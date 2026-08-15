@@ -1,0 +1,44 @@
+[build-system]
+requires = ["hatchling>=1.31,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "thyca-ai"
+version = "0.1.0"
+description = "Thyca — personal terminal harness (pi-inspired, single process, tools = capability)"
+readme = "README.md"
+requires-python = ">=3.14"
+license = { text = "MIT" }
+authors = [{ name = "thyca" }]
+dependencies = [
+    "httpx>=0.27,<1",
+    "mcp>=1.0,<2",
+    "rapidfuzz>=3,<4",
+    "numpy>=2.1,<3",
+    "onnxruntime>=1.17,<2",
+    "tokenizers>=0.21,<1",
+    # sqlite-vec optional: no win_arm64 wheel, fallback to numpy exact search
+    "sqlite-vec>=0.1.9,<0.2; sys_platform != 'win32' or platform_machine != 'ARM64'",
+    "filelock>=3.16,<4",
+    "platformdirs>=4.3,<5",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9,<10",
+    "pytest-asyncio>=1,<2",
+]
+
+[project.scripts]
+thyca = "thyca.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["thyca"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

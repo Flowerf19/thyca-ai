@@ -6,7 +6,7 @@ from pathlib import Path
 from thyca.protocol import Message
 
 
-@dataclass(frozen=True)
+@dataclass
 class Session:
     id: str
     path: Path

@@ -1,18 +1,29 @@
 ---
-status: in-progress
+status: done
 created: 2026-08-14
 last_updated: 2026-08-17
 ---
 
-# Service — Session (`thyca/session.py`)
+# Service — Session (`thyca/sessions/`)
 
 > 2/7. Thuộc `thyca-agent-architecture.md`. Chỉ code khi bạn duyệt `status: in-progress`. Umbrella `thyca-harness-v1.md` vẫn `draft` nên đây là bản chuẩn bị execution-ready (tuân `AGENT_RULES.md:1` — Config là ngoại lệ duy nhất).
+>
+> **Layout:** package `thyca/sessions/` — 4 class SOLID. Không `thyca/session.py` shim. `Message`/`ToolCall` ở `thyca/protocol.py`.
 
 ## Summary
 
 Quản `~/.thyca/sessions/*.jsonl`: create/load/durable append, `--continue`, và compaction rule-based bằng atomic rewrite khi vượt `contextTokens`. Session chỉ lưu turn data; system prompt nóng được rebuild khi chạy. Prerequisite: `thyca/protocol.py` (canonical `Message`/`ToolCall`) và `thyca/config.py` (`LimitsCfg.contextTokens`, default `32000`, range `1000..200000`).
 
-## Class trong module
+## Class trong package
+
+Bốn class, mỗi class một trách nhiệm:
+
+| Class | File | Trách nhiệm |
+|-------|------|-------------|
+| `Session` | `models.py` | Entity: `id`, `path`, `messages` |
+| `SessionStore` | `store.py` | I/O: path safety, `0700/0600`, read/validate, durable append, atomic rewrite |
+| `SessionCompactor` | `compaction.py` | Policy: `estimate_tokens`, turn boundary, 60% tail, marker |
+| `SessionManager` | `manager.py` | Orchestrator: lock, id/timezone, ủy quyền store + compactor |
 
 ```mermaid
 classDiagram
@@ -23,29 +34,28 @@ classDiagram
         +append(msg) void
         +compact_if_needed() void
     }
+    class SessionStore {
+        +ensure_dir() void
+        +path_for(id) Path
+        +create(id) Path
+        +load(id) Session
+        +latest() Session
+        +append(path, msg) void
+        +rewrite(id, target, messages) void
+    }
+    class SessionCompactor {
+        +compact(messages, contextTokens) Message[] | None
+    }
     class Session {
         +id: str
         +path: Path
         +messages: Message[]
     }
-    class Message {
-        +role: user|assistant|tool
-        +content: str | None
-        +tool_calls: ToolCall[]
-        +tool_call_id: str | None
-        +ts: str
-        +meta: dict
-    }
-    class ToolCall {
-        <<from thyca.protocol>>
-        +id: str
-        +name: str
-        +arguments: dict
-        +parse_error: str | None
-    }
+    SessionManager --> SessionStore
+    SessionManager --> SessionCompactor
     SessionManager --> Session
+    SessionStore --> Session
     Session --> Message
-    Message --> ToolCall
 ```
 
 `Message.role` trong session chỉ `user|assistant|tool`. `system` chỉ xuất hiện như synthetic compaction marker ở đầu file sau rewrite, không phải hot prompt (hot prompt rebuild mỗi lượt theo `thyca-agent-architecture.md:58`).
@@ -70,10 +80,10 @@ classDiagram
 | ID | Task | Done | Date |
 |----|------|------|------|
 | TASK-303 | ~~`thyca/session.py`: `create`, strict `load`, durable `append`, `continue_last`, turn-safe atomic `compact_if_needed`~~ — **superseded 2026-08-17** by 303a-d (tách nhỏ để independently verifiable) | | |
-| TASK-303a | `thyca/session.py`: `create` + `continue_last` + `load(id)` strict — id regex, dir/permissions `0700/0600`, timestamp theo `timeline.timezone`, `rand4=secrets.token_hex(2)`, empty/missing dir handling, mtime selection skip symlink/subdir/non-jsonl | | |
-| TASK-303b | `append` durable (`flush+fsync`) + `load` strict (path+line, schema validation `role`/`tool_call_id`, nửa dòng, orphan check), `SessionNotFound`/`SessionCorrupt` taxonomy | | |
-| TASK-303c | `compact_if_needed` trigger (`estimate_tokens` deterministic `ceil(len(json)/4)`, `> limits.contextTokens`) + turn-safe tail (`user?→assistant→tool*` khép kín) + giữ `≤60%` + marker deterministic 1000c | | |
-| TASK-303d | Atomic rewrite (temp `0600` + `flush/fsync` + `os.replace` + `fsync` parent dir) + crash safety + `threading.Lock` — inject failure trước/sau replace | | |
+| TASK-303a | `thyca/session.py`: `create` + `continue_last` + `load(id)` strict — id regex, dir/permissions `0700/0600`, timestamp theo `timeline.timezone`, `rand4=secrets.token_hex(2)`, empty/missing dir handling, mtime selection skip symlink/subdir/non-jsonl | x | 2026-08-17 |
+| TASK-303b | `append` durable (`flush+fsync`) + `load` strict (path+line, schema validation `role`/`tool_call_id`, nửa dòng, orphan check), `SessionNotFound`/`SessionCorrupt` taxonomy | x | 2026-08-17 |
+| TASK-303c | `compact_if_needed` trigger (`estimate_tokens` deterministic `ceil(len(json)/4)`, `> limits.contextTokens`) + turn-safe tail (`user?→assistant→tool*` khép kín) + giữ `≤60%` + marker deterministic 1000c | x | 2026-08-17 |
+| TASK-303d | Atomic rewrite (temp `0600` + `flush/fsync` + `os.replace` + `fsync` parent dir) + crash safety + `threading.Lock` — inject failure trước/sau replace | x | 2026-08-17 |
 
 Xong khi: write 3 turns → load lại đủ (kèm `ts`/`meta`); `--continue` chọn đúng file max mtime và skip symlink/subdir; empty/missing sessions xử lý rõ; `load` reject invalid schema với path:line; compaction giữ newest complete turns dưới 60% và không để orphan `tool_call_id`, marker đúng 1000c; simulated failure trước replace không làm hỏng file cũ, sau replace file mới load được và parent fsync được gọi; `sessions` `0700`/JSONL `0600`; `id` traversal bị chặn; `estimate_tokens` deterministic.
 

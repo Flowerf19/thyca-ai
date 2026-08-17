@@ -1,12 +1,16 @@
+from .compaction import SessionCompactor, estimate_tokens
 from .errors import SessionCorrupt, SessionError, SessionNotFound
-from .manager import SessionManager, estimate_tokens
+from .manager import SessionManager
 from .models import Session
+from .store import SessionStore
 
 __all__ = [
-    "SessionManager",
     "Session",
-    "SessionError",
-    "SessionNotFound",
+    "SessionCompactor",
     "SessionCorrupt",
+    "SessionError",
+    "SessionManager",
+    "SessionNotFound",
+    "SessionStore",
     "estimate_tokens",
 ]

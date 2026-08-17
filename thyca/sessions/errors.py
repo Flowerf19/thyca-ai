@@ -15,6 +15,8 @@ class SessionNotFound(SessionError):
 
 class SessionCorrupt(SessionError):
     def __init__(self, path: str | Path, line: int | None, cause: str | Exception) -> None:
-        self.path, self.line, self.cause = Path(path), line, cause
+        self.path = Path(path)
+        self.line = line
+        self.cause = cause
         suffix = f":{line}" if line is not None else ""
         super().__init__(f"{self.path}{suffix}: {cause}")

@@ -28,7 +28,7 @@ thyca-ai/
     protocol.py            # canonical Message / ToolCall / ToolResult wire types
     cli.py                 # REPL + argparse
     config.py              # -> services/config.md
-    session.py             # -> services/session.md
+    sessions/              # -> services/session.md (Session, SessionStore, SessionCompactor, SessionManager)
     memory/
       hot.py               # -> services/memory.md
       chunk.py             # -> l2-memory-retrieval.md
@@ -82,7 +82,7 @@ Class tổng giữa module **dùng activity này**, không vẽ class tổng. Cl
 | # | Service | File | Mô tả ngắn | Status |
 |---|---------|------|------------|--------|
 | 1 | **Config** | `services/config.md` | `~/.thyca/config.json` (JSON 1 file, đọc ở `~/.thyca`), `provider/embedding/mcpServers/timeline/limits`, resolve `apiKeyEnv` | ✅ done 2026-08-14 (TASK-301/302) |
-| 2 | **Session** | `services/session.md` | JSONL `sessions/*.jsonl`, `create/load/append`, `--continue`, compaction rule-based | ✅ in-progress 2026-08-17 (4-class model, TASK-303a-d) |
+| 2 | **Session** | `services/session.md` | JSONL `sessions/*.jsonl` trong `thyca/sessions/` (4 class SOLID), `create/load/append`, `--continue`, compaction rule-based | ✅ done 2026-08-17 (TASK-303a-d) |
 | 3 | **Memory** | `services/memory.md` | Hot (`SOUL/USER/MEMORY/daily` + tail 4KB) + facade `memory_*` wiring sang L2 | ☐ draft |
 | 4 | **LLM** | `services/llm.md` | 1 client `httpx` OpenAI-compat + `prompt.py` build system prompt | ☐ draft |
 | 5 | **Tools** | `services/tools.md` | `ToolRegistry` + builtin `read/write/edit/bash/web_search` + guard `~/.thyca` | ☐ draft |

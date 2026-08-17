@@ -1,7 +1,7 @@
 ---
 status: draft
 created: 2026-08-14
-last_updated: 2026-08-15
+last_updated: 2026-08-17
 ---
 
 # L2 Memory — Agentic Retrieval (Agent là controller)
@@ -32,8 +32,8 @@ Tool chỉ trả **evidence + score + match_type**, không trả `confidence 0-1
 
 ## L2 là gì — chốt hot/cold lifecycle
 
-- **L1 nóng**: `SOUL.md` + `USER.md` + `MEMORY.md` mỗi lượt + daily **hôm nay** (+ hôm qua lúc mở session) đọc 1 lần lúc start / `--continue`. Nhét thẳng vào system prompt. **Không chunk, không embed** — LLM tự là semantic engine cho hot (thấy raw `thịt quay` thì hiểu `đồ nướng`).
-- **L2 lạnh**: daily `memory/YYYY-MM-DD.md` đã **đóng ngày** (`timeline_day < hôm nay`) qua `memory_search` / `memory_recent` / `memory_get`. File hôm nay chưa chunk/embed cho đến sau 00:00. `SOUL.md`, `USER.md`, `MEMORY.md` là **canonical sources**, luôn indexable như canonical chunks và không gán daily date.
+- **L1 nóng**: `SOUL.md` + `USER.md` **cả file** mỗi lượt (ổn định, lợi prompt cache). `MEMORY.md` + daily hôm nay = tail `hotTailKB`. Hôm qua tail capture một lần lúc `open_session` / `--continue`. **Không chunk, không embed**. Full `MEMORY.md` khi cần: `memory_get(path)`. Chi tiết ActiveMemory ở `services/memory.md`.
+- **L2 lạnh**: daily đã **đóng ngày** (`timeline_day < hôm nay`) qua `memory_search` / `memory_recent` / `memory_get`. Hôm qua vừa hot (tail lúc mở session) vừa cold (được index). File hôm nay không index. `SOUL.md`, `USER.md`, `MEMORY.md` luôn indexable, `timeline_day=NULL`.
 - Khi semantic model unavailable, `semantic=true` trả lexical results kèm warning; không crash và không giả vector score.
 
 ```mermaid
@@ -139,13 +139,15 @@ File daily sau khi đóng ngày (ví dụ đã chốt của bạn):
 
 Sẽ thành 5 chunks (mỗi `- ...` là 1 chunk):
 
-| chunk_id | session_title | leaf_raw |
-|---|---|---|
-| `2026-08-13#08-00#1#a1b2` | `ăn sáng bún bò` | `- 08:00 ăn sáng với bún bò - nội dung ...` |
-| `2026-08-13#08-00#2#b2c3` | `ăn sáng bún bò` | `- nói chuyện với Luna` |
-| `2026-08-13#19-30#1#c3d4` | `bàn đồ nướng` | `- 19:30 ăn thịt quay với bạn ở Q1` |
-| `...#19-30#2#d4e5` | `bàn đồ nướng` | `- 20:30 bàn mai thử đồ nướng` |
-| `...#21-00#1#e5f6` | `bàn xem mai ăn gì` | `- xem menu, chốt mai ...` |
+| chunk_id | session_id | session_title | leaf_raw |
+|---|---|---|---|
+| `2026-08-13#a1b2c3d4#1` | `2026-08-13#a1b2c3d4` | `ăn sáng bún bò` | `- 08:00 ăn sáng với bún bò - nội dung ...` |
+| `2026-08-13#a1b2c3d4#2` | `2026-08-13#a1b2c3d4` | `ăn sáng bún bò` | `- nói chuyện với Luna` |
+| `2026-08-13#e5f6a7b8#1` | `2026-08-13#e5f6a7b8` | `bàn đồ nướng` | `- 19:30 ăn thịt quay với bạn ở Q1` |
+| `2026-08-13#e5f6a7b8#2` | `2026-08-13#e5f6a7b8` | `bàn đồ nướng` | `- 20:30 bàn mai thử đồ nướng` |
+| `2026-08-13#c9d0e1f2#1` | `2026-08-13#c9d0e1f2` | `bàn xem mai ăn gì` | `- xem menu, chốt mai ...` |
+
+`session_id = timeline_day#entry_id` (`entry_id` = 8 hex trong heading `<!-- thyca:entry_id -->`). `chunk_id = session_id#leaf_ord`. Không dùng `HH-mm` trong id — hai heading cùng phút vẫn tách.
 
 Quy tắc tách (deterministic, theo thứ tự):
 
@@ -188,7 +190,7 @@ CREATE TABLE chunks(
   path           TEXT NOT NULL REFERENCES source_files(path) ON DELETE CASCADE,
   source_kind    TEXT NOT NULL CHECK(source_kind IN ('daily','canonical')),
   timeline_day   TEXT,                         -- NULL cho canonical
-  session_id     TEXT NOT NULL,                -- daily#time#occurrence hoặc canonical#name
+  session_id     TEXT NOT NULL,                -- daily: timeline_day#entry_id ; canonical: canonical#name
   session_title  TEXT NOT NULL,
   heading_raw    TEXT NOT NULL,
   leaf_ord       INTEGER NOT NULL,

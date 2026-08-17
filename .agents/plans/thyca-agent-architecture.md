@@ -30,7 +30,7 @@ thyca-ai/
     config.py              # -> services/config.md
     sessions/              # -> services/session.md (Session, SessionStore, SessionCompactor, SessionManager)
     memory/
-      hot.py               # -> services/memory.md
+      active.py               # -> services/memory.md
       chunk.py             # -> l2-memory-retrieval.md
       cold.py              # -> l2-memory-retrieval.md
     llm/
@@ -40,7 +40,7 @@ thyca-ai/
       registry.py          # -> services/tools.md
       builtin/             # -> services/tools.md
       mcp.py               # -> services/mcp.md
-      memory.py            # facade -> services/memory.md
+      memory.py            # facade memory_* -> services/tools.md + l2-memory-retrieval.md
     agent/
       loop.py              # -> services/agent-loop.md
       run.py               # seam -> services/agent-loop.md
@@ -54,8 +54,8 @@ thyca-ai/
 
 ```mermaid
 flowchart TD
-    A["CLI: parseArgs + config.load + HotMemory.ensureFiles"] --> B["SessionManager: create/load JSONL"]
-    B --> C["HotMemory.loadHot -> HotSnapshot<br/>soul/user/memory/today/yesterday"]
+    A["CLI: parseArgs + config.load + ActiveMemory.ensureFiles"] --> B["SessionManager: create/load JSONL"]
+    B --> C["ActiveMemory.refresh -> ActiveSnapshot<br/>soul/user/memory/today/yesterday"]
     C --> D["PromptBuilder.build: system + hot"]
     D --> E["AgentLoop.assemble: system + hot + session + userMsg"]
     E --> F{"LLMClient.chat<br/>think"}
@@ -83,7 +83,7 @@ Class tổng giữa module **dùng activity này**, không vẽ class tổng. Cl
 |---|---------|------|------------|--------|
 | 1 | **Config** | `services/config.md` | `~/.thyca/config.json` (JSON 1 file, đọc ở `~/.thyca`), `provider/embedding/mcpServers/timeline/limits`, resolve `apiKeyEnv` | ✅ done 2026-08-14 (TASK-301/302) |
 | 2 | **Session** | `services/session.md` | JSONL `sessions/*.jsonl` trong `thyca/sessions/` (4 class SOLID), `create/load/append`, `--continue`, compaction rule-based | ✅ done 2026-08-17 (TASK-303a-d) |
-| 3 | **Memory** | `services/memory.md` | Hot (`SOUL/USER/MEMORY/daily` + tail 4KB) + facade `memory_*` wiring sang L2 | ☐ draft |
+| 3 | **Memory** | `services/memory.md` | Active prompt window: `ActiveMemory` + `ActiveSnapshot`, tail 4KB, day-rollover hook | ✅ done 2026-08-17 (TASK-304) |
 | 4 | **LLM** | `services/llm.md` | 1 client `httpx` OpenAI-compat + `prompt.py` build system prompt | ☐ draft |
 | 5 | **Tools** | `services/tools.md` | `ToolRegistry` + builtin `read/write/edit/bash/web_search` + guard `~/.thyca` | ☐ draft |
 | 6 | **MCP** | `services/mcp.md` | stdio spawn, `server__tool` prefix, lifecycle, fault tolerance | ☐ draft |
@@ -94,7 +94,8 @@ Class tổng giữa module **dùng activity này**, không vẽ class tổng. Cl
 
 - [x] 1. Config — `services/config.md` done 2026-08-14
 - [x] 2. Session — duyệt `services/session.md` 2026-08-17 (execution-ready, 303a-d)
-- [ ] 3. Memory — duyệt `services/memory.md` + `l2-memory-retrieval.md`
+- [x] 3. Memory — duyệt `services/memory.md` (ActiveMemory, TASK-304) done 2026-08-17
+- [ ] — Cold (L2) — duyệt `l2-memory-retrieval.md` riêng, không gộp với Hot
 - [ ] 4. LLM — duyệt `services/llm.md`
 - [ ] 5. Tools — duyệt `services/tools.md`
 - [ ] 6. MCP — duyệt `services/mcp.md`
@@ -103,7 +104,7 @@ Class tổng giữa module **dùng activity này**, không vẽ class tổng. Cl
 Thứ tự đề xuất code:
 
 1. `Config` — done.
-2. `Session -> HotMemory -> LLM`.
+2. `Session -> ActiveMemory -> LLM`.
 3. `protocol.py -> ToolRegistry + builtins`.
 4. `MemoryFacade -> L2 lexical`; sau đó L2 semantic/model profile.
 5. `MCP`.

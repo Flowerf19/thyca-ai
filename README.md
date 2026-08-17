@@ -4,7 +4,7 @@ Thyca là harness trợ lý cá nhân chạy trong terminal, lấy cảm hứng 
 
 ## Trạng thái hiện tại
 
-Repo mới ở giai đoạn skeleton. CLI, **Config**, và **Session** (`thyca/sessions/`) đã có; LLM, Tools, MCP, Memory và Agent Loop chưa được triển khai. Vì vậy `thyca -p "ping"` hiện chỉ báo harness chưa được wiring, chưa gọi provider thật.
+Repo mới ở giai đoạn skeleton. CLI, **Config**, **Session**, và **ActiveMemory** đã có; L2, LLM, Tools, MCP và Agent Loop chưa được triển khai. Vì vậy `thyca -p "ping"` hiện chỉ báo harness chưa được wiring, chưa gọi provider thật.
 
 Memory v1 đã được chốt là **L2 hybrid**: markdown dưới `~/.thyca` là nguồn sự thật; SQLite là index suy ra. Lexical retrieval dùng FTS5 và trigram, semantic retrieval dùng exact vector search + RRF khi agent yêu cầu. Daily memory chỉ được index sau khi đóng ngày; `SOUL.md`, `USER.md` và `MEMORY.md` là canonical sources luôn indexable. Chi tiết nằm ở `.agents/plans/l2-memory-retrieval.md` và quyết định `.agents/decisions/2026-08-15-l2-hybrid-v1.md`.
 

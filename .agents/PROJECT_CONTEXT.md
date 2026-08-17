@@ -2,7 +2,7 @@
 
 `thyca-ai` là harness trợ lý cá nhân trong terminal. Cảm hứng pi (vòng lặp nhỏ, ít abstraction), không phải coding agent và không clone OpenClaw/Hermes.
 
-Trạng thái repo (2026-08-17): package flat `thyca/` có skeleton CLI, Config (`thyca/config.py`), Session (`thyca/sessions/` 4 class + `thyca/protocol.py`). Các service Memory/LLM/Tools/MCP/Agent Loop chưa triển khai. `thyca -p` vẫn là stub, chưa gọi LLM.
+Trạng thái repo (2026-08-17): package flat `thyca/` có skeleton CLI, Config, Session (`thyca/sessions/`), ActiveMemory (`thyca/memory/active.py`). L2/LLM/Tools/MCP/Agent Loop chưa triển khai. `thyca -p` vẫn là stub, chưa gọi LLM.
 
 ## Định hướng v1
 

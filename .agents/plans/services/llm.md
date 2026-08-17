@@ -17,7 +17,7 @@ Một async `httpx` OpenAI-compatible client (`/chat/completions` + tool calls) 
 ```mermaid
 classDiagram
     class PromptBuilder {
-        +build(hot: HotSnapshot) str
+        +build(hot: ActiveSnapshot) str
         +rulesSection() str
     }
     class LLMClient {
@@ -38,7 +38,7 @@ classDiagram
         +arguments: dict
         +parse_error: str | None
     }
-    PromptBuilder ..> HotSnapshot
+    PromptBuilder ..> ActiveSnapshot
     LLMClient --> ChatReply
     ChatReply --> ToolCall
 ```

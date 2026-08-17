@@ -10,4 +10,4 @@
 6. `plans/services/*.md` — contract thi công từng service
 7. `plans/l2-memory-retrieval.md` — contract chi tiết cold retrieval
 
-Runtime hiện có skeleton CLI, Config, và Session (`thyca/sessions/`). Đừng bịa command hoặc feature ngoài plan đã được duyệt.
+Runtime hiện có skeleton CLI, Config, Session (`thyca/sessions/`), và ActiveMemory (`thyca/memory/active.py`). Đừng bịa command hoặc feature ngoài plan đã được duyệt.

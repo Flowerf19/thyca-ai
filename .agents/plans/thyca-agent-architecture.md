@@ -30,9 +30,9 @@ thyca-ai/
     config.py              # -> services/config.md
     sessions/              # -> services/session.md (Session, SessionStore, SessionCompactor, SessionManager)
     memory/
-      active.py               # -> services/memory.md
+      active.py            # -> services/memory.md
+      archived.py          # -> l2-memory-retrieval.md (index + search)
       chunk.py             # -> l2-memory-retrieval.md
-      cold.py              # -> l2-memory-retrieval.md
     llm/
       client.py            # -> services/llm.md
       prompt.py            # -> services/llm.md
@@ -88,14 +88,14 @@ Class tổng giữa module **dùng activity này**, không vẽ class tổng. Cl
 | 5 | **Tools** | `services/tools.md` | `ToolRegistry` + builtin `read/write/edit/bash/web_search` + guard `~/.thyca` | ☐ draft |
 | 6 | **MCP** | `services/mcp.md` | stdio spawn, `server__tool` prefix, lifecycle, fault tolerance | ☐ draft |
 | 7 | **Agent Loop** | `services/agent-loop.md` | `loop max 10` assemble/think/run/persist, `run(call)` seam, `cli.py` wiring | ☐ draft |
-| — | **Cold (L2)** | `l2-memory-retrieval.md` | Leaf chunks, FTS+trigram+vector, RRF k=60, lazy day-close, canonical files always indexed | ☐ draft |
+| — | **Archived (L2)** | `l2-memory-retrieval.md` | 4 class lexical done 2026-08-17; vector/RRF still draft | ✅ in-progress 2026-08-17 (GOAL-002) |
 
 **Checklist duyệt (copy ra issue/PR):**
 
 - [x] 1. Config — `services/config.md` done 2026-08-14
 - [x] 2. Session — duyệt `services/session.md` 2026-08-17 (execution-ready, 303a-d)
 - [x] 3. Memory — duyệt `services/memory.md` (ActiveMemory, TASK-304) done 2026-08-17
-- [ ] — Cold (L2) — duyệt `l2-memory-retrieval.md` riêng, không gộp với Hot
+- [ ] — Archived (L2) — duyệt `l2-memory-retrieval.md` riêng, không gộp với ActiveMemory
 - [ ] 4. LLM — duyệt `services/llm.md`
 - [ ] 5. Tools — duyệt `services/tools.md`
 - [ ] 6. MCP — duyệt `services/mcp.md`

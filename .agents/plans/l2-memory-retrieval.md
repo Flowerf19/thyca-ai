@@ -1,5 +1,5 @@
 ---
-status: draft
+status: in-progress
 created: 2026-08-14
 last_updated: 2026-08-17
 ---
@@ -30,20 +30,133 @@ Tool chỉ trả **evidence + score + match_type**, không trả `confidence 0-1
 
 ---
 
-## L2 là gì — chốt hot/cold lifecycle
+## L2 là gì — Active vs Archived
 
-- **L1 nóng**: `SOUL.md` + `USER.md` **cả file** mỗi lượt (ổn định, lợi prompt cache). `MEMORY.md` + daily hôm nay = tail `hotTailKB`. Hôm qua tail capture một lần lúc `open_session` / `--continue`. **Không chunk, không embed**. Full `MEMORY.md` khi cần: `memory_get(path)`. Chi tiết ActiveMemory ở `services/memory.md`.
-- **L2 lạnh**: daily đã **đóng ngày** (`timeline_day < hôm nay`) qua `memory_search` / `memory_recent` / `memory_get`. Hôm qua vừa hot (tail lúc mở session) vừa cold (được index). File hôm nay không index. `SOUL.md`, `USER.md`, `MEMORY.md` luôn indexable, `timeline_day=NULL`.
+- **Active** (`thyca/memory/active.py`): `SOUL.md` + `USER.md` **cả file** mỗi lượt. `MEMORY.md` + daily hôm nay = tail `hotTailKB`. Hôm qua tail capture một lần lúc `open_session` / `--continue`. **Không chunk, không embed**. Full `MEMORY.md` khi cần: `memory_get(path)`. Chi tiết ở `services/memory.md`.
+- **Archived** (`thyca/memory/archived.py` + `chunk.py`): daily đã **đóng ngày** (`timeline_day < hôm nay`) qua `memory_search` / `memory_recent` / `memory_get`. Hôm qua vừa active (tail lúc mở session) vừa archived (được index). File hôm nay không index. `SOUL.md`, `USER.md`, `MEMORY.md` luôn indexable, `timeline_day=NULL`.
 - Khi semantic model unavailable, `semantic=true` trả lexical results kèm warning; không crash và không giả vector score.
 
 ```mermaid
 flowchart LR
-    A["Ngày đang mở (HOT)\n~/.thyca/memory/2026-08-13.md\ntruyền cùng SOUL/USER\nchưa chunk"] --> B{"Qua 00:00"}
-    B --> C["Ngày CLOSED (COLD)\nimmutable\nmới chunk theo heading timeline"]
+    A["Ngày đang mở (ACTIVE)\n~/.thyca/memory/2026-08-13.md\ntruyền cùng SOUL/USER\nchưa chunk"] --> B{"Qua 00:00"}
+    B --> C["Ngày CLOSED (ARCHIVED)\nimmutable\nmới chunk theo heading timeline"]
     C --> D["L2 retrieval\nFTS + trigram + vector"]
 ```
 
 > Vì sao không chunk luôn: tránh duplicate (hot đã chứa) + tránh n lần embed khi append daily. Trong ngày LLM thấy raw nên paraphrase tự xử. Vector chỉ cứu ngày cũ / hot bị `compaction` cắt (v1 daily vài trăm dòng, không cắt).
+
+## Class — Archived lexical (4 class SOLID)
+
+Chốt 2026-08-17. Slice đầu = GOAL-002. Không gộp remember / vector / model pull vào đây.
+
+| Class | File | Trách nhiệm |
+|-------|------|-------------|
+| `Chunk` | `chunk.py` | Entity 1 leaf |
+| `Chunker` | `chunk.py` | Policy: `## HH:mm` → leaf, split/gộp |
+| `ArchiveStore` | `archived.py` | I/O: schema SQLite, reindex, FTS |
+| `ArchivedMemory` | `archived.py` | Kho: reindex, get theo id. Search/recent ở `MemoryFacade` |
+
+`Hit` / `SearchResult` là dataclass trả về, không phải class SOLID thứ 5.
+
+Ngoài slice: `memory_remember` → Tools. Vector/Harrier/`model pull` → GOAL-003 (`Embedder` lúc đó).
+
+```mermaid
+classDiagram
+    class Chunker {
+        +chunk_markdown(path, text) Chunk[]
+        +normalize(text) str
+    }
+    class Chunk {
+        +chunk_id: str
+        +session_id: str
+        +text_raw: str
+        +text_norm: str
+        +embed_text: str
+        +leaf_ord: int
+    }
+    class ArchiveStore {
+        +reindex() void
+        +upsert(chunks) void
+        +fts_search(q) Hit[]
+        +trigram_search(q) Hit[]
+    }
+    class ArchivedMemory {
+        +reindex(now) void
+        +get(chunk_id, session_id, path) str
+        +fts_hits(q) Hit[]
+        +trigram_hits(q) Hit[]
+    }
+    class MemoryFacade {
+        +search(query, semantic, limit, day) SearchResult
+        +recent(limit) Hit[]
+        +remember(...) str
+        +forget(id) void
+        +get(...) str
+    }
+    ArchivedMemory --> ArchiveStore
+    ArchivedMemory --> Chunker
+    ArchiveStore --> Chunk
+    Chunker --> Chunk
+```
+
+`semantic=true` ở slice này: lexical + warning `semantic unavailable` nếu chưa có Embedder. Không giả vector score.
+
+SQL sống ở `thyca/memory/schema.sql`. `ArchiveStore` chỉ `executescript` file đó.
+
+### Lifecycle — remember / forget / reinforce / TTL
+
+Chốt 2026-08-17. Code ở Tools facade (`thyca/tools/memory.py`) + `ArchiveStore` lọc/cập nhật index. Markdown là nguồn. Không daemon.
+
+Heading do code ghi (một comment):
+
+```md
+## 08:00 — ăn sáng bún bò <!-- thyca:a1b2c3d4 imp=3 exp=2026-11-15T00:00:00Z -->
+```
+
+`imp` 1..5 → TTL: `1=3 ngày, 2=1 tuần, 3=1 tháng, 4=3 tháng, 5=6 tháng`. Default `imp=3` (1 tháng). `exp` = UTC `YYYY-MM-DDTHH:mm:ssZ`. `SOUL.md` / `USER.md` không TTL, không `forget` cả file. `get` reset TTL.
+
+Một mốc: `expires_at`. Hết hạn hoặc `forget` → xóa heading+leaf trên markdown rồi reindex. Không `forgotten_at`, không grace 30 ngày.
+
+```python
+def memory_remember(
+    topic: str,
+    summary: str,
+    content: str = "",
+    target: Literal["daily", "user", "memory", "soul"] = "daily",
+    importance: int = 3,
+) -> str:
+    # daily|memory: append ## HH:mm — topic <!-- thyca:entry_id imp exp -->
+    # user|soul: atomic rewrite, no TTL
+    # return session_id (daily/memory) hoặc canonical#name
+
+def memory_forget(session_id: str) -> None:
+    # daily|memory only. Gắn forgotten=now trên heading, reindex.
+    # Search/get ẩn ngay. Reject canonical#soul|#user.
+
+def memory_reinforce(session_id: str, importance: int | None = None) -> str:
+    # Xóa forgotten nếu còn grace. Đặt lại exp từ imp (giữ hoặc đổi).
+    # return exp mới. Reject nếu đã purge hoặc không tìm thấy.
+
+def memory_get(chunk_id=None, session_id=None, path=None) -> str:
+    # đúng một selector. Expired/forgotten → not found.
+    # chunk_id|session_id: gia hạn exp (sliding, cùng imp). path: không gia hạn từng entry.
+
+def memory_search(...) -> SearchResult:
+    # không gia hạn. không trả expired/forgotten.
+```
+
+Hết hạn vs forget:
+
+| Trạng thái | Search/get | Markdown |
+|---|---|---|
+| còn hạn | hiện | nguyên |
+| `exp <= now`, chưa forget | ẩn | nguyên |
+| `forget`, grace ≤30 ngày | ẩn | heading còn, có `forgotten=` |
+| `forgotten + 30 ngày` | ẩn | `reindex` xóa cả heading+leaf |
+
+`reinforce` trong grace hoàn tác forget. Quét purge chỉ lúc `reindex`/startup. `search` không đụng TTL.
+
+Keyed lock theo file path cho mọi mutate (`remember`/`forget`/`reinforce`/`get`-touch heading).
 
 ---
 
@@ -402,14 +515,14 @@ Thyca owns its manifest; it must not import another project's runtime manifest. 
 
 Xong khi: schemas của `SearchResult/Hit/memory_get/memory_remember` có test; explicit target hoạt động; two concurrent remembers preserve both entries; every builtin path form dưới `~/.thyca` bị chặn.
 
-### GOAL-002: Chunking + Lexical retrieval (L2-lexical, lazy)
+### GOAL-002: Chunking + Lexical retrieval (4 class: Chunk, Chunker, ArchiveStore, ArchivedMemory)
 
 | ID | Task | Done | Date |
 |----|------|------|------|
-| TASK-104 | `chunk_markdown`: daily heading→leaf + stable entry ID; canonical paragraph/leaf fallback; split >800 chars/256 tokens; keep raw/norm/embed payloads distinct; test duplicate minute headings, legacy headings, Vietnamese, code fence and fallback | | |
-| TASK-105 | Create `source_files/chunks/chunks_fts` schema + triggers exactly as above. Add migration/version gate and an executable in-memory schema smoke test proving tokenizer creation, raw accented snippet, insert/update/delete sync, canonical NULL day and cascade delete | | |
-| TASK-106 | Rapidfuzz trigram candidates on `text_norm` only when FTS <3; benchmark 10k chunks and lock threshold before release. Merge/dedup deterministically; do not auto-create another table from runtime latency | | |
-| TASK-107 | Reindex exact canonical + daily sources with mtime_ns/size, stable IDs, content/profile hashes, day rollover, transactional lexical update and stale-checked embedding update. Canonical reindexes immediately; hot/future daily skip; deleted source cascades | | |
+| TASK-104 | `chunk_markdown`: daily heading→leaf + stable entry ID; canonical paragraph/leaf fallback; split >800 chars/256 tokens; keep raw/norm/embed payloads distinct; test duplicate minute headings, legacy headings, Vietnamese, code fence and fallback | x | 2026-08-17 |
+| TASK-105 | Create `source_files/chunks/chunks_fts` schema + triggers exactly as above. Add migration/version gate and an executable in-memory schema smoke test proving tokenizer creation, raw accented snippet, insert/update/delete sync, canonical NULL day and cascade delete | x | 2026-08-17 |
+| TASK-106 | Rapidfuzz trigram candidates on `text_norm` only when FTS <3; threshold locked at 70 without 10k bench (measure later). Merge/dedup deterministically; do not auto-create another table from runtime latency | x | 2026-08-17 |
+| TASK-107 | Reindex exact canonical + daily sources with mtime_ns/size, stable IDs, content/profile hashes, day rollover, transactional lexical update and stale-checked embedding update. Canonical reindexes immediately; hot/future daily skip; deleted source cascades | x | 2026-08-17 |
 
 Xong khi: schema smoke chạy trên SQLite thật; canonical search được; `ca phe` hit raw `cà phê`; typo hit trigram; raw snippet giữ dấu; duplicate minute headings không collision; xóa md cascade; daily hot không embed, rollover mới embed.
 
@@ -441,6 +554,16 @@ Xong khi: agent tự chọn lexical trước, semantic retry chỉ khi cần; wa
 | TASK-115 | Log `query, semantic, timeline_day, hit_count, match_type histogram, warnings, profile_id, top bm25/vector_score` vào session JSONL tool meta; không log embedding/API key/raw secret | | |
 | TASK-116 | Limits: query empty → `SearchResult(hits=[], warnings=[...])`; limit clamp 1..10; lexical/vector cap 50; leaf split 800c/256 tokens without silent truncate; strict date validation; hot tail 4KB UTF-8-safe; result serialization cap | | |
 | TASK-117 | Model lifecycle: own immutable Harrier manifest, opt-in `thyca model status/pull`, download five pinned files under a file lock to temp, SHA-256 verify, atomic install at `~/.thyca/models/harrier-q4/<revision>`; status must not import/load ONNX | | |
+
+### GOAL-006: remember / forget / reinforce / TTL
+
+| ID | Task | Done | Date |
+|----|------|------|------|
+| TASK-118 | Heading comment `thyca:id imp exp forgotten`; parse/write deterministic; schema v2 `expires_at`/`forgotten_at`; search/get ẩn hết hạn và forgotten | x | 2026-08-17 |
+| TASK-119 | `memory_remember(..., importance=3)` set exp; `memory_forget(session_id)` soft; `memory_reinforce` gia hạn / undo forget trong grace | x | 2026-08-17 |
+| TASK-120 | `memory_get(chunk_id\|session_id)` sliding TTL; `search`/`get(path)` không slide; purge heading+leaf khi `forgotten+30d` lúc reindex | x | 2026-08-17 |
+
+Xong khi: remember daily có exp; get gia hạn; search không gia hạn; forget ẩn ngay; reinforce trong 30 ngày khôi phục; quá 30 ngày mất khỏi file; SOUL/USER reject forget.
 
 ---
 

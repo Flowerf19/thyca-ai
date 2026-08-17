@@ -1,7 +1,7 @@
 ---
-status: draft
+status: in-progress
 created: 2026-08-14
-last_updated: 2026-08-15
+last_updated: 2026-08-17
 ---
 
 # Thyca — Kiến trúc chung (1 process, flat `thyca/`)
@@ -82,7 +82,7 @@ Class tổng giữa module **dùng activity này**, không vẽ class tổng. Cl
 | # | Service | File | Mô tả ngắn | Status |
 |---|---------|------|------------|--------|
 | 1 | **Config** | `services/config.md` | `~/.thyca/config.json` (JSON 1 file, đọc ở `~/.thyca`), `provider/embedding/mcpServers/timeline/limits`, resolve `apiKeyEnv` | ✅ done 2026-08-14 (TASK-301/302) |
-| 2 | **Session** | `services/session.md` | JSONL `sessions/*.jsonl`, `create/load/append`, `--continue`, compaction rule-based | ☐ draft |
+| 2 | **Session** | `services/session.md` | JSONL `sessions/*.jsonl`, `create/load/append`, `--continue`, compaction rule-based | ✅ in-progress 2026-08-17 (4-class model, TASK-303a-d) |
 | 3 | **Memory** | `services/memory.md` | Hot (`SOUL/USER/MEMORY/daily` + tail 4KB) + facade `memory_*` wiring sang L2 | ☐ draft |
 | 4 | **LLM** | `services/llm.md` | 1 client `httpx` OpenAI-compat + `prompt.py` build system prompt | ☐ draft |
 | 5 | **Tools** | `services/tools.md` | `ToolRegistry` + builtin `read/write/edit/bash/web_search` + guard `~/.thyca` | ☐ draft |
@@ -93,7 +93,7 @@ Class tổng giữa module **dùng activity này**, không vẽ class tổng. Cl
 **Checklist duyệt (copy ra issue/PR):**
 
 - [x] 1. Config — `services/config.md` done 2026-08-14
-- [ ] 2. Session — duyệt `services/session.md`
+- [x] 2. Session — duyệt `services/session.md` 2026-08-17 (execution-ready, 303a-d)
 - [ ] 3. Memory — duyệt `services/memory.md` + `l2-memory-retrieval.md`
 - [ ] 4. LLM — duyệt `services/llm.md`
 - [ ] 5. Tools — duyệt `services/tools.md`

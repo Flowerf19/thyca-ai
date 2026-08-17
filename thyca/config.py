@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import warnings
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -193,11 +194,19 @@ def _parse_mcp_servers(raw: Any) -> dict[str, McpServerCfg]:
             raise ConfigError("mcpServers keys must be non-empty strings")
         if not isinstance(value, dict):
             raise ConfigError(f"mcpServers[{name!r}] must be an object")
-        result[name] = McpServerCfg(
-            command=value.get("command", ""),
-            args=value.get("args", []),
-            env=value.get("env", {}),
-        )
+        raw_command = value.get("command", "")
+        command = raw_command.strip() if isinstance(raw_command, str) else raw_command
+        raw_args = value.get("args", [])
+        args = list(raw_args) if isinstance(raw_args, list) else raw_args
+        raw_env = value.get("env", {})
+        env = dict(raw_env) if isinstance(raw_env, dict) else raw_env
+        try:
+            result[name] = McpServerCfg(command=command, args=args, env=env)
+        except ConfigError as exc:
+            msg = str(exc)
+            if msg.startswith("mcpServers[]."):
+                msg = msg[len("mcpServers[].") :]
+            raise ConfigError(f"mcpServers[{name!r}].{msg}") from exc
     return result
 
 
@@ -235,6 +244,11 @@ def _parse_dict(raw: dict[str, Any]) -> Config:
 
 
 def ensure_thyca_dir() -> Path:
+    """Ensure ``~/.thyca`` exists with mode 0700.
+
+    Both ``mkdir`` and ``chmod`` failures are wrapped as :class:`ConfigError`
+    (intentional tightening vs old code that only wrapped ``chmod``).
+    """
     directory = config_path().parent
     try:
         directory.mkdir(parents=True, exist_ok=True)
@@ -269,8 +283,25 @@ def ensure_default(path: Path | None = None) -> Config:
     return config
 
 
-def save(config: Config, path: Path | None = None) -> None:
-    """Write atomically under a lock; never fall back to an unlocked write."""
+def save(
+    config: Config | None = None, path: Path | None = None, **kwargs: Any
+) -> None:
+    """Write atomically under a lock; never fall back to an unlocked write.
+
+    Accepts legacy ``cfg`` keyword for backward compat: ``save(cfg=...)``.
+    ``temporary`` cleanup is intentionally outside the lock so the stale
+    ``.tmp`` is removed even when the lock cannot be acquired.
+    """
+    # Backward-compat alias: old signature was save(cfg, path)
+    if "cfg" in kwargs:
+        if config is not None:
+            raise TypeError("save() got multiple values for config/cfg")
+        warnings.warn("save(cfg=...) is deprecated, use save(config=...)", DeprecationWarning, stacklevel=2)
+        config = kwargs.pop("cfg")
+    if kwargs:
+        raise TypeError(f"save() got unexpected keyword arguments: {', '.join(kwargs)}")
+    if config is None:
+        raise TypeError("save() missing required argument: 'config'")
     target = path or config_path()
     temporary = target.with_suffix(target.suffix + ".tmp")
     lock_path = target.with_suffix(target.suffix + ".lock")
@@ -301,3 +332,26 @@ def save(config: Config, path: Path | None = None) -> None:
             temporary.unlink(missing_ok=True)
         except OSError:
             pass
+
+
+# ---------------------------------------------------------------------------
+# Backward-compat shims — deprecated but re-exported to avoid ImportError
+# for external consumers that imported deprecated helpers.
+# ---------------------------------------------------------------------------
+
+THYCA_DIR_NAME = ".thyca"
+CONFIG_FILENAME = "config.json"
+
+
+def thyca_dir() -> Path:
+    warnings.warn("thyca_dir() is deprecated, use config_path().parent", DeprecationWarning, stacklevel=2)
+    return config_path().parent
+
+
+def _lock_path(path: Path) -> Path:
+    return path.with_suffix(path.suffix + ".lock")
+
+
+def default_dict() -> dict[str, Any]:
+    warnings.warn("default_dict() is deprecated, use default_config().to_dict()", DeprecationWarning, stacklevel=2)
+    return default_config().to_dict()

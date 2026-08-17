@@ -1,7 +1,7 @@
 ---
-status: draft
+status: in-progress
 created: 2026-08-13
-last_updated: 2026-08-15
+last_updated: 2026-08-17
 ---
 
 # Thyca v1 — personal assistant harness

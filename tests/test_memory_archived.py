@@ -116,6 +116,48 @@ def test_duplicate_minute_and_fence(tmp_path: Path) -> None:
     assert any(c.text_raw.startswith("```") for c in chunks)
 
 
+def test_upsert_keeps_embedding_until_hash_changes(tmp_path: Path) -> None:
+    _seed(tmp_path)
+    archived = ArchivedMemory(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    archived.reindex(at("2026-08-17"))
+    now = "2026-08-17T00:00:00Z"
+    first = "2026-08-13#a1b2c3d4#1"
+    second = "2026-08-13#a1b2c3d4#2"
+    row1 = archived.store.get_chunk(first, now)
+    row2 = archived.store.get_chunk(second, now)
+    assert row1 is not None and row2 is not None
+    blob1, blob2 = b"\x01\x02", b"\x03\x04"
+    assert archived.store.update_embedding(
+        first, blob1, profile_id=row1["profile_id"], embedding_hash=row1["embedding_hash"]
+    )
+    assert archived.store.update_embedding(
+        second, blob2, profile_id=row2["profile_id"], embedding_hash=row2["embedding_hash"]
+    )
+    daily = tmp_path / "memory" / "2026-08-13.md"
+    daily.write_text(daily.read_text(encoding="utf-8"), encoding="utf-8")
+    archived.reindex(at("2026-08-17"))
+    assert archived.store.get_chunk(first, now)["embedding"] == blob1
+    assert archived.store.get_chunk(second, now)["embedding"] == blob2
+
+    daily.write_text(daily.read_text(encoding="utf-8").replace("quán X", "quán Y"), encoding="utf-8")
+    archived.reindex(at("2026-08-17"))
+    assert archived.store.get_chunk(first, now)["embedding"] is None
+    assert archived.store.get_chunk(second, now)["embedding"] == blob2
+    assert archived.store.update_embedding(
+        second, b"x", profile_id="nope", embedding_hash="nope"
+    ) is False
+
+    daily.write_text(
+        "# 2026-08-13\n"
+        "## 08:00 — ăn sáng bún bò <!-- thyca:a1b2c3d4 -->\n"
+        "- Ăn bún bò Huế ở quán Y\n",
+        encoding="utf-8",
+    )
+    archived.reindex(at("2026-08-17"))
+    assert archived.store.get_chunk(second, now) is None
+    assert archived.store.get_chunk(first, now) is not None
+
+
 def test_delete_source_cascades(tmp_path: Path) -> None:
     _seed(tmp_path)
     archived = ArchivedMemory(tmp_path, timezone_name="Asia/Ho_Chi_Minh")

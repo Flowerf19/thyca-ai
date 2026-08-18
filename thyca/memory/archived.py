@@ -118,45 +118,92 @@ class ArchiveStore:
     def replace_source(self, path: str, kind: str, day: str | None, mtime_ns: int, size: int, chunks: list[Chunk]) -> None:
         self._db.execute("BEGIN IMMEDIATE")
         try:
-            self._db.execute("DELETE FROM source_files WHERE path = ?", (path,))
             self._db.execute(
                 """INSERT INTO source_files(path, source_kind, timeline_day, mtime_ns, size_bytes)
-                   VALUES (?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(path) DO UPDATE SET
+                     source_kind=excluded.source_kind,
+                     timeline_day=excluded.timeline_day,
+                     mtime_ns=excluded.mtime_ns,
+                     size_bytes=excluded.size_bytes""",
                 (path, kind, day, mtime_ns, size),
             )
-            for chunk in chunks:
-                self._db.execute(
-                    """INSERT INTO chunks(
-                        chunk_id, path, source_kind, timeline_day, session_id, session_title,
-                        heading_raw, leaf_ord, line_start, line_end, text_raw, text_norm,
-                        embed_text, content_hash, embedding_hash, profile_id, embedding,
-                        expires_at, forgotten_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)""",
-                    (
-                        chunk.chunk_id,
-                        chunk.path,
-                        chunk.source_kind,
-                        chunk.timeline_day,
-                        chunk.session_id,
-                        chunk.session_title,
-                        chunk.heading_raw,
-                        chunk.leaf_ord,
-                        chunk.line_start,
-                        chunk.line_end,
-                        chunk.text_raw,
-                        chunk.text_norm,
-                        chunk.embed_text,
-                        chunk.content_hash,
-                        chunk.embedding_hash,
-                        chunk.profile_id,
-                        chunk.expires_at,
-                        chunk.forgotten_at,
-                    ),
+            incoming = {chunk.chunk_id: chunk for chunk in chunks}
+            existing = {
+                row["chunk_id"]: row
+                for row in self._db.execute(
+                    "SELECT chunk_id, embedding_hash FROM chunks WHERE path = ?",
+                    (path,),
                 )
+            }
+            for chunk_id in existing.keys() - incoming.keys():
+                self._db.execute("DELETE FROM chunks WHERE chunk_id = ?", (chunk_id,))
+            for chunk in chunks:
+                old = existing.get(chunk.chunk_id)
+                if old is None:
+                    self._insert_chunk(chunk)
+                    continue
+                self._update_chunk(chunk, keep_embedding=old["embedding_hash"] == chunk.embedding_hash)
             self._db.commit()
         except Exception:
             self._db.rollback()
             raise
+
+    def update_embedding(
+        self, chunk_id: str, embedding: bytes, *, profile_id: str, embedding_hash: str
+    ) -> bool:
+        cur = self._db.execute(
+            """UPDATE chunks SET embedding = ?
+               WHERE chunk_id = ? AND profile_id = ? AND embedding_hash = ?""",
+            (embedding, chunk_id, profile_id, embedding_hash),
+        )
+        self._db.commit()
+        return cur.rowcount == 1
+
+    def _chunk_values(self, chunk: Chunk) -> tuple[object, ...]:
+        return (
+            chunk.path,
+            chunk.source_kind,
+            chunk.timeline_day,
+            chunk.session_id,
+            chunk.session_title,
+            chunk.heading_raw,
+            chunk.leaf_ord,
+            chunk.line_start,
+            chunk.line_end,
+            chunk.text_raw,
+            chunk.text_norm,
+            chunk.embed_text,
+            chunk.content_hash,
+            chunk.embedding_hash,
+            chunk.profile_id,
+            chunk.expires_at,
+            chunk.forgotten_at,
+            chunk.chunk_id,
+        )
+
+    def _insert_chunk(self, chunk: Chunk) -> None:
+        self._db.execute(
+            """INSERT INTO chunks(
+                path, source_kind, timeline_day, session_id, session_title,
+                heading_raw, leaf_ord, line_start, line_end, text_raw, text_norm,
+                embed_text, content_hash, embedding_hash, profile_id, embedding,
+                expires_at, forgotten_at, chunk_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)""",
+            self._chunk_values(chunk),
+        )
+
+    def _update_chunk(self, chunk: Chunk, *, keep_embedding: bool) -> None:
+        self._db.execute(
+            """UPDATE chunks SET
+                path=?, source_kind=?, timeline_day=?, session_id=?, session_title=?,
+                heading_raw=?, leaf_ord=?, line_start=?, line_end=?, text_raw=?, text_norm=?,
+                embed_text=?, content_hash=?, embedding_hash=?, profile_id=?,
+                expires_at=?, forgotten_at=?,
+                embedding=CASE WHEN ? THEN embedding ELSE NULL END
+               WHERE chunk_id = ?""",
+            (*self._chunk_values(chunk)[:-1], 1 if keep_embedding else 0, chunk.chunk_id),
+        )
 
     def drop_source(self, path: str) -> None:
         self._db.execute("DELETE FROM source_files WHERE path = ?", (path,))

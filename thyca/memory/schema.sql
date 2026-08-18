@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS chunks(
   content_hash   TEXT NOT NULL,
   embedding_hash TEXT NOT NULL,
   profile_id     TEXT NOT NULL,
-  embedding      BLOB,
+  embedding      BLOB,                          -- 640-d float32; NULL until GOAL-003
   expires_at     TEXT,
   forgotten_at   TEXT,
   UNIQUE(path, session_id, leaf_ord)
@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS chunks(
 
 CREATE INDEX IF NOT EXISTS chunks_day ON chunks(timeline_day, session_id, leaf_ord);
 CREATE INDEX IF NOT EXISTS chunks_path ON chunks(path);
+CREATE INDEX IF NOT EXISTS chunks_content_hash ON chunks(content_hash);
+CREATE INDEX IF NOT EXISTS chunks_profile ON chunks(profile_id, embedding_hash);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
   text_raw,

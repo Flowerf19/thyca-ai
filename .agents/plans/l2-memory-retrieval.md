@@ -1,7 +1,7 @@
 ---
 status: in-progress
 created: 2026-08-14
-last_updated: 2026-08-17
+last_updated: 2026-08-18
 ---
 
 # L2 Memory — Agentic Retrieval (Agent là controller)
@@ -530,7 +530,7 @@ Xong khi: schema smoke chạy trên SQLite thật; canonical search được; `c
 
 | ID | Task | Done | Date |
 |----|------|------|------|
-| TASK-108 | Embedding provider interface: local pinned Harrier q4 or OpenAI `/embeddings`; batch outside DB transaction; one failed chunk remains NULL. Compute immutable profile ID from provider/model/dimension/dtype/normalization/query prompt/input version | | |
+| TASK-108 | Embedding provider interface: local pinned Harrier q4 or OpenAI `/embeddings`; batch outside DB transaction; one failed chunk remains NULL. Compute immutable profile ID from provider/model/dimension/dtype/normalization/query prompt/input version | in-progress (local Harrier provider only; OpenAI remains out of slice) | 2026-08-18 |
 | TASK-109 | Exact cosine over current-profile rows only, validate finite/unit norm/dimension/BLOB length; sqlite-vec and NumPy paths share `micro_key`/tie-break and parity tests. No ANN | | |
 | TASK-110 | `semantic=true`: lexical and vector candidate branches, RRF k=60, deterministic tie-break, sibling dedup, SearchResult warnings/meta. Keep original bm25/vector score; no eager expansion | | |
 | TASK-111 | Missing/corrupt model, missing OpenAI key, empty semantic index or per-chunk failure → lexical fallback + explicit warning; never mix profiles or fabricate semantic scores | | |

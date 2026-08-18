@@ -17,7 +17,9 @@ from thyca.memory.archived import (
     dedup_siblings,
     fuse_hits,
 )
+from thyca.config import Config, default_config, load
 from thyca.memory.embed import Embedder
+from thyca.memory.embed_onnx import resolve_embedder
 from thyca.memory.heading import (
     DEFAULT_IMPORTANCE,
     HeadingMeta,
@@ -40,9 +42,15 @@ class MemoryFacade:
         archive: ArchivedMemory | None = None,
         writer: MemoryWriter | None = None,
         embedder: Embedder | None = None,
+        config: Config | None = None,
     ) -> None:
         self.thyca_dir = Path(thyca_dir or Path.home() / ".thyca")
         self.active = ActiveMemory(self.thyca_dir, timezone_name=timezone_name)
+        if archive is None and embedder is None:
+            if config is None:
+                cfg_path = self.thyca_dir / "config.json"
+                config = load(cfg_path) if cfg_path.is_file() else default_config()
+            embedder = resolve_embedder(config.embedding, thyca_dir=self.thyca_dir)
         self.archive = archive or ArchivedMemory(
             self.thyca_dir, timezone_name=timezone_name, embedder=embedder
         )

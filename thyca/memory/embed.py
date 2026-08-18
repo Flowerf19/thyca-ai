@@ -71,7 +71,7 @@ def fold_text(text: str) -> str:
 
 
 class FakeEmbedder:
-    """Deterministic stand-in so hybrid tests do not need Harrier."""
+    """Deterministic stand-in so hybrid tests do not need the local ONNX model."""
 
     dimension = 8
 

@@ -1,4 +1,4 @@
-"""Archived lexical memory: SQLite FTS + trigram. Vector is GOAL-003."""
+"""Archived lexical memory: SQLite FTS + trigram + optional exact cosine."""
 from __future__ import annotations
 
 import re
@@ -11,7 +11,16 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from rapidfuzz import fuzz
 
 from thyca.config import DEFAULT_TIMELINE_TIMEZONE
-from thyca.memory.chunk import Chunk, Chunker
+from thyca.memory.chunk import PROFILE_PENDING, Chunk, Chunker
+from thyca.memory.embed import (
+    COSINE_FLOOR_MICRO,
+    Embedder,
+    cosine,
+    embedding_hash,
+    pack_unit,
+    rrf_ranks,
+    unpack,
+)
 from thyca.memory.heading import format_ts
 
 SCHEMA_VERSION = "2"
@@ -301,6 +310,83 @@ class ArchiveStore:
         ).fetchone()
         return int(row["n"]) if row else 0
 
+    def pending_rows(self, profile_id: str) -> list[sqlite3.Row]:
+        return list(
+            self._db.execute(
+                """SELECT chunk_id, embed_text, embedding_hash FROM chunks
+                   WHERE embedding IS NULL AND profile_id = ?""",
+                (profile_id,),
+            )
+        )
+
+    def has_embeddings(self, profile_id: str) -> bool:
+        row = self._db.execute(
+            "SELECT 1 FROM chunks WHERE embedding IS NOT NULL AND profile_id = ? LIMIT 1",
+            (profile_id,),
+        ).fetchone()
+        return row is not None
+
+    def retarget_profile(self, path: str, profile_id: str) -> None:
+        rows = list(
+            self._db.execute(
+                "SELECT chunk_id, embed_text, profile_id, embedding_hash FROM chunks WHERE path = ?",
+                (path,),
+            )
+        )
+        for row in rows:
+            new_hash = embedding_hash(profile_id, row["embed_text"])
+            if row["profile_id"] == profile_id and row["embedding_hash"] == new_hash:
+                continue
+            self._db.execute(
+                """UPDATE chunks SET profile_id = ?, embedding_hash = ?, embedding = NULL
+                   WHERE chunk_id = ?""",
+                (profile_id, new_hash, row["chunk_id"]),
+            )
+        self._db.commit()
+
+    def vector_search(
+        self,
+        query: list[float],
+        *,
+        profile_id: str,
+        timeline_day: str | None,
+        limit: int,
+        now: str,
+    ) -> list[Hit]:
+        packed = pack_unit(query)
+        qvec = unpack(packed, len(query))
+        if qvec is None:
+            return []
+        sql = """SELECT * FROM chunks
+                  WHERE embedding IS NOT NULL AND profile_id = ?
+                    AND forgotten_at IS NULL
+                    AND (expires_at IS NULL OR expires_at > ?)"""
+        params: list[object] = [profile_id, now]
+        if timeline_day is not None:
+            sql += " AND timeline_day = ?"
+            params.append(timeline_day)
+        scored: list[tuple[int, str, float, sqlite3.Row]] = []
+        for row in self._db.execute(sql, params):
+            vec = unpack(row["embedding"], len(query))
+            if vec is None:
+                continue
+            score = cosine(qvec, vec)
+            micro = round(score * 1_000_000)
+            if micro < COSINE_FLOOR_MICRO:
+                continue
+            scored.append((micro, row["chunk_id"], score, row))
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        return [
+            _hit_from_row(
+                row,
+                "semantic",
+                score=score,
+                snippet=row["text_raw"][:250],
+                vector_score=score,
+            )
+            for _, _, score, row in scored[: min(limit, CANDIDATE_CAP)]
+        ]
+
 
 class ArchivedMemory:
     """Orchestrate chunking, reindex, and lexical search."""
@@ -311,12 +397,17 @@ class ArchivedMemory:
         timezone_name: str | None = None,
         store: ArchiveStore | None = None,
         chunker: Chunker | None = None,
+        embedder: Embedder | None = None,
     ) -> None:
         self.thyca_dir = Path(thyca_dir or Path.home() / ".thyca")
         self.timezone_name = timezone_name or DEFAULT_TIMELINE_TIMEZONE
         db_path = self.thyca_dir / "memory.sqlite"
         self.store = store or ArchiveStore(db_path)
-        self.chunker = chunker or Chunker()
+        self.embedder = embedder
+        if chunker is None:
+            profile = embedder.profile_id if embedder is not None else PROFILE_PENDING
+            chunker = Chunker(profile_id=profile)
+        self.chunker = chunker
 
     def zone(self) -> ZoneInfo:
         try:
@@ -361,6 +452,52 @@ class ArchivedMemory:
         self, query: str, timeline_day: str | None, now: datetime | None, limit: int
     ) -> list[Hit]:
         return self.store.fts_search(query, timeline_day, limit, format_ts(now))
+
+    def vector_hits(
+        self, query: str, timeline_day: str | None, now: datetime | None, limit: int
+    ) -> list[Hit]:
+        if self.embedder is None:
+            return []
+        try:
+            values = self.embedder.embed_query(query)
+        except Exception:
+            return []
+        return self.store.vector_search(
+            values,
+            profile_id=self.embedder.profile_id,
+            timeline_day=timeline_day,
+            limit=limit,
+            now=format_ts(now),
+        )
+
+    def embed_pending(self) -> int:
+        if self.embedder is None:
+            return 0
+        rows = self.store.pending_rows(self.embedder.profile_id)
+        if not rows:
+            return 0
+        try:
+            vectors = self.embedder.embed_docs([row["embed_text"] for row in rows])
+        except Exception:
+            return 0
+        if len(vectors) != len(rows):
+            return 0
+        written = 0
+        for row, vector in zip(rows, vectors, strict=True):
+            if vector is None:
+                continue
+            try:
+                blob = pack_unit(vector)
+            except ValueError:
+                continue
+            if self.store.update_embedding(
+                row["chunk_id"],
+                blob,
+                profile_id=self.embedder.profile_id,
+                embedding_hash=row["embedding_hash"],
+            ):
+                written += 1
+        return written
 
     def trigram_hits(
         self, query: str, timeline_day: str | None, now: datetime | None, limit: int
@@ -441,6 +578,7 @@ class ArchivedMemory:
         stat = path.stat()
         prev = self.store.source_stat(str(path))
         if prev == (stat.st_mtime_ns, stat.st_size):
+            self.store.retarget_profile(str(path), self.chunker.profile_id)
             return
         text = path.read_text(encoding="utf-8")
         chunks = self.chunker.chunk_markdown(path, text, source_kind=kind, timeline_day=day)
@@ -484,6 +622,7 @@ def _hit_from_row(
     score: float | None = None,
     bm25: float | None = None,
     snippet: str | None = None,
+    vector_score: float | None = None,
 ) -> Hit:
     return Hit(
         path=row["path"],
@@ -496,11 +635,54 @@ def _hit_from_row(
         score=float(score if score is not None else (-bm25 if bm25 is not None else 0.0)),
         match_type=match_type,
         bm25=None if bm25 is None else float(bm25),
+        vector_score=vector_score,
         profile_id=row["profile_id"],
         leaf_ord=int(row["leaf_ord"]),
         line_start=int(row["line_start"]),
         line_end=int(row["line_end"]),
     )
+
+
+def fuse_hits(lexical: list[Hit], vector: list[Hit]) -> list[Hit]:
+    ranked = rrf_ranks(
+        [[hit.chunk_id for hit in lexical], [hit.chunk_id for hit in vector]]
+    )
+    lex = {hit.chunk_id: hit for hit in lexical}
+    vec = {hit.chunk_id: hit for hit in vector}
+    fused: list[Hit] = []
+    for chunk_id, score, _branches, _min_rank in ranked:
+        left, right = lex.get(chunk_id), vec.get(chunk_id)
+        base = left or right
+        if base is None:
+            continue
+        if left is not None and right is not None:
+            match_type = "hybrid"
+        elif right is not None:
+            match_type = "semantic"
+        else:
+            match_type = left.match_type
+        fused.append(
+            Hit(
+                path=base.path,
+                source_kind=base.source_kind,
+                chunk_id=base.chunk_id,
+                timeline_day=base.timeline_day,
+                session_id=base.session_id,
+                heading=base.heading,
+                snippet=left.snippet if left is not None else base.snippet,
+                score=score,
+                match_type=match_type,
+                bm25=left.bm25 if left is not None else None,
+                vector_score=right.vector_score if right is not None else None,
+                profile_id=right.profile_id if right is not None else base.profile_id,
+                leaf_ord=base.leaf_ord,
+                session_leaf_count=base.session_leaf_count,
+                has_more=base.has_more,
+                line_start=base.line_start,
+                line_end=base.line_end,
+            )
+        )
+    return fused
 
 
 def dedup_siblings(hits: list[Hit]) -> list[Hit]:

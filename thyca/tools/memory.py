@@ -15,7 +15,9 @@ from thyca.memory.archived import (
     SearchResult,
     DATE_RE,
     dedup_siblings,
+    fuse_hits,
 )
+from thyca.memory.embed import Embedder
 from thyca.memory.heading import (
     DEFAULT_IMPORTANCE,
     HeadingMeta,
@@ -37,10 +39,13 @@ class MemoryFacade:
         timezone_name: str | None = None,
         archive: ArchivedMemory | None = None,
         writer: MemoryWriter | None = None,
+        embedder: Embedder | None = None,
     ) -> None:
         self.thyca_dir = Path(thyca_dir or Path.home() / ".thyca")
         self.active = ActiveMemory(self.thyca_dir, timezone_name=timezone_name)
-        self.archive = archive or ArchivedMemory(self.thyca_dir, timezone_name=timezone_name)
+        self.archive = archive or ArchivedMemory(
+            self.thyca_dir, timezone_name=timezone_name, embedder=embedder
+        )
         self.writer = writer or MemoryWriter(self.thyca_dir)
 
     def remember(
@@ -137,13 +142,14 @@ class MemoryFacade:
         now: datetime | None = None,
     ) -> SearchResult:
         warnings: list[str] = []
-        if semantic:
-            warnings.append("semantic unavailable")
         if timeline_day is not None and not DATE_RE.fullmatch(timeline_day):
-            return SearchResult(warnings=["invalid timeline_day"] + warnings, semantic_requested=semantic)
+            return SearchResult(warnings=["invalid timeline_day"], semantic_requested=semantic)
         limit = max(1, min(limit, 10))
         if not query.strip():
-            return SearchResult(warnings=["empty query"] + warnings, semantic_requested=semantic)
+            warnings = ["empty query"]
+            if semantic and self.archive.embedder is None:
+                warnings.append("semantic unavailable")
+            return SearchResult(warnings=warnings, semantic_requested=semantic)
         fts = self.archive.fts_hits(query, timeline_day, now, CANDIDATE_CAP)
         hits: list[Hit] = list(fts)
         if len(fts) < TRIGRAM_MIN_FTS:
@@ -152,12 +158,23 @@ class MemoryFacade:
                 if hit.chunk_id not in seen:
                     hits.append(hit)
                     seen.add(hit.chunk_id)
+        semantic_used = False
+        if semantic:
+            embedder = self.archive.embedder
+            if embedder is None:
+                warnings.append("semantic unavailable")
+            elif not self.archive.store.has_embeddings(embedder.profile_id):
+                warnings.append("empty semantic index")
+            else:
+                vector = self.archive.vector_hits(query, timeline_day, now, CANDIDATE_CAP)
+                hits = fuse_hits(hits, vector)
+                semantic_used = True
         hits = self.archive.with_counts(dedup_siblings(hits)[:limit])
         return SearchResult(
             hits=hits,
             warnings=warnings,
             semantic_requested=semantic,
-            semantic_used=False,
+            semantic_used=semantic_used,
         )
 
     def recent(self, limit: int = 5, now: datetime | None = None) -> list[Hit]:
@@ -167,3 +184,4 @@ class MemoryFacade:
     def _refresh_index(self, now: datetime | None = None) -> None:
         self.writer.purge_expired(utc_now(now))
         self.archive.reindex(now)
+        self.archive.embed_pending()

@@ -7,6 +7,7 @@ import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
+from thyca.memory.embed import embedding_hash
 from thyca.memory.heading import HeadingMeta, parse_heading, resolve_entry_id, session_id, strip_comment
 
 _BULLET_RE = re.compile(r"^(\s*)([-*]|\d+\.)\s+")
@@ -41,6 +42,9 @@ class Chunk:
 
 class Chunker:
     """Split daily ``## HH:mm`` sessions and canonical files into leafs."""
+
+    def __init__(self, profile_id: str = PROFILE_PENDING) -> None:
+        self.profile_id = profile_id
 
     def chunk_markdown(
         self,
@@ -80,9 +84,8 @@ class Chunker:
                         text_norm=norm,
                         embed_text=embed,
                         content_hash=hashlib.sha256(payload).hexdigest(),
-                        embedding_hash=hashlib.sha256(
-                            PROFILE_PENDING.encode("utf-8") + b"\0" + embed.encode("utf-8")
-                        ).hexdigest(),
+                        embedding_hash=embedding_hash(self.profile_id, embed),
+                        profile_id=self.profile_id,
                         expires_at=session.get("expires_at"),
                         forgotten_at=session.get("forgotten_at"),
                     )

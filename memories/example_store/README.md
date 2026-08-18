@@ -11,7 +11,7 @@ example_store/
     2026-08-13.md         # đã đóng → có trong memory.sqlite
     2026-08-16.md         # hôm qua → Active tail + đã index
     2026-08-17.md         # hôm nay → chỉ Active, KHÔNG có trong sqlite
-  memory.sqlite           # mục lục: source_files + chunks + chunks_fts + chunks_vec
+  memory.sqlite           # mục lục: source_files + chunks + chunks_fts
 ```
 
 ## Chữ vs index vs vector
@@ -22,7 +22,7 @@ example_store/
 | Mục lục file | `source_files` | 5 hàng (không gồm 2026-08-17) |
 | Từng leaf | `chunks` (`text_raw` / `text_norm` / `embed_text`) | 11 hàng |
 | FTS | `chunks_fts` | đồng bộ từ `text_raw` |
-| Vector 640-d | `chunks_vec` (`float[640]`, cosine) | **bảng có, 0 hàng** — GOAL-003 mới insert |
+| Vector 640-d | chưa | `schema.sql` chưa tạo `chunks_vec`; `embedding` NULL |
 | Hội thoại | `sessions/*.jsonl` | không thuộc store này |
 
 `get` chỉ trả chữ. Vector không bao giờ vào `.md` hay tool result.
@@ -42,4 +42,4 @@ m.reindex(datetime(2026, 8, 17, 10, tzinfo=ZoneInfo('Asia/Ho_Chi_Minh')))
 "
 ```
 
-`chunks_vec` tạo tay bằng sqlite-vec; code production chưa tạo bảng này.
+Id/TTL trên `chunks` lấy từ comment JSON trên heading (`a1b2c3d4`, `exp`). Daily 2026-08-17 không có hàng.

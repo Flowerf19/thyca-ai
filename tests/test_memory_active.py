@@ -102,6 +102,18 @@ def test_tail_does_not_split_utf8() -> None:
     assert not out.startswith("\ufffd")
 
 
+def test_refresh_strips_heading_comment(tmp_path: Path) -> None:
+    memory = ActiveMemory(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    memory.ensure_files(at("2026-08-17"))
+    (tmp_path / "MEMORY.md").write_text(
+        '## 10:00 — cafe <!-- thyca {"id":"aaaaaaaa","imp":3,"exp":"2026-09-01T00:00:00Z"} -->\n- den\n',
+        encoding="utf-8",
+    )
+    snap = memory.refresh(memory.open_session(at("2026-08-17")), at("2026-08-17"))
+    assert "thyca" not in snap.memory
+    assert snap.memory.startswith("## 10:00 — cafe")
+
+
 def test_missing_yesterday_is_empty(tmp_path: Path) -> None:
     memory = ActiveMemory(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     snap: ActiveSnapshot = memory.refresh(memory.open_session(at("2026-08-17")), at("2026-08-17"))

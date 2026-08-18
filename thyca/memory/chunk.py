@@ -7,11 +7,8 @@ import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
-_HEADING_RE = re.compile(
-    r"^##\s+(\d{2}:\d{2})\s*[—\-]\s*(.+?)(?:\s*<!--\s*(.*?)\s*-->)?\s*$"
-)
-_THYCA_ID = re.compile(r"(?:^|\s)thyca:([0-9a-f]{8})(?:\s|$)")
-_ATTR = re.compile(r"\b(imp|exp|forgotten)=(\S+)")
+from thyca.memory.heading import HeadingMeta, parse_heading, resolve_entry_id, session_id, strip_comment
+
 _BULLET_RE = re.compile(r"^(\s*)([-*]|\d+\.)\s+")
 _SENTENCE_RE = re.compile(r"(?<=[.!?。])\s+")
 
@@ -103,53 +100,43 @@ def _sessions(
     text: str, source_kind: str, timeline_day: str | None, path: str
 ) -> list[dict]:
     lines = text.splitlines()
-    found: list[tuple[int, re.Match[str]]] = []
+    found: list[tuple[int, HeadingMeta]] = []
     for index, line in enumerate(lines):
-        match = _HEADING_RE.match(line)
-        if match:
-            found.append((index, match))
+        meta = parse_heading(line)
+        if meta is not None:
+            found.append((index, meta))
     if not found:
         name = Path(path).stem.lower()
-        session_id = f"canonical#{name}" if source_kind == "canonical" else f"{timeline_day}#legacy"
+        sid = f"canonical#{name}" if source_kind == "canonical" else f"{timeline_day}#legacy"
         return [
             {
                 "heading": "",
                 "title": "",
-                "session_id": session_id,
+                "session_id": sid,
                 "body": text,
                 "body_start": 1,
             }
         ]
     sessions: list[dict] = []
     title_seen: dict[str, int] = {}
-    for pos, (line_no, match) in enumerate(found):
-        title = match.group(2).strip()
-        title_seen[title] = title_seen.get(title, 0) + 1
-        comment = match.group(3) or ""
-        id_match = _THYCA_ID.search(comment)
-        attrs = dict(_ATTR.findall(comment))
-        entry = id_match.group(1) if id_match else _legacy_entry(path, title, title_seen[title])
+    for pos, (line_no, meta) in enumerate(found):
+        title_seen[meta.title] = title_seen.get(meta.title, 0) + 1
+        entry = resolve_entry_id(meta, path, title_seen[meta.title])
         prefix = timeline_day if source_kind == "daily" else Path(path).stem.lower()
-        session_id = f"{prefix}#{entry}"
         end = found[pos + 1][0] if pos + 1 < len(found) else len(lines)
         body = "\n".join(lines[line_no + 1 : end])
         sessions.append(
             {
-                "heading": lines[line_no],
-                "title": title,
-                "session_id": session_id,
+                "heading": strip_comment(lines[line_no]),
+                "title": meta.title,
+                "session_id": session_id(prefix, entry),
                 "body": body,
                 "body_start": line_no + 2,
-                "expires_at": attrs.get("exp"),
-                "forgotten_at": attrs.get("forgotten"),
+                "expires_at": meta.expires_at,
+                "forgotten_at": None,
             }
         )
     return sessions
-
-
-def _legacy_entry(path: str, title: str, occurrence: int) -> str:
-    payload = f"{path}\0{title}\0{occurrence}".encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()[:8]
 
 
 def _leaves(body: str, body_start: int) -> list[dict]:
@@ -198,7 +185,7 @@ def _leaves(body: str, body_start: int) -> list[dict]:
             and lines[index].strip()
             and not lines[index].startswith("```")
             and not _BULLET_RE.match(lines[index])
-            and not _HEADING_RE.match(lines[index])
+            and parse_heading(lines[index]) is None
         ):
             index += 1
         block = lines[start:index]

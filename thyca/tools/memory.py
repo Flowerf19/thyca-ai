@@ -22,6 +22,7 @@ from thyca.memory.heading import (
     expiry_ts,
     new_entry_id,
     render_heading,
+    session_id,
     utc_now,
 )
 from thyca.memory.writer import MemoryWriter
@@ -64,15 +65,16 @@ class MemoryFacade:
         if target == "daily":
             day = self.archive.day(now)
             path = self.thyca_dir / "memory" / f"{day}.md"
-            session_id = f"{day}#{entry}"
+            sid = session_id(day, entry)
         elif target == "memory":
             path = self.thyca_dir / "MEMORY.md"
-            session_id = f"memory#{entry}"
+            sid = session_id("memory", entry)
         else:
             raise ArchiveError(f"invalid target {target!r}")
         hour = moment.astimezone(self.archive.zone()).strftime("%H:%M")
         meta = HeadingMeta(
-            title_line=f"## {hour} — {topic}",
+            time=hour,
+            title=topic,
             entry_id=entry,
             importance=importance,
             expires_at=expiry_ts(importance, moment),
@@ -84,7 +86,7 @@ class MemoryFacade:
                 path.write_text(f"# {path.stem}\n", encoding="utf-8")
             self.writer.append(path, render_heading(meta) + leaf + "\n")
         self._refresh_index(now)
-        return session_id
+        return sid
 
     def forget(self, session_id: str, now: datetime | None = None) -> None:
         self.writer.forget(session_id, now)

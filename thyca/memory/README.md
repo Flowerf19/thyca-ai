@@ -1,87 +1,103 @@
-# Memory storage
+# L2 — markdown, SQLite, sqlite-vec
 
-Markdown dưới `~/.thyca` là nguồn sự thật. SQLite chỉ là mục lục. Vector không bao giờ ghi vào `.md`.
+Một nguồn chữ, một file mục lục, hai lối tìm. Vector không bao giờ ghi vào `.md`.
 
-Mẫu đủ chữ + sqlite + chỗ vector: [`memories/example_store/`](../../memories/example_store/).
+Mẫu: [`memories/example_store/`](../../memories/example_store/).
 
 ```text
-~/.thyca/
-  SOUL.md              # hồ sơ agent — Active full, index ngay, không TTL
-  USER.md              # hồ sơ user — như SOUL
-  MEMORY.md            # nhớ bền — Active tail 4KB, index ngay, có TTL
-  memory/
-    YYYY-MM-DD.md      # nhật ký ngày
-  memory.sqlite        # index derived (FTS + sau này vec)
-  sessions/*.jsonl     # hội thoại — không phải memory file
+~/.thyca/memory/YYYY-MM-DD.md   # sự thật — 1 file = 1 ngày
+~/.thyca/memory.sqlite          # mục lục derived — FTS + (sau này) vec
 ```
+
+`memory.sqlite` không commit. Xóa `.md` → xóa hàng của file đó. Xóa sqlite → rebuild từ `.md`.
+
+## Ai ghi, ai đọc
+
+```text
+remember / forget / reinforce  ──ghi──►  .md only
+reindex                        ──đọc .md, ghi──►  memory.sqlite
+search / get(id)               ──đọc──►  memory.sqlite only
+get(path)                      ──đọc──►  .md thô
+```
+
+L2 không đọc `.md` khi search. LLM không SQL. Số (vector) không vào tool result.
+
+Daily **hôm nay** chưa vào sqlite — prompt Active đã có chữ. Qua `00:00` file đóng ngày → `reindex` mới cắt leaf.
+
+## Các bước — từ `.md` đến hit
+
+`source_files` không nằm trên đường này. Nó là sổ phụ ở bước 5 (1 hàng/file: path, mtime, cascade khi xóa `.md`).
 
 ```mermaid
-flowchart LR
-  subgraph files["~/.thyca markdown"]
-    SU["SOUL.md / USER.md"]
-    MEM["MEMORY.md"]
-    DAY["memory/YYYY-MM-DD.md"]
-  end
-  subgraph sqlite["memory.sqlite"]
-    SRC["source_files"]
-    CHK["chunks"]
-    FTS["chunks_fts"]
-    VEC["chunks_vec — chưa ghi"]
-  end
-  SU --> SRC
-  MEM --> SRC
-  DAY -->|"hết ngày"| SRC
-  SRC --> CHK
-  CHK --> FTS
-  CHK -.-> VEC
+flowchart TD
+  S1["1. remember ghi .md"] --> S2["2. đợi qua 00:00 — file đóng ngày"]
+  S2 --> S3["3. reindex đọc .md đã đóng"]
+  S3 --> S4["4. Chunker: ## session → từng leaf"]
+  S4 --> S5["5. INSERT chunks
+text_raw / text_norm / embed_text"]
+  S5 --> S6["6. trigger đổ chunks_fts từ text_raw"]
+  S5 -.-> S7["7. GOAL-003: xay embed_text → 640 số
+INSERT chunks_vec"]
+  S6 --> S8["8. search chữ: MATCH chunks_fts"]
+  S7 -.-> S9["9. search nghĩa: cosine chunks_vec"]
+  S8 --> S10["10. trả Hit.snippet = text_raw"]
+  S9 -.-> S10
 ```
 
-## File markdown
+Triển khai theo số: 1–6 + 8 + 10 đã có. 7 + 9 chưa — chỗ để số chưa khóa (`chunks.embedding` BLOB vs bảng `chunks_vec`).
 
-| File | Active (prompt) | Archived (index) | TTL / forget |
-|------|-----------------|------------------|--------------|
-| `SOUL.md` | cả file | ngay | không |
-| `USER.md` | cả file | ngay | không |
-| `MEMORY.md` | tail 4KB | ngay | có — hết hạn hoặc `forget` xóa khối `##` |
-| `memory/hôm nay.md` | tail 4KB | **chưa** | ghi được; search L2 chưa thấy |
-| `memory/ngày đã đóng.md` | hôm qua: tail lúc mở session | chunk + FTS | như MEMORY |
+Hai lối tìm cùng trỏ một `chunk_id`. Khác câu hỏi, không khác kho.
 
-Một entry daily/MEMORY:
+| Hỏi | Đi đâu | Cần số? |
+|-----|--------|---------|
+| Có chữ `cà phê` / `ca phe`? | `chunks_fts` | không |
+| Gõ sai `thit quya`? | `chunks.text_norm` (Python, chưa có bảng) | không |
+| Ý `món nướng hôm nọ` ≈ `thịt quay`? | `chunks_vec` | có — chưa gắn |
+
+## Một leaf xuyên ba lớp
 
 ```md
+# 2026-08-13
 ## 08:00 — ăn sáng bún bò <!-- thyca {"id":"a1b2c3d4","imp":3,"exp":"2026-09-12T01:00:00Z"} -->
-- Ăn bún bò Huế ở quán X
+- Ăn bún bò Huế ở quán X, 45k, khá ngon
+- Nói chuyện với Luna về đồ án
 ```
 
-Hiện code vẫn ghi `thyca:id imp= exp=` (cùng nghĩa). Chốt format: JSON trong comment; strip comment lúc inject.
+Hai bullet → hai hàng `chunks`. Heading là session; comment JSON là tem máy (`id`/`imp`/`exp`). Parser chung: `thyca/memory/heading.py`. Sqlite **copy** id/exp ra cột; `heading_raw` / prompt đã strip comment.
 
-`imp`: 1=3 ngày, 2=1 tuần, 3=1 tháng (default), 4=3 tháng, 5=6 tháng.
+```text
+.md  ──Chunker──►  Chunk
+                     ├─ text_raw      FTS + get + snippet
+                     ├─ text_norm     typo
+                     └─ embed_text    chỉ để xay 640 số (title + leaf)
+                          │
+                          ▼
+                   INSERT chunks
+                          ├─ trigger → chunks_fts(text_raw)
+                          └─ sau này  → embed(embed_text) → chunks_vec
+```
 
-## `memory.sqlite`
+`embed_text` không phải thứ agent đọc.
 
-Không commit. Xóa `.md` → cascade hết hàng của file đó.
-
-| Chỗ | Lưu gì | LLM thấy? |
-|-----|--------|-----------|
-| `meta` | `schema_version` | không |
-| `source_files` | path, daily/canonical, ngày, mtime/size | không |
-| `chunks` | một leaf: chữ, hash, `expires_at` | không — `get` lấy `text_raw` |
-| `chunks_fts` | FTS5 trên `text_raw` (bỏ dấu lúc match) | không — snippet chữ có dấu |
-| `chunks.embedding` / `chunks_vec` | vector 640-d — **chưa ghi** (GOAL-003) | không |
-
-Ba cột chữ trên `chunks`:
+## `chunks` giữ gì
 
 | Cột | Việc |
 |-----|------|
-| `text_raw` | FTS + `get` + snippet (`cà phê`) |
-| `text_norm` | trigram typo (`ca phe`) |
-| `embed_text` | payload embed sau này (`title` + leaf) |
+| `chunk_id` / `session_id` | `ngày#entry#leaf` / `ngày#entry` |
+| `text_raw` | chữ có dấu — FTS + snippet |
+| `text_norm` | bỏ dấu, thường — typo |
+| `embed_text` | nguyên liệu vector |
+| `expires_at` | copy từ comment heading |
+| `embedding` | BLOB dự phòng — hiện `NULL` |
 
-## Không lưu ở đâu
+`chunks_fts` khớp không dấu (`unicode61`), trả snippet **có dấu**.
+
+`schema.sql` chưa tạo `chunks_vec`; `chunks.embedding` NULL. Chỗ để số chưa khóa.
+
+## Không nằm ở đây
 
 | Thứ | Không nằm ở |
 |-----|-------------|
-| Vector | `.md`, tool result, session JSONL |
-| Session hội thoại | `memory/*.md` — nằm `sessions/*.jsonl` |
-| Daily hôm nay | `chunks` / FTS |
-| API key / embedding raw | log, JSONL meta |
+| Vector | `.md`, snippet, session JSONL |
+| Hội thoại | `memory/*.md` — nằm `sessions/*.jsonl` |
+| Daily hôm nay | `chunks` / FTS / vec |

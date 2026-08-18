@@ -15,6 +15,7 @@ from thyca.memory.heading import (
     is_visible,
     parse_heading,
     render_heading,
+    resolve_entry_id,
 )
 
 
@@ -53,13 +54,23 @@ class MemoryWriter:
         lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
         found: HeadingMeta | None = None
         out: list[str] = []
+        seen: dict[str, int] = {}
         for line in lines:
             meta = parse_heading(line)
-            if meta is not None and meta.entry_id == entry_id:
-                found = mutate(meta)
-                out.append(render_heading(found))
-            else:
+            if meta is None:
                 out.append(line)
+                continue
+            seen[meta.title] = seen.get(meta.title, 0) + 1
+            resolved = resolve_entry_id(meta, str(path), seen[meta.title])
+            if resolved != entry_id:
+                out.append(line)
+                continue
+            if meta.entry_id is None:
+                meta = HeadingMeta(meta.time, meta.title, resolved, meta.importance, meta.expires_at)
+            found = mutate(meta)
+            if found.entry_id is None:
+                found = HeadingMeta(found.time, found.title, resolved, found.importance, found.expires_at)
+            out.append(render_heading(found))
         if found is None:
             raise ArchiveError(f"session not found: {entry_id}")
         _atomic_write(path, "".join(out))
@@ -80,7 +91,7 @@ class MemoryWriter:
 
         def touch(meta: HeadingMeta) -> HeadingMeta:
             imp = importance if importance is not None else meta.importance
-            return HeadingMeta(meta.title_line, meta.entry_id, imp, expiry_ts(imp, now))
+            return HeadingMeta(meta.time, meta.title, meta.entry_id, imp, expiry_ts(imp, now))
 
         with self.lock_for(path):
             return self.map_heading(path, entry, touch).expires_at or ""
@@ -92,12 +103,14 @@ class MemoryWriter:
         lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
         captured: list[str] = []
         taking = False
+        seen: dict[str, int] = {}
         for line in lines:
             meta = parse_heading(line)
             if meta is not None:
                 if taking:
                     break
-                if meta.entry_id == entry:
+                seen[meta.title] = seen.get(meta.title, 0) + 1
+                if resolve_entry_id(meta, str(path), seen[meta.title]) == entry:
                     if not is_visible(meta.expires_at):
                         raise ArchiveError(f"session not found: {session_id}")
                     taking = True
@@ -125,16 +138,18 @@ class MemoryWriter:
         out: list[str] = []
         index = 0
         found = False
+        seen: dict[str, int] = {}
         while index < len(lines):
             meta = parse_heading(lines[index])
             if meta is None:
                 out.append(lines[index])
                 index += 1
                 continue
+            seen[meta.title] = seen.get(meta.title, 0) + 1
             end = index + 1
             while end < len(lines) and parse_heading(lines[end]) is None:
                 end += 1
-            if meta.entry_id == entry_id:
+            if resolve_entry_id(meta, str(path), seen[meta.title]) == entry_id:
                 found = True
                 index = end
                 continue

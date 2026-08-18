@@ -10,8 +10,8 @@ from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from thyca.config import DEFAULT_LIMITS_HOT_TAIL_KB, DEFAULT_TIMELINE_TIMEZONE
+from thyca.memory.heading import is_session_heading, strip_heading_comments
 
-_HEADING_RE = re.compile(r"^## \d{2}:\d{2}\b", re.MULTILINE)
 _FENCE_RE = re.compile(r"^```", re.MULTILINE)
 
 _TEMPLATES = {
@@ -163,7 +163,7 @@ class ActiveMemory:
         if not path.is_file() or path.is_symlink():
             return ""
         try:
-            return path.read_text(encoding="utf-8")
+            return strip_heading_comments(path.read_text(encoding="utf-8"))
         except OSError as exc:
             raise ActiveMemoryError(f"cannot read {path}: {exc}") from exc
 
@@ -200,9 +200,11 @@ def _fence_start(text: str, index: int) -> int | None:
 
 def _last_heading_at_or_before(text: str, index: int) -> int | None:
     found: int | None = None
-    for match in _HEADING_RE.finditer(text):
-        if match.start() <= index:
-            found = match.start()
-        else:
+    pos = 0
+    for line in text.splitlines(keepends=True):
+        if pos <= index and is_session_heading(line):
+            found = pos
+        pos += len(line)
+        if pos > index:
             break
     return found

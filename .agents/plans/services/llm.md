@@ -1,16 +1,16 @@
 ---
-status: draft
+status: in-progress
 created: 2026-08-14
-last_updated: 2026-08-15
+last_updated: 2026-08-19
 ---
 
-# Service — LLM (`thyca/llm/client.py` + `thyca/llm/prompt.py`)
+# Service — LLM (`thyca/llm/` + `prompt.py`)
 
 > 4/7. Thuộc `thyca-agent-architecture.md`. Chỉ code khi bạn duyệt `status: in-progress`.
 
 ## Summary
 
-Một async `httpx` OpenAI-compatible client (`/chat/completions` + tool calls) và `PromptBuilder` nhét refreshed hot snapshot vào system prompt. Wire types dùng duy nhất từ `thyca/protocol.py`.
+Factory `ConnectFactory.create(kind)` → `Connect`. `OpenAIChat` (`/chat/completions`) đã có. `OpenAIResponses` (`/responses`) + `Google` / `Anthropic` stub. `PromptBuilder` chưa.
 
 ## Class trong module
 
@@ -66,7 +66,7 @@ classDiagram
 | ID | Task | Done | Date |
 |----|------|------|------|
 | TASK-307 | `thyca/llm/prompt.py`: build refreshed hot snapshot → deterministic system prompt | | |
-| TASK-308 | `thyca/llm/client.py`: owned async client, auth, typed parsing/error, bounded retry/close | | |
+| TASK-308 | `Connect` + Factory + `OpenAICompat` (auth, parse, retry, redact). Google/Anthropic stub | x | 2026-08-19 |
 
 Xong khi: mocked content/tool-call/null-content/error responses parse đúng; malformed arguments trở thành tool error cùng call ID; retry chỉ đúng status; live `thyca -p "ping"` trả text và prompt chứa refreshed SOUL/USER/MEMORY/today.
 

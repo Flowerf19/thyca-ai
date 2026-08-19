@@ -72,7 +72,7 @@ classDiagram
   "limits": { "loopMax": 10, "hotTailKB": 4, "contextTokens": 32000 }
 }
 ```
-- Không lưu `apiKey` raw — chỉ `apiKeyEnv`. `ProviderCfg.api_key()` và `EmbeddingCfg.api_key()` đọc `os.environ` tại call time; missing → lỗi rõ.
+- `ProviderCfg.api_key()` lấy `provider.apiKey` trong JSON trước; trống thì đọc `os.environ[apiKeyEnv]`. `apiKey` không hiện trong `repr`.
 - `embedding.provider="openai"` yêu cầu `baseUrl` và `apiKeyEnv` không rỗng. `provider="local"` không yêu cầu API key; model files được quản bởi L2 model contract.
 - Thiếu file → `ensure_default()` tạo `~/.thyca/config.json` default, không giả vờ đã có lệnh `thyca init`.
 - `pyproject.toml` flat `packages = ["thyca"]` như `another-brain` (không `src/`).

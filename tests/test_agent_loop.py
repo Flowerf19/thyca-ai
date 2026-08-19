@@ -1,0 +1,185 @@
+"""AgentLoop tests — TASK-321 verification."""
+from __future__ import annotations
+
+import asyncio
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from thyca.agent.act import Act
+from thyca.agent.assemble import Assemble
+from thyca.agent.loop import AgentLoop
+from thyca.agent.observe import Observe
+from thyca.agent.think import ChatReply, Think
+from thyca.protocol import Message, ToolCall, ToolResult
+from thyca.sessions import SessionManager
+
+
+@dataclass
+class FakeLLM:
+    replies: list[ChatReply]
+    events: list[str] = field(default_factory=list)
+    requests: list[list[Message]] = field(default_factory=list)
+
+    async def chat(self, messages: list[Message], tools: list | None = None) -> ChatReply:
+        self.events.append("chat")
+        self.requests.append(list(messages))
+        if not self.replies:
+            raise AssertionError("FakeLLM queue is empty")
+        return self.replies.pop(0)
+
+
+@dataclass
+class FakeDispatcher:
+    results: dict[str, ToolResult]
+    delays: dict[str, float] = field(default_factory=dict)
+    calls: list[ToolCall] = field(default_factory=list)
+    completed: list[str] = field(default_factory=list)
+
+    async def dispatch(self, call: ToolCall) -> ToolResult:
+        self.calls.append(call)
+        await asyncio.sleep(self.delays.get(call.id, 0))
+        self.completed.append(call.id)
+        return self.results[call.id]
+
+
+def _wrap_compaction(manager: SessionManager, events: list[str]) -> None:
+    original = manager.compact_if_needed
+
+    def compact() -> bool:
+        events.append("compact")
+        return original()
+
+    manager.compact_if_needed = compact  # type: ignore[method-assign]
+
+
+def _load_messages(tmp_path: Path, session_id: str) -> list[Message]:
+    return SessionManager(tmp_path).load(session_id).messages
+
+
+def _loop(
+    manager: SessionManager,
+    llm: FakeLLM,
+    dispatcher: FakeDispatcher,
+    *,
+    loop_max: int = 3,
+) -> AgentLoop:
+    return AgentLoop(
+        sessions=manager,
+        assemble=Assemble(),
+        think=Think(llm),
+        act=Act(dispatcher),
+        observe=Observe(manager),
+        loop_max=loop_max,
+    )
+
+
+def test_text_only_compacts_before_chat_and_persists_user_and_assistant(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path)
+    session = manager.create()
+    events: list[str] = []
+    _wrap_compaction(manager, events)
+    llm = FakeLLM([ChatReply(content="hello back")], events=events)
+    dispatcher = FakeDispatcher({})
+
+    assert asyncio.run(_loop(manager, llm, dispatcher).run("hello")) == "hello back"
+    assert events == ["compact", "chat"]
+    messages = _load_messages(tmp_path, session.id)
+    assert [(message.role, message.content) for message in messages] == [
+        ("user", "hello"),
+        ("assistant", "hello back"),
+    ]
+
+
+def test_one_tool_round_then_text_persists_complete_round(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path)
+    session = manager.create()
+    call = ToolCall(id="call-1", name="echo", arguments={"value": "x"})
+    llm = FakeLLM(
+        [
+            ChatReply(content=None, tool_calls=[call]),
+            ChatReply(content="finished"),
+        ]
+    )
+    dispatcher = FakeDispatcher(
+        {"call-1": ToolResult(tool_call_id="call-1", name="echo", content="x")}
+    )
+
+    assert asyncio.run(_loop(manager, llm, dispatcher).run("use echo")) == "finished"
+
+    messages = _load_messages(tmp_path, session.id)
+    assert [message.role for message in messages] == ["user", "assistant", "tool", "assistant"]
+    assert messages[1].content is None
+    assert messages[1].tool_calls == [call]
+    assert messages[2].tool_call_id == "call-1"
+    assert messages[2].content == "x"
+    assert messages[3].content == "finished"
+    assert llm.requests[1] == messages[:3]
+
+
+def test_two_tool_calls_persist_results_in_declaration_order(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path)
+    session = manager.create()
+    first = ToolCall(id="first", name="slow")
+    second = ToolCall(id="second", name="fast")
+    llm = FakeLLM(
+        [
+            ChatReply(content="working", tool_calls=[first, second]),
+            ChatReply(content="done"),
+        ]
+    )
+    dispatcher = FakeDispatcher(
+        {
+            "first": ToolResult(tool_call_id="first", name="slow", content="one"),
+            "second": ToolResult(tool_call_id="second", name="fast", content="two"),
+        },
+        delays={"first": 0.02, "second": 0},
+    )
+
+    assert asyncio.run(_loop(manager, llm, dispatcher).run("run both")) == "done"
+
+    messages = _load_messages(tmp_path, session.id)
+    assert [message.tool_call_id for message in messages if message.role == "tool"] == [
+        "first",
+        "second",
+    ]
+    assert dispatcher.completed == ["second", "first"]
+
+
+def test_loop_max_persists_limit_message_without_second_chat(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path)
+    session = manager.create()
+    call = ToolCall(id="call-1", name="echo")
+    llm = FakeLLM([ChatReply(content=None, tool_calls=[call])])
+    dispatcher = FakeDispatcher(
+        {"call-1": ToolResult(tool_call_id="call-1", name="echo", content="result")}
+    )
+
+    assert asyncio.run(_loop(manager, llm, dispatcher, loop_max=1).run("stop after one")) == (
+        "loop limit reached"
+    )
+
+    assert len(llm.requests) == 1
+    messages = _load_messages(tmp_path, session.id)
+    assert [message.role for message in messages] == ["user", "assistant", "tool", "assistant"]
+    assert messages[-1].content == "loop limit reached"
+
+
+def test_parse_error_is_returned_as_tool_error_without_dispatch(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path)
+    session = manager.create()
+    call = ToolCall(id="bad-call", name="echo", parse_error="invalid arguments")
+    llm = FakeLLM(
+        [
+            ChatReply(content=None, tool_calls=[call]),
+            ChatReply(content="recovered"),
+        ]
+    )
+    dispatcher = FakeDispatcher({})
+
+    assert asyncio.run(_loop(manager, llm, dispatcher).run("bad tool call")) == "recovered"
+
+    assert dispatcher.calls == []
+    messages = _load_messages(tmp_path, session.id)
+    assert messages[2].role == "tool"
+    assert messages[2].tool_call_id == "bad-call"
+    assert messages[2].content == "invalid arguments"

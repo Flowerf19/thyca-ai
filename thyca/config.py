@@ -50,6 +50,7 @@ class ProviderCfg:
     baseUrl: str = DEFAULT_PROVIDER_BASE_URL
     apiKeyEnv: str = DEFAULT_PROVIDER_API_KEY_ENV
     model: str = DEFAULT_PROVIDER_MODEL
+    apiKey: str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         for value, name in (
@@ -58,13 +59,16 @@ class ProviderCfg:
             (self.model, "provider.model"),
         ):
             _text(value, name)
+        _text(self.apiKey, "provider.apiKey", allow_none=True, non_empty=True)
 
     def api_key(self) -> str:
+        if self.apiKey:
+            return self.apiKey
         value = os.environ.get(self.apiKeyEnv, "")
         if not value:
             raise ConfigError(
                 f"{self.apiKeyEnv} not set — export {self.apiKeyEnv} "
-                "or set provider.apiKeyEnv to your env var"
+                "or set provider.apiKey in config.json"
             )
         return value
 
@@ -182,7 +186,11 @@ def _parse_mcp_servers(raw: Any) -> dict[str, McpServerCfg]:
 def _parse_dict(raw: dict[str, Any]) -> Config:
     return Config(
         provider=ProviderCfg(
-            **_fields(raw.get("provider", {}), "provider", ("baseUrl", "apiKeyEnv", "model"))
+            **_fields(
+                raw.get("provider", {}),
+                "provider",
+                ("baseUrl", "apiKeyEnv", "model", "apiKey"),
+            )
         ),
         mcpServers=_parse_mcp_servers(raw.get("mcpServers")),
         timeline=TimelineCfg(

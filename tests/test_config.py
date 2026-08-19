@@ -32,6 +32,17 @@ def test_default_config_valid(tmp_path: Path) -> None:
     assert cfg2.to_dict() == cfg.to_dict()
 
 
+def test_api_key_json_wins_over_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    p = tmp_path / "config.json"
+    raw = default_config().to_dict()
+    raw["provider"]["apiKey"] = "json-secret"
+    p.write_text(json.dumps(raw), encoding="utf-8")
+    monkeypatch.setenv("OPENAI_API_KEY", "env-secret")
+    cfg = load(p)
+    assert cfg.provider.api_key() == "json-secret"
+    assert "json-secret" not in repr(cfg.provider)
+
+
 def test_api_key_resolve(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     p = tmp_path / "config.json"
     cfg = load(p)

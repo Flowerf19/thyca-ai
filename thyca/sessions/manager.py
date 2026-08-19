@@ -36,6 +36,13 @@ class SessionManager:
         self._lock = threading.Lock()
         self._session: Session | None = None
 
+    @property
+    def current(self) -> Session:
+        with self._lock:
+            if self._session is None:
+                raise SessionError("no current session — call create/load/continue_last first")
+            return self._session
+
     def _new_id(self) -> str:
         try:
             zone = ZoneInfo(self.timezone_name)

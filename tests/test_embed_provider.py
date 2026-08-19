@@ -9,15 +9,15 @@ from pathlib import Path
 import pytest
 
 from thyca.config import EmbeddingCfg, save
-from thyca.memory.embed_manifest import (
+from thyca.memory.embedding.manifest import (
     FILES_SHA256,
     MODEL_MANIFEST,
     QUERY_PROMPT,
     QUERY_PROMPT_UTF8_SHA256,
     manifest_digest,
 )
-from thyca.memory.embed_onnx import MARKER_NAME, OnnxEmbedder, resolve_embedder
-from thyca.memory.embed_payload import EmbeddingInputError, document_payload, query_payload
+from thyca.memory.embedding.onnx import MARKER_NAME, OnnxEmbedder, resolve_embedder
+from thyca.memory.embedding.payload import EmbeddingInputError, document_payload, query_payload
 from thyca.tools.memory import MemoryFacade
 
 
@@ -40,8 +40,8 @@ def test_profile_id_is_stable() -> None:
 def test_manifest_import_does_not_need_onnx(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "onnxruntime", None)
     monkeypatch.setitem(sys.modules, "tokenizers", None)
-    sys.modules.pop("thyca.memory.embed_manifest", None)
-    import thyca.memory.embed_manifest as manifest
+    sys.modules.pop("thyca.memory.embedding.manifest", None)
+    import thyca.memory.embedding.manifest as manifest
 
     assert manifest.MODEL_MANIFEST.dimensions == 640
 

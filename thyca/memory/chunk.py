@@ -7,7 +7,7 @@ import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
-from thyca.memory.embed import embedding_hash
+from thyca.memory.embedding.embed import embedding_hash
 from thyca.memory.heading import HeadingMeta, parse_heading, resolve_entry_id, session_id, strip_comment
 
 _BULLET_RE = re.compile(r"^(\s*)([-*]|\d+\.)\s+")

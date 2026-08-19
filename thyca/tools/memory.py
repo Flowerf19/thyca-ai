@@ -18,8 +18,8 @@ from thyca.memory.archived import (
     fuse_hits,
 )
 from thyca.config import Config, default_config, load
-from thyca.memory.embed import Embedder
-from thyca.memory.embed_onnx import resolve_embedder
+from thyca.memory.embedding.embed import Embedder
+from thyca.memory.embedding.onnx import resolve_embedder
 from thyca.memory.heading import (
     DEFAULT_IMPORTANCE,
     HeadingMeta,

@@ -1,7 +1,7 @@
 """Payload policy for the locked local embedding input version."""
 from __future__ import annotations
 
-from thyca.memory.embed_manifest import QUERY_PROMPT
+from .manifest import QUERY_PROMPT
 
 
 class EmbeddingInputError(ValueError):

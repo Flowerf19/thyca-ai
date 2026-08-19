@@ -93,8 +93,6 @@ class ModelManifest:
         """SHA-256 of canonical JSON for the complete immutable identity."""
         return hashlib.sha256(canonical_json(self.identity_fields).encode("utf-8")).hexdigest()
 
-
-
 def canonical_json(value: object) -> str:
     """Serialize identity data deterministically for hashing and markers."""
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)

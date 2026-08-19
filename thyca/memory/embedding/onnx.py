@@ -8,9 +8,9 @@ from typing import Any
 
 import numpy as np
 
-from thyca.memory.embed import Embedder
-from thyca.memory.embed_manifest import MODEL_MANIFEST, ModelManifest, manifest_digest
-from thyca.memory.embed_payload import document_payload, query_payload
+from .embed import Embedder
+from .manifest import MODEL_MANIFEST, ModelManifest, manifest_digest
+from .payload import document_payload, query_payload
 
 MARKER_NAME = ".installed.json"
 NORM_TOLERANCE = 1e-3

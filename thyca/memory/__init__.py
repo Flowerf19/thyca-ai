@@ -1,8 +1,7 @@
 from .active import ActiveMemory, ActiveMemoryError, ActiveSnapshot, ActiveState, tail_text
 from .archived import ArchiveError, ArchivedMemory, ArchiveStore, Hit, SearchResult
 from .chunk import Chunk, Chunker
-from .embed_manifest import MODEL_MANIFEST, ModelManifest
-from .embed_onnx import OnnxEmbedder, resolve_embedder
+from .embedding import MODEL_MANIFEST, ModelManifest, OnnxEmbedder, resolve_embedder
 
 __all__ = [
     "ActiveMemory",

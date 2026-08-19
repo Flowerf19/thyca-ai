@@ -12,7 +12,7 @@ from rapidfuzz import fuzz
 
 from thyca.config import DEFAULT_TIMELINE_TIMEZONE
 from thyca.memory.chunk import PROFILE_PENDING, Chunk, Chunker
-from thyca.memory.embed import (
+from thyca.memory.embedding.embed import (
     COSINE_FLOOR_MICRO,
     Embedder,
     cosine,

@@ -6,7 +6,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from thyca.memory.archived import ArchivedMemory, fuse_hits
-from thyca.memory.embed import FakeEmbedder, rrf_ranks
+from thyca.memory.embedding.embed import FakeEmbedder, rrf_ranks
 from thyca.tools.memory import MemoryFacade
 
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")

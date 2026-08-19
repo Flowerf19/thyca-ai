@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import stat
 from pathlib import Path
 
@@ -12,7 +11,6 @@ import pytest
 from thyca.config import (
     Config,
     ConfigError,
-    EmbeddingCfg,
     LimitsCfg,
     ProviderCfg,
     TimelineCfg,
@@ -28,7 +26,6 @@ def test_default_config_valid(tmp_path: Path) -> None:
     # load creates default when missing
     assert p.exists()
     assert cfg.provider.model == "gpt-4o-mini"
-    assert cfg.embedding.provider == "local"
     assert cfg.timeline.timezone == "Asia/Ho_Chi_Minh"
     # round-trip
     cfg2 = load(p)
@@ -57,20 +54,6 @@ def test_api_key_env_custom(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
         cfg.provider.api_key()
     monkeypatch.setenv("MY_KEY", "secret")
     assert cfg.provider.api_key() == "secret"
-
-
-def test_embedding_openai_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    cfg = EmbeddingCfg(
-        provider="openai",
-        model="text-embedding-3-small",
-        baseUrl="https://api.openai.com/v1",
-        apiKeyEnv="EMBEDDING_KEY",
-    )
-    monkeypatch.delenv("EMBEDDING_KEY", raising=False)
-    with pytest.raises(ConfigError, match="EMBEDDING_KEY not set"):
-        cfg.api_key()
-    monkeypatch.setenv("EMBEDDING_KEY", "embedding-secret")
-    assert cfg.api_key() == "embedding-secret"
 
 
 def test_invalid_limits_type_is_config_error(tmp_path: Path) -> None:
@@ -118,7 +101,6 @@ def test_save_fails_closed_when_lock_is_unavailable(
 def test_config_rejects_wrong_field_types(tmp_path: Path) -> None:
     cases = [
         ({"provider": {"baseUrl": None}}, "provider.baseUrl"),
-        ({"embedding": {"model": None}}, "embedding.model"),
         ({"mcpServers": {"echo": {"command": ["python"]}}}, "command must be a non-empty string"),
         ({"mcpServers": {"echo": {"command": "python", "args": [1]}}}, "args must be a list of strings"),
         ({"timeline": {"timezone": 7}}, "timeline.timezone"),
@@ -168,12 +150,6 @@ def test_limits_validation() -> None:
         LimitsCfg(hotTailKB=100)
     with pytest.raises(ConfigError):
         ProviderCfg(baseUrl="", apiKeyEnv="X", model="m")
-    with pytest.raises(ConfigError):
-        EmbeddingCfg(provider="bad")
-    with pytest.raises(ConfigError, match="embedding.baseUrl"):
-        EmbeddingCfg(provider="openai", baseUrl=None, apiKeyEnv="EMBEDDING_KEY")
-    with pytest.raises(ConfigError, match="embedding.apiKeyEnv"):
-        EmbeddingCfg(provider="openai", baseUrl="https://example.test/v1", apiKeyEnv=None)
 
 
 def test_save_roundtrip(tmp_path: Path) -> None:

@@ -1,4 +1,4 @@
-"""Archived lexical memory: SQLite FTS + trigram + optional exact cosine."""
+"""Archived lexical memory: SQLite FTS + trigram."""
 from __future__ import annotations
 
 import re
@@ -11,19 +11,10 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from rapidfuzz import fuzz
 
 from thyca.config import DEFAULT_TIMELINE_TIMEZONE
-from thyca.memory.chunk import PROFILE_PENDING, Chunk, Chunker
-from thyca.memory.embedding.embed import (
-    COSINE_FLOOR_MICRO,
-    Embedder,
-    cosine,
-    embedding_hash,
-    pack_unit,
-    rrf_ranks,
-    unpack,
-)
+from thyca.memory.chunk import Chunk, Chunker
 from thyca.memory.heading import format_ts
 
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 TRIGRAM_MIN_FTS = 3
 TRIGRAM_FLOOR = 70
@@ -49,8 +40,6 @@ class Hit:
     score: float
     match_type: str
     bm25: float | None = None
-    vector_score: float | None = None
-    profile_id: str | None = None
     leaf_ord: int = 1
     session_leaf_count: int = 1
     has_more: bool = False
@@ -62,8 +51,6 @@ class Hit:
 class SearchResult:
     hits: list[Hit] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
-    semantic_requested: bool = False
-    semantic_used: bool = False
 
 
 class ArchiveStore:
@@ -71,7 +58,6 @@ class ArchiveStore:
 
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
-        self.vec_version: str | None = None
         self._db = self._connect(db_path)
         self._init_schema()
 
@@ -83,19 +69,6 @@ class ArchiveStore:
         db = sqlite3.connect(db_path)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA foreign_keys = ON")
-        try:
-            db.enable_load_extension(True)
-            import sqlite_vec
-
-            sqlite_vec.load(db)
-            self.vec_version = db.execute("select vec_version()").fetchone()[0]
-        except Exception:
-            self.vec_version = None
-        finally:
-            try:
-                db.enable_load_extension(False)
-            except Exception:
-                pass
         return db
 
     def _init_schema(self) -> None:
@@ -111,13 +84,16 @@ class ArchiveStore:
             self._migrate(row["value"])
 
     def _migrate(self, from_version: str) -> None:
-        if from_version != "1":
+        if from_version not in {"1", "2"}:
             raise ArchiveError(f"unsupported schema_version {from_version!r}")
-        cols = {row[1] for row in self._db.execute("PRAGMA table_info(chunks)")}
-        if "expires_at" not in cols:
-            self._db.execute("ALTER TABLE chunks ADD COLUMN expires_at TEXT")
-        if "forgotten_at" not in cols:
-            self._db.execute("ALTER TABLE chunks ADD COLUMN forgotten_at TEXT")
+        for trigger in ("chunks_ai", "chunks_ad", "chunks_au"):
+            self._db.execute(f"DROP TRIGGER IF EXISTS {trigger}")
+        for index in ("chunks_day", "chunks_path", "chunks_content_hash", "chunks_profile"):
+            self._db.execute(f"DROP INDEX IF EXISTS {index}")
+        self._db.execute("DROP TABLE IF EXISTS chunks_fts")
+        self._db.execute("DROP TABLE IF EXISTS chunks")
+        self._db.execute("DELETE FROM source_files")
+        self._db.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
         self._db.execute(
             "UPDATE meta SET value = ? WHERE key = 'schema_version'",
             (SCHEMA_VERSION,),
@@ -127,92 +103,41 @@ class ArchiveStore:
     def replace_source(self, path: str, kind: str, day: str | None, mtime_ns: int, size: int, chunks: list[Chunk]) -> None:
         self._db.execute("BEGIN IMMEDIATE")
         try:
+            self._db.execute("DELETE FROM source_files WHERE path = ?", (path,))
             self._db.execute(
                 """INSERT INTO source_files(path, source_kind, timeline_day, mtime_ns, size_bytes)
-                   VALUES (?, ?, ?, ?, ?)
-                   ON CONFLICT(path) DO UPDATE SET
-                     source_kind=excluded.source_kind,
-                     timeline_day=excluded.timeline_day,
-                     mtime_ns=excluded.mtime_ns,
-                     size_bytes=excluded.size_bytes""",
+                   VALUES (?, ?, ?, ?, ?)""",
                 (path, kind, day, mtime_ns, size),
             )
-            incoming = {chunk.chunk_id: chunk for chunk in chunks}
-            existing = {
-                row["chunk_id"]: row
-                for row in self._db.execute(
-                    "SELECT chunk_id, embedding_hash FROM chunks WHERE path = ?",
-                    (path,),
-                )
-            }
-            for chunk_id in existing.keys() - incoming.keys():
-                self._db.execute("DELETE FROM chunks WHERE chunk_id = ?", (chunk_id,))
             for chunk in chunks:
-                old = existing.get(chunk.chunk_id)
-                if old is None:
-                    self._insert_chunk(chunk)
-                    continue
-                self._update_chunk(chunk, keep_embedding=old["embedding_hash"] == chunk.embedding_hash)
+                self._db.execute(
+                    """INSERT INTO chunks(
+                        chunk_id, path, source_kind, timeline_day, session_id, session_title,
+                        heading_raw, leaf_ord, line_start, line_end, text_raw, text_norm,
+                        content_hash, expires_at, forgotten_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        chunk.chunk_id,
+                        chunk.path,
+                        chunk.source_kind,
+                        chunk.timeline_day,
+                        chunk.session_id,
+                        chunk.session_title,
+                        chunk.heading_raw,
+                        chunk.leaf_ord,
+                        chunk.line_start,
+                        chunk.line_end,
+                        chunk.text_raw,
+                        chunk.text_norm,
+                        chunk.content_hash,
+                        chunk.expires_at,
+                        chunk.forgotten_at,
+                    ),
+                )
             self._db.commit()
         except Exception:
             self._db.rollback()
             raise
-
-    def update_embedding(
-        self, chunk_id: str, embedding: bytes, *, profile_id: str, embedding_hash: str
-    ) -> bool:
-        cur = self._db.execute(
-            """UPDATE chunks SET embedding = ?
-               WHERE chunk_id = ? AND profile_id = ? AND embedding_hash = ?""",
-            (embedding, chunk_id, profile_id, embedding_hash),
-        )
-        self._db.commit()
-        return cur.rowcount == 1
-
-    def _chunk_values(self, chunk: Chunk) -> tuple[object, ...]:
-        return (
-            chunk.path,
-            chunk.source_kind,
-            chunk.timeline_day,
-            chunk.session_id,
-            chunk.session_title,
-            chunk.heading_raw,
-            chunk.leaf_ord,
-            chunk.line_start,
-            chunk.line_end,
-            chunk.text_raw,
-            chunk.text_norm,
-            chunk.embed_text,
-            chunk.content_hash,
-            chunk.embedding_hash,
-            chunk.profile_id,
-            chunk.expires_at,
-            chunk.forgotten_at,
-            chunk.chunk_id,
-        )
-
-    def _insert_chunk(self, chunk: Chunk) -> None:
-        self._db.execute(
-            """INSERT INTO chunks(
-                path, source_kind, timeline_day, session_id, session_title,
-                heading_raw, leaf_ord, line_start, line_end, text_raw, text_norm,
-                embed_text, content_hash, embedding_hash, profile_id, embedding,
-                expires_at, forgotten_at, chunk_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)""",
-            self._chunk_values(chunk),
-        )
-
-    def _update_chunk(self, chunk: Chunk, *, keep_embedding: bool) -> None:
-        self._db.execute(
-            """UPDATE chunks SET
-                path=?, source_kind=?, timeline_day=?, session_id=?, session_title=?,
-                heading_raw=?, leaf_ord=?, line_start=?, line_end=?, text_raw=?, text_norm=?,
-                embed_text=?, content_hash=?, embedding_hash=?, profile_id=?,
-                expires_at=?, forgotten_at=?,
-                embedding=CASE WHEN ? THEN embedding ELSE NULL END
-               WHERE chunk_id = ?""",
-            (*self._chunk_values(chunk)[:-1], 1 if keep_embedding else 0, chunk.chunk_id),
-        )
 
     def drop_source(self, path: str) -> None:
         self._db.execute("DELETE FROM source_files WHERE path = ?", (path,))
@@ -310,83 +235,6 @@ class ArchiveStore:
         ).fetchone()
         return int(row["n"]) if row else 0
 
-    def pending_rows(self, profile_id: str) -> list[sqlite3.Row]:
-        return list(
-            self._db.execute(
-                """SELECT chunk_id, embed_text, embedding_hash FROM chunks
-                   WHERE embedding IS NULL AND profile_id = ?""",
-                (profile_id,),
-            )
-        )
-
-    def has_embeddings(self, profile_id: str) -> bool:
-        row = self._db.execute(
-            "SELECT 1 FROM chunks WHERE embedding IS NOT NULL AND profile_id = ? LIMIT 1",
-            (profile_id,),
-        ).fetchone()
-        return row is not None
-
-    def retarget_profile(self, path: str, profile_id: str) -> None:
-        rows = list(
-            self._db.execute(
-                "SELECT chunk_id, embed_text, profile_id, embedding_hash FROM chunks WHERE path = ?",
-                (path,),
-            )
-        )
-        for row in rows:
-            new_hash = embedding_hash(profile_id, row["embed_text"])
-            if row["profile_id"] == profile_id and row["embedding_hash"] == new_hash:
-                continue
-            self._db.execute(
-                """UPDATE chunks SET profile_id = ?, embedding_hash = ?, embedding = NULL
-                   WHERE chunk_id = ?""",
-                (profile_id, new_hash, row["chunk_id"]),
-            )
-        self._db.commit()
-
-    def vector_search(
-        self,
-        query: list[float],
-        *,
-        profile_id: str,
-        timeline_day: str | None,
-        limit: int,
-        now: str,
-    ) -> list[Hit]:
-        packed = pack_unit(query)
-        qvec = unpack(packed, len(query))
-        if qvec is None:
-            return []
-        sql = """SELECT * FROM chunks
-                  WHERE embedding IS NOT NULL AND profile_id = ?
-                    AND forgotten_at IS NULL
-                    AND (expires_at IS NULL OR expires_at > ?)"""
-        params: list[object] = [profile_id, now]
-        if timeline_day is not None:
-            sql += " AND timeline_day = ?"
-            params.append(timeline_day)
-        scored: list[tuple[int, str, float, sqlite3.Row]] = []
-        for row in self._db.execute(sql, params):
-            vec = unpack(row["embedding"], len(query))
-            if vec is None:
-                continue
-            score = cosine(qvec, vec)
-            micro = round(score * 1_000_000)
-            if micro < COSINE_FLOOR_MICRO:
-                continue
-            scored.append((micro, row["chunk_id"], score, row))
-        scored.sort(key=lambda item: (-item[0], item[1]))
-        return [
-            _hit_from_row(
-                row,
-                "semantic",
-                score=score,
-                snippet=row["text_raw"][:250],
-                vector_score=score,
-            )
-            for _, _, score, row in scored[: min(limit, CANDIDATE_CAP)]
-        ]
-
 
 class ArchivedMemory:
     """Orchestrate chunking, reindex, and lexical search."""
@@ -397,17 +245,12 @@ class ArchivedMemory:
         timezone_name: str | None = None,
         store: ArchiveStore | None = None,
         chunker: Chunker | None = None,
-        embedder: Embedder | None = None,
     ) -> None:
         self.thyca_dir = Path(thyca_dir or Path.home() / ".thyca")
         self.timezone_name = timezone_name or DEFAULT_TIMELINE_TIMEZONE
         db_path = self.thyca_dir / "memory.sqlite"
         self.store = store or ArchiveStore(db_path)
-        self.embedder = embedder
-        if chunker is None:
-            profile = embedder.profile_id if embedder is not None else PROFILE_PENDING
-            chunker = Chunker(profile_id=profile)
-        self.chunker = chunker
+        self.chunker = chunker or Chunker()
 
     def zone(self) -> ZoneInfo:
         try:
@@ -453,52 +296,6 @@ class ArchivedMemory:
     ) -> list[Hit]:
         return self.store.fts_search(query, timeline_day, limit, format_ts(now))
 
-    def vector_hits(
-        self, query: str, timeline_day: str | None, now: datetime | None, limit: int
-    ) -> list[Hit]:
-        if self.embedder is None:
-            return []
-        try:
-            values = self.embedder.embed_query(query)
-        except Exception:
-            return []
-        return self.store.vector_search(
-            values,
-            profile_id=self.embedder.profile_id,
-            timeline_day=timeline_day,
-            limit=limit,
-            now=format_ts(now),
-        )
-
-    def embed_pending(self) -> int:
-        if self.embedder is None:
-            return 0
-        rows = self.store.pending_rows(self.embedder.profile_id)
-        if not rows:
-            return 0
-        try:
-            vectors = self.embedder.embed_docs([row["embed_text"] for row in rows])
-        except Exception:
-            return 0
-        if len(vectors) != len(rows):
-            return 0
-        written = 0
-        for row, vector in zip(rows, vectors, strict=True):
-            if vector is None:
-                continue
-            try:
-                blob = pack_unit(vector)
-            except ValueError:
-                continue
-            if self.store.update_embedding(
-                row["chunk_id"],
-                blob,
-                profile_id=self.embedder.profile_id,
-                embedding_hash=row["embedding_hash"],
-            ):
-                written += 1
-        return written
-
     def trigram_hits(
         self, query: str, timeline_day: str | None, now: datetime | None, limit: int
     ) -> list[Hit]:
@@ -528,8 +325,6 @@ class ArchivedMemory:
                     score=hit.score,
                     match_type=hit.match_type,
                     bm25=hit.bm25,
-                    vector_score=hit.vector_score,
-                    profile_id=hit.profile_id,
                     leaf_ord=hit.leaf_ord,
                     session_leaf_count=count,
                     has_more=count > 1,
@@ -578,7 +373,6 @@ class ArchivedMemory:
         stat = path.stat()
         prev = self.store.source_stat(str(path))
         if prev == (stat.st_mtime_ns, stat.st_size):
-            self.store.retarget_profile(str(path), self.chunker.profile_id)
             return
         text = path.read_text(encoding="utf-8")
         chunks = self.chunker.chunk_markdown(path, text, source_kind=kind, timeline_day=day)
@@ -622,7 +416,6 @@ def _hit_from_row(
     score: float | None = None,
     bm25: float | None = None,
     snippet: str | None = None,
-    vector_score: float | None = None,
 ) -> Hit:
     return Hit(
         path=row["path"],
@@ -635,54 +428,10 @@ def _hit_from_row(
         score=float(score if score is not None else (-bm25 if bm25 is not None else 0.0)),
         match_type=match_type,
         bm25=None if bm25 is None else float(bm25),
-        vector_score=vector_score,
-        profile_id=row["profile_id"],
         leaf_ord=int(row["leaf_ord"]),
         line_start=int(row["line_start"]),
         line_end=int(row["line_end"]),
     )
-
-
-def fuse_hits(lexical: list[Hit], vector: list[Hit]) -> list[Hit]:
-    ranked = rrf_ranks(
-        [[hit.chunk_id for hit in lexical], [hit.chunk_id for hit in vector]]
-    )
-    lex = {hit.chunk_id: hit for hit in lexical}
-    vec = {hit.chunk_id: hit for hit in vector}
-    fused: list[Hit] = []
-    for chunk_id, score, _branches, _min_rank in ranked:
-        left, right = lex.get(chunk_id), vec.get(chunk_id)
-        base = left or right
-        if base is None:
-            continue
-        if left is not None and right is not None:
-            match_type = "hybrid"
-        elif right is not None:
-            match_type = "semantic"
-        else:
-            match_type = left.match_type
-        fused.append(
-            Hit(
-                path=base.path,
-                source_kind=base.source_kind,
-                chunk_id=base.chunk_id,
-                timeline_day=base.timeline_day,
-                session_id=base.session_id,
-                heading=base.heading,
-                snippet=left.snippet if left is not None else base.snippet,
-                score=score,
-                match_type=match_type,
-                bm25=left.bm25 if left is not None else None,
-                vector_score=right.vector_score if right is not None else None,
-                profile_id=right.profile_id if right is not None else base.profile_id,
-                leaf_ord=base.leaf_ord,
-                session_leaf_count=base.session_leaf_count,
-                has_more=base.has_more,
-                line_start=base.line_start,
-                line_end=base.line_end,
-            )
-        )
-    return fused
 
 
 def dedup_siblings(hits: list[Hit]) -> list[Hit]:

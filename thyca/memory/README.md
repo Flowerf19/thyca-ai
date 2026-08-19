@@ -37,14 +37,14 @@ flowchart TD
 text_raw / text_norm / embed_text"]
   S5 --> S6["6. trigger đổ chunks_fts từ text_raw"]
   S5 -.-> S7["7. GOAL-003: xay embed_text → 640 số
-UPDATE chunks.embedding"]
+INSERT chunks_vec"]
   S6 --> S8["8. search chữ: MATCH chunks_fts"]
-  S7 -.-> S9["9. search nghĩa: cosine trên embedding"]
+  S7 -.-> S9["9. search nghĩa: cosine chunks_vec"]
   S8 --> S10["10. trả Hit.snippet = text_raw"]
   S9 -.-> S10
 ```
 
-Triển khai theo số: 1–6 + 8 + 10 đã có. 7 + 9 chưa. Số nằm `chunks.embedding` BLOB — không tạo `chunks_vec` ở v1.
+Triển khai theo số: 1–6 + 8 + 10 đã có. 7 + 9 chưa — chỗ để số chưa khóa (`chunks.embedding` BLOB vs bảng `chunks_vec`).
 
 Hai lối tìm cùng trỏ một `chunk_id`. Khác câu hỏi, không khác kho.
 
@@ -52,7 +52,7 @@ Hai lối tìm cùng trỏ một `chunk_id`. Khác câu hỏi, không khác kho.
 |-----|--------|---------|
 | Có chữ `cà phê` / `ca phe`? | `chunks_fts` | không |
 | Gõ sai `thit quya`? | `chunks.text_norm` (Python, chưa có bảng) | không |
-| Ý `món nướng hôm nọ` ≈ `thịt quay`? | `chunks.embedding` | có — chưa gắn |
+| Ý `món nướng hôm nọ` ≈ `thịt quay`? | `chunks_vec` | có — chưa gắn |
 
 ## Một leaf xuyên ba lớp
 
@@ -74,7 +74,7 @@ Hai bullet → hai hàng `chunks`. Heading là session; comment JSON là tem má
                           ▼
                    INSERT chunks
                           ├─ trigger → chunks_fts(text_raw)
-                          └─ sau này  → embed(embed_text) → chunks.embedding
+                          └─ sau này  → embed(embed_text) → chunks_vec
 ```
 
 `embed_text` không phải thứ agent đọc.
@@ -92,7 +92,7 @@ Hai bullet → hai hàng `chunks`. Heading là session; comment JSON là tem má
 
 `chunks_fts` khớp không dấu (`unicode61`), trả snippet **có dấu**.
 
-Vector = cột `chunks.embedding`. Reindex upsert theo `chunk_id`: cùng `embedding_hash` thì giữ BLOB.
+`schema.sql` chưa tạo `chunks_vec`; `chunks.embedding` NULL. Chỗ để số chưa khóa.
 
 ## Không nằm ở đây
 

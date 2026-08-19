@@ -7,7 +7,6 @@ import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
-from thyca.memory.embedding.embed import embedding_hash
 from thyca.memory.heading import HeadingMeta, parse_heading, resolve_entry_id, session_id, strip_comment
 
 _BULLET_RE = re.compile(r"^(\s*)([-*]|\d+\.)\s+")
@@ -15,7 +14,6 @@ _SENTENCE_RE = re.compile(r"(?<=[.!?。])\s+")
 
 MAX_LEAF_CHARS = 800
 MIN_LEAF_CHARS = 20
-PROFILE_PENDING = "pending"
 
 
 @dataclass(frozen=True)
@@ -32,19 +30,13 @@ class Chunk:
     line_end: int
     text_raw: str
     text_norm: str
-    embed_text: str
     content_hash: str
-    embedding_hash: str
-    profile_id: str = PROFILE_PENDING
     expires_at: str | None = None
     forgotten_at: str | None = None
 
 
 class Chunker:
     """Split daily ``## HH:mm`` sessions and canonical files into leafs."""
-
-    def __init__(self, profile_id: str = PROFILE_PENDING) -> None:
-        self.profile_id = profile_id
 
     def chunk_markdown(
         self,
@@ -64,8 +56,6 @@ class Chunker:
                 if not raw.strip():
                     continue
                 norm = self.normalize(raw)
-                title = session["title"]
-                embed = self.normalize(title) + "\n" + norm
                 chunk_id = f"{session['session_id']}#{ord_}"
                 payload = f"{session['heading']}\n{raw}".encode("utf-8")
                 chunks.append(
@@ -75,17 +65,14 @@ class Chunker:
                         source_kind=source_kind,
                         timeline_day=timeline_day,
                         session_id=session["session_id"],
-                        session_title=title,
+                        session_title=session["title"],
                         heading_raw=session["heading"],
                         leaf_ord=ord_,
                         line_start=leaf["start"],
                         line_end=leaf["end"],
                         text_raw=raw,
                         text_norm=norm,
-                        embed_text=embed,
                         content_hash=hashlib.sha256(payload).hexdigest(),
-                        embedding_hash=embedding_hash(self.profile_id, embed),
-                        profile_id=self.profile_id,
                         expires_at=session.get("expires_at"),
                         forgotten_at=session.get("forgotten_at"),
                     )

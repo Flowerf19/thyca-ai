@@ -23,8 +23,6 @@ class ConfigError(RuntimeError):
 DEFAULT_PROVIDER_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_PROVIDER_API_KEY_ENV = "OPENAI_API_KEY"
 DEFAULT_PROVIDER_MODEL = "gpt-4o-mini"
-DEFAULT_EMBEDDING_PROVIDER = "local"
-DEFAULT_EMBEDDING_MODEL = "harrier-q4"
 DEFAULT_TIMELINE_TIMEZONE = "Asia/Ho_Chi_Minh"
 DEFAULT_LIMITS_LOOP_MAX = 10
 DEFAULT_LIMITS_HOT_TAIL_KB = 4
@@ -68,33 +66,6 @@ class ProviderCfg:
                 f"{self.apiKeyEnv} not set — export {self.apiKeyEnv} "
                 "or set provider.apiKeyEnv to your env var"
             )
-        return value
-
-
-@dataclass(frozen=True)
-class EmbeddingCfg:
-    provider: str = DEFAULT_EMBEDDING_PROVIDER
-    model: str = DEFAULT_EMBEDDING_MODEL
-    baseUrl: str | None = None
-    apiKeyEnv: str | None = None
-
-    def __post_init__(self) -> None:
-        _text(self.provider, "embedding.provider")
-        _text(self.model, "embedding.model")
-        _text(self.baseUrl, "embedding.baseUrl", allow_none=True, non_empty=False)
-        _text(self.apiKeyEnv, "embedding.apiKeyEnv", allow_none=True, non_empty=False)
-        if self.provider not in ("local", "openai"):
-            raise ConfigError(f"embedding.provider must be 'local' or 'openai', got {self.provider!r}")
-        if self.provider == "openai":
-            _text(self.baseUrl, "embedding.baseUrl")
-            _text(self.apiKeyEnv, "embedding.apiKeyEnv")
-
-    def api_key(self) -> str | None:
-        if self.apiKeyEnv is None:
-            return None
-        value = os.environ.get(self.apiKeyEnv, "")
-        if not value:
-            raise ConfigError(f"{self.apiKeyEnv} not set")
         return value
 
 
@@ -149,7 +120,6 @@ class LimitsCfg:
 @dataclass(frozen=True)
 class Config:
     provider: ProviderCfg = field(default_factory=ProviderCfg)
-    embedding: EmbeddingCfg = field(default_factory=EmbeddingCfg)
     mcpServers: dict[str, McpServerCfg] = field(default_factory=dict)
     timeline: TimelineCfg = field(default_factory=TimelineCfg)
     limits: LimitsCfg = field(default_factory=LimitsCfg)
@@ -157,7 +127,6 @@ class Config:
     def to_dict(self) -> dict[str, Any]:
         return {
             "provider": asdict(self.provider),
-            "embedding": asdict(self.embedding),
             "mcpServers": {name: asdict(server) for name, server in self.mcpServers.items()},
             "timeline": asdict(self.timeline),
             "limits": asdict(self.limits),
@@ -214,14 +183,6 @@ def _parse_dict(raw: dict[str, Any]) -> Config:
     return Config(
         provider=ProviderCfg(
             **_fields(raw.get("provider", {}), "provider", ("baseUrl", "apiKeyEnv", "model"))
-        ),
-        embedding=EmbeddingCfg(
-            **_fields(
-                raw.get("embedding"),
-                "embedding",
-                ("provider", "model", "baseUrl", "apiKeyEnv"),
-                null_means_default=True,
-            )
         ),
         mcpServers=_parse_mcp_servers(raw.get("mcpServers")),
         timeline=TimelineCfg(

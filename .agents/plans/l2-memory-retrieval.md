@@ -1,14 +1,14 @@
 ---
 status: in-progress
 created: 2026-08-14
-last_updated: 2026-08-18
+last_updated: 2026-08-19
 ---
 
 # L2 Memory — Agentic Retrieval (Agent là controller)
 
 ## Summary
 
-Mở rộng GOAL-006 thành **L2 hybrid retrieval trong v1** do agent điều khiển. `semantic=false` chạy lexical FTS5 + trigram; `semantic=true` chạy lexical + exact vector rồi RRF. Tool không tự fallback ngầm. Markdown vẫn là source of truth; SQLite chỉ là derived index.
+Mở rộng GOAL-006 thành **L2 hybrid retrieval** do agent điều khiển. **Code v1 hiện tại chỉ chạy lexical** (FTS5 + trigram). Kiến trúc `semantic=true` (lexical + exact vector + RRF) giữ trong plan này, chưa implement lại: 2026-08-19 gỡ numpy/onnxruntime/tokenizers/sqlite-vec và revert runtime về `16aa38e`. Tool không tự fallback ngầm. Markdown vẫn là source of truth; SQLite chỉ là derived index.
 
 Flow chốt (agent là retrieval controller):
 
@@ -530,7 +530,7 @@ Xong khi: schema smoke chạy trên SQLite thật; canonical search được; `c
 
 | ID | Task | Done | Date |
 |----|------|------|------|
-| TASK-108 | Embedding provider interface: local pinned Harrier q4 or OpenAI `/embeddings`; batch outside DB transaction; one failed chunk remains NULL. Compute immutable profile ID from provider/model/dimension/dtype/normalization/query prompt/input version | in-progress (local Harrier provider only; OpenAI remains out of slice) | 2026-08-18 |
+| TASK-108 | Embedding provider interface: local pinned Harrier q4 or OpenAI `/embeddings`; batch outside DB transaction; one failed chunk remains NULL. Compute immutable profile ID from provider/model/dimension/dtype/normalization/query prompt/input version | abandoned (2026-08-19: revert runtime; kiến trúc giữ) | 2026-08-19 |
 | TASK-109 | Exact cosine over current-profile rows only, validate finite/unit norm/dimension/BLOB length; sqlite-vec and NumPy paths share `micro_key`/tie-break and parity tests. No ANN | | |
 | TASK-110 | `semantic=true`: lexical and vector candidate branches, RRF k=60, deterministic tie-break, sibling dedup, SearchResult warnings/meta. Keep original bm25/vector score; no eager expansion | | |
 | TASK-111 | Missing/corrupt model, missing OpenAI key, empty semantic index or per-chunk failure → lexical fallback + explicit warning; never mix profiles or fabricate semantic scores | | |
@@ -564,6 +564,16 @@ Xong khi: agent tự chọn lexical trước, semantic retry chỉ khi cần; wa
 | TASK-120 | `memory_get(chunk_id\|session_id)` sliding TTL; `search`/`get(path)` không slide; purge heading+leaf khi `forgotten+30d` lúc reindex | x | 2026-08-17 |
 
 Xong khi: remember daily có exp; get gia hạn; search không gia hạn; forget ẩn ngay; reinforce trong 30 ngày khôi phục; quá 30 ngày mất khỏi file; SOUL/USER reject forget.
+
+### GOAL-007: v1 lexical-only (revert embedding runtime)
+
+| ID | Task | Done | Date |
+|----|------|------|------|
+| TASK-121 | Gỡ `numpy`, `onnxruntime`, `tokenizers`, `sqlite-vec` khỏi `pyproject.toml` / `uv.lock`; `uv sync` sạch | x | 2026-08-19 |
+| TASK-122 | Revert runtime/tests về `16aa38e`; xóa `thyca/memory/embedding/` và test semantic/ONNX. Giữ `.agents/plans` | x | 2026-08-19 |
+| TASK-123 | Bỏ `sqlite_vec` load trong `ArchiveStore`. `semantic=true` vẫn warning `semantic unavailable` | x | 2026-08-19 |
+
+Xong khi: pytest lexical (FTS + trigram) pass; không import numpy/onnx/sqlite-vec; plan L2 còn kiến trúc hybrid.
 
 ---
 

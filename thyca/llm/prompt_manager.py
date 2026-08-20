@@ -12,7 +12,10 @@ _STUB_USER = frozenset({"", "# User"})
 
 _RULES = (
     "Use memory_remember only for daily or MEMORY.md (L2 bullets).\n"
-    "Update SOUL.md, IDENTITY.md, and USER.md with write/edit.\n"
+    "To update your persona or profile, use write/edit on these exact paths:\n"
+    "  - ~/.thyca/SOUL.md\n"
+    "  - ~/.thyca/IDENTITY.md\n"
+    "  - ~/.thyca/USER.md\n"
     "Do not write or edit L2 daily files, MEMORY.md, sessions, or config.json under ~/.thyca.\n"
     "memory_search is lexical-first. If search returns nothing, say so. Do not invent memories."
 )

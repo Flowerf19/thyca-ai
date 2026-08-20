@@ -1,16 +1,16 @@
 ---
-status: in-progress
+status: done
 created: 2026-08-14
-last_updated: 2026-08-19
+last_updated: 2026-08-20
 ---
 
 # Service — Agent Loop (`thyca/agent/`)
 
-> 7/7. Bốn pha + `Stage` chung, chốt 2026-08-19. `Cli` — TASK-317 để sau. Không `thyca/agent.py` shim.
+> 7/7. Bốn pha + `Stage` + `Cli` (TASK-317). Không `thyca/agent.py` shim.
 
 ## Summary
 
-`assemble → think → act → observe` trên một `Stage`. `loop.py` tạo stage rồi lắp bốn pha. HTTP sau.
+`assemble → think → act → observe` trên một `Stage`. `cli.py` REPL / `-p` / `--continue` / `--session` / `--model`.
 
 ## Class trong package
 
@@ -33,11 +33,11 @@ Dataclass không frozen. `messages` / `results` `default_factory=list`. `round >
 
 ### Assemble
 
-`assemble(stage, user_msg)`: copy `stage.messages` + user. `hot` trên stage, v1 không inject system. Non-str → `ValueError`.
+`assemble(stage, user_msg)`: copy `stage.messages` + user. `hot` trên stage, v1 không inject system — cố ý, tests yêu cầu hot unused (chưa nối `PromptManager`). Non-str → `ValueError`.
 
 ### Think
 
-`ChatReply` + `LLMPort.chat` trong `think.py`. `Think.think(stage)` gọi port với `stage.messages` / `stage.tools`, ghi `stage.reply`.
+`ChatReply` sống ở `thyca/llm/llm_base.py` (cùng `Connect` ABC + `LLMError`); `think.py` chỉ import lại. Port là `LLMPort` (Protocol, khai báo trong `think.py`): `chat(messages, tools=None) -> ChatReply`. `Think.think(stage)` gọi port với `stage.messages` / `stage.tools`, ghi `stage.reply`.
 
 ### Act
 
@@ -69,7 +69,9 @@ for _ in 1..loop_max:
     return observe.loop_limit(stage)
 ```
 
-Giữ `SessionManager.current`. Không planner / prefetch / subagent. Không đụng `cli.py`.
+Giữ `SessionManager.current`. Không planner / prefetch / subagent.
+
+> Lưu ý code hiện tại: `AgentLoop.__init__(..., tools=None)` chưa truyền `stage.tools` khi tạo `Stage` (loop.py hiện bỏ qua `tools`), và `Act` dispatch qua `ToolDispatcher` port — registry chưa tồn tại. `LoopPolicy`/`Turn`/`RunGate` là lịch sử split cũ, không có trong code.
 
 ## Tasks
 
@@ -77,7 +79,7 @@ Giữ `SessionManager.current`. Không planner / prefetch / subagent. Không đ�
 |----|------|------|------|
 | TASK-315 | `run.py` RunGate (split cũ) | x | 2026-08-19 |
 | TASK-316 | `loop.py` split cũ | x | 2026-08-19 |
-| TASK-317 | `thyca/cli.py` REPL / `-p` | | |
+| TASK-317 | `thyca/cli.py` REPL / `-p` / `--continue` / `--session` / `--model` | x | 2026-08-20 |
 | TASK-318 | compact trong split cũ | x | 2026-08-19 |
 | TASK-319 | `Turn` (superseded) | x | 2026-08-19 |
 | TASK-320 | `LoopPolicy` (superseded) | x | 2026-08-19 |
@@ -92,4 +94,4 @@ Giữ `SessionManager.current`. Không planner / prefetch / subagent. Không đ�
 
 ## Assumptions
 
-- v1 Fake `LLMPort`. `hot` chưa bind PromptBuilder.
+- `Assemble` inject system khi `hot` là `ActiveSnapshot`. Registry/tools vẫn chưa có — CLI dùng `_NoTools`.

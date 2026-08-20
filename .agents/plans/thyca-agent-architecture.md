@@ -1,7 +1,7 @@
 ---
 status: in-progress
 created: 2026-08-14
-last_updated: 2026-08-17
+last_updated: 2026-08-20
 ---
 
 # Thyca — Kiến trúc chung (1 process, flat `thyca/`)
@@ -34,16 +34,23 @@ thyca-ai/
       archived.py          # -> l2-memory-retrieval.md (index + search)
       chunk.py             # -> l2-memory-retrieval.md
     llm/
-      client.py            # -> services/llm.md
-      prompt.py            # -> services/llm.md
+      llm_base.py         # Connect ABC + ChatReply + LLMError -> services/llm.md
+      llm_factory.py      # ConnectFactory.create(kind, provider) -> services/llm.md
+      openai_chat.py      # OpenAIChat — /chat/completions
+      openai_responses.py # stub
+      google_chat.py      # stub
+      anthropic_chat.py   # stub
+      prompt_manager.py   # PromptManager.build(ActiveSnapshot) -> services/llm.md
+      prompts/soul.md + identity.md
     tools/
       registry.py          # -> services/tools.md
       builtin/             # -> services/tools.md
       mcp.py               # -> services/mcp.md
       memory.py            # facade memory_* -> services/tools.md + l2-memory-retrieval.md
     agent/
-      loop.py              # -> services/agent-loop.md
-      run.py               # seam -> services/agent-loop.md
+      stage.py             # Stage workspace chung -> services/agent-loop.md
+      loop.py              # AgentLoop -> services/agent-loop.md
+      assemble.py / think.py / act.py / observe.py   # bốn pha
   ~/.thyca/                # runtime, không commit
   tests/
 ```
@@ -56,19 +63,19 @@ thyca-ai/
 flowchart TD
     A["CLI: parseArgs + config.load + ActiveMemory.ensureFiles"] --> B["SessionManager: create/load JSONL"]
     B --> C["ActiveMemory.refresh -> ActiveSnapshot<br/>soul/user/memory/today/yesterday"]
-    C --> D["PromptBuilder.build: system + hot"]
-    D --> E["AgentLoop.assemble: system + hot + session + userMsg"]
-    E --> F{"LLMClient.chat<br/>think"}
+    C --> D["PromptManager.build(hot)<br/>chưa gắn Assemble (TASK-307)"]
+    D --> E["AgentLoop.run: assemble: system + hot + session + userMsg<br/>v1 chưa inject system/hot"]
+    E --> F{"Connect.chat<br/>OpenAIChat"}
     F -- "text<br/>no tool_calls" --> G["SessionManager.append<br/>CLI render + persist"]
-    F -- "tool_calls[]" --> H["RunGate.run * N<br/>gather read-only; mutation lock theo resource"]
-    H --> I["ToolRegistry.dispatch"]
+    F -- "tool_calls[]" --> H["Act.act: dispatch * N<br/>gather; mutation lock theo resource (registry chưa có)"]
+    H --> I["ToolDispatcher (registry chưa có)"]
     I --> J1["BuiltinTools<br/>read/write/edit/bash/web_search"]
     I --> J2["MemoryFacade<br/>remember/search/recent/get<br/>-> ColdRetrieval + Chunker"]
     I --> J3["MCPManager<br/>server__tool -> MCPServer stdio"]
     J1 & J2 & J3 --> K["ToolResult[]<br/>giữ order theo tool_call_id"]
-    K --> L["AgentLoop.append tool results<br/>messages += calls + results"]
+    K --> L["Observe.observe: append assistant + tool results<br/>messages += calls + results"]
     L --> F
-    F -- "tool rounds exhausted" --> M["SessionManager.compact_if_needed<br/>persist visible stop"]
+    F -- "tool rounds exhausted" --> M["Observe.compact -> SessionManager.compact_if_needed<br/>persist visible stop"]
     G --> N["end"]
     M --> N
 ```
@@ -84,11 +91,11 @@ Class tổng giữa module **dùng activity này**, không vẽ class tổng. Cl
 | 1 | **Config** | `services/config.md` | `~/.thyca/config.json` (JSON 1 file, đọc ở `~/.thyca`), `provider/embedding/mcpServers/timeline/limits`, resolve `apiKeyEnv` | ✅ done 2026-08-14 (TASK-301/302) |
 | 2 | **Session** | `services/session.md` | JSONL `sessions/*.jsonl` trong `thyca/sessions/` (4 class SOLID), `create/load/append`, `--continue`, compaction rule-based | ✅ done 2026-08-17 (TASK-303a-d) |
 | 3 | **Memory** | `services/memory.md` | Active prompt window: `ActiveMemory` + `ActiveSnapshot`, tail 4KB, day-rollover hook | ✅ done 2026-08-17 (TASK-304) |
-| 4 | **LLM** | `services/llm.md` | 1 client `httpx` OpenAI-compat + `prompt.py` build system prompt | ☐ draft |
-| 5 | **Tools** | `services/tools.md` | `ToolRegistry` + builtin `read/write/edit/bash/web_search` + guard `~/.thyca` | ☐ draft |
+| 4 | **LLM** | `services/llm.md` | `ConnectFactory` → `Connect` (`OpenAIChat` chạy `/chat/completions`; Responses/Google/Anthropic stub) + `PromptManager` | ✅ done 2026-08-20 (TASK-307/308) |
+| 5 | **Tools** | `services/tools.md` | `ToolRegistry` + builtin `read/write/edit/bash/web_search` + guard `~/.thyca` | ☐ in-progress 2026-08-20 |
 | 6 | **MCP** | `services/mcp.md` | stdio spawn, `server__tool` prefix, lifecycle, fault tolerance | ☐ draft |
-| 7 | **Agent Loop** | `services/agent-loop.md` | `loop max 10` assemble/think/run/persist, `run(call)` seam, `cli.py` wiring | ☐ draft |
-| — | **Archived (L2)** | `l2-memory-retrieval.md` | 4 class lexical done 2026-08-17; vector/RRF still draft | ✅ in-progress 2026-08-17 (GOAL-002) |
+| 7 | **Agent Loop** | `services/agent-loop.md` | bốn pha + `Stage` + CLI REPL/`-p` | ✅ done 2026-08-20 (TASK-317/321/322) |
+| — | **Archived (L2)** | `l2-memory-retrieval.md` | Lexical (FTS5 + trigram) + TTL lifecycle + facade: code xong 2026-08-17; embedding runtime gỡ 580ae03 — hybrid giữ frozen trong plan | ✅ lexical 2026-08-17 (GOAL-002); GOAL-006 2026-08-17; vector/RRF draft |
 
 **Checklist duyệt (copy ra issue/PR):**
 
@@ -104,11 +111,11 @@ Class tổng giữa module **dùng activity này**, không vẽ class tổng. Cl
 Thứ tự đề xuất code:
 
 1. `Config` — done.
-2. `Session -> ActiveMemory -> LLM`.
+2. `Session -> ActiveMemory -> LLM` — done (LLM là `Connect`/`OpenAIChat`, không phải `LLMClient`).
 3. `protocol.py -> ToolRegistry + builtins`.
-4. `MemoryFacade -> L2 lexical`; sau đó L2 semantic/model profile.
+4. `MemoryFacade -> L2 lexical` — facade + lexical đã done; còn nối registry; L2 semantic/model profile frozen trong plan.
 5. `MCP`.
-6. `Agent Loop + CLI wiring` và E2E vertical slice.
+6. `Agent Loop + CLI wiring` — loop đã có (TASK-315/316/318/321/322); còn CLI wiring (TASK-317) và E2E vertical slice.
 
 Mỗi service phải có unit/integration evidence trước khi service kế tiếp dựa vào contract của nó. Không bắt `MemoryFacade` hoàn tất trước `ToolRegistry`, vì facade là tool handler.
 

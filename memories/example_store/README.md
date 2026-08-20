@@ -11,7 +11,7 @@ example_store/
     2026-08-13.md         # đã đóng → có trong memory.sqlite
     2026-08-16.md         # hôm qua → Active tail + đã index
     2026-08-17.md         # hôm nay → chỉ Active, không vào sqlite
-  memory.sqlite           # mục lục derived: source_files + chunks + chunks_fts
+  memory.sqlite           # mục lục derived: source_files + chunks + chunks_fts (lexical; vector đã gỡ 580ae03)
 ```
 
 Markdown là sự thật. SQLite chỉ là mục lục. Search đọc sqlite; `get(path)` đọc `.md` thô.

@@ -10,4 +10,4 @@
 6. `plans/services/*.md` — contract thi công từng service
 7. `plans/l2-memory-retrieval.md` — contract chi tiết cold retrieval
 
-Runtime hiện có skeleton CLI, Config, Session (`thyca/sessions/`), và ActiveMemory (`thyca/memory/active.py`). Đừng bịa command hoặc feature ngoài plan đã được duyệt.
+Runtime hiện có: CLI stub, Config, Session (`thyca/sessions/`), ActiveMemory (`thyca/memory/active.py`), L2 archive lexical + TTL lifecycle + facade (`thyca/tools/memory.py`), LLM (`thyca/llm/` — `ConnectFactory`/`OpenAIChat`/`PromptManager`), Agent Loop (`thyca/agent/` — 4 pha + `Stage`). Chưa có: Tools registry/builtin, MCP, CLI wiring. Đừng bịa command hoặc feature ngoài plan đã được duyệt.

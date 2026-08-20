@@ -418,6 +418,8 @@ flowchart LR
 - **FTS**: query `chunks_fts.text_raw`, join `chunks` by rowid, use `bm25(chunks_fts)` and `snippet(chunks_fts, 0, '⟨', '⟩', '…', 6)`. No day filter includes canonical + all closed daily; explicit `timeline_day` restricts to daily rows of that date. Order `bm25 ASC, chunk_id ASC`, cap 50.
 - **Trigram**: when FTS has <3 candidates, run rapidfuzz on `chunks.text_norm`; explicit day filter follows FTS scope. Threshold is benchmarked but locked for release; no unmeasured automatic schema switch.
 - **Vector**: exact cosine only over rows with `embedding IS NOT NULL AND profile_id=current_profile`; validate BLOB dimension before scoring. `micro_key=round(cosine*1e6)`, floor 300000, order desc + chunk_id, cap 50. sqlite-vec and NumPy must return the same ordering.
+
+> ⚠️ Nhánh vector là kiến trúc frozen từ GOAL-007 (580ae03 đã gỡ embedding runtime và cột vector khỏi `schema.sql` v3; `chunks.embedding` không còn tồn tại). Không implement lại như đã có — nếu làm lại, bắt đầu từ plan này + decision `../decisions/2026-08-18-l2-embedding-blob.md` (superseded).
 - **Fusion**: `rrf_fuse(lexical, vector, k=60, top_k=limit)`, equal weight, deterministic tie-break. Lexical-only hits are not cosine-gated. If siblings from one session occupy multiple final slots, keep highest-ranked leaf and expose `session_leaf_count/has_more`; do not eager merge content.
 - **Snippet**: FTS snippet comes from raw accented `text_raw`; trigram/vector-only uses first 250 characters + heading metadata. Tool-result cap applies after serialization.
 - **Expansion**: Hit contains `session_id`; agent calls `memory_get(session_id)` only when it needs mother context. No eager siblings.

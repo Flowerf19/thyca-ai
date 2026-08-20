@@ -54,7 +54,7 @@ classDiagram
 
 - `ensure_files()`: tạo `SOUL.md` / `USER.md` / `MEMORY.md` / `memory/YYYY-MM-DD.md` nếu thiếu, template ngắn, atomic create (`O_CREAT|O_EXCL` hoặc temp+replace). Dir `~/.thyca` và `~/.thyca/memory` `0700`. Không ghi đè file đã có.
 - `open_session(now)`: `day` theo `config.timeline.timezone`. Đọc yesterday tail **một lần** (nếu file hôm qua tồn tại) và giữ trong `ActiveState` đến khi day đổi. Không đọc lại yesterday mỗi turn.
-- `refresh(state, now)`: đọc lại `SOUL` / `USER` / `MEMORY` + today tail. Trả `ActiveSnapshot` cho `PromptBuilder`. Khi timezone day đổi trong process: rotate today/yesterday (yesterday mới = today cũ), rồi gọi hook `on_day_close(closed_day)` — ActiveMemory **không** implement reindex; L2 đăng ký hook.
+- `refresh(state, now)`: đọc lại `SOUL` / `USER` / `MEMORY` + today tail. Trả `ActiveSnapshot` cho `PromptManager`. Khi timezone day đổi trong process: rotate today/yesterday (yesterday mới = today cũ), rồi gọi hook `on_day_close(closed_day)` — ActiveMemory **không** implement reindex; L2 đăng ký hook.
 - Hot tail (today, yesterday, và `MEMORY.md`): UTF-8 bytes, mặc định `limits.hotTailKB` (4, range 1..64). Cắt ở newline hoặc ranh `## HH:mm` gần nhất phía trước ngưỡng; không cắt giữa code point / giữa code fence đã chọn. File ngắn hơn budget → giữ nguyên.
 - `SOUL.md` và `USER.md`: nhét **cả file** mỗi lượt. Hai file này là hồ sơ ổn định — không cắt — để prefix system prompt ít đổi, tận dụng prompt cache.
 - `MEMORY.md`: inject **tail** cùng rule 4KB như daily. File vẫn lớn trên đĩa; phần cũ vào L2. Muốn full file: agent gọi `memory_get(path=MEMORY.md)` (L2/Tools), không thêm cờ inject-full trên ActiveMemory.
@@ -84,5 +84,5 @@ Xong khi: missing files tự tạo, không đè file cũ; `open_session` giữ y
 ## Assumptions
 
 - `l2-memory-retrieval.md` là nguồn thật cho chunk/vector/RRF/`memory_remember`.
-- `PromptBuilder.build(hot)` ở `services/llm.md` nhận `ActiveSnapshot`; LLM plan không implement ActiveMemory.
+- `PromptManager.build(hot)` ở `services/llm.md` nhận `ActiveSnapshot`; LLM plan không implement ActiveMemory.
 - Trần nóng đã chốt 2026-08-17: `SOUL`/`USER` = full; `MEMORY` + daily = tail `hotTailKB`. Không hard-cap lúc ghi kiểu Hermes. Lấy full `MEMORY.md` = `memory_get(path)`, không phải cờ ActiveMemory.

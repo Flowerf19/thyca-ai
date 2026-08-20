@@ -30,6 +30,10 @@ thyca = "thyca.cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["thyca"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"thyca/llm/prompts/soul.md" = "thyca/llm/prompts/soul.md"
+"thyca/llm/prompts/identity.md" = "thyca/llm/prompts/identity.md"
+
 [tool.ruff]
 line-length = 100
 target-version = "py314"

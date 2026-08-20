@@ -12,7 +12,7 @@ last_updated: 2026-08-15
 
 ## Summary
 
-Đọc/ghi `~/.thyca/config.json`, resolve `apiKeyEnv` tại thời điểm gọi, validate defaults, tạo file nếu thiếu. Là nguồn duy nhất cho `provider/embedding/mcpServers/timeline/limits`. Public API dùng Python snake_case ở module level: `load()`, `ensure_default()`, `save()`; dataclass giữ JSON field names hiện có để config tương thích.
+Đọc/ghi `~/.thyca/config.json`, resolve `apiKey`/`apiKeyEnv` tại thời điểm gọi, validate defaults, tạo file nếu thiếu. Là nguồn duy nhất cho `provider/mcpServers/timeline/limits`. Public API dùng Python snake_case ở module level: `load()`, `ensure_default()`, `save()`; dataclass giữ JSON field names hiện có để config tương thích.
 
 ## Class trong module
 
@@ -20,28 +20,17 @@ last_updated: 2026-08-15
 classDiagram
     class Config {
         +provider: ProviderCfg
-        +embedding: EmbeddingCfg
         +mcpServers: dict
         +timeline: TimelineCfg
         +limits: LimitsCfg
         +to_dict() dict
     }
-    class ConfigIO <<module>> {
-        +load(path) Config
-        +ensure_default(path) Config
-        +save(config, path) void
-    }
     class ProviderCfg {
         +baseUrl: str
         +apiKeyEnv: str
         +model: str
-        +apiKey() str
-    }
-    class EmbeddingCfg {
-        +provider: local|openai
-        +model: str
-        +baseUrl: str
-        +apiKeyEnv: str
+        +apiKey: str | None = None  # repr=False
+        +api_key() str
     }
     class TimelineCfg {
         +timezone: str
@@ -51,29 +40,29 @@ classDiagram
         +hotTailKB: int
         +contextTokens: int
     }
-    ConfigIO --> Config
     Config --> ProviderCfg
-    Config --> EmbeddingCfg
     Config --> TimelineCfg
     Config --> LimitsCfg
 ```
 
+> Module-level API (`load`/`ensure_default`/`save`) là `ConfigIO` ẩn: chúng là hàm trong `thyca/config.py`, không phải class.
+
+> `EmbeddingCfg` đã gỡ khỏi config cùng embedding runtime (580ae03). Không còn `embedding` section trong JSON.
+
 ## Contract
 
-**Đọc ở `~/.thyca` — đúng.** `thyca/config.py` chỉ đọc `Path.home() / ".thyca" / "config.json"` (không đọc cwd, không đọc `./config.json`). Các service khác không tự `open()`, chỉ nhận `Config` injected: `LLMClient(cfg.provider)`, `MCPManager(cfg.mcpServers)`. Ghi cũng chỉ qua `config.py`.
+**Đọc ở `~/.thyca` — đúng.** `thyca/config.py` chỉ đọc `Path.home() / ".thyca" / "config.json"` (không đọc cwd, không đọc `./config.json`). Các service khác không tự `open()`, chỉ nhận `Config` injected: `Connect/OpenAIChat(cfg.provider)`, `MCPManager(cfg.mcpServers)`. Ghi cũng chỉ qua `config.py`.
 
 `~/.thyca/config.json`:
 ```json
 {
   "provider": { "baseUrl": "https://api.openai.com/v1", "apiKeyEnv": "OPENAI_API_KEY", "model": "gpt-4o-mini" },
-  "embedding": { "provider": "local", "model": "harrier-q4", "baseUrl": null, "apiKeyEnv": null },
   "mcpServers": { "echo": { "command": "python", "args": ["-m", "examples.echo"], "env": {} } },
   "timeline": { "timezone": "Asia/Ho_Chi_Minh" },
   "limits": { "loopMax": 10, "hotTailKB": 4, "contextTokens": 32000 }
 }
 ```
-- `ProviderCfg.api_key()` lấy `provider.apiKey` trong JSON trước; trống thì đọc `os.environ[apiKeyEnv]`. `apiKey` không hiện trong `repr`.
-- `embedding.provider="openai"` yêu cầu `baseUrl` và `apiKeyEnv` không rỗng. `provider="local"` không yêu cầu API key; model files được quản bởi L2 model contract.
+- `ProviderCfg.api_key()` lấy `provider.apiKey` trong JSON trước; trống thì đọc `os.environ[apiKeyEnv]`. `apiKey` không hiện trong `repr` (field `repr=False`).
 - Thiếu file → `ensure_default()` tạo `~/.thyca/config.json` default, không giả vờ đã có lệnh `thyca init`.
 - `pyproject.toml` flat `packages = ["thyca"]` như `another-brain` (không `src/`).
 - Ghi: `filelock` fail-closed; lock timeout/error trả `ConfigError`, không ghi không-lock. Temp cùng thư mục được mode 0600 trước `os.replace()`; custom test path không tạo side-effect ở `~/.thyca`.
@@ -91,7 +80,7 @@ Xong khi: `thyca --help` chạy; thiếu `~/.thyca/config.json` tự tạo defau
 
 - Thiếu file → tạo default, load lại pass schema.
 - LLM `apiKeyEnv` set/missing → `api_key()` trả đúng / lỗi rõ.
-- Embedding local hợp lệ không cần key; embedding OpenAI bắt buộc `baseUrl` + `apiKeyEnv` và resolve key tại call time.
+- Embedding config validation (`embedding.provider="openai"` cần baseUrl/apiKeyEnv) — đã gỡ cùng embedding runtime (580ae03).
 - Sai JSON type (null/list/number thay string, bool thay int), invalid timezone/limits/MCP shape → `ConfigError`, không coerce hoặc leak raw `ValueError`.
 - Default home giữ mode directory 0700 và config 0600; failure to enforce permissions is an error.
 - Save/load roundtrip, custom path không tạo default-home side effect, và lock failure không ghi fail-open.

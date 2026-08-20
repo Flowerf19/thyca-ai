@@ -1,7 +1,7 @@
 ---
-status: draft
+status: in-progress
 created: 2026-08-14
-last_updated: 2026-08-15
+last_updated: 2026-08-20
 ---
 
 # Service — Tools (`thyca/tools/registry.py` + `thyca/tools/builtin/`)

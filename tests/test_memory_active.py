@@ -23,6 +23,8 @@ def test_ensure_creates_missing_and_keeps_existing(tmp_path: Path) -> None:
     memory.ensure_files(at("2026-08-17"))
     assert soul.read_text(encoding="utf-8") == "# existing soul\n"
     assert (tmp_path / "USER.md").is_file()
+    assert (tmp_path / "IDENTITY.md").is_file()
+    assert "Thyca" in (tmp_path / "IDENTITY.md").read_text(encoding="utf-8")
     assert (tmp_path / "MEMORY.md").is_file()
     assert (tmp_path / "memory" / "2026-08-17.md").is_file()
     assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700

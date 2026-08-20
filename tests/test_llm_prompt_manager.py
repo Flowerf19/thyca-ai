@@ -12,20 +12,30 @@ def _hot(**overrides: str) -> ActiveSnapshot:
     return ActiveSnapshot(**base)
 
 
-def test_build_order_and_rules() -> None:
-    text = PromptManager().build(_hot())
-    assert text == (
-        "<role>\nsoul-text\n</role>\n"
-        "<user>\nuser-text\n</user>\n"
-        "<memory>\nmem-text\n</memory>\n"
-        "<today>\ntoday-text\n</today>\n"
-        "<rules>\n"
-        f"{PromptManager().rules_section()}\n"
-        "</rules>"
-    )
+def test_build_order_identity_then_custom_soul() -> None:
+    manager = PromptManager()
+    text = manager.build(_hot())
+    identity = manager.template("identity")
+    assert text.startswith(f"<identity>\n{identity}\n</identity>\n<role>\nsoul-text\n</role>\n")
+    assert "<user>\nuser-text\n</user>" in text
+    assert text.index("<identity>") < text.index("<role>") < text.index("<user>")
+    assert text.index("<memory>") < text.index("<today>") < text.index("<rules>")
     assert "~/.thyca" in text
-    assert "memory_remember" in text
-    assert "memory_search" in text
+    assert "Thyca" in identity
+
+
+def test_live_identity_wins_over_template() -> None:
+    text = PromptManager().build(_hot(identity="# Identity\nName: Live\n"))
+    assert "Name: Live" in text
+    assert "Name: Thyca" not in text
+
+
+def test_stub_soul_uses_packaged_template_and_omits_stub_user() -> None:
+    text = PromptManager().build(_hot(soul="# Soul\n", user="# User\n"))
+    assert "<identity>" in text
+    assert "You are Thyca" in text
+    assert "Name: Thyca" in text
+    assert "<user>" not in text
 
 
 def test_yesterday_only_when_present() -> None:

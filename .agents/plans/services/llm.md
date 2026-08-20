@@ -73,7 +73,7 @@ classDiagram
 
 ## Contracts
 
-- `PromptManager.build(hot)` được gọi trước mỗi user turn với canonical files + today đã refresh; yesterday lấy từ session-day state. Tool-result rounds trong cùng user turn reuse system prompt đó. `hot.yesterday` rỗng thì bỏ section.
+- `PromptManager.build(hot)`: luôn nhét `prompts/identity.md`. `hot.soul` stub (`# Soul`) thì dùng `prompts/soul.md`. `hot.user` stub thì bỏ `<user>`. Yesterday rỗng thì bỏ section.
   ```
   <role> SOUL.md </role>
   <user> USER.md </user>

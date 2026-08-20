@@ -33,6 +33,9 @@ class ChatUi:
     def error(self, text: str) -> None:
         print(self._paint(_RED, f"thyca: {text}"), file=self._err)
 
+    def debug(self, text: str) -> None:
+        print(self._paint(_DIM, f"debug {text}"), file=self._err)
+
     def goodbye(self) -> None:
         print(file=self._out)
 

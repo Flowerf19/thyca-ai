@@ -512,7 +512,7 @@ Thyca owns its manifest; it must not import another project's runtime manifest. 
 | ID | Task | Done | Date |
 |----|------|------|------|
 | TASK-101 | Implement contract `memory_search(query: str, semantic: bool=False, limit: int=5, timeline_day: str|None=None) -> SearchResult`. `semantic=false` = FTS+trigram; `semantic=true` = lexical+vector+RRF. Return leaf Hits + warnings/meta, no confidence, no eager siblings. Tool description teaches lexical-first, paraphrase second, and `memory_get(session_id)` expansion | | |
-| TASK-102 | Implement `memory_remember(topic, summary, content="", target="daily")`: explicit target enum, generated stable entry ID/timestamp, locked append or atomic canonical rewrite. Builtin write/edit block all `~/.thyca` paths | | |
+| TASK-102 | Implement `memory_remember(topic, summary, content="", target="daily")`: explicit target enum, generated stable entry ID/timestamp, locked append or atomic canonical rewrite. ~~Builtin write/edit block all `~/.thyca` paths~~ — **superseded 2026-08-20**: PathGuard chỉ L2 + session + config; xem `services/tools.md` TASK-310/325 | | |
 | TASK-103 | Sync master/architecture/decision docs: supersede one-file FTS contract, lock L2 hybrid, canonical lifecycle and remember-only ownership | ✅ | 2026-08-15 |
 
 Xong khi: schemas của `SearchResult/Hit/memory_get/memory_remember` có test; explicit target hoạt động; two concurrent remembers preserve both entries; every builtin path form dưới `~/.thyca` bị chặn.

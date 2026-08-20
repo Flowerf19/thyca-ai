@@ -107,6 +107,16 @@ def test_repl_eof_exits_0(tmp_path: Path) -> None:
     assert llm.requests[0][-1].content == "hello"
 
 
+def test_debug_prints_prompt_flags(tmp_path: Path) -> None:
+    cli, _out, err = _cli(tmp_path, FakeLLM(ChatReply(content="ok")))
+    assert cli.main(["--debug", "-p", "hi"]) == 0
+    dbg = err.getvalue()
+    assert "debug " in dbg
+    assert "soul=True" in dbg
+    assert "identity=True" in dbg
+    assert "tools=7" in dbg
+
+
 def test_print_llm_error_is_safe(tmp_path: Path) -> None:
     class Boom:
         async def chat(self, messages, tools=None):

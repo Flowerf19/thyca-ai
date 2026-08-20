@@ -92,7 +92,7 @@ Class tổng giữa module **dùng activity này**, không vẽ class tổng. Cl
 | 2 | **Session** | `services/session.md` | JSONL `sessions/*.jsonl` trong `thyca/sessions/` (4 class SOLID), `create/load/append`, `--continue`, compaction rule-based | ✅ done 2026-08-17 (TASK-303a-d) |
 | 3 | **Memory** | `services/memory.md` | Active prompt window: `ActiveMemory` + `ActiveSnapshot`, tail 4KB, day-rollover hook | ✅ done 2026-08-17 (TASK-304) |
 | 4 | **LLM** | `services/llm.md` | `ConnectFactory` → `Connect` (`OpenAIChat` chạy `/chat/completions`; Responses/Google/Anthropic stub) + `PromptManager` | ✅ done 2026-08-20 (TASK-307/308) |
-| 5 | **Tools** | `services/tools.md` | `ToolRegistry` + builtin `read/write/edit/bash/web_search` + guard `~/.thyca` | ☐ in-progress 2026-08-20 |
+| 5 | **Tools** | `services/tools.md` | Registry + read/write/edit + `memory_*`. Guard L2/session/config. bash/web MCP sau | ✅ done 2026-08-20 (309/310/324–326; 311 abandoned) |
 | 6 | **MCP** | `services/mcp.md` | stdio spawn, `server__tool` prefix, lifecycle, fault tolerance | ☐ draft |
 | 7 | **Agent Loop** | `services/agent-loop.md` | bốn pha + `Stage` + CLI REPL/`-p` | ✅ done 2026-08-20 (TASK-317/321/322) |
 | — | **Archived (L2)** | `l2-memory-retrieval.md` | Lexical (FTS5 + trigram) + TTL lifecycle + facade: code xong 2026-08-17; embedding runtime gỡ 580ae03 — hybrid giữ frozen trong plan | ✅ lexical 2026-08-17 (GOAL-002); GOAL-006 2026-08-17; vector/RRF draft |

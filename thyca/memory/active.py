@@ -14,11 +14,23 @@ from thyca.memory.heading import is_session_heading, strip_heading_comments
 
 _FENCE_RE = re.compile(r"^```", re.MULTILINE)
 
-_TEMPLATES = {
-    "SOUL.md": "# Soul\n",
-    "USER.md": "# User\n",
-    "MEMORY.md": "# Memory\n",
-}
+_PACKAGED_PROMPTS = Path(__file__).resolve().parents[1] / "llm" / "prompts"
+
+
+def _packaged(name: str, fallback: str) -> str:
+    path = _PACKAGED_PROMPTS / f"{name}.md"
+    if path.is_file():
+        return path.read_text(encoding="utf-8")
+    return fallback
+
+
+def _default_files() -> dict[str, str]:
+    return {
+        "SOUL.md": _packaged("soul", "# Soul\n"),
+        "IDENTITY.md": _packaged("identity", "# Identity\n"),
+        "USER.md": "# User\n",
+        "MEMORY.md": "# Memory\n",
+    }
 
 
 class ActiveMemoryError(RuntimeError):
@@ -40,6 +52,7 @@ class ActiveSnapshot:
     memory: str
     today: str
     yesterday: str
+    identity: str = ""
 
 
 class ActiveMemory:
@@ -68,7 +81,7 @@ class ActiveMemory:
     def ensure_files(self, now: datetime | None = None) -> None:
         self._secure_dir(self.thyca_dir)
         self._secure_dir(self.memory_dir)
-        for name, template in _TEMPLATES.items():
+        for name, template in _default_files().items():
             self._create_if_missing(self.thyca_dir / name, template)
         day = self._day(now or self._now())
         self._create_if_missing(self._daily_path(day), f"# {day}\n")
@@ -103,6 +116,7 @@ class ActiveMemory:
                 self.on_day_close(closed)
         return ActiveSnapshot(
             soul=self._read(self.thyca_dir / "SOUL.md"),
+            identity=self._read(self.thyca_dir / "IDENTITY.md"),
             user=self._read(self.thyca_dir / "USER.md"),
             memory=self._tail(self._read(self.thyca_dir / "MEMORY.md")),
             today=self._tail(self._read(state.today_path)),

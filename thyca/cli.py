@@ -19,19 +19,14 @@ from thyca.chat_ui import ChatUi
 from thyca.config import ConfigError, load
 from thyca.llm.llm_factory import ConnectFactory
 from thyca.llm.llm_base import LLMError
+from thyca.llm.prompt_manager import PromptManager
 from thyca.memory.active import ActiveMemory
-from thyca.protocol import ToolCall, ToolResult
 from thyca.sessions import SessionError, SessionManager, SessionNotFound
-
-
-class _NoTools:
-    async def dispatch(self, call: ToolCall) -> ToolResult:
-        return ToolResult(
-            tool_call_id=call.id,
-            name=call.name,
-            content=f"unknown tool: {call.name}",
-            is_error=True,
-        )
+from thyca.tools.builtin import register_file_tools
+from thyca.tools.memory import MemoryFacade
+from thyca.tools.memory_tools import register_memory_tools
+from thyca.tools.path_guard import PathGuard
+from thyca.tools.registry import ToolRegistry
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -41,6 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--continue", dest="cont", action="store_true", help="continue last session")
     parser.add_argument("--session", type=str, default=None, help="session id")
     parser.add_argument("--model", type=str, default=None, help="override model for this request")
+    parser.add_argument("--debug", action="store_true", help="print prompt/session diagnostics on stderr")
     parser.add_argument("prompt", nargs="*", help="prompt for -p mode")
     return parser
 
@@ -119,17 +115,33 @@ class Cli:
         zone = ZoneInfo(cfg.timeline.timezone)
         state = memory.open_session(datetime.now(zone))
         connect = self._connect or ConnectFactory.create("openai_chat", provider)
+        registry = ToolRegistry()
+        register_file_tools(registry, PathGuard(root))
+        register_memory_tools(
+            registry, MemoryFacade(root, timezone_name=cfg.timeline.timezone)
+        )
+        schema = registry.to_openai_schema()
         loop = AgentLoop(
             sessions=sessions,
             assemble=Assemble(),
             think=Think(connect),
-            act=Act(_NoTools()),
+            act=Act(registry),
             observe=Observe(sessions),
             loop_max=cfg.limits.loopMax,
+            tools=schema,
         )
+
+        prompts = PromptManager()
 
         async def turn(text: str) -> str:
             hot = memory.refresh(state, datetime.now(zone))
+            if args.debug:
+                system = prompts.build(hot)
+                ui.debug(
+                    f"session={sessions.current.id} model={provider.model} "
+                    f"identity={('Name: Thyca' in system)} soul={('You are Thyca' in system)} "
+                    f"user={'<user>' in system} tools={len(schema)} system_chars={len(system)}"
+                )
             return await loop.run(text, hot=hot)
 
         try:

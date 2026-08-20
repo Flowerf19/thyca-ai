@@ -6,22 +6,39 @@ from thyca.memory.active import ActiveSnapshot
 
 _PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 _TEMPLATE_NAMES = frozenset({"soul", "identity"})
+_STUB_SOUL = frozenset({"", "# Soul"})
+_STUB_IDENTITY = frozenset({"", "# Identity"})
+_STUB_USER = frozenset({"", "# User"})
 
 _RULES = (
-    "Use memory_remember to persist facts; do not write or edit under ~/.thyca.\n"
-    "memory_search is lexical-first (semantic=false); paraphrase then retry semantic only if needed.\n"
-    "If search returns nothing, say so. Do not invent memories."
+    "Use memory_remember only for daily or MEMORY.md (L2 bullets).\n"
+    "Update SOUL.md, IDENTITY.md, and USER.md with write/edit.\n"
+    "Do not write or edit L2 daily files, MEMORY.md, sessions, or config.json under ~/.thyca.\n"
+    "memory_search is lexical-first. If search returns nothing, say so. Do not invent memories."
 )
 
 
 class PromptManager:
     def build(self, hot: ActiveSnapshot) -> str:
+        soul = hot.soul.strip()
+        if soul in _STUB_SOUL:
+            soul = self.template("soul")
+        identity = hot.identity.strip()
+        if identity in _STUB_IDENTITY:
+            identity = self.template("identity")
+        user = hot.user.strip()
         parts = [
-            _section("role", hot.soul),
-            _section("user", hot.user),
-            _section("memory", hot.memory),
-            _section("today", hot.today),
+            _section("identity", identity),
+            _section("role", soul),
         ]
+        if user not in _STUB_USER:
+            parts.append(_section("user", hot.user))
+        parts.extend(
+            [
+                _section("memory", hot.memory),
+                _section("today", hot.today),
+            ]
+        )
         if hot.yesterday:
             parts.append(_section("yesterday", hot.yesterday))
         parts.append(_section("rules", self.rules_section()))

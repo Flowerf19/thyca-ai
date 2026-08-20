@@ -98,7 +98,7 @@ Không có ba kho. Session = hội thoại đang chạy. Markdown = nhớ bền.
 | **Nóng** | `SOUL.md` + `USER.md` + `MEMORY.md` | Mỗi lượt, phải ngắn |
 | **Nóng (mở session)** | thêm `memory/YYYY-MM-DD.md` hôm nay (+ hôm qua nếu có) | Một lần lúc start / `--continue` |
 | **Lạnh** | L2 hybrid trên markdown ở `~/.thyca`: FTS5 + trigram mặc định; vector/RRF khi `semantic=true` | Tool `memory_search` / `memory_recent` / `memory_get` |
-| **Ghi** | `memory_remember` là writer duy nhất cho memory files; `write`/`edit` bị chặn dưới `~/.thyca` | Daily = mặc định, *append*. `USER`/`MEMORY`/`SOUL` = hiếm, *sửa tại chỗ* |
+| **Ghi** | L2 (`memory/ngày.md`, `MEMORY.md`) chỉ `memory_remember`. `write`/`edit` cấm L2 + session + config; **được** SOUL/IDENTITY/USER | Daily/MEMORY = heading+bullet. USER/SOUL/IDENTITY = persona/hồ sơ, không bullet |
 
 File luôn-có (giữ ít):
 
@@ -120,7 +120,7 @@ Luật:
 - File md là nguồn. sqlite chỉ index. Xóa md → hết hit.
 - Nhớ là claim. Search không hit → nói không nhớ, không bịa.
 - Đổi ý: sửa dòng cũ trong `USER.md`/`MEMORY.md`, không chồng mâu thuẫn.
-- `memory_remember` mặc định append daily. `target=user|memory|soul` chỉ khi user bảo nhớ bền hoặc đó là hồ sơ/quyết định.
+- `memory_remember` chỉ `daily` / `memory` (L2). Hồ sơ/persona: `write`/`edit` `USER.md` / `SOUL.md` / `IDENTITY.md`.
 
 Sao another-brain ở **mặt tool** (`search`, `recent`, `get`, `remember`). L2 v1 giữ cùng surface `memory_*`, nhưng engine là leaf-level FTS5 + trigram + vector/RRF. Agent tự quyết lần gọi semantic thứ hai; không có prefetch hay auto-fallback ngầm.
 

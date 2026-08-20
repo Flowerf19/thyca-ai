@@ -1,23 +1,39 @@
 ---
-status: in-progress
+status: done
 created: 2026-08-14
 last_updated: 2026-08-20
 ---
 
 # Service — Tools (`thyca/tools/registry.py` + `thyca/tools/builtin/`)
 
-> 5/7. Thuộc `thyca-agent-architecture.md`. Chỉ code khi bạn duyệt `status: in-progress`.
+> 5/7. Thuộc `thyca-agent-architecture.md`.
+>
+> **Review 2026-08-20:** đổi guard + tách 3 kho nhớ. Chưa code TASK-309+ cho đến khi bạn chốt. Sau duyệt: sub-agent theo từng TASK, không gộp.
 
 ## Summary
 
-Registry chuyển canonical `ToolCall` thành OpenAI schema/async dispatch. Builtins gồm `read/write/edit/bash/web_search`; `write/edit` chặn `~/.thyca`. Read-only calls được parallel; mutating calls serialize theo resource key.
+Registry biến `ToolCall` → schema OpenAI + `dispatch`. Hai họ tool:
+
+1. **CRUD / máy:** `read` `write` `edit` `bash` `web_search`
+2. **Memory L2:** `memory_remember` `memory_search` `memory_recent` `memory_get` (facade đã có)
+
+Ba kho nhớ **không trộn format**:
+
+| Kho | File | Ai ghi | Format |
+|-----|------|--------|--------|
+| L2 daily / MEMORY | `memory/YYYY-MM-DD.md`, `MEMORY.md` | chỉ `memory_remember` | heading + bullet |
+| User | `USER.md` | CRUD `write`/`edit` | hồ sơ, **không** bullet L2 |
+| Soul / Identity | `SOUL.md`, `IDENTITY.md` | CRUD `write`/`edit` | persona, **không** bullet L2 |
+
+`write`/`edit` **cấm** L2 + `sessions/` + `config.json` + `memory.sqlite`. **Được** `SOUL.md` / `IDENTITY.md` / `USER.md` và mọi path ngoài các file đó.
+
+Code lệch: `MemoryFacade.remember(target="soul"|"user")` đang append `- summary` — sửa ở TASK-325 (reject hoặc bỏ target; không bullet).
 
 ## Class trong module
 
 ```mermaid
 classDiagram
     class ToolRegistry {
-        +specs: ToolSpec[]
         +register(spec) void
         +to_openai_schema() dict[]
         +async dispatch(call: ToolCall) ToolResult
@@ -30,26 +46,14 @@ classDiagram
         +resource_key(args) str | None
         +async handler(args) str | ToolResult
     }
-    class ToolResult {
-        <<from thyca.protocol>>
-        +tool_call_id: str
-        +name: str
-        +content: str
-        +is_error: bool
-        +meta: dict
-    }
-    class BuiltinTools {
-        +read(path) str
-        +write(path, content) str
-        +edit(path, edits) str
-        +bash(cmd, timeout) str
-        +webSearch(query, count) str
-        +guardThyca(path) void
+    class PathGuard {
+        +deny_write(path) void
     }
     ToolRegistry --> ToolSpec
-    ToolSpec --> ToolResult
-    BuiltinTools --> ToolSpec
+    PathGuard ..> ToolSpec
 ```
+
+`ToolCall` / `ToolResult` chỉ ở `thyca/protocol.py`. `MemoryFacade` đã ở `thyca/tools/memory.py` — đăng ký, không viết lại.
 
 ## Contracts
 
@@ -60,34 +64,70 @@ async def edit(path: str, edits: list[dict[str, str]]) -> str: ...
 async def bash(command: str, timeout: int = 30) -> str: ...
 async def web_search(query: str, count: int = 5) -> str: ...
 ```
-- `ToolRegistry.dispatch(call)` là async duy nhất. Nó validate JSON schema/arguments, giữ `call.id`, catch expected tool errors, cap result và luôn trả canonical `ToolResult`; handler không tự invent `tool_call_id`.
-- `resource_key(args)` trả canonical key cho file/memory/server. Registry luôn lock các calls cùng key, kể cả read-vs-write; calls khác key vẫn overlap. Tool không có key chỉ được overlap khi `parallel_safe=True`; MCP mặc định dùng per-server key vì MCP schema không khai báo side effect.
-- `write/edit` expand `~`, resolve parent/target và reject mọi resolved path dưới `Path.home()/".thyca"`; symlink escape test bắt buộc. Internal memory/config/session writers không đi qua builtin này. Ngoài vùng `~/.thyca`, v1 vẫn cho path absolute hoặc relative như product spec.
-- `edit` yêu cầu mỗi `oldText` match đúng một non-overlapping region; mismatch không ghi file. Write/edit dùng temp+replace khi thay cả file.
-- `bash`: POSIX, `cwd=os.getcwd()`, timeout kill process group, cap combined stdout/stderr tail 20KB, giữ exit code/timed_out trong meta.
-- `web_search`: Tavily qua `httpx` nếu `TAVILY_API_KEY` có; thiếu key trả typed tool error, không giả kết quả. `count` clamp 1..10; normalize title/url/snippet và cap response.
-- `to_openai_schema()`: `[{type:"function", function:{name, description, parameters}}]`; schema phải có required/additionalProperties rõ cho từng tool.
+
+- `dispatch`: validate args, giữ `call.id`, cap result, luôn `ToolResult`; handler không invent `tool_call_id`.
+- `resource_key`: lock cùng key (kể cả read-vs-write). Không key → chỉ overlap khi `parallel_safe=True`.
+- **PathGuard (write/edit):** expand `~`, resolve, chặn symlink thoát. Deny nếu resolved path là:
+  - `~/.thyca/config.json`
+  - dưới `~/.thyca/sessions/`
+  - `~/.thyca/memory.sqlite` (và `-wal`/`-shm`)
+  - dưới `~/.thyca/memory/` (daily L2)
+  - `~/.thyca/MEMORY.md`
+- Allow: `~/.thyca/SOUL.md`, `IDENTITY.md`, `USER.md`; cwd; `/tmp`; path tuyệt đối khác.
+- `read` được đọc L2 (không ghi).
+- `edit`: mỗi `oldText` đúng một vùng không chồng; mismatch không ghi. Write/edit = temp+replace.
+- `bash`: POSIX, `cwd=getcwd()`, timeout giết process group, cap 20KB, meta exit/timed_out. **Không** sandbox — `bash` có thể lách PathGuard; chấp nhận v1.
+- `web_search`: Tavily + `TAVILY_API_KEY`; thiếu key = tool error; `count` 1..10.
+- `memory_remember` v1: `target` chỉ `daily` | `memory`. `user`/`soul` → lỗi rõ, không append.
+- `to_openai_schema()`: `{type:function, function:{name,description,parameters}}` + required/additionalProperties.
+- CLI: `stage.tools = registry.to_openai_schema()`; `Act` dùng `registry.dispatch`. Bỏ `_NoTools`.
+- `PromptManager.rules_section` đổi cho khớp guard (được sửa SOUL/USER/IDENTITY; cấm L2/session/config).
 
 ## Tasks
 
+### GOAL-001: Registry
+
 | ID | Task | Done | Date |
 |----|------|------|------|
-| TASK-309 | `thyca/protocol.py` + `tools/registry.py`: canonical types, ToolSpec, OpenAI schema, async dispatch, error/result caps | | |
-| TASK-310 | `thyca/tools/builtin/read.py + write.py + edit.py + bash.py`: impl, protected-home guard, atomic edit/write, resource locks, bash timeout/process-group cleanup | | |
-| TASK-311 | `thyca/tools/builtin/web_search.py`: Tavily request/normalization, missing-key error | | |
+| TASK-309 | `tools/registry.py`: ToolSpec, schema, async dispatch, cap, lock theo resource_key. `protocol.py` đã có types — không định nghĩa lại | x | 2026-08-20 |
 
-Xong khi: schema đúng; canonical call ID đi xuyên dispatch; read-only calls parallel; two writes cùng resource serialize; two memory writes không mất dữ liệu; protected-home bypass bị chặn; bash timeout không để child process sống; web search thiếu key/lỗi HTTP trả tool error.
+### GOAL-002: Builtin CRUD / máy
+
+| ID | Task | Done | Date |
+|----|------|------|------|
+| TASK-310 | `read`/`write`/`edit` + PathGuard. ~~`bash`~~ bỏ — phức tạp, để sau | x | 2026-08-20 |
+| TASK-311 | ~~`web_search` Tavily~~ — **abandoned 2026-08-20**: web search qua MCP sau | | 2026-08-20 |
+
+### GOAL-003: Memory tools + sửa remember
+
+| ID | Task | Done | Date |
+|----|------|------|------|
+| TASK-324 | Đăng ký facade: `memory_remember/search/recent/get` vào registry | x | 2026-08-20 |
+| TASK-325 | `remember`: chỉ `daily`/`memory`. Bỏ/reject `user`/`soul` (không còn append bullet vào SOUL/USER) | x | 2026-08-20 |
+
+### GOAL-004: Nối loop
+
+| ID | Task | Done | Date |
+|----|------|------|------|
+| TASK-326 | Cli/Act dùng registry; `--debug` in `tools=N` thật; rules_section khớp guard | x | 2026-08-20 |
+
+Xong khi: schema + id xuyên suốt; write SOUL ok; write daily/MEMORY/session/config bị chặn (kể cả `~` / `..` / symlink); `remember(target="soul")` lỗi; hai write cùng file serialize; bash timeout sạch; Tavily mock; `thyca --debug` `tools>0`.
 
 ## Test Plan
 
-- OpenAI schema shape + invalid/extra arguments.
-- `ToolResult.tool_call_id == ToolCall.id` cho success/error/malformed arguments.
-- Protected-home guard: `~`, absolute, `..`, symlink; non-memory `/tmp` path vẫn theo v1 contract.
-- Hai calls cùng key (read/write và write/write) serialize; calls khác key/read-only thật sự overlap; output order test ở agent loop.
-- Edit match zero/multiple/overlap không ghi một phần.
-- Bash stdout/stderr cap, exit code, timeout và child cleanup.
-- Tavily mocked success/empty/401/429/missing key; không dùng live web trong unit test.
+- Schema + args thừa/thiếu.
+- `ToolResult.tool_call_id == ToolCall.id` success/error.
+- Guard: deny daily, MEMORY.md, sessions, config, sqlite; allow SOUL/IDENTITY/USER và `/tmp`.
+- Symlink từ `/tmp` vào `memory/2026-08-20.md` → deny write.
+- `remember(target="user"|"soul")` raise; `daily` vẫn heading+bullet.
+- Hai write cùng path serialize; read khác path overlap.
+- Edit 0/nhiều/overlap match → không ghi dở.
+- Bash cap / exit / timeout.
+- Tavily mock; không live web.
 
 ## Assumptions
 
-- Không sandbox bash v1; Linux POSIX.
+- Không sandbox `bash` v1.
+- Linux POSIX.
+- `forget`/`reinforce` chưa đăng ký tool v1 (facade giữ, không schema).
+- MCP sau (`services/mcp.md` vẫn draft).

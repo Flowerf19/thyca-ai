@@ -5,6 +5,8 @@ import { state } from "./state.js";
 import { closeDrawer } from "./drawer.js";
 
 let modeGen = 0;
+let memoriesPoll = 0;
+let lastStatsJson = "";
 
 export function pageCard(page, index) {
   const selected = index === state.activePageIndex;
@@ -91,9 +93,12 @@ export async function renderMode(mode) {
   const gen = ++modeGen;
   state.activeMode = mode;
   state.activePageIndex = 0;
+  stopMemoriesPoll();
   if (mode === "memories") {
+    lastStatsJson = "";
     await hydrateMemories();
     if (gen !== modeGen) return;
+    startMemoriesPoll();
   }
   renderPage(state.activePageIndex);
   el.modeList.querySelectorAll(".mode-link").forEach((button) => {
@@ -104,22 +109,44 @@ export async function renderMode(mode) {
   });
 }
 
-async function hydrateMemories() {
+function startMemoriesPoll() {
+  stopMemoriesPoll();
+  memoriesPoll = window.setInterval(() => {
+    if (state.activeMode === "memories") void hydrateMemories({ keepPage: true });
+  }, 3000);
+}
+
+function stopMemoriesPoll() {
+  if (memoriesPoll) {
+    window.clearInterval(memoriesPoll);
+    memoriesPoll = 0;
+  }
+}
+
+async function hydrateMemories({ keepPage = false } = {}) {
   try {
-    const response = await fetch("/api/memory/stats");
+    const response = await fetch("/api/memory/stats", { cache: "no-store" });
     if (!response.ok) return;
     const stats = await response.json();
     if (typeof stats.total !== "number" || !Array.isArray(stats.leaves)) return;
+    const snapshot = JSON.stringify(stats);
+    if (snapshot === lastStatsJson) return;
+    lastStatsJson = snapshot;
+    const pages = pagesFromStats(stats);
     modes.memories = {
       label: "Memories",
       listLabel: "File md",
       kicker: "leaf · chỉ đếm get",
       note: "Search và inject nóng không tính. Không xóa từ đây.",
       chips: [],
-      pages: pagesFromStats(stats),
+      pages,
     };
     const count = el.modeList.querySelector('[data-mode="memories"] .mode-count');
     if (count) count.textContent = String(stats.total);
+    if (keepPage && state.activeMode === "memories") {
+      const index = Math.min(state.activePageIndex, Math.max(pages.length - 1, 0));
+      renderPage(index);
+    }
   } catch {
     /* static mock: no API */
   }

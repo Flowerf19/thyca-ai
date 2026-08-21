@@ -156,6 +156,17 @@ def test_get_still_slides_ttl(tmp_path: Path) -> None:
     assert meta.expires_at == "2026-09-05T12:00:00Z"
 
 
+def test_stats_sees_remember_from_other_facade(tmp_path: Path) -> None:
+    reader = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    reader.archive.reindex(at("2026-08-17"))
+    assert reader.stats(now=at("2026-08-17")).total == 0
+    writer = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    writer.remember("cafe", "likes ca phe den enough", target="memory", now=at("2026-08-17"))
+    stats = reader.stats(now=at("2026-08-17"))
+    assert stats.total == 1
+    assert stats.leaves[0].session_id.startswith("memory#")
+
+
 def test_v3_migrates_additive(tmp_path: Path) -> None:
     _closed_three(tmp_path)
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")

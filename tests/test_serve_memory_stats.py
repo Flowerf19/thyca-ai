@@ -56,6 +56,7 @@ def test_stats_json_and_static(tmp_path: Path) -> None:
         facade.get(session_id=sid, now=now)
         with urlopen(_url(httpd, "/api/memory/stats"), timeout=2) as response:
             assert response.headers.get_content_type() == "application/json"
+            assert "no-store" in (response.headers.get("Cache-Control") or "")
             payload = json.loads(response.read().decode("utf-8"))
         assert payload["total"] == 1
         assert payload["used"] == 1

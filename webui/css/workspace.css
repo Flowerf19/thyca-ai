@@ -443,6 +443,29 @@
   text-transform: uppercase;
 }
 
+.suggest-inline {
+  margin-block-start: var(--space-2xl);
+}
+
+.suggest-inline h3 {
+  margin: 0;
+  color: var(--color-ink);
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+
+.suggest-inline > p,
+.suggest-empty {
+  max-width: 45ch;
+  margin: var(--space-sm) 0 0;
+  color: var(--color-reading);
+  font-family: var(--font-reading);
+  font-size: var(--text-md);
+  line-height: 1.5;
+}
+
 .suggest-list {
   max-width: 42rem;
   margin: var(--space-xl) 0 0;

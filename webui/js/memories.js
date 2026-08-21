@@ -1,13 +1,9 @@
 export function pagesFromStats(stats) {
-  const pages = [
+  return [
     overviewPage(stats),
     ...filePages(stats.leaves || []),
     ...canonicalPages(stats.files || []),
   ];
-  if (stats.suggest_removal && stats.suggest_removal.length) {
-    pages.push(suggestPage(stats.suggest_removal));
-  }
-  return pages;
 }
 
 export function overviewPage(stats) {
@@ -15,6 +11,7 @@ export function overviewPage(stats) {
   const used = Number(stats.used) || 0;
   const unused = Number(stats.unused) || 0;
   const pct = total ? Math.round((used / total) * 100) : 0;
+  const suggest = stats.suggest_removal || [];
   return {
     title: "Tổng quan",
     date: `${total} leaf`,
@@ -34,6 +31,7 @@ export function overviewPage(stats) {
         </div>
         <div class="progress-label"><span>Đã get</span><strong>${used} / ${total}</strong></div>
         <div class="reading-progress"><span style="width:${pct}%"></span></div>
+        ${suggestBlock(suggest)}
       </div>`,
   };
 }
@@ -118,28 +116,21 @@ function leafEntry(leaf) {
     </article>`;
 }
 
-function suggestPage(rows) {
+function suggestBlock(rows) {
+  if (!rows.length) {
+    return `<div class="suggest-inline"><h3>Đề xuất loại bỏ</h3><p class="suggest-empty">Không có mem unused (trừ hôm nay).</p></div>`;
+  }
   const items = rows
     .map((leaf) => {
       const { topic } = splitHeading(leaf);
       return `<li><strong>${escapeHtml(topic)}</strong><span>${escapeHtml(leaf.snippet || "")}</span><small>${escapeHtml(leafSource(leaf))}</small></li>`;
     })
     .join("");
-  return {
-    title: "Đề xuất loại bỏ",
-    date: `${rows.length} unused`,
-    tag: "suggest",
-    tone: "memories",
-    kicker: "unused · không gồm hôm nay",
-    body: `<div class="book-reading">
-        <div class="book-meta">
-          <span class="book-author">Chưa từng get</span>
-          <h2>Đề xuất loại bỏ</h2>
-          <p>Chỉ gợi ý. Xóa bằng <code>memory_forget</code>, không phải từ trang này.</p>
-        </div>
-        <ul class="suggest-list">${items}</ul>
-      </div>`,
-  };
+  return `<div class="suggest-inline">
+      <h3>Đề xuất loại bỏ</h3>
+      <p>Chưa từng get, không gồm hôm nay. Chỉ gợi ý — không xóa từ đây.</p>
+      <ul class="suggest-list">${items}</ul>
+    </div>`;
 }
 
 function fileKey(leaf) {

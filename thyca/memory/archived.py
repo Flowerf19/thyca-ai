@@ -67,6 +67,7 @@ class ArchiveStore:
     def _connect(self, db_path: Path) -> sqlite3.Connection:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         db = sqlite3.connect(db_path, check_same_thread=False)
+        db.isolation_level = None
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA foreign_keys = ON")
         return db

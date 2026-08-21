@@ -1,7 +1,7 @@
 import { personaPages } from "./data.js";
 
 export function pagesFromStats(stats) {
-  const pages = [overviewPage(stats), ...stats.leaves.map(leafPage)];
+  const pages = [overviewPage(stats), ...filePages(stats.leaves || [])];
   if (stats.suggest_removal.length) {
     pages.push(suggestPage(stats.suggest_removal));
   }
@@ -37,37 +37,60 @@ export function overviewPage(stats) {
   };
 }
 
-function leafPage(leaf) {
-  const { time, topic } = splitHeading(leaf);
-  const count = Number(leaf.get_count) || 0;
-  const tag = leaf.is_today ? "today" : count ? "used" : "unused";
-  const source = leafSource(leaf);
-  const day = leaf.timeline_day || (leaf.is_today ? "hôm nay" : "");
+function filePages(leaves) {
+  const groups = new Map();
+  for (const leaf of leaves) {
+    const key = fileKey(leaf);
+    const list = groups.get(key);
+    if (list) list.push(leaf);
+    else groups.set(key, [leaf]);
+  }
+  return sortFileKeys([...groups.keys()]).map((key) => filePage(key, groups.get(key)));
+}
+
+function filePage(key, leaves) {
+  const used = leaves.filter((leaf) => Number(leaf.get_count) > 0).length;
+  const today = leaves.some((leaf) => leaf.is_today);
+  const tag = key === "MEMORY.md" ? "memory" : today ? "today" : "daily";
+  const entries = leaves
+    .slice()
+    .sort((a, b) => splitHeading(a).time.localeCompare(splitHeading(b).time) || a.chunk_id.localeCompare(b.chunk_id))
+    .map(leafEntry)
+    .join("");
   return {
-    title: escapeHtml(topic),
-    date: escapeHtml([day, count ? `${count} lần get` : "chưa get"].filter(Boolean).join(" · ")),
+    title: escapeHtml(key),
+    date: escapeHtml(`${leaves.length} leaf · ${used} đã get`),
     tag,
     tone: "memories",
-    kicker: escapeHtml(source),
+    kicker: escapeHtml(key),
     body: `<div class="book-reading">
         <div class="book-meta">
-          <span class="book-author">${escapeHtml(source)}</span>
-          <h2>${escapeHtml(topic)}</h2>
+          <span class="book-author">markdown</span>
+          <h2>${escapeHtml(key)}</h2>
+          <p>${leaves.length} mem trong file này.</p>
         </div>
-        <blockquote class="quote-note">
-          <p>${escapeHtml(leaf.snippet || "(trống)")}</p>
-          <cite>${escapeHtml([time, day].filter(Boolean).join(" · ") || leaf.chunk_id)}</cite>
-        </blockquote>
-        <dl class="mem-facts">
-          <dt>Nguồn</dt><dd>${escapeHtml(source)}</dd>
-          <dt>Ngày</dt><dd>${escapeHtml(day || "—")}</dd>
-          <dt>Giờ</dt><dd>${escapeHtml(time || "—")}</dd>
-          <dt>Get</dt><dd>${count}${leaf.last_get_at ? ` · cuối ${escapeHtml(fmtTs(leaf.last_get_at))}` : ""}</dd>
-          <dt>Hết hạn</dt><dd>${escapeHtml(fmtTs(leaf.expires_at) || "—")}</dd>
-          <dt>Id</dt><dd>${escapeHtml(leaf.chunk_id || "")}</dd>
-        </dl>
+        <div class="mem-day-list">${entries}</div>
       </div>`,
   };
+}
+
+function leafEntry(leaf) {
+  const { time, topic } = splitHeading(leaf);
+  const count = Number(leaf.get_count) || 0;
+  const day = leaf.timeline_day || (leaf.is_today ? "hôm nay" : "");
+  return `<article class="mem-entry">
+      <h3>${escapeHtml(topic)}</h3>
+      <blockquote class="quote-note">
+        <p>${escapeHtml(leaf.snippet || "(trống)")}</p>
+        <cite>${escapeHtml([time, day].filter(Boolean).join(" · ") || leaf.chunk_id)}</cite>
+      </blockquote>
+      <dl class="mem-facts">
+        <dt>Giờ</dt><dd>${escapeHtml(time || "—")}</dd>
+        <dt>Get</dt><dd>${count}${leaf.last_get_at ? ` · cuối ${escapeHtml(fmtTs(leaf.last_get_at))}` : ""}</dd>
+        <dt>Hết hạn</dt><dd>${escapeHtml(fmtTs(leaf.expires_at) || "—")}</dd>
+        <dt>Id</dt><dd>${escapeHtml(leaf.chunk_id || "")}</dd>
+      </dl>
+    </article>`;
 }
 
 function suggestPage(rows) {
@@ -92,6 +115,23 @@ function suggestPage(rows) {
         <ul class="suggest-list">${items}</ul>
       </div>`,
   };
+}
+
+function fileKey(leaf) {
+  if (String(leaf.session_id || "").startsWith("memory#")) return "MEMORY.md";
+  if (leaf.timeline_day) return `${leaf.timeline_day}.md`;
+  return "unknown.md";
+}
+
+function sortFileKeys(keys) {
+  return keys.sort((a, b) => {
+    const dayA = a.match(/^(\d{4}-\d{2}-\d{2})\.md$/);
+    const dayB = b.match(/^(\d{4}-\d{2}-\d{2})\.md$/);
+    if (dayA && dayB) return dayB[1].localeCompare(dayA[1]);
+    if (dayA) return -1;
+    if (dayB) return 1;
+    return a.localeCompare(b);
+  });
 }
 
 function splitHeading(leaf) {

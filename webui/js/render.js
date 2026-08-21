@@ -112,7 +112,7 @@ async function hydrateMemories() {
     if (typeof stats.total !== "number" || !Array.isArray(stats.leaves)) return;
     modes.memories = {
       label: "Memories",
-      listLabel: "Leaves",
+      listLabel: "File md",
       kicker: "leaf · chỉ đếm get",
       note: "Search và inject nóng không tính. Không xóa từ đây.",
       chips: [],

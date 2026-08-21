@@ -28,7 +28,7 @@ from thyca.memory.heading import (
     utc_now,
 )
 from thyca.memory.chunk import Chunk
-from thyca.memory.stats import MemoryStats, MemoryStatsResult
+from thyca.memory.stats import CanonicalFile, MemoryStats, MemoryStatsResult
 from thyca.memory.writer import MemoryWriter
 
 Target = Literal["daily", "memory"]
@@ -148,6 +148,7 @@ class MemoryFacade:
             self.archive.store.leaf_get_map(),
             today=self.archive.day(now),
             now_ts=now_ts,
+            files=self._canonical_files(),
         )
 
     def search(
@@ -184,6 +185,19 @@ class MemoryFacade:
         live = set(self.archive.store.chunk_ids())
         live.update(chunk.chunk_id for chunk in self._today_chunks(now))
         self.archive.store.keep_gets(live)
+
+    def _canonical_files(self) -> list[CanonicalFile]:
+        files: list[CanonicalFile] = []
+        for name in ("SOUL.md", "USER.md", "IDENTITY.md"):
+            path = self.thyca_dir / name
+            text = ""
+            if path.is_file() and not path.is_symlink():
+                try:
+                    text = path.read_text(encoding="utf-8")
+                except OSError:
+                    text = ""
+            files.append(CanonicalFile(name=name, content=text))
+        return files
 
     def _today_chunks(self, now: datetime | None) -> list[Chunk]:
         day = self.archive.day(now)

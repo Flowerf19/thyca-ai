@@ -1,11 +1,12 @@
-import { personaPages } from "./data.js";
-
 export function pagesFromStats(stats) {
-  const pages = [overviewPage(stats), ...filePages(stats.leaves || [])];
-  if (stats.suggest_removal.length) {
+  const pages = [
+    overviewPage(stats),
+    ...filePages(stats.leaves || []),
+    ...canonicalPages(stats.files || []),
+  ];
+  if (stats.suggest_removal && stats.suggest_removal.length) {
     pages.push(suggestPage(stats.suggest_removal));
   }
-  pages.push(...personaPages);
   return pages;
 }
 
@@ -72,6 +73,30 @@ function filePage(key, leaves) {
         <div class="mem-day-list">${entries}</div>
       </div>`,
   };
+}
+
+function canonicalPages(files) {
+  return files
+    .filter((file) => file && file.name)
+    .map((file) => {
+      const name = String(file.name);
+      const content = String(file.content || "");
+      return {
+        title: escapeHtml(name),
+        date: "inject cả file",
+        tag: "canonical",
+        tone: "memories",
+        kicker: escapeHtml(name),
+        body: `<div class="book-reading">
+            <div class="book-meta">
+              <span class="book-author">canonical · prompt</span>
+              <h2>${escapeHtml(name)}</h2>
+              <p>Nhét cả file mỗi lượt. Không đếm get.</p>
+            </div>
+            <pre class="mem-file">${escapeHtml(content.trim() || "(trống)")}</pre>
+          </div>`,
+      };
+    });
 }
 
 function leafEntry(leaf) {

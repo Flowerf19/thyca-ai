@@ -24,6 +24,12 @@ class LeafStat:
     is_today: bool = False
 
 
+@dataclass(frozen=True)
+class CanonicalFile:
+    name: str
+    content: str
+
+
 @dataclass
 class MemoryStatsResult:
     total: int
@@ -31,6 +37,7 @@ class MemoryStatsResult:
     unused: int
     leaves: list[LeafStat] = field(default_factory=list)
     suggest_removal: list[LeafStat] = field(default_factory=list)
+    files: list[CanonicalFile] = field(default_factory=list)
 
 
 class MemoryStats:
@@ -43,6 +50,7 @@ class MemoryStats:
         gets: dict[str, tuple[int, str]],
         today: str,
         now_ts: str,
+        files: list[CanonicalFile] | None = None,
     ) -> MemoryStatsResult:
         by_id: dict[str, LeafStat] = {}
         for row in archived:
@@ -67,6 +75,7 @@ class MemoryStats:
             unused=len(unused),
             leaves=leaves,
             suggest_removal=suggest,
+            files=list(files or ()),
         )
 
 

@@ -50,6 +50,9 @@ def test_inventory_excludes_persona_and_counts_unused(tmp_path: Path) -> None:
     }
     assert len(stats.suggest_removal) == 3
     assert all(not item.is_today for item in stats.suggest_removal)
+    assert [item.name for item in stats.files] == ["SOUL.md", "USER.md", "IDENTITY.md"]
+    assert "be concise" in stats.files[0].content
+    assert "Hòa" in stats.files[1].content
 
 
 def test_get_chunk_increments_and_path_search_do_not(tmp_path: Path) -> None:

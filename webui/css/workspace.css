@@ -503,6 +503,19 @@
   margin-block-start: var(--space-md);
 }
 
+.mem-file {
+  max-width: 42rem;
+  margin: var(--space-xl) 0 0;
+  padding: var(--space-lg) 0;
+  border-block-start: 2px solid var(--color-memory);
+  color: var(--color-reading);
+  font-family: var(--font-reading);
+  font-size: var(--text-lg);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .mem-facts {
   display: grid;
   grid-template-columns: 6.5rem 1fr;

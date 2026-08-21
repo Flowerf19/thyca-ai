@@ -18,13 +18,28 @@ Memory v1 đã được chốt là **L2 hybrid**: markdown dưới `~/.thyca` l�
 ## Quick start
 
 ```bash
+curl -LsSf https://raw.githubusercontent.com/Flowerf19/thyca-ai/main/install.sh | sh
+thyca --version
+```
+
+Đã có `uv`:
+
+```bash
+uv tool install --python 3.14 git+https://github.com/Flowerf19/thyca-ai.git
+```
+
+Upgrade: `uv tool upgrade thyca-ai` hoặc chạy lại `install.sh`.
+
+Lần chạy CLI đầu tiên tạo `~/.thyca/config.json` nếu file chưa tồn tại. `ProviderCfg.api_key()` lấy `provider.apiKey` trong JSON trước, trống thì đọc `apiKeyEnv`. Không commit `~/.thyca` hoặc secrets vào repo.
+
+### Development
+
+```bash
 uv sync
 uv run thyca --help
 uv run thyca --version
 uv run pytest -q
 ```
-
-Lần chạy CLI đầu tiên tạo `~/.thyca/config.json` nếu file chưa tồn tại. `ProviderCfg.api_key()` lấy `provider.apiKey` trong JSON trước, trống thì đọc `apiKeyEnv`. Không commit `~/.thyca` hoặc secrets vào repo.
 
 ## Configuration
 

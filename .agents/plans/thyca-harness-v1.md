@@ -1,7 +1,7 @@
 ---
 status: in-progress
 created: 2026-08-13
-last_updated: 2026-08-17
+last_updated: 2026-08-21
 ---
 
 # Thyca v1 — personal assistant harness
@@ -245,6 +245,14 @@ Xong khi: lexical bắt accent/typo; semantic bắt paraphrase ở ngày đã đ
 
 Xong khi: dùng được như chat hàng ngày trên Linux, không nổ khi session dài vừa phải.
 
+### GOAL-008: Cài `thyca` lên PATH từ git
+
+| ID | Task | Done | Date |
+|----|------|------|------|
+| TASK-018 | `install.sh` POSIX ở root, pipe-safe (không dùng `$0`/cwd repo), Linux. Thiếu `uv` thì bootstrap `curl -LsSf https://astral.sh/uv/install.sh \| sh`. `uv python install 3.14`. `uv tool install --python 3.14 --force "${THYCA_GIT:-git+https://github.com/Flowerf19/thyca-ai.git}"` → `thyca` trong `$(uv tool dir --bin)` (thường `~/.local/bin`). Bin chưa nằm PATH: `uv tool update-shell` + in `export PATH=...` cho shell hiện tại. In `thyca --version`, không mở REPL, không ghi secret. README Quick start one-liner: `curl -LsSf https://raw.githubusercontent.com/Flowerf19/thyca-ai/main/install.sh \| sh`. Đã có uv: `uv tool install --python 3.14 git+https://github.com/Flowerf19/thyca-ai.git`. Upgrade: `uv tool upgrade thyca-ai` hoặc chạy lại script | x | 2026-08-21 |
+
+Xong khi: máy Linux không clone repo, one-liner xong gõ `thyca --version` ra `thyca 0.1.0` (không `uv run`, không SSH).
+
 ## Test Plan
 
 Unit/integration test chạy bằng `pytest`; mỗi GOAL còn phải có bằng chứng chạy tay cho boundary thật (LLM/MCP/model) ghi vào commit hoặc review note.
@@ -255,6 +263,7 @@ Unit/integration test chạy bằng `pytest`; mỗi GOAL còn phải có bằng 
 - GOAL-005: 4 file tồn tại sau first run (SOUL/USER/MEMORY/daily); remember mặc định đổi daily; remember target user đổi `USER.md`; prompt lượt sau chứa nội dung nóng mới.
 - GOAL-006: chạy toàn bộ test plan của `l2-memory-retrieval.md`, gồm schema smoke test, canonical files, lexical/semantic, profile invalidation và missing-model fallback.
 - GOAL-007: session cắt khi dài; `--model` đổi model trong config override.
+- GOAL-008: sau `install.sh`, `command -v thyca` trỏ `$(uv tool dir --bin)/thyca`; `thyca --version` không cần cwd repo; chạy lại script không hỏng. Evidence tay (cần mạng + git).
 
 Unit/integration tests không cần live LLM/network. Mỗi GOAL có evidence command/output; E2E model thật chỉ opt-in cho boundary provider/MCP/model pull.
 
@@ -277,6 +286,7 @@ Ghi để review. Sai thì sửa plan trước khi code.
 13. **Compaction v1 = cắt + 1 đoạn tóm tắt rule-based**, không gọi LLM để tóm.
 14. **Tạo MCP tool = skill + file + restart**, không hot-reload.
 15. **web_search = Tavily** nếu user đã có key; nếu không, GOAL-003 hỏi lại 1 provider.
+16. **Cài v1 = `uv tool install` từ git HTTPS.** Python 3.14 do uv tải. Origin `Flowerf19/thyca-ai` public (HTTP 200 logged-out 2026-08-21). One-liner: `curl -LsSf https://raw.githubusercontent.com/Flowerf19/thyca-ai/main/install.sh \| sh`. `THYCA_GIT` đổi fork. Không PyPI, không `pip install --user`.
 
 ## Đã chốt (2026-08-13, cập nhật 2026-08-15)
 

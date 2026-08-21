@@ -8,6 +8,7 @@ from typing import Literal
 from thyca.memory.active import ActiveMemory
 from thyca.memory.archived import (
     CANDIDATE_CAP,
+    GET_SESSION_CAP,
     TRIGRAM_MIN_FTS,
     ArchiveError,
     ArchivedMemory,
@@ -20,11 +21,14 @@ from thyca.memory.heading import (
     DEFAULT_IMPORTANCE,
     HeadingMeta,
     expiry_ts,
+    format_ts,
     new_entry_id,
     render_heading,
     session_id,
     utc_now,
 )
+from thyca.memory.chunk import Chunk
+from thyca.memory.stats import MemoryStats, MemoryStatsResult
 from thyca.memory.writer import MemoryWriter
 
 Target = Literal["daily", "memory"]
@@ -110,20 +114,41 @@ class MemoryFacade:
     ) -> str:
         if path is not None:
             return self.archive.get(path=path, now=now)
+        now_ts = format_ts(utc_now(now))
         try:
             text = self.archive.get(chunk_id=chunk_id, session_id=session_id, now=now)
+            if chunk_id is not None:
+                sid = self.archive.lookup_session_id(chunk_id, now)
+                chunk_ids = [chunk_id]
+            else:
+                sid = session_id or ""
+                rows = self.archive.store.get_session(sid, now_ts)
+                chunk_ids = [str(row["chunk_id"]) for row in rows[:GET_SESSION_CAP]]
         except ArchiveError:
             if session_id is None:
                 raise
             text = self.writer.read_session(session_id)
-        sid = session_id or (self.archive.lookup_session_id(chunk_id, now) if chunk_id else None)
-        if sid is None:
+            sid = session_id
+            chunk_ids = self._session_leaf_ids(session_id, text)[:GET_SESSION_CAP]
+        if chunk_ids and sid:
+            self.archive.store.record_gets(chunk_ids, sid, now_ts)
+        if not sid:
             return text
         self.reinforce(sid, now=now)
         try:
             return self.archive.get(chunk_id=chunk_id, session_id=session_id or sid, now=now)
         except ArchiveError:
             return self.writer.read_session(sid)
+
+    def stats(self, now: datetime | None = None) -> MemoryStatsResult:
+        now_ts = format_ts(utc_now(now))
+        return MemoryStats.build(
+            self.archive.store.visible_chunk_maps(now_ts),
+            self._today_chunks(now),
+            self.archive.store.leaf_get_map(),
+            today=self.archive.day(now),
+            now_ts=now_ts,
+        )
 
     def search(
         self,
@@ -156,3 +181,30 @@ class MemoryFacade:
     def _refresh_index(self, now: datetime | None = None) -> None:
         self.writer.purge_expired(utc_now(now))
         self.archive.reindex(now)
+        live = set(self.archive.store.chunk_ids())
+        live.update(chunk.chunk_id for chunk in self._today_chunks(now))
+        self.archive.store.keep_gets(live)
+
+    def _today_chunks(self, now: datetime | None) -> list[Chunk]:
+        day = self.archive.day(now)
+        path = self.thyca_dir / "memory" / f"{day}.md"
+        if not path.is_file() or path.is_symlink():
+            return []
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            return []
+        return self.archive.chunker.chunk_markdown(
+            path, text, source_kind="daily", timeline_day=day
+        )
+
+    def _session_leaf_ids(self, session_id: str, text: str) -> list[str]:
+        path, _ = self.writer.locate(session_id)
+        if session_id.startswith("memory#"):
+            kind, day = "canonical", None
+        else:
+            kind, day = "daily", session_id.split("#", 1)[0]
+        chunks = self.archive.chunker.chunk_markdown(
+            path, text, source_kind=kind, timeline_day=day
+        )
+        return [chunk.chunk_id for chunk in chunks if chunk.session_id == session_id]

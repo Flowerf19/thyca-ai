@@ -14,7 +14,7 @@ from thyca.config import DEFAULT_TIMELINE_TIMEZONE
 from thyca.memory.chunk import Chunk, Chunker
 from thyca.memory.heading import format_ts
 
-SCHEMA_VERSION = "3"
+SCHEMA_VERSION = "4"
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 TRIGRAM_MIN_FTS = 3
 TRIGRAM_FLOOR = 70
@@ -84,6 +84,14 @@ class ArchiveStore:
             self._migrate(row["value"])
 
     def _migrate(self, from_version: str) -> None:
+        if from_version == "3":
+            self._db.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+            self._db.execute(
+                "UPDATE meta SET value = ? WHERE key = 'schema_version'",
+                (SCHEMA_VERSION,),
+            )
+            self._db.commit()
+            return
         if from_version not in {"1", "2"}:
             raise ArchiveError(f"unsupported schema_version {from_version!r}")
         for trigger in ("chunks_ai", "chunks_ad", "chunks_au"):
@@ -227,6 +235,69 @@ class ArchiveStore:
 
     def list_paths(self) -> list[str]:
         return [row["path"] for row in self._db.execute("SELECT path FROM source_files")]
+
+    def chunk_ids(self) -> list[str]:
+        return [row["chunk_id"] for row in self._db.execute("SELECT chunk_id FROM chunks")]
+
+    def visible_chunk_maps(self, now: str) -> list[dict[str, object]]:
+        rows = self._db.execute(
+            """SELECT chunk_id, session_id, heading_raw, text_raw, source_kind,
+                      timeline_day, expires_at
+               FROM chunks
+               WHERE forgotten_at IS NULL
+                 AND (expires_at IS NULL OR expires_at > ?)""",
+            (now,),
+        )
+        return [dict(row) for row in rows]
+
+    def leaf_get_map(self) -> dict[str, tuple[int, str]]:
+        return {
+            str(row["chunk_id"]): (int(row["get_count"]), str(row["last_get_at"]))
+            for row in self._db.execute(
+                "SELECT chunk_id, get_count, last_get_at FROM leaf_gets"
+            )
+        }
+
+    def record_gets(self, chunk_ids: list[str], session_id: str, now: str) -> None:
+        if not chunk_ids:
+            return
+        self._db.execute("BEGIN IMMEDIATE")
+        try:
+            for chunk_id in chunk_ids:
+                self._db.execute(
+                    """INSERT INTO leaf_gets(chunk_id, session_id, get_count, last_get_at)
+                       VALUES (?, ?, 1, ?)
+                       ON CONFLICT(chunk_id) DO UPDATE SET
+                         get_count = get_count + 1,
+                         last_get_at = excluded.last_get_at,
+                         session_id = excluded.session_id""",
+                    (chunk_id, session_id, now),
+                )
+            self._db.commit()
+        except Exception:
+            self._db.rollback()
+            raise
+
+    def keep_gets(self, chunk_ids: set[str]) -> None:
+        self._db.execute("BEGIN IMMEDIATE")
+        try:
+            if not chunk_ids:
+                self._db.execute("DELETE FROM leaf_gets")
+            else:
+                self._db.execute("DROP TABLE IF EXISTS temp.keep_ids")
+                self._db.execute("CREATE TEMP TABLE keep_ids(chunk_id TEXT PRIMARY KEY)")
+                self._db.executemany(
+                    "INSERT INTO keep_ids(chunk_id) VALUES (?)",
+                    [(chunk_id,) for chunk_id in chunk_ids],
+                )
+                self._db.execute(
+                    "DELETE FROM leaf_gets WHERE chunk_id NOT IN (SELECT chunk_id FROM keep_ids)"
+                )
+                self._db.execute("DROP TABLE keep_ids")
+            self._db.commit()
+        except Exception:
+            self._db.rollback()
+            raise
 
     def session_leaf_count(self, session_id: str) -> int:
         row = self._db.execute(

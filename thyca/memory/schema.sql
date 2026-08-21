@@ -38,6 +38,13 @@ CREATE TABLE IF NOT EXISTS chunks(
 CREATE INDEX IF NOT EXISTS chunks_day ON chunks(timeline_day, session_id, leaf_ord);
 CREATE INDEX IF NOT EXISTS chunks_path ON chunks(path);
 
+CREATE TABLE IF NOT EXISTS leaf_gets(
+  chunk_id     TEXT PRIMARY KEY,
+  session_id   TEXT NOT NULL,
+  get_count    INTEGER NOT NULL CHECK(get_count >= 1),
+  last_get_at  TEXT NOT NULL
+);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
   text_raw,
   content='chunks', content_rowid='row_id',

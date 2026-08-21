@@ -38,33 +38,44 @@ export function overviewPage(stats) {
 }
 
 function leafPage(leaf) {
-  const heading = leafTitle(leaf);
+  const { time, topic } = splitHeading(leaf);
   const count = Number(leaf.get_count) || 0;
   const tag = leaf.is_today ? "today" : count ? "used" : "unused";
+  const source = leafSource(leaf);
+  const day = leaf.timeline_day || (leaf.is_today ? "hôm nay" : "");
   return {
-    title: heading,
-    date: count ? `${count} lần get` : "chưa get",
+    title: escapeHtml(topic),
+    date: escapeHtml([day, count ? `${count} lần get` : "chưa get"].filter(Boolean).join(" · ")),
     tag,
     tone: "memories",
-    kicker: escapeHtml(leaf.chunk_id || ""),
+    kicker: escapeHtml(source),
     body: `<div class="book-reading">
         <div class="book-meta">
-          <span class="book-author">${escapeHtml(leaf.session_id || "")}</span>
-          <h2>${escapeHtml(heading)}</h2>
-          <p>${escapeHtml(leaf.snippet || "")}</p>
-          <div class="progress-label"><span>Get</span><strong>${count}</strong></div>
-          <div class="reading-progress${count ? " reading-progress-complete" : ""}"><span></span></div>
+          <span class="book-author">${escapeHtml(source)}</span>
+          <h2>${escapeHtml(topic)}</h2>
         </div>
+        <blockquote class="quote-note">
+          <p>${escapeHtml(leaf.snippet || "(trống)")}</p>
+          <cite>${escapeHtml([time, day].filter(Boolean).join(" · ") || leaf.chunk_id)}</cite>
+        </blockquote>
+        <dl class="mem-facts">
+          <dt>Nguồn</dt><dd>${escapeHtml(source)}</dd>
+          <dt>Ngày</dt><dd>${escapeHtml(day || "—")}</dd>
+          <dt>Giờ</dt><dd>${escapeHtml(time || "—")}</dd>
+          <dt>Get</dt><dd>${count}${leaf.last_get_at ? ` · cuối ${escapeHtml(fmtTs(leaf.last_get_at))}` : ""}</dd>
+          <dt>Hết hạn</dt><dd>${escapeHtml(fmtTs(leaf.expires_at) || "—")}</dd>
+          <dt>Id</dt><dd>${escapeHtml(leaf.chunk_id || "")}</dd>
+        </dl>
       </div>`,
   };
 }
 
 function suggestPage(rows) {
   const items = rows
-    .map(
-      (leaf) =>
-        `<li><strong>${escapeHtml(leafTitle(leaf))}</strong><small>${escapeHtml(leaf.chunk_id)}</small></li>`,
-    )
+    .map((leaf) => {
+      const { topic } = splitHeading(leaf);
+      return `<li><strong>${escapeHtml(topic)}</strong><span>${escapeHtml(leaf.snippet || "")}</span><small>${escapeHtml(leafSource(leaf))}</small></li>`;
+    })
     .join("");
   return {
     title: "Đề xuất loại bỏ",
@@ -83,9 +94,25 @@ function suggestPage(rows) {
   };
 }
 
-function leafTitle(leaf) {
-  const raw = String(leaf.heading || leaf.chunk_id || "");
-  return raw.replace(/^##\s*/, "");
+function splitHeading(leaf) {
+  const raw = String(leaf.heading || "").replace(/^##\s*/, "");
+  const match = raw.match(/^(\d{2}:\d{2})\s*[—\-]\s+(.+)$/);
+  if (match) return { time: match[1], topic: match[2] };
+  return { time: "", topic: raw || String(leaf.chunk_id || "") };
+}
+
+function leafSource(leaf) {
+  if (String(leaf.session_id || "").startsWith("memory#")) return "MEMORY.md";
+  if (leaf.is_today) return `daily · hôm nay`;
+  if (leaf.timeline_day) return `daily · ${leaf.timeline_day}`;
+  return String(leaf.source_kind || "leaf");
+}
+
+function fmtTs(value) {
+  if (!value) return "";
+  const text = String(value);
+  if (text.length >= 16 && text[10] === "T") return `${text.slice(0, 10)} ${text.slice(11, 16)} UTC`;
+  return text;
 }
 
 export function escapeHtml(value) {

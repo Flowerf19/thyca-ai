@@ -35,11 +35,12 @@
             <nav class="toc" id="toc" aria-label="Mục lục phiên">
               <div class="toc-head">
                 <h2>Mục lục</h2>
-                <button type="button" class="spine-btn toc-new" id="toc-new">Trang mới</button>
               </div>
               <ol>
                 <li>
-                  <button type="button" class="toc-item" data-view="empty">Trang trắng</button>
+                  <button type="button" class="toc-item toc-item-new" data-view="empty">
+                    Trang mới
+                  </button>
                 </li>
                 <li>
                   <button type="button" class="toc-item" data-view="talk">Cà phê không đường</button>
@@ -48,13 +49,10 @@
             </nav>
 
             <main class="page">
-              <div class="spread" id="spread">
-                <div class="leaf is-empty" id="leaf" data-view="empty">
-                  <h1 class="title">Thyca</h1>
-                </div>
-                <button type="button" class="recto" id="recto" aria-label="Lật sang trang mới">
-                  <span class="recto-label">Trang mới</span>
-                </button>
+              <div class="leaf is-empty" id="leaf" data-view="empty">
+                <h1 class="title">Thyca</h1>
+                <div class="staff" aria-hidden="true"><span class="rest">𝄽</span></div>
+                <p class="rest-note">Trang trắng. Viết dòng đầu tiên.</p>
               </div>
 
               <form class="composer" id="composer">
@@ -82,12 +80,9 @@
 
     <script>
       const book = document.getElementById("book");
-      const spread = document.getElementById("spread");
       const leaf = document.getElementById("leaf");
-      const recto = document.getElementById("recto");
       const tocBtn = document.getElementById("toc-btn");
       const newBtn = document.getElementById("new-btn");
-      const tocNew = document.getElementById("toc-new");
       const form = document.getElementById("composer");
       const line = document.getElementById("line");
       const send = document.getElementById("send");
@@ -102,7 +97,7 @@
           </article>
           <article class="turn">
             <p class="who">Thyca</p>
-            <p class="verse">Đã ghi vào nhật hôm nay.</p>
+            <blockquote class="verse"><span>Đã ghi vào nhật hôm nay.</span></blockquote>
           </article>
           <article class="turn turn-user">
             <p class="who">Bạn</p>
@@ -110,9 +105,14 @@
           </article>
           <article class="turn">
             <p class="who">Thyca</p>
-            <p class="verse">Không nhớ lần trước. Bạn muốn tôi ghi khi bạn chốt?</p>
+            <blockquote class="verse"><span>Không nhớ lần trước.</span><span>Bạn muốn tôi ghi khi bạn chốt?</span></blockquote>
           </article>
         </div>`;
+
+      const emptyHtml = `
+        <h1 class="title">Thyca</h1>
+        <div class="staff" aria-hidden="true"><span class="rest">𝄽</span></div>
+        <p class="rest-note">Trang trắng. Viết dòng đầu tiên.</p>`;
 
       function setToc(open) {
         book.classList.toggle("is-toc-open", open);
@@ -120,10 +120,11 @@
         tocBtn.setAttribute("aria-pressed", open ? "true" : "false");
       }
 
-      function emptyPage() {
+      function emptyPage(focus) {
         leaf.className = "leaf is-empty";
         leaf.dataset.view = "empty";
-        leaf.innerHTML = `<h1 class="title">Thyca</h1>`;
+        leaf.innerHTML = emptyHtml;
+        if (focus) line.focus();
       }
 
       function talkPage() {
@@ -148,36 +149,12 @@
         });
       });
 
-      function startBlank() {
-        if (spread.classList.contains("is-flipping")) return;
-        const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-        if (!desktop.matches || reduce) {
-          emptyPage();
-          line.focus();
-          return;
-        }
-        spread.classList.add("is-flipping");
-        recto.disabled = true;
-        let finished = false;
-        const end = () => {
-          if (finished) return;
-          finished = true;
-          emptyPage();
-          spread.classList.remove("is-flipping");
-          recto.disabled = false;
-          line.focus();
-        };
-        spread.addEventListener("transitionend", end, { once: true });
-        window.setTimeout(end, 520);
-      }
-      newBtn.addEventListener("click", startBlank);
-      tocNew.addEventListener("click", startBlank);
-      recto.addEventListener("click", startBlank);
+      newBtn.addEventListener("click", () => emptyPage(true));
 
       document.querySelectorAll("[data-view]").forEach((el) => {
         el.addEventListener("click", () => {
           if (el.dataset.view === "talk") talkPage();
-          else emptyPage();
+          else emptyPage(true);
         });
       });
 
@@ -185,7 +162,7 @@
         send.disabled = on;
         send.classList.toggle("is-loading", on);
         line.disabled = on;
-        hint.textContent = on ? "Đang viết" : "";
+        hint.textContent = on ? "Nghỉ một nhịp" : "";
         hint.className = "hint";
       }
 
@@ -233,9 +210,9 @@
               : "Mock này chưa nối model. Chỉ xem nhịp trang.";
           thread.insertAdjacentHTML(
             "beforeend",
-            `<article class="turn"><p class="who">Thyca</p><p class="verse"></p></article>`
+            `<article class="turn"><p class="who">Thyca</p><blockquote class="verse"><span></span></blockquote></article>`
           );
-          thread.lastElementChild.querySelector(".verse").textContent = reply;
+          thread.lastElementChild.querySelector(".verse span").textContent = reply;
           setBusy(false);
           line.focus();
         }, wait);

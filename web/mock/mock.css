@@ -1,4 +1,11 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V4 */
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V4
+ * genre: editorial · macrostructure: Letter (book spread: toc as verso, writing page as recto)
+ * theme: custom · vibe: "paper, verse measure, rest"
+ * paper: oklch(94% 0.014 72) · accent: oklch(48% 0.14 38)
+ * display: Newsreader · body: IBM Plex Sans
+ * axes: light / roman-serif / warm
+ * audience: owner · use: send a line · tone: editorial
+ */
 
 @import url("./tokens.css");
 
@@ -76,7 +83,7 @@ button {
   grid-template-columns: 0.4rem minmax(0, 1fr) 0.4rem;
   min-height: calc(100dvh - 2 * var(--space-md));
   background: var(--color-paper);
-  box-shadow: 0 1px 2px oklch(20% 0.01 50 / 0.08);
+  box-shadow: 0 1px 2px var(--color-shadow);
 }
 
 .board {
@@ -186,6 +193,8 @@ button {
   color: var(--color-accent);
 }
 
+/* ---- TOC: drawer on mobile, left page of the spread on desktop ---- */
+
 .toc {
   display: none;
   background: var(--color-paper-2);
@@ -214,11 +223,6 @@ button {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--color-muted);
-}
-
-.toc-new {
-  display: none;
-  min-height: 2.75rem;
 }
 
 .toc ol {
@@ -253,6 +257,17 @@ button {
   color: var(--color-accent);
 }
 
+.toc-item-new {
+  color: var(--color-accent);
+}
+
+.toc-item-new::after {
+  content: " ·";
+  color: var(--color-muted);
+}
+
+/* ---- Writing page ---- */
+
 .page {
   display: flex;
   flex-direction: column;
@@ -260,22 +275,10 @@ button {
   min-height: 0;
 }
 
-.spread {
-  flex: 1;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  min-height: 0;
-  min-width: 0;
-}
-
 .leaf {
   min-width: 0;
   width: 100%;
   padding: var(--space-xl) var(--space-md) 8rem;
-}
-
-.recto {
-  display: none;
 }
 
 .leaf.is-empty {
@@ -296,6 +299,59 @@ button {
   overflow-wrap: anywhere;
   min-width: 0;
 }
+
+/* Empty page: five music staff lines with a whole rest — a page at rest. */
+
+.staff {
+  margin-top: var(--space-2xl);
+  height: calc(4 * var(--staff-line));
+  display: grid;
+  grid-template-rows: repeat(4, var(--staff-line));
+  background:
+    linear-gradient(
+      to bottom,
+      var(--color-rule) 0 var(--rule),
+      transparent var(--rule) var(--staff-line)
+    ) 0 0 / 100% var(--staff-line) repeat-y;
+  background-image:
+    linear-gradient(var(--color-rule) 0 0),
+    linear-gradient(var(--color-rule) 0 0),
+    linear-gradient(var(--color-rule) 0 0),
+    linear-gradient(var(--color-rule) 0 0),
+    linear-gradient(var(--color-rule) 0 0);
+  background-repeat: no-repeat;
+  background-size:
+    100% var(--rule),
+    100% var(--rule),
+    100% var(--rule),
+    100% var(--rule),
+    100% var(--rule);
+  background-position:
+    0 0,
+    0 var(--staff-line),
+    0 calc(2 * var(--staff-line)),
+    0 calc(3 * var(--staff-line)),
+    0 calc(4 * var(--staff-line));
+}
+
+.staff .rest {
+  font-family: var(--font-display);
+  font-size: 1.75rem;
+  line-height: 1;
+  color: var(--color-muted);
+  align-self: center;
+  justify-self: start;
+  margin-left: var(--space-lg);
+  transform: translateY(calc(-0.5 * var(--staff-line)));
+}
+
+.rest-note {
+  margin: var(--space-md) 0 0;
+  font-size: var(--text-sm);
+  color: var(--color-muted);
+}
+
+/* ---- Thread: prose turns vs verse turns ---- */
 
 .thread {
   display: flex;
@@ -334,8 +390,12 @@ button {
   line-height: 1.5;
 }
 
+/* Thyca replies as verse: display serif, indented, bar-line on the left. */
+
 .verse {
   margin: 0;
+  padding-left: var(--space-md);
+  border-left: 2px solid var(--color-rule);
   font-family: var(--font-display);
   font-style: normal;
   font-weight: 400;
@@ -343,6 +403,13 @@ button {
   line-height: 1.55;
   font-optical-sizing: auto;
   max-width: var(--measure);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+}
+
+.verse span {
+  min-width: 0;
 }
 
 .verse em {
@@ -350,21 +417,43 @@ button {
   font-weight: 400;
 }
 
-.rest {
-  min-height: 1.2em;
+.rest-dots {
+  margin: 0;
+  padding-left: var(--space-md);
+  border-left: 2px solid var(--color-rule);
+  font-family: var(--font-display);
+  font-style: normal;
+  font-size: var(--text-lg);
+  line-height: 1.55;
+  max-width: var(--measure);
   color: var(--color-muted);
-  font-size: var(--text-sm);
+  display: flex;
+  gap: 0.35em;
 }
 
-.caret {
-  display: inline-block;
-  width: 0.6ch;
-  height: 1em;
-  margin-left: 0.15em;
-  background: var(--color-ink);
-  vertical-align: -0.1em;
-  opacity: 0.7;
+.rest-dots span {
+  animation: rest-tick 1.2s var(--ease-in-out) infinite;
 }
+
+.rest-dots span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.rest-dots span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes rest-tick {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* ---- Composer ---- */
 
 .composer {
   position: sticky;
@@ -580,93 +669,30 @@ button {
     display: none;
   }
 
-  .toc-new {
-    display: inline-flex;
-    align-items: center;
-  }
-
   .opening {
     min-height: calc(100dvh - 2 * var(--space-xl));
   }
+
+  /* Desktop: the toc is always the left page (verso) of the open book. */
 
   .codex.is-toc-open .opening {
     grid-template-columns: 15rem minmax(0, 1fr);
   }
 
-  .spread {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    perspective: 1400px;
-    background: linear-gradient(
-      to right,
-      transparent calc(50% - 14px),
-      oklch(70% 0.02 60 / 0.28) 50%,
-      transparent calc(50% + 14px)
-    );
+  /* Fold between the two pages — the spine of an open book. */
+
+  .codex.is-toc-open .toc {
+    border-right: 0;
+    background: linear-gradient(to right, var(--color-paper-2) calc(100% - 10px), var(--color-paper));
+    box-shadow: inset -10px 0 14px -12px var(--color-fold);
   }
 
   .leaf {
-    transform-origin: right center;
-    border-right: 0;
-    transition: transform var(--dur-long) var(--ease-in), opacity var(--dur-long) var(--ease-in);
-  }
-
-  .recto {
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-end;
-    align-items: flex-start;
-    min-width: 0;
-    min-height: 100%;
-    padding: var(--space-xl) var(--space-xl) 8rem;
-    background: var(--color-paper-2);
-    color: var(--color-muted);
-    text-align: left;
-    transform-origin: left center;
-    transition: transform var(--dur-short) var(--ease-out), color var(--dur-micro) var(--ease-out);
-  }
-
-  .recto-label {
-    font-family: var(--font-display);
-    font-style: normal;
-    font-size: var(--text-sm);
-    font-weight: 400;
-    letter-spacing: 0.04em;
-    white-space: nowrap;
-  }
-
-  .recto:hover,
-  .recto.is-hover {
-    color: var(--color-accent);
-    transform: rotateY(-8deg);
-  }
-
-  .recto:active,
-  .recto.is-active {
-    transform: rotateY(-14deg);
-  }
-
-  .recto:disabled,
-  .recto.is-disabled,
-  .recto.is-loading {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .codex.is-flipping .leaf,
-  .spread.is-flipping .leaf {
-    transform: rotateY(-82deg);
-    opacity: 0;
-  }
-
-  .spread.is-flipping .recto {
-    transform: rotateY(-16deg);
-    color: var(--color-ink-2);
+    box-shadow: inset 12px 0 14px -12px var(--color-fold);
   }
 
   .composer-inner {
-    width: 50%;
-    margin-inline: 0;
-    padding-inline: var(--space-xl);
+    width: min(100%, calc(var(--measure) + 2 * var(--space-xl)));
   }
 }
 
@@ -676,5 +702,10 @@ button {
   *::after {
     animation: none !important;
     transition: opacity var(--dur-micro) linear !important;
+  }
+
+  .rest-dots span {
+    animation: none !important;
+    opacity: 1;
   }
 }

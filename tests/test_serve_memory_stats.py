@@ -110,6 +110,11 @@ def test_stats_error_is_503(tmp_path: Path) -> None:
         _stop(httpd, thread)
 
 
+def test_default_webui_has_index() -> None:
+    assert (WEBUI / "index.html").is_file()
+    assert (WEBUI / "js" / "memories.js").is_file()
+
+
 def test_index_html_parses() -> None:
     raw = (WEBUI / "index.html").read_text(encoding="utf-8")
     HTMLParser().feed(raw)

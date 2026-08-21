@@ -18,7 +18,11 @@ class ServeError(RuntimeError):
 
 
 def default_webui() -> Path:
-    return Path(__file__).resolve().parents[1] / "webui"
+    here = Path(__file__).resolve().parent
+    packaged = here / "webui"
+    if packaged.is_dir():
+        return packaged
+    return here.parent / "webui"
 
 
 def make_server(

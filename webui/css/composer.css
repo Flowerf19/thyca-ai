@@ -1,0 +1,261 @@
+/* ---- Composer ---- */
+
+.composer {
+  position: sticky;
+  inset-block-end: 0;
+  z-index: var(--z-sticky);
+  flex: 0 0 auto;
+  padding: var(--space-md) clamp(var(--space-md), 6vw, var(--space-4xl)) calc(var(--space-md) + env(safe-area-inset-bottom));
+  border-block-start: var(--rule) solid var(--color-rule);
+  background: var(--color-paper);
+}
+
+.composer-inner {
+  width: min(100%, var(--measure));
+  margin-inline: auto;
+}
+
+.composer-chips {
+  display: flex;
+  gap: var(--space-xs);
+  min-width: 0;
+  margin-block-end: var(--space-md);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.composer-chips:empty {
+  display: none;
+}
+
+.composer-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.suggestion-chip {
+  flex: 0 0 auto;
+  min-height: 2.25rem;
+  padding-inline: var(--space-sm);
+  border: var(--rule) solid var(--color-rule);
+  border-radius: 99rem;
+  background: transparent;
+  color: var(--color-muted);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  transition: border-color var(--dur-short) var(--ease-out), color var(--dur-short) var(--ease-out), background-color var(--dur-short) var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .suggestion-chip:hover {
+    border-color: var(--color-accent);
+    background: var(--color-accent-soft);
+    color: var(--color-accent);
+  }
+}
+
+.suggestion-chip:active {
+  transform: translateY(1px);
+}
+
+.suggestion-chip:disabled {
+  opacity: 0.5;
+}
+
+.composer-label {
+  display: block;
+  margin-block-end: var(--space-2xs);
+  color: var(--color-muted);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.writing-line {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-sm);
+  min-height: 3.25rem;
+  border-block-end: var(--rule) solid var(--color-rule);
+  transition: border-color var(--dur-short) var(--ease-out), background-color var(--dur-short) var(--ease-out);
+}
+
+.composer-inner:hover .writing-line,
+.composer-inner.is-hover .writing-line,
+.writing-line:focus-within {
+  border-block-end-color: var(--color-ink-2);
+}
+
+.composer-inner textarea {
+  flex: 1;
+  min-width: 0;
+  min-height: 3rem;
+  max-height: 8rem;
+  padding: var(--space-sm) 0;
+  resize: vertical;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--color-ink);
+  line-height: 1.5;
+  field-sizing: content;
+}
+
+.composer-inner textarea::placeholder {
+  color: var(--color-neutral);
+  opacity: 1;
+}
+
+.composer-inner textarea:hover {
+  background: var(--color-paper-2);
+}
+
+.composer-inner textarea:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 3px;
+}
+
+.composer-inner textarea:disabled {
+  opacity: 0.5;
+}
+
+.composer-inner.is-error .writing-line,
+.composer-inner:has(textarea[aria-invalid="true"]) .writing-line {
+  border-block-end-color: var(--color-danger);
+}
+
+.composer-inner.is-success .writing-line {
+  border-block-end-color: var(--color-ok);
+}
+
+.composer-inner.is-loading .writing-line {
+  border-block-end-color: var(--color-accent);
+}
+
+.bookmark-action {
+  position: relative;
+  display: inline-grid;
+  flex: 0 0 3rem;
+  place-items: center;
+  align-self: stretch;
+  min-height: 3.25rem;
+  margin-block-end: -1px;
+  padding: 0;
+  background: transparent;
+  color: var(--color-accent);
+  transition: color var(--dur-short) var(--ease-out), transform 100ms var(--ease-out);
+}
+
+.bookmark-shape {
+  position: absolute;
+  inset: var(--space-xs) var(--space-2xs) 0;
+  background: var(--color-accent-soft);
+  clip-path: polygon(13% 0, 87% 0, 87% 100%, 50% 82%, 13% 100%);
+  transform: rotate(1.5deg);
+  transform-origin: 50% 100%;
+  transition: background-color var(--dur-short) var(--ease-out), transform var(--dur-short) var(--ease-out);
+}
+
+.bookmark-action::after {
+  content: "";
+  position: absolute;
+  inset-inline-start: 50%;
+  inset-block-end: var(--space-2xs);
+  width: var(--rule);
+  height: var(--space-md);
+  background: var(--color-rule);
+  transform: translateX(-50%);
+}
+
+.pen-icon {
+  position: relative;
+  z-index: 1;
+  width: 1.3rem;
+  height: 1.3rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  transform: rotate(-8deg);
+  transition: transform var(--dur-short) var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .bookmark-action:hover {
+    color: var(--color-ink);
+  }
+
+  .bookmark-action:hover .bookmark-shape {
+    background: var(--color-paper-3);
+    transform: rotate(0deg) translateY(-0.15rem);
+  }
+
+  .bookmark-action:hover .pen-icon {
+    transform: rotate(-8deg) translateY(-0.15rem);
+  }
+}
+
+.bookmark-action:active {
+  transform: translateY(1px);
+}
+
+.bookmark-action:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 3px;
+}
+
+.bookmark-action:disabled {
+  opacity: 0.5;
+}
+
+.bookmark-action.is-loading {
+  color: var(--color-accent);
+  pointer-events: none;
+}
+
+.bookmark-action.is-loading .pen-icon {
+  opacity: 0.35;
+}
+
+.bookmark-action.is-error {
+  color: var(--color-danger);
+}
+
+.bookmark-action.is-success {
+  color: var(--color-ok);
+}
+
+.composer-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  min-height: 1.5rem;
+  padding-block-start: var(--space-xs);
+}
+
+.hint {
+  min-width: 0;
+  min-height: 1.2em;
+  margin: 0;
+  color: var(--color-muted);
+  font-size: var(--text-xs);
+}
+
+.hint.is-error {
+  color: var(--color-danger);
+}
+
+.hint.is-loading {
+  color: var(--color-accent);
+}
+
+.hint.is-success {
+  color: var(--color-ok);
+}
+
+.shortcut {
+  flex: 0 0 auto;
+  color: var(--color-neutral);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}

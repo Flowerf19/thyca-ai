@@ -1,0 +1,110 @@
+:root {
+  /* Hallmark · app system: Sổ tay đồng hành · warm paper / terracotta */
+  --color-sidebar: oklch(24% 0.025 48);
+  --color-sidebar-2: oklch(28% 0.028 48);
+  --color-sidebar-3: oklch(33% 0.03 48);
+  --color-sidebar-ink: oklch(94% 0.014 72);
+  --color-sidebar-muted: oklch(73% 0.018 68);
+  --color-sidebar-rule: oklch(48% 0.025 48);
+
+  --color-paper: oklch(96% 0.014 72);
+  --color-paper-2: oklch(93% 0.018 72);
+  --color-paper-3: oklch(89% 0.022 70);
+  --color-paper-grain: oklch(55% 0.012 70 / 0.08);
+  --color-rule: oklch(82% 0.016 70);
+  --color-rule-2: oklch(87% 0.014 72);
+  --color-ink: oklch(24% 0.025 48);
+  --color-ink-2: oklch(36% 0.03 52);
+  --color-reading: oklch(39% 0.035 55);
+  --color-muted: oklch(48% 0.026 65);
+  --color-neutral: oklch(57% 0.018 68);
+
+  --color-accent: oklch(53% 0.115 35);
+  --color-accent-ink: oklch(98% 0.008 72);
+  --color-accent-soft: oklch(91% 0.045 38);
+  --color-focus: oklch(58% 0.14 35);
+  --color-danger: oklch(48% 0.14 28);
+  --color-ok: oklch(43% 0.09 145);
+
+  --color-chat: oklch(57% 0.08 320);
+  --color-chat-soft: oklch(91% 0.035 320);
+  --color-memory: oklch(49% 0.075 122);
+  --color-memory-soft: oklch(90% 0.035 122);
+  --color-trace: oklch(59% 0.12 58);
+  --color-trace-soft: oklch(91% 0.05 58);
+  --color-chat-icon-dark: oklch(38% 0.035 320);
+  --color-memory-icon-light: oklch(84% 0.04 122);
+  --color-trace-icon-light: oklch(88% 0.05 58);
+  --color-chat-tag-bg: oklch(38% 0.035 320);
+  --color-memory-tag-bg: oklch(37% 0.035 122);
+  --color-memory-tag-ink: oklch(88% 0.045 122);
+  --color-trace-tag-bg: oklch(39% 0.045 58);
+  --color-trace-tag-ink: oklch(90% 0.06 58);
+  --color-poetry: var(--color-chat);
+  --color-poetry-soft: var(--color-chat-soft);
+  --color-book: var(--color-memory);
+  --color-book-soft: var(--color-memory-soft);
+  --color-music: var(--color-trace);
+  --color-music-soft: var(--color-trace-soft);
+  --color-diary: var(--color-accent);
+  --color-diary-rule: oklch(84% 0.018 70);
+  --color-poetry-icon-dark: var(--color-chat-icon-dark);
+  --color-book-icon-light: var(--color-memory-icon-light);
+  --color-music-icon-light: var(--color-trace-icon-light);
+  --color-poetry-tag-bg: var(--color-chat-tag-bg);
+  --color-book-tag-bg: var(--color-memory-tag-bg);
+  --color-book-tag-ink: var(--color-memory-tag-ink);
+  --color-music-tag-bg: var(--color-trace-tag-bg);
+  --color-music-tag-ink: var(--color-trace-tag-ink);
+
+  --line-height-notebook: 2rem;
+
+  --color-shadow: oklch(19% 0.018 48 / 0.1);
+  --color-overlay: oklch(18% 0.02 48 / 0.48);
+
+  --font-display: "Fraunces", ui-serif, Georgia, serif;
+  --font-reading: "Source Serif 4", "Source Serif", ui-serif, serif;
+  --font-ui: "IBM Plex Sans", ui-sans-serif, sans-serif;
+
+  --text-xs: 0.6875rem;
+  --text-sm: 0.8125rem;
+  --text-md: 0.9375rem;
+  --text-base: 1rem;
+  --text-lg: 1.25rem;
+  --text-xl: 1.5625rem;
+  --text-2xl: 2.25rem;
+  --text-display: clamp(2.75rem, 5vw + 1rem, 5.25rem);
+
+  --space-3xs: 0.125rem;
+  --space-2xs: 0.25rem;
+  --space-xs: 0.5rem;
+  --space-sm: 0.75rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2.5rem;
+  --space-2xl: 4rem;
+  --space-3xl: 6rem;
+  --space-4xl: 9rem;
+
+  --radius-xs: 0.125rem;
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --rule: 1px;
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-micro: 100ms;
+  --dur-short: 220ms;
+  --dur-long: 420ms;
+
+  --z-base: 1;
+  --z-page: 10;
+  --z-sticky: 20;
+  --z-drawer: 100;
+  --z-modal: 400;
+
+  --sidebar-width: 17rem;
+  --measure: 68ch;
+}

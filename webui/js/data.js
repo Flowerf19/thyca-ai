@@ -4,6 +4,30 @@ export const icons = {
   trace: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="2" /><circle cx="12" cy="7" r="2" /><circle cx="18" cy="12" r="2" /><circle cx="12" cy="17" r="2" /><path d="M8 11.2 10.2 8.4M13.8 8.4 16 11.2M16 12.8 13.8 15.6M10.2 15.6 8 12.8" /></svg>'
 };
 
+export const personaPages = [
+  {
+    title: "SOUL.md",
+    date: "Inject cả file",
+    tag: "canonical",
+    tone: "memories",
+    body: `<div class="book-reading"><div class="book-meta"><span class="book-author">Canonical · ActiveMemory</span><h2>SOUL.md</h2><p>Hồ sơ ổn định của trợ lý. Nhét cả file mỗi lượt để prefix system ít đổi.</p><div class="progress-label"><span>Inject</span><strong>full</strong></div><div class="reading-progress reading-progress-complete"><span></span></div></div><blockquote class="quote-note"><p>Thyca là harness trợ lý cá nhân. Không phải coding agent.</p><cite>SOUL.md</cite></blockquote></div>`
+  },
+  {
+    title: "USER.md",
+    date: "Inject cả file",
+    tag: "canonical",
+    tone: "memories",
+    body: `<div class="book-reading"><div class="book-meta"><span class="book-author">Canonical · ActiveMemory</span><h2>USER.md</h2><p>Hồ sơ người dùng. Cùng rule với SOUL: cả file, không cắt.</p><div class="progress-label"><span>Inject</span><strong>full</strong></div><div class="reading-progress reading-progress-complete"><span></span></div></div></div>`
+  },
+  {
+    title: "IDENTITY.md",
+    date: "Inject cả file",
+    tag: "canonical",
+    tone: "memories",
+    body: `<div class="book-reading"><div class="book-meta"><span class="book-author">Canonical · ActiveMemory</span><h2>IDENTITY.md</h2><p>Danh tính trợ lý. Cùng rule với SOUL: cả file, không cắt, không vào inventory leaf.</p><div class="progress-label"><span>Inject</span><strong>full</strong></div><div class="reading-progress reading-progress-complete"><span></span></div></div></div>`
+  }
+];
+
 export const modes = {
   chat: {
     label: "Chat",

@@ -37,6 +37,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--session", type=str, default=None, help="session id")
     parser.add_argument("--model", type=str, default=None, help="override model for this request")
     parser.add_argument("--debug", action="store_true", help="print prompt/session diagnostics on stderr")
+    parser.add_argument("--serve", action="store_true", help="serve webui + memory stats on 127.0.0.1")
+    parser.add_argument("--port", type=int, default=8765, help="port for --serve (default 8765)")
     parser.add_argument("prompt", nargs="*", help="prompt for -p mode")
     return parser
 
@@ -68,6 +70,14 @@ class Cli:
         if args.cont and args.session:
             ui.error("--continue and --session are mutually exclusive")
             return 2
+        if args.serve and (args.print_mode or args.cont or args.session or args.prompt):
+            ui.error("--serve cannot combine with -p/--continue/--session/prompt")
+            return 2
+        if args.serve:
+            if args.port < 1 or args.port > 65535:
+                ui.error("--port must be 1..65535")
+                return 2
+            return self._serve(args.port)
         if args.prompt and not args.print_mode:
             ui.error("prompt requires -p")
             return 2
@@ -153,6 +163,32 @@ class Cli:
             close = getattr(connect, "aclose", None)
             if close is not None:
                 await close()
+
+    def _serve(self, port: int) -> int:
+        from thyca.serve import ServeError, default_webui, run
+
+        root = self._thyca_dir if self._thyca_dir is not None else Path.home() / ".thyca"
+        ui = ChatUi(self._stdout, self._stderr, color=False)
+        try:
+            cfg = load(root / "config.json")
+        except ConfigError as exc:
+            ui.error(str(exc))
+            return 1
+        try:
+            run(
+                host="127.0.0.1",
+                port=port,
+                webui=default_webui(),
+                facade=MemoryFacade(root, timezone_name=cfg.timeline.timezone),
+                stdout=self._stdout,
+            )
+        except ServeError as exc:
+            ui.error(str(exc))
+            return 1
+        except OSError as exc:
+            ui.error(str(exc))
+            return 1
+        return 0
 
     def _open_session(self, sessions: SessionManager, args: argparse.Namespace) -> None:
         if args.session:

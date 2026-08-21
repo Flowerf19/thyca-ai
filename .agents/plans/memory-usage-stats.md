@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 created: 2026-08-21
 last_updated: 2026-08-21
 ---
@@ -42,8 +42,8 @@ Xong khi: 3 leaf daily + 0 get → `total=3, used=0, unused=3`; get một leaf �
 
 | ID | Task | Done | Date |
 |----|------|------|------|
-| TASK-007 | `thyca --serve` (flag, không subcommand): stdlib HTTP, bind **chỉ** `127.0.0.1`, port mặc định `8765`. Serve `webui/` tĩnh + `GET /api/memory/stats` JSON từ `MemoryFacade.stats()`. Không POST, không forget, không dependency mới | | |
-| TASK-008 | Bind khác localhost → refuse. CORS không cần (same origin). Lỗi sqlite → HTTP 503 JSON `{error}` không stack | | |
+| TASK-007 | `thyca --serve` (flag, không subcommand): stdlib HTTP, bind **chỉ** `127.0.0.1`, port mặc định `8765`. Serve `webui/` tĩnh + `GET /api/memory/stats` JSON từ `MemoryFacade.stats()`. Không POST, không forget, không dependency mới | x | 2026-08-21 |
+| TASK-008 | Bind khác localhost → refuse. CORS không cần (same origin). Lỗi sqlite → HTTP 503 JSON `{error}` không stack | x | 2026-08-21 |
 
 Xong khi: `thyca --serve` + `GET http://127.0.0.1:8765/api/memory/stats` trả đúng shape; `python -m http.server --directory webui` vẫn là mock tĩnh (không API).
 
@@ -51,8 +51,8 @@ Xong khi: `thyca --serve` + `GET http://127.0.0.1:8765/api/memory/stats` trả �
 
 | ID | Task | Done | Date |
 |----|------|------|------|
-| TASK-009 | Mode Memories: landing tổng quan `total/used/unused`; sidebar list leaf (heading + get_count); trang/section “Đề xuất loại bỏ”. Persona `SOUL.md`/`USER.md`/`IDENTITY.md` giữ page phụ, không trộn vào inventory leaf | | |
-| TASK-010 | Fetch `/api/memory/stats` khi serve cùng origin. Mock tĩnh (`http.server` only) không có API → copy fallback hiện tại, không crash. Không nút xóa | | |
+| TASK-009 | Mode Memories: landing tổng quan `total/used/unused`; sidebar list leaf (heading + get_count); trang/section “Đề xuất loại bỏ”. Persona `SOUL.md`/`USER.md`/`IDENTITY.md` giữ page phụ, không trộn vào inventory leaf | x | 2026-08-21 |
+| TASK-010 | Fetch `/api/memory/stats` khi serve cùng origin. Mock tĩnh (`http.server` only) không có API → copy fallback hiện tại, không crash. Không nút xóa | x | 2026-08-21 |
 
 Xong khi: serve + một `get` thật → leaf đó hiện used; unused và đề xuất khớp API; Chat/Trace không đổi.
 

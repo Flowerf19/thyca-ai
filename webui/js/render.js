@@ -1,7 +1,10 @@
 import { icons, modes } from "./data.js";
 import { el } from "./dom.js";
+import { pagesFromStats } from "./memories.js";
 import { state } from "./state.js";
 import { closeDrawer } from "./drawer.js";
+
+let modeGen = 0;
 
 export function pageCard(page, index) {
   const selected = index === state.activePageIndex;
@@ -84,9 +87,14 @@ export function renderPage(pageIndex = 0) {
   if (state.activeMode === "trace") bindPlayer();
 }
 
-export function renderMode(mode) {
+export async function renderMode(mode) {
+  const gen = ++modeGen;
   state.activeMode = mode;
   state.activePageIndex = 0;
+  if (mode === "memories") {
+    await hydrateMemories();
+    if (gen !== modeGen) return;
+  }
   renderPage(state.activePageIndex);
   el.modeList.querySelectorAll(".mode-link").forEach((button) => {
     const selected = button.dataset.mode === mode;
@@ -94,4 +102,25 @@ export function renderMode(mode) {
     if (selected) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
   });
+}
+
+async function hydrateMemories() {
+  try {
+    const response = await fetch("/api/memory/stats");
+    if (!response.ok) return;
+    const stats = await response.json();
+    if (typeof stats.total !== "number" || !Array.isArray(stats.leaves)) return;
+    modes.memories = {
+      label: "Memories",
+      listLabel: "Leaves",
+      kicker: "leaf · chỉ đếm get",
+      note: "Search và inject nóng không tính. Không xóa từ đây.",
+      chips: [],
+      pages: pagesFromStats(stats),
+    };
+    const count = el.modeList.querySelector('[data-mode="memories"] .mode-count');
+    if (count) count.textContent = String(stats.total);
+  } catch {
+    /* static mock: no API */
+  }
 }

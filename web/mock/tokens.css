@@ -1,0 +1,71 @@
+/* Hallmark · genre: editorial · macrostructure: Letter · theme: custom
+ * vibe: "paper, verse measure, rest"
+ * paper: oklch(94% 0.014 72) · accent: oklch(48% 0.14 38)
+ * display: Newsreader · body: IBM Plex Sans
+ * axes: light / roman-serif / warm
+ * nav: N3 · footer: composer · enrichment: none
+ * audience: owner · use: send a line · tone: editorial
+ */
+
+:root {
+  --color-desk: oklch(86% 0.02 70);
+  --color-board: oklch(30% 0.04 48);
+  --color-board-2: oklch(24% 0.035 46);
+  --color-paper: oklch(94% 0.014 72);
+  --color-paper-2: oklch(91% 0.016 72);
+  --color-paper-3: oklch(87% 0.018 70);
+  --color-rule: oklch(78% 0.012 70);
+  --color-rule-2: oklch(84% 0.01 72);
+  --color-neutral: oklch(48% 0.012 55);
+  --color-muted: oklch(42% 0.014 55);
+  --color-ink: oklch(20% 0.018 50);
+  --color-ink-2: oklch(28% 0.016 52);
+  --color-accent: oklch(48% 0.14 38);
+  --color-focus: oklch(48% 0.16 38);
+  --color-danger: oklch(45% 0.16 28);
+  --color-ok: oklch(42% 0.09 145);
+
+  --font-display: "Newsreader", "Noto Serif", ui-serif, serif;
+  --font-body: "IBM Plex Sans", "Noto Sans", ui-sans-serif, sans-serif;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-md: 1rem;
+  --text-lg: 1.25rem;
+  --text-xl: 1.563rem;
+  --text-2xl: 1.953rem;
+  --text-display-s: 2.441rem;
+  --text-display: 3.052rem;
+
+  --space-3xs: 0.125rem;
+  --space-2xs: 0.25rem;
+  --space-xs: 0.5rem;
+  --space-sm: 0.75rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2.5rem;
+  --space-2xl: 4rem;
+  --space-3xl: 6rem;
+  --space-4xl: 9rem;
+
+  --radius-xs: 0.125rem;
+  --radius-sm: 0.25rem;
+  --rule: 1px;
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-micro: 120ms;
+  --dur-short: 220ms;
+  --dur-long: 420ms;
+
+  --z-base: 0;
+  --z-page: 1;
+  --z-composer: 2;
+  --z-rail: 3;
+  --z-drawer: 4;
+  --z-toast: 5;
+
+  --measure: 52ch;
+  --rail: 2.75rem;
+}

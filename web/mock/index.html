@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Thyca — mock</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=Newsreader:opsz,wght@6..72,400;6..72,600;6..72,700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./mock.css" />
+  </head>
+  <body>
+    <a class="skip" href="#line">Tới ô viết</a>
+    <div class="desk">
+      <div class="codex" id="book">
+        <div class="board board-left">
+          <a class="wordmark wordmark-board" href="./index.html">Thyca</a>
+        </div>
+
+        <div class="block">
+          <header class="spine">
+            <a class="wordmark wordmark-bar" href="./index.html">Thyca</a>
+            <div class="spine-actions">
+              <button type="button" class="spine-btn" id="toc-btn" aria-expanded="false" aria-controls="toc">
+                Mục lục
+              </button>
+              <button type="button" class="spine-btn" id="new-btn">Trang mới</button>
+            </div>
+          </header>
+
+          <div class="opening">
+            <nav class="toc" id="toc" aria-label="Mục lục phiên">
+              <div class="toc-head">
+                <h2>Mục lục</h2>
+                <button type="button" class="spine-btn toc-new" id="toc-new">Trang mới</button>
+              </div>
+              <ol>
+                <li>
+                  <button type="button" class="toc-item" data-view="empty">Trang trắng</button>
+                </li>
+                <li>
+                  <button type="button" class="toc-item" data-view="talk">Cà phê không đường</button>
+                </li>
+              </ol>
+            </nav>
+
+            <main class="page">
+              <div class="spread" id="spread">
+                <div class="leaf is-empty" id="leaf" data-view="empty">
+                  <h1 class="title">Thyca</h1>
+                </div>
+                <button type="button" class="recto" id="recto" aria-label="Lật sang trang mới">
+                  <span class="recto-label">Trang mới</span>
+                </button>
+              </div>
+
+              <form class="composer" id="composer">
+                <div class="composer-inner" id="field">
+                  <label for="line">Dòng viết</label>
+                  <textarea
+                    id="line"
+                    name="line"
+                    rows="1"
+                    maxlength="4000"
+                    placeholder="Một dòng…"
+                    autocomplete="off"
+                  ></textarea>
+                  <button class="send" id="send" type="submit">Gửi</button>
+                  <p class="hint" id="hint" aria-live="polite"></p>
+                </div>
+              </form>
+            </main>
+          </div>
+        </div>
+
+        <div class="board board-right" aria-hidden="true"></div>
+      </div>
+    </div>
+
+    <script>
+      const book = document.getElementById("book");
+      const spread = document.getElementById("spread");
+      const leaf = document.getElementById("leaf");
+      const recto = document.getElementById("recto");
+      const tocBtn = document.getElementById("toc-btn");
+      const newBtn = document.getElementById("new-btn");
+      const tocNew = document.getElementById("toc-new");
+      const form = document.getElementById("composer");
+      const line = document.getElementById("line");
+      const send = document.getElementById("send");
+      const hint = document.getElementById("hint");
+      const field = document.getElementById("field");
+
+      const talkHtml = `
+        <div class="thread" id="thread">
+          <article class="turn turn-user">
+            <p class="who">Bạn</p>
+            <p class="bubble">Nhớ là tôi uống cà phê không đường.</p>
+          </article>
+          <article class="turn">
+            <p class="who">Thyca</p>
+            <p class="verse">Đã ghi vào nhật hôm nay.</p>
+          </article>
+          <article class="turn turn-user">
+            <p class="who">Bạn</p>
+            <p class="bubble">Sáng mai ăn gì?</p>
+          </article>
+          <article class="turn">
+            <p class="who">Thyca</p>
+            <p class="verse">Không nhớ lần trước. Bạn muốn tôi ghi khi bạn chốt?</p>
+          </article>
+        </div>`;
+
+      function setToc(open) {
+        book.classList.toggle("is-toc-open", open);
+        tocBtn.setAttribute("aria-expanded", open ? "true" : "false");
+        tocBtn.setAttribute("aria-pressed", open ? "true" : "false");
+      }
+
+      function emptyPage() {
+        leaf.className = "leaf is-empty";
+        leaf.dataset.view = "empty";
+        leaf.innerHTML = `<h1 class="title">Thyca</h1>`;
+      }
+
+      function talkPage() {
+        leaf.className = "leaf";
+        leaf.dataset.view = "talk";
+        leaf.innerHTML = talkHtml;
+        leaf.querySelector("#thread")?.lastElementChild?.scrollIntoView({ block: "end" });
+      }
+
+      const desktop = window.matchMedia("(min-width: 60rem)");
+      if (desktop.matches) setToc(true);
+
+      tocBtn.addEventListener("click", () => {
+        setToc(!book.classList.contains("is-toc-open"));
+      });
+
+      document.querySelectorAll(".wordmark").forEach((el) => {
+        el.addEventListener("click", (e) => {
+          if (!desktop.matches) return;
+          e.preventDefault();
+          setToc(!book.classList.contains("is-toc-open"));
+        });
+      });
+
+      function startBlank() {
+        if (spread.classList.contains("is-flipping")) return;
+        const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        if (!desktop.matches || reduce) {
+          emptyPage();
+          line.focus();
+          return;
+        }
+        spread.classList.add("is-flipping");
+        recto.disabled = true;
+        let finished = false;
+        const end = () => {
+          if (finished) return;
+          finished = true;
+          emptyPage();
+          spread.classList.remove("is-flipping");
+          recto.disabled = false;
+          line.focus();
+        };
+        spread.addEventListener("transitionend", end, { once: true });
+        window.setTimeout(end, 520);
+      }
+      newBtn.addEventListener("click", startBlank);
+      tocNew.addEventListener("click", startBlank);
+      recto.addEventListener("click", startBlank);
+
+      document.querySelectorAll("[data-view]").forEach((el) => {
+        el.addEventListener("click", () => {
+          if (el.dataset.view === "talk") talkPage();
+          else emptyPage();
+        });
+      });
+
+      function setBusy(on) {
+        send.disabled = on;
+        send.classList.toggle("is-loading", on);
+        line.disabled = on;
+        hint.textContent = on ? "Đang viết" : "";
+        hint.className = "hint";
+      }
+
+      function fail(msg) {
+        field.classList.add("is-error");
+        line.setAttribute("aria-invalid", "true");
+        hint.textContent = msg;
+        hint.className = "hint is-error";
+      }
+
+      function clearFail() {
+        field.classList.remove("is-error");
+        line.removeAttribute("aria-invalid");
+        hint.textContent = "";
+        hint.className = "hint";
+      }
+
+      form.addEventListener("submit", (e) => {
+        e.preventDefault();
+        const text = line.value.trim();
+        if (!text) {
+          fail("Chưa có chữ để gửi.");
+          line.focus();
+          return;
+        }
+        clearFail();
+        if (leaf.dataset.view === "empty") {
+          leaf.className = "leaf";
+          leaf.dataset.view = "talk";
+          leaf.innerHTML = `<div class="thread" id="thread" aria-live="polite"></div>`;
+        }
+        const thread = document.getElementById("thread");
+        thread.insertAdjacentHTML(
+          "beforeend",
+          `<article class="turn turn-user"><p class="who">Bạn</p><p class="bubble"></p></article>`
+        );
+        thread.lastElementChild.querySelector(".bubble").textContent = text;
+        line.value = "";
+        setBusy(true);
+        const wait = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 800;
+        window.setTimeout(() => {
+          const reply =
+            /cà phê|ca phe/i.test(text)
+              ? "Đã ghi vào nhật hôm nay."
+              : "Mock này chưa nối model. Chỉ xem nhịp trang.";
+          thread.insertAdjacentHTML(
+            "beforeend",
+            `<article class="turn"><p class="who">Thyca</p><p class="verse"></p></article>`
+          );
+          thread.lastElementChild.querySelector(".verse").textContent = reply;
+          setBusy(false);
+          line.focus();
+        }, wait);
+      });
+
+      line.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          form.requestSubmit();
+        }
+      });
+
+      line.addEventListener("input", () => {
+        if (line.value.trim()) clearFail();
+      });
+    </script>
+  </body>
+</html>

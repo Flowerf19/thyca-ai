@@ -1,4 +1,4 @@
-import { fillChatAt, hydrateChat } from "./chat.js";
+import { fillChatAt, hydrateChat, stopThinkingCycle } from "./chat.js";
 import { icons, modes } from "./data.js";
 import { el } from "./dom.js";
 import { closeDrawer } from "./drawer.js";
@@ -102,6 +102,7 @@ export async function renderMode(mode) {
   const gen = ++modeGen;
   state.activeMode = mode;
   state.activePageIndex = 0;
+  stopThinkingCycle();
   stopMemoriesPoll();
   if (mode === "memories") {
     lastStatsJson = "";

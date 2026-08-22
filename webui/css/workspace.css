@@ -368,6 +368,47 @@
   color: var(--color-ink-2);
 }
 
+.entry.is-enter,
+.tool-strip.is-enter {
+  animation: entry-in var(--dur-long) var(--ease-out) both;
+}
+
+.entry-thinking {
+  animation: think-ink 1.6s var(--ease-in-out) infinite;
+}
+
+.entry-thinking .thinking-line {
+  color: var(--color-muted);
+  transition: opacity var(--dur-short) var(--ease-out);
+}
+
+.entry-thinking .thinking-line.is-swap {
+  opacity: 0;
+}
+
+@keyframes entry-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.55rem);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes think-ink {
+  0%,
+  100% {
+    border-inline-start-color: var(--color-accent-soft);
+  }
+
+  50% {
+    border-inline-start-color: var(--color-accent);
+  }
+}
+
 .soft-line {
   color: var(--color-muted);
   font-size: var(--text-md);

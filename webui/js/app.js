@@ -1,4 +1,4 @@
-import { beginOutgoingTurn, createChatSession, markIncoming, sendChatTurn, settleIncoming, stopThinkingCycle } from "./chat.js";
+import { createChatSession, sendChatTurn } from "./chat.js";
 import { el } from "./dom.js";
 import { closeDrawer, hideDrawerIfMobile, toggleDrawer } from "./drawer.js";
 import { renderMode, renderPage, renderPageList, setTracePlaying } from "./render.js";
@@ -20,12 +20,14 @@ function showError(message) {
 
 function setBusy(busy) {
   el.send.disabled = busy;
-  el.send.classList.toggle("is-loading", busy);
   el.line.disabled = busy;
   const newer = document.getElementById("new-page");
   if (newer) newer.disabled = busy;
   el.field.classList.toggle("is-loading", busy);
-  if (!busy) stopThinkingCycle();
+  if (busy) {
+    el.hint.textContent = "Thyca đang nghĩ…";
+    el.hint.className = "hint is-loading";
+  }
 }
 
 async function openNewPage() {
@@ -54,35 +56,20 @@ async function submitLine() {
     return;
   }
   clearError();
-  el.line.value = "";
-  el.field.classList.add("is-sending");
-  window.setTimeout(() => el.field.classList.remove("is-sending"), 280);
-  beginOutgoingTurn(text);
   setBusy(true);
   try {
     if (state.chatLive) {
       await sendChatTurn(text);
-      if (state.activeMode !== "chat") return;
-      stopThinkingCycle();
-      if (!settleIncoming()) {
-        renderPage(state.activePageIndex);
-        markIncoming();
-      } else {
-        renderPageList(el.pageSearch.value);
-      }
+      renderPage(state.activePageIndex);
     } else {
-      const wait = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 1600;
+      const wait = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 650;
       await new Promise((resolve) => window.setTimeout(resolve, wait));
-      const thinking = el.pageBody.querySelector(".entry-thinking");
-      if (thinking) thinking.remove();
     }
-    if (state.activeMode !== "chat") return;
     el.field.classList.add("is-success");
     el.hint.textContent = "Đã gửi vào phiên này.";
     el.hint.className = "hint is-success";
+    el.line.value = "";
   } catch (error) {
-    const thinking = el.pageBody.querySelector(".entry-thinking");
-    if (thinking) thinking.remove();
     showError(error instanceof Error ? error.message : "Không gửi được.");
   } finally {
     setBusy(false);

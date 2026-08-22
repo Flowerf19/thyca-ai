@@ -1,37 +1,6 @@
-import { el } from "./dom.js";
 import { modes } from "./data.js";
 import { escapeHtml } from "./memories.js";
 import { state } from "./state.js";
-
-const THINKING_LINES = [
-  "đang mở nhạc…",
-  "đang lên dây…",
-  "đang dò tông…",
-  "đang giữ nhịp…",
-  "đang đếm vào…",
-  "đang nghe lại intro…",
-  "đang để kim đĩa chạy…",
-  "đang lặng một nhịp…",
-  "đang chỉnh amp nhỏ…",
-  "đang tìm beat cũ…",
-  "đang ngân một nốt…",
-  "đang nghe B-side…",
-  "đang làm thơ…",
-  "đang tìm vần…",
-  "đang gieo chữ…",
-  "đang ngắt nhịp câu…",
-  "đang đọc thầm…",
-  "đang mở trang thơ…",
-  "đang sửa một dòng…",
-  "đang gạch nhịp xuống dòng…",
-  "đang để giấy nghỉ…",
-  "đang hạ giọng…",
-  "đang chấm mực…",
-  "đang lật sổ…",
-  "đang nhớ lại…",
-];
-
-let thinkTimer = 0;
 
 const EMPTY_BODY =
   '<div class="new-page-empty"><span aria-hidden="true">+</span><p>Chưa có tin nào.</p><small>Nói điều đầu tiên để mở phiên.</small></div>';
@@ -65,68 +34,6 @@ export async function createChatSession() {
   await hydrateChat();
   const index = modes.chat.pages.findIndex((page) => page.sessionId === created.id);
   state.activePageIndex = index >= 0 ? index : 0;
-}
-
-export function beginOutgoingTurn(text) {
-  stopThinkingCycle();
-  let list = el.pageBody.querySelector(".entry-list");
-  if (!list) {
-    el.pageBody.innerHTML = '<div class="entry-list"></div>';
-    list = el.pageBody.querySelector(".entry-list");
-  }
-  list.insertAdjacentHTML("beforeend", entryHtml("user", text));
-  const user = list.lastElementChild;
-  user.classList.add("is-enter");
-  const phrases = pickThinkingLines();
-  list.insertAdjacentHTML("beforeend", thinkingHtml(phrases[0]));
-  startThinkingCycle(list.lastElementChild, phrases);
-  scrollThread();
-}
-
-export function stopThinkingCycle() {
-  if (thinkTimer) {
-    window.clearInterval(thinkTimer);
-    thinkTimer = 0;
-  }
-}
-
-export function markIncoming() {
-  const list = el.pageBody.querySelector(".entry-list");
-  if (!list) return;
-  const kids = [...list.children];
-  let lastUser = -1;
-  for (let i = kids.length - 1; i >= 0; i -= 1) {
-    if (kids[i].classList.contains("entry-user")) {
-      lastUser = i;
-      break;
-    }
-  }
-  kids.slice(lastUser + 1).forEach((node, index) => {
-    node.classList.add("is-enter");
-    node.style.animationDelay = `${index * 80}ms`;
-  });
-  scrollThread();
-}
-
-export function settleIncoming() {
-  const page = modes.chat.pages[state.activePageIndex];
-  const liveList = el.pageBody.querySelector(".entry-list");
-  const wrap = document.createElement("div");
-  wrap.innerHTML = page?.body || "";
-  const fresh = wrap.querySelector(".entry-list");
-  if (!fresh || !liveList) return false;
-  const kept = [...liveList.children].filter((node) => !node.classList.contains("entry-thinking")).length;
-  liveList.replaceWith(fresh);
-  [...fresh.children].slice(kept).forEach((node, index) => {
-    node.classList.add("is-enter");
-    node.style.animationDelay = `${index * 80}ms`;
-  });
-  const heading = el.pageHeader.querySelector("h1");
-  if (heading && page.title) heading.innerHTML = page.title;
-  const kicker = el.pageHeader.querySelector(".page-kicker");
-  if (kicker && page.kicker) kicker.textContent = page.kicker;
-  scrollThread();
-  return true;
 }
 
 export async function sendChatTurn(text) {
@@ -254,56 +161,6 @@ export function threadHtml(messages) {
   }
   if (!parts.length) return EMPTY_BODY;
   return `<div class="entry-list">${parts.join("")}</div>`;
-}
-
-function thinkingHtml(line) {
-  return `<article class="entry entry-thyca entry-thinking" aria-label="Thyca đang nghĩ">
-      <time>thyca</time>
-      <div class="entry-copy"><p class="thinking-line">${escapeHtml(line)}</p></div>
-    </article>`;
-}
-
-function startThinkingCycle(node, phrases) {
-  const line = node.querySelector(".thinking-line");
-  if (el.hint) {
-    el.hint.textContent = phrases[0];
-    el.hint.className = "hint is-loading";
-  }
-  if (!line || reduceMotion() || phrases.length < 2) return;
-  let index = 0;
-  thinkTimer = window.setInterval(() => {
-    index = (index + 1) % phrases.length;
-    const next = phrases[index];
-    line.classList.add("is-swap");
-    window.setTimeout(() => {
-      line.textContent = next;
-      line.classList.remove("is-swap");
-    }, 160);
-    if (el.hint) el.hint.textContent = next;
-  }, 1400);
-}
-
-function pickThinkingLines() {
-  const copy = THINKING_LINES.slice();
-  for (let i = copy.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
-    const swap = copy[i];
-    copy[i] = copy[j];
-    copy[j] = swap;
-  }
-  return copy.slice(0, 8);
-}
-
-function scrollThread() {
-  if (!el.notebook) return;
-  el.notebook.scrollTo({
-    top: el.notebook.scrollHeight,
-    behavior: reduceMotion() ? "auto" : "smooth",
-  });
-}
-
-function reduceMotion() {
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
 function entryHtml(role, content) {

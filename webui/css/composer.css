@@ -132,11 +132,6 @@
   border-block-end-color: var(--color-accent);
 }
 
-.composer-inner.is-sending .writing-line {
-  border-block-end-color: var(--color-chat);
-  background: var(--color-chat-soft);
-}
-
 .bookmark-action {
   position: relative;
   display: inline-grid;
@@ -219,21 +214,6 @@
 
 .bookmark-action.is-loading .pen-icon {
   opacity: 0.35;
-}
-
-.bookmark-action.is-loading .bookmark-shape {
-  animation: pen-dip 0.9s var(--ease-in-out) infinite;
-}
-
-@keyframes pen-dip {
-  0%,
-  100% {
-    transform: rotate(1.5deg) translateY(0);
-  }
-
-  50% {
-    transform: rotate(0deg) translateY(-0.18rem);
-  }
 }
 
 .bookmark-action.is-error {

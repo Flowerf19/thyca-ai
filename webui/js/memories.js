@@ -1,16 +1,44 @@
 const DAY_FILE = /^(\d{4}-\d{2}-\d{2})\.md$/;
 const SUGGEST_CAP = 8;
 const EXPIRE_CAP = 5;
+const DAY_PAGE = 8;
 
 let openDay = "";
+let dayQuery = "";
+let dayPage = 0;
+let lastDayLeaves = [];
 
 export function pagesFromStats(stats) {
   const leaves = stats.leaves || [];
   return [overviewPage(stats, leaves), ...memoryPages(leaves), ...canonicalPages(stats.files || [])];
 }
 
-export function bindOverview(root) {
+export function bindOverview(root, hooks = {}) {
   if (!root) return;
+  const filter = root.querySelector("[data-day-filter]");
+  if (filter && !filter.dataset.bound) {
+    filter.dataset.bound = "1";
+    filter.addEventListener("input", () => {
+      dayQuery = filter.value;
+      dayPage = 0;
+      redrawDays(root);
+    });
+  }
+  bindDayPager(root);
+  bindDayDetails(root);
+  bindForget(root, hooks.onForget);
+}
+
+function bindDayPager(root) {
+  root.querySelectorAll("[data-day-page]").forEach((button) => {
+    button.addEventListener("click", () => {
+      dayPage = Number(button.dataset.dayPage) || 0;
+      redrawDays(root);
+    });
+  });
+}
+
+function bindDayDetails(root) {
   root.querySelectorAll("details[data-day]").forEach((el) => {
     el.addEventListener("toggle", () => {
       if (el.open) {
@@ -23,6 +51,38 @@ export function bindOverview(root) {
       }
     });
   });
+}
+
+function bindForget(root, onForget) {
+  root.querySelectorAll("[data-forget]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const sid = button.dataset.forget;
+      if (!sid || !window.confirm("Xóa mem này khỏi L2?")) return;
+      void forgetSession(sid, onForget);
+    });
+  });
+}
+
+async function forgetSession(sessionId, onForget) {
+  try {
+    const response = await fetch("/api/memory/forget", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId }),
+    });
+    if (!response.ok) return;
+    if (typeof onForget === "function") onForget();
+  } catch {
+    /* static mock */
+  }
+}
+
+function redrawDays(root) {
+  const mount = root.querySelector("[data-day-list]");
+  if (!mount) return;
+  mount.innerHTML = dayListHtml(lastDayLeaves);
+  bindDayPager(root);
+  bindDayDetails(root);
 }
 
 function overviewPage(stats, leaves) {
@@ -38,11 +98,6 @@ function overviewPage(stats, leaves) {
     tone: "memories",
     kicker: "leaf · get và search",
     body: `<div class="book-reading">
-        <div class="book-meta">
-          <span class="book-author">L2 · get / search</span>
-          <h2>Tổng quan</h2>
-          <p>Get = đọc đủ. Search = đã hiện trong kết quả. Hot không đếm. Không xóa từ đây.</p>
-        </div>
         <div class="stat-row">
           <div><strong>${total}</strong><span>tổng</span></div>
           <div><strong>${used}</strong><span>đã get</span></div>
@@ -57,6 +112,22 @@ function overviewPage(stats, leaves) {
 }
 
 function dayBlock(leaves) {
+  lastDayLeaves = leaves;
+  const groups = dayGroups(leaves);
+  const keys = sortFileKeys([...groups.keys()]);
+  if (!keys.length) {
+    return `<div class="suggest-inline"><h3>Theo ngày</h3><p class="suggest-empty">Chưa có daily.</p></div>`;
+  }
+  return `<div class="suggest-inline">
+      <h3>Theo ngày</h3>
+      <label class="day-filter">Lọc ngày
+        <input type="search" data-day-filter value="${escapeHtml(dayQuery)}" placeholder="2026-08-20" autocomplete="off" />
+      </label>
+      <div data-day-list>${dayListHtml(leaves)}</div>
+    </div>`;
+}
+
+function dayGroups(leaves) {
   const groups = new Map();
   for (const leaf of leaves) {
     const key = fileKey(leaf);
@@ -65,12 +136,36 @@ function dayBlock(leaves) {
     if (list) list.push(leaf);
     else groups.set(key, [leaf]);
   }
-  const keys = sortFileKeys([...groups.keys()]);
-  if (!keys.length) {
-    return `<div class="suggest-inline"><h3>Theo ngày</h3><p class="suggest-empty">Chưa có daily.</p></div>`;
+  return groups;
+}
+
+function dayListHtml(leaves) {
+  const groups = dayGroups(leaves);
+  const keys = filterDayKeys(sortFileKeys([...groups.keys()]), dayQuery);
+  const pages = Math.max(1, Math.ceil(keys.length / DAY_PAGE));
+  if (dayPage >= pages) dayPage = pages - 1;
+  if (dayPage < 0) dayPage = 0;
+  const slice = keys.slice(dayPage * DAY_PAGE, dayPage * DAY_PAGE + DAY_PAGE);
+  if (!slice.length) {
+    return `<p class="suggest-empty">Không thấy ngày khớp.</p>`;
   }
-  const items = keys.map((key) => dayAccordion(key, groups.get(key))).join("");
-  return `<div class="suggest-inline"><h3>Theo ngày</h3><div class="day-acc-list">${items}</div></div>`;
+  const items = slice.map((key) => dayAccordion(key, groups.get(key))).join("");
+  return `<div class="day-acc-list">${items}</div>${dayPager(pages)}`;
+}
+
+export function filterDayKeys(keys, query) {
+  const needle = String(query || "").trim().toLocaleLowerCase("vi");
+  if (!needle) return keys;
+  return keys.filter((key) => key.toLocaleLowerCase("vi").includes(needle));
+}
+
+function dayPager(pages) {
+  if (pages <= 1) return "";
+  return `<nav class="day-pager">
+      <button type="button" data-day-page="${dayPage - 1}" ${dayPage <= 0 ? "disabled" : ""}>Trước</button>
+      <span>${dayPage + 1} / ${pages}</span>
+      <button type="button" data-day-page="${dayPage + 1}" ${dayPage + 1 >= pages ? "disabled" : ""}>Sau</button>
+    </nav>`;
 }
 
 function dayAccordion(key, leaves) {
@@ -184,12 +279,15 @@ function suggestBlock(rows) {
   const items = rows
     .map((leaf) => {
       const { topic } = splitHeading(leaf);
-      return `<li><strong>${escapeHtml(topic)}</strong><small>${escapeHtml(leafSource(leaf))} · hết hạn ${escapeHtml(fmtTs(leaf.expires_at) || "—")}</small></li>`;
+      return `<li>
+          <div><strong>${escapeHtml(topic)}</strong><small>${escapeHtml(leafSource(leaf))} · hết hạn ${escapeHtml(fmtTs(leaf.expires_at) || "—")}</small></div>
+          <button type="button" class="mem-forget" data-forget="${escapeHtml(leaf.session_id || "")}">Xóa</button>
+        </li>`;
     })
     .join("");
   return `<div class="suggest-inline">
       <h3>Đề xuất loại bỏ</h3>
-      <p>Chưa get và chưa từng hiện trong search. Không gồm hôm nay. Chỉ gợi ý — không xóa từ đây.</p>
+      <p>Chưa get/search và đã ≥ 7 ngày. Có thể xóa.</p>
       <ul class="suggest-list">${items}</ul>
     </div>`;
 }

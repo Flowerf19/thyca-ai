@@ -90,7 +90,7 @@ export const modes = {
     label: "Memories",
     listLabel: "File canonical",
     kicker: "~/.thyca · markdown là nguồn sự thật",
-    note: "SQLite chỉ là index suy ra. Hot nhét prompt; lạnh thì agent gọi search.",
+    note: "Get = đọc đủ. Search = đã hiện trong kết quả. Hot không đếm.",
     chips: [],
     pages: [
       {
@@ -99,7 +99,7 @@ export const modes = {
         tag: "stats",
         tone: "memories",
         kicker: "leaf · get và search",
-        body: `<div class="book-reading"><div class="book-meta"><span class="book-author">L2 · get / search</span><h2>Tổng quan</h2><p>Get = đọc đủ. Search = đã hiện trong kết quả. Hot không đếm. Không xóa từ đây.</p></div><div class="suggest-inline"><h3>Theo ngày</h3><p class="suggest-empty">Chưa có daily.</p></div></div>`
+        body: `<div class="book-reading"><div class="stat-row"><div><strong>0</strong><span>tổng</span></div></div><div class="suggest-inline"><h3>Theo ngày</h3><p class="suggest-empty">Chưa có daily.</p></div></div>`
       },
       {
         title: "MEMORY.md",

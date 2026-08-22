@@ -13,6 +13,7 @@ from thyca.chat_app import ChatApp
 from thyca.config import ConfigError
 from thyca.llm.llm_base import LLMError
 from thyca.sessions import SessionCorrupt, SessionError, SessionNotFound
+from thyca.memory.archived import ArchiveError
 from thyca.tools.memory import MemoryFacade
 
 LOOPBACK = frozenset({"127.0.0.1", "localhost"})
@@ -96,6 +97,9 @@ def _handler(
 
         def do_POST(self) -> None:
             path = urlparse(self.path).path
+            if path == "/api/memory/forget":
+                self._forget()
+                return
             if path == "/api/sessions":
                 self._chat_create()
                 return
@@ -110,6 +114,26 @@ def _handler(
 
         def log_message(self, format: str, *args: object) -> None:
             return
+
+        def _forget(self) -> None:
+            try:
+                payload = self._read_json()
+            except ValueError:
+                self._json(400, {"error": "invalid body"})
+                return
+            sid = payload.get("session_id")
+            if not isinstance(sid, str) or not sid.strip():
+                self._json(400, {"error": "invalid session_id"})
+                return
+            try:
+                facade.forget(sid.strip())
+            except ArchiveError:
+                self._json(404, {"error": "session not found"})
+                return
+            except Exception:
+                self._json(503, {"error": "forget failed"})
+                return
+            self._json(200, {"ok": True})
 
         def _stats(self) -> None:
             try:

@@ -90,7 +90,14 @@ export function renderPage(pageIndex = 0) {
   el.pageListLabel.textContent = data.listLabel;
   el.pageHeader.innerHTML = `<div class="page-header-copy"><p class="page-kicker">${page.kicker || data.kicker}</p><h1>${page.title}</h1><p class="page-note">${data.note}</p></div><div class="page-header-mark" aria-hidden="true">${icons[state.activeMode]}<span>${data.label}</span></div>`;
   el.pageBody.innerHTML = page.body || data.body;
-  if (state.activeMode === "memories") bindOverview(el.pageBody);
+  if (state.activeMode === "memories") {
+    bindOverview(el.pageBody, {
+      onForget: () => {
+        lastStatsJson = "";
+        void hydrateMemories({ keepPage: true });
+      },
+    });
+  }
   el.form.hidden = state.activeMode !== "chat";
   el.miniPlayer.hidden = state.activeMode !== "trace";
   setTracePlaying(false);
@@ -156,7 +163,7 @@ async function hydrateMemories({ keepPage = false } = {}) {
       label: "Memories",
       listLabel: "Canonical",
       kicker: "leaf · get và search",
-      note: "Get = đọc đủ. Search = đã hiện trong kết quả. Hot không đếm. Không xóa từ đây.",
+      note: "Get = đọc đủ. Search = đã hiện trong kết quả. Hot không đếm.",
       chips: [],
       pages,
     };

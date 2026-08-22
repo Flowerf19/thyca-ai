@@ -48,8 +48,7 @@ def test_inventory_excludes_persona_and_counts_unused(tmp_path: Path) -> None:
         "2026-08-13#bbbbbbbb",
         "2026-08-13#cccccccc",
     }
-    assert len(stats.suggest_removal) == 3
-    assert all(not item.is_today for item in stats.suggest_removal)
+    assert stats.suggest_removal == []
     assert stats.searched == 0
     assert stats.untouched == 3
     assert [item.name for item in stats.files] == ["SOUL.md", "USER.md", "IDENTITY.md"]
@@ -218,8 +217,7 @@ def test_search_increments_returned_hits_only(tmp_path: Path) -> None:
     assert stats.used == 0
     assert stats.searched == 1
     assert stats.untouched == 2
-    assert cid not in {row.chunk_id for row in stats.suggest_removal}
-    assert len(stats.suggest_removal) == 2
+    assert stats.suggest_removal == []
 
 
 def test_empty_and_invalid_search_do_not_record(tmp_path: Path) -> None:
@@ -318,3 +316,14 @@ def test_expiring_within_14_days_not_beyond(tmp_path: Path) -> None:
     ids = {item.chunk_id for item in stats.expiring}
     assert "memory#aaaaaaaa#1" in ids
     assert "memory#bbbbbbbb#1" not in ids
+
+
+def test_suggest_after_seven_idle_days(tmp_path: Path) -> None:
+    _closed_three(tmp_path)
+    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    facade.archive.reindex(at("2026-08-17"))
+    young = facade.stats(now=at("2026-08-17"))
+    assert young.suggest_removal == []
+    aged = facade.stats(now=at("2026-08-20"))
+    assert len(aged.suggest_removal) == 3
+    assert all(not item.is_today for item in aged.suggest_removal)

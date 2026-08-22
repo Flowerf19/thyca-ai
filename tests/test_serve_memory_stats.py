@@ -75,6 +75,41 @@ def test_stats_json_and_static(tmp_path: Path) -> None:
         _stop(httpd, thread)
 
 
+def test_forget_endpoint(tmp_path: Path) -> None:
+    httpd, thread, facade = _start(tmp_path)
+    try:
+        now = datetime(2026, 8, 10, 10, 0, tzinfo=TZ)
+        sid = facade.remember("cafe", "likes ca phe den enough", target="memory", now=now)
+        assert facade.stats(now=now).total == 1
+        payload = json.dumps({"session_id": sid}).encode("utf-8")
+        request = Request(
+            _url(httpd, "/api/memory/forget"),
+            data=payload,
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urlopen(request, timeout=2) as response:
+            body = json.loads(response.read().decode("utf-8"))
+        assert body == {"ok": True}
+        assert facade.stats(now=now).total == 0
+        try:
+            urlopen(
+                Request(
+                    _url(httpd, "/api/memory/forget"),
+                    data=b'{"session_id":"memory#ffffffff"}',
+                    method="POST",
+                    headers={"Content-Type": "application/json"},
+                ),
+                timeout=2,
+            )
+        except HTTPError as exc:
+            assert exc.code == 404
+        else:
+            raise AssertionError("expected 404")
+    finally:
+        _stop(httpd, thread)
+
+
 def test_post_and_traversal_rejected(tmp_path: Path) -> None:
     httpd, thread, _facade = _start(tmp_path)
     try:
@@ -119,6 +154,8 @@ def test_default_webui_has_index() -> None:
     assert (WEBUI / "js" / "memories.js").is_file()
     raw = (WEBUI / "js" / "memories.js").read_text(encoding="utf-8")
     assert "Theo ngày" in raw
+    assert "data-day-filter" in raw
+    assert "data-forget" in raw
     assert "pagesFromStats" in raw
     assert "title: escapeHtml(key)" not in raw
 

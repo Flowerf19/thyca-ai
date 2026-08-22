@@ -6,9 +6,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from thyca.memory.chunk import Chunk
+from thyca.memory.heading import DEFAULT_IMPORTANCE, TTL_DAYS, parse_heading
 
 SNIPPET_LEN = 250
 EXPIRE_SOON_DAYS = 14
+SUGGEST_IDLE_DAYS = 7
 L2_SESSION_RE = re.compile(r"^(?:\d{4}-\d{2}-\d{2}|memory)#[0-9a-f]{8}$")
 
 
@@ -78,7 +80,9 @@ class MemoryStats:
         suggest = [
             item
             for item in unused
-            if not item.is_today and item.search_count == 0
+            if not item.is_today
+            and item.search_count == 0
+            and _idle_long_enough(item, now_ts)
         ]
         suggest.sort(key=lambda item: (item.expires_at is None, item.expires_at or "", item.chunk_id))
         return MemoryStatsResult(
@@ -167,6 +171,30 @@ def expiring_soon(leaves: list[LeafStat], now_ts: str) -> list[LeafStat]:
 def _expires_by(expires_at: str | None, horizon: datetime) -> bool:
     exp = _parse_ts(expires_at or "")
     return exp is not None and exp <= horizon
+
+
+def _idle_long_enough(item: LeafStat, now_ts: str) -> bool:
+    now = _parse_ts(now_ts)
+    touched = _parse_ts(_last_touch(item) or "")
+    if now is None or touched is None:
+        return False
+    return now - touched >= timedelta(days=SUGGEST_IDLE_DAYS)
+
+
+def _last_touch(item: LeafStat) -> str | None:
+    return item.last_get_at or item.last_search_at or _created_ts(item)
+
+
+def _created_ts(item: LeafStat) -> str | None:
+    meta = parse_heading(item.heading)
+    if meta is not None and meta.expires_at:
+        exp = _parse_ts(meta.expires_at)
+        if exp is not None:
+            days = TTL_DAYS.get(meta.importance, TTL_DAYS[DEFAULT_IMPORTANCE])
+            return (exp - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if item.timeline_day:
+        return f"{item.timeline_day}T00:00:00Z"
+    return None
 
 
 def _parse_ts(value: str) -> datetime | None:

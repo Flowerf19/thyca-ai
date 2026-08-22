@@ -131,7 +131,7 @@ class MemoryFacade:
             sid = session_id
             chunk_ids = self._session_leaf_ids(session_id, text)[:GET_SESSION_CAP]
         if chunk_ids and sid:
-            self.archive.store.record_gets(chunk_ids, sid, now_ts)
+            self.archive.store.usage.record_gets(chunk_ids, sid, now_ts)
         if not sid:
             return text
         self.reinforce(sid, now=now)
@@ -145,7 +145,8 @@ class MemoryFacade:
         return MemoryStats.build(
             self.archive.store.visible_chunk_maps(now_ts),
             self._today_chunks(now),
-            self.archive.store.leaf_get_map(),
+            self.archive.store.usage.get_map(),
+            self.archive.store.usage.search_map(),
             today=self.archive.day(now),
             now_ts=now_ts,
             files=self._canonical_files(),
@@ -173,6 +174,13 @@ class MemoryFacade:
                     hits.append(hit)
                     seen.add(hit.chunk_id)
         hits = self.archive.with_counts(dedup_siblings(hits)[:limit])
+        if hits:
+            now_ts = format_ts(utc_now(now))
+            by_session: dict[str, list[str]] = {}
+            for hit in hits:
+                by_session.setdefault(hit.session_id, []).append(hit.chunk_id)
+            for sid, chunk_ids in by_session.items():
+                self.archive.store.usage.record_searches(chunk_ids, sid, now_ts)
         return SearchResult(hits=hits)
 
     def recent(self, limit: int = 5, now: datetime | None = None) -> list[Hit]:
@@ -184,7 +192,8 @@ class MemoryFacade:
         self.archive.reindex(now)
         live = set(self.archive.store.chunk_ids())
         live.update(chunk.chunk_id for chunk in self._today_chunks(now))
-        self.archive.store.keep_gets(live)
+        self.archive.store.usage.keep_gets(live)
+        self.archive.store.usage.keep_searches(live)
 
     def _canonical_files(self) -> list[CanonicalFile]:
         files: list[CanonicalFile] = []

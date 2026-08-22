@@ -61,7 +61,10 @@ def test_stats_json_and_static(tmp_path: Path) -> None:
         assert payload["total"] == 1
         assert payload["used"] == 1
         assert payload["unused"] == 0
+        assert payload["searched"] == 0
+        assert payload["untouched"] == 0
         assert payload["leaves"][0]["get_count"] == 1
+        assert payload["leaves"][0]["search_count"] == 0
         with urlopen(_url(httpd, "/"), timeout=2) as response:
             html = response.read().decode("utf-8")
         assert 'data-mode="memories"' in html
@@ -114,6 +117,10 @@ def test_stats_error_is_503(tmp_path: Path) -> None:
 def test_default_webui_has_index() -> None:
     assert (WEBUI / "index.html").is_file()
     assert (WEBUI / "js" / "memories.js").is_file()
+    raw = (WEBUI / "js" / "memories.js").read_text(encoding="utf-8")
+    assert "Theo ngày" in raw
+    assert "pagesFromStats" in raw
+    assert "title: escapeHtml(key)" not in raw
 
 
 def test_index_html_parses() -> None:

@@ -94,6 +94,14 @@ export const modes = {
     chips: [],
     pages: [
       {
+        title: "Tổng quan",
+        date: "leaf",
+        tag: "stats",
+        tone: "memories",
+        kicker: "leaf · get và search",
+        body: `<div class="book-reading"><div class="book-meta"><span class="book-author">L2 · get / search</span><h2>Tổng quan</h2><p>Get = đọc đủ. Search = đã hiện trong kết quả. Hot không đếm. Không xóa từ đây.</p></div><div class="suggest-inline"><h3>Theo ngày</h3><p class="suggest-empty">Chưa có daily.</p></div></div>`
+      },
+      {
         title: "MEMORY.md",
         date: "Hot tail · 4KB",
         tag: "canonical",
@@ -113,20 +121,6 @@ export const modes = {
         tag: "canonical",
         tone: "memories",
         body: `<div class="book-reading"><div class="book-meta"><span class="book-author">Canonical · ActiveMemory</span><h2>USER.md</h2><p>Hồ sơ người dùng. Cùng rule với SOUL: cả file, không cắt.</p><div class="progress-label"><span>Inject</span><strong>full</strong></div><div class="reading-progress reading-progress-complete"><span></span></div></div></div>`
-      },
-      {
-        title: "2026-08-21.md",
-        date: "Hôm nay · chưa index",
-        tag: "daily",
-        tone: "memories",
-        body: `<div class="book-reading"><div class="book-meta"><span class="book-author">Daily · chưa đóng ngày</span><h2>2026-08-21.md</h2><p>File hôm nay không vào L2. Chỉ tail 4KB trong prompt. Đóng ngày mới chunk.</p><div class="progress-label"><span>Hot tail</span><strong>4KB</strong></div><div class="reading-progress"><span></span></div></div></div>`
-      },
-      {
-        title: "2026-08-20.md",
-        date: "Đã đóng · FTS5",
-        tag: "archived",
-        tone: "memories",
-        body: `<div class="book-reading"><div class="book-meta"><span class="book-author">Archived · L2 lexical</span><h2>2026-08-20.md</h2><p>Ngày đã đóng: immutable, chunk theo heading, search bằng FTS5 + trigram.</p><div class="progress-label"><span>Index</span><strong>lexical</strong></div><div class="reading-progress reading-progress-complete"><span></span></div></div><blockquote class="quote-note"><p>Linux là target chính. Đừng viết API chỉ chạy trên Windows.</p><cite>memory_search · trigram · 2026-08-20.md</cite></blockquote></div>`
       }
     ],
     body: `

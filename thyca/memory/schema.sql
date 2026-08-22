@@ -45,6 +45,13 @@ CREATE TABLE IF NOT EXISTS leaf_gets(
   last_get_at  TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS leaf_searches(
+  chunk_id        TEXT PRIMARY KEY,
+  session_id      TEXT NOT NULL,
+  search_count    INTEGER NOT NULL CHECK(search_count >= 1),
+  last_search_at  TEXT NOT NULL
+);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
   text_raw,
   content='chunks', content_rowid='row_id',

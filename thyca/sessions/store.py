@@ -91,6 +91,17 @@ class SessionStore:
             raise SessionNotFound(path)
         return Session(session_id, path, self.read(path))
 
+    def list_paths(self) -> list[Path]:
+        if not self.sessions_dir.is_dir():
+            return []
+        candidates = [
+            path
+            for path in self.sessions_dir.glob("*.jsonl")
+            if path.is_file() and not path.is_symlink() and _ID_RE.fullmatch(path.stem)
+        ]
+        candidates.sort(key=lambda path: (path.stat().st_mtime_ns, path.name), reverse=True)
+        return candidates
+
     def latest(self) -> Session:
         if not self.sessions_dir.is_dir():
             raise SessionNotFound(self.sessions_dir)

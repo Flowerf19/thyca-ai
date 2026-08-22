@@ -45,6 +45,40 @@ def test_roundtrip_three_turns_and_permissions(tmp_path: Path) -> None:
     assert stat.S_IMODE(session.path.stat().st_mode) == 0o600
 
 
+def test_list_paths_empty_and_skips(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path)
+    assert store.list_paths() == []
+    assert SessionManager(tmp_path).list_sessions() == []
+    manager = SessionManager(tmp_path)
+    old, new = manager.create(), manager.create()
+    os.utime(old.path, ns=(1, 1))
+    os.utime(new.path, ns=(2, 2))
+    (tmp_path / "notes.jsonl").write_text("nope", encoding="utf-8")
+    (tmp_path / "link.jsonl").symlink_to(new.path)
+    (tmp_path / "sub.jsonl").mkdir()
+    assert [path.stem for path in store.list_paths()] == [new.id, old.id]
+
+
+def test_list_sessions_skips_corrupt_does_not_set_current(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path)
+    good = manager.create()
+    manager.append(msg("user", "ok"))
+    os.utime(good.path, ns=(2, 2))
+    (tmp_path / "2026-01-01T00-00-00_ffff.jsonl").write_text("{bad\n", encoding="utf-8")
+    other = SessionManager(tmp_path)
+    listed = other.list_sessions()
+    assert [item.id for item in listed] == [good.id]
+    try:
+        other.current
+    except SessionError:
+        pass
+    else:
+        raise AssertionError("list_sessions must not set current")
+    other.load(good.id)
+    other.list_sessions()
+    assert other.current.id == good.id
+
+
 def test_continue_mtime_and_skips(tmp_path: Path) -> None:
     manager = SessionManager(tmp_path)
     old, new = manager.create(), manager.create()

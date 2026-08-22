@@ -165,6 +165,7 @@ class Cli:
                 await close()
 
     def _serve(self, port: int) -> int:
+        from thyca.chat_app import ChatApp
         from thyca.serve import ServeError, default_webui, run
 
         root = self._thyca_dir if self._thyca_dir is not None else Path.home() / ".thyca"
@@ -180,6 +181,7 @@ class Cli:
                 port=port,
                 webui=default_webui(),
                 facade=MemoryFacade(root, timezone_name=cfg.timeline.timezone),
+                chat=ChatApp(root, cfg, connect=self._connect),
                 stdout=self._stdout,
             )
         except ServeError as exc:

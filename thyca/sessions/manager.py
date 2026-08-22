@@ -10,7 +10,7 @@ from thyca.config import DEFAULT_TIMELINE_TIMEZONE, LimitsCfg
 from thyca.protocol import Message
 
 from .compaction import SessionCompactor
-from .errors import SessionError
+from .errors import SessionCorrupt, SessionError, SessionNotFound
 from .models import Session
 from .store import SessionStore
 
@@ -76,6 +76,16 @@ class SessionManager:
             session = self.store.latest()
             self._session = session
             return session
+
+    def list_sessions(self) -> list[Session]:
+        with self._lock:
+            sessions: list[Session] = []
+            for path in self.store.list_paths():
+                try:
+                    sessions.append(self.store.load(path.stem))
+                except (SessionCorrupt, SessionNotFound, SessionError):
+                    continue
+            return sessions
 
     def append(self, msg: Message) -> None:
         with self._lock:

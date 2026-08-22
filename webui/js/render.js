@@ -1,8 +1,9 @@
+import { fillChatAt, hydrateChat } from "./chat.js";
 import { icons, modes } from "./data.js";
 import { el } from "./dom.js";
+import { closeDrawer } from "./drawer.js";
 import { pagesFromStats } from "./memories.js";
 import { state } from "./state.js";
-import { closeDrawer } from "./drawer.js";
 
 let modeGen = 0;
 let memoriesPoll = 0;
@@ -32,8 +33,16 @@ export function renderPageList(query = "") {
       });
       card.classList.add("is-active");
       card.setAttribute("aria-current", "page");
-      state.activePageIndex = Number(card.dataset.pageIndex);
-      renderPage(state.activePageIndex);
+      const index = Number(card.dataset.pageIndex);
+      if (state.activeMode === "chat" && state.chatLive) {
+        void fillChatAt(index).then(() => {
+          renderPage(index);
+          closeDrawer();
+        });
+        return;
+      }
+      state.activePageIndex = index;
+      renderPage(index);
       closeDrawer();
     }),
   );
@@ -99,6 +108,14 @@ export async function renderMode(mode) {
     await hydrateMemories();
     if (gen !== modeGen) return;
     startMemoriesPoll();
+  }
+  if (mode === "chat") {
+    try {
+      await hydrateChat();
+    } catch {
+      state.chatLive = false;
+    }
+    if (gen !== modeGen) return;
   }
   renderPage(state.activePageIndex);
   el.modeList.querySelectorAll(".mode-link").forEach((button) => {

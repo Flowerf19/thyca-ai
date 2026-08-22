@@ -1,4 +1,4 @@
-import { createChatSession, sendChatTurn } from "./chat.js";
+import { beginOutgoingTurn, createChatSession, removeStatus, sendChatTurn, settleIncoming, stopStatusCycle } from "./chat.js";
 import { el } from "./dom.js";
 import { closeDrawer, hideDrawerIfMobile, toggleDrawer } from "./drawer.js";
 import { renderMode, renderPage, renderPageList, setTracePlaying } from "./render.js";
@@ -24,10 +24,6 @@ function setBusy(busy) {
   const newer = document.getElementById("new-page");
   if (newer) newer.disabled = busy;
   el.field.classList.toggle("is-loading", busy);
-  if (busy) {
-    el.hint.textContent = "Thyca đang nghĩ…";
-    el.hint.className = "hint is-loading";
-  }
 }
 
 async function openNewPage() {
@@ -56,23 +52,30 @@ async function submitLine() {
     return;
   }
   clearError();
+  el.line.value = "";
+  beginOutgoingTurn(text);
   setBusy(true);
   try {
     if (state.chatLive) {
       await sendChatTurn(text);
-      renderPage(state.activePageIndex);
+      if (state.activeMode !== "chat") return;
+      if (!settleIncoming()) renderPage(state.activePageIndex);
+      else renderPageList(el.pageSearch.value);
     } else {
-      const wait = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 650;
+      const wait = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 1000;
       await new Promise((resolve) => window.setTimeout(resolve, wait));
+      removeStatus();
     }
+    if (state.activeMode !== "chat") return;
     el.field.classList.add("is-success");
     el.hint.textContent = "Đã gửi vào phiên này.";
     el.hint.className = "hint is-success";
-    el.line.value = "";
   } catch (error) {
+    removeStatus();
     showError(error instanceof Error ? error.message : "Không gửi được.");
   } finally {
     setBusy(false);
+    stopStatusCycle();
     el.line.focus();
   }
 }
@@ -118,10 +121,10 @@ function bind() {
     void submitLine();
   });
   el.line.addEventListener("keydown", (event) => {
-    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-      event.preventDefault();
-      el.form.requestSubmit();
-    }
+    if (event.key !== "Enter" || event.isComposing || event.keyCode === 229) return;
+    if (event.shiftKey) return;
+    event.preventDefault();
+    el.form.requestSubmit();
   });
   el.line.addEventListener("input", () => {
     if (el.line.value.trim()) clearError();

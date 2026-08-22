@@ -1,6 +1,37 @@
+import { el } from "./dom.js";
 import { modes } from "./data.js";
 import { escapeHtml } from "./memories.js";
 import { state } from "./state.js";
+
+const STATUS_LINES = [
+  "Đang tìm vần…",
+  "Đang lắng nghe nhịp…",
+  "Đang tìm tứ thơ…",
+  "Nghe nhịp trong đầu…",
+  "Đang đợi cảm hứng…",
+  "Lắng nghe khoảng lặng…",
+  "Đang chọn từ…",
+  "Đang cân nhắc chữ…",
+  "Đang sắp xếp nhịp…",
+  "Đang tìm hình ảnh…",
+  "Đang buộc câu thơ…",
+  "Đang chỉnh nhịp điệu…",
+  "Hmm…",
+  "Đang suy nghĩ…",
+  "Tiếp tục suy nghĩ…",
+  "Đang để cảm xúc lắng…",
+  "Đang nghe trái tim…",
+  "Đang viết tiếp…",
+  "Đang làm thơ…",
+  "Đang viết khổ thơ…",
+  "Đang thả chữ xuống trang…",
+  "Đang để thơ tự đến…",
+  "Sắp xong rồi…",
+];
+
+const RECENT_CAP = 4;
+let statusTimer = 0;
+let statusRecent = [];
 
 const EMPTY_BODY =
   '<div class="new-page-empty"><span aria-hidden="true">+</span><p>Chưa có tin nào.</p><small>Nói điều đầu tiên để mở phiên.</small></div>';
@@ -34,6 +65,57 @@ export async function createChatSession() {
   await hydrateChat();
   const index = modes.chat.pages.findIndex((page) => page.sessionId === created.id);
   state.activePageIndex = index >= 0 ? index : 0;
+}
+
+export function beginOutgoingTurn(text) {
+  stopStatusCycle();
+  let list = el.pageBody.querySelector(".entry-list");
+  if (!list) {
+    el.pageBody.innerHTML = '<div class="entry-list"></div>';
+    list = el.pageBody.querySelector(".entry-list");
+  }
+  list.insertAdjacentHTML("beforeend", entryHtml("user", text));
+  list.lastElementChild.classList.add("is-enter");
+  const first = nextStatus([]);
+  statusRecent = [first];
+  list.insertAdjacentHTML("beforeend", statusHtml(first));
+  startStatusCycle(list.querySelector(".entry-status"));
+  scrollThread();
+}
+
+export function stopStatusCycle() {
+  if (statusTimer) {
+    window.clearInterval(statusTimer);
+    statusTimer = 0;
+  }
+}
+
+export function removeStatus() {
+  stopStatusCycle();
+  const node = el.pageBody.querySelector(".entry-status");
+  if (node) node.remove();
+}
+
+export function settleIncoming() {
+  const page = modes.chat.pages[state.activePageIndex];
+  const liveList = el.pageBody.querySelector(".entry-list");
+  const wrap = document.createElement("div");
+  wrap.innerHTML = page?.body || "";
+  const fresh = wrap.querySelector(".entry-list");
+  if (!fresh || !liveList) return false;
+  stopStatusCycle();
+  const kept = [...liveList.children].filter((node) => !node.classList.contains("entry-status")).length;
+  liveList.replaceWith(fresh);
+  [...fresh.children].slice(kept).forEach((node, index) => {
+    node.classList.add("is-enter");
+    node.style.animationDelay = `${index * 80}ms`;
+  });
+  const heading = el.pageHeader.querySelector("h1");
+  if (heading && page.title) heading.innerHTML = page.title;
+  const kicker = el.pageHeader.querySelector(".page-kicker");
+  if (kicker && page.kicker) kicker.textContent = page.kicker;
+  scrollThread();
+  return true;
 }
 
 export async function sendChatTurn(text) {
@@ -161,6 +243,66 @@ export function threadHtml(messages) {
   }
   if (!parts.length) return EMPTY_BODY;
   return `<div class="entry-list">${parts.join("")}</div>`;
+}
+
+function statusHtml(line) {
+  return `<article class="entry entry-thyca entry-status" aria-label="Thyca đang nghĩ" aria-live="off">
+      <time>thyca</time>
+      <div class="entry-copy">
+        <div class="status-row">
+          <span class="status-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span class="status-ticker"><span class="status-line">${escapeHtml(line)}</span></span>
+        </div>
+      </div>
+    </article>`;
+}
+
+function startStatusCycle(node) {
+  if (!node) return;
+  const ticker = node.querySelector(".status-ticker");
+  if (!ticker) return;
+  statusTimer = window.setInterval(() => {
+    const next = nextStatus(statusRecent);
+    statusRecent = [...statusRecent, next].slice(-RECENT_CAP);
+    if (reduceMotion()) {
+      const line = ticker.querySelector(".status-line");
+      if (line) line.textContent = next;
+      return;
+    }
+    slideStatus(ticker, next);
+  }, 1000);
+}
+
+function nextStatus(recent) {
+  const blocked = new Set(recent.slice(-RECENT_CAP));
+  const pool = STATUS_LINES.filter((line) => !blocked.has(line));
+  const pick = pool.length ? pool : STATUS_LINES;
+  return pick[Math.floor(Math.random() * pick.length)];
+}
+
+function slideStatus(ticker, next) {
+  const outgoing = ticker.querySelector(".status-line:not(.is-out)");
+  const incoming = document.createElement("span");
+  incoming.className = "status-line is-in";
+  incoming.textContent = next;
+  ticker.append(incoming);
+  if (outgoing) outgoing.classList.add("is-out");
+  window.setTimeout(() => {
+    if (outgoing) outgoing.remove();
+    incoming.classList.remove("is-in");
+  }, 200);
+}
+
+function scrollThread() {
+  if (!el.notebook) return;
+  el.notebook.scrollTo({
+    top: el.notebook.scrollHeight,
+    behavior: reduceMotion() ? "auto" : "smooth",
+  });
+}
+
+function reduceMotion() {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
 function entryHtml(role, content) {

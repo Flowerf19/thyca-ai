@@ -48,6 +48,15 @@ class SessionStore:
         self._chmod_best_effort(path)
         return path
 
+    def delete(self, session_id: str) -> None:
+        path = self.path_for(session_id)
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            raise SessionError(f"cannot delete session: {exc}") from exc
+
     def read(self, path: Path) -> list[Message]:
         return self.scan(path)[0]
 

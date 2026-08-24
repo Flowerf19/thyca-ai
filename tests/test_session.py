@@ -26,6 +26,7 @@ from thyca.sessions.title import (
     accept_title,
     display_title,
     fallback_title,
+    is_blank,
     retitle_missing,
     sanitize_title,
 )
@@ -87,6 +88,21 @@ def test_list_sessions_skips_corrupt_does_not_set_current(tmp_path: Path) -> Non
     other.load(good.id)
     other.list_sessions()
     assert other.current.id == good.id
+
+
+def test_discard_empty_keeps_spoken_and_keep(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path)
+    blank = manager.create()
+    kept = manager.create()
+    spoken = manager.create()
+    manager.append(msg("user", "alo"))
+    removed = SessionManager(tmp_path).discard_empty(keep=kept.id)
+    assert set(removed) == {blank.id}
+    assert not blank.path.exists()
+    assert kept.path.exists()
+    assert spoken.path.exists()
+    loaded = SessionManager(tmp_path).load(spoken.id)
+    assert not is_blank(loaded)
 
 
 def test_continue_mtime_and_skips(tmp_path: Path) -> None:

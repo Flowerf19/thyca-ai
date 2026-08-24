@@ -19,7 +19,7 @@ from thyca.llm.llm_factory import ConnectFactory
 from thyca.memory.active import ActiveMemory
 from thyca.protocol import Message
 from thyca.sessions import Session, SessionManager, ask_remember
-from thyca.sessions.title import display_title, propose_title
+from thyca.sessions.title import display_title, is_blank, propose_title
 from thyca.tools.builtin import register_file_tools
 from thyca.tools.memory import MemoryFacade
 from thyca.tools.memory_tools import register_memory_tools
@@ -87,7 +87,11 @@ class ChatApp:
         return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
 
     def list_payload(self) -> dict:
-        sessions = [self._session_summary(item) for item in self._sessions.list_sessions()]
+        sessions = [
+            self._session_summary(item)
+            for item in self._sessions.list_sessions()
+            if not is_blank(item)
+        ]
         return {"model": self._cfg.provider.model, "sessions": sessions}
 
     def get_payload(self, session_id: str) -> dict:
@@ -96,6 +100,7 @@ class ChatApp:
 
     def create(self) -> dict:
         with self._turn_lock:
+            self._sessions.discard_empty()
             session = self._sessions.create()
             return self._session_detail(session)
 

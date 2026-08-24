@@ -59,12 +59,13 @@ export async function hydrateChat() {
 }
 
 export async function createChatSession() {
-  const created = await postJson("/api/sessions", {});
-  if (!created || !created.id) throw new Error("Không tạo được phiên.");
-  state.activeSessionId = created.id;
-  await hydrateChat();
-  const index = modes.chat.pages.findIndex((page) => page.sessionId === created.id);
-  state.activePageIndex = index >= 0 ? index : 0;
+  state.activeSessionId = null;
+  if (state.chatLive) {
+    await hydrateChat();
+  }
+  const rest = modes.chat.pages.filter((page) => page.sessionId);
+  modes.chat.pages = [emptyPage(""), ...rest];
+  state.activePageIndex = 0;
 }
 
 export function beginOutgoingTurn(text) {

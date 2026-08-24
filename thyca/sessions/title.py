@@ -74,15 +74,19 @@ def accept_title(raw: str, session: Session) -> str | None:
     return cleaned
 
 
+def is_blank(session: Session) -> bool:
+    return not any(
+        item.role == "user" and item.content and item.content.strip()
+        for item in session.messages
+    )
+
+
 def display_title(session: Session) -> str:
     if session.title:
         accepted = accept_title(session.title, session)
         if accepted:
             return accepted
-    if any(
-        item.role == "user" and item.content and item.content.strip()
-        for item in session.messages
-    ):
+    if not is_blank(session):
         return fallback_title(session.id)
     return "Phiên trống"
 
@@ -127,7 +131,7 @@ async def retitle_missing(
 ) -> list[tuple[Session, str, str]]:
     named: list[tuple[Session, str, str]] = []
     for session in manager.list_sessions():
-        if naming_messages(session) is None:
+        if is_blank(session) or naming_messages(session) is None:
             continue
         if session.title and accept_title(session.title, session):
             continue

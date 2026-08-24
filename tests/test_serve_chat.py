@@ -108,7 +108,7 @@ def test_create_list_get_and_turn(tmp_path: Path) -> None:
         assert created["title"] == "Phiên trống"
         assert created["messages"] == []
         listed = _json(httpd, "/api/sessions")
-        assert [item["id"] for item in listed["sessions"]] == [created["id"]]
+        assert listed["sessions"] == []
         body = json.dumps({"text": "ping"}).encode("utf-8")
         turned = _json(httpd, f"/api/sessions/{created['id']}/turn", method="POST", data=body)
         assert turned["reply"] == "pong"
@@ -119,6 +119,8 @@ def test_create_list_get_and_turn(tmp_path: Path) -> None:
         loaded = _json(httpd, f"/api/sessions/{created['id']}")
         assert loaded["messages"] == turned["messages"]
         assert loaded["title"] == fallback_title(created["id"])
+        spoken = _json(httpd, "/api/sessions")
+        assert [item["id"] for item in spoken["sessions"]] == [created["id"]]
         session = SessionManager(tmp_path / "sessions").load(created["id"])
         assert session.title is None
         assert [(item.role, item.content) for item in session.messages] == [
@@ -350,11 +352,24 @@ def test_chat_js_shipped() -> None:
     assert (WEBUI / "js" / "chat.js").is_file()
     chat = (WEBUI / "js" / "chat.js").read_text(encoding="utf-8")
     assert "flushTools" in chat
+    start = chat.index("export async function createChatSession")
+    end = chat.index("export function", start + 1)
+    assert "postJson" not in chat[start:end]
     css = (WEBUI / "css" / "workspace.css").read_text(encoding="utf-8")
     assert "flex-flow: row wrap" in css
     script = WEBUI.parent / "scripts" / "retitle_sessions.py"
     assert script.is_file()
     assert "retitle_missing" in script.read_text(encoding="utf-8")
+
+
+def test_create_prunes_previous_blank(tmp_path: Path) -> None:
+    app = _chat(tmp_path, FakeLLM(ChatReply(content="x")))
+    first = app.create()
+    assert app.list_payload()["sessions"] == []
+    second = app.create()
+    assert not (tmp_path / "sessions" / f"{first['id']}.jsonl").exists()
+    assert (tmp_path / "sessions" / f"{second['id']}.jsonl").exists()
+    app.shutdown()
 
 
 def test_session_payload_includes_ask_remember(tmp_path: Path) -> None:

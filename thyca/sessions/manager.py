@@ -13,7 +13,7 @@ from .compaction import SessionCompactor
 from .errors import SessionCorrupt, SessionError, SessionNotFound
 from .models import Session
 from .store import SessionStore
-from .title import sanitize_title
+from .title import is_blank, sanitize_title
 
 
 class SessionManager:
@@ -87,6 +87,24 @@ class SessionManager:
                 except (SessionCorrupt, SessionNotFound, SessionError):
                     continue
             return sessions
+
+    def discard_empty(self, keep: str | None = None) -> list[str]:
+        with self._lock:
+            removed: list[str] = []
+            for path in self.store.list_paths():
+                try:
+                    session = self.store.load(path.stem)
+                except (SessionCorrupt, SessionNotFound, SessionError):
+                    continue
+                if keep is not None and session.id == keep:
+                    continue
+                if not is_blank(session):
+                    continue
+                self.store.delete(session.id)
+                if self._session is not None and self._session.id == session.id:
+                    self._session = None
+                removed.append(session.id)
+            return removed
 
     def append(self, msg: Message) -> None:
         with self._lock:

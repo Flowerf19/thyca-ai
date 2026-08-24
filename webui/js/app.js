@@ -4,6 +4,11 @@ import { closeDrawer, hideDrawerIfMobile, toggleDrawer } from "./drawer.js";
 import { renderMode, renderPage, renderPageList, setTracePlaying } from "./render.js";
 import { state } from "./state.js";
 
+const IDLE_MS = 15 * 60 * 1000;
+const IDLE_REMEMBER =
+  "Hãy nhớ những điều đáng giữ trong phiên này.";
+let idleTimer = 0;
+
 function clearError() {
   el.field.classList.remove("is-error", "is-success");
   el.line.removeAttribute("aria-invalid");
@@ -24,6 +29,26 @@ function setBusy(busy) {
   const newer = document.getElementById("new-page");
   if (newer) newer.disabled = busy;
   el.field.classList.toggle("is-loading", busy);
+  if (el.idleRemember) el.idleRemember.disabled = busy;
+  if (el.idleDismiss) el.idleDismiss.disabled = busy;
+}
+
+function hideIdle() {
+  if (el.idleNudge) el.idleNudge.hidden = true;
+}
+
+function showIdle() {
+  if (!state.chatLive || state.activeMode !== "chat" || el.send.disabled) return;
+  if (!el.pageBody.querySelector(".entry-user")) return;
+  if (el.idleNudge) el.idleNudge.hidden = false;
+}
+
+function armIdle() {
+  hideIdle();
+  window.clearTimeout(idleTimer);
+  idleTimer = 0;
+  if (!state.chatLive) return;
+  idleTimer = window.setTimeout(showIdle, IDLE_MS);
 }
 
 async function openNewPage() {
@@ -70,6 +95,7 @@ async function submitLine() {
     el.field.classList.add("is-success");
     el.hint.textContent = "Đã gửi vào phiên này.";
     el.hint.className = "hint is-success";
+    armIdle();
   } catch (error) {
     removeStatus();
     showError(error instanceof Error ? error.message : "Không gửi được.");
@@ -83,16 +109,22 @@ async function submitLine() {
 function bind() {
   el.modeList.addEventListener("click", (event) => {
     const button = event.target.closest("[data-mode]");
-    if (button) renderMode(button.dataset.mode);
+    if (button) {
+      renderMode(button.dataset.mode);
+      armIdle();
+    }
   });
   el.pageSearch.addEventListener("input", () => renderPageList(el.pageSearch.value));
+  el.pageList.addEventListener("click", (event) => {
+    if (event.target.closest(".page-card")) armIdle();
+  });
   document.getElementById("sort-pages").addEventListener("click", (event) => {
     state.pageOrderNewest = !state.pageOrderNewest;
     event.currentTarget.textContent = state.pageOrderNewest ? "Mới nhất" : "Cũ nhất";
     el.pageList.classList.toggle("is-reversed", !state.pageOrderNewest);
   });
   document.getElementById("new-page").addEventListener("click", () => {
-    void openNewPage();
+    void openNewPage().then(armIdle);
   });
   el.openSidebar.addEventListener("click", toggleDrawer);
   el.closeSidebar.addEventListener("click", closeDrawer);
@@ -128,6 +160,15 @@ function bind() {
   });
   el.line.addEventListener("input", () => {
     if (el.line.value.trim()) clearError();
+    armIdle();
+  });
+  el.idleRemember?.addEventListener("click", () => {
+    hideIdle();
+    el.line.value = IDLE_REMEMBER;
+    void submitLine();
+  });
+  el.idleDismiss?.addEventListener("click", () => {
+    armIdle();
   });
   el.miniPlay.addEventListener("click", () => {
     setTracePlaying(el.miniPlay.getAttribute("aria-pressed") !== "true");
@@ -137,3 +178,4 @@ function bind() {
 bind();
 hideDrawerIfMobile();
 renderMode("chat");
+armIdle();

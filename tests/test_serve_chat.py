@@ -272,3 +272,12 @@ def test_session_title_truncates() -> None:
 
 def test_chat_js_shipped() -> None:
     assert (WEBUI / "js" / "chat.js").is_file()
+
+
+def test_idle_remember_nudge_in_webui() -> None:
+    html = (WEBUI / "index.html").read_text(encoding="utf-8")
+    app = (WEBUI / "js" / "app.js").read_text(encoding="utf-8")
+    assert 'id="idle-nudge"' in html
+    assert "Phiên im 15 phút" in html
+    assert "IDLE_MS = 15 * 60 * 1000" in app
+    assert "memory_remember" not in app

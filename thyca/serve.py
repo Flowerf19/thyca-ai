@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import signal
 from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from mimetypes import guess_type
@@ -28,6 +29,10 @@ _BODY_CAP = 16_384
 
 class ServeError(RuntimeError):
     """Web UI server could not start or bind."""
+
+
+def _raise_interrupt(_signum: int, _frame: object) -> None:
+    raise KeyboardInterrupt
 
 
 def default_webui() -> Path:
@@ -68,6 +73,7 @@ def run(
     httpd = make_server(host=host, port=port, webui=webui, facade=facade, chat=chat)
     bound_host, bound_port = httpd.server_address[:2]
     print(f"http://{bound_host}:{bound_port}/", file=stdout, flush=True)
+    signal.signal(signal.SIGTERM, _raise_interrupt)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

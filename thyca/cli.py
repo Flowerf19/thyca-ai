@@ -38,6 +38,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", type=str, default=None, help="override model for this request")
     parser.add_argument("--debug", action="store_true", help="print prompt/session diagnostics on stderr")
     parser.add_argument("--serve", action="store_true", help="serve webui + memory stats on 127.0.0.1")
+    parser.add_argument("--daemon", action="store_true", help="detach --serve from the terminal")
+    parser.add_argument("--stop", action="store_true", help="stop a background --serve")
     parser.add_argument("--port", type=int, default=8765, help="port for --serve (default 8765)")
     parser.add_argument("prompt", nargs="*", help="prompt for -p mode")
     return parser
@@ -73,11 +75,20 @@ class Cli:
         if args.serve and (args.print_mode or args.cont or args.session or args.prompt):
             ui.error("--serve cannot combine with -p/--continue/--session/prompt")
             return 2
+        if args.daemon and not args.serve:
+            ui.error("--daemon requires --serve")
+            return 2
+        if args.stop and not args.serve:
+            ui.error("--stop requires --serve")
+            return 2
+        if args.daemon and args.stop:
+            ui.error("--daemon and --stop are mutually exclusive")
+            return 2
         if args.serve:
             if args.port < 1 or args.port > 65535:
                 ui.error("--port must be 1..65535")
                 return 2
-            return self._serve(args.port)
+            return self._serve(args.port, daemon=args.daemon, stop=args.stop)
         if args.prompt and not args.print_mode:
             ui.error("prompt requires -p")
             return 2
@@ -164,17 +175,34 @@ class Cli:
             if close is not None:
                 await close()
 
-    def _serve(self, port: int) -> int:
+    def _serve(self, port: int, *, daemon: bool = False, stop: bool = False) -> int:
         from thyca.chat_app import ChatApp
         from thyca.serve import ServeError, default_webui, run
+        from thyca.serve_daemon import daemonize, log_file, stop_daemon
 
         root = self._thyca_dir if self._thyca_dir is not None else Path.home() / ".thyca"
         ui = ChatUi(self._stdout, self._stderr, color=False)
+        if stop:
+            try:
+                pid = stop_daemon(root)
+            except ServeError as exc:
+                ui.error(str(exc))
+                return 1
+            print(f"stopped {pid}", file=self._stdout)
+            return 0
         try:
             cfg = load(root / "config.json")
         except ConfigError as exc:
             ui.error(str(exc))
             return 1
+        if daemon:
+            print(f"http://127.0.0.1:{port}/", file=self._stdout, flush=True)
+            print(f"log {log_file(root)}", file=self._stdout, flush=True)
+            try:
+                daemonize(root)
+            except ServeError as exc:
+                ui.error(str(exc))
+                return 1
         try:
             run(
                 host="127.0.0.1",

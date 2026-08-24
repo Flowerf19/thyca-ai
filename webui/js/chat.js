@@ -327,7 +327,7 @@ function formatUpdated(value) {
   return stamp.toLocaleString("vi-VN", { dateStyle: "medium", timeStyle: "short" });
 }
 
-async function getJson(url) {
+export async function getJson(url) {
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) return null;
   return response.json();

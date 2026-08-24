@@ -280,4 +280,5 @@ def test_idle_remember_nudge_in_webui() -> None:
     assert 'id="idle-nudge"' in html
     assert "Phiên im 15 phút" in html
     assert "IDLE_MS = 15 * 60 * 1000" in app
-    assert "memory_remember" not in app
+    assert "ask_remember" in app
+    assert "idleArmed" in app

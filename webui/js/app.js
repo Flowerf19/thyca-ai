@@ -1,4 +1,4 @@
-import { beginOutgoingTurn, createChatSession, removeStatus, sendChatTurn, settleIncoming, stopStatusCycle } from "./chat.js";
+import { beginOutgoingTurn, createChatSession, getJson, removeStatus, sendChatTurn, settleIncoming, stopStatusCycle } from "./chat.js";
 import { el } from "./dom.js";
 import { closeDrawer, hideDrawerIfMobile, toggleDrawer } from "./drawer.js";
 import { renderMode, renderPage, renderPageList, setTracePlaying } from "./render.js";
@@ -8,6 +8,7 @@ const IDLE_MS = 15 * 60 * 1000;
 const IDLE_REMEMBER =
   "Hãy nhớ những điều đáng giữ trong phiên này.";
 let idleTimer = 0;
+const idleArmed = new Set();
 
 function clearError() {
   el.field.classList.remove("is-error", "is-success");
@@ -37,9 +38,24 @@ function hideIdle() {
   if (el.idleNudge) el.idleNudge.hidden = true;
 }
 
-function showIdle() {
+function sessionKey() {
+  return state.activeSessionId || "";
+}
+
+function noteSend(text) {
+  const key = sessionKey();
+  if (!key) return;
+  if (text === IDLE_REMEMBER) idleArmed.delete(key);
+  else idleArmed.add(key);
+}
+
+async function showIdle() {
+  const key = sessionKey();
   if (!state.chatLive || state.activeMode !== "chat" || el.send.disabled) return;
-  if (!el.pageBody.querySelector(".entry-user")) return;
+  if (!key || !idleArmed.has(key)) return;
+  const detail = await getJson(`/api/sessions/${key}`);
+  if (!detail || detail.ask_remember !== true) return;
+  if (sessionKey() !== key || !idleArmed.has(key)) return;
   if (el.idleNudge) el.idleNudge.hidden = false;
 }
 
@@ -47,8 +63,10 @@ function armIdle() {
   hideIdle();
   window.clearTimeout(idleTimer);
   idleTimer = 0;
-  if (!state.chatLive) return;
-  idleTimer = window.setTimeout(showIdle, IDLE_MS);
+  if (!state.chatLive || !idleArmed.has(sessionKey())) return;
+  idleTimer = window.setTimeout(() => {
+    void showIdle();
+  }, IDLE_MS);
 }
 
 async function openNewPage() {
@@ -95,6 +113,7 @@ async function submitLine() {
     el.field.classList.add("is-success");
     el.hint.textContent = "Đã gửi vào phiên này.";
     el.hint.className = "hint is-success";
+    noteSend(text);
     armIdle();
   } catch (error) {
     removeStatus();

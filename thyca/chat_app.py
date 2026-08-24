@@ -17,7 +17,7 @@ from thyca.config import Config
 from thyca.llm.llm_factory import ConnectFactory
 from thyca.memory.active import ActiveMemory
 from thyca.protocol import Message
-from thyca.sessions import Session, SessionManager
+from thyca.sessions import Session, SessionManager, ask_remember
 from thyca.tools.builtin import register_file_tools
 from thyca.tools.memory import MemoryFacade
 from thyca.tools.memory_tools import register_memory_tools
@@ -158,6 +158,9 @@ class ChatApp:
             "title": session_title(session.messages),
             "model": self._cfg.provider.model,
             "messages": [_message_dict(item) for item in session.messages],
+            "ask_remember": ask_remember(
+                session.messages, datetime.now(timezone.utc)
+            ),
         }
 
 

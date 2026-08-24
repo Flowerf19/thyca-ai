@@ -1,3 +1,4 @@
+from .ask_remember import ask_remember
 from .compaction import SessionCompactor, estimate_tokens
 from .errors import SessionCorrupt, SessionError, SessionNotFound
 from .manager import SessionManager
@@ -12,5 +13,6 @@ __all__ = [
     "SessionManager",
     "SessionNotFound",
     "SessionStore",
+    "ask_remember",
     "estimate_tokens",
 ]

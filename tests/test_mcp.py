@@ -47,6 +47,8 @@ def test_merge_env_keeps_defaults_and_overrides(
     assert merged["PATH"] == "/from-server"
     assert "SECRET" not in merged
     assert "HOME" in merged
+    assert "IncompleteFieldDefinitionWarning" in merged["PYTHONWARNINGS"]
+    assert merge_env({"PYTHONWARNINGS": "default"})["PYTHONWARNINGS"] == "default"
 
 
 def test_join_text_blocks_concatenates_text_only() -> None:

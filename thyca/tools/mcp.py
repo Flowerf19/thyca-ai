@@ -20,8 +20,15 @@ from thyca.tools.registry import ToolSpec
 CALL_TIMEOUT = timedelta(seconds=30)
 
 
+_QUIET_WARNINGS = (
+    "ignore::pydantic_settings.sources.utils.IncompleteFieldDefinitionWarning"
+)
+
+
 def merge_env(server_env: dict[str, str]) -> dict[str, str]:
-    return get_default_environment() | dict(server_env)
+    merged = get_default_environment() | dict(server_env)
+    merged.setdefault("PYTHONWARNINGS", _QUIET_WARNINGS)
+    return merged
 
 
 def resolve_command(command: str) -> str:

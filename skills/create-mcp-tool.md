@@ -7,7 +7,7 @@ Thyca is an MCP **client**. New capabilities are child processes, not builtins.
 ```python
 from mcp.server.fastmcp import FastMCP
 
-mcp = FastMCP("weather")
+mcp = FastMCP("weather", log_level="WARNING")
 
 @mcp.tool()
 def forecast(city: str) -> str:

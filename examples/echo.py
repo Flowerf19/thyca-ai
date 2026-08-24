@@ -1,6 +1,6 @@
 from mcp.server.fastmcp import FastMCP
 
-mcp = FastMCP("echo")
+mcp = FastMCP("echo", log_level="WARNING")
 
 
 @mcp.tool()

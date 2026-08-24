@@ -81,9 +81,12 @@
 }
 
 .composer-inner:hover .writing-line,
-.composer-inner.is-hover .writing-line,
-.writing-line:focus-within {
+.composer-inner.is-hover .writing-line {
   border-block-end-color: var(--color-ink-2);
+}
+
+.writing-line:focus-within {
+  border-block-end-color: var(--color-accent);
 }
 
 .composer-inner textarea {
@@ -111,8 +114,7 @@
 }
 
 .composer-inner textarea:focus-visible {
-  outline: 2px solid var(--color-focus);
-  outline-offset: 3px;
+  outline: none;
 }
 
 .composer-inner textarea:disabled {

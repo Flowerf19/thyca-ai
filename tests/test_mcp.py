@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 from pathlib import Path
+import asyncio
 import sys
 
 import pytest
@@ -91,7 +92,7 @@ async def test_process_start_call_aclose_with_injected_session() -> None:
     await proc.call("ping", {"x": 1})
     assert session.calls == [("ping", {"x": 1}, CALL_TIMEOUT)]
     await proc.aclose()
-    assert proc._session is session
+    assert proc._session is None
 
 
 @pytest.mark.asyncio
@@ -231,3 +232,17 @@ async def test_echo_stdio_list_call_shutdown() -> None:
     assert "pong" in result.content
     await manager.shutdown()
     await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_echo_shutdown_from_other_task() -> None:
+    manager = MCPManager()
+
+    async def spawn() -> None:
+        diags = await manager.spawn_all(
+            {"echo": McpServerCfg(command=sys.executable, args=[str(_ECHO)])}
+        )
+        assert [diag.ok for diag in diags] == [True], diags
+
+    await asyncio.create_task(spawn())
+    await asyncio.create_task(manager.shutdown())

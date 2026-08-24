@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Protocol
+import asyncio
 import re
 import sys
 
@@ -77,36 +77,44 @@ class MCPProcess:
         self._args = args
         self._env = env
         self._session = session
-        self._stack: AsyncExitStack | None = None
+        self._closed: asyncio.Event | None = None
+        self._task: asyncio.Task[None] | None = None
 
     async def start(self) -> list[Tool]:
-        owned = self._session is None
-        if owned:
-            stack = AsyncExitStack()
-            try:
-                params = StdioServerParameters(
-                    command=resolve_command(self._command),
-                    args=list(self._args),
-                    env=merge_env(self._env),
-                )
-                read, write = await stack.enter_async_context(stdio_client(params))
-                self._session = await stack.enter_async_context(
-                    ClientSession(read, write)
-                )
-                self._stack = stack
-            except Exception:
-                await stack.aclose()
-                self._session = None
-                raise
-        assert self._session is not None
-        try:
+        if self._session is not None:
             await self._session.initialize()
             listed = await self._session.list_tools()
-        except Exception:
-            if owned:
-                await self.aclose()
+            return list(listed.tools)
+        ready: asyncio.Future[list[Tool]] = asyncio.get_running_loop().create_future()
+        self._closed = asyncio.Event()
+        self._task = asyncio.create_task(self._run(ready), name=f"mcp:{self.name}")
+        try:
+            return await ready
+        except BaseException:
+            await self.aclose()
             raise
-        return list(listed.tools)
+
+    async def _run(self, ready: asyncio.Future[list[Tool]]) -> None:
+        params = StdioServerParameters(
+            command=resolve_command(self._command),
+            args=list(self._args),
+            env=merge_env(self._env),
+        )
+        try:
+            async with stdio_client(params) as (read, write):
+                async with ClientSession(read, write) as session:
+                    self._session = session
+                    await session.initialize()
+                    listed = await session.list_tools()
+                    if not ready.done():
+                        ready.set_result(list(listed.tools))
+                    assert self._closed is not None
+                    await self._closed.wait()
+        except Exception as exc:
+            if not ready.done():
+                ready.set_exception(exc)
+        finally:
+            self._session = None
 
     async def call(
         self, tool_name: str, arguments: dict[str, Any] | None = None
@@ -120,10 +128,12 @@ class MCPProcess:
         )
 
     async def aclose(self) -> None:
-        stack, self._stack = self._stack, None
-        if stack is not None:
-            await stack.aclose()
-            self._session = None
+        if self._closed is not None:
+            self._closed.set()
+        task, self._task = self._task, None
+        if task is not None:
+            await task
+        self._session = None
 
 
 _TOOL_NAME = re.compile(r"^[A-Za-z0-9_-]+$")

@@ -139,6 +139,8 @@ class ChatApp:
         try:
             if self._loop.is_running():
                 self._submit(self._mcp.shutdown())
+        except Exception:
+            pass
         finally:
             if self._loop.is_running():
                 self._loop.call_soon_threadsafe(self._loop.stop)

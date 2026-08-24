@@ -21,6 +21,9 @@ def test_build_order_identity_then_custom_soul() -> None:
     assert text.index("<identity>") < text.index("<role>") < text.index("<user>")
     assert text.index("<memory>") < text.index("<today>") < text.index("<rules>")
     assert "~/.thyca" in text
+    assert "mcpServers" in text
+    assert "do not say you cannot add tools" in text
+    assert "restart" in text
     assert "Thyca" in identity
 
 

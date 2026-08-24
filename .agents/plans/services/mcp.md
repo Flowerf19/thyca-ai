@@ -186,7 +186,7 @@ IDs 312–314 giữ. Wording cũ quá to → thu hẹp. Chi tiết mới = TASK-
 | ID | Task | Done | Date |
 |----|------|------|------|
 | TASK-314 | ~~`skills/create-mcp-tool.md` + `examples/echo` + doc config/stderr/lifecycle~~ — **thu hẹp 2026-08-24**: chỉ `examples/echo.py` FastMCP 1 tool `ping` → `"pong"`, `mcp.run()` stdio. Không phải installed package — test/skill dùng `sys.executable` + path file | x | 2026-08-24 |
-| TASK-335 | `skills/create-mcp-tool.md` mỏng: copy echo, thêm `mcpServers`, restart thyca (không hot reload), stderr child ra terminal không vào model. Không resources/HTTP/search/another-brain | | |
+| TASK-335 | `skills/create-mcp-tool.md` mỏng: copy echo, thêm `mcpServers`, restart thyca (không hot reload), stderr child ra terminal không vào model. Không resources/HTTP/search/another-brain | x | 2026-08-24 |
 | TASK-336 | Integration (không live LLM): subprocess echo list+call+shutdown; missing binary; ChatApp hai turn `echo__ping` (`spawn_all` == 1); empty config không gọi `stdio_client` | | |
 
 Xong khi (đo được):

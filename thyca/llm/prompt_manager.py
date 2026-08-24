@@ -17,7 +17,13 @@ _RULES = (
     "  - ~/.thyca/IDENTITY.md\n"
     "  - ~/.thyca/USER.md\n"
     "Do not write or edit L2 daily files, MEMORY.md, or sessions under ~/.thyca.\n"
-    "You may write/edit ~/.thyca/config.json (provider keys, mcpServers.env). Changes apply after restart.\n"
+    "You may write/edit ~/.thyca/config.json (provider keys, mcpServers).\n"
+    "Need a capability you do not have (HTTP, search, weather, other APIs): "
+    "do not say you cannot add tools. Write a small FastMCP stdio server in the workspace "
+    "(mcp.server.fastmcp, mcp.run()), then add mcpServers.<name> = {command, args, env}. "
+    "Name must match [A-Za-z0-9_-]+. Put API keys in env, not in the script. "
+    "Tell the user to restart thyca/--serve. Tools appear as server__tool only after restart. "
+    "If that server is already in config this session, call server__tool — do not ask the user to run it by hand.\n"
     "memory_search is lexical-first. If search returns nothing, say so. Do not invent memories."
 )
 

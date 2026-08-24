@@ -9,6 +9,7 @@ const IDLE_REMEMBER =
   "Hãy nhớ những điều đáng giữ trong phiên này.";
 let idleTimer = 0;
 const idleArmed = new Set();
+let idleFromNudge = false;
 
 function clearError() {
   el.field.classList.remove("is-error", "is-success");
@@ -42,11 +43,12 @@ function sessionKey() {
   return state.activeSessionId || "";
 }
 
-function noteSend(text) {
+function noteSend() {
   const key = sessionKey();
   if (!key) return;
-  if (text === IDLE_REMEMBER) idleArmed.delete(key);
+  if (idleFromNudge) idleArmed.delete(key);
   else idleArmed.add(key);
+  idleFromNudge = false;
 }
 
 async function showIdle() {
@@ -101,7 +103,10 @@ async function submitLine() {
   try {
     if (state.chatLive) {
       await sendChatTurn(text);
-      if (state.activeMode !== "chat") return;
+      if (state.activeMode !== "chat") {
+        idleFromNudge = false;
+        return;
+      }
       if (!settleIncoming()) renderPage(state.activePageIndex);
       else renderPageList(el.pageSearch.value);
     } else {
@@ -109,13 +114,17 @@ async function submitLine() {
       await new Promise((resolve) => window.setTimeout(resolve, wait));
       removeStatus();
     }
-    if (state.activeMode !== "chat") return;
+    if (state.activeMode !== "chat") {
+      idleFromNudge = false;
+      return;
+    }
     el.field.classList.add("is-success");
     el.hint.textContent = "Đã gửi vào phiên này.";
     el.hint.className = "hint is-success";
-    noteSend(text);
+    noteSend();
     armIdle();
   } catch (error) {
+    idleFromNudge = false;
     removeStatus();
     showError(error instanceof Error ? error.message : "Không gửi được.");
   } finally {
@@ -183,6 +192,7 @@ function bind() {
   });
   el.idleRemember?.addEventListener("click", () => {
     hideIdle();
+    idleFromNudge = true;
     el.line.value = IDLE_REMEMBER;
     void submitLine();
   });
@@ -197,4 +207,3 @@ function bind() {
 bind();
 hideDrawerIfMobile();
 renderMode("chat");
-armIdle();

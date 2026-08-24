@@ -274,6 +274,17 @@ def test_chat_js_shipped() -> None:
     assert (WEBUI / "js" / "chat.js").is_file()
 
 
+def test_session_payload_includes_ask_remember(tmp_path: Path) -> None:
+    app = _chat(tmp_path, FakeLLM(ChatReply(content="x")))
+    created = app.create()
+    assert created["ask_remember"] is False
+    turned = app.turn(created["id"], "hi")
+    assert turned["ask_remember"] is False
+    loaded = app.get_payload(created["id"])
+    assert loaded["ask_remember"] is False
+    app.shutdown()
+
+
 def test_idle_remember_nudge_in_webui() -> None:
     html = (WEBUI / "index.html").read_text(encoding="utf-8")
     app = (WEBUI / "js" / "app.js").read_text(encoding="utf-8")
@@ -282,3 +293,5 @@ def test_idle_remember_nudge_in_webui() -> None:
     assert "IDLE_MS = 15 * 60 * 1000" in app
     assert "ask_remember" in app
     assert "idleArmed" in app
+    assert "idleFromNudge" in app
+    assert not app.rstrip().endswith("armIdle();")

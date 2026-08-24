@@ -6,6 +6,16 @@ from thyca.sessions import SessionManager
 from .stage import Stage
 
 
+def _tool_message(result: ToolResult) -> Message:
+    meta = {"is_error": True} if result.is_error else None
+    return Message(
+        role="tool",
+        content=result.content,
+        tool_call_id=result.tool_call_id,
+        meta=meta,
+    )
+
+
 class Observe:
     def __init__(self, sessions: SessionManager) -> None:
         self._sessions = sessions
@@ -30,10 +40,7 @@ class Observe:
             tool_calls=stage.reply.tool_calls,
         )
         ordered = self._order_results(stage.reply.tool_calls, stage.results)
-        tool_messages = [
-            Message(role="tool", content=r.content, tool_call_id=r.tool_call_id)
-            for r in ordered
-        ]
+        tool_messages = [_tool_message(result) for result in ordered]
         added = [assistant, *tool_messages]
         for message in added:
             self._sessions.append(message)

@@ -33,6 +33,7 @@ def test_observe_reorders_results_and_extends_stage(tmp_path: Path) -> None:
     assert [m.tool_call_id for m in stage.messages[2:]] == ["first", "second"]
     assert [r.tool_call_id for r in stage.results] == ["first", "second"]
     assert [m.role for m in manager.current.messages] == ["user", "assistant", "tool", "tool"]
+    assert all(item.meta is None for item in manager.current.messages if item.role == "tool")
 
 
 @pytest.mark.parametrize(
@@ -61,6 +62,29 @@ def test_observe_rejects_invalid_result_ids(
         Observe(manager).observe(stage)
 
     assert manager.current.messages == []
+
+
+def test_observe_marks_error_tool_results(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path)
+    manager.create()
+    call = ToolCall(id="c1", name="memory_remember")
+    stage = Stage(
+        messages=[Message(role="user", content="go", ts="2026-01-01T00:00:00Z")],
+        reply=ChatReply(content=None, tool_calls=[call]),
+        results=[
+            ToolResult(
+                tool_call_id="c1",
+                name="memory_remember",
+                content="no",
+                is_error=True,
+            )
+        ],
+    )
+    manager.append(stage.messages[0])
+    Observe(manager).observe(stage)
+    tool = manager.current.messages[-1]
+    assert tool.role == "tool"
+    assert tool.meta == {"is_error": True}
 
 
 def test_loop_limit_persists_exact_text(tmp_path: Path) -> None:

@@ -49,7 +49,11 @@ class SessionStore:
         return path
 
     def read(self, path: Path) -> list[Message]:
+        return self.scan(path)[0]
+
+    def scan(self, path: Path) -> tuple[list[Message], str | None]:
         result: list[Message] = []
+        title: str | None = None
         known_calls: set[str] = set()
         try:
             with path.open("r", encoding="utf-8") as stream:
@@ -58,9 +62,15 @@ class SessionStore:
                     if not line.strip():
                         raise SessionCorrupt(path, number, "empty line")
                     try:
-                        msg = Message.from_dict(json.loads(line))
+                        payload = json.loads(line)
+                        if _is_meta(payload):
+                            extracted = _meta_title(payload)
+                            if extracted:
+                                title = extracted
+                            continue
+                        msg = Message.from_dict(payload)
                         if msg.role == "system":
-                            if number != 1 or not (msg.content or "").startswith("[compaction: "):
+                            if result or not (msg.content or "").startswith("[compaction: "):
                                 raise ValueError(
                                     "system messages are only synthetic compaction markers"
                                 )
@@ -83,13 +93,14 @@ class SessionStore:
             raise
         except OSError as exc:
             raise SessionCorrupt(path, None, exc) from exc
-        return result
+        return result, title
 
     def load(self, session_id: str) -> Session:
         path = self.path_for(session_id)
         if not path.is_file() or path.is_symlink():
             raise SessionNotFound(path)
-        return Session(session_id, path, self.read(path))
+        messages, title = self.scan(path)
+        return Session(session_id, path, messages, title)
 
     def list_paths(self) -> list[Path]:
         if not self.sessions_dir.is_dir():
@@ -117,19 +128,32 @@ class SessionStore:
         session_id = chosen.stem
         if not _ID_RE.fullmatch(session_id):
             raise SessionNotFound(chosen, "invalid session filename")
-        return Session(session_id, chosen, self.read(chosen))
+        messages, title = self.scan(chosen)
+        return Session(session_id, chosen, messages, title)
 
     def append(self, path: Path, msg: Message) -> None:
+        self._append_json(path, msg.to_canonical_dict())
+
+    def append_meta(self, path: Path, title: str) -> None:
+        self._append_json(path, {"type": "meta", "title": title})
+
+    def _append_json(self, path: Path, payload: dict) -> None:
         try:
             with path.open("a", encoding="utf-8") as stream:
-                stream.write(json.dumps(msg.to_canonical_dict(), ensure_ascii=False) + "\n")
+                stream.write(json.dumps(payload, ensure_ascii=False) + "\n")
                 stream.flush()
                 os.fsync(stream.fileno())
         except OSError as exc:
             raise SessionError(f"append failed: {exc}") from exc
         self._chmod_best_effort(path)
 
-    def rewrite(self, session_id: str, target: Path, messages: list[Message]) -> None:
+    def rewrite(
+        self,
+        session_id: str,
+        target: Path,
+        messages: list[Message],
+        title: str | None = None,
+    ) -> None:
         path = self.path_for(session_id)
         if path.resolve() != target.resolve():
             raise SessionError("rewrite target does not match session id")
@@ -138,6 +162,11 @@ class SessionStore:
             fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                    if title:
+                        stream.write(
+                            json.dumps({"type": "meta", "title": title}, ensure_ascii=False)
+                            + "\n"
+                        )
                     for msg in messages:
                         stream.write(json.dumps(msg.to_canonical_dict(), ensure_ascii=False) + "\n")
                     stream.flush()
@@ -176,3 +205,15 @@ class SessionStore:
             pass
         finally:
             os.close(parent_fd)
+
+
+def _is_meta(payload: object) -> bool:
+    return isinstance(payload, dict) and payload.get("type") == "meta" and "role" not in payload
+
+
+def _meta_title(payload: dict) -> str | None:
+    raw = payload.get("title")
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    return text or None

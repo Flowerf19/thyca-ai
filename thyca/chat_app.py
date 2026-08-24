@@ -14,10 +14,12 @@ from thyca.agent.loop import AgentLoop
 from thyca.agent.observe import Observe
 from thyca.agent.think import LLMPort, Think
 from thyca.config import Config
+from thyca.llm.llm_base import LLMError
 from thyca.llm.llm_factory import ConnectFactory
 from thyca.memory.active import ActiveMemory
 from thyca.protocol import Message
 from thyca.sessions import Session, SessionManager, ask_remember
+from thyca.sessions.title import display_title, propose_title
 from thyca.tools.builtin import register_file_tools
 from thyca.tools.memory import MemoryFacade
 from thyca.tools.memory_tools import register_memory_tools
@@ -25,7 +27,6 @@ from thyca.tools.mcp import MCPManager
 from thyca.tools.path_guard import PathGuard
 from thyca.tools.registry import ToolRegistry
 
-TITLE_MAX = 48
 TEXT_MAX = 4000
 
 
@@ -125,12 +126,25 @@ class ChatApp:
             )
             hot = self._memory.refresh(self._state, datetime.now(self._zone))
             reply = await loop.run(text, hot=hot)
+            await self._name_if_needed(connect)
             return {**self._session_detail(self._sessions.current), "reply": reply}
         finally:
             if owns:
                 close = getattr(connect, "aclose", None)
                 if close is not None:
                     await close()
+
+    async def _name_if_needed(self, connect: LLMPort) -> None:
+        session = self._sessions.current
+        if session.title:
+            return
+        try:
+            cleaned = await propose_title(connect.chat, session)
+        except LLMError:
+            return
+        if cleaned is None:
+            return
+        self._sessions.set_title(cleaned)
 
     def shutdown(self) -> None:
         if self._stopped:
@@ -149,7 +163,7 @@ class ChatApp:
     def _session_summary(self, session: Session) -> dict:
         return {
             "id": session.id,
-            "title": session_title(session.messages),
+            "title": session_title(session),
             "updated_at": _updated_at(session),
             "message_count": len(session.messages),
         }
@@ -157,7 +171,7 @@ class ChatApp:
     def _session_detail(self, session: Session) -> dict:
         return {
             "id": session.id,
-            "title": session_title(session.messages),
+            "title": session_title(session),
             "model": self._cfg.provider.model,
             "messages": [_message_dict(item) for item in session.messages],
             "ask_remember": ask_remember(
@@ -166,14 +180,8 @@ class ChatApp:
         }
 
 
-def session_title(messages: list[Message]) -> str:
-    for message in messages:
-        if message.role == "user" and message.content and message.content.strip():
-            line = message.content.strip().splitlines()[0]
-            if len(line) > TITLE_MAX:
-                return line[: TITLE_MAX - 1] + "…"
-            return line
-    return "Phiên trống"
+def session_title(session: Session) -> str:
+    return display_title(session)
 
 
 def _updated_at(session: Session) -> str:

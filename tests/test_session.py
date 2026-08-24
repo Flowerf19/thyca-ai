@@ -1,6 +1,7 @@
 """Session service tests — TASK-303a-d verification."""
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import stat
@@ -12,12 +13,21 @@ import pytest
 from thyca.config import LimitsCfg
 from thyca.protocol import Message, ToolCall
 from thyca.sessions import (
+    Session,
     SessionCorrupt,
     SessionError,
     SessionManager,
     SessionNotFound,
     SessionStore,
     estimate_tokens,
+)
+from thyca.llm.llm_base import ChatReply
+from thyca.sessions.title import (
+    accept_title,
+    display_title,
+    fallback_title,
+    retitle_missing,
+    sanitize_title,
 )
 
 
@@ -266,3 +276,93 @@ def test_concurrent_append_and_compact(tmp_path: Path) -> None:
     assert loaded.messages
     roles = {item.role for item in loaded.messages}
     assert roles <= {"system", "user", "assistant"}
+
+
+def test_meta_title_roundtrip_and_last_wins(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path)
+    session = manager.create()
+    manager.append(msg("user", "alo"))
+    manager.append(msg("assistant", "hey"))
+    assert manager.set_title("Cà phê với Hòa") == "Cà phê với Hòa"
+    assert manager.set_title("  'Nhịp sáng'  ") == "Nhịp sáng"
+    loaded = SessionManager(tmp_path).load(session.id)
+    assert loaded.title == "Nhịp sáng"
+    assert [(item.role, item.content) for item in loaded.messages] == [
+        ("user", "alo"),
+        ("assistant", "hey"),
+    ]
+    assert display_title(loaded) == "Nhịp sáng"
+
+
+def test_meta_without_role_is_not_corrupt_unknown_type_is(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path)
+    session = manager.create()
+    session.path.write_text(
+        json.dumps({"type": "meta"}) + "\n" + json.dumps(msg("user", "hi").to_canonical_dict()) + "\n",
+        encoding="utf-8",
+    )
+    loaded = manager.load(session.id)
+    assert loaded.title is None
+    assert [item.content for item in loaded.messages] == ["hi"]
+    session.path.write_text(json.dumps({"type": "note", "title": "x"}) + "\n", encoding="utf-8")
+    with pytest.raises(SessionCorrupt, match=r":1"):
+        manager.load(session.id)
+
+
+def test_compaction_preserves_title(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path, LimitsCfg(contextTokens=1000))
+    session = manager.create()
+    manager.set_title("Cà phê với Hòa")
+    for i in range(8):
+        manager.append(msg("user", "u" * 300 + str(i)))
+        manager.append(msg("assistant", "a" * 300))
+    assert manager.compact_if_needed()
+    loaded = manager.load(session.id)
+    assert loaded.title == "Cà phê với Hòa"
+    assert loaded.messages[0].role == "system"
+
+
+def test_fallback_and_sanitize_title(tmp_path: Path) -> None:
+    assert fallback_title("2026-08-24T10-56-24_abcd") == "Sáng 24 thg 8"
+    assert fallback_title("2026-08-22T16-51-00_2e20") == "Chiều 22 thg 8"
+    assert fallback_title("2026-08-22T21-00-00_aaaa") == "Tối 22 thg 8"
+    assert sanitize_title('"Cà phê với Hòa."') == "Cà phê với Hòa"
+    assert sanitize_title("**Nhịp sáng**") == "Nhịp sáng"
+    assert sanitize_title("x" * 60) == "x" * 47 + "…"
+    assert sanitize_title("   ") is None
+    spoken = msg("user", "alo")
+    session = Session(
+        "2026-08-24T10-56-24_abcd", tmp_path, [spoken, msg("assistant", "pong")]
+    )
+    assert accept_title("alo", session) is None
+    assert accept_title("pong", session) is None
+    assert accept_title("打招呼", session) is None
+    assert accept_title("Cà phê với Hòa", session) == "Cà phê với Hòa"
+    session.title = "打招呼"
+    assert display_title(session) == "Sáng 24 thg 8"
+
+
+def test_retitle_missing_skips_named_and_empty(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path)
+    blank = manager.create()
+    untitled = manager.create()
+    manager.append(msg("user", "alo"))
+    manager.append(msg("assistant", "hey"))
+    named = manager.create()
+    manager.append(msg("user", "xin chào"))
+    manager.set_title("Đã có tên")
+    cjk = manager.create()
+    manager.append(msg("user", "chào"))
+    manager.set_title("打招呼")
+
+    class LLM:
+        async def chat(self, messages, tools=None):
+            return ChatReply(content="Nhịp sáng")
+
+    result = asyncio.run(retitle_missing(LLM().chat, SessionManager(tmp_path)))
+    ids = {item[0].id: item[2] for item in result}
+    assert ids == {untitled.id: "Nhịp sáng", cjk.id: "Nhịp sáng"}
+    assert SessionManager(tmp_path).load(untitled.id).title == "Nhịp sáng"
+    assert SessionManager(tmp_path).load(named.id).title == "Đã có tên"
+    assert SessionManager(tmp_path).load(cjk.id).title == "Nhịp sáng"
+    assert SessionManager(tmp_path).load(blank.id).title is None

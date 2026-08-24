@@ -11,3 +11,4 @@ class Session:
     id: str
     path: Path
     messages: list[Message]
+    title: str | None = None

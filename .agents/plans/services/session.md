@@ -62,7 +62,7 @@ classDiagram
 
 ## Contracts
 
-- File: `~/.thyca/sessions/{YYYY-MM-DDTHH-mm-ss}_{rand4}.jsonl` với `rand4 = secrets.token_hex(2)` (4 hex lowercase), timestamp theo `config.timeline.timezone` (default `Asia/Ho_Chi_Minh`), wall time local. `id` là stem không extension `YYYY-MM-DDTHH-mm-ss_rand4` (regex `^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_[0-9a-f]{4}$`). Mỗi dòng 1 canonical `Message` từ `thyca/protocol.py`. Canonical `Message`/`ToolCall` sống ở `thyca/protocol.py` — Session phụ thuộc `protocol.py` (tách TASK-309a hoặc Session tạm định nghĩa và Tools reuse). Sessions dir tự tạo `mkdir(parents=True, exist_ok=True); chmod 0o700` (tái dùng pattern `ensure_thyca_dir()` trong `thyca/config.py:237`), file JSONL `0600`, temp cùng dir `0600`.
+- File: `~/.thyca/sessions/{YYYY-MM-DDTHH-mm-ss}_{rand4}.jsonl` với `rand4 = secrets.token_hex(2)` (4 hex lowercase), timestamp theo `config.timeline.timezone` (default `Asia/Ho_Chi_Minh`), wall time local. `id` là stem không extension `YYYY-MM-DDTHH-mm-ss_rand4` (regex `^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_[0-9a-f]{4}$`). Mỗi dòng là canonical `Message` từ `thyca/protocol.py`, hoặc dòng meta `{"type":"meta","title"}` (không có `role`) — last title wins, không vào `messages`/loop. Display title: stored → fallback giờ+ngày từ id → `Phiên trống`. Xem `session-notebook-title.md`. Canonical `Message`/`ToolCall` sống ở `thyca/protocol.py` — Session phụ thuộc `protocol.py` (tách TASK-309a hoặc Session tạm định nghĩa và Tools reuse). Sessions dir tự tạo `mkdir(parents=True, exist_ok=True); chmod 0o700` (tái dùng pattern `ensure_thyca_dir()` trong `thyca/config.py:237`), file JSONL `0600`, temp cùng dir `0600`.
 - `--continue` quét `sessions/*.jsonl` regular files (`is_file() and not is_symlink()`), sort `st_mtime_ns` desc, tie-break `name` desc. Rỗng hoặc thiếu dir → raise typed `SessionNotFound`; CLI (`thyca/cli.py:17-18` `--continue` vs `--session` mutual exclusive) catch và tạo mới khi không có explicit id. Đồng bộ `services/agent-loop.md:58`.
 - `load(id)` validate id regex, `resolve()` và check `parent == sessions_dir` để tránh traversal (`--session ../../etc/passwd`).
 - `SessionManager` nhận `sessions_dir: Path = Path.home()/".thyca"/"sessions"` và `limits: LimitsCfg` (từ `Config`). Giữ `self._lock = threading.Lock()` (single-process, như `thyca-agent-architecture.md:117` một process). `append(msg)` và `compact_if_needed()` cùng `with self._lock`. Không dùng `filelock` ở v1 (khác Config dùng `filelock.FileLock`). `append(msg)`: giữ lock, mở file `a`, ghi đúng một JSON line `json.dumps(canonical, ensure_ascii=False)+"\n"`, `flush()` + `os.fsync(f.fileno())`. Đây là durable append; không gọi nó là atomic transaction.
@@ -101,7 +101,7 @@ Xong khi: write 3 turns → load lại đủ (kèm `ts`/`meta`); `--continue` ch
 
 ## Assumptions
 
-- Không LLM summarizer v1; rule-based tail đủ.
+- Không LLM summarizer khi compact; rule-based tail đủ. Title notebook là 1 `chat()` display-only sau lượt đầu (`session-notebook-title.md`), không đụng compaction.
 - Single-process, Linux target, Python 3.14 (`pyproject.toml:10` `requires-python >=3.14`), flat `thyca/` (`pyproject.toml:34` `packages = ["thyca"]`), `~/.thyca` home data, `cwd` workspace. Config done (`limits.contextTokens` `1000..200000` inject vào `SessionManager`).
 - `protocol.py` là prerequisite của Session (tách TASK-309a) hoặc Session tạm định nghĩa `Message/ToolCall` và Tools sẽ reuse.
 - Daily hot tail 4KB do Memory quản, Session không đọc/ghi daily.

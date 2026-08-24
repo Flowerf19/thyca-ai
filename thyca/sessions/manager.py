@@ -13,6 +13,7 @@ from .compaction import SessionCompactor
 from .errors import SessionCorrupt, SessionError, SessionNotFound
 from .models import Session
 from .store import SessionStore
+from .title import sanitize_title
 
 
 class SessionManager:
@@ -98,11 +99,29 @@ class SessionManager:
         with self._lock:
             if self._session is None:
                 raise SessionError("no current session — call create/load/continue_last first")
-            on_disk = self.store.read(self._session.path)
+            on_disk, title = self.store.scan(self._session.path)
             self._session.messages[:] = on_disk
+            if title:
+                self._session.title = title
             compacted = self.compactor.compact(on_disk, self.limits.contextTokens)
             if compacted is None:
                 return False
-            self.store.rewrite(self._session.id, self._session.path, compacted)
+            self.store.rewrite(
+                self._session.id,
+                self._session.path,
+                compacted,
+                title=self._session.title,
+            )
             self._session.messages[:] = compacted
             return True
+
+    def set_title(self, title: str) -> str | None:
+        with self._lock:
+            if self._session is None:
+                raise SessionError("no current session — call create/load/continue_last first")
+            cleaned = sanitize_title(title)
+            if cleaned is None:
+                return None
+            self.store.append_meta(self._session.path, cleaned)
+            self._session.title = cleaned
+            return cleaned

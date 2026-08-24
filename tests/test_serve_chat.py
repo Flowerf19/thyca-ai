@@ -14,7 +14,8 @@ from thyca.config import default_config, load, save
 from thyca.llm.llm_base import ChatReply, LLMError
 from thyca.protocol import Message
 from thyca.serve import ServeError, default_webui, make_server
-from thyca.sessions import SessionManager
+from thyca.sessions import Session, SessionManager
+from thyca.sessions.title import fallback_title
 from thyca.tools.memory import MemoryFacade
 
 WEBUI = default_webui()
@@ -24,10 +25,26 @@ WEBUI = default_webui()
 class FakeLLM:
     reply: ChatReply
     requests: list[list[Message]] = field(default_factory=list)
+    tools: list = field(default_factory=list)
 
     async def chat(self, messages: list[Message], tools: list | None = None) -> ChatReply:
         self.requests.append(list(messages))
+        self.tools.append(tools)
         return self.reply
+
+
+@dataclass
+class ScriptedLLM:
+    replies: list[ChatReply]
+    requests: list[list[Message]] = field(default_factory=list)
+    tools: list = field(default_factory=list)
+
+    async def chat(self, messages: list[Message], tools: list | None = None) -> ChatReply:
+        self.requests.append(list(messages))
+        self.tools.append(tools)
+        if not self.replies:
+            raise LLMError("no scripted reply")
+        return self.replies.pop(0)
 
 
 def _url(httpd, path: str) -> str:
@@ -95,17 +112,22 @@ def test_create_list_get_and_turn(tmp_path: Path) -> None:
         body = json.dumps({"text": "ping"}).encode("utf-8")
         turned = _json(httpd, f"/api/sessions/{created['id']}/turn", method="POST", data=body)
         assert turned["reply"] == "pong"
-        assert turned["title"] == "ping"
+        assert turned["title"] == fallback_title(created["id"])
+        assert turned["title"] != "ping"
         roles = [(item["role"], item["content"]) for item in turned["messages"]]
         assert roles == [("user", "ping"), ("assistant", "pong")]
         loaded = _json(httpd, f"/api/sessions/{created['id']}")
         assert loaded["messages"] == turned["messages"]
+        assert loaded["title"] == fallback_title(created["id"])
         session = SessionManager(tmp_path / "sessions").load(created["id"])
+        assert session.title is None
         assert [(item.role, item.content) for item in session.messages] == [
             ("user", "ping"),
             ("assistant", "pong"),
         ]
         assert llm.requests[0][-1].content == "ping"
+        assert len(llm.requests) == 2
+        assert llm.tools[1] is None
     finally:
         _stop(httpd, thread)
 
@@ -264,10 +286,64 @@ def test_chat_app_shutdown_idempotent(tmp_path: Path) -> None:
     app.shutdown()
 
 
-def test_session_title_truncates() -> None:
-    long = "x" * 60
-    assert session_title([Message(role="user", content=long, ts="2026-01-01T00:00:00Z")]) == "x" * 47 + "…"
-    assert session_title([]) == "Phiên trống"
+def test_session_title_display_not_utterance(tmp_path: Path) -> None:
+    path = tmp_path / "2026-08-24T10-56-24_abcd.jsonl"
+    path.write_text("", encoding="utf-8")
+    empty = Session("2026-08-24T10-56-24_abcd", path, [])
+    assert session_title(empty) == "Phiên trống"
+    spoken = Session(
+        "2026-08-24T10-56-24_abcd",
+        path,
+        [Message(role="user", content="alo", ts="2026-08-24T03:56:24Z")],
+    )
+    assert session_title(spoken) == "Sáng 24 thg 8"
+    named = Session(
+        "2026-08-24T10-56-24_abcd",
+        path,
+        [Message(role="user", content="alo", ts="2026-08-24T03:56:24Z")],
+        title="Cà phê với Hòa",
+    )
+    assert session_title(named) == "Cà phê với Hòa"
+
+
+def test_notebook_title_persists_and_skips_second_turn(tmp_path: Path) -> None:
+    llm = ScriptedLLM(
+        [
+            ChatReply(content="pong"),
+            ChatReply(content='"Cà phê với Hòa."'),
+            ChatReply(content="again"),
+        ]
+    )
+    app = _chat(tmp_path, llm)
+    created = app.create()
+    first = app.turn(created["id"], "alo")
+    assert first["title"] == "Cà phê với Hòa"
+    assert first["reply"] == "pong"
+    second = app.turn(created["id"], "thêm")
+    assert second["title"] == "Cà phê với Hòa"
+    assert second["reply"] == "again"
+    assert len(llm.requests) == 3
+    listed = app.list_payload()
+    assert listed["sessions"][0]["title"] == "Cà phê với Hòa"
+    app.shutdown()
+
+
+def test_title_failure_keeps_turn_and_fallback(tmp_path: Path) -> None:
+    class TitleBoom(FakeLLM):
+        async def chat(self, messages, tools=None):
+            if len(self.requests) >= 1:
+                self.requests.append(list(messages))
+                raise LLMError("title failed")
+            return await super().chat(messages, tools)
+
+    llm = TitleBoom(ChatReply(content="pong"))
+    app = _chat(tmp_path, llm)
+    created = app.create()
+    turned = app.turn(created["id"], "alo")
+    assert turned["reply"] == "pong"
+    assert turned["title"] == fallback_title(created["id"])
+    assert turned["title"] != "alo"
+    app.shutdown()
 
 
 def test_chat_js_shipped() -> None:
@@ -276,6 +352,9 @@ def test_chat_js_shipped() -> None:
     assert "flushTools" in chat
     css = (WEBUI / "css" / "workspace.css").read_text(encoding="utf-8")
     assert "flex-flow: row wrap" in css
+    script = WEBUI.parent / "scripts" / "retitle_sessions.py"
+    assert script.is_file()
+    assert "retitle_missing" in script.read_text(encoding="utf-8")
 
 
 def test_session_payload_includes_ask_remember(tmp_path: Path) -> None:

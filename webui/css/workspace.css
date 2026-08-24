@@ -251,7 +251,7 @@
 }
 
 .entry-list {
-  max-width: var(--measure);
+  max-width: none;
 }
 
 .entry {
@@ -283,7 +283,7 @@
 }
 
 .entry-copy p {
-  max-width: 56ch;
+  max-width: none;
   margin: 0;
   overflow-wrap: anywhere;
 }
@@ -304,11 +304,11 @@
 
 .tool-strip {
   display: flex;
-  flex-wrap: wrap;
+  flex-flow: row wrap;
   align-items: center;
   gap: var(--space-xs);
-  max-width: var(--measure);
-  margin: var(--space-md) 0 var(--space-xl) 4.5rem;
+  max-width: none;
+  margin: var(--space-sm) 0 var(--space-sm) 4.5rem;
   color: var(--color-muted);
   font-size: var(--text-xs);
   letter-spacing: 0.04em;

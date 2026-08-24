@@ -228,19 +228,26 @@ function emptyPage(model) {
 
 export function threadHtml(messages) {
   const parts = [];
+  const pending = [];
+  const flushTools = () => {
+    if (!pending.length) return;
+    parts.push(`<div class="tool-strip">${pending.join("")}</div>`);
+    pending.length = 0;
+  };
   for (const message of messages) {
     if (!message || message.role === "system" || message.role === "tool") continue;
     if (message.role === "assistant" && message.tool_calls?.length) {
-      const pills = message.tool_calls
-        .map((call) => `<span class="tool-pill">${escapeHtml(call.name || "")}</span>`)
-        .join("");
-      parts.push(`<div class="tool-strip">${pills}</div>`);
+      for (const call of message.tool_calls) {
+        pending.push(`<span class="tool-pill">${escapeHtml(call.name || "")}</span>`);
+      }
       if (!message.content) continue;
     }
+    flushTools();
     if (message.role === "user" || message.role === "assistant") {
       parts.push(entryHtml(message.role, message.content || ""));
     }
   }
+  flushTools();
   if (!parts.length) return EMPTY_BODY;
   return `<div class="entry-list">${parts.join("")}</div>`;
 }

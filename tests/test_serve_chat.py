@@ -272,6 +272,10 @@ def test_session_title_truncates() -> None:
 
 def test_chat_js_shipped() -> None:
     assert (WEBUI / "js" / "chat.js").is_file()
+    chat = (WEBUI / "js" / "chat.js").read_text(encoding="utf-8")
+    assert "flushTools" in chat
+    css = (WEBUI / "css" / "workspace.css").read_text(encoding="utf-8")
+    assert "flex-flow: row wrap" in css
 
 
 def test_session_payload_includes_ask_remember(tmp_path: Path) -> None:

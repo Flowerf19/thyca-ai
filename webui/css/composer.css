@@ -11,7 +11,7 @@
 }
 
 .composer-inner {
-  width: min(100%, var(--measure));
+  width: min(100%, 72rem);
   margin-inline: auto;
 }
 

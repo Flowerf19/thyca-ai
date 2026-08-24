@@ -4,8 +4,10 @@ from collections.abc import Callable
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from datetime import timedelta
+from pathlib import Path
 from typing import Any, Protocol
 import re
+import sys
 
 from mcp import ClientSession, StdioServerParameters, stdio_client
 from mcp.client.stdio import get_default_environment
@@ -20,6 +22,13 @@ CALL_TIMEOUT = timedelta(seconds=30)
 
 def merge_env(server_env: dict[str, str]) -> dict[str, str]:
     return get_default_environment() | dict(server_env)
+
+
+def resolve_command(command: str) -> str:
+    name = Path(command).name
+    if name == "python" or name.startswith("python3"):
+        return sys.executable
+    return command
 
 
 def model_name(server: str, tool: str) -> str:
@@ -76,7 +85,7 @@ class MCPProcess:
             stack = AsyncExitStack()
             try:
                 params = StdioServerParameters(
-                    command=self._command,
+                    command=resolve_command(self._command),
                     args=list(self._args),
                     env=merge_env(self._env),
                 )

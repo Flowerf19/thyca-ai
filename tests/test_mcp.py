@@ -16,6 +16,7 @@ from thyca.tools.mcp import (
     join_text_blocks,
     merge_env,
     model_name,
+    resolve_command,
 )
 from thyca.tools.registry import ToolRegistry
 
@@ -26,6 +27,13 @@ def test_call_timeout_is_30s() -> None:
 
 def test_model_name_prefix() -> None:
     assert model_name("echo", "ping") == "echo__ping"
+
+
+def test_resolve_command_uses_running_interpreter() -> None:
+    assert resolve_command("python3") == sys.executable
+    assert resolve_command("/usr/bin/python3") == sys.executable
+    assert resolve_command("python3.14") == sys.executable
+    assert resolve_command("uv") == "uv"
 
 
 def test_merge_env_keeps_defaults_and_overrides(

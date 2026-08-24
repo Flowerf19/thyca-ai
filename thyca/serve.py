@@ -70,6 +70,8 @@ def run(
     print(f"http://{bound_host}:{bound_port}/", file=stdout, flush=True)
     try:
         httpd.serve_forever()
+    except KeyboardInterrupt:
+        print(file=stdout)
     finally:
         if chat is not None:
             chat.shutdown()

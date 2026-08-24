@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import stat
 from pathlib import Path
 
@@ -152,6 +153,30 @@ def test_mcp_servers_parse(tmp_path: Path) -> None:
     assert cfg.mcpServers["echo"].command == "python"
     assert cfg.mcpServers["echo"].args == ["-m", "echo"]
     assert cfg.mcpServers["echo"].env == {"FOO": "bar"}
+
+
+def test_mcp_server_keys_reject_invalid_charset(tmp_path: Path) -> None:
+    for name in ("echo.1", "echo server"):
+        p = tmp_path / f"{len(list(tmp_path.iterdir()))}.json"
+        raw = default_config().to_dict()
+        raw["mcpServers"] = {name: {"command": "python"}}
+        p.write_text(json.dumps(raw), encoding="utf-8")
+        with pytest.raises(
+            ConfigError, match=re.escape(f"mcpServers[{name!r}] must match")
+        ):
+            load(p)
+
+
+def test_mcp_server_keys_accept_letters_digits_underscore_hyphen(tmp_path: Path) -> None:
+    p = tmp_path / "config.json"
+    raw = default_config().to_dict()
+    raw["mcpServers"] = {
+        "Echo_1": {"command": "python"},
+        "a-b": {"command": "python"},
+    }
+    p.write_text(json.dumps(raw), encoding="utf-8")
+    cfg = load(p)
+    assert set(cfg.mcpServers) == {"Echo_1", "a-b"}
 
 
 def test_limits_validation() -> None:

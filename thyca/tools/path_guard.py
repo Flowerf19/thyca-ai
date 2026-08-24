@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 class PathDenied(ValueError):
-    """write/edit target is L2, session, config, or sqlite."""
+    """write/edit target is L2, session, or sqlite."""
 
 
 class PathGuard:
@@ -31,7 +31,7 @@ class PathGuard:
             target.relative_to(root)
         except ValueError:
             return False
-        if target == root / "config.json" or target == root / "MEMORY.md":
+        if target == root / "MEMORY.md":
             return True
         if target.name.startswith("memory.sqlite"):
             return True

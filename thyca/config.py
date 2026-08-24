@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import warnings
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -165,6 +166,10 @@ def _parse_mcp_servers(raw: Any) -> dict[str, McpServerCfg]:
     for name, value in raw.items():
         if not isinstance(name, str) or not name.strip():
             raise ConfigError("mcpServers keys must be non-empty strings")
+        if re.fullmatch(r"[A-Za-z0-9_-]+", name) is None:
+            raise ConfigError(
+                f"mcpServers[{name!r}] must match [A-Za-z0-9_-]+"
+            )
         if not isinstance(value, dict):
             raise ConfigError(f"mcpServers[{name!r}] must be an object")
         raw_command = value.get("command", "")

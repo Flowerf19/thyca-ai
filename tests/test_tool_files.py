@@ -42,7 +42,6 @@ async def test_write_denies_l2_session_config_sqlite(tmp_path: Path) -> None:
         tmp_path / "memory" / "2026-08-20.md",
         tmp_path / "MEMORY.md",
         tmp_path / "sessions" / "s.jsonl",
-        tmp_path / "config.json",
         tmp_path / "memory.sqlite",
         tmp_path / "memory.sqlite-wal",
     ]
@@ -51,6 +50,14 @@ async def test_write_denies_l2_session_config_sqlite(tmp_path: Path) -> None:
         assert result.is_error, path
         assert "write denied" in result.content
         assert not path.exists()
+
+
+@pytest.mark.asyncio
+async def test_write_allows_config_json(tmp_path: Path) -> None:
+    path = tmp_path / "config.json"
+    result = await _call(_registry(tmp_path), "write", path=str(path), content='{"ok":true}\n')
+    assert not result.is_error
+    assert path.read_text(encoding="utf-8") == '{"ok":true}\n'
 
 
 @pytest.mark.asyncio

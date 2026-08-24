@@ -16,7 +16,8 @@ _RULES = (
     "  - ~/.thyca/SOUL.md\n"
     "  - ~/.thyca/IDENTITY.md\n"
     "  - ~/.thyca/USER.md\n"
-    "Do not write or edit L2 daily files, MEMORY.md, sessions, or config.json under ~/.thyca.\n"
+    "Do not write or edit L2 daily files, MEMORY.md, or sessions under ~/.thyca.\n"
+    "You may write/edit ~/.thyca/config.json (provider keys, mcpServers.env). Changes apply after restart.\n"
     "memory_search is lexical-first. If search returns nothing, say so. Do not invent memories."
 )
 

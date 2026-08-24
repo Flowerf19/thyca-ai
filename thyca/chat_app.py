@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,6 +21,7 @@ from thyca.sessions import Session, SessionManager
 from thyca.tools.builtin import register_file_tools
 from thyca.tools.memory import MemoryFacade
 from thyca.tools.memory_tools import register_memory_tools
+from thyca.tools.mcp import MCPManager
 from thyca.tools.path_guard import PathGuard
 from thyca.tools.registry import ToolRegistry
 
@@ -49,9 +51,39 @@ class ChatApp:
         register_memory_tools(
             registry, MemoryFacade(root, timezone_name=cfg.timeline.timezone)
         )
-        self._tools = registry.to_openai_schema()
-        self._act = Act(registry)
+        self._mcp = MCPManager()
+        self._loop = asyncio.new_event_loop()
+        self._ready = threading.Event()
+        self._thread = threading.Thread(
+            target=self._run_loop, name="thyca-mcp-loop", daemon=True
+        )
         self._turn_lock = threading.Lock()
+        self._stopped = False
+        self._thread.start()
+        try:
+            if not self._ready.wait(timeout=5):
+                raise RuntimeError("mcp loop thread failed to start")
+            for diag in self._submit(self._mcp.spawn_all(cfg.mcpServers)):
+                if not diag.ok:
+                    print(diag.message, file=sys.stderr)
+            for spec in self._mcp.tool_specs():
+                try:
+                    registry.register(spec)
+                except ValueError as exc:
+                    print(str(exc), file=sys.stderr)
+            self._tools = registry.to_openai_schema()
+            self._act = Act(registry)
+        except BaseException:
+            self.shutdown()
+            raise
+
+    def _run_loop(self) -> None:
+        asyncio.set_event_loop(self._loop)
+        self._loop.call_soon(self._ready.set)
+        self._loop.run_forever()
+
+    def _submit(self, coro):
+        return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
 
     def list_payload(self) -> dict:
         sessions = [self._session_summary(item) for item in self._sessions.list_sessions()]
@@ -75,7 +107,7 @@ class ChatApp:
         if len(cleaned) > TEXT_MAX:
             raise ValueError("too long")
         with self._turn_lock:
-            return asyncio.run(self._run_turn(session_id, cleaned))
+            return self._submit(self._run_turn(session_id, cleaned))
 
     async def _run_turn(self, session_id: str, text: str) -> dict:
         connect = self._connect or ConnectFactory.create("openai_chat", self._cfg.provider)
@@ -99,6 +131,18 @@ class ChatApp:
                 close = getattr(connect, "aclose", None)
                 if close is not None:
                     await close()
+
+    def shutdown(self) -> None:
+        if self._stopped:
+            return
+        self._stopped = True
+        try:
+            if self._loop.is_running():
+                self._submit(self._mcp.shutdown())
+        finally:
+            if self._loop.is_running():
+                self._loop.call_soon_threadsafe(self._loop.stop)
+            self._thread.join(timeout=5)
 
     def _session_summary(self, session: Session) -> dict:
         return {

@@ -255,6 +255,15 @@ def test_create_waits_for_in_flight_turn(tmp_path: Path) -> None:
     ]
 
 
+def test_chat_app_shutdown_idempotent(tmp_path: Path) -> None:
+    app = _chat(tmp_path, FakeLLM(ChatReply(content="x")))
+    created = app.create()
+    payload = app.turn(created["id"], "hi")
+    assert payload["reply"] == "x"
+    app.shutdown()
+    app.shutdown()
+
+
 def test_session_title_truncates() -> None:
     long = "x" * 60
     assert session_title([Message(role="user", content=long, ts="2026-01-01T00:00:00Z")]) == "x" * 47 + "…"

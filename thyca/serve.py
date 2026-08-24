@@ -71,6 +71,8 @@ def run(
     try:
         httpd.serve_forever()
     finally:
+        if chat is not None:
+            chat.shutdown()
         httpd.server_close()
 
 

@@ -26,6 +26,7 @@ Không xóa `~/.thyca/MEMORY.md` (user data; Worldfone chỉ nằm đó). Không
 | TASK-004 | WebUI: bỏ page `MEMORY.md` / `memory#`. Mock `data.js` ghi daily | x | 2026-08-25 |
 | TASK-005 | Tests chuyển fixture/assert sang daily đã đóng (search) hoặc today (stats/get) | x | 2026-08-25 |
 | TASK-006 | PROJECT_CONTEXT, memory README, root README, AGENT_RULES, decision | x | 2026-08-25 |
+| TASK-007 | Mở facade `drop_source(MEMORY.md)` — leftover không còn search/stats. Test plant rồi assert trống | x | 2026-08-25 |
 
 ## Test Plan
 

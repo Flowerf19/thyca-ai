@@ -10,7 +10,7 @@ last_updated: 2026-08-25
 
 L2 không còn file `MEMORY.md`. `memory_remember` chỉ append `~/.thyca/memory/YYYY-MM-DD.md`. Hồ sơ bền nằm `USER.md` / `SOUL.md` / `IDENTITY.md` qua `write`/`edit`.
 
-`MEMORY.md` trùng daily (cùng heading+bullet, cùng TTL) nên không có vai trò thứ ba. Leftover `~/.thyca/MEMORY.md` không bị xóa, không index, không inject; `write`/`edit` vẫn deny path đó.
+`MEMORY.md` trùng daily (cùng heading+bullet, cùng TTL) nên không có vai trò thứ ba. Leftover `~/.thyca/MEMORY.md` không bị xóa, không inject, không purge; `write`/`edit` vẫn deny path đó. Mở `MemoryFacade` `drop_source` index cũ.
 
 ## Consequences
 

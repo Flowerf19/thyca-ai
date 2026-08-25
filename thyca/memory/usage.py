@@ -31,6 +31,19 @@ class LeafUsage:
     def keep_searches(self, chunk_ids: set[str]) -> None:
         self._keep("leaf_searches", chunk_ids)
 
+    def drop_ids(self, chunk_ids: list[str]) -> None:
+        if not chunk_ids:
+            return
+        self._db.execute("BEGIN IMMEDIATE")
+        try:
+            rows = [(chunk_id,) for chunk_id in chunk_ids]
+            for table in _TABLES:
+                self._db.executemany(f"DELETE FROM {table} WHERE chunk_id = ?", rows)
+            self._db.commit()
+        except Exception:
+            self._db.rollback()
+            raise
+
     def _map(self, table: str) -> dict[str, tuple[int, str]]:
         count_col, time_col = _TABLES[table]
         return {

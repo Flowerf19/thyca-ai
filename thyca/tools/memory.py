@@ -43,6 +43,7 @@ class MemoryFacade:
         self.active = ActiveMemory(self.thyca_dir, timezone_name=timezone_name)
         self.archive = archive or ArchivedMemory(self.thyca_dir, timezone_name=timezone_name)
         self.writer = writer or MemoryWriter(self.thyca_dir)
+        self.archive.store.drop_source(str(self.thyca_dir / "MEMORY.md"))
 
     def remember(
         self,

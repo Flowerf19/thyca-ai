@@ -9,7 +9,7 @@ from thyca.tools.registry import ToolRegistry
 
 
 @pytest.mark.asyncio
-async def test_memory_remember_and_search_roundtrip(tmp_path) -> None:
+async def test_memory_remember_and_get_roundtrip(tmp_path) -> None:
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     registry = ToolRegistry()
     register_memory_tools(registry, facade)
@@ -41,4 +41,4 @@ async def test_memory_remember_rejects_soul_target(tmp_path) -> None:
         )
     )
     assert result.is_error
-    assert "unexpected argument" in result.content or "daily|memory" in result.content
+    assert "unexpected argument" in result.content

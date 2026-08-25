@@ -36,7 +36,7 @@ def write_spec(guard: PathGuard) -> ToolSpec:
         name="write",
         description=(
             "Write a UTF-8 text file (replace). "
-            "Denied: L2 daily, sessions, config, sqlite. "
+            "Denied: L2 daily, leftover MEMORY.md, sessions, config, sqlite. "
             "Allowed: SOUL.md, IDENTITY.md, USER.md, and paths outside those."
         ),
         parameters=_PARAMETERS,

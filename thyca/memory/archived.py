@@ -166,8 +166,13 @@ class ArchiveStore:
             raise
 
     def drop_source(self, path: str) -> None:
+        ids = [
+            str(row["chunk_id"])
+            for row in self._db.execute("SELECT chunk_id FROM chunks WHERE path = ?", (path,))
+        ]
         self._db.execute("DELETE FROM source_files WHERE path = ?", (path,))
         self._db.commit()
+        self.usage.drop_ids(ids)
 
     def source_stat(self, path: str) -> tuple[int, int] | None:
         row = self._db.execute(

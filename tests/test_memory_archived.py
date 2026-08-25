@@ -120,3 +120,29 @@ def test_delete_source_cascades(tmp_path: Path) -> None:
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh", archive=archived)
     assert facade.search("thịt quay").hits == []
     assert facade.search("Hanoi").hits
+
+
+def test_leftover_memory_md_dropped_on_open(tmp_path: Path) -> None:
+    path = tmp_path / "MEMORY.md"
+    text = (
+        "# Memory\n"
+        '## 08:00 — leftover <!-- thyca {"id":"eeeeeeee","imp":3,"exp":"2026-09-12T00:00:00Z"} -->\n'
+        "- leftover-memory-md-token xyz\n"
+    )
+    path.write_text(text, encoding="utf-8")
+    archived = ArchivedMemory(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    chunks = Chunker().chunk_markdown(path, text, source_kind="canonical", timeline_day=None)
+    stat = path.stat()
+    archived.store.replace_source(
+        str(path), "canonical", None, stat.st_mtime_ns, stat.st_size, chunks
+    )
+    cid = chunks[0].chunk_id
+    archived.store.usage.record_gets([cid], chunks[0].session_id, "2026-08-17T03:00:00Z")
+    assert archived.fts_hits("leftover-memory-md-token", None, None, 5)
+    assert cid in archived.store.usage.get_map()
+    planted = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh", archive=archived)
+    assert planted.search("leftover-memory-md-token").hits == []
+    assert cid not in planted.archive.store.usage.get_map()
+    assert all(
+        not item.session_id.startswith("memory#") for item in planted.stats().leaves
+    )

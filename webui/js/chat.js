@@ -246,14 +246,22 @@ export function threadHtml(messages) {
   const pending = [];
   const flushTools = () => {
     if (!pending.length) return;
-    parts.push(`<div class="tool-strip">${pending.join("")}</div>`);
+    const counts = new Map();
+    for (const name of pending) {
+      counts.set(name, (counts.get(name) || 0) + 1);
+    }
+    const items = [];
+    for (const [name, count] of counts) {
+      items.push(count > 1 ? `${name} ×${count}` : name);
+    }
+    parts.push(`<div class="tool-strip">tools use: ${escapeHtml(items.join(", "))}</div>`);
     pending.length = 0;
   };
   for (const message of messages) {
     if (!message || message.role === "system" || message.role === "tool") continue;
     if (message.role === "assistant" && message.tool_calls?.length) {
       for (const call of message.tool_calls) {
-        pending.push(`<span class="tool-pill">${escapeHtml(call.name || "")}</span>`);
+        pending.push(call.name || "");
       }
       if (!message.content) continue;
     }

@@ -390,24 +390,16 @@
 }
 
 .tool-strip {
-  display: flex;
-  flex-flow: row wrap;
-  align-items: center;
-  gap: var(--space-xs);
   max-width: none;
   margin: var(--space-sm) 0 var(--space-sm) 4.5rem;
+  overflow: hidden;
   color: var(--color-muted);
+  font-family: var(--font-reading);
   font-size: var(--text-xs);
-  letter-spacing: 0.04em;
-}
-
-.tool-pill {
-  padding: 0;
-  border: 0;
-  color: var(--color-ink-2);
-  font-family: ui-monospace, "IBM Plex Mono", "SFMono-Regular", Menlo, monospace;
-  letter-spacing: 0;
-  text-transform: none;
+  font-style: italic;
+  letter-spacing: 0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .phase-list {

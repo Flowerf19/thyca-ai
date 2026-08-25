@@ -352,6 +352,7 @@ def test_chat_js_shipped() -> None:
     assert (WEBUI / "js" / "chat.js").is_file()
     chat = (WEBUI / "js" / "chat.js").read_text(encoding="utf-8")
     assert "flushTools" in chat
+    assert "tools use:" in chat
     start = chat.index("export async function createChatSession")
     end = chat.index("export function", start + 1)
     body = chat[start:end]
@@ -364,7 +365,7 @@ def test_chat_js_shipped() -> None:
     assert "page.sessionId" in chat[send:send_end]
     assert "function bindSession" in chat
     css = (WEBUI / "css" / "workspace.css").read_text(encoding="utf-8")
-    assert "flex-flow: row wrap" in css
+    assert "font-style: italic" in css
     script = WEBUI.parent / "scripts" / "retitle_sessions.py"
     assert script.is_file()
     assert "retitle_missing" in script.read_text(encoding="utf-8")

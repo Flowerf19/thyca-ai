@@ -251,10 +251,16 @@
 }
 
 .entry-list {
+  position: relative;
   max-width: none;
 }
 
 .entry {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr);
+  gap: var(--space-lg);
   min-width: 0;
 }
 
@@ -391,7 +397,7 @@
 
 .tool-strip {
   max-width: none;
-  margin: var(--space-sm) 0;
+  margin: var(--space-sm) 0 var(--space-sm) calc(4.5rem + var(--space-lg));
   overflow: hidden;
   color: var(--color-ink-2);
   font-family: var(--font-reading);
@@ -434,21 +440,65 @@
   color: var(--color-ink);
 }
 
+.note-rail {
+  pointer-events: none;
+  position: absolute;
+  inset-block: 0;
+  left: calc(4.5rem + var(--space-lg) - 2.375rem);
+  z-index: 0;
+  width: 1.75rem;
+}
+
+.note-rail svg {
+  display: block;
+}
+
+.note-line {
+  stroke: var(--color-accent);
+  stroke-opacity: 0.4;
+  stroke-width: 1;
+}
+
+.note-rail .note {
+  stroke: var(--color-accent);
+  stroke-opacity: 0.62;
+  stroke-width: 1.1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: var(--color-accent);
+  fill-opacity: 0.22;
+}
+
+.note-rail .note.is-in {
+  animation: note-in 200ms var(--ease-out) both;
+}
+
+@keyframes note-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 .entry-thyca {
-  display: grid;
-  grid-template-columns: 4.5rem minmax(0, 1fr);
-  gap: var(--space-lg);
-  padding-block: var(--space-sm);
-  border-inline-start: 2px solid var(--color-accent);
-  background: linear-gradient(to right, var(--color-accent-soft), transparent 75%);
+  padding-block: 0;
+  border: 0;
+  background: none;
 }
 
 .entry-thyca > time {
-  padding-inline-start: var(--space-sm);
   color: var(--color-accent);
 }
 
 .entry-thyca .entry-copy {
+  padding: var(--space-sm) var(--space-md);
+  border-inline-start: 2px solid var(--color-accent);
+  background: linear-gradient(to right, var(--color-accent-soft), transparent 72%);
   color: var(--color-ink-2);
 }
 

@@ -54,7 +54,7 @@ Config mặc định dùng một provider OpenAI-compatible:
   },
   "mcpServers": {},
   "timeline": { "timezone": "Asia/Ho_Chi_Minh" },
-  "limits": { "loopMax": 10, "hotTailKB": 4, "contextTokens": 32000 }
+  "limits": { "loopMax": 200, "hotTailKB": 4, "contextTokens": 32000 }
 }
 ```
 

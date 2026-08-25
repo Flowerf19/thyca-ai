@@ -25,7 +25,7 @@ DEFAULT_PROVIDER_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_PROVIDER_API_KEY_ENV = "OPENAI_API_KEY"
 DEFAULT_PROVIDER_MODEL = "gpt-4o-mini"
 DEFAULT_TIMELINE_TIMEZONE = "Asia/Ho_Chi_Minh"
-DEFAULT_LIMITS_LOOP_MAX = 100
+DEFAULT_LIMITS_LOOP_MAX = 200
 DEFAULT_LIMITS_HOT_TAIL_KB = 4
 DEFAULT_LIMITS_CONTEXT_TOKENS = 32000
 
@@ -113,7 +113,7 @@ class LimitsCfg:
 
     def __post_init__(self) -> None:
         for value, name, lower, upper in (
-            (self.loopMax, "limits.loopMax", 1, 20),
+            (self.loopMax, "limits.loopMax", 1, 200),
             (self.hotTailKB, "limits.hotTailKB", 1, 64),
             (self.contextTokens, "limits.contextTokens", 1000, 200_000),
         ):

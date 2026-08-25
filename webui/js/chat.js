@@ -271,8 +271,7 @@ export function threadHtml(messages) {
 
 function statusHtml(line) {
   return `<article class="entry entry-thyca entry-status" aria-label="Thyca đang nghĩ" aria-live="off">
-      <time>thyca</time>
-      <div class="entry-copy"><span class="status-ticker"><span class="status-line">${escapeHtml(line)}</span></span></div>
+      <div class="entry-thyca-head"><time>thyca</time><span class="status-ticker"><span class="status-line">${escapeHtml(line)}</span></span></div>
     </article>`;
 }
 
@@ -290,7 +289,7 @@ function startStatusCycle(node) {
       return;
     }
     slideStatus(ticker, next);
-  }, 2000);
+  }, 3000);
 }
 
 function slideStatus(ticker, next) {

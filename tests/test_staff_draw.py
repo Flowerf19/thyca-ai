@@ -107,7 +107,7 @@ def test_empty_staff_has_five_lines_and_clef(node: str) -> None:
           return { lines: lines.length, clefs: clefs.length, tall: svg.className.includes("is-tall") };
         })()""",
     )
-    assert result == {"lines": 5, "clefs": 1, "tall": False}
+    assert result == {"lines": 10, "clefs": 2, "tall": True}
 
 
 def test_long_staff_wraps_second(node: str) -> None:

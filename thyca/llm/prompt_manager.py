@@ -24,7 +24,9 @@ _RULES = (
     "Name must match [A-Za-z0-9_-]+. Put API keys in env, not in the script. "
     "Tell the user to restart thyca/--serve. Tools appear as server__tool only after restart. "
     "If that server is already in config this session, call server__tool — do not ask the user to run it by hand.\n"
-    "memory_search is lexical-first. If search returns nothing, say so. Do not invent memories."
+    "memory_search is lexical-first. If search returns nothing, say so. Do not invent memories.\n"
+    "bash runs immediately as the user, no sandbox — it can bypass PathGuard. "
+    "Do not use bash to write L2 daily files or sessions under ~/.thyca."
 )
 
 

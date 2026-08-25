@@ -24,6 +24,7 @@ def test_build_order_identity_then_custom_soul() -> None:
     assert "~/.thyca" in text
     assert "mcpServers" in text
     assert "do not say you cannot add tools" in text
+    assert "no sandbox" in text
     assert "restart" in text
     assert "Thyca" in identity
 

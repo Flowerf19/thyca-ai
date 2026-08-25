@@ -61,16 +61,6 @@
   opacity: 0.5;
 }
 
-.composer-label {
-  display: block;
-  margin-block-end: var(--space-2xs);
-  color: var(--color-muted);
-  font-size: var(--text-xs);
-  font-weight: 500;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
 .writing-line {
   display: flex;
   align-items: flex-end;

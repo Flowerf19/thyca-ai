@@ -48,32 +48,34 @@ export const modes = {
         date: "Hôm qua · 21:12",
         tag: "ses_2c91",
         tone: "chat",
-        body: `<div class="entry-list"><article class="entry entry-user" aria-label="Bạn"><div class="entry-copy"><p>API key lấy từ đâu? Đừng bảo commit vào repo.</p></div></article><article class="entry entry-thyca" aria-label="Thyca"><div class="entry-copy"><p><code>provider.apiKey</code> trong <code>~/.thyca/config.json</code> thắng nếu có. Trống thì đọc <code>apiKeyEnv</code>.</p><p class="soft-line">Không hiện key trong <code>repr</code>. Không commit <code>~/.thyca</code>.</p></div></article></div>`
+        body: `<div class="entry-list"><article class="entry entry-user"><div class="entry-copy"><p>API key lấy từ đâu? Đừng bảo commit vào repo.</p></div></article><article class="entry entry-thyca"><time>thyca</time><div class="entry-copy"><p><code>provider.apiKey</code> trong <code>~/.thyca/config.json</code> thắng nếu có. Trống thì đọc <code>apiKeyEnv</code>.</p><p class="soft-line">Không hiện key trong <code>repr</code>. Không commit <code>~/.thyca</code>.</p></div></article></div>`
       },
       {
         title: "Loop max",
         date: "19 tháng 8",
         tag: "ses_9ab0",
         tone: "chat",
-        body: `<div class="entry-list"><article class="entry entry-user" aria-label="Bạn"><div class="entry-copy"><p>Sau 10 vòng tool thì sao?</p></div></article><article class="entry entry-thyca" aria-label="Thyca"><div class="entry-copy"><p><code>Observe.loop_limit</code> append “loop limit reached” rồi dừng. Không planner, không subagent.</p></div></article></div>`
+        body: `<div class="entry-list"><article class="entry entry-user"><div class="entry-copy"><p>Sau 10 vòng tool thì sao?</p></div></article><article class="entry entry-thyca"><time>thyca</time><div class="entry-copy"><p><code>Observe.loop_limit</code> append “loop limit reached” rồi dừng. Không planner, không subagent.</p></div></article></div>`
       }
     ],
     body: `
       <div class="entry-list">
-        <article class="entry entry-user" aria-label="Bạn">
+        <article class="entry entry-user">
           <div class="entry-copy"><p>Linux là target chính. Đừng viết API chỉ chạy trên Windows.</p></div>
         </article>
-        <article class="entry entry-thyca" aria-label="Thyca">
+        <article class="entry entry-thyca">
+          <time>thyca</time>
           <div class="entry-copy">
             <p>Đã ghi vào daily hôm nay. Lượt sau <code>ActiveMemory.refresh</code> sẽ thấy.</p>
             <p class="soft-line">Writer duy nhất cho memory files là <code>memory_remember</code>. Không đụng session JSONL.</p>
           </div>
         </article>
         <div class="tool-strip"><span class="tool-pill">memory_remember</span><span>daily</span></div>
-        <article class="entry entry-user" aria-label="Bạn">
+        <article class="entry entry-user">
           <div class="entry-copy"><p>Tìm lại: L2 hybrid lấy gì trước?</p></div>
         </article>
-        <article class="entry entry-thyca" aria-label="Thyca">
+        <article class="entry entry-thyca">
+          <time>thyca</time>
           <div class="entry-copy">
             <p>Lexical trước: FTS5 + trigram. Semantic/RRF chỉ khi agent gọi lại với <code>semantic=true</code>.</p>
             <p class="soft-line">Embedding runtime đã gỡ. Đừng reintroduce như đã implement.</p>

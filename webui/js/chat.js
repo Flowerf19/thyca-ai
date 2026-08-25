@@ -269,6 +269,7 @@ export function threadHtml(messages) {
 
 function statusHtml(line) {
   return `<article class="entry entry-thyca entry-status" aria-label="Thyca đang nghĩ" aria-live="off">
+      <time>thyca</time>
       <div class="entry-copy">
         <div class="status-row">
           <span class="status-dots" aria-hidden="true"><i></i><i></i><i></i></span>
@@ -328,8 +329,8 @@ function reduceMotion() {
 
 function entryHtml(role, content) {
   const cls = role === "user" ? "entry-user" : "entry-thyca";
-  const label = role === "user" ? "Bạn" : "Thyca";
-  return `<article class="entry ${cls}" aria-label="${label}"><div class="entry-copy">${formatMarkdown(content)}</div></article>`;
+  const stamp = role === "assistant" ? "<time>thyca</time>" : "";
+  return `<article class="entry ${cls}">${stamp}<div class="entry-copy">${formatMarkdown(content)}</div></article>`;
 }
 
 function shortId(id) {

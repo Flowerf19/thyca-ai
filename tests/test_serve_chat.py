@@ -352,7 +352,6 @@ def test_chat_js_shipped() -> None:
     assert (WEBUI / "js" / "chat.js").is_file()
     chat = (WEBUI / "js" / "chat.js").read_text(encoding="utf-8")
     assert "flushTools" in chat
-    assert "<time>" not in chat
     start = chat.index("export async function createChatSession")
     end = chat.index("export function", start + 1)
     body = chat[start:end]

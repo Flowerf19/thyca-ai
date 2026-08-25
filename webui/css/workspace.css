@@ -254,8 +254,21 @@
   max-width: none;
 }
 
+.entry {
+  min-width: 0;
+}
+
 .entry + .entry {
   margin-block-start: var(--space-xl);
+}
+
+.entry > time {
+  padding-block-start: 0.35rem;
+  color: var(--color-neutral);
+  font-size: var(--text-xs);
+  letter-spacing: 0.08em;
+  line-height: 1.4;
+  text-transform: uppercase;
 }
 
 .entry-copy {
@@ -315,7 +328,7 @@
   padding: 0.15rem 0 0.15rem var(--space-md);
   overflow-x: auto;
   border: 0;
-  border-inline-start: 2px solid var(--color-rule);
+  border-inline-start: 2px solid var(--color-ink-2);
   background: none;
   font-size: 0.84em;
   line-height: 1.45;
@@ -382,8 +395,7 @@
   align-items: center;
   gap: var(--space-xs);
   max-width: none;
-  margin: var(--space-sm) 0;
-  padding-inline-start: var(--space-md);
+  margin: var(--space-sm) 0 var(--space-sm) 4.5rem;
   color: var(--color-muted);
   font-size: var(--text-xs);
   letter-spacing: 0.04em;
@@ -427,13 +439,20 @@
 }
 
 .entry-thyca {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr);
+  gap: var(--space-lg);
   padding-block: var(--space-sm);
   border-inline-start: 2px solid var(--color-accent);
   background: linear-gradient(to right, var(--color-accent-soft), transparent 75%);
 }
 
+.entry-thyca > time {
+  padding-inline-start: var(--space-sm);
+  color: var(--color-accent);
+}
+
 .entry-thyca .entry-copy {
-  padding-inline-start: var(--space-md);
   color: var(--color-ink-2);
 }
 

@@ -139,21 +139,12 @@
     padding-block-start: var(--space-xl);
   }
 
-  .entry {
-    grid-template-columns: 3.25rem minmax(0, 1fr);
-    gap: var(--space-sm);
-  }
-
   .entry-copy {
     font-size: var(--text-md);
   }
 
   .entry + .entry {
     margin-block-start: var(--space-lg);
-  }
-
-  .tool-strip {
-    margin-inline-start: 3.25rem;
   }
 
   .book-meta h2,

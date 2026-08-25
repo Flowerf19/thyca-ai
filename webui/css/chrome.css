@@ -152,10 +152,6 @@
     margin-block-start: var(--space-lg);
   }
 
-  .tool-strip {
-    margin-inline-start: 3.25rem;
-  }
-
   .book-meta h2,
   .album-note h2 {
     font-size: var(--text-xl);

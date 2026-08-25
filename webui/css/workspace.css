@@ -391,7 +391,7 @@
 
 .tool-strip {
   max-width: none;
-  margin: var(--space-sm) 0 var(--space-sm) 4.5rem;
+  margin: var(--space-sm) 0;
   overflow: hidden;
   color: var(--color-ink-2);
   font-family: var(--font-reading);

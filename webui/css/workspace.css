@@ -393,13 +393,17 @@
   max-width: none;
   margin: var(--space-sm) 0 var(--space-sm) 4.5rem;
   overflow: hidden;
-  color: var(--color-muted);
+  color: var(--color-ink-2);
   font-family: var(--font-reading);
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
   font-style: italic;
   letter-spacing: 0.02em;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.tool-kicker {
+  color: var(--color-muted);
 }
 
 .phase-list {

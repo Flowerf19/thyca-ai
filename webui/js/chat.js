@@ -245,17 +245,20 @@ export function threadHtml(messages) {
   const parts = [];
   const pending = [];
   const flushTools = () => {
-    if (!pending.length) return;
+    const names = pending.map((name) => String(name || "").trim()).filter(Boolean);
+    pending.length = 0;
+    if (!names.length) return;
     const counts = new Map();
-    for (const name of pending) {
+    for (const name of names) {
       counts.set(name, (counts.get(name) || 0) + 1);
     }
     const items = [];
     for (const [name, count] of counts) {
       items.push(count > 1 ? `${name} ×${count}` : name);
     }
-    parts.push(`<div class="tool-strip">tools use: ${escapeHtml(items.join(", "))}</div>`);
-    pending.length = 0;
+    parts.push(
+      `<div class="tool-strip"><span class="tool-kicker">Tools used:</span> ${escapeHtml(items.join(", "))}</div>`,
+    );
   };
   for (const message of messages) {
     if (!message || message.role === "system" || message.role === "tool") continue;

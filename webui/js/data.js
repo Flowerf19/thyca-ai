@@ -70,7 +70,7 @@ export const modes = {
             <p class="soft-line">Writer duy nhất cho memory files là <code>memory_remember</code>. Không đụng session JSONL.</p>
           </div>
         </article>
-        <div class="tool-strip">tools use: memory_remember</div>
+        <div class="tool-strip"><span class="tool-kicker">Tools used:</span> memory_remember</div>
         <article class="entry entry-user">
           <div class="entry-copy"><p>Tìm lại: L2 hybrid lấy gì trước?</p></div>
         </article>
@@ -81,7 +81,7 @@ export const modes = {
             <p class="soft-line">Embedding runtime đã gỡ. Đừng reintroduce như đã implement.</p>
           </div>
         </article>
-        <div class="tool-strip">tools use: memory_search</div>
+        <div class="tool-strip"><span class="tool-kicker">Tools used:</span> memory_search</div>
       </div>`
   },
   memories: {

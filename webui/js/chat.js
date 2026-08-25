@@ -290,7 +290,7 @@ function startStatusCycle(node) {
       return;
     }
     slideStatus(ticker, next);
-  }, 1000);
+  }, 2000);
 }
 
 function slideStatus(ticker, next) {

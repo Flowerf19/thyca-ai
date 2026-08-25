@@ -14,10 +14,19 @@ export function mountStaff(article, events, opts = {}) {
   paint(article);
 }
 
+export function clearStaffs(root) {
+  if (!root) return;
+  for (const host of root.querySelectorAll(".thyca-staff-host")) host.remove();
+}
+
 export function syncStaffs(root) {
   if (!root) return;
   for (const article of root.querySelectorAll(".entry-thyca")) {
-    if (!EVENTS.has(article)) EVENTS.set(article, { events: [], freshFrom: -1 });
+    const rec = EVENTS.get(article);
+    if (!article.classList.contains("entry-status") && !(rec && rec.events.length)) {
+      article.querySelector(":scope > .thyca-staff-host")?.remove();
+      continue;
+    }
     paint(article);
   }
 }

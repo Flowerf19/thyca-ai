@@ -3,7 +3,7 @@ import { modes } from "./data.js";
 import { formatMarkdown } from "./markdown.js";
 import { escapeHtml } from "./memories.js";
 import { CLOSE_LINE, createThinkCycle, keyForMode, thinkingEvent } from "./staff-map.js";
-import { mountStaff, syncStaffs } from "./staff.js";
+import { clearStaffs, mountStaff, syncStaffs } from "./staff.js";
 import { state } from "./state.js";
 
 let statusTimer = 0;
@@ -48,12 +48,12 @@ export function beginOutgoingTurn(text) {
   }
   list.insertAdjacentHTML("beforeend", entryHtml("user", text));
   list.lastElementChild.classList.add("is-enter");
+  clearStaffs(el.pageBody);
   const first = thinkCycle.nextLine();
   list.insertAdjacentHTML("beforeend", statusHtml(first));
   const status = list.lastElementChild;
   mountStaff(status, []);
   startStatusCycle(status);
-  syncStaffs(el.pageBody);
   scrollThread();
 }
 
@@ -90,7 +90,6 @@ export function settleIncoming() {
     node.classList.add("is-enter");
     node.style.animationDelay = `${index * 80}ms`;
   });
-  syncStaffs(fresh);
   const born = [...fresh.children].slice(kept).find((node) => node.classList.contains("entry-thyca"));
   if (born) mountStaff(born, prefix);
   const heading = el.pageHeader.querySelector("h1");

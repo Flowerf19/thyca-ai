@@ -448,7 +448,9 @@
 .entry-thyca > time {
   padding-inline-start: 0;
   color: var(--color-accent);
-  font-size: var(--text-sm);
+  font-size: var(--text-md);
+  font-weight: 600;
+  text-transform: uppercase;
 }
 
 .entry-thyca-head {
@@ -462,7 +464,9 @@
   flex: 0 0 auto;
   padding-block-start: 0;
   color: var(--color-accent);
-  font-size: var(--text-sm);
+  font-size: var(--text-md);
+  font-weight: 600;
+  text-transform: uppercase;
 }
 
 .entry-status .status-line {
@@ -474,16 +478,24 @@
 }
 
 .entry-thyca .thyca-staff-host {
-  height: 124px;
+  height: 60px;
   margin-block-start: 0;
+}
+
+.entry-thyca .thyca-staff-host:has(.thyca-staff.is-tall) {
+  height: 124px;
 }
 
 .thyca-staff {
   display: block;
   width: 100%;
-  height: 124px;
+  height: 60px;
   overflow: visible;
   pointer-events: none;
+}
+
+.thyca-staff.is-tall {
+  height: 124px;
 }
 
 .staff-line {

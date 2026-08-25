@@ -107,7 +107,7 @@ def test_empty_staff_has_five_lines_and_clef(node: str) -> None:
           return { lines: lines.length, clefs: clefs.length, tall: svg.className.includes("is-tall") };
         })()""",
     )
-    assert result == {"lines": 10, "clefs": 2, "tall": True}
+    assert result == {"lines": 5, "clefs": 1, "tall": False}
 
 
 def test_long_staff_wraps_second(node: str) -> None:
@@ -147,10 +147,15 @@ def test_sync_staffs_only_on_thyca(node: str) -> None:
         const copyT = new El("div");
         copyT.className = "entry-copy";
         thyca.append(copyT);
-        root.append(user, thyca);
+        const status = new El("article");
+        status.className = "entry entry-thyca entry-status";
+        const copyS = new El("div");
+        copyS.className = "entry-copy";
+        status.append(copyS);
+        root.append(user, thyca, status);
         syncStaffs(root);
         const hosts = (el) => el.querySelectorAll(".thyca-staff-host").length;
-        console.log(JSON.stringify({ user: hosts(user), thyca: hosts(thyca) }));
+        console.log(JSON.stringify({ user: hosts(user), thyca: hosts(thyca), status: hosts(status) }));
         """
     )
     result = subprocess.run(
@@ -160,4 +165,4 @@ def test_sync_staffs_only_on_thyca(node: str) -> None:
         text=True,
         cwd=ROOT,
     )
-    assert json.loads(result.stdout) == {"user": 0, "thyca": 1}
+    assert json.loads(result.stdout) == {"user": 0, "thyca": 0, "status": 1}

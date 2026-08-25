@@ -18,10 +18,12 @@ const CLEF_D =
 
 export function renderStaff(events, { freshFrom = -1, reduceMotion = false, widthPx = 560 } = {}) {
   const width = Math.max(240, widthPx);
-  const staves = MAX_STAVES;
+  let beats = 0;
+  for (const event of events || []) beats += event.duration === "w" ? 4 : 1;
+  const staves = beats > MAX_PER * 4 ? MAX_STAVES : 1;
   const measures = MAX_PER;
   const beatW = (width - PAD_LEFT - PAD_RIGHT) / (measures * 4);
-  const height = H * 2 + STAFF_GAP;
+  const height = staves === 1 ? H : H * 2 + STAFF_GAP;
   const placed = placeEvents(events || [], beatW);
   const svg = node("svg", {
     class: staves > 1 ? "thyca-staff is-tall" : "thyca-staff",

@@ -25,7 +25,7 @@ def test_ensure_creates_missing_and_keeps_existing(tmp_path: Path) -> None:
     assert (tmp_path / "USER.md").is_file()
     assert (tmp_path / "IDENTITY.md").is_file()
     assert "Thyca" in (tmp_path / "IDENTITY.md").read_text(encoding="utf-8")
-    assert (tmp_path / "MEMORY.md").is_file()
+    assert not (tmp_path / "MEMORY.md").exists()
     assert (tmp_path / "memory" / "2026-08-17.md").is_file()
     assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
     assert stat.S_IMODE((tmp_path / "memory").stat().st_mode) == 0o700
@@ -40,32 +40,30 @@ def test_refresh_sees_canonical_and_today_not_yesterday(tmp_path: Path) -> None:
     assert snap.yesterday == "# yesterday original\n"
     (tmp_path / "SOUL.md").write_text("# soul v2\n", encoding="utf-8")
     (tmp_path / "USER.md").write_text("# user v2\n", encoding="utf-8")
-    (tmp_path / "MEMORY.md").write_text("# mem v2\n", encoding="utf-8")
     (tmp_path / "memory" / "2026-08-17.md").write_text("# today v2\n", encoding="utf-8")
     (tmp_path / "memory" / "2026-08-16.md").write_text("# yesterday changed\n", encoding="utf-8")
     snap2 = memory.refresh(state, at("2026-08-17"))
     assert snap2.soul == "# soul v2\n"
     assert snap2.user == "# user v2\n"
-    assert snap2.memory == "# mem v2\n"
     assert snap2.today == "# today v2\n"
     assert snap2.yesterday == "# yesterday original\n"
 
 
-def test_soul_user_not_tailed_memory_is(tmp_path: Path) -> None:
+def test_soul_user_not_tailed_today_is(tmp_path: Path) -> None:
     memory = ActiveMemory(tmp_path, tail_kb=1, timezone_name="Asia/Ho_Chi_Minh")
     memory.ensure_files(at("2026-08-17"))
     big = "x" * 2000
     (tmp_path / "SOUL.md").write_text(big, encoding="utf-8")
     (tmp_path / "USER.md").write_text(big, encoding="utf-8")
-    (tmp_path / "MEMORY.md").write_text(
+    (tmp_path / "memory" / "2026-08-17.md").write_text(
         "## 10:00 — old\nshort\n## 11:00 — new\n" + big + "\n",
         encoding="utf-8",
     )
     snap = memory.refresh(memory.open_session(at("2026-08-17")), at("2026-08-17"))
     assert snap.soul == big
     assert snap.user == big
-    assert snap.memory.startswith("## 11:00 — new")
-    assert "old" not in snap.memory
+    assert snap.today.startswith("## 11:00 — new")
+    assert "old" not in snap.today
 
 
 def test_day_rollover_swaps_and_fires_hook(tmp_path: Path) -> None:
@@ -107,13 +105,13 @@ def test_tail_does_not_split_utf8() -> None:
 def test_refresh_strips_heading_comment(tmp_path: Path) -> None:
     memory = ActiveMemory(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     memory.ensure_files(at("2026-08-17"))
-    (tmp_path / "MEMORY.md").write_text(
+    (tmp_path / "memory" / "2026-08-17.md").write_text(
         '## 10:00 — cafe <!-- thyca {"id":"aaaaaaaa","imp":3,"exp":"2026-09-01T00:00:00Z"} -->\n- den\n',
         encoding="utf-8",
     )
     snap = memory.refresh(memory.open_session(at("2026-08-17")), at("2026-08-17"))
-    assert "thyca" not in snap.memory
-    assert snap.memory.startswith("## 10:00 — cafe")
+    assert "thyca" not in snap.today
+    assert snap.today.startswith("## 10:00 — cafe")
 
 
 def test_missing_yesterday_is_empty(tmp_path: Path) -> None:

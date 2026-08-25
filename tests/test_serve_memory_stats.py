@@ -51,9 +51,8 @@ def test_rejects_non_loopback(tmp_path: Path) -> None:
 def test_stats_json_and_static(tmp_path: Path) -> None:
     httpd, thread, facade = _start(tmp_path)
     try:
-        now = datetime(2026, 8, 17, 10, 0, tzinfo=TZ)
-        sid = facade.remember("cafe", "likes ca phe den enough", target="memory", now=now)
-        facade.get(session_id=sid, now=now)
+        sid = facade.remember("cafe", "likes ca phe den enough")
+        facade.get(session_id=sid)
         with urlopen(_url(httpd, "/api/memory/stats"), timeout=2) as response:
             assert response.headers.get_content_type() == "application/json"
             assert "no-store" in (response.headers.get("Cache-Control") or "")
@@ -79,7 +78,7 @@ def test_forget_endpoint(tmp_path: Path) -> None:
     httpd, thread, facade = _start(tmp_path)
     try:
         now = datetime(2026, 8, 10, 10, 0, tzinfo=TZ)
-        sid = facade.remember("cafe", "likes ca phe den enough", target="memory", now=now)
+        sid = facade.remember("cafe", "likes ca phe den enough", now=now)
         assert facade.stats(now=now).total == 1
         payload = json.dumps({"session_id": sid}).encode("utf-8")
         request = Request(

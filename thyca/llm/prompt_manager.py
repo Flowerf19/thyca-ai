@@ -11,12 +11,12 @@ _STUB_IDENTITY = frozenset({"", "# Identity"})
 _STUB_USER = frozenset({"", "# User"})
 
 _RULES = (
-    "Use memory_remember only for daily or MEMORY.md (L2 bullets).\n"
+    "Use memory_remember only for daily L2 bullets (memory/YYYY-MM-DD.md).\n"
     "To update your persona or profile, use write/edit on these exact paths:\n"
     "  - ~/.thyca/SOUL.md\n"
     "  - ~/.thyca/IDENTITY.md\n"
     "  - ~/.thyca/USER.md\n"
-    "Do not write or edit L2 daily files, MEMORY.md, or sessions under ~/.thyca.\n"
+    "Do not write or edit L2 daily files or sessions under ~/.thyca.\n"
     "You may write/edit ~/.thyca/config.json (provider keys, mcpServers).\n"
     "Need a capability you do not have (HTTP, search, weather, other APIs): "
     "do not say you cannot add tools. Write a small FastMCP stdio server in the workspace "
@@ -43,12 +43,7 @@ class PromptManager:
         ]
         if user not in _STUB_USER:
             parts.append(_section("user", hot.user))
-        parts.extend(
-            [
-                _section("memory", hot.memory),
-                _section("today", hot.today),
-            ]
-        )
+        parts.append(_section("today", hot.today))
         if hot.yesterday:
             parts.append(_section("yesterday", hot.yesterday))
         parts.append(_section("rules", self.rules_section()))

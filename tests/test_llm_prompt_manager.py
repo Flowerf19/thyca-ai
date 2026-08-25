@@ -7,7 +7,7 @@ from thyca.memory.active import ActiveSnapshot
 
 
 def _hot(**overrides: str) -> ActiveSnapshot:
-    base = dict(soul="soul-text", user="user-text", memory="mem-text", today="today-text", yesterday="")
+    base = dict(soul="soul-text", user="user-text", today="today-text", yesterday="")
     base.update(overrides)
     return ActiveSnapshot(**base)
 
@@ -19,7 +19,8 @@ def test_build_order_identity_then_custom_soul() -> None:
     assert text.startswith(f"<identity>\n{identity}\n</identity>\n<role>\nsoul-text\n</role>\n")
     assert "<user>\nuser-text\n</user>" in text
     assert text.index("<identity>") < text.index("<role>") < text.index("<user>")
-    assert text.index("<memory>") < text.index("<today>") < text.index("<rules>")
+    assert "<memory>" not in text
+    assert text.index("<today>") < text.index("<rules>")
     assert "~/.thyca" in text
     assert "mcpServers" in text
     assert "do not say you cannot add tools" in text

@@ -125,7 +125,7 @@ class MemoryWriter:
     def purge_expired(self, now: datetime) -> None:
         memory_dir = self.thyca_dir / "memory"
         dailies = sorted(memory_dir.glob("????-??-??.md")) if memory_dir.is_dir() else []
-        for path in [self.thyca_dir / "MEMORY.md", *dailies]:
+        for path in dailies:
             if not path.is_file():
                 continue
             with self.lock_for(path):

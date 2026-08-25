@@ -19,13 +19,13 @@ def at(day: str) -> datetime:
 def _seed(root: Path) -> None:
     (root / "SOUL.md").write_text("# soul\nbe concise\n", encoding="utf-8")
     (root / "USER.md").write_text("# user\nlives in Hanoi\n", encoding="utf-8")
-    (root / "MEMORY.md").write_text("# memory\nlikes cà phê\n", encoding="utf-8")
     (root / "memory").mkdir()
     (root / "memory" / "2026-08-13.md").write_text(
         "# 2026-08-13\n"
         "## 08:00 — ăn sáng bún bò <!-- thyca:a1b2c3d4 -->\n"
         "- Ăn bún bò Huế ở quán X\n"
         "- nói chuyện với Luna\n"
+        "- likes cà phê\n"
         "## 19:30 — bàn đồ nướng <!-- thyca:e5f6a7b8 -->\n"
         "- Ăn thịt quay với bạn ở Q1\n",
         encoding="utf-8",
@@ -85,7 +85,7 @@ def test_trigram_typo_and_get(tmp_path: Path) -> None:
     assert hits.hits
     session = archived.get(session_id=hits.hits[0].session_id)
     assert "thịt quay" in session or "bún bò" in session or "Luna" in session
-    raw = archived.get(path=str(tmp_path / "MEMORY.md"))
+    raw = archived.get(path=str(tmp_path / "memory" / "2026-08-13.md"))
     assert "cà phê" in raw
     try:
         archived.get(path=str(tmp_path / "sessions" / "x.jsonl"))
@@ -119,4 +119,4 @@ def test_delete_source_cascades(tmp_path: Path) -> None:
     archived.reindex(at("2026-08-17"))
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh", archive=archived)
     assert facade.search("thịt quay").hits == []
-    assert facade.search("cà phê").hits
+    assert facade.search("Hanoi").hits

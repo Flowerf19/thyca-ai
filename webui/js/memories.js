@@ -10,7 +10,7 @@ let lastDayLeaves = [];
 
 export function pagesFromStats(stats) {
   const leaves = stats.leaves || [];
-  return [overviewPage(stats, leaves), ...memoryPages(leaves), ...canonicalPages(stats.files || [])];
+  return [overviewPage(stats, leaves), ...canonicalPages(stats.files || [])];
 }
 
 export function bindOverview(root, hooks = {}) {
@@ -202,31 +202,6 @@ function expireBlock(rows) {
     </div>`;
 }
 
-function memoryPages(leaves) {
-  const mem = leaves.filter((leaf) => String(leaf.session_id || "").startsWith("memory#"));
-  if (!mem.length) return [];
-  const used = mem.filter((leaf) => Number(leaf.get_count) > 0).length;
-  const searched = mem.filter((leaf) => Number(leaf.search_count) > 0).length;
-  const entries = sortLeaves(mem).map(leafEntry).join("");
-  return [
-    {
-      title: "MEMORY.md",
-      date: escapeHtml(`${mem.length} leaf · ${used} đã get · ${searched} search`),
-      tag: "memory",
-      tone: "memories",
-      kicker: "MEMORY.md",
-      body: `<div class="book-reading">
-        <div class="book-meta">
-          <span class="book-author">markdown</span>
-          <h2>MEMORY.md</h2>
-          <p>${mem.length} mem trong file này.</p>
-        </div>
-        <div class="mem-day-list">${entries}</div>
-      </div>`,
-    },
-  ];
-}
-
 function canonicalPages(files) {
   return files
     .filter((file) => file && file.name)
@@ -299,7 +274,6 @@ function sortLeaves(leaves) {
 }
 
 function fileKey(leaf) {
-  if (String(leaf.session_id || "").startsWith("memory#")) return "MEMORY.md";
   if (leaf.timeline_day) return `${leaf.timeline_day}.md`;
   return "unknown.md";
 }
@@ -323,7 +297,6 @@ function splitHeading(leaf) {
 }
 
 function leafSource(leaf) {
-  if (String(leaf.session_id || "").startsWith("memory#")) return "MEMORY.md";
   if (leaf.is_today) return `daily · hôm nay`;
   if (leaf.timeline_day) return `daily · ${leaf.timeline_day}`;
   return String(leaf.source_kind || "leaf");

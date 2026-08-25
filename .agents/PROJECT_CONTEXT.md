@@ -10,7 +10,7 @@ Trạng thái repo (2026-08-20): package flat `thyca/` có skeleton CLI, Config,
 - Năng lực đến từ tool, không từ framework.
 - MCP là nguồn tool hạng nhất (khác pi: pi cố ý không có MCP).
 - Stack: Python 3.14 + uv, loop tự viết.
-- Memory: markdown là nguồn sự thật; L2 hybrid gồm FTS5 + trigram + vector/RRF. Lexical search chạy trước; agent tự quyết khi nào gọi semantic search. Embedding runtime đã gỡ (580ae03) — code hiện chỉ lexical; kiến trúc hybrid giữ trong `l2-memory-retrieval.md` như plan frozen, không reintroduce embedding như đã implement. Daily đóng ngày mới index; `SOUL.md`, `USER.md`, `MEMORY.md` luôn indexable.
+- Memory: markdown là nguồn sự thật; L2 hybrid gồm FTS5 + trigram + vector/RRF. Lexical search chạy trước; agent tự quyết khi nào gọi semantic search. Embedding runtime đã gỡ (580ae03) — code hiện chỉ lexical; kiến trúc hybrid giữ trong `l2-memory-retrieval.md` như plan frozen, không reintroduce embedding như đã implement. `memory_remember` chỉ ghi `memory/YYYY-MM-DD.md`. Daily đóng ngày mới index; `SOUL.md` và `USER.md` luôn indexable. `MEMORY.md` đã bỏ (2026-08-25).
 - Tool chạy thẳng, không có cửa xác nhận ở v1. Seam `run(call)` để cắm gate (ask/auto) sau.
 - `write`/`edit` không được ghi dưới `~/.thyca`; `memory_remember` là writer duy nhất cho memory files. Mutating calls phải serialize theo resource dù read-only calls có thể chạy song song.
 

@@ -67,11 +67,11 @@ export const modes = {
         <article class="entry entry-thyca">
           <time>thyca</time>
           <div class="entry-copy">
-            <p>Đã ghi vào <code>MEMORY.md</code>. Lượt sau <code>ActiveMemory.refresh</code> sẽ thấy.</p>
+            <p>Đã ghi vào daily hôm nay. Lượt sau <code>ActiveMemory.refresh</code> sẽ thấy.</p>
             <p class="soft-line">Writer duy nhất cho memory files là <code>memory_remember</code>. Không đụng session JSONL.</p>
           </div>
         </article>
-        <div class="tool-strip"><span class="tool-pill">memory_remember</span><span>MEMORY.md</span></div>
+        <div class="tool-strip"><span class="tool-pill">memory_remember</span><span>daily</span></div>
         <article class="entry entry-user">
           <time>you</time>
           <div class="entry-copy"><p>Tìm lại: L2 hybrid lấy gì trước?</p></div>
@@ -102,13 +102,6 @@ export const modes = {
         body: `<div class="book-reading"><div class="stat-row"><div><strong>0</strong><span>tổng</span></div></div><div class="suggest-inline"><h3>Theo ngày</h3><p class="suggest-empty">Chưa có daily.</p></div></div>`
       },
       {
-        title: "MEMORY.md",
-        date: "Hot tail · 4KB",
-        tag: "canonical",
-        tone: "memories",
-        active: true
-      },
-      {
         title: "SOUL.md",
         date: "Inject cả file",
         tag: "canonical",
@@ -126,15 +119,13 @@ export const modes = {
     body: `
       <div class="book-reading">
         <div class="book-meta">
-          <span class="book-author">Canonical · luôn indexable</span>
-          <h2>MEMORY.md</h2>
-          <p>Inject tail 4KB, cắt ở newline hoặc ranh <code>## HH:mm</code>. Muốn full file: <code>memory_get</code>.</p>
-          <div class="progress-label"><span>Hot tail</span><strong>4KB</strong></div>
-          <div class="reading-progress"><span></span></div>
+          <span class="book-author">Canonical · prompt</span>
+          <h2>SOUL.md</h2>
+          <p>Hồ sơ ổn định của trợ lý. Nhét cả file mỗi lượt.</p>
         </div>
         <blockquote class="quote-note">
           <p>Linux là target chính. Đừng viết API chỉ chạy trên Windows.</p>
-          <cite>MEMORY.md · ghi bởi memory_remember</cite>
+          <cite>SOUL.md</cite>
         </blockquote>
       </div>`
   },

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-
 import pytest
 
 from thyca.protocol import ToolCall
@@ -19,18 +17,16 @@ async def test_memory_remember_and_search_roundtrip(tmp_path) -> None:
         ToolCall(
             id="r1",
             name="memory_remember",
-            arguments={"topic": "cafe", "summary": "cafedenunique", "target": "memory"},
+            arguments={"topic": "cafe", "summary": "cafedenunique"},
         )
     )
     assert not remembered.is_error
-    assert remembered.content.startswith("memory#")
-    found = await registry.dispatch(
-        ToolCall(id="s1", name="memory_search", arguments={"query": "cafedenunique"})
+    assert remembered.content[10] == "#"
+    got = await registry.dispatch(
+        ToolCall(id="g1", name="memory_get", arguments={"session_id": remembered.content})
     )
-    assert not found.is_error
-    payload = json.loads(found.content)
-    assert payload["hits"]
-    assert any("cafedenunique" in hit["snippet"] for hit in payload["hits"])
+    assert not got.is_error
+    assert "cafedenunique" in got.content
 
 
 @pytest.mark.asyncio

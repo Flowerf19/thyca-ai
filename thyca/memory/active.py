@@ -29,7 +29,6 @@ def _default_files() -> dict[str, str]:
         "SOUL.md": _packaged("soul", "# Soul\n"),
         "IDENTITY.md": _packaged("identity", "# Identity\n"),
         "USER.md": "# User\n",
-        "MEMORY.md": "# Memory\n",
     }
 
 
@@ -49,7 +48,6 @@ class ActiveState:
 class ActiveSnapshot:
     soul: str
     user: str
-    memory: str
     today: str
     yesterday: str
     identity: str = ""
@@ -118,7 +116,6 @@ class ActiveMemory:
             soul=self._read(self.thyca_dir / "SOUL.md"),
             identity=self._read(self.thyca_dir / "IDENTITY.md"),
             user=self._read(self.thyca_dir / "USER.md"),
-            memory=self._tail(self._read(self.thyca_dir / "MEMORY.md")),
             today=self._tail(self._read(state.today_path)),
             yesterday=state.yesterday,
         )

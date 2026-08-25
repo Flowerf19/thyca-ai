@@ -313,7 +313,7 @@ class ArchivedMemory:
     def reindex(self, now: datetime | None = None) -> None:
         today = self.day(now)
         wanted: set[str] = set()
-        for name in ("SOUL.md", "USER.md", "MEMORY.md"):
+        for name in ("SOUL.md", "USER.md"):
             path = self.thyca_dir / name
             wanted.add(str(path))
             self._reindex_file(path, "canonical", None, today)
@@ -421,7 +421,7 @@ class ArchivedMemory:
     def _allowed_path(self, path: Path) -> Path:
         root = self.thyca_dir.resolve()
         target = path.expanduser().resolve()
-        if target.parent == root and target.name in {"SOUL.md", "USER.md", "MEMORY.md"}:
+        if target.parent == root and target.name in {"SOUL.md", "USER.md"}:
             return target
         memory_dir = (root / "memory").resolve()
         if target.parent == memory_dir and DATE_RE.fullmatch(target.stem) and target.suffix == ".md":

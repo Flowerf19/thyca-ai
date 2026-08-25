@@ -35,7 +35,7 @@ def test_assemble_does_not_use_hot_to_add_messages() -> None:
 
 
 def test_assemble_injects_system_from_snapshot() -> None:
-    hot = ActiveSnapshot(soul="S", user="U", memory="M", today="T", yesterday="")
+    hot = ActiveSnapshot(soul="S", user="U", today="T", yesterday="")
     existing = Message(role="assistant", content="prev", ts="2026-01-01T00:00:00Z")
     stage = Stage(messages=[existing], hot=hot)
 

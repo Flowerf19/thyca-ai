@@ -20,13 +20,12 @@ def _remember_spec(facade: MemoryFacade) -> ToolSpec:
             str(args["topic"]),
             str(args["summary"]),
             content=str(args.get("content") or ""),
-            target=args.get("target") or "daily",
         )
 
     return ToolSpec(
         name="memory_remember",
         description=(
-            "Append an L2 memory heading+bullet. target is daily (default) or memory. "
+            "Append an L2 memory heading+bullet to today's daily file. "
             "Do not use this for SOUL/USER/IDENTITY — write/edit those files."
         ),
         parameters={
@@ -35,14 +34,13 @@ def _remember_spec(facade: MemoryFacade) -> ToolSpec:
                 "topic": {"type": "string"},
                 "summary": {"type": "string"},
                 "content": {"type": "string"},
-                "target": {"type": "string", "enum": ["daily", "memory"]},
             },
             "required": ["topic", "summary"],
             "additionalProperties": False,
         },
         handler=handler,
         parallel_safe=False,
-        resource_key=lambda args: f"memory:{args.get('target') or 'daily'}",
+        resource_key=lambda _args: "memory:daily",
     )
 
 

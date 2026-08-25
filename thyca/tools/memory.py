@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
 
 from thyca.memory.active import ActiveMemory
 from thyca.memory.archived import (
@@ -31,8 +30,6 @@ from thyca.memory.chunk import Chunk
 from thyca.memory.stats import CanonicalFile, MemoryStats, MemoryStatsResult
 from thyca.memory.writer import MemoryWriter
 
-Target = Literal["daily", "memory"]
-
 
 class MemoryFacade:
     def __init__(
@@ -52,27 +49,15 @@ class MemoryFacade:
         topic: str,
         summary: str,
         content: str = "",
-        target: Target = "daily",
         importance: int = DEFAULT_IMPORTANCE,
         now: datetime | None = None,
     ) -> str:
         self.active.ensure_files(now)
-        if target not in {"daily", "memory"}:
-            raise ArchiveError(
-                f"invalid target {target!r} — use daily|memory; "
-                "edit SOUL.md / USER.md / IDENTITY.md with write/edit"
-            )
         moment = utc_now(now)
         entry = new_entry_id()
-        if target == "daily":
-            day = self.archive.day(now)
-            path = self.thyca_dir / "memory" / f"{day}.md"
-            sid = session_id(day, entry)
-        elif target == "memory":
-            path = self.thyca_dir / "MEMORY.md"
-            sid = session_id("memory", entry)
-        else:
-            raise ArchiveError(f"invalid target {target!r}")
+        day = self.archive.day(now)
+        path = self.thyca_dir / "memory" / f"{day}.md"
+        sid = session_id(day, entry)
         hour = moment.astimezone(self.archive.zone()).strftime("%H:%M")
         meta = HeadingMeta(
             time=hour,

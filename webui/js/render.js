@@ -92,7 +92,7 @@ export function renderPage(pageIndex = 0) {
   el.pageHeader.innerHTML = `<div class="page-header-copy"><p class="page-kicker">${page.kicker || data.kicker}</p><h1>${page.title}</h1><p class="page-note">${data.note}</p></div><div class="page-header-mark" aria-hidden="true">${icons[state.activeMode]}<span>${data.label}</span></div>`;
   el.pageBody.innerHTML = page.body || data.body;
   if (state.activeMode === "chat") {
-    syncNoteRail(el.pageBody.querySelector(".entry-list"));
+    syncNoteRail(el.notebook.querySelector(".notebook-inner"));
   } else {
     syncNoteRail(null);
   }

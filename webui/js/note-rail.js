@@ -29,29 +29,86 @@ export function syncNoteRail(list) {
   }
 }
 
-function layout(list) {
-  let rail = list.querySelector(`:scope > .${RAIL}`);
+function layout(host) {
+  let rail = host.querySelector(`:scope > .${RAIL}`);
   if (!rail) {
     rail = document.createElement("div");
     rail.className = RAIL;
     rail.setAttribute("aria-hidden", "true");
-    list.prepend(rail);
+    host.prepend(rail);
   }
-  const height = list.clientHeight;
-  const spans = freeSpans(list, height);
-  renderRail(rail, height, spans, placeNotes(spans, height));
+  const height = host.clientHeight;
+  const spans = gapsFromBlocked([], height);
+  renderRail(rail, height, spans, notesFromTurns(collectTurns(host)));
 }
 
-function freeSpans(list, height) {
-  const box = list.getBoundingClientRect();
-  const blocked = [];
-  for (const node of list.querySelectorAll(".entry-thyca .entry-copy, .entry-thyca > time")) {
-    const rect = node.getBoundingClientRect();
-    const top = Math.max(0, rect.top - box.top - 4);
-    const bottom = Math.min(height, rect.bottom - box.top + 4);
-    if (bottom > top) blocked.push([top, bottom]);
+export function estimateTokens(text) {
+  const trimmed = String(text || "").replace(/\s+/g, " ").trim();
+  if (!trimmed) return 0;
+  const byChars = trimmed.length / 4;
+  const byWords = trimmed.split(" ").length;
+  return Math.max(1, Math.round((byChars + byWords) / 2));
+}
+
+export const CHORDS = {
+  I: ["b", "s", "b"],
+  vi: ["b", "r", "s"],
+  IV: ["s", "b", "s"],
+  V: ["d", "s", "b"],
+};
+
+export function chordForTurn(text, role) {
+  const body = String(text || "").trim();
+  if (!body) return "I";
+  if (/[?？]/.test(body) || (role === "user" && /(sao|gì|à|nhỉ|hả)\b/i.test(body))) return "V";
+  if (role !== "user") return "I";
+  return ["IV", "I", "vi"][estimateTokens(body) % 3];
+}
+
+function collectTurns(host) {
+  const box = host.getBoundingClientRect();
+  const turns = [];
+  for (const copy of host.querySelectorAll(
+    ".entry-user .entry-copy, .entry-thyca:not(.entry-status) .entry-copy",
+  )) {
+    const rect = copy.getBoundingClientRect();
+    const role = copy.closest(".entry-thyca") ? "assistant" : "user";
+    const text = copy.textContent || "";
+    turns.push({
+      top: rect.top - box.top,
+      bottom: rect.bottom - box.top,
+      tokens: estimateTokens(text),
+      role,
+      text,
+      chord: chordForTurn(text, role),
+    });
   }
-  return gapsFromBlocked(blocked, height);
+  return turns;
+}
+
+export function notesFromTurns(turns) {
+  const stacks = turns.map((turn) => {
+    const chord = turn.chord || chordForTurn(turn.text || "", turn.role || "user");
+    const tones = [...(CHORDS[chord] || CHORDS.I)];
+    if ((turn.tokens || 0) > 48) tones.push(tones[0]);
+    return { top: turn.top, bottom: turn.bottom, tones: tones.slice(0, 4) };
+  });
+  let budget = 18;
+  const kept = [];
+  for (let index = stacks.length - 1; index >= 0 && budget > 0; index -= 1) {
+    const tones = stacks[index].tones.slice(0, budget);
+    kept.unshift({ ...stacks[index], tones });
+    budget -= tones.length;
+  }
+  const spots = [];
+  for (const stack of kept) {
+    const mid = (stack.top + stack.bottom) / 2 - 6;
+    stack.tones.forEach((kind, slot) => {
+      const offset = (slot - (stack.tones.length - 1) / 2) * 7;
+      spots.push({ y: mid + offset, kind });
+    });
+  }
+  return spots;
 }
 
 export function gapsFromBlocked(blocked, height) {

@@ -139,17 +139,9 @@
     padding-block-start: var(--space-xl);
   }
 
-  .entry {
+  .entry-thyca {
     grid-template-columns: 3.25rem minmax(0, 1fr);
     gap: var(--space-sm);
-  }
-
-  .tool-strip {
-    margin-inline-start: calc(3.25rem + var(--space-sm));
-  }
-
-  .note-rail {
-    left: calc(3.25rem + var(--space-sm) - 2.375rem);
   }
 
   .entry-copy {
@@ -208,18 +200,6 @@
     padding-inline: var(--space-sm);
   }
 
-  .entry {
-    grid-template-columns: 2.75rem minmax(0, 1fr);
-    gap: var(--space-xs);
-  }
-
-  .tool-strip {
-    margin-inline-start: calc(2.75rem + var(--space-xs));
-  }
-
-  .note-rail {
-    left: calc(2.75rem + var(--space-xs) - 2.375rem);
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

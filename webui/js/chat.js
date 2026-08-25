@@ -73,7 +73,7 @@ export function beginOutgoingTurn(text) {
   statusRecent = [first];
   list.insertAdjacentHTML("beforeend", statusHtml(first));
   startStatusCycle(list.querySelector(".entry-status"));
-  syncNoteRail(list);
+  syncNoteRail(el.notebook.querySelector(".notebook-inner"));
   scrollThread();
 }
 
@@ -98,15 +98,13 @@ export function settleIncoming() {
   const fresh = wrap.querySelector(".entry-list");
   if (!fresh || !liveList) return false;
   stopStatusCycle();
-  const kept = [...liveList.children].filter(
-    (node) => !node.classList.contains("entry-status") && !node.classList.contains("note-rail"),
-  ).length;
+  const kept = [...liveList.children].filter((node) => !node.classList.contains("entry-status")).length;
   liveList.replaceWith(fresh);
   [...fresh.children].slice(kept).forEach((node, index) => {
     node.classList.add("is-enter");
     node.style.animationDelay = `${index * 80}ms`;
   });
-  syncNoteRail(fresh);
+  syncNoteRail(el.notebook.querySelector(".notebook-inner"));
   const heading = el.pageHeader.querySelector("h1");
   if (heading && page.title) heading.innerHTML = page.title;
   const kicker = el.pageHeader.querySelector(".page-kicker");
@@ -346,7 +344,7 @@ function reduceMotion() {
 function entryHtml(role, content) {
   const cls = role === "user" ? "entry-user" : "entry-thyca";
   const stamp =
-    role === "assistant" ? "<time>thyca</time>" : '<span class="entry-gutter" aria-hidden="true"></span>';
+    role === "assistant" ? "<time>thyca</time>" : "";
   return `<article class="entry ${cls}">${stamp}<div class="entry-copy">${formatMarkdown(content)}</div></article>`;
 }
 

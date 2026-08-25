@@ -1,5 +1,5 @@
 import { fillChatAt, hydrateChat, stopStatusCycle } from "./chat.js";
-import { syncNoteRail } from "./note-rail.js";
+import { syncStaffs } from "./staff.js";
 import { icons, modes } from "./data.js";
 import { el } from "./dom.js";
 import { closeDrawer } from "./drawer.js";
@@ -91,11 +91,8 @@ export function renderPage(pageIndex = 0) {
   el.pageListLabel.textContent = data.listLabel;
   el.pageHeader.innerHTML = `<div class="page-header-copy"><p class="page-kicker">${page.kicker || data.kicker}</p><h1>${page.title}</h1><p class="page-note">${data.note}</p></div><div class="page-header-mark" aria-hidden="true">${icons[state.activeMode]}<span>${data.label}</span></div>`;
   el.pageBody.innerHTML = page.body || data.body;
-  if (state.activeMode === "chat") {
-    syncNoteRail(el.notebook.querySelector(".notebook-inner"));
-  } else {
-    syncNoteRail(null);
-  }
+  if (state.activeMode === "chat") syncStaffs(el.pageBody);
+  else syncStaffs(null);
   if (state.activeMode === "memories") {
     bindOverview(el.pageBody, {
       onForget: () => {

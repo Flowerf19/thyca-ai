@@ -2,38 +2,14 @@ import { el } from "./dom.js";
 import { modes } from "./data.js";
 import { formatMarkdown } from "./markdown.js";
 import { escapeHtml } from "./memories.js";
-import { syncNoteRail } from "./note-rail.js";
+import { CLOSE_LINE, createThinkCycle, keyForMode, thinkingEvent } from "./staff-map.js";
+import { mountStaff, syncStaffs } from "./staff.js";
 import { state } from "./state.js";
 
-const STATUS_LINES = [
-  "Đang tìm vần…",
-  "Đang lắng nghe nhịp…",
-  "Đang tìm tứ thơ…",
-  "Nghe nhịp trong đầu…",
-  "Đang đợi cảm hứng…",
-  "Lắng nghe khoảng lặng…",
-  "Đang chọn từ…",
-  "Đang cân nhắc chữ…",
-  "Đang sắp xếp nhịp…",
-  "Đang tìm hình ảnh…",
-  "Đang buộc câu thơ…",
-  "Đang chỉnh nhịp điệu…",
-  "Hmm…",
-  "Đang suy nghĩ…",
-  "Tiếp tục suy nghĩ…",
-  "Đang để cảm xúc lắng…",
-  "Đang nghe trái tim…",
-  "Đang viết tiếp…",
-  "Đang làm thơ…",
-  "Đang viết khổ thơ…",
-  "Đang thả chữ xuống trang…",
-  "Đang để thơ tự đến…",
-  "Sắp xong rồi…",
-];
-
-const RECENT_CAP = 4;
 let statusTimer = 0;
-let statusRecent = [];
+let thinkCycle = null;
+let thinkEvents = [];
+let thinkKey = "C";
 
 const EMPTY_BODY =
   '<div class="new-page-empty"><span aria-hidden="true">+</span><p>Chưa có tin nào.</p><small>Nói điều đầu tiên để mở phiên.</small></div>';
@@ -62,6 +38,9 @@ export async function createChatSession() {
 
 export function beginOutgoingTurn(text) {
   stopStatusCycle();
+  thinkKey = keyForMode(state.activeMode);
+  thinkCycle = createThinkCycle();
+  thinkEvents = [];
   let list = el.pageBody.querySelector(".entry-list");
   if (!list) {
     el.pageBody.innerHTML = '<div class="entry-list"></div>';
@@ -69,11 +48,12 @@ export function beginOutgoingTurn(text) {
   }
   list.insertAdjacentHTML("beforeend", entryHtml("user", text));
   list.lastElementChild.classList.add("is-enter");
-  const first = nextStatus([]);
-  statusRecent = [first];
+  const first = thinkCycle.nextLine();
   list.insertAdjacentHTML("beforeend", statusHtml(first));
-  startStatusCycle(list.querySelector(".entry-status"));
-  syncNoteRail(el.notebook.querySelector(".notebook-inner"));
+  const status = list.querySelector(".entry-status");
+  mountStaff(status, []);
+  startStatusCycle(status);
+  syncStaffs(el.pageBody);
   scrollThread();
 }
 
@@ -86,6 +66,8 @@ export function stopStatusCycle() {
 
 export function removeStatus() {
   stopStatusCycle();
+  thinkCycle = null;
+  thinkEvents = [];
   const node = el.pageBody.querySelector(".entry-status");
   if (node) node.remove();
 }
@@ -98,13 +80,19 @@ export function settleIncoming() {
   const fresh = wrap.querySelector(".entry-list");
   if (!fresh || !liveList) return false;
   stopStatusCycle();
+  if (thinkCycle) thinkEvents.push(thinkingEvent(CLOSE_LINE, thinkEvents.length, thinkKey));
+  const prefix = thinkEvents;
+  thinkCycle = null;
+  thinkEvents = [];
   const kept = [...liveList.children].filter((node) => !node.classList.contains("entry-status")).length;
   liveList.replaceWith(fresh);
   [...fresh.children].slice(kept).forEach((node, index) => {
     node.classList.add("is-enter");
     node.style.animationDelay = `${index * 80}ms`;
   });
-  syncNoteRail(el.notebook.querySelector(".notebook-inner"));
+  syncStaffs(fresh);
+  const born = [...fresh.children].slice(kept).find((node) => node.classList.contains("entry-thyca"));
+  if (born) mountStaff(born, prefix);
   const heading = el.pageHeader.querySelector("h1");
   if (heading && page.title) heading.innerHTML = page.title;
   const kicker = el.pageHeader.querySelector(".page-kicker");
@@ -284,22 +272,18 @@ export function threadHtml(messages) {
 function statusHtml(line) {
   return `<article class="entry entry-thyca entry-status" aria-label="Thyca đang nghĩ" aria-live="off">
       <time>thyca</time>
-      <div class="entry-copy">
-        <div class="status-row">
-          <span class="status-dots" aria-hidden="true"><i></i><i></i><i></i></span>
-          <span class="status-ticker"><span class="status-line">${escapeHtml(line)}</span></span>
-        </div>
-      </div>
+      <div class="entry-copy"><span class="status-ticker"><span class="status-line">${escapeHtml(line)}</span></span></div>
     </article>`;
 }
 
 function startStatusCycle(node) {
-  if (!node) return;
+  if (!node || !thinkCycle) return;
   const ticker = node.querySelector(".status-ticker");
   if (!ticker) return;
   statusTimer = window.setInterval(() => {
-    const next = nextStatus(statusRecent);
-    statusRecent = [...statusRecent, next].slice(-RECENT_CAP);
+    const next = thinkCycle.nextLine();
+    thinkEvents.push(thinkingEvent(next, thinkEvents.length, thinkKey));
+    mountStaff(node, thinkEvents, { freshFrom: thinkEvents.length - 1 });
     if (reduceMotion()) {
       const line = ticker.querySelector(".status-line");
       if (line) line.textContent = next;
@@ -307,13 +291,6 @@ function startStatusCycle(node) {
     }
     slideStatus(ticker, next);
   }, 1000);
-}
-
-function nextStatus(recent) {
-  const blocked = new Set(recent.slice(-RECENT_CAP));
-  const pool = STATUS_LINES.filter((line) => !blocked.has(line));
-  const pick = pool.length ? pool : STATUS_LINES;
-  return pick[Math.floor(Math.random() * pick.length)];
 }
 
 function slideStatus(ticker, next) {

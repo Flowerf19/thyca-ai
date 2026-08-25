@@ -5,14 +5,14 @@
   inset-block-end: 0;
   z-index: var(--z-sticky);
   flex: 0 0 auto;
-  padding: var(--space-md) clamp(var(--space-md), 6vw, var(--space-4xl)) calc(var(--space-md) + env(safe-area-inset-bottom));
+  padding: var(--space-sm) clamp(var(--space-md), 3vw, var(--space-xl)) calc(var(--space-md) + env(safe-area-inset-bottom));
   border-block-start: var(--rule) solid var(--color-rule);
   background: var(--color-paper);
 }
 
 .composer-inner {
-  width: min(100%, 72rem);
-  margin-inline: auto;
+  width: 100%;
+  margin-inline: 0;
 }
 
 .composer-chips {

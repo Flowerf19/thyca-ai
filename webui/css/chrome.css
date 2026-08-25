@@ -89,7 +89,7 @@
   }
 
   .notebook-inner {
-    padding-block-start: var(--space-xl);
+    padding-block-start: calc(var(--space-xl) * 2);
   }
 }
 
@@ -140,8 +140,8 @@
   }
 
   .entry-thyca {
-    grid-template-columns: 3.25rem minmax(0, 1fr);
-    gap: var(--space-sm);
+    gap: var(--space-2xs);
+    padding-inline: var(--space-sm);
   }
 
   .entry-copy {

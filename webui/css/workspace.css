@@ -292,6 +292,95 @@
   margin-block-start: var(--space-sm);
 }
 
+.entry-copy h1,
+.entry-copy h2,
+.entry-copy h3,
+.entry-copy h4 {
+  margin: var(--space-md) 0 var(--space-xs);
+  color: var(--color-ink);
+  font-family: var(--font-display);
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.entry-copy h1 {
+  font-size: var(--text-xl);
+}
+
+.entry-copy h2 {
+  font-size: var(--text-lg);
+}
+
+.entry-copy h3,
+.entry-copy h4 {
+  font-size: var(--text-base);
+}
+
+.entry-copy ul,
+.entry-copy ol {
+  margin: var(--space-sm) 0;
+  padding-inline-start: 1.25rem;
+}
+
+.entry-copy li + li {
+  margin-block-start: 0.15rem;
+}
+
+.entry-copy pre {
+  margin: var(--space-sm) 0;
+  padding: var(--space-sm);
+  overflow-x: auto;
+  border: var(--rule) solid var(--color-rule);
+  background: var(--color-paper-2);
+  font-size: 0.84em;
+  line-height: 1.45;
+}
+
+.entry-copy pre code {
+  padding: 0;
+  background: none;
+}
+
+.entry-copy .md-table-wrap {
+  max-width: 100%;
+  margin: var(--space-sm) 0;
+  overflow-x: auto;
+}
+
+.entry-copy table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-md);
+}
+
+.entry-copy th,
+.entry-copy td {
+  padding: 0.4rem 0.65rem;
+  border: var(--rule) solid var(--color-rule);
+  vertical-align: top;
+}
+
+.entry-copy th {
+  background: var(--color-paper-2);
+  color: var(--color-ink);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  text-align: start;
+}
+
+.entry-copy blockquote {
+  margin: var(--space-sm) 0;
+  padding-inline-start: var(--space-md);
+  border-inline-start: 2px solid var(--color-rule);
+  color: var(--color-muted);
+}
+
+.entry-copy a {
+  color: var(--color-accent);
+}
+
 .entry-copy code,
 .book-meta code,
 .music-note code,

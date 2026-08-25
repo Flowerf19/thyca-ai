@@ -354,7 +354,15 @@ def test_chat_js_shipped() -> None:
     assert "flushTools" in chat
     start = chat.index("export async function createChatSession")
     end = chat.index("export function", start + 1)
-    assert "postJson" not in chat[start:end]
+    body = chat[start:end]
+    assert "postJson" not in body
+    assert "hydrateChat" not in body
+    assert "refreshChatList" in body
+    assert "state.activeSessionId = null;" in body
+    send = chat.index("export async function sendChatTurn")
+    send_end = chat.index("export async function fillChatAt", send)
+    assert "page.sessionId" in chat[send:send_end]
+    assert "function bindSession" in chat
     css = (WEBUI / "css" / "workspace.css").read_text(encoding="utf-8")
     assert "flex-flow: row wrap" in css
     script = WEBUI.parent / "scripts" / "retitle_sessions.py"

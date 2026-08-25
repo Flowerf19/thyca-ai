@@ -1,5 +1,6 @@
 import { el } from "./dom.js";
 import { modes } from "./data.js";
+import { formatMarkdown } from "./markdown.js";
 import { escapeHtml } from "./memories.js";
 import { state } from "./state.js";
 
@@ -37,19 +38,8 @@ const EMPTY_BODY =
   '<div class="new-page-empty"><span aria-hidden="true">+</span><p>Chưa có tin nào.</p><small>Nói điều đầu tiên để mở phiên.</small></div>';
 
 export async function hydrateChat() {
-  const payload = await getJson("/api/sessions");
-  if (!payload || !Array.isArray(payload.sessions)) return false;
-  const pages = pagesFromSessions(payload);
-  modes.chat = {
-    label: "Chat",
-    listLabel: "Phiên gần đây",
-    kicker: payload.model ? `~/.thyca · ${payload.model}` : modes.chat.kicker,
-    note: modes.chat.note,
-    chips: modes.chat.chips,
-    pages,
-  };
-  const count = document.querySelector('[data-mode="chat"] .mode-count');
-  if (count) count.textContent = String(payload.sessions.length);
+  const pages = await refreshChatList();
+  if (!pages) return false;
   state.chatLive = true;
   let index = pages.findIndex((page) => page.sessionId && page.sessionId === state.activeSessionId);
   if (index < 0) index = 0;
@@ -61,11 +51,12 @@ export async function hydrateChat() {
 export async function createChatSession() {
   state.activeSessionId = null;
   if (state.chatLive) {
-    await hydrateChat();
+    await refreshChatList();
   }
   const rest = modes.chat.pages.filter((page) => page.sessionId);
   modes.chat.pages = [emptyPage(""), ...rest];
   state.activePageIndex = 0;
+  state.activeSessionId = null;
 }
 
 export function beginOutgoingTurn(text) {
@@ -120,7 +111,8 @@ export function settleIncoming() {
 }
 
 export async function sendChatTurn(text) {
-  let sessionId = state.activeSessionId;
+  const page = modes.chat.pages[state.activePageIndex];
+  let sessionId = page ? page.sessionId : state.activeSessionId;
   if (!sessionId) {
     const created = await postJson("/api/sessions", {});
     if (!created || !created.id) throw new Error("Không tạo được phiên.");
@@ -140,13 +132,13 @@ export async function fillChatAt(index) {
 async function fillChatPage(page) {
   if (!page) return;
   if (!page.sessionId) {
-    state.activeSessionId = null;
+    bindSession(page, null);
     page.body = EMPTY_BODY;
     return;
   }
   const detail = await getJson(`/api/sessions/${page.sessionId}`);
   if (!detail || !Array.isArray(detail.messages)) {
-    state.activeSessionId = page.sessionId;
+    bindSession(page, page.sessionId);
     page.body = page.body || EMPTY_BODY;
     return;
   }
@@ -178,7 +170,29 @@ function applyDetailToPage(page, detail) {
   page.kicker = next.kicker;
   page.body = next.body;
   page.sessionId = next.sessionId;
-  state.activeSessionId = next.sessionId;
+  bindSession(page, next.sessionId);
+}
+
+function bindSession(page, sessionId) {
+  if (modes.chat.pages[state.activePageIndex] !== page) return;
+  state.activeSessionId = sessionId;
+}
+
+async function refreshChatList() {
+  const payload = await getJson("/api/sessions");
+  if (!payload || !Array.isArray(payload.sessions)) return null;
+  const pages = pagesFromSessions(payload);
+  modes.chat = {
+    label: "Chat",
+    listLabel: "Phiên gần đây",
+    kicker: payload.model ? `~/.thyca · ${payload.model}` : modes.chat.kicker,
+    note: modes.chat.note,
+    chips: modes.chat.chips,
+    pages,
+  };
+  const count = document.querySelector('[data-mode="chat"] .mode-count');
+  if (count) count.textContent = String(payload.sessions.length);
+  return pages;
 }
 
 export function pagesFromSessions(payload) {
@@ -316,11 +330,7 @@ function reduceMotion() {
 function entryHtml(role, content) {
   const who = role === "user" ? "you" : "thyca";
   const cls = role === "user" ? "entry-user" : "entry-thyca";
-  const blocks = String(content)
-    .split(/\n{2,}/)
-    .map((block) => `<p>${escapeHtml(block).replaceAll("\n", "<br>")}</p>`)
-    .join("");
-  return `<article class="entry ${cls}"><time>${who}</time><div class="entry-copy">${blocks}</div></article>`;
+  return `<article class="entry ${cls}"><time>${who}</time><div class="entry-copy">${formatMarkdown(content)}</div></article>`;
 }
 
 function shortId(id) {

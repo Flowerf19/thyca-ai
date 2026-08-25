@@ -459,12 +459,20 @@
   margin-block-start: var(--space-md);
 }
 
+.entry-thyca .thyca-staff-host:has(.thyca-staff.is-tall) {
+  height: 124px;
+}
+
 .thyca-staff {
   display: block;
   width: 100%;
   height: 60px;
   overflow: visible;
   pointer-events: none;
+}
+
+.thyca-staff.is-tall {
+  height: 124px;
 }
 
 .staff-line {

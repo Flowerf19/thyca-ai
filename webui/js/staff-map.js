@@ -50,7 +50,7 @@ export const THINK_PHASES = [
   ["Đang tìm tứ thơ…", "Đang đợi cảm hứng…", "Đang tìm hình ảnh…"],
   ["Đang tìm vần…", "Đang chọn từ…", "Đang cân nhắc chữ…"],
   ["Đang sắp xếp nhịp…", "Đang buộc câu thơ…", "Đang chỉnh nhịp điệu…"],
-  ["Đang thả chữ xuống trang…", "Đang viết khổ thơ…", "Đang làm thơ…", "Đang để thơ tự đến…"],
+  ["Đang thả chữ xuống trang…", "Đang viết khổ thơ…", "Đang làm thơ…", "Đang để thơ tự đến…", "Đang viết tiếp…"],
 ];
 
 export const THINK_BREATH = ["Hmm…", "Đang suy nghĩ…", "Tiếp tục suy nghĩ…", "Đang để cảm xúc lắng…"];

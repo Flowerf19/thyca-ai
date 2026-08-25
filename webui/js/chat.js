@@ -50,7 +50,7 @@ export function beginOutgoingTurn(text) {
   list.lastElementChild.classList.add("is-enter");
   const first = thinkCycle.nextLine();
   list.insertAdjacentHTML("beforeend", statusHtml(first));
-  const status = list.querySelector(".entry-status");
+  const status = list.lastElementChild;
   mountStaff(status, []);
   startStatusCycle(status);
   syncStaffs(el.pageBody);

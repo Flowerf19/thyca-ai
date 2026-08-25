@@ -103,6 +103,11 @@ def test_think_cycle_no_repeat_three_no_adjacent_breath(node: str) -> None:
         assert not (lines[index] in BREATH and lines[index - 1] in BREATH)
 
 
+def test_write_on_included_in_phases(node: str) -> None:
+    phases = _eval(node, "THINK_PHASES.flat()")
+    assert "Đang viết tiếp…" in phases
+
+
 def test_think_cycle_stays_in_phases(node: str) -> None:
     lines = _eval(
         node,

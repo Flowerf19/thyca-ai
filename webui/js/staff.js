@@ -1,6 +1,8 @@
 import { renderStaff } from "./staff-draw.js";
 
 const EVENTS = new WeakMap();
+const watched = new WeakSet();
+let observer = null;
 
 export function mountStaff(article, events, opts = {}) {
   if (!article || !article.classList.contains("entry-thyca")) return;
@@ -22,6 +24,7 @@ export function syncStaffs(root) {
 
 function paint(article) {
   const host = ensureHost(article);
+  watch(host);
   const rec = EVENTS.get(article) || { events: [], freshFrom: -1 };
   const widthPx = Math.round(host.getBoundingClientRect().width) || 480;
   const reduceMotion =
@@ -32,6 +35,21 @@ function paint(article) {
   host.replaceChildren(
     renderStaff(rec.events, { freshFrom: rec.freshFrom ?? -1, reduceMotion, widthPx }),
   );
+}
+
+function watch(host) {
+  if (typeof ResizeObserver !== "function") return;
+  if (!observer) {
+    observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const article = entry.target.parentNode;
+        if (article?.classList?.contains("entry-thyca")) paint(article);
+      }
+    });
+  }
+  if (watched.has(host)) return;
+  observer.observe(host);
+  watched.add(host);
 }
 
 function ensureHost(article) {

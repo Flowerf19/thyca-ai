@@ -31,5 +31,5 @@ Gỡ nốt trên gutter/gạch dọc. Mỗi block Thyca có khuông 5 dòng tron
 
 1. Nhạc theo thinking, không theo token/text. Tin lịch sử không vẽ khuông.
 2. Chat = Đô trưởng. Memories = Sol trưởng (không có block chat). Không còn mode Thơ.
-3. Block hồng chỉ chuỗi thinking. Khuông nằm gutter kem, sát trái block Thyca (giữa menu và chat).
+3. Khuông nằm trong block trả lời Thyca (bot), dưới label THYCA, trên chữ. Không composer, không tin user, không gutter.
 4. Serve: `uv run thyca --serve --stop` rồi `uv run thyca --serve --daemon` — không dùng binary tool cũ.

@@ -1,30 +1,45 @@
 import { renderStaff } from "./staff-draw.js";
+import { scoreFromEvents } from "./staff-map.js";
 
-const EVENTS = new WeakMap();
+const RECORDS = new WeakMap();
 const watched = new WeakSet();
 let observer = null;
 
-export function mountStaff(article, events, opts = {}) {
+export function mountStaff(article, score, opts = {}) {
   if (!article || !article.classList.contains("entry-thyca")) return;
-  EVENTS.set(article, {
-    events: events || [],
-    freshFrom: opts.freshFrom ?? -1,
-    reduceMotion: opts.reduceMotion,
-  });
+  const normalized = Array.isArray(score) || score == null
+    ? scoreFromEvents(Array.isArray(score) ? score : [])
+    : score;
+  RECORDS.set(article, { score: normalized });
   paint(article);
+}
+
+export function unmountStaff(host) {
+  if (!host) return;
+  if (observer && watched.has(host)) {
+    observer.unobserve(host);
+    watched.delete(host);
+  }
 }
 
 export function clearStaffs(root) {
   if (!root) return;
-  for (const host of root.querySelectorAll(".thyca-staff-host")) host.remove();
+  for (const host of root.querySelectorAll(".thyca-staff-host")) {
+    unmountStaff(host);
+    host.remove();
+  }
 }
 
 export function syncStaffs(root) {
   if (!root) return;
   for (const article of root.querySelectorAll(".entry-thyca")) {
-    const rec = EVENTS.get(article);
-    if (!article.classList.contains("entry-status") && !(rec && rec.events.length)) {
-      article.querySelector(":scope > .thyca-staff-host")?.remove();
+    const rec = RECORDS.get(article);
+    if (!article.classList.contains("entry-status") && !(rec && rec.score?.measures?.length)) {
+      const stray = article.querySelector(":scope > .thyca-staff-host");
+      if (stray) {
+        unmountStaff(stray);
+        stray.remove();
+      }
       continue;
     }
     paint(article);
@@ -34,16 +49,27 @@ export function syncStaffs(root) {
 function paint(article) {
   const host = ensureHost(article);
   watch(host);
-  const rec = EVENTS.get(article) || { events: [], freshFrom: -1 };
+  const rec = RECORDS.get(article) || { score: scoreFromEvents([]) };
   const widthPx = Math.round(host.getBoundingClientRect().width) || 480;
-  const reduceMotion =
-    rec.reduceMotion ?? window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const sig = `${rec.events.length}:${rec.freshFrom}:${widthPx}:${rec.events.at(-1)?.kind || ""}`;
+  const sig = `${scoreSig(rec.score)}:${widthPx}`;
   if (host.dataset.sig === sig) return;
   host.dataset.sig = sig;
-  host.replaceChildren(
-    renderStaff(rec.events, { freshFrom: rec.freshFrom ?? -1, reduceMotion, widthPx }),
-  );
+  host.replaceChildren(renderStaff(rec.score, { widthPx }));
+}
+
+function scoreSig(score) {
+  const measures = score?.measures || [];
+  return measures
+    .map((measure) => {
+      const events = (measure.events || [])
+        .map((item) => `${item.offset}/${item.duration}/${(item.pitches || []).join(".")}`)
+        .join(",");
+      const rests = (measure.rests || [])
+        .map((item) => `${item.offset}/${item.duration}`)
+        .join(",");
+      return `${measure.harmony || ""}:${measure.terminal || ""}:${events}:${rests}`;
+    })
+    .join(";");
 }
 
 function watch(host) {

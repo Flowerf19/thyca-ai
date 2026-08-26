@@ -1,4 +1,5 @@
-import { beginOutgoingTurn, createChatSession, getJson, removeStatus, sendChatTurn, settleIncoming, stopStatusCycle } from "./chat.js";
+import { beginOutgoingTurn, createChatSession, getJson, removeStatus, sendChatTurn, settleIncoming } from "./chat.js";
+import { modes } from "./data.js";
 import { el } from "./dom.js";
 import { closeDrawer, hideDrawerIfMobile, toggleDrawer } from "./drawer.js";
 import { renderMode, renderPage, renderPageList, setTracePlaying } from "./render.js";
@@ -102,12 +103,15 @@ async function submitLine() {
   setBusy(true);
   try {
     if (state.chatLive) {
-      await sendChatTurn(text);
+      const detail = await sendChatTurn(text);
       if (state.activeMode !== "chat") {
         idleFromNudge = false;
         return;
       }
-      if (!settleIncoming()) renderPage(state.activePageIndex);
+      const visible = modes.chat.pages[state.activePageIndex];
+      if (visible && visible.sessionId && visible.sessionId !== detail.id) {
+        renderPageList(el.pageSearch.value);
+      } else if (!settleIncoming()) renderPage(state.activePageIndex);
       else renderPageList(el.pageSearch.value);
     } else {
       const wait = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 1000;
@@ -125,11 +129,11 @@ async function submitLine() {
     armIdle();
   } catch (error) {
     idleFromNudge = false;
-    removeStatus();
+    const failed = state.activeMode === "chat" && el.pageBody.querySelector(".entry-status.is-error");
+    if (!failed) removeStatus();
     showError(error instanceof Error ? error.message : "Không gửi được.");
   } finally {
     setBusy(false);
-    stopStatusCycle();
     el.line.focus();
   }
 }

@@ -2,16 +2,18 @@
 from __future__ import annotations
 
 import json
+import queue
 import re
 import signal
+import threading
 from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from mimetypes import guess_type
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
+from thyca.agent.events import TurnEvent
 from thyca.chat_app import ChatApp
-from thyca.config import ConfigError
 from thyca.llm.llm_base import LLMError
 from thyca.sessions import SessionCorrupt, SessionError, SessionNotFound
 from thyca.memory.archived import ArchiveError
@@ -24,7 +26,78 @@ _SESSION_RE = re.compile(
 _TURN_RE = re.compile(
     r"^/api/sessions/(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_[0-9a-f]{4})/turn$"
 )
+_TURN_STREAM_RE = re.compile(
+    r"^/api/sessions/(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_[0-9a-f]{4})/turn/stream$"
+)
 _BODY_CAP = 16_384
+_SENTINEL = object()
+
+
+def public_turn_error(exc: Exception) -> tuple[int, str, str]:
+    """Map a turn exception to a public ``(status, code, message)``.
+
+    Shared by ``/turn`` and the future ``/turn/stream`` so the two cannot
+    drift. Never leaks stack/path/secret: unexpected errors and
+    :class:`ConfigError` always map to the constant ``chat unavailable``;
+    :class:`LLMError` keeps its provider-redacted/capped text.
+    """
+    if isinstance(exc, ValueError):
+        return 400, "invalid_text", "invalid text"
+    if isinstance(exc, SessionNotFound):
+        return 404, "session_not_found", "session not found"
+    if isinstance(exc, SessionCorrupt):
+        return 503, "session_unreadable", "session unreadable"
+    if isinstance(exc, SessionError):
+        return 503, "session_unavailable", "session unavailable"
+    if isinstance(exc, LLMError):
+        return 503, "llm_error", str(exc)
+    return 503, "chat_unavailable", "chat unavailable"
+
+
+def _bridge_sink(queue_: queue.Queue, state: dict) -> None:
+    """Queue adapter for ``ChatApp.turn(event_sink=...)``.
+
+    Never raises and never blocks AgentLoop: once the client disconnected
+    the sink drops events without touching the queue.
+    """
+    def sink(event: TurnEvent) -> None:
+        if state["disconnected"]:
+            return
+        try:
+            queue_.put(event)
+        except Exception:
+            pass
+    return sink
+
+
+def _bridge_worker(
+    app: ChatApp,
+    session_id: str,
+    text: str,
+    queue_: queue.Queue,
+    state: dict,
+) -> None:
+    """Run one turn, queueing events plus exactly one terminal item.
+
+    The sentinel lands in ``finally`` so the handler cannot hang even if
+    completion enqueue/serialization fails. The first queued item before
+    ``turn.accepted`` (or the sentinel) is a pre-accept error.
+    """
+    sink = _bridge_sink(queue_, state)
+    try:
+        try:
+            detail = app.turn(session_id, text, event_sink=sink)
+        except Exception as exc:
+            queue_.put(("failed", exc))
+        else:
+            queue_.put(("completed", detail))
+    finally:
+        queue_.put(_SENTINEL)
+
+
+def _write_line(wfile, line: dict) -> None:
+    wfile.write(json.dumps(line, ensure_ascii=False).encode("utf-8") + b"\n")
+    wfile.flush()
 
 
 class ServeError(RuntimeError):
@@ -116,6 +189,10 @@ def _handler(
             match = _TURN_RE.fullmatch(path)
             if match:
                 self._chat_turn(match.group(1))
+                return
+            match = _TURN_STREAM_RE.fullmatch(path)
+            if match:
+                self._chat_turn_stream(match.group(1))
                 return
             if path.startswith("/api/sessions"):
                 self._json(404, {"error": "session not found"})
@@ -210,20 +287,95 @@ def _handler(
                 return
             try:
                 self._json(200, app.turn(session_id, text))
+            except Exception as exc:
+                status, _, message = public_turn_error(exc)
+                self._json(status, {"error": message})
+
+        def _chat_turn_stream(self, session_id: str) -> None:
+            app = self._chat()
+            if app is None:
+                return
+            try:
+                payload = self._read_json()
             except ValueError:
+                self._json(400, {"error": "invalid body"})
+                return
+            text = payload.get("text")
+            if not isinstance(text, str):
                 self._json(400, {"error": "invalid text"})
-            except SessionNotFound:
-                self._json(404, {"error": "session not found"})
-            except SessionCorrupt:
-                self._json(503, {"error": "session unreadable"})
-            except SessionError:
-                self._json(503, {"error": "session unavailable"})
-            except LLMError as exc:
-                self._json(503, {"error": str(exc)})
-            except ConfigError as exc:
-                self._json(503, {"error": str(exc)})
-            except Exception:
-                self._json(503, {"error": "chat unavailable"})
+                return
+            items: queue.Queue = queue.Queue()
+            state = {"disconnected": False}
+            worker = threading.Thread(
+                target=_bridge_worker,
+                args=(app, session_id, text, items, state),
+                daemon=True,
+                name="thyca-turn-stream",
+            )
+            worker.start()
+            try:
+                first = items.get()
+                if isinstance(first, TurnEvent):
+                    if first.type == "turn.accepted":
+                        self._stream_headers()
+                        _write_line(self.wfile, first.to_dict())
+                    else:
+                        self._json(503, {"error": "chat unavailable"})
+                        return
+                elif first is _SENTINEL:
+                    self._json(503, {"error": "chat unavailable"})
+                    return
+                else:
+                    # Pre-accept exception: same HTTP error as /turn, no NDJSON.
+                    _type, exc = first
+                    status, _code, message = public_turn_error(exc)
+                    self._json(status, {"error": message})
+                    return
+                terminal = False
+                while True:
+                    item = items.get()
+                    if item is _SENTINEL:
+                        break
+                    if terminal:
+                        continue
+                    if isinstance(item, TurnEvent):
+                        _write_line(self.wfile, item.to_dict())
+                        continue
+                    _kind, value = item
+                    if _kind == "completed":
+                        _write_line(
+                            self.wfile, {"type": "turn.completed", "detail": value}
+                        )
+                    else:
+                        _code, _message = public_turn_error(value)[1:]
+                        _write_line(
+                            self.wfile, {"type": "turn.failed", "code": _code, "message": _message}
+                        )
+                    terminal = True
+                if not terminal and not state["disconnected"]:
+                    # Sentinel with no terminal item: write the constant public
+                    # failure so the client never sees a stream without a terminal.
+                    _write_line(
+                        self.wfile,
+                        {
+                            "type": "turn.failed",
+                            "code": "chat_unavailable",
+                            "message": "chat unavailable",
+                        },
+                    )
+                    terminal = True
+            except (BrokenPipeError, ConnectionResetError):
+                # Client left: drop further events, let persist finish.
+                state["disconnected"] = True
+            finally:
+                worker.join(timeout=60)
+
+        def _stream_headers(self) -> None:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+            self.send_header("Cache-Control", "no-store, no-transform")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
 
         def _chat(self) -> ChatApp | None:
             if chat is None:

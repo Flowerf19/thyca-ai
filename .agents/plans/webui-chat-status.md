@@ -1,8 +1,12 @@
 ---
 status: done
 created: 2026-08-22
-last_updated: 2026-08-22
+last_updated: 2026-08-26
 ---
+
+> Superseded by `thyca-operational-music-trace.md` (2026-08-26):
+> status/staff are an operational event trace, not a 1s poetry timer.
+> Assumptions “Không SSE / stream” and the poetry pool no longer hold.
 
 # Chat — gửi tin + status thơ inline
 
@@ -49,7 +53,7 @@ Success: Enter / nút gửi (bookmark) xóa ô soạn liền; tin user + status 
 3. Không biết ETA (một POST chặn hết loop) → **không** thiên vị “Sắp xong rồi…” những giây cuối.
 4. Hint composer chỉ error/success. Không xoay status dưới đáy.
 5. Không typewriter. Một kiểu swap: slide + blur + scale.
-6. Không SSE / stream. Status chạy tới khi JSON turn về.
+6. ~~Không SSE / stream. Status chạy tới khi JSON turn về.~~ Superseded: NDJSON operational events.
 7. `renderPage` sau gửi là nguyên nhân “thô” — cấm trên happy path.
 8. Pool (23):
 

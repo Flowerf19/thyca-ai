@@ -4,16 +4,18 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+from thyca.agent.events import TurnEvent
 from thyca.chat_app import ChatApp, session_title
 from thyca.config import default_config, load, save
 from thyca.llm.llm_base import ChatReply, LLMError
-from thyca.protocol import Message
-from thyca.serve import ServeError, default_webui, make_server
+from thyca.protocol import Message, ToolCall
+from thyca.serve import ServeError, _SENTINEL, default_webui, make_server
 from thyca.sessions import Session, SessionManager
 from thyca.sessions.title import fallback_title
 from thyca.tools.memory import MemoryFacade
@@ -346,6 +348,305 @@ def test_title_failure_keeps_turn_and_fallback(tmp_path: Path) -> None:
     assert turned["title"] == fallback_title(created["id"])
     assert turned["title"] != "alo"
     app.shutdown()
+
+
+def _stream(httpd, path: str, *, data: bytes, timeout: float = 10):
+    request = Request(
+        _url(httpd, path),
+        data=data,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    return urlopen(request, timeout=timeout)
+
+
+def _stream_lines(response) -> list[dict]:
+    lines = []
+    for raw in response:
+        if raw:
+            lines.append(json.loads(raw.decode("utf-8")))
+    return lines
+
+
+def test_stream_slow_turn_first_line_arrives_before_release(tmp_path: Path) -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    class Slow:
+        async def chat(self, messages, tools=None):
+            started.set()
+            await asyncio.to_thread(release.wait)
+            return ChatReply(content="late")
+
+    httpd, thread = _start(tmp_path, _chat(tmp_path, Slow()))
+    try:
+        created = _json(httpd, "/api/sessions", method="POST", data=b"")
+        response = _stream(
+            httpd,
+            f"/api/sessions/{created['id']}/turn/stream",
+            data=b'{"text":"hello stream"}',
+        )
+        first = json.loads(response.readline().decode("utf-8"))
+        assert response.status == 200
+        assert first == {"type": "turn.accepted"}
+        # Headers + first line went out while the Slow LLM is still blocked.
+        assert release.is_set() is False
+        release.set()
+        lines = _stream_lines(response)
+        types = [item["type"] for item in lines]
+        assert types == [
+            "llm.started",
+            "llm.finished",
+            "session.naming.started",
+            "session.naming.finished",
+            "turn.completed",
+        ]
+        assert lines[0]["round"] == 1
+        assert lines[1] == {"type": "llm.finished", "round": 1, "tool_count": 0}
+        assert lines[3]["updated"] is False
+        completed = lines[-1]
+        assert completed["type"] == "turn.completed"
+        detail = completed["detail"]
+        assert detail["id"] == created["id"]
+        assert detail["reply"] == "late"
+        assert detail["model"]
+        assert detail["title"]
+        assert [(item["role"], item["content"]) for item in detail["messages"]] == [
+            ("user", "hello stream"),
+            ("assistant", "late"),
+        ]
+    finally:
+        _stop(httpd, thread)
+
+
+def test_stream_disconnect_does_not_cancel_turn(tmp_path: Path) -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    class Slow:
+        async def chat(self, messages, tools=None):
+            started.set()
+            await asyncio.to_thread(release.wait)
+            return ChatReply(content="kept")
+
+    httpd, thread = _start(tmp_path, _chat(tmp_path, Slow()))
+    try:
+        created = _json(httpd, "/api/sessions", method="POST", data=b"")
+        response = _stream(
+            httpd,
+            f"/api/sessions/{created['id']}/turn/stream",
+            data=b'{"text":"stay"}',
+        )
+        first = json.loads(response.readline().decode("utf-8"))
+        assert first == {"type": "turn.accepted"}
+        response.close()
+        release.set()
+        stored = None
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            stored = SessionManager(tmp_path / "sessions").load(created["id"])
+            if any(item.role == "assistant" and item.content == "kept" for item in stored.messages):
+                break
+            time.sleep(0.05)
+        assert stored is not None
+        assert [(item.role, item.content) for item in stored.messages[:2]] == [
+            ("user", "stay"),
+            ("assistant", "kept"),
+        ]
+    finally:
+        _stop(httpd, thread)
+
+
+def test_stream_pre_accept_errors_are_http_json(tmp_path: Path) -> None:
+    httpd, thread = _start(tmp_path, _chat(tmp_path, FakeLLM(ChatReply(content="x"))))
+    try:
+        created = _json(httpd, "/api/sessions", method="POST", data=b"")
+        try:
+            _stream(
+                httpd,
+                f"/api/sessions/{created['id']}/turn/stream",
+                data=b'{"text":""}',
+            )
+        except HTTPError as exc:
+            assert exc.code == 400
+            assert exc.headers.get_content_type() == "application/json"
+            body = exc.read().decode("utf-8")
+            assert json.loads(body) == {"error": "invalid text"}
+            assert "turn." not in body
+        else:
+            raise AssertionError("expected 400")
+        try:
+            _stream(
+                httpd,
+                f"/api/sessions/{created['id']}/turn/stream",
+                data=b'{"text":5}',
+            )
+        except HTTPError as exc:
+            assert exc.code == 400
+            body = exc.read().decode("utf-8")
+            assert json.loads(body) == {"error": "invalid text"}
+        else:
+            raise AssertionError("expected 400")
+        try:
+            _stream(
+                httpd,
+                "/api/sessions/2026-01-01T00-00-00_ffff/turn/stream",
+                data=b'{"text":"hi"}',
+            )
+        except HTTPError as exc:
+            assert exc.code == 404
+            assert exc.headers.get_content_type() == "application/json"
+            body = exc.read().decode("utf-8")
+            assert json.loads(body) == {"error": "session not found"}
+            assert "turn." not in body
+        else:
+            raise AssertionError("expected 404")
+    finally:
+        _stop(httpd, thread)
+
+
+def test_stream_post_accept_llm_error_ends_with_single_failed(tmp_path: Path) -> None:
+    class Boom:
+        async def chat(self, messages, tools=None):
+            raise LLMError("provider HTTP 401: denied [redacted]")
+
+    httpd, thread = _start(tmp_path, _chat(tmp_path, Boom()))
+    try:
+        created = _json(httpd, "/api/sessions", method="POST", data=b"")
+        response = _stream(
+            httpd,
+            f"/api/sessions/{created['id']}/turn/stream",
+            data=b'{"text":"hi"}',
+        )
+        assert response.status == 200
+        lines = _stream_lines(response)
+        types = [item["type"] for item in lines]
+        assert types[0] == "turn.accepted"
+        assert "turn.completed" not in types
+        failed = [item for item in lines if item["type"] == "turn.failed"]
+        assert failed == [
+            {
+                "type": "turn.failed",
+                "code": "llm_error",
+                "message": "provider HTTP 401: denied [redacted]",
+            }
+        ]
+        stored = SessionManager(tmp_path / "sessions").load(created["id"])
+        assert [(item.role, item.content) for item in stored.messages] == [
+            ("user", "hi")
+        ]
+    finally:
+        _stop(httpd, thread)
+
+
+def test_stream_headers_and_no_content_length(tmp_path: Path) -> None:
+    httpd, thread = _start(tmp_path, _chat(tmp_path, FakeLLM(ChatReply(content="pong"))))
+    try:
+        created = _json(httpd, "/api/sessions", method="POST", data=b"")
+        response = _stream(
+            httpd,
+            f"/api/sessions/{created['id']}/turn/stream",
+            data=b'{"text":"ping"}',
+        )
+        assert response.status == 200
+        assert response.headers.get_content_type() == "application/x-ndjson"
+        cache = response.headers.get("Cache-Control", "")
+        assert "no-store" in cache
+        assert "no-transform" in cache
+        assert response.headers.get("X-Content-Type-Options") == "nosniff"
+        assert response.headers.get("Content-Length") is None
+        lines = _stream_lines(response)
+        assert lines[-1]["type"] == "turn.completed"
+    finally:
+        _stop(httpd, thread)
+
+
+def test_stream_tool_events_ordered_and_clean(tmp_path: Path) -> None:
+    call = ToolCall(
+        id="call-1",
+        name="bash",
+        arguments={"cmd": "echo hi"},
+        parse_error="invalid arguments",
+    )
+    llm = ScriptedLLM(
+        [
+            ChatReply(content=None, tool_calls=[call]),
+            ChatReply(content="final answer"),
+        ]
+    )
+    httpd, thread = _start(tmp_path, _chat(tmp_path, llm))
+    try:
+        created = _json(httpd, "/api/sessions", method="POST", data=b"")
+        response = _stream(
+            httpd,
+            f"/api/sessions/{created['id']}/turn/stream",
+            data=b'{"text":"run the bash tool now"}',
+        )
+        raws = [raw for raw in response]
+        lines = [json.loads(raw.decode("utf-8")) for raw in raws]
+        assert [item["type"] for item in lines] == [
+            "turn.accepted",
+            "llm.started",
+            "llm.finished",
+            "tool.started",
+            "tool.finished",
+            "llm.started",
+            "llm.finished",
+            "session.naming.started",
+            "session.naming.finished",
+            "turn.completed",
+        ]
+        assert lines[2] == {"type": "llm.finished", "round": 1, "tool_count": 1}
+        assert lines[3] == {
+            "type": "tool.started",
+            "round": 1,
+            "call_id": "call-1",
+            "name": "bash",
+        }
+        assert lines[4] == {
+            "type": "tool.finished",
+            "round": 1,
+            "call_id": "call-1",
+            "name": "bash",
+            "ok": False,
+        }
+        # Intermediate lines never carry user text, tool args, results, or stacks.
+        blob = b"".join(raws[:-1]).decode("utf-8")
+        assert "run the bash tool now" not in blob
+        assert "echo hi" not in blob
+        assert "invalid arguments" not in blob
+        assert "Traceback" not in blob
+    finally:
+        _stop(httpd, thread)
+
+
+def test_stream_sentinel_without_terminal_writes_fallback_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    httpd, thread = _start(tmp_path, _chat(tmp_path, FakeLLM(ChatReply(content="pong"))))
+    try:
+        created = _json(httpd, "/api/sessions", method="POST", data=b"")
+
+        def sentinel_only_worker(app, session_id, text, items, state):
+            items.put(TurnEvent(type="turn.accepted"))
+            items.put(_SENTINEL)
+
+        monkeypatch.setattr("thyca.serve._bridge_worker", sentinel_only_worker)
+        response = _stream(
+            httpd,
+            f"/api/sessions/{created['id']}/turn/stream",
+            data=b'{"text":"hi"}',
+        )
+        assert response.status == 200
+        lines = _stream_lines(response)
+        assert [item["type"] for item in lines] == ["turn.accepted", "turn.failed"]
+        assert lines[-1] == {
+            "type": "turn.failed",
+            "code": "chat_unavailable",
+            "message": "chat unavailable",
+        }
+    finally:
+        _stop(httpd, thread)
 
 
 def test_chat_js_shipped() -> None:

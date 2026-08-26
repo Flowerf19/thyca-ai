@@ -1,7 +1,7 @@
 ---
 status: done
 created: 2026-08-14
-last_updated: 2026-08-20
+last_updated: 2026-08-26
 ---
 
 # Service — Agent Loop (`thyca/agent/`)
@@ -50,6 +50,15 @@ Dataclass không frozen. `messages` / `results` `default_factory=list`. `round >
 - `assistant(stage)` → append text `stage.reply`; return text
 - `observe(stage)`: order results theo call id; append assistant+tool; `stage.messages.extend`; id lệch → `ValueError`
 - `loop_limit(stage)` → append `"loop limit reached"`
+
+### Events (2026-08-26)
+
+`thyca/agent/events.py`: `TurnEvent`, `EventSink`, `emit_event` (fail-open).
+`AgentLoop.run(..., event_sink=None)` emits `turn.accepted` after the user
+message is persisted, then `llm.started` / `llm.finished` each round.
+`Act.act(..., event_sink=None)` emits `tool.started` / `tool.finished`
+(completion order). `turn.completed` / `turn.failed` are transport-only.
+Callers that omit `event_sink` are unchanged.
 
 ### AgentLoop
 

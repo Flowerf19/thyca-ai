@@ -2,14 +2,14 @@ import { el } from "./dom.js";
 import { modes } from "./data.js";
 import { formatMarkdown } from "./markdown.js";
 import { escapeHtml } from "./memories.js";
-import { CLOSE_LINE, createThinkCycle, keyForMode, thinkingEvent } from "./staff-map.js";
-import { clearStaffs, mountStaff, syncStaffs } from "./staff.js";
+import { createNdjsonDecoder } from "./ndjson.js";
+import { scoreFromEvents } from "./staff-map.js";
+import { statusTextForEvent } from "./turn-status.js";
+import { clearStaffs, mountStaff } from "./staff.js";
 import { state } from "./state.js";
 
-let statusTimer = 0;
-let thinkCycle = null;
-let thinkEvents = [];
-let thinkKey = "C";
+let liveEvents = [];
+let liveScore = null;
 
 const EMPTY_BODY =
   '<div class="new-page-empty"><span aria-hidden="true">+</span><p>Chưa có tin nào.</p><small>Nói điều đầu tiên để mở phiên.</small></div>';
@@ -37,10 +37,8 @@ export async function createChatSession() {
 }
 
 export function beginOutgoingTurn(text) {
-  stopStatusCycle();
-  thinkKey = keyForMode(state.activeMode);
-  thinkCycle = createThinkCycle();
-  thinkEvents = [];
+  removeStatus();
+  clearStaffs(el.pageBody);
   let list = el.pageBody.querySelector(".entry-list");
   if (!list) {
     el.pageBody.innerHTML = '<div class="entry-list"></div>';
@@ -48,28 +46,18 @@ export function beginOutgoingTurn(text) {
   }
   list.insertAdjacentHTML("beforeend", entryHtml("user", text));
   list.lastElementChild.classList.add("is-enter");
-  clearStaffs(el.pageBody);
-  const first = thinkCycle.nextLine();
-  list.insertAdjacentHTML("beforeend", statusHtml(first));
-  const status = list.lastElementChild;
-  mountStaff(status, []);
-  startStatusCycle(status);
+  list.insertAdjacentHTML("beforeend", statusHtml());
+  liveEvents = [];
+  liveScore = scoreFromEvents([]);
+  mountStaff(list.lastElementChild, liveScore);
   scrollThread();
 }
 
-export function stopStatusCycle() {
-  if (statusTimer) {
-    window.clearInterval(statusTimer);
-    statusTimer = 0;
-  }
-}
-
 export function removeStatus() {
-  stopStatusCycle();
-  thinkCycle = null;
-  thinkEvents = [];
   const node = el.pageBody.querySelector(".entry-status");
-  if (node) node.remove();
+  if (!node) return;
+  clearStaffs(node);
+  node.remove();
 }
 
 export function settleIncoming() {
@@ -79,11 +67,7 @@ export function settleIncoming() {
   wrap.innerHTML = page?.body || "";
   const fresh = wrap.querySelector(".entry-list");
   if (!fresh || !liveList) return false;
-  stopStatusCycle();
-  if (thinkCycle) thinkEvents.push(thinkingEvent(CLOSE_LINE, thinkEvents.length, thinkKey));
-  const prefix = thinkEvents;
-  thinkCycle = null;
-  thinkEvents = [];
+  clearStaffs(el.pageBody);
   const kept = [...liveList.children].filter((node) => !node.classList.contains("entry-status")).length;
   liveList.replaceWith(fresh);
   [...fresh.children].slice(kept).forEach((node, index) => {
@@ -91,7 +75,7 @@ export function settleIncoming() {
     node.style.animationDelay = `${index * 80}ms`;
   });
   const born = [...fresh.children].slice(kept).find((node) => node.classList.contains("entry-thyca"));
-  if (born) mountStaff(born, prefix);
+  if (born && liveScore) mountStaff(born, liveScore);
   const heading = el.pageHeader.querySelector("h1");
   if (heading && page.title) heading.innerHTML = page.title;
   const kicker = el.pageHeader.querySelector(".page-kicker");
@@ -108,8 +92,82 @@ export async function sendChatTurn(text) {
     if (!created || !created.id) throw new Error("Không tạo được phiên.");
     sessionId = created.id;
   }
-  const detail = await postJson(`/api/sessions/${sessionId}/turn`, { text });
-  applyDetail(detail);
+  const response = await fetch(`/api/sessions/${sessionId}/turn/stream`, {
+    method: "POST",
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text }),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    const message = payload && payload.error ? String(payload.error) : "Không gửi được.";
+    throw new Error(message);
+  }
+  if (!response.body) throw new Error("Không nhận được trả lời.");
+  const decoder = createNdjsonDecoder();
+  const reader = response.body.getReader();
+  let completed = null;
+  let failed = null;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    for (const event of decoder.push(value)) {
+      const terminal = ingestTurnEvent(event);
+      if (terminal === "completed") completed = event.detail;
+      else if (terminal === "failed") failed = event;
+    }
+  }
+  for (const event of decoder.flush()) {
+    const terminal = ingestTurnEvent(event);
+    if (terminal === "completed") completed = event.detail;
+    else if (terminal === "failed") failed = event;
+  }
+  if (failed) {
+    const message = failed.message ? String(failed.message) : "Lượt đã dừng.";
+    throw new Error(message);
+  }
+  if (!completed) throw new Error("Không nhận được trả lời.");
+  applyDetail(completed);
+  return completed;
+}
+
+function ingestTurnEvent(event) {
+  liveEvents.push(event);
+  liveScore = scoreFromEvents(liveEvents);
+  applyStatus(event);
+  const status = chatStatusNode();
+  if (status) {
+    mountStaff(status, liveScore);
+    if (event.type === "turn.failed") status.classList.add("is-error");
+  }
+  if (event.type === "turn.completed") return "completed";
+  if (event.type === "turn.failed") return "failed";
+  return null;
+}
+
+function chatStatusNode() {
+  if (state.activeMode !== "chat") return null;
+  const status = el.pageBody.querySelector(".entry-status");
+  return status && status.isConnected ? status : null;
+}
+
+function applyStatus(event) {
+  const text = statusTextForEvent(event);
+  if (text === null) return;
+  const status = chatStatusNode();
+  const ticker = status && status.querySelector(".status-ticker");
+  if (!ticker || !ticker.isConnected) return;
+  if (reduceMotion()) {
+    let line = ticker.querySelector(".status-line");
+    if (!line) {
+      line = document.createElement("span");
+      line.className = "status-line";
+      ticker.append(line);
+    }
+    line.textContent = text;
+  } else {
+    slideStatus(ticker, text);
+  }
 }
 
 export async function fillChatAt(index) {
@@ -138,6 +196,8 @@ async function fillChatPage(page) {
 function applyDetail(detail) {
   if (!detail || !detail.id) throw new Error("Không nhận được trả lời.");
   let pages = modes.chat.pages;
+  const viewingId =
+    state.activeMode === "chat" ? String(pages[state.activePageIndex]?.sessionId || "") : null;
   let index = pages.findIndex((page) => page.sessionId === detail.id);
   if (index < 0) {
     pages = [pageFromDetail(detail), ...pages.filter((page) => page.sessionId)];
@@ -149,7 +209,9 @@ function applyDetail(detail) {
   const count = document.querySelector('[data-mode="chat"] .mode-count');
   if (count) count.textContent = String(pages.filter((page) => page.sessionId).length);
   state.activeSessionId = detail.id;
-  state.activePageIndex = index;
+  if (state.activeMode === "chat" && (viewingId === "" || viewingId === detail.id)) {
+    state.activePageIndex = index;
+  }
 }
 
 function applyDetailToPage(page, detail) {
@@ -268,27 +330,10 @@ export function threadHtml(messages) {
   return `<div class="entry-list">${parts.join("")}</div>`;
 }
 
-function statusHtml(line) {
+function statusHtml() {
   return `<article class="entry entry-thyca entry-status" aria-label="Thyca đang nghĩ" aria-live="off">
-      <div class="entry-thyca-head"><time>thyca</time><span class="status-ticker"><span class="status-line">${escapeHtml(line)}</span></span></div>
+      <div class="entry-thyca-head"><time>thyca</time><span class="status-ticker"><span class="status-line">Đang chờ Thyca…</span></span></div>
     </article>`;
-}
-
-function startStatusCycle(node) {
-  if (!node || !thinkCycle) return;
-  const ticker = node.querySelector(".status-ticker");
-  if (!ticker) return;
-  statusTimer = window.setInterval(() => {
-    const next = thinkCycle.nextLine();
-    thinkEvents.push(thinkingEvent(next, thinkEvents.length, thinkKey));
-    mountStaff(node, thinkEvents, { freshFrom: thinkEvents.length - 1 });
-    if (reduceMotion()) {
-      const line = ticker.querySelector(".status-line");
-      if (line) line.textContent = next;
-      return;
-    }
-    slideStatus(ticker, next);
-  }, 3000);
 }
 
 function slideStatus(ticker, next) {

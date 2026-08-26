@@ -10,6 +10,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 DRAW = ROOT / "webui" / "js" / "staff-draw.js"
 STAFF = ROOT / "webui" / "js" / "staff.js"
+MAP = ROOT / "webui" / "js" / "staff-map.js"
 
 SHIM = r"""
 class El {
@@ -19,6 +20,7 @@ class El {
     this.children = [];
     this.parentNode = null;
     this.className = "";
+    this.textContent = "";
     this.dataset = {};
     this.width = 400;
     const self = this;
@@ -30,14 +32,24 @@ class El {
   }
   getAttribute(k) { return this.attrs[k] ?? null; }
   append(...nodes) {
-    for (const n of nodes) { n.parentNode = this; this.children.push(n); }
+    for (const n of nodes) {
+      if (typeof n === "string") { this.textContent += n; continue; }
+      n.parentNode = this; this.children.push(n);
+    }
   }
-  replaceChildren(...nodes) { this.children = []; this.append(...nodes); }
+  replaceChildren(...nodes) { this.children = []; this.textContent = ""; this.append(...nodes); }
   insertBefore(node, ref) {
     node.parentNode = this;
     const i = this.children.indexOf(ref);
     if (i < 0) this.children.push(node);
     else this.children.splice(i, 0, node);
+  }
+  remove() {
+    if (!this.parentNode) return;
+    const kids = this.parentNode.children;
+    const i = kids.indexOf(this);
+    if (i >= 0) kids.splice(i, 1);
+    this.parentNode = null;
   }
   getBoundingClientRect() { return { width: this.width }; }
   querySelector(sel) { return this.querySelectorAll(sel)[0] || null; }
@@ -56,10 +68,18 @@ class El {
   }
 }
 function match(n, sel) {
-  if (sel.startsWith(".")) return (n.className || "").split(/\s+/).includes(sel.slice(1));
+  const have = (n.className || "").split(/\s+/);
+  const attr = sel.match(/^\[([\w-]+)(?:='([^']*)')?\]$/);
+  if (attr) {
+    const val = n.getAttribute(attr[1]);
+    return attr[2] === undefined ? val != null : val === attr[2];
+  }
+  if (sel.startsWith(".")) {
+    return sel.slice(1).split(".").filter(Boolean).every((c) => have.includes(c));
+  }
   if (sel.includes(".")) {
-    const [tag, cls] = sel.split(".");
-    return n.tagName === tag && (n.className || "").split(/\s+/).includes(cls);
+    const [tag, ...classes] = sel.split(".");
+    return n.tagName === tag && classes.every((c) => have.includes(c));
   }
   return n.tagName === sel.toLowerCase();
 }
@@ -68,7 +88,13 @@ globalThis.document = {
   createElement(name) { return new El(name); },
 };
 globalThis.window = { matchMedia() { return { matches: false }; } };
-globalThis.ResizeObserver = class { observe() {} disconnect() {} };
+const observed = new Set();
+globalThis.__observed = observed;
+globalThis.ResizeObserver = class {
+  observe(host) { observed.add(host); }
+  unobserve(host) { observed.delete(host); }
+  disconnect() { observed.clear(); }
+};
 """
 
 
@@ -84,6 +110,7 @@ def _eval(node: str, imports: str, expression: str) -> object:
     source = (
         SHIM
         + f"import {{ {imports} }} from '{DRAW.as_posix()}';\n"
+        + f"import {{ scoreFromEvents }} from '{MAP.as_posix()}';\n"
         + f"console.log(JSON.stringify({expression}));\n"
     )
     result = subprocess.run(
@@ -96,39 +123,93 @@ def _eval(node: str, imports: str, expression: str) -> object:
     return json.loads(result.stdout)
 
 
-def test_empty_staff_has_five_lines_and_clef(node: str) -> None:
+def test_empty_score_one_system_with_clef_and_time(node: str) -> None:
+    # scoreFromEvents([]) -> one I measure, whole rest, no terminal.
     result = _eval(
         node,
         "renderStaff",
         """(() => {
           const svg = renderStaff([], { widthPx: 480 });
-          const lines = svg.querySelectorAll(".staff-line");
-          const clefs = svg.querySelectorAll(".staff-clef");
-          return { lines: lines.length, clefs: clefs.length, tall: svg.className.includes("is-tall") };
+          return {
+            lines: svg.querySelectorAll(".staff-line").length,
+            clefs: svg.querySelectorAll(".staff-clef").length,
+            tall: svg.className.includes("is-tall"),
+            time: svg.querySelectorAll(".staff-time").length,
+            systems: svg.querySelectorAll("g.staff-system").length,
+          };
         })()""",
     )
-    assert result == {"lines": 5, "clefs": 1, "tall": False}
+    assert result == {"lines": 5, "clefs": 1, "tall": False, "time": 1, "systems": 1}
 
 
-def test_long_staff_wraps_second(node: str) -> None:
+def test_nine_measures_make_two_systems_with_one_time_signature(node: str) -> None:
+    # 36 finished tools = 9 activity measures (one per 4 events), no terminal.
     result = _eval(
         node,
         "renderStaff",
         """(() => {
-          const events = Array.from({ length: 40 }, () => ({ kind: "note", duration: "q", steps: [5], chord: "I", sharps: [] }));
-          const svg = renderStaff(events, { widthPx: 600 });
+          const events = Array.from({ length: 36 }, () => ({ type: "tool.finished", ok: true }));
+          const score = scoreFromEvents(events);
+          const svg = renderStaff(score, { widthPx: 720 });
           return {
-            tall: svg.className.includes("is-tall"),
             lines: svg.querySelectorAll(".staff-line").length,
             clefs: svg.querySelectorAll(".staff-clef").length,
-            notes: svg.querySelectorAll(".staff-event").length,
+            tall: svg.className.includes("is-tall"),
+            time: svg.querySelectorAll(".staff-time").length,
+            measures: svg.querySelectorAll("g.staff-measure").length,
           };
         })()""",
     )
-    assert result["tall"] is True
-    assert result["lines"] == 10
-    assert result["clefs"] == 2
-    assert result["notes"] == 40
+    assert result == {"lines": 10, "clefs": 2, "tall": True, "time": 1, "measures": 9}
+
+
+def test_completed_terminal_has_double_barline(node: str) -> None:
+    result = _eval(
+        node,
+        "renderStaff",
+        """(() => {
+          const events = [
+            { type: "turn.accepted" },
+            { type: "tool.finished", ok: true },
+            { type: "turn.completed", detail: { id: "x" } },
+          ];
+          const score = scoreFromEvents(events);
+          const svg = renderStaff(score, { widthPx: 480 });
+          // Count final bar group: the last measure's measureContent.
+          const allBars = svg.querySelectorAll(".staff-bar");
+          const finalBars = svg.querySelectorAll(".staff-bar.is-final");
+          const finalGroup = svg.querySelectorAll("g.staff-bar-group").length;
+          return { allBars: allBars.length, finalBars: finalBars.length, finalGroup: finalGroup };
+        })()""",
+    )
+    assert result["finalGroup"] == 1
+    assert result["finalBars"] == 1
+    # completed: 1 single barline (between m0,m1) + 2 lines in final group (thin+thick) = 3
+    assert result["allBars"] == 3
+
+
+def test_failed_terminal_has_single_barline(node: str) -> None:
+    result = _eval(
+        node,
+        "renderStaff",
+        """(() => {
+          const events = [
+            { type: "turn.accepted" },
+            { type: "turn.failed", code: "llm_error" },
+          ];
+          const score = scoreFromEvents(events);
+          const svg = renderStaff(score, { widthPx: 480 });
+          return {
+            allBars: svg.querySelectorAll(".staff-bar").length,
+            finalBars: svg.querySelectorAll(".staff-bar.is-final").length,
+            finalGroup: svg.querySelectorAll("g.staff-bar-group").length,
+          };
+        })()""",
+    )
+    assert result["finalBars"] == 0
+    assert result["finalGroup"] == 0
+    # failed: 1 single barline between measures only; in-flight/failed has single end.
+    assert result["allBars"] == 2
 
 
 def test_sync_staffs_only_on_thyca(node: str) -> None:
@@ -166,3 +247,132 @@ def test_sync_staffs_only_on_thyca(node: str) -> None:
         cwd=ROOT,
     )
     assert json.loads(result.stdout) == {"user": 0, "thyca": 0, "status": 1}
+
+
+def test_smufl_glyphs_match_duration(node: str) -> None:
+    result = _eval(
+        node,
+        "renderStaff",
+        """(() => {
+          const empty = renderStaff([]);
+          const accepted = renderStaff(scoreFromEvents([{type:"turn.accepted"}]));
+          const done = renderStaff(scoreFromEvents([
+            {type:"turn.accepted"},
+            {type:"turn.completed"},
+          ]));
+          const names = (svg) => [...svg.querySelectorAll("[data-glyph]")].map((n) => n.getAttribute("data-glyph"));
+          const codes = (svg) => [...svg.querySelectorAll("[data-glyph]")].map((n) => n.textContent.codePointAt(0));
+          return {
+            empty: names(empty),
+            emptyCodes: codes(empty),
+            accepted: names(accepted),
+            done: names(done),
+          };
+        })()""",
+    )
+    assert result["empty"][:3] == ["gClef", "timeSig4", "timeSig4"]
+    assert "restWhole" in result["empty"]
+    assert result["emptyCodes"][0] == 0xE050
+    assert result["emptyCodes"][1] == 0xE084
+    assert "noteheadBlack" in result["accepted"]
+    assert "noteheadHalf" in result["done"]
+
+
+def test_stem_side_follows_middle_line(node: str) -> None:
+    result = _eval(
+        node,
+        "renderStaff",
+        """(() => {
+          const svg = renderStaff(scoreFromEvents([{type:"turn.accepted"}]));
+          const head = svg.querySelector("[data-glyph='noteheadBlack']");
+          const stem = svg.querySelector(".staff-stem");
+          return {
+            headX: Number(head.getAttribute("x")),
+            stemX: Number(stem.getAttribute("x1")),
+            glyph: head.getAttribute("data-glyph"),
+          };
+        })()""",
+    )
+    # C5 is above B4, so stem down = left of the head.
+    assert result["glyph"] == "noteheadBlack"
+    assert result["stemX"] < result["headX"]
+
+
+def test_clear_staffs_unobserves_detached_host(node: str) -> None:
+    source = (
+        SHIM
+        + f"import {{ mountStaff, clearStaffs }} from '{STAFF.as_posix()}';\n"
+        + """
+        const article = new El("article");
+        article.className = "entry entry-thyca entry-status";
+        mountStaff(article, []);
+        const host = article.querySelector(".thyca-staff-host");
+        const before = globalThis.__observed.has(host);
+        clearStaffs(article);
+        console.log(JSON.stringify({
+          before,
+          after: globalThis.__observed.has(host),
+          remaining: article.querySelectorAll(".thyca-staff-host").length,
+        }));
+        """
+    )
+    result = subprocess.run(
+        [node, "--input-type=module", "-e", source],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+    )
+    assert json.loads(result.stdout) == {"before": True, "after": False, "remaining": 0}
+
+
+def test_remount_same_host_redraws_intra_measure_event(node: str) -> None:
+    source = (
+        SHIM
+        + f"import {{ mountStaff }} from '{STAFF.as_posix()}';\n"
+        + f"import {{ scoreFromEvents }} from '{MAP.as_posix()}';\n"
+        + """
+        const article = new El("article");
+        article.className = "entry entry-thyca entry-status";
+        mountStaff(article, []);
+        const empty = [...article.querySelectorAll("[data-glyph]")].map((n) => n.getAttribute("data-glyph"));
+        mountStaff(article, scoreFromEvents([{ type: "turn.accepted" }]));
+        const accepted = [...article.querySelectorAll("[data-glyph]")].map((n) => n.getAttribute("data-glyph"));
+        console.log(JSON.stringify({ empty, accepted }));
+        """
+    )
+    result = subprocess.run(
+        [node, "--input-type=module", "-e", source],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+    )
+    payload = json.loads(result.stdout)
+    assert "noteheadBlack" not in payload["empty"]
+    assert "restWhole" in payload["empty"]
+    assert "noteheadBlack" in payload["accepted"]
+
+
+def test_fifty_mount_clear_leaves_observer_empty(node: str) -> None:
+    source = (
+        SHIM
+        + f"import {{ mountStaff, clearStaffs }} from '{STAFF.as_posix()}';\n"
+        + """
+        const article = new El("article");
+        article.className = "entry entry-thyca entry-status";
+        for (let i = 0; i < 50; i += 1) {
+          mountStaff(article, []);
+          clearStaffs(article);
+        }
+        console.log(JSON.stringify({ leftover: globalThis.__observed.size }));
+        """
+    )
+    result = subprocess.run(
+        [node, "--input-type=module", "-e", source],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+    )
+    assert json.loads(result.stdout) == {"leftover": 0}

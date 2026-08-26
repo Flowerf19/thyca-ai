@@ -1,5 +1,5 @@
-import { fillChatAt, hydrateChat, stopStatusCycle } from "./chat.js";
-import { syncStaffs } from "./staff.js";
+import { fillChatAt, hydrateChat } from "./chat.js";
+import { clearStaffs, syncStaffs } from "./staff.js";
 import { icons, modes } from "./data.js";
 import { el } from "./dom.js";
 import { closeDrawer } from "./drawer.js";
@@ -90,6 +90,7 @@ export function renderPage(pageIndex = 0) {
   el.modeBreadcrumb.textContent = data.label;
   el.pageListLabel.textContent = data.listLabel;
   el.pageHeader.innerHTML = `<div class="page-header-copy"><p class="page-kicker">${page.kicker || data.kicker}</p><h1>${page.title}</h1><p class="page-note">${data.note}</p></div><div class="page-header-mark" aria-hidden="true">${icons[state.activeMode]}<span>${data.label}</span></div>`;
+  clearStaffs(el.pageBody);
   el.pageBody.innerHTML = page.body || data.body;
   if (state.activeMode === "chat") syncStaffs(el.pageBody);
   else syncStaffs(null);
@@ -113,7 +114,6 @@ export async function renderMode(mode) {
   const gen = ++modeGen;
   state.activeMode = mode;
   state.activePageIndex = 0;
-  stopStatusCycle();
   stopMemoriesPoll();
   if (mode === "memories") {
     lastStatsJson = "";

@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 from thyca.agent.act import Act
 from thyca.agent.assemble import Assemble
+from thyca.agent.events import EventSink, TurnEvent, emit_event
 from thyca.agent.loop import AgentLoop
 from thyca.agent.observe import Observe
 from thyca.agent.think import LLMPort, Think
@@ -104,7 +105,7 @@ class ChatApp:
             session = self._sessions.create()
             return self._session_detail(session)
 
-    def turn(self, session_id: str, text: str) -> dict:
+    def turn(self, session_id: str, text: str, event_sink: EventSink | None = None) -> dict:
         if not isinstance(text, str):
             raise ValueError("text must be a string")
         cleaned = text.strip()
@@ -113,9 +114,11 @@ class ChatApp:
         if len(cleaned) > TEXT_MAX:
             raise ValueError("too long")
         with self._turn_lock:
-            return self._submit(self._run_turn(session_id, cleaned))
+            return self._submit(self._run_turn(session_id, cleaned, event_sink))
 
-    async def _run_turn(self, session_id: str, text: str) -> dict:
+    async def _run_turn(
+        self, session_id: str, text: str, event_sink: EventSink | None = None
+    ) -> dict:
         connect = self._connect or ConnectFactory.create("openai_chat", self._cfg.provider)
         owns = self._connect is None
         try:
@@ -130,8 +133,8 @@ class ChatApp:
                 tools=self._tools,
             )
             hot = self._memory.refresh(self._state, datetime.now(self._zone))
-            reply = await loop.run(text, hot=hot)
-            await self._name_if_needed(connect)
+            reply = await loop.run(text, hot=hot, event_sink=event_sink)
+            await self._name_if_needed(connect, event_sink)
             return {**self._session_detail(self._sessions.current), "reply": reply}
         finally:
             if owns:
@@ -139,17 +142,25 @@ class ChatApp:
                 if close is not None:
                     await close()
 
-    async def _name_if_needed(self, connect: LLMPort) -> None:
+    async def _name_if_needed(
+        self, connect: LLMPort, event_sink: EventSink | None = None
+    ) -> bool:
         session = self._sessions.current
         if session.title:
-            return
+            return False
+        emit_event(event_sink, TurnEvent(type="session.naming.started"))
+        updated = False
         try:
             cleaned = await propose_title(connect.chat, session)
         except LLMError:
-            return
-        if cleaned is None:
-            return
-        self._sessions.set_title(cleaned)
+            cleaned = None
+        if cleaned is not None:
+            stored = self._sessions.set_title(cleaned)
+            updated = stored is not None
+        emit_event(
+            event_sink, TurnEvent(type="session.naming.finished", updated=updated)
+        )
+        return updated
 
     def shutdown(self) -> None:
         if self._stopped:

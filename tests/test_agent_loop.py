@@ -7,6 +7,7 @@ from pathlib import Path
 
 from thyca.agent.act import Act
 from thyca.agent.assemble import Assemble
+from thyca.agent.events import TurnEvent
 from thyca.agent.loop import AgentLoop
 from thyca.agent.observe import Observe
 from thyca.agent.think import ChatReply, Think
@@ -71,6 +72,124 @@ def _loop(
         observe=Observe(manager),
         loop_max=loop_max,
     )
+
+
+def test_text_only_event_order_and_persist_unchanged(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path)
+    session = manager.create()
+    llm = FakeLLM([ChatReply(content="hello back")])
+    dispatcher = FakeDispatcher({})
+    events: list[TurnEvent] = []
+
+    assert (
+        asyncio.run(_loop(manager, llm, dispatcher).run("hello", event_sink=events.append))
+        == "hello back"
+    )
+    assert [(event.type, event.round, event.tool_count) for event in events] == [
+        ("turn.accepted", None, None),
+        ("llm.started", 1, None),
+        ("llm.finished", 1, 0),
+    ]
+    messages = _load_messages(tmp_path, session.id)
+    assert [(message.role, message.content) for message in messages] == [
+        ("user", "hello"),
+        ("assistant", "hello back"),
+    ]
+
+
+def test_tool_round_then_text_emits_round_and_tool_events(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path)
+    session = manager.create()
+    call = ToolCall(id="call-1", name="echo", arguments={"value": "x"})
+    llm = FakeLLM(
+        [
+            ChatReply(content=None, tool_calls=[call]),
+            ChatReply(content="finished"),
+        ]
+    )
+    dispatcher = FakeDispatcher(
+        {"call-1": ToolResult(tool_call_id="call-1", name="echo", content="x")}
+    )
+    events: list[TurnEvent] = []
+
+    assert (
+        asyncio.run(_loop(manager, llm, dispatcher).run("use echo", event_sink=events.append))
+        == "finished"
+    )
+    assert [(event.type, event.round, event.tool_count) for event in events] == [
+        ("turn.accepted", None, None),
+        ("llm.started", 1, None),
+        ("llm.finished", 1, 1),
+        ("tool.started", 1, None),
+        ("tool.finished", 1, None),
+        ("llm.started", 2, None),
+        ("llm.finished", 2, 0),
+    ]
+    started, finished = events[3:5]
+    assert (started.type, started.round, started.call_id, started.name) == (
+        "tool.started",
+        1,
+        "call-1",
+        "echo",
+    )
+    assert (finished.type, finished.round, finished.call_id, finished.name, finished.ok) == (
+        "tool.finished",
+        1,
+        "call-1",
+        "echo",
+        True,
+    )
+    messages = _load_messages(tmp_path, session.id)
+    assert [message.role for message in messages] == ["user", "assistant", "tool", "assistant"]
+    assert messages[-1].content == "finished"
+
+
+def test_loop_max_emits_no_finished_for_skipped_round(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path)
+    session = manager.create()
+    call = ToolCall(id="call-1", name="echo")
+    llm = FakeLLM([ChatReply(content=None, tool_calls=[call])])
+    dispatcher = FakeDispatcher(
+        {"call-1": ToolResult(tool_call_id="call-1", name="echo", content="result")}
+    )
+    events: list[TurnEvent] = []
+
+    assert (
+        asyncio.run(_loop(manager, llm, dispatcher, loop_max=1).run(
+            "stop after one", event_sink=events.append
+        ))
+        == "loop limit reached"
+    )
+    assert [(event.type, event.round, event.tool_count) for event in events] == [
+        ("turn.accepted", None, None),
+        ("llm.started", 1, None),
+        ("llm.finished", 1, 1),
+        ("tool.started", 1, None),
+        ("tool.finished", 1, None),
+    ]
+    messages = _load_messages(tmp_path, session.id)
+    assert [message.role for message in messages] == ["user", "assistant", "tool", "assistant"]
+    assert messages[-1].content == "loop limit reached"
+
+
+def test_sink_raise_fails_open_turn_still_persists(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path)
+    session = manager.create()
+    llm = FakeLLM([ChatReply(content="hello back")])
+    dispatcher = FakeDispatcher({})
+
+    def boom(_event: TurnEvent) -> None:
+        raise RuntimeError("sink exploded")
+
+    assert (
+        asyncio.run(_loop(manager, llm, dispatcher).run("hello", event_sink=boom))
+        == "hello back"
+    )
+    messages = _load_messages(tmp_path, session.id)
+    assert [(message.role, message.content) for message in messages] == [
+        ("user", "hello"),
+        ("assistant", "hello back"),
+    ]
 
 
 def test_text_only_compacts_before_chat_and_persists_user_and_assistant(tmp_path: Path) -> None:

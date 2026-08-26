@@ -1,8 +1,12 @@
 ---
 status: done
 created: 2026-08-22
-last_updated: 2026-08-22
+last_updated: 2026-08-26
 ---
+
+> Superseded in part by `thyca-operational-music-trace.md` (2026-08-26):
+> `POST /api/sessions/{id}/turn` JSON remains; Chat live turns use
+> `POST .../turn/stream` NDJSON. Assumption “Không SSE/stream” no longer holds.
 
 # WebUI Chat — nối session JSONL + AgentLoop
 
@@ -48,7 +52,7 @@ Success: `thyca --serve` → sidebar Chat là `~/.thyca/sessions/*.jsonl`; mở 
 ## Assumptions
 
 1. Chat sống = gửi lượt, không chỉ xem lịch sử. Composer giả là sai khi đã hydrate session thật.
-2. Không SSE/stream. Một POST đợi hết loop (httpx read 60s).
+2. ~~Không SSE/stream. Một POST đợi hết loop.~~ Superseded: `/turn` still blocks; `/turn/stream` is NDJSON.
 3. Một user local: serialize mọi turn. Tab thứ hai chờ, không 409.
 4. Cùng origin, bind `127.0.0.1`. Không CORS, không auth — cùng trust với CLI (tool chạy thẳng).
 5. Mock tĩnh không API → copy `data.js` như Memories.

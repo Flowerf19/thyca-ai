@@ -477,6 +477,12 @@
   color: var(--color-ink-2);
 }
 
+@font-face {
+  font-family: Bravura;
+  src: url("../fonts/Bravura.woff2") format("woff2");
+  font-display: block;
+}
+
 .entry-thyca .thyca-staff-host {
   height: 60px;
   margin-block-start: 0;
@@ -511,21 +517,18 @@
   stroke-width: 1;
 }
 
-.staff-clef {
+.staff-glyph {
+  font-family: Bravura, serif;
   fill: var(--color-accent);
+  fill-opacity: 0.82;
+}
+
+.staff-clef {
   fill-opacity: 0.7;
 }
 
-.staff-head {
-  fill: var(--color-accent);
-  fill-opacity: 0.82;
-  stroke: var(--color-accent);
-  stroke-opacity: 0.82;
-  stroke-width: 1;
-}
-
-.staff-head.is-whole {
-  fill-opacity: 0;
+.staff-rest {
+  fill-opacity: 0.7;
 }
 
 .staff-stem {
@@ -533,69 +536,6 @@
   stroke-opacity: 0.82;
   stroke-width: 1.2;
   stroke-linecap: round;
-}
-
-.staff-rest {
-  fill: none;
-  stroke: var(--color-accent);
-  stroke-opacity: 0.5;
-  stroke-width: 1.35;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.staff-accidental {
-  fill: none;
-  stroke: var(--color-accent);
-  stroke-opacity: 0.82;
-  stroke-width: 1.15;
-  stroke-linecap: round;
-}
-
-.staff-event.is-fresh {
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: staff-note-in 160ms var(--ease-out) both;
-}
-
-.staff-event.is-fresh .staff-head {
-  animation: staff-head-in 160ms var(--ease-out) both;
-}
-
-.staff-event.is-fresh .staff-head.is-whole {
-  animation-name: staff-whole-in;
-}
-
-@keyframes staff-note-in {
-  from {
-    transform: scale(0.85);
-  }
-
-  to {
-    transform: scale(1);
-  }
-}
-
-@keyframes staff-head-in {
-  from {
-    fill-opacity: 0.95;
-    stroke-opacity: 0.95;
-  }
-
-  to {
-    fill-opacity: 0.82;
-    stroke-opacity: 0.82;
-  }
-}
-
-@keyframes staff-whole-in {
-  from {
-    stroke-opacity: 0.95;
-  }
-
-  to {
-    stroke-opacity: 0.82;
-  }
 }
 
 .entry.is-enter,

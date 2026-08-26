@@ -259,6 +259,16 @@
   min-width: 0;
 }
 
+.entry-user {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-xs);
+  padding: var(--space-md) var(--space-md) var(--space-sm);
+  border-inline-start: 2px solid var(--color-user);
+  background: linear-gradient(to right, var(--color-user-soft), transparent 75%);
+}
+
 .entry + .entry {
   margin-block-start: var(--space-xl);
 }
@@ -484,24 +494,17 @@
 }
 
 .entry-thyca .thyca-staff-host {
-  height: 60px;
+  height: auto;
   margin-block-start: 0;
-}
-
-.entry-thyca .thyca-staff-host:has(.thyca-staff.is-tall) {
-  height: 124px;
 }
 
 .thyca-staff {
   display: block;
-  width: 100%;
-  height: 60px;
+  width: auto;
+  max-width: 100%;
+  height: auto;
   overflow: visible;
   pointer-events: none;
-}
-
-.thyca-staff.is-tall {
-  height: 124px;
 }
 
 .staff-line {

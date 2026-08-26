@@ -142,25 +142,34 @@ def test_empty_score_one_system_with_clef_and_time(node: str) -> None:
     assert result == {"lines": 5, "clefs": 1, "tall": False, "time": 1, "systems": 1}
 
 
-def test_nine_measures_make_two_systems_with_one_time_signature(node: str) -> None:
-    # 36 finished tools = 9 activity measures (one per 4 events), no terminal.
+def test_measures_wrap_only_when_width_runs_out(node: str) -> None:
+    # 128px bars: 900px fits 6, 320px fits 2.
     result = _eval(
         node,
         "renderStaff",
         """(() => {
-          const events = Array.from({ length: 36 }, () => ({ type: "tool.finished", ok: true }));
-          const score = scoreFromEvents(events);
-          const svg = renderStaff(score, { widthPx: 720 });
+          const tools = (n) => Array.from({ length: n }, () => ({ type: "tool.finished", ok: true }));
+          const sixWide = renderStaff(scoreFromEvents(tools(24)), { widthPx: 900 });
+          const sevenWide = renderStaff(scoreFromEvents(tools(28)), { widthPx: 900 });
+          const threeNarrow = renderStaff(scoreFromEvents(tools(12)), { widthPx: 320 });
+          const box = (svg) => svg.getAttribute("viewBox").split(" ").map(Number);
           return {
-            lines: svg.querySelectorAll(".staff-line").length,
-            clefs: svg.querySelectorAll(".staff-clef").length,
-            tall: svg.className.includes("is-tall"),
-            time: svg.querySelectorAll(".staff-time").length,
-            measures: svg.querySelectorAll("g.staff-measure").length,
+            sixWideSystems: sixWide.querySelectorAll("g.staff-system").length,
+            sevenWideSystems: sevenWide.querySelectorAll("g.staff-system").length,
+            threeNarrowSystems: threeNarrow.querySelectorAll("g.staff-system").length,
+            sevenClefs: sevenWide.querySelectorAll(".staff-clef").length,
+            sevenTime: sevenWide.querySelectorAll(".staff-time").length,
+            sixTall: box(sixWide)[3],
+            sevenTall: box(sevenWide)[3],
           };
         })()""",
     )
-    assert result == {"lines": 10, "clefs": 2, "tall": True, "time": 1, "measures": 9}
+    assert result["sixWideSystems"] == 1
+    assert result["sevenWideSystems"] == 2
+    assert result["threeNarrowSystems"] == 2
+    assert result["sevenClefs"] == 2
+    assert result["sevenTime"] == 1
+    assert result["sevenTall"] > result["sixTall"]
 
 
 def test_completed_terminal_has_double_barline(node: str) -> None:
@@ -184,8 +193,8 @@ def test_completed_terminal_has_double_barline(node: str) -> None:
     )
     assert result["finalGroup"] == 1
     assert result["finalBars"] == 1
-    # completed: 1 single barline (between m0,m1) + 2 lines in final group (thin+thick) = 3
-    assert result["allBars"] == 3
+    # 480px fits 3 bars: 2 singles + thin+thick final at the end of the line.
+    assert result["allBars"] == 4
 
 
 def test_failed_terminal_has_single_barline(node: str) -> None:
@@ -208,8 +217,8 @@ def test_failed_terminal_has_single_barline(node: str) -> None:
     )
     assert result["finalBars"] == 0
     assert result["finalGroup"] == 0
-    # failed: 1 single barline between measures only; in-flight/failed has single end.
-    assert result["allBars"] == 2
+    # failed: 480px fits 3 single barlines, no final group.
+    assert result["allBars"] == 3
 
 
 def test_sync_staffs_only_on_thyca(node: str) -> None:

@@ -144,6 +144,10 @@
     padding-inline: var(--space-sm);
   }
 
+  .entry-user {
+    padding-inline: var(--space-sm);
+  }
+
   .entry-copy {
     font-size: var(--text-md);
   }

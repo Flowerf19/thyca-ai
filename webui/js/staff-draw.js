@@ -1,13 +1,13 @@
 import { scoreFromEvents } from "./staff-map.js";
 
 const NS = "http://www.w3.org/2000/svg";
-const H = 60;
-const GAP = 7;
-const TOP = 16;
+const H = 48;
+const GAP = 6;
+const TOP = 13;
 const BOTTOM = TOP + GAP * 4;
-const PAD_LEFT = 40;
-const PAD_RIGHT = 12;
-const MAX_PER_SYSTEM = 8;
+const PAD_LEFT = 32;
+const PAD_RIGHT = 10;
+const MEASURE_W = 128;
 const STAFF_GAP = 4;
 const STEM = GAP * 3.5;
 const EM = GAP * 4; // SMuFL em = 4 staff spaces
@@ -36,20 +36,25 @@ function normalizeScore(score) {
   return score;
 }
 
+function barsPerSystem(widthPx) {
+  const avail = Math.max(MEASURE_W, Math.max(240, widthPx) - PAD_LEFT - PAD_RIGHT);
+  return Math.max(1, Math.floor(avail / MEASURE_W));
+}
+
 export function renderStaff(score, { widthPx = 560 } = {}) {
-  const width = Math.max(240, widthPx);
   const normalized = normalizeScore(score);
   const measures = normalized.measures;
   const total = measures.length;
-  const systemCount = total <= MAX_PER_SYSTEM ? 1 : 2;
-  const perSystem = systemCount === 1 ? total : Math.ceil(total / 2);
-  const measureW = (width - PAD_LEFT - PAD_RIGHT) / perSystem;
-  const height = systemCount === 1 ? H : H * 2 + STAFF_GAP;
+  const perSystem = barsPerSystem(widthPx);
+  const systemCount = Math.max(1, Math.ceil(total / perSystem));
+  const measureW = MEASURE_W;
+  const width = PAD_LEFT + measureW * perSystem + PAD_RIGHT;
+  const height = systemCount * H + Math.max(0, systemCount - 1) * STAFF_GAP;
 
   const svg = node("svg", {
     class: systemCount > 1 ? "thyca-staff is-tall" : "thyca-staff",
     viewBox: `0 0 ${width} ${height}`,
-    width: "100%",
+    width: String(width),
     height: String(height),
     fill: "none",
     "aria-hidden": "true",
@@ -60,23 +65,27 @@ export function renderStaff(score, { widthPx = 560 } = {}) {
     const dy = sys * (H + STAFF_GAP);
     const from = sys * perSystem;
     const to = Math.min(from + perSystem, total);
-    svg.append(staffSystem(measures, from, to, width, measureW, dy, sys === 0));
+    svg.append(staffSystem(measures, from, to, width, measureW, dy, sys === 0, perSystem));
   }
   return svg;
 }
 
-function staffSystem(measures, from, to, width, measureW, dy, showTime) {
+function staffSystem(measures, from, to, width, measureW, dy, showTime, slots) {
   const group = node("g", { class: "staff-system" });
-  const endX = PAD_LEFT + (to - from) * measureW;
+  const endX = PAD_LEFT + slots * measureW;
+  const lastHasFinal = !!measures[measures.length - 1]?.finalBarline;
+  const lastSystem = from + slots >= measures.length;
   group.append(staffLines(width, endX, dy));
   group.append(clef(dy));
   if (showTime) group.append(timeSignature(dy));
-  for (let i = from; i < to; i += 1) {
-    const m = measures[i];
-    const mIndex = i - from;
-    const xStart = PAD_LEFT + mIndex * measureW;
-    const isLastOverall = i === to - 1 && i === measures.length - 1;
-    group.append(measureContent(m, xStart, measureW, dy, isLastOverall));
+  for (let slot = 0; slot < slots; slot += 1) {
+    const i = from + slot;
+    const xStart = PAD_LEFT + slot * measureW;
+    const finish = lastSystem && slot === slots - 1 && lastHasFinal;
+    const m = i < to ? measures[i] : null;
+    if (m) group.append(measureContent(m, xStart, measureW, dy, finish));
+    else if (finish) group.append(finalBarline(xStart + measureW, dy, true));
+    else group.append(singleBarline(xStart + measureW, dy));
   }
   return group;
 }
@@ -231,7 +240,7 @@ function notehead(x, y, duration) {
 function stem(x, steps, up, dy) {
   const low = yOf(steps[0]) + dy;
   const high = yOf(steps[steps.length - 1]) + dy;
-  const x1 = up ? x + 4.1 : x - 4.1;
+  const x1 = up ? x + GAP * 0.58 : x - GAP * 0.58;
   const y1 = up ? low : high;
   const y2 = up ? high - STEM : low + STEM;
   return node("line", { class: "staff-stem", x1: String(x1), x2: String(x1), y1: String(y1), y2: String(y2) });
@@ -246,13 +255,13 @@ function ledgerLines(step, x, dy) {
   if (step < 0) {
     for (let line = -2; line >= step; line -= 2) {
       const y = yOf(line) + dy;
-      lines.push(node("line", { class: "staff-ledger", x1: String(x - 6.5), x2: String(x + 6.5), y1: String(y), y2: String(y) }));
+      lines.push(node("line", { class: "staff-ledger", x1: String(x - GAP * 0.93), x2: String(x + GAP * 0.93), y1: String(y), y2: String(y) }));
     }
   }
   if (step > 8) {
     for (let line = 10; line <= step; line += 2) {
       const y = yOf(line) + dy;
-      lines.push(node("line", { class: "staff-ledger", x1: String(x - 6.5), x2: String(x + 6.5), y1: String(y), y2: String(y) }));
+      lines.push(node("line", { class: "staff-ledger", x1: String(x - GAP * 0.93), x2: String(x + GAP * 0.93), y1: String(y), y2: String(y) }));
     }
   }
   return lines;

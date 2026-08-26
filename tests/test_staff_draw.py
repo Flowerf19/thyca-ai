@@ -172,6 +172,44 @@ def test_measures_wrap_only_when_width_runs_out(node: str) -> None:
     assert result["sevenTall"] > result["sixTall"]
 
 
+def test_first_note_clears_time_signature(node: str) -> None:
+    result = _eval(
+        node,
+        "renderStaff",
+        """(() => {
+          const svg = renderStaff(scoreFromEvents([{type:"turn.accepted"}]), { widthPx: 480 });
+          const time = svg.querySelector(".staff-time-glyph");
+          const head = svg.querySelector(".staff-head");
+          return {
+            timeX: Number(time.getAttribute("x")),
+            headX: Number(head.getAttribute("x")),
+          };
+        })()""",
+    )
+    # Time sits in the indent; beat 1 starts after 4/4, not on top of it.
+    assert result["headX"] - result["timeX"] >= 18
+
+
+def test_measures_fill_host_width_evenly(node: str) -> None:
+    result = _eval(
+        node,
+        "renderStaff",
+        """(() => {
+          const svg = renderStaff(scoreFromEvents([{type:"turn.accepted"}]), { widthPx: 900 });
+          const box = svg.getAttribute("viewBox").split(" ").map(Number);
+          const xs = [...svg.querySelectorAll(".staff-bar")]
+            .map((el) => Number(el.getAttribute("x1")))
+            .filter((x, i, all) => all.indexOf(x) === i)
+            .sort((a, b) => a - b);
+          const gaps = xs.slice(1).map((x, i) => x - xs[i]);
+          return { width: box[2], gaps };
+        })()""",
+    )
+    assert result["width"] == 900
+    assert result["gaps"]
+    assert max(result["gaps"]) - min(result["gaps"]) < 0.01
+
+
 def test_completed_terminal_has_double_barline(node: str) -> None:
     result = _eval(
         node,

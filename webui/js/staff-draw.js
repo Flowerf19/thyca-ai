@@ -5,9 +5,11 @@ const H = 48;
 const GAP = 6;
 const TOP = 13;
 const BOTTOM = TOP + GAP * 4;
-const PAD_LEFT = 32;
+const PAD_LEFT = 52; // clef + 4/4 + gap before beat 1
 const PAD_RIGHT = 10;
 const MEASURE_W = 128;
+const CLEF_X = 16;
+const TIME_X = 34;
 const STAFF_GAP = 4;
 const STEM = GAP * 3.5;
 const EM = GAP * 4; // SMuFL em = 4 staff spaces
@@ -36,19 +38,18 @@ function normalizeScore(score) {
   return score;
 }
 
-function barsPerSystem(widthPx) {
+function layout(widthPx) {
   const avail = Math.max(MEASURE_W, Math.max(240, widthPx) - PAD_LEFT - PAD_RIGHT);
-  return Math.max(1, Math.floor(avail / MEASURE_W));
+  const perSystem = Math.max(1, Math.floor(avail / MEASURE_W));
+  return { perSystem, measureW: avail / perSystem, width: PAD_LEFT + avail + PAD_RIGHT };
 }
 
 export function renderStaff(score, { widthPx = 560 } = {}) {
   const normalized = normalizeScore(score);
   const measures = normalized.measures;
   const total = measures.length;
-  const perSystem = barsPerSystem(widthPx);
+  const { perSystem, measureW, width } = layout(widthPx);
   const systemCount = Math.max(1, Math.ceil(total / perSystem));
-  const measureW = MEASURE_W;
-  const width = PAD_LEFT + measureW * perSystem + PAD_RIGHT;
   const height = systemCount * H + Math.max(0, systemCount - 1) * STAFF_GAP;
 
   const svg = node("svg", {
@@ -117,12 +118,12 @@ function glyph(name, code, x, y, cls) {
 
 function clef(dy) {
   // gClef origin sits on the G4 line.
-  return glyph("gClef", SMUFL.gClef, 16, yOf(2) + dy, "staff-clef");
+  return glyph("gClef", SMUFL.gClef, CLEF_X, yOf(2) + dy, "staff-clef");
 }
 
 function timeSignature(dy) {
   const group = node("g", { class: "staff-time" });
-  const x = 30;
+  const x = TIME_X;
   group.append(glyph("timeSig4", SMUFL.timeSig4, x, yOf(6) + dy, "staff-time-glyph"));
   group.append(glyph("timeSig4", SMUFL.timeSig4, x, yOf(2) + dy, "staff-time-glyph"));
   return group;

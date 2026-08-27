@@ -80,4 +80,4 @@ Ngoài scope: Telegram/Discord, subagent, plan mode, confirmation gate, ANN/vect
 
 ## Tài liệu agent
 
-Đọc `.agents/README.md` trước. Plan đang chạy: `thyca-trace-notebook.md` (UI Trace sổ nghe) và phần còn lại của `thyca-trace-cost.md` (naming meta, mtime cache).
+Đọc `.agents/README.md` trước. Plan đang chạy: `review-split-oversize.md` (tách file >400 dòng). Trace đã đóng: `.agents/plans/done/thyca-trace-notebook.md`, `thyca-trace-cost.md`.

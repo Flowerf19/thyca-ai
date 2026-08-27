@@ -5,7 +5,7 @@
 1. `PROJECT_CONTEXT.md` — runtime, ranh giới, env
 2. `AGENT_RULES.md` — an toàn, workflow, gotcha đã verify
 3. `decisions/2026-08-15-l2-hybrid-v1.md` — L2 hybrid thuộc v1
-4. Plan đang chạy: `plans/thyca-trace-cost.md` (persist usage/cost — GOAL-001/002/003 phần lớn xong; UI sổ nghe → `plans/thyca-trace-notebook.md`)
+4. Plan đang chạy: `plans/review-split-oversize.md` (tách file >400 dòng — GOAL-001/002 xong, còn GOAL-003/004/005; Trace đã đóng: `plans/done/thyca-trace-cost.md` + `plans/done/thyca-trace-notebook.md`)
 5. `plans/thyca-harness-v1.md` — plan tổng
 6. `plans/services/*.md` — contract từng service
 

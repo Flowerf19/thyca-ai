@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from thyca.config import ProviderCfg
-from thyca.llm.llm_base import LLMError
+from thyca.llm.llm_base import LLMError, normalize_usage
 from thyca.llm.openai_chat import OpenAIChat, _chat_url
 from thyca.protocol import Message, ToolCall
 
@@ -52,6 +52,44 @@ async def test_text_reply() -> None:
     assert reply.tool_calls == []
     assert reply.finish_reason == "stop"
     assert reply.usage == {"total_tokens": 3}
+
+
+@pytest.mark.asyncio
+async def test_usage_cached_and_reasoning_tokens() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "model": "gpt-4o-mini-2024-07-18",
+                "choices": [
+                    {"message": {"role": "assistant", "content": "pong"}, "finish_reason": "stop"}
+                ],
+                "usage": {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 10,
+                    "total_tokens": 110,
+                    "prompt_tokens_details": {"cached_tokens": 20},
+                    "completion_tokens_details": {"reasoning_tokens": 4},
+                },
+            },
+        )
+
+    connect = OpenAIChat(_provider(), client=_client(handler))
+    reply = await connect.chat([Message(role="user", content="ping")])
+    assert reply.model == "gpt-4o-mini-2024-07-18"
+    assert reply.usage == {
+        "prompt_tokens": 100,
+        "cached_tokens": 20,
+        "completion_tokens": 10,
+        "total_tokens": 110,
+        "reasoning_tokens": 4,
+    }
+
+
+def test_normalize_usage_unknown_shape_is_none() -> None:
+    assert normalize_usage(None, "openai") is None
+    assert normalize_usage({}, "openai") is None
+    assert normalize_usage({"foo": 1}, "openai") is None
 
 
 @pytest.mark.asyncio

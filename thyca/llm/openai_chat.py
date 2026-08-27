@@ -8,7 +8,7 @@ import httpx
 from thyca.config import ProviderCfg
 from thyca.protocol import Message, ToolCall
 
-from .llm_base import ChatReply, Connect, LLMError
+from .llm_base import ChatReply, Connect, LLMError, normalize_usage
 
 _RETRY_STATUS = {429, 502, 503, 504}
 _BODY_CAP = 500
@@ -156,14 +156,19 @@ def _parse_reply(response: httpx.Response, key: str) -> ChatReply:
     finish = first.get("finish_reason") or ""
     if not isinstance(finish, str):
         finish = str(finish)
-    usage = raw.get("usage")
-    if usage is not None and not isinstance(usage, dict):
-        usage = None
+    raw_usage = raw.get("usage")
+    if not isinstance(raw_usage, dict):
+        raw_usage = None
+    usage = normalize_usage(raw_usage, "openai") if isinstance(raw_usage, dict) else None
+    model = raw.get("model")
+    if not isinstance(model, str):
+        model = None
     return ChatReply(
         content=content,
         tool_calls=_parse_tool_calls(message.get("tool_calls")),
         usage=usage,
         finish_reason=finish,
+        model=model,
     )
 
 

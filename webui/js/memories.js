@@ -486,7 +486,7 @@ function openCanonicalEditor(root, name) {
   if (!wrap || wrap.dataset.editing) return;
   wrap.dataset.editing = "1";
   const raw = wrap.dataset.raw || "";
-  wrap.innerHTML = `<textarea class="mem-edit-body mem-edit-body-tall" spellcheck="false"></textarea>
+  wrap.innerHTML = `<textarea class="mem-edit-body" spellcheck="false"></textarea>
       <div class="mem-entry-actions mem-canonical-actions">
         <button type="button" class="mem-reinforce" data-canonical-save="${escapeHtml(name)}">Lưu</button>
         <button type="button" class="mem-forget" data-canonical-cancel="${escapeHtml(name)}">Hủy</button>

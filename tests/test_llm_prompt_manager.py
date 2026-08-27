@@ -66,3 +66,21 @@ def test_soul_and_identity_templates() -> None:
     assert "Thyca" in identity
     with pytest.raises(ValueError, match="unknown prompt template"):
         manager.template("user")
+
+
+def test_packaged_persona_is_general_purpose() -> None:
+    manager = PromptManager()
+    soul = manager.template("soul")
+    identity = manager.template("identity")
+    # not surface-bound: the assistant, not the terminal, is the identity
+    assert "terminal" not in soul.lower()
+    assert "terminal" not in identity.lower()
+    # name meaning
+    assert "thi ca" in soul.lower()
+    assert "thi ca" in identity.lower()
+    # forms of address are learned, not assumed
+    assert "xưng hô" in soul.lower()
+    assert "mirror the user" in identity.lower()
+    # memory is part of the persona
+    assert "memory_remember" in soul
+    assert "memory matters" in identity.lower()

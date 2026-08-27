@@ -10,6 +10,6 @@
 6. `plans/thyca-harness-v1.md` — plan tổng
 7. `plans/services/*.md` — contract từng service (skills: `plans/services/skills.md`, done 2026-08-28)
 
-Runtime **0.5.0**: CLI (`thyca -p`, REPL, `--continue` / `--session` / `--model`), Config (kèm `pricing`), Session JSONL, ActiveMemory + L2 lexical + Skills index, LLM OpenAI-compat (`normalize_usage` + `cost_for`), Agent Loop 4 pha (ghi `Message.meta` usage/cost/latency), Tools registry + `memory_*` + MCP stdio, WebUI `thyca --serve` (Chat / Memories / Trace).
+Runtime **0.5.1**: CLI (`thyca -p`, REPL, `--continue` / `--session` / `--model`), Config (kèm `pricing`), Session JSONL, ActiveMemory + L2 lexical + Skills index, LLM OpenAI-compat (`normalize_usage` + `cost_for`), Agent Loop 4 pha (ghi `Message.meta` usage/cost/latency), Tools registry + `memory_*` + MCP stdio, WebUI `thyca --serve` (Chat / Memories / Trace).
 
 Đừng bịa command hoặc feature. Evidence = tree hiện tại, không phải chat.

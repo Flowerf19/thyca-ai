@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "thyca-ai"
-version = "0.5.0"
+version = "0.5.1"
 description = "Thyca — personal terminal harness (pi-inspired, single process, tools = capability)"
 readme = "README.md"
 requires-python = ">=3.14"

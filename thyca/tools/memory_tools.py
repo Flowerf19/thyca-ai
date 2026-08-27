@@ -12,6 +12,9 @@ def register_memory_tools(registry: ToolRegistry, facade: MemoryFacade) -> None:
     registry.register(_search_spec(facade))
     registry.register(_recent_spec(facade))
     registry.register(_get_spec(facade))
+    registry.register(_forget_spec(facade))
+    registry.register(_reinforce_spec(facade))
+    registry.register(_update_spec(facade))
 
 
 def _remember_spec(facade: MemoryFacade) -> ToolSpec:
@@ -111,4 +114,89 @@ def _get_spec(facade: MemoryFacade) -> ToolSpec:
         },
         handler=handler,
         parallel_safe=True,
+    )
+
+
+def _forget_spec(facade: MemoryFacade) -> ToolSpec:
+    async def handler(args: dict) -> str:
+        facade.forget(str(args["session_id"]))
+        return "forgotten"
+
+    return ToolSpec(
+        name="memory_forget",
+        description=(
+            "Delete one L2 memory leaf (heading+bullet) from its daily file by session_id. "
+            "Irreversible — confirm with the user before calling."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string"},
+            },
+            "required": ["session_id"],
+            "additionalProperties": False,
+        },
+        handler=handler,
+        parallel_safe=False,
+        resource_key=lambda _args: "memory:daily",
+    )
+
+
+def _reinforce_spec(facade: MemoryFacade) -> ToolSpec:
+    async def handler(args: dict) -> str:
+        importance = args.get("importance")
+        expires = facade.reinforce(
+            str(args["session_id"]),
+            importance=int(importance) if importance is not None else None,
+        )
+        return json.dumps({"session_id": str(args["session_id"]), "expires_at": expires}, ensure_ascii=False)
+
+    return ToolSpec(
+        name="memory_reinforce",
+        description="Extend a memory leaf's expiry (optionally raise importance) by session_id.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string"},
+                "importance": {"type": "integer"},
+            },
+            "required": ["session_id"],
+            "additionalProperties": False,
+        },
+        handler=handler,
+        parallel_safe=False,
+        resource_key=lambda _args: "memory:daily",
+    )
+
+
+def _update_spec(facade: MemoryFacade) -> ToolSpec:
+    async def handler(args: dict) -> str:
+        facade.update(
+            str(args["session_id"]),
+            topic=str(args["topic"]).strip() if args.get("topic") else None,
+            summary=str(args["summary"]).strip() if args.get("summary") else None,
+            content=str(args["content"]) if args.get("content") else None,
+        )
+        return "updated"
+
+    return ToolSpec(
+        name="memory_update",
+        description=(
+            "Edit one L2 memory leaf's title and/or body by session_id. "
+            "The leaf's id stays stable; the search index is rebuilt after the edit."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string"},
+                "topic": {"type": "string"},
+                "summary": {"type": "string"},
+                "content": {"type": "string"},
+            },
+            "required": ["session_id"],
+            "additionalProperties": False,
+        },
+        handler=handler,
+        parallel_safe=False,
+        resource_key=lambda _args: "memory:daily",
     )

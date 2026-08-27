@@ -30,7 +30,12 @@ export async function createChatSession() {
   if (state.chatLive) {
     await refreshChatList();
   }
-  const rest = modes.chat.pages.filter((page) => page.sessionId);
+  resetToNewChatPage();
+}
+
+// đưa trang "phiên mới" lên đầu — dùng khi bấm vào mode Chat
+export function resetToNewChatPage() {
+  const rest = (modes.chat.pages || []).filter((page) => page.sessionId);
   modes.chat.pages = [emptyPage(""), ...rest];
   state.activePageIndex = 0;
   state.activeSessionId = null;
@@ -259,7 +264,7 @@ function pageFromSummary(item, model) {
   return {
     title: escapeHtml(item.title || "Phiên trống"),
     date: escapeHtml(formatUpdated(item.updated_at)),
-    tag: escapeHtml(shortId(id)),
+    tag: "",
     tone: "chat",
     sessionId: id,
     kicker: escapeHtml(id && model ? `${id} · ${model}` : id || model),
@@ -273,7 +278,7 @@ function pageFromDetail(detail) {
   return {
     title: escapeHtml(detail.title || "Phiên trống"),
     date: escapeHtml(formatUpdated((detail.messages || []).at(-1)?.ts)),
-    tag: escapeHtml(shortId(id)),
+    tag: "",
     tone: "chat",
     sessionId: id,
     kicker: escapeHtml(id && model ? `${id} · ${model}` : id || model),

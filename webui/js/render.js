@@ -1,4 +1,4 @@
-import { fillChatAt, hydrateChat } from "./chat.js";
+import { fillChatAt, hydrateChat, resetToNewChatPage } from "./chat.js";
 import { clearStaffs, syncStaffs } from "./staff.js";
 import { icons, modes } from "./data.js";
 import { el } from "./dom.js";
@@ -150,6 +150,8 @@ export async function renderMode(mode) {
       state.chatLive = false;
     }
     if (gen !== modeGen) return;
+    // bấm vào Chat = mở phiên mới, không nhảy vào phiên cũ
+    resetToNewChatPage();
   }
   if (mode === "trace") {
     try {

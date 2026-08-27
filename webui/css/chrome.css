@@ -121,8 +121,8 @@
   }
 
   .page-header h1 {
-    max-width: 13ch;
-    font-size: clamp(2.2rem, 11vw, 3.35rem);
+    max-width: none;
+    font-size: clamp(1.6rem, 7vw, 2.25rem);
   }
 
   .page-note {

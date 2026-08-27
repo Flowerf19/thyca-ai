@@ -93,6 +93,7 @@ export const modes = {
     pages: [
       {
         title: "Tổng quan",
+        hideTitle: true,
         date: "leaf",
         tag: "stats",
         tone: "memories",
@@ -129,45 +130,37 @@ export const modes = {
   },
   trace: {
     label: "Trace",
-    listLabel: "Lượt gần đây",
-    kicker: "AgentLoop · round 2 / 10",
-    note: "assemble → think → act → observe. Một Stage, không planner.",
+    listLabel: "Phiên gần đây",
+    kicker: "Trace · AgentLoop",
+    note: "",
     chips: [],
     pages: [
       {
-        title: "think → act",
-        date: "ses_7f3a · 14:06",
-        tag: "round 2",
+        title: "Tổng quan",
+        hideTitle: true,
+        date: "mock",
+        tag: "stats",
         tone: "trace",
-        active: true
+        kicker: "Trace · AgentLoop",
+        body: `<div class="music-page"><div class="album-note"><span class="track-kicker">Trace · AgentLoop</span><h2>Tổng quan</h2><p>model · cache · in/out là derived. Mở bằng server để xem số thật từ JSONL.</p><div class="track-rule"><span style="width:100%"></span></div><div class="track-time"><span>assemble</span><span>observe</span></div></div></div>`
       },
       {
-        title: "text, dừng",
-        date: "ses_7f3a · 14:06",
-        tag: "round 3",
+        title: "Ghi daily buổi tối",
+        date: "20:41 26 thg 8",
+        tag: "muse-spark",
         tone: "trace",
-        body: `<div class="music-page"><div class="album-note"><span class="track-kicker">Observe.assistant</span><h2>text, dừng</h2><p>Không còn tool_calls. In text, append session JSONL.</p><div class="track-rule"><span></span></div><div class="track-time"><span>think</span><span>done</span></div></div><ol class="phase-list"><li class="is-done">assemble</li><li class="is-done">think</li><li>act</li><li class="is-current">observe</li></ol><div class="music-note"><p>Hết vòng tool. Session lưu. Không compact vì còn dưới ngưỡng.</p></div><button class="player-button" id="player-button" type="button" aria-pressed="false"><span class="player-symbol" aria-hidden="true">▶</span><span id="player-label">Phát lại lượt</span></button></div>`
+        body: `<div class="music-page"><div class="album-note"><span class="track-kicker">lượt 1 · ok</span><h2>Ghi daily buổi tối</h2><p>input 1 240 → output 318 · $0,0075 · 1,4 s</p><div class="track-rule"><span style="width:100%"></span></div><div class="track-time"><span>AgentLoop</span><span>1,4 s</span></div></div><ol class="phase-list trace-timeline"><li class="is-done"><span class="phase-name">think #1</span><div class="track-rule"><span style="width:48%"></span></div></li><li class="is-done"><span class="phase-name">act</span><div class="track-rule"><span style="width:14%"></span></div></li><li class="is-done"><span class="phase-name">observe</span><div class="track-rule"><span style="width:0%"></span></div></li></ol><div class="music-note"><p>Model · cache · in/out là derived — đọc từ meta, không đếm tay.</p></div></div>`
       }
     ],
     body: `
       <div class="music-page">
         <div class="album-note">
-          <span class="track-kicker">Act.act · gather</span>
-          <h2>think → act</h2>
-          <p><code>memory_search</code> lexical, không fallback semantic.</p>
+          <span class="track-kicker">Trace · AgentLoop</span>
+          <h2>Tổng quan</h2>
+          <p>model · cache · in/out là derived. Mở bằng server để xem số thật từ JSONL.</p>
           <div class="track-rule"><span></span></div>
-          <div class="track-time"><span>assemble</span><span>act</span></div>
+          <div class="track-time"><span>assemble</span><span>observe</span></div>
         </div>
-        <ol class="phase-list">
-          <li class="is-done">assemble</li>
-          <li class="is-done">think</li>
-          <li class="is-current">act</li>
-          <li>observe</li>
-        </ol>
-        <div class="music-note">
-          <p>Tool chạy thẳng, không cửa xác nhận. Kết quả giữ đúng thứ tự <code>tool_call_id</code>.</p>
-        </div>
-        <button class="player-button" id="player-button" type="button" aria-pressed="false"><span class="player-symbol" aria-hidden="true">▶</span><span id="player-label">Phát lại lượt</span></button>
       </div>`
   }
 };

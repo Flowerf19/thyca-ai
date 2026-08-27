@@ -3,7 +3,8 @@ import { clearStaffs, syncStaffs } from "./staff.js";
 import { icons, modes } from "./data.js";
 import { el } from "./dom.js";
 import { closeDrawer } from "./drawer.js";
-import { bindOverview, pagesFromStats } from "./memories.js";
+import { bindOverview, escapeHtml, pagesFromStats } from "./memories.js";
+import { bindTraceOverview, fillTraceAt, hydrateTrace, mountTraceStaff, updateMiniPlayer } from "./trace.js";
 import { state } from "./state.js";
 
 let modeGen = 0;
@@ -12,10 +13,11 @@ let lastStatsJson = "";
 
 export function pageCard(page, index) {
   const selected = index === state.activePageIndex;
-  return `<button class="page-card${selected ? " is-active" : ""}" type="button" data-page-index="${index}" data-tone="${page.tone}"${selected ? ' aria-current="page"' : ""}>
+  const status = page.status ? ` data-status="${escapeHtml(page.status)}"` : "";
+  return `<button class="page-card${selected ? " is-active" : ""}" type="button" data-page-index="${index}" data-tone="${page.tone}"${status}${selected ? ' aria-current="page"' : ""}>
           <span class="page-card-icon">${icons[page.tone]}</span>
           <span class="page-card-copy"><strong>${page.title}</strong><small>${page.date}</small></span>
-          <span class="page-tag page-tag-${page.tone}">${page.tag}</span>
+          ${page.tag ? `<span class="page-tag page-tag-${page.tone}">${page.tag}</span>` : ""}
         </button>`;
 }
 
@@ -35,8 +37,16 @@ export function renderPageList(query = "") {
       card.classList.add("is-active");
       card.setAttribute("aria-current", "page");
       const index = Number(card.dataset.pageIndex);
+      const page = pages[index];
       if (state.activeMode === "chat" && state.chatLive) {
         void fillChatAt(index).then(() => {
+          renderPage(index);
+          closeDrawer();
+        });
+        return;
+      }
+      if (state.activeMode === "trace" && page && page.sessionId) {
+        void fillTraceAt(index).then(() => {
           renderPage(index);
           closeDrawer();
         });
@@ -74,14 +84,6 @@ export function setTracePlaying(playing) {
   el.miniPlay.querySelector(".mini-play-symbol").textContent = playing ? "Ⅱ" : "▶";
 }
 
-export function bindPlayer() {
-  const playerButton = document.getElementById("player-button");
-  if (!playerButton) return;
-  playerButton.addEventListener("click", () => {
-    setTracePlaying(playerButton.getAttribute("aria-pressed") !== "true");
-  });
-}
-
 export function renderPage(pageIndex = 0) {
   const data = modes[state.activeMode];
   const page = data.pages[pageIndex] || data.pages[0];
@@ -89,7 +91,7 @@ export function renderPage(pageIndex = 0) {
   el.notebook.dataset.mode = state.activeMode;
   el.modeBreadcrumb.textContent = data.label;
   el.pageListLabel.textContent = data.listLabel;
-  el.pageHeader.innerHTML = `<div class="page-header-copy"><p class="page-kicker">${page.kicker || data.kicker}</p><h1>${page.title}</h1><p class="page-note">${data.note}</p></div><div class="page-header-mark" aria-hidden="true">${icons[state.activeMode]}<span>${data.label}</span></div>`;
+  el.pageHeader.innerHTML = `<div class="page-header-copy"><p class="page-kicker">${page.kicker || data.kicker}</p>${page.hideTitle ? "" : `<h1>${page.title}</h1>`}<p class="page-note">${page.note || data.note}</p></div><div class="page-header-mark" aria-hidden="true">${icons[state.activeMode]}<span>${data.label}</span></div>`;
   clearStaffs(el.pageBody);
   el.pageBody.innerHTML = page.body || data.body;
   if (state.activeMode === "chat") syncStaffs(el.pageBody);
@@ -103,11 +105,18 @@ export function renderPage(pageIndex = 0) {
     });
   }
   el.form.hidden = state.activeMode !== "chat";
-  el.miniPlayer.hidden = state.activeMode !== "trace";
-  setTracePlaying(false);
+  if (state.activeMode === "trace") {
+    updateMiniPlayer(page);
+    mountTraceStaff(el.pageBody, page);
+    bindTraceOverview(el.pageBody, {
+      onRefilter: () => renderPage(0),
+      onTurn: () => renderPage(state.activePageIndex),
+    });
+  } else {
+    el.miniPlayer.hidden = true;
+  }
   renderPageList(el.pageSearch.value);
   renderChips();
-  if (state.activeMode === "trace") bindPlayer();
 }
 
 export async function renderMode(mode) {
@@ -129,6 +138,14 @@ export async function renderMode(mode) {
     }
     if (gen !== modeGen) return;
   }
+  if (mode === "trace") {
+    try {
+      await hydrateTrace();
+    } catch {
+      /* static mock: no API */
+    }
+    if (gen !== modeGen) return;
+  }
   renderPage(state.activePageIndex);
   el.modeList.querySelectorAll(".mode-link").forEach((button) => {
     const selected = button.dataset.mode === mode;
@@ -136,6 +153,10 @@ export async function renderMode(mode) {
     if (selected) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
   });
+  const libCount = document.querySelector(".library-count");
+  if (libCount) {
+    libCount.textContent = `${el.modeList.querySelectorAll(".mode-link").length} mục`;
+  }
 }
 
 function startMemoriesPoll() {

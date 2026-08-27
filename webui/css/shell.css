@@ -337,24 +337,67 @@ svg {
 
 .mode-link {
   display: grid;
-  grid-template-columns: 1.75rem minmax(0, 1fr) auto;
+  grid-template-columns: 2rem minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: var(--space-xs);
+  gap: var(--space-sm);
   width: 100%;
-  min-height: 2.75rem;
-  padding: 0 var(--space-xs);
+  min-height: 3.25rem;
+  padding: 0 var(--space-sm);
   background: transparent;
-  color: var(--color-sidebar-muted);
+  color: var(--color-sidebar-ink);
+  opacity: 0.78;
   text-align: start;
-  transition: color var(--dur-short) var(--ease-out), background-color var(--dur-short) var(--ease-out);
+  transition: color var(--dur-short) var(--ease-out), background-color var(--dur-short) var(--ease-out), opacity var(--dur-short) var(--ease-out);
+}
+
+.mode-link:hover,
+.mode-link:focus-visible {
+  opacity: 1;
+}
+
+.mode-link.is-active {
+  opacity: 1;
+  color: var(--color-sidebar-ink);
+}
+
+.mode-link.is-active[data-mode="chat"] {
+  background: color-mix(in oklab, var(--color-chat) 32%, var(--color-sidebar));
+}
+
+.mode-link.is-active[data-mode="memories"] {
+  background: color-mix(in oklab, var(--color-memory) 32%, var(--color-sidebar));
+}
+
+.mode-link.is-active[data-mode="trace"] {
+  background: color-mix(in oklab, var(--color-trace) 32%, var(--color-sidebar));
+}
+
+.mode-link.is-active .mode-name {
+  color: var(--color-sidebar-ink);
+}
+
+.mode-link.is-active .mode-icon {
+  color: var(--color-sidebar-ink);
+}
+
+.mode-link.is-active[data-mode="chat"] .mode-icon {
+  color: var(--color-chat);
+}
+
+.mode-link.is-active[data-mode="memories"] .mode-icon {
+  color: var(--color-memory-icon-light);
+}
+
+.mode-link.is-active[data-mode="trace"] .mode-icon {
+  color: var(--color-trace-icon-light);
 }
 
 .mode-icon,
 .page-card-icon {
   display: inline-grid;
   place-items: center;
-  width: 1.75rem;
-  height: 1.75rem;
+  width: 2rem;
+  height: 2rem;
 }
 
 .mode-icon svg,
@@ -380,13 +423,27 @@ svg {
 
 .mode-name {
   min-width: 0;
+  font-size: var(--text-base);
+  font-weight: 500;
   overflow-wrap: anywhere;
 }
 
 .mode-count {
   color: var(--color-sidebar-muted);
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
+}
+
+.mode-dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: var(--color-danger);
+  justify-self: end;
+}
+
+.mode-dot[hidden] {
+  display: none;
 }
 
 @media (hover: hover) and (pointer: fine) {

@@ -89,7 +89,7 @@
   }
 
   .notebook-inner {
-    padding-block-start: calc(var(--space-xl) * 2);
+    padding-block-start: var(--space-xl);
   }
 }
 

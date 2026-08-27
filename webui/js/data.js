@@ -1,6 +1,6 @@
 export const icons = {
   chat: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14v8H8l-3 3V7Z" /><path d="M9 11h6M9 14h4" /></svg>',
-  memories: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5h7.5L19 9v10.5H7zM14.5 4.5V9H19" /><path d="M9.5 13h7M9.5 16.5h5" /></svg>',
+  memories: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6.6C10.3 5.1 8 4.6 4.5 4.6v13.8c3.5 0 5.8.5 7.5 2 1.7-1.5 4-2 7.5-2V4.6c-3.5 0-5.8.5-7.5 2Z" /><path d="M12 6.6v13.8" /></svg>',
   trace: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="2" /><circle cx="12" cy="7" r="2" /><circle cx="18" cy="12" r="2" /><circle cx="12" cy="17" r="2" /><path d="M8 11.2 10.2 8.4M13.8 8.4 16 11.2M16 12.8 13.8 15.6M10.2 15.6 8 12.8" /></svg>'
 };
 

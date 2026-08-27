@@ -169,6 +169,8 @@ svg {
   min-height: 100dvh;
   padding: var(--space-md) var(--space-md) var(--space-2xs);
   overflow-y: auto;
+  /* luôn chừa chỗ cho scrollbar để mode items không lệch ngang giữa các màn */
+  scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: var(--color-sidebar-3) transparent;
 }

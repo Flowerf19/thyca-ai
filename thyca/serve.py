@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import queue
 import re
 import signal
 import sys
@@ -14,14 +13,9 @@ from mimetypes import guess_type
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-from thyca.agent.events import TurnEvent
-from thyca.bridge import (
-    SENTINEL,
-    bridge_worker,
-    public_turn_error,
-    write_line,
-)
+from thyca.bridge import public_turn_error, stream_turn
 from thyca.chat_app import ChatApp
+from thyca.serve_memory import memory_endpoint
 from thyca.trace_api import (
     trace_detail_payload,
     trace_list_payload,
@@ -105,58 +99,6 @@ def run(
         if chat is not None:
             chat.shutdown()
         httpd.server_close()
-
-
-def memory_endpoint(facade: MemoryFacade, kind: str, payload: dict) -> tuple[int, dict]:
-    """One ``POST /api/memory/*`` action → ``(status, body)``.
-
-    Shared body-parse/session-id handling lives in the handler; this carries
-    only the per-kind facade call and its error mapping.
-    """
-    if kind == "canonical":
-        name = payload.get("name")
-        content = payload.get("content")
-        if not isinstance(name, str) or not isinstance(content, str):
-            return 400, {"error": "invalid body"}
-        try:
-            facade.write_canonical(name, content)
-        except ArchiveError as exc:
-            return 400, {"error": str(exc)}
-        except Exception:
-            return 503, {"error": "write failed"}
-        return 200, {"ok": True}
-
-    sid = payload.get("session_id")
-    if not isinstance(sid, str) or not sid.strip():
-        return 400, {"error": "invalid session_id"}
-    sid = sid.strip()
-    try:
-        if kind == "forget":
-            facade.forget(sid)
-            return 200, {"ok": True}
-        if kind == "reinforce":
-            importance = payload.get("importance")
-            expires = facade.reinforce(
-                sid, importance=int(importance) if importance is not None else None
-            )
-            return 200, {"ok": True, "expires_at": expires}
-        # kind == "update"
-        topic = payload.get("topic")
-        summary = payload.get("summary")
-        content = payload.get("content")
-        if not isinstance(topic, str) and not isinstance(summary, str):
-            return 400, {"error": "nothing to update"}
-        facade.update(
-            sid,
-            topic=topic.strip() if isinstance(topic, str) and topic.strip() else None,
-            summary=summary.strip() if isinstance(summary, str) else None,
-            content=content if isinstance(content, str) else None,
-        )
-        return 200, {"ok": True}
-    except ArchiveError:
-        return 404, {"error": "session not found"}
-    except Exception:
-        return 503, {"error": f"{kind} failed"}
 
 
 def _handler(
@@ -355,81 +297,13 @@ def _handler(
             try:
                 payload = self._read_json()
             except ValueError:
-                self._json(400, {"error": "invalid body"})
+                self._json(400, {"error": "invalid text"})
                 return
             text = payload.get("text")
             if not isinstance(text, str):
                 self._json(400, {"error": "invalid text"})
                 return
-            items: queue.Queue = queue.Queue()
-            state = {"disconnected": False}
-            worker = threading.Thread(
-                target=bridge_worker,
-                args=(app, session_id, text, items, state),
-                daemon=True,
-                name="thyca-turn-stream",
-            )
-            worker.start()
-            try:
-                first = items.get()
-                if isinstance(first, TurnEvent):
-                    if first.type == "turn.accepted":
-                        self._stream_headers()
-                        write_line(self.wfile, first.to_dict())
-                    else:
-                        self._json(503, {"error": "chat unavailable"})
-                        return
-                elif first is SENTINEL:
-                    self._json(503, {"error": "chat unavailable"})
-                    return
-                else:
-                    # Pre-accept exception: same HTTP error as /turn, no NDJSON.
-                    _type, exc = first
-                    status, _code, message = public_turn_error(exc)
-                    self._json(status, {"error": message})
-                    return
-                terminal = False
-                while True:
-                    item = items.get()
-                    if item is SENTINEL:
-                        break
-                    if terminal:
-                        continue
-                    if isinstance(item, TurnEvent):
-                        write_line(self.wfile, item.to_dict())
-                        continue
-                    _kind, value = item
-                    if _kind == "completed":
-                        write_line(
-                            self.wfile, {"type": "turn.completed", "detail": value}
-                        )
-                    else:
-                        _code, _message = public_turn_error(value)[1:]
-                        write_line(
-                            self.wfile, {"type": "turn.failed", "code": _code, "message": _message}
-                        )
-                    terminal = True
-                if not terminal and not state["disconnected"]:
-                    # Sentinel with no terminal item: write the constant public
-                    # failure so the client never sees a stream without a terminal.
-                    write_line(
-                        self.wfile,
-                        {
-                            "type": "turn.failed",
-                            "code": "chat_unavailable",
-                            "message": "chat unavailable",
-                        },
-                    )
-                    terminal = True
-            except (BrokenPipeError, ConnectionResetError):
-                # Client left: drop further events, let persist finish.
-                state["disconnected"] = True
-            finally:
-                # The worker is a daemon and ChatApp serializes turns behind
-                # _turn_lock, so persistence completes regardless. A live
-                # stream waits for the terminal item; an abandoned one only
-                # parks this handler thread briefly.
-                worker.join(timeout=5 if state["disconnected"] else 60)
+            stream_turn(self, app, session_id, text)
 
         def _stream_headers(self) -> None:
             self.send_response(200)

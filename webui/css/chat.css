@@ -1,0 +1,37 @@
+/* Chat surface — mode chrome and paper text. Split from workspace.css (move-only). */
+
+/* Chat: conversation on paper, not a poem workshop. */
+
+.notebook[data-mode="chat"] .page-header {
+  border-block-end-color: var(--color-chat-soft);
+}
+
+.notebook[data-mode="chat"] .page-kicker,
+.notebook[data-mode="chat"] .page-header-mark {
+  color: var(--color-chat);
+}
+
+.poem-sheet {
+  max-width: 39ch;
+  margin-inline: auto;
+  color: var(--color-reading);
+  font-family: var(--font-reading);
+  font-size: clamp(var(--text-lg), 2.1vw, 1.75rem);
+  line-height: 1.75;
+  text-align: center;
+}
+
+.poem-line {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.poem-gap {
+  margin-block-start: var(--space-lg);
+}
+
+.poem-muted {
+  color: var(--color-neutral);
+  font-size: var(--text-md);
+}
+

@@ -13,6 +13,8 @@ from zoneinfo import ZoneInfo
 
 from thyca.cli import Cli, build_parser
 from thyca.serve import ServeError, default_webui, make_server
+import pytest
+
 from thyca.tools.memory import MemoryFacade
 
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
@@ -222,3 +224,15 @@ def test_cli_serve_flag_conflicts(tmp_path: Path) -> None:
     assert cli.main(["--serve", "-p", "hi"]) == 2
     assert "--serve" in err.getvalue()
     assert cli.main(["--serve", "--port", "0"]) == 2
+
+
+def test_canonical_write_endpoint(tmp_path_factory) -> None:
+    from thyca.memory.archived import ArchiveError
+    from thyca.tools.memory import MemoryFacade
+    facade = MemoryFacade(tmp_path_factory.mktemp("canon"), timezone_name="Asia/Ho_Chi_Minh")
+    facade.write_canonical("USER.md", "# User\n\nTên: Hòa\n")
+    assert (facade.thyca_dir / "USER.md").read_text(encoding="utf-8").startswith("# User")
+    with pytest.raises(ArchiveError):
+        facade.write_canonical("../evil.md", "x")
+    with pytest.raises(ArchiveError):
+        facade.write_canonical("MEMORY.md", "x")

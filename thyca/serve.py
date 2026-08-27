@@ -208,6 +208,9 @@ def _handler(
             if path == "/api/memory/update":
                 self._update_mem()
                 return
+            if path == "/api/memory/canonical":
+                self._write_canonical()
+                return
             if path == "/api/sessions":
                 self._chat_create()
                 return
@@ -299,6 +302,27 @@ def _handler(
                 return
             except Exception:
                 self._json(503, {"error": "update failed"})
+                return
+            self._json(200, {"ok": True})
+
+        def _write_canonical(self) -> None:
+            try:
+                payload = self._read_json()
+            except ValueError:
+                self._json(400, {"error": "invalid body"})
+                return
+            name = payload.get("name")
+            content = payload.get("content")
+            if not isinstance(name, str) or not isinstance(content, str):
+                self._json(400, {"error": "invalid body"})
+                return
+            try:
+                facade.write_canonical(name, content)
+            except ArchiveError as exc:
+                self._json(400, {"error": str(exc)})
+                return
+            except Exception:
+                self._json(503, {"error": "write failed"})
                 return
             self._json(200, {"ok": True})
 

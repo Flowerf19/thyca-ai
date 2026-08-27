@@ -1,3 +1,5 @@
+import { formatMarkdown } from "./markdown.js";
+
 const DAY_FILE = /^(\d{4}-\d{2}-\d{2})\.md$/;
 const SUGGEST_CAP = 8;
 const EXPIRE_CAP = 5;
@@ -28,6 +30,7 @@ export function bindOverview(root, hooks = {}) {
   bindDayPager(root);
   bindDayDetails(root);
   bindForget(root, hooks.onForget);
+  bindCanonical(root);
 }
 
 function bindDayPager(root) {
@@ -319,12 +322,10 @@ function canonicalPages(files) {
         tone: "memories",
         kicker: escapeHtml(name),
         body: `<div class="book-reading">
-            <div class="book-meta">
-              <span class="book-author">canonical · prompt</span>
-              <h2>${escapeHtml(name)}</h2>
-              <p>Nhét cả file mỗi lượt. Không đếm get.</p>
+            <div class="mem-md" data-canonical="${escapeHtml(name)}" data-raw="${escapeHtml(content)}">${formatMarkdown(content) || "(trống)"}</div>
+            <div class="mem-entry-actions mem-canonical-actions">
+              <button type="button" class="mem-reinforce" data-canonical-edit="${escapeHtml(name)}">Sửa</button>
             </div>
-            <pre class="mem-file">${escapeHtml(content.trim() || "(trống)")}</pre>
           </div>`,
       };
     });
@@ -424,6 +425,76 @@ function fmtTs(value) {
   const text = String(value);
   if (text.length >= 16 && text[10] === "T") return `${text.slice(0, 10)} ${text.slice(11, 16)} UTC`;
   return text;
+}
+
+// ---- sửa file canonical (SOUL/USER/IDENTITY.md) ----
+
+function bindCanonical(root) {
+  root.querySelectorAll("[data-canonical-edit]").forEach((button) => {
+    bindOnce(button, () => openCanonicalEditor(root, button.dataset.canonicalEdit));
+  });
+  // Lưu/Hủy là nút động (tạo khi mở editor) → delegation trên .mem-md
+  root.querySelectorAll("[data-canonical]").forEach((wrap) => {
+    if (wrap.dataset.canonicalBound) return;
+    wrap.dataset.canonicalBound = "1";
+    wrap.addEventListener("click", (event) => {
+      const save = event.target.closest("[data-canonical-save]");
+      if (save) {
+        const text = wrap.querySelector("textarea")?.value;
+        if (typeof text !== "string") return;
+        save.disabled = true;
+        void saveCanonical(save.dataset.canonicalSave, text, wrap, save);
+        return;
+      }
+      const cancel = event.target.closest("[data-canonical-cancel]");
+      if (cancel) {
+        delete wrap.dataset.editing;
+        wrap.innerHTML = formatMarkdown(wrap.dataset.raw || "") || "(trống)";
+      }
+    });
+  });
+}
+
+function cssEscapeAttr(value) {
+  return window.CSS?.escape ? CSS.escape(value) : String(value).replace(/"/g, '\\"');
+}
+
+function openCanonicalEditor(root, name) {
+  const wrap = root.querySelector(`[data-canonical="${cssEscapeAttr(name)}"]`);
+  if (!wrap || wrap.dataset.editing) return;
+  wrap.dataset.editing = "1";
+  const raw = wrap.dataset.raw || "";
+  wrap.innerHTML = `<textarea class="mem-edit-body" spellcheck="false"></textarea>
+      <div class="mem-entry-actions">
+        <button type="button" class="mem-reinforce" data-canonical-save="${escapeHtml(name)}">Lưu</button>
+        <button type="button" class="mem-forget" data-canonical-cancel="${escapeHtml(name)}">Hủy</button>
+      </div>`;
+  const area = wrap.querySelector("textarea");
+  if (area) {
+    area.value = raw;
+    area.focus();
+  }
+}
+
+async function saveCanonical(name, content, wrap, button) {
+  button.disabled = true;
+  try {
+    /* static mock */
+    const res = await fetch("/api/memory/canonical", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name, content }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    wrap.dataset.raw = content;
+    delete wrap.dataset.editing;
+    wrap.innerHTML = formatMarkdown(content) || "(trống)";
+    // refresh stats để số liệu khớp
+    activeHooks.onForget?.();
+  } catch {
+    button.disabled = false;
+    window.alert("Không lưu được file. Thử lại nhé.");
+  }
 }
 
 // Bấm card gợi ý: mở đúng ngày trong "Theo ngày" rồi nhảy tới leaf

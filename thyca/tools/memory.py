@@ -198,6 +198,26 @@ class MemoryFacade:
         self.archive.store.usage.keep_gets(live)
         self.archive.store.usage.keep_searches(live)
 
+    CANONICAL_NAMES = ("SOUL.md", "USER.md", "IDENTITY.md")
+
+    def write_canonical(self, name: str, content: str) -> None:
+        """Ghi đè file canonical (SOUL/USER/IDENTITY.md). Chỉ whitelist, atomic."""
+        if name not in self.CANONICAL_NAMES:
+            raise ArchiveError(f"unknown canonical file: {name}")
+        path = self.thyca_dir / name
+        if path.is_symlink():
+            raise ArchiveError("refusing to write symlink")
+        text = str(content).replace("\r\n", "\n")
+        if text and not text.endswith("\n"):
+            text += "\n"
+        tmp = path.with_name(path.name + ".tmp")
+        try:
+            tmp.write_text(text, encoding="utf-8")
+            tmp.replace(path)
+        except OSError as exc:
+            tmp.unlink(missing_ok=True)
+            raise ArchiveError(f"write failed: {name}") from exc
+
     def _canonical_files(self) -> list[CanonicalFile]:
         files: list[CanonicalFile] = []
         for name in ("SOUL.md", "USER.md", "IDENTITY.md"):

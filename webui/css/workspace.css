@@ -1012,18 +1012,21 @@
   gap: var(--space-2xl);
 }
 
-.canon-desc {
+.canon-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-md);
   margin: 0 0 var(--space-sm);
-  color: var(--color-neutral);
-  font-size: var(--text-sm);
 }
 
-.canon-label {
+.canon-head > h3 {
+  margin: 0;
+}
+
+.canon-desc {
   margin: 0;
   color: var(--color-neutral);
-  font-size: var(--text-xs);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  font-size: var(--text-sm);
 }
 
 .canon-divider {

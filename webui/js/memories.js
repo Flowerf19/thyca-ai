@@ -311,7 +311,6 @@ function expireBlock(rows) {
 
 function canonicalPages(files) {
   const order = { "USER.md": 0, "SOUL.md": 1, "IDENTITY.md": 2 };
-  const labels = { "USER.md": "ghi chú của user", "SOUL.md": "chỉ dẫn cho agent", "IDENTITY.md": "chỉ dẫn cho agent" };
   const descs = {
     "USER.md": "thông tin về bạn — tên, sở thích, bối cảnh",
     "SOUL.md": "cách agent nói chuyện và trả lời",
@@ -332,9 +331,10 @@ function canonicalPages(files) {
     prevLayer = layer;
     const content = String(file.content || "");
     sections.push(`<article class="mem-entry">
-        <p class="canon-label">${escapeHtml(labels[name] || "")}</p>
-        <h3>${escapeHtml(name)}</h3>
-        <p class="canon-desc">${escapeHtml(descs[name] || "")}</p>
+        <div class="canon-head">
+          <h3>${escapeHtml(name)}</h3>
+          <p class="canon-desc">${escapeHtml(descs[name] || "")}</p>
+        </div>
         <div class="mem-md" data-canonical="${escapeHtml(name)}" data-raw="${escapeHtml(content)}">${formatMarkdown(content) || "(trống)"}</div>
         <div class="mem-entry-actions mem-canonical-actions">
           <button type="button" class="mem-reinforce" data-canonical-edit="${escapeHtml(name)}">Sửa</button>

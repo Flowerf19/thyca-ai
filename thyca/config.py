@@ -110,21 +110,9 @@ class PricingCfg:
     output: float = 0.0
 
     def __post_init__(self) -> None:
-        for value, name in (
-            (self.input, "pricing[].input"),
-            (self.cache, "pricing[].cache"),
-            (self.output, "pricing[].output"),
-        ):
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
-                raise ConfigError(f"{name} must be a number, got {type(value).__name__}")
-            num = float(value)
-            if not math.isfinite(num):
-                raise ConfigError(f"{name} must be finite, got {value!r}")
-            if num < 0:
-                raise ConfigError(f"{name} must be >= 0, got {value!r}")
-        object.__setattr__(self, "input", float(self.input))
-        object.__setattr__(self, "cache", float(self.cache))
-        object.__setattr__(self, "output", float(self.output))
+        object.__setattr__(self, "input", _number(self.input, "pricing[].input"))
+        object.__setattr__(self, "cache", _number(self.cache, "pricing[].cache"))
+        object.__setattr__(self, "output", _number(self.output, "pricing[].output"))
 
 
 @dataclass(frozen=True)
@@ -371,7 +359,8 @@ def save(
         raise
     except OSError as error:
         raise ConfigError(f"cannot write {target}: {error}") from error
-    except Exception as error:
+    except RuntimeError as error:
+        # FileLock acquire failures surface as RuntimeError (e.g. flock unsupported)
         raise ConfigError(f"cannot lock {target}: {error}") from error
     finally:
         try:

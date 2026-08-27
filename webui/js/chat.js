@@ -375,11 +375,6 @@ function entryHtml(role, content) {
   return `<article class="entry ${cls}">${stamp}<div class="entry-copy">${formatMarkdown(content)}</div></article>`;
 }
 
-function shortId(id) {
-  const match = String(id).match(/_([0-9a-f]{4})$/);
-  return match ? match[1] : id.slice(-6) || "chat";
-}
-
 function formatUpdated(value) {
   if (!value) return "";
   const stamp = new Date(String(value));

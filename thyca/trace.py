@@ -29,6 +29,27 @@ class TurnSummary:
     messages: list[Message]
 
 
+    def to_payload(self) -> dict:
+        """Public JSON shape for /api/traces* — the single source of the field list."""
+        return {
+            "session_id": self.session_id,
+            "turn_index": self.turn_index,
+            "title": self.title,
+            "started_at": self.started_at,
+            "ended_at": self.ended_at,
+            "model": self.model,
+            "status": self.status,
+            "rounds": self.rounds,
+            "requests": self.requests,
+            "prompt_tokens": self.prompt_tokens,
+            "cached_tokens": self.cached_tokens,
+            "completion_tokens": self.completion_tokens,
+            "total_tokens": self.total_tokens,
+            "cost_usd": self.cost_usd,
+            "latency_ms": self.latency_ms,
+        }
+
+
 def _turn_status(slice_msgs: list[Message]) -> str:
     # naming meta-messages are not turn outcomes — skip them, keep old semantics
     last = next(

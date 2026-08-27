@@ -5,7 +5,9 @@ import json
 import queue
 import re
 import signal
+import sys
 import threading
+import traceback
 from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from mimetypes import guess_type
@@ -48,10 +50,10 @@ _trace_sessions: dict[Path, tuple[int, object]] = {}
 def public_turn_error(exc: Exception) -> tuple[int, str, str]:
     """Map a turn exception to a public ``(status, code, message)``.
 
-    Shared by ``/turn`` and the future ``/turn/stream`` so the two cannot
-    drift. Never leaks stack/path/secret: unexpected errors and
-    :class:`ConfigError` always map to the constant ``chat unavailable``;
-    :class:`LLMError` keeps its provider-redacted/capped text.
+    Shared by ``/turn`` and ``/turn/stream`` so the two cannot drift. Never
+    leaks stack/path/secret: unexpected errors and :class:`ConfigError` always
+    map to the constant ``chat unavailable``; :class:`LLMError` keeps its
+    provider-redacted/capped text.
     """
     if isinstance(exc, ValueError):
         return 400, "invalid_text", "invalid text"
@@ -350,6 +352,7 @@ def _handler(
             try:
                 self._json(200, _trace_stats_payload(app, query))
             except Exception:
+                traceback.print_exc(file=sys.stderr)
                 self._json(503, {"error": "trace unavailable"})
 
         def _trace_list(self, query: str) -> None:
@@ -359,6 +362,7 @@ def _handler(
             try:
                 self._json(200, _trace_list_payload(app, query))
             except Exception:
+                traceback.print_exc(file=sys.stderr)
                 self._json(503, {"error": "trace unavailable"})
 
         def _trace_detail(self, session_id: str, turn_index: str) -> None:
@@ -379,6 +383,7 @@ def _handler(
             except ValueError:
                 self._json(404, {"error": "trace not found"})
             except Exception:
+                traceback.print_exc(file=sys.stderr)
                 self._json(503, {"error": "trace unavailable"})
 
         def _chat_list(self) -> None:
@@ -388,6 +393,7 @@ def _handler(
             try:
                 self._json(200, app.list_payload())
             except Exception:
+                traceback.print_exc(file=sys.stderr)
                 self._json(503, {"error": "chat unavailable"})
 
         def _chat_get(self, session_id: str) -> None:
@@ -419,6 +425,7 @@ def _handler(
             except SessionError:
                 self._json(503, {"error": "session unavailable"})
             except Exception:
+                traceback.print_exc(file=sys.stderr)
                 self._json(503, {"error": "chat unavailable"})
 
         def _chat_turn(self, session_id: str) -> None:
@@ -610,7 +617,7 @@ def _collect_turns(chat: ChatApp) -> list:
     from thyca.trace import turns_from_session
 
     out: list = []
-    store = chat._sessions.store  # type: ignore[attr-defined]
+    store = chat.trace_store()
     # cap 200 newest files to keep single-user scan cheap
     paths = store.list_paths()[:_TRACE_SCAN_CAP]
     with _trace_scan_lock:
@@ -631,18 +638,12 @@ def _collect_turns(chat: ChatApp) -> list:
     return out
 
 
-def _apply_trace_filters(turns: list, query: str) -> list:
-    from urllib.parse import parse_qs
-
-    qs = parse_qs(query)
+def _apply_trace_filters(turns: list, qs: dict) -> list:
     model = (qs.get("model", [""])[0] or "").strip()
     status = (qs.get("status", [""])[0] or "").strip()
     q = (qs.get("q", [""])[0] or "").strip().lower()
     frm = (qs.get("from", [""])[0] or "").strip()
     to = (qs.get("to", [""])[0] or "").strip()
-    # also accept the common alias "?from=" already parsed above
-    if not frm:
-        frm = (qs.get("from", [""])[0] or "").strip()
     filtered = turns
     if model and model != "all":
         filtered = [t for t in filtered if (t.model or "unknown") == model]
@@ -659,10 +660,10 @@ def _apply_trace_filters(turns: list, query: str) -> list:
 
 def _trace_stats_payload(chat: ChatApp, query: str) -> dict:
     from thyca.trace import aggregate
+    from urllib.parse import parse_qs
 
-    turns = _apply_trace_filters(_collect_turns(chat), query)
-    data = aggregate(turns)
-    return data
+    turns = _apply_trace_filters(_collect_turns(chat), parse_qs(query))
+    return aggregate(turns)
 
 
 def _trace_list_payload(chat: ChatApp, query: str) -> dict:
@@ -679,69 +680,34 @@ def _trace_list_payload(chat: ChatApp, query: str) -> dict:
         offset = max(0, int(offset_raw))
     except ValueError:
         offset = 0
-    turns = _apply_trace_filters(_collect_turns(chat), query)
+    turns = _apply_trace_filters(_collect_turns(chat), qs)
     total = len(turns)
     page = turns[offset : offset + limit]
-    traces = []
-    for t in page:
-        traces.append(
-            {
-                "session_id": t.session_id,
-                "turn_index": t.turn_index,
-                "title": t.title,
-                "started_at": t.started_at,
-                "ended_at": t.ended_at,
-                "model": t.model,
-                "status": t.status,
-                "rounds": t.rounds,
-                "requests": t.requests,
-                "prompt_tokens": t.prompt_tokens,
-                "cached_tokens": t.cached_tokens,
-                "completion_tokens": t.completion_tokens,
-                "total_tokens": t.total_tokens,
-                "cost_usd": t.cost_usd,
-                "latency_ms": t.latency_ms,
-            }
-        )
+    traces = [t.to_payload() for t in page]
     return {"traces": traces, "total": total}
 
 
 def _trace_detail_payload(chat: ChatApp, session_id: str, turn_index: int) -> dict:
     from thyca.trace import turns_from_session
 
-    store = chat._sessions.store  # type: ignore[attr-defined]
+    store = chat.trace_store()
     session = store.load(session_id)
     turns = turns_from_session(session)
     for t in turns:
         if t.turn_index == turn_index:
-            return {
-                "session_id": t.session_id,
-                "turn_index": t.turn_index,
-                "title": t.title,
-                "started_at": t.started_at,
-                "ended_at": t.ended_at,
-                "model": t.model,
-                "status": t.status,
-                "rounds": t.rounds,
-                "requests": t.requests,
-                "prompt_tokens": t.prompt_tokens,
-                "cached_tokens": t.cached_tokens,
-                "completion_tokens": t.completion_tokens,
-                "total_tokens": t.total_tokens,
-                "cost_usd": t.cost_usd,
-                "latency_ms": t.latency_ms,
-                "messages": [
-                    {
-                        "role": m.role,
-                        "content": m.content,
-                        "ts": m.ts,
-                        "tool_calls": [{"id": c.id, "name": c.name} for c in (m.tool_calls or [])],
-                        "tool_call_id": m.tool_call_id,
-                        "meta": m.meta,
-                    }
-                    for m in t.messages
-                ],
-            }
+            payload = t.to_payload()
+            payload["messages"] = [
+                {
+                    "role": m.role,
+                    "content": m.content,
+                    "ts": m.ts,
+                    "tool_calls": [{"id": c.id, "name": c.name} for c in (m.tool_calls or [])],
+                    "tool_call_id": m.tool_call_id,
+                    "meta": m.meta,
+                }
+                for m in t.messages
+            ]
+            return payload
     raise ValueError("trace not found")
 
 

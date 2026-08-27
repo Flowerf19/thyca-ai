@@ -22,6 +22,7 @@ from thyca.llm.pricing import cost_for
 from thyca.memory.active import ActiveMemory
 from thyca.protocol import Message, utc_now_ts
 from thyca.sessions import Session, SessionManager, ask_remember
+from thyca.sessions.store import SessionStore
 from thyca.sessions.title import display_title, is_blank, propose_title
 from thyca.tools.builtin import register_file_tools
 from thyca.tools.memory import MemoryFacade
@@ -209,6 +210,10 @@ class ChatApp:
             if self._loop.is_running():
                 self._loop.call_soon_threadsafe(self._loop.stop)
             self._thread.join(timeout=5)
+
+    def trace_store(self) -> SessionStore:
+        """Session store for read-only scan surfaces (e.g. /api/traces)."""
+        return self._sessions.store
 
     def _session_summary(self, session: Session) -> dict:
         return {

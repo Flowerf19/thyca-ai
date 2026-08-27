@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from thyca.config import DEFAULT_LIMITS_HOT_TAIL_KB, DEFAULT_TIMELINE_TIMEZONE
 from thyca.memory.heading import is_session_heading, strip_heading_comments
+from thyca.skills import SkillStore
 
 _FENCE_RE = re.compile(r"^```", re.MULTILINE)
 
@@ -51,6 +52,7 @@ class ActiveSnapshot:
     today: str
     yesterday: str
     identity: str = ""
+    skills: str = ""
 
 
 class ActiveMemory:
@@ -67,6 +69,7 @@ class ActiveMemory:
         self.tail_kb = DEFAULT_LIMITS_HOT_TAIL_KB if tail_kb is None else tail_kb
         self.timezone_name = timezone_name or DEFAULT_TIMELINE_TIMEZONE
         self.on_day_close = on_day_close
+        self._skills = SkillStore(self.thyca_dir)
 
     @property
     def memory_dir(self) -> Path:
@@ -83,6 +86,7 @@ class ActiveMemory:
             self._create_if_missing(self.thyca_dir / name, template)
         day = self._day(now or self._now())
         self._create_if_missing(self._daily_path(day), f"# {day}\n")
+        self._skills.ensure_defaults()
 
     def open_session(self, now: datetime) -> ActiveState:
         self.ensure_files(now)
@@ -118,6 +122,7 @@ class ActiveMemory:
             user=self._read(self.thyca_dir / "USER.md"),
             today=self._tail(self._read(state.today_path)),
             yesterday=state.yesterday,
+            skills=self._skills.index_text(),
         )
 
     def _now(self) -> datetime:

@@ -18,12 +18,8 @@ _RULES = (
     "  - ~/.thyca/USER.md\n"
     "Do not write or edit L2 daily files or sessions under ~/.thyca.\n"
     "You may write/edit ~/.thyca/config.json (provider keys, mcpServers).\n"
-    "Need a capability you do not have (HTTP, search, weather, other APIs): "
-    "do not say you cannot add tools. Write a small FastMCP stdio server in the workspace "
-    "(mcp.server.fastmcp, mcp.run()), then add mcpServers.<name> = {command, args, env}. "
-    "Name must match [A-Za-z0-9_-]+. Put API keys in env, not in the script. "
-    "Tell the user to restart thyca/--serve. Tools appear as server__tool only after restart. "
-    "If that server is already in config this session, call server__tool — do not ask the user to run it by hand.\n"
+    "Check <skills> before multi-step tasks; read a SKILL.md to follow it.\n"
+    "To author a skill load `create-skill`; to add a capability load `create-mcp-tool`.\n"
     "memory_search is lexical-first. If search returns nothing, say so. Do not invent memories.\n"
     "bash runs immediately as the user, no sandbox — it can bypass PathGuard. "
     "Do not use bash to write L2 daily files or sessions under ~/.thyca."
@@ -48,6 +44,8 @@ class PromptManager:
         parts.append(_section("today", hot.today))
         if hot.yesterday:
             parts.append(_section("yesterday", hot.yesterday))
+        if hot.skills:
+            parts.append(_section("skills", hot.skills))
         parts.append(_section("rules", self.rules_section()))
         return "\n".join(parts)
 

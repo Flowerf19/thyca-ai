@@ -4,12 +4,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 import asyncio
 
-from thyca.protocol import ToolCall, ToolResult
+from thyca.protocol import RESULT_CAP_BYTES, ToolCall, ToolResult
 
 Handler = Callable[[dict], Awaitable[str | ToolResult]]
 ResourceKeyFn = Callable[[dict], str | None]
-
-RESULT_CAP_BYTES = 32_768
 
 
 @dataclass(frozen=True)

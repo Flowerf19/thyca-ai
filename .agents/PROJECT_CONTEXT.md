@@ -1,6 +1,6 @@
 # Project context
 
-`thyca-ai` 0.4.0 — harness trợ lý cá nhân (terminal + webui local). Cảm hứng pi (vòng lặp nhỏ, ít abstraction). Không phải coding agent, không clone OpenClaw/Hermes.
+`thyca-ai` 0.5.0 — harness trợ lý cá nhân (terminal + webui local). Cảm hứng pi (vòng lặp nhỏ, ít abstraction). Không phải coding agent, không clone OpenClaw/Hermes.
 
 ## Runtime (verified 2026-08-27)
 

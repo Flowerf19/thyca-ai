@@ -15,6 +15,9 @@ _ROLE_OPTIONS = ("user", "assistant", "tool", "system")
 # meta cap 4096 bytes when serialized
 META_CAP_BYTES = 4096
 
+# tool result cap 32KB when dispatched
+RESULT_CAP_BYTES = 32_768
+
 # ts format YYYY-MM-DDTHH:mm:ssZ strict UTC
 _TS_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 

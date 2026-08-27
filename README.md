@@ -4,7 +4,7 @@ Thyca là harness trợ lý cá nhân chạy trong terminal, lấy cảm hứng 
 
 ## Trạng thái hiện tại
 
-**0.4.0.** CLI nối Agent Loop: `thyca -p`, REPL, `--continue` / `--session` / `--model`. Tools registry + `memory_*` + MCP stdio đã có. WebUI local: `thyca --serve` (mặc định `127.0.0.1:8765`, `--daemon` / `--stop` / `--port`) — Chat, Memories, Trace.
+**0.5.0.** CLI nối Agent Loop: `thyca -p`, REPL, `--continue` / `--session` / `--model`. Tools registry + `memory_*` + MCP stdio đã có. Skills v1 (chuẩn Agent Skills): `~/.thyca/skills/<name>/SKILL.md` (frontmatter `name` + `description` theo agentskills.io). Index `name — description` vào `<skills>` trong system prompt mỗi turn; tạo bằng `write`, load bằng `read` — **0 tool mới**. Validate-at-scan: skill lỗi hiện cảnh báo trong index để agent tự sửa. Seed 2 skill: `create-skill`, `create-mcp-tool`. Chi tiết: `.agents/plans/services/skills.md`, decision `2026-08-28-skills-agent-skills-v1.md`. WebUI local: `thyca --serve` (mặc định `127.0.0.1:8765`, `--daemon` / `--stop` / `--port`) — Chat, Memories, Trace.
 
 Config / Session JSONL / ActiveMemory / L2 lexical / LLM OpenAI-compat / loop 4 pha đều có test. `ChatReply.usage` chuẩn hóa token (prompt / cached / completion / total); `cost_for` tính USD từ bảng `pricing` (builtin + overlay config). Observe ghi `usage` / `cost_usd` / `latency_ms` vào `Message.meta` trên JSONL. Google/Anthropic connect vẫn stub.
 
@@ -68,13 +68,13 @@ Config mặc định dùng một provider OpenAI-compatible:
 
 ## Kiến trúc
 
-Package flat `thyca/`, không `src/`. Module chính: `config.py`, `protocol.py`, `sessions/` (4 class SOLID), `memory/`, `llm/` (`llm_base` + `pricing` + `openai_chat` …), `agent/` (Assemble/Think/Act/Observe + `Stage`), `tools/` (registry + `memory_*` + MCP), `serve.py` + `webui/`.
+Package flat `thyca/`, không `src/`. Module chính: `config.py`, `protocol.py`, `skills.py`, `sessions/` (4 class SOLID), `memory/`, `llm/` (`llm_base` + `pricing` + `openai_chat` …), `agent/` (Assemble/Think/Act/Observe + `Stage`), `tools/` (registry + `memory_*` + MCP), `serve.py` + `webui/`.
 
 Loop: `assemble → think → act → observe`. `Assemble` nhét `PromptManager.build` khi `hot` là `ActiveSnapshot`. `memory_remember` là writer duy nhất cho memory files; v1 không confirmation gate.
 
 ## Development và testing
 
-`uv run pytest -q` là lệnh kiểm chứng chuẩn (≈319 passed). Baseline đã biết: `tests/test_cli.py::test_debug_prints_prompt_flags` (`tools=11` vs `tools=7`). Live provider/network không nằm trong unit suite. `uv sync --locked` phải tái tạo được môi trường.
+`uv run pytest -q` là lệnh kiểm chứng chuẩn (342 passed). Live provider/network không nằm trong unit suite. `uv sync --locked` phải tái tạo được môi trường.
 
 Ngoài scope: Telegram/Discord, subagent, plan mode, confirmation gate, ANN/vector database, catalog hàng chục provider.
 

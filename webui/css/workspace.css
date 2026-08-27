@@ -1012,6 +1012,31 @@
   gap: var(--space-2xl);
 }
 
+.canon-label {
+  margin: 0;
+  color: var(--color-neutral);
+  font-size: var(--text-xs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.canon-divider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  color: var(--color-neutral);
+  font-size: var(--text-xs);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.canon-divider::before,
+.canon-divider::after {
+  content: "";
+  flex: 1;
+  border-block-start: 2px solid var(--color-rule-2);
+}
+
 /* .mem-md nằm trong .mem-entry của trang Nhật kí: nền trong suốt, card cha là note */
 .canon-list .mem-md {
   padding: 0;

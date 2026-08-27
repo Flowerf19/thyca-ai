@@ -311,22 +311,30 @@ function expireBlock(rows) {
 
 function canonicalPages(files) {
   const order = { "USER.md": 0, "SOUL.md": 1, "IDENTITY.md": 2 };
+  const labels = { "USER.md": "ghi chú của user", "SOUL.md": "ghi chú của bản thân", "IDENTITY.md": "ghi chú của bản thân" };
   const list = files
     .filter((file) => file && file.name)
     .sort((a, b) => (order[a.name] ?? 9) - (order[b.name] ?? 9));
-  const sections = list
-    .map((file) => {
-      const name = String(file.name);
-      const content = String(file.content || "");
-      return `<article class="mem-entry">
-          <h3>${escapeHtml(name)}</h3>
-          <div class="mem-md" data-canonical="${escapeHtml(name)}" data-raw="${escapeHtml(content)}">${formatMarkdown(content) || "(trống)"}</div>
-          <div class="mem-entry-actions mem-canonical-actions">
-            <button type="button" class="mem-reinforce" data-canonical-edit="${escapeHtml(name)}">Sửa</button>
-          </div>
-        </article>`;
-    })
-    .join("");
+  const sections = [];
+  let prevLayer = null;
+  for (const file of list) {
+    const name = String(file.name);
+    const layer = name === "USER.md" ? "user" : "self";
+    // ngăn giữa 2 lớp: ghi chú của user — ghi chú của bản thân
+    if (prevLayer === "user" && layer === "self") {
+      sections.push(`<div class="canon-divider" role="separator"><span>bản thân</span></div>`);
+    }
+    prevLayer = layer;
+    const content = String(file.content || "");
+    sections.push(`<article class="mem-entry">
+        <p class="canon-label">${escapeHtml(labels[name] || "")}</p>
+        <h3>${escapeHtml(name)}</h3>
+        <div class="mem-md" data-canonical="${escapeHtml(name)}" data-raw="${escapeHtml(content)}">${formatMarkdown(content) || "(trống)"}</div>
+        <div class="mem-entry-actions mem-canonical-actions">
+          <button type="button" class="mem-reinforce" data-canonical-edit="${escapeHtml(name)}">Sửa</button>
+        </div>
+      </article>`);
+  }
   return [
     {
       title: "Hồ sơ",
@@ -334,7 +342,7 @@ function canonicalPages(files) {
       tag: "",
       tone: "memories",
       kicker: "canonical · prompt",
-      body: `<div class="canon-list">${sections}</div>`,
+      body: `<div class="canon-list">${sections.join("")}</div>`,
     },
   ];
 }

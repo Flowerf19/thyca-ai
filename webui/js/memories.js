@@ -99,6 +99,13 @@ function bindForget(root, onForget) {
   root.querySelectorAll("[data-edit-cancel]").forEach((button) => {
     bindOnce(button, () => redrawDays(root));
   });
+  // card "Đề xuất loại bỏ": bấm để mở ngày chứa leaf
+  root.querySelectorAll("[data-open-leaf]").forEach((card) => {
+    card.addEventListener("click", (event) => {
+      if (event.target.closest("button")) return;
+      activeHooks.onOpenLeaf?.(card.dataset.openLeaf);
+    });
+  });
 }
 
 function openLeafEditor(root, sessionId) {
@@ -269,7 +276,7 @@ function dayAccordion(key, leaves) {
   const used = leaves.filter((leaf) => Number(leaf.get_count) > 0).length;
   const searched = leaves.filter((leaf) => Number(leaf.search_count) > 0).length;
   const today = leaves.some((leaf) => leaf.is_today);
-  const entries = sortLeaves(leaves).map(leafEntry).join("");
+  const entries = sortLeaves(leaves).map((leaf) => leafEntry(leaf)).join("");
   const open = openDay === key ? " open" : "";
   return `<details class="day-acc" name="mem-day" data-day="${escapeHtml(key)}"${open}>
       <summary>
@@ -323,7 +330,7 @@ function canonicalPages(files) {
     });
 }
 
-function leafEntry(leaf) {
+function leafEntry(leaf, reason = "") {
   const { time, topic } = splitHeading(leaf);
   const gets = Number(leaf.get_count) || 0;
   const searches = Number(leaf.search_count) || 0;
@@ -339,8 +346,9 @@ function leafEntry(leaf) {
   ]
     .filter(Boolean)
     .join(" · ");
-  const cite = [citeTop, citeMeta].filter(Boolean);
-  return `<article class="mem-entry">
+  const cite = [reason, citeTop, citeMeta].filter(Boolean);
+  const openable = reason ? ` data-open-leaf="${escapeHtml(leaf.chunk_id || "")}" title="Bấm để xem leaf trong ngày"` : "";
+  return `<article class="mem-entry${reason ? " is-suggest" : ""}" data-chunk-id="${escapeHtml(leaf.chunk_id || "")}"${openable}>
       <h3>${escapeHtml(topic)}</h3>
       <blockquote class="quote-note">
         <p>${escapeHtml(leaf.snippet || "(trống)")}</p>
@@ -366,19 +374,13 @@ function suggestBlock(rows) {
   if (!rows.length) {
     return `<div class="suggest-inline"><h3>Đề xuất loại bỏ</h3><p class="suggest-empty">Không có gợi ý.</p></div>`;
   }
-  const items = rows
-    .map((leaf) => {
-      const { topic } = splitHeading(leaf);
-      return `<li>
-          <div><strong>${escapeHtml(topic)}</strong><small>${escapeHtml(leafSource(leaf))} · hết hạn ${escapeHtml(fmtTs(leaf.expires_at) || "—")}</small></div>
-          <button type="button" class="mem-forget" data-forget="${escapeHtml(leaf.session_id || "")}">Xóa</button>
-        </li>`;
-    })
+  // card giống leaf trong "Theo ngày", lý do nằm trong card, bấm để xem trong ngày
+  const cards = rows
+    .map((leaf) => leafEntry(leaf, "chưa get/search · ≥ 7 ngày — có thể xóa"))
     .join("");
   return `<div class="suggest-inline">
       <h3>Đề xuất loại bỏ</h3>
-      <p>Chưa get/search và đã ≥ 7 ngày. Có thể xóa.</p>
-      <ul class="suggest-list">${items}</ul>
+      <div class="mem-day-list">${cards}</div>
     </div>`;
 }
 
@@ -422,6 +424,20 @@ function fmtTs(value) {
   const text = String(value);
   if (text.length >= 16 && text[10] === "T") return `${text.slice(0, 10)} ${text.slice(11, 16)} UTC`;
   return text;
+}
+
+// Bấm card gợi ý: mở đúng ngày trong "Theo ngày" rồi nhảy tới leaf
+export async function revealLeaf(chunkId) {
+  const day = `${String(chunkId || "").split("#")[0]}.md`;
+  if (DAY_FILE.test(day)) openDay = day;
+  await activeHooks.onForget?.();
+  setTimeout(() => {
+    const card = document.querySelector(`[data-chunk-id="${window.CSS?.escape ? CSS.escape(chunkId) : chunkId}"]`);
+    if (!card) return;
+    card.scrollIntoView({ behavior: "smooth", block: "center" });
+    card.classList.add("is-flash");
+    setTimeout(() => card.classList.remove("is-flash"), 1800);
+  }, 500);
 }
 
 export function escapeHtml(value) {

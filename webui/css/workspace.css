@@ -941,6 +941,20 @@
   }
 }
 
+.mem-entry.is-suggest {
+  cursor: pointer;
+  transition: border-color var(--dur-short) var(--ease-out);
+}
+
+.mem-entry.is-suggest:hover {
+  border-color: var(--color-memory);
+}
+
+.mem-entry.is-flash {
+  outline: 2px solid var(--color-memory);
+  outline-offset: 2px;
+}
+
 .mem-entry {
   display: flex;
   flex-direction: column;

@@ -254,7 +254,7 @@
 
 .page-body {
   min-width: 0;
-  padding-block-start: var(--space-2xl);
+  padding-block-start: var(--space-lg);
 }
 
 .entry-list {

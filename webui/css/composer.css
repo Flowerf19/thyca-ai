@@ -1,9 +1,6 @@
 /* ---- Composer ---- */
 
 .composer {
-  position: sticky;
-  inset-block-end: 0;
-  z-index: var(--z-sticky);
   flex: 0 0 auto;
   padding: var(--space-sm) clamp(var(--space-md), 3vw, var(--space-xl)) calc(var(--space-md) + env(safe-area-inset-bottom));
   border-block-start: var(--rule) solid var(--color-rule);

@@ -170,9 +170,15 @@
   min-width: 0;
   min-height: 0;
   overflow: auto;
+  /* scroll bằng wheel/touch/keyboard — thanh scrollbar ẩn cho mặt giấy sạch */
+  scrollbar-width: none;
   background-color: var(--color-paper);
   color: var(--color-ink);
   isolation: isolate;
+}
+
+.notebook::-webkit-scrollbar {
+  display: none;
 }
 
 .paper-texture {
@@ -189,6 +195,7 @@
 .notebook-inner {
   position: relative;
   display: flex;
+  flex: none;
   min-height: 100%;
   flex-direction: column;
   width: 100%;

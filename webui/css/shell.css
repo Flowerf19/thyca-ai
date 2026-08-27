@@ -337,7 +337,7 @@ svg {
 
 .mode-link {
   display: grid;
-  grid-template-columns: 2rem minmax(0, 1fr) auto auto;
+  grid-template-columns: 2rem minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-sm);
   width: 100%;
@@ -432,18 +432,6 @@ svg {
   color: var(--color-sidebar-muted);
   font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
-}
-
-.mode-dot {
-  width: 0.45rem;
-  height: 0.45rem;
-  border-radius: 50%;
-  background: var(--color-danger);
-  justify-self: end;
-}
-
-.mode-dot[hidden] {
-  display: none;
 }
 
 @media (hover: hover) and (pointer: fine) {

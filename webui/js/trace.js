@@ -394,9 +394,9 @@ function sessionPage(turnsNewestFirst) {
   const failed = turnsNewestFirst.some((item) => item.status === "failed");
   const turns = [...turnsNewestFirst].sort((a, b) => (a.turn_index || 0) - (b.turn_index || 0));
   return {
-    title: cleanTitle(newest.title || newest.session_id || "Phiên trống"),
+    title: newest.title && newest.title !== newest.session_id ? cleanTitle(newest.title) : "Phiên không tên",
     date: escapeHtml(`${fmtInt(turns.length)} lượt · ${fmtIso(newest.started_at)}`),
-    tag: escapeHtml(failed ? "lỗi" : shortModel(newest.model)),
+    tag: failed ? "lỗi" : "",
     tone: "trace",
     status: failed ? "failed" : String(newest.status || ""),
     model: String(newest.model || ""),
@@ -409,14 +409,6 @@ function sessionPage(turnsNewestFirst) {
 }
 
 // ---- hydrate (assign pages, no innerHTML dump) ----
-
-function syncTraceModeDot() {
-  const dot = document.querySelector('[data-mode-dot="trace"]');
-  if (dot) {
-    const failed = (modes.trace.pages || []).some((page) => page.status === "failed");
-    dot.hidden = !failed;
-  }
-}
 
 export async function hydrateTrace() {
   const base = activeParams();
@@ -440,7 +432,6 @@ function applyTracePages(stats, list, pillStats = null) {
   };
   const count = el.modeList.querySelector('[data-mode="trace"] .mode-count');
   if (count) count.textContent = String(Math.max((modes.trace.pages || []).length - 1, 0));
-  syncTraceModeDot();
 }
 
 // Callback injected by render.js so trace.js never imports renderPage (circular import).

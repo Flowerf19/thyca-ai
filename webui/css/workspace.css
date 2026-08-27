@@ -1071,6 +1071,16 @@
   margin-block-end: var(--space-sm);
 }
 
+/* editor canonical: đủ diện tích soạn thảo */
+.mem-edit-body.mem-edit-body-tall {
+  min-height: clamp(18rem, 55vh, 36rem);
+}
+
+/* ẩn nút Sửa khi đang ở chế độ chỉnh sửa (Lưu/Hủy thay thế) */
+.mem-md[data-editing] + .mem-canonical-actions .mem-reinforce[data-canonical-edit] {
+  display: none;
+}
+
 .mem-file {
   max-width: none;
   margin: var(--space-xl) 0 0;

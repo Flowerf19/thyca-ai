@@ -84,7 +84,7 @@
   min-width: 0;
   min-height: 3rem;
   max-height: 8rem;
-  padding: var(--space-sm) 0;
+  padding: var(--space-sm) var(--space-sm);
   resize: vertical;
   border: 0;
   outline: 0;
@@ -124,87 +124,56 @@
   border-block-end-color: var(--color-accent);
 }
 
-.bookmark-action {
-  position: relative;
+.send-action {
   display: inline-grid;
-  flex: 0 0 3rem;
+  flex: 0 0 auto;
   place-items: center;
-  align-self: stretch;
-  min-height: 3.25rem;
-  margin-block-end: -1px;
+  align-self: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  margin-inline-start: var(--space-sm);
   padding: 0;
-  background: transparent;
-  color: var(--color-accent);
-  transition: color var(--dur-short) var(--ease-out), transform 100ms var(--ease-out);
+  border: var(--rule) solid var(--color-accent);
+  border-radius: 50%;
+  background: var(--color-accent);
+  color: var(--color-accent-ink);
+  transition: background-color var(--dur-short) var(--ease-out), color var(--dur-short) var(--ease-out), transform 100ms var(--ease-out);
 }
 
-.bookmark-shape {
-  position: absolute;
-  inset: var(--space-xs) var(--space-2xs) 0;
-  background: var(--color-accent-soft);
-  clip-path: polygon(13% 0, 87% 0, 87% 100%, 50% 82%, 13% 100%);
-  transform: rotate(1.5deg);
-  transform-origin: 50% 100%;
-  transition: background-color var(--dur-short) var(--ease-out), transform var(--dur-short) var(--ease-out);
-}
-
-.bookmark-action::after {
-  content: "";
-  position: absolute;
-  inset-inline-start: 50%;
-  inset-block-end: var(--space-2xs);
-  width: var(--rule);
-  height: var(--space-md);
-  background: var(--color-rule);
-  transform: translateX(-50%);
-}
-
-.pen-icon {
-  position: relative;
-  z-index: 1;
-  width: 1.3rem;
-  height: 1.3rem;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.6;
-  transform: rotate(-8deg);
-  transition: transform var(--dur-short) var(--ease-out);
+.send-action svg {
+  width: 1.25rem;
+  height: 1.25rem;
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .bookmark-action:hover {
-    color: var(--color-ink);
-  }
-
-  .bookmark-action:hover .bookmark-shape {
-    background: var(--color-paper-3);
-    transform: rotate(0deg) translateY(-0.15rem);
-  }
-
-  .bookmark-action:hover .pen-icon {
-    transform: rotate(-8deg) translateY(-0.15rem);
+  .send-action:hover {
+    background: var(--color-ink);
+    border-color: var(--color-ink);
+    color: var(--color-paper);
+    transform: translateY(-0.1rem);
   }
 }
 
-.bookmark-action:active {
+.send-action:disabled {
+  opacity: 0.45;
+  cursor: default;
+  transform: none;
+}
+
+.send-action:active {
   transform: translateY(1px);
 }
 
-.bookmark-action:focus-visible {
+.send-action:focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: 3px;
 }
 
-.bookmark-action:disabled {
-  opacity: 0.5;
-}
-
-.bookmark-action.is-loading {
-  color: var(--color-accent);
+.send-action.is-loading {
   pointer-events: none;
 }
 
-.bookmark-action.is-loading .pen-icon {
+.send-action.is-loading svg {
   opacity: 0.35;
 }
 

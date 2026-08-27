@@ -931,7 +931,7 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-lg) var(--space-2xl);
-  align-items: start;
+  align-items: stretch;
   margin-block-start: var(--space-xl);
 }
 
@@ -942,10 +942,21 @@
 }
 
 .mem-entry {
+  display: flex;
+  flex-direction: column;
   background: var(--color-paper-2);
   border: var(--rule) solid var(--color-rule-2);
   border-radius: var(--radius-sm);
   padding: var(--space-md) var(--space-lg);
+}
+
+/* nội dung dài không kéo giãn card: giới hạn số dòng hiển thị */
+.mem-entry .quote-note p {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 8;
+  line-clamp: 8;
+  overflow: hidden;
 }
 
 .mem-entry h3 {
@@ -1080,7 +1091,8 @@
   display: flex;
   justify-content: flex-end;
   gap: var(--space-md);
-  margin-block-start: var(--space-sm);
+  margin-block-start: auto;
+  padding-block-start: var(--space-sm);
 }
 
 .mem-reinforce {

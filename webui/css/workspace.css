@@ -188,6 +188,9 @@
 
 .notebook-inner {
   position: relative;
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
   width: 100%;
   margin-inline: 0;
   padding: var(--space-xl) clamp(var(--space-md), 3vw, var(--space-xl)) var(--space-md);
@@ -291,6 +294,7 @@
 
 .page-body {
   min-width: 0;
+  flex: 1 0 auto;
   padding-block-start: var(--space-lg);
 }
 

@@ -33,7 +33,7 @@ export const modes = {
     label: "Chat",
     listLabel: "Phiên gần đây",
     kicker: "ses_7f3a · gpt-4o-mini",
-    note: "Thyca trả lời như trợ lý. Năng lực đến từ tool, không từ khung chat.",
+    note: "",
     chips: ["Nhớ điều này", "Tìm trong memory", "Giải thích lượt vừa rồi"],
     pages: [
       {

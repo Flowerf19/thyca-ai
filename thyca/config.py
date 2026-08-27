@@ -6,6 +6,7 @@ secrets are read from the environment only when ``api_key()`` is called.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import warnings
@@ -44,6 +45,17 @@ def _text(
 def _integer(value: object, name: str) -> None:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ConfigError(f"{name} must be an integer, got {type(value).__name__}")
+
+
+def _number(value: object, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ConfigError(f"{name} must be a number, got {type(value).__name__}")
+    num = float(value)
+    if not math.isfinite(num):
+        raise ConfigError(f"{name} must be finite, got {value!r}")
+    if num < 0:
+        raise ConfigError(f"{name} must be >= 0, got {value!r}")
+    return num
 
 
 @dataclass(frozen=True)
@@ -92,6 +104,30 @@ class McpServerCfg:
 
 
 @dataclass(frozen=True)
+class PricingCfg:
+    input: float = 0.0
+    cache: float = 0.0
+    output: float = 0.0
+
+    def __post_init__(self) -> None:
+        for value, name in (
+            (self.input, "pricing[].input"),
+            (self.cache, "pricing[].cache"),
+            (self.output, "pricing[].output"),
+        ):
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ConfigError(f"{name} must be a number, got {type(value).__name__}")
+            num = float(value)
+            if not math.isfinite(num):
+                raise ConfigError(f"{name} must be finite, got {value!r}")
+            if num < 0:
+                raise ConfigError(f"{name} must be >= 0, got {value!r}")
+        object.__setattr__(self, "input", float(self.input))
+        object.__setattr__(self, "cache", float(self.cache))
+        object.__setattr__(self, "output", float(self.output))
+
+
+@dataclass(frozen=True)
 class TimelineCfg:
     timezone: str = DEFAULT_TIMELINE_TIMEZONE
 
@@ -128,14 +164,18 @@ class Config:
     mcpServers: dict[str, McpServerCfg] = field(default_factory=dict)
     timeline: TimelineCfg = field(default_factory=TimelineCfg)
     limits: LimitsCfg = field(default_factory=LimitsCfg)
+    pricing: dict[str, PricingCfg] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "provider": asdict(self.provider),
             "mcpServers": {name: asdict(server) for name, server in self.mcpServers.items()},
             "timeline": asdict(self.timeline),
             "limits": asdict(self.limits),
         }
+        if self.pricing:
+            payload["pricing"] = {name: asdict(cfg) for name, cfg in self.pricing.items()}
+        return payload
 
 
 def config_path() -> Path:
@@ -188,6 +228,37 @@ def _parse_mcp_servers(raw: Any) -> dict[str, McpServerCfg]:
     return result
 
 
+def _parse_pricing(raw: Any) -> dict[str, PricingCfg]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ConfigError(f"pricing must be an object, got {type(raw).__name__}")
+    result: dict[str, PricingCfg] = {}
+    for name, value in raw.items():
+        if not isinstance(name, str) or not name.strip():
+            raise ConfigError("pricing keys must be non-empty strings")
+        if not isinstance(value, dict):
+            raise ConfigError(f"pricing[{name!r}] must be an object")
+        # support alias cached_input -> cache
+        raw_input = value.get("input")
+        raw_cache = value.get("cache")
+        if raw_cache is None and "cached_input" in value:
+            raw_cache = value.get("cached_input")
+        raw_output = value.get("output")
+        if raw_input is None:
+            raise ConfigError(f"pricing[{name!r}].input is required")
+        if raw_cache is None:
+            raise ConfigError(f"pricing[{name!r}].cache is required")
+        if raw_output is None:
+            raise ConfigError(f"pricing[{name!r}].output is required")
+        result[name] = PricingCfg(
+            input=_number(raw_input, f"pricing[{name!r}].input"),
+            cache=_number(raw_cache, f"pricing[{name!r}].cache"),
+            output=_number(raw_output, f"pricing[{name!r}].output"),
+        )
+    return result
+
+
 def _parse_dict(raw: dict[str, Any]) -> Config:
     return Config(
         provider=ProviderCfg(
@@ -214,6 +285,7 @@ def _parse_dict(raw: dict[str, Any]) -> Config:
                 null_means_default=True,
             )
         ),
+        pricing=_parse_pricing(raw.get("pricing")),
     )
 
 

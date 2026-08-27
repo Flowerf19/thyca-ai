@@ -13,6 +13,7 @@ from thyca.config import (
     Config,
     ConfigError,
     LimitsCfg,
+    PricingCfg,
     ProviderCfg,
     TimelineCfg,
     default_config,
@@ -195,6 +196,33 @@ def test_save_roundtrip(tmp_path: Path) -> None:
     assert p.exists()
     cfg2 = load(p)
     assert cfg2.provider.model == "gpt-4o"
+
+
+def test_pricing_parse_alias_and_roundtrip(tmp_path: Path) -> None:
+    p = tmp_path / "config.json"
+    raw = default_config().to_dict()
+    raw["pricing"] = {
+        "gpt-4o-mini": {"input": 0.15, "cached_input": 0.075, "output": 0.6},
+    }
+    p.write_text(json.dumps(raw), encoding="utf-8")
+    cfg = load(p)
+    assert cfg.pricing["gpt-4o-mini"] == PricingCfg(input=0.15, cache=0.075, output=0.6)
+    saved = cfg.to_dict()
+    assert "cached_input" not in saved["pricing"]["gpt-4o-mini"]
+    assert saved["pricing"]["gpt-4o-mini"]["cache"] == 0.075
+
+
+def test_pricing_rejects_negative_and_missing(tmp_path: Path) -> None:
+    p = tmp_path / "config.json"
+    raw = default_config().to_dict()
+    raw["pricing"] = {"m": {"input": -1, "cache": 0, "output": 1}}
+    p.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(ConfigError, match="must be >= 0"):
+        load(p)
+    raw["pricing"] = {"m": {"input": 1, "output": 1}}
+    p.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(ConfigError, match="cache is required"):
+        load(p)
 
 
 def test_cli_help_and_default_creation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

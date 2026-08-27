@@ -16,6 +16,11 @@ from urllib.parse import unquote, urlparse
 
 from thyca.agent.events import TurnEvent
 from thyca.chat_app import ChatApp
+from thyca.trace_api import (
+    trace_detail_payload,
+    trace_list_payload,
+    trace_stats_payload,
+)
 from thyca.llm.llm_base import LLMError
 from thyca.sessions import SessionCorrupt, SessionError, SessionNotFound
 from thyca.memory.archived import ArchiveError
@@ -38,14 +43,6 @@ _TRACE_DETAIL_RE = re.compile(
 )
 _BODY_CAP = 16_384
 _SENTINEL = object()
-
-# Parse cache for trace scans: path -> (mtime_ns, Session). JSONL stays the
-# source of truth — entries are re-parsed only when mtime_ns changes, and the
-# cache never holds more files than the newest-200 scan window.
-_TRACE_SCAN_CAP = 200
-_trace_scan_lock = threading.Lock()
-_trace_sessions: dict[Path, tuple[int, object]] = {}
-
 
 def public_turn_error(exc: Exception) -> tuple[int, str, str]:
     """Map a turn exception to a public ``(status, code, message)``.
@@ -350,7 +347,7 @@ def _handler(
             if app is None:
                 return
             try:
-                self._json(200, _trace_stats_payload(app, query))
+                self._json(200, trace_stats_payload(app, query))
             except Exception:
                 traceback.print_exc(file=sys.stderr)
                 self._json(503, {"error": "trace unavailable"})
@@ -360,7 +357,7 @@ def _handler(
             if app is None:
                 return
             try:
-                self._json(200, _trace_list_payload(app, query))
+                self._json(200, trace_list_payload(app, query))
             except Exception:
                 traceback.print_exc(file=sys.stderr)
                 self._json(503, {"error": "trace unavailable"})
@@ -375,7 +372,7 @@ def _handler(
                 self._json(404, {"error": "trace not found"})
                 return
             try:
-                self._json(200, _trace_detail_payload(app, session_id, idx))
+                self._json(200, trace_detail_payload(app, session_id, idx))
             except SessionNotFound:
                 self._json(404, {"error": "session not found"})
             except SessionCorrupt:
@@ -591,124 +588,6 @@ _TYPES = {
     ".svg": "image/svg+xml",
     ".json": "application/json; charset=utf-8",
 }
-
-
-def _cached_session(store, path: Path):
-    """Parsed Session for path, re-reading only when mtime_ns changed."""
-    try:
-        mtime = path.stat().st_mtime_ns
-    except OSError:
-        _trace_sessions.pop(path, None)
-        return None
-    cached = _trace_sessions.get(path)
-    if cached is not None and cached[0] == mtime:
-        return cached[1]
-    try:
-        session = store.load(path.stem)
-    except Exception:
-        # corrupt or vanished: drop any stale entry, skip the file
-        _trace_sessions.pop(path, None)
-        return None
-    _trace_sessions[path] = (mtime, session)
-    return session
-
-
-def _collect_turns(chat: ChatApp) -> list:
-    from thyca.trace import turns_from_session
-
-    out: list = []
-    store = chat.trace_store()
-    # cap 200 newest files to keep single-user scan cheap
-    paths = store.list_paths()[:_TRACE_SCAN_CAP]
-    with _trace_scan_lock:
-        for path in paths:
-            session = _cached_session(store, path)
-            if session is None:
-                continue
-            try:
-                out.extend(turns_from_session(session))
-            except Exception:
-                continue
-        # evict files that fell out of the newest-200 window
-        current = set(paths)
-        for stale in [p for p in _trace_sessions if p not in current]:
-            del _trace_sessions[stale]
-    # sort newest first by started_at desc, then session_id desc for stability
-    out.sort(key=lambda t: (t.started_at, t.session_id, t.turn_index), reverse=True)
-    return out
-
-
-def _apply_trace_filters(turns: list, qs: dict) -> list:
-    model = (qs.get("model", [""])[0] or "").strip()
-    status = (qs.get("status", [""])[0] or "").strip()
-    q = (qs.get("q", [""])[0] or "").strip().lower()
-    frm = (qs.get("from", [""])[0] or "").strip()
-    to = (qs.get("to", [""])[0] or "").strip()
-    filtered = turns
-    if model and model != "all":
-        filtered = [t for t in filtered if (t.model or "unknown") == model]
-    if status and status != "all":
-        filtered = [t for t in filtered if t.status == status]
-    if q:
-        filtered = [t for t in filtered if q in t.title.lower() or q in t.session_id.lower()]
-    if frm:
-        filtered = [t for t in filtered if t.started_at.split("T")[0] >= frm]
-    if to:
-        filtered = [t for t in filtered if t.started_at.split("T")[0] <= to]
-    return filtered
-
-
-def _trace_stats_payload(chat: ChatApp, query: str) -> dict:
-    from thyca.trace import aggregate
-    from urllib.parse import parse_qs
-
-    turns = _apply_trace_filters(_collect_turns(chat), parse_qs(query))
-    return aggregate(turns)
-
-
-def _trace_list_payload(chat: ChatApp, query: str) -> dict:
-    from urllib.parse import parse_qs
-
-    qs = parse_qs(query)
-    limit_raw = (qs.get("limit", ["50"])[0] or "50").strip()
-    offset_raw = (qs.get("offset", ["0"])[0] or "0").strip()
-    try:
-        limit = max(1, min(int(limit_raw), 200))
-    except ValueError:
-        limit = 50
-    try:
-        offset = max(0, int(offset_raw))
-    except ValueError:
-        offset = 0
-    turns = _apply_trace_filters(_collect_turns(chat), qs)
-    total = len(turns)
-    page = turns[offset : offset + limit]
-    traces = [t.to_payload() for t in page]
-    return {"traces": traces, "total": total}
-
-
-def _trace_detail_payload(chat: ChatApp, session_id: str, turn_index: int) -> dict:
-    from thyca.trace import turns_from_session
-
-    store = chat.trace_store()
-    session = store.load(session_id)
-    turns = turns_from_session(session)
-    for t in turns:
-        if t.turn_index == turn_index:
-            payload = t.to_payload()
-            payload["messages"] = [
-                {
-                    "role": m.role,
-                    "content": m.content,
-                    "ts": m.ts,
-                    "tool_calls": [{"id": c.id, "name": c.name} for c in (m.tool_calls or [])],
-                    "tool_call_id": m.tool_call_id,
-                    "meta": m.meta,
-                }
-                for m in t.messages
-            ]
-            return payload
-    raise ValueError("trace not found")
 
 
 def _content_type(path: Path) -> str:

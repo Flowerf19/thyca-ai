@@ -10,7 +10,7 @@ from thyca.chat_app import ChatApp
 from thyca.config import default_config, load, save
 from thyca.llm.llm_base import ChatReply
 from thyca.protocol import Message
-import thyca.serve as serve_mod
+import thyca.trace_api as trace_api
 from thyca.serve import default_webui, make_server
 from thyca.sessions import SessionManager
 from thyca.sessions.store import SessionStore
@@ -92,7 +92,7 @@ def test_trace_scan_cache_reuses_unchanged_files(tmp_path: Path) -> None:
         manager = SessionManager(tmp_path / "sessions")
         session_id = _append_turn(manager, model="gpt-4o-mini", content="cached turn", cost=0.00001)
 
-        serve_mod._trace_sessions.clear()
+        trace_api._trace_sessions.clear()
         scans = ["initial"]
         original_scan = SessionStore.scan
 
@@ -132,6 +132,38 @@ def test_trace_scan_cache_reuses_unchanged_files(tmp_path: Path) -> None:
         chat.shutdown()
 
 
+def test_trace_detail_after_list_does_not_reparse_unchanged_files(tmp_path: Path) -> None:
+    chat = _chat(tmp_path)
+    try:
+        manager = SessionManager(tmp_path / "sessions")
+        session_id = _append_turn(manager, model="gpt-4o-mini", content="detail turn", cost=0.00001)
+
+        trace_api._trace_sessions.clear()
+        scans: list[str] = []
+        original_scan = SessionStore.scan
+
+        def counting_scan(self: SessionStore, path: Path):
+            scans.append(path.name)
+            return original_scan(self, path)
+
+        httpd, thread = _start(tmp_path, chat)
+        try:
+            SessionStore.scan = counting_scan  # type: ignore[method-assign]
+            try:
+                listed = _json(httpd, "/api/traces")
+                assert listed["total"] == 1
+                scans.clear()
+                detail = _json(httpd, f"/api/traces/{session_id}/0")
+                assert detail["session_id"] == session_id
+                assert scans == []  # cache hit: detail skips re-parse
+            finally:
+                SessionStore.scan = original_scan  # type: ignore[method-assign]
+        finally:
+            _stop(httpd, thread)
+    finally:
+        chat.shutdown()
+
+
 def test_trace_scan_cache_evicts_files_outside_window(tmp_path: Path) -> None:
     chat = _chat(tmp_path)
     try:
@@ -139,15 +171,15 @@ def test_trace_scan_cache_evicts_files_outside_window(tmp_path: Path) -> None:
         _append_turn(manager, model="gpt-4o-mini", content="evict turn", cost=0.00001)
         ghost = tmp_path / "sessions" / "ghost.jsonl"
 
-        serve_mod._trace_sessions.clear()
-        serve_mod._trace_sessions[ghost] = (0, object())
+        trace_api._trace_sessions.clear()
+        trace_api._trace_sessions[ghost] = (0, object())
 
         httpd, thread = _start(tmp_path, chat)
         try:
             stats = _json(httpd, "/api/traces/stats")
             assert stats["totals"]["requests"] == 1
-            assert ghost not in serve_mod._trace_sessions
-            assert len(serve_mod._trace_sessions) == 1
+            assert ghost not in trace_api._trace_sessions
+            assert len(trace_api._trace_sessions) == 1
         finally:
             _stop(httpd, thread)
     finally:
@@ -161,7 +193,7 @@ def test_trace_scan_cache_skips_then_recovers_corrupt_file(tmp_path: Path) -> No
         session_id = _append_turn(manager, model="gpt-4o-mini", content="recover turn", cost=0.00001)
         path = tmp_path / "sessions" / f"{session_id}.jsonl"
 
-        serve_mod._trace_sessions.clear()
+        trace_api._trace_sessions.clear()
         httpd, thread = _start(tmp_path, chat)
         try:
             assert _json(httpd, "/api/traces/stats")["totals"]["requests"] == 1
@@ -169,7 +201,7 @@ def test_trace_scan_cache_skips_then_recovers_corrupt_file(tmp_path: Path) -> No
             good = path.read_text(encoding="utf-8")
             path.write_text(good + "{bad\n", encoding="utf-8")
             assert _json(httpd, "/api/traces/stats")["totals"]["requests"] == 0
-            assert path not in serve_mod._trace_sessions
+            assert path not in trace_api._trace_sessions
             # repairing the file is picked up again
             path.write_text(good, encoding="utf-8")
             assert _json(httpd, "/api/traces/stats")["totals"]["requests"] == 1

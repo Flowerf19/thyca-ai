@@ -29,6 +29,11 @@ _TURN_RE = re.compile(
 _TURN_STREAM_RE = re.compile(
     r"^/api/sessions/(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_[0-9a-f]{4})/turn/stream$"
 )
+_TRACE_RE = re.compile(r"^/api/traces$")
+_TRACE_STATS_RE = re.compile(r"^/api/traces/stats$")
+_TRACE_DETAIL_RE = re.compile(
+    r"^/api/traces/(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_[0-9a-f]{4})/(\d+)$"
+)
 _BODY_CAP = 16_384
 _SENTINEL = object()
 
@@ -162,12 +167,23 @@ def _handler(
 ) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
-            path = urlparse(self.path).path
+            parsed = urlparse(self.path)
+            path = parsed.path
             if path == "/api/memory/stats":
                 self._stats()
                 return
             if path == "/api/sessions":
                 self._chat_list()
+                return
+            if _TRACE_STATS_RE.fullmatch(path):
+                self._trace_stats(parsed.query)
+                return
+            if _TRACE_RE.fullmatch(path):
+                self._trace_list(parsed.query)
+                return
+            match = _TRACE_DETAIL_RE.fullmatch(path)
+            if match:
+                self._trace_detail(match.group(1), match.group(2))
                 return
             match = _SESSION_RE.fullmatch(path)
             if match:
@@ -176,12 +192,21 @@ def _handler(
             if path.startswith("/api/sessions"):
                 self._json(404, {"error": "session not found"})
                 return
+            if path.startswith("/api/traces"):
+                self._json(404, {"error": "trace not found"})
+                return
             self._static(path)
 
         def do_POST(self) -> None:
             path = urlparse(self.path).path
             if path == "/api/memory/forget":
                 self._forget()
+                return
+            if path == "/api/memory/reinforce":
+                self._reinforce()
+                return
+            if path == "/api/memory/update":
+                self._update_mem()
                 return
             if path == "/api/sessions":
                 self._chat_create()
@@ -222,6 +247,61 @@ def _handler(
                 return
             self._json(200, {"ok": True})
 
+        def _reinforce(self) -> None:
+            try:
+                payload = self._read_json()
+            except ValueError:
+                self._json(400, {"error": "invalid body"})
+                return
+            sid = payload.get("session_id")
+            if not isinstance(sid, str) or not sid.strip():
+                self._json(400, {"error": "invalid session_id"})
+                return
+            importance = payload.get("importance")
+            try:
+                expires = facade.reinforce(
+                    sid.strip(),
+                    importance=int(importance) if importance is not None else None,
+                )
+            except ArchiveError:
+                self._json(404, {"error": "session not found"})
+                return
+            except Exception:
+                self._json(503, {"error": "reinforce failed"})
+                return
+            self._json(200, {"ok": True, "expires_at": expires})
+
+        def _update_mem(self) -> None:
+            try:
+                payload = self._read_json()
+            except ValueError:
+                self._json(400, {"error": "invalid body"})
+                return
+            sid = payload.get("session_id")
+            if not isinstance(sid, str) or not sid.strip():
+                self._json(400, {"error": "invalid session_id"})
+                return
+            topic = payload.get("topic")
+            summary = payload.get("summary")
+            content = payload.get("content")
+            if not isinstance(topic, str) and not isinstance(summary, str):
+                self._json(400, {"error": "nothing to update"})
+                return
+            try:
+                facade.update(
+                    sid.strip(),
+                    topic=topic.strip() if isinstance(topic, str) and topic.strip() else None,
+                    summary=summary.strip() if isinstance(summary, str) else None,
+                    content=content if isinstance(content, str) else None,
+                )
+            except ArchiveError:
+                self._json(404, {"error": "session not found"})
+                return
+            except Exception:
+                self._json(503, {"error": "update failed"})
+                return
+            self._json(200, {"ok": True})
+
         def _stats(self) -> None:
             try:
                 payload = asdict(facade.stats())
@@ -231,6 +311,44 @@ def _handler(
                 self._send(503, body, "application/json; charset=utf-8")
                 return
             self._send(200, body, "application/json; charset=utf-8")
+
+        def _trace_stats(self, query: str) -> None:
+            app = self._chat()
+            if app is None:
+                return
+            try:
+                self._json(200, _trace_stats_payload(app, query))
+            except Exception:
+                self._json(503, {"error": "trace unavailable"})
+
+        def _trace_list(self, query: str) -> None:
+            app = self._chat()
+            if app is None:
+                return
+            try:
+                self._json(200, _trace_list_payload(app, query))
+            except Exception:
+                self._json(503, {"error": "trace unavailable"})
+
+        def _trace_detail(self, session_id: str, turn_index: str) -> None:
+            app = self._chat()
+            if app is None:
+                return
+            try:
+                idx = int(turn_index)
+            except ValueError:
+                self._json(404, {"error": "trace not found"})
+                return
+            try:
+                self._json(200, _trace_detail_payload(app, session_id, idx))
+            except SessionNotFound:
+                self._json(404, {"error": "session not found"})
+            except SessionCorrupt:
+                self._json(503, {"error": "session unreadable"})
+            except ValueError:
+                self._json(404, {"error": "trace not found"})
+            except Exception:
+                self._json(503, {"error": "trace unavailable"})
 
         def _chat_list(self) -> None:
             app = self._chat()
@@ -435,6 +553,141 @@ _TYPES = {
     ".svg": "image/svg+xml",
     ".json": "application/json; charset=utf-8",
 }
+
+
+def _collect_turns(chat: ChatApp) -> list:
+    from thyca.trace import turns_from_session
+
+    out: list = []
+    store = chat._sessions.store  # type: ignore[attr-defined]
+    # cap 200 newest files to keep single-user scan cheap
+    paths = store.list_paths()[:200]
+    for path in paths:
+        try:
+            session = store.load(path.stem)
+        except Exception:
+            continue
+        try:
+            out.extend(turns_from_session(session))
+        except Exception:
+            continue
+    # sort newest first by started_at desc, then session_id desc for stability
+    out.sort(key=lambda t: (t.started_at, t.session_id, t.turn_index), reverse=True)
+    return out
+
+
+def _apply_trace_filters(turns: list, query: str) -> list:
+    from urllib.parse import parse_qs
+
+    qs = parse_qs(query)
+    model = (qs.get("model", [""])[0] or "").strip()
+    status = (qs.get("status", [""])[0] or "").strip()
+    q = (qs.get("q", [""])[0] or "").strip().lower()
+    frm = (qs.get("from", [""])[0] or "").strip()
+    to = (qs.get("to", [""])[0] or "").strip()
+    # also accept the common alias "?from=" already parsed above
+    if not frm:
+        frm = (qs.get("from", [""])[0] or "").strip()
+    filtered = turns
+    if model and model != "all":
+        filtered = [t for t in filtered if (t.model or "unknown") == model]
+    if status and status != "all":
+        filtered = [t for t in filtered if t.status == status]
+    if q:
+        filtered = [t for t in filtered if q in t.title.lower() or q in t.session_id.lower()]
+    if frm:
+        filtered = [t for t in filtered if t.started_at.split("T")[0] >= frm]
+    if to:
+        filtered = [t for t in filtered if t.started_at.split("T")[0] <= to]
+    return filtered
+
+
+def _trace_stats_payload(chat: ChatApp, query: str) -> dict:
+    from thyca.trace import aggregate
+
+    turns = _apply_trace_filters(_collect_turns(chat), query)
+    data = aggregate(turns)
+    return data
+
+
+def _trace_list_payload(chat: ChatApp, query: str) -> dict:
+    from urllib.parse import parse_qs
+
+    qs = parse_qs(query)
+    limit_raw = (qs.get("limit", ["50"])[0] or "50").strip()
+    offset_raw = (qs.get("offset", ["0"])[0] or "0").strip()
+    try:
+        limit = max(1, min(int(limit_raw), 200))
+    except ValueError:
+        limit = 50
+    try:
+        offset = max(0, int(offset_raw))
+    except ValueError:
+        offset = 0
+    turns = _apply_trace_filters(_collect_turns(chat), query)
+    total = len(turns)
+    page = turns[offset : offset + limit]
+    traces = []
+    for t in page:
+        traces.append(
+            {
+                "session_id": t.session_id,
+                "turn_index": t.turn_index,
+                "title": t.title,
+                "started_at": t.started_at,
+                "ended_at": t.ended_at,
+                "model": t.model,
+                "status": t.status,
+                "rounds": t.rounds,
+                "requests": t.requests,
+                "prompt_tokens": t.prompt_tokens,
+                "cached_tokens": t.cached_tokens,
+                "completion_tokens": t.completion_tokens,
+                "total_tokens": t.total_tokens,
+                "cost_usd": t.cost_usd,
+                "latency_ms": t.latency_ms,
+            }
+        )
+    return {"traces": traces, "total": total}
+
+
+def _trace_detail_payload(chat: ChatApp, session_id: str, turn_index: int) -> dict:
+    from thyca.trace import turns_from_session
+
+    store = chat._sessions.store  # type: ignore[attr-defined]
+    session = store.load(session_id)
+    turns = turns_from_session(session)
+    for t in turns:
+        if t.turn_index == turn_index:
+            return {
+                "session_id": t.session_id,
+                "turn_index": t.turn_index,
+                "title": t.title,
+                "started_at": t.started_at,
+                "ended_at": t.ended_at,
+                "model": t.model,
+                "status": t.status,
+                "rounds": t.rounds,
+                "requests": t.requests,
+                "prompt_tokens": t.prompt_tokens,
+                "cached_tokens": t.cached_tokens,
+                "completion_tokens": t.completion_tokens,
+                "total_tokens": t.total_tokens,
+                "cost_usd": t.cost_usd,
+                "latency_ms": t.latency_ms,
+                "messages": [
+                    {
+                        "role": m.role,
+                        "content": m.content,
+                        "ts": m.ts,
+                        "tool_calls": [{"id": c.id, "name": c.name} for c in (m.tool_calls or [])],
+                        "tool_call_id": m.tool_call_id,
+                        "meta": m.meta,
+                    }
+                    for m in t.messages
+                ],
+            }
+    raise ValueError("trace not found")
 
 
 def _content_type(path: Path) -> str:

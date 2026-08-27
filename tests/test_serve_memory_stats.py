@@ -109,6 +109,53 @@ def test_forget_endpoint(tmp_path: Path) -> None:
         _stop(httpd, thread)
 
 
+def test_update_and_reinforce_endpoints(tmp_path: Path) -> None:
+    httpd, thread, facade = _start(tmp_path)
+    try:
+        now = datetime(2026, 8, 10, 10, 0, tzinfo=TZ)
+        sid = facade.remember("cafe", "likes ca phe den enough", now=now)
+        update = json.dumps({"session_id": sid, "topic": "tra"}).encode("utf-8")
+        request = Request(
+            _url(httpd, "/api/memory/update"),
+            data=update,
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urlopen(request, timeout=2) as response:
+            body = json.loads(response.read().decode("utf-8"))
+        assert body == {"ok": True}
+        text = facade.get(session_id=sid, now=now)
+        assert "tra" in text
+        assert "likes ca phe den enough" in text
+        reinforce = json.dumps({"session_id": sid}).encode("utf-8")
+        request = Request(
+            _url(httpd, "/api/memory/reinforce"),
+            data=reinforce,
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urlopen(request, timeout=2) as response:
+            body = json.loads(response.read().decode("utf-8"))
+        assert body["ok"] is True
+        assert body["expires_at"]
+        try:
+            urlopen(
+                Request(
+                    _url(httpd, "/api/memory/update"),
+                    data=b"{}",
+                    method="POST",
+                    headers={"Content-Type": "application/json"},
+                ),
+                timeout=2,
+            )
+        except HTTPError as exc:
+            assert exc.code == 400
+        else:
+            raise AssertionError("expected 400")
+    finally:
+        _stop(httpd, thread)
+
+
 def test_post_and_traversal_rejected(tmp_path: Path) -> None:
     httpd, thread, _facade = _start(tmp_path)
     try:

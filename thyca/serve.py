@@ -15,6 +15,12 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from thyca.agent.events import TurnEvent
+from thyca.bridge import (
+    SENTINEL,
+    bridge_worker,
+    public_turn_error,
+    write_line,
+)
 from thyca.chat_app import ChatApp
 from thyca.trace_api import (
     trace_detail_payload,
@@ -42,73 +48,6 @@ _TRACE_DETAIL_RE = re.compile(
     r"^/api/traces/(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_[0-9a-f]{4})/(\d+)$"
 )
 _BODY_CAP = 16_384
-_SENTINEL = object()
-
-def public_turn_error(exc: Exception) -> tuple[int, str, str]:
-    """Map a turn exception to a public ``(status, code, message)``.
-
-    Shared by ``/turn`` and ``/turn/stream`` so the two cannot drift. Never
-    leaks stack/path/secret: unexpected errors and :class:`ConfigError` always
-    map to the constant ``chat unavailable``; :class:`LLMError` keeps its
-    provider-redacted/capped text.
-    """
-    if isinstance(exc, ValueError):
-        return 400, "invalid_text", "invalid text"
-    if isinstance(exc, SessionNotFound):
-        return 404, "session_not_found", "session not found"
-    if isinstance(exc, SessionCorrupt):
-        return 503, "session_unreadable", "session unreadable"
-    if isinstance(exc, SessionError):
-        return 503, "session_unavailable", "session unavailable"
-    if isinstance(exc, LLMError):
-        return 503, "llm_error", str(exc)
-    return 503, "chat_unavailable", "chat unavailable"
-
-
-def _bridge_sink(queue_: queue.Queue, state: dict) -> None:
-    """Queue adapter for ``ChatApp.turn(event_sink=...)``.
-
-    Never raises and never blocks AgentLoop: once the client disconnected
-    the sink drops events without touching the queue.
-    """
-    def sink(event: TurnEvent) -> None:
-        if state["disconnected"]:
-            return
-        try:
-            queue_.put(event)
-        except Exception:
-            pass
-    return sink
-
-
-def _bridge_worker(
-    app: ChatApp,
-    session_id: str,
-    text: str,
-    queue_: queue.Queue,
-    state: dict,
-) -> None:
-    """Run one turn, queueing events plus exactly one terminal item.
-
-    The sentinel lands in ``finally`` so the handler cannot hang even if
-    completion enqueue/serialization fails. The first queued item before
-    ``turn.accepted`` (or the sentinel) is a pre-accept error.
-    """
-    sink = _bridge_sink(queue_, state)
-    try:
-        try:
-            detail = app.turn(session_id, text, event_sink=sink)
-        except Exception as exc:
-            queue_.put(("failed", exc))
-        else:
-            queue_.put(("completed", detail))
-    finally:
-        queue_.put(_SENTINEL)
-
-
-def _write_line(wfile, line: dict) -> None:
-    wfile.write(json.dumps(line, ensure_ascii=False).encode("utf-8") + b"\n")
-    wfile.flush()
 
 
 class ServeError(RuntimeError):
@@ -168,6 +107,58 @@ def run(
         httpd.server_close()
 
 
+def memory_endpoint(facade: MemoryFacade, kind: str, payload: dict) -> tuple[int, dict]:
+    """One ``POST /api/memory/*`` action → ``(status, body)``.
+
+    Shared body-parse/session-id handling lives in the handler; this carries
+    only the per-kind facade call and its error mapping.
+    """
+    if kind == "canonical":
+        name = payload.get("name")
+        content = payload.get("content")
+        if not isinstance(name, str) or not isinstance(content, str):
+            return 400, {"error": "invalid body"}
+        try:
+            facade.write_canonical(name, content)
+        except ArchiveError as exc:
+            return 400, {"error": str(exc)}
+        except Exception:
+            return 503, {"error": "write failed"}
+        return 200, {"ok": True}
+
+    sid = payload.get("session_id")
+    if not isinstance(sid, str) or not sid.strip():
+        return 400, {"error": "invalid session_id"}
+    sid = sid.strip()
+    try:
+        if kind == "forget":
+            facade.forget(sid)
+            return 200, {"ok": True}
+        if kind == "reinforce":
+            importance = payload.get("importance")
+            expires = facade.reinforce(
+                sid, importance=int(importance) if importance is not None else None
+            )
+            return 200, {"ok": True, "expires_at": expires}
+        # kind == "update"
+        topic = payload.get("topic")
+        summary = payload.get("summary")
+        content = payload.get("content")
+        if not isinstance(topic, str) and not isinstance(summary, str):
+            return 400, {"error": "nothing to update"}
+        facade.update(
+            sid,
+            topic=topic.strip() if isinstance(topic, str) and topic.strip() else None,
+            summary=summary.strip() if isinstance(summary, str) else None,
+            content=content if isinstance(content, str) else None,
+        )
+        return 200, {"ok": True}
+    except ArchiveError:
+        return 404, {"error": "session not found"}
+    except Exception:
+        return 503, {"error": f"{kind} failed"}
+
+
 def _handler(
     webui: Path, facade: MemoryFacade, chat: ChatApp | None
 ) -> type[BaseHTTPRequestHandler]:
@@ -206,16 +197,16 @@ def _handler(
         def do_POST(self) -> None:
             path = urlparse(self.path).path
             if path == "/api/memory/forget":
-                self._forget()
+                self._memory_post("forget")
                 return
             if path == "/api/memory/reinforce":
-                self._reinforce()
+                self._memory_post("reinforce")
                 return
             if path == "/api/memory/update":
-                self._update_mem()
+                self._memory_post("update")
                 return
             if path == "/api/memory/canonical":
-                self._write_canonical()
+                self._memory_post("canonical")
                 return
             if path == "/api/sessions":
                 self._chat_create()
@@ -236,101 +227,14 @@ def _handler(
         def log_message(self, format: str, *args: object) -> None:
             return
 
-        def _forget(self) -> None:
+        def _memory_post(self, kind: str) -> None:
             try:
                 payload = self._read_json()
             except ValueError:
                 self._json(400, {"error": "invalid body"})
                 return
-            sid = payload.get("session_id")
-            if not isinstance(sid, str) or not sid.strip():
-                self._json(400, {"error": "invalid session_id"})
-                return
-            try:
-                facade.forget(sid.strip())
-            except ArchiveError:
-                self._json(404, {"error": "session not found"})
-                return
-            except Exception:
-                self._json(503, {"error": "forget failed"})
-                return
-            self._json(200, {"ok": True})
-
-        def _reinforce(self) -> None:
-            try:
-                payload = self._read_json()
-            except ValueError:
-                self._json(400, {"error": "invalid body"})
-                return
-            sid = payload.get("session_id")
-            if not isinstance(sid, str) or not sid.strip():
-                self._json(400, {"error": "invalid session_id"})
-                return
-            importance = payload.get("importance")
-            try:
-                expires = facade.reinforce(
-                    sid.strip(),
-                    importance=int(importance) if importance is not None else None,
-                )
-            except ArchiveError:
-                self._json(404, {"error": "session not found"})
-                return
-            except Exception:
-                self._json(503, {"error": "reinforce failed"})
-                return
-            self._json(200, {"ok": True, "expires_at": expires})
-
-        def _update_mem(self) -> None:
-            try:
-                payload = self._read_json()
-            except ValueError:
-                self._json(400, {"error": "invalid body"})
-                return
-            sid = payload.get("session_id")
-            if not isinstance(sid, str) or not sid.strip():
-                self._json(400, {"error": "invalid session_id"})
-                return
-            topic = payload.get("topic")
-            summary = payload.get("summary")
-            content = payload.get("content")
-            if not isinstance(topic, str) and not isinstance(summary, str):
-                self._json(400, {"error": "nothing to update"})
-                return
-            try:
-                facade.update(
-                    sid.strip(),
-                    topic=topic.strip() if isinstance(topic, str) and topic.strip() else None,
-                    summary=summary.strip() if isinstance(summary, str) else None,
-                    content=content if isinstance(content, str) else None,
-                )
-            except ArchiveError:
-                self._json(404, {"error": "session not found"})
-                return
-            except Exception:
-                self._json(503, {"error": "update failed"})
-                return
-            self._json(200, {"ok": True})
-
-        def _write_canonical(self) -> None:
-            try:
-                payload = self._read_json()
-            except ValueError:
-                self._json(400, {"error": "invalid body"})
-                return
-            name = payload.get("name")
-            content = payload.get("content")
-            if not isinstance(name, str) or not isinstance(content, str):
-                self._json(400, {"error": "invalid body"})
-                return
-            try:
-                facade.write_canonical(name, content)
-            except ArchiveError as exc:
-                self._json(400, {"error": str(exc)})
-                return
-            except Exception:
-                self._json(503, {"error": "write failed"})
-                return
-            self._json(200, {"ok": True})
+            status, body = memory_endpoint(facade, kind, payload)
+            self._json(status, body)
 
         def _stats(self) -> None:
             try:
@@ -460,7 +364,7 @@ def _handler(
             items: queue.Queue = queue.Queue()
             state = {"disconnected": False}
             worker = threading.Thread(
-                target=_bridge_worker,
+                target=bridge_worker,
                 args=(app, session_id, text, items, state),
                 daemon=True,
                 name="thyca-turn-stream",
@@ -471,11 +375,11 @@ def _handler(
                 if isinstance(first, TurnEvent):
                     if first.type == "turn.accepted":
                         self._stream_headers()
-                        _write_line(self.wfile, first.to_dict())
+                        write_line(self.wfile, first.to_dict())
                     else:
                         self._json(503, {"error": "chat unavailable"})
                         return
-                elif first is _SENTINEL:
+                elif first is SENTINEL:
                     self._json(503, {"error": "chat unavailable"})
                     return
                 else:
@@ -487,28 +391,28 @@ def _handler(
                 terminal = False
                 while True:
                     item = items.get()
-                    if item is _SENTINEL:
+                    if item is SENTINEL:
                         break
                     if terminal:
                         continue
                     if isinstance(item, TurnEvent):
-                        _write_line(self.wfile, item.to_dict())
+                        write_line(self.wfile, item.to_dict())
                         continue
                     _kind, value = item
                     if _kind == "completed":
-                        _write_line(
+                        write_line(
                             self.wfile, {"type": "turn.completed", "detail": value}
                         )
                     else:
                         _code, _message = public_turn_error(value)[1:]
-                        _write_line(
+                        write_line(
                             self.wfile, {"type": "turn.failed", "code": _code, "message": _message}
                         )
                     terminal = True
                 if not terminal and not state["disconnected"]:
                     # Sentinel with no terminal item: write the constant public
                     # failure so the client never sees a stream without a terminal.
-                    _write_line(
+                    write_line(
                         self.wfile,
                         {
                             "type": "turn.failed",
@@ -521,7 +425,11 @@ def _handler(
                 # Client left: drop further events, let persist finish.
                 state["disconnected"] = True
             finally:
-                worker.join(timeout=60)
+                # The worker is a daemon and ChatApp serializes turns behind
+                # _turn_lock, so persistence completes regardless. A live
+                # stream waits for the terminal item; an abandoned one only
+                # parks this handler thread briefly.
+                worker.join(timeout=5 if state["disconnected"] else 60)
 
         def _stream_headers(self) -> None:
             self.send_response(200)

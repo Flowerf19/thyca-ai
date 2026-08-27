@@ -15,7 +15,7 @@ from thyca.chat_app import ChatApp, session_title
 from thyca.config import default_config, load, save
 from thyca.llm.llm_base import ChatReply, LLMError
 from thyca.protocol import Message, ToolCall
-from thyca.serve import ServeError, _SENTINEL, default_webui, make_server
+from thyca.serve import ServeError, SENTINEL, default_webui, make_server
 from thyca.sessions import Session, SessionManager
 from thyca.sessions.title import fallback_title
 from thyca.tools.memory import MemoryFacade
@@ -629,9 +629,9 @@ def test_stream_sentinel_without_terminal_writes_fallback_failure(
 
         def sentinel_only_worker(app, session_id, text, items, state):
             items.put(TurnEvent(type="turn.accepted"))
-            items.put(_SENTINEL)
+            items.put(SENTINEL)
 
-        monkeypatch.setattr("thyca.serve._bridge_worker", sentinel_only_worker)
+        monkeypatch.setattr("thyca.serve.bridge_worker", sentinel_only_worker)
         response = _stream(
             httpd,
             f"/api/sessions/{created['id']}/turn/stream",

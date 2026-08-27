@@ -1012,6 +1012,12 @@
   gap: var(--space-2xl);
 }
 
+.canon-desc {
+  margin: 0 0 var(--space-sm);
+  color: var(--color-neutral);
+  font-size: var(--text-sm);
+}
+
 .canon-label {
   margin: 0;
   color: var(--color-neutral);
@@ -1053,9 +1059,47 @@
   margin-block-end: 0;
 }
 
-/* đang sửa: nền trắng tinh để tập trung soạn */
+/* leaf editor: form nằm trong .quote-note — cho nó đầy card */
+.mem-entry .quote-note:has(.mem-edit) {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+/* đang sửa: nền trắng tinh để tập trung soạn; form chiếm hết chiều cao card
+   để xóa hết text không lộ khoảng trống giữa textarea và nút */
 .mem-md[data-editing] {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
   background: var(--color-paper);
+}
+
+.mem-md[data-editing] .mem-edit-body {
+  flex: 1;
+  margin-block-end: var(--space-sm);
+}
+
+.mem-md[data-editing] .mem-entry-actions {
+  margin-block-start: 0;
+  padding-block-start: 0;
+}
+
+.mem-edit {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.mem-edit .mem-edit-body {
+  flex: 1;
+  margin-block-end: var(--space-sm);
+}
+
+.mem-edit + .mem-entry-actions,
+.mem-edit .mem-entry-actions {
+  margin-block-start: 0;
+  padding-block-start: 0;
 }
 
 .mem-md h1,

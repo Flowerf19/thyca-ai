@@ -311,7 +311,12 @@ function expireBlock(rows) {
 
 function canonicalPages(files) {
   const order = { "USER.md": 0, "SOUL.md": 1, "IDENTITY.md": 2 };
-  const labels = { "USER.md": "ghi chú của user", "SOUL.md": "ghi chú của bản thân", "IDENTITY.md": "ghi chú của bản thân" };
+  const labels = { "USER.md": "ghi chú của user", "SOUL.md": "chỉ dẫn cho agent", "IDENTITY.md": "chỉ dẫn cho agent" };
+  const descs = {
+    "USER.md": "thông tin về bạn — tên, sở thích, bối cảnh",
+    "SOUL.md": "cách agent nói chuyện và trả lời",
+    "IDENTITY.md": "danh tính và giới hạn của agent",
+  };
   const list = files
     .filter((file) => file && file.name)
     .sort((a, b) => (order[a.name] ?? 9) - (order[b.name] ?? 9));
@@ -322,13 +327,14 @@ function canonicalPages(files) {
     const layer = name === "USER.md" ? "user" : "self";
     // ngăn giữa 2 lớp: ghi chú của user — ghi chú của bản thân
     if (prevLayer === "user" && layer === "self") {
-      sections.push(`<div class="canon-divider" role="separator"><span>bản thân</span></div>`);
+      sections.push(`<div class="canon-divider" role="separator"><span>chỉ dẫn cho agent</span></div>`);
     }
     prevLayer = layer;
     const content = String(file.content || "");
     sections.push(`<article class="mem-entry">
         <p class="canon-label">${escapeHtml(labels[name] || "")}</p>
         <h3>${escapeHtml(name)}</h3>
+        <p class="canon-desc">${escapeHtml(descs[name] || "")}</p>
         <div class="mem-md" data-canonical="${escapeHtml(name)}" data-raw="${escapeHtml(content)}">${formatMarkdown(content) || "(trống)"}</div>
         <div class="mem-entry-actions mem-canonical-actions">
           <button type="button" class="mem-reinforce" data-canonical-edit="${escapeHtml(name)}">Sửa</button>

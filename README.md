@@ -4,9 +4,11 @@ Thyca là harness trợ lý cá nhân chạy trong terminal, lấy cảm hứng 
 
 ## Trạng thái hiện tại
 
-Repo đang trong giai đoạn xây dựng v1. Đã có và có test: **Config**, **Session**, **ActiveMemory**, L2 archive lexical (FTS5 + trigram, TTL lifecycle, `MemoryFacade`), **LLM** (`ConnectFactory` + `OpenAIChat` + `PromptManager`) và **Agent Loop** (Assemble/Think/Act/Observe + `Stage`). CLI đã nối loop: `thyca -p`, REPL, `--continue` / `--session` / `--model`. Chưa có: Tools registry/builtin, MCP. Trạng thái mỗi service theo checklist trong `.agents/plans/thyca-agent-architecture.md`.
+**0.4.0.** CLI nối Agent Loop: `thyca -p`, REPL, `--continue` / `--session` / `--model`. Tools registry + `memory_*` + MCP stdio đã có. WebUI local: `thyca --serve` (mặc định `127.0.0.1:8765`, `--daemon` / `--stop` / `--port`) — Chat, Memories, Trace.
 
-Memory v1 đã được chốt là **L2 hybrid**: markdown dưới `~/.thyca` là nguồn sự thật; SQLite là index suy ra. Lexical retrieval (FTS5 + trigram) **đã chạy**; semantic retrieval (exact vector + RRF) chỉ tồn tại trong kiến trúc frozen của plan — embedding runtime đã được gỡ (580ae03) nên `semantic=true` chưa có model, không reintroduce như đã implement. Daily memory chỉ được index sau khi đóng ngày; `SOUL.md` và `USER.md` luôn indexable. `MEMORY.md` đã bỏ — `memory_remember` chỉ ghi `memory/YYYY-MM-DD.md`. Chi tiết nằm ở `.agents/plans/l2-memory-retrieval.md` và quyết định `.agents/decisions/2026-08-15-l2-hybrid-v1.md`.
+Config / Session JSONL / ActiveMemory / L2 lexical / LLM OpenAI-compat / loop 4 pha đều có test. `ChatReply.usage` chuẩn hóa token (prompt / cached / completion / total); `cost_for` tính USD từ bảng `pricing` (builtin + overlay config). Observe ghi `usage` / `cost_usd` / `latency_ms` vào `Message.meta` trên JSONL. Google/Anthropic connect vẫn stub.
+
+Memory v1 là **L2 hybrid**: markdown dưới `~/.thyca` là nguồn sự thật; SQLite là index suy ra. Lexical (FTS5 + trigram) đã chạy; semantic/vector chỉ còn trong plan frozen — embedding runtime đã gỡ (580ae03). Daily index sau khi đóng ngày; `SOUL.md` / `USER.md` / `IDENTITY.md` luôn inject. `MEMORY.md` đã bỏ — `memory_remember` ghi `memory/YYYY-MM-DD.md`. Chi tiết: `.agents/plans/l2-memory-retrieval.md`, `.agents/decisions/2026-08-15-l2-hybrid-v1.md`.
 
 ## Prerequisites
 
@@ -38,6 +40,7 @@ Lần chạy CLI đầu tiên tạo `~/.thyca/config.json` nếu file chưa tồ
 uv sync
 uv run thyca --help
 uv run thyca --version
+uv run thyca --serve --daemon   # webui http://127.0.0.1:8765
 uv run pytest -q
 ```
 
@@ -54,26 +57,27 @@ Config mặc định dùng một provider OpenAI-compatible:
   },
   "mcpServers": {},
   "timeline": { "timezone": "Asia/Ho_Chi_Minh" },
-  "limits": { "loopMax": 200, "hotTailKB": 4, "contextTokens": 32000 }
+  "limits": { "loopMax": 200, "hotTailKB": 4, "contextTokens": 32000 },
+  "pricing": {
+    "gpt-4o-mini": { "input": 0.15, "cache": 0.075, "output": 0.60 }
+  }
 }
 ```
 
-API Python của config ở module level là `load()`, `ensure_default()` và `save()`. Provider secrets được resolve lúc gọi qua `ProviderCfg.api_key()`: giá trị `apiKey` trong JSON thắng nếu có, nếu không mới đọc `apiKeyEnv`; `apiKey` không hiện trong `repr`. Cấu hình embedding model đã được gỡ khỏi config cùng embedding runtime.
+`pricing` là optional (USD / 1M tokens). Thiếu thì dùng bảng builtin trong `thyca/llm/pricing.py`. Alias đọc `cached_input` → ghi ra `cache`. API Python: `load()`, `ensure_default()`, `save()`. `ProviderCfg.api_key()`: `apiKey` JSON thắng `apiKeyEnv`; `apiKey` không hiện trong `repr`.
 
-## Kiến trúc dự kiến
+## Kiến trúc
 
-Package dùng flat layout `thyca/`, không có `src/`. Các module chính đã có: `config.py`, `protocol.py` (canonical `Message`/`ToolCall`/`ToolResult`), `sessions/` (4 class SOLID), `memory/` (active + archived/chunk + writer + heading), `llm/` (`llm_base`/`llm_factory`/`openai_chat`/`openai_responses`/`google_chat`/`anthropic_chat`/`prompt`), `agent/` (Assemble/Think/Act/Observe + `Stage`), `tools/memory.py` (facade `memory_*`).
+Package flat `thyca/`, không `src/`. Module chính: `config.py`, `protocol.py`, `sessions/` (4 class SOLID), `memory/`, `llm/` (`llm_base` + `pricing` + `openai_chat` …), `agent/` (Assemble/Think/Act/Observe + `Stage`), `tools/` (registry + `memory_*` + MCP), `serve.py` + `webui/`.
 
-Vòng lặp agent là `assemble → think → act → observe` trên một `Stage`; `AgentLoop.run` (loop.py) giữ `SessionManager.current`, `Assemble` nhét `PromptManager.build` khi `hot` là `ActiveSnapshot`. Tools registry/builtin và MCP chưa có — `ToolDispatcher` trong `Act` là port cho registry sau này. `memory_remember` là writer duy nhất cho memory files; v1 không có confirmation gate.
+Loop: `assemble → think → act → observe`. `Assemble` nhét `PromptManager.build` khi `hot` là `ActiveSnapshot`. `memory_remember` là writer duy nhất cho memory files; v1 không confirmation gate.
 
 ## Development và testing
 
-Runtime tests (`uv run pytest -q`, 83 tests) phủ Config, Session, ActiveMemory, L2 archive lexical + TTL lifecycle, LLM factory/OpenAI chat/prompt, và agent loop 4 pha. `uv sync --locked` phải cài được project cùng dev group; `uv run pytest -q` là lệnh kiểm chứng chuẩn. Live provider/network không nằm trong unit suite.
+`uv run pytest -q` là lệnh kiểm chứng chuẩn (≈319 passed). Baseline đã biết: `tests/test_cli.py::test_debug_prints_prompt_flags` (`tools=11` vs `tools=7`). Live provider/network không nằm trong unit suite. `uv sync --locked` phải tái tạo được môi trường.
 
-Khi thêm service mới, chỉ đánh dấu plan `in-progress` sau khi contract được duyệt. Task hoàn tất phải cập nhật plan lifecycle và có focused tests trước khi service sau dựa vào nó. Không dùng ad-hoc package cài ngoài `pyproject.toml` để làm bằng chứng; `uv sync --locked` phải tái tạo được môi trường test.
-
-Ngoài scope v1: web/TUI, Telegram/Discord, subagent, plan mode, background memory watcher, ANN/vector database, provider catalog và confirmation gate. Nhạc/ảnh hoặc integration chuyên biệt đi qua MCP về sau, không thêm vào core trước khi vertical slice CLI chạy ổn.
+Ngoài scope: Telegram/Discord, subagent, plan mode, confirmation gate, ANN/vector database, catalog hàng chục provider.
 
 ## Tài liệu agent
 
-Đọc `.agents/README.md` trước, sau đó `PROJECT_CONTEXT.md`, `AGENT_RULES.md`, các decision và plans. Chỉ implement service có plan được duyệt (`status: in-progress`); trạng thái hiện tại theo checklist trong `.agents/plans/thyca-agent-architecture.md` — Config/Session/Memory done, LLM in-progress, Tools/MCP draft.
+Đọc `.agents/README.md` trước. Plan đang chạy: `thyca-trace-notebook.md` (UI Trace sổ nghe) và phần còn lại của `thyca-trace-cost.md` (naming meta, mtime cache).

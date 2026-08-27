@@ -1,7 +1,7 @@
 ---
 status: done
 created: 2026-08-14
-last_updated: 2026-08-26
+last_updated: 2026-08-27
 ---
 
 # Service — Agent Loop (`thyca/agent/`)
@@ -16,7 +16,7 @@ last_updated: 2026-08-26
 
 | Class | File | Việc |
 |-------|------|------|
-| `Stage` | `stage.py` | workspace lượt: `messages`, `round`, `reply`, `results` |
+| `Stage` | `stage.py` | workspace lượt: `messages`, `round`, `reply`, `results`, `llm_latency_ms`, `llm_model`, `llm_cost_usd`, `tool_latencies` |
 | `Assemble` | `assemble.py` | `assemble(stage, user_msg)` |
 | `Think` | `think.py` | `think(stage)` ghi `stage.reply` |
 | `Act` | `act.py` | `act(stage)` gather, ghi `stage.results` |
@@ -47,9 +47,9 @@ Dataclass không frozen. `messages` / `results` `default_factory=list`. `round >
 
 - `compact()` → `sessions.compact_if_needed()`
 - `user(stage)` → append `stage.messages[-1]`
-- `assistant(stage)` → append text `stage.reply`; return text
-- `observe(stage)`: order results theo call id; append assistant+tool; `stage.messages.extend`; id lệch → `ValueError`
-- `loop_limit(stage)` → append `"loop limit reached"`
+- `assistant(stage)` → append text `stage.reply` với `meta` (`kind`, `round`, `model`, `latency_ms`, `usage`, `cost_usd`, `finish_reason`); return text
+- `observe(stage)`: order results theo call id; append assistant+tool; tool `meta.latency_ms` / `meta.round`; `stage.messages.extend`; id lệch → `ValueError`
+- `loop_limit(stage)` → append `"loop limit reached"` + `meta.status=loop_limit`
 
 ### Events (2026-08-26)
 
@@ -80,7 +80,7 @@ for _ in 1..loop_max:
 
 Giữ `SessionManager.current`. Không planner / prefetch / subagent.
 
-> Lưu ý code hiện tại: `AgentLoop.__init__(..., tools=None)` chưa truyền `stage.tools` khi tạo `Stage` (loop.py hiện bỏ qua `tools`), và `Act` dispatch qua `ToolDispatcher` port — registry chưa tồn tại. `LoopPolicy`/`Turn`/`RunGate` là lịch sử split cũ, không có trong code.
+`AgentLoop.__init__` nhận `tools`, `model`, `pricing`. Sau `think`: `cost_for(stage.llm_model, usage, pricing)` (fallback config model). `Act` đo từng tool song song, merge `stage.tool_latencies`. Naming title (`ChatApp._name_if_needed`) chưa ghi `kind: "naming"` vào JSONL.
 
 ## Tasks
 
@@ -103,4 +103,4 @@ Giữ `SessionManager.current`. Không planner / prefetch / subagent.
 
 ## Assumptions
 
-- `Assemble` inject system khi `hot` là `ActiveSnapshot`. Registry/tools vẫn chưa có — CLI dùng `_NoTools`.
+- `Assemble` inject system khi `hot` là `ActiveSnapshot`. Registry + `memory_*` + MCP đã nối CLI/ChatApp.

@@ -1,7 +1,7 @@
 ---
 status: done
 created: 2026-08-14
-last_updated: 2026-08-15
+last_updated: 2026-08-27
 ---
 
 # Service — Config (`thyca/config.py`)
@@ -12,7 +12,7 @@ last_updated: 2026-08-15
 
 ## Summary
 
-Đọc/ghi `~/.thyca/config.json`, resolve `apiKey`/`apiKeyEnv` tại thời điểm gọi, validate defaults, tạo file nếu thiếu. Là nguồn duy nhất cho `provider/mcpServers/timeline/limits`. Public API dùng Python snake_case ở module level: `load()`, `ensure_default()`, `save()`; dataclass giữ JSON field names hiện có để config tương thích.
+Đọc/ghi `~/.thyca/config.json`, resolve `apiKey`/`apiKeyEnv` tại thời điểm gọi, validate defaults, tạo file nếu thiếu. Là nguồn duy nhất cho `provider/mcpServers/timeline/limits` và optional `pricing`. Public API dùng Python snake_case ở module level: `load()`, `ensure_default()`, `save()`; dataclass giữ JSON field names hiện có để config tương thích.
 
 ## Class trong module
 
@@ -59,7 +59,8 @@ classDiagram
   "provider": { "baseUrl": "https://api.openai.com/v1", "apiKeyEnv": "OPENAI_API_KEY", "model": "gpt-4o-mini" },
   "mcpServers": { "echo": { "command": "python", "args": ["-m", "examples.echo"], "env": {} } },
   "timeline": { "timezone": "Asia/Ho_Chi_Minh" },
-  "limits": { "loopMax": 10, "hotTailKB": 4, "contextTokens": 32000 }
+  "limits": { "loopMax": 10, "hotTailKB": 4, "contextTokens": 32000 },
+  "pricing": { "gpt-4o-mini": { "input": 0.15, "cache": 0.075, "output": 0.60 } }
 }
 ```
 - `ProviderCfg.api_key()` lấy `provider.apiKey` trong JSON trước; trống thì đọc `os.environ[apiKeyEnv]`. `apiKey` không hiện trong `repr` (field `repr=False`).
@@ -73,6 +74,7 @@ classDiagram
 |----|------|------|------|
 | TASK-301 | `pyproject.toml` flat, Python >=3.14, locked dev test group, entry point `thyca`, package init/main | ✅ | 2026-08-15 |
 | TASK-302 | `thyca/config.py`: strict load validation, call-time env resolution, defaults, `ensure_default()`, fail-closed locked atomic `save()` | ✅ | 2026-08-15 |
+| TASK-303 | Optional `Config.pricing: dict[str, PricingCfg]`; validate ≥0 finite; alias `cached_input` → `cache`; `to_dict` omits empty pricing | x | 2026-08-27 |
 
 Xong khi: `thyca --help` chạy; thiếu `~/.thyca/config.json` tự tạo default; provider/embedding `apiKeyEnv` resolve đúng; OpenAI embedding config thiếu URL/key bị reject lúc load.
 

@@ -1,25 +1,27 @@
 # Project context
 
-`thyca-ai` là harness trợ lý cá nhân trong terminal. Cảm hứng pi (vòng lặp nhỏ, ít abstraction), không phải coding agent và không clone OpenClaw/Hermes.
+`thyca-ai` 0.4.0 — harness trợ lý cá nhân (terminal + webui local). Cảm hứng pi (vòng lặp nhỏ, ít abstraction). Không phải coding agent, không clone OpenClaw/Hermes.
 
-Trạng thái repo (2026-08-20): package flat `thyca/` có skeleton CLI, Config, Session (`thyca/sessions/`), ActiveMemory (`thyca/memory/active.py`), L2 archive lexical (FTS5 + trigram, TTL lifecycle, facade `thyca/tools/memory.py`), LLM (`thyca/llm/` — `ConnectFactory` + `OpenAIChat` + `PromptManager`) và Agent Loop (`thyca/agent/` — Assemble/Think/Act/Observe + `Stage`). Tools registry/builtin và MCP chưa triển khai. `thyca -p` vẫn là stub, chưa gọi LLM.
+## Runtime (verified 2026-08-27)
 
-## Định hướng v1
+Một process `thyca`. Entry: `uv run thyca --help`.
 
-- Một process CLI. User nói → model + tools → trả lời.
-- Năng lực đến từ tool, không từ framework.
-- MCP là nguồn tool hạng nhất (khác pi: pi cố ý không có MCP).
-- Stack: Python 3.14 + uv, loop tự viết.
-- Memory: markdown là nguồn sự thật; L2 hybrid gồm FTS5 + trigram + vector/RRF. Lexical search chạy trước; agent tự quyết khi nào gọi semantic search. Embedding runtime đã gỡ (580ae03) — code hiện chỉ lexical; kiến trúc hybrid giữ trong `l2-memory-retrieval.md` như plan frozen, không reintroduce embedding như đã implement. `memory_remember` chỉ ghi `memory/YYYY-MM-DD.md`. Daily đóng ngày mới index; `SOUL.md` và `USER.md` luôn indexable. `MEMORY.md` đã bỏ (2026-08-25).
-- Tool chạy thẳng, không có cửa xác nhận ở v1. Seam `run(call)` để cắm gate (ask/auto) sau.
-- `write`/`edit` không được ghi dưới `~/.thyca`; `memory_remember` là writer duy nhất cho memory files. Mutating calls phải serialize theo resource dù read-only calls có thể chạy song song.
+- **CLI:** `-p` one-shot, REPL, `--continue` / `--session` / `--model` / `--debug`.
+- **Serve:** `--serve` (mặc định `127.0.0.1:8765`), `--daemon`, `--stop`, `--port`.
+- **Config:** `~/.thyca/config.json` — `provider`, `mcpServers`, `timeline`, `limits`, optional `pricing` (USD / 1M tokens: `input` / `cache` / `output`; alias đọc `cached_input`). Secret chỉ qua `provider.apiKey` hoặc env `apiKeyEnv`.
+- **Session:** `thyca/sessions/` (4 class SOLID). JSONL dưới `~/.thyca/sessions/`.
+- **Memory:** markdown là nguồn sự thật. ActiveMemory inject full `SOUL.md` / `USER.md` / `IDENTITY.md` + daily tail `hotTailKB`. L2 lexical (FTS5 + trigram, TTL) qua `MemoryFacade`; `memory_remember` ghi `memory/YYYY-MM-DD.md`. Không `MEMORY.md`.
+- **LLM:** `ConnectFactory` → `OpenAIChat`. `ChatReply.usage` chuẩn hóa `prompt_tokens` / `cached_tokens` / `completion_tokens` / `total_tokens` (+ `reasoning_tokens?`); `ChatReply.model` echo từ provider. `thyca/llm/pricing.py` `cost_for` — unknown model → `None`. Google/Anthropic vẫn `NotImplementedError`.
+- **Loop:** `assemble → think → act → observe`. Think/Act đo `perf_counter`. Observe ghi `Message.meta` (`kind`, `round`, `model`, `latency_ms`, `usage`, `cost_usd`, `finish_reason`); tool message: `latency_ms` / `round`. Naming title chưa persist `kind: "naming"`.
+- **Tools:** registry builtin `memory_remember|search|recent|get|forget|reinforce|update` + MCP stdio (`thyca/tools/mcp.py`).
+- **WebUI:** `webui/` — Chat / Memories (Hồ sơ = USER.md rồi SOUL.md / IDENTITY.md) / Trace. API loopback `/api/sessions*`, `/api/memory*`, `/api/traces*`.
 
-## Ngoài v1
+## Ngoài scope hiện tại
 
-- Web UI, Telegram/Discord, subagent, plan mode, GUI popup, todo built-in.
-- Catalog hàng chục provider.
-- Nhạc/ảnh trong core.
-- Memory MCP bên thứ 3 (cùng interface, gắn sau).
-- ANN/vector database, background memory watcher, automatic memory prefetch.
+Telegram/Discord, subagent, plan mode, GUI popup, confirmation gate, ANN/vector DB, catalog hàng chục provider. Embedding runtime đã gỡ (580ae03).
 
-Chi tiết và giả định: `.agents/plans/thyca-harness-v1.md`, `.agents/plans/l2-memory-retrieval.md`, và decision `.agents/decisions/2026-08-15-l2-hybrid-v1.md`.
+## Tests
+
+`uv run pytest -q`. Baseline đã biết: `tests/test_cli.py::test_debug_prints_prompt_flags` fail vì `tools=11` vs `tools=7` — không phải regression của pricing.
+
+Chi tiết plan: `.agents/plans/thyca-harness-v1.md`, `l2-memory-retrieval.md`, decision `2026-08-15-l2-hybrid-v1.md`. Trace cost: `plans/thyca-trace-cost.md`. UI sổ nghe: `plans/thyca-trace-notebook.md`.

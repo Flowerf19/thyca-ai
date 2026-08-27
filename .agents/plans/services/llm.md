@@ -1,7 +1,7 @@
 ---
 status: done
 created: 2026-08-14
-last_updated: 2026-08-20
+last_updated: 2026-08-27
 ---
 
 # Service — LLM (`thyca/llm/` + `prompt_manager.py`)
@@ -48,6 +48,7 @@ classDiagram
         +tool_calls: ToolCall[]
         +usage: dict | None
         +finish_reason: str
+        +model: str | None
     }
     class LLMError {
         <<RuntimeError>>
@@ -94,6 +95,7 @@ classDiagram
 |----|------|------|------|
 | TASK-307 | `prompt_manager.py` + mẫu `prompts/soul.md` `prompts/identity.md` | x | 2026-08-20 |
 | TASK-308 | `Connect` + Factory + `OpenAIChat` (auth, parse, retry, redact). Google/Anthropic stub | x | 2026-08-19 |
+| TASK-309 | `normalize_usage` + `ChatReply.model`; OpenAI bóc cached/reasoning; `thyca/llm/pricing.py` `cost_for` | x | 2026-08-27 |
 
 > Kinds đã map trong factory: `openai`/`openai_chat`/`openai_compat` → `OpenAIChat`, `openai_responses`/`responses` → `OpenAIResponses`, `google` → `GoogleChat`, `anthropic` → `AnthropicChat`. `ProviderCfg.api_key()`: `apiKey` JSON thắng `apiKeyEnv`; `repr=False` cho `apiKey` (config.py:53).
 

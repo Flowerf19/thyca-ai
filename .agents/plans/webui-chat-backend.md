@@ -1,7 +1,7 @@
 ---
 status: done
 created: 2026-08-22
-last_updated: 2026-08-26
+last_updated: 2026-08-27
 ---
 
 > Superseded in part by `thyca-operational-music-trace.md` (2026-08-26):
@@ -14,7 +14,7 @@ last_updated: 2026-08-26
 
 Memories đã đọc `GET /api/memory/stats`. Chat vẫn mock (`data.js`) và composer giả gửi. Nối Chat vào cùng `thyca --serve` loopback: liệt kê / mở / tạo session JSONL thật, gửi một lượt qua **cùng** `AgentLoop` với CLI.
 
-Success: `thyca --serve` → sidebar Chat là `~/.thyca/sessions/*.jsonl`; mở phiên thấy `you`/`thyca` + tool strip; Gửi chạy loop và append JSONL; `python -m http.server --directory webui` vẫn mock, không crash. Trace không đổi.
+Success: `thyca --serve` → sidebar Chat là `~/.thyca/sessions/*.jsonl`; mở phiên thấy `you`/`thyca` + tool strip; Gửi chạy loop và append JSONL; `python -m http.server --directory webui` vẫn mock, không crash. Trace: JSONL `Message.meta` usage/cost — UI sổ nghe là `thyca-trace-notebook.md` (không phải dump admin).
 
 ## Tasks
 

@@ -2,12 +2,13 @@
 
 Đọc theo thứ tự này:
 
-1. `PROJECT_CONTEXT.md` — trạng thái repo, kiến trúc và ranh giới v1
-2. `AGENT_RULES.md` — quy tắc làm việc và approval gate
-3. `decisions/2026-08-15-l2-hybrid-v1.md` — quyết định L2 hybrid thuộc v1
-4. `plans/thyca-harness-v1.md` — plan tổng
-5. `plans/thyca-agent-architecture.md` — wiring và thứ tự service
-6. `plans/services/*.md` — contract thi công từng service
-7. `plans/l2-memory-retrieval.md` — contract chi tiết cold retrieval
+1. `PROJECT_CONTEXT.md` — runtime, ranh giới, env
+2. `AGENT_RULES.md` — an toàn, workflow, gotcha đã verify
+3. `decisions/2026-08-15-l2-hybrid-v1.md` — L2 hybrid thuộc v1
+4. Plan đang chạy: `plans/thyca-trace-cost.md` (persist usage/cost — GOAL-001/002/003 phần lớn xong; UI sổ nghe → `plans/thyca-trace-notebook.md`)
+5. `plans/thyca-harness-v1.md` — plan tổng
+6. `plans/services/*.md` — contract từng service
 
-Runtime hiện có: CLI stub, Config, Session (`thyca/sessions/`), ActiveMemory (`thyca/memory/active.py`), L2 archive lexical + TTL lifecycle + facade (`thyca/tools/memory.py`), LLM (`thyca/llm/` — `ConnectFactory`/`OpenAIChat`/`PromptManager`), Agent Loop (`thyca/agent/` — 4 pha + `Stage`). Chưa có: Tools registry/builtin, MCP, CLI wiring. Đừng bịa command hoặc feature ngoài plan đã được duyệt.
+Runtime **0.4.0**: CLI (`thyca -p`, REPL, `--continue` / `--session` / `--model`), Config (kèm `pricing`), Session JSONL, ActiveMemory + L2 lexical, LLM OpenAI-compat (`normalize_usage` + `cost_for`), Agent Loop 4 pha (ghi `Message.meta` usage/cost/latency), Tools registry + `memory_*` + MCP stdio, WebUI `thyca --serve` (Chat / Memories / Trace).
+
+Đừng bịa command hoặc feature. Evidence = tree hiện tại, không phải chat.

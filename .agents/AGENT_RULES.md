@@ -1,11 +1,13 @@
 # Agent rules
 
-- Plan-only until the umbrella plan is approved (`.agents/plans/thyca-harness-v1.md` status `in-progress`). The Config service is the only approved implementation exception (`services/config.md` status `done`); do not start another runtime service without its plan approval.
-- L2 hybrid retrieval is part of v1. Read `.agents/decisions/2026-08-15-l2-hybrid-v1.md` before changing memory contracts.
-- Session is 4-class SOLID in `thyca/sessions/`: `Session` (entity), `SessionStore` (I/O), `SessionCompactor` (policy), `SessionManager` (orchestrator). No `thyca/session.py` shim.
-- ActiveMemory is `thyca/memory/active.py` only: `SOUL`/`USER`/`IDENTITY` full inject; daily tail `hotTailKB`. Archived/L2 is `thyca/memory/archived.py` + `chunk.py` — closed daily + always-on `SOUL`/`USER` index, not injected. Facade/`memory_*` is Tools, not ActiveMemory. No `MEMORY.md`.
-- Do not add dependencies, abstractions, or features outside the currently approved task.
-- Memory recalled from another-brain is a claim; current repository evidence wins.
-- Code and identifiers are English. Communicate with the user in the user's language.
-- Linux is the real target. Do not write APIs that only work on Windows.
-- Secrets only through environment variables or files outside Git.
+- Chỉ làm task thuộc plan `in-progress` (hoặc bug/fix UI user vừa chỉ). Không thêm dependency, abstraction, hay feature ngoài task đó.
+- Plan đang chạy: `thyca-trace-cost.md` (còn naming meta, mtime cache, Google/Anthropic normalize) và `thyca-trace-notebook.md` (UI sổ nghe — **đã duyệt** 2026-08-27).
+- L2 hybrid thuộc v1. Đọc `.agents/decisions/2026-08-15-l2-hybrid-v1.md` trước khi đổi memory contract.
+- Session là 4-class SOLID trong `thyca/sessions/`: `Session` / `SessionStore` / `SessionCompactor` / `SessionManager`. Không `thyca/session.py` shim.
+- ActiveMemory chỉ `thyca/memory/active.py`: `SOUL`/`USER`/`IDENTITY` full inject; daily tail `hotTailKB`. Archive/L2 là `archived.py` + `chunk.py`. Facade/`memory_*` thuộc Tools. Không `MEMORY.md`. `write`/`edit` không được ghi dưới `~/.thyca`; `memory_remember` là writer duy nhất cho memory files.
+- Serve chỉ loopback. API không trả secret, path nội bộ, hay stack.
+- Memory recalled từ another-brain là claim; tree hiện tại thắng.
+- Code và identifier tiếng Anh. Nói với user theo ngôn ngữ user.
+- Linux là target. Đừng viết API chỉ chạy trên Windows.
+- Secret chỉ qua env hoặc file ngoài Git.
+- Pytest: đừng "sửa" `test_debug_prints_prompt_flags` (`tools=7`) trừ khi task là cập nhật số tool; đó là baseline đã biết (`tools=11`).

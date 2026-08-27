@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Protocol
 
 from thyca.protocol import ToolCall, ToolResult
@@ -21,10 +22,21 @@ class Act:
         if stage.reply is None or not stage.reply.tool_calls:
             stage.results = []
             return stage.results
-        raw = await asyncio.gather(
-            *(self._one(call, stage.round, event_sink) for call in stage.reply.tool_calls)
-        )
-        stage.results = list(raw)
+        # measure each tool individually so Stage.tool_latencies keeps real parallelism
+        async def timed(call: ToolCall) -> tuple[ToolResult, int]:
+            start = time.perf_counter()
+            result = await self._one(call, stage.round, event_sink)
+            elapsed_ms = int((time.perf_counter() - start) * 1000)
+            return result, elapsed_ms
+
+        pairs = await asyncio.gather(*(timed(call) for call in stage.reply.tool_calls))
+        stage.results = [result for result, _ in pairs]
+        # keep latencies keyed by call_id for Observe to attach to tool messages
+        latencies = {result.tool_call_id: elapsed for result, elapsed in pairs}
+        # merge rather than replace — loop may have previous rounds
+        existing = getattr(stage, "tool_latencies", {}) or {}
+        existing.update(latencies)
+        stage.tool_latencies = existing
         return stage.results
 
     async def _one(

@@ -131,6 +131,8 @@ class ChatApp:
                 observe=Observe(self._sessions),
                 loop_max=self._cfg.limits.loopMax,
                 tools=self._tools,
+                model=self._cfg.provider.model,
+                pricing=dict(self._cfg.pricing) if self._cfg.pricing else None,
             )
             hot = self._memory.refresh(self._state, datetime.now(self._zone))
             reply = await loop.run(text, hot=hot, event_sink=event_sink)

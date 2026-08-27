@@ -19,6 +19,11 @@ class Stage:
     tools: list | None = None
     reply: ChatReply | None = None
     results: list[ToolResult] = field(default_factory=list)
+    # trace carriers — set by Think/Act, consumed by Observe
+    llm_latency_ms: int | None = None
+    llm_model: str | None = None
+    llm_cost_usd: float | None = None
+    tool_latencies: dict[str, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if isinstance(self.round, bool) or not isinstance(self.round, int) or self.round < 0:

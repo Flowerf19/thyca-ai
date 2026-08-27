@@ -11,6 +11,7 @@ from thyca.agent.events import TurnEvent
 from thyca.agent.loop import AgentLoop
 from thyca.agent.observe import Observe
 from thyca.agent.think import ChatReply, Think
+from thyca.config import PricingCfg
 from thyca.protocol import Message, ToolCall, ToolResult
 from thyca.sessions import SessionManager
 
@@ -302,3 +303,85 @@ def test_parse_error_is_returned_as_tool_error_without_dispatch(tmp_path: Path) 
     assert messages[2].role == "tool"
     assert messages[2].tool_call_id == "bad-call"
     assert messages[2].content == "invalid arguments"
+
+
+def test_persists_usage_cost_and_config_model_when_reply_omits_model(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path)
+    session = manager.create()
+    usage = {
+        "prompt_tokens": 100,
+        "cached_tokens": 20,
+        "completion_tokens": 10,
+        "total_tokens": 110,
+    }
+    llm = FakeLLM([ChatReply(content="hello back", usage=usage, finish_reason="stop")])
+    dispatcher = FakeDispatcher({})
+    loop = AgentLoop(
+        sessions=manager,
+        assemble=Assemble(),
+        think=Think(llm),
+        act=Act(dispatcher),
+        observe=Observe(manager),
+        loop_max=3,
+        model="gpt-4o-mini",
+        pricing={"gpt-4o-mini": PricingCfg(input=0.15, cache=0.075, output=0.60)},
+    )
+
+    assert asyncio.run(loop.run("hello")) == "hello back"
+
+    messages = _load_messages(tmp_path, session.id)
+    meta = messages[-1].meta
+    assert meta is not None
+    assert meta["model"] == "gpt-4o-mini"
+    assert meta["usage"] == usage
+    assert meta["cost_usd"] == round((80 * 0.15 + 20 * 0.075 + 10 * 0.60) / 1_000_000, 6)
+    assert isinstance(meta["latency_ms"], int)
+    assert meta["kind"] == "llm"
+    assert meta["round"] == 1
+
+
+def test_unknown_model_persists_usage_without_cost(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path)
+    session = manager.create()
+    usage = {"prompt_tokens": 8, "cached_tokens": 0, "completion_tokens": 2, "total_tokens": 10}
+    llm = FakeLLM([ChatReply(content="ok", usage=usage)])
+    loop = AgentLoop(
+        sessions=manager,
+        assemble=Assemble(),
+        think=Think(llm),
+        act=Act(FakeDispatcher({})),
+        observe=Observe(manager),
+        loop_max=3,
+        model="foo/bar",
+    )
+
+    assert asyncio.run(loop.run("hello")) == "ok"
+
+    meta = _load_messages(tmp_path, session.id)[-1].meta
+    assert meta["model"] == "foo/bar"
+    assert meta["usage"] == usage
+    assert "cost_usd" not in meta
+
+
+def test_tool_round_persists_tool_latency(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path)
+    session = manager.create()
+    call = ToolCall(id="call-1", name="echo", arguments={"value": "x"})
+    llm = FakeLLM(
+        [
+            ChatReply(content=None, tool_calls=[call]),
+            ChatReply(content="finished"),
+        ]
+    )
+    dispatcher = FakeDispatcher(
+        {"call-1": ToolResult(tool_call_id="call-1", name="echo", content="x")}
+    )
+
+    assert asyncio.run(_loop(manager, llm, dispatcher).run("use echo")) == "finished"
+
+    messages = _load_messages(tmp_path, session.id)
+    tool = messages[2]
+    assert tool.role == "tool"
+    assert tool.meta is not None
+    assert isinstance(tool.meta["latency_ms"], int)
+    assert tool.meta["round"] == 1

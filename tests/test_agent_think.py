@@ -27,8 +27,12 @@ def test_think_writes_reply_on_stage() -> None:
         tools=[{"name": "echo"}],
     )
 
+    stage.llm_model = "gpt-4o-mini"
     result = asyncio.run(Think(llm).think(stage))
 
     assert result is reply
     assert stage.reply is reply
     assert llm.requests == [stage.messages]
+    assert stage.llm_model == "gpt-4o-mini"
+    assert isinstance(stage.llm_latency_ms, int)
+    assert stage.llm_latency_ms >= 0

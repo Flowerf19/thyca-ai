@@ -97,6 +97,31 @@ def test_loop_limit_persists_exact_text(tmp_path: Path) -> None:
     assert stage.messages[-1].content == "loop limit reached"
 
 
+def test_observe_records_tool_latency_and_round(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path)
+    manager.create()
+    call = ToolCall(id="c1", name="echo")
+    stage = Stage(
+        messages=[Message(role="user", content="go", ts="2026-01-01T00:00:00Z")],
+        round=2,
+        reply=ChatReply(content=None, tool_calls=[call], usage={"prompt_tokens": 1, "completion_tokens": 0}),
+        results=[ToolResult(tool_call_id="c1", name="echo", content="ok")],
+        tool_latencies={"c1": 17},
+        llm_model="gpt-4o-mini",
+        llm_latency_ms=40,
+        llm_cost_usd=0.00001,
+    )
+    manager.append(stage.messages[0])
+    Observe(manager).observe(stage)
+    assistant, tool = manager.current.messages[1:]
+    assert assistant.meta["round"] == 2
+    assert assistant.meta["model"] == "gpt-4o-mini"
+    assert assistant.meta["latency_ms"] == 40
+    assert assistant.meta["cost_usd"] == 0.00001
+    assert tool.meta["latency_ms"] == 17
+    assert tool.meta["round"] == 2
+
+
 def test_compact_delegates_to_session_manager(tmp_path: Path) -> None:
     manager = SessionManager(tmp_path)
     manager.create()

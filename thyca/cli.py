@@ -150,6 +150,8 @@ class Cli:
             observe=Observe(sessions),
             loop_max=cfg.limits.loopMax,
             tools=schema,
+            model=provider.model,
+            pricing=dict(cfg.pricing) if cfg.pricing else None,
         )
 
         prompts = PromptManager()

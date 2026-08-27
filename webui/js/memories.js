@@ -310,25 +310,30 @@ function expireBlock(rows) {
 }
 
 function canonicalPages(files) {
-  return files
-    .filter((file) => file && file.name)
+  const list = files.filter((file) => file && file.name);
+  const sections = list
     .map((file) => {
       const name = String(file.name);
       const content = String(file.content || "");
-      return {
-        title: escapeHtml(name),
-        date: "inject cả file",
-        tag: "",
-        tone: "memories",
-        kicker: escapeHtml(name),
-        body: `<div class="book-reading">
-            <div class="mem-md" data-canonical="${escapeHtml(name)}" data-raw="${escapeHtml(content)}">${formatMarkdown(content) || "(trống)"}</div>
-            <div class="mem-entry-actions mem-canonical-actions">
-              <button type="button" class="mem-reinforce" data-canonical-edit="${escapeHtml(name)}">Sửa</button>
-            </div>
-          </div>`,
-      };
-    });
+      return `<article class="mem-entry">
+          <h3>${escapeHtml(name)}</h3>
+          <div class="mem-md" data-canonical="${escapeHtml(name)}" data-raw="${escapeHtml(content)}">${formatMarkdown(content) || "(trống)"}</div>
+          <div class="mem-entry-actions mem-canonical-actions">
+            <button type="button" class="mem-reinforce" data-canonical-edit="${escapeHtml(name)}">Sửa</button>
+          </div>
+        </article>`;
+    })
+    .join("");
+  return [
+    {
+      title: "Nhật kí",
+      date: `${escapeHtml(String(list.length))} file · inject mỗi lượt`,
+      tag: "",
+      tone: "memories",
+      kicker: "canonical · prompt",
+      body: `<div class="canon-list">${sections}</div>`,
+    },
+  ];
 }
 
 function leafEntry(leaf, reason = "") {

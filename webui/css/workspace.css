@@ -997,10 +997,40 @@
 
 .mem-md {
   margin-block-start: 0;
+  padding: var(--space-lg) var(--space-xl);
+  background: var(--color-paper-2);
+  border: var(--rule) solid var(--color-rule-2);
+  border-radius: var(--radius-sm);
   color: var(--color-reading);
   font-family: var(--font-reading);
   font-size: var(--text-base);
   line-height: 1.6;
+}
+
+.canon-list {
+  display: grid;
+  gap: var(--space-2xl);
+}
+
+/* .mem-md nằm trong .mem-entry của trang Nhật kí: nền trong suốt, card cha là note */
+.canon-list .mem-md {
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+}
+
+.mem-md > :first-child {
+  margin-block-start: 0;
+}
+
+.mem-md > :last-child {
+  margin-block-end: 0;
+}
+
+/* đang sửa: nền trắng tinh để tập trung soạn */
+.mem-md[data-editing] {
+  background: var(--color-paper);
 }
 
 .mem-md h1,

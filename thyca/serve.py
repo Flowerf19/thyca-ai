@@ -37,6 +37,13 @@ _TRACE_DETAIL_RE = re.compile(
 _BODY_CAP = 16_384
 _SENTINEL = object()
 
+# Parse cache for trace scans: path -> (mtime_ns, Session). JSONL stays the
+# source of truth — entries are re-parsed only when mtime_ns changes, and the
+# cache never holds more files than the newest-200 scan window.
+_TRACE_SCAN_CAP = 200
+_trace_scan_lock = threading.Lock()
+_trace_sessions: dict[Path, tuple[int, object]] = {}
+
 
 def public_turn_error(exc: Exception) -> tuple[int, str, str]:
     """Map a turn exception to a public ``(status, code, message)``.
@@ -579,22 +586,46 @@ _TYPES = {
 }
 
 
+def _cached_session(store, path: Path):
+    """Parsed Session for path, re-reading only when mtime_ns changed."""
+    try:
+        mtime = path.stat().st_mtime_ns
+    except OSError:
+        _trace_sessions.pop(path, None)
+        return None
+    cached = _trace_sessions.get(path)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
+    try:
+        session = store.load(path.stem)
+    except Exception:
+        # corrupt or vanished: drop any stale entry, skip the file
+        _trace_sessions.pop(path, None)
+        return None
+    _trace_sessions[path] = (mtime, session)
+    return session
+
+
 def _collect_turns(chat: ChatApp) -> list:
     from thyca.trace import turns_from_session
 
     out: list = []
     store = chat._sessions.store  # type: ignore[attr-defined]
     # cap 200 newest files to keep single-user scan cheap
-    paths = store.list_paths()[:200]
-    for path in paths:
-        try:
-            session = store.load(path.stem)
-        except Exception:
-            continue
-        try:
-            out.extend(turns_from_session(session))
-        except Exception:
-            continue
+    paths = store.list_paths()[:_TRACE_SCAN_CAP]
+    with _trace_scan_lock:
+        for path in paths:
+            session = _cached_session(store, path)
+            if session is None:
+                continue
+            try:
+                out.extend(turns_from_session(session))
+            except Exception:
+                continue
+        # evict files that fell out of the newest-200 window
+        current = set(paths)
+        for stale in [p for p in _trace_sessions if p not in current]:
+            del _trace_sessions[stale]
     # sort newest first by started_at desc, then session_id desc for stability
     out.sort(key=lambda t: (t.started_at, t.session_id, t.turn_index), reverse=True)
     return out

@@ -80,7 +80,7 @@ for _ in 1..loop_max:
 
 Giữ `SessionManager.current`. Không planner / prefetch / subagent.
 
-`AgentLoop.__init__` nhận `tools`, `model`, `pricing`. Sau `think`: `cost_for(stage.llm_model, usage, pricing)` (fallback config model). `Act` đo từng tool song song, merge `stage.tool_latencies`. Naming title (`ChatApp._name_if_needed`) chưa ghi `kind: "naming"` vào JSONL.
+`AgentLoop.__init__` nhận `tools`, `model`, `pricing`. Sau `think`: `cost_for(stage.llm_model, usage, pricing)` (fallback config model). `Act` đo từng tool song song, merge `stage.tool_latencies`. Naming title (`ChatApp._name_if_needed`) ghi message `meta.kind: "naming"` (model/latency/usage/cost) vào JSONL — đếm là một llm call trong trace, `_turn_status` bỏ qua khi xét status lượt.
 
 ## Tasks
 

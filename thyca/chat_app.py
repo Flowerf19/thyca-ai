@@ -6,6 +6,7 @@ import sys
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
+from time import perf_counter
 from zoneinfo import ZoneInfo
 
 from thyca.agent.act import Act
@@ -17,8 +18,9 @@ from thyca.agent.think import LLMPort, Think
 from thyca.config import Config
 from thyca.llm.llm_base import LLMError
 from thyca.llm.llm_factory import ConnectFactory
+from thyca.llm.pricing import cost_for
 from thyca.memory.active import ActiveMemory
-from thyca.protocol import Message
+from thyca.protocol import Message, utc_now_ts
 from thyca.sessions import Session, SessionManager, ask_remember
 from thyca.sessions.title import display_title, is_blank, propose_title
 from thyca.tools.builtin import register_file_tools
@@ -152,17 +154,47 @@ class ChatApp:
             return False
         emit_event(event_sink, TurnEvent(type="session.naming.started"))
         updated = False
+        captured: dict = {}
+
+        async def spy(messages, tools=None):
+            reply = await connect.chat(messages, tools)
+            captured["reply"] = reply
+            return reply
+
+        started = perf_counter()
         try:
-            cleaned = await propose_title(connect.chat, session)
+            cleaned = await propose_title(spy, session)
         except LLMError:
             cleaned = None
+        latency_ms = int((perf_counter() - started) * 1000)
         if cleaned is not None:
             stored = self._sessions.set_title(cleaned)
             updated = stored is not None
+            if updated:
+                self._record_naming(captured.get("reply"), latency_ms)
         emit_event(
             event_sink, TurnEvent(type="session.naming.finished", updated=updated)
         )
         return updated
+
+    def _record_naming(self, reply: object, latency_ms: int) -> None:
+        """Persist the naming LLM call as a meta-only assistant message (TASK-009)."""
+        usage = getattr(reply, "usage", None)
+        model = (getattr(reply, "model", None) or self._cfg.provider.model or "").strip() or None
+        meta: dict = {"kind": "naming", "latency_ms": max(0, latency_ms)}
+        if model:
+            meta["model"] = model
+        if isinstance(usage, dict) and usage:
+            meta["usage"] = usage
+        if model:
+            price = cost_for(
+                model,
+                usage if isinstance(usage, dict) else None,
+                dict(self._cfg.pricing) if self._cfg.pricing else None,
+            )
+            if price is not None:
+                meta["cost_usd"] = price
+        self._sessions.append(Message(role="assistant", content=None, ts=utc_now_ts(), meta=meta))
 
     def shutdown(self) -> None:
         if self._stopped:

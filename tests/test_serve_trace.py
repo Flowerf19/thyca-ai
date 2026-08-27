@@ -10,8 +10,10 @@ from thyca.chat_app import ChatApp
 from thyca.config import default_config, load, save
 from thyca.llm.llm_base import ChatReply
 from thyca.protocol import Message
+import thyca.serve as serve_mod
 from thyca.serve import default_webui, make_server
 from thyca.sessions import SessionManager
+from thyca.sessions.store import SessionStore
 from thyca.tools.memory import MemoryFacade
 
 WEBUI = default_webui()
@@ -82,6 +84,99 @@ def _append_turn(
         meta["cost_usd"] = cost
     manager.append(Message(role="assistant", content=content, ts=TS2, meta=meta))
     return session.id
+
+
+def test_trace_scan_cache_reuses_unchanged_files(tmp_path: Path) -> None:
+    chat = _chat(tmp_path)
+    try:
+        manager = SessionManager(tmp_path / "sessions")
+        session_id = _append_turn(manager, model="gpt-4o-mini", content="cached turn", cost=0.00001)
+
+        serve_mod._trace_sessions.clear()
+        scans = ["initial"]
+        original_scan = SessionStore.scan
+
+        def counting_scan(self: SessionStore, path: Path):
+            scans.append(path.name)
+            return original_scan(self, path)
+
+        httpd, thread = _start(tmp_path, chat)
+        try:
+            SessionStore.scan = counting_scan  # type: ignore[method-assign]
+            try:
+                first = _json(httpd, "/api/traces/stats")
+                assert first["totals"]["requests"] == 1
+                scans.clear()
+                # unchanged files: no re-parse, totals identical
+                second = _json(httpd, "/api/traces/stats")
+                assert second == first
+                assert scans == []
+                # appended line changes mtime_ns: only that file is re-parsed
+                manager.load(session_id)
+                manager.append(
+                    Message(
+                        role="user",
+                        content="second turn",
+                        ts="2026-08-26T10:00:00Z",
+                    )
+                )
+                scans.clear()
+                refreshed = _json(httpd, "/api/traces/stats")
+                assert refreshed["totals"]["requests"] == 1  # still one open turn
+                assert scans == [f"{session_id}.jsonl"]
+            finally:
+                SessionStore.scan = original_scan  # type: ignore[method-assign]
+        finally:
+            _stop(httpd, thread)
+    finally:
+        chat.shutdown()
+
+
+def test_trace_scan_cache_evicts_files_outside_window(tmp_path: Path) -> None:
+    chat = _chat(tmp_path)
+    try:
+        manager = SessionManager(tmp_path / "sessions")
+        _append_turn(manager, model="gpt-4o-mini", content="evict turn", cost=0.00001)
+        ghost = tmp_path / "sessions" / "ghost.jsonl"
+
+        serve_mod._trace_sessions.clear()
+        serve_mod._trace_sessions[ghost] = (0, object())
+
+        httpd, thread = _start(tmp_path, chat)
+        try:
+            stats = _json(httpd, "/api/traces/stats")
+            assert stats["totals"]["requests"] == 1
+            assert ghost not in serve_mod._trace_sessions
+            assert len(serve_mod._trace_sessions) == 1
+        finally:
+            _stop(httpd, thread)
+    finally:
+        chat.shutdown()
+
+
+def test_trace_scan_cache_skips_then_recovers_corrupt_file(tmp_path: Path) -> None:
+    chat = _chat(tmp_path)
+    try:
+        manager = SessionManager(tmp_path / "sessions")
+        session_id = _append_turn(manager, model="gpt-4o-mini", content="recover turn", cost=0.00001)
+        path = tmp_path / "sessions" / f"{session_id}.jsonl"
+
+        serve_mod._trace_sessions.clear()
+        httpd, thread = _start(tmp_path, chat)
+        try:
+            assert _json(httpd, "/api/traces/stats")["totals"]["requests"] == 1
+            # corrupting the file must not poison the cache: skip, no crash
+            good = path.read_text(encoding="utf-8")
+            path.write_text(good + "{bad\n", encoding="utf-8")
+            assert _json(httpd, "/api/traces/stats")["totals"]["requests"] == 0
+            assert path not in serve_mod._trace_sessions
+            # repairing the file is picked up again
+            path.write_text(good, encoding="utf-8")
+            assert _json(httpd, "/api/traces/stats")["totals"]["requests"] == 1
+        finally:
+            _stop(httpd, thread)
+    finally:
+        chat.shutdown()
 
 
 def test_traces_without_chat_are_404(tmp_path: Path) -> None:

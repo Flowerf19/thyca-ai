@@ -5,6 +5,7 @@ from pathlib import Path
 
 from thyca.agent.events import TurnEvent
 from thyca.llm.llm_base import ChatReply, LLMError
+from thyca.protocol import Message
 from thyca.sessions import SessionManager
 from thyca.sessions.title import fallback_title
 
@@ -46,7 +47,11 @@ def test_first_turn_emits_naming_pairs_and_persists_title(tmp_path: Path) -> Non
         assert [(item.role, item.content) for item in session.messages] == [
             ("user", "alo"),
             ("assistant", "pong"),
+            ("assistant", None),
         ]
+        naming = session.messages[-1]
+        assert naming.meta["kind"] == "naming"
+        assert isinstance(naming.meta["latency_ms"], int)
     finally:
         app.shutdown()
 
@@ -139,6 +144,82 @@ def test_naming_empty_title_reports_updated_false_turn_succeeds(tmp_path: Path) 
         assert session.title is None
     finally:
         app.shutdown()
+
+
+def test_naming_meta_persists_usage_cost_and_counts_as_request(tmp_path: Path) -> None:
+    llm = ScriptedLLM(
+        [
+            ChatReply(
+                content="pong",
+                model="gpt-4o-mini",
+                usage={
+                    "prompt_tokens": 10,
+                    "cached_tokens": 2,
+                    "completion_tokens": 3,
+                    "total_tokens": 13,
+                },
+            ),
+            ChatReply(
+                content='"Tựa đề đẹp."',
+                model="gpt-4o-mini",
+                usage={
+                    "prompt_tokens": 40,
+                    "cached_tokens": 0,
+                    "completion_tokens": 7,
+                    "total_tokens": 47,
+                },
+            ),
+        ]
+    )
+    app = _chat(tmp_path, llm)
+    created = app.create()
+    try:
+        app.turn(created["id"], "alo")
+        session = SessionManager(tmp_path / "sessions").load(created["id"])
+        naming = [m for m in session.messages if (m.meta or {}).get("kind") == "naming"]
+        assert len(naming) == 1
+        meta = naming[0].meta
+        assert meta["model"] == "gpt-4o-mini"
+        assert meta["usage"]["total_tokens"] == 47
+        assert isinstance(meta["cost_usd"], float) and meta["cost_usd"] > 0
+
+        # trace aggregates: naming là một llm call → requests = 2, usage/cost gộp cả naming
+        from thyca.trace import turns_from_session
+
+        turns = turns_from_session(session)
+        assert len(turns) == 1
+        assert turns[0].requests == 2
+        assert turns[0].total_tokens == 60
+        assert turns[0].status == "completed"
+    finally:
+        app.shutdown()
+
+
+def test_naming_meta_does_not_flip_failed_turn_status(tmp_path: Path) -> None:
+    from thyca.trace import turns_from_session
+
+    session = SessionManager(tmp_path / "sessions")
+    session.create()
+    session.append(Message(role="user", content="alo", ts="2026-08-26T09:12:00Z"))
+    session.append(
+        Message(
+            role="assistant",
+            content="loop limit reached",
+            ts="2026-08-26T09:12:05Z",
+            meta={"kind": "llm", "round": 1, "finish_reason": "stop"},
+        )
+    )
+    session.append(
+        Message(
+            role="assistant",
+            content=None,
+            ts="2026-08-26T09:12:06Z",
+            meta={"kind": "naming", "latency_ms": 300},
+        )
+    )
+    turns = turns_from_session(session.current)
+    assert len(turns) == 1
+    assert turns[0].status == "loop_limit"
 
 
 def test_turn_without_sink_still_works(tmp_path: Path) -> None:

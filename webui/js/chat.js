@@ -325,6 +325,8 @@ export function threadHtml(messages) {
       }
       if (!message.content) continue;
     }
+    // meta-only messages (kind: "naming") carry no chat content — never a bubble
+    if (message.role === "assistant" && !message.content && !message.tool_calls?.length) continue;
     flushTools();
     if (message.role === "user" || message.role === "assistant") {
       parts.push(entryHtml(message.role, message.content || ""));

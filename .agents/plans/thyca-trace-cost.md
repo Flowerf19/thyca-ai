@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 created: 2026-08-26
 last_updated: 2026-08-27
 ---
@@ -161,7 +161,7 @@ Fallback: khi không có `ChatApp` (static `http.server`) → 404 `{error:"trace
 |----|------|------|------|
 | TASK-001 | `thyca/llm/llm_base.py`: định nghĩa `Usage = TypedDict(prompt_tokens, completion_tokens, cached_tokens, total_tokens, reasoning_tokens?)` và helper `normalize_usage(raw: dict, provider: str) -> dict \| None`. Thêm `ChatReply.model: str \| None` và `ChatReply.usage: dict \| None` đã normalize. | x | 2026-08-27 |
 | TASK-002 | `thyca/llm/openai_chat.py`: `_parse_reply` bóc `prompt_tokens_details.cached_tokens` và `completion_tokens_details.reasoning_tokens`; map qua `normalize_usage("openai", raw)`. Giữ `_cap`/`_redact` không đổi. | x | 2026-08-27 |
-| TASK-003 | `thyca/llm/google_chat.py` / `anthropic_chat.py`: khi implement lần đầu, dùng cùng `normalize_usage` (Google: `cachedContentTokenCount`, Anthropic: `cache_read_input_tokens`). Trước khi có key thật, giữ `NotImplementedError` nhưng thêm normalize stub để test không phụ thuộc network. | | |
+| TASK-003 | `thyca/llm/google_chat.py` / `anthropic_chat.py`: khi implement lần đầu, dùng cùng `normalize_usage` (Google: `cachedContentTokenCount`, Anthropic: `cache_read_input_tokens`). Trước khi có key thật, giữ `NotImplementedError` nhưng thêm normalize stub để test không phụ thuộc network. | x | 2026-08-27 |
 | TASK-004 | `thyca/config.py`: thêm `PricingCfg(input, cache, output)` và `Config.pricing: dict[str, PricingCfg]` (validate `>=0`, finite, key `model` non-empty). `to_dict`/`_parse_dict` hỗ trợ `pricing` optional; chấp nhận alias `cached_input` khi đọc để backward-compat nhưng ghi ra `cache`. Seed mặc định `DEFAULT_PRICING` cho known models nếu config không có. `thyca/llm/pricing.py`: `DEFAULT_PRICES`, `cost_for(model, usage, pricing_cfg) -> float \| None` resolve `pricing_cfg.get(model) ?? DEFAULT_PRICES[model]`, `resolve_model(raw)`. Unknown → `None`. | x | 2026-08-27 |
 
 ### GOAL-002: Đo latency và persist vào session JSONL
@@ -172,7 +172,7 @@ Fallback: khi không có `ChatApp` (static `http.server`) → 404 `{error:"trace
 | TASK-006 | `thyca/agent/stage.py`: thêm optional `meta_llm: list[dict]` hoặc dùng `Stage.results` mở rộng để mang `latency_ms`/`usage` qua `Observe`. Giữ `Stage` dataclass non-frozen, không I/O. | x | 2026-08-27 |
 | TASK-007 | `thyca/agent/observe.py`: `assistant()` và `observe()` nhận `latency_ms`/`usage`/`cost_usd` từ `Stage`, ghi vào `Message.meta` của `assistant` (`kind: "llm" | "naming"`, `round`, `model`, `latency_ms`, `usage`, `cost_usd`, `finish_reason`). Tool messages thêm `meta.latency_ms`/`meta.round`. Giữ `order_results` theo `call_id` như hiện tại. | x | 2026-08-27 |
 | TASK-008 | `thyca/agent/loop.py`: trong `for round` loop, sau `think.think` tính `cost_for(model, usage, self._pricing)` (pricing lấy từ `Config.pricing` truyền vào `AgentLoop`/`ChatApp`) và chuẩn bị meta cho `Observe`; `Act.act` đo từng tool `latency_ms` (trong `Act._one` tương tự) và trả về `ToolResult` kèm latency qua `Stage`. `loop_limit` cũng ghi meta với `status: loop_limit`. | x | 2026-08-27 |
-| TASK-009 | `thyca/chat_app.py`: `_run_turn` truyền `model` từ `Config.provider.model` và `pricing` từ `Config.pricing` xuống `Stage`/`AgentLoop`; `_name_if_needed` đo latency riêng, lưu `kind: "naming"` với model/usage/cost (dùng cùng `cost_for`) nếu LLM title thành công. Không lưu `TurnEvent` riêng — JSONL là source. | | |
+| TASK-009 | `thyca/chat_app.py`: `_run_turn` truyền `model` từ `Config.provider.model` và `pricing` từ `Config.pricing` xuống `Stage`/`AgentLoop`; `_name_if_needed` đo latency riêng, lưu `kind: "naming"` với model/usage/cost (dùng cùng `cost_for`) nếu LLM title thành công. Không lưu `TurnEvent` riêng — JSONL là source. | x | 2026-08-27 |
 
 ### GOAL-003: HTTP aggregates cho Trace (không phá endpoint cũ)
 
@@ -180,7 +180,7 @@ Fallback: khi không có `ChatApp` (static `http.server`) → 404 `{error:"trace
 |----|------|------|------|
 | TASK-010 | `thyca/serve.py`: thêm `GET /api/traces/stats` và `GET /api/traces` (filter `model`, `status`, `from`/`to` `YYYY-MM-DD`, `q`, `limit`/`offset`). Dùng helper `_trace_from_messages(messages)` để nhóm thành turns và cộng `meta.usage`/`cost_usd`/`latency_ms`. Sort desc theo `started_at`. Unknown cost giữ `null`. Lỗi scan một file → bỏ qua file đó, không 503 toàn bộ. | x | 2026-08-27 |
 | TASK-011 | `thyca/serve.py`: thêm `GET /api/traces/{session_id}/{turn_index}` detail: trả `{session_id, turn_index, title, started_at, ended_at, model, status, latency_ms, usage, cost_usd, messages: [...]}` với messages là canonical `to_canonical_dict()` của turn đó (đã có trong JSONL). Traversal/id sai → 404. | x | 2026-08-27 |
-| TASK-012 | Cache scan: `dict[path -> (mtime_ns, parsed)]` trong `Handler` hoặc module-level với lock; invalidate khi `mtime_ns` đổi. Cap 200 files gần nhất; `by_day` aggregate từ `by_model` turns. Không thêm sqlite. | | |
+| TASK-012 | Cache scan: `dict[path -> (mtime_ns, parsed)]` trong `Handler` hoặc module-level với lock; invalidate khi `mtime_ns` đổi. Cap 200 files gần nhất; `by_day` aggregate từ `by_model` turns. Không thêm sqlite. | x | 2026-08-27 |
 
 ### GOAL-004: WebUI Trace — LangSmith thông tin, Thyca giọng giấy
 
@@ -190,9 +190,9 @@ Fallback: khi không có `ChatApp` (static `http.server`) → 404 `{error:"trace
 |----|------|------|------|
 | TASK-013 | `webui/js/trace.js` (mới): `fetchTracesStats`, `fetchTraces`, `fetchTraceDetail`. Fallback khi `!response.ok` → giữ `modes.trace.pages` từ `data.js` như `chat.js:hydrateChat`/`render.js:hydrateMemories`. Không throw ra ngoài. | x | 2026-08-27 |
 | TASK-014 | `webui/js/trace-score.js` (mới): `traceScoreFromMessages(messages, turnRange)` — dựng array `TurnEvent`-like từ `assistant.meta.kind/round` và `tool` messages, rồi gọi `scoreFromEvents` hiện có. Giữ invariant 16 ticks/measure, Bravura, cadence `V→I` như `staff-map.js`. Test thuần JS, không DOM. | x | 2026-08-27 |
-| TASK-015 | `webui/js/render.js` / `webui/js/data.js`: đổi Trace từ mock `music-page` sang layout mới — header stats strip (4 ô), filter bar (pills), sidebar list `page-card` có `trace` tone, detail có staff + timeline waterfall + token breakdown. Giữ `clearStaffs`/`syncStaffs` lifecycle như Chat (`staff.js` đã có `unmountStaff`). | | |
-| TASK-016 | `webui/css/workspace.css` + `webui/css/chrome.css`: thêm `.trace-stats`, `.trace-filter`, `.trace-timeline`, `.trace-token-badge` bằng tokens hiện có (`--color-trace`, `--color-paper-2`, `--font-ui`). Không thêm font hay framework. Responsive wrap như `chrome.css` breakpoint hiện tại. | | |
-| TASK-017 | `webui/js/app.js`: wiring `renderMode("trace")` gọi `hydrateTrace()`, filter pills trigger `fetchTraces` với query. Khi `state.chatLive` false, Trace vẫn render mock. Không đụng `chat.js` NDJSON streaming. | | |
+| TASK-015 | `webui/js/render.js` / `webui/js/data.js`: đổi Trace từ mock `music-page` sang layout mới — header stats strip (4 ô), filter bar (pills), sidebar list `page-card` có `trace` tone, detail có staff + timeline waterfall + token breakdown. Giữ `clearStaffs`/`syncStaffs` lifecycle như Chat (`staff.js` đã có `unmountStaff`). | superseded | — |
+| TASK-016 | `webui/css/workspace.css` + `webui/css/chrome.css`: thêm `.trace-stats`, `.trace-filter`, `.trace-timeline`, `.trace-token-badge` bằng tokens hiện có (`--color-trace`, `--color-paper-2`, `--font-ui`). Không thêm font hay framework. Responsive wrap như `chrome.css` breakpoint hiện tại. | superseded | — |
+| TASK-017 | `webui/js/app.js`: wiring `renderMode("trace")` gọi `hydrateTrace()`, filter pills trigger `fetchTraces` với query. Khi `state.chatLive` false, Trace vẫn render mock. Không đụng `chat.js` NDJSON streaming. | superseded | — |
 
 ### GOAL-005: Verification và tài liệu contract
 
@@ -203,7 +203,7 @@ Fallback: khi không có `ChatApp` (static `http.server`) → 404 `{error:"trace
 | TASK-020 | `tests/test_agent_loop.py` / `test_agent_observe.py`: stub `FakeLLM` trả `ChatReply(usage={...}, model="gpt-4o-mini")`, assert `SessionManager.current.messages[-1].meta.usage` và `meta.cost_usd` được persist; tool `latency_ms` có mặt. | x | 2026-08-27 |
 | TASK-021 | `tests/test_serve_trace.py` (mới): tạo 2 sessions với turns có meta khác model/usage, gọi `GET /api/traces/stats` → `by_model` đúng tổng, filter `?model=gpt-4o-mini` chỉ trả turns đó; corrupt file bị skip; `GET /api/traces/{id}/{idx}` 404/200. | x | 2026-08-27 |
 | TASK-022 | Frontend Node test (mở rộng `tests/test_chat_ui.py` hoặc file mới `tests/test_trace_score.py`): `traceScoreFromMessages` với 2 LLM rounds + 2 tools → score có 2 measures + terminal `V half → I half`, harmony `I→vi`, mỗi measure đủ 16 ticks, `vii°` chỉ khi `is_error`. | x | 2026-08-27 |
-| TASK-023 | Cập nhật `.agents/plans/services/agent-loop.md` (events → trace) và `webui-chat-backend.md` assumption superseded; chuyển plan này sang `done` khi `uv run pytest -q` pass và manual check 320/375/414/768px không overflow. | | |
+| TASK-023 | Cập nhật `.agents/plans/services/agent-loop.md` (events → trace) và `webui-chat-backend.md` assumption superseded; chuyển plan này sang `done` khi `uv run pytest -q` pass và manual check 320/375/414/768px không overflow. | x | 2026-08-27 |
 
 ## Test Plan
 

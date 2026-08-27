@@ -56,6 +56,6 @@ Success: `thyca --serve` → sidebar Chat là `~/.thyca/sessions/*.jsonl`; mở 
 3. Một user local: serialize mọi turn. Tab thứ hai chờ, không 409.
 4. Cùng origin, bind `127.0.0.1`. Không CORS, không auth — cùng trust với CLI (tool chạy thẳng).
 5. Mock tĩnh không API → copy `data.js` như Memories.
-6. Không đổi compaction, protocol, Trace, memory stats.
-7. `SessionStore.read` vẫn reject dòng hỏng; GET lúc đang append có thể 503 — chấp nhận.
+6. ~~Không đổi compaction, protocol, Trace, memory stats.~~ Superseded riêng phần Trace: `/api/traces*` là bề mặt riêng (`thyca-trace-cost.md`); compaction/protocol/memory stats vẫn nguyên.
+7. `SessionStore.read` vẫn reject dòng hỏng; GET lúc đang append có thể 503 — chấp nhận. Trace scan không 503 theo file: file hỏng bị skip, không chặn cả endpoint.
 8. Không extract `runtime.py` rộng; wiring loop nằm trong `ChatApp`, song song `Cli._run`.

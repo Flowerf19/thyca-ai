@@ -30,10 +30,12 @@ class TurnSummary:
 
 
 def _turn_status(slice_msgs: list[Message]) -> str:
-    if not slice_msgs:
-        return "failed"
-    last = slice_msgs[-1]
-    if last.role != "assistant":
+    # naming meta-messages are not turn outcomes — skip them, keep old semantics
+    last = next(
+        (m for m in reversed(slice_msgs) if (m.meta or {}).get("kind") != "naming"),
+        None,
+    )
+    if last is None or last.role != "assistant":
         return "failed"
     if last.content == "loop limit reached":
         return "loop_limit"

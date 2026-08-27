@@ -92,6 +92,56 @@ def test_normalize_usage_unknown_shape_is_none() -> None:
     assert normalize_usage({"foo": 1}, "openai") is None
 
 
+def test_normalize_usage_anthropic_and_google_stubs() -> None:
+    import asyncio
+
+    # offline stub coverage cho connect chưa implement (TASK-003)
+    anthropic = normalize_usage(
+        {
+            "input_tokens": 10,
+            "output_tokens": 3,
+            "cache_read_input_tokens": 4,
+            "cache_creation_input_tokens": 1,
+            "total_tokens": 13,
+        },
+        "anthropic",
+    )
+    assert anthropic == {
+        "prompt_tokens": 10,
+        "cached_tokens": 4,
+        "completion_tokens": 3,
+        "total_tokens": 13,
+    }
+
+    google = normalize_usage(
+        {
+            "promptTokenCount": 20,
+            "candidatesTokenCount": 5,
+            "cachedContentTokenCount": 8,
+            "totalTokenCount": 25,
+        },
+        "google",
+    )
+    assert google == {
+        "prompt_tokens": 20,
+        "cached_tokens": 8,
+        "completion_tokens": 5,
+        "total_tokens": 25,
+    }
+    # connect thật vẫn NotImplementedError tới khi có key
+    import asyncio
+
+    import pytest
+
+    from thyca.llm.anthropic_chat import AnthropicChat
+    from thyca.llm.google_chat import GoogleChat
+
+    with pytest.raises(NotImplementedError):
+        asyncio.run(GoogleChat().chat([]))
+    with pytest.raises(NotImplementedError):
+        asyncio.run(AnthropicChat().chat([]))
+
+
 @pytest.mark.asyncio
 async def test_null_content_tool_call_and_bad_arguments() -> None:
     def handler(request: httpx.Request) -> httpx.Response:

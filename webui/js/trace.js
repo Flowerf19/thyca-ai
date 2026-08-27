@@ -665,13 +665,13 @@ function timelineSpans(messages, turnLat) {
         continue;
       }
       thinkCount += 1;
-      spans.push({ label: `think #${thinkCount}`, latency: Number(meta.latency_ms) || 0, body: thinkBody(msg) });
       const hasTools = Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0;
       if (hasTools) {
+        spans.push({ label: `think #${thinkCount}`, latency: Number(meta.latency_ms) || 0, body: thinkBody(msg) });
         spans.push({ label: "act", latency: 0, tools: [] });
       } else {
-        // assistant text without tool_calls ends the loop -> observe
-        spans.push({ label: "observe", latency: 0, body: observeBody(msg) });
+        // assistant text without tool_calls ends the loop -> observe (không đẩy thêm think trùng nội dung)
+        spans.push({ label: "observe", latency: Number(meta.latency_ms) || 0, body: observeBody(msg) });
       }
     } else if (msg.role === "tool" && spans.length > 0 && spans[spans.length - 1].label === "act") {
       const act = spans[spans.length - 1];

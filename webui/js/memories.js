@@ -310,7 +310,10 @@ function expireBlock(rows) {
 }
 
 function canonicalPages(files) {
-  const list = files.filter((file) => file && file.name);
+  const order = { "USER.md": 0, "SOUL.md": 1, "IDENTITY.md": 2 };
+  const list = files
+    .filter((file) => file && file.name)
+    .sort((a, b) => (order[a.name] ?? 9) - (order[b.name] ?? 9));
   const sections = list
     .map((file) => {
       const name = String(file.name);
@@ -326,7 +329,7 @@ function canonicalPages(files) {
     .join("");
   return [
     {
-      title: "Nhật kí",
+      title: "Hồ sơ",
       date: `${escapeHtml(String(list.length))} file · inject mỗi lượt`,
       tag: "",
       tone: "memories",

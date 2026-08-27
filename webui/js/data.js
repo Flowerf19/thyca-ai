@@ -6,13 +6,13 @@ export const icons = {
 
 export const personaPages = [
   {
-    title: "Nhật kí",
+    title: "Hồ sơ",
     date: "3 file · inject mỗi lượt",
     tag: "",
     tone: "memories",
     body: `<div class="canon-list">
-        <article class="mem-entry"><h3>SOUL.md</h3><blockquote class="quote-note"><p>Thyca là harness trợ lý cá nhân. Không phải coding agent.</p><cite>SOUL.md</cite></blockquote></article>
         <article class="mem-entry"><h3>USER.md</h3><blockquote class="quote-note"><p>Linux là target chính. Đừng viết API chỉ chạy trên Windows.</p><cite>USER.md</cite></blockquote></article>
+        <article class="mem-entry"><h3>SOUL.md</h3><blockquote class="quote-note"><p>Thyca là harness trợ lý cá nhân. Không phải coding agent.</p><cite>SOUL.md</cite></blockquote></article>
       </div>`
   }
 ];

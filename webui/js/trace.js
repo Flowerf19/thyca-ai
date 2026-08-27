@@ -162,7 +162,7 @@ function overviewPage(stats, traces, pillStats) {
     title: "Tổng quan",
     hideTitle: true,
     date: `${fmtInt(requests)} lượt`,
-    tag: "stats",
+    tag: "",
     tone: "trace",
     kicker: "Trace · AgentLoop",
     note: "",
@@ -396,7 +396,7 @@ function sessionPage(turnsNewestFirst) {
   return {
     title: newest.title && newest.title !== newest.session_id ? cleanTitle(newest.title) : "Phiên không tên",
     date: escapeHtml(`${fmtInt(turns.length)} lượt · ${fmtIso(newest.started_at)}`),
-    tag: failed ? "lỗi" : "",
+    tag: "",
     tone: "trace",
     status: failed ? "failed" : String(newest.status || ""),
     model: String(newest.model || ""),

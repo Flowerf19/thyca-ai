@@ -191,7 +191,7 @@ function overviewPage(stats, leaves) {
     title: "Tổng quan",
     hideTitle: true,
     date: `${total} leaf`,
-    tag: "stats",
+    tag: "",
     tone: "memories",
     kicker: "leaf · get và search",
     body: `<div class="book-reading">
@@ -308,7 +308,7 @@ function canonicalPages(files) {
       return {
         title: escapeHtml(name),
         date: "inject cả file",
-        tag: "canonical",
+        tag: "",
         tone: "memories",
         kicker: escapeHtml(name),
         body: `<div class="book-reading">

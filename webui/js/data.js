@@ -8,21 +8,21 @@ export const personaPages = [
   {
     title: "SOUL.md",
     date: "Inject cả file",
-    tag: "canonical",
+    tag: "",
     tone: "memories",
     body: `<div class="book-reading"><div class="book-meta"><span class="book-author">Canonical · ActiveMemory</span><h2>SOUL.md</h2><p>Hồ sơ ổn định của trợ lý. Nhét cả file mỗi lượt để prefix system ít đổi.</p><div class="progress-label"><span>Inject</span><strong>full</strong></div><div class="reading-progress reading-progress-complete"><span></span></div></div><blockquote class="quote-note"><p>Thyca là harness trợ lý cá nhân. Không phải coding agent.</p><cite>SOUL.md</cite></blockquote></div>`
   },
   {
     title: "USER.md",
     date: "Inject cả file",
-    tag: "canonical",
+    tag: "",
     tone: "memories",
     body: `<div class="book-reading"><div class="book-meta"><span class="book-author">Canonical · ActiveMemory</span><h2>USER.md</h2><p>Hồ sơ người dùng. Cùng rule với SOUL: cả file, không cắt.</p><div class="progress-label"><span>Inject</span><strong>full</strong></div><div class="reading-progress reading-progress-complete"><span></span></div></div></div>`
   },
   {
     title: "IDENTITY.md",
     date: "Inject cả file",
-    tag: "canonical",
+    tag: "",
     tone: "memories",
     body: `<div class="book-reading"><div class="book-meta"><span class="book-author">Canonical · ActiveMemory</span><h2>IDENTITY.md</h2><p>Danh tính trợ lý. Cùng rule với SOUL: cả file, không cắt, không vào inventory leaf.</p><div class="progress-label"><span>Inject</span><strong>full</strong></div><div class="reading-progress reading-progress-complete"><span></span></div></div></div>`
   }
@@ -95,7 +95,7 @@ export const modes = {
         title: "Tổng quan",
         hideTitle: true,
         date: "leaf",
-        tag: "stats",
+        tag: "",
         tone: "memories",
         kicker: "leaf · get và search",
         body: `<div class="book-reading"><div class="stat-row"><div><strong>0</strong><span>tổng</span></div></div><div class="suggest-inline"><h3>Theo ngày</h3><p class="suggest-empty">Chưa có daily.</p></div></div>`
@@ -103,14 +103,14 @@ export const modes = {
       {
         title: "SOUL.md",
         date: "Inject cả file",
-        tag: "canonical",
+        tag: "",
         tone: "memories",
         body: `<div class="book-reading"><div class="book-meta"><span class="book-author">Canonical · ActiveMemory</span><h2>SOUL.md</h2><p>Hồ sơ ổn định của trợ lý. Nhét cả file mỗi lượt để prefix system ít đổi.</p><div class="progress-label"><span>Inject</span><strong>full</strong></div><div class="reading-progress reading-progress-complete"><span></span></div></div><blockquote class="quote-note"><p>Thyca là harness trợ lý cá nhân. Không phải coding agent.</p><cite>SOUL.md</cite></blockquote></div>`
       },
       {
         title: "USER.md",
         date: "Inject cả file",
-        tag: "canonical",
+        tag: "",
         tone: "memories",
         body: `<div class="book-reading"><div class="book-meta"><span class="book-author">Canonical · ActiveMemory</span><h2>USER.md</h2><p>Hồ sơ người dùng. Cùng rule với SOUL: cả file, không cắt.</p><div class="progress-label"><span>Inject</span><strong>full</strong></div><div class="reading-progress reading-progress-complete"><span></span></div></div></div>`
       }
@@ -139,7 +139,7 @@ export const modes = {
         title: "Tổng quan",
         hideTitle: true,
         date: "mock",
-        tag: "stats",
+        tag: "",
         tone: "trace",
         kicker: "Trace · AgentLoop",
         body: `<div class="music-page"><div class="album-note"><span class="track-kicker">Trace · AgentLoop</span><h2>Tổng quan</h2><p>model · cache · in/out là derived. Mở bằng server để xem số thật từ JSONL.</p><div class="track-rule"><span style="width:100%"></span></div><div class="track-time"><span>assemble</span><span>observe</span></div></div></div>`

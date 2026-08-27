@@ -89,9 +89,15 @@ export function renderPage(pageIndex = 0) {
   const page = data.pages[pageIndex] || data.pages[0];
   state.activePageIndex = data.pages.indexOf(page);
   el.notebook.dataset.mode = state.activeMode;
-  el.modeBreadcrumb.textContent = data.label;
+  el.modeBreadcrumb.textContent = data.kicker;
+  el.modeMark.innerHTML = `${icons[state.activeMode]}<span>${data.label}</span>`;
+  el.topbar.dataset.mode = state.activeMode;
   el.pageListLabel.textContent = data.listLabel;
-  el.pageHeader.innerHTML = `<div class="page-header-copy"><p class="page-kicker">${page.kicker || data.kicker}</p>${page.hideTitle ? "" : `<h1>${page.title}</h1>`}<p class="page-note">${page.note || data.note}</p></div><div class="page-header-mark" aria-hidden="true">${icons[state.activeMode]}<span>${data.label}</span></div>`;
+  const noteText = page.note || data.note;
+  el.pageHeader.hidden = Boolean(page.hideTitle);
+  el.pageHeader.innerHTML = page.hideTitle
+    ? ""
+    : `<div class="page-header-copy"><h1>${page.title}</h1>${noteText ? `<p class="page-note">${noteText}</p>` : ""}</div>`;
   clearStaffs(el.pageBody);
   el.pageBody.innerHTML = page.body || data.body;
   if (state.activeMode === "chat") syncStaffs(el.pageBody);

@@ -81,6 +81,74 @@ class MemoryWriter:
         with self.lock_for(path):
             self._remove_session(path, entry)
 
+    def update_session(
+        self,
+        session_id: str,
+        *,
+        topic: str | None = None,
+        body_lines: list[str] | None = None,
+    ) -> None:
+        """Rewrite one session's title and/or body in place.
+
+        entry_id / importance / expires_at stay untouched — the id the index
+        and callers hold never changes; only the visible text moves.
+        """
+        path, entry = self.locate(session_id)
+        with self.lock_for(path):
+            self._update_session(path, entry, topic=topic, body_lines=body_lines)
+
+    def _update_session(
+        self,
+        path: Path,
+        entry_id: str,
+        *,
+        topic: str | None,
+        body_lines: list[str] | None,
+    ) -> None:
+        if not path.is_file():
+            raise ArchiveError(f"memory file missing: {path}")
+        if topic is None and body_lines is None:
+            return
+        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+        out: list[str] = []
+        index = 0
+        found = False
+        seen: dict[str, int] = {}
+        while index < len(lines):
+            meta = parse_heading(lines[index])
+            if meta is None:
+                out.append(lines[index])
+                index += 1
+                continue
+            seen[meta.title] = seen.get(meta.title, 0) + 1
+            end = index + 1
+            while end < len(lines) and parse_heading(lines[end]) is None:
+                end += 1
+            resolved = resolve_entry_id(meta, str(path), seen[meta.title])
+            if resolved == entry_id:
+                found = True
+                new_meta = HeadingMeta(
+                    meta.time,
+                    topic if topic is not None else meta.title,
+                    meta.entry_id or resolved,
+                    meta.importance,
+                    meta.expires_at,
+                )
+                out.append(render_heading(new_meta))
+                if body_lines is not None:
+                    out.extend(
+                        line if line.endswith("\n") else f"{line}\n" for line in body_lines
+                    )
+                else:
+                    out.extend(lines[index + 1 : end])
+                index = end
+                continue
+            out.extend(lines[index:end])
+            index = end
+        if not found:
+            raise ArchiveError(f"session not found: {entry_id}")
+        _atomic_write(path, "".join(out))
+
     def reinforce(
         self,
         session_id: str,

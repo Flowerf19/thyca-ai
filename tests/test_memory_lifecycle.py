@@ -67,3 +67,45 @@ def test_reject_forget_soul(tmp_path: Path) -> None:
         raise AssertionError("expected reject")
 
 
+
+
+def test_update_keeps_entry_id_and_reindexes(tmp_path: Path) -> None:
+    from thyca.tools.memory import MemoryFacade
+
+    facade = MemoryFacade(tmp_path)
+    sid = facade.remember("Chủ đề cũ", "nội dung cũ", now=None)
+    before = facade.get(session_id=sid)
+    facade.update(sid, topic="Chủ đề mới", summary="nội dung mới", content="dòng chi tiết")
+    after = facade.get(session_id=sid)
+    # id nhúng trong heading giữ nguyên — session_id không đổi
+    assert 'Chủ đề cũ' not in after
+    assert "Chủ đề mới" in after
+    assert "nội dung mới" in after
+    assert "dòng chi tiết" in after
+    import re
+
+    id_before = re.search(r'"id":"([0-9a-f]{8})"', before)
+    id_after = re.search(r'"id":"([0-9a-f]{8})"', after)
+    assert id_before and id_after and id_before.group(1) == id_after.group(1)
+
+
+def test_update_not_found(tmp_path: Path) -> None:
+    import pytest
+
+    from thyca.memory.archived import ArchiveError
+    from thyca.tools.memory import MemoryFacade
+
+    facade = MemoryFacade(tmp_path)
+    with pytest.raises(ArchiveError):
+        facade.update("nope#deadbeef", topic="x")
+
+
+def test_update_topic_only_keeps_body(tmp_path: Path) -> None:
+    facade = MemoryFacade(tmp_path)
+    sid = facade.remember("Chủ đề cũ", "nội dung giữ", content="dòng chi tiết")
+    facade.update(sid, topic="Chủ đề mới")
+    after = facade.get(session_id=sid)
+    assert "Chủ đề cũ" not in after
+    assert "Chủ đề mới" in after
+    assert "nội dung giữ" in after
+    assert "dòng chi tiết" in after

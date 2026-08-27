@@ -80,6 +80,23 @@ class MemoryFacade:
         self.writer.forget(session_id, now)
         self._refresh_index(now)
 
+    def update(
+        self,
+        session_id: str,
+        *,
+        topic: str | None = None,
+        summary: str | None = None,
+        content: str | None = None,
+        now: datetime | None = None,
+    ) -> None:
+        body_lines = None
+        if summary is not None:
+            body_lines = [f"- {summary.strip()}"]
+            for line in str(content).splitlines() if content else []:
+                body_lines.append(f"  {line}")
+        self.writer.update_session(session_id, topic=topic, body_lines=body_lines)
+        self._refresh_index(now)
+
     def reinforce(
         self,
         session_id: str,

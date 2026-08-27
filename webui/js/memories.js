@@ -15,6 +15,7 @@ export function pagesFromStats(stats) {
 
 export function bindOverview(root, hooks = {}) {
   if (!root) return;
+  activeHooks = hooks;
   const filter = root.querySelector("[data-day-filter]");
   if (filter && !filter.dataset.bound) {
     filter.dataset.bound = "1";
@@ -53,14 +54,106 @@ function bindDayDetails(root) {
   });
 }
 
+function bindOnce(button, handler) {
+  if (button.dataset.bound) return;
+  button.dataset.bound = "1";
+  button.addEventListener("click", handler);
+}
+
 function bindForget(root, onForget) {
   root.querySelectorAll("[data-forget]").forEach((button) => {
-    button.addEventListener("click", () => {
+    bindOnce(button, () => {
       const sid = button.dataset.forget;
       if (!sid || !window.confirm("Xóa mem này khỏi L2?")) return;
       void forgetSession(sid, onForget);
     });
   });
+  root.querySelectorAll("[data-reinforce]").forEach((button) => {
+    bindOnce(button, () => {
+      const sid = button.dataset.reinforce;
+      if (!sid) return;
+      void reinforceSession(sid, onForget, button);
+    });
+  });
+  root.querySelectorAll("[data-edit]").forEach((button) => {
+    bindOnce(button, () => {
+      const sid = button.dataset.edit;
+      if (!sid) return;
+      openLeafEditor(root, sid);
+    });
+  });
+  root.querySelectorAll("[data-edit-save]").forEach((button) => {
+    bindOnce(button, () => {
+      const sid = button.dataset.editSave;
+      const card = button.closest(".mem-entry");
+      if (!sid || !card) return;
+      const topic = card.querySelector(".mem-edit-topic")?.value.trim() || "";
+      const raw = card.querySelector(".mem-edit-body")?.value || "";
+      const lines = raw.replace(/\r/g, "").split("\n");
+      const summary = (lines.shift() || "").replace(/^-\s+/, "").trim();
+      const content = lines.map((line) => line.replace(/^ {2}/, "")).join("\n").trim();
+      if (!topic && !summary) return;
+      void updateSession(sid, topic || null, summary || null, content || null, onForget, button);
+    });
+  });
+  root.querySelectorAll("[data-edit-cancel]").forEach((button) => {
+    bindOnce(button, () => redrawDays(root));
+  });
+}
+
+function openLeafEditor(root, sessionId) {
+  const card = [...root.querySelectorAll(".mem-entry")].find(
+    (card) => card.querySelector("[data-edit]")?.dataset.edit === sessionId,
+  );
+  if (!card) return;
+  const topic = card.querySelector("h3")?.textContent || "";
+  const snippet = card.querySelector(".quote-note p")?.textContent || "";
+  const block = card.querySelector(".quote-note");
+  if (!block) return;
+  block.innerHTML = `<div class="mem-edit">
+      <input class="mem-edit-topic" value="${escapeHtml(topic)}" placeholder="tiêu đề" />
+      <textarea class="mem-edit-body" rows="4">${escapeHtml(snippet)}</textarea>
+      <div class="mem-entry-actions">
+        <button type="button" class="mem-forget" data-edit-save="${escapeHtml(sessionId)}">Lưu</button>
+        <button type="button" class="mem-reinforce" data-edit-cancel>Hủy</button>
+      </div>
+    </div>`;
+  bindForget(root, activeHooks.onForget);
+  card.querySelector(".mem-edit-topic")?.focus();
+}
+
+async function updateSession(sessionId, topic, summary, content, onForget, button) {
+  if (button) button.disabled = true;
+  try {
+    const response = await fetch("/api/memory/update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId, topic, summary, content }),
+    });
+    if (!response.ok) return;
+    if (typeof onForget === "function") onForget();
+  } catch {
+    /* static mock */
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function reinforceSession(sessionId, onForget, button) {
+  if (button) button.disabled = true;
+  try {
+    const response = await fetch("/api/memory/reinforce", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId }),
+    });
+    if (!response.ok) return;
+    if (typeof onForget === "function") onForget();
+  } catch {
+    /* static mock */
+  } finally {
+    if (button) button.disabled = false;
+  }
 }
 
 async function forgetSession(sessionId, onForget) {
@@ -77,12 +170,15 @@ async function forgetSession(sessionId, onForget) {
   }
 }
 
+let activeHooks = {};
+
 function redrawDays(root) {
   const mount = root.querySelector("[data-day-list]");
   if (!mount) return;
   mount.innerHTML = dayListHtml(lastDayLeaves);
   bindDayPager(root);
   bindDayDetails(root);
+  bindForget(root, activeHooks.onForget);
 }
 
 function overviewPage(stats, leaves) {
@@ -93,6 +189,7 @@ function overviewPage(stats, leaves) {
   const suggest = (stats.suggest_removal || []).slice(0, SUGGEST_CAP);
   return {
     title: "Tổng quan",
+    hideTitle: true,
     date: `${total} leaf`,
     tag: "stats",
     tone: "memories",
@@ -231,20 +328,38 @@ function leafEntry(leaf) {
   const gets = Number(leaf.get_count) || 0;
   const searches = Number(leaf.search_count) || 0;
   const day = leaf.timeline_day || (leaf.is_today ? "hôm nay" : "");
+  // cite 2 dòng: giờ - ngày / get · search · hết hạn · id
+  const chunkDay = chunkDate(leaf.chunk_id);
+  const citeTop = [time, chunkDay || (day && day !== "hôm nay" ? day : "")].filter(Boolean).join(" - ");
+  const citeMeta = [
+    `get ${gets}`,
+    `search ${searches}`,
+    leaf.expires_at ? `hết hạn ${fmtTs(leaf.expires_at)}` : "",
+    leaf.chunk_id ? `id ${leaf.chunk_id}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const cite = [citeTop, citeMeta].filter(Boolean);
   return `<article class="mem-entry">
       <h3>${escapeHtml(topic)}</h3>
       <blockquote class="quote-note">
         <p>${escapeHtml(leaf.snippet || "(trống)")}</p>
-        <cite>${escapeHtml([time, day].filter(Boolean).join(" · ") || leaf.chunk_id)}</cite>
+        <cite class="mem-entry-cite">${cite.map((line) => `<span>${escapeHtml(line)}</span>`).join("") || escapeHtml(leaf.chunk_id || "")}</cite>
       </blockquote>
-      <dl class="mem-facts">
-        <dt>Giờ</dt><dd>${escapeHtml(time || "—")}</dd>
-        <dt>Get</dt><dd>${gets}${leaf.last_get_at ? ` · cuối ${escapeHtml(fmtTs(leaf.last_get_at))}` : ""}</dd>
-        <dt>Search</dt><dd>${searches}${leaf.last_search_at ? ` · cuối ${escapeHtml(fmtTs(leaf.last_search_at))}` : ""}</dd>
-        <dt>Hết hạn</dt><dd>${escapeHtml(fmtTs(leaf.expires_at) || "—")}</dd>
-        <dt>Id</dt><dd>${escapeHtml(leaf.chunk_id || "")}</dd>
-      </dl>
+      <div class="mem-entry-actions">
+        <button type="button" class="mem-reinforce" data-edit="${escapeHtml(leaf.session_id || "")}">Sửa</button>
+        <button type="button" class="mem-forget" data-forget="${escapeHtml(leaf.session_id || "")}">Xóa</button>
+        <button type="button" class="mem-reinforce" data-reinforce="${escapeHtml(leaf.session_id || "")}">Gia hạn</button>
+      </div>
     </article>`;
+}
+
+// chunk_id dạng "YYYY-MM-DD#hash#n" → "YYYY-M-D"
+function chunkDate(chunkId) {
+  const day = String(chunkId || "").split("#")[0];
+  if (!/^\d{4}-\d{2}-\d{2}/.test(day)) return "";
+  const [y, m, d] = day.split("-");
+  return `${y}-${Number(m)}-${Number(d)}`;
 }
 
 function suggestBlock(rows) {

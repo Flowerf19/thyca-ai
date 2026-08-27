@@ -237,7 +237,7 @@ async function refreshChatList() {
   modes.chat = {
     label: "Chat",
     listLabel: "Phiên gần đây",
-    kicker: modes.chat.kicker,
+    kicker: payload.model ? `~/.thyca · ${payload.model}` : modes.chat.kicker,
     note: modes.chat.note,
     chips: modes.chat.chips,
     pages,

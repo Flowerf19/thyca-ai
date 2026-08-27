@@ -221,29 +221,26 @@
   white-space: nowrap;
 }
 
-.topbar-mark {
+.crumb-mark {
   display: flex;
   align-items: center;
   gap: var(--space-xs);
 }
 
-.topbar-mark svg {
+.crumb-mark svg {
   width: 1.4rem;
   height: 1.4rem;
 }
 
-.topbar[data-mode="chat"] .crumb-kicker,
-.topbar[data-mode="chat"] .topbar-mark {
+.topbar[data-mode="chat"] .crumb-kicker {
   color: var(--color-chat);
 }
 
-.topbar[data-mode="memories"] .crumb-kicker,
-.topbar[data-mode="memories"] .topbar-mark {
+.topbar[data-mode="memories"] .crumb-kicker {
   color: var(--color-memory);
 }
 
-.topbar[data-mode="trace"] .crumb-kicker,
-.topbar[data-mode="trace"] .topbar-mark {
+.topbar[data-mode="trace"] .crumb-kicker {
   color: var(--color-trace);
 }
 

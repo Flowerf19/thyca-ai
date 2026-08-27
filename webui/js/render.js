@@ -89,9 +89,15 @@ export function renderPage(pageIndex = 0) {
   const page = data.pages[pageIndex] || data.pages[0];
   state.activePageIndex = data.pages.indexOf(page);
   el.notebook.dataset.mode = state.activeMode;
-  el.modeBreadcrumb.textContent = data.kicker;
-  el.modeMark.innerHTML = `${icons[state.activeMode]}<span>${data.label}</span>`;
   el.topbar.dataset.mode = state.activeMode;
+  // chat giữ kicker ~/.thyca · model; memories/trace: mark (icon + label) ở góc trái
+  if (state.activeMode === "chat") {
+    el.modeBreadcrumb.classList.remove("crumb-mark");
+    el.modeBreadcrumb.textContent = data.kicker;
+  } else {
+    el.modeBreadcrumb.classList.add("crumb-mark");
+    el.modeBreadcrumb.innerHTML = `${icons[state.activeMode]}<span>${data.label}</span>`;
+  }
   el.pageListLabel.textContent = data.listLabel;
   const noteText = page.note || data.note;
   el.pageHeader.hidden = Boolean(page.hideTitle);

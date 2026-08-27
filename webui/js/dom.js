@@ -12,7 +12,6 @@ export const el = {
   searchEmpty: document.getElementById("search-empty"),
   pageListLabel: document.getElementById("page-list-label"),
   modeBreadcrumb: document.getElementById("mode-breadcrumb"),
-  modeMark: document.getElementById("mode-mark"),
   topbar: document.querySelector(".topbar"),
   miniPlayer: document.getElementById("mini-player"),
   miniPlay: document.getElementById("mini-play"),

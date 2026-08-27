@@ -88,7 +88,7 @@ export const modes = {
     label: "Memories",
     listLabel: "File canonical",
     kicker: "~/.thyca · markdown là nguồn sự thật",
-    note: "Get = đọc đủ. Search = đã hiện trong kết quả. Hot không đếm.",
+    note: "",
     chips: [],
     pages: [
       {

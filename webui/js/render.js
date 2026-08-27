@@ -187,7 +187,7 @@ async function hydrateMemories({ keepPage = false } = {}) {
       label: "Memories",
       listLabel: "Canonical",
       kicker: "leaf · get và search",
-      note: "Get = đọc đủ. Search = đã hiện trong kết quả. Hot không đếm.",
+      note: "",
       chips: [],
       pages,
     };

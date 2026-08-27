@@ -1,8 +1,18 @@
 import { formatMarkdown } from "./markdown.js";
+import { escapeHtml } from "./util.js";
+import { bindCanonical, canonicalPages } from "./memories-canonical.js";
+import { DAY_FILE } from "./memories-leaf.js";
+import {
+  expireBlock,
+  fileKey,
+  leafEntry,
+  sortLeaves,
+  sortFileKeys,
+  splitHeading,
+  suggestBlock,
+} from "./memories-leaf.js";
 
-const DAY_FILE = /^(\d{4}-\d{2}-\d{2})\.md$/;
 const SUGGEST_CAP = 8;
-const EXPIRE_CAP = 5;
 const DAY_PAGE = 8;
 
 let openDay = "";
@@ -30,7 +40,7 @@ export function bindOverview(root, hooks = {}) {
   bindDayPager(root);
   bindDayDetails(root);
   bindForget(root, hooks.onForget);
-  bindCanonical(root);
+  bindCanonical(root, hooks);
 }
 
 function bindDayPager(root) {
@@ -116,8 +126,8 @@ function openLeafEditor(root, sessionId) {
     (card) => card.querySelector("[data-edit]")?.dataset.edit === sessionId,
   );
   if (!card) return;
-  const topic = card.querySelector("h3")?.textContent || "";
-  const snippet = card.querySelector(".quote-note p")?.textContent || "";
+  const topic = card.dataset.topic || "";
+  const snippet = card.dataset.snippet || "";
   const block = card.querySelector(".quote-note");
   if (!block) return;
   block.innerHTML = `<div class="mem-edit">
@@ -140,7 +150,10 @@ async function updateSession(sessionId, topic, summary, content, onForget, butto
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ session_id: sessionId, topic, summary, content }),
     });
-    if (!response.ok) return;
+    if (!response.ok) {
+      window.alert(`Không lưu được (${response.status}). Thử lại nhé.`);
+      return;
+    }
     if (typeof onForget === "function") onForget();
   } catch {
     /* static mock */
@@ -157,7 +170,10 @@ async function reinforceSession(sessionId, onForget, button) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ session_id: sessionId }),
     });
-    if (!response.ok) return;
+    if (!response.ok) {
+      window.alert(`Không gia hạn được (${response.status}). Thử lại nhé.`);
+      return;
+    }
     if (typeof onForget === "function") onForget();
   } catch {
     /* static mock */
@@ -173,7 +189,10 @@ async function forgetSession(sessionId, onForget) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ session_id: sessionId }),
     });
-    if (!response.ok) return;
+    if (!response.ok) {
+      window.alert(`Không xóa được (${response.status}). Thử lại nhé.`);
+      return;
+    }
     if (typeof onForget === "function") onForget();
   } catch {
     /* static mock */
@@ -291,235 +310,6 @@ function dayAccordion(key, leaves) {
     </details>`;
 }
 
-function expireBlock(rows) {
-  const list = (rows || []).slice(0, EXPIRE_CAP);
-  if (!list.length) return "";
-  const items = list
-    .map((leaf) => {
-      const { topic } = splitHeading(leaf);
-      const gets = Number(leaf.get_count) || 0;
-      const searches = Number(leaf.search_count) || 0;
-      return `<li><strong>${escapeHtml(topic)}</strong><small>${escapeHtml(leafSource(leaf))} · hết hạn ${escapeHtml(fmtTs(leaf.expires_at) || "—")} · get ${gets} / search ${searches}</small></li>`;
-    })
-    .join("");
-  return `<div class="suggest-inline">
-      <h3>Sắp hết hạn</h3>
-      <p>Trong 14 ngày. Chỉ xem — không xóa từ đây.</p>
-      <ul class="suggest-list">${items}</ul>
-    </div>`;
-}
-
-function canonicalPages(files) {
-  const order = { "USER.md": 0, "SOUL.md": 1, "IDENTITY.md": 2 };
-  const descs = {
-    "USER.md": "thông tin về bạn — tên, sở thích, bối cảnh",
-    "SOUL.md": "cách agent nói chuyện và trả lời",
-    "IDENTITY.md": "danh tính và giới hạn của agent",
-  };
-  const list = files
-    .filter((file) => file && file.name)
-    .sort((a, b) => (order[a.name] ?? 9) - (order[b.name] ?? 9));
-  const sections = [];
-  let prevLayer = null;
-  for (const file of list) {
-    const name = String(file.name);
-    const layer = name === "USER.md" ? "user" : "self";
-    // ngăn giữa 2 lớp: ghi chú của user — ghi chú của bản thân
-    if (prevLayer === "user" && layer === "self") {
-      sections.push(`<div class="canon-divider" role="separator"><span>chỉ dẫn cho agent</span></div>`);
-    }
-    prevLayer = layer;
-    const content = String(file.content || "");
-    sections.push(`<article class="mem-entry">
-        <div class="canon-head">
-          <h3>${escapeHtml(name)}</h3>
-          <p class="canon-desc">${escapeHtml(descs[name] || "")}</p>
-        </div>
-        <div class="mem-md" data-canonical="${escapeHtml(name)}" data-raw="${escapeHtml(content)}">${formatMarkdown(content) || "(trống)"}</div>
-        <div class="mem-entry-actions mem-canonical-actions">
-          <button type="button" class="mem-reinforce" data-canonical-edit="${escapeHtml(name)}">Sửa</button>
-        </div>
-      </article>`);
-  }
-  return [
-    {
-      title: "Hồ sơ",
-      date: `${escapeHtml(String(list.length))} file · inject mỗi lượt`,
-      tag: "",
-      tone: "memories",
-      kicker: "canonical · prompt",
-      body: `<div class="canon-list">${sections.join("")}</div>`,
-    },
-  ];
-}
-
-function leafEntry(leaf, reason = "") {
-  const { time, topic } = splitHeading(leaf);
-  const gets = Number(leaf.get_count) || 0;
-  const searches = Number(leaf.search_count) || 0;
-  const day = leaf.timeline_day || (leaf.is_today ? "hôm nay" : "");
-  // cite 2 dòng: giờ - ngày / get · search · hết hạn · id
-  const chunkDay = chunkDate(leaf.chunk_id);
-  const citeTop = [time, chunkDay || (day && day !== "hôm nay" ? day : "")].filter(Boolean).join(" - ");
-  const citeMeta = [
-    `get ${gets}`,
-    `search ${searches}`,
-    leaf.expires_at ? `hết hạn ${fmtTs(leaf.expires_at)}` : "",
-    leaf.chunk_id ? `id ${leaf.chunk_id}` : "",
-  ]
-    .filter(Boolean)
-    .join(" · ");
-  const cite = [reason, citeTop, citeMeta].filter(Boolean);
-  const openable = reason ? ` data-open-leaf="${escapeHtml(leaf.chunk_id || "")}" title="Bấm để xem leaf trong ngày"` : "";
-  return `<article class="mem-entry${reason ? " is-suggest" : ""}" data-chunk-id="${escapeHtml(leaf.chunk_id || "")}"${openable}>
-      <h3>${escapeHtml(topic)}</h3>
-      <blockquote class="quote-note">
-        <p>${escapeHtml(leaf.snippet || "(trống)")}</p>
-        <cite class="mem-entry-cite">${cite.map((line) => `<span>${escapeHtml(line)}</span>`).join("") || escapeHtml(leaf.chunk_id || "")}</cite>
-      </blockquote>
-      <div class="mem-entry-actions">
-        <button type="button" class="mem-reinforce" data-edit="${escapeHtml(leaf.session_id || "")}">Sửa</button>
-        <button type="button" class="mem-forget" data-forget="${escapeHtml(leaf.session_id || "")}">Xóa</button>
-        <button type="button" class="mem-reinforce" data-reinforce="${escapeHtml(leaf.session_id || "")}">Gia hạn</button>
-      </div>
-    </article>`;
-}
-
-// chunk_id dạng "YYYY-MM-DD#hash#n" → "YYYY-M-D"
-function chunkDate(chunkId) {
-  const day = String(chunkId || "").split("#")[0];
-  if (!/^\d{4}-\d{2}-\d{2}/.test(day)) return "";
-  const [y, m, d] = day.split("-");
-  return `${y}-${Number(m)}-${Number(d)}`;
-}
-
-function suggestBlock(rows) {
-  if (!rows.length) {
-    return `<div class="suggest-inline"><h3>Đề xuất loại bỏ</h3><p class="suggest-empty">Không có gợi ý.</p></div>`;
-  }
-  // card giống leaf trong "Theo ngày", lý do nằm trong card, bấm để xem trong ngày
-  const cards = rows
-    .map((leaf) => leafEntry(leaf, "chưa get/search · ≥ 7 ngày — có thể xóa"))
-    .join("");
-  return `<div class="suggest-inline">
-      <h3>Đề xuất loại bỏ</h3>
-      <div class="mem-day-list">${cards}</div>
-    </div>`;
-}
-
-function sortLeaves(leaves) {
-  return leaves
-    .slice()
-    .sort((a, b) => splitHeading(a).time.localeCompare(splitHeading(b).time) || String(a.chunk_id).localeCompare(String(b.chunk_id)));
-}
-
-function fileKey(leaf) {
-  if (leaf.timeline_day) return `${leaf.timeline_day}.md`;
-  return "unknown.md";
-}
-
-function sortFileKeys(keys) {
-  return keys.sort((a, b) => {
-    const dayA = a.match(DAY_FILE);
-    const dayB = b.match(DAY_FILE);
-    if (dayA && dayB) return dayB[1].localeCompare(dayA[1]);
-    if (dayA) return -1;
-    if (dayB) return 1;
-    return a.localeCompare(b);
-  });
-}
-
-function splitHeading(leaf) {
-  const raw = String(leaf.heading || "").replace(/^##\s*/, "");
-  const match = raw.match(/^(\d{2}:\d{2})\s*[—\-]\s+(.+)$/);
-  if (match) return { time: match[1], topic: match[2] };
-  return { time: "", topic: raw || String(leaf.chunk_id || "") };
-}
-
-function leafSource(leaf) {
-  if (leaf.is_today) return `daily · hôm nay`;
-  if (leaf.timeline_day) return `daily · ${leaf.timeline_day}`;
-  return String(leaf.source_kind || "leaf");
-}
-
-function fmtTs(value) {
-  if (!value) return "";
-  const text = String(value);
-  if (text.length >= 16 && text[10] === "T") return `${text.slice(0, 10)} ${text.slice(11, 16)} UTC`;
-  return text;
-}
-
-// ---- sửa file canonical (SOUL/USER/IDENTITY.md) ----
-
-function bindCanonical(root) {
-  root.querySelectorAll("[data-canonical-edit]").forEach((button) => {
-    bindOnce(button, () => openCanonicalEditor(root, button.dataset.canonicalEdit));
-  });
-  // Lưu/Hủy là nút động (tạo khi mở editor) → delegation trên .mem-md
-  root.querySelectorAll("[data-canonical]").forEach((wrap) => {
-    if (wrap.dataset.canonicalBound) return;
-    wrap.dataset.canonicalBound = "1";
-    wrap.addEventListener("click", (event) => {
-      const save = event.target.closest("[data-canonical-save]");
-      if (save) {
-        const text = wrap.querySelector("textarea")?.value;
-        if (typeof text !== "string") return;
-        save.disabled = true;
-        void saveCanonical(save.dataset.canonicalSave, text, wrap, save);
-        return;
-      }
-      const cancel = event.target.closest("[data-canonical-cancel]");
-      if (cancel) {
-        delete wrap.dataset.editing;
-        wrap.innerHTML = formatMarkdown(wrap.dataset.raw || "") || "(trống)";
-      }
-    });
-  });
-}
-
-function cssEscapeAttr(value) {
-  return window.CSS?.escape ? CSS.escape(value) : String(value).replace(/"/g, '\\"');
-}
-
-function openCanonicalEditor(root, name) {
-  const wrap = root.querySelector(`[data-canonical="${cssEscapeAttr(name)}"]`);
-  if (!wrap || wrap.dataset.editing) return;
-  wrap.dataset.editing = "1";
-  const raw = wrap.dataset.raw || "";
-  wrap.innerHTML = `<textarea class="mem-edit-body" spellcheck="false"></textarea>
-      <div class="mem-entry-actions mem-canonical-actions">
-        <button type="button" class="mem-reinforce" data-canonical-save="${escapeHtml(name)}">Lưu</button>
-        <button type="button" class="mem-forget" data-canonical-cancel="${escapeHtml(name)}">Hủy</button>
-      </div>`;
-  const area = wrap.querySelector("textarea");
-  if (area) {
-    area.value = raw;
-    area.focus();
-  }
-}
-
-async function saveCanonical(name, content, wrap, button) {
-  button.disabled = true;
-  try {
-    /* static mock */
-    const res = await fetch("/api/memory/canonical", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name, content }),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    wrap.dataset.raw = content;
-    delete wrap.dataset.editing;
-    wrap.innerHTML = formatMarkdown(content) || "(trống)";
-    // refresh stats để số liệu khớp
-    activeHooks.onForget?.();
-  } catch {
-    button.disabled = false;
-    window.alert("Không lưu được file. Thử lại nhé.");
-  }
-}
-
-// Bấm card gợi ý: mở đúng ngày trong "Theo ngày" rồi nhảy tới leaf
 export async function revealLeaf(chunkId) {
   const day = `${String(chunkId || "").split("#")[0]}.md`;
   if (DAY_FILE.test(day)) openDay = day;
@@ -531,13 +321,4 @@ export async function revealLeaf(chunkId) {
     card.classList.add("is-flash");
     setTimeout(() => card.classList.remove("is-flash"), 1800);
   }, 500);
-}
-
-export function escapeHtml(value) {
-  return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
 }

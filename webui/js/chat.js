@@ -1,7 +1,7 @@
 import { el } from "./dom.js";
 import { modes } from "./data.js";
 import { formatMarkdown } from "./markdown.js";
-import { escapeHtml } from "./memories.js";
+import { escapeHtml, formatUpdated, getJson, postJson } from "./util.js";
 import { createNdjsonDecoder } from "./ndjson.js";
 import { scoreFromEvents } from "./staff-map.js";
 import { statusTextForEvent } from "./turn-status.js";
@@ -375,30 +375,3 @@ function entryHtml(role, content) {
   return `<article class="entry ${cls}">${stamp}<div class="entry-copy">${formatMarkdown(content)}</div></article>`;
 }
 
-function formatUpdated(value) {
-  if (!value) return "";
-  const stamp = new Date(String(value));
-  if (Number.isNaN(stamp.getTime())) return String(value);
-  return stamp.toLocaleString("vi-VN", { dateStyle: "medium", timeStyle: "short" });
-}
-
-export async function getJson(url) {
-  const response = await fetch(url, { cache: "no-store" });
-  if (!response.ok) return null;
-  return response.json();
-}
-
-async function postJson(url, body) {
-  const response = await fetch(url, {
-    method: "POST",
-    cache: "no-store",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const payload = await response.json().catch(() => null);
-  if (!response.ok) {
-    const message = payload && payload.error ? String(payload.error) : "Không gửi được.";
-    throw new Error(message);
-  }
-  return payload;
-}

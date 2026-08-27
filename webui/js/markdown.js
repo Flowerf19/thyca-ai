@@ -1,5 +1,5 @@
 import { Marked } from "../vendor/marked.esm.js";
-import { escapeHtml } from "./memories.js";
+import { escapeHtml } from "./util.js";
 
 const SAFE_HREF = /^(https?:|mailto:)/i;
 

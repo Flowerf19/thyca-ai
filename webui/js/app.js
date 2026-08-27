@@ -1,8 +1,9 @@
-import { beginOutgoingTurn, createChatSession, getJson, removeStatus, sendChatTurn, settleIncoming } from "./chat.js";
+import { beginOutgoingTurn, createChatSession, removeStatus, sendChatTurn, settleIncoming } from "./chat.js";
 import { modes } from "./data.js";
 import { el } from "./dom.js";
 import { closeDrawer, hideDrawerIfMobile, toggleDrawer } from "./drawer.js";
 import { renderMode, renderPage, renderPageList, setTracePlaying } from "./render.js";
+import { getJson } from "./util.js";
 import { state } from "./state.js";
 
 const IDLE_MS = 15 * 60 * 1000;

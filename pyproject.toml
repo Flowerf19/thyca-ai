@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "thyca-ai"
-version = "0.5.2"
-description = "Thyca — personal terminal harness (pi-inspired, single process, tools = capability)"
+version = "0.6.3"
+description = "Thyca — personal harness"
 readme = "README.md"
 requires-python = ">=3.14"
 license = { text = "MIT" }
@@ -34,6 +34,7 @@ packages = ["thyca"]
 [tool.hatch.build.targets.wheel.force-include]
 "thyca/llm/prompts/soul.md" = "thyca/llm/prompts/soul.md"
 "thyca/llm/prompts/identity.md" = "thyca/llm/prompts/identity.md"
+"thyca/read_after_config.md" = "thyca/read_after_config.md"
 "webui" = "thyca/webui"
 
 [tool.ruff]

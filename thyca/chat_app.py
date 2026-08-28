@@ -15,7 +15,7 @@ from thyca.agent.events import EventSink, TurnEvent, emit_event
 from thyca.agent.loop import AgentLoop
 from thyca.agent.observe import Observe
 from thyca.agent.think import LLMPort, Think
-from thyca.config import Config
+from thyca.config import Config, ConfigError, load
 from thyca.llm.llm_base import LLMError
 from thyca.llm.llm_factory import ConnectFactory
 from thyca.llm.pricing import cost_for
@@ -37,7 +37,9 @@ TEXT_MAX = 4000
 class ChatApp:
     def __init__(self, root: Path, cfg: Config, connect: LLMPort | None = None) -> None:
         self._root = root
-        self._cfg = cfg
+        self._config_file = root / "config.json"
+        self._cfg = self._current_cfg() if self._config_file.exists() else cfg
+        self._injected_connect = connect
         self._connect = connect
         self._sessions = SessionManager(
             root / "sessions",
@@ -98,6 +100,14 @@ class ChatApp:
         ]
         return {"model": self._cfg.provider.model, "sessions": sessions}
 
+    def _current_cfg(self) -> Config:
+        """Re-read the config file each turn so settings changes apply
+        without restarting the server (reasoningEffort, model, ...)."""
+        try:
+            return load(self._config_file)
+        except ConfigError:
+            return self._cfg
+
     def get_payload(self, session_id: str) -> dict:
         session = self._sessions.store.load(session_id)
         return self._session_detail(session)
@@ -122,8 +132,9 @@ class ChatApp:
     async def _run_turn(
         self, session_id: str, text: str, event_sink: EventSink | None = None
     ) -> dict:
-        connect = self._connect or ConnectFactory.create("openai_chat", self._cfg.provider)
-        owns = self._connect is None
+        self._cfg = self._current_cfg()
+        connect = self._injected_connect or ConnectFactory.create("openai_chat", self._cfg.provider)
+        owns = self._injected_connect is None
         try:
             self._sessions.load(session_id)
             loop = AgentLoop(
@@ -135,7 +146,7 @@ class ChatApp:
                 loop_max=self._cfg.limits.loopMax,
                 tools=self._tools,
                 model=self._cfg.provider.model,
-                pricing=dict(self._cfg.pricing) if self._cfg.pricing else None,
+                pricing=self._cfg.effective_pricing() or None,
             )
             hot = self._memory.refresh(self._state, datetime.now(self._zone))
             reply = await loop.run(text, hot=hot, event_sink=event_sink)
@@ -191,7 +202,7 @@ class ChatApp:
             price = cost_for(
                 model,
                 usage if isinstance(usage, dict) else None,
-                dict(self._cfg.pricing) if self._cfg.pricing else None,
+                self._cfg.effective_pricing() or None,
             )
             if price is not None:
                 meta["cost_usd"] = price

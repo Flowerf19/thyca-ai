@@ -58,6 +58,10 @@ class OpenAIChat(Connect):
         }
         if tools:
             payload["tools"] = tools
+        # Some OpenAI-compatible providers reject reasoning_effort for
+        # non-reasoning models; _request drops it once and retries in that case.
+        if self._provider.reasoningEffort:
+            payload["reasoning_effort"] = self._provider.reasoningEffort
 
         key = self._provider.api_key()
         headers = {"Authorization": f"Bearer {key}"}
@@ -85,6 +89,15 @@ class OpenAIChat(Connect):
             except httpx.RequestError as exc:
                 raise LLMError(_redact(_cap(str(exc)), key)) from exc
 
+            if (
+                response.status_code == 400
+                and "reasoning_effort" in payload
+                and "reasoning_effort" in response.text
+            ):
+                # Model does not support the effort parameter — drop it and
+                # retry once instead of failing the turn.
+                payload = {k: v for k, v in payload.items() if k != "reasoning_effort"}
+                continue
             if response.status_code in _RETRY_STATUS and attempt == 0:
                 await _sleep_retry_after(response)
                 last_error = _http_error(response, key)

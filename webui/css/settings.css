@@ -1,0 +1,400 @@
+/* Settings surface — notebook mode (was a dialog; styles kept for reuse). */
+
+/* Single flow: providers section first, models below, full width. */
+.settings-form {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-2xl);
+  max-width: 72rem;
+}
+
+.settings-form > .settings-section {
+  min-width: 0;
+}
+
+/* Provider cards lay out horizontally, wrapping as space runs out. */
+.provider-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+  gap: var(--space-md);
+  margin-bottom: var(--space-md);
+}
+
+.settings-details {
+  margin: 0 0 var(--space-lg);
+  border: 1px solid var(--color-rule-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper-2);
+}
+
+.settings-details > summary {
+  cursor: pointer;
+  padding: 0.6rem 0.9rem;
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--color-muted);
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.settings-details > summary::before {
+  content: "▸";
+  font-size: 0.75rem;
+  transition: transform 0.15s ease;
+}
+
+.settings-details[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.settings-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-details-body {
+  display: grid;
+  gap: var(--space-md);
+  padding: 0 0.9rem 0.9rem;
+  border-top: 1px dashed var(--color-rule-2);
+  padding-top: var(--space-md);
+}
+
+/* Provider cards — one per endpoint, base URL + API key. */
+
+.provider-card {
+  display: grid;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  border: var(--rule) solid var(--color-rule-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper-2);
+}
+
+.provider-card .canon-head h4 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--color-ink);
+}
+
+.settings-section {
+  display: grid;
+  gap: var(--space-md);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.settings-legend {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: var(--text-lg);
+  letter-spacing: -0.02em;
+  color: var(--color-ink);
+  margin: 0 0 var(--space-sm);
+  padding: 0;
+}
+
+.settings-actions-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.settings-form .settings-status {
+  font-size: var(--text-sm);
+  color: var(--color-muted);
+  min-height: 1em;
+  margin: 0;
+}
+
+.settings-form .settings-status.is-error {
+  color: var(--color-danger);
+}
+
+.settings-form .settings-status.is-ok {
+  color: var(--color-ok);
+}
+
+.settings-field {
+  display: grid;
+  gap: 0.25rem;
+  align-content: start;
+  min-width: 0;
+}
+
+.settings-field > span {
+  font-size: 0.8rem;
+  color: var(--color-muted);
+}
+
+.settings-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  position: relative;
+  flex-wrap: wrap;
+}
+
+.settings-row > input {
+  flex: 1 1 12rem;
+}
+
+.settings-input,
+.settings-field select {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  font: inherit;
+  font-size: 0.92rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--color-rule);
+  border-radius: 8px;
+  background: var(--color-paper-2);
+  color: var(--color-ink);
+  box-sizing: border-box;
+}
+
+.settings-field,
+.settings-field .settings-row {
+  min-width: 0;
+}
+
+/* Card boxes — shared by add-model, limits. */
+.settings-box {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: var(--space-md);
+  padding: var(--space-md);
+  border: var(--rule) solid var(--color-rule-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper-2);
+}
+
+.settings-box .settings-cost-row {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+/* Giá token block spans the full box row so its label lines up. */
+/* Giá token label sits inline with its 3 cost inputs, like other fields. */
+.settings-pricing-field {
+  grid-column: auto;
+  grid-row: auto;
+}
+
+.settings-pricing-field .settings-cost-row {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 0;
+}
+
+/* Hint + Thêm on one line: no floating gap between them. */
+.settings-pricing-field .settings-hint {
+  grid-column: 1 / -1;
+  margin-top: 0.35rem;
+}
+
+.settings-box .settings-legend {
+  margin-bottom: var(--space-sm);
+}
+
+.settings-box-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--color-ink);
+}
+
+.settings-divider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  margin-top: var(--space-md);
+}
+
+.settings-divider::before,
+.settings-divider::after {
+  content: "";
+  flex: 1;
+  border-top: 1px dashed var(--color-rule-2);
+}
+
+.settings-divider > span {
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-neutral);
+}
+
+.settings-box .mem-entry-actions {
+  display: flex;
+  justify-content: flex-end;
+  grid-column: 1 / -1;
+}
+
+.settings-input:focus,
+.settings-field select:focus {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 1px;
+}
+
+.settings-hint {
+  font-size: 0.75rem;
+  color: var(--color-neutral);
+  margin: 0.1rem 0 0;
+}
+
+.settings-button {
+  font: inherit;
+  font-size: 0.88rem;
+  padding: 0.45rem 0.9rem;
+  border-radius: 999px;
+  border: 1px solid var(--color-rule);
+  background: var(--color-paper-2);
+  color: var(--color-ink);
+  cursor: pointer;
+}
+
+.settings-button:hover {
+  border-color: var(--color-accent);
+}
+
+.settings-button.is-primary {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-accent-ink);
+}
+
+.settings-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Pricing page: one note-card per model, three cost cells, edit/delete. */
+.pricing-page {
+  display: grid;
+  gap: var(--space-lg);
+  max-width: 44rem;
+}
+
+.pricing-list {
+  display: grid;
+  gap: var(--space-lg);
+}
+
+.pricing-card .canon-head {
+  align-items: center;
+}
+
+.pricing-card.is-default {
+  border-color: var(--color-accent);
+}
+
+.pricing-card .page-tag {
+  vertical-align: middle;
+  margin-left: 0.4rem;
+}
+
+.pricing-card .mem-entry-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.settings-cost-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin-top: var(--space-md);
+}
+
+@media (max-width: 30rem) {
+  .settings-cost-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.settings-cost-row input::placeholder {
+  font-size: 0.72rem;
+  color: var(--color-neutral);
+}
+
+.settings-cost-row input {
+  font-size: 0.85rem;
+}
+
+.settings-cost-cell {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.settings-cost-cell > span {
+  font-size: 0.72rem;
+  color: var(--color-neutral);
+}
+
+.settings-cost-cell .settings-input {
+  width: 100%;
+}
+
+.settings-cost-cell .settings-input[readonly] {
+  border-color: transparent;
+  background: transparent;
+  padding-left: 0;
+  color: var(--color-reading);
+}
+
+.pricing-edit-row {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: var(--space-md);
+  padding-top: var(--space-md);
+  border-top: 1px dashed var(--color-rule-2);
+}
+
+.pricing-edit-row .settings-cost-row {
+  margin-top: 0;
+}
+
+.pricing-edit-row .mem-entry-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+/* Model dropdown — styled list anchored under the model input. */
+.settings-model-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  max-height: 14rem;
+  overflow-y: auto;
+  background: var(--color-paper);
+  border: 1px solid var(--color-rule);
+  border-radius: 8px;
+  box-shadow: 0 10px 28px oklch(20% 0.02 48 / 0.25);
+  padding: 0.25rem;
+  display: grid;
+  gap: 0.1rem;
+}
+
+.settings-model-item {
+  font: inherit;
+  font-size: 0.85rem;
+  text-align: left;
+  padding: 0.4rem 0.55rem;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-ink);
+  cursor: pointer;
+}
+
+.settings-model-item:hover {
+  background: var(--color-accent-soft);
+}

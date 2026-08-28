@@ -261,3 +261,78 @@ async def test_assistant_tool_roundtrip_payload() -> None:
     assert messages[1]["tool_calls"][0]["function"]["name"] == "echo"
     assert json.loads(messages[1]["tool_calls"][0]["function"]["arguments"]) == {"q": "hi"}
     assert messages[2]["tool_call_id"] == "c1"
+
+
+@pytest.mark.asyncio
+async def test_reasoning_effort_sent_by_default() -> None:
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]},
+        )
+
+    connect = OpenAIChat(_provider(), client=_client(handler))
+    await connect.chat([Message(role="user", content="x")])
+    assert seen["body"]["reasoning_effort"] == "high"
+
+
+@pytest.mark.asyncio
+async def test_reasoning_effort_dropped_on_400_and_retried() -> None:
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        bodies.append(body)
+        if "reasoning_effort" in body:
+            return httpx.Response(
+                400,
+                json={"error": {"message": "reasoning_effort does not support 'high' with this model"}},
+            )
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]},
+        )
+
+    connect = OpenAIChat(_provider(), client=_client(handler))
+    reply = await connect.chat([Message(role="user", content="x")])
+    assert reply.content == "ok"
+    assert len(bodies) == 2
+    assert "reasoning_effort" in bodies[0]
+    assert "reasoning_effort" not in bodies[1]
+
+
+@pytest.mark.asyncio
+async def test_reasoning_effort_400_without_marker_raises() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"error": {"message": "bad request"}})
+
+    connect = OpenAIChat(_provider(), client=_client(handler))
+    with pytest.raises(LLMError, match="400"):
+        await connect.chat([Message(role="user", content="x")])
+
+
+@pytest.mark.asyncio
+async def test_reasoning_effort_low_sent() -> None:
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]},
+        )
+
+    connect = OpenAIChat(
+        ProviderCfg(
+            baseUrl="https://api.example.com/v1",
+            model="demo-model",
+            apiKey="sk-secret-key",
+            reasoningEffort="low",
+        ),
+        client=_client(handler),
+    )
+    await connect.chat([Message(role="user", content="x")])
+    assert seen["body"]["reasoning_effort"] == "low"

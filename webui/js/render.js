@@ -4,6 +4,7 @@ import { icons, modes } from "./data.js";
 import { el } from "./dom.js";
 import { closeDrawer } from "./drawer.js";
 import { bindOverview, pagesFromStats, revealLeaf } from "./memories.js";
+import { bindSettings, hydrateSettings } from "./settings.js";
 import { escapeHtml } from "./util.js";
 import { bindTraceOverview, fillTraceAt, hydrateTrace, mountTraceStaff, updateMiniPlayer } from "./trace.js";
 import { state } from "./state.js";
@@ -118,6 +119,9 @@ export function renderPage(pageIndex = 0) {
       onOpenLeaf: (chunkId) => void revealLeaf(chunkId),
     });
   }
+  if (state.activeMode === "settings") {
+    bindSettings(el.pageBody);
+  }
   el.form.hidden = state.activeMode !== "chat";
   if (state.activeMode === "trace") {
     updateMiniPlayer(page);
@@ -160,6 +164,10 @@ export async function renderMode(mode) {
     } catch {
       /* static mock: no API */
     }
+    if (gen !== modeGen) return;
+  }
+  if (mode === "settings") {
+    await hydrateSettings();
     if (gen !== modeGen) return;
   }
   renderPage(state.activePageIndex);

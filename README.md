@@ -4,7 +4,7 @@ Thyca là harness trợ lý cá nhân chạy trong terminal, lấy cảm hứng 
 
 ## Trạng thái hiện tại
 
-**0.5.2.** CLI nối Agent Loop: `thyca -p`, REPL, `--continue` / `--session` / `--model`. Tools registry + `memory_*` + MCP stdio đã có. Skills v1 (chuẩn Agent Skills): `~/.thyca/skills/<name>/SKILL.md` (frontmatter `name` + `description` theo agentskills.io). Index `name — description` vào `<skills>` trong system prompt mỗi turn; tạo bằng `write`, load bằng `read` — **0 tool mới**. Validate-at-scan: skill lỗi hiện cảnh báo trong index để agent tự sửa. Seed 2 skill: `create-skill`, `create-mcp-tool`. Chi tiết: `.agents/plans/services/skills.md`, decision `2026-08-28-skills-agent-skills-v1.md`. WebUI local: `thyca --serve` (mặc định `127.0.0.1:8765`, `--daemon` / `--stop` / `--port`) — Chat, Memories, Trace.
+**0.6.3.** CLI nối Agent Loop: `thyca -p`, REPL, `--continue` / `--session` / `--model`. Tools registry + `memory_*` + MCP stdio đã có. Skills v1 (chuẩn Agent Skills): `~/.thyca/skills/<name>/SKILL.md` (frontmatter `name` + `description` theo agentskills.io). Index `name — description` vào `<skills>` trong system prompt mỗi turn; tạo bằng `write`, load bằng `read` — **0 tool mới**. Validate-at-scan: skill lỗi hiện cảnh báo trong index để agent tự sửa. Seed 2 skill: `create-skill`, `create-mcp-tool`. Chi tiết: `.agents/plans/services/skills.md`, decision `2026-08-28-skills-agent-skills-v1.md`. WebUI local: `thyca --serve` (mặc định `127.0.0.1:8765`, `--daemon` / `--stop` / `--port`) — Chat, Memories, Trace.
 
 Config / Session JSONL / ActiveMemory / L2 lexical / LLM OpenAI-compat / loop 4 pha đều có test. `ChatReply.usage` chuẩn hóa token (prompt / cached / completion / total); `cost_for` tính USD từ bảng `pricing` (builtin + overlay config). Observe ghi `usage` / `cost_usd` / `latency_ms` vào `Message.meta` trên JSONL. Google/Anthropic connect vẫn stub.
 
@@ -15,14 +15,21 @@ Memory v1 là **L2 hybrid**: markdown dưới `~/.thyca` là nguồn sự thật
 - Linux là target chính.
 - Python 3.14+
 - `uv`
-- API key của OpenAI-compatible provider cho LLM service: `OPENAI_API_KEY` hoặc env name tương ứng trong config.
+- API key của OpenAI-compatible provider cho LLM service: `THYCA_TOKEN` hoặc env name tương ứng trong config (`provider.apiKeyEnv`).
 
 ## Quick start
 
 ```bash
 curl -LsSf https://raw.githubusercontent.com/Flowerf19/thyca-ai/main/install.sh | sh
 thyca --version
+thyca --serve        # mở http://127.0.0.1:8765
 ```
+
+Lần đầu mở WebUI khi chưa có API key: panel **Cài đặt** tự mở — điền Base URL
++ API key, bấm **Tải danh sách model** để lấy model từ provider
+(`GET {baseUrl}/models`), chọn model, **Lưu**. Config ghi vào
+`~/.thyca/config.json` (mode 0600) và WebUI vào chat bình thường. Provider nào
+không có `/models` thì gõ tay tên model.
 
 Đã có `uv`:
 
@@ -52,7 +59,7 @@ Config mặc định dùng một provider OpenAI-compatible:
 {
   "provider": {
     "baseUrl": "https://api.openai.com/v1",
-    "apiKeyEnv": "OPENAI_API_KEY",
+    "apiKeyEnv": "THYCA_TOKEN",
     "model": "gpt-4o-mini"
   },
   "mcpServers": {},
@@ -66,6 +73,17 @@ Config mặc định dùng một provider OpenAI-compatible:
 
 `pricing` là optional (USD / 1M tokens). Thiếu thì dùng bảng builtin trong `thyca/llm/pricing.py`. Alias đọc `cached_input` → ghi ra `cache`. API Python: `load()`, `ensure_default()`, `save()`. `ProviderCfg.api_key()`: `apiKey` JSON thắng `apiKeyEnv`; `apiKey` không hiện trong `repr`.
 
+`provider.reasoningEffort` (default `"high"`, choice `low/medium/high`) điều chỉnh
+được trong panel Cài đặt. `OpenAIChat` gửi `reasoning_effort` lên Chat
+Completions; model không hỗ trợ (ví dụ gpt-4o) trả 400 có "reasoning_effort" →
+tự rút param và retry 1 lần, không đổi config.
+
+WebUI có panel **Cài đặt** (nút trong sidebar) đọc/ghi config qua
+`GET/POST /api/config`. Schema sinh tự động từ dataclass `Config`
+(`thyca/config_schema.py`) — thêm field mới vào `Config` là panel tự hiện,
+không sửa frontend. `GET /api/config` không bao giờ trả API key; POST với
+`apiKey` rỗng nghĩa là giữ key cũ.
+
 ## Kiến trúc
 
 Package flat `thyca/`, không `src/`. Module chính: `config.py`, `protocol.py`, `skills.py`, `sessions/` (4 class SOLID), `memory/`, `llm/` (`llm_base` + `pricing` + `openai_chat` …), `agent/` (Assemble/Think/Act/Observe + `Stage`), `tools/` (registry + `memory_*` + MCP), `serve.py` + `webui/`.
@@ -74,7 +92,7 @@ Loop: `assemble → think → act → observe`. `Assemble` nhét `PromptManager.
 
 ## Development và testing
 
-`uv run pytest -q` là lệnh kiểm chứng chuẩn (342 passed). Live provider/network không nằm trong unit suite. `uv sync --locked` phải tái tạo được môi trường.
+`uv run pytest -q` là lệnh kiểm chứng chuẩn (365 passed). Live provider/network không nằm trong unit suite. `uv sync --locked` phải tái tạo được môi trường.
 
 Ngoài scope: Telegram/Discord, subagent, plan mode, confirmation gate, ANN/vector database, catalog hàng chục provider.
 

@@ -15,6 +15,13 @@ from urllib.parse import unquote, urlparse
 
 from thyca.bridge import public_turn_error, stream_turn
 from thyca.chat_app import ChatApp
+from thyca.config import ConfigError, load, save
+from thyca.config_schema import config_schema
+from thyca.onboarding import (
+    ProviderProbeError,
+    provider_ready,
+    validate_provider,
+)
 from thyca.serve_memory import memory_endpoint
 from thyca.trace_api import (
     trace_detail_payload,
@@ -44,6 +51,35 @@ _TRACE_DETAIL_RE = re.compile(
 _BODY_CAP = 16_384
 
 
+def _config_values(cfg) -> dict:
+    """Config as UI values; the API key never leaves the server."""
+    values = cfg.to_dict()
+    values["provider"]["apiKey"] = ""
+    return values
+
+
+def _config_meta(cfg) -> dict:
+    """Non-secret status the settings panel can show (validity via verify)."""
+    return {"hasApiKey": bool(cfg.provider.apiKey)}
+
+
+def _merge_saved_key(raw: dict, cfg) -> dict:
+    """Empty provider.apiKey in the payload means keep the stored key."""
+    provider = raw.get("provider")
+    if isinstance(provider, dict) and provider.get("apiKey") == "":
+        provider = dict(provider)
+        provider["apiKey"] = cfg.provider.apiKey
+        raw = dict(raw)
+        raw["provider"] = provider
+    return raw
+
+
+def _parse_config_payload(payload: dict, cfg):
+    from thyca.config import _parse_dict
+
+    return _parse_dict(_merge_saved_key(payload, cfg))
+
+
 class ServeError(RuntimeError):
     """Web UI server could not start or bind."""
 
@@ -67,13 +103,16 @@ def make_server(
     webui: Path,
     facade: MemoryFacade,
     chat: ChatApp | None = None,
+    config_file: Path | None = None,
 ) -> ThreadingHTTPServer:
     if host not in LOOPBACK:
         raise ServeError("bind must be loopback")
     root = webui.resolve()
     if not root.is_dir():
         raise ServeError(f"webui missing: {webui}")
-    httpd = ThreadingHTTPServer((host, port), _handler(root, facade, chat))
+    httpd = ThreadingHTTPServer(
+        (host, port), _handler(root, facade, chat, config_file)
+    )
     httpd.allow_reuse_address = True
     return httpd
 
@@ -86,8 +125,16 @@ def run(
     facade: MemoryFacade,
     stdout,
     chat: ChatApp | None = None,
+    config_file: Path | None = None,
 ) -> None:
-    httpd = make_server(host=host, port=port, webui=webui, facade=facade, chat=chat)
+    httpd = make_server(
+        host=host,
+        port=port,
+        webui=webui,
+        facade=facade,
+        chat=chat,
+        config_file=config_file,
+    )
     bound_host, bound_port = httpd.server_address[:2]
     print(f"http://{bound_host}:{bound_port}/", file=stdout, flush=True)
     signal.signal(signal.SIGTERM, _raise_interrupt)
@@ -102,7 +149,10 @@ def run(
 
 
 def _handler(
-    webui: Path, facade: MemoryFacade, chat: ChatApp | None
+    webui: Path,
+    facade: MemoryFacade,
+    chat: ChatApp | None,
+    config_file: Path | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
@@ -110,6 +160,12 @@ def _handler(
             path = parsed.path
             if path == "/api/memory/stats":
                 self._stats()
+                return
+            if path == "/api/config/status":
+                self._config_status()
+                return
+            if path == "/api/config":
+                self._config_get()
                 return
             if path == "/api/sessions":
                 self._chat_list()
@@ -140,6 +196,12 @@ def _handler(
             path = urlparse(self.path).path
             if path == "/api/memory/forget":
                 self._memory_post("forget")
+                return
+            if path == "/api/config":
+                self._config_post()
+                return
+            if path == "/api/onboarding/verify":
+                self._onboarding_verify()
                 return
             if path == "/api/memory/reinforce":
                 self._memory_post("reinforce")
@@ -177,6 +239,77 @@ def _handler(
                 return
             status, body = memory_endpoint(facade, kind, payload)
             self._json(status, body)
+
+        def _config(self):
+            try:
+                return load(config_file) if config_file else load()
+            except ConfigError:
+                return None
+
+        def _config_status(self) -> None:
+            cfg = self._config()
+            ready = cfg is not None and provider_ready(cfg)
+            self._json(200, {"ready": ready})
+
+        def _config_get(self) -> None:
+            cfg = self._config()
+            if cfg is None:
+                self._json(503, {"error": "config unavailable"})
+                return
+            self._json(
+                200,
+                {
+                    "schema": config_schema(),
+                    "values": _config_values(cfg),
+                    "meta": _config_meta(cfg),
+                },
+            )
+
+        def _config_post(self) -> None:
+            try:
+                payload = self._read_json()
+            except ValueError:
+                self._json(400, {"error": "invalid body"})
+                return
+            cfg = self._config()
+            if cfg is None:
+                self._json(503, {"error": "config unavailable"})
+                return
+            try:
+                updated = _parse_config_payload(payload, cfg)
+                save(updated, config_file) if config_file else save(updated)
+            except ConfigError as exc:
+                self._json(422, {"error": str(exc)})
+                return
+            self._json(200, {"ok": True, "ready": provider_ready(updated)})
+
+        def _onboarding_verify(self) -> None:
+            try:
+                payload = self._read_json()
+            except ValueError:
+                self._json(400, {"error": "invalid body"})
+                return
+            base_url = payload.get("baseUrl")
+            if not isinstance(base_url, str) or not base_url.strip():
+                self._json(400, {"error": "invalid baseUrl"})
+                return
+            api_key = payload.get("apiKey")
+            if not isinstance(api_key, str) or not api_key.strip():
+                cfg = self._config()
+                if cfg is None:
+                    self._json(503, {"error": "config unavailable"})
+                    return
+                try:
+                    api_key = cfg.provider.api_key()
+                except ConfigError:
+                    self._json(422, {"error": "chưa có API key"})
+                    return
+            try:
+                models = validate_provider(base_url.strip(), api_key)
+            except ProviderProbeError as exc:
+                self._json(422, {"error": str(exc)})
+                return
+            self._json(200, {"models": models, "apiKeyOk": True})
 
         def _stats(self) -> None:
             try:

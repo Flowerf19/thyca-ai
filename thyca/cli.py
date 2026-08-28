@@ -151,7 +151,7 @@ class Cli:
             loop_max=cfg.limits.loopMax,
             tools=schema,
             model=provider.model,
-            pricing=dict(cfg.pricing) if cfg.pricing else None,
+            pricing=cfg.effective_pricing() or None,
         )
 
         prompts = PromptManager()
@@ -213,6 +213,7 @@ class Cli:
                 facade=MemoryFacade(root, timezone_name=cfg.timeline.timezone),
                 chat=ChatApp(root, cfg, connect=self._connect),
                 stdout=self._stdout,
+                config_file=root / "config.json",
             )
         except ServeError as exc:
             ui.error(str(exc))

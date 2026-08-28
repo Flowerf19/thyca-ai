@@ -396,6 +396,10 @@ svg {
   color: var(--color-trace-icon-light);
 }
 
+.mode-link.is-active[data-mode="settings"] .mode-icon {
+  color: var(--color-accent);
+}
+
 .mode-icon,
 .page-card-icon {
   display: inline-grid;
@@ -423,6 +427,11 @@ svg {
 .mode-icon-trace,
 .page-card[data-tone="trace"] .page-card-icon {
   color: var(--color-trace-icon-light);
+}
+
+.mode-icon-settings,
+.page-card[data-tone="settings"] .page-card-icon {
+  color: var(--color-accent);
 }
 
 .mode-name {

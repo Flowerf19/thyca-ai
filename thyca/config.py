@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import pathlib
 import re
 import warnings
 from dataclasses import asdict, dataclass, field
@@ -23,12 +24,30 @@ class ConfigError(RuntimeError):
 
 
 DEFAULT_PROVIDER_BASE_URL = "https://api.openai.com/v1"
-DEFAULT_PROVIDER_API_KEY_ENV = "OPENAI_API_KEY"
+DEFAULT_PROVIDER_API_KEY_ENV = "THYCA_TOKEN"
 DEFAULT_PROVIDER_MODEL = "gpt-4o-mini"
+REASONING_EFFORTS = ("low", "medium", "high")
+DEFAULT_PROVIDER_REASONING_EFFORT = "high"
 DEFAULT_TIMELINE_TIMEZONE = "Asia/Ho_Chi_Minh"
+
+
+def _system_timezone() -> str:
+    """Best-effort IANA zone of the host; falls back to the default."""
+    try:
+        link = pathlib.Path("/etc/localtime")
+        if link.is_symlink():
+            target = link.resolve()
+            if "zoneinfo" in target.parts:
+                name = "/".join(target.parts[target.parts.index("zoneinfo") + 1 :])
+                ZoneInfo(name)
+                return name
+    except (OSError, ZoneInfoNotFoundError, ValueError):
+        pass
+    return DEFAULT_TIMELINE_TIMEZONE
 DEFAULT_LIMITS_LOOP_MAX = 200
 DEFAULT_LIMITS_HOT_TAIL_KB = 4
-DEFAULT_LIMITS_CONTEXT_TOKENS = 32000
+DEFAULT_LIMITS_CONTEXT_TOKENS = 272_000
+DEFAULT_LIMITS_CONTEXT_TOKENS_MAX = 2_000_000
 
 
 def _text(
@@ -62,8 +81,10 @@ def _number(value: object, name: str) -> float:
 class ProviderCfg:
     baseUrl: str = DEFAULT_PROVIDER_BASE_URL
     apiKeyEnv: str = DEFAULT_PROVIDER_API_KEY_ENV
-    model: str = DEFAULT_PROVIDER_MODEL
+    # apiKey before model: settings UI flow is key → fetch models → pick model.
     apiKey: str | None = field(default=None, repr=False)
+    reasoningEffort: str = DEFAULT_PROVIDER_REASONING_EFFORT
+    model: str = DEFAULT_PROVIDER_MODEL
 
     def __post_init__(self) -> None:
         for value, name in (
@@ -73,6 +94,11 @@ class ProviderCfg:
         ):
             _text(value, name)
         _text(self.apiKey, "provider.apiKey", allow_none=True, non_empty=True)
+        if self.reasoningEffort not in REASONING_EFFORTS:
+            raise ConfigError(
+                "provider.reasoningEffort must be one of "
+                f"{'/'.join(REASONING_EFFORTS)}, got {self.reasoningEffort!r}"
+            )
 
     def api_key(self) -> str:
         if self.apiKey:
@@ -116,6 +142,32 @@ class PricingCfg:
 
 
 @dataclass(frozen=True)
+class ModelCfg:
+    """A model the user registered: optional provider override + token prices.
+
+    ``baseUrl`` empty means "use provider.baseUrl"; a non-empty value points
+    the model at another OpenAI-compatible endpoint (multi-provider).
+    Prices are USD / 1M tokens.
+    """
+
+    baseUrl: str = ""
+    input: float = 0.0
+    cache: float = 0.0
+    output: float = 0.0
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.baseUrl, str):
+            raise ConfigError("models[].baseUrl must be a string")
+        if self.baseUrl and not self.baseUrl.startswith(("http://", "https://")):
+            raise ConfigError(
+                f"models[].baseUrl must start with http:// or https://: {self.baseUrl!r}"
+            )
+        object.__setattr__(self, "input", _number(self.input, "models[].input"))
+        object.__setattr__(self, "cache", _number(self.cache, "models[].cache"))
+        object.__setattr__(self, "output", _number(self.output, "models[].output"))
+
+
+@dataclass(frozen=True)
 class TimelineCfg:
     timezone: str = DEFAULT_TIMELINE_TIMEZONE
 
@@ -139,7 +191,7 @@ class LimitsCfg:
         for value, name, lower, upper in (
             (self.loopMax, "limits.loopMax", 1, 200),
             (self.hotTailKB, "limits.hotTailKB", 1, 64),
-            (self.contextTokens, "limits.contextTokens", 1000, 200_000),
+            (self.contextTokens, "limits.contextTokens", 1000, DEFAULT_LIMITS_CONTEXT_TOKENS_MAX),
         ):
             _integer(value, name)
             if not lower <= value <= upper:
@@ -152,6 +204,7 @@ class Config:
     mcpServers: dict[str, McpServerCfg] = field(default_factory=dict)
     timeline: TimelineCfg = field(default_factory=TimelineCfg)
     limits: LimitsCfg = field(default_factory=LimitsCfg)
+    models: dict[str, ModelCfg] = field(default_factory=dict)
     pricing: dict[str, PricingCfg] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -161,9 +214,18 @@ class Config:
             "timeline": asdict(self.timeline),
             "limits": asdict(self.limits),
         }
+        if self.models:
+            payload["models"] = {name: asdict(cfg) for name, cfg in self.models.items()}
         if self.pricing:
             payload["pricing"] = {name: asdict(cfg) for name, cfg in self.pricing.items()}
         return payload
+
+    def effective_pricing(self) -> dict[str, PricingCfg]:
+        """Pricing overlay for cost tracing: user models win over pricing."""
+        merged = dict(self.pricing)
+        for name, model in self.models.items():
+            merged[name] = PricingCfg(input=model.input, cache=model.cache, output=model.output)
+        return merged
 
 
 def config_path() -> Path:
@@ -171,7 +233,8 @@ def config_path() -> Path:
 
 
 def default_config() -> Config:
-    return Config()
+    """Defaults for a fresh config; timezone follows the host system."""
+    return Config(timeline=TimelineCfg(timezone=_system_timezone()))
 
 
 def _fields(
@@ -247,13 +310,33 @@ def _parse_pricing(raw: Any) -> dict[str, PricingCfg]:
     return result
 
 
+def _parse_models(raw: Any) -> dict[str, ModelCfg]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ConfigError(f"models must be an object, got {type(raw).__name__}")
+    result: dict[str, ModelCfg] = {}
+    for name, value in raw.items():
+        if not isinstance(name, str) or not name.strip():
+            raise ConfigError("models keys must be non-empty strings")
+        if not isinstance(value, dict):
+            raise ConfigError(f"models[{name!r}] must be an object")
+        result[name] = ModelCfg(
+            baseUrl=value.get("baseUrl", ""),
+            input=_number(value.get("input", 0), f"models[{name!r}].input"),
+            cache=_number(value.get("cache", 0), f"models[{name!r}].cache"),
+            output=_number(value.get("output", 0), f"models[{name!r}].output"),
+        )
+    return result
+
+
 def _parse_dict(raw: dict[str, Any]) -> Config:
-    return Config(
+    config = Config(
         provider=ProviderCfg(
             **_fields(
                 raw.get("provider", {}),
                 "provider",
-                ("baseUrl", "apiKeyEnv", "model", "apiKey"),
+                ("baseUrl", "apiKeyEnv", "model", "reasoningEffort", "apiKey"),
             )
         ),
         mcpServers=_parse_mcp_servers(raw.get("mcpServers")),
@@ -273,8 +356,47 @@ def _parse_dict(raw: dict[str, Any]) -> Config:
                 null_means_default=True,
             )
         ),
+        models=_parse_models(raw.get("models")),
         pricing=_parse_pricing(raw.get("pricing")),
     )
+    # Legacy migration: pricing-only entries become registered models so the
+    # settings UI can edit them. pricing stays for older consumers.
+    if config.pricing and not config.models:
+        config = Config(
+            provider=config.provider,
+            mcpServers=config.mcpServers,
+            timeline=config.timeline,
+            limits=config.limits,
+            models={
+                name: ModelCfg(input=p.input, cache=p.cache, output=p.output)
+                for name, p in config.pricing.items()
+            },
+            pricing=config.pricing,
+        )
+    return config
+
+
+GUIDE_NAME = "read_after_config.md"
+
+
+def write_config_guide() -> Path | None:
+    """Copy the packaged agent config guide into ~/.thyca (best effort).
+
+    Returns the written path, or None when the guide is not packaged
+    (source checkout) or cannot be written.
+    """
+    packaged = Path(__file__).resolve().parent / GUIDE_NAME
+    if not packaged.is_file():
+        return None
+    try:
+        directory = ensure_thyca_dir()
+        target = directory / GUIDE_NAME
+        if not target.exists():
+            target.write_text(packaged.read_text(encoding="utf-8"), encoding="utf-8")
+            target.chmod(0o600)
+        return target
+    except OSError:
+        return None
 
 
 def ensure_thyca_dir() -> Path:
@@ -314,6 +436,7 @@ def ensure_default(path: Path | None = None) -> Config:
         return load(target)
     config = default_config()
     save(config, target)
+    write_config_guide()
     return config
 
 

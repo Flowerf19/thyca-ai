@@ -1,7 +1,8 @@
 export const icons = {
   chat: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14v8H8l-3 3V7Z" /><path d="M9 11h6M9 14h4" /></svg>',
   memories: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6.6C10.3 5.1 8 4.6 4.5 4.6v13.8c3.5 0 5.8.5 7.5 2 1.7-1.5 4-2 7.5-2V4.6c-3.5 0-5.8.5-7.5 2Z" /><path d="M12 6.6v13.8" /></svg>',
-  trace: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="2" /><circle cx="12" cy="7" r="2" /><circle cx="18" cy="12" r="2" /><circle cx="12" cy="17" r="2" /><path d="M8 11.2 10.2 8.4M13.8 8.4 16 11.2M16 12.8 13.8 15.6M10.2 15.6 8 12.8" /></svg>'
+  trace: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="2" /><circle cx="12" cy="7" r="2" /><circle cx="18" cy="12" r="2" /><circle cx="12" cy="17" r="2" /><path d="M8 11.2 10.2 8.4M13.8 8.4 16 11.2M16 12.8 13.8 15.6M10.2 15.6 8 12.8" /></svg>',
+  settings: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7ZM4.8 13.4l-1.1.8 1.5 2.6 1.3-.5a7.8 7.8 0 0 0 1.8 1.1l.2 1.4h3l.2-1.4a7.8 7.8 0 0 0 1.8-1.1l1.3.5 1.5-2.6-1.1-.8c.1-.6.1-1.2 0-1.8l1.1-.8-1.5-2.6-1.3.5a7.8 7.8 0 0 0-1.8-1.1l-.2-1.4h-3l-.2 1.4a7.8 7.8 0 0 0-1.8 1.1l-1.3-.5-1.5 2.6 1.1.8c-.1.6-.1 1.2 0 1.8Z" /></svg>'
 };
 
 export const personaPages = [
@@ -154,3 +155,13 @@ export const modes = {
   }
 };
 
+
+modes.settings = {
+  label: "Cài đặt",
+  listLabel: "Cấu hình",
+  kicker: "~/.thyca · config.json",
+  note: "",
+  chips: [],
+  pages: [],
+  body: ""
+};

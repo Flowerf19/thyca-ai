@@ -3,8 +3,9 @@ import { modes } from "./data.js";
 import { el } from "./dom.js";
 import { closeDrawer, hideDrawerIfMobile, toggleDrawer } from "./drawer.js";
 import { renderMode, renderPage, renderPageList, setTracePlaying } from "./render.js";
-import { getJson } from "./util.js";
+import { getJson, postJson } from "./util.js";
 import { state } from "./state.js";
+import { hydrateSettings, renderModeSettings } from "./settings.js";
 
 const IDLE_MS = 15 * 60 * 1000;
 const IDLE_REMEMBER =
@@ -211,4 +212,26 @@ function bind() {
 
 bind();
 hideDrawerIfMobile();
+
+async function bootProviderGate() {
+  const status = await getJson("/api/config/status");
+  if (!status || status.ready !== false) return;
+  state.chatLive = false;
+  el.line.disabled = true;
+  el.send.disabled = true;
+  el.hint.textContent = "Cần cấu hình provider trước khi chat.";
+  el.hint.className = "hint is-error";
+  await renderModeSettings();
+  // Re-check when returning to chat: a saved config may have made it ready.
+  const fresh = await getJson("/api/config/status");
+  if (fresh && fresh.ready !== false) {
+    state.chatLive = true;
+    el.line.disabled = false;
+    el.send.disabled = false;
+    el.hint.textContent = "";
+    el.hint.className = "hint";
+  }
+}
+
+void bootProviderGate();
 renderMode("chat");

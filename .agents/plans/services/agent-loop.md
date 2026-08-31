@@ -57,8 +57,25 @@ Dataclass không frozen. `messages` / `results` `default_factory=list`. `round >
 `AgentLoop.run(..., event_sink=None)` emits `turn.accepted` after the user
 message is persisted, then `llm.started` / `llm.finished` each round.
 `Act.act(..., event_sink=None)` emits `tool.started` / `tool.finished`
-(completion order). `turn.completed` / `turn.failed` are transport-only.
+(completion order). When the call is a `read` whose path resolves inside
+`~/.thyca/skills/<name>/`, `Act` (constructed with `skills_root`) emits
+`skill.started` / `skill.finished` instead — one skill load is one beat pair,
+never both `tool.*` and `skill.*`. `name` is the sanitized skill dirname
+(fallback `"skill"`); no path, content, or args in events. Skill index scan,
+skill authoring via `write`/`edit`, and `bash` inside a skill dir stay
+`tool.*`. `turn.completed` / `turn.failed` are transport-only.
 Callers that omit `event_sink` are unchanged.
+
+History replay mirrors this: `thyca/trace_api.py` classifies recorded calls
+at payload build (same `classify_skill_read`, no path leaves the server —
+wire carries only `{id, name, skill?}`) and `webui/js/trace-score.js`
+re-emits `skill.*` from that marker, so a skill load draws the same notes
+live and from a saved session.
+
+On the UI side, the musical role of each event type (pulse/rest/terminal) is
+registered in `webui/js/staff-catalog.js` (declarative YAML catalog); the
+mapper never switches on event names — new traces register there without
+touching `staff-map.js`.
 
 ### AgentLoop
 

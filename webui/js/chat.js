@@ -10,6 +10,7 @@ import { state } from "./state.js";
 
 let liveEvents = [];
 let liveScore = null;
+let lastOperationalText = "";
 
 const EMPTY_BODY =
   '<div class="new-page-empty"><span aria-hidden="true">+</span><p>Chưa có tin nào.</p><small>Nói điều đầu tiên để mở phiên.</small></div>';
@@ -44,6 +45,7 @@ export function resetToNewChatPage() {
 export function beginOutgoingTurn(text) {
   removeStatus();
   clearStaffs(el.pageBody);
+  lastOperationalText = "";
   let list = el.pageBody.querySelector(".entry-list");
   if (!list) {
     el.pageBody.innerHTML = '<div class="entry-list"></div>';
@@ -159,6 +161,18 @@ function chatStatusNode() {
 function applyStatus(event) {
   const text = statusTextForEvent(event);
   if (text === null) return;
+  // Let tool/skill text linger through the next llm wait: the round ticker
+  // ("Đang xử lý vòng N…") would erase it after ~200 ms while the model thinks
+  // for seconds. Keep the operational line on top instead — the round is
+  // still visible on the staff as that wait's note pair.
+  const operational = event.type === "tool.started" || event.type === "tool.finished"
+    || event.type === "skill.started" || event.type === "skill.finished";
+  if (event.type === "llm.started" && lastOperationalText) return;
+  if (operational) {
+    lastOperationalText = text;
+  } else if (event.type === "llm.finished" || event.type === "turn.accepted") {
+    lastOperationalText = "";
+  }
   const status = chatStatusNode();
   const ticker = status && status.querySelector(".status-ticker");
   if (!ticker || !ticker.isConnected) return;

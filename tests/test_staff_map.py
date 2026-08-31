@@ -248,3 +248,50 @@ def test_same_input_is_deterministic(node: str) -> None:
         COMPLETED,
     ]
     assert _score(node, *events) == _score(node, *events)
+
+
+def test_skill_pair_is_two_quarters_in_chord(node: str) -> None:
+    score = _score(
+        node,
+        ACCEPTED,
+        {"type": "skill.started"},
+        {"type": "skill.finished", "ok": True},
+        COMPLETED,
+    )
+    measure = score["measures"][0]
+    assert measure["harmony"] == "I"
+    assert measure["events"] == [
+        {"offset": 0, "duration": 4, "pitches": ["C5"]},
+        {"offset": 4, "duration": 4, "pitches": ["G5"]},
+        {"offset": 8, "duration": 4, "pitches": ["C5", "E5", "G5"]},
+    ]
+    assert measure["rests"] == [{"offset": 12, "duration": 4}]
+
+
+def test_skill_failed_is_diminished_then_recovering_chord(node: str) -> None:
+    score = _score(
+        node,
+        ACCEPTED,
+        {"type": "skill.finished", "ok": False},
+        {"type": "skill.finished", "ok": True},
+    )
+    events = score["measures"][0]["events"]
+    assert [e["pitches"] for e in events] == [
+        ["C5"],
+        ["B4", "D5", "F5"],
+        ["C5", "E5", "G5"],
+    ]
+
+
+def test_unknown_event_type_costs_no_beat(node: str) -> None:
+    with_noise = _score(
+        node,
+        ACCEPTED,
+        {"type": "turn.delta", "text": "partial text"},
+        {"type": "skill.started"},
+        {"type": "skill.finished", "ok": True},
+    )
+    without_noise = _score(
+        node, ACCEPTED, {"type": "skill.started"}, {"type": "skill.finished", "ok": True}
+    )
+    assert with_noise == without_noise

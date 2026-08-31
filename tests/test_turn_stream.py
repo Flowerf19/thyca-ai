@@ -102,3 +102,32 @@ def test_failed_stream_is_open_dominant(node: str) -> None:
     assert result["finalBarline"] is False
     assert result["pitches"] == ["G4", "B4", "D5"]
     assert result["duration"] == 16
+
+
+def test_skill_events_change_status_without_terminal(node: str) -> None:
+    raw = (
+        '{"type":"turn.accepted"}\n'
+        '{"type":"skill.started","round":1,"call_id":"call-1","name":"create-skill"}\n'
+        '{"type":"skill.finished","round":1,"call_id":"call-1","name":"create-skill","ok":true}\n'
+    )
+    result = _run(
+        node,
+        """(() => {
+          const d = createNdjsonDecoder();
+          const events = [...d.push(new TextEncoder().encode(%s)), ...d.flush()];
+          const score = scoreFromEvents(events);
+          return {
+            status: events.map((e) => statusTextForEvent(e)),
+            terminals: score.measures.filter((m) => m.terminal).length,
+            lastPitches: score.measures.at(-1).events.map((e) => e.pitches),
+          };
+        })()"""
+        % json.dumps(raw),
+    )
+    assert result["status"] == [
+        "Đã nhận lượt…",
+        "Đang mở skill create-skill…",
+        "Đã mở skill create-skill…",
+    ]
+    assert result["terminals"] == 0
+    assert result["lastPitches"] == [["C5"], ["G5"], ["C5", "E5", "G5"]]

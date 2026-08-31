@@ -1,5 +1,13 @@
 // Pure mapper: operational events (same objects as NDJSON) -> normalized score model.
 // No timer, no text hashing, no key choice: single voice C major, 4/4.
+// Event types are NOT known here — role lookup lives in staff-catalog.js
+// (familyFor: pulse | rest | terminal). Unregistered events are silence.
+//
+// TO ADD A NEW TRACE: append 4 YAML lines to the catalog (staff-catalog.js),
+// a status line in turn-status.js, and a TurnEvent allowlist entry in
+// thyca/agent/events.py — plus a test proving it does not double up with
+// tool.*. Never add an "unknown event = note" fallback; silence is the
+// safe default.
 //
 // Invariants (per returned measure):
 //   - ticks: quarter=4, half=8, whole=16; measure=16
@@ -8,8 +16,9 @@
 //   - no duration crosses beat 3 (tick 8) except a whole rest in an empty measure
 //   - no dotted values, no 8th/16th, no ties
 
-export const TICKS = { quarter: 4, half: 8, whole: 16, measure: 16 };
+import { familyFor } from "./staff-catalog.js";
 
+export const TICKS = { quarter: 4, half: 8, whole: 16, measure: 16 };
 // Activity voicings [low, middle, high]; vii° is the local error color only.
 const VOICINGS = {
   I: ["C5", "E5", "G5"],
@@ -24,17 +33,6 @@ const BEATS = [0, 4, 8, 12];
 // Pitches for the terminal measures: dominant (G4 B4 D5) and tonic (C5 E5 G5).
 const V_TRIAD = ["G4", "B4", "D5"];
 const I_TRIAD = ["C5", "E5", "G5"];
-
-const TERMINALS = new Set(["turn.completed", "turn.failed"]);
-const ACTIVITY_TYPES = new Set([
-  "turn.accepted",
-  "llm.started",
-  "llm.finished",
-  "tool.started",
-  "tool.finished",
-  "session.naming.started",
-  "session.naming.finished",
-]);
 
 function createMeasure(harmony) {
   return {
@@ -65,7 +63,7 @@ function trailingRests(used) {
   }
 }
 
-// Keep operational rests (naming.started) and only fill the unused tail.
+// Keep operational rests (rest slot) and only fill the unused tail.
 function closeMeasure(measure, used) {
   measure.rests = measure.rests.concat(trailingRests(used));
 }
@@ -79,7 +77,7 @@ function samePitches(left, right) {
   );
 }
 
-export function scoreFromEvents(events) {
+export function scoreFromEvents(events, familyLookup = familyFor) {
   const score = { key: "C", meter: { beats: 4, beatType: 4, ticksPerQuarter: 4 }, measures: [] };
   const input = Array.isArray(events) ? events : [];
   let measure = null;
@@ -87,29 +85,27 @@ export function scoreFromEvents(events) {
   let usedSlots = 0;
   let previousActivityPitches = null;
 
-  // Sonority of one activity slot (all quarters). Returns {pitches} or {rest: true}.
-  function activityFor(event) {
-    if (event.type === "session.naming.started") return { rest: true };
+  // Sonority of one activity slot (all quarters) from the family role.
+  // Returns {pitches} or {rest: true}; null = silence (no beat used).
+  function activityFor(event, family) {
+    if (family.slot === "rest") return { rest: true };
     const low = VOICINGS[measure.harmony][0];
     const high = VOICINGS[measure.harmony][2];
     const full = VOICINGS[measure.harmony];
     const vii = VOICINGS["vii°"];
-    switch (event.type) {
-      case "turn.accepted":
-      case "llm.started":
+    if (family.errorWhen?.(event)) {
+      if (!samePitches(previousActivityPitches, vii)) return { pitches: [...vii] };
+      return { pitches: full };
+    }
+    switch (family.density) {
+      case "anchor":
         return { pitches: [low] };
-      case "llm.finished":
+      case "outer":
         return { pitches: [low, high] };
-      case "tool.started":
+      case "cue":
         return { pitches: [high] };
-      case "tool.finished":
-        if (event.ok !== true) {
-          if (!samePitches(previousActivityPitches, vii)) return { pitches: [...vii] };
-          return { pitches: full };
-        }
+      case "full":
         return { pitches: full };
-      case "session.naming.finished":
-        return { pitches: [low] };
       default:
         return null;
     }
@@ -117,8 +113,9 @@ export function scoreFromEvents(events) {
 
   for (const raw of input) {
     if (!raw || typeof raw !== "object" || typeof raw.type !== "string") continue;
-    if (TERMINALS.has(raw.type)) break;
-    if (!ACTIVITY_TYPES.has(raw.type)) continue;
+    const family = familyLookup(raw);
+    if (!family) continue;
+    if (family.slot === "terminal") break;
     if (!measure) {
       measure = createMeasure(HARMONY_ORDER[measureIndex % HARMONY_ORDER.length]);
       usedSlots = 0;
@@ -130,7 +127,7 @@ export function scoreFromEvents(events) {
       measure = createMeasure(HARMONY_ORDER[measureIndex % HARMONY_ORDER.length]);
       usedSlots = 0;
     }
-    const slot = activityFor(raw);
+    const slot = activityFor(raw, family);
     if (!slot) continue;
     const beat = BEATS[usedSlots];
     if (slot.rest) {
@@ -146,13 +143,15 @@ export function scoreFromEvents(events) {
 
   if (!measure) measure = createMeasure(HARMONY_ORDER[0]);
 
-  const terminalType = input.find((raw) => raw && typeof raw === "object" && TERMINALS.has(raw.type) && typeof raw.type === "string")?.type;
-  if (terminalType) {
+  // First terminal in stream order wins; kind comes from the catalog family.
+  const terminalFamily = input.map(familyLookup).find((f) => f?.slot === "terminal");
+  const terminalKind = terminalFamily ? terminalFamily.kind : null;
+  if (terminalKind) {
     if (usedSlots > 0) {
       closeMeasure(measure, usedSlots);
       score.measures.push(measure);
     } // else: skip an empty whole-rest measure opened solely to close.
-    if (terminalType === "turn.completed") {
+    if (terminalKind === "completed") {
       score.measures.push({
         harmony: null,
         terminal: "completed",

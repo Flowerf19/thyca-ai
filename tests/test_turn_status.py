@@ -76,6 +76,17 @@ def test_tool_finished_error(node: str) -> None:
     assert _eval(node, 'statusTextForEvent({type: "tool.finished", round: 1, call_id: "call-1", name: "bash", ok: false})') == "bash gặp lỗi, đang xử lý tiếp…"
 
 
+def test_skill_events(node: str) -> None:
+    assert _eval(node, 'statusTextForEvent({type: "skill.started", round: 1, call_id: "call-1", name: "codereview"})') == "Đang mở skill codereview…"
+    assert _eval(node, 'statusTextForEvent({type: "skill.finished", round: 1, call_id: "call-1", name: "codereview", ok: true})') == "Đã mở skill codereview…"
+    assert _eval(node, 'statusTextForEvent({type: "skill.finished", round: 1, call_id: "call-1", name: "codereview", ok: false})') == "Skill codereview không đọc được, đang xử lý tiếp…"
+
+
+def test_missing_skill_name_uses_skill_fallback(node: str) -> None:
+    # Backend falls back to "skill"; the client must not say "tool" here.
+    assert _eval(node, 'statusTextForEvent({type: "skill.started", round: 1, call_id: "call-1"})') == "Đang mở skill skill…"
+
+
 def test_session_naming(node: str) -> None:
     assert _eval(node, 'statusTextForEvent({type: "session.naming.started"})') == "Đang đặt tên phiên…"
     assert _eval(node, 'statusTextForEvent({type: "session.naming.finished", updated: true})') == "Đang hoàn tất…"

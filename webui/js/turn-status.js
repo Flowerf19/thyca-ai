@@ -25,6 +25,12 @@ export function statusTextForEvent(event) {
         ? `${name} đã xong…`
         : `${name} gặp lỗi, đang xử lý tiếp…`;
     }
+    case "skill.started":
+      return `Đang mở skill ${skillName(event)}…`;
+    case "skill.finished":
+      return event.ok === true
+        ? `Đã mở skill ${skillName(event)}…`
+        : `Skill ${skillName(event)} không đọc được, đang xử lý tiếp…`;
     case "session.naming.started":
       return "Đang đặt tên phiên…";
     case "session.naming.finished":
@@ -41,4 +47,11 @@ export function statusTextForEvent(event) {
 function publicName(name) {
   if (typeof name !== "string" || !name) return "tool";
   return name;
+}
+
+// Skill events keep the backend's own fallback word so status never says
+// "tool" for a skill load.
+function skillName(event) {
+  const name = event && typeof event.name === "string" ? event.name.trim() : "";
+  return name || "skill";
 }

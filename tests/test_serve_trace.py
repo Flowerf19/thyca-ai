@@ -9,7 +9,7 @@ from urllib.request import Request, urlopen
 from thyca.chat_app import ChatApp
 from thyca.config import default_config, load, save
 from thyca.llm.llm_base import ChatReply
-from thyca.protocol import Message
+from thyca.protocol import Message, ToolCall
 import thyca.trace_api as trace_api
 from thyca.serve import default_webui, make_server
 from thyca.sessions import SessionManager
@@ -280,3 +280,43 @@ def test_stats_filter_detail_and_corrupt_skip(tmp_path: Path) -> None:
             _stop(httpd, thread)
     finally:
         chat.shutdown()
+
+
+def test_trace_detail_marks_skill_loads_without_paths(tmp_path: Path) -> None:
+    """Skill classification happens server-side; arguments never reach wire."""
+    chat = _chat(tmp_path)
+    try:
+        manager = SessionManager(tmp_path / "sessions")
+        session = manager.create()
+        skill_file = tmp_path / "skills" / "codereview" / "SKILL.md"
+        skill_file.parent.mkdir(parents=True)
+        skill_file.write_text("---\nname: codereview\n---\n")
+        manager.append(Message(role="user", content="go", ts=TS))
+        manager.append(
+            Message(
+                role="assistant",
+                content=None,
+                ts=TS,
+                tool_calls=[
+                    ToolCall(id="c1", name="read", arguments={"path": str(skill_file)}),
+                    ToolCall(id="c2", name="read", arguments={"path": str(tmp_path / "notes.md")}),
+                ],
+                meta={"kind": "llm", "round": 1},
+            )
+        )
+        manager.append(Message(role="tool", tool_call_id="c1", content="---", ts=TS2))
+        manager.append(Message(role="tool", tool_call_id="c2", content="notes", ts=TS2))
+        manager.append(
+            Message(role="assistant", content="done", ts=TS2, meta={"kind": "llm", "round": 2})
+        )
+
+        trace_api._trace_sessions.clear()
+        payload = trace_api.trace_detail_payload(chat, session.id, 0)
+
+        calls = next(m for m in payload["messages"] if m["tool_calls"])
+        assert calls["tool_calls"][0] == {"id": "c1", "name": "read", "skill": "codereview"}
+        assert calls["tool_calls"][1] == {"id": "c2", "name": "read"}
+        # arguments (paths) never appear anywhere in the payload
+        assert str(tmp_path) not in json.dumps(payload)
+    finally:
+        chat.close() if hasattr(chat, "close") else None

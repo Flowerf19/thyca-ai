@@ -1,16 +1,25 @@
 // Build a normalized staff score for a historical turn from its JSONL slice.
 // Reuses the living-room grammar in staff-map.js (C major, 4/4, I–vi–IV–V).
+//
+// Replay fidelity: the server classifies skill loads at payload build time
+// (thyca/trace_api.py, same rule as live) and marks them with a `skill`
+// field — arguments/paths never leave the server. traceScoreFromEvents
+// re-emits skill.* from that marker, matching the live stream.
 import { scoreFromEvents } from "./staff-map.js";
+import { skillNameForRead } from "./skill-replay.js";
 
-export function traceScoreFromMessages(messages) {
+// Replay the JSONL slice as the event sequence the live stream would have
+// emitted. Exported separately so tests can pin skill.*/tool.* wiring —
+// sonority alone cannot distinguish them (same densities by design).
+export function traceScoreFromEvents(messages) {
   const slice = Array.isArray(messages) ? messages : [];
-  if (!slice.length) return scoreFromEvents([]);
-  const idToName = new Map();
+  if (!slice.length) return [];
+  const idToCall = new Map();
   for (const msg of slice) {
     if (msg.role === "assistant" && Array.isArray(msg.tool_calls)) {
       for (const call of msg.tool_calls) {
         if (call && typeof call.id === "string" && typeof call.name === "string") {
-          idToName.set(call.id, call.name);
+          idToCall.set(call.id, call);
         }
       }
     }
@@ -28,10 +37,14 @@ export function traceScoreFromMessages(messages) {
     } else if (msg.role === "tool") {
       const meta = msg.meta || {};
       const round = Number.isInteger(meta.round) ? meta.round : 1;
-      const name = (msg.tool_call_id && idToName.get(msg.tool_call_id)) || "tool";
+      const call = (msg.tool_call_id && idToCall.get(msg.tool_call_id)) || null;
+      const name = (call && call.name) || "tool";
       const ok = !(meta.is_error === true);
-      seq.push({ type: "tool.started", round, call_id: String(msg.tool_call_id || "call"), name });
-      seq.push({ type: "tool.finished", round, call_id: String(msg.tool_call_id || "call"), name, ok });
+      const skillName = skillNameForRead(call);
+      const kind = skillName ? "skill" : "tool";
+      const publicName = skillName || name;
+      seq.push({ type: `${kind}.started`, round, call_id: String(msg.tool_call_id || "call"), name: publicName });
+      seq.push({ type: `${kind}.finished`, round, call_id: String(msg.tool_call_id || "call"), name: publicName, ok });
     }
   }
   const last = slice[slice.length - 1];
@@ -43,5 +56,11 @@ export function traceScoreFromMessages(messages) {
     last.content === "loop limit reached" ||
     lastMeta.finish_reason === "error";
   seq.push({ type: failed ? "turn.failed" : "turn.completed" });
-  return scoreFromEvents(seq);
+  return seq;
+}
+
+export function traceScoreFromMessages(messages) {
+  const slice = Array.isArray(messages) ? messages : [];
+  if (!slice.length) return scoreFromEvents([]);
+  return scoreFromEvents(traceScoreFromEvents(messages));
 }

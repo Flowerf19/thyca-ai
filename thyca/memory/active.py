@@ -72,6 +72,10 @@ class ActiveMemory:
         self._skills = SkillStore(self.thyca_dir)
 
     @property
+    def skills_store(self) -> SkillStore:
+        return self._skills
+
+    @property
     def memory_dir(self) -> Path:
         return self.thyca_dir / "memory"
 

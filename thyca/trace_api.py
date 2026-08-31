@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs
 
+from thyca.agent.skill_event import classify_skill_read
+from thyca.protocol import ToolCall
 from thyca.trace import TurnSummary, turns_from_session
 
 if TYPE_CHECKING:
@@ -136,7 +138,9 @@ def trace_detail_payload(chat: ChatApp, session_id: str, turn_index: int) -> dic
                     "role": m.role,
                     "content": m.content,
                     "ts": m.ts,
-                    "tool_calls": [{"id": c.id, "name": c.name} for c in (m.tool_calls or [])],
+                    "tool_calls": [
+                        trace_tool_call(c, chat.skills_root) for c in (m.tool_calls or [])
+                    ],
                     "tool_call_id": m.tool_call_id,
                     "meta": m.meta,
                 }
@@ -144,3 +148,24 @@ def trace_detail_payload(chat: ChatApp, session_id: str, turn_index: int) -> dic
             ]
             return payload
     raise ValueError("trace not found")
+
+
+def trace_tool_call(call: ToolCall, skills_root: Path) -> dict:
+    """Wire payload for a recorded call: id + name + optional skill marker.
+
+    ``arguments`` never leave the server (they contain paths/content). Skill
+    classification happens here — reusing the exact backend rule — so history
+    replay in the browser matches the live stream without leaking paths.
+    """
+    entry: dict = {"id": call.id, "name": call.name}
+    if call.name == "read" and call.arguments.get("path"):
+        path = call.arguments["path"]
+        try:
+            resolved = Path(path).expanduser().resolve()
+        except (OSError, ValueError, TypeError):
+            resolved = None
+        if resolved is not None:
+            name = classify_skill_read(skills_root, resolved)
+            if name is not None:
+                entry["skill"] = name
+    return entry

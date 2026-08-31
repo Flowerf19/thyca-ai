@@ -159,6 +159,9 @@ function ingestTurnEvent(event) {
   if (status) {
     mountStaff(status, liveScore);
     if (event.type === "turn.failed") status.classList.add("is-error");
+    // While the model thinks (llm.started → next event) the newest note
+    // breathes — see .is-waiting in workspace.css.
+    status.classList.toggle("is-waiting", event.type === "llm.started");
   }
   if (event.type === "turn.completed") return "completed";
   if (event.type === "turn.failed") return "failed";

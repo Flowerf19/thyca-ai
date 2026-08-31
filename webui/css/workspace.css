@@ -595,6 +595,48 @@
   stroke-linecap: round;
 }
 
+/* While the model is thinking (llm.started → llm.finished), the newest note
+   breathes: honest motion — no synthesized notes, the wait is just visible.
+   Structure per staff-draw.js: system children end with the last measure
+   (g), measure children end with events (g) — barlines are lines/groups but
+   staffLines/clef/timeSig render first, so g:last-of-type picks the latest
+   measure and its last event. Cannot use :last-child — the barline always
+   follows the events inside a measure. */
+.entry-status.is-waiting
+  .staff-system:last-of-type
+  .staff-measure:last-of-type
+  .staff-event:last-of-type .staff-glyph,
+.entry-status.is-waiting
+  .staff-system:last-of-type
+  .staff-measure:last-of-type
+  .staff-event:last-of-type .staff-stem {
+  animation: staff-breath 1.2s ease-in-out infinite;
+}
+
+.entry-status.is-waiting
+  .staff-system:last-of-type
+  .staff-measure:last-of-type
+  .staff-event:last-of-type .staff-stem {
+  animation-name: staff-breath-stroke;
+}
+
+@keyframes staff-breath {
+  0%, 100% { fill-opacity: 0.82; }
+  50% { fill-opacity: 0.3; }
+}
+
+@keyframes staff-breath-stroke {
+  0%, 100% { stroke-opacity: 0.82; }
+  50% { stroke-opacity: 0.3; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .entry-status.is-waiting .staff-event .staff-glyph,
+  .entry-status.is-waiting .staff-event .staff-stem {
+    animation: none;
+  }
+}
+
 .entry.is-enter,
 .tool-strip.is-enter {
   animation: entry-in 320ms var(--ease-out) both;

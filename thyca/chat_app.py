@@ -51,6 +51,7 @@ class ChatApp:
             tail_kb=cfg.limits.hotTailKB,
             timezone_name=cfg.timeline.timezone,
         )
+        self.skills_root = self._memory.skills_store.root
         self._zone = ZoneInfo(cfg.timeline.timezone)
         self._state = self._memory.open_session(datetime.now(self._zone))
         registry = ToolRegistry()
@@ -79,7 +80,7 @@ class ChatApp:
                 except ValueError as exc:
                     print(str(exc), file=sys.stderr)
             self._tools = registry.to_openai_schema()
-            self._act = Act(registry)
+            self._act = Act(registry, skills_root=root / "skills")
         except BaseException:
             self.shutdown()
             raise

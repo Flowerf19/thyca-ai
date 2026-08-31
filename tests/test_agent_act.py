@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass, field
 
 from thyca.agent.act import Act
@@ -213,3 +214,177 @@ def test_dispatch_exception_becomes_error_result() -> None:
     assert result.name == call.name
     assert result.content == "tool unavailable"
     assert result.is_error is True
+
+
+def _skill_call(tmp_path: Path, path: str | None = "skills") -> ToolCall:
+    skill = tmp_path / "skills" / "create-skill"
+    skill.mkdir(parents=True, exist_ok=True)
+    target = skill / "SKILL.md"
+    target.write_text("---\nname: create-skill\n---\n")
+    args = {"path": str(target)} if path == "skills" else {"path": path}
+    return ToolCall(id="call-1", name="read", arguments=args)
+
+
+def test_skill_read_emits_skill_events_not_tool(tmp_path: Path) -> None:
+    dispatcher = FakeDispatcher(
+        result=ToolResult(tool_call_id="call-1", name="read", content="---")
+    )
+    events: list[TurnEvent] = []
+
+    asyncio.run(
+        Act(dispatcher, skills_root=tmp_path / "skills").act(
+            _stage_round(_skill_call(tmp_path)), event_sink=events.append
+        )
+    )
+
+    assert [(event.type, event.name, event.ok) for event in events] == [
+        ("skill.started", "create-skill", None),
+        ("skill.finished", "create-skill", True),
+    ]
+
+
+def test_plain_read_keeps_tool_events(tmp_path: Path) -> None:
+    dispatcher = FakeDispatcher(
+        result=ToolResult(tool_call_id="call-1", name="read", content="text")
+    )
+    plain = ToolCall(
+        id="call-1", name="read", arguments={"path": str(tmp_path / "notes.md")}
+    )
+    events: list[TurnEvent] = []
+
+    asyncio.run(
+        Act(dispatcher, skills_root=tmp_path / "skills").act(
+            _stage_round(plain), event_sink=events.append
+        )
+    )
+
+    assert [event.type for event in events] == ["tool.started", "tool.finished"]
+
+
+def test_parse_error_read_keeps_tool_events(tmp_path: Path) -> None:
+    dispatcher = FakeDispatcher()
+    call = ToolCall(
+        id="call-1", name="read", arguments={}, parse_error="invalid arguments"
+    )
+    events: list[TurnEvent] = []
+
+    asyncio.run(
+        Act(dispatcher, skills_root=tmp_path / "skills").act(
+            _stage_round(call), event_sink=events.append
+        )
+    )
+
+    assert [event.type for event in events] == ["tool.started", "tool.finished"]
+
+
+def test_skill_read_outside_root_keeps_tool_events(tmp_path: Path) -> None:
+    dispatcher = FakeDispatcher(
+        result=ToolResult(tool_call_id="call-1", name="read", content="text")
+    )
+    outside = ToolCall(
+        id="call-1", name="read", arguments={"path": str(tmp_path / "other.md")}
+    )
+    events: list[TurnEvent] = []
+
+    asyncio.run(
+        Act(dispatcher, skills_root=tmp_path / "skills").act(
+            _stage_round(outside), event_sink=events.append
+        )
+    )
+
+    assert [event.type for event in events] == ["tool.started", "tool.finished"]
+
+
+def test_skill_finished_error_emits_ok_false(tmp_path: Path) -> None:
+    dispatcher = FakeDispatcher(error=FileNotFoundError("not a file"))
+    events: list[TurnEvent] = []
+
+    asyncio.run(
+        Act(dispatcher, skills_root=tmp_path / "skills").act(
+            _stage_round(_skill_call(tmp_path)), event_sink=events.append
+        )
+    )
+
+    assert [(event.type, event.name, event.ok) for event in events] == [
+        ("skill.started", "create-skill", None),
+        ("skill.finished", "create-skill", False),
+    ]
+
+
+def test_skill_event_sink_raise_still_returns_result(tmp_path: Path) -> None:
+    dispatcher = FakeDispatcher(
+        result=ToolResult(tool_call_id="call-1", name="read", content="---")
+    )
+
+    def boom(_event: TurnEvent) -> None:
+        raise RuntimeError("sink exploded")
+
+    results = asyncio.run(
+        Act(dispatcher, skills_root=tmp_path / "skills").act(
+            _stage_round(_skill_call(tmp_path)), event_sink=boom
+        )
+    )
+
+    assert results[0].content == "---"
+    assert results[0].is_error is False
+
+
+def test_skill_dir_write_edit_bash_stay_tool_events(tmp_path: Path) -> None:
+    skill_file = tmp_path / "skills" / "create-skill" / "SKILL.md"
+    skill_file.parent.mkdir(parents=True, exist_ok=True)
+    skill_file.write_text("---\nname: create-skill\n---\n")
+    events: list[TurnEvent] = []
+    for tool, args in (
+        ("write", {"path": str(skill_file), "content": "x"}),
+        ("edit", {"path": str(skill_file)}),
+        ("bash", {"command": f"cat {skill_file}"}),
+    ):
+        dispatcher = FakeDispatcher(
+            result=ToolResult(tool_call_id="call-1", name=tool, content="ok")
+        )
+        asyncio.run(
+            Act(dispatcher, skills_root=tmp_path / "skills").act(
+                _stage_round(ToolCall(id="call-1", name=tool, arguments=args)),
+                event_sink=events.append,
+            )
+        )
+    assert [event.type for event in events] == [
+        "tool.started", "tool.finished",
+    ] * 3
+    assert all(event.name in {"write", "edit", "bash"} for event in events)
+
+
+def test_no_skills_root_keeps_tool_events_for_skill_path(tmp_path: Path) -> None:
+    dispatcher = FakeDispatcher(
+        result=ToolResult(tool_call_id="call-1", name="read", content="---")
+    )
+    events: list[TurnEvent] = []
+
+    asyncio.run(
+        Act(dispatcher).act(
+            _stage_round(_skill_call(tmp_path)), event_sink=events.append
+        )
+    )
+
+    assert [event.type for event in events] == ["tool.started", "tool.finished"]
+    assert events[0].name == "read"
+
+
+def test_skill_events_wire_never_carries_path(tmp_path: Path) -> None:
+    dispatcher = FakeDispatcher(
+        result=ToolResult(tool_call_id="call-1", name="read", content="---")
+    )
+    events: list[TurnEvent] = []
+
+    asyncio.run(
+        Act(dispatcher, skills_root=tmp_path / "skills").act(
+            _stage_round(_skill_call(tmp_path)), event_sink=events.append
+        )
+    )
+
+    skill_path = str(tmp_path / "skills" / "create-skill" / "SKILL.md")
+    for event in events:
+        payload = event.to_dict()
+        assert set(payload) <= {"type", "round", "call_id", "name", "ok"}
+        assert skill_path not in json.dumps(payload)
+        assert "create-skill/SKILL.md" not in json.dumps(payload)

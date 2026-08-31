@@ -19,6 +19,8 @@ _ALLOWED_FIELDS: dict[str, frozenset[str]] = {
     "llm.finished": frozenset({"round", "tool_count"}),
     "tool.started": frozenset({"round", "call_id", "name"}),
     "tool.finished": frozenset({"round", "call_id", "name", "ok"}),
+    "skill.started": frozenset({"round", "call_id", "name"}),
+    "skill.finished": frozenset({"round", "call_id", "name", "ok"}),
     "session.naming.started": frozenset(),
     "session.naming.finished": frozenset({"updated"}),
 }

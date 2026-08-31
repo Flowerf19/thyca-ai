@@ -90,6 +90,45 @@ def test_valid_mcp_name_kept() -> None:
     assert event.to_dict()["name"] == "echo__ping"
 
 
+def test_skill_events_to_dict_exact_keys() -> None:
+    assert TurnEvent(
+        type="skill.started", round=1, call_id="call-1", name="create-skill"
+    ).to_dict() == {
+        "type": "skill.started",
+        "round": 1,
+        "call_id": "call-1",
+        "name": "create-skill",
+    }
+    assert TurnEvent(
+        type="skill.finished", round=1, call_id="call-1", name="create-skill", ok=True
+    ).to_dict() == {
+        "type": "skill.finished",
+        "round": 1,
+        "call_id": "call-1",
+        "name": "create-skill",
+        "ok": True,
+    }
+
+
+def test_skill_event_rejects_extra_fields() -> None:
+    with pytest.raises(TypeError, match="path"):
+        TurnEvent(
+            type="skill.started",
+            round=1,
+            call_id="call-1",
+            name="create-skill",
+            path="/home/x/.thyca/skills/create-skill/SKILL.md",
+        )
+    with pytest.raises(ValueError, match="unexpected field"):
+        TurnEvent(
+            type="tool.started",
+            round=1,
+            call_id="call-1",
+            name="bash",
+            ok=True,
+        )
+
+
 def test_bad_call_id_becomes_public_call() -> None:
     empty = TurnEvent(type="tool.started", round=1, call_id="", name="bash")
     assert empty.call_id == "call"

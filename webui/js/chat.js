@@ -11,6 +11,15 @@ import { state } from "./state.js";
 let liveEvents = [];
 let liveScore = null;
 let lastOperationalText = "";
+// Live snapshot of in-flight operations, keyed by call_id — the ticker is a
+// single line, so parallel tool/skill calls must render as one aggregate
+// ("Đang dùng read, bash · Đang mở skill create-skill…") instead of
+// overwriting each other.
+const activeOps = new Map();
+let batchNames = [];
+const STATUS_MIN_DWELL_MS = 500;
+let pendingStatus = null;
+let lastStatusSwapAt = 0;
 
 const EMPTY_BODY =
   '<div class="new-page-empty"><span aria-hidden="true">+</span><p>Chưa có tin nào.</p><small>Nói điều đầu tiên để mở phiên.</small></div>';
@@ -46,6 +55,10 @@ export function beginOutgoingTurn(text) {
   removeStatus();
   clearStaffs(el.pageBody);
   lastOperationalText = "";
+  activeOps.clear();
+  batchNames = [];
+  flushPendingStatus();
+  lastStatusSwapAt = 0;
   let list = el.pageBody.querySelector(".entry-list");
   if (!list) {
     el.pageBody.innerHTML = '<div class="entry-list"></div>';
@@ -159,17 +172,36 @@ function chatStatusNode() {
 }
 
 function applyStatus(event) {
-  const text = statusTextForEvent(event);
+  let text = statusTextForEvent(event);
   if (text === null) return;
-  // Let tool/skill text linger through the next llm wait: the round ticker
-  // ("Đang xử lý vòng N…") would erase it after ~200 ms while the model thinks
-  // for seconds. Keep the operational line on top instead — the round is
-  // still visible on the staff as that wait's note pair.
-  const operational = event.type === "tool.started" || event.type === "tool.finished"
-    || event.type === "skill.started" || event.type === "skill.finished";
-  if (event.type === "llm.started" && lastOperationalText) return;
-  if (operational) {
+  const opKind = event.type.startsWith("tool.") ? "tool"
+    : event.type.startsWith("skill.") ? "skill" : null;
+  if (opKind) {
+    const id = event.call_id || "call";
+    if (event.type.endsWith(".started")) {
+      const name = event.name || (opKind === "skill" ? "skill" : "tool");
+      activeOps.set(id, { kind: opKind, name });
+      batchNames.push(name);
+    } else {
+      activeOps.delete(id);
+    }
+    // Aggregate every in-flight op into one line; when the batch drains,
+    // summarize what ran so the result text matches what was announced.
+    const skills = [];
+    const tools = [];
+    for (const op of activeOps.values()) (op.kind === "skill" ? skills : tools).push(op.name);
+    const chunks = [];
+    if (skills.length) chunks.push(`Đang mở skill ${skills.join(", ")}…`);
+    if (tools.length) chunks.push(`Đang dùng ${tools.join(", ")}…`);
+    text = chunks.length
+      ? chunks.join(" · ")
+      : `${batchNames.join(", ")} đã xong…`;
+    if (!activeOps.size) batchNames = [];
     lastOperationalText = text;
+  } else if (event.type === "llm.started") {
+    // Linger the operational line through the llm wait — the round is still
+    // visible on the staff as that wait's note pair.
+    if (lastOperationalText) return;
   } else if (event.type === "llm.finished" || event.type === "turn.accepted") {
     lastOperationalText = "";
   }
@@ -177,6 +209,7 @@ function applyStatus(event) {
   const ticker = status && status.querySelector(".status-ticker");
   if (!ticker || !ticker.isConnected) return;
   if (reduceMotion()) {
+    flushPendingStatus();
     let line = ticker.querySelector(".status-line");
     if (!line) {
       line = document.createElement("span");
@@ -184,8 +217,47 @@ function applyStatus(event) {
       ticker.append(line);
     }
     line.textContent = text;
-  } else {
-    slideStatus(ticker, text);
+    return;
+  }
+  // Minimum dwell: parallel tool calls emit status lines tens of ms apart —
+  // too fast to read. Hold each line ≥ STATUS_MIN_DWELL, coalescing to the
+  // newest queued text. Terminals bypass so the outcome is never delayed.
+  const terminal = event.type === "turn.completed" || event.type === "turn.failed";
+  if (terminal) {
+    flushPendingStatus();
+    showStatusLine(ticker, text);
+    return;
+  }
+  const wait = STATUS_MIN_DWELL_MS - (performance.now() - lastStatusSwapAt);
+  if (wait <= 0) {
+    flushPendingStatus();
+    showStatusLine(ticker, text);
+    return;
+  }
+  if (pendingStatus) {
+    pendingStatus.text = text; // coalesce: newest wins
+    return;
+  }
+  const tickerRef = ticker;
+  pendingStatus = {
+    text,
+    timer: window.setTimeout(() => {
+      const pending = pendingStatus;
+      pendingStatus = null;
+      if (pending && tickerRef.isConnected) showStatusLine(tickerRef, pending.text);
+    }, wait),
+  };
+}
+
+function showStatusLine(ticker, text) {
+  lastStatusSwapAt = performance.now();
+  slideStatus(ticker, text);
+}
+
+function flushPendingStatus() {
+  if (pendingStatus) {
+    window.clearTimeout(pendingStatus.timer);
+    pendingStatus = null;
   }
 }
 

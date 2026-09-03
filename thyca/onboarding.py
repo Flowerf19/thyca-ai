@@ -6,6 +6,7 @@ messages never contain the API key.
 from __future__ import annotations
 
 import json
+import socket
 from dataclasses import replace
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -14,6 +15,14 @@ from thyca.config import Config, ConfigError, ProviderCfg
 from thyca import __version__
 
 _PROBE_TIMEOUT_S = 10.0
+
+
+def _is_timeout_reason(reason: object) -> bool:
+    """True khi URLError bọc socket timeout (urlopen bọc timeout thành
+    URLError(reason=TimeoutError) thay vì ném TimeoutError trần)."""
+    if isinstance(reason, (TimeoutError, socket.timeout)):
+        return True
+    return "timed out" in str(reason or "").lower()
 
 
 class ProviderProbeError(RuntimeError):
@@ -48,9 +57,15 @@ def validate_provider(
             raise ProviderProbeError("API key bị từ chối (HTTP %d)" % exc.code) from exc
         raise ProviderProbeError(f"provider trả HTTP {exc.code}") from exc
     except URLError as exc:
+        if _is_timeout_reason(exc.reason):
+            raise ProviderProbeError(
+                f"provider quá thời gian phản hồi ({timeout:g}s)"
+            ) from exc
         raise ProviderProbeError(f"không kết nối được {base_url}: {exc.reason}") from exc
-    except TimeoutError as exc:
-        raise ProviderProbeError("provider quá thời gian phản hồi") from exc
+    except (TimeoutError, socket.timeout) as exc:
+        raise ProviderProbeError(
+            f"provider quá thời gian phản hồi ({timeout:g}s)"
+        ) from exc
     except OSError as exc:
         raise ProviderProbeError(f"không kết nối được {base_url}") from exc
     try:

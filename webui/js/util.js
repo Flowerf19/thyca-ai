@@ -16,13 +16,26 @@ export async function getJson(url) {
   return response.json();
 }
 
-export async function postJson(url, body) {
-  const response = await fetch(url, {
-    method: "POST",
-    cache: "no-store",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+export async function postJson(url, body, { timeoutMs = 15000 } = {}) {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  let response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("Hết thời gian chờ — thử lại.");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timer);
+  }
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
     const message = payload && payload.error ? String(payload.error) : "Không gửi được.";

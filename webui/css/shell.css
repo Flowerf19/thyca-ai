@@ -553,6 +553,15 @@ svg {
   white-space: nowrap;
 }
 
+/* Tab tải lỗi: viền + chữ đỏ để thấy ngay, bấm lại là thử lại (fillChatAt). */
+.page-card[data-load-error] {
+  border-inline-start-color: var(--color-danger);
+}
+
+.page-card[data-load-error] .page-card-copy small {
+  color: var(--color-danger);
+}
+
 .page-tag {
   grid-area: tag;
   justify-self: start;

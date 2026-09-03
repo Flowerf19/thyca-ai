@@ -10,10 +10,20 @@ export function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
-export async function getJson(url) {
-  const response = await fetch(url, { cache: "no-store" });
-  if (!response.ok) return null;
-  return response.json();
+export async function getJson(url, { timeoutMs = 15000 } = {}) {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { cache: "no-store", signal: controller.signal });
+    if (!response.ok) return null;
+    return response.json();
+  } catch {
+    // Timeout / mất mạng: trả null như response !ok để caller rơi vào
+    // nhánh lỗi visible sẵn có (LOAD_ERROR_BODY / showPageError).
+    return null;
+  } finally {
+    window.clearTimeout(timer);
+  }
 }
 
 export async function postJson(url, body, { timeoutMs = 15000 } = {}) {

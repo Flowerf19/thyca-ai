@@ -301,8 +301,9 @@ async function fillChatPage(page) {
   }
   let detail = null;
   try {
-    const response = await fetch(`/api/sessions/${page.sessionId}`, { cache: "no-store" });
-    if (response.ok) detail = await response.json();
+    // Timeout 15s như postJson: session kẹt không treo tab,
+    // fail thì rơi vào nhánh LOAD_ERROR_BODY bên dưới.
+    detail = await getJson(`/api/sessions/${page.sessionId}`);
   } catch {
     detail = null;
   }

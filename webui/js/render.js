@@ -17,9 +17,10 @@ let lastStatsJson = "";
 export function pageCard(page, index) {
   const selected = index === state.activePageIndex;
   const status = page.status ? ` data-status="${escapeHtml(page.status)}"` : "";
-  return `<button class="page-card${selected ? " is-active" : ""}" type="button" data-page-index="${index}" data-tone="${page.tone}"${status}${selected ? ' aria-current="page"' : ""}>
+  const failed = page.loadError ? " data-load-error" : "";
+  return `<button class="page-card${selected ? " is-active" : ""}" type="button" data-page-index="${index}" data-tone="${page.tone}"${status}${failed}${selected ? ' aria-current="page"' : ""}>
           <span class="page-card-icon">${icons[page.tone]}</span>
-          <span class="page-card-copy"><strong>${page.title}</strong><small>${page.date}</small></span>
+          <span class="page-card-copy"><strong>${page.title}${page.loadError ? " ⚠" : ""}</strong><small>${page.loadError ? "tải lỗi — bấm để thử lại" : page.date}</small></span>
           ${page.tag ? `<span class="page-tag page-tag-${page.tone}">${page.tag}</span>` : ""}
         </button>`;
 }

@@ -10,12 +10,16 @@ import { postJson } from "./util.js";
 import { modes } from "./data.js";
 import { state } from "./state.js";
 import { el } from "./dom.js";
+import { resetToNewChatPage } from "./chat.js";
 import { renderPage } from "./render.js";
 
 let schema = null;
 let schemaValues = {};
 let hasStoredKey = false;
 let modelOptions = [];
+let modelOptionsEndpoint = "";
+const modelCache = new Map();
+let modelFetching = false;
 let defaultModel = "";
 
 export function initSettings() {
@@ -393,27 +397,41 @@ async function saveProviderCard(root, card) {
   }
 }
 
+function bindModelInput(input, root) {
+  if (!input || input.dataset.bound) return;
+  input.dataset.bound = "1";
+  input.autocomplete = "off";
+  input.addEventListener("focus", () => {
+    // Focus tự fetch khi chưa có list (TASK-030): lần đầu mở trang
+    // modelOptions rỗng, không bắt user gạt Provider qua lại.
+    if (!modelOptions.length && !modelFetching) {
+      void fetchModels(root, input).then(() => {
+        openModelDropdown(input, input.value);
+      });
+      return;
+    }
+    openModelDropdown(input, input.value);
+  });
+  input.addEventListener("input", () => openModelDropdown(input, input.value));
+}
+
 function bindAddModel(root) {
-  const modelInput = root.querySelector("[data-add-model]");
-  if (modelInput) {
-    delete modelInput.dataset.bound;
-    modelInput.dataset.bound = "1";
-    modelInput.autocomplete = "off";
-    modelInput.addEventListener("focus", () => openModelDropdown(modelInput));
-    modelInput.addEventListener("input", () => openModelDropdown(modelInput, modelInput.value));
-  }
+  bindModelInput(root.querySelector("[data-add-model]"), root);
   // Picking a provider auto-loads its model list (no button).
-  const providerSel = root.querySelector("[data-add-provider]");
-  if (providerSel) {
-    delete providerSel.dataset.bound;
+  // Bind mọi select (box chính + box clone) thay vì chỉ box đầu.
+  root.querySelectorAll("[data-add-provider]").forEach((providerSel) => {
+    if (providerSel.dataset.bound) return;
     providerSel.dataset.bound = "1";
     providerSel.addEventListener("change", () => {
+      const box = providerSel.closest("[data-add-model-box], [data-extra-box]");
+      const input = box?.querySelector("[data-add-model]");
       modelOptions = [];
-      void fetchModels(root).then(() => {
-        if (modelOptions.length) openModelDropdown(modelInput);
+      modelOptionsEndpoint = "";
+      void fetchModels(root, input).then(() => {
+        if (input && modelOptions.length) openModelDropdown(input, input.value);
       });
     });
-  }
+  });
   const addSave = root.querySelector("[data-add-save]");
   if (addSave) {
     delete addSave.dataset.bound;
@@ -432,10 +450,27 @@ function bindAddModel(root) {
       const clone = source.cloneNode(true);
       clone.removeAttribute("data-add-model-box");
       clone.dataset.extraBox = "1";
+      // cloneNode không copy listener: xóa flag bound rồi bind lại
+      // input + select trong box clone (TASK-031).
+      clone.querySelectorAll("[data-bound]").forEach((n) => delete n.dataset.bound);
+      clone.querySelectorAll("[data-add-model], [data-add-provider]").forEach((n) => delete n.dataset.bound);
       // Extra boxes skip limits (form-level, saved once) but keep their own
       // Thêm button, which binds to the same addModel flow.
       clone.querySelectorAll("[data-key^=\"limits.\"]").forEach((n) => n.closest(".settings-field")?.remove());
       extra.appendChild(clone);
+      bindModelInput(clone.querySelector("[data-add-model]"), root);
+      clone.querySelectorAll("[data-add-provider]").forEach((sel) => {
+        if (sel.dataset.bound) return;
+        sel.dataset.bound = "1";
+        sel.addEventListener("change", () => {
+          const input = clone.querySelector("[data-add-model]");
+          modelOptions = [];
+          modelOptionsEndpoint = "";
+          void fetchModels(root, input).then(() => {
+            if (input && modelOptions.length) openModelDropdown(input, input.value);
+          });
+        });
+      });
       clone.querySelector("[data-add-model]")?.focus();
     });
   }
@@ -603,7 +638,27 @@ async function persist(root, { models, providerModel, providerBaseUrl, providerA
   if (!payload.ready) {
     setStatus(root, "Đã lưu nhưng provider chưa dùng được — kiểm tra API key.", "error");
   }
+  // Model cache theo endpoint: đổi baseUrl global là cache cũ sai.
+  modelCache.clear();
+  modelOptions = [];
+  modelOptionsEndpoint = "";
+  notifyProviderChanged(root, values.provider);
   return payload;
+}
+
+// Provider đổi (baseUrl/model/key mới) → chat phải reset theo (TASK-040/041):
+// backend hot-reload config mỗi turn rồi, frontend chỉ cần mở khóa composer,
+// refresh kicker model + về phiên mới khi model/baseUrl đổi.
+function notifyProviderChanged(root, provider) {
+  if (state.activeMode === "chat" || !provider) return;
+  void import("./chat.js").then(async ({ resetToNewChatPage, refreshChatKicker }) => {
+    try {
+      if (typeof refreshChatKicker === "function") await refreshChatKicker();
+    } catch { /* giữ kicker cũ, không chặn settings */ }
+    const modelChanged = provider.model && provider.model !== state.lastChatModel;
+    const urlChanged = provider.baseUrl && provider.baseUrl !== state.lastChatBaseUrl;
+    if (modelChanged || urlChanged) resetToNewChatPage();
+  });
 }
 
 async function refreshPages(root, page = 0) {
@@ -611,28 +666,37 @@ async function refreshPages(root, page = 0) {
   renderPage(page);
 }
 
-async function fetchModels(root) {
-  const form = root.querySelector("#settings-form");
-  // Provider dropdown decides the endpoint; empty = global provider.
-  const chosen = form?.querySelector("[data-add-provider]")?.value || "";
-  let baseUrl = chosen;
-  let apiKey = "";
-  if (!chosen) {
-    baseUrl = form?.querySelector("[data-provider-card] [data-provider-url]")?.value.trim() || "";
-    apiKey = form?.querySelector("[data-provider-card] [data-provider-key]")?.value || "";
-  } else {
-    // Match a provider card with the same URL for its key, if any.
-    for (const card of form.querySelectorAll("[data-provider-card]")) {
-      if (card.querySelector("[data-provider-url]")?.value.trim() === chosen) {
-        apiKey = card.querySelector("[data-provider-key]")?.value || "";
-        break;
-      }
-    }
-  }
+// Probe endpoint = endpoint sẽ lưu (TASK-032): đọc đúng dropdown của box
+// chứa input đang focus, không đọc ô input đang gõ dở ở card provider.
+function probeTargetFor(input) {
+  const box = input?.closest("[data-add-model-box], [data-extra-box]");
+  const chosen = box?.querySelector("[data-add-provider]")?.value.trim()
+    || document.querySelector("#settings-form [data-add-provider]")?.value.trim()
+    || "";
+  if (chosen) return { baseUrl: chosen, apiKey: "" };
+  // Global provider: baseUrl đã lưu + key (ô nhập trước, key lưu sau).
+  const card = document.querySelector("#settings-form [data-provider-card]");
+  return {
+    baseUrl: card?.querySelector("[data-provider-url]")?.value.trim()
+      || schemaValues.provider?.baseUrl || "",
+    apiKey: card?.querySelector("[data-provider-key]")?.value || "",
+  };
+}
+
+async function fetchModels(root, input = null) {
+  const { baseUrl, apiKey } = probeTargetFor(input);
   if (!baseUrl) {
     setStatus(root, "Cần Base URL trước khi tải model.", "error");
     return;
   }
+  // Cache theo endpoint: đổi provider mới probe lại.
+  if (modelCache.has(baseUrl)) {
+    modelOptions = modelCache.get(baseUrl);
+    modelOptionsEndpoint = baseUrl;
+    return;
+  }
+  if (modelFetching) return;
+  modelFetching = true;
   setStatus(root, "Đang tải danh sách model…");
   try {
     const payload = await postJson("/api/onboarding/verify", {
@@ -640,6 +704,8 @@ async function fetchModels(root) {
       apiKey: typeof apiKey === "string" ? apiKey : (apiKey?.value ?? ""),
     });
     modelOptions = payload.models || [];
+    modelOptionsEndpoint = baseUrl;
+    modelCache.set(baseUrl, modelOptions);
     const usedSavedKey = !(typeof apiKey === "string" ? apiKey.trim() : apiKey?.value?.trim());
     const keyNote = payload.apiKeyOk
       ? usedSavedKey
@@ -660,6 +726,8 @@ async function fetchModels(root) {
     );
   } catch (error) {
     setStatus(root, error instanceof Error ? error.message : "Không tải được model.", "error");
+  } finally {
+    modelFetching = false;
   }
 }
 
@@ -680,15 +748,35 @@ document.addEventListener("click", (event) => {
 
 function openModelDropdown(input, filter = "") {
   closeModelDropdown();
-  if (!modelOptions.length) return;
+  // Dropdown rỗng phải báo lý do, không return câm (TASK-032).
+  if (modelFetching) {
+    dropdownNote(input, "Đang tải danh sách model…");
+    return;
+  }
+  if (!modelOptions.length) {
+    dropdownNote(input, modelOptionsEndpoint
+      ? "Không có model nào ở provider này — gõ tay tên model."
+      : "Chưa tải danh sách — bấm vào lại sau giây lát, hoặc gõ tay tên model.");
+    return;
+  }
   const needle = filter.trim().toLowerCase();
   const matches = needle
-    ? modelOptions.filter((id) => id.toLowerCase().includes(needle)).slice(0, 40)
-    : modelOptions.slice(0, 40);
-  if (!matches.length) return;
+    ? modelOptions.filter((id) => id.toLowerCase().includes(needle))
+    : modelOptions;
+  if (!matches.length) {
+    dropdownNote(input, `Không khớp "${filter.trim()}" trong ${modelOptions.length} model — gõ tay tên model.`);
+    return;
+  }
+  const shown = matches.slice(0, 40);
   const box = document.createElement("div");
   box.className = "settings-model-dropdown";
-  for (const id of matches) {
+  if (matches.length > shown.length) {
+    const more = document.createElement("p");
+    more.className = "settings-hint";
+    more.textContent = `Hiện 40/${matches.length} — gõ thêm để lọc.`;
+    box.appendChild(more);
+  }
+  for (const id of shown) {
     const item = document.createElement("button");
     item.type = "button";
     item.className = "settings-model-item";
@@ -702,6 +790,17 @@ function openModelDropdown(input, filter = "") {
     });
     box.appendChild(item);
   }
+  input.parentElement.appendChild(box);
+  modelDropdown = box;
+}
+
+function dropdownNote(input, text) {
+  const box = document.createElement("div");
+  box.className = "settings-model-dropdown";
+  const note = document.createElement("p");
+  note.className = "settings-hint";
+  note.textContent = text;
+  box.appendChild(note);
   input.parentElement.appendChild(box);
   modelDropdown = box;
 }

@@ -359,6 +359,11 @@ async function refreshChatList() {
   const payload = await getJson("/api/sessions");
   if (!payload || !Array.isArray(payload.sessions)) return null;
   const pages = pagesFromSessions(payload);
+  if (payload.model) state.lastChatModel = payload.model;
+  try {
+    const cfg = await getJson("/api/config");
+    if (cfg?.values?.provider?.baseUrl) state.lastChatBaseUrl = cfg.values.provider.baseUrl;
+  } catch { /* giữ baseUrl cũ, không chặn chat */ }
   modes.chat = {
     label: "Chat",
     listLabel: "Phiên gần đây",
@@ -370,6 +375,28 @@ async function refreshChatList() {
   const count = document.querySelector('[data-mode="chat"] .mode-count');
   if (count) count.textContent = String(payload.sessions.length);
   return pages;
+}
+
+export async function refreshChatKicker() {
+  // Re-check provider sau khi settings lưu (TASK-040): mở khóa composer
+  // nếu trước đó bị boot gate chặn, refresh kicker model mới.
+  try {
+    const status = await getJson("/api/config/status");
+    if (status && status.ready !== false && !state.chatLive) {
+      state.chatLive = true;
+      if (el.line) el.line.disabled = false;
+      if (el.send) el.send.disabled = false;
+      if (el.hint && el.hint.textContent.includes("Cần cấu hình")) {
+        el.hint.textContent = "";
+        el.hint.className = "hint";
+      }
+    }
+  } catch { /* giữ trạng thái cũ */ }
+  const pages = await refreshChatList();
+  if (!pages) return;
+  if (state.activeMode === "chat" && el.modeBreadcrumb && !el.modeBreadcrumb.classList.contains("crumb-mark")) {
+    el.modeBreadcrumb.textContent = modes.chat.kicker;
+  }
 }
 
 export function pagesFromSessions(payload) {

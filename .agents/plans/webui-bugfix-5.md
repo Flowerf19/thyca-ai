@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 created: 2026-09-03
 last_updated: 2026-09-03
 ---
@@ -47,16 +47,16 @@ Test: mở session dài → switch tab → luôn ở cuối; kéo lên → nút 
 
 | ID | Task | Done | Date |
 |----|------|------|------|
-| TASK-030 | Focus ô Model ID tự fetch khi `modelOptions` rỗng | | |
-| TASK-031 | Box clone "+ Thêm model" có đủ listener (dropdown/fetch) | | |
-| TASK-032 | Dropdown rỗng báo lý do (chưa tải / filter lệch / slice 40), probe endpoint = endpoint sẽ lưu | | |
+| TASK-030 | Focus ô Model ID tự fetch khi `modelOptions` rỗng | x | 2026-09-03 |
+| TASK-031 | Box clone "+ Thêm model" có đủ listener (dropdown/fetch) | x | 2026-09-03 |
+| TASK-032 | Dropdown rỗng báo lý do (chưa tải / filter lệch / slice 40), probe endpoint = endpoint sẽ lưu | x | 2026-09-03 |
 
 ### GOAL-005: Tự reset khi update provider (thiếu)
 
 | ID | Task | Done | Date |
 |----|------|------|------|
-| TASK-040 | Persist xong re-check `/api/config/status`, mở khóa composer, refresh kicker chat | | |
-| TASK-041 | Reset về phiên mới + clear draft khi provider đổi, giữ khi chỉ sửa giá/limits | | |
+| TASK-040 | Persist xong re-check `/api/config/status`, mở khóa composer, refresh kicker chat | x | 2026-09-03 |
+| TASK-041 | Reset về phiên mới + clear draft khi provider đổi, giữ khi chỉ sửa giá/limits | x | 2026-09-03 |
 
 ## Assumptions
 

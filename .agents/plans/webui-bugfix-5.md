@@ -31,9 +31,9 @@ Test: mở session dài → switch tab → luôn ở cuối; kéo lên → nút 
 
 | ID | Task | Done | Date |
 |----|------|------|------|
-| TASK-010 | Guard generation cho `fillChatAt` (click A rồi B nhanh không nhảy về A) | | |
-| TASK-011 | Fetch fail báo lỗi visible thay vì trang trắng | | |
-| TASK-012 | Vào lại mode Chat không ép về "Phiên mới" khi đang xem session | | |
+| TASK-010 | Guard generation cho `fillChatAt` (click A rồi B nhanh không nhảy về A) | x | 2026-09-03 |
+| TASK-011 | Fetch fail báo lỗi visible thay vì trang trắng | x | 2026-09-03 |
+| TASK-012 | Vào lại mode Chat không ép về "Phiên mới" khi đang xem session | x | 2026-09-03 |
 
 ### GOAL-003: Update API key (bug 1)
 

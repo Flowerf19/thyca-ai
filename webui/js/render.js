@@ -1,4 +1,4 @@
-import { fillChatAt, hydrateChat, initToBottom, resetToNewChatPage, scrollThread, updateToBottomVisibility } from "./chat.js";
+import { fillChatAt, hydrateChat, initToBottom, invalidateChatHydrate, resetToNewChatPage, scrollThread, updateToBottomVisibility } from "./chat.js";
 import { clearStaffs, syncStaffs } from "./staff.js";
 import { icons, modes } from "./data.js";
 import { el } from "./dom.js";
@@ -10,6 +10,7 @@ import { bindTraceOverview, fillTraceAt, hydrateTrace, mountTraceStaff, updateMi
 import { state } from "./state.js";
 
 let modeGen = 0;
+let openPageAtGen = 0;
 let memoriesPoll = 0;
 let lastStatsJson = "";
 
@@ -39,26 +40,45 @@ export function renderPageList(query = "") {
       card.classList.add("is-active");
       card.setAttribute("aria-current", "page");
       const index = Number(card.dataset.pageIndex);
-      const page = pages[index];
-      if (state.activeMode === "chat" && state.chatLive) {
-        void fillChatAt(index).then(() => {
-          renderPage(index);
-          closeDrawer();
-        });
-        return;
-      }
-      if (state.activeMode === "trace" && page && page.sessionId) {
-        void fillTraceAt(index).then(() => {
-          renderPage(index);
-          closeDrawer();
-        });
-        return;
-      }
-      state.activePageIndex = index;
-      renderPage(index);
-      closeDrawer();
+      openPageAt(index);
     }),
   );
+}
+
+// Một điểm mở tab duy nhất: gắn guard race cho chat (TASK-010),
+// trace giữ nguyên fillTraceAt, các mode khác render trực tiếp.
+function openPageAt(index) {
+  const pages = modes[state.activeMode].pages;
+  const page = pages[index];
+  if (!page) return;
+  if (state.activeMode === "chat" && state.chatLive) {
+    const gen = (openPageAtGen += 1);
+    void fillChatAt(index).then((ok) => {
+      // Lượt cũ về trễ: bỏ, không render đè tab mới.
+      if (gen !== openPageAtGen) return;
+      if (ok === false) showPageError();
+      renderPage(state.activePageIndex);
+      closeDrawer();
+    });
+    return;
+  }
+  if (state.activeMode === "trace" && page && page.sessionId) {
+    void fillTraceAt(index).then(() => {
+      renderPage(index);
+      closeDrawer();
+    });
+    return;
+  }
+  state.activePageIndex = index;
+  renderPage(index);
+  closeDrawer();
+}
+
+// Lỗi tải session: báo ở hint composer thay vì trang trắng (TASK-011).
+function showPageError() {
+  if (state.activeMode !== "chat" || !el.hint) return;
+  el.hint.textContent = "Không tải được phiên này — kiểm tra mạng rồi bấm lại tab.";
+  el.hint.className = "hint is-error";
 }
 
 export function renderChips() {
@@ -158,14 +178,23 @@ export async function renderMode(mode) {
     startMemoriesPoll();
   }
   if (mode === "chat") {
+    invalidateChatHydrate();
     try {
       await hydrateChat();
     } catch {
       state.chatLive = false;
     }
     if (gen !== modeGen) return;
-    // bấm vào Chat = mở phiên mới, không nhảy vào phiên cũ
-    resetToNewChatPage();
+    // Giữ session đang xem nếu hydrate giữ được nó; chỉ mở phiên mới
+    // khi hydrate không khôi phục được vị trí cũ (TASK-012).
+    const kept = (modes.chat.pages || []).findIndex(
+      (page) => page.sessionId && page.sessionId === state.activeSessionId,
+    );
+    if (kept >= 0) {
+      state.activePageIndex = kept;
+    } else {
+      resetToNewChatPage();
+    }
   }
   if (mode === "trace") {
     try {

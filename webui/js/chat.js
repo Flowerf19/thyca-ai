@@ -23,16 +23,33 @@ let lastStatusSwapAt = 0;
 
 const EMPTY_BODY =
   '<div class="new-page-empty"><span aria-hidden="true">+</span><p>Chưa có tin nào.</p><small>Nói điều đầu tiên để mở phiên.</small></div>';
+const LOAD_ERROR_BODY =
+  '<div class="new-page-empty"><span aria-hidden="true">!</span><p>Không tải được phiên này.</p><small>Kiểm tra mạng rồi bấm lại tab.</small></div>';
+
+// Guard chống race khi bấm tab liên tiếp: lượt fetch cũ về sau phải bỏ,
+// không được render đè lên tab mới.
+let chatFillGen = 0;
+// Guard generation cho hydrateChat: renderMode(chat) bấm liên tiếp không
+// để lượt hydrate cũ đè activeSessionId của lượt mới.
+let hydrateChatGen = 0;
 
 export async function hydrateChat() {
+  const gen = ++hydrateChatGen;
   const pages = await refreshChatList();
+  if (gen !== hydrateChatGen) return false;
   if (!pages) return false;
   state.chatLive = true;
   let index = pages.findIndex((page) => page.sessionId && page.sessionId === state.activeSessionId);
   if (index < 0) index = 0;
   state.activePageIndex = index;
   await fillChatPage(pages[index]);
+  if (gen !== hydrateChatGen) return false;
   return true;
+}
+
+export function invalidateChatHydrate() {
+  hydrateChatGen++;
+  chatFillGen++;
 }
 
 export async function createChatSession() {
@@ -265,26 +282,40 @@ function flushPendingStatus() {
 }
 
 export async function fillChatAt(index) {
+  const gen = ++chatFillGen;
   const page = modes.chat.pages[index];
-  if (!page) return;
+  if (!page) return false;
+  const ok = await fillChatPage(page);
+  // Fetch cũ về trễ: bỏ, giữ tab mới.
+  if (gen !== chatFillGen) return false;
   state.activePageIndex = index;
-  await fillChatPage(page);
+  return ok;
 }
 
 async function fillChatPage(page) {
-  if (!page) return;
+  if (!page) return false;
   if (!page.sessionId) {
     bindSession(page, null);
     page.body = EMPTY_BODY;
-    return;
+    return true;
   }
-  const detail = await getJson(`/api/sessions/${page.sessionId}`);
+  let detail = null;
+  try {
+    const response = await fetch(`/api/sessions/${page.sessionId}`, { cache: "no-store" });
+    if (response.ok) detail = await response.json();
+  } catch {
+    detail = null;
+  }
   if (!detail || !Array.isArray(detail.messages)) {
+    // Lỗi visible thay vì trang trắng: giữ body cũ nếu có, báo rõ.
     bindSession(page, page.sessionId);
-    page.body = page.body || EMPTY_BODY;
-    return;
+    if (!page.body) page.body = LOAD_ERROR_BODY;
+    page.loadError = true;
+    return false;
   }
+  page.loadError = false;
   applyDetailToPage(page, detail);
+  return true;
 }
 
 function applyDetail(detail) {

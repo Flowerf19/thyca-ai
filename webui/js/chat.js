@@ -445,12 +445,47 @@ function slideStatus(ticker, next) {
   }, 200);
 }
 
-function scrollThread() {
+export function scrollThread() {
   if (!el.notebook) return;
-  el.notebook.scrollTo({
-    top: el.notebook.scrollHeight,
-    behavior: reduceMotion() ? "auto" : "smooth",
-  });
+  // Đợi layout ổn định (font/ảnh/markdown) rồi mới scroll,
+  // nếu không scrollHeight đo sớm sẽ hụt.
+  const doScroll = () => {
+    if (!el.notebook || !el.notebook.isConnected) return;
+    el.notebook.scrollTo({
+      top: el.notebook.scrollHeight,
+      behavior: reduceMotion() ? "auto" : "smooth",
+    });
+    updateToBottomVisibility();
+  };
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(() => requestAnimationFrame(doScroll));
+  } else {
+    doScroll();
+  }
+}
+
+const TO_BOTTOM_PX = 200;
+let toBottomBound = false;
+
+export function isNearBottom(margin = TO_BOTTOM_PX) {
+  if (!el.notebook) return true;
+  const distance = el.notebook.scrollHeight - el.notebook.scrollTop - el.notebook.clientHeight;
+  return distance <= margin;
+}
+
+export function updateToBottomVisibility() {
+  const button = el.toBottom;
+  if (!button || !el.notebook) return;
+  const scrollable = el.notebook.scrollHeight > el.notebook.clientHeight + TO_BOTTOM_PX;
+  const show = state.activeMode === "chat" && scrollable && !isNearBottom();
+  button.hidden = !show;
+}
+
+export function initToBottom() {
+  if (toBottomBound || !el.notebook || !el.toBottom) return;
+  toBottomBound = true;
+  el.notebook.addEventListener("scroll", () => updateToBottomVisibility(), { passive: true });
+  el.toBottom.addEventListener("click", () => scrollThread());
 }
 
 function reduceMotion() {

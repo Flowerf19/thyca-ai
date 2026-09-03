@@ -1,4 +1,4 @@
-import { fillChatAt, hydrateChat, resetToNewChatPage } from "./chat.js";
+import { fillChatAt, hydrateChat, initToBottom, resetToNewChatPage, scrollThread, updateToBottomVisibility } from "./chat.js";
 import { clearStaffs, syncStaffs } from "./staff.js";
 import { icons, modes } from "./data.js";
 import { el } from "./dom.js";
@@ -89,9 +89,11 @@ export function setTracePlaying(playing) {
 export function renderPage(pageIndex = 0) {
   const data = modes[state.activeMode];
   const page = data.pages[pageIndex] || data.pages[0];
+  initToBottom();
   state.activePageIndex = data.pages.indexOf(page);
   el.notebook.dataset.mode = state.activeMode;
   el.topbar.dataset.mode = state.activeMode;
+  if (el.toBottom) el.toBottom.hidden = true;
   // chat giữ kicker ~/.thyca · model; memories/trace: mark (icon + label) ở góc trái
   if (state.activeMode === "chat") {
     el.modeBreadcrumb.classList.remove("crumb-mark");
@@ -123,6 +125,12 @@ export function renderPage(pageIndex = 0) {
     bindSettings(el.pageBody);
   }
   el.form.hidden = state.activeMode !== "chat";
+  if (state.activeMode === "chat") {
+    // Switch tab chat = xuống cuối (scrollThread đợi layout ổn định qua rAF).
+    scrollThread();
+  } else if (el.toBottom) {
+    el.toBottom.hidden = true;
+  }
   if (state.activeMode === "trace") {
     updateMiniPlayer(page);
     mountTraceStaff(el.pageBody, page);
@@ -135,6 +143,7 @@ export function renderPage(pageIndex = 0) {
   }
   renderPageList(el.pageSearch.value);
   renderChips();
+  updateToBottomVisibility();
 }
 
 export async function renderMode(mode) {

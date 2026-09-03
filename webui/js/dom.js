@@ -5,6 +5,7 @@ export const el = {
   openSidebar: document.getElementById("open-sidebar"),
   closeSidebar: document.getElementById("close-sidebar"),
   notebook: document.getElementById("notebook"),
+  toBottom: document.getElementById("to-bottom"),
   pageHeader: document.getElementById("page-header"),
   pageBody: document.getElementById("page-body"),
   pageList: document.getElementById("page-list"),

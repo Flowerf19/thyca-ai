@@ -131,8 +131,8 @@ function overviewBody(stats, traces, pillStats) {
       ${pillBlock(models, byModel, byStatus)}
       <div class="stat-row">
         <div><strong>${fmtInt(totals.requests)}</strong><span>request</span></div>
-        <div title="token input không cache (prompt − cache)"><strong>${fmtInt(fresh)}</strong><span>input</span></div>
-        <div title="token đọc từ cache"><strong>${fmtInt(cached)}</strong><span>cache</span></div>
+        <div title="token input không cache (prompt − cache): ${fmtInt(fresh)}"><strong>${fmtInt(fresh)}</strong><span>input</span></div>
+        <div title="token đọc từ cache: ${fmtInt(cached)}"><strong>${fmtInt(cached)}</strong><span>cache</span></div>
         <div><strong>${fmtInt(completion)}</strong><span>output</span></div>
         <div><strong>${fmtCost(totals.cost_usd)}</strong><span>cost</span></div>
       </div>

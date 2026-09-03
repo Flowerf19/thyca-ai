@@ -20,6 +20,7 @@
 
 .stat-row > div {
   min-width: 0;
+  overflow: hidden;
   padding: var(--space-md) var(--space-lg);
   background: var(--color-paper-2);
   border: var(--rule) solid var(--color-rule-2);
@@ -30,10 +31,16 @@
   display: block;
   color: var(--color-memory);
   font-family: var(--font-display);
-  font-size: var(--text-2xl);
+  /* Số lớn (vd 70.607.522) không được trèo ra ngoài viền note:
+     chữ co theo viewport + cắt ellipsis + title tooltip số đầy đủ. */
+  font-size: clamp(var(--text-lg), 0.9rem + 2vw, var(--text-2xl));
   font-weight: 600;
   letter-spacing: -0.03em;
-  line-height: 1;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
 }
 
 .stat-row span {

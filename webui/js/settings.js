@@ -390,7 +390,13 @@ async function saveProviderCard(root, card) {
     // Refresh để dropdown Provider / placeholder / hasStoredKey đồng bộ,
     // không cần F5 (TASK-021). renderPage rebuild DOM nên không cần xóa
     // keyInput tay — providerCard luôn render value="".
-    await refreshPages(root, state.activePageIndex);
+    // refreshPages bọc riêng: hydrate fail không được nuốt "Đã lưu"
+    // khi persist đã thành công (user bấm Lưu nữa sẽ lưu trùng).
+    try {
+      await refreshPages(root, state.activePageIndex);
+    } catch {
+      /* giữ DOM cũ, vẫn báo đã lưu bên dưới */
+    }
     setStatus(root, `Đã lưu ${url}.`, "ok");
   } catch (error) {
     setStatus(root, error instanceof Error ? error.message : "Không lưu được.", "error");
@@ -631,9 +637,10 @@ async function persist(root, { models, providerModel, providerBaseUrl, providerA
   // nên ép rỗng trước khi merge vào schemaValues (TASK-022).
   if (values.provider) values.provider.apiKey = "";
   schemaValues = { ...schemaValues, ...values };
-  // Đồng bộ hasStoredKey từ server: payload.ready true nghĩa là đã có key
-  // dùng được (provider_ready đọc key thật phía server).
-  if (payload.ready) hasStoredKey = true;
+  // Đồng bộ hasStoredKey 2 chiều từ server: ready true nghĩa là đã có key
+  // dùng được; ready false nghĩa là hết key (đã xóa) → placeholder phải
+  // về "dán API key" thay vì kẹt "••••" (trước chỉ set 1 chiều true).
+  hasStoredKey = Boolean(payload.ready);
   if (providerModel !== undefined) defaultModel = values.provider?.model || defaultModel;
   if (!payload.ready) {
     setStatus(root, "Đã lưu nhưng provider chưa dùng được — kiểm tra API key.", "error");

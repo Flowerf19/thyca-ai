@@ -148,8 +148,6 @@ export function renderPage(pageIndex = 0) {
   if (state.activeMode === "chat") {
     // Switch tab chat = xuống cuối (scrollThread đợi layout ổn định qua rAF).
     scrollThread();
-  } else if (el.toBottom) {
-    el.toBottom.hidden = true;
   }
   if (state.activeMode === "trace") {
     updateMiniPlayer(page);

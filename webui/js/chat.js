@@ -505,8 +505,9 @@ function slideStatus(ticker, next) {
 
 export function scrollThread() {
   if (!el.notebook) return;
-  // Đợi layout ổn định (font/ảnh/markdown) rồi mới scroll,
-  // nếu không scrollHeight đo sớm sẽ hụt.
+  // Đợi layout ổn định (font/ảnh/markdown/staff SVG) rồi mới scroll,
+  // nếu không scrollHeight đo sớm sẽ hụt. Rọi lại 1 nhịp sau 300ms
+  // cho session nhiều staff hoặc font web chưa về.
   const doScroll = () => {
     if (!el.notebook || !el.notebook.isConnected) return;
     el.notebook.scrollTo({
@@ -515,10 +516,16 @@ export function scrollThread() {
     });
     updateToBottomVisibility();
   };
-  if (typeof requestAnimationFrame === "function") {
-    requestAnimationFrame(() => requestAnimationFrame(doScroll));
-  } else {
+  const settle = () => {
     doScroll();
+    window.setTimeout(() => {
+      if (!isNearBottom()) doScroll();
+    }, 300);
+  };
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(() => requestAnimationFrame(settle));
+  } else {
+    settle();
   }
 }
 

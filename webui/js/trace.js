@@ -126,11 +126,13 @@ function overviewBody(stats, traces, pillStats) {
     : Array.isArray(stats && stats.models)
       ? stats.models
       : [];
+  const fresh = Math.max(prompt - cached, 0);
   return `<div class="book-reading">
       ${pillBlock(models, byModel, byStatus)}
       <div class="stat-row">
         <div><strong>${fmtInt(totals.requests)}</strong><span>request</span></div>
-        <div title="input = tổng prompt gửi lên (đã gồm cache)"><strong>${fmtInt(prompt)}</strong><span>input <small>(gồm cache)</small></span><small class="stat-sub">fresh ${fmtInt(Math.max(prompt - cached, 0))} · cache ${fmtInt(cached)}</small></div>
+        <div title="token input không cache (prompt − cache)"><strong>${fmtInt(fresh)}</strong><span>input</span></div>
+        <div title="token đọc từ cache"><strong>${fmtInt(cached)}</strong><span>cache</span></div>
         <div><strong>${fmtInt(completion)}</strong><span>output</span></div>
         <div><strong>${fmtCost(totals.cost_usd)}</strong><span>cost</span></div>
       </div>
@@ -158,9 +160,9 @@ function recentBlock(traces) {
           <span class="trace-ledger-time" title="giờ">${escapeHtml(fmtTimePart(item.started_at))}</span>
           <button type="button" class="trace-ledger-name" data-trace-pill="model" data-value="${escapeHtml(String(item.model || "unknown"))}">${escapeHtml(shortModel(item.model) || "không rõ")}</button>
           <span class="trace-ledger-status is-${escapeHtml(status)}" title="trạng thái">${escapeHtml(statusLabel(status))}</span>
-          <span class="trace-ledger-num" title="input = tổng prompt (gồm cache); fresh ${fmtInt(fresh)} + cache ${fmtInt(c)}">${fmtInt(item.prompt_tokens)}</span>
+          <span class="trace-ledger-num" title="input không cache (prompt − cache)">${fmtInt(fresh)}</span>
+          <span class="trace-ledger-num" title="cache đọc lại">${fmtInt(item.cached_tokens)}</span>
           <span class="trace-ledger-num" title="output">${fmtInt(item.completion_tokens)}</span>
-          <span class="trace-ledger-num" title="cache là subset của input, không cộng thêm">${fmtInt(item.cached_tokens)}</span>
           <span class="trace-ledger-num" title="cost">${fmtCost(item.cost_usd)}</span>
         </div>`;
     })
@@ -169,7 +171,7 @@ function recentBlock(traces) {
       <h3>Recent request</h3>
       <p class="trace-section-note">${fmtInt(rows.length)} request gần nhất</p>
       <div class="trace-ledger-head" aria-hidden="true">
-        <span>ngày</span><span>giờ</span><span>model</span><span>trạng thái</span><span>input</span><span>output</span><span>cache</span><span>cost</span>
+        <span>ngày</span><span>giờ</span><span>model</span><span>trạng thái</span><span>input</span><span>cache</span><span>output</span><span>cost</span>
       </div>
       ${ledger}
     </section>`;
@@ -306,8 +308,8 @@ function tokenLine(detail) {
   const prompt = Number(detail.prompt_tokens) || 0;
   const fresh = Math.max(prompt - cached, 0);
   const cachePct = prompt > 0 ? Math.round((cached / prompt) * 100) : 0;
-  const cacheBadge = cached > 0 ? ` <span class="trace-token-badge" title="cache là subset của input, không cộng thêm">cache ${fmtInt(cached)} · ${cachePct}%</span>` : "";
-  return `input ${fmtInt(detail.prompt_tokens)} <small class="stat-sub">(fresh ${fmtInt(fresh)})</small>${cacheBadge} → output ${fmtInt(detail.completion_tokens)} · ${fmtCost(detail.cost_usd)} · ${fmtLatency(detail.latency_ms)}`;
+  const cacheBadge = cached > 0 ? ` <span class="trace-token-badge" title="token đọc từ cache">cache ${fmtInt(cached)} · ${cachePct}%</span>` : "";
+  return `input ${fmtInt(fresh)}${cacheBadge} → output ${fmtInt(detail.completion_tokens)} · ${fmtCost(detail.cost_usd)} · ${fmtLatency(detail.latency_ms)}`;
 }
 
 function sessionBody(page, detail, messages) {

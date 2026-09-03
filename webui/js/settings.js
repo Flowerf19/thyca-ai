@@ -10,7 +10,6 @@ import { postJson } from "./util.js";
 import { modes } from "./data.js";
 import { state } from "./state.js";
 import { el } from "./dom.js";
-import { resetToNewChatPage } from "./chat.js";
 import { renderPage } from "./render.js";
 
 let schema = null;
@@ -458,7 +457,6 @@ function bindAddModel(root) {
       clone.dataset.extraBox = "1";
       // cloneNode không copy listener: xóa flag bound rồi bind lại
       // input + select trong box clone (TASK-031).
-      clone.querySelectorAll("[data-bound]").forEach((n) => delete n.dataset.bound);
       clone.querySelectorAll("[data-add-model], [data-add-provider]").forEach((n) => delete n.dataset.bound);
       // Extra boxes skip limits (form-level, saved once) but keep their own
       // Thêm button, which binds to the same addModel flow.
@@ -649,21 +647,29 @@ async function persist(root, { models, providerModel, providerBaseUrl, providerA
   modelCache.clear();
   modelOptions = [];
   modelOptionsEndpoint = "";
-  notifyProviderChanged(root, values.provider);
+  // Chỉ reset chat khi patch thật sự đổi model/baseUrl (TASK-041):
+  // sửa giá/limits không có 2 field này → giữ nguyên phiên đang xem.
+  // So với snapshot trước khi refreshChatKicker cập nhật nó.
+  const nextModel = providerModel !== undefined ? values.provider?.model : undefined;
+  const nextUrl = providerBaseUrl !== undefined ? values.provider?.baseUrl : undefined;
+  notifyProviderChanged(root, values.provider, { nextModel, nextUrl });
   return payload;
 }
 
 // Provider đổi (baseUrl/model/key mới) → chat phải reset theo (TASK-040/041):
 // backend hot-reload config mỗi turn rồi, frontend chỉ cần mở khóa composer,
 // refresh kicker model + về phiên mới khi model/baseUrl đổi.
-function notifyProviderChanged(root, provider) {
+function notifyProviderChanged(root, provider, changed = {}) {
   if (state.activeMode === "chat" || !provider) return;
+  const { nextModel, nextUrl } = changed;
   void import("./chat.js").then(async ({ resetToNewChatPage, refreshChatKicker }) => {
+    const prevModel = state.lastChatModel;
+    const prevUrl = state.lastChatBaseUrl;
     try {
       if (typeof refreshChatKicker === "function") await refreshChatKicker();
     } catch { /* giữ kicker cũ, không chặn settings */ }
-    const modelChanged = provider.model && provider.model !== state.lastChatModel;
-    const urlChanged = provider.baseUrl && provider.baseUrl !== state.lastChatBaseUrl;
+    const modelChanged = nextModel !== undefined && nextModel !== prevModel;
+    const urlChanged = nextUrl !== undefined && nextUrl !== prevUrl;
     if (modelChanged || urlChanged) resetToNewChatPage();
   });
 }
@@ -675,14 +681,16 @@ async function refreshPages(root, page = 0) {
 
 // Probe endpoint = endpoint sẽ lưu (TASK-032): đọc đúng dropdown của box
 // chứa input đang focus, không đọc ô input đang gõ dở ở card provider.
-function probeTargetFor(input) {
+// Scoped trong root (form settings) để không phụ thuộc DOM global.
+function probeTargetFor(root, input) {
   const box = input?.closest("[data-add-model-box], [data-extra-box]");
+  const form = root?.querySelector?.("#settings-form") || document.querySelector("#settings-form");
   const chosen = box?.querySelector("[data-add-provider]")?.value.trim()
-    || document.querySelector("#settings-form [data-add-provider]")?.value.trim()
+    || form?.querySelector("[data-add-provider]")?.value.trim()
     || "";
   if (chosen) return { baseUrl: chosen, apiKey: "" };
   // Global provider: baseUrl đã lưu + key (ô nhập trước, key lưu sau).
-  const card = document.querySelector("#settings-form [data-provider-card]");
+  const card = form?.querySelector("[data-provider-card]");
   return {
     baseUrl: card?.querySelector("[data-provider-url]")?.value.trim()
       || schemaValues.provider?.baseUrl || "",
@@ -691,7 +699,7 @@ function probeTargetFor(input) {
 }
 
 async function fetchModels(root, input = null) {
-  const { baseUrl, apiKey } = probeTargetFor(input);
+  const { baseUrl, apiKey } = probeTargetFor(root, input);
   if (!baseUrl) {
     setStatus(root, "Cần Base URL trước khi tải model.", "error");
     return;

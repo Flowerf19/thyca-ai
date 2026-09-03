@@ -31,15 +31,12 @@
   display: block;
   color: var(--color-memory);
   font-family: var(--font-display);
-  /* Số lớn (vd 70.607.522) không được trèo ra ngoài viền note:
-     chữ co theo viewport + cắt ellipsis + title tooltip số đầy đủ. */
-  font-size: clamp(var(--text-lg), 0.9rem + 2vw, var(--text-2xl));
+  /* Số đã rút gọn (70.6M) nên luôn vừa ô — giữ cỡ lớn, không ellipsis. */
+  font-size: var(--text-2xl);
   font-weight: 600;
   letter-spacing: -0.03em;
   line-height: 1.1;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   font-variant-numeric: tabular-nums;
 }
 

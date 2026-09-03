@@ -67,6 +67,23 @@ export function fmtInt(value) {
   return n.toLocaleString("vi-VN");
 }
 
+// Số lớn rút gọn cho ô stat/bảng hẹp (70.607.522 → 70.6M).
+// Số đầy đủ nằm ở title tooltip — không cắt ellipsis mù nữa.
+export function fmtCompact(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "—";
+  const abs = Math.abs(n);
+  const trim = (x, suffix) => {
+    // toFixed(1) rồi cắt số 0 thừa ở đuôi thập phân: 70.60 → 70.6
+    const s = x.toFixed(1).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
+    return `${s}${suffix}`;
+  };
+  if (abs >= 1_000_000_000) return trim(n / 1_000_000_000, "B");
+  if (abs >= 1_000_000) return trim(n / 1_000_000, "M");
+  if (abs >= 10_000) return trim(n / 1_000, "K");
+  return n.toLocaleString("vi-VN");
+}
+
 export function fmtCost(value) {
   const n = Number(value);
   if (value == null || value === "" || !Number.isFinite(n)) return "—";

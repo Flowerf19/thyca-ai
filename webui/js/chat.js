@@ -39,6 +39,13 @@ export async function hydrateChat() {
   if (gen !== hydrateChatGen) return false;
   if (!pages) return false;
   state.chatLive = true;
+  // Reload page: state mất trắng (activeSessionId=null) → khôi phục tab
+  // đang xem từ sessionStorage, không mặc định về mới nhất.
+  if (!state.activeSessionId) {
+    try {
+      state.activeSessionId = window.sessionStorage.getItem("thyca.activeSessionId") || null;
+    } catch { /* storage bị chặn, giữ null */ }
+  }
   let index = pages.findIndex((page) => page.sessionId && page.sessionId === state.activeSessionId);
   if (index < 0) index = 0;
   state.activePageIndex = index;
@@ -354,6 +361,11 @@ function applyDetailToPage(page, detail) {
 function bindSession(page, sessionId) {
   if (modes.chat.pages[state.activePageIndex] !== page) return;
   state.activeSessionId = sessionId;
+  // Giữ tab đang xem qua reload page (sessionStorage theo tab).
+  try {
+    if (sessionId) window.sessionStorage.setItem("thyca.activeSessionId", sessionId);
+    else window.sessionStorage.removeItem("thyca.activeSessionId");
+  } catch { /* storage bị chặn, bỏ qua */ }
 }
 
 async function refreshChatList() {

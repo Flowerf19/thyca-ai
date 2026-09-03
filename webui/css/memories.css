@@ -43,6 +43,17 @@
   text-transform: uppercase;
 }
 
+/* Dòng phụ trong ô stat (vd fresh/cache) — chữ thường, không uppercase. */
+.stat-row .stat-sub,
+.stat-sub {
+  display: block;
+  margin-block-start: var(--space-2xs);
+  color: var(--color-neutral);
+  font-size: var(--text-xs);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
 .suggest-inline {
   margin-block-start: var(--space-2xl);
 }

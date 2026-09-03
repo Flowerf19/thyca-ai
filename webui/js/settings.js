@@ -375,14 +375,18 @@ async function saveProviderCard(root, card) {
       card.dataset.savedUrl = url;
       // Secondary cards have no key field (config stores one key); a model
       // bound to this URL still needs a key — require the primary's key.
-      if (!schemaValues.provider?.apiKey && !key) {
+      // NOTE: server luôn mask apiKey="" nên phải check hasStoredKey
+      // (meta.hasApiKey), không check schemaValues.provider.apiKey.
+      if (!hasStoredKey && !key) {
         setStatus(root, "Lưu key ở nhà cung cấp Mặc định trước (model dùng chung key).", "error");
         return;
       }
     }
     await persist(root, patch);
-    const keyInput = card.querySelector("[data-provider-key]");
-    if (keyInput) keyInput.value = "";
+    // Refresh để dropdown Provider / placeholder / hasStoredKey đồng bộ,
+    // không cần F5 (TASK-021). renderPage rebuild DOM nên không cần xóa
+    // keyInput tay — providerCard luôn render value="".
+    await refreshPages(root, state.activePageIndex);
     setStatus(root, `Đã lưu ${url}.`, "ok");
   } catch (error) {
     setStatus(root, error instanceof Error ? error.message : "Không lưu được.", "error");
@@ -588,7 +592,14 @@ async function persist(root, { models, providerModel, providerBaseUrl, providerA
     if (providerApiKey !== undefined) values.provider.apiKey = providerApiKey;
   }
   const payload = await postJson("/api/config", values);
+  // Giữ contract "rỗng = giữ key cũ": server luôn trả apiKey="",
+  // nên ép rỗng trước khi merge vào schemaValues (TASK-022).
+  if (values.provider) values.provider.apiKey = "";
   schemaValues = { ...schemaValues, ...values };
+  // Đồng bộ hasStoredKey từ server: payload.ready true nghĩa là đã có key
+  // dùng được (provider_ready đọc key thật phía server).
+  if (payload.ready) hasStoredKey = true;
+  if (providerModel !== undefined) defaultModel = values.provider?.model || defaultModel;
   if (!payload.ready) {
     setStatus(root, "Đã lưu nhưng provider chưa dùng được — kiểm tra API key.", "error");
   }

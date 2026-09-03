@@ -39,9 +39,9 @@ Test: mở session dài → switch tab → luôn ở cuối; kéo lên → nút 
 
 | ID | Task | Done | Date |
 |----|------|------|------|
-| TASK-020 | Card phụ check `hasStoredKey` thay vì `schemaValues.provider.apiKey` (server luôn mask rỗng) | | |
-| TASK-021 | Lưu xong refresh pages (dropdown, placeholder, hasStoredKey đồng bộ, không cần F5) | | |
-| TASK-022 | Không gửi lại key thật ở persist sau (giữ contract rỗng = giữ key cũ) | | |
+| TASK-020 | Card phụ check `hasStoredKey` thay vì `schemaValues.provider.apiKey` (server luôn mask rỗng) | x | 2026-09-03 |
+| TASK-021 | Lưu xong refresh pages (dropdown, placeholder, hasStoredKey đồng bộ, không cần F5) | x | 2026-09-03 |
+| TASK-022 | Không gửi lại key thật ở persist sau (giữ contract rỗng = giữ key cũ) | x | 2026-09-03 |
 
 ### GOAL-004: Model ID dropdown (bug 3)
 

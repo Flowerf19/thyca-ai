@@ -5,18 +5,12 @@ import { escapeHtml, formatUpdated, getJson, postJson } from "./util.js";
 import { createNdjsonDecoder } from "./ndjson.js";
 import { scoreFromEvents } from "./staff-map.js";
 import { statusTextForEvent } from "./turn-status.js";
-import { clearStaffs, mountStaff } from "./staff.js";
+import { clearStaffs, dropStaff, mountStaff } from "./staff.js";
 import { state } from "./state.js";
 
-let liveEvents = [];
-let liveScore = null;
-let lastOperationalText = "";
-// Live snapshot of in-flight operations, keyed by call_id — the ticker is a
-// single line, so parallel tool/skill calls must render as one aggregate
-// ("Đang dùng read, bash · Đang mở skill create-skill…") instead of
-// overwriting each other.
-const activeOps = new Map();
-let batchNames = [];
+// Per-session in-flight turn. Survives renderPage / fillChatAt innerHTML
+// replacement: restoreLiveTurn remounts .entry-status from this Map.
+const liveTurns = new Map();
 const STATUS_MIN_DWELL_MS = 500;
 let pendingStatus = null;
 let lastStatusSwapAt = 0;
@@ -32,6 +26,126 @@ let chatFillGen = 0;
 // Guard generation cho hydrateChat: renderMode(chat) bấm liên tiếp không
 // để lượt hydrate cũ đè activeSessionId của lượt mới.
 let hydrateChatGen = 0;
+
+function liveKey(sessionId) {
+  return String(sessionId || "");
+}
+
+function staffOpts(sessionId) {
+  return { sessionId: liveKey(sessionId), index: "live" };
+}
+
+function makeLive(text) {
+  return {
+    events: [],
+    score: scoreFromEvents([]),
+    statusText: "Đang chờ Thyca…",
+    running: true,
+    dirty: false,
+    failed: false,
+    waiting: false,
+    text: text || "",
+    activeOps: new Map(),
+    batchNames: [],
+    lastOperationalText: "",
+  };
+}
+
+function startLiveTurn(sessionId, text) {
+  const rec = makeLive(text);
+  liveTurns.set(liveKey(sessionId), rec);
+  return rec;
+}
+
+function ensureLive(sessionId) {
+  const key = liveKey(sessionId);
+  let rec = liveTurns.get(key);
+  if (!rec) {
+    rec = makeLive("");
+    liveTurns.set(key, rec);
+  }
+  return rec;
+}
+
+export function getLiveTurn(sessionId) {
+  if (sessionId == null) return null;
+  return liveTurns.get(liveKey(sessionId)) || null;
+}
+
+export function isViewingSession(sessionId) {
+  if (state.activeMode !== "chat") return false;
+  const page = modes.chat.pages[state.activePageIndex];
+  if (!page) return false;
+  if (!sessionId) return !page.sessionId;
+  if (!page.sessionId) return true;
+  return String(page.sessionId) === String(sessionId);
+}
+
+function rekeyLiveTurn(fromId, toId) {
+  const from = liveKey(fromId);
+  const to = liveKey(toId);
+  if (from === to) return;
+  const rec = liveTurns.get(from);
+  if (rec) {
+    liveTurns.delete(from);
+    liveTurns.set(to, rec);
+  }
+  dropStaff(`session:${from}:live`);
+}
+
+function ensureEntryList(root) {
+  let list = root.querySelector(".entry-list");
+  if (list) return list;
+  root.innerHTML = '<div class="entry-list"></div>';
+  return root.querySelector(".entry-list");
+}
+
+function ensureOutgoingUser(list, text) {
+  if (!text) return;
+  const nodes = [...list.children].filter((node) => !node.classList.contains("entry-status"));
+  const last = nodes.at(-1);
+  if (last && last.classList.contains("entry-user")) return;
+  list.insertAdjacentHTML("beforeend", entryHtml("user", text));
+}
+
+export function restoreLiveTurn(root, page) {
+  if (!root || !page) return false;
+  const rec = getLiveTurn(page.sessionId);
+  if (!rec) return false;
+  if (rec.running || rec.failed) {
+    const list = ensureEntryList(root);
+    ensureOutgoingUser(list, rec.text);
+    let status = list.querySelector(".entry-status");
+    if (!status) {
+      list.insertAdjacentHTML("beforeend", statusHtml(rec.statusText));
+      status = list.querySelector(".entry-status");
+    } else {
+      const line = status.querySelector(".status-line");
+      if (line) line.textContent = rec.statusText;
+    }
+    if (!status) return false;
+    status.classList.toggle("is-error", rec.failed);
+    status.classList.toggle("is-waiting", rec.waiting);
+    mountStaff(status, rec.score, staffOpts(page.sessionId));
+    return true;
+  }
+  const list = root.querySelector(".entry-list");
+  if (!list || !rec.score) return false;
+  const born = [...list.querySelectorAll(".entry-thyca")].filter(
+    (node) => !node.classList.contains("entry-status"),
+  ).at(-1);
+  if (born) mountStaff(born, rec.score, staffOpts(page.sessionId));
+  rec.dirty = false;
+  return Boolean(born);
+}
+
+export function discardRunningLiveTurns() {
+  for (const [key, rec] of [...liveTurns.entries()]) {
+    if (!rec.running) continue;
+    liveTurns.delete(key);
+    dropStaff(`session:${key}:live`);
+  }
+}
 
 export async function hydrateChat() {
   const gen = ++hydrateChatGen;
@@ -78,11 +192,11 @@ export function resetToNewChatPage() {
 export function beginOutgoingTurn(text) {
   removeStatus();
   clearStaffs(el.pageBody);
-  lastOperationalText = "";
-  activeOps.clear();
-  batchNames = [];
   flushPendingStatus();
   lastStatusSwapAt = 0;
+  const page = modes.chat.pages[state.activePageIndex];
+  const sessionId = (page && page.sessionId) || state.activeSessionId || "";
+  const rec = startLiveTurn(sessionId, text);
   let list = el.pageBody.querySelector(".entry-list");
   if (!list) {
     el.pageBody.innerHTML = '<div class="entry-list"></div>';
@@ -90,10 +204,8 @@ export function beginOutgoingTurn(text) {
   }
   list.insertAdjacentHTML("beforeend", entryHtml("user", text));
   list.lastElementChild.classList.add("is-enter");
-  list.insertAdjacentHTML("beforeend", statusHtml());
-  liveEvents = [];
-  liveScore = scoreFromEvents([]);
-  mountStaff(list.lastElementChild, liveScore);
+  list.insertAdjacentHTML("beforeend", statusHtml(rec.statusText));
+  mountStaff(list.lastElementChild, rec.score, staffOpts(sessionId));
   scrollThread();
 }
 
@@ -106,6 +218,8 @@ export function removeStatus() {
 
 export function settleIncoming() {
   const page = modes.chat.pages[state.activePageIndex];
+  const sessionId = page?.sessionId || "";
+  const rec = getLiveTurn(sessionId);
   const liveList = el.pageBody.querySelector(".entry-list");
   const wrap = document.createElement("div");
   wrap.innerHTML = page?.body || "";
@@ -119,7 +233,12 @@ export function settleIncoming() {
     node.style.animationDelay = `${index * 80}ms`;
   });
   const born = [...fresh.children].slice(kept).find((node) => node.classList.contains("entry-thyca"));
-  if (born && liveScore) mountStaff(born, liveScore);
+  if (born && rec?.score) mountStaff(born, rec.score, staffOpts(sessionId));
+  if (rec) {
+    rec.running = false;
+    rec.dirty = false;
+    rec.failed = false;
+  }
   const heading = el.pageHeader.querySelector("h1");
   if (heading && page.title) heading.innerHTML = page.title;
   const kicker = el.pageHeader.querySelector(".page-kicker");
@@ -131,10 +250,19 @@ export function settleIncoming() {
 export async function sendChatTurn(text) {
   const page = modes.chat.pages[state.activePageIndex];
   let sessionId = page ? page.sessionId : state.activeSessionId;
+  const pendingId = sessionId || "";
   if (!sessionId) {
     const created = await postJson("/api/sessions", {});
     if (!created || !created.id) throw new Error("Không tạo được phiên.");
     sessionId = created.id;
+    if (page) {
+      page.sessionId = sessionId;
+      bindSession(page, sessionId);
+    }
+    rekeyLiveTurn(pendingId, sessionId);
+    const status = chatStatusNode(sessionId);
+    const rec = getLiveTurn(sessionId);
+    if (status && rec) mountStaff(status, rec.score, staffOpts(sessionId));
   }
   const response = await fetch(`/api/sessions/${sessionId}/turn/stream`, {
     method: "POST",
@@ -156,13 +284,13 @@ export async function sendChatTurn(text) {
     const { done, value } = await reader.read();
     if (done) break;
     for (const event of decoder.push(value)) {
-      const terminal = ingestTurnEvent(event);
+      const terminal = ingestTurnEvent(sessionId, event);
       if (terminal === "completed") completed = event.detail;
       else if (terminal === "failed") failed = event;
     }
   }
   for (const event of decoder.flush()) {
-    const terminal = ingestTurnEvent(event);
+    const terminal = ingestTurnEvent(sessionId, event);
     if (terminal === "completed") completed = event.detail;
     else if (terminal === "failed") failed = event;
   }
@@ -175,30 +303,39 @@ export async function sendChatTurn(text) {
   return completed;
 }
 
-function ingestTurnEvent(event) {
-  liveEvents.push(event);
-  liveScore = scoreFromEvents(liveEvents);
-  applyStatus(event);
-  const status = chatStatusNode();
+function ingestTurnEvent(sessionId, event) {
+  const rec = ensureLive(sessionId);
+  rec.events.push(event);
+  rec.score = scoreFromEvents(rec.events);
+  rec.waiting = event.type === "llm.started";
+  if (event.type === "turn.failed") rec.failed = true;
+  if (event.type === "turn.completed" || event.type === "turn.failed") {
+    rec.running = false;
+    rec.dirty = true;
+  }
+  applyStatus(sessionId, event);
+  const status = chatStatusNode(sessionId);
   if (status) {
-    mountStaff(status, liveScore);
-    if (event.type === "turn.failed") status.classList.add("is-error");
+    mountStaff(status, rec.score, staffOpts(sessionId));
+    if (rec.failed) status.classList.add("is-error");
     // While the model thinks (llm.started → next event) the newest note
     // breathes — see .is-waiting in workspace.css.
-    status.classList.toggle("is-waiting", event.type === "llm.started");
+    status.classList.toggle("is-waiting", rec.waiting);
   }
   if (event.type === "turn.completed") return "completed";
   if (event.type === "turn.failed") return "failed";
   return null;
 }
 
-function chatStatusNode() {
+function chatStatusNode(sessionId) {
   if (state.activeMode !== "chat") return null;
+  if (sessionId && !isViewingSession(sessionId)) return null;
   const status = el.pageBody.querySelector(".entry-status");
   return status && status.isConnected ? status : null;
 }
 
-function applyStatus(event) {
+function applyStatus(sessionId, event) {
+  const rec = ensureLive(sessionId);
   let text = statusTextForEvent(event);
   if (text === null) return;
   const opKind = event.type.startsWith("tool.") ? "tool"
@@ -207,34 +344,38 @@ function applyStatus(event) {
     const id = event.call_id || "call";
     if (event.type.endsWith(".started")) {
       const name = event.name || (opKind === "skill" ? "skill" : "tool");
-      activeOps.set(id, { kind: opKind, name });
-      batchNames.push(name);
+      rec.activeOps.set(id, { kind: opKind, name });
+      rec.batchNames.push(name);
     } else {
-      activeOps.delete(id);
+      rec.activeOps.delete(id);
     }
     // Aggregate every in-flight op into one line; when the batch drains,
     // summarize what ran so the result text matches what was announced.
     const skills = [];
     const tools = [];
-    for (const op of activeOps.values()) (op.kind === "skill" ? skills : tools).push(op.name);
+    for (const op of rec.activeOps.values()) (op.kind === "skill" ? skills : tools).push(op.name);
     const chunks = [];
     if (skills.length) chunks.push(`Đang mở skill ${skills.join(", ")}…`);
     if (tools.length) chunks.push(`Đang dùng ${tools.join(", ")}…`);
     text = chunks.length
       ? chunks.join(" · ")
-      : `${batchNames.join(", ")} đã xong…`;
-    if (!activeOps.size) batchNames = [];
-    lastOperationalText = text;
+      : `${rec.batchNames.join(", ")} đã xong…`;
+    if (!rec.activeOps.size) rec.batchNames = [];
+    rec.lastOperationalText = text;
   } else if (event.type === "llm.started") {
     // Linger the operational line through the llm wait — the round is still
     // visible on the staff as that wait's note pair.
-    if (lastOperationalText) return;
+    if (rec.lastOperationalText) return;
   } else if (event.type === "llm.finished" || event.type === "turn.accepted") {
-    lastOperationalText = "";
+    rec.lastOperationalText = "";
   }
-  const status = chatStatusNode();
+  rec.statusText = text;
+  const status = chatStatusNode(sessionId);
   const ticker = status && status.querySelector(".status-ticker");
-  if (!ticker || !ticker.isConnected) return;
+  if (!ticker || !ticker.isConnected) {
+    flushPendingStatus();
+    return;
+  }
   if (reduceMotion()) {
     flushPendingStatus();
     let line = ticker.querySelector(".status-line");
@@ -497,9 +638,9 @@ export function threadHtml(messages) {
   return `<div class="entry-list">${parts.join("")}</div>`;
 }
 
-function statusHtml() {
+function statusHtml(text = "Đang chờ Thyca…") {
   return `<article class="entry entry-thyca entry-status" aria-label="Thyca đang nghĩ" aria-live="off">
-      <div class="entry-thyca-head"><time>thyca</time><span class="status-ticker"><span class="status-line">Đang chờ Thyca…</span></span></div>
+      <div class="entry-thyca-head"><time>thyca</time><span class="status-ticker"><span class="status-line">${escapeHtml(text)}</span></span></div>
     </article>`;
 }
 

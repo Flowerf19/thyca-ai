@@ -423,3 +423,47 @@ def test_fifty_mount_clear_leaves_observer_empty(node: str) -> None:
         cwd=ROOT,
     )
     assert json.loads(result.stdout) == {"leftover": 0}
+
+
+def test_staff_key_survives_clear_and_sync(node: str) -> None:
+    source = (
+        SHIM
+        + f"import {{ mountStaff, clearStaffs, syncStaffs, getStaff }} from '{STAFF.as_posix()}';\n"
+        + f"import {{ scoreFromEvents }} from '{MAP.as_posix()}';\n"
+        + """
+        const root = new El("div");
+        const article = new El("article");
+        article.className = "entry entry-thyca entry-status";
+        root.append(article);
+        const score = scoreFromEvents([{ type: "turn.accepted" }]);
+        const key = mountStaff(article, score, { sessionId: "abc", index: "live" });
+        const keptAfterMount = Boolean(getStaff(key));
+        clearStaffs(root);
+        root.replaceChildren();
+        const fresh = new El("article");
+        fresh.className = "entry entry-thyca entry-status";
+        root.append(fresh);
+        syncStaffs(root, { sessionId: "abc", index: "live" });
+        const glyphs = [...fresh.querySelectorAll("[data-glyph]")].map((n) => n.getAttribute("data-glyph"));
+        console.log(JSON.stringify({
+          key,
+          keptAfterMount,
+          keptAfterClear: Boolean(getStaff(key)),
+          staffKey: fresh.dataset.staffKey,
+          hasNote: glyphs.includes("noteheadBlack"),
+        }));
+        """
+    )
+    result = subprocess.run(
+        [node, "--input-type=module", "-e", source],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+    )
+    payload = json.loads(result.stdout)
+    assert payload["key"] == "session:abc:live"
+    assert payload["keptAfterMount"] is True
+    assert payload["keptAfterClear"] is True
+    assert payload["staffKey"] == "session:abc:live"
+    assert payload["hasNote"] is True

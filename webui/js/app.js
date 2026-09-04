@@ -1,5 +1,4 @@
-import { beginOutgoingTurn, createChatSession, removeStatus, sendChatTurn, settleIncoming } from "./chat.js";
-import { modes } from "./data.js";
+import { beginOutgoingTurn, createChatSession, discardRunningLiveTurns, isViewingSession, removeStatus, sendChatTurn, settleIncoming } from "./chat.js";
 import { el } from "./dom.js";
 import { closeDrawer, hideDrawerIfMobile, toggleDrawer } from "./drawer.js";
 import { renderMode, renderPage, renderPageList, setTracePlaying } from "./render.js";
@@ -106,33 +105,36 @@ async function submitLine() {
   try {
     if (state.chatLive) {
       const detail = await sendChatTurn(text);
-      if (state.activeMode !== "chat") {
-        idleFromNudge = false;
-        return;
-      }
-      const visible = modes.chat.pages[state.activePageIndex];
-      if (visible && visible.sessionId && visible.sessionId !== detail.id) {
+      if (isViewingSession(detail.id)) {
+        if (!settleIncoming()) renderPage(state.activePageIndex);
+        else renderPageList(el.pageSearch.value);
+      } else {
+        // Turn finished in the background: page.body already updated by
+        // applyDetail. restoreLiveTurn settles staff when the user returns.
         renderPageList(el.pageSearch.value);
-      } else if (!settleIncoming()) renderPage(state.activePageIndex);
-      else renderPageList(el.pageSearch.value);
+      }
     } else {
       const wait = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 1000;
       await new Promise((resolve) => window.setTimeout(resolve, wait));
-      removeStatus();
+      if (state.activeMode === "chat") removeStatus();
     }
-    if (state.activeMode !== "chat") {
+    if (state.activeMode === "chat") {
+      el.field.classList.add("is-success");
+      el.hint.textContent = "Đã gửi vào phiên này.";
+      el.hint.className = "hint is-success";
+      noteSend();
+      armIdle();
+    } else {
       idleFromNudge = false;
-      return;
     }
-    el.field.classList.add("is-success");
-    el.hint.textContent = "Đã gửi vào phiên này.";
-    el.hint.className = "hint is-success";
-    noteSend();
-    armIdle();
   } catch (error) {
     idleFromNudge = false;
-    const failed = state.activeMode === "chat" && el.pageBody.querySelector(".entry-status.is-error");
-    if (!failed) removeStatus();
+    const viewing = state.activeMode === "chat";
+    const failed = viewing && el.pageBody.querySelector(".entry-status.is-error");
+    if (!failed) {
+      discardRunningLiveTurns();
+      if (viewing) removeStatus();
+    }
     showError(error instanceof Error ? error.message : "Không gửi được.");
   } finally {
     setBusy(false);

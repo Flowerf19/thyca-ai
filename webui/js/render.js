@@ -1,4 +1,4 @@
-import { fillChatAt, hydrateChat, initToBottom, invalidateChatHydrate, resetToNewChatPage, scrollThread, updateToBottomVisibility } from "./chat.js";
+import { fillChatAt, hydrateChat, initToBottom, invalidateChatHydrate, resetToNewChatPage, restoreLiveTurn, scrollThread, updateToBottomVisibility } from "./chat.js";
 import { clearStaffs, syncStaffs } from "./staff.js";
 import { icons, modes } from "./data.js";
 import { el } from "./dom.js";
@@ -131,8 +131,12 @@ export function renderPage(pageIndex = 0) {
     : `<div class="page-header-copy"><h1>${page.title}</h1>${noteText ? `<p class="page-note">${noteText}</p>` : ""}</div>`;
   clearStaffs(el.pageBody);
   el.pageBody.innerHTML = page.body || data.body;
-  if (state.activeMode === "chat") syncStaffs(el.pageBody);
-  else syncStaffs(null);
+  if (state.activeMode === "chat") {
+    restoreLiveTurn(el.pageBody, page);
+    syncStaffs(el.pageBody, { sessionId: page.sessionId, index: "live" });
+  } else {
+    syncStaffs(null);
+  }
   if (state.activeMode === "memories") {
     bindOverview(el.pageBody, {
       onForget: () => {

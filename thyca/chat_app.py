@@ -66,6 +66,9 @@ class ChatApp:
             target=self._run_loop, name="thyca-mcp-loop", daemon=True
         )
         self._turn_lock = threading.Lock()
+        # Session id of an in-flight turn (if any). create()/discard must
+        # not clobber or delete it while the LLM call holds the turn lock.
+        self._active_turn_session_id: str | None = None
         self._stopped = False
         self._thread.start()
         try:
@@ -114,10 +117,13 @@ class ChatApp:
         return self._session_detail(session)
 
     def create(self) -> dict:
-        with self._turn_lock:
-            self._sessions.discard_empty()
-            session = self._sessions.create()
-            return self._session_detail(session)
+        # Do not take _turn_lock: create/list must stay responsive while a
+        # turn awaits the LLM. SessionManager already serializes store ops.
+        # Keep the in-flight turn session (if any) and do not steal current.
+        keep = self._active_turn_session_id
+        self._sessions.discard_empty(keep=keep)
+        session = self._sessions.create(make_current=keep is None)
+        return self._session_detail(session)
 
     def turn(self, session_id: str, text: str, event_sink: EventSink | None = None) -> dict:
         if not isinstance(text, str):
@@ -127,8 +133,14 @@ class ChatApp:
             raise ValueError("empty")
         if len(cleaned) > TEXT_MAX:
             raise ValueError("too long")
+        # Serialize turns against each other (shared SessionManager.current),
+        # but create()/list never take this lock — only short store sections.
         with self._turn_lock:
-            return self._submit(self._run_turn(session_id, cleaned, event_sink))
+            self._active_turn_session_id = session_id
+            try:
+                return self._submit(self._run_turn(session_id, cleaned, event_sink))
+            finally:
+                self._active_turn_session_id = None
 
     async def _run_turn(
         self, session_id: str, text: str, event_sink: EventSink | None = None
@@ -136,6 +148,7 @@ class ChatApp:
         self._cfg = self._current_cfg()
         connect = self._injected_connect or ConnectFactory.create("openai_chat", self._cfg.provider)
         owns = self._injected_connect is None
+        self._wire_retry_events(connect, event_sink)
         try:
             self._sessions.load(session_id)
             loop = AgentLoop(
@@ -209,7 +222,28 @@ class ChatApp:
                 meta["cost_usd"] = price
         self._sessions.append(Message(role="assistant", content=None, ts=utc_now_ts(), meta=meta))
 
+    def _wire_retry_events(
+        self, connect: LLMPort, event_sink: EventSink | None
+    ) -> None:
+        """Surface provider transient retries as non-error TurnEvents."""
+        setter = getattr(connect, "set_retry_hook", None)
+        if not callable(setter):
+            return
+
+        def on_retry(attempt: int, max_attempts: int) -> None:
+            emit_event(
+                event_sink,
+                TurnEvent(
+                    type="llm.retry",
+                    attempt=attempt,
+                    max_attempts=max_attempts,
+                ),
+            )
+
+        setter(on_retry)
+
     def shutdown(self) -> None:
+
         if self._stopped:
             return
         self._stopped = True

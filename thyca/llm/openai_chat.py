@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 
@@ -43,6 +43,19 @@ class OpenAIChat(Connect):
         self._client = client or httpx.AsyncClient(
             timeout=httpx.Timeout(connect=10.0, read=60.0, write=30.0, pool=10.0)
         )
+        self._retry_hook: Callable[[int, int], None] | None = None
+
+    def set_retry_hook(self, hook: Callable[[int, int], None] | None) -> None:
+        """Optional (attempt, max_attempts) callback for transient retries."""
+        self._retry_hook = hook
+
+    def _notify_retry(self, attempt: int, max_attempts: int) -> None:
+        if self._retry_hook is None:
+            return
+        try:
+            self._retry_hook(attempt, max_attempts)
+        except Exception:
+            pass
 
     async def aclose(self) -> None:
         if self._owns_client:
@@ -77,15 +90,22 @@ class OpenAIChat(Connect):
         headers: dict[str, str],
         key: str,
     ) -> httpx.Response:
+        # Exactly 3 transient attempts; each failure emits retry status
+        # (1/3, 2/3, 3/3) before the final provider error.
+        max_attempts = 3
         last_error: LLMError | None = None
-        for attempt in range(2):
+        transient = 0
+        dropped_effort = False
+        while True:
             try:
                 response = await self._client.post(url, json=payload, headers=headers)
             except httpx.TimeoutException as exc:
+                transient += 1
                 last_error = LLMError("provider timeout")
-                if attempt == 0:
-                    continue
-                raise last_error from exc
+                self._notify_retry(transient, max_attempts)
+                if transient >= max_attempts:
+                    raise last_error from exc
+                continue
             except httpx.RequestError as exc:
                 raise LLMError(_redact(_cap(str(exc)), key)) from exc
 
@@ -93,20 +113,24 @@ class OpenAIChat(Connect):
                 response.status_code == 400
                 and "reasoning_effort" in payload
                 and "reasoning_effort" in response.text
+                and not dropped_effort
             ):
                 # Model does not support the effort parameter — drop it and
-                # retry once instead of failing the turn.
+                # retry once (does not count as a transient attempt).
                 payload = {k: v for k, v in payload.items() if k != "reasoning_effort"}
+                dropped_effort = True
                 continue
-            if response.status_code in _RETRY_STATUS and attempt == 0:
-                await _sleep_retry_after(response)
+            if response.status_code in _RETRY_STATUS:
+                transient += 1
                 last_error = _http_error(response, key)
+                self._notify_retry(transient, max_attempts)
+                if transient >= max_attempts:
+                    raise last_error
+                await _sleep_retry_after(response)
                 continue
             if response.status_code >= 400:
                 raise _http_error(response, key)
             return response
-        assert last_error is not None
-        raise last_error
 
 
 async def _sleep_retry_after(response: httpx.Response) -> None:

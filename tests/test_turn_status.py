@@ -62,6 +62,8 @@ def test_llm_started_round(node: str) -> None:
 def test_llm_finished_tool_count(node: str) -> None:
     assert _eval(node, 'statusTextForEvent({type: "llm.finished", round: 1, tool_count: 0})') == "Đang hoàn tất câu trả lời…"
     assert _eval(node, 'statusTextForEvent({type: "llm.finished", round: 1, tool_count: 2})') == "Đã chọn 2 công cụ…"
+    assert _eval(node, 'statusTextForEvent({type: "llm.retry", attempt: 1, max_attempts: 3})') == "Đang thử lại (1/3)…"
+    assert _eval(node, 'statusTextForEvent({type: "llm.retry", attempt: 3, max_attempts: 3})') == "Đang thử lại (3/3)…"
 
 
 def test_tool_started(node: str) -> None:

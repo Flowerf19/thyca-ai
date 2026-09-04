@@ -155,3 +155,24 @@ def test_emit_event_delivers() -> None:
     event = TurnEvent(type="turn.accepted")
     emit_event(received.append, event)
     assert received == [event]
+
+def test_llm_retry_to_dict() -> None:
+    assert TurnEvent(type="llm.retry", attempt=2, max_attempts=3).to_dict() == {
+        "type": "llm.retry",
+        "attempt": 2,
+        "max_attempts": 3,
+    }
+
+
+def test_llm_retry_rejects_bad_counts() -> None:
+    with pytest.raises(ValueError, match="attempt"):
+        TurnEvent(type="llm.retry", attempt=0, max_attempts=3)
+    with pytest.raises(ValueError, match="max_attempts"):
+        TurnEvent(type="llm.retry", attempt=1, max_attempts=0)
+    with pytest.raises(ValueError, match="attempt must be <="):
+        TurnEvent(type="llm.retry", attempt=4, max_attempts=3)
+    with pytest.raises(ValueError, match="max_attempts"):
+        TurnEvent(type="llm.retry", attempt=1)
+    with pytest.raises(ValueError, match="attempt"):
+        TurnEvent(type="llm.retry", max_attempts=3)
+

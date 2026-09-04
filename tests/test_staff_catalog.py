@@ -58,6 +58,7 @@ def test_registered_entries_match_contract(node: str) -> None:
     assert by_type["turn.accepted"] == {"type": "turn.accepted", "slot": "pulse", "density": "anchor"}
     assert by_type["llm.started"] == {"type": "llm.started", "slot": "pulse", "density": "anchor"}
     assert by_type["llm.finished"] == {"type": "llm.finished", "slot": "pulse", "density": "outer"}
+    assert by_type["llm.retry"] == {"type": "llm.retry", "slot": "rest"}
     assert by_type["tool.started"] == {"type": "tool.started", "slot": "pulse", "density": "cue"}
     assert by_type["skill.started"] == {"type": "skill.started", "slot": "pulse", "density": "cue"}
     assert by_type["tool.finished"]["slot"] == "pulse"

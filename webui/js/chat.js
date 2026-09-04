@@ -307,7 +307,7 @@ function ingestTurnEvent(sessionId, event) {
   const rec = ensureLive(sessionId);
   rec.events.push(event);
   rec.score = scoreFromEvents(rec.events);
-  rec.waiting = event.type === "llm.started";
+  rec.waiting = event.type === "llm.started" || event.type === "llm.retry";
   if (event.type === "turn.failed") rec.failed = true;
   if (event.type === "turn.completed" || event.type === "turn.failed") {
     rec.running = false;
@@ -366,6 +366,9 @@ function applyStatus(sessionId, event) {
     // Linger the operational line through the llm wait — the round is still
     // visible on the staff as that wait's note pair.
     if (rec.lastOperationalText) return;
+  } else if (event.type === "llm.retry") {
+    // Retry status must replace any lingering operational line (not error).
+    rec.lastOperationalText = "";
   } else if (event.type === "llm.finished" || event.type === "turn.accepted") {
     rec.lastOperationalText = "";
   }

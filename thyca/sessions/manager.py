@@ -52,7 +52,7 @@ class SessionManager:
         timestamp = datetime.now(zone).strftime("%Y-%m-%dT%H-%M-%S")
         return f"{timestamp}_{secrets.token_hex(2)}"
 
-    def create(self) -> Session:
+    def create(self, *, make_current: bool = True) -> Session:
         with self._lock:
             self.store.ensure_dir()
             for _ in range(10):
@@ -62,7 +62,8 @@ class SessionManager:
                 except FileExistsError:
                     continue
                 session = Session(session_id, path, [])
-                self._session = session
+                if make_current:
+                    self._session = session
                 return session
             raise SessionError("session filename collision")
 

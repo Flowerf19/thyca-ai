@@ -231,7 +231,8 @@ def test_rejects_non_loopback(tmp_path: Path) -> None:
         raise AssertionError("expected refuse")
 
 
-def test_create_waits_for_in_flight_turn(tmp_path: Path) -> None:
+def test_create_during_in_flight_turn(tmp_path: Path) -> None:
+    """create() must not wait on the LLM — only turns serialize on _turn_lock."""
     started = threading.Event()
     release = threading.Event()
 
@@ -264,22 +265,22 @@ def test_create_waits_for_in_flight_turn(tmp_path: Path) -> None:
     assert started.wait(2)
     maker = threading.Thread(target=run_create)
     maker.start()
-    maker.join(0.2)
-    assert maker.is_alive()
-    assert not created
+    maker.join(2)
+    assert not maker.is_alive(), "create blocked by in-flight turn lock"
+    assert created.get("id") and created["id"] != first
+    assert created["messages"] == []
+    # Turn session must still receive the reply after create ran mid-flight.
     release.set()
     worker.join(timeout=5)
-    maker.join(timeout=5)
     assert not errors
     assert result["reply"] == "late"
     assert result["id"] == first
-    assert created["id"] != first
-    assert created["messages"] == []
     stored = SessionManager(tmp_path / "sessions").load(first)
     assert [(item.role, item.content) for item in stored.messages] == [
         ("user", "hi"),
         ("assistant", "late"),
     ]
+    app.shutdown()
 
 
 def test_chat_app_shutdown_idempotent(tmp_path: Path) -> None:
@@ -705,3 +706,31 @@ def test_idle_remember_nudge_in_webui() -> None:
     assert "idleArmed" in app
     assert "idleFromNudge" in app
     assert not app.rstrip().endswith("armIdle();")
+
+def test_retry_hook_emits_llm_retry_events(tmp_path: Path) -> None:
+    """ChatApp wires OpenAIChat-style retry hooks to non-error TurnEvents."""
+
+    class Recovering:
+        def __init__(self) -> None:
+            self._hook = None
+            self.n = 0
+
+        def set_retry_hook(self, hook) -> None:
+            self._hook = hook
+
+        async def chat(self, messages, tools=None):
+            self.n += 1
+            # Only the first (turn) call simulates a transient retry notify.
+            if self.n == 1 and self._hook:
+                self._hook(1, 3)
+            return ChatReply(content="ok" if self.n == 1 else '"Tên phiên."')
+
+    app = _chat(tmp_path, Recovering())
+    created = app.create()
+    events: list[TurnEvent] = []
+    payload = app.turn(created["id"], "ping", event_sink=events.append)
+    assert payload["reply"] == "ok"
+    retries = [e for e in events if e.type == "llm.retry"]
+    assert retries == [TurnEvent(type="llm.retry", attempt=1, max_attempts=3)]
+    app.shutdown()
+

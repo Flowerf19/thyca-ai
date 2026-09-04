@@ -30,6 +30,8 @@ const CATALOG_YAML = `
 - type: llm.finished
   slot: pulse
   density: outer
+- type: llm.retry
+  slot: rest
 - type: tool.started
   slot: pulse
   density: cue

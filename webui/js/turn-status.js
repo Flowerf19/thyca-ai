@@ -15,6 +15,12 @@ export function statusTextForEvent(event) {
       const count = Number.isInteger(event.tool_count) ? event.tool_count : 0;
       return count > 0 ? `Đã chọn ${count} công cụ…` : "Đang hoàn tất câu trả lời…";
     }
+    case "llm.retry": {
+      const attempt = Number.isInteger(event.attempt) ? event.attempt : null;
+      const max = Number.isInteger(event.max_attempts) ? event.max_attempts : null;
+      if (attempt === null || max === null) return null;
+      return `Đang thử lại (${attempt}/${max})…`;
+    }
     case "tool.started": {
       const name = publicName(event.name);
       return `Đang dùng ${name}…`;

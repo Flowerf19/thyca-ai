@@ -205,12 +205,13 @@ async def test_401_does_not_retry_and_redacts_key() -> None:
 
 
 @pytest.mark.asyncio
-async def test_429_retries_once() -> None:
+async def test_429_retries_up_to_three_attempts() -> None:
     hits = {"n": 0}
+    retries: list[tuple[int, int]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         hits["n"] += 1
-        if hits["n"] == 1:
+        if hits["n"] < 3:
             return httpx.Response(429, headers={"Retry-After": "0"}, text="slow")
         return httpx.Response(
             200,
@@ -218,23 +219,28 @@ async def test_429_retries_once() -> None:
         )
 
     connect = OpenAIChat(_provider(), client=_client(handler))
+    connect.set_retry_hook(lambda a, m: retries.append((a, m)))
     reply = await connect.chat([Message(role="user", content="x")])
-    assert hits["n"] == 2
+    assert hits["n"] == 3
     assert reply.content == "ok"
+    assert retries == [(1, 3), (2, 3)]
 
 
 @pytest.mark.asyncio
-async def test_timeout_retries_once_then_errors() -> None:
+async def test_timeout_retries_three_times_then_errors() -> None:
     hits = {"n": 0}
+    retries: list[tuple[int, int]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         hits["n"] += 1
         raise httpx.ReadTimeout("read timed out")
 
     connect = OpenAIChat(_provider(), client=_client(handler))
+    connect.set_retry_hook(lambda a, m: retries.append((a, m)))
     with pytest.raises(LLMError, match="timeout"):
         await connect.chat([Message(role="user", content="x")])
-    assert hits["n"] == 2
+    assert hits["n"] == 3
+    assert retries == [(1, 3), (2, 3), (3, 3)]
 
 
 @pytest.mark.asyncio

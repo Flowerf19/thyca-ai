@@ -76,22 +76,23 @@ def test_play_score_schedules_whole_passage(node: str) -> None:
             },
         ]
     }
-    result = _eval(node, f"({{ ok: await playScore({json.dumps(score)}, {{ context: fake }}) }})")
-    assert result["ok"] is True
+    result = _eval(node, f"({{ out: await playScore({json.dumps(score)}, {{ context: fake }}) }})")
+    assert result["out"]["ok"] is True
+    assert len(result["out"]["timeline"]) == 3
     # C5 + (E5,G5) + C5 — rests add no oscillators (no decodeAudioData → triangle)
     assert len(result["started"]) == 4
     assert result["started"][0] == pytest.approx(523.25)
 
 
 def test_play_score_empty_or_rests_only_is_silent(node: str) -> None:
-    empty = _eval(node, "({ ok: await playScore({ measures: [] }, { context: fake }) })")
+    empty = _eval(node, "({ out: await playScore({ measures: [] }, { context: fake }) })")
     rests = _eval(
         node,
-        "({ ok: await playScore({ measures: [{ events: [], rests: [{ offset: 0, duration: 16 }] }] }, { context: fake }) })",
+        "({ out: await playScore({ measures: [{ events: [], rests: [{ offset: 0, duration: 16 }] }] }, { context: fake }) })",
     )
-    assert empty["ok"] is False
+    assert empty["out"]["ok"] is False
     assert empty["started"] == []
-    assert rests["ok"] is False
+    assert rests["out"]["ok"] is False
     assert rests["started"] == []
 
 
@@ -121,7 +122,7 @@ def test_play_score_prefers_sound_over_pitches(node: str) -> None:
             }
         ]
     }
-    result = _eval(node, f"({{ ok: await playScore({json.dumps(score)}, {{ context: fake }}) }})")
-    assert result["ok"] is True
+    result = _eval(node, f"({{ out: await playScore({json.dumps(score)}, {{ context: fake }}) }})")
+    assert result["out"]["ok"] is True
     assert len(result["started"]) == 2
     assert result["started"][0] == pytest.approx(261.63)

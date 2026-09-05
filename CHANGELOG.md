@@ -2,6 +2,10 @@
 
 Thay đổi của Thyca, viết ngắn gọn cho người dùng.
 
+## 0.7.7 — 05/09/2026
+
+- Khuông chat gọn hơn (không kéo ô trống); chạm khuông nghe cả đoạn, nốt hiện dần theo tiếng; chạm một nốt thì chỉ nốt đó kêu.
+
 ## 0.7.6 — 05/09/2026
 
 - Dòng meter dưới khung chat thêm output và cửa sổ request cuối (ctx). Di chuột vào để xem số đầy đủ.

@@ -28,8 +28,10 @@ function getContext() {
   return shared;
 }
 
-function tickSec() {
-  return (60 / BPM) / TICKS_PER_QUARTER;
+function tickSec(bpm = BPM) {
+  const n = Number(bpm);
+  const use = Number.isFinite(n) && n > 0 ? n : BPM;
+  return (60 / use) / TICKS_PER_QUARTER;
 }
 
 export function stopPlayback() {
@@ -91,14 +93,15 @@ function voice(ac, name, hz, when, sec, peak) {
   active.push(osc);
 }
 
-export function playPitches(pitches, durationTicks, { context, atTicks = 0 } = {}) {
+export function playPitches(pitches, durationTicks, { context, atTicks = 0, bpm } = {}) {
   const names = (Array.isArray(pitches) ? pitches : []).filter((name) => FREQ[name]);
   if (!names.length) return false;
   const ac = context || getContext();
   if (!ac) return false;
   const ticks = Number.isFinite(durationTicks) && durationTicks > 0 ? durationTicks : TICKS_PER_QUARTER;
-  const sec = Math.max(0.12, ticks * tickSec());
-  const when = (ac.currentTime || 0) + Math.max(0, atTicks) * tickSec();
+  const step = tickSec(bpm);
+  const sec = Math.max(0.12, ticks * step);
+  const when = (ac.currentTime || 0) + Math.max(0, atTicks) * step;
   const peak = (buffers ? 0.28 : 0.1) / Math.sqrt(names.length);
   for (const name of names) voice(ac, name, FREQ[name], when, sec, peak);
   return true;
@@ -106,20 +109,32 @@ export function playPitches(pitches, durationTicks, { context, atTicks = 0 } = {
 
 export async function playScore(score, { context } = {}) {
   const ac = context || getContext();
-  if (!ac) return false;
+  if (!ac) return { ok: false, timeline: [], startedAt: 0 };
   const mine = ++playGen;
   await loadPiano(ac);
-  if (mine !== playGen) return false;
+  if (mine !== playGen) return { ok: false, timeline: [], startedAt: 0 };
   stopPlayback();
   const measures = score?.measures;
-  if (!Array.isArray(measures) || !measures.length) return false;
+  if (!Array.isArray(measures) || !measures.length) return { ok: false, timeline: [], startedAt: 0 };
+  const bpm = score.bpm;
+  const step = tickSec(bpm);
+  const startedAt = ac.currentTime || 0;
+  const timeline = [];
   let any = false;
   for (let i = 0; i < measures.length; i += 1) {
     for (const event of measures[i].events || []) {
       const atTicks = i * MEASURE_TICKS + (Number(event.offset) || 0);
       const names = event.sound || event.pitches;
-      if (playPitches(names, event.duration, { context: ac, atTicks })) any = true;
+      if (playPitches(names, event.duration, { context: ac, atTicks, bpm })) any = true;
+      if (Array.isArray(names) && names.length) {
+        timeline.push({
+          measure: i,
+          offset: Number(event.offset) || 0,
+          atSec: atTicks * step,
+          durSec: Math.max(0.12, (Number(event.duration) || 4) * step),
+        });
+      }
     }
   }
-  return any;
+  return { ok: any, timeline, startedAt };
 }

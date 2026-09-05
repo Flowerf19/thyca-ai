@@ -88,9 +88,37 @@
   50% { stroke-opacity: 0.3; }
 }
 
+.staff-event.is-ink .staff-glyph,
+.staff-event.is-ink .staff-stem {
+  animation: staff-ink 220ms var(--ease-out) both;
+}
+
+@keyframes staff-ink {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: none; }
+}
+
+.thyca-staff.is-playback .staff-event[data-pitches] .staff-glyph {
+  fill-opacity: 0.28;
+}
+.thyca-staff.is-playback .staff-event[data-pitches] .staff-stem {
+  stroke-opacity: 0.28;
+}
+.thyca-staff.is-playback .staff-event.is-revealed .staff-glyph {
+  fill-opacity: 0.82;
+}
+.thyca-staff.is-playback .staff-event.is-revealed .staff-stem {
+  stroke-opacity: 0.82;
+}
+.staff-event.is-playing .staff-glyph {
+  filter: drop-shadow(0 0 3px var(--color-accent-soft));
+}
+
 @media (prefers-reduced-motion: reduce) {
   .entry-status.is-waiting .staff-event .staff-glyph,
-  .entry-status.is-waiting .staff-event .staff-stem {
+  .entry-status.is-waiting .staff-event .staff-stem,
+  .staff-event.is-ink .staff-glyph,
+  .staff-event.is-ink .staff-stem {
     animation: none;
   }
 }

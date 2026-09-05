@@ -44,11 +44,14 @@ function layout(widthPx) {
   return { perSystem, measureW: avail / perSystem, width: PAD_LEFT + avail + PAD_RIGHT };
 }
 
-export function renderStaff(score, { widthPx = 560 } = {}) {
+export function renderStaff(score, { widthPx = 560, maxSystems = 0 } = {}) {
   const normalized = normalizeScore(score);
-  const measures = normalized.measures;
-  const total = measures.length;
   const { perSystem, measureW, width } = layout(widthPx);
+  let measures = normalized.measures;
+  if (maxSystems === 1 && measures.length > perSystem) {
+    measures = measures.slice(-perSystem);
+  }
+  const total = measures.length;
   const systemCount = Math.max(1, Math.ceil(total / perSystem));
   const height = systemCount * H + Math.max(0, systemCount - 1) * STAFF_GAP;
 
@@ -66,7 +69,7 @@ export function renderStaff(score, { widthPx = 560 } = {}) {
     const dy = sys * (H + STAFF_GAP);
     const from = sys * perSystem;
     const to = Math.min(from + perSystem, total);
-    svg.append(staffSystem(measures, from, to, width, measureW, dy, perSystem));
+    svg.append(staffSystem(measures, from, to, width, measureW, dy, to - from));
   }
   return svg;
 }
@@ -84,7 +87,7 @@ function staffSystem(measures, from, to, width, measureW, dy, slots) {
     const xStart = PAD_LEFT + slot * measureW;
     const finish = lastSystem && slot === slots - 1 && lastHasFinal;
     const m = i < to ? measures[i] : null;
-    if (m) group.append(measureContent(m, xStart, measureW, dy, finish));
+    if (m) group.append(measureContent(m, xStart, measureW, dy, finish, i));
     else if (finish) group.append(finalBarline(xStart + measureW, dy, true));
     else group.append(singleBarline(xStart + measureW, dy));
   }
@@ -129,14 +132,14 @@ function timeSignature(dy) {
   return group;
 }
 
-function measureContent(measure, xStart, measureW, dy, isLastOverall) {
+function measureContent(measure, xStart, measureW, dy, isLastOverall, measureIndex) {
   const group = node("g", { class: "staff-measure" });
   const ticks = 16;
   for (const rest of measure.rests || []) {
     group.append(restGlyph(rest, xStart, measureW, ticks, dy));
   }
   for (const event of measure.events || []) {
-    group.append(eventGlyph(event, xStart, measureW, ticks, dy));
+    group.append(eventGlyph(event, xStart, measureW, ticks, dy, measureIndex));
   }
   if (isLastOverall) {
     group.append(finalBarline(xStart + measureW, dy, !!measure.finalBarline));
@@ -150,16 +153,21 @@ function eventX(offset, xStart, measureW, ticks) {
   return xStart + (offset / ticks) * measureW;
 }
 
-function eventGlyph(event, xStart, measureW, ticks, dy) {
+function eventGlyph(event, xStart, measureW, ticks, dy, measureIndex) {
   const x = eventX(event.offset, xStart, measureW, ticks) + measureW * 0.06;
   const names = (event.pitches || []).filter((p) => Number.isFinite(PITCH_STEPS[p]));
   const pitches = names.map((p) => PITCH_STEPS[p]);
   pitches.sort((a, b) => a - b);
   const duration = event.duration;
   const group = node("g", { class: "staff-event" });
+  group.setAttribute("data-measure", String(measureIndex ?? 0));
+  group.setAttribute("data-offset", String(event.offset ?? 0));
   if (names.length) {
     group.setAttribute("data-pitches", names.join(","));
     group.setAttribute("data-duration", String(duration));
+    if (event.sound && event.sound.length) {
+      group.setAttribute("data-sound", event.sound.join(","));
+    }
   }
   if (!pitches.length) {
     // Treat chordless event as a rest for layout safety.

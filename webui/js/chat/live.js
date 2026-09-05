@@ -1,4 +1,5 @@
 import { scoreFromEvents } from "../staff/map.js";
+import { pickBpm, pickFormula } from "../staff/formula.js";
 import { dropStaff, mountStaff } from "../staff/index.js";
 import { modes } from "../shared/data.js";
 import { state } from "../shared/state.js";
@@ -18,9 +19,15 @@ export function staffOpts(sessionId) {
 }
 
 function makeLive(text) {
+  const formula = pickFormula();
+  const bpm = pickBpm(formula);
+  const score = scoreFromEvents([], undefined, formula);
+  score.bpm = bpm;
   return {
     events: [],
-    score: scoreFromEvents([]),
+    formula,
+    bpm,
+    score,
     statusText: "Đang chờ Thyca…",
     running: true,
     dirty: false,

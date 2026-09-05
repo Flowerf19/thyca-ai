@@ -26,7 +26,7 @@ def node() -> str:
 
 def _eval(node: str, expression: str) -> object:
     source = (
-        f"import {{ statusTextForEvent }} from '{SCRIPT.as_posix()}';\n"
+        f"import {{ statusTextForEvent, collapseNames, batchDoneText }} from '{SCRIPT.as_posix()}';\n"
         f"console.log(JSON.stringify({expression}));\n"
     )
     result = subprocess.run(
@@ -116,3 +116,17 @@ def test_sanitized_name_is_kept_as_public_identifier(node: str) -> None:
 def test_llm_started_missing_round_is_null(node: str) -> None:
     assert _eval(node, 'statusTextForEvent({type: "llm.started"})') is None
     assert _eval(node, 'statusTextForEvent({type: "llm.started", round: "x"})') is None
+
+
+def test_collapse_names_counts_duplicates_in_first_seen_order(node: str) -> None:
+    assert _eval(node, 'collapseNames(["bash", "bash", "memory_recent"])') == (
+        "bash ×2 · memory_recent"
+    )
+    assert _eval(node, 'collapseNames(["bash"])') == "bash"
+    assert _eval(node, "collapseNames([])") == ""
+
+
+def test_batch_done_text_does_not_sound_like_turn_complete(node: str) -> None:
+    assert _eval(node, 'batchDoneText(["bash", "bash", "memory_recent"])') == (
+        "Đã chạy bash ×2 · memory_recent…"
+    )

@@ -1,6 +1,6 @@
 import { renderStaff } from "./draw.js";
 import { scoreFromEvents } from "./map.js";
-import { playScore } from "./play.js";
+import { playPitches, playScore, stopPlayback } from "./play.js";
 
 // RECORDS keyed by stable string — NOT by DOM node — so innerHTML
 // replacement (renderPage / fillChatAt tab switch) doesn't lose live score.
@@ -141,10 +141,17 @@ function paint(article, explicitKey = null) {
   const rec = key ? RECORDS.get(key) : null;
   const score = rec?.score || scoreFromEvents([]);
   const widthPx = Math.round(host.getBoundingClientRect().width) || 480;
-  const sig = `${scoreSig(score)}:${widthPx}`;
+  const live = article.classList.contains("entry-status");
+  const sig = `${scoreSig(score)}:${widthPx}:${live ? "1" : "0"}`;
   if (host.dataset.sig === sig) return;
   host.dataset.sig = sig;
-  host.replaceChildren(renderStaff(score, { widthPx }));
+  host.replaceChildren(renderStaff(score, { widthPx, maxSystems: live ? 1 : 0 }));
+  const svg = host.querySelector(".thyca-staff");
+  const notes = svg && svg.querySelectorAll(".staff-event[data-pitches]");
+  const last = notes && notes.length ? notes[notes.length - 1] : null;
+  if (last && last.classList && typeof last.classList.add === "function") {
+    last.classList.add("is-ink");
+  }
 }
 
 function scoreSig(score) {
@@ -177,8 +184,56 @@ function watch(host) {
   watched.add(host);
 }
 
-function onStaffPointer(ev) {
-  const host = ev.currentTarget;
+let playRaf = 0;
+
+function reducedMotion() {
+  return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function clearReveal(svg) {
+  if (playRaf && typeof cancelAnimationFrame === "function") cancelAnimationFrame(playRaf);
+  playRaf = 0;
+  if (!svg || !svg.querySelectorAll) return;
+  svg.classList.remove("is-playback");
+  for (const el of svg.querySelectorAll(".staff-event")) {
+    el.classList.remove("is-revealed", "is-playing");
+  }
+}
+
+function startReveal(svg, timeline) {
+  clearReveal(svg);
+  if (!svg || !timeline.length) return;
+  svg.classList.add("is-playback");
+  if (reducedMotion()) {
+    for (const el of svg.querySelectorAll(".staff-event[data-pitches]")) {
+      el.classList.add("is-revealed");
+    }
+    return;
+  }
+  if (typeof requestAnimationFrame !== "function") return;
+  const end = Math.max(...timeline.map((item) => item.atSec + item.durSec), 0);
+  const t0 = typeof performance !== "undefined" ? performance.now() : 0;
+  const step = () => {
+    const now = typeof performance !== "undefined" ? (performance.now() - t0) / 1000 : 0;
+    for (const item of timeline) {
+      const el = svg.querySelector(
+        `.staff-event[data-measure="${item.measure}"][data-offset="${item.offset}"]`,
+      );
+      if (!el) continue;
+      if (now + 0.03 >= item.atSec) el.classList.add("is-revealed");
+      el.classList.toggle("is-playing", now >= item.atSec && now < item.atSec + item.durSec);
+    }
+    if (now < end) playRaf = requestAnimationFrame(step);
+    else {
+      playRaf = 0;
+      svg.classList.remove("is-playback");
+      for (const el of svg.querySelectorAll(".is-playing")) el.classList.remove("is-playing");
+    }
+  };
+  playRaf = requestAnimationFrame(step);
+}
+
+function scoreForHost(host) {
   const article = host && host.parentNode;
   let key = null;
   try {
@@ -186,7 +241,34 @@ function onStaffPointer(ev) {
   } catch { key = null; }
   if (!key && article?.classList?.contains("entry-status")) key = lastKey;
   const rec = key ? RECORDS.get(key) : null;
-  if (rec?.score) playScore(rec.score);
+  return rec?.score || null;
+}
+
+function onStaffPointer(ev) {
+  const host = ev.currentTarget;
+  const target = ev.target;
+  const eventNode = target && typeof target.closest === "function"
+    ? target.closest(".staff-event")
+    : null;
+  if (eventNode && eventNode.getAttribute("data-pitches")) {
+    if (typeof ev.stopPropagation === "function") ev.stopPropagation();
+    const raw = eventNode.getAttribute("data-sound") || eventNode.getAttribute("data-pitches");
+    const duration = Number(eventNode.getAttribute("data-duration")) || 4;
+    const score = scoreForHost(host);
+    stopPlayback();
+    const svg = host.querySelector && host.querySelector(".thyca-staff");
+    clearReveal(svg);
+    playPitches(raw.split(","), duration, { bpm: score && score.bpm });
+    eventNode.classList.add("is-playing", "is-revealed");
+    return;
+  }
+  const score = scoreForHost(host);
+  if (!score) return;
+  const svg = host.querySelector && host.querySelector(".thyca-staff");
+  playScore(score).then((result) => {
+    if (!result || !result.ok) return;
+    startReveal(svg, result.timeline);
+  });
 }
 
 function ensureHost(article) {

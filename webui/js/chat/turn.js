@@ -2,7 +2,7 @@ import { el } from "../shared/dom.js";
 import { modes } from "../shared/data.js";
 import { postJson } from "../shared/util.js";
 import { createNdjsonDecoder } from "../shared/ndjson.js";
-import { statusTextForEvent } from "../staff/status.js";
+import { batchDoneText, collapseNames, statusTextForEvent } from "../staff/status.js";
 import { clearStaffs, mountStaff } from "../staff/index.js";
 import { scoreFromEvents } from "../staff/map.js";
 import { state } from "../shared/state.js";
@@ -149,7 +149,8 @@ export async function sendChatTurn(text) {
 function ingestTurnEvent(sessionId, event) {
   const rec = ensureLive(sessionId);
   rec.events.push(event);
-  rec.score = scoreFromEvents(rec.events);
+  rec.score = scoreFromEvents(rec.events, undefined, rec.formula);
+  if (Number.isFinite(rec.bpm)) rec.score.bpm = rec.bpm;
   rec.waiting = event.type === "llm.started" || event.type === "llm.retry";
   if (event.type === "turn.failed") rec.failed = true;
   if (event.type === "turn.completed" || event.type === "turn.failed") {
@@ -191,11 +192,9 @@ function applyStatus(sessionId, event) {
     const tools = [];
     for (const op of rec.activeOps.values()) (op.kind === "skill" ? skills : tools).push(op.name);
     const chunks = [];
-    if (skills.length) chunks.push(`Đang mở skill ${skills.join(", ")}…`);
-    if (tools.length) chunks.push(`Đang dùng ${tools.join(", ")}…`);
-    text = chunks.length
-      ? chunks.join(" · ")
-      : `${rec.batchNames.join(", ")} đã xong…`;
+    if (skills.length) chunks.push(`Đang mở skill ${collapseNames(skills)}…`);
+    if (tools.length) chunks.push(`Đang dùng ${collapseNames(tools)}…`);
+    text = chunks.length ? chunks.join(" · ") : batchDoneText(rec.batchNames);
     if (!rec.activeOps.size) rec.batchNames = [];
     rec.lastOperationalText = text;
   } else if (event.type === "llm.started") {

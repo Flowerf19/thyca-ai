@@ -172,6 +172,45 @@ def test_measures_wrap_only_when_width_runs_out(node: str) -> None:
     assert result["sevenTall"] > result["sixTall"]
 
 
+def test_last_system_does_not_pad_empty_measures(node: str) -> None:
+    result = _eval(
+        node,
+        "renderStaff",
+        """(() => {
+          const tools = (n) => Array.from({ length: n }, () => ({ type: "tool.finished", ok: true }));
+          const svg = renderStaff(scoreFromEvents(tools(28)), { widthPx: 900 });
+          const systems = svg.querySelectorAll("g.staff-system");
+          const bars = (sys) => sys.querySelectorAll(".staff-bar").length;
+          const note = svg.querySelector("[data-pitches]");
+          return {
+            systems: systems.length,
+            firstBars: bars(systems[0]),
+            lastBars: bars(systems[1]),
+            measure: note && note.getAttribute("data-measure"),
+            offset: note && note.getAttribute("data-offset"),
+          };
+        })()""",
+    )
+    assert result["systems"] == 2
+    assert result["firstBars"] > result["lastBars"]
+    assert result["lastBars"] >= 1
+    assert result["measure"] is not None
+    assert result["offset"] is not None
+
+
+def test_live_max_systems_is_one(node: str) -> None:
+    result = _eval(
+        node,
+        "renderStaff",
+        """(() => {
+          const tools = (n) => Array.from({ length: n }, () => ({ type: "tool.finished", ok: true }));
+          const svg = renderStaff(scoreFromEvents(tools(28)), { widthPx: 900, maxSystems: 1 });
+          return svg.querySelectorAll("g.staff-system").length;
+        })()""",
+    )
+    assert result == 1
+
+
 def test_note_event_exposes_pitches_for_playback(node: str) -> None:
     result = _eval(
         node,
@@ -220,7 +259,8 @@ def test_measures_fill_host_width_evenly(node: str) -> None:
         node,
         "renderStaff",
         """(() => {
-          const svg = renderStaff(scoreFromEvents([{type:"turn.accepted"}]), { widthPx: 900 });
+          const tools = (n) => Array.from({ length: n }, () => ({ type: "tool.finished", ok: true }));
+          const svg = renderStaff(scoreFromEvents(tools(24)), { widthPx: 900 });
           const box = svg.getAttribute("viewBox").split(" ").map(Number);
           const xs = [...svg.querySelectorAll(".staff-bar")]
             .map((el) => Number(el.getAttribute("x1")))
@@ -256,8 +296,8 @@ def test_completed_terminal_has_double_barline(node: str) -> None:
     )
     assert result["finalGroup"] == 1
     assert result["finalBars"] == 1
-    # 480px fits 3 bars: 2 singles + thin+thick final at the end of the line.
-    assert result["allBars"] == 4
+    # 2 measures (activity + cadence): 1 single + thin+thick final. No empty slots.
+    assert result["allBars"] == 3
 
 
 def test_failed_terminal_has_single_barline(node: str) -> None:
@@ -280,8 +320,8 @@ def test_failed_terminal_has_single_barline(node: str) -> None:
     )
     assert result["finalBars"] == 0
     assert result["finalGroup"] == 0
-    # failed: 480px fits 3 single barlines, no final group.
-    assert result["allBars"] == 3
+    # failed: 2 measures → 2 single barlines, no padded empty slot.
+    assert result["allBars"] == 2
 
 
 def test_sync_staffs_only_on_thyca(node: str) -> None:

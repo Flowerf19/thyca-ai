@@ -55,6 +55,26 @@ function publicName(name) {
   return name;
 }
 
+// First-seen order, identical names collapse: bash, bash, memory_recent → bash ×2 · memory_recent
+export function collapseNames(names) {
+  const order = [];
+  const count = new Map();
+  for (const raw of Array.isArray(names) ? names : []) {
+    const key = String(raw || "").trim() || "tool";
+    if (!count.has(key)) order.push(key);
+    count.set(key, (count.get(key) || 0) + 1);
+  }
+  return order.map((key) => {
+    const n = count.get(key);
+    return n > 1 ? `${key} ×${n}` : key;
+  }).join(" · ");
+}
+
+export function batchDoneText(names) {
+  const summary = collapseNames(names);
+  return summary ? `Đã chạy ${summary}…` : "Đã chạy công cụ…";
+}
+
 // Skill events keep the backend's own fallback word so status never says
 // "tool" for a skill load.
 function skillName(event) {

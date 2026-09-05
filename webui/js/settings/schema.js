@@ -106,7 +106,11 @@ export function settingsForm(root) {
 }
 
 export function setStatus(root, message, kind = "") {
+  const box = root && typeof root.querySelector === "function"
+    ? root.querySelector("[data-add-model-box]:not([hidden])")
+    : null;
   const status =
+    (box && box.querySelector(".settings-status")) ||
     (settingsForm(root)?.querySelector(".settings-status") ||
       (root && typeof root.querySelector === "function" ? root.querySelector(".settings-status") : null));
   if (status) {

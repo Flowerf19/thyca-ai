@@ -93,47 +93,6 @@
   border-inline-end: var(--rule) solid var(--color-rule-2);
 }
 
-/* Mini-player trên Trace là plaque (title + model · status) — không phát lại. */
-.mini-player .mini-play {
-  display: none;
-}
-
-.mini-play {
-  display: inline-grid;
-  place-items: center;
-  width: 2rem;
-  height: 2rem;
-  border: var(--rule) solid var(--color-trace);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-trace);
-  font-size: var(--text-xs);
-  transition: background-color var(--dur-short) var(--ease-out), color var(--dur-short) var(--ease-out), transform 100ms var(--ease-out);
-}
-
-.mini-play-symbol {
-  transform: translateX(0.05rem);
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .mini-play:hover {
-    background: var(--color-trace);
-    color: var(--color-accent-ink);
-  }
-}
-
-.mini-play:active {
-  transform: translateY(1px);
-}
-
-.mini-play:disabled {
-  opacity: 0.5;
-}
-
-.mini-play.is-playing {
-  background: var(--color-trace-soft);
-}
-
 .mini-player-copy {
   display: flex;
   flex-direction: column;
@@ -348,5 +307,13 @@
   min-width: 0;
   flex: 1 0 auto;
   padding-block-start: var(--space-lg);
+}
+
+.notebook-inner:has(#page-header[hidden]) {
+  padding-block-start: var(--space-sm);
+}
+
+.notebook-inner:has(#page-header[hidden]) .page-body {
+  padding-block-start: var(--space-2xs);
 }
 

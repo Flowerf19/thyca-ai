@@ -1,7 +1,43 @@
 .page-list-wrap {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
   min-width: 0;
-  margin-block-start: var(--space-xl);
+  min-height: 0;
+  margin-block-start: var(--space-md);
 }
+
+.page-list-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.search-toggle {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  background: transparent;
+  color: var(--color-sidebar-muted);
+  transition: color var(--dur-short) var(--ease-out);
+}
+
+.search-toggle svg {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .search-toggle:hover {
+    color: var(--color-sidebar-ink);
+  }
+}
+
 
 .text-button {
   min-height: 2rem;
@@ -21,13 +57,30 @@
 
 .page-list {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: var(--space-2xs);
+  min-height: 0;
   margin-block-start: var(--space-sm);
+  overflow: hidden;
 }
 
-.page-list.is-reversed {
-  flex-direction: column-reverse;
+.page-list-pager {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-block-start: var(--space-xs);
+  color: var(--color-sidebar-muted);
+  font-size: var(--text-xs);
+}
+
+.page-list-pager[hidden] {
+  display: none;
+}
+
+.text-button:disabled {
+  opacity: 0.35;
 }
 
 .page-card {
@@ -146,7 +199,6 @@
   font-size: var(--text-xs);
 }
 
-.foot-row,
 .foot-note {
   display: contents;
 }
@@ -189,40 +241,3 @@
   transform: translateY(1px);
 }
 
-.foot-action {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
-  min-height: 2.5rem;
-  padding: 0;
-  background: transparent;
-  color: inherit;
-  font-size: var(--text-xs);
-  transition: color var(--dur-short) var(--ease-out);
-}
-
-.foot-action svg {
-  width: 1rem;
-  height: 1rem;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .foot-action:hover {
-    color: var(--color-sidebar-ink);
-  }
-}
-
-.sync-note {
-  display: inline-flex;
-  align-items: center;
-  justify-self: end;
-  gap: var(--space-2xs);
-  white-space: nowrap;
-}
-
-.sync-note i {
-  width: 0.35rem;
-  height: 0.35rem;
-  border-radius: 50%;
-  background: var(--color-ok);
-}

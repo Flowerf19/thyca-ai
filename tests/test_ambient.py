@@ -183,16 +183,7 @@ def test_unknown_event_never_invents_copy(node: str) -> None:
     assert _eval(node, "AMBIENT.wait").count(line) == 1
 
 
-def test_live_chat_does_not_mount_staff() -> None:
-    paths = [
-        ROOT / "webui" / "js" / "chat" / "live.js",
-        ROOT / "webui" / "js" / "chat" / "turn.js",
-        ROOT / "webui" / "js" / "chat" / "view.js",
-        ROOT / "webui" / "js" / "chat" / "index.js",
-        ROOT / "webui" / "js" / "render.js",
-    ]
-    banned = ("mountStaff", "syncStaffs", "thyca-staff-host")
-    for path in paths:
-        text = path.read_text(encoding="utf-8")
-        for token in banned:
-            assert token not in text, f"{path.name} still uses {token}"
+def test_staff_module_is_gone() -> None:
+    assert not (ROOT / "webui" / "js" / "staff").exists()
+    assert not (ROOT / "webui" / "css" / "workspace" / "staff.css").exists()
+

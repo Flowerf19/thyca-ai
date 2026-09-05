@@ -15,8 +15,8 @@ let hydrateChatGen = 0;
 export async function hydrateChat() {
   const gen = ++hydrateChatGen;
   // Trace→Chat mid-turn: list/detail fetch thành công vẫn hại — summary
-  // pages có body rỗng, đè mất chỗ live staff đang vẽ dở. Đã có page live
-  // thì bỏ qua rebuild, restoreLiveTurn vẽ lại đồng bộ trong renderPage.
+  // pages có body rỗng, đè mất lượt đang chạy. Đã có page live thì bỏ
+  // qua rebuild, restoreLiveTurn vẽ lại đồng bộ trong renderPage.
   const liveId = String(state.activeSessionId || "");
   if (liveId && getLiveTurn(liveId)?.running) {
     const existing = modes.chat.pages || [];
@@ -59,7 +59,7 @@ export async function createChatSession() {
   resetToNewChatPage();
 }
 
-// đưa trang "phiên mới" lên đầu — dùng khi bấm vào mode Chat
+// đưa trang "phiên mới" lên đầu — dùng khi bấm Phiên mới
 export function resetToNewChatPage() {
   const rest = (modes.chat.pages || []).filter((page) => page.sessionId);
   modes.chat.pages = [emptyPage(""), ...rest];
@@ -86,10 +86,8 @@ async function fillChatPage(page) {
     return true;
   }
   // Đang có turn chạy trên session này: fill lại JSONL (summary body rỗng
-  // đè lên chỗ live staff đang vẽ dở — hydrate mid-turn là thủ phạm lớp B).
-  // Giữ body hiện tại, chờ stream ingest vào liveTurns rồi render lúc turn
-  // xong. Cùng lý do, abort/timeout của chính GET này cũng không được đè
-  // body đã có: hydrate về null trong lúc staff x27/edit x10 vẫn tăng.
+  // đè lên lượt đang chạy — hydrate mid-turn là thủ phạm lớp B).
+  // Giữ body hiện tại, chờ stream ingest vào liveTurns rồi render lúc turn xong.
   const live = getLiveTurn(page.sessionId);
   if (live?.running && page.body) return true;
   let detail = null;

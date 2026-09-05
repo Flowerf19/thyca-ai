@@ -11,9 +11,8 @@ WEBUI = ROOT / "webui"
 MARKDOWN_JS = WEBUI / "js" / "shared" / "markdown.js"
 SHARED_INDEX = WEBUI / "js" / "shared" / "index.js"
 MEMORIES_INDEX = WEBUI / "js" / "memories" / "index.js"
-STAFF_INDEX = WEBUI / "js" / "staff" / "index.js"
+LEAF_JS = WEBUI / "js" / "memories" / "leaf.js"
 SCORE_JS = WEBUI / "js" / "trace" / "score.js"
-STAFF_MAP = WEBUI / "js" / "staff" / "map.js"
 
 
 def _render(src: str) -> str:
@@ -81,18 +80,12 @@ def test_shared_barrel_is_node_clean() -> None:
     assert result.stdout == "shared-index-ok"
 
 
-def test_memories_and_staff_barrels_import_clean() -> None:
-    # memories/index.js (overview/leaf/canonical) và staff pure modules
-    # (map/draw/catalog/status/replay + trace/score) đều không chạm DOM lúc
-    # import. trace/index.js và shared dom/drawer là DOM-only nên KHÔNG
-    # import ở đây — xem ghi chú trong webui/js/shared/index.js.
+def test_memories_and_trace_score_import_clean() -> None:
+    # memories/index.js và trace/score.js không chạm DOM lúc import.
     script = f"""
     import {json.dumps(MEMORIES_INDEX.as_uri())};
-    import {{ scoreFromEvents }} from {json.dumps(STAFF_MAP.as_uri())};
-    import {{ traceScoreFromMessages }} from {json.dumps(SCORE_JS.as_uri())};
-    import {json.dumps(STAFF_INDEX.as_uri())};
-    if (typeof scoreFromEvents !== "function") throw new Error("no score");
-    if (typeof traceScoreFromMessages !== "function") throw new Error("no trace score");
+    import {{ traceScoreFromEvents }} from {json.dumps(SCORE_JS.as_uri())};
+    if (typeof traceScoreFromEvents !== "function") throw new Error("no trace score");
     process.stdout.write("barrels-ok");
     """
     result = subprocess.run(
@@ -102,3 +95,29 @@ def test_memories_and_staff_barrels_import_clean() -> None:
         text=True,
     )
     assert result.stdout == "barrels-ok"
+
+
+def test_rank_leaves_caps_and_orders() -> None:
+    script = f"""
+    import {{ rankLeaves }} from {json.dumps(LEAF_JS.as_uri())};
+    const leaves = [
+      {{ get_count: 1, search_count: 0, chunk_id: "a" }},
+      {{ get_count: 9, search_count: 1, chunk_id: "b" }},
+      {{ get_count: 0, search_count: 4, chunk_id: "c" }},
+    ];
+    const get = rankLeaves(leaves, "get").map((l) => l.chunk_id);
+    const search = rankLeaves(leaves, "search").map((l) => l.chunk_id);
+    const least = rankLeaves(leaves, "least").map((l) => l.chunk_id);
+    process.stdout.write(JSON.stringify({{ get, search, least, cap: rankLeaves(leaves.concat(leaves, leaves, leaves), "get").length }}));
+    """
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(result.stdout)
+    assert payload["get"] == ["b", "a", "c"]
+    assert payload["search"] == ["c", "b", "a"]
+    assert payload["least"] == ["a", "c", "b"]
+    assert payload["cap"] == 8

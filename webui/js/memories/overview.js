@@ -5,18 +5,18 @@ import {
   expireBlock,
   fileKey,
   leafEntry,
+  rankLeaves,
   sortLeaves,
   sortFileKeys,
   splitHeading,
-  suggestBlock,
 } from "./leaf.js";
 
-const SUGGEST_CAP = 8;
 const DAY_PAGE = 8;
 
 let openDay = "";
 let dayQuery = "";
 let dayPage = 0;
+let dayView = "day";
 let lastDayLeaves = [];
 
 export function pagesFromStats(stats) {
@@ -37,9 +37,20 @@ export function bindOverview(root, hooks = {}) {
     });
   }
   bindDayPager(root);
+  bindDayViews(root);
   bindDayDetails(root);
   bindForget(root, hooks.onForget);
   bindCanonical(root, hooks);
+}
+
+function bindDayViews(root) {
+  root.querySelectorAll("[data-day-view]").forEach((button) => {
+    bindOnce(button, () => {
+      dayView = button.dataset.dayView || "day";
+      dayPage = 0;
+      redrawDays(root);
+    });
+  });
 }
 
 function bindDayPager(root) {
@@ -76,7 +87,7 @@ function bindForget(root, onForget) {
   root.querySelectorAll("[data-forget]").forEach((button) => {
     bindOnce(button, () => {
       const sid = button.dataset.forget;
-      if (!sid || !window.confirm("Xóa mem này khỏi L2?")) return;
+      if (!sid || !window.confirm("Quên mem này khỏi L2?")) return;
       void forgetSession(sid, onForget);
     });
   });
@@ -110,13 +121,6 @@ function bindForget(root, onForget) {
   });
   root.querySelectorAll("[data-edit-cancel]").forEach((button) => {
     bindOnce(button, () => redrawDays(root));
-  });
-  // card "Đề xuất loại bỏ": bấm để mở ngày chứa leaf
-  root.querySelectorAll("[data-open-leaf]").forEach((card) => {
-    card.addEventListener("click", (event) => {
-      if (event.target.closest("button")) return;
-      activeHooks.onOpenLeaf?.(card.dataset.openLeaf);
-    });
   });
 }
 
@@ -189,7 +193,7 @@ async function forgetSession(sessionId, onForget) {
       body: JSON.stringify({ session_id: sessionId }),
     });
     if (!response.ok) {
-      window.alert(`Không xóa được (${response.status}). Thử lại nhé.`);
+      window.alert(`Không quên được (${response.status}). Thử lại nhé.`);
       return;
     }
     if (typeof onForget === "function") onForget();
@@ -203,6 +207,16 @@ let activeHooks = {};
 function redrawDays(root) {
   const mount = root.querySelector("[data-day-list]");
   if (!mount) return;
+  const block = mount.closest(".suggest-inline");
+  if (block) {
+    const heading = block.querySelector("h3");
+    if (heading) heading.textContent = viewTitle();
+  }
+  const filter = root.querySelector(".day-filter");
+  if (filter) filter.hidden = dayView !== "day";
+  root.querySelectorAll("[data-day-view]").forEach((button) => {
+    button.classList.toggle("is-on", (button.dataset.dayView || "day") === dayView);
+  });
   mount.innerHTML = dayListHtml(lastDayLeaves);
   bindDayPager(root);
   bindDayDetails(root);
@@ -214,7 +228,6 @@ function overviewPage(stats, leaves) {
   const used = Number(stats.used) || 0;
   const searched = Number(stats.searched) || 0;
   const untouched = Number(stats.untouched) || 0;
-  const suggest = (stats.suggest_removal || []).slice(0, SUGGEST_CAP);
   return {
     title: "Tổng quan",
     hideTitle: true,
@@ -224,14 +237,13 @@ function overviewPage(stats, leaves) {
     kicker: "leaf · get và search",
     body: `<div class="book-reading">
         <div class="stat-row">
-          <div><strong>${total}</strong><span>tổng</span></div>
-          <div><strong>${used}</strong><span>đã get</span></div>
-          <div><strong>${searched}</strong><span>đã search</span></div>
-          <div><strong>${untouched}</strong><span>chưa đụng</span></div>
+          <div><span>Tổng:</span> <strong>${total}</strong></div>
+          <div><span>Đã get:</span> <strong>${used}</strong></div>
+          <div><span>Đã search:</span> <strong>${searched}</strong></div>
+          <div><span>Chưa đụng:</span> <strong>${untouched}</strong></div>
         </div>
         ${dayBlock(leaves)}
         ${expireBlock(stats.expiring)}
-        ${suggestBlock(suggest)}
       </div>`,
   };
 }
@@ -244,12 +256,31 @@ function dayBlock(leaves) {
     return `<div class="suggest-inline"><h3>Theo ngày</h3><p class="suggest-empty">Chưa có daily.</p></div>`;
   }
   return `<div class="suggest-inline">
-      <h3>Theo ngày</h3>
-      <label class="day-filter">Lọc ngày
+      <h3>${escapeHtml(viewTitle())}</h3>
+      <nav class="day-view">
+        ${viewTab("day", "Theo ngày")}
+        ${viewTab("get", "Dùng nhiều")}
+        ${viewTab("search", "Tìm nhiều")}
+        ${viewTab("least", "Dùng ít")}
+      </nav>
+      ${dayView === "day" ? `<label class="day-filter">
+        <span class="visually-hidden">Lọc ngày</span>
         <input type="search" data-day-filter value="${escapeHtml(dayQuery)}" placeholder="2026-08-20" autocomplete="off" />
-      </label>
+      </label>` : ""}
       <div data-day-list>${dayListHtml(leaves)}</div>
     </div>`;
+}
+
+function viewTitle() {
+  if (dayView === "get") return "Dùng nhiều nhất";
+  if (dayView === "search") return "Tìm nhiều nhất";
+  if (dayView === "least") return "Ít được dùng";
+  return "Theo ngày";
+}
+
+function viewTab(id, label) {
+  const on = dayView === id ? " class=\"is-on\"" : "";
+  return `<button type="button"${on} data-day-view="${id}">${escapeHtml(label)}</button>`;
 }
 
 function dayGroups(leaves) {
@@ -265,6 +296,11 @@ function dayGroups(leaves) {
 }
 
 function dayListHtml(leaves) {
+  if (dayView !== "day") {
+    const ranked = rankLeaves(leaves, dayView);
+    if (!ranked.length) return `<p class="suggest-empty">Chưa có leaf.</p>`;
+    return `<div class="mem-day-list">${ranked.map((leaf) => leafEntry(leaf)).join("")}</div>`;
+  }
   const groups = dayGroups(leaves);
   const keys = filterDayKeys(sortFileKeys([...groups.keys()]), dayQuery);
   const pages = Math.max(1, Math.ceil(keys.length / DAY_PAGE));

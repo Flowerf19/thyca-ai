@@ -1,12 +1,11 @@
-import { fillChatAt, hydrateChat, initToBottom, invalidateChatHydrate, renderComposerMeter, resetToNewChatPage, restoreLiveTurn, scrollThread, updateToBottomVisibility } from "./chat/index.js";
-import { clearStaffs } from "./staff/index.js";
+import { fillChatAt, getLiveTurn, hydrateChat, initToBottom, invalidateChatHydrate, renderComposerMeter, resetToNewChatPage, restoreLiveTurn, scrollThread, updateToBottomVisibility } from "./chat/index.js";
 import { icons, modes } from "./shared/data.js";
 import { el } from "./shared/dom.js";
 import { closeDrawer } from "./shared/drawer.js";
 import { bindOverview, pagesFromStats, revealLeaf } from "./memories/index.js";
 import { bindSettings, hydrateSettings } from "./settings/index.js";
 import { escapeHtml } from "./shared/util.js";
-import { bindTraceOverview, fillTraceAt, hydrateTrace, mountTraceStaff, updateMiniPlayer } from "./trace/index.js";
+import { bindTraceOverview, fillTraceAt, hydrateTrace, updateMiniPlayer } from "./trace/index.js";
 import { state } from "./shared/state.js";
 
 let modeGen = 0;
@@ -25,13 +24,73 @@ export function pageCard(page, index) {
         </button>`;
 }
 
-export function renderPageList(query = "") {
+let listQuery = "";
+let listCap = 0;
+let listResizeBound = false;
+
+function listCapacity() {
+  const wrap = el.pageList && el.pageList.closest(".page-list-wrap");
+  if (!wrap) return 1;
+  const toolbar = wrap.querySelector(".page-list-toolbar");
+  const toolbarH = toolbar ? toolbar.offsetHeight : 0;
+  const pagerH = 28;
+  const available = wrap.clientHeight - toolbarH - pagerH - 8;
+  const card = el.pageList.querySelector(".page-card");
+  const gap = parseFloat(getComputedStyle(el.pageList).rowGap) || 4;
+  const cardH = card ? card.offsetHeight : 56;
+  const step = cardH + gap;
+  if (step <= 0 || available <= 0) return 1;
+  return Math.max(1, Math.floor(available / step));
+}
+
+function bindListResize() {
+  if (listResizeBound) return;
+  const wrap = el.pageList && el.pageList.closest(".page-list-wrap");
+  if (!wrap || typeof ResizeObserver !== "function") return;
+  listResizeBound = true;
+  new ResizeObserver(() => {
+    const cap = listCapacity();
+    if (cap === listCap) return;
+    renderPageList(listQuery);
+  }).observe(wrap);
+}
+
+export function renderPageList(query = "", { snapToActive = false } = {}) {
+  bindListResize();
   const pages = modes[state.activeMode].pages;
   const normalized = query.trim().toLocaleLowerCase("vi");
-  const filtered = pages.filter((page) => `${page.title} ${page.tag} ${page.date}`.toLocaleLowerCase("vi").includes(normalized));
-  el.pageList.innerHTML = filtered.map((page) => pageCard(page, pages.indexOf(page))).join("");
+  let filtered = pages.filter((page) => `${page.title} ${page.tag} ${page.date}`.toLocaleLowerCase("vi").includes(normalized));
+  if (!state.pageOrderNewest) filtered = filtered.slice().reverse();
+  const cap = listCapacity();
+  listCap = cap;
+  if (query !== listQuery) {
+    listQuery = query;
+    snapToActive = true;
+  }
+  if (snapToActive) {
+    const active = pages[state.activePageIndex];
+    const at = active ? filtered.indexOf(active) : -1;
+    state.listPage = at >= 0 && cap > 0 ? Math.floor(at / cap) : 0;
+  }
+  const pageCount = Math.max(1, Math.ceil(filtered.length / cap) || 1);
+  if (state.listPage > pageCount - 1) state.listPage = pageCount - 1;
+  if (state.listPage < 0) state.listPage = 0;
+  const start = state.listPage * cap;
+  const visible = filtered.slice(start, start + cap);
+  el.pageList.innerHTML = visible.map((page) => pageCard(page, pages.indexOf(page))).join("");
   el.searchEmpty.hidden = filtered.length > 0;
   el.pageList.hidden = filtered.length === 0;
+  const pager = document.getElementById("page-list-pager");
+  const pos = document.getElementById("page-list-pos");
+  const prev = document.getElementById("page-list-prev");
+  const next = document.getElementById("page-list-next");
+  if (pager) {
+    const show = filtered.length > cap;
+    pager.hidden = !show;
+    if (pos) pos.textContent = `${state.listPage + 1} / ${pageCount}`;
+    if (prev) prev.disabled = state.listPage <= 0;
+    if (next) next.disabled = state.listPage >= pageCount - 1;
+  }
   el.pageList.querySelectorAll(".page-card").forEach((card) =>
     card.addEventListener("click", () => {
       el.pageList.querySelectorAll(".page-card").forEach((item) => {
@@ -92,21 +151,6 @@ export function renderChips() {
   );
 }
 
-export function setTracePlaying(playing) {
-  const playerButton = document.getElementById("player-button");
-  const playerLabel = document.getElementById("player-label");
-  if (playerButton) {
-    playerButton.setAttribute("aria-pressed", String(playing));
-    playerButton.classList.toggle("is-playing", playing);
-    playerButton.querySelector(".player-symbol").textContent = playing ? "Ⅱ" : "▶";
-    playerLabel.textContent = playing ? "Đang phát lại" : "Phát lại lượt";
-  }
-  el.miniPlay.setAttribute("aria-pressed", String(playing));
-  el.miniPlay.setAttribute("aria-label", playing ? "Dừng phát lại" : "Phát lại lượt");
-  el.miniPlay.classList.toggle("is-playing", playing);
-  el.miniPlay.querySelector(".mini-play-symbol").textContent = playing ? "Ⅱ" : "▶";
-}
-
 export function renderPage(pageIndex = 0) {
   const data = modes[state.activeMode];
   const page = data.pages[pageIndex] || data.pages[0];
@@ -129,7 +173,6 @@ export function renderPage(pageIndex = 0) {
   el.pageHeader.innerHTML = page.hideTitle
     ? ""
     : `<div class="page-header-copy"><h1>${page.title}</h1>${noteText ? `<p class="page-note">${noteText}</p>` : ""}</div>`;
-  clearStaffs(el.pageBody);
   el.pageBody.innerHTML = page.body || data.body;
   if (state.activeMode === "chat") {
     restoreLiveTurn(el.pageBody, page);
@@ -152,11 +195,11 @@ export function renderPage(pageIndex = 0) {
     scrollThread();
     // Meter dưới composer = last-turn fresh/cache/out/ctx/cost của tab đang xem;
     // phiên trống (messages rỗng) hiện "—".
-    renderComposerMeter(el.meter, page.messages);
+    const live = getLiveTurn(page.sessionId);
+    renderComposerMeter(el.meter, page.messages, live && live.running ? null : el.toolMeter);
   }
   if (state.activeMode === "trace") {
     updateMiniPlayer(page);
-    mountTraceStaff(el.pageBody, page);
     bindTraceOverview(el.pageBody, {
       onRefilter: () => renderPage(0),
       onTurn: () => renderPage(state.activePageIndex),
@@ -164,7 +207,7 @@ export function renderPage(pageIndex = 0) {
   } else {
     el.miniPlayer.hidden = true;
   }
-  renderPageList(el.pageSearch.value);
+  renderPageList(el.pageSearch.value, { snapToActive: true });
   renderChips();
   updateToBottomVisibility();
 }
@@ -173,6 +216,7 @@ export async function renderMode(mode) {
   const gen = ++modeGen;
   state.activeMode = mode;
   state.activePageIndex = 0;
+  state.listPage = 0;
   stopMemoriesPoll();
   if (mode === "memories") {
     lastStatsJson = "";
@@ -218,10 +262,6 @@ export async function renderMode(mode) {
     if (selected) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
   });
-  const libCount = document.querySelector(".library-count");
-  if (libCount) {
-    libCount.textContent = `${el.modeList.querySelectorAll(".mode-link").length} mục`;
-  }
 }
 
 function startMemoriesPoll() {

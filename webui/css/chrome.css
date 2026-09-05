@@ -91,6 +91,10 @@
   .notebook-inner {
     padding-block-start: var(--space-xl);
   }
+
+  .notebook-inner:has(#page-header[hidden]) {
+    padding-block-start: var(--space-sm);
+  }
 }
 
 @media (max-width: 39.99rem) {
@@ -137,6 +141,10 @@
 
   .page-body {
     padding-block-start: var(--space-xl);
+  }
+
+  .notebook-inner:has(#page-header[hidden]) .page-body {
+    padding-block-start: var(--space-2xs);
   }
 
   .entry-thyca {
@@ -201,7 +209,7 @@
   }
 
   .sidebar-main {
-    padding-inline: var(--space-sm);
+    padding-inline: 0.5rem;
   }
 
 }

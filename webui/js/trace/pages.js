@@ -1,8 +1,6 @@
 import { el } from "../shared/dom.js";
 import { modes } from "../shared/data.js";
 import { state } from "../shared/state.js";
-import { mountStaff } from "../staff/index.js";
-import { traceScoreFromMessages } from "./score.js";
 import {
   cleanTitle,
   escapeHtml,
@@ -271,7 +269,6 @@ export function bindTraceOverview(root, { onRefilter, onTurn } = {}) {
       const page = modes.trace.pages[state.activePageIndex];
       if (!page || !page.sessionId) return;
       page.selectedTurnIndex = Number(button.dataset.traceTurn);
-      page.score = null;
       void fillTraceAt(state.activePageIndex).then(() => {
         if (typeof onTraceTurn === "function") onTraceTurn();
       });
@@ -299,7 +296,6 @@ export async function fillTraceAt(index) {
   page.model = String(detail.model || page.model || "");
   page.kicker = `${escapeHtml(shortSession(page.sessionId))} · ${fmtInt(n)} lượt`;
   page.note = tokenLine(detail);
-  page.score = traceScoreFromMessages(messages);
   page.body = sessionBody(page, detail, messages);
   return true;
 }
@@ -324,7 +320,6 @@ function sessionBody(page, detail, messages) {
   const picker = turnPicker(page.turns || [], selected);
   return `<div class="music-page${failed ? " is-failed" : ""}">
       ${picker}
-      <article class="entry entry-thyca" aria-label="Nhạc cốt lượt"></article>
       ${timeline}
     </div>`;
 }
@@ -344,13 +339,7 @@ function turnPicker(turns, selected) {
 
 // ---- chrome helpers called from render.js ----
 
-export function mountTraceStaff(root, page) {
-  if (!root || !page || !page.score) return;
-  const article = root.querySelector(".entry-thyca");
-  if (article) mountStaff(article, page.score);
-}
-
-// Mini-player is a plaque: title + model · status. No replay button.
+// Mini-player is a plaque: title + model · status.
 export function updateMiniPlayer(page) {
   const isTurn = Boolean(page && page.sessionId);
   el.miniPlayer.hidden = !isTurn;

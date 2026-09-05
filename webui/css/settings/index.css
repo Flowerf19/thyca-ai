@@ -5,7 +5,7 @@
   display: grid;
   grid-template-columns: 1fr;
   gap: var(--space-2xl);
-  max-width: 72rem;
+  max-width: none;
 }
 
 .settings-form > .settings-section {
@@ -15,7 +15,7 @@
 /* Provider cards lay out horizontally, wrapping as space runs out. */
 .provider-list {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+  grid-template-columns: 1fr;
   gap: var(--space-md);
   margin-bottom: var(--space-md);
 }
@@ -24,7 +24,7 @@
   margin: 0 0 var(--space-lg);
   border: 1px solid var(--color-rule-2);
   border-radius: var(--radius-sm);
-  background: var(--color-paper-2);
+  background: var(--color-paper-3);
 }
 
 .settings-details > summary {
@@ -69,7 +69,7 @@
   padding: var(--space-md);
   border: var(--rule) solid var(--color-rule-2);
   border-radius: var(--radius-sm);
-  background: var(--color-paper-2);
+  background: var(--color-paper-3);
 }
 
 .provider-card .canon-head h4 {
@@ -104,19 +104,23 @@
   gap: var(--space-md);
 }
 
-.settings-form .settings-status {
+.settings-status {
   font-size: var(--text-sm);
   color: var(--color-muted);
   min-height: 1em;
   margin: 0;
 }
 
-.settings-form .settings-status.is-error {
+.settings-status.is-error {
   color: var(--color-danger);
 }
 
-.settings-form .settings-status.is-ok {
+.settings-status.is-ok {
   color: var(--color-ok);
+}
+
+.settings-box .settings-status {
+  grid-column: 1 / -1;
 }
 
 .settings-field {
@@ -172,7 +176,7 @@
   padding: var(--space-md);
   border: var(--rule) solid var(--color-rule-2);
   border-radius: var(--radius-sm);
-  background: var(--color-paper-2);
+  background: var(--color-paper-3);
 }
 
 .settings-box .settings-cost-row {
@@ -279,12 +283,44 @@
 .pricing-page {
   display: grid;
   gap: var(--space-lg);
-  max-width: 44rem;
+  max-width: none;
 }
 
-.pricing-list {
-  display: grid;
-  gap: var(--space-lg);
+.pricing-page > .settings-button {
+  justify-self: start;
+}
+
+.pricing-page > .settings-box[data-add-model-box] {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  width: min(100%, 52rem);
+  justify-self: center;
+}
+
+.pricing-page > .settings-box[data-add-model-box] .settings-pricing-field,
+.pricing-page > .settings-box[data-add-model-box] .mem-entry-actions {
+  grid-column: 1 / -1;
+}
+
+.pricing-page > .settings-box[data-add-model-box] .mem-entry-actions {
+  justify-content: center;
+}
+
+@media (max-width: 40rem) {
+  .pricing-page > .settings-box[data-add-model-box] {
+    grid-template-columns: 1fr;
+  }
+}
+
+.pricing-card:has(.pricing-edit-row:not([hidden])) > .mem-entry-actions {
+  display: none;
+}
+
+.pricing-list.mem-day-list {
+  margin-block-start: 0;
+}
+
+.pricing-card:has(.pricing-edit-row:not([hidden])) {
+  grid-column: 1 / -1;
 }
 
 .pricing-card .canon-head {

@@ -658,9 +658,14 @@ def test_chat_js_shipped() -> None:
         (chat_dir / name).read_text(encoding="utf-8")
         for name in ("index.js", "live.js", "turn.js", "pages.js", "view.js")
     )
+    assert "threadHtml" in chat
+    assert "statusHtml" in chat
     assert "flushTools" in chat
     assert "tool-kicker" in chat
     assert "Tools used:" in chat
+    assert "status-ticker" in chat
+    assert 'statusHtml(rec.statusText, rec.ambientText)' in chat
+    assert 'event.type === "skill.started"' in chat
     pages = (chat_dir / "pages.js").read_text(encoding="utf-8")
     start = pages.index("export async function createChatSession")
     # Next export after createChatSession in pages.js
@@ -681,6 +686,31 @@ def test_chat_js_shipped() -> None:
     script = WEBUI.parent / "scripts" / "retitle_sessions.py"
     assert script.is_file()
     assert "retitle_missing" in script.read_text(encoding="utf-8")
+
+
+def test_chat_nav_is_mode_switch_not_new_session() -> None:
+    app_js = (WEBUI / "js" / "app.js").read_text(encoding="utf-8")
+    html = (WEBUI / "index.html").read_text(encoding="utf-8")
+    render = (WEBUI / "js" / "render.js").read_text(encoding="utf-8")
+    bind = app_js[app_js.index("function bind()") :]
+    chat_click = bind[bind.index("el.modeList.addEventListener") : bind.index("const searchToggle")]
+    assert "openNewPage" not in chat_click
+    assert 'renderMode(button.dataset.mode)' in chat_click
+    assert 'id="new-page"' in html
+    assert 'getElementById("new-page")' in app_js
+    assert "newer.disabled = busy" in app_js
+    assert "snapToActive" in render
+    provider = (WEBUI / "js" / "settings" / "provider.js").read_text(encoding="utf-8")
+    box_start = provider.index("export function addModelBoxHtml")
+    box_end = provider.index("export function addModelPage")
+    box = provider[box_start:box_end]
+    page_start = provider.index("export function addModelPage")
+    page = provider[page_start : page_start + 1800]
+    assert "limitsFieldsHtml" not in box
+    assert "reasoningHtml" not in box
+    assert "${limitsFieldsHtml()}" in page
+    assert "${reasoningHtml()}" in page
+    assert not (WEBUI / "js" / "staff").exists()
 
 
 def test_create_prunes_previous_blank(tmp_path: Path) -> None:

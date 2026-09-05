@@ -1,6 +1,7 @@
 import { modes } from "../shared/data.js";
 import { state } from "../shared/state.js";
 import { el } from "../shared/dom.js";
+import { collapseNames } from "./status.js";
 import { ambientLineForEvent } from "./ambient.js";
 import { entryHtml, statusHtml } from "./view.js";
 
@@ -23,8 +24,18 @@ function makeLive(text) {
     text: text || "",
     activeOps: new Map(),
     batchNames: [],
+    seenTools: [],
     lastOperationalText: "",
   };
+}
+
+export function paintLiveTools(rec) {
+  if (!el.toolMeter) return;
+  const tools = collapseNames(rec && rec.seenTools);
+  el.toolMeter.textContent = tools;
+  el.toolMeter.hidden = !tools;
+  if (tools) el.toolMeter.setAttribute("title", tools);
+  else el.toolMeter.removeAttribute("title");
 }
 
 export function startLiveTurn(sessionId, text) {
@@ -112,6 +123,7 @@ export function restoreLiveTurn(root, page) {
   if (!status) return false;
   status.classList.toggle("is-error", rec.failed);
   status.classList.toggle("is-waiting", rec.waiting);
+  paintLiveTools(rec);
   return true;
 }
 

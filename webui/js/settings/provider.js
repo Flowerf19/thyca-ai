@@ -90,6 +90,24 @@ function reasoningHtml() {
   return fieldHtml(field);
 }
 
+export function addModelBoxHtml() {
+  return `<div class="settings-box" data-add-model-box hidden>
+      ${providerSelectHtml()}
+      <label class="settings-field"><span>Model ID</span>
+        <div class="settings-row" id="add-model-row">
+          <input class="settings-input" type="text" data-add-model spellcheck="false" autocomplete="off" placeholder="provider/model-id" />
+        </div>
+      </label>
+      <div class="settings-field settings-pricing-field"><span>Giá token (USD / 1M)</span>${costInputs("add", null)}
+      </div>
+      <p class="settings-status" aria-live="polite"></p>
+      <div class="mem-entry-actions">
+        <button type="button" class="settings-button is-primary" data-add-save>Thêm</button>
+        <button type="button" class="settings-button" data-add-cancel>Hủy</button>
+      </div>
+    </div>`;
+}
+
 export function addModelPage(meta) {
   return {
     title: "Thêm model",
@@ -104,22 +122,9 @@ export function addModelPage(meta) {
           ${providerFieldsHtml()}
         </section>
         <section class="settings-section">
-          <h3 class="settings-legend">Thêm model</h3>
-          <div class="settings-box" data-add-model-box>
-            ${providerSelectHtml()}
-            <label class="settings-field"><span>Model ID</span>
-              <div class="settings-row" id="add-model-row">
-                <input class="settings-input" type="text" data-add-model spellcheck="false" autocomplete="off" placeholder="provider/model-id" />
-              </div>
-            </label>
-            ${reasoningHtml()}
-            ${limitsFieldsHtml()}
-            <div class="settings-field settings-pricing-field"><span>Giá token (USD / 1M)</span>${costInputs("add", null)}
-            </div>
-            <div class="mem-entry-actions"><button type="button" class="settings-button is-primary" data-add-save>Thêm</button></div>
-          </div>
-          <div class="add-model-extra" data-add-model-extra></div>
-          <button type="button" class="settings-button settings-block-button" data-add-model-box-btn>+ Thêm model</button>
+          <h3 class="settings-legend">Giới hạn</h3>
+          ${reasoningHtml()}
+          ${limitsFieldsHtml()}
         </section>
         <div class="settings-actions-row">
           <p class="settings-status" aria-live="polite"></p>

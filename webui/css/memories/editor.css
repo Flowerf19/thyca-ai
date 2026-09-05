@@ -264,18 +264,25 @@
   padding-inline-start: var(--space-md);
 }
 
+.mem-entry-cite {
+  display: grid;
+  gap: 0.35rem;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
 .mem-entry-cite span {
   display: block;
   font-variant-numeric: tabular-nums;
-  line-height: 1.6;
+  line-height: 1.45;
 }
 
 .mem-entry-actions {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-evenly;
   gap: var(--space-md);
   margin-block-start: auto;
-  padding-block-start: var(--space-sm);
+  padding-block-start: var(--space-md);
 }
 
 .mem-reinforce {
@@ -348,5 +355,10 @@
   font-style: normal;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+
+.mem-entry .quote-note cite {
+  letter-spacing: 0;
+  text-transform: none;
 }
 

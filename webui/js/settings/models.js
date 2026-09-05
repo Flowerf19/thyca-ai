@@ -1,5 +1,6 @@
 import { postJson } from "../shared/util.js";
 import { state } from "../shared/state.js";
+import { addModelBoxHtml } from "./provider.js";
 import {
   costInputs,
   defaultModel,
@@ -32,7 +33,9 @@ export function modelsPage(count) {
     tone: "settings",
     kicker: "models · mặc định + giá token",
     body: `<div class="pricing-page">
-        <div class="pricing-list">${cards || `<p class="settings-hint">Chưa có model nào — thêm ở trang "Thêm model".</p>`}</div>
+        <div class="pricing-list mem-day-list">${cards || `<p class="settings-hint">Chưa có model nào.</p>`}</div>
+        <button type="button" class="settings-button" data-add-model-box-btn>+ Thêm model</button>
+        ${addModelBoxHtml()}
         <p class="settings-status" aria-live="polite"></p>
       </div>`,
   };
@@ -42,16 +45,8 @@ function modelCard(name, model) {
   const isDefault = name === defaultModel;
   const baseNote = model.baseUrl ? esc(model.baseUrl) : "dùng Base URL chung";
   return `<article class="mem-entry pricing-card${isDefault ? " is-default" : ""}" data-model="${esc(name)}">
-      <div class="canon-head">
-        <h3 class="pricing-name-text">${esc(name)}${isDefault ? ' <span class="page-tag page-tag-chat">mặc định</span>' : ""}</h3>
-        <div class="mem-entry-actions">
-          ${isDefault ? "" : '<button type="button" class="mem-reinforce" data-set-default>Đặt mặc định</button>'}
-          <button type="button" class="mem-reinforce" data-model-edit>Sửa</button>
-          <button type="button" class="mem-reinforce" data-model-delete>Xóa</button>
-        </div>
-      </div>
+      <h3 class="pricing-name-text">${esc(name)}${isDefault ? ' <span class="page-tag page-tag-chat">mặc định</span>' : ""}</h3>
       <p class="settings-hint">${baseNote}</p>
-      ${costInputs("card", model)}
       <div class="pricing-edit-row" hidden>
         <label class="settings-field"><span>Model ID</span><input type="text" class="settings-input" data-edit-name value="${esc(name)}" spellcheck="false" /></label>
         <label class="settings-field"><span>Base URL riêng (trống = dùng chung)</span><input type="text" class="settings-input" data-edit-baseurl value="${esc(model.baseUrl || "")}" spellcheck="false" placeholder="https://…/v1" /></label>
@@ -60,6 +55,11 @@ function modelCard(name, model) {
           <button type="button" class="mem-reinforce" data-model-save>Lưu</button>
           <button type="button" class="mem-reinforce" data-model-cancel>Hủy</button>
         </div>
+      </div>
+      <div class="mem-entry-actions">
+        ${isDefault ? "" : '<button type="button" class="mem-reinforce" data-set-default>Đặt mặc định</button>'}
+        <button type="button" class="mem-reinforce" data-model-edit>Sửa</button>
+        <button type="button" class="mem-reinforce" data-model-delete>Xóa</button>
       </div>
     </article>`;
 }
@@ -105,39 +105,26 @@ export function bindAddModel(root) {
     addSave.dataset.bound = "1";
     addSave.addEventListener("click", () => void addModel(root));
   }
-  // "+ Thêm model": clone the add-model box as a blank extra block.
   const addBoxBtn = root.querySelector("[data-add-model-box-btn]");
   if (addBoxBtn) {
     delete addBoxBtn.dataset.bound;
     addBoxBtn.dataset.bound = "1";
     addBoxBtn.addEventListener("click", () => {
-      const source = root.querySelector("[data-add-model-box]");
-      const extra = root.querySelector("[data-add-model-extra]");
-      if (!source || !extra) return;
-      const clone = source.cloneNode(true);
-      clone.removeAttribute("data-add-model-box");
-      clone.dataset.extraBox = "1";
-      // cloneNode không copy listener: xóa flag bound rồi bind lại
-      // input + select trong box clone (TASK-031).
-      clone.querySelectorAll("[data-add-model], [data-add-provider]").forEach((n) => delete n.dataset.bound);
-      // Extra boxes skip limits (form-level, saved once) but keep their own
-      // Thêm button, which binds to the same addModel flow.
-      clone.querySelectorAll("[data-key^=\"limits.\"]").forEach((n) => n.closest(".settings-field")?.remove());
-      extra.appendChild(clone);
-      bindModelInput(clone.querySelector("[data-add-model]"), root);
-      clone.querySelectorAll("[data-add-provider]").forEach((sel) => {
-        if (sel.dataset.bound) return;
-        sel.dataset.bound = "1";
-        sel.addEventListener("change", () => {
-          const input = clone.querySelector("[data-add-model]");
-          setModelOptions([]);
-          setModelOptionsEndpoint("");
-          void fetchModels(root, input).then(() => {
-            if (input && modelOptions.length) openModelDropdown(input, input.value);
-          });
-        });
-      });
-      clone.querySelector("[data-add-model]")?.focus();
+      const box = root.querySelector("[data-add-model-box]");
+      if (!box) return;
+      box.hidden = false;
+      addBoxBtn.hidden = true;
+      box.querySelector("[data-add-model]")?.focus();
+    });
+  }
+  const addCancel = root.querySelector("[data-add-cancel]");
+  if (addCancel) {
+    delete addCancel.dataset.bound;
+    addCancel.dataset.bound = "1";
+    addCancel.addEventListener("click", () => {
+      const box = root.querySelector("[data-add-model-box]");
+      if (box) box.hidden = true;
+      if (addBoxBtn) addBoxBtn.hidden = false;
     });
   }
 }
@@ -168,7 +155,6 @@ async function addModel(root) {
   try {
     await persist(root, { models, providerModel: makeDefault ? firstName : undefined });
     if (makeDefault) setDefaultModel(firstName);
-    root.querySelector("[data-add-model-extra]")?.replaceChildren();
     await refreshPages(root, state.activePageIndex);
     const note = added.length > 1 ? `Đã thêm ${added.length} model.` : makeDefault ? `Đã thêm ${firstName} (mặc định).` : `Đã thêm ${firstName}.`;
     setStatus(root, note, "ok");

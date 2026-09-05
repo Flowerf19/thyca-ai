@@ -150,10 +150,10 @@ def test_meter_text_compact_and_title_full(node: str) -> None:
         "cost": 0.012345,
     }
     assert _eval(node, f"m.meterText({json.dumps(summary)})") == (
-        "input 607.5K · cache 70M · out 82.2K · ctx 128K · $0,0123"
+        "input 607.5K · cache 70M · output 82.2K · context 128K · cost $0,0123"
     )
     assert _eval(node, f"m.meterTitle({json.dumps(summary)})") == (
-        "lượt vừa rồi — input 607.522 · cache 70.000.000 · out 82.200 · ctx 128.000 · $0,0123"
+        "lượt vừa rồi — input 607.522 · cache 70.000.000 · output 82.200 · context 128.000 · cost $0,0123"
     )
     assert _eval(node, "m.meterText({fresh: null})") == ""
 
@@ -168,26 +168,57 @@ def test_meter_text_hides_cache_badge_when_zero(node: str) -> None:
         "cost": 0.001,
     }
     assert _eval(node, f"m.meterText({json.dumps(summary)})") == (
-        "input 5.000 · out 10 · ctx 5.000 · $0,0010"
+        "input 5.000 · output 10 · context 5.000 · cost $0,0010"
     )
     assert _eval(node, f"m.meterTitle({json.dumps(summary)})") == (
-        "lượt vừa rồi — input 5.000 · out 10 · ctx 5.000 · $0,0010"
+        "lượt vừa rồi — input 5.000 · output 10 · context 5.000 · cost $0,0010"
     )
     zero_out = {**summary, "completion": 0}
     assert _eval(node, f"m.meterText({json.dumps(zero_out)})") == (
-        "input 5.000 · ctx 5.000 · $0,0010"
+        "input 5.000 · context 5.000 · cost $0,0010"
     )
     assert _eval(node, f"m.meterTitle({json.dumps(zero_out)})") == (
-        "lượt vừa rồi — input 5.000 · ctx 5.000 · $0,0010"
+        "lượt vừa rồi — input 5.000 · context 5.000 · cost $0,0010"
     )
+
+
+def test_last_turn_tools_collapses_in_first_seen_order(node: str) -> None:
+    messages = [
+        {"role": "user", "content": "old"},
+        {"role": "assistant", "content": "x", "tool_calls": [{"name": "bash"}]},
+        {"role": "user", "content": "now"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {"name": "memory_search"},
+                {"name": "bash"},
+                {"name": "memory_search"},
+                {"name": "bash"},
+                {"name": "memory_recent"},
+                {"name": "memory_get"},
+                {"name": "memory_get"},
+            ],
+        },
+        {"role": "assistant", "content": "done"},
+    ]
+    assert _eval(node, f"m.lastTurnTools({json.dumps(messages)})") == (
+        "memory_search ×2 · bash ×2 · memory_recent · memory_get ×2"
+    )
+    assert _eval(node, "m.lastTurnTools([])") == ""
+    assert _eval(node, 'm.lastTurnTools([{role:"user",content:"x"}])') == ""
 
 
 def test_meter_wired_in_dom_and_composer_meta() -> None:
     dom = (WEBUI / "js" / "shared" / "dom.js").read_text(encoding="utf-8")
     assert 'meter: document.getElementById("meter")' in dom
+    assert 'toolMeter: document.getElementById("tool-meter")' in dom
     html = (WEBUI / "index.html").read_text(encoding="utf-8")
     assert 'id="meter"' in html
+    assert 'id="tool-meter"' in html
+    assert 'id="new-page"' in html
     assert "composer-meta" in html
+    assert "composer-chip-row" in html
     # meter reuses .hint — no new design system
     assert 'class="hint" id="meter"' in html
     chat_index = (WEBUI / "js" / "chat" / "index.js").read_text(encoding="utf-8")
@@ -195,7 +226,7 @@ def test_meter_wired_in_dom_and_composer_meta() -> None:
     render = (WEBUI / "js" / "render.js").read_text(encoding="utf-8")
     assert "renderComposerMeter(el.meter" in render
     turn = (WEBUI / "js" / "chat" / "turn.js").read_text(encoding="utf-8")
-    assert "renderComposerMeter(el.meter, completed.messages)" in turn
+    assert "renderComposerMeter(el.meter, completed.messages, el.toolMeter)" in turn
 
 
 def test_session_detail_carries_meta_for_meter(tmp_path: Path) -> None:

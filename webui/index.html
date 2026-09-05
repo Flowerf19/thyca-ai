@@ -25,23 +25,16 @@
             </button>
           </header>
 
-          <label class="search-field" for="page-search">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="5.8" /><path d="m15.2 15.2 4.1 4.1" /></svg>
-            <span class="visually-hidden">Tìm phiên, memory, lượt</span>
-            <input id="page-search" type="search" placeholder="Tìm phiên, file, lượt…" autocomplete="off" />
-            <kbd>/</kbd>
-          </label>
-
-          <button class="new-page" id="new-page" type="button">
-            <span class="new-page-mark" aria-hidden="true">+</span>
-            <span>Phiên mới</span>
-            <span class="new-page-key">N</span>
-          </button>
-
-          <nav class="library" aria-label="Các bề mặt">
+          <nav class="library" aria-label="THYCA AI">
             <div class="library-heading">
-              <span>Bề mặt</span>
-              <span class="library-count"></span>
+              <span>THYCA AI</span>
+              <button class="search-toggle" id="search-toggle" type="button" aria-label="Tìm phiên" aria-expanded="false" aria-controls="page-search">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="5.8" /><path d="m15.2 15.2 4.1 4.1" /></svg>
+              </button>
+              <label class="search-field" id="search-field" for="page-search" hidden>
+                <span class="visually-hidden">Tìm phiên, memory, lượt</span>
+                <input id="page-search" type="search" placeholder="Tìm phiên, file, lượt…" autocomplete="off" />
+              </label>
             </div>
             <div class="mode-list" id="mode-list">
               <button class="mode-link is-active" type="button" data-mode="chat" aria-current="page">
@@ -76,22 +69,21 @@
           </nav>
 
           <div class="page-list-wrap">
-            <div class="library-heading">
-              <span id="page-list-label">Phiên gần đây</span>
-              <button class="text-button" id="sort-pages" type="button">Mới nhất</button>
+            <span id="page-list-label" class="visually-hidden">Phiên gần đây</span>
+            <div class="page-list-toolbar">
+              <button class="text-button" id="sort-pages" type="button">Hoạt động gần đây</button>
+              <button class="text-button" id="new-page" type="button">Phiên mới</button>
             </div>
             <div class="page-list" id="page-list" aria-live="polite"></div>
+            <nav class="page-list-pager" id="page-list-pager" hidden>
+              <button class="text-button" id="page-list-prev" type="button" aria-label="Trang trước">‹</button>
+              <span id="page-list-pos"></span>
+              <button class="text-button" id="page-list-next" type="button" aria-label="Trang sau">›</button>
+            </nav>
             <p class="search-empty" id="search-empty" hidden>Không thấy mục nào.</p>
           </div>
 
           <footer class="sidebar-foot">
-            <div class="foot-row">
-              <button class="foot-action" type="button" data-mode="settings">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7ZM4.8 13.4l-1.1.8 1.5 2.6 1.3-.5a7.8 7.8 0 0 0 1.8 1.1l.2 1.4h3l.2-1.4a7.8 7.8 0 0 0 1.8-1.1l1.3.5 1.5-2.6-1.1-.8c.1-.6.1-1.2 0-1.8l1.1-.8-1.5-2.6-1.3.5a7.8 7.8 0 0 0-1.8-1.1l-.2-1.4h-3l-.2 1.4a7.8 7.8 0 0 0-1.8 1.1l-1.3-.5-1.5 2.6 1.1.8c-.1.6-.1 1.2 0 1.8Z" /></svg>
-                <span>Cài đặt</span>
-              </button>
-              <span class="sync-note"><i aria-hidden="true"></i> ~/.thyca</span>
-            </div>
             <p class="foot-note"><span>Thyca harness</span><a class="foot-github" href="https://github.com/Flowerf19/thyca-ai" rel="noreferrer" aria-label="GitHub Thyca"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.865 8.166 6.839 9.489.5.092.682-.217.682-.482 0-.237-.009-.866-.013-1.7-2.782.603-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.463-1.11-1.463-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.564 9.564 0 0 1 12 6.844a9.56 9.56 0 0 1 2.504.337c1.909-1.294 2.748-1.025 2.748-1.025.546 1.377.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48A10.01 10.01 0 0 0 22 12c0-5.523-4.477-10-10-10z" /></svg></a></p>
           </footer>
         </div>
@@ -109,9 +101,6 @@
           </div>
           <div class="topbar-actions">
             <div class="mini-player" id="mini-player" hidden>
-              <button class="mini-play" id="mini-play" type="button" aria-label="Phát lại lượt" aria-pressed="false">
-                <span class="mini-play-symbol" aria-hidden="true">▶</span>
-              </button>
               <div class="mini-player-copy">
                 <strong id="mini-phase">think</strong>
                 <small id="mini-round">round 2 / 10</small>
@@ -137,7 +126,10 @@
 
         <form class="composer" id="composer">
             <div class="composer-inner" id="field">
-              <div class="composer-chips" id="composer-chips" aria-label="Gợi ý nhanh"></div>
+              <div class="composer-chip-row">
+                <div class="composer-chips" id="composer-chips" aria-label="Gợi ý nhanh"></div>
+                <span class="hint" id="tool-meter" hidden></span>
+              </div>
               <label class="visually-hidden" for="line">Tin nhắn</label>
               <div class="writing-line">
                 <textarea

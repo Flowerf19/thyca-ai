@@ -156,8 +156,11 @@
   font-size: var(--text-sm);
   font-style: italic;
   letter-spacing: 0.02em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.tool-strip summary {
+  width: max-content;
+  cursor: pointer;
 }
 
 .tool-kicker {
@@ -232,4 +235,25 @@
 
 .entry-thyca .entry-copy {
   color: var(--color-ink-2);
+}
+
+.entry.is-enter {
+  animation: entry-in 320ms var(--ease-out) both;
+}
+
+@keyframes entry-in {
+  from {
+    opacity: 0.85;
+    transform: translateY(0.6rem) scale(0.97);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.soft-line {
+  color: var(--color-muted);
+  font-size: var(--text-md);
 }

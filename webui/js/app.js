@@ -1,7 +1,7 @@
 import { beginOutgoingTurn, createChatSession, discardRunningLiveTurns, isViewingSession, removeStatus, sendChatTurn, settleIncoming } from "./chat/index.js";
 import { el } from "./shared/dom.js";
 import { closeDrawer, hideDrawerIfMobile, toggleDrawer } from "./shared/drawer.js";
-import { renderMode, renderPage, renderPageList, setTracePlaying } from "./render.js";
+import { renderMode, renderPage, renderPageList } from "./render.js";
 import { getJson, postJson } from "./shared/util.js";
 import { state } from "./shared/state.js";
 import { hydrateSettings, renderModeSettings } from "./settings/index.js";
@@ -76,6 +76,9 @@ function armIdle() {
 async function openNewPage() {
   el.line.value = "";
   clearError();
+  if (state.activeMode !== "chat") {
+    await renderMode("chat");
+  }
   if (state.chatLive) {
     try {
       await createChatSession();
@@ -83,8 +86,6 @@ async function openNewPage() {
       showError(error instanceof Error ? error.message : "Không tạo được phiên.");
       return;
     }
-  } else {
-    await renderMode("chat");
   }
   renderPage(state.activePageIndex);
   el.line.focus();
@@ -110,7 +111,7 @@ async function submitLine() {
         else renderPageList(el.pageSearch.value);
       } else {
         // Turn finished in the background: page.body already updated by
-        // applyDetail. restoreLiveTurn settles staff when the user returns.
+        // applyDetail. restoreLiveTurn remounts the thinking line on return.
         renderPageList(el.pageSearch.value);
       }
     } else {
@@ -145,22 +146,50 @@ async function submitLine() {
 function bind() {
   el.modeList.addEventListener("click", (event) => {
     const button = event.target.closest("[data-mode]");
-    if (button) {
-      renderMode(button.dataset.mode);
-      armIdle();
-    }
+    if (!button) return;
+    renderMode(button.dataset.mode);
+    armIdle();
   });
+  const searchToggle = document.getElementById("search-toggle");
+  const searchField = document.getElementById("search-field");
+  const searchToolbar = searchToggle && searchToggle.closest(".library-heading");
+  const openSearch = () => {
+    if (!searchField || !searchToggle) return;
+    searchField.hidden = false;
+    searchToggle.setAttribute("aria-expanded", "true");
+    searchToolbar?.classList.add("is-searching");
+    el.pageSearch.focus();
+  };
+  const closeSearch = () => {
+    if (!searchField || !searchToggle || el.pageSearch.value.trim()) return;
+    searchField.hidden = true;
+    searchToggle.setAttribute("aria-expanded", "false");
+    searchToolbar?.classList.remove("is-searching");
+    el.pageSearch.blur();
+  };
+  searchToggle?.addEventListener("click", () => openSearch());
   el.pageSearch.addEventListener("input", () => renderPageList(el.pageSearch.value));
+  el.pageSearch.addEventListener("blur", () => {
+    window.setTimeout(closeSearch, 0);
+  });
   el.pageList.addEventListener("click", (event) => {
     if (event.target.closest(".page-card")) armIdle();
   });
   document.getElementById("sort-pages").addEventListener("click", (event) => {
     state.pageOrderNewest = !state.pageOrderNewest;
-    event.currentTarget.textContent = state.pageOrderNewest ? "Mới nhất" : "Cũ nhất";
-    el.pageList.classList.toggle("is-reversed", !state.pageOrderNewest);
+    event.currentTarget.textContent = state.pageOrderNewest ? "Hoạt động gần đây" : "Cũ nhất";
+    renderPageList(el.pageSearch.value, { snapToActive: true });
   });
-  document.getElementById("new-page").addEventListener("click", () => {
+  document.getElementById("new-page")?.addEventListener("click", () => {
     void openNewPage().then(armIdle);
+  });
+  document.getElementById("page-list-prev")?.addEventListener("click", () => {
+    state.listPage -= 1;
+    renderPageList(el.pageSearch.value);
+  });
+  document.getElementById("page-list-next")?.addEventListener("click", () => {
+    state.listPage += 1;
+    renderPageList(el.pageSearch.value);
   });
   el.openSidebar.addEventListener("click", toggleDrawer);
   el.closeSidebar.addEventListener("click", closeDrawer);
@@ -168,13 +197,20 @@ function bind() {
   document.addEventListener("keydown", (event) => {
     if (event.key.toLocaleLowerCase() === "n" && document.activeElement !== el.pageSearch && document.activeElement !== el.line) {
       event.preventDefault();
-      document.getElementById("new-page").click();
+      document.getElementById("new-page")?.click();
     }
     if (event.key === "/" && document.activeElement !== el.pageSearch && document.activeElement !== el.line) {
       event.preventDefault();
-      el.pageSearch.focus();
+      openSearch();
     }
     if (event.key === "Escape") {
+      if (document.activeElement === el.pageSearch) {
+        el.pageSearch.value = "";
+        renderPageList("");
+        closeSearch();
+        event.preventDefault();
+        return;
+      }
       closeDrawer();
       el.pageSearch.blur();
     }
@@ -206,9 +242,6 @@ function bind() {
   });
   el.idleDismiss?.addEventListener("click", () => {
     armIdle();
-  });
-  el.miniPlay.addEventListener("click", () => {
-    setTracePlaying(el.miniPlay.getAttribute("aria-pressed") !== "true");
   });
 }
 

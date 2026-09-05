@@ -1,4 +1,4 @@
-"""Node tests for the operational event -> status text mapper — webui/js/staff/status.js.
+"""Node tests for the operational event -> status text mapper — webui/js/chat/status.js.
 
 Runs in Node with --input-type=module so no DOM is needed; mirrors the eval
 helper style of tests/test_ndjson.py.
@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "webui" / "js" / "staff" / "status.js"
+SCRIPT = ROOT / "webui" / "js" / "chat" / "status.js"
 
 
 @pytest.fixture(scope="module")
@@ -124,6 +124,7 @@ def test_collapse_names_counts_duplicates_in_first_seen_order(node: str) -> None
     )
     assert _eval(node, 'collapseNames(["bash"])') == "bash"
     assert _eval(node, "collapseNames([])") == ""
+    assert _eval(node, 'collapseNames(["bash", "bash", "read"], ", ")') == "bash ×2, read"
 
 
 def test_batch_done_text_does_not_sound_like_turn_complete(node: str) -> None:

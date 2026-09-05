@@ -30,53 +30,50 @@ export function leafEntry(leaf, reason = "") {
   const gets = Number(leaf.get_count) || 0;
   const searches = Number(leaf.search_count) || 0;
   const day = leaf.timeline_day || (leaf.is_today ? "hôm nay" : "");
-  // cite 2 dòng: giờ - ngày / get · search · hết hạn · id
   const chunkDay = chunkDate(leaf.chunk_id);
-  const citeTop = [time, chunkDay || (day && day !== "hôm nay" ? day : "")].filter(Boolean).join(" - ");
-  const citeMeta = [
+  const meta = [
+    time,
+    chunkDay || (day && day !== "hôm nay" ? day : ""),
     `get ${gets}`,
     `search ${searches}`,
     leaf.expires_at ? `hết hạn ${fmtTs(leaf.expires_at)}` : "",
-    leaf.chunk_id ? `id ${leaf.chunk_id}` : "",
-  ]
-    .filter(Boolean)
-    .join(" · ");
-  const cite = [reason, citeTop, citeMeta].filter(Boolean);
-  const openable = reason ? ` data-open-leaf="${escapeHtml(leaf.chunk_id || "")}" title="Bấm để xem leaf trong ngày"` : "";
-  return `<article class="mem-entry${reason ? " is-suggest" : ""}" data-chunk-id="${escapeHtml(leaf.chunk_id || "")}" data-topic="${escapeHtml(topic)}" data-snippet="${escapeHtml(leaf.snippet || "")}"${openable}>
+  ].filter(Boolean).join(" · ");
+  return `<article class="mem-entry" data-chunk-id="${escapeHtml(leaf.chunk_id || "")}" data-topic="${escapeHtml(topic)}" data-snippet="${escapeHtml(leaf.snippet || "")}">
       <h3>${escapeHtml(topic)}</h3>
       <blockquote class="quote-note">
         <p>${escapeHtml(leaf.snippet || "(trống)")}</p>
-        <cite class="mem-entry-cite">${cite.map((line) => `<span>${escapeHtml(line)}</span>`).join("") || escapeHtml(leaf.chunk_id || "")}</cite>
+        <cite class="mem-entry-cite">${reason ? `<span>${escapeHtml(reason)}</span>` : ""}${meta ? `<span>${escapeHtml(meta)}</span>` : ""}</cite>
       </blockquote>
       <div class="mem-entry-actions">
         <button type="button" class="mem-reinforce" data-edit="${escapeHtml(leaf.session_id || "")}">Sửa</button>
-        <button type="button" class="mem-forget" data-forget="${escapeHtml(leaf.session_id || "")}">Xóa</button>
+        <button type="button" class="mem-forget" data-forget="${escapeHtml(leaf.session_id || "")}">Quên</button>
         <button type="button" class="mem-reinforce" data-reinforce="${escapeHtml(leaf.session_id || "")}">Gia hạn</button>
       </div>
     </article>`;
 }
 
-// chunk_id dạng "YYYY-MM-DD#hash#n" → "YYYY-M-D"
+// chunk_id dạng "YYYY-MM-DD#hash#n" → "YYYY-MM-DD"
 function chunkDate(chunkId) {
   const day = String(chunkId || "").split("#")[0];
-  if (!/^\d{4}-\d{2}-\d{2}/.test(day)) return "";
-  const [y, m, d] = day.split("-");
-  return `${y}-${Number(m)}-${Number(d)}`;
+  return /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : "";
 }
 
-export function suggestBlock(rows) {
-  if (!rows.length) {
-    return `<div class="suggest-inline"><h3>Đề xuất loại bỏ</h3><p class="suggest-empty">Không có gợi ý.</p></div>`;
+const RANK_CAP = 8;
+
+export function rankLeaves(leaves, kind) {
+  const list = (leaves || []).slice();
+  if (kind === "get") {
+    list.sort((a, b) => (Number(b.get_count) || 0) - (Number(a.get_count) || 0));
+  } else if (kind === "search") {
+    list.sort((a, b) => (Number(b.search_count) || 0) - (Number(a.search_count) || 0));
+  } else {
+    list.sort((a, b) => useScore(a) - useScore(b));
   }
-  // card giống leaf trong "Theo ngày", lý do nằm trong card, bấm để xem trong ngày
-  const cards = rows
-    .map((leaf) => leafEntry(leaf, "chưa get/search · ≥ 7 ngày — có thể xóa"))
-    .join("");
-  return `<div class="suggest-inline">
-      <h3>Đề xuất loại bỏ</h3>
-      <div class="mem-day-list">${cards}</div>
-    </div>`;
+  return list.slice(0, RANK_CAP);
+}
+
+function useScore(leaf) {
+  return (Number(leaf.get_count) || 0) + (Number(leaf.search_count) || 0);
 }
 
 export function sortLeaves(leaves) {

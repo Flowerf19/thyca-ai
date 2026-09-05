@@ -2,6 +2,10 @@
 
 Thay đổi của Thyca, viết ngắn gọn cho người dùng.
 
+## 0.7.9 — 05/09/2026
+
+- Gỡ khuông nhạc (chat và Trace): không còn nốt, piano, font Bravura.
+
 ## 0.7.8 — 05/09/2026
 
 - Chat lúc đang nghĩ không còn khuông nhạc: nền giấy ấm, một dòng ambient, một dòng trạng thái thật (đang dùng tool gì).

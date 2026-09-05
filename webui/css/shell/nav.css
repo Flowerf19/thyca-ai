@@ -18,7 +18,7 @@
   flex-direction: column;
   min-width: 0;
   min-height: 100dvh;
-  padding: var(--space-md) var(--space-md) var(--space-2xs);
+  padding: var(--space-md) 0.5rem var(--space-2xs);
   overflow-y: auto;
   /* scrollbar ẩn — mode items không lệch ngang giữa các màn vì không còn scrollbar chiếm chỗ */
   scrollbar-width: none;
@@ -119,68 +119,33 @@
   background: var(--color-sidebar-2);
 }
 
-.new-page {
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
-  width: 100%;
-  min-height: 2.75rem;
-  margin-block-start: var(--space-md);
-  padding: 0 var(--space-xs);
-  background: transparent;
-  color: var(--color-accent);
-  font-size: var(--text-sm);
-  font-weight: 500;
-  text-align: start;
-  transition: color var(--dur-short) var(--ease-out), background-color var(--dur-short) var(--ease-out);
-}
-
-.new-page-mark {
-  display: inline-grid;
-  place-items: center;
-  width: 1.5rem;
-  height: 1.5rem;
-  border: var(--rule) solid currentColor;
-  font-size: var(--text-md);
-  line-height: 1;
-}
-
-.new-page-key {
-  margin-inline-start: auto;
-  color: var(--color-sidebar-muted);
-  font-size: var(--text-xs);
-  letter-spacing: 0.08em;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .new-page:hover {
-    background: var(--color-sidebar-3);
-    color: var(--color-sidebar-ink);
-  }
-}
-
-.new-page:active {
-  transform: translateY(1px);
-}
-
 .library {
-  margin-block-start: var(--space-xl);
+  margin-block-start: 0;
 }
 
 .library-heading {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: var(--space-xs);
   min-width: 0;
 }
 
-.library-count {
-  color: var(--color-sidebar-muted);
-  font-size: var(--text-xs);
+.library-heading.is-searching {
+  justify-content: stretch;
+}
+
+.library-heading.is-searching > span:first-child,
+.library-heading.is-searching .search-toggle {
+  display: none;
+}
+
+.library-heading .search-field {
+  flex: 1;
+  min-width: 0;
+  font-weight: 400;
   letter-spacing: 0;
   text-transform: none;
-  white-space: nowrap;
 }
 
 .mode-list {

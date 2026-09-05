@@ -11,7 +11,7 @@ export {
   leafEntry,
   sortFileKeys,
   sortLeaves,
+  rankLeaves,
   splitHeading,
-  suggestBlock,
 } from "./leaf.js";
 export { bindCanonical, canonicalPages } from "./canonical.js";

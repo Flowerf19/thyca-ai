@@ -1,16 +1,14 @@
-// Build a normalized staff score for a historical turn from its JSONL slice.
-// Reuses the living-room grammar in staff/map.js (A minor, 4/4).
-//
-// Replay fidelity: the server classifies skill loads at payload build time
-// (thyca/trace_api.py, same rule as live) and marks them with a `skill`
-// field — arguments/paths never leave the server. traceScoreFromEvents
-// re-emits skill.* from that marker, matching the live stream.
-import { scoreFromEvents } from "../staff/map.js";
-import { skillNameForRead } from "../staff/replay.js";
+// Replay a JSONL slice as the event sequence the live stream would have
+// emitted. The server classifies skill loads at payload build time
+// (thyca/trace_api.py) and marks them with a `skill` field — arguments/paths
+// never leave the server. traceScoreFromEvents re-emits skill.* from that
+// marker, matching the live stream.
 
-// Replay the JSONL slice as the event sequence the live stream would have
-// emitted. Exported separately so tests can pin skill.*/tool.* wiring —
-// sonority alone cannot distinguish them (same densities by design).
+export function skillNameForRead(call) {
+  if (!call || typeof call.skill !== "string") return null;
+  return call.skill;
+}
+
 export function traceScoreFromEvents(messages) {
   const slice = Array.isArray(messages) ? messages : [];
   if (!slice.length) return [];
@@ -57,10 +55,4 @@ export function traceScoreFromEvents(messages) {
     lastMeta.finish_reason === "error";
   seq.push({ type: failed ? "turn.failed" : "turn.completed" });
   return seq;
-}
-
-export function traceScoreFromMessages(messages) {
-  const slice = Array.isArray(messages) ? messages : [];
-  if (!slice.length) return scoreFromEvents([]);
-  return scoreFromEvents(traceScoreFromEvents(messages));
 }

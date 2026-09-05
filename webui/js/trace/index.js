@@ -2,7 +2,6 @@ export {
   bindTraceOverview,
   fillTraceAt,
   hydrateTrace,
-  mountTraceStaff,
   pagesFromTraces,
   updateMiniPlayer,
 } from "./pages.js";
@@ -15,4 +14,4 @@ export {
   traceFilter,
 } from "./filter.js";
 export { timelineSpans } from "./timeline.js";
-export { traceScoreFromEvents, traceScoreFromMessages } from "./score.js";
+export { skillNameForRead, traceScoreFromEvents } from "./score.js";

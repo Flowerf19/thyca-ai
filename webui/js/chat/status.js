@@ -56,7 +56,7 @@ function publicName(name) {
 }
 
 // First-seen order, identical names collapse: bash, bash, memory_recent → bash ×2 · memory_recent
-export function collapseNames(names) {
+export function collapseNames(names, sep = " · ") {
   const order = [];
   const count = new Map();
   for (const raw of Array.isArray(names) ? names : []) {
@@ -67,7 +67,7 @@ export function collapseNames(names) {
   return order.map((key) => {
     const n = count.get(key);
     return n > 1 ? `${key} ×${n}` : key;
-  }).join(" · ");
+  }).join(sep);
 }
 
 export function batchDoneText(names) {

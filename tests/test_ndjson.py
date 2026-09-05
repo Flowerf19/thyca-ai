@@ -1,7 +1,7 @@
 """Node tests for the NDJSON decoder — webui/js/shared/ndjson.js.
 
 Runs in Node with --input-type=module so no DOM is needed; mirrors the
-eval helper style of tests/test_staff_map.py.
+eval helper style of tests/test_turn_status.py.
 """
 from __future__ import annotations
 

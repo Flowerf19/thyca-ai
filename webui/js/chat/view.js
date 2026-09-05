@@ -2,6 +2,7 @@ import { el } from "../shared/dom.js";
 import { formatMarkdown } from "../shared/markdown.js";
 import { escapeHtml } from "../shared/util.js";
 import { state } from "../shared/state.js";
+import { collapseNames } from "./status.js";
 
 export const EMPTY_BODY =
   '<div class="new-page-empty"><span aria-hidden="true">+</span><p>Chưa có tin nào.</p><small>Nói điều đầu tiên để mở phiên.</small></div>';
@@ -15,16 +16,8 @@ export function threadHtml(messages) {
     const names = pending.map((name) => String(name || "").trim()).filter(Boolean);
     pending.length = 0;
     if (!names.length) return;
-    const counts = new Map();
-    for (const name of names) {
-      counts.set(name, (counts.get(name) || 0) + 1);
-    }
-    const items = [];
-    for (const [name, count] of counts) {
-      items.push(count > 1 ? `${name} ×${count}` : name);
-    }
     parts.push(
-      `<div class="tool-strip"><span class="tool-kicker">Tools used:</span> ${escapeHtml(items.join(", "))}</div>`,
+      `<div class="tool-strip"><span class="tool-kicker">Tools used:</span> ${escapeHtml(collapseNames(names, ", "))}</div>`,
     );
   };
   for (const message of messages) {
@@ -49,8 +42,7 @@ export function threadHtml(messages) {
 
 export function statusHtml(text = "Đang chờ Thyca…", ambient = "") {
   return `<article class="entry entry-thyca entry-status" aria-label="Thyca đang nghĩ" aria-live="off">
-      <div class="entry-thyca-head"><time>thyca</time></div>
-      <p class="status-ambient">${escapeHtml(ambient)}</p>
+      <div class="entry-thyca-head"><time>thyca</time><p class="status-ambient">${escapeHtml(ambient)}</p></div>
       <span class="status-ticker"><span class="status-line">${escapeHtml(text)}</span></span>
     </article>`;
 }
@@ -70,9 +62,8 @@ export function slideStatus(ticker, next) {
 
 export function scrollThread() {
   if (!el.notebook) return;
-  // Đợi layout ổn định (font/ảnh/markdown/staff SVG) rồi mới scroll,
-  // nếu không scrollHeight đo sớm sẽ hụt. Rọi lại 1 nhịp sau 300ms
-  // cho session nhiều staff hoặc font web chưa về.
+  // Đợi layout ổn định (font/ảnh/markdown) rồi mới scroll,
+  // nếu không scrollHeight đo sớm sẽ hụt. Rọi lại 1 nhịp sau 300ms.
   const doScroll = () => {
     if (!el.notebook || !el.notebook.isConnected) return;
     el.notebook.scrollTo({

@@ -2,7 +2,6 @@ import { el } from "../shared/dom.js";
 import { formatMarkdown } from "../shared/markdown.js";
 import { escapeHtml } from "../shared/util.js";
 import { state } from "../shared/state.js";
-import { collapseNames } from "./status.js";
 
 export const EMPTY_BODY =
   '<div class="new-page-empty"><span aria-hidden="true">+</span><p>Chưa có tin nào.</p><small>Nói điều đầu tiên để mở phiên.</small></div>';
@@ -11,39 +10,22 @@ export const LOAD_ERROR_BODY =
 
 export function threadHtml(messages) {
   const parts = [];
-  const pending = [];
-  const flushTools = () => {
-    const names = pending.map((name) => String(name || "").trim()).filter(Boolean);
-    pending.length = 0;
-    if (!names.length) return;
-    parts.push(
-      `<div class="tool-strip"><span class="tool-kicker">Tools used:</span> ${escapeHtml(collapseNames(names, ", "))}</div>`,
-    );
-  };
   for (const message of messages) {
     if (!message || message.role === "system" || message.role === "tool") continue;
-    if (message.role === "assistant" && message.tool_calls?.length) {
-      for (const call of message.tool_calls) {
-        pending.push(call.name || "");
-      }
-      if (!message.content) continue;
-    }
+    if (message.role === "assistant" && message.tool_calls?.length && !message.content) continue;
     // meta-only messages (kind: "naming") carry no chat content — never a bubble
     if (message.role === "assistant" && !message.content && !message.tool_calls?.length) continue;
-    flushTools();
     if (message.role === "user" || message.role === "assistant") {
       parts.push(entryHtml(message.role, message.content || ""));
     }
   }
-  flushTools();
   if (!parts.length) return EMPTY_BODY;
   return `<div class="entry-list">${parts.join("")}</div>`;
 }
 
-export function statusHtml(text = "Đang chờ Thyca…", ambient = "") {
+export function statusHtml(ambient = "") {
   return `<article class="entry entry-thyca entry-status" aria-label="Thyca đang nghĩ" aria-live="off">
       <div class="entry-thyca-head"><time>thyca</time><p class="status-ambient">${escapeHtml(ambient)}</p></div>
-      <span class="status-ticker"><span class="status-line">${escapeHtml(text)}</span></span>
     </article>`;
 }
 

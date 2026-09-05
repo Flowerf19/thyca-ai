@@ -660,11 +660,8 @@ def test_chat_js_shipped() -> None:
     )
     assert "threadHtml" in chat
     assert "statusHtml" in chat
-    assert "flushTools" in chat
-    assert "tool-kicker" in chat
-    assert "Tools used:" in chat
-    assert "status-ticker" in chat
-    assert 'statusHtml(rec.statusText, rec.ambientText)' in chat
+    assert "Tools used:" not in chat
+    assert 'statusHtml(rec.ambientText)' in chat
     pages = (chat_dir / "pages.js").read_text(encoding="utf-8")
     start = pages.index("export async function createChatSession")
     # Next export after createChatSession in pages.js
@@ -687,14 +684,14 @@ def test_chat_js_shipped() -> None:
     assert "retitle_missing" in script.read_text(encoding="utf-8")
 
 
-def test_chat_nav_is_mode_switch_not_new_session() -> None:
+def test_chat_nav_opens_new_session() -> None:
     app_js = (WEBUI / "js" / "app.js").read_text(encoding="utf-8")
     html = (WEBUI / "index.html").read_text(encoding="utf-8")
     render = (WEBUI / "js" / "render.js").read_text(encoding="utf-8")
     bind = app_js[app_js.index("function bind()") :]
     chat_click = bind[bind.index("el.modeList.addEventListener") : bind.index("const searchToggle")]
-    assert "openNewPage" not in chat_click
-    assert 'renderMode(button.dataset.mode)' in chat_click
+    assert "openNewPage" in chat_click
+    assert 'button.dataset.mode === "chat"' in chat_click
     assert 'id="new-page"' in html
     assert 'getElementById("new-page")' in app_js
     assert "newer.disabled = busy" in app_js

@@ -182,14 +182,43 @@ def test_meter_text_hides_cache_badge_when_zero(node: str) -> None:
     )
 
 
+def test_last_turn_tools_collapses_in_first_seen_order(node: str) -> None:
+    messages = [
+        {"role": "user", "content": "old"},
+        {"role": "assistant", "content": "x", "tool_calls": [{"name": "bash"}]},
+        {"role": "user", "content": "now"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {"name": "memory_search"},
+                {"name": "bash"},
+                {"name": "memory_search"},
+                {"name": "bash"},
+                {"name": "memory_recent"},
+                {"name": "memory_get"},
+                {"name": "memory_get"},
+            ],
+        },
+        {"role": "assistant", "content": "done"},
+    ]
+    assert _eval(node, f"m.lastTurnTools({json.dumps(messages)})") == (
+        "memory_search ×2 · bash ×2 · memory_recent · memory_get ×2"
+    )
+    assert _eval(node, "m.lastTurnTools([])") == ""
+    assert _eval(node, 'm.lastTurnTools([{role:"user",content:"x"}])') == ""
+
+
 def test_meter_wired_in_dom_and_composer_meta() -> None:
     dom = (WEBUI / "js" / "shared" / "dom.js").read_text(encoding="utf-8")
     assert 'meter: document.getElementById("meter")' in dom
+    assert 'toolMeter: document.getElementById("tool-meter")' in dom
     html = (WEBUI / "index.html").read_text(encoding="utf-8")
     assert 'id="meter"' in html
-    assert 'id="tool-meter"' not in html
+    assert 'id="tool-meter"' in html
     assert 'id="new-page"' in html
     assert "composer-meta" in html
+    assert "composer-chip-row" in html
     # meter reuses .hint — no new design system
     assert 'class="hint" id="meter"' in html
     chat_index = (WEBUI / "js" / "chat" / "index.js").read_text(encoding="utf-8")
@@ -197,7 +226,7 @@ def test_meter_wired_in_dom_and_composer_meta() -> None:
     render = (WEBUI / "js" / "render.js").read_text(encoding="utf-8")
     assert "renderComposerMeter(el.meter" in render
     turn = (WEBUI / "js" / "chat" / "turn.js").read_text(encoding="utf-8")
-    assert "renderComposerMeter(el.meter, completed.messages)" in turn
+    assert "renderComposerMeter(el.meter, completed.messages, el.toolMeter)" in turn
 
 
 def test_session_detail_carries_meta_for_meter(tmp_path: Path) -> None:

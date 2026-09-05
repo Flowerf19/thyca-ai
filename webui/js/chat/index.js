@@ -2,6 +2,7 @@ export {
   discardRunningLiveTurns,
   getLiveTurn,
   isViewingSession,
+  paintLiveTools,
   restoreLiveTurn,
 } from "./live.js";
 export {

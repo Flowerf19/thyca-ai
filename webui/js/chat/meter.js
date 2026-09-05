@@ -2,6 +2,7 @@
 // Semantics mirror Trace (INPUT=fresh = prompt − cached, CACHE, OUTPUT, cost).
 // ctx = prompt_tokens of the last non-naming LLM round (one-request window),
 // not the summed prompt (that is fresh+cache). Pure logic — safe for Node tests.
+import { collapseNames } from "./status.js";
 import { fmtCompact, fmtCost, fmtInt } from "../shared/util.js";
 
 // Group messages into turns like thyca/trace.py turns_from_session:
@@ -77,6 +78,19 @@ export function sumLastTurnUsage(messages) {
   return { prompt, cached, fresh, completion, ctx, cost };
 }
 
+// Last-turn tool names, first-seen with counts. Empty when the turn used none.
+export function lastTurnTools(messages) {
+  const names = [];
+  for (const msg of lastTurnSlice(messages)) {
+    if (!msg || msg.role !== "assistant" || !Array.isArray(msg.tool_calls)) continue;
+    for (const call of msg.tool_calls) {
+      const name = String(call && call.name ? call.name : "").trim();
+      if (name) names.push(name);
+    }
+  }
+  return collapseNames(names);
+}
+
 // Compact one-liner: input · cache · output · context · cost. Returns "" when no usage.
 export function meterText(summary) {
   if (!summary || summary.fresh == null) return "";
@@ -101,28 +115,42 @@ export function meterTitle(summary) {
 
 // Render into a .hint-style node. No usage → "—" placeholder, keeps the row
 // height stable instead of collapsing composer-meta.
-export function renderComposerMeter(node, messages) {
-  if (!node) return;
-  const summary = sumLastTurnUsage(messages);
-  const text = meterText(summary);
-  if (!text) {
-    node.textContent = "—";
-    node.removeAttribute("title");
-    return;
+export function renderComposerMeter(node, messages, toolsNode) {
+  if (node) {
+    const summary = sumLastTurnUsage(messages);
+    const text = meterText(summary);
+    if (!text) {
+      node.textContent = "—";
+      node.removeAttribute("title");
+    } else {
+      node.replaceChildren();
+      for (const part of text.split(" · ")) {
+        const span = document.createElement("span");
+        span.textContent = part;
+        node.append(span);
+      }
+      const title = meterTitle(summary);
+      if (title) node.setAttribute("title", title);
+      else node.removeAttribute("title");
+    }
   }
-  node.replaceChildren();
-  for (const part of text.split(" · ")) {
-    const span = document.createElement("span");
-    span.textContent = part;
-    node.append(span);
+  if (toolsNode) {
+    const tools = lastTurnTools(messages);
+    toolsNode.textContent = tools;
+    toolsNode.hidden = !tools;
+    if (tools) toolsNode.setAttribute("title", tools);
+    else toolsNode.removeAttribute("title");
   }
-  const title = meterTitle(summary);
-  if (title) node.setAttribute("title", title);
-  else node.removeAttribute("title");
 }
 
-export function clearComposerMeter(node) {
-  if (!node) return;
-  node.textContent = "—";
-  node.removeAttribute("title");
+export function clearComposerMeter(node, toolsNode) {
+  if (node) {
+    node.textContent = "—";
+    node.removeAttribute("title");
+  }
+  if (toolsNode) {
+    toolsNode.textContent = "";
+    toolsNode.hidden = true;
+    toolsNode.removeAttribute("title");
+  }
 }

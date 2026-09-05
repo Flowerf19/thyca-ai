@@ -1,4 +1,4 @@
-import { fillChatAt, hydrateChat, initToBottom, invalidateChatHydrate, renderComposerMeter, resetToNewChatPage, restoreLiveTurn, scrollThread, updateToBottomVisibility } from "./chat/index.js";
+import { fillChatAt, getLiveTurn, hydrateChat, initToBottom, invalidateChatHydrate, renderComposerMeter, resetToNewChatPage, restoreLiveTurn, scrollThread, updateToBottomVisibility } from "./chat/index.js";
 import { icons, modes } from "./shared/data.js";
 import { el } from "./shared/dom.js";
 import { closeDrawer } from "./shared/drawer.js";
@@ -195,7 +195,8 @@ export function renderPage(pageIndex = 0) {
     scrollThread();
     // Meter dưới composer = last-turn fresh/cache/out/ctx/cost của tab đang xem;
     // phiên trống (messages rỗng) hiện "—".
-    renderComposerMeter(el.meter, page.messages);
+    const live = getLiveTurn(page.sessionId);
+    renderComposerMeter(el.meter, page.messages, live && live.running ? null : el.toolMeter);
   }
   if (state.activeMode === "trace") {
     updateMiniPlayer(page);

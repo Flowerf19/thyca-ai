@@ -147,6 +147,10 @@ function bind() {
   el.modeList.addEventListener("click", (event) => {
     const button = event.target.closest("[data-mode]");
     if (!button) return;
+    if (button.dataset.mode === "chat") {
+      void openNewPage().then(armIdle);
+      return;
+    }
     renderMode(button.dataset.mode);
     armIdle();
   });

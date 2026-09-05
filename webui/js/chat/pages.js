@@ -59,7 +59,7 @@ export async function createChatSession() {
   resetToNewChatPage();
 }
 
-// đưa trang "phiên mới" lên đầu — dùng khi bấm Phiên mới
+// đưa trang "phiên mới" lên đầu — dùng khi bấm Chat / Phiên mới
 export function resetToNewChatPage() {
   const rest = (modes.chat.pages || []).filter((page) => page.sessionId);
   modes.chat.pages = [emptyPage(""), ...rest];

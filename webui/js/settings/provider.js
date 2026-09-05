@@ -2,11 +2,10 @@ import { state } from "../shared/state.js";
 import {
   costInputs,
   esc,
-  fieldHtml,
   hasStoredKey,
+  modelLimitsHtml,
   persist,
   refreshPages,
-  schema,
   schemaValues,
   setStatus,
 } from "./schema.js";
@@ -48,17 +47,6 @@ export function providerCard(baseUrl, isPrimary) {
     </div>`;
 }
 
-function limitsFieldsHtml() {
-  const sections = [];
-  for (const section of schema.sections) {
-    if (section.key !== "limits") continue;
-    const visible = section.fields.filter((field) => !field.hidden);
-    if (!visible.length) continue;
-    sections.push(visible.map((field) => fieldHtml(field)).join(""));
-  }
-  return sections.join("");
-}
-
 // Distinct provider endpoints: the global one plus every registered
 // model's own baseUrl. The add-model flow picks one, then loads its models.
 function knownProviders() {
@@ -82,14 +70,6 @@ export function providerSelectHtml() {
     </label>`;
 }
 
-function reasoningHtml() {
-  const field = schema.sections
-    .flatMap((s) => s.fields)
-    .find((f) => f.key === "provider.reasoningEffort");
-  if (!field) return "";
-  return fieldHtml(field);
-}
-
 export function addModelBoxHtml() {
   return `<div class="settings-box" data-add-model-box hidden>
       ${providerSelectHtml()}
@@ -98,6 +78,7 @@ export function addModelBoxHtml() {
           <input class="settings-input" type="text" data-add-model spellcheck="false" autocomplete="off" placeholder="provider/model-id" />
         </div>
       </label>
+      ${modelLimitsHtml("add", null)}
       <div class="settings-field settings-pricing-field"><span>Giá token (USD / 1M)</span>${costInputs("add", null)}
       </div>
       <p class="settings-status" aria-live="polite"></p>
@@ -120,11 +101,6 @@ export function addModelPage(meta) {
         <section class="settings-section">
           <h3 class="settings-legend">Nhà cung cấp</h3>
           ${providerFieldsHtml()}
-        </section>
-        <section class="settings-section">
-          <h3 class="settings-legend">Giới hạn</h3>
-          ${reasoningHtml()}
-          ${limitsFieldsHtml()}
         </section>
         <div class="settings-actions-row">
           <p class="settings-status" aria-live="polite"></p>

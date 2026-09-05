@@ -43,12 +43,12 @@ class ChatApp:
         self._connect = connect
         self._sessions = SessionManager(
             root / "sessions",
-            limits=cfg.limits,
+            limits=self._cfg.effective_limits(),
             timezone_name=cfg.timeline.timezone,
         )
         self._memory = ActiveMemory(
             root,
-            tail_kb=cfg.limits.hotTailKB,
+            tail_kb=self._cfg.effective_limits().hotTailKB,
             timezone_name=cfg.timeline.timezone,
         )
         self.skills_root = self._memory.skills_store.root
@@ -146,18 +146,22 @@ class ChatApp:
         self, session_id: str, text: str, event_sink: EventSink | None = None
     ) -> dict:
         self._cfg = self._current_cfg()
-        connect = self._injected_connect or ConnectFactory.create("openai_chat", self._cfg.provider)
+        connect = self._injected_connect or ConnectFactory.create(
+            "openai_chat", self._cfg.effective_provider()
+        )
         owns = self._injected_connect is None
         self._wire_retry_events(connect, event_sink)
         try:
             self._sessions.load(session_id)
+            limits = self._cfg.effective_limits()
+            self._sessions.limits = limits
             loop = AgentLoop(
                 sessions=self._sessions,
                 assemble=Assemble(),
                 think=Think(connect),
                 act=self._act,
                 observe=Observe(self._sessions),
-                loop_max=self._cfg.limits.loopMax,
+                loop_max=limits.loopMax,
                 tools=self._tools,
                 model=self._cfg.provider.model,
                 pricing=self._cfg.effective_pricing() or None,

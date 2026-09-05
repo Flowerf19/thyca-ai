@@ -114,9 +114,11 @@ class Cli:
             return 1
 
         provider = replace(cfg.provider, model=args.model) if args.model else cfg.provider
+        cfg = replace(cfg, provider=provider)
+        limits = cfg.effective_limits()
         sessions = SessionManager(
             root / "sessions",
-            limits=cfg.limits,
+            limits=limits,
             timezone_name=cfg.timeline.timezone,
         )
         try:
@@ -130,12 +132,12 @@ class Cli:
 
         memory = ActiveMemory(
             root,
-            tail_kb=cfg.limits.hotTailKB,
+            tail_kb=limits.hotTailKB,
             timezone_name=cfg.timeline.timezone,
         )
         zone = ZoneInfo(cfg.timeline.timezone)
         state = memory.open_session(datetime.now(zone))
-        connect = self._connect or ConnectFactory.create("openai_chat", provider)
+        connect = self._connect or ConnectFactory.create("openai_chat", cfg.effective_provider())
         registry = ToolRegistry()
         register_file_tools(registry, PathGuard(root))
         register_memory_tools(
@@ -148,7 +150,7 @@ class Cli:
             think=Think(connect),
             act=Act(registry),
             observe=Observe(sessions),
-            loop_max=cfg.limits.loopMax,
+            loop_max=limits.loopMax,
             tools=schema,
             model=provider.model,
             pricing=cfg.effective_pricing() or None,

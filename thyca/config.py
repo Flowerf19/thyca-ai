@@ -11,7 +11,7 @@ import os
 import pathlib
 import re
 import warnings
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -147,13 +147,18 @@ class ModelCfg:
 
     ``baseUrl`` empty means "use provider.baseUrl"; a non-empty value points
     the model at another OpenAI-compatible endpoint (multi-provider).
-    Prices are USD / 1M tokens.
+    Prices are USD / 1M tokens. Limits/reasoning empty or None inherit the
+    global provider/limits values.
     """
 
     baseUrl: str = ""
     input: float = 0.0
     cache: float = 0.0
     output: float = 0.0
+    reasoningEffort: str = ""
+    loopMax: int | None = None
+    hotTailKB: int | None = None
+    contextTokens: int | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.baseUrl, str):
@@ -165,6 +170,23 @@ class ModelCfg:
         object.__setattr__(self, "input", _number(self.input, "models[].input"))
         object.__setattr__(self, "cache", _number(self.cache, "models[].cache"))
         object.__setattr__(self, "output", _number(self.output, "models[].output"))
+        if not isinstance(self.reasoningEffort, str):
+            raise ConfigError("models[].reasoningEffort must be a string")
+        if self.reasoningEffort and self.reasoningEffort not in REASONING_EFFORTS:
+            raise ConfigError(
+                "models[].reasoningEffort must be one of "
+                f"{'/'.join(REASONING_EFFORTS)}, got {self.reasoningEffort!r}"
+            )
+        for value, name, lower, upper in (
+            (self.loopMax, "models[].loopMax", 1, 200),
+            (self.hotTailKB, "models[].hotTailKB", 1, 64),
+            (self.contextTokens, "models[].contextTokens", 1000, DEFAULT_LIMITS_CONTEXT_TOKENS_MAX),
+        ):
+            if value is None:
+                continue
+            _integer(value, name)
+            if not lower <= value <= upper:
+                raise ConfigError(f"{name} must be {lower}..{upper}, got {value}")
 
 
 @dataclass(frozen=True)
@@ -215,7 +237,7 @@ class Config:
             "limits": asdict(self.limits),
         }
         if self.models:
-            payload["models"] = {name: asdict(cfg) for name, cfg in self.models.items()}
+            payload["models"] = {name: _model_to_dict(cfg) for name, cfg in self.models.items()}
         if self.pricing:
             payload["pricing"] = {name: asdict(cfg) for name, cfg in self.pricing.items()}
         return payload
@@ -226,6 +248,28 @@ class Config:
         for name, model in self.models.items():
             merged[name] = PricingCfg(input=model.input, cache=model.cache, output=model.output)
         return merged
+
+    def effective_provider(self) -> ProviderCfg:
+        """Provider slice for the active model (per-model reasoning if set)."""
+        registered = self.models.get(self.provider.model)
+        if registered is None or not registered.reasoningEffort:
+            return self.provider
+        return replace(self.provider, reasoningEffort=registered.reasoningEffort)
+
+    def effective_limits(self) -> LimitsCfg:
+        """Limits for the active model; unset fields inherit the global block."""
+        registered = self.models.get(self.provider.model)
+        if registered is None:
+            return self.limits
+        return LimitsCfg(
+            loopMax=self.limits.loopMax if registered.loopMax is None else registered.loopMax,
+            hotTailKB=self.limits.hotTailKB if registered.hotTailKB is None else registered.hotTailKB,
+            contextTokens=(
+                self.limits.contextTokens
+                if registered.contextTokens is None
+                else registered.contextTokens
+            ),
+        )
 
 
 def config_path() -> Path:
@@ -326,8 +370,41 @@ def _parse_models(raw: Any) -> dict[str, ModelCfg]:
             input=_number(value.get("input", 0), f"models[{name!r}].input"),
             cache=_number(value.get("cache", 0), f"models[{name!r}].cache"),
             output=_number(value.get("output", 0), f"models[{name!r}].output"),
+            reasoningEffort=value.get("reasoningEffort") or "",
+            loopMax=_optional_int(value.get("loopMax"), f"models[{name!r}].loopMax"),
+            hotTailKB=_optional_int(value.get("hotTailKB"), f"models[{name!r}].hotTailKB"),
+            contextTokens=_optional_int(
+                value.get("contextTokens"), f"models[{name!r}].contextTokens"
+            ),
         )
     return result
+
+
+def _optional_int(value: object, name: str) -> int | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    _integer(value, name)
+    return int(value)
+
+
+def _model_to_dict(cfg: ModelCfg) -> dict[str, Any]:
+    data: dict[str, Any] = {
+        "baseUrl": cfg.baseUrl,
+        "input": cfg.input,
+        "cache": cfg.cache,
+        "output": cfg.output,
+    }
+    if cfg.reasoningEffort:
+        data["reasoningEffort"] = cfg.reasoningEffort
+    if cfg.loopMax is not None:
+        data["loopMax"] = cfg.loopMax
+    if cfg.hotTailKB is not None:
+        data["hotTailKB"] = cfg.hotTailKB
+    if cfg.contextTokens is not None:
+        data["contextTokens"] = cfg.contextTokens
+    return data
 
 
 def _parse_dict(raw: dict[str, Any]) -> Config:

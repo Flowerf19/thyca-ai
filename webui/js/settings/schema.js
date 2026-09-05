@@ -73,6 +73,47 @@ export function readCostInputs(root, attr) {
   return costs;
 }
 
+function inheritedLimits() {
+  const limits = schemaValues.limits || {};
+  return {
+    reasoningEffort: schemaValues.provider?.reasoningEffort || "high",
+    loopMax: limits.loopMax ?? 200,
+    hotTailKB: limits.hotTailKB ?? 4,
+    contextTokens: limits.contextTokens ?? 272000,
+  };
+}
+
+export function modelLimitsHtml(prefix, model) {
+  const fallback = inheritedLimits();
+  const m = model || {};
+  const effort = m.reasoningEffort || fallback.reasoningEffort;
+  const num = (key) => (m[key] != null ? m[key] : fallback[key]);
+  const opts = ["low", "medium", "high"]
+    .map((choice) => `<option value="${esc(choice)}"${choice === effort ? " selected" : ""}>${esc(choice)}</option>`)
+    .join("");
+  return `<label class="settings-field"><span>Mức suy luận (thinking)</span>
+      <select data-${prefix}-reasoning>${opts}</select></label>
+    <label class="settings-field"><span>Số vòng agent tối đa</span>
+      <input class="settings-input" type="number" min="1" max="200" data-${prefix}-limit="loopMax" value="${esc(num("loopMax"))}" /></label>
+    <label class="settings-field"><span>Dung lượng nhớ nóng (KB)</span>
+      <input class="settings-input" type="number" min="1" max="64" data-${prefix}-limit="hotTailKB" value="${esc(num("hotTailKB"))}" /></label>
+    <label class="settings-field"><span>Trần ngữ cảnh gửi lên model (tokens)</span>
+      <input class="settings-input" type="number" min="1000" max="2000000" data-${prefix}-limit="contextTokens" value="${esc(num("contextTokens"))}" /></label>`;
+}
+
+export function readModelLimits(root, prefix) {
+  const out = {};
+  const effort = root.querySelector(`[data-${prefix}-reasoning]`)?.value.trim() || "";
+  if (effort) out.reasoningEffort = effort;
+  for (const input of root.querySelectorAll(`[data-${prefix}-limit]`)) {
+    const key = input.dataset[`${prefix}Limit`];
+    if (!key || input.value === "") continue;
+    const n = Number(input.value);
+    if (Number.isFinite(n)) out[key] = n;
+  }
+  return out;
+}
+
 
 export async function hydrateSettings() {
   const response = await fetch("/api/config", { cache: "no-store" });

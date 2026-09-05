@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 import re
 import stat
 from pathlib import Path
@@ -230,6 +231,47 @@ def test_models_parse_and_roundtrip(tmp_path: Path) -> None:
     assert saved["models"]["gpt-x@other"] == {
         "baseUrl": "https://other.api/v1", "input": 1.0, "cache": 0.1, "output": 2.0,
     }
+
+
+def test_model_limits_override_global(tmp_path: Path) -> None:
+    p = tmp_path / "config.json"
+    raw = default_config().to_dict()
+    raw["provider"]["model"] = "special"
+    raw["provider"]["reasoningEffort"] = "low"
+    raw["limits"] = {"loopMax": 10, "hotTailKB": 4, "contextTokens": 8000}
+    raw["models"] = {
+        "special": {
+            "input": 0,
+            "cache": 0,
+            "output": 0,
+            "reasoningEffort": "high",
+            "loopMax": 50,
+            "hotTailKB": 8,
+            "contextTokens": 128000,
+        },
+        "plain": {"input": 0, "cache": 0, "output": 0},
+    }
+    p.write_text(json.dumps(raw), encoding="utf-8")
+    cfg = load(p)
+    assert cfg.effective_provider().reasoningEffort == "high"
+    assert cfg.effective_limits().loopMax == 50
+    assert cfg.effective_limits().hotTailKB == 8
+    assert cfg.effective_limits().contextTokens == 128000
+    saved = cfg.to_dict()["models"]["special"]
+    assert saved["loopMax"] == 50
+    assert "loopMax" not in cfg.to_dict()["models"]["plain"]
+    plain = replace(cfg, provider=replace(cfg.provider, model="plain"))
+    assert plain.effective_provider().reasoningEffort == "low"
+    assert plain.effective_limits().loopMax == 10
+
+
+def test_model_limits_reject_out_of_range(tmp_path: Path) -> None:
+    p = tmp_path / "config.json"
+    raw = default_config().to_dict()
+    raw["models"] = {"m": {"input": 0, "cache": 0, "output": 0, "loopMax": 999}}
+    p.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(ConfigError, match="loopMax"):
+        load(p)
 
 
 def test_models_rejects_bad_baseurl_and_negative_price(tmp_path: Path) -> None:

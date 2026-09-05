@@ -705,10 +705,11 @@ def test_chat_nav_is_mode_switch_not_new_session() -> None:
     box = provider[box_start:box_end]
     page_start = provider.index("export function addModelPage")
     page = provider[page_start : page_start + 1800]
-    assert "limitsFieldsHtml" not in box
-    assert "reasoningHtml" not in box
-    assert "${limitsFieldsHtml()}" in page
-    assert "${reasoningHtml()}" in page
+    assert "modelLimitsHtml" in box
+    assert "Giới hạn" not in page
+    models_js = (WEBUI / "js" / "settings" / "models.js").read_text(encoding="utf-8")
+    assert 'modelLimitsHtml("edit"' in models_js
+    assert "readModelLimits" in models_js
     assert not (WEBUI / "js" / "staff").exists()
 
 

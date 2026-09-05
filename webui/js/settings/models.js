@@ -5,12 +5,14 @@ import {
   costInputs,
   defaultModel,
   esc,
+  modelLimitsHtml,
   modelCache,
   modelFetching,
   modelOptions,
   modelOptionsEndpoint,
   persist,
   readCostInputs,
+  readModelLimits,
   refreshPages,
   schemaValues,
   setDefaultModel,
@@ -50,6 +52,7 @@ function modelCard(name, model) {
       <div class="pricing-edit-row" hidden>
         <label class="settings-field"><span>Model ID</span><input type="text" class="settings-input" data-edit-name value="${esc(name)}" spellcheck="false" /></label>
         <label class="settings-field"><span>Base URL riêng (trống = dùng chung)</span><input type="text" class="settings-input" data-edit-baseurl value="${esc(model.baseUrl || "")}" spellcheck="false" placeholder="https://…/v1" /></label>
+        ${modelLimitsHtml("edit", model)}
         ${costInputs("edit", model)}
         <div class="mem-entry-actions">
           <button type="button" class="mem-reinforce" data-model-save>Lưu</button>
@@ -142,7 +145,13 @@ async function addModel(root) {
     if (!name) continue; // blank extra box — skip
     const baseUrl = box.querySelector("[data-add-provider]")?.value.trim() || "";
     const costs = readCostInputs(box, "add");
-    models[name] = { baseUrl, input: costs.input || 0, cache: costs.cache || 0, output: costs.output || 0 };
+    models[name] = {
+      baseUrl,
+      input: costs.input || 0,
+      cache: costs.cache || 0,
+      output: costs.output || 0,
+      ...readModelLimits(box, "add"),
+    };
     added.push(name);
   }
   if (!added.length) {
@@ -219,6 +228,7 @@ export function bindModelCards(root) {
         input: costs.input || 0,
         cache: costs.cache || 0,
         output: costs.output || 0,
+        ...readModelLimits(card, "edit"),
       };
       if (newName !== oldName) delete models[oldName];
       models[newName] = entry;

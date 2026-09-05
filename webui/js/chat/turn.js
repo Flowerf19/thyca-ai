@@ -10,7 +10,6 @@ import {
   ensureLive,
   getLiveTurn,
   isViewingSession,
-  paintLiveTools,
   rekeyLiveTurn,
   startLiveTurn,
 } from "./live.js";
@@ -48,7 +47,6 @@ export function beginOutgoingTurn(text) {
   list.insertAdjacentHTML("beforeend", entryHtml("user", text));
   list.lastElementChild.classList.add("is-enter");
   list.insertAdjacentHTML("beforeend", statusHtml(rec.statusText, rec.ambientText));
-  paintLiveTools(rec);
   scrollThread();
 }
 
@@ -138,7 +136,7 @@ export async function sendChatTurn(text) {
   applyDetail(completed);
   // Meter lên ngay khi turn xong — renderPage không chạy lại khi settle
   // thành công (chỉ renderPageList), nên update ở đây; tab nền thì bỏ qua.
-  if (isViewingSession(completed.id)) renderComposerMeter(el.meter, completed.messages, el.toolMeter);
+  if (isViewingSession(completed.id)) renderComposerMeter(el.meter, completed.messages);
   return completed;
 }
 
@@ -149,10 +147,6 @@ function ingestTurnEvent(sessionId, event) {
   if (event.type === "turn.completed" || event.type === "turn.failed") {
     rec.running = false;
     rec.dirty = true;
-  }
-  if (event.type === "tool.started" || event.type === "skill.started") {
-    rec.seenTools.push(event.name || (event.type === "skill.started" ? "skill" : "tool"));
-    if (isViewingSession(sessionId)) paintLiveTools(rec);
   }
   applyAmbient(sessionId, event);
   applyStatus(sessionId, event);

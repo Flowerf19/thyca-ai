@@ -665,7 +665,6 @@ def test_chat_js_shipped() -> None:
     assert "Tools used:" in chat
     assert "status-ticker" in chat
     assert 'statusHtml(rec.statusText, rec.ambientText)' in chat
-    assert 'event.type === "skill.started"' in chat
     pages = (chat_dir / "pages.js").read_text(encoding="utf-8")
     start = pages.index("export async function createChatSession")
     # Next export after createChatSession in pages.js

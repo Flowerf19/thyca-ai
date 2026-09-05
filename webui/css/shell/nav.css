@@ -9,6 +9,7 @@
   overflow: hidden;
   background: var(--color-sidebar-2);
   color: var(--color-sidebar-ink);
+  border-inline-end: var(--rule) solid var(--color-sidebar-rule);
 }
 
 .sidebar-main {
@@ -58,9 +59,9 @@
   font-family: var(--font-display);
   font-size: var(--text-xl);
   font-style: normal;
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: -0.03em;
-  line-height: 1.05;
+  line-height: 1.25;
   overflow-wrap: anywhere;
 }
 
@@ -127,7 +128,7 @@
   margin-block-start: var(--space-md);
   padding: 0 var(--space-xs);
   background: transparent;
-  color: var(--color-accent-soft);
+  color: var(--color-accent);
   font-size: var(--text-sm);
   font-weight: 500;
   text-align: start;
@@ -266,17 +267,17 @@
 
 .mode-icon-chat,
 .page-card[data-tone="chat"] .page-card-icon {
-  color: var(--color-chat-soft);
+  color: var(--color-chat);
 }
 
 .mode-icon-memories,
 .page-card[data-tone="memories"] .page-card-icon {
-  color: var(--color-memory-icon-light);
+  color: var(--color-memory);
 }
 
 .mode-icon-trace,
 .page-card[data-tone="trace"] .page-card-icon {
-  color: var(--color-trace-icon-light);
+  color: var(--color-trace);
 }
 
 .mode-icon-settings,

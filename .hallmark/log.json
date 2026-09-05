@@ -1,5 +1,14 @@
 [
   {
+    "date": "2026-09-05",
+    "macrostructure": "Workbench",
+    "theme": "studied-DNA",
+    "theme_axes": "light / roman-serif / warm",
+    "vibe": "cream paper, sand, bookstore",
+    "enrichment": "none",
+    "brief": "Thyca webui restyle from Booksaw DNA — tokens/type/square chrome, backend unchanged"
+  },
+  {
     "date": "2026-08-21",
     "macrostructure": "Letter",
     "theme": "custom",

@@ -1,8 +1,8 @@
-/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5
+/* Hallmark · pre-emit critique: P4 H4 E5 S4 R5 V4
  * genre: editorial · macrostructure: Workbench (designed-as-app)
- * design-system: notebook system · theme: warm paper / terracotta
+ * theme: studied-DNA (Booksaw) · cream paper / sand / Prata
  * audience: owner · use: chat with assistant, inspect memory, replay a turn
- * tone: precise, warm, not a lifestyle journal
+ * tone: bookstore, warm, square
  * states: default · hover · focus · active · disabled · loading · error · success
  */
 
@@ -29,7 +29,7 @@ html {
   background: var(--color-sidebar);
   font-family: var(--font-ui);
   font-size: 100%;
-  line-height: 1.5;
+  line-height: 1.7;
   -webkit-text-size-adjust: 100%;
 }
 
@@ -68,8 +68,8 @@ textarea:disabled {
 }
 
 ::selection {
-  background: var(--color-accent-soft);
-  color: var(--color-ink);
+  background: var(--color-ink);
+  color: var(--color-paper);
 }
 
 .skip {

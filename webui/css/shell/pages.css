@@ -153,7 +153,7 @@
 
 .foot-note span {
   min-width: 0;
-  color: var(--color-accent-soft);
+  color: var(--color-sidebar-ink);
   font-size: var(--text-sm);
   font-weight: 500;
   letter-spacing: 0.08em;
@@ -168,7 +168,7 @@
   justify-self: end;
   width: 1.75rem;
   height: 1.75rem;
-  color: var(--color-accent-soft);
+  color: var(--color-sidebar-ink);
   text-decoration: none;
 }
 

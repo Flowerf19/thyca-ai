@@ -7,6 +7,7 @@ Thay đổi của Thyca, viết ngắn gọn cho người dùng.
 - Dòng meter dưới khung chat thêm output và cửa sổ request cuối (ctx). Di chuột vào để xem số đầy đủ.
 - Khuông nhạc hiện 4/4 ở mọi hàng; chạm khuông để nghe cả đoạn bằng piano.
 - Khuông theo câu 8 ô (có V7); tool, skill và retry nghe khác nhau.
+- Đổi tab Trace ↔ Chat giữa lượt đang chạy không còn làm mất nốt nhạc đang vẽ, không còn spam log lỗi pipe; lượt vẫn chạy tiếp bình thường.
 
 ## 0.7.5 — 05/09/2026
 

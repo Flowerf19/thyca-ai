@@ -1,8 +1,8 @@
-import { el } from "./dom.js";
-import { modes } from "./data.js";
-import { state } from "./state.js";
-import { mountStaff } from "./staff.js";
-import { traceScoreFromMessages } from "./trace-score.js";
+import { el } from "../shared/dom.js";
+import { modes } from "../shared/data.js";
+import { state } from "../shared/state.js";
+import { mountStaff } from "../staff/index.js";
+import { traceScoreFromMessages } from "./score.js";
 import {
   cleanTitle,
   escapeHtml,
@@ -13,16 +13,16 @@ import {
   fmtLatency,
   shortModel,
   statusLabel,
-} from "./util.js";
-import { byDayBlock } from "./trace-chart.js";
-import { timelineSpans } from "./trace-timeline.js";
+} from "../shared/util.js";
+import { byDayBlock } from "./chart.js";
+import { timelineSpans } from "./timeline.js";
 import {
   activeParams,
   bindFilterOutside,
   closeFilterPops,
   pillBlock,
   traceFilter,
-} from "./trace-filter.js";
+} from "./filter.js";
 
 
 // ---- formatters (vi-VN, no UNKNOWN) ----

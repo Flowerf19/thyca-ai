@@ -1,8 +1,8 @@
 // Shared settings schema state + field helpers + persistence.
-import { postJson } from "../util.js";
-import { modes } from "../data.js";
-import { state } from "../state.js";
-import { el } from "../dom.js";
+import { postJson } from "../shared/util.js";
+import { modes } from "../shared/data.js";
+import { state } from "../shared/state.js";
+import { el } from "../shared/dom.js";
 import { renderPage } from "../render.js";
 
 let schema = null;

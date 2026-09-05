@@ -1,7 +1,6 @@
-import { formatMarkdown } from "./markdown.js";
-import { escapeHtml } from "./util.js";
-import { bindCanonical, canonicalPages } from "./memories-canonical.js";
-import { DAY_FILE } from "./memories-leaf.js";
+import { escapeHtml } from "../shared/util.js";
+import { bindCanonical, canonicalPages } from "./canonical.js";
+import { DAY_FILE } from "./leaf.js";
 import {
   expireBlock,
   fileKey,
@@ -10,7 +9,7 @@ import {
   sortFileKeys,
   splitHeading,
   suggestBlock,
-} from "./memories-leaf.js";
+} from "./leaf.js";
 
 const SUGGEST_CAP = 8;
 const DAY_PAGE = 8;

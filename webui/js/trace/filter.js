@@ -2,7 +2,7 @@
 // "all" = param omitted. traceFilter is exported and mutated in place by
 // trace.js's pill handler so both modules see one state.
 
-import { escapeHtml, fmtInt, shortModel } from "./util.js";
+import { escapeHtml, fmtInt, shortModel } from "../shared/util.js";
 
 
 // Filter state for the overview pills. "all" = param omitted.

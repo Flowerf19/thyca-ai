@@ -1,4 +1,4 @@
-"""Node tests for traceScoreFromMessages — webui/js/trace-score.js."""
+"""Node tests for traceScoreFromMessages — webui/js/trace/score.js."""
 from __future__ import annotations
 
 import json
@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "webui" / "js" / "trace-score.js"
-REPLAY = ROOT / "webui" / "js" / "skill-replay.js"
+SCRIPT = ROOT / "webui" / "js" / "trace" / "score.js"
+REPLAY = ROOT / "webui" / "js" / "staff" / "replay.js"
 
 
 @pytest.fixture(scope="module")

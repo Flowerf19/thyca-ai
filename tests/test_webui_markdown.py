@@ -8,7 +8,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WEBUI = ROOT / "webui"
-MARKDOWN_JS = WEBUI / "js" / "markdown.js"
+MARKDOWN_JS = WEBUI / "js" / "shared" / "markdown.js"
+SHARED_INDEX = WEBUI / "js" / "shared" / "index.js"
+MEMORIES_INDEX = WEBUI / "js" / "memories" / "index.js"
+STAFF_INDEX = WEBUI / "js" / "staff" / "index.js"
+SCORE_JS = WEBUI / "js" / "trace" / "score.js"
+STAFF_MAP = WEBUI / "js" / "staff" / "map.js"
 
 
 def _render(src: str) -> str:
@@ -54,7 +59,46 @@ def test_chat_js_uses_formatter() -> None:
     css = "\n".join(
         p.read_text(encoding="utf-8") for p in sorted((WEBUI / "css" / "workspace").glob("*.css"))
     )
-    assert 'from "../markdown.js"' in view
+    assert 'from "../shared/markdown.js"' in view
     assert "formatMarkdown(content)" in view
     assert ".md-table-wrap" in css
     assert (WEBUI / "vendor" / "marked.esm.js").is_file()
+
+
+def test_shared_barrel_is_node_clean() -> None:
+    # shared/index.js chỉ re-export pure modules (không DOM): import trong
+    # Node phải thành công để pin import graph của barrel.
+    script = f"""
+    import {json.dumps(SHARED_INDEX.as_uri())};
+    process.stdout.write("shared-index-ok");
+    """
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert result.stdout == "shared-index-ok"
+
+
+def test_memories_and_staff_barrels_import_clean() -> None:
+    # memories/index.js (overview/leaf/canonical) và staff pure modules
+    # (map/draw/catalog/status/replay + trace/score) đều không chạm DOM lúc
+    # import. trace/index.js và shared dom/drawer là DOM-only nên KHÔNG
+    # import ở đây — xem ghi chú trong webui/js/shared/index.js.
+    script = f"""
+    import {json.dumps(MEMORIES_INDEX.as_uri())};
+    import {{ scoreFromEvents }} from {json.dumps(STAFF_MAP.as_uri())};
+    import {{ traceScoreFromMessages }} from {json.dumps(SCORE_JS.as_uri())};
+    import {json.dumps(STAFF_INDEX.as_uri())};
+    if (typeof scoreFromEvents !== "function") throw new Error("no score");
+    if (typeof traceScoreFromMessages !== "function") throw new Error("no trace score");
+    process.stdout.write("barrels-ok");
+    """
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert result.stdout == "barrels-ok"

@@ -1,12 +1,12 @@
 // Build a normalized staff score for a historical turn from its JSONL slice.
-// Reuses the living-room grammar in staff-map.js (C major, 4/4, I–vi–IV–V).
+// Reuses the living-room grammar in staff/map.js (C major, 4/4, I–vi–IV–V).
 //
 // Replay fidelity: the server classifies skill loads at payload build time
 // (thyca/trace_api.py, same rule as live) and marks them with a `skill`
 // field — arguments/paths never leave the server. traceScoreFromEvents
 // re-emits skill.* from that marker, matching the live stream.
-import { scoreFromEvents } from "./staff-map.js";
-import { skillNameForRead } from "./skill-replay.js";
+import { scoreFromEvents } from "../staff/map.js";
+import { skillNameForRead } from "../staff/replay.js";
 
 // Replay the JSONL slice as the event sequence the live stream would have
 // emitted. Exported separately so tests can pin skill.*/tool.* wiring —

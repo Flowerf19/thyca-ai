@@ -1,4 +1,4 @@
-"""Node tests for the event catalog — webui/js/staff-catalog.js.
+"""Node tests for the event catalog — webui/js/staff/catalog.js.
 
 The catalog is the only place that maps event types to musical roles;
 the mapper must stay free of event-name switches (behavior-preserving
@@ -14,8 +14,8 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-CATALOG = ROOT / "webui" / "js" / "staff-catalog.js"
-MAP = ROOT / "webui" / "js" / "staff-map.js"
+CATALOG = ROOT / "webui" / "js" / "staff" / "catalog.js"
+MAP = ROOT / "webui" / "js" / "staff" / "map.js"
 
 _PROBE_TYPES = [
     "turn.accepted",
@@ -130,7 +130,7 @@ def test_mapper_stays_free_of_event_names(node: str) -> None:
         if not line.strip().startswith("//")
     )
     for name in ("tool.", "skill.", "llm.", "naming.", "turn.accepted"):
-        assert name not in code_only, f"staff-map.js code must not know event name {name!r}"
+        assert name not in code_only, f"staff/map.js code must not know event name {name!r}"
 
 
 def test_catalog_error_drops_entry_not_crash(node: str) -> None:

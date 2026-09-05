@@ -1,8 +1,8 @@
-import { scoreFromEvents } from "../staff-map.js";
-import { dropStaff, mountStaff } from "../staff.js";
-import { modes } from "../data.js";
-import { state } from "../state.js";
-import { el } from "../dom.js";
+import { scoreFromEvents } from "../staff/map.js";
+import { dropStaff, mountStaff } from "../staff/index.js";
+import { modes } from "../shared/data.js";
+import { state } from "../shared/state.js";
+import { el } from "../shared/dom.js";
 import { entryHtml, statusHtml } from "./view.js";
 
 // Per-session in-flight turn. Survives renderPage / fillChatAt innerHTML

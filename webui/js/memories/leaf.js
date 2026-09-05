@@ -1,7 +1,7 @@
 // Leaf entry builders for the Memories overview (split from memories.js).
 // Pure render helpers over /api/memory/stats payloads — no module state.
 
-import { escapeHtml } from "./util.js";
+import { escapeHtml } from "../shared/util.js";
 
 export const DAY_FILE = /^(\d{4}-\d{2}-\d{2})\.md$/;
 const EXPIRE_CAP = 5;

@@ -1,4 +1,4 @@
-import { state } from "../state.js";
+import { state } from "../shared/state.js";
 import { hydrateSettings } from "./schema.js";
 import { bindProviderForm } from "./provider.js";
 import { bindAddModel, bindModelCards } from "./models.js";

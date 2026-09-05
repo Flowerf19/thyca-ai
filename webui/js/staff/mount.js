@@ -1,5 +1,5 @@
-import { renderStaff } from "./staff-draw.js";
-import { scoreFromEvents } from "./staff-map.js";
+import { renderStaff } from "./draw.js";
+import { scoreFromEvents } from "./map.js";
 
 // RECORDS keyed by stable string — NOT by DOM node — so innerHTML
 // replacement (renderPage / fillChatAt tab switch) doesn't lose live score.

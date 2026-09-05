@@ -1,8 +1,8 @@
 // Event catalog for the staff score — the ONLY place that knows event types.
 //
 // Adding a new operational trace = add 4 YAML lines here, a status line in
-// turn-status.js, and a TurnEvent allowlist entry in thyca/agent/events.py.
-// The mapper (staff-map.js) never switches on event types; unregistered
+// staff/status.js, and a TurnEvent allowlist entry in thyca/agent/events.py.
+// The mapper (staff/map.js) never switches on event types; unregistered
 // events are silence by design — never add an "unknown event = note" fallback.
 //
 // Schema per entry (flat, string values only):
@@ -134,7 +134,7 @@ function compile(entries) {
 }
 
 function warn(reason, entry) {
-  console.warn(`staff-catalog: dropped ${JSON.stringify(entry.type ?? entry)}: ${reason}`);
+  console.warn(`staff/catalog: dropped ${JSON.stringify(entry.type ?? entry)}: ${reason}`);
 }
 
 const FAMILIES = compile(parseCatalog(CATALOG_YAML));

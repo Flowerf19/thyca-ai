@@ -1,4 +1,4 @@
-"""Node tests for the pure event -> score mapper — webui/js/staff-map.js.
+"""Node tests for the pure event -> score mapper — webui/js/staff/map.js.
 
 Runs in Node with --input-type=module so no DOM is needed; mirrors the
 eval helper style of tests/test_ndjson.py.
@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "webui" / "js" / "staff-map.js"
+SCRIPT = ROOT / "webui" / "js" / "staff" / "map.js"
 
 ACCEPTED = {"type": "turn.accepted"}
 COMPLETED = {"type": "turn.completed"}

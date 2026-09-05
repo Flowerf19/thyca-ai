@@ -1,7 +1,7 @@
 // Daily / hourly bar chart for the Trace overview — hand-built SVG, no library.
 // Pure functions over API payloads; filter state stays in trace.js.
 
-import { escapeHtml, fmtCost, fmtInt } from "./util.js";
+import { escapeHtml, fmtCost, fmtInt } from "../shared/util.js";
 
 export function fmtDayShort(day) {
   const d = new Date(`${String(day)}T00:00:00Z`);

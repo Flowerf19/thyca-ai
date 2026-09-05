@@ -1,13 +1,13 @@
 import { fillChatAt, hydrateChat, initToBottom, invalidateChatHydrate, resetToNewChatPage, restoreLiveTurn, scrollThread, updateToBottomVisibility } from "./chat/index.js";
-import { clearStaffs, syncStaffs } from "./staff.js";
-import { icons, modes } from "./data.js";
-import { el } from "./dom.js";
-import { closeDrawer } from "./drawer.js";
-import { bindOverview, pagesFromStats, revealLeaf } from "./memories.js";
+import { clearStaffs, syncStaffs } from "./staff/index.js";
+import { icons, modes } from "./shared/data.js";
+import { el } from "./shared/dom.js";
+import { closeDrawer } from "./shared/drawer.js";
+import { bindOverview, pagesFromStats, revealLeaf } from "./memories/index.js";
 import { bindSettings, hydrateSettings } from "./settings/index.js";
-import { escapeHtml } from "./util.js";
-import { bindTraceOverview, fillTraceAt, hydrateTrace, mountTraceStaff, updateMiniPlayer } from "./trace.js";
-import { state } from "./state.js";
+import { escapeHtml } from "./shared/util.js";
+import { bindTraceOverview, fillTraceAt, hydrateTrace, mountTraceStaff, updateMiniPlayer } from "./trace/index.js";
+import { state } from "./shared/state.js";
 
 let modeGen = 0;
 let openPageAtGen = 0;

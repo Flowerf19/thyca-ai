@@ -9,9 +9,9 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-NDJSON = ROOT / "webui" / "js" / "ndjson.js"
-STATUS = ROOT / "webui" / "js" / "turn-status.js"
-MAP = ROOT / "webui" / "js" / "staff-map.js"
+NDJSON = ROOT / "webui" / "js" / "shared" / "ndjson.js"
+STATUS = ROOT / "webui" / "js" / "staff" / "status.js"
+MAP = ROOT / "webui" / "js" / "staff" / "map.js"
 
 
 @pytest.fixture(scope="module")

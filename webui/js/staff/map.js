@@ -1,10 +1,10 @@
 // Pure mapper: operational events (same objects as NDJSON) -> normalized score model.
 // No timer, no text hashing, no key choice: single voice C major, 4/4.
-// Event types are NOT known here — role lookup lives in staff-catalog.js
+// Event types are NOT known here — role lookup lives in staff/catalog.js
 // (familyFor: pulse | rest | terminal). Unregistered events are silence.
 //
-// TO ADD A NEW TRACE: append 4 YAML lines to the catalog (staff-catalog.js),
-// a status line in turn-status.js, and a TurnEvent allowlist entry in
+// TO ADD A NEW TRACE: append 4 YAML lines to the catalog (staff/catalog.js),
+// a status line in staff/status.js, and a TurnEvent allowlist entry in
 // thyca/agent/events.py — plus a test proving it does not double up with
 // tool.*. Never add an "unknown event = note" fallback; silence is the
 // safe default.
@@ -16,7 +16,7 @@
 //   - no duration crosses beat 3 (tick 8) except a whole rest in an empty measure
 //   - no dotted values, no 8th/16th, no ties
 
-import { familyFor } from "./staff-catalog.js";
+import { familyFor } from "./catalog.js";
 
 export const TICKS = { quarter: 4, half: 8, whole: 16, measure: 16 };
 // Activity voicings [low, middle, high]; vii° is the local error color only.

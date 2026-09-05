@@ -8,9 +8,9 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-DRAW = ROOT / "webui" / "js" / "staff-draw.js"
-STAFF = ROOT / "webui" / "js" / "staff.js"
-MAP = ROOT / "webui" / "js" / "staff-map.js"
+DRAW = ROOT / "webui" / "js" / "staff" / "draw.js"
+STAFF = ROOT / "webui" / "js" / "staff" / "mount.js"
+MAP = ROOT / "webui" / "js" / "staff" / "map.js"
 
 SHIM = r"""
 class El {

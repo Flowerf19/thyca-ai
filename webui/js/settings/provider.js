@@ -1,4 +1,4 @@
-import { state } from "../state.js";
+import { state } from "../shared/state.js";
 import {
   costInputs,
   esc,

@@ -1,9 +1,9 @@
 import { beginOutgoingTurn, createChatSession, discardRunningLiveTurns, isViewingSession, removeStatus, sendChatTurn, settleIncoming } from "./chat/index.js";
-import { el } from "./dom.js";
-import { closeDrawer, hideDrawerIfMobile, toggleDrawer } from "./drawer.js";
+import { el } from "./shared/dom.js";
+import { closeDrawer, hideDrawerIfMobile, toggleDrawer } from "./shared/drawer.js";
 import { renderMode, renderPage, renderPageList, setTracePlaying } from "./render.js";
-import { getJson, postJson } from "./util.js";
-import { state } from "./state.js";
+import { getJson, postJson } from "./shared/util.js";
+import { state } from "./shared/state.js";
 import { hydrateSettings, renderModeSettings } from "./settings/index.js";
 
 const IDLE_MS = 15 * 60 * 1000;

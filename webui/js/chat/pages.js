@@ -1,7 +1,7 @@
-import { el } from "../dom.js";
-import { modes } from "../data.js";
-import { escapeHtml, formatUpdated, getJson } from "../util.js";
-import { state } from "../state.js";
+import { el } from "../shared/dom.js";
+import { modes } from "../shared/data.js";
+import { escapeHtml, formatUpdated, getJson } from "../shared/util.js";
+import { state } from "../shared/state.js";
 import { EMPTY_BODY, LOAD_ERROR_BODY, threadHtml } from "./view.js";
 
 // Guard chống race khi bấm tab liên tiếp: lượt fetch cũ về sau phải bỏ,

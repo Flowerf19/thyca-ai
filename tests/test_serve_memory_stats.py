@@ -69,9 +69,11 @@ def test_stats_json_and_static(tmp_path: Path) -> None:
         with urlopen(_url(httpd, "/"), timeout=2) as response:
             html = response.read().decode("utf-8")
         assert 'data-mode="memories"' in html
-        with urlopen(_url(httpd, "/js/memories.js"), timeout=2) as response:
+        with urlopen(_url(httpd, "/js/memories/index.js"), timeout=2) as response:
             assert "javascript" in response.headers.get_content_type()
             assert b"pagesFromStats" in response.read()
+        overview = (WEBUI / "js" / "memories" / "overview.js").read_text(encoding="utf-8")
+        assert "Theo ngày" in overview
     finally:
         _stop(httpd, thread)
 
@@ -199,8 +201,11 @@ def test_stats_error_is_503(tmp_path: Path) -> None:
 
 def test_default_webui_has_index() -> None:
     assert (WEBUI / "index.html").is_file()
-    assert (WEBUI / "js" / "memories.js").is_file()
-    raw = (WEBUI / "js" / "memories.js").read_text(encoding="utf-8")
+    assert (WEBUI / "js" / "memories" / "index.js").is_file()
+    raw = "\n".join(
+        (WEBUI / "js" / "memories" / name).read_text(encoding="utf-8")
+        for name in ("index.js", "overview.js", "leaf.js", "canonical.js")
+    )
     assert "Theo ngày" in raw
     assert "data-day-filter" in raw
     assert "data-forget" in raw

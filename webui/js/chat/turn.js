@@ -1,11 +1,11 @@
-import { el } from "../dom.js";
-import { modes } from "../data.js";
-import { postJson } from "../util.js";
-import { createNdjsonDecoder } from "../ndjson.js";
-import { statusTextForEvent } from "../turn-status.js";
-import { clearStaffs, mountStaff } from "../staff.js";
-import { scoreFromEvents } from "../staff-map.js";
-import { state } from "../state.js";
+import { el } from "../shared/dom.js";
+import { modes } from "../shared/data.js";
+import { postJson } from "../shared/util.js";
+import { createNdjsonDecoder } from "../shared/ndjson.js";
+import { statusTextForEvent } from "../staff/status.js";
+import { clearStaffs, mountStaff } from "../staff/index.js";
+import { scoreFromEvents } from "../staff/map.js";
+import { state } from "../shared/state.js";
 import {
   chatStatusNode,
   ensureLive,

@@ -1,7 +1,7 @@
-import { el } from "../dom.js";
-import { formatMarkdown } from "../markdown.js";
-import { escapeHtml } from "../util.js";
-import { state } from "../state.js";
+import { el } from "../shared/dom.js";
+import { formatMarkdown } from "../shared/markdown.js";
+import { escapeHtml } from "../shared/util.js";
+import { state } from "../shared/state.js";
 
 export const EMPTY_BODY =
   '<div class="new-page-empty"><span aria-hidden="true">+</span><p>Chưa có tin nào.</p><small>Nói điều đầu tiên để mở phiên.</small></div>';

@@ -1,4 +1,4 @@
-"""Node tests for the NDJSON decoder — webui/js/ndjson.js.
+"""Node tests for the NDJSON decoder — webui/js/shared/ndjson.js.
 
 Runs in Node with --input-type=module so no DOM is needed; mirrors the
 eval helper style of tests/test_staff_map.py.
@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "webui" / "js" / "ndjson.js"
+SCRIPT = ROOT / "webui" / "js" / "shared" / "ndjson.js"
 
 
 @pytest.fixture(scope="module")

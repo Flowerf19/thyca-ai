@@ -1,8 +1,8 @@
 // Canonical files (SOUL/USER/IDENTITY.md): page builder + inline editor
 // (split from memories.js). Event hooks come in via bindCanonical(root, hooks).
 
-import { formatMarkdown } from "./markdown.js";
-import { escapeHtml } from "./util.js";
+import { formatMarkdown } from "../shared/markdown.js";
+import { escapeHtml } from "../shared/util.js";
 
 export function canonicalPages(files) {
   const order = { "USER.md": 0, "SOUL.md": 1, "IDENTITY.md": 2 };
@@ -123,5 +123,3 @@ async function saveCanonical(name, content, wrap, button, hooks) {
     window.alert("Không lưu được file. Thử lại nhé.");
   }
 }
-
-// Bấm card gợi ý: mở đúng ngày trong "Theo ngày" rồi nhảy tới leaf

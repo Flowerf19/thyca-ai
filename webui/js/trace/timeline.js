@@ -1,7 +1,7 @@
 // Turn timeline for the trace detail paper — spans derived from detail.messages
 // only (no new API), each row a native <details> with a latency bar.
 
-import { escapeHtml, fmtLatency } from "./util.js";
+import { escapeHtml, fmtLatency } from "../shared/util.js";
 
 const SPAN_TEXT_LIMIT = 4000;
 

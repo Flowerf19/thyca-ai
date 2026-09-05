@@ -1,4 +1,4 @@
-import { fillChatAt, hydrateChat, initToBottom, invalidateChatHydrate, resetToNewChatPage, restoreLiveTurn, scrollThread, updateToBottomVisibility } from "./chat/index.js";
+import { fillChatAt, hydrateChat, initToBottom, invalidateChatHydrate, renderComposerMeter, resetToNewChatPage, restoreLiveTurn, scrollThread, updateToBottomVisibility } from "./chat/index.js";
 import { clearStaffs, syncStaffs } from "./staff/index.js";
 import { icons, modes } from "./shared/data.js";
 import { el } from "./shared/dom.js";
@@ -153,6 +153,9 @@ export function renderPage(pageIndex = 0) {
   if (state.activeMode === "chat") {
     // Switch tab chat = xuống cuối (scrollThread đợi layout ổn định qua rAF).
     scrollThread();
+    // Meter dưới composer = last-turn fresh/cache/cost của tab đang xem;
+    // phiên trống (messages rỗng) hiện "—".
+    renderComposerMeter(el.meter, page.messages);
   }
   if (state.activeMode === "trace") {
     updateMiniPlayer(page);

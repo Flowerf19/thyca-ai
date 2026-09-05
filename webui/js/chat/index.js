@@ -21,6 +21,10 @@ export {
   settleIncoming,
 } from "./turn.js";
 export {
+  renderComposerMeter,
+  sumLastTurnUsage,
+} from "./meter.js";
+export {
   initToBottom,
   isNearBottom,
   scrollThread,

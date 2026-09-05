@@ -10,11 +10,13 @@ import {
   chatStatusNode,
   ensureLive,
   getLiveTurn,
+  isViewingSession,
   rekeyLiveTurn,
   staffOpts,
   startLiveTurn,
 } from "./live.js";
 import { applyDetail, bindSession } from "./pages.js";
+import { renderComposerMeter } from "./meter.js";
 import {
   entryHtml,
   reduceMotion,
@@ -138,6 +140,9 @@ export async function sendChatTurn(text) {
   }
   if (!completed) throw new Error("Không nhận được trả lời.");
   applyDetail(completed);
+  // Meter lên ngay khi turn xong — renderPage không chạy lại khi settle
+  // thành công (chỉ renderPageList), nên update ở đây; tab nền thì bỏ qua.
+  if (isViewingSession(completed.id)) renderComposerMeter(el.meter, completed.messages);
   return completed;
 }
 

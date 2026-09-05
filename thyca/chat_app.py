@@ -304,6 +304,8 @@ def _message_dict(message: Message) -> dict:
         ]
     if message.tool_call_id is not None:
         payload["tool_call_id"] = message.tool_call_id
+    if message.meta is not None:
+        payload["meta"] = dict(message.meta)
     return payload
 
 

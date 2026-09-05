@@ -2,8 +2,9 @@
 
 Thay đổi của Thyca, viết ngắn gọn cho người dùng.
 
-## Chưa phát hành
+## 0.7.5 — 05/09/2026
 
+- Dưới khung chat có thêm dòng nhỏ: lượt vừa rồi tốn bao nhiêu token (input, cache) và bao nhiêu tiền. Di chuột vào để xem số đầy đủ.
 - Web gọn lại: code giao diện (chat, cài đặt, memories, trace...) được chia thư mục riêng nên tải nhanh và ít lỗi vặt hơn. Bạn không cần làm gì, cứ dùng như cũ.
 
 ## 0.7.4 — 05/09/2026

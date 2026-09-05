@@ -120,6 +120,7 @@ function applyDetailToPage(page, detail) {
   page.kicker = next.kicker;
   page.body = next.body;
   page.sessionId = next.sessionId;
+  page.messages = next.messages;
   bindSession(page, next.sessionId);
 }
 
@@ -194,20 +195,23 @@ function pageFromSummary(item, model) {
     sessionId: id,
     kicker: escapeHtml(id && model ? `${id} · ${model}` : id || model),
     body: "",
+    messages: [],
   };
 }
 
 function pageFromDetail(detail) {
   const id = String(detail.id || "");
   const model = detail.model || "";
+  const messages = Array.isArray(detail.messages) ? detail.messages : [];
   return {
     title: escapeHtml(detail.title || "Phiên trống"),
-    date: escapeHtml(formatUpdated((detail.messages || []).at(-1)?.ts)),
+    date: escapeHtml(formatUpdated(messages.at(-1)?.ts)),
     tag: "",
     tone: "chat",
     sessionId: id,
     kicker: escapeHtml(id && model ? `${id} · ${model}` : id || model),
-    body: threadHtml(detail.messages || []),
+    body: threadHtml(messages),
+    messages,
   };
 }
 
@@ -220,5 +224,6 @@ function emptyPage(model) {
     sessionId: "",
     kicker: model ? `${model} · phiên mới` : "Phiên mới · chưa lưu",
     body: EMPTY_BODY,
+    messages: [],
   };
 }

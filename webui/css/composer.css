@@ -235,6 +235,15 @@
   color: var(--color-ok);
 }
 
+/* Usage meter: cùng hàng .composer-meta, reuse .hint, chỉ giữ 1 dòng. */
+#meter {
+  flex: 0 0 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .shortcut {
   flex: 0 0 auto;
   color: var(--color-neutral);

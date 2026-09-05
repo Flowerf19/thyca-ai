@@ -23,6 +23,7 @@ export const el = {
   send: document.getElementById("send"),
   hint: document.getElementById("hint"),
   chips: document.getElementById("composer-chips"),
+  meter: document.getElementById("meter"),
   idleNudge: document.getElementById("idle-nudge"),
   idleRemember: document.getElementById("idle-remember"),
   idleDismiss: document.getElementById("idle-dismiss"),

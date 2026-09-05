@@ -742,3 +742,43 @@ def test_retry_hook_emits_llm_retry_events(tmp_path: Path) -> None:
     assert retries == [TurnEvent(type="llm.retry", attempt=1, max_attempts=3)]
     app.shutdown()
 
+
+def test_aborted_static_and_body_keep_server_quiet(tmp_path: Path, capsys) -> None:
+    """Client ngắt mid-response/mid-body (đổi Trace↔Chat): im lặng, server sống."""
+    import socket
+
+    httpd, thread = _start(tmp_path, _chat(tmp_path, FakeLLM(ChatReply(content="x"))))
+    try:
+        port = httpd.server_address[1]
+        # 1. GET đóng ngay sau request: wfile.flush() cuối handle_one_request
+        #    dâng BrokenPipe lên handle_error (không qua _send).
+        sock = socket.create_connection(("127.0.0.1", port), timeout=5)
+        try:
+            sock.sendall(b"GET /api/sessions HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+        finally:
+            sock.close()
+        # 2. POST khai Content-Length lớn rồi đóng giữa body.
+        sock = socket.create_connection(("127.0.0.1", port), timeout=5)
+        try:
+            sock.sendall(
+                b"POST /api/sessions HTTP/1.1\r\nHost: x\r\n"
+                b"Content-Length: 5000\r\nContent-Type: application/json\r\n"
+                b"Connection: close\r\n\r\n{\"a\":"
+            )
+        finally:
+            sock.close()
+        # 3. Static file đóng ngay sau request.
+        sock = socket.create_connection(("127.0.0.1", port), timeout=5)
+        try:
+            sock.sendall(b"GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+        finally:
+            sock.close()
+        time.sleep(0.5)
+        assert thread.is_alive()
+        payload = _json(httpd, "/api/sessions")
+        assert payload["sessions"] == []
+        captured = capsys.readouterr()
+        assert "Traceback" not in captured.err
+        assert "BrokenPipeError" not in captured.err
+    finally:
+        _stop(httpd, thread)

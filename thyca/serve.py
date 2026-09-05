@@ -96,6 +96,23 @@ def default_webui() -> Path:
     return here.parent / "webui"
 
 
+class _QuietHTTPServer(ThreadingHTTPServer):
+    """ThreadingHTTPServer im lặng khi client đi giữa response.
+
+    _send đã nuốt pipe ở đường write, nhưng wfile.flush() cuối
+    handle_one_request (và body POST bị abort) vẫn dâng BrokenPipe /
+    ConnectionReset lên BaseServer.handle_error — mặc định in traceback.
+    Đổi Trace↔Chat mid-turn abort các GET in-flight nên chỉ nuốt 2 loại
+    này; lỗi khác vẫn log như cũ.
+    """
+
+    def handle_error(self, request, client_address) -> None:
+        _, exc, _ = sys.exc_info()
+        if isinstance(exc, (BrokenPipeError, ConnectionResetError)):
+            return
+        super().handle_error(request, client_address)
+
+
 def make_server(
     *,
     host: str,
@@ -104,13 +121,13 @@ def make_server(
     facade: MemoryFacade,
     chat: ChatApp | None = None,
     config_file: Path | None = None,
-) -> ThreadingHTTPServer:
+) -> _QuietHTTPServer:
     if host not in LOOPBACK:
         raise ServeError("bind must be loopback")
     root = webui.resolve()
     if not root.is_dir():
         raise ServeError(f"webui missing: {webui}")
-    httpd = ThreadingHTTPServer(
+    httpd = _QuietHTTPServer(
         (host, port), _handler(root, facade, chat, config_file)
     )
     httpd.allow_reuse_address = True
@@ -486,12 +503,16 @@ def _handler(
             self._send(status, body, "application/json; charset=utf-8")
 
         def _send(self, status: int, body: bytes, content_type: str) -> None:
-            self.send_response(status)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.send_response(status)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                # Client ngắt giữa response (reload/đóng tab): hết người nghe.
+                return
 
     return Handler
 

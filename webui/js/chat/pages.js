@@ -2,6 +2,7 @@ import { el } from "../shared/dom.js";
 import { modes } from "../shared/data.js";
 import { escapeHtml, formatUpdated, getJson } from "../shared/util.js";
 import { state } from "../shared/state.js";
+import { getLiveTurn } from "./live.js";
 import { EMPTY_BODY, LOAD_ERROR_BODY, threadHtml } from "./view.js";
 
 // Guard chống race khi bấm tab liên tiếp: lượt fetch cũ về sau phải bỏ,
@@ -13,6 +14,19 @@ let hydrateChatGen = 0;
 
 export async function hydrateChat() {
   const gen = ++hydrateChatGen;
+  // Trace→Chat mid-turn: list/detail fetch thành công vẫn hại — summary
+  // pages có body rỗng, đè mất chỗ live staff đang vẽ dở. Đã có page live
+  // thì bỏ qua rebuild, restoreLiveTurn vẽ lại đồng bộ trong renderPage.
+  const liveId = String(state.activeSessionId || "");
+  if (liveId && getLiveTurn(liveId)?.running) {
+    const existing = modes.chat.pages || [];
+    const at = existing.findIndex((page) => String(page.sessionId || "") === liveId);
+    if (at >= 0 && existing[at].body) {
+      state.chatLive = true;
+      state.activePageIndex = at;
+      return true;
+    }
+  }
   const pages = await refreshChatList();
   if (gen !== hydrateChatGen) return false;
   if (!pages) return false;
@@ -71,6 +85,13 @@ async function fillChatPage(page) {
     page.body = EMPTY_BODY;
     return true;
   }
+  // Đang có turn chạy trên session này: fill lại JSONL (summary body rỗng
+  // đè lên chỗ live staff đang vẽ dở — hydrate mid-turn là thủ phạm lớp B).
+  // Giữ body hiện tại, chờ stream ingest vào liveTurns rồi render lúc turn
+  // xong. Cùng lý do, abort/timeout của chính GET này cũng không được đè
+  // body đã có: hydrate về null trong lúc staff x27/edit x10 vẫn tăng.
+  const live = getLiveTurn(page.sessionId);
+  if (live?.running && page.body) return true;
   let detail = null;
   try {
     // Timeout 15s như postJson: session kẹt không treo tab,
@@ -80,8 +101,11 @@ async function fillChatPage(page) {
     detail = null;
   }
   if (!detail || !Array.isArray(detail.messages)) {
-    // Lỗi visible thay vì trang trắng: giữ body cũ nếu có, báo rõ.
+    // Lỗi visible thay vì trang trắng: giữ body cũ nếu có, báo rõ. Riêng
+    // mid-turn (live vẫn running) thì im lặng giữ nguyên — fetch abort lúc
+    // đổi mode không phải lỗi của turn, không gắn cờ loadError.
     bindSession(page, page.sessionId);
+    if (getLiveTurn(page.sessionId)?.running && page.body) return true;
     if (!page.body) page.body = LOAD_ERROR_BODY;
     page.loadError = true;
     return false;

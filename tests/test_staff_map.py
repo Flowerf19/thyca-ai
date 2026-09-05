@@ -20,10 +20,12 @@ COMPLETED = {"type": "turn.completed"}
 FAILED = {"type": "turn.failed"}
 
 CHORDS = {
-    "I": ["C5", "E5", "G5"],
-    "vi": ["C5", "E5", "A5"],
-    "IV": ["C5", "F5", "A5"],
-    "V": ["B4", "D5", "G5"],
+    "i": ["C5", "E5", "A5"],
+    "VI": ["C5", "F5", "A5"],
+    "III": ["C5", "E5", "G5"],
+    "VII": ["B4", "D5", "G5"],
+    "iv": ["D5", "F5", "A5"],
+    "VII7": ["G4", "B4", "F5"],
     "vii°": ["B4", "D5", "F5"],
 }
 
@@ -65,7 +67,7 @@ def _slots(measure: dict) -> list[tuple[int, int, list[str] | None]]:
 def test_integer_ticks_and_full_measure_union(node: str) -> None:
     events = [ACCEPTED, {"type": "tool.finished", "ok": True}]
     score = _score(node, *events, COMPLETED)
-    assert score["key"] == "C"
+    assert score["key"] == "a"
     assert score["meter"] == {"beats": 4, "beatType": 4, "ticksPerQuarter": 4}
     for measure in score["measures"]:
         for item in measure["events"] + measure["rests"]:
@@ -87,7 +89,7 @@ def test_empty_input_is_whole_rest_measure(node: str) -> None:
     score = _score(node)
     assert len(score["measures"]) == 1
     measure = score["measures"][0]
-    assert measure["harmony"] == "I"
+    assert measure["harmony"] == "i"
     assert measure["terminal"] is None
     assert measure["finalBarline"] is False
     assert measure["events"] == []
@@ -98,8 +100,10 @@ def test_accepted_at_beat_one_no_pickup(node: str) -> None:
     score = _score(node, ACCEPTED)
     assert len(score["measures"]) == 1
     measure = score["measures"][0]
-    assert measure["harmony"] == "I"
-    assert measure["events"] == [{"offset": 0, "duration": 4, "pitches": ["C5"]}]
+    assert measure["harmony"] == "i"
+    assert measure["events"] == [
+        {"offset": 0, "duration": 4, "pitches": ["C5"], "sound": ["A3", "C5"]}
+    ]
     assert measure["rests"] == [
         {"offset": 4, "duration": 4},
         {"offset": 8, "duration": 8},
@@ -108,11 +112,11 @@ def test_accepted_at_beat_one_no_pickup(node: str) -> None:
 
 def test_harmony_cycle_across_measures(node: str) -> None:
     events = []
-    for _ in range(16):
+    for _ in range(32):
         events.append({"type": "tool.finished", "ok": True})
     score = _score(node, *events)
     harmonies = [m["harmony"] for m in score["measures"]]
-    assert harmonies == ["I", "vi", "IV", "V"]
+    assert harmonies == ["i", "VI", "III", "VII", "iv", "VII7", "i", "i"]
 
 
 def test_pitches_are_subset_of_measure_chord(node: str) -> None:
@@ -144,8 +148,18 @@ def test_unknown_event_type_is_noop(node: str) -> None:
     assert len(score["measures"]) == 1
     measure = score["measures"][0]
     assert len(measure["events"]) == 2
-    assert measure["events"][0] == {"offset": 0, "duration": 4, "pitches": ["C5"]}
-    assert measure["events"][1] == {"offset": 4, "duration": 4, "pitches": ["C5", "E5", "G5"]}
+    assert measure["events"][0] == {
+        "offset": 0,
+        "duration": 4,
+        "pitches": ["C5"],
+        "sound": ["A3", "C5"],
+    }
+    assert measure["events"][1] == {
+        "offset": 4,
+        "duration": 4,
+        "pitches": ["C5", "E5", "A5"],
+        "sound": ["A3", "C5", "E5", "A5"],
+    }
     assert measure["rests"] == [{"offset": 8, "duration": 8}]
 
 
@@ -157,10 +171,10 @@ def test_no_consecutive_diminished(node: str) -> None:
     assert [e["pitches"] for e in events] == [
         ["C5"],
         ["B4", "D5", "F5"],
-        ["C5", "E5", "G5"],
+        ["C5", "E5", "A5"],
     ]
     assert sorted(events[1]["pitches"]) == sorted(CHORDS["vii°"])
-    assert sorted(events[2]["pitches"]) == sorted(CHORDS["I"])
+    assert sorted(events[2]["pitches"]) == sorted(CHORDS["i"])
 
 
 def test_completed_terminal_measure(node: str) -> None:
@@ -168,10 +182,15 @@ def test_completed_terminal_measure(node: str) -> None:
     assert len(score["measures"]) == 2
     activity, terminal = score["measures"]
     assert activity["terminal"] is None
-    assert activity["harmony"] == "I"
+    assert activity["harmony"] == "i"
     assert activity["events"] == [
-        {"offset": 0, "duration": 4, "pitches": ["C5"]},
-        {"offset": 4, "duration": 4, "pitches": ["C5", "E5", "G5"]},
+        {"offset": 0, "duration": 4, "pitches": ["C5"], "sound": ["A3", "C5"]},
+        {
+            "offset": 4,
+            "duration": 4,
+            "pitches": ["C5", "E5", "A5"],
+            "sound": ["A3", "C5", "E5", "A5"],
+        },
     ]
     assert activity["rests"] == [{"offset": 8, "duration": 8}]  # still 16 ticks
     assert terminal["harmony"] is None
@@ -179,8 +198,18 @@ def test_completed_terminal_measure(node: str) -> None:
     assert terminal["finalBarline"] is True
     assert terminal["rests"] == []
     assert terminal["events"] == [
-        {"offset": 0, "duration": 8, "pitches": ["G4", "B4", "D5"]},
-        {"offset": 8, "duration": 8, "pitches": ["C5", "E5", "G5"]},
+        {
+            "offset": 0,
+            "duration": 8,
+            "pitches": ["G4", "B4", "F5"],
+            "sound": ["G3", "G4", "B4", "F5"],
+        },
+        {
+            "offset": 8,
+            "duration": 8,
+            "pitches": ["C5", "E5", "A5"],
+            "sound": ["A3", "C5", "E5", "A5"],
+        },
     ]
 
 
@@ -195,7 +224,14 @@ def test_failed_terminal_measure(node: str) -> None:
     assert terminal["harmony"] is None
     assert terminal["terminal"] == "failed"
     assert terminal["finalBarline"] is False
-    assert terminal["events"] == [{"offset": 0, "duration": 16, "pitches": ["G4", "B4", "D5"]}]
+    assert terminal["events"] == [
+        {
+            "offset": 0,
+            "duration": 16,
+            "pitches": ["G4", "B4", "F5"],
+            "sound": ["G3", "G4", "B4", "F5"],
+        }
+    ]
     assert terminal["rests"] == []
 
 
@@ -220,15 +256,17 @@ def test_window_keeps_terminal_and_original_harmony(node: str) -> None:
     assert first["terminal"] is None
     assert first["events"][0]["offset"] == 0  # excerpt starts at a barline
     # 120 quarters = activity 0..29 + terminal. Window keeps 15..29 + terminal.
-    # HARMONY_ORDER[15 % 4] == V.
-    assert first["harmony"] == "V"
+    # HARMONY_ORDER[15 % 8] == I (second I of the 8-bar phrase).
+    assert first["harmony"] == "i"
 
 
 def test_naming_started_is_quarter_rest_not_note(node: str) -> None:
     score = _score(node, ACCEPTED, {"type": "session.naming.started"})
     measure = score["measures"][0]
-    assert measure["harmony"] == "I"
-    assert measure["events"] == [{"offset": 0, "duration": 4, "pitches": ["C5"]}]
+    assert measure["harmony"] == "i"
+    assert measure["events"] == [
+        {"offset": 0, "duration": 4, "pitches": ["C5"], "sound": ["A3", "C5"]}
+    ]
     assert measure["rests"] == [
         {"offset": 4, "duration": 4},
         {"offset": 8, "duration": 8},
@@ -259,11 +297,11 @@ def test_skill_pair_is_two_quarters_in_chord(node: str) -> None:
         COMPLETED,
     )
     measure = score["measures"][0]
-    assert measure["harmony"] == "I"
+    assert measure["harmony"] == "i"
     assert measure["events"] == [
-        {"offset": 0, "duration": 4, "pitches": ["C5"]},
-        {"offset": 4, "duration": 4, "pitches": ["G5"]},
-        {"offset": 8, "duration": 4, "pitches": ["C5", "E5", "G5"]},
+        {"offset": 0, "duration": 4, "pitches": ["C5"], "sound": ["A3", "C5"]},
+        {"offset": 4, "duration": 4, "pitches": ["C5", "A5"], "sound": ["A3", "C5", "A5"]},
+        {"offset": 8, "duration": 4, "pitches": ["C5", "A5"], "sound": ["A3", "C5", "A5"]},
     ]
     assert measure["rests"] == [{"offset": 12, "duration": 4}]
 
@@ -279,8 +317,9 @@ def test_skill_failed_is_diminished_then_recovering_chord(node: str) -> None:
     assert [e["pitches"] for e in events] == [
         ["C5"],
         ["B4", "D5", "F5"],
-        ["C5", "E5", "G5"],
+        ["C5", "A5"],
     ]
+    assert "sound" not in events[1]
 
 
 def test_unknown_event_type_costs_no_beat(node: str) -> None:
@@ -295,3 +334,24 @@ def test_unknown_event_type_costs_no_beat(node: str) -> None:
         node, ACCEPTED, {"type": "skill.started"}, {"type": "skill.finished", "ok": True}
     )
     assert with_noise == without_noise
+
+
+def test_v7_full_then_error_still_vii(node: str) -> None:
+    events = [{"type": "tool.finished", "ok": True}] * 21
+    events.append({"type": "tool.finished", "ok": False})
+    score = _score(node, *events)
+    measure = score["measures"][5]
+    assert measure["harmony"] == "VII7"
+    assert measure["events"][0]["pitches"] == ["G4", "B4", "F5"]
+    assert measure["events"][1]["pitches"] == ["B4", "D5", "F5"]
+    assert "sound" not in measure["events"][1]
+
+
+def test_v_sound_has_no_seventh(node: str) -> None:
+    events = [{"type": "tool.finished", "ok": True}] * 13
+    score = _score(node, *events)
+    measure = score["measures"][3]
+    assert measure["harmony"] == "VII"
+    sound = measure["events"][0]["sound"]
+    assert "F5" not in sound
+    assert sound[0] == "G3"

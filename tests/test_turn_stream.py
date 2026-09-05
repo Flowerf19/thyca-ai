@@ -100,7 +100,7 @@ def test_failed_stream_is_open_dominant(node: str) -> None:
     assert result["status"][-1] == "Lượt đã dừng."
     assert result["terminal"] == "failed"
     assert result["finalBarline"] is False
-    assert result["pitches"] == ["G4", "B4", "D5"]
+    assert result["pitches"] == ["G4", "B4", "F5"]
     assert result["duration"] == 16
 
 
@@ -130,4 +130,4 @@ def test_skill_events_change_status_without_terminal(node: str) -> None:
         "Đã mở skill create-skill…",
     ]
     assert result["terminals"] == 0
-    assert result["lastPitches"] == [["C5"], ["G5"], ["C5", "E5", "G5"]]
+    assert result["lastPitches"] == [["C5"], ["C5", "A5"], ["C5", "A5"]]

@@ -1,5 +1,6 @@
 import { renderStaff } from "./draw.js";
 import { scoreFromEvents } from "./map.js";
+import { playScore } from "./play.js";
 
 // RECORDS keyed by stable string — NOT by DOM node — so innerHTML
 // replacement (renderPage / fillChatAt tab switch) doesn't lose live score.
@@ -176,12 +177,27 @@ function watch(host) {
   watched.add(host);
 }
 
+function onStaffPointer(ev) {
+  const host = ev.currentTarget;
+  const article = host && host.parentNode;
+  let key = null;
+  try {
+    key = article?.dataset?.staffKey || NODE_KEYS.get(article) || null;
+  } catch { key = null; }
+  if (!key && article?.classList?.contains("entry-status")) key = lastKey;
+  const rec = key ? RECORDS.get(key) : null;
+  if (rec?.score) playScore(rec.score);
+}
+
 function ensureHost(article) {
   let host = article.querySelector(":scope > .thyca-staff-host");
   if (host) return host;
   host = document.createElement("div");
   host.className = "thyca-staff-host";
   host.setAttribute("aria-hidden", "true");
+  if (typeof host.addEventListener === "function") {
+    host.addEventListener("pointerdown", onStaffPointer);
+  }
   const copy = article.querySelector(":scope > .entry-copy");
   if (copy) article.insertBefore(host, copy);
   else article.append(host);

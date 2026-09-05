@@ -56,15 +56,15 @@ def test_registered_entries_match_contract(node: str) -> None:
     entries = _eval(node, "catalogEntries()")
     by_type = {entry["type"]: entry for entry in entries}
     assert by_type["turn.accepted"] == {"type": "turn.accepted", "slot": "pulse", "density": "anchor"}
-    assert by_type["llm.started"] == {"type": "llm.started", "slot": "pulse", "density": "anchor"}
+    assert by_type["llm.started"] == {"type": "llm.started", "slot": "pulse", "density": "cue"}
     assert by_type["llm.finished"] == {"type": "llm.finished", "slot": "pulse", "density": "outer"}
-    assert by_type["llm.retry"] == {"type": "llm.retry", "slot": "rest"}
+    assert by_type["llm.retry"] == {"type": "llm.retry", "slot": "pulse", "density": "outer"}
     assert by_type["tool.started"] == {"type": "tool.started", "slot": "pulse", "density": "cue"}
-    assert by_type["skill.started"] == {"type": "skill.started", "slot": "pulse", "density": "cue"}
+    assert by_type["skill.started"] == {"type": "skill.started", "slot": "pulse", "density": "outer"}
     assert by_type["tool.finished"]["slot"] == "pulse"
     assert by_type["tool.finished"]["density"] == "full"
     assert by_type["skill.finished"]["slot"] == "pulse"
-    assert by_type["skill.finished"]["density"] == "full"
+    assert by_type["skill.finished"]["density"] == "outer"
     assert by_type["session.naming.started"] == {"type": "session.naming.started", "slot": "rest"}
     assert by_type["session.naming.finished"] == {
         "type": "session.naming.finished",
@@ -87,6 +87,38 @@ def test_error_when_guard_compiled_not_evaled(node: str) -> None:
     assert failed is True
     missing = _eval(node, "familyFor({type:'skill.finished'}).errorWhen({})")
     assert missing is True  # ok absent -> ok !== true -> error color
+
+
+def test_family_for_resolves_tool_count_and_bash(node: str) -> None:
+    assert _eval(node, "familyFor({type:'llm.finished'}).density") == "outer"
+    assert _eval(node, "familyFor({type:'llm.finished', tool_count:0}).density") == "full"
+    assert _eval(node, "familyFor({type:'llm.finished', tool_count:1}).density") == "outer"
+    assert _eval(node, "familyFor({type:'tool.started', name:'read'}).density") == "cue"
+    assert _eval(node, "familyFor({type:'tool.started', name:'bash'}).density") == "full"
+    assert _eval(node, "familyFor({type:'skill.started', name:'bash'}).density") == "outer"
+
+
+def test_family_for_clone_does_not_mutate_catalog(node: str) -> None:
+    density = _eval(
+        node,
+        """(() => {
+          familyFor({type:'tool.started', name:'bash'});
+          familyFor({type:'tool.started', name:'read'});
+          return catalogEntries().find((e) => e.type === 'tool.started').density;
+        })()""",
+    )
+    assert density == "cue"
+
+
+def test_unknown_when_drops_entry(node: str) -> None:
+    yaml = CATALOG.read_text(encoding="utf-8").replace(
+        "when: tool_count === 0", "when: nope"
+    )
+    module = _module_from_yaml(node, yaml)
+    # llm.finished is not a probe; probe tool.started (2) still resolves.
+    assert module["families"][2] is not None
+    dropped = _eval_yaml_family(node, yaml, {"type": "llm.finished", "tool_count": 0})
+    assert dropped is None
 
 
 def test_family_for_rejects_non_events(node: str) -> None:
@@ -232,6 +264,41 @@ def _module_from_yaml(node: str, yaml: str) -> dict:
         "  families: probes.map((p) => familyFor(p)),\n"
         "  emptyScore: scoreFromEvents([{type: 'turn.accepted'}], familyFor),\n"
         "}));\n"
+    )
+    try:
+        result = subprocess.run(
+            [node, "--input-type=module", "-e", loader],
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=ROOT,
+        )
+        return json.loads(result.stdout)
+    finally:
+        path.unlink()
+
+
+def _eval_yaml_family(node: str, yaml: str, event: dict) -> object:
+    import re
+    import tempfile
+
+    source = CATALOG.read_text(encoding="utf-8")
+    escaped = yaml.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
+    patched = re.sub(
+        r"const CATALOG_YAML = `.*?`;",
+        "const CATALOG_YAML = `" + escaped + "`;",
+        source,
+        count=1,
+        flags=re.DOTALL,
+    )
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".js", dir=CATALOG.parent, prefix="catalog-test-", delete=False
+    ) as handle:
+        handle.write(patched)
+        path = Path(handle.name)
+    loader = (
+        f"import {{ familyFor }} from '{path.as_posix()}';\n"
+        f"console.log(JSON.stringify(familyFor({json.dumps(event)})));\n"
     )
     try:
         result = subprocess.run(

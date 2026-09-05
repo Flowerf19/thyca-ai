@@ -1,4 +1,4 @@
-"""Composer usage meter — last-turn fresh/cache/cost under the chat box."""
+"""Composer usage meter — last-turn fresh/cache/out/ctx/cost under the chat box."""
 from __future__ import annotations
 
 import json
@@ -61,6 +61,8 @@ def test_sum_last_turn_takes_final_slice_only(node: str) -> None:
         "prompt": 70607522,
         "cached": 70000000,
         "fresh": 607522,
+        "completion": 0,
+        "ctx": 70607522,
         "cost": pytest.approx(0.012345),
     }
 
@@ -70,6 +72,8 @@ def test_sum_last_turn_empty_or_no_usage_is_null(node: str) -> None:
         "prompt": None,
         "cached": None,
         "fresh": None,
+        "completion": None,
+        "ctx": None,
         "cost": None,
     }
     only_user = _eval(node, 'm.sumLastTurnUsage([{role:"user",content:"x"}])')
@@ -78,22 +82,103 @@ def test_sum_last_turn_empty_or_no_usage_is_null(node: str) -> None:
         node, 'm.sumLastTurnUsage([{role:"user",content:"x"},{role:"assistant",content:"y"}])'
     )
     assert no_meta["fresh"] is None
+    assert no_meta["completion"] is None
+    assert no_meta["ctx"] is None
+
+
+def test_sum_last_turn_out_and_ctx_skips_naming(node: str) -> None:
+    messages = [
+        {"role": "user", "content": "hi"},
+        {
+            "role": "assistant",
+            "content": "r1",
+            "meta": {
+                "kind": "llm",
+                "usage": {
+                    "prompt_tokens": 1000,
+                    "cached_tokens": 100,
+                    "completion_tokens": 50,
+                },
+                "cost_usd": 0.001,
+            },
+        },
+        {
+            "role": "assistant",
+            "content": "r2",
+            "meta": {
+                "kind": "llm",
+                "usage": {
+                    "prompt_tokens": 128000,
+                    "cached_tokens": 120000,
+                    "completion_tokens": 30,
+                },
+                "cost_usd": 0.002,
+            },
+        },
+        {
+            "role": "assistant",
+            "content": None,
+            "meta": {
+                "kind": "naming",
+                "usage": {
+                    "prompt_tokens": 200,
+                    "cached_tokens": 0,
+                    "completion_tokens": 8,
+                },
+                "cost_usd": 0.0001,
+            },
+        },
+    ]
+    summary = _eval(node, f"m.sumLastTurnUsage({json.dumps(messages)})")
+    assert summary == {
+        "prompt": 129200,
+        "cached": 120100,
+        "fresh": 9100,
+        "completion": 88,
+        "ctx": 128000,
+        "cost": pytest.approx(0.0031),
+    }
 
 
 def test_meter_text_compact_and_title_full(node: str) -> None:
-    summary = {"prompt": 70607522, "cached": 70000000, "fresh": 607522, "cost": 0.012345}
-    assert _eval(node, f"m.meterText({json.dumps(summary)})") == "input 607.5K · cache 70M · $0,0123"
+    summary = {
+        "prompt": 70607522,
+        "cached": 70000000,
+        "fresh": 607522,
+        "completion": 82200,
+        "ctx": 128000,
+        "cost": 0.012345,
+    }
+    assert _eval(node, f"m.meterText({json.dumps(summary)})") == (
+        "input 607.5K · cache 70M · out 82.2K · ctx 128K · $0,0123"
+    )
     assert _eval(node, f"m.meterTitle({json.dumps(summary)})") == (
-        "lượt vừa rồi — input 607.522 · cache 70.000.000 · $0,0123"
+        "lượt vừa rồi — input 607.522 · cache 70.000.000 · out 82.200 · ctx 128.000 · $0,0123"
     )
     assert _eval(node, "m.meterText({fresh: null})") == ""
 
 
 def test_meter_text_hides_cache_badge_when_zero(node: str) -> None:
-    summary = {"prompt": 5000, "cached": 0, "fresh": 5000, "cost": 0.001}
-    assert _eval(node, f"m.meterText({json.dumps(summary)})") == "input 5.000 · $0,0010"
+    summary = {
+        "prompt": 5000,
+        "cached": 0,
+        "fresh": 5000,
+        "completion": 10,
+        "ctx": 5000,
+        "cost": 0.001,
+    }
+    assert _eval(node, f"m.meterText({json.dumps(summary)})") == (
+        "input 5.000 · out 10 · ctx 5.000 · $0,0010"
+    )
     assert _eval(node, f"m.meterTitle({json.dumps(summary)})") == (
-        "lượt vừa rồi — input 5.000 · $0,0010"
+        "lượt vừa rồi — input 5.000 · out 10 · ctx 5.000 · $0,0010"
+    )
+    zero_out = {**summary, "completion": 0}
+    assert _eval(node, f"m.meterText({json.dumps(zero_out)})") == (
+        "input 5.000 · ctx 5.000 · $0,0010"
+    )
+    assert _eval(node, f"m.meterTitle({json.dumps(zero_out)})") == (
+        "lượt vừa rồi — input 5.000 · ctx 5.000 · $0,0010"
     )
 
 

@@ -66,19 +66,19 @@ export function renderStaff(score, { widthPx = 560 } = {}) {
     const dy = sys * (H + STAFF_GAP);
     const from = sys * perSystem;
     const to = Math.min(from + perSystem, total);
-    svg.append(staffSystem(measures, from, to, width, measureW, dy, sys === 0, perSystem));
+    svg.append(staffSystem(measures, from, to, width, measureW, dy, perSystem));
   }
   return svg;
 }
 
-function staffSystem(measures, from, to, width, measureW, dy, showTime, slots) {
+function staffSystem(measures, from, to, width, measureW, dy, slots) {
   const group = node("g", { class: "staff-system" });
   const endX = PAD_LEFT + slots * measureW;
   const lastHasFinal = !!measures[measures.length - 1]?.finalBarline;
   const lastSystem = from + slots >= measures.length;
   group.append(staffLines(width, endX, dy));
   group.append(clef(dy));
-  if (showTime) group.append(timeSignature(dy));
+  group.append(timeSignature(dy));
   for (let slot = 0; slot < slots; slot += 1) {
     const i = from + slot;
     const xStart = PAD_LEFT + slot * measureW;
@@ -152,10 +152,15 @@ function eventX(offset, xStart, measureW, ticks) {
 
 function eventGlyph(event, xStart, measureW, ticks, dy) {
   const x = eventX(event.offset, xStart, measureW, ticks) + measureW * 0.06;
-  const pitches = (event.pitches || []).map((p) => PITCH_STEPS[p]).filter((n) => Number.isFinite(n));
+  const names = (event.pitches || []).filter((p) => Number.isFinite(PITCH_STEPS[p]));
+  const pitches = names.map((p) => PITCH_STEPS[p]);
   pitches.sort((a, b) => a - b);
   const duration = event.duration;
   const group = node("g", { class: "staff-event" });
+  if (names.length) {
+    group.setAttribute("data-pitches", names.join(","));
+    group.setAttribute("data-duration", String(duration));
+  }
   if (!pitches.length) {
     // Treat chordless event as a rest for layout safety.
     group.append(restPath(duration, x, dy));

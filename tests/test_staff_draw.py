@@ -168,8 +168,33 @@ def test_measures_wrap_only_when_width_runs_out(node: str) -> None:
     assert result["sevenWideSystems"] == 2
     assert result["threeNarrowSystems"] == 2
     assert result["sevenClefs"] == 2
-    assert result["sevenTime"] == 1
+    assert result["sevenTime"] == 2
     assert result["sevenTall"] > result["sixTall"]
+
+
+def test_note_event_exposes_pitches_for_playback(node: str) -> None:
+    result = _eval(
+        node,
+        "renderStaff",
+        """(() => {
+          const svg = renderStaff(scoreFromEvents([{type:"turn.accepted"}]), { widthPx: 480 });
+          const playable = svg.querySelectorAll("[data-pitches]");
+          const rest = svg.querySelectorAll(".staff-rest");
+          const first = playable[0];
+          return {
+            playable: playable.length,
+            restParentPitches: rest[0] && rest[0].parentNode
+              ? rest[0].parentNode.getAttribute("data-pitches")
+              : "missing",
+            pitches: first ? first.getAttribute("data-pitches") : null,
+            duration: first ? first.getAttribute("data-duration") : null,
+          };
+        })()""",
+    )
+    assert result["playable"] >= 1
+    assert result["restParentPitches"] in (None, "missing")
+    assert result["pitches"] == "C5"
+    assert result["duration"] == "4"
 
 
 def test_first_note_clears_time_signature(node: str) -> None:

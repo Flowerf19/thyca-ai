@@ -8,6 +8,7 @@
 .entry-thyca .thyca-staff-host {
   height: auto;
   margin-block-start: 0;
+  cursor: pointer;
 }
 
 .thyca-staff {
@@ -16,7 +17,6 @@
   max-width: 100%;
   height: auto;
   overflow: visible;
-  pointer-events: none;
 }
 
 .staff-line {

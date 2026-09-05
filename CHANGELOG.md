@@ -2,6 +2,12 @@
 
 Thay đổi của Thyca, viết ngắn gọn cho người dùng.
 
+## 0.7.6 — 05/09/2026
+
+- Dòng meter dưới khung chat thêm output và cửa sổ request cuối (ctx). Di chuột vào để xem số đầy đủ.
+- Khuông nhạc hiện 4/4 ở mọi hàng; chạm khuông để nghe cả đoạn bằng piano.
+- Khuông theo câu 8 ô (có V7); tool, skill và retry nghe khác nhau.
+
 ## 0.7.5 — 05/09/2026
 
 - Dưới khung chat có thêm dòng nhỏ: lượt vừa rồi tốn bao nhiêu token (input, cache) và bao nhiêu tiền. Di chuột vào để xem số đầy đủ.

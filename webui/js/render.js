@@ -153,7 +153,7 @@ export function renderPage(pageIndex = 0) {
   if (state.activeMode === "chat") {
     // Switch tab chat = xuống cuối (scrollThread đợi layout ổn định qua rAF).
     scrollThread();
-    // Meter dưới composer = last-turn fresh/cache/cost của tab đang xem;
+    // Meter dưới composer = last-turn fresh/cache/out/ctx/cost của tab đang xem;
     // phiên trống (messages rỗng) hiện "—".
     renderComposerMeter(el.meter, page.messages);
   }

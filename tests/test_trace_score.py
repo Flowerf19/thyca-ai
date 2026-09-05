@@ -86,7 +86,7 @@ def test_two_rounds_and_tools_complete_with_v_to_i(node: str) -> None:
         {"role": "assistant", "content": "done", "meta": {"kind": "llm", "round": 2}},
     ]
     score = _score(node, messages)
-    assert score["key"] == "C"
+    assert score["key"] == "a"
     assert score["measures"][-1]["terminal"] == "completed"
     events = score["measures"][-1]["events"]
     assert [item["duration"] for item in events] == [8, 8]
@@ -111,7 +111,9 @@ def test_incomplete_turn_uses_failed_cadence(node: str) -> None:
     score = _score(node, messages)
     last = score["measures"][-1]
     assert last["terminal"] == "failed"
-    assert last["events"] == [{"offset": 0, "duration": 16, "pitches": ["G4", "B4", "D5"]}]
+    assert last["events"][0]["offset"] == 0
+    assert last["events"][0]["duration"] == 16
+    assert last["events"][0]["pitches"] == ["G4", "B4", "F5"]
 
 
 def test_skill_read_replays_as_skill_events(node: str) -> None:
@@ -146,9 +148,7 @@ def test_skill_read_replays_as_skill_events(node: str) -> None:
         if not measure["terminal"]
         for item in measure["events"]
     ]
-    # The skill read must replay as a cue (single high note) followed by a
-    # full triad — the same sonority tool.* would give, so assert the pair
-    # appears anywhere (harmony depends on measure position).
+    # tool.started (cue, 1) then tool.finished ok (full, 3) still adjacent.
     pair_found = any(
         len(pitches[i]) == 1 and len(pitches[i + 1]) == 3
         for i in range(len(pitches) - 1)

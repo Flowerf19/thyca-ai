@@ -11,6 +11,7 @@
 //   density   — anchor | cue | outer | full   (pulse only)
 //   kind      — completed | failed            (terminal only)
 //   errorWhen — optional guard expression; whitelist-compiled, never eval'd
+//   when + thenDensity — optional paired override (both required)
 //
 // Rules that keep the 4/4 grammar intact (see .agents/plans/staff-event-catalog.md):
 //   - one operational action = at most one pulse (classification lives in Act)
@@ -26,12 +27,15 @@ const CATALOG_YAML = `
   density: anchor
 - type: llm.started
   slot: pulse
-  density: anchor
+  density: cue
 - type: llm.finished
   slot: pulse
   density: outer
+  when: tool_count === 0
+  thenDensity: full
 - type: llm.retry
-  slot: rest
+  slot: pulse
+  density: outer
 - type: tool.started
   slot: pulse
   density: cue
@@ -41,10 +45,10 @@ const CATALOG_YAML = `
   errorWhen: ok !== true
 - type: skill.started
   slot: pulse
-  density: cue
+  density: outer
 - type: skill.finished
   slot: pulse
-  density: full
+  density: outer
   errorWhen: ok !== true
 - type: session.naming.started
   slot: rest
@@ -60,16 +64,14 @@ const CATALOG_YAML = `
 `;
 
 // Guard expressions are hand-compiled, not evaluated: only known shapes pass.
-// A value outside the whitelist drops the entry (with a console warning) so a
-// YAML typo can never turn a string into executable code.
 const ERROR_WHEN = new Map([["ok !== true", (event) => event.ok !== true]]);
+const WHEN = new Map([["tool_count === 0", (event) => event.tool_count === 0]]);
 
 const SLOTS = new Set(["pulse", "rest", "terminal"]);
 const DENSITIES = new Set(["anchor", "cue", "outer", "full"]);
 const KINDS = new Set(["completed", "failed"]);
+const BASH_TYPES = new Set(["tool.started", "tool.finished"]);
 
-// Minimal YAML subset parser: a flat list of flat maps with string values.
-// Not general YAML — deliberately tiny so the catalog stays dependency-free.
 function parseCatalog(text) {
   const entries = [];
   let current = null;
@@ -120,6 +122,21 @@ function compile(entries) {
         continue;
       }
       if (guard) family.errorWhen = guard;
+      const hasWhen = Boolean(entry.when);
+      const hasThen = Boolean(entry.thenDensity);
+      if (hasWhen !== hasThen) {
+        warn("when/thenDensity must be paired", entry);
+        continue;
+      }
+      if (hasWhen) {
+        const pred = WHEN.get(entry.when);
+        if (!pred || !DENSITIES.has(entry.thenDensity)) {
+          warn("when/thenDensity invalid", entry);
+          continue;
+        }
+        family.when = pred;
+        family.thenDensity = entry.thenDensity;
+      }
     }
     if (slot === "terminal") {
       if (!KINDS.has(entry.kind)) {
@@ -139,13 +156,35 @@ function warn(reason, entry) {
 
 const FAMILIES = compile(parseCatalog(CATALOG_YAML));
 
-// Single lookup for the mapper: object with a string type, else null (silence).
-export function familyFor(event) {
-  if (!event || typeof event !== "object" || typeof event.type !== "string") return null;
-  return FAMILIES.get(event.type) ?? null;
+function cloneFamily(family) {
+  const out = { slot: family.slot };
+  if (family.density) out.density = family.density;
+  if (family.kind) out.kind = family.kind;
+  if (family.errorWhen) out.errorWhen = family.errorWhen;
+  if (family.when) out.when = family.when;
+  if (family.thenDensity) out.thenDensity = family.thenDensity;
+  return out;
 }
 
-// Exposed for tests: assert the catalog shape without reaching into YAML text.
+// Single lookup for the mapper: resolved clone, else null (silence).
+export function familyFor(event) {
+  if (!event || typeof event !== "object" || typeof event.type !== "string") return null;
+  const base = FAMILIES.get(event.type);
+  if (!base) return null;
+  const family = cloneFamily(base);
+  if (family.slot === "pulse") {
+    if (family.when?.(event) && family.thenDensity) family.density = family.thenDensity;
+    if (BASH_TYPES.has(event.type) && event.name === "bash") family.density = "full";
+  }
+  return family;
+}
+
+// Static catalog shape for tests — no predicates, no resolved overrides.
 export function catalogEntries() {
-  return [...FAMILIES.entries()].map(([type, family]) => ({ type, ...family }));
+  return [...FAMILIES.entries()].map(([type, family]) => {
+    const out = { type, slot: family.slot };
+    if (family.density) out.density = family.density;
+    if (family.kind) out.kind = family.kind;
+    return out;
+  });
 }

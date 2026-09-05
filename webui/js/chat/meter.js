@@ -1,6 +1,7 @@
-// Composer usage meter: last-turn fresh/cache/cost under the chat box.
-// Semantics mirror Trace (INPUT=fresh = prompt − cached, CACHE, cost).
-// Pure logic (no document/window at import) — safe for Node-based tests.
+// Composer usage meter: last-turn fresh/cache/out/ctx/cost under the chat box.
+// Semantics mirror Trace (INPUT=fresh = prompt − cached, CACHE, OUTPUT, cost).
+// ctx = prompt_tokens of the last non-naming LLM round (one-request window),
+// not the summed prompt (that is fresh+cache). Pure logic — safe for Node tests.
 import { fmtCompact, fmtCost, fmtInt } from "../shared/util.js";
 
 // Group messages into turns like thyca/trace.py turns_from_session:
@@ -22,12 +23,15 @@ export function lastTurnSlice(messages) {
   return last;
 }
 
-// Sum prompt/cached/cost over assistant meta.usage/meta.cost_usd in one turn slice. Mirrors _sum_tokens (naming kind included — Trace counts
-// it as a request too, so the meter matches Recent rows).
+// Sum prompt/cached/completion/cost over assistant meta in one turn slice.
+// Mirrors _sum_tokens (naming included in sums — Trace counts it as a request).
+// ctx skips naming: that call is appended after the turn and is not the window.
 export function sumLastTurnUsage(messages) {
   const slice = lastTurnSlice(messages);
   let prompt = null;
   let cached = null;
+  let completion = null;
+  let ctx = null;
   let cost = null;
   let hasUsage = false;
   let hasCost = false;
@@ -38,12 +42,18 @@ export function sumLastTurnUsage(messages) {
     if (usage && typeof usage === "object") {
       const pt = usage.prompt_tokens;
       const ct = usage.cached_tokens;
+      const cot = usage.completion_tokens;
       if (Number.isInteger(pt)) {
         prompt = (prompt || 0) + pt;
         hasUsage = true;
+        if (meta.kind !== "naming") ctx = pt;
       }
       if (Number.isInteger(ct)) {
         cached = (cached || 0) + ct;
+        hasUsage = true;
+      }
+      if (Number.isInteger(cot)) {
+        completion = (completion || 0) + cot;
         hasUsage = true;
       }
     }
@@ -56,19 +66,24 @@ export function sumLastTurnUsage(messages) {
   if (!hasUsage) {
     prompt = null;
     cached = null;
-  } else if (cached == null) {
-    cached = 0;
+    completion = null;
+    ctx = null;
+  } else {
+    if (cached == null) cached = 0;
+    if (completion == null) completion = 0;
   }
   if (!hasCost) cost = null;
   const fresh = prompt != null ? Math.max(prompt - (cached || 0), 0) : null;
-  return { prompt, cached, fresh, cost };
+  return { prompt, cached, fresh, completion, ctx, cost };
 }
 
-// Compact one-liner: fresh · cache · cost. Returns "" when no usage at all.
+// Compact one-liner: fresh · cache · out · ctx · cost. Returns "" when no usage.
 export function meterText(summary) {
   if (!summary || summary.fresh == null) return "";
   const parts = [`input ${fmtCompact(summary.fresh)}`];
   if (summary.cached) parts.push(`cache ${fmtCompact(summary.cached)}`);
+  if (summary.completion) parts.push(`out ${fmtCompact(summary.completion)}`);
+  if (summary.ctx != null) parts.push(`ctx ${fmtCompact(summary.ctx)}`);
   parts.push(fmtCost(summary.cost));
   return parts.join(" · ");
 }
@@ -78,6 +93,8 @@ export function meterTitle(summary) {
   if (!summary || summary.fresh == null) return "";
   const bits = [`input ${fmtInt(summary.fresh)}`];
   if (summary.cached) bits.push(`cache ${fmtInt(summary.cached)}`);
+  if (summary.completion) bits.push(`out ${fmtInt(summary.completion)}`);
+  if (summary.ctx != null) bits.push(`ctx ${fmtInt(summary.ctx)}`);
   bits.push(fmtCost(summary.cost));
   return `lượt vừa rồi — ${bits.join(" · ")}`;
 }

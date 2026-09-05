@@ -1,5 +1,5 @@
 // Pure mapper: operational events (same objects as NDJSON) -> normalized score model.
-// No timer, no text hashing, no key choice: single voice C major, 4/4.
+// No timer, no text hashing, no key choice: single voice A minor, 4/4.
 // Event types are NOT known here — role lookup lives in staff/catalog.js
 // (familyFor: pulse | rest | terminal). Unregistered events are silence.
 //
@@ -20,19 +20,21 @@ import { familyFor } from "./catalog.js";
 
 export const TICKS = { quarter: 4, half: 8, whole: 16, measure: 16 };
 // Activity voicings [low, middle, high]; vii° is the local error color only.
+// VII7 is root+3rd+7th (omit 5th) so it is never the same three pitches as vii°.
 const VOICINGS = {
-  I: ["C5", "E5", "G5"],
-  vi: ["C5", "E5", "A5"],
-  IV: ["C5", "F5", "A5"],
-  V: ["B4", "D5", "G5"],
+  i: ["C5", "E5", "A5"],
+  VI: ["C5", "F5", "A5"],
+  III: ["C5", "E5", "G5"],
+  VII: ["B4", "D5", "G5"],
+  iv: ["D5", "F5", "A5"],
+  VII7: ["G4", "B4", "F5"],
   "vii°": ["B4", "D5", "F5"],
 };
-const HARMONY_ORDER = ["I", "vi", "IV", "V"];
+const HARMONY_ORDER = ["i", "VI", "III", "VII", "iv", "VII7", "i", "i"];
 const BEATS = [0, 4, 8, 12];
-
-// Pitches for the terminal measures: dominant (G4 B4 D5) and tonic (C5 E5 G5).
-const V_TRIAD = ["G4", "B4", "D5"];
-const I_TRIAD = ["C5", "E5", "G5"];
+const BASS = { i: "A3", VI: "F3", III: "C4", VII: "G3", VII7: "G3", iv: "D3" };
+const VII7_STAFF = VOICINGS.VII7;
+const I_STAFF = VOICINGS.i;
 
 function createMeasure(harmony) {
   return {
@@ -44,7 +46,6 @@ function createMeasure(harmony) {
   };
 }
 
-// Generated trailing rests for a measure with `used` activity slots.
 function trailingRests(used) {
   switch (used) {
     case 0:
@@ -63,7 +64,6 @@ function trailingRests(used) {
   }
 }
 
-// Keep operational rests (rest slot) and only fill the unused tail.
 function closeMeasure(measure, used) {
   measure.rests = measure.rests.concat(trailingRests(used));
 }
@@ -77,25 +77,39 @@ function samePitches(left, right) {
   );
 }
 
+function staffEvent(offset, duration, pitches, harmony, isVii) {
+  const item = { offset, duration, pitches };
+  if (isVii) return item;
+  const sound = [];
+  const bass = BASS[harmony];
+  if (bass) sound.push(bass);
+  for (const pitch of pitches) {
+    if (!sound.includes(pitch)) sound.push(pitch);
+  }
+  // Thin VII7 densities (anchor/cue) omit the 7th on the staff; still hear F5. Never runs for VII.
+  if (harmony === "VII7" && !sound.includes("F5")) sound.push("F5");
+  item.sound = sound;
+  return item;
+}
+
 export function scoreFromEvents(events, familyLookup = familyFor) {
-  const score = { key: "C", meter: { beats: 4, beatType: 4, ticksPerQuarter: 4 }, measures: [] };
+  const score = { key: "a", meter: { beats: 4, beatType: 4, ticksPerQuarter: 4 }, measures: [] };
   const input = Array.isArray(events) ? events : [];
   let measure = null;
   let measureIndex = 0;
   let usedSlots = 0;
   let previousActivityPitches = null;
+  const vii = VOICINGS["vii°"];
 
-  // Sonority of one activity slot (all quarters) from the family role.
-  // Returns {pitches} or {rest: true}; null = silence (no beat used).
   function activityFor(event, family) {
     if (family.slot === "rest") return { rest: true };
-    const low = VOICINGS[measure.harmony][0];
-    const high = VOICINGS[measure.harmony][2];
-    const full = VOICINGS[measure.harmony];
-    const vii = VOICINGS["vii°"];
+    const chord = VOICINGS[measure.harmony];
+    const low = chord[0];
+    const high = chord[chord.length - 1];
+    const full = chord;
     if (family.errorWhen?.(event)) {
       if (!samePitches(previousActivityPitches, vii)) return { pitches: [...vii] };
-      return { pitches: full };
+      return { pitches: [...full] };
     }
     switch (family.density) {
       case "anchor":
@@ -105,7 +119,7 @@ export function scoreFromEvents(events, familyLookup = familyFor) {
       case "cue":
         return { pitches: [high] };
       case "full":
-        return { pitches: full };
+        return { pitches: [...full] };
       default:
         return null;
     }
@@ -136,28 +150,28 @@ export function scoreFromEvents(events, familyLookup = familyFor) {
       previousActivityPitches = null;
       continue;
     }
-    measure.events.push({ offset: beat, duration: 4, pitches: slot.pitches });
+    const isVii = samePitches(slot.pitches, vii);
+    measure.events.push(staffEvent(beat, 4, slot.pitches, measure.harmony, isVii));
     usedSlots += 1;
     previousActivityPitches = slot.pitches;
   }
 
   if (!measure) measure = createMeasure(HARMONY_ORDER[0]);
 
-  // First terminal in stream order wins; kind comes from the catalog family.
   const terminalFamily = input.map(familyLookup).find((f) => f?.slot === "terminal");
   const terminalKind = terminalFamily ? terminalFamily.kind : null;
   if (terminalKind) {
     if (usedSlots > 0) {
       closeMeasure(measure, usedSlots);
       score.measures.push(measure);
-    } // else: skip an empty whole-rest measure opened solely to close.
+    }
     if (terminalKind === "completed") {
       score.measures.push({
         harmony: null,
         terminal: "completed",
         events: [
-          { offset: 0, duration: 8, pitches: V_TRIAD },
-          { offset: 8, duration: 8, pitches: I_TRIAD },
+          staffEvent(0, 8, [...VII7_STAFF], "VII7", false),
+          staffEvent(8, 8, [...I_STAFF], "i", false),
         ],
         rests: [],
         finalBarline: true,
@@ -166,14 +180,14 @@ export function scoreFromEvents(events, familyLookup = familyFor) {
       score.measures.push({
         harmony: null,
         terminal: "failed",
-        events: [{ offset: 0, duration: 16, pitches: V_TRIAD }],
+        events: [staffEvent(0, 16, [...VII7_STAFF], "VII7", false)],
         rests: [],
         finalBarline: false,
       });
     }
   } else {
     closeMeasure(measure, usedSlots);
-    score.measures.push(measure); // in-flight score always shows the current measure
+    score.measures.push(measure);
   }
 
   if (score.measures.length > 16) {

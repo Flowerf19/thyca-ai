@@ -1,0 +1,328 @@
+/* Memories surface — file volume, day accordions, canonical editor. Split from workspace.css (move-only). */
+
+/* Memories: reuse the book cover as a file volume. */
+
+.notebook[data-mode="memories"] .page-kicker,
+.notebook[data-mode="memories"] .page-header-mark {
+  color: var(--color-memory);
+}
+
+.book-reading {
+  max-width: none;
+}
+
+.stat-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: var(--space-md);
+  margin-block-start: var(--space-lg);
+}
+
+.stat-row > div {
+  min-width: 0;
+  overflow: hidden;
+  padding: var(--space-md) var(--space-lg);
+  background: var(--color-paper-2);
+  border: var(--rule) solid var(--color-rule-2);
+  border-radius: var(--radius-sm);
+}
+
+.stat-row strong {
+  display: block;
+  color: var(--color-memory);
+  font-family: var(--font-display);
+  /* Số đã rút gọn (70.6M) nên luôn vừa ô — giữ cỡ lớn, không ellipsis. */
+  font-size: var(--text-2xl);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-row span {
+  color: var(--color-muted);
+  font-size: var(--text-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* Dòng phụ trong ô stat (vd fresh/cache) — chữ thường, không uppercase. */
+.stat-row .stat-sub,
+.stat-sub {
+  display: block;
+  margin-block-start: var(--space-2xs);
+  color: var(--color-neutral);
+  font-size: var(--text-xs);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.suggest-inline {
+  margin-block-start: var(--space-2xl);
+}
+
+.suggest-inline h3 {
+  margin: 0;
+  color: var(--color-ink);
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+
+.suggest-inline > p,
+.suggest-empty {
+  max-width: 45ch;
+  margin: var(--space-sm) 0 0;
+  color: var(--color-reading);
+  font-family: var(--font-reading);
+  font-size: var(--text-md);
+  line-height: 1.5;
+}
+
+.suggest-list {
+  max-width: none;
+  margin: var(--space-xl) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.suggest-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm) var(--space-md);
+  padding: var(--space-md) 0;
+  border-block-start: 1px solid var(--color-rule);
+}
+
+.suggest-list li > div {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 16rem;
+  flex-direction: column;
+  gap: var(--space-2xs);
+}
+
+.suggest-list strong {
+  color: var(--color-ink);
+  font-family: var(--font-reading);
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+
+.suggest-list small {
+  color: var(--color-muted);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+}
+
+.suggest-list span {
+  color: var(--color-reading);
+  font-family: var(--font-reading);
+  font-size: var(--text-md);
+  line-height: 1.45;
+}
+
+.day-filter {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  margin-block-start: var(--space-md);
+  color: var(--color-muted);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.day-filter input {
+  max-width: 16rem;
+  padding: var(--space-xs) 0;
+  border: 0;
+  border-block-end: 1px solid var(--color-rule);
+  background: transparent;
+  color: var(--color-ink);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.day-filter input:focus {
+  outline: none;
+  border-block-end-color: var(--color-memory);
+}
+
+.day-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-md);
+  margin-block-start: var(--space-md);
+  color: var(--color-muted);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+}
+
+.day-pager button,
+.mem-forget {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-memory);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.day-pager button:disabled {
+  color: var(--color-muted);
+  cursor: default;
+}
+
+.mem-forget:hover,
+.day-pager button:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.day-acc-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-lg) var(--space-2xl);
+  align-items: start;
+  margin-block-start: var(--space-lg);
+}
+
+@media (max-width: 900px) {
+  .day-acc-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.day-acc {
+  border-block-start: 1px solid var(--color-rule);
+}
+
+.day-acc > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-xs) var(--space-md);
+  padding: var(--space-md) 0;
+  cursor: pointer;
+  list-style: none;
+}
+
+.day-acc > summary::-webkit-details-marker {
+  display: none;
+}
+
+.day-acc > summary strong {
+  color: var(--color-ink);
+  font-family: var(--font-reading);
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+
+.day-acc > summary span {
+  color: var(--color-ink-2);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+}
+
+.day-acc > summary small {
+  color: var(--color-muted);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.day-acc .mem-day-list {
+  margin-block-start: 0;
+  padding-block-end: var(--space-lg);
+}
+
+/* ngày mở chiếm cả hàng, leaves dàn 3 cột */
+.day-acc[open] {
+  grid-column: 1 / -1;
+}
+
+.mem-day-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-lg) var(--space-2xl);
+  align-items: stretch;
+  margin-block-start: var(--space-xl);
+}
+
+@media (max-width: 900px) {
+  .mem-day-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.mem-entry.is-suggest {
+  cursor: pointer;
+  transition: border-color var(--dur-short) var(--ease-out);
+}
+
+.mem-entry.is-suggest:hover {
+  border-color: var(--color-memory);
+}
+
+.mem-entry.is-flash {
+  outline: 2px solid var(--color-memory);
+  outline-offset: 2px;
+}
+
+.mem-entry {
+  display: flex;
+  flex-direction: column;
+  background: var(--color-paper-2);
+  border: var(--rule) solid var(--color-rule-2);
+  border-radius: var(--radius-sm);
+  padding: var(--space-md) var(--space-lg);
+}
+
+/* nội dung dài không kéo giãn card: giới hạn số dòng hiển thị */
+.mem-entry .quote-note p {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 8;
+  line-clamp: 8;
+  overflow: hidden;
+}
+
+.mem-entry h3 {
+  margin: 0;
+  color: var(--color-ink);
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.mem-entry .quote-note {
+  margin-block-start: var(--space-md);
+}
+
+.mem-entry-actions.mem-canonical-actions {
+  justify-content: flex-start;
+}
+
+.mem-md {
+  margin-block-start: 0;
+  padding: var(--space-lg) var(--space-xl);
+  background: var(--color-paper-2);
+  border: var(--rule) solid var(--color-rule-2);
+  border-radius: var(--radius-sm);
+  color: var(--color-reading);
+  font-family: var(--font-reading);
+  font-size: var(--text-base);
+  line-height: 1.6;
+}

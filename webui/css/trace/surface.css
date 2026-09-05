@@ -1,0 +1,333 @@
+/* Trace surface — listening notebook, music grammar, filter pills. Split from workspace.css (move-only). */
+
+/* Trace: reuse the listening treatment as loop playback. */
+
+.notebook[data-mode="trace"] .page-kicker,
+.notebook[data-mode="trace"] .page-header-mark {
+  color: var(--color-trace);
+}
+
+.music-page {
+  max-width: none;
+}
+
+.album-note {
+  min-width: 0;
+}
+
+.track-kicker {
+  color: var(--color-trace);
+}
+
+.album-note p {
+  margin: var(--space-xs) 0 0;
+  color: var(--color-muted);
+  font-size: var(--text-md);
+}
+
+.track-rule {
+  margin-block-start: var(--space-xl);
+}
+
+.track-rule span {
+  width: 55%;
+  background: var(--color-trace);
+}
+
+.track-time {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-block-start: var(--space-xs);
+  color: var(--color-neutral);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.music-note {
+  max-width: none;
+  margin-block-start: var(--space-3xl);
+  color: var(--color-reading);
+  font-family: var(--font-reading);
+  font-size: var(--text-xl);
+  line-height: 1.45;
+}
+
+.music-note p {
+  margin: 0;
+}
+
+.player-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-height: 2.75rem;
+  margin-block-start: var(--space-xl);
+  padding-inline: var(--space-md);
+  border: var(--rule) solid var(--color-trace);
+  background: transparent;
+  color: var(--color-trace);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  transition: background-color var(--dur-short) var(--ease-out), color var(--dur-short) var(--ease-out), transform 100ms var(--ease-out);
+}
+
+.player-symbol {
+  font-size: var(--text-xs);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .player-button:hover {
+    background: var(--color-trace);
+    color: var(--color-accent-ink);
+  }
+}
+
+.player-button:active {
+  transform: translateY(1px);
+}
+
+.player-button:disabled {
+  opacity: 0.5;
+}
+
+.player-button.is-playing {
+  background: var(--color-trace-soft);
+}
+
+.new-page-empty {
+  display: grid;
+  place-items: center;
+  max-width: 34ch;
+  min-height: 14rem;
+  margin-inline: auto;
+  color: var(--color-muted);
+  text-align: center;
+}
+
+.new-page-empty > span {
+  color: var(--color-accent);
+  font-family: var(--font-display);
+  font-size: var(--text-2xl);
+  line-height: 1;
+}
+
+.new-page-empty p {
+  margin: var(--space-md) 0 0;
+  color: var(--color-reading);
+  font-family: var(--font-reading);
+  font-size: var(--text-lg);
+}
+
+.new-page-empty small {
+  margin-block-start: var(--space-xs);
+  font-size: var(--text-sm);
+}
+
+/* Trace — sổ nghe: số terracotta riêng, không đụng màu Memories. */
+
+.notebook[data-mode="trace"] .stat-row strong,
+.notebook[data-mode="trace"] .progress-label strong {
+  color: var(--color-trace);
+}
+
+.trace-pills {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: var(--space-sm) var(--space-2xl);
+  align-items: center;
+  margin-block: var(--space-sm) var(--space-lg);
+  padding-block-end: var(--space-md);
+  border-block-end: var(--rule) solid var(--color-rule-2);
+}
+
+.trace-pills .pill-name {
+  color: var(--color-ink);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.trace-filter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.trace-filter-menu {
+  position: relative;
+  flex: 1;
+  display: flex;
+  min-width: 0;
+}
+
+.trace-filter-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  width: 100%;
+  padding-block: var(--space-xs);
+  color: var(--color-ink);
+  font-weight: 600;
+}
+
+.trace-filter-toggle .trace-filter-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.trace-filter-toggle .trace-filter-caret {
+  flex: none;
+  margin-inline-start: auto;
+  color: var(--color-muted);
+}
+
+.trace-filter-toggle.is-engaged {
+  border-color: var(--color-trace);
+  background: var(--color-trace-soft);
+  color: var(--color-ink);
+}
+
+.trace-filter-toggle.is-engaged .trace-filter-caret {
+  color: var(--color-trace);
+}
+
+.trace-filter-pop {
+  position: absolute;
+  inset-inline: 0;
+  top: calc(100% + var(--space-sm));
+  z-index: var(--z-sticky);
+  width: 100%;
+  max-height: 18rem;
+  overflow-y: auto;
+  display: grid;
+  gap: var(--space-3xs);
+  padding: var(--space-2xs);
+  background: var(--color-paper);
+  border: var(--rule) solid var(--color-rule);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 2px 12px var(--color-shadow);
+}
+
+.trace-filter-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  width: 100%;
+  padding: var(--space-2xs) var(--space-sm);
+  border: 0;
+  border-block-end: var(--rule) solid var(--color-rule-2);
+  border-radius: 0;
+  background: none;
+  color: var(--color-ink);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+
+.trace-filter-option:last-child {
+  border-block-end: 0;
+}
+
+.trace-filter-option:hover {
+  background: var(--color-paper-3);
+}
+
+.trace-filter-option[aria-pressed="true"] {
+  background: var(--color-trace-soft);
+  color: var(--color-ink);
+}
+
+.trace-filter-option:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: -2px;
+}
+
+.trace-filter-option .pill-count {
+  margin-inline-start: auto;
+  color: var(--color-muted);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.trace-option-label {
+  min-width: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.trace-pills .pill-count {
+  color: var(--color-muted);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.trace-turn-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  margin-block-end: var(--space-xl);
+}
+
+.trace-turn-list .suggestion-chip[aria-pressed="true"],
+.trace-pills .suggestion-chip[aria-pressed="true"] {
+  border-color: var(--color-trace);
+  background: var(--color-trace-soft);
+  color: var(--color-ink);
+}
+
+.trace-section {
+  margin-block: var(--space-2xl);
+}
+
+.trace-section > h3 {
+  margin: 0;
+  color: var(--color-ink);
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+
+.trace-section-note {
+  margin: var(--space-3xs) 0 0;
+  color: var(--color-muted);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+}
+
+.trace-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-block-start: var(--space-md);
+  overflow: visible;
+}
+
+.trace-chart-bar {
+  fill: var(--color-trace-soft);
+  stroke: var(--color-trace);
+  stroke-width: 1;
+  transition: fill var(--dur-short) var(--ease-out);
+}
+
+.trace-chart-bar:hover {
+  fill: var(--color-trace);
+}
+
+.trace-chart-rule {
+  stroke: var(--color-rule);
+  stroke-width: 1;
+}
+

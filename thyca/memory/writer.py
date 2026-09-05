@@ -164,7 +164,7 @@ class MemoryWriter:
         with self.lock_for(path):
             return self.map_heading(path, entry, touch).expires_at or ""
 
-    def read_session(self, session_id: str) -> str:
+    def read_session(self, session_id: str, now: datetime | None = None) -> str:
         path, entry = self.locate(session_id)
         if not path.is_file():
             raise ArchiveError(f"session not found: {session_id}")
@@ -179,7 +179,7 @@ class MemoryWriter:
                     break
                 seen[meta.title] = seen.get(meta.title, 0) + 1
                 if resolve_entry_id(meta, str(path), seen[meta.title]) == entry:
-                    if not is_visible(meta.expires_at):
+                    if not is_visible(meta.expires_at, now):
                         raise ArchiveError(f"session not found: {session_id}")
                     taking = True
                     captured.append(line)

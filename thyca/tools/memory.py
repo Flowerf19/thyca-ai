@@ -130,7 +130,7 @@ class MemoryFacade:
         except ArchiveError:
             if session_id is None:
                 raise
-            text = self.writer.read_session(session_id)
+            text = self.writer.read_session(session_id, now=now)
             sid = session_id
             chunk_ids = self._session_leaf_ids(session_id, text)[:GET_SESSION_CAP]
         if chunk_ids and sid:
@@ -141,7 +141,7 @@ class MemoryFacade:
         try:
             return self.archive.get(chunk_id=chunk_id, session_id=session_id or sid, now=now)
         except ArchiveError:
-            return self.writer.read_session(sid)
+            return self.writer.read_session(sid, now=now)
 
     def stats(self, now: datetime | None = None) -> MemoryStatsResult:
         now_ts = format_ts(utc_now(now))

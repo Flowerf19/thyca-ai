@@ -652,23 +652,31 @@ def test_stream_sentinel_without_terminal_writes_fallback_failure(
 
 
 def test_chat_js_shipped() -> None:
-    assert (WEBUI / "js" / "chat.js").is_file()
-    chat = (WEBUI / "js" / "chat.js").read_text(encoding="utf-8")
+    chat_dir = WEBUI / "js" / "chat"
+    assert (chat_dir / "index.js").is_file()
+    chat = "\n".join(
+        (chat_dir / name).read_text(encoding="utf-8")
+        for name in ("index.js", "live.js", "turn.js", "pages.js", "view.js")
+    )
     assert "flushTools" in chat
     assert "tool-kicker" in chat
     assert "Tools used:" in chat
-    start = chat.index("export async function createChatSession")
-    end = chat.index("export function", start + 1)
-    body = chat[start:end]
+    pages = (chat_dir / "pages.js").read_text(encoding="utf-8")
+    start = pages.index("export async function createChatSession")
+    # Next export after createChatSession in pages.js
+    end = pages.index("export function", start + 1)
+    body = pages[start:end]
     assert "postJson" not in body
     assert "hydrateChat" not in body
     assert "refreshChatList" in body
     assert "state.activeSessionId = null;" in body
-    send = chat.index("export async function sendChatTurn")
-    send_end = chat.index("export async function fillChatAt", send)
-    assert "page.sessionId" in chat[send:send_end]
-    assert "function bindSession" in chat
-    css = (WEBUI / "css" / "workspace.css").read_text(encoding="utf-8")
+    turn = (chat_dir / "turn.js").read_text(encoding="utf-8")
+    send = turn.index("export async function sendChatTurn")
+    assert "page.sessionId" in turn[send:]
+    assert "function bindSession" in pages or "export function bindSession" in pages
+    css = "\n".join(
+        p.read_text(encoding="utf-8") for p in sorted((WEBUI / "css" / "workspace").glob("*.css"))
+    )
     assert "font-style: italic" in css
     script = WEBUI.parent / "scripts" / "retitle_sessions.py"
     assert script.is_file()

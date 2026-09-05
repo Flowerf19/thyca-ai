@@ -1,9 +1,9 @@
 @import url("./tokens.css");
-@import url("./shell.css");
-@import url("./workspace.css");
-@import url("./chat.css");
-@import url("./memories.css");
-@import url("./trace.css");
+@import url("./shell/index.css");
+@import url("./workspace/index.css");
+@import url("./chat/index.css");
+@import url("./memories/index.css");
+@import url("./trace/index.css");
 @import url("./composer.css");
-@import url("./settings.css");
+@import url("./settings/index.css");
 @import url("./chrome.css");

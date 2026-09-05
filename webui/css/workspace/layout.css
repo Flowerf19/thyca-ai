@@ -1,0 +1,344 @@
+/* ---- Main workspace ---- */
+
+.workspace {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--color-paper);
+}
+
+.topbar {
+  position: relative;
+  z-index: var(--z-sticky);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  min-height: 4.25rem;
+  padding: var(--space-xs) clamp(var(--space-md), 4vw, var(--space-2xl));
+  border-block-end: var(--rule) solid var(--color-rule-2);
+  background: var(--color-paper);
+}
+
+.topbar-start,
+.topbar-actions,
+.breadcrumb {
+  display: flex;
+  align-items: center;
+}
+
+.topbar-start,
+.topbar-actions {
+  gap: var(--space-sm);
+}
+
+.menu-button {
+  display: none;
+  color: var(--color-muted);
+}
+
+.breadcrumb {
+  gap: var(--space-xs);
+  min-width: 0;
+  color: var(--color-neutral);
+  font-size: var(--text-sm);
+}
+
+.breadcrumb span,
+.breadcrumb b {
+  color: var(--color-neutral);
+  font-weight: 400;
+}
+
+.breadcrumb strong {
+  overflow: hidden;
+  color: var(--color-ink-2);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.top-action {
+  min-height: 2.75rem;
+  padding-inline: var(--space-sm);
+  background: transparent;
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  transition: color var(--dur-short) var(--ease-out), background-color var(--dur-short) var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .top-action:hover {
+    background: var(--color-paper-2);
+    color: var(--color-ink);
+  }
+}
+
+.top-action:active {
+  transform: translateY(1px);
+}
+
+.topbar-actions > .icon-button {
+  color: var(--color-muted);
+}
+
+.mini-player {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+  padding-inline-end: var(--space-sm);
+  border-inline-end: var(--rule) solid var(--color-rule-2);
+}
+
+/* Mini-player trên Trace là plaque (title + model · status) — không phát lại. */
+.mini-player .mini-play {
+  display: none;
+}
+
+.mini-play {
+  display: inline-grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border: var(--rule) solid var(--color-trace);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-trace);
+  font-size: var(--text-xs);
+  transition: background-color var(--dur-short) var(--ease-out), color var(--dur-short) var(--ease-out), transform 100ms var(--ease-out);
+}
+
+.mini-play-symbol {
+  transform: translateX(0.05rem);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .mini-play:hover {
+    background: var(--color-trace);
+    color: var(--color-accent-ink);
+  }
+}
+
+.mini-play:active {
+  transform: translateY(1px);
+}
+
+.mini-play:disabled {
+  opacity: 0.5;
+}
+
+.mini-play.is-playing {
+  background: var(--color-trace-soft);
+}
+
+.mini-player-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.2;
+}
+
+.mini-player-copy strong,
+.mini-player-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mini-player-copy strong {
+  max-width: 10ch;
+  color: var(--color-ink-2);
+  font-size: var(--text-xs);
+  font-weight: 500;
+}
+
+.mini-player-copy small {
+  max-width: 12ch;
+  margin-block-start: 0.15rem;
+  color: var(--color-neutral);
+  font-size: 0.625rem;
+}
+
+.notebook {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  /* scroll bằng wheel/touch/keyboard — thanh scrollbar ẩn cho mặt giấy sạch */
+  scrollbar-width: none;
+  background-color: var(--color-paper);
+  color: var(--color-ink);
+  isolation: isolate;
+}
+
+.notebook::-webkit-scrollbar {
+  display: none;
+}
+
+.paper-texture {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.35;
+  background-image: radial-gradient(var(--color-paper-grain) 0.55px, transparent 0.7px);
+  background-position: 0 0;
+  background-size: 7px 7px;
+}
+
+.notebook-inner {
+  position: relative;
+  display: flex;
+  flex: none;
+  min-height: 100%;
+  flex-direction: column;
+  width: 100%;
+  margin-inline: 0;
+  padding: var(--space-xl) clamp(var(--space-md), 3vw, var(--space-xl)) var(--space-md);
+}
+
+/* Nút "xuống cuối" — thay thế scrollbar đã ẩn. Chỉ hiện khi cách đáy
+   (> ngưỡng), chỉ ở mode chat. Nằm trong .notebook nên sticky theo scroll. */
+.to-bottom {
+  position: sticky;
+  bottom: var(--space-md);
+  z-index: var(--z-sticky);
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  margin-inline-start: auto;
+  margin-inline-end: clamp(var(--space-md), 3vw, var(--space-xl));
+  margin-block-start: -3.5rem;
+  border: var(--rule) solid var(--color-rule);
+  border-radius: 50%;
+  background: var(--color-paper-2);
+  color: var(--color-muted);
+  box-shadow: 0 0.25rem 1rem var(--color-shadow);
+  transition: color var(--dur-short) var(--ease-out), border-color var(--dur-short) var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .to-bottom:hover {
+    border-color: var(--color-accent);
+    color: var(--color-accent);
+  }
+}
+
+.to-bottom:active {
+  transform: translateY(1px);
+}
+
+.to-bottom svg {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-xl);
+  min-width: 0;
+  padding-block-end: var(--space-xl);
+  border-block-end: var(--rule) solid var(--color-rule-2);
+}
+
+.page-header-copy {
+  min-width: 0;
+}
+
+.page-header[hidden] {
+  display: none;
+}
+
+/* kicker + mark đã chuyển lên topbar */
+.crumb-kicker,
+.topbar-mark {
+  color: var(--color-accent);
+  font-size: var(--text-sm);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.crumb-mark {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.crumb-mark svg {
+  width: 1.4rem;
+  height: 1.4rem;
+}
+
+.topbar[data-mode="chat"] .crumb-kicker {
+  color: var(--color-chat);
+}
+
+.topbar[data-mode="memories"] .crumb-kicker {
+  color: var(--color-memory);
+}
+
+.topbar[data-mode="trace"] .crumb-kicker {
+  color: var(--color-trace);
+}
+
+.page-kicker {
+  color: var(--color-accent);
+  font-size: var(--text-sm);
+}
+
+.page-header h1 {
+  max-width: none;
+  margin: var(--space-sm) 0 0;
+  color: var(--color-ink);
+  font-family: var(--font-display);
+  font-size: clamp(1.75rem, 2.6vw, 2.75rem);
+  font-style: normal;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+
+.page-note {
+  max-width: 45ch;
+  margin: var(--space-md) 0 0;
+  color: var(--color-muted);
+  font-family: var(--font-reading);
+  font-size: var(--text-lg);
+  line-height: 1.45;
+}
+
+.page-header-mark {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-xs);
+  padding-block-start: var(--space-xs);
+  color: var(--color-accent);
+  font-size: var(--text-sm);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.page-header-mark svg {
+  width: 1.4rem;
+  height: 1.4rem;
+}
+
+.page-body {
+  min-width: 0;
+  flex: 1 0 auto;
+  padding-block-start: var(--space-lg);
+}
+

@@ -1,0 +1,228 @@
+.page-list-wrap {
+  min-width: 0;
+  margin-block-start: var(--space-xl);
+}
+
+.text-button {
+  min-height: 2rem;
+  padding: 0;
+  background: transparent;
+  color: var(--color-sidebar-muted);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  transition: color var(--dur-short) var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .text-button:hover {
+    color: var(--color-sidebar-ink);
+  }
+}
+
+.page-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  margin-block-start: var(--space-sm);
+}
+
+.page-list.is-reversed {
+  flex-direction: column-reverse;
+}
+
+.page-card {
+  display: grid;
+  grid-template-columns: 1.75rem minmax(0, 1fr);
+  grid-template-areas:
+    "icon copy"
+    "icon tag";
+  align-items: center;
+  column-gap: var(--space-xs);
+  width: 100%;
+  min-width: 0;
+  min-height: 3.5rem;
+  padding: var(--space-xs);
+  border-inline-start: 1px solid transparent;
+  background: transparent;
+  color: var(--color-sidebar-muted);
+  text-align: start;
+  transition: color var(--dur-short) var(--ease-out), background-color var(--dur-short) var(--ease-out), border-color var(--dur-short) var(--ease-out);
+}
+
+.page-card-icon {
+  grid-area: icon;
+}
+
+.page-card-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 0.1rem;
+}
+
+.page-card-copy strong {
+  overflow: hidden;
+  color: var(--color-sidebar-ink);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.page-card-copy small {
+  overflow: hidden;
+  color: var(--color-sidebar-muted);
+  font-size: var(--text-xs);
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Tab tải lỗi: viền + chữ đỏ để thấy ngay, bấm lại là thử lại (fillChatAt). */
+.page-card[data-load-error] {
+  border-inline-start-color: var(--color-danger);
+}
+
+.page-card[data-load-error] .page-card-copy small {
+  color: var(--color-danger);
+}
+
+.page-tag {
+  grid-area: tag;
+  justify-self: start;
+  margin-block-start: var(--space-2xs);
+  padding: 0.08rem 0.35rem;
+  font-size: var(--text-xs);
+  line-height: 1.25;
+}
+
+.page-tag-chat {
+  background: var(--color-chat-tag-bg);
+  color: var(--color-chat-soft);
+}
+
+.page-tag-memories {
+  background: var(--color-memory-tag-bg);
+  color: var(--color-memory-tag-ink);
+}
+
+.page-tag-trace {
+  background: var(--color-trace-tag-bg);
+  color: var(--color-trace-tag-ink);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .page-card:hover {
+    background: var(--color-sidebar-3);
+    color: var(--color-sidebar-ink);
+  }
+}
+
+.page-card:active {
+  transform: translateY(1px);
+}
+
+.page-card.is-active {
+  border-inline-start-color: var(--color-accent-soft);
+  background: var(--color-sidebar-3);
+}
+
+.search-empty {
+  margin: var(--space-md) 0;
+  color: var(--color-sidebar-muted);
+  font-size: var(--text-sm);
+}
+
+.sidebar-foot {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-xs);
+  width: 100%;
+  margin-block-start: auto;
+  padding-block-start: var(--space-lg);
+  color: var(--color-sidebar-muted);
+  font-size: var(--text-xs);
+}
+
+.foot-row,
+.foot-note {
+  display: contents;
+}
+
+.foot-note span {
+  min-width: 0;
+  color: var(--color-accent-soft);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  line-height: 1.35;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.foot-github {
+  display: inline-grid;
+  place-items: center;
+  justify-self: end;
+  width: 1.75rem;
+  height: 1.75rem;
+  color: var(--color-accent-soft);
+  text-decoration: none;
+}
+
+.foot-github svg {
+  width: 1.1rem;
+  height: 1.1rem;
+  fill: currentColor;
+  stroke: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .foot-github:hover {
+    color: var(--color-sidebar-ink);
+  }
+}
+
+.foot-github:active {
+  transform: translateY(1px);
+}
+
+.foot-action {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-height: 2.5rem;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font-size: var(--text-xs);
+  transition: color var(--dur-short) var(--ease-out);
+}
+
+.foot-action svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .foot-action:hover {
+    color: var(--color-sidebar-ink);
+  }
+}
+
+.sync-note {
+  display: inline-flex;
+  align-items: center;
+  justify-self: end;
+  gap: var(--space-2xs);
+  white-space: nowrap;
+}
+
+.sync-note i {
+  width: 0.35rem;
+  height: 0.35rem;
+  border-radius: 50%;
+  background: var(--color-ok);
+}

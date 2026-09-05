@@ -50,9 +50,11 @@ def test_escapes_raw_html_and_unsafe_url() -> None:
 
 
 def test_chat_js_uses_formatter() -> None:
-    chat = (WEBUI / "js" / "chat.js").read_text(encoding="utf-8")
-    css = (WEBUI / "css" / "workspace.css").read_text(encoding="utf-8")
-    assert 'from "./markdown.js"' in chat
-    assert "formatMarkdown(content)" in chat
+    view = (WEBUI / "js" / "chat" / "view.js").read_text(encoding="utf-8")
+    css = "\n".join(
+        p.read_text(encoding="utf-8") for p in sorted((WEBUI / "css" / "workspace").glob("*.css"))
+    )
+    assert 'from "../markdown.js"' in view
+    assert "formatMarkdown(content)" in view
     assert ".md-table-wrap" in css
     assert (WEBUI / "vendor" / "marked.esm.js").is_file()

@@ -3,16 +3,14 @@ import { modes } from "../shared/data.js";
 import { postJson } from "../shared/util.js";
 import { createNdjsonDecoder } from "../shared/ndjson.js";
 import { batchDoneText, collapseNames, statusTextForEvent } from "../staff/status.js";
-import { clearStaffs, mountStaff } from "../staff/index.js";
-import { scoreFromEvents } from "../staff/map.js";
 import { state } from "../shared/state.js";
+import { ambientLineForEvent } from "./ambient.js";
 import {
   chatStatusNode,
   ensureLive,
   getLiveTurn,
   isViewingSession,
   rekeyLiveTurn,
-  staffOpts,
   startLiveTurn,
 } from "./live.js";
 import { applyDetail, bindSession } from "./pages.js";
@@ -26,14 +24,18 @@ import {
 } from "./view.js";
 
 const STATUS_MIN_DWELL_MS = 500;
+const AMBIENT_DEBOUNCE_MS = 520;
 let pendingStatus = null;
 let lastStatusSwapAt = 0;
+let pendingAmbient = null;
+let lastAmbientSwapAt = 0;
 
 export function beginOutgoingTurn(text) {
   removeStatus();
-  clearStaffs(el.pageBody);
   flushPendingStatus();
+  flushPendingAmbient();
   lastStatusSwapAt = 0;
+  lastAmbientSwapAt = performance.now();
   const page = modes.chat.pages[state.activePageIndex];
   const sessionId = (page && page.sessionId) || state.activeSessionId || "";
   const rec = startLiveTurn(sessionId, text);
@@ -44,15 +46,13 @@ export function beginOutgoingTurn(text) {
   }
   list.insertAdjacentHTML("beforeend", entryHtml("user", text));
   list.lastElementChild.classList.add("is-enter");
-  list.insertAdjacentHTML("beforeend", statusHtml(rec.statusText));
-  mountStaff(list.lastElementChild, rec.score, staffOpts(sessionId));
+  list.insertAdjacentHTML("beforeend", statusHtml(rec.statusText, rec.ambientText));
   scrollThread();
 }
 
 export function removeStatus() {
   const node = el.pageBody.querySelector(".entry-status");
   if (!node) return;
-  clearStaffs(node);
   node.remove();
 }
 
@@ -65,15 +65,12 @@ export function settleIncoming() {
   wrap.innerHTML = page?.body || "";
   const fresh = wrap.querySelector(".entry-list");
   if (!fresh || !liveList) return false;
-  clearStaffs(el.pageBody);
   const kept = [...liveList.children].filter((node) => !node.classList.contains("entry-status")).length;
   liveList.replaceWith(fresh);
   [...fresh.children].slice(kept).forEach((node, index) => {
     node.classList.add("is-enter");
     node.style.animationDelay = `${index * 80}ms`;
   });
-  const born = [...fresh.children].slice(kept).find((node) => node.classList.contains("entry-thyca"));
-  if (born && rec?.score) mountStaff(born, rec.score, staffOpts(sessionId));
   if (rec) {
     rec.running = false;
     rec.dirty = false;
@@ -100,9 +97,6 @@ export async function sendChatTurn(text) {
       bindSession(page, sessionId);
     }
     rekeyLiveTurn(pendingId, sessionId);
-    const status = chatStatusNode(sessionId);
-    const rec = getLiveTurn(sessionId);
-    if (status && rec) mountStaff(status, rec.score, staffOpts(sessionId));
   }
   const response = await fetch(`/api/sessions/${sessionId}/turn/stream`, {
     method: "POST",
@@ -148,22 +142,17 @@ export async function sendChatTurn(text) {
 
 function ingestTurnEvent(sessionId, event) {
   const rec = ensureLive(sessionId);
-  rec.events.push(event);
-  rec.score = scoreFromEvents(rec.events, undefined, rec.formula);
-  if (Number.isFinite(rec.bpm)) rec.score.bpm = rec.bpm;
   rec.waiting = event.type === "llm.started" || event.type === "llm.retry";
   if (event.type === "turn.failed") rec.failed = true;
   if (event.type === "turn.completed" || event.type === "turn.failed") {
     rec.running = false;
     rec.dirty = true;
   }
+  applyAmbient(sessionId, event);
   applyStatus(sessionId, event);
   const status = chatStatusNode(sessionId);
   if (status) {
-    mountStaff(status, rec.score, staffOpts(sessionId));
     if (rec.failed) status.classList.add("is-error");
-    // While the model thinks (llm.started → next event) the newest note
-    // breathes — see .is-waiting in workspace.css.
     status.classList.toggle("is-waiting", rec.waiting);
   }
   if (event.type === "turn.completed") return "completed";
@@ -198,11 +187,8 @@ function applyStatus(sessionId, event) {
     if (!rec.activeOps.size) rec.batchNames = [];
     rec.lastOperationalText = text;
   } else if (event.type === "llm.started") {
-    // Linger the operational line through the llm wait — the round is still
-    // visible on the staff as that wait's note pair.
     if (rec.lastOperationalText) return;
   } else if (event.type === "llm.retry") {
-    // Retry status must replace any lingering operational line (not error).
     rec.lastOperationalText = "";
   } else if (event.type === "llm.finished" || event.type === "turn.accepted") {
     rec.lastOperationalText = "";
@@ -255,14 +241,68 @@ function applyStatus(sessionId, event) {
   };
 }
 
+function applyAmbient(sessionId, event) {
+  const rec = ensureLive(sessionId);
+  const text = ambientLineForEvent(event);
+  rec.ambientText = text;
+  const status = chatStatusNode(sessionId);
+  const line = status && status.querySelector(".status-ambient");
+  if (!line || !line.isConnected) {
+    flushPendingAmbient();
+    return;
+  }
+  if (reduceMotion()) {
+    flushPendingAmbient();
+    line.textContent = text;
+    return;
+  }
+  const terminal = event.type === "turn.completed" || event.type === "turn.failed";
+  if (terminal) {
+    flushPendingAmbient();
+    showAmbient(line, text);
+    return;
+  }
+  const wait = AMBIENT_DEBOUNCE_MS - (performance.now() - lastAmbientSwapAt);
+  if (wait <= 0) {
+    flushPendingAmbient();
+    showAmbient(line, text);
+    return;
+  }
+  if (pendingAmbient) {
+    pendingAmbient.text = text;
+    return;
+  }
+  const lineRef = line;
+  pendingAmbient = {
+    text,
+    timer: window.setTimeout(() => {
+      const pending = pendingAmbient;
+      pendingAmbient = null;
+      if (pending && lineRef.isConnected) showAmbient(lineRef, pending.text);
+    }, wait),
+  };
+}
+
 function showStatusLine(ticker, text) {
   lastStatusSwapAt = performance.now();
   slideStatus(ticker, text);
+}
+
+function showAmbient(line, text) {
+  lastAmbientSwapAt = performance.now();
+  line.textContent = text;
 }
 
 function flushPendingStatus() {
   if (pendingStatus) {
     window.clearTimeout(pendingStatus.timer);
     pendingStatus = null;
+  }
+}
+
+function flushPendingAmbient() {
+  if (pendingAmbient) {
+    window.clearTimeout(pendingAmbient.timer);
+    pendingAmbient = null;
   }
 }

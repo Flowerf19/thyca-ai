@@ -47,9 +47,11 @@ export function threadHtml(messages) {
   return `<div class="entry-list">${parts.join("")}</div>`;
 }
 
-export function statusHtml(text = "Đang chờ Thyca…") {
+export function statusHtml(text = "Đang chờ Thyca…", ambient = "") {
   return `<article class="entry entry-thyca entry-status" aria-label="Thyca đang nghĩ" aria-live="off">
-      <div class="entry-thyca-head"><time>thyca</time><span class="status-ticker"><span class="status-line">${escapeHtml(text)}</span></span></div>
+      <div class="entry-thyca-head"><time>thyca</time></div>
+      <p class="status-ambient">${escapeHtml(ambient)}</p>
+      <span class="status-ticker"><span class="status-line">${escapeHtml(text)}</span></span>
     </article>`;
 }
 

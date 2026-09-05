@@ -1,5 +1,5 @@
 import { fillChatAt, hydrateChat, initToBottom, invalidateChatHydrate, renderComposerMeter, resetToNewChatPage, restoreLiveTurn, scrollThread, updateToBottomVisibility } from "./chat/index.js";
-import { clearStaffs, syncStaffs } from "./staff/index.js";
+import { clearStaffs } from "./staff/index.js";
 import { icons, modes } from "./shared/data.js";
 import { el } from "./shared/dom.js";
 import { closeDrawer } from "./shared/drawer.js";
@@ -133,9 +133,6 @@ export function renderPage(pageIndex = 0) {
   el.pageBody.innerHTML = page.body || data.body;
   if (state.activeMode === "chat") {
     restoreLiveTurn(el.pageBody, page);
-    syncStaffs(el.pageBody, { sessionId: page.sessionId, index: "live" });
-  } else {
-    syncStaffs(null);
   }
   if (state.activeMode === "memories") {
     bindOverview(el.pageBody, {

@@ -1,9 +1,7 @@
-import { scoreFromEvents } from "../staff/map.js";
-import { pickBpm, pickFormula } from "../staff/formula.js";
-import { dropStaff, mountStaff } from "../staff/index.js";
 import { modes } from "../shared/data.js";
 import { state } from "../shared/state.js";
 import { el } from "../shared/dom.js";
+import { ambientLineForEvent } from "./ambient.js";
 import { entryHtml, statusHtml } from "./view.js";
 
 // Per-session in-flight turn. Survives renderPage / fillChatAt innerHTML
@@ -14,21 +12,10 @@ export function liveKey(sessionId) {
   return String(sessionId || "");
 }
 
-export function staffOpts(sessionId) {
-  return { sessionId: liveKey(sessionId), index: "live" };
-}
-
 function makeLive(text) {
-  const formula = pickFormula();
-  const bpm = pickBpm(formula);
-  const score = scoreFromEvents([], undefined, formula);
-  score.bpm = bpm;
   return {
-    events: [],
-    formula,
-    bpm,
-    score,
     statusText: "Đang chờ Thyca…",
+    ambientText: ambientLineForEvent(null),
     running: true,
     dirty: false,
     failed: false,
@@ -79,7 +66,6 @@ export function rekeyLiveTurn(fromId, toId) {
     liveTurns.delete(from);
     liveTurns.set(to, rec);
   }
-  dropStaff(`session:${from}:live`);
 }
 
 function ensureEntryList(root) {
@@ -97,42 +83,42 @@ function ensureOutgoingUser(list, text) {
   list.insertAdjacentHTML("beforeend", entryHtml("user", text));
 }
 
+function paintStatusCopy(status, rec) {
+  const line = status.querySelector(".status-line");
+  if (line) line.textContent = rec.statusText;
+  const ambient = status.querySelector(".status-ambient");
+  if (ambient) ambient.textContent = rec.ambientText;
+  status.classList.toggle("is-error", rec.failed);
+  status.classList.toggle("is-waiting", rec.waiting);
+}
+
 export function restoreLiveTurn(root, page) {
   if (!root || !page) return false;
   const rec = getLiveTurn(page.sessionId);
   if (!rec) return false;
-  if (rec.running || rec.failed) {
-    const list = ensureEntryList(root);
-    ensureOutgoingUser(list, rec.text);
-    let status = list.querySelector(".entry-status");
-    if (!status) {
-      list.insertAdjacentHTML("beforeend", statusHtml(rec.statusText));
-      status = list.querySelector(".entry-status");
-    } else {
-      const line = status.querySelector(".status-line");
-      if (line) line.textContent = rec.statusText;
-    }
-    if (!status) return false;
-    status.classList.toggle("is-error", rec.failed);
-    status.classList.toggle("is-waiting", rec.waiting);
-    mountStaff(status, rec.score, staffOpts(page.sessionId));
-    return true;
+  if (!(rec.running || rec.failed)) {
+    rec.dirty = false;
+    return false;
   }
-  const list = root.querySelector(".entry-list");
-  if (!list || !rec.score) return false;
-  const born = [...list.querySelectorAll(".entry-thyca")].filter(
-    (node) => !node.classList.contains("entry-status"),
-  ).at(-1);
-  if (born) mountStaff(born, rec.score, staffOpts(page.sessionId));
-  rec.dirty = false;
-  return Boolean(born);
+  const list = ensureEntryList(root);
+  ensureOutgoingUser(list, rec.text);
+  let status = list.querySelector(".entry-status");
+  if (!status) {
+    list.insertAdjacentHTML("beforeend", statusHtml(rec.statusText, rec.ambientText));
+    status = list.querySelector(".entry-status");
+  } else {
+    paintStatusCopy(status, rec);
+  }
+  if (!status) return false;
+  status.classList.toggle("is-error", rec.failed);
+  status.classList.toggle("is-waiting", rec.waiting);
+  return true;
 }
 
 export function discardRunningLiveTurns() {
   for (const [key, rec] of [...liveTurns.entries()]) {
     if (!rec.running) continue;
     liveTurns.delete(key);
-    dropStaff(`session:${key}:live`);
   }
 }
 

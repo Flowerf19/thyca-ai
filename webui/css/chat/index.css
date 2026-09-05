@@ -35,3 +35,86 @@
   font-size: var(--text-md);
 }
 
+/* Live turn: warm paper + faint terracotta staff suggestion. No SVG staff. */
+.notebook[data-mode="chat"] .entry-status {
+  position: relative;
+  isolation: isolate;
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0 1.7rem,
+      oklch(90.7% 0 0 / 0.45) 1.7rem calc(1.7rem + 1px)
+    ),
+    linear-gradient(to right, var(--color-paper-3), var(--color-paper) 78%);
+}
+
+.notebook[data-mode="chat"] .entry-status::before {
+  content: "";
+  position: absolute;
+  inset: 0.9rem 1rem auto 1rem;
+  height: 2.2rem;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    oklch(75.3% 0.046 61 / 0.28) 0 1px,
+    transparent 1px 0.5rem
+  );
+  background-size: 100% 2.5rem;
+  background-repeat: no-repeat;
+  opacity: 0.7;
+  z-index: 0;
+}
+
+.notebook[data-mode="chat"] .entry-status::after {
+  content: "";
+  position: absolute;
+  left: 16%;
+  top: 1.85rem;
+  width: 38%;
+  height: 1.5px;
+  pointer-events: none;
+  background: oklch(32% 0.055 45 / 0.42);
+  border-radius: 1px;
+  transform: rotate(-8deg);
+  transform-origin: left center;
+  z-index: 0;
+}
+
+.notebook[data-mode="chat"] .entry-status > * {
+  position: relative;
+  z-index: 1;
+}
+
+.notebook[data-mode="chat"] .entry-status.is-waiting::after {
+  animation: status-ink 2.6s ease-in-out infinite;
+}
+
+.notebook[data-mode="chat"] .status-ambient {
+  margin: 0;
+  min-height: 1.35em;
+  color: var(--color-accent);
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+  font-style: italic;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  line-height: 1.35;
+}
+
+@keyframes status-ink {
+  0%, 100% {
+    opacity: 0.28;
+    transform: rotate(-8deg) scaleX(0.9);
+  }
+  50% {
+    opacity: 0.62;
+    transform: rotate(-5deg) scaleX(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notebook[data-mode="chat"] .entry-status.is-waiting::after {
+    animation: none;
+  }
+}
+

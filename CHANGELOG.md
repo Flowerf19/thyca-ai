@@ -2,6 +2,10 @@
 
 Thay đổi của Thyca, viết ngắn gọn cho người dùng.
 
+## 0.7.8 — 05/09/2026
+
+- Chat lúc đang nghĩ không còn khuông nhạc: nền giấy ấm, một dòng ambient, một dòng trạng thái thật (đang dùng tool gì).
+
 ## 0.7.7 — 05/09/2026
 
 - Khuông chat gọn hơn (không kéo ô trống); chạm khuông nghe cả đoạn, nốt hiện dần theo tiếng; chạm một nốt thì chỉ nốt đó kêu.

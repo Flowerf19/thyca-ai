@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-WEBUI = ROOT / "thyca-css"
+WEBUI = ROOT / "thyca" / "webui"
 BACKEND = WEBUI / "backend"
 MARKDOWN_JS = BACKEND / "markdown.js"
 MEMORY_DATA = BACKEND / "memory-data.js"

@@ -89,14 +89,7 @@ def _raise_interrupt(_signum: int, _frame: object) -> None:
 
 
 def default_webui() -> Path:
-    here = Path(__file__).resolve().parent
-    packaged = here / "webui"
-    if packaged.is_dir():
-        return packaged
-    new_ui = here.parent / "thyca-css"
-    if new_ui.is_dir():
-        return new_ui
-    return here.parent / "webui"
+    return Path(__file__).resolve().parent / "webui"
 
 
 class _QuietHTTPServer(ThreadingHTTPServer):

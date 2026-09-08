@@ -1,7 +1,7 @@
 """Lifecycle: chunked NDJSON → status text. No jsdom.
 
-Drives thyca-css/backend/api.js (postNdjson) with stubbed fetch and maps the
-decoded events through thyca-css/backend/chat-status.js (statusTextForEvent).
+Drives webui/backend/api.js (postNdjson) with stubbed fetch and maps the
+decoded events through webui/backend/chat-status.js (statusTextForEvent).
 """
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-API = ROOT / "thyca-css" / "backend" / "api.js"
-STATUS = ROOT / "thyca-css" / "backend" / "chat-status.js"
+API = ROOT / "thyca" / "webui" / "backend" / "api.js"
+STATUS = ROOT / "thyca" / "webui" / "backend" / "chat-status.js"
 
 
 @pytest.fixture(scope="module")

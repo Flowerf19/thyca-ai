@@ -1,8 +1,8 @@
-"""Number formatting for the new UI — thyca-css/backend/format.js.
+"""Number formatting for the new UI — webui/backend/format.js.
 
 The old composer usage meter (webui/js/chat/meter.js: sumLastTurnUsage,
 meterText, lastTurnTools, #meter/#tool-meter DOM) was deliberately dropped in
-the thyca-css migration: usage now lives on the dashboard/usage screen backed
+the new-UI migration: usage now lives on the dashboard/usage screen backed
 by /api/traces aggregation (see tests/test_webui_markdown.py). This file pins
 that decision and covers the replacement formatters (formatCompact,
 formatInteger, formatCost) plus the backend usage-meta contract that feeds
@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-NEW_UI = ROOT / "thyca-css"
+NEW_UI = ROOT / "thyca" / "webui"
 FORMAT_JS = NEW_UI / "backend" / "format.js"
 
 

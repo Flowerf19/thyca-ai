@@ -1,4 +1,4 @@
-"""Node tests for live ambient copy — thyca-css/backend/chat-ambient.js.
+"""Node tests for live ambient copy — webui/backend/chat-ambient.js.
 
 Runs in Node with --input-type=module; mirrors tests/test_turn_status.py.
 """
@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "thyca-css" / "backend" / "chat-ambient.js"
+SCRIPT = ROOT / "thyca" / "webui" / "backend" / "chat-ambient.js"
 
 FIXED_40 = [
     "đang ngân nga…",
@@ -184,8 +184,8 @@ def test_unknown_event_never_invents_copy(node: str) -> None:
 
 
 def test_staff_module_is_gone() -> None:
-    # The staff workspace was dropped in the thyca-css migration; neither the
+    # The staff workspace was dropped in the new-UI migration; neither the
     # backend helpers dir nor the UI root may reintroduce it.
-    assert not (ROOT / "thyca-css" / "backend" / "staff").exists()
-    assert not (ROOT / "thyca-css" / "staff").exists()
+    assert not (ROOT / "thyca" / "webui" / "backend" / "staff").exists()
+    assert not (ROOT / "thyca" / "webui" / "staff").exists()
 

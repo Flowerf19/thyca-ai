@@ -1,4 +1,4 @@
-"""NDJSON stream decoding — thyca-css/backend/api.js (postNdjson).
+"""NDJSON stream decoding — webui/backend/api.js (postNdjson).
 
 The old standalone decoder (webui/js/shared/ndjson.js) no longer exists: the
 new UI decodes NDJSON inline inside postNdjson. These tests drive postNdjson
@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-API = ROOT / "thyca-css" / "backend" / "api.js"
+API = ROOT / "thyca" / "webui" / "backend" / "api.js"
 
 
 @pytest.fixture(scope="module")

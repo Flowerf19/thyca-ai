@@ -1,4 +1,4 @@
-"""Trace detail mapping — thyca-css/backend/trace-data.js.
+"""Trace detail mapping — webui/backend/trace-data.js.
 
 The old replay helper (webui/js/trace/score.js::traceScoreFromEvents) was not
 ported: the new trace screen reads tool calls straight from the trace detail
@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-TRACE_DATA = ROOT / "thyca-css" / "backend" / "trace-data.js"
+TRACE_DATA = ROOT / "thyca" / "webui" / "backend" / "trace-data.js"
 
 
 @pytest.fixture(scope="module")

@@ -204,7 +204,7 @@ def test_stats_error_is_503(tmp_path: Path) -> None:
 
 
 def test_default_webui_has_index() -> None:
-    assert WEBUI.name == "thyca-css"
+    assert WEBUI.name == "webui"
     for name in ("index.html", "memories.html", "trace.html", "provider.html", "dashboard.html"):
         assert (WEBUI / name).is_file()
     for name in ("app.js", "memories.js", "trace.js", "provider.js", "cost.js", "usage.js"):

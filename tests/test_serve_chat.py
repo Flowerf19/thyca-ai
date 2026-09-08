@@ -665,7 +665,7 @@ def test_chat_js_shipped() -> None:
     assert "turn.completed" in api
     assert "Tools used:" not in view
     assert ".live-status" in css
-    script = WEBUI.parent / "scripts" / "retitle_sessions.py"
+    script = WEBUI.parent.parent / "scripts" / "retitle_sessions.py"
     assert script.is_file()
     assert "retitle_missing" in script.read_text(encoding="utf-8")
 

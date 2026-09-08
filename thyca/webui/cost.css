@@ -92,10 +92,7 @@
 }
 
 .cost-models {
-  margin-block-start: 1.5rem;
-}
-
-.cost-models {
+  margin-block-start: 3rem;
   padding: 0;
   overflow: hidden;
 }

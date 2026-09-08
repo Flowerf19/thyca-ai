@@ -294,11 +294,27 @@ svg {
   background: transparent;
   color: var(--color-muted);
   text-align: start;
+  text-decoration: none;
   transition: color var(--dur-short) var(--ease-out), background-color var(--dur-short) var(--ease-out), transform var(--dur-micro) var(--ease-out);
 }
 
 .session-item:first-child {
   border-block-start: 0;
+}
+
+.session-item:has(.session-body) {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.session-body {
+  display: grid;
+  grid-template-columns: 1.85rem minmax(0, 1fr);
+  align-items: center;
+  align-content: start;
+  column-gap: 0.08rem;
+  row-gap: 0.35rem;
 }
 
 .session-item:not(:has(.session-icon)) {
@@ -313,30 +329,28 @@ svg {
 }
 
 .session-icon {
+  grid-column: 1;
+  grid-row: 1;
   width: 1.85rem;
   height: 1.85rem;
   margin-inline-end: -0.35rem;
   background: currentColor;
-  -webkit-mask: url("images/thyca-icons/long-vit.svg") left center / contain no-repeat;
-  mask: url("images/thyca-icons/long-vit.svg") left center / contain no-repeat;
+  -webkit-mask: url("images/thyca-icons/canh-cay.svg") left center / contain no-repeat;
+  mask: url("images/thyca-icons/canh-cay.svg") left center / contain no-repeat;
 }
 
-.memories-shell .session-icon {
-  -webkit-mask-image: url("images/thyca-icons/but-may.svg");
-  mask-image: url("images/thyca-icons/but-may.svg");
+.session-body .session-icon {
+  grid-row: 2;
 }
 
-.trace-shell .session-icon {
-  -webkit-mask-image: url("images/thyca-icons/not-nhac.svg");
-  mask-image: url("images/thyca-icons/not-nhac.svg");
-}
-
-.dashboard-shell .session-icon {
-  -webkit-mask-image: url("images/thyca-icons/canh-cay.svg");
-  mask-image: url("images/thyca-icons/canh-cay.svg");
+.session-body .session-name {
+  grid-column: 1 / -1;
+  padding-inline-start: 0.5rem;
 }
 
 .session-name {
+  grid-column: 2;
+  grid-row: 1;
   min-width: 0;
   overflow: hidden;
   color: var(--color-reading);
@@ -349,6 +363,9 @@ svg {
 }
 
 .session-item time {
+  grid-column: 2;
+  grid-row: 2;
+  justify-self: end;
   color: var(--color-muted-soft);
   font-size: 0.72rem;
   line-height: 1;
@@ -443,9 +460,7 @@ svg {
   overflow: hidden;
   border: var(--rule) solid var(--color-border);
   border-radius: var(--radius-chat);
-  background-color: var(--color-paper-chat);
-  background-image: radial-gradient(var(--color-paper-grain) 0.52px, transparent 0.72px);
-  background-size: 7px 7px;
+  background: color-mix(in oklab, var(--color-paper-chat) 45%, transparent);
 }
 
 .conversation-scroll {
@@ -1049,12 +1064,9 @@ button:active {
     padding-inline-start: 1.55rem;
   }
 
-  .session-item {
+  .session-item,
+  .session-body {
     grid-template-columns: 1.75rem minmax(0, 1fr);
-  }
-
-  .session-item time {
-    display: none;
   }
 
   .site-footer {

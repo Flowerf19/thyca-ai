@@ -341,7 +341,8 @@ def test_fallback_and_sanitize_title(tmp_path: Path) -> None:
     assert fallback_title("2026-08-22T21-00-00_aaaa") == "Tối 22 thg 8"
     assert sanitize_title('"Cà phê với Hòa."') == "Cà phê với Hòa"
     assert sanitize_title("**Nhịp sáng**") == "Nhịp sáng"
-    assert sanitize_title("x" * 60) == "x" * 47 + "…"
+    assert sanitize_title("x" * 32) == "x" * 32
+    assert sanitize_title("x" * 60) == "x" * 31 + "…"
     assert sanitize_title("   ") is None
     spoken = msg("user", "alo")
     session = Session(

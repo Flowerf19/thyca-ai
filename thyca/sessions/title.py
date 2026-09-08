@@ -15,11 +15,11 @@ if TYPE_CHECKING:
 
 ChatFn = Callable[[list[Message], list | None], Awaitable]
 
-TITLE_MAX = 48
+TITLE_MAX = 32
 _SNIPPET = 400
 _CJK_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]")
 _NAMING_PROMPT = (
-    "Đặt tiêu đề sổ tay 3–6 chữ tiếng Việt cho cuộc trò chuyện này. "
+    "Đặt tiêu đề sổ tay 3–6 chữ tiếng Việt, tối đa 32 ký tự, cho cuộc trò chuyện này. "
     "Chỉ trả về tiêu đề tiếng Việt. Không chữ Hán, không ngoại ngữ, "
     "không ngoặc kép, không dấu câu cuối, không giải thích."
 )

@@ -114,7 +114,10 @@ function sessionButton(session) {
   const time = document.createElement("time");
   time.dateTime = String(session.updated_at || "");
   time.textContent = formatSessionTime(session.updated_at);
-  button.append(icon, name, time);
+  const body = document.createElement("span");
+  body.className = "session-body";
+  body.append(icon, name, time);
+  button.append(body);
   button.addEventListener("click", () => void loadSession(button.dataset.sessionId));
   return button;
 }

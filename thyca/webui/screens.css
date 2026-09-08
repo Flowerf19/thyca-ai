@@ -30,7 +30,7 @@ a { color: inherit; }
   overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: var(--color-divider) transparent;
-  margin: 0 1.65rem 1.25rem 1.45rem;
+  margin: 0 1.25rem 1.25rem 0.18rem;
   padding: 1.75rem;
   border: var(--rule) solid var(--color-border);
   border-radius: var(--radius-chat);
@@ -148,9 +148,6 @@ a { color: inherit; }
   color: var(--color-accent-ink);
 }
 .screen-nav svg { width: 1.45rem; height: 1.45rem; flex: 0 0 auto; }
-.screen-sidebar-footer { margin-block-start: auto; padding: 1.5rem 1.6rem; }
-.screen-sidebar-footer .screen-card { padding: 1rem; }
-
 .screen-dialog {
   width: min(32rem, calc(100vw - 2rem));
   max-height: calc(100dvh - 2rem);

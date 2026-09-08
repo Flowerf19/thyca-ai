@@ -11,8 +11,6 @@
   height: auto;
   padding: 0;
   overflow: hidden;
-  border-radius: 0 0 0 var(--radius-shell);
-  border-inline-end: 1px solid var(--color-border);
   pointer-events: auto;
 }
 
@@ -397,8 +395,7 @@
     pointer-events: auto;
   }
 
-  .trace-shell .sessions,
-  .trace-shell .sidebar-bottom {
+  .trace-shell .sessions {
     display: flex !important;
     pointer-events: auto;
   }

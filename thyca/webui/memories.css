@@ -111,9 +111,10 @@
 
 .memory-card {
   display: grid;
-  grid-template-columns: 5.5rem minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 1rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: 1rem;
+  row-gap: 0.12rem;
   min-height: 8.55rem;
   padding: 1rem 1.3rem;
   border: 1px solid var(--color-border);
@@ -122,45 +123,42 @@
   box-shadow: 0 0.15rem 0.5rem var(--color-shell-shadow-soft);
 }
 
-.memory-medallion {
-  display: grid;
-  place-items: center;
-  width: 4.75rem;
-  height: 4.75rem;
-  border: 1px solid var(--color-paper-edge);
-  border-radius: 50%;
-  background: var(--color-accent-soft);
-  color: var(--color-accent);
-}
-
-.memory-medallion svg {
-  width: 2.5rem;
-  height: 2.5rem;
-}
-
 .memory-copy {
-  min-width: 0;
+  display: contents;
 }
 
 .memory-copy h3 {
-  margin: 0 0 0.25rem;
+  grid-column: 1;
+  grid-row: 1;
+  align-self: center;
+  min-width: 0;
+  margin: 0;
   color: var(--color-ink);
   font-family: var(--font-reading);
   font-size: 1.3rem;
+  font-style: italic;
+  text-transform: uppercase;
 }
 
 .memory-copy p {
+  grid-column: 1 / -1;
+  grid-row: 2;
   margin: 0;
   color: var(--color-muted);
   font-size: 1rem;
+  font-style: italic;
+  text-align: justify;
   overflow-wrap: anywhere;
 }
 
 .memory-tags {
   display: flex;
   flex-wrap: wrap;
+  grid-column: 1;
+  grid-row: 3;
+  align-self: center;
   gap: 0.5rem;
-  margin-top: 0.55rem;
+  margin-top: 0.45rem;
 }
 
 .memory-tags span {
@@ -172,23 +170,34 @@
 }
 
 .memory-meta {
-  display: flex;
-  align-self: start;
-  align-items: center;
-  gap: 0.85rem;
+  display: contents;
+}
+
+.memory-meta time {
+  grid-column: 2;
+  grid-row: 3;
+  justify-self: end;
+  align-self: center;
+  margin-top: 0.45rem;
   color: var(--color-muted);
   font-size: 0.85rem;
+  font-style: italic;
   white-space: nowrap;
 }
 
 .memory-more {
-  width: 2.75rem;
-  height: 2.75rem;
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+  align-self: center;
+  width: 1.35rem;
+  height: 1.85rem;
+  padding: 0;
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--color-accent-deep);
-  font-size: 1.5rem;
-  letter-spacing: 0.1rem;
+  font-size: 1.25rem;
+  letter-spacing: 0;
 }
 
 .memory-empty {
@@ -228,24 +237,8 @@
   }
 
   .memory-card {
-    grid-template-columns: 4rem minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) auto;
     padding: 0.85rem;
-  }
-
-  .memory-medallion {
-    width: 3.6rem;
-    height: 3.6rem;
-  }
-
-  .memory-medallion svg {
-    width: 2rem;
-    height: 2rem;
-  }
-
-  .memory-meta {
-    grid-column: 2;
-    align-self: auto;
-    justify-content: space-between;
   }
 
   .memory-copy h3 {

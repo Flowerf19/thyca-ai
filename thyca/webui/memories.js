@@ -2,12 +2,6 @@ import { getJson, postJson } from "./backend/api.js";
 import { formatDate, formatDateTime } from "./backend/format.js";
 import { selectCanonical, selectMemories } from "./backend/memory-data.js";
 
-const ICONS = {
-  leaf: '<path d="M12 21V5M12 14c-5-1-7-4-7-8 4 0 7 2 7 8ZM12 17c5-1 7-4 7-8-4 0-7 2-7 8Z"/>',
-  feather: '<path d="M5 19C8 11 13 5 20 4c0 7-6 12-15 15Z"/><path d="m6 18 9-9"/>',
-  book: '<path d="M12 6C9 4.5 6 4.5 3.5 5v14c2.5-.5 5.5-.5 8.5 1 3-1.5 6-1.5 8.5-1V5C18 4.5 15 4.5 12 6Zm0 0v14"/>',
-};
-
 const el = {
   list: document.querySelector("#memory-list"),
   empty: document.querySelector("#memory-empty"),
@@ -61,17 +55,6 @@ function setBusy(busy) {
   el.list.setAttribute("aria-busy", String(busy));
 }
 
-function medallion(kind) {
-  const box = document.createElement("div");
-  box.className = "memory-medallion";
-  box.setAttribute("aria-hidden", "true");
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("viewBox", "0 0 24 24");
-  svg.innerHTML = ICONS[kind] || ICONS.leaf;
-  box.append(svg);
-  return box;
-}
-
 function memoryCard(memory) {
   const article = document.createElement("article");
   article.className = "memory-card";
@@ -108,7 +91,7 @@ function memoryCard(memory) {
   more.textContent = "⋮";
   more.addEventListener("click", () => openMemory(memory, more));
   meta.append(time, more);
-  article.append(medallion(memory.uses > memory.searches ? "leaf" : "feather"), copy, meta);
+  article.append(copy, meta);
   return article;
 }
 
@@ -136,7 +119,7 @@ function canonicalCard(file) {
   edit.textContent = "⋮";
   edit.addEventListener("click", () => openCanonical(file, edit));
   meta.append(edit);
-  article.append(medallion("book"), copy, meta);
+  article.append(copy, meta);
   return article;
 }
 

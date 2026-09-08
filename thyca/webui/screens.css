@@ -34,7 +34,13 @@ a { color: inherit; }
   padding: 1.75rem;
   border: var(--rule) solid var(--color-border);
   border-radius: var(--radius-chat);
-  background: color-mix(in oklab, var(--color-paper-chat) 45%, transparent);
+  background-color: var(--color-paper-chat);
+  background-image:
+    linear-gradient(color-mix(in oklab, var(--color-paper-chat) 42%, transparent), color-mix(in oklab, var(--color-paper-chat) 42%, transparent)),
+    url("images/thyca-bg-main.png");
+  background-position: center;
+  background-size: cover;
+  background-attachment: fixed;
 }
 
 .screen-heading, .screen-toolbar {

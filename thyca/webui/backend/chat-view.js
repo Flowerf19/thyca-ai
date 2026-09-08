@@ -3,8 +3,18 @@ import { collapseNames, statusTextForEvent } from "./chat-status.js";
 import { formatTime } from "./format.js";
 import { formatMarkdown } from "./markdown.js";
 
-const AVATAR = `<svg viewBox="0 0 48 48" aria-hidden="true"><path d="M24 38V13"/><path d="M24 20c-7-1-11-6-10-12M24 23c7-2 11-7 10-13M24 29c-6-1-10-5-9-10M24 34c5-1 8-4 8-9"/><path class="avatar-leaf" d="M18 17c-5 0-8-3-8-7 5 0 8 2 8 7ZM29 18c5-1 8-4 8-8-5 0-8 3-8 8ZM19 28c-5 0-8-3-8-7 5 0 8 2 8 7ZM29 32c5-1 8-4 8-8-5 0-8 3-8 8Z"/><circle cx="24" cy="12" r="2.2"/><circle cx="15" cy="21" r="1.5"/><circle cx="33" cy="24" r="1.5"/></svg>`;
-const TERMINAL = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6.5 8 3.5 3.5L6.5 15M12.5 15h5"/></svg>`;
+const AVATAR = `<span class="avatar-mark"></span>`;
+const PENCIL = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20h4L19.5 9.5a2.1 2.1 0 0 0-3-3L6 17Z"/><path d="m14 8 2.5 2.5"/></svg>`;
+const CHEVRON = `<svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>`;
+
+function setAmbientText(ambient, text) {
+  const label = ambient.querySelector(".ambient-label");
+  if (label) {
+    label.textContent = text;
+  } else {
+    ambient.textContent = text;
+  }
+}
 
 function assistantHeader(stamp, ambientText = "đã viết") {
   const header = document.createElement("header");
@@ -14,38 +24,78 @@ function assistantHeader(stamp, ambientText = "đã viết") {
   avatar.setAttribute("aria-hidden", "true");
   avatar.innerHTML = AVATAR;
   const copy = document.createElement("div");
+  copy.className = "live-card-copy";
   const heading = document.createElement("h2");
   heading.textContent = "Thyca";
   const ambient = document.createElement("p");
   ambient.className = "ambient";
-  ambient.textContent = stamp ? `${ambientText} · ${formatTime(stamp)}` : ambientText;
+  const icon = document.createElement("span");
+  icon.className = "ambient-icon";
+  icon.setAttribute("aria-hidden", "true");
+  const label = document.createElement("span");
+  label.className = "ambient-label";
+  label.textContent = stamp ? `${ambientText} · ${formatTime(stamp)}` : ambientText;
+  ambient.append(icon, label);
   copy.append(heading, ambient);
   header.append(avatar, copy);
   return header;
 }
 
-function toolRow(names) {
-  const unique = [...new Set((names || []).filter(Boolean).map(String))];
-  if (!unique.length) return null;
-  const footer = document.createElement("footer");
-  footer.className = "tool-row";
-  const icon = document.createElement("span");
-  icon.className = "terminal-icon";
-  icon.setAttribute("aria-hidden", "true");
-  icon.innerHTML = TERMINAL;
+function displayToolName(rawName) {
+  const name = String(rawName || "tool");
+  return name.startsWith("memory_") ? "memories" : name;
+}
+
+function countTools(names) {
+  const counts = new Map();
+  for (const rawName of names || []) {
+    if (!rawName) continue;
+    const name = displayToolName(rawName);
+    counts.set(name, (counts.get(name) || 0) + 1);
+  }
+  return counts;
+}
+
+function toolRow(completedNames, activeNames = [], existing = null) {
+  const completed = countTools(completedNames);
+  const active = countTools(activeNames);
+  const names = [...new Set([...completed.keys(), ...active.keys()])];
+  if (!names.length) {
+    const empty = document.createElement("p");
+    empty.className = "tool-row is-empty";
+    empty.textContent = "phiên này không dùng tool nào";
+    return empty;
+  }
+  const details = document.createElement("details");
+  details.className = "tool-row";
+  if (existing instanceof HTMLDetailsElement) details.open = existing.open;
+  const summary = document.createElement("summary");
+  const mark = document.createElement("span");
+  mark.className = "tool-mark";
+  mark.setAttribute("aria-hidden", "true");
   const label = document.createElement("span");
   label.className = "tool-label";
-  label.textContent = "Đã dùng";
-  footer.append(icon, label);
-  for (const name of unique) {
+  label.textContent = active.size ? "tool đang dùng" : "tool đã dùng";
+  summary.append(mark, label);
+  summary.insertAdjacentHTML("beforeend", CHEVRON);
+  const body = document.createElement("div");
+  body.className = "tool-row-body";
+  for (const name of names) {
+    const completedCount = completed.get(name) || 0;
+    const activeCount = active.get(name) || 0;
     const chip = document.createElement("span");
     chip.className = "tool-chip";
-    const dot = document.createElement("i");
-    dot.setAttribute("aria-hidden", "true");
-    chip.append(dot, document.createTextNode(name));
-    footer.append(chip);
+    if (activeCount) chip.classList.add("is-active");
+    const chipMark = document.createElement("i");
+    chipMark.setAttribute("aria-hidden", "true");
+    const count = completedCount || activeCount;
+    const suffix = count > 0 ? ` ×${count}` : "";
+    const state = activeCount ? " · đang chạy" : "";
+    chip.append(chipMark, document.createTextNode(`${name}${suffix}${state}`));
+    body.append(chip);
   }
-  return footer;
+  details.append(summary, body);
+  return details;
 }
 
 function userMessage(message) {
@@ -73,9 +123,7 @@ function assistantMessage(message, tools) {
   const body = document.createElement("div");
   body.className = "live-copy markdown-body";
   body.innerHTML = formatMarkdown(message.content);
-  article.append(body);
-  const row = toolRow(tools);
-  if (row) article.append(row);
+  article.append(body, toolRow(tools));
   return article;
 }
 
@@ -140,13 +188,10 @@ export function createLiveStatus(root) {
   article.setAttribute("aria-label", "Thyca đang trả lời");
   article.setAttribute("aria-live", "polite");
   const header = assistantHeader("", ambientLineForEvent(null));
-  const body = document.createElement("p");
-  body.className = "live-copy status-copy";
-  body.textContent = "Đang chờ Thyca…";
   const details = document.createElement("details");
   details.className = "thinking";
   details.open = true;
-  details.innerHTML = `<summary><span class="thinking-title"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20h4L19.5 9.5a2.1 2.1 0 0 0-3-3L6 17Z"/><path d="m14 8 2.5 2.5"/></svg><span>Tiến trình</span></span><svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></summary>`;
+  details.innerHTML = `<summary><span class="thinking-title">${PENCIL}<span>Tiến trình</span></span><svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></summary>`;
   const thinkingBody = document.createElement("div");
   thinkingBody.className = "thinking-body";
   const events = document.createElement("ul");
@@ -155,17 +200,29 @@ export function createLiveStatus(root) {
   events.append(first);
   thinkingBody.append(events);
   details.append(thinkingBody);
-  article.append(header, body, details);
+  article.append(header, details);
   root.append(article);
-  return { article, ambient: header.querySelector(".ambient"), body, events, tools: [] };
+  return {
+    article,
+    ambient: header.querySelector(".ambient"),
+    events,
+    activeTools: new Map(),
+    completedTools: [],
+  };
 }
 
 export function updateLiveStatus(live, event) {
   const status = statusTextForEvent(event);
-  if (status) live.body.textContent = status;
-  live.ambient.textContent = ambientLineForEvent(event);
-  if (event?.type === "tool.started" || event?.type === "skill.started") {
-    live.tools.push(event.name || (event.type === "skill.started" ? "skill" : "tool"));
+  setAmbientText(live.ambient, ambientLineForEvent(event));
+  const startsTool = event?.type === "tool.started" || event?.type === "skill.started";
+  const finishesTool = event?.type === "tool.finished" || event?.type === "skill.finished";
+  const callKey = event?.call_id || `${event?.type}:${event?.name || "tool"}`;
+  if (startsTool) {
+    live.activeTools.set(callKey, event.name || (event.type === "skill.started" ? "skill" : "tool"));
+  } else if (finishesTool) {
+    const name = live.activeTools.get(callKey) || event.name || "tool";
+    live.activeTools.delete(callKey);
+    live.completedTools.push(name);
   }
   if (status && live.events.lastElementChild?.textContent !== status) {
     const item = document.createElement("li");
@@ -174,10 +231,13 @@ export function updateLiveStatus(live, event) {
     while (live.events.children.length > 6) live.events.firstElementChild.remove();
   }
   const existing = live.article.querySelector(".tool-row");
-  const next = toolRow(live.tools);
+  const next = toolRow(live.completedTools, [...live.activeTools.values()], existing);
   if (existing) existing.remove();
-  if (next) live.article.append(next);
+  if (next && !next.classList.contains("is-empty")) live.article.append(next);
   if (event?.type === "turn.failed") live.article.classList.add("is-error");
-  const summary = collapseNames(live.tools);
+  const summary = collapseNames([
+    ...live.completedTools,
+    ...live.activeTools.values(),
+  ]);
   if (summary) live.article.dataset.tools = summary;
 }

@@ -87,13 +87,16 @@ function renderSidebar() {
     button.classList.toggle("is-active", selected);
     button.setAttribute("aria-pressed", String(selected));
     if (selected) button.setAttribute("aria-current", "page");
+    const icon = document.createElement("span");
+    icon.className = "session-icon";
+    icon.setAttribute("aria-hidden", "true");
     const name = document.createElement("span");
     name.className = "session-name";
     name.textContent = cleanText(group.title, group.sessionId);
     const meta = document.createElement("time");
     meta.dateTime = group.startedAt;
     meta.textContent = `${group.turns.length} lượt · ${formatDuration(group.latencyMs)}`;
-    button.append(name, meta);
+    button.append(icon, name, meta);
     button.addEventListener("click", () => void selectGroup(index));
     return button;
   });

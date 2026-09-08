@@ -55,6 +55,16 @@ export function postJson(url, body, options = {}) {
   });
 }
 
+function yieldToRender() {
+  return new Promise((resolve) => {
+    if (typeof globalThis.requestAnimationFrame === "function") {
+      globalThis.requestAnimationFrame(() => resolve());
+    } else {
+      globalThis.setTimeout(resolve, 0);
+    }
+  });
+}
+
 export async function postNdjson(url, body, onEvent, { signal } = {}) {
   let response;
   try {
@@ -84,7 +94,7 @@ export async function postNdjson(url, body, onEvent, { signal } = {}) {
   let buffer = "";
   let terminal = null;
 
-  const consume = (line) => {
+  const consume = async (line) => {
     if (!line.trim()) return;
     let event;
     try {
@@ -94,6 +104,7 @@ export async function postNdjson(url, body, onEvent, { signal } = {}) {
     }
     onEvent(event);
     if (event.type === "turn.completed" || event.type === "turn.failed") terminal = event;
+    await yieldToRender();
   };
 
   while (true) {
@@ -102,12 +113,12 @@ export async function postNdjson(url, body, onEvent, { signal } = {}) {
     buffer += decoder.decode(value, { stream: true });
     let newline;
     while ((newline = buffer.indexOf("\n")) >= 0) {
-      consume(buffer.slice(0, newline));
+      await consume(buffer.slice(0, newline));
       buffer = buffer.slice(newline + 1);
     }
   }
   buffer += decoder.decode();
-  consume(buffer);
+  await consume(buffer);
 
   if (!terminal) throw new ApiError("Luồng trả lời kết thúc quá sớm.");
   if (terminal.type === "turn.failed") {

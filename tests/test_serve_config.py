@@ -9,6 +9,7 @@ from urllib.request import Request, urlopen
 
 import pytest
 
+from thyca import __version__
 from thyca.config import default_config, load, save
 from thyca.config_schema import config_schema
 from thyca.serve import default_webui, make_server
@@ -89,7 +90,7 @@ def test_status_reflects_key(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     httpd, thread = _start(tmp_path)
     try:
         status, body = _call(httpd, "/api/config/status")
-        assert status == 200 and body == {"ready": False}
+        assert status == 200 and body == {"ready": False, "version": __version__}
     finally:
         _stop(httpd, thread)
 

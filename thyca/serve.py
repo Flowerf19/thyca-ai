@@ -12,6 +12,7 @@ from mimetypes import guess_type
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
+from thyca import __version__
 from thyca.bridge import public_turn_error, stream_turn
 from thyca.chat_app import ChatApp
 from thyca.config import ConfigError, load, save
@@ -259,7 +260,7 @@ def _handler(
         def _config_status(self) -> None:
             cfg = self._config()
             ready = cfg is not None and provider_ready(cfg)
-            self._json(200, {"ready": ready})
+            self._json(200, {"ready": ready, "version": __version__})
 
         def _config_get(self) -> None:
             cfg = self._config()

@@ -1,0 +1,14 @@
+{
+  "purpose": "Random leading icon for collapsed “Đã dùng” tools-used row",
+  "color": "currentColor (set terracotta/brown via CSS)",
+  "size": "24",
+  "pool": [
+    { "id": "nib", "file": "da-dung-nib.svg", "label": "nib bút máy" },
+    { "id": "note", "file": "da-dung-note.svg", "label": "nốt nhạc" },
+    { "id": "quill", "file": "da-dung-quill.svg", "label": "ngòi lông gọn" },
+    { "id": "leaf", "file": "da-dung-leaf.svg", "label": "lá" },
+    { "id": "dash", "file": "da-dung-dash.svg", "label": "gạch mực" }
+  ],
+  "pick": "On each turn that shows the row, pick one id uniformly at random (or weighted: prefer nib/note). Keep the same icon while that row stays mounted; re-roll on a new agent turn.",
+  "avoid": "Do not use green status dots. Feather full-body optional; quill tip ok."
+}

@@ -68,4 +68,27 @@ if (menuButtons.length) {
   });
   dialog.addEventListener("close", () => opener?.focus());
 }
+
+const headerTime = document.querySelector("#header-datetime");
+const headerEdition = document.querySelector("#header-edition");
+if (headerTime) {
+  const now = new Date();
+  headerTime.dateTime = now.toISOString();
+  headerTime.textContent = new Intl.DateTimeFormat("vi-VN", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(now);
+}
+if (headerEdition) {
+  fetch("/api/config/status", { cache: "no-store" })
+    .then((response) => response.json())
+    .then((data) => {
+      const version = String(data?.version || "").trim();
+      headerEdition.textContent = version ? `Thyca · phiên bản ${version}` : "Thyca";
+    })
+    .catch(() => {
+      headerEdition.textContent = "Thyca";
+    });
+}
 })();

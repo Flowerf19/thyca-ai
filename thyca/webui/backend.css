@@ -176,10 +176,6 @@ body {
   vertical-align: top;
 }
 
-.live-status .status-copy {
-  font-style: italic;
-}
-
 .live-status.is-error {
   border-color: var(--color-accent);
 }

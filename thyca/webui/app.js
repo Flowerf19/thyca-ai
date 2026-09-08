@@ -108,7 +108,6 @@ function sessionButton(session) {
   const icon = document.createElement("span");
   icon.className = "session-icon";
   icon.setAttribute("aria-hidden", "true");
-  icon.innerHTML = '<svg viewBox="0 0 24 24"><path d="M5 6.5h14v9H9l-4 3v-12Z"/><path d="M9 10h6M9 13h4"/></svg>';
   const name = document.createElement("span");
   name.className = "session-name";
   name.textContent = cleanText(session.title, "Phiên trống");
@@ -230,7 +229,7 @@ async function sendMessage() {
   hideIdle();
   window.clearTimeout(idleTimer);
   setBusy(true);
-  setStatus("Đang gửi…");
+  setStatus("Đang xử lý…");
   el.input.value = "";
   try {
     const sessionId = await ensureSession();
@@ -257,8 +256,12 @@ async function sendMessage() {
     const live = el.messageList.querySelector(".live-status:last-of-type");
     if (live) {
       live.classList.add("is-error");
-      const copy = live.querySelector(".status-copy");
-      if (copy) copy.textContent = messageOf(error, "Lượt trò chuyện đã dừng.");
+      const events = live.querySelector(".thinking-body ul");
+      if (events) {
+        const item = document.createElement("li");
+        item.textContent = messageOf(error, "Lượt trò chuyện đã dừng.");
+        events.append(item);
+      }
     }
     setStatus(messageOf(error, "Không gửi được tin nhắn."), "error");
   } finally {

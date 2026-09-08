@@ -193,6 +193,11 @@
   text-align: center;
 }
 
+#cost-status,
+#usage-status {
+  text-align: center;
+}
+
 @media (max-width: 56rem) {
   .cost-overview {
     grid-template-columns: minmax(0, 1fr);

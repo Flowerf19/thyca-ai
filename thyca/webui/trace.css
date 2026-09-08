@@ -243,8 +243,9 @@
 
 .general > div {
   display: grid;
-  grid-template-columns: 1.5fr 1.5fr 0.7fr;
-  gap: 1rem 1.5rem;
+  /* Giữ cùng track với .token-panels để các cột thẳng hàng theo chiều dọc. */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem 1.2rem;
 }
 
 .general > div > span {

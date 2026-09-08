@@ -87,12 +87,11 @@
 }
 
 .cost-model-heading {
-  margin: 1.4rem 0 0.55rem;
+  margin: 3rem 0 0.55rem;
   color: var(--color-ink);
 }
 
 .cost-models {
-  margin-block-start: 3rem;
   padding: 0;
   overflow: hidden;
 }

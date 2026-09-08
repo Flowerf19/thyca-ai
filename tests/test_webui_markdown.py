@@ -7,12 +7,13 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-WEBUI = ROOT / "webui"
-MARKDOWN_JS = WEBUI / "js" / "shared" / "markdown.js"
-SHARED_INDEX = WEBUI / "js" / "shared" / "index.js"
-MEMORIES_INDEX = WEBUI / "js" / "memories" / "index.js"
-LEAF_JS = WEBUI / "js" / "memories" / "leaf.js"
-SCORE_JS = WEBUI / "js" / "trace" / "score.js"
+WEBUI = ROOT / "thyca-css"
+BACKEND = WEBUI / "backend"
+MARKDOWN_JS = BACKEND / "markdown.js"
+MEMORY_DATA = BACKEND / "memory-data.js"
+TRACE_DATA = BACKEND / "trace-data.js"
+ANALYTICS_DATA = BACKEND / "analytics-data.js"
+FORMAT_JS = BACKEND / "format.js"
 
 
 def _render(src: str) -> str:
@@ -54,22 +55,21 @@ def test_escapes_raw_html_and_unsafe_url() -> None:
 
 
 def test_chat_js_uses_formatter() -> None:
-    view = (WEBUI / "js" / "chat" / "view.js").read_text(encoding="utf-8")
-    css = "\n".join(
-        p.read_text(encoding="utf-8") for p in sorted((WEBUI / "css" / "workspace").glob("*.css"))
-    )
-    assert 'from "../shared/markdown.js"' in view
-    assert "formatMarkdown(content)" in view
+    view = (BACKEND / "chat-view.js").read_text(encoding="utf-8")
+    css = (WEBUI / "backend.css").read_text(encoding="utf-8")
+    assert 'from "./markdown.js"' in view
+    assert "formatMarkdown(message.content)" in view
     assert ".md-table-wrap" in css
     assert (WEBUI / "vendor" / "marked.esm.js").is_file()
 
 
-def test_shared_barrel_is_node_clean() -> None:
-    # shared/index.js chỉ re-export pure modules (không DOM): import trong
-    # Node phải thành công để pin import graph của barrel.
+def test_backend_mapping_modules_are_node_clean() -> None:
     script = f"""
-    import {json.dumps(SHARED_INDEX.as_uri())};
-    process.stdout.write("shared-index-ok");
+    import {json.dumps(FORMAT_JS.as_uri())};
+    import {json.dumps(MEMORY_DATA.as_uri())};
+    import {json.dumps(TRACE_DATA.as_uri())};
+    import {json.dumps(ANALYTICS_DATA.as_uri())};
+    process.stdout.write("backend-modules-ok");
     """
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script],
@@ -77,16 +77,16 @@ def test_shared_barrel_is_node_clean() -> None:
         capture_output=True,
         text=True,
     )
-    assert result.stdout == "shared-index-ok"
+    assert result.stdout == "backend-modules-ok"
 
 
-def test_memories_and_trace_score_import_clean() -> None:
-    # memories/index.js và trace/score.js không chạm DOM lúc import.
+def test_memory_and_trace_mappers_import_clean() -> None:
     script = f"""
-    import {json.dumps(MEMORIES_INDEX.as_uri())};
-    import {{ traceScoreFromEvents }} from {json.dumps(SCORE_JS.as_uri())};
-    if (typeof traceScoreFromEvents !== "function") throw new Error("no trace score");
-    process.stdout.write("barrels-ok");
+    import {{ selectMemories }} from {json.dumps(MEMORY_DATA.as_uri())};
+    import {{ groupTraceTurns }} from {json.dumps(TRACE_DATA.as_uri())};
+    if (typeof selectMemories !== "function") throw new Error("no memory mapper");
+    if (typeof groupTraceTurns !== "function") throw new Error("no trace mapper");
+    process.stdout.write("mappers-ok");
     """
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script],
@@ -94,21 +94,21 @@ def test_memories_and_trace_score_import_clean() -> None:
         capture_output=True,
         text=True,
     )
-    assert result.stdout == "barrels-ok"
+    assert result.stdout == "mappers-ok"
 
 
-def test_rank_leaves_caps_and_orders() -> None:
+def test_select_memories_orders_backend_leaves() -> None:
     script = f"""
-    import {{ rankLeaves }} from {json.dumps(LEAF_JS.as_uri())};
+    import {{ selectMemories }} from {json.dumps(MEMORY_DATA.as_uri())};
     const leaves = [
-      {{ get_count: 1, search_count: 0, chunk_id: "a" }},
-      {{ get_count: 9, search_count: 1, chunk_id: "b" }},
-      {{ get_count: 0, search_count: 4, chunk_id: "c" }},
+      {{ get_count: 1, search_count: 0, chunk_id: "a", heading: "a" }},
+      {{ get_count: 9, search_count: 1, chunk_id: "b", heading: "b" }},
+      {{ get_count: 0, search_count: 4, chunk_id: "c", heading: "c" }},
     ];
-    const get = rankLeaves(leaves, "get").map((l) => l.chunk_id);
-    const search = rankLeaves(leaves, "search").map((l) => l.chunk_id);
-    const least = rankLeaves(leaves, "least").map((l) => l.chunk_id);
-    process.stdout.write(JSON.stringify({{ get, search, least, cap: rankLeaves(leaves.concat(leaves, leaves, leaves), "get").length }}));
+    const get = selectMemories(leaves, {{ view: "used-more" }}).map((l) => l.id);
+    const search = selectMemories(leaves, {{ view: "searched-more" }}).map((l) => l.id);
+    const least = selectMemories(leaves, {{ view: "used-less" }}).map((l) => l.id);
+    process.stdout.write(JSON.stringify({{ get, search, least }}));
     """
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script],
@@ -120,4 +120,33 @@ def test_rank_leaves_caps_and_orders() -> None:
     assert payload["get"] == ["b", "a", "c"]
     assert payload["search"] == ["c", "b", "a"]
     assert payload["least"] == ["a", "c", "b"]
-    assert payload["cap"] == 8
+
+
+def test_usage_mapper_splits_cached_prompt_tokens() -> None:
+    script = f"""
+    import {{ aggregateUsage }} from {json.dumps(ANALYTICS_DATA.as_uri())};
+    const usage = aggregateUsage([{{
+      started_at: "2026-08-20T10:00:00Z",
+      prompt_tokens: 100,
+      cached_tokens: 40,
+      completion_tokens: 20,
+      total_tokens: 120,
+      requests: 2,
+    }}]);
+    process.stdout.write(JSON.stringify(usage));
+    """
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(result.stdout)
+    assert payload["totals"] == {
+        "input": 60,
+        "cache": 40,
+        "output": 20,
+        "total": 120,
+        "turns": 1,
+        "requests": 2,
+    }

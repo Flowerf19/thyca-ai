@@ -1,0 +1,276 @@
+.usage-heading h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.usage-title-icon {
+  width: 1.5rem;
+  height: 1.5rem;
+  color: var(--color-accent);
+}
+
+.usage-heading label {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--color-muted);
+  font-size: 0.75rem;
+}
+
+.usage-heading select {
+  min-width: 12.5rem;
+}
+
+.usage-chart-card {
+  min-height: 21rem;
+  padding: 1rem 1.25rem;
+}
+
+.usage-chart-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.usage-legend {
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.usage-legend span::before {
+  content: "";
+  display: inline-block;
+  width: 0.8rem;
+  height: 0.8rem;
+  margin-right: 0.55rem;
+  border-radius: 0.25rem;
+  background: var(--color-chart-input);
+}
+
+.usage-legend .cache::before {
+  background: var(--color-chart-cache);
+}
+
+.usage-legend .output::before {
+  background: var(--color-accent);
+}
+
+.usage-toggle {
+  display: flex;
+  border: 1px solid var(--color-divider);
+  border-radius: 0.7rem;
+  overflow: hidden;
+}
+
+.usage-toggle button {
+  min-width: 5rem;
+  min-height: 2.75rem;
+  background: transparent;
+  color: var(--color-ink);
+}
+
+.usage-toggle button[aria-pressed='true'] {
+  background: color-mix(in oklab, var(--color-accent-soft) 60%, var(--color-paper-card));
+}
+
+.usage-chart-card svg {
+  width: 100%;
+  height: 17rem;
+  margin-top: 0.4rem;
+}
+
+.usage-grid {
+  stroke: var(--color-divider);
+  stroke-width: 1;
+}
+
+.usage-axis {
+  fill: var(--color-muted);
+  stroke: none;
+  font: 12px var(--font-reading);
+}
+
+.usage-bar-input,
+.usage-bar-cache,
+.usage-bar-output {
+  stroke: none;
+}
+
+.usage-bar-input {
+  fill: var(--color-chart-input);
+}
+
+.usage-bar-cache {
+  fill: var(--color-chart-cache);
+}
+
+.usage-bar-output {
+  fill: var(--color-accent);
+}
+
+.usage-summaries {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.usage-summary {
+  min-height: 8.2rem;
+}
+
+.usage-summary header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.usage-summary h3 {
+  font-size: 1rem;
+}
+
+.usage-leaf {
+  width: 1.35rem;
+  height: 1.35rem;
+  color: var(--color-botanical);
+}
+
+.usage-summary strong {
+  display: block;
+  margin: 0.6rem 0;
+  color: var(--color-ink);
+  font-family: var(--font-display);
+  font-size: 1.8rem;
+  font-weight: 500;
+}
+
+.usage-summary strong small {
+  font-family: var(--font-reading);
+  font-size: 1rem;
+}
+
+.usage-summary footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  color: var(--color-muted);
+  font-size: 0.8rem;
+}
+
+.usage-summary footer span:last-child {
+  padding: 0.2rem 0.55rem;
+  border-radius: 0.5rem;
+  background: var(--color-accent-soft);
+  white-space: nowrap;
+}
+
+.usage-total {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.usage-avatar {
+  display: grid;
+  place-items: center;
+  width: 3.5rem;
+  height: 3.5rem;
+  border: 1px solid var(--color-divider);
+  border-radius: 50%;
+  color: var(--color-botanical);
+}
+
+.usage-avatar svg {
+  width: 2.1rem;
+  height: 2.1rem;
+}
+
+.usage-total div:nth-child(2) {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.usage-total strong {
+  color: var(--color-ink);
+  font-family: var(--font-display);
+  font-size: 1.8rem;
+  font-weight: 500;
+}
+
+.usage-total strong small {
+  font-family: var(--font-reading);
+  font-size: 1rem;
+}
+
+.usage-total-right {
+  display: grid;
+  gap: 0.15rem;
+  margin-left: auto;
+}
+
+.usage-total-right span,
+.usage-note {
+  color: var(--color-muted);
+  font-size: 0.85rem;
+}
+
+.usage-note {
+  text-align: center;
+}
+
+@media (max-width: 56rem) {
+  .usage-summaries {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .usage-chart-card {
+    min-height: 19rem;
+    padding-inline: 0.65rem;
+  }
+
+  .usage-chart-card svg {
+    height: 15rem;
+  }
+
+  .usage-total {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .usage-total-right {
+    width: 100%;
+    margin-left: 4.5rem;
+  }
+}
+
+@media (max-width: 28rem) {
+  .usage-heading select {
+    min-width: 0;
+  }
+
+  .usage-chart-top {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .usage-toggle {
+    align-self: flex-end;
+  }
+
+  .usage-legend {
+    gap: 0.75rem;
+    font-size: 0.9rem;
+  }
+
+  .usage-total {
+    padding: 0.85rem;
+  }
+
+  .usage-total-right {
+    margin-left: 0;
+  }
+}

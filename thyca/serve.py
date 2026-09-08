@@ -93,6 +93,9 @@ def default_webui() -> Path:
     packaged = here / "webui"
     if packaged.is_dir():
         return packaged
+    new_ui = here.parent / "thyca-css"
+    if new_ui.is_dir():
+        return new_ui
     return here.parent / "webui"
 
 

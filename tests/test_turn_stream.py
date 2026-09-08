@@ -1,4 +1,8 @@
-"""Lifecycle: chunked NDJSON → status text. No jsdom."""
+"""Lifecycle: chunked NDJSON → status text. No jsdom.
+
+Drives thyca-css/backend/api.js (postNdjson) with stubbed fetch and maps the
+decoded events through thyca-css/backend/chat-status.js (statusTextForEvent).
+"""
 from __future__ import annotations
 
 import json
@@ -9,8 +13,8 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-NDJSON = ROOT / "webui" / "js" / "shared" / "ndjson.js"
-STATUS = ROOT / "webui" / "js" / "chat" / "status.js"
+API = ROOT / "thyca-css" / "backend" / "api.js"
+STATUS = ROOT / "thyca-css" / "backend" / "chat-status.js"
 
 
 @pytest.fixture(scope="module")
@@ -21,12 +25,28 @@ def node() -> str:
     return binary
 
 
+_PREAMBLE = f"""
+import {{ postNdjson }} from '{API.as_posix()}';
+import {{ statusTextForEvent }} from '{STATUS.as_posix()}';
+async function decode(raw, splitAt = -1) {{
+  const bytes = new TextEncoder().encode(raw);
+  const parts = splitAt >= 0 ? [bytes.slice(0, splitAt), bytes.slice(splitAt)] : [bytes];
+  let i = 0;
+  globalThis.fetch = async () => ({{
+    ok: true,
+    body: {{ getReader: () => ({{
+      read: async () => (i < parts.length ? {{ done: false, value: parts[i++] }} : {{ done: true, value: undefined }}),
+    }}) }},
+  }});
+  const events = [];
+  await postNdjson('/api/x', {{}}, (e) => events.push(e));
+  return events;
+}}
+"""
+
+
 def _run(node: str, expression: str) -> object:
-    source = (
-        f"import {{ createNdjsonDecoder }} from '{NDJSON.as_posix()}';\n"
-        f"import {{ statusTextForEvent }} from '{STATUS.as_posix()}';\n"
-        f"console.log(JSON.stringify({expression}));\n"
-    )
+    source = _PREAMBLE + f"console.log(JSON.stringify(await {expression}));\n"
     result = subprocess.run(
         [node, "--input-type=module", "-e", source],
         check=True,
@@ -39,25 +59,22 @@ def _run(node: str, expression: str) -> object:
 
 def test_chunked_stream_status(node: str) -> None:
     raw = (
-        '{"type":"turn.accepted"}\\n'
-        '{"type":"llm.started","round":1}\\n'
-        '{"type":"llm.finished","round":1,"tool_count":0}\\n'
-        '{"type":"turn.completed","detail":{"id":"s"}}\\n'
+        '{"type":"turn.accepted"}\n'
+        '{"type":"llm.started","round":1}\n'
+        '{"type":"llm.finished","round":1,"tool_count":0}\n'
+        '{"type":"turn.completed","detail":{"id":"s"}}\n'
     )
     result = _run(
         node,
-        """(() => {
-          const bytes = new TextEncoder().encode(%s);
-          const d = createNdjsonDecoder();
-          const mid = Math.floor(bytes.length / 2);
-          const events = [...d.push(bytes.slice(0, mid)), ...d.push(bytes.slice(mid)), ...d.flush()];
-          const status = events.map((e) => statusTextForEvent(e));
+        """(async () => {
+          const mid = Math.floor(new TextEncoder().encode(%s).length / 2);
+          const events = await decode(%s, mid);
           return {
             types: events.map((e) => e.type),
-            status,
+            status: events.map((e) => statusTextForEvent(e)),
           };
         })()"""
-        % json.dumps(raw.replace("\\n", "\n")),
+        % (json.dumps(raw), json.dumps(raw)),
     )
     assert result["types"] == [
         "turn.accepted",
@@ -71,17 +88,32 @@ def test_chunked_stream_status(node: str) -> None:
 
 
 def test_failed_stream_status(node: str) -> None:
-    raw = '{"type":"turn.accepted"}\\n{"type":"turn.failed","code":"llm_error","message":"x"}\\n'
+    raw = '{"type":"turn.accepted"}\n{"type":"turn.failed","code":"llm_error","message":"x"}\n'
     result = _run(
         node,
-        """(() => {
-          const d = createNdjsonDecoder();
-          const events = [...d.push(new TextEncoder().encode(%s)), ...d.flush()];
-          return {
-            status: events.map((e) => statusTextForEvent(e)),
-          };
-        })()"""
-        % json.dumps(raw.replace("\\n", "\n")),
+        """(async () => {
+          try {
+            await decode(%s);
+            return 'no-throw';
+          } catch (error) {
+            return { message: error.message };
+          }
+        })()""" % json.dumps(raw),
+    )
+    assert result["message"] == "x"
+
+
+def test_failed_stream_events_map_to_stopped(node: str) -> None:
+    raw = '{"type":"turn.accepted"}\n{"type":"turn.failed","code":"llm_error","message":"x"}\n'
+    result = _run(
+        node,
+        """(async () => {
+          const events = [
+            { type: 'turn.accepted' },
+            { type: 'turn.failed', code: 'llm_error', message: 'x' },
+          ];
+          return { status: events.map((e) => statusTextForEvent(e)) };
+        })()""",
     )
     assert result["status"][-1] == "Lượt đã dừng."
 
@@ -91,20 +123,18 @@ def test_skill_events_change_status(node: str) -> None:
         '{"type":"turn.accepted"}\n'
         '{"type":"skill.started","round":1,"call_id":"call-1","name":"create-skill"}\n'
         '{"type":"skill.finished","round":1,"call_id":"call-1","name":"create-skill","ok":true}\n'
+        '{"type":"turn.completed","detail":{"id":"s"}}\n'
     )
     result = _run(
         node,
-        """(() => {
-          const d = createNdjsonDecoder();
-          const events = [...d.push(new TextEncoder().encode(%s)), ...d.flush()];
-          return {
-            status: events.map((e) => statusTextForEvent(e)),
-          };
-        })()"""
-        % json.dumps(raw),
+        """(async () => {
+          const events = await decode(%s);
+          return { status: events.map((e) => statusTextForEvent(e)) };
+        })()""" % json.dumps(raw),
     )
     assert result["status"] == [
         "Đã nhận lượt…",
         "Đang mở skill create-skill…",
         "Đã mở skill create-skill…",
+        "Đã xong.",
     ]

@@ -1,0 +1,260 @@
+.cost-period {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--color-muted);
+  font-size: 0.75rem;
+}
+
+.cost-period .screen-select {
+  min-width: 14rem;
+}
+
+.cost-overview {
+  display: grid;
+  grid-template-columns: minmax(13rem, 0.8fr) minmax(0, 1.3fr);
+  gap: 1.5rem;
+}
+
+.cost-total {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 14rem;
+}
+
+.cost-total strong {
+  margin-block: 0.65rem;
+  color: var(--color-ink);
+  font-family: var(--font-display);
+  font-size: 3.8rem;
+  font-weight: 500;
+  letter-spacing: -0.05em;
+  line-height: 1;
+}
+
+.cost-total strong small {
+  font-family: var(--font-reading);
+  font-size: 1.5rem;
+  letter-spacing: 0;
+}
+
+.cost-total p {
+  color: var(--color-muted);
+  font-size: 0.95rem;
+}
+
+.cost-chart-card {
+  min-height: 14rem;
+  padding: 1rem 1.25rem;
+}
+
+.cost-chart-card h3 {
+  margin-block-end: 0.35rem;
+}
+
+.cost-chart-card svg {
+  width: 100%;
+  height: 10.5rem;
+  color: var(--color-muted);
+}
+
+.cost-chart-grid {
+  stroke: var(--color-divider);
+  stroke-width: 1;
+}
+
+.cost-chart-area {
+  fill: color-mix(in oklab, var(--color-accent-soft) 70%, transparent);
+  stroke: none;
+}
+
+.cost-chart-line {
+  fill: none;
+  stroke: var(--color-accent);
+  stroke-width: 2.5;
+}
+
+.cost-chart-point {
+  fill: var(--color-paper-card);
+  stroke: var(--color-accent);
+  stroke-width: 2;
+}
+
+.cost-chart-label {
+  fill: var(--color-muted);
+  stroke: none;
+  font: 12px var(--font-reading);
+}
+
+.cost-model-heading {
+  margin: 1.4rem 0 0.55rem;
+  color: var(--color-ink);
+}
+
+.cost-models {
+  padding: 0;
+  overflow: hidden;
+}
+
+.cost-model {
+  border-block-end: 1px solid var(--color-border);
+}
+
+.cost-model:last-child {
+  border: 0;
+}
+
+.cost-model summary {
+  display: grid;
+  grid-template-columns: 2.8rem minmax(0, 1fr) auto auto 1rem;
+  align-items: center;
+  gap: 1rem;
+  min-height: 4.65rem;
+  padding: 0.65rem 1.1rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.cost-model summary::-webkit-details-marker,
+.cost-model summary::marker {
+  display: none;
+  content: "";
+}
+
+.cost-model summary::after {
+  content: "";
+  width: 0.45rem;
+  height: 0.45rem;
+  border-right: 1.5px solid var(--color-muted);
+  border-bottom: 1.5px solid var(--color-muted);
+  transform: rotate(-45deg);
+  justify-self: center;
+}
+
+.cost-model[open] summary::after {
+  transform: rotate(45deg);
+}
+
+.cost-model-icon {
+  display: grid;
+  place-items: center;
+  width: 2.8rem;
+  height: 2.8rem;
+  border: 1px solid var(--color-divider);
+  border-radius: 0.7rem;
+  background: var(--color-accent-soft);
+  color: var(--color-botanical);
+}
+
+.cost-model-icon svg {
+  width: 1.35rem;
+  height: 1.35rem;
+}
+
+.cost-model-name {
+  display: block;
+  color: var(--color-ink);
+  font-size: 1.05rem;
+  overflow-wrap: anywhere;
+}
+
+.cost-model-meta {
+  display: block;
+  color: var(--color-muted);
+  font-size: 0.85rem;
+}
+
+.cost-model-cost {
+  color: var(--color-ink);
+  white-space: nowrap;
+}
+
+.cost-model-percent {
+  font-family: var(--font-ui);
+  font-size: 0.8rem;
+}
+
+.cost-model-breakdown {
+  margin: 0;
+  padding: 0 1.1rem 0.85rem 4.9rem;
+  color: var(--color-muted);
+  font-size: 0.85rem;
+}
+
+.cost-model-breakdown div {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-block: 0.2rem;
+}
+
+.cost-footnote {
+  margin-top: 1rem;
+  text-align: center;
+}
+
+@media (max-width: 56rem) {
+  .cost-overview {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cost-total {
+    min-height: 10rem;
+  }
+
+  .cost-chart-card {
+    min-height: 16rem;
+  }
+
+  .cost-model summary {
+    grid-template-columns: 2.5rem minmax(0, 1fr) auto 1rem;
+  }
+
+  .cost-model-percent {
+    grid-column: 3;
+  }
+
+  .cost-model-cost {
+    grid-column: 2;
+  }
+
+  .cost-model summary::after {
+    grid-column: 4;
+    grid-row: 1 / span 2;
+  }
+
+  .cost-model-icon {
+    width: 2.5rem;
+    height: 2.5rem;
+    grid-row: span 2;
+  }
+
+  .cost-model-breakdown {
+    padding-inline: 1rem;
+  }
+
+  .cost-period .screen-select {
+    min-width: 0;
+  }
+}
+
+@media (max-width: 28rem) {
+  .cost-model summary {
+    gap: 0.65rem;
+    padding-inline: 0.65rem;
+  }
+
+  .cost-total strong {
+    font-size: 3rem;
+  }
+
+  .cost-chart-card {
+    padding-inline: 0.5rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cost-model summary::after {
+    transition: none;
+  }
+}

@@ -1,4 +1,13 @@
-"""Composer usage meter — last-turn fresh/cache/out/ctx/cost under the chat box."""
+"""Number formatting for the new UI — thyca-css/backend/format.js.
+
+The old composer usage meter (webui/js/chat/meter.js: sumLastTurnUsage,
+meterText, lastTurnTools, #meter/#tool-meter DOM) was deliberately dropped in
+the thyca-css migration: usage now lives on the dashboard/usage screen backed
+by /api/traces aggregation (see tests/test_webui_markdown.py). This file pins
+that decision and covers the replacement formatters (formatCompact,
+formatInteger, formatCost) plus the backend usage-meta contract that feeds
+them.
+"""
 from __future__ import annotations
 
 import json
@@ -9,8 +18,8 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-WEBUI = ROOT / "webui"
-METER_JS = WEBUI / "js" / "chat" / "meter.js"
+NEW_UI = ROOT / "thyca-css"
+FORMAT_JS = NEW_UI / "backend" / "format.js"
 
 
 @pytest.fixture(scope="module")
@@ -21,212 +30,56 @@ def node() -> str:
     return binary
 
 
-def _eval(node: str, expr: str) -> object:
-    script = f"""
-    import * as m from {json.dumps(METER_JS.as_uri())};
-    process.stdout.write(JSON.stringify({expr}));
-    """
+def _eval(node: str, expression: str) -> object:
+    source = (
+        f"import * as m from '{FORMAT_JS.as_posix()}';\n"
+        f"console.log(JSON.stringify({expression}));\n"
+    )
     result = subprocess.run(
-        ["node", "--input-type=module", "-e", script],
+        [node, "--input-type=module", "-e", source],
         check=True,
         capture_output=True,
         text=True,
+        cwd=ROOT,
     )
     return json.loads(result.stdout)
 
 
-def test_sum_last_turn_takes_final_slice_only(node: str) -> None:
-    messages = [
-        {"role": "user", "content": "hi"},
-        {
-            "role": "assistant",
-            "content": "yo",
-            "meta": {
-                "usage": {"prompt_tokens": 1000, "cached_tokens": 990},
-                "cost_usd": 0.0001,
-            },
-        },
-        {"role": "user", "content": "hi2"},
-        {
-            "role": "assistant",
-            "content": "yo2",
-            "meta": {
-                "usage": {"prompt_tokens": 70607522, "cached_tokens": 70000000},
-                "cost_usd": 0.012345,
-            },
-        },
+def test_composer_meter_is_dropped_in_new_ui() -> None:
+    haystacks = [
+        (NEW_UI / name).read_text(encoding="utf-8")
+        for name in ("app.js", "index.html", "cost.js", "usage.js")
+    ] + [
+        (NEW_UI / "backend" / name).read_text(encoding="utf-8")
+        for name in ("api.js", "chat-view.js", "analytics-data.js", "format.js")
     ]
-    summary = _eval(node, f"m.sumLastTurnUsage({json.dumps(messages)})")
-    assert summary == {
-        "prompt": 70607522,
-        "cached": 70000000,
-        "fresh": 607522,
-        "completion": 0,
-        "ctx": 70607522,
-        "cost": pytest.approx(0.012345),
-    }
+    blob = "\n".join(haystacks)
+    assert "sumLastTurnUsage" not in blob
+    assert "lastTurnTools" not in blob
+    assert "renderComposerMeter" not in blob
+    assert 'id="meter"' not in blob
+    assert 'id="tool-meter"' not in blob
 
 
-def test_sum_last_turn_empty_or_no_usage_is_null(node: str) -> None:
-    assert _eval(node, "m.sumLastTurnUsage([])") == {
-        "prompt": None,
-        "cached": None,
-        "fresh": None,
-        "completion": None,
-        "ctx": None,
-        "cost": None,
-    }
-    only_user = _eval(node, 'm.sumLastTurnUsage([{role:"user",content:"x"}])')
-    assert only_user["fresh"] is None
-    no_meta = _eval(
-        node, 'm.sumLastTurnUsage([{role:"user",content:"x"},{role:"assistant",content:"y"}])'
-    )
-    assert no_meta["fresh"] is None
-    assert no_meta["completion"] is None
-    assert no_meta["ctx"] is None
+def test_format_compact_matches_old_meter_scale(node: str) -> None:
+    assert _eval(node, "m.formatCompact(70000000)") == "70M"
+    assert _eval(node, "m.formatCompact(128000)") == "128K"
+    assert _eval(node, "m.formatCompact(5000)") == "5.000"
+    assert _eval(node, "m.formatCompact(0)") == "0"
+    assert _eval(node, "m.formatCompact('x')") == "—"
 
 
-def test_sum_last_turn_out_and_ctx_skips_naming(node: str) -> None:
-    messages = [
-        {"role": "user", "content": "hi"},
-        {
-            "role": "assistant",
-            "content": "r1",
-            "meta": {
-                "kind": "llm",
-                "usage": {
-                    "prompt_tokens": 1000,
-                    "cached_tokens": 100,
-                    "completion_tokens": 50,
-                },
-                "cost_usd": 0.001,
-            },
-        },
-        {
-            "role": "assistant",
-            "content": "r2",
-            "meta": {
-                "kind": "llm",
-                "usage": {
-                    "prompt_tokens": 128000,
-                    "cached_tokens": 120000,
-                    "completion_tokens": 30,
-                },
-                "cost_usd": 0.002,
-            },
-        },
-        {
-            "role": "assistant",
-            "content": None,
-            "meta": {
-                "kind": "naming",
-                "usage": {
-                    "prompt_tokens": 200,
-                    "cached_tokens": 0,
-                    "completion_tokens": 8,
-                },
-                "cost_usd": 0.0001,
-            },
-        },
-    ]
-    summary = _eval(node, f"m.sumLastTurnUsage({json.dumps(messages)})")
-    assert summary == {
-        "prompt": 129200,
-        "cached": 120100,
-        "fresh": 9100,
-        "completion": 88,
-        "ctx": 128000,
-        "cost": pytest.approx(0.0031),
-    }
+def test_format_cost_keeps_usd_precision(node: str) -> None:
+    assert _eval(node, "m.formatCost(0.012345)") == "$0.012345"
+    assert _eval(node, "m.formatCost(0)") == "$0.0000"
+    assert _eval(node, "m.formatCost(null)") == "—"
+    assert _eval(node, "m.formatCost('')") == "—"
 
 
-def test_meter_text_compact_and_title_full(node: str) -> None:
-    summary = {
-        "prompt": 70607522,
-        "cached": 70000000,
-        "fresh": 607522,
-        "completion": 82200,
-        "ctx": 128000,
-        "cost": 0.012345,
-    }
-    assert _eval(node, f"m.meterText({json.dumps(summary)})") == (
-        "input 607.5K · cache 70M · output 82.2K · context 128K · cost $0,0123"
-    )
-    assert _eval(node, f"m.meterTitle({json.dumps(summary)})") == (
-        "lượt vừa rồi — input 607.522 · cache 70.000.000 · output 82.200 · context 128.000 · cost $0,0123"
-    )
-    assert _eval(node, "m.meterText({fresh: null})") == ""
-
-
-def test_meter_text_hides_cache_badge_when_zero(node: str) -> None:
-    summary = {
-        "prompt": 5000,
-        "cached": 0,
-        "fresh": 5000,
-        "completion": 10,
-        "ctx": 5000,
-        "cost": 0.001,
-    }
-    assert _eval(node, f"m.meterText({json.dumps(summary)})") == (
-        "input 5.000 · output 10 · context 5.000 · cost $0,0010"
-    )
-    assert _eval(node, f"m.meterTitle({json.dumps(summary)})") == (
-        "lượt vừa rồi — input 5.000 · output 10 · context 5.000 · cost $0,0010"
-    )
-    zero_out = {**summary, "completion": 0}
-    assert _eval(node, f"m.meterText({json.dumps(zero_out)})") == (
-        "input 5.000 · context 5.000 · cost $0,0010"
-    )
-    assert _eval(node, f"m.meterTitle({json.dumps(zero_out)})") == (
-        "lượt vừa rồi — input 5.000 · context 5.000 · cost $0,0010"
-    )
-
-
-def test_last_turn_tools_collapses_in_first_seen_order(node: str) -> None:
-    messages = [
-        {"role": "user", "content": "old"},
-        {"role": "assistant", "content": "x", "tool_calls": [{"name": "bash"}]},
-        {"role": "user", "content": "now"},
-        {
-            "role": "assistant",
-            "content": None,
-            "tool_calls": [
-                {"name": "memory_search"},
-                {"name": "bash"},
-                {"name": "memory_search"},
-                {"name": "bash"},
-                {"name": "memory_recent"},
-                {"name": "memory_get"},
-                {"name": "memory_get"},
-            ],
-        },
-        {"role": "assistant", "content": "done"},
-    ]
-    assert _eval(node, f"m.lastTurnTools({json.dumps(messages)})") == (
-        "memory_search ×2 · bash ×2 · memory_recent · memory_get ×2"
-    )
-    assert _eval(node, "m.lastTurnTools([])") == ""
-    assert _eval(node, 'm.lastTurnTools([{role:"user",content:"x"}])') == ""
-
-
-def test_meter_wired_in_dom_and_composer_meta() -> None:
-    dom = (WEBUI / "js" / "shared" / "dom.js").read_text(encoding="utf-8")
-    assert 'meter: document.getElementById("meter")' in dom
-    assert 'toolMeter: document.getElementById("tool-meter")' in dom
-    html = (WEBUI / "index.html").read_text(encoding="utf-8")
-    assert 'id="meter"' in html
-    assert 'id="tool-meter"' in html
-    assert 'id="new-page"' in html
-    assert "composer-meta" in html
-    assert "composer-chip-row" in html
-    # meter reuses .hint — no new design system
-    assert 'class="hint" id="meter"' in html
-    chat_index = (WEBUI / "js" / "chat" / "index.js").read_text(encoding="utf-8")
-    assert "renderComposerMeter" in chat_index
-    render = (WEBUI / "js" / "render.js").read_text(encoding="utf-8")
-    assert "renderComposerMeter(el.meter" in render
-    turn = (WEBUI / "js" / "chat" / "turn.js").read_text(encoding="utf-8")
-    assert "renderComposerMeter(el.meter, completed.messages, el.toolMeter)" in turn
+def test_format_integer_uses_vi_locale(node: str) -> None:
+    assert _eval(node, "m.formatInteger(70607522)") == "70.607.522"
+    assert _eval(node, "m.formatInteger(5000)") == "5.000"
+    assert _eval(node, "m.formatInteger('x')") == "—"
 
 
 def test_session_detail_carries_meta_for_meter(tmp_path: Path) -> None:

@@ -1,4 +1,4 @@
-"""Node tests for the operational event -> status text mapper — webui/js/chat/status.js.
+"""Node tests for the operational event -> status text mapper — thyca-css/backend/chat-status.js.
 
 Runs in Node with --input-type=module so no DOM is needed; mirrors the eval
 helper style of tests/test_ndjson.py.
@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "webui" / "js" / "chat" / "status.js"
+SCRIPT = ROOT / "thyca-css" / "backend" / "chat-status.js"
 
 
 @pytest.fixture(scope="module")

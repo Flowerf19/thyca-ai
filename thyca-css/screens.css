@@ -1,0 +1,200 @@
+/* Hallmark · macrostructure: Workbench · theme: studied-DNA (Thyca references)
+ * Shared notebook screens · existing palette, typography and repaired corners.
+ * Pre-emit critique: P5 H4 E4 S5 R5 V4
+ */
+
+:root {
+  --color-chart-input: oklch(78% 0.077 65);
+  --color-chart-cache: oklch(87% 0.054 72);
+  --color-success-ink: oklch(43% 0.085 155);
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
+[hidden] { display: none !important; }
+
+a { color: inherit; }
+
+.screen-shell { font-family: var(--font-reading); }
+.screen-shell .brand-header { padding-inline: 0; }
+.screen-shell .screen-surface h2,
+.screen-shell .screen-surface h3 { font-weight: 500; font-style: normal; }
+.screen-shell .screen-surface h2 { margin: 0; font-size: 1.7rem; line-height: 1.25; }
+.screen-shell .screen-surface h3 { margin: 0; font-size: 1.15rem; }
+.screen-shell p { margin-block: 0.4rem; }
+.screen-shell input, .screen-shell select, .screen-shell textarea, .screen-shell button { font: inherit; }
+
+.screen-surface {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-divider) transparent;
+  margin: 0 1.65rem 1.25rem 1.45rem;
+  padding: 1.75rem;
+  border: var(--rule) solid var(--color-border);
+  border-radius: var(--radius-chat);
+  background: color-mix(in oklab, var(--color-paper-chat) 45%, transparent);
+}
+
+.screen-heading, .screen-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+  margin-block-end: var(--space-lg);
+}
+.screen-heading > *, .screen-toolbar > * { min-width: 0; }
+.screen-heading h2 { color: var(--color-ink); }
+.screen-muted { color: var(--color-muted); }
+.screen-note { color: var(--color-muted); font-size: 0.875rem; }
+.screen-icon { flex: 0 0 auto; width: 1.4rem; height: 1.4rem; }
+
+.screen-card {
+  min-width: 0;
+  padding: var(--space-lg);
+  border: var(--rule) solid var(--color-border);
+  border-radius: var(--radius-chat);
+  background: color-mix(in oklab, var(--color-paper-card) 72%, transparent);
+  box-shadow: 0 0.18rem 0.55rem color-mix(in oklab, var(--color-shell-shadow-soft) 30%, transparent);
+}
+.screen-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 0.2rem 0.65rem;
+  border: var(--rule) solid var(--color-border);
+  border-radius: var(--radius-xs);
+  background: color-mix(in oklab, var(--color-accent-soft) 40%, transparent);
+  color: var(--color-accent-deep);
+  font-size: 0.875rem;
+  white-space: nowrap;
+}
+.screen-button, .screen-select, .screen-input {
+  min-height: 2.75rem;
+  max-width: 100%;
+  padding: 0.65rem 1rem;
+  border: var(--rule) solid var(--color-divider);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper-card);
+  color: var(--color-ink);
+  font: inherit;
+}
+.screen-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.screen-button.is-primary {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: var(--color-accent-ink);
+}
+.screen-input { width: 100%; min-width: 0; }
+.screen-select { cursor: pointer; }
+.screen-button:disabled, .screen-tabs button:disabled {
+  cursor: not-allowed;
+  color: var(--color-muted);
+  opacity: 0.65;
+}
+
+.screen-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  padding: 0.2rem 0.5rem;
+  margin: -1.75rem -1.75rem 1.75rem;
+  border-block-end: var(--rule) solid var(--color-border);
+}
+.screen-tabs a, .screen-tabs button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 4rem;
+  padding: 0.75rem 1.5rem;
+  border-block-end: 2px solid transparent;
+  background: transparent;
+  color: var(--color-ink);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.screen-tabs [aria-current="page"], .screen-tabs [aria-selected="true"] {
+  color: var(--color-accent-deep);
+  border-block-end-color: var(--color-accent);
+}
+
+.screen-nav { display: grid; gap: var(--space-xs); padding: 1.4rem 1.6rem; }
+.screen-nav a, .screen-nav button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  min-height: 3.6rem;
+  padding: 0.75rem 1rem;
+  border: var(--rule) solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--color-ink);
+  text-align: start;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.screen-nav [aria-current="page"], .screen-nav [aria-selected="true"] {
+  border-radius: var(--radius-sm);
+  background: var(--color-accent);
+  color: var(--color-accent-ink);
+}
+.screen-nav svg { width: 1.45rem; height: 1.45rem; flex: 0 0 auto; }
+.screen-sidebar-footer { margin-block-start: auto; padding: 1.5rem 1.6rem; }
+.screen-sidebar-footer .screen-card { padding: 1rem; }
+
+.screen-dialog {
+  width: min(32rem, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  padding: var(--space-lg);
+  overflow: auto;
+  border: var(--rule) solid var(--color-divider);
+  border-radius: var(--radius-chat);
+  background: var(--color-paper);
+  color: var(--color-reading);
+  font-family: var(--font-reading);
+  box-shadow: 0 1rem 3rem var(--color-shell-shadow-soft);
+}
+.screen-dialog::backdrop { background: var(--color-shell-shadow); }
+.screen-dialog h2 { margin: 0; font-family: var(--font-display); font-size: 1.5rem; }
+.screen-dialog .screen-nav { padding: 0; }
+.screen-dialog .screen-heading { margin-block-end: 1rem; }
+.screen-dialog form { display: grid; gap: var(--space-md); }
+.screen-dialog label { display: grid; gap: var(--space-xs); }
+.screen-dialog textarea { min-height: 6rem; resize: vertical; }
+.screen-dialog .screen-toolbar { justify-content: flex-end; margin: 0; }
+
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 3px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .screen-button:not(:disabled):hover { border-color: var(--color-accent); }
+  .screen-nav :is(a, button):not([aria-current="page"]):not([aria-selected="true"]):not(:disabled):hover {
+    border-color: var(--color-divider);
+    background: var(--color-paper-card);
+  }
+}
+@media (max-width: 56rem) {
+  .screen-shell { max-height: none; }
+  .screen-shell .sidebar > :not(.sidebar-top) { display: none; }
+  .screen-shell .brand-header { padding-inline: 3.5rem 1rem; }
+  .screen-surface { margin: 0; padding: 1rem; border-inline: 0; border-block-end: 0; border-radius: 0; }
+  .screen-tabs { margin: -1rem -1rem 1rem; padding-inline: 0.5rem; gap: 0; }
+  .screen-tabs a, .screen-tabs button { min-height: 3rem; padding: 0.6rem 0.75rem; }
+  .screen-card { padding: 1rem; }
+}
+@media (max-width: 28rem) {
+  .screen-heading { align-items: stretch; flex-direction: column; }
+  .screen-shell h2 { font-size: 1.45rem; overflow-wrap: anywhere; }
+  .screen-select { width: 100%; }
+}

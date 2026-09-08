@@ -1,0 +1,258 @@
+.memories-surface {
+  padding: 1.75rem 1.8rem;
+}
+
+.memories-title {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0.8rem;
+  color: var(--color-accent-deep);
+}
+
+.memories-title h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  font-family: var(--font-reading);
+  font-size: 1.25rem;
+}
+
+.memories-title h2::before,
+.memories-title h2::after {
+  content: "";
+  width: 1.35rem;
+  border-top: 1px solid var(--color-divider);
+}
+
+.memories-rule {
+  text-align: center;
+  margin: 0.15rem 0 1.5rem;
+}
+
+.memories-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  margin-bottom: 1.45rem;
+}
+
+.memory-search {
+  position: relative;
+  display: block;
+  width: min(50%, 32rem);
+}
+
+.memory-search svg {
+  position: absolute;
+  z-index: 1;
+  left: 1rem;
+  top: 0.72rem;
+  width: 1.4rem;
+  height: 1.4rem;
+  color: var(--color-muted);
+}
+
+.memory-search input {
+  padding-left: 3.2rem;
+  height: 3.45rem;
+}
+
+.memory-filter-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.memory-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.memory-filters .screen-button {
+  min-height: 2.45rem;
+  padding: 0.45rem 1.1rem;
+  border-radius: var(--radius-pill);
+  font-size: 0.95rem;
+}
+
+.sort-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--color-muted);
+  white-space: nowrap;
+}
+
+.sort-label .screen-select {
+  min-height: 2.55rem;
+}
+
+.memory-day {
+  margin: 0.85rem 0 0.15rem;
+  color: var(--color-ink);
+  font-family: var(--font-reading);
+  font-size: 1rem;
+  font-weight: 500;
+}
+
+.memory-day:first-child {
+  margin-top: 0;
+}
+
+.memory-list {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.memory-card {
+  display: grid;
+  grid-template-columns: 5.5rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 1rem;
+  min-height: 8.55rem;
+  padding: 1rem 1.3rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-chat);
+  background: color-mix(in oklab, var(--color-paper-card) 78%, transparent);
+  box-shadow: 0 0.15rem 0.5rem var(--color-shell-shadow-soft);
+}
+
+.memory-medallion {
+  display: grid;
+  place-items: center;
+  width: 4.75rem;
+  height: 4.75rem;
+  border: 1px solid var(--color-paper-edge);
+  border-radius: 50%;
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+.memory-medallion svg {
+  width: 2.5rem;
+  height: 2.5rem;
+}
+
+.memory-copy {
+  min-width: 0;
+}
+
+.memory-copy h3 {
+  margin: 0 0 0.25rem;
+  color: var(--color-ink);
+  font-family: var(--font-reading);
+  font-size: 1.3rem;
+}
+
+.memory-copy p {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.memory-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.55rem;
+}
+
+.memory-tags span {
+  padding: 0.2rem 0.7rem;
+  border-radius: var(--radius-pill);
+  background: color-mix(in oklab, var(--color-accent-soft) 65%, var(--color-paper));
+  color: var(--color-accent-deep);
+  font-size: 0.83rem;
+}
+
+.memory-meta {
+  display: flex;
+  align-self: start;
+  align-items: center;
+  gap: 0.85rem;
+  color: var(--color-muted);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.memory-more {
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--color-accent-deep);
+  font-size: 1.5rem;
+  letter-spacing: 0.1rem;
+}
+
+.memory-empty {
+  text-align: center;
+  padding: 2rem;
+  color: var(--color-muted);
+}
+
+.memories-footnote {
+  text-align: center;
+  margin-top: 1rem;
+}
+
+@media (max-width: 56rem) {
+  .memories-shell .sessions {
+    display: flex !important;
+    pointer-events: auto;
+  }
+
+  .memories-controls {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .memory-search {
+    width: 100%;
+  }
+
+  .memory-filter-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .sort-label {
+    justify-content: space-between;
+  }
+
+  .memory-card {
+    grid-template-columns: 4rem minmax(0, 1fr);
+    padding: 0.85rem;
+  }
+
+  .memory-medallion {
+    width: 3.6rem;
+    height: 3.6rem;
+  }
+
+  .memory-medallion svg {
+    width: 2rem;
+    height: 2rem;
+  }
+
+  .memory-meta {
+    grid-column: 2;
+    align-self: auto;
+    justify-content: space-between;
+  }
+
+  .memory-copy h3 {
+    font-size: 1.15rem;
+  }
+
+  .memory-copy p {
+    font-size: 0.92rem;
+  }
+}

@@ -66,14 +66,18 @@ def test_stats_json_and_static(tmp_path: Path) -> None:
         assert payload["untouched"] == 0
         assert payload["leaves"][0]["get_count"] == 1
         assert payload["leaves"][0]["search_count"] == 0
-        with urlopen(_url(httpd, "/"), timeout=2) as response:
+        with urlopen(_url(httpd, "/memories.html"), timeout=2) as response:
             html = response.read().decode("utf-8")
-        assert 'data-mode="memories"' in html
-        with urlopen(_url(httpd, "/js/memories/index.js"), timeout=2) as response:
+        assert 'id="memory-list"' in html
+        assert './memories.js' in html
+        with urlopen(_url(httpd, "/memories.js"), timeout=2) as response:
             assert "javascript" in response.headers.get_content_type()
-            assert b"pagesFromStats" in response.read()
-        overview = (WEBUI / "js" / "memories" / "overview.js").read_text(encoding="utf-8")
-        assert "Theo ngày" in overview
+            memory_js = response.read()
+        assert b'getJson("/api/memory/stats")' in memory_js
+        assert b'"/api/memory/update"' in memory_js
+        mapping = (WEBUI / "backend" / "memory-data.js").read_text(encoding="utf-8")
+        assert "selectMemories" in mapping
+        assert 'view === "used-more"' in mapping
     finally:
         _stop(httpd, thread)
 
@@ -200,24 +204,31 @@ def test_stats_error_is_503(tmp_path: Path) -> None:
 
 
 def test_default_webui_has_index() -> None:
-    assert (WEBUI / "index.html").is_file()
-    assert (WEBUI / "js" / "memories" / "index.js").is_file()
-    raw = "\n".join(
-        (WEBUI / "js" / "memories" / name).read_text(encoding="utf-8")
-        for name in ("index.js", "overview.js", "leaf.js", "canonical.js")
-    )
-    assert "Theo ngày" in raw
-    assert "data-day-filter" in raw
-    assert "data-forget" in raw
-    assert "pagesFromStats" in raw
-    assert "title: escapeHtml(key)" not in raw
+    assert WEBUI.name == "thyca-css"
+    for name in ("index.html", "memories.html", "trace.html", "provider.html", "dashboard.html"):
+        assert (WEBUI / name).is_file()
+    for name in ("app.js", "memories.js", "trace.js", "provider.js", "cost.js", "usage.js"):
+        assert (WEBUI / name).is_file()
+    raw = (WEBUI / "memories.js").read_text(encoding="utf-8")
+    assert '"/api/memory/update"' in raw
+    assert '"/api/memory/reinforce"' in raw
+    assert '"/api/memory/forget"' in raw
+    assert 'postJson("/api/memory/canonical"' in raw
 
 
 def test_index_html_parses() -> None:
-    raw = (WEBUI / "index.html").read_text(encoding="utf-8")
-    HTMLParser().feed(raw)
-    assert 'data-mode="memories"' in raw
-    assert "./js/app.js" in raw
+    expected = {
+        "index.html": './app.js',
+        "memories.html": './memories.js',
+        "trace.html": './trace.js',
+        "provider.html": './provider.js',
+        "dashboard.html": './cost.js',
+    }
+    for name, script in expected.items():
+        raw = (WEBUI / name).read_text(encoding="utf-8")
+        HTMLParser().feed(raw)
+        assert script in raw
+        assert './navigation.js' in raw
 
 
 def test_cli_serve_flag_conflicts(tmp_path: Path) -> None:

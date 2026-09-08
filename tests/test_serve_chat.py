@@ -652,62 +652,45 @@ def test_stream_sentinel_without_terminal_writes_fallback_failure(
 
 
 def test_chat_js_shipped() -> None:
-    chat_dir = WEBUI / "js" / "chat"
-    assert (chat_dir / "index.js").is_file()
-    chat = "\n".join(
-        (chat_dir / name).read_text(encoding="utf-8")
-        for name in ("index.js", "live.js", "turn.js", "pages.js", "view.js")
-    )
-    assert "threadHtml" in chat
-    assert "statusHtml" in chat
-    assert "Tools used:" not in chat
-    assert 'statusHtml(rec.ambientText)' in chat
-    pages = (chat_dir / "pages.js").read_text(encoding="utf-8")
-    start = pages.index("export async function createChatSession")
-    # Next export after createChatSession in pages.js
-    end = pages.index("export function", start + 1)
-    body = pages[start:end]
-    assert "postJson" not in body
-    assert "hydrateChat" not in body
-    assert "refreshChatList" in body
-    assert "state.activeSessionId = null;" in body
-    turn = (chat_dir / "turn.js").read_text(encoding="utf-8")
-    send = turn.index("export async function sendChatTurn")
-    assert "page.sessionId" in turn[send:]
-    assert "function bindSession" in pages or "export function bindSession" in pages
-    css = "\n".join(
-        p.read_text(encoding="utf-8") for p in sorted((WEBUI / "css" / "workspace").glob("*.css"))
-    )
-    assert "font-style: italic" in css
+    app = (WEBUI / "app.js").read_text(encoding="utf-8")
+    view = (WEBUI / "backend" / "chat-view.js").read_text(encoding="utf-8")
+    api = (WEBUI / "backend" / "api.js").read_text(encoding="utf-8")
+    css = (WEBUI / "backend.css").read_text(encoding="utf-8")
+
+    assert 'postNdjson(' in app
+    assert '/turn/stream' in app
+    assert 'postJson("/api/sessions", {})' in app
+    assert "formatMarkdown" in view
+    assert "tool.started" in view
+    assert "turn.completed" in api
+    assert "Tools used:" not in view
+    assert ".live-status" in css
     script = WEBUI.parent / "scripts" / "retitle_sessions.py"
     assert script.is_file()
     assert "retitle_missing" in script.read_text(encoding="utf-8")
 
 
 def test_chat_nav_opens_new_session() -> None:
-    app_js = (WEBUI / "js" / "app.js").read_text(encoding="utf-8")
+    app = (WEBUI / "app.js").read_text(encoding="utf-8")
     html = (WEBUI / "index.html").read_text(encoding="utf-8")
-    render = (WEBUI / "js" / "render.js").read_text(encoding="utf-8")
-    bind = app_js[app_js.index("function bind()") :]
-    chat_click = bind[bind.index("el.modeList.addEventListener") : bind.index("const searchToggle")]
-    assert "openNewPage" in chat_click
-    assert 'button.dataset.mode === "chat"' in chat_click
-    assert 'id="new-page"' in html
-    assert 'getElementById("new-page")' in app_js
-    assert "newer.disabled = busy" in app_js
-    assert "snapToActive" in render
-    provider = (WEBUI / "js" / "settings" / "provider.js").read_text(encoding="utf-8")
-    box_start = provider.index("export function addModelBoxHtml")
-    box_end = provider.index("export function addModelPage")
-    box = provider[box_start:box_end]
-    page_start = provider.index("export function addModelPage")
-    page = provider[page_start : page_start + 1800]
-    assert "modelLimitsHtml" in box
-    assert "Giới hạn" not in page
-    models_js = (WEBUI / "js" / "settings" / "models.js").read_text(encoding="utf-8")
-    assert 'modelLimitsHtml("edit"' in models_js
-    assert "readModelLimits" in models_js
-    assert not (WEBUI / "js" / "staff").exists()
+    new_session = app[app.index("function newSession()") : app.index("async function ensureSession")]
+    ensure_session = app[app.index("async function ensureSession") : app.index("async function sendMessage")]
+
+    assert 'id="new-session"' in html
+    assert 'id="message-list"' in html
+    assert 'id="composer"' in html
+    assert 'querySelector("#new-session")' in app
+    assert "state.activeId = \"\";" in new_session
+    assert "postJson" not in new_session
+    assert 'postJson("/api/sessions", {})' in ensure_session
+    assert "const sessionId = await ensureSession()" in app
+
+    provider = (WEBUI / "provider.js").read_text(encoding="utf-8")
+    assert 'getJson("/api/config")' in provider
+    assert 'postJson("/api/config"' in provider
+    assert 'postJson("/api/onboarding/verify"' in provider
+    assert "contextTokens" in provider
+    assert not (WEBUI / "staff").exists()
 
 
 def test_create_prunes_previous_blank(tmp_path: Path) -> None:
@@ -733,7 +716,7 @@ def test_session_payload_includes_ask_remember(tmp_path: Path) -> None:
 
 def test_idle_remember_nudge_in_webui() -> None:
     html = (WEBUI / "index.html").read_text(encoding="utf-8")
-    app = (WEBUI / "js" / "app.js").read_text(encoding="utf-8")
+    app = (WEBUI / "app.js").read_text(encoding="utf-8")
     assert 'id="idle-nudge"' in html
     assert "Phiên im 15 phút" in html
     assert "IDLE_MS = 15 * 60 * 1000" in app

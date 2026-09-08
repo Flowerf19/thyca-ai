@@ -64,17 +64,14 @@ def test_chunked_stream_status(node: str) -> None:
         '{"type":"llm.finished","round":1,"tool_count":0}\n'
         '{"type":"turn.completed","detail":{"id":"s"}}\n'
     )
+    payload = json.dumps(raw)
     result = _run(
         node,
-        """(async () => {
-          const mid = Math.floor(new TextEncoder().encode(%s).length / 2);
-          const events = await decode(%s, mid);
-          return {
-            types: events.map((e) => e.type),
-            status: events.map((e) => statusTextForEvent(e)),
-          };
-        })()"""
-        % (json.dumps(raw), json.dumps(raw)),
+        "(async () => {"
+        + f" const mid = Math.floor(new TextEncoder().encode({payload}).length / 2);"
+        + f" const events = await decode({payload}, mid);"
+        + " return { types: events.map((e) => e.type),"
+        + " status: events.map((e) => statusTextForEvent(e)) }; })()",
     )
     assert result["types"] == [
         "turn.accepted",
@@ -89,22 +86,18 @@ def test_chunked_stream_status(node: str) -> None:
 
 def test_failed_stream_status(node: str) -> None:
     raw = '{"type":"turn.accepted"}\n{"type":"turn.failed","code":"llm_error","message":"x"}\n'
+    payload = json.dumps(raw)
     result = _run(
         node,
-        """(async () => {
-          try {
-            await decode(%s);
-            return 'no-throw';
-          } catch (error) {
-            return { message: error.message };
-          }
-        })()""" % json.dumps(raw),
+        "(async () => { try {"
+        + f" await decode({payload});"
+        + " return 'no-throw'; } catch (error) {"
+        + " return { message: error.message }; } })()",
     )
     assert result["message"] == "x"
 
 
 def test_failed_stream_events_map_to_stopped(node: str) -> None:
-    raw = '{"type":"turn.accepted"}\n{"type":"turn.failed","code":"llm_error","message":"x"}\n'
     result = _run(
         node,
         """(async () => {
@@ -125,12 +118,12 @@ def test_skill_events_change_status(node: str) -> None:
         '{"type":"skill.finished","round":1,"call_id":"call-1","name":"create-skill","ok":true}\n'
         '{"type":"turn.completed","detail":{"id":"s"}}\n'
     )
+    payload = json.dumps(raw)
     result = _run(
         node,
-        """(async () => {
-          const events = await decode(%s);
-          return { status: events.map((e) => statusTextForEvent(e)) };
-        })()""" % json.dumps(raw),
+        "(async () => {"
+        + f" const events = await decode({payload});"
+        + " return { status: events.map((e) => statusTextForEvent(e)) }; })()",
     )
     assert result["status"] == [
         "Đã nhận lượt…",

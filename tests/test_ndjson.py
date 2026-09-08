@@ -61,9 +61,12 @@ def _eval(node: str, expression: str) -> object:
 
 
 def _eval_err(node: str, expression: str) -> str:
-    source = _PREAMBLE + (
-        "try { await %s; console.log(JSON.stringify('no-throw')); }\n"
-        "catch (error) { console.log(JSON.stringify(error.message)); }\n" % expression
+    source = (
+        _PREAMBLE
+        + "try { await "
+        + expression
+        + "; console.log(JSON.stringify('no-throw')); }\n"
+        + "catch (error) { console.log(JSON.stringify(error.message)); }\n"
     )
     result = subprocess.run(
         [node, "--input-type=module", "-e", source],

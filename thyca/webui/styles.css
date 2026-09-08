@@ -242,6 +242,10 @@ svg {
   flex-direction: column;
   min-height: 0;
   margin-block-start: 1.5rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-divider) transparent;
 }
 
 .session-item {

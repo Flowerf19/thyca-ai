@@ -119,10 +119,13 @@
                 <select class="screen-select" id="tool-select" aria-label="Chọn tool call"></select>
                 <span id="tool-duration">—</span>
               </div>
-              <div class="json-grid">
-                <label>Input<pre id="json-input"></pre></label>
-                <label>Output<pre id="json-output"></pre></label>
-              </div>
+              <details class="tool-payload">
+                <summary>Xem Input / Output</summary>
+                <div class="json-grid">
+                  <label>Input<pre id="json-input"></pre></label>
+                  <label>Output<pre id="json-output"></pre></label>
+                </div>
+              </details>
               <button class="screen-button" id="raw-json" type="button">Xem raw JSON</button>
             </section>
 

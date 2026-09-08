@@ -133,7 +133,7 @@ function render() {
   const days = Number(el.period.value) || 30;
   const range = rollingRange(days);
   const total = stats.totals?.cost_usd;
-  const value = document.createTextNode(total == null ? "—" : Number(total).toLocaleString("en-US", { maximumFractionDigits: 6 }));
+  const value = document.createTextNode(total == null ? "—" : formatCost(total, 2));
   const unit = document.createElement("small");
   unit.textContent = " USD";
   el.total.replaceChildren(value, unit);

@@ -243,8 +243,8 @@
 
 .general > div {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.75rem 1rem;
+  grid-template-columns: 1.5fr 1.5fr 0.7fr;
+  gap: 1rem 1.5rem;
 }
 
 .general > div > span {

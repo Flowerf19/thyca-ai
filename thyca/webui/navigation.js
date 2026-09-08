@@ -18,8 +18,6 @@ const routes = [
   ["memories.html", "Nhật ký", "M12 6C9 4 6 4 3 5v14c3-1 6-1 9 1 3-2 6-2 9-1V5c-3-1-6-1-9 1Zm0 0v14"],
   ["trace.html", "Trace", "M5 4v16M5 6h14M5 12h10M5 18h14"],
   ["dashboard.html", "Tổng quan", "M4 20V10h4v9M10 20V5h4v14M16 19v-7h4v7"],
-  ["usage.html", "Sử dụng", "M5 19V9M12 19V5M19 19v-7"],
-  ["cost.html", "Chi phí", "M12 3v18M16.5 7H9.8a3 3 0 0 0 0 6h4.4a3 3 0 0 1 0 6H7.5"],
   ["provider.html", "Provider", "M5 15.5a5.5 5.5 0 0 1 1.8-10.7A6.5 6.5 0 0 1 19 8.5a4.5 4.5 0 0 1-.5 9H6"],
   ["settings.html", "Giao diện", "M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1 1-3Zm3 5a4 4 0 1 0 0 8 4 4 0 0 0 0-8"],
 ];

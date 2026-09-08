@@ -86,7 +86,7 @@
   font: 12px var(--font-reading);
 }
 
-.cost-model-heading {
+#chi-phi h3.cost-model-heading {
   margin: 3rem 0 0.55rem;
   color: var(--color-ink);
 }

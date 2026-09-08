@@ -1,7 +1,7 @@
 """remember / forget / reinforce / TTL — GOAL-006."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from thyca.memory.heading import TTL_DAYS, parse_heading
@@ -9,7 +9,7 @@ from thyca.tools.memory import MemoryFacade
 
 
 def test_remember_default_month_and_get_resets_ttl(tmp_path: Path) -> None:
-    t0 = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    t0 = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     sid = facade.remember("cafe", "likes ca phe den", now=t0)
     assert sid.startswith("2026-08-01#")
@@ -26,7 +26,7 @@ def test_remember_default_month_and_get_resets_ttl(tmp_path: Path) -> None:
 
 
 def test_search_does_not_refresh_and_forget_deletes(tmp_path: Path) -> None:
-    t0 = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    t0 = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     sid = facade.remember("thit", "an thit quay", now=t0)
     daily = tmp_path / "memory" / "2026-08-01.md"
@@ -45,7 +45,7 @@ def test_search_does_not_refresh_and_forget_deletes(tmp_path: Path) -> None:
 
 
 def test_expired_deleted_on_reindex(tmp_path: Path) -> None:
-    t0 = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    t0 = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     facade.remember("x", "ttl-purge-token-zzzx", importance=1, now=t0)
     daily = tmp_path / "memory" / "2026-08-01.md"

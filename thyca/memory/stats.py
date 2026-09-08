@@ -199,6 +199,6 @@ def _created_ts(item: LeafStat) -> str | None:
 
 def _parse_ts(value: str) -> datetime | None:
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return datetime.fromisoformat(value)
     except ValueError:
         return None

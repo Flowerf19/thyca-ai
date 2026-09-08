@@ -11,7 +11,6 @@ import pytest
 
 from thyca.config import default_config, load, save
 from thyca.config_schema import config_schema
-from thyca.onboarding import ProviderProbeError
 from thyca.serve import default_webui, make_server
 from thyca.tools.memory import MemoryFacade
 

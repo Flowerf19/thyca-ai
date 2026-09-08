@@ -17,8 +17,8 @@ from thyca.agent.observe import Observe
 from thyca.agent.think import LLMPort, Think
 from thyca.chat_ui import ChatUi
 from thyca.config import ConfigError, load
-from thyca.llm.llm_factory import ConnectFactory
 from thyca.llm.llm_base import LLMError
+from thyca.llm.llm_factory import ConnectFactory
 from thyca.llm.prompt_manager import PromptManager
 from thyca.memory.active import ActiveMemory
 from thyca.sessions import SessionError, SessionManager, SessionNotFound

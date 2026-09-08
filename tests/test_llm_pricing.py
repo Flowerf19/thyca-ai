@@ -3,7 +3,6 @@ from __future__ import annotations
 from thyca.config import PricingCfg
 from thyca.llm.pricing import cost_for
 
-
 USAGE = {"prompt_tokens": 100, "cached_tokens": 20, "completion_tokens": 10, "total_tokens": 110}
 MINI = {"gpt-4o-mini": PricingCfg(input=0.15, cache=0.075, output=0.60)}
 

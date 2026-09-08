@@ -1,9 +1,9 @@
 """Operational turn events. No prompt, content, args, result, or exception text."""
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
-import re
 
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9_-]+$")
 _IDENTIFIER_MAX = 64

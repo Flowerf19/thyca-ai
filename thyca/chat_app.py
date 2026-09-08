@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from time import perf_counter
 from zoneinfo import ZoneInfo
@@ -25,9 +25,9 @@ from thyca.sessions import Session, SessionManager, ask_remember
 from thyca.sessions.store import SessionStore
 from thyca.sessions.title import display_title, is_blank, propose_title
 from thyca.tools.builtin import register_file_tools
+from thyca.tools.mcp import MCPManager
 from thyca.tools.memory import MemoryFacade
 from thyca.tools.memory_tools import register_memory_tools
-from thyca.tools.mcp import MCPManager
 from thyca.tools.path_guard import PathGuard
 from thyca.tools.registry import ToolRegistry
 
@@ -280,7 +280,7 @@ class ChatApp:
             "model": self._cfg.provider.model,
             "messages": [_message_dict(item) for item in session.messages],
             "ask_remember": ask_remember(
-                session.messages, datetime.now(timezone.utc)
+                session.messages, datetime.now(UTC)
             ),
         }
 
@@ -292,7 +292,7 @@ def session_title(session: Session) -> str:
 def _updated_at(session: Session) -> str:
     if session.messages:
         return session.messages[-1].ts
-    stamp = datetime.fromtimestamp(session.path.stat().st_mtime, timezone.utc)
+    stamp = datetime.fromtimestamp(session.path.stat().st_mtime, UTC)
     return stamp.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 

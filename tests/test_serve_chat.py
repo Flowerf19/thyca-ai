@@ -11,12 +11,12 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from thyca.agent.events import TurnEvent
+from thyca.bridge import SENTINEL
 from thyca.chat_app import ChatApp, session_title
 from thyca.config import default_config, load, save
 from thyca.llm.llm_base import ChatReply, LLMError
 from thyca.protocol import Message, ToolCall
 from thyca.serve import ServeError, default_webui, make_server
-from thyca.bridge import SENTINEL
 from thyca.sessions import Session, SessionManager
 from thyca.sessions.title import fallback_title
 from thyca.tools.memory import MemoryFacade
@@ -363,11 +363,7 @@ def _stream(httpd, path: str, *, data: bytes, timeout: float = 10):
 
 
 def _stream_lines(response) -> list[dict]:
-    lines = []
-    for raw in response:
-        if raw:
-            lines.append(json.loads(raw.decode("utf-8")))
-    return lines
+    return [json.loads(raw.decode("utf-8")) for raw in response if raw]
 
 
 def test_stream_slow_turn_first_line_arrives_before_release(tmp_path: Path) -> None:
@@ -584,7 +580,7 @@ def test_stream_tool_events_ordered_and_clean(tmp_path: Path) -> None:
             f"/api/sessions/{created['id']}/turn/stream",
             data=b'{"text":"run the bash tool now"}',
         )
-        raws = [raw for raw in response]
+        raws = list(response)
         lines = [json.loads(raw.decode("utf-8")) for raw in raws]
         assert [item["type"] for item in lines] == [
             "turn.accepted",

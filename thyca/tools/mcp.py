@@ -1,13 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+import re
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Protocol
-import asyncio
-import re
-import sys
 
 from mcp import ClientSession, StdioServerParameters, stdio_client
 from mcp.client.stdio import get_default_environment
@@ -108,8 +108,9 @@ class MCPProcess:
             env=merge_env(self._env),
         )
         try:
-            async with stdio_client(params) as (read, write):
-                async with ClientSession(read, write) as session:
+            async with stdio_client(params) as (read, write), ClientSession(
+                read, write
+            ) as session:
                     self._session = session
                     await session.initialize()
                     listed = await session.list_tools()

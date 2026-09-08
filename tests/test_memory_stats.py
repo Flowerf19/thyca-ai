@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from thyca.memory.archived import ArchiveError, SCHEMA_VERSION
+from thyca.memory.archived import SCHEMA_VERSION, ArchiveError
 from thyca.memory.heading import parse_heading
 from thyca.tools.memory import MemoryFacade
 
@@ -136,7 +136,7 @@ def test_forget_drops_leaf_gets(tmp_path: Path) -> None:
 
 
 def test_reindex_keeps_get_counts(tmp_path: Path) -> None:
-    t0 = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    t0 = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     sid = facade.remember("cafe", "likes ca phe den enough", now=t0)
     facade.get(session_id=sid, now=t0)
@@ -147,7 +147,7 @@ def test_reindex_keeps_get_counts(tmp_path: Path) -> None:
 
 
 def test_get_still_slides_ttl(tmp_path: Path) -> None:
-    t0 = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    t0 = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     sid = facade.remember("cafe", "likes ca phe den enough", now=t0)
     facade.get(session_id=sid, now=t0 + timedelta(days=5))
@@ -312,7 +312,7 @@ def test_expiring_within_14_days_not_beyond(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
-    now = datetime(2026, 8, 17, 10, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 8, 17, 10, 0, tzinfo=UTC)
     facade.archive.reindex(now)
     stats = facade.stats(now=now)
     ids = {item.chunk_id for item in stats.expiring}

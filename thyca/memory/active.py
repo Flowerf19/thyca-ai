@@ -140,10 +140,7 @@ class ActiveMemory:
 
     def _day(self, now: datetime) -> str:
         zone = self._zone()
-        if now.tzinfo is None:
-            aware = now.replace(tzinfo=zone)
-        else:
-            aware = now.astimezone(zone)
+        aware = now.replace(tzinfo=zone) if now.tzinfo is None else now.astimezone(zone)
         return aware.date().isoformat()
 
     def _daily_path(self, day: str) -> Path:

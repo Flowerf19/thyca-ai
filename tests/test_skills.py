@@ -7,7 +7,7 @@ import pytest
 
 from thyca.llm.prompt_manager import PromptManager
 from thyca.memory.active import ActiveMemory, ActiveSnapshot
-from thyca.skills import SkillStore, _PACKAGED_SKILLS
+from thyca.skills import _PACKAGED_SKILLS, SkillStore
 
 
 @pytest.fixture
@@ -151,7 +151,7 @@ def test_active_memory_seeds_and_exposes_index(thyca_dir: Path) -> None:
 
 
 def _hot(**overrides: str) -> ActiveSnapshot:
-    base = dict(soul="soul-text", user="user-text", today="today-text", yesterday="")
+    base = {"soul": "soul-text", "user": "user-text", "today": "today-text", "yesterday": ""}
     base.update(overrides)
     return ActiveSnapshot(**base)
 

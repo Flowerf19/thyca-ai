@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
 import re
 import stat
+from dataclasses import replace
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -18,7 +18,6 @@ from thyca.config import (
     ModelCfg,
     PricingCfg,
     ProviderCfg,
-    TimelineCfg,
     default_config,
     load,
     save,
@@ -78,7 +77,7 @@ def test_invalid_limits_type_is_config_error(tmp_path: Path) -> None:
     raw = default_config().to_dict()
     raw["limits"]["loopMax"] = "ten"
     p.write_text(json.dumps(raw), encoding="utf-8")
-    with pytest.raises(ConfigError, match="limits.loopMax must be an integer"):
+    with pytest.raises(ConfigError, match=r"limits\.loopMax must be an integer"):
         load(p)
 
 

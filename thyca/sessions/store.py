@@ -78,16 +78,18 @@ class SessionStore:
                                 title = extracted
                             continue
                         msg = Message.from_dict(payload)
-                        if msg.role == "system":
-                            if result or not (msg.content or "").startswith("[compaction: "):
-                                raise ValueError(
-                                    "system messages are only synthetic compaction markers"
-                                )
-                        elif msg.role == "tool":
-                            if not msg.tool_call_id or msg.tool_call_id not in known_calls:
-                                raise ValueError(
-                                    "role=tool requires a matching prior assistant tool_call"
-                                )
+                        if msg.role == "system" and (
+                            result or not (msg.content or "").startswith("[compaction: ")
+                        ):
+                            raise ValueError(
+                                "system messages are only synthetic compaction markers"
+                            )
+                        if msg.role == "tool" and (
+                            not msg.tool_call_id or msg.tool_call_id not in known_calls
+                        ):
+                            raise ValueError(
+                                "role=tool requires a matching prior assistant tool_call"
+                            )
                         if msg.role == "assistant" and msg.tool_calls:
                             ids = [call.id for call in msg.tool_calls]
                             if len(ids) != len(set(ids)):

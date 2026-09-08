@@ -3,13 +3,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from test_serve_chat import FakeLLM, ScriptedLLM, _chat
+
 from thyca.agent.events import TurnEvent
 from thyca.llm.llm_base import ChatReply, LLMError
 from thyca.protocol import Message
 from thyca.sessions import SessionManager
 from thyca.sessions.title import fallback_title
-
-from test_serve_chat import FakeLLM, ScriptedLLM, _chat
 
 
 def _types(events: list[TurnEvent]) -> list[str]:

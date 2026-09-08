@@ -6,11 +6,11 @@ from pathlib import Path
 
 import pytest
 
+from tests.test_cli import FakeLLM
 from thyca.cli import Cli
 from thyca.llm.llm_base import ChatReply
 from thyca.serve import ServeError
 from thyca.serve_daemon import pid_alive, pid_file, running_pid, stop_daemon
-from tests.test_cli import FakeLLM
 
 
 def test_stale_pidfile_is_cleared(tmp_path: Path) -> None:

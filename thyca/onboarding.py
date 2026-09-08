@@ -7,12 +7,11 @@ from __future__ import annotations
 
 import json
 import socket
-from dataclasses import replace
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from thyca.config import Config, ConfigError, ProviderCfg
 from thyca import __version__
+from thyca.config import Config, ConfigError
 
 _PROBE_TIMEOUT_S = 10.0
 
@@ -54,7 +53,7 @@ def validate_provider(
             body = response.read()
     except HTTPError as exc:
         if exc.code in (401, 403):
-            raise ProviderProbeError("API key bị từ chối (HTTP %d)" % exc.code) from exc
+            raise ProviderProbeError(f"API key bị từ chối (HTTP {exc.code})") from exc
         raise ProviderProbeError(f"provider trả HTTP {exc.code}") from exc
     except URLError as exc:
         if _is_timeout_reason(exc.reason):
@@ -62,7 +61,7 @@ def validate_provider(
                 f"provider quá thời gian phản hồi ({timeout:g}s)"
             ) from exc
         raise ProviderProbeError(f"không kết nối được {base_url}: {exc.reason}") from exc
-    except (TimeoutError, socket.timeout) as exc:
+    except TimeoutError as exc:
         raise ProviderProbeError(
             f"provider quá thời gian phản hồi ({timeout:g}s)"
         ) from exc
@@ -93,7 +92,7 @@ def apply_provider(
             cfg.provider,
             baseUrl=base_url.strip(),
             model=model.strip(),
-            apiKey=api_key if api_key else None,
+            apiKey=api_key or None,
         )
         return _replace(cfg, provider=provider)
     except ConfigError as exc:

@@ -129,8 +129,6 @@ def test_normalize_usage_anthropic_and_google_stubs() -> None:
         "total_tokens": 25,
     }
     # connect thật vẫn NotImplementedError tới khi có key
-    import asyncio
-
     import pytest
 
     from thyca.llm.anthropic_chat import AnthropicChat

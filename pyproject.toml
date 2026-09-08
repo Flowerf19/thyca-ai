@@ -41,6 +41,36 @@ artifacts = ["thyca/webui/**/*.html", "thyca/webui/**/*.css", "thyca/webui/**/*.
 line-length = 100
 target-version = "py314"
 
+[tool.ruff.lint]
+# NOTE: ruff default (E4,E7,E9,F) + the rule families this repo actually
+# enforces. S/TRY/PLR families are intentionally NOT enabled repo-wide:
+# enabling them surfaces 1700+ pre-existing style nits (S101 asserts in
+# tests, TRY003 long messages, PLR2004 magic values...) that predate any
+# lint gate. Add families only with a plan to fix that backlog.
+select = ["E4", "E7", "E9", "F", "I", "UP", "B", "SIM", "C4", "DTZ", "PERF", "RUF", "FURB"]
+ignore = [
+    # Boundary-wide intentional patterns (documented per-site):
+    # - BLE001 blind-except: loopback server must never leak tracebacks/
+    #   paths to the browser; agent/tool dispatch converts all failures
+    #   into ToolResult/event payloads by design.
+    # - TRY004 ValueError-on-wrong-type: public error strings are a stable
+    #   API contract asserted by tests (e.g. "text must be a string");
+    #   switching to TypeError would break clients.
+    # - S110/S112 + DTZ001 in tests: deliberate history/telemetry guards
+    #   and naive-datetime fixtures.
+    # - SIM105 try-except-pass: cleanup guards (chmod/unlink/kill) where
+    #   contextlib.suppress adds an import for zero clarity gain.
+    # - RUF001 ambiguous characters: intentional Cu/S.. in
+    #   user-facing Vietnamese copy (×, –, ‘ ’).
+    "BLE001",
+    "TRY004",
+    "S110",
+    "S112",
+    "DTZ001",
+    "SIM105",
+    "RUF001",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"

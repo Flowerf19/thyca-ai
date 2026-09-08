@@ -5,7 +5,6 @@ and re-exports the store vocabulary so existing imports stay stable.
 """
 from __future__ import annotations
 
-import re
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -15,16 +14,17 @@ from thyca.memory.archive_store import (
     CANDIDATE_CAP,  # noqa: F401 — re-exported
     DATE_RE,
     GET_SESSION_CAP,
-    SCHEMA_VERSION,
-    TRIGRAM_MIN_FTS,
+    SCHEMA_VERSION,  # noqa: F401 — re-exported
+    TRIGRAM_MIN_FTS,  # noqa: F401 — re-exported
     ArchiveError,
+    ArchiveStore,
     Hit,
-    SearchResult,
+    SearchResult,  # noqa: F401 — re-exported
+    _hit_from_row,
 )
-from thyca.memory.archive_store import ArchiveStore, _hit_from_row
-from thyca.memory.chunk import Chunk, Chunker
+from thyca.memory.chunk import Chunker
 from thyca.memory.heading import format_ts
-from thyca.memory.usage import LeafUsage
+
 
 class ArchivedMemory:
     """Orchestrate chunking, reindex, and lexical search."""

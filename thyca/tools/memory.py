@@ -7,15 +7,16 @@ from pathlib import Path
 from thyca.memory.active import ActiveMemory
 from thyca.memory.archived import (
     CANDIDATE_CAP,
+    DATE_RE,
     GET_SESSION_CAP,
     TRIGRAM_MIN_FTS,
-    ArchiveError,
     ArchivedMemory,
+    ArchiveError,
     Hit,
     SearchResult,
-    DATE_RE,
     dedup_siblings,
 )
+from thyca.memory.chunk import Chunk
 from thyca.memory.heading import (
     DEFAULT_IMPORTANCE,
     HeadingMeta,
@@ -26,7 +27,6 @@ from thyca.memory.heading import (
     session_id,
     utc_now,
 )
-from thyca.memory.chunk import Chunk
 from thyca.memory.stats import CanonicalFile, MemoryStats, MemoryStatsResult
 from thyca.memory.writer import MemoryWriter
 

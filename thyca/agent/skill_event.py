@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from thyca.skills import NAME_MAX, _NAME_RE
+from thyca.skills import _NAME_RE, NAME_MAX
 
 _FALLBACK = "skill"
 

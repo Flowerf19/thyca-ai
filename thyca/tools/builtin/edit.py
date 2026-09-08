@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from itertools import pairwise
+
 from thyca.tools.builtin.write import replace_file
 from thyca.tools.path_guard import PathGuard
 from thyca.tools.registry import ToolSpec
@@ -44,7 +46,7 @@ def apply_edits(text: str, edits: object) -> str:
             raise ValueError("oldText matches more than once")
         spans.append((start, start + len(old), new))
     spans.sort(key=lambda span: span[0])
-    for previous, current in zip(spans, spans[1:]):
+    for previous, current in pairwise(spans):
         if previous[1] > current[0]:
             raise ValueError("oldText regions overlap")
     parts: list[str] = []

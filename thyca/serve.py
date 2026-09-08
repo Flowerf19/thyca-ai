@@ -5,7 +5,6 @@ import json
 import re
 import signal
 import sys
-import threading
 import traceback
 from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -23,15 +22,13 @@ from thyca.onboarding import (
     validate_provider,
 )
 from thyca.serve_memory import memory_endpoint
+from thyca.sessions import SessionCorrupt, SessionError, SessionNotFound
+from thyca.tools.memory import MemoryFacade
 from thyca.trace_api import (
     trace_detail_payload,
     trace_list_payload,
     trace_stats_payload,
 )
-from thyca.llm.llm_base import LLMError
-from thyca.sessions import SessionCorrupt, SessionError, SessionNotFound
-from thyca.memory.archived import ArchiveError
-from thyca.tools.memory import MemoryFacade
 
 LOOPBACK = frozenset({"127.0.0.1", "localhost"})
 _SESSION_RE = re.compile(

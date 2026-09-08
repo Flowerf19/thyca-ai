@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import timedelta
-from pathlib import Path
 import asyncio
 import sys
+from datetime import timedelta
+from pathlib import Path
 
 import pytest
 from mcp.types import CallToolResult, ImageContent, ListToolsResult, TextContent, Tool
@@ -23,7 +23,7 @@ from thyca.tools.registry import ToolRegistry
 
 
 def test_call_timeout_is_30s() -> None:
-    assert CALL_TIMEOUT == timedelta(seconds=30)
+    assert timedelta(seconds=30) == CALL_TIMEOUT
 
 
 def test_model_name_prefix() -> None:

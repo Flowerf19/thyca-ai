@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from thyca.config import LimitsCfg
+from thyca.llm.llm_base import ChatReply
 from thyca.protocol import Message, ToolCall
 from thyca.sessions import (
     Session,
@@ -21,7 +22,6 @@ from thyca.sessions import (
     SessionStore,
     estimate_tokens,
 )
-from thyca.llm.llm_base import ChatReply
 from thyca.sessions.title import (
     accept_title,
     display_title,
@@ -79,12 +79,9 @@ def test_list_sessions_skips_corrupt_does_not_set_current(tmp_path: Path) -> Non
     other = SessionManager(tmp_path)
     listed = other.list_sessions()
     assert [item.id for item in listed] == [good.id]
-    try:
-        other.current
-    except SessionError:
-        pass
-    else:
-        raise AssertionError("list_sessions must not set current")
+    # list_sessions must not set current
+    with pytest.raises(SessionError, match="no current session"):
+        _ = other.current
     other.load(good.id)
     other.list_sessions()
     assert other.current.id == good.id

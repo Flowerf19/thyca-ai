@@ -16,7 +16,8 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from filelock import FileLock, Timeout as FileLockTimeout
+from filelock import FileLock
+from filelock import Timeout as FileLockTimeout
 
 
 class ConfigError(RuntimeError):
@@ -317,8 +318,7 @@ def _parse_mcp_servers(raw: Any) -> dict[str, McpServerCfg]:
             result[name] = McpServerCfg(command=command, args=args, env=env)
         except ConfigError as exc:
             msg = str(exc)
-            if msg.startswith("mcpServers[]."):
-                msg = msg[len("mcpServers[].") :]
+            msg = msg.removeprefix("mcpServers[].")
             raise ConfigError(f"mcpServers[{name!r}].{msg}") from exc
     return result
 

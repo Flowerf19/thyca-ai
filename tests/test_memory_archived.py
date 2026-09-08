@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from thyca.memory import ArchiveError, ArchivedMemory, Chunker
+from thyca.memory import ArchivedMemory, ArchiveError, Chunker
 from thyca.tools.memory import MemoryFacade
 
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")

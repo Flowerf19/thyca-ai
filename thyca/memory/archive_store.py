@@ -8,6 +8,7 @@ from pathlib import Path
 
 from rapidfuzz import fuzz
 
+from thyca.memory.chunk import Chunk
 from thyca.memory.usage import LeafUsage
 
 SCHEMA_VERSION = "5"

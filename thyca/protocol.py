@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 
 _ROLE_OPTIONS = ("user", "assistant", "tool", "system")
@@ -23,7 +23,7 @@ _TS_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
 
 def utc_now_ts() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _validate_ts(ts: str) -> None:
@@ -31,7 +31,7 @@ def _validate_ts(ts: str) -> None:
         raise ValueError(f"ts must be ISO-8601 UTC YYYY-MM-DDTHH:mm:ssZ, got {ts!r}")
     # also validate datetime parseable
     try:
-        datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
     except ValueError as e:
         raise ValueError(f"invalid ts {ts!r}: {e}") from e
 
@@ -173,8 +173,5 @@ class Message:
 
     @classmethod
     def from_json_line(cls, line: str) -> Message:
-        try:
-            raw = json.loads(line)
-        except json.JSONDecodeError as e:
-            raise e
+        raw = json.loads(line)
         return cls.from_dict(raw)

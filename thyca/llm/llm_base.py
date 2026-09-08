@@ -101,7 +101,7 @@ def normalize_usage(raw: dict | None, provider: str) -> dict | None:
         out["total_tokens"] = total
     if reasoning is not None:
         out["reasoning_tokens"] = reasoning
-    return out if out else None
+    return out or None
 
 
 class LLMError(RuntimeError):

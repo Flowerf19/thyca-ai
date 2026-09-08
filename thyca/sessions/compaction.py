@@ -56,7 +56,7 @@ class SessionCompactor:
                 "omitted_chars": omitted_chars,
             },
         )
-        return [marker] + tail
+        return [marker, *tail]
 
     @staticmethod
     def _clip_excerpt(text: str, limit: int = _EXCERPT_LIMIT) -> str:

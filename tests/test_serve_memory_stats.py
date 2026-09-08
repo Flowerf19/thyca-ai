@@ -11,10 +11,10 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-from thyca.cli import Cli, build_parser
-from thyca.serve import ServeError, default_webui, make_server
 import pytest
 
+from thyca.cli import Cli, build_parser
+from thyca.serve import ServeError, default_webui, make_server
 from thyca.tools.memory import MemoryFacade
 
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")

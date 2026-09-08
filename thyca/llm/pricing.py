@@ -29,7 +29,7 @@ def _candidates(model: str) -> list[str]:
     add(model)
     if "/" in model:
         add(model.rsplit("/", 1)[-1])
-    for name in list(names):
+    for name in names:
         stripped = _DATE_SUFFIX.sub("", name)
         add(stripped)
         if "/" in stripped:
@@ -67,8 +67,7 @@ def cost_for(
     cached = usage.get("cached_tokens", 0)
     if isinstance(cached, bool) or not isinstance(cached, int) or cached < 0:
         cached = 0
-    if cached > prompt:
-        cached = prompt
+    cached = min(cached, prompt)
     uncached = prompt - cached
     cost = (uncached * pricing.input + cached * pricing.cache + completion * pricing.output) / 1_000_000
     return round(cost, 6)

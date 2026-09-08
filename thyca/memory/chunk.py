@@ -7,7 +7,13 @@ import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
-from thyca.memory.heading import HeadingMeta, parse_heading, resolve_entry_id, session_id, strip_comment
+from thyca.memory.heading import (
+    HeadingMeta,
+    parse_heading,
+    resolve_entry_id,
+    session_id,
+    strip_comment,
+)
 
 _BULLET_RE = re.compile(r"^(\s*)([-*]|\d+\.)\s+")
 _SENTENCE_RE = re.compile(r"(?<=[.!?。])\s+")
@@ -57,7 +63,7 @@ class Chunker:
                     continue
                 norm = self.normalize(raw)
                 chunk_id = f"{session['session_id']}#{ord_}"
-                payload = f"{session['heading']}\n{raw}".encode("utf-8")
+                payload = f"{session['heading']}\n{raw}".encode()
                 chunks.append(
                     Chunk(
                         chunk_id=chunk_id,

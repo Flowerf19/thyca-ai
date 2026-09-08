@@ -61,10 +61,9 @@ def daemonize(root: Path) -> None:
         os._exit(0)
     sys.stdout.flush()
     sys.stderr.flush()
-    log = open(log_path, "a", encoding="utf-8")
-    os.dup2(log.fileno(), 1)
-    os.dup2(log.fileno(), 2)
-    log.close()
+    with open(log_path, "a", encoding="utf-8") as log:
+        os.dup2(log.fileno(), 1)
+        os.dup2(log.fileno(), 2)
     null = os.open(os.devnull, os.O_RDONLY)
     os.dup2(null, 0)
     os.close(null)

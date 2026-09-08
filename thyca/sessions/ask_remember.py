@@ -1,7 +1,7 @@
 """Read-only: whether a session should be nudged to remember."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from thyca.protocol import Message
 
@@ -31,7 +31,7 @@ def ask_remember(messages: list[Message], now: datetime) -> bool:
             last_ok_i = max(last_ok_i, result[0])
     if last_user_at is None or last_ok_i > last_user_i:
         return False
-    return now.astimezone(timezone.utc) - last_user_at >= IDLE
+    return now.astimezone(UTC) - last_user_at >= IDLE
 
 
 def _tool_results(messages: list[Message]) -> dict[str, tuple[int, bool]]:
@@ -45,4 +45,4 @@ def _tool_results(messages: list[Message]) -> dict[str, tuple[int, bool]]:
 
 
 def _ts(value: str) -> datetime:
-    return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)

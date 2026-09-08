@@ -7,7 +7,7 @@ from thyca.memory.active import ActiveSnapshot
 
 
 def _hot(**overrides: str) -> ActiveSnapshot:
-    base = dict(soul="soul-text", user="user-text", today="today-text", yesterday="")
+    base = {"soul": "soul-text", "user": "user-text", "today": "today-text", "yesterday": ""}
     base.update(overrides)
     return ActiveSnapshot(**base)
 

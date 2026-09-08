@@ -4,12 +4,10 @@ from __future__ import annotations
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.error import HTTPError
-from urllib.request import Request, urlopen
 
 import pytest
 
-from thyca.config import Config, ConfigError, ProviderCfg
+from thyca.config import Config, ProviderCfg
 from thyca.onboarding import (
     ProviderProbeError,
     apply_provider,

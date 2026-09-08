@@ -10,7 +10,7 @@ import json
 import re
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 TTL_DAYS = {1: 3, 2: 7, 3: 30, 4: 90, 5: 180}
 DEFAULT_IMPORTANCE = 3
@@ -35,10 +35,10 @@ class HeadingMeta:
 
 def utc_now(now: datetime | None = None) -> datetime:
     if now is None:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
     if now.tzinfo is None:
-        return now.replace(tzinfo=timezone.utc)
-    return now.astimezone(timezone.utc)
+        return now.replace(tzinfo=UTC)
+    return now.astimezone(UTC)
 
 
 def format_ts(now: datetime) -> str:
@@ -106,7 +106,7 @@ def session_id(prefix: str, entry_id: str) -> str:
 
 
 def legacy_entry_id(path: str, title: str, occurrence: int) -> str:
-    payload = f"{path}\0{title}\0{occurrence}".encode("utf-8")
+    payload = f"{path}\0{title}\0{occurrence}".encode()
     return hashlib.sha256(payload).hexdigest()[:8]
 
 

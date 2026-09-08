@@ -12,17 +12,17 @@ def _echo_spec(**overrides) -> ToolSpec:
     async def echo(args: dict) -> str:
         return str(args.get("text", ""))
 
-    fields = dict(
-        name="echo",
-        description="echo text",
-        parameters={
+    fields = {
+        "name": "echo",
+        "description": "echo text",
+        "parameters": {
             "type": "object",
             "properties": {"text": {"type": "string"}},
             "required": ["text"],
             "additionalProperties": False,
         },
-        handler=echo,
-    )
+        "handler": echo,
+    }
     fields.update(overrides)
     return ToolSpec(**fields)
 

@@ -6,11 +6,11 @@ from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+from thyca import trace_api
 from thyca.chat_app import ChatApp
 from thyca.config import default_config, load, save
 from thyca.llm.llm_base import ChatReply
 from thyca.protocol import Message, ToolCall
-import thyca.trace_api as trace_api
 from thyca.serve import default_webui, make_server
 from thyca.sessions import SessionManager
 from thyca.sessions.store import SessionStore

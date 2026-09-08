@@ -698,10 +698,9 @@ svg {
 .thinking-body {
   display: grid;
   grid-template-rows: auto;
-  margin-inline: var(--space-lg);
+  margin-inline: 0;
   overflow: hidden;
-  border-radius: var(--radius-sm);
-  background: color-mix(in oklab, var(--color-paper) 68%, var(--color-paper-card));
+  background: transparent;
 }
 
 .thinking:not([open]) .thinking-body {

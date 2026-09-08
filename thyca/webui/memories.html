@@ -30,6 +30,11 @@
           <div class="sessions-heading">
             <h2>Nhật ký</h2>
           </div>
+          <label class="memory-search">
+            <span class="visually-hidden">Tìm trong nhật ký</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 5 5" /></svg>
+            <input class="screen-input" id="memory-search" type="search" placeholder="Tìm trong nhật ký…">
+          </label>
           <nav class="session-list" aria-label="Chia nhật ký">
             <button class="session-item is-active" type="button" data-view="day" aria-pressed="true"><span class="session-icon" aria-hidden="true"></span><span class="session-name">Theo ngày</span></button>
             <button class="session-item" type="button" data-view="used-more" aria-pressed="false"><span class="session-icon" aria-hidden="true"></span><span class="session-name">Dùng nhiều</span></button>
@@ -44,18 +49,6 @@
         <section class="screen-surface memories-surface" aria-label="Danh sách nhật ký">
           <div class="memories-title"><h2>Nhật ký của bạn</h2></div>
           <p class="screen-note memories-rule">Những trang Thyca ghi lại từ các cuộc trò chuyện.</p>
-
-          <div class="memories-controls">
-            <label class="memory-search">
-              <span class="visually-hidden">Tìm trong nhật ký</span>
-              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 5 5" /></svg>
-              <input class="screen-input" id="memory-search" type="search" placeholder="Tìm trong nhật ký…">
-            </label>
-            <a class="screen-button is-primary" id="add-memory" href="./index.html" title="Yêu cầu Thyca ghi nhớ trong Chat">
-              <svg class="screen-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
-              Ghi từ Chat
-            </a>
-          </div>
           <p class="screen-note memory-status" id="memory-status" role="status" aria-live="polite"></p>
 
           <div id="memory-list" class="memory-list" aria-live="polite"></div>

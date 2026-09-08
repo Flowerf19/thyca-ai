@@ -211,7 +211,7 @@ svg {
   background-color: var(--color-paper-chat);
   background-image:
     linear-gradient(color-mix(in oklab, var(--color-paper-chat) 42%, transparent), color-mix(in oklab, var(--color-paper-chat) 42%, transparent)),
-    url("images/thyca-bg-main.png");
+    url("images/thyca-bg-paper.png");
   background-position: center;
   background-size: cover;
   background-attachment: fixed;
@@ -428,7 +428,7 @@ svg {
   background-color: var(--color-paper-chat);
   background-image:
     linear-gradient(color-mix(in oklab, var(--color-paper-chat) 42%, transparent), color-mix(in oklab, var(--color-paper-chat) 42%, transparent)),
-    url("images/thyca-bg-main.png");
+    url("images/thyca-bg-paper.png");
   background-position: center;
   background-size: cover;
   background-attachment: fixed;
@@ -502,7 +502,10 @@ svg {
   margin-inline-start: auto;
   padding: 1.15rem 1.35rem 0.75rem;
   border-radius: 1.3rem 1.3rem 0.35rem 1.3rem;
-  background: var(--color-accent-soft);
+  background-color: var(--color-accent-soft);
+  background-image: url("images/thyca-bg-bubble-user.png");
+  background-position: center;
+  background-size: cover;
   color: var(--color-reading);
   box-shadow: 0 0.18rem 0.45rem var(--color-shell-shadow-soft);
 }
@@ -540,9 +543,10 @@ svg {
 }
 
 .read-mark {
+  width: 0.78rem;
+  height: 0.7rem;
   color: var(--color-accent-deep);
-  letter-spacing: -0.1em;
-  padding-inline-end: 0.1em;
+  stroke-width: 1.7;
 }
 
 .live-card {
@@ -557,7 +561,10 @@ svg {
   padding: 1.45rem 1.6rem 1rem;
   border: var(--rule) solid var(--color-border);
   border-radius: var(--radius-card);
-  background: var(--color-paper-card);
+  background-color: var(--color-paper-card);
+  background-image: url("images/thyca-bg-bubble-assistant.png");
+  background-position: center;
+  background-size: cover;
   box-shadow: 0 0.55rem 1.35rem var(--color-shell-shadow-soft);
   animation: card-arrive 420ms var(--ease-out) both;
 }
@@ -576,38 +583,15 @@ svg {
 .live-card-header {
   display: flex;
   align-items: center;
-  gap: 0.85rem;
-}
-
-.avatar {
-  display: grid;
-  flex: 0 0 auto;
-  place-items: center;
-  width: 4.65rem;
-  height: 4.65rem;
-  background: transparent;
-}
-
-.avatar-mark {
-  width: 4.5rem;
-  height: 4.5rem;
-  background: color-mix(in oklab, var(--color-ink) 55%, black);
-  -webkit-mask: url("images/thyca-emblem-pen-ink-current.svg") center / contain no-repeat;
-  mask: url("images/thyca-emblem-pen-ink-current.svg") center / contain no-repeat;
-}
-
-.live-card-copy {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
   min-width: 0;
+  gap: 0.35rem;
 }
 
 .live-card h2 {
   margin: 0;
   color: var(--color-ink);
   font-family: var(--font-display);
-  font-size: 1.35rem;
+  font-size: 1.7rem;
   font-style: normal;
   font-weight: 600;
   letter-spacing: -0.015em;
@@ -618,7 +602,7 @@ svg {
   display: inline-flex;
   align-items: center;
   gap: 0.08rem;
-  margin: 0.25rem 0 0;
+  margin: 0;
   color: var(--color-accent-deep);
   font-family: var(--font-display);
   font-size: 1rem;
@@ -748,41 +732,21 @@ svg {
 }
 
 .tool-row {
-  margin-block-start: 0;
-  padding-block: 0.85rem 0.65rem;
-}
-
-.tool-row > summary {
   display: flex;
   align-items: center;
-  gap: 0.08rem;
+  gap: 0.35rem;
+  margin: 0;
+  padding-block: 0.85rem 0.65rem;
   min-height: 2.4rem;
-  cursor: pointer;
-  list-style: none;
-}
-
-.tool-row > summary::-webkit-details-marker {
-  display: none;
-}
-
-.tool-row > summary .chevron {
-  margin-inline-start: auto;
-}
-
-.tool-row:not([open]) > summary .chevron {
-  transform: rotate(180deg);
 }
 
 .tool-row-body {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.65rem;
-  padding: 0.45rem 0 0.1rem;
-}
-
-.tool-row:not([open]) .tool-row-body {
-  display: none;
+  flex: 1;
+  min-width: 0;
+  color: var(--color-muted);
+  font-family: var(--font-reading);
+  font-size: 0.95rem;
+  font-style: italic;
 }
 
 .tool-row.is-empty,
@@ -796,48 +760,6 @@ svg {
   font-size: 1rem;
   font-style: italic;
   font-weight: 500;
-}
-
-.tool-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  min-height: 1.8rem;
-  padding: 0.15rem 0.7rem;
-  border: 0;
-  border-radius: var(--radius-pill);
-  background: color-mix(in oklab, var(--color-paper-edge) 34%, var(--color-paper-input));
-  color: var(--color-reading);
-  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
-  font-size: 0.75rem;
-  line-height: 1;
-}
-
-.tool-mark,
-.tool-chip i {
-  flex: 0 0 auto;
-  background: var(--color-accent);
-  -webkit-mask: url("images/thyca-icons/but-may.svg") center / contain no-repeat;
-  mask: url("images/thyca-icons/but-may.svg") center / contain no-repeat;
-}
-
-.tool-mark {
-  width: 2.3rem;
-  height: 2.3rem;
-  margin-inline-start: -0.35rem;
-  margin-inline-end: -0.45rem;
-  -webkit-mask-position: left center;
-  mask-position: left center;
-}
-
-.tool-chip i {
-  width: 1.55rem;
-  height: 1.55rem;
-}
-
-.tool-chip.is-active {
-  border-color: color-mix(in oklab, var(--color-accent) 45%, transparent);
-  background: color-mix(in oklab, var(--color-accent) 12%, var(--color-paper-input));
 }
 
 .music-watermark {
@@ -1164,12 +1086,6 @@ button:active {
     font-size: 1rem;
   }
 
-  .avatar,
-  .avatar-mark {
-    width: 4rem;
-    height: 4rem;
-  }
-
   .live-copy {
     font-size: 1rem;
   }
@@ -1177,10 +1093,6 @@ button:active {
   .thinking-body ul {
     padding-inline: 2rem 0.75rem;
     font-size: 0.72rem;
-  }
-
-  .tool-row-body {
-    padding-inline-start: 0;
   }
 
   .mic-button {

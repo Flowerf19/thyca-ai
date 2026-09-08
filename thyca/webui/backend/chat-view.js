@@ -3,10 +3,7 @@ import { collapseNames, statusTextForEvent } from "./chat-status.js";
 import { formatTime } from "./format.js";
 import { formatMarkdown } from "./markdown.js";
 
-const AVATAR = `<span class="avatar-mark"></span>`;
 const PENCIL = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20h4L19.5 9.5a2.1 2.1 0 0 0-3-3L6 17Z"/><path d="m14 8 2.5 2.5"/></svg>`;
-const CHEVRON = `<svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>`;
-
 function setAmbientText(ambient, text) {
   const label = ambient.querySelector(".ambient-label");
   if (label) {
@@ -19,12 +16,6 @@ function setAmbientText(ambient, text) {
 function assistantHeader(stamp, ambientText = "đã viết") {
   const header = document.createElement("header");
   header.className = "live-card-header";
-  const avatar = document.createElement("span");
-  avatar.className = "avatar";
-  avatar.setAttribute("aria-hidden", "true");
-  avatar.innerHTML = AVATAR;
-  const copy = document.createElement("div");
-  copy.className = "live-card-copy";
   const heading = document.createElement("h2");
   heading.textContent = "Thyca";
   const ambient = document.createElement("p");
@@ -36,8 +27,7 @@ function assistantHeader(stamp, ambientText = "đã viết") {
   label.className = "ambient-label";
   label.textContent = stamp ? `${ambientText} · ${formatTime(stamp)}` : ambientText;
   ambient.append(icon, label);
-  copy.append(heading, ambient);
-  header.append(avatar, copy);
+  header.append(heading, ambient);
   return header;
 }
 
@@ -56,46 +46,29 @@ function countTools(names) {
   return counts;
 }
 
-function toolRow(completedNames, activeNames = [], existing = null) {
+function toolRow(completedNames, activeNames = []) {
   const completed = countTools(completedNames);
   const active = countTools(activeNames);
   const names = [...new Set([...completed.keys(), ...active.keys()])];
   if (!names.length) {
     const empty = document.createElement("p");
     empty.className = "tool-row is-empty";
-    empty.textContent = "phiên này không dùng tool nào";
+    empty.textContent = "Phiên này không dùng tool nào";
     return empty;
   }
-  const details = document.createElement("details");
-  details.className = "tool-row";
-  if (existing instanceof HTMLDetailsElement) details.open = existing.open;
-  const summary = document.createElement("summary");
-  const mark = document.createElement("span");
-  mark.className = "tool-mark";
-  mark.setAttribute("aria-hidden", "true");
+  const row = document.createElement("p");
+  row.className = "tool-row";
   const label = document.createElement("span");
   label.className = "tool-label";
-  label.textContent = active.size ? "tool đang dùng" : "tool đã dùng";
-  summary.append(mark, label);
-  summary.insertAdjacentHTML("beforeend", CHEVRON);
-  const body = document.createElement("div");
+  label.textContent = active.size ? "Tool đang dùng:" : "Tool đã dùng:";
+  const body = document.createElement("span");
   body.className = "tool-row-body";
-  for (const name of names) {
-    const completedCount = completed.get(name) || 0;
-    const activeCount = active.get(name) || 0;
-    const chip = document.createElement("span");
-    chip.className = "tool-chip";
-    if (activeCount) chip.classList.add("is-active");
-    const chipMark = document.createElement("i");
-    chipMark.setAttribute("aria-hidden", "true");
-    const count = completedCount || activeCount;
-    const suffix = count > 0 ? ` ×${count}` : "";
-    const state = activeCount ? " · đang chạy" : "";
-    chip.append(chipMark, document.createTextNode(`${name}${suffix}${state}`));
-    body.append(chip);
-  }
-  details.append(summary, body);
-  return details;
+  body.textContent = names.map((name) => {
+    const count = (completed.get(name) || 0) + (active.get(name) || 0);
+    return `${name} x${count}`;
+  }).join(", ");
+  row.append(label, body);
+  return row;
 }
 
 function userMessage(message) {
@@ -107,10 +80,12 @@ function userMessage(message) {
   const time = document.createElement("time");
   time.dateTime = String(message.ts || "");
   time.textContent = formatTime(message.ts);
-  const mark = document.createElement("span");
-  mark.className = "read-mark";
-  mark.setAttribute("aria-label", "Đã gửi");
-  mark.textContent = "✓✓";
+  const mark = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  mark.classList.add("read-mark");
+  mark.setAttribute("viewBox", "0 0 12 10");
+  mark.setAttribute("role", "img");
+  mark.setAttribute("aria-label", "Đã nhận");
+  mark.innerHTML = '<path d="M1.4 5.4 4.2 8.2 10.6 1.6"/>';
   footer.append(time, mark);
   article.append(body, footer);
   return article;
@@ -231,7 +206,7 @@ export function updateLiveStatus(live, event) {
     while (live.events.children.length > 6) live.events.firstElementChild.remove();
   }
   const existing = live.article.querySelector(".tool-row");
-  const next = toolRow(live.completedTools, [...live.activeTools.values()], existing);
+  const next = toolRow(live.completedTools, [...live.activeTools.values()]);
   if (existing) existing.remove();
   if (next && !next.classList.contains("is-empty")) live.article.append(next);
   if (event?.type === "turn.failed") live.article.classList.add("is-error");

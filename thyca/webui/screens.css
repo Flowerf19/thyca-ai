@@ -37,7 +37,7 @@ a { color: inherit; }
   background-color: var(--color-paper-chat);
   background-image:
     linear-gradient(color-mix(in oklab, var(--color-paper-chat) 42%, transparent), color-mix(in oklab, var(--color-paper-chat) 42%, transparent)),
-    url("images/thyca-bg-main.png");
+    url("images/thyca-bg-paper.png");
   background-position: center;
   background-size: cover;
   background-attachment: fixed;
@@ -62,7 +62,10 @@ a { color: inherit; }
   padding: var(--space-lg);
   border: var(--rule) solid var(--color-border);
   border-radius: var(--radius-chat);
-  background: color-mix(in oklab, var(--color-paper-card) 72%, transparent);
+  background-color: var(--color-paper-card);
+  background-image: url("images/thyca-bg-bubble-assistant.png");
+  background-position: center;
+  background-size: cover;
   box-shadow: 0 0.18rem 0.55rem color-mix(in oklab, var(--color-shell-shadow-soft) 30%, transparent);
 }
 .screen-badge {
@@ -156,12 +159,19 @@ a { color: inherit; }
 .screen-nav svg { width: 1.45rem; height: 1.45rem; flex: 0 0 auto; }
 .screen-dialog {
   width: min(32rem, calc(100vw - 2rem));
+  height: fit-content;
   max-height: calc(100dvh - 2rem);
+  margin: auto;
   padding: var(--space-lg);
   overflow: auto;
   border: var(--rule) solid var(--color-divider);
   border-radius: var(--radius-chat);
-  background: var(--color-paper);
+  background-color: var(--color-paper);
+  background-image:
+    linear-gradient(color-mix(in oklab, var(--color-paper-chat) 42%, transparent), color-mix(in oklab, var(--color-paper-chat) 42%, transparent)),
+    url("images/thyca-bg-menu.png");
+  background-position: center;
+  background-size: cover;
   color: var(--color-reading);
   font-family: var(--font-reading);
   box-shadow: 0 1rem 3rem var(--color-shell-shadow-soft);

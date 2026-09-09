@@ -501,9 +501,12 @@ svg {
   max-width: 100%;
   min-height: 0;
   margin-inline-start: auto;
-  padding: 0.45rem 0.85rem 0.3rem;
-  color: var(--color-reading);
-  background: radial-gradient(ellipse 90% 85% at 78% 42%, rgba(255, 226, 120, 0.38), transparent 72%);
+  padding: 1rem 1.15rem 0.75rem;
+  border: 1px solid rgba(61, 42, 31, 0.1);
+  border-radius: 1.15rem;
+  background: rgba(245, 233, 218, 0.92);
+  color: #3d2a1f;
+  backdrop-filter: blur(4px);
 }
 
 .message-user p {
@@ -572,8 +575,8 @@ svg {
   width: max-content;
   max-width: 100%;
   min-width: 0;
-  padding: 0.45rem 1.35rem 0.5rem 0;
-  background: radial-gradient(ellipse 85% 95% at 32% 42%, var(--chat-brand-wash), transparent 72%);
+  padding: 0.35rem 0.85rem 0.35rem 0;
+  background: radial-gradient(ellipse 70% 80% at 38% 45%, var(--chat-brand-wash), transparent 68%);
 }
 
 .chat-brand[data-state="error"] {
@@ -656,19 +659,20 @@ svg {
   50% { opacity: 1; transform: scale(1); }
 }
 
-.live-copy,
-.tool-row {
-  padding-inline-start: calc(var(--chat-brand-stripe) + var(--chat-brand-gap));
-}
-
 .live-copy {
-  margin: 1.15rem 0 0;
-  padding-block-end: var(--space-sm);
-  color: var(--color-ink);
+  width: fit-content;
+  max-width: 100%;
+  margin: 0.65rem 0 0 calc(var(--chat-brand-stripe) + var(--chat-brand-gap));
+  padding: 1rem 1.15rem;
+  border: 1px solid rgba(61, 42, 31, 0.1);
+  border-radius: 1.15rem;
+  background: rgba(255, 246, 237, 0.92);
+  color: #3d2a1f;
   font-family: var(--font-reading);
   font-size: 0.98rem;
   line-height: 1.5;
   overflow-wrap: anywhere;
+  backdrop-filter: blur(4px);
 }
 
 .tool-row {
@@ -677,6 +681,7 @@ svg {
   gap: 0.35rem;
   margin: 0;
   padding-block: 0.85rem 0.65rem;
+  padding-inline-start: calc(var(--chat-brand-stripe) + var(--chat-brand-gap));
   min-height: 2.4rem;
 }
 

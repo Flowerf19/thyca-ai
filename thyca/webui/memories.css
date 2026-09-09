@@ -112,11 +112,8 @@
   padding: 1rem 1.3rem;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-chat);
-  background-color: var(--color-accent-soft);
-  background-image: url("images/thyca-bg-bubble-user.png");
-  background-position: center;
-  background-size: cover;
-  box-shadow: 0 0.15rem 0.5rem var(--color-shell-shadow-soft);
+  background: var(--chat-brand-wash);
+  box-shadow: none;
 }
 
 .memory-copy {
@@ -160,7 +157,7 @@
 .memory-tags span {
   padding: 0.2rem 0.7rem;
   border-radius: var(--radius-pill);
-  background: color-mix(in oklab, var(--color-accent-soft) 65%, var(--color-paper));
+  background: var(--chat-brand-wash);
   color: var(--color-accent-deep);
   font-size: 0.83rem;
 }

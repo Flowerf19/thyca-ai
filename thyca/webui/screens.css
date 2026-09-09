@@ -75,7 +75,7 @@ a { color: inherit; }
 }
 .ledger > :last-child { border-block-end: 0; }
 .ledger-row.is-active {
-  background: color-mix(in oklab, var(--color-accent-soft) 72%, transparent);
+  background: var(--chat-brand-wash);
 }
 .ledger-icon {
   display: grid;
@@ -84,8 +84,8 @@ a { color: inherit; }
   height: 2.8rem;
   border: 1px solid var(--color-divider);
   border-radius: 0.7rem;
-  background: var(--color-accent-soft);
-  color: var(--color-botanical);
+  background: var(--chat-brand-wash);
+  color: var(--chat-brand-accent);
 }
 .ledger-icon svg { width: 1.35rem; height: 1.35rem; }
 .ledger-copy { min-width: 0; }
@@ -110,11 +110,8 @@ a { color: inherit; }
   padding: var(--space-lg);
   border: var(--rule) solid var(--color-border);
   border-radius: var(--radius-chat);
-  background-color: var(--color-accent-soft);
-  background-image: url("images/thyca-bg-bubble-user.png");
-  background-position: center;
-  background-size: cover;
-  box-shadow: 0 0.18rem 0.55rem color-mix(in oklab, var(--color-shell-shadow-soft) 30%, transparent);
+  background: var(--chat-brand-wash);
+  box-shadow: none;
 }
 .screen-badge {
   display: inline-flex;
@@ -123,7 +120,7 @@ a { color: inherit; }
   padding: 0.2rem 0.65rem;
   border: var(--rule) solid var(--color-border);
   border-radius: var(--radius-xs);
-  background: color-mix(in oklab, var(--color-accent-soft) 40%, transparent);
+  background: var(--chat-brand-wash);
   color: var(--color-accent-deep);
   font-size: 0.875rem;
   white-space: nowrap;

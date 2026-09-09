@@ -80,12 +80,12 @@
   margin-inline: -0.55rem;
   padding-left: 0.55rem;
   border-radius: var(--radius-sm);
-  background: var(--color-accent);
-  color: var(--color-accent-ink);
+  background: var(--chat-brand-wash);
+  color: inherit;
 }
 
 .trace-turn.is-active .trace-dot {
-  background: var(--color-accent-ink);
+  background: var(--chat-brand-accent);
 }
 
 .trace-turn.is-active:before {

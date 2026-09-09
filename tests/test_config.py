@@ -72,6 +72,35 @@ def test_api_key_env_custom(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     assert cfg.provider.api_key() == "secret"
 
 
+def test_api_key_command_prefix(tmp_path: Path) -> None:
+    script = tmp_path / "key.sh"
+    script.write_text("#!/bin/sh\necho 'cmd-secret'\n", encoding="utf-8")
+    script.chmod(0o700)
+    cfg = ProviderCfg(apiKey=f"!{script}")
+    assert cfg.api_key() == "cmd-secret"
+    assert "cmd-secret" not in repr(cfg)
+
+
+def test_api_key_command_failure_hides_stdout(tmp_path: Path) -> None:
+    script = tmp_path / "fail.sh"
+    script.write_text("#!/bin/sh\necho 'should-not-leak'\necho fail-stderr >&2\nexit 3\n", encoding="utf-8")
+    script.chmod(0o700)
+    cfg = ProviderCfg(apiKey=f"!{script}")
+    with pytest.raises(ConfigError, match="exited 3") as caught:
+        cfg.api_key()
+    assert "should-not-leak" not in str(caught.value)
+    assert "fail-stderr" in str(caught.value)
+
+
+def test_api_key_command_empty_stdout(tmp_path: Path) -> None:
+    script = tmp_path / "empty.sh"
+    script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    script.chmod(0o700)
+    cfg = ProviderCfg(apiKey=f"!{script}")
+    with pytest.raises(ConfigError, match="produced no key"):
+        cfg.api_key()
+
+
 def test_invalid_limits_type_is_config_error(tmp_path: Path) -> None:
     p = tmp_path / "config.json"
     raw = default_config().to_dict()

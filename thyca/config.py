@@ -1,7 +1,8 @@
 """Load and persist the single Thyca config file: ``~/.thyca/config.json``.
 
 This module owns config-file I/O. Other services receive a config slice, and
-secrets are read from the environment only when ``api_key()`` is called.
+secrets are read from the environment or an ``apiKey`` command only when
+``api_key()`` is called.
 """
 from __future__ import annotations
 
@@ -10,6 +11,8 @@ import math
 import os
 import pathlib
 import re
+import shlex
+import subprocess
 import warnings
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
@@ -78,6 +81,42 @@ def _number(value: object, name: str) -> float:
     return num
 
 
+_API_KEY_COMMAND_TIMEOUT_S = 30.0
+_API_KEY_COMMAND_ERR_CAP = 200
+
+
+def _api_key_from_command(command: str) -> str:
+    argv = shlex.split(command)
+    if not argv:
+        raise ConfigError("provider.apiKey command is empty")
+    try:
+        completed = subprocess.run(
+            argv,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=_API_KEY_COMMAND_TIMEOUT_S,
+        )
+    except FileNotFoundError as exc:
+        raise ConfigError(f"provider.apiKey command not found: {argv[0]}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ConfigError(
+            f"provider.apiKey command timed out after {_API_KEY_COMMAND_TIMEOUT_S:.0f}s"
+        ) from exc
+    if completed.returncode != 0:
+        err = (completed.stderr or "").strip().replace("\n", " ")
+        if len(err) > _API_KEY_COMMAND_ERR_CAP:
+            err = err[:_API_KEY_COMMAND_ERR_CAP] + "…"
+        detail = f": {err}" if err else ""
+        raise ConfigError(
+            f"provider.apiKey command exited {completed.returncode}{detail}"
+        )
+    key = completed.stdout.strip()
+    if not key:
+        raise ConfigError("provider.apiKey command produced no key")
+    return key
+
+
 @dataclass(frozen=True)
 class ProviderCfg:
     baseUrl: str = DEFAULT_PROVIDER_BASE_URL
@@ -103,6 +142,9 @@ class ProviderCfg:
 
     def api_key(self) -> str:
         if self.apiKey:
+            # "!cmd args" runs cmd; stdout is the key. Do not log stdout.
+            if self.apiKey.startswith("!"):
+                return _api_key_from_command(self.apiKey[1:])
             return self.apiKey
         value = os.environ.get(self.apiKeyEnv, "")
         if not value:

@@ -71,10 +71,6 @@ body {
   overflow-wrap: anywhere;
 }
 
-.message-assistant .ambient {
-  animation: none;
-}
-
 .markdown-body > :first-child {
   margin-block-start: 0;
 }
@@ -176,11 +172,7 @@ body {
   vertical-align: top;
 }
 
-.live-status.is-error {
-  border-color: var(--color-accent);
-}
-
-.live-status.is-error .ambient,
+.live-status.is-error .chat-brand-line,
 .composer-status.is-error {
   color: var(--color-accent-deep);
 }

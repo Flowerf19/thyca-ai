@@ -26,7 +26,8 @@ def node() -> str:
 
 def _eval(node: str, expression: str) -> object:
     source = (
-        f"import {{ statusTextForEvent, collapseNames, batchDoneText }} from '{SCRIPT.as_posix()}';\n"
+        "import { statusTextForEvent, collapseNames, batchDoneText, "
+        f"brandForEvent, IDLE_TAGLINE, SEND_ERROR_STATUS }} from '{SCRIPT.as_posix()}';\n"
         f"console.log(JSON.stringify({expression}));\n"
     )
     result = subprocess.run(
@@ -131,3 +132,37 @@ def test_batch_done_text_does_not_sound_like_turn_complete(node: str) -> None:
     assert _eval(node, 'batchDoneText(["bash", "bash", "memory_recent"])') == (
         "Đã chạy bash ×2 · memory_recent…"
     )
+
+
+def test_brand_idle_uses_tagline(node: str) -> None:
+    tagline = _eval(node, "IDLE_TAGLINE")
+    assert tagline == "nắn lại giai điệu"
+    assert _eval(node, "brandForEvent(null)") == {"state": "idle", "status": tagline}
+    assert _eval(node, "brandForEvent({})") == {"state": "idle", "status": tagline}
+    assert _eval(node, 'brandForEvent({type: "turn.completed"})') == {
+        "state": "idle",
+        "status": tagline,
+    }
+
+
+def test_brand_busy_reuses_status_text(node: str) -> None:
+    assert _eval(node, 'brandForEvent({type: "llm.started", round: 1})') == {
+        "state": "busy",
+        "status": "Đang xử lý vòng 1…",
+    }
+    assert _eval(node, 'brandForEvent({type: "turn.accepted"})') == {
+        "state": "busy",
+        "status": "Đã nhận lượt…",
+    }
+    assert _eval(node, 'brandForEvent({type: "llm.started"})') == {
+        "state": "busy",
+        "status": None,
+    }
+
+
+def test_brand_error_uses_existing_failed_status(node: str) -> None:
+    assert _eval(node, 'brandForEvent({type: "turn.failed", code: "llm_error"})') == {
+        "state": "error",
+        "status": "Lượt đã dừng.",
+    }
+    assert _eval(node, "SEND_ERROR_STATUS") == "Không gửi được — thử lại."

@@ -1,11 +1,12 @@
 import { getJson, postJson, postNdjson } from "./backend/api.js";
+import { SEND_ERROR_STATUS } from "./backend/chat-status.js";
 import { cleanText, formatSessionTime } from "./backend/format.js";
 import {
   createLiveStatus,
   renderConversation,
   renderEmpty,
   renderError,
-  setThinkingLine,
+  setChatBrand,
   updateLiveStatus,
 } from "./backend/chat-view.js";
 
@@ -258,11 +259,8 @@ async function sendMessage() {
   } catch (error) {
     idleFromNudge = false;
     const live = el.messageList.querySelector(".live-status:last-of-type");
-    if (live) {
-      live.classList.add("is-error");
-      setThinkingLine(live, messageOf(error, "Lượt đã dừng."));
-    }
-    setStatus(messageOf(error, "Không gửi được tin nhắn."), "error");
+    if (live) setChatBrand(live, { state: "error", status: SEND_ERROR_STATUS });
+    setStatus(SEND_ERROR_STATUS, "error");
   } finally {
     setBusy(false);
     el.input.focus();

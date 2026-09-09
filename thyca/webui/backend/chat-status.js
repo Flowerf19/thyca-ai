@@ -1,5 +1,8 @@
 // Operational event -> status text. Pure mapping, no DOM, no timers.
 // Unknown event types return null so the caller keeps the current text.
+export const IDLE_TAGLINE = "nắn lại giai điệu";
+export const SEND_ERROR_STATUS = "Không gửi được — thử lại.";
+
 export function statusTextForEvent(event) {
   if (!event || typeof event !== "object") return null;
   const type = event.type;
@@ -48,6 +51,21 @@ export function statusTextForEvent(event) {
     default:
       return null;
   }
+}
+
+// One subline for header.chat-brand: tagline XOR loop status XOR send error.
+// status is null when the event has no mapped text — caller keeps the current line.
+export function brandForEvent(event) {
+  if (!event || typeof event !== "object" || typeof event.type !== "string") {
+    return { state: "idle", status: IDLE_TAGLINE };
+  }
+  if (event.type === "turn.failed") {
+    return { state: "error", status: statusTextForEvent(event) || SEND_ERROR_STATUS };
+  }
+  if (event.type === "turn.completed") {
+    return { state: "idle", status: IDLE_TAGLINE };
+  }
+  return { state: "busy", status: statusTextForEvent(event) };
 }
 
 function publicName(name) {

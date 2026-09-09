@@ -1,33 +1,70 @@
-import { ambientLineForEvent } from "./chat-ambient.js";
-import { collapseNames, statusTextForEvent } from "./chat-status.js";
+import {
+  brandForEvent,
+  collapseNames,
+  IDLE_TAGLINE,
+  statusTextForEvent,
+} from "./chat-status.js";
 import { formatTime } from "./format.js";
 import { formatMarkdown } from "./markdown.js";
 
-function setAmbientText(ambient, text) {
-  const label = ambient.querySelector(".ambient-label");
-  if (label) {
-    label.textContent = text;
-  } else {
-    ambient.textContent = text;
+function chatBrandHeader({ state = "idle", status = IDLE_TAGLINE } = {}) {
+  const header = document.createElement("header");
+  header.className = "chat-brand";
+  header.dataset.state = state;
+  const stripe = document.createElement("span");
+  stripe.className = "chat-brand-stripe";
+  stripe.setAttribute("aria-hidden", "true");
+  const body = document.createElement("div");
+  body.className = "chat-brand-body";
+  const lockup = document.createElement("div");
+  lockup.className = "chat-brand-lockup";
+  const heading = document.createElement("h2");
+  heading.textContent = "Thyca";
+  const quill = document.createElement("span");
+  quill.className = "chat-brand-quill";
+  quill.setAttribute("aria-hidden", "true");
+  lockup.append(heading, quill);
+  const line = document.createElement("p");
+  line.className = "chat-brand-line";
+  const ink = document.createElement("span");
+  ink.className = "chat-brand-ink";
+  ink.setAttribute("aria-hidden", "true");
+  const label = document.createElement("span");
+  label.className = "chat-brand-status";
+  label.textContent = status;
+  line.append(ink, label);
+  body.append(lockup, line);
+  header.append(stripe, body);
+  return header;
+}
+
+function brandRoot(target) {
+  if (!target) return { article: null, header: null };
+  const article = target.article
+    ?? (target.classList?.contains("live-status") ? target : null);
+  const header = target.brand
+    ?? article?.querySelector(".chat-brand")
+    ?? target.querySelector?.(".chat-brand")
+    ?? (target.classList?.contains("chat-brand") ? target : null);
+  return { article, header };
+}
+
+export function setChatBrand(target, { state, status } = {}) {
+  const { article, header } = brandRoot(target);
+  if (!header) return;
+  if (state) {
+    header.dataset.state = state;
+    if (state === "error") article?.classList.add("is-error");
+  }
+  if (status) {
+    const label = header.querySelector(".chat-brand-status");
+    if (label) label.textContent = status;
   }
 }
 
-function assistantHeader(stamp, ambientText = "đã viết") {
-  const header = document.createElement("header");
-  header.className = "live-card-header";
-  const heading = document.createElement("h2");
-  heading.textContent = "Thyca";
-  const ambient = document.createElement("p");
-  ambient.className = "ambient";
-  const icon = document.createElement("span");
-  icon.className = "ambient-icon";
-  icon.setAttribute("aria-hidden", "true");
-  const label = document.createElement("span");
-  label.className = "ambient-label";
-  label.textContent = stamp ? `${ambientText} · ${formatTime(stamp)}` : ambientText;
-  ambient.append(icon, label);
-  header.append(heading, ambient);
-  return header;
+function assistantHeader(stamp) {
+  const status = stamp ? `đã viết · ${formatTime(stamp)}` : "đã viết";
+  return chatBrandHeader({ state: "idle", status });
 }
 
 function displayToolName(rawName) {
@@ -185,77 +222,26 @@ export function createLiveStatus(root) {
   article.className = "live-card live-status";
   article.setAttribute("aria-label", "Thyca đang trả lời");
   article.setAttribute("aria-live", "polite");
-  const header = assistantHeader("", ambientLineForEvent(null));
-  const thinkingBody = document.createElement("div");
-  thinkingBody.className = "thinking-body";
-  const ambient = header.querySelector(".ambient");
-  const label = ambient.querySelector(".ambient-label");
-  const copy = document.createElement("div");
-  copy.className = "ambient-copy";
-  label.replaceWith(copy);
-  copy.append(label, thinkingBody);
+  const header = chatBrandHeader({
+    state: "busy",
+    status: statusTextForEvent({ type: "turn.accepted" }),
+  });
   article.append(header);
   root.append(article);
-  const live = {
+  return {
     article,
-    ambient: header.querySelector(".ambient"),
-    body: thinkingBody,
+    brand: header,
     activeTools: new Map(),
     completedTools: [],
   };
-  setThinkingLine(live, "Đã nhận tin nhắn…");
-  return live;
-}
-
-export function setThinkingLine(target, text) {
-  const body = target?.body ?? target?.querySelector?.(".thinking-body");
-  if (!body || !text) return;
-  const current = body.querySelector(".thinking-line:not(.is-leave)");
-  if (current?.dataset.text === text) return;
-  for (const stale of body.querySelectorAll(".thinking-line.is-leave")) stale.remove();
-  const next = thinkingLine(text);
-  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  if (!current || reduce) {
-    current?.remove();
-    body.replaceChildren(next);
-    return;
-  }
-  current.classList.add("is-leave");
-  next.classList.add("is-enter");
-  body.append(next);
-  const drop = () => current.remove();
-  current.addEventListener("animationend", drop, { once: true });
-  setTimeout(drop, 400);
-}
-
-function thinkingLine(text) {
-  const pending = text.endsWith("…");
-  const line = document.createElement("p");
-  line.className = "thinking-line";
-  line.dataset.text = text;
-  const label = document.createElement("span");
-  label.className = "thinking-label";
-  label.textContent = pending ? text.slice(0, -1) : text;
-  line.append(label);
-  if (pending) {
-    const dots = document.createElement("span");
-    dots.className = "thinking-dots";
-    dots.setAttribute("aria-hidden", "true");
-    dots.append(dot(), dot(), dot());
-    line.append(dots);
-  }
-  return line;
-}
-
-function dot() {
-  const mark = document.createElement("span");
-  mark.textContent = ".";
-  return mark;
 }
 
 export function updateLiveStatus(live, event) {
-  const status = statusTextForEvent(event);
-  setAmbientText(live.ambient, ambientLineForEvent(event));
+  const brand = brandForEvent(event);
+  setChatBrand(live, {
+    state: brand.state,
+    status: brand.status || undefined,
+  });
   const startsTool = event?.type === "tool.started" || event?.type === "skill.started";
   const finishesTool = event?.type === "tool.finished" || event?.type === "skill.finished";
   const callKey = event?.call_id || `${event?.type}:${event?.name || "tool"}`;
@@ -266,12 +252,10 @@ export function updateLiveStatus(live, event) {
     live.activeTools.delete(callKey);
     live.completedTools.push(name);
   }
-  if (status) setThinkingLine(live, status);
   const existing = live.article.querySelector(".tool-row");
   const next = toolRow(live.completedTools, [...live.activeTools.values()]);
   if (existing) existing.remove();
   if (next && !next.classList.contains("is-empty")) live.article.append(next);
-  if (event?.type === "turn.failed") live.article.classList.add("is-error");
   const summary = collapseNames([
     ...live.completedTools,
     ...live.activeTools.values(),

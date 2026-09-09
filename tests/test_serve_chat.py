@@ -657,6 +657,9 @@ def test_chat_js_shipped() -> None:
     assert '/turn/stream' in app
     assert 'postJson("/api/sessions", {})' in app
     assert "formatMarkdown" in view
+    assert "chat-brand" in view
+    assert "brandForEvent" in view
+    assert "ambientLineForEvent" not in view
     assert "tool.started" in view
     assert "turn.completed" in api
     assert "Tools used:" not in view

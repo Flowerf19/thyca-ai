@@ -3,7 +3,6 @@ import { collapseNames, statusTextForEvent } from "./chat-status.js";
 import { formatTime } from "./format.js";
 import { formatMarkdown } from "./markdown.js";
 
-const PENCIL = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20h4L19.5 9.5a2.1 2.1 0 0 0-3-3L6 17Z"/><path d="m14 8 2.5 2.5"/></svg>`;
 function setAmbientText(ambient, text) {
   const label = ambient.querySelector(".ambient-label");
   if (label) {
@@ -91,23 +90,46 @@ function userMessage(message) {
   return article;
 }
 
-function assistantMessage(message, tools) {
+function assistantMessage(segments, ts) {
   const article = document.createElement("article");
   article.className = "live-card message-assistant";
-  article.append(assistantHeader(message.ts));
-  const body = document.createElement("div");
-  body.className = "live-copy markdown-body";
-  body.innerHTML = formatMarkdown(message.content);
-  article.append(body, toolRow(tools));
+  article.append(assistantHeader(ts));
+  let usedTools = false;
+  for (const segment of segments) {
+    const body = document.createElement("div");
+    body.className = "live-copy markdown-body";
+    body.innerHTML = formatMarkdown(segment.content);
+    article.append(body);
+    if (segment.tools.length) {
+      usedTools = true;
+      article.append(toolRow(segment.tools));
+    }
+  }
+  if (!usedTools) article.append(toolRow([]));
   return article;
 }
 
 export function renderConversation(root, messages) {
   const nodes = [];
   const pendingTools = [];
+  const pendingParts = [];
+  let pendingTs = "";
+
+  const flushAssistant = () => {
+    if (!pendingParts.length) {
+      pendingTools.length = 0;
+      return;
+    }
+    nodes.push(assistantMessage(pendingParts.splice(0), pendingTs));
+    pendingTools.length = 0;
+    pendingTs = "";
+  };
+
   for (const message of Array.isArray(messages) ? messages : []) {
     if (!message || message.role === "system") continue;
+    if ((message.meta || {}).kind === "naming") continue;
     if (message.role === "user") {
+      flushAssistant();
       nodes.push(userMessage(message));
       continue;
     }
@@ -116,10 +138,11 @@ export function renderConversation(root, messages) {
       if (call && call.name) pendingTools.push(call.name);
     }
     if (typeof message.content === "string" && message.content.trim()) {
-      nodes.push(assistantMessage(message, pendingTools));
-      pendingTools.length = 0;
+      pendingParts.push({ content: message.content, tools: pendingTools.splice(0) });
+      pendingTs = message.ts || pendingTs;
     }
   }
+  flushAssistant();
   root.replaceChildren(...nodes);
   return nodes.length;
 }
@@ -163,27 +186,71 @@ export function createLiveStatus(root) {
   article.setAttribute("aria-label", "Thyca đang trả lời");
   article.setAttribute("aria-live", "polite");
   const header = assistantHeader("", ambientLineForEvent(null));
-  const details = document.createElement("details");
-  details.className = "thinking";
-  details.open = true;
-  details.innerHTML = `<summary><span class="thinking-title">${PENCIL}<span>Tiến trình</span></span><svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></summary>`;
   const thinkingBody = document.createElement("div");
   thinkingBody.className = "thinking-body";
-  const events = document.createElement("ul");
-  const first = document.createElement("li");
-  first.textContent = "Đã nhận tin nhắn.";
-  events.append(first);
-  thinkingBody.append(events);
-  details.append(thinkingBody);
-  article.append(header, details);
+  const ambient = header.querySelector(".ambient");
+  const label = ambient.querySelector(".ambient-label");
+  const copy = document.createElement("div");
+  copy.className = "ambient-copy";
+  label.replaceWith(copy);
+  copy.append(label, thinkingBody);
+  article.append(header);
   root.append(article);
-  return {
+  const live = {
     article,
     ambient: header.querySelector(".ambient"),
-    events,
+    body: thinkingBody,
     activeTools: new Map(),
     completedTools: [],
   };
+  setThinkingLine(live, "Đã nhận tin nhắn…");
+  return live;
+}
+
+export function setThinkingLine(target, text) {
+  const body = target?.body ?? target?.querySelector?.(".thinking-body");
+  if (!body || !text) return;
+  const current = body.querySelector(".thinking-line:not(.is-leave)");
+  if (current?.dataset.text === text) return;
+  for (const stale of body.querySelectorAll(".thinking-line.is-leave")) stale.remove();
+  const next = thinkingLine(text);
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (!current || reduce) {
+    current?.remove();
+    body.replaceChildren(next);
+    return;
+  }
+  current.classList.add("is-leave");
+  next.classList.add("is-enter");
+  body.append(next);
+  const drop = () => current.remove();
+  current.addEventListener("animationend", drop, { once: true });
+  setTimeout(drop, 400);
+}
+
+function thinkingLine(text) {
+  const pending = text.endsWith("…");
+  const line = document.createElement("p");
+  line.className = "thinking-line";
+  line.dataset.text = text;
+  const label = document.createElement("span");
+  label.className = "thinking-label";
+  label.textContent = pending ? text.slice(0, -1) : text;
+  line.append(label);
+  if (pending) {
+    const dots = document.createElement("span");
+    dots.className = "thinking-dots";
+    dots.setAttribute("aria-hidden", "true");
+    dots.append(dot(), dot(), dot());
+    line.append(dots);
+  }
+  return line;
+}
+
+function dot() {
+  const mark = document.createElement("span");
+  mark.textContent = ".";
+  return mark;
 }
 
 export function updateLiveStatus(live, event) {
@@ -199,12 +266,7 @@ export function updateLiveStatus(live, event) {
     live.activeTools.delete(callKey);
     live.completedTools.push(name);
   }
-  if (status && live.events.lastElementChild?.textContent !== status) {
-    const item = document.createElement("li");
-    item.textContent = status;
-    live.events.append(item);
-    while (live.events.children.length > 6) live.events.firstElementChild.remove();
-  }
+  if (status) setThinkingLine(live, status);
   const existing = live.article.querySelector(".tool-row");
   const next = toolRow(live.completedTools, [...live.activeTools.values()]);
   if (existing) existing.remove();

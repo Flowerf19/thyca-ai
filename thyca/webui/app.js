@@ -5,6 +5,7 @@ import {
   renderConversation,
   renderEmpty,
   renderError,
+  setThinkingLine,
   updateLiveStatus,
 } from "./backend/chat-view.js";
 
@@ -259,12 +260,7 @@ async function sendMessage() {
     const live = el.messageList.querySelector(".live-status:last-of-type");
     if (live) {
       live.classList.add("is-error");
-      const events = live.querySelector(".thinking-body ul");
-      if (events) {
-        const item = document.createElement("li");
-        item.textContent = messageOf(error, "Lượt trò chuyện đã dừng.");
-        events.append(item);
-      }
+      setThinkingLine(live, messageOf(error, "Lượt đã dừng."));
     }
     setStatus(messageOf(error, "Không gửi được tin nhắn."), "error");
   } finally {

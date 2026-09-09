@@ -582,12 +582,15 @@ svg {
 
 .live-card-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   min-width: 0;
   gap: 0.35rem;
 }
 
 .live-card h2 {
+  display: flex;
+  align-items: center;
+  min-height: 2.3rem;
   margin: 0;
   color: var(--color-ink);
   font-family: var(--font-display);
@@ -600,7 +603,7 @@ svg {
 
 .ambient {
   display: inline-flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.08rem;
   margin: 0;
   color: var(--color-accent-deep);
@@ -610,6 +613,18 @@ svg {
   font-weight: 500;
   line-height: 1.2;
   animation: ambient-breathe 2.8s var(--ease-in-out) infinite;
+}
+
+.ambient-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ambient-label {
+  display: flex;
+  align-items: center;
+  min-height: 2.3rem;
 }
 
 .ambient-icon {
@@ -639,95 +654,69 @@ svg {
   overflow-wrap: anywhere;
 }
 
-.thinking {
-  overflow: hidden;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-}
-
-.thinking summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-md);
-  min-height: 3rem;
-  padding: 0.55rem 0;
-  cursor: pointer;
-  color: var(--color-ink);
-  list-style: none;
-}
-
-.thinking summary::-webkit-details-marker {
-  display: none;
-}
-
-.thinking-title {
-  display: flex;
-  align-items: center;
-  gap: 0.65rem;
-  font-family: var(--font-reading);
-  font-size: 1.03rem;
-  font-weight: 600;
-}
-
-.thinking-title > svg:first-child,
-.chevron {
-  width: 1.2rem;
-  height: 1.2rem;
-}
-
-.thinking-caret-inline {
-  width: 0.85rem;
-  height: 0.85rem;
-  margin-inline-start: 0.1rem;
-  color: var(--color-muted);
-  stroke-width: 1.7;
-}
-
-.chevron {
-  flex: 0 0 auto;
-  color: var(--color-ink);
-  transition: transform var(--dur-long) var(--ease-in-out);
-}
-
-.thinking:not([open]) .chevron {
-  transform: rotate(180deg);
-}
-
 .thinking-body {
   display: grid;
-  grid-template-rows: auto;
-  margin-inline: 0;
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr;
+  margin: -0.35rem 0 0;
   overflow: hidden;
-  background: transparent;
 }
 
-.thinking:not([open]) .thinking-body {
-  display: none;
-}
-
-.thinking-body ul {
-  min-height: 0;
+.thinking-line {
+  grid-area: 1 / 1;
   margin: 0;
-  padding: 0 1.1rem 0.5rem 2.65rem;
-  color: var(--color-reading);
-  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
-  font-size: 0.72rem;
-  line-height: 1.35;
+  color: var(--color-accent-deep);
+  font-family: var(--font-display);
+  font-size: 0.78rem;
+  font-style: italic;
+  font-weight: 500;
+  line-height: 1.3;
 }
 
-.thinking-body li + li {
-  margin-block-start: 0.1rem;
+.thinking-line.is-leave {
+  animation: thinking-out var(--dur-short) var(--ease-in) forwards;
 }
 
-.thinking-body li::marker {
-  color: var(--color-accent);
+.thinking-line.is-enter {
+  animation: thinking-in var(--dur-short) var(--ease-out);
 }
 
-.thinking-body strong {
-  color: var(--color-reading);
-  font-weight: 600;
+.thinking-dots {
+  display: inline-flex;
+  margin-inline-start: 0.05em;
+  letter-spacing: 0.02em;
+}
+
+.thinking-dots span {
+  animation: thinking-dot 1.2s var(--ease-in-out) infinite;
+  opacity: 0.2;
+}
+
+.thinking-dots span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.thinking-dots span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes thinking-out {
+  to {
+    opacity: 0;
+    transform: translateY(-0.4em);
+  }
+}
+
+@keyframes thinking-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.4em);
+  }
+}
+
+@keyframes thinking-dot {
+  0%, 100% { opacity: 0.2; }
+  40% { opacity: 1; }
 }
 
 .tool-row {
@@ -847,7 +836,10 @@ svg {
   padding: 0.35rem 0.4rem 0.35rem 0.8rem;
   border: var(--rule) solid var(--color-border);
   border-radius: 1.45rem;
-  background: var(--color-paper-input);
+  background-color: var(--color-accent-soft);
+  background-image: url("images/thyca-bg-bubble-user.png");
+  background-position: center;
+  background-size: cover;
 }
 
 .mic-button,
@@ -1089,9 +1081,8 @@ button:active {
     font-size: 1rem;
   }
 
-  .thinking-body ul {
-    padding-inline: 2rem 0.75rem;
-    font-size: 0.72rem;
+  .thinking-line {
+    font-size: 0.8rem;
   }
 
   .mic-button {

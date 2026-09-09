@@ -30,17 +30,11 @@ a { color: inherit; }
   overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: var(--color-divider) transparent;
-  margin: 0 1.25rem 1.25rem 0.18rem;
+  margin: 0;
   padding: 1.75rem;
-  border: var(--rule) solid var(--color-border);
-  border-radius: var(--radius-chat);
-  background-color: var(--color-paper-chat);
-  background-image:
-    linear-gradient(color-mix(in oklab, var(--color-paper-chat) 42%, transparent), color-mix(in oklab, var(--color-paper-chat) 42%, transparent)),
-    url("images/thyca-bg-paper.png");
-  background-position: center;
-  background-size: cover;
-  background-attachment: fixed;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .screen-heading, .screen-toolbar {
@@ -62,8 +56,8 @@ a { color: inherit; }
   padding: var(--space-lg);
   border: var(--rule) solid var(--color-border);
   border-radius: var(--radius-chat);
-  background-color: var(--color-paper-card);
-  background-image: url("images/thyca-bg-bubble-assistant.png");
+  background-color: var(--color-accent-soft);
+  background-image: url("images/thyca-bg-bubble-user.png");
   background-position: center;
   background-size: cover;
   box-shadow: 0 0.18rem 0.55rem color-mix(in oklab, var(--color-shell-shadow-soft) 30%, transparent);

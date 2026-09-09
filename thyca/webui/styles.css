@@ -158,6 +158,21 @@ svg {
     0.65rem 0.8rem 1.2rem var(--color-shell-shadow-soft);
 }
 
+.notebook-shell::before {
+  content: "";
+  position: absolute;
+  z-index: var(--z-base);
+  inset: 2.75rem 1.25rem 1.25rem;
+  border-radius: var(--radius-chat);
+  background-color: var(--color-paper-chat);
+  background-image:
+    linear-gradient(color-mix(in oklab, var(--color-paper-chat) 42%, transparent), color-mix(in oklab, var(--color-paper-chat) 42%, transparent)),
+    url("images/thyca-bg-paper.png");
+  background-position: center;
+  background-size: cover;
+  pointer-events: none;
+}
+
 .site-header {
   position: relative;
   z-index: var(--z-content);
@@ -208,13 +223,7 @@ svg {
   overflow: hidden;
   border: var(--rule) solid var(--color-border);
   border-radius: var(--radius-chat);
-  background-color: var(--color-paper-chat);
-  background-image:
-    linear-gradient(color-mix(in oklab, var(--color-paper-chat) 42%, transparent), color-mix(in oklab, var(--color-paper-chat) 42%, transparent)),
-    url("images/thyca-bg-paper.png");
-  background-position: center;
-  background-size: cover;
-  background-attachment: fixed;
+  background: transparent;
 }
 
 .icon-button,
@@ -391,25 +400,26 @@ svg {
   position: relative;
   z-index: var(--z-content);
   grid-column: 2;
-  grid-row: 2;
+  grid-row: 2 / 4;
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  margin: 0 1.25rem 1.25rem 0.18rem;
   overflow: hidden;
-  border-radius: 0;
+  border: var(--rule) solid var(--color-border);
+  border-radius: var(--radius-chat);
   background: transparent;
-}
-
-.notebook-shell:not(:has(.site-footer)) .workspace {
-  border-radius: 0 0 var(--radius-shell) 0;
+  box-shadow: 0 0.55rem 1.35rem var(--color-shell-shadow-soft);
 }
 
 .site-footer {
-  grid-column: 2;
-  grid-row: 3;
+  position: absolute;
+  z-index: 6;
+  inset: auto 0 0;
+  flex: 0 0 auto;
   min-width: 0;
-  border-radius: 0 0 var(--radius-shell) 0;
+  border-radius: 0;
   background: transparent;
 }
 
@@ -418,24 +428,15 @@ svg {
   display: flex;
   flex-direction: column;
   justify-content: flex-start;
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
-  margin: 0 1.25rem 1.25rem 0.18rem;
   overflow: hidden;
-  border: var(--rule) solid var(--color-border);
-  border-radius: var(--radius-chat);
-  background-color: var(--color-paper-chat);
-  background-image:
-    linear-gradient(color-mix(in oklab, var(--color-paper-chat) 42%, transparent), color-mix(in oklab, var(--color-paper-chat) 42%, transparent)),
-    url("images/thyca-bg-paper.png");
-  background-position: center;
-  background-size: cover;
-  background-attachment: fixed;
+  background: transparent;
 }
 
 .conversation-scroll {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
   overflow-x: clip;
@@ -467,7 +468,7 @@ svg {
   gap: var(--space-lg);
   min-width: 0;
   min-height: 0;
-  padding: 2.25rem 1.25rem 2rem;
+  padding: 2.25rem 1.25rem 7.25rem;
 }
 
 .day-divider {
@@ -561,8 +562,8 @@ svg {
   padding: 1.45rem 1.6rem 1rem;
   border: var(--rule) solid var(--color-border);
   border-radius: var(--radius-card);
-  background-color: var(--color-paper-card);
-  background-image: url("images/thyca-bg-bubble-assistant.png");
+  background-color: var(--color-accent-soft);
+  background-image: url("images/thyca-bg-bubble-user.png");
   background-position: center;
   background-size: cover;
   box-shadow: 0 0.55rem 1.35rem var(--color-shell-shadow-soft);
@@ -618,6 +619,7 @@ svg {
 .ambient-copy {
   display: flex;
   flex-direction: column;
+  gap: 0.12rem;
   min-width: 0;
 }
 
@@ -625,6 +627,19 @@ svg {
   display: flex;
   align-items: center;
   min-height: 2.3rem;
+}
+
+.live-status .live-card-header {
+  align-items: center;
+}
+
+.live-status .live-card h2,
+.live-status .ambient-label {
+  min-height: 0;
+}
+
+.live-status .ambient {
+  align-items: center;
 }
 
 .ambient-icon {
@@ -658,7 +673,7 @@ svg {
   display: grid;
   grid-template-columns: 1fr;
   grid-template-rows: 1fr;
-  margin: -0.35rem 0 0;
+  margin: 0;
   overflow: hidden;
 }
 
@@ -793,7 +808,7 @@ svg {
   z-index: 4;
   flex: 0 0 auto;
   height: 5rem;
-  margin: 0 2.3rem 1.95rem;
+  margin: 0 1.5rem 1.35rem;
   padding: 0.35rem;
   border: var(--rule) solid var(--color-border);
   border-radius: 1.8rem;
@@ -805,7 +820,7 @@ svg {
   position: absolute;
   z-index: 5;
   inset-inline-end: 3.2rem;
-  inset-block-end: 1.5rem;
+  inset-block-end: 6.75rem;
   display: grid;
   place-items: center;
   width: 2.75rem;
@@ -836,10 +851,7 @@ svg {
   padding: 0.35rem 0.4rem 0.35rem 0.8rem;
   border: var(--rule) solid var(--color-border);
   border-radius: 1.45rem;
-  background-color: var(--color-accent-soft);
-  background-image: url("images/thyca-bg-bubble-user.png");
-  background-position: center;
-  background-size: cover;
+  background: var(--color-paper-input);
 }
 
 .mic-button,
@@ -975,6 +987,11 @@ button:active {
     box-shadow: none;
   }
 
+  .notebook-shell::before {
+    inset: 0;
+    border-radius: 0;
+  }
+
   .sidebar {
     position: absolute;
     z-index: calc(var(--z-content) + 1);
@@ -1002,6 +1019,8 @@ button:active {
   .workspace {
     flex: 1 1 auto;
     height: auto;
+    margin: 0;
+    border: 0;
     border-radius: 0;
   }
 
@@ -1019,7 +1038,7 @@ button:active {
 
   .conversation-content {
     gap: var(--space-lg);
-    padding: 1.5rem 0.85rem 2rem;
+    padding: 1.5rem 0.85rem 6.75rem;
   }
 
   .day-divider {
@@ -1048,17 +1067,16 @@ button:active {
     height: 4.85rem;
     margin: 0.65rem 0.75rem calc(0.75rem + env(safe-area-inset-bottom));
     padding: 0.38rem;
-    border-inline-end: var(--rule) solid var(--color-border);
     border-radius: var(--radius-pill);
   }
 
   .to-bottom {
     inset-inline-end: 1.25rem;
-    inset-block-end: 1.5rem;
+    inset-block-end: 6.5rem;
   }
 
   .composer-pill {
-    border-radius: var(--radius-pill);
+    border-radius: inherit;
   }
 
   .send-button {

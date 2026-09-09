@@ -96,36 +96,12 @@
                 <svg class="screen-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6.5 18 3l3 3-3.5 3.5M3 21l7.5-7.5" /><circle cx="16.5" cy="7.5" r="3.2" /></svg>
                 Tool calls
               </h3>
-              <div class="tool-head">
-                <select class="screen-select" id="tool-select" aria-label="Chọn tool call"></select>
-                <span id="tool-duration">—</span>
-              </div>
-              <details class="tool-payload">
-                <summary>Xem Input / Output</summary>
-                <div class="json-grid">
-                  <label>Input<pre id="json-input"></pre></label>
-                  <label>Output<pre id="json-output"></pre></label>
-                </div>
-              </details>
-              <button class="screen-button" id="raw-json" type="button">Xem raw JSON</button>
+              <div class="screen-card ledger" id="tool-list"></div>
             </section>
-
-            <details class="metadata">
-              <summary>Metadata</summary>
-              <pre id="metadata-json"></pre>
-            </details>
           </article>
         </section>
       </section>
     </main>
-
-    <dialog class="screen-dialog" id="raw-dialog" aria-labelledby="raw-title">
-      <h2 id="raw-title">Raw JSON</h2>
-      <pre id="raw-content"></pre>
-      <form method="dialog">
-        <button class="screen-button is-primary" type="submit">Đóng</button>
-      </form>
-    </dialog>
 
     <script src="./navigation.js" defer></script>
     <script type="module" src="./trace.js"></script>

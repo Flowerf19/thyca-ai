@@ -36,6 +36,50 @@ export function groupTraceTurns(rows) {
     .sort((a, b) => b.startedAt.localeCompare(a.startedAt) || b.sessionId.localeCompare(a.sessionId));
 }
 
+export function formatRecordText(value) {
+  if (value == null || value === "") return "—";
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return "—";
+    if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+      try {
+        return formatRecordText(JSON.parse(trimmed));
+      } catch {
+        return value;
+      }
+    }
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) {
+    const lines = value.map(formatRecordText).filter((line) => line !== "—");
+    return lines.length ? lines.join("\n") : "—";
+  }
+  if (typeof value === "object") {
+    const entries = Object.entries(value);
+    if (!entries.length) return "—";
+    return entries.map(([key, nested]) => {
+      const text = formatRecordText(nested);
+      return text.includes("\n") ? `${key}:\n${text}` : `${key}: ${text}`;
+    }).join("\n");
+  }
+  return String(value);
+}
+
+export function asArguments(value) {
+  if (value == null || value === "") return {};
+  if (typeof value === "string") {
+    try {
+      return asArguments(JSON.parse(value));
+    } catch {
+      return { value };
+    }
+  }
+  if (Array.isArray(value)) return { items: value };
+  if (typeof value === "object") return value;
+  return { value };
+}
+
 export function toolsFromDetail(detail) {
   const messages = Array.isArray(detail?.messages) ? detail.messages : [];
   const results = new Map();
@@ -56,6 +100,7 @@ export function toolsFromDetail(detail) {
       tools.push({
         id: cleanText(call.id),
         name: cleanText(call.skill ? `skill:${call.skill}` : call.name, "tool"),
+        arguments: asArguments(call.arguments),
         output: result?.content ?? null,
         latencyMs: Number.isFinite(result?.latencyMs) ? result.latencyMs : null,
       });

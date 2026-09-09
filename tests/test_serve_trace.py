@@ -282,8 +282,8 @@ def test_stats_filter_detail_and_corrupt_skip(tmp_path: Path) -> None:
         chat.shutdown()
 
 
-def test_trace_detail_marks_skill_loads_without_paths(tmp_path: Path) -> None:
-    """Skill classification happens server-side; arguments never reach wire."""
+def test_trace_detail_marks_skill_loads_and_keeps_arguments(tmp_path: Path) -> None:
+    """Skill classification happens server-side; arguments stay on the payload."""
     chat = _chat(tmp_path)
     try:
         manager = SessionManager(tmp_path / "sessions")
@@ -314,9 +314,16 @@ def test_trace_detail_marks_skill_loads_without_paths(tmp_path: Path) -> None:
         payload = trace_api.trace_detail_payload(chat, session.id, 0)
 
         calls = next(m for m in payload["messages"] if m["tool_calls"])
-        assert calls["tool_calls"][0] == {"id": "c1", "name": "read", "skill": "codereview"}
-        assert calls["tool_calls"][1] == {"id": "c2", "name": "read"}
-        # arguments (paths) never appear anywhere in the payload
-        assert str(tmp_path) not in json.dumps(payload)
+        assert calls["tool_calls"][0] == {
+            "id": "c1",
+            "name": "read",
+            "arguments": {"path": str(skill_file)},
+            "skill": "codereview",
+        }
+        assert calls["tool_calls"][1] == {
+            "id": "c2",
+            "name": "read",
+            "arguments": {"path": str(tmp_path / "notes.md")},
+        }
     finally:
         chat.close() if hasattr(chat, "close") else None

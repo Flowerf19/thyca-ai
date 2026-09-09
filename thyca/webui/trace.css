@@ -283,92 +283,115 @@
 }
 
 .tool-calls {
-  margin: 0 1.2rem 1rem;
-  padding: 1rem;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  margin: 0 1.2rem 1.2rem;
 }
 
 .tool-calls h3 {
-  margin-bottom: 0.8rem;
+  margin: 0 0 0.55rem;
 }
 
-.tool-payload {
-  margin-top: 0.7rem;
-  padding: 0.85rem 1rem;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+.tool-calls .ledger {
+  margin: 0;
 }
 
-.tool-payload summary {
-  cursor: pointer;
-  color: var(--color-muted);
-  font-size: 0.82rem;
+.tool-catalogs {
+  border-block-end: 1px solid var(--color-border);
+  background: color-mix(in oklab, var(--color-paper-input) 55%, transparent);
 }
 
-.tool-payload .json-grid {
-  margin-top: 0.8rem;
-  grid-template-columns: minmax(0, 1fr);
+.catalog-fold {
+  border-block-end: 1px solid var(--color-border);
 }
 
-.tool-head {
-  display: flex;
-  align-items: center;
-  gap: 0.8rem;
-  padding: 0.7rem;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  font-size: 0.82rem;
+.catalog-fold:last-child {
+  border-block-end: 0;
 }
 
-.tool-head span:last-child {
-  margin-left: auto;
+.catalog-summary {
+  min-height: 3.15rem;
+  grid-template-columns: minmax(0, 1fr) 1rem;
+  padding-inline: 1.1rem;
+  list-style: none;
 }
 
-.json-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 1.2rem;
+.catalog-summary::-webkit-details-marker,
+.catalog-summary::marker {
+  display: none;
+  content: "";
 }
 
-.json-grid label {
-  min-width: 0;
-  color: var(--color-muted);
-  font-size: 0.8rem;
+.catalog-summary::after {
+  content: "";
+  width: 0.45rem;
+  height: 0.45rem;
+  border-right: 1.5px solid var(--color-muted);
+  border-bottom: 1.5px solid var(--color-muted);
+  transform: rotate(-45deg);
+  justify-self: center;
 }
 
-.json-grid pre,
-.metadata pre,
-#raw-content {
-  min-width: 0;
-  padding: 0.8rem;
+.catalog-fold[open] > .catalog-summary::after {
+  transform: rotate(45deg);
+}
+
+.catalog-body {
+  padding: 0.75rem 1.1rem 1rem;
+}
+
+.tool-catalogs .record-block {
+  margin: 0 0 0.85rem;
+}
+
+.tool-catalogs .record-block:last-child {
+  margin-bottom: 0;
+}
+
+.tool-catalogs .record-block p,
+.tool-catalogs pre {
+  min-height: 4.5rem;
+  max-height: 18rem;
+}
+
+.record-block {
+  margin-block: 1rem;
+}
+
+.record-block h3 {
+  margin: 0 0 0.4rem;
+  color: var(--color-ink);
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  font-style: normal;
+  font-weight: 500;
+}
+
+.record-block p {
+  margin: 0;
+  min-height: 2.6rem;
+  max-height: 40vh;
+  padding: 0.75rem 0.9rem;
   overflow: auto;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-xs);
+  border: var(--rule) solid var(--color-border);
+  border-radius: var(--radius-sm);
   background: var(--color-paper-input);
-  font: 0.72rem/1.5 var(--font-mono);
+  font-family: var(--font-reading);
+  font-size: 0.95rem;
+  line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-.tool-calls > .screen-button {
-  margin-top: 0.7rem;
-  font-size: 0.78rem;
-}
-
-.metadata {
-  margin: 0 1.2rem 1.2rem;
-  padding: 0.85rem 1rem;
-  border: 1px solid var(--color-border);
+.tool-catalogs pre {
+  margin: 0;
+  min-width: 0;
+  padding: 0.75rem 0.9rem;
+  overflow: auto;
+  border: var(--rule) solid var(--color-border);
   border-radius: var(--radius-sm);
-}
-
-.metadata summary {
-  cursor: pointer;
-}
-
-.metadata pre {
-  margin-top: 0.8rem;
+  background: var(--color-paper-input);
+  font: 0.72rem/1.5 var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 56rem) {
@@ -452,8 +475,7 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .token-panels,
-  .json-grid {
+  .token-panels {
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -461,12 +483,15 @@
     padding: 0.9rem;
   }
 
-  .tool-calls,
-  .metadata {
+  .token-panels {
+    padding-inline: 0.8rem;
+  }
+
+  .tool-calls {
     margin-inline: 0.8rem;
   }
 
-  .token-panels {
-    padding-inline: 0.8rem;
+  .catalog-summary {
+    padding-inline: 0.75rem;
   }
 }

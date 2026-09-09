@@ -29,7 +29,8 @@ def node() -> str:
 def _eval(node: str, expression: str) -> object:
     source = (
         f"import {{ toolsFromDetail, groupTraceTurns, selectedModelConfig, tokenCost,"
-        f" firstUserText, finalAssistantText }} from '{TRACE_DATA.as_posix()}';\n"
+        f" firstUserText, finalAssistantText, formatRecordText, asArguments }}"
+        f" from '{TRACE_DATA.as_posix()}';\n"
         f"console.log(JSON.stringify({expression}));\n"
     )
     result = subprocess.run(
@@ -50,8 +51,9 @@ def test_skill_call_keeps_skill_prefix(node: str) -> None:
                 "role": "assistant",
                 "content": None,
                 "tool_calls": [
-                    {"id": "c1", "name": "read", "skill": "codereview"},
-                    {"id": "c2", "name": "read"},
+                    {"id": "c1", "name": "read", "skill": "codereview",
+                     "arguments": {"path": "SKILL.md"}},
+                    {"id": "c2", "name": "read", "arguments": {"path": "notes.md"}},
                 ],
             },
             {"role": "tool", "tool_call_id": "c1", "content": "out1",
@@ -63,9 +65,43 @@ def test_skill_call_keeps_skill_prefix(node: str) -> None:
     }
     tools = _eval(node, f"toolsFromDetail({json.dumps(detail)})")
     assert tools == [
-        {"id": "c1", "name": "skill:codereview", "output": "out1", "latencyMs": 120},
-        {"id": "c2", "name": "read", "output": "out2", "latencyMs": 5},
+        {"id": "c1", "name": "skill:codereview", "arguments": {"path": "SKILL.md"}, "output": "out1", "latencyMs": 120},
+        {"id": "c2", "name": "read", "arguments": {"path": "notes.md"}, "output": "out2", "latencyMs": 5},
     ]
+
+
+def test_string_arguments_are_parsed(node: str) -> None:
+    detail = {
+        "messages": [
+            {"role": "assistant", "content": None,
+             "tool_calls": [{"id": "c1", "name": "bash",
+                             "arguments": "{\"command\": \"ls\"}"}]},
+        ]
+    }
+    tools = _eval(node, f"toolsFromDetail({json.dumps(detail)})")
+    assert tools[0]["arguments"] == {"command": "ls"}
+
+
+def test_format_record_text_shows_tool_input(node: str) -> None:
+    assert _eval(node, 'formatRecordText({limit: 3})') == "limit: 3"
+    assert _eval(
+        node, "formatRecordText({command: 'echo ok'})"
+    ) == "command: echo ok"
+    assert _eval(node, 'formatRecordText({})') == "—"
+    assert _eval(node, 'asArguments("{\\"limit\\": 3}")') == {"limit": 3}
+    detail = {
+        "messages": [
+            {"role": "assistant", "content": None,
+             "tool_calls": [{"id": "c1", "name": "memory_recent",
+                             "arguments": {"limit": 3}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "ok"},
+        ]
+    }
+    tools = _eval(node, f"toolsFromDetail({json.dumps(detail)})")
+    assert _eval(
+        node, f"formatRecordText({json.dumps(tools[0]['arguments'])})"
+    ) == "limit: 3"
+    assert tools[0]["arguments"]["limit"] == 3
 
 
 def test_tool_without_result_has_null_output(node: str) -> None:
@@ -78,7 +114,7 @@ def test_tool_without_result_has_null_output(node: str) -> None:
         ]
     }
     tools = _eval(node, f"toolsFromDetail({json.dumps(detail)})")
-    assert tools == [{"id": "c1", "name": "bash", "output": None, "latencyMs": None}]
+    assert tools == [{"id": "c1", "name": "bash", "arguments": {}, "output": None, "latencyMs": None}]
 
 
 def test_missing_tool_name_falls_back_to_tool(node: str) -> None:

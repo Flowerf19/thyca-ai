@@ -151,13 +151,18 @@ def trace_detail_payload(chat: ChatApp, session_id: str, turn_index: int) -> dic
 
 
 def trace_tool_call(call: ToolCall, skills_root: Path) -> dict:
-    """Wire payload for a recorded call: id + name + optional skill marker.
+    """Wire payload for a recorded call: id, name, arguments, optional skill.
 
-    ``arguments`` never leave the server (they contain paths/content). Skill
-    classification happens here — reusing the exact backend rule — so history
-    replay in the browser matches the live stream without leaking paths.
+    Skill classification still happens here so history replay matches the live
+    stream. Arguments stay on the payload so the Trace screen can show input JSON.
     """
-    entry: dict = {"id": call.id, "name": call.name}
+    entry: dict = {
+        "id": call.id,
+        "name": call.name,
+        "arguments": call.arguments,
+    }
+    if call.parse_error:
+        entry["parse_error"] = call.parse_error
     if call.name == "read" and call.arguments.get("path"):
         path = call.arguments["path"]
         try:

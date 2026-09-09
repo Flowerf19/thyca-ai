@@ -36,6 +36,8 @@ async def test_text_reply() -> None:
         body = json.loads(request.content)
         assert body["model"] == "demo-model"
         assert body["messages"][0]["content"] == "ping"
+        assert "tools" not in body
+        assert "tool_choice" not in body
         return httpx.Response(
             200,
             json={
@@ -52,6 +54,24 @@ async def test_text_reply() -> None:
     assert reply.tool_calls == []
     assert reply.finish_reason == "stop"
     assert reply.usage == {"total_tokens": 3}
+
+
+@pytest.mark.asyncio
+async def test_tools_sent_without_tool_choice() -> None:
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]},
+        )
+
+    connect = OpenAIChat(_provider(), client=_client(handler))
+    tools = [{"type": "function", "function": {"name": "echo"}}]
+    await connect.chat([Message(role="user", content="x")], tools)
+    assert seen["body"]["tools"] == tools
+    assert "tool_choice" not in seen["body"]
 
 
 @pytest.mark.asyncio

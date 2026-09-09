@@ -68,7 +68,6 @@ class OpenAIChat(Connect):
         payload: dict[str, Any] = {
             "model": self._provider.model,
             "messages": [_to_openai_message(m) for m in messages],
-            "tool_choice": "auto",
         }
         if tools:
             payload["tools"] = tools

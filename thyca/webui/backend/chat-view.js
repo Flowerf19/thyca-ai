@@ -2,7 +2,6 @@ import {
   brandForEvent,
   collapseNames,
   IDLE_TAGLINE,
-  statusTextForEvent,
 } from "./chat-status.js";
 import { formatTime } from "./format.js";
 import { formatMarkdown } from "./markdown.js";
@@ -222,10 +221,7 @@ export function createLiveStatus(root) {
   article.className = "live-card live-status";
   article.setAttribute("aria-label", "Thyca đang trả lời");
   article.setAttribute("aria-live", "polite");
-  const header = chatBrandHeader({
-    state: "busy",
-    status: statusTextForEvent({ type: "turn.accepted" }),
-  });
+  const header = chatBrandHeader(brandForEvent({ type: "turn.accepted" }));
   article.append(header);
   root.append(article);
   return {

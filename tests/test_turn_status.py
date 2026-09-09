@@ -145,24 +145,21 @@ def test_brand_idle_uses_tagline(node: str) -> None:
     }
 
 
-def test_brand_busy_reuses_status_text(node: str) -> None:
-    assert _eval(node, 'brandForEvent({type: "llm.started", round: 1})') == {
-        "state": "busy",
-        "status": "Đang xử lý vòng 1…",
-    }
-    assert _eval(node, 'brandForEvent({type: "turn.accepted"})') == {
-        "state": "busy",
-        "status": "Đã nhận lượt…",
-    }
-    assert _eval(node, 'brandForEvent({type: "llm.started"})') == {
-        "state": "busy",
-        "status": None,
-    }
+def test_brand_busy_uses_ambient_not_round_status(node: str) -> None:
+    llm = _eval(node, 'brandForEvent({type: "llm.started", round: 1})')
+    accepted = _eval(node, 'brandForEvent({type: "turn.accepted"})')
+    assert llm["state"] == "busy"
+    assert accepted["state"] == "busy"
+    assert "Đang xử lý vòng" not in llm["status"]
+    assert llm["status"] != "Đã nhận lượt…"
+    assert accepted["status"] != "Đã nhận lượt…"
+    assert llm["status"]
+    assert accepted["status"]
 
 
-def test_brand_error_uses_existing_failed_status(node: str) -> None:
-    assert _eval(node, 'brandForEvent({type: "turn.failed", code: "llm_error"})') == {
-        "state": "error",
-        "status": "Lượt đã dừng.",
-    }
+def test_brand_error_uses_ambient_failed(node: str) -> None:
+    failed = _eval(node, 'brandForEvent({type: "turn.failed", code: "llm_error"})')
+    assert failed["state"] == "error"
+    assert failed["status"] != "Lượt đã dừng."
+    assert failed["status"] in {"phách lệch.", "mực lem, dừng lại."}
     assert _eval(node, "SEND_ERROR_STATUS") == "Không gửi được — thử lại."

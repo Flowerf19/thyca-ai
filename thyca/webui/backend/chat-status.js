@@ -1,5 +1,7 @@
 // Operational event -> status text. Pure mapping, no DOM, no timers.
 // Unknown event types return null so the caller keeps the current text.
+import { ambientLineForEvent } from "./chat-ambient.js";
+
 export const IDLE_TAGLINE = "nắn lại giai điệu";
 export const SEND_ERROR_STATUS = "Không gửi được — thử lại.";
 
@@ -60,12 +62,12 @@ export function brandForEvent(event) {
     return { state: "idle", status: IDLE_TAGLINE };
   }
   if (event.type === "turn.failed") {
-    return { state: "error", status: statusTextForEvent(event) || SEND_ERROR_STATUS };
+    return { state: "error", status: ambientLineForEvent(event) };
   }
   if (event.type === "turn.completed") {
     return { state: "idle", status: IDLE_TAGLINE };
   }
-  return { state: "busy", status: statusTextForEvent(event) };
+  return { state: "busy", status: ambientLineForEvent(event) };
 }
 
 function publicName(name) {

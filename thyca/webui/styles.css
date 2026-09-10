@@ -38,6 +38,10 @@
   --chat-brand-ink: #3d2a1f;
   --chat-brand-accent: #a65a42;
   --chat-brand-wash: rgba(255, 222, 192, 0.42);
+  --ink: var(--chat-brand-ink);
+  --terra: var(--chat-brand-accent);
+  --composer-bg: rgba(255, 252, 250, 0.82);
+  --composer-border: rgba(61, 42, 31, 0.12);
 
   --font-display: "Fraunces", ui-serif, Georgia, serif;
   --font-reading: "Source Serif 4", ui-serif, Georgia, serif;
@@ -789,11 +793,9 @@ svg {
   flex: 0 0 auto;
   height: 5rem;
   margin: 0 1.5rem 1.35rem;
-  padding: 0.35rem;
-  border: var(--rule) solid var(--color-border);
-  border-radius: 1.8rem;
-  background: color-mix(in oklab, var(--color-paper-card) 82%, transparent);
-  box-shadow: 0 0.45rem 1.2rem var(--color-shell-shadow-soft);
+  padding: 0;
+  border: 0;
+  background: none;
 }
 
 .to-bottom {
@@ -829,9 +831,11 @@ svg {
   width: 100%;
   height: 100%;
   padding: 0.35rem 0.4rem 0.35rem 0.8rem;
-  border: var(--rule) solid var(--color-border);
-  border-radius: 1.45rem;
-  background: var(--color-paper-input);
+  border: var(--rule) solid var(--composer-border);
+  border-radius: var(--radius-pill);
+  background: var(--composer-bg);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
 }
 
 .mic-button,
@@ -848,7 +852,7 @@ svg {
   width: 2.85rem;
   height: 2.85rem;
   background: transparent;
-  color: var(--color-accent-deep);
+  color: color-mix(in oklab, var(--ink) 55%, transparent);
 }
 
 .mic-button svg {
@@ -867,23 +871,22 @@ svg {
   border: 0;
   outline: 0;
   background: transparent;
-  color: var(--color-reading);
+  color: var(--ink);
   font-family: var(--font-reading);
   font-size: 1.1rem;
   line-height: 1.45;
 }
 
 .composer textarea::placeholder {
-  color: var(--color-muted);
+  color: color-mix(in oklab, var(--ink) 45%, transparent);
   opacity: 1;
 }
 
 .send-button {
   width: 3.25rem;
   height: 3.25rem;
-  background: var(--color-accent);
-  color: var(--color-accent-ink);
-  box-shadow: 0 0.18rem 0.5rem var(--color-shell-shadow-soft);
+  background: var(--terra);
+  color: #fff;
 }
 
 .send-icon {
@@ -896,9 +899,13 @@ svg {
 
 @media (hover: hover) and (pointer: fine) {
   .icon-button:hover,
-  .new-session:hover,
-  .mic-button:hover {
+  .new-session:hover {
     color: var(--color-accent-deep);
+    background: color-mix(in oklab, var(--color-accent-soft) 52%, transparent);
+  }
+
+  .mic-button:hover {
+    color: var(--ink);
     background: color-mix(in oklab, var(--color-accent-soft) 52%, transparent);
   }
 
@@ -920,7 +927,7 @@ svg {
   }
 
   .send-button:hover {
-    background: color-mix(in oklab, var(--color-accent) 88%, var(--color-ink));
+    background: color-mix(in oklab, var(--terra) 88%, var(--ink));
   }
 }
 
@@ -1052,17 +1059,12 @@ button:active {
     inset: auto;
     height: 4.85rem;
     margin: 0.65rem 0.75rem calc(0.75rem + env(safe-area-inset-bottom));
-    padding: 0.38rem;
-    border-radius: var(--radius-pill);
+    padding: 0;
   }
 
   .to-bottom {
     inset-inline-end: 1.25rem;
     inset-block-end: 6.5rem;
-  }
-
-  .composer-pill {
-    border-radius: inherit;
   }
 
   .send-button {

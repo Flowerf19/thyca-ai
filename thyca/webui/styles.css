@@ -797,6 +797,19 @@ svg {
   background: none;
 }
 
+/* Empty submit: one quick shake, then still. Motion is suppressed wholesale
+   under prefers-reduced-motion, so the hint text is the fallback. */
+@keyframes composer-nudge {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-0.35rem); }
+  50% { transform: translateX(0.3rem); }
+  80% { transform: translateX(-0.15rem); }
+}
+
+.composer.is-nudging .composer-pill {
+  animation: composer-nudge 160ms var(--ease-in-out);
+}
+
 .to-bottom {
   position: absolute;
   z-index: 5;

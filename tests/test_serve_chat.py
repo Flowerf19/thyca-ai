@@ -829,3 +829,22 @@ def test_session_detail_tags_skill_loads(tmp_path: Path) -> None:
         assert calls[1] == {"id": "call-2", "name": "read"}
     finally:
         _stop(httpd, thread)
+
+
+def test_empty_submit_nudges_without_sending() -> None:
+    app = (WEBUI / "app.js").read_text(encoding="utf-8")
+    html = (WEBUI / "index.html").read_text(encoding="utf-8")
+    css = (WEBUI / "styles.css").read_text(encoding="utf-8")
+    send_message = app[app.index("async function sendMessage()") : app.index("function bind()")]
+    empty_branch = send_message[: send_message.index("if (state.busy) return;")]
+
+    # The hint is the accessible half of the nudge: motion needs text too.
+    assert 'id="composer-hint"' in html
+    assert 'role="status"' in html
+    assert 'querySelector("#composer-hint")' in app
+    assert "Chưa có nội dung để gửi." in app
+    # An empty submit shakes and returns without touching the network.
+    assert "shakeComposer()" in empty_branch
+    assert "fetch(" not in empty_branch
+    assert "@keyframes composer-nudge" in css
+    assert ".composer.is-nudging" in css

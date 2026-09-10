@@ -14,6 +14,7 @@ const el = {
   composer: document.querySelector("#composer"),
   input: document.querySelector("#message"),
   send: document.querySelector("#send-message"),
+  status: document.querySelector("#composer-hint"),
   sessionList: document.querySelector("#session-list"),
   newSession: document.querySelector("#new-session"),
   messageList: document.querySelector("#message-list"),
@@ -46,6 +47,20 @@ function messageOf(error, fallback) {
 
 function hideIdle() {
   el.idleNudge.hidden = true;
+}
+
+// Nudge for an action that cannot say no: a short shake plus a polite hint
+// for screen readers (the pill itself stays aria-label-free).
+function shakeComposer() {
+  el.composer.classList.remove("is-nudging");
+  void el.composer.offsetWidth;
+  el.composer.classList.add("is-nudging");
+  el.status.textContent = "Chưa có nội dung để gửi.";
+}
+
+function clearNudge() {
+  el.composer.classList.remove("is-nudging");
+  if (el.status.textContent) el.status.textContent = "";
 }
 
 function sessionKey() {
@@ -215,11 +230,13 @@ async function ensureSession() {
 async function sendMessage() {
   const text = el.input.value.trim();
   if (!text) {
+    shakeComposer();
     el.input.focus();
     return;
   }
   if (state.busy) return;
 
+  clearNudge();
   hideIdle();
   window.clearTimeout(idleTimer);
   setBusy(true);
@@ -268,7 +285,11 @@ function bind() {
     el.composer.requestSubmit();
   });
   el.input.addEventListener("input", () => {
+    if (el.input.value.trim()) clearNudge();
     armIdle();
+  });
+  el.composer.addEventListener("animationend", (event) => {
+    if (event.animationName === "composer-nudge") el.composer.classList.remove("is-nudging");
   });
   el.idleRemember.addEventListener("click", () => {
     hideIdle();

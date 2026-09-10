@@ -75,11 +75,8 @@ def skill_name_for_call(call: object, skills_root: Path | None) -> str | None:
     path = arguments.get("path") if isinstance(arguments, dict) else None
     if not isinstance(path, str):
         return None
-    try:
-        resolved = Path(path).expanduser().resolve()
-    except (OSError, ValueError, TypeError):
-        return None
-    return classify_skill_read(skills_root, resolved)
+    # Containment (and both resolve() calls) live in classify_skill_read.
+    return classify_skill_read(skills_root, Path(path))
 
 
 def public_skill_name(name: str | None) -> str:

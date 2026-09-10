@@ -95,6 +95,40 @@ export function batchDoneText(names) {
   return summary ? `Đã chạy ${summary}…` : "Đã chạy công cụ…";
 }
 
+// Names as the usage row shows them: memory tool families read as one word.
+function usageName(rawName) {
+  const name = String(rawName || "tool");
+  return name.startsWith("memory_") ? "memories" : name;
+}
+
+function tallyNames(names) {
+  const counts = new Map();
+  for (const rawName of names || []) {
+    if (!rawName) continue;
+    const name = usageName(rawName);
+    counts.set(name, (counts.get(name) || 0) + 1);
+  }
+  return counts;
+}
+
+// One neutral "what ran" line: skills and tools share it, names in first-seen
+// order. While a call is running it reads as a plain list
+// ("Đang dùng: bash, edit"); once the turn settles it becomes the tally
+// ("Đã dùng: bash x2 + edit x1"). Null when nothing ran.
+export function usageLine(completedNames, activeNames = []) {
+  const completed = tallyNames(completedNames);
+  const active = tallyNames(activeNames);
+  const names = [...new Set([...completed.keys(), ...active.keys()])];
+  if (!names.length) return null;
+  const busy = active.size > 0;
+  return {
+    label: busy ? "Đang dùng:" : "Đã dùng:",
+    body: busy
+      ? names.join(", ")
+      : names.map((name) => `${name} x${completed.get(name)}`).join(" + "),
+  };
+}
+
 // Skill events keep the backend's own fallback word so status never says
 // "tool" for a skill load.
 function skillName(event) {

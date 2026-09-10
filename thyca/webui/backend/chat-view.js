@@ -1,7 +1,7 @@
 import {
   brandForEvent,
-  collapseNames,
   IDLE_TAGLINE,
+  usageLine,
 } from "./chat-status.js";
 import { formatTime } from "./format.js";
 import { formatMarkdown } from "./markdown.js";
@@ -66,46 +66,24 @@ function assistantHeader(stamp) {
   return chatBrandHeader({ state: "idle", status });
 }
 
-function displayToolName(rawName) {
-  const name = String(rawName || "tool");
-  return name.startsWith("memory_") ? "memories" : name;
-}
-
-function tally(names) {
-  const counts = new Map();
-  for (const rawName of names || []) {
-    if (!rawName) continue;
-    const name = displayToolName(rawName);
-    counts.set(name, (counts.get(name) || 0) + 1);
-  }
-  return counts;
-}
-
-// One neutral "what ran" line: skills and tools share it, names in first-seen
-// order. While a call is running the line reads as a plain list
-// ("Đang dùng: bash, edit"); once the turn settles it becomes the tally
-// ("Đã dùng: bash x2 + edit x1").
+// One "what ran" line: skills and tools share it, formatted by usageLine().
+// The live card omits emptyText; a settled transcript shows the placeholder.
 function usageRow(completedNames, activeNames = [], emptyText = "") {
-  const completed = tally(completedNames);
-  const active = tally(activeNames);
-  const names = [...new Set([...completed.keys(), ...active.keys()])];
+  const line = usageLine(completedNames, activeNames);
   const row = document.createElement("p");
   row.className = "usage-row";
-  if (!names.length) {
+  if (!line) {
     if (!emptyText) return null;
     row.classList.add("is-empty");
     row.textContent = emptyText;
     return row;
   }
-  const busy = active.size > 0;
   const label = document.createElement("span");
   label.className = "usage-label";
-  label.textContent = busy ? "Đang dùng:" : "Đã dùng:";
+  label.textContent = line.label;
   const body = document.createElement("span");
   body.className = "usage-row-body";
-  body.textContent = busy
-    ? names.join(", ")
-    : names.map((name) => `${name} x${completed.get(name) || 0}`).join(" + ");
+  body.textContent = line.body;
   row.append(label, body);
   return row;
 }
@@ -263,6 +241,4 @@ export function updateLiveStatus(live, event) {
   live.article.querySelectorAll(".usage-row").forEach((node) => node.remove());
   const next = usageRow(live.completed, [...live.active.values()]);
   if (next) live.article.append(next);
-  const summary = collapseNames([...live.completed, ...live.active.values()]);
-  if (summary) live.article.dataset.usage = summary;
 }

@@ -27,7 +27,7 @@ def node() -> str:
 def _eval(node: str, expression: str) -> object:
     source = (
         "import { statusTextForEvent, collapseNames, batchDoneText, "
-        f"brandForEvent, IDLE_TAGLINE, SEND_ERROR_STATUS }} from '{SCRIPT.as_posix()}';\n"
+        f"brandForEvent, IDLE_TAGLINE, SEND_ERROR_STATUS, usageLine }} from '{SCRIPT.as_posix()}';\n"
         f"console.log(JSON.stringify({expression}));\n"
     )
     result = subprocess.run(
@@ -163,3 +163,29 @@ def test_brand_error_uses_ambient_failed(node: str) -> None:
     assert failed["status"] != "Lượt đã dừng."
     assert failed["status"] in {"phách lệch.", "mực lem, dừng lại."}
     assert _eval(node, "SEND_ERROR_STATUS") == "Không gửi được — thử lại."
+
+
+def test_usage_line_plain_list_while_calls_run(node: str) -> None:
+    assert _eval(node, 'usageLine([], ["bash"])') == {
+        "label": "Đang dùng:",
+        "body": "bash",
+    }
+    # Completed names stay listed, but without counts, while anything runs.
+    assert _eval(node, 'usageLine(["bash"], ["bash", "create-skill"])') == {
+        "label": "Đang dùng:",
+        "body": "bash, create-skill",
+    }
+
+
+def test_usage_line_tally_once_settled(node: str) -> None:
+    assert _eval(
+        node, 'usageLine(["bash", "bash", "memory_search", "create-skill", "edit"], [])'
+    ) == {
+        "label": "Đã dùng:",
+        "body": "bash x2 + memories x1 + create-skill x1 + edit x1",
+    }
+
+
+def test_usage_line_is_null_when_nothing_ran(node: str) -> None:
+    assert _eval(node, "usageLine([], [])") is None
+    assert _eval(node, 'usageLine([""], [null])') is None

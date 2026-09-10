@@ -245,6 +245,8 @@ async function sendMessage() {
     armIdle();
   } catch {
     idleFromNudge = false;
+    // Hand the text back unless the user already started the next message.
+    if (!el.input.value) el.input.value = text;
     const live = el.messageList.querySelector(".live-status:last-of-type");
     if (live) setChatBrand(live, { state: "error", status: SEND_ERROR_STATUS });
   } finally {

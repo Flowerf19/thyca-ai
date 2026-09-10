@@ -67,17 +67,12 @@ function assistantHeader(stamp) {
 }
 
 // One "what ran" line: skills and tools share it, formatted by usageLine().
-// The live card omits emptyText; a settled transcript shows the placeholder.
-function usageRow(completedNames, activeNames = [], emptyText = "") {
+// Nothing runs → no line at all (the assistant's own prose stands alone).
+function usageRow(completedNames, activeNames = []) {
   const line = usageLine(completedNames, activeNames);
+  if (!line) return null;
   const row = document.createElement("p");
   row.className = "usage-row";
-  if (!line) {
-    if (!emptyText) return null;
-    row.classList.add("is-empty");
-    row.textContent = emptyText;
-    return row;
-  }
   const label = document.createElement("span");
   label.className = "usage-label";
   label.textContent = line.label;
@@ -112,18 +107,16 @@ function assistantMessage(segments, ts) {
   const article = document.createElement("article");
   article.className = "live-card message-assistant";
   article.append(assistantHeader(ts));
-  let used = false;
   for (const segment of segments) {
     const body = document.createElement("div");
     body.className = "live-copy markdown-body";
     body.innerHTML = formatMarkdown(segment.content);
     article.append(body);
     if ((segment.names || []).length) {
-      used = true;
-      article.append(usageRow(segment.names));
+      const row = usageRow(segment.names);
+      if (row) article.append(row);
     }
   }
-  if (!used) article.append(usageRow([], [], "Phiên này không dùng tool nào"));
   return article;
 }
 
@@ -237,6 +230,12 @@ export function updateLiveStatus(live, event) {
     const name = live.active.get(callKey) || event.name || "tool";
     live.active.delete(callKey);
     live.completed.push(name);
+  }
+  if (event?.type === "turn.failed") {
+    // The turn is over, so nothing is still running: settle the row instead
+    // of leaving it claiming a call is in flight.
+    live.completed.push(...live.active.values());
+    live.active.clear();
   }
   live.article.querySelectorAll(".usage-row").forEach((node) => node.remove());
   const next = usageRow(live.completed, [...live.active.values()]);

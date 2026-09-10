@@ -736,7 +736,6 @@ svg {
   font-style: italic;
 }
 
-.usage-row.is-empty,
 .usage-label {
   margin: 0;
   width: max-content;

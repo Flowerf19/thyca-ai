@@ -736,6 +736,40 @@ svg {
   font-style: italic;
 }
 
+/* Skill loads sit above the tool line: quieter, terra, never mixed in. */
+.skill-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0;
+  padding-block: 0.7rem 0;
+  padding-inline-start: calc(var(--chat-brand-stripe) + var(--chat-brand-gap));
+}
+
+.skill-label {
+  margin: 0;
+  width: max-content;
+  color: var(--terra);
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  font-style: italic;
+  font-weight: 500;
+}
+
+.skill-row-body {
+  flex: 1;
+  min-width: 0;
+  color: color-mix(in oklab, var(--terra) 82%, transparent);
+  font-family: var(--font-reading);
+  font-size: 0.92rem;
+  font-style: italic;
+}
+
+.skill-row + .tool-row {
+  padding-block-start: 0.35rem;
+  min-height: 1.6rem;
+}
+
 .tool-row.is-empty,
 .tool-label {
   margin: 0;

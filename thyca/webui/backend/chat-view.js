@@ -71,39 +71,64 @@ function displayToolName(rawName) {
   return name.startsWith("memory_") ? "memories" : name;
 }
 
-function countTools(names) {
+function tally(names, normalize) {
   const counts = new Map();
   for (const rawName of names || []) {
     if (!rawName) continue;
-    const name = displayToolName(rawName);
+    const name = normalize(rawName);
     counts.set(name, (counts.get(name) || 0) + 1);
   }
   return counts;
 }
 
-function toolRow(completedNames, activeNames = []) {
-  const completed = countTools(completedNames);
-  const active = countTools(activeNames);
+// One "what ran" line. Skills and tools are different registers, so each
+// gets its own row: a skill load must never read as a tool call.
+function activityRow(completedNames, activeNames, shape) {
+  const completed = tally(completedNames, shape.normalize);
+  const active = tally(activeNames, shape.normalize);
   const names = [...new Set([...completed.keys(), ...active.keys()])];
-  if (!names.length) {
-    const empty = document.createElement("p");
-    empty.className = "tool-row is-empty";
-    empty.textContent = "Phiên này không dùng tool nào";
-    return empty;
-  }
   const row = document.createElement("p");
-  row.className = "tool-row";
+  row.className = shape.rowClass;
+  if (!names.length) {
+    if (!shape.emptyText) return null;
+    row.classList.add("is-empty");
+    row.textContent = shape.emptyText;
+    return row;
+  }
   const label = document.createElement("span");
-  label.className = "tool-label";
-  label.textContent = active.size ? "Tool đang dùng:" : "Tool đã dùng:";
+  label.className = shape.labelClass;
+  label.textContent = active.size ? shape.activeLabel : shape.doneLabel;
   const body = document.createElement("span");
-  body.className = "tool-row-body";
+  body.className = shape.bodyClass;
   body.textContent = names.map((name) => {
     const count = (completed.get(name) || 0) + (active.get(name) || 0);
     return `${name} x${count}`;
   }).join(", ");
   row.append(label, body);
   return row;
+}
+
+function toolRow(completedNames, activeNames = [], emptyText = "") {
+  return activityRow(completedNames, activeNames, {
+    normalize: displayToolName,
+    rowClass: "tool-row",
+    labelClass: "tool-label",
+    bodyClass: "tool-row-body",
+    activeLabel: "Tool đang dùng:",
+    doneLabel: "Tool đã dùng:",
+    emptyText,
+  });
+}
+
+function skillRow(completedNames, activeNames = []) {
+  return activityRow(completedNames, activeNames, {
+    normalize: (name) => String(name),
+    rowClass: "skill-row",
+    labelClass: "skill-label",
+    bodyClass: "skill-row-body",
+    activeLabel: "Skill đang mở:",
+    doneLabel: "Skill đã mở:",
+  });
 }
 
 function userMessage(message) {
@@ -131,33 +156,43 @@ function assistantMessage(segments, ts) {
   article.className = "live-card message-assistant";
   article.append(assistantHeader(ts));
   let usedTools = false;
+  let usedSkills = false;
   for (const segment of segments) {
     const body = document.createElement("div");
     body.className = "live-copy markdown-body";
     body.innerHTML = formatMarkdown(segment.content);
     article.append(body);
-    if (segment.tools.length) {
+    if ((segment.skills || []).length) {
+      usedSkills = true;
+      article.append(skillRow(segment.skills));
+    }
+    if ((segment.tools || []).length) {
       usedTools = true;
       article.append(toolRow(segment.tools));
     }
   }
-  if (!usedTools) article.append(toolRow([]));
+  if (!usedTools && !usedSkills) {
+    article.append(toolRow([], [], "Phiên này không dùng tool nào"));
+  }
   return article;
 }
 
 export function renderConversation(root, messages) {
   const nodes = [];
   const pendingTools = [];
+  const pendingSkills = [];
   const pendingParts = [];
   let pendingTs = "";
 
   const flushAssistant = () => {
     if (!pendingParts.length) {
       pendingTools.length = 0;
+      pendingSkills.length = 0;
       return;
     }
     nodes.push(assistantMessage(pendingParts.splice(0), pendingTs));
     pendingTools.length = 0;
+    pendingSkills.length = 0;
     pendingTs = "";
   };
 
@@ -171,10 +206,18 @@ export function renderConversation(root, messages) {
     }
     if (message.role !== "assistant") continue;
     for (const call of message.tool_calls || []) {
-      if (call && call.name) pendingTools.push(call.name);
+      if (!call) continue;
+      // A skill load arrives tagged by the backend, so replay labels it as a
+      // skill instead of the bare `read` that carried it.
+      if (typeof call.skill === "string" && call.skill) pendingSkills.push(call.skill);
+      else if (call.name) pendingTools.push(call.name);
     }
     if (typeof message.content === "string" && message.content.trim()) {
-      pendingParts.push({ content: message.content, tools: pendingTools.splice(0) });
+      pendingParts.push({
+        content: message.content,
+        tools: pendingTools.splice(0),
+        skills: pendingSkills.splice(0),
+      });
       pendingTs = message.ts || pendingTs;
     }
   }
@@ -230,6 +273,8 @@ export function createLiveStatus(root) {
     brand: header,
     activeTools: new Map(),
     completedTools: [],
+    activeSkills: new Map(),
+    completedSkills: [],
   };
 }
 
@@ -239,23 +284,32 @@ export function updateLiveStatus(live, event) {
     state: brand.state,
     status: brand.status || undefined,
   });
-  const startsTool = event?.type === "tool.started" || event?.type === "skill.started";
-  const finishesTool = event?.type === "tool.finished" || event?.type === "skill.finished";
+  const isSkill = event?.type === "skill.started" || event?.type === "skill.finished";
+  const startsTool = event?.type === "tool.started" || isSkill;
+  const finishesTool = event?.type === "tool.finished" || isSkill;
   const callKey = event?.call_id || `${event?.type}:${event?.name || "tool"}`;
+  const active = isSkill ? live.activeSkills : live.activeTools;
+  const completed = isSkill ? live.completedSkills : live.completedTools;
   if (startsTool) {
-    live.activeTools.set(callKey, event.name || (event.type === "skill.started" ? "skill" : "tool"));
+    active.set(callKey, event.name || (isSkill ? "skill" : "tool"));
   } else if (finishesTool) {
-    const name = live.activeTools.get(callKey) || event.name || "tool";
-    live.activeTools.delete(callKey);
-    live.completedTools.push(name);
+    const name = active.get(callKey) || event.name || (isSkill ? "skill" : "tool");
+    active.delete(callKey);
+    completed.push(name);
   }
-  const existing = live.article.querySelector(".tool-row");
-  const next = toolRow(live.completedTools, [...live.activeTools.values()]);
-  if (existing) existing.remove();
-  if (next && !next.classList.contains("is-empty")) live.article.append(next);
+  live.article.querySelectorAll(".skill-row, .tool-row").forEach((node) => node.remove());
+  const skills = skillRow(live.completedSkills, [...live.activeSkills.values()]);
+  const tools = toolRow(live.completedTools, [...live.activeTools.values()]);
+  if (skills) live.article.append(skills);
+  if (tools) live.article.append(tools);
   const summary = collapseNames([
     ...live.completedTools,
     ...live.activeTools.values(),
   ]);
   if (summary) live.article.dataset.tools = summary;
+  const skillSummary = collapseNames([
+    ...live.completedSkills,
+    ...live.activeSkills.values(),
+  ]);
+  if (skillSummary) live.article.dataset.skills = skillSummary;
 }

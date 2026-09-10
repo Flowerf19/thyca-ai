@@ -14,13 +14,14 @@ from thyca.agent.assemble import Assemble
 from thyca.agent.events import EventSink, TurnEvent, emit_event
 from thyca.agent.loop import AgentLoop
 from thyca.agent.observe import Observe
+from thyca.agent.skill_event import skill_name_for_call
 from thyca.agent.think import LLMPort, Think
 from thyca.config import Config, ConfigError, load
 from thyca.llm.llm_base import LLMError
 from thyca.llm.llm_factory import ConnectFactory
 from thyca.llm.pricing import cost_for
 from thyca.memory.active import ActiveMemory
-from thyca.protocol import Message, utc_now_ts
+from thyca.protocol import Message, ToolCall, utc_now_ts
 from thyca.sessions import Session, SessionManager, ask_remember
 from thyca.sessions.store import SessionStore
 from thyca.sessions.title import display_title, is_blank, propose_title
@@ -278,7 +279,9 @@ class ChatApp:
             "id": session.id,
             "title": session_title(session),
             "model": self._cfg.provider.model,
-            "messages": [_message_dict(item) for item in session.messages],
+            "messages": [
+                _message_dict(item, self.skills_root) for item in session.messages
+            ],
             "ask_remember": ask_remember(
                 session.messages, datetime.now(UTC)
             ),
@@ -296,7 +299,7 @@ def _updated_at(session: Session) -> str:
     return stamp.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _message_dict(message: Message) -> dict:
+def _message_dict(message: Message, skills_root: Path | None = None) -> dict:
     payload: dict = {
         "role": message.role,
         "content": message.content,
@@ -304,12 +307,26 @@ def _message_dict(message: Message) -> dict:
     }
     if message.tool_calls:
         payload["tool_calls"] = [
-            {"id": call.id, "name": call.name} for call in message.tool_calls
+            _tool_call_dict(call, skills_root) for call in message.tool_calls
         ]
     if message.tool_call_id is not None:
         payload["tool_call_id"] = message.tool_call_id
     if message.meta is not None:
         payload["meta"] = dict(message.meta)
     return payload
+
+
+def _tool_call_dict(call: ToolCall, skills_root: Path | None) -> dict:
+    """Wire payload for one call: id, name, and the skill it loaded.
+
+    Replay keeps skill identity so a reloaded transcript can label a skill
+    load as a skill instead of a bare ``read``. Arguments stay out of this
+    payload; the Trace screen is where input JSON belongs.
+    """
+    entry = {"id": call.id, "name": call.name}
+    skill = skill_name_for_call(call, skills_root)
+    if skill is not None:
+        entry["skill"] = skill
+    return entry
 
 

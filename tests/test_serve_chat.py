@@ -791,3 +791,41 @@ def test_aborted_static_and_body_keep_server_quiet(tmp_path: Path, capsys) -> No
         assert "BrokenPipeError" not in captured.err
     finally:
         _stop(httpd, thread)
+
+
+def test_session_detail_tags_skill_loads(tmp_path: Path) -> None:
+    skills_root = tmp_path / "skills"
+    skill_md = skills_root / "create-skill"
+    skill_md.mkdir(parents=True)
+    (skill_md / "SKILL.md").write_text("---\nname: create-skill\n---\n", encoding="utf-8")
+    llm = ScriptedLLM(
+        [
+            ChatReply(
+                content=None,
+                tool_calls=[
+                    ToolCall(
+                        id="call-1",
+                        name="read",
+                        arguments={"path": str(skill_md / "SKILL.md")},
+                    ),
+                    ToolCall(id="call-2", name="read", arguments={"path": str(tmp_path / "notes.md")}),
+                ],
+            ),
+            ChatReply(content="xong"),
+        ]
+    )
+    httpd, thread = _start(tmp_path, _chat(tmp_path, llm))
+    try:
+        created = _json(httpd, "/api/sessions", method="POST", data=b"")
+        body = json.dumps({"text": "viết skill"}).encode("utf-8")
+        _json(httpd, f"/api/sessions/{created['id']}/turn", method="POST", data=body)
+        detail = _json(httpd, f"/api/sessions/{created['id']}")
+        calls = next(
+            item["tool_calls"] for item in detail["messages"] if item.get("tool_calls")
+        )
+        # The skill read carries its name so replay can label it a skill; the
+        # ordinary read stays a plain tool call, and arguments stay off payload.
+        assert calls[0] == {"id": "call-1", "name": "read", "skill": "create-skill"}
+        assert calls[1] == {"id": "call-2", "name": "read"}
+    finally:
+        _stop(httpd, thread)

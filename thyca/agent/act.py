@@ -8,7 +8,7 @@ from typing import Protocol
 from thyca.protocol import ToolCall, ToolResult
 
 from .events import EventSink, TurnEvent, emit_event
-from .skill_event import classify_skill_read, public_skill_name
+from .skill_event import public_skill_name, skill_name_for_call
 from .stage import Stage
 
 
@@ -97,13 +97,4 @@ class Act:
 
     def _skill_name(self, call: ToolCall) -> str | None:
         """Skill name when this call is a read inside the skills dir, else None."""
-        if self._skills_root is None or call.name != "read" or call.parse_error is not None:
-            return None
-        path = call.arguments.get("path")
-        if not isinstance(path, str):
-            return None
-        try:
-            resolved = Path(path).expanduser().resolve()
-        except (OSError, ValueError):
-            return None
-        return classify_skill_read(self._skills_root, resolved)
+        return skill_name_for_call(call, self._skills_root)

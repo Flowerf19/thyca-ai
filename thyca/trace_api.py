@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs
 
-from thyca.agent.skill_event import classify_skill_read
+from thyca.agent.skill_event import skill_name_for_call
 from thyca.protocol import ToolCall
 from thyca.trace import TurnSummary, turns_from_session
 
@@ -163,14 +163,7 @@ def trace_tool_call(call: ToolCall, skills_root: Path) -> dict:
     }
     if call.parse_error:
         entry["parse_error"] = call.parse_error
-    if call.name == "read" and call.arguments.get("path"):
-        path = call.arguments["path"]
-        try:
-            resolved = Path(path).expanduser().resolve()
-        except (OSError, ValueError, TypeError):
-            resolved = None
-        if resolved is not None:
-            name = classify_skill_read(skills_root, resolved)
-            if name is not None:
-                entry["skill"] = name
+    name = skill_name_for_call(call, skills_root)
+    if name is not None:
+        entry["skill"] = name
     return entry

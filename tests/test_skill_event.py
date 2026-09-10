@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from thyca.agent.skill_event import classify_skill_read, public_skill_name
+from thyca.agent.skill_event import (
+    classify_skill_read,
+    public_skill_name,
+    skill_name_for_call,
+)
+from thyca.protocol import ToolCall
 
 
 def _root(tmp_path: Path) -> Path:
@@ -76,3 +81,23 @@ def test_public_skill_name_fallback() -> None:
     assert public_skill_name("no valid name") == "skill"
     assert public_skill_name("a" * 65) == "skill"
     assert public_skill_name("create-skill") == "create-skill"
+
+
+def _call(name: str, arguments: dict | None = None, parse_error: str | None = None) -> ToolCall:
+    return ToolCall(id="call-1", name=name, arguments=arguments or {}, parse_error=parse_error)
+
+
+def test_skill_name_for_call_matches_skill_load(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    call = _call("read", {"path": str(root / "create-skill" / "SKILL.md")})
+    assert skill_name_for_call(call, root) == "create-skill"
+
+
+def test_skill_name_for_call_rejects_other_shapes(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    skill_md = str(root / "create-skill" / "SKILL.md")
+    assert skill_name_for_call(_call("read", {"path": skill_md}), None) is None
+    assert skill_name_for_call(_call("bash", {"command": "cat " + skill_md}), root) is None
+    assert skill_name_for_call(_call("read", {"path": skill_md}, "bad json"), root) is None
+    assert skill_name_for_call(_call("read", {}), root) is None
+    assert skill_name_for_call(_call("read", {"path": tmp_path / "MEMORY.md"}), root) is None

@@ -57,6 +57,31 @@ def classify_skill_read(root: Path, path: Path) -> str | None:
     return name
 
 
+def skill_name_for_call(call: object, skills_root: Path | None) -> str | None:
+    """Skill name when ``call`` is a skill load, else None.
+
+    One predicate for every surface that shows a tool call: the live event
+    stream (:class:`Act`), the trace ledger, and the chat payload. A call
+    counts only when it is a ``read`` with a string ``path`` inside the
+    skills root; anything else — other tools, unparsed arguments, an
+    unrelated file — stays an ordinary tool call. Duck-typed on purpose so
+    this module keeps importing nothing but the skills grammar.
+    """
+    if skills_root is None or getattr(call, "parse_error", None) is not None:
+        return None
+    if getattr(call, "name", None) != "read":
+        return None
+    arguments = getattr(call, "arguments", None)
+    path = arguments.get("path") if isinstance(arguments, dict) else None
+    if not isinstance(path, str):
+        return None
+    try:
+        resolved = Path(path).expanduser().resolve()
+    except (OSError, ValueError, TypeError):
+        return None
+    return classify_skill_read(skills_root, resolved)
+
+
 def public_skill_name(name: str | None) -> str:
     """Event-safe display name: already-validated names pass, else fallback."""
     if name is None:

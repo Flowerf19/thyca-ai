@@ -82,7 +82,9 @@ function tally(names) {
 }
 
 // One neutral "what ran" line: skills and tools share it, names in first-seen
-// order, each with its call count.
+// order. While a call is running the line reads as a plain list
+// ("Đang dùng: bash, edit"); once the turn settles it becomes the tally
+// ("Đã dùng: bash x2 + edit x1").
 function usageRow(completedNames, activeNames = [], emptyText = "") {
   const completed = tally(completedNames);
   const active = tally(activeNames);
@@ -95,14 +97,15 @@ function usageRow(completedNames, activeNames = [], emptyText = "") {
     row.textContent = emptyText;
     return row;
   }
+  const busy = active.size > 0;
   const label = document.createElement("span");
   label.className = "usage-label";
-  label.textContent = active.size ? "Đang dùng:" : "Đã dùng:";
+  label.textContent = busy ? "Đang dùng:" : "Đã dùng:";
   const body = document.createElement("span");
   body.className = "usage-row-body";
-  body.textContent = names
-    .map((name) => `${name} x${(completed.get(name) || 0) + (active.get(name) || 0)}`)
-    .join(" + ");
+  body.textContent = busy
+    ? names.join(", ")
+    : names.map((name) => `${name} x${completed.get(name) || 0}`).join(" + ");
   row.append(label, body);
   return row;
 }

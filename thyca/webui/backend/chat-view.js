@@ -71,19 +71,22 @@ function displayToolName(rawName) {
   return name.startsWith("memory_") ? "memories" : name;
 }
 
-function uniqueNames(names) {
-  const seen = new Set();
+function tally(names) {
+  const counts = new Map();
   for (const rawName of names || []) {
     if (!rawName) continue;
-    seen.add(displayToolName(rawName));
+    const name = displayToolName(rawName);
+    counts.set(name, (counts.get(name) || 0) + 1);
   }
-  return [...seen];
+  return counts;
 }
 
 // One neutral "what ran" line: skills and tools share it, names in first-seen
-// order, each listed once. No per-name counts.
+// order, each with its call count.
 function usageRow(completedNames, activeNames = [], emptyText = "") {
-  const names = uniqueNames([...completedNames, ...activeNames]);
+  const completed = tally(completedNames);
+  const active = tally(activeNames);
+  const names = [...new Set([...completed.keys(), ...active.keys()])];
   const row = document.createElement("p");
   row.className = "usage-row";
   if (!names.length) {
@@ -92,13 +95,14 @@ function usageRow(completedNames, activeNames = [], emptyText = "") {
     row.textContent = emptyText;
     return row;
   }
-  const busy = (activeNames || []).some(Boolean);
   const label = document.createElement("span");
   label.className = "usage-label";
-  label.textContent = busy ? "Đang dùng:" : "Đã dùng:";
+  label.textContent = active.size ? "Đang dùng:" : "Đã dùng:";
   const body = document.createElement("span");
   body.className = "usage-row-body";
-  body.textContent = names.join(" + ");
+  body.textContent = names
+    .map((name) => `${name} x${(completed.get(name) || 0) + (active.get(name) || 0)}`)
+    .join(" + ");
   row.append(label, body);
   return row;
 }

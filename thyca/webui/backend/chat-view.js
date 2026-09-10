@@ -71,64 +71,36 @@ function displayToolName(rawName) {
   return name.startsWith("memory_") ? "memories" : name;
 }
 
-function tally(names, normalize) {
-  const counts = new Map();
+function uniqueNames(names) {
+  const seen = new Set();
   for (const rawName of names || []) {
     if (!rawName) continue;
-    const name = normalize(rawName);
-    counts.set(name, (counts.get(name) || 0) + 1);
+    seen.add(displayToolName(rawName));
   }
-  return counts;
+  return [...seen];
 }
 
-// One "what ran" line. Skills and tools are different registers, so each
-// gets its own row: a skill load must never read as a tool call.
-function activityRow(completedNames, activeNames, shape) {
-  const completed = tally(completedNames, shape.normalize);
-  const active = tally(activeNames, shape.normalize);
-  const names = [...new Set([...completed.keys(), ...active.keys()])];
+// One neutral "what ran" line: skills and tools share it, names in first-seen
+// order, each listed once. No per-name counts.
+function usageRow(completedNames, activeNames = [], emptyText = "") {
+  const names = uniqueNames([...completedNames, ...activeNames]);
   const row = document.createElement("p");
-  row.className = shape.rowClass;
+  row.className = "usage-row";
   if (!names.length) {
-    if (!shape.emptyText) return null;
+    if (!emptyText) return null;
     row.classList.add("is-empty");
-    row.textContent = shape.emptyText;
+    row.textContent = emptyText;
     return row;
   }
+  const busy = (activeNames || []).some(Boolean);
   const label = document.createElement("span");
-  label.className = shape.labelClass;
-  label.textContent = active.size ? shape.activeLabel : shape.doneLabel;
+  label.className = "usage-label";
+  label.textContent = busy ? "Đang dùng:" : "Đã dùng:";
   const body = document.createElement("span");
-  body.className = shape.bodyClass;
-  body.textContent = names.map((name) => {
-    const count = (completed.get(name) || 0) + (active.get(name) || 0);
-    return `${name} x${count}`;
-  }).join(", ");
+  body.className = "usage-row-body";
+  body.textContent = names.join(" + ");
   row.append(label, body);
   return row;
-}
-
-function toolRow(completedNames, activeNames = [], emptyText = "") {
-  return activityRow(completedNames, activeNames, {
-    normalize: displayToolName,
-    rowClass: "tool-row",
-    labelClass: "tool-label",
-    bodyClass: "tool-row-body",
-    activeLabel: "Tool đang dùng:",
-    doneLabel: "Tool đã dùng:",
-    emptyText,
-  });
-}
-
-function skillRow(completedNames, activeNames = []) {
-  return activityRow(completedNames, activeNames, {
-    normalize: (name) => String(name),
-    rowClass: "skill-row",
-    labelClass: "skill-label",
-    bodyClass: "skill-row-body",
-    activeLabel: "Skill đang mở:",
-    doneLabel: "Skill đã mở:",
-  });
 }
 
 function userMessage(message) {
@@ -155,44 +127,34 @@ function assistantMessage(segments, ts) {
   const article = document.createElement("article");
   article.className = "live-card message-assistant";
   article.append(assistantHeader(ts));
-  let usedTools = false;
-  let usedSkills = false;
+  let used = false;
   for (const segment of segments) {
     const body = document.createElement("div");
     body.className = "live-copy markdown-body";
     body.innerHTML = formatMarkdown(segment.content);
     article.append(body);
-    if ((segment.skills || []).length) {
-      usedSkills = true;
-      article.append(skillRow(segment.skills));
-    }
-    if ((segment.tools || []).length) {
-      usedTools = true;
-      article.append(toolRow(segment.tools));
+    if ((segment.names || []).length) {
+      used = true;
+      article.append(usageRow(segment.names));
     }
   }
-  if (!usedTools && !usedSkills) {
-    article.append(toolRow([], [], "Phiên này không dùng tool nào"));
-  }
+  if (!used) article.append(usageRow([], [], "Phiên này không dùng tool nào"));
   return article;
 }
 
 export function renderConversation(root, messages) {
   const nodes = [];
-  const pendingTools = [];
-  const pendingSkills = [];
+  const pendingNames = [];
   const pendingParts = [];
   let pendingTs = "";
 
   const flushAssistant = () => {
     if (!pendingParts.length) {
-      pendingTools.length = 0;
-      pendingSkills.length = 0;
+      pendingNames.length = 0;
       return;
     }
     nodes.push(assistantMessage(pendingParts.splice(0), pendingTs));
-    pendingTools.length = 0;
-    pendingSkills.length = 0;
+    pendingNames.length = 0;
     pendingTs = "";
   };
 
@@ -207,16 +169,15 @@ export function renderConversation(root, messages) {
     if (message.role !== "assistant") continue;
     for (const call of message.tool_calls || []) {
       if (!call) continue;
-      // A skill load arrives tagged by the backend, so replay labels it as a
-      // skill instead of the bare `read` that carried it.
-      if (typeof call.skill === "string" && call.skill) pendingSkills.push(call.skill);
-      else if (call.name) pendingTools.push(call.name);
+      // A skill load arrives tagged by the backend so replay keeps the skill
+      // name instead of the bare `read` that carried it.
+      if (typeof call.skill === "string" && call.skill) pendingNames.push(call.skill);
+      else if (call.name) pendingNames.push(call.name);
     }
     if (typeof message.content === "string" && message.content.trim()) {
       pendingParts.push({
         content: message.content,
-        tools: pendingTools.splice(0),
-        skills: pendingSkills.splice(0),
+        names: pendingNames.splice(0),
       });
       pendingTs = message.ts || pendingTs;
     }
@@ -271,10 +232,8 @@ export function createLiveStatus(root) {
   return {
     article,
     brand: header,
-    activeTools: new Map(),
-    completedTools: [],
-    activeSkills: new Map(),
-    completedSkills: [],
+    active: new Map(),
+    completed: [],
   };
 }
 
@@ -284,32 +243,19 @@ export function updateLiveStatus(live, event) {
     state: brand.state,
     status: brand.status || undefined,
   });
-  const isSkill = event?.type === "skill.started" || event?.type === "skill.finished";
-  const startsTool = event?.type === "tool.started" || isSkill;
-  const finishesTool = event?.type === "tool.finished" || isSkill;
+  const starts = event?.type === "tool.started" || event?.type === "skill.started";
+  const finishes = event?.type === "tool.finished" || event?.type === "skill.finished";
   const callKey = event?.call_id || `${event?.type}:${event?.name || "tool"}`;
-  const active = isSkill ? live.activeSkills : live.activeTools;
-  const completed = isSkill ? live.completedSkills : live.completedTools;
-  if (startsTool) {
-    active.set(callKey, event.name || (isSkill ? "skill" : "tool"));
-  } else if (finishesTool) {
-    const name = active.get(callKey) || event.name || (isSkill ? "skill" : "tool");
-    active.delete(callKey);
-    completed.push(name);
+  if (starts) {
+    live.active.set(callKey, event.name || "tool");
+  } else if (finishes) {
+    const name = live.active.get(callKey) || event.name || "tool";
+    live.active.delete(callKey);
+    live.completed.push(name);
   }
-  live.article.querySelectorAll(".skill-row, .tool-row").forEach((node) => node.remove());
-  const skills = skillRow(live.completedSkills, [...live.activeSkills.values()]);
-  const tools = toolRow(live.completedTools, [...live.activeTools.values()]);
-  if (skills) live.article.append(skills);
-  if (tools) live.article.append(tools);
-  const summary = collapseNames([
-    ...live.completedTools,
-    ...live.activeTools.values(),
-  ]);
-  if (summary) live.article.dataset.tools = summary;
-  const skillSummary = collapseNames([
-    ...live.completedSkills,
-    ...live.activeSkills.values(),
-  ]);
-  if (skillSummary) live.article.dataset.skills = skillSummary;
+  live.article.querySelectorAll(".usage-row").forEach((node) => node.remove());
+  const next = usageRow(live.completed, [...live.active.values()]);
+  if (next) live.article.append(next);
+  const summary = collapseNames([...live.completed, ...live.active.values()]);
+  if (summary) live.article.dataset.usage = summary;
 }

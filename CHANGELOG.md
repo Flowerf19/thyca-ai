@@ -2,6 +2,15 @@
 
 Thay đổi của Thyca, viết ngắn gọn cho người dùng.
 
+## 0.8.0 — 10/09/2026
+
+- Khung soạn tin thành một pill kính mờ, bỏ khung trắng lồng hai lớp; mic và chữ theo mực nâu, nút gửi terra với icon trắng.
+- Bỏ dòng chữ nhỏ dưới khung chat ("Đã nhận trả lời.", "Đang xử lý…"): trạng thái đã nằm ở dòng dưới cây bút.
+- Một dòng "Đang dùng:" / "Đã dùng:" duy nhất cho cả skill lẫn tool. Lúc chạy liệt kê tên (bash, create-skill); xong thì kèm số lần (bash x2 + create-skill x1). Lượt không dùng gì thì không còn dòng "không dùng tool nào".
+- Skill hiện đúng tên skill thay vì "read", cả lúc đang chạy lẫn khi mở lại phiên cũ. Trang Trace hiện tên skill kèm input JSON.
+- Lượt lỗi: dòng "Đã dùng" chốt lại đúng phần đã chạy, và câu bạn vừa gõ được trả về ô nhập (không đè nếu bạn đã gõ câu mới).
+- Enter khi ô trống không còn im lặng: khung rung nhẹ một nhịp. Máy bật giảm chuyển động thì chỉ có thông báo cho trình đọc màn hình.
+
 ## 0.7.9 — 05/09/2026
 
 - Gỡ khuông nhạc (chat và Trace): không còn nốt, piano, font Bravura.

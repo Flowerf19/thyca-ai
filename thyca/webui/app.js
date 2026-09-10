@@ -14,7 +14,6 @@ const el = {
   composer: document.querySelector("#composer"),
   input: document.querySelector("#message"),
   send: document.querySelector("#send-message"),
-  status: document.querySelector("#composer-status"),
   sessionList: document.querySelector("#session-list"),
   newSession: document.querySelector("#new-session"),
   messageList: document.querySelector("#message-list"),
@@ -43,11 +42,6 @@ const state = {
 
 function messageOf(error, fallback) {
   return error instanceof Error && error.message ? error.message : fallback;
-}
-
-function setStatus(message = "", kind = "") {
-  el.status.textContent = message;
-  el.status.className = `composer-status${kind ? ` is-${kind}` : ""}`;
 }
 
 function hideIdle() {
@@ -182,18 +176,15 @@ async function loadSession(sessionId) {
   const generation = ++state.loadGeneration;
   state.activeId = sessionId;
   renderSessions();
-  setStatus("Đang mở phiên…");
   el.messageList.setAttribute("aria-busy", "true");
   try {
     const detail = await getJson(`/api/sessions/${encodeURIComponent(sessionId)}`);
     if (generation !== state.loadGeneration) return;
     renderDetail(detail);
-    setStatus();
     armIdle();
   } catch (error) {
     if (generation !== state.loadGeneration) return;
     renderError(el.messageList, messageOf(error, "Không mở được phiên."), () => void loadSession(sessionId));
-    setStatus(messageOf(error, "Không mở được phiên."), "error");
   } finally {
     if (generation === state.loadGeneration) el.messageList.setAttribute("aria-busy", "false");
   }
@@ -209,7 +200,6 @@ function newSession() {
   renderEmpty(el.messageList);
   el.label.textContent = "Phiên trống";
   armIdle();
-  setStatus("Phiên mới đã sẵn sàng.", "success");
   el.input.focus();
 }
 
@@ -225,7 +215,6 @@ async function ensureSession() {
 async function sendMessage() {
   const text = el.input.value.trim();
   if (!text) {
-    setStatus("Viết một câu trước khi gửi.", "error");
     el.input.focus();
     return;
   }
@@ -234,7 +223,6 @@ async function sendMessage() {
   hideIdle();
   window.clearTimeout(idleTimer);
   setBusy(true);
-  setStatus("Đang xử lý…");
   el.input.value = "";
   try {
     const sessionId = await ensureSession();
@@ -253,14 +241,12 @@ async function sendMessage() {
     );
     renderDetail(detail);
     await refreshSessions();
-    setStatus("Đã nhận trả lời.", "success");
     noteSend();
     armIdle();
-  } catch (error) {
+  } catch {
     idleFromNudge = false;
     const live = el.messageList.querySelector(".live-status:last-of-type");
     if (live) setChatBrand(live, { state: "error", status: SEND_ERROR_STATUS });
-    setStatus(SEND_ERROR_STATUS, "error");
   } finally {
     setBusy(false);
     el.input.focus();
@@ -280,7 +266,6 @@ function bind() {
     el.composer.requestSubmit();
   });
   el.input.addEventListener("input", () => {
-    if (el.input.value.trim()) setStatus();
     armIdle();
   });
   el.idleRemember.addEventListener("click", () => {
@@ -326,7 +311,6 @@ async function boot() {
     }
   } catch (error) {
     renderError(el.messageList, messageOf(error, "Backend chưa sẵn sàng."), () => location.reload());
-    setStatus(messageOf(error, "Backend chưa sẵn sàng."), "error");
     el.messageList.setAttribute("aria-busy", "false");
     el.input.disabled = true;
     el.send.disabled = true;

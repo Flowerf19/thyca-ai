@@ -172,8 +172,7 @@ body {
   vertical-align: top;
 }
 
-.live-status.is-error .chat-brand-line,
-.composer-status.is-error {
+.live-status.is-error .chat-brand-line {
   color: var(--color-accent-deep);
 }
 
@@ -211,24 +210,6 @@ body {
 .chat-idle-nudge .screen-button {
   min-height: 2.4rem;
   padding: 0.45rem 0.75rem;
-}
-
-.composer-status {
-  position: absolute;
-  inset-inline: 1.4rem 5.5rem;
-  inset-block-end: -1.5rem;
-  overflow: hidden;
-  margin: 0;
-  color: var(--color-muted);
-  font-family: var(--font-ui);
-  font-size: 0.72rem;
-  line-height: 1.2;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.composer-status.is-success {
-  color: var(--color-botanical);
 }
 
 .composer.is-loading .send-button {
@@ -309,11 +290,6 @@ input:disabled {
 }
 
 @media (max-width: 56rem) {
-  .composer-status {
-    inset-inline: 1.1rem 4.5rem;
-    inset-block-end: -1.25rem;
-  }
-
   .chat-idle-nudge {
     inset-inline: 0;
     width: 100%;

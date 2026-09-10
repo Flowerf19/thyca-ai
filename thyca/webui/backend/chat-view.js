@@ -200,6 +200,7 @@ export function renderEmpty(root, title = "Bắt đầu một trang mới", note
 export function renderError(root, message, retry) {
   const box = document.createElement("div");
   box.className = "backend-state is-error";
+  box.setAttribute("role", "alert");
   const heading = document.createElement("strong");
   heading.textContent = "Không tải được cuộc trò chuyện";
   const copy = document.createElement("p");

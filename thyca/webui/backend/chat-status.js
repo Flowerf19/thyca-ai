@@ -114,7 +114,7 @@ function tallyNames(names) {
 // One neutral "what ran" line: skills and tools share it, names in first-seen
 // order. While a call is running it reads as a plain list
 // ("Đang dùng: bash, edit"); once the turn settles it becomes the tally
-// ("Đã dùng: bash x2 + edit x1"). Null when nothing ran.
+// ("Đã dùng: bash x2, edit x1"). Null when nothing ran.
 export function usageLine(completedNames, activeNames = []) {
   const completed = tallyNames(completedNames);
   const active = tallyNames(activeNames);
@@ -125,7 +125,7 @@ export function usageLine(completedNames, activeNames = []) {
     label: busy ? "Đang dùng:" : "Đã dùng:",
     body: busy
       ? names.join(", ")
-      : names.map((name) => `${name} x${completed.get(name)}`).join(" + "),
+      : names.map((name) => `${name} x${completed.get(name)}`).join(", "),
   };
 }
 

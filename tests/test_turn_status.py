@@ -182,7 +182,7 @@ def test_usage_line_tally_once_settled(node: str) -> None:
         node, 'usageLine(["bash", "bash", "memory_search", "create-skill", "edit"], [])'
     ) == {
         "label": "Đã dùng:",
-        "body": "bash x2 + memories x1 + create-skill x1 + edit x1",
+        "body": "bash x2, memories x1, create-skill x1, edit x1",
     }
 
 

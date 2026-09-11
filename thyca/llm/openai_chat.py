@@ -42,7 +42,7 @@ class OpenAIChat(Connect):
         self._provider = provider
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=10.0, read=60.0, write=30.0, pool=10.0)
+            timeout=httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0)
         )
         self._retry_hook: Callable[[int, int], None] | None = None
 

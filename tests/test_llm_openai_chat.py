@@ -29,6 +29,15 @@ def test_chat_url_does_not_double_slash() -> None:
 
 
 @pytest.mark.asyncio
+async def test_default_client_uses_five_minute_read_timeout() -> None:
+    connect = OpenAIChat(_provider())
+    try:
+        assert connect._client.timeout.read == 300.0
+    finally:
+        await connect.aclose()
+
+
+@pytest.mark.asyncio
 async def test_text_reply() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path.endswith("/chat/completions")

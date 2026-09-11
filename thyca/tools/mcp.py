@@ -20,9 +20,14 @@ from thyca.tools.registry import ToolSpec
 CALL_TIMEOUT = timedelta(seconds=30)
 
 
-_QUIET_WARNINGS = (
-    "ignore::pydantic_settings.sources.utils.IncompleteFieldDefinitionWarning"
-)
+# PYTHONWARNINGS is parsed while `warnings` itself is still importing, so a
+# dotted category path (…sources.utils.IncompleteFieldDefinitionWarning) can
+# never be imported at that point: the whole option is dropped with "invalid
+# module name" and the warning it was meant to silence still prints. Match the
+# emitting module instead — a regex, no import needed at parse time. The
+# cost of not being able to name the category is that every warning raised
+# from this third-party module is silenced, not just this one.
+_QUIET_WARNINGS = "ignore:::pydantic_settings.sources.utils"
 
 
 def merge_env(server_env: dict[str, str]) -> dict[str, str]:

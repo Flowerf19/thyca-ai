@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import subprocess
 import sys
 from datetime import timedelta
 from pathlib import Path
@@ -47,8 +49,25 @@ def test_merge_env_keeps_defaults_and_overrides(
     assert merged["PATH"] == "/from-server"
     assert "SECRET" not in merged
     assert "HOME" in merged
-    assert "IncompleteFieldDefinitionWarning" in merged["PYTHONWARNINGS"]
+    assert "pydantic_settings" in merged["PYTHONWARNINGS"]
     assert merge_env({"PYTHONWARNINGS": "default"})["PYTHONWARNINGS"] == "default"
+
+
+def test_quiet_warnings_actually_silences_fastmcp() -> None:
+    """The filter must survive `warnings` import: a dotted category path is
+    dropped there with "invalid module name", leaving the child noisy."""
+    script = "from mcp.server.fastmcp import FastMCP\nFastMCP('t')\n"
+    env = {**os.environ, "PYTHONWARNINGS": merge_env({})["PYTHONWARNINGS"]}
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=Path(script).parent,
+    )
+    assert result.returncode == 0
+    assert "Invalid -W option" not in result.stderr
+    assert "IncompleteFieldDefinitionWarning" not in result.stderr
 
 
 def test_join_text_blocks_concatenates_text_only() -> None:

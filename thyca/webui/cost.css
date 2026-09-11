@@ -91,103 +91,6 @@
   color: var(--color-ink);
 }
 
-.cost-models {
-  padding: 0;
-  overflow: hidden;
-}
-
-.cost-model {
-  border-block-end: 1px solid var(--color-border);
-}
-
-.cost-model:last-child {
-  border: 0;
-}
-
-.cost-model summary {
-  display: grid;
-  grid-template-columns: 2.8rem minmax(0, 1fr) auto auto 1rem;
-  align-items: center;
-  gap: 1rem;
-  min-height: 4.65rem;
-  padding: 0.65rem 1.1rem;
-  cursor: pointer;
-  list-style: none;
-}
-
-.cost-model summary::-webkit-details-marker,
-.cost-model summary::marker {
-  display: none;
-  content: "";
-}
-
-.cost-model summary::after {
-  content: "";
-  width: 0.45rem;
-  height: 0.45rem;
-  border-right: 1.5px solid var(--color-muted);
-  border-bottom: 1.5px solid var(--color-muted);
-  transform: rotate(-45deg);
-  justify-self: center;
-}
-
-.cost-model[open] summary::after {
-  transform: rotate(45deg);
-}
-
-.cost-model-icon {
-  display: grid;
-  place-items: center;
-  width: 2.8rem;
-  height: 2.8rem;
-  border: 1px solid var(--color-divider);
-  border-radius: 0.7rem;
-  background: var(--color-accent-soft);
-  color: var(--color-botanical);
-}
-
-.cost-model-icon svg {
-  width: 1.35rem;
-  height: 1.35rem;
-}
-
-.cost-model-name {
-  display: block;
-  color: var(--color-ink);
-  font-size: 1.05rem;
-  overflow-wrap: anywhere;
-}
-
-.cost-model-meta {
-  display: block;
-  color: var(--color-muted);
-  font-size: 0.85rem;
-}
-
-.cost-model-cost {
-  color: var(--color-ink);
-  white-space: nowrap;
-}
-
-.cost-model-percent {
-  font-family: var(--font-ui);
-  font-size: 0.8rem;
-}
-
-.cost-model-breakdown {
-  margin: 0;
-  padding: 0 1.1rem 0.85rem 4.9rem;
-  color: var(--color-muted);
-  font-size: 0.85rem;
-}
-
-.cost-model-breakdown div {
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-  padding-block: 0.2rem;
-}
-
 .cost-footnote {
   margin-top: 1rem;
   text-align: center;
@@ -211,55 +114,17 @@
     min-height: 16rem;
   }
 
-  .cost-model summary {
-    grid-template-columns: 2.5rem minmax(0, 1fr) auto 1rem;
-  }
-
-  .cost-model-percent {
-    grid-column: 3;
-  }
-
-  .cost-model-cost {
-    grid-column: 2;
-  }
-
-  .cost-model summary::after {
-    grid-column: 4;
-    grid-row: 1 / span 2;
-  }
-
-  .cost-model-icon {
-    width: 2.5rem;
-    height: 2.5rem;
-    grid-row: span 2;
-  }
-
-  .cost-model-breakdown {
-    padding-inline: 1rem;
-  }
-
   .cost-period .screen-select {
     min-width: 0;
   }
 }
 
 @media (max-width: 28rem) {
-  .cost-model summary {
-    gap: 0.65rem;
-    padding-inline: 0.65rem;
-  }
-
   .cost-total strong {
     font-size: 3rem;
   }
 
   .cost-chart-card {
     padding-inline: 0.5rem;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .cost-model summary::after {
-    transition: none;
   }
 }

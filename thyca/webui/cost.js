@@ -89,28 +89,28 @@ function drawChart(rows) {
 
 function modelRow(model, total) {
   const details = document.createElement("details");
-  details.className = "cost-model";
+  details.className = "fold-row";
   const summary = document.createElement("summary");
   const icon = document.createElement("span");
-  icon.className = "cost-model-icon";
+  icon.className = "fold-row-icon";
   icon.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7.2"/><path d="M9 9.5h6v5H9Z"/><path d="M12 8v8"/></svg>';
   const copy = document.createElement("div");
   const name = document.createElement("span");
-  name.className = "cost-model-name";
+  name.className = "fold-row-name";
   name.textContent = model.model || "unknown";
   const meta = document.createElement("span");
-  meta.className = "cost-model-meta";
+  meta.className = "fold-row-meta";
   meta.textContent = `${formatInteger(model.requests)} request · ${formatCompact(model.total_tokens)} token`;
   copy.append(name, meta);
   const cost = document.createElement("span");
-  cost.className = "cost-model-cost";
+  cost.className = "fold-row-stat";
   cost.textContent = formatCost(model.cost_usd);
   const percent = document.createElement("span");
-  percent.className = "screen-badge cost-model-percent";
+  percent.className = "screen-badge fold-row-badge";
   percent.textContent = model.cost_usd == null || !total ? "—" : `${Math.round(Number(model.cost_usd) / total * 100)}%`;
   summary.append(icon, copy, cost, percent);
   const breakdown = document.createElement("div");
-  breakdown.className = "cost-model-breakdown";
+  breakdown.className = "fold-row-body";
   for (const [label, value] of [
     ["Input", model.prompt_tokens],
     ["Cache", model.cached_tokens],

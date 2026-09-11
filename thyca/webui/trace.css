@@ -37,6 +37,18 @@
   font-size: 1.15rem;
 }
 
+/* Same pen and draw size as the composer send button. */
+.tool-pen {
+  flex: 0 0 auto;
+  width: 2.8rem;
+  height: 2.8rem;
+  margin-block: -0.9rem;
+  margin-inline-start: -0.55rem;
+  background: var(--terra);
+  -webkit-mask: url("images/thyca-icons/but-may.svg") center / contain no-repeat;
+  mask: url("images/thyca-icons/but-may.svg") center / contain no-repeat;
+}
+
 .trace-turn {
   position: relative;
   display: grid;
@@ -290,37 +302,36 @@
   margin: 0 0 0.55rem;
 }
 
-.tool-calls .ledger {
+/* One row per tool, borrowing the collapsible row from screens.css: a summary
+   you can open for the calls inside. */
+.tool-calls .fold-list {
   margin: 0;
 }
 
-.tool-catalogs {
-  border-block-end: 1px solid var(--color-border);
-  background: color-mix(in oklab, var(--color-paper-input) 55%, transparent);
+.call-fold {
+  border-block-start: 1px solid var(--color-border);
 }
 
-.catalog-fold {
-  border-block-end: 1px solid var(--color-border);
-}
-
-.catalog-fold:last-child {
-  border-block-end: 0;
-}
-
-.catalog-summary {
-  min-height: 3.15rem;
+.call-summary {
+  display: grid;
   grid-template-columns: minmax(0, 1fr) 1rem;
-  padding-inline: 1.1rem;
+  align-items: center;
+  gap: 1rem;
+  min-height: 3.15rem;
+  padding: 0.35rem 0 0.35rem 1.1rem;
+  cursor: pointer;
   list-style: none;
+  color: var(--color-ink);
+  font-size: 0.95rem;
 }
 
-.catalog-summary::-webkit-details-marker,
-.catalog-summary::marker {
+.call-summary::-webkit-details-marker,
+.call-summary::marker {
   display: none;
   content: "";
 }
 
-.catalog-summary::after {
+.call-summary::after {
   content: "";
   width: 0.45rem;
   height: 0.45rem;
@@ -330,26 +341,30 @@
   justify-self: center;
 }
 
-.catalog-fold[open] > .catalog-summary::after {
+.call-fold[open] > .call-summary::after {
   transform: rotate(45deg);
 }
 
-.catalog-body {
-  padding: 0.75rem 1.1rem 1rem;
+.call-body {
+  padding-block: 0.35rem 0.6rem;
 }
 
-.tool-catalogs .record-block {
-  margin: 0 0 0.85rem;
+.call-body .record-block {
+  margin-block: 0.6rem;
 }
 
-.tool-catalogs .record-block:last-child {
-  margin-bottom: 0;
+.call-body .record-block h3 {
+  font-size: 1rem;
 }
 
-.tool-catalogs .record-block p,
-.tool-catalogs pre {
+.record-block p,
+.turn-meta-body {
   min-height: 4.5rem;
   max-height: 18rem;
+}
+
+.turn-meta {
+  margin: 0 1.2rem 1.2rem;
 }
 
 .record-block {
@@ -381,7 +396,7 @@
   overflow-wrap: anywhere;
 }
 
-.tool-catalogs pre {
+.turn-meta-body {
   margin: 0;
   min-width: 0;
   padding: 0.75rem 0.9rem;
@@ -491,7 +506,11 @@
     margin-inline: 0.8rem;
   }
 
-  .catalog-summary {
-    padding-inline: 0.75rem;
+  .turn-meta {
+    margin-inline: 0.8rem;
+  }
+
+  .call-summary {
+    padding-inline-start: 0.75rem;
   }
 }

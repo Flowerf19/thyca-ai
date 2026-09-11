@@ -28,8 +28,8 @@ def node() -> str:
 
 def _eval(node: str, expression: str) -> object:
     source = (
-        f"import {{ toolsFromDetail, groupTraceTurns, selectedModelConfig, tokenCost,"
-        f" firstUserText, finalAssistantText, formatRecordText, asArguments }}"
+        f"import {{ toolsFromDetail, groupToolCalls, groupTraceTurns, selectedModelConfig,"
+        f" tokenCost, firstUserText, finalAssistantText, formatRecordText, asArguments }}"
         f" from '{TRACE_DATA.as_posix()}';\n"
         f"console.log(JSON.stringify({expression}));\n"
     )
@@ -43,7 +43,7 @@ def _eval(node: str, expression: str) -> object:
     return json.loads(result.stdout)
 
 
-def test_skill_call_keeps_skill_prefix(node: str) -> None:
+def test_skill_call_keeps_raw_name_and_skill(node: str) -> None:
     detail = {
         "messages": [
             {"role": "user", "content": "go"},
@@ -65,8 +65,10 @@ def test_skill_call_keeps_skill_prefix(node: str) -> None:
     }
     tools = _eval(node, f"toolsFromDetail({json.dumps(detail)})")
     assert tools == [
-        {"id": "c1", "name": "skill:codereview", "arguments": {"path": "SKILL.md"}, "output": "out1", "latencyMs": 120},
-        {"id": "c2", "name": "read", "arguments": {"path": "notes.md"}, "output": "out2", "latencyMs": 5},
+        {"id": "c1", "name": "read", "skill": "codereview",
+         "arguments": {"path": "SKILL.md"}, "output": "out1", "latencyMs": 120},
+        {"id": "c2", "name": "read", "skill": None,
+         "arguments": {"path": "notes.md"}, "output": "out2", "latencyMs": 5},
     ]
 
 
@@ -114,7 +116,10 @@ def test_tool_without_result_has_null_output(node: str) -> None:
         ]
     }
     tools = _eval(node, f"toolsFromDetail({json.dumps(detail)})")
-    assert tools == [{"id": "c1", "name": "bash", "arguments": {}, "output": None, "latencyMs": None}]
+    assert tools == [
+        {"id": "c1", "name": "bash", "skill": None,
+         "arguments": {}, "output": None, "latencyMs": None}
+    ]
 
 
 def test_missing_tool_name_falls_back_to_tool(node: str) -> None:
@@ -125,6 +130,81 @@ def test_missing_tool_name_falls_back_to_tool(node: str) -> None:
     }
     tools = _eval(node, f"toolsFromDetail({json.dumps(detail)})")
     assert tools[0]["name"] == "tool"
+
+
+def test_group_tool_calls_keeps_first_seen_order(node: str) -> None:
+    tools = [
+        {"id": "a1", "name": "memory_recent", "skill": None,
+         "arguments": {"limit": 3}, "output": "m1", "latencyMs": 4},
+        {"id": "b1", "name": "bash", "skill": None,
+         "arguments": {"command": "ls"}, "output": "o1", "latencyMs": 10},
+        {"id": "a2", "name": "memory_recent", "skill": None,
+         "arguments": {"limit": 5}, "output": "m2", "latencyMs": 6},
+        {"id": "b2", "name": "bash", "skill": None,
+         "arguments": {"command": "pwd"}, "output": "o2", "latencyMs": None},
+    ]
+    groups = _eval(node, f"groupToolCalls({json.dumps(tools)})")
+    assert [g["name"] for g in groups] == ["memory_recent", "bash"]
+    assert [g["kind"] for g in groups] == ["tool", "tool"]
+    assert [g["count"] for g in groups] == [2, 2]
+    assert groups[0]["latencyMs"] == 10
+    assert groups[1]["latencyMs"] == 10
+    assert [c["order"] for c in groups[0]["calls"]] == [1, 2]
+    assert groups[1]["calls"][1] == {
+        "order": 2, "id": "b2", "arguments": {"command": "pwd"},
+        "output": "o2", "latencyMs": None,
+    }
+
+
+def test_group_tool_calls_separates_skill_loads(node: str) -> None:
+    tools = [
+        {"id": "s1", "name": "read", "skill": "create-skill",
+         "arguments": {"path": "SKILL.md"}, "output": "x", "latencyMs": 2},
+        {"id": "r1", "name": "read", "skill": None,
+         "arguments": {"path": "notes.md"}, "output": "y", "latencyMs": 3},
+        {"id": "s2", "name": "read", "skill": "code-reviewer",
+         "arguments": {"path": "SKILL.md"}, "output": "z", "latencyMs": 1},
+    ]
+    groups = _eval(node, f"groupToolCalls({json.dumps(tools)})")
+    assert [(g["name"], g["kind"], g["count"]) for g in groups] == [
+        ("create-skill", "skill", 1),
+        ("read", "tool", 1),
+        ("code-reviewer", "skill", 1),
+    ]
+    assert groups[0]["calls"][0]["order"] == 1
+
+
+def test_group_tool_calls_without_rows_or_latency(node: str) -> None:
+    assert _eval(node, "groupToolCalls([])") == []
+    assert _eval(node, "groupToolCalls(undefined)") == []
+    groups = _eval(node, "groupToolCalls([{id: 'b1', name: 'bash', latencyMs: null}])")
+    assert groups[0]["latencyMs"] is None
+    assert groups[0]["calls"][0]["arguments"] == {}
+
+
+def test_missing_latency_is_null_but_zero_stays_zero(node: str) -> None:
+    """A call without latency_ms must not print "0ms" (Number(null) === 0)."""
+
+    def detail(meta: dict) -> dict:
+        return {
+            "messages": [
+                {"role": "assistant", "content": None,
+                 "tool_calls": [{"id": "c1", "name": "bash"}]},
+                {"role": "tool", "tool_call_id": "c1", "content": "ok", "meta": meta},
+            ]
+        }
+
+    assert _eval(node, f"toolsFromDetail({json.dumps(detail({'latency_ms': 0}))})")[0][
+        "latencyMs"
+    ] == 0
+    assert _eval(node, f"toolsFromDetail({json.dumps(detail({}))})")[0]["latencyMs"] is None
+    assert _eval(node, f"toolsFromDetail({json.dumps(detail({'latency_ms': -5}))})")[0][
+        "latencyMs"
+    ] is None
+    groups = _eval(node, f"groupToolCalls(toolsFromDetail({json.dumps(detail({}))}))")
+    assert groups[0]["latencyMs"] is None
+    zero = _eval(node, f"groupToolCalls(toolsFromDetail({json.dumps(detail({'latency_ms': 0}))}))")
+    assert zero[0]["latencyMs"] == 0
 
 
 def test_group_trace_turns_sorts_and_sums(node: str) -> None:

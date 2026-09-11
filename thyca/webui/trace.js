@@ -13,6 +13,7 @@ import {
   finalAssistantText,
   firstUserText,
   formatRecordText,
+  groupToolCalls,
   groupTraceTurns,
   selectedModelConfig,
   tokenCost,
@@ -31,6 +32,8 @@ const el = {
   next: document.querySelector("#page-next"),
   toolSection: document.querySelector("#tool-calls"),
   toolList: document.querySelector("#tool-list"),
+  turnMetaFold: document.querySelector("#turn-meta-fold"),
+  turnMetaBody: document.querySelector("#turn-meta-body"),
 };
 
 const state = {
@@ -40,7 +43,7 @@ const state = {
   detail: null,
   config: null,
   tools: [],
-  toolIndex: -1,
+  toolGroups: [],
   metaText: "",
   generation: 0,
 };
@@ -109,7 +112,7 @@ function renderSidebar() {
 function emptyDetail(message) {
   state.detail = null;
   state.tools = [];
-  state.toolIndex = -1;
+  state.toolGroups = [];
   state.metaText = "";
   el.detail.hidden = true;
   el.crumb.textContent = `Trace › ${message}`;
@@ -127,90 +130,83 @@ function rateFor(model) {
   return selectedModelConfig(state.config, model) || {};
 }
 
-function toolRowLabel(tool, index, tools) {
-  const same = tools.filter((item) => item.name === tool.name).length;
-  if (same <= 1) return tool.name;
-  const order = tools.slice(0, index + 1).filter((item) => item.name === tool.name).length;
-  return `${tool.name} · ${order}`;
-}
-
-function catalogsPanel(tool) {
-  const wrap = document.createElement("div");
-  wrap.className = "tool-catalogs";
-  const record = document.createElement("details");
-  record.className = "catalog-fold";
-  record.open = true;
-  const recordSummary = document.createElement("summary");
-  recordSummary.className = "ledger-row catalog-summary";
-  recordSummary.textContent = "Bản ghi";
-  const recordBody = document.createElement("div");
-  recordBody.className = "catalog-body";
-  const inputBlock = document.createElement("div");
-  inputBlock.className = "record-block";
-  inputBlock.innerHTML = "<h3>Input</h3><p></p>";
-  const outputBlock = document.createElement("div");
-  outputBlock.className = "record-block";
-  outputBlock.innerHTML = "<h3>Output</h3><p></p>";
-  inputBlock.querySelector("p").textContent = formatRecordText(tool.arguments);
-  outputBlock.querySelector("p").textContent = formatRecordText(tool.output);
-  recordBody.append(inputBlock, outputBlock);
-  record.append(recordSummary, recordBody);
-  const meta = document.createElement("details");
-  meta.className = "catalog-fold";
-  const metaSummary = document.createElement("summary");
-  metaSummary.className = "ledger-row catalog-summary";
-  metaSummary.textContent = "Metadata";
-  const metaBody = document.createElement("pre");
-  metaBody.className = "catalog-body";
-  metaBody.textContent = state.metaText || "—";
-  meta.append(metaSummary, metaBody);
-  wrap.append(record, meta);
-  return wrap;
-}
-
-function selectTool(index) {
-  const rows = [...el.toolList.querySelectorAll(".ledger-row")];
-  const open = el.toolList.querySelector(".tool-catalogs");
-  if (state.toolIndex === index && open) {
-    open.remove();
-    state.toolIndex = -1;
-    rows.forEach((row) => row.classList.remove("is-active"));
-    return;
+// Input/output of one call, as the record blocks the trace screen uses.
+function recordBody(call) {
+  const body = document.createElement("div");
+  body.className = "call-body";
+  for (const [label, value] of [["Input", call.arguments], ["Output", call.output]]) {
+    const block = document.createElement("div");
+    block.className = "record-block";
+    const title = document.createElement("h3");
+    title.textContent = label;
+    const text = document.createElement("p");
+    text.textContent = formatRecordText(value);
+    block.append(title, text);
+    body.append(block);
   }
-  state.toolIndex = index;
-  open?.remove();
-  rows.forEach((row, i) => row.classList.toggle("is-active", i === index));
-  const tool = state.tools[index];
-  if (!tool) return;
-  rows[index]?.after(catalogsPanel(tool));
+  return body;
+}
+
+function callLabel(call) {
+  const parts = [`#${call.order}`];
+  if (call.id) parts.push(`id ${call.id.slice(0, 8)}`);
+  parts.push(formatDuration(call.latencyMs));
+  return parts.join(" · ");
+}
+
+// One place to push a text span into a summary's copy slot.
+function copyOf(name, meta) {
+  const copy = document.createElement("div");
+  copy.className = "fold-row-copy";
+  const nameEl = document.createElement("span");
+  nameEl.className = "fold-row-name";
+  nameEl.textContent = name;
+  copy.append(nameEl);
+  if (meta) {
+    const metaEl = document.createElement("span");
+    metaEl.className = "fold-row-meta";
+    metaEl.textContent = meta;
+    copy.append(metaEl);
+  }
+  return copy;
+}
+
+// One catalog entry: a single call opens straight to its record, several calls
+// fold into one row each so a long turn stays readable.
+function toolBody(group) {
+  const body = document.createElement("div");
+  body.className = "fold-row-body";
+  if (group.calls.length === 1) {
+    body.append(recordBody(group.calls[0]));
+    return body;
+  }
+  for (const call of group.calls) {
+    const fold = document.createElement("details");
+    fold.className = "call-fold";
+    const summary = document.createElement("summary");
+    summary.className = "call-summary";
+    summary.textContent = callLabel(call);
+    fold.append(summary, recordBody(call));
+    body.append(fold);
+  }
+  return body;
 }
 
 function renderTools() {
   state.tools = toolsFromDetail(state.detail);
-  state.toolIndex = -1;
-  el.toolSection.hidden = !state.tools.length;
-  const rows = state.tools.map((tool, index) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "ledger-row";
-    const icon = document.createElement("span");
-    icon.className = "ledger-icon";
-    icon.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6.5 18 3l3 3-3.5 3.5M3 21l7.5-7.5" /><circle cx="16.5" cy="7.5" r="3.2" /></svg>';
-    const copy = document.createElement("div");
-    copy.className = "ledger-copy";
-    const name = document.createElement("span");
-    name.className = "ledger-name";
-    name.textContent = toolRowLabel(tool, index, state.tools);
-    const meta = document.createElement("span");
-    meta.className = "ledger-meta";
-    meta.textContent = tool.id ? `id ${tool.id.slice(0, 8)}` : "tool";
-    copy.append(name, meta);
+  state.toolGroups = groupToolCalls(state.tools);
+  el.toolSection.hidden = !state.toolGroups.length;
+  const rows = state.toolGroups.map((group) => {
+    const fold = document.createElement("details");
+    fold.className = "fold-row fold-row--plain";
+    const summary = document.createElement("summary");
+    summary.append(copyOf(group.name, `${group.count} lần`));
     const stat = document.createElement("span");
-    stat.className = "ledger-stat";
-    stat.textContent = formatDuration(tool.latencyMs);
-    button.append(icon, copy, stat);
-    button.addEventListener("click", () => selectTool(index));
-    return button;
+    stat.className = "fold-row-stat";
+    stat.textContent = formatDuration(group.latencyMs);
+    summary.append(stat);
+    fold.append(summary, toolBody(group));
+    return fold;
   });
   el.toolList.replaceChildren(...rows);
 }
@@ -259,6 +255,8 @@ function renderDetail() {
   });
   el.previous.disabled = state.turnIndex === 0;
   el.next.disabled = state.turnIndex >= total - 1;
+  if (el.turnMetaBody) el.turnMetaBody.textContent = state.metaText;
+  if (el.turnMetaFold) el.turnMetaFold.open = false;
   renderTools();
   el.content.scrollTop = 0;
 }

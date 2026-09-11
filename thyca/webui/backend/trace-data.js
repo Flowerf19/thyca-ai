@@ -87,7 +87,7 @@ export function toolsFromDetail(detail) {
     if (message?.role === "tool" && message.tool_call_id) {
       results.set(String(message.tool_call_id), {
         content: message.content,
-        latencyMs: Number(message.meta?.latency_ms),
+        latencyMs: finiteMs(message.meta?.latency_ms),
       });
     }
   }
@@ -99,14 +99,58 @@ export function toolsFromDetail(detail) {
       const result = results.get(String(call.id || ""));
       tools.push({
         id: cleanText(call.id),
-        name: cleanText(call.skill ? `skill:${call.skill}` : call.name, "tool"),
+        name: cleanText(call.name, "tool"),
+        skill: cleanText(call.skill) || null,
         arguments: asArguments(call.arguments),
         output: result?.content ?? null,
-        latencyMs: Number.isFinite(result?.latencyMs) ? result.latencyMs : null,
+        latencyMs: result?.latencyMs ?? null,
       });
     }
   }
   return tools;
+}
+
+// Missing latency is null, never 0: Number(null) === 0 would print "0ms".
+function finiteMs(value) {
+  if (value == null || value === "") return null;
+  const ms = Number(value);
+  return Number.isFinite(ms) && ms >= 0 ? ms : null;
+}
+
+// What to print for one call: the skill name when the call loaded a skill,
+// otherwise the tool name exactly as the agent called it. No lookup table —
+// tools and skills the agent adds or removes show up as they are recorded.
+export function toolDisplayName(tool) {
+  const skill = cleanText(tool?.skill);
+  return skill || cleanText(tool?.name, "tool");
+}
+
+// One catalog entry per distinct name, first-seen order, with every call kept
+// for the detail view. A skill load is its own entry (kind "skill") so it never
+// merges into an ordinary read of the same file-reading tool.
+export function groupToolCalls(tools) {
+  const groups = new Map();
+  for (const tool of Array.isArray(tools) ? tools : []) {
+    const kind = cleanText(tool?.skill) ? "skill" : "tool";
+    const name = toolDisplayName(tool);
+    const key = `${kind}\u0000${name}`;
+    let group = groups.get(key);
+    if (!group) {
+      group = { name, kind, count: 0, latencyMs: null, calls: [] };
+      groups.set(key, group);
+    }
+    group.count += 1;
+    const latency = finiteMs(tool?.latencyMs);
+    if (latency !== null) group.latencyMs = (group.latencyMs || 0) + latency;
+    group.calls.push({
+      order: group.count,
+      id: cleanText(tool?.id),
+      arguments: tool?.arguments ?? {},
+      output: tool?.output ?? null,
+      latencyMs: latency,
+    });
+  }
+  return [...groups.values()];
 }
 
 export function selectedModelConfig(configValues, modelName) {

@@ -93,10 +93,21 @@
 
             <section class="tool-calls" id="tool-calls">
               <h3>
-                <svg class="screen-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6.5 18 3l3 3-3.5 3.5M3 21l7.5-7.5" /><circle cx="16.5" cy="7.5" r="3.2" /></svg>
+                <span class="tool-pen" aria-hidden="true"></span>
                 Tool calls
               </h3>
-              <div class="screen-card ledger" id="tool-list"></div>
+              <div class="screen-card fold-list" id="tool-list"></div>
+            </section>
+
+            <section class="screen-card fold-list turn-meta" id="turn-meta">
+              <details class="fold-row fold-row--plain" id="turn-meta-fold">
+                <summary>
+                  <span class="fold-row-copy"><span class="fold-row-name">Bản ghi lượt</span></span>
+                </summary>
+                <div class="fold-row-body">
+                  <pre class="turn-meta-body" id="turn-meta-body">—</pre>
+                </div>
+              </details>
             </section>
           </article>
         </section>

@@ -79,7 +79,7 @@ def test_packaged_persona_is_general_purpose() -> None:
     assert "thi ca" in soul.lower()
     assert "thi ca" in identity.lower()
     # forms of address are learned, not assumed
-    assert "xưng hô" in soul.lower()
+    assert "never assume a fixed pronoun style" in soul.lower()
     assert "mirror the user" in identity.lower()
     # memory is part of the persona
     assert "memory_remember" in soul

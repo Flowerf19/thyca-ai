@@ -2,6 +2,14 @@
 
 Thay đổi của Thyca, viết ngắn gọn cho người dùng.
 
+## 0.8.1 — 11/09/2026
+
+- Hồ sơ thành màn riêng trong mục lục: chọn giữa USER.md / SOUL.md / IDENTITY.md, nội dung hiện đúng markdown (bảng, code, trích dẫn), khung sửa rộng hơn hẳn.
+- Chat không còn đứng hình khi bạn tải lại trang hay sang phiên khác giữa lúc Thyca đang trả lời: sidebar và nút phiên mới vẫn bấm được, phiên đang chạy tự hiện đúng và cập nhật tiếp khi xong.
+- Dòng "Đã dùng" nối bằng dấu phẩy: bash x2, edit x1.
+- Bớt hai dòng cảnh báo lặp của thư viện MCP trong log khởi động.
+- Rời một phiên đang trả lời rồi quay lại thì phiên đó vẫn tiếp tục chạy đúng chỗ đang dở, không reset về một dòng trạng thái trống.
+
 ## 0.8.0 — 10/09/2026
 
 - Khung soạn tin thành một pill kính mờ, bỏ khung trắng lồng hai lớp; mic và chữ theo mực nâu, nút gửi terra với icon trắng.

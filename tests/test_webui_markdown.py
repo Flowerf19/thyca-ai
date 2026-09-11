@@ -58,7 +58,7 @@ def test_chat_js_uses_formatter() -> None:
     view = (BACKEND / "chat-view.js").read_text(encoding="utf-8")
     css = (WEBUI / "backend.css").read_text(encoding="utf-8")
     assert 'from "./markdown.js"' in view
-    assert "formatMarkdown(message.content)" in view
+    assert "formatMarkdown(segment.content)" in view
     assert ".md-table-wrap" in css
     assert (WEBUI / "vendor" / "marked.esm.js").is_file()
 

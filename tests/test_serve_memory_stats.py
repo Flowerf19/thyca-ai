@@ -26,6 +26,15 @@ def _url(httpd, path: str) -> str:
     return f"http://127.0.0.1:{port}{path}"
 
 
+def _fresh_now() -> datetime:
+    """Wall-clock now: leaves the entry's TTL ahead of the real clock.
+
+    A hardcoded past date goes stale — the endpoint refreshes the index with
+    the real clock, which purges anything whose TTL already ran out.
+    """
+    return datetime.now(TZ).replace(second=0, microsecond=0)
+
+
 def _start(tmp_path: Path, facade: MemoryFacade | None = None):
     memory = facade or MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     httpd = make_server(host="127.0.0.1", port=0, webui=WEBUI, facade=memory)
@@ -120,7 +129,7 @@ def test_forget_endpoint(tmp_path: Path) -> None:
 def test_update_and_reinforce_endpoints(tmp_path: Path) -> None:
     httpd, thread, facade = _start(tmp_path)
     try:
-        now = datetime(2026, 8, 10, 10, 0, tzinfo=TZ)
+        now = _fresh_now()
         sid = facade.remember("cafe", "likes ca phe den enough", now=now)
         update = json.dumps({"session_id": sid, "topic": "tra"}).encode("utf-8")
         request = Request(

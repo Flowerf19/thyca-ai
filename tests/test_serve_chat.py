@@ -901,6 +901,30 @@ def test_busy_session_reports_running_and_refuses_a_second_turn(tmp_path: Path) 
         _stop(httpd, thread)
 
 
+def test_webui_keeps_streaming_card_across_session_switch() -> None:
+    """Leaving a streaming session and coming back must not reset its card.
+
+    renderDetail replaces #message-list, which detaches the live card. Keeping
+    the object per session (and re-appending it) is what lets the in-flight
+    stream keep drawing into it; a fresh card would read as a bare status line
+    with no usage row and no further updates.
+    """
+    app = (WEBUI / "app.js").read_text(encoding="utf-8")
+    render = app[app.index("function renderDetail(detail)") : app.index("// Reload mid-turn")]
+    send_message = app[app.index("async function sendMessage()") : app.index("function bind()")]
+
+    assert "const liveTurns = new Map();" in app
+    assert "liveTurns.set(sessionId, live);" in send_message
+    assert "liveTurns.delete(sessionId);" in send_message
+    # Reuse the card for the session on screen, mint one only when there is
+    # none to reuse (turn started before this page loaded).
+    assert "const live = liveTurns.get(state.activeId);" in render
+    assert "if (live) el.messageList.append(live.article);" in render
+    assert "else createLiveStatus(el.messageList);" in render
+    # A detached card must not drag the visible conversation around.
+    assert "if (state.activeId === sessionId) scrollToBottom();" in send_message
+
+
 def test_webui_follows_a_turn_it_did_not_start() -> None:
     app = (WEBUI / "app.js").read_text(encoding="utf-8")
     view = (WEBUI / "backend" / "chat-view.js").read_text(encoding="utf-8")
@@ -913,7 +937,7 @@ def test_webui_follows_a_turn_it_did_not_start() -> None:
     # cheap GET until it lands and render the transcript it wrote.
     assert "RUNNING_POLL_MS = 2000" in app
     assert "detail && detail.running === true" in app
-    assert "if (state.running) createLiveStatus(el.messageList);" in app
+    assert "else createLiveStatus(el.messageList);" in app
     assert "createLiveStatus" in view
     # No turn status is invented for the reload case: the card reads like any
     # in-flight turn, from copy that already exists.

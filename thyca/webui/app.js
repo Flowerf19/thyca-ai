@@ -39,6 +39,10 @@ let idleTimer = 0;
 let idleFromNudge = false;
 let runningTimer = 0;
 const idleArmed = new Set();
+// session_id -> live card for a turn this tab is streaming. Switching to
+// another session detaches the card from the DOM, so keep the object (and the
+// events it already shows) and mount it again on the way back.
+const liveTurns = new Map();
 
 const state = {
   sessions: [],
@@ -207,9 +211,14 @@ function renderDetail(detail) {
   if (!renderConversation(el.messageList, messages)) renderEmpty(el.messageList);
   el.label.textContent = cleanText(detail?.title, "Hôm nay");
   setRunning(detail?.running === true);
-  // A turn that started before this page loaded still deserves its live card;
-  // it looks and reads exactly like one streaming in this tab.
-  if (state.running) createLiveStatus(el.messageList);
+  if (state.running) {
+    // A turn streaming in this tab gets its own card back — same object, so
+    // the events it has been collecting are still on it. A turn started
+    // elsewhere (or before a reload) gets a fresh one that only reports state.
+    const live = liveTurns.get(state.activeId);
+    if (live) el.messageList.append(live.article);
+    else createLiveStatus(el.messageList);
+  }
   renderSessions();
   requestAnimationFrame(() => scrollToBottom("auto"));
 }
@@ -323,13 +332,14 @@ async function sendMessage() {
     const optimistic = [...previous, { role: "user", content: text, ts: new Date().toISOString() }];
     renderConversation(el.messageList, optimistic);
     const live = createLiveStatus(el.messageList);
+    liveTurns.set(sessionId, live);
     scrollToBottom();
     const detail = await postNdjson(
       `/api/sessions/${encodeURIComponent(sessionId)}/turn/stream`,
       { text },
       (event) => {
         updateLiveStatus(live, event);
-        scrollToBottom();
+        if (state.activeId === sessionId) scrollToBottom();
       },
     );
     // The user may have switched to another session mid-turn: only the
@@ -355,6 +365,7 @@ async function sendMessage() {
     // Hand the text back unless the user already started the next message.
     if (!el.input.value) el.input.value = text;
   } finally {
+    if (sessionId) liveTurns.delete(sessionId);
     state.streamSessionId = "";
     setSending(false);
     el.input.focus();

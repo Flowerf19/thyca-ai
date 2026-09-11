@@ -117,6 +117,18 @@ export function splitMemoryHeading(leaf) {
   };
 }
 
+/* Hash text is whatever the address bar holds: "%" alone makes
+   decodeURIComponent throw, so a stray escape degrades to raw text instead
+   of breaking the handler that reads it. */
+export function decodeHash(hash) {
+  const raw = String(hash ?? "").replace(/^#/, "");
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
 export function providerLabel(baseUrl) {
   try {
     const host = new URL(String(baseUrl || "")).hostname.toLowerCase();

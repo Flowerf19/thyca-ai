@@ -49,6 +49,20 @@ a { color: inherit; }
 .screen-heading h2 { color: var(--color-ink); }
 .screen-muted { color: var(--color-muted); }
 .screen-note { color: var(--color-muted); font-size: 0.875rem; }
+
+/* Quiet ⋮ action: row actions on cards, and the header action on Hồ sơ. */
+.row-action {
+  align-self: center;
+  width: 1.35rem;
+  height: 1.85rem;
+  padding: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--color-accent-deep);
+  font-size: 1.25rem;
+  letter-spacing: 0;
+}
+
 .screen-icon { flex: 0 0 auto; width: 1.4rem; height: 1.4rem; }
 
 .screen-card {

@@ -16,6 +16,7 @@ try {
 const routes = [
   ["index.html", "Trò chuyện", "M4 5h16v11H9l-5 4V5Z"],
   ["memories.html", "Nhật ký", "M12 6C9 4 6 4 3 5v14c3-1 6-1 9 1 3-2 6-2 9-1V5c-3-1-6-1-9 1Zm0 0v14"],
+  ["profile.html", "Hồ sơ", "M12 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm-7 18a7 7 0 0 1 14 0"],
   ["trace.html", "Trace", "M5 4v16M5 6h14M5 12h10M5 18h14"],
   ["dashboard.html", "Tổng quan", "M4 20V10h4v9M10 20V5h4v14M16 19v-7h4v7"],
   ["settings.html", "Cài đặt", "M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1 1-3Zm3 5a4 4 0 1 0 0 8 4 4 0 0 0 0-8"],

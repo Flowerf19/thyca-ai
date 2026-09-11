@@ -271,10 +271,6 @@ input:disabled {
   margin-inline-end: auto;
 }
 
-#canonical-content {
-  min-height: 14rem;
-  font-family: var(--font-mono, ui-monospace, "SFMono-Regular", Menlo, monospace);
-}
 
 #trace-status {
   margin: 0 0 0.75rem;

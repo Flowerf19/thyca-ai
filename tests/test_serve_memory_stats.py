@@ -214,15 +214,96 @@ def test_stats_error_is_503(tmp_path: Path) -> None:
 
 def test_default_webui_has_index() -> None:
     assert WEBUI.name == "webui"
-    for name in ("index.html", "memories.html", "trace.html", "provider.html", "dashboard.html"):
+    for name in (
+        "index.html",
+        "memories.html",
+        "profile.html",
+        "trace.html",
+        "provider.html",
+        "dashboard.html",
+    ):
         assert (WEBUI / name).is_file()
-    for name in ("app.js", "memories.js", "trace.js", "provider.js", "cost.js", "usage.js"):
+    for name in ("app.js", "memories.js", "profile.js", "trace.js", "provider.js", "cost.js", "usage.js"):
         assert (WEBUI / name).is_file()
     raw = (WEBUI / "memories.js").read_text(encoding="utf-8")
     assert '"/api/memory/update"' in raw
     assert '"/api/memory/reinforce"' in raw
     assert '"/api/memory/forget"' in raw
-    assert 'postJson("/api/memory/canonical"' in raw
+    # Hồ sơ is its own screen now: the canonical write lives there.
+    assert "canonical" not in raw
+    profile = (WEBUI / "profile.js").read_text(encoding="utf-8")
+    assert 'postJson("/api/memory/canonical"' in profile
+
+
+def test_profile_screen_renders_markdown() -> None:
+    """Hồ sơ is its own screen: mục lục route, file switcher, markdown body."""
+    html = (WEBUI / "profile.html").read_text(encoding="utf-8")
+    script = (WEBUI / "profile.js").read_text(encoding="utf-8")
+    css = (WEBUI / "profile.css").read_text(encoding="utf-8")
+    navigation = (WEBUI / "navigation.js").read_text(encoding="utf-8")
+    memories = (WEBUI / "memories.html").read_text(encoding="utf-8")
+
+    assert '["profile.html", "Hồ sơ"' in navigation
+    assert 'id="profile-nav"' in html
+    assert "./profile.js" in html
+    assert "./navigation.js" in html
+    # The edit dialog moves across unchanged; only its size grows.
+    assert 'id="canonical-dialog"' in html
+    assert "min(56rem, calc(100vw - 2rem))" in css
+    # Body text is markdown, rendered by the shared chat renderer.
+    assert 'from "./backend/markdown.js"' in script
+    assert "formatMarkdown(file.content)" in script
+    assert "selectCanonical" in script
+    assert 'postJson("/api/memory/canonical"' in script
+    # Nhật ký no longer carries the profile view or its dialog.
+    assert 'data-view="profile"' not in memories
+    assert "canonical" not in memories
+
+    # Switching files must not rebuild the list: the removed button would take
+    # keyboard focus with it, and the loader status must not outlive the load.
+    assert "function markNav()" in script
+    show_body = script[script.index("function show(") : script.index("function activeNavButton")]
+    assert "markNav();" in show_body
+    assert "renderNav();" not in show_body
+    load_body = script[script.index("async function load()") : script.index("function openDialog")]
+    assert "renderNav();" in load_body
+    assert "setStatus();" in show_body
+    # A stray escape in the hash must not throw out of the hashchange handler;
+    # the guard lives in the shared helper (tests/test_webui_format.py).
+    assert 'import { decodeHash } from "./backend/format.js";' in script
+    assert "decodeHash(location.hash)" in script
+    assert "decodeURIComponent(" not in script
+
+    # Blanking a profile is a real action, so it asks first rather than being
+    # blocked by native `required` validation.
+    assert 'id="canonical-content" spellcheck' in html
+    assert "required" not in html
+    assert 'confirm(`Xoá nội dung “${name}”?`)' in script
+
+    # Switching files moves focus to the nav button, whose own label announces
+    # the file; re-reading a whole file body would be noise.
+    assert 'id="profile-content" aria-live' not in html
+
+    # Heading, status and prose share one measure (measured 1440px: all three
+    # span the same box instead of the prose being centred on its own).
+    assert ".profile-surface > .screen-heading," in css
+    assert "max-width: 60rem;" in css
+
+    # Sidebar rows reuse the shape dashboard.html and memories.html use, so the
+    # shared .session-item/.session-name rules apply unchanged (measured: row
+    # 58.4px tall, name 41px in, 15.04px — identical on all three screens).
+    # The chat variant (.session-body) lays the same row out taller and shifts
+    # the name, which is what this screen used to do.
+    assert 'className = "session-body"' not in script
+    assert 'icon.className = "session-icon"' in script
+    assert 'name.className = "session-name"' in script
+
+    # Spacing matches the screens that put a heading above content: 1rem under
+    # the heading (same as .dashboard-block > .screen-heading), and an empty
+    # status line holds no space (measured: heading 71px + 16px gap on both).
+    assert ".profile-surface > .screen-heading {" in css
+    assert "margin-block-end: 1rem;" in css
+    assert ".profile-status:empty {" in css
 
 
 def test_index_html_parses() -> None:
@@ -232,6 +313,7 @@ def test_index_html_parses() -> None:
         "trace.html": './trace.js',
         "provider.html": './provider.js',
         "dashboard.html": './cost.js',
+        "profile.html": './profile.js',
     }
     for name, script in expected.items():
         raw = (WEBUI / name).read_text(encoding="utf-8")

@@ -1,0 +1,47 @@
+.profile-surface {
+  padding: 1.75rem 1.8rem;
+}
+
+/* Heading, status and prose share one measure: a lone centred column under a
+   full-width heading reads as a mistake on a wide window. One file at a time,
+   so the prose keeps a readable width instead of spanning the surface. */
+.profile-surface > .screen-heading,
+.profile-surface > .profile-status,
+.profile-content {
+  width: 100%;
+  max-width: 60rem;
+  margin-inline: auto;
+}
+
+/* Same 1rem the other screens put under a heading with a note. */
+.profile-surface > .screen-heading {
+  margin-block-end: 1rem;
+}
+
+/* The status line is a live region, not a placeholder: with nothing to say it
+   must not hold a line open above the file. */
+.profile-status:empty {
+  display: none;
+}
+
+.profile-content:empty {
+  min-height: 6rem;
+}
+
+/* Editing one markdown file needs room the shared dialog does not give. */
+#canonical-dialog {
+  width: min(56rem, calc(100vw - 2rem));
+}
+
+#canonical-content {
+  min-height: 22rem;
+  font-family: var(--font-mono, ui-monospace, "SFMono-Regular", Menlo, monospace);
+}
+
+@media (max-width: 56rem) {
+  /* Same as the other screens: the file switcher stays reachable. */
+  .profile-shell .sessions {
+    display: flex !important;
+    pointer-events: auto;
+  }
+}

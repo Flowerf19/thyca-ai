@@ -178,19 +178,11 @@
   white-space: nowrap;
 }
 
+/* Placement only — the look lives in .row-action (screens.css). */
 .memory-more {
   grid-column: 2;
   grid-row: 1;
   justify-self: end;
-  align-self: center;
-  width: 1.35rem;
-  height: 1.85rem;
-  padding: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--color-accent-deep);
-  font-size: 1.25rem;
-  letter-spacing: 0;
 }
 
 .memory-empty {

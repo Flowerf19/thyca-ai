@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#714327">
+    <title>Thyca — Hồ sơ</title>
+    <link rel="icon" href="data:," />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600&family=Fraunces:ital,opsz,wght@0,9..144;0,9..144,500;0,9..144,600;1,9..144,500&family=Source+Serif+4:ital,opsz,wght@0,8..60;0,8..60,400;0,8..60,500;1,8..60,400&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="./styles.css">
+    <link rel="stylesheet" href="./screens.css">
+    <link rel="stylesheet" href="./profile.css">
+    <link rel="stylesheet" href="./backend.css">
+  </head>
+  <body>
+    <main class="notebook-shell screen-shell profile-shell" aria-label="Hồ sơ của bạn">
+      <header class="site-header">
+        <button class="icon-button menu-button" type="button" aria-label="Mở mục lục">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6.5h16M4 12h16M4 17.5h11" /></svg>
+        </button>
+        <p class="header-line">
+          <time id="header-datetime" datetime=""></time>
+          <span id="header-edition">Thyca</span>
+        </p>
+      </header>
+      <aside class="sidebar" aria-label="Điều hướng chính">
+        <section class="sessions">
+          <div class="sessions-heading">
+            <h2>Hồ sơ</h2>
+          </div>
+          <nav class="session-list" id="profile-nav" aria-label="Các file hồ sơ" aria-live="polite"></nav>
+        </section>
+      </aside>
+
+      <section class="workspace" aria-label="Không gian hồ sơ">
+        <section class="screen-surface profile-surface" aria-label="Nội dung hồ sơ">
+          <header class="screen-heading">
+            <div>
+              <h2 id="profile-title">Hồ sơ</h2>
+              <p class="screen-muted" id="profile-note">Những gì Thyca luôn đọc trước khi trả lời.</p>
+            </div>
+            <button class="row-action" id="profile-edit" type="button" aria-label="Sửa file hồ sơ" aria-haspopup="dialog" disabled>⋮</button>
+          </header>
+          <p class="screen-status profile-status" id="profile-status" role="status" aria-live="polite"></p>
+          <article class="markdown-body profile-content" id="profile-content"></article>
+        </section>
+      </section>
+    </main>
+
+    <dialog class="screen-dialog" id="canonical-dialog" aria-labelledby="canonical-dialog-title">
+      <form method="dialog" id="canonical-form">
+        <h2 id="canonical-dialog-title">Sửa hồ sơ</h2>
+        <input type="hidden" id="canonical-name">
+        <label for="canonical-content">Nội dung<textarea class="screen-input" id="canonical-content" spellcheck="false"></textarea></label>
+        <p class="screen-status" id="canonical-dialog-status" role="status" aria-live="polite"></p>
+        <div class="screen-toolbar">
+          <button class="screen-button" id="cancel-canonical" type="button">Hủy</button>
+          <button class="screen-button is-primary" type="submit">Lưu file</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="./navigation.js" defer></script>
+    <script type="module" src="./profile.js"></script>
+  </body>
+</html>

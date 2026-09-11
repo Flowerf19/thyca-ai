@@ -232,7 +232,7 @@ def test_rejects_non_loopback(tmp_path: Path) -> None:
 
 
 def test_create_during_in_flight_turn(tmp_path: Path) -> None:
-    """create() must not wait on the LLM — only turns serialize on _turn_lock."""
+    """create() must not wait on the LLM of an in-flight turn."""
     started = threading.Event()
     release = threading.Event()
 
@@ -682,7 +682,7 @@ def test_chat_nav_opens_new_session() -> None:
     assert "state.activeId = \"\";" in new_session
     assert "postJson" not in new_session
     assert 'postJson("/api/sessions", {})' in ensure_session
-    assert "const sessionId = await ensureSession()" in app
+    assert "sessionId = await ensureSession()" in app
 
     provider = (WEBUI / "provider.js").read_text(encoding="utf-8")
     assert 'getJson("/api/config")' in provider
@@ -836,7 +836,7 @@ def test_empty_submit_nudges_without_sending() -> None:
     html = (WEBUI / "index.html").read_text(encoding="utf-8")
     css = (WEBUI / "styles.css").read_text(encoding="utf-8")
     send_message = app[app.index("async function sendMessage()") : app.index("function bind()")]
-    empty_branch = send_message[: send_message.index("if (state.busy) return;")]
+    empty_branch = send_message[: send_message.index("if (composerBusy()) return;")]
 
     # The hint is the accessible half of the nudge: motion needs text too.
     assert 'id="composer-hint"' in html
@@ -848,3 +848,98 @@ def test_empty_submit_nudges_without_sending() -> None:
     assert "fetch(" not in empty_branch
     assert "@keyframes composer-nudge" in css
     assert ".composer.is-nudging" in css
+
+
+def test_busy_session_reports_running_and_refuses_a_second_turn(tmp_path: Path) -> None:
+    """A turn in flight is visible to the UI and refuses a second one."""
+    release = threading.Event()
+
+    class Slow:
+        async def chat(self, messages, tools=None):
+            await asyncio.to_thread(release.wait)
+            return ChatReply(content="late")
+
+    httpd, thread = _start(tmp_path, _chat(tmp_path, Slow()))
+    try:
+        created = _json(httpd, "/api/sessions", method="POST", data=b"")
+        session_id = created["id"]
+        assert _json(httpd, f"/api/sessions/{session_id}")["running"] is False
+        response = _stream(
+            httpd,
+            f"/api/sessions/{session_id}/turn/stream",
+            data=b'{"text":"first"}',
+        )
+        assert json.loads(response.readline().decode("utf-8")) == {"type": "turn.accepted"}
+        try:
+            # The reloaded page reads exactly this to know a turn is in flight.
+            detail = _json(httpd, f"/api/sessions/{session_id}")
+            assert detail["running"] is True
+            assert detail["started_at"]
+            request = Request(
+                _url(httpd, f"/api/sessions/{session_id}/turn"),
+                data=b'{"text":"second"}',
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            try:
+                urlopen(request, timeout=5)
+            except HTTPError as exc:
+                assert exc.code == 409
+                assert json.loads(exc.read().decode("utf-8")) == {"error": "session busy"}
+            else:
+                raise AssertionError("expected 409")
+        finally:
+            response.close()
+            release.set()
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            if _json(httpd, f"/api/sessions/{session_id}")["running"] is False:
+                break
+            time.sleep(0.05)
+        assert _json(httpd, f"/api/sessions/{session_id}")["running"] is False
+    finally:
+        _stop(httpd, thread)
+
+
+def test_webui_follows_a_turn_it_did_not_start() -> None:
+    app = (WEBUI / "app.js").read_text(encoding="utf-8")
+    view = (WEBUI / "backend" / "chat-view.js").read_text(encoding="utf-8")
+    status = (WEBUI / "backend" / "chat-status.js").read_text(encoding="utf-8")
+    load_session = app[app.index("async function loadSession") : app.index("function newSession")]
+    watch = app[app.index("function watchRunning(sessionId)") : app.index("async function loadSession")]
+    composer = app[app.index("function composerBusy()") : app.index("function setSending")]
+
+    # Reload mid-turn: keep the live card the turn would own, then poll the
+    # cheap GET until it lands and render the transcript it wrote.
+    assert "RUNNING_POLL_MS = 2000" in app
+    assert "detail && detail.running === true" in app
+    assert "if (state.running) createLiveStatus(el.messageList);" in app
+    assert "createLiveStatus" in view
+    # No turn status is invented for the reload case: the card reads like any
+    # in-flight turn, from copy that already exists.
+    assert "Đang trả lời lượt trước" not in status
+    assert "Phiên đang trả lời" not in status
+    assert "SESSION_BUSY_STATUS" not in status
+
+    # A single failed GET must not strand the composer behind a "running"
+    # state nobody polls any more.
+    assert "RUNNING_POLL_MAX_FAILURES" in app
+    assert "failures += 1" in watch
+    assert "setRunning(false)" in watch
+    assert "RUNNING_POLL_MS * failures" in watch
+
+    # Blocking is per session: only the session this tab streams from (or the
+    # one running on the backend) has its composer disabled.
+    assert "state.streamSessionId" in app
+    assert "state.streamSessionId === sessionKey()" in composer
+    # Sending to one session must not disable another session's composer.
+    assert "state.sending || state.running" not in composer
+
+    # The 409 branch must not depend on an identifier the module never
+    # imported (a missing ApiError import threw at runtime, not at load).
+    assert 'import { ApiError, getJson, postJson, postNdjson }' in app
+    assert "error instanceof ApiError" in app
+    assert "state.busy" not in load_session
+    # The sidebar and New session stay usable while a turn runs.
+    assert "el.newSession.disabled" not in app
+    assert "button.disabled = busy" not in app

@@ -22,7 +22,7 @@ from thyca.llm.llm_factory import ConnectFactory
 from thyca.llm.pricing import cost_for
 from thyca.memory.active import ActiveMemory
 from thyca.protocol import Message, ToolCall, utc_now_ts
-from thyca.sessions import Session, SessionManager, ask_remember
+from thyca.sessions import Session, SessionBusy, SessionManager, ask_remember
 from thyca.sessions.store import SessionStore
 from thyca.sessions.title import display_title, is_blank, propose_title
 from thyca.tools.builtin import register_file_tools
@@ -66,10 +66,11 @@ class ChatApp:
         self._thread = threading.Thread(
             target=self._run_loop, name="thyca-mcp-loop", daemon=True
         )
-        self._turn_lock = threading.Lock()
-        # Session id of an in-flight turn (if any). create()/discard must
-        # not clobber or delete it while the LLM call holds the turn lock.
-        self._active_turn_session_id: str | None = None
+        self._running_lock = threading.Lock()
+        # session_id -> started_at for every turn in flight. Turns are keyed by
+        # session, not serialized globally: a slow turn in one session must not
+        # block another (nor its own UI, which reads this map).
+        self._running: dict[str, str] = {}
         self._stopped = False
         self._thread.start()
         try:
@@ -103,7 +104,7 @@ class ChatApp:
             for item in self._sessions.list_sessions()
             if not is_blank(item)
         ]
-        return {"model": self._cfg.provider.model, "sessions": sessions}
+        return {"model": self._current_cfg().provider.model, "sessions": sessions}
 
     def _current_cfg(self) -> Config:
         """Re-read the config file each turn so settings changes apply
@@ -115,16 +116,22 @@ class ChatApp:
 
     def get_payload(self, session_id: str) -> dict:
         session = self._sessions.store.load(session_id)
-        return self._session_detail(session)
+        return self._session_detail(session, self._current_cfg())
+
+    def running_sessions(self) -> dict[str, str]:
+        """Snapshot of session_id -> started_at for turns in flight."""
+        with self._running_lock:
+            return dict(self._running)
 
     def create(self) -> dict:
-        # Do not take _turn_lock: create/list must stay responsive while a
-        # turn awaits the LLM. SessionManager already serializes store ops.
-        # Keep the in-flight turn session (if any) and do not steal current.
-        keep = self._active_turn_session_id
+        # Do not wait on any turn: create/list stay responsive while an LLM
+        # call is in flight. Blank sessions belonging to a running turn must
+        # survive the prune — its transcript is still empty on disk.
+        with self._running_lock:
+            keep = set(self._running)
         self._sessions.discard_empty(keep=keep)
-        session = self._sessions.create(make_current=keep is None)
-        return self._session_detail(session)
+        session = self._sessions.create()
+        return self._session_detail(session, self._current_cfg())
 
     def turn(self, session_id: str, text: str, event_sink: EventSink | None = None) -> dict:
         if not isinstance(text, str):
@@ -134,43 +141,57 @@ class ChatApp:
             raise ValueError("empty")
         if len(cleaned) > TEXT_MAX:
             raise ValueError("too long")
-        # Serialize turns against each other (shared SessionManager.current),
-        # but create()/list never take this lock — only short store sections.
-        with self._turn_lock:
-            self._active_turn_session_id = session_id
-            try:
-                return self._submit(self._run_turn(session_id, cleaned, event_sink))
-            finally:
-                self._active_turn_session_id = None
+        # Claim the session, then run. Claiming is what makes the second turn
+        # on a busy session an explicit 409 instead of a silent queue behind
+        # the first one's LLM call.
+        with self._running_lock:
+            if session_id in self._running:
+                raise SessionBusy(session_id)
+            self._running[session_id] = utc_now_ts()
+        try:
+            return self._submit(self._run_turn(session_id, cleaned, event_sink))
+        finally:
+            with self._running_lock:
+                self._running.pop(session_id, None)
 
     async def _run_turn(
         self, session_id: str, text: str, event_sink: EventSink | None = None
     ) -> dict:
-        self._cfg = self._current_cfg()
+        # Every turn owns its session state (config, SessionManager, current
+        # session). Nothing here is shared with a concurrent turn, so a slow
+        # provider call in one session cannot block or corrupt another.
+        cfg = self._current_cfg()
+        sessions = SessionManager(
+            limits=cfg.effective_limits(),
+            timezone_name=cfg.timeline.timezone,
+            store=self._sessions.store,
+        )
+        sessions.load(session_id)
         connect = self._injected_connect or ConnectFactory.create(
-            "openai_chat", self._cfg.effective_provider()
+            "openai_chat", cfg.effective_provider()
         )
         owns = self._injected_connect is None
         self._wire_retry_events(connect, event_sink)
         try:
-            self._sessions.load(session_id)
-            limits = self._cfg.effective_limits()
-            self._sessions.limits = limits
+            limits = cfg.effective_limits()
             loop = AgentLoop(
-                sessions=self._sessions,
+                sessions=sessions,
                 assemble=Assemble(),
                 think=Think(connect),
                 act=self._act,
-                observe=Observe(self._sessions),
+                observe=Observe(sessions),
                 loop_max=limits.loopMax,
                 tools=self._tools,
-                model=self._cfg.provider.model,
-                pricing=self._cfg.effective_pricing() or None,
+                model=cfg.provider.model,
+                pricing=cfg.effective_pricing() or None,
             )
             hot = self._memory.refresh(self._state, datetime.now(self._zone))
             reply = await loop.run(text, hot=hot, event_sink=event_sink)
-            await self._name_if_needed(connect, event_sink)
-            return {**self._session_detail(self._sessions.current), "reply": reply}
+            await self._name_if_needed(connect, sessions, cfg, event_sink)
+            # The turn's own response is not a turn in flight: the client that
+            # just received it must not be told to wait for itself.
+            detail = self._session_detail(sessions.current, cfg, running=False)
+            return {**detail, "reply": reply}
         finally:
             if owns:
                 close = getattr(connect, "aclose", None)
@@ -178,9 +199,13 @@ class ChatApp:
                     await close()
 
     async def _name_if_needed(
-        self, connect: LLMPort, event_sink: EventSink | None = None
+        self,
+        connect: LLMPort,
+        sessions: SessionManager,
+        cfg: Config,
+        event_sink: EventSink | None = None,
     ) -> bool:
-        session = self._sessions.current
+        session = sessions.current
         if session.title:
             return False
         emit_event(event_sink, TurnEvent(type="session.naming.started"))
@@ -199,19 +224,21 @@ class ChatApp:
             cleaned = None
         latency_ms = int((perf_counter() - started) * 1000)
         if cleaned is not None:
-            stored = self._sessions.set_title(cleaned)
+            stored = sessions.set_title(cleaned)
             updated = stored is not None
             if updated:
-                self._record_naming(captured.get("reply"), latency_ms)
+                self._record_naming(captured.get("reply"), latency_ms, sessions, cfg)
         emit_event(
             event_sink, TurnEvent(type="session.naming.finished", updated=updated)
         )
         return updated
 
-    def _record_naming(self, reply: object, latency_ms: int) -> None:
+    def _record_naming(
+        self, reply: object, latency_ms: int, sessions: SessionManager, cfg: Config
+    ) -> None:
         """Persist the naming LLM call as a meta-only assistant message (TASK-009)."""
         usage = getattr(reply, "usage", None)
-        model = (getattr(reply, "model", None) or self._cfg.provider.model or "").strip() or None
+        model = (getattr(reply, "model", None) or cfg.provider.model or "").strip() or None
         meta: dict = {"kind": "naming", "latency_ms": max(0, latency_ms)}
         if model:
             meta["model"] = model
@@ -221,11 +248,11 @@ class ChatApp:
             price = cost_for(
                 model,
                 usage if isinstance(usage, dict) else None,
-                self._cfg.effective_pricing() or None,
+                cfg.effective_pricing() or None,
             )
             if price is not None:
                 meta["cost_usd"] = price
-        self._sessions.append(Message(role="assistant", content=None, ts=utc_now_ts(), meta=meta))
+        sessions.append(Message(role="assistant", content=None, ts=utc_now_ts(), meta=meta))
 
     def _wire_retry_events(
         self, connect: LLMPort, event_sink: EventSink | None
@@ -274,11 +301,13 @@ class ChatApp:
             "message_count": len(session.messages),
         }
 
-    def _session_detail(self, session: Session) -> dict:
-        return {
+    def _session_detail(
+        self, session: Session, cfg: Config, *, running: bool | None = None
+    ) -> dict:
+        detail = {
             "id": session.id,
             "title": session_title(session),
-            "model": self._cfg.provider.model,
+            "model": cfg.provider.model,
             "messages": [
                 _message_dict(item, self.skills_root) for item in session.messages
             ],
@@ -286,6 +315,14 @@ class ChatApp:
                 session.messages, datetime.now(UTC)
             ),
         }
+        # A turn in flight is invisible on disk until it finishes writing, so
+        # the client is told here: it can wait instead of guessing. A caller
+        # that already knows the answer (the turn itself) passes it in.
+        started_at = self.running_sessions().get(session.id) if running is None else None
+        detail["running"] = running if running is not None else started_at is not None
+        if started_at is not None:
+            detail["started_at"] = started_at
+        return detail
 
 
 def session_title(session: Session) -> str:

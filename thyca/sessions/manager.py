@@ -89,7 +89,13 @@ class SessionManager:
                     continue
             return sessions
 
-    def discard_empty(self, keep: str | None = None) -> list[str]:
+    def discard_empty(self, keep: set[str] | None = None) -> list[str]:
+        """Drop blank sessions except the ones named in ``keep``.
+
+        ``keep`` is every session with an in-flight turn: a turn writes its
+        first message a moment after it starts, so an empty file may still
+        belong to a running turn.
+        """
         with self._lock:
             removed: list[str] = []
             for path in self.store.list_paths():
@@ -97,7 +103,7 @@ class SessionManager:
                     session = self.store.load(path.stem)
                 except (SessionCorrupt, SessionNotFound, SessionError):
                     continue
-                if keep is not None and session.id == keep:
+                if keep and session.id in keep:
                     continue
                 if not is_blank(session):
                     continue

@@ -93,7 +93,7 @@ def test_discard_empty_keeps_spoken_and_keep(tmp_path: Path) -> None:
     kept = manager.create()
     spoken = manager.create()
     manager.append(msg("user", "alo"))
-    removed = SessionManager(tmp_path).discard_empty(keep=kept.id)
+    removed = SessionManager(tmp_path).discard_empty(keep={kept.id})
     assert set(removed) == {blank.id}
     assert not blank.path.exists()
     assert kept.path.exists()

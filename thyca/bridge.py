@@ -13,7 +13,7 @@ import threading
 from thyca.agent.events import TurnEvent
 from thyca.chat_app import ChatApp
 from thyca.llm.llm_base import LLMError
-from thyca.sessions import SessionCorrupt, SessionError, SessionNotFound
+from thyca.sessions import SessionBusy, SessionCorrupt, SessionError, SessionNotFound
 
 SENTINEL = object()
 
@@ -28,6 +28,8 @@ def public_turn_error(exc: Exception) -> tuple[int, str, str]:
     """
     if isinstance(exc, ValueError):
         return 400, "invalid_text", "invalid text"
+    if isinstance(exc, SessionBusy):
+        return 409, "session_busy", "session busy"
     if isinstance(exc, SessionNotFound):
         return 404, "session_not_found", "session not found"
     if isinstance(exc, SessionCorrupt):
@@ -159,8 +161,8 @@ def stream_turn(handler, app: ChatApp, session_id: str, text: str) -> None:
         # Client left: drop further events, let persist finish.
         state["disconnected"] = True
     finally:
-        # The worker is a daemon and ChatApp serializes turns behind
-        # _turn_lock, so persistence completes regardless. A live
+        # The worker is a daemon and only this session's turn was ever at
+        # stake, so persistence completes regardless of the client. A live
         # stream waits for the terminal item; an abandoned one only
         # parks this handler thread briefly.
         worker.join(timeout=5 if state["disconnected"] else 60)

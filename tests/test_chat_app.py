@@ -1,14 +1,19 @@
 """ChatApp.turn event sink — TASK-004 verification."""
 from __future__ import annotations
 
+import asyncio
+import threading
+import time
 from pathlib import Path
 
+import pytest
 from test_serve_chat import FakeLLM, ScriptedLLM, _chat
 
 from thyca.agent.events import TurnEvent
 from thyca.llm.llm_base import ChatReply, LLMError
+from thyca.memory.active import ActiveMemory
 from thyca.protocol import Message
-from thyca.sessions import SessionManager
+from thyca.sessions import SessionBusy, SessionManager
 from thyca.sessions.title import fallback_title
 
 
@@ -245,5 +250,160 @@ def test_sink_not_stored_on_app(tmp_path: Path) -> None:
         app.turn(created["id"], "alo", event_sink=sink)
         values = list(app.__dict__.values())
         assert all(value is not sink for value in values)
+    finally:
+        app.shutdown()
+
+
+def test_two_sessions_run_turns_in_parallel(tmp_path: Path) -> None:
+    """A turn in flight owns only its own session — it blocks no other one."""
+    first_started = threading.Event()
+    release = threading.Event()
+
+    class Gated:
+        async def chat(self, messages, tools=None):
+            text = messages[-1].content
+            if text == "slow":
+                first_started.set()
+                await asyncio.to_thread(release.wait)
+            return ChatReply(content=f"reply:{text}")
+
+    # One connect per turn is what the factory does; the injected one is
+    # shared, so make each chat call independent instead of stateful.
+    app = _chat(tmp_path, Gated())
+    slow_id = app.create()["id"]
+    errors: list[BaseException] = []
+    slow: dict = {}
+
+    def run_slow() -> None:
+        try:
+            slow.update(app.turn(slow_id, "slow"))
+        except BaseException as exc:
+            errors.append(exc)
+
+    worker = threading.Thread(target=run_slow)
+    worker.start()
+    assert first_started.wait(2)
+    try:
+        # The second session is idle: its turn must complete while the first
+        # one is still parked in the provider call.
+        other_id = app.create()["id"]
+        started_at = time.monotonic()
+        quick = app.turn(other_id, "fast")
+        elapsed = time.monotonic() - started_at
+        assert quick["reply"] == "reply:fast"
+        assert elapsed < 2, f"second session waited on the first turn: {elapsed:.2f}s"
+    finally:
+        release.set()
+        worker.join(timeout=5)
+    assert not errors
+    assert slow["reply"] == "reply:slow"
+    assert sorted(app.running_sessions()) == []
+    # Each turn wrote only its own transcript: sharing one session holder would
+    # have appended the slow reply into whichever session the fast turn loaded.
+    store = SessionManager(tmp_path / "sessions")
+    slow_messages = [(item.role, item.content) for item in store.load(slow_id).messages]
+    fast_messages = [(item.role, item.content) for item in store.load(other_id).messages]
+    assert slow_messages[:2] == [("user", "slow"), ("assistant", "reply:slow")]
+    assert fast_messages[:2] == [("user", "fast"), ("assistant", "reply:fast")]
+    assert not any("fast" in (content or "") for _role, content in slow_messages)
+    assert not any("slow" in (content or "") for _role, content in fast_messages)
+    app.shutdown()
+
+
+def test_second_turn_on_same_session_is_busy(tmp_path: Path) -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    class Slow:
+        async def chat(self, messages, tools=None):
+            started.set()
+            await asyncio.to_thread(release.wait)
+            return ChatReply(content="late")
+
+    app = _chat(tmp_path, Slow())
+    session_id = app.create()["id"]
+    errors: list[BaseException] = []
+
+    def run_turn() -> None:
+        try:
+            app.turn(session_id, "first")
+        except BaseException as exc:  # surfaced by the assert below
+            errors.append(exc)
+
+    worker = threading.Thread(target=run_turn)
+    worker.start()
+    assert started.wait(2)
+    try:
+        assert app.running_sessions()[session_id]
+        detail = app.get_payload(session_id)
+        assert detail["running"] is True
+        assert detail["started_at"]
+        with pytest.raises(SessionBusy):
+            app.turn(session_id, "second")
+    finally:
+        release.set()
+        worker.join(timeout=5)
+    assert not errors
+    assert app.running_sessions() == {}
+    assert app.get_payload(session_id)["running"] is False
+    app.shutdown()
+
+
+def test_create_keeps_blank_session_with_running_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """create() prunes blank sessions except the one whose turn is in flight.
+
+    A turn claims its session before writing anything, so an empty transcript
+    on disk still belongs to a running turn.
+    """
+    claimed = threading.Event()
+    release = threading.Event()
+    real_refresh = ActiveMemory.refresh
+
+    def gated_refresh(self, state, now):
+        claimed.set()
+        release.wait(5)
+        return real_refresh(self, state, now)
+
+    monkeypatch.setattr(ActiveMemory, "refresh", gated_refresh)
+    app = _chat(tmp_path, FakeLLM(ChatReply(content="late")))
+    running_id = app.create()["id"]
+    assert app.get_payload(running_id)["messages"] == []
+    errors: list[BaseException] = []
+
+    def run_turn() -> None:
+        try:
+            app.turn(running_id, "hi")
+        except BaseException as exc:  # surfaced by the assert below
+            errors.append(exc)
+
+    worker = threading.Thread(target=run_turn)
+    worker.start()
+    assert claimed.wait(2)
+    try:
+        fresh = app.create()
+        assert fresh["id"] != running_id
+        assert (tmp_path / "sessions" / f"{running_id}.jsonl").exists()
+    finally:
+        release.set()
+        worker.join(timeout=5)
+    assert not errors
+    stored = SessionManager(tmp_path / "sessions").load(running_id)
+    assert [(item.role, item.content) for item in stored.messages] == [
+        ("user", "hi"),
+        ("assistant", "late"),
+    ]
+    app.shutdown()
+
+
+def test_turn_response_does_not_claim_to_be_running(tmp_path: Path) -> None:
+    """The turn's own payload must not tell the client to wait for itself."""
+    app = _chat(tmp_path, FakeLLM(ChatReply(content="pong")))
+    created = app.create()
+    try:
+        turned = app.turn(created["id"], "alo")
+        assert turned["running"] is False
+        assert "started_at" not in turned
     finally:
         app.shutdown()

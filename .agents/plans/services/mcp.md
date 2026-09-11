@@ -17,7 +17,7 @@ Spawn MCP stdio bằng official SDK (`mcp` 1.29.0, `mcp>=1.0,<2` đã có trong 
 Hai mặt loop:
 
 - **CLI** (`Cli._run`): `asyncio.run` một lần cho cả process như hiện tại. `await spawn_all` trên loop đó. Không thêm thread. `finally` gọi `shutdown`.
-- **`--serve`** (`ChatApp`): `ThreadingHTTPServer` + `turn()` đang `asyncio.run` mỗi POST (`chat_app.py`). Session MCP không sống sót cách đó. `ChatApp` spawn **một** loop thread lúc `__init__`; `spawn_all` một lần trên thread đó; `turn` = `run_coroutine_threadsafe`. `_turn_lock` vẫn serialize lượt chat. `serve.run` `finally` gọi `ChatApp.shutdown()`.
+- **`--serve`** (`ChatApp`): `ThreadingHTTPServer` + `turn()` đang `asyncio.run` mỗi POST (`chat_app.py`). Session MCP không sống sót cách đó. `ChatApp` spawn **một** loop thread lúc `__init__`; `spawn_all` một lần trên thread đó; `turn` = `run_coroutine_threadsafe`. Lượt chat giờ theo session (`ChatApp._running`), không còn `_turn_lock` toàn cục. `serve.run` `finally` gọi `ChatApp.shutdown()`.
 
 `mcpServers: {}` → 0 child. AgentLoop / `tools=7` (debug CLI) giữ như hiện tại.
 
@@ -130,7 +130,7 @@ finally:
 3. `run_coroutine_threadsafe(manager.spawn_all(cfg.mcpServers), loop).result()`; in diagnostic fail.
 4. `register` `tool_specs()`; snapshot `to_openai_schema()`; `Act(registry)`.
 
-`turn`: giữ `_turn_lock`; **cấm** `asyncio.run`. `run_coroutine_threadsafe(self._run_turn(...), loop).result()` — exception (`LLMError`, `SessionError`, `ValueError`) propagate như hiện tại (serve map HTTP).
+`turn`: claim session trong `_running` (lượt thứ hai cùng session → `SessionBusy`/409); **cấm** `asyncio.run`. `run_coroutine_threadsafe(self._run_turn(...), loop).result()` — exception (`LLMError`, `SessionError`, `ValueError`) propagate như hiện tại (serve map HTTP).
 
 `shutdown` (sync): `spawn` `manager.shutdown()` trên loop → `call_soon_threadsafe(loop.stop)` → `thread.join` (timeout 5s). `serve.run` `finally`: `chat.shutdown()` rồi `httpd.server_close()`. KeyboardInterrupt/`serve_forever` return đều đi vào `finally`.
 
@@ -171,7 +171,7 @@ IDs 312–314 giữ. Wording cũ quá to → thu hẹp. Chi tiết mới = TASK-
 
 | ID | Task | Done | Date |
 |----|------|------|------|
-| TASK-332 | `ChatApp`: loop thread bền; `spawn_all` một lần trong `__init__`; `turn` dùng `run_coroutine_threadsafe`; xóa `asyncio.run` từng POST. `_turn_lock` giữ. CLI không thêm thread | x | 2026-08-24 |
+| TASK-332 | `ChatApp`: loop thread bền; `spawn_all` một lần trong `__init__`; `turn` dùng `run_coroutine_threadsafe`; xóa `asyncio.run` từng POST. Claim theo session (`_running`). CLI không thêm thread | x | 2026-08-24 |
 | TASK-333 | `ChatApp.shutdown()`; `serve.run` `finally` gọi khi `chat` không `None`. Test serve cũ (empty MCP) vẫn pass không bắt shutdown | x | 2026-08-24 |
 
 ### GOAL-005: Fault

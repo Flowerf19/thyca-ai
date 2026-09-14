@@ -132,7 +132,7 @@ a { color: inherit; }
 }
 
 /* Collapsible rows: one card, each row a summary you can open for detail.
-   Shared by "Chi phí theo mô hình" and the trace tool catalog. */
+   Used by the trace tool catalog and the turn record. */
 .screen-card.fold-list,
 .fold-list {
   padding: 0;

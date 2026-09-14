@@ -95,49 +95,43 @@ function drawChart(rows) {
   el.chart.setAttribute("aria-label", `Chi phí ${rows.length} ngày; cao nhất ${formatCost(maxValue)}.`);
 }
 
-// One model, always showing its token split: the numbers are short enough to
-// read at a glance, so a disclosure step would only hide them.
-function modelRow(model, total) {
-  const row = document.createElement("article");
-  row.className = "fold-row cost-model-row";
-  const head = document.createElement("div");
-  head.className = "cost-model-head";
-  const icon = document.createElement("span");
-  icon.className = "fold-row-icon";
-  icon.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7.2"/><path d="M9 9.5h6v5H9Z"/><path d="M12 8v8"/></svg>';
+// One model per card, shaped like a Nhật ký page: title, summary, token tags,
+// and the cost in the corner. Open at rest — nothing to click.
+function modelCard(model, total) {
+  const card = document.createElement("article");
+  card.className = "cost-model-card";
   const copy = document.createElement("div");
-  const name = document.createElement("span");
-  name.className = "fold-row-name";
+  copy.className = "cost-model-copy";
+  const name = document.createElement("h3");
   name.textContent = model.model || "unknown";
-  const meta = document.createElement("span");
-  meta.className = "fold-row-meta";
+  const meta = document.createElement("p");
   meta.textContent = `${formatInteger(model.requests)} request · ${formatCompact(model.total_tokens)} token`;
-  copy.append(name, meta);
-  const cost = document.createElement("span");
-  cost.className = "fold-row-stat";
-  cost.textContent = formatCost(model.cost_usd);
-  const percent = document.createElement("span");
-  percent.className = "screen-badge fold-row-badge";
-  percent.textContent = model.cost_usd == null || !total ? "—" : `${Math.round(Number(model.cost_usd) / total * 100)}%`;
-  head.append(icon, copy, cost, percent);
-  const breakdown = document.createElement("div");
-  breakdown.className = "fold-row-body cost-model-stats";
+  const tokens = document.createElement("div");
+  tokens.className = "cost-model-tokens";
+  // Input here is the uncached part only; cache is reported inside prompt_tokens.
   const { input, cache } = splitPromptTokens(model.prompt_tokens, model.cached_tokens);
   for (const [label, value] of [
     ["Input", input],
     ["Cache", cache],
     ["Output", model.completion_tokens],
   ]) {
-    const cell = document.createElement("div");
-    const key = document.createElement("span");
-    const amount = document.createElement("strong");
-    key.textContent = label;
-    amount.textContent = `${formatInteger(value)} token`;
-    cell.append(key, amount);
-    breakdown.append(cell);
+    const tag = document.createElement("span");
+    tag.textContent = `${label} ${formatCompact(value)}`;
+    tokens.append(tag);
   }
-  row.append(head, breakdown);
-  return row;
+  copy.append(name, meta, tokens);
+  const share = document.createElement("span");
+  share.className = "screen-badge cost-model-share";
+  share.textContent = shareOf(model.cost_usd, total);
+  const cost = document.createElement("strong");
+  cost.className = "cost-model-cost";
+  cost.textContent = formatCost(model.cost_usd);
+  card.append(copy, share, cost);
+  return card;
+}
+
+function shareOf(value, total) {
+  return value == null || !total ? "—" : `${Math.round(Number(value) / total * 100)}%`;
 }
 
 function render() {
@@ -152,7 +146,7 @@ function render() {
   el.range.textContent = `Từ ${formatDate(range.from)} – ${formatDate(range.to)}`;
   drawChart(completeCosts(range, stats.by_day));
   const rows = selectModels(stats.by_model, { sort, query: el.search?.value || "" });
-  el.models.replaceChildren(...rows.map((model) => modelRow(model, Number(total) || 0)));
+  el.models.replaceChildren(...rows.map((model) => modelCard(model, Number(total) || 0)));
   el.sorts.forEach((button) => {
     button.setAttribute("aria-pressed", String(button.dataset.sort === sort));
   });

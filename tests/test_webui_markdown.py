@@ -209,7 +209,11 @@ def test_cost_panel_splits_cache_and_uses_shared_toolbar() -> None:
     # be clicked (or pressed) before the token split is readable.
     assert "createElement(\"details\")" not in script
     assert "createElement(\"summary\")" not in script
-    assert 'className = "fold-row cost-model-row"' in script
+    # Nhật ký's page-card shape, reused for a model: display:contents wrapper,
+    # one tag per token kind, cost where the date sits.
+    assert 'className = "cost-model-card"' in script
+    assert 'className = "cost-model-copy"' in script
+    assert 'tokens.className = "cost-model-tokens"' in script
 
     # The toolbar markup is the shared shape, wired to the three orders.
     assert 'class="screen-filter-row"' in html
@@ -222,14 +226,14 @@ def test_cost_panel_splits_cache_and_uses_shared_toolbar() -> None:
     assert "memory-filters" not in memories_css
     assert ".sidebar .screen-search" in memories_css
 
-    # One row of three equal columns, and it leaves the shared row padding in
-    # .fold-row-body rather than re-declaring it.
-    assert "grid-template-columns: repeat(3, minmax(0, 1fr));" in css
-    assert ".cost-model-stats {" in css
-    assert ".fold-row-body {" not in css
-    # The head keeps the shared fold-row rhythm without the disclosure arrow,
-    # which only <summary> gets.
-    assert ".cost-model-row > .cost-model-head {" in css
+    # One row of three equal columns, and its card furniture matches
+    # .memory-card value for value so the two lists read as the same object.
+    assert ".cost-model-card {" in css
+    assert "display: contents;" in css
+    assert "border-radius: var(--radius-chat);" in css
+    assert "background: var(--chat-brand-wash);" in css
+    assert "min-height: 8.55rem;" in css
+    assert ".cost-model-stats" not in css
     assert ".screen-filters .screen-button" in shared
     assert ".screen-search svg" in shared
 

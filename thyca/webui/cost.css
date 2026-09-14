@@ -91,42 +91,96 @@
   color: var(--color-ink);
 }
 
-/* The cost list is not a disclosure list: each row is a standing summary with
-   its breakdown already open, so nothing here needs the fold affordance. */
-.cost-model-row > .cost-model-head {
+/* One model per card, in the shape Nhật ký uses for a page: title line with
+   its badge, a muted summary line, token tags, then the cost where a memory
+   card puts its date. Same card furniture as .memory-card — border, radius,
+   peach wash, and column/row placement so the two screens read alike. */
+.cost-model-card {
   display: grid;
-  grid-template-columns: 2.8rem minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 1rem;
-  min-height: 4.65rem;
-  padding: 0.65rem 1.1rem 0.2rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: 1rem;
+  row-gap: 0.12rem;
+  min-height: 8.55rem;
+  padding: 1rem 1.3rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-chat);
+  background: var(--chat-brand-wash);
+  box-shadow: none;
 }
 
-/* Input · Cache · Output as one row of three equal columns: label above the
-   count, same measure as the general-info grid on Trace. */
-.cost-model-stats {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.35rem 1.2rem;
-  padding-block-start: 0;
+/* Same trick as .memory-copy: the wrapper holds no box, so its children are
+   placed by the card's own grid. */
+.cost-model-copy {
+  display: contents;
 }
 
-.cost-model-stats > div {
+.cost-model-copy h3 {
+  grid-column: 1;
+  grid-row: 1;
+  align-self: center;
   min-width: 0;
-}
-
-.cost-model-stats span {
-  color: var(--color-muted);
-  font-size: 0.82rem;
-}
-
-.cost-model-stats strong {
-  display: block;
-  margin-block-start: 0.2rem;
+  margin: 0;
   color: var(--color-ink);
-  font-size: 0.95rem;
-  font-weight: 400;
+  font-family: var(--font-reading);
+  font-size: 1.3rem;
+  font-style: italic;
   overflow-wrap: anywhere;
+}
+
+.cost-model-copy p {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 1rem;
+  font-style: italic;
+  overflow-wrap: anywhere;
+}
+
+/* Same tag as .memory-tags span. */
+.cost-model-tokens {
+  display: flex;
+  flex-wrap: wrap;
+  grid-column: 1;
+  grid-row: 3;
+  align-self: center;
+  gap: 0.5rem;
+  margin-block-start: 0.45rem;
+}
+
+.cost-model-tokens span {
+  padding: 0.2rem 0.7rem;
+  border-radius: var(--radius-pill);
+  background: var(--chat-brand-wash);
+  color: var(--color-accent-deep);
+  font-size: 0.83rem;
+  white-space: nowrap;
+}
+
+.cost-model-share {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+  align-self: center;
+}
+
+/* Where a memory card puts its date. */
+.cost-model-cost {
+  grid-column: 2;
+  grid-row: 3;
+  justify-self: end;
+  align-self: center;
+  margin-block-start: 0.45rem;
+  color: var(--color-ink);
+  font-size: 1.05rem;
+  white-space: nowrap;
+}
+
+/* The list is cards now, not one bordered stack. */
+.cost-model-list {
+  display: grid;
+  gap: 0.65rem;
 }
 
 .cost-footnote {
@@ -144,23 +198,18 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .cost-model-row > .cost-model-head {
-    grid-template-columns: 2.5rem minmax(0, 1fr) auto;
-    row-gap: 0.15rem;
+  /* Same narrowing Nhật ký applies to its cards. */
+  .cost-model-card {
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding: 0.85rem;
   }
 
-  .cost-model-row .fold-row-stat {
-    grid-column: 2;
+  .cost-model-copy h3 {
+    font-size: 1.15rem;
   }
 
-  .cost-model-row .fold-row-badge {
-    grid-column: 3;
-    grid-row: 1 / span 2;
-    align-self: center;
-  }
-
-  .cost-model-row .fold-row-icon {
-    grid-row: span 2;
+  .cost-model-copy p {
+    font-size: 0.92rem;
   }
 
   .cost-total {

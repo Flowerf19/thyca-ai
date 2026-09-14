@@ -531,7 +531,7 @@ svg {
   z-index: 2;
   align-self: end;
   width: fit-content;
-  max-width: min(28rem, 100%);
+  max-width: 100%;
   min-height: 0;
   margin-inline-start: auto;
   padding: 0;
@@ -967,10 +967,6 @@ button:active {
     grid-template-columns: 1.75rem minmax(0, 1fr);
   }
 
-  .message-user {
-    max-width: 100%;
-  }
-
   .live-card {
     width: auto;
     margin-inline-end: 0;
@@ -1050,10 +1046,6 @@ button:active {
 
   .day-divider {
     margin: 0 auto;
-  }
-
-  .message-user {
-    max-width: 100%;
   }
 
   .live-card {

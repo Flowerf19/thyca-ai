@@ -531,7 +531,7 @@ svg {
   z-index: 2;
   align-self: end;
   width: fit-content;
-  max-width: 100%;
+  max-width: 75%;
   min-height: 0;
   margin-inline-start: auto;
   padding: 0;

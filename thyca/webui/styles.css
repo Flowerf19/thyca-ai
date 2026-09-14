@@ -38,6 +38,9 @@
   --chat-brand-ink: #3d2a1f;
   --chat-brand-accent: #a65a42;
   --chat-brand-wash: rgba(255, 222, 192, 0.42);
+  /* A ghost of the brand colour: the user's tick is the same ink as Thyca's
+     stripe, kept thin and faint so the two never read as the same mark. */
+  --chat-user-tick: color-mix(in srgb, var(--chat-brand-accent) 35%, transparent);
   --ink: var(--chat-brand-ink);
   --terra: var(--chat-brand-accent);
   --composer-bg: rgba(255, 252, 250, 0.82);
@@ -526,6 +529,9 @@ svg {
   border-block-start: var(--rule) solid var(--color-divider);
 }
 
+/* No fill: the right-aligned block plus its ink tick carry the turn, so the
+   paper stays the paper. The tick is the thin, faint counterpart to
+   .chat-brand-stripe — same accent, much less of it. */
 .message-user {
   position: relative;
   z-index: 2;
@@ -534,7 +540,10 @@ svg {
   max-width: 75%;
   min-height: 0;
   margin-inline-start: auto;
+  margin-inline-end: 0;
   padding: 0;
+  border-inline-start: 3px solid var(--chat-user-tick);
+  padding-inline-start: 12px;
   color: #3d2a1f;
 }
 
@@ -559,6 +568,13 @@ svg {
   color: var(--color-muted-soft);
   font-size: 0.72rem;
   font-variant-numeric: tabular-nums;
+  text-align: right;
+  opacity: 0.45;
+}
+
+/* Turns share one column gap; users sit closer to each other than to Thyca. */
+.message-user + .message-user {
+  margin-block-start: calc(var(--space-sm) - var(--space-lg));
 }
 
 .read-mark {

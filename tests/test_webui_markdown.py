@@ -205,6 +205,12 @@ def test_cost_panel_splits_cache_and_uses_shared_toolbar() -> None:
     assert '["Input", model.prompt_tokens]' not in script
     assert "selectModels(stats.by_model" in script
 
+    # The breakdown is open at rest: no <details>/<summary>, so nothing has to
+    # be clicked (or pressed) before the token split is readable.
+    assert "createElement(\"details\")" not in script
+    assert "createElement(\"summary\")" not in script
+    assert 'className = "fold-row cost-model-row"' in script
+
     # The toolbar markup is the shared shape, wired to the three orders.
     assert 'class="screen-filter-row"' in html
     assert 'class="screen-search"' in html
@@ -221,6 +227,9 @@ def test_cost_panel_splits_cache_and_uses_shared_toolbar() -> None:
     assert "grid-template-columns: repeat(3, minmax(0, 1fr));" in css
     assert ".cost-model-stats {" in css
     assert ".fold-row-body {" not in css
+    # The head keeps the shared fold-row rhythm without the disclosure arrow,
+    # which only <summary> gets.
+    assert ".cost-model-row > .cost-model-head {" in css
     assert ".screen-filters .screen-button" in shared
     assert ".screen-search svg" in shared
 

@@ -95,10 +95,13 @@ function drawChart(rows) {
   el.chart.setAttribute("aria-label", `Chi phí ${rows.length} ngày; cao nhất ${formatCost(maxValue)}.`);
 }
 
+// One model, always showing its token split: the numbers are short enough to
+// read at a glance, so a disclosure step would only hide them.
 function modelRow(model, total) {
-  const details = document.createElement("details");
-  details.className = "fold-row";
-  const summary = document.createElement("summary");
+  const row = document.createElement("article");
+  row.className = "fold-row cost-model-row";
+  const head = document.createElement("div");
+  head.className = "cost-model-head";
   const icon = document.createElement("span");
   icon.className = "fold-row-icon";
   icon.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7.2"/><path d="M9 9.5h6v5H9Z"/><path d="M12 8v8"/></svg>';
@@ -116,7 +119,7 @@ function modelRow(model, total) {
   const percent = document.createElement("span");
   percent.className = "screen-badge fold-row-badge";
   percent.textContent = model.cost_usd == null || !total ? "—" : `${Math.round(Number(model.cost_usd) / total * 100)}%`;
-  summary.append(icon, copy, cost, percent);
+  head.append(icon, copy, cost, percent);
   const breakdown = document.createElement("div");
   breakdown.className = "fold-row-body cost-model-stats";
   const { input, cache } = splitPromptTokens(model.prompt_tokens, model.cached_tokens);
@@ -125,16 +128,16 @@ function modelRow(model, total) {
     ["Cache", cache],
     ["Output", model.completion_tokens],
   ]) {
-    const row = document.createElement("div");
+    const cell = document.createElement("div");
     const key = document.createElement("span");
     const amount = document.createElement("strong");
     key.textContent = label;
     amount.textContent = `${formatInteger(value)} token`;
-    row.append(key, amount);
-    breakdown.append(row);
+    cell.append(key, amount);
+    breakdown.append(cell);
   }
-  details.append(summary, breakdown);
-  return details;
+  row.append(head, breakdown);
+  return row;
 }
 
 function render() {

@@ -91,13 +91,24 @@
   color: var(--color-ink);
 }
 
+/* The cost list is not a disclosure list: each row is a standing summary with
+   its breakdown already open, so nothing here needs the fold affordance. */
+.cost-model-row > .cost-model-head {
+  display: grid;
+  grid-template-columns: 2.8rem minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 1rem;
+  min-height: 4.65rem;
+  padding: 0.65rem 1.1rem 0.2rem;
+}
+
 /* Input · Cache · Output as one row of three equal columns: label above the
-   count, same measure as the general-info grid on Trace. Padding is left to
-   .fold-row-body so the mobile indentation stays in one place. */
+   count, same measure as the general-info grid on Trace. */
 .cost-model-stats {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.35rem 1.2rem;
+  padding-block-start: 0;
 }
 
 .cost-model-stats > div {
@@ -133,8 +144,23 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .cost-model-stats {
-    grid-template-columns: minmax(0, 1fr);
+  .cost-model-row > .cost-model-head {
+    grid-template-columns: 2.5rem minmax(0, 1fr) auto;
+    row-gap: 0.15rem;
+  }
+
+  .cost-model-row .fold-row-stat {
+    grid-column: 2;
+  }
+
+  .cost-model-row .fold-row-badge {
+    grid-column: 3;
+    grid-row: 1 / span 2;
+    align-self: center;
+  }
+
+  .cost-model-row .fold-row-icon {
+    grid-row: span 2;
   }
 
   .cost-total {

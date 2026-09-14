@@ -177,6 +177,10 @@ def test_aggregate_by_model_and_unknown_cost() -> None:
     assert models["gpt-4o-mini"]["cost_usd"] == 0.00001
     assert models["foo/bar"]["cost_usd"] is None
     assert data["models"] == ["foo/bar", "gpt-4o-mini"]
+    # "Gần nhất" needs the newest turn per model; the rows above carry
+    # different dates, so each model reports its own.
+    assert models["gpt-4o-mini"]["last_started_at"] == TS
+    assert models["foo/bar"]["last_started_at"] == "2026-08-25T09:12:03Z"
     days = {row["day"]: row for row in data["by_day"]}
     assert days["2026-08-26"]["requests"] == 1
     assert days["2026-08-25"]["cost_usd"] is None

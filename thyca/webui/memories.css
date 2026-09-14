@@ -30,59 +30,10 @@
   margin: 0.15rem 0 1.5rem;
 }
 
-.memory-search {
-  position: relative;
-  display: block;
-  width: auto;
+/* The search field sits in the sidebar, so it keeps the sidebar's own gutter;
+   the field itself is the shared .screen-search (screens.css). */
+.sidebar .screen-search {
   margin: 1rem 0.65rem 0 0;
-}
-
-.memory-search svg {
-  position: absolute;
-  z-index: 1;
-  left: 1rem;
-  top: 0.72rem;
-  width: 1.4rem;
-  height: 1.4rem;
-  color: var(--color-muted);
-}
-
-.memory-search input {
-  padding-left: 3.2rem;
-  height: 3.45rem;
-}
-
-.memory-filter-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: 1rem;
-}
-
-.memory-filters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.6rem;
-}
-
-.memory-filters .screen-button {
-  min-height: 2.45rem;
-  padding: 0.45rem 1.1rem;
-  border-radius: var(--radius-pill);
-  font-size: 0.95rem;
-}
-
-.sort-label {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  color: var(--color-muted);
-  white-space: nowrap;
-}
-
-.sort-label .screen-select {
-  min-height: 2.55rem;
 }
 
 .memory-day {
@@ -202,17 +153,8 @@
     pointer-events: auto;
   }
 
-  .memory-search {
+  .sidebar .screen-search {
     margin-inline: 0 0.65rem;
-  }
-
-  .memory-filter-row {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .sort-label {
-    justify-content: space-between;
   }
 
   .memory-card {

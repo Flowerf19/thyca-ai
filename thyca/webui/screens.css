@@ -50,6 +50,51 @@ a { color: inherit; }
 .screen-muted { color: var(--color-muted); }
 .screen-note { color: var(--color-muted); font-size: 0.875rem; }
 
+/* Toolbar above a list: the filter pills on one side, the search field on the
+   other. Shared by Nhật ký (sidebar) and "Chi phí theo mô hình". */
+.screen-filter-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-block-end: 1rem;
+}
+.screen-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+.screen-filters .screen-button {
+  min-height: 2.45rem;
+  padding: 0.45rem 1.1rem;
+  border-radius: var(--radius-pill);
+  font-size: 0.95rem;
+}
+/* Same selected look as the token/turn segmented control, so "chosen" reads
+   the same way on both blocks of the dashboard. */
+.screen-filters .screen-button[aria-pressed='true'] {
+  background: color-mix(in oklab, var(--color-accent-soft) 60%, var(--color-paper-card));
+}
+.screen-search {
+  position: relative;
+  display: block;
+  width: auto;
+  min-width: 0;
+}
+.screen-search svg {
+  position: absolute;
+  z-index: 1;
+  left: 1rem;
+  top: 0.72rem;
+  width: 1.4rem;
+  height: 1.4rem;
+  color: var(--color-muted);
+}
+.screen-search input {
+  padding-left: 3.2rem;
+  height: 3.45rem;
+}
+
 /* Quiet ⋮ action: row actions on cards, and the header action on Hồ sơ. */
 .row-action {
   align-self: center;
@@ -292,6 +337,7 @@ a { color: inherit; }
 }
 @media (max-width: 56rem) {
   .screen-shell { max-height: none; }
+  .screen-filter-row { align-items: stretch; flex-direction: column; }
   .screen-shell .sidebar > * { display: none; }
   .screen-surface { margin: 0; padding: 1rem; border-inline: 0; border-block-end: 0; border-radius: 0; }
   .screen-tabs { margin: -1rem -1rem 1rem; padding-inline: 0.5rem; gap: 0; }

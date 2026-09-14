@@ -229,6 +229,9 @@ def aggregate(turns: list[TurnSummary]) -> dict:
             "total_tokens": sum(x.total_tokens or 0 for x in group),
             "cost_usd": round(sum(x.cost_usd or 0 for x in group), 6) if any(x.cost_usd is not None for x in group) else None,
             "latency_ms_p50": _percentile(lat, 0.5),
+            # Newest turn per model, so the UI can sort by "gần nhất" without
+            # rescanning sessions.
+            "last_started_at": max((x.started_at for x in group if x.started_at), default=""),
         }
         by_model.append(entry)
     # by_day

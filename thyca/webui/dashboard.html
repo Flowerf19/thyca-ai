@@ -66,6 +66,18 @@
               </article>
             </div>
             <h3 class="cost-model-heading">Chi phí theo mô hình</h3>
+            <div class="screen-filter-row">
+              <div class="screen-filters" role="group" aria-label="Sắp xếp mô hình">
+                <button class="screen-button" type="button" data-sort="cost-desc" aria-pressed="true">Cao nhất</button>
+                <button class="screen-button" type="button" data-sort="cost-asc" aria-pressed="false">Thấp nhất</button>
+                <button class="screen-button" type="button" data-sort="recent" aria-pressed="false">Gần nhất</button>
+              </div>
+              <label class="screen-search">
+                <span class="visually-hidden">Tìm theo tên mô hình</span>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 5 5" /></svg>
+                <input class="screen-input" id="model-search" type="search" placeholder="Tìm mô hình…">
+              </label>
+            </div>
             <div class="screen-card fold-list" id="cost-models"></div>
             <p class="screen-status" id="cost-status" role="status" aria-live="polite"></p>
             <p class="screen-note cost-footnote">Dữ liệu trace backend · Đơn vị: USD · giá “—” nghĩa là model chưa được cấu hình giá.</p>

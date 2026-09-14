@@ -1,5 +1,10 @@
 import { getJson } from "./backend/api.js";
-import { rollingRange, traceRangeUrl } from "./backend/analytics-data.js";
+import {
+  rollingRange,
+  selectModels,
+  splitPromptTokens,
+  traceRangeUrl,
+} from "./backend/analytics-data.js";
 import { formatCompact, formatCost, formatDate, formatInteger } from "./backend/format.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -10,9 +15,12 @@ const el = {
   chart: document.querySelector("#cost-chart"),
   models: document.querySelector("#cost-models"),
   status: document.querySelector("#cost-status"),
+  search: document.querySelector("#model-search"),
+  sorts: [...document.querySelectorAll("[data-sort]")],
 };
 const compact = matchMedia("(max-width: 56rem)");
 let stats = null;
+let sort = "cost-desc";
 
 function messageOf(error, fallback) {
   return error instanceof Error && error.message ? error.message : fallback;
@@ -110,15 +118,16 @@ function modelRow(model, total) {
   percent.textContent = model.cost_usd == null || !total ? "—" : `${Math.round(Number(model.cost_usd) / total * 100)}%`;
   summary.append(icon, copy, cost, percent);
   const breakdown = document.createElement("div");
-  breakdown.className = "fold-row-body";
+  breakdown.className = "fold-row-body cost-model-stats";
+  const { input, cache } = splitPromptTokens(model.prompt_tokens, model.cached_tokens);
   for (const [label, value] of [
-    ["Input", model.prompt_tokens],
-    ["Cache", model.cached_tokens],
+    ["Input", input],
+    ["Cache", cache],
     ["Output", model.completion_tokens],
   ]) {
     const row = document.createElement("div");
     const key = document.createElement("span");
-    const amount = document.createElement("span");
+    const amount = document.createElement("strong");
     key.textContent = label;
     amount.textContent = `${formatInteger(value)} token`;
     row.append(key, amount);
@@ -139,12 +148,17 @@ function render() {
   el.total.replaceChildren(value, unit);
   el.range.textContent = `Từ ${formatDate(range.from)} – ${formatDate(range.to)}`;
   drawChart(completeCosts(range, stats.by_day));
-  const rows = Array.isArray(stats.by_model) ? stats.by_model : [];
+  const rows = selectModels(stats.by_model, { sort, query: el.search?.value || "" });
   el.models.replaceChildren(...rows.map((model) => modelRow(model, Number(total) || 0)));
+  el.sorts.forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.sort === sort));
+  });
   if (!rows.length) {
     const empty = document.createElement("p");
     empty.className = "screen-note";
-    empty.textContent = "Chưa có lượt nào trong khoảng này.";
+    empty.textContent = (stats.by_model || []).length
+      ? "Không có mô hình nào khớp tên đang tìm."
+      : "Chưa có lượt nào trong khoảng này.";
     el.models.append(empty);
   }
 }
@@ -165,5 +179,12 @@ async function load() {
 }
 
 el.period?.addEventListener("change", () => void load());
+el.search?.addEventListener("input", render);
+el.sorts.forEach((button) => {
+  button.addEventListener("click", () => {
+    sort = button.dataset.sort || "cost-desc";
+    render();
+  });
+});
 compact.addEventListener("change", render);
 void load();

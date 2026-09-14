@@ -122,6 +122,109 @@ def test_select_memories_orders_backend_leaves() -> None:
     assert payload["least"] == ["a", "c", "b"]
 
 
+def test_select_models_filters_and_orders_by_cost() -> None:
+    """"Chi phí theo mô hình": search by name, then rank.
+
+    A model with no configured price cannot be ranked by cost, so it sinks to
+    the end in both directions instead of reading as the cheapest.
+    """
+    rows = [
+        {"model": "gpt-5.6-luna", "cost_usd": 2.4, "last_started_at": "2026-09-14T09:00:00Z"},
+        {"model": "muse-spark-1.2-contributor", "cost_usd": 0.9, "last_started_at": "2026-09-12T10:00:00Z"},
+        {"model": "foo/bar", "cost_usd": None, "last_started_at": "2026-09-14T11:00:00Z"},
+        {"model": "gpt-4o-mini", "cost_usd": 0.2, "last_started_at": "2026-09-01T08:00:00Z"},
+    ]
+    script = f"""
+    import {{ selectModels }} from {json.dumps(ANALYTICS_DATA.as_uri())};
+    const rows = {json.dumps(rows)};
+    const names = (sort, query) => selectModels(rows, {{ sort, query }}).map((r) => r.model);
+    process.stdout.write(JSON.stringify({{
+      desc: names("cost-desc", ""),
+      asc: names("cost-asc", ""),
+      recent: names("recent", ""),
+      upper: names("cost-desc", "GPT"),
+      miss: names("cost-desc", "zzz"),
+    }}));
+    """
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(result.stdout)
+    assert payload["desc"] == ["gpt-5.6-luna", "muse-spark-1.2-contributor", "gpt-4o-mini", "foo/bar"]
+    assert payload["asc"] == ["gpt-4o-mini", "muse-spark-1.2-contributor", "gpt-5.6-luna", "foo/bar"]
+    assert payload["recent"] == ["foo/bar", "gpt-5.6-luna", "muse-spark-1.2-contributor", "gpt-4o-mini"]
+    # Search is a name match, case-insensitive.
+    assert payload["upper"] == ["gpt-5.6-luna", "gpt-4o-mini"]
+    assert payload["miss"] == []
+
+
+def test_split_prompt_tokens_removes_cache() -> None:
+    """prompt_tokens already contains the cached part, so a panel that prints
+    both raw double-counts the input side (measured: 1000 + 800 for a prompt of
+    1000 with 800 cached)."""
+    script = f"""
+    import {{ splitPromptTokens }} from {json.dumps(ANALYTICS_DATA.as_uri())};
+    process.stdout.write(JSON.stringify({{
+      split: splitPromptTokens(1000, 800),
+      noCache: splitPromptTokens(1000, 0),
+      missing: splitPromptTokens(1000, null),
+      clamped: splitPromptTokens(100, 500),
+      absent: splitPromptTokens(null, null),
+    }}));
+    """
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(result.stdout)
+    assert payload["split"] == {"input": 200, "cache": 800}
+    assert payload["noCache"] == {"input": 1000, "cache": 0}
+    assert payload["missing"] == {"input": 1000, "cache": 0}
+    # A provider that over-reports cache must not push input negative.
+    assert payload["clamped"] == {"input": 0, "cache": 100}
+    assert payload["absent"] == {"input": 0, "cache": 0}
+
+
+def test_cost_panel_splits_cache_and_uses_shared_toolbar() -> None:
+    """The model breakdown is the one place that used raw prompt_tokens; it now
+    splits through the shared helper, and the toolbar reuses the shared search
+    and filter-pill classes instead of private copies."""
+    script = (WEBUI / "cost.js").read_text(encoding="utf-8")
+    html = (WEBUI / "dashboard.html").read_text(encoding="utf-8")
+    css = (WEBUI / "cost.css").read_text(encoding="utf-8")
+    shared = (WEBUI / "screens.css").read_text(encoding="utf-8")
+    memories = (WEBUI / "memories.html").read_text(encoding="utf-8")
+    memories_css = (WEBUI / "memories.css").read_text(encoding="utf-8")
+
+    assert "splitPromptTokens(model.prompt_tokens, model.cached_tokens)" in script
+    assert '["Input", model.prompt_tokens]' not in script
+    assert "selectModels(stats.by_model" in script
+
+    # The toolbar markup is the shared shape, wired to the three orders.
+    assert 'class="screen-filter-row"' in html
+    assert 'class="screen-search"' in html
+    for sort in ("cost-desc", "cost-asc", "recent"):
+        assert f'data-sort="{sort}"' in html
+
+    # Nhật ký switched to the promoted classes rather than keeping a copy.
+    assert 'class="memory-search"' not in memories
+    assert "memory-filters" not in memories_css
+    assert ".sidebar .screen-search" in memories_css
+
+    # One row of three equal columns, and it leaves the shared row padding in
+    # .fold-row-body rather than re-declaring it.
+    assert "grid-template-columns: repeat(3, minmax(0, 1fr));" in css
+    assert ".cost-model-stats {" in css
+    assert ".fold-row-body {" not in css
+    assert ".screen-filters .screen-button" in shared
+    assert ".screen-search svg" in shared
+
+
 def test_usage_mapper_splits_cached_prompt_tokens() -> None:
     script = f"""
     import {{ aggregateUsage }} from {json.dumps(ANALYTICS_DATA.as_uri())};

@@ -91,6 +91,33 @@
   color: var(--color-ink);
 }
 
+/* Input · Cache · Output as one row of three equal columns: label above the
+   count, same measure as the general-info grid on Trace. Padding is left to
+   .fold-row-body so the mobile indentation stays in one place. */
+.cost-model-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.35rem 1.2rem;
+}
+
+.cost-model-stats > div {
+  min-width: 0;
+}
+
+.cost-model-stats span {
+  color: var(--color-muted);
+  font-size: 0.82rem;
+}
+
+.cost-model-stats strong {
+  display: block;
+  margin-block-start: 0.2rem;
+  color: var(--color-ink);
+  font-size: 0.95rem;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+
 .cost-footnote {
   margin-top: 1rem;
   text-align: center;
@@ -103,6 +130,10 @@
 
 @media (max-width: 56rem) {
   .cost-overview {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cost-model-stats {
     grid-template-columns: minmax(0, 1fr);
   }
 

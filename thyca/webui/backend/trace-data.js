@@ -66,7 +66,7 @@ export function formatRecordText(value) {
   return String(value);
 }
 
-function asArguments(value) {
+export function asArguments(value) {
   if (value == null || value === "") return {};
   if (typeof value === "string") {
     try {

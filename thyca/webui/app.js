@@ -21,7 +21,6 @@ const el = {
   scroll: document.querySelector("#conversation-scroll"),
   end: document.querySelector("#conversation-end"),
   toBottom: document.querySelector("#to-bottom"),
-  label: document.querySelector("#conversation-label"),
   idleNudge: document.querySelector("#idle-nudge"),
   idleRemember: document.querySelector("#idle-remember"),
   idleDismiss: document.querySelector("#idle-dismiss"),
@@ -233,11 +232,6 @@ async function refreshSessions() {
   return payload;
 }
 
-function sessionTitleOf(id) {
-  const row = state.sessions.find((item) => String(item.id) === id);
-  return row ? cleanText(row.title, "Phiên trống") : "";
-}
-
 // Titles are the user's own text: it is stored as written and returned to the
 // row verbatim, so the dialog reopens showing exactly what was saved.
 function openRename(session) {
@@ -271,7 +265,6 @@ async function submitRename() {
   }
   el.renameDialog.close();
   await refreshSessions();
-  if (state.activeId === id) el.label.textContent = sessionTitleOf(id) || "Hôm nay";
 }
 
 function openDelete(session) {
@@ -332,7 +325,6 @@ function renderDetail(detail) {
   rememberActiveSession(state.activeId);
   const messages = Array.isArray(detail?.messages) ? detail.messages : [];
   if (!renderConversation(el.messageList, messages)) renderEmpty(el.messageList);
-  el.label.textContent = cleanText(detail?.title, "Hôm nay");
   setRunning(detail?.running === true);
   if (state.running) {
     // A turn streaming in this tab gets its own card back — same object, so
@@ -415,7 +407,6 @@ function newSession() {
   rememberActiveSession("");
   renderSessions();
   renderEmpty(el.messageList);
-  el.label.textContent = "Phiên trống";
   setRunning(false);
   armIdle();
   el.input.focus();

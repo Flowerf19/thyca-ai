@@ -10,27 +10,12 @@
   color: var(--color-accent);
 }
 
-.usage-heading label {
-  display: grid;
-  gap: 0.35rem;
-  color: var(--color-muted);
-  font-size: 0.75rem;
-}
-
 .usage-heading select {
   min-width: 12.5rem;
 }
 
 .usage-chart-card {
   min-height: 21rem;
-  padding: 1rem 1.25rem;
-}
-
-.usage-chart-top {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 1rem;
 }
 
 .usage-legend {
@@ -79,17 +64,6 @@
   width: 100%;
   height: 17rem;
   margin-top: 0.4rem;
-}
-
-.usage-grid {
-  stroke: var(--color-divider);
-  stroke-width: 1;
-}
-
-.usage-axis {
-  fill: var(--color-muted);
-  stroke: none;
-  font: 12px var(--font-reading);
 }
 
 .usage-bar-input,
@@ -141,14 +115,11 @@
 .usage-summary strong {
   display: block;
   margin: 0.6rem 0;
-  color: var(--color-ink);
-  font-family: var(--font-display);
   font-size: 1.8rem;
-  font-weight: 500;
 }
 
-.usage-summary strong small {
-  font-family: var(--font-reading);
+.usage-summary strong small,
+.usage-total strong small {
   font-size: 1rem;
 }
 
@@ -195,15 +166,7 @@
 }
 
 .usage-total strong {
-  color: var(--color-ink);
-  font-family: var(--font-display);
   font-size: 1.8rem;
-  font-weight: 500;
-}
-
-.usage-total strong small {
-  font-family: var(--font-reading);
-  font-size: 1rem;
 }
 
 .usage-total-right {
@@ -219,6 +182,10 @@
 }
 
 .usage-note {
+  text-align: center;
+}
+
+#usage-status {
   text-align: center;
 }
 

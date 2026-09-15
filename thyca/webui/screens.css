@@ -57,12 +57,16 @@ a { color: inherit; }
 .screen-note { color: var(--color-muted); font-size: 0.875rem; }
 
 /* Toolbar above a list: the filter pills on one side, the search field on the
-   other. Shared by Nhật ký (sidebar) and "Chi phí theo mô hình". */
-.screen-filter-row {
+   other. Shared by Nhật ký (sidebar), "Chi phí theo mô hình" and the usage
+   chart header. The bottom margin is a list-toolbar delta only. */
+.screen-filter-row,
+.usage-chart-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
+}
+.screen-filter-row {
   margin-block-end: 1rem;
 }
 .screen-filters {
@@ -76,9 +80,10 @@ a { color: inherit; }
   border-radius: var(--radius-pill);
   font-size: 0.95rem;
 }
-/* Same selected look as the token/turn segmented control, so "chosen" reads
-   the same way on both blocks of the dashboard. */
-.screen-filters .screen-button[aria-pressed='true'] {
+/* Same selected look as the token/turn segmented control and the usage
+   period toggle, so "chosen" reads the same way on both dashboard blocks. */
+.screen-filters .screen-button[aria-pressed='true'],
+.usage-toggle button[aria-pressed='true'] {
   background: color-mix(in oklab, var(--color-accent-soft) 60%, var(--color-paper-card));
 }
 .screen-search {
@@ -221,6 +226,44 @@ a { color: inherit; }
 .cost-footnote {
   text-align: center;
   margin-top: 1rem;
+}
+
+/* Usage/cost dashboard kit · period label, chart frame, svg strokes and
+   summary figures shared by the Sử dụng and Chi phí panels.
+   Page files keep deltas (select min-widths, svg heights, margins, sizes). */
+.usage-heading label,
+.cost-period {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--color-muted);
+  font-size: 0.75rem;
+}
+.usage-chart-card,
+.cost-chart-card {
+  padding: 1rem 1.25rem;
+}
+.usage-grid,
+.cost-chart-grid {
+  stroke: var(--color-divider);
+  stroke-width: 1;
+}
+.usage-axis,
+.cost-chart-label {
+  fill: var(--color-muted);
+  stroke: none;
+  font: 12px var(--font-reading);
+}
+.usage-summary strong,
+.usage-total strong,
+.cost-total strong {
+  color: var(--color-ink);
+  font-family: var(--font-display);
+  font-weight: 500;
+}
+.usage-summary strong small,
+.usage-total strong small,
+.cost-total strong small {
+  font-family: var(--font-reading);
 }
 
 /* Collapsible rows: one card, each row a summary you can open for detail.

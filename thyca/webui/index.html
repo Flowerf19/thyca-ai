@@ -106,6 +106,32 @@
         </footer>
       </section>
     </main>
+
+    <dialog class="screen-dialog" id="rename-dialog" aria-labelledby="rename-title">
+      <form method="dialog" id="rename-form">
+        <h2 id="rename-title">Đặt tên phiên</h2>
+        <input type="hidden" id="rename-id">
+        <label for="rename-name">Tên phiên<input class="screen-input" id="rename-name" required maxlength="120" autocomplete="off"></label>
+        <p class="screen-status" id="rename-status" role="status" aria-live="polite"></p>
+        <div class="screen-toolbar">
+          <button class="screen-button" id="cancel-rename" type="button">Hủy</button>
+          <button class="screen-button is-primary" type="submit">Lưu tên</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="screen-dialog" id="delete-dialog" aria-labelledby="delete-title">
+      <form method="dialog" id="delete-form">
+        <h2 id="delete-title">Xóa phiên này?</h2>
+        <p class="screen-note" id="delete-note"></p>
+        <p class="screen-status" id="delete-status" role="status" aria-live="polite"></p>
+        <div class="screen-toolbar">
+          <button class="screen-button" id="cancel-delete" type="button">Hủy</button>
+          <button class="screen-button is-danger" id="confirm-delete" type="submit">Xóa phiên</button>
+        </div>
+      </form>
+    </dialog>
+
     <script type="module" src="./app.js"></script>
     <script src="./navigation.js" defer></script>
   </body>

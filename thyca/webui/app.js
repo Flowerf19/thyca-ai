@@ -1,4 +1,4 @@
-import { ApiError, getJson, postJson, postNdjson } from "./backend/api.js";
+import { ApiError, deleteJson, getJson, patchJson, postJson, postNdjson } from "./backend/api.js";
 import { SEND_ERROR_STATUS } from "./backend/chat-status.js";
 import { cleanText, formatSessionTime } from "./backend/format.js";
 import {
@@ -25,6 +25,17 @@ const el = {
   idleNudge: document.querySelector("#idle-nudge"),
   idleRemember: document.querySelector("#idle-remember"),
   idleDismiss: document.querySelector("#idle-dismiss"),
+  renameDialog: document.querySelector("#rename-dialog"),
+  renameForm: document.querySelector("#rename-form"),
+  renameId: document.querySelector("#rename-id"),
+  renameName: document.querySelector("#rename-name"),
+  renameStatus: document.querySelector("#rename-status"),
+  renameCancel: document.querySelector("#cancel-rename"),
+  deleteDialog: document.querySelector("#delete-dialog"),
+  deleteForm: document.querySelector("#delete-form"),
+  deleteNote: document.querySelector("#delete-note"),
+  deleteStatus: document.querySelector("#delete-status"),
+  deleteCancel: document.querySelector("#cancel-delete"),
 };
 
 const IDLE_MS = 15 * 60 * 1000;
@@ -54,6 +65,7 @@ const state = {
   streamSessionId: "",
   running: false,
   loadGeneration: 0,
+  deleteId: "",
 };
 
 function messageOf(error, fallback) {
@@ -135,7 +147,26 @@ function syncComposer() {
   el.messageList.setAttribute("aria-busy", String(busy));
 }
 
+// Icon-only row action. The look (and the traced icon it masks) lives in
+// styles.css next to the row it belongs to.
+function rowAction(className, label, onClick) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = className;
+  button.setAttribute("aria-label", label);
+  const mark = document.createElement("span");
+  mark.className = "session-action-icon";
+  mark.setAttribute("aria-hidden", "true");
+  button.append(mark);
+  button.addEventListener("click", onClick);
+  return button;
+}
+
 function sessionButton(session) {
+  // Buttons cannot nest, so the row is a button and the two actions sit next
+  // to it inside one positioned wrapper.
+  const row = document.createElement("div");
+  row.className = "session-row";
   const button = document.createElement("button");
   button.type = "button";
   button.className = "session-item";
@@ -152,13 +183,31 @@ function sessionButton(session) {
   name.textContent = cleanText(session.title, "Phiên trống");
   const time = document.createElement("time");
   time.dateTime = String(session.updated_at || "");
-  time.textContent = formatSessionTime(session.updated_at);
+  time.textContent = sessionMeta(session);
   const body = document.createElement("span");
   body.className = "session-body";
   body.append(icon, name, time);
   button.append(body);
   button.addEventListener("click", () => void loadSession(button.dataset.sessionId));
-  return button;
+
+  const title = cleanText(session.title, "Phiên trống");
+  const actions = document.createElement("span");
+  actions.className = "session-actions";
+  actions.append(
+    rowAction("session-action", `Đặt tên cho phiên ${title}`, () => openRename(session)),
+    rowAction("session-action is-delete", `Xóa phiên ${title}`, () => openDelete(session)),
+  );
+  row.append(button, actions);
+  return row;
+}
+
+// Second line of a row: when it happened, then how many turns it holds. The
+// turn count reads the same way Trace counts them (one per user message).
+function sessionMeta(session) {
+  const when = formatSessionTime(session.updated_at);
+  const turns = Number(session.turns);
+  if (!Number.isFinite(turns) || turns <= 0) return when;
+  return `${when} · ${turns} lượt`;
 }
 
 function renderSessions() {
@@ -177,6 +226,66 @@ async function refreshSessions() {
   state.sessions = Array.isArray(payload.sessions) ? payload.sessions : [];
   renderSessions();
   return payload;
+}
+
+function sessionTitleOf(id) {
+  const row = state.sessions.find((item) => String(item.id) === id);
+  return row ? cleanText(row.title, "Phiên trống") : "";
+}
+
+// Titles are the user's own text: it is stored as written and returned to the
+// row verbatim, so the dialog reopens showing exactly what was saved.
+function openRename(session) {
+  const id = String(session.id || "");
+  if (!id) return;
+  el.renameId.value = id;
+  el.renameName.value = cleanText(session.title, "");
+  el.renameStatus.textContent = "";
+  el.renameDialog.showModal();
+  el.renameName.select();
+}
+
+async function submitRename() {
+  const id = el.renameId.value;
+  const title = el.renameName.value.trim();
+  if (!id || !title) {
+    el.renameStatus.textContent = "Tên phiên không được để trống.";
+    return;
+  }
+  el.renameStatus.textContent = "Đang lưu…";
+  try {
+    await patchJson(`/api/sessions/${encodeURIComponent(id)}`, { title });
+  } catch (error) {
+    el.renameStatus.textContent = messageOf(error, "Không đổi được tên phiên.");
+    return;
+  }
+  el.renameDialog.close();
+  await refreshSessions();
+  if (state.activeId === id) el.label.textContent = sessionTitleOf(id) || "Hôm nay";
+}
+
+function openDelete(session) {
+  const id = String(session.id || "");
+  if (!id) return;
+  state.deleteId = id;
+  el.deleteNote.textContent = `“${cleanText(session.title, "Phiên trống")}” sẽ mất hẳn khỏi sổ. Những trang nhật ký đã ghi từ phiên này vẫn còn.`;
+  el.deleteStatus.textContent = "";
+  el.deleteDialog.showModal();
+}
+
+async function submitDelete() {
+  const id = state.deleteId;
+  if (!id) return;
+  el.deleteStatus.textContent = "Đang xóa…";
+  try {
+    await deleteJson(`/api/sessions/${encodeURIComponent(id)}`);
+  } catch (error) {
+    el.deleteStatus.textContent = messageOf(error, "Không xóa được phiên.");
+    return;
+  }
+  el.deleteDialog.close();
+  if (state.activeId === id) newSession();
+  await refreshSessions();
 }
 
 function rememberActiveSession(id) {
@@ -398,6 +507,19 @@ function bind() {
     void sendMessage();
   });
   el.idleDismiss.addEventListener("click", armIdle);
+  el.renameCancel.addEventListener("click", () => el.renameDialog.close());
+  el.renameForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void submitRename();
+  });
+  el.deleteCancel.addEventListener("click", () => el.deleteDialog.close());
+  el.deleteDialog.addEventListener("close", () => {
+    state.deleteId = "";
+  });
+  el.deleteForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void submitDelete();
+  });
   el.scroll.addEventListener("scroll", updateToBottom, { passive: true });
   el.toBottom.addEventListener("click", () => scrollToBottom());
   if (typeof ResizeObserver === "function") {

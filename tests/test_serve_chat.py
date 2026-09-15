@@ -961,9 +961,224 @@ def test_webui_follows_a_turn_it_did_not_start() -> None:
 
     # The 409 branch must not depend on an identifier the module never
     # imported (a missing ApiError import threw at runtime, not at load).
-    assert 'import { ApiError, getJson, postJson, postNdjson }' in app
+    assert 'import { ApiError,' in app
     assert "error instanceof ApiError" in app
     assert "state.busy" not in load_session
     # The sidebar and New session stay usable while a turn runs.
     assert "el.newSession.disabled" not in app
     assert "button.disabled = busy" not in app
+
+
+def test_session_summary_counts_turns_the_way_trace_does(tmp_path: Path) -> None:
+    """One turn per user message — not the raw message count.
+
+    Tool rounds inflate message_count (every assistant round and tool result
+    is a line), which would read as "5 lượt" for a single question.
+    """
+    llm = FakeLLM(ChatReply(content="pong"))
+    app = _chat(tmp_path, llm)
+    try:
+        created = app.create()
+        app.turn(created["id"], "ping")
+        app.turn(created["id"], "pong?")
+        listed = app.list_payload()["sessions"]
+        assert [item["turns"] for item in listed] == [2]
+        assert listed[0]["message_count"] == 4
+    finally:
+        app.shutdown()
+
+
+def test_rename_and_delete_over_http(tmp_path: Path) -> None:
+    llm = FakeLLM(ChatReply(content="pong"))
+    app = _chat(tmp_path, llm)
+    httpd, thread = _start(tmp_path, app)
+    try:
+        created = _json(httpd, "/api/sessions", method="POST", data=b"")
+        sid = created["id"]
+        body = json.dumps({"text": "ping"}).encode("utf-8")
+        _json(httpd, f"/api/sessions/{sid}/turn", method="POST", data=body)
+
+        patch = json.dumps({"title": "  Kế hoạch   tuần này "}).encode("utf-8")
+        renamed = _json(httpd, f"/api/sessions/{sid}", method="PATCH", data=patch)
+        assert renamed == {"ok": True, "id": sid, "title": "Kế hoạch tuần này"}
+        detail = _json(httpd, f"/api/sessions/{sid}")
+        assert detail["title"] == "Kế hoạch tuần này"
+        listed = _json(httpd, "/api/sessions")
+        assert listed["sessions"][0]["title"] == "Kế hoạch tuần này"
+
+        # The title is stored on disk as a meta line carrying its source, so
+        # the naming policy knows not to vet it.
+        stored = SessionManager(tmp_path / "sessions").load(sid)
+        assert stored.title == "Kế hoạch tuần này"
+        assert stored.title_source == "user"
+        assert '"source": "user"' in (tmp_path / "sessions" / f"{sid}.jsonl").read_text(
+            encoding="utf-8"
+        )
+
+        # Empty title is refused, and so is a body that is not a title.
+        for bad in ({"title": "   "}, {"title": 7}, {}):
+            data = json.dumps(bad).encode("utf-8")
+            try:
+                _json(httpd, f"/api/sessions/{sid}", method="PATCH", data=data)
+            except HTTPError as exc:
+                assert exc.code == 400
+            else:
+                raise AssertionError("expected 400")
+
+        deleted = _json(httpd, f"/api/sessions/{sid}", method="DELETE")
+        assert deleted == {"ok": True, "id": sid}
+        assert not (tmp_path / "sessions" / f"{sid}.jsonl").exists()
+        try:
+            urlopen(_url(httpd, f"/api/sessions/{sid}"), timeout=2)
+        except HTTPError as exc:
+            assert exc.code == 404
+        else:
+            raise AssertionError("expected 404 after delete")
+        # The notebook is gone; the memory it left behind is not touched.
+        assert _json(httpd, "/api/sessions")["sessions"] == []
+
+        # Dropping a notebook is idempotent: a missing file is already the
+        # wanted end state, so a second DELETE from another tab is not an
+        # error. A malformed id is still refused.
+        assert _json(httpd, f"/api/sessions/{sid}", method="DELETE")["ok"] is True
+        try:
+            _json(
+                httpd,
+                f"/api/sessions/{sid}",
+                method="PATCH",
+                data=json.dumps({"title": "x"}).encode("utf-8"),
+            )
+        except HTTPError as exc:
+            assert exc.code == 404
+        else:
+            raise AssertionError("expected 404 for PATCH on a missing session")
+        for method in ("PATCH", "DELETE"):
+            data = json.dumps({"title": "x"}).encode("utf-8") if method == "PATCH" else None
+            try:
+                _json(httpd, "/api/sessions/not-an-id", method=method, data=data)
+            except HTTPError as exc:
+                assert exc.code == 404
+            else:
+                raise AssertionError("expected 404 for a malformed id")
+    finally:
+        _stop(httpd, thread)
+
+
+def test_delete_refuses_a_session_mid_turn(tmp_path: Path) -> None:
+    """A running turn is still appending: deleting under it is a 409."""
+    started = threading.Event()
+    release = threading.Event()
+
+    class Slow:
+        async def chat(self, messages, tools=None):
+            started.set()
+            await asyncio.to_thread(release.wait)
+            return ChatReply(content="late")
+
+    app = _chat(tmp_path, Slow())
+    httpd, thread = _start(tmp_path, app)
+    try:
+        created = _json(httpd, "/api/sessions", method="POST", data=b"")
+        sid = created["id"]
+
+        worker = threading.Thread(target=lambda: app.turn(sid, "ping"), daemon=True)
+        worker.start()
+        assert started.wait(timeout=5)
+        try:
+            _json(httpd, f"/api/sessions/{sid}", method="DELETE")
+        except HTTPError as exc:
+            assert exc.code == 409
+        else:
+            raise AssertionError("expected 409 for a running session")
+        assert (tmp_path / "sessions" / f"{sid}.jsonl").exists()
+        release.set()
+        worker.join(timeout=5)
+        assert not worker.is_alive()
+        assert (tmp_path / "sessions" / f"{sid}.jsonl").exists()
+        # Once the turn has landed the same call goes through.
+        assert _json(httpd, f"/api/sessions/{sid}", method="DELETE")["ok"] is True
+    finally:
+        release.set()
+        _stop(httpd, thread)
+        app.shutdown()
+
+
+def test_webui_has_row_actions_for_rename_and_delete() -> None:
+    """The sidebar row carries both actions; hover reveals, keyboard reaches."""
+    app = (WEBUI / "app.js").read_text(encoding="utf-8")
+    html = (WEBUI / "index.html").read_text(encoding="utf-8")
+    css = (WEBUI / "styles.css").read_text(encoding="utf-8")
+    api = (WEBUI / "backend" / "api.js").read_text(encoding="utf-8")
+
+    assert 'patchJson(`/api/sessions/${encodeURIComponent(id)}`, { title })' in app
+    assert 'deleteJson(`/api/sessions/${encodeURIComponent(id)}`)' in app
+    assert "export function patchJson" in api
+    assert "export function deleteJson" in api
+
+    # Two dialogs, the same .screen-dialog the mục lục uses.
+    assert 'id="rename-dialog"' in html
+    assert 'class="screen-dialog"' in html
+    assert 'id="delete-dialog"' in html
+    assert 'id="rename-name"' in html
+    assert 'maxlength="120"' in html
+    assert "screen-button is-danger" in html
+
+    # Reused art: the fountain pen and the eraser, masked in currentColor.
+    assert 'url("images/thyca-icons/but-may.svg")' in css
+    assert 'url("images/thyca-icons/tay.svg")' in css
+    # Hidden until the row is pointed at, reachable by keyboard, and visible
+    # on touch where hover does not exist.
+    assert ".session-row:hover .session-actions" in css
+    assert ".session-row:focus-within .session-actions" in css
+    assert "@media (hover: none)" in css
+    # Centred on the row, not aligned to its first line.
+    assert "inset-block: 0;" in css
+    assert "align-items: center;" in css
+    # Second line carries when and how many turns.
+    assert "lượt`;" in app or "lượt" in app
+    assert "function sessionMeta(session)" in app
+
+
+def test_rename_midturn_survives_the_agent_naming_step(tmp_path: Path) -> None:
+    """Naming must not append over a title the user typed during the turn.
+
+    The turn holds its own Session snapshot from load time; the sidebar writes
+    a meta line to the same file. Without a re-read the agent's naming step
+    would append its own line and the stored title would be the model's.
+    """
+    started = threading.Event()
+    release = threading.Event()
+    calls = {"n": 0}
+
+    class Slow:
+        async def chat(self, messages, tools=None):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                started.set()
+                await asyncio.to_thread(release.wait)
+                return ChatReply(content="pong")
+            # The naming step proposes a title the policy would normally accept:
+            # it differs from both the user's words and the reply.
+            return ChatReply(content="Nhịp sáng")
+
+    app = _chat(tmp_path, Slow())
+    try:
+        created = app.create()
+        sid = created["id"]
+        worker = threading.Thread(target=lambda: app.turn(sid, "ping"), daemon=True)
+        worker.start()
+        assert started.wait(timeout=5)
+
+        # The user names it from the sidebar while the turn is still running.
+        assert app.rename_session(sid, "Tên tôi tự đặt") == "Tên tôi tự đặt"
+        release.set()
+        worker.join(timeout=5)
+        assert not worker.is_alive()
+
+        stored = SessionManager(tmp_path / "sessions").load(sid)
+        assert stored.title == "Tên tôi tự đặt"
+        assert stored.title_source == "user"
+        assert app.get_payload(sid)["title"] == "Tên tôi tự đặt"
+    finally:
+        release.set()
+        app.shutdown()

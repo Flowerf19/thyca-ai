@@ -60,9 +60,10 @@ class SessionStore:
     def read(self, path: Path) -> list[Message]:
         return self.scan(path)[0]
 
-    def scan(self, path: Path) -> tuple[list[Message], str | None]:
+    def scan(self, path: Path) -> tuple[list[Message], str | None, str | None]:
         result: list[Message] = []
         title: str | None = None
+        title_source: str | None = None
         known_calls: set[str] = set()
         try:
             with path.open("r", encoding="utf-8") as stream:
@@ -76,6 +77,7 @@ class SessionStore:
                             extracted = _meta_title(payload)
                             if extracted:
                                 title = extracted
+                                title_source = _meta_source(payload)
                             continue
                         msg = Message.from_dict(payload)
                         if msg.role == "system" and (
@@ -104,14 +106,14 @@ class SessionStore:
             raise
         except OSError as exc:
             raise SessionCorrupt(path, None, exc) from exc
-        return result, title
+        return result, title, title_source
 
     def load(self, session_id: str) -> Session:
         path = self.path_for(session_id)
         if not path.is_file() or path.is_symlink():
             raise SessionNotFound(path)
-        messages, title = self.scan(path)
-        return Session(session_id, path, messages, title)
+        messages, title, title_source = self.scan(path)
+        return Session(session_id, path, messages, title, title_source)
 
     def list_paths(self) -> list[Path]:
         if not self.sessions_dir.is_dir():
@@ -139,14 +141,17 @@ class SessionStore:
         session_id = chosen.stem
         if not _ID_RE.fullmatch(session_id):
             raise SessionNotFound(chosen, "invalid session filename")
-        messages, title = self.scan(chosen)
-        return Session(session_id, chosen, messages, title)
+        messages, title, title_source = self.scan(chosen)
+        return Session(session_id, chosen, messages, title, title_source)
 
     def append(self, path: Path, msg: Message) -> None:
         self._append_json(path, msg.to_canonical_dict())
 
-    def append_meta(self, path: Path, title: str) -> None:
-        self._append_json(path, {"type": "meta", "title": title})
+    def append_meta(self, path: Path, title: str, source: str | None = None) -> None:
+        payload: dict = {"type": "meta", "title": title}
+        if source:
+            payload["source"] = source
+        self._append_json(path, payload)
 
     def _append_json(self, path: Path, payload: dict) -> None:
         try:
@@ -164,6 +169,7 @@ class SessionStore:
         target: Path,
         messages: list[Message],
         title: str | None = None,
+        title_source: str | None = None,
     ) -> None:
         path = self.path_for(session_id)
         if path.resolve() != target.resolve():
@@ -174,9 +180,11 @@ class SessionStore:
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as stream:
                     if title:
+                        meta: dict = {"type": "meta", "title": title}
+                        if title_source:
+                            meta["source"] = title_source
                         stream.write(
-                            json.dumps({"type": "meta", "title": title}, ensure_ascii=False)
-                            + "\n"
+                            json.dumps(meta, ensure_ascii=False) + "\n"
                         )
                     for msg in messages:
                         stream.write(json.dumps(msg.to_canonical_dict(), ensure_ascii=False) + "\n")
@@ -228,3 +236,8 @@ def _meta_title(payload: dict) -> str | None:
         return None
     text = raw.strip()
     return text or None
+
+
+def _meta_source(payload: dict) -> str | None:
+    raw = payload.get("source")
+    return raw.strip() if isinstance(raw, str) and raw.strip() else None

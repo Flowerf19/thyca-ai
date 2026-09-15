@@ -118,6 +118,18 @@ class ChatApp:
         session = self._sessions.store.load(session_id)
         return self._session_detail(session, self._current_cfg())
 
+    def rename_session(self, session_id: str, title: str) -> str:
+        """Set a title the user typed. Returns the stored (cleaned) title."""
+        if not isinstance(title, str):
+            raise ValueError("title must be a string")
+        return self._sessions.rename(session_id, title)
+
+    def delete_session(self, session_id: str) -> None:
+        """Drop the notebook. Memory leaves written from it are left alone."""
+        with self._running_lock:
+            keep = set(self._running)
+        self._sessions.delete(session_id, keep=keep)
+
     def running_sessions(self) -> dict[str, str]:
         """Snapshot of session_id -> started_at for turns in flight."""
         with self._running_lock:
@@ -205,6 +217,11 @@ class ChatApp:
         cfg: Config,
         event_sink: EventSink | None = None,
     ) -> bool:
+        session = sessions.current
+        # The user may have named the notebook from the sidebar while this turn
+        # was running. Re-read the title from disk so the model does not
+        # overwrite a name that landed mid-turn.
+        sessions.refresh_title()
         session = sessions.current
         if session.title:
             return False
@@ -299,6 +316,9 @@ class ChatApp:
             "title": session_title(session),
             "updated_at": _updated_at(session),
             "message_count": len(session.messages),
+            # Turns the way Trace counts them: one per user message. Raw
+            # message_count would read as inflated by tool traffic.
+            "turns": sum(1 for item in session.messages if item.role == "user"),
         }
 
     def _session_detail(

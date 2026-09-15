@@ -15,6 +15,7 @@ from thyca.llm.llm_base import ChatReply
 from thyca.protocol import Message, ToolCall
 from thyca.sessions import (
     Session,
+    SessionBusy,
     SessionCorrupt,
     SessionError,
     SessionManager,
@@ -23,6 +24,7 @@ from thyca.sessions import (
     estimate_tokens,
 )
 from thyca.sessions.title import (
+    USER_TITLE_MAX,
     accept_title,
     display_title,
     fallback_title,
@@ -380,3 +382,124 @@ def test_retitle_missing_skips_named_and_empty(tmp_path: Path) -> None:
     assert SessionManager(tmp_path).load(named.id).title == "Đã có tên"
     assert SessionManager(tmp_path).load(cjk.id).title == "Nhịp sáng"
     assert SessionManager(tmp_path).load(blank.id).title is None
+
+
+def test_user_title_is_verbatim_and_survives_compaction(tmp_path: Path) -> None:
+    """A title the user typed is the authority on its own notebook.
+
+    The agent's naming policy refuses titles that echo the first message or
+    contain CJK; neither is this policy's business when the user wrote it.
+    """
+    manager = SessionManager(tmp_path)
+    session = manager.create()
+    manager.append(msg("user", "Cà phê với Hòa"))
+    manager.append(msg("assistant", "ok"))
+    # Verbatim: the text the user typed is exactly what comes back, even if it
+    # happens to repeat their first message.
+    assert manager.set_title("Cà phê với Hòa", source="user") == "Cà phê với Hòa"
+    # A whole phrase is allowed — the 32-char agent label is not the ceiling.
+    long = "Kế hoạch tuần này cho dự án Thyca cùng Hòa"
+    assert manager.set_title(long, source="user") == long
+    assert len(long) > 32
+    loaded = SessionManager(tmp_path).load(session.id)
+    assert loaded.title == long
+    assert loaded.title_source == "user"
+    assert display_title(loaded) == long
+
+    # Compaction rewrites the file; the user's title and its provenance stay.
+    sized = SessionManager(tmp_path, LimitsCfg(contextTokens=1000))
+    sized.load(session.id)
+    for i in range(8):
+        sized.append(msg("user", "u" * 300 + str(i)))
+        sized.append(msg("assistant", "a" * 300))
+    assert sized.compact_if_needed()
+    after = SessionManager(tmp_path).load(session.id)
+    assert after.title == long
+    assert after.title_source == "user"
+
+
+def test_user_title_caps_and_cleans_but_keeps_punctuation(tmp_path: Path) -> None:
+    from thyca.sessions.title import sanitize_user_title
+
+    assert sanitize_user_title("  Nhịp   sáng  ") == "Nhịp sáng"
+    assert sanitize_user_title("Nhịp sáng.") == "Nhịp sáng."
+    assert sanitize_user_title("打招呼") == "打招呼"
+    assert sanitize_user_title("   ") is None
+    assert sanitize_user_title("x" * 200) == "x" * (USER_TITLE_MAX - 1) + "…"
+
+    manager = SessionManager(tmp_path)
+    manager.create()
+    assert manager.set_title("   ", source="user") is None
+    assert manager.set_title("Sáng 15 thg 9", source="user") == "Sáng 15 thg 9"
+
+
+def test_agent_title_still_goes_through_the_naming_policy(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path)
+    session = manager.create()
+    manager.append(msg("user", "alo"))
+    manager.append(msg("assistant", "hey"))
+    # No source: the model's proposal keeps the old veting (32 chars, no CJK,
+    # not a copy of what the user said).
+    assert manager.set_title("打招呼") == "打招呼"
+    loaded = SessionManager(tmp_path).load(session.id)
+    assert loaded.title_source is None
+    assert display_title(loaded) == fallback_title(session.id)
+    assert manager.set_title("alo") == "alo"
+    assert display_title(SessionManager(tmp_path).load(session.id)) == fallback_title(session.id)
+
+
+def test_rename_targets_any_stored_session(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path)
+    first = manager.create()
+    manager.append(msg("user", "alo"))
+    second = manager.create()
+    manager.append(msg("user", "chào"))
+
+    # Any session, not only the one the manager currently holds.
+    assert manager.rename(first.id, "  Chuyện   buổi sáng ") == "Chuyện buổi sáng"
+    loaded = SessionManager(tmp_path).load(first.id)
+    assert loaded.title == "Chuyện buổi sáng"
+    assert loaded.title_source == "user"
+    manager.rename(second.id, "Chuyện buổi chiều")
+    assert SessionManager(tmp_path).load(second.id).title == "Chuyện buổi chiều"
+
+    with pytest.raises(SessionNotFound):
+        manager.rename("2026-01-01T00-00-00_beef", "x")
+    with pytest.raises(ValueError):
+        manager.rename(first.id, "   ")
+
+
+def test_delete_removes_the_file_and_refuses_mid_turn(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path)
+    session = manager.create()
+    manager.append(msg("user", "alo"))
+    path = session.path
+    assert path.exists()
+
+    with pytest.raises(SessionBusy):
+        manager.delete(session.id, keep={session.id})
+    assert path.exists()
+    assert manager.load(session.id) is not None
+
+    manager.delete(session.id)
+    assert not path.exists()
+    with pytest.raises(SessionNotFound):
+        manager.load(session.id)
+    # Deleting again is a no-op, not an error: the row is already gone.
+    manager.delete(session.id)
+
+
+def test_naming_step_does_not_overwrite_the_user_title(tmp_path: Path) -> None:
+    """A title typed while a turn runs wins over the agent's naming step."""
+    manager = SessionManager(tmp_path)
+    session = manager.create()
+    manager.append(msg("user", "alo"))
+    # The turn's snapshot predates the rename: another manager writes the meta
+    # line to the same file while this one holds its stale view.
+    other = SessionManager(tmp_path)
+    other.rename(session.id, "Tên tôi tự đặt")
+    assert manager.current.title is None
+    manager.refresh_title()
+    assert manager.current.title == "Tên tôi tự đặt"
+    assert manager.current.title_source == "user"
+    assert display_title(manager.current) == "Tên tôi tự đặt"

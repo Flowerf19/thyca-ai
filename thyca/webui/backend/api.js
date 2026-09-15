@@ -55,6 +55,28 @@ export function postJson(url, body, options = {}) {
   });
 }
 
+export function deleteJson(url, body, options = {}) {
+  return requestJson(url, {
+    ...options,
+    method: "DELETE",
+    ...(body === undefined
+      ? {}
+      : {
+          headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+          body: JSON.stringify(body),
+        }),
+  });
+}
+
+export function patchJson(url, body, options = {}) {
+  return requestJson(url, {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    body: JSON.stringify(body),
+  });
+}
+
 function yieldToRender() {
   return new Promise((resolve) => {
     if (typeof globalThis.requestAnimationFrame === "function") {

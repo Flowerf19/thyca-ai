@@ -16,6 +16,11 @@ if TYPE_CHECKING:
 ChatFn = Callable[[list[Message], list | None], Awaitable]
 
 TITLE_MAX = 32
+# Marker stored in the session's meta line for a title the user typed.
+USER_TITLE_SOURCE = "user"
+# A title the user typed in the sidebar is shown as written — only the noise of
+# a multiline paste is cleaned, and the ceiling is a whole phrase, not a label.
+USER_TITLE_MAX = 120
 _SNIPPET = 400
 _CJK_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]")
 _NAMING_PROMPT = (
@@ -40,6 +45,15 @@ def sanitize_title(raw: str) -> str | None:
         return None
     if len(text) > TITLE_MAX:
         return text[: TITLE_MAX - 1] + "…"
+    return text
+
+
+def sanitize_user_title(raw: str) -> str | None:
+    text = " ".join(str(raw).split())
+    if not text:
+        return None
+    if len(text) > USER_TITLE_MAX:
+        return text[: USER_TITLE_MAX - 1] + "…"
     return text
 
 
@@ -83,6 +97,10 @@ def is_blank(session: Session) -> bool:
 
 def display_title(session: Session) -> str:
     if session.title:
+        # A user-written title is the authority on its own notebook; the
+        # naming policy only vets what the model proposes.
+        if session.title_source == USER_TITLE_SOURCE:
+            return session.title
         accepted = accept_title(session.title, session)
         if accepted:
             return accepted
@@ -132,6 +150,8 @@ async def retitle_missing(
     named: list[tuple[Session, str, str]] = []
     for session in manager.list_sessions():
         if is_blank(session) or naming_messages(session) is None:
+            continue
+        if session.title_source == USER_TITLE_SOURCE and session.title:
             continue
         if session.title and accept_title(session.title, session):
             continue

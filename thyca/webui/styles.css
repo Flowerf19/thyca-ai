@@ -310,6 +310,12 @@ svg {
   scrollbar-color: var(--color-divider) transparent;
 }
 
+/* The row is the positioning context for its hover actions: the button keeps
+   its own layout, the actions are laid over the right end of it. */
+.session-row {
+  position: relative;
+}
+
 .session-item {
   position: relative;
   display: grid;
@@ -329,7 +335,11 @@ svg {
   transition: color var(--dur-short) var(--ease-out), background-color var(--dur-short) var(--ease-out), transform var(--dur-micro) var(--ease-out);
 }
 
-.session-item:first-child {
+/* The first row of the list carries no rule above it. Chat rows are wrapped
+   in .session-row to hold their hover actions; every other screen puts the
+   .session-item straight into the list. */
+.session-list > .session-row:first-child .session-item,
+.session-list > .session-item:first-child {
   border-block-start: 0;
 }
 
@@ -337,6 +347,10 @@ svg {
   display: block;
   width: 100%;
   height: auto;
+}
+
+.session-row .session-item {
+  width: 100%;
 }
 
 .session-body {
@@ -430,6 +444,71 @@ svg {
 
 .session-item.is-active time {
   color: var(--chat-brand-accent);
+}
+
+/* Row actions: đặt tên and xóa. Out of the way until the row is pointed at
+   (or reached by keyboard), then sitting centred on the right end. Touch has
+   no hover, so there they stay visible instead (see the media query below). */
+.session-actions {
+  position: absolute;
+  z-index: 1;
+  inset-block: 0;
+  inset-inline-end: 0.55rem;
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-short) var(--ease-out);
+}
+
+.session-row:hover .session-actions,
+.session-row:focus-within .session-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.session-action {
+  display: inline-grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--chat-brand-accent);
+  transition: color var(--dur-short) var(--ease-out), background-color var(--dur-short) var(--ease-out);
+}
+
+.session-action-icon {
+  display: block;
+  width: 1.1rem;
+  height: 1.1rem;
+  background: currentColor;
+  -webkit-mask: url("images/thyca-icons/but-may.svg") center / contain no-repeat;
+  mask: url("images/thyca-icons/but-may.svg") center / contain no-repeat;
+}
+
+.session-action.is-delete {
+  color: var(--color-accent-deep);
+}
+
+.session-action.is-delete .session-action-icon {
+  -webkit-mask-image: url("images/thyca-icons/tay.svg");
+  mask-image: url("images/thyca-icons/tay.svg");
+}
+
+/* The actions cover the tail of both lines: they make room instead of running
+   underneath. Only where the actions overlay the row at all — on touch they
+   sit in their own column and the row keeps its full width. */
+@media (hover: hover) and (pointer: fine) {
+  .session-row:hover .session-name,
+  .session-row:focus-within .session-name,
+  .session-row:hover time,
+  .session-row:focus-within time {
+    padding-inline-end: 3.6rem;
+  }
 }
 
 .workspace {
@@ -932,6 +1011,10 @@ svg {
     background: color-mix(in oklab, var(--color-accent-soft) 52%, transparent);
   }
 
+  .session-action:hover {
+    background: color-mix(in oklab, var(--color-accent-soft) 52%, transparent);
+  }
+
   .mic-button:hover {
     color: var(--ink);
     background: color-mix(in oklab, var(--color-accent-soft) 52%, transparent);
@@ -961,6 +1044,22 @@ svg {
 
 button:active {
   transform: translateY(1px);
+}
+
+@media (hover: none) {
+  /* No pointer to reveal them: on touch the actions stay visible, and the row
+     gives them a column of their own instead of overlaying the name. */
+  .session-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .session-actions {
+    position: static;
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 @media (max-width: 75rem) {

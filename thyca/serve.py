@@ -23,7 +23,7 @@ from thyca.onboarding import (
     validate_provider,
 )
 from thyca.serve_memory import memory_endpoint
-from thyca.sessions import SessionCorrupt, SessionError, SessionNotFound
+from thyca.sessions import SessionBusy, SessionCorrupt, SessionError, SessionNotFound
 from thyca.tools.memory import MemoryFacade
 from thyca.trace_api import (
     trace_detail_payload,
@@ -238,6 +238,63 @@ def _handler(
                 self._json(404, {"error": "session not found"})
                 return
             self._send(405, b"method not allowed", "text/plain; charset=utf-8")
+
+        def do_DELETE(self) -> None:
+            path = urlparse(self.path).path
+            match = _SESSION_RE.fullmatch(path)
+            if not match:
+                self._json(404, {"error": "session not found"})
+                return
+            app = self._chat()
+            if app is None:
+                return
+            try:
+                app.delete_session(match.group(1))
+            except SessionNotFound:
+                self._json(404, {"error": "session not found"})
+            except SessionBusy:
+                self._json(409, {"error": "session busy"})
+            except SessionError:
+                self._json(503, {"error": "session unavailable"})
+            except Exception:
+                traceback.print_exc(file=sys.stderr)
+                self._json(503, {"error": "chat unavailable"})
+            else:
+                self._json(200, {"ok": True, "id": match.group(1)})
+
+        def do_PATCH(self) -> None:
+            path = urlparse(self.path).path
+            match = _SESSION_RE.fullmatch(path)
+            if not match:
+                self._json(404, {"error": "session not found"})
+                return
+            app = self._chat()
+            if app is None:
+                return
+            try:
+                payload = self._read_json()
+            except ValueError:
+                self._json(400, {"error": "invalid body"})
+                return
+            title = payload.get("title")
+            if not isinstance(title, str):
+                self._json(400, {"error": "invalid title"})
+                return
+            try:
+                stored = app.rename_session(match.group(1), title)
+            except SessionNotFound:
+                self._json(404, {"error": "session not found"})
+            except ValueError:
+                self._json(400, {"error": "invalid title"})
+            except SessionCorrupt:
+                self._json(503, {"error": "session unreadable"})
+            except SessionError:
+                self._json(503, {"error": "session unavailable"})
+            except Exception:
+                traceback.print_exc(file=sys.stderr)
+                self._json(503, {"error": "chat unavailable"})
+            else:
+                self._json(200, {"ok": True, "id": match.group(1), "title": stored})
 
         def log_message(self, format: str, *args: object) -> None:
             return

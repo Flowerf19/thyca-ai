@@ -10,10 +10,10 @@ from thyca.config import DEFAULT_TIMELINE_TIMEZONE, LimitsCfg
 from thyca.protocol import Message
 
 from .compaction import SessionCompactor
-from .errors import SessionCorrupt, SessionError, SessionNotFound
+from .errors import SessionBusy, SessionCorrupt, SessionError, SessionNotFound
 from .models import Session
 from .store import SessionStore
-from .title import is_blank, sanitize_title
+from .title import USER_TITLE_SOURCE, is_blank, sanitize_title, sanitize_user_title
 
 
 class SessionManager:
@@ -124,10 +124,11 @@ class SessionManager:
         with self._lock:
             if self._session is None:
                 raise SessionError("no current session — call create/load/continue_last first")
-            on_disk, title = self.store.scan(self._session.path)
+            on_disk, title, title_source = self.store.scan(self._session.path)
             self._session.messages[:] = on_disk
             if title:
                 self._session.title = title
+                self._session.title_source = title_source
             compacted = self.compactor.compact(on_disk, self.limits.contextTokens)
             if compacted is None:
                 return False
@@ -136,17 +137,69 @@ class SessionManager:
                 self._session.path,
                 compacted,
                 title=self._session.title,
+                title_source=self._session.title_source,
             )
             self._session.messages[:] = compacted
             return True
 
-    def set_title(self, title: str) -> str | None:
+    def refresh_title(self) -> None:
+        """Re-read the title a stored meta line carries.
+
+        A turn holds its own ``Session`` snapshot from load time; a title the
+        user typed in the meantime is on disk only. Without this the agent's
+        naming step would append its own meta line over the user's name.
+        """
+        with self._lock:
+            if self._session is None:
+                return
+            try:
+                _messages, title, title_source = self.store.scan(self._session.path)
+            except (SessionCorrupt, SessionError):
+                return
+            if title:
+                self._session.title = title
+                self._session.title_source = title_source
+
+    def set_title(self, title: str, *, source: str | None = None) -> str | None:
         with self._lock:
             if self._session is None:
                 raise SessionError("no current session — call create/load/continue_last first")
-            cleaned = sanitize_title(title)
+            cleaned = (
+                sanitize_user_title(title)
+                if source == USER_TITLE_SOURCE
+                else sanitize_title(title)
+            )
             if cleaned is None:
                 return None
-            self.store.append_meta(self._session.path, cleaned)
+            self.store.append_meta(self._session.path, cleaned, source)
             self._session.title = cleaned
+            self._session.title_source = source
             return cleaned
+
+    def rename(self, session_id: str, title: str) -> str:
+        """Set the title of any stored session, not only the current one."""
+        cleaned = sanitize_user_title(title)
+        if cleaned is None:
+            raise ValueError("empty title")
+        with self._lock:
+            session = self.store.load(session_id)
+            self.store.append_meta(session.path, cleaned, USER_TITLE_SOURCE)
+            session.title = cleaned
+            session.title_source = USER_TITLE_SOURCE
+            if self._session is not None and self._session.id == session_id:
+                self._session.title = cleaned
+                self._session.title_source = USER_TITLE_SOURCE
+            return cleaned
+
+    def delete(self, session_id: str, *, keep: set[str] | None = None) -> None:
+        """Remove a session file outright.
+
+        ``keep`` names sessions with a turn in flight: deleting the transcript
+        under a running turn would leave the writer appending to a moved file.
+        """
+        with self._lock:
+            if keep and session_id in keep:
+                raise SessionBusy(session_id)
+            self.store.delete(session_id)
+            if self._session is not None and self._session.id == session_id:
+                self._session = None

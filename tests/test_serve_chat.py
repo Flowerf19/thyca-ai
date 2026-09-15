@@ -1249,3 +1249,30 @@ def test_webui_submits_a_rename_or_delete_once() -> None:
     assert "finally {\n    state.saving = false;" in rename
     assert "finally {\n    state.saving = false;" in remove
     assert "saving: false," in app
+
+
+def test_chat_row_second_line_sits_beside_the_leaf() -> None:
+    """The chat row's time/turn line hugs the icon instead of the far edge."""
+    css = (WEBUI / "styles.css").read_text(encoding="utf-8")
+
+    # The icon box grows for the chat variant only: the leaf's own viewBox has
+    # a lot of empty height, so the ink lands small in the shared 1.85rem box.
+    assert ".session-body .session-icon {" in css
+    body_icon = css[css.index(".session-body .session-icon {") :][:400]
+    assert "width: 2.5rem;" in body_icon
+    assert "height: 2.5rem;" in body_icon
+    # Other screens keep the shared size — they do not wrap rows in .session-body.
+    shared = css[css.index(".session-icon {") : css.index(".session-body .session-icon {")]
+    assert "width: 1.85rem;" in shared
+    assert "height: 1.85rem;" in shared
+
+    # The line starts under the name, not pushed to the row's right edge.
+    assert ".session-item:has(.session-body) time {" in css
+    beside = css[css.index(".session-item:has(.session-body) time {") :][:200]
+    assert "justify-self: start;" in beside
+    assert "padding-inline-start: 0.45rem;" in beside
+
+    # The narrow-window breakpoint keeps the same proportions.
+    narrow = css[css.index("@media (max-width: 75rem)") :]
+    assert "grid-template-columns: 2.4rem minmax(0, 1fr);" in narrow[:2000]
+    assert "width: 2.4rem;" in narrow[:2000]

@@ -355,7 +355,7 @@ svg {
 
 .session-body {
   display: grid;
-  grid-template-columns: 1.85rem minmax(0, 1fr);
+  grid-template-columns: 2.5rem minmax(0, 1fr);
   align-items: center;
   align-content: start;
   column-gap: 0.08rem;
@@ -407,6 +407,11 @@ svg {
 
 .session-body .session-icon {
   grid-row: 2;
+  /* Bigger than the shared 1.85rem: the leaf's own viewBox carries a lot of
+     empty height, so the ink lands small unless the box is given room. */
+  width: 2.5rem;
+  height: 2.5rem;
+  margin-inline-end: -0.5rem;
 }
 
 .session-body .session-name {
@@ -444,6 +449,13 @@ svg {
 
 .session-item.is-active time {
   color: var(--chat-brand-accent);
+}
+
+/* The second line of a chat row starts under the name, right beside the icon
+   rather than pushed to the far edge (measured: 8px from the leaf). */
+.session-item:has(.session-body) time {
+  justify-self: start;
+  padding-inline-start: 0.45rem;
 }
 
 /* Row actions: đặt tên and xóa. Out of the way until the row is pointed at
@@ -1080,6 +1092,15 @@ button:active {
   .session-item,
   .session-body {
     grid-template-columns: 1.75rem minmax(0, 1fr);
+  }
+
+  .session-body {
+    grid-template-columns: 2.4rem minmax(0, 1fr);
+  }
+
+  .session-body .session-icon {
+    width: 2.4rem;
+    height: 2.4rem;
   }
 
   .live-card {

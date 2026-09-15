@@ -451,16 +451,10 @@ svg {
   color: var(--chat-brand-accent);
 }
 
-/* The second line of a chat row starts under the name, right beside the icon
-   rather than pushed to the far edge (measured: 8px from the leaf). */
-.session-item:has(.session-body) time {
-  justify-self: start;
-  padding-inline-start: 0.45rem;
-}
-
-/* Row actions: đặt tên and xóa. Out of the way until the row is pointed at
-   (or reached by keyboard), then sitting centred on the right end. Touch has
-   no hover, so there they stay visible instead (see the media query below). */
+/* Row actions: đặt tên and xóa as plain underlined words at the right end of
+   the row, using the type of the row's own second line so the two read as one.
+   Out of the way until the row is pointed at (or reached by keyboard); touch
+   has no hover, so there they stay visible instead. */
 .session-actions {
   position: absolute;
   z-index: 1;
@@ -468,7 +462,7 @@ svg {
   inset-inline-end: 0.55rem;
   display: flex;
   align-items: center;
-  gap: 0.15rem;
+  gap: 0.75rem;
   opacity: 0;
   pointer-events: none;
   transition: opacity var(--dur-short) var(--ease-out);
@@ -481,34 +475,24 @@ svg {
 }
 
 .session-action {
-  display: inline-grid;
-  place-items: center;
-  width: 1.75rem;
-  height: 1.75rem;
   padding: 0;
   border: 0;
-  border-radius: var(--radius-xs);
+  border-radius: 0;
   background: transparent;
   color: var(--chat-brand-accent);
-  transition: color var(--dur-short) var(--ease-out), background-color var(--dur-short) var(--ease-out);
-}
-
-.session-action-icon {
-  display: block;
-  width: 1.1rem;
-  height: 1.1rem;
-  background: currentColor;
-  -webkit-mask: url("images/thyca-icons/but-may.svg") center / contain no-repeat;
-  mask: url("images/thyca-icons/but-may.svg") center / contain no-repeat;
+  font-family: var(--font-ui);
+  font-size: 0.72rem;
+  line-height: 1;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  white-space: nowrap;
+  transition: color var(--dur-short) var(--ease-out);
 }
 
 .session-action.is-delete {
   color: var(--color-accent-deep);
-}
-
-.session-action.is-delete .session-action-icon {
-  -webkit-mask-image: url("images/thyca-icons/tay.svg");
-  mask-image: url("images/thyca-icons/tay.svg");
 }
 
 /* The actions cover the tail of both lines: they make room instead of running
@@ -519,7 +503,7 @@ svg {
   .session-row:focus-within .session-name,
   .session-row:hover time,
   .session-row:focus-within time {
-    padding-inline-end: 3.6rem;
+    padding-inline-end: 5.2rem;
   }
 }
 
@@ -1024,7 +1008,7 @@ svg {
   }
 
   .session-action:hover {
-    background: color-mix(in oklab, var(--color-accent-soft) 52%, transparent);
+    color: var(--color-accent-deep);
   }
 
   .mic-button:hover {
@@ -1071,6 +1055,7 @@ button:active {
     position: static;
     opacity: 1;
     pointer-events: auto;
+    padding-inline-end: 0.35rem;
   }
 }
 

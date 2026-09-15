@@ -149,17 +149,14 @@ function syncComposer() {
   el.messageList.setAttribute("aria-busy", String(busy));
 }
 
-// Icon-only row action. The look (and the traced icon it masks) lives in
-// styles.css next to the row it belongs to.
-function rowAction(className, label, onClick) {
+// Row action: a word, not a glyph. What it says and which row it belongs to
+// both live in the label; the look is .session-action in styles.css.
+function rowAction(className, label, text, onClick) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = className;
+  button.textContent = text;
   button.setAttribute("aria-label", label);
-  const mark = document.createElement("span");
-  mark.className = "session-action-icon";
-  mark.setAttribute("aria-hidden", "true");
-  button.append(mark);
   button.addEventListener("click", onClick);
   return button;
 }
@@ -196,8 +193,15 @@ function sessionButton(session) {
   const actions = document.createElement("span");
   actions.className = "session-actions";
   actions.append(
-    rowAction("session-action", `Đặt tên cho phiên ${title}`, () => openRename(session)),
-    rowAction("session-action is-delete", `Xóa phiên ${title}`, () => openDelete(session)),
+    rowAction(
+      "session-action",
+      `Đặt tên cho phiên ${title}`,
+      "Đổi tên",
+      () => openRename(session),
+    ),
+    rowAction("session-action is-delete", `Xóa phiên ${title}`, "Xóa", () =>
+      openDelete(session),
+    ),
   );
   row.append(button, actions);
   return row;

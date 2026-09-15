@@ -1142,17 +1142,33 @@ def test_webui_has_row_actions_for_rename_and_delete() -> None:
     assert 'maxlength="120"' in html
     assert "screen-button is-danger" in html
 
-    # Reused art: the fountain pen and the eraser, masked in currentColor.
-    assert 'url("images/thyca-icons/but-may.svg")' in css
-    assert 'url("images/thyca-icons/tay.svg")' in css
+    # Words, not glyphs: no icon element and no mask art on the actions.
+    assert "session-action-icon" not in app
+    assert "session-action-icon" not in css
+    # The send button still masks the pen; the row actions do not use art.
+    action_block = css[css.index("/* Row actions:"):css.index(".workspace {")]
+    assert "but-may.svg" not in action_block
+    assert "tay.svg" not in action_block
+    # Both carry their word as text, and name their row in the label.
+    assert '"Đổi tên",' in app
+    assert '"Xóa", () =>' in app
+    assert "`Đặt tên cho phiên ${title}`" in app
+    assert "`Xóa phiên ${title}`" in app
+    action = css[css.index(".session-action {") :][:700]
+    assert "text-decoration: underline;" in action
+    assert "text-decoration-thickness: 1px;" in action
+    assert "text-underline-offset: 3px;" in action
+    assert "font-family: var(--font-ui);" in action
+    assert "font-size: 0.72rem;" in action
     # Hidden until the row is pointed at, reachable by keyboard, and visible
     # on touch where hover does not exist.
     assert ".session-row:hover .session-actions" in css
     assert ".session-row:focus-within .session-actions" in css
     assert "@media (hover: none)" in css
-    # Centred on the row, not aligned to its first line.
+    # Centred on the row; both lines make room for the words.
     assert "inset-block: 0;" in css
     assert "align-items: center;" in css
+    assert "padding-inline-end: 5.2rem;" in css
     # Second line carries when and how many turns.
     assert "lượt`;" in app or "lượt" in app
     assert "function sessionMeta(session)" in app
@@ -1251,8 +1267,8 @@ def test_webui_submits_a_rename_or_delete_once() -> None:
     assert "saving: false," in app
 
 
-def test_chat_row_second_line_sits_beside_the_leaf() -> None:
-    """The chat row's time/turn line hugs the icon instead of the far edge."""
+def test_chat_row_keeps_the_shared_second_line() -> None:
+    """The chat row's time/turn line stays flush right like every other screen."""
     css = (WEBUI / "styles.css").read_text(encoding="utf-8")
 
     # The icon box grows for the chat variant only: the leaf's own viewBox has
@@ -1266,11 +1282,10 @@ def test_chat_row_second_line_sits_beside_the_leaf() -> None:
     assert "width: 1.85rem;" in shared
     assert "height: 1.85rem;" in shared
 
-    # The line starts under the name, not pushed to the row's right edge.
-    assert ".session-item:has(.session-body) time {" in css
-    beside = css[css.index(".session-item:has(.session-body) time {") :][:200]
-    assert "justify-self: start;" in beside
-    assert "padding-inline-start: 0.45rem;" in beside
+    # No rule re-aims the time line: nothing overrides the shared
+    # `justify-self: end`, so it reads the same on every screen.
+    assert "justify-self: start;" not in css
+    assert ".session-item:has(.session-body) time" not in css
 
     # The narrow-window breakpoint keeps the same proportions.
     narrow = css[css.index("@media (max-width: 75rem)") :]

@@ -31,7 +31,7 @@ export function cleanText(value, fallback = "") {
   return text || fallback;
 }
 
-export function dateValue(value) {
+function dateValue(value) {
   const date = new Date(String(value || ""));
   return Number.isNaN(date.getTime()) ? null : date;
 }

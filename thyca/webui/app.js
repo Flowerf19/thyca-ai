@@ -19,7 +19,6 @@ const el = {
   newSession: document.querySelector("#new-session"),
   messageList: document.querySelector("#message-list"),
   scroll: document.querySelector("#conversation-scroll"),
-  end: document.querySelector("#conversation-end"),
   toBottom: document.querySelector("#to-bottom"),
   idleNudge: document.querySelector("#idle-nudge"),
   idleRemember: document.querySelector("#idle-remember"),

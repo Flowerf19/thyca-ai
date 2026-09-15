@@ -66,7 +66,7 @@ export function formatRecordText(value) {
   return String(value);
 }
 
-export function asArguments(value) {
+function asArguments(value) {
   if (value == null || value === "") return {};
   if (typeof value === "string") {
     try {
@@ -120,7 +120,7 @@ function finiteMs(value) {
 // What to print for one call: the skill name when the call loaded a skill,
 // otherwise the tool name exactly as the agent called it. No lookup table —
 // tools and skills the agent adds or removes show up as they are recorded.
-export function toolDisplayName(tool) {
+function toolDisplayName(tool) {
   const skill = cleanText(tool?.skill);
   return skill || cleanText(tool?.name, "tool");
 }

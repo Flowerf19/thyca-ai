@@ -226,13 +226,15 @@ def test_cost_panel_splits_cache_and_uses_shared_toolbar() -> None:
     assert "memory-filters" not in memories_css
     assert ".sidebar .screen-search" in memories_css
 
-    # One row of three equal columns, and its card furniture matches
-    # .memory-card value for value so the two lists read as the same object.
-    assert ".cost-model-card {" in css
-    assert "display: contents;" in css
-    assert "border-radius: var(--radius-chat);" in css
-    assert "background: var(--chat-brand-wash);" in css
-    assert "min-height: 8.55rem;" in css
+    # One row of three equal columns; the card furniture IS the .memory-card
+    # rule now — one grouped kit rule in screens.css, no private copy in
+    # cost.css.
+    assert ".memory-card,\n.cost-model-card {" in shared
+    assert "display: contents;" in shared
+    assert "border-radius: var(--radius-chat);" in shared
+    assert "background: var(--chat-brand-wash);" in shared
+    assert "min-height: 8.55rem;" in shared
+    assert ".cost-model-card" not in css
     assert ".cost-model-stats" not in css
     assert ".screen-filters .screen-button" in shared
     assert ".screen-search svg" in shared

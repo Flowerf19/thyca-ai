@@ -1,6 +1,6 @@
 import { cleanText, splitMemoryHeading } from "./format.js";
 
-export function memoryFromLeaf(leaf) {
+function memoryFromLeaf(leaf) {
   const heading = splitMemoryHeading(leaf);
   return {
     id: cleanText(leaf?.chunk_id),
@@ -12,7 +12,6 @@ export function memoryFromLeaf(leaf) {
     uses: Math.max(0, Number(leaf?.get_count) || 0),
     searches: Math.max(0, Number(leaf?.search_count) || 0),
     expiresAt: cleanText(leaf?.expires_at),
-    raw: leaf,
   };
 }
 

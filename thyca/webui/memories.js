@@ -20,11 +20,10 @@ const el = {
 };
 
 const state = {
-  stats: { leaves: [], files: [] },
+  stats: { leaves: [] },
   view: "day",
   activeMemory: null,
   opener: null,
-  busy: false,
 };
 
 function messageOf(error, fallback) {
@@ -42,7 +41,6 @@ function setDialogStatus(target, message = "", kind = "") {
 }
 
 function setBusy(busy) {
-  state.busy = busy;
   for (const control of el.dialog.querySelectorAll("button, input, textarea")) control.disabled = busy;
   el.list.setAttribute("aria-busy", String(busy));
 }

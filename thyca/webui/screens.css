@@ -19,7 +19,8 @@ a { color: inherit; }
 .screen-shell .screen-surface h3 { font-weight: 500; }
 .screen-shell .screen-surface h2 { font-style: normal; margin: 0; font-size: 1.7rem; line-height: 1.25; }
 .screen-shell .screen-surface h3 { margin: 0; }
-/* Card titles in .cost-model-copy / .memory-copy set 1.3rem italic at (0,1,1). */
+/* Card titles in the list-card kit below set 1.3rem italic at (0,1,1).
+   This :not() must keep excluding them so that value still wins. */
 .screen-shell .screen-surface h3:not(:where(.cost-model-copy h3, .memory-copy h3)) {
   font-style: normal;
   font-size: 1.15rem;
@@ -134,6 +135,92 @@ a { color: inherit; }
   color: var(--color-accent-deep);
   font-size: 0.875rem;
   white-space: nowrap;
+}
+
+/* List card kit · Nhật ký (.memory-*) and Chi phí (.cost-model-*).
+   One card per row: title + action, muted summary, tags, then date/cost.
+   Page files keep only deltas (uppercase, justify, nowrap, colors). */
+.memory-list,
+.cost-model-list {
+  display: grid;
+  gap: 0.65rem;
+}
+.memory-card,
+.cost-model-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: 1rem;
+  row-gap: 0.12rem;
+  min-height: 8.55rem;
+  padding: 1rem 1.3rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-chat);
+  background: var(--chat-brand-wash);
+  box-shadow: none;
+}
+/* Wrapper holds no box, so children are placed on the card's own grid. */
+.memory-copy,
+.cost-model-copy {
+  display: contents;
+}
+.memory-copy h3,
+.cost-model-copy h3 {
+  grid-column: 1;
+  grid-row: 1;
+  align-self: center;
+  min-width: 0;
+  margin: 0;
+  color: var(--color-ink);
+  font-family: var(--font-reading);
+  font-size: 1.3rem;
+  font-style: italic;
+}
+.memory-copy p,
+.cost-model-copy p {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 1rem;
+  font-style: italic;
+  overflow-wrap: anywhere;
+}
+.memory-tags,
+.cost-model-tokens {
+  display: flex;
+  flex-wrap: wrap;
+  grid-column: 1;
+  grid-row: 3;
+  align-self: center;
+  gap: 0.5rem;
+}
+.memory-tags span,
+.cost-model-tokens span {
+  padding: 0.2rem 0.7rem;
+  border-radius: var(--radius-pill);
+  background: var(--chat-brand-wash);
+  color: var(--color-accent-deep);
+  font-size: 0.83rem;
+}
+.memory-more,
+.cost-model-share {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+}
+.memory-meta time,
+.cost-model-cost {
+  grid-column: 2;
+  grid-row: 3;
+  justify-self: end;
+  align-self: center;
+  white-space: nowrap;
+}
+.memories-footnote,
+.cost-footnote {
+  text-align: center;
+  margin-top: 1rem;
 }
 
 /* Collapsible rows: one card, each row a summary you can open for detail.
@@ -303,6 +390,19 @@ a { color: inherit; }
   .screen-shell .sidebar > * { display: none; }
   .screen-surface { margin: 0; padding: 1rem; border-inline: 0; border-block-end: 0; border-radius: 0; }
   .screen-card { padding: 1rem; }
+  .memory-card,
+  .cost-model-card {
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding: 0.85rem;
+  }
+  .memory-copy h3,
+  .cost-model-copy h3 {
+    font-size: 1.15rem;
+  }
+  .memory-copy p,
+  .cost-model-copy p {
+    font-size: 0.92rem;
+  }
   .fold-row:not(.fold-row--plain) > summary {
     grid-template-columns: 2.5rem minmax(0, 1fr) auto 1rem;
   }

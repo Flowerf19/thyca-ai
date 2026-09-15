@@ -91,101 +91,27 @@
   color: var(--color-ink);
 }
 
-/* One model per card, in the shape Nhật ký uses for a page: title line with
-   its badge, a muted summary line, token tags, then the cost where a memory
-   card puts its date. Same card furniture as .memory-card — border, radius,
-   peach wash, and column/row placement so the two screens read alike. */
-.cost-model-card {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  column-gap: 1rem;
-  row-gap: 0.12rem;
-  min-height: 8.55rem;
-  padding: 1rem 1.3rem;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-chat);
-  background: var(--chat-brand-wash);
-  box-shadow: none;
-}
-
-/* Same trick as .memory-copy: the wrapper holds no box, so its children are
-   placed by the card's own grid. */
-.cost-model-copy {
-  display: contents;
-}
-
+/* Card grid, copy, tags, share, list, footnote: screens.css list-card kit. */
 .cost-model-copy h3 {
-  grid-column: 1;
-  grid-row: 1;
-  align-self: center;
-  min-width: 0;
-  margin: 0;
-  color: var(--color-ink);
-  font-family: var(--font-reading);
-  font-size: 1.3rem;
-  font-style: italic;
   overflow-wrap: anywhere;
 }
 
-.cost-model-copy p {
-  grid-column: 1 / -1;
-  grid-row: 2;
-  margin: 0;
-  color: var(--color-muted);
-  font-size: 1rem;
-  font-style: italic;
-  overflow-wrap: anywhere;
-}
-
-/* Same tag as .memory-tags span. */
 .cost-model-tokens {
-  display: flex;
-  flex-wrap: wrap;
-  grid-column: 1;
-  grid-row: 3;
-  align-self: center;
-  gap: 0.5rem;
   margin-block-start: 0.45rem;
 }
 
 .cost-model-tokens span {
-  padding: 0.2rem 0.7rem;
-  border-radius: var(--radius-pill);
-  background: var(--chat-brand-wash);
-  color: var(--color-accent-deep);
-  font-size: 0.83rem;
   white-space: nowrap;
 }
 
 .cost-model-share {
-  grid-column: 2;
-  grid-row: 1;
-  justify-self: end;
   align-self: center;
 }
 
-/* Where a memory card puts its date. */
 .cost-model-cost {
-  grid-column: 2;
-  grid-row: 3;
-  justify-self: end;
-  align-self: center;
   margin-block-start: 0.45rem;
   color: var(--color-ink);
   font-size: 1.05rem;
-  white-space: nowrap;
-}
-
-/* The list is cards now, not one bordered stack. */
-.cost-model-list {
-  display: grid;
-  gap: 0.65rem;
-}
-
-.cost-footnote {
-  margin-top: 1rem;
-  text-align: center;
 }
 
 #cost-status,
@@ -196,20 +122,6 @@
 @media (max-width: 56rem) {
   .cost-overview {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  /* Same narrowing Nhật ký applies to its cards. */
-  .cost-model-card {
-    grid-template-columns: minmax(0, 1fr) auto;
-    padding: 0.85rem;
-  }
-
-  .cost-model-copy h3 {
-    font-size: 1.15rem;
-  }
-
-  .cost-model-copy p {
-    font-size: 0.92rem;
   }
 
   .cost-total {

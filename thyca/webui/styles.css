@@ -7,18 +7,15 @@
 :root {
   --color-desk-top: oklch(46.8% 0.103 42.5);
   --color-desk-mid: oklch(42% 0.09 41.4);
-  --color-desk-edge: oklch(43.1% 0.076 50.9);
   --color-desk-bottom: oklch(31.8% 0.073 42.8);
   --color-shell-shadow: oklch(21.7% 0.047 45.8 / 0.72);
   --color-shell-shadow-soft: oklch(25% 0.06 44 / 0.32);
 
   --color-paper: oklch(94.3% 0.023 71.8);
-  --color-paper-sidebar: oklch(94.8% 0.023 75.9);
   --color-paper-chat: oklch(96.4% 0.019 80.1);
   --color-paper-card: oklch(97.4% 0.011 63.4);
   --color-paper-input: oklch(96.7% 0.011 71.9);
   --color-paper-edge: oklch(82% 0.045 72);
-  --color-paper-grain: oklch(49% 0.035 65 / 0.075);
   --color-border: oklch(87.4% 0.024 69.6);
   --color-divider: oklch(78.6% 0.042 69.6);
 
@@ -31,8 +28,6 @@
   --color-accent-soft: oklch(89.2% 0.049 72.2);
   --color-accent-ink: oklch(95.6% 0.021 65.3);
   --color-botanical: oklch(51.3% 0.049 68.6);
-  --color-berry: oklch(64.4% 0.1 44.2);
-  --color-tool-ok: oklch(67.1% 0.112 156.6);
   --color-watermark: oklch(87.9% 0.037 80.6 / 0.58);
   --color-focus: oklch(51.7% 0.134 36.5);
   --chat-brand-ink: #3d2a1f;
@@ -50,14 +45,10 @@
   --font-reading: "Source Serif 4", ui-serif, Georgia, serif;
   --font-ui: "Be Vietnam Pro", ui-sans-serif, sans-serif;
 
-  --space-3xs: 0.125rem;
-  --space-2xs: 0.25rem;
   --space-xs: 0.5rem;
   --space-sm: 0.75rem;
   --space-md: 1rem;
   --space-lg: 1.5rem;
-  --space-xl: 2.5rem;
-  --space-2xl: 4rem;
 
   --radius-xs: 0.5rem;
   --radius-sm: 0.75rem;
@@ -68,11 +59,9 @@
 
   --rule: 1px;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
   --dur-micro: 120ms;
   --dur-short: 220ms;
-  --dur-long: 420ms;
   --z-base: 1;
   --z-paper: 10;
   --z-content: 20;
@@ -347,10 +336,6 @@ svg {
   width: 100%;
 }
 
-.session-item:not(:has(.session-icon)) {
-  grid-template-columns: minmax(0, 1fr) auto;
-}
-
 .session-item.is-active::before {
   content: "";
   position: absolute;
@@ -414,14 +399,6 @@ svg {
   font-style: italic;
   line-height: 1;
   white-space: nowrap;
-}
-
-.session-item.is-active .session-name {
-  color: var(--chat-brand-ink);
-}
-
-.session-item.is-active time {
-  color: var(--chat-brand-accent);
 }
 
 /* Row actions: đặt tên and xóa as plain underlined words at the right end of
@@ -555,28 +532,6 @@ svg {
   padding: 2.25rem 1.25rem 7.25rem;
 }
 
-.day-divider {
-  position: relative;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.85rem;
-  width: 13rem;
-  margin: 0 auto;
-  color: var(--color-muted);
-  font-family: var(--font-reading);
-  font-size: 0.98rem;
-  line-height: 1;
-}
-
-.day-divider::before,
-.day-divider::after {
-  content: "";
-  flex: 1;
-  border-block-start: var(--rule) solid var(--color-divider);
-}
-
 /* No fill: the right-aligned block plus its ink tick carry the turn, so the
    paper stays the paper. The tick is the thin, faint counterpart to
    .chat-brand-stripe — same accent, much less of it. */
@@ -597,7 +552,7 @@ svg {
 
 .message-user p {
   margin: 0;
-  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
   white-space: pre-wrap;
   font-family: var(--font-reading);
   font-size: 1.05rem;
@@ -891,10 +846,6 @@ svg {
   box-shadow: 0 0.35rem 0.9rem var(--color-shell-shadow-soft);
 }
 
-.to-bottom[hidden] {
-  display: none;
-}
-
 .to-bottom svg {
   width: 1.25rem;
   height: 1.25rem;
@@ -1030,14 +981,8 @@ button:active {
 }
 
 @media (max-width: 75rem) {
-  body {
-    padding: 1.15rem;
-  }
-
   .notebook-shell {
     grid-template-columns: 16.5rem minmax(0, 1fr);
-    grid-template-rows: 2.75rem minmax(0, 1fr) auto;
-    height: calc(100dvh - 2.3rem);
   }
 
   .sessions {
@@ -1046,11 +991,6 @@ button:active {
 
   .session-item {
     grid-template-columns: 1.75rem minmax(0, 1fr);
-  }
-
-  .live-card {
-    width: auto;
-    margin-inline-end: 0;
   }
 }
 
@@ -1125,10 +1065,6 @@ button:active {
     padding: 1.5rem 0.85rem 6.75rem;
   }
 
-  .day-divider {
-    margin: 0 auto;
-  }
-
   .live-card {
     width: auto;
     min-height: 0;
@@ -1186,4 +1122,13 @@ button:active {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+html[data-reduce-motion="on"] *,
+html[data-reduce-motion="on"] *::before,
+html[data-reduce-motion="on"] *::after {
+  scroll-behavior: auto !important;
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
 }

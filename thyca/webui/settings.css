@@ -16,7 +16,6 @@
 .settings-control .screen-input { width: 100%; }
 .settings-block { margin-top: 1.75rem; }
 .settings-block > h2 { margin: 0 0 0.35rem; color: var(--color-ink); font-family: var(--font-display); font-size: 1.35rem; font-weight: 500; }
-.settings-block > .screen-muted { margin: 0 0 0.5rem; }
 .settings-field { display: flex; align-items: center; gap: 0.75rem; }
 .settings-field .screen-input { flex: 1; min-width: 0; }
 .settings-unit { flex: 0 0 auto; color: var(--color-muted); font-size: 0.88rem; white-space: nowrap; }
@@ -24,17 +23,6 @@
 .settings-check input { width: 1.15rem; height: 1.15rem; accent-color: var(--color-accent); }
 .model-note { display: flex; align-items: center; flex-wrap: wrap; gap: 0.6rem; margin-top: 0.65rem; color: var(--color-muted); font-size: 0.9rem; }
 .model-note .screen-badge { color: var(--color-accent-deep); font-size: 0.82rem; }
-.settings-range { --range-fill: 50%; width: 100%; height: 1.5rem; margin: 0.25rem 0 0.1rem; appearance: none; background: transparent; cursor: pointer; }
-.settings-range::-webkit-slider-runnable-track { height: 0.38rem; border-radius: var(--radius-pill); background: linear-gradient(to right, var(--color-accent) var(--range-fill), var(--color-accent-soft) var(--range-fill)); }
-.settings-range::-moz-range-track { height: 0.38rem; border-radius: var(--radius-pill); background: var(--color-accent-soft); }
-.settings-range::-moz-range-progress { height: 0.38rem; border-radius: var(--radius-pill); background: var(--color-accent); }
-.settings-range::-webkit-slider-thumb { width: 1.45rem; height: 1.45rem; margin-top: -0.54rem; appearance: none; border: 1px solid var(--color-accent-deep); border-radius: 50%; background: var(--color-accent); box-shadow: 0 0.12rem 0.3rem var(--color-shell-shadow-soft); }
-.settings-range::-moz-range-thumb { width: 1.35rem; height: 1.35rem; border: 1px solid var(--color-accent-deep); border-radius: 50%; background: var(--color-accent); box-shadow: 0 0.12rem 0.3rem var(--color-shell-shadow-soft); }
-.range-value { display: block; min-height: 1.45rem; color: var(--color-ink); font-family: var(--font-reading); font-size: 1.1rem; font-variant-numeric: tabular-nums; }
-.range-labels { display: flex; justify-content: space-between; color: var(--color-reading); font-size: 1rem; line-height: 1.25; }
-.range-labels span:last-child { text-align: right; }
-.range-labels small { color: var(--color-muted); font-size: 0.85rem; }
-.range-help { margin-top: 1.1rem; color: var(--color-muted); font-size: 0.82rem; }
 .settings-mock-note { margin-top: 1rem; text-align: right; }
 #giao-dien { scroll-margin-top: 1rem; }
 html[data-type-scale="small"] { font-size: 93.75%; }
@@ -44,15 +32,6 @@ html[data-theme="dusk"] {
   --color-desk-mid: oklch(28% 0.05 42);
   --color-paper: oklch(88% 0.03 72);
   --color-paper-chat: oklch(90% 0.025 80);
-}
-html[data-sprigs="off"] .brand-sprig { display: none; }
-html[data-reduce-motion="on"] *,
-html[data-reduce-motion="on"] *::before,
-html[data-reduce-motion="on"] *::after {
-  scroll-behavior: auto !important;
-  animation-duration: 0.01ms !important;
-  animation-iteration-count: 1 !important;
-  transition-duration: 0.01ms !important;
 }
 @media (max-width: 68.75rem) {
   .settings-row { grid-template-columns: minmax(0, 1fr); gap: 0.8rem; }

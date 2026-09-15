@@ -49,101 +49,6 @@
   mask: url("images/thyca-icons/but-may.svg") center / contain no-repeat;
 }
 
-.trace-turn {
-  position: relative;
-  display: grid;
-  grid-template-columns: 2.4rem minmax(0, 1fr) auto;
-  gap: 0.55rem;
-  width: 100%;
-  margin-left: 0.45rem;
-  padding: 0.75rem 0.65rem 0.8rem 0;
-  border-bottom: 1px solid var(--color-border);
-  background: transparent;
-  color: inherit;
-  text-align: start;
-  cursor: pointer;
-}
-
-.trace-turn:before {
-  content: "";
-  position: absolute;
-  left: 0.73rem;
-  top: 1.3rem;
-  bottom: -1.3rem;
-  border-left: 1px solid var(--color-divider);
-}
-
-.trace-turn:last-child:before {
-  display: none;
-}
-
-.trace-dot {
-  z-index: 1;
-  align-self: start;
-  width: 0.8rem;
-  height: 0.8rem;
-  margin: 0.2rem auto;
-  border: 1px solid var(--color-accent);
-  border-radius: 50%;
-  background: var(--color-paper);
-}
-
-.trace-turn.is-active {
-  margin-inline: -0.55rem;
-  padding-left: 0.55rem;
-  border-radius: var(--radius-sm);
-  background: var(--chat-brand-wash);
-  color: inherit;
-}
-
-.trace-turn.is-active .trace-dot {
-  background: var(--chat-brand-accent);
-}
-
-.trace-turn.is-active:before {
-  left: 1.28rem;
-}
-
-.trace-turn-heading {
-  display: flex;
-  align-items: baseline;
-  gap: 0.55rem;
-  min-width: 0;
-}
-
-.trace-turn-heading strong {
-  font-family: var(--font-reading);
-  font-size: 1.05rem;
-}
-
-.trace-turn strong {
-  font-family: var(--font-reading);
-  font-size: 1.05rem;
-}
-
-.trace-turn small,
-.trace-turn time {
-  font-size: 0.72rem;
-}
-
-.trace-turn time {
-  white-space: nowrap;
-}
-
-.trace-turn p {
-  grid-column: 2 / -1;
-  margin: 0.15rem 0;
-  color: inherit;
-  font-family: var(--font-reading);
-  font-size: 0.88rem;
-}
-
-.trace-turn em {
-  grid-column: 2 / -1;
-  font-size: 0.72rem;
-  font-style: normal;
-}
-
 .trace-crumb {
   display: flex;
   justify-content: space-between;
@@ -213,13 +118,6 @@
   text-align: center;
 }
 
-.success svg {
-  width: 0.7rem;
-  height: 0.7rem;
-  fill: currentColor;
-  stroke: none;
-}
-
 .general {
   padding: 1.1rem 1.2rem;
 }
@@ -287,11 +185,6 @@
 .token-panels span {
   color: var(--color-muted);
   font-size: 0.85rem;
-}
-
-.token-detail pre {
-  min-height: 0;
-  padding: 0 1rem 0.8rem;
 }
 
 .tool-calls {
@@ -435,35 +328,6 @@
   .trace-shell .sessions {
     display: flex !important;
     pointer-events: auto;
-  }
-
-  .trace-turn {
-    display: grid;
-    grid-template-columns: 1.2rem minmax(0, 1fr);
-    width: 100%;
-    margin: 0 0 0.35rem;
-    padding: 0.45rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-xs);
-    background: transparent;
-    text-align: start;
-  }
-
-  .trace-turn.is-active {
-    margin: 0 0 0.35rem;
-    padding: 0.45rem;
-  }
-
-  .trace-turn:before {
-    display: none;
-  }
-
-  .trace-turn em {
-    display: none;
-  }
-
-  .trace-turn p {
-    font-size: 0.8rem;
   }
 
   .trace-workspace {

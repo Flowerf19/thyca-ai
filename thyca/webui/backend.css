@@ -1,10 +1,5 @@
 /* Backend integration states for the Thyca notebook UI. */
 
-html,
-body {
-  overflow-x: clip;
-}
-
 .conversation-content {
   min-height: 100%;
 }
@@ -64,11 +59,6 @@ body {
   border: var(--rule) solid var(--color-danger, var(--color-accent));
   border-radius: var(--radius-card);
   background: var(--color-paper-card);
-}
-
-.message-user p {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 
 .markdown-body > :first-child {
@@ -279,10 +269,6 @@ input:disabled {
 #turn-detail[hidden],
 #tool-calls[hidden] {
   display: none;
-}
-
-#tool-select {
-  min-width: min(100%, 18rem);
 }
 
 @media (max-width: 56rem) {

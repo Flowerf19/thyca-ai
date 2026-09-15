@@ -183,10 +183,9 @@ function sessionButton(session) {
   const time = document.createElement("time");
   time.dateTime = String(session.updated_at || "");
   time.textContent = sessionMeta(session);
-  const body = document.createElement("span");
-  body.className = "session-body";
-  body.append(icon, name, time);
-  button.append(body);
+  // Same shape as Hồ sơ / Nhật ký: icon and name on the item. The time line
+  // is the shared second row of .session-item, flush right under the name.
+  button.append(icon, name, time);
   button.addEventListener("click", () => void loadSession(button.dataset.sessionId));
 
   const title = cleanText(session.title, "Phiên trống");

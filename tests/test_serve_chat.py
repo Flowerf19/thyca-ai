@@ -1267,27 +1267,64 @@ def test_webui_submits_a_rename_or_delete_once() -> None:
     assert "saving: false," in app
 
 
-def test_chat_row_keeps_the_shared_second_line() -> None:
-    """The chat row's time/turn line stays flush right like every other screen."""
+def test_chat_row_uses_the_shared_session_item() -> None:
+    """Chat and Trace rows use the same .session-item grid as Hồ sơ / Nhật ký."""
+    css = (WEBUI / "styles.css").read_text(encoding="utf-8")
+    app = (WEBUI / "app.js").read_text(encoding="utf-8")
+    trace = (WEBUI / "trace.js").read_text(encoding="utf-8")
+
+    # No restack wrapper: icon and name sit on the item, like profile.js.
+    assert "session-body" not in css
+    assert "session-body" not in app
+    assert "session-body" not in trace
+    assert "button.append(icon, name, time);" in app
+    assert "button.append(icon, name, meta);" in trace
+
+    icon = css[css.index(".session-icon {") : css.index(".session-name {")]
+    icon = icon[: icon.index("}")]
+    assert "width: 1.85rem;" in icon
+    assert "height: 1.85rem;" in icon
+    assert "grid-column: 1;" in icon
+    assert "grid-row: 1;" in icon
+    assert ".session-item:has(time) .session-icon {" in css
+    span_icon = css[css.index(".session-item:has(time) .session-icon {") :]
+    span_icon = span_icon[: span_icon.index("}")]
+    assert "grid-row: 1 / -1;" in span_icon
+
+    name = css[css.index(".session-name {") :]
+    name = name[: name.index("}")]
+    assert "grid-column: 2;" in name
+    assert "grid-row: 1;" in name
+
+    time = css[css.index(".session-item time {") :]
+    time = time[: time.index("}")]
+    assert "grid-column: 2;" in time
+    assert "grid-row: 2;" in time
+    assert "justify-self: start;" in time
+    assert "font-family: var(--font-reading);" in time
+    assert "font-size: 0.72rem;" in time
+    assert "font-style: italic;" in time
+
+    item = css[css.index(".session-item {") :]
+    item = item[: item.index("}")]
+    assert "grid-template-columns: 1.85rem minmax(0, 1fr) auto;" in item
+    assert "min-height: 3.65rem;" in item
+
+    narrow = css[css.index("@media (max-width: 75rem)") :]
+    assert "grid-template-columns: 1.75rem minmax(0, 1fr);" in narrow[:2000]
+    assert "1.5rem minmax(0, 1fr)" not in narrow[:2000]
+
+
+def test_hovering_a_row_keeps_its_divider() -> None:
+    """The pointer wash does not hide the line above the row it lights up."""
     css = (WEBUI / "styles.css").read_text(encoding="utf-8")
 
-    # The icon box grows for the chat variant only: the leaf's own viewBox has
-    # a lot of empty height, so the ink lands small in the shared 1.85rem box.
-    assert ".session-body .session-icon {" in css
-    body_icon = css[css.index(".session-body .session-icon {") :][:400]
-    assert "width: 2.5rem;" in body_icon
-    assert "height: 2.5rem;" in body_icon
-    # Other screens keep the shared size — they do not wrap rows in .session-body.
-    shared = css[css.index(".session-icon {") : css.index(".session-body .session-icon {")]
-    assert "width: 1.85rem;" in shared
-    assert "height: 1.85rem;" in shared
-
-    # No rule re-aims the time line: nothing overrides the shared
-    # `justify-self: end`, so it reads the same on every screen.
-    assert "justify-self: start;" not in css
-    assert ".session-item:has(.session-body) time" not in css
-
-    # The narrow-window breakpoint keeps the same proportions.
-    narrow = css[css.index("@media (max-width: 75rem)") :]
-    assert "grid-template-columns: 2.4rem minmax(0, 1fr);" in narrow[:2000]
-    assert "width: 2.4rem;" in narrow[:2000]
+    # The wash is the only hover change: the row's own top rule stays, so the
+    # divider between it and the session above keeps showing.
+    assert ".session-item:not(.is-active):hover::before {" in css
+    assert ".session-item:not(.is-active):hover {" not in css
+    assert "border-block-start-color: transparent;" not in css
+    # Selecting a row used the same trick: `border-color: transparent` dropped
+    # the line above the active session. The stripe and wash stay; the rule goes.
+    assert ".session-item.is-active {" not in css
+    assert "border-color: transparent;" not in css

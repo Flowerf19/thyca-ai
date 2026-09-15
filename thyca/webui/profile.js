@@ -52,8 +52,7 @@ function activeFile() {
 
 function navButton(file) {
   // Same shape as the static rows in memories.html / dashboard.html: icon and
-  // name directly inside .session-item. The chat variant wraps them in
-  // .session-body, which lays the row out differently (taller, name shifted).
+  // name directly inside .session-item.
   const button = document.createElement("button");
   button.type = "button";
   button.className = "session-item";

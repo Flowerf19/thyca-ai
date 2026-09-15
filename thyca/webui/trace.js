@@ -99,10 +99,7 @@ function renderSidebar() {
     const meta = document.createElement("time");
     meta.dateTime = group.startedAt;
     meta.textContent = `${group.turns.length} lượt · ${formatDuration(group.latencyMs)}`;
-    const body = document.createElement("span");
-    body.className = "session-body";
-    body.append(icon, name, meta);
-    button.append(body);
+    button.append(icon, name, meta);
     button.addEventListener("click", () => void selectGroup(index));
     return button;
   });

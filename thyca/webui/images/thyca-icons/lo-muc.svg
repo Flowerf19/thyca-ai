@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none" role="img" aria-label="Lọ mực">
+  <rect x="20" y="28" width="24" height="24" rx="3" fill="#3D2A1F"/>
+  <rect x="20" y="28" width="24" height="8" fill="#5A4030"/>
+  <rect x="24" y="18" width="16" height="12" rx="2" fill="#A65A42"/>
+  <rect x="26" y="14" width="12" height="6" rx="1.5" fill="#C4785C"/>
+  <ellipse cx="32" cy="40" rx="7" ry="5" fill="#1A120C" opacity="0.9"/>
+  <path d="M28 40c2-3 6-3 8 0" stroke="#E8A0A8" stroke-opacity="0.35" stroke-width="1.5" fill="none"/>
+</svg>

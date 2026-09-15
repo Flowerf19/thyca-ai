@@ -343,33 +343,12 @@ svg {
   border-block-start: 0;
 }
 
-.session-item:has(.session-body) {
-  display: block;
-  width: 100%;
-  height: auto;
-}
-
 .session-row .session-item {
   width: 100%;
 }
 
-.session-body {
-  display: grid;
-  grid-template-columns: 2.5rem minmax(0, 1fr);
-  align-items: center;
-  align-content: start;
-  column-gap: 0.08rem;
-  row-gap: 0.35rem;
-}
-
 .session-item:not(:has(.session-icon)) {
   grid-template-columns: minmax(0, 1fr) auto;
-}
-
-.session-item.is-active {
-  border-color: transparent;
-  background: transparent;
-  color: var(--chat-brand-accent);
 }
 
 .session-item.is-active::before {
@@ -405,18 +384,10 @@ svg {
   mask: url("images/thyca-icons/canh-cay.svg") left center / contain no-repeat;
 }
 
-.session-body .session-icon {
-  grid-row: 2;
-  /* Bigger than the shared 1.85rem: the leaf's own viewBox carries a lot of
-     empty height, so the ink lands small unless the box is given room. */
-  width: 2.5rem;
-  height: 2.5rem;
-  margin-inline-end: -0.5rem;
-}
-
-.session-body .session-name {
-  grid-column: 1 / -1;
-  padding-inline-start: 0.5rem;
+/* Chat and Trace carry a time line: the leaf spans both rows so the meta
+   sits against it. Hồ sơ / Nhật ký have no <time>, so their icon stays put. */
+.session-item:has(time) .session-icon {
+  grid-row: 1 / -1;
 }
 
 .session-name {
@@ -436,9 +407,11 @@ svg {
 .session-item time {
   grid-column: 2;
   grid-row: 2;
-  justify-self: end;
+  justify-self: start;
   color: var(--chat-brand-accent);
+  font-family: var(--font-reading);
   font-size: 0.72rem;
+  font-style: italic;
   line-height: 1;
   white-space: nowrap;
 }
@@ -1016,12 +989,9 @@ svg {
     background: color-mix(in oklab, var(--color-accent-soft) 52%, transparent);
   }
 
-  .session-item:not(.is-active):hover {
-    border-block-start-color: transparent;
-    background: transparent;
-    color: var(--chat-brand-accent);
-  }
-
+  /* Pointer over a row: the peach wash appears and nothing else changes. The
+     row keeps its own top rule — dropping it read as the line above the row
+     going missing. */
   .session-item:not(.is-active):hover::before {
     content: "";
     position: absolute;
@@ -1074,18 +1044,8 @@ button:active {
     padding-inline-start: 1.55rem;
   }
 
-  .session-item,
-  .session-body {
+  .session-item {
     grid-template-columns: 1.75rem minmax(0, 1fr);
-  }
-
-  .session-body {
-    grid-template-columns: 2.4rem minmax(0, 1fr);
-  }
-
-  .session-body .session-icon {
-    width: 2.4rem;
-    height: 2.4rem;
   }
 
   .live-card {

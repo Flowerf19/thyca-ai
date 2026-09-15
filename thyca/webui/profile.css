@@ -3,13 +3,14 @@
 }
 
 /* Heading, status and prose share one measure: a lone centred column under a
-   full-width heading reads as a mistake on a wide window. One file at a time,
-   so the prose keeps a readable width instead of spanning the surface. */
+   full-width heading reads as a mistake on a wide window. Three quarters of
+   the surface — measured 1416px of usable width on a 1920 window, 75% = 1062,
+   which is the readable measure a profile wants without looking full-bleed. */
 .profile-surface > .screen-heading,
 .profile-surface > .profile-status,
 .profile-content {
   width: 100%;
-  max-width: 60rem;
+  max-width: 75%;
   margin-inline: auto;
 }
 
@@ -39,6 +40,13 @@
 }
 
 @media (max-width: 56rem) {
+  /* A percentage measure is too cramped once the surface is that narrow. */
+  .profile-surface > .screen-heading,
+  .profile-surface > .profile-status,
+  .profile-content {
+    max-width: 100%;
+  }
+
   /* Same as the other screens: the file switcher stays reachable. */
   .profile-shell .sessions {
     display: flex !important;

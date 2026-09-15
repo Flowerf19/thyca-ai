@@ -287,13 +287,12 @@ def test_profile_screen_renders_markdown() -> None:
     # Heading, status and prose share one measure (measured 1440px: all three
     # span the same box instead of the prose being centred on its own).
     assert ".profile-surface > .screen-heading," in css
-    assert "max-width: 60rem;" in css
+    assert "max-width: 75%;" in css
+    assert "max-width: 100%;" in css
 
     # Sidebar rows reuse the shape dashboard.html and memories.html use, so the
     # shared .session-item/.session-name rules apply unchanged (measured: row
     # 58.4px tall, name 41px in, 15.04px — identical on all three screens).
-    # The chat variant (.session-body) lays the same row out taller and shifts
-    # the name, which is what this screen used to do.
     assert 'className = "session-body"' not in script
     assert 'icon.className = "session-icon"' in script
     assert 'name.className = "session-name"' in script

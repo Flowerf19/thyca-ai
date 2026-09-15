@@ -503,3 +503,164 @@ def test_naming_step_does_not_overwrite_the_user_title(tmp_path: Path) -> None:
     assert manager.current.title == "Tên tôi tự đặt"
     assert manager.current.title_source == "user"
     assert display_title(manager.current) == "Tên tôi tự đặt"
+
+
+def test_read_title_walks_the_tail_and_last_meta_wins(tmp_path: Path) -> None:
+    """The naming step reads only the title, so it must not parse the whole file."""
+    manager = SessionManager(tmp_path)
+    session = manager.create()
+    # More than one tail chunk (>8 KiB) so the backwards walk has to loop.
+    for i in range(300):
+        manager.append(msg("user", "u" * 200 + str(i)))
+        manager.append(msg("assistant", "a" * 200))
+    manager.set_title("Tên cũ")
+    for i in range(300):
+        manager.append(msg("user", "v" * 200 + str(i)))
+    manager.set_title("Tên mới", source="user")
+
+    store = SessionStore(tmp_path)
+    assert store.read_title(session.path) == ("Tên mới", "user")
+    # Equivalent to a full scan's answer, at a fraction of the work.
+    _messages, title, title_source = store.scan(session.path)
+    assert (title, title_source) == ("Tên mới", "user")
+    # No meta line at all → None (caller leaves the in-memory title alone).
+    bare = SessionManager(tmp_path)
+    empty = bare.create()
+    assert store.read_title(empty.path) is None
+
+
+def test_read_title_ignores_non_meta_lines_and_bad_json(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path)
+    path = tmp_path / "2026-01-01T00-00-00_abcd.jsonl"
+    path.write_text(
+        json.dumps({"role": "user", "ts": "t", "content": "có title trong chữ"}) + "\n"
+        + json.dumps({"type": "meta", "title": "Đúng"}) + "\n",
+        encoding="utf-8",
+    )
+    assert store.read_title(path) == ("Đúng", None)
+
+    # A half-written line at the tail must not hide the meta line above it.
+    path.write_text(
+        json.dumps({"type": "meta", "title": "Vẫn đọc được"}) + "\n" + '{"role": "user", "co',
+        encoding="utf-8",
+    )
+    assert store.read_title(path) == ("Vẫn đọc được", None)
+
+
+def test_delete_gate_blocks_a_claim_inside_the_window(tmp_path: Path) -> None:
+    """The keep-check and the unlink share the claim lock.
+
+    Reproduces the ordering that used to be possible: ChatApp snapshotted the
+    in-flight map, then unlinked. A turn claiming in between was not in `keep`,
+    so its transcript was removed under it — and the next append re-created the
+    file truncated, silently dropping the earlier history.
+    """
+    from thyca.sessions import SessionBusy
+    from thyca.turn_state import TurnState
+
+    turns = TurnState()
+    manager = SessionManager(tmp_path)
+    session = manager.create()
+    manager.append(msg("user", "câu hỏi"))
+    path = session.path
+
+    # A turn claims first: the delete must refuse.
+    turns.claim(session.id)
+    with pytest.raises(SessionBusy):
+        turns.delete_unclaimed(manager, session.id)
+    assert path.exists()
+    turns.release(session.id)
+
+    # No turn: the delete goes through.
+    turns.delete_unclaimed(manager, session.id)
+    assert not path.exists()
+
+
+def test_turn_state_claim_is_exclusive_and_releasable(tmp_path: Path) -> None:
+    from thyca.sessions import SessionBusy
+    from thyca.turn_state import TurnState
+
+    turns = TurnState()
+    assert turns.started_at("s") is None
+    turns.claim("s")
+    first = turns.started_at("s")
+    assert first is not None
+    assert turns.snapshot() == {"s": first}
+    with pytest.raises(SessionBusy):
+        turns.claim("s")
+    # A snapshot is a copy: later claims do not leak into it.
+    held = turns.snapshot()
+    turns.claim("other")
+    assert held == {"s": first}
+    turns.release("s")
+    assert turns.started_at("s") is None
+    turns.claim("s")  # free again
+    # Releasing an unknown session is a no-op, not an error.
+    turns.release("never-claimed")
+
+
+def test_claim_cannot_slip_between_the_check_and_the_unlink(tmp_path: Path) -> None:
+    """A concurrent claim waits for the delete, so it cannot land in the window."""
+    import threading
+    import time
+
+    from thyca.sessions import SessionNotFound
+    from thyca.turn_state import TurnState
+
+    turns = TurnState()
+    manager = SessionManager(tmp_path)
+    session = manager.create()
+    manager.append(msg("user", "câu hỏi"))
+    path = session.path
+    assert path.exists()
+
+    inside = threading.Event()
+    release = threading.Event()
+    original_delete = SessionStore.delete
+
+    def paused_delete(self, session_id):
+        inside.set()
+        release.wait(timeout=5)
+        return original_delete(self, session_id)
+
+    claimed = threading.Event()
+    failures: list[Exception] = []
+
+    def claim_from_another_thread():
+        try:
+            turns.claim(session.id)
+        except Exception as exc:  # pragma: no cover - nothing should raise
+            failures.append(exc)
+        finally:
+            claimed.set()
+
+    SessionStore.delete = paused_delete
+    try:
+        deleter = threading.Thread(
+            target=lambda: turns.delete_unclaimed(manager, session.id), daemon=True
+        )
+        deleter.start()
+        assert inside.wait(timeout=5), "delete never reached the unlink step"
+
+        claimer = threading.Thread(target=claim_from_another_thread, daemon=True)
+        claimer.start()
+        # The whole point: while the delete holds the claim, no other thread can
+        # take the session — the claim is what used to slip through.
+        time.sleep(0.2)
+        assert not claimed.is_set(), "claim got through the delete window"
+        assert path.exists()
+
+        release.set()
+        deleter.join(timeout=5)
+        claimer.join(timeout=5)
+    finally:
+        SessionStore.delete = original_delete
+        release.set()
+
+    assert not failures
+    assert claimed.is_set()
+    # The claim landed after the unlink, so the turn now finds a session that is
+    # gone (a 404 the client can act on) instead of writing into a removed path.
+    with pytest.raises(SessionNotFound):
+        manager.load(session.id)
+    turns.release(session.id)

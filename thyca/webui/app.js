@@ -66,6 +66,8 @@ const state = {
   running: false,
   loadGeneration: 0,
   deleteId: "",
+  // True while a rename/delete request is in flight: one submission at a time.
+  saving: false,
 };
 
 function messageOf(error, fallback) {
@@ -246,18 +248,23 @@ function openRename(session) {
 }
 
 async function submitRename() {
+  // One submission at a time: a double Enter would send the same title twice.
+  if (state.saving) return;
   const id = el.renameId.value;
   const title = el.renameName.value.trim();
   if (!id || !title) {
     el.renameStatus.textContent = "Tên phiên không được để trống.";
     return;
   }
+  state.saving = true;
   el.renameStatus.textContent = "Đang lưu…";
   try {
     await patchJson(`/api/sessions/${encodeURIComponent(id)}`, { title });
   } catch (error) {
     el.renameStatus.textContent = messageOf(error, "Không đổi được tên phiên.");
     return;
+  } finally {
+    state.saving = false;
   }
   el.renameDialog.close();
   await refreshSessions();
@@ -274,14 +281,18 @@ function openDelete(session) {
 }
 
 async function submitDelete() {
+  if (state.saving) return;
   const id = state.deleteId;
   if (!id) return;
+  state.saving = true;
   el.deleteStatus.textContent = "Đang xóa…";
   try {
     await deleteJson(`/api/sessions/${encodeURIComponent(id)}`);
   } catch (error) {
     el.deleteStatus.textContent = messageOf(error, "Không xóa được phiên.");
     return;
+  } finally {
+    state.saving = false;
   }
   el.deleteDialog.close();
   if (state.activeId === id) newSession();

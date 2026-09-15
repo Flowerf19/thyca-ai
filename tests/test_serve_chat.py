@@ -17,7 +17,7 @@ from thyca.config import default_config, load, save
 from thyca.llm.llm_base import ChatReply, LLMError
 from thyca.protocol import Message, ToolCall
 from thyca.serve import ServeError, default_webui, make_server
-from thyca.sessions import Session, SessionManager
+from thyca.sessions import Session, SessionBusy, SessionManager
 from thyca.sessions.title import fallback_title
 from thyca.tools.memory import MemoryFacade
 
@@ -961,7 +961,21 @@ def test_webui_follows_a_turn_it_did_not_start() -> None:
 
     # The 409 branch must not depend on an identifier the module never
     # imported (a missing ApiError import threw at runtime, not at load).
-    assert 'import { ApiError,' in app
+    # Every name the module uses has to be in the import list, not just the
+    # first one: assert the name itself, wherever it sits in the braces.
+    import re
+
+    names = re.search(r'import \{([^}]*)\}\s*from "\./backend/api\.js"', app)
+    assert names, "app.js must import from ./backend/api.js"
+    imported = {name.strip() for name in names.group(1).split(",") if name.strip()}
+    assert {
+        "ApiError",
+        "deleteJson",
+        "getJson",
+        "patchJson",
+        "postJson",
+        "postNdjson",
+    } <= imported
     assert "error instanceof ApiError" in app
     assert "state.busy" not in load_session
     # The sidebar and New session stay usable while a turn runs.
@@ -1115,6 +1129,11 @@ def test_webui_has_row_actions_for_rename_and_delete() -> None:
     assert "export function patchJson" in api
     assert "export function deleteJson" in api
 
+    # Both row actions keep the dialog's own buttons reachable, and the row
+    # button stays a sibling so pressing it never triggers an action.
+    assert 'row.append(button, actions);' in app
+    assert "button.addEventListener(\"click\", onClick);" in app
+
     # Two dialogs, the same .screen-dialog the mục lục uses.
     assert 'id="rename-dialog"' in html
     assert 'class="screen-dialog"' in html
@@ -1182,3 +1201,51 @@ def test_rename_midturn_survives_the_agent_naming_step(tmp_path: Path) -> None:
     finally:
         release.set()
         app.shutdown()
+
+
+def test_delete_racing_a_claim_does_not_lose_the_transcript(tmp_path: Path) -> None:
+    """The delete gate and the claim share one lock.
+
+    Before: ``delete_session`` snapshotted the in-flight map and then unlinked,
+    so a turn claiming in that window was not protected — the file went away
+    under it and its next append re-created it truncated, dropping history.
+    """
+    llm = FakeLLM(ChatReply(content="pong"))
+    app = _chat(tmp_path, llm)
+    try:
+        created = app.create()
+        sid = created["id"]
+        app.turn(sid, "câu hỏi đầu")
+        path = tmp_path / "sessions" / f"{sid}.jsonl"
+        assert path.exists()
+
+        # Hold a claim exactly as a live turn does, then ask the delete to run.
+        app._turns.claim(sid)
+        try:
+            app.delete_session(sid)
+        except SessionBusy:
+            pass
+        else:
+            raise AssertionError("delete must refuse a claimed session")
+        assert path.exists()
+        app._turns.release(sid)
+
+        # Free again: the same call drops the notebook.
+        app.delete_session(sid)
+        assert not path.exists()
+    finally:
+        app.shutdown()
+
+
+def test_webui_submits_a_rename_or_delete_once() -> None:
+    """A double submit must not send the same request twice."""
+    app = (WEBUI / "app.js").read_text(encoding="utf-8")
+    rename = app[app.index("async function submitRename()") : app.index("function openDelete")]
+    remove = app[app.index("async function submitDelete()") : app.index("function rememberActiveSession")]
+
+    assert "if (state.saving) return;" in rename
+    assert "if (state.saving) return;" in remove
+    assert "state.saving = true;" in rename and "state.saving = true;" in remove
+    assert "finally {\n    state.saving = false;" in rename
+    assert "finally {\n    state.saving = false;" in remove
+    assert "saving: false," in app

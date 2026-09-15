@@ -1,21 +1,32 @@
 """Bridge between HTTP handlers and one ChatApp turn (split from serve.py).
 
-The NDJSON stream bridge: queue adapter for turn events, the worker thread
-that produces exactly one terminal item, and the public turn-error mapping
-shared by ``/turn`` and ``/turn/stream``.
+The HTTP bridge for ``/api/sessions*``: the NDJSON stream (queue adapter for
+turn events, the worker thread that produces exactly one terminal item, the
+public turn-error mapping shared by ``/turn`` and ``/turn/stream``) plus the
+session read/rename/delete endpoints.
+
+Handlers are accessed only through their ``_json`` / ``_read_json`` /
+``_read_body`` / ``_stream_headers`` / ``wfile`` surface, so this module never
+imports ``serve.py`` — which is what keeps ``serve.py`` a router.
 """
 from __future__ import annotations
 
 import json
 import queue
+import re
+import sys
 import threading
+import traceback
 
 from thyca.agent.events import TurnEvent
 from thyca.chat_app import ChatApp
 from thyca.llm.llm_base import LLMError
+from thyca.session_wire import delete_error, rename_error
 from thyca.sessions import SessionBusy, SessionCorrupt, SessionError, SessionNotFound
 
 SENTINEL = object()
+# Same grammar the session routes use: a timestamp id and four hex chars.
+SESSION_RE = re.compile(r"^/api/sessions/(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_[0-9a-f]{4})$")
 
 
 def public_turn_error(exc: Exception) -> tuple[int, str, str]:
@@ -167,3 +178,139 @@ def stream_turn(handler, app: ChatApp, session_id: str, text: str) -> None:
         # parks this handler thread briefly.
         worker.join(timeout=5 if state["disconnected"] else 60)
 
+
+
+def _sessions_error(handler, exc: Exception) -> None:
+    """Map a read-path session failure to its public HTTP error."""
+    if isinstance(exc, SessionNotFound):
+        handler._json(404, {"error": "session not found"})
+    elif isinstance(exc, SessionCorrupt):
+        handler._json(503, {"error": "session unreadable"})
+    elif isinstance(exc, SessionError):
+        handler._json(503, {"error": "session unavailable"})
+    else:
+        traceback.print_exc(file=sys.stderr)
+        handler._json(503, {"error": "chat unavailable"})
+
+
+def _missing_chat(handler, app: ChatApp | None) -> bool:
+    """True when the server was started without a chat app (404 already sent)."""
+    if app is None:
+        handler._json(404, {"error": "chat unavailable"})
+        return True
+    return False
+
+
+def session_list(handler, app: ChatApp | None) -> None:
+    if _missing_chat(handler, app):
+        return
+    try:
+        handler._json(200, app.list_payload())
+    except Exception as exc:
+        _sessions_error(handler, exc)
+
+
+def session_get(handler, app: ChatApp | None, session_id: str) -> None:
+    if _missing_chat(handler, app):
+        return
+    try:
+        handler._json(200, app.get_payload(session_id))
+    except Exception as exc:
+        _sessions_error(handler, exc)
+
+
+def session_create(handler, app: ChatApp | None) -> None:
+    if _missing_chat(handler, app):
+        return
+    try:
+        handler._read_body()
+    except ValueError:
+        handler._json(400, {"error": "invalid body"})
+        return
+    try:
+        handler._json(200, app.create())
+    except Exception as exc:
+        _sessions_error(handler, exc)
+
+
+def session_turn(handler, app: ChatApp | None, session_id: str) -> None:
+    if _missing_chat(handler, app):
+        return
+    try:
+        payload = handler._read_json()
+    except ValueError:
+        handler._json(400, {"error": "invalid body"})
+        return
+    text = payload.get("text")
+    if not isinstance(text, str):
+        handler._json(400, {"error": "invalid text"})
+        return
+    try:
+        handler._json(200, app.turn(session_id, text))
+    except Exception as exc:
+        status, _code, message = public_turn_error(exc)
+        handler._json(status, {"error": message})
+
+
+def session_turn_stream(handler, app: ChatApp | None, session_id: str) -> None:
+    if _missing_chat(handler, app):
+        return
+    try:
+        payload = handler._read_json()
+    except ValueError:
+        handler._json(400, {"error": "invalid text"})
+        return
+    text = payload.get("text")
+    if not isinstance(text, str):
+        handler._json(400, {"error": "invalid text"})
+        return
+    stream_turn(handler, app, session_id, text)
+
+
+def session_rename(handler, app: ChatApp | None, path: str) -> None:
+    """``PATCH /api/sessions/<id>`` — store a title the user typed."""
+    if _missing_chat(handler, app):
+        return
+    match = SESSION_RE.fullmatch(path)
+    if not match:
+        handler._json(404, {"error": "session not found"})
+        return
+    try:
+        payload = handler._read_json()
+    except ValueError:
+        handler._json(400, {"error": "invalid body"})
+        return
+    title = payload.get("title")
+    if not isinstance(title, str):
+        handler._json(400, {"error": "invalid title"})
+        return
+    try:
+        stored = app.rename_session(match.group(1), title)
+    except Exception as exc:
+        mapped = rename_error(exc)
+        if mapped is None:
+            _sessions_error(handler, exc)
+            return
+        handler._json(mapped[0], {"error": mapped[1]})
+    else:
+        handler._json(200, {"ok": True, "id": match.group(1), "title": stored})
+
+
+def session_delete(handler, app: ChatApp | None, path: str) -> None:
+    """``DELETE /api/sessions/<id>`` — drop the notebook, keep memory."""
+    if _missing_chat(handler, app):
+        return
+    match = SESSION_RE.fullmatch(path)
+    if not match:
+        handler._json(404, {"error": "session not found"})
+        return
+    try:
+        app.delete_session(match.group(1))
+    except Exception as exc:
+        mapped = delete_error(exc)
+        if mapped is None:
+            _sessions_error(handler, exc)
+            return
+        handler._json(mapped[0], {"error": mapped[1]})
+    else:
+        handler._json(200, {"ok": True, "id": match.group(1)})

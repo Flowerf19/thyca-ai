@@ -60,6 +60,35 @@ class SessionStore:
     def read(self, path: Path) -> list[Message]:
         return self.scan(path)[0]
 
+    def read_title(self, path: Path) -> tuple[str, str | None] | None:
+        """Last meta line's ``(title, source)``, read from the end of the file.
+
+        The naming step needs only the title, and a full ``scan`` parses the
+        whole transcript (tens of milliseconds on a long session). Meta lines
+        are appended, so the last one wins — walking backwards from the tail
+        stops after the first match.
+
+        Returns None when the file has no meta line (or cannot be read), which
+        callers treat as "leave the in-memory title alone".
+        """
+        try:
+            with path.open("rb") as stream:
+                for raw in _lines_backwards(stream):
+                    if b'"type"' not in raw or b"title" not in raw:
+                        continue
+                    try:
+                        payload = json.loads(raw)
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        continue
+                    if not _is_meta(payload):
+                        continue
+                    title = _meta_title(payload)
+                    if title:
+                        return title, _meta_source(payload)
+        except OSError:
+            return None
+        return None
+
     def scan(self, path: Path) -> tuple[list[Message], str | None, str | None]:
         result: list[Message] = []
         title: str | None = None
@@ -224,6 +253,25 @@ class SessionStore:
             pass
         finally:
             os.close(parent_fd)
+
+
+def _lines_backwards(stream, chunk_size: int = 8192):
+    """Yield the file's lines newest-first without loading it whole."""
+    stream.seek(0, os.SEEK_END)
+    position = stream.tell()
+    pending = b""
+    while position > 0:
+        read_size = min(chunk_size, position)
+        position -= read_size
+        stream.seek(position)
+        pending = stream.read(read_size) + pending
+        parts = pending.split(b"\n")
+        pending = parts[0]
+        for line in reversed(parts[1:]):
+            if line.strip():
+                yield line
+    if pending.strip():
+        yield pending
 
 
 def _is_meta(payload: object) -> bool:

@@ -13,7 +13,15 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from thyca import __version__
-from thyca.bridge import public_turn_error, stream_turn
+from thyca.bridge import (
+    session_create,
+    session_delete,
+    session_get,
+    session_list,
+    session_rename,
+    session_turn,
+    session_turn_stream,
+)
 from thyca.chat_app import ChatApp
 from thyca.config import ConfigError, load, save
 from thyca.config_schema import config_schema
@@ -23,7 +31,7 @@ from thyca.onboarding import (
     validate_provider,
 )
 from thyca.serve_memory import memory_endpoint
-from thyca.sessions import SessionBusy, SessionCorrupt, SessionError, SessionNotFound
+from thyca.sessions import SessionCorrupt, SessionNotFound
 from thyca.tools.memory import MemoryFacade
 from thyca.trace_api import (
     trace_detail_payload,
@@ -179,7 +187,7 @@ def _handler(
                 self._config_get()
                 return
             if path == "/api/sessions":
-                self._chat_list()
+                session_list(self, chat)
                 return
             if _TRACE_STATS_RE.fullmatch(path):
                 self._trace_stats(parsed.query)
@@ -193,7 +201,7 @@ def _handler(
                 return
             match = _SESSION_RE.fullmatch(path)
             if match:
-                self._chat_get(match.group(1))
+                session_get(self, chat, match.group(1))
                 return
             if path.startswith("/api/sessions"):
                 self._json(404, {"error": "session not found"})
@@ -224,15 +232,15 @@ def _handler(
                 self._memory_post("canonical")
                 return
             if path == "/api/sessions":
-                self._chat_create()
+                session_create(self, chat)
                 return
             match = _TURN_RE.fullmatch(path)
             if match:
-                self._chat_turn(match.group(1))
+                session_turn(self, chat, match.group(1))
                 return
             match = _TURN_STREAM_RE.fullmatch(path)
             if match:
-                self._chat_turn_stream(match.group(1))
+                session_turn_stream(self, chat, match.group(1))
                 return
             if path.startswith("/api/sessions"):
                 self._json(404, {"error": "session not found"})
@@ -240,61 +248,16 @@ def _handler(
             self._send(405, b"method not allowed", "text/plain; charset=utf-8")
 
         def do_DELETE(self) -> None:
-            path = urlparse(self.path).path
-            match = _SESSION_RE.fullmatch(path)
-            if not match:
-                self._json(404, {"error": "session not found"})
-                return
             app = self._chat()
             if app is None:
                 return
-            try:
-                app.delete_session(match.group(1))
-            except SessionNotFound:
-                self._json(404, {"error": "session not found"})
-            except SessionBusy:
-                self._json(409, {"error": "session busy"})
-            except SessionError:
-                self._json(503, {"error": "session unavailable"})
-            except Exception:
-                traceback.print_exc(file=sys.stderr)
-                self._json(503, {"error": "chat unavailable"})
-            else:
-                self._json(200, {"ok": True, "id": match.group(1)})
+            session_delete(self, app, urlparse(self.path).path)
 
         def do_PATCH(self) -> None:
-            path = urlparse(self.path).path
-            match = _SESSION_RE.fullmatch(path)
-            if not match:
-                self._json(404, {"error": "session not found"})
-                return
             app = self._chat()
             if app is None:
                 return
-            try:
-                payload = self._read_json()
-            except ValueError:
-                self._json(400, {"error": "invalid body"})
-                return
-            title = payload.get("title")
-            if not isinstance(title, str):
-                self._json(400, {"error": "invalid title"})
-                return
-            try:
-                stored = app.rename_session(match.group(1), title)
-            except SessionNotFound:
-                self._json(404, {"error": "session not found"})
-            except ValueError:
-                self._json(400, {"error": "invalid title"})
-            except SessionCorrupt:
-                self._json(503, {"error": "session unreadable"})
-            except SessionError:
-                self._json(503, {"error": "session unavailable"})
-            except Exception:
-                traceback.print_exc(file=sys.stderr)
-                self._json(503, {"error": "chat unavailable"})
-            else:
-                self._json(200, {"ok": True, "id": match.group(1), "title": stored})
+            session_rename(self, app, urlparse(self.path).path)
 
         def log_message(self, format: str, *args: object) -> None:
             return
@@ -429,82 +392,6 @@ def _handler(
             except Exception:
                 traceback.print_exc(file=sys.stderr)
                 self._json(503, {"error": "trace unavailable"})
-
-        def _chat_list(self) -> None:
-            app = self._chat()
-            if app is None:
-                return
-            try:
-                self._json(200, app.list_payload())
-            except Exception:
-                traceback.print_exc(file=sys.stderr)
-                self._json(503, {"error": "chat unavailable"})
-
-        def _chat_get(self, session_id: str) -> None:
-            app = self._chat()
-            if app is None:
-                return
-            try:
-                self._json(200, app.get_payload(session_id))
-            except SessionNotFound:
-                self._json(404, {"error": "session not found"})
-            except SessionCorrupt:
-                self._json(503, {"error": "session unreadable"})
-            except SessionError:
-                self._json(503, {"error": "session unavailable"})
-            except Exception:
-                self._json(503, {"error": "chat unavailable"})
-
-        def _chat_create(self) -> None:
-            app = self._chat()
-            if app is None:
-                return
-            try:
-                self._read_body()
-            except ValueError:
-                self._json(400, {"error": "invalid body"})
-                return
-            try:
-                self._json(200, app.create())
-            except SessionError:
-                self._json(503, {"error": "session unavailable"})
-            except Exception:
-                traceback.print_exc(file=sys.stderr)
-                self._json(503, {"error": "chat unavailable"})
-
-        def _chat_turn(self, session_id: str) -> None:
-            app = self._chat()
-            if app is None:
-                return
-            try:
-                payload = self._read_json()
-            except ValueError:
-                self._json(400, {"error": "invalid body"})
-                return
-            text = payload.get("text")
-            if not isinstance(text, str):
-                self._json(400, {"error": "invalid text"})
-                return
-            try:
-                self._json(200, app.turn(session_id, text))
-            except Exception as exc:
-                status, _, message = public_turn_error(exc)
-                self._json(status, {"error": message})
-
-        def _chat_turn_stream(self, session_id: str) -> None:
-            app = self._chat()
-            if app is None:
-                return
-            try:
-                payload = self._read_json()
-            except ValueError:
-                self._json(400, {"error": "invalid text"})
-                return
-            text = payload.get("text")
-            if not isinstance(text, str):
-                self._json(400, {"error": "invalid text"})
-                return
-            stream_turn(self, app, session_id, text)
 
         def _stream_headers(self) -> None:
             self.send_response(200)

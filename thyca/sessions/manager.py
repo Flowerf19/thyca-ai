@@ -152,10 +152,10 @@ class SessionManager:
         with self._lock:
             if self._session is None:
                 return
-            try:
-                _messages, title, title_source = self.store.scan(self._session.path)
-            except (SessionCorrupt, SessionError):
+            found = self.store.read_title(self._session.path)
+            if found is None:
                 return
+            title, title_source = found
             if title:
                 self._session.title = title
                 self._session.title_source = title_source
@@ -194,8 +194,11 @@ class SessionManager:
     def delete(self, session_id: str, *, keep: set[str] | None = None) -> None:
         """Remove a session file outright.
 
-        ``keep`` names sessions with a turn in flight: deleting the transcript
-        under a running turn would leave the writer appending to a moved file.
+        ``keep`` names sessions with a turn in flight. The caller must pass a
+        snapshot that cannot go stale between the check and the unlink — i.e.
+        hold the same lock a turn claims under — or a claim landing in that
+        window leaves the writer appending to a deleted path, which re-creates
+        the file truncated on its next write.
         """
         with self._lock:
             if keep and session_id in keep:

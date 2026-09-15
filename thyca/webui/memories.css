@@ -72,18 +72,7 @@
   font-style: italic;
 }
 
-.memory-empty {
-  text-align: center;
-  padding: 2rem;
-  color: var(--color-muted);
-}
-
 @media (max-width: 56rem) {
-  .memories-shell .sessions {
-    display: flex !important;
-    pointer-events: auto;
-  }
-
   .sidebar .screen-search {
     margin-inline: 0 0.65rem;
   }

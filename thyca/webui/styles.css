@@ -105,13 +105,6 @@ button {
   cursor: pointer;
 }
 
-button:focus-visible,
-textarea:focus-visible,
-summary:focus-visible {
-  outline: 2px solid var(--color-focus);
-  outline-offset: 3px;
-}
-
 svg {
   display: block;
   fill: none;
@@ -287,6 +280,15 @@ svg {
   stroke-width: 1.7;
 }
 
+/* One thin, faint scrollbar for the chat sidebar, the conversation pane, and
+   the screen surfaces (screens.css loads later but never re-sets these). */
+.session-list,
+.conversation-scroll,
+.screen-surface {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-divider) transparent;
+}
+
 .session-list {
   display: flex;
   flex-direction: column;
@@ -295,8 +297,6 @@ svg {
   margin-block-start: 1.5rem;
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-width: thin;
-  scrollbar-color: var(--color-divider) transparent;
 }
 
 /* The row is the positioning context for its hover actions: the button keeps
@@ -502,8 +502,6 @@ svg {
   min-height: 0;
   overflow-x: clip;
   overflow-y: auto;
-  scrollbar-color: var(--color-divider) transparent;
-  scrollbar-width: thin;
   scroll-behavior: smooth;
 }
 
@@ -916,12 +914,17 @@ svg {
   color: #fff;
 }
 
-.send-icon {
+/* Same pen and draw size as the trace tool header's pen (trace.css). */
+.send-icon,
+.tool-pen {
   width: 2.8rem;
   height: 2.8rem;
-  background: currentColor;
   -webkit-mask: url("images/thyca-icons/but-may.svg") center / contain no-repeat;
   mask: url("images/thyca-icons/but-may.svg") center / contain no-repeat;
+}
+
+.send-icon {
+  background: currentColor;
 }
 
 @media (hover: hover) and (pointer: fine) {

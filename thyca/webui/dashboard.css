@@ -11,10 +11,3 @@
 .dashboard-block > .screen-heading {
   margin-block-end: 1rem;
 }
-
-@media (max-width: 56rem) {
-  .dashboard-shell .sessions {
-    display: flex !important;
-    pointer-events: auto;
-  }
-}

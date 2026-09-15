@@ -24,16 +24,12 @@
   font-size: 1.15rem;
 }
 
-/* Same pen and draw size as the composer send button. */
+/* Size and pen mask come from styles.css (.send-icon, .tool-pen). */
 .tool-pen {
   flex: 0 0 auto;
-  width: 2.8rem;
-  height: 2.8rem;
   margin-block: -0.9rem;
   margin-inline-start: -0.55rem;
   background: var(--terra);
-  -webkit-mask: url("images/thyca-icons/but-may.svg") center / contain no-repeat;
-  mask: url("images/thyca-icons/but-may.svg") center / contain no-repeat;
 }
 
 .trace-crumb {
@@ -274,11 +270,6 @@
     overflow: auto;
     border: 0;
     border-bottom: 1px solid var(--color-border);
-    pointer-events: auto;
-  }
-
-  .trace-shell .sessions {
-    display: flex !important;
     pointer-events: auto;
   }
 

@@ -17,7 +17,8 @@
 }
 
 .conversation-empty,
-.backend-state {
+.backend-state,
+.memory-empty {
   position: relative;
   z-index: 2;
   display: grid;

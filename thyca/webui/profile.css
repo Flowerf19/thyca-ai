@@ -46,10 +46,4 @@
   .profile-content {
     max-width: 100%;
   }
-
-  /* Same as the other screens: the file switcher stays reachable. */
-  .profile-shell .sessions {
-    display: flex !important;
-    pointer-events: auto;
-  }
 }

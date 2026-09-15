@@ -34,8 +34,6 @@ a { color: inherit; }
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
-  scrollbar-width: thin;
-  scrollbar-color: var(--color-divider) transparent;
   margin: 0;
   padding: 1.75rem;
   border: 0;
@@ -438,6 +436,15 @@ a { color: inherit; }
 }
 @media (max-width: 56rem) {
   .screen-shell { max-height: none; }
+  /* The screens' file switcher stays reachable on mobile — one rule for the
+     four screens that opted in (settings/provider keep theirs hidden). */
+  .memories-shell .sessions,
+  .profile-shell .sessions,
+  .dashboard-shell .sessions,
+  .trace-shell .sessions {
+    display: flex !important;
+    pointer-events: auto;
+  }
   .screen-filter-row { align-items: stretch; flex-direction: column; }
   .screen-shell .sidebar > * { display: none; }
   .screen-surface { margin: 0; padding: 1rem; border-inline: 0; border-block-end: 0; border-radius: 0; }

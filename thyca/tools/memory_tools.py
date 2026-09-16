@@ -7,8 +7,14 @@ from thyca.tools.memory import MemoryFacade
 from thyca.tools.registry import ToolRegistry, ToolSpec
 
 
-def register_memory_tools(registry: ToolRegistry, facade: MemoryFacade) -> None:
-    registry.register(_remember_spec(facade))
+def register_memory_tools(
+    registry: ToolRegistry,
+    facade: MemoryFacade,
+    chat_provider=None,
+) -> None:
+    """chat_provider: optional zero-arg callable returning the current chat
+    session id (injected into memory leaves; the LLM never supplies it)."""
+    registry.register(_remember_spec(facade, chat_provider))
     registry.register(_search_spec(facade))
     registry.register(_recent_spec(facade))
     registry.register(_get_spec(facade))
@@ -17,12 +23,14 @@ def register_memory_tools(registry: ToolRegistry, facade: MemoryFacade) -> None:
     registry.register(_update_spec(facade))
 
 
-def _remember_spec(facade: MemoryFacade) -> ToolSpec:
+def _remember_spec(facade: MemoryFacade, chat_provider) -> ToolSpec:
     async def handler(args: dict) -> str:
         return facade.remember(
             str(args["topic"]),
             str(args["summary"]),
             content=str(args.get("content") or ""),
+            proj=args.get("proj"),
+            chat=chat_provider() if chat_provider is not None else None,
         )
 
     return ToolSpec(
@@ -37,6 +45,16 @@ def _remember_spec(facade: MemoryFacade) -> ToolSpec:
                 "topic": {"type": "string"},
                 "summary": {"type": "string"},
                 "content": {"type": "string"},
+                "proj": {
+                    "type": "string",
+                    "description": (
+                        "Absolute path of the project root this memory belongs to, "
+                        "e.g. /home/flowerf/Projects/thyca-ai or /home/flowerf/.thyca. "
+                        "Use the real repo/workdir root, never a short name or "
+                        "relative path. Omit for general or user-level memories "
+                        "that belong to no project."
+                    ),
+                },
             },
             "required": ["topic", "summary"],
             "additionalProperties": False,
@@ -53,6 +71,8 @@ def _search_spec(facade: MemoryFacade) -> ToolSpec:
             str(args["query"]),
             limit=int(args.get("limit") or 5),
             timeline_day=args.get("timeline_day"),
+            proj=args.get("proj"),
+            chat=args.get("chat"),
         )
         return json.dumps(asdict(result), ensure_ascii=False)
 
@@ -65,6 +85,17 @@ def _search_spec(facade: MemoryFacade) -> ToolSpec:
                 "query": {"type": "string"},
                 "limit": {"type": "integer"},
                 "timeline_day": {"type": "string"},
+                "proj": {
+                    "type": "string",
+                    "description": (
+                        "Filter to leaves saved with this exact project root path "
+                        "(absolute path, as passed to memory_remember's proj)."
+                    ),
+                },
+                "chat": {
+                    "type": "string",
+                    "description": "Filter to leaves saved during this chat session id.",
+                },
             },
             "required": ["query"],
             "additionalProperties": False,
@@ -176,6 +207,8 @@ def _update_spec(facade: MemoryFacade) -> ToolSpec:
             topic=str(args["topic"]).strip() if args.get("topic") else None,
             summary=str(args["summary"]).strip() if args.get("summary") else None,
             content=str(args["content"]) if args.get("content") else None,
+            proj=args.get("proj"),
+            chat=args.get("chat"),
         )
         return "updated"
 
@@ -192,6 +225,20 @@ def _update_spec(facade: MemoryFacade) -> ToolSpec:
                 "topic": {"type": "string"},
                 "summary": {"type": "string"},
                 "content": {"type": "string"},
+                "proj": {
+                    "type": "string",
+                    "description": (
+                        "New project root path (absolute) for this memory. "
+                        "Omit to keep the current value."
+                    ),
+                },
+                "chat": {
+                    "type": "string",
+                    "description": (
+                        "New chat session id for this memory. "
+                        "Omit to keep the current value."
+                    ),
+                },
             },
             "required": ["session_id"],
             "additionalProperties": False,

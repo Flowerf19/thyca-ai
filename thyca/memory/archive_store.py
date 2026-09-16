@@ -11,7 +11,9 @@ from rapidfuzz import fuzz
 from thyca.memory.chunk import Chunk
 from thyca.memory.usage import LeafUsage
 
-SCHEMA_VERSION = "5"
+SCHEMA_VERSION = "6"
+# Bump when Chunker.normalize changes so stale text_norm rows rebuild.
+NORM_VERSION = "2"
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 TRIGRAM_FLOOR = 60
 CANDIDATE_CAP = 50
@@ -80,8 +82,18 @@ class ArchiveStore:
             self._db.commit()
         elif row["value"] != SCHEMA_VERSION:
             self._migrate(row["value"])
+        self._ensure_norm_version()
 
     def _migrate(self, from_version: str) -> None:
+        if from_version == "5":
+            self._db.execute("ALTER TABLE chunks ADD COLUMN project TEXT")
+            self._db.execute("ALTER TABLE chunks ADD COLUMN chat_session TEXT")
+            self._db.execute(
+                "UPDATE meta SET value = ? WHERE key = 'schema_version'",
+                (SCHEMA_VERSION,),
+            )
+            self._db.commit()
+            return
         if from_version == "4":
             self._db.execute(
                 """CREATE TABLE IF NOT EXISTS leaf_searches(
@@ -121,6 +133,22 @@ class ArchiveStore:
         )
         self._db.commit()
 
+    def _ensure_norm_version(self) -> None:
+        row = self._db.execute(
+            "SELECT value FROM meta WHERE key='norm_version'"
+        ).fetchone()
+        if row is not None and row["value"] == NORM_VERSION:
+            return
+        # Drop indexed files so the next reindex rewrites text_norm. Chunk ids
+        # come back the same; leaf_gets/searches are not FK-bound and stay.
+        self._db.execute("DELETE FROM source_files")
+        self._db.execute("DELETE FROM meta WHERE key='norm_version'")
+        self._db.execute(
+            "INSERT INTO meta(key, value) VALUES ('norm_version', ?)",
+            (NORM_VERSION,),
+        )
+        self._db.commit()
+
     def replace_source(self, path: str, kind: str, day: str | None, mtime_ns: int, size: int, chunks: list[Chunk]) -> None:
         self._db.execute("BEGIN IMMEDIATE")
         try:
@@ -135,8 +163,8 @@ class ArchiveStore:
                     """INSERT INTO chunks(
                         chunk_id, path, source_kind, timeline_day, session_id, session_title,
                         heading_raw, leaf_ord, line_start, line_end, text_raw, text_norm,
-                        content_hash, expires_at, forgotten_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        content_hash, expires_at, forgotten_at, project, chat_session
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         chunk.chunk_id,
                         chunk.path,
@@ -153,6 +181,8 @@ class ArchiveStore:
                         chunk.content_hash,
                         chunk.expires_at,
                         chunk.forgotten_at,
+                        chunk.project,
+                        chunk.chat_session,
                     ),
                 )
             self._db.commit()
@@ -178,7 +208,16 @@ class ArchiveStore:
             return None
         return int(row["mtime_ns"]), int(row["size_bytes"])
 
-    def fts_search(self, query: str, timeline_day: str | None, limit: int, now: str) -> list[Hit]:
+    def fts_search(
+        self,
+        query: str,
+        timeline_day: str | None,
+        limit: int,
+        now: str,
+        *,
+        project: str | None = None,
+        chat_session: str | None = None,
+    ) -> list[Hit]:
         match = _safe_match(query)
         if match is None:
             return []
@@ -195,12 +234,27 @@ class ArchiveStore:
         if timeline_day is not None:
             sql += " AND c.timeline_day = ?"
             params.append(timeline_day)
+        if project is not None:
+            sql += " AND c.project = ?"
+            params.append(project)
+        if chat_session is not None:
+            sql += " AND c.chat_session = ?"
+            params.append(chat_session)
         sql += " ORDER BY bm25 ASC, c.chunk_id ASC LIMIT ?"
         params.append(min(limit, CANDIDATE_CAP))
         rows = self._db.execute(sql, params).fetchall()
         return [_hit_from_row(row, "fts", bm25=row["bm25"], snippet=row["snippet"]) for row in rows]
 
-    def trigram_search(self, query_norm: str, timeline_day: str | None, limit: int, now: str) -> list[Hit]:
+    def trigram_search(
+        self,
+        query_norm: str,
+        timeline_day: str | None,
+        limit: int,
+        now: str,
+        *,
+        project: str | None = None,
+        chat_session: str | None = None,
+    ) -> list[Hit]:
         tokens = [t for t in _NON_ALNUM.split(query_norm) if len(t) >= 3]
         sql = """SELECT * FROM chunks
                   WHERE forgotten_at IS NULL
@@ -209,6 +263,12 @@ class ArchiveStore:
         if timeline_day is not None:
             sql += " AND timeline_day = ?"
             params.append(timeline_day)
+        if project is not None:
+            sql += " AND project = ?"
+            params.append(project)
+        if chat_session is not None:
+            sql += " AND chat_session = ?"
+            params.append(chat_session)
         scored: list[tuple[float, sqlite3.Row]] = []
         for row in self._db.execute(sql, params):
             text = row["text_norm"]
@@ -260,6 +320,19 @@ class ArchiveStore:
 
     def chunk_ids(self) -> list[str]:
         return [row["chunk_id"] for row in self._db.execute("SELECT chunk_id FROM chunks")]
+
+    def rank_hays(self, chunk_ids: list[str]) -> dict[str, str]:
+        """heading + text_norm for in-order ranking. Empty dict if no ids."""
+        if not chunk_ids:
+            return {}
+        marks = ",".join("?" * len(chunk_ids))
+        rows = self._db.execute(
+            f"SELECT chunk_id, heading_raw, text_norm FROM chunks WHERE chunk_id IN ({marks})",
+            chunk_ids,
+        )
+        return {
+            row["chunk_id"]: f"{row['heading_raw']} {row['text_norm']}" for row in rows
+        }
 
     def visible_chunk_maps(self, now: str) -> list[dict[str, object]]:
         rows = self._db.execute(

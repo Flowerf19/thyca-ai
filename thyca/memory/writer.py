@@ -94,15 +94,21 @@ class MemoryWriter:
         *,
         topic: str | None = None,
         body_lines: list[str] | None = None,
+        proj: str | None = None,
+        chat: str | None = None,
     ) -> None:
-        """Rewrite one session's title and/or body in place.
+        """Rewrite one session's title, body, and/or linking metadata in place.
 
         entry_id / importance / expires_at stay untouched — the id the index
         and callers hold never changes; only the visible text moves.
+        proj/chat only change when the caller passes them.
         """
         path, entry = self.locate(session_id)
         with self.lock_for(path):
-            self._update_session(path, entry, topic=topic, body_lines=body_lines)
+            self._update_session(
+                path, entry, topic=topic, body_lines=body_lines,
+                proj=proj, chat=chat,
+            )
 
     def _update_session(
         self,
@@ -111,10 +117,12 @@ class MemoryWriter:
         *,
         topic: str | None,
         body_lines: list[str] | None,
+        proj: str | None = None,
+        chat: str | None = None,
     ) -> None:
         if not path.is_file():
             raise ArchiveError(f"memory file missing: {path}")
-        if topic is None and body_lines is None:
+        if topic is None and body_lines is None and proj is None and chat is None:
             return
         lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
         out: list[str] = []
@@ -140,6 +148,8 @@ class MemoryWriter:
                     meta.entry_id or resolved,
                     meta.importance,
                     meta.expires_at,
+                    meta.proj if proj is None else proj,
+                    meta.chat if chat is None else chat,
                 )
                 out.append(render_heading(new_meta))
                 if body_lines is not None:

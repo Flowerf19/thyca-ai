@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS chunks(
   content_hash   TEXT NOT NULL,
   expires_at     TEXT,
   forgotten_at   TEXT,
+  project        TEXT,
+  chat_session   TEXT,
   UNIQUE(path, session_id, leaf_ord)
 );
 

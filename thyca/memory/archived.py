@@ -81,15 +81,33 @@ class ArchivedMemory:
             self.store.drop_source(stale)
 
     def fts_hits(
-        self, query: str, timeline_day: str | None, now: datetime | None, limit: int
+        self,
+        query: str,
+        timeline_day: str | None,
+        now: datetime | None,
+        limit: int,
+        *,
+        project: str | None = None,
+        chat_session: str | None = None,
     ) -> list[Hit]:
-        return self.store.fts_search(query, timeline_day, limit, format_ts(now))
+        return self.store.fts_search(
+            query, timeline_day, limit, format_ts(now),
+            project=project, chat_session=chat_session,
+        )
 
     def trigram_hits(
-        self, query: str, timeline_day: str | None, now: datetime | None, limit: int
+        self,
+        query: str,
+        timeline_day: str | None,
+        now: datetime | None,
+        limit: int,
+        *,
+        project: str | None = None,
+        chat_session: str | None = None,
     ) -> list[Hit]:
         return self.store.trigram_search(
-            self.chunker.normalize(query), timeline_day, limit, format_ts(now)
+            self.chunker.normalize(query), timeline_day, limit, format_ts(now),
+            project=project, chat_session=chat_session,
         )
 
     def recent_hits(self, limit: int, now: datetime | None = None) -> list[Hit]:

@@ -39,6 +39,8 @@ class Chunk:
     content_hash: str
     expires_at: str | None = None
     forgotten_at: str | None = None
+    project: str | None = None
+    chat_session: str | None = None
 
 
 class Chunker:
@@ -81,6 +83,8 @@ class Chunker:
                         content_hash=hashlib.sha256(payload).hexdigest(),
                         expires_at=session.get("expires_at"),
                         forgotten_at=session.get("forgotten_at"),
+                        project=session.get("project"),
+                        chat_session=session.get("chat_session"),
                     )
                 )
         return chunks
@@ -131,6 +135,8 @@ def _sessions(
                 "body_start": line_no + 2,
                 "expires_at": meta.expires_at,
                 "forgotten_at": None,
+                "project": meta.proj,
+                "chat_session": meta.chat,
             }
         )
     return sessions

@@ -292,6 +292,45 @@ async def test_timeout_retries_three_times_then_errors() -> None:
 
 
 @pytest.mark.asyncio
+async def test_connect_error_retries_three_times_then_errors() -> None:
+    hits = {"n": 0}
+    retries: list[tuple[int, int]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        hits["n"] += 1
+        raise httpx.ConnectError("connection reset")
+
+    connect = OpenAIChat(_provider(), client=_client(handler))
+    connect.set_retry_hook(lambda a, m: retries.append((a, m)))
+    with pytest.raises(LLMError, match="connection reset"):
+        await connect.chat([Message(role="user", content="x")])
+    assert hits["n"] == 3
+    assert retries == [(1, 3), (2, 3), (3, 3)]
+
+
+@pytest.mark.asyncio
+async def test_500_retries_up_to_three_attempts() -> None:
+    hits = {"n": 0}
+    retries: list[tuple[int, int]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        hits["n"] += 1
+        if hits["n"] < 3:
+            return httpx.Response(500, headers={"Retry-After": "0"}, text="boom")
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]},
+        )
+
+    connect = OpenAIChat(_provider(), client=_client(handler))
+    connect.set_retry_hook(lambda a, m: retries.append((a, m)))
+    reply = await connect.chat([Message(role="user", content="x")])
+    assert hits["n"] == 3
+    assert reply.content == "ok"
+    assert retries == [(1, 3), (2, 3)]
+
+
+@pytest.mark.asyncio
 async def test_assistant_tool_roundtrip_payload() -> None:
     seen: dict = {}
 

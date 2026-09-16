@@ -216,6 +216,7 @@ svg {
   border: var(--rule) solid var(--color-border);
   border-radius: var(--radius-chat);
   background: transparent;
+  box-shadow: 0 0.55rem 1.35rem var(--color-shell-shadow-soft);
 }
 
 .icon-button,
@@ -1029,6 +1030,7 @@ button:active {
     border: 0;
     border-radius: 0;
     background: transparent;
+    box-shadow: none;
     pointer-events: none;
   }
 

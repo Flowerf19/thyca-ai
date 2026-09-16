@@ -59,7 +59,9 @@ class ChatApp:
         registry = ToolRegistry()
         register_file_tools(registry, PathGuard(root))
         register_memory_tools(
-            registry, MemoryFacade(root, timezone_name=cfg.timeline.timezone)
+            registry,
+            MemoryFacade(root, timezone_name=cfg.timeline.timezone),
+            chat_provider=lambda: self._current_chat_session_id(),
         )
         self._mcp = MCPManager()
         self._loop = asyncio.new_event_loop()
@@ -152,6 +154,17 @@ class ChatApp:
         self._sessions.discard_empty(keep=set(self._turns.snapshot()))
         session = self._sessions.create()
         return self._detail(session, self._current_cfg())
+
+    def _current_chat_session_id(self) -> str | None:
+        """Chat session id injected into memory leaves (best effort).
+
+        The turn in flight loads its own SessionManager, so the shared one may
+        not have a current session — return None rather than guess.
+        """
+        try:
+            return self._sessions.current.id
+        except Exception:
+            return None
 
     def turn(self, session_id: str, text: str, event_sink: EventSink | None = None) -> dict:
         if not isinstance(text, str):

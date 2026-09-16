@@ -31,6 +31,8 @@ class HeadingMeta:
     entry_id: str | None
     importance: int = DEFAULT_IMPORTANCE
     expires_at: str | None = None
+    proj: str | None = None
+    chat: str | None = None
 
 
 def utc_now(now: datetime | None = None) -> datetime:
@@ -66,8 +68,8 @@ def parse_heading(line: str) -> HeadingMeta | None:
     time, title, comment = match.group(1), match.group(2).strip(), match.group(3) or ""
     if not title:
         return None
-    entry_id, importance, expires_at = _parse_comment(comment)
-    return HeadingMeta(time, title, entry_id, importance, expires_at)
+    entry_id, importance, expires_at, proj, chat = _parse_comment(comment)
+    return HeadingMeta(time, title, entry_id, importance, expires_at, proj, chat)
 
 
 def render_heading(meta: HeadingMeta) -> str:
@@ -80,6 +82,10 @@ def render_heading(meta: HeadingMeta) -> str:
         if EXP_RE.fullmatch(meta.expires_at) is None:
             raise ValueError(f"invalid expires_at {meta.expires_at!r}")
         payload["exp"] = meta.expires_at
+    if meta.proj:
+        payload["proj"] = meta.proj
+    if meta.chat:
+        payload["chat"] = meta.chat
     body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     return f"## {meta.time} — {meta.title} <!-- thyca {body} -->\n"
 
@@ -126,30 +132,34 @@ def is_expired(expires_at: str | None, now: datetime | None = None) -> bool:
     return bool(expires_at) and not is_visible(expires_at, now)
 
 
-def _parse_comment(comment: str) -> tuple[str | None, int, str | None]:
+def _parse_comment(comment: str) -> tuple[str | None, int, str | None, str | None, str | None]:
     raw = comment.strip()
     if not raw:
-        return None, DEFAULT_IMPORTANCE, None
+        return None, DEFAULT_IMPORTANCE, None, None, None
     if raw.startswith("thyca"):
         rest = raw[5:].lstrip()
         if rest.startswith("{"):
             return _from_json(rest)
-    return _from_legacy(raw)
+    return (*_from_legacy(raw), None, None)
 
 
-def _from_json(blob: str) -> tuple[str | None, int, str | None]:
+def _from_json(blob: str) -> tuple[str | None, int, str | None, str | None, str | None]:
     try:
         data = json.loads(blob)
     except json.JSONDecodeError:
-        return None, DEFAULT_IMPORTANCE, None
+        return None, DEFAULT_IMPORTANCE, None, None, None
     if not isinstance(data, dict):
-        return None, DEFAULT_IMPORTANCE, None
+        return None, DEFAULT_IMPORTANCE, None, None, None
     entry = data.get("id")
     entry_id = entry if isinstance(entry, str) and ENTRY_ID_RE.fullmatch(entry) else None
     importance = _coerce_imp(data.get("imp"))
     exp = data.get("exp")
     expires_at = exp if isinstance(exp, str) and EXP_RE.fullmatch(exp) else None
-    return entry_id, importance, expires_at
+    proj = data.get("proj")
+    chat = data.get("chat")
+    proj = proj if isinstance(proj, str) and proj else None
+    chat = chat if isinstance(chat, str) and chat else None
+    return entry_id, importance, expires_at, proj, chat
 
 
 def _from_legacy(raw: str) -> tuple[str | None, int, str | None]:

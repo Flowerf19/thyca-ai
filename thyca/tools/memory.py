@@ -54,6 +54,8 @@ class MemoryFacade:
         content: str = "",
         importance: int = DEFAULT_IMPORTANCE,
         now: datetime | None = None,
+        proj: str | None = None,
+        chat: str | None = None,
     ) -> str:
         with self.writer.mutation_lock():
             self.active.ensure_files(now)
@@ -69,6 +71,8 @@ class MemoryFacade:
                 entry_id=entry,
                 importance=importance,
                 expires_at=expiry_ts(importance, moment),
+                proj=proj,
+                chat=chat,
             )
             leaf = f"- {summary}" + (f"\n  {content}" if content else "")
             with self.writer.lock_for(path):
@@ -94,6 +98,8 @@ class MemoryFacade:
         summary: str | None = None,
         content: str | None = None,
         now: datetime | None = None,
+        proj: str | None = None,
+        chat: str | None = None,
     ) -> None:
         self._reject_legacy_session(session_id)
         body_lines = None
@@ -103,7 +109,10 @@ class MemoryFacade:
                 body_lines.append(f"  {line}")
         path, _ = self.writer.locate(session_id)
         with self.writer.mutation_lock(), self.writer.lock_for(path):
-            self.writer.update_session(session_id, topic=topic, body_lines=body_lines)
+            self.writer.update_session(
+                session_id, topic=topic, body_lines=body_lines,
+                proj=proj, chat=chat,
+            )
             self._refresh_index(now)
 
     def reinforce(
@@ -177,21 +186,30 @@ class MemoryFacade:
         limit: int = 5,
         timeline_day: str | None = None,
         now: datetime | None = None,
+        proj: str | None = None,
+        chat: str | None = None,
     ) -> SearchResult:
         if timeline_day is not None and not DATE_RE.fullmatch(timeline_day):
             return SearchResult(warnings=["invalid timeline_day"])
         limit = max(1, min(limit, 10))
         if not query.strip():
             return SearchResult(warnings=["empty query"])
-        fts = self.archive.fts_hits(query, timeline_day, now, CANDIDATE_CAP)
+        fts = self.archive.fts_hits(
+            query, timeline_day, now, CANDIDATE_CAP,
+            project=proj, chat_session=chat,
+        )
         hits: list[Hit] = list(fts)
-        trigram = self.archive.trigram_hits(query, timeline_day, now, CANDIDATE_CAP)
+        trigram = self.archive.trigram_hits(
+            query, timeline_day, now, CANDIDATE_CAP,
+            project=proj, chat_session=chat,
+        )
         seen = {hit.chunk_id for hit in hits}
         for hit in trigram:
             if hit.chunk_id not in seen:
                 hits.append(hit)
                 seen.add(hit.chunk_id)
-        hits = _promote_in_order_span(query, hits, self.archive.chunker)
+        hays = self.archive.store.rank_hays([hit.chunk_id for hit in hits])
+        hits = _promote_in_order_span(query, hits, self.archive.chunker, hays)
         hits = self.archive.with_counts(dedup_siblings(hits)[:limit])
         if hits:
             now_ts = format_ts(utc_now(now))
@@ -277,19 +295,23 @@ class MemoryFacade:
         return [chunk.chunk_id for chunk in chunks if chunk.session_id == session_id]
 
 
-def _promote_in_order_span(query: str, hits: list[Hit], chunker) -> list[Hit]:
-    """Boost hits containing the query's tokens close together (in order).
+def _promote_in_order_span(
+    query: str, hits: list[Hit], chunker, hays: dict[str, str] | None = None
+) -> list[Hit]:
+    """Lift hits whose heading+body contain a longer prefix of the query tokens.
 
-    BM25 ranks per-term, so common tokens ("session", "id") bury the leaf
-    that matches the whole query. Score = matched prefix length of the token
-    sequence in order; hits matching more leading tokens rank higher.
+    Score = longest run of consecutive query tokens (from the start of the
+    query) appearing as consecutive tokens in the leaf. Gaps in the leaf break
+    the run. Ties keep input order.
     """
     tokens = [t for t in _phrase_key(query, chunker).split() if t]
     if len(tokens) < 2:
         return hits
+    texts = hays or {}
 
     def span(hit: Hit) -> int:
-        hay = _phrase_key(f"{hit.heading} {hit.snippet}", chunker).split()
+        raw = texts.get(hit.chunk_id) or f"{hit.heading} {hit.snippet}"
+        hay = _phrase_key(raw, chunker).split()
         best = 0
         for i in range(len(hay)):
             n = 0

@@ -11,7 +11,7 @@ from thyca.protocol import Message, ToolCall
 
 from .llm_base import ChatReply, Connect, LLMError, normalize_usage
 
-_RETRY_STATUS = {429, 502, 503, 504}
+_RETRY_STATUS = {429, 500, 502, 503, 504}
 _BODY_CAP = 500
 _RETRY_AFTER_CAP_S = 5.0
 
@@ -99,15 +99,17 @@ class OpenAIChat(Connect):
         while True:
             try:
                 response = await self._client.post(url, json=payload, headers=headers)
-            except httpx.TimeoutException as exc:
+            except httpx.RequestError as exc:
+                # Timeout, connect reset, remote protocol — same 3 tries as 429/5xx.
                 transient += 1
-                last_error = LLMError("provider timeout")
+                if isinstance(exc, httpx.TimeoutException):
+                    last_error = LLMError("provider timeout")
+                else:
+                    last_error = LLMError(_redact(_cap(str(exc)), key))
                 self._notify_retry(transient, max_attempts)
                 if transient >= max_attempts:
                     raise last_error from exc
                 continue
-            except httpx.RequestError as exc:
-                raise LLMError(_redact(_cap(str(exc)), key)) from exc
 
             if (
                 response.status_code == 400

@@ -20,6 +20,7 @@ from thyca.bridge import (
     session_list,
     session_rename,
     session_turn,
+    session_turn_follow,
     session_turn_stream,
 )
 from thyca.chat_app import ChatApp
@@ -202,6 +203,10 @@ def _handler(
             match = _SESSION_RE.fullmatch(path)
             if match:
                 session_get(self, chat, match.group(1))
+                return
+            match = _TURN_STREAM_RE.fullmatch(path)
+            if match:
+                session_turn_follow(self, chat, match.group(1))
                 return
             if path.startswith("/api/sessions"):
                 self._json(404, {"error": "session not found"})

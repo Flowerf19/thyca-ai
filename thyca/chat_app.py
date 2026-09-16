@@ -31,7 +31,7 @@ from thyca.tools.memory import MemoryFacade
 from thyca.tools.memory_tools import register_memory_tools
 from thyca.tools.path_guard import PathGuard
 from thyca.tools.registry import ToolRegistry
-from thyca.turn_state import TurnState
+from thyca.turn_state import TurnHub, TurnState
 
 TEXT_MAX = 4000
 
@@ -133,6 +133,18 @@ class ChatApp:
         """Snapshot of session_id -> started_at for turns in flight."""
         return self._turns.snapshot()
 
+    def follow_hub(self, session_id: str) -> TurnHub | None:
+        """Hub for an in-flight turn, or None if this session is idle.
+
+        Raises the usual session errors when the notebook does not exist or
+        cannot be read, so a follower GET can 404/503 instead of "idle".
+        """
+        hub = self._turns.hub(session_id)
+        if hub is not None:
+            return hub
+        self._sessions.store.load(session_id)
+        return None
+
     def create(self) -> dict:
         # Do not wait on any turn: create/list stay responsive while an LLM
         # call is in flight. Blank sessions belonging to a running turn must
@@ -149,9 +161,21 @@ class ChatApp:
             raise ValueError("empty")
         if len(cleaned) > TEXT_MAX:
             raise ValueError("too long")
-        self._turns.claim(session_id)
+        hub = self._turns.claim(session_id)
         try:
-            return self._submit(self._run_turn(session_id, cleaned, event_sink))
+
+            def sink(event: TurnEvent) -> None:
+                hub.publish(event)
+                if event_sink is not None:
+                    event_sink(event)
+
+            try:
+                detail = self._submit(self._run_turn(session_id, cleaned, sink))
+            except Exception as exc:
+                hub.publish(("failed", exc))
+                raise
+            hub.publish(("completed", detail))
+            return detail
         finally:
             self._turns.release(session_id)
 

@@ -640,6 +640,30 @@ def test_turn_state_claim_is_exclusive_and_releasable(tmp_path: Path) -> None:
     turns.release("never-claimed")
 
 
+def test_turn_hub_replays_to_late_subscriber_and_closes_on_release() -> None:
+    from thyca.turn_state import TurnHub, TurnState
+
+    turns = TurnState()
+    hub = turns.claim("s")
+    assert turns.hub("s") is hub
+    hub.publish("a")
+    early = hub.subscribe()
+    assert early.get(timeout=1) == "a"
+    hub.publish("b")
+    assert early.get(timeout=1) == "b"
+    late = hub.subscribe()
+    assert late.get(timeout=1) == "a"
+    assert late.get(timeout=1) == "b"
+    hub.drop(early)
+    hub.publish("c")
+    assert late.get(timeout=1) == "c"
+    assert early.empty()
+    turns.release("s")
+    assert late.get(timeout=1) is TurnHub.SENTINEL
+    assert turns.hub("s") is None
+    assert turns.started_at("s") is None
+
+
 def test_claim_cannot_slip_between_the_check_and_the_unlink(tmp_path: Path) -> None:
     """A concurrent claim waits for the delete, so it cannot land in the window."""
     import threading

@@ -926,6 +926,121 @@ def test_busy_session_reports_running_and_refuses_a_second_turn(tmp_path: Path) 
         _stop(httpd, thread)
 
 
+def test_follow_stream_replays_and_tails_a_running_turn(tmp_path: Path) -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    class Slow:
+        async def chat(self, messages, tools=None):
+            started.set()
+            await asyncio.to_thread(release.wait)
+            return ChatReply(content="late")
+
+    httpd, thread = _start(tmp_path, _chat(tmp_path, Slow()))
+    try:
+        created = _json(httpd, "/api/sessions", method="POST", data=b"")
+        session_id = created["id"]
+        starter = _stream(
+            httpd,
+            f"/api/sessions/{session_id}/turn/stream",
+            data=b'{"text":"hello follow"}',
+        )
+        assert json.loads(starter.readline().decode("utf-8")) == {"type": "turn.accepted"}
+        assert started.wait(2)
+        follower = urlopen(
+            Request(
+                _url(httpd, f"/api/sessions/{session_id}/turn/stream"),
+                method="GET",
+            ),
+            timeout=10,
+        )
+        assert follower.status == 200
+        assert follower.headers.get_content_type() == "application/x-ndjson"
+        assert json.loads(follower.readline().decode("utf-8")) == {"type": "turn.accepted"}
+        release.set()
+        starter_types = [item["type"] for item in _stream_lines(starter)]
+        follower_lines = _stream_lines(follower)
+        follower_types = [item["type"] for item in follower_lines]
+        assert starter_types[-1] == "turn.completed"
+        assert follower_types[-1] == "turn.completed"
+        assert "llm.started" in follower_types
+        assert follower_lines[-1]["detail"]["reply"] == "late"
+    finally:
+        _stop(httpd, thread)
+
+
+def test_follow_stream_idle_or_missing(tmp_path: Path) -> None:
+    httpd, thread = _start(tmp_path, _chat(tmp_path, FakeLLM(ChatReply(content="x"))))
+    try:
+        created = _json(httpd, "/api/sessions", method="POST", data=b"")
+        try:
+            urlopen(
+                Request(
+                    _url(httpd, f"/api/sessions/{created['id']}/turn/stream"),
+                    method="GET",
+                ),
+                timeout=5,
+            )
+        except HTTPError as exc:
+            assert exc.code == 409
+            assert json.loads(exc.read().decode("utf-8")) == {"error": "session idle"}
+        else:
+            raise AssertionError("expected 409")
+        try:
+            urlopen(
+                Request(
+                    _url(httpd, "/api/sessions/2026-01-01T00-00-00_ffff/turn/stream"),
+                    method="GET",
+                ),
+                timeout=5,
+            )
+        except HTTPError as exc:
+            assert exc.code == 404
+            assert json.loads(exc.read().decode("utf-8")) == {"error": "session not found"}
+        else:
+            raise AssertionError("expected 404")
+    finally:
+        _stop(httpd, thread)
+
+
+def test_follow_stream_survives_starter_disconnect(tmp_path: Path) -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    class Slow:
+        async def chat(self, messages, tools=None):
+            started.set()
+            await asyncio.to_thread(release.wait)
+            return ChatReply(content="kept")
+
+    httpd, thread = _start(tmp_path, _chat(tmp_path, Slow()))
+    try:
+        created = _json(httpd, "/api/sessions", method="POST", data=b"")
+        session_id = created["id"]
+        starter = _stream(
+            httpd,
+            f"/api/sessions/{session_id}/turn/stream",
+            data=b'{"text":"stay"}',
+        )
+        assert json.loads(starter.readline().decode("utf-8")) == {"type": "turn.accepted"}
+        assert started.wait(2)
+        follower = urlopen(
+            Request(
+                _url(httpd, f"/api/sessions/{session_id}/turn/stream"),
+                method="GET",
+            ),
+            timeout=10,
+        )
+        assert json.loads(follower.readline().decode("utf-8")) == {"type": "turn.accepted"}
+        starter.close()
+        release.set()
+        lines = _stream_lines(follower)
+        assert lines[-1]["type"] == "turn.completed"
+        assert lines[-1]["detail"]["reply"] == "kept"
+    finally:
+        _stop(httpd, thread)
+
+
 def test_webui_keeps_streaming_card_across_session_switch() -> None:
     """Leaving a streaming session and coming back must not reset its card.
 
@@ -945,7 +1060,7 @@ def test_webui_keeps_streaming_card_across_session_switch() -> None:
     # none to reuse (turn started before this page loaded).
     assert "const live = liveTurns.get(state.activeId);" in render
     assert "if (live) el.messageList.append(live.article);" in render
-    assert "else createLiveStatus(el.messageList);" in render
+    assert "else liveTurns.set(state.activeId, createLiveStatus(el.messageList));" in render
     # A detached card must not drag the visible conversation around.
     assert "if (state.activeId === sessionId) scrollToBottom();" in send_message
 
@@ -958,11 +1073,15 @@ def test_webui_follows_a_turn_it_did_not_start() -> None:
     watch = app[app.index("function watchRunning(sessionId)") : app.index("async function loadSession")]
     composer = app[app.index("function composerBusy()") : app.index("function setSending")]
 
-    # Reload mid-turn: keep the live card the turn would own, then poll the
-    # cheap GET until it lands and render the transcript it wrote.
+    # Reload mid-turn: attach GET /turn/stream so the card receives the same
+    # events as the starter. Poll is only the fallback if that stream is gone.
     assert "RUNNING_POLL_MS = 2000" in app
     assert "detail && detail.running === true" in app
-    assert "else createLiveStatus(el.messageList);" in app
+    assert "else liveTurns.set(state.activeId, createLiveStatus(el.messageList));" in app
+    assert "async function followTurn" in app
+    assert "void followTurn(sessionId)" in load_session
+    assert "abortFollow()" in load_session
+    assert "getNdjson" in app
     assert "createLiveStatus" in view
     # No turn status is invented for the reload case: the card reads like any
     # in-flight turn, from copy that already exists.
@@ -997,6 +1116,7 @@ def test_webui_follows_a_turn_it_did_not_start() -> None:
         "ApiError",
         "deleteJson",
         "getJson",
+        "getNdjson",
         "patchJson",
         "postJson",
         "postNdjson",

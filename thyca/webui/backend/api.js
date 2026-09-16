@@ -87,25 +87,11 @@ function yieldToRender() {
   });
 }
 
-export async function postNdjson(url, body, onEvent, { signal } = {}) {
-  let response;
-  try {
-    response = await fetch(url, {
-      method: "POST",
-      cache: "no-store",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      signal,
-    });
-  } catch (error) {
-    if (error?.name === "AbortError") throw error;
-    throw new ApiError("Không kết nối được với backend Thyca.");
-  }
-
+async function readNdjson(response, onEvent, fallbackMessage) {
   if (!response.ok) {
     const payload = await response.json().catch(() => null);
     throw new ApiError(
-      payload && typeof payload.error === "string" ? payload.error : "Không gửi được tin nhắn.",
+      payload && typeof payload.error === "string" ? payload.error : fallbackMessage,
       response.status,
     );
   }
@@ -147,4 +133,38 @@ export async function postNdjson(url, body, onEvent, { signal } = {}) {
     throw new ApiError(terminal.message || "Lượt trò chuyện đã dừng.");
   }
   return terminal.detail;
+}
+
+async function openNdjson(url, options, fallbackMessage, onEvent) {
+  let response;
+  try {
+    response = await fetch(url, { cache: "no-store", ...options });
+  } catch (error) {
+    if (error?.name === "AbortError") throw error;
+    throw new ApiError("Không kết nối được với backend Thyca.");
+  }
+  return readNdjson(response, onEvent, fallbackMessage);
+}
+
+export async function postNdjson(url, body, onEvent, { signal } = {}) {
+  return openNdjson(
+    url,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal,
+    },
+    "Không gửi được tin nhắn.",
+    onEvent,
+  );
+}
+
+export async function getNdjson(url, onEvent, { signal } = {}) {
+  return openNdjson(
+    url,
+    { method: "GET", signal },
+    "Không theo dõi được lượt.",
+    onEvent,
+  );
 }

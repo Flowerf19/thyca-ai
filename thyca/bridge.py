@@ -23,6 +23,7 @@ from thyca.chat_app import ChatApp
 from thyca.llm.llm_base import LLMError
 from thyca.session_wire import delete_error, rename_error
 from thyca.sessions import SessionBusy, SessionCorrupt, SessionError, SessionNotFound
+from thyca.turn_state import TurnHub
 
 SENTINEL = object()
 # Same grammar the session routes use: a timestamp id and four hex chars.
@@ -98,25 +99,17 @@ def write_line(wfile, line: dict) -> None:
     wfile.flush()
 
 
-def stream_turn(handler, app: ChatApp, session_id: str, text: str) -> None:
-    """Pump one turn as NDJSON: headers, events, exactly one terminal item.
+def _stream_end(item: object) -> bool:
+    return item is SENTINEL or item is TurnHub.SENTINEL
+
+
+def pump_stream(handler, items: queue.Queue, state: dict) -> None:
+    """Write NDJSON from *items* until a sentinel, or HTTP JSON on pre-accept.
 
     ``handler`` is the BaseHTTPRequestHandler — accessed only through its
     ``_stream_headers`` / ``_json`` / ``wfile`` surface, so this module never
     imports serve.py.
     """
-    if not isinstance(text, str):
-        handler._json(400, {"error": "invalid text"})
-        return
-    items: queue.Queue = queue.Queue()
-    state = {"disconnected": False}
-    worker = threading.Thread(
-        target=bridge_worker,
-        args=(app, session_id, text, items, state),
-        daemon=True,
-        name="thyca-turn-stream",
-    )
-    worker.start()
     try:
         first = items.get()
         if isinstance(first, TurnEvent):
@@ -126,7 +119,7 @@ def stream_turn(handler, app: ChatApp, session_id: str, text: str) -> None:
             else:
                 handler._json(503, {"error": "chat unavailable"})
                 return
-        elif first is SENTINEL:
+        elif _stream_end(first):
             handler._json(503, {"error": "chat unavailable"})
             return
         else:
@@ -138,7 +131,7 @@ def stream_turn(handler, app: ChatApp, session_id: str, text: str) -> None:
         terminal = False
         while True:
             item = items.get()
-            if item is SENTINEL:
+            if _stream_end(item):
                 break
             if terminal:
                 continue
@@ -167,10 +160,27 @@ def stream_turn(handler, app: ChatApp, session_id: str, text: str) -> None:
                     "message": "chat unavailable",
                 },
             )
-            terminal = True
     except (BrokenPipeError, ConnectionResetError):
         # Client left: drop further events, let persist finish.
         state["disconnected"] = True
+
+
+def stream_turn(handler, app: ChatApp, session_id: str, text: str) -> None:
+    """Pump one turn as NDJSON: headers, events, exactly one terminal item."""
+    if not isinstance(text, str):
+        handler._json(400, {"error": "invalid text"})
+        return
+    items: queue.Queue = queue.Queue()
+    state = {"disconnected": False}
+    worker = threading.Thread(
+        target=bridge_worker,
+        args=(app, session_id, text, items, state),
+        daemon=True,
+        name="thyca-turn-stream",
+    )
+    worker.start()
+    try:
+        pump_stream(handler, items, state)
     finally:
         # The worker is a daemon and only this session's turn was ever at
         # stake, so persistence completes regardless of the client. A live
@@ -265,6 +275,25 @@ def session_turn_stream(handler, app: ChatApp | None, session_id: str) -> None:
         handler._json(400, {"error": "invalid text"})
         return
     stream_turn(handler, app, session_id, text)
+
+
+def session_turn_follow(handler, app: ChatApp | None, session_id: str) -> None:
+    """``GET /turn/stream`` — replay + tail the in-flight turn, if any."""
+    if _missing_chat(handler, app):
+        return
+    try:
+        hub = app.follow_hub(session_id)
+    except Exception as exc:
+        _sessions_error(handler, exc)
+        return
+    if hub is None:
+        handler._json(409, {"error": "session idle"})
+        return
+    items = hub.subscribe()
+    try:
+        pump_stream(handler, items, {"disconnected": False})
+    finally:
+        hub.drop(items)
 
 
 def session_rename(handler, app: ChatApp | None, path: str) -> None:

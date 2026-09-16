@@ -15,7 +15,6 @@ from thyca.memory.archive_store import (
     DATE_RE,
     GET_SESSION_CAP,
     SCHEMA_VERSION,  # noqa: F401 — re-exported
-    TRIGRAM_MIN_FTS,  # noqa: F401 — re-exported
     ArchiveError,
     ArchiveStore,
     Hit,

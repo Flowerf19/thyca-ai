@@ -13,8 +13,7 @@ from thyca.memory.usage import LeafUsage
 
 SCHEMA_VERSION = "5"
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
-TRIGRAM_MIN_FTS = 3
-TRIGRAM_FLOOR = 70
+TRIGRAM_FLOOR = 60
 CANDIDATE_CAP = 50
 GET_SESSION_CAP = 10
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -202,6 +201,7 @@ class ArchiveStore:
         return [_hit_from_row(row, "fts", bm25=row["bm25"], snippet=row["snippet"]) for row in rows]
 
     def trigram_search(self, query_norm: str, timeline_day: str | None, limit: int, now: str) -> list[Hit]:
+        tokens = [t for t in _NON_ALNUM.split(query_norm) if len(t) >= 3]
         sql = """SELECT * FROM chunks
                   WHERE forgotten_at IS NULL
                     AND (expires_at IS NULL OR expires_at > ?)"""
@@ -211,7 +211,10 @@ class ArchiveStore:
             params.append(timeline_day)
         scored: list[tuple[float, sqlite3.Row]] = []
         for row in self._db.execute(sql, params):
-            score = float(fuzz.partial_ratio(query_norm, row["text_norm"]))
+            text = row["text_norm"]
+            if tokens and not any(t in text for t in tokens):
+                continue
+            score = float(fuzz.partial_ratio(query_norm, text))
             if score >= TRIGRAM_FLOOR:
                 scored.append((score, row))
         scored.sort(key=lambda item: (-item[0], item[1]["chunk_id"]))

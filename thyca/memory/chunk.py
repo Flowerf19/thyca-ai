@@ -89,7 +89,8 @@ class Chunker:
     def normalize(text: str) -> str:
         decomposed = unicodedata.normalize("NFD", text)
         stripped = "".join(ch for ch in decomposed if unicodedata.category(ch) != "Mn")
-        return stripped.lower()
+        # NFD does not decompose đ (U+0111) — map it to d explicitly.
+        return stripped.lower().replace("đ", "d")
 
 
 def _sessions(

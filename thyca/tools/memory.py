@@ -1,6 +1,7 @@
 """Memory facade: remember / forget / reinforce / get."""
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -9,7 +10,6 @@ from thyca.memory.archived import (
     CANDIDATE_CAP,
     DATE_RE,
     GET_SESSION_CAP,
-    TRIGRAM_MIN_FTS,
     ArchivedMemory,
     ArchiveError,
     Hit,
@@ -185,12 +185,13 @@ class MemoryFacade:
             return SearchResult(warnings=["empty query"])
         fts = self.archive.fts_hits(query, timeline_day, now, CANDIDATE_CAP)
         hits: list[Hit] = list(fts)
-        if len(fts) < TRIGRAM_MIN_FTS:
-            seen = {hit.chunk_id for hit in hits}
-            for hit in self.archive.trigram_hits(query, timeline_day, now, CANDIDATE_CAP):
-                if hit.chunk_id not in seen:
-                    hits.append(hit)
-                    seen.add(hit.chunk_id)
+        trigram = self.archive.trigram_hits(query, timeline_day, now, CANDIDATE_CAP)
+        seen = {hit.chunk_id for hit in hits}
+        for hit in trigram:
+            if hit.chunk_id not in seen:
+                hits.append(hit)
+                seen.add(hit.chunk_id)
+        hits = _promote_in_order_span(query, hits, self.archive.chunker)
         hits = self.archive.with_counts(dedup_siblings(hits)[:limit])
         if hits:
             now_ts = format_ts(utc_now(now))
@@ -274,3 +275,35 @@ class MemoryFacade:
             path, text, source_kind=kind, timeline_day=day
         )
         return [chunk.chunk_id for chunk in chunks if chunk.session_id == session_id]
+
+
+def _promote_in_order_span(query: str, hits: list[Hit], chunker) -> list[Hit]:
+    """Boost hits containing the query's tokens close together (in order).
+
+    BM25 ranks per-term, so common tokens ("session", "id") bury the leaf
+    that matches the whole query. Score = matched prefix length of the token
+    sequence in order; hits matching more leading tokens rank higher.
+    """
+    tokens = [t for t in _phrase_key(query, chunker).split() if t]
+    if len(tokens) < 2:
+        return hits
+
+    def span(hit: Hit) -> int:
+        hay = _phrase_key(f"{hit.heading} {hit.snippet}", chunker).split()
+        best = 0
+        for i in range(len(hay)):
+            n = 0
+            for q_tok, h_tok in zip(tokens, hay[i:]):
+                if q_tok == h_tok or (len(q_tok) >= 4 and h_tok.startswith(q_tok)):
+                    n += 1
+                else:
+                    break
+            best = max(best, n)
+        return best
+
+    return sorted(hits, key=lambda hit: -span(hit))
+
+
+def _phrase_key(text: str, chunker) -> str:
+    """Normalize + collapse non-word runs to single spaces (FuzzyWuzzy-style)."""
+    return re.sub(r"[\W_]+", " ", chunker.normalize(text)).strip()

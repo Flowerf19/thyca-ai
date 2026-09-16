@@ -1,4 +1,4 @@
-import { ApiError, deleteJson, getJson, patchJson, postJson, postNdjson } from "./backend/api.js";
+import { ApiError, deleteJson, getJson, getNdjson, patchJson, postJson, postNdjson } from "./backend/api.js";
 import { SEND_ERROR_STATUS } from "./backend/chat-status.js";
 import { cleanText, formatSessionTime } from "./backend/format.js";
 import {
@@ -38,8 +38,8 @@ const el = {
 
 const IDLE_MS = 15 * 60 * 1000;
 const IDLE_REMEMBER = "Hãy nhớ những điều đáng giữ trong phiên này.";
-// A turn running on the backend writes nothing until it lands, so the open
-// page asks again on this cadence — cheap GET, no stream to re-attach.
+// Fallback if GET /turn/stream is gone (turn just landed, or a blip):
+// cheap session GET until the notebook has the reply.
 const RUNNING_POLL_MS = 2000;
 // A few failed polls in a row (backend restarting, network blip) unlock the
 // composer instead of leaving it disabled forever.
@@ -47,6 +47,7 @@ const RUNNING_POLL_MAX_FAILURES = 5;
 let idleTimer = 0;
 let idleFromNudge = false;
 let runningTimer = 0;
+let followAbort = null;
 const idleArmed = new Set();
 // session_id -> live card for a turn this tab is streaming. Switching to
 // another session detaches the card from the DOM, so keep the object (and the
@@ -137,6 +138,12 @@ function setSending(sending) {
 function setRunning(running) {
   state.running = running;
   syncComposer();
+}
+
+function abortFollow() {
+  if (!followAbort) return;
+  followAbort.abort();
+  followAbort = null;
 }
 
 function syncComposer() {
@@ -328,16 +335,69 @@ function renderDetail(detail) {
   if (state.running) {
     // A turn streaming in this tab gets its own card back — same object, so
     // the events it has been collecting are still on it. A turn started
-    // elsewhere (or before a reload) gets a fresh one that only reports state.
+    // elsewhere (or before a reload) gets a fresh one; followTurn then
+    // attaches the live stream to that same card.
     const live = liveTurns.get(state.activeId);
     if (live) el.messageList.append(live.article);
-    else createLiveStatus(el.messageList);
+    else liveTurns.set(state.activeId, createLiveStatus(el.messageList));
+  } else if (state.streamSessionId !== state.activeId) {
+    liveTurns.delete(state.activeId);
   }
   renderSessions();
   requestAnimationFrame(() => scrollToBottom("auto"));
 }
 
-// Reload mid-turn (or a turn started in another tab): keep asking until the
+// Another tab started this turn: replay + tail its NDJSON so the card
+// updates the same way the starter's does. Poll is only the fallback.
+async function followTurn(sessionId) {
+  const controller = new AbortController();
+  followAbort = controller;
+  let live = liveTurns.get(sessionId);
+  if (live) {
+    // Replay will rebuild the usage row from the hub log; keep the card.
+    live.active.clear();
+    live.completed.length = 0;
+    live.article.querySelectorAll(".usage-row").forEach((node) => node.remove());
+  } else {
+    live = createLiveStatus(el.messageList);
+    liveTurns.set(sessionId, live);
+  }
+  try {
+    const detail = await getNdjson(
+      `/api/sessions/${encodeURIComponent(sessionId)}/turn/stream`,
+      (event) => {
+        updateLiveStatus(live, event);
+        if (state.activeId === sessionId) scrollToBottom();
+      },
+      { signal: controller.signal },
+    );
+    if (state.activeId === sessionId) renderDetail(detail);
+    await refreshSessions();
+    if (state.activeId === sessionId) armIdle();
+  } catch (error) {
+    if (error?.name === "AbortError") return;
+    if (state.activeId !== sessionId) return;
+    try {
+      const detail = await getJson(`/api/sessions/${encodeURIComponent(sessionId)}`);
+      if (state.activeId !== sessionId) return;
+      renderDetail(detail);
+      if (detail.running === true) watchRunning(sessionId);
+      else {
+        await refreshSessions();
+        armIdle();
+      }
+    } catch {
+      watchRunning(sessionId);
+    }
+  } finally {
+    const replaced = followAbort !== null && followAbort !== controller;
+    if (followAbort === controller) followAbort = null;
+    if (replaced) return;
+    if (state.streamSessionId !== sessionId) liveTurns.delete(sessionId);
+  }
+}
+
+// Reload mid-turn when follow is unavailable: keep asking until the
 // backend says it landed, then render the transcript the turn produced.
 function watchRunning(sessionId) {
   window.clearTimeout(runningTimer);
@@ -378,6 +438,7 @@ function watchRunning(sessionId) {
 async function loadSession(sessionId) {
   if (!sessionId) return;
   const generation = ++state.loadGeneration;
+  abortFollow();
   window.clearTimeout(runningTimer);
   runningTimer = 0;
   state.activeId = sessionId;
@@ -387,7 +448,8 @@ async function loadSession(sessionId) {
     const detail = await getJson(`/api/sessions/${encodeURIComponent(sessionId)}`);
     if (generation !== state.loadGeneration) return;
     renderDetail(detail);
-    watchRunning(sessionId);
+    if (state.running && state.streamSessionId !== sessionId) void followTurn(sessionId);
+    else watchRunning(sessionId);
     armIdle();
   } catch (error) {
     if (generation !== state.loadGeneration) return;
@@ -398,6 +460,7 @@ async function loadSession(sessionId) {
 }
 
 function newSession() {
+  abortFollow();
   window.clearTimeout(runningTimer);
   runningTimer = 0;
   ++state.loadGeneration;

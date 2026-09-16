@@ -28,6 +28,7 @@ const el = {
   crumb: document.querySelector("#trace-crumb"),
   copy: document.querySelector("#copy-id"),
   copyLabel: document.querySelector("#copy-label"),
+  progress: document.querySelector("#turn-progress"),
   previous: document.querySelector("#page-prev"),
   next: document.querySelector("#page-next"),
   toolSection: document.querySelector("#tool-calls"),
@@ -115,6 +116,24 @@ function emptyDetail(message) {
   el.crumb.textContent = `Trace › ${message}`;
   el.copyLabel.textContent = "ID: —";
   el.copy.disabled = true;
+  el.progress?.replaceChildren();
+}
+
+function renderProgress() {
+  const group = activeGroup();
+  if (!group || !el.progress) return;
+  const dots = group.turns.map((turn, index) => {
+    const dot = document.createElement("button");
+    dot.type = "button";
+    dot.className = "trace-dot";
+    dot.setAttribute("aria-label", `Mở lượt ${index + 1}`);
+    dot.setAttribute("aria-current", String(index === state.turnIndex));
+    dot.title = `Lượt ${index + 1}`;
+    dot.classList.toggle("is-active", index === state.turnIndex);
+    dot.addEventListener("click", () => void selectTurn(index));
+    return dot;
+  });
+  el.progress.replaceChildren(...dots);
 }
 
 function providerFor(model) {
@@ -197,7 +216,7 @@ function renderTools() {
     const fold = document.createElement("details");
     fold.className = "fold-row fold-row--plain";
     const summary = document.createElement("summary");
-    summary.append(copyOf(group.name, `${group.count} lần`));
+    summary.append(copyOf(`${group.name} ×${group.count}`, null));
     const stat = document.createElement("span");
     stat.className = "fold-row-stat";
     stat.textContent = formatDuration(group.latencyMs);
@@ -218,6 +237,7 @@ function renderDetail() {
   const total = group.turns.length;
 
   el.detail.hidden = false;
+  renderProgress();
   el.copy.disabled = false;
   el.crumb.textContent = `Trace › ${cleanText(group.title, group.sessionId)}`;
   el.copyLabel.textContent = `ID: ${group.sessionId}`;

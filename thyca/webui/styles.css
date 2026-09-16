@@ -915,9 +915,7 @@ svg {
   color: #fff;
 }
 
-/* Same pen and draw size as the trace tool header's pen (trace.css). */
-.send-icon,
-.tool-pen {
+.send-icon {
   width: 2.8rem;
   height: 2.8rem;
   -webkit-mask: url("images/thyca-icons/but-may.svg") center / contain no-repeat;

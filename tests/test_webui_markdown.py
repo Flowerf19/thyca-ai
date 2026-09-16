@@ -190,6 +190,53 @@ def test_split_prompt_tokens_removes_cache() -> None:
     assert payload["absent"] == {"input": 0, "cache": 0}
 
 
+def test_trace_typography_matches_profile_screen() -> None:
+    trace = (WEBUI / "trace.css").read_text(encoding="utf-8")
+    profile = (WEBUI / "profile.css").read_text(encoding="utf-8")
+    html = (WEBUI / "trace.html").read_text(encoding="utf-8")
+    script = (WEBUI / "trace.js").read_text(encoding="utf-8")
+
+    # Trace content uses the same profile body and heading families/sizes;
+    # only raw turn metadata keeps a monospace face for readability.
+    assert ".trace-content {" in trace
+    assert "font-family: var(--font-reading);" in trace
+    assert "font-size: 1rem;" in trace
+    assert ".trace-content h3 {" in trace
+    assert "font-family: var(--font-display);" in trace
+    assert "font-size: 1.15rem;" in trace
+    assert "#canonical-content" in profile
+    assert "var(--font-mono)" in trace
+
+    # The detail reads as a sequence of labelled sections, with the same
+    # terracotta title mark as the chat brand stripe and clickable turn dots.
+    assert 'class="turn-progress"' in html
+    assert 'class="general-card screen-card"' in html
+    assert 'class="trace-section token-section"' in html
+    assert '>Đã dùng</h3>' in html
+    assert 'Bản ghi lượt</span>' in html
+    assert 'Nhật ký' not in html
+    assert "function renderProgress()" in script
+    assert 'className = "trace-dot"' in script
+    assert ".trace-section > h3::before" in trace
+    assert ".trace-section > .screen-card.fold-list" in trace
+    assert ".tool-calls .fold-list" not in trace
+    assert ".turn-meta-section > .screen-card" not in trace
+    assert ".trace-section .fold-row--plain > summary" in trace
+    assert "grid-template-columns: minmax(0, 1fr) auto 1rem;" in trace
+
+
+def test_overview_typography_matches_profile_screen() -> None:
+    overview = (WEBUI / "dashboard.css").read_text(encoding="utf-8")
+
+    assert ".dashboard-surface {" in overview
+    assert "font-family: var(--font-reading);" in overview
+    assert ".dashboard-surface .cost-model-copy h3 {" in overview
+    assert "font-family: var(--font-display);" in overview
+    assert "font-size: 1.15rem;" in overview
+    assert ".dashboard-surface .cost-model-copy p," in overview
+    assert "font-size: 1rem;" in overview
+
+
 def test_cost_panel_splits_cache_and_uses_shared_toolbar() -> None:
     """The model breakdown is the one place that used raw prompt_tokens; it now
     splits through the shared helper, and the toolbar reuses the shared search

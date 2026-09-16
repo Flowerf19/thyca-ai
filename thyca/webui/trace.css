@@ -15,21 +15,34 @@
   align-items: stretch;
 }
 
+/* Keep Trace's content typography identical to Hồ sơ: readable serif body,
+   Fraunces headings, and the same 1rem base size. Raw turn metadata remains
+   monospace below because it is machine-readable content. */
+.trace-content {
+  font-family: var(--font-reading);
+  font-size: 1rem;
+}
+
+.trace-content > .trace-crumb,
+.trace-content > #trace-status,
+.trace-content > .turn-detail {
+  width: min(100%, 72rem);
+  margin-inline: auto;
+}
+
+.trace-content h3 {
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  font-style: normal;
+  font-weight: 500;
+}
+
 .general h3,
 .tool-calls h3 {
   display: flex;
   align-items: center;
   gap: 0.45rem;
   color: var(--color-ink);
-  font-size: 1.15rem;
-}
-
-/* Size and pen mask come from styles.css (.send-icon, .tool-pen). */
-.tool-pen {
-  flex: 0 0 auto;
-  margin-block: -0.9rem;
-  margin-inline-start: -0.55rem;
-  background: var(--terra);
 }
 
 .trace-crumb {
@@ -39,7 +52,6 @@
   gap: 1rem;
   margin-bottom: 1rem;
   color: var(--color-ink);
-  font-size: 1.1rem;
 }
 
 .trace-crumb > span {
@@ -48,7 +60,6 @@
 
 .trace-crumb button {
   flex: 0 0 auto;
-  font-size: 0.8rem;
 }
 
 .turn-detail {
@@ -66,13 +77,19 @@
 }
 
 .turn-detail-head strong {
-  font-size: 1.05rem;
+  font-size: 1.15rem;
+  font-weight: 600;
+}
+
+.turn-recorded {
+  color: var(--color-muted);
+  font-style: italic;
 }
 
 .turn-detail-head time,
 .trace-pager span {
   color: var(--color-muted);
-  font-size: 0.85rem;
+  font-size: 1rem;
   font-variant-numeric: tabular-nums;
 }
 
@@ -99,28 +116,83 @@
   text-align: center;
 }
 
+.turn-progress-wrap {
+  padding: 1rem 1.2rem 0.8rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.turn-progress {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  min-height: 1rem;
+}
+
+.trace-dot {
+  width: 1rem;
+  height: 1rem;
+  min-height: 0;
+  padding: 0;
+  border: 2px solid color-mix(in oklab, var(--color-accent) 28%, var(--color-border));
+  border-radius: 50%;
+  background: var(--color-accent-soft);
+}
+
+.trace-dot.is-active {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+}
+
+.trace-dot:focus-visible {
+  outline-offset: 3px;
+}
+
+.turn-progress-note {
+  margin: 0.5rem 0 0;
+  color: var(--color-muted);
+  font-size: 0.875rem;
+}
+
+.trace-section {
+  margin: 1.35rem 1.2rem 0;
+}
+
+.trace-section > h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 0 0 0.7rem;
+}
+
+.trace-section > h3::before {
+  content: "";
+  flex: 0 0 0.3rem;
+  width: 0.3rem;
+  height: 1.35rem;
+  border-radius: 99px;
+  background: var(--chat-brand-accent);
+  box-shadow: 0 0 0.35rem color-mix(in oklab, var(--chat-brand-accent) 35%, transparent);
+}
+
 .general {
-  padding: 1.1rem 1.2rem;
+  padding: 0;
 }
 
-.general h3 {
-  margin-bottom: 0.8rem;
-}
-
-.general > div {
+.general-card {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1rem 1.2rem;
-  padding-inline: 0.9rem;
+  margin: 0;
+  padding: 1rem 1.2rem;
 }
 
-.general > div > span {
+.general-card > span {
   min-width: 0;
 }
 
 .general span {
   color: var(--color-muted);
-  font-size: 0.82rem;
+  font-size: 1rem;
 }
 
 .general strong {
@@ -128,7 +200,7 @@
   min-width: 0;
   margin-top: 0.2rem;
   color: var(--color-ink);
-  font-size: 0.95rem;
+  font-size: 1rem;
   font-weight: 400;
   overflow-wrap: anywhere;
 }
@@ -141,7 +213,7 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1.2rem;
-  padding: 0 1.2rem 1rem;
+  padding: 0;
 }
 
 .token-panels .screen-card {
@@ -153,33 +225,47 @@
 .token-panels h3 {
   margin: 0;
   color: var(--color-muted);
-  font-size: 0.82rem;
-  font-weight: 500;
 }
 
 .token-panels strong {
   color: var(--color-ink);
-  font-size: 1.15rem;
+  font-size: 1rem;
   font-weight: 500;
 }
 
 .token-panels span {
   color: var(--color-muted);
-  font-size: 0.85rem;
+  font-size: 1rem;
 }
 
 .tool-calls {
-  margin: 0 1.2rem 1.2rem;
+  margin: 1.35rem 1.2rem 1.2rem;
 }
 
 .tool-calls h3 {
-  margin: 0 0 0.55rem;
+  margin: 0 0 0.7rem;
 }
 
-/* One row per tool, borrowing the collapsible row from screens.css: a summary
-   you can open for the calls inside. */
-.tool-calls .fold-list {
+/* The used-tool list and journal are the same fold-list surface. Their rows
+   differ in content only; the surrounding card and arrow spacing stay identical. */
+.trace-section > .screen-card.fold-list {
   margin: 0;
+}
+
+.trace-section .fold-row--plain > summary {
+  grid-template-columns: minmax(0, 1fr) auto 1rem;
+  grid-template-rows: auto;
+  min-height: 4.65rem;
+  padding-inline-end: 1.1rem;
+}
+
+.trace-section .fold-row-stat {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+  color: var(--color-muted);
+  font-size: 0.875rem;
+  font-style: italic;
 }
 
 .call-fold {
@@ -191,7 +277,6 @@
   min-height: 3.15rem;
   padding: 0.35rem 0 0.35rem 1.1rem;
   color: var(--color-ink);
-  font-size: 0.95rem;
 }
 
 .call-body {
@@ -203,7 +288,7 @@
 }
 
 .call-body .record-block h3 {
-  font-size: 1rem;
+  font-size: 1.15rem;
 }
 
 .record-block p,
@@ -220,8 +305,25 @@
   overflow-wrap: anywhere;
 }
 
-.turn-meta {
-  margin: 0 1.2rem 1.2rem;
+.turn-meta-section {
+  margin-bottom: 1.2rem;
+}
+
+.turn-record-summary .fold-row-copy,
+.turn-record-summary .fold-row-name {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.turn-record-summary .fold-row-name::before {
+  content: "";
+  flex: 0 0 0.3rem;
+  width: 0.3rem;
+  height: 1.35rem;
+  border-radius: 99px;
+  background: var(--chat-brand-accent);
+  box-shadow: 0 0 0.35rem color-mix(in oklab, var(--chat-brand-accent) 35%, transparent);
 }
 
 .record-block {
@@ -232,7 +334,7 @@
   margin: 0 0 0.4rem;
   color: var(--color-ink);
   font-family: var(--font-display);
-  font-size: 1.05rem;
+  font-size: 1.15rem;
   font-style: normal;
   font-weight: 500;
 }
@@ -241,13 +343,13 @@
   min-height: 2.6rem;
   max-height: 40vh;
   font-family: var(--font-reading);
-  font-size: 0.95rem;
+  font-size: 1rem;
   line-height: 1.5;
 }
 
 .turn-meta-body {
   min-width: 0;
-  font: 0.72rem/1.5 var(--font-mono);
+  font: 1rem/1.5 var(--font-mono);
 }
 
 @media (max-width: 56rem) {
@@ -282,14 +384,13 @@
   .trace-crumb {
     align-items: stretch;
     flex-direction: column;
-    font-size: 0.95rem;
   }
 
   .trace-crumb button {
     align-self: flex-start;
   }
 
-  .general > div {
+  .general-card {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -301,19 +402,21 @@
     padding: 0.9rem;
   }
 
-  .token-panels {
-    padding-inline: 0.8rem;
-  }
-
   .tool-calls {
     margin-inline: 0.8rem;
   }
 
-  .turn-meta {
+  .turn-meta-section {
     margin-inline: 0.8rem;
   }
 
   .call-summary {
     padding-inline-start: 0.75rem;
+  }
+}
+
+@media (max-width: 36rem) {
+  .general-card {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

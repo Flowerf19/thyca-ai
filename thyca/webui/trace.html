@@ -50,7 +50,7 @@
             <header class="turn-detail-head">
               <strong id="detail-title">Lượt 1</strong>
               <span class="screen-badge" id="detail-type">LLM</span>
-              <time id="detail-time">10:24:01</time>
+              <span class="turn-recorded">đã ghi · <time id="detail-time">10:24:01</time></span>
               <nav class="trace-pager" aria-label="Phân trang lượt">
                 <button class="screen-button" id="page-prev" type="button" aria-label="Lượt trước">‹</button>
                 <span id="page-status">1 / 5</span>
@@ -58,12 +58,14 @@
               </nav>
             </header>
 
-            <section class="general">
-              <h3>
-                <svg class="screen-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4h10v16H7Z" /><path d="M10 8h4M10 12h4M10 16h2" /></svg>
-                Thông tin chung
-              </h3>
-              <div>
+            <div class="turn-progress-wrap">
+              <nav class="turn-progress" id="turn-progress" aria-label="Các lượt trong phiên"></nav>
+              <p class="turn-progress-note">Chấm terracotta = lượt đang xem · bấm chấm để nhảy</p>
+            </div>
+
+            <section class="trace-section general">
+              <h3>Thông tin chung</h3>
+              <div class="general-card screen-card">
                 <span>Mô hình<strong id="detail-model">gpt-4o-mini</strong></span>
                 <span>Provider<strong id="detail-provider">OpenAI</strong></span>
                 <span>Số vòng<strong id="detail-image">—</strong></span>
@@ -73,35 +75,35 @@
               </div>
             </section>
 
-            <section class="token-panels">
-              <article class="screen-card">
-                <h3>Input token</h3>
-                <strong id="input-count">192 tokens</strong>
-                <span id="input-cost-line">$0.00003</span>
-              </article>
-              <article class="screen-card">
-                <h3>Output token</h3>
-                <strong id="output-count">92 tokens</strong>
-                <span id="output-cost-line">$0.00006</span>
-              </article>
-              <article class="screen-card">
-                <h3>Cache</h3>
-                <strong id="cache-count">128 tokens</strong>
-                <span id="cache-cost-line">$0.00001</span>
-              </article>
+            <section class="trace-section token-section">
+              <h3>Token</h3>
+              <div class="token-panels">
+                <article class="screen-card">
+                  <h3>Input token</h3>
+                  <strong id="input-count">192 tokens</strong>
+                  <span id="input-cost-line">$0.00003</span>
+                </article>
+                <article class="screen-card">
+                  <h3>Output token</h3>
+                  <strong id="output-count">92 tokens</strong>
+                  <span id="output-cost-line">$0.00006</span>
+                </article>
+                <article class="screen-card">
+                  <h3>Cache</h3>
+                  <strong id="cache-count">128 tokens</strong>
+                  <span id="cache-cost-line">$0.00001</span>
+                </article>
+              </div>
             </section>
 
-            <section class="tool-calls" id="tool-calls">
-              <h3>
-                <span class="tool-pen" aria-hidden="true"></span>
-                Tool calls
-              </h3>
+            <section class="trace-section tool-calls" id="tool-calls">
+              <h3>Đã dùng</h3>
               <div class="screen-card fold-list" id="tool-list"></div>
             </section>
 
-            <section class="screen-card fold-list turn-meta" id="turn-meta">
-              <details class="fold-row fold-row--plain" id="turn-meta-fold">
-                <summary>
+            <section class="trace-section turn-meta-section" id="turn-meta">
+              <details class="screen-card fold-list fold-row fold-row--plain" id="turn-meta-fold">
+                <summary class="turn-record-summary">
                   <span class="fold-row-copy"><span class="fold-row-name">Bản ghi lượt</span></span>
                 </summary>
                 <div class="fold-row-body">

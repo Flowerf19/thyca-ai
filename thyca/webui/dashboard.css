@@ -11,3 +11,37 @@
 .dashboard-block > .screen-heading {
   margin-block-end: 1rem;
 }
+
+/* Overview uses the same readable typography as Hồ sơ. Keep the dashboard's
+   chart/KPI hierarchy, but remove the list-card italic/UI deltas. */
+.dashboard-surface {
+  font-family: var(--font-reading);
+  font-size: 1rem;
+}
+
+.dashboard-surface .screen-card h3,
+.dashboard-surface .cost-model-heading {
+  font-family: var(--font-display);
+  font-style: normal;
+}
+
+.dashboard-surface .cost-model-copy h3 {
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  font-style: normal;
+}
+
+.dashboard-surface .cost-model-copy p,
+.dashboard-surface .cost-model-tokens span,
+.dashboard-surface .cost-model-cost,
+.dashboard-surface .cost-period,
+.dashboard-surface .cost-total p,
+.dashboard-surface .usage-summary footer,
+.dashboard-surface .usage-total-right span,
+.dashboard-surface .usage-note,
+.dashboard-surface .usage-legend,
+.dashboard-surface .usage-toggle button {
+  font-family: var(--font-reading);
+  font-size: 1rem;
+  font-style: normal;
+}

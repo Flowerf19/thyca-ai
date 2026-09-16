@@ -79,7 +79,7 @@ class ChatApp:
                 raise RuntimeError("mcp loop thread failed to start")
             for diag in self._submit(self._mcp.spawn_all(cfg.mcpServers)):
                 if not diag.ok:
-                    print(diag.message, file=sys.stderr)
+                    print(f"{diag.server}: {diag.message}", file=sys.stderr)
             for spec in self._mcp.tool_specs():
                 try:
                     registry.register(spec)

@@ -43,7 +43,9 @@ class MemoryFacade:
         self.active = ActiveMemory(self.thyca_dir, timezone_name=timezone_name)
         self.archive = archive or ArchivedMemory(self.thyca_dir, timezone_name=timezone_name)
         self.writer = writer or MemoryWriter(self.thyca_dir)
-        self.archive.store.drop_source(str(self.thyca_dir / "MEMORY.md"))
+        with self.writer.mutation_lock():
+            self.archive.store.drop_source(str(self.thyca_dir / "MEMORY.md"))
+            self.archive.reindex()
 
     def remember(
         self,
@@ -53,32 +55,36 @@ class MemoryFacade:
         importance: int = DEFAULT_IMPORTANCE,
         now: datetime | None = None,
     ) -> str:
-        self.active.ensure_files(now)
-        moment = utc_now(now)
-        entry = new_entry_id()
-        day = self.archive.day(now)
-        path = self.thyca_dir / "memory" / f"{day}.md"
-        sid = session_id(day, entry)
-        hour = moment.astimezone(self.archive.zone()).strftime("%H:%M")
-        meta = HeadingMeta(
-            time=hour,
-            title=topic,
-            entry_id=entry,
-            importance=importance,
-            expires_at=expiry_ts(importance, moment),
-        )
-        leaf = f"- {summary}" + (f"\n  {content}" if content else "")
-        with self.writer.lock_for(path):
-            if not path.is_file():
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(f"# {path.stem}\n", encoding="utf-8")
-            self.writer.append(path, render_heading(meta) + leaf + "\n")
-        self._refresh_index(now)
-        return sid
+        with self.writer.mutation_lock():
+            self.active.ensure_files(now)
+            moment = utc_now(now)
+            entry = new_entry_id()
+            day = self.archive.day(now)
+            path = self.thyca_dir / "memory" / f"{day}.md"
+            sid = session_id(day, entry)
+            hour = moment.astimezone(self.archive.zone()).strftime("%H:%M")
+            meta = HeadingMeta(
+                time=hour,
+                title=topic,
+                entry_id=entry,
+                importance=importance,
+                expires_at=expiry_ts(importance, moment),
+            )
+            leaf = f"- {summary}" + (f"\n  {content}" if content else "")
+            with self.writer.lock_for(path):
+                if not path.is_file():
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(f"# {path.stem}\n", encoding="utf-8")
+                self.writer.append(path, render_heading(meta) + leaf + "\n")
+                self._refresh_index(now)
+            return sid
 
     def forget(self, session_id: str, now: datetime | None = None) -> None:
-        self.writer.forget(session_id, now)
-        self._refresh_index(now)
+        self._reject_legacy_session(session_id)
+        path, _ = self.writer.locate(session_id)
+        with self.writer.mutation_lock(), self.writer.lock_for(path):
+            self.writer.forget(session_id, now)
+            self._refresh_index(now)
 
     def update(
         self,
@@ -89,13 +95,16 @@ class MemoryFacade:
         content: str | None = None,
         now: datetime | None = None,
     ) -> None:
+        self._reject_legacy_session(session_id)
         body_lines = None
         if summary is not None:
             body_lines = [f"- {summary.strip()}"]
             for line in str(content).splitlines() if content else []:
                 body_lines.append(f"  {line}")
-        self.writer.update_session(session_id, topic=topic, body_lines=body_lines)
-        self._refresh_index(now)
+        path, _ = self.writer.locate(session_id)
+        with self.writer.mutation_lock(), self.writer.lock_for(path):
+            self.writer.update_session(session_id, topic=topic, body_lines=body_lines)
+            self._refresh_index(now)
 
     def reinforce(
         self,
@@ -103,9 +112,12 @@ class MemoryFacade:
         importance: int | None = None,
         now: datetime | None = None,
     ) -> str:
-        exp = self.writer.reinforce(session_id, importance, now)
-        self._refresh_index(now)
-        return exp
+        self._reject_legacy_session(session_id)
+        path, _ = self.writer.locate(session_id)
+        with self.writer.mutation_lock(), self.writer.lock_for(path):
+            exp = self.writer.reinforce(session_id, importance, now)
+            self._refresh_index(now)
+            return exp
 
     def get(
         self,
@@ -115,6 +127,9 @@ class MemoryFacade:
         path: str | None = None,
         now: datetime | None = None,
     ) -> str:
+        self._reject_legacy_session(session_id)
+        if chunk_id is not None and chunk_id.startswith("memory#"):
+            raise ArchiveError("MEMORY.md is no longer supported")
         if path is not None:
             return self.archive.get(path=path, now=now)
         now_ts = format_ts(utc_now(now))
@@ -190,13 +205,19 @@ class MemoryFacade:
         limit = max(1, min(limit, 10))
         return self.archive.with_counts(self.archive.recent_hits(limit, now))
 
+    @staticmethod
+    def _reject_legacy_session(session_id: str | None) -> None:
+        if isinstance(session_id, str) and session_id.startswith("memory#"):
+            raise ArchiveError("MEMORY.md is no longer supported")
+
     def _refresh_index(self, now: datetime | None = None) -> None:
-        self.writer.purge_expired(utc_now(now))
-        self.archive.reindex(now)
-        live = set(self.archive.store.chunk_ids())
-        live.update(chunk.chunk_id for chunk in self._today_chunks(now))
-        self.archive.store.usage.keep_gets(live)
-        self.archive.store.usage.keep_searches(live)
+        with self.writer.mutation_lock():
+            self.writer.purge_expired(utc_now(now))
+            self.archive.reindex(now)
+            live = set(self.archive.store.chunk_ids())
+            live.update(chunk.chunk_id for chunk in self._today_chunks(now))
+            self.archive.store.usage.keep_gets(live)
+            self.archive.store.usage.keep_searches(live)
 
     CANONICAL_NAMES = ("SOUL.md", "USER.md", "IDENTITY.md")
 
@@ -212,8 +233,10 @@ class MemoryFacade:
             text += "\n"
         tmp = path.with_name(path.name + ".tmp")
         try:
-            tmp.write_text(text, encoding="utf-8")
-            tmp.replace(path)
+            with self.writer.mutation_lock(), self.writer.lock_for(path):
+                tmp.write_text(text, encoding="utf-8")
+                tmp.replace(path)
+                self._refresh_index()
         except OSError as exc:
             tmp.unlink(missing_ok=True)
             raise ArchiveError(f"write failed: {name}") from exc
@@ -246,10 +269,7 @@ class MemoryFacade:
 
     def _session_leaf_ids(self, session_id: str, text: str) -> list[str]:
         path, _ = self.writer.locate(session_id)
-        if session_id.startswith("memory#"):
-            kind, day = "canonical", None
-        else:
-            kind, day = "daily", session_id.split("#", 1)[0]
+        kind, day = "daily", session_id.split("#", 1)[0]
         chunks = self.archive.chunker.chunk_markdown(
             path, text, source_kind=kind, timeline_day=day
         )

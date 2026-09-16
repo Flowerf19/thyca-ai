@@ -6,6 +6,7 @@ import subprocess
 import sys
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from mcp.types import CallToolResult, ImageContent, ListToolsResult, TextContent, Tool
@@ -195,6 +196,114 @@ async def test_spawn_all_isolates_failed_server() -> None:
     assert "missing binary" in by_name["bad"].message
     assert by_name["echo"].ok is True
     assert [spec.name for spec in manager.tool_specs()] == ["echo__ping"]
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_startup_cleanup_failure_does_not_abort_other_servers() -> None:
+    class FailStart(_FakeSession):
+        async def initialize(self) -> object:
+            raise RuntimeError("start failed")
+
+    class CloseFails(MCPProcess):
+        async def aclose(self) -> None:
+            raise RuntimeError("close failed")
+
+    def make(name: str, cfg: McpServerCfg) -> MCPProcess:
+        if name == "bad":
+            return CloseFails(name, cfg.command, [], {}, session=FailStart())
+        return MCPProcess(name, cfg.command, [], {}, session=_FakeSession())
+
+    manager = MCPManager(process_factory=make)
+    diags = await manager.spawn_all(
+        {"bad": McpServerCfg(command="true"), "good": McpServerCfg(command="true")}
+    )
+
+    assert any(diag.server == "bad" and not diag.ok for diag in diags)
+    assert any(diag.server == "good" and diag.ok for diag in diags)
+    assert [spec.name for spec in manager.tool_specs()] == ["good__ping"]
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_closes_remaining_servers_after_failure() -> None:
+    class CloseFails:
+        async def aclose(self) -> None:
+            raise RuntimeError("close failed")
+
+    class Closes:
+        def __init__(self) -> None:
+            self.closed = False
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    manager = MCPManager()
+    remaining = Closes()
+    manager._live = [(CloseFails(), []), (remaining, [])]  # type: ignore[list-item]
+
+    await manager.shutdown()
+
+    assert remaining.closed
+
+
+@pytest.mark.asyncio
+async def test_invalid_mcp_tool_emits_startup_diagnostic() -> None:
+    class InvalidSession(_FakeSession):
+        async def list_tools(self):
+            return SimpleNamespace(
+                tools=[
+                    SimpleNamespace(
+                        name="bad.name",
+                        description="bad",
+                        inputSchema={"type": "object"},
+                    ),
+                    SimpleNamespace(
+                        name="bad_schema",
+                        description="bad schema",
+                        inputSchema=None,
+                    ),
+                    SimpleNamespace(
+                        name="scalar_schema",
+                        description="scalar schema",
+                        inputSchema={"type": "string"},
+                    ),
+                    SimpleNamespace(
+                        name="bad_property",
+                        description="bad property",
+                        inputSchema={"type": "object", "properties": {"x": "bad"}},
+                    ),
+                    SimpleNamespace(
+                        name="bad_nested_additional",
+                        description="bad nested additional",
+                        inputSchema={
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "object",
+                                "properties": {"x": "bad"},
+                            },
+                        },
+                    ),
+                ]
+            )
+
+    manager = MCPManager(
+        process_factory=lambda name, cfg: MCPProcess(
+            name, cfg.command, [], {}, session=InvalidSession()
+        )
+    )
+    diags = await manager.spawn_all({"echo": McpServerCfg(command="true")})
+
+    assert [spec.name for spec in manager.tool_specs()] == []
+    messages = [diag.message for diag in diags if not diag.ok]
+    assert any("bad.name" in message for message in messages)
+    assert any("bad_schema" in message for message in messages)
+    assert any("scalar_schema" in message and "object schema" in message for message in messages)
+    assert any("bad_property" in message and "object schema" in message for message in messages)
+    assert any(
+        "bad_nested_additional" in message and "object schema" in message
+        for message in messages
+    )
     await manager.shutdown()
 
 

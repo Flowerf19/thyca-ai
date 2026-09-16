@@ -261,6 +261,22 @@ def test_models_parse_and_roundtrip(tmp_path: Path) -> None:
     }
 
 
+def test_effective_provider_applies_model_endpoint_and_reasoning() -> None:
+    cfg = Config(
+        provider=ProviderCfg(model="special", reasoningEffort="high"),
+        models={
+            "special": ModelCfg(
+                baseUrl="https://other.example/v1", reasoningEffort="low"
+            )
+        },
+    )
+
+    effective = cfg.effective_provider()
+
+    assert effective.baseUrl == "https://other.example/v1"
+    assert effective.reasoningEffort == "low"
+
+
 def test_model_limits_override_global(tmp_path: Path) -> None:
     p = tmp_path / "config.json"
     raw = default_config().to_dict()

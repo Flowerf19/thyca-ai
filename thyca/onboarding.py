@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import socket
+from http.client import HTTPException, InvalidURL
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -40,17 +41,21 @@ def validate_provider(
     base_url: str, api_key: str, *, timeout: float = _PROBE_TIMEOUT_S
 ) -> list[str]:
     """GET ``{base_url}/models`` with a bearer token; return sorted model ids."""
-    if not base_url.startswith(("http://", "https://")):
-        raise ProviderProbeError(f"baseUrl phải bắt đầu bằng http:// hoặc https://: {base_url!r}")
-    url = base_url.rstrip("/") + "/models"
-    # Some gateways (e.g. commandcode) 403 requests without a User-Agent.
-    request = Request(
-        url,
-        headers={"Authorization": f"Bearer {api_key}", "User-Agent": f"thyca/{__version__}"},
-    )
     try:
+        if not base_url.startswith(("http://", "https://")):
+            raise ProviderProbeError("baseUrl phải bắt đầu bằng http:// hoặc https://")
+        url = base_url.rstrip("/") + "/models"
+        # Some gateways (e.g. commandcode) 403 requests without a User-Agent.
+        request = Request(
+            url,
+            headers={"Authorization": f"Bearer {api_key}", "User-Agent": f"thyca/{__version__}"},
+        )
         with urlopen(request, timeout=timeout) as response:
             body = response.read()
+    except ProviderProbeError:
+        raise
+    except (InvalidURL, TypeError, UnicodeError, ValueError) as exc:
+        raise ProviderProbeError("baseUrl không hợp lệ") from exc
     except HTTPError as exc:
         if exc.code in (401, 403):
             raise ProviderProbeError(f"API key bị từ chối (HTTP {exc.code})") from exc
@@ -60,13 +65,17 @@ def validate_provider(
             raise ProviderProbeError(
                 f"provider quá thời gian phản hồi ({timeout:g}s)"
             ) from exc
-        raise ProviderProbeError(f"không kết nối được {base_url}: {exc.reason}") from exc
+        raise ProviderProbeError("không kết nối được provider") from exc
     except TimeoutError as exc:
         raise ProviderProbeError(
             f"provider quá thời gian phản hồi ({timeout:g}s)"
         ) from exc
     except OSError as exc:
-        raise ProviderProbeError(f"không kết nối được {base_url}") from exc
+        raise ProviderProbeError("không kết nối được provider") from exc
+    except HTTPException as exc:
+        raise ProviderProbeError("không kết nối được provider") from exc
+    except Exception as exc:
+        raise ProviderProbeError("không kết nối được provider") from exc
     try:
         payload = json.loads(body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:

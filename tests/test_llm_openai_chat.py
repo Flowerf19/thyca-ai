@@ -5,7 +5,7 @@ import json
 import httpx
 import pytest
 
-from thyca.config import ProviderCfg
+from thyca.config import Config, ModelCfg, ProviderCfg
 from thyca.llm.llm_base import LLMError, normalize_usage
 from thyca.llm.openai_chat import OpenAIChat, _chat_url
 from thyca.protocol import Message, ToolCall
@@ -26,6 +26,27 @@ def _client(handler) -> httpx.AsyncClient:
 def test_chat_url_does_not_double_slash() -> None:
     assert _chat_url("https://api.example.com/v1/") == "https://api.example.com/v1/chat/completions"
     assert _chat_url("https://api.example.com/v1") == "https://api.example.com/v1/chat/completions"
+
+
+@pytest.mark.asyncio
+async def test_effective_model_endpoint_is_used_for_request() -> None:
+    cfg = Config(
+        provider=ProviderCfg(model="special", apiKey="sk-secret-key"),
+        models={"special": ModelCfg(baseUrl="https://other.example/v1")},
+    )
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return httpx.Response(
+            200,
+            json={"model": "special", "choices": [{"message": {"content": "ok"}}]},
+        )
+
+    connect = OpenAIChat(cfg.effective_provider(), client=_client(handler))
+    await connect.chat([Message(role="user", content="x")])
+
+    assert seen == ["https://other.example/v1/chat/completions"]
 
 
 @pytest.mark.asyncio

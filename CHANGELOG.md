@@ -2,6 +2,14 @@
 
 Thay đổi của Thyca, viết ngắn gọn cho người dùng.
 
+## 0.8.2 — 16/09/2026
+
+- Ghi nhớ không còn mất mục khi chat và trang Memories sửa cùng lúc; tìm lại được sau khi mở lại Thyca hoặc sửa SOUL/USER/IDENTITY.
+- Model khai `baseUrl` riêng thì gọi đúng máy chủ đó.
+- CLI (`thyca -p` / REPL) dùng MCP server trong config, giống WebUI; tool MCP sai tên/schema bị bỏ qua và báo rõ server nào.
+- `--continue` tự tạo phiên mới nếu chưa có, bỏ qua file phiên hỏng.
+- Trang Cài đặt không còn lộ URL/API key khi kiểm tra provider lỗi.
+
 ## 0.8.1 — 11/09/2026
 
 - Hồ sơ thành màn riêng trong mục lục: chọn giữa USER.md / SOUL.md / IDENTITY.md, nội dung hiện đúng markdown (bảng, code, trích dẫn), khung sửa rộng hơn hẳn.

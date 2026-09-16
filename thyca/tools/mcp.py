@@ -179,20 +179,54 @@ def _handler(proc: MCPProcess, tool_name: str):
     return handler
 
 
-def _spec_for(proc: MCPProcess, tool: Tool) -> ToolSpec | None:
-    if not _TOOL_NAME.fullmatch(tool.name):
-        return None
-    name = model_name(proc.name, tool.name)
+def _is_object_schema(schema: object) -> bool:
+    def is_schema(candidate: object) -> bool:
+        if not isinstance(candidate, dict):
+            return False
+        properties = candidate.get("properties")
+        if properties is not None and (
+            not isinstance(properties, dict)
+            or any(not is_schema(value) for value in properties.values())
+        ):
+            return False
+        required = candidate.get("required")
+        if required is not None and (
+            not isinstance(required, list)
+            or any(not isinstance(name, str) for name in required)
+        ):
+            return False
+        additional = candidate.get("additionalProperties", True)
+        return isinstance(additional, bool) or is_schema(additional)
+
+    return isinstance(schema, dict) and schema.get("type") == "object" and is_schema(schema)
+
+
+def _tool_error(
+    proc: MCPProcess, tool: Tool, seen: set[str] | None = None
+) -> str | None:
+    tool_name = getattr(tool, "name", None)
+    if not isinstance(tool_name, str) or _TOOL_NAME.fullmatch(tool_name) is None:
+        return "tool name must match [A-Za-z0-9_-]+"
+    name = model_name(proc.name, tool_name)
     if len(name) > _MODEL_NAME_MAX:
+        return "generated tool name is longer than 64 characters"
+    if seen is not None and name in seen:
+        return "generated tool name is already registered"
+    if not _is_object_schema(getattr(tool, "inputSchema", None)):
+        return "input schema must be an object schema"
+    description = getattr(tool, "description", None) or tool_name
+    if not isinstance(description, str) or not description:
+        return "tool description must be a non-empty string"
+    return None
+
+
+def _spec_for(proc: MCPProcess, tool: Tool) -> ToolSpec | None:
+    if _tool_error(proc, tool) is not None:
         return None
-    schema = tool.inputSchema if isinstance(tool.inputSchema, dict) else {
-        "type": "object",
-        "properties": {},
-    }
     return ToolSpec(
-        name=name,
+        name=model_name(proc.name, tool.name),
         description=tool.description or tool.name,
-        parameters=schema,
+        parameters=tool.inputSchema,
         handler=_handler(proc, tool.name),
         parallel_safe=False,
         resource_key=lambda _args, server=proc.name: f"mcp:{server}",
@@ -213,11 +247,29 @@ class MCPManager:
             try:
                 tools = await proc.start()
             except Exception as exc:
-                await proc.aclose()
+                try:
+                    await proc.aclose()
+                except Exception:
+                    pass
                 diags.append(StartupDiagnostic(name, False, str(exc)))
                 continue
+            seen = {
+                spec.name
+                for spec in self.tool_specs()
+            }
             self._live.append((proc, tools))
             diags.append(StartupDiagnostic(name, True, ""))
+            for tool in tools:
+                error = _tool_error(proc, tool, seen)
+                if error is not None:
+                    raw_name = getattr(tool, "name", "unknown")
+                    diags.append(
+                        StartupDiagnostic(
+                            name, False, f"MCP tool {raw_name!r} skipped: {error}"
+                        )
+                    )
+                else:
+                    seen.add(model_name(proc.name, tool.name))
         return diags
 
     def tool_specs(self) -> list[ToolSpec]:
@@ -235,4 +287,7 @@ class MCPManager:
     async def shutdown(self) -> None:
         live, self._live = self._live, []
         for proc, _tools in live:
-            await proc.aclose()
+            try:
+                await proc.aclose()
+            except Exception:
+                continue

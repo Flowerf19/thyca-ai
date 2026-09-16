@@ -138,11 +138,14 @@ def test_leftover_memory_md_dropped_on_open(tmp_path: Path) -> None:
     )
     cid = chunks[0].chunk_id
     archived.store.usage.record_gets([cid], chunks[0].session_id, "2026-08-17T03:00:00Z")
-    assert archived.fts_hits("leftover-memory-md-token", None, None, 5)
+    before_expiry = at("2026-08-17")
+    assert archived.fts_hits("leftover-memory-md-token", None, before_expiry, 5)
+    assert archived.fts_hits("leftover-memory-md-token", None, at("2026-09-13"), 5) == []
     assert cid in archived.store.usage.get_map()
     planted = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh", archive=archived)
-    assert planted.search("leftover-memory-md-token").hits == []
+    assert planted.search("leftover-memory-md-token", now=before_expiry).hits == []
     assert cid not in planted.archive.store.usage.get_map()
     assert all(
-        not item.session_id.startswith("memory#") for item in planted.stats().leaves
+        not item.session_id.startswith("memory#")
+        for item in planted.stats(now=before_expiry).leaves
     )

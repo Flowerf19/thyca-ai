@@ -121,6 +121,47 @@ def test_continue_mtime_and_skips(tmp_path: Path) -> None:
         SessionManager(empty).continue_last()
 
 
+def test_continue_skips_newer_invalid_filename(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path)
+    valid = manager.create()
+    os.utime(valid.path, ns=(1, 1))
+    invalid = tmp_path / "notes.jsonl"
+    invalid.write_text("not a session\n", encoding="utf-8")
+    os.utime(invalid, ns=(2, 2))
+
+    assert manager.continue_last().id == valid.id
+
+
+def test_continue_skips_newer_corrupt_session(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path)
+    valid = manager.create()
+    manager.append(msg("user", "older valid"))
+    os.utime(valid.path, ns=(1, 1))
+
+    newer = SessionManager(tmp_path).create(make_current=False)
+    newer.path.write_text("{bad\n", encoding="utf-8")
+    os.utime(newer.path, ns=(2, 2))
+
+    assert manager.continue_last().id == valid.id
+    with pytest.raises(SessionCorrupt):
+        manager.load(newer.id)
+
+
+def test_invalid_utf8_is_corrupt_and_skipped_by_continue(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path)
+    valid = manager.create()
+    manager.append(msg("user", "older valid"))
+    os.utime(valid.path, ns=(1, 1))
+
+    corrupt = SessionManager(tmp_path).create(make_current=False)
+    corrupt.path.write_bytes(b'{"role":"user",\xff}\n')
+    os.utime(corrupt.path, ns=(2, 2))
+
+    assert manager.continue_last().id == valid.id
+    with pytest.raises(SessionCorrupt, match="invalid UTF-8"):
+        manager.load(corrupt.id)
+
+
 def test_invalid_json_reports_path_and_line(tmp_path: Path) -> None:
     manager = SessionManager(tmp_path)
     session = manager.create()

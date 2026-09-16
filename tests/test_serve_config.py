@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import threading
+from http.client import BadStatusLine
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -212,10 +213,12 @@ def test_verify_with_saved_key_no_leak(tmp_path: Path) -> None:
             httpd,
             "/api/onboarding/verify",
             method="POST",
-            data={"baseUrl": "http://127.0.0.1:1", "apiKey": "sk-x"},
+            data={"baseUrl": "http://127.0.0.1:1/?apiKey=url-secret", "apiKey": "sk-x"},
         )
         assert status == 422
         assert "sk-x" not in body["error"]
+        assert "url-secret" not in body["error"]
+        assert "127.0.0.1" not in body["error"]
         # no apiKey → uses stored (empty) → 422 missing key
         status2, body2 = _call(
             httpd,
@@ -225,6 +228,53 @@ def test_verify_with_saved_key_no_leak(tmp_path: Path) -> None:
         )
         assert status2 == 422
         assert "key" in body2["error"].lower()
+    finally:
+        _stop(httpd, thread)
+
+
+@pytest.mark.parametrize("bad_suffix", ["\x00", "\udcff"])
+def test_verify_malformed_url_does_not_echo_url_secret(
+    tmp_path: Path, bad_suffix: str
+) -> None:
+    httpd, thread = _start(tmp_path)
+    try:
+        base_url = "https://provider.example/v1?token=url-secret" + bad_suffix
+        status, body = _call(
+            httpd,
+            "/api/onboarding/verify",
+            method="POST",
+            data={"baseUrl": base_url, "apiKey": "sk-x"},
+        )
+        assert status == 422
+        assert body["error"] == "baseUrl không hợp lệ"
+        assert "url-secret" not in body["error"]
+        assert "provider.example" not in body["error"]
+    finally:
+        _stop(httpd, thread)
+
+
+def test_verify_request_exception_does_not_echo_url_secret(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base_url = "https://provider.example/v1?token=url-secret"
+
+    def fail(*args, **kwargs):
+        raise BadStatusLine(f"{base_url} sk-secret")
+
+    monkeypatch.setattr("thyca.onboarding.urlopen", fail)
+    httpd, thread = _start(tmp_path)
+    try:
+        status, body = _call(
+            httpd,
+            "/api/onboarding/verify",
+            method="POST",
+            data={"baseUrl": base_url, "apiKey": "sk-secret"},
+        )
+        assert status == 422
+        assert body["error"] == "không kết nối được provider"
+        assert base_url not in body["error"]
+        assert "url-secret" not in body["error"]
+        assert "sk-secret" not in body["error"]
     finally:
         _stop(httpd, thread)
 

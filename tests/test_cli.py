@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from io import StringIO
 from pathlib import Path
 
 from thyca.cli import Cli
-from thyca.config import default_config, load, save
+from thyca.config import McpServerCfg, default_config, load, save
 from thyca.llm.llm_base import ChatReply, LLMError
-from thyca.protocol import Message
-from thyca.sessions import SessionManager
+from thyca.protocol import Message, ToolCall
+from thyca.tools.mcp import StartupDiagnostic
+from thyca.tools.registry import ToolSpec
+from thyca.sessions import SessionError, SessionManager
 
 
 @dataclass
@@ -76,6 +78,25 @@ def test_print_writes_reply_and_persists(tmp_path: Path) -> None:
     ]
 
 
+def test_continue_without_prior_session_creates_one(tmp_path: Path) -> None:
+    cli, out, err = _cli(tmp_path, FakeLLM(ChatReply(content="new")))
+
+    assert cli.main(["--continue", "-p", "first"]) == 0
+    assert out.getvalue().strip() == "new"
+    assert err.getvalue() == ""
+
+
+def test_continue_creation_failure_is_reported(tmp_path: Path, monkeypatch) -> None:
+    def fail_create(self, *, make_current: bool = True):
+        raise SessionError("cannot create fallback session")
+
+    monkeypatch.setattr(SessionManager, "create", fail_create)
+    cli, _out, err = _cli(tmp_path, FakeLLM(ChatReply(content="unused")))
+
+    assert cli.main(["--continue", "-p", "first"]) == 1
+    assert "cannot create fallback session" in err.getvalue()
+
+
 def test_continue_remembers_prior_turn(tmp_path: Path) -> None:
     first = FakeLLM(ChatReply(content="one"))
     assert _cli(tmp_path, first)[0].main(["-p", "first"]) == 0
@@ -86,6 +107,88 @@ def test_continue_remembers_prior_turn(tmp_path: Path) -> None:
     roles = [m.role for m in second.requests[0]]
     assert roles == ["system", "user", "assistant", "user"]
     assert [m.content for m in second.requests[0] if m.role == "user"] == ["first", "again"]
+
+
+def test_cli_registers_and_closes_configured_mcp_tools(tmp_path: Path, monkeypatch) -> None:
+    class FakeManager:
+        def __init__(self) -> None:
+            self.servers = None
+            self.closed = False
+
+        async def spawn_all(self, servers):
+            self.servers = servers
+            return []
+
+        def tool_specs(self):
+            async def ping(_args: dict) -> str:
+                return "pong"
+
+            return [
+                ToolSpec(
+                    name="echo__ping",
+                    description="ping",
+                    parameters={"type": "object", "properties": {}},
+                    handler=ping,
+                )
+            ]
+
+        async def shutdown(self) -> None:
+            self.closed = True
+
+    manager = FakeManager()
+    monkeypatch.setattr("thyca.cli.MCPManager", lambda: manager)
+    cfg = replace(
+        default_config(),
+        mcpServers={"echo": McpServerCfg(command="ignored")},
+    )
+    save(cfg, tmp_path / "config.json")
+
+    @dataclass
+    class ToolCallingLLM:
+        requests: list[list[Message]] = field(default_factory=list)
+        schemas: list[list[dict] | None] = field(default_factory=list)
+        replies: list[ChatReply] = field(
+            default_factory=lambda: [
+                ChatReply(
+                    content=None,
+                    tool_calls=[ToolCall(id="c1", name="echo__ping")],
+                ),
+                ChatReply(content="done"),
+            ]
+        )
+
+        async def chat(self, messages, tools=None):
+            self.requests.append(list(messages))
+            self.schemas.append(tools)
+            return self.replies.pop(0)
+
+    llm = ToolCallingLLM()
+    cli, out, err = _cli(tmp_path, llm)
+
+    assert cli.main(["-p", "ping"]) == 0
+    assert out.getvalue().strip() == "done"
+    assert err.getvalue() == ""
+    assert manager.servers == {"echo": cfg.mcpServers["echo"]}
+    assert manager.closed
+    assert any(item["function"]["name"] == "echo__ping" for item in llm.schemas[0])
+
+
+def test_cli_mcp_diagnostic_includes_server_name(tmp_path: Path, monkeypatch) -> None:
+    class FakeManager:
+        async def spawn_all(self, servers):
+            return [StartupDiagnostic("remote", False, "failed to start")]
+
+        def tool_specs(self):
+            return []
+
+        async def shutdown(self) -> None:
+            return
+
+    monkeypatch.setattr("thyca.cli.MCPManager", FakeManager)
+    cli, _out, err = _cli(tmp_path, FakeLLM(ChatReply(content="ok")))
+
+    assert cli.main(["-p", "hi"]) == 0
+    assert "remote: failed to start" in err.getvalue()
 
 
 def test_model_override_does_not_persist(tmp_path: Path) -> None:

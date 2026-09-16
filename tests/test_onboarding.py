@@ -88,6 +88,21 @@ def test_validate_provider_connection_refused() -> None:
         validate_provider("http://127.0.0.1:1", "sk-secret", timeout=1.0)
 
 
+def test_validate_provider_oserror_does_not_echo_query_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail(*args, **kwargs):
+        raise OSError("connection failed")
+
+    monkeypatch.setattr("thyca.onboarding.urlopen", fail)
+    base_url = "https://provider.example/v1?token=query-secret"
+    with pytest.raises(ProviderProbeError) as excinfo:
+        validate_provider(base_url, "sk-secret")
+    assert str(excinfo.value) == "không kết nối được provider"
+    assert "query-secret" not in str(excinfo.value)
+    assert base_url not in str(excinfo.value)
+
+
 def test_validate_provider_bad_url() -> None:
     with pytest.raises(ProviderProbeError):
         validate_provider("not-a-url", "sk-secret", timeout=1.0)

@@ -20,15 +20,20 @@ from thyca.memory.heading import (
 
 
 class MemoryWriter:
+    _locks: dict[str, threading.RLock] = {}
+    _guard = threading.Lock()
+    _mutation_lock = threading.RLock()
+
     def __init__(self, thyca_dir: Path) -> None:
         self.thyca_dir = thyca_dir
-        self._locks: dict[str, threading.Lock] = {}
-        self._guard = threading.Lock()
 
-    def lock_for(self, path: Path) -> threading.Lock:
-        key = str(path)
-        with self._guard:
-            return self._locks.setdefault(key, threading.Lock())
+    def lock_for(self, path: Path) -> threading.RLock:
+        key = str(path.resolve())
+        with MemoryWriter._guard:
+            return MemoryWriter._locks.setdefault(key, threading.RLock())
+
+    def mutation_lock(self) -> threading.RLock:
+        return MemoryWriter._mutation_lock
 
     def locate(self, session_id: str) -> tuple[Path, str]:
         if session_id.startswith("canonical#"):
@@ -37,44 +42,46 @@ class MemoryWriter:
             raise ArchiveError(f"invalid session_id {session_id!r}")
         prefix, entry = session_id.split("#", 1)
         if prefix == "memory":
-            return self.thyca_dir / "MEMORY.md", entry
+            raise ArchiveError("MEMORY.md is no longer supported")
         if len(prefix) == 10 and prefix[4] == "-" and prefix[7] == "-":
             return self.thyca_dir / "memory" / f"{prefix}.md", entry
         raise ArchiveError(f"invalid session_id {session_id!r}")
 
     def append(self, path: Path, text: str) -> None:
-        with path.open("a", encoding="utf-8") as stream:
-            stream.write(text)
-            stream.flush()
-            os.fsync(stream.fileno())
+        with self.lock_for(path):
+            with path.open("a", encoding="utf-8") as stream:
+                stream.write(text)
+                stream.flush()
+                os.fsync(stream.fileno())
 
     def map_heading(self, path: Path, entry_id: str, mutate: Callable[[HeadingMeta], HeadingMeta]) -> HeadingMeta:
-        if not path.is_file():
-            raise ArchiveError(f"memory file missing: {path}")
-        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-        found: HeadingMeta | None = None
-        out: list[str] = []
-        seen: dict[str, int] = {}
-        for line in lines:
-            meta = parse_heading(line)
-            if meta is None:
-                out.append(line)
-                continue
-            seen[meta.title] = seen.get(meta.title, 0) + 1
-            resolved = resolve_entry_id(meta, str(path), seen[meta.title])
-            if resolved != entry_id:
-                out.append(line)
-                continue
-            if meta.entry_id is None:
-                meta = HeadingMeta(meta.time, meta.title, resolved, meta.importance, meta.expires_at)
-            found = mutate(meta)
-            if found.entry_id is None:
-                found = HeadingMeta(found.time, found.title, resolved, found.importance, found.expires_at)
-            out.append(render_heading(found))
-        if found is None:
-            raise ArchiveError(f"session not found: {entry_id}")
-        _atomic_write(path, "".join(out))
-        return found
+        with self.lock_for(path):
+            if not path.is_file():
+                raise ArchiveError(f"memory file missing: {path}")
+            lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+            found: HeadingMeta | None = None
+            out: list[str] = []
+            seen: dict[str, int] = {}
+            for line in lines:
+                meta = parse_heading(line)
+                if meta is None:
+                    out.append(line)
+                    continue
+                seen[meta.title] = seen.get(meta.title, 0) + 1
+                resolved = resolve_entry_id(meta, str(path), seen[meta.title])
+                if resolved != entry_id:
+                    out.append(line)
+                    continue
+                if meta.entry_id is None:
+                    meta = HeadingMeta(meta.time, meta.title, resolved, meta.importance, meta.expires_at)
+                found = mutate(meta)
+                if found.entry_id is None:
+                    found = HeadingMeta(found.time, found.title, resolved, found.importance, found.expires_at)
+                out.append(render_heading(found))
+            if found is None:
+                raise ArchiveError(f"session not found: {entry_id}")
+            _atomic_write(path, "".join(out))
+            return found
 
     def forget(self, session_id: str, now: datetime | None = None) -> None:
         path, entry = self.locate(session_id)

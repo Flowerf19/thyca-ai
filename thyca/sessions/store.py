@@ -133,6 +133,8 @@ class SessionStore:
                     result.append(msg)
         except SessionCorrupt:
             raise
+        except UnicodeDecodeError as exc:
+            raise SessionCorrupt(path, None, "invalid UTF-8") from exc
         except OSError as exc:
             raise SessionCorrupt(path, None, exc) from exc
         return result, title, title_source
@@ -161,17 +163,19 @@ class SessionStore:
         candidates = [
             path
             for path in self.sessions_dir.glob("*.jsonl")
-            if path.is_file() and not path.is_symlink()
+            if path.is_file() and not path.is_symlink() and _ID_RE.fullmatch(path.stem)
         ]
         if not candidates:
             raise SessionNotFound(self.sessions_dir)
         candidates.sort(key=lambda path: (path.stat().st_mtime_ns, path.name), reverse=True)
-        chosen = candidates[0]
-        session_id = chosen.stem
-        if not _ID_RE.fullmatch(session_id):
-            raise SessionNotFound(chosen, "invalid session filename")
-        messages, title, title_source = self.scan(chosen)
-        return Session(session_id, chosen, messages, title, title_source)
+        for chosen in candidates:
+            session_id = chosen.stem
+            try:
+                messages, title, title_source = self.scan(chosen)
+            except SessionCorrupt:
+                continue
+            return Session(session_id, chosen, messages, title, title_source)
+        raise SessionNotFound(self.sessions_dir, "no valid sessions")
 
     def append(self, path: Path, msg: Message) -> None:
         self._append_json(path, msg.to_canonical_dict())

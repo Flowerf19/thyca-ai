@@ -293,11 +293,16 @@ class Config:
         return merged
 
     def effective_provider(self) -> ProviderCfg:
-        """Provider slice for the active model (per-model reasoning if set)."""
+        """Provider slice for the active model's URL and reasoning settings."""
         registered = self.models.get(self.provider.model)
-        if registered is None or not registered.reasoningEffort:
+        if registered is None:
             return self.provider
-        return replace(self.provider, reasoningEffort=registered.reasoningEffort)
+        overrides: dict[str, str] = {}
+        if registered.baseUrl:
+            overrides["baseUrl"] = registered.baseUrl
+        if registered.reasoningEffort:
+            overrides["reasoningEffort"] = registered.reasoningEffort
+        return replace(self.provider, **overrides) if overrides else self.provider
 
     def effective_limits(self) -> LimitsCfg:
         """Limits for the active model; unset fields inherit the global block."""

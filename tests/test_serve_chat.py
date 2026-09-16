@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+from io import StringIO
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,6 +21,7 @@ from thyca.serve import ServeError, default_webui, make_server
 from thyca.sessions import Session, SessionBusy, SessionManager
 from thyca.sessions.title import fallback_title
 from thyca.tools.memory import MemoryFacade
+from thyca.tools.mcp import StartupDiagnostic
 
 WEBUI = default_webui()
 
@@ -58,6 +60,29 @@ def _url(httpd, path: str) -> str:
 def _chat(tmp_path: Path, connect=None) -> ChatApp:
     save(default_config(), tmp_path / "config.json")
     return ChatApp(tmp_path, load(tmp_path / "config.json"), connect=connect)
+
+
+def test_chat_app_mcp_diagnostic_includes_server_name(
+    tmp_path: Path, monkeypatch
+) -> None:
+    class FakeManager:
+        async def spawn_all(self, servers):
+            return [StartupDiagnostic("remote", False, "failed to start")]
+
+        def tool_specs(self):
+            return []
+
+        async def shutdown(self) -> None:
+            return
+
+    stderr = StringIO()
+    monkeypatch.setattr("thyca.chat_app.MCPManager", FakeManager)
+    monkeypatch.setattr("thyca.chat_app.sys.stderr", stderr)
+    app = _chat(tmp_path, FakeLLM(ChatReply(content="unused")))
+    try:
+        assert "remote: failed to start" in stderr.getvalue()
+    finally:
+        app.shutdown()
 
 
 def _start(tmp_path: Path, chat: ChatApp | None = None):

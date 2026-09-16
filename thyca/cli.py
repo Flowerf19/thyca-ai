@@ -25,6 +25,7 @@ from thyca.sessions import SessionError, SessionManager, SessionNotFound
 from thyca.tools.builtin import register_file_tools
 from thyca.tools.memory import MemoryFacade
 from thyca.tools.memory_tools import register_memory_tools
+from thyca.tools.mcp import MCPManager
 from thyca.tools.path_guard import PathGuard
 from thyca.tools.registry import ToolRegistry
 
@@ -124,8 +125,15 @@ class Cli:
         try:
             self._open_session(sessions, args)
         except SessionNotFound as exc:
-            ui.error(str(exc))
-            return 1
+            if args.cont and not args.session:
+                try:
+                    sessions.create()
+                except SessionError as create_exc:
+                    ui.error(str(create_exc))
+                    return 1
+            else:
+                ui.error(str(exc))
+                return 1
         except SessionError as exc:
             ui.error(str(exc))
             return 1
@@ -137,47 +145,61 @@ class Cli:
         )
         zone = ZoneInfo(cfg.timeline.timezone)
         state = memory.open_session(datetime.now(zone))
-        connect = self._connect or ConnectFactory.create("openai_chat", cfg.effective_provider())
         registry = ToolRegistry()
         register_file_tools(registry, PathGuard(root))
         register_memory_tools(
             registry, MemoryFacade(root, timezone_name=cfg.timeline.timezone)
         )
-        schema = registry.to_openai_schema()
-        loop = AgentLoop(
-            sessions=sessions,
-            assemble=Assemble(),
-            think=Think(connect),
-            act=Act(registry),
-            observe=Observe(sessions),
-            loop_max=limits.loopMax,
-            tools=schema,
-            model=provider.model,
-            pricing=cfg.effective_pricing() or None,
-        )
-
-        prompts = PromptManager()
-
-        async def turn(text: str) -> str:
-            hot = memory.refresh(state, datetime.now(zone))
-            if args.debug:
-                system = prompts.build(hot)
-                ui.debug(
-                    f"session={sessions.current.id} model={provider.model} "
-                    f"identity={('Name: Thyca' in system)} soul={('You are Thyca' in system)} "
-                    f"user={'<user>' in system} tools={len(schema)} system_chars={len(system)}"
-                )
-            return await loop.run(text, hot=hot)
-
+        manager = MCPManager()
         try:
-            if args.print_mode:
-                return await self._oneshot(" ".join(args.prompt), turn, ui)
-            ui.banner(sessions.current.id, provider.model)
-            return await self._repl(turn, ui)
+            for diag in await manager.spawn_all(cfg.mcpServers):
+                if not diag.ok:
+                    print(f"{diag.server}: {diag.message}", file=self._stderr)
+            for spec in manager.tool_specs():
+                try:
+                    registry.register(spec)
+                except ValueError as exc:
+                    print(str(exc), file=self._stderr)
+            schema = registry.to_openai_schema()
+            connect = self._connect or ConnectFactory.create(
+                "openai_chat", cfg.effective_provider()
+            )
+            loop = AgentLoop(
+                sessions=sessions,
+                assemble=Assemble(),
+                think=Think(connect),
+                act=Act(registry),
+                observe=Observe(sessions),
+                loop_max=limits.loopMax,
+                tools=schema,
+                model=provider.model,
+                pricing=cfg.effective_pricing() or None,
+            )
+
+            prompts = PromptManager()
+
+            async def turn(text: str) -> str:
+                hot = memory.refresh(state, datetime.now(zone))
+                if args.debug:
+                    system = prompts.build(hot)
+                    ui.debug(
+                        f"session={sessions.current.id} model={provider.model} "
+                        f"identity={('Name: Thyca' in system)} soul={('You are Thyca' in system)} "
+                        f"user={'<user>' in system} tools={len(schema)} system_chars={len(system)}"
+                    )
+                return await loop.run(text, hot=hot)
+
+            try:
+                if args.print_mode:
+                    return await self._oneshot(" ".join(args.prompt), turn, ui)
+                ui.banner(sessions.current.id, provider.model)
+                return await self._repl(turn, ui)
+            finally:
+                close = getattr(connect, "aclose", None)
+                if close is not None:
+                    await close()
         finally:
-            close = getattr(connect, "aclose", None)
-            if close is not None:
-                await close()
+            await manager.shutdown()
 
     def _serve(self, port: int, *, daemon: bool = False, stop: bool = False) -> int:
         from thyca.chat_app import ChatApp

@@ -156,6 +156,7 @@ class ArchivedMemory:
 
     def _reindex_file(self, path: Path, kind: str, day: str | None, today: str) -> None:
         if kind == "daily" and day is not None and day >= today:
+            self.store.drop_source(str(path))
             return
         if not path.is_file() or path.is_symlink():
             self.store.drop_source(str(path))

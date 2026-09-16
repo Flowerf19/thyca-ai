@@ -76,3 +76,29 @@ def test_strip_comment_and_hyphen() -> None:
     text = line + "\n- leaf\n"
     assert strip_heading_comments(text) == "## 08:00 — topic\n- leaf\n"
     assert session_id("2026-08-13", "a1b2c3d4") == "2026-08-13#a1b2c3d4"
+
+
+def test_proj_chat_roundtrip_and_old_heading_stays_empty() -> None:
+    rendered = render_heading(
+        HeadingMeta(
+            "08:00",
+            "link",
+            "a1b2c3d4",
+            3,
+            "2026-09-12T01:00:00Z",
+            proj="/home/flowerf/Projects/thyca-ai",
+            chat="2026-09-16T14-39-01_a1b2",
+        )
+    )
+    assert '"proj":"/home/flowerf/Projects/thyca-ai"' in rendered
+    assert '"chat":"2026-09-16T14-39-01_a1b2"' in rendered
+    back = parse_heading(rendered)
+    assert back is not None
+    assert back.proj == "/home/flowerf/Projects/thyca-ai"
+    assert back.chat == "2026-09-16T14-39-01_a1b2"
+    old = parse_heading(
+        '## 08:00 — x <!-- thyca {"id":"a1b2c3d4","imp":3} -->'
+    )
+    assert old is not None
+    assert old.proj is None
+    assert old.chat is None

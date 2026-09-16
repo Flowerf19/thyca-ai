@@ -31,6 +31,23 @@ from thyca.memory.stats import CanonicalFile, MemoryStats, MemoryStatsResult
 from thyca.memory.writer import MemoryWriter
 
 
+def _absolute_proj(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("proj must be an absolute path")
+    text = value.strip()
+    if not text:
+        return None
+    path = Path(text).expanduser()
+    if not path.is_absolute():
+        raise ValueError("proj must be an absolute path")
+    rendered = str(path)
+    if len(rendered) > 1:
+        rendered = rendered.rstrip("/")
+    return rendered
+
+
 class MemoryFacade:
     def __init__(
         self,
@@ -57,6 +74,7 @@ class MemoryFacade:
         proj: str | None = None,
         chat: str | None = None,
     ) -> str:
+        normalized_proj = _absolute_proj(proj)
         with self.writer.mutation_lock():
             self.active.ensure_files(now)
             moment = utc_now(now)
@@ -71,8 +89,8 @@ class MemoryFacade:
                 entry_id=entry,
                 importance=importance,
                 expires_at=expiry_ts(importance, moment),
-                proj=proj,
-                chat=chat,
+                proj=normalized_proj,
+                chat=chat if isinstance(chat, str) and chat.strip() else None,
             )
             leaf = f"- {summary}" + (f"\n  {content}" if content else "")
             with self.writer.lock_for(path):
@@ -99,9 +117,9 @@ class MemoryFacade:
         content: str | None = None,
         now: datetime | None = None,
         proj: str | None = None,
-        chat: str | None = None,
     ) -> None:
         self._reject_legacy_session(session_id)
+        normalized_proj = _absolute_proj(proj)
         body_lines = None
         if summary is not None:
             body_lines = [f"- {summary.strip()}"]
@@ -111,7 +129,7 @@ class MemoryFacade:
         with self.writer.mutation_lock(), self.writer.lock_for(path):
             self.writer.update_session(
                 session_id, topic=topic, body_lines=body_lines,
-                proj=proj, chat=chat,
+                proj=normalized_proj,
             )
             self._refresh_index(now)
 
@@ -194,6 +212,10 @@ class MemoryFacade:
         limit = max(1, min(limit, 10))
         if not query.strip():
             return SearchResult(warnings=["empty query"])
+        try:
+            proj = _absolute_proj(proj)
+        except ValueError:
+            return SearchResult(warnings=["invalid proj"])
         fts = self.archive.fts_hits(
             query, timeline_day, now, CANDIDATE_CAP,
             project=proj, chat_session=chat,

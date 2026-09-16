@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import threading
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
@@ -73,10 +74,10 @@ class MemoryWriter:
                     out.append(line)
                     continue
                 if meta.entry_id is None:
-                    meta = HeadingMeta(meta.time, meta.title, resolved, meta.importance, meta.expires_at)
+                    meta = replace(meta, entry_id=resolved)
                 found = mutate(meta)
                 if found.entry_id is None:
-                    found = HeadingMeta(found.time, found.title, resolved, found.importance, found.expires_at)
+                    found = replace(found, entry_id=resolved)
                 out.append(render_heading(found))
             if found is None:
                 raise ArchiveError(f"session not found: {entry_id}")
@@ -142,14 +143,12 @@ class MemoryWriter:
             resolved = resolve_entry_id(meta, str(path), seen[meta.title])
             if resolved == entry_id:
                 found = True
-                new_meta = HeadingMeta(
-                    meta.time,
-                    topic if topic is not None else meta.title,
-                    meta.entry_id or resolved,
-                    meta.importance,
-                    meta.expires_at,
-                    meta.proj if proj is None else proj,
-                    meta.chat if chat is None else chat,
+                new_meta = replace(
+                    meta,
+                    title=topic if topic is not None else meta.title,
+                    entry_id=meta.entry_id or resolved,
+                    proj=meta.proj if proj is None else proj,
+                    chat=meta.chat if chat is None else chat,
                 )
                 out.append(render_heading(new_meta))
                 if body_lines is not None:
@@ -176,7 +175,9 @@ class MemoryWriter:
 
         def touch(meta: HeadingMeta) -> HeadingMeta:
             imp = importance if importance is not None else meta.importance
-            return HeadingMeta(meta.time, meta.title, meta.entry_id, imp, expiry_ts(imp, now))
+            return replace(
+                meta, importance=imp, expires_at=expiry_ts(imp, now)
+            )
 
         with self.lock_for(path):
             return self.map_heading(path, entry, touch).expires_at or ""

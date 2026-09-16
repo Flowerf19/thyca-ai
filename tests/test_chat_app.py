@@ -12,7 +12,8 @@ from test_serve_chat import FakeLLM, ScriptedLLM, _chat
 from thyca.agent.events import TurnEvent
 from thyca.llm.llm_base import ChatReply, LLMError
 from thyca.memory.active import ActiveMemory
-from thyca.protocol import Message
+from thyca.memory.heading import parse_heading
+from thyca.protocol import Message, ToolCall
 from thyca.sessions import SessionBusy, SessionManager
 from thyca.sessions.title import fallback_title
 
@@ -225,6 +226,41 @@ def test_naming_meta_does_not_flip_failed_turn_status(tmp_path: Path) -> None:
     turns = turns_from_session(session.current)
     assert len(turns) == 1
     assert turns[0].status == "loop_limit"
+
+
+def test_memory_remember_injects_turn_session_id(tmp_path: Path) -> None:
+    class RememberLLM:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def chat(self, messages, tools=None):
+            self.calls += 1
+            if self.calls == 1:
+                return ChatReply(
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id="remember-1",
+                            name="memory_remember",
+                            arguments={"topic": "linked", "summary": "linked-token"},
+                        )
+                    ],
+                )
+            return ChatReply(content="done")
+
+    app = _chat(tmp_path, RememberLLM())
+    created = app.create()
+    try:
+        app.turn(created["id"], "remember this")
+        daily = next((tmp_path / "memory").glob("*.md"))
+        meta = next(
+            parsed
+            for line in daily.read_text(encoding="utf-8").splitlines()
+            if (parsed := parse_heading(line))
+        )
+        assert meta.chat == created["id"]
+    finally:
+        app.shutdown()
 
 
 def test_turn_without_sink_still_works(tmp_path: Path) -> None:

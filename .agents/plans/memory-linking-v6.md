@@ -1,5 +1,5 @@
 ---
-status: ready
+status: done
 created: 2026-09-16
 last_updated: 2026-09-16
 ---
@@ -23,9 +23,10 @@ trong text leaf, FTS bắt được).
 ### 1. Schema v6 — `thyca/memory/schema.sql` + `archive_store.py`
 
 - `chunks` thêm 2 cột nullable: `project TEXT`, `chat_session TEXT` (ALTER TABLE).
-- `SCHEMA_VERSION = "6"`; migration v5→v6: `ALTER TABLE chunks ADD COLUMN ...` ×2,
-  bump meta version, xoá `source_files` + chunks để reindex nạp lại (markdown là
-  source of truth, index derived — mất mát = 0).
+- `SCHEMA_VERSION = "6"`; migration v3/v4/v5→v6 adds missing nullable columns with
+  `ALTER TABLE`, creates any missing usage table, bumps meta version, and marks
+  indexed files stale so the next reindex rereads Markdown. Không xoá dữ liệu nguồn
+  hay chunks explicitly; Markdown remains source of truth and SQLite remains derived.
 - `replace_source()` INSERT thêm 2 cột mới.
 - `fts_search()` / `trigram_search()` nhận thêm filter `project` / `chat_session`
   (exact match, WHERE trên bảng chunks).
@@ -49,8 +50,8 @@ trong text leaf, FTS bắt được).
 
 ### 5. Tool spec — `thyca/tools/memory_tools.py` (description phải tốt)
 
-`register_memory_tools(registry, facade, chat_provider=None)` — thêm optional callable
-trả chat session id hiện tại (None nếu không có).
+`register_memory_tools(registry, facade)`; chat session context is bound per in-flight
+turn with `ContextVar` (CLI leaves it unset, so `chat=None`).
 
 **`memory_remember`** — param mới `proj`, description đầy đủ:
 
@@ -73,11 +74,11 @@ chat:   Filter to leaves saved during this chat session id.
 - Filter match ANY khi truyền cả hai? → KHÔNG: match cả hai (AND) — mỗi leaf chỉ có
   1 giá trị mỗi trường, AND là ngữ nghĩa tự nhiên.
 
-**`memory_update`** — thêm param optional `proj` / `chat` (2026-09-16, Hòa duyệt):
+**`memory_update`** — thêm param optional `proj` (chat remains system-controlled and is
+never exposed to this LLM-facing contract):
 
 ```
 proj:   New project root path for this memory. Omit to keep the current value.
-chat:   New chat session id for this memory. Omit to keep the current value.
 ```
 
 - Lý do cho sửa: proj do LLM điền → có lúc sai (tên ngắn, nhầm repo). Không có đường
@@ -86,16 +87,15 @@ chat:   New chat session id for this memory. Omit to keep the current value.
 - Phạm vi sửa: theo SESSION (tất cả leaf cùng session_id) — proj/chat vốn là metadata
   gắn ở heading session, khớp cơ chế update hiện có của writer (đã sửa topic theo
   session). Không hỗ trợ lệch từng leaf.
-- Handler: truyền xuống `writer.update_session(..., proj=..., chat=...)` khi param
-  có mặt (phân biệt "không truyền" vs "truyền null" — chỉ update khi param được gửi).
+- Handler: truyền `proj` xuống `writer.update_session`; omitted `proj` preserves the
+  current value. `chat` is preserved by writer rewrites but cannot be LLM-mutated.
 
 ### 6. Inject điểm — wiring
 
-- `chat_app.py`: `register_memory_tools(registry, facade, chat_provider=...)` — lambda
-  đọc chat session id của phiên đang chạy (`{timestamp}_{hex}` từ SessionManager).
-- `cli.py`: không có chat session → không truyền provider (chat=None).
-- Cả 2 nơi đang gọi `register_memory_tools(registry, MemoryFacade(...))` — giữ signature
-  cũ vẫn chạy (provider optional).
+- `chat_app.py`: bind `session_id` in a `ContextVar` around each `_run_turn`; memory
+  remember reads that context, so concurrent turns cannot cross-link.
+- `cli.py`: no binding → chat remains `None`.
+- Tool registration is identical in ChatApp and CLI.
 
 ## Thứ tự thi công
 
@@ -106,7 +106,7 @@ chat:   New chat session id for this memory. Omit to keep the current value.
 5. memory_tools.py: spec mới + description + chat_provider.
 6. memory_tools.py: spec mới + description + chat_provider + memory_update thêm proj/chat.
 7. chat_app.py / cli.py: wire chat_provider.
-8. Tests + full suite.
+8. Tests + full suite. ✅ 522 tests pass (2026-09-16).
 
 ## Tests
 
@@ -115,9 +115,10 @@ chat:   New chat session id for this memory. Omit to keep the current value.
 - Migration: DB v5 có sẵn data → mở bằng v6 → reindex → cột mới nạp đúng, data cũ giữ.
 - remember(proj=..., chat=...) → file markdown chứa JSON đúng → reindex → DB đúng.
 - search(proj=X) chỉ trả leaf của X; search(chat=Y) tương tự; không truyền → như cũ.
-- Tool: handler inject chat từ provider; LLM truyền proj vào schema được validate.
-- memory_update(proj=..., chat=...): heading session đổi đúng, các leaf khác giữ nguyên;
-  không truyền param → không đổi.
+- Tool: handler inject chat from the bound context; LLM truyền proj vào schema được
+  validate, còn `chat` trong memory_update bị reject.
+- memory_update(proj=...): heading session đổi đúng, metadata chat được giữ nguyên;
+  không truyền proj → không đổi.
 - Regression: 512 test cũ pass.
 
 ## Không làm (ngoài phạm vi)

@@ -1,20 +1,29 @@
 from __future__ import annotations
 
 import json
+from contextvars import ContextVar
 from dataclasses import asdict
 
 from thyca.tools.memory import MemoryFacade
 from thyca.tools.registry import ToolRegistry, ToolSpec
 
+_chat_session_id: ContextVar[str | None] = ContextVar("thyca_memory_chat", default=None)
+
+
+def bind_chat_session(session_id: str | None):
+    """Pin the in-flight chat session id for memory_remember to inject."""
+    return _chat_session_id.set(session_id)
+
+
+def reset_chat_session(token) -> None:
+    _chat_session_id.reset(token)
+
 
 def register_memory_tools(
     registry: ToolRegistry,
     facade: MemoryFacade,
-    chat_provider=None,
 ) -> None:
-    """chat_provider: optional zero-arg callable returning the current chat
-    session id (injected into memory leaves; the LLM never supplies it)."""
-    registry.register(_remember_spec(facade, chat_provider))
+    registry.register(_remember_spec(facade))
     registry.register(_search_spec(facade))
     registry.register(_recent_spec(facade))
     registry.register(_get_spec(facade))
@@ -23,14 +32,14 @@ def register_memory_tools(
     registry.register(_update_spec(facade))
 
 
-def _remember_spec(facade: MemoryFacade, chat_provider) -> ToolSpec:
+def _remember_spec(facade: MemoryFacade) -> ToolSpec:
     async def handler(args: dict) -> str:
         return facade.remember(
             str(args["topic"]),
             str(args["summary"]),
             content=str(args.get("content") or ""),
             proj=args.get("proj"),
-            chat=chat_provider() if chat_provider is not None else None,
+            chat=_chat_session_id.get(),
         )
 
     return ToolSpec(
@@ -208,7 +217,6 @@ def _update_spec(facade: MemoryFacade) -> ToolSpec:
             summary=str(args["summary"]).strip() if args.get("summary") else None,
             content=str(args["content"]) if args.get("content") else None,
             proj=args.get("proj"),
-            chat=args.get("chat"),
         )
         return "updated"
 
@@ -229,13 +237,6 @@ def _update_spec(facade: MemoryFacade) -> ToolSpec:
                     "type": "string",
                     "description": (
                         "New project root path (absolute) for this memory. "
-                        "Omit to keep the current value."
-                    ),
-                },
-                "chat": {
-                    "type": "string",
-                    "description": (
-                        "New chat session id for this memory. "
                         "Omit to keep the current value."
                     ),
                 },

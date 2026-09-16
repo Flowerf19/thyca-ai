@@ -28,7 +28,7 @@ from thyca.sessions.title import display_title, is_blank, propose_title
 from thyca.tools.builtin import register_file_tools
 from thyca.tools.mcp import MCPManager
 from thyca.tools.memory import MemoryFacade
-from thyca.tools.memory_tools import register_memory_tools
+from thyca.tools.memory_tools import bind_chat_session, register_memory_tools, reset_chat_session
 from thyca.tools.path_guard import PathGuard
 from thyca.tools.registry import ToolRegistry
 from thyca.turn_state import TurnHub, TurnState
@@ -59,9 +59,7 @@ class ChatApp:
         registry = ToolRegistry()
         register_file_tools(registry, PathGuard(root))
         register_memory_tools(
-            registry,
-            MemoryFacade(root, timezone_name=cfg.timeline.timezone),
-            chat_provider=lambda: self._current_chat_session_id(),
+            registry, MemoryFacade(root, timezone_name=cfg.timeline.timezone)
         )
         self._mcp = MCPManager()
         self._loop = asyncio.new_event_loop()
@@ -155,17 +153,6 @@ class ChatApp:
         session = self._sessions.create()
         return self._detail(session, self._current_cfg())
 
-    def _current_chat_session_id(self) -> str | None:
-        """Chat session id injected into memory leaves (best effort).
-
-        The turn in flight loads its own SessionManager, so the shared one may
-        not have a current session — return None rather than guess.
-        """
-        try:
-            return self._sessions.current.id
-        except Exception:
-            return None
-
     def turn(self, session_id: str, text: str, event_sink: EventSink | None = None) -> dict:
         if not isinstance(text, str):
             raise ValueError("text must be a string")
@@ -205,36 +192,40 @@ class ChatApp:
             store=self._sessions.store,
         )
         sessions.load(session_id)
-        connect = self._injected_connect or ConnectFactory.create(
-            "openai_chat", cfg.effective_provider()
-        )
-        owns = self._injected_connect is None
-        self._wire_retry_events(connect, event_sink)
+        token = bind_chat_session(session_id)
         try:
-            limits = cfg.effective_limits()
-            loop = AgentLoop(
-                sessions=sessions,
-                assemble=Assemble(),
-                think=Think(connect),
-                act=self._act,
-                observe=Observe(sessions),
-                loop_max=limits.loopMax,
-                tools=self._tools,
-                model=cfg.provider.model,
-                pricing=cfg.effective_pricing() or None,
+            connect = self._injected_connect or ConnectFactory.create(
+                "openai_chat", cfg.effective_provider()
             )
-            hot = self._memory.refresh(self._state, datetime.now(self._zone))
-            reply = await loop.run(text, hot=hot, event_sink=event_sink)
-            await self._name_if_needed(connect, sessions, cfg, event_sink)
-            # The turn's own response is not a turn in flight: the client that
-            # just received it must not be told to wait for itself.
-            detail = self._detail(sessions.current, cfg, running=False)
-            return {**detail, "reply": reply}
+            owns = self._injected_connect is None
+            self._wire_retry_events(connect, event_sink)
+            try:
+                limits = cfg.effective_limits()
+                loop = AgentLoop(
+                    sessions=sessions,
+                    assemble=Assemble(),
+                    think=Think(connect),
+                    act=self._act,
+                    observe=Observe(sessions),
+                    loop_max=limits.loopMax,
+                    tools=self._tools,
+                    model=cfg.provider.model,
+                    pricing=cfg.effective_pricing() or None,
+                )
+                hot = self._memory.refresh(self._state, datetime.now(self._zone))
+                reply = await loop.run(text, hot=hot, event_sink=event_sink)
+                await self._name_if_needed(connect, sessions, cfg, event_sink)
+                # The turn's own response is not a turn in flight: the client that
+                # just received it must not be told to wait for itself.
+                detail = self._detail(sessions.current, cfg, running=False)
+                return {**detail, "reply": reply}
+            finally:
+                if owns:
+                    close = getattr(connect, "aclose", None)
+                    if close is not None:
+                        await close()
         finally:
-            if owns:
-                close = getattr(connect, "aclose", None)
-                if close is not None:
-                    await close()
+            reset_chat_session(token)
 
     async def _name_if_needed(
         self,

@@ -359,3 +359,31 @@ def test_update_topic_only_keeps_body(tmp_path: Path) -> None:
     assert "Chủ đề mới" in after
     assert "nội dung giữ" in after
     assert "dòng chi tiết" in after
+
+
+def test_proj_survives_update_and_reinforce_and_filters_search(tmp_path: Path) -> None:
+    t0 = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+    later = datetime(2026, 8, 17, 12, 0, tzinfo=UTC)
+    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    proj = "/home/flowerf/Projects/thyca-ai"
+    sid = facade.remember(
+        "link", "zzzxuniqueaaa", now=t0, proj=proj, chat="2026-09-16T14-39-01_a1b2"
+    )
+    other = facade.remember("other", "zzzyuniquebbb", now=t0, proj="/tmp/other")
+    facade.archive.reindex(later)
+    linked = facade.search("zzzxuniqueaaa", now=later, proj=proj)
+    assert [hit.session_id for hit in linked.hits] == [sid]
+    assert facade.search("zzzyuniquebbb", now=later, proj=proj).hits == []
+    unfiltered = facade.search("zzzyuniquebbb", now=later)
+    assert [hit.session_id for hit in unfiltered.hits] == [other]
+
+    facade.update(sid, topic="link mới", now=later)
+    facade.reinforce(sid, now=later)
+    daily = tmp_path / "memory" / "2026-08-13.md"
+    meta = next(m for line in daily.read_text(encoding="utf-8").splitlines() if (m := parse_heading(line)) and m.title.startswith("link"))
+    assert meta.proj == proj
+    assert meta.chat == "2026-09-16T14-39-01_a1b2"
+    assert meta.title == "link mới"
+
+    with pytest.raises(ValueError, match="absolute"):
+        facade.remember("x", "y", now=t0, proj="relative/path")

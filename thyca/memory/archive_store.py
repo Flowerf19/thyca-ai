@@ -85,32 +85,20 @@ class ArchiveStore:
         self._ensure_norm_version()
 
     def _migrate(self, from_version: str) -> None:
-        if from_version == "5":
-            self._db.execute("ALTER TABLE chunks ADD COLUMN project TEXT")
-            self._db.execute("ALTER TABLE chunks ADD COLUMN chat_session TEXT")
-            self._db.execute(
-                "UPDATE meta SET value = ? WHERE key = 'schema_version'",
-                (SCHEMA_VERSION,),
-            )
-            self._db.commit()
-            return
-        if from_version == "4":
-            self._db.execute(
-                """CREATE TABLE IF NOT EXISTS leaf_searches(
-                    chunk_id        TEXT PRIMARY KEY,
-                    session_id      TEXT NOT NULL,
-                    search_count    INTEGER NOT NULL CHECK(search_count >= 1),
-                    last_search_at  TEXT NOT NULL
-                )"""
-            )
-            self._db.execute(
-                "UPDATE meta SET value = ? WHERE key = 'schema_version'",
-                (SCHEMA_VERSION,),
-            )
-            self._db.commit()
-            return
-        if from_version == "3":
-            self._db.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+        if from_version in {"3", "4", "5"}:
+            # CREATE IF NOT EXISTS does not alter the existing chunks table.
+            # Add the v6 columns explicitly for every non-destructive upgrade
+            # path, including databases that skipped an intermediate release.
+            self._add_linking_columns()
+            if from_version in {"3", "4"}:
+                self._db.execute(
+                    """CREATE TABLE IF NOT EXISTS leaf_searches(
+                        chunk_id        TEXT PRIMARY KEY,
+                        session_id      TEXT NOT NULL,
+                        search_count    INTEGER NOT NULL CHECK(search_count >= 1),
+                        last_search_at  TEXT NOT NULL
+                    )"""
+                )
             self._db.execute(
                 "UPDATE meta SET value = ? WHERE key = 'schema_version'",
                 (SCHEMA_VERSION,),
@@ -133,15 +121,27 @@ class ArchiveStore:
         )
         self._db.commit()
 
+    def _add_linking_columns(self) -> None:
+        columns = {
+            str(row["name"])
+            for row in self._db.execute("PRAGMA table_info(chunks)")
+        }
+        for name in ("project", "chat_session"):
+            if name not in columns:
+                self._db.execute(f"ALTER TABLE chunks ADD COLUMN {name} TEXT")
+        # Existing rows contain no heading metadata. Keep the derived rows
+        # until the normal reindex pass, but ensure unchanged files are read.
+        self._db.execute("UPDATE source_files SET mtime_ns = -1")
+
     def _ensure_norm_version(self) -> None:
         row = self._db.execute(
             "SELECT value FROM meta WHERE key='norm_version'"
         ).fetchone()
         if row is not None and row["value"] == NORM_VERSION:
             return
-        # Drop indexed files so the next reindex rewrites text_norm. Chunk ids
-        # come back the same; leaf_gets/searches are not FK-bound and stay.
-        self._db.execute("DELETE FROM source_files")
+        # Mark indexed files stale so the next reindex rewrites text_norm.
+        # Keep derived rows until then; usage counters are not FK-bound.
+        self._db.execute("UPDATE source_files SET mtime_ns = -1")
         self._db.execute("DELETE FROM meta WHERE key='norm_version'")
         self._db.execute(
             "INSERT INTO meta(key, value) VALUES ('norm_version', ?)",

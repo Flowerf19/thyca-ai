@@ -80,8 +80,7 @@ export function asArguments(value) {
   return { value };
 }
 
-function toolBatches(detail) {
-  const messages = Array.isArray(detail?.messages) ? detail.messages : [];
+function toolResults(messages) {
   const results = new Map();
   for (const message of messages) {
     if (message?.role === "tool" && message.tool_call_id) {
@@ -91,22 +90,52 @@ function toolBatches(detail) {
       });
     }
   }
+  return results;
+}
+
+function toolCallsFromAssistant(message, results) {
+  return (Array.isArray(message?.tool_calls) ? message.tool_calls : [])
+    .filter((call) => call?.id || call?.name)
+    .map((call) => {
+      const result = results.get(String(call.id || ""));
+      return {
+        id: cleanText(call.id),
+        name: cleanText(call.name, "tool"),
+        skill: cleanText(call.skill) || null,
+        arguments: asArguments(call.arguments),
+        output: result?.content ?? null,
+        latencyMs: result?.latencyMs ?? null,
+      };
+    });
+}
+
+function toolBatches(detail) {
+  const messages = Array.isArray(detail?.messages) ? detail.messages : [];
+  const results = toolResults(messages);
   return messages
     .filter((message) => message?.role === "assistant" && Array.isArray(message.tool_calls))
-    .map((message) => message.tool_calls
-      .filter((call) => call?.id || call?.name)
-      .map((call) => {
-        const result = results.get(String(call.id || ""));
-        return {
-          id: cleanText(call.id),
-          name: cleanText(call.name, "tool"),
-          skill: cleanText(call.skill) || null,
-          arguments: asArguments(call.arguments),
-          output: result?.content ?? null,
-          latencyMs: result?.latencyMs ?? null,
-        };
-      }))
+    .map((message) => toolCallsFromAssistant(message, results))
     .filter((batch) => batch.length);
+}
+
+// One step per think round, then that round's tools. Naming messages stay out
+// so the activity line is Input → thinking → tools → thinking → Output.
+export function activityStepsFromDetail(detail) {
+  const messages = Array.isArray(detail?.messages) ? detail.messages : [];
+  const results = toolResults(messages);
+  const steps = [];
+  for (const message of messages) {
+    if (message?.role !== "assistant") continue;
+    if ((message.meta || {}).kind === "naming") continue;
+    steps.push({
+      type: "thinking",
+      content: typeof message.content === "string" ? message.content : "",
+      latencyMs: finiteMs(message.meta?.latency_ms),
+    });
+    const batch = toolCallsFromAssistant(message, results);
+    if (batch.length) steps.push({ type: "tools", groups: groupToolCalls(batch) });
+  }
+  return steps;
 }
 
 export function toolBatchesFromDetail(detail) {

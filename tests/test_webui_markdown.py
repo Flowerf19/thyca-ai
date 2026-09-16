@@ -211,21 +211,32 @@ def test_trace_typography_matches_profile_screen() -> None:
     assert 'class="general-card screen-card"' in html
     assert 'class="trace-section token-section"' in html
     assert '>Log hoạt động</h3>' in html
+    assert 'class="activity-log-fold"' in html
     assert 'id="record-flow"' in html
+    assert 'id="tool-dialog"' in html
+    assert 'id="tool-dialog-body"' in html
     assert 'Đã dùng' not in html
     assert 'Bản ghi lượt' not in html
     assert "function renderProgress()" in script
     assert 'className = "trace-dot"' in script
     assert 'flowNode("Input"' in script
     assert 'flowNode("Output"' in script
-    assert 'className = "trace-parallel"' in script
+    assert 'function flowPill(' in script
+    assert 'countedLabel(group.name, group.count)' in script
+    assert 'function parallelFlowNode(' in script
+    assert 'el.toolDialog.showModal()' in script
+    assert 'className = "trace-tool-fold"' in script
+    assert ".trace-tool-dialog" in trace
+    assert "text-decoration: underline;" in trace
     assert ".trace-section > h3::before" in trace
     assert ".trace-record-card" in trace
     assert ".activity-log h3" in trace
     assert ".tool-calls .fold-list" not in trace
     assert ".turn-meta-section > .screen-card" not in trace
     assert "grid-template-columns: repeat(3, minmax(0, 1fr));" in trace
-    assert "trace-flow-row" in script
+    assert "function flowFromSteps(" in script
+    assert 'className = "trace-flow-step"' in script
+    assert "flex-wrap: wrap;" in trace
 
 
 def test_overview_typography_matches_profile_screen() -> None:

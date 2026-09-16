@@ -97,13 +97,26 @@
             </section>
 
             <section class="trace-section activity-log" id="activity-log">
-              <h3>Log hoạt động</h3>
-              <div class="screen-card trace-record-card" id="record-flow"></div>
+              <details class="activity-log-fold">
+                <summary><h3>Log hoạt động</h3></summary>
+                <div class="screen-card trace-record-card" id="record-flow"></div>
+              </details>
             </section>
           </article>
         </section>
       </section>
     </main>
+
+    <dialog class="screen-dialog trace-tool-dialog" id="tool-dialog" aria-labelledby="tool-dialog-title">
+      <header class="trace-tool-dialog-head">
+        <div>
+          <h2 id="tool-dialog-title">Chi tiết tool</h2>
+          <p class="trace-tool-dialog-meta" id="tool-dialog-meta"></p>
+        </div>
+        <button class="screen-button trace-tool-dialog-close" id="tool-dialog-close" type="button" aria-label="Đóng chi tiết tool">×</button>
+      </header>
+      <div class="trace-tool-dialog-body" id="tool-dialog-body"></div>
+    </dialog>
 
     <script src="./navigation.js" defer></script>
     <script type="module" src="./trace.js"></script>

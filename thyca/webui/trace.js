@@ -10,14 +10,13 @@ import {
   statusLabel,
 } from "./backend/format.js";
 import {
+  activityStepsFromDetail,
   finalAssistantText,
   firstUserText,
   formatRecordText,
-  groupToolCalls,
   groupTraceTurns,
   selectedModelConfig,
   tokenCost,
-  toolBatchesFromDetail,
 } from "./backend/trace-data.js";
 
 const el = {
@@ -33,6 +32,11 @@ const el = {
   next: document.querySelector("#page-next"),
   activitySection: document.querySelector("#activity-log"),
   recordFlow: document.querySelector("#record-flow"),
+  toolDialog: document.querySelector("#tool-dialog"),
+  toolDialogTitle: document.querySelector("#tool-dialog-title"),
+  toolDialogMeta: document.querySelector("#tool-dialog-meta"),
+  toolDialogBody: document.querySelector("#tool-dialog-body"),
+  toolDialogClose: document.querySelector("#tool-dialog-close"),
 };
 
 const state = {
@@ -41,7 +45,7 @@ const state = {
   turnIndex: 0,
   detail: null,
   config: null,
-  toolBatches: [],
+  toolOpener: null,
   generation: 0,
 };
 
@@ -99,9 +103,28 @@ function renderSidebar() {
   el.list.replaceChildren(...nodes);
 }
 
+function focusToolOpener() {
+  const opener = state.toolOpener;
+  state.toolOpener = null;
+  opener?.focus();
+}
+
+function closeToolDialog() {
+  if (el.toolDialog?.open) {
+    el.toolDialog.close();
+    return;
+  }
+  focusToolOpener();
+}
+
+function discardToolDialog() {
+  state.toolOpener = null;
+  if (el.toolDialog?.open) el.toolDialog.close();
+}
+
 function emptyDetail(message) {
+  discardToolDialog();
   state.detail = null;
-  state.toolBatches = [];
   el.detail.hidden = true;
   el.crumb.textContent = `Trace › ${message}`;
   el.recordFlow?.replaceChildren();
@@ -169,109 +192,131 @@ function arrow() {
   return node;
 }
 
-function flowNode(label, value, className = "") {
-  const node = document.createElement("details");
-  node.className = `trace-flow-node${className ? ` ${className}` : ""}`;
-  const summary = document.createElement("summary");
-  summary.className = "trace-flow-pill";
+function textBody(value) {
+  const block = document.createElement("div");
+  block.className = "record-block";
+  const text = document.createElement("p");
+  text.textContent = value;
+  block.append(text);
+  return block;
+}
+
+function countedLabel(name, count) {
+  return count == null ? name : `${name} ×${count}`;
+}
+
+function flowPill(label, extraClass = "") {
+  const node = document.createElement("button");
+  node.type = "button";
+  node.className = `trace-flow-node trace-flow-pill${extraClass ? ` ${extraClass}` : ""}`;
+  node.setAttribute("aria-haspopup", "dialog");
+  node.setAttribute("aria-controls", "tool-dialog");
+  node.title = label;
   const name = document.createElement("span");
   name.className = "trace-flow-name";
   name.textContent = label;
-  summary.append(name);
-  const body = document.createElement("div");
-  body.className = "trace-flow-body";
-  body.textContent = value;
-  node.append(summary, body);
+  node.append(name);
+  return node;
+}
+
+function flowNode(label, value, className = "") {
+  const node = flowPill(label, className);
+  node.addEventListener("click", () => openFlowDialog({
+    title: label,
+    body: textBody(value),
+    opener: node,
+  }));
+  return node;
+}
+
+function thinkingNode(step) {
+  const node = flowPill("thinking", "trace-flow-thinking");
+  node.addEventListener("click", () => openFlowDialog({
+    title: "thinking",
+    meta: formatDuration(step.latencyMs),
+    body: textBody(step.content || "—"),
+    opener: node,
+  }));
   return node;
 }
 
 function toolFlowNode(group) {
-  const node = document.createElement("details");
-  node.className = "trace-flow-node trace-flow-tool";
-  const summary = document.createElement("summary");
-  summary.className = "trace-flow-pill";
-  const name = document.createElement("span");
-  name.className = "trace-flow-name";
-  name.textContent = `${group.name} ×${group.count}`;
-  const stat = document.createElement("span");
-  stat.className = "trace-flow-stat";
-  stat.textContent = formatDuration(group.latencyMs);
-  summary.append(name, stat);
-  node.append(summary, toolBody(group));
+  const node = flowPill(countedLabel(group.name, group.count), "trace-flow-tool");
+  node.addEventListener("click", () => openToolDialog(group, node));
   return node;
 }
 
-function flowGroups(batch) {
-  return groupToolCalls(batch);
+function parallelFlowNode(groups) {
+  const label = groups.map((group) => countedLabel(group.name, group.count)).join(" · ");
+  const node = flowPill(label, "trace-flow-tool");
+  node.addEventListener("click", () => openFlowDialog({
+    title: label,
+    meta: groups.map((group) => `${countedLabel(group.name, group.count)} · ${formatDuration(group.latencyMs)}`).join(" · "),
+    body: parallelBody(groups),
+    opener: node,
+  }));
+  return node;
 }
 
-function parallelNode(groups) {
-  const parallel = document.createElement("div");
-  parallel.className = "trace-parallel";
-  parallel.setAttribute("role", "group");
-  parallel.setAttribute("aria-label", "Các tool chạy song song");
-  const label = document.createElement("span");
-  label.className = "trace-parallel-label";
-  label.textContent = "song song";
-  const nodes = document.createElement("div");
-  nodes.className = "trace-parallel-nodes";
-  groups.forEach((group) => nodes.append(toolFlowNode(group)));
-  parallel.append(label, nodes);
-  return parallel;
+function parallelBody(groups) {
+  const body = document.createElement("div");
+  body.className = "trace-tool-dialog-content";
+  for (const group of groups) {
+    const heading = document.createElement("p");
+    heading.className = "trace-tool-call-label";
+    heading.textContent = `${countedLabel(group.name, group.count)} · ${formatDuration(group.latencyMs)}`;
+    body.append(heading, toolBody(group));
+  }
+  return body;
 }
 
-function toolFlowSteps() {
-  return state.toolBatches.flatMap((batch) => {
-    const groups = flowGroups(batch);
-    if (groups.length > 1) return [parallelNode(groups)];
+function activityFlowSteps() {
+  return activityStepsFromDetail(state.detail).flatMap((step) => {
+    if (step.type === "thinking") return [thinkingNode(step)];
+    const groups = step.groups || [];
+    if (groups.length > 1) return [parallelFlowNode(groups)];
     return groups[0] ? [toolFlowNode(groups[0])] : [];
   });
 }
 
-function toolFlow() {
+function flowFromSteps(steps) {
   const flow = document.createElement("div");
   flow.className = "trace-flow";
-  const steps = toolFlowSteps();
-  for (let start = 0; start < steps.length; start += 3) {
-    const row = document.createElement("div");
-    row.className = "trace-flow-row";
-    const chunk = steps.slice(start, start + 3);
-    chunk.forEach((step, index) => {
-      const item = document.createElement("div");
-      item.className = "trace-flow-step";
-      item.append(step);
-      if (start + index < steps.length - 1) item.append(arrow());
-      row.append(item);
-    });
-    flow.append(row);
-  }
+  steps.forEach((step, index) => {
+    const item = document.createElement("span");
+    item.className = "trace-flow-step";
+    item.append(step);
+    if (index < steps.length - 1) item.append(arrow());
+    flow.append(item);
+  });
   return flow;
 }
 
 function renderRecord() {
   if (!el.recordFlow) return;
+  el.activitySection?.querySelector("details")?.removeAttribute("open");
   const record = document.createElement("div");
   record.className = "trace-record";
-  record.append(flowNode("Input", firstUserText(state.detail), "trace-flow-input"));
-  if (state.toolBatches.length) record.append(arrow(), toolFlow());
-  record.append(arrow(), flowNode("Output", finalAssistantText(state.detail), "trace-flow-output"));
+  record.append(flowFromSteps([
+    flowNode("Input", firstUserText(state.detail), "trace-flow-input"),
+    ...activityFlowSteps(),
+    flowNode("Output", finalAssistantText(state.detail), "trace-flow-output"),
+  ]));
   el.recordFlow.replaceChildren(record);
 }
 
-// One catalog entry: a single call opens straight to its record, several calls
-// fold into one row each so a long turn stays readable.
 function toolBody(group) {
   const body = document.createElement("div");
-  body.className = "fold-row-body";
+  body.className = "trace-tool-dialog-content";
   if (group.calls.length === 1) {
     body.append(recordBody(group.calls[0]));
     return body;
   }
   for (const call of group.calls) {
     const fold = document.createElement("details");
-    fold.className = "call-fold";
+    fold.className = "trace-tool-fold";
     const summary = document.createElement("summary");
-    summary.className = "call-summary";
+    summary.className = "trace-tool-fold-summary";
     summary.textContent = callLabel(call);
     fold.append(summary, recordBody(call));
     body.append(fold);
@@ -279,12 +324,27 @@ function toolBody(group) {
   return body;
 }
 
-function prepareTools() {
-  state.toolBatches = toolBatchesFromDetail(state.detail);
-  el.activitySection.hidden = false;
+function openFlowDialog({ title, meta = "", body, opener }) {
+  closeToolDialog();
+  state.toolOpener = opener;
+  el.toolDialogTitle.textContent = title;
+  el.toolDialogMeta.textContent = meta;
+  el.toolDialogBody.replaceChildren(body);
+  el.toolDialog.showModal();
+  el.toolDialogClose.focus();
+}
+
+function openToolDialog(group, opener) {
+  openFlowDialog({
+    title: group.name,
+    meta: `${group.count} lần gọi · ${formatDuration(group.latencyMs)}`,
+    body: toolBody(group),
+    opener,
+  });
 }
 
 function renderDetail() {
+  discardToolDialog();
   const summary = activeSummary();
   const detail = state.detail;
   if (!summary || !detail) return;
@@ -319,7 +379,6 @@ function renderDetail() {
   setText("#page-status", `${state.turnIndex + 1} / ${total}`);
   el.previous.disabled = state.turnIndex === 0;
   el.next.disabled = state.turnIndex >= total - 1;
-  prepareTools();
   renderRecord();
   el.content.scrollTop = 0;
 }
@@ -366,6 +425,11 @@ async function selectTurn(index) {
 function bind() {
   el.previous.addEventListener("click", () => void selectTurn(state.turnIndex - 1));
   el.next.addEventListener("click", () => void selectTurn(state.turnIndex + 1));
+  el.toolDialogClose.addEventListener("click", () => closeToolDialog());
+  el.toolDialog.addEventListener("click", (event) => {
+    if (event.target === el.toolDialog) closeToolDialog();
+  });
+  el.toolDialog.addEventListener("close", () => focusToolOpener());
   el.copy.addEventListener("click", async () => {
     const id = activeGroup()?.sessionId;
     if (!id) return;

@@ -28,7 +28,7 @@ def node() -> str:
 
 def _eval(node: str, expression: str) -> object:
     source = (
-        f"import {{ toolsFromDetail, toolBatchesFromDetail, groupToolCalls, groupTraceTurns, selectedModelConfig,"
+        f"import {{ toolsFromDetail, toolBatchesFromDetail, activityStepsFromDetail, groupToolCalls, groupTraceTurns, selectedModelConfig,"
         f" tokenCost, firstUserText, finalAssistantText, formatRecordText, asArguments }}"
         f" from '{TRACE_DATA.as_posix()}';\n"
         f"console.log(JSON.stringify({expression}));\n"
@@ -90,6 +90,36 @@ def test_tool_batches_preserve_parallel_assistant_calls(node: str) -> None:
         ["memory_recent", "bash"],
         ["read"],
     ]
+
+
+def test_activity_steps_insert_thinking_between_tool_rounds(node: str) -> None:
+    detail = {
+        "messages": [
+            {"role": "user", "content": "go"},
+            {"role": "assistant", "content": "", "tool_calls": [
+                {"id": "c1", "name": "bash"},
+                {"id": "c2", "name": "bash"},
+            ], "meta": {"latency_ms": 40}},
+            {"role": "tool", "tool_call_id": "c1", "content": "a",
+             "meta": {"latency_ms": 10}},
+            {"role": "tool", "tool_call_id": "c2", "content": "b",
+             "meta": {"latency_ms": 20}},
+            {"role": "assistant", "content": "", "tool_calls": [
+                {"id": "c3", "name": "bash"},
+                {"id": "c4", "name": "bash"},
+            ], "meta": {"latency_ms": 50}},
+            {"role": "assistant", "content": "done", "meta": {"kind": "naming"}},
+            {"role": "assistant", "content": "done", "meta": {"latency_ms": 12}},
+        ]
+    }
+    steps = _eval(node, f"activityStepsFromDetail({json.dumps(detail)})")
+    assert [step["type"] for step in steps] == [
+        "thinking", "tools", "thinking", "tools", "thinking",
+    ]
+    assert steps[0]["latencyMs"] == 40
+    assert steps[1]["groups"][0]["name"] == "bash"
+    assert steps[1]["groups"][0]["count"] == 2
+    assert steps[-1]["content"] == "done"
 
 
 def test_string_arguments_are_parsed(node: str) -> None:

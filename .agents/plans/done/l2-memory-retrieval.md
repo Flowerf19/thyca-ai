@@ -1,14 +1,14 @@
 ---
-status: in-progress
+status: done
 created: 2026-08-14
-last_updated: 2026-08-19
+last_updated: 2026-09-16
 ---
 
 # L2 Memory — Agentic Retrieval (Agent là controller)
 
 ## Summary
 
-Mở rộng GOAL-006 thành **L2 hybrid retrieval** do agent điều khiển. **Code v1 hiện tại chỉ chạy lexical** (FTS5 + trigram). Kiến trúc `semantic=true` (lexical + exact vector + RRF) giữ trong plan này, chưa implement lại: 2026-08-19 gỡ numpy/onnxruntime/tokenizers/sqlite-vec và revert runtime về `16aa38e`. Tool không tự fallback ngầm. Markdown vẫn là source of truth; SQLite chỉ là derived index.
+Mở rộng GOAL-006 thành L2 retrieval do agent điều khiển. **v1 chỉ lexical** (FTS5 + trigram). Embedding / `semantic=true` / vector / RRF / Harrier **cancelled 2026-09-16** — không giữ frozen, không implement lại. Runtime embedding đã gỡ 2026-08-19 (`580ae03`). Markdown vẫn là source of truth; SQLite chỉ là derived index.
 
 Flow chốt (agent là retrieval controller):
 
@@ -511,7 +511,7 @@ Thyca owns its manifest; it must not import another project's runtime manifest. 
 
 | ID | Task | Done | Date |
 |----|------|------|------|
-| TASK-101 | Implement contract `memory_search(query: str, semantic: bool=False, limit: int=5, timeline_day: str|None=None) -> SearchResult`. `semantic=false` = FTS+trigram; `semantic=true` = lexical+vector+RRF. Return leaf Hits + warnings/meta, no confidence, no eager siblings. Tool description teaches lexical-first, paraphrase second, and `memory_get(session_id)` expansion | | |
+| TASK-101 | Implement contract `memory_search(...)`. `semantic=false` = FTS+trigram. ~~`semantic=true` = lexical+vector+RRF~~ — **abandoned 2026-09-16**: embedding cancelled | lexical shipped; semantic abandoned | 2026-09-16 |
 | TASK-102 | Implement `memory_remember(topic, summary, content="", target="daily")`: explicit target enum, generated stable entry ID/timestamp, locked append or atomic canonical rewrite. ~~Builtin write/edit block all `~/.thyca` paths~~ — **superseded 2026-08-20**: PathGuard chỉ L2 + session + config; xem `services/tools.md` TASK-310/325 | | |
 | TASK-103 | Sync master/architecture/decision docs: supersede one-file FTS contract, lock L2 hybrid, canonical lifecycle and remember-only ownership | ✅ | 2026-08-15 |
 
@@ -532,10 +532,12 @@ Xong khi: schema smoke chạy trên SQLite thật; canonical search được; `c
 
 | ID | Task | Done | Date |
 |----|------|------|------|
-| TASK-108 | Embedding provider interface: local pinned Harrier q4 or OpenAI `/embeddings`; batch outside DB transaction; one failed chunk remains NULL. Compute immutable profile ID from provider/model/dimension/dtype/normalization/query prompt/input version | abandoned (2026-08-19: revert runtime; kiến trúc giữ) | 2026-08-19 |
-| TASK-109 | Exact cosine over current-profile rows only, validate finite/unit norm/dimension/BLOB length; sqlite-vec and NumPy paths share `micro_key`/tie-break and parity tests. No ANN | | |
-| TASK-110 | `semantic=true`: lexical and vector candidate branches, RRF k=60, deterministic tie-break, sibling dedup, SearchResult warnings/meta. Keep original bm25/vector score; no eager expansion | | |
-| TASK-111 | Missing/corrupt model, missing OpenAI key, empty semantic index or per-chunk failure → lexical fallback + explicit warning; never mix profiles or fabricate semantic scores | | |
+| TASK-108 | Embedding provider interface: local pinned Harrier q4 or OpenAI `/embeddings`; batch outside DB transaction; one failed chunk remains NULL. Compute immutable profile ID from provider/model/dimension/dtype/normalization/query prompt/input version | abandoned | 2026-09-16 |
+| TASK-109 | Exact cosine over current-profile rows only, validate finite/unit norm/dimension/BLOB length; sqlite-vec and NumPy paths share `micro_key`/tie-break and parity tests. No ANN | abandoned | 2026-09-16 |
+| TASK-110 | `semantic=true`: lexical and vector candidate branches, RRF k=60, deterministic tie-break, sibling dedup, SearchResult warnings/meta. Keep original bm25/vector score; no eager expansion | abandoned | 2026-09-16 |
+| TASK-111 | Missing/corrupt model, missing OpenAI key, empty semantic index or per-chunk failure → lexical fallback + explicit warning; never mix profiles or fabricate semantic scores | abandoned | 2026-09-16 |
+
+Cancelled 2026-09-16: embedding/semantic/RRF/Harrier không thuộc v1. Lý do: runtime đã gỡ `580ae03`; không giữ kiến trúc frozen.
 
 Xong khi: `semantic=false` không load/embed; `semantic=true` bắt paraphrase không có lexical overlap; profile change invalidates/rebuilds vectors; local model missing/corrupt and OpenAI key missing both fallback lexical; model pull verifies hashes and recovers interrupted/concurrent download.
 
@@ -543,8 +545,8 @@ Xong khi: `semantic=false` không load/embed; `semantic=true` bắt paraphrase k
 
 | ID | Task | Done | Date |
 |----|------|------|------|
-| TASK-112 | Tool description `memory_search` teaches lexical-first (`semantic=false`), when to paraphrase and retry semantic, timeline inference, limit 5, and how to interpret `SearchResult.warnings`/`Hit.has_more` | | |
-| TASK-113 | System prompt few-shot: lexical miss → agent judges → semantic paraphrase; `memory_remember(topic, summary, target?)`; never builtin write/edit under `~/.thyca`; no planner/prefetch | | |
+| TASK-112 | ~~Tool description teaches lexical-first then semantic retry~~ — **abandoned 2026-09-16**: embedding cancelled; description chỉ lexical | abandoned | 2026-09-16 |
+| TASK-113 | ~~System prompt few-shot lexical miss → semantic paraphrase~~ — **abandoned 2026-09-16**: embedding cancelled | abandoned | 2026-09-16 |
 | TASK-114 | Integrate canonical `SearchResult`, `memory_recent` (canonical + daily mtime), `memory_get(chunk_id/session_id/path)` validation/caps, and ordered tool calls through the existing registry; no hidden fallback/dispatch | | |
 
 Xong khi: agent tự chọn lexical trước, semantic retry chỉ khi cần; warning không bị nuốt; timeline filter đúng; memory get không path-traversal/arbitrary file; remember target đúng; loop/registry vẫn là một dispatch path.
@@ -555,7 +557,7 @@ Xong khi: agent tự chọn lexical trước, semantic retry chỉ khi cần; wa
 |----|------|------|------|
 | TASK-115 | Log `query, semantic, timeline_day, hit_count, match_type histogram, warnings, profile_id, top bm25/vector_score` vào session JSONL tool meta; không log embedding/API key/raw secret | | |
 | TASK-116 | Limits: query empty → `SearchResult(hits=[], warnings=[...])`; limit clamp 1..10; lexical/vector cap 50; leaf split 800c/256 tokens without silent truncate; strict date validation; hot tail 4KB UTF-8-safe; result serialization cap | | |
-| TASK-117 | Model lifecycle: own immutable Harrier manifest, opt-in `thyca model status/pull`, download five pinned files under a file lock to temp, SHA-256 verify, atomic install at `~/.thyca/models/harrier-q4/<revision>`; status must not import/load ONNX | | |
+| TASK-117 | Model lifecycle: own immutable Harrier manifest, opt-in `thyca model status/pull`… | abandoned | 2026-09-16 |
 
 ### GOAL-006: remember / forget / reinforce / TTL
 
@@ -575,7 +577,7 @@ Xong khi: remember daily có exp; get gia hạn; search không gia hạn; forget
 | TASK-122 | Revert runtime/tests về `16aa38e`; xóa `thyca/memory/embedding/` và test semantic/ONNX. Giữ `.agents/plans` | x | 2026-08-19 |
 | TASK-123 | Bỏ `sqlite_vec` load trong `ArchiveStore`. `semantic=true` vẫn warning `semantic unavailable` | x | 2026-08-19 |
 
-Xong khi: pytest lexical (FTS + trigram) pass; không import numpy/onnx/sqlite-vec; plan L2 còn kiến trúc hybrid.
+Xong khi: pytest lexical (FTS + trigram) pass; không import numpy/onnx/sqlite-vec. Embedding cancelled 2026-09-16 — không giữ hybrid frozen.
 
 ---
 

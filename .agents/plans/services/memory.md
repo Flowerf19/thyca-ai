@@ -83,6 +83,6 @@ Xong khi: missing files tự tạo, không đè file cũ; `open_session` giữ y
 
 ## Assumptions
 
-- `l2-memory-retrieval.md` là nguồn thật cho chunk/vector/RRF/`memory_remember`.
+- `done/l2-memory-retrieval.md` là nguồn thật cho chunk/lexical/`memory_remember`. Embedding cancelled.
 - `PromptManager.build(hot)` ở `services/llm.md` nhận `ActiveSnapshot`; LLM plan không implement ActiveMemory.
 - Trần nóng đã chốt 2026-08-17: `SOUL`/`USER` = full; `MEMORY` + daily = tail `hotTailKB`. Không hard-cap lúc ghi kiểu Hermes. Lấy full `MEMORY.md` = `memory_get(path)`, không phải cờ ActiveMemory.

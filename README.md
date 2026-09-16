@@ -8,7 +8,7 @@ Thyca là harness trợ lý cá nhân chạy trong terminal, lấy cảm hứng 
 
 Config / Session JSONL / ActiveMemory / L2 lexical / LLM OpenAI-compat / loop 4 pha đều có test. `ChatReply.usage` chuẩn hóa token (prompt / cached / completion / total); `cost_for` tính USD từ bảng `pricing` (builtin + overlay config). Observe ghi `usage` / `cost_usd` / `latency_ms` vào `Message.meta` trên JSONL. Google/Anthropic connect vẫn stub.
 
-Memory v1 là **L2 hybrid**: markdown dưới `~/.thyca` là nguồn sự thật; SQLite là index suy ra. Lexical (FTS5 + trigram) đã chạy; semantic/vector chỉ còn trong plan frozen — embedding runtime đã gỡ (580ae03). Daily index sau khi đóng ngày; `SOUL.md` / `USER.md` / `IDENTITY.md` luôn inject. `MEMORY.md` đã bỏ — `memory_remember` ghi `memory/YYYY-MM-DD.md`. Chi tiết: `.agents/plans/l2-memory-retrieval.md`, `.agents/decisions/2026-08-15-l2-hybrid-v1.md`.
+Memory v1 là **L2 lexical**: markdown dưới `~/.thyca` là nguồn sự thật; SQLite là index suy ra. FTS5 + trigram đã chạy. Embedding / semantic / vector **cancelled** (runtime gỡ 580ae03). Daily index sau khi đóng ngày; `SOUL.md` / `USER.md` / `IDENTITY.md` luôn inject. `MEMORY.md` đã bỏ — `memory_remember` ghi `memory/YYYY-MM-DD.md`. Chi tiết: `.agents/plans/done/l2-memory-retrieval.md`, `.agents/decisions/2026-08-15-l2-hybrid-v1.md`.
 
 ## Prerequisites
 

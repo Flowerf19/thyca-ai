@@ -2,12 +2,12 @@
 status: superseded
 created: 2026-08-18
 last_updated: 2026-08-20
-superseded_by: 580ae03 (drop embedding runtime) — xem `.agents/plans/l2-memory-retrieval.md` GOAL-007
+superseded_by: 580ae03 (drop embedding runtime); embedding cancelled 2026-09-16 — `.agents/plans/done/l2-memory-retrieval.md`
 ---
 
 # Decision — L2 vectors live on `chunks.embedding`
 
-> **Superseded 2026-08-20:** commit `580ae03` ("refactor(memory): drop embedding, keep FTS and trigram") removed the embedding runtime, `chunks.embedding` BLOB, and all semantic columns from `schema.sql` v3. Runtime retrieval is lexical-only (FTS5 + trigram). The hybrid architecture (lexical + exact vector + RRF) remains frozen in `.agents/plans/l2-memory-retrieval.md` and is **not** implemented; do not reintroduce embedding as implemented. This decision is kept as history; its contract no longer matches the code.
+> **Superseded 2026-08-20:** commit `580ae03` ("refactor(memory): drop embedding, keep FTS and trigram") removed the embedding runtime, `chunks.embedding` BLOB, and all semantic columns from `schema.sql` v3. Runtime retrieval is lexical-only (FTS5 + trigram). Embedding / hybrid vector+RRF was **cancelled 2026-09-16** (not frozen). Do not reintroduce embedding. This decision is kept as history; its contract no longer matches the code.
 
 ## Decision (original, 2026-08-18)
 

@@ -17,7 +17,7 @@ last_updated: 2026-08-20
 Tham chiếu:
 - Product spec: `thyca-harness-v1.md` — source of truth cho scope và success v1
 - Accepted decision: `../decisions/2026-08-15-l2-hybrid-v1.md`
-- Cold retrieval: `l2-memory-retrieval.md` — executable contract cho chunk/schema/reindex/retrieval
+- Cold retrieval: `done/l2-memory-retrieval.md` — lexical chunk/schema/reindex/retrieval; embedding cancelled
 
 ## Flat layout (không `src/`)
 
@@ -96,7 +96,7 @@ Class tổng giữa module **dùng activity này**, không vẽ class tổng. Cl
 | 6 | **MCP** | `services/mcp.md` | stdio spawn, `server__tool` prefix, lifecycle, fault tolerance | ☐ draft |
 | 7 | **Agent Loop** | `services/agent-loop.md` | bốn pha + `Stage` + CLI REPL/`-p` | ✅ done 2026-08-20 (TASK-317/321/322) |
 | 8 | **Skills** | `services/skills.md` | index trong prompt + `write`/`read`, chuẩn Agent Skills, validate-at-scan, không dispatch ẩn | ✅ done 2026-08-28 (TASK-901–904) |
-| — | **Archived (L2)** | `l2-memory-retrieval.md` | Lexical (FTS5 + trigram) + TTL lifecycle + facade: code xong 2026-08-17; embedding runtime gỡ 580ae03 — hybrid giữ frozen trong plan | ✅ lexical 2026-08-17 (GOAL-002); GOAL-006 2026-08-17; vector/RRF draft |
+| — | **Archived (L2)** | `done/l2-memory-retrieval.md` | Lexical (FTS5 + trigram) + TTL lifecycle + facade: code xong 2026-08-17; embedding cancelled 2026-09-16 | ✅ lexical 2026-08-17; embedding cancelled |
 
 **Checklist duyệt (copy ra issue/PR):**
 

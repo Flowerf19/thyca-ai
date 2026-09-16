@@ -7,7 +7,7 @@ from thyca.memory.active import ActiveSnapshot
 
 
 def _hot(**overrides: str) -> ActiveSnapshot:
-    base = {"soul": "soul-text", "user": "user-text", "today": "today-text", "yesterday": ""}
+    base = {"soul": "soul-text", "user": "user-text", "today": "today-text"}
     base.update(overrides)
     return ActiveSnapshot(**base)
 
@@ -43,15 +43,13 @@ def test_stub_soul_uses_packaged_template_and_omits_stub_user() -> None:
     assert "<user>" not in text
 
 
-def test_yesterday_only_when_present() -> None:
-    assert "<yesterday>" not in PromptManager().build(_hot())
-    text = PromptManager().build(_hot(yesterday="yday-text"))
-    assert "<yesterday>\nyday-text\n</yesterday>" in text
-    assert text.index("<today>") < text.index("<yesterday>") < text.index("<rules>")
+def test_build_does_not_inject_previous_day_memory() -> None:
+    text = PromptManager().build(_hot())
+    assert "<yesterday>" not in text
 
 
 def test_build_is_deterministic() -> None:
-    hot = _hot(yesterday="keep")
+    hot = _hot()
     manager = PromptManager()
     assert manager.build(hot) == manager.build(hot)
 

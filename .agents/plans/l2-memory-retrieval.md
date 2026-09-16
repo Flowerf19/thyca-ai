@@ -32,8 +32,8 @@ Tool chỉ trả **evidence + score + match_type**, không trả `confidence 0-1
 
 ## L2 là gì — Active vs Archived
 
-- **Active** (`thyca/memory/active.py`): `SOUL.md` + `USER.md` **cả file** mỗi lượt. `MEMORY.md` + daily hôm nay = tail `hotTailKB`. Hôm qua tail capture một lần lúc `open_session` / `--continue`. **Không chunk, không embed**. Full `MEMORY.md` khi cần: `memory_get(path)`. Chi tiết ở `services/memory.md`.
-- **Archived** (`thyca/memory/archived.py` + `chunk.py`): daily đã **đóng ngày** (`timeline_day < hôm nay`) qua `memory_search` / `memory_recent` / `memory_get`. Hôm qua vừa active (tail lúc mở session) vừa archived (được index). File hôm nay không index. `SOUL.md`, `USER.md`, `MEMORY.md` luôn indexable, `timeline_day=NULL`.
+- **Active** (`thyca/memory/active.py`): `SOUL.md` + `USER.md` + `IDENTITY.md` **cả file** mỗi lượt, cùng tail của daily hôm nay. **Không inject daily của ngày trước, không chunk, không embed**. Ngày cũ khi cần được lấy qua `memory_search` / `memory_get`. Chi tiết ở `services/memory.md`.
+- **Archived** (`thyca/memory/archived.py` + `chunk.py`): daily đã **đóng ngày** (`timeline_day < hôm nay`) qua `memory_search` / `memory_recent` / `memory_get`. File hôm nay không index. `SOUL.md`, `USER.md`, `IDENTITY.md` luôn indexable, `timeline_day=NULL`.
 - Khi semantic model unavailable, `semantic=true` trả lexical results kèm warning; không crash và không giả vector score.
 
 ```mermaid
@@ -43,7 +43,7 @@ flowchart LR
     C --> D["L2 retrieval\nFTS + trigram + vector"]
 ```
 
-> Vì sao không chunk luôn: tránh duplicate (hot đã chứa) + tránh n lần embed khi append daily. Trong ngày LLM thấy raw nên paraphrase tự xử. Vector chỉ cứu ngày cũ / hot bị `compaction` cắt (v1 daily vài trăm dòng, không cắt).
+> Vì sao không chunk luôn: tránh duplicate và tránh n lần embed khi append daily. Trong ngày LLM thấy raw nên paraphrase tự xử; ngày cũ được agent lấy có chủ đích qua L2 tools.
 
 ## Class — Archived lexical (4 class SOLID)
 
@@ -579,6 +579,17 @@ Xong khi: remember daily có exp; get gia hạn; search không gia hạn; forget
 
 Xong khi: pytest lexical (FTS + trigram) pass; không import numpy/onnx/sqlite-vec. Embedding cancelled 2026-09-16 — không giữ hybrid frozen.
 
+### GOAL-008: Active prompt boundary — current-day memory only
+
+`ActiveMemory` là cửa nóng của process, không phải bộ nhớ theo chat session. Chat transcript giữ continuity khi `--continue`; daily đã đóng được agent truy xuất theo yêu cầu qua memory tools. Vì vậy previous-day daily không được eager-inject vào session mới hoặc session cũ.
+
+| ID | Task | Done | Date |
+|----|------|------|------|
+| TASK-124 | Bỏ capture/rotate `yesterday` khỏi `ActiveMemory` và bỏ `<yesterday>` khỏi `PromptManager`; giữ profile + today tail và day rollover | x | 2026-09-16 |
+| TASK-125 | Cập nhật test/docs về ranh giới: session cũ giữ transcript, session mới không nhận previous-day hot memory, daily cũ vẫn qua L2 tools | x | 2026-09-16 |
+
+Xong khi: snapshot chỉ có profile/skills/today; không có previous-day daily trong system prompt; qua ngày tạo today mới mà không copy daily cũ vào hot prompt; archived yesterday vẫn search/get được.
+
 ---
 
 ## Test Plan
@@ -589,7 +600,8 @@ Không dùng live model/network cho unit path. Mỗi GOAL có deterministic unit
 - **GOAL-002:** (a) daily headings + bullets → leafs/session IDs đúng; duplicate minute IDs không collision; (b) canonical files → `source_kind=canonical`, `timeline_day=NULL`; (c) `ca phe` hit raw `cà phê`; (d) typo trigram; (e) raw snippet giữ dấu; (f) >800c/256 tokens split; (g) delete source cascades chunks/FTS; (h) today skip, rollover indexes.
 - **GOAL-003:** (a) `semantic=false` never loads/calls embedding; (b) stored `Ăn thịt quay` vs query `món nướng hôm nọ` has no lexical overlap but semantic hit when model exists; (c) missing/corrupt model and missing key return lexical + warning; (d) profile change re-embeds; (e) vector backend parity; (f) model pull hash/lock/interruption tests.
 - **GOAL-004:** trace lexical → agent semantic retry with `query2 != query1`; timeline filter; warning/meta in JSONL; `memory_get(session_id)` capped and ordered.
-- **GOAL-005:** empty query/limit/date validation, result cap, no secret/embedding logging, canonical/today hot refresh.
+- **GOAL-005:** empty query/limit/date validation, result cap, no secret/embedding logging, canonical/today hot refresh; previous-day daily is not hot-injected.
+- **GOAL-008:** `ActiveSnapshot` contains no previous-day daily; day rollover keeps only the new today file; archived previous days remain retrievable through the memory facade.
 
 Bằng chứng mỗi GOAL: command + output + focused test report + relevant JSONL/SQLite counts. E2E live credentials/model are opt-in and never required for unit CI.
 

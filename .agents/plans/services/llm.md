@@ -1,7 +1,7 @@
 ---
 status: done
 created: 2026-08-14
-last_updated: 2026-08-27
+last_updated: 2026-09-16
 ---
 
 # Service — LLM (`thyca/llm/` + `prompt_manager.py`)
@@ -74,13 +74,13 @@ classDiagram
 
 ## Contracts
 
-- `PromptManager.build(hot)`: luôn nhét `prompts/identity.md`. `hot.soul` stub (`# Soul`) thì dùng `prompts/soul.md`. `hot.user` stub thì bỏ `<user>`. Yesterday rỗng thì bỏ section.
+- `PromptManager.build(hot)`: luôn nhét `prompts/identity.md`. `hot.soul` stub (`# Soul`) thì dùng `prompts/soul.md`. `hot.user` stub thì bỏ `<user>`. Previous-day daily không được inject; ngày cũ chỉ truy xuất qua memory tools.
   ```
+  <identity> packaged/live identity </identity>
   <role> SOUL.md </role>
   <user> USER.md </user>
-  <memory> MEMORY.md </memory>
   <today> daily tail </today>
-  <yesterday> (chỉ open session) </yesterday>
+  <skills> skill index </skills>
   <rules> remember/search + guard </rules>
   ```
 - `Connect.chat(messages, tools)` (không có `model` param — model nằm trong `ProviderCfg`):
@@ -99,13 +99,13 @@ classDiagram
 
 > Kinds đã map trong factory: `openai`/`openai_chat`/`openai_compat` → `OpenAIChat`, `openai_responses`/`responses` → `OpenAIResponses`, `google` → `GoogleChat`, `anthropic` → `AnthropicChat`. `ProviderCfg.api_key()`: `apiKey` JSON thắng `apiKeyEnv`; `repr=False` cho `apiKey` (config.py:53).
 
-Xong khi: mocked content/tool-call/null-content/error responses parse đúng; malformed arguments trở thành tool error cùng call ID; retry chỉ đúng status; `stage.tools` được nối (TASK-317/309) rồi mới có live `thyca -p "ping"` trả text và prompt chứa refreshed SOUL/USER/MEMORY/today.
+Xong khi: mocked content/tool-call/null-content/error responses parse đúng; malformed arguments trở thành tool error cùng call ID; retry chỉ đúng status; `stage.tools` được nối (TASK-317/309) rồi mới có live `thyca -p "ping"` trả text và prompt chứa refreshed profile/today.
 
 ## Test Plan
 
 - Mock HTTP: text, null-content tool calls, malformed arguments, empty choices, 401, 429 retry, 503 retry, timeout, capped error body.
 - Verify API key không xuất hiện trong exception/log.
-- Prompt refresh: canonical/today update xuất hiện ở user turn kế tiếp; yesterday snapshot ổn định trong cùng session day.
+- Prompt refresh: canonical/today update xuất hiện ở user turn kế tiếp; previous-day daily không được eager-inject và chỉ truy xuất qua memory tools.
 - E2E thật 1 lần với model trong config, ngoài unit test deterministic.
 
 ## Assumptions

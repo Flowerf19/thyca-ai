@@ -6,7 +6,8 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from thyca.memory import ActiveMemory, ActiveSnapshot, tail_text
+from thyca.llm.prompt_manager import PromptManager
+from thyca.memory import ActiveMemory, tail_text
 
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
@@ -31,22 +32,22 @@ def test_ensure_creates_missing_and_keeps_existing(tmp_path: Path) -> None:
     assert stat.S_IMODE((tmp_path / "memory").stat().st_mode) == 0o700
 
 
-def test_refresh_sees_canonical_and_today_not_yesterday(tmp_path: Path) -> None:
+def test_refresh_sees_canonical_and_today_not_previous_day(tmp_path: Path) -> None:
     memory = ActiveMemory(tmp_path, tail_kb=4, timezone_name="Asia/Ho_Chi_Minh")
     (tmp_path / "memory").mkdir()
-    (tmp_path / "memory" / "2026-08-16.md").write_text("# yesterday original\n", encoding="utf-8")
+    (tmp_path / "memory" / "2026-08-16.md").write_text("# previous day\n", encoding="utf-8")
     state = memory.open_session(at("2026-08-17"))
     snap = memory.refresh(state, at("2026-08-17"))
-    assert snap.yesterday == "# yesterday original\n"
+    assert snap.today == "# 2026-08-17\n"
+    assert not hasattr(snap, "yesterday")
+    assert "previous day" not in PromptManager().build(snap)
     (tmp_path / "SOUL.md").write_text("# soul v2\n", encoding="utf-8")
     (tmp_path / "USER.md").write_text("# user v2\n", encoding="utf-8")
     (tmp_path / "memory" / "2026-08-17.md").write_text("# today v2\n", encoding="utf-8")
-    (tmp_path / "memory" / "2026-08-16.md").write_text("# yesterday changed\n", encoding="utf-8")
     snap2 = memory.refresh(state, at("2026-08-17"))
     assert snap2.soul == "# soul v2\n"
     assert snap2.user == "# user v2\n"
     assert snap2.today == "# today v2\n"
-    assert snap2.yesterday == "# yesterday original\n"
 
 
 def test_soul_user_not_tailed_today_is(tmp_path: Path) -> None:
@@ -66,7 +67,7 @@ def test_soul_user_not_tailed_today_is(tmp_path: Path) -> None:
     assert "old" not in snap.today
 
 
-def test_day_rollover_swaps_and_fires_hook(tmp_path: Path) -> None:
+def test_day_rollover_creates_today_and_fires_hook(tmp_path: Path) -> None:
     closed: list[str] = []
     memory = ActiveMemory(
         tmp_path,
@@ -79,7 +80,9 @@ def test_day_rollover_swaps_and_fires_hook(tmp_path: Path) -> None:
     (tmp_path / "memory" / "2026-08-17.md").write_text("# d17 live\n", encoding="utf-8")
     snap = memory.refresh(state, at("2026-08-18"))
     assert state.day == "2026-08-18"
-    assert snap.yesterday == "# d17 live\n"
+    assert snap.today == "# 2026-08-18\n"
+    assert not hasattr(snap, "yesterday")
+    assert "d17 live" not in snap.today
     assert closed == ["2026-08-17"]
     assert (tmp_path / "memory" / "2026-08-18.md").is_file()
 
@@ -112,9 +115,3 @@ def test_refresh_strips_heading_comment(tmp_path: Path) -> None:
     snap = memory.refresh(memory.open_session(at("2026-08-17")), at("2026-08-17"))
     assert "thyca" not in snap.today
     assert snap.today.startswith("## 10:00 — cafe")
-
-
-def test_missing_yesterday_is_empty(tmp_path: Path) -> None:
-    memory = ActiveMemory(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
-    snap: ActiveSnapshot = memory.refresh(memory.open_session(at("2026-08-17")), at("2026-08-17"))
-    assert snap.yesterday == ""

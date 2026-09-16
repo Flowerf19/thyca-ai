@@ -24,4 +24,4 @@ Telegram/Discord, subagent, plan mode, GUI popup, confirmation gate, ANN/vector 
 
 `uv run pytest -q`. Baseline đã biết: `tests/test_cli.py::test_debug_prints_prompt_flags` fail vì `tools=11` vs `tools=7` — không phải regression của pricing.
 
-Chi tiết plan: `.agents/plans/thyca-harness-v1.md`, `plans/done/l2-memory-retrieval.md` (lexical shipped; embedding cancelled 2026-09-16), decision `2026-08-15-l2-hybrid-v1.md`. Trace cost: `plans/done/thyca-trace-cost.md`. UI sổ nghe: `plans/done/thyca-trace-notebook.md`.
+Chi tiết plan: `.agents/plans/thyca-harness-v1.md`, `plans/l2-memory-retrieval.md` (active prompt boundary; lexical shipped; embedding cancelled), decision `2026-08-15-l2-hybrid-v1.md`. Trace cost: `plans/done/thyca-trace-cost.md`. UI sổ nghe: `plans/done/thyca-trace-notebook.md`.

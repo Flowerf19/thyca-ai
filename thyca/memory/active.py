@@ -5,7 +5,7 @@ import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -41,8 +41,6 @@ class ActiveMemoryError(RuntimeError):
 class ActiveState:
     day: str
     today_path: Path
-    yesterday_path: Path | None
-    yesterday: str
 
 
 @dataclass(frozen=True)
@@ -50,7 +48,6 @@ class ActiveSnapshot:
     soul: str
     user: str
     today: str
-    yesterday: str
     identity: str = ""
     skills: str = ""
 
@@ -95,26 +92,12 @@ class ActiveMemory:
     def open_session(self, now: datetime) -> ActiveState:
         self.ensure_files(now)
         day = self._day(now)
-        yesterday_day = self._shift_day(day, -1)
-        yesterday_path = self._daily_path(yesterday_day)
-        yesterday = ""
-        if yesterday_path.is_file() and not yesterday_path.is_symlink():
-            yesterday = self._tail(self._read(yesterday_path))
-        else:
-            yesterday_path = None
-        return ActiveState(
-            day=day,
-            today_path=self._daily_path(day),
-            yesterday_path=yesterday_path,
-            yesterday=yesterday,
-        )
+        return ActiveState(day=day, today_path=self._daily_path(day))
 
     def refresh(self, state: ActiveState, now: datetime) -> ActiveSnapshot:
         day = self._day(now)
         if day != state.day:
             closed = state.day
-            state.yesterday_path = state.today_path
-            state.yesterday = self._tail(self._read(state.today_path))
             state.day = day
             state.today_path = self._daily_path(day)
             self._create_if_missing(state.today_path, f"# {day}\n")
@@ -125,7 +108,6 @@ class ActiveMemory:
             identity=self._read(self.thyca_dir / "IDENTITY.md"),
             user=self._read(self.thyca_dir / "USER.md"),
             today=self._tail(self._read(state.today_path)),
-            yesterday=state.yesterday,
             skills=self._skills.index_text(),
         )
 
@@ -145,10 +127,6 @@ class ActiveMemory:
 
     def _daily_path(self, day: str) -> Path:
         return self.memory_dir / f"{day}.md"
-
-    @staticmethod
-    def _shift_day(day: str, delta: int) -> str:
-        return (datetime.fromisoformat(day).date() + timedelta(days=delta)).isoformat()
 
     def _secure_dir(self, path: Path) -> None:
         try:

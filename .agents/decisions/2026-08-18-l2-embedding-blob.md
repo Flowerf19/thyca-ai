@@ -2,7 +2,7 @@
 status: superseded
 created: 2026-08-18
 last_updated: 2026-08-20
-superseded_by: 580ae03 (drop embedding runtime); embedding cancelled 2026-09-16 — `.agents/plans/done/l2-memory-retrieval.md`
+superseded_by: 580ae03 (drop embedding runtime); embedding cancelled 2026-09-16 — `.agents/plans/l2-memory-retrieval.md`
 ---
 
 # Decision — L2 vectors live on `chunks.embedding`

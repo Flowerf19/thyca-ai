@@ -151,7 +151,7 @@ def test_active_memory_seeds_and_exposes_index(thyca_dir: Path) -> None:
 
 
 def _hot(**overrides: str) -> ActiveSnapshot:
-    base = {"soul": "soul-text", "user": "user-text", "today": "today-text", "yesterday": ""}
+    base = {"soul": "soul-text", "user": "user-text", "today": "today-text"}
     base.update(overrides)
     return ActiveSnapshot(**base)
 

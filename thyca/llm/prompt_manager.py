@@ -42,8 +42,6 @@ class PromptManager:
         if user not in _STUB_USER:
             parts.append(_section("user", hot.user))
         parts.append(_section("today", hot.today))
-        if hot.yesterday:
-            parts.append(_section("yesterday", hot.yesterday))
         if hot.skills:
             parts.append(_section("skills", hot.skills))
         parts.append(_section("rules", self.rules_section()))

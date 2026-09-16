@@ -17,7 +17,7 @@ last_updated: 2026-08-20
 Tham chiếu:
 - Product spec: `thyca-harness-v1.md` — source of truth cho scope và success v1
 - Accepted decision: `../decisions/2026-08-15-l2-hybrid-v1.md`
-- Cold retrieval: `done/l2-memory-retrieval.md` — lexical chunk/schema/reindex/retrieval; embedding cancelled
+- Cold retrieval: `l2-memory-retrieval.md` — lexical chunk/schema/reindex/retrieval; embedding cancelled
 
 ## Flat layout (không `src/`)
 
@@ -62,7 +62,7 @@ thyca-ai/
 ```mermaid
 flowchart TD
     A["CLI: parseArgs + config.load + ActiveMemory.ensureFiles"] --> B["SessionManager: create/load JSONL"]
-    B --> C["ActiveMemory.refresh -> ActiveSnapshot<br/>soul/user/memory/today/yesterday"]
+    B --> C["ActiveMemory.refresh -> ActiveSnapshot<br/>soul/user/identity/today/skills"]
     C --> D["PromptManager.build(hot)<br/>chưa gắn Assemble (TASK-307)"]
     D --> E["AgentLoop.run: assemble: system + hot + session + userMsg<br/>v1 chưa inject system/hot"]
     E --> F{"Connect.chat<br/>OpenAIChat"}
@@ -90,20 +90,20 @@ Class tổng giữa module **dùng activity này**, không vẽ class tổng. Cl
 |---|---------|------|------------|--------|
 | 1 | **Config** | `services/config.md` | `~/.thyca/config.json` (JSON 1 file, đọc ở `~/.thyca`), `provider/embedding/mcpServers/timeline/limits`, resolve `apiKeyEnv` | ✅ done 2026-08-14 (TASK-301/302) |
 | 2 | **Session** | `services/session.md` | JSONL `sessions/*.jsonl` trong `thyca/sessions/` (4 class SOLID), `create/load/append`, `--continue`, compaction rule-based | ✅ done 2026-08-17 (TASK-303a-d) |
-| 3 | **Memory** | `services/memory.md` | Active prompt window: `ActiveMemory` + `ActiveSnapshot`, tail 4KB, day-rollover hook | ✅ done 2026-08-17 (TASK-304) |
+| 3 | **Memory** | `services/memory.md` | Active prompt window: `ActiveMemory` + `ActiveSnapshot`, today tail 4KB, day-rollover hook | ✅ done 2026-09-16 (TASK-304 + current-day boundary) |
 | 4 | **LLM** | `services/llm.md` | `ConnectFactory` → `Connect` (`OpenAIChat` chạy `/chat/completions`; Responses/Google/Anthropic stub) + `PromptManager` | ✅ done 2026-08-20 (TASK-307/308) |
 | 5 | **Tools** | `services/tools.md` | Registry + read/write/edit + `memory_*`. Guard L2/session/config. bash/web MCP sau | ✅ done 2026-08-20 (309/310/324–326; 311 abandoned) |
 | 6 | **MCP** | `services/mcp.md` | stdio spawn, `server__tool` prefix, lifecycle, fault tolerance | ☐ draft |
 | 7 | **Agent Loop** | `services/agent-loop.md` | bốn pha + `Stage` + CLI REPL/`-p` | ✅ done 2026-08-20 (TASK-317/321/322) |
 | 8 | **Skills** | `services/skills.md` | index trong prompt + `write`/`read`, chuẩn Agent Skills, validate-at-scan, không dispatch ẩn | ✅ done 2026-08-28 (TASK-901–904) |
-| — | **Archived (L2)** | `done/l2-memory-retrieval.md` | Lexical (FTS5 + trigram) + TTL lifecycle + facade: code xong 2026-08-17; embedding cancelled 2026-09-16 | ✅ lexical 2026-08-17; embedding cancelled |
+| — | **Archived (L2)** | `l2-memory-retrieval.md` | Lexical (FTS5 + trigram) + TTL lifecycle + facade; active prompt boundary is current-day only | ✅ done 2026-09-16 |
 
 **Checklist duyệt (copy ra issue/PR):**
 
 - [x] 1. Config — `services/config.md` done 2026-08-14
 - [x] 2. Session — duyệt `services/session.md` 2026-08-17 (execution-ready, 303a-d)
 - [x] 3. Memory — duyệt `services/memory.md` (ActiveMemory, TASK-304) done 2026-08-17
-- [ ] — Archived (L2) — duyệt `l2-memory-retrieval.md` riêng, không gộp với ActiveMemory
+- [x] — Archived (L2) — duyệt `l2-memory-retrieval.md` riêng, không gộp với ActiveMemory; active prompt boundary tracked in GOAL-008
 - [ ] 4. LLM — duyệt `services/llm.md`
 - [ ] 5. Tools — duyệt `services/tools.md`
 - [ ] 6. MCP — duyệt `services/mcp.md`

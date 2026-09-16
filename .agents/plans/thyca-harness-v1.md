@@ -95,10 +95,10 @@ Không có ba kho. Session = hội thoại đang chạy. Markdown = nhớ bền.
 
 | Cửa | Đọc gì | Khi nào |
 |---|---|---|
-| **Nóng** | `SOUL.md` + `USER.md` + `MEMORY.md` | Mỗi lượt, phải ngắn |
-| **Nóng (mở session)** | thêm `memory/YYYY-MM-DD.md` hôm nay (+ hôm qua nếu có) | Một lần lúc start / `--continue` |
+| **Nóng** | `SOUL.md` + `USER.md` + `IDENTITY.md` + daily hôm nay | Mỗi lượt, phải ngắn |
+| **Nóng (mở process)** | tạo/chọn `memory/YYYY-MM-DD.md` hôm nay | Một lần lúc start; refresh khi qua ngày |
 | **Lạnh** | L2 hybrid trên markdown ở `~/.thyca`: FTS5 + trigram mặc định; vector/RRF khi `semantic=true` | Tool `memory_search` / `memory_recent` / `memory_get` |
-| **Ghi** | L2 (`memory/ngày.md`, `MEMORY.md`) chỉ `memory_remember`. `write`/`edit` cấm L2 + session + config; **được** SOUL/IDENTITY/USER | Daily/MEMORY = heading+bullet. USER/SOUL/IDENTITY = persona/hồ sơ, không bullet |
+| **Ghi** | L2 daily chỉ `memory_remember`. `write`/`edit` cấm L2 + session + config; **được** SOUL/IDENTITY/USER | Daily = heading+bullet. USER/SOUL/IDENTITY = persona/hồ sơ, không bullet |
 
 File luôn-có (giữ ít):
 
@@ -107,9 +107,8 @@ File luôn-có (giữ ít):
   config.json          # provider + mcp servers
   SOUL.md              # agent là ai
   USER.md              # user là ai
-  MEMORY.md            # sự thật / quyết định đã chắt
   memory/
-    YYYY-MM-DD.md      # nhật ký ngày (lạnh; nóng chỉ hôm nay+hôm qua lúc mở session)
+    YYYY-MM-DD.md      # nhật ký ngày (hôm nay nóng; ngày cũ qua memory tools)
   sessions/*.jsonl
   memory.sqlite        # L2 derived index (FTS/trigram/vector metadata), không phải nguồn sự thật
 ```
@@ -222,7 +221,7 @@ Xong khi: một server mẫu `echo` trong `examples/` nối được; agent gọ
 
 | ID | Task | Done | Date |
 |----|------|------|------|
-| TASK-012 | Lúc start: tạo `SOUL.md` / `USER.md` / `MEMORY.md` / daily hôm nay nếu chưa có (template ngắn). Mỗi lượt nhét SOUL+USER+MEMORY. Lúc mở session thêm daily hôm nay (+ hôm qua nếu có) | | |
+| TASK-012 | Lúc start: tạo `SOUL.md` / `USER.md` / `IDENTITY.md` / daily hôm nay nếu chưa có. Mỗi lượt nhét profile + today tail; daily đã đóng chỉ qua memory tools | x | 2026-09-16 |
 | TASK-013 | `memory_remember(topic, summary, content="", target="daily")`: daily locked append; target `user|memory|soul` atomic rewrite. Builtin write/edit không được ghi dưới `~/.thyca` | | |
 
 Xong khi: "nhớ là tôi uống cà phê không đường" → dòng trong daily; session mới cùng ngày thấy ở cửa nóng; "nhớ bền: tôi ở Hà Nội" → `USER.md` hoặc `MEMORY.md`.
@@ -293,7 +292,7 @@ Ghi để review. Sai thì sửa plan trước khi code.
 1. Stack: tự thiết kế, loop viết mới. **Python 3.14 + uv** (đảo TS/Node 2026-08-13 — user rành Python).
 2. Kênh: CLI đủ v1.
 3. An toàn: gate đã chốt rồi **đảo** — v1 bỏ gate, tool chạy thẳng (2026-08-13). Seam `run` để cắm lại sau.
-4. Nhớ: một kho markdown. Nóng = SOUL+USER+MEMORY mỗi lượt, daily hôm nay(+hôm qua) lúc mở session. Lạnh = L2 hybrid leaf-level, lazy day-close; canonical files luôn indexable.
+4. Nhớ: một kho markdown. Nóng = profile + daily hôm nay mỗi lượt. Daily đã đóng ngày là L2 lexical, agent truy xuất qua memory tools; canonical files luôn indexable.
 5. Tool: read-only calls có thể chạy song song; mutating calls phải serialize theo resource.
 
 Còn mở (không chặn duyệt nếu im): các câu hỏi gate cũ (MCP có hỏi không, bash pattern nào) gác lại đến khi cắm lại gate.

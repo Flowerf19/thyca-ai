@@ -28,7 +28,7 @@ def node() -> str:
 
 def _eval(node: str, expression: str) -> object:
     source = (
-        f"import {{ toolsFromDetail, groupToolCalls, groupTraceTurns, selectedModelConfig,"
+        f"import {{ toolsFromDetail, toolBatchesFromDetail, groupToolCalls, groupTraceTurns, selectedModelConfig,"
         f" tokenCost, firstUserText, finalAssistantText, formatRecordText, asArguments }}"
         f" from '{TRACE_DATA.as_posix()}';\n"
         f"console.log(JSON.stringify({expression}));\n"
@@ -69,6 +69,26 @@ def test_skill_call_keeps_raw_name_and_skill(node: str) -> None:
          "arguments": {"path": "SKILL.md"}, "output": "out1", "latencyMs": 120},
         {"id": "c2", "name": "read", "skill": None,
          "arguments": {"path": "notes.md"}, "output": "out2", "latencyMs": 5},
+    ]
+
+
+def test_tool_batches_preserve_parallel_assistant_calls(node: str) -> None:
+    detail = {
+        "messages": [
+            {"role": "user", "content": "go"},
+            {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "c1", "name": "memory_recent"},
+                {"id": "c2", "name": "bash"},
+            ]},
+            {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "c3", "name": "read"},
+            ]},
+        ]
+    }
+    batches = _eval(node, f"toolBatchesFromDetail({json.dumps(detail)})")
+    assert [[call["name"] for call in batch] for batch in batches] == [
+        ["memory_recent", "bash"],
+        ["read"],
     ]
 
 

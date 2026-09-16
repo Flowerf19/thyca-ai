@@ -80,7 +80,7 @@ export function asArguments(value) {
   return { value };
 }
 
-export function toolsFromDetail(detail) {
+function toolBatches(detail) {
   const messages = Array.isArray(detail?.messages) ? detail.messages : [];
   const results = new Map();
   for (const message of messages) {
@@ -91,23 +91,30 @@ export function toolsFromDetail(detail) {
       });
     }
   }
-  const tools = [];
-  for (const message of messages) {
-    if (message?.role !== "assistant") continue;
-    for (const call of message.tool_calls || []) {
-      if (!call?.id && !call?.name) continue;
-      const result = results.get(String(call.id || ""));
-      tools.push({
-        id: cleanText(call.id),
-        name: cleanText(call.name, "tool"),
-        skill: cleanText(call.skill) || null,
-        arguments: asArguments(call.arguments),
-        output: result?.content ?? null,
-        latencyMs: result?.latencyMs ?? null,
-      });
-    }
-  }
-  return tools;
+  return messages
+    .filter((message) => message?.role === "assistant" && Array.isArray(message.tool_calls))
+    .map((message) => message.tool_calls
+      .filter((call) => call?.id || call?.name)
+      .map((call) => {
+        const result = results.get(String(call.id || ""));
+        return {
+          id: cleanText(call.id),
+          name: cleanText(call.name, "tool"),
+          skill: cleanText(call.skill) || null,
+          arguments: asArguments(call.arguments),
+          output: result?.content ?? null,
+          latencyMs: result?.latencyMs ?? null,
+        };
+      }))
+    .filter((batch) => batch.length);
+}
+
+export function toolBatchesFromDetail(detail) {
+  return toolBatches(detail);
+}
+
+export function toolsFromDetail(detail) {
+  return toolBatches(detail).flat();
 }
 
 // Missing latency is null, never 0: Number(null) === 0 would print "0ms".

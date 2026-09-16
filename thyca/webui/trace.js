@@ -17,6 +17,7 @@ import {
   groupTraceTurns,
   selectedModelConfig,
   tokenCost,
+  toolBatchesFromDetail,
   toolsFromDetail,
 } from "./backend/trace-data.js";
 
@@ -45,7 +46,7 @@ const state = {
   config: null,
   tools: [],
   toolGroups: [],
-  metaText: "",
+  toolBatches: [],
   generation: 0,
 };
 
@@ -61,10 +62,6 @@ function setStatus(message = "", kind = "") {
 function setText(selector, value) {
   const node = document.querySelector(selector);
   if (node) node.textContent = String(value ?? "—");
-}
-
-function pretty(value) {
-  return JSON.stringify(value, null, 2);
 }
 
 function activeGroup() {
@@ -111,7 +108,7 @@ function emptyDetail(message) {
   state.detail = null;
   state.tools = [];
   state.toolGroups = [];
-  state.metaText = "";
+  state.toolBatches = [];
   el.detail.hidden = true;
   el.crumb.textContent = `Trace › ${message}`;
   el.copyLabel.textContent = "ID: —";
@@ -170,21 +167,84 @@ function callLabel(call) {
   return parts.join(" · ");
 }
 
-// One place to push a text span into a summary's copy slot.
-function copyOf(name, meta) {
-  const copy = document.createElement("div");
-  copy.className = "fold-row-copy";
-  const nameEl = document.createElement("span");
-  nameEl.className = "fold-row-name";
-  nameEl.textContent = name;
-  copy.append(nameEl);
-  if (meta) {
-    const metaEl = document.createElement("span");
-    metaEl.className = "fold-row-meta";
-    metaEl.textContent = meta;
-    copy.append(metaEl);
+function arrow() {
+  const node = document.createElement("span");
+  node.className = "trace-flow-arrow";
+  node.textContent = "→";
+  node.setAttribute("aria-hidden", "true");
+  return node;
+}
+
+function flowNode(label, value, className = "") {
+  const node = document.createElement("details");
+  node.className = `trace-flow-node${className ? ` ${className}` : ""}`;
+  const summary = document.createElement("summary");
+  summary.className = "trace-flow-pill";
+  const name = document.createElement("span");
+  name.className = "trace-flow-name";
+  name.textContent = label;
+  summary.append(name);
+  const body = document.createElement("div");
+  body.className = "trace-flow-body";
+  body.textContent = value;
+  node.append(summary, body);
+  return node;
+}
+
+function toolFlowNode(group) {
+  const node = document.createElement("details");
+  node.className = "trace-flow-node trace-flow-tool";
+  const summary = document.createElement("summary");
+  summary.className = "trace-flow-pill";
+  const name = document.createElement("span");
+  name.className = "trace-flow-name";
+  name.textContent = `${group.name} ×${group.count}`;
+  const stat = document.createElement("span");
+  stat.className = "trace-flow-stat";
+  stat.textContent = formatDuration(group.latencyMs);
+  summary.append(name, stat);
+  node.append(summary, toolBody(group));
+  return node;
+}
+
+function flowGroups(batch) {
+  return groupToolCalls(batch);
+}
+
+function toolFlow() {
+  const flow = document.createElement("div");
+  flow.className = "trace-flow";
+  for (const [index, batch] of state.toolBatches.entries()) {
+    const groups = flowGroups(batch);
+    if (index) flow.append(arrow());
+    if (groups.length > 1) {
+      const parallel = document.createElement("div");
+      parallel.className = "trace-parallel";
+      parallel.setAttribute("role", "group");
+      parallel.setAttribute("aria-label", "Các tool chạy song song");
+      const label = document.createElement("span");
+      label.className = "trace-parallel-label";
+      label.textContent = "song song";
+      const nodes = document.createElement("div");
+      nodes.className = "trace-parallel-nodes";
+      groups.forEach((group) => nodes.append(toolFlowNode(group)));
+      parallel.append(label, nodes);
+      flow.append(parallel);
+    } else if (groups[0]) {
+      flow.append(toolFlowNode(groups[0]));
+    }
   }
-  return copy;
+  return flow;
+}
+
+function renderRecord() {
+  if (!el.turnMetaBody) return;
+  const record = document.createElement("div");
+  record.className = "trace-record";
+  record.append(flowNode("Input", firstUserText(state.detail), "trace-flow-input"));
+  if (state.toolBatches.length) record.append(arrow(), toolFlow());
+  record.append(arrow(), flowNode("Output", finalAssistantText(state.detail), "trace-flow-output"));
+  el.turnMetaBody.replaceChildren(record);
 }
 
 // One catalog entry: a single call opens straight to its record, several calls
@@ -210,21 +270,11 @@ function toolBody(group) {
 
 function renderTools() {
   state.tools = toolsFromDetail(state.detail);
+  state.toolBatches = toolBatchesFromDetail(state.detail);
   state.toolGroups = groupToolCalls(state.tools);
   el.toolSection.hidden = !state.toolGroups.length;
-  const rows = state.toolGroups.map((group) => {
-    const fold = document.createElement("details");
-    fold.className = "fold-row fold-row--plain";
-    const summary = document.createElement("summary");
-    summary.append(copyOf(`${group.name} ×${group.count}`, null));
-    const stat = document.createElement("span");
-    stat.className = "fold-row-stat";
-    stat.textContent = formatDuration(group.latencyMs);
-    summary.append(stat);
-    fold.append(summary, toolBody(group));
-    return fold;
-  });
-  el.toolList.replaceChildren(...rows);
+  const flow = toolFlow();
+  el.toolList.replaceChildren(flow);
 }
 
 function renderDetail() {
@@ -260,21 +310,11 @@ function renderDetail() {
   setText("#output-cost-line", formatCost(tokenCost(detail.completion_tokens, rates.output)));
   setText("#cache-cost-line", formatCost(tokenCost(cacheTokens, rates.cache)));
   setText("#page-status", `${state.turnIndex + 1} / ${total}`);
-  state.metaText = pretty({
-    session_id: detail.session_id,
-    turn_index: detail.turn_index,
-    started_at: detail.started_at,
-    ended_at: detail.ended_at,
-    requests: detail.requests,
-    rounds: detail.rounds,
-    input: firstUserText(detail),
-    output: finalAssistantText(detail),
-  });
   el.previous.disabled = state.turnIndex === 0;
   el.next.disabled = state.turnIndex >= total - 1;
-  if (el.turnMetaBody) el.turnMetaBody.textContent = state.metaText;
-  if (el.turnMetaFold) el.turnMetaFold.open = false;
   renderTools();
+  renderRecord();
+  if (el.turnMetaFold) el.turnMetaFold.open = false;
   el.content.scrollTop = 0;
 }
 

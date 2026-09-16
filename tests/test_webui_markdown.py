@@ -217,6 +217,9 @@ def test_trace_typography_matches_profile_screen() -> None:
     assert 'Nhật ký' not in html
     assert "function renderProgress()" in script
     assert 'className = "trace-dot"' in script
+    assert 'flowNode("Input"' in script
+    assert 'flowNode("Output"' in script
+    assert 'className = "trace-parallel"' in script
     assert ".trace-section > h3::before" in trace
     assert ".trace-section > .screen-card.fold-list" in trace
     assert ".tool-calls .fold-list" not in trace

@@ -259,13 +259,132 @@
   padding-inline-end: 1.1rem;
 }
 
-.trace-section .fold-row-stat {
-  grid-column: 2;
-  grid-row: 1;
-  justify-self: end;
+.trace-flow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.7rem;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 1rem 1.1rem;
+}
+
+.trace-flow-node {
+  flex: 0 1 auto;
+  width: 12rem;
+  min-width: 10rem;
+  max-width: 100%;
+}
+
+.trace-flow-node[open] {
+  width: min(30rem, 100%);
+}
+
+.trace-flow-node > summary {
+  list-style: none;
+}
+
+.trace-flow-node > summary::-webkit-details-marker {
+  display: none;
+}
+
+.trace-flow-pill {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.7rem;
+  min-height: 2.8rem;
+  padding: 0.55rem 0.9rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-paper-input);
+  cursor: pointer;
+}
+
+.trace-flow-pill:hover {
+  border-color: var(--color-accent);
+}
+
+.trace-flow-name {
+  color: var(--color-ink);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.trace-flow-stat,
+.trace-parallel-label {
   color: var(--color-muted);
-  font-size: 0.875rem;
   font-style: italic;
+  white-space: nowrap;
+}
+
+.trace-flow-body {
+  width: min(30rem, 100%);
+  box-sizing: border-box;
+  margin-top: 0.55rem;
+  padding: 0.7rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper-input);
+  max-height: 40vh;
+  overflow: auto;
+}
+
+.trace-flow-io {
+  min-width: 12rem;
+}
+
+.trace-flow-tool .fold-row-body {
+  padding-inline: 0;
+}
+
+.trace-flow-io .trace-flow-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.trace-flow-arrow {
+  flex: 0 0 auto;
+  color: var(--color-accent);
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.trace-parallel {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 0.35rem;
+  padding: 0.55rem 0.7rem 0.7rem;
+  border: 2px dashed color-mix(in oklab, var(--color-accent) 38%, var(--color-border));
+  border-radius: 1.1rem;
+}
+
+.trace-parallel-label {
+  padding-inline-start: 0.15rem;
+  font-size: 0.9rem;
+}
+
+.trace-parallel-nodes {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.trace-parallel .trace-flow-node {
+  min-width: 15rem;
+}
+
+.trace-record {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.7rem;
+  width: 100%;
+  min-width: 0;
+}
+
+.trace-record > .trace-flow {
+  display: contents;
 }
 
 .call-fold {
@@ -349,6 +468,12 @@
 
 .turn-meta-body {
   min-width: 0;
+  min-height: 0;
+  max-height: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  overflow: visible;
   font: 1rem/1.5 var(--font-mono);
 }
 

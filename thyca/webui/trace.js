@@ -18,7 +18,6 @@ import {
   selectedModelConfig,
   tokenCost,
   toolBatchesFromDetail,
-  toolsFromDetail,
 } from "./backend/trace-data.js";
 
 const el = {
@@ -32,10 +31,8 @@ const el = {
   progress: document.querySelector("#turn-progress"),
   previous: document.querySelector("#page-prev"),
   next: document.querySelector("#page-next"),
-  toolSection: document.querySelector("#tool-calls"),
-  toolList: document.querySelector("#tool-list"),
-  turnMetaFold: document.querySelector("#turn-meta-fold"),
-  turnMetaBody: document.querySelector("#turn-meta-body"),
+  activitySection: document.querySelector("#activity-log"),
+  recordFlow: document.querySelector("#record-flow"),
 };
 
 const state = {
@@ -44,8 +41,6 @@ const state = {
   turnIndex: 0,
   detail: null,
   config: null,
-  tools: [],
-  toolGroups: [],
   toolBatches: [],
   generation: 0,
 };
@@ -106,11 +101,10 @@ function renderSidebar() {
 
 function emptyDetail(message) {
   state.detail = null;
-  state.tools = [];
-  state.toolGroups = [];
   state.toolBatches = [];
   el.detail.hidden = true;
   el.crumb.textContent = `Trace › ${message}`;
+  el.recordFlow?.replaceChildren();
   el.copyLabel.textContent = "ID: —";
   el.copy.disabled = true;
   el.progress?.replaceChildren();
@@ -211,40 +205,57 @@ function flowGroups(batch) {
   return groupToolCalls(batch);
 }
 
+function parallelNode(groups) {
+  const parallel = document.createElement("div");
+  parallel.className = "trace-parallel";
+  parallel.setAttribute("role", "group");
+  parallel.setAttribute("aria-label", "Các tool chạy song song");
+  const label = document.createElement("span");
+  label.className = "trace-parallel-label";
+  label.textContent = "song song";
+  const nodes = document.createElement("div");
+  nodes.className = "trace-parallel-nodes";
+  groups.forEach((group) => nodes.append(toolFlowNode(group)));
+  parallel.append(label, nodes);
+  return parallel;
+}
+
+function toolFlowSteps() {
+  return state.toolBatches.flatMap((batch) => {
+    const groups = flowGroups(batch);
+    if (groups.length > 1) return [parallelNode(groups)];
+    return groups[0] ? [toolFlowNode(groups[0])] : [];
+  });
+}
+
 function toolFlow() {
   const flow = document.createElement("div");
   flow.className = "trace-flow";
-  for (const [index, batch] of state.toolBatches.entries()) {
-    const groups = flowGroups(batch);
-    if (index) flow.append(arrow());
-    if (groups.length > 1) {
-      const parallel = document.createElement("div");
-      parallel.className = "trace-parallel";
-      parallel.setAttribute("role", "group");
-      parallel.setAttribute("aria-label", "Các tool chạy song song");
-      const label = document.createElement("span");
-      label.className = "trace-parallel-label";
-      label.textContent = "song song";
-      const nodes = document.createElement("div");
-      nodes.className = "trace-parallel-nodes";
-      groups.forEach((group) => nodes.append(toolFlowNode(group)));
-      parallel.append(label, nodes);
-      flow.append(parallel);
-    } else if (groups[0]) {
-      flow.append(toolFlowNode(groups[0]));
-    }
+  const steps = toolFlowSteps();
+  for (let start = 0; start < steps.length; start += 3) {
+    const row = document.createElement("div");
+    row.className = "trace-flow-row";
+    const chunk = steps.slice(start, start + 3);
+    chunk.forEach((step, index) => {
+      const item = document.createElement("div");
+      item.className = "trace-flow-step";
+      item.append(step);
+      if (start + index < steps.length - 1) item.append(arrow());
+      row.append(item);
+    });
+    flow.append(row);
   }
   return flow;
 }
 
 function renderRecord() {
-  if (!el.turnMetaBody) return;
+  if (!el.recordFlow) return;
   const record = document.createElement("div");
   record.className = "trace-record";
   record.append(flowNode("Input", firstUserText(state.detail), "trace-flow-input"));
   if (state.toolBatches.length) record.append(arrow(), toolFlow());
   record.append(arrow(), flowNode("Output", finalAssistantText(state.detail), "trace-flow-output"));
-  el.turnMetaBody.replaceChildren(record);
+  el.recordFlow.replaceChildren(record);
 }
 
 // One catalog entry: a single call opens straight to its record, several calls
@@ -268,13 +279,9 @@ function toolBody(group) {
   return body;
 }
 
-function renderTools() {
-  state.tools = toolsFromDetail(state.detail);
+function prepareTools() {
   state.toolBatches = toolBatchesFromDetail(state.detail);
-  state.toolGroups = groupToolCalls(state.tools);
-  el.toolSection.hidden = !state.toolGroups.length;
-  const flow = toolFlow();
-  el.toolList.replaceChildren(flow);
+  el.activitySection.hidden = false;
 }
 
 function renderDetail() {
@@ -312,9 +319,8 @@ function renderDetail() {
   setText("#page-status", `${state.turnIndex + 1} / ${total}`);
   el.previous.disabled = state.turnIndex === 0;
   el.next.disabled = state.turnIndex >= total - 1;
-  renderTools();
+  prepareTools();
   renderRecord();
-  if (el.turnMetaFold) el.turnMetaFold.open = false;
   el.content.scrollTop = 0;
 }
 

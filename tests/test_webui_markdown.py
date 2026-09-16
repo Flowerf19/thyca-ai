@@ -196,8 +196,7 @@ def test_trace_typography_matches_profile_screen() -> None:
     html = (WEBUI / "trace.html").read_text(encoding="utf-8")
     script = (WEBUI / "trace.js").read_text(encoding="utf-8")
 
-    # Trace content uses the same profile body and heading families/sizes;
-    # only raw turn metadata keeps a monospace face for readability.
+    # Trace content uses the same profile body and heading families/sizes.
     assert ".trace-content {" in trace
     assert "font-family: var(--font-reading);" in trace
     assert "font-size: 1rem;" in trace
@@ -205,27 +204,28 @@ def test_trace_typography_matches_profile_screen() -> None:
     assert "font-family: var(--font-display);" in trace
     assert "font-size: 1.15rem;" in trace
     assert "#canonical-content" in profile
-    assert "var(--font-mono)" in trace
 
     # The detail reads as a sequence of labelled sections, with the same
     # terracotta title mark as the chat brand stripe and clickable turn dots.
     assert 'class="turn-progress"' in html
     assert 'class="general-card screen-card"' in html
     assert 'class="trace-section token-section"' in html
-    assert '>Đã dùng</h3>' in html
-    assert 'Bản ghi lượt</span>' in html
-    assert 'Nhật ký' not in html
+    assert '>Log hoạt động</h3>' in html
+    assert 'id="record-flow"' in html
+    assert 'Đã dùng' not in html
+    assert 'Bản ghi lượt' not in html
     assert "function renderProgress()" in script
     assert 'className = "trace-dot"' in script
     assert 'flowNode("Input"' in script
     assert 'flowNode("Output"' in script
     assert 'className = "trace-parallel"' in script
     assert ".trace-section > h3::before" in trace
-    assert ".trace-section > .screen-card.fold-list" in trace
+    assert ".trace-record-card" in trace
+    assert ".activity-log h3" in trace
     assert ".tool-calls .fold-list" not in trace
     assert ".turn-meta-section > .screen-card" not in trace
-    assert ".trace-section .fold-row--plain > summary" in trace
-    assert "grid-template-columns: minmax(0, 1fr) auto 1rem;" in trace
+    assert "grid-template-columns: repeat(3, minmax(0, 1fr));" in trace
+    assert "trace-flow-row" in script
 
 
 def test_overview_typography_matches_profile_screen() -> None:

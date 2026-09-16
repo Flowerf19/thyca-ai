@@ -38,7 +38,7 @@
 }
 
 .general h3,
-.tool-calls h3 {
+.activity-log h3 {
   display: flex;
   align-items: center;
   gap: 0.45rem;
@@ -238,47 +238,45 @@
   font-size: 1rem;
 }
 
-.tool-calls {
+.activity-log {
   margin: 1.35rem 1.2rem 1.2rem;
 }
 
-.tool-calls h3 {
+.activity-log h3 {
   margin: 0 0 0.7rem;
 }
 
-/* The used-tool list and journal are the same fold-list surface. Their rows
-   differ in content only; the surrounding card and arrow spacing stay identical. */
-.trace-section > .screen-card.fold-list {
+.trace-record-card {
   margin: 0;
-}
-
-.trace-section .fold-row--plain > summary {
-  grid-template-columns: minmax(0, 1fr) auto 1rem;
-  grid-template-rows: auto;
-  min-height: 4.65rem;
-  padding-inline-end: 1.1rem;
+  padding: 0;
+  overflow: hidden;
 }
 
 .trace-flow {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  display: grid;
   gap: 0.7rem;
   width: 100%;
   min-width: 0;
-  box-sizing: border-box;
   padding: 1rem 1.1rem;
 }
 
-.trace-flow-node {
-  flex: 0 1 auto;
-  width: 12rem;
-  min-width: 10rem;
-  max-width: 100%;
+.trace-flow-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.7rem;
+  min-width: 0;
 }
 
-.trace-flow-node[open] {
-  width: min(30rem, 100%);
+.trace-flow-step {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.trace-flow-step .trace-flow-node {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .trace-flow-node > summary {
@@ -307,9 +305,11 @@
 }
 
 .trace-flow-name {
+  flex: 1 1 auto;
+  min-width: 0;
   color: var(--color-ink);
   font-weight: 500;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .trace-flow-stat,
@@ -320,7 +320,7 @@
 }
 
 .trace-flow-body {
-  width: min(30rem, 100%);
+  width: 100%;
   box-sizing: border-box;
   margin-top: 0.55rem;
   padding: 0.7rem;
@@ -329,14 +329,6 @@
   background: var(--color-paper-input);
   max-height: 40vh;
   overflow: auto;
-}
-
-.trace-flow-io {
-  min-width: 12rem;
-}
-
-.trace-flow-tool .fold-row-body {
-  padding-inline: 0;
 }
 
 .trace-flow-io .trace-flow-body {
@@ -353,7 +345,7 @@
 
 .trace-parallel {
   display: grid;
-  flex: 0 0 auto;
+  width: 100%;
   gap: 0.35rem;
   padding: 0.55rem 0.7rem 0.7rem;
   border: 2px dashed color-mix(in oklab, var(--color-accent) 38%, var(--color-border));
@@ -371,20 +363,22 @@
 }
 
 .trace-parallel .trace-flow-node {
-  min-width: 15rem;
+  width: 100%;
 }
 
 .trace-record {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  display: grid;
+  grid-template-columns: 12rem auto minmax(0, 1fr) auto 12rem;
+  align-items: start;
   gap: 0.7rem;
   width: 100%;
   min-width: 0;
+  padding: 1rem 1.1rem;
 }
 
 .trace-record > .trace-flow {
-  display: contents;
+  align-self: start;
+  padding: 0;
 }
 
 .call-fold {
@@ -410,8 +404,7 @@
   font-size: 1.15rem;
 }
 
-.record-block p,
-.turn-meta-body {
+.record-block p {
   margin: 0;
   min-height: 4.5rem;
   max-height: 18rem;
@@ -422,27 +415,6 @@
   background: var(--color-paper-input);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-}
-
-.turn-meta-section {
-  margin-bottom: 1.2rem;
-}
-
-.turn-record-summary .fold-row-copy,
-.turn-record-summary .fold-row-name {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-}
-
-.turn-record-summary .fold-row-name::before {
-  content: "";
-  flex: 0 0 0.3rem;
-  width: 0.3rem;
-  height: 1.35rem;
-  border-radius: 99px;
-  background: var(--chat-brand-accent);
-  box-shadow: 0 0 0.35rem color-mix(in oklab, var(--chat-brand-accent) 35%, transparent);
 }
 
 .record-block {
@@ -464,17 +436,6 @@
   font-family: var(--font-reading);
   font-size: 1rem;
   line-height: 1.5;
-}
-
-.turn-meta-body {
-  min-width: 0;
-  min-height: 0;
-  max-height: none;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  overflow: visible;
-  font: 1rem/1.5 var(--font-mono);
 }
 
 @media (max-width: 56rem) {
@@ -527,11 +488,31 @@
     padding: 0.9rem;
   }
 
-  .tool-calls {
-    margin-inline: 0.8rem;
+  .trace-record {
+    grid-template-columns: minmax(0, 1fr);
   }
 
-  .turn-meta-section {
+  .trace-record > .trace-flow-node,
+  .trace-record > .trace-flow,
+  .trace-record > .trace-flow-arrow {
+    grid-column: 1;
+  }
+
+  .trace-record > .trace-flow-node {
+    justify-self: center;
+    width: min(100%, 18rem);
+  }
+
+  .trace-record > .trace-flow-arrow {
+    justify-self: center;
+    transform: rotate(90deg);
+  }
+
+  .trace-flow-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .activity-log {
     margin-inline: 0.8rem;
   }
 
@@ -541,6 +522,10 @@
 }
 
 @media (max-width: 36rem) {
+  .trace-flow-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .general-card {
     grid-template-columns: minmax(0, 1fr);
   }

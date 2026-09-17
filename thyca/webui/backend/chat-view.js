@@ -87,6 +87,21 @@ function usageRow(completedNames, activeNames = []) {
   return row;
 }
 
+function againButton() {
+  const again = document.createElement("button");
+  again.type = "button";
+  again.className = "again";
+  again.setAttribute("aria-label", "Thử lại");
+  const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  icon.setAttribute("viewBox", "0 0 24 24");
+  icon.setAttribute("aria-hidden", "true");
+  icon.innerHTML = '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 3v5h5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>';
+  const againLabel = document.createElement("span");
+  againLabel.textContent = "Thử lại";
+  again.append(icon, againLabel);
+  return again;
+}
+
 function userMessage(message) {
   const article = document.createElement("article");
   article.className = "message-user";
@@ -152,18 +167,7 @@ function assistantMessage(segments, ts) {
     }
   }
   const footer = document.createElement("footer");
-  const again = document.createElement("button");
-  again.type = "button";
-  again.className = "again";
-  again.setAttribute("aria-label", "Thử lại");
-  const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  icon.setAttribute("viewBox", "0 0 24 24");
-  icon.setAttribute("aria-hidden", "true");
-  icon.innerHTML = '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 3v5h5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>';
-  const againLabel = document.createElement("span");
-  againLabel.textContent = "Thử lại";
-  again.append(icon, againLabel);
-  footer.append(again);
+  footer.append(againButton());
   if (ts) {
     const time = document.createElement("time");
     time.dateTime = String(ts);
@@ -220,6 +224,10 @@ export function renderConversation(root, messages) {
     }
   }
   flushAssistant();
+  const last = nodes[nodes.length - 1];
+  if (last?.classList.contains("message-user")) {
+    last.querySelector("footer")?.prepend(againButton());
+  }
   root.replaceChildren(...nodes);
   return nodes.length;
 }
@@ -308,13 +316,17 @@ export function updateLiveStatus(live, event) {
     live.active.delete(callKey);
     live.completed.push(name);
   }
-  if (event?.type === "turn.failed") {
+  if (event?.type === "turn.failed" || event?.type === "turn.cancelled") {
     // The turn is over, so nothing is still running: settle the row instead
     // of leaving it claiming a call is in flight.
     live.completed.push(...live.active.values());
     live.active.clear();
   }
-  if (event?.type === "turn.completed" || event?.type === "turn.failed") {
+  if (
+    event?.type === "turn.completed"
+    || event?.type === "turn.failed"
+    || event?.type === "turn.cancelled"
+  ) {
     live.thinking?.settle();
   }
   live.article.querySelectorAll(".usage-row").forEach((node) => node.remove());

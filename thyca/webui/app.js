@@ -14,6 +14,9 @@ const el = {
   composer: document.querySelector("#composer"),
   input: document.querySelector("#message"),
   send: document.querySelector("#send-message"),
+  model: document.querySelector("#composer-model"),
+  effort: document.querySelector("#thinking-effort"),
+  stop: document.querySelector("#stop-button"),
   status: document.querySelector("#composer-hint"),
   sessionList: document.querySelector("#session-list"),
   newSession: document.querySelector("#new-session"),
@@ -379,7 +382,7 @@ async function followTurn(sessionId) {
       },
       { signal: controller.signal },
     );
-    if (state.activeId === sessionId) renderDetail(detail);
+    if (state.activeId === sessionId) await showTurnDetail(sessionId, detail);
     await refreshSessions();
     if (state.activeId === sessionId) armIdle();
   } catch (error) {
@@ -494,6 +497,20 @@ async function ensureSession() {
   return state.activeId;
 }
 
+function composerTurn(extra) {
+  const body = { ...extra };
+  if (el.model.value) body.model = el.model.value;
+  if (el.effort.value) body.effort = el.effort.value;
+  return body;
+}
+
+async function showTurnDetail(sessionId, detail) {
+  if (state.activeId !== sessionId) return;
+  if (!detail) detail = await getJson(`/api/sessions/${encodeURIComponent(sessionId)}`);
+  if (state.activeId !== sessionId) return;
+  renderDetail(detail);
+}
+
 async function sendMessage() {
   const text = el.input.value.trim();
   if (!text) {
@@ -523,7 +540,7 @@ async function sendMessage() {
     scrollToBottom();
     const detail = await postNdjson(
       `/api/sessions/${encodeURIComponent(sessionId)}/turn/stream`,
-      { text },
+      composerTurn({ text }),
       (event) => {
         updateLiveStatus(live, event);
         if (state.activeId === sessionId) scrollToBottom();
@@ -531,7 +548,7 @@ async function sendMessage() {
     );
     // The user may have switched to another session mid-turn: only the
     // session still on screen gets re-rendered.
-    if (state.activeId === sessionId) renderDetail(detail);
+    if (state.activeId === sessionId) await showTurnDetail(sessionId, detail);
     await refreshSessions();
     noteSend(sessionId);
     if (state.activeId === sessionId) armIdle();
@@ -560,8 +577,72 @@ async function sendMessage() {
   }
 }
 
+async function stopTurn() {
+  if (!composerBusy()) return;
+  const sessionId = state.streamSessionId || sessionKey();
+  if (!sessionId) return;
+  try {
+    await postJson(`/api/sessions/${encodeURIComponent(sessionId)}/turn/cancel`, {});
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 409) return;
+  }
+}
+
+async function retryMessage() {
+  if (composerBusy()) return;
+
+  clearNudge();
+  hideIdle();
+  window.clearTimeout(idleTimer);
+  setSending(true);
+  let sessionId = "";
+  try {
+    sessionId = await ensureSession();
+    state.streamSessionId = sessionId;
+    syncComposer();
+    const live = createLiveStatus(el.messageList);
+    liveTurns.set(sessionId, live);
+    scrollToBottom();
+    const detail = await postNdjson(
+      `/api/sessions/${encodeURIComponent(sessionId)}/turn/stream`,
+      composerTurn({ retry: true }),
+      (event) => {
+        updateLiveStatus(live, event);
+        if (state.activeId === sessionId) scrollToBottom();
+      },
+    );
+    if (state.activeId === sessionId) await showTurnDetail(sessionId, detail);
+    await refreshSessions();
+    noteSend(sessionId);
+    if (state.activeId === sessionId) armIdle();
+  } catch (error) {
+    idleFromNudge = false;
+    const refused = error instanceof ApiError && error.status === 409;
+    if (state.activeId === sessionId) {
+      if (refused) {
+        renderDetail({ ...(state.detail || {}), running: true });
+        watchRunning(sessionId);
+      } else {
+        const live = el.messageList.querySelector(".live-status:last-of-type");
+        if (live) setChatBrand(live, { state: "error", status: SEND_ERROR_STATUS });
+      }
+    }
+  } finally {
+    if (sessionId) liveTurns.delete(sessionId);
+    state.streamSessionId = "";
+    setSending(false);
+    el.input.focus();
+    updateToBottom();
+  }
+}
+
 function bind() {
   el.newSession.addEventListener("click", newSession);
+  el.stop.addEventListener("click", () => void stopTurn());
+  el.messageList.addEventListener("click", (event) => {
+    if (!event.target.closest(".again")) return;
+    void retryMessage();
+  });
   el.composer.addEventListener("submit", (event) => {
     event.preventDefault();
     void sendMessage();
@@ -607,6 +688,36 @@ function bind() {
   }
 }
 
+function fillComposerControls(payload) {
+  const values = payload?.values || {};
+  const provider = values.provider || {};
+  const catalog = [...new Set(
+    [provider.model, ...Object.keys(values.models || {})].filter(
+      (id) => typeof id === "string" && id,
+    ),
+  )];
+  el.model.replaceChildren(
+    ...catalog.map((id) => {
+      const option = document.createElement("option");
+      option.value = id;
+      option.textContent = id;
+      return option;
+    }),
+  );
+  if (!catalog.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.disabled = true;
+    option.selected = true;
+    option.textContent = "Model";
+    el.model.append(option);
+  } else if (provider.model) {
+    el.model.value = provider.model;
+  }
+  const effort = provider.reasoningEffort;
+  el.effort.value = effort === "low" || effort === "medium" || effort === "high" ? effort : "high";
+}
+
 async function boot() {
   bind();
   renderEmpty(el.messageList, "Đang mở sổ…", "Thyca đang tìm những phiên đã lưu.");
@@ -616,6 +727,7 @@ async function boot() {
       location.replace("./provider.html?required=1");
       return;
     }
+    fillComposerControls(await getJson("/api/config"));
     await refreshSessions();
     let saved = "";
     try {

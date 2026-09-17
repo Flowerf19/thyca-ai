@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import sys
 import threading
+import time
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from time import perf_counter
@@ -15,7 +18,7 @@ from thyca.agent.events import EventSink, TurnEvent, emit_event
 from thyca.agent.loop import AgentLoop
 from thyca.agent.observe import Observe
 from thyca.agent.think import LLMPort, Think
-from thyca.config import Config, ConfigError, load
+from thyca.config import REASONING_EFFORTS, Config, ConfigError, load
 from thyca.llm.llm_base import LLMError
 from thyca.llm.llm_factory import ConnectFactory
 from thyca.llm.pricing import cost_for
@@ -34,6 +37,174 @@ from thyca.tools.registry import ToolRegistry
 from thyca.turn_state import TurnHub, TurnState
 
 TEXT_MAX = 4000
+_CANCEL_WAIT_S = 5.0
+
+
+class InvalidTurnOption(ValueError):
+    """Per-turn model/effort/retry the HTTP layer reports as 400."""
+
+
+class TurnCancelled(Exception):
+    """In-flight turn was cancelled; not a provider failure."""
+
+
+class SessionIdle(Exception):
+    """Cancel arrived while this session had no turn in flight."""
+
+
+def overlay_turn_cfg(cfg: Config, model: str | None, effort: str | None) -> Config:
+    chosen = cfg.provider.model if model is None else model
+    if chosen != cfg.provider.model and chosen not in cfg.models:
+        raise InvalidTurnOption("invalid model")
+    if effort is not None and effort not in REASONING_EFFORTS:
+        raise InvalidTurnOption("invalid effort")
+    return replace(cfg, provider=replace(cfg.provider, model=chosen))
+
+
+def _clean_turn_text(text: object, *, retry: bool) -> str:
+    if retry:
+        return ""
+    if not isinstance(text, str):
+        raise ValueError("text must be a string")
+    cleaned = text.strip()
+    if not cleaned:
+        raise ValueError("empty")
+    if len(cleaned) > TEXT_MAX:
+        raise ValueError("too long")
+    return cleaned
+
+
+class _TurnJob:
+    __slots__ = ("task", "cancel", "cfut", "lock")
+
+    def __init__(self) -> None:
+        self.task: asyncio.Task | None = None
+        self.cancel = False
+        self.cfut: concurrent.futures.Future = concurrent.futures.Future()
+        self.lock = threading.Lock()
+
+
+class _LoopTurns:
+    """asyncio.Task per claimed session; each job is locked across spawn/cancel."""
+
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        self._loop = loop
+        self._jobs: dict[str, _TurnJob] = {}
+        self._lock = threading.Lock()
+
+    def begin(self, session_id: str) -> _TurnJob:
+        job = _TurnJob()
+        with self._lock:
+            self._jobs[session_id] = job
+        return job
+
+    def end(self, session_id: str, job: _TurnJob) -> None:
+        with self._lock:
+            if self._jobs.get(session_id) is job:
+                del self._jobs[session_id]
+
+    def submit(self, job: _TurnJob, coro):
+        def spawn() -> None:
+            with job.lock:
+                if job.cancel:
+                    coro.close()
+                    job.cfut.cancel()
+                    return
+                task = self._loop.create_task(coro)
+                job.task = task
+
+            def done(finished: asyncio.Task) -> None:
+                if job.cfut.done():
+                    return
+                if finished.cancelled():
+                    job.cfut.cancel()
+                    return
+                exc = finished.exception()
+                if exc is not None:
+                    job.cfut.set_exception(exc)
+                else:
+                    job.cfut.set_result(finished.result())
+
+            task.add_done_callback(done)
+
+        self._loop.call_soon_threadsafe(spawn)
+        try:
+            return job.cfut.result()
+        except concurrent.futures.CancelledError:
+            raise TurnCancelled() from None
+
+    def request_cancel(self, session_id: str) -> bool:
+        with self._lock:
+            job = self._jobs.get(session_id)
+        if job is None:
+            return False
+        with job.lock:
+            job.cancel = True
+            task = job.task
+        if task is not None:
+            self._loop.call_soon_threadsafe(task.cancel)
+        return True
+
+
+async def _name_if_needed(
+    connect: LLMPort,
+    sessions: SessionManager,
+    cfg: Config,
+    event_sink: EventSink | None = None,
+) -> bool:
+    # The user may have named the notebook from the sidebar while this turn
+    # was running. Re-read the title from disk so the model does not
+    # overwrite a name that landed mid-turn.
+    sessions.refresh_title()
+    session = sessions.current
+    if session.title:
+        return False
+    emit_event(event_sink, TurnEvent(type="session.naming.started"))
+    updated = False
+    captured: dict = {}
+
+    async def spy(messages, tools=None):
+        reply = await connect.chat(messages, tools)
+        captured["reply"] = reply
+        return reply
+
+    started = perf_counter()
+    try:
+        cleaned = await propose_title(spy, session)
+    except LLMError:
+        cleaned = None
+    latency_ms = int((perf_counter() - started) * 1000)
+    if cleaned is not None:
+        stored = sessions.set_title(cleaned)
+        updated = stored is not None
+        if updated:
+            _record_naming(captured.get("reply"), latency_ms, sessions, cfg)
+    emit_event(
+        event_sink, TurnEvent(type="session.naming.finished", updated=updated)
+    )
+    return updated
+
+
+def _record_naming(
+    reply: object, latency_ms: int, sessions: SessionManager, cfg: Config
+) -> None:
+    """Persist the naming LLM call as a meta-only assistant message (TASK-009)."""
+    usage = getattr(reply, "usage", None)
+    model = (getattr(reply, "model", None) or cfg.provider.model or "").strip() or None
+    meta: dict = {"kind": "naming", "latency_ms": max(0, latency_ms)}
+    if model:
+        meta["model"] = model
+    if isinstance(usage, dict) and usage:
+        meta["usage"] = usage
+    if model:
+        price = cost_for(
+            model,
+            usage if isinstance(usage, dict) else None,
+            cfg.effective_pricing() or None,
+        )
+        if price is not None:
+            meta["cost_usd"] = price
+    sessions.append(Message(role="assistant", content=None, ts=utc_now_ts(), meta=meta))
 
 
 class ChatApp:
@@ -72,6 +243,8 @@ class ChatApp:
         # block another (nor its own UI, which reads this map). Shared with the
         # delete gate so a claim cannot slip between check and unlink.
         self._turns = TurnState()
+        self._loop_turns = _LoopTurns(self._loop)
+        self._claim_lock = threading.Lock()
         self._stopped = False
         self._thread.start()
         try:
@@ -153,15 +326,20 @@ class ChatApp:
         session = self._sessions.create()
         return self._detail(session, self._current_cfg())
 
-    def turn(self, session_id: str, text: str, event_sink: EventSink | None = None) -> dict:
-        if not isinstance(text, str):
-            raise ValueError("text must be a string")
-        cleaned = text.strip()
-        if not cleaned:
-            raise ValueError("empty")
-        if len(cleaned) > TEXT_MAX:
-            raise ValueError("too long")
-        hub = self._turns.claim(session_id)
+    def turn(
+        self,
+        session_id: str,
+        text: str = "",
+        event_sink: EventSink | None = None,
+        model: str | None = None,
+        effort: str | None = None,
+        retry: bool = False,
+    ) -> dict:
+        cleaned = _clean_turn_text(text, retry=retry)
+        turn_cfg = overlay_turn_cfg(self._current_cfg(), model, effort)
+        with self._claim_lock:
+            hub = self._turns.claim(session_id)
+            job = self._loop_turns.begin(session_id)
         try:
 
             def sink(event: TurnEvent) -> None:
@@ -170,37 +348,75 @@ class ChatApp:
                     event_sink(event)
 
             try:
-                detail = self._submit(self._run_turn(session_id, cleaned, sink))
+                detail = self._loop_turns.submit(
+                    job,
+                    self._run_turn(
+                        session_id,
+                        cleaned,
+                        sink,
+                        turn_cfg=turn_cfg,
+                        effort=effort,
+                        retry=retry,
+                    ),
+                )
+            except TurnCancelled:
+                hub.publish(("cancelled", None))
+                raise
             except Exception as exc:
                 hub.publish(("failed", exc))
                 raise
             hub.publish(("completed", detail))
             return detail
         finally:
-            self._turns.release(session_id)
+            with self._claim_lock:
+                self._loop_turns.end(session_id, job)
+                self._turns.release(session_id)
+
+    def cancel(self, session_id: str) -> None:
+        with self._claim_lock:
+            if self._turns.hub(session_id) is None:
+                self._sessions.store.load(session_id)
+                raise SessionIdle()
+            self._loop_turns.request_cancel(session_id)
+        deadline = time.monotonic() + _CANCEL_WAIT_S
+        while time.monotonic() < deadline:
+            if self._turns.hub(session_id) is None:
+                return
+            time.sleep(0.05)
 
     async def _run_turn(
-        self, session_id: str, text: str, event_sink: EventSink | None = None
+        self,
+        session_id: str,
+        text: str,
+        event_sink: EventSink | None = None,
+        *,
+        turn_cfg: Config,
+        effort: str | None,
+        retry: bool,
     ) -> dict:
         # Every turn owns its session state (config, SessionManager, current
         # session). Nothing here is shared with a concurrent turn, so a slow
         # provider call in one session cannot block or corrupt another.
-        cfg = self._current_cfg()
         sessions = SessionManager(
-            limits=cfg.effective_limits(),
-            timezone_name=cfg.timeline.timezone,
+            limits=turn_cfg.effective_limits(),
+            timezone_name=turn_cfg.timeline.timezone,
             store=self._sessions.store,
         )
         sessions.load(session_id)
+        if retry and not sessions.truncate_to_last_user():
+            raise InvalidTurnOption("no user")
         token = bind_chat_session(session_id)
         try:
+            provider = turn_cfg.effective_provider()
+            if effort is not None:
+                provider = replace(provider, reasoningEffort=effort)
             connect = self._injected_connect or ConnectFactory.create(
-                "openai_chat", cfg.effective_provider()
+                "openai_chat", provider
             )
             owns = self._injected_connect is None
             self._wire_retry_events(connect, event_sink)
             try:
-                limits = cfg.effective_limits()
+                limits = turn_cfg.effective_limits()
                 loop = AgentLoop(
                     sessions=sessions,
                     assemble=Assemble(),
@@ -209,15 +425,17 @@ class ChatApp:
                     observe=Observe(sessions),
                     loop_max=limits.loopMax,
                     tools=self._tools,
-                    model=cfg.provider.model,
-                    pricing=cfg.effective_pricing() or None,
+                    model=turn_cfg.provider.model,
+                    pricing=turn_cfg.effective_pricing() or None,
                 )
                 hot = self._memory.refresh(self._state, datetime.now(self._zone))
-                reply = await loop.run(text, hot=hot, event_sink=event_sink)
-                await self._name_if_needed(connect, sessions, cfg, event_sink)
+                reply = await loop.run(
+                    text, hot=hot, event_sink=event_sink, persist_user=not retry
+                )
+                await _name_if_needed(connect, sessions, turn_cfg, event_sink)
                 # The turn's own response is not a turn in flight: the client that
                 # just received it must not be told to wait for itself.
-                detail = self._detail(sessions.current, cfg, running=False)
+                detail = self._detail(sessions.current, turn_cfg, running=False)
                 return {**detail, "reply": reply}
             finally:
                 if owns:
@@ -226,66 +444,6 @@ class ChatApp:
                         await close()
         finally:
             reset_chat_session(token)
-
-    async def _name_if_needed(
-        self,
-        connect: LLMPort,
-        sessions: SessionManager,
-        cfg: Config,
-        event_sink: EventSink | None = None,
-    ) -> bool:
-        # The user may have named the notebook from the sidebar while this turn
-        # was running. Re-read the title from disk so the model does not
-        # overwrite a name that landed mid-turn.
-        sessions.refresh_title()
-        session = sessions.current
-        if session.title:
-            return False
-        emit_event(event_sink, TurnEvent(type="session.naming.started"))
-        updated = False
-        captured: dict = {}
-
-        async def spy(messages, tools=None):
-            reply = await connect.chat(messages, tools)
-            captured["reply"] = reply
-            return reply
-
-        started = perf_counter()
-        try:
-            cleaned = await propose_title(spy, session)
-        except LLMError:
-            cleaned = None
-        latency_ms = int((perf_counter() - started) * 1000)
-        if cleaned is not None:
-            stored = sessions.set_title(cleaned)
-            updated = stored is not None
-            if updated:
-                self._record_naming(captured.get("reply"), latency_ms, sessions, cfg)
-        emit_event(
-            event_sink, TurnEvent(type="session.naming.finished", updated=updated)
-        )
-        return updated
-
-    def _record_naming(
-        self, reply: object, latency_ms: int, sessions: SessionManager, cfg: Config
-    ) -> None:
-        """Persist the naming LLM call as a meta-only assistant message (TASK-009)."""
-        usage = getattr(reply, "usage", None)
-        model = (getattr(reply, "model", None) or cfg.provider.model or "").strip() or None
-        meta: dict = {"kind": "naming", "latency_ms": max(0, latency_ms)}
-        if model:
-            meta["model"] = model
-        if isinstance(usage, dict) and usage:
-            meta["usage"] = usage
-        if model:
-            price = cost_for(
-                model,
-                usage if isinstance(usage, dict) else None,
-                cfg.effective_pricing() or None,
-            )
-            if price is not None:
-                meta["cost_usd"] = price
-        sessions.append(Message(role="assistant", content=None, ts=utc_now_ts(), meta=meta))
 
     def _wire_retry_events(
         self, connect: LLMPort, event_sink: EventSink | None

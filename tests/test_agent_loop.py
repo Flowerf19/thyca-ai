@@ -432,3 +432,33 @@ def test_on_reasoning_emits_thinking_deltas(tmp_path: Path) -> None:
         {"type": "llm.thinking", "round": 1, "delta": "check"},
     ]
     assert _load_messages(tmp_path, session.id)[-1].reasoning == "First check"
+
+
+def test_persist_user_false_does_not_append_user(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path)
+    session = manager.create()
+    manager.append(Message(role="user", content="hello"))
+    llm = FakeLLM([ChatReply(content="again")])
+    events: list[TurnEvent] = []
+
+    assert (
+        asyncio.run(
+            _loop(manager, llm, FakeDispatcher({})).run(
+                "ignored", event_sink=events.append, persist_user=False
+            )
+        )
+        == "again"
+    )
+    assert [event.type for event in events] == [
+        "turn.accepted",
+        "llm.started",
+        "llm.finished",
+    ]
+    messages = _load_messages(tmp_path, session.id)
+    assert [(message.role, message.content) for message in messages] == [
+        ("user", "hello"),
+        ("assistant", "again"),
+    ]
+    assert [message.content for message in llm.requests[0] if message.role == "user"] == [
+        "hello"
+    ]

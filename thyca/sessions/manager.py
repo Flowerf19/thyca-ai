@@ -120,6 +120,37 @@ class SessionManager:
             self.store.append(self._session.path, msg)
             self._session.messages.append(msg)
 
+    def truncate_to_last_user(self) -> bool:
+        """Drop messages after the last user. No-op if the tail is already a user.
+
+        Returns False when the transcript has no ``role=user`` message.
+        """
+        with self._lock:
+            if self._session is None:
+                raise SessionError(
+                    "no current session — call create/load/continue_last first"
+                )
+            messages = self._session.messages
+            last = None
+            for index in range(len(messages) - 1, -1, -1):
+                if messages[index].role == "user":
+                    last = index
+                    break
+            if last is None:
+                return False
+            if last == len(messages) - 1:
+                return True
+            kept = messages[: last + 1]
+            self.store.rewrite(
+                self._session.id,
+                self._session.path,
+                kept,
+                title=self._session.title,
+                title_source=self._session.title_source,
+            )
+            self._session.messages[:] = kept
+            return True
+
     def compact_if_needed(self) -> bool:
         with self._lock:
             if self._session is None:

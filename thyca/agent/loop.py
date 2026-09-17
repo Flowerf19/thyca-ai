@@ -40,6 +40,7 @@ class AgentLoop:
         user_msg: str,
         hot: object = None,
         event_sink: EventSink | None = None,
+        persist_user: bool = True,
     ) -> str:
         if self._loop_max < 1:
             raise ValueError("loop_max must be positive")
@@ -50,8 +51,12 @@ class AgentLoop:
             tools=self._tools,
         )
         self._observe.compact()
-        self._assemble.assemble(stage, user_msg)
-        self._observe.user(stage)
+        if persist_user:
+            self._assemble.assemble(stage, user_msg)
+            self._observe.user(stage)
+        else:
+            stage.messages = list(self._sessions.current.messages)
+            self._assemble.assemble(stage, user_msg, append_user=False)
         emit_event(event_sink, TurnEvent(type="turn.accepted"))
 
         for _ in range(self._loop_max):

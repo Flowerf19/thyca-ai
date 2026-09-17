@@ -20,6 +20,7 @@ from thyca.bridge import (
     session_list,
     session_rename,
     session_turn,
+    session_turn_cancel,
     session_turn_follow,
     session_turn_stream,
 )
@@ -49,6 +50,9 @@ _TURN_RE = re.compile(
 )
 _TURN_STREAM_RE = re.compile(
     r"^/api/sessions/(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_[0-9a-f]{4})/turn/stream$"
+)
+_TURN_CANCEL_RE = re.compile(
+    r"^/api/sessions/(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_[0-9a-f]{4})/turn/cancel$"
 )
 _TRACE_RE = re.compile(r"^/api/traces$")
 _TRACE_STATS_RE = re.compile(r"^/api/traces/stats$")
@@ -246,6 +250,10 @@ def _handler(
             match = _TURN_STREAM_RE.fullmatch(path)
             if match:
                 session_turn_stream(self, chat, match.group(1))
+                return
+            match = _TURN_CANCEL_RE.fullmatch(path)
+            if match:
+                session_turn_cancel(self, chat, match.group(1))
                 return
             if path.startswith("/api/sessions"):
                 self._json(404, {"error": "session not found"})

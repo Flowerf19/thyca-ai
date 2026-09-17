@@ -20,7 +20,8 @@ import traceback
 
 from thyca.agent.events import TurnEvent
 from thyca.agent.thinking import ThinkingDelta
-from thyca.chat_app import ChatApp
+from thyca.chat_app import ChatApp, InvalidTurnOption, SessionIdle, TurnCancelled
+from thyca.config import REASONING_EFFORTS
 from thyca.llm.llm_base import LLMError
 from thyca.session_wire import delete_error, rename_error
 from thyca.sessions import SessionBusy, SessionCorrupt, SessionError, SessionNotFound
@@ -29,6 +30,38 @@ from thyca.turn_state import TurnHub
 SENTINEL = object()
 # Same grammar the session routes use: a timestamp id and four hex chars.
 SESSION_RE = re.compile(r"^/api/sessions/(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_[0-9a-f]{4})$")
+_MODEL_MAX = 200
+
+
+def parse_turn_body(payload: dict) -> tuple[str, str | None, str | None, bool]:
+    """Shared by /turn and /turn/stream. Extra keys ignored."""
+    retry = payload.get("retry") is True
+    if "model" in payload:
+        model = payload["model"]
+        if (
+            not isinstance(model, str)
+            or not model
+            or len(model) > _MODEL_MAX
+            or "\n" in model
+            or "\r" in model
+            or not model.strip()
+        ):
+            raise InvalidTurnOption("invalid model")
+    else:
+        model = None
+    if "effort" in payload:
+        if payload["effort"] not in REASONING_EFFORTS:
+            raise InvalidTurnOption("invalid effort")
+        effort = payload["effort"]
+    else:
+        effort = None
+    if retry:
+        text = payload.get("text")
+        return text if isinstance(text, str) else "", model, effort, True
+    text = payload.get("text")
+    if not isinstance(text, str):
+        raise ValueError("invalid text")
+    return text, model, effort, False
 
 
 def public_turn_error(exc: Exception) -> tuple[int, str, str]:
@@ -39,6 +72,11 @@ def public_turn_error(exc: Exception) -> tuple[int, str, str]:
     map to the constant ``chat unavailable``; :class:`LLMError` keeps its
     provider-redacted/capped text.
     """
+    if isinstance(exc, InvalidTurnOption):
+        message = str(exc)
+        return 400, message.replace(" ", "_"), message
+    if isinstance(exc, TurnCancelled):
+        return 200, "cancelled", "cancelled"
     if isinstance(exc, ValueError):
         return 400, "invalid_text", "invalid text"
     if isinstance(exc, SessionBusy):
@@ -76,6 +114,9 @@ def bridge_worker(
     text: str,
     queue_: queue.Queue,
     state: dict,
+    model: str | None = None,
+    effort: str | None = None,
+    retry: bool = False,
 ) -> None:
     """Run one turn, queueing events plus exactly one terminal item.
 
@@ -86,7 +127,16 @@ def bridge_worker(
     sink = bridge_sink(queue_, state)
     try:
         try:
-            detail = app.turn(session_id, text, event_sink=sink)
+            detail = app.turn(
+                session_id,
+                text,
+                event_sink=sink,
+                model=model,
+                effort=effort,
+                retry=retry,
+            )
+        except TurnCancelled:
+            queue_.put(("cancelled", None))
         except Exception as exc:
             queue_.put(("failed", exc))
         else:
@@ -126,6 +176,10 @@ def pump_stream(handler, items: queue.Queue, state: dict) -> None:
         else:
             # Pre-accept exception: same HTTP error as /turn, no NDJSON.
             _type, exc = first
+            if _type == "cancelled":
+                handler._stream_headers()
+                write_line(handler.wfile, {"type": "turn.cancelled"})
+                return
             status, _code, message = public_turn_error(exc)
             handler._json(status, {"error": message})
             return
@@ -144,6 +198,8 @@ def pump_stream(handler, items: queue.Queue, state: dict) -> None:
                 write_line(
                     handler.wfile, {"type": "turn.completed", "detail": value}
                 )
+            elif _kind == "cancelled":
+                write_line(handler.wfile, {"type": "turn.cancelled"})
             else:
                 _code, _message = public_turn_error(value)[1:]
                 write_line(
@@ -166,7 +222,15 @@ def pump_stream(handler, items: queue.Queue, state: dict) -> None:
         state["disconnected"] = True
 
 
-def stream_turn(handler, app: ChatApp, session_id: str, text: str) -> None:
+def stream_turn(
+    handler,
+    app: ChatApp,
+    session_id: str,
+    text: str,
+    model: str | None = None,
+    effort: str | None = None,
+    retry: bool = False,
+) -> None:
     """Pump one turn as NDJSON: headers, events, exactly one terminal item."""
     if not isinstance(text, str):
         handler._json(400, {"error": "invalid text"})
@@ -176,6 +240,7 @@ def stream_turn(handler, app: ChatApp, session_id: str, text: str) -> None:
     worker = threading.Thread(
         target=bridge_worker,
         args=(app, session_id, text, items, state),
+        kwargs={"model": model, "effort": effort, "retry": retry},
         daemon=True,
         name="thyca-turn-stream",
     )
@@ -252,12 +317,21 @@ def session_turn(handler, app: ChatApp | None, session_id: str) -> None:
     except ValueError:
         handler._json(400, {"error": "invalid body"})
         return
-    text = payload.get("text")
-    if not isinstance(text, str):
+    try:
+        text, model, effort, retry = parse_turn_body(payload)
+    except InvalidTurnOption as exc:
+        handler._json(400, {"error": str(exc)})
+        return
+    except ValueError:
         handler._json(400, {"error": "invalid text"})
         return
     try:
-        handler._json(200, app.turn(session_id, text))
+        handler._json(
+            200,
+            app.turn(session_id, text, model=model, effort=effort, retry=retry),
+        )
+    except TurnCancelled:
+        handler._json(200, {"cancelled": True})
     except Exception as exc:
         status, _code, message = public_turn_error(exc)
         handler._json(status, {"error": message})
@@ -271,11 +345,35 @@ def session_turn_stream(handler, app: ChatApp | None, session_id: str) -> None:
     except ValueError:
         handler._json(400, {"error": "invalid text"})
         return
-    text = payload.get("text")
-    if not isinstance(text, str):
+    try:
+        text, model, effort, retry = parse_turn_body(payload)
+    except InvalidTurnOption as exc:
+        handler._json(400, {"error": str(exc)})
+        return
+    except ValueError:
         handler._json(400, {"error": "invalid text"})
         return
-    stream_turn(handler, app, session_id, text)
+    stream_turn(
+        handler, app, session_id, text, model=model, effort=effort, retry=retry
+    )
+
+
+def session_turn_cancel(handler, app: ChatApp | None, session_id: str) -> None:
+    if _missing_chat(handler, app):
+        return
+    try:
+        handler._read_body()
+    except ValueError:
+        handler._json(400, {"error": "invalid body"})
+        return
+    try:
+        app.cancel(session_id)
+    except SessionIdle:
+        handler._json(409, {"error": "session idle"})
+    except Exception as exc:
+        _sessions_error(handler, exc)
+    else:
+        handler._json(200, {"ok": True})
 
 
 def session_turn_follow(handler, app: ChatApp | None, session_id: str) -> None:

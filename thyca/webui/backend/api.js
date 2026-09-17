@@ -111,7 +111,11 @@ async function readNdjson(response, onEvent, fallbackMessage) {
       throw new ApiError("Luồng trả lời từ backend không hợp lệ.");
     }
     onEvent(event);
-    if (event.type === "turn.completed" || event.type === "turn.failed") terminal = event;
+    if (
+      event.type === "turn.completed"
+      || event.type === "turn.failed"
+      || event.type === "turn.cancelled"
+    ) terminal = event;
     await yieldToRender();
   };
 

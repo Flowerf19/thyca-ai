@@ -8,7 +8,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from thyca.bridge import public_turn_error
-from thyca.chat_app import ChatApp
+from thyca.chat_app import ChatApp, InvalidTurnOption, TurnCancelled
 from thyca.config import ConfigError, default_config, load, save
 from thyca.llm.llm_base import LLMError
 from thyca.serve import default_webui, make_server
@@ -74,6 +74,12 @@ def test_maps_each_exception_to_exact_public_triple() -> None:
         503,
         "chat_unavailable",
         "chat unavailable",
+    )
+    assert public_turn_error(TurnCancelled()) == (200, "cancelled", "cancelled")
+    assert public_turn_error(InvalidTurnOption("invalid model")) == (
+        400,
+        "invalid_model",
+        "invalid model",
     )
 
 

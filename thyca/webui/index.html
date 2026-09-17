@@ -100,19 +100,19 @@
             </div>
             <div class="composer-send">
               <label class="effort-control model-control" for="composer-model"><span class="effort-label">Model</span>
-                <select class="effort-select model-select" id="composer-model" disabled title="Chưa nối model">
-                  <option selected>Model</option>
+                <select class="effort-select model-select" id="composer-model">
+                  <option value="" disabled selected>Model</option>
                 </select>
               </label>
               <label class="effort-control" for="thinking-effort"><span class="effort-label">Suy nghĩ</span>
-                <select class="effort-select" id="thinking-effort" disabled title="Chưa nối mức suy nghĩ">
+                <select class="effort-select" id="thinking-effort">
                   <option value="low">Nhanh</option>
                   <option value="medium" selected>Cân bằng</option>
                   <option value="high">Kỹ hơn</option>
                 </select>
               </label>
               <button class="send-button" id="send-message" type="submit" aria-label="Gửi tin nhắn">Gửi</button>
-              <button class="stop-button" type="button" aria-label="Dừng">Dừng</button>
+              <button class="stop-button" id="stop-button" type="button" aria-label="Dừng">Dừng</button>
             </div>
           </div>
           <p class="visually-hidden" id="composer-hint" role="status" aria-live="polite"></p>

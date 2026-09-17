@@ -6,7 +6,7 @@ import json
 import threading
 from io import StringIO
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -14,7 +14,7 @@ from urllib.request import Request, urlopen
 from thyca.agent.events import TurnEvent
 from thyca.bridge import SENTINEL
 from thyca.chat_app import ChatApp, session_title
-from thyca.config import default_config, load, save
+from thyca.config import ModelCfg, default_config, load, save
 from thyca.llm.llm_base import ChatReply, LLMError
 from thyca.protocol import Message, ToolCall
 from thyca.serve import ServeError, default_webui, make_server
@@ -650,7 +650,7 @@ def test_stream_sentinel_without_terminal_writes_fallback_failure(
     try:
         created = _json(httpd, "/api/sessions", method="POST", data=b"")
 
-        def sentinel_only_worker(app, session_id, text, items, state):
+        def sentinel_only_worker(app, session_id, text, items, state, **_kwargs):
             items.put(TurnEvent(type="turn.accepted"))
             items.put(SENTINEL)
 
@@ -683,6 +683,11 @@ def test_chat_js_shipped() -> None:
     assert 'postNdjson(' in app
     assert '/turn/stream' in app
     assert 'postJson("/api/sessions", {})' in app
+    assert "function fillComposerControls" in app
+    assert "function composerTurn" in app
+    assert "/turn/cancel" in app
+    assert "composerTurn({ retry: true })" in app
+    assert 'getJson("/api/config")' in app
     assert "formatMarkdown" in view
     assert "chat-brand" in view
     assert "brandState" in view
@@ -1522,3 +1527,298 @@ def test_hovering_a_row_keeps_its_divider() -> None:
     # the line above the active session. The stripe and wash stay; the rule goes.
     assert ".session-item.is-active {" not in css
     assert "border-color: transparent;" not in css
+
+
+def _http_error(httpd, path: str, data: bytes, timeout: float = 5) -> tuple[int, dict]:
+    request = Request(
+        _url(httpd, path),
+        data=data,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        urlopen(request, timeout=timeout)
+    except HTTPError as exc:
+        body = json.loads(exc.read().decode("utf-8"))
+        return exc.code, body
+    raise AssertionError("expected HTTPError")
+
+
+def test_stream_model_and_effort_reach_provider(tmp_path: Path, monkeypatch) -> None:
+    captured: list = []
+
+    class Spy:
+        async def chat(self, messages, tools=None):
+            return ChatReply(content="pong")
+
+        async def aclose(self):
+            return
+
+    def create(kind, provider):
+        captured.append(provider)
+        return Spy()
+
+    monkeypatch.setattr("thyca.chat_app.ConnectFactory.create", create)
+    cfg = default_config()
+    cfg = replace(
+        cfg,
+        models={"card-model": ModelCfg()},
+        provider=replace(cfg.provider, model="gpt-4o-mini", reasoningEffort="high"),
+    )
+    save(cfg, tmp_path / "config.json")
+    app = ChatApp(tmp_path, load(tmp_path / "config.json"))
+    httpd, thread = _start(tmp_path, app)
+    try:
+        created = _json(httpd, "/api/sessions", method="POST", data=b"")
+        path = f"/api/sessions/{created['id']}/turn/stream"
+        omitted = _stream_lines(_stream(httpd, path, data=b'{"text":"omit"}'))
+        assert omitted[-1]["type"] == "turn.completed"
+        assert captured[0].model == "gpt-4o-mini"
+        assert captured[0].reasoningEffort == "high"
+        body = json.dumps(
+            {"text": "override", "model": "card-model", "effort": "low"}
+        ).encode("utf-8")
+        overridden = _stream_lines(_stream(httpd, path, data=body))
+        assert overridden[-1]["type"] == "turn.completed"
+        assert captured[-1].model == "card-model"
+        assert captured[-1].reasoningEffort == "low"
+        card = replace(
+            cfg,
+            models={"card-model": ModelCfg(reasoningEffort="low")},
+            provider=replace(cfg.provider, model="gpt-4o-mini", reasoningEffort="high"),
+        )
+        save(card, tmp_path / "config.json")
+        inherited = _stream_lines(
+            _stream(
+                httpd,
+                path,
+                data=b'{"text":"card-effort","model":"card-model"}',
+            )
+        )
+        assert inherited[-1]["type"] == "turn.completed"
+        assert captured[-1].model == "card-model"
+        assert captured[-1].reasoningEffort == "low"
+        stored = SessionManager(tmp_path / "sessions").load(created["id"])
+        assistants = [
+            item
+            for item in stored.messages
+            if item.role == "assistant" and (item.meta or {}).get("kind") != "naming"
+        ]
+        assert assistants[-1].meta["model"] == "card-model"
+        assert assistants[0].meta["model"] == "gpt-4o-mini"
+    finally:
+        _stop(httpd, thread)
+        app.shutdown()
+
+
+def test_stream_rejects_unknown_model_and_bad_effort(tmp_path: Path) -> None:
+    httpd, thread = _start(tmp_path, _chat(tmp_path, FakeLLM(ChatReply(content="x"))))
+    try:
+        created = _json(httpd, "/api/sessions", method="POST", data=b"")
+        path = f"/api/sessions/{created['id']}/turn/stream"
+        code, body = _http_error(
+            httpd, path, b'{"text":"hi","model":"not-configured"}'
+        )
+        assert code == 400
+        assert body == {"error": "invalid model"}
+        code, body = _http_error(httpd, path, b'{"text":"hi","effort":"extreme"}')
+        assert code == 400
+        assert body == {"error": "invalid effort"}
+        code, body = _http_error(httpd, path, b'{"text":"hi","model":""}')
+        assert code == 400
+        assert body == {"error": "invalid model"}
+        code, body = _http_error(
+            httpd, path, json.dumps({"text": "hi", "model": "a" * 201}).encode()
+        )
+        assert code == 400
+        assert body == {"error": "invalid model"}
+        code, body = _http_error(
+            httpd, path, json.dumps({"text": "hi", "model": "a\nb"}).encode()
+        )
+        assert code == 400
+        assert body == {"error": "invalid model"}
+    finally:
+        _stop(httpd, thread)
+
+
+def test_cancel_in_flight_turn(tmp_path: Path) -> None:
+    started = threading.Event()
+    gate = asyncio.Event()
+
+    class Blocked:
+        async def chat(self, messages, tools=None):
+            started.set()
+            await gate.wait()
+            return ChatReply(content="should-not")
+
+    httpd, thread = _start(tmp_path, _chat(tmp_path, Blocked()))
+    try:
+        created = _json(httpd, "/api/sessions", method="POST", data=b"")
+        session_id = created["id"]
+        response = _stream(
+            httpd,
+            f"/api/sessions/{session_id}/turn/stream",
+            data=b'{"text":"hold"}',
+        )
+        first = json.loads(response.readline().decode("utf-8"))
+        assert first == {"type": "turn.accepted"}
+        assert started.wait(2)
+        follower = urlopen(
+            Request(
+                _url(httpd, f"/api/sessions/{session_id}/turn/stream"),
+                method="GET",
+            ),
+            timeout=10,
+        )
+        assert json.loads(follower.readline().decode("utf-8")) == {"type": "turn.accepted"}
+        cancelled = _json(
+            httpd,
+            f"/api/sessions/{session_id}/turn/cancel",
+            method="POST",
+            data=b"",
+        )
+        assert cancelled == {"ok": True}
+        lines = _stream_lines(response)
+        types = [item["type"] for item in lines]
+        assert types[-1] == "turn.cancelled"
+        follower_types = [item["type"] for item in _stream_lines(follower)]
+        assert follower_types[-1] == "turn.cancelled"
+        assert "turn.completed" not in types
+        assert "turn.failed" not in types
+        detail = _json(httpd, f"/api/sessions/{session_id}")
+        assert detail["running"] is False
+        stored = SessionManager(tmp_path / "sessions").load(session_id)
+        assert [(item.role, item.content) for item in stored.messages] == [
+            ("user", "hold")
+        ]
+        code, body = _http_error(
+            httpd, f"/api/sessions/{session_id}/turn/cancel", b""
+        )
+        assert code == 409
+        assert body == {"error": "session idle"}
+    finally:
+        _stop(httpd, thread)
+
+
+def test_retry_last_user_turn(tmp_path: Path) -> None:
+    llm = ScriptedLLM(
+        [
+            ChatReply(content="first"),
+            ChatReply(content='"Notebook."'),
+            ChatReply(content="second"),
+        ]
+    )
+    httpd, thread = _start(tmp_path, _chat(tmp_path, llm))
+    try:
+        created = _json(httpd, "/api/sessions", method="POST", data=b"")
+        session_id = created["id"]
+        path = f"/api/sessions/{session_id}/turn/stream"
+        first = _stream_lines(_stream(httpd, path, data=b'{"text":"hello"}'))
+        assert first[-1]["type"] == "turn.completed"
+        retried = _stream_lines(_stream(httpd, path, data=b'{"retry":true}'))
+        assert retried[0] == {"type": "turn.accepted"}
+        assert retried[-1]["type"] == "turn.completed"
+        stored = SessionManager(tmp_path / "sessions").load(session_id)
+        users = [item for item in stored.messages if item.role == "user"]
+        assistants = [
+            item
+            for item in stored.messages
+            if item.role == "assistant" and (item.meta or {}).get("kind") != "naming"
+        ]
+        assert [item.content for item in users] == ["hello"]
+        assert assistants[-1].content == "second"
+        think_users = [item.content for item in llm.requests[-1] if item.role == "user"]
+        assert think_users == ["hello"]
+
+        empty = _json(httpd, "/api/sessions", method="POST", data=b"")
+        code, body = _http_error(
+            httpd, f"/api/sessions/{empty['id']}/turn/stream", b'{"retry":true}'
+        )
+        assert code == 400
+        assert body == {"error": "no user"}
+    finally:
+        _stop(httpd, thread)
+
+    started = threading.Event()
+    release = threading.Event()
+
+    class Slow:
+        async def chat(self, messages, tools=None):
+            started.set()
+            await asyncio.to_thread(release.wait)
+            return ChatReply(content="late")
+
+    httpd, thread = _start(tmp_path, _chat(tmp_path, Slow()))
+    try:
+        busy = _json(httpd, "/api/sessions", method="POST", data=b"")
+        response = _stream(
+            httpd,
+            f"/api/sessions/{busy['id']}/turn/stream",
+            data=b'{"text":"first"}',
+        )
+        assert json.loads(response.readline().decode("utf-8")) == {"type": "turn.accepted"}
+        assert started.wait(2)
+        try:
+            code, body = _http_error(
+                httpd,
+                f"/api/sessions/{busy['id']}/turn/stream",
+                b'{"retry":true}',
+            )
+            assert code == 409
+            assert body == {"error": "session busy"}
+        finally:
+            response.close()
+            release.set()
+    finally:
+        _stop(httpd, thread)
+
+
+def test_cancel_then_retry_keeps_one_user(tmp_path: Path) -> None:
+    started = threading.Event()
+    gate = asyncio.Event()
+
+    class BlockThenReply:
+        def __init__(self) -> None:
+            self.requests: list = []
+            self._blocked = True
+
+        async def chat(self, messages, tools=None):
+            self.requests.append(list(messages))
+            if self._blocked:
+                started.set()
+                await gate.wait()
+                return ChatReply(content="should-not")
+            return ChatReply(content="retried")
+
+    llm = BlockThenReply()
+    httpd, thread = _start(tmp_path, _chat(tmp_path, llm))
+    try:
+        created = _json(httpd, "/api/sessions", method="POST", data=b"")
+        session_id = created["id"]
+        path = f"/api/sessions/{session_id}/turn/stream"
+        response = _stream(httpd, path, data=b'{"text":"hold"}')
+        assert json.loads(response.readline().decode("utf-8")) == {"type": "turn.accepted"}
+        assert started.wait(2)
+        assert _json(httpd, f"{path.replace('/stream', '/cancel')}", method="POST", data=b"") == {
+            "ok": True
+        }
+        assert _stream_lines(response)[-1]["type"] == "turn.cancelled"
+        llm._blocked = False
+        retried = _stream_lines(_stream(httpd, path, data=b'{"retry":true}'))
+        assert retried[-1]["type"] == "turn.completed"
+        stored = SessionManager(tmp_path / "sessions").load(session_id)
+        users = [item for item in stored.messages if item.role == "user"]
+        assistants = [
+            item
+            for item in stored.messages
+            if item.role == "assistant" and (item.meta or {}).get("kind") != "naming"
+        ]
+        assert [item.content for item in users] == ["hold"]
+        assert assistants[-1].content == "retried"
+        user_turns = [
+            [item.content for item in req if item.role == "user"]
+            for req in llm.requests
+        ]
+        assert user_turns.count(["hold"]) == 2
+    finally:
+        _stop(httpd, thread)

@@ -115,16 +115,19 @@ def trace_list_payload(chat: ChatApp, query: str) -> dict:
     limit_raw = (qs.get("limit", ["50"])[0] or "50").strip()
     offset_raw = (qs.get("offset", ["0"])[0] or "0").strip()
     try:
-        limit = max(1, min(int(limit_raw), 200))
-    except ValueError:
-        limit = 50
-    try:
         offset = max(0, int(offset_raw))
     except ValueError:
         offset = 0
     turns = _apply_trace_filters(collect_turns(chat), qs)
     total = len(turns)
-    page = turns[offset : offset + limit]
+    if limit_raw in ("0", "all"):
+        page = turns[offset:]
+    else:
+        try:
+            limit = max(1, min(int(limit_raw), 200))
+        except ValueError:
+            limit = 50
+        page = turns[offset : offset + limit]
     return {"traces": [t.to_payload() for t in page], "total": total}
 
 

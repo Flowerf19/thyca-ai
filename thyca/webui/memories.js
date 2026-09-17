@@ -1,13 +1,14 @@
 import { getJson, postJson } from "./backend/api.js";
-import { formatDate, formatDateTime } from "./backend/format.js";
+import { formatDate, formatDateTime, formatInteger } from "./backend/format.js";
 import { selectMemories } from "./backend/memory-data.js";
 
 const el = {
   list: document.querySelector("#memory-list"),
   empty: document.querySelector("#memory-empty"),
+  viewSections: [...document.querySelectorAll(".memory-view")],
   search: document.querySelector("#memory-search"),
   status: document.querySelector("#memory-status"),
-  viewButtons: [...document.querySelectorAll("[data-view]")],
+  viewButtons: [...document.querySelectorAll(".session-item[data-view]")],
   dialog: document.querySelector("#memory-dialog"),
   form: document.querySelector("#memory-form"),
   id: document.querySelector("#memory-id"),
@@ -18,10 +19,24 @@ const el = {
   reinforce: document.querySelector("#reinforce-memory"),
   forget: document.querySelector("#forget-memory"),
 };
+const compact = matchMedia("(max-width: 56rem)");
+
+function placeSearch() {
+  const cluster = el.search?.closest(".memory-search-cluster");
+  const bar = document.querySelector(".memory-search-bar");
+  if (!cluster) return;
+  if (compact.matches) {
+    if (bar && cluster.parentNode !== bar) bar.append(cluster);
+  } else {
+    const sessions = document.querySelector(".sessions");
+    const list = sessions?.querySelector(".session-list");
+    if (sessions && list && cluster.nextElementSibling !== list) sessions.insertBefore(cluster, list);
+  }
+}
 
 const state = {
   stats: { leaves: [] },
-  view: "day",
+  view: "overview",
   activeMemory: null,
   opener: null,
 };
@@ -85,12 +100,33 @@ function memoryCard(memory) {
   return article;
 }
 
-function render() {
-  const rows = selectMemories(state.stats.leaves, { view: state.view, query: el.search.value });
+function overviewCards() {
+  const leaves = state.stats.leaves;
+  const pages = state.stats.total ?? leaves.length;
+  const uses = leaves.reduce((sum, leaf) => sum + Math.max(0, Number(leaf.get_count) || 0), 0);
+  const searches = leaves.reduce((sum, leaf) => sum + Math.max(0, Number(leaf.search_count) || 0), 0);
+  return [
+    ["Trang nhật ký", pages],
+    ["Lần dùng", uses],
+    ["Lần tìm", searches],
+  ].map(([title, count]) => {
+    const article = document.createElement("article");
+    article.className = "screen-card";
+    const heading = document.createElement("h3");
+    heading.textContent = title;
+    const value = document.createElement("strong");
+    value.textContent = formatInteger(count);
+    article.append(heading, value);
+    return article;
+  });
+}
+
+function renderRows(view) {
+  const rows = selectMemories(state.stats.leaves, { view, query: el.search.value });
   const nodes = [];
   let lastDay = "";
   for (const memory of rows) {
-    if (state.view === "day" && memory.date !== lastDay) {
+    if (view === "day" && memory.date !== lastDay) {
       lastDay = memory.date;
       const heading = document.createElement("h3");
       heading.className = "memory-day";
@@ -99,15 +135,57 @@ function render() {
     }
     nodes.push(memoryCard(memory));
   }
-  el.list.replaceChildren(...nodes);
-  el.empty.hidden = rows.length > 0;
-  el.empty.textContent = "Không tìm thấy trang nhật ký phù hợp.";
+  return { rows, nodes };
+}
+
+function render() {
+  if (compact.matches) {
+    // Mobile: every view is its own collapsible section on one scrolling page.
+    el.list.hidden = true;
+    el.empty.hidden = true;
+    for (const section of el.viewSections) {
+      section.hidden = false;
+      const body = section.querySelector(".memory-view-body");
+      if (section.dataset.view === "overview") {
+        body.replaceChildren(...overviewCards());
+        continue;
+      }
+      const { nodes } = renderRows(section.dataset.view);
+      body.replaceChildren(...nodes);
+      if (!nodes.length) {
+        const note = document.createElement("p");
+        note.className = "screen-note";
+        note.textContent = "Không tìm thấy trang nhật ký phù hợp.";
+        body.append(note);
+      }
+    }
+  } else {
+    for (const section of el.viewSections) section.hidden = true;
+    if (state.view === "overview") {
+      const wrap = document.createElement("div");
+      wrap.className = "memory-overview";
+      wrap.append(...overviewCards());
+      el.list.replaceChildren(wrap);
+      el.list.hidden = false;
+      el.empty.hidden = true;
+    } else {
+      const { rows, nodes } = renderRows(state.view);
+      el.list.replaceChildren(...nodes);
+      el.list.hidden = false;
+      el.empty.hidden = rows.length > 0;
+      el.empty.textContent = "Không tìm thấy trang nhật ký phù hợp.";
+    }
+  }
   el.viewButtons.forEach((button) => {
     const active = button.dataset.view === state.view;
     button.classList.toggle("is-active", active);
     button.setAttribute("aria-pressed", String(active));
   });
 }
+compact.addEventListener("change", () => {
+  placeSearch();
+  render();
+});
 
 async function loadStats({ quiet = false } = {}) {
   if (!quiet) setStatus("Đang đọc bộ nhớ…");
@@ -119,7 +197,7 @@ async function loadStats({ quiet = false } = {}) {
       leaves: Array.isArray(stats.leaves) ? stats.leaves : [],
     };
     render();
-    setStatus(`${state.stats.total ?? state.stats.leaves.length} leaf · dữ liệu backend`, "success");
+    setStatus();
   } catch (error) {
     el.list.replaceChildren();
     el.empty.hidden = false;
@@ -157,6 +235,7 @@ async function mutateMemory(path, body, success) {
 }
 
 function bind() {
+  placeSearch();
   el.search.addEventListener("input", render);
   el.viewButtons.forEach((button) => {
     button.addEventListener("click", () => {

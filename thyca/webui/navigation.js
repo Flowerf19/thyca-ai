@@ -35,8 +35,7 @@ if (menuButtons.length) {
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6"/></svg>
       </button>
     </div>
-    <nav class="screen-nav" aria-label="Các màn Thyca"></nav>
-    <p class="screen-note">Thyca local · dữ liệu từ backend</p>`;
+    <nav class="screen-nav" aria-label="Các màn Thyca"></nav>`;
   const nav = dialog.querySelector("nav");
   const currentPage = location.pathname.split("/").pop() || "index.html";
   for (const [path, label, icon] of routes) {
@@ -104,5 +103,55 @@ if (headerEdition) {
     .catch(() => {
       headerEdition.textContent = "Thyca";
     });
+}
+
+const settingsShell = document.querySelector(".settings-shell");
+if (settingsShell) {
+  const compact = matchMedia("(max-width: 56rem)");
+  const file = location.pathname.split("/").pop() || "settings.html";
+  let chosen = file === "provider.html" || Boolean(location.hash);
+  const sync = () => {
+    settingsShell.classList.toggle("is-picking", compact.matches && !chosen);
+  };
+  settingsShell.querySelectorAll(".session-list a").forEach((link) => {
+    link.addEventListener("click", (event) => {
+      if (!compact.matches || file !== "settings.html") return;
+      const href = link.getAttribute("href") || "";
+      if (href.includes("provider.html")) return;
+      event.preventDefault();
+      chosen = true;
+      const hash = href.includes("#") ? href.slice(href.indexOf("#")) : "#chung";
+      history.replaceState(null, "", hash);
+      if (hash !== "#chung") document.querySelector(hash)?.scrollIntoView();
+      sync();
+    });
+  });
+  document.querySelector(".settings-shell .screen-back")?.addEventListener("click", () => {
+    if (file === "provider.html") {
+      location.href = "settings.html";
+      return;
+    }
+    chosen = false;
+    history.replaceState(null, "", "settings.html");
+    sync();
+  });
+  compact.addEventListener("change", sync);
+  sync();
+}
+
+for (const wrap of document.querySelectorAll(".thyca-search")) {
+  const input = wrap.querySelector(".thyca-search__input");
+  const clear = wrap.querySelector(".thyca-search__clear");
+  if (!input) continue;
+  const sync = () => wrap.classList.toggle("is-filled", Boolean(input.value));
+  input.addEventListener("input", sync);
+  input.addEventListener("search", sync);
+  clear?.addEventListener("click", () => {
+    input.value = "";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.focus();
+    sync();
+  });
+  sync();
 }
 })();

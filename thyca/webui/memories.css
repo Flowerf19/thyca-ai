@@ -2,39 +2,35 @@
   padding: 1.75rem 1.8rem;
 }
 
-.memories-title {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: 0.8rem;
-  color: var(--color-accent-deep);
-}
-
-.memories-title h2 {
-  display: flex;
-  align-items: center;
-  gap: 0.8rem;
-  font-family: var(--font-reading);
-  font-size: 1.25rem;
-}
-
-.memories-title h2::before,
-.memories-title h2::after {
-  content: "";
-  width: 1.35rem;
-  border-top: 1px solid var(--color-divider);
-}
-
 .memories-rule {
   text-align: center;
   margin: 0.15rem 0 1.5rem;
 }
 
 /* The search field sits in the sidebar, so it keeps the sidebar's own gutter;
-   the field itself is the shared .screen-search (screens.css). */
-.sidebar .screen-search {
+   the field itself is the shared .thyca-search (screens.css). */
+.sidebar .memory-search-cluster {
   margin: 1rem 0.65rem 0 0;
 }
+.memory-overview {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+.memory-overview strong {
+  display: block;
+  margin-top: 0.35rem;
+  color: var(--chat-brand-accent);
+  font-family: var(--font-display);
+  font-size: 1.7rem;
+  font-weight: 500;
+  line-height: 1;
+}
+.memory-search-cluster .memory-status {
+  margin: 0.35rem 0 0;
+  text-align: start;
+}
+.memory-status:empty { display: none; }
 
 .memory-day {
   margin: 0.85rem 0 0.15rem;
@@ -48,7 +44,7 @@
   margin-top: 0;
 }
 
-/* Card grid, copy, tags, more, list, footnote: screens.css list-card kit. */
+/* Card grid, copy, tags, more, list: screens.css list-card kit. */
 .memory-copy h3 {
   text-transform: uppercase;
 }
@@ -72,8 +68,48 @@
   font-style: italic;
 }
 
+/* Mobile (≤56rem) stacks the four view sections on one page — headers are
+   the shared fold-section kit; the pill switcher is desktop furniture. */
+.memory-view {
+  border-top: var(--rule) solid var(--color-divider);
+  padding-block-start: 0.9rem;
+}
+
+.memory-view + .memory-view {
+  margin-top: 0.9rem;
+}
+
+/* Desktop keeps the sidebar search. Mobile: the field sits slimmer, always
+   visible, just above the "Theo ngày" fold (JS moves the label into the bar). */
+.memory-search-bar { display: none; }
+
 @media (max-width: 56rem) {
-  .sidebar .screen-search {
-    margin-inline: 0 0.65rem;
+  /* Sit "Nhật ký" on the header row, after the hamburger — the static
+     sidebar was dropping it onto its own line. */
+  .memories-shell .sidebar {
+    position: absolute;
+    inset: 0 0 auto;
+    height: 2.75rem;
+    margin: 0;
+    pointer-events: none;
   }
+  .memories-shell .sessions {
+    height: 2.75rem;
+    padding: 0 1rem 0 3.5rem;
+    pointer-events: none;
+  }
+  .memories-shell .sessions-heading h2 { font-size: 1.15rem; }
+  .memories-shell .session-list { display: none; }
+  .memory-search-bar {
+    display: block;
+    margin: 0 0 0.9rem;
+  }
+  .memory-search-bar .thyca-search {
+    --search-h: 34px;
+    padding: 0 10px 0 12px;
+    gap: 8px;
+  }
+  .memory-search-bar .thyca-search .thyca-search__input { font-size: 13px; padding: 7px 0; }
+  .memory-search-bar .thyca-search .thyca-search__icon { width: 14px; height: 14px; }
+  .memory-overview { grid-template-columns: minmax(0, 1fr); }
 }

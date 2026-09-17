@@ -30,13 +30,24 @@
           <div class="sessions-heading">
             <h2>Nhật ký</h2>
           </div>
-          <label class="screen-search">
-            <span class="visually-hidden">Tìm trong nhật ký</span>
-            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 5 5" /></svg>
-            <input class="screen-input" id="memory-search" type="search" placeholder="Tìm trong nhật ký…">
-          </label>
+          <div class="memory-search-cluster">
+          <div class="thyca-search" role="search">
+            <svg class="thyca-search__icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="1.6"/>
+              <path d="M16.2 16.2 20 20" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+            </svg>
+            <input class="thyca-search__input" id="memory-search" type="search" placeholder="Tìm trong nhật ký…" autocomplete="off" aria-label="Tìm trong nhật ký">
+            <button type="button" class="thyca-search__clear" aria-label="Xóa">
+              <svg viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+              </svg>
+            </button>
+          </div>
+          <p class="screen-note memory-status" id="memory-status" role="status" aria-live="polite"></p>
+          </div>
           <nav class="session-list" aria-label="Chia nhật ký">
-            <button class="session-item is-active" type="button" data-view="day" aria-pressed="true"><span class="session-icon" aria-hidden="true"></span><span class="session-name">Theo ngày</span></button>
+            <button class="session-item is-active" type="button" data-view="overview" aria-pressed="true"><span class="session-icon" aria-hidden="true"></span><span class="session-name">Tổng quan</span></button>
+            <button class="session-item" type="button" data-view="day" aria-pressed="false"><span class="session-icon" aria-hidden="true"></span><span class="session-name">Theo ngày</span></button>
             <button class="session-item" type="button" data-view="used-more" aria-pressed="false"><span class="session-icon" aria-hidden="true"></span><span class="session-name">Dùng nhiều</span></button>
             <button class="session-item" type="button" data-view="searched-more" aria-pressed="false"><span class="session-icon" aria-hidden="true"></span><span class="session-name">Tìm nhiều</span></button>
             <button class="session-item" type="button" data-view="used-less" aria-pressed="false"><span class="session-icon" aria-hidden="true"></span><span class="session-name">Dùng ít</span></button>
@@ -46,13 +57,43 @@
 
       <section class="workspace" aria-label="Không gian nhật ký">
         <section class="screen-surface memories-surface" aria-label="Danh sách nhật ký">
-          <div class="memories-title"><h2>Nhật ký của bạn</h2></div>
+          <div class="screen-title"><h1>Nhật ký của bạn</h1></div>
           <p class="screen-note memories-rule">Những trang Thyca ghi lại từ các cuộc trò chuyện.</p>
-          <p class="screen-note memory-status" id="memory-status" role="status" aria-live="polite"></p>
-
           <div id="memory-list" class="memory-list" aria-live="polite"></div>
+          <div class="memory-search-bar"></div>
+          <!-- Mobile (≤56rem) renders every view as its own fold section on one
+               page; desktop keeps the single switchable list above. -->
+          <section class="memory-view" data-view="overview" hidden>
+            <details class="fold-section" open>
+              <summary><h3>Tổng quan</h3></summary>
+              <div class="memory-view-body memory-overview"></div>
+            </details>
+          </section>
+          <section class="memory-view" data-view="day" hidden>
+            <details class="fold-section" open>
+              <summary><h3>Theo ngày</h3></summary>
+              <div class="memory-view-body"></div>
+            </details>
+          </section>
+          <section class="memory-view" data-view="used-more" hidden>
+            <details class="fold-section" open>
+              <summary><h3>Dùng nhiều</h3></summary>
+              <div class="memory-view-body"></div>
+            </details>
+          </section>
+          <section class="memory-view" data-view="searched-more" hidden>
+            <details class="fold-section" open>
+              <summary><h3>Tìm nhiều</h3></summary>
+              <div class="memory-view-body"></div>
+            </details>
+          </section>
+          <section class="memory-view" data-view="used-less" hidden>
+            <details class="fold-section" open>
+              <summary><h3>Dùng ít</h3></summary>
+              <div class="memory-view-body"></div>
+            </details>
+          </section>
           <p id="memory-empty" class="memory-empty" hidden>Không tìm thấy trang nhật ký phù hợp.</p>
-          <p class="screen-note memories-footnote">Dữ liệu từ bộ nhớ Thyca local.</p>
         </section>
       </section>
     </main>

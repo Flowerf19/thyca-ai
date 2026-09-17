@@ -18,11 +18,13 @@ const el = {
   cancel: document.querySelector("#cancel-canonical"),
 };
 
+const compact = matchMedia("(max-width: 56rem)");
 const state = {
   files: [],
   active: "",
   opener: null,
   busy: false,
+  chosen: false,
 };
 
 function messageOf(error, fallback) {
@@ -37,6 +39,11 @@ function setStatus(message = "", kind = "") {
 function setDialogStatus(message = "", kind = "") {
   el.dialogStatus.textContent = message;
   el.dialogStatus.className = `screen-status${kind ? ` is-${kind}` : ""}`;
+}
+
+function syncPicking() {
+  const picking = compact.matches && !state.chosen;
+  document.querySelector(".profile-shell")?.classList.toggle("is-picking", picking);
 }
 
 function setBusy(busy) {
@@ -93,6 +100,8 @@ function show(name, { focus = false } = {}) {
   const file = state.files.find((item) => item.name === name);
   if (!file) return;
   state.active = file.name;
+  state.chosen = true;
+  syncPicking();
   el.title.textContent = file.title;
   el.note.textContent = file.description;
   if (file.content.trim()) {
@@ -119,6 +128,7 @@ function activeNavButton() {
 }
 
 async function load() {
+  syncPicking();
   setStatus("Đang đọc hồ sơ…");
   el.nav.setAttribute("aria-busy", "true");
   try {
@@ -130,6 +140,12 @@ async function load() {
     if (!first) {
       el.content.textContent = "";
       setStatus("Chưa có file hồ sơ.");
+      syncPicking();
+      return;
+    }
+    if (compact.matches && !wanted && !state.chosen) {
+      setStatus();
+      syncPicking();
       return;
     }
     show(first.name);
@@ -154,6 +170,19 @@ function openDialog(opener) {
 }
 
 function bind() {
+  document.querySelector("#profile-back")?.addEventListener("click", () => {
+    state.chosen = false;
+    history.replaceState(null, "", location.pathname);
+    syncPicking();
+  });
+  compact.addEventListener("change", () => {
+    if (!compact.matches && state.files.length && !state.chosen) {
+      const first = state.files[0];
+      if (first) show(first.name);
+      return;
+    }
+    syncPicking();
+  });
   el.edit.addEventListener("click", () => openDialog(el.edit));
   el.cancel.addEventListener("click", () => el.dialog.close());
   el.form.addEventListener("submit", async (event) => {

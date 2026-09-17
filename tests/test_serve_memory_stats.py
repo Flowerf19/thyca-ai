@@ -284,11 +284,9 @@ def test_profile_screen_renders_markdown() -> None:
     # the file; re-reading a whole file body would be noise.
     assert 'id="profile-content" aria-live' not in html
 
-    # Heading, status and prose share one measure (measured 1440px: all three
-    # span the same box instead of the prose being centred on its own).
-    assert ".profile-surface > .screen-heading," in css
-    assert "max-width: 75%;" in css
-    assert "max-width: 100%;" in css
+    # Heading and file card share the surface width, same as dashboard/memories
+    # (no centred 75% column).
+    assert "max-width: 75%;" not in css
 
     # Sidebar rows reuse the shape dashboard.html and memories.html use, so the
     # shared .session-item/.session-name rules apply unchanged (measured: row

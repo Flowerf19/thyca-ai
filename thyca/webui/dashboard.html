@@ -34,6 +34,7 @@
           </div>
           <nav class="session-list" aria-label="Mục tổng quan">
             <button class="session-item is-active" type="button" data-view="cost" aria-pressed="true"><span class="session-icon" aria-hidden="true"></span><span class="session-name">Chi phí</span></button>
+            <button class="session-item" type="button" data-view="request" aria-pressed="false"><span class="session-icon" aria-hidden="true"></span><span class="session-name">Request</span></button>
             <button class="session-item" type="button" data-view="usage" aria-pressed="false"><span class="session-icon" aria-hidden="true"></span><span class="session-name">Sử dụng token</span></button>
           </nav>
         </section>
@@ -42,10 +43,8 @@
         <section class="screen-surface dashboard-surface" aria-label="Chi phí và sử dụng">
           <section class="dashboard-block" id="chi-phi" aria-labelledby="cost-heading">
             <header class="screen-heading">
-              <div>
-                <h2 id="cost-heading">Chi phí</h2>
-                <p class="screen-muted">Tổng · theo mô hình</p>
-              </div>
+              <div class="screen-title"><h1 id="cost-heading">Chi phí</h1></div>
+              <p class="screen-muted">Tổng · theo mô hình</p>
               <label class="cost-period">
                 Khoảng thời gian
                 <select class="screen-select" id="cost-period">
@@ -65,33 +64,81 @@
                 <svg id="cost-chart" viewBox="0 0 720 230" role="img" aria-label="Biểu đồ chi phí theo ngày"></svg>
               </article>
             </div>
-            <h3 class="cost-model-heading">Chi phí theo mô hình</h3>
+            <h2 class="cost-model-heading">Chi phí theo mô hình</h2>
             <div class="screen-filter-row">
               <div class="screen-filters" role="group" aria-label="Sắp xếp mô hình">
                 <button class="screen-button" type="button" data-sort="cost-desc" aria-pressed="true">Cao nhất</button>
                 <button class="screen-button" type="button" data-sort="cost-asc" aria-pressed="false">Thấp nhất</button>
                 <button class="screen-button" type="button" data-sort="recent" aria-pressed="false">Gần nhất</button>
               </div>
-              <label class="screen-search">
-                <span class="visually-hidden">Tìm theo tên mô hình</span>
-                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 5 5" /></svg>
-                <input class="screen-input" id="model-search" type="search" placeholder="Tìm mô hình…">
-              </label>
+              <div class="thyca-search thyca-search--sm" role="search">
+                <svg class="thyca-search__icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="1.6"/>
+                  <path d="M16.2 16.2 20 20" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+                </svg>
+                <input class="thyca-search__input" id="model-search" type="search" placeholder="Tìm mô hình…" autocomplete="off" aria-label="Tìm theo tên mô hình">
+                <button type="button" class="thyca-search__clear" aria-label="Xóa">
+                  <svg viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                    <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+                  </svg>
+                </button>
+              </div>
             </div>
             <div class="cost-model-list" id="cost-models"></div>
             <p class="screen-status" id="cost-status" role="status" aria-live="polite"></p>
-            <p class="screen-note cost-footnote">Dữ liệu trace backend · Đơn vị: USD · giá “—” nghĩa là model chưa được cấu hình giá.</p>
+          </section>
+
+          <section class="dashboard-block" id="request" aria-labelledby="request-heading" hidden>
+            <header class="screen-heading">
+              <div class="screen-title"><h1 id="request-heading">Request</h1></div>
+              <p class="screen-muted">Tổng · theo mô hình</p>
+              <label class="cost-period">
+                Khoảng thời gian
+                <select class="screen-select" id="request-period">
+                  <option value="30">30 ngày qua</option>
+                  <option value="7">7 ngày qua</option>
+                </select>
+              </label>
+            </header>
+            <div class="cost-overview">
+              <article class="screen-card cost-total">
+                <h3>Tổng request</h3>
+                <strong id="request-total">—</strong>
+                <p id="request-range">Đang tải…</p>
+              </article>
+              <article class="screen-card cost-chart-card">
+                <h3>Request theo ngày</h3>
+                <svg id="request-chart" viewBox="0 0 720 230" role="img" aria-label="Biểu đồ request theo ngày"></svg>
+              </article>
+            </div>
+            <h2 class="cost-model-heading">Request theo mô hình</h2>
+            <div class="screen-filter-row">
+              <div class="screen-filters" role="group" aria-label="Sắp xếp mô hình">
+                <button class="screen-button" type="button" data-req-sort="req-desc" aria-pressed="true">Cao nhất</button>
+                <button class="screen-button" type="button" data-req-sort="req-asc" aria-pressed="false">Thấp nhất</button>
+                <button class="screen-button" type="button" data-req-sort="recent" aria-pressed="false">Gần nhất</button>
+              </div>
+              <div class="thyca-search thyca-search--sm" role="search">
+                <svg class="thyca-search__icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="1.6"/>
+                  <path d="M16.2 16.2 20 20" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+                </svg>
+                <input class="thyca-search__input" id="request-model-search" type="search" placeholder="Tìm mô hình…" autocomplete="off" aria-label="Tìm theo tên mô hình">
+                <button type="button" class="thyca-search__clear" aria-label="Xóa">
+                  <svg viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                    <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <div class="cost-model-list" id="request-models"></div>
+            <p class="screen-status" id="request-status" role="status" aria-live="polite"></p>
           </section>
 
           <section class="dashboard-block" id="su-dung" aria-labelledby="usage-heading" hidden>
             <header class="screen-heading usage-heading">
-              <div>
-                <h2 id="usage-heading">
-                  <svg class="usage-title-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V10h4v9M10 19V5h4v14M16 19v-7h4v7" /></svg>
-                  Sử dụng token
-                </h2>
-                <p class="screen-muted">Thống kê lượng token mỗi ngày trong tháng này.</p>
-              </div>
+              <div class="screen-title"><h1 id="usage-heading">Sử dụng token</h1></div>
+              <p class="screen-muted">Thống kê lượng token mỗi ngày trong tháng này.</p>
               <label>
                 Tháng
                 <select id="usage-month" class="screen-select">
@@ -129,13 +176,13 @@
               </div>
             </article>
             <p class="screen-status" id="usage-status" role="status" aria-live="polite"></p>
-            <p class="screen-note usage-note">Tối đa 200 lượt trace gần nhất trong khoảng đã chọn.</p>
           </section>
         </section>
       </section>
     </main>
     <script src="./navigation.js" defer></script>
     <script type="module" src="./cost.js"></script>
+    <script type="module" src="./request.js"></script>
     <script type="module" src="./usage.js"></script>
     <script src="./dashboard.js" defer></script>
   </body>

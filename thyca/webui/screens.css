@@ -21,7 +21,7 @@ a { color: inherit; }
 .screen-shell .screen-surface h3 { margin: 0; }
 /* Card titles in the list-card kit below set 1.3rem italic at (0,1,1).
    This :not() must keep excluding them so that value still wins. */
-.screen-shell .screen-surface h3:not(:where(.cost-model-copy h3, .memory-copy h3)) {
+.screen-shell .screen-surface h3:not(:where(.memory-copy h3)) {
   font-style: normal;
   font-size: 1.15rem;
 }
@@ -53,6 +53,42 @@ a { color: inherit; }
 .screen-heading h2 { color: var(--color-ink); }
 .screen-muted { color: var(--color-muted); }
 .screen-note { color: var(--color-muted); font-size: 0.875rem; }
+.screen-back { display: none; }
+
+/* Page title · Nhật ký's centred reading-face with hairline ticks. Shared by
+   Hồ sơ, Chi phí, Sử dụng token. */
+.screen-title {
+  display: flex;
+  flex: 1 1 100%;
+  justify-content: center;
+  align-items: center;
+  gap: 0.8rem;
+  color: var(--color-accent-deep);
+}
+.screen-title :is(h1, h2),
+.screen-shell .screen-surface .screen-title :is(h1, h2) {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  margin: 0;
+  color: inherit;
+  font-family: var(--font-reading);
+  font-size: 1.25rem;
+  font-style: normal;
+  font-weight: 500;
+}
+.screen-title :is(h1, h2)::before,
+.screen-title :is(h1, h2)::after {
+  content: "";
+  width: 1.35rem;
+  border-top: 1px solid var(--color-divider);
+}
+.screen-title + .screen-muted,
+.screen-title + .screen-note {
+  flex: 1 1 100%;
+  margin: 0.15rem 0 0;
+  text-align: center;
+}
 
 /* Toolbar above a list: the filter pills on one side, the search field on the
    other. Shared by Nhật ký (sidebar), "Chi phí theo mô hình" and the usage
@@ -72,36 +108,167 @@ a { color: inherit; }
   flex-wrap: wrap;
   gap: 0.6rem;
 }
+/* Sort chips reuse the fold-h3 lighter: terra mark + text, darker on hover/pressed.
+   Usage token/lượt toggle keeps its own segmented look below. */
 .screen-filters .screen-button {
-  min-height: 2.45rem;
-  padding: 0.45rem 1.1rem;
-  border-radius: var(--radius-pill);
-  font-size: 0.95rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  min-height: 0;
+  padding: 0.15rem 0.2rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--chat-brand-accent);
+  font-size: 1.15rem;
+  transition: color var(--dur-short) var(--ease-out);
 }
-/* Same selected look as the token/turn segmented control and the usage
-   period toggle, so "chosen" reads the same way on both dashboard blocks. */
-.screen-filters .screen-button[aria-pressed='true'],
+.screen-filters .screen-button::before {
+  content: "";
+  flex: 0 0 0.28rem;
+  width: 0.28rem;
+  height: 1.15rem;
+  border-radius: 99px;
+  background: var(--chat-brand-accent);
+  box-shadow: 0 0 0.35rem color-mix(in oklab, var(--chat-brand-accent) 35%, transparent);
+  transition: background var(--dur-short) var(--ease-out), box-shadow var(--dur-short) var(--ease-out);
+}
+.screen-filters .screen-button[aria-pressed='true'] {
+  color: color-mix(in oklab, var(--chat-brand-accent) 35%, var(--color-ink));
+  background: transparent;
+}
+.screen-filters .screen-button[aria-pressed='true']::before {
+  background: color-mix(in oklab, var(--chat-brand-accent) 35%, var(--color-ink));
+  box-shadow: 0 0 0.4rem color-mix(in oklab, var(--chat-brand-accent) 50%, transparent);
+}
+@media (hover: hover) and (pointer: fine) {
+  .screen-filters .screen-button:not(:disabled):hover {
+    border-color: transparent;
+    color: color-mix(in oklab, var(--chat-brand-accent) 35%, var(--color-ink));
+    background: transparent;
+  }
+  .screen-filters .screen-button:not(:disabled):hover::before {
+    background: color-mix(in oklab, var(--chat-brand-accent) 35%, var(--color-ink));
+    box-shadow: 0 0 0.4rem color-mix(in oklab, var(--chat-brand-accent) 50%, transparent);
+  }
+}
 .usage-toggle button[aria-pressed='true'] {
   background: color-mix(in oklab, var(--color-accent-soft) 60%, var(--color-paper-card));
 }
-.screen-search {
+/* Shared search · fill-cream C. Every screen uses .thyca-search; page files
+   only place the widget and (rarely) --sm/--lg. Tokens stay local so they
+   do not fight the notebook :root. */
+.thyca-search {
+  --ink: #3d2a1f;
+  --terra: #a65a42;
+  --fill: #f5e9da;
+  --border: rgba(61, 42, 31, 0.18);
+  --border-strong: rgba(166, 90, 66, 0.35);
+  --muted: rgba(61, 42, 31, 0.52);
+  --search-h: 40px;
   position: relative;
-  display: block;
-  width: auto;
+  display: flex;
+  align-items: center;
+  width: 100%;
   min-width: 0;
+  min-height: var(--search-h);
+  padding: 0 12px 0 14px;
+  gap: 10px;
+  background: var(--fill);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.55) inset,
+    0 1px 2px rgba(61, 42, 31, 0.04);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
-.screen-search svg {
-  position: absolute;
-  z-index: 1;
-  left: 1rem;
-  top: 0.72rem;
-  width: 1.4rem;
-  height: 1.4rem;
-  color: var(--color-muted);
+.thyca-search:hover {
+  border-color: rgba(61, 42, 31, 0.2);
+  background: rgba(245, 233, 218, 0.72);
 }
-.screen-search input {
-  padding-left: 3.2rem;
-  height: 3.45rem;
+.thyca-search:focus-within {
+  border-color: var(--border-strong);
+  background: #fffcfa;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.8) inset,
+    0 0 0 3px rgba(166, 90, 66, 0.12),
+    0 2px 6px rgba(61, 42, 31, 0.06);
+}
+.thyca-search__icon {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+  display: block;
+}
+.thyca-search:focus-within .thyca-search__icon { color: var(--terra); }
+.thyca-search__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  box-shadow: none;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.3;
+  color: var(--ink);
+  padding: 10px 0;
+  caret-color: var(--terra);
+}
+.thyca-search__input:focus,
+.thyca-search__input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+.thyca-search__input::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+.thyca-search__input::-webkit-search-cancel-button,
+.thyca-search__input::-webkit-search-decoration {
+  -webkit-appearance: none;
+  appearance: none;
+}
+.thyca-search__clear {
+  flex: 0 0 auto;
+  width: 0;
+  height: 22px;
+  border-radius: 50%;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: transparent;
+  color: var(--muted);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease, width 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+.thyca-search.is-filled .thyca-search__clear {
+  width: 22px;
+  opacity: 1;
+  pointer-events: auto;
+}
+.thyca-search__clear:hover {
+  background: rgba(61, 42, 31, 0.08);
+  color: var(--ink);
+}
+.thyca-search__clear svg {
+  width: 12px;
+  height: 12px;
+  display: block;
+}
+.thyca-search--sm { --search-h: 34px; padding: 0 10px 0 12px; gap: 8px; }
+.thyca-search--sm .thyca-search__input { font-size: 13px; padding: 7px 0; }
+.thyca-search--sm .thyca-search__icon { width: 14px; height: 14px; }
+.thyca-search--lg { --search-h: 46px; padding: 0 14px 0 16px; gap: 12px; }
+.thyca-search--lg .thyca-search__input { font-size: 15px; padding: 12px 0; }
+.screen-filter-row .thyca-search {
+  width: min(20rem, 100%);
+  flex: 0 1 20rem;
 }
 
 /* Quiet ⋮ action: row actions on cards, and the header action on Hồ sơ. */
@@ -140,16 +307,14 @@ a { color: inherit; }
   white-space: nowrap;
 }
 
-/* List card kit · Nhật ký (.memory-*) and Chi phí (.cost-model-*).
-   One card per row: title + action, muted summary, tags, then date/cost.
-   Page files keep only deltas (uppercase, justify, nowrap, colors). */
-.memory-list,
-.cost-model-list {
+/* List card kit · Nhật ký (.memory-*). One card per row: title + action,
+   muted summary, tags, then date/cost. Page files keep only deltas
+   (uppercase, justify, nowrap, colors). Chi phí renders bar rows instead. */
+.memory-list {
   display: grid;
   gap: 0.65rem;
 }
-.memory-card,
-.cost-model-card {
+.memory-card {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: start;
@@ -163,12 +328,10 @@ a { color: inherit; }
   box-shadow: none;
 }
 /* Wrapper holds no box, so children are placed on the card's own grid. */
-.memory-copy,
-.cost-model-copy {
+.memory-copy {
   display: contents;
 }
-.memory-copy h3,
-.cost-model-copy h3 {
+.memory-copy h3 {
   grid-column: 1;
   grid-row: 1;
   align-self: center;
@@ -179,8 +342,7 @@ a { color: inherit; }
   font-size: 1.3rem;
   font-style: italic;
 }
-.memory-copy p,
-.cost-model-copy p {
+.memory-copy p {
   grid-column: 1 / -1;
   grid-row: 2;
   margin: 0;
@@ -189,8 +351,7 @@ a { color: inherit; }
   font-style: italic;
   overflow-wrap: anywhere;
 }
-.memory-tags,
-.cost-model-tokens {
+.memory-tags {
   display: flex;
   flex-wrap: wrap;
   grid-column: 1;
@@ -198,32 +359,74 @@ a { color: inherit; }
   align-self: center;
   gap: 0.5rem;
 }
-.memory-tags span,
-.cost-model-tokens span {
+.memory-tags span {
   padding: 0.2rem 0.7rem;
   border-radius: var(--radius-pill);
   background: var(--chat-brand-wash);
   color: var(--color-accent-deep);
   font-size: 0.83rem;
 }
-.memory-more,
-.cost-model-share {
+.memory-more {
   grid-column: 2;
   grid-row: 1;
   justify-self: end;
 }
-.memory-meta time,
-.cost-model-cost {
+.memory-meta time {
   grid-column: 2;
   grid-row: 3;
   justify-self: end;
   align-self: center;
   white-space: nowrap;
 }
-.memories-footnote,
-.cost-footnote {
-  text-align: center;
-  margin-top: 1rem;
+/* Fold section kit · section headers that collapse/expand their content:
+   details.fold-section > summary > :is(h2, h3), content after the summary. The
+   terracotta lighter mark lives on the heading, so every screen (trace,
+   Cài đặt, Nhật ký mobile) keeps one shared look and behaviour.
+   Open by default — click the heading to collapse. */
+.fold-section > summary {
+  cursor: pointer;
+  list-style: none;
+  margin: -0.35rem -0.7rem;
+  padding: 0.35rem 0.7rem;
+}
+.fold-section > summary:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 3px;
+}
+.fold-section > summary::-webkit-details-marker,
+.fold-section > summary::marker {
+  display: none;
+  content: "";
+}
+.fold-section > summary :is(h2, h3) {
+  display: flex;
+  align-items: center;
+  gap: 0.28rem;
+  margin: 0;
+  color: var(--chat-brand-accent);
+  transition: color var(--dur-short) var(--ease-out);
+}
+.fold-section > summary :is(h2, h3)::before {
+  content: "";
+  flex: 0 0 0.28rem;
+  width: 0.28rem;
+  height: 1.15rem;
+  border-radius: 99px;
+  background: var(--chat-brand-accent);
+  box-shadow: 0 0 0.35rem color-mix(in oklab, var(--chat-brand-accent) 35%, transparent);
+  transition: background var(--dur-short) var(--ease-out), box-shadow var(--dur-short) var(--ease-out);
+}
+@media (hover: hover) and (pointer: fine) {
+  .fold-section > summary:hover :is(h2, h3) {
+    color: color-mix(in oklab, var(--chat-brand-accent) 35%, var(--color-ink));
+  }
+  .fold-section > summary:hover :is(h2, h3)::before {
+    background: color-mix(in oklab, var(--chat-brand-accent) 35%, var(--color-ink));
+    box-shadow: 0 0 0.4rem color-mix(in oklab, var(--chat-brand-accent) 50%, transparent);
+  }
+}
+.fold-section[open] > summary :is(h2, h3) {
+  margin: 0 0 0.7rem;
 }
 
 /* Usage/cost dashboard kit · period label, chart frame, svg strokes and
@@ -436,30 +639,68 @@ a { color: inherit; }
 }
 @media (max-width: 56rem) {
   .screen-shell { max-height: none; }
-  /* The screens' file switcher stays reachable on mobile — one rule for the
-     four screens that opted in (settings/provider keep theirs hidden). */
-  .memories-shell .sessions,
-  .profile-shell .sessions,
-  .dashboard-shell .sessions,
-  .trace-shell .sessions {
-    display: flex !important;
+  /* The screens' file switcher stays reachable on mobile — an in-flow compact
+     pill row under the header for the three screens that opted in
+     (dashboard stacks its sections on one page instead — see dashboard.css).
+     The overlay sidebar this replaces used to overlap the
+     header line and the content below. */
+  .screen-shell .sidebar {
+    position: static;
+    height: auto;
+    flex: none;
+    margin: 0;
     pointer-events: auto;
   }
-  .screen-filter-row { align-items: stretch; flex-direction: column; }
+  .memories-shell .sessions {
+    display: flex !important;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.2rem 0.9rem;
+    padding: 0.1rem 1rem 0.45rem;
+    pointer-events: auto;
+  }
   .screen-shell .sidebar > * { display: none; }
+  .screen-shell .sessions-heading { padding-inline-end: 0; flex: none; }
+  .screen-shell .sessions-heading h2 { font-size: 0.95rem; white-space: nowrap; }
+  .screen-shell .session-list {
+    flex: 1 1 100%;
+    flex-direction: row;
+    margin-block-start: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    gap: 0.3rem;
+    scrollbar-width: none;
+  }
+  .screen-shell .session-item {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    min-height: 0;
+    padding: 0.28rem 0.7rem;
+    border: var(--rule) solid var(--color-border);
+    border-radius: var(--radius-pill);
+    background: var(--color-paper-card);
+  }
+  .screen-shell .session-item::before,
+  .screen-shell .session-item::after { content: none; }
+  .screen-shell .session-item.is-active {
+    border-color: var(--color-accent);
+    background: var(--chat-brand-wash);
+  }
+  .screen-shell .session-icon { width: 1.1rem; height: 1.1rem; margin: 0; }
+  .screen-shell .session-item time { display: none; }
+  .screen-filter-row { align-items: stretch; flex-direction: column; }
   .screen-surface { margin: 0; padding: 1rem; border-inline: 0; border-block-end: 0; border-radius: 0; }
   .screen-card { padding: 1rem; }
-  .memory-card,
-  .cost-model-card {
+  .memory-card {
     grid-template-columns: minmax(0, 1fr) auto;
     padding: 0.85rem;
   }
-  .memory-copy h3,
-  .cost-model-copy h3 {
+  .memory-copy h3 {
     font-size: 1.15rem;
   }
-  .memory-copy p,
-  .cost-model-copy p {
+  .memory-copy p {
     font-size: 0.92rem;
   }
   .fold-row:not(.fold-row--plain) > summary {
@@ -477,6 +718,72 @@ a { color: inherit; }
   }
   .fold-row-body {
     padding-inline: 1rem;
+  }
+  /* Trace, Cài đặt, Hồ sơ: pick from the list first, then show the paper. */
+  .pick-shell.is-picking .workspace { display: none; }
+  .pick-shell:not(.is-picking) .sidebar { display: none; }
+  .pick-shell.is-picking .sidebar {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    pointer-events: auto;
+  }
+  .pick-shell.is-picking .sessions {
+    display: flex !important;
+    flex-direction: column;
+    padding: 0.85rem 1rem 1.25rem;
+    pointer-events: auto;
+  }
+  .pick-shell.is-picking .sessions-heading h2 { font-size: 1.15rem; }
+  .pick-shell.is-picking .session-list {
+    flex: 1;
+    flex-direction: column;
+    margin-block-start: 1rem;
+    overflow-x: hidden;
+    overflow-y: auto;
+    gap: 0.35rem;
+  }
+  .pick-shell.is-picking .session-item {
+    display: grid;
+    grid-template-columns: 1.85rem minmax(0, 1fr);
+    min-height: 3.65rem;
+    padding: 0.4rem 0.85rem 0.4rem 0.55rem;
+    border: var(--rule) solid transparent;
+    border-block-start-color: var(--color-divider);
+    border-radius: 0;
+    background: transparent;
+  }
+  .pick-shell.is-picking .session-item time { display: block; }
+  .pick-shell.is-picking .session-item.is-active::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: 0.2rem 0.15rem;
+    border-radius: 50%;
+    background: var(--chat-brand-wash);
+    filter: blur(10px);
+    pointer-events: none;
+  }
+  .pick-shell.is-picking .session-item.is-active::after {
+    content: "";
+    position: absolute;
+    inset-block: 0.55rem;
+    inset-inline-start: 0;
+    width: 4px;
+    border-radius: 99px;
+    background: var(--chat-brand-accent);
+  }
+  .pick-shell:not(.is-picking) .screen-back {
+    display: inline-flex;
+    align-items: center;
+    flex: none;
+    padding: 0.2rem 0.4rem 0.2rem 0;
+    border: 0;
+    background: transparent;
+    color: var(--chat-brand-accent);
+    font: inherit;
+    font-size: 1rem;
+    cursor: pointer;
   }
 }
 @media (max-width: 28rem) {

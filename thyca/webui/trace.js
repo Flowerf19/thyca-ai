@@ -30,7 +30,6 @@ const el = {
   progress: document.querySelector("#turn-progress"),
   previous: document.querySelector("#page-prev"),
   next: document.querySelector("#page-next"),
-  activitySection: document.querySelector("#activity-log"),
   recordFlow: document.querySelector("#record-flow"),
   toolDialog: document.querySelector("#tool-dialog"),
   toolDialogTitle: document.querySelector("#tool-dialog-title"),
@@ -39,6 +38,7 @@ const el = {
   toolDialogClose: document.querySelector("#tool-dialog-close"),
 };
 
+const compact = matchMedia("(max-width: 56rem)");
 const state = {
   groups: [],
   groupIndex: 0,
@@ -47,6 +47,7 @@ const state = {
   config: null,
   toolOpener: null,
   generation: 0,
+  chosen: false,
 };
 
 function messageOf(error, fallback) {
@@ -120,6 +121,11 @@ function closeToolDialog() {
 function discardToolDialog() {
   state.toolOpener = null;
   if (el.toolDialog?.open) el.toolDialog.close();
+}
+
+function syncPicking() {
+  const picking = compact.matches && !state.chosen;
+  document.querySelector(".trace-shell")?.classList.toggle("is-picking", picking);
 }
 
 function emptyDetail(message) {
@@ -294,7 +300,6 @@ function flowFromSteps(steps) {
 
 function renderRecord() {
   if (!el.recordFlow) return;
-  el.activitySection?.querySelector("details")?.removeAttribute("open");
   const record = document.createElement("div");
   record.className = "trace-record";
   record.append(flowFromSteps([
@@ -412,8 +417,15 @@ async function loadTurn() {
 async function selectGroup(index) {
   state.groupIndex = Math.min(Math.max(index, 0), Math.max(0, state.groups.length - 1));
   state.turnIndex = 0;
+  state.chosen = true;
+  syncPicking();
   renderSidebar();
   await loadTurn();
+}
+
+function backToSessions() {
+  state.chosen = false;
+  syncPicking();
 }
 
 async function selectTurn(index) {
@@ -423,6 +435,11 @@ async function selectTurn(index) {
 }
 
 function bind() {
+  document.querySelector("#trace-back")?.addEventListener("click", () => backToSessions());
+  compact.addEventListener("change", () => {
+    if (!compact.matches && state.groups.length && !state.chosen) void selectGroup(0);
+    else syncPicking();
+  });
   el.previous.addEventListener("click", () => void selectTurn(state.turnIndex - 1));
   el.next.addEventListener("click", () => void selectTurn(state.turnIndex + 1));
   el.toolDialogClose.addEventListener("click", () => closeToolDialog());
@@ -447,6 +464,7 @@ function bind() {
 
 async function boot() {
   bind();
+  syncPicking();
   emptyDetail("Đang tải…");
   setStatus("Đang đọc trace backend…");
   const [traceResult, configResult] = await Promise.allSettled([
@@ -458,6 +476,7 @@ async function boot() {
     renderSidebar();
     emptyDetail("Trace chưa sẵn sàng");
     setStatus(messageOf(traceResult.reason, "Không tải được trace."), "error");
+    syncPicking();
     return;
   }
   state.groups = groupTraceTurns(traceResult.value.traces);
@@ -465,6 +484,14 @@ async function boot() {
   if (!state.groups.length) {
     emptyDetail("Chưa có trace nào");
     setStatus("Gửi một tin nhắn trong Chat để tạo trace.");
+    syncPicking();
+    return;
+  }
+  if (compact.matches) {
+    state.chosen = false;
+    emptyDetail("Chọn một phiên");
+    setStatus("Chọn phiên để xem trace.");
+    syncPicking();
     return;
   }
   await selectGroup(0);

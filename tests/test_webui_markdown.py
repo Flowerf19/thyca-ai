@@ -126,13 +126,16 @@ def test_select_models_filters_and_orders_by_cost() -> None:
     """"Chi phí theo mô hình": search by name, then rank.
 
     A model with no configured price cannot be ranked by cost, so it sinks to
-    the end in both directions instead of reading as the cheapest.
+    the end in both directions instead of reading as the cheapest. A bucket
+    with no requests and no tokens has nothing to show, so it never becomes a
+    row (measured: the backend emits an all-zero "unknown" bucket).
     """
     rows = [
-        {"model": "gpt-5.6-luna", "cost_usd": 2.4, "last_started_at": "2026-09-14T09:00:00Z"},
-        {"model": "muse-spark-1.2-contributor", "cost_usd": 0.9, "last_started_at": "2026-09-12T10:00:00Z"},
-        {"model": "foo/bar", "cost_usd": None, "last_started_at": "2026-09-14T11:00:00Z"},
-        {"model": "gpt-4o-mini", "cost_usd": 0.2, "last_started_at": "2026-09-01T08:00:00Z"},
+        {"model": "gpt-5.6-luna", "cost_usd": 2.4, "requests": 12, "total_tokens": 3400, "last_started_at": "2026-09-14T09:00:00Z"},
+        {"model": "muse-spark-1.2-contributor", "cost_usd": 0.9, "requests": 4, "total_tokens": 900, "last_started_at": "2026-09-12T10:00:00Z"},
+        {"model": "foo/bar", "cost_usd": None, "requests": 2, "total_tokens": 150, "last_started_at": "2026-09-14T11:00:00Z"},
+        {"model": "gpt-4o-mini", "cost_usd": 0.2, "requests": 30, "total_tokens": 12000, "last_started_at": "2026-09-01T08:00:00Z"},
+        {"model": "unknown", "cost_usd": None, "requests": 0, "total_tokens": 0, "last_started_at": "2026-09-14T12:00:00Z"},
     ]
     script = f"""
     import {{ selectModels }} from {json.dumps(ANALYTICS_DATA.as_uri())};
@@ -159,6 +162,8 @@ def test_select_models_filters_and_orders_by_cost() -> None:
     # Search is a name match, case-insensitive.
     assert payload["upper"] == ["gpt-5.6-luna", "gpt-4o-mini"]
     assert payload["miss"] == []
+    # The all-zero "unknown" bucket is noise: filtered out in every order.
+    assert "unknown" not in payload["desc"] + payload["asc"] + payload["recent"]
 
 
 def test_split_prompt_tokens_removes_cache() -> None:
@@ -193,6 +198,7 @@ def test_split_prompt_tokens_removes_cache() -> None:
 def test_trace_typography_matches_profile_screen() -> None:
     trace = (WEBUI / "trace.css").read_text(encoding="utf-8")
     profile = (WEBUI / "profile.css").read_text(encoding="utf-8")
+    shared = (WEBUI / "screens.css").read_text(encoding="utf-8")
     html = (WEBUI / "trace.html").read_text(encoding="utf-8")
     script = (WEBUI / "trace.js").read_text(encoding="utf-8")
 
@@ -211,7 +217,8 @@ def test_trace_typography_matches_profile_screen() -> None:
     assert 'class="general-card screen-card"' in html
     assert 'class="trace-section token-section"' in html
     assert '>Log hoạt động</h3>' in html
-    assert 'class="activity-log-fold"' in html
+    assert 'class="fold-section"' in html
+    assert 'class="activity-log-fold"' not in html
     assert 'id="record-flow"' in html
     assert 'id="tool-dialog"' in html
     assert 'id="tool-dialog-body"' in html
@@ -228,9 +235,11 @@ def test_trace_typography_matches_profile_screen() -> None:
     assert 'className = "trace-tool-fold"' in script
     assert ".trace-tool-dialog" in trace
     assert "text-decoration: underline;" in trace
-    assert ".trace-section > h3::before" in trace
+    assert ".trace-section > h3::before" not in trace
     assert ".trace-record-card" in trace
-    assert ".activity-log h3" in trace
+    assert ".activity-log h3" not in trace
+    # The lighter mark + arrow fold furniture is one shared kit now.
+    assert ".fold-section > summary :is(h2, h3)::before" in shared
     assert ".tool-calls .fold-list" not in trace
     assert ".turn-meta-section > .screen-card" not in trace
     assert "grid-template-columns: repeat(3, minmax(0, 1fr));" in trace
@@ -244,17 +253,16 @@ def test_overview_typography_matches_profile_screen() -> None:
 
     assert ".dashboard-surface {" in overview
     assert "font-family: var(--font-reading);" in overview
-    assert ".dashboard-surface .cost-model-copy h3 {" in overview
+    assert ".dashboard-surface .screen-card h3," in overview
     assert "font-family: var(--font-display);" in overview
-    assert "font-size: 1.15rem;" in overview
-    assert ".dashboard-surface .cost-model-copy p," in overview
+    assert ".dashboard-surface .cost-model-cost," in overview
     assert "font-size: 1rem;" in overview
 
 
-def test_cost_panel_splits_cache_and_uses_shared_toolbar() -> None:
-    """The model breakdown is the one place that used raw prompt_tokens; it now
-    splits through the shared helper, and the toolbar reuses the shared search
-    and filter-pill classes instead of private copies."""
+def test_cost_panel_renders_bar_rows_and_uses_shared_toolbar() -> None:
+    """The model breakdown is a bar list now: one row per model with name,
+    cost, a share-filled track and the share %, and the toolbar reuses the
+    shared search and filter-pill classes instead of private copies."""
     script = (WEBUI / "cost.js").read_text(encoding="utf-8")
     html = (WEBUI / "dashboard.html").read_text(encoding="utf-8")
     css = (WEBUI / "cost.css").read_text(encoding="utf-8")
@@ -262,43 +270,81 @@ def test_cost_panel_splits_cache_and_uses_shared_toolbar() -> None:
     memories = (WEBUI / "memories.html").read_text(encoding="utf-8")
     memories_css = (WEBUI / "memories.css").read_text(encoding="utf-8")
 
-    assert "splitPromptTokens(model.prompt_tokens, model.cached_tokens)" in script
-    assert '["Input", model.prompt_tokens]' not in script
     assert "selectModels(stats.by_model" in script
 
     # The breakdown is open at rest: no <details>/<summary>, so nothing has to
-    # be clicked (or pressed) before the token split is readable.
+    # be clicked (or pressed) before the bars are readable.
     assert "createElement(\"details\")" not in script
     assert "createElement(\"summary\")" not in script
-    # Nhật ký's page-card shape, reused for a model: display:contents wrapper,
-    # one tag per token kind, cost where the date sits.
-    assert 'className = "cost-model-card"' in script
-    assert 'className = "cost-model-copy"' in script
-    assert 'tokens.className = "cost-model-tokens"' in script
+    # One bar row per model: name + cost on top, then track + share, then the
+    # request/token line and the Input/Cache/Output split from the bảng.
+    assert 'className = "cost-model-row"' in script
+    assert 'className = "cost-model-row-head"' in script
+    assert 'className = "cost-model-track"' in script
+    assert "cost-model-fill is-${index % 3}" in script
+    assert 'className = "cost-model-share"' in script
+    assert 'className = "cost-model-meta"' in script
+    assert 'className = "cost-model-token"' in script
+    # Fills cycle the Sử dụng token series colors.
+    assert "splitPromptTokens(model.prompt_tokens, model.cached_tokens)" in script
 
     # The toolbar markup is the shared shape, wired to the three orders.
     assert 'class="screen-filter-row"' in html
-    assert 'class="screen-search"' in html
+    assert 'class="thyca-search thyca-search--sm"' in html
     for sort in ("cost-desc", "cost-asc", "recent"):
         assert f'data-sort="{sort}"' in html
 
     # Nhật ký switched to the promoted classes rather than keeping a copy.
     assert 'class="memory-search"' not in memories
     assert "memory-filters" not in memories_css
-    assert ".sidebar .screen-search" in memories_css
+    assert ".sidebar .memory-search-cluster" in memories_css
 
-    # One row of three equal columns; the card furniture IS the .memory-card
-    # rule now — one grouped kit rule in screens.css, no private copy in
-    # cost.css.
-    assert ".memory-card,\n.cost-model-card {" in shared
+    # Nhật ký keeps the promoted classes; Chi phí left the shared card kit —
+    # one grouped kit rule in screens.css for memory only, no private copy in
+    # cost.css (which owns the bar rows).
+    assert ".memory-card {" in shared
+    assert ".cost-model-card" not in shared
     assert "display: contents;" in shared
     assert "border-radius: var(--radius-chat);" in shared
     assert "background: var(--chat-brand-wash);" in shared
     assert "min-height: 8.55rem;" in shared
     assert ".cost-model-card" not in css
     assert ".cost-model-stats" not in css
+    assert ".cost-model-track" in css
+    assert ".cost-model-fill" in css
+    # Rows sit on the cream wash (not white paper); fills reuse the usage
+    # chart series colors and token values read in the accent rust.
+    assert "background: var(--chat-brand-wash);" in css
+    assert ".cost-model-fill.is-1" in css
+    assert "var(--color-chart-input)" in css
+    assert "var(--color-chart-cache)" in css
     assert ".screen-filters .screen-button" in shared
-    assert ".screen-search svg" in shared
+    assert ".thyca-search__icon" in shared
+    assert ".screen-search" not in shared
+
+
+def test_request_panel_mirrors_cost_layout() -> None:
+    html = (WEBUI / "dashboard.html").read_text(encoding="utf-8")
+    script = (WEBUI / "request.js").read_text(encoding="utf-8")
+    css = (WEBUI / "cost.css").read_text(encoding="utf-8")
+    dash = (WEBUI / "dashboard.js").read_text(encoding="utf-8")
+
+    assert 'data-view="request"' in html
+    assert 'id="request-total"' in html
+    assert 'id="request-chart"' in html
+    assert "./request.js" in html
+    assert "selectRequestModels" in script
+    assert 'className = "cost-model-row"' in script
+    assert "#request h2.cost-model-heading" in css
+    assert 'node.hidden = stack ? false : key !== next' in dash
+
+
+def test_usage_loads_every_trace_page() -> None:
+    script = (WEBUI / "usage.js").read_text(encoding="utf-8")
+    assert "async function loadAllTraces" in script
+    assert "offset=${offset}" in script
+    assert "Đang hiển thị" not in script
+    assert 'traceRangeUrl("/api/traces", days, 200)' in script
 
 
 def test_usage_mapper_splits_cached_prompt_tokens() -> None:

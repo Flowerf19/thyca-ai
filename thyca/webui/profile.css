@@ -2,18 +2,6 @@
   padding: 1.75rem 1.8rem;
 }
 
-/* Heading, status and prose share one measure: a lone centred column under a
-   full-width heading reads as a mistake on a wide window. Three quarters of
-   the surface — measured 1416px of usable width on a 1920 window, 75% = 1062,
-   which is the readable measure a profile wants without looking full-bleed. */
-.profile-surface > .screen-heading,
-.profile-surface > .profile-status,
-.profile-content {
-  width: 100%;
-  max-width: 75%;
-  margin-inline: auto;
-}
-
 /* Same 1rem the other screens put under a heading with a note. */
 .profile-surface > .screen-heading {
   margin-block-end: 1rem;
@@ -23,6 +11,20 @@
    must not hold a line open above the file. */
 .profile-status:empty {
   display: none;
+}
+
+.profile-file {
+  position: relative;
+}
+
+.profile-file .row-action {
+  position: absolute;
+  top: 1rem;
+  right: 1.1rem;
+}
+
+.profile-content {
+  padding-inline-end: 2rem;
 }
 
 .profile-content:empty {
@@ -39,11 +41,3 @@
   font-family: var(--font-mono, ui-monospace, "SFMono-Regular", Menlo, monospace);
 }
 
-@media (max-width: 56rem) {
-  /* A percentage measure is too cramped once the surface is that narrow. */
-  .profile-surface > .screen-heading,
-  .profile-surface > .profile-status,
-  .profile-content {
-    max-width: 100%;
-  }
-}

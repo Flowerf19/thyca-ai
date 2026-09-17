@@ -1,38 +1,33 @@
 import { getJson } from "./backend/api.js";
-import {
-  rollingRange,
-  selectModels,
-  splitPromptTokens,
-  traceRangeUrl,
-} from "./backend/analytics-data.js";
-import { formatCompact, formatCost, formatDate, formatInteger } from "./backend/format.js";
+import { rollingRange, traceRangeUrl } from "./backend/analytics-data.js";
+import { cleanText, formatDate, formatInteger } from "./backend/format.js";
 
-const SVG_NS = "http://www.w3.org/2000/svg";
 const el = {
-  period: document.querySelector("#cost-period"),
-  total: document.querySelector("#cost-total"),
-  range: document.querySelector("#cost-range"),
-  chart: document.querySelector("#cost-chart"),
-  models: document.querySelector("#cost-models"),
-  status: document.querySelector("#cost-status"),
-  search: document.querySelector("#model-search"),
-  sorts: [...document.querySelectorAll("[data-sort]")],
+  period: document.querySelector("#request-period"),
+  total: document.querySelector("#request-total"),
+  range: document.querySelector("#request-range"),
+  chart: document.querySelector("#request-chart"),
+  models: document.querySelector("#request-models"),
+  status: document.querySelector("#request-status"),
+  search: document.querySelector("#request-model-search"),
+  sorts: [...document.querySelectorAll("[data-req-sort]")],
 };
 const compact = matchMedia("(max-width: 56rem)");
 let stats = null;
-let sort = "cost-desc";
+let sort = "req-desc";
 
 function messageOf(error, fallback) {
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
 function setStatus(message = "", kind = "") {
+  if (!el.status) return;
   el.status.textContent = message;
   el.status.className = `screen-status${kind ? ` is-${kind}` : ""}`;
 }
 
 function svg(name, attributes = {}, text = "") {
-  const node = document.createElementNS(SVG_NS, name);
+  const node = document.createElementNS("http://www.w3.org/2000/svg", name);
   for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, String(value));
   if (text) node.textContent = text;
   return node;
@@ -43,16 +38,32 @@ function dateLabel(day) {
   return year && month && date ? `${date}/${month}` : String(day);
 }
 
-function completeCosts(range, rows) {
-  const indexed = new Map((rows || []).map((row) => [row.day, row.cost_usd]));
+function completeRequests(range, rows) {
+  const indexed = new Map((rows || []).map((row) => [row.day, row.requests]));
   const start = new Date(`${range.from}T00:00:00Z`);
   return Array.from({ length: range.days }, (_, index) => {
     const date = new Date(start);
     date.setUTCDate(start.getUTCDate() + index);
     const day = date.toISOString().slice(0, 10);
     const raw = indexed.get(day);
-    return { day, value: raw == null ? null : Number(raw) || 0 };
+    return { day, value: raw == null ? 0 : Number(raw) || 0 };
   });
+}
+
+function selectRequestModels(models, { sort: order, query = "" } = {}) {
+  const needle = cleanText(query).toLocaleLowerCase("vi");
+  const name = (row) => cleanText(row?.model);
+  const rows = (Array.isArray(models) ? models : [])
+    .filter((row) => (Number(row?.requests) || 0) > 0)
+    .filter((row) => !needle || name(row).toLocaleLowerCase("vi").includes(needle));
+  if (order === "req-asc") {
+    return rows.sort((a, b) => (Number(a.requests) || 0) - (Number(b.requests) || 0) || name(a).localeCompare(name(b), "vi"));
+  }
+  if (order === "recent") {
+    return rows.sort((a, b) => cleanText(b?.last_started_at).localeCompare(cleanText(a?.last_started_at))
+      || name(a).localeCompare(name(b), "vi"));
+  }
+  return rows.sort((a, b) => (Number(b.requests) || 0) - (Number(a.requests) || 0) || name(a).localeCompare(name(b), "vi"));
 }
 
 function drawChart(rows) {
@@ -75,7 +86,7 @@ function drawChart(rows) {
     const yy = y(value);
     el.chart.append(
       svg("line", { class: "cost-chart-grid", x1: left, x2: width - right, y1: yy, y2: yy }),
-      svg("text", { class: "cost-chart-label", x: 2, y: yy + 4 }, formatCost(value, 6)),
+      svg("text", { class: "cost-chart-label", x: 2, y: yy + 4 }, formatInteger(value)),
     );
   }
 
@@ -83,7 +94,6 @@ function drawChart(rows) {
   const area = `M${x(0)} ${height - bottom} ${rows.map((row, index) => `L${x(index)} ${y(row.value || 0)}`).join(" ")} L${x(rows.length - 1)} ${height - bottom} Z`;
   el.chart.append(svg("path", { class: "cost-chart-area", d: area }), svg("path", { class: "cost-chart-line", d: path }));
   rows.forEach((row, index) => {
-    if (row.value == null) return;
     el.chart.append(svg("circle", { class: "cost-chart-point", cx: x(index), cy: y(row.value), r: 3 }));
   });
   const labels = compact.matches
@@ -92,13 +102,13 @@ function drawChart(rows) {
   [...new Set(labels)].forEach((index) => {
     el.chart.append(svg("text", { class: "cost-chart-label", "text-anchor": "middle", x: x(index), y: height - 8 }, dateLabel(rows[index].day)));
   });
-  el.chart.setAttribute("aria-label", `Chi phí ${rows.length} ngày; cao nhất ${formatCost(maxValue)}.`);
+  el.chart.setAttribute("aria-label", `Request ${rows.length} ngày; cao nhất ${formatInteger(maxValue)}.`);
 }
 
-// One bar per model, shaped like the "Thanh" view: name and cost on top,
-// a track filled by the model's share of total cost, share at the end, then
-// the request/token summary and the Input/Cache/Output split from the bảng.
-// Fill cycles the Sử dụng token series (output rust, input tan, cache sand).
+function shareOf(value, total) {
+  return !total ? "—" : `${Math.round(Number(value) / total * 100)}%`;
+}
+
 function modelRow(model, total, index) {
   const row = document.createElement("article");
   row.className = "cost-model-row";
@@ -106,87 +116,62 @@ function modelRow(model, total, index) {
   head.className = "cost-model-row-head";
   const name = document.createElement("h3");
   name.textContent = model.model || "unknown";
-  const cost = document.createElement("strong");
-  cost.className = "cost-model-cost";
-  cost.textContent = formatCost(model.cost_usd);
-  head.append(name, cost);
+  const count = document.createElement("strong");
+  count.className = "cost-model-cost";
+  count.textContent = formatInteger(model.requests);
+  head.append(name, count);
   const bar = document.createElement("div");
   bar.className = "cost-model-bar";
   const track = document.createElement("span");
   track.className = "cost-model-track";
   const fill = document.createElement("span");
   fill.className = `cost-model-fill is-${index % 3}`;
-  const shareText = shareOf(model.cost_usd, total);
-  fill.style.width = shareText === "—" ? "0%" : `${Math.round(Number(model.cost_usd) / total * 100)}%`;
+  const shareText = shareOf(model.requests, total);
+  fill.style.width = shareText === "—" ? "0%" : shareText;
   const share = document.createElement("span");
   share.className = "cost-model-share";
   share.textContent = shareText;
   track.append(fill);
   bar.append(track, share);
-  const meta = document.createElement("p");
-  meta.className = "cost-model-meta";
-  const req = document.createElement("span");
-  req.className = "cost-model-req";
-  req.textContent = `${formatInteger(model.requests)} request · ${formatCompact(model.total_tokens)} token`;
-  meta.append(req);
-  // Input here is the uncached part only; cache is reported inside prompt_tokens.
-  const { input, cache } = splitPromptTokens(model.prompt_tokens, model.cached_tokens);
-  for (const [label, value] of [
-    ["Input", input],
-    ["Cache", cache],
-    ["Output", model.completion_tokens],
-  ]) {
-    const token = document.createElement("span");
-    token.className = "cost-model-token";
-    token.textContent = `${label} ${formatCompact(value)}`;
-    meta.append(token);
-  }
-  row.append(head, bar, meta);
+  row.append(head, bar);
   return row;
 }
 
-function shareOf(value, total) {
-  return value == null || !total ? "—" : `${Math.round(Number(value) / total * 100)}%`;
-}
-
 function render() {
-  if (!stats) return;
+  if (!stats || !el.total) return;
   const days = Number(el.period.value) || 30;
   const range = rollingRange(days);
-  const total = stats.totals?.cost_usd;
-  const value = document.createTextNode(total == null ? "—" : formatCost(total, 2));
-  const unit = document.createElement("small");
-  unit.textContent = " USD";
-  el.total.replaceChildren(value, unit);
+  const total = Number(stats.totals?.requests) || 0;
+  el.total.textContent = formatInteger(total);
   el.range.textContent = `Từ ${formatDate(range.from)} – ${formatDate(range.to)}`;
-  drawChart(completeCosts(range, stats.by_day));
-  const rows = selectModels(stats.by_model, { sort, query: el.search?.value || "" });
-  el.models.replaceChildren(...rows.map((model, index) => modelRow(model, Number(total) || 0, index)));
+  drawChart(completeRequests(range, stats.by_day));
+  const rows = selectRequestModels(stats.by_model, { sort, query: el.search?.value || "" });
+  el.models.replaceChildren(...rows.map((model, index) => modelRow(model, total, index)));
   el.sorts.forEach((button) => {
-    button.setAttribute("aria-pressed", String(button.dataset.sort === sort));
+    button.setAttribute("aria-pressed", String(button.dataset.reqSort === sort));
   });
   if (!rows.length) {
     const empty = document.createElement("p");
     empty.className = "screen-note";
     empty.textContent = (stats.by_model || []).length
       ? "Không có mô hình nào khớp tên đang tìm."
-      : "Chưa có lượt nào trong khoảng này.";
+      : "Chưa có request nào trong khoảng này.";
     el.models.append(empty);
   }
 }
 
 async function load() {
   const days = Number(el.period.value) || 30;
-  setStatus("Đang tổng hợp chi phí từ trace…");
+  setStatus("Đang tổng hợp request từ trace…");
   try {
     stats = await getJson(traceRangeUrl("/api/traces/stats", days));
     render();
     setStatus();
   } catch (error) {
     stats = null;
-    el.models.replaceChildren();
-    el.chart.replaceChildren();
-    setStatus(messageOf(error, "Không tải được chi phí."), "error");
+    el.models?.replaceChildren();
+    el.chart?.replaceChildren();
+    setStatus(messageOf(error, "Không tải được request."), "error");
   }
 }
 
@@ -194,9 +179,9 @@ el.period?.addEventListener("change", () => void load());
 el.search?.addEventListener("input", render);
 el.sorts.forEach((button) => {
   button.addEventListener("click", () => {
-    sort = button.dataset.sort || "cost-desc";
+    sort = button.dataset.reqSort || "req-desc";
     render();
   });
 });
 compact.addEventListener("change", render);
-void load();
+if (el.total) void load();

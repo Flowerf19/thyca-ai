@@ -284,11 +284,12 @@ input:disabled {
   }
 
   .provider-actions {
-    align-items: stretch;
+    flex-wrap: nowrap;
+    overflow-x: auto;
   }
 
   .provider-actions .screen-button {
-    flex: 1 1 auto;
+    flex: none;
   }
 
   .memory-dialog-actions .is-danger {

@@ -497,6 +497,16 @@ svg {
   background: transparent;
 }
 
+.chat-title-head {
+  flex: none;
+  padding: 0.85rem 1.25rem 0.4rem;
+}
+
+.chat-title-head .screen-title :is(h1, h2) {
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+
 .conversation-scroll {
   flex: 1 1 auto;
   min-width: 0;

@@ -54,8 +54,10 @@ function draw() {
     el.chart.replaceChildren();
     return;
   }
-  const width = 900;
-  const height = 300;
+  const box = el.chart.getBoundingClientRect();
+  const width = Math.max(Math.round(box.width) || 900, 320);
+  const height = Math.max(Math.round(box.height) || 272, 160);
+  el.chart.setAttribute("viewBox", `0 0 ${width} ${height}`);
   const left = 58;
   const right = 10;
   const top = 12;
@@ -151,21 +153,30 @@ function render() {
   draw();
 }
 
+async function loadAllTraces(days) {
+  const traces = [];
+  let offset = 0;
+  let total = Infinity;
+  while (offset < total) {
+    const page = await getJson(`${traceRangeUrl("/api/traces", days, 200)}&offset=${offset}`);
+    const rows = Array.isArray(page.traces) ? page.traces : [];
+    total = Number(page.total) || 0;
+    traces.push(...rows);
+    if (!rows.length) break;
+    offset += rows.length;
+  }
+  return { traces, total };
+}
+
 async function load() {
   const days = Number(el.period.value) || 30;
   setStatus("Đang tổng hợp token từ trace…");
   try {
-    payload = await getJson(traceRangeUrl("/api/traces", days, 200));
+    payload = await loadAllTraces(days);
     usage = aggregateUsage(payload.traces);
     series = completeDays(usage.days, rollingRange(days));
     render();
-    const clipped = Number(payload.total) > (payload.traces?.length || 0);
-    setStatus(
-      clipped
-        ? `Đang hiển thị ${payload.traces.length}/${payload.total} lượt mới nhất.`
-        : `${formatInteger(usage.totals.turns)} lượt trong ${days} ngày.`,
-      clipped ? "" : "success",
-    );
+    setStatus();
   } catch (error) {
     payload = null;
     usage = null;
@@ -185,4 +196,7 @@ el.units.forEach((button) => {
 });
 el.period?.addEventListener("change", () => void load());
 compact.addEventListener("change", draw);
+new ResizeObserver(() => {
+  if (series.length) draw();
+}).observe(el.chart);
 void load();

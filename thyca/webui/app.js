@@ -34,6 +34,7 @@ const el = {
   deleteNote: document.querySelector("#delete-note"),
   deleteStatus: document.querySelector("#delete-status"),
   deleteCancel: document.querySelector("#cancel-delete"),
+  chatTitle: document.querySelector("#chat-title"),
 };
 
 const IDLE_MS = 15 * 60 * 1000;
@@ -270,6 +271,7 @@ async function submitRename() {
     state.saving = false;
   }
   el.renameDialog.close();
+  if (id === state.activeId) setChatTitle(title);
   await refreshSessions();
 }
 
@@ -325,10 +327,15 @@ function updateToBottom() {
   el.toBottom.hidden = !scrollable || distance <= 120;
 }
 
+function setChatTitle(name) {
+  if (el.chatTitle) el.chatTitle.textContent = cleanText(name, "Phiên trống");
+}
+
 function renderDetail(detail) {
   state.detail = detail;
   state.activeId = String(detail?.id || state.activeId || "");
   rememberActiveSession(state.activeId);
+  setChatTitle(detail?.title);
   const messages = Array.isArray(detail?.messages) ? detail.messages : [];
   if (!renderConversation(el.messageList, messages)) renderEmpty(el.messageList);
   setRunning(detail?.running === true);
@@ -442,6 +449,8 @@ async function loadSession(sessionId) {
   window.clearTimeout(runningTimer);
   runningTimer = 0;
   state.activeId = sessionId;
+  const preview = state.sessions.find((session) => String(session.id) === sessionId);
+  if (preview) setChatTitle(preview.title);
   renderSessions();
   el.messageList.setAttribute("aria-busy", "true");
   try {
@@ -467,6 +476,7 @@ function newSession() {
   state.activeId = "";
   state.detail = null;
   rememberActiveSession("");
+  setChatTitle("Phiên trống");
   renderSessions();
   renderEmpty(el.messageList);
   setRunning(false);

@@ -60,11 +60,14 @@ export function splitPromptTokens(promptTokens, cachedTokens) {
 
 /* Model rows for "Chi phí theo mô hình": filter by name, then order. A model
    with no configured price has no cost to rank, so it sorts last either way
-   instead of posing as the cheapest. */
+   instead of posing as the cheapest. Buckets with no requests and no tokens
+   (e.g. an "unknown" placeholder) have nothing to show, so they never become
+   a row. */
 export function selectModels(models, { sort = "cost-desc", query = "" } = {}) {
   const needle = cleanText(query).toLocaleLowerCase("vi");
   const name = (row) => cleanText(row?.model);
   const rows = (Array.isArray(models) ? models : [])
+    .filter((row) => (Number(row?.requests) || 0) > 0 || (Number(row?.total_tokens) || 0) > 0)
     .filter((row) => !needle || name(row).toLocaleLowerCase("vi").includes(needle));
   if (sort === "cost-asc") {
     return rows.sort((a, b) => byCost(a, b, 1) || name(a).localeCompare(name(b), "vi"));

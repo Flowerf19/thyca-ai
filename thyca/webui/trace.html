@@ -15,7 +15,7 @@
     <link rel="stylesheet" href="./backend.css">
   </head>
   <body>
-    <main class="notebook-shell screen-shell trace-shell" aria-label="Trace phiên trò chuyện">
+    <main class="notebook-shell screen-shell trace-shell pick-shell is-picking" aria-label="Trace phiên trò chuyện">
       <header class="site-header">
         <button class="icon-button menu-button" type="button" aria-label="Mở mục lục">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6.5h16M4 12h16M4 17.5h11" /></svg>
@@ -37,14 +37,17 @@
 
       <section class="workspace trace-workspace" aria-label="Chi tiết lượt">
         <section class="screen-surface trace-content">
-          <header class="trace-crumb">
-            <span id="trace-crumb">Trace › Đang tải…</span>
+          <header class="screen-heading">
+            <button class="screen-back" id="trace-back" type="button">‹ Phiên</button>
+            <div class="screen-title"><h1 id="trace-crumb">Trace › Đang tải…</h1></div>
+          </header>
+          <div class="trace-meta">
+            <p class="screen-status" id="trace-status" role="status" aria-live="polite"></p>
             <button class="screen-button" id="copy-id" type="button">
               <span id="copy-label">ID: —</span>
               <svg class="screen-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="13" rx="1.5" /><path d="M6 16H5a1.5 1.5 0 0 1-1.5-1.5v-11A1.5 1.5 0 0 1 5 2h9A1.5 1.5 0 0 1 15.5 3.5V5" /></svg>
             </button>
-          </header>
-          <p class="screen-status" id="trace-status" role="status" aria-live="polite"></p>
+          </div>
 
           <article class="screen-card turn-detail" id="turn-detail">
             <header class="turn-detail-head">
@@ -64,20 +67,23 @@
             </div>
 
             <section class="trace-section general">
-              <h3>Thông tin chung</h3>
-              <div class="general-card screen-card">
-                <span>Mô hình<strong id="detail-model">gpt-4o-mini</strong></span>
-                <span>Provider<strong id="detail-provider">OpenAI</strong></span>
-                <span>Số vòng<strong id="detail-image">—</strong></span>
-                <span>Trạng thái<strong class="success-text" id="detail-status">Thành công</strong></span>
-                <span>Thời gian phản hồi<strong id="detail-duration">0.21s</strong></span>
-                <span>Chi phí<strong id="detail-cost">$0.00065</strong></span>
-              </div>
+              <details class="fold-section" open>
+                <summary><h3>Thông tin chung</h3></summary>
+                <div class="general-card screen-card">
+                  <span>Mô hình<strong id="detail-model">gpt-4o-mini</strong></span>
+                  <span>Provider<strong id="detail-provider">OpenAI</strong></span>
+                  <span>Số vòng<strong id="detail-image">—</strong></span>
+                  <span>Trạng thái<strong class="success-text" id="detail-status">Thành công</strong></span>
+                  <span>Thời gian phản hồi<strong id="detail-duration">0.21s</strong></span>
+                  <span>Chi phí<strong id="detail-cost">$0.00065</strong></span>
+                </div>
+              </details>
             </section>
 
             <section class="trace-section token-section">
-              <h3>Token</h3>
-              <div class="token-panels">
+              <details class="fold-section" open>
+                <summary><h3>Token</h3></summary>
+                <div class="token-panels">
                 <article class="screen-card">
                   <h3>Input token</h3>
                   <strong id="input-count">192 tokens</strong>
@@ -94,10 +100,11 @@
                   <span id="cache-cost-line">$0.00001</span>
                 </article>
               </div>
+              </details>
             </section>
 
             <section class="trace-section activity-log" id="activity-log">
-              <details class="activity-log-fold">
+              <details class="fold-section" open>
                 <summary><h3>Log hoạt động</h3></summary>
                 <div class="screen-card trace-record-card" id="record-flow"></div>
               </details>

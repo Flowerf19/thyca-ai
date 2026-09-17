@@ -247,6 +247,9 @@ def test_stats_filter_detail_and_corrupt_skip(tmp_path: Path) -> None:
             assert models["foo/bar"]["cost_usd"] is None
             listed = _json(httpd, "/api/traces")
             assert {item["session_id"] for item in listed["traces"]} == {mini_id, other_id}
+            listed_all = _json(httpd, "/api/traces?limit=0")
+            assert listed_all["total"] == 2
+            assert len(listed_all["traces"]) == 2
 
             filtered = _json(httpd, "/api/traces?model=gpt-4o-mini&status=completed")
             assert filtered["total"] == 1

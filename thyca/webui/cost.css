@@ -4,7 +4,8 @@
 
 .cost-overview {
   display: grid;
-  grid-template-columns: minmax(13rem, 0.8fr) minmax(0, 1.3fr);
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: stretch;
   gap: 1.5rem;
 }
 
@@ -12,7 +13,8 @@
   display: flex;
   flex-direction: column;
   justify-content: center;
-  min-height: 14rem;
+  width: max-content;
+  max-width: 100%;
 }
 
 .cost-total strong {
@@ -28,6 +30,7 @@
 }
 
 .cost-total p {
+  margin: 0;
   color: var(--color-muted);
   font-size: 0.95rem;
 }
@@ -177,7 +180,7 @@
   }
 
   .cost-total {
-    min-height: 10rem;
+    width: auto;
   }
 
   .cost-chart-card {

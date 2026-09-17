@@ -67,10 +67,13 @@ function selectRequestModels(models, { sort: order, query = "" } = {}) {
 }
 
 function drawChart(rows) {
-  const width = 720;
-  const height = 230;
+  if (!el.chart) return;
+  const box = el.chart.getBoundingClientRect();
+  const width = Math.max(Math.round(box.width) || 720, 320);
+  const height = Math.max(Math.round(box.height) || 168, 160);
+  el.chart.setAttribute("viewBox", `0 0 ${width} ${height}`);
   const left = 58;
-  const right = 34;
+  const right = 10;
   const top = 14;
   const bottom = 32;
   const values = rows.map((row) => row.value || 0);
@@ -184,4 +187,7 @@ el.sorts.forEach((button) => {
   });
 });
 compact.addEventListener("change", render);
+if (el.chart) {
+  new ResizeObserver(() => { if (stats) render(); }).observe(el.chart);
+}
 if (el.total) void load();

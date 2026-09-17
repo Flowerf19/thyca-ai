@@ -85,15 +85,35 @@
 
         <footer class="site-footer">
         <form class="composer" id="composer" aria-label="Soạn tin nhắn">
-          <div class="composer-pill">
-            <button class="mic-button" type="button" aria-label="Nhập bằng giọng nói" disabled title="Chưa hỗ trợ nhập bằng giọng nói">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8.5" y="3.5" width="7" height="12" rx="3.5" /><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M8.5 21h7" /></svg>
-            </button>
-            <label class="visually-hidden" for="message">Tin nhắn</label>
-            <textarea id="message" name="message" rows="1" maxlength="4000" placeholder="Nói với Thyca"></textarea>
-            <button class="send-button" id="send-message" type="submit" aria-label="Gửi tin nhắn">
-              <span class="send-icon" aria-hidden="true"></span>
-            </button>
+          <label class="letter-label" for="message">Gửi Thyca,</label>
+          <textarea id="message" name="message" rows="1" maxlength="4000" placeholder="Viết vài dòng cho Thyca…"></textarea>
+          <div class="composer-toolbar">
+            <div class="composer-tools">
+              <button class="attach-button" type="button" disabled title="Chưa hỗ trợ đính kèm">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.4 11.2 12 20.6a5.5 5.5 0 0 1-7.8-7.8l9.4-9.4a3.5 3.5 0 0 1 5 5L9.2 17.8a1.5 1.5 0 0 1-2.1-2.1l8.5-8.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                <span>Tệp</span>
+              </button>
+              <button class="voice-button" type="button" disabled title="Chưa hỗ trợ nhập bằng giọng nói">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8.5" y="3.5" width="7" height="12" rx="3.5" fill="none" stroke="currentColor" stroke-width="1.7" /><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M8.5 21h7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></svg>
+                <span>Nói</span>
+              </button>
+            </div>
+            <div class="composer-send">
+              <label class="effort-control model-control" for="composer-model"><span class="effort-label">Model</span>
+                <select class="effort-select model-select" id="composer-model" disabled title="Chưa nối model">
+                  <option selected>Model</option>
+                </select>
+              </label>
+              <label class="effort-control" for="thinking-effort"><span class="effort-label">Suy nghĩ</span>
+                <select class="effort-select" id="thinking-effort" disabled title="Chưa nối mức suy nghĩ">
+                  <option value="low">Nhanh</option>
+                  <option value="medium" selected>Cân bằng</option>
+                  <option value="high">Kỹ hơn</option>
+                </select>
+              </label>
+              <button class="send-button" id="send-message" type="submit" aria-label="Gửi tin nhắn">Gửi</button>
+              <button class="stop-button" type="button" aria-label="Dừng">Dừng</button>
+            </div>
           </div>
           <p class="visually-hidden" id="composer-hint" role="status" aria-live="polite"></p>
           <div class="chat-idle-nudge" id="idle-nudge" hidden>

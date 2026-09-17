@@ -364,6 +364,7 @@ async function followTurn(sessionId) {
     // Replay will rebuild the usage row from the hub log; keep the card.
     live.active.clear();
     live.completed.length = 0;
+    live.thinking?.reset();
     live.article.querySelectorAll(".usage-row").forEach((node) => node.remove());
   } else {
     live = createLiveStatus(el.messageList);

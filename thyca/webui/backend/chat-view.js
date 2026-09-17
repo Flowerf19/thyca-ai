@@ -1,12 +1,13 @@
 import {
-  brandForEvent,
-  IDLE_TAGLINE,
+  brandState,
+  TURN_FAILED_STATUS,
   usageLine,
 } from "./chat-status.js";
+import { bindThinkingToggle, createThinkingNote, elapsedLabel, settledThinkingNote } from "./chat-thinking.js";
 import { formatTime } from "./format.js";
 import { formatMarkdown } from "./markdown.js";
 
-function chatBrandHeader({ state = "idle", status = IDLE_TAGLINE } = {}) {
+function chatBrandHeader({ state = "idle", status = "đã viết", expandable = false } = {}) {
   const header = document.createElement("header");
   header.className = "chat-brand";
   header.dataset.state = state;
@@ -23,8 +24,9 @@ function chatBrandHeader({ state = "idle", status = IDLE_TAGLINE } = {}) {
   quill.className = "chat-brand-quill";
   quill.setAttribute("aria-hidden", "true");
   lockup.append(heading, quill);
-  const line = document.createElement("p");
+  const line = document.createElement(expandable ? "button" : "p");
   line.className = "chat-brand-line";
+  if (expandable) line.type = "button";
   const ink = document.createElement("span");
   ink.className = "chat-brand-ink";
   ink.setAttribute("aria-hidden", "true");
@@ -61,9 +63,11 @@ export function setChatBrand(target, { state, status } = {}) {
   }
 }
 
-function assistantHeader(stamp) {
-  const status = stamp ? `đã viết · ${formatTime(stamp)}` : "đã viết";
-  return chatBrandHeader({ state: "idle", status });
+function assistantHeader({ expandable = false, latencyMs } = {}) {
+  const status = Number.isFinite(latencyMs) && latencyMs >= 0
+    ? `đã viết · ${elapsedLabel(Math.round(latencyMs / 1000))}`
+    : "đã viết";
+  return chatBrandHeader({ state: "idle", status, expandable });
 }
 
 // One "what ran" line: skills and tools share it, formatted by usageLine().
@@ -103,20 +107,70 @@ function userMessage(message) {
   return article;
 }
 
+function toolLine(names, active = []) {
+  const line = usageLine(names, active);
+  return line ? `${line.label} ${line.body}` : "";
+}
+
 function assistantMessage(segments, ts) {
   const article = document.createElement("article");
   article.className = "live-card message-assistant";
-  article.append(assistantHeader(ts));
-  for (const segment of segments) {
-    const body = document.createElement("div");
-    body.className = "live-copy markdown-body";
-    body.innerHTML = formatMarkdown(segment.content);
-    article.append(body);
-    if ((segment.names || []).length) {
+  const blocks = segments.map((segment) => ({
+    segment,
+    thought: settledThinkingNote(segment.reasoning, {
+      toolLine: toolLine(segment.names || []),
+    }),
+  }));
+  const thoughts = blocks.map((block) => block.thought).filter(Boolean);
+  const latencyMs = blocks.reduce((total, block) => {
+    const ms = block.segment.latencyMs;
+    if (!Number.isFinite(ms) || ms < 0) return total;
+    return (total ?? 0) + ms;
+  }, null);
+  const header = assistantHeader({
+    expandable: thoughts.length > 0,
+    latencyMs,
+  });
+  article.append(header);
+  if (thoughts.length) {
+    bindThinkingToggle(header.querySelector(".chat-brand-line"), {
+      bodies: thoughts.map((item) => item.body),
+      notes: thoughts.map((item) => item.note),
+    });
+  }
+  for (const { segment, thought } of blocks) {
+    if (thought) article.append(thought.note);
+    if (typeof segment.content === "string" && segment.content.trim()) {
+      const body = document.createElement("div");
+      body.className = "live-copy markdown-body";
+      body.innerHTML = formatMarkdown(segment.content);
+      article.append(body);
+    }
+    if (!thought && (segment.names || []).length) {
       const row = usageRow(segment.names);
       if (row) article.append(row);
     }
   }
+  const footer = document.createElement("footer");
+  const again = document.createElement("button");
+  again.type = "button";
+  again.className = "again";
+  again.setAttribute("aria-label", "Thử lại");
+  const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  icon.setAttribute("viewBox", "0 0 24 24");
+  icon.setAttribute("aria-hidden", "true");
+  icon.innerHTML = '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 3v5h5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>';
+  const againLabel = document.createElement("span");
+  againLabel.textContent = "Thử lại";
+  again.append(icon, againLabel);
+  footer.append(again);
+  if (ts) {
+    const time = document.createElement("time");
+    time.dateTime = String(ts);
+    time.textContent = formatTime(ts);
+    footer.append(time);
+  }
+  article.append(footer);
   return article;
 }
 
@@ -152,10 +206,15 @@ export function renderConversation(root, messages) {
       if (typeof call.skill === "string" && call.skill) pendingNames.push(call.skill);
       else if (call.name) pendingNames.push(call.name);
     }
-    if (typeof message.content === "string" && message.content.trim()) {
+    const reasoning = typeof message.reasoning === "string" ? message.reasoning : "";
+    const content = typeof message.content === "string" ? message.content : "";
+    if (reasoning || content.trim()) {
+      const latency = Number((message.meta || {}).latency_ms);
       pendingParts.push({
-        content: message.content,
+        content,
         names: pendingNames.splice(0),
+        reasoning,
+        latencyMs: Number.isFinite(latency) && latency >= 0 ? latency : null,
       });
       pendingTs = message.ts || pendingTs;
     }
@@ -204,22 +263,40 @@ export function createLiveStatus(root) {
   article.className = "live-card live-status";
   article.setAttribute("aria-label", "Thyca đang trả lời");
   article.setAttribute("aria-live", "polite");
-  const header = chatBrandHeader(brandForEvent({ type: "turn.accepted" }));
-  article.append(header);
-  root.append(article);
-  return {
+  const live = {
     article,
-    brand: header,
+    brand: null,
+    thinking: null,
     active: new Map(),
     completed: [],
   };
+  const thinking = createThinkingNote({
+    live: true,
+    onElapsed(sec) {
+      setChatBrand(live, { status: `đang suy nghĩ · ${elapsedLabel(sec)}` });
+    },
+  });
+  const header = chatBrandHeader({
+    state: "busy",
+    status: `đang suy nghĩ · ${elapsedLabel(0)}`,
+    expandable: true,
+  });
+  bindThinkingToggle(header.querySelector(".chat-brand-line"), thinking);
+  article.append(header, thinking.note);
+  root.append(article);
+  live.brand = header;
+  live.thinking = thinking;
+  return live;
 }
 
 export function updateLiveStatus(live, event) {
-  const brand = brandForEvent(event);
+  if (event?.type === "llm.thinking") {
+    live.thinking?.append(event.delta);
+    return;
+  }
   setChatBrand(live, {
-    state: brand.state,
-    status: brand.status || undefined,
+    state: brandState(event),
+    status: event?.type === "turn.failed" ? TURN_FAILED_STATUS : undefined,
   });
   const starts = event?.type === "tool.started" || event?.type === "skill.started";
   const finishes = event?.type === "tool.finished" || event?.type === "skill.finished";
@@ -237,7 +314,10 @@ export function updateLiveStatus(live, event) {
     live.completed.push(...live.active.values());
     live.active.clear();
   }
+  if (event?.type === "turn.completed" || event?.type === "turn.failed") {
+    live.thinking?.settle();
+  }
   live.article.querySelectorAll(".usage-row").forEach((node) => node.remove());
-  const next = usageRow(live.completed, [...live.active.values()]);
-  if (next) live.article.append(next);
+  const active = [...live.active.values()];
+  live.thinking?.setToolLine(toolLine(live.completed, active), active.length > 0);
 }

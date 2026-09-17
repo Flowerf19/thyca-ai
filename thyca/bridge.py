@@ -19,6 +19,7 @@ import threading
 import traceback
 
 from thyca.agent.events import TurnEvent
+from thyca.agent.thinking import ThinkingDelta
 from thyca.chat_app import ChatApp
 from thyca.llm.llm_base import LLMError
 from thyca.session_wire import delete_error, rename_error
@@ -135,7 +136,7 @@ def pump_stream(handler, items: queue.Queue, state: dict) -> None:
                 break
             if terminal:
                 continue
-            if isinstance(item, TurnEvent):
+            if isinstance(item, (TurnEvent, ThinkingDelta)):
                 write_line(handler.wfile, item.to_dict())
                 continue
             _kind, value = item

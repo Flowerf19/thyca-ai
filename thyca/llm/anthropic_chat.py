@@ -7,6 +7,6 @@ from .llm_base import ChatReply, Connect
 
 class AnthropicChat(Connect):
     async def chat(
-        self, messages: list[Message], tools: list | None = None
+        self, messages: list[Message], tools: list | None = None, on_reasoning=None
     ) -> ChatReply:
         raise NotImplementedError("Anthropic connect is not implemented")

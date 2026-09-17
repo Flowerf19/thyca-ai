@@ -61,6 +61,8 @@ def test_unknown_type_rejected() -> None:
         TurnEvent(type="turn.completed")
     with pytest.raises(ValueError, match="unknown event type"):
         TurnEvent(type="turn.failed")
+    with pytest.raises(ValueError, match="unknown event type"):
+        TurnEvent(type="llm.thinking")
 
 
 def test_bool_as_int_rejected() -> None:
@@ -175,4 +177,23 @@ def test_llm_retry_rejects_bad_counts() -> None:
         TurnEvent(type="llm.retry", attempt=1)
     with pytest.raises(ValueError, match="attempt"):
         TurnEvent(type="llm.retry", max_attempts=3)
+
+
+def test_thinking_delta_to_dict_exact_keys() -> None:
+    from thyca.agent.thinking import ThinkingDelta
+
+    assert ThinkingDelta(round=1, delta="First I check").to_dict() == {
+        "type": "llm.thinking",
+        "round": 1,
+        "delta": "First I check",
+    }
+
+
+def test_thinking_delta_rejects_empty() -> None:
+    from thyca.agent.thinking import ThinkingDelta
+
+    with pytest.raises(ValueError, match="delta"):
+        ThinkingDelta(round=1, delta="")
+    with pytest.raises(ValueError, match="round"):
+        ThinkingDelta(round=0, delta="x")
 

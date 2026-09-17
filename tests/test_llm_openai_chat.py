@@ -429,3 +429,153 @@ async def test_reasoning_effort_low_sent() -> None:
     )
     await connect.chat([Message(role="user", content="x")])
     assert seen["body"]["reasoning_effort"] == "low"
+
+
+def _sse(*chunks: dict, done: bool = True) -> httpx.Response:
+    parts = [f"data: {json.dumps(chunk)}" for chunk in chunks]
+    if done:
+        parts.append("data: [DONE]")
+    return httpx.Response(
+        200,
+        text="\n\n".join(parts) + "\n\n",
+        headers={"Content-Type": "text/event-stream"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_stream_reasoning_content_emits_and_persists() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert body["stream"] is True
+        assert body["stream_options"] == {"include_usage": True}
+        return _sse(
+            {"choices": [{"delta": {"reasoning_content": "Think about "}}]},
+            {"choices": [{"delta": {"reasoning_content": "the chords."}}]},
+            {
+                "choices": [{"delta": {"content": "yes"}, "finish_reason": "stop"}],
+                "usage": {"total_tokens": 4},
+            },
+        )
+
+    seen: list[str] = []
+    connect = OpenAIChat(_provider(), client=_client(handler))
+    reply = await connect.chat([Message(role="user", content="x")], on_reasoning=seen.append)
+    assert reply.content == "yes"
+    assert reply.reasoning == "Think about the chords."
+    assert "".join(seen) == "Think about the chords."
+    assert reply.usage == {"total_tokens": 4}
+
+
+@pytest.mark.asyncio
+async def test_stream_reasoning_field_openrouter() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _sse(
+            {"choices": [{"delta": {"reasoning": "because"}}]},
+            {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]},
+        )
+
+    connect = OpenAIChat(_provider(), client=_client(handler))
+    reply = await connect.chat([Message(role="user", content="x")])
+    assert reply.reasoning == "because"
+    assert reply.content == "ok"
+
+
+@pytest.mark.asyncio
+async def test_json_reasoning_content_parsed_without_stream() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": "pong",
+                            "reasoning_content": "I thought",
+                        },
+                        "finish_reason": "stop",
+                    }
+                ]
+            },
+        )
+
+    seen: list[str] = []
+    connect = OpenAIChat(_provider(), client=_client(handler))
+    reply = await connect.chat([Message(role="user", content="x")], on_reasoning=seen.append)
+    assert reply.reasoning == "I thought"
+    assert seen == ["I thought"]
+
+
+@pytest.mark.asyncio
+async def test_reasoning_key_redacted_in_delta() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _sse(
+            {"choices": [{"delta": {"reasoning_content": "use sk-secret-key now"}}]},
+            {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]},
+        )
+
+    seen: list[str] = []
+    connect = OpenAIChat(_provider(), client=_client(handler))
+    reply = await connect.chat([Message(role="user", content="x")], on_reasoning=seen.append)
+    assert "sk-secret-key" not in (reply.reasoning or "")
+    assert "[redacted]" in (reply.reasoning or "")
+    assert all("sk-secret-key" not in item for item in seen)
+
+
+@pytest.mark.asyncio
+async def test_reasoning_capped_at_result_limit() -> None:
+    from thyca.protocol import RESULT_CAP_BYTES
+
+    huge = "a" * (RESULT_CAP_BYTES + 50)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _sse(
+            {"choices": [{"delta": {"reasoning_content": huge}}]},
+            {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]},
+        )
+
+    connect = OpenAIChat(_provider(), client=_client(handler))
+    reply = await connect.chat([Message(role="user", content="x")])
+    assert reply.reasoning is not None
+    assert len(reply.reasoning.encode("utf-8")) <= RESULT_CAP_BYTES
+
+
+@pytest.mark.asyncio
+async def test_stream_tool_calls_assembled() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _sse(
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "call-1",
+                                    "function": {"name": "echo", "arguments": ""},
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {"index": 0, "function": {"arguments": '{"q":"hi"}'}}
+                            ]
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ]
+            },
+        )
+
+    connect = OpenAIChat(_provider(), client=_client(handler))
+    reply = await connect.chat([Message(role="user", content="x")])
+    assert reply.content is None
+    assert len(reply.tool_calls) == 1
+    assert reply.tool_calls[0].id == "call-1"
+    assert reply.tool_calls[0].name == "echo"
+    assert reply.tool_calls[0].arguments == {"q": "hi"}

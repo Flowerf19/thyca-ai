@@ -7,9 +7,10 @@ from typing import Any
 import httpx
 
 from thyca.config import ProviderCfg
-from thyca.protocol import Message, ToolCall
+from thyca.protocol import Message
 
-from .llm_base import ChatReply, Connect, LLMError, normalize_usage
+from .llm_base import ChatReply, Connect, LLMError
+from .openai_parse import parse_chat_bytes, read_sse_reply
 
 _RETRY_STATUS = {429, 500, 502, 503, 504}
 _BODY_CAP = 500
@@ -63,11 +64,16 @@ class OpenAIChat(Connect):
             await self._client.aclose()
 
     async def chat(
-        self, messages: list[Message], tools: list | None = None
+        self,
+        messages: list[Message],
+        tools: list | None = None,
+        on_reasoning: Callable[[str], None] | None = None,
     ) -> ChatReply:
         payload: dict[str, Any] = {
             "model": self._provider.model,
             "messages": [_to_openai_message(m) for m in messages],
+            "stream": True,
+            "stream_options": {"include_usage": True},
         }
         if tools:
             payload["tools"] = tools
@@ -79,9 +85,7 @@ class OpenAIChat(Connect):
         key = self._provider.api_key()
         headers = {"Authorization": f"Bearer {key}"}
         url = _chat_url(self._provider.baseUrl)
-
-        response = await self._request(url, payload, headers, key)
-        return _parse_reply(response, key)
+        return await self._request(url, payload, headers, key, on_reasoning)
 
     async def _request(
         self,
@@ -89,7 +93,8 @@ class OpenAIChat(Connect):
         payload: dict[str, Any],
         headers: dict[str, str],
         key: str,
-    ) -> httpx.Response:
+        on_reasoning: Callable[[str], None] | None,
+    ) -> ChatReply:
         # Exactly 3 transient attempts; each failure emits retry status
         # (1/3, 2/3, 3/3) before the final provider error.
         max_attempts = 3
@@ -98,9 +103,17 @@ class OpenAIChat(Connect):
         dropped_effort = False
         while True:
             try:
-                response = await self._client.post(url, json=payload, headers=headers)
+                async with self._client.stream(
+                    "POST", url, json=payload, headers=headers
+                ) as response:
+                    reply = await self._consume(
+                        response, payload, key, on_reasoning, dropped_effort
+                    )
+            except _DropEffort:
+                payload = {k: v for k, v in payload.items() if k != "reasoning_effort"}
+                dropped_effort = True
+                continue
             except httpx.RequestError as exc:
-                # Timeout, connect reset, remote protocol — same 3 tries as 429/5xx.
                 transient += 1
                 if isinstance(exc, httpx.TimeoutException):
                     last_error = LLMError("provider timeout")
@@ -111,28 +124,56 @@ class OpenAIChat(Connect):
                     raise last_error from exc
                 continue
 
-            if (
-                response.status_code == 400
-                and "reasoning_effort" in payload
-                and "reasoning_effort" in response.text
-                and not dropped_effort
-            ):
-                # Model does not support the effort parameter — drop it and
-                # retry once (does not count as a transient attempt).
-                payload = {k: v for k, v in payload.items() if k != "reasoning_effort"}
-                dropped_effort = True
-                continue
-            if response.status_code in _RETRY_STATUS:
+            if isinstance(reply, LLMError):
                 transient += 1
-                last_error = _http_error(response, key)
+                last_error = reply
                 self._notify_retry(transient, max_attempts)
                 if transient >= max_attempts:
                     raise last_error
-                await _sleep_retry_after(response)
                 continue
-            if response.status_code >= 400:
-                raise _http_error(response, key)
-            return response
+            return reply
+
+
+    async def _consume(
+        self,
+        response: httpx.Response,
+        payload: dict[str, Any],
+        key: str,
+        on_reasoning: Callable[[str], None] | None,
+        dropped_effort: bool,
+    ) -> ChatReply | LLMError:
+        status = response.status_code
+        if (
+            status == 400
+            and "reasoning_effort" in payload
+            and not dropped_effort
+        ):
+            body = (await response.aread()).decode("utf-8", errors="replace")
+            if "reasoning_effort" in body:
+                raise _DropEffort
+            raise LLMError(f"provider HTTP 400: {_redact(_cap(body), key)}")
+        if status in _RETRY_STATUS:
+            await _sleep_retry_after(response)
+            body = (await response.aread()).decode("utf-8", errors="replace")
+            return LLMError(f"provider HTTP {status}: {_redact(_cap(body), key)}")
+        if status >= 400:
+            body = (await response.aread()).decode("utf-8", errors="replace")
+            raise LLMError(f"provider HTTP {status}: {_redact(_cap(body), key)}")
+        ctype = response.headers.get("content-type", "")
+        if "event-stream" in ctype:
+            return await read_sse_reply(response, key, on_reasoning)
+        raw = await response.aread()
+        reply = parse_chat_bytes(raw, key)
+        if on_reasoning and reply.reasoning:
+            try:
+                on_reasoning(reply.reasoning)
+            except Exception:
+                pass
+        return reply
+
+
+class _DropEffort(Exception):
+    """Retry the request once without reasoning_effort."""
 
 
 async def _sleep_retry_after(response: httpx.Response) -> None:
@@ -147,11 +188,6 @@ async def _sleep_retry_after(response: httpx.Response) -> None:
         import asyncio
 
         await asyncio.sleep(delay)
-
-
-def _http_error(response: httpx.Response, key: str) -> LLMError:
-    body = _redact(_cap(response.text), key)
-    return LLMError(f"provider HTTP {response.status_code}: {body}")
 
 
 def _to_openai_message(message: Message) -> dict[str, Any]:
@@ -171,82 +207,3 @@ def _to_openai_message(message: Message) -> dict[str, Any]:
     if message.tool_call_id is not None:
         payload["tool_call_id"] = message.tool_call_id
     return payload
-
-
-def _parse_reply(response: httpx.Response, key: str) -> ChatReply:
-    try:
-        raw = response.json()
-    except json.JSONDecodeError as exc:
-        raise LLMError(_redact(_cap(response.text), key)) from exc
-    if not isinstance(raw, dict):
-        raise LLMError("provider response must be an object")
-    choices = raw.get("choices")
-    if not isinstance(choices, list) or not choices:
-        raise LLMError("provider response missing choices")
-    first = choices[0]
-    if not isinstance(first, dict):
-        raise LLMError("provider choice must be an object")
-    message = first.get("message")
-    if not isinstance(message, dict):
-        raise LLMError("provider message missing")
-    content = message.get("content")
-    if content is not None and not isinstance(content, str):
-        raise LLMError("provider content must be string or null")
-    finish = first.get("finish_reason") or ""
-    if not isinstance(finish, str):
-        finish = str(finish)
-    raw_usage = raw.get("usage")
-    if not isinstance(raw_usage, dict):
-        raw_usage = None
-    usage = normalize_usage(raw_usage, "openai") if isinstance(raw_usage, dict) else None
-    model = raw.get("model")
-    if not isinstance(model, str):
-        model = None
-    return ChatReply(
-        content=content,
-        tool_calls=_parse_tool_calls(message.get("tool_calls")),
-        usage=usage,
-        finish_reason=finish,
-        model=model,
-    )
-
-
-def _parse_tool_calls(raw: object) -> list[ToolCall]:
-    if raw is None:
-        return []
-    if not isinstance(raw, list):
-        raise LLMError("provider tool_calls must be a list")
-    calls: list[ToolCall] = []
-    for item in raw:
-        if not isinstance(item, dict):
-            raise LLMError("provider tool_call must be an object")
-        fn = item.get("function")
-        if not isinstance(fn, dict):
-            fn = {}
-        call_id = item.get("id")
-        name = fn.get("name")
-        if not isinstance(call_id, str) or not call_id:
-            raise LLMError("provider tool_call missing id")
-        if not isinstance(name, str) or not name:
-            raise LLMError("provider tool_call missing name")
-        arguments_raw = fn.get("arguments", "{}")
-        parse_error: str | None = None
-        arguments: dict = {}
-        if isinstance(arguments_raw, dict):
-            arguments = arguments_raw
-        elif isinstance(arguments_raw, str):
-            try:
-                parsed = json.loads(arguments_raw) if arguments_raw else {}
-            except json.JSONDecodeError:
-                parse_error = "invalid arguments"
-                parsed = {}
-            if parse_error is None and not isinstance(parsed, dict):
-                parse_error = "invalid arguments"
-                parsed = {}
-            arguments = parsed
-        else:
-            parse_error = "invalid arguments"
-        calls.append(
-            ToolCall(id=call_id, name=name, arguments=arguments, parse_error=parse_error)
-        )
-    return calls

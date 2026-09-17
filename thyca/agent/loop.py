@@ -9,6 +9,7 @@ from .events import EventSink, TurnEvent, emit_event
 from .observe import Observe
 from .stage import Stage
 from .think import Think
+from .thinking import ThinkingDelta
 
 
 class AgentLoop:
@@ -58,7 +59,19 @@ class AgentLoop:
             # carry model/pricing so Observe/Trace can build meta without reading config
             stage.llm_model = self._model
             emit_event(event_sink, TurnEvent(type="llm.started", round=stage.round))
-            await self._think.think(stage)
+            round_no = stage.round
+            on_reasoning = None
+            if event_sink is not None:
+
+                def on_reasoning(delta: str, *, _round: int = round_no) -> None:
+                    if not delta:
+                        return
+                    try:
+                        event_sink(ThinkingDelta(round=_round, delta=delta))  # type: ignore[arg-type]
+                    except Exception:
+                        pass
+
+            await self._think.think(stage, on_reasoning=on_reasoning)
             assert stage.reply is not None
             echoed = getattr(stage.reply, "model", None)
             if isinstance(echoed, str) and echoed.strip():

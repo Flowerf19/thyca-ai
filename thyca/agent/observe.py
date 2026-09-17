@@ -6,6 +6,13 @@ from thyca.sessions import SessionManager
 from .stage import Stage
 
 
+def _reasoning(stage: Stage) -> str | None:
+    value = getattr(getattr(stage, "reply", None), "reasoning", None)
+    if isinstance(value, str) and value:
+        return value
+    return None
+
+
 def _tool_message(
     result: ToolResult, latency_ms: int | None = None, round_no: int | None = None
 ) -> Message:
@@ -63,7 +70,9 @@ class Observe:
     def assistant(self, stage: Stage) -> str:
         content = "" if stage.reply is None else (stage.reply.content or "")
         meta = self._assistant_meta(stage, kind="llm")
-        self._sessions.append(Message(role="assistant", content=content, meta=meta))
+        self._sessions.append(
+            Message(role="assistant", content=content, meta=meta, reasoning=_reasoning(stage))
+        )
         return content
 
     def observe(self, stage: Stage) -> None:
@@ -75,6 +84,7 @@ class Observe:
             content=stage.reply.content,
             tool_calls=stage.reply.tool_calls,
             meta=meta,
+            reasoning=_reasoning(stage),
         )
         ordered = self._order_results(stage.reply.tool_calls, stage.results)
         latencies = getattr(stage, "tool_latencies", {}) or {}

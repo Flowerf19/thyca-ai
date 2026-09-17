@@ -9,6 +9,6 @@ class OpenAIResponses(Connect):
     """OpenAI `/v1/responses` — not implemented in v1."""
 
     async def chat(
-        self, messages: list[Message], tools: list | None = None
+        self, messages: list[Message], tools: list | None = None, on_reasoning=None
     ) -> ChatReply:
         raise NotImplementedError("OpenAI Responses connect is not implemented")

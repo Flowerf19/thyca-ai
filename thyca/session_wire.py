@@ -94,6 +94,8 @@ def message_dict(message: Message, skills_root: Path | None = None) -> dict:
         payload["tool_call_id"] = message.tool_call_id
     if message.meta is not None:
         payload["meta"] = dict(message.meta)
+    if message.reasoning:
+        payload["reasoning"] = message.reasoning
     return payload
 
 

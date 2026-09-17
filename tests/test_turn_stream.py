@@ -1,7 +1,6 @@
-"""Lifecycle: chunked NDJSON → status text. No jsdom.
+"""Lifecycle: chunked NDJSON decode. No jsdom.
 
-Drives webui/backend/api.js (postNdjson) with stubbed fetch and maps the
-decoded events through webui/backend/chat-status.js (statusTextForEvent).
+Drives webui/backend/api.js (postNdjson) with stubbed fetch.
 """
 from __future__ import annotations
 
@@ -14,7 +13,6 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 API = ROOT / "thyca" / "webui" / "backend" / "api.js"
-STATUS = ROOT / "thyca" / "webui" / "backend" / "chat-status.js"
 
 
 @pytest.fixture(scope="module")
@@ -27,7 +25,6 @@ def node() -> str:
 
 _PREAMBLE = f"""
 import {{ postNdjson }} from '{API.as_posix()}';
-import {{ statusTextForEvent }} from '{STATUS.as_posix()}';
 async function decode(raw, splitAt = -1) {{
   const bytes = new TextEncoder().encode(raw);
   const parts = splitAt >= 0 ? [bytes.slice(0, splitAt), bytes.slice(splitAt)] : [bytes];
@@ -70,8 +67,7 @@ def test_chunked_stream_status(node: str) -> None:
         "(async () => {"
         + f" const mid = Math.floor(new TextEncoder().encode({payload}).length / 2);"
         + f" const events = await decode({payload}, mid);"
-        + " return { types: events.map((e) => e.type),"
-        + " status: events.map((e) => statusTextForEvent(e)) }; })()",
+        + " return { types: events.map((e) => e.type) }; })()",
     )
     assert result["types"] == [
         "turn.accepted",
@@ -79,9 +75,6 @@ def test_chunked_stream_status(node: str) -> None:
         "llm.finished",
         "turn.completed",
     ]
-    assert result["status"][0] == "Đã nhận lượt…"
-    assert result["status"][1] == "Đang xử lý vòng 1…"
-    assert result["status"][-1] == "Đã xong."
 
 
 def test_failed_stream_status(node: str) -> None:
@@ -97,21 +90,7 @@ def test_failed_stream_status(node: str) -> None:
     assert result["message"] == "x"
 
 
-def test_failed_stream_events_map_to_stopped(node: str) -> None:
-    result = _run(
-        node,
-        """(async () => {
-          const events = [
-            { type: 'turn.accepted' },
-            { type: 'turn.failed', code: 'llm_error', message: 'x' },
-          ];
-          return { status: events.map((e) => statusTextForEvent(e)) };
-        })()""",
-    )
-    assert result["status"][-1] == "Lượt đã dừng."
-
-
-def test_skill_events_change_status(node: str) -> None:
+def test_skill_events_pass_through(node: str) -> None:
     raw = (
         '{"type":"turn.accepted"}\n'
         '{"type":"skill.started","round":1,"call_id":"call-1","name":"create-skill"}\n'
@@ -123,11 +102,36 @@ def test_skill_events_change_status(node: str) -> None:
         node,
         "(async () => {"
         + f" const events = await decode({payload});"
-        + " return { status: events.map((e) => statusTextForEvent(e)) }; })()",
+        + " return { types: events.map((e) => e.type) }; })()",
     )
-    assert result["status"] == [
-        "Đã nhận lượt…",
-        "Đang mở skill create-skill…",
-        "Đã mở skill create-skill…",
-        "Đã xong.",
+    assert result["types"] == [
+        "turn.accepted",
+        "skill.started",
+        "skill.finished",
+        "turn.completed",
     ]
+
+
+def test_thinking_deltas_pass_through_ndjson(node: str) -> None:
+    raw = (
+        '{"type":"turn.accepted"}\n'
+        '{"type":"llm.started","round":1}\n'
+        '{"type":"llm.thinking","round":1,"delta":"First I check"}\n'
+        '{"type":"llm.finished","round":1,"tool_count":0}\n'
+        '{"type":"turn.completed","detail":{"id":"s"}}\n'
+    )
+    payload = json.dumps(raw)
+    result = _run(
+        node,
+        "(async () => {"
+        + f" const events = await decode({payload});"
+        + " return { types: events.map((e) => e.type), deltas: events.filter((e) => e.type === 'llm.thinking').map((e) => e.delta) }; })()",
+    )
+    assert result["types"] == [
+        "turn.accepted",
+        "llm.started",
+        "llm.thinking",
+        "llm.finished",
+        "turn.completed",
+    ]
+    assert result["deltas"] == ["First I check"]

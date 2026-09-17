@@ -96,6 +96,7 @@ class Message:
     tool_call_id: str | None = None
     ts: str = field(default_factory=utc_now_ts)
     meta: dict | None = None
+    reasoning: str | None = None
 
     def __post_init__(self) -> None:
         if self.role not in _ROLE_OPTIONS:
@@ -110,6 +111,8 @@ class Message:
                     raise ValueError("tool_calls entries must be ToolCall")
         if self.tool_call_id is not None and not isinstance(self.tool_call_id, str):
             raise ValueError("tool_call_id must be str or None")
+        if self.reasoning is not None and not isinstance(self.reasoning, str):
+            raise ValueError("reasoning must be str or None")
         _validate_ts(self.ts)
         if self.meta is not None:
             if not isinstance(self.meta, dict):
@@ -132,6 +135,8 @@ class Message:
             d["tool_calls"] = [tc.to_dict() for tc in self.tool_calls]
         if self.tool_call_id is not None:
             d["tool_call_id"] = self.tool_call_id
+        if self.reasoning:
+            d["reasoning"] = self.reasoning
         if self.meta is not None:
             # re-check cap at serialization time as well
             meta_json = json.dumps(self.meta, ensure_ascii=False)
@@ -162,6 +167,7 @@ class Message:
         if ts is None:
             raise ValueError("Message missing required 'ts'")
         meta = raw.get("meta")
+        reasoning = raw.get("reasoning")
         return cls(
             role=role,
             content=content,
@@ -169,6 +175,7 @@ class Message:
             tool_call_id=tool_call_id,
             ts=ts,
             meta=meta,
+            reasoning=reasoning,
         )
 
     @classmethod

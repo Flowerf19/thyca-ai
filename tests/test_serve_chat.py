@@ -675,17 +675,31 @@ def test_stream_sentinel_without_terminal_writes_fallback_failure(
 def test_chat_js_shipped() -> None:
     app = (WEBUI / "app.js").read_text(encoding="utf-8")
     view = (WEBUI / "backend" / "chat-view.js").read_text(encoding="utf-8")
+    thinking = (WEBUI / "backend" / "chat-thinking.js").read_text(encoding="utf-8")
     api = (WEBUI / "backend" / "api.js").read_text(encoding="utf-8")
     css = (WEBUI / "backend.css").read_text(encoding="utf-8")
+    styles = (WEBUI / "styles.css").read_text(encoding="utf-8")
 
     assert 'postNdjson(' in app
     assert '/turn/stream' in app
     assert 'postJson("/api/sessions", {})' in app
     assert "formatMarkdown" in view
     assert "chat-brand" in view
-    assert "brandForEvent" in view
+    assert "brandState" in view
+    assert "createThinkingNote" in view
+    assert "settledThinkingNote" in view
     assert "ambientLineForEvent" not in view
+    assert not (WEBUI / "backend" / "chat-ambient.js").exists()
     assert "tool.started" in view
+    assert "llm.thinking" in view
+    assert "thinking?.reset" in app
+    assert "bindThinkingToggle" in thinking
+    assert "thought-footer" in thinking
+    assert "search-event" in thinking
+    assert "giây" in thinking
+    assert "settledThinkingNote" in thinking
+    assert ".thought-footer" in styles
+    assert ".search-event" in styles
     assert "turn.completed" in api
     assert "Tools used:" not in view
     assert ".live-status" in css
@@ -965,6 +979,41 @@ def test_follow_stream_replays_and_tails_a_running_turn(tmp_path: Path) -> None:
         assert follower_types[-1] == "turn.completed"
         assert "llm.started" in follower_types
         assert follower_lines[-1]["detail"]["reply"] == "late"
+    finally:
+        _stop(httpd, thread)
+
+
+def test_stream_emits_thinking_deltas_and_persists(tmp_path: Path) -> None:
+    class ThinkingLLM:
+        async def chat(self, messages, tools=None, on_reasoning=None):
+            if on_reasoning:
+                on_reasoning("First I check")
+                on_reasoning(" the chords")
+            return ChatReply(content="yes", reasoning="First I check the chords")
+
+    httpd, thread = _start(tmp_path, _chat(tmp_path, ThinkingLLM()))
+    try:
+        created = _json(httpd, "/api/sessions", method="POST", data=b"")
+        response = _stream(
+            httpd,
+            f"/api/sessions/{created['id']}/turn/stream",
+            data=b'{"text":"kalimba"}',
+        )
+        lines = _stream_lines(response)
+        types = [item["type"] for item in lines]
+        thinking = [item for item in lines if item["type"] == "llm.thinking"]
+        assert types[0] == "turn.accepted"
+        assert types[1] == "llm.started"
+        assert thinking == [
+            {"type": "llm.thinking", "round": 1, "delta": "First I check"},
+            {"type": "llm.thinking", "round": 1, "delta": " the chords"},
+        ]
+        assert "llm.finished" in types
+        assert types[-1] == "turn.completed"
+        detail = _json(httpd, f"/api/sessions/{created['id']}")
+        assistant = next(item for item in detail["messages"] if item["role"] == "assistant" and item.get("content") == "yes")
+        assert assistant["reasoning"] == "First I check the chords"
+        assert assistant["content"] == "yes"
     finally:
         _stop(httpd, thread)
 

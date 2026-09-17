@@ -385,3 +385,50 @@ def test_tool_round_persists_tool_latency(tmp_path: Path) -> None:
     assert tool.meta is not None
     assert isinstance(tool.meta["latency_ms"], int)
     assert tool.meta["round"] == 1
+
+
+def test_reasoning_persists_without_thinking_events(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path)
+    session = manager.create()
+    llm = FakeLLM([ChatReply(content="hello back", reasoning="because")])
+    events: list = []
+
+    assert (
+        asyncio.run(_loop(manager, llm, FakeDispatcher({})).run("hello", event_sink=events.append))
+        == "hello back"
+    )
+    assert [event.type for event in events] == ["turn.accepted", "llm.started", "llm.finished"]
+    messages = _load_messages(tmp_path, session.id)
+    assert messages[-1].content == "hello back"
+    assert messages[-1].reasoning == "because"
+
+
+def test_on_reasoning_emits_thinking_deltas(tmp_path: Path) -> None:
+    from thyca.agent.thinking import ThinkingDelta
+
+    @dataclass
+    class StreamingLLM:
+        async def chat(self, messages, tools=None, on_reasoning=None):
+            if on_reasoning:
+                on_reasoning("First ")
+                on_reasoning("check")
+            return ChatReply(content="ok", reasoning="First check")
+
+    manager = SessionManager(tmp_path)
+    session = manager.create()
+    events: list = []
+    loop = AgentLoop(
+        sessions=manager,
+        assemble=Assemble(),
+        think=Think(StreamingLLM()),
+        act=Act(FakeDispatcher({})),
+        observe=Observe(manager),
+        loop_max=3,
+    )
+    assert asyncio.run(loop.run("hello", event_sink=events.append)) == "ok"
+    thinking = [event for event in events if isinstance(event, ThinkingDelta)]
+    assert [event.to_dict() for event in thinking] == [
+        {"type": "llm.thinking", "round": 1, "delta": "First "},
+        {"type": "llm.thinking", "round": 1, "delta": "check"},
+    ]
+    assert _load_messages(tmp_path, session.id)[-1].reasoning == "First check"

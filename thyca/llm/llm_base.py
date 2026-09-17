@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TypedDict
 
@@ -115,6 +116,7 @@ class ChatReply:
     usage: dict | None = None
     finish_reason: str = ""
     model: str | None = None
+    reasoning: str | None = None
 
 
 class Connect(ABC):
@@ -122,7 +124,10 @@ class Connect(ABC):
 
     @abstractmethod
     async def chat(
-        self, messages: list[Message], tools: list | None = None
+        self,
+        messages: list[Message],
+        tools: list | None = None,
+        on_reasoning: Callable[[str], None] | None = None,
     ) -> ChatReply:
         raise NotImplementedError
 

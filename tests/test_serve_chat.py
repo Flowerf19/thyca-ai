@@ -1156,10 +1156,12 @@ def test_webui_follows_a_turn_it_did_not_start() -> None:
     assert "setRunning(false)" in watch
     assert "RUNNING_POLL_MS * failures" in watch
 
-    # Blocking is per session: only the session this tab streams from (or the
-    # one running on the backend) has its composer disabled.
-    assert "state.streamSessionId" in app
-    assert "state.streamSessionId === sessionKey()" in composer
+    # Blocking is per session: only sessions this tab streams from have their
+    # composer disabled, and finishing one turn must not orphan the other's
+    # reader — hence a Set of streaming sessions, not a single id.
+    assert "const streamingSessions = new Set();" in app
+    assert "streamingSessions.has(sessionKey())" in composer
+    assert "streamingSessions.delete(sessionId)" in app
     # Sending to one session must not disable another session's composer.
     assert "state.sending || state.running" not in composer
 

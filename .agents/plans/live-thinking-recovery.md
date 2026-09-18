@@ -18,7 +18,9 @@ Corrections shipped:
 
 - `backend/api.js`: yield once per read chunk via timer; never gate on animation frames (tests/test_webui_stream.py, 8 variants, fails pre-fix).
 - `app.js`: failed follow keeps polling ownership of the live card; `renderPolledProgress` syncs only newly persisted reasoning into the card (`chat-thinking.js sync()`), so no transcript rebuild, selection loss, or forced scroll per poll; terminal poll renders the full transcript; a retained card whose `started_at` changed is replaced instead of reused.
-- Review status: api.js fix approved independently; app.js polling fix reviewed with 3 Important findings, all addressed (poll rebuild, stale retained card, test boundary); final re-review of `renderPolledProgress` did not complete (reviewer usage limit) — residual: concurrent sends still share one global `streamSessionId` (pre-existing), untested in a real browser with a genuinely interrupted connection.
+- Review status: api.js fix approved independently; app.js polling fix reviewed with 3 Important findings, all addressed (poll rebuild, stale retained card, test boundary). Concurrent-send ownership fixed separately: per-session `streamingSessions` Set replaces the single global id (tests/test_webui_concurrent_streams.py fails on the previous source). Verified in a real browser: follow GET interrupted by a fetch patch → fallback polls displayed saved reasoning while the turn was still running, full transcript after the terminal.
+
+Residual: browser timer throttling under long background periods untested.
 
 Normal single-turn session switching already resumes its clock in the lifecycle reproduction. No evidence of which transport failure occurred in the historical user session.
 

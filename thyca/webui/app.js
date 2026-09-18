@@ -57,15 +57,16 @@ const idleArmed = new Set();
 // another session detaches the card from the DOM, so keep the object (and the
 // events it already shows) and mount it again on the way back.
 const liveTurns = new Map();
+// Sessions this tab is streaming a turn from. A Set, not one id: two turns
+// can stream at once (send in A, switch to B, send there), and finishing B
+// must not orphan A's reader.
+const streamingSessions = new Set();
 
 const state = {
   sessions: [],
   activeId: "",
   detail: null,
   sending: false,
-  // Session this tab is currently streaming from — only that session's
-  // composer is blocked; any other session stays writable.
-  streamSessionId: "",
   running: false,
   loadGeneration: 0,
   deleteId: "",
@@ -131,7 +132,7 @@ function armIdle() {
 function composerBusy() {
   if (state.running) return true;
   if (!state.sending) return false;
-  return !state.streamSessionId || state.streamSessionId === sessionKey();
+  return !streamingSessions.size || streamingSessions.has(sessionKey());
 }
 
 function setSending(sending) {
@@ -356,7 +357,7 @@ function renderDetail(detail) {
     } else {
       liveTurns.set(state.activeId, createLiveStatus(el.messageList, detail.started_at));
     }
-  } else if (state.streamSessionId !== state.activeId) {
+  } else if (!streamingSessions.has(state.activeId)) {
     liveTurns.delete(state.activeId);
   }
   renderSessions();
@@ -417,7 +418,7 @@ async function followTurn(sessionId, startedAt) {
     if (replaced) return;
     // Polling still owns the mounted card and its clock. Don't orphan it
     // just because the stream failed; renderDetail reuses it on each poll.
-    if (!polling && state.streamSessionId !== sessionId) liveTurns.delete(sessionId);
+    if (!polling && !streamingSessions.has(sessionId)) liveTurns.delete(sessionId);
   }
 }
 
@@ -445,7 +446,7 @@ function watchRunning(sessionId) {
   let failures = 0;
   const tick = async () => {
     runningTimer = 0;
-    if (state.activeId !== key || state.streamSessionId === key) return;
+    if (state.activeId !== key || streamingSessions.has(key)) return;
     let detail = null;
     try {
       detail = await getJson(`/api/sessions/${encodeURIComponent(key)}`);
@@ -489,7 +490,7 @@ async function loadSession(sessionId) {
     const detail = await getJson(`/api/sessions/${encodeURIComponent(sessionId)}`);
     if (generation !== state.loadGeneration) return;
     renderDetail(detail);
-    if (state.running && state.streamSessionId !== sessionId) {
+    if (state.running && !streamingSessions.has(sessionId)) {
       void followTurn(sessionId, detail.started_at);
     } else watchRunning(sessionId);
     armIdle();
@@ -557,7 +558,7 @@ async function sendMessage() {
   let sessionId = "";
   try {
     sessionId = await ensureSession();
-    state.streamSessionId = sessionId;
+    streamingSessions.add(sessionId);
     syncComposer();
     const previous = state.detail?.id === sessionId && Array.isArray(state.detail.messages)
       ? state.detail.messages
@@ -598,8 +599,10 @@ async function sendMessage() {
     // Hand the text back unless the user already started the next message.
     if (!el.input.value) el.input.value = text;
   } finally {
-    if (sessionId) liveTurns.delete(sessionId);
-    state.streamSessionId = "";
+    if (sessionId) {
+      liveTurns.delete(sessionId);
+      streamingSessions.delete(sessionId);
+    }
     setSending(false);
     el.input.focus();
     updateToBottom();
@@ -608,7 +611,12 @@ async function sendMessage() {
 
 async function stopTurn() {
   if (!composerBusy()) return;
-  const sessionId = state.streamSessionId || sessionKey();
+  // Prefer the turn in the session on screen; else any turn this tab is
+  // streaming; else the current session (a turn another tab started).
+  const current = sessionKey();
+  const sessionId = streamingSessions.has(current)
+    ? current
+    : [...streamingSessions][0] || current;
   if (!sessionId) return;
   try {
     await postJson(`/api/sessions/${encodeURIComponent(sessionId)}/turn/cancel`, {});
@@ -627,7 +635,7 @@ async function retryMessage() {
   let sessionId = "";
   try {
     sessionId = await ensureSession();
-    state.streamSessionId = sessionId;
+    streamingSessions.add(sessionId);
     syncComposer();
     const live = createLiveStatus(el.messageList);
     liveTurns.set(sessionId, live);
@@ -657,8 +665,10 @@ async function retryMessage() {
       }
     }
   } finally {
-    if (sessionId) liveTurns.delete(sessionId);
-    state.streamSessionId = "";
+    if (sessionId) {
+      liveTurns.delete(sessionId);
+      streamingSessions.delete(sessionId);
+    }
     setSending(false);
     el.input.focus();
     updateToBottom();

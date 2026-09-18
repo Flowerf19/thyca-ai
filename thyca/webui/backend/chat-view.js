@@ -178,6 +178,21 @@ function assistantMessage(segments, ts) {
   return article;
 }
 
+// A round that thought nothing and went straight to tools renders as a bare
+// "Đã dùng" shell — noise. Fold its tool names into the previous segment's
+// line when nothing (no content) separates the two, so consecutive tool
+// usage collapses into one cumulative line on the thinking that preceded it.
+function foldToolOnlyParts(parts) {
+  for (let i = 1; i < parts.length; i++) {
+    const part = parts[i];
+    const previous = parts[i - 1];
+    if (part.reasoning || !previous) continue;
+    if (String(previous.content || "").trim()) continue;
+    previous.names.push(...part.names);
+    part.names = [];
+  }
+}
+
 export function renderConversation(root, messages) {
   const nodes = [];
   const pendingNames = [];
@@ -189,6 +204,7 @@ export function renderConversation(root, messages) {
       pendingNames.length = 0;
       return;
     }
+    foldToolOnlyParts(pendingParts);
     nodes.push(assistantMessage(pendingParts.splice(0), pendingTs));
     pendingNames.length = 0;
     pendingTs = "";
@@ -316,6 +332,10 @@ function thinkingElapsed(live) {
 // line stay, like the settled transcript) and stream the new round into a
 // fresh note below it. Empty previous notes hide themselves via settle().
 function startThinkingSegment(live) {
+  // The cumulative tool line lives only on the current note: clear it here
+  // so the previous note collapses (empty ones hide themselves) instead of
+  // stacking near-identical "Đã dùng" lines.
+  live.thinking?.setToolLine("", false);
   live.thinking?.settle();
   const next = createThinkingNote({
     live: true,

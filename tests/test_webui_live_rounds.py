@@ -153,14 +153,14 @@ def test_round_one_streams_and_keeps_tool_line(rounds: dict) -> None:
 def test_round_two_adds_a_segment_and_keeps_the_previous(rounds: dict) -> None:
     assert rounds["atRound2Start"] == {
         "segments": [
-            {"text": "round one thoughts", "tool": "Đã dùng: bash x1", "caretSettled": True},
+            {"text": "round one thoughts", "tool": "", "caretSettled": True},
             {"text": "", "tool": "Đã dùng: bash x1", "caretSettled": False},
         ],
         "replies": ["Xin chào"],
     }
     assert rounds["afterRound2"] == {
         "segments": [
-            {"text": "round one thoughts", "tool": "Đã dùng: bash x1", "caretSettled": True},
+            {"text": "round one thoughts", "tool": "", "caretSettled": True},
             {"text": "round two", "tool": "Đã dùng: bash x1", "caretSettled": False},
         ],
         "replies": ["Xin chào", "round two reply"],
@@ -175,3 +175,139 @@ def test_refollow_rebuilds_segments_instead_of_duplicating(rounds: dict) -> None
     assert rounds["afterRefollowReset"] == [
         {"text": "", "tool": "", "caretSettled": False},
     ]
+
+
+_FOLD_SCRIPT = r"""
+import assert from 'node:assert/strict';
+
+class Element {
+  constructor(tag = 'div') {
+    this.tag = tag;
+    this.children = [];
+    this.parentNode = null;
+    this.dataset = {};
+    this.attributes = {};
+    this.className = '';
+    this.text = '';
+    this.classList = {
+      contains: name => this.className.split(' ').includes(name),
+      add: (...names) => {
+        this.className = [...new Set([...this.className.split(' '), ...names])].join(' ');
+      },
+      remove: (...names) => {
+        this.className = this.className.split(' ').filter(name => !names.includes(name)).join(' ');
+      },
+      toggle: (name, force) => {
+        if (force ?? !this.classList.contains(name)) this.classList.add(name);
+        else this.classList.remove(name);
+      },
+    };
+  }
+  get isConnected() { return Boolean(this.root || this.parentNode?.isConnected); }
+  remove() {
+    if (this.parentNode) {
+      this.parentNode.children = this.parentNode.children.filter(node => node !== this);
+    }
+    this.parentNode = null;
+  }
+  append(...nodes) {
+    for (const node of nodes) {
+      node.remove();
+      node.parentNode = this;
+      this.children.push(node);
+    }
+  }
+  prepend(...nodes) {
+    for (const node of [...nodes].reverse()) {
+      node.remove();
+      node.parentNode = this;
+      this.children.unshift(node);
+    }
+  }
+  replaceChildren(...nodes) {
+    for (const node of [...this.children]) node.remove();
+    this.text = '';
+    this.append(...nodes);
+  }
+  set textContent(value) { this.replaceChildren(); this.text = String(value); }
+  get textContent() { return this.text + this.children.map(node => node.textContent).join(''); }
+  setAttribute(key, value) { this.attributes[key] = String(value); }
+  getAttribute(key) { return this.attributes[key] ?? null; }
+  querySelectorAll(selector) {
+    const matches = node => selector.startsWith('.')
+      ? node.classList.contains(selector.slice(1)) : node.tag === selector;
+    return this.children.flatMap(node => [
+      ...(matches(node) ? [node] : []), ...node.querySelectorAll(selector),
+    ]);
+  }
+  querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
+  addEventListener() {}
+  scrollTo() {}
+}
+globalThis.document = {
+  createElement: tag => new Element(tag),
+  createElementNS: (_namespace, tag) => new Element(tag),
+  createTextNode: text => {
+    const node = new Element('#text');
+    node.text = String(text);
+    return node;
+  },
+  querySelector: () => { const node = new Element(); node.root = true; return node; },
+};
+
+const view = await import('./thyca/webui/backend/chat-view.js');
+// Same shape as the reported turn: think+search, then a silent bash round,
+// content, another silent bash round, content.
+const messages = [
+  { role: 'assistant', reasoning: 'User wants sequential: search, reply, check.',
+    tool_calls: [{ name: 'tavily-search__web_search' }] },
+  { role: 'assistant', tool_calls: [{ name: 'bash' }] },
+  { role: 'assistant', content: 'Search xong rồi. Vài tin hôm nay:' },
+  { role: 'assistant', tool_calls: [{ name: 'bash' }] },
+  { role: 'assistant', content: 'Nhiệt độ: 45°C — vẫn mát.' },
+];
+const root = new Element(); root.root = true;
+view.renderConversation(root, messages);
+const notes = [...root.querySelectorAll('.thinking-note')];
+console.log(JSON.stringify({
+  notes: notes.map(note => ({
+    text: note.querySelector('.thought-output')?.textContent ?? '',
+    tool: note.querySelector('.tool-status')?.textContent ?? '',
+    hidden: note.hidden === true,
+  })),
+  usageRows: root.querySelectorAll('.usage-row').map(node => node.textContent),
+  contentCount: root.querySelectorAll('.live-copy').length,
+}));
+"""
+
+
+@pytest.fixture(scope="module")
+def folded() -> dict:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not installed")
+    result = subprocess.run(
+        [node, "--input-type=module", "-e", _FOLD_SCRIPT],
+        cwd=ROOT, check=True, capture_output=True, text=True, timeout=10,
+    )
+    return json.loads(result.stdout)
+
+
+def test_silent_tool_rounds_fold_into_the_previous_thinking_line(folded: dict) -> None:
+    assert folded["notes"] == [
+        {
+            "text": "User wants sequential: search, reply, check.",
+            "tool": "Đã dùng: tavily-search__web_search x1, bash x1",
+            "hidden": False,
+        },
+        {
+            "text": "",
+            "tool": "Đã dùng: bash x1",
+            "hidden": False,
+        },
+    ]
+
+
+def test_tool_line_before_content_stays_attached_to_that_content(folded: dict) -> None:
+    assert folded["usageRows"] == []
+    assert folded["contentCount"] == 2

@@ -29,6 +29,7 @@ from thyca.tools.memory_tools import register_memory_tools
 from thyca.tools.mcp import MCPManager
 from thyca.tools.path_guard import PathGuard
 from thyca.tools.registry import ToolRegistry
+from thyca.tools.task_store import TaskStore, tool_read_spec
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -146,9 +147,11 @@ class Cli:
         )
         zone = ZoneInfo(cfg.timeline.timezone)
         state = memory.open_session(datetime.now(zone))
-        registry = ToolRegistry()
+        tasks = TaskStore()
+        registry = ToolRegistry(tasks=tasks)
         background = BackgroundProcs()
         register_file_tools(registry, PathGuard(root), background)
+        registry.register(tool_read_spec(tasks))
         register_memory_tools(
             registry, MemoryFacade(root, timezone_name=cfg.timeline.timezone)
         )

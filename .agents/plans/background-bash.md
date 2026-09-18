@@ -55,6 +55,15 @@ Hành vi mặc định (foreground) giữ nguyên.
 | TASK-008 | `bash` mặc định chạy qua manager với soft timeout 60s: xong trong 60s trả kết quả đúng format foreground; vượt thì trả `still running: bg<N>` và tiếp tục nền (hard timeout = `timeout` param, default 1800); explicit `background: true` vẫn trả id ngay; không có manager thì giữ path foreground cũ | x | 2026-09-18 |
 | TASK-009 | Description `bash` giải thích auto-escalate; tests: fast path trả ngay, long path still running → bash_read done, explicit timeout nhỏ vẫn kill đúng | x | 2026-09-18 |
 
+### GOAL-004: Auto-escalate chung cho mọi tool (soft timeout ở registry)
+
+| ID | Task | Done | Date |
+|----|------|------|------|
+| TASK-010 | `tools/task_store.py`: `TaskStore` (track task đang chạy, settle kết quả/error/cancelled) + tool `tool_read(id, wait 0–60)` | x | 2026-09-18 |
+| TASK-011 | `ToolRegistry`: tham số `tasks` + `soft_timeout_s` (60); handler vượt soft window → trả `still running: task<N>`, task chạy tiếp; `ToolSpec.escalates` opt-out (bash tự escalate); phân biệt handler tự raise TimeoutError với timeout của wrapper | x | 2026-09-18 |
+| TASK-012 | ChatApp + CLI tạo TaskStore, đăng ký `tool_read`; baseline tools 12 → 13; tests: escalate → tool_read done, fast path không đổi, handler lỗi sau escalate, ToolResult is_error được giữ, bash opt-out | x | 2026-09-18 |
+| TASK-013 | Review follow-up: bỏ shield (đợi settle event) hết log-spam 3.14; entry chưa expose bị cancel → tự dọn; sửa docstring lock (thả lock khi escalate); xử lý race finish đúng deadline; đổi tên test file → `test_tool_task_store.py` | x | 2026-09-18 |
+
 ## Test Plan
 
 - `pytest tests/test_tool_bash.py tests/test_tool_files.py tests/test_cli.py`

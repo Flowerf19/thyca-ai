@@ -217,7 +217,7 @@ def test_debug_prints_prompt_flags(tmp_path: Path) -> None:
     assert "debug " in dbg
     assert "soul=True" in dbg
     assert "identity=True" in dbg
-    assert "tools=12" in dbg
+    assert "tools=13" in dbg
 
 
 def test_print_llm_error_is_safe(tmp_path: Path) -> None:

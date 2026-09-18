@@ -91,6 +91,7 @@ def bash_spec(background: BackgroundProcs | None = None) -> ToolSpec:
         handler=handler,
         parallel_safe=False,
         resource_key=lambda _args: "bash",
+        escalates=True,
     )
 
 

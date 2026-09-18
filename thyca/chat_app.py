@@ -35,6 +35,7 @@ from thyca.tools.memory import MemoryFacade
 from thyca.tools.memory_tools import bind_chat_session, register_memory_tools, reset_chat_session
 from thyca.tools.path_guard import PathGuard
 from thyca.tools.registry import ToolRegistry
+from thyca.tools.task_store import TaskStore, tool_read_spec
 from thyca.turn_state import TurnHub, TurnState
 
 TEXT_MAX = 4000
@@ -228,9 +229,11 @@ class ChatApp:
         self.skills_root = self._memory.skills_store.root
         self._zone = ZoneInfo(cfg.timeline.timezone)
         self._state = self._memory.open_session(datetime.now(self._zone))
-        registry = ToolRegistry()
+        self._tasks = TaskStore()
+        registry = ToolRegistry(tasks=self._tasks)
         self._background = BackgroundProcs()
         register_file_tools(registry, PathGuard(root), self._background)
+        registry.register(tool_read_spec(self._tasks))
         register_memory_tools(
             registry, MemoryFacade(root, timezone_name=cfg.timeline.timezone)
         )

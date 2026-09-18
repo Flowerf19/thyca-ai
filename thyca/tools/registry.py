@@ -3,11 +3,17 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from thyca.protocol import RESULT_CAP_BYTES, ToolCall, ToolResult
 
+if TYPE_CHECKING:
+    from thyca.tools.task_store import TaskStore
+
 Handler = Callable[[dict], Awaitable[str | ToolResult]]
 ResourceKeyFn = Callable[[dict], str | None]
+
+_DEFAULT_SOFT_TIMEOUT_S = 60
 
 
 @dataclass(frozen=True)
@@ -18,6 +24,9 @@ class ToolSpec:
     handler: Handler
     parallel_safe: bool = True
     resource_key: ResourceKeyFn | None = None
+    # True = the tool manages its own long-running behavior (e.g. bash
+    # escalates itself); the registry's generic soft-timeout wrapper skips it.
+    escalates: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.name, str) or not self.name:
@@ -29,11 +38,18 @@ class ToolSpec:
 
 
 class ToolRegistry:
-    def __init__(self, result_cap: int = RESULT_CAP_BYTES) -> None:
+    def __init__(
+        self,
+        result_cap: int = RESULT_CAP_BYTES,
+        tasks: TaskStore | None = None,
+        soft_timeout_s: int = _DEFAULT_SOFT_TIMEOUT_S,
+    ) -> None:
         self._specs: dict[str, ToolSpec] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._lock_guard = asyncio.Lock()
         self._result_cap = result_cap
+        self._tasks = tasks
+        self._soft_timeout_s = soft_timeout_s
 
     def register(self, spec: ToolSpec) -> None:
         if spec.name in self._specs:
@@ -75,7 +91,10 @@ class ToolRegistry:
 
     async def _run(self, spec: ToolSpec, call: ToolCall) -> ToolResult:
         try:
-            raw = await spec.handler(dict(call.arguments))
+            if self._tasks is not None and not spec.escalates:
+                raw = await self._run_escalatable(spec, call)
+            else:
+                raw = await spec.handler(dict(call.arguments))
         except Exception as exc:
             return _result(call, str(exc), is_error=True)
         if isinstance(raw, ToolResult):
@@ -83,6 +102,41 @@ class ToolRegistry:
         if not isinstance(raw, str):
             return _result(call, "handler must return str or ToolResult", is_error=True)
         return _result(call, self._cap(raw), is_error=False)
+
+    async def _run_escalatable(self, spec: ToolSpec, call: ToolCall) -> str | ToolResult:
+        """Run the handler with a soft timeout: past it, the handler keeps
+        running as a tracked task and a synthetic result goes back now. The
+        call's resource lock (if any) is released as soon as this returns, so
+        same-key calls may overlap the tail of an escalated task."""
+        task = asyncio.create_task(spec.handler(dict(call.arguments)))
+        entry = self._tasks.track(task)
+        try:
+            # Waiting on the settle event (not on the task via shield) keeps
+            # the handler immune to cancellation of this awaiter and avoids
+            # shield's exception-logging on Python 3.14.
+            await asyncio.wait_for(entry.done.wait(), self._soft_timeout_s)
+        except TimeoutError:
+            if task.done():
+                # Finished exactly at the deadline: surface the real outcome
+                # instead of misclassifying it as an escalation.
+                if not task.cancelled() and task.exception() is not None:
+                    raise task.exception() from None
+                if not task.cancelled():
+                    self._tasks.untrack(entry.id)
+                    return task.result()
+            entry.exposed = True
+            return ToolResult(
+                tool_call_id=call.id,
+                name=call.name,
+                content=(
+                    f"still running: {entry.id}\n"
+                    f"{call.name} is still executing; poll the result with "
+                    "tool_read. It keeps running even if this turn is cancelled."
+                ),
+                is_error=False,
+            )
+        self._tasks.untrack(entry.id)
+        return task.result()
 
     async def _lock_for(self, key: str) -> asyncio.Lock:
         async with self._lock_guard:

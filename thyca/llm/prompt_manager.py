@@ -21,6 +21,9 @@ _RULES = (
     "Check <skills> before multi-step tasks; read a SKILL.md to follow it.\n"
     "To author a skill load `create-skill`; to add a capability load `create-mcp-tool`.\n"
     "memory_search is lexical-first. If search returns nothing, say so. Do not invent memories.\n"
+    "Today's daily memory file is NOT in the search index yet — it is injected into <today>. "
+    "memory_search returning nothing for today's memories is by design: don't retry or rebuild; "
+    "read the <today> block or the daily file directly.\n"
     "bash runs immediately as the user, no sandbox — it can bypass PathGuard. "
     "Do not use bash to write L2 daily files or sessions under ~/.thyca."
 )

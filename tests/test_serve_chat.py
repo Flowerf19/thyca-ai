@@ -703,6 +703,10 @@ def test_chat_js_shipped() -> None:
     assert "search-event" in thinking
     assert "giây" in thinking
     assert "settledThinkingNote" in thinking
+    assert "timer = setInterval(tick, 1000);" in thinking
+    assert "const startTimer = () =>" in thinking
+    assert "startTimer();\n      tick();" in thinking
+    assert "state.startedAt = Date.now();\n      onElapsed?.(0);" not in thinking
     assert ".thought-footer" in styles
     assert ".search-event" in styles
     assert "turn.completed" in api

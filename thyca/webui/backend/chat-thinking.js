@@ -72,16 +72,23 @@ export function createThinkingNote({ live = true, onElapsed } = {}) {
 
   const state = { startedAt: Date.now() };
   let timer = null;
-  if (live) {
-    const tick = () => {
-      if (!note.isConnected) {
-        clearInterval(timer);
-        return;
-      }
-      const sec = Math.max(0, Math.floor((Date.now() - state.startedAt) / 1000));
-      onElapsed?.(sec);
-    };
+  const tick = () => {
+    if (!note.isConnected) {
+      clearInterval(timer);
+      timer = null;
+      return;
+    }
+    const sec = Math.max(0, Math.floor((Date.now() - state.startedAt) / 1000));
+    onElapsed?.(sec);
+  };
+  const startTimer = () => {
+    if (!live || timer) return;
+    // The live card may be detached while its session is off-screen. Pause
+    // then; reset() resumes this same clock when the card is mounted again.
     timer = setInterval(tick, 1000);
+  };
+  if (live) {
+    startTimer();
     onElapsed?.(0);
   }
 
@@ -117,8 +124,8 @@ export function createThinkingNote({ live = true, onElapsed } = {}) {
       tool.classList.remove("working");
       toolStatus.textContent = "";
       footer.hidden = true;
-      state.startedAt = Date.now();
-      onElapsed?.(0);
+      startTimer();
+      tick();
     },
     settle() {
       if (caret) caret.hidden = true;

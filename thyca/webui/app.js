@@ -6,6 +6,7 @@ import {
   renderConversation,
   renderEmpty,
   renderError,
+  resetLiveStatus,
   setChatBrand,
   updateLiveStatus,
 } from "./backend/chat-view.js";
@@ -372,10 +373,11 @@ async function followTurn(sessionId, startedAt) {
   let polling = false;
   let live = liveTurns.get(sessionId);
   if (live) {
-    // Replay will rebuild the usage row from the hub log; keep the card.
+    // Replay will rebuild the usage row from the hub log; rebuild segments
+    // too, so the replay does not duplicate notes an earlier attempt added.
     live.active.clear();
     live.completed.length = 0;
-    live.thinking?.reset();
+    resetLiveStatus(live, startedAt);
     live.article.querySelectorAll(".usage-row").forEach((node) => node.remove());
   } else {
     live = createLiveStatus(el.messageList, startedAt);

@@ -697,7 +697,7 @@ def test_chat_js_shipped() -> None:
     assert not (WEBUI / "backend" / "chat-ambient.js").exists()
     assert "tool.started" in view
     assert "llm.thinking" in view
-    assert "thinking?.reset" in app
+    assert "resetLiveStatus(live, startedAt)" in app
     assert "bindThinkingToggle" in thinking
     assert "thought-footer" in thinking
     assert "search-event" in thinking

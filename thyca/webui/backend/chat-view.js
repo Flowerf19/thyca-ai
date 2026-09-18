@@ -276,33 +276,78 @@ export function createLiveStatus(root, startedAt) {
     startedAt: startedAt || null,
     brand: null,
     thinking: null,
+    notes: [],
+    notesWrap: null,
     active: new Map(),
     completed: [],
   };
+  const notesWrap = document.createElement("div");
+  notesWrap.className = "thinking-notes";
+  notesWrap.id = `thinking-notes-${++liveSerial}`;
   const thinking = createThinkingNote({
     live: true,
     startedAt,
-    onElapsed(sec) {
-      setChatBrand(live, { status: `đang suy nghĩ · ${elapsedLabel(sec)}` });
-    },
+    onElapsed: thinkingElapsed(live),
   });
+  notesWrap.append(thinking.note);
   const header = chatBrandHeader({
     state: "busy",
     status: `đang suy nghĩ · ${elapsedLabel(0)}`,
     expandable: true,
   });
-  bindThinkingToggle(header.querySelector(".chat-brand-line"), thinking);
-  article.append(header, thinking.note);
+  bindThinkingToggle(header.querySelector(".chat-brand-line"), { bodies: [notesWrap] });
+  article.append(header, notesWrap);
   root.append(article);
   live.brand = header;
   live.thinking = thinking;
+  live.notesWrap = notesWrap;
+  live.notes.push(thinking);
   return live;
+}
+
+let liveSerial = 0;
+
+function thinkingElapsed(live) {
+  return (sec) => setChatBrand(live, { status: `đang suy nghĩ · ${elapsedLabel(sec)}` });
+}
+
+// One segment per LLM round: settle the previous note (its text and tool
+// line stay, like the settled transcript) and stream the new round into a
+// fresh note below it. Empty previous notes hide themselves via settle().
+function startThinkingSegment(live) {
+  live.thinking?.settle();
+  const next = createThinkingNote({
+    live: true,
+    startedAt: live.startedAt ?? undefined,
+    onElapsed: thinkingElapsed(live),
+  });
+  live.notesWrap.append(next.note);
+  live.notes.push(next);
+  live.thinking = next;
+}
+
+// A re-follow replays the whole turn; rebuild segments from scratch so the
+// replay does not duplicate the notes an earlier attempt already added.
+export function resetLiveStatus(live, startedAt) {
+  if (!live?.notesWrap) return;
+  live.notesWrap.replaceChildren();
+  const fresh = createThinkingNote({
+    live: true,
+    startedAt: startedAt ?? live.startedAt ?? undefined,
+    onElapsed: thinkingElapsed(live),
+  });
+  live.notesWrap.append(fresh.note);
+  live.notes = [fresh];
+  live.thinking = fresh;
 }
 
 export function updateLiveStatus(live, event) {
   if (event?.type === "llm.thinking") {
     live.thinking?.append(event.delta);
     return;
+  }
+  if (event?.type === "llm.started" && event.round > 1) {
+    startThinkingSegment(live);
   }
   setChatBrand(live, {
     state: brandState(event),
@@ -329,7 +374,7 @@ export function updateLiveStatus(live, event) {
     || event?.type === "turn.failed"
     || event?.type === "turn.cancelled"
   ) {
-    live.thinking?.settle();
+    for (const note of live.notes) note.settle();
   }
   live.article.querySelectorAll(".usage-row").forEach((node) => node.remove());
   const active = [...live.active.values()];

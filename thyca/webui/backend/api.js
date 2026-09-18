@@ -78,13 +78,9 @@ export function patchJson(url, body, options = {}) {
 }
 
 function yieldToRender() {
-  return new Promise((resolve) => {
-    if (typeof globalThis.requestAnimationFrame === "function") {
-      globalThis.requestAnimationFrame(() => resolve());
-    } else {
-      globalThis.setTimeout(resolve, 0);
-    }
-  });
+  // Animation frames can stop in background tabs. Never gate network
+  // consumption on a paint; yield once per chunk, not once per event.
+  return new Promise((resolve) => globalThis.setTimeout(resolve, 0));
 }
 
 async function readNdjson(response, onEvent, fallbackMessage) {
@@ -102,7 +98,7 @@ async function readNdjson(response, onEvent, fallbackMessage) {
   let buffer = "";
   let terminal = null;
 
-  const consume = async (line) => {
+  const consume = (line) => {
     if (!line.trim()) return;
     let event;
     try {
@@ -116,7 +112,6 @@ async function readNdjson(response, onEvent, fallbackMessage) {
       || event.type === "turn.failed"
       || event.type === "turn.cancelled"
     ) terminal = event;
-    await yieldToRender();
   };
 
   while (true) {
@@ -125,12 +120,13 @@ async function readNdjson(response, onEvent, fallbackMessage) {
     buffer += decoder.decode(value, { stream: true });
     let newline;
     while ((newline = buffer.indexOf("\n")) >= 0) {
-      await consume(buffer.slice(0, newline));
+      consume(buffer.slice(0, newline));
       buffer = buffer.slice(newline + 1);
     }
+    await yieldToRender();
   }
   buffer += decoder.decode();
-  await consume(buffer);
+  consume(buffer);
 
   if (!terminal) throw new ApiError("Luồng trả lời kết thúc quá sớm.");
   if (terminal.type === "turn.failed") {

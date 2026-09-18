@@ -1108,7 +1108,7 @@ def test_webui_keeps_streaming_card_across_session_switch() -> None:
     with no usage row and no further updates.
     """
     app = (WEBUI / "app.js").read_text(encoding="utf-8")
-    render = app[app.index("function renderDetail(detail)") : app.index("// Reload mid-turn")]
+    render = app[app.index("function renderDetail(detail)") : app.index("function watchRunning(sessionId)")]
     send_message = app[app.index("async function sendMessage()") : app.index("function bind()")]
 
     assert "const liveTurns = new Map();" in app

@@ -350,7 +350,7 @@ function renderDetail(detail) {
     // turn's real start (started_at) instead of this remount; followTurn then
     // attaches the live stream to that same card.
     const live = liveTurns.get(state.activeId);
-    if (live) {
+    if (live && (!live.startedAt || live.startedAt === detail.started_at)) {
       el.messageList.append(live.article);
       live.thinking?.resume();
     } else {
@@ -368,6 +368,7 @@ function renderDetail(detail) {
 async function followTurn(sessionId, startedAt) {
   const controller = new AbortController();
   followAbort = controller;
+  let polling = false;
   let live = liveTurns.get(sessionId);
   if (live) {
     // Replay will rebuild the usage row from the hub log; keep the card.
@@ -397,25 +398,45 @@ async function followTurn(sessionId, startedAt) {
     try {
       const detail = await getJson(`/api/sessions/${encodeURIComponent(sessionId)}`);
       if (state.activeId !== sessionId) return;
-      renderDetail(detail);
-      if (detail.running === true) watchRunning(sessionId);
-      else {
+      if (detail.running === true) {
+        renderPolledProgress(detail);
+        polling = true;
+        watchRunning(sessionId);
+      } else {
+        renderDetail(detail);
         await refreshSessions();
         armIdle();
       }
     } catch {
+      polling = true;
       watchRunning(sessionId);
     }
   } finally {
     const replaced = followAbort !== null && followAbort !== controller;
     if (followAbort === controller) followAbort = null;
     if (replaced) return;
-    if (state.streamSessionId !== sessionId) liveTurns.delete(sessionId);
+    // Polling still owns the mounted card and its clock. Don't orphan it
+    // just because the stream failed; renderDetail reuses it on each poll.
+    if (!polling && state.streamSessionId !== sessionId) liveTurns.delete(sessionId);
   }
 }
 
-// Reload mid-turn when follow is unavailable: keep asking until the
-// backend says it landed, then render the transcript the turn produced.
+// Keep the transcript, selection, collapsed panels and scroll position intact.
+// Only reasoning appended since the last full render belongs in the live card.
+function renderPolledProgress(detail) {
+  const live = liveTurns.get(detail.id);
+  if (!live || (live.startedAt && live.startedAt !== detail.started_at)) {
+    renderDetail(detail);
+    return;
+  }
+  const rendered = state.detail?.id === detail.id ? (state.detail.messages?.length || 0) : 0;
+  const reasoning = (detail.messages || []).slice(rendered)
+    .filter((message) => message.role === "assistant" && typeof message.reasoning === "string")
+    .map((message) => message.reasoning).filter(Boolean).join("\n\n");
+  if (reasoning) live.thinking?.sync(reasoning);
+}
+
+// Follow unavailable: show persisted progress without waiting for Stop.
 function watchRunning(sessionId) {
   window.clearTimeout(runningTimer);
   runningTimer = 0;
@@ -442,6 +463,7 @@ function watchRunning(sessionId) {
     failures = 0;
     if (state.activeId !== key) return;
     if (detail && detail.running === true) {
+      renderPolledProgress(detail);
       runningTimer = window.setTimeout(() => void tick(), RUNNING_POLL_MS);
       return;
     }

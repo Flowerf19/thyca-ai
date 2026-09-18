@@ -273,6 +273,7 @@ export function createLiveStatus(root, startedAt) {
   article.setAttribute("aria-live", "polite");
   const live = {
     article,
+    startedAt: startedAt || null,
     brand: null,
     thinking: null,
     active: new Map(),

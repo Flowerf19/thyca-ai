@@ -5,6 +5,7 @@ Thay đổi của Thyca, viết ngắn gọn cho người dùng.
 ## 0.8.4 — 18/09/2026
 
 - Bash thông minh hơn với lệnh dài: lệnh chạy quá ~60 giây tự chuyển sang nền — tool trả "still running: bg<N>" và bạn chat được tiếp với Thyca trong khi lệnh chạy; hỏi tiến độ bằng `bash_read`. Lệnh nhanh thì vẫn trả kết quả luôn như cũ. Có thể chủ động `background: true` cho lệnh biết trước là dài (build, OCR, server). Lệnh nền tự bị hủy khi tắt Thyca hoặc quá timeout (mặc định 30 phút).
+- Sửa thinking sometimes not live: khi luồng theo dõi lượt bị gián đoạn, giao diện giờ hiện tiến độ đã lưu ở mỗi lần hỏi lại (poll) thay vì chờ đến khi bấm Dừng; đọc luồng trả lời không còn phụ thuộc animation frame (tab nền vẫn nhận sự kiện); đồng hồ trên card được giữ đúng khi fallback và không dựng lại toàn bộ hội thoại mỗi 2 giây.
 - Sửa đồng hồ "đang suy nghĩ" khi quay lại phiên đang chạy: giờ nó đếm đúng từ lúc turn bắt đầu (lấy từ máy chủ) thay vì đếm lại từ 0, và không còn đứng hình khi rời phiên rồi quay lại.
 - Mọi tool khác (kể cả MCP) cũng có cơ chế như vậy: tool chạy quá ~60 giây thì trả "still running: task<N>", kết quả lấy lại bằng tool `tool_read` mới — phiên không bao giờ bị một tool chậm giữ chân.
 

@@ -106,6 +106,16 @@ export function createThinkingNote({ live = true, startedAt, onElapsed } = {}) {
       token.textContent = delta;
       output.append(token);
     },
+    sync(text) {
+      const current = output.textContent;
+      if (text === current) return;
+      if (text.startsWith(current)) {
+        this.append(text.slice(current.length));
+      } else {
+        output.replaceChildren();
+        this.append(text);
+      }
+    },
     setToolLine(line, working = false) {
       if (!line) {
         tool.hidden = true;

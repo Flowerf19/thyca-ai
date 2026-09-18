@@ -85,6 +85,11 @@ class Element {
 globalThis.document = {
   createElement: tag => new Element(tag),
   createElementNS: (_namespace, tag) => new Element(tag),
+  createTextNode: text => {
+    const node = new Element('#text');
+    node.text = String(text);
+    return node;
+  },
   querySelector: () => { const node = new Element(); node.root = true; return node; },
 };
 globalThis.requestAnimationFrame = callback => callback();
@@ -105,14 +110,18 @@ const segments = () => live.notes.map(note => ({
 view.updateLiveStatus(live, { type: 'llm.started', round: 1 });
 view.updateLiveStatus(live, { type: 'llm.thinking', round: 1, delta: 'round one ' });
 view.updateLiveStatus(live, { type: 'llm.thinking', round: 1, delta: 'thoughts' });
+view.updateLiveStatus(live, { type: 'llm.content', round: 1, delta: 'Xin ' });
+view.updateLiveStatus(live, { type: 'llm.content', round: 1, delta: 'chào' });
 view.updateLiveStatus(live, { type: 'tool.started', name: 'bash', call_id: 'b1' });
 view.updateLiveStatus(live, { type: 'tool.finished', name: 'bash', call_id: 'b1' });
 const afterRound1 = segments();
+const replyTexts = () => [...live.notesWrap.querySelectorAll('.reply-live')].map(n => n.textContent);
 
 view.updateLiveStatus(live, { type: 'llm.started', round: 2 });
-const atRound2Start = segments();
+const atRound2Start = { segments: segments(), replies: replyTexts() };
 view.updateLiveStatus(live, { type: 'llm.thinking', round: 2, delta: 'round two' });
-const afterRound2 = segments();
+view.updateLiveStatus(live, { type: 'llm.content', round: 2, delta: 'round two reply' });
+const afterRound2 = { segments: segments(), replies: replyTexts() };
 
 view.updateLiveStatus(live, { type: 'turn.completed' });
 const afterCompleted = segments();
@@ -142,14 +151,20 @@ def test_round_one_streams_and_keeps_tool_line(rounds: dict) -> None:
 
 
 def test_round_two_adds_a_segment_and_keeps_the_previous(rounds: dict) -> None:
-    assert rounds["atRound2Start"] == [
-        {"text": "round one thoughts", "tool": "Đã dùng: bash x1", "caretSettled": True},
-        {"text": "", "tool": "Đã dùng: bash x1", "caretSettled": False},
-    ]
-    assert rounds["afterRound2"] == [
-        {"text": "round one thoughts", "tool": "Đã dùng: bash x1", "caretSettled": True},
-        {"text": "round two", "tool": "Đã dùng: bash x1", "caretSettled": False},
-    ]
+    assert rounds["atRound2Start"] == {
+        "segments": [
+            {"text": "round one thoughts", "tool": "Đã dùng: bash x1", "caretSettled": True},
+            {"text": "", "tool": "Đã dùng: bash x1", "caretSettled": False},
+        ],
+        "replies": ["Xin chào"],
+    }
+    assert rounds["afterRound2"] == {
+        "segments": [
+            {"text": "round one thoughts", "tool": "Đã dùng: bash x1", "caretSettled": True},
+            {"text": "round two", "tool": "Đã dùng: bash x1", "caretSettled": False},
+        ],
+        "replies": ["Xin chào", "round two reply"],
+ }
 
 
 def test_completion_settles_every_segment(rounds: dict) -> None:

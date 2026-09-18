@@ -278,6 +278,7 @@ export function createLiveStatus(root, startedAt) {
     thinking: null,
     notes: [],
     notesWrap: null,
+    reply: null,
     active: new Map(),
     completed: [],
   };
@@ -324,6 +325,19 @@ function startThinkingSegment(live) {
   live.notesWrap.append(next.note);
   live.notes.push(next);
   live.thinking = next;
+  live.reply = null;
+}
+
+// The visible reply streams into its own paragraph below the round's
+// thinking note; plain text here — markdown renders in the transcript.
+function replySegment(live) {
+  if (!live.reply) {
+    const p = document.createElement("p");
+    p.className = "reply-live";
+    live.notesWrap.append(p);
+    live.reply = p;
+  }
+  return live.reply;
 }
 
 // A re-follow replays the whole turn; rebuild segments from scratch so the
@@ -339,11 +353,17 @@ export function resetLiveStatus(live, startedAt) {
   live.notesWrap.append(fresh.note);
   live.notes = [fresh];
   live.thinking = fresh;
+  live.reply = null;
 }
 
 export function updateLiveStatus(live, event) {
   if (event?.type === "llm.thinking") {
     live.thinking?.append(event.delta);
+    return;
+  }
+  if (event?.type === "llm.content") {
+    const p = replySegment(live);
+    p.append(document.createTextNode(event.delta));
     return;
   }
   if (event?.type === "llm.started" && event.round > 1) {

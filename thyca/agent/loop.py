@@ -10,6 +10,7 @@ from .observe import Observe
 from .stage import Stage
 from .think import Think
 from .thinking import ThinkingDelta
+from .reply import ContentDelta
 
 
 class AgentLoop:
@@ -66,6 +67,7 @@ class AgentLoop:
             emit_event(event_sink, TurnEvent(type="llm.started", round=stage.round))
             round_no = stage.round
             on_reasoning = None
+            on_content = None
             if event_sink is not None:
 
                 def on_reasoning(delta: str, *, _round: int = round_no) -> None:
@@ -76,7 +78,17 @@ class AgentLoop:
                     except Exception:
                         pass
 
-            await self._think.think(stage, on_reasoning=on_reasoning)
+                def on_content(delta: str, *, _round: int = round_no) -> None:
+                    if not delta:
+                        return
+                    try:
+                        event_sink(ContentDelta(round=_round, delta=delta))  # type: ignore[arg-type]
+                    except Exception:
+                        pass
+
+            await self._think.think(
+                stage, on_reasoning=on_reasoning, on_content=on_content
+            )
             assert stage.reply is not None
             echoed = getattr(stage.reply, "model", None)
             if isinstance(echoed, str) and echoed.strip():

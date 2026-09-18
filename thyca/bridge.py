@@ -20,6 +20,7 @@ import traceback
 
 from thyca.agent.events import TurnEvent
 from thyca.agent.thinking import ThinkingDelta
+from thyca.agent.reply import ContentDelta
 from thyca.chat_app import ChatApp, InvalidTurnOption, SessionIdle, TurnCancelled
 from thyca.config import REASONING_EFFORTS
 from thyca.llm.llm_base import LLMError
@@ -190,7 +191,7 @@ def pump_stream(handler, items: queue.Queue, state: dict) -> None:
                 break
             if terminal:
                 continue
-            if isinstance(item, (TurnEvent, ThinkingDelta)):
+            if isinstance(item, (TurnEvent, ThinkingDelta, ContentDelta)):
                 write_line(handler.wfile, item.to_dict())
                 continue
             _kind, value = item

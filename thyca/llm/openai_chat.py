@@ -68,6 +68,7 @@ class OpenAIChat(Connect):
         messages: list[Message],
         tools: list | None = None,
         on_reasoning: Callable[[str], None] | None = None,
+        on_content: Callable[[str], None] | None = None,
     ) -> ChatReply:
         payload: dict[str, Any] = {
             "model": self._provider.model,
@@ -85,7 +86,7 @@ class OpenAIChat(Connect):
         key = self._provider.api_key()
         headers = {"Authorization": f"Bearer {key}"}
         url = _chat_url(self._provider.baseUrl)
-        return await self._request(url, payload, headers, key, on_reasoning)
+        return await self._request(url, payload, headers, key, on_reasoning, on_content)
 
     async def _request(
         self,
@@ -94,6 +95,7 @@ class OpenAIChat(Connect):
         headers: dict[str, str],
         key: str,
         on_reasoning: Callable[[str], None] | None,
+        on_content: Callable[[str], None] | None = None,
     ) -> ChatReply:
         # Exactly 3 transient attempts; each failure emits retry status
         # (1/3, 2/3, 3/3) before the final provider error.
@@ -107,7 +109,7 @@ class OpenAIChat(Connect):
                     "POST", url, json=payload, headers=headers
                 ) as response:
                     reply = await self._consume(
-                        response, payload, key, on_reasoning, dropped_effort
+                        response, payload, key, on_reasoning, on_content, dropped_effort
                     )
             except _DropEffort:
                 payload = {k: v for k, v in payload.items() if k != "reasoning_effort"}
@@ -140,6 +142,7 @@ class OpenAIChat(Connect):
         payload: dict[str, Any],
         key: str,
         on_reasoning: Callable[[str], None] | None,
+        on_content: Callable[[str], None] | None,
         dropped_effort: bool,
     ) -> ChatReply | LLMError:
         status = response.status_code
@@ -161,12 +164,17 @@ class OpenAIChat(Connect):
             raise LLMError(f"provider HTTP {status}: {_redact(_cap(body), key)}")
         ctype = response.headers.get("content-type", "")
         if "event-stream" in ctype:
-            return await read_sse_reply(response, key, on_reasoning)
+            return await read_sse_reply(response, key, on_reasoning, on_content)
         raw = await response.aread()
         reply = parse_chat_bytes(raw, key)
         if on_reasoning and reply.reasoning:
             try:
                 on_reasoning(reply.reasoning)
+            except Exception:
+                pass
+        if on_content and reply.content:
+            try:
+                on_content(reply.content)
             except Exception:
                 pass
         return reply

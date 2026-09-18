@@ -859,6 +859,13 @@ svg {
   padding-inline-start: calc(var(--chat-brand-stripe) + var(--chat-brand-gap));
 }
 
+.reply-live {
+  margin: 0.35rem 0 0;
+  padding-inline-start: calc(var(--chat-brand-stripe) + var(--chat-brand-gap));
+  font-family: var(--font-reading);
+  white-space: pre-wrap;
+}
+
 .thinking-note.is-collapsed {
   margin: 0;
 }

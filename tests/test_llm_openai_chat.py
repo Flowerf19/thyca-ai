@@ -481,6 +481,25 @@ async def test_stream_reasoning_field_openrouter() -> None:
 
 
 @pytest.mark.asyncio
+async def test_stream_content_deltas_forwarded() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _sse(
+            {"choices": [{"delta": {"content": "Xin "}}]},
+            {"choices": [{"delta": {"content": "chào"}}]},
+            {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c1", "function": {"name": "bash", "arguments": "{}"}}]}}]},
+            {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]},
+        )
+
+    seen: list[str] = []
+    connect = OpenAIChat(_provider(), client=_client(handler))
+    reply = await connect.chat([Message(role="user", content="x")], on_content=seen.append)
+    assert "".join(seen) == "Xin chào"
+    assert reply.content == "Xin chào"
+    assert reply.finish_reason == "tool_calls"
+    assert [call.name for call in reply.tool_calls] == ["bash"]
+
+
+@pytest.mark.asyncio
 async def test_stream_reasoning_text_field_parsed() -> None:
     """Some providers send reasoning as reasoning_text (pi reads it too)."""
 

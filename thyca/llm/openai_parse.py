@@ -38,6 +38,38 @@ def _reasoning_text(payload: dict) -> str:
     return ""
 
 
+class _ContentOut:
+    """Forward reply-text deltas while streaming. Never accumulates or caps:
+    the authoritative content is assembled separately and uncapped."""
+
+    _FLUSH_CHARS = _FLUSH_CHARS
+    _FLUSH_S = _FLUSH_S
+
+    def __init__(self, on_content: Callable[[str], None] | None) -> None:
+        self._on = on_content
+        self._buf = ""
+        self._last = time.monotonic()
+
+    def add(self, piece: str) -> None:
+        if not piece:
+            return
+        self._buf += piece
+        if len(self._buf) >= self._FLUSH_CHARS or (time.monotonic() - self._last) >= self._FLUSH_S:
+            self.flush()
+
+    def flush(self) -> None:
+        if not self._buf:
+            return
+        chunk, self._buf = self._buf, ""
+        self._last = time.monotonic()
+        if self._on is None:
+            return
+        try:
+            self._on(chunk)
+        except Exception:
+            pass
+
+
 class _ReasoningOut:
     def __init__(self, key: str, on_reasoning: Callable[[str], None] | None) -> None:
         self._key = key
@@ -173,6 +205,7 @@ async def read_sse_reply(
     response: httpx.Response,
     key: str,
     on_reasoning: Callable[[str], None] | None,
+    on_content: Callable[[str], None] | None = None,
 ) -> ChatReply:
     content_parts: list[str] = []
     saw_content_str = False
@@ -183,6 +216,7 @@ async def read_sse_reply(
     usage: dict | None = None
     slots: dict[int, dict[str, str]] = {}
     reasoning = _ReasoningOut(key, on_reasoning)
+    content_out = _ContentOut(on_content)
 
     async for line in response.aiter_lines():
         if not line or line.startswith(":"):
@@ -223,6 +257,7 @@ async def read_sse_reply(
             elif isinstance(value, str):
                 saw_content_str = True
                 content_parts.append(value)
+                content_out.add(value)
         piece = _reasoning_text(delta)
         if piece:
             reasoning.add(piece)
@@ -230,6 +265,7 @@ async def read_sse_reply(
 
     if not saw_choice:
         raise LLMError("provider response missing choices")
+    content_out.flush()
     if saw_content_str:
         content: str | None = "".join(content_parts)
     elif saw_content_null:

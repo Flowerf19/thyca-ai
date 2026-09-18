@@ -1027,6 +1027,36 @@ def test_stream_emits_thinking_deltas_and_persists(tmp_path: Path) -> None:
         _stop(httpd, thread)
 
 
+def test_stream_emits_content_deltas_alongside_thinking(tmp_path: Path) -> None:
+    class StreamingLLM:
+        async def chat(self, messages, tools=None, on_reasoning=None, on_content=None):
+            if on_reasoning:
+                on_reasoning("I will greet")
+            if on_content:
+                on_content("Xin ")
+                on_content("chào")
+            return ChatReply(content="Xin chào", reasoning="I will greet")
+
+    httpd, thread = _start(tmp_path, _chat(tmp_path, StreamingLLM()))
+    try:
+        created = _json(httpd, "/api/sessions", method="POST", data=b"")
+        response = _stream(
+            httpd,
+            f"/api/sessions/{created['id']}/turn/stream",
+            data=b'{"text":"kalimba"}',
+        )
+        lines = _stream_lines(response)
+        content = [item for item in lines if item["type"] == "llm.content"]
+        assert content == [
+            {"type": "llm.content", "round": 1, "delta": "Xin "},
+            {"type": "llm.content", "round": 1, "delta": "chào"},
+        ]
+        assert any(item["type"] == "llm.thinking" for item in lines)
+        assert lines[-1]["type"] == "turn.completed"
+    finally:
+        _stop(httpd, thread)
+
+
 def test_follow_stream_idle_or_missing(tmp_path: Path) -> None:
     httpd, thread = _start(tmp_path, _chat(tmp_path, FakeLLM(ChatReply(content="x"))))
     try:

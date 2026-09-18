@@ -128,6 +128,7 @@ class Connect(ABC):
         messages: list[Message],
         tools: list | None = None,
         on_reasoning: Callable[[str], None] | None = None,
+        on_content: Callable[[str], None] | None = None,
     ) -> ChatReply:
         raise NotImplementedError
 

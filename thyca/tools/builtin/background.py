@@ -86,6 +86,15 @@ class _BgProc:
             head += "\ntimed_out: true"
         return f"{head}\n{text}"
 
+    def render_plain(self) -> str:
+        """Foreground-shaped result, for commands that finished quickly."""
+        text = bytes(self.buf).decode("utf-8", errors="replace")
+        code = 124 if self.proc.returncode is None else self.proc.returncode
+        head = f"exit: {code}"
+        if self.timed_out:
+            head += "\ntimed_out: true"
+        return f"{head}\n{text}"
+
 
 class BackgroundProcs:
     """Registry of background bash processes, keyed by ``bg<N>`` ids."""
@@ -110,6 +119,26 @@ class BackgroundProcs:
         entry.task = asyncio.create_task(entry.run(timeout))
         self._procs[bid] = entry
         return bid
+
+    async def start_and_wait(
+        self, command: str, timeout: int, cwd: str, soft_s: int
+    ) -> str:
+        """Run like foreground for quick commands: return the plain result when
+        the proc finishes within soft_s, else hand back the background id."""
+        bid = await self.start(command, timeout, cwd)
+        entry = self._procs[bid]
+        # When the hard cap is within the soft window there is nothing to
+        # escalate: the run task kills the proc at the cap, so wait past it.
+        wait_s = soft_s if soft_s < timeout else timeout + _DRAIN_GRACE_S
+        try:
+            await asyncio.wait_for(entry.done.wait(), timeout=wait_s)
+        except TimeoutError:
+            return (
+                f"still running: {bid}\n"
+                f"moved to background (hard timeout {timeout}s). "
+                "Poll progress and the result with bash_read."
+            )
+        return entry.render_plain()
 
     def known_ids(self) -> list[str]:
         return list(self._procs)

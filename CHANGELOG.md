@@ -4,7 +4,7 @@ Thay đổi của Thyca, viết ngắn gọn cho người dùng.
 
 ## 0.8.4 — 18/09/2026
 
-- Tool bash thêm chế độ chạy nền (`background: true`): lệnh dài (OCR, build...) không còn giữ phiên cả chục phút — model nhận ngay id và vẫn chat được với bạn trong lúc lệnh chạy; hỏi tiến độ bằng tool `bash_read` mới. Lệnh nền tự bị hủy khi tắt Thyca hoặc quá timeout (mặc định 30 phút).
+- Bash thông minh hơn với lệnh dài: lệnh chạy quá ~60 giây tự chuyển sang nền — tool trả "still running: bg<N>" và bạn chat được tiếp với Thyca trong khi lệnh chạy; hỏi tiến độ bằng `bash_read`. Lệnh nhanh thì vẫn trả kết quả luôn như cũ. Có thể chủ động `background: true` cho lệnh biết trước là dài (build, OCR, server). Lệnh nền tự bị hủy khi tắt Thyca hoặc quá timeout (mặc định 30 phút).
 
 ## 0.8.3 — 17/09/2026
 

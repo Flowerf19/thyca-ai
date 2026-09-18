@@ -48,6 +48,13 @@ Hành vi mặc định (foreground) giữ nguyên.
 | TASK-006 | Baseline `tools=11` → `tools=12` (test_cli) + dòng tương ứng trong AGENT_RULES | x | 2026-09-18 |
 | TASK-007 | CHANGELOG entry; README câu tools nếu cần | x | 2026-09-18 |
 
+### GOAL-003: Auto-escalate foreground → background (review follow-up)
+
+| ID | Task | Done | Date |
+|----|------|------|------|
+| TASK-008 | `bash` mặc định chạy qua manager với soft timeout 60s: xong trong 60s trả kết quả đúng format foreground; vượt thì trả `still running: bg<N>` và tiếp tục nền (hard timeout = `timeout` param, default 1800); explicit `background: true` vẫn trả id ngay; không có manager thì giữ path foreground cũ | x | 2026-09-18 |
+| TASK-009 | Description `bash` giải thích auto-escalate; tests: fast path trả ngay, long path still running → bash_read done, explicit timeout nhỏ vẫn kill đúng | x | 2026-09-18 |
+
 ## Test Plan
 
 - `pytest tests/test_tool_bash.py tests/test_tool_files.py tests/test_cli.py`

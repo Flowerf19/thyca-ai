@@ -116,6 +116,48 @@ async def test_wait_beyond_cap_returns_when_done(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_fast_command_returns_foreground_result(tmp_path: Path) -> None:
+    registry = _registry(tmp_path, BackgroundProcs())
+    result = await _call(registry, "bash", command="echo hi")
+    assert not result.is_error
+    assert result.content.startswith("exit: 0\n")
+    assert "hi" in result.content
+    assert "still running" not in result.content
+    assert "status:" not in result.content
+
+
+@pytest.mark.asyncio
+async def test_slow_command_auto_escapes_to_background(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("thyca.tools.builtin.bash._SOFT_DEFAULT", 1)
+    registry = _registry(tmp_path, BackgroundProcs())
+    result = await _call(registry, "bash", command="sleep 2; echo fin")
+    assert result.content.startswith("still running: bg")
+    bid = result.content.splitlines()[0].removeprefix("still running: ")
+    read = await _call(registry, "bash_read", id=bid, wait=10)
+    assert "status: done" in read.content
+    assert "fin" in read.content
+
+
+@pytest.mark.asyncio
+async def test_explicit_small_timeout_still_kills(tmp_path: Path) -> None:
+    marker = tmp_path / "still-running"
+    registry = _registry(tmp_path, BackgroundProcs())
+    result = await _call(
+        registry,
+        "bash",
+        command=f"sleep 5; echo alive > '{marker}'",
+        timeout=1,
+    )
+    assert not result.is_error
+    assert result.content.startswith("exit:")
+    assert "timed_out: true" in result.content
+    await asyncio.sleep(0.1)
+    assert not marker.exists()
+
+
+@pytest.mark.asyncio
 async def test_background_without_manager_is_error(tmp_path: Path) -> None:
     registry = _registry(tmp_path, None)
     result = await _call(registry, "bash", command="echo hi", background=True)

@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 
 _TIMEOUT_DEFAULT = 30
 _TIMEOUT_BACKGROUND_DEFAULT = 1800
+_SOFT_DEFAULT = 60
 
 
 def select_shell() -> str:
@@ -53,16 +54,29 @@ def bash_spec(background: BackgroundProcs | None = None) -> ToolSpec:
                 f"running in background (timeout {timeout}s). "
                 "Poll progress and the result with bash_read."
             )
+        if background is not None:
+            # Auto-escalate: quick commands return like foreground; a command
+            # still running after the soft window moves to background instead
+            # of blocking the turn.
+            raw = args.get("timeout")
+            hard = _TIMEOUT_BACKGROUND_DEFAULT if raw is None else parse_timeout(raw)
+            return await background.start_and_wait(
+                command, hard, os.getcwd(), _SOFT_DEFAULT
+            )
         return await _run(command, parse_timeout(args.get("timeout")))
 
     return ToolSpec(
         name="bash",
         description=(
             "Run a POSIX shell command on this machine (no sandbox). "
-            "cwd is the process working directory. timeout defaults to 30 seconds; "
-            "the agent may choose another positive integer. Timeout kills the process group. "
-            "background: true starts the command without waiting and returns an id; "
-            "poll it with bash_read (background timeout defaults to 1800 seconds)."
+            "cwd is the process working directory. Commands that finish within "
+            "~60 seconds return their result directly. A still-running command "
+            "then automatically moves to background and the tool returns "
+            "'still running: bg<N>' — poll progress and the result with bash_read "
+            "instead of re-running it. Use background: true when you know from "
+            "the start the command is long (builds, OCR, servers): the id comes "
+            "back immediately. timeout is the hard cap that kills the process "
+            "group; backgrounded commands default to 1800 seconds."
         ),
         parameters={
             "type": "object",

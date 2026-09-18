@@ -5,7 +5,7 @@ Thay đổi của Thyca, viết ngắn gọn cho người dùng.
 ## 0.8.3 — 17/09/2026
 
 - Ô soạn tin kiểu thư: chọn model (từ Cài đặt), mức suy nghĩ (Nhanh / Cân bằng / Kỹ hơn), nút Dừng khi Thyca đang trả lời, Thử lại không gửi lại câu của bạn.
-- Chat hiện suy nghĩ thật của model lúc đang viết, không còn câu ambient giả.
+- Chat hiện suy nghĩ thật của model lúc đang viết, không còn câu ambient giả; đồng hồ suy nghĩ tiếp tục đúng khi đổi qua lại giữa các phiên.
 
 ## 0.8.2 — 16/09/2026
 

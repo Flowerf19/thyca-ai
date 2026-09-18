@@ -98,6 +98,10 @@ Package flat `thyca/`: `agent/` chạy loop 4 pha (assemble → think → act �
 
 Skills theo chuẩn [Agent Skills](https://agentskills.io): `~/.thyca/skills/<name>/SKILL.md` — tạo bằng `write`, không cần tool mới.
 
+## Thảo luận dự án
+
+Thyca đang ở giai đoạn beta. Mọi góp ý về cách Thyca học từ user, hỗ trợ model, bộ nhớ, workflow hoặc các công việc mới đều được hoan nghênh tại [GitHub Discussions](https://github.com/Flowerf19/thyca-ai/discussions).
+
 ## Tài liệu
 
 Nhìn xa hơn: `.agents/README.md` (hướng dẫn cho agent contributor), `.agents/plans/` (kế hoạch đang chạy và đã xong), `.agents/decisions/` (quyết định kiến trúc kèm ngày). Kế hoạch live thinking và composer controls ghi rõ wire/API, stop, retry và giới hạn hiện tại.

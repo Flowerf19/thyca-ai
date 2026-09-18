@@ -266,7 +266,7 @@ export function renderError(root, message, retry) {
   root.replaceChildren(box);
 }
 
-export function createLiveStatus(root) {
+export function createLiveStatus(root, startedAt) {
   const article = document.createElement("article");
   article.className = "live-card live-status";
   article.setAttribute("aria-label", "Thyca đang trả lời");
@@ -280,6 +280,7 @@ export function createLiveStatus(root) {
   };
   const thinking = createThinkingNote({
     live: true,
+    startedAt,
     onElapsed(sec) {
       setChatBrand(live, { status: `đang suy nghĩ · ${elapsedLabel(sec)}` });
     },

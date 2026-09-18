@@ -344,12 +344,18 @@ function renderDetail(detail) {
   setRunning(detail?.running === true);
   if (state.running) {
     // A turn streaming in this tab gets its own card back — same object, so
-    // the events it has been collecting are still on it. A turn started
-    // elsewhere (or before a reload) gets a fresh one; followTurn then
+    // the events it has been collecting are still on it; resume() restarts
+    // the clock tick that stopped while the card was detached. A turn started
+    // elsewhere (or before a reload) gets a fresh one, counted from the
+    // turn's real start (started_at) instead of this remount; followTurn then
     // attaches the live stream to that same card.
     const live = liveTurns.get(state.activeId);
-    if (live) el.messageList.append(live.article);
-    else liveTurns.set(state.activeId, createLiveStatus(el.messageList));
+    if (live) {
+      el.messageList.append(live.article);
+      live.thinking?.resume();
+    } else {
+      liveTurns.set(state.activeId, createLiveStatus(el.messageList, detail.started_at));
+    }
   } else if (state.streamSessionId !== state.activeId) {
     liveTurns.delete(state.activeId);
   }
@@ -359,7 +365,7 @@ function renderDetail(detail) {
 
 // Another tab started this turn: replay + tail its NDJSON so the card
 // updates the same way the starter's does. Poll is only the fallback.
-async function followTurn(sessionId) {
+async function followTurn(sessionId, startedAt) {
   const controller = new AbortController();
   followAbort = controller;
   let live = liveTurns.get(sessionId);
@@ -370,7 +376,7 @@ async function followTurn(sessionId) {
     live.thinking?.reset();
     live.article.querySelectorAll(".usage-row").forEach((node) => node.remove());
   } else {
-    live = createLiveStatus(el.messageList);
+    live = createLiveStatus(el.messageList, startedAt);
     liveTurns.set(sessionId, live);
   }
   try {
@@ -461,8 +467,9 @@ async function loadSession(sessionId) {
     const detail = await getJson(`/api/sessions/${encodeURIComponent(sessionId)}`);
     if (generation !== state.loadGeneration) return;
     renderDetail(detail);
-    if (state.running && state.streamSessionId !== sessionId) void followTurn(sessionId);
-    else watchRunning(sessionId);
+    if (state.running && state.streamSessionId !== sessionId) {
+      void followTurn(sessionId, detail.started_at);
+    } else watchRunning(sessionId);
     armIdle();
   } catch (error) {
     if (generation !== state.loadGeneration) return;

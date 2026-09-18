@@ -1114,11 +1114,13 @@ def test_webui_keeps_streaming_card_across_session_switch() -> None:
     assert "const liveTurns = new Map();" in app
     assert "liveTurns.set(sessionId, live);" in send_message
     assert "liveTurns.delete(sessionId);" in send_message
-    # Reuse the card for the session on screen, mint one only when there is
-    # none to reuse (turn started before this page loaded).
+    # Reuse the card for the session on screen (resume() restarts the clock
+    # tick that stopped while the card was detached); mint one only when there
+    # is none to reuse, counted from the turn's real started_at.
     assert "const live = liveTurns.get(state.activeId);" in render
-    assert "if (live) el.messageList.append(live.article);" in render
-    assert "else liveTurns.set(state.activeId, createLiveStatus(el.messageList));" in render
+    assert "el.messageList.append(live.article);" in render
+    assert "live.thinking?.resume();" in render
+    assert "createLiveStatus(el.messageList, detail.started_at)" in render
     # A detached card must not drag the visible conversation around.
     assert "if (state.activeId === sessionId) scrollToBottom();" in send_message
 
@@ -1135,9 +1137,9 @@ def test_webui_follows_a_turn_it_did_not_start() -> None:
     # events as the starter. Poll is only the fallback if that stream is gone.
     assert "RUNNING_POLL_MS = 2000" in app
     assert "detail && detail.running === true" in app
-    assert "else liveTurns.set(state.activeId, createLiveStatus(el.messageList));" in app
+    assert "createLiveStatus(el.messageList, detail.started_at)" in app
     assert "async function followTurn" in app
-    assert "void followTurn(sessionId)" in load_session
+    assert "void followTurn(sessionId, detail.started_at)" in load_session
     assert "abortFollow()" in load_session
     assert "getNdjson" in app
     assert "createLiveStatus" in view

@@ -34,7 +34,7 @@ export function elapsedLabel(seconds) {
   return `${Math.max(0, seconds)} giây`;
 }
 
-export function createThinkingNote({ live = true, onElapsed } = {}) {
+export function createThinkingNote({ live = true, startedAt, onElapsed } = {}) {
   const id = `thought-body-${++serial}`;
   const note = document.createElement("section");
   note.className = "thinking-note";
@@ -70,7 +70,10 @@ export function createThinkingNote({ live = true, onElapsed } = {}) {
   body.append(text, footer);
   note.append(body);
 
-  const state = { startedAt: Date.now() };
+  // The clock counts from the turn's real start (the backend sends
+  // started_at), not from whenever this card happens to be created.
+  const parsed = typeof startedAt === "string" ? Date.parse(startedAt) : Number(startedAt);
+  const state = { startedAt: Number.isFinite(parsed) ? parsed : Date.now() };
   let timer = null;
   const tick = () => {
     if (!note.isConnected) {
@@ -84,7 +87,8 @@ export function createThinkingNote({ live = true, onElapsed } = {}) {
   const startTimer = () => {
     if (!live || timer) return;
     // The live card may be detached while its session is off-screen. Pause
-    // then; reset() resumes this same clock when the card is mounted again.
+    // then; reset() and resume() restart this same clock when it is mounted
+    // again.
     timer = setInterval(tick, 1000);
   };
   if (live) {
@@ -133,6 +137,12 @@ export function createThinkingNote({ live = true, onElapsed } = {}) {
       timer = null;
       footer.hidden = tool.hidden;
       if (!output.textContent && tool.hidden) note.hidden = true;
+    },
+    resume() {
+      // Re-entering a session re-appends this card after tick() stopped the
+      // interval on detach; pick the same clock back up where it was.
+      startTimer();
+      tick();
     },
   };
 }

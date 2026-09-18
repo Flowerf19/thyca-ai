@@ -29,6 +29,7 @@ from thyca.sessions import Session, SessionManager
 from thyca.sessions.store import SessionStore
 from thyca.sessions.title import display_title, is_blank, propose_title
 from thyca.tools.builtin import register_file_tools
+from thyca.tools.builtin.background import BackgroundProcs
 from thyca.tools.mcp import MCPManager
 from thyca.tools.memory import MemoryFacade
 from thyca.tools.memory_tools import bind_chat_session, register_memory_tools, reset_chat_session
@@ -228,7 +229,8 @@ class ChatApp:
         self._zone = ZoneInfo(cfg.timeline.timezone)
         self._state = self._memory.open_session(datetime.now(self._zone))
         registry = ToolRegistry()
-        register_file_tools(registry, PathGuard(root))
+        self._background = BackgroundProcs()
+        register_file_tools(registry, PathGuard(root), self._background)
         register_memory_tools(
             registry, MemoryFacade(root, timezone_name=cfg.timeline.timezone)
         )
@@ -473,6 +475,7 @@ class ChatApp:
         try:
             if self._loop.is_running():
                 self._submit(self._mcp.shutdown())
+                self._submit(self._background.kill_all())
         except Exception:
             pass
         finally:

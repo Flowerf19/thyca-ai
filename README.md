@@ -94,7 +94,7 @@ Config mặc định dùng một provider OpenAI-compatible:
 
 ## Kiến trúc (tóm tắt cho người tò mò)
 
-Package flat `thyca/`: `agent/` chạy loop 4 pha (assemble → think → act → observe), `tools/` giữ registry (bash, read/write/edit, `memory_*`, MCP stdio), `memory/` tách Active (inject) và Archived (index), `llm/` là client OpenAI-compat, `serve.py` + `webui/` là giao diện.
+Package flat `thyca/`: `agent/` chạy loop 4 pha (assemble → think → act → observe), `tools/` giữ registry (bash + bash_read nền, read/write/edit, `memory_*`, MCP stdio), `memory/` tách Active (inject) và Archived (index), `llm/` là client OpenAI-compat, `serve.py` + `webui/` là giao diện.
 
 Skills theo chuẩn [Agent Skills](https://agentskills.io): `~/.thyca/skills/<name>/SKILL.md` — tạo bằng `write`, không cần tool mới.
 

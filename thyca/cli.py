@@ -23,6 +23,7 @@ from thyca.llm.prompt_manager import PromptManager
 from thyca.memory.active import ActiveMemory
 from thyca.sessions import SessionError, SessionManager, SessionNotFound
 from thyca.tools.builtin import register_file_tools
+from thyca.tools.builtin.background import BackgroundProcs
 from thyca.tools.memory import MemoryFacade
 from thyca.tools.memory_tools import register_memory_tools
 from thyca.tools.mcp import MCPManager
@@ -146,7 +147,8 @@ class Cli:
         zone = ZoneInfo(cfg.timeline.timezone)
         state = memory.open_session(datetime.now(zone))
         registry = ToolRegistry()
-        register_file_tools(registry, PathGuard(root))
+        background = BackgroundProcs()
+        register_file_tools(registry, PathGuard(root), background)
         register_memory_tools(
             registry, MemoryFacade(root, timezone_name=cfg.timeline.timezone)
         )
@@ -199,6 +201,7 @@ class Cli:
                 if close is not None:
                     await close()
         finally:
+            await background.kill_all()
             await manager.shutdown()
 
     def _serve(self, port: int, *, daemon: bool = False, stop: bool = False) -> int:

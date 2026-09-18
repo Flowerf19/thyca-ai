@@ -10,4 +10,4 @@
 - Code và identifier tiếng Anh. Nói với user theo ngôn ngữ user.
 - Linux là target. Đừng viết API chỉ chạy trên Windows.
 - Secret chỉ qua env hoặc file ngoài Git.
-- Pytest: đừng "sửa" `test_debug_prints_prompt_flags` (`tools=7`) trừ khi task là cập nhật số tool; đó là baseline đã biết (`tools=11`).
+- Pytest: đừng "sửa" `test_debug_prints_prompt_flags` (`tools=7`) trừ khi task là cập nhật số tool; đó là baseline đã biết (`tools=12`).

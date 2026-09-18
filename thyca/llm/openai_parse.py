@@ -29,7 +29,9 @@ def _cap(text: str, limit: int = 500) -> str:
 
 
 def _reasoning_text(payload: dict) -> str:
-    for name in ("reasoning_content", "reasoning"):
+    # Same field set pi reads for OpenAI-compatible providers; providers pick
+    # whichever they like (this one uses "reasoning").
+    for name in ("reasoning_content", "reasoning", "reasoning_text"):
         value = payload.get(name)
         if isinstance(value, str) and value:
             return value

@@ -481,6 +481,25 @@ async def test_stream_reasoning_field_openrouter() -> None:
 
 
 @pytest.mark.asyncio
+async def test_stream_reasoning_text_field_parsed() -> None:
+    """Some providers send reasoning as reasoning_text (pi reads it too)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _sse(
+            {"choices": [{"delta": {"reasoning_text": "step one "}}]},
+            {"choices": [{"delta": {"reasoning_text": "step two"}}]},
+            {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]},
+        )
+
+    seen: list[str] = []
+    connect = OpenAIChat(_provider(), client=_client(handler))
+    reply = await connect.chat([Message(role="user", content="x")], on_reasoning=seen.append)
+    assert reply.reasoning == "step one step two"
+    assert "".join(seen) == "step one step two"
+    assert reply.content == "ok"
+
+
+@pytest.mark.asyncio
 async def test_json_reasoning_content_parsed_without_stream() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(

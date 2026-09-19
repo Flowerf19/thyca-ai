@@ -683,7 +683,7 @@ function bind() {
   el.stop.addEventListener("click", () => void stopTurn());
   el.model.addEventListener("change", async () => {
     try {
-      fillComposerControls(await getJson("/api/config"));
+      fillComposerControls(await getJson("/api/config"), { keepSelection: true });
     } catch {
       // Keep the current options when the config fetch fails.
     }
@@ -737,7 +737,7 @@ function bind() {
   }
 }
 
-function fillComposerControls(payload) {
+function fillComposerControls(payload, { keepSelection = false } = {}) {
   const values = payload?.values || {};
   const provider = values.provider || {};
   const catalog = [...new Set(
@@ -745,6 +745,7 @@ function fillComposerControls(payload) {
       (id) => typeof id === "string" && id,
     ),
   )];
+  const current = el.model.value;
   el.model.replaceChildren(
     ...catalog.map((id) => {
       const option = document.createElement("option");
@@ -760,13 +761,17 @@ function fillComposerControls(payload) {
     option.selected = true;
     option.textContent = "Model";
     el.model.append(option);
+  } else if (keepSelection && current && catalog.includes(current)) {
+    // Keep the composer's selection (a per-turn override) on re-fetch;
+    // provider.model is only the initial value.
+    el.model.value = current;
   } else if (provider.model) {
     el.model.value = provider.model;
   }
   const schema = payload?.schema;
   fillEffortSelect(
     el.effort,
-    effortChoicesFor(schema, values, provider.model),
+    effortChoicesFor(schema, values, el.model.value),
     provider.reasoningEffort,
     schema,
   );

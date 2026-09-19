@@ -37,9 +37,10 @@ sửa `~/.thyca/config.json`. File được cài kèm thyca và lưu tại `~/.t
 - `apiKeyEnv`: tên biến môi trường chứa key. Mặc định `THYCA_TOKEN` — đừng để
   `OPENAI_API_KEY` làm mặc định: dễ bị harness/công cụ khác quét và dùng trùng key.
 - `model`: tên model đúng như provider trả trong `GET {baseUrl}/models`.
-- `reasoningEffort`: `low` | `medium` | `high` (mặc định `high`). Thyca gửi
-  `reasoning_effort` lên Chat Completions; model không hỗ trợ (ví dụ gpt-4o)
-  sẽ tự được retry không có param — không cần xoá tay.
+- `reasoningEffort`: mức suy luận, lấy từ `REASONING_EFFORTS` trong
+  `thyca/config.py` (mặc định `high`). WebUI tự render danh sách mức theo
+  config. Thyca gửi `reasoning_effort` lên Chat Completions; model không
+  hỗ trợ (ví dụ gpt-4o) sẽ tự được retry không có param — không cần xoá tay.
 
 ### timeline
 

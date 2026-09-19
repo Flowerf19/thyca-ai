@@ -31,6 +31,7 @@ const el = {
 
 const state = {
   values: null,
+  schema: null,
   saved: null,
   meta: {},
   verifiedModels: [],
@@ -73,6 +74,26 @@ function modelSpec(name) {
   return state.values?.models?.[name] || state.values?.pricing?.[name] || {};
 }
 
+function effortChoices() {
+  const field = (state.schema?.sections || [])
+    .find((section) => section.key === "provider")?.fields
+    ?.find((item) => item.key === "provider.reasoningEffort");
+  return field?.choices?.length ? field.choices : ["low", "medium", "high"];
+}
+
+function fillEffortOptions(selected) {
+  const choices = effortChoices();
+  el.reasoning.replaceChildren(
+    ...choices.map((choice) => {
+      const option = document.createElement("option");
+      option.value = choice;
+      option.textContent = choice;
+      return option;
+    }),
+  );
+  el.reasoning.value = choices.includes(selected) ? selected : choices[choices.length - 1];
+}
+
 function fillModelOptions(extra = []) {
   const values = state.values || {};
   const names = new Set([
@@ -93,7 +114,7 @@ function applyModel(name) {
   const values = state.values;
   if (!values) return;
   const spec = modelSpec(name);
-  el.reasoning.value = spec.reasoningEffort || values.provider?.reasoningEffort || "high";
+  fillEffortOptions(spec.reasoningEffort || values.provider?.reasoningEffort);
   el.loopMax.value = spec.loopMax ?? values.limits?.loopMax ?? 200;
   el.hotTailKB.value = spec.hotTailKB ?? values.limits?.hotTailKB ?? 4;
   el.contextTokens.value = spec.contextTokens ?? values.limits?.contextTokens ?? 272000;
@@ -275,6 +296,7 @@ async function boot() {
   try {
     const payload = await getJson("/api/config");
     state.meta = payload.meta || {};
+    state.schema = payload.schema || null;
     state.saved = clone(payload.values || {});
     applyValues(state.saved);
     const required = new URLSearchParams(location.search).has("required");

@@ -755,8 +755,20 @@ function fillComposerControls(payload) {
   } else if (provider.model) {
     el.model.value = provider.model;
   }
+  const schema = (payload?.schema?.sections || [])
+    .find((section) => section.key === "provider")?.fields
+    ?.find((field) => field.key === "provider.reasoningEffort");
+  const choices = schema?.choices?.length ? schema.choices : ["low", "medium", "high"];
+  el.effort.replaceChildren(
+    ...choices.map((choice) => {
+      const option = document.createElement("option");
+      option.value = choice;
+      option.textContent = choice;
+      return option;
+    }),
+  );
   const effort = provider.reasoningEffort;
-  el.effort.value = effort === "low" || effort === "medium" || effort === "high" ? effort : "high";
+  el.effort.value = choices.includes(effort) ? effort : (schema?.default || choices[choices.length - 1]);
 }
 
 async function boot() {

@@ -1,4 +1,5 @@
 import { getJson, postJson } from "./backend/api.js";
+import { fillEffortSelect } from "./backend/reasoning-effort.js";
 
 const PRESETS = {
   openai: "https://api.openai.com/v1",
@@ -74,24 +75,8 @@ function modelSpec(name) {
   return state.values?.models?.[name] || state.values?.pricing?.[name] || {};
 }
 
-function effortChoices() {
-  const field = (state.schema?.sections || [])
-    .find((section) => section.key === "provider")?.fields
-    ?.find((item) => item.key === "provider.reasoningEffort");
-  return field?.choices?.length ? field.choices : ["low", "medium", "high"];
-}
-
 function fillEffortOptions(selected) {
-  const choices = effortChoices();
-  el.reasoning.replaceChildren(
-    ...choices.map((choice) => {
-      const option = document.createElement("option");
-      option.value = choice;
-      option.textContent = choice;
-      return option;
-    }),
-  );
-  el.reasoning.value = choices.includes(selected) ? selected : choices[choices.length - 1];
+  fillEffortSelect(el.reasoning, state.schema, selected);
 }
 
 function fillModelOptions(extra = []) {

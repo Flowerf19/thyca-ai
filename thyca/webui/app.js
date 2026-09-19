@@ -1,4 +1,5 @@
 import { ApiError, deleteJson, getJson, getNdjson, patchJson, postJson, postNdjson } from "./backend/api.js";
+import { fillEffortSelect } from "./backend/reasoning-effort.js";
 import { SEND_ERROR_STATUS } from "./backend/chat-status.js";
 import { cleanText, formatSessionTime } from "./backend/format.js";
 import {
@@ -755,20 +756,8 @@ function fillComposerControls(payload) {
   } else if (provider.model) {
     el.model.value = provider.model;
   }
-  const schema = (payload?.schema?.sections || [])
-    .find((section) => section.key === "provider")?.fields
-    ?.find((field) => field.key === "provider.reasoningEffort");
-  const choices = schema?.choices?.length ? schema.choices : ["low", "medium", "high"];
-  el.effort.replaceChildren(
-    ...choices.map((choice) => {
-      const option = document.createElement("option");
-      option.value = choice;
-      option.textContent = choice;
-      return option;
-    }),
-  );
-  const effort = provider.reasoningEffort;
-  el.effort.value = choices.includes(effort) ? effort : (schema?.default || choices[choices.length - 1]);
+  const schema = payload?.schema;
+  fillEffortSelect(el.effort, schema, provider.reasoningEffort);
 }
 
 async function boot() {

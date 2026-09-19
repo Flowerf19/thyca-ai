@@ -46,11 +46,11 @@
           <p class="screen-note memory-status" id="memory-status" role="status" aria-live="polite"></p>
           </div>
           <nav class="session-list" aria-label="Chia nhật ký">
-            <button class="session-item is-active" type="button" data-view="overview" aria-pressed="true"><span class="session-icon" aria-hidden="true"></span><span class="session-name">Tổng quan</span></button>
-            <button class="session-item" type="button" data-view="day" aria-pressed="false"><span class="session-icon" aria-hidden="true"></span><span class="session-name">Theo ngày</span></button>
-            <button class="session-item" type="button" data-view="used-more" aria-pressed="false"><span class="session-icon" aria-hidden="true"></span><span class="session-name">Dùng nhiều</span></button>
-            <button class="session-item" type="button" data-view="searched-more" aria-pressed="false"><span class="session-icon" aria-hidden="true"></span><span class="session-name">Tìm nhiều</span></button>
-            <button class="session-item" type="button" data-view="used-less" aria-pressed="false"><span class="session-icon" aria-hidden="true"></span><span class="session-name">Dùng ít</span></button>
+            <button class="session-item is-active" type="button" data-view="overview" aria-pressed="true"><span class="session-icon" aria-hidden="true"></span><span class="session-name">01 / Tổng quan</span></button>
+            <button class="session-item" type="button" data-view="day" aria-pressed="false"><span class="session-icon" aria-hidden="true"></span><span class="session-name">02 / Theo ngày</span></button>
+            <button class="session-item" type="button" data-view="used-more" aria-pressed="false"><span class="session-icon" aria-hidden="true"></span><span class="session-name">03 / Dùng nhiều</span></button>
+            <button class="session-item" type="button" data-view="searched-more" aria-pressed="false"><span class="session-icon" aria-hidden="true"></span><span class="session-name">04 / Tìm nhiều</span></button>
+            <button class="session-item" type="button" data-view="used-less" aria-pressed="false"><span class="session-icon" aria-hidden="true"></span><span class="session-name">05 / Dùng ít</span></button>
           </nav>
         </section>
       </aside>
@@ -66,7 +66,7 @@
           <section class="memory-view" data-view="overview" hidden>
             <details class="fold-section" open>
               <summary><h3>Tổng quan</h3></summary>
-              <div class="memory-view-body memory-overview"></div>
+              <div class="memory-view-body"></div>
             </details>
           </section>
           <section class="memory-view" data-view="day" hidden>
@@ -93,14 +93,14 @@
               <div class="memory-view-body"></div>
             </details>
           </section>
-          <p id="memory-empty" class="memory-empty" hidden>Không tìm thấy trang nhật ký phù hợp.</p>
+          <p id="memory-empty" class="memory-empty" hidden>Không tìm thấy mẩu nhật ký phù hợp.</p>
         </section>
       </section>
     </main>
 
     <dialog class="screen-dialog" id="memory-dialog" aria-labelledby="dialog-title">
       <form method="dialog" id="memory-form">
-        <h2 id="dialog-title">Sửa trang nhật ký</h2>
+        <h2 id="dialog-title">Sửa mẩu nhật ký</h2>
         <input type="hidden" id="memory-id">
         <label for="memory-title">Tiêu đề<input class="screen-input" id="memory-title" required maxlength="120"></label>
         <label for="memory-description">Mô tả<textarea class="screen-input" id="memory-description" required maxlength="400"></textarea></label>

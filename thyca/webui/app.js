@@ -285,7 +285,7 @@ function openDelete(session) {
   const id = String(session.id || "");
   if (!id) return;
   state.deleteId = id;
-  el.deleteNote.textContent = `“${cleanText(session.title, "Phiên trống")}” sẽ mất hẳn khỏi sổ. Những trang nhật ký đã ghi từ phiên này vẫn còn.`;
+  el.deleteNote.textContent = `“${cleanText(session.title, "Phiên trống")}” sẽ mất hẳn khỏi sổ. Những mẩu nhật ký đã ghi từ phiên này vẫn còn.`;
   el.deleteStatus.textContent = "";
   el.deleteDialog.showModal();
 }

@@ -31,14 +31,6 @@
   margin-block-start: 1rem;
 }
 #giao-dien { scroll-margin-top: 1rem; }
-html[data-type-scale="small"] { font-size: 93.75%; }
-html[data-type-scale="large"] { font-size: 112.5%; }
-html[data-theme="dusk"] {
-  --color-desk-top: oklch(32% 0.06 42);
-  --color-desk-mid: oklch(28% 0.05 42);
-  --color-paper: oklch(88% 0.03 72);
-  --color-paper-chat: oklch(90% 0.025 80);
-}
 @media (max-width: 68.75rem) {
   .settings-row { grid-template-columns: minmax(0, 1fr); gap: 0.55rem; }
 }

@@ -32,7 +32,7 @@
 .cost-total p {
   margin: 0;
   color: var(--color-muted);
-  font-size: 0.95rem;
+  font-size: 0.85rem;
 }
 
 .cost-chart-card {
@@ -102,9 +102,6 @@
 .cost-model-row-head h3 {
   margin: 0;
   color: var(--color-ink);
-  font-family: var(--font-mono);
-  font-size: 0.95rem;
-  font-style: normal;
   overflow-wrap: anywhere;
 }
 
@@ -140,8 +137,8 @@
 .cost-model-share {
   min-width: 2.6rem;
   color: var(--color-accent-deep);
-  font-size: 0.95rem;
-  font-style: italic;
+  font-size: 0.85rem;
+  font-style: normal;
   font-variant-numeric: tabular-nums;
   text-align: right;
 }

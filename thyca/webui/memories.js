@@ -1,7 +1,8 @@
 import { getJson, postJson } from "./backend/api.js";
+import { completeDays, rollingRange } from "./backend/analytics-data.js";
+import { drawBarChart } from "./backend/bar-chart.js";
 import { formatDate, formatDateTime, formatInteger } from "./backend/format.js";
 import { selectMemories } from "./backend/memory-data.js";
-
 const el = {
   list: document.querySelector("#memory-list"),
   empty: document.querySelector("#memory-empty"),
@@ -64,30 +65,27 @@ function memoryCard(memory) {
   const article = document.createElement("article");
   article.className = "memory-card";
   article.dataset.memoryId = memory.id;
+  const time = document.createElement("time");
+  time.textContent = memory.date === "Không rõ ngày" ? memory.date : formatDate(memory.date);
   const copy = document.createElement("div");
   copy.className = "memory-copy";
   const heading = document.createElement("h3");
   heading.textContent = memory.title;
   const description = document.createElement("p");
   description.textContent = memory.description;
-  const tags = document.createElement("div");
-  tags.className = "memory-tags";
+  copy.append(heading, description);
+  const meta = document.createElement("div");
+  meta.className = "memory-meta";
   for (const label of [`${memory.uses} lần dùng`, `${memory.searches} lần tìm`]) {
     const tag = document.createElement("span");
     tag.textContent = label;
-    tags.append(tag);
+    meta.append(tag);
   }
   if (memory.expiresAt) {
     const tag = document.createElement("span");
     tag.textContent = `hết hạn ${formatDateTime(memory.expiresAt)}`;
-    tags.append(tag);
+    meta.append(tag);
   }
-  copy.append(heading, description, tags);
-
-  const meta = document.createElement("div");
-  meta.className = "memory-meta";
-  const time = document.createElement("time");
-  time.textContent = memory.date === "Không rõ ngày" ? memory.date : formatDate(memory.date);
   const more = document.createElement("button");
   more.className = "memory-more row-action";
   more.type = "button";
@@ -95,8 +93,45 @@ function memoryCard(memory) {
   more.setAttribute("aria-label", `Sửa trang ${memory.title}`);
   more.textContent = "⋮";
   more.addEventListener("click", () => openMemory(memory, more));
-  meta.append(time, more);
-  article.append(copy, meta);
+  meta.append(more);
+  article.append(time, copy, meta);
+  return article;
+}
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+let overviewSvg = null;
+const chartObserver = new ResizeObserver(() => drawOverviewChart());
+
+function drawOverviewChart() {
+  if (!overviewSvg) return;
+  const counts = new Map();
+  for (const leaf of state.stats.leaves) {
+    const day = String(leaf?.timeline_day || "");
+    if (/^\d{4}-\d{2}-\d{2}$/.test(day)) counts.set(day, (counts.get(day) || 0) + 1);
+  }
+  // completeDays zero-fills the 30-day window; days without data come back
+  // without `value`, so coerce to 0.
+  const rows = completeDays([...counts].map(([day, value]) => ({ day, value })), rollingRange(30))
+    .map(({ day, value }) => ({ day, value: value || 0 }));
+  drawBarChart(overviewSvg, rows.map((row) => ({
+    day: row.day,
+    segments: [{ class: "memory-bar", value: row.value }],
+  })), {
+    valueLabels: true,
+    ariaLabel: `Biểu đồ mẩu nhật ký theo ngày; mức cao nhất ${formatInteger(Math.max(...rows.map((row) => row.value), 0))}.`,
+  });
+}
+
+function overviewChartCard() {
+  const article = document.createElement("article");
+  article.className = "screen-card memory-chart-card";
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("role", "img");
+  article.append(svg);
+  overviewSvg = svg;
+  chartObserver.disconnect();
+  chartObserver.observe(svg);
+  drawOverviewChart();
   return article;
 }
 
@@ -106,7 +141,7 @@ function overviewCards() {
   const uses = leaves.reduce((sum, leaf) => sum + Math.max(0, Number(leaf.get_count) || 0), 0);
   const searches = leaves.reduce((sum, leaf) => sum + Math.max(0, Number(leaf.search_count) || 0), 0);
   return [
-    ["Trang nhật ký", pages],
+    ["Mẩu nhật ký", pages],
     ["Lần dùng", uses],
     ["Lần tìm", searches],
   ].map(([title, count]) => {
@@ -121,20 +156,18 @@ function overviewCards() {
   });
 }
 
+function overviewStats() {
+  const wrap = document.createElement("div");
+  wrap.className = "memory-overview";
+  wrap.append(...overviewCards());
+  return wrap;
+}
+
 function renderRows(view) {
   const rows = selectMemories(state.stats.leaves, { view, query: el.search.value });
-  const nodes = [];
-  let lastDay = "";
-  for (const memory of rows) {
-    if (view === "day" && memory.date !== lastDay) {
-      lastDay = memory.date;
-      const heading = document.createElement("h3");
-      heading.className = "memory-day";
-      heading.textContent = memory.date === "Không rõ ngày" ? memory.date : formatDate(memory.date);
-      nodes.push(heading);
-    }
-    nodes.push(memoryCard(memory));
-  }
+  // Dates live in each entry's left gutter, so the day view needs no separate
+  // day headings between groups.
+  const nodes = rows.map((memory) => memoryCard(memory));
   return { rows, nodes };
 }
 
@@ -147,7 +180,7 @@ function render() {
       section.hidden = false;
       const body = section.querySelector(".memory-view-body");
       if (section.dataset.view === "overview") {
-        body.replaceChildren(...overviewCards());
+        body.replaceChildren(overviewChartCard(), overviewStats());
         continue;
       }
       const { nodes } = renderRows(section.dataset.view);
@@ -155,17 +188,14 @@ function render() {
       if (!nodes.length) {
         const note = document.createElement("p");
         note.className = "screen-note";
-        note.textContent = "Không tìm thấy trang nhật ký phù hợp.";
+        note.textContent = "Không tìm thấy mẩu nhật ký phù hợp.";
         body.append(note);
       }
     }
   } else {
     for (const section of el.viewSections) section.hidden = true;
     if (state.view === "overview") {
-      const wrap = document.createElement("div");
-      wrap.className = "memory-overview";
-      wrap.append(...overviewCards());
-      el.list.replaceChildren(wrap);
+      el.list.replaceChildren(overviewChartCard(), overviewStats());
       el.list.hidden = false;
       el.empty.hidden = true;
     } else {
@@ -173,7 +203,7 @@ function render() {
       el.list.replaceChildren(...nodes);
       el.list.hidden = false;
       el.empty.hidden = rows.length > 0;
-      el.empty.textContent = "Không tìm thấy trang nhật ký phù hợp.";
+      el.empty.textContent = "Không tìm thấy mẩu nhật ký phù hợp.";
     }
   }
   el.viewButtons.forEach((button) => {

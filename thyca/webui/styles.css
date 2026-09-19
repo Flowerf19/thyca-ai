@@ -95,6 +95,17 @@ body {
   -webkit-text-size-adjust: 100%;
 }
 
+/* Preferences set in Cài đặt (navigation.js mirrors them onto <html> on every
+   page); they live here so each page honors them, not just settings/provider. */
+html[data-type-scale="small"] { font-size: 93.75%; }
+html[data-type-scale="large"] { font-size: 112.5%; }
+html[data-theme="dusk"] {
+  --color-desk-top: oklch(32% 0.06 42);
+  --color-desk-mid: oklch(28% 0.05 42);
+  --color-paper: oklch(88% 0.03 72);
+  --color-paper-chat: oklch(90% 0.025 80);
+}
+
 button,
 textarea {
   font: inherit;

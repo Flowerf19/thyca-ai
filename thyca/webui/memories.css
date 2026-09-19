@@ -12,10 +12,28 @@
 .sidebar .memory-search-cluster {
   margin: 1rem 0.65rem 0 0;
 }
+.memory-chart-card {
+  min-height: 19rem;
+}
+
+.memory-chart-card svg {
+  width: 100%;
+  height: 16rem;
+  margin-top: 0.4rem;
+  /* styles.css gives every svg an icon stroke; bars and axis text are fills,
+     grid lines re-declare their own stroke. */
+  stroke: none;
+}
+
+.memory-bar {
+  fill: var(--color-accent);
+}
+
 .memory-overview {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.65rem;
+  margin-top: 0.9rem;
 }
 .memory-overview strong {
   display: block;
@@ -32,40 +50,35 @@
 }
 .memory-status:empty { display: none; }
 
-.memory-day {
-  margin: 0.85rem 0 0.15rem;
-  color: var(--color-ink);
-  font-family: var(--font-reading);
-  font-size: 1rem;
-  font-weight: 500;
-}
-
-.memory-day:first-child {
-  margin-top: 0;
-}
-
-/* Card grid, copy, tags, more, list: screens.css list-card kit. */
+/* Notebook dash: each entry opens with a terracotta "—" beside its title, as
+   in the sổ design. The date sits in the left gutter (screens.css journal kit). */
 .memory-copy h3 {
-  text-transform: uppercase;
+  position: relative;
+}
+.memory-copy h3::before {
+  content: "—";
+  position: absolute;
+  left: -1.4rem;
+  color: var(--chat-brand-accent);
 }
 
+/* List kit, copy, tags, more, list: screens.css journal kit. */
 .memory-copy p {
   text-align: justify;
 }
 
-.memory-tags {
-  margin-top: 0.45rem;
-}
-
+/* Tags row doubles as the entry's meta line: muted words separated by "·",
+   with the ⋮ action at the right end. */
 .memory-meta {
-  display: contents;
+  display: flex;
+  flex-wrap: wrap;
+  grid-column: 2;
+  grid-row: 3;
+  align-items: baseline;
+  gap: 0.5rem;
 }
-
-.memory-meta time {
-  margin-top: 0.45rem;
-  color: var(--color-muted);
-  font-size: 0.85rem;
-  font-style: italic;
+.memory-meta .memory-more {
+  margin-inline-start: auto;
 }
 
 /* Mobile (≤56rem) stacks the four view sections on one page — headers are
@@ -111,5 +124,11 @@
   }
   .memory-search-bar .thyca-search .thyca-search__input { font-size: 13px; padding: 7px 0; }
   .memory-search-bar .thyca-search .thyca-search__icon { width: 14px; height: 14px; }
+  .memory-chart-card {
+    min-height: 17rem;
+  }
+  .memory-chart-card svg {
+    height: 14rem;
+  }
   .memory-overview { grid-template-columns: minmax(0, 1fr); }
 }

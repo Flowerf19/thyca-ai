@@ -25,7 +25,6 @@
 }
 
 .trace-content h3 {
-  font-family: var(--font-display);
   font-size: 1.15rem;
   font-style: normal;
   font-weight: 500;
@@ -386,7 +385,6 @@
 .record-block h3 {
   margin: 0 0 0.4rem;
   color: var(--color-ink);
-  font-family: var(--font-display);
   font-size: 1.15rem;
   font-style: normal;
   font-weight: 500;

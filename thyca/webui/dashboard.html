@@ -33,14 +33,30 @@
             <h2>Tổng quan</h2>
           </div>
           <nav class="session-list" aria-label="Mục tổng quan">
-            <button class="session-item is-active" type="button" data-view="cost" aria-pressed="true"><span class="session-icon" aria-hidden="true"></span><span class="session-name">Chi phí</span></button>
-            <button class="session-item" type="button" data-view="request" aria-pressed="false"><span class="session-icon" aria-hidden="true"></span><span class="session-name">Request</span></button>
-            <button class="session-item" type="button" data-view="usage" aria-pressed="false"><span class="session-icon" aria-hidden="true"></span><span class="session-name">Sử dụng token</span></button>
+            <button class="session-item is-active" type="button" data-view="today" aria-pressed="true"><span class="session-icon" aria-hidden="true"></span><span class="session-name">01 / Tổng quan</span></button>
+            <a class="session-item" href="./trace.html"><span class="session-icon" aria-hidden="true"></span><span class="session-name">02 / Trace</span></a>
+            <button class="session-item" type="button" data-view="cost" aria-pressed="false"><span class="session-icon" aria-hidden="true"></span><span class="session-name">03 / Chi phí</span></button>
+            <button class="session-item" type="button" data-view="request" aria-pressed="false"><span class="session-icon" aria-hidden="true"></span><span class="session-name">04 / Request</span></button>
+            <button class="session-item" type="button" data-view="usage" aria-pressed="false"><span class="session-icon" aria-hidden="true"></span><span class="session-name">05 / Sử dụng token</span></button>
           </nav>
         </section>
       </aside>
       <section class="workspace" aria-label="Bảng tổng quan">
         <section class="screen-surface dashboard-surface" aria-label="Chi phí và sử dụng">
+          <section class="dashboard-block" id="hom-nay" aria-labelledby="today-heading">
+            <header class="screen-heading">
+              <div class="screen-title"><h1 id="today-heading">Hôm nay</h1></div>
+              <p class="screen-muted">Lượt chạy, chi phí · 7 ngày gần nhất ở các mục dưới</p>
+            </header>
+            <ul class="today-metrics journal-list" id="today-metrics"></ul>
+            <div class="today-section-head">
+              <h2 class="cost-model-heading">Những lượt chạy vừa rồi</h2>
+              <a class="today-trace-link" href="./trace.html">Xem Trace ↗</a>
+            </div>
+            <ul class="today-recent journal-list" id="today-recent"></ul>
+            <p class="screen-status" id="today-status" role="status" aria-live="polite"></p>
+          </section>
+
           <section class="dashboard-block" id="chi-phi" aria-labelledby="cost-heading">
             <header class="screen-heading">
               <div class="screen-title"><h1 id="cost-heading">Chi phí</h1></div>

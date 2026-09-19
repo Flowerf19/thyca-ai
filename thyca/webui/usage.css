@@ -90,10 +90,6 @@
   gap: 0.5rem;
 }
 
-.usage-summary h3 {
-  font-size: 1rem;
-}
-
 .usage-leaf {
   width: 1.35rem;
   height: 1.35rem;
@@ -103,7 +99,7 @@
 .usage-summary strong {
   display: block;
   margin: 0.6rem 0;
-  font-size: 1.8rem;
+  font-size: 1.7rem;
 }
 
 .usage-summary strong small,
@@ -116,7 +112,7 @@
   justify-content: space-between;
   gap: 0.5rem;
   color: var(--color-muted);
-  font-size: 0.8rem;
+  font-size: 0.85rem;
 }
 
 .usage-summary footer span:last-child {
@@ -154,7 +150,7 @@
 }
 
 .usage-total strong {
-  font-size: 1.8rem;
+  font-size: 1.7rem;
 }
 
 .usage-total-right {

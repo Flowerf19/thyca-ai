@@ -1,8 +1,8 @@
 import { getJson } from "./backend/api.js";
 import { aggregateUsage, completeDays, rollingRange, traceRangeUrl } from "./backend/analytics-data.js";
+import { drawBarChart } from "./backend/bar-chart.js";
 import { formatCompact, formatDate, formatInteger } from "./backend/format.js";
 
-const SVG_NS = "http://www.w3.org/2000/svg";
 const el = {
   period: document.querySelector("#usage-month"),
   chart: document.querySelector("#usage-chart"),
@@ -30,78 +30,25 @@ function setStatus(message = "", kind = "") {
   el.status.className = `screen-status${kind ? ` is-${kind}` : ""}`;
 }
 
-function svg(name, attributes = {}, text = "") {
-  const node = document.createElementNS(SVG_NS, name);
-  for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, String(value));
-  if (text) node.textContent = text;
-  return node;
-}
-
-function niceCeiling(max) {
-  if (!Number.isFinite(max) || max <= 0) return 1;
-  const power = 10 ** Math.floor(Math.log10(max));
-  const scaled = max / power;
-  const nice = scaled <= 1 ? 1 : scaled <= 2 ? 2 : scaled <= 5 ? 5 : 10;
-  return nice * power;
-}
-
-function dayLabel(day) {
-  return String(day || "").slice(8, 10).replace(/^0/, "") || "—";
-}
-
 function draw() {
   if (!series.length) {
     el.chart.replaceChildren();
     return;
   }
-  const box = el.chart.getBoundingClientRect();
-  const width = Math.max(Math.round(box.width) || 900, 320);
-  const height = Math.max(Math.round(box.height) || 272, 160);
-  el.chart.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  const left = 58;
-  const right = 10;
-  const top = 12;
-  const bottom = 34;
   const values = series.map((day) => unit === "token" ? day.input + day.cache + day.output : day.turns);
-  const ceiling = niceCeiling(Math.max(...values, 0));
-  const x = (index) => left + index * (width - left - right) / series.length;
-  const y = (value) => height - bottom - value / ceiling * (height - bottom - top);
-  const barWidth = Math.max(4, (width - left - right) / series.length * 0.58);
-  el.chart.replaceChildren();
-
-  for (let index = 0; index <= 5; index += 1) {
-    const value = ceiling * index / 5;
-    const yy = y(value);
-    el.chart.append(
-      svg("line", { class: "usage-grid", x1: left, x2: width - right, y1: yy, y2: yy }),
-      svg("text", { class: "usage-axis", x: 3, y: yy + 4 }, formatCompact(value)),
-    );
-  }
-
-  series.forEach((day, index) => {
-    const base = height - bottom;
-    const input = unit === "token" ? day.input : day.turns;
-    const cache = unit === "token" ? day.cache : 0;
-    const output = unit === "token" ? day.output : 0;
-    const inputH = input / ceiling * (height - bottom - top);
-    const cacheH = cache / ceiling * (height - bottom - top);
-    const outputH = output / ceiling * (height - bottom - top);
-    el.chart.append(
-      svg("rect", { class: "usage-bar-input", x: x(index), y: base - inputH, width: barWidth, height: inputH, rx: 3 }),
-      svg("rect", { class: "usage-bar-cache", x: x(index), y: base - inputH - cacheH, width: barWidth, height: cacheH }),
-      svg("rect", { class: "usage-bar-output", x: x(index), y: base - inputH - cacheH - outputH, width: barWidth, height: outputH, rx: 3 }),
-    );
-    const show = !compact.matches || index === 0 || index === series.length - 1 || (index + 1) % 7 === 0;
-    if (show) {
-      el.chart.append(svg("text", {
-        class: "usage-axis",
-        "text-anchor": "middle",
-        x: x(index) + barWidth / 2,
-        y: height - 10,
-      }, dayLabel(day.day)));
-    }
+  const rows = series.map((day) => ({
+    day: day.day,
+    segments: unit === "token"
+      ? [
+          { class: "usage-bar-input", value: day.input },
+          { class: "usage-bar-cache", value: day.cache },
+          { class: "usage-bar-output", value: day.output },
+        ]
+      : [{ class: "usage-bar-input", value: day.turns }],
+  }));
+  drawBarChart(el.chart, rows, {
+    ariaLabel: `Biểu đồ ${unit === "token" ? "token" : "lượt"} theo ngày; mức cao nhất ${formatCompact(Math.max(...values, 0))}.`,
   });
-  el.chart.setAttribute("aria-label", `Biểu đồ ${unit === "token" ? "token" : "lượt"} theo ngày; mức cao nhất ${formatCompact(Math.max(...values, 0))}.`);
 }
 
 function summaryCard(title, amount, total, turns) {

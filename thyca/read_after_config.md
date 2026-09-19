@@ -40,13 +40,13 @@ sửa `~/.thyca/config.json`. File được cài kèm thyca và lưu tại `~/.t
 - `reasoningEffort`: mức suy luận gửi lên model qua `reasoning_effort`.
   Danh sách mức khả dụng lấy từ `REASONING_EFFORTS` trong `thyca/config.py`
   (WebUI tự render theo config); mặc định `high`.
-  Chọn mức theo chính model đang cấu hình, không đoán mò:
-  tra tài liệu/API reference của model (web search) hoặc trang cài đặt
-  chính thức của provider để biết model hỗ trợ những mức nào (ví dụ
-  `minimal`/`low`/`medium`/`high`, hay tên tham số khác hẳn). Nếu model
-  chỉ nhận mức ngoài danh sách hiện có, hỏi user trước khi mở rộng
-  `REASONING_EFFORTS`. Model không hỗ trợ `reasoning_effort` (ví dụ gpt-4o)
-  sẽ tự được retry không có param — không cần xoá tay.
+  Chọn mức theo chính model đang cấu hình, không đoán mò: tra tài liệu/
+  API reference của model (web search) hoặc trang cài đặt chính thức của
+  provider để biết model hỗ trợ những mức nào — mỗi model một bộ mức riêng
+  (gpt-5.6 có 5 mức minimal→max, model khác chỉ 3 mức). Mức ngoài danh sách
+  hiện có thì hỏi user trước khi mở rộng `REASONING_EFFORTS`. Model không
+  hỗ trợ `reasoning_effort` (ví dụ gpt-4o) sẽ tự được retry không có param
+  — không cần xoá tay.
 
 ### timeline
 

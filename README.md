@@ -88,7 +88,7 @@ Config mặc định dùng một provider OpenAI-compatible:
 ```
 
 - `pricing` optional (USD / 1M tokens); thiếu thì dùng bảng builtin. Đây là dữ liệu cho màn Tổng quan và Trace.
-- `reasoningEffort` (`low`/`medium`/`high`) chỉnh được trong Cài đặt hoặc ngay trên ô soạn tin mỗi lượt.
+- `reasoningEffort` (`low`/`high`/`max`) chỉnh được trong Cài đặt hoặc ngay trên ô soạn tin mỗi lượt; chọn theo mức model hỗ trợ, mặc định `high`.
 - Có thể lưu nhiều card model (`models`) trong Cài đặt và đổi giữa các card ngay trên composer.
 - Panel Cài đặt sinh schema tự động từ dataclass `Config` — thêm field mới là panel tự hiện.
 

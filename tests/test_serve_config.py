@@ -64,7 +64,7 @@ def test_schema_covers_all_scalar_sections() -> None:
     # Pricing renders per-model in the UI, not as a schema section.
     assert keys == ["provider", "limits", "timeline"]
     provider = {f["key"]: f for f in schema["sections"][0]["fields"]}
-    assert provider["provider.reasoningEffort"]["choices"] == ["low", "medium", "high"]
+    assert provider["provider.reasoningEffort"]["choices"] == ["low", "high", "max"]
     assert provider["provider.reasoningEffort"]["default"] == "high"
     assert provider["provider.apiKey"]["secret"] is True
     assert "secret" not in provider["provider.apiKeyEnv"]

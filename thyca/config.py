@@ -30,7 +30,7 @@ class ConfigError(RuntimeError):
 DEFAULT_PROVIDER_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_PROVIDER_API_KEY_ENV = "THYCA_TOKEN"
 DEFAULT_PROVIDER_MODEL = "gpt-4o-mini"
-REASONING_EFFORTS = ("low", "medium", "high")
+REASONING_EFFORTS = ("low", "high", "max")
 DEFAULT_PROVIDER_REASONING_EFFORT = "high"
 DEFAULT_TIMELINE_TIMEZONE = "Asia/Ho_Chi_Minh"
 

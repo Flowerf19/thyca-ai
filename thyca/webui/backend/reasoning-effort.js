@@ -2,7 +2,7 @@
 // The option list comes from the config schema served by /api/config
 // (provider.reasoningEffort.choices, sourced from REASONING_EFFORTS).
 
-const FALLBACK_CHOICES = ["low", "medium", "high"];
+const FALLBACK_CHOICES = ["low", "high", "max"];
 
 export function effortField(schema) {
   return (schema?.sections || [])

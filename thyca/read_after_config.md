@@ -37,16 +37,19 @@ sửa `~/.thyca/config.json`. File được cài kèm thyca và lưu tại `~/.t
 - `apiKeyEnv`: tên biến môi trường chứa key. Mặc định `THYCA_TOKEN` — đừng để
   `OPENAI_API_KEY` làm mặc định: dễ bị harness/công cụ khác quét và dùng trùng key.
 - `model`: tên model đúng như provider trả trong `GET {baseUrl}/models`.
-- `reasoningEffort`: mức suy luận gửi lên model qua `reasoning_effort`.
-  Danh sách mức khả dụng lấy từ `REASONING_EFFORTS` trong `thyca/config.py`
-  (WebUI tự render theo config); mặc định `high`.
-  Chọn mức theo chính model đang cấu hình, không đoán mò: tra tài liệu/
-  API reference của model (web search) hoặc trang cài đặt chính thức của
-  provider để biết model hỗ trợ những mức nào — mỗi model một bộ mức riêng
-  (gpt-5.6 có 5 mức minimal→max, model khác chỉ 3 mức). Mức ngoài danh sách
-  hiện có thì hỏi user trước khi mở rộng `REASONING_EFFORTS`. Model không
-  hỗ trợ `reasoning_effort` (ví dụ gpt-4o) sẽ tự được retry không có param
-  — không cần xoá tay.
+- `reasoningEffort`: mức suy luận gửi lên model qua `reasoning_effort`;
+  mặc định `high`.
+- Mỗi model có một bộ mức suy luận riêng (gpt-5.6 có 5 mức minimal→max,
+  model khác chỉ 3 mức). Khai báo thinking map của model trong
+  `models["<model>"].reasoningEfforts` — mảng các mức, ví dụ:
+  `"reasoningEfforts": ["minimal", "low", "medium", "high", "max"]`.
+  `reasoningEffort` của model đó phải nằm trong map; composer/provider
+  tự render đúng các mức này khi chọn model. Model chưa khai báo map thì
+  dùng mặc định `low`/`high`/`max`.
+  Tra mức hỗ trợ bằng tài liệu/API reference của model (web search) hoặc
+  trang cài đặt chính thức của provider — không đoán mò.
+  Model không hỗ trợ `reasoning_effort` (ví dụ gpt-4o) sẽ tự được retry
+  không có param — không cần xoá tay.
 
 ### timeline
 

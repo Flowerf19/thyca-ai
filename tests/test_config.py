@@ -18,6 +18,7 @@ from thyca.config import (
     ModelCfg,
     PricingCfg,
     ProviderCfg,
+    _model_to_dict,
     default_config,
     load,
     save,
@@ -307,6 +308,29 @@ def test_model_limits_override_global(tmp_path: Path) -> None:
     plain = replace(cfg, provider=replace(cfg.provider, model="plain"))
     assert plain.effective_provider().reasoningEffort == "low"
     assert plain.effective_limits().loopMax == 10
+
+
+def test_model_reasoning_efforts_thinking_map(tmp_path: Path) -> None:
+    """models[].reasoningEfforts declares the model's own thinking levels."""
+    cfg = ModelCfg(
+        input=0,
+        cache=0,
+        output=0,
+        reasoningEffort="medium",
+        reasoningEfforts=("minimal", "low", "medium", "high", "max"),
+    )
+    assert cfg.reasoningEfforts == ("minimal", "low", "medium", "high", "max")
+    data = _model_to_dict(cfg)
+    assert data["reasoningEfforts"] == ["minimal", "low", "medium", "high", "max"]
+    # effort outside the declared map is rejected
+    with pytest.raises(ConfigError, match="not in"):
+        ModelCfg(input=0, cache=0, output=0, reasoningEffort="ultra", reasoningEfforts=("low", "max"))
+    # no map declared → effort must be one of REASONING_EFFORTS
+    with pytest.raises(ConfigError, match="reasoningEffort must be one of"):
+        ModelCfg(input=0, cache=0, output=0, reasoningEffort="ultra")
+    # duplicate levels are rejected
+    with pytest.raises(ConfigError, match="duplicates"):
+        ModelCfg(input=0, cache=0, output=0, reasoningEfforts=("low", "low"))
 
 
 def test_model_limits_reject_out_of_range(tmp_path: Path) -> None:

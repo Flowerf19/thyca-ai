@@ -1,4 +1,5 @@
 import { getJson, postJson } from "./backend/api.js";
+import { effortChoicesFor, fillEffortSelect } from "./backend/reasoning-effort.js";
 import { fillEffortSelect } from "./backend/reasoning-effort.js";
 
 const PRESETS = {
@@ -18,6 +19,7 @@ const el = {
   modelBadge: document.querySelector("#model-badge"),
   modelNote: document.querySelector("#model-note-text"),
   reasoning: document.querySelector("#reasoning-effort"),
+  reasoningEfforts: document.querySelector("#reasoning-efforts"),
   loopMax: document.querySelector("#loop-max"),
   hotTailKB: document.querySelector("#hot-tail-kb"),
   contextTokens: document.querySelector("#context-window"),
@@ -54,7 +56,7 @@ function setStatus(message = "", kind = "") {
 
 function setBusy(busy) {
   state.busy = busy;
-  for (const control of [el.provider, el.endpoint, el.apiKey, el.model, el.reasoning, el.loopMax, el.hotTailKB, el.contextTokens, el.inputCost, el.cacheCost, el.outputCost, el.verify, el.save, el.reset]) {
+  for (const control of [el.provider, el.endpoint, el.apiKey, el.model, el.reasoning, el.reasoningEfforts, el.loopMax, el.hotTailKB, el.contextTokens, el.inputCost, el.cacheCost, el.outputCost, el.verify, el.save, el.reset]) {
     control.disabled = busy;
   }
 }
@@ -76,7 +78,12 @@ function modelSpec(name) {
 }
 
 function fillEffortOptions(selected) {
-  fillEffortSelect(el.reasoning, state.schema, selected);
+  fillEffortSelect(
+    el.reasoning,
+    effortChoicesFor(state.schema, state.values, el.model.value.trim()),
+    selected,
+    state.schema,
+  );
 }
 
 function fillModelOptions(extra = []) {
@@ -100,6 +107,7 @@ function applyModel(name) {
   if (!values) return;
   const spec = modelSpec(name);
   fillEffortOptions(spec.reasoningEffort || values.provider?.reasoningEffort);
+  el.reasoningEfforts.value = (spec.reasoningEfforts || []).join(", ");
   el.loopMax.value = spec.loopMax ?? values.limits?.loopMax ?? 200;
   el.hotTailKB.value = spec.hotTailKB ?? values.limits?.hotTailKB ?? 4;
   el.contextTokens.value = spec.contextTokens ?? values.limits?.contextTokens ?? 272000;
@@ -167,6 +175,18 @@ function collectValues() {
   const input = hasAnyPrice ? positiveNumber(el.inputCost, "Chi phí input") : null;
   const cache = hasAnyPrice ? positiveNumber(el.cacheCost, "Chi phí cache") : null;
   const output = hasAnyPrice ? positiveNumber(el.outputCost, "Chi phí output") : null;
+  const efforts = el.reasoningEfforts.value
+    .split(",")
+    .map((level) => level.trim())
+    .filter(Boolean);
+  const seen = new Set();
+  for (const level of efforts) {
+    if (seen.has(level)) throw new Error(`Thinking map bị lặp mức: ${level}`);
+    seen.add(level);
+  }
+  if (efforts.length && !seen.has(el.reasoning.value)) {
+    throw new Error(`Mức suy luận "${el.reasoning.value}" không nằm trong thinking map.`);
+  }
 
   values.provider = {
     ...(values.provider || {}),
@@ -181,7 +201,7 @@ function collectValues() {
     hotTailKB,
     contextTokens,
   };
-  if (hasAnyPrice) {
+  if (hasAnyPrice || efforts.length) {
     values.models = { ...(values.models || {}) };
     values.models[model] = {
       ...(values.models[model] || {}),
@@ -190,12 +210,15 @@ function collectValues() {
       cache,
       output,
       reasoningEffort: el.reasoning.value,
+      reasoningEfforts: efforts,
       loopMax,
       hotTailKB,
       contextTokens,
     };
-    values.pricing = { ...(values.pricing || {}) };
-    values.pricing[model] = { input, cache, output };
+    if (hasAnyPrice) {
+      values.pricing = { ...(values.pricing || {}) };
+      values.pricing[model] = { input, cache, output };
+    }
   }
   return values;
 }

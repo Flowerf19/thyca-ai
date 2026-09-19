@@ -1,5 +1,5 @@
 import { ApiError, deleteJson, getJson, getNdjson, patchJson, postJson, postNdjson } from "./backend/api.js";
-import { fillEffortSelect } from "./backend/reasoning-effort.js";
+import { effortChoicesFor, fillEffortSelect } from "./backend/reasoning-effort.js";
 import { SEND_ERROR_STATUS } from "./backend/chat-status.js";
 import { cleanText, formatSessionTime } from "./backend/format.js";
 import {
@@ -681,6 +681,13 @@ async function retryMessage() {
 function bind() {
   el.newSession.addEventListener("click", newSession);
   el.stop.addEventListener("click", () => void stopTurn());
+  el.model.addEventListener("change", async () => {
+    try {
+      fillComposerControls(await getJson("/api/config"));
+    } catch {
+      // Keep the current options when the config fetch fails.
+    }
+  });
   el.messageList.addEventListener("click", (event) => {
     if (!event.target.closest(".again")) return;
     void retryMessage();
@@ -757,7 +764,12 @@ function fillComposerControls(payload) {
     el.model.value = provider.model;
   }
   const schema = payload?.schema;
-  fillEffortSelect(el.effort, schema, provider.reasoningEffort);
+  fillEffortSelect(
+    el.effort,
+    effortChoicesFor(schema, values, provider.model),
+    provider.reasoningEffort,
+    schema,
+  );
 }
 
 async function boot() {

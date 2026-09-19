@@ -134,11 +134,8 @@ class ProviderCfg:
         ):
             _text(value, name)
         _text(self.apiKey, "provider.apiKey", allow_none=True, non_empty=True)
-        if self.reasoningEffort not in REASONING_EFFORTS:
-            raise ConfigError(
-                "provider.reasoningEffort must be one of "
-                f"{'/'.join(REASONING_EFFORTS)}, got {self.reasoningEffort!r}"
-            )
+        if not isinstance(self.reasoningEffort, str) or not self.reasoningEffort.strip():
+            raise ConfigError("provider.reasoningEffort must be a non-empty string")
 
     def api_key(self) -> str:
         if self.apiKey:
@@ -199,6 +196,7 @@ class ModelCfg:
     cache: float = 0.0
     output: float = 0.0
     reasoningEffort: str = ""
+    reasoningEfforts: tuple[str, ...] = ()
     loopMax: int | None = None
     hotTailKB: int | None = None
     contextTokens: int | None = None
@@ -215,10 +213,24 @@ class ModelCfg:
         object.__setattr__(self, "output", _number(self.output, "models[].output"))
         if not isinstance(self.reasoningEffort, str):
             raise ConfigError("models[].reasoningEffort must be a string")
-        if self.reasoningEffort and self.reasoningEffort not in REASONING_EFFORTS:
+        if not isinstance(self.reasoningEfforts, tuple) or not all(
+            isinstance(level, str) and level.strip() for level in self.reasoningEfforts
+        ):
+            raise ConfigError(
+                "models[].reasoningEfforts must be a list of non-empty strings"
+            )
+        if len(set(self.reasoningEfforts)) != len(self.reasoningEfforts):
+            raise ConfigError("models[].reasoningEfforts must not contain duplicates")
+        if self.reasoningEffort and self.reasoningEfforts and self.reasoningEffort not in self.reasoningEfforts:
+            raise ConfigError(
+                f"models[].reasoningEffort {self.reasoningEffort!r} is not in "
+                f"models[].reasoningEfforts ({'/'.join(self.reasoningEfforts)})"
+            )
+        if self.reasoningEffort and not self.reasoningEfforts and self.reasoningEffort not in REASONING_EFFORTS:
             raise ConfigError(
                 "models[].reasoningEffort must be one of "
-                f"{'/'.join(REASONING_EFFORTS)}, got {self.reasoningEffort!r}"
+                f"{'/'.join(REASONING_EFFORTS)} (or declare models[].reasoningEfforts), "
+                f"got {self.reasoningEffort!r}"
             )
         for value, name, lower, upper in (
             (self.loopMax, "models[].loopMax", 1, 200),
@@ -418,6 +430,7 @@ def _parse_models(raw: Any) -> dict[str, ModelCfg]:
             cache=_number(value.get("cache", 0), f"models[{name!r}].cache"),
             output=_number(value.get("output", 0), f"models[{name!r}].output"),
             reasoningEffort=value.get("reasoningEffort") or "",
+            reasoningEfforts=_parse_efforts(value.get("reasoningEfforts"), f"models[{name!r}].reasoningEfforts"),
             loopMax=_optional_int(value.get("loopMax"), f"models[{name!r}].loopMax"),
             hotTailKB=_optional_int(value.get("hotTailKB"), f"models[{name!r}].hotTailKB"),
             contextTokens=_optional_int(
@@ -425,6 +438,18 @@ def _parse_models(raw: Any) -> dict[str, ModelCfg]:
             ),
         )
     return result
+
+
+def _parse_efforts(raw: Any, name: str) -> tuple[str, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list) or not raw or not all(
+        isinstance(level, str) and level.strip() for level in raw
+    ):
+        raise ConfigError(f"{name} must be a non-empty list of non-empty strings")
+    if len(set(raw)) != len(raw):
+        raise ConfigError(f"{name} must not contain duplicates")
+    return tuple(raw)
 
 
 def _optional_int(value: object, name: str) -> int | None:
@@ -445,6 +470,8 @@ def _model_to_dict(cfg: ModelCfg) -> dict[str, Any]:
     }
     if cfg.reasoningEffort:
         data["reasoningEffort"] = cfg.reasoningEffort
+    if cfg.reasoningEfforts:
+        data["reasoningEfforts"] = list(cfg.reasoningEfforts)
     if cfg.loopMax is not None:
         data["loopMax"] = cfg.loopMax
     if cfg.hotTailKB is not None:

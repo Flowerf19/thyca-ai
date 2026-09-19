@@ -22,7 +22,7 @@ from thyca.agent.events import TurnEvent
 from thyca.agent.thinking import ThinkingDelta
 from thyca.agent.reply import ContentDelta
 from thyca.chat_app import ChatApp, InvalidTurnOption, SessionIdle, TurnCancelled
-from thyca.config import REASONING_EFFORTS
+from thyca.config import Config
 from thyca.llm.llm_base import LLMError
 from thyca.session_wire import delete_error, rename_error
 from thyca.sessions import SessionBusy, SessionCorrupt, SessionError, SessionNotFound
@@ -51,7 +51,7 @@ def parse_turn_body(payload: dict) -> tuple[str, str | None, str | None, bool]:
     else:
         model = None
     if "effort" in payload:
-        if payload["effort"] not in REASONING_EFFORTS:
+        if not isinstance(payload["effort"], str) or not payload["effort"].strip():
             raise InvalidTurnOption("invalid effort")
         effort = payload["effort"]
     else:

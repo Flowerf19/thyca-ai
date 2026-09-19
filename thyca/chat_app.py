@@ -18,7 +18,7 @@ from thyca.agent.events import EventSink, TurnEvent, emit_event
 from thyca.agent.loop import AgentLoop
 from thyca.agent.observe import Observe
 from thyca.agent.think import LLMPort, Think
-from thyca.config import REASONING_EFFORTS, Config, ConfigError, load
+from thyca.config import Config, ConfigError, load
 from thyca.llm.llm_base import LLMError
 from thyca.llm.llm_factory import ConnectFactory
 from thyca.llm.pricing import cost_for
@@ -58,7 +58,7 @@ def overlay_turn_cfg(cfg: Config, model: str | None, effort: str | None) -> Conf
     chosen = cfg.provider.model if model is None else model
     if chosen != cfg.provider.model and chosen not in cfg.models:
         raise InvalidTurnOption("invalid model")
-    if effort is not None and effort not in REASONING_EFFORTS:
+    if effort is not None and (not isinstance(effort, str) or not effort.strip()):
         raise InvalidTurnOption("invalid effort")
     return replace(cfg, provider=replace(cfg.provider, model=chosen))
 

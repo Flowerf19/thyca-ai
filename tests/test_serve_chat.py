@@ -1659,7 +1659,7 @@ def test_stream_rejects_unknown_model_and_bad_effort(tmp_path: Path) -> None:
         )
         assert code == 400
         assert body == {"error": "invalid model"}
-        code, body = _http_error(httpd, path, b'{"text":"hi","effort":"extreme"}')
+        code, body = _http_error(httpd, path, b'{"text":"hi","effort":""}')
         assert code == 400
         assert body == {"error": "invalid effort"}
         code, body = _http_error(httpd, path, b'{"text":"hi","model":""}')

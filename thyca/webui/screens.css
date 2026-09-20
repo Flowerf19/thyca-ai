@@ -384,6 +384,157 @@ a { color: inherit; }
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+/* Journal kit · shared, opt-in via the Dashboard/Trace shells only. One row
+   per entry: tabular date in the left gutter, terracotta dash on the body,
+   hairline rule between entries. Memories keeps its own .memory-* rules; page
+   files (dashboard.css, trace.css) add placement deltas on top. */
+:is(.dashboard-shell, .trace-shell) {
+  /* Muted error red for the kit, scoped here so the global root palette is
+     untouched; terracotta (--chat-brand-accent / --color-accent-deep) stays
+     reserved for the dash and section marks. */
+  --journal-error-ink: oklch(48% 0.11 25);
+}
+:is(.dashboard-shell, .trace-shell) .journal-entry,
+:is(.dashboard-shell, .trace-shell) .journal-metrics {
+  list-style: none;
+}
+:is(.dashboard-shell, .trace-shell) .journal-entry {
+  display: grid;
+  grid-template-columns: 5.6rem minmax(0, 1fr);
+  column-gap: 1.4rem;
+  align-items: start;
+  padding: 1.05rem 0;
+  border-block-end: var(--rule) solid var(--color-divider);
+}
+:is(.dashboard-shell, .trace-shell) .journal-date {
+  padding-top: 0.2rem;
+  color: var(--color-muted);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+:is(.dashboard-shell, .trace-shell) .journal-body {
+  position: relative;
+  min-width: 0;
+  padding-inline-start: 1.4rem;
+}
+:is(.dashboard-shell, .trace-shell) .journal-body::before {
+  content: "—";
+  position: absolute;
+  inset-inline-start: 0;
+  color: var(--chat-brand-accent);
+}
+:is(.dashboard-shell, .trace-shell) .journal-body h3 {
+  margin: 0;
+  color: var(--color-ink);
+  overflow-wrap: anywhere;
+}
+:is(.dashboard-shell, .trace-shell) .journal-body h3 a {
+  color: inherit;
+  text-decoration: none;
+}
+@media (hover: hover) and (pointer: fine) {
+  :is(.dashboard-shell, .trace-shell) .journal-body h3 a:hover {
+    text-decoration: underline;
+    text-underline-offset: 0.2em;
+  }
+}
+:is(.dashboard-shell, .trace-shell) .journal-status {
+  margin-inline-start: 0.6rem;
+  color: var(--color-success-ink);
+  font-size: 0.78rem;
+  font-weight: 400;
+  white-space: nowrap;
+}
+:is(.dashboard-shell, .trace-shell) .journal-status.is-error {
+  color: var(--journal-error-ink);
+}
+:is(.dashboard-shell, .trace-shell) .journal-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 1rem;
+  margin-block-start: 0.3rem;
+  color: var(--color-muted);
+  font-size: 0.83rem;
+}
+:is(.dashboard-shell, .trace-shell) .journal-meta > * + *::before {
+  content: "\00b7";
+  margin-inline-end: 1rem;
+  color: var(--color-muted-soft);
+}
+:is(.dashboard-shell, .trace-shell) .journal-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 2.5rem;
+  margin: 0;
+  padding: 0;
+}
+:is(.dashboard-shell, .trace-shell) .journal-metrics .journal-entry {
+  grid-template-columns: minmax(0, 1fr);
+  padding: 0.9rem 0;
+}
+:is(.dashboard-shell, .trace-shell) .journal-metrics .journal-body {
+  padding-inline-start: 0;
+}
+:is(.dashboard-shell, .trace-shell) .journal-metrics .journal-body::before {
+  content: none;
+}
+:is(.dashboard-shell, .trace-shell) .journal-metrics h3 {
+  color: var(--color-muted);
+  font-weight: 400;
+}
+:is(.dashboard-shell, .trace-shell) .journal-value {
+  display: block;
+  margin-block-start: 0.1rem;
+  color: var(--color-ink);
+  font-family: var(--font-display);
+  font-size: 1.9rem;
+  font-weight: 500;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+}
+:is(.dashboard-shell, .trace-shell) .journal-row-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+:is(.dashboard-shell, .trace-shell) .journal-amount {
+  color: var(--color-ink);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+:is(.dashboard-shell, .trace-shell) .journal-meter {
+  height: 3px;
+  margin: 0.75rem 0;
+  background: color-mix(in oklab, var(--color-divider) 70%, transparent);
+}
+:is(.dashboard-shell, .trace-shell) .journal-meter > span {
+  display: block;
+  height: 100%;
+  width: var(--share, 0%);
+  background: var(--chat-brand-accent);
+}
+@media (max-width: 56rem) {
+  :is(.dashboard-shell, .trace-shell) .journal-entry {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 0.15rem;
+  }
+  :is(.dashboard-shell, .trace-shell) .journal-date {
+    padding-inline-start: 1.4rem;
+  }
+  :is(.dashboard-shell, .trace-shell) .journal-metrics {
+    grid-template-columns: minmax(0, 1fr);
+    column-gap: 0;
+  }
+  :is(.dashboard-shell, .trace-shell) .journal-metrics .journal-value {
+    font-size: 1.6rem;
+  }
+  :is(.dashboard-shell, .trace-shell) .journal-row-title {
+    flex-wrap: wrap;
+  }
+}
+
 /* Fold section kit · section headers that collapse/expand their content:
    details.fold-section > summary > :is(h2, h3), content after the summary. The
    terracotta lighter mark lives on the heading, so every screen (trace,
@@ -643,6 +794,79 @@ a { color: inherit; }
     border-color: var(--color-divider);
     background: var(--color-paper-card);
   }
+}
+
+/* Compact journal pagers (TASK-034): one restrained row of text controls
+   shared by the Dashboard/Trace journals (.journal-pager) and the chat
+   session list (.session-pager). The buttons keep the .screen-button hook
+   from the markup, but the card look (paper background, hairline box,
+   radius, shadow) is reset inside the pager only — what remains is
+   terracotta serif text, underline on hover, a 44px touch box and the
+   global focus-visible ring. No decorative counters; the plain x/y label
+   stays modest and tabular. Rows wrap instead of overflowing on narrow
+   screens; nothing hides overflow here. */
+:is(.dashboard-shell, .trace-shell) .journal-pager,
+.session-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem 0.9rem;
+}
+
+:is(.dashboard-shell, .trace-shell) .journal-pager .journal-pager-step,
+.session-pager .session-pager-step {
+  appearance: none;
+  min-height: 2.75rem; /* 44px touch target, as .screen-button */
+  min-width: 0;
+  margin: 0;
+  padding: 0.25rem 0.4rem;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--color-accent-deep);
+  font: inherit;
+  white-space: nowrap;
+  text-decoration: none;
+  text-underline-offset: 0.22em;
+  cursor: pointer;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  :is(.dashboard-shell, .trace-shell) .journal-pager .journal-pager-step:not(:disabled):hover,
+  .session-pager .session-pager-step:not(:disabled):hover {
+    color: var(--color-ink);
+    text-decoration: underline;
+  }
+}
+
+:is(.dashboard-shell, .trace-shell) .journal-pager .journal-pager-step:not(:disabled):active,
+.session-pager .session-pager-step:not(:disabled):active {
+  color: var(--color-ink);
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+}
+
+:is(.dashboard-shell, .trace-shell) .journal-pager .journal-pager-step:disabled,
+.session-pager .session-pager-step:disabled {
+  color: var(--color-muted-soft);
+  opacity: 0.6;
+  text-decoration: none;
+  cursor: not-allowed;
+}
+
+:is(.dashboard-shell, .trace-shell) .journal-pager .journal-pager-label,
+.session-pager .session-pager-label {
+  min-width: 3.25rem;
+  color: var(--color-muted);
+  font-size: 0.875rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+:is(.dashboard-shell, .trace-shell) .journal-pager {
+  margin-block-start: 1rem;
 }
 @media (max-width: 56rem) {
   .screen-shell { max-height: none; }

@@ -196,56 +196,82 @@ def test_split_prompt_tokens_removes_cache() -> None:
 
 
 def test_trace_typography_matches_profile_screen() -> None:
+    """Trace is a view inside dashboard.html (TASK-025/026): the #trace block
+    renders the session list in the main area and one journal entry per turn
+    with a single "Xem các bước & dữ liệu" disclosure (numbered steps, one
+    Input/Output block); trace.html survives only as a param-preserving
+    redirect and trace.css is scoped to #trace."""
     trace = (WEBUI / "trace.css").read_text(encoding="utf-8")
     profile = (WEBUI / "profile.css").read_text(encoding="utf-8")
     shared = (WEBUI / "screens.css").read_text(encoding="utf-8")
-    html = (WEBUI / "trace.html").read_text(encoding="utf-8")
+    html = (WEBUI / "dashboard.html").read_text(encoding="utf-8")
+    redirect = (WEBUI / "trace.html").read_text(encoding="utf-8")
     script = (WEBUI / "trace.js").read_text(encoding="utf-8")
 
-    # Trace content uses the same profile body and heading families/sizes.
-    assert ".trace-content {" in trace
-    assert "font-family: var(--font-reading);" in trace
-    assert "font-size: 1rem;" in trace
-    assert ".trace-content h3 {" in trace
-    assert "font-family: var(--font-display);" in trace
-    assert "font-size: 1.15rem;" in trace
-    assert "#canonical-content" in profile
+    # Trace lives in dashboard.html as a switched view next to the other
+    # dashboard blocks; the sidebar has a data-view="trace" toggle.
+    assert '<section class="dashboard-block" id="trace"' in html
+    assert 'data-view="trace"' in html
+    assert 'id="trace-sessions"' in html
+    assert 'id="trace-turns"' in html
+    # Old trace.html links keep working: a thin redirect that preserves the
+    # deep-link params and loads no app script of its own.
+    assert 'location.replace("./dashboard.html" + location.search + "#trace")' in redirect
+    assert "./trace.js" not in redirect
+    assert '<noscript><meta http-equiv="refresh" content="0; url=./dashboard.html#trace"></noscript>' in redirect
 
-    # The detail reads as a sequence of labelled sections, with the same
-    # terracotta title mark as the chat brand stripe and clickable turn dots.
-    assert 'class="turn-progress"' in html
-    assert 'class="general-card screen-card"' in html
-    assert 'class="trace-section token-section"' in html
-    assert '>Log hoạt động</h3>' in html
-    assert 'class="fold-section"' in html
-    assert 'class="activity-log-fold"' not in html
-    assert 'id="record-flow"' in html
-    assert 'id="tool-dialog"' in html
-    assert 'id="tool-dialog-body"' in html
-    assert 'Đã dùng' not in html
-    assert 'Bản ghi lượt' not in html
-    assert "function renderProgress()" in script
-    assert 'className = "trace-dot"' in script
-    assert 'flowNode("Input"' in script
-    assert 'flowNode("Output"' in script
-    assert 'function flowPill(' in script
-    assert 'countedLabel(group.name, group.count)' in script
-    assert 'function parallelFlowNode(' in script
-    assert 'el.toolDialog.showModal()' in script
-    assert 'className = "trace-tool-fold"' in script
-    assert ".trace-tool-dialog" in trace
-    assert "text-decoration: underline;" in trace
-    assert ".trace-section > h3::before" not in trace
-    assert ".trace-record-card" in trace
-    assert ".activity-log h3" not in trace
+    # Typography still matches the profile screen through the shared
+    # .journal-* kit (Source Serif body, Fraunces display) scoped to the
+    # dashboard shell; trace.css carries no private font rules of its own.
+    assert ":is(.dashboard-shell, .trace-shell) .journal-value {" in shared
+    assert ":is(.dashboard-shell, .trace-shell) .journal-row-title {" in shared
+    assert "--font-display" not in trace
+    assert "font-family: var(--font-reading)" not in trace
+    assert "#canonical-content" in profile
+    # trace.css is scoped to the #trace block only.
+    assert "#trace .trace-meta {" in trace
+    assert "#trace .trace-turn-fold {" in trace
+    assert "#trace .trace-steps {" in trace
+    assert "#trace .trace-step {" in trace
+    assert "#trace .trace-io {" in trace
+    assert "#trace .trace-code {" in trace
+    assert "flex-wrap: wrap;" in trace
+
+    # The session list renders in the MAIN AREA of the view (no session
+    # sidebar); selecting a session renders the full turn journal, one
+    # .journal-entry per turn with per-turn view state keyed by
+    # `${sessionId}:${turn_index}`.
+    assert 'sessions: document.querySelector("#trace-sessions")' in script
+    assert "turns: new Map()," in script
+    assert 'item.className = "journal-entry trace-turn"' in script
+    assert 'summaryLine.textContent = "Xem các bước & dữ liệu"' in script
+    # Errors are marked on the line via the shared status kit.
+    assert 'status.className = "journal-status is-error"' in script
+
+    # Inside the disclosure: numbered steps "01 — Tên bước" with absolute
+    # indices, tool rows indented under the round that issued them, and ONE
+    # labelled Input/Output code block at the end (textContent only).
+    assert 'num.className = "trace-step-num"' in script
+    assert 'num.textContent = String(index + 1).padStart(2, "0")' in script
+    assert 'item.classList.add("is-nested")' in script
+    assert 'wrap.className = "trace-io"' in script
+    assert '["Input", firstUserText(detail)]' in script
+    assert '["Output", finalAssistantText(detail)]' in script
+    assert 'pre.className = "trace-code"' in script
+    assert "executionStepsFromDetail(detail)" in script
+
+    # The old standalone-trace furniture is gone everywhere.
+    assert ".trace-tool-dialog" not in trace
+    assert ".trace-record-card" not in trace
+    assert ".trace-section" not in trace
+    assert ".activity-log" not in trace
+    assert "trace-dot" not in script
+    assert "renderProgress" not in script
+    assert "record-flow" not in script
+    assert "turn-progress" not in script
+    assert "tool-dialog" not in script
     # The lighter mark + arrow fold furniture is one shared kit now.
     assert ".fold-section > summary :is(h2, h3)::before" in shared
-    assert ".tool-calls .fold-list" not in trace
-    assert ".turn-meta-section > .screen-card" not in trace
-    assert "grid-template-columns: repeat(3, minmax(0, 1fr));" in trace
-    assert "function flowFromSteps(" in script
-    assert 'className = "trace-flow-step"' in script
-    assert "flex-wrap: wrap;" in trace
 
 
 def test_overview_typography_matches_profile_screen() -> None:
@@ -253,44 +279,64 @@ def test_overview_typography_matches_profile_screen() -> None:
 
     assert ".dashboard-surface {" in overview
     assert "font-family: var(--font-reading);" in overview
-    assert ".dashboard-surface .screen-card h3," in overview
+    # Inner cards are flattened (no private h3 rule): section headings keep
+    # the Fraunces display face, and section cards render on the shell —
+    # hairline border and focus rings stay, paper does not.
+    assert ".dashboard-surface .screen-card h3" not in overview
+    assert ".dashboard-surface .cost-model-heading {" in overview
     assert "font-family: var(--font-display);" in overview
-    assert ".dashboard-surface .cost-model-cost," in overview
+    # TASK-036 removed the cost-model-cost count (no more per-model cards);
+    # the remaining primary-amount selectors keep the reading size.
+    assert ".dashboard-surface .cost-period," in overview
     assert "font-size: 1rem;" in overview
+    assert ".dashboard-section .screen-card {" in overview
+    assert "background: transparent;" in overview
+    assert "border-radius: 0;" in overview
+    assert "box-shadow: none;" in overview
 
 
 def test_cost_panel_renders_bar_rows_and_uses_shared_toolbar() -> None:
-    """The model breakdown is a bar list now: one row per model with name,
-    cost, a share-filled track and the share %, and the toolbar reuses the
-    shared search and filter-pill classes instead of private copies."""
+    """Chi phí is a snapshot journal now: one .journal-entry per model and per
+    session on the shared .journal-* kit (title + amount, share meter, meta
+    line), and the toolbar reuses the shared search and filter-pill classes
+    instead of private copies."""
     script = (WEBUI / "cost.js").read_text(encoding="utf-8")
     html = (WEBUI / "dashboard.html").read_text(encoding="utf-8")
-    css = (WEBUI / "cost.css").read_text(encoding="utf-8")
     shared = (WEBUI / "screens.css").read_text(encoding="utf-8")
     memories = (WEBUI / "memories.html").read_text(encoding="utf-8")
     memories_css = (WEBUI / "memories.css").read_text(encoding="utf-8")
 
-    assert "selectModels(stats.by_model" in script
+    # Rows come from the snapshot's by_model ranked by the shared selectModels
+    # with the live search query; the share denominator is fixed on the full
+    # snapshot before filtering.
+    assert 'selectModels(models, { sort, query: el.search?.value || "" })' in script
+    assert "knownCostTotal(models)" in script
 
-    # The breakdown is open at rest: no <details>/<summary>, so nothing has to
-    # be clicked (or pressed) before the bars are readable.
-    assert "createElement(\"details\")" not in script
-    assert "createElement(\"summary\")" not in script
-    # One bar row per model: name + cost on top, then track + share, then the
-    # request/token line and the Input/Cache/Output split from the bảng.
-    assert 'className = "cost-model-row"' in script
-    assert 'className = "cost-model-row-head"' in script
-    assert 'className = "cost-model-track"' in script
-    assert "cost-model-fill is-${index % 3}" in script
-    assert 'className = "cost-model-share"' in script
-    assert 'className = "cost-model-meta"' in script
-    assert 'className = "cost-model-token"' in script
-    # Fills cycle the Sử dụng token series colors.
+    # One journal entry per model and per session: dated gutter, title +
+    # amount, share meter, and a meta line with the Input/Cache/Output split
+    # from the bảng. Per-model rates fold into a <details> marked Đơn giá.
+    assert 'className = "journal-entry"' in script
+    assert 'className = "journal-date"' in script
+    assert 'className = "journal-row-title"' in script
+    assert 'className = "journal-amount"' in script
+    assert 'className = "journal-meter"' in script
+    assert 'className = "journal-meta"' in script
+    assert 'fill.style.setProperty("--share", ratio)' in script
     assert "splitPromptTokens(model.prompt_tokens, model.cached_tokens)" in script
+    assert 'details.className = "cost-pricing"' in script
+    assert 'summary.textContent = "Đơn giá"' in script
 
-    # The toolbar markup is the shared shape, wired to the three orders.
+    # The journal look comes from the shared screens.css kit, not a private
+    # cost.css copy.
+    assert '<ul class="journal" id="cost-models">' in html
+    assert ":is(.dashboard-shell, .trace-shell) .journal-meter > span {" in shared
+    assert ":is(.dashboard-shell, .trace-shell) .journal-row-title {" in shared
+
+    # The toolbar markup is the shared shape, wired to the three orders and
+    # the #model-search input.
     assert 'class="screen-filter-row"' in html
     assert 'class="thyca-search thyca-search--sm"' in html
+    assert 'id="model-search"' in html
     for sort in ("cost-desc", "cost-asc", "recent"):
         assert f'data-sort="{sort}"' in html
 
@@ -307,36 +353,79 @@ def test_cost_panel_renders_bar_rows_and_uses_shared_toolbar() -> None:
     assert "display: contents;" in shared
     assert "border-radius: var(--radius-chat);" in shared
     assert "background: var(--chat-brand-wash);" in shared
-    assert "min-height: 8.55rem;" in shared
-    assert ".cost-model-card" not in css
-    assert ".cost-model-stats" not in css
-    assert ".cost-model-track" in css
-    assert ".cost-model-fill" in css
-    # Rows sit on the cream wash (not white paper); fills reuse the usage
-    # chart series colors and token values read in the accent rust.
-    assert "background: var(--chat-brand-wash);" in css
-    assert ".cost-model-fill.is-1" in css
-    assert "var(--color-chart-input)" in css
-    assert "var(--color-chart-cache)" in css
     assert ".screen-filters .screen-button" in shared
     assert ".thyca-search__icon" in shared
     assert ".screen-search" not in shared
 
 
 def test_request_panel_mirrors_cost_layout() -> None:
+    """The four-view dashboard (Sử dụng token / Request / Chi phí / Trace,
+    GOAL-010) keeps Request and Sử dụng token as real switch views
+    (#request/#su-dung hashes). Since TASK-036, request.js renders ONE flat
+    horizontal bar chart (shared scale, text labels) instead of per-model
+    cost cards. The old first Dashboard subview (#hom-nay) is gone; the
+    legacy hash falls back to Request (behavior tests in
+    test_dashboard_journal.py)."""
     html = (WEBUI / "dashboard.html").read_text(encoding="utf-8")
     script = (WEBUI / "request.js").read_text(encoding="utf-8")
     css = (WEBUI / "cost.css").read_text(encoding="utf-8")
     dash = (WEBUI / "dashboard.js").read_text(encoding="utf-8")
 
-    assert 'data-view="request"' in html
+    # Sidebar: exactly four destinations in the Usage/Request/Cost/Trace
+    # order, all in-page view toggles (Trace included since it moved into the
+    # dashboard); no today view and no decorative numeric prefixes (TASK-036).
+    assert '<span class="session-name">Sử dụng token</span>' in html
+    assert '<span class="session-name">Request</span>' in html
+    assert '<span class="session-name">Chi phí</span>' in html
+    assert '<span class="session-name">Trace</span>' in html
+    assert "01 / " not in html
+    assert 'data-view="today"' not in html
+    assert 'id="hom-nay"' not in html
+    assert 'id="cost-range"' not in html
+    order = [
+        html.index('data-view="usage"'),
+        html.index('data-view="request"'),
+        html.index('data-view="cost"'),
+        html.index('data-view="trace"'),
+    ]
+    assert order == sorted(order)
+
+    # Request and Sử dụng token are their own switch blocks again; the
+    # dashboard-section class keeps the flat screen-card rules applying.
+    assert 'class="dashboard-block dashboard-section" id="request"' in html
+    assert 'class="dashboard-block dashboard-section" id="su-dung"' in html
     assert 'id="request-total"' in html
     assert 'id="request-chart"' in html
     assert "./request.js" in html
+
+    # The view switcher covers the four toggles and their hashes; the legacy
+    # #hom-nay hash maps to nothing (Request is the fallback default).
+    hashes = {
+        "request": "#request",
+        "usage": "#su-dung",
+        "trace": "#trace",
+        "cost": "#chi-phi",
+    }
+    for view, hash in hashes.items():
+        assert f'{view}:' in dash
+        assert f'"{hash}"' in dash
+    assert '"#hom-nay"' not in dash
+    assert 'node.hidden = key !== next' in dash
+    assert "stack ? false" not in dash
+
+    # Request now renders one shared-scale bar chart (TASK-036), scoped by
+    # the request-model-* classes; behavior tests live in
+    # test_request_chart.py.
     assert "selectRequestModels" in script
-    assert 'className = "cost-model-row"' in script
+    assert 'className = "request-model-chart"' in script
+    assert "request-model-fill" in script
+    assert 'className = "cost-model-row"' not in script
+    # The old per-model card styles are gone now that Request is one chart;
+    # only the #request heading margin rule remains (it serves dashboard.html).
+    assert ".cost-model-track" not in css
+    assert ".cost-model-fill" not in css
+    assert ".cost-model-row" not in css
     assert "#request h2.cost-model-heading" in css
-    assert 'node.hidden = stack ? false : key !== next' in dash
 
 
 def test_usage_loads_every_trace_page() -> None:
@@ -375,3 +464,28 @@ def test_usage_mapper_splits_cached_prompt_tokens() -> None:
         "turns": 1,
         "requests": 2,
     }
+
+
+def test_chat_sidebar_pager_markers() -> None:
+    """TASK-020: the chat session list paginates at 12 per page. The pager
+    math is the marker-delimited pure block (executed in Node by the journal
+    tests); here we lock the wiring markers. The DOM behavior (active row
+    stays marked, jumps on create/rename/open) is browser-test territory."""
+    script = (WEBUI / "app.js").read_text(encoding="utf-8")
+    assert "const SESSIONS_PAGE_SIZE = 12;" in script
+    assert "sessionsPageCount(state.sessions.length)" in script
+    assert "state.sessionPage = clampPage(state.sessionPage, pages)" in script
+    assert "state.sessions.slice(start, start + SESSIONS_PAGE_SIZE)" in script
+    # Create (both send paths), rename and open flip to the page holding the
+    # session; delete only clamps via renderSessions. The send paths guard the
+    # reveal: a background completion must not hijack the page the user paged
+    # or navigated to (behavioral regression: tests/test_webui_concurrent_streams.py).
+    assert script.count('state.activeId === sessionId && state.sessionPage === pageAtSend ? sessionId : ""') == 2
+    assert "await refreshSessions(\n      state.activeId === sessionId" in script
+    assert "await refreshSessions(id); // renamed row may sit on another page" in script
+    assert "revealSession(sessionId); // opening a session shows the page that holds it" in script
+    assert "function revealSession(id)" in script
+    # Pager reuses shared button styles and Vietnamese labels.
+    assert 'setAttribute("aria-label", "Trang trước")' in script
+    assert 'setAttribute("aria-label", "Trang sau")' in script
+    assert 'className = "screen-button session-pager-step"' in script

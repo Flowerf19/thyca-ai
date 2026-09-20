@@ -307,7 +307,6 @@ def test_index_html_parses() -> None:
     expected = {
         "index.html": './app.js',
         "memories.html": './memories.js',
-        "trace.html": './trace.js',
         "provider.html": './provider.js',
         "dashboard.html": './cost.js',
         "profile.html": './profile.js',
@@ -317,6 +316,12 @@ def test_index_html_parses() -> None:
         HTMLParser().feed(raw)
         assert script in raw
         assert './navigation.js' in raw
+    # Trace moved into the Dashboard: trace.html is a thin redirect that
+    # preserves old deep-link params and loads no app script of its own.
+    raw = (WEBUI / "trace.html").read_text(encoding="utf-8")
+    HTMLParser().feed(raw)
+    assert './trace.js' not in raw
+    assert 'location.replace("./dashboard.html" + location.search + "#trace")' in raw
 
 
 def test_cli_serve_flag_conflicts(tmp_path: Path) -> None:

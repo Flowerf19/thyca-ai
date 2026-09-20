@@ -1520,3 +1520,11 @@ html[data-reduce-motion="on"] *::after {
   animation-iteration-count: 1 !important;
   transition-duration: 0.01ms !important;
 }
+
+/* Pager for the chat sidebar session list only (TASK-034): the restrained
+   compact design is shared with the dashboard/trace .journal-pager and lives
+   in screens.css; only the chat's placement margin stays here. Global
+   .screen-button is untouched. */
+.session-pager {
+  margin-block: 0.75rem 0;
+}

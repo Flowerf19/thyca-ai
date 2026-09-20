@@ -15,6 +15,7 @@ const el = {
 const compact = matchMedia("(max-width: 56rem)");
 let stats = null;
 let sort = "req-desc";
+let loadId = 0;
 
 function messageOf(error, fallback) {
   return error instanceof Error && error.message ? error.message : fallback;
@@ -112,32 +113,40 @@ function shareOf(value, total) {
   return !total ? "—" : `${Math.round(Number(value) / total * 100)}%`;
 }
 
-function modelRow(model, total, index) {
-  const row = document.createElement("article");
-  row.className = "cost-model-row";
-  const head = document.createElement("div");
-  head.className = "cost-model-row-head";
-  const name = document.createElement("h3");
-  name.textContent = model.model || "unknown";
-  const count = document.createElement("strong");
-  count.className = "cost-model-cost";
-  count.textContent = formatInteger(model.requests);
-  head.append(name, count);
-  const bar = document.createElement("div");
-  bar.className = "cost-model-bar";
-  const track = document.createElement("span");
-  track.className = "cost-model-track";
-  const fill = document.createElement("span");
-  fill.className = `cost-model-fill is-${index % 3}`;
-  const shareText = shareOf(model.requests, total);
-  fill.style.width = shareText === "—" ? "0%" : shareText;
-  const share = document.createElement("span");
-  share.className = "cost-model-share";
-  share.textContent = shareText;
-  track.append(fill);
-  bar.append(track, share);
-  row.append(head, bar);
-  return row;
+/* Request theo mô hình is ONE horizontal bar chart: every row is measured on
+   the same scale (width = value / largest value across the full data, not
+   the filtered subset), so bars stay comparable after search or sort. Names
+   and counts are real text — long model names wrap instead of hiding behind
+   a tooltip — and the bar is decorative. Share uses the full-data total. */
+function modelChart(rows, total, max) {
+  const list = document.createElement("ul");
+  list.className = "request-model-chart";
+  rows.forEach((row) => {
+    const item = document.createElement("li");
+    item.className = "request-model-row";
+    const head = document.createElement("div");
+    head.className = "request-model-head";
+    const name = document.createElement("span");
+    name.className = "request-model-name";
+    name.textContent = cleanText(row?.model) || "unknown";
+    const count = document.createElement("span");
+    count.className = "request-model-count";
+    count.textContent = formatInteger(row.requests);
+    const share = document.createElement("span");
+    share.className = "request-model-share";
+    share.textContent = shareOf(row.requests, total);
+    const bar = document.createElement("span");
+    bar.className = "request-model-bar";
+    bar.setAttribute("aria-hidden", "true");
+    const fill = document.createElement("span");
+    fill.className = "request-model-fill";
+    fill.style.width = max > 0 ? `${(Number(row.requests) || 0) / max * 100}%` : "0%";
+    bar.append(fill);
+    head.append(name, count, share);
+    item.append(head, bar);
+    list.append(item);
+  });
+  return list;
 }
 
 function render() {
@@ -149,14 +158,19 @@ function render() {
   el.range.textContent = `Từ ${formatDate(range.from)} – ${formatDate(range.to)}`;
   drawChart(completeRequests(range, stats.by_day));
   const rows = selectRequestModels(stats.by_model, { sort, query: el.search?.value || "" });
-  el.models.replaceChildren(...rows.map((model, index) => modelRow(model, total, index)));
+  // Shared scale covers every model in the stats payload, so a search that
+  // narrows the rows never changes what a bar of a given length means.
+  const max = Math.max(...(stats.by_model || []).map((row) => Number(row.requests) || 0), 0);
+  el.models.replaceChildren(modelChart(rows, total, max));
   el.sorts.forEach((button) => {
     button.setAttribute("aria-pressed", String(button.dataset.reqSort === sort));
   });
   if (!rows.length) {
     const empty = document.createElement("p");
     empty.className = "screen-note";
-    empty.textContent = (stats.by_model || []).length
+    // Name the real reason: a search that matched nothing vs a period with
+    // no request at all (zero-request models are never drawn as bars).
+    empty.textContent = (el.search?.value || "").trim() && (stats.by_model || []).length
       ? "Không có mô hình nào khớp tên đang tìm."
       : "Chưa có request nào trong khoảng này.";
     el.models.append(empty);
@@ -164,13 +178,19 @@ function render() {
 }
 
 async function load() {
+  // Generation guard: a slow response for an older period must never
+  // overwrite the newer selection's stats (period change race).
+  const generation = ++loadId;
   const days = Number(el.period.value) || 30;
   setStatus("Đang tổng hợp request từ trace…");
   try {
-    stats = await getJson(traceRangeUrl("/api/traces/stats", days));
+    const fresh = await getJson(traceRangeUrl("/api/traces/stats", days));
+    if (generation !== loadId) return;
+    stats = fresh;
     render();
     setStatus();
   } catch (error) {
+    if (generation !== loadId) return;
     stats = null;
     el.models?.replaceChildren();
     el.chart?.replaceChildren();

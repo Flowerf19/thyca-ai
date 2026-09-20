@@ -2,6 +2,16 @@
   min-width: 14rem;
 }
 
+#cost-coverage {
+  margin: 0.3rem 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--color-muted);
+  font-size: 0.8rem;
+}
+
+/* Overview split (big number + chart card) shared with the Request section,
+   which keeps its own .cost-overview/.cost-total/.cost-chart-card markup. */
 .cost-overview {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
@@ -49,6 +59,18 @@
   color: var(--color-muted);
 }
 
+/* Cost journal headings inside #chi-phi. The shared .cost-model-heading rule
+   below still serves the Request section owned by dashboard. */
+#chi-phi h2.cost-journal-heading {
+  margin: 3rem 0 0.55rem;
+  color: var(--color-ink);
+}
+#request h2.cost-model-heading {
+  margin: 2.65rem 0 0.7rem;
+}
+
+/* Request-section SVG chart (request.js draws .cost-chart-* nodes; the grid
+   and label text styles live in screens.css). */
 .cost-chart-area {
   fill: color-mix(in oklab, var(--color-accent-soft) 70%, transparent);
   stroke: none;
@@ -66,105 +88,20 @@
   stroke-width: 2;
 }
 
-#chi-phi h2.cost-model-heading {
-  margin: 3rem 0 0.55rem;
-  color: var(--color-ink);
+/* Pricing disclosure: native details under each model row. */
+#chi-phi details.cost-pricing {
+  margin-block-start: 0.45rem;
 }
-#request h2.cost-model-heading {
-  margin: 2.65rem 0 0.7rem;
-}
-
-/* Bar list · one row per model: name + cost, share bar and %, then the
-   request/token summary and Input/Cache/Output split. Rows sit on the same
-   cream wash as the Sử dụng token cards; fills cycle its three series
-   colors (output rust, input tan, cache sand). */
-.cost-model-list {
-  display: grid;
-  gap: 0.5rem;
-}
-
-.cost-model-row {
-  display: grid;
-  gap: 0.45rem;
-  padding: 0.8rem 1.1rem 0.75rem;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-chat);
-  background: var(--chat-brand-wash);
-}
-
-.cost-model-row-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-.cost-model-row-head h3 {
-  margin: 0;
-  color: var(--color-ink);
-  overflow-wrap: anywhere;
-}
-
-.cost-model-bar {
-  display: flex;
-  align-items: center;
-  gap: 0.7rem;
-}
-
-.cost-model-track {
-  flex: 1;
-  height: 0.55rem;
-  border-radius: var(--radius-pill);
-  background: color-mix(in oklab, var(--color-border) 60%, transparent);
-  overflow: hidden;
-}
-
-.cost-model-fill {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--color-accent);
-}
-
-.cost-model-fill.is-1 {
-  background: var(--color-chart-input);
-}
-
-.cost-model-fill.is-2 {
-  background: var(--color-chart-cache);
-}
-
-.cost-model-share {
-  min-width: 2.6rem;
-  color: var(--color-accent-deep);
-  font-size: 0.85rem;
-  font-style: normal;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-}
-
-#chi-phi .cost-model-meta {
-  display: flex;
-  flex-wrap: wrap;
-  column-gap: 1rem;
-  margin: 0;
-  font-size: 0.85rem;
-  font-variant-numeric: tabular-nums;
-}
-
-.cost-model-req {
+#chi-phi details.cost-pricing summary {
+  width: fit-content;
+  cursor: pointer;
   color: var(--color-muted);
+  font-size: 0.8rem;
 }
-
-.cost-model-token {
-  color: var(--color-accent-deep);
-}
-
-.cost-model-cost {
-  color: var(--color-ink);
-  font-size: 1rem;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+#chi-phi details.cost-pricing p {
+  margin: 0.3rem 0 0;
+  color: var(--color-muted);
+  font-size: 0.83rem;
 }
 
 #cost-status {

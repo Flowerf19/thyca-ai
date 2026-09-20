@@ -16,9 +16,9 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
-_SCRIPT = r"""
-import fs from 'node:fs';
-
+# Shared minimal DOM surface used by the production chat view and thinking
+# panel, plus the settle helper; prepended to every scenario script.
+_HARNESS = r"""
 // Minimal DOM surface used by the production chat view and thinking panel.
 class Element {
   constructor(tag = 'div') {
@@ -63,6 +63,16 @@ class Element {
       node.remove();
       node.parentNode = this;
       this.children.unshift(node);
+    }
+  }
+  after(...nodes) {
+    const parent = this.parentNode;
+    if (!parent) return;
+    const index = parent.children.indexOf(this);
+    for (const node of [...nodes].reverse()) {
+      node.remove();
+      node.parentNode = parent;
+      parent.children.splice(index + 1, 0, node);
     }
   }
   replaceChildren(...nodes) {
@@ -114,7 +124,11 @@ globalThis.window = {
 const settle = async () => {
   for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
 };
+"""
 
+_SCRIPT = r"""
+import fs from 'node:fs';
+""" + _HARNESS + r"""
 const view = await import('./thyca/webui/backend/chat-view.js');
 const format = await import('./thyca/webui/backend/format.js');
 const followCalls = [];
@@ -236,3 +250,126 @@ def test_finishing_the_first_stream_renders_once_and_cleans_up(
     assert concurrent["doneA"]["followCalls"] == 0
     assert concurrent["doneA"]["reasoning"] == "A-thought"
     assert concurrent["doneA"]["tracked"] == []
+
+
+# A background turn completion refreshes the sidebar; the reveal of the
+# session's row must respect what the user did to the pager meanwhile.
+_REVEAL_SCRIPT = r"""
+import fs from 'node:fs';
+""" + _HARNESS + r"""
+const view = await import('./thyca/webui/backend/chat-view.js');
+const format = await import('./thyca/webui/backend/format.js');
+// 25 sessions fill three 12-per-page pages; a session created by the turn
+// lands at the end (page 3) only once the turn completes.
+const sessions = Array.from({ length: 25 }, (_, i) => ({
+  id: `s${i}`, title: `Phiên ${i}`, updated_at: '', turns: 1,
+}));
+const created = { id: 'new', title: 'Phiên mới', updated_at: '', turns: 1 };
+
+function makeApp(turnId) {
+  let turnDone = false;
+  let release;
+  const deps = {
+    ...view, ...format,
+    SEND_ERROR_STATUS: 'Không gửi được.',
+    ApiError: class ApiError extends Error {
+      constructor(message, status) { super(message); this.status = status; }
+    },
+    async getJson(url) {
+      if (url === '/api/sessions') {
+        return { sessions: turnDone ? [...sessions, created] : sessions };
+      }
+      return { id: url.split('/').pop(), running: false, messages: [] };
+    },
+    async getNdjson() { throw new Error('follow must not run here'); },
+    async postJson() { return { id: turnId }; },
+    async postNdjson(_url, _body, onEvent) {
+      onEvent({ type: 'turn.accepted' });
+      return new Promise(resolve => {
+        release = () => resolve({ id: turnId, running: false, messages: [] });
+      });
+    },
+    async patchJson() { return {}; },
+    async deleteJson() { return {}; },
+  };
+  const source = fs.readFileSync('./thyca/webui/app.js', 'utf8')
+    .replace(/^import[\s\S]*?from .*?;\n/gm, '')
+    .replace('void boot();', '');
+  const app = new Function(...Object.keys(deps), source + `
+    return { state, el, loadSession, sendMessage, refreshSessions };
+  `)(...Object.values(deps));
+  return { app, finish: () => { turnDone = true; release(); } };
+}
+
+const result = {};
+
+// The user pages to the last page mid-turn: completion must leave the pager
+// where they put it.
+const paged = makeApp('s0');
+await paged.app.refreshSessions();
+await paged.app.loadSession('s0');
+await settle();
+paged.app.el.input.value = 'xin chào';
+const pendingPaged = paged.app.sendMessage();
+await settle();
+paged.app.state.sessionPage = 3;
+paged.finish();
+await pendingPaged;
+await settle();
+result.paged = { page: paged.app.state.sessionPage, active: paged.app.state.activeId };
+
+// The user opens another session mid-turn: completion must not flip to the
+// finished session's page.
+const navigated = makeApp('s0');
+await navigated.app.refreshSessions();
+await navigated.app.loadSession('s0');
+await settle();
+navigated.app.el.input.value = 'xin chào';
+const pendingNavigated = navigated.app.sendMessage();
+await settle();
+await navigated.app.loadSession('s20');
+await settle();
+navigated.finish();
+await pendingNavigated;
+await settle();
+result.navigated = { page: navigated.app.state.sessionPage, active: navigated.app.state.activeId };
+
+// Still on the composer with the just-created session: the completion may
+// reveal its page.
+const stayed = makeApp('new');
+await stayed.app.refreshSessions();
+await settle();
+stayed.app.el.input.value = 'xin chào';
+const pendingStayed = stayed.app.sendMessage();
+await settle();
+stayed.finish();
+await pendingStayed;
+await settle();
+result.stayed = { page: stayed.app.state.sessionPage, active: stayed.app.state.activeId };
+
+console.log(JSON.stringify(result));
+"""
+
+
+@pytest.fixture(scope="module")
+def reveal() -> dict:
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not installed")
+    result = subprocess.run(
+        [node, "--input-type=module", "-e", _REVEAL_SCRIPT],
+        cwd=ROOT, check=True, capture_output=True, text=True, timeout=15,
+    )
+    return json.loads(result.stdout)
+
+
+def test_background_completion_leaves_pager_where_the_user_put_it(reveal: dict) -> None:
+    assert reveal["paged"] == {"page": 3, "active": "s0"}
+
+
+def test_background_completion_does_not_reveal_after_navigation(reveal: dict) -> None:
+    assert reveal["navigated"] == {"page": 2, "active": "s20"}
+
+
+def test_completion_still_reveals_just_created_session(reveal: dict) -> None:
+    assert reveal["stayed"] == {"page": 3, "active": "new"}

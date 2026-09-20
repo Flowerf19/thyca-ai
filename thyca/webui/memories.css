@@ -132,3 +132,104 @@
   }
   .memory-overview { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Inline edit (no dialog): clicking ⋮ turns the card itself into the editor —
+   same entry grid (date gutter + copy column), boxless fields that only gain
+   a dashed underline on hover/focus, the terracotta dash marking the title
+   like every other row. Actions sit on the tag row: dismiss/data/primary,
+   danger pushed to the far end. Tokens only. */
+.memory-edit {
+  display: contents;
+}
+.memory-edit-line {
+  position: relative;
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+}
+.memory-edit-line::before {
+  content: "—";
+  position: absolute;
+  left: -1.4rem;
+  color: var(--chat-brand-accent);
+}
+.memory-edit-title,
+.memory-edit-text {
+  width: 100%;
+  padding: 0 0 0.15rem;
+  border: 0;
+  border-block-end: var(--rule) dashed transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--color-ink);
+  font: inherit;
+  font-family: var(--font-reading);
+}
+.memory-edit-title {
+  font-size: 1.15rem;
+}
+.memory-edit-text {
+  grid-column: 2;
+  grid-row: 2;
+  min-height: 3.5rem;
+  max-height: 16rem;
+  margin-block-start: 0.2rem;
+  color: var(--color-muted);
+  font-size: 1rem;
+  line-height: 1.55;
+  text-align: justify;
+  resize: vertical;
+  field-sizing: content;
+}
+.memory-edit-title:hover,
+.memory-edit-text:hover,
+.memory-edit-title:focus-visible,
+.memory-edit-text:focus-visible {
+  border-block-end-color: var(--color-divider);
+}
+.memory-edit-actions {
+  grid-column: 2;
+  grid-row: 3;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 1.15rem;
+}
+/* Text links, not boxed buttons — the row reads as part of the written page.
+   Hierarchy through colour only: neutral ink for dismiss/data, terracotta for
+   the primary save, the journal-kit muted red for the destructive Quên. */
+.memory-edit-actions button {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--color-ink);
+  font: inherit;
+  white-space: nowrap;
+  text-decoration: underline;
+  text-decoration-color: var(--color-divider);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.3rem;
+}
+.memory-edit-actions button:not(:disabled):hover {
+  border: 0;
+  text-decoration-color: var(--color-accent);
+}
+.memory-edit-actions .is-primary {
+  background: transparent;
+  color: var(--color-accent-deep);
+  font-weight: 500;
+}
+.memory-edit-actions .is-danger {
+  margin-inline-start: auto;
+  color: var(--journal-error-ink, oklch(48% 0.11 25));
+}
+.memory-card.is-editing {
+  border-block-end-color: var(--color-divider);
+}
+@media (max-width: 56rem) {
+  .memory-edit-line::before {
+    display: none;
+  }
+}

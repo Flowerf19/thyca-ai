@@ -64,6 +64,16 @@ class Element {
       this.children.unshift(node);
     }
   }
+  after(...nodes) {
+    const parent = this.parentNode;
+    if (!parent) return;
+    const index = parent.children.indexOf(this);
+    for (const node of [...nodes].reverse()) {
+      node.remove();
+      node.parentNode = parent;
+      parent.children.splice(index + 1, 0, node);
+    }
+  }
   replaceChildren(...nodes) {
     for (const node of [...this.children]) node.remove();
     this.text = '';

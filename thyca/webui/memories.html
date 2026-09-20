@@ -46,11 +46,11 @@
           <p class="screen-note memory-status" id="memory-status" role="status" aria-live="polite"></p>
           </div>
           <nav class="session-list" aria-label="Chia nhật ký">
-            <button class="session-item is-active" type="button" data-view="overview" aria-pressed="true"><span class="session-icon" aria-hidden="true"></span><span class="session-name">01 / Tổng quan</span></button>
-            <button class="session-item" type="button" data-view="day" aria-pressed="false"><span class="session-icon" aria-hidden="true"></span><span class="session-name">02 / Theo ngày</span></button>
-            <button class="session-item" type="button" data-view="used-more" aria-pressed="false"><span class="session-icon" aria-hidden="true"></span><span class="session-name">03 / Dùng nhiều</span></button>
-            <button class="session-item" type="button" data-view="searched-more" aria-pressed="false"><span class="session-icon" aria-hidden="true"></span><span class="session-name">04 / Tìm nhiều</span></button>
-            <button class="session-item" type="button" data-view="used-less" aria-pressed="false"><span class="session-icon" aria-hidden="true"></span><span class="session-name">05 / Dùng ít</span></button>
+            <button class="session-item is-active" type="button" data-view="overview" aria-pressed="true"><span class="session-icon" aria-hidden="true"></span><span class="session-name">Tổng quan</span></button>
+            <button class="session-item" type="button" data-view="day" aria-pressed="false"><span class="session-icon" aria-hidden="true"></span><span class="session-name">Theo ngày</span></button>
+            <button class="session-item" type="button" data-view="used-more" aria-pressed="false"><span class="session-icon" aria-hidden="true"></span><span class="session-name">Dùng nhiều</span></button>
+            <button class="session-item" type="button" data-view="searched-more" aria-pressed="false"><span class="session-icon" aria-hidden="true"></span><span class="session-name">Tìm nhiều</span></button>
+            <button class="session-item" type="button" data-view="used-less" aria-pressed="false"><span class="session-icon" aria-hidden="true"></span><span class="session-name">Dùng ít</span></button>
           </nav>
         </section>
       </aside>
@@ -97,22 +97,6 @@
         </section>
       </section>
     </main>
-
-    <dialog class="screen-dialog" id="memory-dialog" aria-labelledby="dialog-title">
-      <form method="dialog" id="memory-form">
-        <h2 id="dialog-title">Sửa mẩu nhật ký</h2>
-        <input type="hidden" id="memory-id">
-        <label for="memory-title">Tiêu đề<input class="screen-input" id="memory-title" required maxlength="120"></label>
-        <label for="memory-description">Mô tả<textarea class="screen-input" id="memory-description" required maxlength="400"></textarea></label>
-        <p class="screen-status" id="memory-dialog-status" role="status" aria-live="polite"></p>
-        <div class="screen-toolbar memory-dialog-actions">
-          <button class="screen-button is-danger" id="forget-memory" type="button">Quên</button>
-          <button class="screen-button" id="reinforce-memory" type="button">Gia hạn</button>
-          <button class="screen-button" id="cancel-memory" type="button">Hủy</button>
-          <button class="screen-button is-primary" id="save-memory" value="default" type="submit">Lưu trang</button>
-        </div>
-      </form>
-    </dialog>
 
     <script src="./navigation.js" defer></script>
     <script type="module" src="./memories.js"></script>

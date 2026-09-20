@@ -74,7 +74,65 @@ const state = {
   deleteId: "",
   // True while a rename/delete request is in flight: one submission at a time.
   saving: false,
+  // Page of the sidebar session list (SESSIONS_PAGE_SIZE per page).
+  sessionPage: 1,
 };
+
+// >>> journal-pager (pure math; extracted by unit tests, no DOM here)
+const SESSIONS_PAGE_SIZE = 12;
+function sessionsPageCount(totalItems, perPage = SESSIONS_PAGE_SIZE) {
+  return Math.max(1, Math.ceil(totalItems / perPage));
+}
+function clampPage(page, pages) {
+  return Math.min(Math.max(page, 1), pages);
+}
+// <<< journal-pager
+
+function buildPager(onStep) {
+  const nav = document.createElement("nav");
+  nav.className = "session-pager";
+  nav.hidden = true;
+  const prev = document.createElement("button");
+  prev.type = "button";
+  prev.className = "screen-button session-pager-step";
+  prev.textContent = "‹ Trước";
+  prev.setAttribute("aria-label", "Trang trước");
+  const label = document.createElement("span");
+  label.className = "session-pager-label";
+  label.setAttribute("aria-live", "polite");
+  const next = document.createElement("button");
+  next.type = "button";
+  next.className = "screen-button session-pager-step";
+  next.textContent = "Sau ›";
+  next.setAttribute("aria-label", "Trang sau");
+  prev.addEventListener("click", () => onStep(-1));
+  next.addEventListener("click", () => onStep(1));
+  nav.append(prev, label, next);
+  return { nav, prev, next, label };
+}
+
+function syncPager(pager, page, pages) {
+  pager.nav.hidden = pages <= 1;
+  pager.prev.disabled = page <= 1;
+  pager.next.disabled = page >= pages;
+  pager.label.textContent = `${page} / ${pages}`;
+}
+
+const sessionPager = buildPager((delta) => {
+  state.sessionPage = clampPage(
+    state.sessionPage + delta,
+    sessionsPageCount(state.sessions.length),
+  );
+  renderSessions();
+});
+el.sessionList.after(sessionPager.nav); // pager below the scrolling list
+
+// After create/rename/open: flip to the page that holds this session.
+function revealSession(id) {
+  if (!id) return;
+  const index = state.sessions.findIndex((session) => String(session.id) === String(id));
+  if (index !== -1) state.sessionPage = Math.floor(index / SESSIONS_PAGE_SIZE) + 1;
+}
 
 function messageOf(error, fallback) {
   return error instanceof Error && error.message ? error.message : fallback;
@@ -228,6 +286,7 @@ function sessionMeta(session) {
 }
 
 function renderSessions() {
+  sessionPager.nav.hidden = !state.sessions.length;
   if (!state.sessions.length) {
     const empty = document.createElement("p");
     empty.className = "sidebar-state";
@@ -235,12 +294,21 @@ function renderSessions() {
     el.sessionList.replaceChildren(empty);
     return;
   }
-  el.sessionList.replaceChildren(...state.sessions.map(sessionButton));
+  const pages = sessionsPageCount(state.sessions.length);
+  state.sessionPage = clampPage(state.sessionPage, pages); // clamp after deletes
+  const start = (state.sessionPage - 1) * SESSIONS_PAGE_SIZE;
+  el.sessionList.replaceChildren(
+    ...state.sessions.slice(start, start + SESSIONS_PAGE_SIZE).map(sessionButton),
+  );
+  // Selection is keyed by session id, so the active row stays marked on any
+  // page it lands on.
+  syncPager(sessionPager, state.sessionPage, pages);
 }
 
-async function refreshSessions() {
+async function refreshSessions(revealId = "") {
   const payload = await getJson("/api/sessions");
   state.sessions = Array.isArray(payload.sessions) ? payload.sessions : [];
+  if (revealId) revealSession(revealId);
   renderSessions();
   return payload;
 }
@@ -278,7 +346,7 @@ async function submitRename() {
   }
   el.renameDialog.close();
   if (id === state.activeId) setChatTitle(title);
-  await refreshSessions();
+  await refreshSessions(id); // renamed row may sit on another page
 }
 
 function openDelete(session) {
@@ -487,6 +555,7 @@ async function loadSession(sessionId) {
   state.activeId = sessionId;
   const preview = state.sessions.find((session) => String(session.id) === sessionId);
   if (preview) setChatTitle(preview.title);
+  revealSession(sessionId); // opening a session shows the page that holds it
   renderSessions();
   el.messageList.setAttribute("aria-busy", "true");
   try {
@@ -559,6 +628,7 @@ async function sendMessage() {
   setSending(true);
   el.input.value = "";
   let sessionId = "";
+  const pageAtSend = state.sessionPage; // sidebar page the user chose
   try {
     sessionId = await ensureSession();
     streamingSessions.add(sessionId);
@@ -582,7 +652,12 @@ async function sendMessage() {
     // The user may have switched to another session mid-turn: only the
     // session still on screen gets re-rendered.
     if (state.activeId === sessionId) await showTurnDetail(sessionId, detail);
-    await refreshSessions();
+    // Reveal the row only if the user is still where the turn left them:
+    // paging the sidebar or opening another session must not be hijacked by
+    // a background completion.
+    await refreshSessions(
+      state.activeId === sessionId && state.sessionPage === pageAtSend ? sessionId : "",
+    );
     noteSend(sessionId);
     if (state.activeId === sessionId) armIdle();
   } catch (error) {
@@ -636,6 +711,7 @@ async function retryMessage() {
   window.clearTimeout(idleTimer);
   setSending(true);
   let sessionId = "";
+  const pageAtSend = state.sessionPage; // sidebar page the user chose
   try {
     sessionId = await ensureSession();
     streamingSessions.add(sessionId);
@@ -652,7 +728,11 @@ async function retryMessage() {
       },
     );
     if (state.activeId === sessionId) await showTurnDetail(sessionId, detail);
-    await refreshSessions();
+    // Same reveal rule as a fresh send: a background completion of a retry
+    // must not flip the page the user has paged or navigated to.
+    await refreshSessions(
+      state.activeId === sessionId && state.sessionPage === pageAtSend ? sessionId : "",
+    );
     noteSend(sessionId);
     if (state.activeId === sessionId) armIdle();
   } catch (error) {

@@ -254,15 +254,6 @@ input:disabled {
   margin: 0;
 }
 
-.memory-dialog-actions {
-  flex-wrap: wrap;
-}
-
-.memory-dialog-actions .is-danger {
-  margin-inline-end: auto;
-}
-
-
 #trace-status {
   margin: 0 0 0.75rem;
 }
@@ -290,9 +281,5 @@ input:disabled {
 
   .provider-actions .screen-button {
     flex: none;
-  }
-
-  .memory-dialog-actions .is-danger {
-    margin-inline-end: 0;
   }
 }

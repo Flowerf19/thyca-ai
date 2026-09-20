@@ -64,18 +64,18 @@ export function drawBarChart(node, rows, { ariaLabel = "", valueLabels = false }
       node.append(svg("rect", { class: seg.class, x: x(index), y: base - segHeight, width: barWidth, height: segHeight, rx }));
       base -= segHeight;
     });
+    // Date and value labels share one sparse rule: on compact screens only
+    // the first, last and weekly ticks get text, so 30 numeric labels never
+    // cram into a 320px chart. Every bar stays; the aria-label keeps totals.
     const show = !compact.matches || index === 0 || index === rows.length - 1 || (index + 1) % 7 === 0;
-    if (show) {
-      node.append(svg("text", {
-        class: "usage-axis",
-        "text-anchor": "middle",
-        x: x(index) + barWidth / 2,
-        y: height - 10,
-      }, dayLabel(row.day)));
-    }
-  });
-  if (valueLabels) {
-    rows.forEach((row, index) => {
+    if (!show) return;
+    node.append(svg("text", {
+      class: "usage-axis",
+      "text-anchor": "middle",
+      x: x(index) + barWidth / 2,
+      y: height - 10,
+    }, dayLabel(row.day)));
+    if (valueLabels) {
       const total = row.segments.reduce((sum, seg) => sum + (Number(seg.value) || 0), 0);
       node.append(svg("text", {
         class: "usage-axis",
@@ -83,7 +83,7 @@ export function drawBarChart(node, rows, { ariaLabel = "", valueLabels = false }
         x: x(index) + barWidth / 2,
         y: y(total) - 5,
       }, formatCompact(total)));
-    });
-  }
+    }
+  });
   if (ariaLabel) node.setAttribute("aria-label", ariaLabel);
 }

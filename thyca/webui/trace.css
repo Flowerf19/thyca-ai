@@ -1,453 +1,216 @@
-.trace-shell .trace-sidebar {
-  position: static;
-  inset: auto;
-  grid-row: 2;
-  gap: 0;
-  height: auto;
-  padding: 0;
-  pointer-events: auto;
+/* Trace as a Dashboard view (TASK-025/026): the shared .journal-* kit in
+   screens.css already applies inside .dashboard-shell; only the trace-specific
+   pieces live here, scoped to the #trace block. Payload code blocks are filled
+   with textContent only, so long JSON wraps instead of blowing out the row. */
+
+/* Flat code surface (TASK-035): no existing code-surface token exists, so the
+   payload blocks scope two tokens here — an opaque neutral deeper than the
+   paper (light) and a warm dark surface with light ink (dusk). No texture,
+   image or gradient; nothing relies on the paper showing through, and no
+   global pre/pseudo overlay paints on top of .trace-code. */
+#trace {
+  --trace-code-bg: oklch(92.5% 0.012 71.9);
+  --trace-code-ink: oklch(28% 0.05 44);
 }
 
-.trace-workspace {
-  grid-column: 2;
-  grid-row: 2;
-  justify-content: flex-start;
-  align-items: stretch;
+html[data-theme="dusk"] #trace {
+  --trace-code-bg: oklch(24% 0.025 45);
+  --trace-code-ink: oklch(89% 0.02 80);
 }
 
-/* Keep Trace's content typography identical to Hồ sơ: readable serif body,
-   Fraunces headings, and the same 1rem base size. Raw turn metadata remains
-   monospace below because it is machine-readable content. */
-.trace-content {
-  padding: 1.75rem 1.8rem;
-  font-family: var(--font-reading);
-  font-size: 1rem;
-}
-
-.trace-content h3 {
-  font-size: 1.15rem;
-  font-style: normal;
-  font-weight: 500;
-}
-
-.trace-content > .screen-heading .screen-title :is(h1, h2) {
-  overflow-wrap: anywhere;
-  text-align: center;
-}
-
-.trace-meta {
+/* Status/note row plus the copy-session-ID button. */
+#trace .trace-meta {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
+  gap: 0.5rem 1rem;
   margin-block-end: 1rem;
 }
 
-.trace-meta #trace-status {
+#trace .trace-meta #trace-status {
   margin: 0;
   text-align: start;
 }
 
-.trace-meta #copy-id {
-  flex: 0 0 auto;
+#trace .trace-meta #copy-id {
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
-.turn-detail {
-  padding: 0;
+#trace .trace-meta #copy-label {
+  min-width: 0;
   overflow: hidden;
-}
-
-.turn-detail-head {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 0.55rem 0.85rem;
-  padding: 0.7rem 1.2rem;
-  border-bottom: 1px solid var(--color-border);
-}
-
-.turn-detail-head strong {
-  font-size: 1.15rem;
-  font-weight: 600;
-}
-
-.turn-recorded {
-  color: var(--color-muted);
-  font-style: italic;
-}
-
-.turn-detail-head time,
-.trace-pager span {
-  color: var(--color-muted);
-  font-size: 1rem;
-  font-variant-numeric: tabular-nums;
-}
-
-.trace-pager {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  margin-inline-start: auto;
-}
-
-.trace-pager .screen-button {
-  min-height: 2.2rem;
-  padding: 0 0.7rem;
-  line-height: 1;
-}
-
-.trace-pager .screen-button:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.trace-pager span {
-  min-width: 3.2rem;
-  text-align: center;
-}
-
-.turn-progress-wrap {
-  padding: 1rem 1.2rem 0.8rem;
-  border-bottom: 1px solid var(--color-border);
-}
-
-.turn-progress {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.45rem;
-  min-height: 1rem;
-}
-
-.trace-dot {
-  width: 1rem;
-  height: 1rem;
-  min-height: 0;
-  padding: 0;
-  border: 2px solid color-mix(in oklab, var(--color-accent) 28%, var(--color-border));
-  border-radius: 50%;
-  background: var(--color-accent-soft);
-}
-
-.trace-dot.is-active {
-  border-color: var(--color-accent);
-  background: var(--color-accent);
-}
-
-.trace-dot:focus-visible {
-  outline-offset: 3px;
-}
-
-.turn-progress-note {
-  margin: 0.5rem 0 0;
-  color: var(--color-muted);
-  font-size: 0.875rem;
-}
-
-.trace-section {
-  margin: 1.35rem 1.2rem 0;
-}
-
-.general {
-  padding: 0;
-}
-
-.general-card {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 1rem 1.2rem;
-  margin: 0;
-  padding: 1rem 1.2rem;
-}
-
-.general-card > span {
-  min-width: 0;
-}
-
-.general span {
-  color: var(--color-muted);
-  font-size: 1rem;
-}
-
-.general strong {
-  display: block;
-  min-width: 0;
-  margin-top: 0.2rem;
-  color: var(--color-ink);
-  font-size: 1rem;
-  font-weight: 400;
-  overflow-wrap: anywhere;
-}
-
-.success-text {
-  color: var(--color-success-ink) !important;
-}
-
-.token-panels {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 1.2rem;
-  padding: 0;
-}
-
-.token-panels .screen-card {
-  display: grid;
-  gap: 0.25rem;
-  padding: 0.9rem 1rem;
-}
-
-.token-panels h3 {
-  margin: 0;
-  color: var(--color-muted);
-}
-
-.token-panels strong {
-  color: var(--color-ink);
-  font-size: 1rem;
-  font-weight: 500;
-}
-
-.token-panels span {
-  color: var(--color-muted);
-  font-size: 1rem;
-}
-
-.trace-record-card {
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
-}
-
-.trace-flow {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: start;
-  column-gap: 0.55rem;
-  row-gap: 0.35rem;
-  width: 100%;
-  min-width: 0;
-  color: var(--color-muted);
-  line-height: 1.7;
-  text-align: start;
-}
-
-.trace-flow-step {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 0.4rem;
-  width: max-content;
-  max-width: 100%;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.trace-flow-pill {
-  display: inline;
-  width: auto;
-  min-width: 0;
-  min-height: 0;
+/* Config-timezone / incomplete-window warnings are muted red, like errors. */
+#trace .trace-note {
+  color: var(--journal-error-ink);
+}
+
+/* Session rows in the main area: the title is a button, reset to the h3
+   typography and underlined on hover like the journal's h3 a links. */
+#trace h3 .trace-session-open {
+  appearance: none;
+  margin: 0;
   padding: 0;
   border: 0;
-  border-radius: 0;
-  background: transparent;
+  background: none;
   color: inherit;
   font: inherit;
   text-align: start;
-  text-decoration: underline;
-  text-decoration-thickness: 1px;
-  text-underline-offset: 3px;
-  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
   cursor: pointer;
 }
 
-.trace-flow-pill:hover {
-  color: var(--color-accent-deep);
-  text-decoration-color: currentColor;
+@media (hover: hover) and (pointer: fine) {
+  #trace h3 .trace-session-open:hover {
+    text-decoration: underline;
+    text-underline-offset: 0.2em;
+  }
 }
 
-.trace-flow-name {
-  color: inherit;
-  font-weight: 400;
+/* The single per-turn disclosure "Xem các bước & dữ liệu". */
+#trace .trace-turn-fold {
+  margin-block-start: 0.6rem;
 }
 
-.trace-flow-arrow {
+#trace .trace-turn-fold summary {
+  width: fit-content;
   color: var(--color-muted);
-  font-size: 1em;
-  line-height: 1;
-  opacity: 0.7;
-}
-
-.trace-tool-dialog {
-  width: min(46rem, calc(100vw - 2rem));
-}
-
-.trace-tool-dialog-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-block-end: 1rem;
-}
-
-.trace-tool-dialog-head h2 {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.trace-tool-dialog-meta {
-  margin: 0.25rem 0 0;
-  color: var(--color-muted);
-  font-size: 0.9rem;
-}
-
-.trace-tool-dialog-meta:empty {
-  display: none;
-}
-
-.trace-tool-dialog-close {
-  flex: 0 0 auto;
-  min-width: 2.75rem;
-  padding-inline: 0.65rem;
-  font-size: 1.35rem;
-  line-height: 1;
-}
-
-.trace-tool-dialog-body {
-  min-width: 0;
-}
-
-.trace-tool-call-label {
-  margin: 0.8rem 0 0.35rem;
-  color: var(--color-muted);
-  font-size: 0.88rem;
-  font-variant-numeric: tabular-nums;
-}
-
-.trace-tool-fold {
-  border-block-start: 1px solid var(--color-border);
-}
-
-.trace-tool-fold:first-child {
-  border-block-start: 0;
-}
-
-.trace-tool-fold-summary {
-  display: block;
-  padding: 0.55rem 0;
-  color: var(--color-ink);
+  font-size: 0.875rem;
   cursor: pointer;
   list-style: none;
 }
 
-.trace-tool-fold-summary::-webkit-details-marker,
-.trace-tool-fold-summary::marker {
+#trace .trace-turn-fold summary::-webkit-details-marker,
+#trace .trace-turn-fold summary::marker {
   display: none;
   content: "";
 }
 
-.trace-tool-fold-summary::before {
+#trace .trace-turn-fold summary::before {
   content: "▸ ";
-  color: var(--color-muted);
 }
 
-.trace-tool-fold[open] > .trace-tool-fold-summary::before {
+#trace .trace-turn-fold[open] > summary::before {
   content: "▾ ";
 }
 
-.trace-tool-call-label:first-child {
-  margin-block-start: 0;
+#trace .trace-turn-fold summary:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
 }
 
-.trace-tool-dialog-body .record-block p {
-  max-height: min(34vh, 24rem);
+/* Execution journal inside the disclosure: one numbered row per real event —
+   "01 — Tên bước" with a meta line (duration · detail). Tool rows indent under
+   the assistant round that issued them; nothing else invents a parent tree. */
+#trace .trace-steps {
+  margin: 0.4rem 0 0;
+  padding: 0;
+  list-style: none;
 }
 
-.trace-record {
-  margin: 0;
-  padding: 1rem 1.1rem;
+#trace .trace-steps-empty {
+  padding: 0.75rem 0;
+  color: var(--color-muted);
+  font-style: italic;
 }
 
-.call-body {
-  padding-block: 0.35rem 0.6rem;
+#trace .trace-step {
+  padding: 0.55rem 0;
+  border-block-end: var(--rule) solid var(--color-divider);
 }
 
-.call-body .record-block {
-  margin-block: 0.6rem;
+#trace .trace-step:last-child {
+  border-block-end: 0;
 }
 
-.call-body .record-block h3 {
-  font-size: 1.15rem;
+#trace .trace-step.is-nested {
+  padding-inline-start: 1.6rem;
 }
 
-.record-block {
-  margin-block: 1rem;
+#trace .trace-step-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.75rem;
 }
 
-.record-block h3 {
-  margin: 0 0 0.4rem;
+#trace .trace-step-num {
+  color: var(--color-muted);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+#trace .trace-step-title {
+  font-weight: 600;
+}
+
+#trace .trace-step .journal-meta {
+  margin-block-start: 0.15rem;
+}
+
+#trace .trace-step-note {
+  margin: 0.4rem 0 0;
+  color: var(--color-muted);
+  font-size: 0.875rem;
+  font-style: italic;
+}
+
+/* Per-step payload disclosure (TASK-032): a small native <details> under each
+   step reusing the labelled .trace-code blocks of the final turn IO. */
+#trace .trace-step-data {
+  margin-block-start: 0.4rem;
+}
+
+#trace .trace-step-data > summary {
+  cursor: pointer;
+  color: var(--color-muted);
+  font-size: 0.8rem;
+}
+
+#trace .trace-step-data[open] > summary {
   color: var(--color-ink);
-  font-size: 1.15rem;
-  font-style: normal;
-  font-weight: 500;
 }
 
-.record-block p {
-  margin: 0;
-  min-height: 2.6rem;
-  max-height: 40vh;
-  padding: 0.75rem 0.9rem;
+#trace .trace-step-io {
+  margin-block-start: 0.2rem;
+}
+
+/* Labelled Input/Output block at the end of the disclosure. */
+#trace .trace-io {
+  margin-block-start: 0.9rem;
+}
+
+#trace .trace-io-label {
+  margin: 0.8rem 0 0;
+  color: var(--color-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+#trace .trace-code {
+  margin: 0.3rem 0 0;
+  max-height: min(40vh, 24rem);
+  padding: 0.7rem 0.85rem;
   overflow: auto;
-  border: var(--rule) solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-paper-input);
-  color: var(--color-ink);
-  font-family: var(--font-reading);
-  font-size: 1rem;
-  line-height: 1.5;
+  border: var(--rule) solid var(--color-divider);
+  background: var(--trace-code-bg);
+  color: var(--trace-code-ink);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-@media (max-width: 56rem) {
-  .trace-workspace { border-radius: 0; }
-
-  .general-card {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .token-panels {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .turn-detail-head {
-    padding: 0.9rem;
-  }
-
-  .trace-tool-dialog {
-    width: min(46rem, calc(100vw - 1rem));
-    max-height: calc(100dvh - 1rem);
-    padding: 0.85rem;
-  }
-
-  .trace-tool-dialog-head {
-    gap: 0.65rem;
-  }
-}
-
 @media (max-width: 36rem) {
-  .trace-tool-dialog {
-    width: calc(100vw - 1rem);
-    padding: 0.75rem;
-  }
-
-  .trace-tool-dialog-head {
-    align-items: center;
-  }
-
-  .trace-tool-dialog-body .record-block p {
-    max-height: 32vh;
-  }
-
-  .general-card {
-    grid-template-columns: minmax(0, 1fr);
+  #trace .trace-step.is-nested {
+    padding-inline-start: 1rem;
   }
 }

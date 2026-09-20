@@ -3,129 +3,16 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <meta name="theme-color" content="#714327">
     <title>Thyca — Trace</title>
     <link rel="icon" href="data:," />
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600&family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;1,9..144,500&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;1,8..60,400&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="./styles.css">
-    <link rel="stylesheet" href="./screens.css">
-    <link rel="stylesheet" href="./trace.css">
-    <link rel="stylesheet" href="./backend.css">
+    <script>
+      // Trace is now a view inside the Dashboard (TASK-025); old links and
+      // bookmarks keep their ?session=&turn= deep-link params.
+      location.replace("./dashboard.html" + location.search + "#trace");
+    </script>
+    <noscript><meta http-equiv="refresh" content="0; url=./dashboard.html#trace"></noscript>
   </head>
   <body>
-    <main class="notebook-shell screen-shell trace-shell pick-shell is-picking" aria-label="Trace phiên trò chuyện">
-      <header class="site-header">
-        <button class="icon-button menu-button" type="button" aria-label="Mở mục lục">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6.5h16M4 12h16M4 17.5h11" /></svg>
-        </button>
-        <p class="header-line">
-          <time id="header-datetime" datetime=""></time>
-          <span id="header-edition">Thyca</span>
-        </p>
-      </header>
-
-      <aside class="sidebar trace-sidebar" aria-label="Danh sách phiên">
-        <section class="sessions">
-          <div class="sessions-heading">
-            <h2>Phiên trò chuyện</h2>
-          </div>
-          <nav class="session-list" id="trace-list" aria-label="Phiên trò chuyện"></nav>
-        </section>
-      </aside>
-
-      <section class="workspace trace-workspace" aria-label="Chi tiết lượt">
-        <section class="screen-surface trace-content">
-          <header class="screen-heading">
-            <button class="screen-back" id="trace-back" type="button">‹ Phiên</button>
-            <div class="screen-title"><h1 id="trace-crumb">Trace › Đang tải…</h1></div>
-          </header>
-          <div class="trace-meta">
-            <p class="screen-status" id="trace-status" role="status" aria-live="polite"></p>
-            <button class="screen-button" id="copy-id" type="button">
-              <span id="copy-label">ID: —</span>
-              <svg class="screen-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="13" rx="1.5" /><path d="M6 16H5a1.5 1.5 0 0 1-1.5-1.5v-11A1.5 1.5 0 0 1 5 2h9A1.5 1.5 0 0 1 15.5 3.5V5" /></svg>
-            </button>
-          </div>
-
-          <article class="screen-card turn-detail" id="turn-detail">
-            <header class="turn-detail-head">
-              <strong id="detail-title">Lượt 1</strong>
-              <span class="screen-badge" id="detail-type">LLM</span>
-              <span class="turn-recorded">đã ghi · <time id="detail-time">10:24:01</time></span>
-              <nav class="trace-pager" aria-label="Phân trang lượt">
-                <button class="screen-button" id="page-prev" type="button" aria-label="Lượt trước">‹</button>
-                <span id="page-status">1 / 5</span>
-                <button class="screen-button" id="page-next" type="button" aria-label="Lượt sau">›</button>
-              </nav>
-            </header>
-
-            <div class="turn-progress-wrap">
-              <nav class="turn-progress" id="turn-progress" aria-label="Các lượt trong phiên"></nav>
-              <p class="turn-progress-note">Chấm terracotta = lượt đang xem · bấm chấm để nhảy</p>
-            </div>
-
-            <section class="trace-section general">
-              <details class="fold-section" open>
-                <summary><h3>Thông tin chung</h3></summary>
-                <div class="general-card screen-card">
-                  <span>Mô hình<strong id="detail-model">gpt-4o-mini</strong></span>
-                  <span>Provider<strong id="detail-provider">OpenAI</strong></span>
-                  <span>Số vòng<strong id="detail-image">—</strong></span>
-                  <span>Trạng thái<strong class="success-text" id="detail-status">Thành công</strong></span>
-                  <span>Thời gian phản hồi<strong id="detail-duration">0.21s</strong></span>
-                  <span>Chi phí<strong id="detail-cost">$0.00065</strong></span>
-                </div>
-              </details>
-            </section>
-
-            <section class="trace-section token-section">
-              <details class="fold-section" open>
-                <summary><h3>Token</h3></summary>
-                <div class="token-panels">
-                <article class="screen-card">
-                  <h3>Input token</h3>
-                  <strong id="input-count">192 tokens</strong>
-                  <span id="input-cost-line">$0.00003</span>
-                </article>
-                <article class="screen-card">
-                  <h3>Output token</h3>
-                  <strong id="output-count">92 tokens</strong>
-                  <span id="output-cost-line">$0.00006</span>
-                </article>
-                <article class="screen-card">
-                  <h3>Cache</h3>
-                  <strong id="cache-count">128 tokens</strong>
-                  <span id="cache-cost-line">$0.00001</span>
-                </article>
-              </div>
-              </details>
-            </section>
-
-            <section class="trace-section activity-log" id="activity-log">
-              <details class="fold-section" open>
-                <summary><h3>Log hoạt động</h3></summary>
-                <div class="screen-card trace-record-card" id="record-flow"></div>
-              </details>
-            </section>
-          </article>
-        </section>
-      </section>
-    </main>
-
-    <dialog class="screen-dialog trace-tool-dialog" id="tool-dialog" aria-labelledby="tool-dialog-title">
-      <header class="trace-tool-dialog-head">
-        <div>
-          <h2 id="tool-dialog-title">Chi tiết tool</h2>
-          <p class="trace-tool-dialog-meta" id="tool-dialog-meta"></p>
-        </div>
-        <button class="screen-button trace-tool-dialog-close" id="tool-dialog-close" type="button" aria-label="Đóng chi tiết tool">×</button>
-      </header>
-      <div class="trace-tool-dialog-body" id="tool-dialog-body"></div>
-    </dialog>
-
-    <script src="./navigation.js" defer></script>
-    <script type="module" src="./trace.js"></script>
+    <p>Trace đã chuyển vào Dashboard. <a href="./dashboard.html#trace">Mở Trace</a></p>
   </body>
 </html>

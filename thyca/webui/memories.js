@@ -10,15 +10,6 @@ const el = {
   search: document.querySelector("#memory-search"),
   status: document.querySelector("#memory-status"),
   viewButtons: [...document.querySelectorAll(".session-item[data-view]")],
-  dialog: document.querySelector("#memory-dialog"),
-  form: document.querySelector("#memory-form"),
-  id: document.querySelector("#memory-id"),
-  title: document.querySelector("#memory-title"),
-  description: document.querySelector("#memory-description"),
-  dialogStatus: document.querySelector("#memory-dialog-status"),
-  cancel: document.querySelector("#cancel-memory"),
-  reinforce: document.querySelector("#reinforce-memory"),
-  forget: document.querySelector("#forget-memory"),
 };
 const compact = matchMedia("(max-width: 56rem)");
 
@@ -38,8 +29,12 @@ function placeSearch() {
 const state = {
   stats: { leaves: [] },
   view: "overview",
-  activeMemory: null,
-  opener: null,
+  // Inline edit state: the edited card re-renders from here, so a search
+  // keystroke or a resize rebuild keeps the draft instead of losing it.
+  editing: null, // { id, sessionId, topic, summary }
+  // True while a save/forget/reinforce request is in flight: one mutation at
+  // a time, editors stay disabled, start/cancel are refused.
+  pending: false,
 };
 
 function messageOf(error, fallback) {
@@ -51,14 +46,13 @@ function setStatus(message = "", kind = "") {
   el.status.className = `screen-note memory-status screen-status${kind ? ` is-${kind}` : ""}`;
 }
 
-function setDialogStatus(target, message = "", kind = "") {
-  target.textContent = message;
-  target.className = `screen-status${kind ? ` is-${kind}` : ""}`;
-}
-
 function setBusy(busy) {
-  for (const control of el.dialog.querySelectorAll("button, input, textarea")) control.disabled = busy;
   el.list.setAttribute("aria-busy", String(busy));
+  // Every rendered editor responds, not just the last one created: mobile
+  // renders one editor copy per matching view section.
+  for (const form of document.querySelectorAll(".memory-edit")) {
+    for (const control of form.querySelectorAll("button, input, textarea")) control.disabled = busy;
+  }
 }
 
 function memoryCard(memory) {
@@ -67,6 +61,14 @@ function memoryCard(memory) {
   article.dataset.memoryId = memory.id;
   const time = document.createElement("time");
   time.textContent = memory.date === "Không rõ ngày" ? memory.date : formatDate(memory.date);
+  article.append(time);
+  if (state.editing?.id === memory.id) {
+    // Edit-in-place: the card turns into the editor on the page itself —
+    // no dialog. The date gutter and grid stay untouched.
+    article.classList.add("is-editing");
+    article.append(editForm(memory));
+    return article;
+  }
   const copy = document.createElement("div");
   copy.className = "memory-copy";
   const heading = document.createElement("h3");
@@ -92,10 +94,108 @@ function memoryCard(memory) {
   more.disabled = !memory.sessionId;
   more.setAttribute("aria-label", `Sửa trang ${memory.title}`);
   more.textContent = "⋮";
-  more.addEventListener("click", () => openMemory(memory, more));
+  more.addEventListener("click", (event) => startEdit(memory, event.currentTarget));
   meta.append(more);
-  article.append(time, copy, meta);
+  article.append(copy, meta);
   return article;
+}
+
+// The editor lives on the card itself: same entry grid, boxless fields that
+// only gain a dashed underline on hover/focus. The draft lives in
+// state.editing, so re-renders (search keystroke, resize) never lose it.
+function editForm(memory) {
+  const form = document.createElement("form");
+  form.className = "memory-edit";
+  const line = document.createElement("div");
+  line.className = "memory-edit-line";
+  const title = document.createElement("input");
+  title.className = "memory-edit-title";
+  title.required = true;
+  title.maxLength = 120;
+  title.autocomplete = "off";
+  title.placeholder = "Tên trang nhật ký";
+  title.setAttribute("aria-label", "Tiêu đề trang");
+  title.value = state.editing.topic;
+  title.addEventListener("input", () => { state.editing.topic = title.value; });
+  line.append(title);
+  const text = document.createElement("textarea");
+  text.className = "memory-edit-text";
+  text.required = true;
+  text.maxLength = 400;
+  text.placeholder = "Nội dung ghi lại từ phiên trò chuyện";
+  text.setAttribute("aria-label", "Mô tả trang");
+  text.value = state.editing.summary;
+  text.addEventListener("input", () => { state.editing.summary = text.value; });
+  const actions = document.createElement("div");
+  actions.className = "memory-edit-actions";
+  const save = document.createElement("button");
+  save.className = "screen-button is-primary";
+  save.type = "submit";
+  save.textContent = "Lưu trang";
+  const cancel = document.createElement("button");
+  cancel.className = "screen-button";
+  cancel.type = "button";
+  cancel.textContent = "Hủy";
+  cancel.addEventListener("click", () => cancelEdit(cancel));
+  const reinforce = document.createElement("button");
+  reinforce.className = "screen-button";
+  reinforce.type = "button";
+  reinforce.textContent = "Gia hạn";
+  reinforce.addEventListener("click", () => {
+    void mutateMemory("/api/memory/reinforce", { session_id: state.editing.sessionId }, "Đã gia hạn trang.");
+  });
+  const forget = document.createElement("button");
+  forget.className = "screen-button is-danger";
+  forget.type = "button";
+  forget.textContent = "Quên";
+  forget.addEventListener("click", () => {
+    if (!confirm(`Quên “${state.editing.topic || "trang này"}” khỏi bộ nhớ?`)) return;
+    void mutateMemory("/api/memory/forget", { session_id: state.editing.sessionId }, "Đã quên trang.");
+  });
+  actions.append(cancel, reinforce, save, forget);
+  form.append(line, text, actions);
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const topic = state.editing.topic.trim();
+    const summary = state.editing.summary.trim();
+    if (!topic || !summary) return;
+    void mutateMemory("/api/memory/update", { session_id: state.editing.sessionId, topic, summary }, "Đã cập nhật trang.");
+  });
+  form.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !event.isComposing) {
+      event.stopPropagation();
+      cancelEdit(form);
+    }
+  });
+  return form;
+}
+
+// Mobile renders one editor copy per matching view section. Focus follows the
+// copy the user actually opened, and cancel puts focus back on that row's
+// action button. Both capture their section before render detaches the row.
+function firstVisible(nodes) {
+  return nodes.find((node) => node.offsetParent !== null) ?? null;
+}
+
+function startEdit(memory, origin) {
+  if (state.pending) return; // a mutation is in flight; the draft must not move
+  const section = origin?.closest(".memory-view") ?? null;
+  state.editing = { id: memory.id, sessionId: memory.sessionId, topic: memory.title, summary: memory.description };
+  render();
+  const titles = [...(section || document).querySelectorAll(".memory-edit-title")];
+  (firstVisible(titles) ?? titles[0])?.focus();
+}
+
+function cancelEdit(origin) {
+  if (state.pending) return;
+  const section = origin?.closest(".memory-view") ?? null;
+  const id = state.editing?.id;
+  state.editing = null;
+  render();
+  if (!id) return;
+  const actions = [...(section || document).querySelectorAll(".row-action")]
+    .filter((node) => node.closest(".memory-card")?.dataset.memoryId === String(id));
+  (firstVisible(actions) ?? actions[0])?.focus();
 }
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -211,6 +311,9 @@ function render() {
     button.classList.toggle("is-active", active);
     button.setAttribute("aria-pressed", String(active));
   });
+  // A re-render while a mutation is in flight (search keystroke, resize,
+  // view switch) must rebuild the editor copies in the busy state, not live.
+  if (state.pending) setBusy(true);
 }
 compact.addEventListener("change", () => {
   placeSearch();
@@ -238,28 +341,23 @@ async function loadStats({ quiet = false } = {}) {
   }
 }
 
-function openMemory(memory, opener) {
-  state.activeMemory = memory;
-  state.opener = opener;
-  el.id.value = memory.sessionId;
-  el.title.value = memory.title;
-  el.description.value = memory.description;
-  setDialogStatus(el.dialogStatus);
-  el.dialog.showModal();
-  el.title.focus();
-}
-
 async function mutateMemory(path, body, success) {
+  if (state.pending) return; // one mutation at a time; no duplicate requests
+  const draft = state.editing; // identity: only the submitted draft may be cleared
+  state.pending = true;
   setBusy(true);
-  setDialogStatus(el.dialogStatus, "Đang lưu…");
+  setStatus("Đang lưu…");
   try {
     await postJson(path, body);
-    el.dialog.close();
+    // A draft started after this request began keeps its text.
+    if (state.editing === draft) state.editing = null;
     await loadStats({ quiet: true });
     setStatus(success, "success");
   } catch (error) {
-    setDialogStatus(el.dialogStatus, messageOf(error, "Không lưu được."), "error");
+    // Failure keeps the draft on screen, re-enabled.
+    setStatus(messageOf(error, "Không lưu được."), "error");
   } finally {
+    state.pending = false;
     setBusy(false);
   }
 }
@@ -273,23 +371,6 @@ function bind() {
       render();
     });
   });
-  el.cancel.addEventListener("click", () => el.dialog.close());
-  el.form.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const topic = el.title.value.trim();
-    const summary = el.description.value.trim();
-    if (!topic || !summary || !el.id.value) return;
-    void mutateMemory("/api/memory/update", { session_id: el.id.value, topic, summary }, "Đã cập nhật trang.");
-  });
-  el.reinforce.addEventListener("click", () => {
-    if (!el.id.value) return;
-    void mutateMemory("/api/memory/reinforce", { session_id: el.id.value }, "Đã gia hạn trang.");
-  });
-  el.forget.addEventListener("click", () => {
-    if (!el.id.value || !confirm(`Quên “${state.activeMemory?.title || "trang này"}” khỏi bộ nhớ?`)) return;
-    void mutateMemory("/api/memory/forget", { session_id: el.id.value }, "Đã quên trang.");
-  });
-  el.dialog.addEventListener("close", () => state.opener?.focus());
 }
 
 bind();

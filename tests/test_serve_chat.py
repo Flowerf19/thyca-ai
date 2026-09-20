@@ -4,9 +4,9 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
-from io import StringIO
 import time
 from dataclasses import dataclass, field, replace
+from io import StringIO
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -20,8 +20,8 @@ from thyca.protocol import Message, ToolCall
 from thyca.serve import ServeError, default_webui, make_server
 from thyca.sessions import Session, SessionBusy, SessionManager
 from thyca.sessions.title import fallback_title
-from thyca.tools.memory import MemoryFacade
 from thyca.tools.mcp import StartupDiagnostic
+from thyca.tools.memory import MemoryFacade
 
 WEBUI = default_webui()
 
@@ -1505,7 +1505,9 @@ def test_webui_submits_a_rename_or_delete_once() -> None:
 
 
 def test_chat_row_uses_the_shared_session_item() -> None:
-    """Chat and Trace rows use the same .session-item grid as Hồ sơ / Nhật ký."""
+    """Chat sidebar rows use the same .session-item grid as Hồ sơ / Nhật ký;
+    Trace moved into the dashboard and renders its session list there as
+    .journal-entry rows on the shared kit instead."""
     css = (WEBUI / "styles.css").read_text(encoding="utf-8")
     app = (WEBUI / "app.js").read_text(encoding="utf-8")
     trace = (WEBUI / "trace.js").read_text(encoding="utf-8")
@@ -1515,7 +1517,12 @@ def test_chat_row_uses_the_shared_session_item() -> None:
     assert "session-body" not in app
     assert "session-body" not in trace
     assert "button.append(icon, name, time);" in app
-    assert "button.append(icon, name, meta);" in trace
+    # Trace's main-area session list: one journal entry per session, the
+    # title as a journal row-title button, meta line from the shared kit.
+    assert 'item.className = "journal-entry";' in trace
+    assert 'open.className = "journal-row-title trace-session-open";' in trace
+    assert 'meta.className = "journal-meta";' in trace
+    assert "item.append(stampNode(group.startedAt), body);" in trace
 
     icon = css[css.index(".session-icon {") : css.index(".session-name {")]
     icon = icon[: icon.index("}")]

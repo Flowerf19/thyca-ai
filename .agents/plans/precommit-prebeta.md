@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 created: 2026-09-20
 last_updated: 2026-09-20
 ---
@@ -12,9 +12,9 @@ Review all pending WebUI changes, fix verified regressions through GLM-5.3 Flash
 | ID | Task | Done | Date |
 |----|------|------|------|
 | TASK-001 | Independently review tracked and untracked changes; verify actionable findings before fixes. | ✓ | 2026-09-20 |
-| TASK-002 | GLM agent fixes confirmed issues with focused regression tests; review actual resulting diff. | | |
+| TASK-002 | GLM agent fixes confirmed issues with focused regression tests; review actual resulting diff. | ✓ | 2026-09-20 |
 | TASK-003 | Set pyproject.toml, thyca/__init__.py and uv.lock to 0.8.5.dev0; replace current README beta claims with pre-beta; add accurate changelog entry. | ✓ | 2026-09-20 |
-| TASK-004 | Run full pytest, applicable lint, diff checks and version consistency checks; commit and push only on acceptance. | | |
+| TASK-004 | Run full pytest, applicable lint, diff checks and version consistency checks; commit and push only on acceptance. | ✓ | 2026-09-20 |
 
 ## Review findings to resolve
 - Trace: order boot/reload responses; reject incomplete deduplicated pagination; synchronize navigation URLs; invalidate detail cache on fresh snapshots; retain older history/deep links; restore diagnostic metadata; avoid asserting complete pricing from known-only totals.

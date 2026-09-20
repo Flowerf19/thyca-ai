@@ -1,8 +1,8 @@
 # Thyca
 
-Trợ lý cá nhân đa công việc, đang ở giai đoạn **beta**. Thyca học dần từ những gì bạn chia sẻ và cách bạn làm việc để điều chỉnh cách hỗ trợ phù hợp nhất với bạn — từ trò chuyện, viết code, đọc và xử lý tài liệu đến những việc khác trong công việc hằng ngày.
+Trợ lý cá nhân đa công việc, đang ở giai đoạn **trước beta (pre-beta)**. Thyca học dần từ những gì bạn chia sẻ và cách bạn làm việc để điều chỉnh cách hỗ trợ phù hợp nhất với bạn — từ trò chuyện, viết code, đọc và xử lý tài liệu đến những việc khác trong công việc hằng ngày.
 
-**Phiên bản hiện tại: 0.8.3.**
+**Phiên bản hiện tại: 0.8.5.dev0 (trước beta).**
 
 ## Nó làm được gì?
 
@@ -100,7 +100,7 @@ Skills theo chuẩn [Agent Skills](https://agentskills.io): `~/.thyca/skills/<na
 
 ## Thảo luận dự án
 
-Thyca đang ở giai đoạn beta. Mọi góp ý về cách Thyca học từ user, hỗ trợ model, bộ nhớ, workflow hoặc các công việc mới đều được hoan nghênh tại [GitHub Discussions](https://github.com/Flowerf19/thyca-ai/discussions).
+Thyca đang ở giai đoạn trước beta (pre-beta). Mọi góp ý về cách Thyca học từ user, hỗ trợ model, bộ nhớ, workflow hoặc các công việc mới đều được hoan nghênh tại [GitHub Discussions](https://github.com/Flowerf19/thyca-ai/discussions).
 
 ## Tài liệu
 
@@ -108,4 +108,4 @@ Nhìn xa hơn: `.agents/README.md` (hướng dẫn cho agent contributor), `.age
 
 ## Đang ở giai đoạn nào?
 
-WebUI và CLI đang ở giai đoạn beta, bộ nhớ L2 chạy ổn định, có usage/cost tracking. Chưa làm: Telegram/Discord, subagent, plan mode, confirmation gate, vector/semantic search (đã cân nhắc và bỏ — lexical đủ cho hiện tại).
+WebUI và CLI đang ở giai đoạn trước beta (pre-beta), bộ nhớ L2 chạy ổn định, có usage/cost tracking. Chưa làm: Telegram/Discord, subagent, plan mode, confirmation gate, vector/semantic search (đã cân nhắc và bỏ — lexical đủ cho hiện tại).

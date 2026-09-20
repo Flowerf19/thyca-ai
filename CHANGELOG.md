@@ -2,6 +2,14 @@
 
 Thay đổi của Thyca, viết ngắn gọn cho người dùng.
 
+## 0.8.5.dev0 — 20/09/2026
+
+- Bản phát triển trước beta (pre-beta): đồng bộ phiên bản ở `pyproject.toml`, `uv.lock` và `thyca/__init__.py` về 0.8.5.dev0 (trước đây lệch nhau 0.8.4/0.8.3).
+- Tổng quan tổ chức lại thành bốn view: Sử dụng token, Request, Chi phí và Trace; mặc định mở Sử dụng token, hash cũ `#hom-nay` hoặc hash không hợp lệ cũng về view này, còn liên kết sâu `?session=`/`?turn=` mở đúng Trace.
+- Request theo mô hình thành một biểu đồ thanh ngang chung (thang so sánh giữa các model) thay vì mỗi model một card.
+- Trace thiết kế lại kiểu nhật ký: chọn phiên và xem từng lượt thành mục nhật ký, phiên và lượt phân trang 12 mục/trang; input/output của lượt và tool step dùng nền code phẳng, mỗi bước một dòng với thời gian, trạng thái và phần bung riêng.
+- Panel Chi phí gọn chú thích: bỏ dòng range/UTC và chú thích quét tệp phiên tĩnh, giữ bộ lọc kỳ, công thức tính, cảnh báo lệch tổng và thiếu đơn giá.
+
 ## 0.8.4 — 18/09/2026
 
 - Bash thông minh hơn với lệnh dài: lệnh chạy quá ~60 giây tự chuyển sang nền — tool trả "still running: bg<N>" và bạn chat được tiếp với Thyca trong khi lệnh chạy; hỏi tiến độ bằng `bash_read`. Lệnh nhanh thì vẫn trả kết quả luôn như cũ. Có thể chủ động `background: true` cho lệnh biết trước là dài (build, OCR, server). Lệnh nền tự bị hủy khi tắt Thyca hoặc quá timeout (mặc định 30 phút).

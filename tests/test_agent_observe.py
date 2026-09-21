@@ -135,3 +135,19 @@ def test_compact_delegates_to_session_manager(tmp_path: Path) -> None:
 
     assert Observe(manager).compact() is True
     assert called == [True]
+
+
+def test_observe_persists_reasoning_details(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path)
+    manager.create()
+    manager.append(Message(role="user", content="go", ts="2026-01-01T00:00:00Z"))
+    details = [{"type": "reasoning.text", "text": "hmm", "signature": "sig"}]
+    stage = Stage(
+        messages=list(manager.current.messages),
+        reply=ChatReply(content="done", reasoning_details=details),
+    )
+
+    Observe(manager).assistant(stage)
+
+    stored = manager.current.messages[-1]
+    assert stored.reasoning_details == details

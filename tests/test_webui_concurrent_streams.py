@@ -174,7 +174,8 @@ const app = new Function(...Object.keys(dependencies), source + `
 `)(...Object.values(dependencies));
 const result = {};
 const cardText = () => [...app.liveTurns.values()]
-  .map(live => live.thinking?.body.textContent).join('|');
+  .map(live => [...live.notesWrap.children].map(node => node.textContent).join(''))
+  .join('|');
 
 await app.loadSession('A');
 await settle();
@@ -231,7 +232,7 @@ def concurrent() -> dict:
 
 
 def test_second_send_keeps_first_stream_ownership(concurrent: dict) -> None:
-    assert concurrent["a"] == {"posts": 1, "text": "A-one Đang dùng: bash", "tracked": True}
+    assert concurrent["a"] == {"posts": 1, "text": "A-one Đang dùng:bash", "tracked": True}
     assert concurrent["b"]["posts"] == 2
     assert concurrent["b"]["tracked"] == ["A"]
 
@@ -240,7 +241,7 @@ def test_returning_to_streaming_session_reuses_card_without_second_reader(
     concurrent: dict,
 ) -> None:
     assert concurrent["backToA"]["followCalls"] == 0
-    assert concurrent["backToA"]["text"] == "A-one Đang dùng: bash"
+    assert concurrent["backToA"]["text"] == "A-one Đang dùng:bash"
     assert concurrent["backToA"]["tracked"] is True
 
 

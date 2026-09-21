@@ -5,7 +5,7 @@ import json
 import httpx
 import pytest
 
-from thyca.config import Config, ModelCfg, ProviderCfg
+from thyca.config import Config, ModelCfg, ProviderCfg, ProviderEntry
 from thyca.llm.llm_base import LLMError, normalize_usage
 from thyca.llm.openai_chat import OpenAIChat, _chat_url
 from thyca.protocol import Message, ToolCall
@@ -31,7 +31,8 @@ def test_chat_url_does_not_double_slash() -> None:
 @pytest.mark.asyncio
 async def test_effective_model_endpoint_is_used_for_request() -> None:
     cfg = Config(
-        provider=ProviderCfg(model="special", apiKey="sk-secret-key"),
+        providers={"default": ProviderEntry(apiKey="sk-secret-key")},
+        defaultModel="special",
         models={"special": ModelCfg(baseUrl="https://other.example/v1")},
     )
     seen: list[str] = []
@@ -142,10 +143,7 @@ def test_normalize_usage_unknown_shape_is_none() -> None:
     assert normalize_usage({"foo": 1}, "openai") is None
 
 
-def test_normalize_usage_anthropic_and_google_stubs() -> None:
-    import asyncio
-
-    # offline stub coverage cho connect chưa implement (TASK-003)
+def test_normalize_usage_anthropic_and_google() -> None:
     anthropic = normalize_usage(
         {
             "input_tokens": 10,
@@ -178,16 +176,6 @@ def test_normalize_usage_anthropic_and_google_stubs() -> None:
         "completion_tokens": 5,
         "total_tokens": 25,
     }
-    # connect thật vẫn NotImplementedError tới khi có key
-    import pytest
-
-    from thyca.llm.anthropic_chat import AnthropicChat
-    from thyca.llm.google_chat import GoogleChat
-
-    with pytest.raises(NotImplementedError):
-        asyncio.run(GoogleChat().chat([]))
-    with pytest.raises(NotImplementedError):
-        asyncio.run(AnthropicChat().chat([]))
 
 
 @pytest.mark.asyncio
@@ -617,3 +605,83 @@ async def test_stream_tool_calls_assembled() -> None:
     assert reply.tool_calls[0].id == "call-1"
     assert reply.tool_calls[0].name == "echo"
     assert reply.tool_calls[0].arguments == {"q": "hi"}
+
+
+@pytest.mark.asyncio
+async def test_stream_reasoning_details_merged_and_invalid_ignored() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _sse(
+            {"choices": [{"delta": {"reasoning_details": [
+                {"type": "reasoning.text", "text": "unga ", "id": "d1"},
+                {"type": "bogus", "text": "nope"},
+                "not-a-dict",
+            ]}}]},
+            {"choices": [{"delta": {"reasoning_details": [
+                {"type": "reasoning.text", "text": "bunga", "signature": "sig1"},
+            ]}}]},
+            {"choices": [{"delta": {"reasoning_details": [
+                {"type": "reasoning.summary", "summary": "did stuff"},
+            ], "content": "ok"}, "finish_reason": "stop"}]},
+            {"choices": [{"delta": {"reasoning_details": "not-a-list"}}]},
+        )
+
+    connect = OpenAIChat(_provider(), client=_client(handler))
+    reply = await connect.chat([Message(role="user", content="x")])
+    assert reply.reasoning_details == [
+        {"type": "reasoning.text", "text": "unga bunga", "signature": "sig1", "id": "d1"},
+        {"type": "reasoning.summary", "summary": "did stuff"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_nonstream_reasoning_details_parsed() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "model": "demo-model",
+                "choices": [{
+                    "message": {
+                        "content": "ok",
+                        "reasoning_details": [
+                            {"type": "reasoning.encrypted", "data": "blob", "index": 2},
+                            {"type": "reasoning.text", "text": ""},
+                        ],
+                    },
+                    "finish_reason": "stop",
+                }],
+            },
+        )
+
+    connect = OpenAIChat(_provider(), client=_client(handler))
+    reply = await connect.chat([Message(role="user", content="x")])
+    assert reply.reasoning_details == [
+        {"type": "reasoning.encrypted", "data": "blob", "index": 2}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_no_reasoning_details_is_none() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json={"model": "m", "choices": [{"message": {"content": "ok"}}]}
+        )
+
+    connect = OpenAIChat(_provider(), client=_client(handler))
+    assert (await connect.chat([Message(role="user", content="x")])).reasoning_details is None
+
+
+def test_to_openai_message_roundtrips_reasoning_details() -> None:
+    from thyca.llm.openai_chat import _to_openai_message
+
+    details = [{"type": "reasoning.text", "text": "t", "signature": "s"}]
+    payload = _to_openai_message(
+        Message(role="assistant", content="hi", reasoning_details=details)
+    )
+    assert payload["reasoning_details"] == details
+    assert payload["reasoning_details"] is not details
+    plain = _to_openai_message(Message(role="assistant", content="hi"))
+    assert "reasoning_details" not in plain
+    assert "reasoning_details" not in _to_openai_message(
+        Message(role="user", content="hi")
+    )

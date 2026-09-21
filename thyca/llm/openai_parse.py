@@ -2,18 +2,14 @@
 from __future__ import annotations
 
 import json
-import time
 from collections.abc import Callable
-from typing import Any
 
 import httpx
 
-from thyca.protocol import RESULT_CAP_BYTES, ToolCall
+from thyca.protocol import ToolCall
 
 from .llm_base import ChatReply, LLMError, normalize_usage
-
-_FLUSH_CHARS = 64
-_FLUSH_S = 0.08
+from .streaming import ContentOut, ReasoningOut
 
 
 def _redact(text: str, secret: str) -> str:
@@ -38,84 +34,91 @@ def _reasoning_text(payload: dict) -> str:
     return ""
 
 
-class _ContentOut:
-    """Forward reply-text deltas while streaming. Never accumulates or caps:
-    the authoritative content is assembled separately and uncapped."""
+def _reasoning_detail(item: object) -> dict | None:
+    """Validate one reasoning_details item; None when unusable.
 
-    _FLUSH_CHARS = _FLUSH_CHARS
-    _FLUSH_S = _FLUSH_S
+    Never raises: providers vary, and a malformed detail must not fail the
+    whole turn. Mirrors pi's OpenAI detail shapes (text/summary/encrypted)
+    plus the shared id/format/index passthrough.
+    """
+    if not isinstance(item, dict):
+        return None
+    dtype = item.get("type")
+    if dtype == "reasoning.text":
+        text = item.get("text")
+        if not isinstance(text, str) or not text:
+            return None
+        out: dict[str, object] = {"type": dtype, "text": text}
+        signature = item.get("signature")
+        if isinstance(signature, str) and signature:
+            out["signature"] = signature
+    elif dtype == "reasoning.summary":
+        summary = item.get("summary")
+        if not isinstance(summary, str) or not summary:
+            return None
+        out = {"type": dtype, "summary": summary}
+    elif dtype == "reasoning.encrypted":
+        data = item.get("data")
+        if not isinstance(data, str) or not data:
+            return None
+        out = {"type": dtype, "data": data}
+    else:
+        return None
+    detail_id = item.get("id")
+    if isinstance(detail_id, str) and detail_id:
+        out["id"] = detail_id
+    detail_format = item.get("format")
+    if isinstance(detail_format, str) and detail_format:
+        out["format"] = detail_format
+    index = item.get("index")
+    if isinstance(index, int) and not isinstance(index, bool):
+        out["index"] = index
+    return out
 
-    def __init__(self, on_content: Callable[[str], None] | None) -> None:
-        self._on = on_content
-        self._buf = ""
-        self._last = time.monotonic()
 
-    def add(self, piece: str) -> None:
-        if not piece:
+class _ReasoningDetailsOut:
+    """Accumulate reasoning_details across chunks, merging consecutive splits.
+
+    Streaming splits one logical block across chunks; consecutive same-type
+    text/summary pieces concatenate (pi parity), anything else appends.
+    """
+
+    def __init__(self) -> None:
+        self._items: list[dict] = []
+
+    def add(self, raw: object) -> None:
+        if not isinstance(raw, list):
             return
-        self._buf += piece
-        if len(self._buf) >= self._FLUSH_CHARS or (time.monotonic() - self._last) >= self._FLUSH_S:
-            self.flush()
+        for item in raw:
+            detail = _reasoning_detail(item)
+            if detail is None:
+                continue
+            last = self._items[-1] if self._items else None
+            if (
+                detail["type"] == "reasoning.text"
+                and last is not None
+                and last["type"] == "reasoning.text"
+            ):
+                last["text"] += detail["text"]
+                if "signature" in detail:
+                    last.setdefault("signature", detail["signature"])
+                for key in ("id", "format", "index"):
+                    if key in detail:
+                        last.setdefault(key, detail[key])
+            elif (
+                detail["type"] == "reasoning.summary"
+                and last is not None
+                and last["type"] == "reasoning.summary"
+            ):
+                last["summary"] += detail["summary"]
+                for key in ("id", "format", "index"):
+                    if key in detail:
+                        last.setdefault(key, detail[key])
+            else:
+                self._items.append(detail)
 
-    def flush(self) -> None:
-        if not self._buf:
-            return
-        chunk, self._buf = self._buf, ""
-        self._last = time.monotonic()
-        if self._on is None:
-            return
-        try:
-            self._on(chunk)
-        except Exception:
-            pass
-
-
-class _ReasoningOut:
-    def __init__(self, key: str, on_reasoning: Callable[[str], None] | None) -> None:
-        self._key = key
-        self._on = on_reasoning
-        self._buf = ""
-        self._last = time.monotonic()
-        self._parts: list[str] = []
-        self._bytes = 0
-        self._capped = False
-
-    def add(self, piece: str) -> None:
-        if self._capped or not piece:
-            return
-        piece = _redact(piece, self._key)
-        encoded = piece.encode("utf-8")
-        room = RESULT_CAP_BYTES - self._bytes
-        if room <= 0:
-            self._capped = True
-            return
-        if len(encoded) > room:
-            piece = encoded[:room].decode("utf-8", errors="ignore")
-            encoded = piece.encode("utf-8")
-            self._capped = True
-            if not piece:
-                return
-        self._parts.append(piece)
-        self._bytes += len(encoded)
-        self._buf += piece
-        if len(self._buf) >= _FLUSH_CHARS or (time.monotonic() - self._last) >= _FLUSH_S:
-            self.flush()
-
-    def flush(self) -> None:
-        if not self._buf:
-            return
-        chunk, self._buf = self._buf, ""
-        self._last = time.monotonic()
-        if self._on is None:
-            return
-        try:
-            self._on(chunk)
-        except Exception:
-            pass
-
-    def text(self) -> str | None:
-        self.flush()
-        return "".join(self._parts) or None
+    def items(self) -> list[dict] | None:
+        return [dict(item) for item in self._items] or None
 
 
 def parse_chat_payload(raw: dict, key: str) -> ChatReply:
@@ -142,6 +145,8 @@ def parse_chat_payload(raw: dict, key: str) -> ChatReply:
     if not isinstance(model, str):
         model = None
     reasoning = _reasoning_text(message)
+    details = _ReasoningDetailsOut()
+    details.add(message.get("reasoning_details"))
     return ChatReply(
         content=content,
         tool_calls=parse_tool_calls(message.get("tool_calls")),
@@ -149,6 +154,7 @@ def parse_chat_payload(raw: dict, key: str) -> ChatReply:
         finish_reason=finish,
         model=model,
         reasoning=reasoning or None,
+        reasoning_details=details.items(),
     )
 
 
@@ -215,8 +221,9 @@ async def read_sse_reply(
     model: str | None = None
     usage: dict | None = None
     slots: dict[int, dict[str, str]] = {}
-    reasoning = _ReasoningOut(key, on_reasoning)
-    content_out = _ContentOut(on_content)
+    reasoning = ReasoningOut(key, on_reasoning)
+    content_out = ContentOut(on_content)
+    details = _ReasoningDetailsOut()
 
     async for line in response.aiter_lines():
         if not line or line.startswith(":"):
@@ -261,6 +268,7 @@ async def read_sse_reply(
         piece = _reasoning_text(delta)
         if piece:
             reasoning.add(piece)
+        details.add(delta.get("reasoning_details"))
         _merge_tool_deltas(slots, delta.get("tool_calls"))
 
     if not saw_choice:
@@ -279,6 +287,7 @@ async def read_sse_reply(
         finish_reason=finish,
         model=model,
         reasoning=reasoning.text(),
+        reasoning_details=details.items(),
     )
 
 

@@ -2,6 +2,17 @@
 
 Thay đổi của Thyca, viết ngắn gọn cho người dùng.
 
+## Chưa phát hành
+
+- Nhiều provider, mỗi provider key riêng: trang Provider quản lý danh sách provider (thêm/đổi tên/xóa), mỗi model thuộc một provider — đổi model trong chat thì endpoint và key đi theo model, hết lỗi gọi nhầm máy chủ. Config cũ tự chuyển thành provider `default`, không mất key/giá/limits.
+- Lưu cấu hình xong hệ thống tự test API của model mặc định và báo OK/thất bại ngay trên trang Provider; mỗi provider cũng có nút Test riêng.
+- Lượt chat lỗi giờ hiện đúng message của provider (ví dụ model không tồn tại) thay vì chỉ "Không gửi được — thử lại.", server ghi một dòng log mỗi lượt lỗi vào `serve.log`, và trang Trace hiện message lỗi ngay dưới dòng model của lượt đó (thử lại thành công thì vết lỗi cũ tự hết).
+- Key tách khỏi config: API key của từng provider nằm ở `~/.thyca/auth.json` (mode 0600), `config.json` không còn secret. Config cũ tự chuyển key sang `auth.json` ở lần lưu đầu tiên; không cần đụng tới biến môi trường nữa.
+- Bỏ hỗ trợ key dạng `"!command"` (chạy lệnh shell lấy key): key chỉ còn 2 nguồn là `auth.json` và biến môi trường. Gỡ 2 connect stub chưa implement (Anthropic/Google).
+- Thêm kiểu API Responses cho provider: model meta giờ hiện được thinking thật (summaries) trong lúc trả lời — chọn "Responses (thinking summaries)" ở trang Provider. Provider khác giữ nguyên Chat completions, không đổi gì.
+- Thứ tự hiển thị theo đúng thời gian thực trong mỗi vòng: suy nghĩ → câu trả lời → dòng "Đã dùng" (tool chạy sau khi model viết xong). Áp dụng cả lúc đang trả lời lẫn lúc đã xong, thay vì dòng tool đè lên trên câu chữ như trước.
+- Trang Chi phí tính trung bình trên các lượt đã định giá và không lỗi (bỏ qua lượt lỗi/chưa có giá), kèm dòng ghi rõ cơ sở tính thay vì hiện "—" khi thiếu giá một phần.
+
 ## 0.8.5.dev0 — 20/09/2026
 
 - Bản phát triển trước beta (pre-beta): đồng bộ phiên bản ở `pyproject.toml`, `uv.lock` và `thyca/__init__.py` về 0.8.5.dev0 (trước đây lệch nhau 0.8.4/0.8.3).

@@ -3,6 +3,15 @@
 export const SEND_ERROR_STATUS = "Không gửi được — thử lại.";
 export const TURN_FAILED_STATUS = "Lượt đã dừng.";
 
+// Chat send/retry failure: prefer the provider's own message (it arrives via
+// the turn.failed terminal) over the generic status.
+export function sendErrorMessage(error) {
+  const detail = error instanceof Error && typeof error.message === "string"
+    ? error.message.trim()
+    : "";
+  return detail ? `Không gửi được — ${detail}` : SEND_ERROR_STATUS;
+}
+
 export function brandState(event) {
   if (event?.type === "turn.failed") return "error";
   if (event?.type === "turn.completed") return "idle";

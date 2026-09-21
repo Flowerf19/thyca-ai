@@ -14,7 +14,15 @@ class Assemble:
     def assemble(self, stage: Stage, user_msg: str, *, append_user: bool = True) -> None:
         if append_user and not isinstance(user_msg, str):
             raise ValueError("user_msg must be a string")
-        messages = [message for message in stage.messages if message.role != "system"]
+        # Naming rows are transcript-only (assistant with null content and no
+        # tool calls): strict providers 400 on them, so they never reach the
+        # model. Same predicate as chat-view and trace.
+        messages = [
+            message
+            for message in stage.messages
+            if message.role != "system"
+            and (message.meta or {}).get("kind") != "naming"
+        ]
         if isinstance(stage.hot, ActiveSnapshot):
             messages.insert(0, Message(role="system", content=self._prompts.build(stage.hot)))
         if append_user:

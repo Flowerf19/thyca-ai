@@ -14,7 +14,7 @@ from typing import Any
 from thyca.config import (
     REASONING_EFFORTS,
     LimitsCfg,
-    ProviderCfg,
+    ProviderEntry,
     TimelineCfg,
 )
 
@@ -111,7 +111,9 @@ def _dict_section(key: str) -> dict[str, Any]:
 
 
 def config_schema() -> dict[str, Any]:
-    sections: list[dict[str, Any]] = [_scalar_section("provider", ProviderCfg)]
+    # The "provider" section describes one provider entry (choices/defaults for
+    # the reasoning pickers); the multi-provider form itself is custom UI.
+    sections: list[dict[str, Any]] = [_scalar_section("provider", ProviderEntry)]
     # Pricing/models render as cards in the UI, not schema sections.
     # Timeline hidden (system default); mcpServers agent-managed.
     sections.append(_scalar_section("limits", LimitsCfg))

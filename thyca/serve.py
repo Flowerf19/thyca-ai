@@ -30,6 +30,7 @@ from thyca.config_schema import config_schema
 from thyca.onboarding import (
     ProviderProbeError,
     provider_ready,
+    test_provider_api,
     validate_provider,
 )
 from thyca.serve_memory import memory_endpoint
@@ -63,25 +64,42 @@ _BODY_CAP = 16_384
 
 
 def _config_values(cfg) -> dict:
-    """Config as UI values; the API key never leaves the server."""
+    """Config as UI values; API keys never leave the server."""
     values = cfg.to_dict()
-    values["provider"]["apiKey"] = ""
+    providers = values.get("providers")
+    if isinstance(providers, dict):
+        for entry in providers.values():
+            if isinstance(entry, dict):
+                entry["apiKey"] = ""
     return values
 
 
 def _config_meta(cfg) -> dict:
     """Non-secret status the settings panel can show (validity via verify)."""
-    return {"hasApiKey": bool(cfg.provider.apiKey)}
+    stored = {pid: bool(entry.apiKey) for pid, entry in cfg.providers.items()}
+    default = cfg.providers.get(cfg.defaultProvider)
+    return {"hasApiKey": bool(default.apiKey) if default else False, "providers": stored}
 
 
 def _merge_saved_key(raw: dict, cfg) -> dict:
-    """Empty provider.apiKey in the payload means keep the stored key."""
-    provider = raw.get("provider")
-    if isinstance(provider, dict) and provider.get("apiKey") == "":
-        provider = dict(provider)
-        provider["apiKey"] = cfg.provider.apiKey
-        raw = dict(raw)
-        raw["provider"] = provider
+    """Empty providers[id].apiKey in the payload keeps that provider's stored key.
+
+    Keys never cross providers: an unknown id with an empty key merges to None
+    (env fallback at call time), never to another provider's secret.
+    """
+    providers = raw.get("providers")
+    if not isinstance(providers, dict):
+        return raw
+    merged = dict(providers)
+    for pid, entry in providers.items():
+        if not isinstance(entry, dict) or entry.get("apiKey") != "":
+            continue
+        stored = cfg.providers.get(pid)
+        updated = dict(entry)
+        updated["apiKey"] = stored.apiKey if stored is not None else None
+        merged[pid] = updated
+    raw = dict(raw)
+    raw["providers"] = merged
     return raw
 
 
@@ -231,6 +249,9 @@ def _handler(
             if path == "/api/onboarding/verify":
                 self._onboarding_verify()
                 return
+            if path == "/api/providers/test":
+                self._providers_test()
+                return
             if path == "/api/memory/reinforce":
                 self._memory_post("reinforce")
                 return
@@ -337,6 +358,12 @@ def _handler(
             if not isinstance(base_url, str) or not base_url.strip():
                 self._json(400, {"error": "invalid baseUrl"})
                 return
+            provider_id = payload.get("providerId")
+            if provider_id is not None and (
+                not isinstance(provider_id, str) or not provider_id.strip()
+            ):
+                self._json(400, {"error": "invalid providerId"})
+                return
             api_key = payload.get("apiKey")
             if not isinstance(api_key, str) or not api_key.strip():
                 cfg = self._config()
@@ -344,7 +371,14 @@ def _handler(
                     self._json(503, {"error": "config unavailable"})
                     return
                 try:
-                    api_key = cfg.provider.api_key()
+                    if provider_id:
+                        entry = cfg.providers.get(provider_id.strip())
+                        if entry is None:
+                            self._json(404, {"error": "provider not found"})
+                            return
+                        api_key = entry.api_key()
+                    else:
+                        api_key = cfg.provider.api_key()
                 except ConfigError:
                     self._json(422, {"error": "chưa có API key"})
                     return
@@ -354,6 +388,73 @@ def _handler(
                 self._json(422, {"error": str(exc)})
                 return
             self._json(200, {"models": models, "apiKeyOk": True})
+
+        def _providers_test(self) -> None:
+            try:
+                payload = self._read_json()
+            except ValueError:
+                self._json(400, {"error": "invalid body"})
+                return
+            cfg = self._config()
+            if cfg is None:
+                self._json(503, {"error": "config unavailable"})
+                return
+            provider_id = payload.get("providerId", cfg.defaultProvider)
+            if not isinstance(provider_id, str) or not provider_id.strip():
+                self._json(400, {"error": "invalid providerId"})
+                return
+            provider_id = provider_id.strip()
+            entry = cfg.providers.get(provider_id)
+            if entry is None:
+                self._json(404, {"error": "provider not found"})
+                return
+            model = payload.get("model") or cfg.defaultModel
+            if not isinstance(model, str) or not model.strip():
+                self._json(400, {"error": "invalid model"})
+                return
+            model = model.strip()
+            base_url = entry.baseUrl
+            registered = cfg.models.get(model)
+            if registered is not None and registered.baseUrl:
+                # Legacy per-model endpoint wins, exactly like the turn path.
+                base_url = registered.baseUrl
+            try:
+                key = entry.api_key()
+            except ConfigError:
+                print(
+                    f"provider test provider={provider_id} model={model} "
+                    "ok=false error=no api key",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                self._json(422, {"error": "chưa có API key"})
+                return
+            try:
+                result = test_provider_api(entry.api, base_url, key, model)
+            except ProviderProbeError as exc:
+                print(
+                    f"provider test provider={provider_id} model={model} "
+                    f"ok=false error={exc}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                self._json(422, {"error": str(exc)})
+                return
+            print(
+                f"provider test provider={provider_id} model={result['model']} "
+                f"ok=true latency_ms={result['latency_ms']}",
+                file=sys.stderr,
+                flush=True,
+            )
+            self._json(
+                200,
+                {
+                    "ok": True,
+                    "providerId": provider_id,
+                    "model": result["model"],
+                    "latencyMs": result["latency_ms"],
+                },
+            )
 
         def _stats(self) -> None:
             try:

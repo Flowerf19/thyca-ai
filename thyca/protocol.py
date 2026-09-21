@@ -97,6 +97,7 @@ class Message:
     ts: str = field(default_factory=utc_now_ts)
     meta: dict | None = None
     reasoning: str | None = None
+    reasoning_details: list[dict] | None = None
 
     def __post_init__(self) -> None:
         if self.role not in _ROLE_OPTIONS:
@@ -113,6 +114,14 @@ class Message:
             raise ValueError("tool_call_id must be str or None")
         if self.reasoning is not None and not isinstance(self.reasoning, str):
             raise ValueError("reasoning must be str or None")
+        if self.reasoning_details is not None:
+            if not isinstance(self.reasoning_details, list):
+                raise ValueError("reasoning_details must be list or None")
+            # Provider signature blobs: validated for shape, never capped —
+            # truncating them would invalidate the signature on round-trip.
+            for detail in self.reasoning_details:
+                if not isinstance(detail, dict):
+                    raise ValueError("reasoning_details entries must be dict")
         _validate_ts(self.ts)
         if self.meta is not None:
             if not isinstance(self.meta, dict):
@@ -137,6 +146,8 @@ class Message:
             d["tool_call_id"] = self.tool_call_id
         if self.reasoning:
             d["reasoning"] = self.reasoning
+        if self.reasoning_details:
+            d["reasoning_details"] = self.reasoning_details
         if self.meta is not None:
             # re-check cap at serialization time as well
             meta_json = json.dumps(self.meta, ensure_ascii=False)
@@ -176,6 +187,7 @@ class Message:
             ts=ts,
             meta=meta,
             reasoning=reasoning,
+            reasoning_details=raw.get("reasoning_details"),
         )
 
     @classmethod

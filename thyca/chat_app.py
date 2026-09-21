@@ -55,12 +55,12 @@ class SessionIdle(Exception):
 
 
 def overlay_turn_cfg(cfg: Config, model: str | None, effort: str | None) -> Config:
-    chosen = cfg.provider.model if model is None else model
-    if chosen != cfg.provider.model and chosen not in cfg.models:
+    chosen = cfg.defaultModel if model is None else model
+    if chosen != cfg.defaultModel and chosen not in cfg.models:
         raise InvalidTurnOption("invalid model")
     if effort is not None and (not isinstance(effort, str) or not effort.strip()):
         raise InvalidTurnOption("invalid effort")
-    return replace(cfg, provider=replace(cfg.provider, model=chosen))
+    return replace(cfg, defaultModel=chosen)
 
 
 def _clean_turn_text(text: object, *, retry: bool) -> str:
@@ -307,6 +307,15 @@ class ChatApp:
         """Drop the notebook. Memory leaves written from it are left alone."""
         self._turns.delete_unclaimed(self._sessions, session_id)
 
+    def default_model(self) -> str:
+        """Default model id (for failure logs when the turn omits model)."""
+        return self._current_cfg().defaultModel
+
+    def provider_id_for(self, model: str | None) -> str:
+        """Provider id a turn resolves through (for failure logs)."""
+        cfg = self._current_cfg()
+        return cfg.provider_id_for(model or cfg.defaultModel)
+
     def running_sessions(self) -> dict[str, str]:
         """Snapshot of session_id -> started_at for turns in flight."""
         return self._turns.snapshot()
@@ -416,7 +425,7 @@ class ChatApp:
             if effort is not None:
                 provider = replace(provider, reasoningEffort=effort)
             connect = self._injected_connect or ConnectFactory.create(
-                "openai_chat", provider
+                provider.api, provider
             )
             owns = self._injected_connect is None
             self._wire_retry_events(connect, event_sink)
@@ -434,9 +443,20 @@ class ChatApp:
                     pricing=turn_cfg.effective_pricing() or None,
                 )
                 hot = self._memory.refresh(self._state, datetime.now(self._zone))
-                reply = await loop.run(
-                    text, hot=hot, event_sink=event_sink, persist_user=not retry
-                )
+                try:
+                    reply = await loop.run(
+                        text, hot=hot, event_sink=event_sink, persist_user=not retry
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except LLMError as exc:
+                    self._mark_turn_error(sessions, "llm_error", str(exc))
+                    raise
+                except Exception:
+                    # Precise code stays in serve.log via bridge; the
+                    # transcript marker stays generic on purpose.
+                    self._mark_turn_error(sessions, "chat_unavailable", "chat unavailable")
+                    raise
                 await _name_if_needed(connect, sessions, turn_cfg, event_sink)
                 # The turn's own response is not a turn in flight: the client that
                 # just received it must not be told to wait for itself.
@@ -449,6 +469,14 @@ class ChatApp:
                         await close()
         finally:
             reset_chat_session(token)
+
+    @staticmethod
+    def _mark_turn_error(sessions: SessionManager, code: str, message: str) -> None:
+        """Best-effort transcript marker; never masks the original failure."""
+        try:
+            sessions.mark_turn_error(code, message)
+        except Exception:
+            pass
 
     def _wire_retry_events(
         self, connect: LLMPort, event_sink: EventSink | None

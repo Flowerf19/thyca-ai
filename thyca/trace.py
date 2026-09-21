@@ -27,7 +27,7 @@ class TurnSummary:
     latency_ms: int | None
     # raw slice for detail endpoint
     messages: list[Message]
-
+    error: dict | None = None
 
     def to_payload(self) -> dict:
         """Public JSON shape for /api/traces* — the single source of the field list."""
@@ -47,10 +47,15 @@ class TurnSummary:
             "total_tokens": self.total_tokens,
             "cost_usd": self.cost_usd,
             "latency_ms": self.latency_ms,
+            "error": self.error,
         }
 
 
 def _turn_status(slice_msgs: list[Message]) -> str:
+    # A stamped failure marker wins: a turn that died mid-loop may still end
+    # on an assistant/tool message, which must not read as completed.
+    if any(isinstance((m.meta or {}).get("error"), dict) for m in slice_msgs):
+        return "failed"
     # naming meta-messages are not turn outcomes — skip them, keep old semantics
     last = next(
         (m for m in reversed(slice_msgs) if (m.meta or {}).get("kind") != "naming"),
@@ -154,6 +159,10 @@ def turns_from_session(session: Session) -> list[TurnSummary]:
     for idx, sl in enumerate(slices):
         prompt, cached, completion, total, cost, latency, model = _sum_tokens(sl)
         status = _turn_status(sl)
+        error = next(
+            (m.meta["error"] for m in sl if isinstance((m.meta or {}).get("error"), dict)),
+            None,
+        )
         rounds = sum(1 for m in sl if m.role == "assistant")
         requests = rounds
         started = sl[0].ts if sl else ""
@@ -176,6 +185,7 @@ def turns_from_session(session: Session) -> list[TurnSummary]:
                 cost_usd=cost,
                 latency_ms=latency,
                 messages=list(sl),
+                error=error,
             )
         )
     return out

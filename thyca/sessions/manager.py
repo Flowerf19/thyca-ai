@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import secrets
 import threading
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -123,6 +124,8 @@ class SessionManager:
     def truncate_to_last_user(self) -> bool:
         """Drop messages after the last user. No-op if the tail is already a user.
 
+        A stale failure marker on the kept user message is stripped: a retry
+        starts clean, and re-marks itself only if it fails again.
         Returns False when the transcript has no ``role=user`` message.
         """
         with self._lock:
@@ -138,7 +141,17 @@ class SessionManager:
                     break
             if last is None:
                 return False
-            if last == len(messages) - 1:
+            stripped = False
+            if (messages[last].meta or {}).get("error") is not None:
+                kept_user = messages[last]
+                cleaned = {
+                    key: value
+                    for key, value in (kept_user.meta or {}).items()
+                    if key != "error"
+                }
+                messages[last] = replace(kept_user, meta=cleaned or None)
+                stripped = True
+            if last == len(messages) - 1 and not stripped:
                 return True
             kept = messages[: last + 1]
             self.store.rewrite(
@@ -149,6 +162,39 @@ class SessionManager:
                 title_source=self._session.title_source,
             )
             self._session.messages[:] = kept
+            return True
+
+    def mark_turn_error(self, code: str, message: str) -> bool:
+        """Stamp the turn's user message with the failure and persist it.
+
+        The marker is what Trace shows for a failed turn; the live chat keeps
+        using the stream terminal. Returns False when there is no user
+        message to mark. Disk failures raise SessionError — callers that must
+        not mask the original error guard this call.
+        """
+        with self._lock:
+            if self._session is None:
+                raise SessionError(
+                    "no current session — call create/load/continue_last first"
+                )
+            messages = self._session.messages
+            last = None
+            for index in range(len(messages) - 1, -1, -1):
+                if messages[index].role == "user":
+                    last = index
+                    break
+            if last is None:
+                return False
+            marked = dict(messages[last].meta or {})
+            marked["error"] = {"code": code, "message": message}
+            messages[last] = replace(messages[last], meta=marked)
+            self.store.rewrite(
+                self._session.id,
+                self._session.path,
+                messages,
+                title=self._session.title,
+                title_source=self._session.title_source,
+            )
             return True
 
     def compact_if_needed(self) -> bool:

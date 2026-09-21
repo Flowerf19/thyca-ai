@@ -72,19 +72,28 @@ function assistantHeader({ expandable = false, latencyMs } = {}) {
 
 // One "what ran" line: skills and tools share it, formatted by usageLine().
 // Nothing runs → no line at all (the assistant's own prose stands alone).
-function usageRow(completedNames, activeNames = []) {
-  const line = usageLine(completedNames, activeNames);
-  if (!line) return null;
+function usageRowSkeleton() {
   const row = document.createElement("p");
   row.className = "usage-row";
   const label = document.createElement("span");
   label.className = "usage-label";
-  label.textContent = line.label;
   const body = document.createElement("span");
   body.className = "usage-row-body";
-  body.textContent = line.body;
   row.append(label, body);
   return row;
+}
+
+function fillUsageRow(row, completedNames, activeNames = []) {
+  const line = usageLine(completedNames, activeNames);
+  if (!line) return false;
+  row.querySelector(".usage-label").textContent = line.label;
+  row.querySelector(".usage-row-body").textContent = line.body;
+  return true;
+}
+
+function usageRow(completedNames, activeNames = []) {
+  const row = usageRowSkeleton();
+  return fillUsageRow(row, completedNames, activeNames) ? row : null;
 }
 
 function againButton() {
@@ -122,19 +131,12 @@ function userMessage(message) {
   return article;
 }
 
-function toolLine(names, active = []) {
-  const line = usageLine(names, active);
-  return line ? `${line.label} ${line.body}` : "";
-}
-
 function assistantMessage(segments, ts) {
   const article = document.createElement("article");
   article.className = "live-card message-assistant";
   const blocks = segments.map((segment) => ({
     segment,
-    thought: settledThinkingNote(segment.reasoning, {
-      toolLine: toolLine(segment.names || []),
-    }),
+    thought: settledThinkingNote(segment.reasoning),
   }));
   const thoughts = blocks.map((block) => block.thought).filter(Boolean);
   const latencyMs = blocks.reduce((total, block) => {
@@ -153,6 +155,10 @@ function assistantMessage(segments, ts) {
       notes: thoughts.map((item) => item.note),
     });
   }
+  // Chronological within a round: thinking, then the reply text produced
+  // during think, then the tool line (tools execute after think). The tool
+  // line used to sit in the thinking note above the text, reading backwards
+  // for replies that announce the tool call ("để mình check...").
   for (const { segment, thought } of blocks) {
     if (thought) article.append(thought.note);
     if (typeof segment.content === "string" && segment.content.trim()) {
@@ -161,10 +167,8 @@ function assistantMessage(segments, ts) {
       body.innerHTML = formatMarkdown(segment.content);
       article.append(body);
     }
-    if (!thought && (segment.names || []).length) {
-      const row = usageRow(segment.names);
-      if (row) article.append(row);
-    }
+    const row = usageRow(segment.names || []);
+    if (row) article.append(row);
   }
   const footer = document.createElement("footer");
   footer.append(againButton());
@@ -295,8 +299,10 @@ export function createLiveStatus(root, startedAt) {
     notes: [],
     notesWrap: null,
     reply: null,
-    active: new Map(),
-    completed: [],
+    // Tool record is per round (reset on each new segment), like the
+    // settled transcript where every round keeps its own usage line.
+    // The row renders after the reply text: tools execute after think.
+    round: { active: new Map(), completed: [], usage: null },
   };
   const notesWrap = document.createElement("div");
   notesWrap.className = "thinking-notes";
@@ -328,14 +334,11 @@ function thinkingElapsed(live) {
   return (sec) => setChatBrand(live, { status: `đang suy nghĩ · ${elapsedLabel(sec)}` });
 }
 
-// One segment per LLM round: settle the previous note (its text and tool
-// line stay, like the settled transcript) and stream the new round into a
-// fresh note below it. Empty previous notes hide themselves via settle().
+// One segment per LLM round: settle the previous note WITH its tool line
+// (each round keeps its own "Đã dùng", like the settled transcript) and
+// stream the new round into a fresh note with a fresh tool record below
+// it. Empty previous notes hide themselves via settle().
 function startThinkingSegment(live) {
-  // The cumulative tool line lives only on the current note: clear it here
-  // so the previous note collapses (empty ones hide themselves) instead of
-  // stacking near-identical "Đã dùng" lines.
-  live.thinking?.setToolLine("", false);
   live.thinking?.settle();
   const next = createThinkingNote({
     live: true,
@@ -346,6 +349,24 @@ function startThinkingSegment(live) {
   live.notes.push(next);
   live.thinking = next;
   live.reply = null;
+  live.round = { active: new Map(), completed: [], usage: null };
+}
+
+// The round's usage row lives after its reply text (tools execute after
+// think), mirroring the settled transcript. Created on the first tool
+// event of the round, updated in place, left in place on segment switch.
+function syncRoundUsage(live) {
+  const active = [...live.round.active.values()];
+  if (!usageLine(live.round.completed, active)) {
+    live.round.usage?.remove();
+    live.round.usage = null;
+    return;
+  }
+  if (!live.round.usage) {
+    live.round.usage = usageRowSkeleton();
+    live.notesWrap.append(live.round.usage);
+  }
+  fillUsageRow(live.round.usage, live.round.completed, active);
 }
 
 // The visible reply streams into its own paragraph below the round's
@@ -374,6 +395,7 @@ export function resetLiveStatus(live, startedAt) {
   live.notes = [fresh];
   live.thinking = fresh;
   live.reply = null;
+  live.round = { active: new Map(), completed: [], usage: null };
 }
 
 export function updateLiveStatus(live, event) {
@@ -397,17 +419,17 @@ export function updateLiveStatus(live, event) {
   const finishes = event?.type === "tool.finished" || event?.type === "skill.finished";
   const callKey = event?.call_id || `${event?.type}:${event?.name || "tool"}`;
   if (starts) {
-    live.active.set(callKey, event.name || "tool");
+    live.round.active.set(callKey, event.name || "tool");
   } else if (finishes) {
-    const name = live.active.get(callKey) || event.name || "tool";
-    live.active.delete(callKey);
-    live.completed.push(name);
+    const name = live.round.active.get(callKey) || event.name || "tool";
+    live.round.active.delete(callKey);
+    live.round.completed.push(name);
   }
   if (event?.type === "turn.failed" || event?.type === "turn.cancelled") {
     // The turn is over, so nothing is still running: settle the row instead
     // of leaving it claiming a call is in flight.
-    live.completed.push(...live.active.values());
-    live.active.clear();
+    live.round.completed.push(...live.round.active.values());
+    live.round.active.clear();
   }
   if (
     event?.type === "turn.completed"
@@ -416,7 +438,5 @@ export function updateLiveStatus(live, event) {
   ) {
     for (const note of live.notes) note.settle();
   }
-  live.article.querySelectorAll(".usage-row").forEach((node) => node.remove());
-  const active = [...live.active.values()];
-  live.thinking?.setToolLine(toolLine(live.completed, active), active.length > 0);
+  syncRoundUsage(live);
 }

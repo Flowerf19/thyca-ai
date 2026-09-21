@@ -155,7 +155,37 @@ def _stream_end(item: object) -> bool:
     return item is SENTINEL or item is TurnHub.SENTINEL
 
 
-def pump_stream(handler, items: queue.Queue, state: dict) -> None:
+def _log_turn_failure(
+    app: ChatApp | None, session_id: str, model: str | None, exc: Exception
+) -> None:
+    """One stderr line per failed turn (lands in serve.log under --daemon).
+
+    Never raises: logging must not break the error response itself. The
+    message is the public redacted/capped text, never a key or traceback.
+    """
+    try:
+        resolved = model or (app.default_model() if app is not None else "?")
+        provider_id = app.provider_id_for(model) if app is not None else "?"
+    except Exception:
+        resolved, provider_id = model or "?", "?"
+    _status, code, message = public_turn_error(exc)
+    print(
+        f"turn failed session={session_id} model={resolved} "
+        f"provider={provider_id} code={code} msg={message}",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def pump_stream(
+    handler,
+    items: queue.Queue,
+    state: dict,
+    *,
+    app: ChatApp | None = None,
+    session_id: str = "?",
+    model: str | None = None,
+) -> None:
     """Write NDJSON from *items* until a sentinel, or HTTP JSON on pre-accept.
 
     ``handler`` is the BaseHTTPRequestHandler — accessed only through its
@@ -169,9 +199,11 @@ def pump_stream(handler, items: queue.Queue, state: dict) -> None:
                 handler._stream_headers()
                 write_line(handler.wfile, first.to_dict())
             else:
+                _log_turn_failure(app, session_id, model, RuntimeError("no turn.accepted"))
                 handler._json(503, {"error": "chat unavailable"})
                 return
         elif _stream_end(first):
+            _log_turn_failure(app, session_id, model, RuntimeError("empty turn queue"))
             handler._json(503, {"error": "chat unavailable"})
             return
         else:
@@ -182,6 +214,7 @@ def pump_stream(handler, items: queue.Queue, state: dict) -> None:
                 write_line(handler.wfile, {"type": "turn.cancelled"})
                 return
             status, _code, message = public_turn_error(exc)
+            _log_turn_failure(app, session_id, model, exc)
             handler._json(status, {"error": message})
             return
         terminal = False
@@ -203,6 +236,7 @@ def pump_stream(handler, items: queue.Queue, state: dict) -> None:
                 write_line(handler.wfile, {"type": "turn.cancelled"})
             else:
                 _code, _message = public_turn_error(value)[1:]
+                _log_turn_failure(app, session_id, model, value)
                 write_line(
                     handler.wfile, {"type": "turn.failed", "code": _code, "message": _message}
                 )
@@ -210,6 +244,7 @@ def pump_stream(handler, items: queue.Queue, state: dict) -> None:
         if not terminal and not state["disconnected"]:
             # Sentinel with no terminal item: write the constant public
             # failure so the client never sees a stream without a terminal.
+            _log_turn_failure(app, session_id, model, RuntimeError("missing terminal"))
             write_line(
                 handler.wfile,
                 {
@@ -247,7 +282,7 @@ def stream_turn(
     )
     worker.start()
     try:
-        pump_stream(handler, items, state)
+        pump_stream(handler, items, state, app=app, session_id=session_id, model=model)
     finally:
         # The worker is a daemon and only this session's turn was ever at
         # stake, so persistence completes regardless of the client. A live
@@ -335,6 +370,7 @@ def session_turn(handler, app: ChatApp | None, session_id: str) -> None:
         handler._json(200, {"cancelled": True})
     except Exception as exc:
         status, _code, message = public_turn_error(exc)
+        _log_turn_failure(app, session_id, model, exc)
         handler._json(status, {"error": message})
 
 
@@ -391,7 +427,12 @@ def session_turn_follow(handler, app: ChatApp | None, session_id: str) -> None:
         return
     items = hub.subscribe()
     try:
-        pump_stream(handler, items, {"disconnected": False})
+        # A follower never learns the turn's model override: log unknown
+        # rather than the default, which would misattribute the failure.
+        pump_stream(
+            handler, items, {"disconnected": False}, app=app, session_id=session_id,
+            model="?",
+        )
     finally:
         hub.drop(items)
 

@@ -188,3 +188,50 @@ def test_aggregate_by_model_and_unknown_cost() -> None:
     assert statuses["completed"] == 2
     hours = {row["hour"]: row["requests"] for row in data["by_hour"]}
     assert hours["09"] == 2
+
+
+def test_error_marker_forces_failed_and_payload() -> None:
+    marked = _session(
+        "2026-08-26T09-12-03_abcm",
+        [
+            Message(
+                role="user",
+                content="go",
+                ts=TS,
+                meta={"error": {"code": "llm_error", "message": "provider HTTP 404: gone"}},
+            ),
+        ],
+    )
+    (turn,) = turns_from_session(marked)
+    assert turn.status == "failed"
+    assert turn.to_payload()["error"] == {"code": "llm_error", "message": "provider HTTP 404: gone"}
+
+
+def test_error_marker_wins_over_trailing_assistant() -> None:
+    # A turn that died mid-loop after persisting round 1 must not read completed.
+    mid = _session(
+        "2026-08-26T09-12-03_abcn",
+        [
+            Message(
+                role="user",
+                content="go",
+                ts=TS,
+                meta={"error": {"code": "chat_unavailable", "message": "chat unavailable"}},
+            ),
+            Message(role="assistant", content="partial", ts=TS2, meta={"kind": "llm"}),
+        ],
+    )
+    assert turns_from_session(mid)[0].status == "failed"
+
+
+def test_completed_turn_has_no_error() -> None:
+    ok = _session(
+        "2026-08-26T09-12-03_abco",
+        [
+            Message(role="user", content="go", ts=TS),
+            Message(role="assistant", content="done", ts=TS2, meta={"kind": "llm"}),
+        ],
+    )
+    (turn,) = turns_from_session(ok)
+    assert turn.status == "completed"
+    assert turn.to_payload()["error"] is None

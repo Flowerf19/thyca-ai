@@ -13,6 +13,13 @@ def _reasoning(stage: Stage) -> str | None:
     return None
 
 
+def _reasoning_details(stage: Stage) -> list[dict] | None:
+    value = getattr(getattr(stage, "reply", None), "reasoning_details", None)
+    if isinstance(value, list) and value and all(isinstance(item, dict) for item in value):
+        return [dict(item) for item in value]
+    return None
+
+
 def _tool_message(
     result: ToolResult, latency_ms: int | None = None, round_no: int | None = None
 ) -> Message:
@@ -71,7 +78,13 @@ class Observe:
         content = "" if stage.reply is None else (stage.reply.content or "")
         meta = self._assistant_meta(stage, kind="llm")
         self._sessions.append(
-            Message(role="assistant", content=content, meta=meta, reasoning=_reasoning(stage))
+            Message(
+                role="assistant",
+                content=content,
+                meta=meta,
+                reasoning=_reasoning(stage),
+                reasoning_details=_reasoning_details(stage),
+            )
         )
         return content
 
@@ -85,6 +98,7 @@ class Observe:
             tool_calls=stage.reply.tool_calls,
             meta=meta,
             reasoning=_reasoning(stage),
+            reasoning_details=_reasoning_details(stage),
         )
         ordered = self._order_results(stage.reply.tool_calls, stage.results)
         latencies = getattr(stage, "tool_latencies", {}) or {}

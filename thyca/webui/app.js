@@ -1,6 +1,6 @@
 import { ApiError, deleteJson, getJson, getNdjson, patchJson, postJson, postNdjson } from "./backend/api.js";
-import { effortChoicesFor, fillEffortSelect } from "./backend/reasoning-effort.js";
-import { SEND_ERROR_STATUS } from "./backend/chat-status.js";
+import { effortChoicesFor, effortDefaultFor, fillEffortSelect } from "./backend/reasoning-effort.js";
+import { sendErrorMessage } from "./backend/chat-status.js";
 import { cleanText, formatSessionTime } from "./backend/format.js";
 import {
   createLiveStatus,
@@ -442,10 +442,9 @@ async function followTurn(sessionId, startedAt) {
   let polling = false;
   let live = liveTurns.get(sessionId);
   if (live) {
-    // Replay will rebuild the usage row from the hub log; rebuild segments
-    // too, so the replay does not duplicate notes an earlier attempt added.
-    live.active.clear();
-    live.completed.length = 0;
+    // Replay rebuilds usage rows and segments from the hub log (reset also
+    // clears the per-round tool record), so the replay does not duplicate
+    // notes an earlier attempt added.
     resetLiveStatus(live, startedAt);
     live.article.querySelectorAll(".usage-row").forEach((node) => node.remove());
   } else {
@@ -671,7 +670,7 @@ async function sendMessage() {
         watchRunning(sessionId);
       } else {
         const live = el.messageList.querySelector(".live-status:last-of-type");
-        if (live) setChatBrand(live, { state: "error", status: SEND_ERROR_STATUS });
+        if (live) setChatBrand(live, { state: "error", status: sendErrorMessage(error) });
       }
     }
     // Hand the text back unless the user already started the next message.
@@ -744,7 +743,7 @@ async function retryMessage() {
         watchRunning(sessionId);
       } else {
         const live = el.messageList.querySelector(".live-status:last-of-type");
-        if (live) setChatBrand(live, { state: "error", status: SEND_ERROR_STATUS });
+        if (live) setChatBrand(live, { state: "error", status: sendErrorMessage(error) });
       }
     }
   } finally {
@@ -817,21 +816,44 @@ function bind() {
   }
 }
 
+function hostOf(baseUrl) {
+  try {
+    return new URL(String(baseUrl || "")).host;
+  } catch {
+    return "";
+  }
+}
+
 function fillComposerControls(payload, { keepSelection = false } = {}) {
   const values = payload?.values || {};
-  const provider = values.provider || {};
+  const defaultModel = values.defaultModel || "";
+  const models = values.models && typeof values.models === "object" ? values.models : {};
+  const providers = values.providers && typeof values.providers === "object" ? values.providers : {};
   const catalog = [...new Set(
-    [provider.model, ...Object.keys(values.models || {})].filter(
+    [defaultModel, ...Object.keys(models)].filter(
       (id) => typeof id === "string" && id,
     ),
   )];
+  const providerOf = (id) => models[id]?.provider || values.defaultProvider || "default";
+  const groups = new Map();
+  for (const id of catalog) {
+    const pid = providerOf(id);
+    if (!groups.has(pid)) groups.set(pid, []);
+    groups.get(pid).push(id);
+  }
   const current = el.model.value;
   el.model.replaceChildren(
-    ...catalog.map((id) => {
-      const option = document.createElement("option");
-      option.value = id;
-      option.textContent = id;
-      return option;
+    ...[...groups.entries()].map(([pid, ids]) => {
+      const group = document.createElement("optgroup");
+      const host = hostOf(providers[pid]?.baseUrl);
+      group.label = host ? `${pid} — ${host}` : pid;
+      for (const id of ids) {
+        const option = document.createElement("option");
+        option.value = id;
+        option.textContent = id;
+        group.append(option);
+      }
+      return group;
     }),
   );
   if (!catalog.length) {
@@ -843,16 +865,16 @@ function fillComposerControls(payload, { keepSelection = false } = {}) {
     el.model.append(option);
   } else if (keepSelection && current && catalog.includes(current)) {
     // Keep the composer's selection (a per-turn override) on re-fetch;
-    // provider.model is only the initial value.
+    // defaultModel is only the initial value.
     el.model.value = current;
-  } else if (provider.model) {
-    el.model.value = provider.model;
+  } else if (defaultModel) {
+    el.model.value = defaultModel;
   }
   const schema = payload?.schema;
   fillEffortSelect(
     el.effort,
     effortChoicesFor(schema, values, el.model.value),
-    provider.reasoningEffort,
+    effortDefaultFor(values, el.model.value),
     schema,
   );
 }

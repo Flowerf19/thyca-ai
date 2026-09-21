@@ -50,3 +50,17 @@ def test_assemble_injects_system_from_snapshot() -> None:
 def test_assemble_rejects_non_string_user_message() -> None:
     with pytest.raises(ValueError):
         Assemble().assemble(Stage(), 123)  # type: ignore[arg-type]
+
+
+def test_assemble_drops_naming_meta_message() -> None:
+    naming = Message(
+        role="assistant",
+        content=None,
+        ts="2026-01-01T00:00:00Z",
+        meta={"kind": "naming"},
+    )
+    stage = Stage(messages=[naming], hot=object())
+
+    Assemble().assemble(stage, "hello")
+
+    assert [(m.role, m.content) for m in stage.messages] == [("user", "hello")]

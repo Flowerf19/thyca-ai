@@ -38,7 +38,7 @@ def normalize_usage(raw: dict | None, provider: str) -> dict | None:
     completion: int | None = None
     total: int | None = None
     reasoning: int | None = None
-    if provider in ("openai", "openai_chat", "openai_compat", "openai_responses"):
+    if provider in ("openai", "openai_chat", "openai_compat"):
         prompt = _coerce_int(raw.get("prompt_tokens"))
         completion = _coerce_int(raw.get("completion_tokens"))
         total = _coerce_int(raw.get("total_tokens"))
@@ -46,6 +46,17 @@ def normalize_usage(raw: dict | None, provider: str) -> dict | None:
         if isinstance(details, dict):
             cached = _coerce_int(details.get("cached_tokens"))
         c_details = raw.get("completion_tokens_details")
+        if isinstance(c_details, dict):
+            reasoning = _coerce_int(c_details.get("reasoning_tokens"))
+    elif provider == "openai_responses":
+        # Responses API shape (verified live): input/output counters.
+        prompt = _coerce_int(raw.get("input_tokens"))
+        completion = _coerce_int(raw.get("output_tokens"))
+        total = _coerce_int(raw.get("total_tokens"))
+        details = raw.get("input_tokens_details")
+        if isinstance(details, dict):
+            cached = _coerce_int(details.get("cached_tokens"))
+        c_details = raw.get("output_tokens_details")
         if isinstance(c_details, dict):
             reasoning = _coerce_int(c_details.get("reasoning_tokens"))
     elif provider == "anthropic":
@@ -117,6 +128,7 @@ class ChatReply:
     finish_reason: str = ""
     model: str | None = None
     reasoning: str | None = None
+    reasoning_details: list[dict] | None = None
 
 
 class Connect(ABC):

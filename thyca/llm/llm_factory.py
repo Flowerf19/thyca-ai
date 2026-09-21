@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from thyca.config import ProviderCfg
 
-from .anthropic_chat import AnthropicChat
-from .google_chat import GoogleChat
 from .llm_base import Connect
 from .openai_chat import OpenAIChat
 from .openai_responses import OpenAIResponses
@@ -14,8 +12,6 @@ _KINDS = {
     "openai_compat": OpenAIChat,
     "openai_responses": OpenAIResponses,
     "responses": OpenAIResponses,
-    "google": GoogleChat,
-    "anthropic": AnthropicChat,
 }
 
 
@@ -31,4 +27,6 @@ class ConnectFactory:
         cls = _KINDS[key]
         if cls is OpenAIChat:
             return OpenAIChat(provider or ProviderCfg())
+        if cls is OpenAIResponses:
+            return OpenAIResponses(provider or ProviderCfg())
         return cls()

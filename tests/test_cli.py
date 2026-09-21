@@ -231,3 +231,75 @@ def test_print_llm_error_is_safe(tmp_path: Path) -> None:
     raw = json.dumps(default_config().to_dict())
     assert "sk-" not in err.getvalue()
     assert raw not in err.getvalue()
+
+
+def test_print_model_override_routes_to_its_provider(tmp_path: Path) -> None:
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from thyca.config import ModelCfg, ProviderEntry
+
+    calls_a: list = []
+    calls_b: list = []
+
+    def _stub(calls: list, reply_model: str):
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:
+                length = int(self.headers.get("Content-Length", "0"))
+                raw = self.rfile.read(length) if length else b""
+                body = json.loads(raw.decode("utf-8"))
+                calls.append(
+                    {
+                        "auth": self.headers.get("Authorization"),
+                        "model": body.get("model"),
+                    }
+                )
+                payload = json.dumps(
+                    {
+                        "model": reply_model,
+                        "choices": [{"message": {"content": "stub-ok"}}],
+                    }
+                ).encode()
+
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, format: str, *args: object) -> None:
+                return
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        return server, thread
+
+    stub_a, thread_a = _stub(calls_a, "model-a")
+    stub_b, thread_b = _stub(calls_b, "model-b")
+    try:
+        base_a = f"http://127.0.0.1:{stub_a.server_address[1]}"
+        base_b = f"http://127.0.0.1:{stub_b.server_address[1]}"
+        cfg = default_config()
+        cfg = replace(
+            cfg,
+            providers={
+                "default": ProviderEntry(baseUrl=base_a, apiKey="sk-a"),
+                "second": ProviderEntry(baseUrl=base_b, apiKey="sk-b"),
+            },
+            defaultModel="model-a",
+            models={"model-a": ModelCfg(), "model-b": ModelCfg(provider="second")},
+        )
+        save(cfg, tmp_path / "config.json")
+        cli, out, _err = _cli(tmp_path, None)
+        assert cli.main(["-p", "--model", "model-b", "hi"]) == 0
+        assert "stub-ok" in out.getvalue()
+        assert calls_a == []
+        assert calls_b == [{"auth": "Bearer sk-b", "model": "model-b"}]
+    finally:
+        stub_a.shutdown()
+        thread_a.join(timeout=2)
+        stub_a.server_close()
+        stub_b.shutdown()
+        thread_b.join(timeout=2)
+        stub_b.server_close()

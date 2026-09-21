@@ -1608,7 +1608,7 @@ def test_stream_model_and_effort_reach_provider(tmp_path: Path, monkeypatch) -> 
     cfg = replace(
         cfg,
         models={"card-model": ModelCfg()},
-        provider=replace(cfg.provider, model="gpt-4o-mini", reasoningEffort="high"),
+        defaultModel="gpt-4o-mini",
     )
     save(cfg, tmp_path / "config.json")
     app = ChatApp(tmp_path, load(tmp_path / "config.json"))
@@ -1630,7 +1630,7 @@ def test_stream_model_and_effort_reach_provider(tmp_path: Path, monkeypatch) -> 
         card = replace(
             cfg,
             models={"card-model": ModelCfg(reasoningEffort="low")},
-            provider=replace(cfg.provider, model="gpt-4o-mini", reasoningEffort="high"),
+            defaultModel="gpt-4o-mini",
         )
         save(card, tmp_path / "config.json")
         inherited = _stream_lines(
@@ -1867,3 +1867,292 @@ def test_cancel_then_retry_keeps_one_user(tmp_path: Path) -> None:
         assert user_turns.count(["hold"]) == 2
     finally:
         _stop(httpd, thread)
+
+
+def _provider_stub(calls: list, reply_model: str):
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(length) if length else b""
+            body = json.loads(raw.decode("utf-8"))
+            calls.append(
+                    {
+                        "path": self.path,
+                        "auth": self.headers.get("Authorization"),
+                        "model": body.get("model"),
+                    }
+                )
+            payload = json.dumps(
+                {
+                    "model": reply_model,
+                    "choices": [
+                        {
+                            "message": {"content": "stub-ok"},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 5,
+                        "completion_tokens": 2,
+                        "total_tokens": 7,
+                    },
+                }
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread
+
+
+def test_turn_model_override_routes_to_its_provider(tmp_path: Path) -> None:
+    calls_a: list = []
+    calls_b: list = []
+    stub_a, thread_a = _provider_stub(calls_a, "model-a")
+    stub_b, thread_b = _provider_stub(calls_b, "model-b")
+    try:
+        base_a = f"http://127.0.0.1:{stub_a.server_address[1]}"
+        base_b = f"http://127.0.0.1:{stub_b.server_address[1]}"
+        cfg = default_config()
+        cfg = replace(
+            cfg,
+            providers={
+                "default": replace(
+                    cfg.providers["default"], baseUrl=base_a, apiKey="sk-a"
+                ),
+                "second": replace(
+                    cfg.providers["default"], baseUrl=base_b, apiKey="sk-b"
+                ),
+            },
+            defaultModel="model-a",
+            models={"model-a": ModelCfg(), "model-b": ModelCfg(provider="second")},
+        )
+        save(cfg, tmp_path / "config.json")
+        app = ChatApp(tmp_path, load(tmp_path / "config.json"))
+        httpd, thread = _start(tmp_path, app)
+        try:
+            created = _json(httpd, "/api/sessions", method="POST", data=b"")
+            path = f"/api/sessions/{created['id']}/turn/stream"
+            lines_b = _stream_lines(
+                _stream(httpd, path, data=b'{"text":"hi b","model":"model-b"}')
+            )
+            assert lines_b[-1]["type"] == "turn.completed"
+            lines_a = _stream_lines(
+                _stream(httpd, path, data=b'{"text":"hi a","model":"model-a"}')
+            )
+            assert lines_a[-1]["type"] == "turn.completed"
+        finally:
+            _stop(httpd, thread)
+            app.shutdown()
+        assert calls_b and all(
+            call["auth"] == "Bearer sk-b" and call["model"] == "model-b"
+            for call in calls_b
+        )
+        assert calls_a and all(
+            call["auth"] == "Bearer sk-a" and call["model"] == "model-a"
+            for call in calls_a
+        )
+    finally:
+        stub_a.shutdown()
+        thread_a.join(timeout=2)
+        stub_a.server_close()
+        stub_b.shutdown()
+        thread_b.join(timeout=2)
+        stub_b.server_close()
+
+
+def test_failed_turn_logs_one_stderr_line(tmp_path: Path, capsys) -> None:
+    class BoomLLM:
+        async def chat(self, messages, tools=None):
+            raise LLMError("provider HTTP 404: model gone")
+
+        async def aclose(self):
+            return
+
+    app = _chat(tmp_path, BoomLLM())
+    httpd, thread = _start(tmp_path, app)
+    try:
+        created = _json(httpd, "/api/sessions", method="POST", data=b"")
+        path = f"/api/sessions/{created['id']}/turn/stream"
+        lines = _stream_lines(_stream(httpd, path, data=b'{"text":"hi"}'))
+        assert lines[-1]["type"] == "turn.failed"
+        assert lines[-1]["code"] == "llm_error"
+        assert "model gone" in lines[-1]["message"]
+    finally:
+        _stop(httpd, thread)
+        app.shutdown()
+    err = capsys.readouterr().err
+    assert (
+        f"turn failed session={created['id']} model=gpt-4o-mini "
+        "provider=default code=llm_error msg=provider HTTP 404: model gone" in err
+    )
+
+
+def test_stream_invalid_model_logs_preaccept_failure(tmp_path: Path, capsys) -> None:
+    app = _chat(tmp_path, FakeLLM(ChatReply(content="unused")))
+    httpd, thread = _start(tmp_path, app)
+    try:
+        created = _json(httpd, "/api/sessions", method="POST", data=b"")
+        path = f"/api/sessions/{created['id']}/turn/stream"
+        request = Request(
+            _url(httpd, path),
+            data=b'{"text":"hi","model":"ghost-model"}',
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            urlopen(request, timeout=5)
+            raise AssertionError("expected HTTP 400")
+        except HTTPError as exc:
+            assert exc.code == 400
+            assert json.loads(exc.read().decode()) == {"error": "invalid model"}
+    finally:
+        _stop(httpd, thread)
+        app.shutdown()
+    err = capsys.readouterr().err
+    assert (
+        f"turn failed session={created['id']} model=ghost-model "
+        "provider=default code=invalid_model msg=invalid model" in err
+    )
+
+
+def test_failed_turn_marks_transcript_and_trace(tmp_path: Path) -> None:
+    class BoomLLM:
+        async def chat(self, messages, tools=None):
+            raise LLMError("provider HTTP 404: model gone")
+
+        async def aclose(self):
+            return
+
+    app = _chat(tmp_path, BoomLLM())
+    httpd, thread = _start(tmp_path, app)
+    try:
+        created = _json(httpd, "/api/sessions", method="POST", data=b"")
+        path = f"/api/sessions/{created['id']}/turn/stream"
+        lines = _stream_lines(_stream(httpd, path, data=b'{"text":"hi"}'))
+        assert lines[-1]["type"] == "turn.failed"
+        stored = SessionManager(tmp_path / "sessions").load(created["id"])
+        users = [item for item in stored.messages if item.role == "user"]
+        assert users[-1].meta == {
+            "error": {"code": "llm_error", "message": "provider HTTP 404: model gone"}
+        }
+        traces = _json(httpd, "/api/traces")
+        mine = [row for row in traces["traces"] if row["session_id"] == created["id"]]
+        assert len(mine) == 1
+        assert mine[0]["status"] == "failed"
+        assert mine[0]["error"] == {
+            "code": "llm_error",
+            "message": "provider HTTP 404: model gone",
+        }
+    finally:
+        _stop(httpd, thread)
+        app.shutdown()
+
+
+def test_retry_after_failure_strips_marker_on_success(tmp_path: Path) -> None:
+    class FlakyLLM:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def chat(self, messages, tools=None):
+            self.calls += 1
+            if self.calls == 1:
+                raise LLMError("boom-1")
+            return ChatReply(content="recovered")
+
+        async def aclose(self):
+            return
+
+    app = _chat(tmp_path, FlakyLLM())
+    httpd, thread = _start(tmp_path, app)
+    try:
+        created = _json(httpd, "/api/sessions", method="POST", data=b"")
+        path = f"/api/sessions/{created['id']}/turn/stream"
+        failed = _stream_lines(_stream(httpd, path, data=b'{"text":"hi"}'))
+        assert failed[-1]["type"] == "turn.failed"
+        retried = _stream_lines(_stream(httpd, path, data=b'{"retry":true}'))
+        assert retried[-1]["type"] == "turn.completed"
+        stored = SessionManager(tmp_path / "sessions").load(created["id"])
+        users = [item for item in stored.messages if item.role == "user"]
+        assert (users[-1].meta or {}).get("error") is None
+        assistants = [
+            item
+            for item in stored.messages
+            if item.role == "assistant" and (item.meta or {}).get("kind") != "naming"
+        ]
+        assert assistants[-1].content == "recovered"
+    finally:
+        _stop(httpd, thread)
+        app.shutdown()
+
+
+def test_cancelled_turn_leaves_no_error_marker(tmp_path: Path) -> None:
+    started = threading.Event()
+    gate = asyncio.Event()
+
+    class Blocked:
+        async def chat(self, messages, tools=None):
+            started.set()
+            await gate.wait()
+            return ChatReply(content="should-not")
+
+    app = _chat(tmp_path, Blocked())
+    httpd, thread = _start(tmp_path, app)
+    try:
+        created = _json(httpd, "/api/sessions", method="POST", data=b"")
+        session_id = created["id"]
+        response = _stream(
+            httpd, f"/api/sessions/{session_id}/turn/stream", data=b'{"text":"hold"}'
+        )
+        assert json.loads(response.readline().decode("utf-8")) == {"type": "turn.accepted"}
+        assert started.wait(2)
+        cancelled = _json(
+            httpd, f"/api/sessions/{session_id}/turn/cancel", method="POST", data=b""
+        )
+        assert cancelled == {"ok": True}
+        assert _stream_lines(response)[-1]["type"] == "turn.cancelled"
+        stored = SessionManager(tmp_path / "sessions").load(session_id)
+        assert [(item.role, item.content) for item in stored.messages] == [("user", "hold")]
+        assert (stored.messages[0].meta or {}).get("error") is None
+    finally:
+        _stop(httpd, thread)
+        app.shutdown()
+
+
+def test_unexpected_turn_error_marks_chat_unavailable(tmp_path: Path) -> None:
+    class BoomGeneric:
+        async def chat(self, messages, tools=None):
+            raise RuntimeError("boom-secret-path-/tmp/x")
+
+        async def aclose(self):
+            return
+
+    app = _chat(tmp_path, BoomGeneric())
+    httpd, thread = _start(tmp_path, app)
+    try:
+        created = _json(httpd, "/api/sessions", method="POST", data=b"")
+        path = f"/api/sessions/{created['id']}/turn/stream"
+        lines = _stream_lines(_stream(httpd, path, data=b'{"text":"hi"}'))
+        assert lines[-1] == {
+            "type": "turn.failed",
+            "code": "chat_unavailable",
+            "message": "chat unavailable",
+        }
+        stored = SessionManager(tmp_path / "sessions").load(created["id"])
+        users = [item for item in stored.messages if item.role == "user"]
+        assert users[-1].meta == {
+            "error": {"code": "chat_unavailable", "message": "chat unavailable"}
+        }
+    finally:
+        _stop(httpd, thread)
+        app.shutdown()

@@ -34,7 +34,7 @@ def _eval(node: str, expression: str) -> object:
     source = (
         f"import {{ NO_SESSION_KEY, overviewMetrics, aggregateSessions, knownCostTotal,"
         f" shareLabel, shareRatio, priceRates, estimatedCostSplit, turnCost,"
-        f" modelTurnCoverage }}"
+        f" modelTurnCoverage, averageDisplay }}"
         f" from '{SCRIPT.as_posix()}';\n"
         f"import {{ fetchAllTraces }} from '{TODAY_SCRIPT.as_posix()}';\n"
         f"console.log(JSON.stringify(await ({expression})));\n"
@@ -61,9 +61,37 @@ def test_turn_count_vs_request_count(node: str) -> None:
     assert overview["requests"] == 5
     assert overview["costUsd"] == pytest.approx(0.03)
     assert overview["pricedTurns"] == 2
+    assert overview["averageTurns"] == 2  # no status on these rows → not failed
+    assert overview["averageCostUsd"] == pytest.approx(0.03)
     assert overview["inputTokens"] == 60 + 50  # prompt minus cache subset
     assert overview["cacheTokens"] == 40
     assert overview["outputTokens"] == 30
+
+
+def test_average_skips_failed_and_counts_only_priced_turns(node: str) -> None:
+    # The per-turn average runs over priced, non-failed turns: a failed turn's
+    # recorded cost stays in the total but is skipped from the average basis,
+    # and unpriced turns cannot contribute either way.
+    rows = [
+        {"session_id": "s1", "turn_index": 0, "status": "failed", "cost_usd": 0.5},
+        {"session_id": "s1", "turn_index": 1, "status": "completed", "cost_usd": 0.2},
+        {"session_id": "s1", "turn_index": 2, "status": "completed", "cost_usd": None},
+        {"session_id": "s1", "turn_index": 3, "status": "loop_limit", "cost_usd": 0.1},
+    ]
+    overview = _eval(node, "overviewMetrics($rows)".replace("$rows", json.dumps(rows)))
+    assert overview["turns"] == 4 and overview["pricedTurns"] == 3
+    assert overview["costUsd"] == pytest.approx(0.8)  # total keeps the failed cost
+    assert overview["averageTurns"] == 2  # failed turn skipped, loop_limit kept
+    assert overview["averageCostUsd"] == pytest.approx(0.3)
+
+
+def test_average_basis_zero_when_every_priced_turn_failed(node: str) -> None:
+    rows = [
+        {"session_id": "s1", "turn_index": 0, "status": "failed", "cost_usd": 0.5},
+        {"session_id": "s1", "turn_index": 1, "status": "completed", "cost_usd": None},
+    ]
+    overview = _eval(node, "overviewMetrics($rows)".replace("$rows", json.dumps(rows)))
+    assert overview["averageTurns"] == 0 and overview["averageCostUsd"] is None
 
 
 def test_session_aggregation_dedupes_and_groups(node: str) -> None:
@@ -396,3 +424,47 @@ def test_pager_resets_on_filter_sort_and_snapshot(node):
     assert 'setAttribute("aria-label", "Trang trước")' in script
     assert 'setAttribute("aria-label", "Trang sau")' in script
     assert 'className = "screen-button journal-pager-step"' in script
+
+
+def test_average_display_value_and_meta(node: str) -> None:
+    rows = [
+        {"session_id": "s1", "turn_index": 0, "status": "completed", "cost_usd": 0.2},
+        {"session_id": "s1", "turn_index": 1, "status": "failed", "cost_usd": 0.5},
+        {"session_id": "s1", "turn_index": 2, "status": "completed", "cost_usd": None},
+        {"session_id": "s1", "turn_index": 3, "status": "completed", "cost_usd": 0.1},
+    ]
+    display = _eval(
+        node,
+        "averageDisplay(overviewMetrics($rows))".replace("$rows", json.dumps(rows)),
+    )
+    assert display["value"] == pytest.approx(0.15)
+    assert display["meta"] == [
+        "trên 2 lượt đã định giá",
+        "bỏ 2 lượt chưa định giá hoặc lỗi",
+    ]
+
+
+def test_average_display_empty_basis(node: str) -> None:
+    rows = [
+        {"session_id": "s1", "turn_index": 0, "status": "failed", "cost_usd": 0.5},
+    ]
+    display = _eval(
+        node,
+        "averageDisplay(overviewMetrics($rows))".replace("$rows", json.dumps(rows)),
+    )
+    assert display == {"value": None, "meta": ["không có lượt nào đủ giá để tính trung bình"]}
+    empty = _eval(node, "averageDisplay(overviewMetrics([]))")
+    assert empty == {"value": None, "meta": ["chưa có lượt nào"]}
+
+
+def test_average_display_full_coverage_single_line(node: str) -> None:
+    rows = [
+        {"session_id": "s1", "turn_index": 0, "status": "completed", "cost_usd": 0.0},
+        {"session_id": "s1", "turn_index": 1, "status": "completed", "cost_usd": 0.4},
+    ]
+    display = _eval(
+        node,
+        "averageDisplay(overviewMetrics($rows))".replace("$rows", json.dumps(rows)),
+    )
+    assert display["value"] == pytest.approx(0.2)
+    assert display["meta"] == ["trên 2 lượt đã định giá"]

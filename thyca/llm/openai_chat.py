@@ -200,6 +200,10 @@ async def _sleep_retry_after(response: httpx.Response) -> None:
 
 def _to_openai_message(message: Message) -> dict[str, Any]:
     payload: dict[str, Any] = {"role": message.role, "content": message.content}
+    if message.reasoning_details:
+        # Round-trip provider thinking signatures; absent for providers that
+        # never emit them, so payloads there are byte-identical to before.
+        payload["reasoning_details"] = [dict(detail) for detail in message.reasoning_details]
     if message.tool_calls:
         payload["tool_calls"] = [
             {

@@ -8,7 +8,7 @@
    `requests` counts model calls inside a turn, so requests != turns. Stored
    cost_usd is authoritative; null means "no priced turn yet", not $0. */
 
-import { cleanText } from "./format.js";
+import { cleanText, formatInteger } from "./format.js";
 import { splitPromptTokens } from "./analytics-data.js";
 import { selectedModelConfig, tokenCost } from "./trace-data.js";
 
@@ -46,11 +46,17 @@ export function turnCost(row) {
 
 /* Overview metrics for the four-metric header. `costUsd` sums only priced
    turns and is null when nothing was priced; `pricedTurns` lets the caller
-   label a partial total instead of presenting it as complete. */
+   label a partial total instead of presenting it as complete.
+   `averageCostUsd`/`averageTurns` are the per-turn average basis: priced
+   turns that are not failed — error turns are skipped, unpriced turns cannot
+   contribute — so the average always divides a cost sum by exactly the turns
+   that make it up, even when coverage is partial. */
 export function overviewMetrics(rows) {
   const turns = dedupeTurns(rows);
   let costUsd = null;
   let pricedTurns = 0;
+  let averageCostUsd = null;
+  let averageTurns = 0;
   let requests = 0;
   let inputTokens = 0;
   let cacheTokens = 0;
@@ -60,6 +66,10 @@ export function overviewMetrics(rows) {
     if (cost != null) {
       costUsd = (costUsd ?? 0) + cost;
       pricedTurns += 1;
+      if (cleanText(row.status) !== "failed") {
+        averageCostUsd = (averageCostUsd ?? 0) + cost;
+        averageTurns += 1;
+      }
     }
     requests += Number(row.requests) || 0;
     const { input, cache } = splitPromptTokens(row.prompt_tokens, row.cached_tokens);
@@ -72,12 +82,37 @@ export function overviewMetrics(rows) {
     requests,
     costUsd,
     pricedTurns,
+    averageCostUsd,
+    averageTurns,
     // Raw prompt sum = uncached input + cache (cache is a subset of prompt),
     // so the overview can show the full input side with a cache note.
     promptTokens: inputTokens + cacheTokens,
     inputTokens,
     cacheTokens,
     outputTokens,
+  };
+}
+
+/* Per-turn average for the header: value plus its meta lines. Runs over the
+   average basis (priced, non-failed turns); null value with an explanatory
+   line when no turn qualifies. Kept here (not in cost.js) so the formula
+   and wording stay unit-tested. */
+export function averageDisplay(overview) {
+  const turns = Number(overview?.averageTurns) || 0;
+  const cost = overview?.averageCostUsd;
+  if (!turns || cost == null) {
+    return {
+      value: null,
+      meta: [overview?.turns ? "không có lượt nào đủ giá để tính trung bình" : "chưa có lượt nào"],
+    };
+  }
+  const skipped = (Number(overview.turns) || 0) - turns;
+  return {
+    value: cost / turns,
+    meta: [
+      `trên ${formatInteger(turns)} lượt đã định giá`,
+      ...(skipped > 0 ? [`bỏ ${formatInteger(skipped)} lượt chưa định giá hoặc lỗi`] : []),
+    ],
   };
 }
 

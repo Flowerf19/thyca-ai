@@ -18,6 +18,7 @@ from thyca.config import (
     ModelCfg,
     PricingCfg,
     ProviderCfg,
+    ProviderEntry,
     _model_to_dict,
     default_config,
     load,
@@ -41,7 +42,7 @@ def test_default_config_valid(tmp_path: Path) -> None:
 def test_api_key_json_wins_over_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     p = tmp_path / "config.json"
     raw = default_config().to_dict()
-    raw["provider"]["apiKey"] = "json-secret"
+    raw["providers"]["default"]["apiKey"] = "json-secret"
     p.write_text(json.dumps(raw), encoding="utf-8")
     monkeypatch.setenv("THYCA_TOKEN", "env-secret")
     cfg = load(p)
@@ -62,7 +63,7 @@ def test_api_key_resolve(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
 def test_api_key_env_custom(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     p = tmp_path / "config.json"
     raw = default_config().to_dict()
-    raw["provider"]["apiKeyEnv"] = "MY_KEY"
+    raw["providers"]["default"]["apiKeyEnv"] = "MY_KEY"
     p.write_text(json.dumps(raw), encoding="utf-8")
     cfg = load(p)
     assert cfg.provider.apiKeyEnv == "MY_KEY"
@@ -73,33 +74,10 @@ def test_api_key_env_custom(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     assert cfg.provider.api_key() == "secret"
 
 
-def test_api_key_command_prefix(tmp_path: Path) -> None:
-    script = tmp_path / "key.sh"
-    script.write_text("#!/bin/sh\necho 'cmd-secret'\n", encoding="utf-8")
-    script.chmod(0o700)
-    cfg = ProviderCfg(apiKey=f"!{script}")
-    assert cfg.api_key() == "cmd-secret"
-    assert "cmd-secret" not in repr(cfg)
-
-
-def test_api_key_command_failure_hides_stdout(tmp_path: Path) -> None:
-    script = tmp_path / "fail.sh"
-    script.write_text("#!/bin/sh\necho 'should-not-leak'\necho fail-stderr >&2\nexit 3\n", encoding="utf-8")
-    script.chmod(0o700)
-    cfg = ProviderCfg(apiKey=f"!{script}")
-    with pytest.raises(ConfigError, match="exited 3") as caught:
-        cfg.api_key()
-    assert "should-not-leak" not in str(caught.value)
-    assert "fail-stderr" in str(caught.value)
-
-
-def test_api_key_command_empty_stdout(tmp_path: Path) -> None:
-    script = tmp_path / "empty.sh"
-    script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    script.chmod(0o700)
-    cfg = ProviderCfg(apiKey=f"!{script}")
-    with pytest.raises(ConfigError, match="produced no key"):
-        cfg.api_key()
+def test_api_key_bang_command_rejected_loudly() -> None:
+    entry = ProviderEntry(apiKey="!echo sk-command")
+    with pytest.raises(ConfigError, match="!command"):
+        entry.api_key()
 
 
 def test_invalid_limits_type_is_config_error(tmp_path: Path) -> None:
@@ -137,7 +115,7 @@ def test_save_fails_closed_when_lock_is_unavailable(
         def __init__(self, *_args: object, **_kwargs: object) -> None:
             raise RuntimeError("lock unavailable")
 
-    monkeypatch.setattr("thyca.config.FileLock", BrokenLock)
+    monkeypatch.setattr("thyca.config.store.FileLock", BrokenLock)
     p = tmp_path / "config.json"
     with pytest.raises(ConfigError, match="cannot lock"):
         save(default_config(), p)
@@ -146,7 +124,7 @@ def test_save_fails_closed_when_lock_is_unavailable(
 
 def test_config_rejects_wrong_field_types(tmp_path: Path) -> None:
     cases = [
-        ({"provider": {"baseUrl": None}}, "provider.baseUrl"),
+        ({"providers": {"default": {"baseUrl": None}}}, "providers"),
         ({"mcpServers": {"echo": {"command": ["python"]}}}, "command must be a non-empty string"),
         ({"mcpServers": {"echo": {"command": "python", "args": [1]}}}, "args must be a list of strings"),
         ({"timeline": {"timezone": 7}}, "timeline.timezone"),
@@ -224,7 +202,7 @@ def test_limits_validation() -> None:
 
 def test_save_roundtrip(tmp_path: Path) -> None:
     p = tmp_path / "config.json"
-    cfg = Config(provider=ProviderCfg(model="gpt-4o"))
+    cfg = Config(defaultModel="gpt-4o")
     save(cfg, p)
     assert p.exists()
     cfg2 = load(p)
@@ -264,7 +242,8 @@ def test_models_parse_and_roundtrip(tmp_path: Path) -> None:
 
 def test_effective_provider_applies_model_endpoint_and_reasoning() -> None:
     cfg = Config(
-        provider=ProviderCfg(model="special", reasoningEffort="high"),
+        providers={"default": ProviderEntry(reasoningEffort="high")},
+        defaultModel="special",
         models={
             "special": ModelCfg(
                 baseUrl="https://other.example/v1", reasoningEffort="low"
@@ -281,8 +260,8 @@ def test_effective_provider_applies_model_endpoint_and_reasoning() -> None:
 def test_model_limits_override_global(tmp_path: Path) -> None:
     p = tmp_path / "config.json"
     raw = default_config().to_dict()
-    raw["provider"]["model"] = "special"
-    raw["provider"]["reasoningEffort"] = "low"
+    raw["defaultModel"] = "special"
+    raw["providers"]["default"]["reasoningEffort"] = "low"
     raw["limits"] = {"loopMax": 10, "hotTailKB": 4, "contextTokens": 8000}
     raw["models"] = {
         "special": {
@@ -305,7 +284,7 @@ def test_model_limits_override_global(tmp_path: Path) -> None:
     saved = cfg.to_dict()["models"]["special"]
     assert saved["loopMax"] == 50
     assert "loopMax" not in cfg.to_dict()["models"]["plain"]
-    plain = replace(cfg, provider=replace(cfg.provider, model="plain"))
+    plain = replace(cfg, defaultModel="plain")
     assert plain.effective_provider().reasoningEffort == "low"
     assert plain.effective_limits().loopMax == 10
 
@@ -404,6 +383,7 @@ def test_config_guide_written_on_ensure_default(
 ) -> None:
     import os
 
+    import thyca
     import thyca.config as cfgmod
 
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -413,7 +393,7 @@ def test_config_guide_written_on_ensure_default(
     assert target.exists()
     mode = stat.S_IMODE(target.stat().st_mode)
     assert mode == 0o600
-    packaged = Path(cfgmod.__file__).parent / "read_after_config.md"
+    packaged = Path(thyca.__file__).parent / "read_after_config.md"
     assert target.read_text(encoding="utf-8") == packaged.read_text(encoding="utf-8")
     # idempotent
     before = target.read_text(encoding="utf-8")
@@ -433,3 +413,245 @@ def test_ensure_default_writes_guide(
     cfgmod.ensure_default(p)
     # guide lands in ~/.thyca even when config path is custom
     assert (tmp_path / ".thyca" / "read_after_config.md").exists()
+
+
+def test_legacy_single_provider_migrates_to_default(tmp_path: Path) -> None:
+    p = tmp_path / "config.json"
+    p.write_text(
+        json.dumps(
+            {
+                "provider": {
+                    "baseUrl": "https://legacy.example/v1",
+                    "apiKeyEnv": "THYCA_TOKEN",
+                    "model": "legacy-model",
+                    "reasoningEffort": "low",
+                    "apiKey": "legacy-secret",
+                },
+                "models": {
+                    "legacy-model": {"input": 0, "cache": 0, "output": 0},
+                    "other-host": {
+                        "baseUrl": "https://other.example/v1",
+                        "input": 0,
+                        "cache": 0,
+                        "output": 0,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    cfg = load(p)
+    assert cfg.defaultProvider == "default"
+    assert cfg.defaultModel == "legacy-model"
+    assert cfg.providers["default"].baseUrl == "https://legacy.example/v1"
+    assert cfg.providers["default"].api_key() == "legacy-secret"
+    # save writes the new shape; legacy block is gone
+    save(cfg, p)
+    raw = json.loads(p.read_text(encoding="utf-8"))
+    assert "provider" not in raw
+    assert raw["providers"]["default"]["baseUrl"] == "https://legacy.example/v1"
+    assert raw["defaultModel"] == "legacy-model"
+    # per-model baseUrl escape hatch still wins after migration
+    assert cfg.effective_provider_for("other-host").baseUrl == "https://other.example/v1"
+    assert cfg.effective_provider().baseUrl == "https://legacy.example/v1"
+
+
+def test_legacy_provider_type_error_preserved(tmp_path: Path) -> None:
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({"provider": {"baseUrl": None}}), encoding="utf-8")
+    with pytest.raises(ConfigError, match=r"provider\.baseUrl"):
+        load(p)
+
+
+def test_model_resolves_through_its_own_provider() -> None:
+    cfg = Config(
+        providers={
+            "default": ProviderEntry(baseUrl="https://a.example/v1", apiKey="key-a"),
+            "second": ProviderEntry(baseUrl="https://b.example/v1", apiKey="key-b"),
+        },
+        defaultModel="model-a",
+        models={
+            "model-a": ModelCfg(),
+            "model-b": ModelCfg(provider="second"),
+        },
+    )
+    assert cfg.provider_id_for("model-a") == "default"
+    assert cfg.provider_id_for("model-b") == "second"
+    first = cfg.effective_provider_for("model-a")
+    assert (first.baseUrl, first.api_key(), first.model) == (
+        "https://a.example/v1",
+        "key-a",
+        "model-a",
+    )
+    second = cfg.effective_provider_for("model-b")
+    assert (second.baseUrl, second.api_key(), second.model) == (
+        "https://b.example/v1",
+        "key-b",
+        "model-b",
+    )
+    # unregistered model falls back to the default provider (never 500s)
+    assert cfg.effective_provider_for("ghost").baseUrl == "https://a.example/v1"
+
+
+def test_providers_reject_bad_shape(tmp_path: Path) -> None:
+    cases = [
+        ({"providers": {}}, "providers must not be empty"),
+        ({"providers": {"bad id": {}}}, "must match"),
+        (
+            {"providers": {"default": {}}, "defaultProvider": "ghost"},
+            "defaultProvider 'ghost' is not in providers",
+        ),
+        (
+            {
+                "providers": {"default": {}},
+                "models": {"m": {"provider": "ghost"}},
+            },
+            r"models\['m'\]\.provider 'ghost' does not exist",
+        ),
+    ]
+    for patch, message in cases:
+        raw = default_config().to_dict()
+        raw.update(patch)
+        p = tmp_path / f"{len(list(tmp_path.iterdir()))}.json"
+        p.write_text(json.dumps(raw), encoding="utf-8")
+        with pytest.raises(ConfigError, match=message):
+            load(p)
+
+
+def test_provider_id_for_dangling_ref_falls_back_to_default() -> None:
+    # Unreachable via load (rejected), but hand-built configs must not
+    # label a provider the request would never go to.
+    cfg = Config(models={"m": ModelCfg(provider="ghost")})
+    assert cfg.provider_id_for("m") == "default"
+    assert cfg.effective_provider_for("m").baseUrl == cfg.providers["default"].baseUrl
+
+
+def test_save_splits_keys_to_auth_json(tmp_path: Path) -> None:
+    p = tmp_path / "config.json"
+    cfg = Config(
+        providers={
+            "default": ProviderEntry(baseUrl="https://a.example/v1", apiKey="sk-a"),
+            "second": ProviderEntry(baseUrl="https://b.example/v1", apiKey="sk-b"),
+        },
+        defaultModel="m",
+    )
+    save(cfg, p)
+    auth_path = tmp_path / "auth.json"
+    assert stat.S_IMODE(auth_path.stat().st_mode) == 0o600
+    auth_raw = json.loads(auth_path.read_text(encoding="utf-8"))
+    assert auth_raw == {
+        "providers": {"default": {"apiKey": "sk-a"}, "second": {"apiKey": "sk-b"}}
+    }
+    conf_raw = json.loads(p.read_text(encoding="utf-8"))
+    assert "apiKey" not in conf_raw["providers"]["default"]
+    assert "apiKey" not in conf_raw["providers"]["second"]
+    assert "sk-a" not in p.read_text(encoding="utf-8")
+    assert "sk-b" not in p.read_text(encoding="utf-8")
+    assert load(p) == cfg
+
+
+def test_auth_json_wins_over_inline_key(tmp_path: Path) -> None:
+    p = tmp_path / "config.json"
+    p.write_text(
+        json.dumps(
+            {
+                "providers": {
+                    "default": {"baseUrl": "https://a.example/v1", "apiKey": "sk-inline"}
+                },
+                "defaultProvider": "default",
+                "defaultModel": "m",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "auth.json").write_text(
+        json.dumps({"providers": {"default": {"apiKey": "sk-auth"}}}), encoding="utf-8"
+    )
+    assert load(p).providers["default"].api_key() == "sk-auth"
+    save(load(p), p)
+    assert (
+        json.loads((tmp_path / "auth.json").read_text(encoding="utf-8"))["providers"][
+            "default"
+        ]["apiKey"]
+        == "sk-auth"
+    )
+    assert "apiKey" not in json.loads(p.read_text(encoding="utf-8"))["providers"]["default"]
+
+
+def test_inline_key_migrates_to_auth_on_save(tmp_path: Path) -> None:
+    p = tmp_path / "config.json"
+    p.write_text(
+        json.dumps(
+            {
+                "providers": {
+                    "default": {"baseUrl": "https://a.example/v1", "apiKey": "sk-inline"}
+                },
+                "defaultProvider": "default",
+                "defaultModel": "m",
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert load(p).providers["default"].api_key() == "sk-inline"
+    save(load(p), p)
+    assert (
+        json.loads((tmp_path / "auth.json").read_text(encoding="utf-8"))["providers"][
+            "default"
+        ]["apiKey"]
+        == "sk-inline"
+    )
+    assert "apiKey" not in json.loads(p.read_text(encoding="utf-8"))["providers"]["default"]
+
+
+def test_malformed_auth_json_is_config_error(tmp_path: Path) -> None:
+    p = tmp_path / "config.json"
+    save(default_config(), p)
+    (tmp_path / "auth.json").write_text("not json", encoding="utf-8")
+    with pytest.raises(ConfigError, match=r"auth\.json"):
+        load(p)
+
+
+def test_missing_auth_json_means_no_keys(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("THYCA_TOKEN", raising=False)
+    p = tmp_path / "config.json"
+    save(default_config(), p)
+    (tmp_path / "auth.json").unlink()
+    with pytest.raises(ConfigError, match="THYCA_TOKEN not set"):
+        load(p).providers["default"].api_key()
+
+
+def test_provider_api_field_roundtrip(tmp_path: Path) -> None:
+    p = tmp_path / "config.json"
+    raw = default_config().to_dict()
+    raw["providers"] = {
+        "default": {"baseUrl": "https://a.example/v1", "api": "openai_responses"},
+        "second": {"baseUrl": "https://b.example/v1"},
+    }
+    p.write_text(json.dumps(raw), encoding="utf-8")
+    cfg = load(p)
+    assert cfg.providers["default"].api == "openai_responses"
+    # missing api → default chat (zero behavior change for old configs)
+    assert cfg.providers["second"].api == "openai_chat"
+    saved = cfg.to_dict()
+    assert saved["providers"]["default"]["api"] == "openai_responses"
+    assert saved["providers"]["second"]["api"] == "openai_chat"
+
+
+def test_provider_api_rejects_unknown_kind(tmp_path: Path) -> None:
+    p = tmp_path / "config.json"
+    raw = default_config().to_dict()
+    raw["providers"]["default"]["api"] = "graphql"
+    p.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(ConfigError, match=r"api must be one of openai_chat/openai_responses"):
+        load(p)
+
+
+def test_effective_provider_carries_api() -> None:
+    cfg = Config(
+        providers={"default": ProviderEntry(api="openai_responses")},
+        models={"m": ModelCfg(provider="default")},
+    )
+    for model in ("m", "unregistered"):
+        assert cfg.effective_provider_for(model).api == "openai_responses"

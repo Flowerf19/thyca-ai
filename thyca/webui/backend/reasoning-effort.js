@@ -23,6 +23,18 @@ export function effortChoicesFor(schema, values, modelName) {
   return effortChoices(schema);
 }
 
+// Default effort for a model: its own setting wins, then its provider's,
+// then the default provider's.
+export function effortDefaultFor(values, modelName) {
+  const spec = values?.models?.[modelName];
+  if (spec?.reasoningEffort) return spec.reasoningEffort;
+  const providers = values?.providers;
+  const pid = spec?.provider || values?.defaultProvider;
+  const entry = providers && typeof providers === "object" ? providers[pid] : null;
+  if (entry?.reasoningEffort) return entry.reasoningEffort;
+  return providers?.[values?.defaultProvider]?.reasoningEffort;
+}
+
 export function effortDefault(schema) {
   return effortField(schema)?.default;
 }

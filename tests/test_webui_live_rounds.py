@@ -1,8 +1,8 @@
 """Execute the live thinking panel across LLM rounds with real modules.
 
-Each LLM round gets its own thinking segment: round 2 must start a fresh
-note below round 1's, whose text and tool line stay (like the settled
-transcript). A re-follow rebuilds segments instead of duplicating them.
+Each LLM round keeps its own usage row after its reply text (tools execute
+after think), like the settled transcript: note, reply, usage per round.
+A re-follow rebuilds segments instead of duplicating them.
 """
 from __future__ import annotations
 
@@ -103,9 +103,14 @@ const host = new Element(); host.root = true;
 const live = view.createLiveStatus(host, Date.now() - 12000);
 const segments = () => live.notes.map(note => ({
   text: note.body.querySelector('.thought-output').textContent,
-  tool: note.body.querySelector('.tool-status').textContent,
   caretSettled: note.body.querySelector('.streaming-caret')?.hidden === true,
 }));
+const usage = () => [...live.notesWrap.querySelectorAll('.usage-row')].map(node =>
+  `${node.querySelector('.usage-label').textContent} ${node.querySelector('.usage-row-body').textContent}`);
+const order = () => [...live.notesWrap.children].map(node =>
+  node.classList.contains('thinking-note') ? 'note'
+  : node.classList.contains('usage-row') ? 'usage'
+  : node.classList.contains('reply-live') ? 'reply' : node.tag);
 
 view.updateLiveStatus(live, { type: 'llm.started', round: 1 });
 view.updateLiveStatus(live, { type: 'llm.thinking', round: 1, delta: 'round one ' });
@@ -114,21 +119,24 @@ view.updateLiveStatus(live, { type: 'llm.content', round: 1, delta: 'Xin ' });
 view.updateLiveStatus(live, { type: 'llm.content', round: 1, delta: 'chào' });
 view.updateLiveStatus(live, { type: 'tool.started', name: 'bash', call_id: 'b1' });
 view.updateLiveStatus(live, { type: 'tool.finished', name: 'bash', call_id: 'b1' });
-const afterRound1 = segments();
+const afterRound1 = { segments: segments(), usage: usage(), order: order() };
 const replyTexts = () => [...live.notesWrap.querySelectorAll('.reply-live')].map(n => n.textContent);
 
 view.updateLiveStatus(live, { type: 'llm.started', round: 2 });
-const atRound2Start = { segments: segments(), replies: replyTexts() };
+const atRound2Start = { segments: segments(), usage: usage(), order: order(), replies: replyTexts() };
 view.updateLiveStatus(live, { type: 'llm.thinking', round: 2, delta: 'round two' });
 view.updateLiveStatus(live, { type: 'llm.content', round: 2, delta: 'round two reply' });
-const afterRound2 = { segments: segments(), replies: replyTexts() };
+const afterRound2 = { segments: segments(), usage: usage(), order: order(), replies: replyTexts() };
+view.updateLiveStatus(live, { type: 'tool.started', name: 'read', call_id: 'r2' });
+view.updateLiveStatus(live, { type: 'tool.finished', name: 'read', call_id: 'r2' });
+const afterRound2Tools = { segments: segments(), usage: usage(), order: order(), replies: replyTexts() };
 
 view.updateLiveStatus(live, { type: 'turn.completed' });
 const afterCompleted = segments();
 
 view.resetLiveStatus(live, live.startedAt);
 const afterRefollowReset = segments();
-console.log(JSON.stringify({ afterRound1, atRound2Start, afterRound2, afterCompleted, afterRefollowReset }));
+console.log(JSON.stringify({ afterRound1, atRound2Start, afterRound2, afterRound2Tools, afterCompleted, afterRefollowReset }));
 """
 
 
@@ -145,26 +153,44 @@ def rounds() -> dict:
 
 
 def test_round_one_streams_and_keeps_tool_line(rounds: dict) -> None:
-    assert rounds["afterRound1"] == [
-        {"text": "round one thoughts", "tool": "Đã dùng: bash x1", "caretSettled": False},
-    ]
+    assert rounds["afterRound1"] == {
+        "segments": [{"text": "round one thoughts", "caretSettled": False}],
+        "usage": ["Đã dùng: bash x1"],
+        "order": ["note", "reply", "usage"],
+    }
 
 
 def test_round_two_adds_a_segment_and_keeps_the_previous(rounds: dict) -> None:
     assert rounds["atRound2Start"] == {
         "segments": [
-            {"text": "round one thoughts", "tool": "", "caretSettled": True},
-            {"text": "", "tool": "Đã dùng: bash x1", "caretSettled": False},
+            {"text": "round one thoughts", "caretSettled": True},
+            {"text": "", "caretSettled": False},
         ],
+        "usage": ["Đã dùng: bash x1"],
+        "order": ["note", "reply", "usage", "note"],
         "replies": ["Xin chào"],
     }
     assert rounds["afterRound2"] == {
         "segments": [
-            {"text": "round one thoughts", "tool": "", "caretSettled": True},
-            {"text": "round two", "tool": "Đã dùng: bash x1", "caretSettled": False},
+            {"text": "round one thoughts", "caretSettled": True},
+            {"text": "round two", "caretSettled": False},
         ],
+        "usage": ["Đã dùng: bash x1"],
+        "order": ["note", "reply", "usage", "note", "reply"],
         "replies": ["Xin chào", "round two reply"],
- }
+    }
+
+
+def test_each_round_keeps_its_own_tool_line(rounds: dict) -> None:
+    assert rounds["afterRound2Tools"] == {
+        "segments": [
+            {"text": "round one thoughts", "caretSettled": True},
+            {"text": "round two", "caretSettled": False},
+        ],
+        "usage": ["Đã dùng: bash x1", "Đã dùng: read x1"],
+        "order": ["note", "reply", "usage", "note", "reply", "usage"],
+        "replies": ["Xin chào", "round two reply"],
+    }
 
 
 def test_completion_settles_every_segment(rounds: dict) -> None:
@@ -173,7 +199,7 @@ def test_completion_settles_every_segment(rounds: dict) -> None:
 
 def test_refollow_rebuilds_segments_instead_of_duplicating(rounds: dict) -> None:
     assert rounds["afterRefollowReset"] == [
-        {"text": "", "tool": "", "caretSettled": False},
+        {"text": "", "caretSettled": False},
     ]
 
 
@@ -269,14 +295,21 @@ const messages = [
 const root = new Element(); root.root = true;
 view.renderConversation(root, messages);
 const notes = [...root.querySelectorAll('.thinking-note')];
+const article = root.querySelector('.message-assistant');
 console.log(JSON.stringify({
   notes: notes.map(note => ({
     text: note.querySelector('.thought-output')?.textContent ?? '',
-    tool: note.querySelector('.tool-status')?.textContent ?? '',
     hidden: note.hidden === true,
   })),
-  usageRows: root.querySelectorAll('.usage-row').map(node => node.textContent),
+  usageRows: root.querySelectorAll('.usage-row').map(node => ({
+    label: node.querySelector('.usage-label')?.textContent ?? '',
+    body: node.querySelector('.usage-row-body')?.textContent ?? '',
+  })),
   contentCount: root.querySelectorAll('.live-copy').length,
+  order: [...article.children].map(node =>
+    node.classList.contains('thinking-note') ? 'note'
+    : node.classList.contains('usage-row') ? 'usage'
+    : node.classList.contains('live-copy') ? 'content' : node.tag),
 }));
 """
 
@@ -295,19 +328,22 @@ def folded() -> dict:
 
 def test_silent_tool_rounds_fold_into_the_previous_thinking_line(folded: dict) -> None:
     assert folded["notes"] == [
-        {
-            "text": "User wants sequential: search, reply, check.",
-            "tool": "Đã dùng: tavily-search__web_search x1, bash x1",
-            "hidden": False,
-        },
-        {
-            "text": "",
-            "tool": "Đã dùng: bash x1",
-            "hidden": False,
-        },
+        {"text": "User wants sequential: search, reply, check.", "hidden": False},
     ]
-
-
-def test_tool_line_before_content_stays_attached_to_that_content(folded: dict) -> None:
-    assert folded["usageRows"] == []
+    assert folded["usageRows"] == [
+        {"label": "Đã dùng:", "body": "tavily-search__web_search x1, bash x1"},
+        {"label": "Đã dùng:", "body": "bash x1"},
+    ]
     assert folded["contentCount"] == 2
+
+
+def test_tool_line_after_content_stays_attached_to_that_content(folded: dict) -> None:
+    assert folded["order"] == [
+        "header",
+        "note",
+        "usage",
+        "content",
+        "content",
+        "usage",
+        "footer",
+    ]

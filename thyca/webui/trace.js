@@ -364,6 +364,13 @@ function turnEntry(group, summary, position) {
   description.className = "trace-turn-description";
   description.textContent = cleanText(summary.model, "—");
 
+  let errorLine = null;
+  if (summary.error && typeof summary.error.message === "string" && summary.error.message) {
+    errorLine = document.createElement("p");
+    errorLine.className = "trace-turn-error";
+    errorLine.textContent = summary.error.message;
+  }
+
   const meta = document.createElement("p");
   meta.className = "journal-meta";
   for (const label of [
@@ -394,7 +401,7 @@ function turnEntry(group, summary, position) {
     if (fold.open) fill();
   });
 
-  body.append(heading, description, meta, fold);
+  body.append(heading, description, ...(errorLine ? [errorLine] : []), meta, fold);
   item.append(stampNode(summary.started_at), body);
   return item;
 }

@@ -3,6 +3,7 @@ import { fetchAllTraces } from "./backend/dashboard-today.js";
 import {
   NO_SESSION_KEY,
   aggregateSessions,
+  averageDisplay,
   estimatedCostSplit,
   knownCostTotal,
   modelTurnCoverage,
@@ -147,18 +148,11 @@ function renderOverview() {
     partialNote(overview.pricedTurns, overview.turns),
   ]);
 
-  // Average is per TURN (deduped trace rows), never per model request. When
-  // only part of the turns is priced, the sum divided by all turns would
-  // understate the real average, so show "—" with the coverage instead.
-  const partial = overview.pricedTurns < overview.turns;
-  const average = priced == null || !overview.turns || partial ? null : priced / overview.turns;
-  metricValue(el.average, average == null ? "—" : formatCost(average, 6));
-  metricMeta(el.averageMeta, partial
-    ? [
-      overview.turns ? `trên ${formatInteger(overview.turns)} lượt` : "chưa có lượt nào",
-      `${formatInteger(overview.turns - overview.pricedTurns)} lượt chưa định giá — cần đủ giá mới có trung bình`,
-    ]
-    : [overview.turns ? `trên ${formatInteger(overview.turns)} lượt` : "chưa có lượt nào"]);
+  // Average is per TURN (deduped trace rows), never per model request —
+  // formula and wording live in averageDisplay() (tested).
+  const display = averageDisplay(overview);
+  metricValue(el.average, display.value == null ? "—" : formatCost(display.value, 6));
+  metricMeta(el.averageMeta, display.meta);
 
   // Full input side (cache is a subset of prompt_tokens, so input + cache is
   // the raw prompt total); the cache part is called out beside it.
@@ -182,13 +176,6 @@ function coverageNotes(overview, stats) {
     || (statsNumber != null && rowsCost != null && Math.abs(statsNumber - rowsCost) > 1e-6);
   if (diverged) {
     notes.push(`Tổng theo stats (${formatCost(statsNumber)}) và theo danh sách trace (${formatCost(rowsCost)}) lệch nhau — dữ liệu có thể vừa thay đổi giữa hai lần đọc, hãy tải lại.`);
-  }
-  // The stored per-turn cost only sums the model calls whose cost reached the
-  // trace (backend keeps missing cost as missing), so a turn carrying a cost
-  // never proves every call inside it was priced — always say amounts are
-  // recorded-known, never claim full request coverage.
-  if (overview.pricedTurns) {
-    notes.push("Tổng và trung bình là số đã ghi nhận: backend chỉ cộng chi phí của các lần gọi model có sẵn trong dữ liệu, nên một lượt đã có chi phí chưa chắc mọi lần gọi trong lượt đều được định giá.");
   }
   return notes;
 }

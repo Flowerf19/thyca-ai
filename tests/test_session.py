@@ -729,3 +729,72 @@ def test_claim_cannot_slip_between_the_check_and_the_unlink(tmp_path: Path) -> N
     with pytest.raises(SessionNotFound):
         manager.load(session.id)
     turns.release(session.id)
+
+
+def test_mark_turn_error_stamps_last_user_and_persists(tmp_path: Path) -> None:
+    mgr = SessionManager(tmp_path / "sessions")
+    session = mgr.create()
+    mgr.append(msg("user", "hi"))
+    assert mgr.current.messages[0].meta is None
+    assert mgr.mark_turn_error("llm_error", "provider HTTP 404: gone") is True
+    marked = mgr.current.messages[0].meta
+    assert marked == {"error": {"code": "llm_error", "message": "provider HTTP 404: gone"}}
+    reloaded = SessionManager(tmp_path / "sessions").load(session.id)
+    assert reloaded.messages[0].meta == marked
+
+
+def test_mark_turn_error_no_user_returns_false(tmp_path: Path) -> None:
+    mgr = SessionManager(tmp_path / "sessions")
+    mgr.create()
+    assert mgr.mark_turn_error("llm_error", "x") is False
+
+
+def test_truncate_to_last_user_strips_error_marker(tmp_path: Path) -> None:
+    mgr = SessionManager(tmp_path / "sessions")
+    session = mgr.create()
+    mgr.append(msg("user", "hi", meta={"error": {"code": "llm_error", "message": "boom"}}))
+    mgr.append(msg("assistant", "partial"))
+    assert mgr.truncate_to_last_user() is True
+    assert mgr.current.messages[-1].meta is None
+    reloaded = SessionManager(tmp_path / "sessions").load(session.id)
+    assert reloaded.messages[-1].meta is None
+
+
+def test_truncate_tail_user_with_marker_rewrites(tmp_path: Path) -> None:
+    mgr = SessionManager(tmp_path / "sessions")
+    session = mgr.create()
+    mgr.append(msg("user", "hi", meta={"error": {"code": "llm_error", "message": "boom"}}))
+    assert mgr.truncate_to_last_user() is True
+    assert mgr.current.messages[-1].meta is None
+    reloaded = SessionManager(tmp_path / "sessions").load(session.id)
+    assert reloaded.messages[-1].meta is None
+
+
+def test_message_reasoning_details_canonical_roundtrip(tmp_path: Path) -> None:
+    details = [{"type": "reasoning.encrypted", "data": "blob"}]
+    msg = Message(
+        role="assistant",
+        content="hi",
+        ts="2026-01-01T00:00:00Z",
+        reasoning_details=details,
+    )
+    assert Message.from_dict(msg.to_canonical_dict()).reasoning_details == details
+    # old lines without the key load as None
+    bare = Message.from_dict(
+        {"role": "user", "content": "x", "ts": "2026-01-01T00:00:00Z"}
+    )
+    assert bare.reasoning_details is None
+
+
+def test_message_reasoning_details_rejects_bad_shape() -> None:
+    with pytest.raises(ValueError, match="reasoning_details"):
+        Message(role="assistant", content="x", reasoning_details="nope")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="reasoning_details"):
+        Message.from_dict(
+            {
+                "role": "assistant",
+                "content": "x",
+                "ts": "2026-01-01T00:00:00Z",
+                "reasoning_details": [{"type": "reasoning.text", "text": "t"}, 42],
+            }
+        )

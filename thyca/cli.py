@@ -116,8 +116,9 @@ class Cli:
             ui.error(str(exc))
             return 1
 
-        provider = replace(cfg.provider, model=args.model) if args.model else cfg.provider
-        cfg = replace(cfg, provider=provider)
+        if args.model:
+            cfg = replace(cfg, defaultModel=args.model.strip())
+        provider = cfg.effective_provider()
         limits = cfg.effective_limits()
         sessions = SessionManager(
             root / "sessions",
@@ -167,7 +168,7 @@ class Cli:
                     print(str(exc), file=self._stderr)
             schema = registry.to_openai_schema()
             connect = self._connect or ConnectFactory.create(
-                "openai_chat", cfg.effective_provider()
+                cfg.effective_provider().api, cfg.effective_provider()
             )
             loop = AgentLoop(
                 sessions=sessions,
@@ -189,6 +190,7 @@ class Cli:
                     system = prompts.build(hot)
                     ui.debug(
                         f"session={sessions.current.id} model={provider.model} "
+                        f"provider={cfg.provider_id_for(provider.model)} baseUrl={provider.baseUrl} "
                         f"identity={('Name: Thyca' in system)} soul={('You are Thyca' in system)} "
                         f"user={'<user>' in system} tools={len(schema)} system_chars={len(system)}"
                     )

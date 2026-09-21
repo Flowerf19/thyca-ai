@@ -101,7 +101,9 @@ def test_config_get_masks_api_key(tmp_path: Path) -> None:
     try:
         status, body = _call(httpd, "/api/config")
         assert status == 200
-        assert body["values"]["provider"]["apiKey"] == ""
+        assert body["values"]["providers"]["default"]["apiKey"] == ""
+        assert body["values"]["defaultModel"] == "gpt-4o-mini"
+        assert body["meta"] == {"hasApiKey": False, "providers": {"default": False}}
         assert body["schema"]["sections"][0]["key"] == "provider"
     finally:
         _stop(httpd, thread)
@@ -112,13 +114,13 @@ def test_config_post_saves_and_keeps_key(tmp_path: Path) -> None:
     try:
         _, got = _call(httpd, "/api/config")
         values = got["values"]
-        values["provider"]["apiKey"] = "sk-live-123"
-        values["provider"]["model"] = "gpt-5.6-luna"
+        values["providers"]["default"]["apiKey"] = "sk-live-123"
+        values["defaultModel"] = "gpt-5.6-luna"
         status, body = _call(httpd, "/api/config", method="POST", data=values)
         assert status == 200 and body == {"ok": True, "ready": True}
         saved = load(tmp_path / "config.json")
-        assert saved.provider.apiKey == "sk-live-123"
-        assert saved.provider.model == "gpt-5.6-luna"
+        assert saved.providers["default"].apiKey == "sk-live-123"
+        assert saved.defaultModel == "gpt-5.6-luna"
     finally:
         _stop(httpd, thread)
 
@@ -128,17 +130,17 @@ def test_config_post_empty_key_keeps_old(tmp_path: Path) -> None:
     try:
         _, got = _call(httpd, "/api/config")
         values = got["values"]
-        values["provider"]["apiKey"] = "sk-first"
+        values["providers"]["default"]["apiKey"] = "sk-first"
         _, _ = _call(httpd, "/api/config", method="POST", data=values)
         _, got2 = _call(httpd, "/api/config")
         values2 = got2["values"]
-        values2["provider"]["model"] = "m-2"
-        values2["provider"]["apiKey"] = ""
+        values2["defaultModel"] = "m-2"
+        values2["providers"]["default"]["apiKey"] = ""
         status, body = _call(httpd, "/api/config", method="POST", data=values2)
         assert status == 200 and body["ok"] is True
         saved = load(tmp_path / "config.json")
-        assert saved.provider.apiKey == "sk-first"
-        assert saved.provider.model == "m-2"
+        assert saved.providers["default"].apiKey == "sk-first"
+        assert saved.defaultModel == "m-2"
     finally:
         _stop(httpd, thread)
 
@@ -191,16 +193,16 @@ def test_config_post_last_model_keep_default(tmp_path: Path) -> None:
         _, got = _call(httpd, "/api/config")
         values = got["values"]
         values["models"] = {"only-model": {"input": 0, "cache": 0, "output": 0}}
-        values["provider"]["model"] = "only-model"
+        values["defaultModel"] = "only-model"
         _, _ = _call(httpd, "/api/config", method="POST", data=values)
         # UI keeps the deleted default as fallback — server must accept it.
         values2 = got["values"]
         values2["models"] = {}
-        values2["provider"]["model"] = "only-model"
+        values2["defaultModel"] = "only-model"
         status, body = _call(httpd, "/api/config", method="POST", data=values2)
         assert status == 200 and body["ok"] is True
         saved = load(tmp_path / "config.json")
-        assert saved.provider.model == "only-model"
+        assert saved.defaultModel == "only-model"
         assert saved.models == {}
     finally:
         _stop(httpd, thread)
@@ -321,3 +323,292 @@ def test_verify_success_returns_models(tmp_path: Path) -> None:
         models.shutdown()
         mthread.join(timeout=2)
         models.server_close()
+
+
+def _chat_stub(
+    payload: bytes,
+    status: int = 200,
+    calls: list | None = None,
+    paths: list | None = None,
+):
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            length = int(self.headers.get("Content-Length", "0"))
+            if length:
+                self.rfile.read(length)
+            if calls is not None:
+                calls.append(self.headers.get("Authorization"))
+            if paths is not None:
+                paths.append(self.path)
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread
+
+
+def test_config_post_two_providers_keys_stay_isolated(tmp_path: Path) -> None:
+    httpd, thread = _start(tmp_path)
+    try:
+        _, got = _call(httpd, "/api/config")
+        values = got["values"]
+        values["providers"] = {
+            "default": {
+                "baseUrl": "https://a.example/v1",
+                "apiKeyEnv": "THYCA_TOKEN",
+                "apiKey": "sk-a",
+                "reasoningEffort": "high",
+            },
+            "second": {
+                "baseUrl": "https://b.example/v1",
+                "apiKeyEnv": "THYCA_TOKEN",
+                "apiKey": "sk-b",
+                "reasoningEffort": "low",
+            },
+        }
+        values["models"] = {
+            "model-b": {"provider": "second", "input": 0, "cache": 0, "output": 0},
+        }
+        status, body = _call(httpd, "/api/config", method="POST", data=values)
+        assert status == 200 and body["ok"] is True
+        saved = load(tmp_path / "config.json")
+        assert saved.providers["second"].api_key() == "sk-b"
+        assert saved.effective_provider_for("model-b").baseUrl == "https://b.example/v1"
+        # secrets split: keys land in auth.json, never config.json
+        auth_raw = json.loads((tmp_path / "auth.json").read_text(encoding="utf-8"))
+        assert auth_raw["providers"]["second"]["apiKey"] == "sk-b"
+        conf_text = (tmp_path / "config.json").read_text(encoding="utf-8")
+        assert "sk-a" not in conf_text and "sk-b" not in conf_text
+        # masked re-post keeps each provider's own key (never crosses)
+        _, got2 = _call(httpd, "/api/config")
+        assert got2["values"]["providers"]["second"]["apiKey"] == ""
+        assert got2["meta"]["providers"] == {"default": True, "second": True}
+        status2, _ = _call(httpd, "/api/config", method="POST", data=got2["values"])
+        assert status2 == 200
+        saved2 = load(tmp_path / "config.json")
+        assert saved2.providers["default"].api_key() == "sk-a"
+        assert saved2.providers["second"].api_key() == "sk-b"
+    finally:
+        _stop(httpd, thread)
+
+
+def test_config_post_rejects_unknown_model_provider(tmp_path: Path) -> None:
+    httpd, thread = _start(tmp_path)
+    try:
+        _, got = _call(httpd, "/api/config")
+        values = got["values"]
+        values["models"] = {
+            "orphan": {"provider": "ghost", "input": 0, "cache": 0, "output": 0},
+        }
+        status, body = _call(httpd, "/api/config", method="POST", data=values)
+        assert status == 422
+        assert "ghost" in body["error"]
+    finally:
+        _stop(httpd, thread)
+
+
+def test_verify_uses_named_provider_saved_key(tmp_path: Path) -> None:
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    calls: list = []
+
+    class ModelsHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            calls.append(self.headers.get("Authorization"))
+            payload = b'{"data": [{"id": "m-9"}]}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+    models = ThreadingHTTPServer(("127.0.0.1", 0), ModelsHandler)
+    mthread = threading.Thread(target=models.serve_forever, daemon=True)
+    mthread.start()
+    httpd, thread = _start(tmp_path)
+    try:
+        _, got = _call(httpd, "/api/config")
+        values = got["values"]
+        values["providers"]["second"] = {
+            "baseUrl": "https://b.example/v1",
+            "apiKeyEnv": "THYCA_TOKEN",
+            "apiKey": "sk-second",
+            "reasoningEffort": "high",
+        }
+        assert _call(httpd, "/api/config", method="POST", data=values)[0] == 200
+        base = f"http://127.0.0.1:{models.server_address[1]}"
+        status, body = _call(
+            httpd,
+            "/api/onboarding/verify",
+            method="POST",
+            data={"baseUrl": base, "providerId": "second"},
+        )
+        assert status == 200 and body["models"] == ["m-9"]
+        assert calls == ["Bearer sk-second"]
+        status, body = _call(
+            httpd,
+            "/api/onboarding/verify",
+            method="POST",
+            data={"baseUrl": base, "providerId": "ghost"},
+        )
+        assert status == 404
+    finally:
+        _stop(httpd, thread)
+        models.shutdown()
+        mthread.join(timeout=2)
+        models.server_close()
+
+
+def test_providers_test_ok_and_failure(tmp_path: Path, capsys) -> None:
+    ok_payload = json.dumps(
+        {"model": "m-test", "choices": [{"message": {"content": "pong"}}]}
+    ).encode()
+    calls: list = []
+    stub, sthread = _chat_stub(ok_payload, calls=calls)
+    httpd, thread = _start(tmp_path)
+    try:
+        base = f"http://127.0.0.1:{stub.server_address[1]}"
+        _, got = _call(httpd, "/api/config")
+        values = got["values"]
+        values["providers"]["default"]["baseUrl"] = base
+        values["providers"]["default"]["apiKey"] = "sk-live"
+        values["defaultModel"] = "m-test"
+        assert _call(httpd, "/api/config", method="POST", data=values)[0] == 200
+        status, body = _call(
+            httpd, "/api/providers/test", method="POST", data={"providerId": "default"}
+        )
+        assert status == 200 and body["ok"] is True
+        assert body["model"] == "m-test"
+        assert body["latencyMs"] >= 0
+        assert calls == ["Bearer sk-live"]
+        err = capsys.readouterr().err
+        assert "provider test provider=default model=m-test ok=true" in err
+        # unknown model on a strict stub → 422 with the provider message
+        fail, fthread = _chat_stub(b'{"error": "nope"}', status=404)
+        try:
+            base2 = f"http://127.0.0.1:{fail.server_address[1]}"
+            _, got2 = _call(httpd, "/api/config")
+            values2 = got2["values"]
+            values2["providers"]["default"]["baseUrl"] = base2
+            values2["providers"]["default"]["apiKey"] = "sk-live"
+            assert _call(httpd, "/api/config", method="POST", data=values2)[0] == 200
+            status, body = _call(
+                httpd,
+                "/api/providers/test",
+                method="POST",
+                data={"providerId": "default", "model": "ghost"},
+            )
+            assert status == 422
+            assert "ghost" in body["error"]
+            assert "sk-live" not in body["error"]
+            fail_err = capsys.readouterr().err
+            assert "provider test provider=default model=ghost ok=false" in fail_err
+            assert "sk-live" not in fail_err
+        finally:
+            fail.shutdown()
+            fthread.join(timeout=2)
+            fail.server_close()
+    finally:
+        _stop(httpd, thread)
+        stub.shutdown()
+        sthread.join(timeout=2)
+        stub.server_close()
+
+
+def test_providers_test_without_key_422(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("THYCA_TOKEN", raising=False)
+    httpd, thread = _start(tmp_path)
+    try:
+        status, body = _call(
+            httpd, "/api/providers/test", method="POST", data={"providerId": "default"}
+        )
+        assert status == 422
+        assert "API key" in body["error"]
+        status, body = _call(
+            httpd, "/api/providers/test", method="POST", data={"providerId": "ghost"}
+        )
+        assert status == 404
+    finally:
+        _stop(httpd, thread)
+
+
+def test_providers_test_honors_model_baseurl_override(tmp_path: Path) -> None:
+    ok_payload = json.dumps(
+        {"model": "m-odd", "choices": [{"message": {"content": "pong"}}]}
+    ).encode()
+    stub, sthread = _chat_stub(ok_payload)
+    httpd, thread = _start(tmp_path)
+    try:
+        base = f"http://127.0.0.1:{stub.server_address[1]}"
+        _, got = _call(httpd, "/api/config")
+        values = got["values"]
+        # Provider points nowhere; the model's own endpoint must win.
+        values["providers"]["default"]["baseUrl"] = "http://127.0.0.1:1"
+        values["providers"]["default"]["apiKey"] = "sk-live"
+        values["models"] = {
+            "m-odd": {"baseUrl": base, "input": 0, "cache": 0, "output": 0},
+        }
+        assert _call(httpd, "/api/config", method="POST", data=values)[0] == 200
+        status, body = _call(
+            httpd,
+            "/api/providers/test",
+            method="POST",
+            data={"providerId": "default", "model": "m-odd"},
+        )
+        assert status == 200 and body["ok"] is True
+        assert body["model"] == "m-odd"
+    finally:
+        _stop(httpd, thread)
+        stub.shutdown()
+        sthread.join(timeout=2)
+        stub.server_close()
+
+
+def test_providers_test_dispatches_responses_api(tmp_path: Path) -> None:
+    ok_payload = json.dumps(
+        {
+            "model": "m-resp",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "pong"}],
+                }
+            ],
+        }
+    ).encode()
+    paths: list = []
+    stub, sthread = _chat_stub(ok_payload, paths=paths)
+    httpd, thread = _start(tmp_path)
+    try:
+        base = f"http://127.0.0.1:{stub.server_address[1]}"
+        _, got = _call(httpd, "/api/config")
+        values = got["values"]
+        values["providers"]["default"]["baseUrl"] = base
+        values["providers"]["default"]["apiKey"] = "sk-live"
+        values["providers"]["default"]["api"] = "openai_responses"
+        values["defaultModel"] = "m-resp"
+        assert _call(httpd, "/api/config", method="POST", data=values)[0] == 200
+        status, body = _call(
+            httpd, "/api/providers/test", method="POST", data={"providerId": "default"}
+        )
+        assert status == 200 and body["ok"] is True
+        assert body["model"] == "m-resp"
+        assert paths == ["/responses"]
+    finally:
+        _stop(httpd, thread)
+        stub.shutdown()
+        sthread.join(timeout=2)
+        stub.server_close()

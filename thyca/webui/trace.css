@@ -50,6 +50,12 @@ html[data-theme="dusk"] #trace {
   color: var(--journal-error-ink);
 }
 
+/* Failed-turn provider message under the model line; wraps, muted red. */
+#trace .trace-turn-error {
+  color: var(--journal-error-ink);
+  overflow-wrap: anywhere;
+}
+
 /* Session rows in the main area: the title is a button, reset to the h3
    typography and underlined on hover like the journal's h3 a links. */
 #trace h3 .trace-session-open {

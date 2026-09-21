@@ -30,7 +30,7 @@ async def run(root: Path) -> int:
         limits=cfg.limits,
         timezone_name=cfg.timeline.timezone,
     )
-    connect = ConnectFactory.create("openai_chat", cfg.provider)
+    connect = ConnectFactory.create(cfg.provider.api, cfg.provider)
     try:
         named = await retitle_missing(connect.chat, manager)
     finally:

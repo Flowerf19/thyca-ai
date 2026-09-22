@@ -8,7 +8,7 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
-from thyca.memory.archived import ArchiveError
+from thyca.memory.archive_store import ArchiveError
 from thyca.memory.heading import (
     HeadingMeta,
     expiry_ts,

@@ -1,6 +1,5 @@
-/* Chat page (W6 TASK-007): notebook shell, session list, conversation, composer
-   and responsive rules moved verbatim from shared/css/styles.css.
-   Tokens live in shared/css/tokens.css; W1 owns further refactor. */
+/* Chat page: conversation, composer and responsive rules (ex-styles.css).
+   App shell + session list moved to shared/css/kit.css at merge (cross-page). */
 .chat-canvas {
   position: relative;
   display: flex;

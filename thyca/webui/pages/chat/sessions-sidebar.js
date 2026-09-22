@@ -85,7 +85,7 @@ export function rememberActiveSession(id) {
 }
 
 // Row action: a word, not a glyph. What it says and which row it belongs to
-// both live in the label; the look is .session-action in pages/chat/chat.css.
+// both live in the label; the look is .session-action in shared/css/kit.css.
 function rowAction(className, label, text, onClick) {
   const button = document.createElement("button");
   button.type = "button";

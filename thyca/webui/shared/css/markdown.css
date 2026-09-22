@@ -100,3 +100,10 @@
   text-align: start;
   vertical-align: top;
 }
+
+@media (max-width: 56rem) {
+  .markdown-body pre {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+}

@@ -1,4 +1,5 @@
-import { ApiError, getJson, postJson, postNdjson } from "../../shared/js/api.js";
+import { ApiError, getJson, postJson } from "../../shared/js/http.js";
+import { postNdjson } from "../../shared/js/streams.js";
 import { effortChoicesFor, effortDefaultFor, fillEffortSelect } from "../../shared/js/reasoning-effort.js";
 import { sendErrorMessage } from "./chat-status.js";
 import { renderConversation } from "./transcript.js";

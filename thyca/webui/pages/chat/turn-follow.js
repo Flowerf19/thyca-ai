@@ -1,4 +1,5 @@
-import { ApiError, getJson, getNdjson, postJson } from "../../shared/js/api.js";
+import { ApiError, getJson, postJson } from "../../shared/js/http.js";
+import { getNdjson } from "../../shared/js/streams.js";
 import { createLiveStatus, resetLiveStatus, updateLiveStatus } from "./live-status.js";
 import { refreshSessions } from "./sessions-sidebar.js";
 

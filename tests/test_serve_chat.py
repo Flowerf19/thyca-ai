@@ -1222,8 +1222,8 @@ def test_webui_follows_a_turn_it_did_not_start() -> None:
     # first one: assert the name itself, wherever it sits in the braces.
     import re
 
-    names = re.findall(r'import \{([^}]*)\}\s*from "\.\./\.\./shared/js/api\.js"', app)
-    assert names, "app.js must import from ../../shared/js/api.js"
+    names = re.findall(r'import \{([^}]*)\}\s*from "\.\./\.\./shared/js/(?:api|http|streams)\.js"', app)
+    assert names, "app.js must import from ../../shared/js/{api,http,streams}.js"
     imported = {name.strip() for group in names for name in group.split(",") if name.strip()}
     assert {
         "ApiError",

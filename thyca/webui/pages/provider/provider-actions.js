@@ -1,4 +1,4 @@
-import { getJson, postJson } from "../../shared/js/api.js";
+import { getJson, postJson } from "../../shared/js/http.js";
 import {
   applyModel,
   el,

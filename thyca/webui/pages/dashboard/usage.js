@@ -1,4 +1,4 @@
-import { getJson } from "../../shared/js/api.js";
+import { getJson } from "../../shared/js/http.js";
 import { aggregateUsage, completeDays, rollingRange, traceRangeUrl } from "../../shared/js/analytics-data.js";
 import { drawBarChart } from "../../shared/js/bar-chart.js";
 import { fetchAllTraces } from "../../shared/js/dashboard-today.js";

@@ -1,4 +1,4 @@
-import { getJson, postJson } from "../../shared/js/api.js";
+import { getJson, postJson } from "../../shared/js/http.js";
 import { decodeHash } from "../../shared/js/format.js";
 import { formatMarkdown } from "../../shared/js/markdown.js";
 import { selectCanonical } from "../../shared/js/memory-data.js";

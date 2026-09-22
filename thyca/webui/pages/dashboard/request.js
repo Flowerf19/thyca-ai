@@ -1,4 +1,4 @@
-import { getJson } from "../../shared/js/api.js";
+import { getJson } from "../../shared/js/http.js";
 import { completeDays, rollingRange, traceRangeUrl } from "../../shared/js/analytics-data.js";
 import { svg } from "../../shared/js/bar-chart.js";
 import { makeSetStatus, messageOf } from "../../shared/js/status.js";

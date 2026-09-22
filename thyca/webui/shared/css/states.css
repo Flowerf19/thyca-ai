@@ -167,11 +167,6 @@ input:disabled {
     width: 100%;
   }
 
-  .markdown-body pre {
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-  }
-
   .provider-actions {
     flex-wrap: nowrap;
     overflow-x: auto;

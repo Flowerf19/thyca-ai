@@ -1,4 +1,4 @@
-import { deleteJson, getJson, patchJson } from "../../shared/js/api.js";
+import { deleteJson, getJson, patchJson } from "../../shared/js/http.js";
 import { cleanText, formatSessionTime } from "../../shared/js/format.js";
 
 // Sidebar session list: pager, rows, rename/delete dialogs. Receives the

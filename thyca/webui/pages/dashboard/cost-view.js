@@ -1,4 +1,4 @@
-import { getJson } from "../../shared/js/api.js";
+import { getJson } from "../../shared/js/http.js";
 import { fetchAllTraces } from "../../shared/js/dashboard-today.js";
 import {
   averageDisplay,

@@ -1,4 +1,4 @@
-import { getJson } from "../../shared/js/api.js";
+import { getJson } from "../../shared/js/http.js";
 import { rollingRange } from "../../shared/js/analytics-data.js";
 import {
   JOURNAL_PAGE_SIZE,

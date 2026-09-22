@@ -1,4 +1,4 @@
-import { getJson, postJson } from "../../shared/js/api.js";
+import { getJson, postJson } from "../../shared/js/http.js";
 import { completeDays, rollingRange } from "../../shared/js/analytics-data.js";
 import { drawBarChart } from "../../shared/js/bar-chart.js";
 import { formatDate, formatDateTime, formatInteger } from "../../shared/js/format.js";

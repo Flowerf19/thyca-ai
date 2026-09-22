@@ -61,13 +61,13 @@ giữ nguyên vị trí trừ khi team chứng minh lợi ích di chuyển.
 
 | ID | Task | Done | Date |
 |----|------|------|------|
-| TASK-005 | W1 chat: refactor theo module plan → test → review độc lập | | |
-| TASK-006 | W2 dashboard: refactor theo module plan → test → review độc lập | | |
-| TASK-007 | W3 views: refactor theo module plan → test → review độc lập (giữ `trace.html` redirect stub + deep-link params) | | |
-| TASK-008 | W4 memory-ui: refactor theo module plan → test → review độc lập | | |
-| TASK-009 | W5 config-ui: refactor theo module plan → test → review độc lập (giải quyết settings.css xài chung) | | |
-| TASK-010 | W6 shared: refactor theo module plan → test → review độc lập (tokens/kit tách nhưng giữ nguyên visual) | | |
-| TASK-011 | Orchestrator merge 6 nhánh team vào `refactor/webui-solid`, giải quyết conflict (ưu tiên giữ behavior + tests xanh) | | |
+| TASK-005 | W1 chat: refactor theo module plan → test → review độc lập | x (redo splits + harness concat, test 719, review approve) | 2026-09-22 |
+| TASK-006 | W2 dashboard: refactor theo module plan → test → review độc lập | x (test 719, review approve zero findings) | 2026-09-22 |
+| TASK-007 | W3 views: refactor theo module plan → test → review độc lập (giữ `trace.html` redirect stub + deep-link params) | x (redo splits + extractor updates, test 719, review approve) | 2026-09-22 |
+| TASK-008 | W4 memory-ui: refactor theo module plan → test → review độc lập | x (test 719, review approve) | 2026-09-22 |
+| TASK-009 | W5 config-ui: refactor theo module plan → test → review độc lập (giải quyết settings.css xài chung) | x (split + 1-line test fix, test 719, review approve) | 2026-09-22 |
+| TASK-010 | W6 shared: refactor theo module plan → test → review độc lập (tokens/kit tách nhưng giữ nguyên visual) | x (redo full split, test 719, review request-changes 1 regression → fixed at merge) | 2026-09-22 |
+| TASK-011 | Orchestrator merge 6 nhánh team vào `refactor/webui-solid`, giải quyết conflict (ưu tiên giữ behavior + tests xanh) | x (6 merges, 5 conflict spots resolved loader-level + media fix + direct http/streams imports) | 2026-09-22 |
 
 ### GOAL-004: Integration + visual + docs
 
@@ -98,10 +98,10 @@ giữ nguyên vị trí trừ khi team chứng minh lợi ích di chuyển.
 
 | ID | Task | Done | Date |
 |----|------|------|------|
-| TASK-016 | W1 redo: rebase + splits + harness concat updates → test → review | | |
-| TASK-017 | W3 redo: rebase + pager/trace/cost splits + extractor updates → test → review | | |
-| TASK-018 | W5 fix: giữ split, update 1 substring assert → test → review | | |
-| TASK-019 | W6 redo: full plan (plans đã commit) + CSS-pin updates → test → review | | |
+| TASK-016 | W1 redo: rebase + splits + harness concat updates → test → review | x (wf_405fd8582c4e + review approve) | 2026-09-22 |
+| TASK-017 | W3 redo: rebase + pager/trace/cost splits + extractor updates → test → review | x (wf_405fd8582c4e + review approve) | 2026-09-22 |
+| TASK-018 | W5 fix: giữ split, update 1 substring assert → test → review | x (wf_405fd8582c4e + review approve) | 2026-09-22 |
+| TASK-019 | W6 redo: full plan (plans đã commit) + CSS-pin updates → test → review | x (wf_405fd8582c4e + review request-changes → fixed at merge) | 2026-09-22 |
 
 ## Test Plan
 

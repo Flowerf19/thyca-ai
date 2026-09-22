@@ -1382,7 +1382,9 @@ def test_webui_has_row_actions_for_rename_and_delete() -> None:
         for name in ("sessions-sidebar.js", "turn-follow.js", "composer.js", "app.js")
     )
     html = (WEBUI / "index.html").read_text(encoding="utf-8")
-    css = (WEBUI / "pages" / "chat" / "chat.css").read_text(encoding="utf-8")
+    css = (WEBUI / "shared" / "css" / "kit.css").read_text(
+        encoding="utf-8"
+    ) + (WEBUI / "pages" / "chat" / "chat.css").read_text(encoding="utf-8")
     api = (WEBUI / "shared" / "js" / "http.js").read_text(encoding="utf-8")
 
     assert 'patchJson(`/api/sessions/${encodeURIComponent(id)}`, { title })' in app
@@ -1535,7 +1537,7 @@ def test_chat_row_uses_the_shared_session_item() -> None:
     """Chat sidebar rows use the same .session-item grid as Hồ sơ / Nhật ký;
     Trace moved into the dashboard and renders its session list there as
     .journal-entry rows on the shared kit instead."""
-    css = (WEBUI / "pages" / "chat" / "chat.css").read_text(encoding="utf-8")
+    css = (WEBUI / "shared" / "css" / "kit.css").read_text(encoding="utf-8")
     app = "\n".join(
         (WEBUI / "pages" / "chat" / name).read_text(encoding="utf-8")
         for name in ("sessions-sidebar.js", "turn-follow.js", "composer.js", "app.js")
@@ -1557,7 +1559,7 @@ def test_chat_row_uses_the_shared_session_item() -> None:
     assert 'meta.className = "journal-meta";' in trace
     assert "item.append(stampNode(group.startedAt), body);" in trace
 
-    icon = css[css.index(".session-icon {") : css.index(".session-name {")]
+    icon = css[css.index("\n.session-icon {") : css.index(".session-name {")]
     icon = icon[: icon.index("}")]
     assert "width: 1.85rem;" in icon
     assert "height: 1.85rem;" in icon
@@ -1573,7 +1575,7 @@ def test_chat_row_uses_the_shared_session_item() -> None:
     assert "grid-column: 2;" in name
     assert "grid-row: 1;" in name
 
-    time = css[css.index(".session-item time {") :]
+    time = css[css.index("\n.session-item time {") :]
     time = time[: time.index("}")]
     assert "grid-column: 2;" in time
     assert "grid-row: 2;" in time
@@ -1582,7 +1584,7 @@ def test_chat_row_uses_the_shared_session_item() -> None:
     assert "font-size: 0.72rem;" in time
     assert "font-style: italic;" in time
 
-    item = css[css.index(".session-item {") :]
+    item = css[css.index("\n.session-item {") :]
     item = item[: item.index("}")]
     assert "grid-template-columns: 1.85rem minmax(0, 1fr) auto;" in item
     assert "min-height: 3.65rem;" in item

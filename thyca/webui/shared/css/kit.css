@@ -887,3 +887,468 @@
   .screen-shell h2 { font-size: 1.45rem; overflow-wrap: anywhere; }
   .screen-select { width: 100%; }
 }
+
+
+/* App shell restored from pages/chat/chat.css (merge fix): these rules
+   (.notebook-shell grid, site-header, sidebar, session list, workspace,
+   icon-button, responsive shell overrides, reduced-motion) apply to EVERY
+   page. W6 TASK-007 misfiled them as chat-only, breaking dashboard and
+   other pages (unstyled shell). Moved verbatim; order within file kept. */
+.notebook-shell {
+  position: relative;
+  z-index: var(--z-paper);
+  display: grid;
+  grid-template-columns: 20.25rem minmax(0, 1fr);
+  grid-template-rows: 2.75rem minmax(0, 1fr) auto;
+  width: 100%;
+  height: calc(100dvh - 2.3rem);
+  min-height: 43rem;
+  max-height: 58.875rem;
+  overflow: hidden;
+  border-radius: var(--radius-shell);
+  background-color: var(--color-paper);
+  background-image:
+    linear-gradient(color-mix(in oklab, var(--color-paper-chat) 42%, transparent), color-mix(in oklab, var(--color-paper-chat) 42%, transparent)),
+    url("../../images/thyca-bg-outer.png");
+  background-position: center;
+  background-size: cover;
+  box-shadow:
+    0 0.72rem 0 var(--color-paper-edge),
+    0 2.05rem 2.3rem var(--color-shell-shadow),
+    0.65rem 0.8rem 1.2rem var(--color-shell-shadow-soft);
+}
+
+.notebook-shell::before {
+  content: "";
+  position: absolute;
+  z-index: var(--z-base);
+  inset: 2.75rem 1.25rem 1.25rem;
+  border-radius: var(--radius-chat);
+  background-color: var(--color-paper-chat);
+  background-image:
+    linear-gradient(color-mix(in oklab, var(--color-paper-chat) 42%, transparent), color-mix(in oklab, var(--color-paper-chat) 42%, transparent)),
+    url("../../images/thyca-bg-paper.png");
+  background-position: center;
+  background-size: cover;
+  pointer-events: none;
+}
+
+.site-header {
+  position: relative;
+  z-index: var(--z-content);
+  grid-column: 1 / -1;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding-inline: 1.55rem 1.85rem;
+  border-radius: var(--radius-shell) var(--radius-shell) 0 0;
+  background: transparent;
+}
+
+.header-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 0.7rem;
+  width: max-content;
+  max-width: 100%;
+  margin: 0 0 0 auto;
+  min-height: 1.15rem;
+  padding: 0 0.2rem 0.12rem;
+  overflow: hidden;
+  border-bottom: var(--rule) solid var(--color-divider);
+  color: var(--color-muted);
+  font-family: var(--font-reading);
+  font-size: 0.88rem;
+  font-style: italic;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
+#header-edition {
+  font-size: 0.72rem;
+}
+
+.sidebar {
+  position: relative;
+  z-index: var(--z-content);
+  grid-column: 1;
+  grid-row: 2 / -1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  margin: 0 0.18rem 1.25rem 1.25rem;
+  overflow: hidden;
+  border: var(--rule) solid var(--color-border);
+  border-radius: var(--radius-chat);
+  background: transparent;
+  box-shadow: 0 0.55rem 1.35rem var(--color-shell-shadow-soft);
+}
+
+.icon-button,
+.new-session {
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--color-muted);
+  transition: color var(--dur-short) var(--ease-out), transform var(--dur-micro) var(--ease-out), background-color var(--dur-short) var(--ease-out);
+}
+
+.icon-button {
+  width: 2.75rem;
+  height: 2.75rem;
+}
+
+.icon-button svg {
+  width: 1.65rem;
+  height: 1.65rem;
+  stroke-width: 1.75;
+}
+
+.sessions {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  padding: 1.95rem 0.65rem 1rem 1.55rem;
+  font-family: var(--font-ui);
+}
+
+.sessions-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding-inline-end: 0.65rem;
+}
+
+.sessions-heading h2 {
+  margin: 0;
+  color: var(--chat-brand-ink);
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-style: normal;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.2;
+}
+
+.new-session {
+  width: 2.5rem;
+  height: 2.35rem;
+  border: var(--rule) solid var(--color-divider);
+}
+
+.new-session svg {
+  width: 1.1rem;
+  height: 1.1rem;
+  stroke-width: 1.7;
+}
+
+/* One thin, faint scrollbar for the chat sidebar, the conversation pane, and
+   the screen surfaces (kit.css never re-sets these). */
+.session-list,
+.conversation-scroll,
+.screen-surface {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-divider) transparent;
+}
+
+.session-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-height: 0;
+  margin-block-start: 1.5rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* The row is the positioning context for its hover actions: the button keeps
+   its own layout, the actions are laid over the right end of it. */
+.session-row {
+  position: relative;
+}
+
+.session-item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1.85rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.08rem;
+  min-height: 3.65rem;
+  padding: 0.4rem 0.85rem 0.4rem 0.55rem;
+  isolation: isolate;
+  border: var(--rule) solid transparent;
+  border-block-start-color: var(--color-divider);
+  border-radius: 0;
+  background: transparent;
+  color: var(--chat-brand-accent);
+  text-align: start;
+  text-decoration: none;
+  transition: color var(--dur-short) var(--ease-out), background-color var(--dur-short) var(--ease-out), transform var(--dur-micro) var(--ease-out);
+}
+
+/* The first row of the list carries no rule above it. Chat rows are wrapped
+   in .session-row to hold their hover actions; every other screen puts the
+   .session-item straight into the list. */
+.session-list > .session-row:first-child .session-item,
+.session-list > .session-item:first-child {
+  border-block-start: 0;
+}
+
+.session-row .session-item {
+  width: 100%;
+}
+
+.session-item.is-active::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0.2rem 0.15rem;
+  border-radius: 50%;
+  background: var(--chat-brand-wash);
+  filter: blur(10px);
+  pointer-events: none;
+}
+
+.session-item.is-active::after {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  inset-block: 0.55rem;
+  inset-inline-start: 0;
+  width: 4px;
+  border-radius: 99px;
+  background: var(--chat-brand-accent);
+}
+
+.session-icon {
+  grid-column: 1;
+  grid-row: 1;
+  width: 1.85rem;
+  height: 1.85rem;
+  margin-inline-end: -0.35rem;
+  background: currentColor;
+  -webkit-mask: url("../../images/thyca-icons/canh-cay.svg") left center / contain no-repeat;
+  mask: url("../../images/thyca-icons/canh-cay.svg") left center / contain no-repeat;
+}
+
+/* Chat and Trace carry a time line: the leaf spans both rows so the meta
+   sits against it. Hồ sơ / Nhật ký have no <time>, so their icon stays put. */
+.session-item:has(time) .session-icon {
+  grid-row: 1 / -1;
+}
+
+.session-name {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--chat-brand-ink);
+  font-family: var(--font-reading);
+  font-size: 0.94rem;
+  font-weight: 500;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-item time {
+  grid-column: 2;
+  grid-row: 2;
+  justify-self: start;
+  color: var(--chat-brand-accent);
+  font-family: var(--font-reading);
+  font-size: 0.72rem;
+  font-style: italic;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* Row actions: đặt tên and xóa as plain underlined words at the right end of
+   the row, using the type of the row's own second line so the two read as one.
+   Out of the way until the row is pointed at (or reached by keyboard); touch
+   has no hover, so there they stay visible instead. */
+.session-actions {
+  position: absolute;
+  z-index: 1;
+  inset-block: 0;
+  inset-inline-end: 0.55rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-short) var(--ease-out);
+}
+
+.session-row:hover .session-actions,
+.session-row:focus-within .session-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.session-action {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--chat-brand-accent);
+  font-family: var(--font-ui);
+  font-size: 0.72rem;
+  line-height: 1;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  white-space: nowrap;
+  transition: color var(--dur-short) var(--ease-out);
+}
+
+.session-action.is-delete {
+  color: var(--color-accent-deep);
+}
+
+/* The actions cover the tail of both lines: they make room instead of running
+   underneath. Only where the actions overlay the row at all — on touch they
+   sit in their own column and the row keeps its full width. */
+@media (hover: hover) and (pointer: fine) {
+  .session-row:hover .session-name,
+  .session-row:focus-within .session-name,
+  .session-row:hover time,
+  .session-row:focus-within time {
+    padding-inline-end: 5.2rem;
+  }
+}
+
+.workspace {
+  position: relative;
+  z-index: var(--z-content);
+  grid-column: 2;
+  grid-row: 2 / 4;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  margin: 0 1.25rem 1.25rem 0.18rem;
+  overflow: hidden;
+  border: var(--rule) solid var(--color-border);
+  border-radius: var(--radius-chat);
+  background: transparent;
+  box-shadow: 0 0.55rem 1.35rem var(--color-shell-shadow-soft);
+}
+
+.site-footer {
+  position: relative;
+  z-index: 6;
+  flex: 0 0 auto;
+  min-width: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+@media (max-width: 75rem) {
+  .notebook-shell {
+    grid-template-columns: 16.5rem minmax(0, 1fr);
+  }
+
+  .sessions {
+    padding-inline-start: 1.55rem;
+  }
+
+  .session-item {
+    grid-template-columns: 1.75rem minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 56rem) {
+  body {
+    padding: 0;
+    background: var(--color-paper);
+  }
+
+  .notebook-shell {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .notebook-shell::before {
+    inset: 0;
+    border-radius: 0;
+  }
+
+  .sidebar {
+    position: absolute;
+    z-index: calc(var(--z-content) + 1);
+    inset: 0 0 auto;
+    display: block;
+    height: 4rem;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    pointer-events: none;
+  }
+
+  .site-header {
+    height: 2.75rem;
+    padding-inline: 0.75rem 1rem;
+    border-radius: 0;
+  }
+
+
+  .sessions {
+    display: none;
+  }
+
+  .workspace {
+    flex: 1 1 auto;
+    height: auto;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .site-footer {
+    display: block;
+    border-radius: 0;
+  }
+}
+
+@media (max-width: 28rem) {
+  .header-line {
+    font-size: 0.8rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+html[data-reduce-motion="on"] *,
+html[data-reduce-motion="on"] *::before,
+html[data-reduce-motion="on"] *::after {
+  scroll-behavior: auto !important;
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}

@@ -1,4 +1,4 @@
-import { Marked } from "../vendor/marked.esm.js";
+import { Marked } from "../../vendor/marked.esm.js";
 import { escapeHtml } from "./format.js";
 
 const SAFE_HREF = /^(https?:|mailto:)/i;

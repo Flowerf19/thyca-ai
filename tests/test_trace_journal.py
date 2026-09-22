@@ -1,4 +1,4 @@
-"""Trace execution journal + deep-link time helpers — webui/backend/trace-data.js.
+"""Trace execution journal + deep-link time helpers — webui/pages/dashboard/trace-data.js.
 
 executionStepsFromDetail is the flat journal behind the Trace screen: real
 message order, tool calls kept per call (id preserved, never merged by name)
@@ -17,8 +17,8 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-TRACE_DATA = ROOT / "thyca" / "webui" / "backend" / "trace-data.js"
-TRACE_JS = ROOT / "thyca" / "webui" / "trace.js"
+TRACE_DATA = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "trace-data.js"
+TRACE_JS = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "trace.js"
 
 
 @pytest.fixture(scope="module")
@@ -896,7 +896,7 @@ globalThis.fetch = async (url) => {
   return { ok: true, json: async () => ({ traces, total: traces.length }) };
 };
 
-await import("./thyca/webui/trace.js");
+await import("./thyca/webui/pages/dashboard/trace.js");
 await tick();
 
 const result = {

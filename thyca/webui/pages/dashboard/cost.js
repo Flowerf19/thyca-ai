@@ -1,5 +1,5 @@
-import { getJson } from "./backend/api.js";
-import { fetchAllTraces } from "./backend/dashboard-today.js";
+import { getJson } from "../../shared/js/api.js";
+import { fetchAllTraces } from "../../shared/js/dashboard-today.js";
 import {
   NO_SESSION_KEY,
   aggregateSessions,
@@ -11,13 +11,13 @@ import {
   priceRates,
   shareLabel,
   shareRatio,
-} from "./backend/cost-data.js";
+} from "./cost-data.js";
 import {
   rollingRange,
   selectModels,
   splitPromptTokens,
-} from "./backend/analytics-data.js";
-import { formatCost, formatInteger } from "./backend/format.js";
+} from "../../shared/js/analytics-data.js";
+import { formatCost, formatInteger } from "../../shared/js/format.js";
 
 const el = {
   period: document.querySelector("#cost-period"),

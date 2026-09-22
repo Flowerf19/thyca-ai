@@ -1,6 +1,6 @@
-import { getJson } from "./backend/api.js";
-import { rollingRange, traceRangeUrl } from "./backend/analytics-data.js";
-import { cleanText, formatDate, formatInteger } from "./backend/format.js";
+import { getJson } from "../../shared/js/api.js";
+import { rollingRange, traceRangeUrl } from "../../shared/js/analytics-data.js";
+import { cleanText, formatDate, formatInteger } from "../../shared/js/format.js";
 
 const el = {
   period: document.querySelector("#request-period"),

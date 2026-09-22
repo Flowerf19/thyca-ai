@@ -1,7 +1,7 @@
-import { getJson, postJson } from "./backend/api.js";
-import { decodeHash } from "./backend/format.js";
-import { formatMarkdown } from "./backend/markdown.js";
-import { selectCanonical } from "./backend/memory-data.js";
+import { getJson, postJson } from "../../shared/js/api.js";
+import { decodeHash } from "../../shared/js/format.js";
+import { formatMarkdown } from "../../shared/js/markdown.js";
+import { selectCanonical } from "../../shared/js/memory-data.js";
 
 const el = {
   nav: document.querySelector("#profile-nav"),

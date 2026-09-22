@@ -1,7 +1,7 @@
-import { getJson } from "./backend/api.js";
-import { aggregateUsage, completeDays, rollingRange, traceRangeUrl } from "./backend/analytics-data.js";
-import { drawBarChart } from "./backend/bar-chart.js";
-import { formatCompact, formatDate, formatInteger } from "./backend/format.js";
+import { getJson } from "../../shared/js/api.js";
+import { aggregateUsage, completeDays, rollingRange, traceRangeUrl } from "../../shared/js/analytics-data.js";
+import { drawBarChart } from "../../shared/js/bar-chart.js";
+import { formatCompact, formatDate, formatInteger } from "../../shared/js/format.js";
 
 const el = {
   period: document.querySelector("#usage-month"),

@@ -4,8 +4,8 @@ import {
   usageLine,
 } from "./chat-status.js";
 import { bindThinkingToggle, createThinkingNote, elapsedLabel, settledThinkingNote } from "./chat-thinking.js";
-import { formatTime } from "./format.js";
-import { formatMarkdown } from "./markdown.js";
+import { formatTime } from "../../shared/js/format.js";
+import { formatMarkdown } from "../../shared/js/markdown.js";
 
 function chatBrandHeader({ state = "idle", status = "đã viết", expandable = false } = {}) {
   const header = document.createElement("header");

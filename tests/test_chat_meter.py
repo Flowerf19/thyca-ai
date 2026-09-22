@@ -1,4 +1,4 @@
-"""Number formatting for the new UI — webui/backend/format.js.
+"""Number formatting for the new UI — webui/shared/js/format.js.
 
 The old composer usage meter (webui/js/chat/meter.js: sumLastTurnUsage,
 meterText, lastTurnTools, #meter/#tool-meter DOM) was deliberately dropped in
@@ -19,7 +19,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 NEW_UI = ROOT / "thyca" / "webui"
-FORMAT_JS = NEW_UI / "backend" / "format.js"
+FORMAT_JS = NEW_UI / "shared" / "js" / "format.js"
 
 
 @pytest.fixture(scope="module")
@@ -48,10 +48,12 @@ def _eval(node: str, expression: str) -> object:
 def test_composer_meter_is_dropped_in_new_ui() -> None:
     haystacks = [
         (NEW_UI / name).read_text(encoding="utf-8")
-        for name in ("app.js", "index.html", "cost.js", "usage.js")
+        for name in ("pages/chat/app.js", "index.html", "pages/dashboard/cost.js", "pages/dashboard/usage.js")
     ] + [
-        (NEW_UI / "backend" / name).read_text(encoding="utf-8")
-        for name in ("api.js", "chat-view.js", "analytics-data.js", "format.js")
+        (NEW_UI / "shared" / "js" / name).read_text(encoding="utf-8")
+        for name in ("api.js", "analytics-data.js", "format.js")
+    ] + [
+        (NEW_UI / "pages" / "chat" / "chat-view.js").read_text(encoding="utf-8")
     ]
     blob = "\n".join(haystacks)
     assert "sumLastTurnUsage" not in blob

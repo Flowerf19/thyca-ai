@@ -1,4 +1,4 @@
-"""Node tests for the Chi phí journal helpers — webui/backend/cost-data.js.
+"""Node tests for the Chi phí journal helpers — webui/pages/dashboard/cost-data.js.
 
 Covers session aggregation (dedupe on session_id+turn_index, missing-session
 group, turn vs request counts), overview metrics (null vs zero cost, partial
@@ -17,9 +17,9 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "thyca" / "webui" / "backend" / "cost-data.js"
-TODAY_SCRIPT = ROOT / "thyca" / "webui" / "backend" / "dashboard-today.js"
-COST_JS = ROOT / "thyca" / "webui" / "cost.js"
+SCRIPT = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "cost-data.js"
+TODAY_SCRIPT = ROOT / "thyca" / "webui" / "shared" / "js" / "dashboard-today.js"
+COST_JS = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "cost.js"
 
 
 @pytest.fixture(scope="module")

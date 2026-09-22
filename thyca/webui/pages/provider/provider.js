@@ -1,5 +1,5 @@
-import { getJson, postJson } from "./backend/api.js";
-import { effortChoicesFor, fillEffortSelect } from "./backend/reasoning-effort.js";
+import { getJson, postJson } from "../../shared/js/api.js";
+import { effortChoicesFor, fillEffortSelect } from "../../shared/js/reasoning-effort.js";
 
 const PRESETS = {
   openai: "https://api.openai.com/v1",

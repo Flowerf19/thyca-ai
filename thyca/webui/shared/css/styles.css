@@ -152,7 +152,7 @@ svg {
   background-color: var(--color-paper);
   background-image:
     linear-gradient(color-mix(in oklab, var(--color-paper-chat) 42%, transparent), color-mix(in oklab, var(--color-paper-chat) 42%, transparent)),
-    url("images/thyca-bg-outer.png");
+    url("../../images/thyca-bg-outer.png");
   background-position: center;
   background-size: cover;
   box-shadow:
@@ -170,7 +170,7 @@ svg {
   background-color: var(--color-paper-chat);
   background-image:
     linear-gradient(color-mix(in oklab, var(--color-paper-chat) 42%, transparent), color-mix(in oklab, var(--color-paper-chat) 42%, transparent)),
-    url("images/thyca-bg-paper.png");
+    url("../../images/thyca-bg-paper.png");
   background-position: center;
   background-size: cover;
   pointer-events: none;
@@ -377,8 +377,8 @@ svg {
   height: 1.85rem;
   margin-inline-end: -0.35rem;
   background: currentColor;
-  -webkit-mask: url("images/thyca-icons/canh-cay.svg") left center / contain no-repeat;
-  mask: url("images/thyca-icons/canh-cay.svg") left center / contain no-repeat;
+  -webkit-mask: url("../../images/thyca-icons/canh-cay.svg") left center / contain no-repeat;
+  mask: url("../../images/thyca-icons/canh-cay.svg") left center / contain no-repeat;
 }
 
 /* Chat and Trace carry a time line: the leaf spans both rows so the meta
@@ -717,8 +717,8 @@ svg {
   width: 22px;
   height: 22px;
   background: var(--chat-brand-accent);
-  -webkit-mask: url("images/thyca-icons/long-vit.svg") center / contain no-repeat;
-  mask: url("images/thyca-icons/long-vit.svg") center / contain no-repeat;
+  -webkit-mask: url("../../images/thyca-icons/long-vit.svg") center / contain no-repeat;
+  mask: url("../../images/thyca-icons/long-vit.svg") center / contain no-repeat;
 }
 
 .chat-brand-line {

@@ -1,4 +1,4 @@
-import { cleanText } from "./format.js";
+import { cleanText } from "../../shared/js/format.js";
 
 // Known turn cost: number (0 is real), or null when never priced. null and
 // "" both mean "no price recorded" — never fake zero (same semantics as

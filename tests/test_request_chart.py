@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-REQUEST_JS = ROOT / "thyca" / "webui" / "request.js"
+REQUEST_JS = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "request.js"
 
 
 @pytest.fixture(scope="module")

@@ -1,8 +1,8 @@
-import { getJson, postJson } from "./backend/api.js";
-import { completeDays, rollingRange } from "./backend/analytics-data.js";
-import { drawBarChart } from "./backend/bar-chart.js";
-import { formatDate, formatDateTime, formatInteger } from "./backend/format.js";
-import { selectMemories } from "./backend/memory-data.js";
+import { getJson, postJson } from "../../shared/js/api.js";
+import { completeDays, rollingRange } from "../../shared/js/analytics-data.js";
+import { drawBarChart } from "../../shared/js/bar-chart.js";
+import { formatDate, formatDateTime, formatInteger } from "../../shared/js/format.js";
+import { selectMemories } from "../../shared/js/memory-data.js";
 const el = {
   list: document.querySelector("#memory-list"),
   empty: document.querySelector("#memory-empty"),

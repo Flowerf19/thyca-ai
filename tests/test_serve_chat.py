@@ -673,12 +673,12 @@ def test_stream_sentinel_without_terminal_writes_fallback_failure(
 
 
 def test_chat_js_shipped() -> None:
-    app = (WEBUI / "app.js").read_text(encoding="utf-8")
-    view = (WEBUI / "backend" / "chat-view.js").read_text(encoding="utf-8")
-    thinking = (WEBUI / "backend" / "chat-thinking.js").read_text(encoding="utf-8")
-    api = (WEBUI / "backend" / "api.js").read_text(encoding="utf-8")
-    css = (WEBUI / "backend.css").read_text(encoding="utf-8")
-    styles = (WEBUI / "styles.css").read_text(encoding="utf-8")
+    app = (WEBUI / "pages" / "chat" / "app.js").read_text(encoding="utf-8")
+    view = (WEBUI / "pages" / "chat" / "chat-view.js").read_text(encoding="utf-8")
+    thinking = (WEBUI / "pages" / "chat" / "chat-thinking.js").read_text(encoding="utf-8")
+    api = (WEBUI / "shared" / "js" / "api.js").read_text(encoding="utf-8")
+    css = (WEBUI / "shared" / "css" / "backend.css").read_text(encoding="utf-8")
+    styles = (WEBUI / "shared" / "css" / "styles.css").read_text(encoding="utf-8")
 
     assert 'postNdjson(' in app
     assert '/turn/stream' in app
@@ -694,7 +694,7 @@ def test_chat_js_shipped() -> None:
     assert "createThinkingNote" in view
     assert "settledThinkingNote" in view
     assert "ambientLineForEvent" not in view
-    assert not (WEBUI / "backend" / "chat-ambient.js").exists()
+    assert not (WEBUI / "pages" / "chat" / "chat-ambient.js").exists()
     assert "tool.started" in view
     assert "llm.thinking" in view
     assert "resetLiveStatus(live, startedAt)" in app
@@ -718,7 +718,7 @@ def test_chat_js_shipped() -> None:
 
 
 def test_chat_nav_opens_new_session() -> None:
-    app = (WEBUI / "app.js").read_text(encoding="utf-8")
+    app = (WEBUI / "pages" / "chat" / "app.js").read_text(encoding="utf-8")
     html = (WEBUI / "index.html").read_text(encoding="utf-8")
     new_session = app[app.index("function newSession()") : app.index("async function ensureSession")]
     ensure_session = app[app.index("async function ensureSession") : app.index("async function sendMessage")]
@@ -732,7 +732,7 @@ def test_chat_nav_opens_new_session() -> None:
     assert 'postJson("/api/sessions", {})' in ensure_session
     assert "sessionId = await ensureSession()" in app
 
-    provider = (WEBUI / "provider.js").read_text(encoding="utf-8")
+    provider = (WEBUI / "pages" / "provider" / "provider.js").read_text(encoding="utf-8")
     assert 'getJson("/api/config")' in provider
     assert 'postJson("/api/config"' in provider
     assert 'postJson("/api/onboarding/verify"' in provider
@@ -763,7 +763,7 @@ def test_session_payload_includes_ask_remember(tmp_path: Path) -> None:
 
 def test_idle_remember_nudge_in_webui() -> None:
     html = (WEBUI / "index.html").read_text(encoding="utf-8")
-    app = (WEBUI / "app.js").read_text(encoding="utf-8")
+    app = (WEBUI / "pages" / "chat" / "app.js").read_text(encoding="utf-8")
     assert 'id="idle-nudge"' in html
     assert "Phiên im 15 phút" in html
     assert "IDLE_MS = 15 * 60 * 1000" in app
@@ -880,9 +880,9 @@ def test_session_detail_tags_skill_loads(tmp_path: Path) -> None:
 
 
 def test_empty_submit_nudges_without_sending() -> None:
-    app = (WEBUI / "app.js").read_text(encoding="utf-8")
+    app = (WEBUI / "pages" / "chat" / "app.js").read_text(encoding="utf-8")
     html = (WEBUI / "index.html").read_text(encoding="utf-8")
-    css = (WEBUI / "styles.css").read_text(encoding="utf-8")
+    css = (WEBUI / "shared" / "css" / "styles.css").read_text(encoding="utf-8")
     send_message = app[app.index("async function sendMessage()") : app.index("function bind()")]
     empty_branch = send_message[: send_message.index("if (composerBusy()) return;")]
 
@@ -1137,7 +1137,7 @@ def test_webui_keeps_streaming_card_across_session_switch() -> None:
     stream keep drawing into it; a fresh card would read as a bare status line
     with no usage row and no further updates.
     """
-    app = (WEBUI / "app.js").read_text(encoding="utf-8")
+    app = (WEBUI / "pages" / "chat" / "app.js").read_text(encoding="utf-8")
     render = app[app.index("function renderDetail(detail)") : app.index("function watchRunning(sessionId)")]
     send_message = app[app.index("async function sendMessage()") : app.index("function bind()")]
 
@@ -1156,9 +1156,9 @@ def test_webui_keeps_streaming_card_across_session_switch() -> None:
 
 
 def test_webui_follows_a_turn_it_did_not_start() -> None:
-    app = (WEBUI / "app.js").read_text(encoding="utf-8")
-    view = (WEBUI / "backend" / "chat-view.js").read_text(encoding="utf-8")
-    status = (WEBUI / "backend" / "chat-status.js").read_text(encoding="utf-8")
+    app = (WEBUI / "pages" / "chat" / "app.js").read_text(encoding="utf-8")
+    view = (WEBUI / "pages" / "chat" / "chat-view.js").read_text(encoding="utf-8")
+    status = (WEBUI / "pages" / "chat" / "chat-status.js").read_text(encoding="utf-8")
     load_session = app[app.index("async function loadSession") : app.index("function newSession")]
     watch = app[app.index("function watchRunning(sessionId)") : app.index("async function loadSession")]
     composer = app[app.index("function composerBusy()") : app.index("function setSending")]
@@ -1201,8 +1201,8 @@ def test_webui_follows_a_turn_it_did_not_start() -> None:
     # first one: assert the name itself, wherever it sits in the braces.
     import re
 
-    names = re.search(r'import \{([^}]*)\}\s*from "\./backend/api\.js"', app)
-    assert names, "app.js must import from ./backend/api.js"
+    names = re.search(r'import \{([^}]*)\}\s*from "\.\./\.\./shared/js/api\.js"', app)
+    assert names, "app.js must import from ../../shared/js/api.js"
     imported = {name.strip() for name in names.group(1).split(",") if name.strip()}
     assert {
         "ApiError",
@@ -1356,10 +1356,10 @@ def test_delete_refuses_a_session_mid_turn(tmp_path: Path) -> None:
 
 def test_webui_has_row_actions_for_rename_and_delete() -> None:
     """The sidebar row carries both actions; hover reveals, keyboard reaches."""
-    app = (WEBUI / "app.js").read_text(encoding="utf-8")
+    app = (WEBUI / "pages" / "chat" / "app.js").read_text(encoding="utf-8")
     html = (WEBUI / "index.html").read_text(encoding="utf-8")
-    css = (WEBUI / "styles.css").read_text(encoding="utf-8")
-    api = (WEBUI / "backend" / "api.js").read_text(encoding="utf-8")
+    css = (WEBUI / "shared" / "css" / "styles.css").read_text(encoding="utf-8")
+    api = (WEBUI / "shared" / "js" / "api.js").read_text(encoding="utf-8")
 
     assert 'patchJson(`/api/sessions/${encodeURIComponent(id)}`, { title })' in app
     assert 'deleteJson(`/api/sessions/${encodeURIComponent(id)}`)' in app
@@ -1492,7 +1492,7 @@ def test_delete_racing_a_claim_does_not_lose_the_transcript(tmp_path: Path) -> N
 
 def test_webui_submits_a_rename_or_delete_once() -> None:
     """A double submit must not send the same request twice."""
-    app = (WEBUI / "app.js").read_text(encoding="utf-8")
+    app = (WEBUI / "pages" / "chat" / "app.js").read_text(encoding="utf-8")
     rename = app[app.index("async function submitRename()") : app.index("function openDelete")]
     remove = app[app.index("async function submitDelete()") : app.index("function rememberActiveSession")]
 
@@ -1508,9 +1508,9 @@ def test_chat_row_uses_the_shared_session_item() -> None:
     """Chat sidebar rows use the same .session-item grid as Hồ sơ / Nhật ký;
     Trace moved into the dashboard and renders its session list there as
     .journal-entry rows on the shared kit instead."""
-    css = (WEBUI / "styles.css").read_text(encoding="utf-8")
-    app = (WEBUI / "app.js").read_text(encoding="utf-8")
-    trace = (WEBUI / "trace.js").read_text(encoding="utf-8")
+    css = (WEBUI / "shared" / "css" / "styles.css").read_text(encoding="utf-8")
+    app = (WEBUI / "pages" / "chat" / "app.js").read_text(encoding="utf-8")
+    trace = (WEBUI / "pages" / "dashboard" / "trace.js").read_text(encoding="utf-8")
 
     # No restack wrapper: icon and name sit on the item, like profile.js.
     assert "session-body" not in css
@@ -1561,7 +1561,7 @@ def test_chat_row_uses_the_shared_session_item() -> None:
 
 def test_hovering_a_row_keeps_its_divider() -> None:
     """The pointer wash does not hide the line above the row it lights up."""
-    css = (WEBUI / "styles.css").read_text(encoding="utf-8")
+    css = (WEBUI / "shared" / "css" / "styles.css").read_text(encoding="utf-8")
 
     # The wash is the only hover change: the row's own top rule stays, so the
     # divider between it and the session above keeps showing.

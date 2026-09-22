@@ -9,13 +9,13 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600&family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;1,9..144,500&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;1,8..60,400&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./styles.css" />
-    <link rel="stylesheet" href="./screens.css" />
-    <link rel="stylesheet" href="./cost.css" />
-    <link rel="stylesheet" href="./usage.css" />
-    <link rel="stylesheet" href="./dashboard.css" />
-    <link rel="stylesheet" href="./trace.css" />
-    <link rel="stylesheet" href="./backend.css" />
+    <link rel="stylesheet" href="./shared/css/styles.css" />
+    <link rel="stylesheet" href="./shared/css/screens.css" />
+    <link rel="stylesheet" href="./pages/dashboard/cost.css" />
+    <link rel="stylesheet" href="./pages/dashboard/usage.css" />
+    <link rel="stylesheet" href="./pages/dashboard/dashboard.css" />
+    <link rel="stylesheet" href="./pages/dashboard/trace.css" />
+    <link rel="stylesheet" href="./shared/css/backend.css" />
   </head>
   <body>
     <main class="notebook-shell screen-shell dashboard-shell" aria-label="Dashboard Thyca">
@@ -233,11 +233,11 @@
         </section>
       </section>
     </main>
-    <script src="./navigation.js" defer></script>
-    <script type="module" src="./cost.js"></script>
-    <script type="module" src="./request.js"></script>
-    <script type="module" src="./usage.js"></script>
-    <script type="module" src="./trace.js"></script>
-    <script type="module" src="./dashboard.js"></script>
+    <script src="./shared/js/navigation.js" defer></script>
+    <script type="module" src="./pages/dashboard/cost.js"></script>
+    <script type="module" src="./pages/dashboard/request.js"></script>
+    <script type="module" src="./pages/dashboard/usage.js"></script>
+    <script type="module" src="./pages/dashboard/trace.js"></script>
+    <script type="module" src="./pages/dashboard/dashboard.js"></script>
   </body>
 </html>

@@ -1,5 +1,5 @@
-import { getJson } from "./backend/api.js";
-import { rollingRange } from "./backend/analytics-data.js";
+import { getJson } from "../../shared/js/api.js";
+import { rollingRange } from "../../shared/js/analytics-data.js";
 import {
   cleanText,
   formatCompact,
@@ -7,7 +7,7 @@ import {
   formatDuration,
   formatInteger,
   statusLabel,
-} from "./backend/format.js";
+} from "../../shared/js/format.js";
 import {
   collectTracePages,
   executionStepsFromDetail,
@@ -16,7 +16,7 @@ import {
   formatTraceTimestamp,
   groupTraceTurns,
   traceTimeFormatter,
-} from "./backend/trace-data.js";
+} from "./trace-data.js";
 
 // Trace is a view inside dashboard.html (TASK-025): the session list renders
 // in the main area, selecting a session turns it into a journal with ONE

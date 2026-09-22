@@ -22,10 +22,10 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 WEBUI = ROOT / "thyca" / "webui"
-SCRIPT = WEBUI / "backend" / "dashboard-today.js"
-DASH_JS = WEBUI / "dashboard.js"
+SCRIPT = WEBUI / "shared" / "js" / "dashboard-today.js"
+DASH_JS = WEBUI / "pages" / "dashboard" / "dashboard.js"
 DASH_HTML = WEBUI / "dashboard.html"
-NAV_JS = WEBUI / "navigation.js"
+NAV_JS = WEBUI / "shared" / "js" / "navigation.js"
 
 
 @pytest.fixture(scope="module")
@@ -328,14 +328,14 @@ def test_dashboard_hash_switcher_covers_exactly_the_four_views() -> None:
 def test_dashboard_switches_views_on_every_viewport() -> None:
     """Actual switching on mobile too; the sidebar must opt back into the
     shared 56rem rule that hides .sidebar > *."""
-    dash_css = (WEBUI / "dashboard.css").read_text(encoding="utf-8")
+    dash_css = (WEBUI / "pages" / "dashboard" / "dashboard.css").read_text(encoding="utf-8")
     assert ".dashboard-shell .sessions" in dash_css
     assert "display: flex !important" in dash_css
 
 
 def test_dashboard_sections_are_flat_and_errors_use_scoped_red() -> None:
-    dash_css = (WEBUI / "dashboard.css").read_text(encoding="utf-8")
-    screens_css = (WEBUI / "screens.css").read_text(encoding="utf-8")
+    dash_css = (WEBUI / "pages" / "dashboard" / "dashboard.css").read_text(encoding="utf-8")
+    screens_css = (WEBUI / "shared" / "css" / "screens.css").read_text(encoding="utf-8")
     # Decorative card background/radius/shadow go; no global root token change.
     assert ".dashboard-section .screen-card" in dash_css
     assert "background: transparent" in dash_css
@@ -351,8 +351,8 @@ def test_today_only_helpers_are_gone_but_paging_stays_for_cost() -> None:
     for gone in ("todaySummary", "dayKeyInZone", "periodRange", "rowsInPeriod", "formatRunStamp", "recentTraces"):
         assert gone not in helper
     assert "export async function fetchAllTraces" in helper
-    cost = (WEBUI / "cost.js").read_text(encoding="utf-8")
-    assert 'import { fetchAllTraces } from "./backend/dashboard-today.js";' in cost
+    cost = (WEBUI / "pages" / "dashboard" / "cost.js").read_text(encoding="utf-8")
+    assert 'import { fetchAllTraces } from "../../shared/js/dashboard-today.js";' in cost
 
 
 def test_fetch_all_traces_pages_until_total_and_dedupes(node: str) -> None:

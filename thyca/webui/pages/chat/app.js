@@ -1,7 +1,7 @@
-import { ApiError, deleteJson, getJson, getNdjson, patchJson, postJson, postNdjson } from "./backend/api.js";
-import { effortChoicesFor, effortDefaultFor, fillEffortSelect } from "./backend/reasoning-effort.js";
-import { sendErrorMessage } from "./backend/chat-status.js";
-import { cleanText, formatSessionTime } from "./backend/format.js";
+import { ApiError, deleteJson, getJson, getNdjson, patchJson, postJson, postNdjson } from "../../shared/js/api.js";
+import { effortChoicesFor, effortDefaultFor, fillEffortSelect } from "../../shared/js/reasoning-effort.js";
+import { sendErrorMessage } from "./chat-status.js";
+import { cleanText, formatSessionTime } from "../../shared/js/format.js";
 import {
   createLiveStatus,
   renderConversation,
@@ -10,7 +10,7 @@ import {
   resetLiveStatus,
   setChatBrand,
   updateLiveStatus,
-} from "./backend/chat-view.js";
+} from "./chat-view.js";
 
 const el = {
   composer: document.querySelector("#composer"),

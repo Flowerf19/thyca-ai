@@ -8,12 +8,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WEBUI = ROOT / "thyca" / "webui"
-BACKEND = WEBUI / "backend"
-MARKDOWN_JS = BACKEND / "markdown.js"
-MEMORY_DATA = BACKEND / "memory-data.js"
-TRACE_DATA = BACKEND / "trace-data.js"
-ANALYTICS_DATA = BACKEND / "analytics-data.js"
-FORMAT_JS = BACKEND / "format.js"
+SHARED_JS = WEBUI / "shared" / "js"
+MARKDOWN_JS = SHARED_JS / "markdown.js"
+MEMORY_DATA = SHARED_JS / "memory-data.js"
+TRACE_DATA = WEBUI / "pages" / "dashboard" / "trace-data.js"
+ANALYTICS_DATA = SHARED_JS / "analytics-data.js"
+FORMAT_JS = SHARED_JS / "format.js"
 
 
 def _render(src: str) -> str:
@@ -55,9 +55,9 @@ def test_escapes_raw_html_and_unsafe_url() -> None:
 
 
 def test_chat_js_uses_formatter() -> None:
-    view = (BACKEND / "chat-view.js").read_text(encoding="utf-8")
-    css = (WEBUI / "backend.css").read_text(encoding="utf-8")
-    assert 'from "./markdown.js"' in view
+    view = (WEBUI / "pages" / "chat" / "chat-view.js").read_text(encoding="utf-8")
+    css = (WEBUI / "shared" / "css" / "backend.css").read_text(encoding="utf-8")
+    assert 'from "../../shared/js/markdown.js"' in view
     assert "formatMarkdown(segment.content)" in view
     assert ".md-table-wrap" in css
     assert (WEBUI / "vendor" / "marked.esm.js").is_file()
@@ -201,12 +201,12 @@ def test_trace_typography_matches_profile_screen() -> None:
     with a single "Xem các bước & dữ liệu" disclosure (numbered steps, one
     Input/Output block); trace.html survives only as a param-preserving
     redirect and trace.css is scoped to #trace."""
-    trace = (WEBUI / "trace.css").read_text(encoding="utf-8")
-    profile = (WEBUI / "profile.css").read_text(encoding="utf-8")
-    shared = (WEBUI / "screens.css").read_text(encoding="utf-8")
+    trace = (WEBUI / "pages" / "dashboard" / "trace.css").read_text(encoding="utf-8")
+    profile = (WEBUI / "pages" / "profile" / "profile.css").read_text(encoding="utf-8")
+    shared = (WEBUI / "shared" / "css" / "screens.css").read_text(encoding="utf-8")
     html = (WEBUI / "dashboard.html").read_text(encoding="utf-8")
     redirect = (WEBUI / "trace.html").read_text(encoding="utf-8")
-    script = (WEBUI / "trace.js").read_text(encoding="utf-8")
+    script = (WEBUI / "pages" / "dashboard" / "trace.js").read_text(encoding="utf-8")
 
     # Trace lives in dashboard.html as a switched view next to the other
     # dashboard blocks; the sidebar has a data-view="trace" toggle.
@@ -275,7 +275,7 @@ def test_trace_typography_matches_profile_screen() -> None:
 
 
 def test_overview_typography_matches_profile_screen() -> None:
-    overview = (WEBUI / "dashboard.css").read_text(encoding="utf-8")
+    overview = (WEBUI / "pages" / "dashboard" / "dashboard.css").read_text(encoding="utf-8")
 
     assert ".dashboard-surface {" in overview
     assert "font-family: var(--font-reading);" in overview
@@ -300,11 +300,11 @@ def test_cost_panel_renders_bar_rows_and_uses_shared_toolbar() -> None:
     session on the shared .journal-* kit (title + amount, share meter, meta
     line), and the toolbar reuses the shared search and filter-pill classes
     instead of private copies."""
-    script = (WEBUI / "cost.js").read_text(encoding="utf-8")
+    script = (WEBUI / "pages" / "dashboard" / "cost.js").read_text(encoding="utf-8")
     html = (WEBUI / "dashboard.html").read_text(encoding="utf-8")
-    shared = (WEBUI / "screens.css").read_text(encoding="utf-8")
+    shared = (WEBUI / "shared" / "css" / "screens.css").read_text(encoding="utf-8")
     memories = (WEBUI / "memories.html").read_text(encoding="utf-8")
-    memories_css = (WEBUI / "memories.css").read_text(encoding="utf-8")
+    memories_css = (WEBUI / "pages" / "memories" / "memories.css").read_text(encoding="utf-8")
 
     # Rows come from the snapshot's by_model ranked by the shared selectModels
     # with the live search query; the share denominator is fixed on the full
@@ -367,9 +367,9 @@ def test_request_panel_mirrors_cost_layout() -> None:
     legacy hash falls back to Request (behavior tests in
     test_dashboard_journal.py)."""
     html = (WEBUI / "dashboard.html").read_text(encoding="utf-8")
-    script = (WEBUI / "request.js").read_text(encoding="utf-8")
-    css = (WEBUI / "cost.css").read_text(encoding="utf-8")
-    dash = (WEBUI / "dashboard.js").read_text(encoding="utf-8")
+    script = (WEBUI / "pages" / "dashboard" / "request.js").read_text(encoding="utf-8")
+    css = (WEBUI / "pages" / "dashboard" / "cost.css").read_text(encoding="utf-8")
+    dash = (WEBUI / "pages" / "dashboard" / "dashboard.js").read_text(encoding="utf-8")
 
     # Sidebar: exactly four destinations in the Usage/Request/Cost/Trace
     # order, all in-page view toggles (Trace included since it moved into the
@@ -396,7 +396,7 @@ def test_request_panel_mirrors_cost_layout() -> None:
     assert 'class="dashboard-block dashboard-section" id="su-dung"' in html
     assert 'id="request-total"' in html
     assert 'id="request-chart"' in html
-    assert "./request.js" in html
+    assert "./pages/dashboard/request.js" in html
 
     # The view switcher covers the four toggles and their hashes; the legacy
     # #hom-nay hash maps to nothing (Request is the fallback default).
@@ -429,7 +429,7 @@ def test_request_panel_mirrors_cost_layout() -> None:
 
 
 def test_usage_loads_every_trace_page() -> None:
-    script = (WEBUI / "usage.js").read_text(encoding="utf-8")
+    script = (WEBUI / "pages" / "dashboard" / "usage.js").read_text(encoding="utf-8")
     assert "async function loadAllTraces" in script
     assert "offset=${offset}" in script
     assert "Đang hiển thị" not in script
@@ -471,7 +471,7 @@ def test_chat_sidebar_pager_markers() -> None:
     math is the marker-delimited pure block (executed in Node by the journal
     tests); here we lock the wiring markers. The DOM behavior (active row
     stays marked, jumps on create/rename/open) is browser-test territory."""
-    script = (WEBUI / "app.js").read_text(encoding="utf-8")
+    script = (WEBUI / "pages" / "chat" / "app.js").read_text(encoding="utf-8")
     assert "const SESSIONS_PAGE_SIZE = 12;" in script
     assert "sessionsPageCount(state.sessions.length)" in script
     assert "state.sessionPage = clampPage(state.sessionPage, pages)" in script

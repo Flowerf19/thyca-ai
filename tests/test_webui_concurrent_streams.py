@@ -129,8 +129,8 @@ const settle = async () => {
 _SCRIPT = r"""
 import fs from 'node:fs';
 """ + _HARNESS + r"""
-const view = await import('./thyca/webui/backend/chat-view.js');
-const format = await import('./thyca/webui/backend/format.js');
+const view = await import('./thyca/webui/pages/chat/chat-view.js');
+const format = await import('./thyca/webui/shared/js/format.js');
 const followCalls = [];
 const posts = [];
 let resolveA;
@@ -166,7 +166,7 @@ const dependencies = {
     return doneB;
   },
 };
-const source = fs.readFileSync('./thyca/webui/app.js', 'utf8')
+const source = fs.readFileSync('./thyca/webui/pages/chat/app.js', 'utf8')
   .replace(/^import[\s\S]*?from .*?;\n/gm, '')
   .replace('void boot();', '');
 const app = new Function(...Object.keys(dependencies), source + `
@@ -258,8 +258,8 @@ def test_finishing_the_first_stream_renders_once_and_cleans_up(
 _REVEAL_SCRIPT = r"""
 import fs from 'node:fs';
 """ + _HARNESS + r"""
-const view = await import('./thyca/webui/backend/chat-view.js');
-const format = await import('./thyca/webui/backend/format.js');
+const view = await import('./thyca/webui/pages/chat/chat-view.js');
+const format = await import('./thyca/webui/shared/js/format.js');
 // 25 sessions fill three 12-per-page pages; a session created by the turn
 // lands at the end (page 3) only once the turn completes.
 const sessions = Array.from({ length: 25 }, (_, i) => ({
@@ -293,7 +293,7 @@ function makeApp(turnId) {
     async patchJson() { return {}; },
     async deleteJson() { return {}; },
   };
-  const source = fs.readFileSync('./thyca/webui/app.js', 'utf8')
+  const source = fs.readFileSync('./thyca/webui/pages/chat/app.js', 'utf8')
     .replace(/^import[\s\S]*?from .*?;\n/gm, '')
     .replace('void boot();', '');
   const app = new Function(...Object.keys(deps), source + `

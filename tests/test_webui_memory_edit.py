@@ -222,7 +222,7 @@ const deps = {
   formatInteger: value => String(value),
   selectMemories: () => hooks.leaves, // every view shows every leaf
 };
-const source = fs.readFileSync('./thyca/webui/memories.js', 'utf8')
+const source = fs.readFileSync('./thyca/webui/pages/memories/memories.js', 'utf8')
   .replace(/^import[\s\S]*?from .*?;\n/gm, '');
 const page = new Function(...Object.keys(deps), source + `
   return { state, el, render, startEdit, cancelEdit, mutateMemory };

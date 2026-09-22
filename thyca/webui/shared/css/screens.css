@@ -768,7 +768,7 @@ a { color: inherit; }
   background-color: var(--color-paper);
   background-image:
     linear-gradient(color-mix(in oklab, var(--color-paper-chat) 42%, transparent), color-mix(in oklab, var(--color-paper-chat) 42%, transparent)),
-    url("images/thyca-bg-menu.png");
+    url("../../images/thyca-bg-menu.png");
   background-position: center;
   background-size: cover;
   color: var(--color-reading);

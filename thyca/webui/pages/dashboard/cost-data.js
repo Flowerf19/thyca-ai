@@ -8,8 +8,8 @@
    `requests` counts model calls inside a turn, so requests != turns. Stored
    cost_usd is authoritative; null means "no priced turn yet", not $0. */
 
-import { cleanText, formatInteger } from "./format.js";
-import { splitPromptTokens } from "./analytics-data.js";
+import { cleanText, formatInteger } from "../../shared/js/format.js";
+import { splitPromptTokens } from "../../shared/js/analytics-data.js";
 import { selectedModelConfig, tokenCost } from "./trace-data.js";
 
 /* Group key for rows whose session_id is missing/blank — rendered as its own

@@ -732,7 +732,7 @@ def test_chat_nav_opens_new_session() -> None:
     assert 'postJson("/api/sessions", {})' in ensure_session
     assert "sessionId = await ensureSession()" in app
 
-    provider = (WEBUI / "pages" / "provider" / "provider.js").read_text(encoding="utf-8")
+    provider = "".join(p.read_text(encoding="utf-8") for p in sorted((WEBUI / "pages" / "provider").glob("*.js")))
     assert 'getJson("/api/config")' in provider
     assert 'postJson("/api/config"' in provider
     assert 'postJson("/api/onboarding/verify"' in provider

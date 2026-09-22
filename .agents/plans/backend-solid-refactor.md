@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 created: 2026-09-22
 last_updated: 2026-09-22
 ---
@@ -67,8 +67,8 @@ File oversize (>400 dòng) phải tách: `serve.py`, `bridge.py`, `chat_app.py` 
 | ID | Task | Done | Date |
 |----|------|------|------|
 | TASK-014 | Full `uv run pytest -q` + `git diff --check` trên nhánh tích hợp; mọi finding phải có evidence (log/test/file:line) | x (719 passed, diff clean, max file archive_store.py 400 lines) | 2026-09-22 |
-| TASK-015 | Review tổng độc lập 1 lượt toàn diff (scope, SOLID, không behavior change lén) | | |
-| TASK-016 | Cập nhật `.agents/AGENT_RULES.md`, `PROJECT_CONTEXT.md`, `README.md`, root `README.md`, `CHANGELOG.md` theo tree mới | | |
+| TASK-015 | Review tổng độc lập 1 lượt toàn diff (scope, SOLID, không behavior change lén) | x (1.3 max approve, 2 minors fixed: make_handler + errors re-export) | 2026-09-22 |
+| TASK-016 | Cập nhật `.agents/AGENT_RULES.md`, `PROJECT_CONTEXT.md`, `README.md`, root `README.md`, `CHANGELOG.md` theo tree mới | x (+ services/*.md paths, baseline 719/0) | 2026-09-22 |
 
 ### Layout decisions (orchestrator, 2026-09-22 — sau review 8 module plans)
 

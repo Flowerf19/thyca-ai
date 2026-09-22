@@ -15,7 +15,9 @@ function dayLabel(day) {
   return String(day || "").slice(8, 10).replace(/^0/, "") || "—";
 }
 
-function svg(name, attributes = {}, text = "") {
+/* Shared with pages/dashboard/request.js, which draws its own line chart
+   with the same element helper. */
+export function svg(name, attributes = {}, text = "") {
   const node = document.createElementNS(SVG_NS, name);
   for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, String(value));
   if (text) node.textContent = text;

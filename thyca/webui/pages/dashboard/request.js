@@ -1,5 +1,7 @@
 import { getJson } from "../../shared/js/api.js";
-import { rollingRange, traceRangeUrl } from "../../shared/js/analytics-data.js";
+import { completeDays, rollingRange, traceRangeUrl } from "../../shared/js/analytics-data.js";
+import { svg } from "../../shared/js/bar-chart.js";
+import { makeSetStatus, messageOf } from "../../shared/js/status.js";
 import { cleanText, formatDate, formatInteger } from "../../shared/js/format.js";
 
 const el = {
@@ -17,22 +19,7 @@ let stats = null;
 let sort = "req-desc";
 let loadId = 0;
 
-function messageOf(error, fallback) {
-  return error instanceof Error && error.message ? error.message : fallback;
-}
-
-function setStatus(message = "", kind = "") {
-  if (!el.status) return;
-  el.status.textContent = message;
-  el.status.className = `screen-status${kind ? ` is-${kind}` : ""}`;
-}
-
-function svg(name, attributes = {}, text = "") {
-  const node = document.createElementNS("http://www.w3.org/2000/svg", name);
-  for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, String(value));
-  if (text) node.textContent = text;
-  return node;
-}
+const setStatus = makeSetStatus(el.status);
 
 function dateLabel(day) {
   const [year, month, date] = String(day).split("-");
@@ -40,15 +27,7 @@ function dateLabel(day) {
 }
 
 function completeRequests(range, rows) {
-  const indexed = new Map((rows || []).map((row) => [row.day, row.requests]));
-  const start = new Date(`${range.from}T00:00:00Z`);
-  return Array.from({ length: range.days }, (_, index) => {
-    const date = new Date(start);
-    date.setUTCDate(start.getUTCDate() + index);
-    const day = date.toISOString().slice(0, 10);
-    const raw = indexed.get(day);
-    return { day, value: raw == null ? 0 : Number(raw) || 0 };
-  });
+  return completeDays(rows || [], range).map((row) => ({ day: row.day, value: Number(row.requests) || 0 }));
 }
 
 function selectRequestModels(models, { sort: order, query = "" } = {}) {

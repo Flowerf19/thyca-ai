@@ -22,14 +22,12 @@ from thyca.llm.llm_factory import ConnectFactory
 from thyca.llm.prompt_manager import PromptManager
 from thyca.memory.active import ActiveMemory
 from thyca.sessions import SessionError, SessionManager, SessionNotFound
-from thyca.tools.builtin import register_file_tools
 from thyca.tools.builtin.background import BackgroundProcs
 from thyca.tools.memory import MemoryFacade
-from thyca.tools.memory_tools import register_memory_tools
 from thyca.tools.mcp import MCPManager
-from thyca.tools.path_guard import PathGuard
-from thyca.tools.registry import ToolRegistry
-from thyca.tools.task_store import TaskStore, tool_read_spec
+from thyca.tools.task_store import TaskStore
+
+from thyca.app.toolchain import build_tool_registry, install_mcp_specs, report_spawn_diags
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -149,23 +147,14 @@ class Cli:
         zone = ZoneInfo(cfg.timeline.timezone)
         state = memory.open_session(datetime.now(zone))
         tasks = TaskStore()
-        registry = ToolRegistry(tasks=tasks)
         background = BackgroundProcs()
-        register_file_tools(registry, PathGuard(root), background)
-        registry.register(tool_read_spec(tasks))
-        register_memory_tools(
-            registry, MemoryFacade(root, timezone_name=cfg.timeline.timezone)
-        )
+        registry = build_tool_registry(root, cfg, tasks, background)
         manager = MCPManager()
         try:
-            for diag in await manager.spawn_all(cfg.mcpServers):
-                if not diag.ok:
-                    print(f"{diag.server}: {diag.message}", file=self._stderr)
-            for spec in manager.tool_specs():
-                try:
-                    registry.register(spec)
-                except ValueError as exc:
-                    print(str(exc), file=self._stderr)
+            report_spawn_diags(
+                await manager.spawn_all(cfg.mcpServers), err=self._stderr
+            )
+            install_mcp_specs(registry, manager, err=self._stderr)
             schema = registry.to_openai_schema()
             connect = self._connect or ConnectFactory.create(
                 cfg.effective_provider().api, cfg.effective_provider()

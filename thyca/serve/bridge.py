@@ -1,96 +1,47 @@
-"""Bridge between HTTP handlers and one ChatApp turn (split from serve.py).
+"""NDJSON turn streaming for ``/api/sessions*`` (split from serve.py).
 
-The HTTP bridge for ``/api/sessions*``: the NDJSON stream (queue adapter for
-turn events, the worker thread that produces exactly one terminal item, the
-public turn-error mapping shared by ``/turn`` and ``/turn/stream``) plus the
-session read/rename/delete endpoints.
+The queue adapter for turn events, the worker thread that produces exactly
+one terminal item, and the stream pump. Turn-error mapping and body parsing
+live in ``errors`` (re-exported here so ``thyca.serve.bridge`` keeps its
+import surface); session read/rename/delete endpoints live in
+``sessions_api``.
 
 Handlers are accessed only through their ``_json`` / ``_read_json`` /
 ``_read_body`` / ``_stream_headers`` / ``wfile`` surface, so this module never
-imports ``serve.py`` — which is what keeps ``serve.py`` a router.
+imports ``routes`` — which is what keeps ``routes`` a router. ``ChatApp`` is
+only an annotation (``TYPE_CHECKING``); the turn exception is imported
+lazily — ``thyca.app.chat_app`` imports ``thyca.serve.turn_state``, so a
+top-level import here would cycle (M7-TASK-013).
 """
 from __future__ import annotations
 
 import json
 import queue
-import re
 import sys
 import threading
-import traceback
+from typing import TYPE_CHECKING
 
 from thyca.agent.events import TurnEvent
 from thyca.agent.thinking import ThinkingDelta
 from thyca.agent.reply import ContentDelta
-from thyca.app.chat_app import ChatApp, InvalidTurnOption, SessionIdle, TurnCancelled
-from thyca.config import Config
-from thyca.llm.llm_base import LLMError
-from thyca.sessions.wire import delete_error, rename_error
-from thyca.sessions import SessionBusy, SessionCorrupt, SessionError, SessionNotFound
+from thyca.serve.errors import parse_turn_body, public_turn_error
 from thyca.serve.turn_state import TurnHub
 
+if TYPE_CHECKING:
+    from thyca.app.chat_app import ChatApp
+
+__all__ = [
+    "SENTINEL",
+    "bridge_sink",
+    "bridge_worker",
+    "parse_turn_body",
+    "public_turn_error",
+    "pump_stream",
+    "stream_turn",
+    "write_line",
+]
+
 SENTINEL = object()
-# Same grammar the session routes use: a timestamp id and four hex chars.
-SESSION_RE = re.compile(r"^/api/sessions/(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_[0-9a-f]{4})$")
-_MODEL_MAX = 200
-
-
-def parse_turn_body(payload: dict) -> tuple[str, str | None, str | None, bool]:
-    """Shared by /turn and /turn/stream. Extra keys ignored."""
-    retry = payload.get("retry") is True
-    if "model" in payload:
-        model = payload["model"]
-        if (
-            not isinstance(model, str)
-            or not model
-            or len(model) > _MODEL_MAX
-            or "\n" in model
-            or "\r" in model
-            or not model.strip()
-        ):
-            raise InvalidTurnOption("invalid model")
-    else:
-        model = None
-    if "effort" in payload:
-        if not isinstance(payload["effort"], str) or not payload["effort"].strip():
-            raise InvalidTurnOption("invalid effort")
-        effort = payload["effort"]
-    else:
-        effort = None
-    if retry:
-        text = payload.get("text")
-        return text if isinstance(text, str) else "", model, effort, True
-    text = payload.get("text")
-    if not isinstance(text, str):
-        raise ValueError("invalid text")
-    return text, model, effort, False
-
-
-def public_turn_error(exc: Exception) -> tuple[int, str, str]:
-    """Map a turn exception to a public ``(status, code, message)``.
-
-    Shared by ``/turn`` and ``/turn/stream`` so the two cannot drift. Never
-    leaks stack/path/secret: unexpected errors and :class:`ConfigError` always
-    map to the constant ``chat unavailable``; :class:`LLMError` keeps its
-    provider-redacted/capped text.
-    """
-    if isinstance(exc, InvalidTurnOption):
-        message = str(exc)
-        return 400, message.replace(" ", "_"), message
-    if isinstance(exc, TurnCancelled):
-        return 200, "cancelled", "cancelled"
-    if isinstance(exc, ValueError):
-        return 400, "invalid_text", "invalid text"
-    if isinstance(exc, SessionBusy):
-        return 409, "session_busy", "session busy"
-    if isinstance(exc, SessionNotFound):
-        return 404, "session_not_found", "session not found"
-    if isinstance(exc, SessionCorrupt):
-        return 503, "session_unreadable", "session unreadable"
-    if isinstance(exc, SessionError):
-        return 503, "session_unavailable", "session unavailable"
-    if isinstance(exc, LLMError):
-        return 503, "llm_error", str(exc)
-    return 503, "chat_unavailable", "chat unavailable"
 
 
 def bridge_sink(queue_: queue.Queue, state: dict):
@@ -125,6 +76,10 @@ def bridge_worker(
     completion enqueue/serialization fails. The first queued item before
     ``turn.accepted`` (or the sentinel) is a pre-accept error.
     """
+    # Local import: thyca.app.chat_app imports thyca.serve.turn_state, so a
+    # top-level import here would cycle (M7-TASK-013).
+    from thyca.app.chat_app import TurnCancelled
+
     sink = bridge_sink(queue_, state)
     try:
         try:
@@ -190,7 +145,7 @@ def pump_stream(
 
     ``handler`` is the BaseHTTPRequestHandler — accessed only through its
     ``_stream_headers`` / ``_json`` / ``wfile`` surface, so this module never
-    imports serve.py.
+    imports routes.
     """
     try:
         first = items.get()
@@ -289,198 +244,3 @@ def stream_turn(
         # stream waits for the terminal item; an abandoned one only
         # parks this handler thread briefly.
         worker.join(timeout=5 if state["disconnected"] else 60)
-
-
-
-def _sessions_error(handler, exc: Exception) -> None:
-    """Map a read-path session failure to its public HTTP error."""
-    if isinstance(exc, SessionNotFound):
-        handler._json(404, {"error": "session not found"})
-    elif isinstance(exc, SessionCorrupt):
-        handler._json(503, {"error": "session unreadable"})
-    elif isinstance(exc, SessionError):
-        handler._json(503, {"error": "session unavailable"})
-    else:
-        traceback.print_exc(file=sys.stderr)
-        handler._json(503, {"error": "chat unavailable"})
-
-
-def _missing_chat(handler, app: ChatApp | None) -> bool:
-    """True when the server was started without a chat app (404 already sent)."""
-    if app is None:
-        handler._json(404, {"error": "chat unavailable"})
-        return True
-    return False
-
-
-def session_list(handler, app: ChatApp | None) -> None:
-    if _missing_chat(handler, app):
-        return
-    try:
-        handler._json(200, app.list_payload())
-    except Exception as exc:
-        _sessions_error(handler, exc)
-
-
-def session_get(handler, app: ChatApp | None, session_id: str) -> None:
-    if _missing_chat(handler, app):
-        return
-    try:
-        handler._json(200, app.get_payload(session_id))
-    except Exception as exc:
-        _sessions_error(handler, exc)
-
-
-def session_create(handler, app: ChatApp | None) -> None:
-    if _missing_chat(handler, app):
-        return
-    try:
-        handler._read_body()
-    except ValueError:
-        handler._json(400, {"error": "invalid body"})
-        return
-    try:
-        handler._json(200, app.create())
-    except Exception as exc:
-        _sessions_error(handler, exc)
-
-
-def session_turn(handler, app: ChatApp | None, session_id: str) -> None:
-    if _missing_chat(handler, app):
-        return
-    try:
-        payload = handler._read_json()
-    except ValueError:
-        handler._json(400, {"error": "invalid body"})
-        return
-    try:
-        text, model, effort, retry = parse_turn_body(payload)
-    except InvalidTurnOption as exc:
-        handler._json(400, {"error": str(exc)})
-        return
-    except ValueError:
-        handler._json(400, {"error": "invalid text"})
-        return
-    try:
-        handler._json(
-            200,
-            app.turn(session_id, text, model=model, effort=effort, retry=retry),
-        )
-    except TurnCancelled:
-        handler._json(200, {"cancelled": True})
-    except Exception as exc:
-        status, _code, message = public_turn_error(exc)
-        _log_turn_failure(app, session_id, model, exc)
-        handler._json(status, {"error": message})
-
-
-def session_turn_stream(handler, app: ChatApp | None, session_id: str) -> None:
-    if _missing_chat(handler, app):
-        return
-    try:
-        payload = handler._read_json()
-    except ValueError:
-        handler._json(400, {"error": "invalid text"})
-        return
-    try:
-        text, model, effort, retry = parse_turn_body(payload)
-    except InvalidTurnOption as exc:
-        handler._json(400, {"error": str(exc)})
-        return
-    except ValueError:
-        handler._json(400, {"error": "invalid text"})
-        return
-    stream_turn(
-        handler, app, session_id, text, model=model, effort=effort, retry=retry
-    )
-
-
-def session_turn_cancel(handler, app: ChatApp | None, session_id: str) -> None:
-    if _missing_chat(handler, app):
-        return
-    try:
-        handler._read_body()
-    except ValueError:
-        handler._json(400, {"error": "invalid body"})
-        return
-    try:
-        app.cancel(session_id)
-    except SessionIdle:
-        handler._json(409, {"error": "session idle"})
-    except Exception as exc:
-        _sessions_error(handler, exc)
-    else:
-        handler._json(200, {"ok": True})
-
-
-def session_turn_follow(handler, app: ChatApp | None, session_id: str) -> None:
-    """``GET /turn/stream`` — replay + tail the in-flight turn, if any."""
-    if _missing_chat(handler, app):
-        return
-    try:
-        hub = app.follow_hub(session_id)
-    except Exception as exc:
-        _sessions_error(handler, exc)
-        return
-    if hub is None:
-        handler._json(409, {"error": "session idle"})
-        return
-    items = hub.subscribe()
-    try:
-        # A follower never learns the turn's model override: log unknown
-        # rather than the default, which would misattribute the failure.
-        pump_stream(
-            handler, items, {"disconnected": False}, app=app, session_id=session_id,
-            model="?",
-        )
-    finally:
-        hub.drop(items)
-
-
-def session_rename(handler, app: ChatApp | None, path: str) -> None:
-    """``PATCH /api/sessions/<id>`` — store a title the user typed."""
-    if _missing_chat(handler, app):
-        return
-    match = SESSION_RE.fullmatch(path)
-    if not match:
-        handler._json(404, {"error": "session not found"})
-        return
-    try:
-        payload = handler._read_json()
-    except ValueError:
-        handler._json(400, {"error": "invalid body"})
-        return
-    title = payload.get("title")
-    if not isinstance(title, str):
-        handler._json(400, {"error": "invalid title"})
-        return
-    try:
-        stored = app.rename_session(match.group(1), title)
-    except Exception as exc:
-        mapped = rename_error(exc)
-        if mapped is None:
-            _sessions_error(handler, exc)
-            return
-        handler._json(mapped[0], {"error": mapped[1]})
-    else:
-        handler._json(200, {"ok": True, "id": match.group(1), "title": stored})
-
-
-def session_delete(handler, app: ChatApp | None, path: str) -> None:
-    """``DELETE /api/sessions/<id>`` — drop the notebook, keep memory."""
-    if _missing_chat(handler, app):
-        return
-    match = SESSION_RE.fullmatch(path)
-    if not match:
-        handler._json(404, {"error": "session not found"})
-        return
-    try:
-        app.delete_session(match.group(1))
-    except Exception as exc:
-        mapped = delete_error(exc)
-        if mapped is None:
-            _sessions_error(handler, exc)
-            return
-        handler._json(mapped[0], {"error": mapped[1]})
-    else:
-        handler._json(200, {"ok": True, "id": match.group(1)})

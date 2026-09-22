@@ -16,6 +16,32 @@ class ToolDispatcher(Protocol):
     async def dispatch(self, call: ToolCall) -> ToolResult: ...
 
 
+def _build_result(
+    call: ToolCall, dispatched: ToolResult | None, error: Exception | None = None
+) -> ToolResult:
+    if call.parse_error is not None:
+        return ToolResult(
+            tool_call_id=call.id,
+            name=call.name,
+            content=str(call.parse_error),
+            is_error=True,
+        )
+    if error is not None:
+        return ToolResult(
+            tool_call_id=call.id,
+            name=call.name,
+            content=str(error),
+            is_error=True,
+        )
+    assert dispatched is not None
+    return ToolResult(
+        tool_call_id=call.id,
+        name=call.name,
+        content=dispatched.content,
+        is_error=dispatched.is_error,
+    )
+
+
 class Act:
     def __init__(
         self, dispatcher: ToolDispatcher, skills_root: Path | None = None
@@ -59,29 +85,14 @@ class Act:
                 TurnEvent(type=f"{kind}.started", round=round, call_id=call.id, name=name),
             )
         if call.parse_error is not None:
-            result = ToolResult(
-                tool_call_id=call.id,
-                name=call.name,
-                content=str(call.parse_error),
-                is_error=True,
-            )
+            result = _build_result(call, None)
         else:
             try:
                 dispatched = await self._dispatcher.dispatch(call)
             except Exception as exc:
-                result = ToolResult(
-                    tool_call_id=call.id,
-                    name=call.name,
-                    content=str(exc),
-                    is_error=True,
-                )
+                result = _build_result(call, None, exc)
             else:
-                result = ToolResult(
-                    tool_call_id=call.id,
-                    name=call.name,
-                    content=dispatched.content,
-                    is_error=dispatched.is_error,
-                )
+                result = _build_result(call, dispatched)
         if event_sink is not None:
             emit_event(
                 event_sink,

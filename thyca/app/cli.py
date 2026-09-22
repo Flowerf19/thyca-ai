@@ -172,7 +172,7 @@ class Cli:
             )
             loop = AgentLoop(
                 sessions=sessions,
-                assemble=Assemble(),
+                assemble=Assemble(PromptManager()),
                 think=Think(connect),
                 act=Act(registry),
                 observe=Observe(sessions),

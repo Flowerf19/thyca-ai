@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from thyca.llm.pricing import cost_for
 from thyca.sessions import SessionManager
 
@@ -11,6 +13,50 @@ from .stage import Stage
 from .think import Think
 from .thinking import ThinkingDelta
 from .reply import ContentDelta
+
+
+def _reasoning_callback(
+    event_sink: EventSink | None, round_no: int
+) -> Callable[[str], None] | None:
+    if event_sink is None:
+        return None
+
+    def on_reasoning(delta: str) -> None:
+        if not delta:
+            return
+        try:
+            event_sink(ThinkingDelta(round=round_no, delta=delta))  # type: ignore[arg-type]
+        except Exception:
+            pass
+
+    return on_reasoning
+
+
+def _content_callback(
+    event_sink: EventSink | None, round_no: int
+) -> Callable[[str], None] | None:
+    if event_sink is None:
+        return None
+
+    def on_content(delta: str) -> None:
+        if not delta:
+            return
+        try:
+            event_sink(ContentDelta(round=round_no, delta=delta))  # type: ignore[arg-type]
+        except Exception:
+            pass
+
+    return on_content
+
+
+def _resolve_cost(stage: Stage, model: str | None, pricing: dict | None) -> None:
+    echoed = getattr(stage.reply, "model", None)
+    if isinstance(echoed, str) and echoed.strip():
+        stage.llm_model = echoed.strip()
+    usage = getattr(stage.reply, "usage", None)
+    stage.llm_cost_usd = cost_for(stage.llm_model, usage, pricing)
+    if stage.llm_cost_usd is None and model and model != stage.llm_model:
+        stage.llm_cost_usd = cost_for(model, usage, pricing)
 
 
 class AgentLoop:
@@ -66,37 +112,13 @@ class AgentLoop:
             stage.llm_model = self._model
             emit_event(event_sink, TurnEvent(type="llm.started", round=stage.round))
             round_no = stage.round
-            on_reasoning = None
-            on_content = None
-            if event_sink is not None:
-
-                def on_reasoning(delta: str, *, _round: int = round_no) -> None:
-                    if not delta:
-                        return
-                    try:
-                        event_sink(ThinkingDelta(round=_round, delta=delta))  # type: ignore[arg-type]
-                    except Exception:
-                        pass
-
-                def on_content(delta: str, *, _round: int = round_no) -> None:
-                    if not delta:
-                        return
-                    try:
-                        event_sink(ContentDelta(round=_round, delta=delta))  # type: ignore[arg-type]
-                    except Exception:
-                        pass
-
+            on_reasoning = _reasoning_callback(event_sink, round_no)
+            on_content = _content_callback(event_sink, round_no)
             await self._think.think(
                 stage, on_reasoning=on_reasoning, on_content=on_content
             )
             assert stage.reply is not None
-            echoed = getattr(stage.reply, "model", None)
-            if isinstance(echoed, str) and echoed.strip():
-                stage.llm_model = echoed.strip()
-            usage = getattr(stage.reply, "usage", None)
-            stage.llm_cost_usd = cost_for(stage.llm_model, usage, self._pricing)
-            if stage.llm_cost_usd is None and self._model and self._model != stage.llm_model:
-                stage.llm_cost_usd = cost_for(self._model, usage, self._pricing)
+            _resolve_cost(stage, self._model, self._pricing)
             emit_event(
                 event_sink,
                 TurnEvent(

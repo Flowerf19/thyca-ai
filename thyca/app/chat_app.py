@@ -21,6 +21,7 @@ from thyca.agent.think import LLMPort, Think
 from thyca.config import Config, ConfigError, load
 from thyca.llm.llm_base import LLMError
 from thyca.llm.llm_factory import ConnectFactory
+from thyca.llm.prompt_manager import PromptManager
 from thyca.llm.pricing import cost_for
 from thyca.memory.active import ActiveMemory
 from thyca.core.protocol import Message, utc_now_ts
@@ -433,7 +434,7 @@ class ChatApp:
                 limits = turn_cfg.effective_limits()
                 loop = AgentLoop(
                     sessions=sessions,
-                    assemble=Assemble(),
+                    assemble=Assemble(PromptManager()),
                     think=Think(connect),
                     act=self._act,
                     observe=Observe(sessions),

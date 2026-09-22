@@ -1,4 +1,4 @@
-"""Node tests for the Chi phí journal helpers — webui/backend/cost-data.js.
+"""Node tests for the Chi phí journal helpers — webui/pages/dashboard/cost-data.js.
 
 Covers session aggregation (dedupe on session_id+turn_index, missing-session
 group, turn vs request counts), overview metrics (null vs zero cost, partial
@@ -17,9 +17,21 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "thyca" / "webui" / "backend" / "cost-data.js"
-TODAY_SCRIPT = ROOT / "thyca" / "webui" / "backend" / "dashboard-today.js"
-COST_JS = ROOT / "thyca" / "webui" / "cost.js"
+SCRIPT = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "cost-data.js"
+TODAY_SCRIPT = ROOT / "thyca" / "webui" / "shared" / "js" / "dashboard-today.js"
+COST_JS = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "cost.js"
+COST_VIEW = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "cost-view.js"
+COST_ROWS = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "cost-rows.js"
+PAGER_JS = ROOT / "thyca" / "webui" / "shared" / "js" / "pager.js"
+
+
+def _cost_script() -> str:
+    """Concat of the Cost journal modules (entry + view + rows + shared
+    pager): substring pins read the split files, asserts stay unchanged."""
+    return "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (COST_JS, COST_VIEW, COST_ROWS, PAGER_JS)
+    )
 
 
 @pytest.fixture(scope="module")
@@ -321,7 +333,7 @@ def test_load_drops_snapshot_and_labels_recorded_known_costs() -> None:
     renderers refuse to draw without a snapshot, an accepted failure resets
     the DOM, the overview is labeled as recorded-known amounts, and per-model
     missing-turn coverage comes from the loaded rows."""
-    script = COST_JS.read_text(encoding="utf-8")
+    script = _cost_script()
     assert script.count("view = null;") == 3  # declaration, load start, accepted failure
     assert script.count("if (!view) return;") == 3  # render, models, sessions
     # Sums/averages are recorded-known: a priced turn never proves every
@@ -335,7 +347,7 @@ def test_pricing_disclosures_persist_across_repages() -> None:
     """TASK-018 follow-up: open/closed "Đơn giá" state is kept per model name
     within the fixed snapshot and cleared only on a fresh snapshot, so paging
     and filtering never collapse an open disclosure."""
-    script = COST_JS.read_text(encoding="utf-8")
+    script = _cost_script()
     assert "const openPricing = new Set();" in script
     assert "details.open = openPricing.has(model.model);" in script
     assert "openPricing.add(model.model);" in script
@@ -383,14 +395,14 @@ def _pager_block(path):
 
 def _run_pager(node, path, expression):
     source = _pager_block(path) + "\nconsole.log(JSON.stringify(" + expression + "));\n"
-    result = subprocess.run([node, "-e", source], check=True, capture_output=True, text=True)
+    result = subprocess.run([node, "--input-type=module", "-e", source], check=True, capture_output=True, text=True)
     return json.loads(result.stdout)
 
 
 def test_pager_math_thirteen_items_make_two_pages(node):
     result = _run_pager(
         node,
-        COST_JS,
+        PAGER_JS,
         "[journalPageCount(13), journalPageCount(12), journalPageCount(0), journalPageCount(1), journalPageCount(25, 10)]",
     )
     assert result == [2, 1, 1, 1, 3]
@@ -399,14 +411,14 @@ def test_pager_math_thirteen_items_make_two_pages(node):
 def test_pager_clamps_at_both_bounds(node):
     result = _run_pager(
         node,
-        COST_JS,
+        PAGER_JS,
         "[journalClampPage(0, 2), journalClampPage(1, 2), journalClampPage(2, 2), journalClampPage(3, 2), journalClampPage(-5, 3)]",
     )
     assert result == [1, 1, 2, 2, 1]
 
 
 def test_pager_resets_on_filter_sort_and_snapshot(node):
-    script = COST_JS.read_text(encoding="utf-8")
+    script = _cost_script()
     # Search input, sort click and a fresh snapshot each restart at page 1
     # (the 4th hit is the `let modelsPage = 1` declaration).
     assert script.count("modelsPage = 1;") == 4

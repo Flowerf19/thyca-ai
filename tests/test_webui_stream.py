@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-API = ROOT / "thyca/webui/backend/api.js"
+API = ROOT / "thyca/webui/shared/js/api.js"
 
 
 @pytest.mark.parametrize("method", ["getNdjson", "postNdjson"])

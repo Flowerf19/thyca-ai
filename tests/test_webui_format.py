@@ -1,4 +1,4 @@
-"""Node tests for the pure display helpers — webui/backend/format.js.
+"""Node tests for the pure display helpers — webui/shared/js/format.js.
 
 Runs in Node with --input-type=module so no DOM is needed; mirrors the eval
 helper style of tests/test_turn_status.py.
@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "thyca" / "webui" / "backend" / "format.js"
+SCRIPT = ROOT / "thyca" / "webui" / "shared" / "js" / "format.js"
 
 
 @pytest.fixture(scope="module")

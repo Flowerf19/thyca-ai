@@ -13,6 +13,7 @@ Thay đổi của Thyca, viết ngắn gọn cho người dùng.
 - Thứ tự hiển thị theo đúng thời gian thực trong mỗi vòng: suy nghĩ → câu trả lời → dòng "Đã dùng" (tool chạy sau khi model viết xong). Áp dụng cả lúc đang trả lời lẫn lúc đã xong, thay vì dòng tool đè lên trên câu chữ như trước.
 - Trang Chi phí tính trung bình trên các lượt đã định giá và không lỗi (bỏ qua lượt lỗi/chưa có giá), kèm dòng ghi rõ cơ sở tính thay vì hiện "—" khi thiếu giá một phần.
 - Sắp xếp lại code backend theo module (`serve/`, `app/`, `core/`, `skills/` mới, hết file lẻ, không file nào quá 400 dòng): nội bộ, không đổi tính năng hay API.
+- Sắp xếp lại WebUI page-first (`pages/<trang>/` + `shared/`, tách file JS/CSS trên 400 dòng): nội bộ, giao diện và URL giữ nguyên.
 
 ## 0.8.5.dev0 — 20/09/2026
 

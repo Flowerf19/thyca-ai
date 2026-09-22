@@ -94,7 +94,7 @@ Config mặc định dùng một provider OpenAI-compatible:
 
 ## Kiến trúc (tóm tắt cho người tò mò)
 
-Package `thyca/` chia module: `agent/` chạy loop 4 pha (assemble → think → act → observe), `tools/` giữ registry (bash + bash_read nền, read/write/edit, `memory_*`, MCP stdio), `memory/` tách Active (inject) và Archived (index), `llm/` là client OpenAI-compat (chat + responses), `skills/` là index Agent Skills, `core/` giữ wire types (`Message`/`ToolCall`), `app/` là chat orchestration + CLI, `serve/` + `webui/` là giao diện HTTP loopback.
+Package `thyca/` chia module: `agent/` chạy loop 4 pha (assemble → think → act → observe), `tools/` giữ registry (bash + bash_read nền, read/write/edit, `memory_*`, MCP stdio), `memory/` tách Active (inject) và Archived (index), `llm/` là client OpenAI-compat (chat + responses), `skills/` là index Agent Skills, `core/` giữ wire types (`Message`/`ToolCall`), `app/` là chat orchestration + CLI, `serve/` + `webui/` là giao diện HTTP loopback. WebUI tổ chức page-first: `.html` flat, JS/CSS theo `pages/<trang>/`, đồ dùng chung ở `shared/`.
 
 Skills theo chuẩn [Agent Skills](https://agentskills.io): `~/.thyca/skills/<name>/SKILL.md` — tạo bằng `write`, không cần tool mới.
 

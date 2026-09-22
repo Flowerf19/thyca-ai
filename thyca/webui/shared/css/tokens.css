@@ -1,0 +1,149 @@
+/* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4
+ * genre: editorial · macrostructure: Workbench · theme: studied-DNA (user image)
+ * tone: cream paper, terracotta leather, quiet botanical notebook
+ * fonts: Fraunces · Source Serif 4 · Be Vietnam Pro
+ */
+
+:root {
+  --color-desk-top: oklch(46.8% 0.103 42.5);
+  --color-desk-mid: oklch(42% 0.09 41.4);
+  --color-desk-bottom: oklch(31.8% 0.073 42.8);
+  --color-shell-shadow: oklch(21.7% 0.047 45.8 / 0.72);
+  --color-shell-shadow-soft: oklch(25% 0.06 44 / 0.32);
+
+  --color-paper: oklch(94.3% 0.023 71.8);
+  --color-paper-chat: oklch(96.4% 0.019 80.1);
+  --color-paper-card: oklch(97.4% 0.011 63.4);
+  --color-paper-input: oklch(96.7% 0.011 71.9);
+  --color-paper-edge: oklch(82% 0.045 72);
+  --color-border: oklch(87.4% 0.024 69.6);
+  --color-divider: oklch(78.6% 0.042 69.6);
+
+  --color-ink: oklch(30.9% 0.064 43.9);
+  --color-reading: oklch(33.5% 0.021 70);
+  --color-muted: oklch(48.2% 0.033 68.6);
+  --color-muted-soft: oklch(57.6% 0.041 66.9);
+  --color-accent: oklch(55.5% 0.13 38.2);
+  --color-accent-deep: oklch(51.7% 0.134 36.5);
+  --color-accent-soft: oklch(89.2% 0.049 72.2);
+  --color-accent-ink: oklch(95.6% 0.021 65.3);
+  --color-botanical: oklch(51.3% 0.049 68.6);
+  --color-watermark: oklch(87.9% 0.037 80.6 / 0.58);
+  --color-focus: oklch(51.7% 0.134 36.5);
+  --chat-brand-ink: #3d2a1f;
+  --chat-brand-accent: #a65a42;
+  --chat-brand-wash: rgba(255, 222, 192, 0.42);
+  /* A ghost of the brand colour: the user's tick is the same ink as Thyca's
+     stripe, kept thin and faint so the two never read as the same mark. */
+  --chat-user-tick: color-mix(in srgb, var(--chat-brand-accent) 35%, transparent);
+  --ink: var(--chat-brand-ink);
+  --terra: var(--chat-brand-accent);
+  --composer-bg: rgba(255, 252, 250, 0.82);
+  --composer-border: rgba(61, 42, 31, 0.12);
+
+  --font-display: "Fraunces", ui-serif, Georgia, serif;
+  --font-reading: "Source Serif 4", ui-serif, Georgia, serif;
+  --font-ui: "Be Vietnam Pro", ui-sans-serif, sans-serif;
+
+  --space-xs: 0.5rem;
+  --space-sm: 0.75rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+
+  --radius-xs: 0.5rem;
+  --radius-sm: 0.75rem;
+  --radius-card: 1rem;
+  --radius-chat: 1.25rem;
+  --radius-shell: 1.75rem;
+  --radius-pill: 999px;
+
+  --rule: 1px;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-micro: 120ms;
+  --dur-short: 220ms;
+  --z-base: 1;
+  --z-paper: 10;
+  --z-content: 20;
+}
+
+html,
+body {
+  min-width: 0;
+  min-height: 100%;
+  overflow-x: clip;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-height: 100dvh;
+  margin: 0;
+  padding: 1.15rem;
+  color: var(--color-reading);
+  background-color: var(--color-desk-mid);
+  background-image:
+    radial-gradient(ellipse at 50% -22%, var(--color-desk-top) 0%, transparent 68%),
+    linear-gradient(to bottom, transparent 45%, var(--color-desk-bottom) 118%);
+  background-size: auto;
+  font-family: var(--font-ui);
+  font-size: 100%;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* Preferences set in Cài đặt (navigation.js mirrors them onto <html> on every
+   page); they live here so each page honors them, not just settings/provider. */
+html[data-type-scale="small"] { font-size: 93.75%; }
+html[data-type-scale="large"] { font-size: 112.5%; }
+html[data-theme="dusk"] {
+  --color-desk-top: oklch(32% 0.06 42);
+  --color-desk-mid: oklch(28% 0.05 42);
+  --color-paper: oklch(88% 0.03 72);
+  --color-paper-chat: oklch(90% 0.025 80);
+}
+
+button,
+textarea {
+  font: inherit;
+}
+
+button {
+  border: 0;
+  cursor: pointer;
+}
+
+svg {
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.65;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+/* Screen base + chart/mono tokens, moved from shared/css/screens.css (W6 TASK-006). */
+:root {
+  --color-chart-input: oklch(78% 0.077 65);
+  --color-chart-cache: oklch(87% 0.054 72);
+  --color-success-ink: oklch(43% 0.085 155);
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
+[hidden] { display: none !important; }
+
+a { color: inherit; }

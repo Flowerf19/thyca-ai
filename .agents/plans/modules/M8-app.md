@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 created: 2026-09-22
 last_updated: 2026-09-22
 ---
@@ -104,3 +104,6 @@ Không phát hiện vi phạm ISP cụ thể: `LLMPort` (`agent/think.py`, dùng
 4. Shim `thyca/protocol.py` (re-export) thuộc về commit layout GOAL-002 của orchestrator — M8 coding không tự ý xóa file shim nếu nó tồn tại, tránh break importers của module khác; toàn bộ import mới trong M8 dùng `thyca.core.protocol` / `thyca.app.*`.
 5. Chỉ `chat_app.py` vượt ngưỡng 400 dòng nên chỉ nó bị tách; `cli.py`/`onboarding.py` dưới ngưỡng giữ biên file, refactor giới hạn trong trích helper (TASK-010–012).
 6. Onboarding probe tests dùng HTTP server local và mock `urlopen` — team M8 không gọi provider thật trong test; mọi message lỗi probe đã là tiếng Việt có sẵn, giữ nguyên wording để tests key-leak/message khớp.
+
+## Close-out (2026-09-22, orchestrator)
+All module tasks landed and verified: branch refactor/M8-app commit c3f734d, test 719/719, review approve (toolchain.py accepted; merge overlap with M1 resolved M8-side). Merged into refactor/backend-solid, full suite 719 passed, plan status done.

@@ -38,35 +38,35 @@ File oversize (>400 dòng) phải tách: `serve.py`, `bridge.py`, `chat_app.py` 
 
 | ID | Task | Done | Date |
 |----|------|------|------|
-| TASK-001 | 8 planning agents đọc sâu module được giao (code + tests + consumers), viết `.agents/plans/modules/M<n>-<name>.md` theo format skill implementation-planner, ghi rõ target layout + thứ tự tách file + rủi ro cycle | | |
+| TASK-001 | 8 planning agents đọc sâu module được giao (code + tests + consumers), viết `.agents/plans/modules/M<n>-<name>.md` theo format skill implementation-planner, ghi rõ target layout + thứ tự tách file + rủi ro cycle | x (8/8 plans, wf_b110a1f870a0) | 2026-09-22 |
 | TASK-002 | Orchestrator duyệt 8 module plans (layout nhất quán, không tranh file, không cycle chéo) rồi mới mở GOAL-002 | x (orchestrator approved 8/8 + 5 layout decisions §dưới; chờ user duyệt mới chạy layout agent) | 2026-09-22 |
 
 ### GOAL-002: Physical layout (1 agent, mechanical)
 
 | ID | Task | Done | Date |
 |----|------|------|------|
-| TASK-003 | Layout agent `git mv` file lẻ vào thư mục đích theo layout đã duyệt, sửa imports (runtime + tests + scripts), không refactor logic trong bước này | | |
-| TASK-004 | Verify sau move: `uv run pytest -q` xanh như baseline, check không circular import, `git diff --check` sạch → 1 commit `chore(layout): ...` | | |
+| TASK-003 | Layout agent `git mv` file lẻ vào thư mục đích theo layout đã duyệt, sửa imports (runtime + tests + scripts), không refactor logic trong bước này | x (15 files + 4 __init__, ~60 import sites, commit f2702a7) | 2026-09-22 |
+| TASK-004 | Verify sau move: `uv run pytest -q` xanh như baseline, check không circular import, `git diff --check` sạch → 1 commit `chore(layout): ...` | x (719 passed parity, imports ok, diff clean — orchestrator re-verified) | 2026-09-22 |
 
 ### GOAL-003: SOLID refactor per-module (8 teams song song)
 
 | ID | Task | Done | Date |
 |----|------|------|------|
-| TASK-005 | M1 agent: refactor theo module plan → pytest module → review độc lập | | |
-| TASK-006 | M2 llm: refactor theo module plan → pytest module → review độc lập | | |
-| TASK-007 | M3 config: refactor theo module plan → pytest module → review độc lập | | |
-| TASK-008 | M4 memory: refactor theo module plan → pytest module → review độc lập (đọc decision L2-hybrid-v1 trước khi đụng memory contract) | | |
-| TASK-009 | M5 sessions: refactor theo module plan → pytest module → review độc lập (giữ 4-class SOLID Session/Store/Compactor/Manager) | | |
-| TASK-010 | M6 tools: refactor theo module plan → pytest module → review độc lập (giữ memory tools contract + MCP stdio) | | |
-| TASK-011 | M7 serve: refactor theo module plan → pytest module → review độc lập (serve chỉ loopback; API không lộ secret/path/stack) | | |
-| TASK-012 | M8 app: refactor theo module plan → pytest module → review độc lập | | |
-| TASK-013 | Orchestrator merge 8 nhánh team vào `refactor/backend-solid`, giải quyết conflict (ưu tiên giữ behavior + tests xanh) | | |
+| TASK-005 | M1 agent: refactor theo module plan → pytest module → review độc lập | x (code 527f939 + test 719 + review approve, 1 minor accepted) | 2026-09-22 |
+| TASK-006 | M2 llm: refactor theo module plan → pytest module → review độc lập | x (code 3286e01 + test 719 + review approve; I001 fixed at merge) | 2026-09-22 |
+| TASK-007 | M3 config: refactor theo module plan → pytest module → review độc lập | x (code c725758 + test 719 + review approve) | 2026-09-22 |
+| TASK-008 | M4 memory: refactor theo module plan → pytest module → review độc lập (đọc decision L2-hybrid-v1 trước khi đụng memory contract) | x (code 341a473 + test 719 + review approve, zero findings) | 2026-09-22 |
+| TASK-009 | M5 sessions: refactor theo module plan → pytest module → review độc lập (giữ 4-class SOLID Session/Store/Compactor/Manager) | x (code 203bcc0 + test 719 + review approve) | 2026-09-22 |
+| TASK-010 | M6 tools: refactor theo module plan → pytest module → review độc lập (giữ memory tools contract + MCP stdio) | x (code feb784c + test 719 + review approve, zero findings) | 2026-09-22 |
+| TASK-011 | M7 serve: refactor theo module plan → pytest module → review độc lập (serve chỉ loopback; API không lộ secret/path/stack) | x (code 39f293f + test 719 + review approve; turn_stream deviation accepted; cycle fix verified) | 2026-09-22 |
+| TASK-012 | M8 app: refactor theo module plan → pytest module → review độc lập | x (code c3f734d + test 719 + review approve; toolchain.py accepted) | 2026-09-22 |
+| TASK-013 | Orchestrator merge 8 nhánh team vào `refactor/backend-solid`, giải quyết conflict (ưu tiên giữ behavior + tests xanh) | x (8 merges + conflict chat_app.py resolved M8-side + ruff I001 8a1dd7c; cycle probes all pass) | 2026-09-22 |
 
 ### GOAL-004: Integration + docs
 
 | ID | Task | Done | Date |
 |----|------|------|------|
-| TASK-014 | Full `uv run pytest -q` + `git diff --check` trên nhánh tích hợp; mọi finding phải có evidence (log/test/file:line) | | |
+| TASK-014 | Full `uv run pytest -q` + `git diff --check` trên nhánh tích hợp; mọi finding phải có evidence (log/test/file:line) | x (719 passed, diff clean, max file archive_store.py 400 lines) | 2026-09-22 |
 | TASK-015 | Review tổng độc lập 1 lượt toàn diff (scope, SOLID, không behavior change lén) | | |
 | TASK-016 | Cập nhật `.agents/AGENT_RULES.md`, `PROJECT_CONTEXT.md`, `README.md`, root `README.md`, `CHANGELOG.md` theo tree mới | | |
 
@@ -98,3 +98,6 @@ File oversize (>400 dòng) phải tách: `serve.py`, `bridge.py`, `chat_app.py` 
 5. Secret/path nội bộ/stack không bao giờ lọt vào API response hay log mới.
 6. Mỗi team branch từ `refactor/backend-solid` sau commit layout (GOAL-002); rebase trước merge.
 7. Review agents (per-team TASK-005..012 + review tổng TASK-015) luôn dùng `meta/muse-spark-1.3` effort `max`, skill `code-reviewer`, đọc actual diff — không review chay.
+8. Contributor agents (planning/coding/test) mặc định effort `xhigh` (user chốt 2026-09-22). Baseline sau layout: **719 passed / 0 fail** (fail `test_debug_prints_prompt_flags` cũ không tái hiện — tools count đã khớp).
+9. **Coder KHÔNG commit; reviewer commit khi pass** (user chốt 2026-09-22): coding agents chỉ viết code + chạy test + báo evidence (worktree giữ work trên nhánh team); review agent (`1.3 max`) verify actual diff + test evidence, nếu `approve` thì gộp thành đúng 1 commit sạch `refactor(<module>): ...` trên nhánh team. Batch GOAL-003 đang chạy giữ cách cũ (coders commit) vì đã tung — rule mới áp từ review workflow + mọi fix-round sau.
+10. **Agent prompts in English** (user chốt 2026-09-22): mọi prompt cho subagents viết tiếng Anh — tiếng Việt không dấu dễ bị hiểu sai. Áp từ review workflow trở đi. (Báo cáo với user vẫn tiếng Việt.)

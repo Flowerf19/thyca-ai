@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 created: 2026-09-22
 last_updated: 2026-09-22
 ---
@@ -130,3 +130,6 @@ Gate merge:
      `kill_process_group, select_shell` từ `bash.py`, còn `bash.py` chỉ `TYPE_CHECKING`-import
      `BackgroundProcs` — giữ hướng import một chiều này, không cho `bash.py` import runtime
      từ `background.py`.
+
+## Close-out (2026-09-22, orchestrator)
+All module tasks landed and verified: branch refactor/M6-tools commit feb784c, test 719/719, review approve zero findings. Merged into refactor/backend-solid, full suite 719 passed, plan status done.

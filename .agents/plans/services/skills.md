@@ -97,7 +97,7 @@ Skill của agent dev (pi) ở repo `skills/` không đổi — hai hệ riêng.
 ## Contracts
 
 ```python
-# thyca/skills.py — store dùng chung bởi memory (index) và tương lai (tools)
+# thyca/skills/store.py — store dùng chung bởi memory (index) và tương lai (tools)
 @dataclass(frozen=True)
 class SkillMeta:
     name: str            # = dirname
@@ -122,7 +122,7 @@ class SkillStore:
 
 | File | Đổi |
 |---|---|
-| `thyca/skills.py` (mới) | SkillStore + validate spec + index builder + seed |
+| `thyca/skills/store.py` (mới) | SkillStore + validate spec + index builder + seed |
 | `thyca/memory/active.py` | refresh scan + ensure_defaults |
 | `thyca/llm/prompt_manager.py` | `<skills>` + rút `_RULES` |
 | `cli.py` / `chat_app.py` | 0 đổi (index đi qua Assemble sẵn) |
@@ -132,7 +132,7 @@ class SkillStore:
 
 | TASK | Nội dung | Trạng thái |
 |---|---|---|
-| TASK-901 | `thyca/skills.py`: SkillStore (list_meta/index_text/ensure_defaults) + PyYAML + tests: spec name regex, name ≠ dirname, description >1024, frontmatter YAML lỗi, field lạ bỏ qua | x 2026-08-28 |
+| TASK-901 | `thyca/skills/store.py`: SkillStore (list_meta/index_text/ensure_defaults) + PyYAML + tests: spec name regex, name ≠ dirname, description >1024, frontmatter YAML lỗi, field lạ bỏ qua | x 2026-08-28 |
 | TASK-902 | `ActiveSnapshot.skills` + refresh scan + `<skills>` section + test prompt | x 2026-08-28 |
 | TASK-903 | Seed `create-skill` + `create-mcp-tool` theo spec + rút `_RULES` + template packaged + force-include + test | x 2026-08-28 |
 | TASK-904 | Docs: README kiến trúc, checklist architecture, decision doc sau duyệt | x 2026-08-28 |

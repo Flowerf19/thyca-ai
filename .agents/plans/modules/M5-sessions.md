@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 created: 2026-09-22
 last_updated: 2026-09-22
 ---
@@ -117,3 +117,6 @@ Thứ tự tách file oversize: không có. File lớn nhất `store.py` (295 d�
    Cách tránh: wire không import ngược app/serve layers; `title.py:13-14` import
    `SessionManager` giữ `TYPE_CHECKING`-only; TASK-007 pin bằng import check.
 6. Không thêm dependency, file mới (ngoài `wire.py` từ move), hay API mới; behavior giữ nguyên.
+
+## Close-out (2026-09-22, orchestrator)
+All module tasks landed and verified: branch refactor-M5-sessions commit 203bcc0, test 719/719, review approve. Merged into refactor/backend-solid, full suite 719 passed, plan status done.

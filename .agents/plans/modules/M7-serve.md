@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 created: 2026-09-22
 last_updated: 2026-09-22
 ---
@@ -150,3 +150,6 @@ không import class Handler — đúng cam kết hiện tại trong `bridge.py:1
 4. `turn_state.py` thuộc M7 (dù `chat_app.py` dùng nó): M8 chỉ consumer một
    chiều; tranh chấp biên do orchestrator quyết ở GOAL-002 plan tổng.
 5. Không thêm dependency, route, hay field API mới trong refactor này.
+
+## Close-out (2026-09-22, orchestrator)
+All module tasks landed and verified: branch refactor/M7-serve commit 39f293f, test 719/719, review approve (turn_stream deviation accepted, cycle fix verified at merge). Merged into refactor/backend-solid, full suite 719 passed, plan status done.

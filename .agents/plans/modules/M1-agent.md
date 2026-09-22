@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 created: 2026-09-22
 last_updated: 2026-09-22
 ---
@@ -137,3 +137,6 @@ Cycle/import risks với module khác + cách tránh:
    đổi grammar — mọi đổi grammar thuộc về M6.
 5. Không thêm dependency, abstraction, hay event type mới; `TurnEvent` allowlist và
    `Stage` fields giữ nguyên.
+
+## Close-out (2026-09-22, orchestrator)
+All module tasks landed and verified: branch refactor/backend-solid-M1-agent commit 527f939, test 719/719, review approve (1 minor: TASK-003 fallback accepted). Merged into refactor/backend-solid, full suite 719 passed, plan status done.

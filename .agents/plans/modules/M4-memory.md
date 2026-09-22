@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 created: 2026-09-22
 last_updated: 2026-09-22
 ---
@@ -65,3 +65,6 @@ markdown là nguồn sự thật, `memory_remember` là writer duy nhất — th
 4. Không thêm dependency, không đổi schema version (`SCHEMA_VERSION = "6"` ở
    `archive_store.py:14`), không đổi TTL/heading grammar (`heading.py`).
 5. `schema.sql` và `thyca/memory/README.md` ở yên — là data/docs của module, không phải file lẻ.
+
+## Close-out (2026-09-22, orchestrator)
+All module tasks landed and verified: branch refactor-backend-solid-M4-memory commit 341a473, test 719/719, review approve zero findings. Merged into refactor/backend-solid, full suite 719 passed, plan status done.

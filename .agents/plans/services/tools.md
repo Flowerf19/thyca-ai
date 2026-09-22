@@ -53,7 +53,7 @@ classDiagram
     PathGuard ..> ToolSpec
 ```
 
-`ToolCall` / `ToolResult` chỉ ở `thyca/protocol.py`. `MemoryFacade` đã ở `thyca/tools/memory.py` — đăng ký, không viết lại.
+`ToolCall` / `ToolResult` chỉ ở `thyca/core/protocol.py`. `MemoryFacade` đã ở `thyca/tools/memory.py` — đăng ký, không viết lại.
 
 ## Contracts
 

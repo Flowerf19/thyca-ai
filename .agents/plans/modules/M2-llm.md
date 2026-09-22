@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 created: 2026-09-22
 last_updated: 2026-09-22
 ---
@@ -135,3 +135,6 @@ dùng chung của hai connect; không tách thêm.
 - Consumer smoke: `test_agent_think`, `test_agent_loop`, `test_chat_app` xanh.
 - Full suite: không regression mới vs baseline; `git diff --check` sạch; import probe
   `python -c "import thyca.llm.llm_factory, thyca.agent.think, thyca.chat_app"` thành công.
+
+## Close-out (2026-09-22, orchestrator)
+All module tasks landed and verified: branch refactor-backend-solid-M2-llm commit 3286e01, test 719/719, review approve (1 minor: I001 fixed at merge 8a1dd7c). Merged into refactor/backend-solid, full suite 719 passed, plan status done.

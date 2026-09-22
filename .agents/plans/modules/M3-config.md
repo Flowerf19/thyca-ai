@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 created: 2026-09-22
 last_updated: 2026-09-22
 ---
@@ -128,3 +128,6 @@ tên theo frontend; WebUI ngoài scope refactor).
    (`serve`, `chat_app`, `bridge`) không `ImportError`/circular.
 5. `git diff --check` sạch; diff ngoài 4 nhóm file ở tiêu chí 1 + 2
    micro-cleanup = 0 (không broad rewrite).
+
+## Close-out (2026-09-22, orchestrator)
+All module tasks landed and verified: branch refactor/backend-solid-M3-config commit c725758, test 719/719, review approve. Merged into refactor/backend-solid, full suite 719 passed, plan status done.

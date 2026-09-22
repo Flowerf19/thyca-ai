@@ -1,6 +1,6 @@
 """Wire contract for one chat session: payload shape + public error mapping.
 
-Shared by the layers on both sides of it: :class:`~thyca.chat_app.ChatApp`
+Shared by the layers on both sides of it: :class:`~thyca.app.chat_app.ChatApp`
 builds payloads with it, and the HTTP handlers map failures with it. Keeping
 it here (rather than in either) is what stops ``serve.py`` from growing a
 second copy of the field list and keeps the app layer free of HTTP statuses.

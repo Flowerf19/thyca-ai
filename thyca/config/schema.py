@@ -36,8 +36,6 @@ _LABELS: dict[str, str] = {
     "output": "Output",
 }
 
-_HINTS: dict[str, str] = {}  # hints removed from the settings panel
-
 # int ranges mirror LimitsCfg.__post_init__ bounds.
 _RANGES: dict[str, tuple[int, int]] = {
     "loopMax": (1, 200),
@@ -79,8 +77,6 @@ def _field_entry(prefix: str, field: dataclasses.Field) -> dict[str, Any]:
         entry["min"], entry["max"] = _RANGES[field.name]
     if _is_secret(field.name):
         entry["secret"] = True
-    if field.name in _HINTS:
-        entry["hint"] = _HINTS[field.name]
     return entry
 
 

@@ -203,6 +203,19 @@ def _parse_provider_block(raw: dict[str, Any]) -> tuple[dict[str, ProviderEntry]
     )
 
 
+def _migrate_pricing_to_models(config: Config) -> Config:
+    """Legacy migration: pricing-only entries become registered models."""
+    if config.pricing and not config.models:
+        return replace(
+            config,
+            models={
+                name: ModelCfg(input=p.input, cache=p.cache, output=p.output)
+                for name, p in config.pricing.items()
+            },
+        )
+    return config
+
+
 def _parse_dict(raw: dict[str, Any]) -> Config:
     providers, default_provider, default_model = _parse_provider_block(raw)
     models = _parse_models(raw.get("models"))
@@ -237,12 +250,4 @@ def _parse_dict(raw: dict[str, Any]) -> Config:
     )
     # Legacy migration: pricing-only entries become registered models so the
     # settings UI can edit them. pricing stays for older consumers.
-    if config.pricing and not config.models:
-        config = replace(
-            config,
-            models={
-                name: ModelCfg(input=p.input, cache=p.cache, output=p.output)
-                for name, p in config.pricing.items()
-            },
-        )
-    return config
+    return _migrate_pricing_to_models(config)

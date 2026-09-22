@@ -135,8 +135,8 @@ async function poll() {
   await settle();
 }
 
-const view = await import('./thyca/webui/backend/chat-view.js');
-const format = await import('./thyca/webui/backend/format.js');
+const view = await import('./thyca/webui/pages/chat/chat-view.js');
+const format = await import('./thyca/webui/shared/js/format.js');
 let detail = {
   id: 'A', title: 'A', running: true,
   started_at: new Date(now).toISOString(), messages: [],
@@ -163,8 +163,17 @@ const dependencies = {
 };
 // Inject transport in place of imports, suppress startup I/O, and expose the
 // existing lifecycle entry points. Their production function bodies are intact.
-const source = fs.readFileSync('./thyca/webui/app.js', 'utf8')
+const sources = [
+  './thyca/webui/pages/chat/sessions-sidebar.js',
+  './thyca/webui/pages/chat/turn-follow.js',
+  './thyca/webui/pages/chat/composer.js',
+  './thyca/webui/pages/chat/app.js',
+];
+const source = sources
+  .map(path => fs.readFileSync(path, 'utf8'))
+  .join('\n')
   .replace(/^import[\s\S]*?from .*?;\n/gm, '')
+  .replace(/^export (?=async function|function|const)/gm, '')
   .replace('void boot();', '');
 const app = new Function(...Object.keys(dependencies), source + `
   return { loadSession, state, el, liveTurns };

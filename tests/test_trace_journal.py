@@ -1,4 +1,4 @@
-"""Trace execution journal + deep-link time helpers — webui/backend/trace-data.js.
+"""Trace execution journal + deep-link time helpers — webui/pages/dashboard/trace-data.js.
 
 executionStepsFromDetail is the flat journal behind the Trace screen: real
 message order, tool calls kept per call (id preserved, never merged by name)
@@ -17,8 +17,21 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-TRACE_DATA = ROOT / "thyca" / "webui" / "backend" / "trace-data.js"
-TRACE_JS = ROOT / "thyca" / "webui" / "trace.js"
+TRACE_DATA = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "trace-data.js"
+TRACE_JS = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "trace.js"
+TRACE_VIEW = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "trace-view.js"
+TRACE_TURNS = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "trace-turns.js"
+TRACE_DEEPLINK = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "trace-deeplink.js"
+PAGER_JS = ROOT / "thyca" / "webui" / "shared" / "js" / "pager.js"
+
+
+def _trace_script() -> str:
+    """Concat of the Trace journal modules (entry + view + turns + deeplink
+    + shared pager): substring pins read the split files, asserts unchanged."""
+    return "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (TRACE_JS, TRACE_VIEW, TRACE_TURNS, TRACE_DEEPLINK, PAGER_JS)
+    )
 
 
 @pytest.fixture(scope="module")
@@ -365,7 +378,7 @@ def test_invalid_or_missing_zone_never_fakes_zoned_time(node: str) -> None:
 
 
 def _trace_pager_block():
-    text = TRACE_JS.read_text(encoding="utf-8")
+    text = PAGER_JS.read_text(encoding="utf-8")
     block = text.split("// >>> journal-pager", 1)[1]
     block = block[block.index("\n") + 1:]  # skip the rest of the marker line
     return block.split("// <<< journal-pager", 1)[0]
@@ -377,7 +390,7 @@ def test_trace_pager_math_and_clamp(node):
         "journalPageCount(13), journalPageCount(12), journalPageCount(0),"
         "journalClampPage(0, 2), journalClampPage(3, 2), journalClampPage(2, 2)]));\n"
     )
-    result = subprocess.run([node, "-e", source], check=True, capture_output=True, text=True)
+    result = subprocess.run([node, "--input-type=module", "-e", source], check=True, capture_output=True, text=True)
     assert json.loads(result.stdout) == [2, 1, 1, 1, 2, 2]
 
 
@@ -386,7 +399,7 @@ def test_step_paging_keeps_absolute_keys_and_open_steps():
     `${sessionId}:${turn_index}`), so the page and every open disclosure
     survive re-renders of any other turn; the slice maps with the ABSOLUTE
     step index, so numbering continues across pages."""
-    script = TRACE_JS.read_text(encoding="utf-8")
+    script = _trace_script()
     assert "(step, offset) => stepEntry(step, start + offset, turnState)" in script
     assert ".slice(start, start + JOURNAL_PAGE_SIZE)" in script
     # Per-turn state map: each turn owns open/detail/pending/error/stepsPage,
@@ -419,7 +432,7 @@ def test_deeplink_turn_reveals_and_pager_stays_single():
     matching session re-asserts open + reveal from the per-turn state, and the
     steps pager lives on the turn state so re-renders can never accumulate
     .journal-pager nodes inside one disclosure."""
-    script = TRACE_JS.read_text(encoding="utf-8")
+    script = _trace_script()
     # Reveal honors prefers-reduced-motion (same pattern as app.js).
     assert 'matchMedia("(prefers-reduced-motion: reduce)")' in script
     assert 'behavior: reducedMotion ? "auto" : "smooth"' in script
@@ -896,7 +909,7 @@ globalThis.fetch = async (url) => {
   return { ok: true, json: async () => ({ traces, total: traces.length }) };
 };
 
-await import("./thyca/webui/trace.js");
+await import("./thyca/webui/pages/dashboard/trace.js");
 await tick();
 
 const result = {

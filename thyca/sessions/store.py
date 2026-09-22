@@ -6,7 +6,7 @@ import re
 import secrets
 from pathlib import Path
 
-from thyca.protocol import Message
+from thyca.core.protocol import Message
 
 from .errors import SessionCorrupt, SessionError, SessionNotFound
 from .models import Session
@@ -158,16 +158,9 @@ class SessionStore:
         return candidates
 
     def latest(self) -> Session:
-        if not self.sessions_dir.is_dir():
-            raise SessionNotFound(self.sessions_dir)
-        candidates = [
-            path
-            for path in self.sessions_dir.glob("*.jsonl")
-            if path.is_file() and not path.is_symlink() and _ID_RE.fullmatch(path.stem)
-        ]
+        candidates = self.list_paths()
         if not candidates:
             raise SessionNotFound(self.sessions_dir)
-        candidates.sort(key=lambda path: (path.stat().st_mtime_ns, path.name), reverse=True)
         for chosen in candidates:
             session_id = chosen.stem
             try:

@@ -4,7 +4,7 @@ created: 2026-08-14
 last_updated: 2026-08-27
 ---
 
-# Service — Config (`thyca/config.py`)
+# Service — Config (`thyca/config/`)
 
 > 1/7. Thuộc `thyca-agent-architecture.md`. **Đã duyệt — chốt thiết kế.**
 
@@ -45,13 +45,13 @@ classDiagram
     Config --> LimitsCfg
 ```
 
-> Module-level API (`load`/`ensure_default`/`save`) là `ConfigIO` ẩn: chúng là hàm trong `thyca/config.py`, không phải class.
+> Module-level API (`load`/`ensure_default`/`save`) là `ConfigIO` ẩn: chúng là hàm trong `thyca/config/store.py`, không phải class.
 
 > `EmbeddingCfg` đã gỡ khỏi config cùng embedding runtime (580ae03). Không còn `embedding` section trong JSON.
 
 ## Contract
 
-**Đọc ở `~/.thyca` — đúng.** `thyca/config.py` chỉ đọc `Path.home() / ".thyca" / "config.json"` (không đọc cwd, không đọc `./config.json`). Các service khác không tự `open()`, chỉ nhận `Config` injected: `Connect/OpenAIChat(cfg.provider)`, `MCPManager(cfg.mcpServers)`. Ghi cũng chỉ qua `config.py`.
+**Đọc ở `~/.thyca` — đúng.** `thyca/config/store.py` chỉ đọc `Path.home() / ".thyca" / "config.json"` (không đọc cwd, không đọc `./config.json`). Các service khác không tự `open()`, chỉ nhận `Config` injected: `Connect/OpenAIChat(cfg.provider)`, `MCPManager(cfg.mcpServers)`. Ghi cũng chỉ qua `config.py`.
 
 `~/.thyca/config.json`:
 ```json

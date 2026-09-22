@@ -8,7 +8,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from thyca.config import DEFAULT_TIMELINE_TIMEZONE, LimitsCfg
-from thyca.protocol import Message
+from thyca.core.protocol import Message
 
 from .compaction import SessionCompactor
 from .errors import SessionBusy, SessionCorrupt, SessionError, SessionNotFound
@@ -38,12 +38,16 @@ class SessionManager:
         self._lock = threading.Lock()
         self._session: Session | None = None
 
+    def _current_locked(self) -> Session:
+        """Return the current session. The caller must hold ``self._lock``."""
+        if self._session is None:
+            raise SessionError("no current session — call create/load/continue_last first")
+        return self._session
+
     @property
     def current(self) -> Session:
         with self._lock:
-            if self._session is None:
-                raise SessionError("no current session — call create/load/continue_last first")
-            return self._session
+            return self._current_locked()
 
     def _new_id(self) -> str:
         try:
@@ -116,10 +120,9 @@ class SessionManager:
 
     def append(self, msg: Message) -> None:
         with self._lock:
-            if self._session is None:
-                raise SessionError("no current session — call create/load/continue_last first")
-            self.store.append(self._session.path, msg)
-            self._session.messages.append(msg)
+            session = self._current_locked()
+            self.store.append(session.path, msg)
+            session.messages.append(msg)
 
     def truncate_to_last_user(self) -> bool:
         """Drop messages after the last user. No-op if the tail is already a user.
@@ -129,11 +132,8 @@ class SessionManager:
         Returns False when the transcript has no ``role=user`` message.
         """
         with self._lock:
-            if self._session is None:
-                raise SessionError(
-                    "no current session — call create/load/continue_last first"
-                )
-            messages = self._session.messages
+            session = self._current_locked()
+            messages = session.messages
             last = None
             for index in range(len(messages) - 1, -1, -1):
                 if messages[index].role == "user":
@@ -155,13 +155,13 @@ class SessionManager:
                 return True
             kept = messages[: last + 1]
             self.store.rewrite(
-                self._session.id,
-                self._session.path,
+                session.id,
+                session.path,
                 kept,
-                title=self._session.title,
-                title_source=self._session.title_source,
+                title=session.title,
+                title_source=session.title_source,
             )
-            self._session.messages[:] = kept
+            session.messages[:] = kept
             return True
 
     def mark_turn_error(self, code: str, message: str) -> bool:
@@ -173,11 +173,8 @@ class SessionManager:
         not mask the original error guard this call.
         """
         with self._lock:
-            if self._session is None:
-                raise SessionError(
-                    "no current session — call create/load/continue_last first"
-                )
-            messages = self._session.messages
+            session = self._current_locked()
+            messages = session.messages
             last = None
             for index in range(len(messages) - 1, -1, -1):
                 if messages[index].role == "user":
@@ -189,34 +186,33 @@ class SessionManager:
             marked["error"] = {"code": code, "message": message}
             messages[last] = replace(messages[last], meta=marked)
             self.store.rewrite(
-                self._session.id,
-                self._session.path,
+                session.id,
+                session.path,
                 messages,
-                title=self._session.title,
-                title_source=self._session.title_source,
+                title=session.title,
+                title_source=session.title_source,
             )
             return True
 
     def compact_if_needed(self) -> bool:
         with self._lock:
-            if self._session is None:
-                raise SessionError("no current session — call create/load/continue_last first")
-            on_disk, title, title_source = self.store.scan(self._session.path)
-            self._session.messages[:] = on_disk
+            session = self._current_locked()
+            on_disk, title, title_source = self.store.scan(session.path)
+            session.messages[:] = on_disk
             if title:
-                self._session.title = title
-                self._session.title_source = title_source
+                session.title = title
+                session.title_source = title_source
             compacted = self.compactor.compact(on_disk, self.limits.contextTokens)
             if compacted is None:
                 return False
             self.store.rewrite(
-                self._session.id,
-                self._session.path,
+                session.id,
+                session.path,
                 compacted,
-                title=self._session.title,
-                title_source=self._session.title_source,
+                title=session.title,
+                title_source=session.title_source,
             )
-            self._session.messages[:] = compacted
+            session.messages[:] = compacted
             return True
 
     def refresh_title(self) -> None:
@@ -239,8 +235,7 @@ class SessionManager:
 
     def set_title(self, title: str, *, source: str | None = None) -> str | None:
         with self._lock:
-            if self._session is None:
-                raise SessionError("no current session — call create/load/continue_last first")
+            session = self._current_locked()
             cleaned = (
                 sanitize_user_title(title)
                 if source == USER_TITLE_SOURCE
@@ -248,9 +243,9 @@ class SessionManager:
             )
             if cleaned is None:
                 return None
-            self.store.append_meta(self._session.path, cleaned, source)
-            self._session.title = cleaned
-            self._session.title_source = source
+            self.store.append_meta(session.path, cleaned, source)
+            session.title = cleaned
+            session.title_source = source
             return cleaned
 
     def rename(self, session_id: str, title: str) -> str:

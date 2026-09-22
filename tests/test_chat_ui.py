@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from io import StringIO
 
-from thyca.chat_ui import ChatUi
+from thyca.app.chat_ui import ChatUi
 
 
 def test_banner_prompt_assistant_without_color() -> None:

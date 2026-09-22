@@ -6,7 +6,7 @@ from collections.abc import Callable
 
 import httpx
 
-from thyca.protocol import ToolCall
+from thyca.core.protocol import ToolCall
 
 from .llm_base import ChatReply, LLMError, normalize_usage
 from .streaming import ContentOut, ReasoningOut

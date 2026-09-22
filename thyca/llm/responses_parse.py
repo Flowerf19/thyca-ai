@@ -7,7 +7,7 @@ from typing import Any
 
 import httpx
 
-from thyca.protocol import Message, ToolCall
+from thyca.core.protocol import Message, ToolCall
 
 from .llm_base import ChatReply, LLMError, normalize_usage
 from .openai_parse import parse_tool_calls

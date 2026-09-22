@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from thyca.llm.llm_base import LLMError
-from thyca.protocol import Message
+from thyca.core.protocol import Message
 
 from .models import Session
 

@@ -4,7 +4,7 @@ import time
 from typing import Protocol
 
 from thyca.llm.llm_base import ChatReply
-from thyca.protocol import Message
+from thyca.core.protocol import Message
 
 from .stage import Stage
 

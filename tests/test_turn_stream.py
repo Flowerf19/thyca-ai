@@ -1,6 +1,6 @@
 """Lifecycle: chunked NDJSON decode. No jsdom.
 
-Drives webui/backend/api.js (postNdjson) with stubbed fetch.
+Drives webui/shared/js/api.js (postNdjson) with stubbed fetch.
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-API = ROOT / "thyca" / "webui" / "backend" / "api.js"
+API = ROOT / "thyca" / "webui" / "shared" / "js" / "api.js"
 
 
 @pytest.fixture(scope="module")

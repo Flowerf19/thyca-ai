@@ -12,7 +12,7 @@ import pytest
 
 from thyca.config import LimitsCfg
 from thyca.llm.llm_base import ChatReply
-from thyca.protocol import Message, ToolCall
+from thyca.core.protocol import Message, ToolCall
 from thyca.sessions import (
     Session,
     SessionBusy,
@@ -597,7 +597,7 @@ def test_delete_gate_blocks_a_claim_inside_the_window(tmp_path: Path) -> None:
     file truncated, silently dropping the earlier history.
     """
     from thyca.sessions import SessionBusy
-    from thyca.turn_state import TurnState
+    from thyca.serve.turn_state import TurnState
 
     turns = TurnState()
     manager = SessionManager(tmp_path)
@@ -619,7 +619,7 @@ def test_delete_gate_blocks_a_claim_inside_the_window(tmp_path: Path) -> None:
 
 def test_turn_state_claim_is_exclusive_and_releasable(tmp_path: Path) -> None:
     from thyca.sessions import SessionBusy
-    from thyca.turn_state import TurnState
+    from thyca.serve.turn_state import TurnState
 
     turns = TurnState()
     assert turns.started_at("s") is None
@@ -641,7 +641,7 @@ def test_turn_state_claim_is_exclusive_and_releasable(tmp_path: Path) -> None:
 
 
 def test_turn_hub_replays_to_late_subscriber_and_closes_on_release() -> None:
-    from thyca.turn_state import TurnHub, TurnState
+    from thyca.serve.turn_state import TurnHub, TurnState
 
     turns = TurnState()
     hub = turns.claim("s")
@@ -670,7 +670,7 @@ def test_claim_cannot_slip_between_the_check_and_the_unlink(tmp_path: Path) -> N
     import time
 
     from thyca.sessions import SessionNotFound
-    from thyca.turn_state import TurnState
+    from thyca.serve.turn_state import TurnState
 
     turns = TurnState()
     manager = SessionManager(tmp_path)

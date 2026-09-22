@@ -1,13 +1,15 @@
 # Agent rules
 
 - Chỉ làm task thuộc plan `in-progress` (hoặc bug/fix UI user vừa chỉ). Không thêm dependency, abstraction, hay feature ngoài task đó.
-- Plan đang chạy: `review-split-oversize.md` (tách file >400 dòng — GOAL-001/002 xong). Trace đã đóng: `plans/done/thyca-trace-cost.md`, `plans/done/thyca-trace-notebook.md`.
+- Không còn plan in-progress (2026-09-22): `backend-solid-refactor.md` done (nhánh `refactor/backend-solid`), `webui-solid-refactor.md` done (nhánh `refactor/webui-solid`) — cả hai chờ quyết merge main. Plans cũ ở `plans/done/`.
 - L2 hybrid thuộc v1. Đọc `.agents/decisions/2026-08-15-l2-hybrid-v1.md` trước khi đổi memory contract.
-- Session là 4-class SOLID trong `thyca/sessions/`: `Session` / `SessionStore` / `SessionCompactor` / `SessionManager`. Không `thyca/session.py` shim.
+- Session là 4-class SOLID trong `thyca/sessions/`: `Session` / `SessionStore` / `SessionCompactor` / `SessionManager` (+ `wire.py` payload contract). Không `thyca/session.py` shim.
 - ActiveMemory chỉ `thyca/memory/active.py`: `SOUL`/`USER`/`IDENTITY` full inject; daily tail `hotTailKB`. Archive/L2 là `archived.py` + `chunk.py`. Facade/`memory_*` thuộc Tools. Không `MEMORY.md`. `write`/`edit` không được ghi dưới `~/.thyca`; `memory_remember` là writer duy nhất cho memory files.
 - Serve chỉ loopback. API không trả secret, path nội bộ, hay stack.
 - Memory recalled từ another-brain là claim; tree hiện tại thắng.
 - Code và identifier tiếng Anh. Nói với user theo ngôn ngữ user.
 - Linux là target. Đừng viết API chỉ chạy trên Windows.
-- Secret chỉ qua env hoặc file ngoài Git.
-- Pytest: đừng "sửa" `test_debug_prints_prompt_flags` (`tools=7`) trừ khi task là cập nhật số tool; đó là baseline đã biết (`tools=13`).
+- Secret chỉ qua env hoặc file ngoài Git (`~/.thyca/auth.json`, mode 0600).
+- Layout backend: `thyca/{agent,llm,config,memory,sessions,tools,skills,serve,app,core}/` — cấm file lẻ top-level (trừ `__init__.py`/`__main__.py`) và cấm shim. `core/` là leaf (stdlib-only, không import `thyca.*` khác). `serve/` không import runtime `app/` (chỉ `TYPE_CHECKING` + lazy).
+- Layout webui: `webui/*.html` flat (URL contract) + `webui/pages/<page>/` (JS+CSS theo trang) + `webui/shared/{css,js}/` (tokens/kit/states/markdown, api/http/streams, pager); `vendor/` + `images/` giữ root. Cấm CSS global mới không scope; app shell sống ở `shared/css/kit.css`.
+- Pytest baseline 2026-09-22: **719 passed / 0 fail**. Fail `test_debug_prints_prompt_flags` cũ (`tools=7` vs `tools=13`) không tái hiện — nếu đỏ lại thì là regression, không tự sửa số.

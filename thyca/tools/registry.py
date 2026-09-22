@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from thyca.protocol import RESULT_CAP_BYTES, ToolCall, ToolResult
+from thyca.core.protocol import RESULT_CAP_BYTES, ToolCall, ToolResult
 
 if TYPE_CHECKING:
     from thyca.tools.task_store import TaskStore

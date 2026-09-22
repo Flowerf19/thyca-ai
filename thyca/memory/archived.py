@@ -19,7 +19,7 @@ from thyca.memory.archive_store import (
     ArchiveStore,
     Hit,
     SearchResult,  # noqa: F401 — re-exported
-    _hit_from_row,
+    hit_from_row,
 )
 from thyca.memory.chunk import Chunker
 from thyca.memory.heading import format_ts
@@ -112,7 +112,7 @@ class ArchivedMemory:
 
     def recent_hits(self, limit: int, now: datetime | None = None) -> list[Hit]:
         return [
-            _hit_from_row(row, "recent", snippet=row["text_raw"][:250])
+            hit_from_row(row, "recent", snippet=row["text_raw"][:250])
             for row in self.store.recent_rows(limit, format_ts(now))
         ]
 

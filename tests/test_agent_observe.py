@@ -7,7 +7,7 @@ import pytest
 from thyca.agent.observe import Observe
 from thyca.agent.stage import Stage
 from thyca.agent.think import ChatReply
-from thyca.protocol import Message, ToolCall, ToolResult
+from thyca.core.protocol import Message, ToolCall, ToolResult
 from thyca.sessions import SessionManager
 
 

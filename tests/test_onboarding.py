@@ -8,15 +8,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 
 from thyca.config import Config, ProviderEntry
-from thyca.onboarding import (
+from thyca.app.onboarding import (
     ProviderProbeError,
     apply_provider,
     provider_ready,
     validate_provider,
 )
-from thyca.onboarding import test_chat as probe_test_chat
-from thyca.onboarding import test_provider_api as probe_dispatch
-from thyca.onboarding import test_responses_chat as probe_test_responses
+from thyca.app.onboarding import test_chat as probe_test_chat
+from thyca.app.onboarding import test_provider_api as probe_dispatch
+from thyca.app.onboarding import test_responses_chat as probe_test_responses
 
 
 def _models_server(payload: bytes, status: int = 200):
@@ -97,7 +97,7 @@ def test_validate_provider_oserror_does_not_echo_query_secret(
     def fail(*args, **kwargs):
         raise OSError("connection failed")
 
-    monkeypatch.setattr("thyca.onboarding.urlopen", fail)
+    monkeypatch.setattr("thyca.app.onboarding.urlopen", fail)
     base_url = "https://provider.example/v1?token=query-secret"
     with pytest.raises(ProviderProbeError) as excinfo:
         validate_provider(base_url, "sk-secret")

@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from thyca.agent.stage import Stage
-from thyca.protocol import Message
+from thyca.core.protocol import Message
 
 
 def test_stage_defaults_isolated() -> None:

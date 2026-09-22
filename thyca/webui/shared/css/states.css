@@ -1,0 +1,178 @@
+/* Backend integration states for the Thyca notebook UI. */
+
+.message-list {
+  display: contents;
+}
+
+.sidebar-state {
+  margin: 0;
+  padding: 1rem 0.75rem;
+  color: var(--color-muted);
+  font-family: var(--font-reading);
+  font-size: 0.9rem;
+}
+
+.conversation-empty,
+.backend-state,
+.memory-empty {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  justify-items: center;
+  align-self: center;
+  gap: 0.55rem;
+  width: min(100%, 34rem);
+  margin: auto;
+  padding: 2rem;
+  color: var(--color-muted);
+  text-align: center;
+}
+
+.conversation-empty > span {
+  color: var(--color-accent);
+  font-family: var(--font-display);
+  font-size: 2.4rem;
+  line-height: 1;
+}
+
+.conversation-empty h2,
+.backend-state strong {
+  margin: 0;
+  color: var(--color-ink);
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  font-style: normal;
+  font-weight: 600;
+}
+
+.conversation-empty p,
+.backend-state p {
+  margin: 0;
+  font-family: var(--font-reading);
+  line-height: 1.5;
+}
+
+.backend-state.is-error {
+  border: var(--rule) solid var(--color-danger, var(--color-accent));
+  border-radius: var(--radius-card);
+  background: var(--color-paper-card);
+}
+
+.live-status.is-error .chat-brand-line {
+  color: var(--color-accent-deep);
+}
+
+.chat-idle-nudge {
+  position: absolute;
+  inset-inline-end: 0;
+  inset-block-end: calc(100% + 0.65rem);
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: min(30rem, 100%);
+  padding: 0.8rem 0.9rem;
+  border: var(--rule) solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-paper-card);
+  box-shadow: 0 0.45rem 1.2rem var(--color-shell-shadow-soft);
+}
+
+.chat-idle-nudge[hidden] {
+  display: none;
+}
+
+.chat-idle-nudge p {
+  flex: 1;
+  margin: 0;
+  color: var(--color-reading);
+  font-size: 0.9rem;
+}
+
+.chat-idle-nudge > div {
+  display: flex;
+  gap: var(--space-xs);
+}
+
+.chat-idle-nudge .screen-button {
+  min-height: 2.4rem;
+  padding: 0.45rem 0.75rem;
+}
+
+/* W6 TASK-014: merged the styles.css `display: none` copy here (complementary
+   declarations in one file keep the computed style). */
+.composer.is-loading .send-button {
+  display: none;
+  cursor: progress;
+  opacity: 0.72;
+}
+
+button:disabled,
+textarea:disabled,
+select:disabled,
+input:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.screen-status {
+  min-height: 1.35rem;
+  color: var(--color-muted);
+  font-family: var(--font-ui);
+  font-size: 0.82rem;
+}
+
+.screen-status.is-error {
+  color: var(--color-accent-deep);
+}
+
+.screen-status.is-success {
+  color: var(--color-botanical);
+}
+
+[aria-busy="true"] {
+  cursor: progress;
+}
+
+.screen-button.is-danger {
+  border-color: var(--color-accent-deep);
+  color: var(--color-accent-deep);
+}
+
+.provider-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  margin-block-start: 1.25rem;
+}
+
+.provider-actions .screen-status {
+  flex: 1 1 18rem;
+  margin: 0;
+}
+
+#trace-status {
+  margin: 0 0 0.75rem;
+}
+
+#turn-detail[hidden],
+#tool-calls[hidden] {
+  display: none;
+}
+
+@media (max-width: 56rem) {
+  .chat-idle-nudge {
+    inset-inline: 0;
+    width: 100%;
+  }
+
+  .provider-actions {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+
+  .provider-actions .screen-button {
+    flex: none;
+  }
+}

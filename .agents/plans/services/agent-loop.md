@@ -23,7 +23,7 @@ last_updated: 2026-08-27
 | `Observe` | `observe.py` | compact / user / assistant / observe / loop_limit |
 | `AgentLoop` | `loop.py` | tạo `Stage`, vòng `loopMax` |
 
-`Message` / `ToolCall` / `ToolResult` chỉ ở `thyca/protocol.py`.
+`Message` / `ToolCall` / `ToolResult` chỉ ở `thyca/core/protocol.py`.
 
 ## Contracts
 
@@ -66,7 +66,7 @@ skill authoring via `write`/`edit`, and `bash` inside a skill dir stay
 `tool.*`. `turn.completed` / `turn.failed` are transport-only.
 Callers that omit `event_sink` are unchanged.
 
-History replay mirrors this: `thyca/trace_api.py` classifies recorded calls
+History replay mirrors this: `thyca/serve/trace_api.py` classifies recorded calls
 at payload build (same `classify_skill_read`, no path leaves the server —
 wire carries only `{id, name, skill?}`) and `webui/js/trace-score.js`
 re-emits `skill.*` from that marker, so a skill load draws the same notes
@@ -105,7 +105,7 @@ Giữ `SessionManager.current`. Không planner / prefetch / subagent.
 |----|------|------|------|
 | TASK-315 | `run.py` RunGate (split cũ) | x | 2026-08-19 |
 | TASK-316 | `loop.py` split cũ | x | 2026-08-19 |
-| TASK-317 | `thyca/cli.py` REPL / `-p` / `--continue` / `--session` / `--model` | x | 2026-08-20 |
+| TASK-317 | `thyca/app/cli.py` REPL / `-p` / `--continue` / `--session` / `--model` | x | 2026-08-20 |
 | TASK-318 | compact trong split cũ | x | 2026-08-19 |
 | TASK-319 | `Turn` (superseded) | x | 2026-08-19 |
 | TASK-320 | `LoopPolicy` (superseded) | x | 2026-08-19 |

@@ -98,7 +98,7 @@ let serial = 0;
 globalThis.setInterval = callback => { intervals.set(++serial, callback); return serial; };
 globalThis.clearInterval = id => intervals.delete(id);
 
-const view = await import('./thyca/webui/backend/chat-view.js');
+const view = await import('./thyca/webui/pages/chat/chat-view.js');
 const host = new Element(); host.root = true;
 const live = view.createLiveStatus(host, Date.now() - 12000);
 const segments = () => live.notes.map(note => ({
@@ -281,7 +281,7 @@ globalThis.document = {
   querySelector: () => { const node = new Element(); node.root = true; return node; },
 };
 
-const view = await import('./thyca/webui/backend/chat-view.js');
+const view = await import('./thyca/webui/pages/chat/chat-view.js');
 // Same shape as the reported turn: think+search, then a silent bash round,
 // content, another silent bash round, content.
 const messages = [

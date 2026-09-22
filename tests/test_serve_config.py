@@ -12,7 +12,7 @@ import pytest
 
 from thyca import __version__
 from thyca.config import default_config, load, save
-from thyca.config_schema import config_schema
+from thyca.config import config_schema
 from thyca.serve import default_webui, make_server
 from thyca.tools.memory import MemoryFacade
 
@@ -263,7 +263,7 @@ def test_verify_request_exception_does_not_echo_url_secret(
     def fail(*args, **kwargs):
         raise BadStatusLine(f"{base_url} sk-secret")
 
-    monkeypatch.setattr("thyca.onboarding.urlopen", fail)
+    monkeypatch.setattr("thyca.app.onboarding.urlopen", fail)
     httpd, thread = _start(tmp_path)
     try:
         status, body = _call(

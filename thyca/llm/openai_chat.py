@@ -7,30 +7,15 @@ from typing import Any
 import httpx
 
 from thyca.config import ProviderCfg
-from thyca.protocol import Message
+from thyca.core.protocol import Message
 
+from ._http import _RETRY_STATUS, _cap, _redact, _sleep_retry_after
 from .llm_base import ChatReply, Connect, LLMError
 from .openai_parse import parse_chat_bytes, read_sse_reply
-
-_RETRY_STATUS = {429, 500, 502, 503, 504}
-_BODY_CAP = 500
-_RETRY_AFTER_CAP_S = 5.0
 
 
 def _chat_url(base_url: str) -> str:
     return base_url.rstrip("/") + "/chat/completions"
-
-
-def _redact(text: str, secret: str) -> str:
-    if secret and secret in text:
-        return text.replace(secret, "[redacted]")
-    return text
-
-
-def _cap(text: str) -> str:
-    if len(text) <= _BODY_CAP:
-        return text
-    return text[:_BODY_CAP] + "…"
 
 
 class OpenAIChat(Connect):
@@ -182,20 +167,6 @@ class OpenAIChat(Connect):
 
 class _DropEffort(Exception):
     """Retry the request once without reasoning_effort."""
-
-
-async def _sleep_retry_after(response: httpx.Response) -> None:
-    raw = response.headers.get("Retry-After")
-    delay = 0.0
-    if raw:
-        try:
-            delay = min(max(float(raw), 0.0), _RETRY_AFTER_CAP_S)
-        except ValueError:
-            delay = 0.0
-    if delay > 0:
-        import asyncio
-
-        await asyncio.sleep(delay)
 
 
 def _to_openai_message(message: Message) -> dict[str, Any]:

@@ -9,7 +9,7 @@ from thyca.config import ProviderCfg
 from thyca.llm.llm_base import LLMError, normalize_usage
 from thyca.llm.openai_responses import OpenAIResponses, _responses_url
 from thyca.llm.responses_parse import _to_responses_input, _to_responses_tools
-from thyca.protocol import Message, ToolCall
+from thyca.core.protocol import Message, ToolCall
 
 
 def _provider() -> ProviderCfg:

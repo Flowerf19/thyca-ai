@@ -58,7 +58,7 @@ Không có `MCPManager.call_tool` / `MCPProcess.call_tool(ToolCall)` — đó l�
 
 ### Config
 
-`config.mcpServers: {name: McpServerCfg(command, args, env)}` — `thyca/config.py`.
+`config.mcpServers: {name: McpServerCfg(command, args, env)}` — `thyca/config/store.py`.
 
 - Key server: `re.fullmatch(r"[A-Za-z0-9_-]+", name)` trong `_parse_mcp_servers`. Sai → `ConfigError` lúc `load`, không spawn. (Hiện chỉ cấm key rỗng.)
 - Không thêm field timeout / cwd / transport. Timeout call cố định 30s trong code.

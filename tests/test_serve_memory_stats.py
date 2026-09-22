@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from thyca.cli import Cli, build_parser
+from thyca.app.cli import Cli, build_parser
 from thyca.serve import ServeError, default_webui, make_server
 from thyca.tools.memory import MemoryFacade
 
@@ -78,13 +78,13 @@ def test_stats_json_and_static(tmp_path: Path) -> None:
         with urlopen(_url(httpd, "/memories.html"), timeout=2) as response:
             html = response.read().decode("utf-8")
         assert 'id="memory-list"' in html
-        assert './memories.js' in html
-        with urlopen(_url(httpd, "/memories.js"), timeout=2) as response:
+        assert './pages/memories/memories.js' in html
+        with urlopen(_url(httpd, "/pages/memories/memories.js"), timeout=2) as response:
             assert "javascript" in response.headers.get_content_type()
             memory_js = response.read()
         assert b'getJson("/api/memory/stats")' in memory_js
         assert b'"/api/memory/update"' in memory_js
-        mapping = (WEBUI / "backend" / "memory-data.js").read_text(encoding="utf-8")
+        mapping = (WEBUI / "shared" / "js" / "memory-data.js").read_text(encoding="utf-8")
         assert "selectMemories" in mapping
         assert 'view === "used-more"' in mapping
     finally:
@@ -223,35 +223,35 @@ def test_default_webui_has_index() -> None:
         "dashboard.html",
     ):
         assert (WEBUI / name).is_file()
-    for name in ("app.js", "memories.js", "profile.js", "trace.js", "provider.js", "cost.js", "usage.js"):
+    for name in ("pages/chat/app.js", "pages/memories/memories.js", "pages/profile/profile.js", "pages/dashboard/trace.js", "pages/provider/provider.js", "pages/dashboard/cost.js", "pages/dashboard/usage.js"):
         assert (WEBUI / name).is_file()
-    raw = (WEBUI / "memories.js").read_text(encoding="utf-8")
+    raw = (WEBUI / "pages" / "memories" / "memories.js").read_text(encoding="utf-8")
     assert '"/api/memory/update"' in raw
     assert '"/api/memory/reinforce"' in raw
     assert '"/api/memory/forget"' in raw
     # Hồ sơ is its own screen now: the canonical write lives there.
     assert "canonical" not in raw
-    profile = (WEBUI / "profile.js").read_text(encoding="utf-8")
+    profile = (WEBUI / "pages" / "profile" / "profile.js").read_text(encoding="utf-8")
     assert 'postJson("/api/memory/canonical"' in profile
 
 
 def test_profile_screen_renders_markdown() -> None:
     """Hồ sơ is its own screen: mục lục route, file switcher, markdown body."""
     html = (WEBUI / "profile.html").read_text(encoding="utf-8")
-    script = (WEBUI / "profile.js").read_text(encoding="utf-8")
-    css = (WEBUI / "profile.css").read_text(encoding="utf-8")
-    navigation = (WEBUI / "navigation.js").read_text(encoding="utf-8")
+    script = (WEBUI / "pages" / "profile" / "profile.js").read_text(encoding="utf-8")
+    css = (WEBUI / "pages" / "profile" / "profile.css").read_text(encoding="utf-8")
+    navigation = (WEBUI / "shared" / "js" / "navigation.js").read_text(encoding="utf-8")
     memories = (WEBUI / "memories.html").read_text(encoding="utf-8")
 
     assert '["profile.html", "Hồ sơ"' in navigation
     assert 'id="profile-nav"' in html
-    assert "./profile.js" in html
-    assert "./navigation.js" in html
+    assert "./pages/profile/profile.js" in html
+    assert "./shared/js/navigation.js" in html
     # The edit dialog moves across unchanged; only its size grows.
     assert 'id="canonical-dialog"' in html
     assert "min(56rem, calc(100vw - 2rem))" in css
     # Body text is markdown, rendered by the shared chat renderer.
-    assert 'from "./backend/markdown.js"' in script
+    assert 'from "../../shared/js/markdown.js"' in script
     assert "formatMarkdown(file.content)" in script
     assert "selectCanonical" in script
     assert 'postJson("/api/memory/canonical"' in script
@@ -270,7 +270,7 @@ def test_profile_screen_renders_markdown() -> None:
     assert "setStatus();" in show_body
     # A stray escape in the hash must not throw out of the hashchange handler;
     # the guard lives in the shared helper (tests/test_webui_format.py).
-    assert 'import { decodeHash } from "./backend/format.js";' in script
+    assert 'import { decodeHash } from "../../shared/js/format.js";' in script
     assert "decodeHash(location.hash)" in script
     assert "decodeURIComponent(" not in script
 
@@ -305,17 +305,17 @@ def test_profile_screen_renders_markdown() -> None:
 
 def test_index_html_parses() -> None:
     expected = {
-        "index.html": './app.js',
-        "memories.html": './memories.js',
-        "provider.html": './provider.js',
-        "dashboard.html": './cost.js',
-        "profile.html": './profile.js',
+        "index.html": './pages/chat/app.js',
+        "memories.html": './pages/memories/memories.js',
+        "provider.html": './pages/provider/provider.js',
+        "dashboard.html": './pages/dashboard/cost.js',
+        "profile.html": './pages/profile/profile.js',
     }
     for name, script in expected.items():
         raw = (WEBUI / name).read_text(encoding="utf-8")
         HTMLParser().feed(raw)
         assert script in raw
-        assert './navigation.js' in raw
+        assert './shared/js/navigation.js' in raw
     # Trace moved into the Dashboard: trace.html is a thin redirect that
     # preserves old deep-link params and loads no app script of its own.
     raw = (WEBUI / "trace.html").read_text(encoding="utf-8")

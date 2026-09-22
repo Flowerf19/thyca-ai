@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from thyca.protocol import Message
+from thyca.core.protocol import Message
 
 
 @dataclass

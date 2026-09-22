@@ -9,7 +9,7 @@ from thyca.agent.act import Act
 from thyca.agent.events import TurnEvent
 from thyca.agent.stage import Stage
 from thyca.agent.think import ChatReply
-from thyca.protocol import ToolCall, ToolResult
+from thyca.core.protocol import ToolCall, ToolResult
 
 
 @dataclass

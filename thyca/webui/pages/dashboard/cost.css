@@ -1,0 +1,168 @@
+.cost-period .screen-select {
+  min-width: 14rem;
+}
+
+#cost-coverage {
+  margin: 0.3rem 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--color-muted);
+  font-size: 0.8rem;
+}
+
+/* Overview split (big number + chart card) for the Request section (owned
+   by dashboard): the #chi-phi journal uses the shared .journal-* kit and
+   none of these classes, so the rules are scoped to #request. */
+#request .cost-overview {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: stretch;
+  gap: 1.5rem;
+}
+
+#request .cost-total {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  width: max-content;
+  max-width: 100%;
+}
+
+#request .cost-total strong {
+  margin-block: 0.65rem;
+  font-size: 3.8rem;
+  letter-spacing: -0.05em;
+  line-height: 1;
+}
+
+#request .cost-total strong small {
+  font-size: 1.5rem;
+  letter-spacing: 0;
+}
+
+#request .cost-total p {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 0.85rem;
+}
+
+#request .cost-chart-card {
+  min-height: 14rem;
+}
+
+#request .cost-chart-card h3 {
+  margin-block-end: 0.35rem;
+}
+
+#request .cost-chart-card svg {
+  width: 100%;
+  height: 10.5rem;
+  color: var(--color-muted);
+}
+
+/* Cost journal headings inside #chi-phi. The shared .cost-model-heading rule
+   below still serves the Request section owned by dashboard. */
+#chi-phi h2.cost-journal-heading {
+  margin: 3rem 0 0.55rem;
+  color: var(--color-ink);
+}
+#request h2.cost-model-heading {
+  margin: 2.65rem 0 0.7rem;
+}
+
+/* Request-section SVG chart (request.js draws .cost-chart-* nodes; the grid
+   and label text styles live in the chart-kit section below). Scoped to
+   #request — the only section carrying this markup. */
+#request .cost-chart-area {
+  fill: color-mix(in oklab, var(--color-accent-soft) 70%, transparent);
+  stroke: none;
+}
+
+#request .cost-chart-line {
+  fill: none;
+  stroke: var(--color-accent);
+  stroke-width: 2.5;
+}
+
+#request .cost-chart-point {
+  fill: var(--color-paper-card);
+  stroke: var(--color-accent);
+  stroke-width: 2;
+}
+
+/* Pricing disclosure: native details under each model row. */
+#chi-phi details.cost-pricing {
+  margin-block-start: 0.45rem;
+}
+#chi-phi details.cost-pricing summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--color-muted);
+  font-size: 0.8rem;
+}
+#chi-phi details.cost-pricing p {
+  margin: 0.3rem 0 0;
+  color: var(--color-muted);
+  font-size: 0.83rem;
+}
+
+#cost-status {
+  text-align: center;
+}
+
+@media (max-width: 56rem) {
+  #request .cost-overview {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  #request .cost-total {
+    width: auto;
+  }
+
+  #request .cost-chart-card {
+    min-height: 16rem;
+  }
+
+  .cost-period .screen-select {
+    min-width: 0;
+  }
+}
+
+@media (max-width: 28rem) {
+  #request .cost-total strong {
+    font-size: 3rem;
+  }
+
+  #request .cost-chart-card {
+    padding-inline: 0.5rem;
+  }
+}
+
+/* W6 shared push (TASK-008, layout decision 6): cost-* chart kit moved verbatim
+   from shared/css/screens.css; shared keeps the .journal-* kit only. */
+.cost-period {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--color-muted);
+  font-size: 0.75rem;
+}
+.cost-chart-card {
+  padding: 1rem 1.25rem;
+}
+.cost-chart-grid {
+  stroke: var(--color-divider);
+  stroke-width: 1;
+}
+.cost-chart-label {
+  fill: var(--color-muted);
+  stroke: none;
+  font: 12px var(--font-reading);
+}
+.cost-total strong {
+  color: var(--color-ink);
+  font-family: var(--font-display);
+  font-weight: 500;
+}
+.cost-total strong small {
+  font-family: var(--font-reading);
+}

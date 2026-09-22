@@ -7,11 +7,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from thyca.config import DEFAULT_LIMITS_HOT_TAIL_KB, DEFAULT_TIMELINE_TIMEZONE
 from thyca.memory.heading import is_session_heading, strip_heading_comments
-from thyca.skills import SkillStore
+
+if TYPE_CHECKING:
+    from thyca.skills import SkillStore
 
 _FENCE_RE = re.compile(r"^```", re.MULTILINE)
 
@@ -61,12 +64,18 @@ class ActiveMemory:
         tail_kb: int | None = None,
         timezone_name: str | None = None,
         on_day_close: Callable[[str], None] | None = None,
+        skills_store: SkillStore | None = None,
     ) -> None:
         self.thyca_dir = Path(thyca_dir or Path.home() / ".thyca")
         self.tail_kb = DEFAULT_LIMITS_HOT_TAIL_KB if tail_kb is None else tail_kb
         self.timezone_name = timezone_name or DEFAULT_TIMELINE_TIMEZONE
         self.on_day_close = on_day_close
-        self._skills = SkillStore(self.thyca_dir)
+        if skills_store is not None:
+            self._skills = skills_store
+        else:
+            from thyca.skills import SkillStore
+
+            self._skills = SkillStore(self.thyca_dir)
 
     @property
     def skills_store(self) -> SkillStore:

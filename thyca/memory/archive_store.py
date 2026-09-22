@@ -243,7 +243,7 @@ class ArchiveStore:
         sql += " ORDER BY bm25 ASC, c.chunk_id ASC LIMIT ?"
         params.append(min(limit, CANDIDATE_CAP))
         rows = self._db.execute(sql, params).fetchall()
-        return [_hit_from_row(row, "fts", bm25=row["bm25"], snippet=row["snippet"]) for row in rows]
+        return [hit_from_row(row, "fts", bm25=row["bm25"], snippet=row["snippet"]) for row in rows]
 
     def trigram_search(
         self,
@@ -279,7 +279,7 @@ class ArchiveStore:
                 scored.append((score, row))
         scored.sort(key=lambda item: (-item[0], item[1]["chunk_id"]))
         return [
-            _hit_from_row(row, "trigram", score=score, snippet=row["text_raw"][:250])
+            hit_from_row(row, "trigram", score=score, snippet=row["text_raw"][:250])
             for score, row in scored[: min(limit, CANDIDATE_CAP)]
         ]
 
@@ -371,7 +371,7 @@ def _safe_match(query: str) -> str | None:
     return " OR ".join(terms)
 
 
-def _hit_from_row(
+def hit_from_row(
     row: sqlite3.Row,
     match_type: str,
     *,
@@ -394,3 +394,7 @@ def _hit_from_row(
         line_start=int(row["line_start"]),
         line_end=int(row["line_end"]),
     )
+
+
+# Private alias kept for backward compatibility (tests / older imports).
+_hit_from_row = hit_from_row

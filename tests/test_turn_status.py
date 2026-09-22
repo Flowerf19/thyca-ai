@@ -1,4 +1,4 @@
-"""Node tests for live chat status helpers — webui/backend/chat-status.js."""
+"""Node tests for live chat status helpers — webui/pages/chat/chat-status.js."""
 from __future__ import annotations
 
 import json
@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "thyca" / "webui" / "backend" / "chat-status.js"
+SCRIPT = ROOT / "thyca" / "webui" / "pages" / "chat" / "chat-status.js"
 
 
 @pytest.fixture(scope="module")

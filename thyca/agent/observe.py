@@ -1,45 +1,10 @@
 from __future__ import annotations
 
-from thyca.protocol import Message, ToolCall, ToolResult
+from thyca.core.protocol import Message, ToolCall, ToolResult
 from thyca.sessions import SessionManager
 
+from .meta import assistant_meta, reasoning, reasoning_details, tool_message
 from .stage import Stage
-
-
-def _reasoning(stage: Stage) -> str | None:
-    value = getattr(getattr(stage, "reply", None), "reasoning", None)
-    if isinstance(value, str) and value:
-        return value
-    return None
-
-
-def _reasoning_details(stage: Stage) -> list[dict] | None:
-    value = getattr(getattr(stage, "reply", None), "reasoning_details", None)
-    if isinstance(value, list) and value and all(isinstance(item, dict) for item in value):
-        return [dict(item) for item in value]
-    return None
-
-
-def _tool_message(
-    result: ToolResult, latency_ms: int | None = None, round_no: int | None = None
-) -> Message:
-    meta: dict | None = None
-    if result.is_error:
-        meta = {"is_error": True}
-    if latency_ms is not None:
-        if meta is None:
-            meta = {}
-        meta["latency_ms"] = latency_ms
-    if round_no is not None and round_no > 0:
-        if meta is None:
-            meta = {}
-        meta["round"] = round_no
-    return Message(
-        role="tool",
-        content=result.content,
-        tool_call_id=result.tool_call_id,
-        meta=meta,
-    )
 
 
 class Observe:
@@ -52,38 +17,16 @@ class Observe:
     def user(self, stage: Stage) -> None:
         self._sessions.append(stage.messages[-1])
 
-    def _assistant_meta(self, stage: Stage, *, kind: str = "llm") -> dict | None:
-        meta: dict = {"kind": kind}
-        if stage.round:
-            meta["round"] = stage.round
-        model = getattr(stage, "llm_model", None) or getattr(getattr(stage, "reply", None), "model", None)
-        if isinstance(model, str) and model.strip():
-            meta["model"] = model.strip()
-        latency = getattr(stage, "llm_latency_ms", None)
-        if isinstance(latency, int) and latency >= 0:
-            meta["latency_ms"] = latency
-        usage = getattr(getattr(stage, "reply", None), "usage", None)
-        if isinstance(usage, dict) and usage:
-            meta["usage"] = dict(usage)
-        cost = getattr(stage, "llm_cost_usd", None)
-        if isinstance(cost, (int, float)):
-            meta["cost_usd"] = float(cost)
-        finish = getattr(getattr(stage, "reply", None), "finish_reason", None)
-        if isinstance(finish, str) and finish:
-            meta["finish_reason"] = finish
-        # drop kind-only meta when no other field — still keep kind for trace grouping
-        return meta
-
     def assistant(self, stage: Stage) -> str:
         content = "" if stage.reply is None else (stage.reply.content or "")
-        meta = self._assistant_meta(stage, kind="llm")
+        meta = assistant_meta(stage, kind="llm")
         self._sessions.append(
             Message(
                 role="assistant",
                 content=content,
                 meta=meta,
-                reasoning=_reasoning(stage),
-                reasoning_details=_reasoning_details(stage),
+                reasoning=reasoning(stage),
+                reasoning_details=reasoning_details(stage),
             )
         )
         return content
@@ -91,19 +34,19 @@ class Observe:
     def observe(self, stage: Stage) -> None:
         if stage.reply is None:
             raise ValueError("Stage.reply is required")
-        meta = self._assistant_meta(stage, kind="llm")
+        meta = assistant_meta(stage, kind="llm")
         assistant = Message(
             role="assistant",
             content=stage.reply.content,
             tool_calls=stage.reply.tool_calls,
             meta=meta,
-            reasoning=_reasoning(stage),
-            reasoning_details=_reasoning_details(stage),
+            reasoning=reasoning(stage),
+            reasoning_details=reasoning_details(stage),
         )
         ordered = self._order_results(stage.reply.tool_calls, stage.results)
         latencies = getattr(stage, "tool_latencies", {}) or {}
         tool_messages = [
-            _tool_message(result, latency_ms=latencies.get(result.tool_call_id), round_no=stage.round)
+            tool_message(result, latency_ms=latencies.get(result.tool_call_id), round_no=stage.round)
             for result in ordered
         ]
         added = [assistant, *tool_messages]
@@ -114,7 +57,7 @@ class Observe:
 
     def loop_limit(self, stage: Stage) -> str:
         text = "loop limit reached"
-        meta = self._assistant_meta(stage, kind="llm")
+        meta = assistant_meta(stage, kind="llm")
         if meta is not None:
             meta["status"] = "loop_limit"
         msg = Message(role="assistant", content=text, meta=meta)

@@ -63,7 +63,7 @@ _TRACE_DETAIL_RE = re.compile(
 _BODY_CAP = 16_384
 
 
-def _handler(
+def make_handler(
     webui: Path,
     facade: MemoryFacade,
     chat: ChatApp | None,

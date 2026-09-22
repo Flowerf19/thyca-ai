@@ -12,7 +12,7 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from thyca.serve.routes import _handler
+from thyca.serve.routes import make_handler
 from thyca.tools.memory import MemoryFacade
 
 if TYPE_CHECKING:
@@ -65,7 +65,7 @@ def make_server(
     if not root.is_dir():
         raise ServeError(f"webui missing: {webui}")
     httpd = _QuietHTTPServer(
-        (host, port), _handler(root, facade, chat, config_file)
+        (host, port), make_handler(root, facade, chat, config_file)
     )
     httpd.allow_reuse_address = True
     return httpd

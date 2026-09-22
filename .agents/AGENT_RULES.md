@@ -1,7 +1,7 @@
 # Agent rules
 
 - Chỉ làm task thuộc plan `in-progress` (hoặc bug/fix UI user vừa chỉ). Không thêm dependency, abstraction, hay feature ngoài task đó.
-- Plan đang chạy duy nhất: `backend-solid-refactor.md` (nhánh `refactor/backend-solid`, 8 module teams). Plans cũ đã đóng hết vào `plans/done/` (2026-09-22).
+- Plan đang chạy duy nhất: `webui-solid-refactor.md` (nhánh `refactor/webui-solid`, 6 module teams). `backend-solid-refactor.md` đã done (chờ merge main). Plans cũ đã đóng hết vào `plans/done/` (2026-09-22).
 - L2 hybrid thuộc v1. Đọc `.agents/decisions/2026-08-15-l2-hybrid-v1.md` trước khi đổi memory contract.
 - Session là 4-class SOLID trong `thyca/sessions/`: `Session` / `SessionStore` / `SessionCompactor` / `SessionManager` (+ `wire.py` payload contract). Không `thyca/session.py` shim.
 - ActiveMemory chỉ `thyca/memory/active.py`: `SOUL`/`USER`/`IDENTITY` full inject; daily tail `hotTailKB`. Archive/L2 là `archived.py` + `chunk.py`. Facade/`memory_*` thuộc Tools. Không `MEMORY.md`. `write`/`edit` không được ghi dưới `~/.thyca`; `memory_remember` là writer duy nhất cho memory files.

@@ -335,7 +335,7 @@ def test_dashboard_switches_views_on_every_viewport() -> None:
 
 def test_dashboard_sections_are_flat_and_errors_use_scoped_red() -> None:
     dash_css = (WEBUI / "pages" / "dashboard" / "dashboard.css").read_text(encoding="utf-8")
-    screens_css = (WEBUI / "shared" / "css" / "screens.css").read_text(encoding="utf-8")
+    screens_css = (WEBUI / "shared" / "css" / "kit.css").read_text(encoding="utf-8")
     # Decorative card background/radius/shadow go; no global root token change.
     assert ".dashboard-section .screen-card" in dash_css
     assert "background: transparent" in dash_css

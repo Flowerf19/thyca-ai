@@ -220,7 +220,7 @@ function syncComposer() {
 }
 
 // Row action: a word, not a glyph. What it says and which row it belongs to
-// both live in the label; the look is .session-action in styles.css.
+// both live in the label; the look is .session-action in pages/chat/chat.css.
 function rowAction(className, label, text, onClick) {
   const button = document.createElement("button");
   button.type = "button";

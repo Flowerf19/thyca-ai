@@ -53,7 +53,7 @@
 
 /* Mobile: the shared 56rem rule hides .sidebar > * for screens, which would
    hide the dashboard's four destinations. Opt .sessions back in as a compact
-   pill row (same pattern as Nhật ký in screens.css). Switching stays real on
+   pill row (same pattern as Nhật ký in kit.css). Switching stays real on
    every viewport — JS never clears [hidden] here. */
 @media (max-width: 56rem) {
   .dashboard-shell .sessions {

@@ -70,7 +70,7 @@
 }
 
 /* Request-section SVG chart (request.js draws .cost-chart-* nodes; the grid
-   and label text styles live in screens.css). */
+   and label text styles live in the chart-kit section below). */
 .cost-chart-area {
   fill: color-mix(in oklab, var(--color-accent-soft) 70%, transparent);
   stroke: none;
@@ -134,4 +134,33 @@
   .cost-chart-card {
     padding-inline: 0.5rem;
   }
+}
+
+/* W6 shared push (TASK-008, layout decision 6): cost-* chart kit moved verbatim
+   from shared/css/screens.css; shared keeps the .journal-* kit only. */
+.cost-period {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--color-muted);
+  font-size: 0.75rem;
+}
+.cost-chart-card {
+  padding: 1rem 1.25rem;
+}
+.cost-chart-grid {
+  stroke: var(--color-divider);
+  stroke-width: 1;
+}
+.cost-chart-label {
+  fill: var(--color-muted);
+  stroke: none;
+  font: 12px var(--font-reading);
+}
+.cost-total strong {
+  color: var(--color-ink);
+  font-family: var(--font-display);
+  font-weight: 500;
+}
+.cost-total strong small {
+  font-family: var(--font-reading);
 }

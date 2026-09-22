@@ -1,5 +1,5 @@
 /* Trace as a Dashboard view (TASK-025/026): the shared .journal-* kit in
-   screens.css already applies inside .dashboard-shell; only the trace-specific
+   kit.css already applies inside .dashboard-shell; only the trace-specific
    pieces live here, scoped to the #trace block. Payload code blocks are filled
    with textContent only, so long JSON wraps instead of blowing out the row. */
 

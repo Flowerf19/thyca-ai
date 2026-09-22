@@ -206,7 +206,10 @@ def test_trace_typography_matches_profile_screen() -> None:
     shared = (WEBUI / "shared" / "css" / "screens.css").read_text(encoding="utf-8")
     html = (WEBUI / "dashboard.html").read_text(encoding="utf-8")
     redirect = (WEBUI / "trace.html").read_text(encoding="utf-8")
-    script = (WEBUI / "pages" / "dashboard" / "trace.js").read_text(encoding="utf-8")
+    script = "\n".join(
+        (WEBUI / "pages" / "dashboard" / name).read_text(encoding="utf-8")
+        for name in ("trace.js", "trace-view.js", "trace-turns.js", "trace-deeplink.js")
+    )
 
     # Trace lives in dashboard.html as a switched view next to the other
     # dashboard blocks; the sidebar has a data-view="trace" toggle.
@@ -300,7 +303,10 @@ def test_cost_panel_renders_bar_rows_and_uses_shared_toolbar() -> None:
     session on the shared .journal-* kit (title + amount, share meter, meta
     line), and the toolbar reuses the shared search and filter-pill classes
     instead of private copies."""
-    script = (WEBUI / "pages" / "dashboard" / "cost.js").read_text(encoding="utf-8")
+    script = "\n".join(
+        (WEBUI / "pages" / "dashboard" / name).read_text(encoding="utf-8")
+        for name in ("cost.js", "cost-view.js", "cost-rows.js")
+    )
     html = (WEBUI / "dashboard.html").read_text(encoding="utf-8")
     shared = (WEBUI / "shared" / "css" / "screens.css").read_text(encoding="utf-8")
     memories = (WEBUI / "memories.html").read_text(encoding="utf-8")

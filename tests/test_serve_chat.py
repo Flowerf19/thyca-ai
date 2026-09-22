@@ -1510,7 +1510,10 @@ def test_chat_row_uses_the_shared_session_item() -> None:
     .journal-entry rows on the shared kit instead."""
     css = (WEBUI / "shared" / "css" / "styles.css").read_text(encoding="utf-8")
     app = (WEBUI / "pages" / "chat" / "app.js").read_text(encoding="utf-8")
-    trace = (WEBUI / "pages" / "dashboard" / "trace.js").read_text(encoding="utf-8")
+    trace = "\n".join(
+        (WEBUI / "pages" / "dashboard" / name).read_text(encoding="utf-8")
+        for name in ("trace.js", "trace-view.js", "trace-turns.js", "trace-deeplink.js")
+    )
 
     # No restack wrapper: icon and name sit on the item, like profile.js.
     assert "session-body" not in css

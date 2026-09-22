@@ -94,6 +94,15 @@ giữ nguyên vị trí trừ khi team chứng minh lợi ích di chuyển.
 12. **Test path-literals**: layout agent cập nhật cơ học theo lists trong 6 module plans (approved contract change, tương tự backend GOAL-002).
 13. **W3 TASK-008 default duyệt** (scope cost.css tại chỗ, không tách file); W2 verify visual view Request.
 
+### GOAL-005: Redo round (test-harness rule mới)
+
+| ID | Task | Done | Date |
+|----|------|------|------|
+| TASK-016 | W1 redo: rebase + splits + harness concat updates → test → review | | |
+| TASK-017 | W3 redo: rebase + pager/trace/cost splits + extractor updates → test → review | | |
+| TASK-018 | W5 fix: giữ split, update 1 substring assert → test → review | | |
+| TASK-019 | W6 redo: full plan (plans đã commit) + CSS-pin updates → test → review | | |
+
 ## Test Plan
 
 - Baseline: full pytest **719 passed / 0 fail** (backend branch tip). Mọi fail mới là regression.
@@ -122,3 +131,9 @@ giữ nguyên vị trí trừ khi team chứng minh lợi ích di chuyển.
    layout (GOAL-002).
 7. Standing rules từ backend (giữ nguyên): contributor `xhigh`, review `1.3 max`,
    English prompts, coder-no-commit/reviewer-commits, skill `code-reviewer` đọc actual diff.
+8. **Test-harness updates allowed** (user chốt 2026-09-22): tests webui pin implementation
+   (substring/block-extract/source-eval) nên splits yêu cầu sửa cơ chế load/extract của
+   harness. Locks: (a) assert lines byte-identical — diff test chỉ đụng loader/extractor/path
+   lines; (b) code + harness update cùng 1 branch; (c) reviewer soi test-diff theo checklist;
+   (d) full 719 xanh. Evidence: pager-block extract (test_cost/trace_journal), substring
+   assert (test_serve_chat.py:737), source-eval harness (concurrent_streams/live_recovery).

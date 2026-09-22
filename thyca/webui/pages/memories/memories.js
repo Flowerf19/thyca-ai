@@ -13,6 +13,8 @@ const el = {
 };
 const compact = matchMedia("(max-width: 56rem)");
 
+// 1. Responsive search placement: the search cluster lives in the sidebar on
+// desktop and moves into the bar above the view folds on mobile.
 function placeSearch() {
   const cluster = el.search?.closest(".memory-search-cluster");
   const bar = document.querySelector(".memory-search-bar");
@@ -55,6 +57,8 @@ function setBusy(busy) {
   }
 }
 
+// 2. Card render: one memory leaf becomes an article row; the row being
+// edited renders the inline editor instead of its copy block.
 function memoryCard(memory) {
   const article = document.createElement("article");
   article.className = "memory-card";
@@ -100,9 +104,11 @@ function memoryCard(memory) {
   return article;
 }
 
+// 3. Inline editor: the card turns into the edit form in place. The draft
+// lives in state.editing so re-renders never lose it; focus follows the
+// visible copy on mobile (one editor copy per view section).
 // The editor lives on the card itself: same entry grid, boxless fields that
-// only gain a dashed underline on hover/focus. The draft lives in
-// state.editing, so re-renders (search keystroke, resize) never lose it.
+// only gain a dashed underline on hover/focus.
 function editForm(memory) {
   const form = document.createElement("form");
   form.className = "memory-edit";
@@ -198,6 +204,7 @@ function cancelEdit(origin) {
   (firstVisible(actions) ?? actions[0])?.focus();
 }
 
+// 4. Overview: 30-day bar chart plus the three stat cards.
 const SVG_NS = "http://www.w3.org/2000/svg";
 let overviewSvg = null;
 const chartObserver = new ResizeObserver(() => drawOverviewChart());
@@ -263,6 +270,8 @@ function overviewStats() {
   return wrap;
 }
 
+// 5. Render dispatch + data: per-view rows, desktop/mobile render, stats
+// load, single-flight mutations, and event binding.
 function renderRows(view) {
   const rows = selectMemories(state.stats.leaves, { view, query: el.search.value });
   // Dates live in each entry's left gutter, so the day view needs no separate

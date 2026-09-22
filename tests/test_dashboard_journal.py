@@ -351,7 +351,10 @@ def test_today_only_helpers_are_gone_but_paging_stays_for_cost() -> None:
     for gone in ("todaySummary", "dayKeyInZone", "periodRange", "rowsInPeriod", "formatRunStamp", "recentTraces"):
         assert gone not in helper
     assert "export async function fetchAllTraces" in helper
-    cost = (WEBUI / "pages" / "dashboard" / "cost.js").read_text(encoding="utf-8")
+    cost = "\n".join(
+        (WEBUI / "pages" / "dashboard" / name).read_text(encoding="utf-8")
+        for name in ("cost.js", "cost-view.js", "cost-rows.js")
+    )
     assert 'import { fetchAllTraces } from "../../shared/js/dashboard-today.js";' in cost
 
 

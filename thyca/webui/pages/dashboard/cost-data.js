@@ -1,6 +1,6 @@
 /* Pure helpers for the Chi phí journal — no DOM, no fetch. The fetch and
-   rendering side lives in webui/cost.js; paging reuses fetchAllTraces from
-   dashboard-today.js. All aggregates run over one fixed snapshot of /api/traces
+   rendering side lives in pages/dashboard/cost.js; paging reuses
+   fetchAllTraces from shared/js/dashboard-today.js. All aggregates run over one fixed snapshot of /api/traces
    rows (one range, fully paged) so shares never change denominator mid-view.
 
    Semantics kept from the backend (trace.py): a "turn" is one trace row keyed
@@ -10,7 +10,6 @@
 
 import { cleanText, formatInteger } from "../../shared/js/format.js";
 import { splitPromptTokens } from "../../shared/js/analytics-data.js";
-import { selectedModelConfig, tokenCost } from "./trace-data.js";
 
 /* Group key for rows whose session_id is missing/blank — rendered as its own
    explicit group instead of being dropped or silently merged. */
@@ -224,6 +223,24 @@ export function shareRatio(value, total) {
   if (!Number.isFinite(number) || !Number.isFinite(total) || total <= 0) return null;
   const ratio = Math.min(Math.max(number / total * 100, 0), 100);
   return `${ratio}%`;
+}
+
+/* Model pricing from /api/config (values.models, USD per 1M tokens, with
+   the legacy values.pricing fallback). Owned here — Cost is the only
+   consumer — and re-exported through trace-data.js for existing importers. */
+export function selectedModelConfig(configValues, modelName) {
+  const models = configValues?.models;
+  const model = models && typeof models === "object" ? models[modelName] : null;
+  const pricing = configValues?.pricing;
+  const legacy = pricing && typeof pricing === "object" ? pricing[modelName] : null;
+  return model || legacy || null;
+}
+
+export function tokenCost(tokens, rate) {
+  const count = Number(tokens);
+  const price = Number(rate);
+  if (!Number.isFinite(count) || !Number.isFinite(price)) return null;
+  return count * price / 1_000_000;
 }
 
 /* Rates for one model from /api/config (values.pricing / values.models,

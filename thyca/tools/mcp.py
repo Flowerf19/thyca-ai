@@ -14,7 +14,7 @@ from mcp.client.stdio import get_default_environment
 from mcp.types import CallToolResult, Tool
 
 from thyca.config import McpServerCfg
-from thyca.protocol import ToolResult
+from thyca.core.protocol import ToolResult
 from thyca.tools.registry import ToolSpec
 
 CALL_TIMEOUT = timedelta(seconds=30)

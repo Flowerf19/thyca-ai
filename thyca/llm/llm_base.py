@@ -5,7 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TypedDict
 
-from thyca.protocol import Message, ToolCall
+from thyca.core.protocol import Message, ToolCall
 
 
 class Usage(TypedDict, total=False):

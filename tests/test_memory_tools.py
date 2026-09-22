@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from thyca.protocol import ToolCall
+from thyca.core.protocol import ToolCall
 from thyca.tools.memory import MemoryFacade
 from thyca.tools.memory_tools import register_memory_tools
 from thyca.tools.registry import ToolRegistry

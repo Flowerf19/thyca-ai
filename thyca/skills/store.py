@@ -16,7 +16,7 @@ from pathlib import Path
 
 import yaml
 
-from thyca.protocol import RESULT_CAP_BYTES
+from thyca.core.protocol import RESULT_CAP_BYTES
 
 NAME_MAX = 64
 DESCRIPTION_MAX = 1024

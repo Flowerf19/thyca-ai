@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 
-from thyca.protocol import ToolResult
+from thyca.core.protocol import ToolResult
 from thyca.tools.registry import ToolSpec
 
 _READ_WAIT_MAX_S = 60

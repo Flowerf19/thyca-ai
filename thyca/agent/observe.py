@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from thyca.protocol import Message, ToolCall, ToolResult
+from thyca.core.protocol import Message, ToolCall, ToolResult
 from thyca.sessions import SessionManager
 
 from .stage import Stage

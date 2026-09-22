@@ -1,7 +1,7 @@
 ---
-status: in-progress
+status: done
 created: 2026-09-19
-last_updated: 2026-09-20
+last_updated: 2026-09-22
 ---
 
 # Tổng quan / Chi phí / Trace — journal UI
@@ -258,3 +258,6 @@ User báo thấy lỗi trong lúc tester dùng Chrome DevTools. TASK-016/017 v�
 - Cuối task ghi ngay vào plan: commit/ref, file đã đổi, command test + kết quả, screenshot paths, rủi ro và đúng một việc tiếp theo. Không tạo nhiều tài liệu trạng thái trùng nhau.
 - Quy trình đã duyệt: GLM code/unit-test theo file ownership → main đọc actual diff + review → GLM tester test UI qua Chrome DevTools/chụp ảnh → GLM coder sửa findings → báo user kết quả và chờ quyết định commit.
 - Commit dự kiến: journal foundation; dashboard integration; cost journal; trace execution journal; cleanup nếu có diff độc lập. Không tự động chạy xuyên các task.
+
+## Closing note (2026-09-22, orchestrator)
+Đóng plan khi merge nhánh refactor mới. Known gap còn lại: console sweep Dashboard/Trace chưa hoàn tất (TASK-037 partial); TASK-031 superseded bởi integration run TASK-037. Mở plan mới nếu cần thay vì reopen.

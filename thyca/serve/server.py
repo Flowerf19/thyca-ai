@@ -13,7 +13,15 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from thyca import __version__
-from thyca.bridge import (
+from thyca.app.chat_app import ChatApp
+from thyca.app.onboarding import (
+    ProviderProbeError,
+    provider_ready,
+    test_provider_api,
+    validate_provider,
+)
+from thyca.config import ConfigError, config_schema, load, save
+from thyca.serve.bridge import (
     session_create,
     session_delete,
     session_get,
@@ -24,23 +32,14 @@ from thyca.bridge import (
     session_turn_follow,
     session_turn_stream,
 )
-from thyca.chat_app import ChatApp
-from thyca.config import ConfigError, load, save
-from thyca.config_schema import config_schema
-from thyca.onboarding import (
-    ProviderProbeError,
-    provider_ready,
-    test_provider_api,
-    validate_provider,
-)
-from thyca.serve_memory import memory_endpoint
-from thyca.sessions import SessionCorrupt, SessionNotFound
-from thyca.tools.memory import MemoryFacade
-from thyca.trace_api import (
+from thyca.serve.memory import memory_endpoint
+from thyca.serve.trace_api import (
     trace_detail_payload,
     trace_list_payload,
     trace_stats_payload,
 )
+from thyca.sessions import SessionCorrupt, SessionNotFound
+from thyca.tools.memory import MemoryFacade
 
 LOOPBACK = frozenset({"127.0.0.1", "localhost"})
 _SESSION_RE = re.compile(
@@ -118,7 +117,7 @@ def _raise_interrupt(_signum: int, _frame: object) -> None:
 
 
 def default_webui() -> Path:
-    return Path(__file__).resolve().parent / "webui"
+    return Path(__file__).resolve().parent.parent / "webui"
 
 
 class _QuietHTTPServer(ThreadingHTTPServer):

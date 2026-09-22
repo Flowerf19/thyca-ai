@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from thyca.protocol import Message
+from thyca.core.protocol import Message
 
 IDLE = timedelta(minutes=15)
 _REMEMBER = "memory_remember"

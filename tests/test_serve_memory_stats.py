@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from thyca.cli import Cli, build_parser
+from thyca.app.cli import Cli, build_parser
 from thyca.serve import ServeError, default_webui, make_server
 from thyca.tools.memory import MemoryFacade
 

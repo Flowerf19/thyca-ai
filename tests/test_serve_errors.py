@@ -7,8 +7,8 @@ from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from thyca.bridge import public_turn_error
-from thyca.chat_app import ChatApp, InvalidTurnOption, TurnCancelled
+from thyca.serve.bridge import public_turn_error
+from thyca.app.chat_app import ChatApp, InvalidTurnOption, TurnCancelled
 from thyca.config import ConfigError, default_config, load, save
 from thyca.llm.llm_base import LLMError
 from thyca.serve import default_webui, make_server

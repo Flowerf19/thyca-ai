@@ -15,16 +15,16 @@ from pathlib import Path
 
 from thyca.agent.skill_event import skill_name_for_call
 from thyca.config import Config
-from thyca.protocol import Message, ToolCall
-from thyca.sessions import (
+from thyca.core.protocol import Message, ToolCall
+from . import (
     Session,
     SessionBusy,
     SessionCorrupt,
     SessionError,
     SessionNotFound,
 )
-from thyca.sessions.ask_remember import ask_remember
-from thyca.sessions.title import display_title
+from .ask_remember import ask_remember
+from .title import display_title
 
 
 def session_title(session: Session) -> str:

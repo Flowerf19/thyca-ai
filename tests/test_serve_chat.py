@@ -12,11 +12,11 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from thyca.agent.events import TurnEvent
-from thyca.bridge import SENTINEL
-from thyca.chat_app import ChatApp, session_title
+from thyca.serve.bridge import SENTINEL
+from thyca.app.chat_app import ChatApp, session_title
 from thyca.config import ModelCfg, default_config, load, save
 from thyca.llm.llm_base import ChatReply, LLMError
-from thyca.protocol import Message, ToolCall
+from thyca.core.protocol import Message, ToolCall
 from thyca.serve import ServeError, default_webui, make_server
 from thyca.sessions import Session, SessionBusy, SessionManager
 from thyca.sessions.title import fallback_title
@@ -76,8 +76,8 @@ def test_chat_app_mcp_diagnostic_includes_server_name(
             return
 
     stderr = StringIO()
-    monkeypatch.setattr("thyca.chat_app.MCPManager", FakeManager)
-    monkeypatch.setattr("thyca.chat_app.sys.stderr", stderr)
+    monkeypatch.setattr("thyca.app.chat_app.MCPManager", FakeManager)
+    monkeypatch.setattr("thyca.app.chat_app.sys.stderr", stderr)
     app = _chat(tmp_path, FakeLLM(ChatReply(content="unused")))
     try:
         assert "remote: failed to start" in stderr.getvalue()
@@ -654,7 +654,7 @@ def test_stream_sentinel_without_terminal_writes_fallback_failure(
             items.put(TurnEvent(type="turn.accepted"))
             items.put(SENTINEL)
 
-        monkeypatch.setattr("thyca.bridge.bridge_worker", sentinel_only_worker)
+        monkeypatch.setattr("thyca.serve.bridge.bridge_worker", sentinel_only_worker)
         response = _stream(
             httpd,
             f"/api/sessions/{created['id']}/turn/stream",
@@ -1603,7 +1603,7 @@ def test_stream_model_and_effort_reach_provider(tmp_path: Path, monkeypatch) -> 
         captured.append(provider)
         return Spy()
 
-    monkeypatch.setattr("thyca.chat_app.ConnectFactory.create", create)
+    monkeypatch.setattr("thyca.app.chat_app.ConnectFactory.create", create)
     cfg = default_config()
     cfg = replace(
         cfg,

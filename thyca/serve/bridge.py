@@ -21,12 +21,12 @@ import traceback
 from thyca.agent.events import TurnEvent
 from thyca.agent.thinking import ThinkingDelta
 from thyca.agent.reply import ContentDelta
-from thyca.chat_app import ChatApp, InvalidTurnOption, SessionIdle, TurnCancelled
+from thyca.app.chat_app import ChatApp, InvalidTurnOption, SessionIdle, TurnCancelled
 from thyca.config import Config
 from thyca.llm.llm_base import LLMError
-from thyca.session_wire import delete_error, rename_error
+from thyca.sessions.wire import delete_error, rename_error
 from thyca.sessions import SessionBusy, SessionCorrupt, SessionError, SessionNotFound
-from thyca.turn_state import TurnHub
+from thyca.serve.turn_state import TurnHub
 
 SENTINEL = object()
 # Same grammar the session routes use: a timestamp id and four hex chars.

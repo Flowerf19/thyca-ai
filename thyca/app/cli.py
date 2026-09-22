@@ -15,7 +15,7 @@ from thyca.agent.assemble import Assemble
 from thyca.agent.loop import AgentLoop
 from thyca.agent.observe import Observe
 from thyca.agent.think import LLMPort, Think
-from thyca.chat_ui import ChatUi
+from thyca.app.chat_ui import ChatUi
 from thyca.config import ConfigError, load
 from thyca.llm.llm_base import LLMError
 from thyca.llm.llm_factory import ConnectFactory
@@ -210,9 +210,9 @@ class Cli:
             await manager.shutdown()
 
     def _serve(self, port: int, *, daemon: bool = False, stop: bool = False) -> int:
-        from thyca.chat_app import ChatApp
+        from thyca.app.chat_app import ChatApp
         from thyca.serve import ServeError, default_webui, run
-        from thyca.serve_daemon import daemonize, log_file, stop_daemon
+        from thyca.serve.daemon import daemonize, log_file, stop_daemon
 
         root = self._thyca_dir if self._thyca_dir is not None else Path.home() / ".thyca"
         ui = ChatUi(self._stdout, self._stderr, color=False)

@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 from thyca.agent.stage import Stage
 from thyca.agent.think import ChatReply, Think
-from thyca.protocol import Message, ToolCall
+from thyca.core.protocol import Message, ToolCall
 
 
 @dataclass

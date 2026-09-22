@@ -12,11 +12,11 @@ from typing import TYPE_CHECKING
 from urllib.parse import parse_qs
 
 from thyca.agent.skill_event import skill_name_for_call
-from thyca.protocol import ToolCall
-from thyca.trace import TurnSummary, turns_from_session
+from thyca.core.protocol import ToolCall
+from thyca.serve.trace import TurnSummary, aggregate, turns_from_session
 
 if TYPE_CHECKING:
-    from thyca.chat_app import ChatApp
+    from thyca.app.chat_app import ChatApp
     from thyca.sessions import Session
     from thyca.sessions.store import SessionStore
 
@@ -104,8 +104,6 @@ def _apply_trace_filters(turns: list[TurnSummary], qs: dict) -> list[TurnSummary
 
 
 def trace_stats_payload(chat: ChatApp, query: str) -> dict:
-    from thyca.trace import aggregate
-
     turns = _apply_trace_filters(collect_turns(chat), parse_qs(query))
     return aggregate(turns)
 

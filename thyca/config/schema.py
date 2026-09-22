@@ -11,12 +11,10 @@ import dataclasses
 from dataclasses import fields
 from typing import Any
 
-from thyca.config import (
-    REASONING_EFFORTS,
-    LimitsCfg,
-    ProviderEntry,
-    TimelineCfg,
-)
+from .defaults import REASONING_EFFORTS
+from .limits import LimitsCfg
+from .providers import ProviderEntry
+from .timeline import TimelineCfg
 
 _LABELS: dict[str, str] = {
     "provider": "Nhà cung cấp",

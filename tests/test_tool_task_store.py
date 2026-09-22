@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from thyca.protocol import ToolCall, ToolResult
+from thyca.core.protocol import ToolCall, ToolResult
 from thyca.tools.builtin import register_file_tools
 from thyca.tools.path_guard import PathGuard
 from thyca.tools.registry import ToolRegistry, ToolSpec

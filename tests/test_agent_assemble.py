@@ -5,7 +5,7 @@ import pytest
 from thyca.agent.assemble import Assemble
 from thyca.agent.stage import Stage
 from thyca.memory.active import ActiveSnapshot
-from thyca.protocol import Message
+from thyca.core.protocol import Message
 
 
 def test_assemble_copies_and_appends_user() -> None:

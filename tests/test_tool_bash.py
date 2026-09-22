@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from thyca.protocol import ToolCall
+from thyca.core.protocol import ToolCall
 from thyca.tools.builtin import register_file_tools
 from thyca.tools.builtin.bash import kill_process_group, parse_timeout, select_shell
 from thyca.tools.path_guard import PathGuard

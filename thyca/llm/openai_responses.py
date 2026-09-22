@@ -12,7 +12,7 @@ from typing import Any
 import httpx
 
 from thyca.config import ProviderCfg
-from thyca.protocol import Message
+from thyca.core.protocol import Message
 
 from .llm_base import ChatReply, Connect, LLMError
 from .responses_parse import (

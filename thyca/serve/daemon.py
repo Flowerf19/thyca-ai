@@ -7,7 +7,7 @@ import sys
 import time
 from pathlib import Path
 
-from thyca.serve import ServeError
+from .server import ServeError
 
 PID_NAME = "serve.pid"
 LOG_NAME = "serve.log"

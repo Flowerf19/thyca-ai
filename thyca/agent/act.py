@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 from typing import Protocol
 
-from thyca.protocol import ToolCall, ToolResult
+from thyca.core.protocol import ToolCall, ToolResult
 
 from .events import EventSink, TurnEvent, emit_event
 from .skill_event import public_skill_name, skill_name_for_call

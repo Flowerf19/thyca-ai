@@ -4,7 +4,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 
-from thyca.protocol import Message
+from thyca.core.protocol import Message
 from thyca.sessions import Session
 
 

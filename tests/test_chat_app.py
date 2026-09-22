@@ -13,7 +13,7 @@ from thyca.agent.events import TurnEvent
 from thyca.llm.llm_base import ChatReply, LLMError
 from thyca.memory.active import ActiveMemory
 from thyca.memory.heading import parse_heading
-from thyca.protocol import Message, ToolCall
+from thyca.core.protocol import Message, ToolCall
 from thyca.sessions import SessionBusy, SessionManager
 from thyca.sessions.title import fallback_title
 
@@ -190,7 +190,7 @@ def test_naming_meta_persists_usage_cost_and_counts_as_request(tmp_path: Path) -
         assert isinstance(meta["cost_usd"], float) and meta["cost_usd"] > 0
 
         # trace aggregates: naming là một llm call → requests = 2, usage/cost gộp cả naming
-        from thyca.trace import turns_from_session
+        from thyca.serve.trace import turns_from_session
 
         turns = turns_from_session(session)
         assert len(turns) == 1
@@ -202,7 +202,7 @@ def test_naming_meta_persists_usage_cost_and_counts_as_request(tmp_path: Path) -
 
 
 def test_naming_meta_does_not_flip_failed_turn_status(tmp_path: Path) -> None:
-    from thyca.trace import turns_from_session
+    from thyca.serve.trace import turns_from_session
 
     session = SessionManager(tmp_path / "sessions")
     session.create()

@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from thyca.protocol import ToolCall, ToolResult
+from thyca.core.protocol import ToolCall, ToolResult
 from thyca.tools.registry import ToolRegistry, ToolSpec
 
 

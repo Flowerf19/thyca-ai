@@ -23,8 +23,8 @@ from thyca.llm.llm_base import LLMError
 from thyca.llm.llm_factory import ConnectFactory
 from thyca.llm.pricing import cost_for
 from thyca.memory.active import ActiveMemory
-from thyca.protocol import Message, utc_now_ts
-from thyca.session_wire import session_detail, session_summary
+from thyca.core.protocol import Message, utc_now_ts
+from thyca.sessions.wire import session_detail, session_summary
 from thyca.sessions import Session, SessionManager
 from thyca.sessions.store import SessionStore
 from thyca.sessions.title import display_title, is_blank, propose_title
@@ -36,7 +36,7 @@ from thyca.tools.memory_tools import bind_chat_session, register_memory_tools, r
 from thyca.tools.path_guard import PathGuard
 from thyca.tools.registry import ToolRegistry
 from thyca.tools.task_store import TaskStore, tool_read_spec
-from thyca.turn_state import TurnHub, TurnState
+from thyca.serve.turn_state import TurnHub, TurnState
 
 TEXT_MAX = 4000
 _CANCEL_WAIT_S = 5.0

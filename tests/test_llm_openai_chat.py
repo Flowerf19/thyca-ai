@@ -8,7 +8,7 @@ import pytest
 from thyca.config import Config, ModelCfg, ProviderCfg, ProviderEntry
 from thyca.llm.llm_base import LLMError, normalize_usage
 from thyca.llm.openai_chat import OpenAIChat, _chat_url
-from thyca.protocol import Message, ToolCall
+from thyca.core.protocol import Message, ToolCall
 
 
 def _provider() -> ProviderCfg:
@@ -549,7 +549,7 @@ async def test_reasoning_key_redacted_in_delta() -> None:
 
 @pytest.mark.asyncio
 async def test_reasoning_capped_at_result_limit() -> None:
-    from thyca.protocol import RESULT_CAP_BYTES
+    from thyca.core.protocol import RESULT_CAP_BYTES
 
     huge = "a" * (RESULT_CAP_BYTES + 50)
 

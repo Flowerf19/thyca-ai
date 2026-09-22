@@ -12,7 +12,7 @@ import pytest
 from mcp.types import CallToolResult, ImageContent, ListToolsResult, TextContent, Tool
 
 from thyca.config import McpServerCfg
-from thyca.protocol import ToolCall
+from thyca.core.protocol import ToolCall
 from thyca.tools.mcp import (
     CALL_TIMEOUT,
     MCPManager,

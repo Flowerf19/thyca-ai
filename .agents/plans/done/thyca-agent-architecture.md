@@ -1,7 +1,7 @@
 ---
-status: in-progress
+status: done
 created: 2026-08-14
-last_updated: 2026-08-20
+last_updated: 2026-09-22
 ---
 
 # Thyca — Kiến trúc chung (1 process, flat `thyca/`)
@@ -132,3 +132,6 @@ Mỗi service phải có unit/integration evidence trước khi service kế ti�
 8. Linux target; FTS `unicode61 remove_diacritics 2`, RRF `k=60`.
 9. `run(call)` là seam duy nhất cho gate. `dispatch(call)` giữ canonical `tool_call_id`; mutation serialize theo resource.
 10. Flat `thyca/`, YAGNI: không plugin loader/provider catalog/vector DB/TUI/subagent.
+
+## Closing note (2026-09-22, orchestrator)
+All service rows ✅ (Config/Session/Memory/LLM/Agent Loop/Skills). Epic đóng, work tiếp theo thuộc backend-solid-refactor.

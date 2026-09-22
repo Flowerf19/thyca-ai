@@ -8,7 +8,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from thyca.config import DEFAULT_TIMELINE_TIMEZONE, LimitsCfg
-from thyca.protocol import Message
+from thyca.core.protocol import Message
 
 from .compaction import SessionCompactor
 from .errors import SessionBusy, SessionCorrupt, SessionError, SessionNotFound

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from thyca.llm.prompt_manager import PromptManager
 from thyca.memory.active import ActiveSnapshot
-from thyca.protocol import Message
+from thyca.core.protocol import Message
 
 from .stage import Stage
 

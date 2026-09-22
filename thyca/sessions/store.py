@@ -6,7 +6,7 @@ import re
 import secrets
 from pathlib import Path
 
-from thyca.protocol import Message
+from thyca.core.protocol import Message
 
 from .errors import SessionCorrupt, SessionError, SessionNotFound
 from .models import Session

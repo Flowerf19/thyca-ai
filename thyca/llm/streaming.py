@@ -8,7 +8,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 
-from thyca.protocol import RESULT_CAP_BYTES
+from thyca.core.protocol import RESULT_CAP_BYTES
 
 _FLUSH_CHARS = 64
 _FLUSH_S = 0.08

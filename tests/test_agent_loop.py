@@ -12,7 +12,7 @@ from thyca.agent.loop import AgentLoop
 from thyca.agent.observe import Observe
 from thyca.agent.think import ChatReply, Think
 from thyca.config import PricingCfg
-from thyca.protocol import Message, ToolCall, ToolResult
+from thyca.core.protocol import Message, ToolCall, ToolResult
 from thyca.sessions import SessionManager
 
 

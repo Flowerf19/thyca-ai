@@ -39,6 +39,7 @@ from .parsing import _parse_dict
 from .pricing import PricingCfg
 from .providers import ProviderCfg, ProviderEntry
 from .root import Config
+from .schema import config_schema
 from .store import (
     GUIDE_NAME,
     FileLock,
@@ -78,6 +79,7 @@ __all__ = [
     "PricingCfg",
     "ProviderCfg",
     "ProviderEntry",
+    "config_schema",
     "TimelineCfg",
     "_lock_path",
     "_model_to_dict",

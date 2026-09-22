@@ -7,7 +7,7 @@ from thyca.agent.skill_event import (
     public_skill_name,
     skill_name_for_call,
 )
-from thyca.protocol import ToolCall
+from thyca.core.protocol import ToolCall
 
 
 def _root(tmp_path: Path) -> Path:

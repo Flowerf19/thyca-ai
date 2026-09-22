@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from thyca.protocol import Message
+from thyca.core.protocol import Message
 
 _EXCERPT_LIMIT = 1000
 

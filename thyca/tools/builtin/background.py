@@ -11,7 +11,7 @@ import asyncio
 import itertools
 import time
 
-from thyca.protocol import RESULT_CAP_BYTES
+from thyca.core.protocol import RESULT_CAP_BYTES
 from thyca.tools.builtin.bash import kill_process_group, select_shell
 from thyca.tools.registry import ToolSpec
 

@@ -1,7 +1,7 @@
 ---
-status: in-progress
+status: done
 created: 2026-09-21
-last_updated: 2026-09-21
+last_updated: 2026-09-22
 ---
 
 # Responses API support (thinking summaries)
@@ -74,10 +74,10 @@ Không đụng config/factory ở GOAL này — test trực tiếp class.
 
 | ID | Task | Done | Date |
 |----|------|------|------|
-| TASK-007 | `ProviderEntry.api: str = "openai_chat"`, validate thuộc `("openai_chat","openai_responses")`, message lỗi liệt kê choices. `ProviderCfg` mang theo `api`; `effective_provider_for` copy từ entry (không override theo model). `to_dict`/parse roundtrip; config cũ thiếu field → default chat (zero behavior change). | | |
-| TASK-008 | Factory: `OpenAIResponses` nhận `provider` như `OpenAIChat` (sửa nhánh `return cls()`); call sites (`chat_app`, `cli`, `scripts/retitle_sessions.py`) truyền `provider.api` thay vì literal `"openai_chat"`. Cập nhật `test_llm_factory` (routing + provider injection). | | |
-| TASK-009 | Onboarding test dispatch theo api: `POST /api/providers/test` gọi probe responses (`test_responses_chat`: 1 turn `input:"ping"`, assert `output_text` về) khi provider là responses; giữ `test_chat` cho chat. Log/422/key-free như cũ. Test cả 2 nhánh. | | |
-| TASK-010 | Provider page: select API theo provider (chat-completions/responses) + lưu/load; verify (`/models`) không đổi vì API-agnostic. | | |
+| TASK-007 | `ProviderEntry.api: str = "openai_chat"`, validate thuộc `("openai_chat","openai_responses")`, message lỗi liệt kê choices. `ProviderCfg` mang theo `api`; `effective_provider_for` copy từ entry (không override theo model). `to_dict`/parse roundtrip; config cũ thiếu field → default chat (zero behavior change). | x (verified tree: providers.py api field + validation) | 2026-09-21 |
+| TASK-008 | Factory: `OpenAIResponses` nhận `provider` như `OpenAIChat` (sửa nhánh `return cls()`); call sites (`chat_app`, `cli`, `scripts/retitle_sessions.py`) truyền `provider.api` thay vì literal `"openai_chat"`. Cập nhật `test_llm_factory` (routing + provider injection). | x (verified: chat_app.py:428, cli.py:171, retitle_sessions.py:33) | 2026-09-21 |
+| TASK-009 | Onboarding test dispatch theo api: `POST /api/providers/test` gọi probe responses (`test_responses_chat`: 1 turn `input:"ping"`, assert `output_text` về) khi provider là responses; giữ `test_chat` cho chat. Log/422/key-free như cũ. Test cả 2 nhánh. | x (verified: onboarding.py test_responses_chat + dispatch) | 2026-09-21 |
+| TASK-010 | Provider page: select API theo provider (chat-completions/responses) + lưu/load; verify (`/models`) không đổi vì API-agnostic. | x (verified: provider.html #provider-api + provider.js load/save) | 2026-09-21 |
 
 ### GOAL-003: Thinking parity + cost (chủ yếu là verify)
 
@@ -96,7 +96,7 @@ reasoning) đều 200 và reply đúng. GOAL-004 bị hoãn lại: không implem
 | ID | Task | Done | Date |
 |----|------|------|------|
 | TASK-014 | Persist reasoning item (`id`, `summary[]`, `encrypted_content` nếu xin `include`) lên `Message` — tái dùng `reasoning_details` (validation list-of-dicts đã đủ chứa) hay field mới, quyết lúc làm; giữ khỏi trace/UI payload. | x | 2026-09-21 |
-| TASK-015 | Gửi lại items ở turn sau trong `input[]` (đúng format responses), `include: ["reasoning.encrypted_content"]` khi cần. Test round-trip 2 turn mock + live. | | |
+| TASK-015 | Gửi lại items ở turn sau trong `input[]` (đúng format responses), `include: ["reasoning.encrypted_content"]` khi cần. Test round-trip 2 turn mock + live. | deferred (TASK-013 pass — GOAL-004 conditional không trigger) | 2026-09-21 |
 
 ### GOAL-005: Docs + rollout
 

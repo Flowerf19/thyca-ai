@@ -14,7 +14,7 @@ from __future__ import annotations
 import queue
 import threading
 
-from thyca.protocol import utc_now_ts
+from thyca.core.protocol import utc_now_ts
 from thyca.sessions import SessionBusy, SessionManager
 
 

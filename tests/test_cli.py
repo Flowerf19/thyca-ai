@@ -5,10 +5,10 @@ from dataclasses import dataclass, field, replace
 from io import StringIO
 from pathlib import Path
 
-from thyca.cli import Cli
+from thyca.app.cli import Cli
 from thyca.config import McpServerCfg, default_config, load, save
 from thyca.llm.llm_base import ChatReply, LLMError
-from thyca.protocol import Message, ToolCall
+from thyca.core.protocol import Message, ToolCall
 from thyca.tools.mcp import StartupDiagnostic
 from thyca.tools.registry import ToolSpec
 from thyca.sessions import SessionError, SessionManager
@@ -136,7 +136,7 @@ def test_cli_registers_and_closes_configured_mcp_tools(tmp_path: Path, monkeypat
             self.closed = True
 
     manager = FakeManager()
-    monkeypatch.setattr("thyca.cli.MCPManager", lambda: manager)
+    monkeypatch.setattr("thyca.app.cli.MCPManager", lambda: manager)
     cfg = replace(
         default_config(),
         mcpServers={"echo": McpServerCfg(command="ignored")},
@@ -184,7 +184,7 @@ def test_cli_mcp_diagnostic_includes_server_name(tmp_path: Path, monkeypatch) ->
         async def shutdown(self) -> None:
             return
 
-    monkeypatch.setattr("thyca.cli.MCPManager", FakeManager)
+    monkeypatch.setattr("thyca.app.cli.MCPManager", FakeManager)
     cli, _out, err = _cli(tmp_path, FakeLLM(ChatReply(content="ok")))
 
     assert cli.main(["-p", "hi"]) == 0

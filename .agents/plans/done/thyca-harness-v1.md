@@ -1,7 +1,8 @@
 ---
-status: in-progress
+status: abandoned
 created: 2026-08-13
-last_updated: 2026-08-21
+last_updated: 2026-09-22
+abandoned_reason: superseded by per-service plans + shipped 0.8.5.dev0 pre-beta; remaining v1 scope re-planned under backend-solid-refactor
 ---
 
 # Thyca v1 — personal assistant harness

@@ -1,6 +1,8 @@
 import { getJson } from "../../shared/js/api.js";
 import { aggregateUsage, completeDays, rollingRange, traceRangeUrl } from "../../shared/js/analytics-data.js";
 import { drawBarChart } from "../../shared/js/bar-chart.js";
+import { fetchAllTraces } from "../../shared/js/dashboard-today.js";
+import { makeSetStatus, messageOf } from "../../shared/js/status.js";
 import { formatCompact, formatDate, formatInteger } from "../../shared/js/format.js";
 
 const el = {
@@ -21,14 +23,7 @@ let payload = null;
 let usage = null;
 let series = [];
 
-function messageOf(error, fallback) {
-  return error instanceof Error && error.message ? error.message : fallback;
-}
-
-function setStatus(message = "", kind = "") {
-  el.status.textContent = message;
-  el.status.className = `screen-status${kind ? ` is-${kind}` : ""}`;
-}
+const setStatus = makeSetStatus(el.status);
 
 function draw() {
   if (!series.length) {
@@ -101,18 +96,10 @@ function render() {
 }
 
 async function loadAllTraces(days) {
-  const traces = [];
-  let offset = 0;
-  let total = Infinity;
-  while (offset < total) {
-    const page = await getJson(`${traceRangeUrl("/api/traces", days, 200)}&offset=${offset}`);
-    const rows = Array.isArray(page.traces) ? page.traces : [];
-    total = Number(page.total) || 0;
-    traces.push(...rows);
-    if (!rows.length) break;
-    offset += rows.length;
-  }
-  return { traces, total };
+  const traces = await fetchAllTraces(
+    (offset) => getJson(`${traceRangeUrl("/api/traces", days, 200)}&offset=${offset}`),
+  );
+  return { traces, total: traces.length };
 }
 
 async function load() {

@@ -1,7 +1,3 @@
-.usage-heading select {
-  min-width: 12.5rem;
-}
-
 .usage-chart-card {
   min-height: 21rem;
 }
@@ -194,10 +190,6 @@
 }
 
 @media (max-width: 28rem) {
-  .usage-heading select {
-    min-width: 0;
-  }
-
   .usage-chart-top {
     align-items: flex-start;
     flex-direction: column;

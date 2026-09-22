@@ -166,8 +166,17 @@ const dependencies = {
     return doneB;
   },
 };
-const source = fs.readFileSync('./thyca/webui/pages/chat/app.js', 'utf8')
+const sources = [
+  './thyca/webui/pages/chat/sessions-sidebar.js',
+  './thyca/webui/pages/chat/turn-follow.js',
+  './thyca/webui/pages/chat/composer.js',
+  './thyca/webui/pages/chat/app.js',
+];
+const source = sources
+  .map(path => fs.readFileSync(path, 'utf8'))
+  .join('\n')
   .replace(/^import[\s\S]*?from .*?;\n/gm, '')
+  .replace(/^export (?=async function|function|const)/gm, '')
   .replace('void boot();', '');
 const app = new Function(...Object.keys(dependencies), source + `
   return { loadSession, sendMessage, state, el, liveTurns, streamingSessions };
@@ -293,8 +302,17 @@ function makeApp(turnId) {
     async patchJson() { return {}; },
     async deleteJson() { return {}; },
   };
-  const source = fs.readFileSync('./thyca/webui/pages/chat/app.js', 'utf8')
+  const sources = [
+    './thyca/webui/pages/chat/sessions-sidebar.js',
+    './thyca/webui/pages/chat/turn-follow.js',
+    './thyca/webui/pages/chat/composer.js',
+    './thyca/webui/pages/chat/app.js',
+  ];
+  const source = sources
+    .map(path => fs.readFileSync(path, 'utf8'))
+    .join('\n')
     .replace(/^import[\s\S]*?from .*?;\n/gm, '')
+    .replace(/^export (?=async function|function|const)/gm, '')
     .replace('void boot();', '');
   const app = new Function(...Object.keys(deps), source + `
     return { state, el, loadSession, sendMessage, refreshSessions };

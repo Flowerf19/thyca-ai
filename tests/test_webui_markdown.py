@@ -55,7 +55,7 @@ def test_escapes_raw_html_and_unsafe_url() -> None:
 
 
 def test_chat_js_uses_formatter() -> None:
-    view = (WEBUI / "pages" / "chat" / "chat-view.js").read_text(encoding="utf-8")
+    view = (WEBUI / "pages" / "chat" / "transcript.js").read_text(encoding="utf-8")
     css = (WEBUI / "shared" / "css" / "backend.css").read_text(encoding="utf-8")
     assert 'from "../../shared/js/markdown.js"' in view
     assert "formatMarkdown(segment.content)" in view
@@ -471,7 +471,10 @@ def test_chat_sidebar_pager_markers() -> None:
     math is the marker-delimited pure block (executed in Node by the journal
     tests); here we lock the wiring markers. The DOM behavior (active row
     stays marked, jumps on create/rename/open) is browser-test territory."""
-    script = (WEBUI / "pages" / "chat" / "app.js").read_text(encoding="utf-8")
+    script = "\n".join(
+        (WEBUI / "pages" / "chat" / name).read_text(encoding="utf-8")
+        for name in ("sessions-sidebar.js", "turn-follow.js", "composer.js", "app.js")
+    )
     assert "const SESSIONS_PAGE_SIZE = 12;" in script
     assert "sessionsPageCount(state.sessions.length)" in script
     assert "state.sessionPage = clampPage(state.sessionPage, pages)" in script

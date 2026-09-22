@@ -673,8 +673,14 @@ def test_stream_sentinel_without_terminal_writes_fallback_failure(
 
 
 def test_chat_js_shipped() -> None:
-    app = (WEBUI / "pages" / "chat" / "app.js").read_text(encoding="utf-8")
-    view = (WEBUI / "pages" / "chat" / "chat-view.js").read_text(encoding="utf-8")
+    app = "\n".join(
+        (WEBUI / "pages" / "chat" / name).read_text(encoding="utf-8")
+        for name in ("sessions-sidebar.js", "turn-follow.js", "composer.js", "app.js")
+    )
+    view = "\n".join(
+        (WEBUI / "pages" / "chat" / name).read_text(encoding="utf-8")
+        for name in ("chat-view.js", "transcript.js", "live-status.js")
+    )
     thinking = (WEBUI / "pages" / "chat" / "chat-thinking.js").read_text(encoding="utf-8")
     api = (WEBUI / "shared" / "js" / "api.js").read_text(encoding="utf-8")
     css = (WEBUI / "shared" / "css" / "backend.css").read_text(encoding="utf-8")
@@ -718,10 +724,13 @@ def test_chat_js_shipped() -> None:
 
 
 def test_chat_nav_opens_new_session() -> None:
-    app = (WEBUI / "pages" / "chat" / "app.js").read_text(encoding="utf-8")
+    app = "\n".join(
+        (WEBUI / "pages" / "chat" / name).read_text(encoding="utf-8")
+        for name in ("sessions-sidebar.js", "turn-follow.js", "composer.js", "app.js")
+    )
     html = (WEBUI / "index.html").read_text(encoding="utf-8")
-    new_session = app[app.index("function newSession()") : app.index("async function ensureSession")]
-    ensure_session = app[app.index("async function ensureSession") : app.index("async function sendMessage")]
+    new_session = app[app.index("function newSession()"):]
+    ensure_session = app[app.index("async function ensureSession"):]
 
     assert 'id="new-session"' in html
     assert 'id="message-list"' in html
@@ -763,7 +772,10 @@ def test_session_payload_includes_ask_remember(tmp_path: Path) -> None:
 
 def test_idle_remember_nudge_in_webui() -> None:
     html = (WEBUI / "index.html").read_text(encoding="utf-8")
-    app = (WEBUI / "pages" / "chat" / "app.js").read_text(encoding="utf-8")
+    app = "\n".join(
+        (WEBUI / "pages" / "chat" / name).read_text(encoding="utf-8")
+        for name in ("sessions-sidebar.js", "turn-follow.js", "composer.js", "app.js")
+    )
     assert 'id="idle-nudge"' in html
     assert "Phiên im 15 phút" in html
     assert "IDLE_MS = 15 * 60 * 1000" in app
@@ -880,7 +892,10 @@ def test_session_detail_tags_skill_loads(tmp_path: Path) -> None:
 
 
 def test_empty_submit_nudges_without_sending() -> None:
-    app = (WEBUI / "pages" / "chat" / "app.js").read_text(encoding="utf-8")
+    app = "\n".join(
+        (WEBUI / "pages" / "chat" / name).read_text(encoding="utf-8")
+        for name in ("sessions-sidebar.js", "turn-follow.js", "composer.js", "app.js")
+    )
     html = (WEBUI / "index.html").read_text(encoding="utf-8")
     css = (WEBUI / "shared" / "css" / "styles.css").read_text(encoding="utf-8")
     send_message = app[app.index("async function sendMessage()") : app.index("function bind()")]
@@ -1137,9 +1152,12 @@ def test_webui_keeps_streaming_card_across_session_switch() -> None:
     stream keep drawing into it; a fresh card would read as a bare status line
     with no usage row and no further updates.
     """
-    app = (WEBUI / "pages" / "chat" / "app.js").read_text(encoding="utf-8")
-    render = app[app.index("function renderDetail(detail)") : app.index("function watchRunning(sessionId)")]
-    send_message = app[app.index("async function sendMessage()") : app.index("function bind()")]
+    app = "\n".join(
+        (WEBUI / "pages" / "chat" / name).read_text(encoding="utf-8")
+        for name in ("sessions-sidebar.js", "turn-follow.js", "composer.js", "app.js")
+    )
+    render = app[app.index("function renderDetail(detail)"):]
+    send_message = app[app.index("async function sendMessage()"):]
 
     assert "const liveTurns = new Map();" in app
     assert "liveTurns.set(sessionId, live);" in send_message
@@ -1156,11 +1174,14 @@ def test_webui_keeps_streaming_card_across_session_switch() -> None:
 
 
 def test_webui_follows_a_turn_it_did_not_start() -> None:
-    app = (WEBUI / "pages" / "chat" / "app.js").read_text(encoding="utf-8")
+    app = "\n".join(
+        (WEBUI / "pages" / "chat" / name).read_text(encoding="utf-8")
+        for name in ("sessions-sidebar.js", "turn-follow.js", "composer.js", "app.js")
+    )
     view = (WEBUI / "pages" / "chat" / "chat-view.js").read_text(encoding="utf-8")
     status = (WEBUI / "pages" / "chat" / "chat-status.js").read_text(encoding="utf-8")
     load_session = app[app.index("async function loadSession") : app.index("function newSession")]
-    watch = app[app.index("function watchRunning(sessionId)") : app.index("async function loadSession")]
+    watch = app[app.index("function watchRunning(sessionId)"):]
     composer = app[app.index("function composerBusy()") : app.index("function setSending")]
 
     # Reload mid-turn: attach GET /turn/stream so the card receives the same
@@ -1201,9 +1222,9 @@ def test_webui_follows_a_turn_it_did_not_start() -> None:
     # first one: assert the name itself, wherever it sits in the braces.
     import re
 
-    names = re.search(r'import \{([^}]*)\}\s*from "\.\./\.\./shared/js/api\.js"', app)
+    names = re.findall(r'import \{([^}]*)\}\s*from "\.\./\.\./shared/js/api\.js"', app)
     assert names, "app.js must import from ../../shared/js/api.js"
-    imported = {name.strip() for name in names.group(1).split(",") if name.strip()}
+    imported = {name.strip() for group in names for name in group.split(",") if name.strip()}
     assert {
         "ApiError",
         "deleteJson",
@@ -1356,7 +1377,10 @@ def test_delete_refuses_a_session_mid_turn(tmp_path: Path) -> None:
 
 def test_webui_has_row_actions_for_rename_and_delete() -> None:
     """The sidebar row carries both actions; hover reveals, keyboard reaches."""
-    app = (WEBUI / "pages" / "chat" / "app.js").read_text(encoding="utf-8")
+    app = "\n".join(
+        (WEBUI / "pages" / "chat" / name).read_text(encoding="utf-8")
+        for name in ("sessions-sidebar.js", "turn-follow.js", "composer.js", "app.js")
+    )
     html = (WEBUI / "index.html").read_text(encoding="utf-8")
     css = (WEBUI / "shared" / "css" / "styles.css").read_text(encoding="utf-8")
     api = (WEBUI / "shared" / "js" / "api.js").read_text(encoding="utf-8")
@@ -1492,9 +1516,12 @@ def test_delete_racing_a_claim_does_not_lose_the_transcript(tmp_path: Path) -> N
 
 def test_webui_submits_a_rename_or_delete_once() -> None:
     """A double submit must not send the same request twice."""
-    app = (WEBUI / "pages" / "chat" / "app.js").read_text(encoding="utf-8")
+    app = "\n".join(
+        (WEBUI / "pages" / "chat" / name).read_text(encoding="utf-8")
+        for name in ("sessions-sidebar.js", "turn-follow.js", "composer.js", "app.js")
+    )
     rename = app[app.index("async function submitRename()") : app.index("function openDelete")]
-    remove = app[app.index("async function submitDelete()") : app.index("function rememberActiveSession")]
+    remove = app[app.index("async function submitDelete()"):]
 
     assert "if (state.saving) return;" in rename
     assert "if (state.saving) return;" in remove
@@ -1509,7 +1536,10 @@ def test_chat_row_uses_the_shared_session_item() -> None:
     Trace moved into the dashboard and renders its session list there as
     .journal-entry rows on the shared kit instead."""
     css = (WEBUI / "shared" / "css" / "styles.css").read_text(encoding="utf-8")
-    app = (WEBUI / "pages" / "chat" / "app.js").read_text(encoding="utf-8")
+    app = "\n".join(
+        (WEBUI / "pages" / "chat" / name).read_text(encoding="utf-8")
+        for name in ("sessions-sidebar.js", "turn-follow.js", "composer.js", "app.js")
+    )
     trace = (WEBUI / "pages" / "dashboard" / "trace.js").read_text(encoding="utf-8")
 
     # No restack wrapper: icon and name sit on the item, like profile.js.

@@ -8,7 +8,7 @@
 }
 
 /* The search field sits in the sidebar, so it keeps the sidebar's own gutter;
-   the field itself is the shared .thyca-search (screens.css). */
+   the field itself is the shared .thyca-search (kit.css). */
 .sidebar .memory-search-cluster {
   margin: 1rem 0.65rem 0 0;
 }
@@ -20,7 +20,7 @@
   width: 100%;
   height: 16rem;
   margin-top: 0.4rem;
-  /* styles.css gives every svg an icon stroke; bars and axis text are fills,
+  /* tokens.css gives every svg an icon stroke; bars and axis text are fills,
      grid lines re-declare their own stroke. */
   stroke: none;
 }
@@ -51,7 +51,7 @@
 .memory-status:empty { display: none; }
 
 /* Notebook dash: each entry opens with a terracotta "—" beside its title, as
-   in the sổ design. The date sits in the left gutter (screens.css journal kit). */
+   in the sổ design. The date sits in the left gutter (kit.css journal kit). */
 .memory-copy h3 {
   position: relative;
 }
@@ -62,7 +62,7 @@
   color: var(--chat-brand-accent);
 }
 
-/* List kit, copy, tags, more, list: screens.css journal kit. */
+/* List kit, copy, tags, more, list: kit.css journal kit. */
 .memory-copy p {
   text-align: justify;
 }
@@ -231,5 +231,104 @@
 @media (max-width: 56rem) {
   .memory-edit-line::before {
     display: none;
+  }
+}
+
+/* W6 shared push (TASK-008): .memory-* journal kit + mobile rules moved verbatim
+   from shared/css/screens.css; shared keeps the .journal-* kit only. */
+/* Journal kit — Nhật ký (.memory-*). No cards: entries written
+   straight onto the paper (notebook look). One row per entry: tabular date in
+   the left gutter, terracotta dash on the body, then title, summary, tags.
+   Page files keep only deltas (justify, nowrap, colors). Chi phí renders
+   bar rows instead. */
+.memory-list {
+  display: grid;
+}
+.memory-card {
+  display: grid;
+  grid-template-columns: 5.6rem minmax(0, 1fr);
+  column-gap: 1.4rem;
+  row-gap: 0.1rem;
+  padding: 1.05rem 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  border-block-end: var(--rule) solid var(--color-divider);
+}
+/* Wrapper holds no box, so children are placed on the entry's own grid. */
+.memory-copy {
+  display: contents;
+}
+.memory-copy h3 {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: center;
+  min-width: 0;
+  margin: 0;
+  color: var(--color-ink);
+  font-family: var(--font-reading);
+}
+.memory-copy p {
+  grid-column: 2;
+  grid-row: 2;
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 1rem;
+  font-style: normal;
+  overflow-wrap: anywhere;
+}
+.memory-tags {
+  display: flex;
+  flex-wrap: wrap;
+  grid-column: 2;
+  grid-row: 3;
+  align-self: center;
+  gap: 0.5rem;
+}
+.memory-tags span {
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--color-muted);
+  font-size: 0.83rem;
+}
+.memory-tags span + span::before {
+  content: "\00b7";
+  margin-inline-end: 0.5rem;
+  color: var(--color-muted-soft);
+}
+.memory-more {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+}
+.memory-meta time {
+  grid-column: 1;
+  grid-row: 1;
+  justify-self: start;
+  align-self: baseline;
+  padding-top: 0.2rem;
+  color: var(--color-muted);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.memory-chart-card {
+  padding: 1rem 1.25rem;
+}
+@media (max-width: 56rem) {
+  .memory-card {
+    grid-template-columns: 4.4rem minmax(0, 1fr);
+    column-gap: 0.8rem;
+    padding: 0.85rem 0;
+  }
+  .memory-meta time {
+    grid-column: 1 / -1;
+  }
+  .memory-copy h3 {
+    font-size: 1.15rem;
+  }
+  .memory-copy p {
+    font-size: 0.92rem;
   }
 }

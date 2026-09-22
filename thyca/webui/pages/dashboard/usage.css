@@ -212,3 +212,34 @@
     margin-left: 0;
   }
 }
+
+/* W6 shared push (TASK-008, layout decision 6): usage-* chart kit moved verbatim
+   from shared/css/screens.css; shared keeps the .journal-* kit only. */
+.usage-heading label {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--color-muted);
+  font-size: 0.75rem;
+}
+.usage-chart-card {
+  padding: 1rem 1.25rem;
+}
+.usage-grid {
+  stroke: var(--color-divider);
+  stroke-width: 1;
+}
+.usage-axis {
+  fill: var(--color-muted);
+  stroke: none;
+  font: 12px var(--font-reading);
+}
+.usage-summary strong,
+.usage-total strong {
+  color: var(--color-ink);
+  font-family: var(--font-display);
+  font-weight: 500;
+}
+.usage-summary strong small,
+.usage-total strong small {
+  font-family: var(--font-reading);
+}

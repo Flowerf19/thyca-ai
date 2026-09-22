@@ -56,7 +56,7 @@ def test_escapes_raw_html_and_unsafe_url() -> None:
 
 def test_chat_js_uses_formatter() -> None:
     view = (WEBUI / "pages" / "chat" / "transcript.js").read_text(encoding="utf-8")
-    css = (WEBUI / "shared" / "css" / "backend.css").read_text(encoding="utf-8")
+    css = (WEBUI / "shared" / "css" / "markdown.css").read_text(encoding="utf-8")
     assert 'from "../../shared/js/markdown.js"' in view
     assert "formatMarkdown(segment.content)" in view
     assert ".md-table-wrap" in css
@@ -203,7 +203,7 @@ def test_trace_typography_matches_profile_screen() -> None:
     redirect and trace.css is scoped to #trace."""
     trace = (WEBUI / "pages" / "dashboard" / "trace.css").read_text(encoding="utf-8")
     profile = (WEBUI / "pages" / "profile" / "profile.css").read_text(encoding="utf-8")
-    shared = (WEBUI / "shared" / "css" / "screens.css").read_text(encoding="utf-8")
+    shared = (WEBUI / "shared" / "css" / "kit.css").read_text(encoding="utf-8")
     html = (WEBUI / "dashboard.html").read_text(encoding="utf-8")
     redirect = (WEBUI / "trace.html").read_text(encoding="utf-8")
     script = "\n".join(
@@ -308,7 +308,11 @@ def test_cost_panel_renders_bar_rows_and_uses_shared_toolbar() -> None:
         for name in ("cost.js", "cost-view.js", "cost-rows.js")
     )
     html = (WEBUI / "dashboard.html").read_text(encoding="utf-8")
-    shared = (WEBUI / "shared" / "css" / "screens.css").read_text(encoding="utf-8")
+    # W6 split: the journal kit lives in kit.css, .memory-* moved to memories.css.
+    shared = (
+        (WEBUI / "shared" / "css" / "kit.css").read_text(encoding="utf-8")
+        + (WEBUI / "pages" / "memories" / "memories.css").read_text(encoding="utf-8")
+    )
     memories = (WEBUI / "memories.html").read_text(encoding="utf-8")
     memories_css = (WEBUI / "pages" / "memories" / "memories.css").read_text(encoding="utf-8")
 

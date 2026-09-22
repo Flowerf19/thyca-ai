@@ -23,7 +23,7 @@ def _read(name: str) -> str:
 def test_compact_pager_is_shared_in_screens_css() -> None:
     """One shared block styles the dashboard/trace .journal-pager and the chat
     .session-pager; neither may inherit the card .screen-button look."""
-    screens = _read("shared/css/screens.css")
+    screens = _read("shared/css/kit.css")
     assert ":is(.dashboard-shell, .trace-shell) .journal-pager" in screens
     assert ".session-pager" in screens
     # The old card appearance is reset inside the pager scope only.
@@ -45,7 +45,7 @@ def test_old_pager_rules_are_gone_from_cost_and_styles() -> None:
     """cost.css no longer styles .journal-pager (it used to hit Cost and Trace
     at once) and styles.css keeps only the chat pager's placement margin."""
     cost = _read("pages/dashboard/cost.css")
-    styles = _read("shared/css/styles.css")
+    styles = _read("pages/chat/chat.css")
     assert ".journal-pager" not in cost
     assert ".session-pager .screen-button" not in styles
     assert ".session-pager-label" not in styles
@@ -58,7 +58,7 @@ def test_pager_scoping_does_not_touch_global_button() -> None:
     """The global .screen-button base/hover blocks stay as they were; the
     pager block itself never selects .screen-button — it hooks the pager
     classes only, so other screens' buttons keep their card look."""
-    screens = _read("shared/css/screens.css")
+    screens = _read("shared/css/kit.css")
     assert ".screen-button, .screen-select, .screen-input {" in screens
     assert (
         ".screen-button:not(:disabled):hover { border-color: var(--color-accent); }"

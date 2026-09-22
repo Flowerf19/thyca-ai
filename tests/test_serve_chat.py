@@ -682,9 +682,9 @@ def test_chat_js_shipped() -> None:
         for name in ("chat-view.js", "transcript.js", "live-status.js")
     )
     thinking = (WEBUI / "pages" / "chat" / "chat-thinking.js").read_text(encoding="utf-8")
-    api = (WEBUI / "shared" / "js" / "api.js").read_text(encoding="utf-8")
-    css = (WEBUI / "shared" / "css" / "backend.css").read_text(encoding="utf-8")
-    styles = (WEBUI / "shared" / "css" / "styles.css").read_text(encoding="utf-8")
+    api = (WEBUI / "shared" / "js" / "streams.js").read_text(encoding="utf-8")
+    css = (WEBUI / "shared" / "css" / "states.css").read_text(encoding="utf-8")
+    styles = (WEBUI / "pages" / "chat" / "chat.css").read_text(encoding="utf-8")
 
     assert 'postNdjson(' in app
     assert '/turn/stream' in app
@@ -897,7 +897,7 @@ def test_empty_submit_nudges_without_sending() -> None:
         for name in ("sessions-sidebar.js", "turn-follow.js", "composer.js", "app.js")
     )
     html = (WEBUI / "index.html").read_text(encoding="utf-8")
-    css = (WEBUI / "shared" / "css" / "styles.css").read_text(encoding="utf-8")
+    css = (WEBUI / "pages" / "chat" / "chat.css").read_text(encoding="utf-8")
     send_message = app[app.index("async function sendMessage()") : app.index("function bind()")]
     empty_branch = send_message[: send_message.index("if (composerBusy()) return;")]
 
@@ -1382,8 +1382,8 @@ def test_webui_has_row_actions_for_rename_and_delete() -> None:
         for name in ("sessions-sidebar.js", "turn-follow.js", "composer.js", "app.js")
     )
     html = (WEBUI / "index.html").read_text(encoding="utf-8")
-    css = (WEBUI / "shared" / "css" / "styles.css").read_text(encoding="utf-8")
-    api = (WEBUI / "shared" / "js" / "api.js").read_text(encoding="utf-8")
+    css = (WEBUI / "pages" / "chat" / "chat.css").read_text(encoding="utf-8")
+    api = (WEBUI / "shared" / "js" / "http.js").read_text(encoding="utf-8")
 
     assert 'patchJson(`/api/sessions/${encodeURIComponent(id)}`, { title })' in app
     assert 'deleteJson(`/api/sessions/${encodeURIComponent(id)}`)' in app
@@ -1535,7 +1535,7 @@ def test_chat_row_uses_the_shared_session_item() -> None:
     """Chat sidebar rows use the same .session-item grid as Hồ sơ / Nhật ký;
     Trace moved into the dashboard and renders its session list there as
     .journal-entry rows on the shared kit instead."""
-    css = (WEBUI / "shared" / "css" / "styles.css").read_text(encoding="utf-8")
+    css = (WEBUI / "pages" / "chat" / "chat.css").read_text(encoding="utf-8")
     app = "\n".join(
         (WEBUI / "pages" / "chat" / name).read_text(encoding="utf-8")
         for name in ("sessions-sidebar.js", "turn-follow.js", "composer.js", "app.js")
@@ -1594,7 +1594,7 @@ def test_chat_row_uses_the_shared_session_item() -> None:
 
 def test_hovering_a_row_keeps_its_divider() -> None:
     """The pointer wash does not hide the line above the row it lights up."""
-    css = (WEBUI / "shared" / "css" / "styles.css").read_text(encoding="utf-8")
+    css = (WEBUI / "pages" / "chat" / "chat.css").read_text(encoding="utf-8")
 
     # The wash is the only hover change: the row's own top rule stays, so the
     # divider between it and the session above keeps showing.

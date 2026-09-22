@@ -24,6 +24,75 @@ def _coerce_int(value: object) -> int | None:
     return None
 
 
+def _extract_openai(raw: dict) -> tuple[int | None, int | None, int | None, int | None, int | None]:
+    prompt = _coerce_int(raw.get("prompt_tokens"))
+    completion = _coerce_int(raw.get("completion_tokens"))
+    total = _coerce_int(raw.get("total_tokens"))
+    cached = None
+    details = raw.get("prompt_tokens_details")
+    if isinstance(details, dict):
+        cached = _coerce_int(details.get("cached_tokens"))
+    reasoning = None
+    c_details = raw.get("completion_tokens_details")
+    if isinstance(c_details, dict):
+        reasoning = _coerce_int(c_details.get("reasoning_tokens"))
+    return prompt, cached, completion, total, reasoning
+
+
+def _extract_responses(raw: dict) -> tuple[int | None, int | None, int | None, int | None, int | None]:
+    # Responses API shape (verified live): input/output counters.
+    prompt = _coerce_int(raw.get("input_tokens"))
+    completion = _coerce_int(raw.get("output_tokens"))
+    total = _coerce_int(raw.get("total_tokens"))
+    cached = None
+    details = raw.get("input_tokens_details")
+    if isinstance(details, dict):
+        cached = _coerce_int(details.get("cached_tokens"))
+    reasoning = None
+    c_details = raw.get("output_tokens_details")
+    if isinstance(c_details, dict):
+        reasoning = _coerce_int(c_details.get("reasoning_tokens"))
+    return prompt, cached, completion, total, reasoning
+
+
+def _extract_anthropic(raw: dict) -> tuple[int | None, int | None, int | None, int | None, int | None]:
+    prompt = _coerce_int(raw.get("input_tokens"))
+    completion = _coerce_int(raw.get("output_tokens"))
+    cached = _coerce_int(raw.get("cache_read_input_tokens"))
+    # cache_creation_input_tokens is still prompt cost, not cached
+    total = None
+    total_raw = raw.get("total_tokens")
+    if isinstance(total_raw, int):
+        total = _coerce_int(total_raw)
+    return prompt, cached, completion, total, None
+
+
+def _extract_google(raw: dict) -> tuple[int | None, int | None, int | None, int | None, int | None]:
+    prompt = _coerce_int(raw.get("promptTokenCount"))
+    if prompt is None:
+        prompt = _coerce_int(raw.get("prompt_tokens"))
+    completion = _coerce_int(raw.get("candidatesTokenCount"))
+    if completion is None:
+        completion = _coerce_int(raw.get("completion_tokens"))
+    cached = _coerce_int(raw.get("cachedContentTokenCount"))
+    if cached is None:
+        cached = _coerce_int(raw.get("cached_tokens"))
+    total = _coerce_int(raw.get("totalTokenCount"))
+    if total is None:
+        total = _coerce_int(raw.get("total_tokens"))
+    return prompt, cached, completion, total, None
+
+
+def _extract_generic(raw: dict) -> tuple[int | None, int | None, int | None, int | None, int | None]:
+    return (
+        _coerce_int(raw.get("prompt_tokens")),
+        _coerce_int(raw.get("cached_tokens")),
+        _coerce_int(raw.get("completion_tokens")),
+        _coerce_int(raw.get("total_tokens")),
+        _coerce_int(raw.get("reasoning_tokens")),
+    )
+
+
 def normalize_usage(raw: dict | None, provider: str) -> dict | None:
     """Normalize provider usage to ``{prompt_tokens, cached_tokens, completion_tokens, total_tokens, reasoning_tokens?}``.
 
@@ -33,59 +102,16 @@ def normalize_usage(raw: dict | None, provider: str) -> dict | None:
     if not isinstance(raw, dict) or not raw:
         return None
     provider = provider.strip().lower()
-    prompt: int | None = None
-    cached: int | None = None
-    completion: int | None = None
-    total: int | None = None
-    reasoning: int | None = None
     if provider in ("openai", "openai_chat", "openai_compat"):
-        prompt = _coerce_int(raw.get("prompt_tokens"))
-        completion = _coerce_int(raw.get("completion_tokens"))
-        total = _coerce_int(raw.get("total_tokens"))
-        details = raw.get("prompt_tokens_details")
-        if isinstance(details, dict):
-            cached = _coerce_int(details.get("cached_tokens"))
-        c_details = raw.get("completion_tokens_details")
-        if isinstance(c_details, dict):
-            reasoning = _coerce_int(c_details.get("reasoning_tokens"))
+        prompt, cached, completion, total, reasoning = _extract_openai(raw)
     elif provider == "openai_responses":
-        # Responses API shape (verified live): input/output counters.
-        prompt = _coerce_int(raw.get("input_tokens"))
-        completion = _coerce_int(raw.get("output_tokens"))
-        total = _coerce_int(raw.get("total_tokens"))
-        details = raw.get("input_tokens_details")
-        if isinstance(details, dict):
-            cached = _coerce_int(details.get("cached_tokens"))
-        c_details = raw.get("output_tokens_details")
-        if isinstance(c_details, dict):
-            reasoning = _coerce_int(c_details.get("reasoning_tokens"))
+        prompt, cached, completion, total, reasoning = _extract_responses(raw)
     elif provider == "anthropic":
-        prompt = _coerce_int(raw.get("input_tokens"))
-        completion = _coerce_int(raw.get("output_tokens"))
-        cached = _coerce_int(raw.get("cache_read_input_tokens"))
-        # cache_creation_input_tokens is still prompt cost, not cached
-        total_raw = raw.get("total_tokens")
-        if isinstance(total_raw, int):
-            total = _coerce_int(total_raw)
+        prompt, cached, completion, total, reasoning = _extract_anthropic(raw)
     elif provider == "google":
-        prompt = _coerce_int(raw.get("promptTokenCount"))
-        if prompt is None:
-            prompt = _coerce_int(raw.get("prompt_tokens"))
-        completion = _coerce_int(raw.get("candidatesTokenCount"))
-        if completion is None:
-            completion = _coerce_int(raw.get("completion_tokens"))
-        cached = _coerce_int(raw.get("cachedContentTokenCount"))
-        if cached is None:
-            cached = _coerce_int(raw.get("cached_tokens"))
-        total = _coerce_int(raw.get("totalTokenCount"))
-        if total is None:
-            total = _coerce_int(raw.get("total_tokens"))
+        prompt, cached, completion, total, reasoning = _extract_google(raw)
     else:
-        prompt = _coerce_int(raw.get("prompt_tokens"))
-        completion = _coerce_int(raw.get("completion_tokens"))
-        cached = _coerce_int(raw.get("cached_tokens"))
-        total = _coerce_int(raw.get("total_tokens"))
-        reasoning = _coerce_int(raw.get("reasoning_tokens"))
+        prompt, cached, completion, total, reasoning = _extract_generic(raw)
     if prompt is None and completion is None and total is None:
         return None
     if prompt is None and total is not None and completion is not None:

@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 created: 2026-09-22
 last_updated: 2026-09-22
 ---
@@ -134,3 +134,6 @@ mở thẳng view Trace (W3 code, W2 chỉ verify wiring còn nguyên);
 - **`url()` trong CSS**: `usage.css`/`dashboard.css` hiện không có `url()`
   (đã grep) — move CSS không kéo assets; nếu W6 move `images/`/`vendor/` sau
   này thì check lại.
+
+## Close-out (2026-09-22, orchestrator)
+All module tasks landed and verified: branch refactor-webui-W2-dashboard, test 719/719, review approve zero findings. Merged into refactor/webui-solid, full suite 719 passed, Chrome gate pass, plan status done.

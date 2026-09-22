@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 created: 2026-09-22
 last_updated: 2026-09-22
 ---
@@ -73,10 +73,10 @@ giữ nguyên vị trí trừ khi team chứng minh lợi ích di chuyển.
 
 | ID | Task | Done | Date |
 |----|------|------|------|
-| TASK-012 | Full `uv run pytest -q` + `git diff --check` + URL probes trên nhánh tích hợp | | |
-| TASK-013 | Chrome screenshot gate: chụp 6 trang (desktop + 1 mobile width) so với base — không vỡ layout mới pass | | |
-| TASK-014 | Review tổng độc lập 1 lượt toàn diff (scope, SOLID, không behavior change lén) | | |
-| TASK-015 | Cập nhật docs (AGENT_RULES, PROJECT_CONTEXT, README, CHANGELOG) theo tree mới | | |
+| TASK-012 | Full `uv run pytest -q` + `git diff --check` + URL probes trên nhánh tích hợp | x (719 passed, diff clean, 6/6 html 200 + assets, old paths 404) | 2026-09-22 |
+| TASK-013 | Chrome screenshot gate: chụp 6 trang (desktop + 1 mobile width) so với base — không vỡ layout mới pass | x (24 shots, consoles clean; found+fixed shell misfile breakage, re-shot: pixel-diffs ~0, eye-verified) | 2026-09-22 |
+| TASK-014 | Review tổng độc lập 1 lượt toàn diff (scope, SOLID, không behavior change lén) | x (1.3 max approve, 2 comment minors fixed) | 2026-09-22 |
+| TASK-015 | Cập nhật docs (AGENT_RULES, PROJECT_CONTEXT, README, CHANGELOG) theo tree mới | x | 2026-09-22 |
 
 ### Layout decisions (orchestrator, 2026-09-22 — sau review 6 module plans)
 

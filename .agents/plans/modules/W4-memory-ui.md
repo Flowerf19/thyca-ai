@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 created: 2026-09-22
 last_updated: 2026-09-22
 ---
@@ -156,3 +156,6 @@ verified bằng grep, không consumer ngoài.
 4. Không tách file W4 (lý do tại SOLID-1..4); mọi thay đổi ngoài 7 file module
    (`memories.html`/`.js`/`.css`, `profile.html`/`.js`/`.css`, `memory-data.js`) đều
    ngoài scope.
+
+## Close-out (2026-09-22, orchestrator)
+All module tasks landed and verified: branch refactor-webui-W4-memory-ui, test 719/719, review approve. Merged into refactor/webui-solid, full suite 719 passed, Chrome gate pass, plan status done.

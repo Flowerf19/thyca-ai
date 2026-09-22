@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 created: 2026-09-22
 last_updated: 2026-09-22
 ---
@@ -93,3 +93,6 @@ Focused tests cho W6 (chạy sau mỗi GOAL):
 4. Pager contract (`test_journal_visual.py`): block pager chung hook class pager, không hook `.screen-button` — khi tách phải giữ nguyên block, không "tiện tay" gộp vào button base.
 5. `serve/static.py` `safe_file` resolve mọi subpath dưới `webui/` nên phục vụ `shared/` + `pages/` không cần sửa serve; rủi ro còn lại là quên cập nhật `<link>/<script>/import` dẫn 404 — probe toàn bộ paths sau move.
 6. Test literals (`./backend/api.js`, `./backend/format.js`, `./backend/markdown.js`, flat css names) vỡ sau move — đã liệt kê cập nhật ở TASK-005, thuộc contract change duyệt trước, không phải sửa test để pass.
+
+## Close-out (2026-09-22, orchestrator)
+All module tasks landed and verified: branch refactor-webui-W6-shared (redo full split), test 719/719, review request-changes 1 regression (media order, fixed at merge) + shell misfile found by Chrome gate (fixed at merge). Merged into refactor/webui-solid, full suite 719 passed, Chrome gate pass, plan status done.

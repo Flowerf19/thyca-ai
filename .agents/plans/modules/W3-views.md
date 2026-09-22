@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 created: 2026-09-22
 last_updated: 2026-09-22
 ---
@@ -220,3 +220,6 @@ Thứ tự tách (mỗi bước xong phải chạy lại test gate TASK-010 trư
    `cost.js` 451 và `trace-data.js` 409 vượt nhẹ nên tách tối thiểu
    (TASK-006/007); `cost.css` 137 và `trace.css` 222 không tách file,
    chỉ rescope (TASK-008).
+
+## Close-out (2026-09-22, orchestrator)
+All module tasks landed and verified: branch refactor-webui-W3-views (redo splits + extractor updates), test 719/719, review approve. Merged into refactor/webui-solid, full suite 719 passed, Chrome gate pass, plan status done.

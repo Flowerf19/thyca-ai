@@ -24,6 +24,6 @@ Telegram/Discord, subagent, plan mode, GUI popup, confirmation gate, ANN/vector 
 
 `uv run pytest -q`. Baseline 2026-09-22: **719 passed / 0 fail** (fail `test_debug_prints_prompt_flags` cũ không tái hiện — tools count đã khớp; nếu đỏ lại thì là regression).
 
-Layout: `thyca/{agent,llm,config,memory,sessions,tools,skills,serve,app,core}/` — top-level chỉ còn `__init__.py` + `__main__.py`; entry serve qua `thyca/serve/`, chat/CLI qua `thyca/app/`.
+Layout backend: `thyca/{agent,llm,config,memory,sessions,tools,skills,serve,app,core}/` — top-level chỉ còn `__init__.py` + `__main__.py`; entry serve qua `thyca/serve/`, chat/CLI qua `thyca/app/`. Layout webui: `webui/*.html` flat + `pages/<trang>/` + `shared/{css,js}/`.
 
 Chi tiết plan: `plans/backend-solid-refactor.md` (in-progress, GOAL-004); history: `plans/done/thyca-harness-v1.md`, `plans/done/l2-memory-retrieval.md`, decision `2026-08-15-l2-hybrid-v1.md`.

@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 created: 2026-09-22
 last_updated: 2026-09-22
 ---
@@ -203,3 +203,6 @@ path ở Risks cần orchestrator quyết ở GOAL-002 plan tổng):
    `uv run pytest -q` 719 passed/0 fail; `git diff --check` sạch.
 5. Visual: chat page qua serve — sidebar + pager, 1 vòng gửi/nhận, 2 dialogs
    — giống base (screenshot desktop + 1 mobile width, không vỡ layout).
+
+## Close-out (2026-09-22, orchestrator)
+All module tasks landed and verified: branch refactor-webui-W1-chat (redo splits + harness concat), test 719/719, review approve. Merged into refactor/webui-solid, full suite 719 passed, Chrome gate pass, plan status done.

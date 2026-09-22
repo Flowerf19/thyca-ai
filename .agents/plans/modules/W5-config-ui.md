@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 created: 2026-09-22
 last_updated: 2026-09-22
 ---
@@ -183,3 +183,6 @@ cách mở `provider.html` console sạch + pytest gate ở GOAL-004):
    1 mobile, console zero error, theme toggle persist qua reload.
 6. Zero test edits, zero new dependencies, zero thay đổi `thyca/serve/`,
    `git diff --check` sạch.
+
+## Close-out (2026-09-22, orchestrator)
+All module tasks landed and verified: branch refactor-webui-W5-config-ui (split + 1-line test fix), test 719/719, review approve. Merged into refactor/webui-solid, full suite 719 passed, Chrome gate pass, plan status done.

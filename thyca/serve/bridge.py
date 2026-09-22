@@ -22,8 +22,8 @@ import threading
 from typing import TYPE_CHECKING
 
 from thyca.agent.events import TurnEvent
-from thyca.agent.thinking import ThinkingDelta
 from thyca.agent.reply import ContentDelta
+from thyca.agent.thinking import ThinkingDelta
 from thyca.serve.errors import parse_turn_body, public_turn_error
 from thyca.serve.turn_state import TurnHub
 

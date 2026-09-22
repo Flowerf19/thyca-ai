@@ -9,8 +9,8 @@ import httpx
 from thyca.config import ProviderCfg
 from thyca.core.protocol import Message
 
-from .llm_base import ChatReply, Connect, LLMError
 from ._http import _RETRY_STATUS, _cap, _redact, _sleep_retry_after
+from .llm_base import ChatReply, Connect, LLMError
 from .openai_parse import parse_chat_bytes, read_sse_reply
 
 

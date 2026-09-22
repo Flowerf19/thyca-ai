@@ -16,8 +16,8 @@ from typing import TYPE_CHECKING
 
 from thyca.serve.bridge import _log_turn_failure, pump_stream, stream_turn
 from thyca.serve.errors import parse_turn_body, public_turn_error
-from thyca.sessions.wire import delete_error, rename_error
 from thyca.sessions import SessionCorrupt, SessionError, SessionNotFound
+from thyca.sessions.wire import delete_error, rename_error
 
 if TYPE_CHECKING:
     from thyca.app.chat_app import ChatApp

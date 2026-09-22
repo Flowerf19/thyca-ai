@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from thyca.serve import config_api
+from thyca.serve.memory import memory_endpoint
 from thyca.serve.sessions_api import (
     session_create,
     session_delete,
@@ -30,7 +31,6 @@ from thyca.serve.sessions_api import (
     session_turn_follow,
     session_turn_stream,
 )
-from thyca.serve.memory import memory_endpoint
 from thyca.serve.static import content_type, safe_file
 from thyca.serve.trace_api import (
     trace_detail_payload,

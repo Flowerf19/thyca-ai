@@ -14,14 +14,15 @@ import httpx
 from thyca.config import ProviderCfg
 from thyca.core.protocol import Message
 
-from .llm_base import ChatReply, Connect, LLMError
 from ._http import _RETRY_STATUS, _cap, _redact, _sleep_retry_after
+from .llm_base import ChatReply, Connect, LLMError
 from .responses_parse import (
     _to_responses_input,
     _to_responses_tools,
     parse_responses_bytes,
     read_responses_sse,
 )
+
 
 def _responses_url(base_url: str) -> str:
     return base_url.rstrip("/") + "/responses"

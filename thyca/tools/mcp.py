@@ -20,6 +20,23 @@ from thyca.tools.registry import ToolSpec
 CALL_TIMEOUT = timedelta(seconds=30)
 
 
+class _McpSession(Protocol):
+    async def initialize(self) -> object: ...
+    async def list_tools(self) -> Any: ...
+    async def call_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any] | None = None,
+        read_timeout_seconds: timedelta | None = None,
+        **kwargs: Any,
+    ) -> CallToolResult: ...
+
+
+_TOOL_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
+_MODEL_NAME_MAX = 64
+ProcessFactory = Callable[[str, McpServerCfg], "MCPProcess"]
+
+
 # PYTHONWARNINGS is parsed while `warnings` itself is still importing, so a
 # dotted category path (…sources.utils.IncompleteFieldDefinitionWarning) can
 # never be imported at that point: the whole option is dropped with "invalid
@@ -63,16 +80,26 @@ def join_text_blocks(content: list[Any]) -> str:
     return "".join(parts)
 
 
-class _McpSession(Protocol):
-    async def initialize(self) -> object: ...
-    async def list_tools(self) -> Any: ...
-    async def call_tool(
-        self,
-        name: str,
-        arguments: dict[str, Any] | None = None,
-        read_timeout_seconds: timedelta | None = None,
-        **kwargs: Any,
-    ) -> CallToolResult: ...
+def _is_object_schema(schema: object) -> bool:
+    def is_schema(candidate: object) -> bool:
+        if not isinstance(candidate, dict):
+            return False
+        properties = candidate.get("properties")
+        if properties is not None and (
+            not isinstance(properties, dict)
+            or any(not is_schema(value) for value in properties.values())
+        ):
+            return False
+        required = candidate.get("required")
+        if required is not None and (
+            not isinstance(required, list)
+            or any(not isinstance(name, str) for name in required)
+        ):
+            return False
+        additional = candidate.get("additionalProperties", True)
+        return isinstance(additional, bool) or is_schema(additional)
+
+    return isinstance(schema, dict) and schema.get("type") == "object" and is_schema(schema)
 
 
 class MCPProcess:
@@ -149,11 +176,6 @@ class MCPProcess:
         self._session = None
 
 
-_TOOL_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
-_MODEL_NAME_MAX = 64
-ProcessFactory = Callable[[str, McpServerCfg], MCPProcess]
-
-
 @dataclass(frozen=True)
 class StartupDiagnostic:
     server: str
@@ -177,28 +199,6 @@ def _handler(proc: MCPProcess, tool_name: str):
         )
 
     return handler
-
-
-def _is_object_schema(schema: object) -> bool:
-    def is_schema(candidate: object) -> bool:
-        if not isinstance(candidate, dict):
-            return False
-        properties = candidate.get("properties")
-        if properties is not None and (
-            not isinstance(properties, dict)
-            or any(not is_schema(value) for value in properties.values())
-        ):
-            return False
-        required = candidate.get("required")
-        if required is not None and (
-            not isinstance(required, list)
-            or any(not isinstance(name, str) for name in required)
-        ):
-            return False
-        additional = candidate.get("additionalProperties", True)
-        return isinstance(additional, bool) or is_schema(additional)
-
-    return isinstance(schema, dict) and schema.get("type") == "object" and is_schema(schema)
 
 
 def _tool_error(

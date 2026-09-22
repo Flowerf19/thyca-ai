@@ -173,6 +173,8 @@ def bash_read_spec(background: BackgroundProcs | None) -> ToolSpec:
         if not isinstance(bid, str) or not bid.strip():
             raise ValueError("id must be a non-empty string")
         raw_wait = args.get("wait")
+        # Kept inline (not bash.parse_timeout): wait allows 0 and clamps to
+        # _READ_WAIT_MAX_S instead of requiring a positive integer.
         if raw_wait is None:
             wait_s = 0
         elif isinstance(raw_wait, bool) or not isinstance(raw_wait, int) or raw_wait < 0:

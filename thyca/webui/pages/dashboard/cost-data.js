@@ -9,7 +9,7 @@
    cost_usd is authoritative; null means "no priced turn yet", not $0. */
 
 import { cleanText, formatInteger } from "../../shared/js/format.js";
-import { splitPromptTokens } from "../../shared/js/analytics-data.js";
+import { completeDays, splitPromptTokens } from "../../shared/js/analytics-data.js";
 
 /* Group key for rows whose session_id is missing/blank — rendered as its own
    explicit group instead of being dropped or silently merged. */
@@ -94,8 +94,9 @@ export function overviewMetrics(rows) {
 
 /* Per-turn average for the header: value plus its meta lines. Runs over the
    average basis (priced, non-failed turns); null value with an explanatory
-   line when no turn qualifies. Kept here (not in cost.js) so the formula
-   and wording stay unit-tested. */
+   line when no turn qualifies. The skip line splits failed vs unpriced so it
+   never clashes with the header total's "đã định giá N" coverage note.
+   Kept here (not in cost.js) so the formula and wording stay unit-tested. */
 export function averageDisplay(overview) {
   const turns = Number(overview?.averageTurns) || 0;
   const cost = overview?.averageCostUsd;
@@ -105,12 +106,18 @@ export function averageDisplay(overview) {
       meta: [overview?.turns ? "không có lượt nào đủ giá để tính trung bình" : "chưa có lượt nào"],
     };
   }
-  const skipped = (Number(overview.turns) || 0) - turns;
+  const pricedTurns = Number(overview?.pricedTurns) || 0;
+  const totalTurns = Number(overview?.turns) || 0;
+  const skipped = [];
+  const failed = Math.max(pricedTurns - turns, 0);
+  const unpriced = Math.max(totalTurns - pricedTurns, 0);
+  if (failed > 0) skipped.push(`${formatInteger(failed)} lỗi`);
+  if (unpriced > 0) skipped.push(`${formatInteger(unpriced)} chưa định giá`);
   return {
     value: cost / turns,
     meta: [
-      `trên ${formatInteger(turns)} lượt đã định giá`,
-      ...(skipped > 0 ? [`bỏ ${formatInteger(skipped)} lượt chưa định giá hoặc lỗi`] : []),
+      `${formatInteger(turns)} lượt hợp lệ`,
+      ...(skipped.length ? [`bỏ ${skipped.join(" · ")}`] : []),
     ],
   };
 }
@@ -202,6 +209,36 @@ export function knownCostTotal(models) {
     if (cost != null) total = (total ?? 0) + cost;
   }
   return total;
+}
+
+/* Token total of one by_model row: the whole prompt side (cached_tokens is
+   already inside prompt_tokens) plus completion, so the Token-by-model
+   table and its Đầu vào/Cache/Đầu ra breakdown always add up. */
+export function modelTokens(row) {
+  const prompt = Number(row?.prompt_tokens) || 0;
+  const completion = Number(row?.completion_tokens) || 0;
+  return prompt + completion;
+}
+
+/* Token denominator over the snapshot's models (mirrors knownCostTotal);
+   null when nothing to share so meters stay empty instead of 0%. */
+export function knownTokenTotal(models) {
+  let total = null;
+  for (const row of Array.isArray(models) ? models : []) {
+    const tokens = modelTokens(row);
+    if (tokens > 0) total = (total ?? 0) + tokens;
+  }
+  return total;
+}
+
+/* Cost per day for the overview chart: priced daily totals from stats.by_day
+   (null = no priced turn that day, drawn as zero), zero-filled across the
+   snapshot range so gaps read as gaps. */
+export function dailyCosts(byDay, range) {
+  const rows = (Array.isArray(byDay) ? byDay : [])
+    .filter((row) => /^\d{4}-\d{2}-\d{2}$/.test(String(row?.day || "")))
+    .map((row) => ({ day: row.day, value: Number(row?.cost_usd) || 0 }));
+  return completeDays(rows, range).map((row) => ({ day: row.day, value: Number(row.value) || 0 }));
 }
 
 /* Share as a percent string, or "—" when either side is unknown or the

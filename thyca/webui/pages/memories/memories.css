@@ -16,6 +16,15 @@
   min-height: 19rem;
 }
 
+/* Flat surface like dashboard Request/Usage (dashboard.css): no cream panel
+   on the overview — keep only the hairline border from .screen-card. */
+.memory-chart-card,
+.memory-overview .screen-card {
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
+}
+
 .memory-chart-card svg {
   width: 100%;
   height: 16rem;
@@ -27,6 +36,21 @@
 
 .memory-bar {
   fill: var(--color-accent);
+  stroke: none;
+}
+
+/* Shared bar-chart helper (shared/js/bar-chart.js) emits .usage-grid lines
+   + .usage-axis labels for every chart, including this one. Those rules live
+   in pages/dashboard/usage.css (dashboard-only), so scope them here for the
+   memory chart card — otherwise grid + day/value labels render invisible. */
+.memory-chart-card .usage-grid {
+  stroke: var(--color-divider);
+  stroke-width: 1;
+}
+.memory-chart-card .usage-axis {
+  fill: var(--color-muted);
+  stroke: none;
+  font: 12px var(--font-reading);
 }
 
 .memory-overview {
@@ -302,7 +326,7 @@
   grid-row: 1;
   justify-self: end;
 }
-.memory-meta time {
+.memory-card > time {
   grid-column: 1;
   grid-row: 1;
   justify-self: start;
@@ -318,12 +342,16 @@
 }
 @media (max-width: 56rem) {
   .memory-card {
-    grid-template-columns: 4.4rem minmax(0, 1fr);
+    grid-template-columns: 5rem minmax(0, 1fr);
     column-gap: 0.8rem;
     padding: 0.85rem 0;
   }
-  .memory-meta time {
-    grid-column: 1 / -1;
+  .memory-card > time {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .memory-copy h3::before {
+    left: -0.8rem;
   }
   .memory-copy h3 {
     font-size: 1.15rem;

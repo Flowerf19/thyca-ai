@@ -96,6 +96,14 @@ function rowAction(className, label, text, onClick) {
   return button;
 }
 
+// Mobile pick pattern: a tapped row reveals its conversation (boot-time and
+// retry loads must NOT exit picking — only real taps do).
+function exitPickingOnTap() {
+  if (matchMedia("(max-width: 56rem)").matches) {
+    document.querySelector(".chat-shell")?.classList.remove("is-picking");
+  }
+}
+
 function sessionButton(session) {
   // Buttons cannot nest, so the row is a button and the two actions sit next
   // to it inside one positioned wrapper.
@@ -121,7 +129,10 @@ function sessionButton(session) {
   // Same shape as Hồ sơ / Nhật ký: icon and name on the item. The time line
   // is the shared second row of .session-item, flush right under the name.
   button.append(icon, name, time);
-  button.addEventListener("click", () => void sidebarDeps.loadSession(button.dataset.sessionId));
+  button.addEventListener("click", () => {
+    exitPickingOnTap();
+    void sidebarDeps.loadSession(button.dataset.sessionId);
+  });
 
   const title = cleanText(session.title, "Phiên trống");
   const actions = document.createElement("span");

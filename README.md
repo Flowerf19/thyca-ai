@@ -2,7 +2,7 @@
 
 Trợ lý cá nhân đa công việc, đang ở giai đoạn **trước beta (pre-beta)**. Thyca học dần từ những gì bạn chia sẻ và cách bạn làm việc để điều chỉnh cách hỗ trợ phù hợp nhất với bạn — từ trò chuyện, viết code, đọc và xử lý tài liệu đến những việc khác trong công việc hằng ngày.
 
-**Phiên bản hiện tại: 0.8.5.dev0 (trước beta).**
+**Phiên bản hiện tại: 0.8.6.dev0 (trước beta).**
 
 ## Nó làm được gì?
 
@@ -20,11 +20,11 @@ Màn **Hồ sơ** cho bạn sửa trực tiếp USER.md / SOUL.md / IDENTITY.md 
 
 ![Màn hồ sơ](docs/images/webui-profile.png)
 
-Màn **Trace** ghi lại từng lượt tool call với input/output đầy đủ, màn **Tổng quan** vẽ chi phí và lượng token theo ngày, theo model.
+Màn **Trace** ghi lại từng lượt tool call với input/output đầy đủ, màn **Dashboard** vẽ token, request và chi phí theo ngày, theo model (4 tab: Sử dụng token, Request, Chi phí, Trace).
 
 ![Màn Trace](docs/images/webui-trace.png)
 
-![Màn Tổng quan](docs/images/webui-dashboard.png)
+![Màn Chi phí — Dashboard](docs/images/webui-dashboard.png)
 
 ## Cách bộ nhớ hoạt động
 

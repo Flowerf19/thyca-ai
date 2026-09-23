@@ -63,7 +63,16 @@ const el = {
   deleteStatus: document.querySelector("#delete-status"),
   deleteCancel: document.querySelector("#cancel-delete"),
   chatTitle: document.querySelector("#chat-title"),
+  back: document.querySelector("#chat-back"),
 };
+
+// Mobile pick pattern (same as Hồ sơ/Cài đặt): the session list shows first,
+// opening a session reveals the conversation, ‹ Phiên returns to the list.
+const shell = document.querySelector(".chat-shell");
+const compact = matchMedia("(max-width: 56rem)");
+function exitPicking() {
+  if (compact.matches) shell?.classList.remove("is-picking");
+}
 
 const state = {
   sessions: [],
@@ -166,6 +175,7 @@ async function loadSession(sessionId) {
 }
 
 function newSession() {
+  exitPicking(); // the fresh composer replaces the list on mobile
   abortFollow();
   clearRunningPoll();
   ++state.loadGeneration;
@@ -182,6 +192,7 @@ function newSession() {
 
 function bind() {
   el.newSession.addEventListener("click", newSession);
+  el.back?.addEventListener("click", () => shell?.classList.add("is-picking"));
   el.stop.addEventListener("click", () => void stopTurn());
   el.model.addEventListener("change", async () => {
     try {

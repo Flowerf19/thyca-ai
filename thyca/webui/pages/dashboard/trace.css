@@ -18,6 +18,13 @@ html[data-theme="dusk"] #trace {
   --trace-code-ink: oklch(89% 0.02 80);
 }
 
+/* Journal lists sit inset from section headings on both sides, like the
+   by-model charts — rows never run edge to edge. */
+#trace-sessions,
+#trace-turns {
+  padding-inline: 1rem;
+}
+
 /* Status/note row plus the copy-session-ID button. */
 #trace .trace-meta {
   display: flex;

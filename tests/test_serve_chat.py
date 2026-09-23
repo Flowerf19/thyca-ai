@@ -770,6 +770,20 @@ def test_session_payload_includes_ask_remember(tmp_path: Path) -> None:
     app.shutdown()
 
 
+def test_chat_mobile_pick_pattern() -> None:
+    """Chat follows the Hồ sơ/Cài đặt mobile pattern: the session list shows
+    first (pick-shell), a tapped row or + reveals the conversation, ‹ Phiên
+    returns. Boot-time loads must not exit picking — only real taps do."""
+    html = (WEBUI / "index.html").read_text(encoding="utf-8")
+    app = (WEBUI / "pages" / "chat" / "app.js").read_text(encoding="utf-8")
+    sidebar = (WEBUI / "pages" / "chat" / "sessions-sidebar.js").read_text(encoding="utf-8")
+    assert "chat-shell pick-shell is-picking" in html
+    assert "screen-shell" not in html
+    assert 'id="chat-back"' in html
+    assert "exitPicking" in app
+    assert "exitPickingOnTap" in sidebar
+
+
 def test_idle_remember_nudge_in_webui() -> None:
     html = (WEBUI / "index.html").read_text(encoding="utf-8")
     app = "\n".join(

@@ -1,9 +1,10 @@
 import { getJson } from "../../shared/js/http.js";
-import { aggregateUsage, completeDays, rollingRange, traceRangeUrl } from "../../shared/js/analytics-data.js";
+import { aggregateUsage, completeDays, rollingRange, splitPromptTokens, traceRangeUrl } from "../../shared/js/analytics-data.js";
+import { knownTokenTotal, modelTokens, shareLabel, shareRatio } from "./cost-data.js";
 import { drawBarChart } from "../../shared/js/bar-chart.js";
 import { fetchAllTraces } from "../../shared/js/dashboard-today.js";
 import { makeSetStatus, messageOf } from "../../shared/js/status.js";
-import { formatCompact, formatDate, formatInteger } from "../../shared/js/format.js";
+import { cleanText, formatCompact, formatDate, formatInteger } from "../../shared/js/format.js";
 
 const el = {
   period: document.querySelector("#usage-month"),
@@ -13,6 +14,7 @@ const el = {
   turns: document.querySelector("#usage-turns"),
   range: document.querySelector("#usage-period"),
   status: document.querySelector("#usage-status"),
+  models: document.querySelector("#usage-models"),
   legend: [...document.querySelectorAll(".usage-legend span")],
   units: [...document.querySelectorAll(".usage-toggle button")],
 };
@@ -70,6 +72,78 @@ function summaryCard(title, amount, total, turns) {
   return article;
 }
 
+/* Token by model, aggregated from the same loaded trace snapshot as the
+   chart above — no extra request. Sorted by tokens, never by cost. */
+function aggregateModelTokens(traces) {
+  const byModel = new Map();
+  for (const row of Array.isArray(traces) ? traces : []) {
+    const name = cleanText(row?.model) || "unknown";
+    const current = byModel.get(name)
+      || { model: name, requests: 0, prompt_tokens: 0, cached_tokens: 0, completion_tokens: 0 };
+    current.requests += Number(row?.requests) || 0;
+    current.prompt_tokens += Number(row?.prompt_tokens) || 0;
+    current.cached_tokens += Number(row?.cached_tokens) || 0;
+    current.completion_tokens += Number(row?.completion_tokens) || 0;
+    byModel.set(name, current);
+  }
+  return [...byModel.values()].sort((a, b) => modelTokens(b) - modelTokens(a));
+}
+
+/* Token-by-model chart row: same row markup as Request theo mô hình
+   (shared .request-model-* rules in dashboard.css). The token breakdown
+   rides below the bar as one muted meta line. */
+function modelTokenEntry(model, denominator) {
+  const item = document.createElement("li");
+  item.className = "request-model-row";
+  const tokens = modelTokens(model);
+  const head = document.createElement("div");
+  head.className = "request-model-head";
+  const name = document.createElement("span");
+  name.className = "request-model-name";
+  name.textContent = model.model || "unknown";
+  const amount = document.createElement("span");
+  amount.className = "request-model-count";
+  amount.textContent = `${formatInteger(tokens)} token`;
+  const share = document.createElement("span");
+  share.className = "request-model-share";
+  share.textContent = shareLabel(tokens, denominator);
+  const bar = document.createElement("span");
+  bar.className = "request-model-bar";
+  bar.setAttribute("aria-hidden", "true");
+  const fill = document.createElement("span");
+  fill.className = "request-model-fill";
+  fill.style.width = shareRatio(tokens, denominator) ?? "0%";
+  bar.append(fill);
+  head.append(name, amount, share);
+  item.append(head, bar);
+  const meta = document.createElement("p");
+  meta.className = "journal-meta";
+  const calls = document.createElement("span");
+  calls.textContent = `${formatInteger(model.requests)} lần gọi model`;
+  meta.append(calls);
+  // prompt_tokens already contains cached_tokens (backend semantics), so the
+  // uncached input is split out and cache is reported beside it, never added
+  // twice.
+  const { input, cache } = splitPromptTokens(model.prompt_tokens, model.cached_tokens);
+  const output = model.completion_tokens;
+  for (const [label, value] of [["Đầu vào", input], ["Cache", cache], ["Đầu ra", output]]) {
+    const token = document.createElement("span");
+    token.textContent = `${label} ${formatCompact(value)} token`;
+    meta.append(token);
+  }
+  meta.title = `Đầu vào ${formatInteger(input)} token · Cache ${formatInteger(cache)} token · Đầu ra ${formatInteger(output)} token`;
+  item.append(meta);
+  return item;
+}
+
+function renderModels() {
+  const rows = aggregateModelTokens(payload?.traces);
+  const list = document.createElement("ul");
+  list.className = "request-model-chart";
+  list.replaceChildren(...rows.map((model) => modelTokenEntry(model, knownTokenTotal(rows))));
+  el.models.replaceChildren(list);
+}
+
 function setStrong(root, value, unitText) {
   const small = document.createElement("small");
   small.textContent = unitText;
@@ -92,6 +166,7 @@ function render() {
     item.hidden = unit === "turn" && index > 0;
     if (index === 0) item.textContent = unit === "turn" ? "Lượt" : "Input";
   });
+  renderModels();
   draw();
 }
 
@@ -117,6 +192,7 @@ async function load() {
     series = [];
     el.chart.replaceChildren();
     el.summaries.replaceChildren();
+    el.models.replaceChildren();
     setStatus(messageOf(error, "Không tải được số liệu token."), "error");
   }
 }

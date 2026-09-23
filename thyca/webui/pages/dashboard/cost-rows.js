@@ -10,7 +10,6 @@ import {
 } from "./cost-data.js";
 import {
   selectModels,
-  splitPromptTokens,
 } from "../../shared/js/analytics-data.js";
 import { formatCost, formatInteger } from "../../shared/js/format.js";
 import {
@@ -79,7 +78,9 @@ function metricMeta(node, parts) {
 
 function partialNote(pricedTurns, turns) {
   if (pricedTurns >= turns) return "";
-  return `${turns - pricedTurns} lượt chưa định giá`;
+  // One coverage style for model/session rows ("đã định giá N"), never a
+  // second denominator.
+  return `đã định giá ${formatInteger(pricedTurns)}`;
 }
 
 function pricingDetails(model, denominator) {
@@ -110,54 +111,43 @@ function pricingDetails(model, denominator) {
   return details;
 }
 
-function modelEntry(model, index, denominator, coverage) {
-  const entry = document.createElement("li");
-  entry.className = "journal-entry";
-  const gutter = document.createElement("span");
-  gutter.className = "journal-date";
-  gutter.textContent = shareLabel(model.cost_usd, denominator);
-  const body = document.createElement("div");
-  body.className = "journal-body";
-  const title = document.createElement("div");
-  title.className = "journal-row-title";
-  const name = document.createElement("h3");
+/* Cost-only chart row: same row markup as Request theo mô hình (shared
+   .request-model-* rules in dashboard.css). The bar is the cost share of
+   the snapshot total; the Đơn giá disclosure stays — it is cost detail. */
+function modelEntry(model, denominator, coverage) {
+  const item = document.createElement("li");
+  item.className = "request-model-row";
+  const head = document.createElement("div");
+  head.className = "request-model-head";
+  const name = document.createElement("span");
+  name.className = "request-model-name";
   name.textContent = model.model || "unknown";
-  const amount = document.createElement("strong");
-  amount.className = "journal-amount";
+  const amount = document.createElement("span");
+  amount.className = "request-model-count";
   amount.textContent = formatCost(model.cost_usd);
-  title.append(name, amount);
-  const meter = document.createElement("div");
-  meter.className = "journal-meter";
-  meter.setAttribute("aria-hidden", "true");
+  const share = document.createElement("span");
+  share.className = "request-model-share";
+  share.textContent = shareLabel(model.cost_usd, denominator);
+  const bar = document.createElement("span");
+  bar.className = "request-model-bar";
+  bar.setAttribute("aria-hidden", "true");
   const fill = document.createElement("span");
-  const ratio = shareRatio(model.cost_usd, denominator);
-  if (ratio != null) fill.style.setProperty("--share", ratio);
-  meter.append(fill);
-  const meta = document.createElement("p");
-  meta.className = "journal-meta";
-  const calls = document.createElement("span");
-  calls.textContent = `${formatInteger(model.requests)} lần gọi model`;
-  meta.append(calls);
-  // prompt_tokens already contains cached_tokens (backend semantics), so the
-  // uncached input is split out and cache is reported beside it, never added
-  // twice.
-  const { input, cache } = splitPromptTokens(model.prompt_tokens, model.cached_tokens);
-  for (const [label, value] of [["Đầu vào", input], ["Cache", cache], ["Đầu ra", model.completion_tokens]]) {
-    const token = document.createElement("span");
-    token.textContent = `${label} ${formatInteger(value)} token`;
-    meta.append(token);
-  }
+  fill.className = "request-model-fill";
+  fill.style.width = shareRatio(model.cost_usd, denominator) ?? "0%";
+  bar.append(fill);
+  head.append(name, amount, share);
+  item.append(head, bar);
   // by_model carries no turn count: missing-turn coverage for this model is
   // derived from the loaded rows, so a partial aggregate is labeled as such
   // instead of posing as complete.
   if (coverage && coverage.pricedTurns < coverage.turns) {
-    const partial = document.createElement("span");
-    partial.textContent = partialNote(coverage.pricedTurns, coverage.turns);
-    meta.append(partial);
+    const note = document.createElement("span");
+    note.className = "request-model-share";
+    note.textContent = partialNote(coverage.pricedTurns, coverage.turns);
+    item.append(note);
   }
-  body.append(title, meter, meta, pricingDetails(model, denominator));
-  entry.append(gutter, body);
-  return entry;
+  item.append(pricingDetails(model, denominator));
+  return item;
 }
 
 function sessionEntry(session, denominator) {
@@ -220,17 +210,25 @@ function renderModels() {
   modelsPages = journalPageCount(rows.length);
   modelsPage = journalClampPage(modelsPage, modelsPages);
   const start = (modelsPage - 1) * JOURNAL_PAGE_SIZE;
-  el.models.replaceChildren(
-    ...rows.slice(start, start + JOURNAL_PAGE_SIZE)
-      .map((model, index) => modelEntry(model, index, denominator, coverage.get(model.model || "unknown"))),
+  const page = rows.slice(start, start + JOURNAL_PAGE_SIZE);
+  const list = document.createElement("ul");
+  list.className = "request-model-chart";
+  list.replaceChildren(
+    ...page.map((model) => modelEntry(model, denominator, coverage.get(model.model || "unknown"))),
   );
+  el.models.replaceChildren(list);
   syncPager(modelsPager, modelsPage, modelsPages);
   el.sorts.forEach((button) => {
     button.setAttribute("aria-pressed", String(button.dataset.sort === sort));
   });
-  if (!rows.length) el.models.append(emptyItem(models.length
-    ? "Không có mô hình nào khớp tên đang tìm."
-    : "Chưa có lượt nào trong khoảng này."));
+  if (!rows.length) {
+    const empty = document.createElement("p");
+    empty.className = "screen-note";
+    empty.textContent = models.length
+      ? "Không có mô hình nào khớp tên đang tìm."
+      : "Chưa có lượt nào trong khoảng này.";
+    el.models.append(empty);
+  }
 }
 
 function renderSessions() {

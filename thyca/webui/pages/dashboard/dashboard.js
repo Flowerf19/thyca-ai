@@ -14,14 +14,27 @@
   const hashes = { usage: "#su-dung", request: "#request", cost: "#chi-phi", trace: "#trace" };
   const DEFAULT_VIEW = "usage";
 
+  // Mobile pick pattern (same as Hồ sơ/Cài đặt): the destination list shows
+  // first; choosing reveals the view, ‹ Dashboard returns to the list. A
+  // deep link or a view hash opens its view directly instead of the list.
+  const shell = document.querySelector(".dashboard-shell");
+  // matchMedia is absent in the Node test harness — fall back to a desktop
+  // stub so module evaluation never throws there.
+  const compact = typeof matchMedia === "function"
+    ? matchMedia("(max-width: 56rem)")
+    : { matches: false, addEventListener: () => {} };
+  const params = new URLSearchParams(location.search);
+  let chosen = params.has("session") || params.has("turn") || Boolean(location.hash);
+  const syncPick = () => shell?.classList.toggle("is-picking", compact.matches && !chosen);
+
   function viewFromHash() {
     const view = Object.keys(hashes).find((key) => location.hash === hashes[key]);
     return view || DEFAULT_VIEW;
   }
 
   // Actual switching on every viewport: Sử dụng token, Request, Chi phí and
-  // Trace are separate destinations on mobile too (the sidebar stays
-  // visible there — see dashboard.css).
+  // Trace are separate destinations on mobile too — the pick list hands off
+  // to one visible view at a time.
   const show = (view) => {
     const next = blocks[view] ? view : DEFAULT_VIEW;
     for (const [key, node] of Object.entries(blocks)) {
@@ -60,13 +73,28 @@
   };
 
   buttons.forEach((button) => {
-    button.addEventListener("click", () => show(button.dataset.view));
+    button.addEventListener("click", () => {
+      chosen = true;
+      syncPick();
+      show(button.dataset.view);
+    });
   });
-  window.addEventListener("hashchange", () => show(viewFromHash()));
+  document.querySelectorAll(".dashboard-shell .screen-back").forEach((button) => {
+    button.addEventListener("click", () => {
+      chosen = false;
+      syncPick();
+    });
+  });
+  window.addEventListener("hashchange", () => {
+    chosen = true;
+    syncPick();
+    show(viewFromHash());
+  });
+  compact.addEventListener("change", syncPick);
 
   // A ?session=/?turn= deep link always opens the Trace view, never the
   // default one.
-  const params = new URLSearchParams(location.search);
   const deepTrace = params.has("session") || params.has("turn");
   show(deepTrace ? "trace" : viewFromHash());
+  syncPick();
 })();

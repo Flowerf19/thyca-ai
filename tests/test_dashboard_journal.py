@@ -326,11 +326,29 @@ def test_dashboard_hash_switcher_covers_exactly_the_four_views() -> None:
 
 
 def test_dashboard_switches_views_on_every_viewport() -> None:
-    """Actual switching on mobile too; the sidebar must opt back into the
-    shared 56rem rule that hides .sidebar > *."""
+    """Mobile pick pattern (same as Hồ sơ/Cài đặt): the destination list
+    shows first, choosing reveals one view, ‹ Dashboard returns. No pill
+    override survives in dashboard.css — kit's pick rules own the layout."""
     dash_css = (WEBUI / "pages" / "dashboard" / "dashboard.css").read_text(encoding="utf-8")
-    assert ".dashboard-shell .sessions" in dash_css
-    assert "display: flex !important" in dash_css
+    dash_js = (WEBUI / "pages" / "dashboard" / "dashboard.js").read_text(encoding="utf-8")
+    pick_html = DASH_HTML.read_text(encoding="utf-8")
+    assert "pick-shell is-picking" in pick_html
+    assert pick_html.count('class="screen-back"') == 4
+    assert "syncPick" in dash_js
+    assert 'classList.toggle("is-picking"' in dash_js
+    assert ".dashboard-shell .sessions" not in dash_css
+    # By-model charts sit inset from their section headers on both sides.
+    assert "padding-inline: 1rem" in dash_css
+
+
+def test_mobile_filter_search_resets_row_basis() -> None:
+    """The filter-row search basis (20rem) is a width on desktop but becomes
+    a 320px height once the row stacks vertically — mobile must reset it so
+    the box renders at its slim --search-h like the memories search."""
+    kit = (WEBUI / "shared" / "css" / "kit.css").read_text(encoding="utf-8")
+    mobile = kit[kit.index("@media (max-width: 56rem)"):]
+    assert ".screen-shell .screen-filter-row .thyca-search" in mobile
+    assert "flex: none" in mobile
 
 
 def test_dashboard_sections_are_flat_and_errors_use_scoped_red() -> None:

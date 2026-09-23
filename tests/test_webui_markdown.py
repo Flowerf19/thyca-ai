@@ -308,7 +308,13 @@ def test_cost_panel_renders_bar_rows_and_uses_shared_toolbar() -> None:
         for name in ("cost.js", "cost-view.js", "cost-rows.js")
     )
     html = (WEBUI / "dashboard.html").read_text(encoding="utf-8")
-    # W6 split: the journal kit lives in kit.css, .memory-* moved to memories.css.
+    cost_css = (WEBUI / "pages" / "dashboard" / "cost.css").read_text(encoding="utf-8")
+    trace_css = (WEBUI / "pages" / "dashboard" / "trace.css").read_text(encoding="utf-8")
+    # Journal lists share the by-model chart inset from section headings.
+    assert "#cost-sessions" in cost_css
+    assert "#trace-sessions" in trace_css
+    assert "#trace-turns" in trace_css
+    assert trace_css.count("padding-inline: 1rem") >= 1
     shared = (
         (WEBUI / "shared" / "css" / "kit.css").read_text(encoding="utf-8")
         + (WEBUI / "pages" / "memories" / "memories.css").read_text(encoding="utf-8")
@@ -323,8 +329,10 @@ def test_cost_panel_renders_bar_rows_and_uses_shared_toolbar() -> None:
     assert "knownCostTotal(models)" in script
 
     # One journal entry per model and per session: dated gutter, title +
-    # amount, share meter, and a meta line with the Input/Cache/Output split
-    # from the bảng. Per-model rates fold into a <details> marked Đơn giá.
+    # amount, share meter. Model rows are cost-only (the Input/Cache/Output
+    # split moved to the Token-by-model table on the Sử dụng token screen);
+    # per-model rates fold into a <details> marked Đơn giá.
+    usage = (WEBUI / "pages" / "dashboard" / "usage.js").read_text(encoding="utf-8")
     assert 'className = "journal-entry"' in script
     assert 'className = "journal-date"' in script
     assert 'className = "journal-row-title"' in script
@@ -332,13 +340,28 @@ def test_cost_panel_renders_bar_rows_and_uses_shared_toolbar() -> None:
     assert 'className = "journal-meter"' in script
     assert 'className = "journal-meta"' in script
     assert 'fill.style.setProperty("--share", ratio)' in script
-    assert "splitPromptTokens(model.prompt_tokens, model.cached_tokens)" in script
+    assert "splitPromptTokens(model.prompt_tokens, model.cached_tokens)" not in script
+    assert "splitPromptTokens(model.prompt_tokens, model.cached_tokens)" in usage
+    assert 'id="usage-models"' in html
     assert 'details.className = "cost-pricing"' in script
     assert 'summary.textContent = "Đơn giá"' in script
 
     # The journal look comes from the shared screens.css kit, not a private
-    # cost.css copy.
-    assert '<ul class="journal" id="cost-models">' in html
+    # cost.css copy. Model tables (cost + token) reuse the Request chart rows.
+    # The cost overview pairs a day chart with its model table, like token.
+    assert '<div class="request-models" id="cost-models">' in html
+    assert '<div class="request-models" id="usage-models">' in html
+    assert 'id="cost-chart"' in html
+    assert 'class="cost-chart-top"' in html
+    assert 'class="usage-leaf"' in html
+    assert '<strong id="cost-total">' in html
+    assert '<span class="journal-meta" id="cost-total-meta">' in html
+    assert html.index('id="cost-total"') < html.index('id="cost-chart"')
+    assert "dailyCosts(" in script
+    assert 'className = "request-model-chart"' in script
+    assert 'className = "request-model-row"' in script
+    assert 'className = "request-model-chart"' in usage
+    assert 'className = "request-model-row"' in usage
     assert ":is(.dashboard-shell, .trace-shell) .journal-meter > span {" in shared
     assert ":is(.dashboard-shell, .trace-shell) .journal-row-title {" in shared
 
@@ -431,11 +454,13 @@ def test_request_panel_mirrors_cost_layout() -> None:
     assert "request-model-fill" in script
     assert 'className = "cost-model-row"' not in script
     # The old per-model card styles are gone now that Request is one chart;
-    # only the #request heading margin rule remains (it serves dashboard.html).
+    # the heading margin rule is unscoped so the reused chart tables (Token,
+    # Cost) get the same gap.
     assert ".cost-model-track" not in css
     assert ".cost-model-fill" not in css
     assert ".cost-model-row" not in css
-    assert "#request h2.cost-model-heading" in css
+    assert "h2.cost-model-heading" in css
+    assert "#request h2.cost-model-heading" not in css
 
 
 def test_usage_loads_every_trace_page() -> None:

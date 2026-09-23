@@ -796,6 +796,10 @@
   .screen-shell .session-icon { width: 1.1rem; height: 1.1rem; margin: 0; }
   .screen-shell .session-item time { display: none; }
   .screen-filter-row { align-items: stretch; flex-direction: column; }
+  /* Column direction turns the row's flex-basis into height: without this
+     reset the search box renders 20rem tall on mobile (memories search is
+     exempt — it never sits in a filter row). */
+  .screen-shell .screen-filter-row .thyca-search { flex: none; width: 100%; }
   .screen-surface { margin: 0; padding: 1rem; border-inline: 0; border-block-end: 0; border-radius: 0; }
   .screen-card { padding: 1rem; }
   .fold-row:not(.fold-row--plain) > summary {

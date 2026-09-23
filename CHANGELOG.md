@@ -14,6 +14,11 @@ Thay đổi của Thyca, viết ngắn gọn cho người dùng.
 - Trang Chi phí tính trung bình trên các lượt đã định giá và không lỗi (bỏ qua lượt lỗi/chưa có giá), kèm dòng ghi rõ cơ sở tính thay vì hiện "—" khi thiếu giá một phần.
 - Sắp xếp lại code backend theo module (`serve/`, `app/`, `core/`, `skills/` mới, hết file lẻ, không file nào quá 400 dòng): nội bộ, không đổi tính năng hay API.
 - Sắp xếp lại WebUI page-first (`pages/<trang>/` + `shared/`, tách file JS/CSS trên 400 dòng): nội bộ, giao diện và URL giữ nguyên.
+- Sửa màn Nhật ký sau refactor: biểu đồ Tổng quan hiện lại lưới/nhãn ngày, thẻ tổng quan nền phẳng trong suốt như Dashboard.
+- Mục Chi phí gọn lại: sơ đồ cột chi phí theo ngày gộp số tổng vào đầu card; bảng Chi phí theo mô hình chỉ còn chi phí, phần token chuyển sang màn Sử dụng token.
+- Ba bảng theo mô hình (Request/Chi phí/Token) dùng chung kiểu thanh ngang, thụt lề khỏi tiêu đề; danh sách phiên và Trace cũng thụt lề đồng bộ.
+- Mobile: Trò chuyện và Dashboard mở màn chọn list trước như Hồ sơ/Cài đặt (bấm vào hiện nội dung, có nút quay lại); ô tìm kiếm mobile hết phình cao.
+- Sửa ngày nhật ký tràn vào tiêu đề; số token theo mô hình gọn (M/K, hover hiện số đầy đủ); trục biểu đồ chi phí hiện $ lẻ đúng thay vì trùng nhãn.
 
 ## 0.8.5.dev0 — 20/09/2026
 

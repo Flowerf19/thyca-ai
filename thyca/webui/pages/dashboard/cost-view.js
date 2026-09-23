@@ -2,19 +2,20 @@ import { getJson } from "../../shared/js/http.js";
 import { fetchAllTraces } from "../../shared/js/dashboard-today.js";
 import {
   averageDisplay,
+  dailyCosts,
   overviewMetrics,
 } from "./cost-data.js";
 import {
   rollingRange,
 } from "../../shared/js/analytics-data.js";
 import { formatCost, formatInteger } from "../../shared/js/format.js";
+import { drawBarChart } from "../../shared/js/bar-chart.js";
 import {
   modelsPager,
   sessionsPager,
   openPricing,
   metricValue,
   metricMeta,
-  partialNote,
   renderModels,
   renderSessions,
   resetModelsPage,
@@ -31,12 +32,7 @@ const el = {
   coverage: document.querySelector("#cost-coverage"),
   total: document.querySelector("#cost-total"),
   totalMeta: document.querySelector("#cost-total-meta"),
-  average: document.querySelector("#cost-average"),
-  averageMeta: document.querySelector("#cost-average-meta"),
-  input: document.querySelector("#cost-input"),
-  inputMeta: document.querySelector("#cost-input-meta"),
-  output: document.querySelector("#cost-output"),
-  outputMeta: document.querySelector("#cost-output-meta"),
+  chart: document.querySelector("#cost-chart"),
   models: document.querySelector("#cost-models"),
   sessions: document.querySelector("#cost-sessions"),
   status: document.querySelector("#cost-status"),
@@ -71,26 +67,30 @@ function renderOverview() {
   const total = stats?.totals?.cost_usd;
   const priced = total == null ? null : Number(total);
   metricValue(el.total, priced == null ? "—" : formatCost(priced, 2));
+  // Single KPI: the per-turn average folds into the total's meta line in
+  // the chart header row.
+  const display = averageDisplay(overview);
   metricMeta(el.totalMeta, [
     overview.turns ? `${formatInteger(overview.turns)} lượt` : "",
-    overview.turns ? `${formatInteger(overview.requests)} lần gọi model` : "",
-    partialNote(overview.pricedTurns, overview.turns),
+    display.value == null ? "" : `trung bình ${formatCost(display.value, 4)}/lượt`,
   ]);
+}
 
-  // Average is per TURN (deduped trace rows), never per model request —
-  // formula and wording live in averageDisplay() (tested).
-  const display = averageDisplay(overview);
-  metricValue(el.average, display.value == null ? "—" : formatCost(display.value, 6));
-  metricMeta(el.averageMeta, display.meta);
-
-  // Full input side (cache is a subset of prompt_tokens, so input + cache is
-  // the raw prompt total); the cache part is called out beside it.
-  metricValue(el.input, formatInteger(overview.promptTokens));
-  metricMeta(el.inputMeta, [
-    `gồm ${formatInteger(overview.cacheTokens)} token cache`,
-  ]);
-  metricValue(el.output, formatInteger(overview.outputTokens));
-  metricMeta(el.outputMeta, [`${formatInteger(overview.requests)} lần gọi model`]);
+/* Cost-by-day bar chart above the model table: same shared bar helper as the
+   token screen, one accent bar per day across the snapshot range. */
+function drawCostChart() {
+  if (!view || !el.chart) return;
+  const days = dailyCosts(view.stats?.by_day, view.range);
+  const max = Math.max(...days.map((row) => row.value), 0);
+  drawBarChart(el.chart, days.map((row) => ({
+    day: row.day,
+    segments: [{ class: "cost-bar", value: row.value }],
+  })), {
+    ariaLabel: `Biểu đồ chi phí theo ngày; cao nhất ${formatCost(max, 2)}.`,
+    // Dollar grid steps land on fractions ($0.4 …) that formatCompact would
+    // round into duplicate integer labels.
+    formatAxis: (value) => `$${Number.isInteger(value) ? value : value.toFixed(1)}`,
+  });
 }
 
 /* Coverage note: the stats and list endpoints are two separate reads — if
@@ -122,8 +122,9 @@ function resetView() {
   // A failed/starting load must never leave numbers of a previous period on
   // screen.
   setCoverage([]);
-  for (const node of [el.total, el.average, el.input, el.output]) metricValue(node, "—");
-  for (const node of [el.totalMeta, el.averageMeta, el.inputMeta, el.outputMeta]) node.replaceChildren();
+  for (const node of [el.total]) metricValue(node, "—");
+  for (const node of [el.totalMeta]) node.replaceChildren();
+  el.chart?.replaceChildren();
   el.models.replaceChildren();
   el.sessions.replaceChildren();
   modelsPager.nav.hidden = true; // no stale pager while the new period loads
@@ -133,6 +134,7 @@ function resetView() {
 function render() {
   if (!view) return;
   renderOverview();
+  drawCostChart();
   renderModels();
   renderSessions();
 }
@@ -204,6 +206,7 @@ function bootCostJournal() {
   });
   el.models.after(modelsPager.nav); // pager below the list, no layout shift
   el.sessions.after(sessionsPager.nav);
+  if (el.chart) new ResizeObserver(() => drawCostChart()).observe(el.chart);
   void load();
 }
 

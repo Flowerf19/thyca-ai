@@ -10,48 +10,57 @@
   font-size: 0.8rem;
 }
 
-/* Overview split (big number + chart card) for the Request section (owned
-   by dashboard): the #chi-phi journal uses the shared .journal-* kit and
-   none of these classes, so the rules are scoped to #request. */
-#request .cost-overview {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  align-items: stretch;
-  gap: 1.5rem;
+/* Cost overview day chart (#chi-phi): same shared bar helper as the token
+   screen — one accent bar per day. Grid/label text reuses the shared
+   usage-* chart text (usage.css is loaded on this page); only the bar fill
+   is cost-owned. */
+#chi-phi .cost-chart-card {
+  min-height: 14rem;
+}
+#chi-phi svg#cost-chart {
+  width: 100%;
+  height: 10.5rem;
+  stroke: none;
+}
+.cost-bar {
+  fill: var(--color-accent);
+  stroke: none;
 }
 
-#request .cost-total {
+/* Cost chart header: total on the left, meta + leaf on the right, one row
+   above the day bars. No separate heading line. Shared by the Request and
+   Chi phí charts. */
+.cost-chart-top {
   display: flex;
-  flex-direction: column;
-  justify-content: center;
-  width: max-content;
-  max-width: 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.2rem 1rem;
+  margin-block-end: 0.35rem;
 }
-
-#request .cost-total strong {
-  margin-block: 0.65rem;
-  font-size: 3.8rem;
-  letter-spacing: -0.05em;
-  line-height: 1;
+.cost-chart-top .cost-chart-total {
+  margin-inline-end: auto;
+  color: var(--color-muted);
+  font-size: 0.9rem;
 }
-
-#request .cost-total strong small {
+.cost-chart-top .cost-chart-total strong {
+  color: var(--color-ink);
+  font-family: var(--font-display);
   font-size: 1.5rem;
-  letter-spacing: 0;
+  font-weight: 500;
 }
-
-#request .cost-total p {
+.cost-chart-top #request-range {
   margin: 0;
   color: var(--color-muted);
   font-size: 0.85rem;
 }
 
-#request .cost-chart-card {
-  min-height: 14rem;
+.cost-chart-top .journal-meta {
+  margin: 0;
 }
 
-#request .cost-chart-card h3 {
-  margin-block-end: 0.35rem;
+/* Day-chart card shared bits (padding only — heights stay per section). */
+#request .cost-chart-card {
+  min-height: 14rem;
 }
 
 #request .cost-chart-card svg {
@@ -66,7 +75,11 @@
   margin: 3rem 0 0.55rem;
   color: var(--color-ink);
 }
-#request h2.cost-model-heading {
+/* Section sub-headings (Request / Sử dụng token): flat gap above each table.
+   Every h2 under the dashboard surface resets to margin 0 via a (0,2,1)
+   kit rule, so this selector keeps ID specificity through :is() — a bare
+   class selector loses and the heading glues to the chart. */
+:is(#request, #su-dung) h2.cost-model-heading {
   margin: 2.65rem 0 0.7rem;
 }
 
@@ -106,19 +119,17 @@
   font-size: 0.83rem;
 }
 
+/* Session journal mirrors the by-model chart inset: rows sit in from the
+   section heading on both sides instead of running edge to edge. */
+#cost-sessions {
+  padding-inline: 1rem;
+}
+
 #cost-status {
   text-align: center;
 }
 
 @media (max-width: 56rem) {
-  #request .cost-overview {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  #request .cost-total {
-    width: auto;
-  }
-
   #request .cost-chart-card {
     min-height: 16rem;
   }
@@ -129,10 +140,6 @@
 }
 
 @media (max-width: 28rem) {
-  #request .cost-total strong {
-    font-size: 3rem;
-  }
-
   #request .cost-chart-card {
     padding-inline: 0.5rem;
   }
@@ -157,12 +164,4 @@
   fill: var(--color-muted);
   stroke: none;
   font: 12px var(--font-reading);
-}
-.cost-total strong {
-  color: var(--color-ink);
-  font-family: var(--font-display);
-  font-weight: 500;
-}
-.cost-total strong small {
-  font-family: var(--font-reading);
 }

@@ -45,8 +45,8 @@ def node() -> str:
 def _eval(node: str, expression: str) -> object:
     source = (
         f"import {{ NO_SESSION_KEY, overviewMetrics, aggregateSessions, knownCostTotal,"
-        f" shareLabel, shareRatio, priceRates, estimatedCostSplit, turnCost,"
-        f" modelTurnCoverage, averageDisplay }}"
+        f" knownTokenTotal, modelTokens, dailyCosts, shareLabel, shareRatio, priceRates,"
+        f" estimatedCostSplit, turnCost, modelTurnCoverage, averageDisplay }}"
         f" from '{SCRIPT.as_posix()}';\n"
         f"import {{ fetchAllTraces }} from '{TODAY_SCRIPT.as_posix()}';\n"
         f"console.log(JSON.stringify(await ({expression})));\n"
@@ -368,7 +368,7 @@ def test_multi_model_session_tokens_split_not_double_counted(node: str) -> None:
 
 def test_overview_prompt_tokens_is_full_input_side(node: str) -> None:
     # The overview "Token đầu vào" value is promptTokens = uncached + cache
-    # (cache is a subset of prompt), matching the 'gồm N token cache' note —
+    # (cache is a subset of prompt), matching the 'N% qua cache' note —
     # never cache double-counted.
     rows = [
         {"session_id": "s1", "turn_index": 0, "prompt_tokens": 300,
@@ -438,6 +438,37 @@ def test_pager_resets_on_filter_sort_and_snapshot(node):
     assert 'className = "screen-button journal-pager-step"' in script
 
 
+def test_model_token_total_never_double_counts_cache(node: str) -> None:
+    # Token-by-model total is the whole prompt side plus completion; cache is
+    # already inside prompt_tokens, so prompt + completion is the full count.
+    rows = [
+        {"prompt_tokens": 300, "cached_tokens": 100, "completion_tokens": 10},
+        {"prompt_tokens": 50, "cached_tokens": None, "completion_tokens": 2},
+    ]
+    totals = _eval(node, "[$rows.map(modelTokens)]".replace("$rows", json.dumps(rows)))
+    assert totals == [[310, 52]]
+    assert _eval(node, "knownTokenTotal($rows)".replace("$rows", json.dumps(rows))) == 362
+    assert _eval(node, "knownTokenTotal([])") is None
+
+
+def test_daily_costs_zero_fill_missing_days(node: str) -> None:
+    by_day = [
+        {"day": "2026-09-20", "cost_usd": 0.5},
+        {"day": "2026-09-22", "cost_usd": None},
+        {"day": "nope", "cost_usd": 99},
+    ]
+    days = _eval(
+        node,
+        "dailyCosts($rows, { from: '2026-09-20', to: '2026-09-22', days: 3 })"
+        .replace("$rows", json.dumps(by_day)),
+    )
+    assert days == [
+        {"day": "2026-09-20", "value": 0.5},
+        {"day": "2026-09-21", "value": 0},
+        {"day": "2026-09-22", "value": 0},
+    ]
+
+
 def test_average_display_value_and_meta(node: str) -> None:
     rows = [
         {"session_id": "s1", "turn_index": 0, "status": "completed", "cost_usd": 0.2},
@@ -451,9 +482,32 @@ def test_average_display_value_and_meta(node: str) -> None:
     )
     assert display["value"] == pytest.approx(0.15)
     assert display["meta"] == [
-        "trên 2 lượt đã định giá",
-        "bỏ 2 lượt chưa định giá hoặc lỗi",
+        "2 lượt hợp lệ",
+        "bỏ 1 lỗi · 1 chưa định giá",
     ]
+
+
+def test_average_display_skip_line_lists_only_present_causes(node: str) -> None:
+    # Unpriced-only basis skips the failed part and vice versa, so the skip
+    # line never mentions a cause with zero turns.
+    unpriced_only = [
+        {"session_id": "s1", "turn_index": 0, "status": "completed", "cost_usd": 0.2},
+        {"session_id": "s1", "turn_index": 1, "status": "completed", "cost_usd": None},
+    ]
+    display = _eval(
+        node,
+        "averageDisplay(overviewMetrics($rows))".replace("$rows", json.dumps(unpriced_only)),
+    )
+    assert display["meta"] == ["1 lượt hợp lệ", "bỏ 1 chưa định giá"]
+    failed_only = [
+        {"session_id": "s1", "turn_index": 0, "status": "completed", "cost_usd": 0.2},
+        {"session_id": "s1", "turn_index": 1, "status": "failed", "cost_usd": 0.5},
+    ]
+    display = _eval(
+        node,
+        "averageDisplay(overviewMetrics($rows))".replace("$rows", json.dumps(failed_only)),
+    )
+    assert display["meta"] == ["1 lượt hợp lệ", "bỏ 1 lỗi"]
 
 
 def test_average_display_empty_basis(node: str) -> None:
@@ -479,4 +533,4 @@ def test_average_display_full_coverage_single_line(node: str) -> None:
         "averageDisplay(overviewMetrics($rows))".replace("$rows", json.dumps(rows)),
     )
     assert display["value"] == pytest.approx(0.2)
-    assert display["meta"] == ["trên 2 lượt đã định giá"]
+    assert display["meta"] == ["2 lượt hợp lệ"]

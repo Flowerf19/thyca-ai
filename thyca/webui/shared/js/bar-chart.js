@@ -27,8 +27,10 @@ export function svg(name, attributes = {}, text = "") {
 /* Shared day bar chart. `rows` is [{ day, segments: [{ class, value }] }];
    segments stack bottom-up inside each day bar and `class` picks the fill
    from the calling page's stylesheet. `valueLabels` prints the day total
-   above each bar. */
-export function drawBarChart(node, rows, { ariaLabel = "", valueLabels = false } = {}) {
+   above each bar. `formatAxis` formats grid + value labels — the default
+   rounds sub-10K values to integers, so fractional units (dollars) pass
+   their own formatter. */
+export function drawBarChart(node, rows, { ariaLabel = "", valueLabels = false, formatAxis = formatCompact } = {}) {
   if (!rows.length) {
     node.replaceChildren();
     return;
@@ -52,7 +54,7 @@ export function drawBarChart(node, rows, { ariaLabel = "", valueLabels = false }
     const yy = y(value);
     node.append(
       svg("line", { class: "usage-grid", x1: left, x2: width - right, y1: yy, y2: yy }),
-      svg("text", { class: "usage-axis", x: 3, y: yy + 4 }, formatCompact(value)),
+      svg("text", { class: "usage-axis", x: 3, y: yy + 4 }, formatAxis(value)),
     );
   }
 
@@ -84,7 +86,7 @@ export function drawBarChart(node, rows, { ariaLabel = "", valueLabels = false }
         "text-anchor": "middle",
         x: x(index) + barWidth / 2,
         y: y(total) - 5,
-      }, formatCompact(total)));
+      }, formatAxis(total)));
     }
   });
   if (ariaLabel) node.setAttribute("aria-label", ariaLabel);

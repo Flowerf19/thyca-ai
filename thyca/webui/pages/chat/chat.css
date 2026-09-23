@@ -805,6 +805,16 @@ button:active {
 }
 
 @media (max-width: 56rem) {
+  /* Pick pattern needs an in-flow sidebar (kit only provides this under
+     .screen-shell, which chat skips to keep its desktop UI typeface). */
+  .chat-shell .sidebar {
+    position: static;
+    height: auto;
+    flex: none;
+    margin: 0;
+    pointer-events: auto;
+  }
+
   .chat-canvas {
     margin: 0;
     border-inline: 0;

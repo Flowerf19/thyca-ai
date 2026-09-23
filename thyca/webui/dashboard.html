@@ -19,7 +19,7 @@
     <link rel="stylesheet" href="./pages/dashboard/trace.css" />
   </head>
   <body>
-    <main class="notebook-shell screen-shell dashboard-shell" aria-label="Dashboard Thyca">
+    <main class="notebook-shell screen-shell dashboard-shell pick-shell is-picking" aria-label="Dashboard Thyca">
       <header class="site-header">
         <button class="icon-button menu-button" type="button" aria-label="Mở mục lục">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6.5h16M4 12h16M4 17.5h11" /></svg>
@@ -46,6 +46,7 @@
         <section class="screen-surface dashboard-surface" aria-label="Chi phí và sử dụng">
           <section class="dashboard-block dashboard-section" id="request" aria-labelledby="request-heading">
               <header class="screen-heading">
+                <button class="screen-back" type="button">‹ Dashboard</button>
                 <div class="screen-title"><h1 id="request-heading">Request</h1></div>
                 <label class="cost-period">
                   <select class="screen-select" id="request-period" aria-label="Khoảng thời gian">
@@ -55,17 +56,13 @@
                   </select>
                 </label>
               </header>
-              <div class="cost-overview">
-                <article class="screen-card cost-total">
-                  <h3>Tổng request</h3>
-                  <strong id="request-total">—</strong>
+              <article class="screen-card cost-chart-card">
+                <div class="cost-chart-top">
+                  <span class="cost-chart-total">Tổng request <strong id="request-total">—</strong></span>
                   <p id="request-range">Đang tải…</p>
-                </article>
-                <article class="screen-card cost-chart-card">
-                  <h3>Request theo ngày</h3>
-                  <svg id="request-chart" viewBox="0 0 720 230" role="img" aria-label="Biểu đồ request theo ngày"></svg>
-                </article>
-              </div>
+                </div>
+                <svg id="request-chart" viewBox="0 0 720 230" role="img" aria-label="Biểu đồ request theo ngày"></svg>
+              </article>
               <h2 class="cost-model-heading">Request theo mô hình</h2>
               <div class="screen-filter-row">
                 <div class="screen-filters" role="group" aria-label="Sắp xếp mô hình">
@@ -92,6 +89,7 @@
 
           <section class="dashboard-block dashboard-section" id="su-dung" aria-labelledby="usage-heading">
               <header class="screen-heading">
+                <button class="screen-back" type="button">‹ Dashboard</button>
                 <div class="screen-title"><h1 id="usage-heading">Sử dụng token</h1></div>
                 <label class="cost-period">
                   <select id="usage-month" class="screen-select" aria-label="Khoảng thời gian">
@@ -129,11 +127,14 @@
                   <span id="usage-period">đang tải…</span>
                 </div>
               </article>
+              <h2 class="cost-model-heading">Token theo mô hình</h2>
+              <div class="request-models" id="usage-models"></div>
               <p class="screen-status" id="usage-status" role="status" aria-live="polite"></p>
           </section>
 
-          <section class="dashboard-block" id="chi-phi" aria-labelledby="cost-heading" hidden>
+          <section class="dashboard-block dashboard-section" id="chi-phi" aria-labelledby="cost-heading" hidden>
             <header class="screen-heading">
+              <button class="screen-back" type="button">‹ Dashboard</button>
               <div class="screen-title"><h1 id="cost-heading">Chi phí</h1></div>
               <label class="cost-period">
                 <select class="screen-select" id="cost-period" aria-label="Khoảng thời gian">
@@ -144,36 +145,14 @@
               </label>
             </header>
             <ul class="screen-note" id="cost-coverage"></ul>
-            <ul class="journal journal-metrics" aria-label="Tổng quan chi phí">
-              <li class="journal-entry">
-                <div class="journal-body">
-                  <h3>Tổng chi phí</h3>
-                  <div class="journal-value" id="cost-total">—</div>
-                  <p class="journal-meta" id="cost-total-meta"></p>
-                </div>
-              </li>
-              <li class="journal-entry">
-                <div class="journal-body">
-                  <h3>Trung bình mỗi lượt</h3>
-                  <div class="journal-value" id="cost-average">—</div>
-                  <p class="journal-meta" id="cost-average-meta"></p>
-                </div>
-              </li>
-              <li class="journal-entry">
-                <div class="journal-body">
-                  <h3>Token đầu vào</h3>
-                  <div class="journal-value" id="cost-input">—</div>
-                  <p class="journal-meta" id="cost-input-meta"></p>
-                </div>
-              </li>
-              <li class="journal-entry">
-                <div class="journal-body">
-                  <h3>Token đầu ra</h3>
-                  <div class="journal-value" id="cost-output">—</div>
-                  <p class="journal-meta" id="cost-output-meta"></p>
-                </div>
-              </li>
-            </ul>
+            <article class="screen-card cost-chart-card">
+              <div class="cost-chart-top">
+                <span class="cost-chart-total">Tổng chi phí <strong id="cost-total">—</strong></span>
+                <span class="journal-meta" id="cost-total-meta"></span>
+                <svg class="usage-leaf" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18c4.2-7.5 7.5-10.8 12-12-1.2 4.8-4.7 8.1-12 12Z"/><path d="m7 17 6-6"/></svg>
+              </div>
+              <svg id="cost-chart" viewBox="0 0 720 230" role="img" aria-label="Biểu đồ chi phí theo ngày"></svg>
+            </article>
             <h2 class="cost-journal-heading">Chi phí theo mô hình</h2>
             <div class="screen-filter-row">
               <div class="screen-filters" role="group" aria-label="Sắp xếp mô hình">
@@ -194,7 +173,7 @@
                 </button>
               </div>
             </div>
-            <ul class="journal" id="cost-models"></ul>
+            <div class="request-models" id="cost-models"></div>
             <h2 class="cost-journal-heading">Chi phí theo phiên</h2>
             <ul class="journal" id="cost-sessions"></ul>
             <p class="screen-status" id="cost-status" role="status" aria-live="polite"></p>
@@ -203,6 +182,7 @@
 
           <section class="dashboard-block" id="trace" aria-labelledby="trace-heading" hidden>
             <header class="screen-heading">
+              <button class="screen-back" type="button">‹ Dashboard</button>
               <div class="screen-title"><h1 id="trace-heading">Trace</h1></div>
               <label class="cost-period">
                 <select class="screen-select" id="trace-period" aria-label="Khoảng thời gian">

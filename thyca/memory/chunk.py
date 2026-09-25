@@ -4,13 +4,14 @@ from __future__ import annotations
 import hashlib
 import re
 import unicodedata
+from bisect import bisect_right
 from dataclasses import dataclass
 from pathlib import Path
 
+from thyca.core.protocol import estimate_tokens
 from thyca.memory.heading import (
-    HeadingMeta,
+    iter_session_blocks,
     parse_heading,
-    resolve_entry_id,
     session_id,
     strip_comment,
 )
@@ -60,9 +61,9 @@ class Chunker:
         for session in sessions:
             leaves = _split_long(_merge_short(_leaves(session["body"], session["body_start"])))
             for ord_, leaf in enumerate(leaves, start=1):
+                # Never blank: _leaves skips blank lines and every split
+                # stage only emits non-blank parts, so no guard is needed.
                 raw = leaf["text"]
-                if not raw.strip():
-                    continue
                 norm = self.normalize(raw)
                 chunk_id = f"{session['session_id']}#{ord_}"
                 payload = f"{session['heading']}\n{raw}".encode()
@@ -101,12 +102,8 @@ def _sessions(
     text: str, source_kind: str, timeline_day: str | None, path: str
 ) -> list[dict]:
     lines = text.splitlines()
-    found: list[tuple[int, HeadingMeta]] = []
-    for index, line in enumerate(lines):
-        meta = parse_heading(line)
-        if meta is not None:
-            found.append((index, meta))
-    if not found:
+    blocks = list(iter_session_blocks(lines, path))
+    if not blocks:
         name = Path(path).stem.lower()
         sid = f"canonical#{name}" if source_kind == "canonical" else f"{timeline_day}#legacy"
         return [
@@ -119,12 +116,10 @@ def _sessions(
             }
         ]
     sessions: list[dict] = []
-    title_seen: dict[str, int] = {}
-    for pos, (line_no, meta) in enumerate(found):
-        title_seen[meta.title] = title_seen.get(meta.title, 0) + 1
-        entry = resolve_entry_id(meta, path, title_seen[meta.title])
-        prefix = timeline_day if source_kind == "daily" else Path(path).stem.lower()
-        end = found[pos + 1][0] if pos + 1 < len(found) else len(lines)
+    for meta, entry, line_no, end in blocks:
+        # Canonical sessions share the canonical# root with the no-heading
+        # fallback so facade get (canonical#*) and stats accept them.
+        prefix = timeline_day if source_kind == "daily" else f"canonical#{Path(path).stem.lower()}"
         body = "\n".join(lines[line_no + 1 : end])
         sessions.append(
             {
@@ -218,21 +213,51 @@ def _split_long(leaves: list[dict]) -> list[dict]:
     out: list[dict] = []
     for leaf in leaves:
         text = leaf["text"]
-        if len(text) <= MAX_LEAF_CHARS and (len(text) + 3) // 4 <= 256:
+        if len(text) <= MAX_LEAF_CHARS and estimate_tokens(text) <= 256:
             out.append(leaf)
             continue
         parts = [bit for bit in _SENTENCE_RE.split(text) if bit.strip()]
         if len(parts) <= 1:
             parts = text.splitlines() or [text]
+        if len(parts) <= 1 and len(text) > MAX_LEAF_CHARS:
+            # Single-line overflow: hard char-split, or one giant line
+            # would sail through as a single unbounded leaf.
+            parts = [
+                text[index : index + MAX_LEAF_CHARS]
+                for index in range(0, len(text), MAX_LEAF_CHARS)
+            ]
+        # Line starts within the leaf text, so each emitted part carries
+        # its own span instead of the whole leaf's.
+        starts = [0]
+        for match in re.finditer("\n", text):
+            starts.append(match.end())
+
+        def line_of(offset: int) -> int:
+            return leaf["start"] + bisect_right(starts, offset) - 1
+
         buf = ""
-        start = leaf["start"]
+        buf_start = 0
+        buf_end = 0
+        cursor = 0
         for part in parts:
-            candidate = part if not buf else f"{buf} {part}".strip()
-            if buf and (len(candidate) > MAX_LEAF_CHARS or (len(candidate) + 3) // 4 > 256):
-                out.append({"text": buf, "start": start, "end": leaf["end"]})
-                buf = part
+            at = text.find(part, cursor)
+            if at < 0:
+                at = cursor
+            if not buf:
+                buf, buf_start, buf_end = part, at, at + len(part)
             else:
-                buf = candidate
-        if buf:
-            out.append({"text": buf, "start": start, "end": leaf["end"]})
+                candidate = f"{buf} {part}".strip()
+                if len(candidate) > MAX_LEAF_CHARS or estimate_tokens(candidate) > 256:
+                    if buf.strip():
+                        out.append(
+                            {"text": buf, "start": line_of(buf_start), "end": line_of(buf_end - 1)}
+                        )
+                    buf, buf_start, buf_end = part, at, at + len(part)
+                else:
+                    buf, buf_end = candidate, at + len(part)
+            cursor = at + len(part)
+        if buf.strip():
+            out.append(
+                {"text": buf, "start": line_of(buf_start), "end": line_of(buf_end - 1)}
+            )
     return out

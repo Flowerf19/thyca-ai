@@ -15,7 +15,7 @@ import pytest
 
 from thyca.app.cli import Cli, build_parser
 from thyca.serve import ServeError, default_webui, make_server
-from thyca.tools.memory import MemoryFacade
+from thyca.memory.facade import MemoryFacade
 
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 WEBUI = default_webui()
@@ -337,7 +337,7 @@ def test_cli_serve_flag_conflicts(tmp_path: Path) -> None:
 
 def test_canonical_write_endpoint(tmp_path_factory) -> None:
     from thyca.memory.archived import ArchiveError
-    from thyca.tools.memory import MemoryFacade
+    from thyca.memory.facade import MemoryFacade
     facade = MemoryFacade(tmp_path_factory.mktemp("canon"), timezone_name="Asia/Ho_Chi_Minh")
     facade.write_canonical("USER.md", "# User\n\nTên: Hòa\n")
     assert (facade.thyca_dir / "USER.md").read_text(encoding="utf-8").startswith("# User")
@@ -345,3 +345,20 @@ def test_canonical_write_endpoint(tmp_path_factory) -> None:
         facade.write_canonical("../evil.md", "x")
     with pytest.raises(ArchiveError):
         facade.write_canonical("MEMORY.md", "x")
+
+
+def test_null_byte_path_is_404_not_dropped(tmp_path: Path) -> None:
+    from thyca.serve.static import safe_file
+
+    assert safe_file(WEBUI, "/%00") is None
+    assert safe_file(WEBUI, "/\x00") is None
+    httpd, thread, _ = _start(tmp_path)
+    try:
+        try:
+            urlopen(_url(httpd, "/%00"), timeout=2)
+        except HTTPError as exc:
+            assert exc.code == 404
+        else:
+            raise AssertionError("expected 404 for null-byte path")
+    finally:
+        _stop(httpd, thread)

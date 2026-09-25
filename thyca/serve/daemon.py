@@ -1,6 +1,7 @@
 """Detach --serve from the controlling terminal."""
 from __future__ import annotations
 
+import fcntl
 import os
 import signal
 import sys
@@ -11,6 +12,7 @@ from .server import ServeError
 
 PID_NAME = "serve.pid"
 LOG_NAME = "serve.log"
+LOCK_NAME = "serve.lock"
 
 
 def pid_file(root: Path) -> Path:
@@ -19,6 +21,10 @@ def pid_file(root: Path) -> Path:
 
 def log_file(root: Path) -> Path:
     return root / LOG_NAME
+
+
+def lock_file(root: Path) -> Path:
+    return root / LOCK_NAME
 
 
 def pid_alive(pid: int) -> bool:
@@ -54,6 +60,17 @@ def daemonize(root: Path) -> None:
         raise ServeError(f"already running (pid {existing})")
     log_path = log_file(root)
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    # Claim the start lock BEFORE forking: a concurrent daemonize — even one
+    # that runs before the grandchild writes serve.pid — fails LOCK_NB and
+    # raises below. The fd stays open in the daemon (inherited across fork),
+    # so the lock needs no stale cleanup: it dies with the daemon. A separate
+    # file (never unlinked, unlike the pidfile) keeps the lock stable.
+    lock_fd = os.open(lock_file(root), os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o644)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(lock_fd)
+        raise ServeError("already running (start in progress)") from None
     if os.fork() > 0:
         os._exit(0)
     os.setsid()

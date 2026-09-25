@@ -2,8 +2,17 @@
 
 Thay đổi của Thyca, viết ngắn gọn cho người dùng.
 
-## Chưa phát hành
+## 0.8.6 — 25/09/2026
 
+- Sửa 2 lỗi mất dữ liệu: lưu config không key không còn xóa key đã lưu; cập nhật summary không còn xóa chi tiết đã nhớ.
+- Bền hơn khi lỗi: config hỏng vẫn mở được; lượt vượt trần ngữ cảnh gửi history đã nén; MCP chết giữa chừng báo rõ nguyên nhân; hết 503 ngẫu nhiên ở Trace; Dashboard token không còn hiện sai kỳ.
+- Validate và báo lỗi chặt hơn: key không lọt ra log/chat, file secret 0600 ngay khi tạo, provider khai sai báo rõ, lỗi lượt phân loại đúng.
+- Thêm `thyca --seed`: tạo file mẫu (prompt/skills/guide) khi thiếu, không ghi đè; cài đặt tự seed.
+- Đổi ngưỡng chờ tool (softTimeoutS) trên trang Provider áp dụng ngay lượt sau, không cần khởi động lại.
+- Gọn code nội bộ: hợp nhất logic trùng, xóa CSS/JS chết, chuyển memory sang data plane — giao diện và API giữ nguyên.
+- Chạy nền thống nhất: mọi tool chậm đều trả `still running: exec<N>` và đọc tiến độ bằng một tool `tool_read` duy nhất (kết quả dài đọc tiếp bằng phân trang, không còn mất đầu im lặng); thêm tool `tool_kill` để dừng job đang chạy; bỏ `bash_read` cũ và kiểu id `bg<N>`/`task<N>`.
+- Ngưỡng chờ tool trước khi chuyển nền (~60 giây) chỉnh được ở trang Provider (mục limits); lệnh bash có timeout ngắn hơn ngưỡng vẫn trả kết quả luôn như cũ.
+- Thiết kế lại ba hồ sơ mặc định: IDENTITY giữ danh tính/vai trò, SOUL hướng dẫn hành xử và vòng đời ký ức, USER có khung thông tin trống cùng quy tắc AI cập nhật. Chỉ tạo mẫu khi file chưa có, không ghi đè hồ sơ của bạn khi nâng cấp.
 - Nhiều provider, mỗi provider key riêng: trang Provider quản lý danh sách provider (thêm/đổi tên/xóa), mỗi model thuộc một provider — đổi model trong chat thì endpoint và key đi theo model, hết lỗi gọi nhầm máy chủ. Config cũ tự chuyển thành provider `default`, không mất key/giá/limits.
 - Lưu cấu hình xong hệ thống tự test API của model mặc định và báo OK/thất bại ngay trên trang Provider; mỗi provider cũng có nút Test riêng.
 - Lượt chat lỗi giờ hiện đúng message của provider (ví dụ model không tồn tại) thay vì chỉ "Không gửi được — thử lại.", server ghi một dòng log mỗi lượt lỗi vào `serve.log`, và trang Trace hiện message lỗi ngay dưới dòng model của lượt đó (thử lại thành công thì vết lỗi cũ tự hết).

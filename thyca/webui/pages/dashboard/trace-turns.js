@@ -1,4 +1,5 @@
 import { getJson } from "../../shared/js/http.js";
+import { messageOf } from "../../shared/js/status.js";
 import {
   JOURNAL_PAGE_SIZE,
   journalPageCount,
@@ -21,7 +22,7 @@ import {
   formatTraceTimestamp,
 } from "./trace-data.js";
 import { el, state, stampNode, noteNode } from "./trace-view.js";
-import { activeGroup, messageOf, setStatus, syncUrl } from "./trace-deeplink.js";
+import { activeGroup, setStatus, syncUrl } from "./trace-deeplink.js";
 
 // Trace turn entries, numbered steps and the per-turn detail lifecycle.
 function turnStateFor(key) {

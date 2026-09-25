@@ -151,3 +151,29 @@ def test_observe_persists_reasoning_details(tmp_path: Path) -> None:
 
     stored = manager.current.messages[-1]
     assert stored.reasoning_details == details
+
+
+# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
+from pathlib import Path
+
+def test_m2_observe_normalizes_tool_path_content(tmp_path: Path) -> None:
+    from thyca.agent.observe import Observe
+    from thyca.agent.stage import Stage
+    from thyca.core.protocol import ToolCall
+    from thyca.llm.llm_base import ChatReply
+    from thyca.sessions import SessionManager
+
+    from thyca.core.protocol import ToolResult
+
+    manager = SessionManager(tmp_path)
+    manager.create()
+    call = ToolCall(id="c1", name="echo", arguments={})
+    Observe(manager).observe(
+        Stage(
+            reply=ChatReply(content=None, tool_calls=[call]),
+            results=[ToolResult(tool_call_id="c1", name="echo", content="x")],
+            round=1,
+        )
+    )
+    assistant = manager.current.messages[0]
+    assert assistant.role == "assistant" and assistant.content == ""

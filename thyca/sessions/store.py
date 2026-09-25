@@ -11,7 +11,10 @@ from thyca.core.protocol import Message
 from .errors import SessionCorrupt, SessionError, SessionNotFound
 from .models import Session
 
-_ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_[0-9a-f]{4}$")
+#: The one session-id grammar: timestamp + 4 hex. Serve route regexes compose
+#: from this so the grammar cannot drift between layers.
+SESSION_ID_PATTERN = r"\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_[0-9a-f]{4}"
+_ID_RE = re.compile(rf"^{SESSION_ID_PATTERN}$")
 
 
 class SessionStore:
@@ -57,9 +60,6 @@ class SessionStore:
         except OSError as exc:
             raise SessionError(f"cannot delete session: {exc}") from exc
 
-    def read(self, path: Path) -> list[Message]:
-        return self.scan(path)[0]
-
     def read_title(self, path: Path) -> tuple[str, str | None] | None:
         """Last meta line's ``(title, source)``, read from the end of the file.
 
@@ -99,7 +99,9 @@ class SessionStore:
                 for number, raw_line in enumerate(stream, 1):
                     line = raw_line.rstrip("\n")
                     if not line.strip():
-                        raise SessionCorrupt(path, number, "empty line")
+                        # Blank lines carry no information: skip so sessions
+                        # self-heal instead of bricking the whole transcript.
+                        continue
                     try:
                         payload = json.loads(line)
                         if _is_meta(payload):
@@ -135,6 +137,8 @@ class SessionStore:
             raise
         except UnicodeDecodeError as exc:
             raise SessionCorrupt(path, None, "invalid UTF-8") from exc
+        except FileNotFoundError as exc:
+            raise SessionNotFound(path) from exc
         except OSError as exc:
             raise SessionCorrupt(path, None, exc) from exc
         return result, title, title_source
@@ -154,7 +158,7 @@ class SessionStore:
             for path in self.sessions_dir.glob("*.jsonl")
             if path.is_file() and not path.is_symlink() and _ID_RE.fullmatch(path.stem)
         ]
-        candidates.sort(key=lambda path: (path.stat().st_mtime_ns, path.name), reverse=True)
+        candidates.sort(key=lambda path: (_mtime_ns(path), path.name), reverse=True)
         return candidates
 
     def latest(self) -> Session:
@@ -165,7 +169,7 @@ class SessionStore:
             session_id = chosen.stem
             try:
                 messages, title, title_source = self.scan(chosen)
-            except SessionCorrupt:
+            except (SessionCorrupt, SessionNotFound):
                 continue
             return Session(session_id, chosen, messages, title, title_source)
         raise SessionNotFound(self.sessions_dir, "no valid sessions")
@@ -174,10 +178,7 @@ class SessionStore:
         self._append_json(path, msg.to_canonical_dict())
 
     def append_meta(self, path: Path, title: str, source: str | None = None) -> None:
-        payload: dict = {"type": "meta", "title": title}
-        if source:
-            payload["source"] = source
-        self._append_json(path, payload)
+        self._append_json(path, _meta_payload(title, source))
 
     def _append_json(self, path: Path, payload: dict) -> None:
         try:
@@ -206,9 +207,7 @@ class SessionStore:
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as stream:
                     if title:
-                        meta: dict = {"type": "meta", "title": title}
-                        if title_source:
-                            meta["source"] = title_source
+                        meta = _meta_payload(title, title_source)
                         stream.write(
                             json.dumps(meta, ensure_ascii=False) + "\n"
                         )
@@ -216,20 +215,19 @@ class SessionStore:
                         stream.write(json.dumps(msg.to_canonical_dict(), ensure_ascii=False) + "\n")
                     stream.flush()
                     os.fsync(stream.fileno())
-            except Exception:
-                try:
-                    tmp.unlink(missing_ok=True)
-                except OSError:
-                    pass
-                raise
+            except (TypeError, ValueError) as exc:
+                raise SessionError(f"compaction rewrite failed: {exc}") from exc
             self._chmod_best_effort(tmp)
             os.replace(tmp, path)
         except OSError as exc:
+            raise SessionError(f"compaction rewrite failed: {exc}") from exc
+        finally:
+            # One cleanup path: a failed write never leaves its tmp behind
+            # (on success the rename already moved it away, so this no-ops).
             try:
                 tmp.unlink(missing_ok=True)
             except OSError:
                 pass
-            raise SessionError(f"compaction rewrite failed: {exc}") from exc
         self._fsync_dir_best_effort()
         self._chmod_best_effort(path)
 
@@ -252,6 +250,13 @@ class SessionStore:
             os.close(parent_fd)
 
 
+def _mtime_ns(path: Path) -> int:
+    try:
+        return path.stat().st_mtime_ns
+    except OSError:
+        return -1
+
+
 def _lines_backwards(stream, chunk_size: int = 8192):
     """Yield the file's lines newest-first without loading it whole."""
     stream.seek(0, os.SEEK_END)
@@ -269,6 +274,14 @@ def _lines_backwards(stream, chunk_size: int = 8192):
                 yield line
     if pending.strip():
         yield pending
+
+
+def _meta_payload(title: str, source: str | None) -> dict:
+    """The one meta-line builder shared by append and rewrite."""
+    payload: dict = {"type": "meta", "title": title}
+    if source:
+        payload["source"] = source
+    return payload
 
 
 def _is_meta(payload: object) -> bool:

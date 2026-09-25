@@ -4,8 +4,8 @@ from pathlib import Path
 
 from thyca.memory.active import ActiveSnapshot
 
-_PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
-_TEMPLATE_NAMES = frozenset({"soul", "identity"})
+_PROMPTS_DIR = Path(__file__).resolve().parents[1] / "seeds" / "prompts"
+_TEMPLATE_NAMES = frozenset({"soul", "identity", "user"})
 _STUB_SOUL = frozenset({"", "# Soul"})
 _STUB_IDENTITY = frozenset({"", "# Identity"})
 _STUB_USER = frozenset({"", "# User"})
@@ -18,7 +18,7 @@ _RULES = (
     "  - ~/.thyca/USER.md\n"
     "Do not write or edit L2 daily files or sessions under ~/.thyca.\n"
     "You may write/edit ~/.thyca/config.json (provider keys, mcpServers). "
-    "Before reading or changing it, read ~/.thyca/read_after_config.md first.\n"
+    "Before reading or changing it, read ~/.thyca/read_before_config.md first.\n"
     "Check <skills> before multi-step tasks; read a SKILL.md to follow it.\n"
     "To author a skill load `create-skill`; to add a capability load `create-mcp-tool`.\n"
     "memory_search is lexical-first. If search returns nothing, say so. Do not invent memories.\n"

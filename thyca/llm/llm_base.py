@@ -3,17 +3,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TypedDict
 
 from thyca.core.protocol import Message, ToolCall
-
-
-class Usage(TypedDict, total=False):
-    prompt_tokens: int
-    cached_tokens: int
-    completion_tokens: int
-    total_tokens: int
-    reasoning_tokens: int
 
 
 def _coerce_int(value: object) -> int | None:
@@ -55,34 +46,6 @@ def _extract_responses(raw: dict) -> tuple[int | None, int | None, int | None, i
     return prompt, cached, completion, total, reasoning
 
 
-def _extract_anthropic(raw: dict) -> tuple[int | None, int | None, int | None, int | None, int | None]:
-    prompt = _coerce_int(raw.get("input_tokens"))
-    completion = _coerce_int(raw.get("output_tokens"))
-    cached = _coerce_int(raw.get("cache_read_input_tokens"))
-    # cache_creation_input_tokens is still prompt cost, not cached
-    total = None
-    total_raw = raw.get("total_tokens")
-    if isinstance(total_raw, int):
-        total = _coerce_int(total_raw)
-    return prompt, cached, completion, total, None
-
-
-def _extract_google(raw: dict) -> tuple[int | None, int | None, int | None, int | None, int | None]:
-    prompt = _coerce_int(raw.get("promptTokenCount"))
-    if prompt is None:
-        prompt = _coerce_int(raw.get("prompt_tokens"))
-    completion = _coerce_int(raw.get("candidatesTokenCount"))
-    if completion is None:
-        completion = _coerce_int(raw.get("completion_tokens"))
-    cached = _coerce_int(raw.get("cachedContentTokenCount"))
-    if cached is None:
-        cached = _coerce_int(raw.get("cached_tokens"))
-    total = _coerce_int(raw.get("totalTokenCount"))
-    if total is None:
-        total = _coerce_int(raw.get("total_tokens"))
-    return prompt, cached, completion, total, None
-
-
 def _extract_generic(raw: dict) -> tuple[int | None, int | None, int | None, int | None, int | None]:
     return (
         _coerce_int(raw.get("prompt_tokens")),
@@ -106,11 +69,9 @@ def normalize_usage(raw: dict | None, provider: str) -> dict | None:
         prompt, cached, completion, total, reasoning = _extract_openai(raw)
     elif provider == "openai_responses":
         prompt, cached, completion, total, reasoning = _extract_responses(raw)
-    elif provider == "anthropic":
-        prompt, cached, completion, total, reasoning = _extract_anthropic(raw)
-    elif provider == "google":
-        prompt, cached, completion, total, reasoning = _extract_google(raw)
     else:
+        # OpenAI-only is deliberate: unknown providers fall through to the
+        # generic snake_case counters, never to vendor-specific shapes.
         prompt, cached, completion, total, reasoning = _extract_generic(raw)
     if prompt is None and completion is None and total is None:
         return None

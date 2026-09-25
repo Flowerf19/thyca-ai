@@ -254,8 +254,6 @@
 .thyca-search--sm { --search-h: 34px; padding: 0 10px 0 12px; gap: 8px; }
 .thyca-search--sm .thyca-search__input { font-size: 13px; padding: 7px 0; }
 .thyca-search--sm .thyca-search__icon { width: 14px; height: 14px; }
-.thyca-search--lg { --search-h: 46px; padding: 0 14px 0 16px; gap: 12px; }
-.thyca-search--lg .thyca-search__input { font-size: 15px; padding: 12px 0; }
 .screen-filter-row .thyca-search {
   width: min(20rem, 100%);
   flex: 0 1 20rem;
@@ -307,8 +305,7 @@
      reserved for the dash and section marks. */
   --journal-error-ink: oklch(48% 0.11 25);
 }
-:is(.dashboard-shell, .trace-shell) .journal-entry,
-:is(.dashboard-shell, .trace-shell) .journal-metrics {
+:is(.dashboard-shell, .trace-shell) .journal-entry {
   list-style: none;
 }
 :is(.dashboard-shell, .trace-shell) .journal-entry {
@@ -375,27 +372,6 @@
   margin-inline-end: 1rem;
   color: var(--color-muted-soft);
 }
-:is(.dashboard-shell, .trace-shell) .journal-metrics {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  column-gap: 2.5rem;
-  margin: 0;
-  padding: 0;
-}
-:is(.dashboard-shell, .trace-shell) .journal-metrics .journal-entry {
-  grid-template-columns: minmax(0, 1fr);
-  padding: 0.9rem 0;
-}
-:is(.dashboard-shell, .trace-shell) .journal-metrics .journal-body {
-  padding-inline-start: 0;
-}
-:is(.dashboard-shell, .trace-shell) .journal-metrics .journal-body::before {
-  content: none;
-}
-:is(.dashboard-shell, .trace-shell) .journal-metrics h3 {
-  color: var(--color-muted);
-  font-weight: 400;
-}
 :is(.dashboard-shell, .trace-shell) .journal-value {
   display: block;
   margin-block-start: 0.1rem;
@@ -435,13 +411,6 @@
   }
   :is(.dashboard-shell, .trace-shell) .journal-date {
     padding-inline-start: 1.4rem;
-  }
-  :is(.dashboard-shell, .trace-shell) .journal-metrics {
-    grid-template-columns: minmax(0, 1fr);
-    column-gap: 0;
-  }
-  :is(.dashboard-shell, .trace-shell) .journal-metrics .journal-value {
-    font-size: 1.6rem;
   }
   :is(.dashboard-shell, .trace-shell) .journal-row-title {
     flex-wrap: wrap;
@@ -499,10 +468,10 @@
   margin: 0 0 0.7rem;
 }
 
-/* Collapsible rows: one card, each row a summary you can open for detail.
-   Used by the trace tool catalog and the turn record. The trace page's
-   .call-summary shares the grid basis, marker hide and chevron below;
-   trace.css keeps only its own deltas (columns, min-height, padding). */
+/* Settings card rows: provider.html / settings.html render each setting as an
+   article.fold-row inside .fold-list, separated by a hairline rule. (The old
+   collapsible summary kit — .fold-row > summary, .fold-row--plain and the
+   .fold-row-*/.call-* sub-elements — is gone: no page renders summaries.) */
 .screen-card.fold-list,
 .fold-list {
   padding: 0;
@@ -513,69 +482,6 @@
 }
 .fold-row:last-child {
   border: 0;
-}
-.fold-row > summary,
-.call-summary {
-  display: grid;
-  align-items: center;
-  gap: 1rem;
-  cursor: pointer;
-  list-style: none;
-}
-.fold-row > summary {
-  grid-template-columns: 2.8rem minmax(0, 1fr) auto auto 1rem;
-  min-height: 4.65rem;
-  padding: 0.65rem 1.1rem;
-}
-/* Rows without a leading icon slot. */
-.fold-row--plain > summary {
-  grid-template-columns: minmax(0, 1fr) auto 1rem;
-}
-.fold-row > summary::-webkit-details-marker,
-.fold-row > summary::marker,
-.call-summary::-webkit-details-marker,
-.call-summary::marker {
-  display: none;
-  content: "";
-}
-.fold-row > summary::after,
-.call-summary::after {
-  content: "";
-  width: 0.45rem;
-  height: 0.45rem;
-  border-right: 1.5px solid var(--color-muted);
-  border-bottom: 1.5px solid var(--color-muted);
-  transform: rotate(-45deg);
-  justify-self: center;
-}
-.fold-row[open] > summary::after,
-.call-fold[open] > .call-summary::after {
-  transform: rotate(45deg);
-}
-.fold-row-copy { min-width: 0; }
-.fold-row-name {
-  display: block;
-  color: var(--color-ink);
-  font-size: 1.05rem;
-  overflow-wrap: anywhere;
-}
-.fold-row-meta {
-  display: block;
-  color: var(--color-muted);
-  font-size: 0.85rem;
-}
-.fold-row-stat {
-  color: var(--color-ink);
-  white-space: nowrap;
-}
-.fold-row-body {
-  margin: 0;
-  padding: 0 1.1rem 0.85rem 4.9rem;
-  color: var(--color-muted);
-  font-size: 0.85rem;
-}
-.fold-row--plain > .fold-row-body {
-  padding-inline-start: 1.1rem;
 }
 
 .screen-button, .screen-select, .screen-input {
@@ -802,22 +708,6 @@
   .screen-shell .screen-filter-row .thyca-search { flex: none; width: 100%; }
   .screen-surface { margin: 0; padding: 1rem; border-inline: 0; border-block-end: 0; border-radius: 0; }
   .screen-card { padding: 1rem; }
-  .fold-row:not(.fold-row--plain) > summary {
-    grid-template-columns: 2.5rem minmax(0, 1fr) auto 1rem;
-  }
-  .fold-row:not(.fold-row--plain) .fold-row-stat {
-    grid-column: 2;
-  }
-  .fold-row:not(.fold-row--plain) .fold-row-badge {
-    grid-column: 3;
-  }
-  .fold-row:not(.fold-row--plain) > summary::after {
-    grid-column: 4;
-    grid-row: 1 / span 2;
-  }
-  .fold-row-body {
-    padding-inline: 1rem;
-  }
   /* Trace, Cài đặt, Hồ sơ: pick from the list first, then show the paper. */
   .pick-shell.is-picking .workspace { display: none; }
   .pick-shell:not(.is-picking) .sidebar { display: none; }
@@ -886,7 +776,6 @@
   }
 }
 @media (max-width: 28rem) {
-  .fold-row > summary { gap: 0.65rem; padding-inline: 0.65rem; }
   .screen-heading { align-items: stretch; flex-direction: column; }
   .screen-shell h2 { font-size: 1.45rem; overflow-wrap: anywhere; }
   .screen-select { width: 100%; }

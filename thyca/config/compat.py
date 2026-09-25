@@ -7,7 +7,7 @@ import warnings
 from pathlib import Path
 from typing import Any
 
-from .store import config_path, default_config
+from .store import _lock_path as _lock_path, config_path, default_config
 
 THYCA_DIR_NAME = ".thyca"
 CONFIG_FILENAME = "config.json"
@@ -16,10 +16,6 @@ CONFIG_FILENAME = "config.json"
 def thyca_dir() -> Path:
     warnings.warn("thyca_dir() is deprecated, use config_path().parent", DeprecationWarning, stacklevel=2)
     return config_path().parent
-
-
-def _lock_path(path: Path) -> Path:
-    return path.with_suffix(path.suffix + ".lock")
 
 
 def default_dict() -> dict[str, Any]:

@@ -8,12 +8,13 @@ from __future__ import annotations
 import json
 import socket
 import time
-from http.client import HTTPException, InvalidURL
+from http.client import InvalidURL
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from thyca import __version__
 from thyca.config import Config, ConfigError
+from thyca.llm._http import redact
 
 _PROBE_TIMEOUT_S = 10.0
 _TEST_TIMEOUT_S = 20.0
@@ -28,12 +29,6 @@ def _is_timeout_reason(reason: object) -> bool:
     return "timed out" in str(reason or "").lower()
 
 
-def _redact(text: str, secret: str) -> str:
-    if secret and secret in text:
-        return text.replace(secret, "[redacted]")
-    return text
-
-
 class ProviderProbeError(RuntimeError):
     """Provider /models probe failed (network, auth, or bad response)."""
 
@@ -46,45 +41,77 @@ def provider_ready(cfg: Config) -> bool:
     return True
 
 
+def _map_network_error(exc: Exception, timeout: float, *, model: str | None = None) -> ProviderProbeError:
+    """One mapping for every probe/test transport failure (key-free messages).
+
+    ``model`` enables the 404 branch the config tests use; the /models probe
+    passes none and keeps the generic HTTP message. HTTPError precedes
+    URLError (it subclasses it), TimeoutError precedes the bare fallback."""
+    if isinstance(exc, ProviderProbeError):
+        return exc
+    if isinstance(exc, (InvalidURL, TypeError, UnicodeError, ValueError)):
+        return ProviderProbeError("baseUrl không hợp lệ")
+    if isinstance(exc, HTTPError):
+        if exc.code in (401, 403):
+            return ProviderProbeError(f"API key bị từ chối (HTTP {exc.code})")
+        if exc.code == 404 and model is not None:
+            return ProviderProbeError(
+                f"model {model!r} không có trên provider (HTTP 404)"
+            )
+        return ProviderProbeError(f"provider trả HTTP {exc.code}")
+    if isinstance(exc, URLError):
+        if _is_timeout_reason(exc.reason):
+            return ProviderProbeError(
+                f"provider quá thời gian phản hồi ({timeout:g}s)"
+            )
+        return ProviderProbeError("không kết nối được provider")
+    if isinstance(exc, TimeoutError):
+        return ProviderProbeError(
+            f"provider quá thời gian phản hồi ({timeout:g}s)"
+        )
+    return ProviderProbeError("không kết nối được provider")
+
+
+def _request_json(
+    base_url: str,
+    path: str,
+    api_key: str,
+    *,
+    body: bytes | None,
+    timeout: float,
+    model: str | None = None,
+) -> bytes:
+    """One bearer-JSON request for the probe/tests: scheme check, URL join,
+    transport, and the shared network-error mapping. ``body=None`` sends GET.
+    The config tests pass ``model`` for the 404 branch and the blank-model
+    guard; the scheme check stays first so both-bad inputs report the URL."""
+    try:
+        if not base_url.startswith(("http://", "https://")):
+            raise ProviderProbeError("baseUrl phải bắt đầu bằng http:// hoặc https://")
+        if model is not None and not model.strip():
+            raise ProviderProbeError("cần model để test")
+        url = base_url.rstrip("/") + path
+        headers = {"Authorization": f"Bearer {api_key}", "User-Agent": f"thyca/{__version__}"}
+        if body is not None:
+            headers["Content-Type"] = "application/json"
+        # Some gateways (e.g. commandcode) 403 requests without a User-Agent.
+        request = Request(url, data=body, headers=headers)
+    except ProviderProbeError:
+        raise
+    except Exception as exc:
+        raise _map_network_error(exc, timeout, model=model) from exc
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            return response.read()
+    except Exception as exc:
+        raise _map_network_error(exc, timeout, model=model) from exc
+
+
 def validate_provider(
     base_url: str, api_key: str, *, timeout: float = _PROBE_TIMEOUT_S
 ) -> list[str]:
     """GET ``{base_url}/models`` with a bearer token; return sorted model ids."""
-    try:
-        if not base_url.startswith(("http://", "https://")):
-            raise ProviderProbeError("baseUrl phải bắt đầu bằng http:// hoặc https://")
-        url = base_url.rstrip("/") + "/models"
-        # Some gateways (e.g. commandcode) 403 requests without a User-Agent.
-        request = Request(
-            url,
-            headers={"Authorization": f"Bearer {api_key}", "User-Agent": f"thyca/{__version__}"},
-        )
-        with urlopen(request, timeout=timeout) as response:
-            body = response.read()
-    except ProviderProbeError:
-        raise
-    except (InvalidURL, TypeError, UnicodeError, ValueError) as exc:
-        raise ProviderProbeError("baseUrl không hợp lệ") from exc
-    except HTTPError as exc:
-        if exc.code in (401, 403):
-            raise ProviderProbeError(f"API key bị từ chối (HTTP {exc.code})") from exc
-        raise ProviderProbeError(f"provider trả HTTP {exc.code}") from exc
-    except URLError as exc:
-        if _is_timeout_reason(exc.reason):
-            raise ProviderProbeError(
-                f"provider quá thời gian phản hồi ({timeout:g}s)"
-            ) from exc
-        raise ProviderProbeError("không kết nối được provider") from exc
-    except TimeoutError as exc:
-        raise ProviderProbeError(
-            f"provider quá thời gian phản hồi ({timeout:g}s)"
-        ) from exc
-    except OSError as exc:
-        raise ProviderProbeError("không kết nối được provider") from exc
-    except HTTPException as exc:
-        raise ProviderProbeError("không kết nối được provider") from exc
-    except Exception as exc:
-        raise ProviderProbeError("không kết nối được provider") from exc
+    body = _request_json(base_url, "/models", api_key, body=None, timeout=timeout)
     try:
         payload = json.loads(body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -108,58 +135,16 @@ def test_chat(
     Raises :class:`ProviderProbeError` with a key-free message on any failure.
     """
     started = time.perf_counter()
-    try:
-        if not base_url.startswith(("http://", "https://")):
-            raise ProviderProbeError("baseUrl phải bắt đầu bằng http:// hoặc https://")
-        if not model.strip():
-            raise ProviderProbeError("cần model để test")
-        url = base_url.rstrip("/") + "/chat/completions"
-        body = json.dumps(
-            {
-                "model": model,
-                "messages": [{"role": "user", "content": _TEST_MESSAGE}],
-                "stream": False,
-            }
-        ).encode("utf-8")
-        request = Request(
-            url,
-            data=body,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-                "User-Agent": f"thyca/{__version__}",
-            },
-        )
-        with urlopen(request, timeout=timeout) as response:
-            raw = response.read()
-    except ProviderProbeError:
-        raise
-    except (InvalidURL, TypeError, UnicodeError, ValueError) as exc:
-        raise ProviderProbeError("baseUrl không hợp lệ") from exc
-    except HTTPError as exc:
-        if exc.code in (401, 403):
-            raise ProviderProbeError(f"API key bị từ chối (HTTP {exc.code})") from exc
-        if exc.code == 404:
-            raise ProviderProbeError(
-                f"model {model!r} không có trên provider (HTTP 404)"
-            ) from exc
-        raise ProviderProbeError(f"provider trả HTTP {exc.code}") from exc
-    except URLError as exc:
-        if _is_timeout_reason(exc.reason):
-            raise ProviderProbeError(
-                f"provider quá thời gian phản hồi ({timeout:g}s)"
-            ) from exc
-        raise ProviderProbeError("không kết nối được provider") from exc
-    except TimeoutError as exc:
-        raise ProviderProbeError(
-            f"provider quá thời gian phản hồi ({timeout:g}s)"
-        ) from exc
-    except OSError as exc:
-        raise ProviderProbeError("không kết nối được provider") from exc
-    except HTTPException as exc:
-        raise ProviderProbeError("không kết nối được provider") from exc
-    except Exception as exc:
-        raise ProviderProbeError("không kết nối được provider") from exc
+    body = json.dumps(
+        {
+            "model": model,
+            "messages": [{"role": "user", "content": _TEST_MESSAGE}],
+            "stream": False,
+        }
+    ).encode("utf-8")
+    raw = _request_json(
+        base_url, "/chat/completions", api_key, body=body, timeout=timeout, model=model
+    )
     latency_ms = int((time.perf_counter() - started) * 1000)
     try:
         payload = json.loads(raw.decode("utf-8"))
@@ -189,58 +174,16 @@ def test_responses_chat(
     (``input`` in, ``output_text`` out).
     """
     started = time.perf_counter()
-    try:
-        if not base_url.startswith(("http://", "https://")):
-            raise ProviderProbeError("baseUrl phải bắt đầu bằng http:// hoặc https://")
-        if not model.strip():
-            raise ProviderProbeError("cần model để test")
-        url = base_url.rstrip("/") + "/responses"
-        body = json.dumps(
-            {
-                "model": model,
-                "input": [{"role": "user", "content": _TEST_MESSAGE}],
-                "stream": False,
-            }
-        ).encode("utf-8")
-        request = Request(
-            url,
-            data=body,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-                "User-Agent": f"thyca/{__version__}",
-            },
-        )
-        with urlopen(request, timeout=timeout) as response:
-            raw = response.read()
-    except ProviderProbeError:
-        raise
-    except (InvalidURL, TypeError, UnicodeError, ValueError) as exc:
-        raise ProviderProbeError("baseUrl không hợp lệ") from exc
-    except HTTPError as exc:
-        if exc.code in (401, 403):
-            raise ProviderProbeError(f"API key bị từ chối (HTTP {exc.code})") from exc
-        if exc.code == 404:
-            raise ProviderProbeError(
-                f"model {model!r} không có trên provider (HTTP 404)"
-            ) from exc
-        raise ProviderProbeError(f"provider trả HTTP {exc.code}") from exc
-    except URLError as exc:
-        if _is_timeout_reason(exc.reason):
-            raise ProviderProbeError(
-                f"provider quá thời gian phản hồi ({timeout:g}s)"
-            ) from exc
-        raise ProviderProbeError("không kết nối được provider") from exc
-    except TimeoutError as exc:
-        raise ProviderProbeError(
-            f"provider quá thời gian phản hồi ({timeout:g}s)"
-        ) from exc
-    except OSError as exc:
-        raise ProviderProbeError("không kết nối được provider") from exc
-    except HTTPException as exc:
-        raise ProviderProbeError("không kết nối được provider") from exc
-    except Exception as exc:
-        raise ProviderProbeError("không kết nối được provider") from exc
+    body = json.dumps(
+        {
+            "model": model,
+            "input": [{"role": "user", "content": _TEST_MESSAGE}],
+            "stream": False,
+        }
+    ).encode("utf-8")
+    raw = _request_json(
+        base_url, "/responses", api_key, body=body, timeout=timeout, model=model
+    )
     latency_ms = int((time.perf_counter() - started) * 1000)
     try:
         payload = json.loads(raw.decode("utf-8"))
@@ -250,7 +193,7 @@ def test_responses_chat(
         raise ProviderProbeError("provider trả JSON không hợp lệ")
     error = payload.get("error")
     if isinstance(error, dict) and error:
-        detail = _redact(str(error.get("message", "")), api_key)
+        detail = redact(str(error.get("message", "")), api_key)
         raise ProviderProbeError(f"provider trả lỗi: {detail}")
     output = payload.get("output")
     has_text = isinstance(output, list) and any(

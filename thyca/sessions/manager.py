@@ -11,10 +11,21 @@ from thyca.config import DEFAULT_TIMELINE_TIMEZONE, LimitsCfg
 from thyca.core.protocol import Message
 
 from .compaction import SessionCompactor
-from .errors import SessionBusy, SessionCorrupt, SessionError, SessionNotFound
+from .errors import SessionBusy, SessionError
 from .models import Session
 from .store import SessionStore
 from .title import USER_TITLE_SOURCE, is_blank, sanitize_title, sanitize_user_title
+
+
+def _last_user_index(messages: list[Message]) -> int | None:
+    """Index of the last user message, or None when there is none.
+
+    The one reverse scan shared by ``truncate_to_last_user`` and
+    ``mark_turn_error``."""
+    for index in range(len(messages) - 1, -1, -1):
+        if messages[index].role == "user":
+            return index
+    return None
 
 
 class SessionManager:
@@ -90,7 +101,7 @@ class SessionManager:
             for path in self.store.list_paths():
                 try:
                     sessions.append(self.store.load(path.stem))
-                except (SessionCorrupt, SessionNotFound, SessionError):
+                except SessionError:
                     continue
             return sessions
 
@@ -106,7 +117,7 @@ class SessionManager:
             for path in self.store.list_paths():
                 try:
                     session = self.store.load(path.stem)
-                except (SessionCorrupt, SessionNotFound, SessionError):
+                except SessionError:
                     continue
                 if keep and session.id in keep:
                     continue
@@ -134,11 +145,7 @@ class SessionManager:
         with self._lock:
             session = self._current_locked()
             messages = session.messages
-            last = None
-            for index in range(len(messages) - 1, -1, -1):
-                if messages[index].role == "user":
-                    last = index
-                    break
+            last = _last_user_index(messages)
             if last is None:
                 return False
             stripped = False
@@ -175,11 +182,7 @@ class SessionManager:
         with self._lock:
             session = self._current_locked()
             messages = session.messages
-            last = None
-            for index in range(len(messages) - 1, -1, -1):
-                if messages[index].role == "user":
-                    last = index
-                    break
+            last = _last_user_index(messages)
             if last is None:
                 return False
             marked = dict(messages[last].meta or {})

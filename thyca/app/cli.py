@@ -11,10 +11,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from thyca.agent.act import Act
-from thyca.agent.assemble import Assemble
-from thyca.agent.loop import AgentLoop
-from thyca.agent.observe import Observe
-from thyca.agent.think import LLMPort, Think
+from thyca.agent.think import LLMPort
 from thyca.app.chat_ui import ChatUi
 from thyca.config import ConfigError, load
 from thyca.llm.llm_base import LLMError
@@ -22,17 +19,24 @@ from thyca.llm.llm_factory import ConnectFactory
 from thyca.llm.prompt_manager import PromptManager
 from thyca.memory.active import ActiveMemory
 from thyca.sessions import SessionError, SessionManager, SessionNotFound
-from thyca.tools.builtin.background import BackgroundProcs
-from thyca.tools.memory import MemoryFacade
+from thyca.tools.gateway.background import BackgroundProcs
+from thyca.memory.facade import MemoryFacade
 from thyca.tools.mcp import MCPManager
 from thyca.tools.task_store import TaskStore
 
-from thyca.app.toolchain import build_tool_registry, install_mcp_specs, report_spawn_diags
+from thyca.app.toolchain import (
+    build_agent_loop,
+    build_tool_gateway,
+    build_tool_registry,
+    install_mcp_specs,
+    report_spawn_diags,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="thyca", description="Thyca — personal terminal harness")
     parser.add_argument("--version", action="store_true", help="show version and exit")
+    parser.add_argument("--seed", action="store_true", help="seed ~/.thyca defaults (copy-if-missing) and exit")
     parser.add_argument("-p", "--print", dest="print_mode", action="store_true", help="one-shot print mode")
     parser.add_argument("--continue", dest="cont", action="store_true", help="continue last session")
     parser.add_argument("--session", type=str, default=None, help="session id")
@@ -70,6 +74,8 @@ class Cli:
 
             print(f"thyca {__version__}", file=self._stdout)
             return 0
+        if args.seed:
+            return self._seed()
         if args.cont and args.session:
             ui.error("--continue and --session are mutually exclusive")
             return 2
@@ -148,7 +154,13 @@ class Cli:
         state = memory.open_session(datetime.now(zone))
         tasks = TaskStore()
         background = BackgroundProcs()
-        registry = build_tool_registry(root, cfg, tasks, background)
+        registry = build_tool_registry(root, cfg, background)
+        gateway = build_tool_gateway(
+            registry,
+            tasks,
+            background,
+            soft_timeout_s=cfg.effective_limits().softTimeoutS,
+        )
         manager = MCPManager()
         try:
             report_spawn_diags(
@@ -156,17 +168,13 @@ class Cli:
             )
             install_mcp_specs(registry, manager, err=self._stderr)
             schema = registry.to_openai_schema()
-            connect = self._connect or ConnectFactory.create(
-                cfg.effective_provider().api, cfg.effective_provider()
-            )
-            loop = AgentLoop(
+            connect = self._connect or ConnectFactory.create(provider.api, provider)
+            loop = build_agent_loop(
                 sessions=sessions,
-                assemble=Assemble(PromptManager()),
-                think=Think(connect),
-                act=Act(registry),
-                observe=Observe(sessions),
-                loop_max=limits.loopMax,
+                connect=connect,
+                act=Act(gateway),
                 tools=schema,
+                loop_max=limits.loopMax,
                 model=provider.model,
                 pricing=cfg.effective_pricing() or None,
             )
@@ -180,8 +188,8 @@ class Cli:
                     ui.debug(
                         f"session={sessions.current.id} model={provider.model} "
                         f"provider={cfg.provider_id_for(provider.model)} baseUrl={provider.baseUrl} "
-                        f"identity={('Name: Thyca' in system)} soul={('You are Thyca' in system)} "
-                        f"user={'<user>' in system} tools={len(schema)} system_chars={len(system)}"
+                        f"identity={'</identity>' in system} soul={'</role>' in system} "
+                        f"user={'</user>' in system} tools={len(schema)} system_chars={len(system)}"
                     )
                 return await loop.run(text, hot=hot)
 
@@ -195,8 +203,31 @@ class Cli:
                 if close is not None:
                     await close()
         finally:
-            await background.kill_all()
+            await gateway.shutdown()
             await manager.shutdown()
+
+    def _seed(self) -> int:
+        from thyca.config import GUIDE_NAME, ConfigError, ensure_thyca_dir, write_config_guide
+        from thyca.memory.active import ActiveMemory, ActiveMemoryError
+        from thyca.skills import SkillStore
+
+        # Install-time seeding: HOME-based ~/.thyca by design (self._thyca_dir
+        # is a per-run override, not the install target). Every step below is
+        # copy-if-missing, so reinstalls/upgrades never overwrite user edits.
+        ui = ChatUi(self._stdout, self._stderr, color=False)
+        try:
+            root = ensure_thyca_dir()
+            ActiveMemory().ensure_files()
+            SkillStore().ensure_defaults()
+            write_config_guide()
+        except (ConfigError, ActiveMemoryError, OSError) as exc:
+            ui.error(f"seed failed: {exc}")
+            return 1
+        print(
+            f"seeded {root} (SOUL.md, IDENTITY.md, USER.md, skills, {GUIDE_NAME}; existing files kept)",
+            file=self._stdout,
+        )
+        return 0
 
     def _serve(self, port: int, *, daemon: bool = False, stop: bool = False) -> int:
         from thyca.app.chat_app import ChatApp

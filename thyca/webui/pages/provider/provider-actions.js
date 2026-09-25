@@ -1,4 +1,5 @@
 import { getJson, postJson } from "../../shared/js/http.js";
+import { messageOf } from "../../shared/js/status.js";
 import {
   applyModel,
   el,
@@ -11,7 +12,6 @@ import {
 } from "./provider-dom.js";
 import {
   clone,
-  messageOf,
   modelsOf,
   providerIds,
   providerOf,

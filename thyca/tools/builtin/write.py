@@ -25,22 +25,20 @@ def replace_file(path: Path, content: str) -> None:
 
 def write_spec(guard: PathGuard) -> ToolSpec:
     async def handler(args: dict) -> str:
-        content = args.get("content")
-        if not isinstance(content, str):
-            raise ValueError("content must be a string")
-        path = guard.deny_write(str(args["path"]))
-        replace_file(path, content)
+        # Schema types arrive pre-checked by the registry (X3).
+        path = guard.deny_write(args["path"])
+        replace_file(path, args["content"])
         return f"wrote {path}"
 
     return ToolSpec(
         name="write",
         description=(
             "Write a UTF-8 text file (replace). "
-            "Denied: L2 daily, leftover MEMORY.md, sessions, config, sqlite. "
-            "Allowed: SOUL.md, IDENTITY.md, USER.md, and paths outside those."
+            "Denied: L2 daily, leftover MEMORY.md, sessions, sqlite. "
+            "Allowed: SOUL.md, IDENTITY.md, USER.md, config.json, and paths outside those."
         ),
         parameters=_PARAMETERS,
         handler=handler,
         parallel_safe=False,
-        resource_key=lambda args: str(guard.resolve(str(args["path"]))),
+        resource_key=guard.key,
     )

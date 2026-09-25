@@ -11,11 +11,13 @@ in-flight events instead of waiting for the notebook to land.
 """
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import queue
 import threading
 
 from thyca.core.protocol import utc_now_ts
-from thyca.sessions import SessionBusy, SessionManager
+from thyca.sessions import SessionBusy, SessionError, SessionManager
 
 
 class TurnHub:
@@ -69,29 +71,63 @@ class TurnHub:
             self._subs.clear()
 
 
+class _TurnJob:
+    """One turn's asyncio handle: task, cancel flag, and completion future."""
+
+    __slots__ = ("task", "cancel", "cfut", "lock")
+
+    def __init__(self) -> None:
+        self.task: asyncio.Task | None = None
+        self.cancel = False
+        self.cfut: concurrent.futures.Future = concurrent.futures.Future()
+        self.lock = threading.Lock()
+
+
+class _Turn:
+    """One claimed turn: started_at stamp, event hub, and loop job."""
+
+    __slots__ = ("hub", "job", "started_at")
+
+    def __init__(self, started_at: str, hub: TurnHub) -> None:
+        self.started_at = started_at
+        self.hub = hub
+        self.job: _TurnJob | None = None
+
+
 class TurnState:
-    """``session_id -> started_at`` for turns in flight, behind one lock."""
+    """The one turn registry: ``session_id -> turn`` for turns in flight.
+
+    The claim (hub + started_at) and the loop job share one record behind
+    one lock; :class:`_LoopTurns` is a view over it for the asyncio side.
+    """
 
     def __init__(self) -> None:
         # Plain lock, not reentrant: nothing here calls back into the claim
         # while holding it, and re-entry would mean the delete gate is being
         # used from inside itself.
         self._lock = threading.Lock()
-        self._running: dict[str, str] = {}
-        self._hubs: dict[str, TurnHub] = {}
+        self._turns: dict[str, _Turn] = {}
 
     def snapshot(self) -> dict[str, str]:
         """Copy of the in-flight map, for callers that only need to read it."""
         with self._lock:
-            return dict(self._running)
+            return {sid: turn.started_at for sid, turn in self._turns.items()}
 
     def started_at(self, session_id: str) -> str | None:
         with self._lock:
-            return self._running.get(session_id)
+            turn = self._turns.get(session_id)
+            return turn.started_at if turn is not None else None
 
     def hub(self, session_id: str) -> TurnHub | None:
         with self._lock:
-            return self._hubs.get(session_id)
+            turn = self._turns.get(session_id)
+            return turn.hub if turn is not None else None
+
+    def job(self, session_id: str) -> _TurnJob | None:
+        """The loop job attached by :class:`_LoopTurns`, if any."""
+        with self._lock:
+            turn = self._turns.get(session_id)
+            return turn.job if turn is not None else None
 
     def claim(self, session_id: str) -> TurnHub:
         """Take the session for a turn, or raise :class:`SessionBusy`.
@@ -100,19 +136,32 @@ class TurnState:
         instead of a silent queue behind the first one's LLM call.
         """
         with self._lock:
-            if session_id in self._running:
+            if session_id in self._turns:
                 raise SessionBusy(session_id)
-            self._running[session_id] = utc_now_ts()
             hub = TurnHub()
-            self._hubs[session_id] = hub
+            self._turns[session_id] = _Turn(utc_now_ts(), hub)
             return hub
+
+    def attach(self, session_id: str, job: _TurnJob) -> None:
+        """Pin the loop job to a claimed turn (the _LoopTurns.begin half)."""
+        with self._lock:
+            turn = self._turns.get(session_id)
+            if turn is None:
+                raise SessionError(f"no turn claimed for session: {session_id}")
+            turn.job = job
+
+    def detach(self, session_id: str, job: _TurnJob) -> None:
+        """Unpin the loop job, but only when it is still this one."""
+        with self._lock:
+            turn = self._turns.get(session_id)
+            if turn is not None and turn.job is job:
+                turn.job = None
 
     def release(self, session_id: str) -> None:
         with self._lock:
-            self._running.pop(session_id, None)
-            hub = self._hubs.pop(session_id, None)
-        if hub is not None:
-            hub.close()
+            turn = self._turns.pop(session_id, None)
+        if turn is not None:
+            turn.hub.close()
 
     def delete_unclaimed(self, manager: SessionManager, session_id: str) -> None:
         """Delete a session unless a turn holds it.
@@ -125,4 +174,4 @@ class TurnState:
         next write and silently dropping the earlier history.
         """
         with self._lock:
-            manager.delete(session_id, keep=set(self._running))
+            manager.delete(session_id, keep=set(self._turns))

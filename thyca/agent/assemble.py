@@ -3,6 +3,7 @@ from __future__ import annotations
 from thyca.llm.prompt_manager import PromptManager
 from thyca.memory.active import ActiveSnapshot
 from thyca.core.protocol import Message
+from thyca.sessions.wire import is_naming_message
 
 from .stage import Stage
 
@@ -16,12 +17,11 @@ class Assemble:
             raise ValueError("user_msg must be a string")
         # Naming rows are transcript-only (assistant with null content and no
         # tool calls): strict providers 400 on them, so they never reach the
-        # model. Same predicate as chat-view and trace.
+        # model. Canonical predicate lives in sessions/wire (shared with trace).
         messages = [
             message
             for message in stage.messages
-            if message.role != "system"
-            and (message.meta or {}).get("kind") != "naming"
+            if message.role != "system" and not is_naming_message(message)
         ]
         if isinstance(stage.hot, ActiveSnapshot):
             messages.insert(0, Message(role="system", content=self._prompts.build(stage.hot)))

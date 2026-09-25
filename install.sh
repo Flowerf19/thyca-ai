@@ -48,3 +48,4 @@ fi
 PATH="${bin_dir}:${PATH:-}"
 export PATH
 thyca --version
+thyca --seed || true

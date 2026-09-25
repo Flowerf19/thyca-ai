@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -33,6 +33,7 @@ class _McpSession(Protocol):
 
 
 _TOOL_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
+_PYTHON3_MINOR = re.compile(r"python3\.\d+")
 _MODEL_NAME_MAX = 64
 ProcessFactory = Callable[[str, McpServerCfg], "MCPProcess"]
 
@@ -55,7 +56,8 @@ def merge_env(server_env: dict[str, str]) -> dict[str, str]:
 
 def resolve_command(command: str) -> str:
     name = Path(command).name
-    if name == "python" or name.startswith("python3"):
+    # python3 + optional minor only: python3foo is a real binary name.
+    if name == "python" or name == "python3" or _PYTHON3_MINOR.fullmatch(name):
         return sys.executable
     return command
 
@@ -118,6 +120,7 @@ class MCPProcess:
         self._session = session
         self._closed: asyncio.Event | None = None
         self._task: asyncio.Task[None] | None = None
+        self._failure: BaseException | None = None
 
     async def start(self) -> list[Tool]:
         if self._session is not None:
@@ -148,11 +151,13 @@ class MCPProcess:
                     listed = await session.list_tools()
                     if not ready.done():
                         ready.set_result(list(listed.tools))
-                    assert self._closed is not None
+                    # _closed is always set in start() before this task exists.
                     await self._closed.wait()
         except Exception as exc:
             if not ready.done():
                 ready.set_exception(exc)
+            else:
+                self._failure = exc
         finally:
             self._session = None
 
@@ -160,12 +165,24 @@ class MCPProcess:
         self, tool_name: str, arguments: dict[str, Any] | None = None
     ) -> CallToolResult:
         if self._session is None:
+            if self._failure is not None:
+                raise RuntimeError(
+                    f"mcp process {self.name!r} failed: {self._failure!r}"
+                ) from self._failure
             raise RuntimeError(f"mcp process {self.name!r} is not started")
-        return await self._session.call_tool(
-            tool_name,
-            arguments,
-            read_timeout_seconds=CALL_TIMEOUT,
-        )
+        try:
+            result = await self._session.call_tool(
+                tool_name,
+                arguments,
+                read_timeout_seconds=CALL_TIMEOUT,
+            )
+        except Exception as exc:
+            self._failure = exc
+            raise RuntimeError(
+                f"mcp process {self.name!r} tool {tool_name!r} failed: {exc!r}"
+            ) from exc
+        self._failure = None
+        return result
 
     async def aclose(self) -> None:
         if self._closed is not None:
@@ -174,6 +191,7 @@ class MCPProcess:
         if task is not None:
             await task
         self._session = None
+        self._failure = None
 
 
 @dataclass(frozen=True)
@@ -233,6 +251,28 @@ def _spec_for(proc: MCPProcess, tool: Tool) -> ToolSpec | None:
     )
 
 
+def _canonical_tools(
+    live: list[tuple[MCPProcess, list[Tool]]], seen: set[str]
+) -> Iterator[tuple[MCPProcess, Tool, ToolSpec | None, str | None]]:
+    """Yield ``(proc, tool, spec, error)`` per tool; exactly one of spec/error set.
+
+    The single validation+dedup point: first name wins, accepted names join
+    ``seen``. ``spawn_all`` turns errors into skip diagnostics; ``tool_specs``
+    keeps the specs — so the two can never disagree on which tool won."""
+    for proc, tools in live:
+        for tool in tools:
+            error = _tool_error(proc, tool, seen)
+            if error is not None:
+                yield proc, tool, None, error
+                continue
+            spec = _spec_for(proc, tool)
+            # The un-seen validation inside _spec_for is a subset of the
+            # check that just passed, so the build cannot fail here.
+            assert spec is not None
+            seen.add(spec.name)
+            yield proc, tool, spec, None
+
+
 class MCPManager:
     def __init__(self, process_factory: ProcessFactory | None = None) -> None:
         self._factory = process_factory or _default_process
@@ -242,6 +282,8 @@ class MCPManager:
         if not servers:
             return []
         diags: list[StartupDiagnostic] = []
+        # One set across the loop: rebuilding tool_specs() per server was O(n²).
+        seen = {spec.name for spec in self.tool_specs()}
         for name, cfg in servers.items():
             proc = self._factory(name, cfg)
             try:
@@ -253,36 +295,26 @@ class MCPManager:
                     pass
                 diags.append(StartupDiagnostic(name, False, str(exc)))
                 continue
-            seen = {
-                spec.name
-                for spec in self.tool_specs()
-            }
             self._live.append((proc, tools))
             diags.append(StartupDiagnostic(name, True, ""))
-            for tool in tools:
-                error = _tool_error(proc, tool, seen)
-                if error is not None:
-                    raw_name = getattr(tool, "name", "unknown")
-                    diags.append(
-                        StartupDiagnostic(
-                            name, False, f"MCP tool {raw_name!r} skipped: {error}"
-                        )
+            for _proc, tool, _spec, error in _canonical_tools([(proc, tools)], seen):
+                if error is None:
+                    continue
+                raw_name = getattr(tool, "name", "unknown")
+                diags.append(
+                    StartupDiagnostic(
+                        name, False, f"MCP tool {raw_name!r} skipped: {error}"
                     )
-                else:
-                    seen.add(model_name(proc.name, tool.name))
+                )
         return diags
 
     def tool_specs(self) -> list[ToolSpec]:
-        specs: list[ToolSpec] = []
         seen: set[str] = set()
-        for proc, tools in self._live:
-            for tool in tools:
-                spec = _spec_for(proc, tool)
-                if spec is None or spec.name in seen:
-                    continue
-                seen.add(spec.name)
-                specs.append(spec)
-        return specs
+        return [
+            spec
+            for _proc, _tool, spec, _error in _canonical_tools(self._live, seen)
+            if spec is not None
+        ]
 
     async def shutdown(self) -> None:
         live, self._live = self._live, []

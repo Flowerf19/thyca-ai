@@ -1,6 +1,16 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
+
+
+def absolutize(value: str) -> Path:
+    """~-expand + lexically normalize, without touching the filesystem.
+
+    Shared by :meth:`PathGuard.resolve` (which then anchors relative paths
+    and resolves symlinks) and ``MemoryFacade`` proj handling (which requires
+    absolute): ``/a/../b`` and ``/b`` are one identity in both."""
+    return Path(os.path.normpath(os.path.expanduser(value)))
 
 
 class PathDenied(ValueError):
@@ -14,10 +24,17 @@ class PathGuard:
     def resolve(self, path: str) -> Path:
         if not isinstance(path, str) or not path.strip():
             raise ValueError("path must be a non-empty string")
-        raw = Path(path).expanduser()
+        raw = absolutize(path)
         if not raw.is_absolute():
             raw = Path.cwd() / raw
         return raw.resolve()
+
+    def key(self, args: dict) -> str:
+        """Lock identity for one file-tool call: the resolved path string.
+
+        The one ``resource_key`` for the read/write/edit specs, so same-path
+        calls always serialize on one identity."""
+        return str(self.resolve(args["path"]))
 
     def deny_write(self, path: str) -> Path:
         target = self.resolve(path)

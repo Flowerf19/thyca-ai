@@ -22,6 +22,15 @@ def _integer(value: object, name: str) -> None:
         raise ConfigError(f"{name} must be an integer, got {type(value).__name__}")
 
 
+def _optional_int(value: object, name: str) -> int | None:
+    """Optional int for sparse wire forms: None/"" mean unset, else one int
+    policy (the same strictness as :func:`_integer`; integral floats are out)."""
+    if value is None or value == "":
+        return None
+    _integer(value, name)
+    return int(value)
+
+
 def _number(value: object, name: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ConfigError(f"{name} must be a number, got {type(value).__name__}")

@@ -4,13 +4,13 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 
 import pytest
 
 import thyca.memory.writer as writer_module
 from thyca.memory.heading import TTL_DAYS, parse_heading
-from thyca.tools.memory import MemoryFacade
+from thyca.memory.facade import MemoryFacade
 
 
 def test_facade_indexes_existing_sources_on_open(tmp_path: Path) -> None:
@@ -292,7 +292,7 @@ def test_legacy_memory_selectors_are_rejected(tmp_path: Path) -> None:
     for action in (
         lambda: facade.get(session_id="memory#abcdef12"),
         lambda: facade.get(
-            session_id="memory#abcdef12", path=str(tmp_path / "SOUL.md")
+            chunk_id="memory#abcdef12#1", session_id="memory#abcdef12"
         ),
         lambda: facade.forget("memory#abcdef12"),
         lambda: facade.reinforce("memory#abcdef12"),
@@ -320,7 +320,7 @@ def test_reject_forget_soul(tmp_path: Path) -> None:
 
 
 def test_update_keeps_entry_id_and_reindexes(tmp_path: Path) -> None:
-    from thyca.tools.memory import MemoryFacade
+    from thyca.memory.facade import MemoryFacade
 
     facade = MemoryFacade(tmp_path)
     sid = facade.remember("Chủ đề cũ", "nội dung cũ", now=None)
@@ -343,7 +343,7 @@ def test_update_not_found(tmp_path: Path) -> None:
     import pytest
 
     from thyca.memory.archived import ArchiveError
-    from thyca.tools.memory import MemoryFacade
+    from thyca.memory.facade import MemoryFacade
 
     facade = MemoryFacade(tmp_path)
     with pytest.raises(ArchiveError):
@@ -359,6 +359,17 @@ def test_update_topic_only_keeps_body(tmp_path: Path) -> None:
     assert "Chủ đề mới" in after
     assert "nội dung giữ" in after
     assert "dòng chi tiết" in after
+
+
+def test_update_summary_only_keeps_details(tmp_path: Path) -> None:
+    facade = MemoryFacade(tmp_path)
+    sid = facade.remember("topic", "old summary", content="kept detail")
+    facade.update(sid, summary="new summary")
+    after = facade.get(session_id=sid)
+    assert "new summary" in after
+    assert "kept detail" in after
+    facade.update(sid, summary="cleared", content="")
+    assert "kept detail" not in facade.get(session_id=sid)
 
 
 def test_proj_survives_update_and_reinforce_and_filters_search(tmp_path: Path) -> None:
@@ -387,3 +398,156 @@ def test_proj_survives_update_and_reinforce_and_filters_search(tmp_path: Path) -
 
     with pytest.raises(ValueError, match="absolute"):
         facade.remember("x", "y", now=t0, proj="relative/path")
+
+
+def test_canonical_heading_session_roundtrips(tmp_path: Path) -> None:
+    facade = MemoryFacade(tmp_path)
+    facade.write_canonical(
+        "SOUL.md", "# Soul\n\n## 10:00 — Morning pages\n- zephyrquuxnote about testing\n"
+    )
+    found = facade.search("zephyrquuxnote")
+    assert len(found.hits) == 1
+    hit = found.hits[0]
+    assert hit.session_id.startswith("canonical#soul#")
+    assert "zephyrquuxnote" in facade.get(chunk_id=hit.chunk_id)
+    assert "zephyrquuxnote" in facade.get(session_id=hit.session_id)
+    assert hit.chunk_id in {leaf.chunk_id for leaf in facade.stats().leaves}
+
+
+# --- F23/X13: writer owns per-file locking; no facade pre-locate ---
+
+
+def _facade(tmp_path: Path) -> MemoryFacade:
+    return MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+
+
+def test_f23_mutations_locate_once_under_mutation_lock(tmp_path: Path) -> None:
+    facade = _facade(tmp_path)
+    now = datetime(2026, 9, 1, 8, 0)
+    sid = facade.remember("topic", "summary", now=now)
+    writer = facade.writer
+    real_locate = writer.locate
+    calls: list[str] = []
+
+    def spy(session_id: str):
+        calls.append(session_id)
+        assert writer.mutation_lock()._is_owned(), "locate must run under mutation_lock"
+        return real_locate(session_id)
+
+    writer.locate = spy  # type: ignore[method-assign]
+    try:
+        facade.reinforce(sid, now=now)
+        assert calls == [sid]
+        calls.clear()
+        facade.update(sid, topic="renamed", now=now)
+        assert calls == [sid]
+        calls.clear()
+        facade.forget(sid, now=now)
+        assert calls == [sid]
+    finally:
+        del writer.locate
+
+
+def test_f23_concurrent_mutations_stay_consistent(tmp_path: Path) -> None:
+    facade = _facade(tmp_path)
+    now = datetime(2026, 9, 1, 8, 0)
+    sids: list[str] = []
+    sids_lock = Lock()
+    errors: list[BaseException] = []
+
+    def remember_many(n: int) -> None:
+        try:
+            for i in range(5):
+                sid = facade.remember(f"topic-{n}-{i}", "summary body", now=now)
+                with sids_lock:
+                    sids.append(sid)
+        except BaseException as exc:  # noqa: BLE001 — collected, asserted below
+            errors.append(exc)
+
+    threads = [Thread(target=remember_many, args=(n,)) for n in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    assert len(sids) == 20
+
+    def mutate_one(sid: str, drop: bool) -> None:
+        try:
+            facade.reinforce(sid, 5, now=now)
+            facade.update(sid, topic="renamed", now=now)
+            if drop:
+                facade.forget(sid, now=now)
+        except BaseException as exc:  # noqa: BLE001 — collected, asserted below
+            errors.append(exc)
+
+    workers = [
+        Thread(target=mutate_one, args=(sid, idx % 2 == 0))
+        for idx, sid in enumerate(sids)
+    ]
+    for t in workers:
+        t.start()
+    for t in workers:
+        t.join()
+    assert errors == []
+    assert facade.stats(now=now).total == 10
+
+
+# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
+import stat
+import pytest
+
+def test_x7_memory_writes_flow_through_it(tmp_path: Path) -> None:
+    from thyca.memory.facade import MemoryFacade
+
+    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    facade.write_canonical("SOUL.md", "# Soul\n")
+    assert stat.S_IMODE((tmp_path / "SOUL.md").stat().st_mode) == 0o600
+    assert list(tmp_path.glob("*.tmp")) == []
+    assert list((tmp_path / "memory").glob("*.tmp")) == []
+
+
+def test_x7_write_canonical_reports_reindex_failure_itself(tmp_path: Path) -> None:
+    from thyca.memory.archived import ArchiveError
+    from thyca.memory.facade import MemoryFacade
+
+    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+
+    def boom(now=None):
+        raise ArchiveError("boom")
+
+    facade._refresh_index = boom  # type: ignore[method-assign]
+    with pytest.raises(ArchiveError, match="boom"):
+        facade.write_canonical("SOUL.md", "# Soul\n")
+
+    def oserr(now=None):
+        raise OSError("disk gone")
+
+    facade._refresh_index = oserr  # type: ignore[method-assign]
+    with pytest.raises(OSError, match="disk gone"):
+        facade.write_canonical("SOUL.md", "# Soul\n")
+    assert (tmp_path / "SOUL.md").read_text(encoding="utf-8") == "# Soul\n"
+
+
+def test_x14_facade_proj_is_normalized(tmp_path: Path) -> None:
+    from thyca.memory.facade import MemoryFacade
+    from thyca.memory.heading import parse_heading
+
+    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    proj = f"{tmp_path}/sub/../proj"
+    facade.remember("t", "s here", proj=proj)
+    daily = next((tmp_path / "memory").glob("*.md"))
+    metas = [
+        m
+        for line in daily.read_text(encoding="utf-8").splitlines()
+        if (m := parse_heading(line))
+    ]
+    assert metas and metas[0].proj == str(tmp_path / "proj")
+    with pytest.raises(ValueError, match="absolute path"):
+        facade.remember("t", "s here", proj="relative/path")
+
+
+def test_canonical_files_follow_canonical_names(tmp_path: Path) -> None:
+    """stats().files iterates CANONICAL_NAMES: no second literal list."""
+    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    assert [f.name for f in facade.stats().files] == list(MemoryFacade.CANONICAL_NAMES)

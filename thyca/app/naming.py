@@ -4,13 +4,14 @@ from __future__ import annotations
 from time import perf_counter
 
 from thyca.agent.events import EventSink, TurnEvent, emit_event
+from thyca.agent.meta import naming_meta
 from thyca.agent.think import LLMPort
 from thyca.config import Config
 from thyca.core.protocol import Message, utc_now_ts
 from thyca.llm.llm_base import LLMError
-from thyca.llm.pricing import cost_for
-from thyca.sessions import Session, SessionManager
-from thyca.sessions.title import display_title, propose_title
+from thyca.sessions import SessionManager
+from thyca.sessions.title import propose_title
+from thyca.sessions.wire import session_title  # noqa: F401 — canonical alias, re-exported
 
 
 async def _name_if_needed(
@@ -56,24 +57,11 @@ def _record_naming(
     reply: object, latency_ms: int, sessions: SessionManager, cfg: Config
 ) -> None:
     """Persist the naming LLM call as a meta-only assistant message (TASK-009)."""
-    usage = getattr(reply, "usage", None)
-    model = (getattr(reply, "model", None) or cfg.provider.model or "").strip() or None
-    meta: dict = {"kind": "naming", "latency_ms": max(0, latency_ms)}
-    if model:
-        meta["model"] = model
-    if isinstance(usage, dict) and usage:
-        meta["usage"] = usage
-    if model:
-        price = cost_for(
-            model,
-            usage if isinstance(usage, dict) else None,
-            cfg.effective_pricing() or None,
+    sessions.append(
+        Message(
+            role="assistant",
+            content=None,
+            ts=utc_now_ts(),
+            meta=naming_meta(reply, latency_ms, cfg),
         )
-        if price is not None:
-            meta["cost_usd"] = price
-    sessions.append(Message(role="assistant", content=None, ts=utc_now_ts(), meta=meta))
-
-
-def session_title(session: Session) -> str:
-    """Display title for one session (thin alias over the payload module)."""
-    return display_title(session)
+    )

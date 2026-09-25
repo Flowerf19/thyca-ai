@@ -10,9 +10,17 @@ from pathlib import Path
 
 import pytest
 
+from thyca.agent.assemble import Assemble
+from thyca.agent.stage import Stage
+from thyca.app import naming as app_naming
+from thyca.app.chat_app import session_title as chat_session_title
 from thyca.config import LimitsCfg
 from thyca.llm.llm_base import ChatReply
 from thyca.core.protocol import Message, ToolCall
+from thyca.serve import routes as serve_routes
+from thyca.serve import trace as serve_trace
+from thyca.serve import trace_api
+from thyca.serve.sessions_api import SESSION_RE, _sessions_error
 from thyca.sessions import (
     Session,
     SessionBusy,
@@ -23,6 +31,17 @@ from thyca.sessions import (
     SessionStore,
     estimate_tokens,
 )
+from thyca.sessions.store import SESSION_ID_PATTERN
+from thyca.sessions.wire import (
+    delete_error,
+    is_naming_message,
+    message_dict,
+    rename_error,
+    session_http_error,
+    session_title,
+    tool_call_dict,
+)
+from thyca.skills.skill_event import skill_name_for_call
 from thyca.sessions.title import (
     USER_TITLE_MAX,
     accept_title,
@@ -798,3 +817,311 @@ def test_message_reasoning_details_rejects_bad_shape() -> None:
                 "reasoning_details": [{"type": "reasoning.text", "text": "t"}, 42],
             }
         )
+
+
+# --- X1: sessions-owned wire canonicalization ---
+
+_TS = "2026-09-01T10:00:00Z"
+_SID = "2026-09-01T10-00-00_ab12"
+
+
+def _old_naming_excluded(meta: dict | None) -> bool:
+    return (meta or {}).get("kind") != "naming"
+
+
+def test_x1_naming_predicate_matches_old_inline_everywhere() -> None:
+    metas = [None, {}, {"kind": "naming"}, {"kind": "llm"}, {"kind": None}, {"other": 1}]
+    for role in ("user", "assistant", "tool", "system"):
+        for meta in metas:
+            assert is_naming_message(Message(role=role, content="x", ts=_TS, meta=meta)) == (
+                not _old_naming_excluded(meta)
+            ), (role, meta)
+
+
+def test_x1_assemble_and_trace_use_canonical_predicate(tmp_path: Path) -> None:
+    naming = Message(role="assistant", content=None, ts=_TS, meta={"kind": "naming"})
+    user = Message(role="user", content="hi", ts=_TS)
+    stage = Stage(messages=[user, naming])
+    Assemble().assemble(stage, "next")
+    assert all(m.meta != {"kind": "naming"} for m in stage.messages)
+    assert [m.content for m in stage.messages if m.role == "user"] == ["hi", "next"]
+
+    session = Session("s", tmp_path / "s.jsonl", [
+        Message(role="user", content="q", ts=_TS),
+        Message(role="assistant", content="a", ts=_TS, meta={"kind": "llm"}),
+        naming,
+    ])
+    (turn,) = serve_trace.turns_from_session(session)
+    assert turn.status == "completed"  # naming row skipped as a turn outcome
+
+
+def _old_chat_call(call: ToolCall, root) -> dict:
+    entry = {"id": call.id, "name": call.name}
+    skill = skill_name_for_call(call, root)
+    if skill is not None:
+        entry["skill"] = skill
+    return entry
+
+
+def _old_chat_message(message: Message, root) -> dict:
+    payload: dict = {"role": message.role, "content": message.content, "ts": message.ts}
+    if message.tool_calls:
+        payload["tool_calls"] = [_old_chat_call(c, root) for c in message.tool_calls]
+    if message.tool_call_id is not None:
+        payload["tool_call_id"] = message.tool_call_id
+    if message.meta is not None:
+        payload["meta"] = dict(message.meta)
+    if message.reasoning:
+        payload["reasoning"] = message.reasoning
+    return payload
+
+
+def _old_trace_call(call: ToolCall, root) -> dict:
+    entry: dict = {"id": call.id, "name": call.name, "arguments": call.arguments}
+    if call.parse_error:
+        entry["parse_error"] = call.parse_error
+    skill = skill_name_for_call(call, root)
+    if skill is not None:
+        entry["skill"] = skill
+    return entry
+
+
+def _old_trace_message(message: Message, root) -> dict:
+    return {
+        "role": message.role,
+        "content": message.content,
+        "ts": message.ts,
+        "tool_calls": [_old_trace_call(c, root) for c in (message.tool_calls or [])],
+        "tool_call_id": message.tool_call_id,
+        "meta": message.meta,
+    }
+
+
+def _wire_matrix() -> list[Message]:
+    return [
+        Message(role="user", content="hi", ts=_TS),
+        Message(role="assistant", content=None, ts=_TS, tool_calls=[
+            ToolCall(id="c1", name="bash", arguments={"command": "ls"}),
+            ToolCall(id="c2", name="read", arguments={}, parse_error="bad args"),
+        ], meta={"kind": "llm", "round": 1}),
+        Message(role="assistant", content="done", ts=_TS, meta={"kind": "llm"}),
+        Message(role="tool", content="out", ts=_TS, tool_call_id="c1", meta={"is_error": False}),
+        Message(role="assistant", content="r", ts=_TS, reasoning="thinking...", meta=None),
+        Message(role="assistant", content=None, ts=_TS, meta={"kind": "naming"}),
+    ]
+
+
+def test_x1_call_and_message_dicts_match_old_shapes(tmp_path: Path) -> None:
+    root = tmp_path / "skills"
+    for message in _wire_matrix():
+        assert message_dict(message, root) == _old_chat_message(message, root)
+        assert message_dict(message, root, include_args=True) == _old_trace_message(message, root)
+        for call in message.tool_calls or []:
+            assert tool_call_dict(call, root) == _old_chat_call(call, root)
+            assert tool_call_dict(call, root, include_args=True) == _old_trace_call(call, root)
+    # Trace seam delegates to the canonical helper.
+    call = ToolCall(id="c9", name="bash", arguments={"command": "ls"})
+    assert trace_api.trace_tool_call(call, root) == tool_call_dict(call, root, include_args=True)
+
+
+def test_x1_session_id_grammar_is_single_pattern(tmp_path: Path) -> None:
+    assert SESSION_ID_PATTERN == r"\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_[0-9a-f]{4}"
+    store = SessionStore(tmp_path / "sessions")
+    assert store.path_for(_SID).name == f"{_SID}.jsonl"
+    patterns = [
+        serve_routes._SESSION_RE,
+        serve_routes._TURN_RE,
+        serve_routes._TURN_STREAM_RE,
+        serve_routes._TURN_CANCEL_RE,
+        serve_routes._TRACE_DETAIL_RE,
+        SESSION_RE,
+    ]
+    for pattern in patterns:
+        assert SESSION_ID_PATTERN in pattern.pattern
+    # The two identical session routes provably cannot drift apart.
+    assert serve_routes._SESSION_RE.pattern == SESSION_RE.pattern
+    assert serve_routes._SESSION_RE.fullmatch(f"/api/sessions/{_SID}").group(1) == _SID  # type: ignore[union-attr]
+    assert serve_routes._TURN_RE.fullmatch(f"/api/sessions/{_SID}/turn").group(1) == _SID  # type: ignore[union-attr]
+    detail = serve_routes._TRACE_DETAIL_RE.fullmatch(f"/api/traces/{_SID}/3")
+    assert detail is not None and (detail.group(1), detail.group(2)) == (_SID, "3")
+    bad = [
+        "2026-09-01T10-00-00_ab1g",  # non-hex
+        "2026-09-01T10-00-00_ab123",  # too long
+        "2026-09-01T10-00-00_ab1",  # too short
+        "2026-09-01 10-00-00_ab12",  # space, not T
+        "../2026-09-01T10-00-00_ab12",  # traversal
+    ]
+    for raw in bad:
+        try:
+            store.path_for(raw)
+        except SessionNotFound:
+            pass
+        else:
+            raise AssertionError(f"path_for accepted {raw!r}")
+        assert serve_routes._SESSION_RE.fullmatch(f"/api/sessions/{raw}") is None
+        assert SESSION_RE.fullmatch(f"/api/sessions/{raw}") is None
+
+
+def _error_matrix() -> list[tuple[Exception, tuple[int, str] | None]]:
+    not_found: tuple[int, str] | None = (404, "session not found")
+    busy: tuple[int, str] | None = (409, "session busy")
+    unreadable: tuple[int, str] | None = (503, "session unreadable")
+    unavailable: tuple[int, str] | None = (503, "session unavailable")
+    return [
+        (SessionNotFound("/x"), not_found),
+        (SessionBusy("s"), busy),
+        (SessionCorrupt("/x", 1, "boom"), unreadable),
+        (SessionError("boom"), unavailable),
+        (ValueError("bad"), None),
+        (RuntimeError("boom"), None),
+    ]
+
+
+def test_x1_error_maps_share_one_table() -> None:
+    for exc, expected in _error_matrix():
+        assert session_http_error(exc) == expected, exc
+        assert delete_error(exc) == expected, exc
+        assert rename_error(exc) == ((400, "invalid title") if isinstance(exc, ValueError) else expected), exc
+
+
+class _Handler:
+    def __init__(self) -> None:
+        self.calls: list[tuple[int, dict]] = []
+
+    def _json(self, status: int, payload: dict) -> None:
+        self.calls.append((status, payload))
+
+
+def test_x1_sessions_error_delegates_with_chat_fallback() -> None:
+    for exc, expected in _error_matrix():
+        handler = _Handler()
+        _sessions_error(handler, exc)
+        if expected is None:
+            assert handler.calls == [(503, {"error": "chat unavailable"})], exc
+        else:
+            assert handler.calls == [(expected[0], {"error": expected[1]})], exc
+
+
+def test_x1_title_alias_is_single_canonical() -> None:
+    assert app_naming.session_title is session_title
+    assert chat_session_title is session_title
+
+
+# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
+import json
+import pytest
+
+def test_x17_shared_estimator() -> None:
+    from thyca.core.protocol import estimate_tokens as core_estimate
+
+    from thyca.sessions.compaction import estimate_tokens as session_estimate
+    from thyca.core.protocol import Message
+
+    assert core_estimate("abcd") == 1
+    assert core_estimate("") == 0
+    msg = Message(role="user", content="same")
+    assert session_estimate(msg) == core_estimate(
+        json.dumps(msg.to_canonical_dict(), ensure_ascii=False)
+    )
+
+
+def test_m8_store_read_is_gone() -> None:
+    from thyca.sessions.store import SessionStore
+
+    assert not hasattr(SessionStore, "read")
+
+
+def test_m8_failed_rewrite_leaves_no_tmp(tmp_path: Path) -> None:
+    from thyca.core.protocol import Message
+    from thyca.sessions import SessionError, SessionManager
+
+    manager = SessionManager(tmp_path)
+    session = manager.create()
+    bad = Message(role="user", content="x")
+    object.__setattr__(bad, "meta", {"bad": object()})
+    with pytest.raises(SessionError, match="rewrite failed"):
+        manager.store.rewrite(session.id, session.path, [bad])
+    assert list(tmp_path.glob("*.tmp*")) == []
+    assert list(tmp_path.glob(".*.tmp*")) == []
+
+
+# Moved from tests/test_b2_contracts.py (B2 batch).
+def test_f37_blank_lines_skipped_on_load(tmp_path: Path) -> None:
+    """Fails pre-fix: one blank line bricked the session (SessionCorrupt)."""
+    manager = SessionManager(tmp_path)
+    session = manager.create()
+    lines = [
+        Message(role="user", content="hi").to_json_line(),
+        "",
+        "   ",
+        Message(role="assistant", content="yo").to_json_line(),
+        "",
+    ]
+    session.path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    loaded = manager.load(session.id)
+    assert [(item.role, item.content) for item in loaded.messages] == [
+        ("user", "hi"),
+        ("assistant", "yo"),
+    ]
+
+
+def test_last_user_index_shared_by_truncate_and_mark(tmp_path: Path) -> None:
+    """truncate + mark agree on the last user message in a multi-turn run."""
+    from thyca.sessions.manager import _last_user_index
+
+    mgr = SessionManager(tmp_path / "sessions")
+    mgr.create()
+    mgr.append(msg("user", "first"))
+    mgr.append(msg("assistant", "answer"))
+    mgr.append(msg("user", "second"))
+    mgr.append(msg("assistant", "partial"))
+    messages = mgr.current.messages
+    assert _last_user_index(messages) == 2
+    assert _last_user_index([]) is None
+    assert _last_user_index([msg("assistant", "orphan")]) is None
+    assert mgr.mark_turn_error("llm_error", "boom") is True
+    assert messages[2].meta == {"error": {"code": "llm_error", "message": "boom"}}
+    assert messages[0].meta is None
+    assert mgr.truncate_to_last_user() is True
+    assert [m.content for m in mgr.current.messages] == ["first", "answer", "second"]
+
+
+def test_meta_payload_identical_for_append_and_rewrite(tmp_path: Path) -> None:
+    """append_meta and rewrite emit byte-identical meta lines for same input."""
+    from thyca.sessions.store import _meta_payload
+
+    assert _meta_payload("T", "user") == {"type": "meta", "title": "T", "source": "user"}
+    assert _meta_payload("T", None) == {"type": "meta", "title": "T"}
+    root = tmp_path / "sessions"
+    root.mkdir()
+    store = SessionStore(root)
+    target = root / "m.jsonl"
+    store.append_meta(target, "T", "user")
+    appended = target.read_text(encoding="utf-8").splitlines()[0]
+    mgr = SessionManager(root)
+    session = mgr.create()
+    store.rewrite(session.id, session.path, [], title="T", title_source="user")
+    rewritten = session.path.read_text(encoding="utf-8").splitlines()[0]
+    assert json.loads(appended) == json.loads(rewritten) == _meta_payload("T", "user")
+
+
+def test_wire_turns_match_trace_turn_slices(tmp_path: Path) -> None:
+    """Wire turns, turn_slices, and Trace agree incl. system/orphan rows."""
+    from thyca.sessions.wire import session_summary, turn_slices
+
+    session = Session(
+        id="s1",
+        path=tmp_path / "s1.jsonl",
+        messages=[
+            msg("assistant", "orphan-before-first-user"),
+            msg("user", "one"),
+            msg("assistant", "a1"),
+            msg("system", "compact-marker"),
+            msg("user", "two"),
+            msg("tool", "t", tool_call_id="c1"),
+        ],
+        title="T",
+    )
+    assert session_summary(session)["turns"] == 2
+    assert len(turn_slices(session.messages)) == 2
+    assert len(serve_trace.turns_from_session(session)) == 2

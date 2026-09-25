@@ -443,3 +443,274 @@ def test_turn_response_does_not_claim_to_be_running(tmp_path: Path) -> None:
         assert "started_at" not in turned
     finally:
         app.shutdown()
+
+
+def test_corrupt_config_file_falls_back_to_passed_cfg(tmp_path: Path) -> None:
+    """A corrupt on-disk config.json must not break init when a good cfg was passed."""
+    from test_serve_chat import FakeLLM
+
+    from thyca.app.chat_app import ChatApp
+    from thyca.config import default_config
+    from thyca.llm.llm_base import ChatReply
+
+    (tmp_path / "config.json").write_text("{not valid json", encoding="utf-8")
+    cfg = default_config()
+    app = ChatApp(tmp_path, cfg, connect=FakeLLM(ChatReply(content="pong")))
+    try:
+        assert app.default_model() == cfg.defaultModel
+    finally:
+        app.shutdown()
+
+
+def test_cancel_past_wait_reports_turn_in_flight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import thyca.app.chat_app as chat_mod
+    from thyca.app.chat_app import TurnInFlight
+
+    monkeypatch.setattr(chat_mod, "_CANCEL_WAIT_S", 0.05)
+    release = threading.Event()
+
+    class BlockingLLM:
+        async def chat(self, messages, tools=None):
+            await asyncio.to_thread(release.wait, 10)
+            return ChatReply(content="late")
+
+    app = _chat(tmp_path, BlockingLLM())
+    try:
+        created = app.create()
+        errors: list[BaseException] = []
+
+        def run() -> None:
+            try:
+                app.turn(created["id"], "go")
+            except BaseException as exc:
+                errors.append(exc)
+
+        worker = threading.Thread(target=run, daemon=True)
+        worker.start()
+        deadline = time.monotonic() + 5
+        while created["id"] not in app.running_sessions():
+            assert time.monotonic() < deadline, "turn never started"
+            time.sleep(0.01)
+        with pytest.raises(TurnInFlight):
+            app.cancel(created["id"])
+        # The cancel was still requested: the worker ends cancelled (or
+        # finishes once released) — either way the hub is released.
+        release.set()
+        worker.join(timeout=10)
+        assert not worker.is_alive()
+        from thyca.app.chat_app import TurnCancelled
+
+        assert all(isinstance(exc, TurnCancelled) for exc in errors)
+        assert created["id"] not in app.running_sessions()
+    finally:
+        release.set()
+        app.shutdown()
+
+
+def test_cancel_turn_in_flight_maps_to_409() -> None:
+    from thyca.app.chat_app import TurnInFlight
+    from thyca.serve.sessions_api import session_turn_cancel
+
+    class Handler:
+        def __init__(self) -> None:
+            self.sent: tuple[int, dict] | None = None
+
+        def _read_body(self) -> bytes:
+            return b""
+
+        def _json(self, status: int, payload: dict) -> None:
+            self.sent = (status, payload)
+
+    class BusyApp:
+        def cancel(self, session_id: str) -> None:
+            raise TurnInFlight("turn still in flight")
+
+    handler = Handler()
+    session_turn_cancel(handler, BusyApp(), "s-id")
+    assert handler.sent == (409, {"error": "turn in flight"})
+
+
+def test_naming_usage_mutate_after_does_not_leak(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    from thyca.app.naming import _record_naming
+    from thyca.config import default_config
+    from thyca.sessions import SessionManager
+
+    manager = SessionManager(tmp_path / "sessions")
+    manager.create()
+    usage = {"prompt_tokens": 10, "completion_tokens": 5}
+    _record_naming(
+        SimpleNamespace(usage=usage, model="m-test"), 7, manager, default_config()
+    )
+    usage["prompt_tokens"] = 999
+    usage["injected"] = True
+    stored = manager.current.messages[-1]
+    assert stored.meta is not None
+    assert stored.meta["usage"] == {"prompt_tokens": 10, "completion_tokens": 5}
+
+
+def test_turn_refreshes_live_gateway_soft_timeout(tmp_path: Path) -> None:
+    """TASK-034: a saved softTimeoutS applies to the next turn, no restart."""
+    from dataclasses import replace
+
+    from thyca.config import load, save
+
+    app = _chat(tmp_path, FakeLLM(ChatReply(content="pong")))
+    created = app.create()
+    try:
+        assert app._gateway._soft_timeout_s == 60  # default at construction
+        cfg = load(tmp_path / "config.json")
+        save(replace(cfg, limits=replace(cfg.limits, softTimeoutS=5)), tmp_path / "config.json")
+        app.turn(created["id"], "alo")
+        assert app._gateway._soft_timeout_s == 5
+    finally:
+        app.shutdown()
+
+
+# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
+import pytest
+from pathlib import Path
+
+def test_x2_turn_options_single_shape_check() -> None:
+    from thyca.app.chat_app import InvalidTurnOption
+    from thyca.app.turn_options import MODEL_MAX, validate_turn_options
+
+    assert MODEL_MAX == 200
+    assert validate_turn_options({"model": "m", "effort": "e", "retry": True}) == (
+        "m",
+        "e",
+        True,
+    )
+    with pytest.raises(InvalidTurnOption):
+        validate_turn_options({"model": "a\nb"})
+
+
+def test_x20_single_registry_lifecycle() -> None:
+    import asyncio as aio
+
+    from thyca.app.loop_turns import _LoopTurns
+    from thyca.serve.turn_state import TurnState
+    from thyca.sessions import SessionBusy, SessionError
+
+    loop = aio.new_event_loop()
+    try:
+        turns = TurnState()
+        view = _LoopTurns(loop, turns)
+        hub = turns.claim("s")
+        assert turns.hub("s") is hub
+        assert turns.job("s") is None
+        job = view.begin("s")
+        assert turns.job("s") is job
+        with pytest.raises(SessionBusy):
+            turns.claim("s")
+        assert view.request_cancel("missing") is False
+        assert view.request_cancel("s") is True
+        other = view.begin("s")  # re-begin overwrites, like before
+        assert turns.job("s") is other
+        view.end("s", job)  # mismatch: pinned job stays
+        assert turns.job("s") is other
+        view.end("s", other)
+        assert turns.job("s") is None
+        turns.release("s")
+        assert turns.hub("s") is None
+        with pytest.raises(SessionError):
+            view.begin("never-claimed")
+    finally:
+        loop.close()
+
+
+def test_x21_shared_loop_wiring(tmp_path: Path) -> None:
+    from thyca.agent.act import Act
+    from thyca.agent.assemble import Assemble
+    from thyca.agent.loop import AgentLoop
+    from thyca.agent.observe import Observe
+    from thyca.agent.think import Think
+    from thyca.app.toolchain import build_agent_loop
+    from thyca.sessions import SessionManager
+
+    sessions = SessionManager(tmp_path)
+    sessions.create()
+
+    async def fake_chat(messages, tools=None):
+        from thyca.llm.llm_base import ChatReply
+
+        return ChatReply(content="x")
+
+    loop = build_agent_loop(
+        sessions=sessions,
+        connect=fake_chat,  # type: ignore[arg-type]
+        act=Act(dispatcher=None),  # type: ignore[arg-type]
+        tools=[],
+        loop_max=3,
+        model="m",
+        pricing=None,
+    )
+    assert isinstance(loop, AgentLoop)
+    assert isinstance(loop._assemble, Assemble)
+    assert isinstance(loop._think, Think)
+    assert isinstance(loop._observe, Observe)
+
+
+def test_x24_naming_meta_matches_sidecar_shape() -> None:
+    from types import SimpleNamespace
+
+    from thyca.agent.meta import assistant_meta, naming_meta
+    from thyca.agent.stage import Stage
+    from thyca.config import default_config
+    from thyca.llm.llm_base import ChatReply
+
+    cfg = default_config()
+    reply = ChatReply(
+        content="x",
+        model="gpt-4o-mini",
+        usage={"prompt_tokens": 100, "completion_tokens": 10},
+    )
+    meta = naming_meta(reply, 5, cfg)
+    assert list(meta) == ["kind", "latency_ms", "model", "usage", "cost_usd"]
+    assert meta["kind"] == "naming"
+    assert meta["usage"] == {"prompt_tokens": 100, "completion_tokens": 10}
+    assert meta["usage"] is not reply.usage
+    assert meta["cost_usd"] == pytest.approx(0.000021)
+    assert naming_meta(SimpleNamespace(model=None, usage=None), -3, cfg) == {
+        "kind": "naming",
+        "latency_ms": 0,
+        "model": "gpt-4o-mini",
+    }
+    stage = Stage()
+    stage.reply = reply
+    assert isinstance(assistant_meta(stage), dict)
+
+
+# Moved from tests/test_b2_contracts.py (B2 batch).
+from thyca.app.chat_app import InvalidTurnOption, InvalidTurnText
+from thyca.app.turn_options import _clean_turn_text, overlay_turn_cfg
+from thyca.config import Config, ModelCfg, default_config
+
+def test_f5_turn_effort_override_is_model_aware() -> None:
+    """Fails pre-fix: per-turn junk effort sailed through overlay."""
+    cfg = Config(
+        models={"m": ModelCfg(reasoningEfforts=("minimal", "medium"))},
+        defaultModel="m",
+    )
+    assert overlay_turn_cfg(cfg, "m", "minimal").defaultModel == "m"
+    with pytest.raises(InvalidTurnOption, match="allows minimal/medium"):
+        overlay_turn_cfg(cfg, "m", "ultra")
+    plain = default_config()
+    with pytest.raises(InvalidTurnOption, match="use low/high/max"):
+        overlay_turn_cfg(plain, None, "ultra")
+    assert overlay_turn_cfg(plain, None, "low").defaultModel == plain.defaultModel
+
+
+def test_f10_clean_turn_text_reasons() -> None:
+    """Fails pre-fix: plain ValueError, and 'text must be a string' wording."""
+    with pytest.raises(InvalidTurnText, match="^invalid$"):
+        _clean_turn_text(5, retry=False)
+    with pytest.raises(InvalidTurnText, match="^empty$"):
+        _clean_turn_text("   ", retry=False)
+    with pytest.raises(InvalidTurnText, match="^too long$"):
+        _clean_turn_text("x" * 4001, retry=False)
+    assert _clean_turn_text("  hi  ", retry=False) == "hi"
+    assert _clean_turn_text(123, retry=True) == ""

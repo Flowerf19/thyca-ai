@@ -7,8 +7,11 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from thyca.memory.archived import SCHEMA_VERSION, ArchiveError
-from thyca.memory.heading import parse_heading
-from thyca.tools.memory import MemoryFacade
+from thyca.memory.archive_store import ArchiveStore
+from thyca.memory.chunk import Chunk
+from thyca.memory.heading import VISIBLE_SQL, is_expired, is_visible, parse_heading
+from thyca.memory.facade import MemoryFacade
+from thyca.memory.stats import MemoryStats
 
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
@@ -64,7 +67,6 @@ def test_get_increments_search_does_not_increment_get(tmp_path: Path) -> None:
     facade.get(chunk_id=cid, now=now)
     facade.get(chunk_id=cid, now=now)
     facade.search("first", now=now)
-    facade.get(path=str(tmp_path / "memory" / "2026-08-13.md"), now=now)
     stats = facade.stats(now=now)
     by_id = {item.chunk_id: item for item in stats.leaves}
     assert by_id[cid].get_count == 2
@@ -229,7 +231,6 @@ def test_empty_and_invalid_search_do_not_record(tmp_path: Path) -> None:
     facade.search("x", timeline_day="nope", now=now)
     facade.search("zzzz-no-such-token", now=now)
     facade.recent(now=now)
-    facade.get(path=str(tmp_path / "memory" / "2026-08-13.md"), now=now)
     assert facade.archive.store.usage.search_map() == {}
 
 
@@ -329,3 +330,111 @@ def test_suggest_after_seven_idle_days(tmp_path: Path) -> None:
     aged = facade.stats(now=at("2026-08-20"))
     assert len(aged.suggest_removal) == 3
     assert all(not item.is_today for item in aged.suggest_removal)
+
+
+# --- X10: single visibility predicate ---
+
+
+def _chunk(cid: str, path: str, sid: str) -> Chunk:
+    return Chunk(
+        chunk_id=cid,
+        path=path,
+        source_kind="daily",
+        timeline_day="2026-09-01",
+        session_id=sid,
+        session_title="t",
+        heading_raw="## 08:00",
+        leaf_ord=1,
+        line_start=1,
+        line_end=2,
+        text_raw="hello world leaf content here",
+        text_norm="hello world leaf content here",
+        content_hash="abc",
+    )
+
+
+def _vis_chunk(cid: str, path: str, sid: str, **kw) -> Chunk:
+    base = _chunk(cid, path, sid)
+    return Chunk(**{**base.__dict__, **kw})
+
+
+def _vis_store(tmp_path: Path) -> ArchiveStore:
+    store = ArchiveStore(tmp_path / "v.sqlite")
+    now = "2026-09-01T12:00:00Z"
+    rows = [
+        _vis_chunk("vis", "/m/d.md", "2026-09-01#aaaaaaaa", leaf_ord=1),
+        _vis_chunk("fut", "/m/d.md", "2026-09-01#aaaaaaaa", expires_at="2026-09-02T00:00:00Z", leaf_ord=2),
+        _vis_chunk("exp", "/m/d.md", "2026-09-01#bbbbbbbb", expires_at="2026-09-01T11:00:00Z", leaf_ord=1),
+        _vis_chunk("edge", "/m/d.md", "2026-09-01#bbbbbbbb", expires_at=now, leaf_ord=2),
+        _vis_chunk("gone", "/m/d.md", "2026-09-01#cccccccc", forgotten_at="2026-09-01T10:00:00Z", leaf_ord=1),
+    ]
+    store.replace_source("/m/d.md", "daily", "2026-09-01", 1, 9, rows)
+    return store
+
+
+def test_x10_visible_sql_text_and_python_twin_agree() -> None:
+    assert VISIBLE_SQL == "forgotten_at IS NULL AND (expires_at IS NULL OR expires_at > ?)"
+    now = datetime(2026, 9, 1, 12, 0)
+    assert is_visible(None, now) and not is_expired(None, now)
+    assert is_visible("2026-09-02T00:00:00Z", now)
+    assert not is_visible("2026-09-01T11:00:00Z", now)
+    assert not is_visible("2026-09-01T12:00:00Z", now)  # boundary: strict >
+    assert is_expired("2026-09-01T12:00:00Z", now)
+
+
+def test_x10_all_read_paths_share_visibility(tmp_path: Path) -> None:
+    store = _vis_store(tmp_path)
+    now = "2026-09-01T12:00:00Z"
+    try:
+        assert {h.chunk_id for h in store.fts_search("hello", None, 10, now)} == {"vis", "fut"}
+        assert {h.chunk_id for h in store.trigram_search("hello world", None, 10, now)} == {"vis", "fut"}
+        assert store.get_chunk("vis", now) is not None
+        assert store.get_chunk("exp", now) is None
+        assert store.get_chunk("edge", now) is None
+        assert store.get_chunk("gone", now) is None
+        assert [r["chunk_id"] for r in store.get_session("2026-09-01#aaaaaaaa", now)] == ["vis", "fut"]
+        assert store.get_session("2026-09-01#bbbbbbbb", now) == []
+        assert {r["chunk_id"] for r in store.recent_rows(10, now)} == {"vis", "fut"}
+        assert {m["chunk_id"] for m in store.visible_chunk_maps(now)} == {"vis", "fut"}
+        assert store.session_leaf_count("2026-09-01#aaaaaaaa", now) == 2
+        assert store.session_leaf_count("2026-09-01#bbbbbbbb", now) == 0
+    finally:
+        store.close()
+
+
+def test_x10_stats_today_path_uses_python_helper(tmp_path: Path) -> None:
+    now_ts = "2026-09-01T12:00:00Z"
+    fresh = _vis_chunk("fresh#1", "/m/2026-09-01.md", "2026-09-01#dddddddd")
+    stale = _vis_chunk(
+        "stale#1", "/m/2026-09-01.md", "2026-09-01#eeeeeeee",
+        expires_at="2026-09-01T11:00:00Z",
+    )
+    result = MemoryStats.build([], [fresh, stale], {}, {}, "2026-09-01", now_ts)
+    assert {leaf.chunk_id for leaf in result.leaves} == {"fresh#1"}
+    assert result.total == 1
+
+
+# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
+def test_m5_memory_ids_excluded_from_stats() -> None:
+    from thyca.memory.stats import L2_SESSION_RE, MemoryStats
+
+    assert L2_SESSION_RE.fullmatch("memory#aaaaaaaa") is None
+    result = MemoryStats.build(
+        archived=[
+            {
+                "chunk_id": "memory#aaaaaaaa#1",
+                "session_id": "memory#aaaaaaaa",
+                "heading_raw": "## h",
+                "text_raw": "x",
+                "source_kind": "daily",
+                "timeline_day": "2026-08-01",
+                "expires_at": None,
+            }
+        ],
+        today_chunks=[],
+        gets={},
+        searches={},
+        today="2026-08-17",
+        now_ts="2026-08-17T00:00:00Z",
+    )
+    assert result.total == 0

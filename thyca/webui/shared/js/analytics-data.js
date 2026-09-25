@@ -52,10 +52,36 @@ export function aggregateUsage(rows) {
    (llm_base.normalize_usage: "cached_tokens is always a subset of
    prompt_tokens"), so a raw prompt count added to a cache count double-counts.
    Split once here — pricing.py does the same subtraction server-side. */
+/* Known cost: number (0 is real), or null when never priced. null and ""
+   both mean "no price recorded" — never fake zero. Shared by the Cost
+   journal (cost-data.js) and the Trace journal (trace-data.js), which
+   previously carried identical copies. */
+export function finiteCost(value) {
+  if (value == null || value === "") return null;
+  const cost = Number(value);
+  return Number.isFinite(cost) ? cost : null;
+}
+
 export function splitPromptTokens(promptTokens, cachedTokens) {
   const prompt = Number(promptTokens) || 0;
   const cache = Math.min(Math.max(Number(cachedTokens) || 0, 0), Math.max(prompt, 0));
   return { input: Math.max(prompt - cache, 0), cache };
+}
+
+/* Model-name sort key shared by the Cost and Request journals: both rank
+   by-model rows with the same Vietnamese name order and the same
+   last-started-at recency (name tiebreak). */
+export function modelName(row) {
+  return cleanText(row?.model);
+}
+
+export function byName(a, b) {
+  return modelName(a).localeCompare(modelName(b), "vi");
+}
+
+export function byRecent(a, b) {
+  return cleanText(b?.last_started_at).localeCompare(cleanText(a?.last_started_at))
+    || byName(a, b);
 }
 
 /* Model rows for "Chi phí theo mô hình": filter by name, then order. A model
@@ -65,18 +91,16 @@ export function splitPromptTokens(promptTokens, cachedTokens) {
    a row. */
 export function selectModels(models, { sort = "cost-desc", query = "" } = {}) {
   const needle = cleanText(query).toLocaleLowerCase("vi");
-  const name = (row) => cleanText(row?.model);
   const rows = (Array.isArray(models) ? models : [])
     .filter((row) => (Number(row?.requests) || 0) > 0 || (Number(row?.total_tokens) || 0) > 0)
-    .filter((row) => !needle || name(row).toLocaleLowerCase("vi").includes(needle));
+    .filter((row) => !needle || modelName(row).toLocaleLowerCase("vi").includes(needle));
   if (sort === "cost-asc") {
-    return rows.sort((a, b) => byCost(a, b, 1) || name(a).localeCompare(name(b), "vi"));
+    return rows.sort((a, b) => byCost(a, b, 1) || byName(a, b));
   }
   if (sort === "recent") {
-    return rows.sort((a, b) => cleanText(b?.last_started_at).localeCompare(cleanText(a?.last_started_at))
-      || name(a).localeCompare(name(b), "vi"));
+    return rows.sort(byRecent);
   }
-  return rows.sort((a, b) => byCost(a, b, -1) || name(a).localeCompare(name(b), "vi"));
+  return rows.sort((a, b) => byCost(a, b, -1) || byName(a, b));
 }
 
 function byCost(a, b, direction) {

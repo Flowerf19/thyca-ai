@@ -66,6 +66,32 @@ def merge_auth_keys(config: Config, keys: dict[str, str | None]) -> Config:
     return replace(config, providers=providers) if changed else config
 
 
+def merge_saved_keys(payload: dict, config: Config) -> dict:
+    """Fill empty/omitted providers[id].apiKey in a settings payload from the
+    stored config, so a save that never saw a secret keeps it.
+
+    Keys never cross providers: an unknown id with an empty key merges to None
+    (env fallback at call time), never to another provider's secret."""
+    providers = payload.get("providers")
+    if not isinstance(providers, dict):
+        return payload
+    merged = dict(providers)
+    for pid, entry in providers.items():
+        if not isinstance(entry, dict):
+            continue
+        # Omitted and explicit-null merge like "": the UI masks the secret
+        # as "", and a payload that never saw it must not wipe it.
+        if entry.get("apiKey") not in ("", None):
+            continue
+        stored = config.providers.get(pid)
+        updated = dict(entry)
+        updated["apiKey"] = stored.apiKey if stored is not None else None
+        merged[pid] = updated
+    payload = dict(payload)
+    payload["providers"] = merged
+    return payload
+
+
 def auth_to_dict(config: Config) -> dict[str, Any]:
     """Wire form of ``auth.json``: only providers carrying key material."""
     return {

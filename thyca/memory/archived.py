@@ -22,7 +22,7 @@ from thyca.memory.archive_store import (
     hit_from_row,
 )
 from thyca.memory.chunk import Chunker
-from thyca.memory.heading import format_ts
+from thyca.memory.heading import day, format_ts, read_text_file
 
 
 class ArchivedMemory:
@@ -48,10 +48,7 @@ class ArchivedMemory:
             return ZoneInfo(DEFAULT_TIMELINE_TIMEZONE)
 
     def day(self, now: datetime | None = None) -> str:
-        moment = now or datetime.now(self.zone())
-        zone = self.zone()
-        aware = moment.replace(tzinfo=zone) if moment.tzinfo is None else moment.astimezone(zone)
-        return aware.date().isoformat()
+        return day(now, self.zone())
 
     def lookup_session_id(self, chunk_id: str, now: datetime | None = None) -> str:
         row = self.store.get_chunk(chunk_id, format_ts(now))
@@ -116,10 +113,11 @@ class ArchivedMemory:
             for row in self.store.recent_rows(limit, format_ts(now))
         ]
 
-    def with_counts(self, hits: list[Hit]) -> list[Hit]:
+    def with_counts(self, hits: list[Hit], now: datetime | None = None) -> list[Hit]:
+        now_ts = format_ts(now)
         counted: list[Hit] = []
         for hit in hits:
-            count = self.store.session_leaf_count(hit.session_id)
+            count = self.store.session_leaf_count(hit.session_id, now_ts)
             counted.append(
                 Hit(
                     path=hit.path,
@@ -146,30 +144,26 @@ class ArchivedMemory:
         *,
         chunk_id: str | None = None,
         session_id: str | None = None,
-        path: str | None = None,
         now: datetime | None = None,
     ) -> str:
-        selectors = [item for item in (chunk_id, session_id, path) if item]
+        selectors = [item for item in (chunk_id, session_id) if item]
         if len(selectors) != 1:
-            raise ArchiveError("exactly one of chunk_id, session_id, path is required")
+            raise ArchiveError("exactly one of chunk_id, session_id is required")
         now = format_ts(now)
-        if chunk_id is not None:
+        if chunk_id:
             row = self.store.get_chunk(chunk_id, now)
             if row is None:
                 raise ArchiveError(f"chunk not found: {chunk_id}")
             return row["text_raw"]
-        if session_id is not None:
-            rows = self.store.get_session(session_id, now)
-            if not rows:
-                raise ArchiveError(f"session not found: {session_id}")
-            heading = rows[0]["heading_raw"]
-            body = [row["text_raw"] for row in rows[:GET_SESSION_CAP]]
-            text = "\n".join([heading, *body] if heading else body)
-            if len(rows) > GET_SESSION_CAP:
-                text += f"\n<!-- more:{len(rows) - GET_SESSION_CAP} -->"
-            return text
-        allowed = self._allowed_path(Path(path or ""))
-        return allowed.read_text(encoding="utf-8")
+        rows = self.store.get_session(session_id or "", now)
+        if not rows:
+            raise ArchiveError(f"session not found: {session_id}")
+        heading = rows[0]["heading_raw"]
+        body = [row["text_raw"] for row in rows[:GET_SESSION_CAP]]
+        text = "\n".join([heading, *body] if heading else body)
+        if len(rows) > GET_SESSION_CAP:
+            text += f"\n<!-- more:{len(rows) - GET_SESSION_CAP} -->"
+        return text
 
     def _reindex_file(self, path: Path, kind: str, day: str | None, today: str) -> None:
         if kind == "daily" and day is not None and day >= today:
@@ -182,22 +176,19 @@ class ArchivedMemory:
         prev = self.store.source_stat(str(path))
         if prev == (stat.st_mtime_ns, stat.st_size):
             return
-        text = path.read_text(encoding="utf-8")
+        try:
+            text = read_text_file(path)
+        except UnicodeDecodeError as exc:
+            raise ArchiveError(f"memory file is not valid UTF-8: {path}") from exc
+        except FileNotFoundError:
+            text = None  # Vanished mid-read: same drop path as text is None.
+        if text is None:
+            # Vanished between the stat and the read: drop, like a missing file.
+            self.store.drop_source(str(path))
+            return
         chunks = self.chunker.chunk_markdown(path, text, source_kind=kind, timeline_day=day)
         self.store.replace_source(str(path), kind, day, stat.st_mtime_ns, stat.st_size, chunks)
 
-    def _allowed_path(self, path: Path) -> Path:
-        root = self.thyca_dir.resolve()
-        target = path.expanduser().resolve()
-        if target.parent == root and target.name in {"SOUL.md", "USER.md"}:
-            return target
-        memory_dir = (root / "memory").resolve()
-        if target.parent == memory_dir and DATE_RE.fullmatch(target.stem) and target.suffix == ".md":
-            today = self.day()
-            if target.stem >= today:
-                raise ArchiveError("today daily is not archived")
-            return target
-        raise ArchiveError(f"path not an archived memory source: {path}")
 
 
 def dedup_siblings(hits: list[Hit]) -> list[Hit]:

@@ -23,8 +23,8 @@ dưới `tools/` sẽ tạo cycle package M4↔M6. Không file nào vượt 400 
 |----|------|------|------|
 | TASK-001 | `git mv thyca/skills.py thyca/skills/store.py` + tạo `thyca/skills/__init__.py` re-export (`SkillStore`, `SkillMeta`, `NAME_MAX`, `DESCRIPTION_MAX`, `INDEX_DESCRIPTION_CHARS`, `_NAME_RE`, `_PACKAGED_SKILLS`) để mọi consumer `from thyca.skills import ...` chạy unchanged | | |
 | TASK-002 | `git mv thyca/skills_templates thyca/skills/skills_templates` + cập nhật `_PACKAGED_SKILLS` trong `skills/store.py` (`Path(__file__).parent / "skills_templates"`); verify `pyproject.toml` (`packages = ["thyca"]`) vẫn ship templates | | |
-| TASK-003 | Sửa imports do move: `thyca/memory/active.py:14`, `thyca/agent/skill_event.py:24`, `tests/test_skills.py:10` — giữ nguyên tên import (`from thyca.skills import ...`), chỉ đổi file nguồn; không đụng logic | | |
-| TASK-004 | Verify sau move: `uv run pytest -q` xanh bằng baseline, `python -c "import thyca.skills, thyca.tools, thyca.memory.active, thyca.agent.skill_event"` không circular, `git diff --check` sạch | | |
+| TASK-003 | Sửa imports do move: `thyca/memory/active.py:14`, `thyca/skills/skill_event.py:24`, `tests/test_skills.py:10` — giữ nguyên tên import (`from thyca.skills import ...`), chỉ đổi file nguồn; không đụng logic | | |
+| TASK-004 | Verify sau move: `uv run pytest -q` xanh bằng baseline, `python -c "import thyca.skills, thyca.tools, thyca.memory.active, thyca.skills.skill_event"` không circular, `git diff --check` sạch | | |
 
 Target layout cuối (không move gì thêm trong `tools/` — đã đúng vị trí):
 
@@ -46,7 +46,7 @@ Target layout cuối (không move gì thêm trong `tools/` — đã đúng vị 
 |----|------|------|------|
 | TASK-005 | `tools/memory.py`: trích `_promote_in_order_span` + `_phrase_key` (cuối file, ~dòng 320-353, ranking policy dùng `chunker.normalize`) sang `tools/memory_rank.py` mới, `memory.py` import lại; facade và signature public giữ nguyên | | |
 | TASK-006 | `tools/mcp.py`: chuyển `_McpSession` Protocol (dòng 99-107) + `ProcessFactory` (dòng 154) lên gần đầu file sau `CALL_TIMEOUT`, gom pure helpers (`merge_env`, `resolve_command`, `model_name`, `join_text_blocks`, `_is_object_schema`) thành khối liền mạch; không đổi logic, không đổi public API (`MCPManager`, `MCPProcess`, `StartupDiagnostic`) | | |
-| TASK-007 | `tools/builtin/background.py`: trích hằng số rendezvous (`_READ_WAIT_MAX_S`, `_DRAIN_GRACE_S`, `_EXIT_POLL_S`) + `parse_timeout`-tương đương nếu trùng với `bash.py` — chỉ dedup khi chữ ký giống hệt, ngược lại giữ duplicate có comment lý do | | |
+| TASK-007 | `tools/gateway/background.py`: trích hằng số rendezvous (`_READ_WAIT_MAX_S`, `_DRAIN_GRACE_S`, `_EXIT_POLL_S`) + `parse_timeout`-tương đương nếu trùng với `bash.py` — chỉ dedup khi chữ ký giống hệt, ngược lại giữ duplicate có comment lý do | | |
 | TASK-008 | Chạy focused tests M6 (liệt kê ở Test Plan) + full `uv run pytest -q`; mọi fail mới phải có evidence file:line, không sửa test để pass | | |
 
 Thứ tự tách file oversize: không có file >400 dòng trong module
@@ -102,7 +102,7 @@ Gate merge:
   chấp nhận là `tests/test_cli.py::test_debug_prints_prompt_flags` (`tools=7` vs thực tế `tools=13`
   — baseline đã biết, AGENT_RULES cấm sửa số này).
 - Không circular import:
-  `python -c "import thyca.skills, thyca.tools, thyca.memory.active, thyca.agent.skill_event, thyca.chat_app, thyca.cli"`.
+  `python -c "import thyca.skills, thyca.tools, thyca.memory.active, thyca.skills.skill_event, thyca.chat_app, thyca.cli"`.
 - `git diff --check` sạch. Không sửa test để pass trừ contract đổi đã ghi trong plan này và được duyệt.
 
 ## Assumptions
@@ -110,11 +110,11 @@ Gate merge:
 1. `thyca/skills/` là package mới thuộc scope M6 theo quyền team quyết trong plan tổng
    (gom `skills.py` vào `tools/` hoặc `skills/` mới); orchestrator duyệt layout này ở GOAL-002 tổng.
 2. `thyca.protocol` (`RESULT_CAP_BYTES`, `ToolCall`, `ToolResult` — dùng tại `registry.py:8`,
-   `builtin/background.py:14`, `skills.py` qua `RESULT_CAP_BYTES`) do M8 sở hữu; M6 giữ nguyên
+   `gateway/background.py:14`, `skills.py` qua `RESULT_CAP_BYTES`) do M8 sở hữu; M6 giữ nguyên
    `from thyca.protocol import ...`, M8 đảm bảo re-export nếu move sang `core/`.
 3. `McpServerCfg` (`tools/mcp.py:16`) do M3 sở hữu; M6 giữ nguyên import path, M3 đảm bảo
    re-export từ `thyca.config` nếu gộp `config_schema.py`.
-4. `thyca.agent.skill_event` (M1) chỉ import grammar skills (`_NAME_RE`, `NAME_MAX` —
+4. `thyca.skills.skill_event` (M1) chỉ import grammar skills (`_NAME_RE`, `NAME_MAX` —
    xem `skill_event.py:24,68`); `thyca/skills/__init__.py` giữ hai tên này export vĩnh viễn.
 5. `MemoryFacade` public API do M4/M7 dùng (`serve_memory.py:5`, `serve.py:38`, `cli.py:27`,
    `chat_app.py:34`) — TASK-005/009 không đổi chữ ký hay semantics; L2 hybrid v1 decision
@@ -126,7 +126,7 @@ Gate merge:
      không được import `thyca.tools` hay `thyca.memory` bao giờ.
    - M6→M3: chỉ via type `McpServerCfg`; nếu M3 move, M6 đổi đúng 1 dòng import.
    - M6→M8 (`protocol`): chỉ via wire types; nếu M8 move sang `core/`, M8 giữ shim.
-   - `builtin/bash.py` ↔ `builtin/background.py`: `background.py:15` import
+   - `builtin/bash.py` ↔ `gateway/background.py`: `background.py:15` import
      `kill_process_group, select_shell` từ `bash.py`, còn `bash.py` chỉ `TYPE_CHECKING`-import
      `BackgroundProcs` — giữ hướng import một chiều này, không cho `bash.py` import runtime
      từ `background.py`.

@@ -1,5 +1,6 @@
 import { getJson } from "../../shared/js/http.js";
 import { fetchAllTraces } from "../../shared/js/dashboard-today.js";
+import { makeSetStatus, messageOf } from "../../shared/js/status.js";
 import {
   averageDisplay,
   dailyCosts,
@@ -45,14 +46,7 @@ let view = null; // one immutable snapshot: fixed range, stats, rows, config
 let sort = "cost-desc";
 let generation = 0; // rapid period changes: only the newest load may render
 
-function messageOf(error, fallback) {
-  return error instanceof Error && error.message ? error.message : fallback;
-}
-
-function setStatus(message = "", kind = "") {
-  el.status.textContent = message;
-  el.status.className = `screen-status${kind ? ` is-${kind}` : ""}`;
-}
+const setStatus = makeSetStatus(el.status);
 
 function setRetry(visible) {
   if (el.retry) el.retry.hidden = !visible;

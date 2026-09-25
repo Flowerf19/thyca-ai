@@ -11,21 +11,17 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from thyca.agent.act import Act
-from thyca.agent.assemble import Assemble
 from thyca.agent.events import EventSink, TurnEvent, emit_event
-from thyca.agent.loop import AgentLoop
-from thyca.agent.observe import Observe
-from thyca.agent.think import LLMPort, Think
+from thyca.agent.think import LLMPort
 from thyca.config import Config, ConfigError, load
 from thyca.llm.llm_base import LLMError
 from thyca.llm.llm_factory import ConnectFactory
-from thyca.llm.prompt_manager import PromptManager
 from thyca.memory.active import ActiveMemory
 from thyca.sessions.wire import session_detail, session_summary
 from thyca.sessions import Session, SessionManager
 from thyca.sessions.store import SessionStore
 from thyca.sessions.title import is_blank
-from thyca.tools.builtin.background import BackgroundProcs
+from thyca.tools.gateway.background import BackgroundProcs
 from thyca.tools.mcp import MCPManager
 from thyca.tools.memory_tools import bind_chat_session, reset_chat_session
 from thyca.tools.task_store import TaskStore
@@ -33,14 +29,22 @@ from thyca.serve.turn_state import TurnHub, TurnState
 
 from thyca.app.loop_turns import _CANCEL_WAIT_S, _LoopTurns, TurnCancelled
 from thyca.app.naming import _name_if_needed, session_title
-from thyca.app.toolchain import build_tool_registry, install_mcp_specs, report_spawn_diags
-from thyca.app.turn_options import InvalidTurnOption, _clean_turn_text, overlay_turn_cfg
+from thyca.app.toolchain import (
+    build_agent_loop,
+    build_tool_gateway,
+    build_tool_registry,
+    install_mcp_specs,
+    report_spawn_diags,
+)
+from thyca.app.turn_options import InvalidTurnOption, InvalidTurnText, _clean_turn_text, overlay_turn_cfg
 
 __all__ = [
     "ChatApp",
     "InvalidTurnOption",
+    "InvalidTurnText",
     "SessionIdle",
     "TurnCancelled",
+    "TurnInFlight",
     "session_title",
 ]
 
@@ -49,11 +53,18 @@ class SessionIdle(Exception):
     """Cancel arrived while this session had no turn in flight."""
 
 
+class TurnInFlight(Exception):
+    """Cancel wait expired while the turn was still running."""
+
+
 class ChatApp:
     def __init__(self, root: Path, cfg: Config, connect: LLMPort | None = None) -> None:
         self._root = root
         self._config_file = root / "config.json"
-        self._cfg = self._current_cfg() if self._config_file.exists() else cfg
+        # Seed before re-read: _current_cfg falls back to _cfg on ConfigError.
+        self._cfg = cfg
+        if self._config_file.exists():
+            self._cfg = self._current_cfg()
         self._injected_connect = connect
         self._connect = connect
         self._sessions = SessionManager(
@@ -71,7 +82,13 @@ class ChatApp:
         self._state = self._memory.open_session(datetime.now(self._zone))
         self._tasks = TaskStore()
         self._background = BackgroundProcs()
-        registry = build_tool_registry(root, cfg, self._tasks, self._background)
+        registry = build_tool_registry(root, cfg, self._background)
+        self._gateway = build_tool_gateway(
+            registry,
+            self._tasks,
+            self._background,
+            soft_timeout_s=cfg.effective_limits().softTimeoutS,
+        )
         self._mcp = MCPManager()
         self._loop = asyncio.new_event_loop()
         self._ready = threading.Event()
@@ -83,7 +100,7 @@ class ChatApp:
         # block another (nor its own UI, which reads this map). Shared with the
         # delete gate so a claim cannot slip between check and unlink.
         self._turns = TurnState()
-        self._loop_turns = _LoopTurns(self._loop)
+        self._loop_turns = _LoopTurns(self._loop, self._turns)
         self._claim_lock = threading.Lock()
         self._stopped = False
         self._thread.start()
@@ -95,7 +112,7 @@ class ChatApp:
             )
             install_mcp_specs(registry, self._mcp, err=sys.stderr)
             self._tools = registry.to_openai_schema()
-            self._act = Act(registry, skills_root=root / "skills")
+            self._act = Act(self._gateway, skills_root=root / "skills")
         except BaseException:
             self.shutdown()
             raise
@@ -182,6 +199,9 @@ class ChatApp:
     ) -> dict:
         cleaned = _clean_turn_text(text, retry=retry)
         turn_cfg = overlay_turn_cfg(self._current_cfg(), model, effort)
+        # The gateway is built once; refresh its soft window from current
+        # config so Provider-page saves apply without a restart.
+        self._gateway.set_soft_timeout_s(turn_cfg.effective_limits().softTimeoutS)
         with self._claim_lock:
             hub = self._turns.claim(session_id)
             job = self._loop_turns.begin(session_id)
@@ -228,6 +248,7 @@ class ChatApp:
             if self._turns.hub(session_id) is None:
                 return
             time.sleep(0.05)
+        raise TurnInFlight("turn still in flight")
 
     async def _run_turn(
         self,
@@ -254,7 +275,13 @@ class ChatApp:
         try:
             provider = turn_cfg.effective_provider()
             if effort is not None:
-                provider = replace(provider, reasoningEffort=effort)
+                # overlay_turn_cfg already approved this level model-aware;
+                # carry the model's own set so a custom level resolves.
+                chosen = turn_cfg.models.get(turn_cfg.defaultModel)
+                own_set = chosen.reasoningEfforts if chosen is not None else ()
+                provider = replace(
+                    provider, reasoningEffort=effort, reasoningEfforts=own_set
+                )
             connect = self._injected_connect or ConnectFactory.create(
                 provider.api, provider
             )
@@ -262,14 +289,12 @@ class ChatApp:
             self._wire_retry_events(connect, event_sink)
             try:
                 limits = turn_cfg.effective_limits()
-                loop = AgentLoop(
+                loop = build_agent_loop(
                     sessions=sessions,
-                    assemble=Assemble(PromptManager()),
-                    think=Think(connect),
+                    connect=connect,
                     act=self._act,
-                    observe=Observe(sessions),
-                    loop_max=limits.loopMax,
                     tools=self._tools,
+                    loop_max=limits.loopMax,
                     model=turn_cfg.provider.model,
                     pricing=turn_cfg.effective_pricing() or None,
                 )
@@ -336,8 +361,8 @@ class ChatApp:
         self._stopped = True
         try:
             if self._loop.is_running():
+                self._submit(self._gateway.shutdown())
                 self._submit(self._mcp.shutdown())
-                self._submit(self._background.kill_all())
         except Exception:
             pass
         finally:

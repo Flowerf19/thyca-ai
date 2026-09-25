@@ -16,6 +16,7 @@ from pathlib import Path
 
 import yaml
 
+from thyca.config.store import config_path
 from thyca.core.protocol import RESULT_CAP_BYTES
 
 NAME_MAX = 64
@@ -24,7 +25,7 @@ INDEX_DESCRIPTION_CHARS = 256
 
 _NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 _FM_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*(?:\n|$)", re.DOTALL)
-_PACKAGED_SKILLS = Path(__file__).resolve().parent / "skills_templates"
+_PACKAGED_SKILLS = Path(__file__).resolve().parents[1] / "seeds" / "skills"
 
 
 @dataclass(frozen=True)
@@ -40,7 +41,8 @@ class SkillStore:
     """Read-only view + default seeding over the skills directory."""
 
     def __init__(self, thyca_dir: Path | None = None) -> None:
-        self.thyca_dir = Path(thyca_dir or Path.home() / ".thyca")
+        # Single source for the home default: config_path().parent.
+        self.thyca_dir = Path(thyca_dir or config_path().parent)
 
     @property
     def root(self) -> Path:
@@ -49,11 +51,8 @@ class SkillStore:
     def list_meta(self) -> list[SkillMeta]:
         if not self.root.is_dir():
             return []
-        metas = [
-            self._meta(entry)
-            for entry in sorted(self.root.iterdir())
-            if entry.is_dir()
-        ]
+        # One sort: names are unique dir names, so the final key order is total.
+        metas = [self._meta(entry) for entry in self.root.iterdir() if entry.is_dir()]
         metas.sort(key=lambda meta: meta.name)
         return metas
 
@@ -98,7 +97,8 @@ class SkillStore:
         if not path.is_file():
             return SkillMeta(name, "", path, ok=False, error="missing SKILL.md")
         try:
-            text = path.read_text(encoding="utf-8")
+            # utf-8-sig: a BOM-headed SKILL.md is valid, not broken frontmatter.
+            text = path.read_text(encoding="utf-8-sig")
         except (OSError, UnicodeDecodeError) as exc:
             return SkillMeta(name, "", path, ok=False, error=f"unreadable: {exc}")
         data = _parse_frontmatter(text)

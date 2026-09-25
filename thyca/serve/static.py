@@ -24,6 +24,9 @@ def content_type(path: Path) -> str:
 
 def safe_file(webui: Path, url_path: str) -> Path | None:
     rel = unquote(url_path).lstrip("/")
+    if "\x00" in rel:
+        # Null bytes make resolve()/stat raise ValueError; treat as missing.
+        return None
     if not rel or rel.endswith("/"):
         rel = (rel + "index.html") if rel else "index.html"
     target = (webui / rel).resolve()

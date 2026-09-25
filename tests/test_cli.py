@@ -5,6 +5,8 @@ from dataclasses import dataclass, field, replace
 from io import StringIO
 from pathlib import Path
 
+import pytest
+
 from thyca.app.cli import Cli
 from thyca.config import McpServerCfg, default_config, load, save
 from thyca.llm.llm_base import ChatReply, LLMError
@@ -210,13 +212,24 @@ def test_repl_eof_exits_0(tmp_path: Path) -> None:
     assert llm.requests[0][-1].content == "hello"
 
 
-def test_debug_prints_prompt_flags(tmp_path: Path) -> None:
+@pytest.mark.parametrize("custom_persona", [False, True])
+@pytest.mark.parametrize("user", [None, "", "# User\n", "# User\nPrefers short answers.\n"])
+def test_debug_prints_prompt_flags(
+    tmp_path: Path, custom_persona: bool, user: str | None
+) -> None:
+    if custom_persona:
+        (tmp_path / "SOUL.md").write_text("# Custom voice\nSpeak plainly.\n", encoding="utf-8")
+        (tmp_path / "IDENTITY.md").write_text("# Custom identity\nName: Local\n", encoding="utf-8")
+    if user is not None:
+        (tmp_path / "USER.md").write_text(user, encoding="utf-8")
     cli, _out, err = _cli(tmp_path, FakeLLM(ChatReply(content="ok")))
     assert cli.main(["--debug", "-p", "hi"]) == 0
     dbg = err.getvalue()
     assert "debug " in dbg
     assert "soul=True" in dbg
     assert "identity=True" in dbg
+    has_user = user is None or user.strip() not in {"", "# User"}
+    assert f"user={has_user}" in dbg
     assert "tools=13" in dbg
 
 

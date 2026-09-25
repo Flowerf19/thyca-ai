@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 import threading
 from pathlib import Path
 from urllib.error import HTTPError
@@ -14,7 +16,7 @@ from thyca.core.protocol import Message, ToolCall
 from thyca.serve import default_webui, make_server
 from thyca.sessions import SessionManager
 from thyca.sessions.store import SessionStore
-from thyca.tools.memory import MemoryFacade
+from thyca.memory.facade import MemoryFacade
 
 WEBUI = default_webui()
 TS = "2026-08-26T09:12:03Z"
@@ -84,6 +86,82 @@ def _append_turn(
         meta["cost_usd"] = cost
     manager.append(Message(role="assistant", content=content, ts=TS2, meta=meta))
     return session.id
+
+
+def test_concurrent_trace_list_and_detail_do_not_race_cache(tmp_path: Path) -> None:
+    """List (iterate/evict) + detail (insert) share ``_trace_sessions``.
+
+    Under ThreadingHTTPServer the overlap used to raise ``RuntimeError:
+    dictionary changed size`` (→ 503). The shrunk window keeps detail
+    inserting entries the list scan keeps evicting, so every round races
+    without the lock.
+    """
+    chat = _chat(tmp_path)
+    cap = trace_api._TRACE_SCAN_CAP
+    try:
+        manager = SessionManager(tmp_path / "sessions")
+        ids = [
+            _append_turn(manager, model="m", content=f"turn {index}", cost=None)
+            for index in range(8)
+        ]
+        # Pin a stable window: the first six files are oldest, so they sit
+        # outside a cap-2 scan window no matter the creation order.
+        base = 1_700_000_000
+        for rank, sid in enumerate(ids):
+            path = tmp_path / "sessions" / f"{sid}.jsonl"
+            os.utime(path, (base + rank, base + rank))
+        ordered = [path.stem for path in chat.trace_store().list_paths()]
+        assert ordered == ids[::-1]
+        outside = ordered[2:]
+        assert len(outside) == 6
+
+        trace_api._TRACE_SCAN_CAP = 2
+        trace_api._trace_sessions.clear()
+        # Fat first-round scan window: the eviction pass iterates thousands
+        # of entries while detail threads insert (size change mid-iteration
+        # is the RuntimeError). Later rounds keep churning: detail
+        # re-inserts outside-window entries every list scan evicts.
+        trace_api._trace_sessions.update(
+            (Path(f"/stale/{index}.jsonl"), (0, object())) for index in range(2000)
+        )
+        errors: list[Exception] = []
+        barrier = threading.Barrier(5)
+        interval = sys.getswitchinterval()
+        sys.setswitchinterval(1e-5)
+        try:
+            def lister() -> None:
+                barrier.wait(timeout=10)
+                try:
+                    for _ in range(300):
+                        trace_api.collect_turns(chat)
+                except Exception as exc:
+                    errors.append(exc)
+
+            def detailer(slot: int) -> None:
+                store = chat.trace_store()
+                sids = outside[slot:] + outside[:slot]
+                barrier.wait(timeout=10)
+                try:
+                    for _ in range(100):
+                        for sid in sids:
+                            trace_api.cached_turns_for(store, sid)
+                except Exception as exc:
+                    errors.append(exc)
+
+            threads = [threading.Thread(target=lister) for _ in range(2)]
+            threads += [threading.Thread(target=detailer, args=(i,)) for i in range(3)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=120)
+            assert not any(thread.is_alive() for thread in threads)
+            assert errors == []
+        finally:
+            sys.setswitchinterval(interval)
+    finally:
+        trace_api._TRACE_SCAN_CAP = cap
+        trace_api._trace_sessions.clear()
+        chat.shutdown()
 
 
 def test_trace_scan_cache_reuses_unchanged_files(tmp_path: Path) -> None:
@@ -330,3 +408,158 @@ def test_trace_detail_marks_skill_loads_and_keeps_arguments(tmp_path: Path) -> N
         }
     finally:
         chat.close() if hasattr(chat, "close") else None
+
+
+# --- F34: limit=all is bounded, total stays full ---
+
+
+class _NoopLLM:
+    async def chat(self, messages, tools=None):
+        return ChatReply(content="x")
+
+
+def _trace_chat(tmp_path: Path) -> ChatApp:
+    save(default_config(), tmp_path / "config.json")
+    return ChatApp(tmp_path, load(tmp_path / "config.json"), connect=_NoopLLM())
+
+
+def _write_turn_files(sessions_dir: Path, n_files: int, turns_per_file: int) -> int:
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    for i in range(n_files):
+        sid = (
+            f"2026-09-{(i % 28) + 1:02d}"
+            f"T10-{(i * 7) % 60:02d}-{(i * 13) % 60:02d}_{i:04x}"
+        )
+        lines = []
+        for t in range(turns_per_file):
+            lines.append(json.dumps({"role": "user", "content": f"q{t}", "ts": "2026-09-01T10:00:00Z"}))
+            lines.append(json.dumps({"role": "assistant", "content": f"a{t}", "ts": "2026-09-01T10:00:01Z"}))
+        (sessions_dir / f"{sid}.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return n_files * turns_per_file
+
+
+def test_f34_limit_all_capped_total_full_and_offset_pages_on(tmp_path: Path) -> None:
+    total = _write_turn_files(tmp_path / "sessions", 100, 25)
+    assert total == 2500
+    chat = _trace_chat(tmp_path)
+    trace_api._trace_sessions.clear()
+
+    payload = trace_api.trace_list_payload(chat, "limit=all")
+    assert payload["total"] == 2500
+    assert len(payload["traces"]) == trace_api._TRACE_ALL_CAP == 2000
+
+    tail = trace_api.trace_list_payload(chat, "limit=all&offset=2000")
+    assert tail["total"] == 2500
+    assert len(tail["traces"]) == 500
+
+    zero = trace_api.trace_list_payload(chat, "limit=0")
+    assert zero["total"] == 2500
+    assert len(zero["traces"]) == 2000
+
+
+# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
+import json
+import threading
+from pathlib import Path
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
+
+def test_x26_sum_group_rollup() -> None:
+    from thyca.serve.trace import TurnSummary, _sum_group
+
+    def turn(requests, cost):
+        return TurnSummary(
+            session_id="s",
+            turn_index=0,
+            title="t",
+            started_at="",
+            ended_at="",
+            model=None,
+            status="completed",
+            rounds=1,
+            requests=requests,
+            prompt_tokens=None,
+            cached_tokens=None,
+            completion_tokens=None,
+            total_tokens=None,
+            cost_usd=cost,
+            latency_ms=None,
+            messages=[],
+        )
+
+    assert _sum_group([turn(2, 0.5), turn(3, None)]) == (5, 0.5)
+    assert _sum_group([turn(1, None)]) == (1, None)
+
+
+def _start_config_server(tmp_path: Path):
+    from thyca.config import default_config, save
+    from thyca.memory.facade import MemoryFacade
+    from thyca.serve import default_webui, make_server
+
+    save(default_config(), tmp_path / "config.json")
+    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    httpd = make_server(
+        host="127.0.0.1",
+        port=0,
+        webui=default_webui(),
+        facade=facade,
+        config_file=tmp_path / "config.json",
+    )
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    return httpd, thread
+
+
+def _post(httpd, path: str, data: dict) -> tuple[int, dict]:
+    body = json.dumps(data).encode()
+    request = Request(
+        f"http://127.0.0.1:{httpd.server_address[1]}{path}",
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urlopen(request, timeout=5) as response:
+            return response.status, json.loads(response.read().decode())
+    except HTTPError as exc:
+        return exc.code, json.loads(exc.read().decode())
+
+
+def test_m7_post_traces_is_404_like_get(tmp_path: Path) -> None:
+    httpd, thread = _start_config_server(tmp_path)
+    try:
+        status, body = _post(httpd, "/api/traces/anything", {})
+        assert status == 404
+        assert body == {"error": "trace not found"}
+    finally:
+        httpd.shutdown()
+        thread.join(timeout=2)
+        httpd.server_close()
+
+
+def test_m7_turn_status_meta_first_then_stripped() -> None:
+    from thyca.core.protocol import Message
+    from thyca.serve.trace import turns_from_session
+    from thyca.sessions import Session
+
+    def session_with(last: Message) -> Session:
+        return Session(
+            "2026-08-26T09-12-03_abcf",
+            Path("/tmp/x.jsonl"),
+            [Message(role="user", content="go"), last],
+        )
+
+    padded = turns_from_session(
+        session_with(Message(role="assistant", content="loop limit reached\n"))
+    )[0]
+    assert padded.status == "loop_limit"
+    meta_only = turns_from_session(
+        session_with(
+            Message(role="assistant", content="done", meta={"status": "loop_limit"})
+        )
+    )[0]
+    assert meta_only.status == "loop_limit"
+    plain = turns_from_session(session_with(Message(role="assistant", content="done")))[
+        0
+    ]
+    assert plain.status == "completed"

@@ -6,14 +6,14 @@ from pathlib import Path
 from typing import Protocol
 
 from thyca.core.protocol import ToolCall, ToolResult
+from thyca.skills.skill_event import public_skill_name, skill_name_for_call
 
 from .events import EventSink, TurnEvent, emit_event
-from .skill_event import public_skill_name, skill_name_for_call
 from .stage import Stage
 
 
 class ToolDispatcher(Protocol):
-    async def dispatch(self, call: ToolCall) -> ToolResult: ...
+    async def submit(self, call: ToolCall) -> ToolResult: ...
 
 
 def _build_result(
@@ -33,7 +33,14 @@ def _build_result(
             content=str(error),
             is_error=True,
         )
-    assert dispatched is not None
+    if dispatched is None:
+        # Misbehaving dispatcher: per-call error, never an abort of act().
+        return ToolResult(
+            tool_call_id=call.id,
+            name=call.name,
+            content="dispatcher returned no result",
+            is_error=True,
+        )
     return ToolResult(
         tool_call_id=call.id,
         name=call.name,
@@ -71,7 +78,7 @@ class Act:
         return stage.results
 
     async def _one(
-        self, call: ToolCall, round: int, event_sink: EventSink | None = None
+        self, call: ToolCall, round_no: int, event_sink: EventSink | None = None
     ) -> ToolResult:
         # A read inside the skills dir emits skill.* instead of tool.* — one
         # action is one beat pair, never tool.* and skill.* together.
@@ -82,13 +89,13 @@ class Act:
         if event_sink is not None:
             emit_event(
                 event_sink,
-                TurnEvent(type=f"{kind}.started", round=round, call_id=call.id, name=name),
+                TurnEvent(type=f"{kind}.started", round=round_no, call_id=call.id, name=name),
             )
         if call.parse_error is not None:
             result = _build_result(call, None)
         else:
             try:
-                dispatched = await self._dispatcher.dispatch(call)
+                dispatched = await self._dispatcher.submit(call)
             except Exception as exc:
                 result = _build_result(call, None, exc)
             else:
@@ -98,7 +105,7 @@ class Act:
                 event_sink,
                 TurnEvent(
                     type=f"{kind}.finished",
-                    round=round,
+                    round=round_no,
                     call_id=call.id,
                     name=name,
                     ok=not result.is_error,

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from thyca.core.protocol import Message
+from thyca.core.protocol import Message, parse_ts
 
 IDLE = timedelta(minutes=15)
 _REMEMBER = "memory_remember"
@@ -19,7 +19,7 @@ def ask_remember(messages: list[Message], now: datetime) -> bool:
     for index, message in enumerate(messages):
         if message.role == "user" and (message.content or "").strip():
             last_user_i = index
-            last_user_at = _ts(message.ts)
+            last_user_at = parse_ts(message.ts)
         if message.role != "assistant" or not message.tool_calls:
             continue
         for call in message.tool_calls:
@@ -42,7 +42,3 @@ def _tool_results(messages: list[Message]) -> dict[str, tuple[int, bool]]:
         errored = bool((message.meta or {}).get("is_error"))
         found[message.tool_call_id] = (index, errored)
     return found
-
-
-def _ts(value: str) -> datetime:
-    return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)

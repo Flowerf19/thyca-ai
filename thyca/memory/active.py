@@ -11,28 +11,32 @@ from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from thyca.config import DEFAULT_LIMITS_HOT_TAIL_KB, DEFAULT_TIMELINE_TIMEZONE
-from thyca.memory.heading import is_session_heading, strip_heading_comments
+from thyca.memory.heading import day, is_session_heading, read_text_file, strip_heading_comments
 
 if TYPE_CHECKING:
     from thyca.skills import SkillStore
 
 _FENCE_RE = re.compile(r"^```", re.MULTILINE)
 
-_PACKAGED_PROMPTS = Path(__file__).resolve().parents[1] / "llm" / "prompts"
-
 
 def _packaged(name: str, fallback: str) -> str:
-    path = _PACKAGED_PROMPTS / f"{name}.md"
-    if path.is_file():
-        return path.read_text(encoding="utf-8")
-    return fallback
+    # PromptManager.template is the sole prompt loader; Active keeps only
+    # the missing-file fallback. Local import: llm.prompt_manager imports
+    # this module for ActiveSnapshot, so a top-level import would cycle.
+    from thyca.llm.prompt_manager import PromptManager
+
+    try:
+        return PromptManager().template(name)
+    except FileNotFoundError:
+        # Missing file only: corruption/permission bugs must stay loud.
+        return fallback
 
 
 def _default_files() -> dict[str, str]:
     return {
         "SOUL.md": _packaged("soul", "# Soul\n"),
         "IDENTITY.md": _packaged("identity", "# Identity\n"),
-        "USER.md": "# User\n",
+        "USER.md": _packaged("user", "# User\n"),
     }
 
 
@@ -104,14 +108,19 @@ class ActiveMemory:
         return ActiveState(day=day, today_path=self._daily_path(day))
 
     def refresh(self, state: ActiveState, now: datetime) -> ActiveSnapshot:
-        day = self._day(now)
-        if day != state.day:
+        today = self._day(now)
+        if today != state.day:
             closed = state.day
-            state.day = day
-            state.today_path = self._daily_path(day)
-            self._create_if_missing(state.today_path, f"# {day}\n")
+            state.day = today
+            state.today_path = self._daily_path(today)
+            self._create_if_missing(state.today_path, f"# {today}\n")
             if self.on_day_close is not None:
                 self.on_day_close(closed)
+        elif not state.today_path.exists():
+            # A today file deleted mid-day comes back instead of silently
+            # reading as "" until rollover.
+            self._secure_dir(self.memory_dir)
+            self._create_if_missing(state.today_path, f"# {today}\n")
         return ActiveSnapshot(
             soul=self._read(self.thyca_dir / "SOUL.md"),
             identity=self._read(self.thyca_dir / "IDENTITY.md"),
@@ -130,9 +139,7 @@ class ActiveMemory:
             return ZoneInfo(DEFAULT_TIMELINE_TIMEZONE)
 
     def _day(self, now: datetime) -> str:
-        zone = self._zone()
-        aware = now.replace(tzinfo=zone) if now.tzinfo is None else now.astimezone(zone)
-        return aware.date().isoformat()
+        return day(now, self._zone())
 
     def _daily_path(self, day: str) -> Path:
         return self.memory_dir / f"{day}.md"
@@ -164,12 +171,13 @@ class ActiveMemory:
             pass
 
     def _read(self, path: Path) -> str:
-        if not path.is_file() or path.is_symlink():
-            return ""
         try:
-            return strip_heading_comments(path.read_text(encoding="utf-8"))
-        except OSError as exc:
+            text = read_text_file(path)
+        except (OSError, UnicodeDecodeError) as exc:
             raise ActiveMemoryError(f"cannot read {path}: {exc}") from exc
+        if text is None:
+            return ""
+        return strip_heading_comments(text)
 
     def _tail(self, text: str) -> str:
         return tail_text(text, self._budget)

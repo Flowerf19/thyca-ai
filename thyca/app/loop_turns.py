@@ -1,9 +1,14 @@
-"""Thread/asyncio bridge: one asyncio.Task per claimed session (split from chat_app, M8)."""
+"""Thread/asyncio bridge: run a claimed turn's coroutine on the loop thread.
+
+The per-session registry lives in :class:`TurnState` (the one turn registry);
+this module is the asyncio view over it: job spawn/await plus cancel.
+"""
 from __future__ import annotations
 
 import asyncio
 import concurrent.futures
-import threading
+
+from thyca.serve.turn_state import _TurnJob, TurnState
 
 _CANCEL_WAIT_S = 5.0
 
@@ -16,34 +21,20 @@ class TurnCancelled(Exception):
     """
 
 
-class _TurnJob:
-    __slots__ = ("task", "cancel", "cfut", "lock")
-
-    def __init__(self) -> None:
-        self.task: asyncio.Task | None = None
-        self.cancel = False
-        self.cfut: concurrent.futures.Future = concurrent.futures.Future()
-        self.lock = threading.Lock()
-
-
 class _LoopTurns:
     """asyncio.Task per claimed session; each job is locked across spawn/cancel."""
 
-    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+    def __init__(self, loop: asyncio.AbstractEventLoop, turns: TurnState) -> None:
         self._loop = loop
-        self._jobs: dict[str, _TurnJob] = {}
-        self._lock = threading.Lock()
+        self._turns = turns
 
     def begin(self, session_id: str) -> _TurnJob:
         job = _TurnJob()
-        with self._lock:
-            self._jobs[session_id] = job
+        self._turns.attach(session_id, job)
         return job
 
     def end(self, session_id: str, job: _TurnJob) -> None:
-        with self._lock:
-            if self._jobs.get(session_id) is job:
-                del self._jobs[session_id]
+        self._turns.detach(session_id, job)
 
     def submit(self, job: _TurnJob, coro):
         def spawn() -> None:
@@ -76,8 +67,7 @@ class _LoopTurns:
             raise TurnCancelled() from None
 
     def request_cancel(self, session_id: str) -> bool:
-        with self._lock:
-            job = self._jobs.get(session_id)
+        job = self._turns.job(session_id)
         if job is None:
             return False
         with job.lock:

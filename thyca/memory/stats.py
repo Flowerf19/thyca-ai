@@ -6,12 +6,16 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from thyca.memory.chunk import Chunk
-from thyca.memory.heading import DEFAULT_IMPORTANCE, TTL_DAYS, parse_heading
+from thyca.memory.heading import is_expired
 
 SNIPPET_LEN = 250
 EXPIRE_SOON_DAYS = 14
 SUGGEST_IDLE_DAYS = 7
-L2_SESSION_RE = re.compile(r"^(?:\d{4}-\d{2}-\d{2}|memory)#[0-9a-f]{8}$")
+# Dates + canonical sessions only: MEMORY.md rows are dropped on facade open
+# and never reindexed, so the legacy memory# alternative matched nothing.
+L2_SESSION_RE = re.compile(
+    r"^(?:\d{4}-\d{2}-\d{2}#[0-9a-f]{8}|canonical#[^#]+#[0-9a-f]{8})$"
+)
 
 
 @dataclass(frozen=True)
@@ -70,7 +74,7 @@ class MemoryStats:
         for chunk in today_chunks:
             if chunk.chunk_id in by_id:
                 continue
-            if chunk.expires_at and chunk.expires_at <= now_ts:
+            if is_expired(chunk.expires_at, _parse_ts(now_ts)):
                 continue
             stat = _from_today(chunk, gets, searches)
             if stat is not None:
@@ -186,12 +190,8 @@ def _last_touch(item: LeafStat) -> str | None:
 
 
 def _created_ts(item: LeafStat) -> str | None:
-    meta = parse_heading(item.heading)
-    if meta is not None and meta.expires_at:
-        exp = _parse_ts(meta.expires_at)
-        if exp is not None:
-            days = TTL_DAYS.get(meta.importance, TTL_DAYS[DEFAULT_IMPORTANCE])
-            return (exp - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # Headings arrive comment-stripped, so no TTL back-calculation applies;
+    # the timeline-day midnight fallback is the only creation signal.
     if item.timeline_day:
         return f"{item.timeline_day}T00:00:00Z"
     return None

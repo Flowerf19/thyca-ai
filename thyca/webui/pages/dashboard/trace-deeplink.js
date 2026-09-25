@@ -4,12 +4,15 @@ import {
   journalClampPage,
 } from "../../shared/js/pager.js";
 import { cleanText } from "../../shared/js/format.js";
+import { makeSetStatus } from "../../shared/js/status.js";
 import { el, state, selectGroup, backToSessions, reloadTrace } from "./trace-view.js";
 import { turnStateFor, fillTurnBody } from "./trace-turns.js";
 
 // Trace deep-link (?session=&turn=), address-bar sync and reveal.
 // Deep-link reveal honors prefers-reduced-motion (same pattern as app.js).
-const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const reducedMotion = typeof matchMedia === "function"
+  ? matchMedia("(prefers-reduced-motion: reduce)").matches
+  : false;
 
 function revealScrollOptions() {
   return { block: "start", behavior: reducedMotion ? "auto" : "smooth" };
@@ -90,14 +93,11 @@ function watchTraceViewVisibility() {
   }).observe(view, { attributes: true, attributeFilter: ["hidden"] });
 }
 
-function messageOf(error, fallback) {
-  return error instanceof Error && error.message ? error.message : fallback;
-}
-
+/* `el` comes from trace-view.js (circular import): it is still uninitialized
+   while this module evaluates, so the node is read per call, never bound
+   once at module top. */
 function setStatus(message = "", kind = "") {
-  if (!el.status) return;
-  el.status.textContent = message;
-  el.status.className = `screen-status${kind ? ` is-${kind}` : ""}`;
+  makeSetStatus(el.status)(message, kind);
 }
 
 function setNote(message = "") {
@@ -255,7 +255,6 @@ function bind() {
 }
 
 export {
-  messageOf,
   setStatus,
   updateNote,
   activeGroup,

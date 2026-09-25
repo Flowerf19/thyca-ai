@@ -15,25 +15,22 @@ import traceback
 from typing import TYPE_CHECKING
 
 from thyca.serve.bridge import _log_turn_failure, pump_stream, stream_turn
-from thyca.serve.errors import parse_turn_body, public_turn_error
-from thyca.sessions import SessionCorrupt, SessionError, SessionNotFound
-from thyca.sessions.wire import delete_error, rename_error
+from thyca.serve.errors import _with_json, parse_turn_body, public_turn_error
+from thyca.sessions.store import SESSION_ID_PATTERN
+from thyca.sessions.wire import delete_error, rename_error, session_http_error
 
 if TYPE_CHECKING:
     from thyca.app.chat_app import ChatApp
 
-# Same grammar the session routes use: a timestamp id and four hex chars.
-SESSION_RE = re.compile(r"^/api/sessions/(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_[0-9a-f]{4})$")
+# Same grammar the session routes use, composed from the sessions-owned pattern.
+SESSION_RE = re.compile(rf"^/api/sessions/({SESSION_ID_PATTERN})$")
 
 
 def _sessions_error(handler, exc: Exception) -> None:
     """Map a read-path session failure to its public HTTP error."""
-    if isinstance(exc, SessionNotFound):
-        handler._json(404, {"error": "session not found"})
-    elif isinstance(exc, SessionCorrupt):
-        handler._json(503, {"error": "session unreadable"})
-    elif isinstance(exc, SessionError):
-        handler._json(503, {"error": "session unavailable"})
+    mapped = session_http_error(exc)
+    if mapped is not None:
+        handler._json(mapped[0], {"error": mapped[1]})
     else:
         traceback.print_exc(file=sys.stderr)
         handler._json(503, {"error": "chat unavailable"})
@@ -80,61 +77,71 @@ def session_create(handler, app: ChatApp | None) -> None:
 
 
 def session_turn(handler, app: ChatApp | None, session_id: str) -> None:
-    from thyca.app.chat_app import InvalidTurnOption, TurnCancelled
+    from thyca.app.chat_app import InvalidTurnOption, InvalidTurnText, TurnCancelled
 
     if _missing_chat(handler, app):
         return
-    try:
-        payload = handler._read_json()
-    except ValueError:
-        handler._json(400, {"error": "invalid body"})
-        return
-    try:
-        text, model, effort, retry = parse_turn_body(payload)
-    except InvalidTurnOption as exc:
-        handler._json(400, {"error": str(exc)})
-        return
-    except ValueError:
-        handler._json(400, {"error": "invalid text"})
-        return
-    try:
-        handler._json(
-            200,
-            app.turn(session_id, text, model=model, effort=effort, retry=retry),
-        )
-    except TurnCancelled:
-        handler._json(200, {"cancelled": True})
-    except Exception as exc:
-        status, _code, message = public_turn_error(exc)
-        _log_turn_failure(app, session_id, model, exc)
-        handler._json(status, {"error": message})
+
+    def run(payload: dict) -> None:
+        try:
+            text, model, effort, retry = parse_turn_body(payload)
+        except InvalidTurnOption as exc:
+            handler._json(400, {"error": str(exc)})
+            return
+        except InvalidTurnText as exc:
+            _status, _code, message = public_turn_error(exc)
+            handler._json(_status, {"error": message})
+            return
+        except ValueError as exc:
+            # Unreachable from the typed parse above; a bug here 500s.
+            _log_turn_failure(app, session_id, None, exc)
+            handler._json(500, {"error": "chat unavailable"})
+            return
+        try:
+            handler._json(
+                200,
+                app.turn(session_id, text, model=model, effort=effort, retry=retry),
+            )
+        except TurnCancelled:
+            handler._json(200, {"cancelled": True})
+        except Exception as exc:
+            status, _code, message = public_turn_error(exc)
+            _log_turn_failure(app, session_id, model, exc)
+            handler._json(status, {"error": message})
+
+    _with_json(handler, run)
 
 
 def session_turn_stream(handler, app: ChatApp | None, session_id: str) -> None:
-    from thyca.app.chat_app import InvalidTurnOption
+    from thyca.app.chat_app import InvalidTurnOption, InvalidTurnText
 
     if _missing_chat(handler, app):
         return
-    try:
-        payload = handler._read_json()
-    except ValueError:
-        handler._json(400, {"error": "invalid text"})
-        return
-    try:
-        text, model, effort, retry = parse_turn_body(payload)
-    except InvalidTurnOption as exc:
-        handler._json(400, {"error": str(exc)})
-        return
-    except ValueError:
-        handler._json(400, {"error": "invalid text"})
-        return
-    stream_turn(
-        handler, app, session_id, text, model=model, effort=effort, retry=retry
-    )
+
+    def run(payload: dict) -> None:
+        try:
+            text, model, effort, retry = parse_turn_body(payload)
+        except InvalidTurnOption as exc:
+            handler._json(400, {"error": str(exc)})
+            return
+        except InvalidTurnText as exc:
+            _status, _code, message = public_turn_error(exc)
+            handler._json(_status, {"error": message})
+            return
+        except ValueError as exc:
+            # Unreachable from the typed parse above; a bug here 500s.
+            _log_turn_failure(app, session_id, None, exc)
+            handler._json(500, {"error": "chat unavailable"})
+            return
+        stream_turn(
+            handler, app, session_id, text, model=model, effort=effort, retry=retry
+        )
+
+    _with_json(handler, run, error="invalid text")
 
 
 def session_turn_cancel(handler, app: ChatApp | None, session_id: str) -> None:
-    from thyca.app.chat_app import SessionIdle
+    from thyca.app.chat_app import SessionIdle, TurnInFlight
 
     if _missing_chat(handler, app):
         return
@@ -147,6 +154,8 @@ def session_turn_cancel(handler, app: ChatApp | None, session_id: str) -> None:
         app.cancel(session_id)
     except SessionIdle:
         handler._json(409, {"error": "session idle"})
+    except TurnInFlight:
+        handler._json(409, {"error": "turn in flight"})
     except Exception as exc:
         _sessions_error(handler, exc)
     else:
@@ -185,25 +194,24 @@ def session_rename(handler, app: ChatApp | None, path: str) -> None:
     if not match:
         handler._json(404, {"error": "session not found"})
         return
-    try:
-        payload = handler._read_json()
-    except ValueError:
-        handler._json(400, {"error": "invalid body"})
-        return
-    title = payload.get("title")
-    if not isinstance(title, str):
-        handler._json(400, {"error": "invalid title"})
-        return
-    try:
-        stored = app.rename_session(match.group(1), title)
-    except Exception as exc:
-        mapped = rename_error(exc)
-        if mapped is None:
-            _sessions_error(handler, exc)
+
+    def run(payload: dict) -> None:
+        title = payload.get("title")
+        if not isinstance(title, str):
+            handler._json(400, {"error": "invalid title"})
             return
-        handler._json(mapped[0], {"error": mapped[1]})
-    else:
-        handler._json(200, {"ok": True, "id": match.group(1), "title": stored})
+        try:
+            stored = app.rename_session(match.group(1), title)
+        except Exception as exc:
+            mapped = rename_error(exc)
+            if mapped is None:
+                _sessions_error(handler, exc)
+                return
+            handler._json(mapped[0], {"error": mapped[1]})
+        else:
+            handler._json(200, {"ok": True, "id": match.group(1), "title": stored})
+
+    _with_json(handler, run)
 
 
 def session_delete(handler, app: ChatApp | None, path: str) -> None:

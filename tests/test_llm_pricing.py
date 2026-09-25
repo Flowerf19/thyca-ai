@@ -55,3 +55,9 @@ def test_muse_spark_contributor_prices() -> None:
     assert cost_for("meta/muse-spark-1.2-contributor", USAGE) == expected
     overlay = {"meta/muse-spark-1.2-contributor": PricingCfg(input=0.10, cache=0.002, output=0.20)}
     assert cost_for("meta/muse-spark-1.2-contributor", USAGE, overlay) == expected
+
+
+def test_muse_spark_13_contributor_prices() -> None:
+    expected = round((80 * 0.10 + 20 * 0.002 + 10 * 0.20) / 1_000_000, 6)
+    assert cost_for("muse-spark-1.3-contributor", USAGE) == expected
+    assert cost_for("meta/muse-spark-1.3-contributor", USAGE) == expected

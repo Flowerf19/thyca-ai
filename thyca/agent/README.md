@@ -26,7 +26,6 @@ thyca/agent/
   observe.py     # Observe (chỉ persist; builders ở meta.py)
   meta.py        # pure builders: assistant_meta / tool_message / reasoning[_details], không I/O
   events.py      # TurnEvent / EventSink / emit_event (contract event)
-  skill_event.py # skill.* classification (bản copy grammar M6 có dẫn nguồn)
   loop.py        # AgentLoop orchestrate 4 pha
   README.md
 ```
@@ -105,5 +104,5 @@ classDiagram
 ## Ranh giới mới sau refactor (M1)
 
 - `meta.py` pure, không I/O: `Observe` chỉ còn persist qua `SessionManager` + `_order_results`; mọi message/meta construction nằm ở `meta.py`, test được độc lập.
-- Grammar skill (`^[a-z0-9]+(-[a-z0-9]+)*$`, max 64) do M6 (`thyca/skills/store.py`) sở hữu; bản copy trong `skill_event.py` là read-only có comment dẫn nguồn — M1 không tự đổi grammar, không import private M6.
+- Grammar skill (`^[a-z0-9]+(-[a-z0-9]+)*$`, max 64) do M6 (`thyca/skills/store.py`) sở hữu; `skill_event.py` đã dọn về `thyca/skills/` và import canonical từ `.store` — M1 (`act.py`) chỉ dùng public API (`skill_name_for_call`, `public_skill_name`).
 - `Think` (`LLMPort`) và `Act` (`ToolDispatcher`) inject qua Protocol — giữ nguyên làm mẫu DIP; production call-site truyền `PromptManager()` tường minh vào `Assemble` (default `None` giữ lại cho backward-compat vì tests dựng `Assemble()` zero-arg).

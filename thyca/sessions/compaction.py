@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import json
 
-from thyca.core.protocol import Message
+from thyca.core.protocol import Message, estimate_tokens as _chars_to_tokens
 
 _EXCERPT_LIMIT = 1000
 
 
 def estimate_tokens(msg: Message) -> int:
     value = json.dumps(msg.to_canonical_dict(), ensure_ascii=False)
-    return (len(value) + 3) // 4
+    return _chars_to_tokens(value)
 
 
 class SessionCompactor:

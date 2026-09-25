@@ -29,4 +29,5 @@ class ConnectFactory:
             return OpenAIChat(provider or ProviderCfg())
         if cls is OpenAIResponses:
             return OpenAIResponses(provider or ProviderCfg())
-        return cls()
+        # _KINDS holds only the two OpenAI kinds, both returned above.
+        raise AssertionError(f"unreachable connect kind: {kind!r}")

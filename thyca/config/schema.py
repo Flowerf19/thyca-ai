@@ -11,7 +11,7 @@ import dataclasses
 from dataclasses import fields
 from typing import Any
 
-from .defaults import REASONING_EFFORTS
+from .defaults import LIMIT_RANGES, REASONING_EFFORTS
 from .limits import LimitsCfg
 from .providers import ProviderEntry
 from .timeline import TimelineCfg
@@ -20,27 +20,15 @@ _LABELS: dict[str, str] = {
     "provider": "Nhà cung cấp",
     "baseUrl": "Base URL",
     "apiKeyEnv": "Tên biến môi trường API key",
-    "model": "Model",
     "reasoningEffort": "Mức suy luận (thinking)",
     "apiKey": "API key",
-    "mcpServers": "MCP servers",
     "timeline": "Khác",
     "timezone": "Múi giờ",
     "limits": "Giới hạn",
     "loopMax": "Số vòng agent tối đa",
     "hotTailKB": "Dung lượng nhớ nóng (KB)",
     "contextTokens": "Trần ngữ cảnh gửi lên model (tokens)",
-    "pricing": "Giá token (USD / 1M)",
-    "input": "Input",
-    "cache": "Cache",
-    "output": "Output",
-}
-
-# int ranges mirror LimitsCfg.__post_init__ bounds.
-_RANGES: dict[str, tuple[int, int]] = {
-    "loopMax": (1, 200),
-    "hotTailKB": (1, 64),
-    "contextTokens": (1000, 2_000_000),
+    "softTimeoutS": "Soft timeout chờ tool (giây)",
 }
 
 def _is_secret(name: str) -> bool:
@@ -73,8 +61,8 @@ def _field_entry(prefix: str, field: dataclasses.Field) -> dict[str, Any]:
         # timezone follows the host system; apiKeyEnv is plumbing, not user-facing.
         # Both stay in the config file, the panel just skips them.
         entry["hidden"] = True
-    if field.name in _RANGES:
-        entry["min"], entry["max"] = _RANGES[field.name]
+    if field.name in LIMIT_RANGES:
+        entry["min"], entry["max"] = LIMIT_RANGES[field.name]
     if _is_secret(field.name):
         entry["secret"] = True
     return entry
@@ -86,21 +74,6 @@ def _scalar_section(key: str, cfg: Any) -> dict[str, Any]:
         "key": key,
         "label": _LABELS.get(key, key),
         "fields": [_field_entry(prefix, f) for f in fields(cfg)],
-    }
-
-
-def _dict_section(key: str) -> dict[str, Any]:
-    """mcpServers / pricing are dynamic dict-of-objects: one JSON field."""
-    return {
-        "key": key,
-        "label": _LABELS.get(key, key),
-        "fields": [
-            {
-                "key": key,
-                "type": "dict",
-                "label": _LABELS.get(key, key),
-            }
-        ],
     }
 
 

@@ -1,19 +1,12 @@
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
-from thyca.core.protocol import RESULT_CAP_BYTES, ToolCall, ToolResult
-
-if TYPE_CHECKING:
-    from thyca.tools.task_store import TaskStore
+from thyca.core.protocol import ToolResult
 
 Handler = Callable[[dict], Awaitable[str | ToolResult]]
 ResourceKeyFn = Callable[[dict], str | None]
-
-_DEFAULT_SOFT_TIMEOUT_S = 60
 
 
 @dataclass(frozen=True)
@@ -24,9 +17,6 @@ class ToolSpec:
     handler: Handler
     parallel_safe: bool = True
     resource_key: ResourceKeyFn | None = None
-    # True = the tool manages its own long-running behavior (e.g. bash
-    # escalates itself); the registry's generic soft-timeout wrapper skips it.
-    escalates: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.name, str) or not self.name:
@@ -38,23 +28,27 @@ class ToolSpec:
 
 
 class ToolRegistry:
-    def __init__(
-        self,
-        result_cap: int = RESULT_CAP_BYTES,
-        tasks: TaskStore | None = None,
-        soft_timeout_s: int = _DEFAULT_SOFT_TIMEOUT_S,
-    ) -> None:
+    """Spec store: register specs, validate args, emit schemas.
+
+    Execution (locks, caps, soft-timeout, tracking) lives in the gateway;
+    this class never runs a handler.
+    """
+
+    def __init__(self) -> None:
         self._specs: dict[str, ToolSpec] = {}
-        self._locks: dict[str, asyncio.Lock] = {}
-        self._lock_guard = asyncio.Lock()
-        self._result_cap = result_cap
-        self._tasks = tasks
-        self._soft_timeout_s = soft_timeout_s
 
     def register(self, spec: ToolSpec) -> None:
         if spec.name in self._specs:
             raise ValueError(f"tool already registered: {spec.name}")
         self._specs[spec.name] = spec
+
+    def get(self, name: str) -> ToolSpec | None:
+        """Spec lookup for the gateway; None when unregistered."""
+        return self._specs.get(name)
+
+    def validate_args(self, spec: ToolSpec, arguments: dict) -> str | None:
+        """Arg validation for the gateway; None when valid."""
+        return _validate_args(spec.parameters, arguments)
 
     def to_openai_schema(self) -> list[dict]:
         return [
@@ -68,101 +62,6 @@ class ToolRegistry:
             }
             for spec in self._specs.values()
         ]
-
-    async def dispatch(self, call: ToolCall) -> ToolResult:
-        if call.parse_error is not None:
-            return _result(call, str(call.parse_error), is_error=True)
-        spec = self._specs.get(call.name)
-        if spec is None:
-            return _result(call, f"unknown tool: {call.name}", is_error=True)
-        invalid = _validate_args(spec.parameters, call.arguments)
-        if invalid is not None:
-            return _result(call, invalid, is_error=True)
-
-        key = spec.resource_key(call.arguments) if spec.resource_key is not None else None
-        if key is None and not spec.parallel_safe:
-            key = f"tool:{spec.name}"
-
-        if key is None:
-            return await self._run(spec, call)
-        lock = await self._lock_for(key)
-        async with lock:
-            return await self._run(spec, call)
-
-    async def _run(self, spec: ToolSpec, call: ToolCall) -> ToolResult:
-        try:
-            if self._tasks is not None and not spec.escalates:
-                raw = await self._run_escalatable(spec, call)
-            else:
-                raw = await spec.handler(dict(call.arguments))
-        except Exception as exc:
-            return _result(call, str(exc), is_error=True)
-        if isinstance(raw, ToolResult):
-            return _result(call, self._cap(raw.content), is_error=raw.is_error)
-        if not isinstance(raw, str):
-            return _result(call, "handler must return str or ToolResult", is_error=True)
-        return _result(call, self._cap(raw), is_error=False)
-
-    async def _run_escalatable(self, spec: ToolSpec, call: ToolCall) -> str | ToolResult:
-        """Run the handler with a soft timeout: past it, the handler keeps
-        running as a tracked task and a synthetic result goes back now. The
-        call's resource lock (if any) is released as soon as this returns, so
-        same-key calls may overlap the tail of an escalated task."""
-        task = asyncio.create_task(spec.handler(dict(call.arguments)))
-        entry = self._tasks.track(task)
-        try:
-            # Waiting on the settle event (not on the task via shield) keeps
-            # the handler immune to cancellation of this awaiter and avoids
-            # shield's exception-logging on Python 3.14.
-            await asyncio.wait_for(entry.done.wait(), self._soft_timeout_s)
-        except TimeoutError:
-            if task.done():
-                # Finished exactly at the deadline: surface the real outcome
-                # instead of misclassifying it as an escalation.
-                if not task.cancelled() and task.exception() is not None:
-                    raise task.exception() from None
-                if not task.cancelled():
-                    self._tasks.untrack(entry.id)
-                    return task.result()
-            entry.exposed = True
-            return ToolResult(
-                tool_call_id=call.id,
-                name=call.name,
-                content=(
-                    f"still running: {entry.id}\n"
-                    f"{call.name} is still executing; poll the result with "
-                    "tool_read. It keeps running even if this turn is cancelled."
-                ),
-                is_error=False,
-            )
-        self._tasks.untrack(entry.id)
-        return task.result()
-
-    async def _lock_for(self, key: str) -> asyncio.Lock:
-        async with self._lock_guard:
-            lock = self._locks.get(key)
-            if lock is None:
-                lock = asyncio.Lock()
-                self._locks[key] = lock
-            return lock
-
-    def _cap(self, content: str) -> str:
-        raw = content.encode("utf-8")
-        if len(raw) <= self._result_cap:
-            return content
-        clipped = raw[-self._result_cap :]
-        while clipped and clipped[0] & 0xC0 == 0x80:
-            clipped = clipped[1:]
-        return clipped.decode("utf-8")
-
-
-def _result(call: ToolCall, content: str, *, is_error: bool) -> ToolResult:
-    return ToolResult(
-        tool_call_id=call.id,
-        name=call.name,
-        content=content,
-        is_error=is_error,
-    )
 
 
 def _validate_args(schema: dict, arguments: dict) -> str | None:
@@ -178,4 +77,76 @@ def _validate_args(schema: dict, arguments: dict) -> str | None:
         unexpected = [key for key in arguments if key not in allowed]
         if unexpected:
             return f"unexpected argument: {unexpected[0]}"
+    properties = schema.get("properties")
+    if isinstance(properties, dict):
+        for name, value in arguments.items():
+            subschema = properties.get(name)
+            if not isinstance(subschema, dict):
+                continue
+            expected = subschema.get("type")
+            if expected is None:
+                # Untyped properties (some MCP schemas) skip type checks;
+                # handlers keep their domain validation.
+                continue
+            error = _type_error(name, value, expected)
+            if error is not None:
+                return error
     return None
+
+
+def _type_name(value: object) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, dict):
+        return "object"
+    return type(value).__name__
+
+
+def _matches_type(value: object, expected: str) -> bool:
+    if expected == "string":
+        return isinstance(value, str)
+    if expected == "boolean":
+        return isinstance(value, bool)
+    if expected == "integer":
+        # JSON-Schema parity: integral floats are integers; bools are not.
+        if isinstance(value, bool):
+            return False
+        if isinstance(value, int):
+            return True
+        return isinstance(value, float) and value.is_integer()
+    if expected == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if expected == "array":
+        return isinstance(value, list)
+    if expected == "object":
+        return isinstance(value, dict)
+    if expected == "null":
+        return value is None
+    # Unknown type names stay forward-compatible: never reject on them.
+    return True
+
+
+def _type_error(name: str, value: object, expected: object) -> str | None:
+    allowed = [
+        candidate
+        for candidate in (expected if isinstance(expected, list) else [expected])
+        if isinstance(candidate, str)
+    ]
+    if not allowed:
+        # Malformed schema: skip like unknown-type (forward-compatible).
+        return None
+    for candidate in allowed:
+        if _matches_type(value, candidate):
+            return None
+    want = allowed[0] if len(allowed) == 1 else f"one of {allowed}"
+    return f"argument {name!r} must be {want}, got {_type_name(value)}"

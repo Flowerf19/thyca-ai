@@ -18,6 +18,31 @@ META_CAP_BYTES = 4096
 # tool result cap 32KB when dispatched
 RESULT_CAP_BYTES = 32_768
 
+
+def truncate_to_cap(raw: bytes, cap: int) -> tuple[bytes, bool]:
+    """Clip bytes to ``cap`` at a UTF-8 boundary. Returns ``(kept, clipped)``.
+
+    The one byte-cap kernel: gateway retention (via ``head_bytes``) and the
+    streaming reasoning budget share it so cap semantics cannot drift. The
+    skills index keeps its no-read ``stat()`` size check against the same
+    ``RESULT_CAP_BYTES`` policy instead of calling this (reading every
+    SKILL.md just to truncate would be worse)."""
+    if len(raw) <= cap:
+        return raw, False
+    kept = raw[:cap]
+    while kept:
+        try:
+            kept.decode("utf-8")
+            return kept, True
+        except UnicodeDecodeError:
+            kept = kept[:-1]
+    return kept, True
+
+
+def estimate_tokens(text: str) -> int:
+    """Shared char/4 token heuristic for session compaction + memory chunking."""
+    return (len(text) + 3) // 4
+
 # ts format YYYY-MM-DDTHH:mm:ssZ strict UTC
 _TS_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
@@ -26,14 +51,32 @@ def utc_now_ts() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _validate_ts(ts: str) -> None:
+def parse_ts(ts: str) -> datetime:
+    """Parse a canonical ts string to an aware UTC datetime.
+
+    The one ts parser: Message validation and ask_remember share it so the
+    accepted grammar cannot drift."""
     if not isinstance(ts, str) or not _TS_RE.match(ts):
         raise ValueError(f"ts must be ISO-8601 UTC YYYY-MM-DDTHH:mm:ssZ, got {ts!r}")
     # also validate datetime parseable
     try:
-        datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+        return datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
     except ValueError as e:
         raise ValueError(f"invalid ts {ts!r}: {e}") from e
+
+
+def _validate_ts(ts: str) -> None:
+    parse_ts(ts)
+
+
+def _check_meta_cap(meta: dict) -> None:
+    """Raise when the serialized meta exceeds the 4096-byte cap.
+
+    The one meta-cap check shared by construction-time validation and
+    serialization-time re-check."""
+    meta_json = json.dumps(meta, ensure_ascii=False)
+    if len(meta_json.encode("utf-8")) > META_CAP_BYTES:
+        raise ValueError(f"meta exceeds {META_CAP_BYTES} bytes when serialized")
 
 
 @dataclass(frozen=True)
@@ -126,10 +169,7 @@ class Message:
         if self.meta is not None:
             if not isinstance(self.meta, dict):
                 raise ValueError("meta must be dict or None")
-            # cap 4096 bytes when serialized
-            meta_json = json.dumps(self.meta, ensure_ascii=False)
-            if len(meta_json.encode("utf-8")) > META_CAP_BYTES:
-                raise ValueError(f"meta exceeds {META_CAP_BYTES} bytes when serialized")
+            _check_meta_cap(self.meta)
 
     def to_canonical_dict(self) -> dict:
         """Canonical dict for JSONL per spec. Deterministic key order via sort in dumps."""
@@ -137,9 +177,9 @@ class Message:
         # content: include even if None? spec says content str|None, tool-call assistant may have null.
         # For canonical we include content key if not None or role assistant with tool_calls
         # Keep explicit to make loader validation clear.
-        if self.content is not None or self.role in ("assistant", "tool", "system", "user"):
-            # Preserve None explicitly for assistant tool-call case
-            d["content"] = self.content
+        # Always present (None for assistant tool-call rows) so the loader
+        # sees an explicit content key on every message.
+        d["content"] = self.content
         if self.tool_calls is not None:
             d["tool_calls"] = [tc.to_dict() for tc in self.tool_calls]
         if self.tool_call_id is not None:
@@ -150,9 +190,7 @@ class Message:
             d["reasoning_details"] = self.reasoning_details
         if self.meta is not None:
             # re-check cap at serialization time as well
-            meta_json = json.dumps(self.meta, ensure_ascii=False)
-            if len(meta_json.encode("utf-8")) > META_CAP_BYTES:
-                raise ValueError(f"meta exceeds {META_CAP_BYTES} bytes")
+            _check_meta_cap(self.meta)
             d["meta"] = self.meta
         return d
 

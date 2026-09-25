@@ -17,7 +17,6 @@ Mẫu: [`memories/example_store/`](../../memories/example_store/).
 remember / forget / reinforce  ──ghi──►  .md only
 reindex                        ──đọc .md, ghi──►  memory.sqlite
 search / get(id)               ──đọc──►  memory.sqlite only
-get(path)                      ──đọc──►  .md thô
 ```
 
 L2 không đọc `.md` khi search. LLM không SQL. Vector đã gỡ khỏi runtime (580ae03); kiến trúc semantic giữ frozen trong L2 plan.

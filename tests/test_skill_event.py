@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from thyca.agent.skill_event import (
+from thyca.skills.skill_event import (
     classify_skill_read,
     public_skill_name,
     skill_name_for_call,

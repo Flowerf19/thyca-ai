@@ -1,4 +1,4 @@
-from .memory import MemoryFacade
+from thyca.memory.facade import MemoryFacade
 from .path_guard import PathDenied, PathGuard
 from .registry import ToolRegistry, ToolSpec
 

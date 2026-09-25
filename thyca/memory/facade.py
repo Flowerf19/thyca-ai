@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
+from thyca.config import atomic_write_text
 from thyca.memory.active import ActiveMemory
 from thyca.memory.archived import (
     CANDIDATE_CAP,
@@ -18,20 +19,27 @@ from thyca.memory.archived import (
 from thyca.memory.chunk import Chunk
 from thyca.memory.heading import (
     DEFAULT_IMPORTANCE,
+    TTL_DAYS,
     HeadingMeta,
     expiry_ts,
+    format_body,
     format_ts,
     new_entry_id,
+    read_text_file,
     render_heading,
     session_id,
     utc_now,
 )
 from thyca.memory.stats import CanonicalFile, MemoryStats, MemoryStatsResult
 from thyca.memory.writer import MemoryWriter
-from thyca.tools.memory_rank import _promote_in_order_span
+from thyca.memory.rank import _promote_in_order_span
 
 
 def _absolute_proj(value: object) -> str | None:
+    # Local import: thyca.tools.__init__ re-exports MemoryFacade, so a
+    # top-level import here would cycle.
+    from thyca.tools.path_guard import absolutize
+
     if value is None:
         return None
     if not isinstance(value, str):
@@ -39,13 +47,10 @@ def _absolute_proj(value: object) -> str | None:
     text = value.strip()
     if not text:
         return None
-    path = Path(text).expanduser()
+    path = absolutize(text)
     if not path.is_absolute():
         raise ValueError("proj must be an absolute path")
-    rendered = str(path)
-    if len(rendered) > 1:
-        rendered = rendered.rstrip("/")
-    return rendered
+    return str(path)
 
 
 class MemoryFacade:
@@ -74,6 +79,12 @@ class MemoryFacade:
         proj: str | None = None,
         chat: str | None = None,
     ) -> str:
+        if not isinstance(topic, str) or not topic.strip():
+            raise ValueError("topic must be a non-empty string")
+        if not isinstance(summary, str) or not summary.strip():
+            raise ValueError("summary must be a non-empty string")
+        if not isinstance(content, str):
+            raise ValueError("content must be a string")
         normalized_proj = _absolute_proj(proj)
         with self.writer.mutation_lock():
             self.active.ensure_files(now)
@@ -92,7 +103,7 @@ class MemoryFacade:
                 proj=normalized_proj,
                 chat=chat if isinstance(chat, str) and chat.strip() else None,
             )
-            leaf = f"- {summary}" + (f"\n  {content}" if content else "")
+            leaf = "\n".join(format_body(summary, content))
             with self.writer.lock_for(path):
                 if not path.is_file():
                     path.parent.mkdir(parents=True, exist_ok=True)
@@ -103,8 +114,9 @@ class MemoryFacade:
 
     def forget(self, session_id: str, now: datetime | None = None) -> None:
         self._reject_legacy_session(session_id)
-        path, _ = self.writer.locate(session_id)
-        with self.writer.mutation_lock(), self.writer.lock_for(path):
+        # The writer owns per-file locking and locates under mutation_lock:
+        # no facade-side pre-locate (TOCTOU + double locate).
+        with self.writer.mutation_lock():
             self.writer.forget(session_id, now)
             self._refresh_index(now)
 
@@ -120,16 +132,31 @@ class MemoryFacade:
     ) -> None:
         self._reject_legacy_session(session_id)
         normalized_proj = _absolute_proj(proj)
+        for name, value in (("topic", topic), ("summary", summary), ("content", content)):
+            if value is not None and not isinstance(value, str):
+                raise ValueError(f"{name} must be a string")
+        if topic is not None and not topic.strip():
+            raise ValueError("topic must not be blank")
+        if summary is not None and not summary.strip():
+            raise ValueError("summary must not be blank")
+        if content is not None and summary is None:
+            raise ValueError("content requires summary")
+        if topic is None and summary is None and content is None and normalized_proj is None:
+            raise ValueError("nothing to update")
+        topic = topic.strip() if topic is not None else None
         body_lines = None
+        keep_details = False
         if summary is not None:
-            body_lines = [f"- {summary.strip()}"]
-            for line in str(content).splitlines() if content else []:
-                body_lines.append(f"  {line}")
-        path, _ = self.writer.locate(session_id)
-        with self.writer.mutation_lock(), self.writer.lock_for(path):
+            if content is None:
+                # Summary-only: the caller did not pass details, so keep them.
+                keep_details = True
+                body_lines = format_body(summary)
+            else:
+                body_lines = format_body(summary, content)
+        with self.writer.mutation_lock():
             self.writer.update_session(
                 session_id, topic=topic, body_lines=body_lines,
-                proj=normalized_proj,
+                proj=normalized_proj, keep_details=keep_details,
             )
             self._refresh_index(now)
 
@@ -140,8 +167,9 @@ class MemoryFacade:
         now: datetime | None = None,
     ) -> str:
         self._reject_legacy_session(session_id)
-        path, _ = self.writer.locate(session_id)
-        with self.writer.mutation_lock(), self.writer.lock_for(path):
+        if importance is not None and importance not in TTL_DAYS:
+            raise ValueError(f"importance must be 1..5, got {importance}")
+        with self.writer.mutation_lock():
             exp = self.writer.reinforce(session_id, importance, now)
             self._refresh_index(now)
             return exp
@@ -151,14 +179,24 @@ class MemoryFacade:
         *,
         chunk_id: str | None = None,
         session_id: str | None = None,
-        path: str | None = None,
         now: datetime | None = None,
     ) -> str:
         self._reject_legacy_session(session_id)
+        provided = [
+            (name, value)
+            for name, value in (
+                ("chunk_id", chunk_id),
+                ("session_id", session_id),
+            )
+            if value is not None
+        ]
+        if len(provided) != 1:
+            raise ArchiveError("exactly one of chunk_id, session_id is required")
+        name, value = provided[0]
+        if not isinstance(value, str) or not value.strip():
+            raise ArchiveError(f"{name} must be a non-empty string")
         if chunk_id is not None and chunk_id.startswith("memory#"):
             raise ArchiveError("MEMORY.md is no longer supported")
-        if path is not None:
-            return self.archive.get(path=path, now=now)
         now_ts = format_ts(utc_now(now))
         try:
             text = self.archive.get(chunk_id=chunk_id, session_id=session_id, now=now)
@@ -177,11 +215,17 @@ class MemoryFacade:
             chunk_ids = self._session_leaf_ids(session_id, text)[:GET_SESSION_CAP]
         if chunk_ids and sid:
             self.archive.store.usage.record_gets(chunk_ids, sid, now_ts)
-        if not sid:
+        # sid is always a validated non-empty id here (blank selectors raise
+        # above; lookup raises on miss), so no empty-sid early return.
+        if sid.startswith("canonical#"):
+            # Canonical reads are profile content, not daily memory: return
+            # the fetched text without TTL renewal or profile-file mutation.
             return text
         self.reinforce(sid, now=now)
         try:
-            return self.archive.get(chunk_id=chunk_id, session_id=session_id or sid, now=now)
+            if chunk_id is not None:
+                return self.archive.get(chunk_id=chunk_id, now=now)
+            return self.archive.get(session_id=sid, now=now)
         except ArchiveError:
             return self.writer.read_session(sid, now=now)
 
@@ -207,9 +251,13 @@ class MemoryFacade:
         proj: str | None = None,
         chat: str | None = None,
     ) -> SearchResult:
-        if timeline_day is not None and not DATE_RE.fullmatch(timeline_day):
+        if timeline_day is not None and not (
+            isinstance(timeline_day, str) and DATE_RE.fullmatch(timeline_day)
+        ):
             return SearchResult(warnings=["invalid timeline_day"])
         limit = max(1, min(limit, 10))
+        if not isinstance(query, str):
+            return SearchResult(warnings=["invalid query"])
         if not query.strip():
             return SearchResult(warnings=["empty query"])
         try:
@@ -232,7 +280,7 @@ class MemoryFacade:
                 seen.add(hit.chunk_id)
         hays = self.archive.store.rank_hays([hit.chunk_id for hit in hits])
         hits = _promote_in_order_span(query, hits, self.archive.chunker, hays)
-        hits = self.archive.with_counts(dedup_siblings(hits)[:limit])
+        hits = self.archive.with_counts(dedup_siblings(hits)[:limit], now)
         if hits:
             now_ts = format_ts(utc_now(now))
             by_session: dict[str, list[str]] = {}
@@ -244,7 +292,7 @@ class MemoryFacade:
 
     def recent(self, limit: int = 5, now: datetime | None = None) -> list[Hit]:
         limit = max(1, min(limit, 10))
-        return self.archive.with_counts(self.archive.recent_hits(limit, now))
+        return self.archive.with_counts(self.archive.recent_hits(limit, now), now)
 
     @staticmethod
     def _reject_legacy_session(session_id: str | None) -> None:
@@ -272,37 +320,40 @@ class MemoryFacade:
         text = str(content).replace("\r\n", "\n")
         if text and not text.endswith("\n"):
             text += "\n"
-        tmp = path.with_name(path.name + ".tmp")
         try:
             with self.writer.mutation_lock(), self.writer.lock_for(path):
-                tmp.write_text(text, encoding="utf-8")
-                tmp.replace(path)
-                self._refresh_index()
+                atomic_write_text(path, text)
         except OSError as exc:
-            tmp.unlink(missing_ok=True)
             raise ArchiveError(f"write failed: {name}") from exc
+        # Outside the write guard: the file already landed, so a reindex
+        # failure must surface as itself, not as "write failed".
+        # Raw OSError propagates (HTTP 503); only write-phase failures wrap.
+        with self.writer.mutation_lock():
+            self._refresh_index()
 
     def _canonical_files(self) -> list[CanonicalFile]:
         files: list[CanonicalFile] = []
-        for name in ("SOUL.md", "USER.md", "IDENTITY.md"):
+        for name in self.CANONICAL_NAMES:
             path = self.thyca_dir / name
-            text = ""
-            if path.is_file() and not path.is_symlink():
-                try:
-                    text = path.read_text(encoding="utf-8")
-                except OSError:
-                    text = ""
-            files.append(CanonicalFile(name=name, content=text))
+            try:
+                text = read_text_file(path)
+            except OSError:
+                text = None
+            except UnicodeDecodeError as exc:
+                raise ArchiveError(f"memory file is not valid UTF-8: {path}") from exc
+            files.append(CanonicalFile(name=name, content=text or ""))
         return files
 
     def _today_chunks(self, now: datetime | None) -> list[Chunk]:
         day = self.archive.day(now)
         path = self.thyca_dir / "memory" / f"{day}.md"
-        if not path.is_file() or path.is_symlink():
-            return []
         try:
-            text = path.read_text(encoding="utf-8")
+            text = read_text_file(path)
         except OSError:
+            return []
+        except UnicodeDecodeError as exc:
+            raise ArchiveError(f"memory file is not valid UTF-8: {path}") from exc
+        if text is None:
             return []
         return self.archive.chunker.chunk_markdown(
             path, text, source_kind="daily", timeline_day=day
@@ -310,8 +361,8 @@ class MemoryFacade:
 
     def _session_leaf_ids(self, session_id: str, text: str) -> list[str]:
         path, _ = self.writer.locate(session_id)
-        kind, day = "daily", session_id.split("#", 1)[0]
+        day = session_id.split("#", 1)[0]
         chunks = self.archive.chunker.chunk_markdown(
-            path, text, source_kind=kind, timeline_day=day
+            path, text, source_kind="daily", timeline_day=day
         )
         return [chunk.chunk_id for chunk in chunks if chunk.session_id == session_id]

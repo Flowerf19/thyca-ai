@@ -18,6 +18,18 @@ def _default_providers() -> dict[str, ProviderEntry]:
     return {DEFAULT_PROVIDER_ID: ProviderEntry()}
 
 
+def resolve_model_base_url(entry_base_url: str, registered: ModelCfg | None) -> str:
+    """Legacy per-model endpoint wins over its provider's URL.
+
+    The one override rule for the turn path (:meth:`Config.effective_provider_for`)
+    and the provider test endpoint: a model with its own baseUrl (0.8.2 escape
+    hatch) calls that endpoint; the new UI does not write it, but old configs
+    keep working."""
+    if registered is not None and registered.baseUrl:
+        return registered.baseUrl
+    return entry_base_url
+
+
 @dataclass(frozen=True)
 class Config:
     providers: dict[str, ProviderEntry] = field(default_factory=_default_providers)
@@ -76,16 +88,16 @@ class Config:
             entry = self.providers.get(self.defaultProvider)
         if entry is None:
             entry = next(iter(self.providers.values()), ProviderEntry())
-        base_url = entry.baseUrl
         effort = entry.reasoningEffort
         registered = self.models.get(model_id)
+        base_url = resolve_model_base_url(entry.baseUrl, registered)
+        own_set: tuple[str, ...] = ()
         if registered is not None:
-            # Legacy per-model baseUrl wins (0.8.2 escape hatch); the new UI
-            # does not write it, but old configs keep working.
-            if registered.baseUrl:
-                base_url = registered.baseUrl
             if registered.reasoningEffort:
                 effort = registered.reasoningEffort
+                # The model's own set governs only its own override; an
+                # inherited entry effort stays on the global check.
+                own_set = registered.reasoningEfforts
         return ProviderCfg(
             baseUrl=base_url,
             apiKeyEnv=entry.apiKeyEnv,
@@ -93,6 +105,7 @@ class Config:
             reasoningEffort=effort,
             api=entry.api,
             model=model_id,
+            reasoningEfforts=own_set,
         )
 
     def effective_provider(self) -> ProviderCfg:
@@ -112,4 +125,5 @@ class Config:
                 if registered.contextTokens is None
                 else registered.contextTokens
             ),
+            softTimeoutS=self.limits.softTimeoutS,
         )

@@ -19,13 +19,9 @@ tool, which is out of scope for this layer.
 """
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
-# Skill-name grammar owned by M6 (thyca/skills/store.py:21,25) — read-only
-# copy here so M1 never imports M6 privates; grammar changes belong to M6.
-NAME_MAX = 64
-_NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+from .store import NAME_MAX, _NAME_RE
 
 _FALLBACK = "skill"
 

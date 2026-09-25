@@ -1,8 +1,8 @@
 import { getJson } from "../../shared/js/http.js";
-import { completeDays, rollingRange, traceRangeUrl } from "../../shared/js/analytics-data.js";
+import { byName, byRecent, completeDays, modelName, rollingRange, traceRangeUrl } from "../../shared/js/analytics-data.js";
 import { svg } from "../../shared/js/bar-chart.js";
 import { makeSetStatus, messageOf } from "../../shared/js/status.js";
-import { cleanText, formatDate, formatInteger } from "../../shared/js/format.js";
+import { cleanText, formatDate, formatInteger, shareLabel } from "../../shared/js/format.js";
 
 const el = {
   period: document.querySelector("#request-period"),
@@ -14,7 +14,9 @@ const el = {
   search: document.querySelector("#request-model-search"),
   sorts: [...document.querySelectorAll("[data-req-sort]")],
 };
-const compact = matchMedia("(max-width: 56rem)");
+const compact = typeof matchMedia === "function"
+  ? matchMedia("(max-width: 56rem)")
+  : { matches: false, addEventListener: () => {} };
 let stats = null;
 let sort = "req-desc";
 let loadId = 0;
@@ -32,18 +34,16 @@ function completeRequests(range, rows) {
 
 function selectRequestModels(models, { sort: order, query = "" } = {}) {
   const needle = cleanText(query).toLocaleLowerCase("vi");
-  const name = (row) => cleanText(row?.model);
   const rows = (Array.isArray(models) ? models : [])
     .filter((row) => (Number(row?.requests) || 0) > 0)
-    .filter((row) => !needle || name(row).toLocaleLowerCase("vi").includes(needle));
+    .filter((row) => !needle || modelName(row).toLocaleLowerCase("vi").includes(needle));
   if (order === "req-asc") {
-    return rows.sort((a, b) => (Number(a.requests) || 0) - (Number(b.requests) || 0) || name(a).localeCompare(name(b), "vi"));
+    return rows.sort((a, b) => (Number(a.requests) || 0) - (Number(b.requests) || 0) || byName(a, b));
   }
   if (order === "recent") {
-    return rows.sort((a, b) => cleanText(b?.last_started_at).localeCompare(cleanText(a?.last_started_at))
-      || name(a).localeCompare(name(b), "vi"));
+    return rows.sort(byRecent);
   }
-  return rows.sort((a, b) => (Number(b.requests) || 0) - (Number(a.requests) || 0) || name(a).localeCompare(name(b), "vi"));
+  return rows.sort((a, b) => (Number(b.requests) || 0) - (Number(a.requests) || 0) || byName(a, b));
 }
 
 function drawChart(rows) {
@@ -88,10 +88,6 @@ function drawChart(rows) {
   el.chart.setAttribute("aria-label", `Request ${rows.length} ngày; cao nhất ${formatInteger(maxValue)}.`);
 }
 
-function shareOf(value, total) {
-  return !total ? "—" : `${Math.round(Number(value) / total * 100)}%`;
-}
-
 /* Request theo mô hình is ONE horizontal bar chart: every row is measured on
    the same scale (width = value / largest value across the full data, not
    the filtered subset), so bars stay comparable after search or sort. Names
@@ -113,7 +109,7 @@ function modelChart(rows, total, max) {
     count.textContent = formatInteger(row.requests);
     const share = document.createElement("span");
     share.className = "request-model-share";
-    share.textContent = shareOf(row.requests, total);
+    share.textContent = shareLabel(row.requests, total);
     const bar = document.createElement("span");
     bar.className = "request-model-bar";
     bar.setAttribute("aria-hidden", "true");

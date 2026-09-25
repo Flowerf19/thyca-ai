@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from thyca.core.protocol import Message
 from thyca.sessions import Session
+from thyca.sessions.wire import is_naming_message, turn_slices
 
 
 @dataclass
@@ -58,18 +59,18 @@ def _turn_status(slice_msgs: list[Message]) -> str:
         return "failed"
     # naming meta-messages are not turn outcomes — skip them, keep old semantics
     last = next(
-        (m for m in reversed(slice_msgs) if (m.meta or {}).get("kind") != "naming"),
+        (m for m in reversed(slice_msgs) if not is_naming_message(m)),
         None,
     )
     if last is None or last.role != "assistant":
         return "failed"
-    if last.content == "loop limit reached":
-        return "loop_limit"
     meta = last.meta or {}
     if meta.get("status") == "loop_limit":
         return "loop_limit"
     if meta.get("finish_reason") == "error":
         return "failed"
+    if isinstance(last.content, str) and last.content.strip() == "loop limit reached":
+        return "loop_limit"
     return "completed"
 
 
@@ -140,21 +141,9 @@ def _sum_tokens(turn_msgs: list[Message]) -> tuple[int | None, int | None, int |
 
 
 def turns_from_session(session: Session) -> list[TurnSummary]:
-    # ignore system compaction markers for grouping
-    filtered = [m for m in session.messages if m.role != "system"]
-    slices: list[list[Message]] = []
-    cur: list[Message] | None = None
-    for msg in filtered:
-        if msg.role == "user":
-            if cur is not None:
-                slices.append(cur)
-            cur = [msg]
-        else:
-            if cur is None:
-                continue
-            cur.append(msg)
-    if cur is not None:
-        slices.append(cur)
+    # Grouping shared with the wire turns count (turn_slices): system
+    # compaction markers excluded, one slice per user message.
+    slices = turn_slices(session.messages)
     out: list[TurnSummary] = []
     for idx, sl in enumerate(slices):
         prompt, cached, completion, total, cost, latency, model = _sum_tokens(sl)
@@ -200,25 +189,28 @@ def _percentile(sorted_vals: list[int], p: float) -> int | None:
     return sorted_vals[k]
 
 
+def _sum_group(group: list[TurnSummary]) -> tuple[int, float | None]:
+    """Shared (requests, cost_usd) rollup; cost stays None unless reported."""
+    cost = (
+        round(sum(t.cost_usd or 0 for t in group), 6)
+        if any(t.cost_usd is not None for t in group)
+        else None
+    )
+    return sum(t.requests for t in group), cost
+
+
 def aggregate(turns: list[TurnSummary]) -> dict:
+    total_requests, total_cost = _sum_group(turns)
     totals = {
-        "requests": sum(t.requests for t in turns),
+        "requests": total_requests,
         "prompt_tokens": sum(t.prompt_tokens or 0 for t in turns),
         "cached_tokens": sum(t.cached_tokens or 0 for t in turns),
         "completion_tokens": sum(t.completion_tokens or 0 for t in turns),
         "total_tokens": sum(t.total_tokens or 0 for t in turns),
-        "cost_usd": round(sum(t.cost_usd or 0 for t in turns), 6) if any(t.cost_usd is not None for t in turns) else None,
+        "cost_usd": total_cost,
         "latency_ms_p50": None,
         "latency_ms_p90": None,
     }
-    # fix total_tokens when some turns missing total but have prompt+completion
-    # already summed as 0 for missing — need to keep 0 if no tokens at all
-    has_any_token = any(t.total_tokens is not None or t.prompt_tokens is not None for t in turns)
-    if not has_any_token:
-        totals["prompt_tokens"] = 0
-        totals["cached_tokens"] = 0
-        totals["completion_tokens"] = 0
-        totals["total_tokens"] = 0
     latencies = sorted([t.latency_ms for t in turns if isinstance(t.latency_ms, int)])
     totals["latency_ms_p50"] = _percentile(latencies, 0.5)
     totals["latency_ms_p90"] = _percentile(latencies, 0.9)
@@ -230,14 +222,15 @@ def aggregate(turns: list[TurnSummary]) -> dict:
     by_model = []
     for model, group in sorted(by.items()):
         lat = sorted([x.latency_ms for x in group if isinstance(x.latency_ms, int)])
+        requests, cost = _sum_group(group)
         entry = {
             "model": model,
-            "requests": sum(x.requests for x in group),
+            "requests": requests,
             "prompt_tokens": sum(x.prompt_tokens or 0 for x in group),
             "cached_tokens": sum(x.cached_tokens or 0 for x in group),
             "completion_tokens": sum(x.completion_tokens or 0 for x in group),
             "total_tokens": sum(x.total_tokens or 0 for x in group),
-            "cost_usd": round(sum(x.cost_usd or 0 for x in group), 6) if any(x.cost_usd is not None for x in group) else None,
+            "cost_usd": cost,
             "latency_ms_p50": _percentile(lat, 0.5),
             # Newest turn per model, so the UI can sort by "gần nhất" without
             # rescanning sessions.
@@ -257,13 +250,8 @@ def aggregate(turns: list[TurnSummary]) -> dict:
             by_day_map[day].append(t)
     by_day = []
     for day, group in sorted(by_day_map.items()):
-        by_day.append(
-            {
-                "day": day,
-                "requests": sum(x.requests for x in group),
-                "cost_usd": round(sum(x.cost_usd or 0 for x in group), 6) if any(x.cost_usd is not None for x in group) else None,
-            }
-        )
+        requests, cost = _sum_group(group)
+        by_day.append({"day": day, "requests": requests, "cost_usd": cost})
     models = sorted(by.keys())
     by_status_map: dict[str, list[TurnSummary]] = defaultdict(list)
     for t in turns:
@@ -281,16 +269,10 @@ def aggregate(turns: list[TurnSummary]) -> dict:
             hour = ""
         if hour:
             by_hour_map[hour].append(t)
-    by_hour = [
-        {
-            "hour": hour,
-            "requests": sum(x.requests for x in group),
-            "cost_usd": round(sum(x.cost_usd or 0 for x in group), 6)
-            if any(x.cost_usd is not None for x in group)
-            else None,
-        }
-        for hour, group in sorted(by_hour_map.items())
-    ]
+    by_hour = []
+    for hour, group in sorted(by_hour_map.items()):
+        requests, cost = _sum_group(group)
+        by_hour.append({"hour": hour, "requests": requests, "cost_usd": cost})
     return {
         "totals": totals,
         "by_model": by_model,

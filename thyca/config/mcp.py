@@ -8,7 +8,9 @@ from .errors import ConfigError
 
 @dataclass(frozen=True)
 class McpServerCfg:
-    command: str = ""
+    # command is required (no default): bare McpServerCfg() must be a
+    # TypeError, not a ConfigError from a default that always fails.
+    command: str
     args: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
 

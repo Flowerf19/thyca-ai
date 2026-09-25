@@ -15,44 +15,29 @@ from .thinking import ThinkingDelta
 from .reply import ContentDelta
 
 
-def _reasoning_callback(
-    event_sink: EventSink | None, round_no: int
+def _delta_callback(
+    event_sink: EventSink | None,
+    round_no: int,
+    cls: type[ThinkingDelta] | type[ContentDelta],
 ) -> Callable[[str], None] | None:
+    """One live-delta callback: reasoning and content differ only in class."""
     if event_sink is None:
         return None
 
-    def on_reasoning(delta: str) -> None:
+    def on_delta(delta: str) -> None:
         if not delta:
             return
         try:
-            event_sink(ThinkingDelta(round=round_no, delta=delta))  # type: ignore[arg-type]
+            event_sink(cls(round=round_no, delta=delta))  # type: ignore[arg-type]
         except Exception:
             pass
 
-    return on_reasoning
-
-
-def _content_callback(
-    event_sink: EventSink | None, round_no: int
-) -> Callable[[str], None] | None:
-    if event_sink is None:
-        return None
-
-    def on_content(delta: str) -> None:
-        if not delta:
-            return
-        try:
-            event_sink(ContentDelta(round=round_no, delta=delta))  # type: ignore[arg-type]
-        except Exception:
-            pass
-
-    return on_content
+    return on_delta
 
 
 def _resolve_cost(stage: Stage, model: str | None, pricing: dict | None) -> None:
-    echoed = getattr(stage.reply, "model", None)
-    if isinstance(echoed, str) and echoed.strip():
-        stage.llm_model = echoed.strip()
+    # Think already echoed reply.model into stage.llm_model; only the cost
+    # fallback lives here.
     usage = getattr(stage.reply, "usage", None)
     stage.llm_cost_usd = cost_for(stage.llm_model, usage, pricing)
     if stage.llm_cost_usd is None and model and model != stage.llm_model:
@@ -92,17 +77,18 @@ class AgentLoop:
         if self._loop_max < 1:
             raise ValueError("loop_max must be positive")
 
+        # Compact first: the stage must snapshot post-compaction history so
+        # the turn tripping the cap sends the compacted tail to the LLM.
+        self._observe.compact()
         stage = Stage(
             messages=list(self._sessions.current.messages),
             hot=hot,
             tools=self._tools,
         )
-        self._observe.compact()
         if persist_user:
             self._assemble.assemble(stage, user_msg)
             self._observe.user(stage)
         else:
-            stage.messages = list(self._sessions.current.messages)
             self._assemble.assemble(stage, user_msg, append_user=False)
         emit_event(event_sink, TurnEvent(type="turn.accepted"))
 
@@ -112,8 +98,8 @@ class AgentLoop:
             stage.llm_model = self._model
             emit_event(event_sink, TurnEvent(type="llm.started", round=stage.round))
             round_no = stage.round
-            on_reasoning = _reasoning_callback(event_sink, round_no)
-            on_content = _content_callback(event_sink, round_no)
+            on_reasoning = _delta_callback(event_sink, round_no, ThinkingDelta)
+            on_content = _delta_callback(event_sink, round_no, ContentDelta)
             await self._think.think(
                 stage, on_reasoning=on_reasoning, on_content=on_content
             )
@@ -134,4 +120,5 @@ class AgentLoop:
             if stage.round == self._loop_max:
                 return self._observe.loop_limit(stage)
 
-        raise ValueError("loop_max must be positive")
+        # Unreachable: loop_max >= 1 always enters, and every path returns.
+        raise AssertionError("unreachable: agent loop fell through")

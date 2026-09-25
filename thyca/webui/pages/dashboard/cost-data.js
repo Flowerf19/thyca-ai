@@ -9,7 +9,7 @@
    cost_usd is authoritative; null means "no priced turn yet", not $0. */
 
 import { cleanText, formatInteger } from "../../shared/js/format.js";
-import { completeDays, splitPromptTokens } from "../../shared/js/analytics-data.js";
+import { completeDays, finiteCost, splitPromptTokens } from "../../shared/js/analytics-data.js";
 
 /* Group key for rows whose session_id is missing/blank — rendered as its own
    explicit group instead of being dropped or silently merged. */
@@ -30,12 +30,6 @@ function dedupeTurns(rows) {
     unique.push(row);
   }
   return unique;
-}
-
-function finiteCost(value) {
-  if (value == null || value === "") return null;
-  const cost = Number(value);
-  return Number.isFinite(cost) ? cost : null;
 }
 
 /* Cost of one turn: number (0 is real), or null when never priced. */
@@ -241,26 +235,10 @@ export function dailyCosts(byDay, range) {
   return completeDays(rows, range).map((row) => ({ day: row.day, value: Number(row.value) || 0 }));
 }
 
-/* Share as a percent string, or "—" when either side is unknown or the
-   denominator is not a positive number. Number(null) is 0, so unpriced
-   values are rejected before coercion — an unpriced row must never pose as
-   0%, and total=0 must not make NaN. */
-export function shareLabel(value, total) {
-  if (value == null || value === "") return "—";
-  const number = Number(value);
-  if (!Number.isFinite(number) || !Number.isFinite(total) || total <= 0) return "—";
-  return `${Math.round(number / total * 100)}%`;
-}
-
-/* Meter fill as a CSS var value, clamped to 0–100% for rendering safety;
-   null when unknown so the meter stays empty. */
-export function shareRatio(value, total) {
-  if (value == null || value === "") return null;
-  const number = Number(value);
-  if (!Number.isFinite(number) || !Number.isFinite(total) || total <= 0) return null;
-  const ratio = Math.min(Math.max(number / total * 100, 0), 100);
-  return `${ratio}%`;
-}
+/* Share formatter lives in shared/js/format.js (one copy for the Cost,
+   Token and Request journals); re-exported here so existing cost-data.js
+   importers keep working. */
+export { shareLabel, shareRatio } from "../../shared/js/format.js";
 
 /* Model pricing from /api/config (values.models, USD per 1M tokens, with
    the legacy values.pricing fallback). Owned here — Cost is the only

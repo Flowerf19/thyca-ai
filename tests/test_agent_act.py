@@ -7,9 +7,11 @@ from pathlib import Path
 
 from thyca.agent.act import Act
 from thyca.agent.events import TurnEvent
+from thyca.agent.observe import Observe
 from thyca.agent.stage import Stage
 from thyca.agent.think import ChatReply
-from thyca.core.protocol import ToolCall, ToolResult
+from thyca.core.protocol import Message, ToolCall, ToolResult
+from thyca.sessions import SessionManager
 
 
 @dataclass
@@ -18,7 +20,7 @@ class FakeDispatcher:
     error: Exception | None = None
     calls: list[ToolCall] = field(default_factory=list)
 
-    async def dispatch(self, call: ToolCall) -> ToolResult:
+    async def submit(self, call: ToolCall) -> ToolResult:
         self.calls.append(call)
         if self.error is not None:
             raise self.error
@@ -95,7 +97,7 @@ def test_happy_path_emits_started_then_finished_ok_true() -> None:
     assert results[0].is_error is False
 
 
-def test_dispatch_exception_emits_started_then_finished_ok_false() -> None:
+def test_submit_exception_emits_started_then_finished_ok_false() -> None:
     dispatcher = FakeDispatcher(error=RuntimeError("tool unavailable"))
     call = ToolCall(id="call-1", name="weather")
     events: list[TurnEvent] = []
@@ -164,7 +166,7 @@ def test_parallel_finished_in_completion_order() -> None:
         return ToolResult(tool_call_id="call-1", name="slow", content="one")
 
     class TwoDispatcher:
-        async def dispatch(self, call: ToolCall) -> ToolResult:
+        async def submit(self, call: ToolCall) -> ToolResult:
             if call.name == "fast":
                 return await fast(call)
             return await slow(call)
@@ -203,7 +205,7 @@ def test_happy_path_preserves_call_identity() -> None:
     assert result.name == call.name
 
 
-def test_dispatch_exception_becomes_error_result() -> None:
+def test_submit_exception_becomes_error_result() -> None:
     dispatcher = FakeDispatcher(error=RuntimeError("tool unavailable"))
     call = ToolCall(id="call-1", name="weather")
     stage = _stage(call)
@@ -389,3 +391,79 @@ def test_skill_events_wire_never_carries_path(tmp_path: Path) -> None:
         assert set(payload) <= {"type", "round", "call_id", "name", "ok"}
         assert skill_path not in json.dumps(payload)
         assert "create-skill/SKILL.md" not in json.dumps(payload)
+
+
+# --- F13: None/raising dispatchers keep partials + consistent transcript ---
+
+
+class _FlakyDispatcher:
+    """Dispatcher with per-call behavior: result, None, or raise."""
+
+    def __init__(self, behaviors: dict[str, object]) -> None:
+        self._behaviors = behaviors
+        self.calls: list[str] = []
+
+    async def submit(self, call: ToolCall):
+        self.calls.append(call.id)
+        behavior = self._behaviors.get(call.id, "ok")
+        if isinstance(behavior, Exception):
+            raise behavior
+        if behavior == "none":
+            return None
+        return ToolResult(tool_call_id=call.id, name=call.name, content="ok", is_error=False)
+
+
+def _calls(*ids: str) -> list[ToolCall]:
+    return [ToolCall(id=cid, name="tool", arguments={}) for cid in ids]
+
+
+def test_f13_none_dispatcher_yields_per_call_error_and_keeps_partials() -> None:
+    dispatcher = _FlakyDispatcher({"c1": "none", "c3": "none"})
+    events: list[TurnEvent] = []
+    stage = Stage(reply=ChatReply(content=None, tool_calls=_calls("c1", "c2", "c3")), round=1)
+
+    results = asyncio.run(Act(dispatcher).act(stage, events.append))
+
+    assert [r.tool_call_id for r in results] == ["c1", "c2", "c3"]
+    assert results[0].is_error and "no result" in results[0].content
+    assert results[1] == ToolResult(tool_call_id="c2", name="tool", content="ok", is_error=False)
+    assert results[2].is_error
+    finished = {e.call_id: e.ok for e in events if e.type == "tool.finished"}
+    assert finished == {"c1": False, "c2": True, "c3": False}
+
+
+def test_f13_raising_dispatcher_keeps_consistent_transcript(tmp_path: Path) -> None:
+    dispatcher = _FlakyDispatcher({"c2": RuntimeError("boom")})
+    sessions = SessionManager(tmp_path / "sessions")
+    sessions.create()
+    sessions.append(Message(role="user", content="go"))
+    stage = Stage(
+        messages=list(sessions.current.messages),
+        reply=ChatReply(content=None, tool_calls=_calls("c1", "c2")),
+        round=1,
+    )
+
+    asyncio.run(Act(dispatcher).act(stage))
+    Observe(sessions).observe(stage)
+
+    persisted = sessions.current.messages
+    assistant = persisted[-3]
+    assert assistant.role == "assistant" and assistant.tool_calls is not None
+    assert [c.id for c in assistant.tool_calls] == ["c1", "c2"]
+    tools = persisted[-2:]
+    assert [(m.role, m.tool_call_id) for m in tools] == [("tool", "c1"), ("tool", "c2")]
+    assert tools[1].meta is not None and tools[1].meta.get("is_error") is True
+
+
+def test_f13_none_dispatcher_transcript_has_no_dangling_calls(tmp_path: Path) -> None:
+    dispatcher = _FlakyDispatcher({"c1": "none"})
+    sessions = SessionManager(tmp_path / "sessions")
+    sessions.create()
+    stage = Stage(reply=ChatReply(content=None, tool_calls=_calls("c1")), round=1)
+
+    asyncio.run(Act(dispatcher).act(stage))
+    Observe(sessions).observe(stage)  # must not raise: every call has a result
+
+    persisted = sessions.current.messages
+    assert persisted[-2].role == "assistant" and len(persisted[-2].tool_calls or []) == 1
+    assert (persisted[-1].role, persisted[-1].tool_call_id) == ("tool", "c1")

@@ -21,7 +21,7 @@ from thyca.serve import ServeError, default_webui, make_server
 from thyca.sessions import Session, SessionBusy, SessionManager
 from thyca.sessions.title import fallback_title
 from thyca.tools.mcp import StartupDiagnostic
-from thyca.tools.memory import MemoryFacade
+from thyca.memory.facade import MemoryFacade
 
 WEBUI = default_webui()
 
@@ -494,7 +494,7 @@ def test_stream_pre_accept_errors_are_http_json(tmp_path: Path) -> None:
             assert exc.code == 400
             assert exc.headers.get_content_type() == "application/json"
             body = exc.read().decode("utf-8")
-            assert json.loads(body) == {"error": "invalid text"}
+            assert json.loads(body) == {"error": "invalid text: empty"}
             assert "turn." not in body
         else:
             raise AssertionError("expected 400")
@@ -507,7 +507,7 @@ def test_stream_pre_accept_errors_are_http_json(tmp_path: Path) -> None:
         except HTTPError as exc:
             assert exc.code == 400
             body = exc.read().decode("utf-8")
-            assert json.loads(body) == {"error": "invalid text"}
+            assert json.loads(body) == {"error": "invalid text: invalid"}
         else:
             raise AssertionError("expected 400")
         try:
@@ -718,9 +718,6 @@ def test_chat_js_shipped() -> None:
     assert "turn.completed" in api
     assert "Tools used:" not in view
     assert ".live-status" in css
-    script = WEBUI.parent.parent / "scripts" / "retitle_sessions.py"
-    assert script.is_file()
-    assert "retitle_missing" in script.read_text(encoding="utf-8")
 
 
 def test_chat_nav_opens_new_session() -> None:
@@ -2202,6 +2199,26 @@ def test_unexpected_turn_error_marks_chat_unavailable(tmp_path: Path) -> None:
         assert users[-1].meta == {
             "error": {"code": "chat_unavailable", "message": "chat unavailable"}
         }
+    finally:
+        _stop(httpd, thread)
+        app.shutdown()
+
+
+def test_4000_emoji_turn_accepted_end_to_end(tmp_path: Path) -> None:
+    llm = FakeLLM(ChatReply(content="pong"))
+    app = _chat(tmp_path, llm)
+    httpd, thread = _start(tmp_path, app)
+    try:
+        created = _json(httpd, "/api/sessions", method="POST", data=b"")
+        text = "\U0001f600" * 4000
+        assert len(text) == 4000
+        body = json.dumps({"text": text}).encode("utf-8")
+        assert len(body) > 16_384  # would trip the old fixed cap
+        turned = _json(
+            httpd, f"/api/sessions/{created['id']}/turn", method="POST", data=body
+        )
+        assert turned["reply"] == "pong"
+        assert llm.requests[0][-1].content == text
     finally:
         _stop(httpd, thread)
         app.shutdown()

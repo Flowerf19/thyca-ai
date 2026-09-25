@@ -14,7 +14,7 @@ from thyca import __version__
 from thyca.config import default_config, load, save
 from thyca.config import config_schema
 from thyca.serve import default_webui, make_server
-from thyca.tools.memory import MemoryFacade
+from thyca.memory.facade import MemoryFacade
 
 WEBUI = default_webui()
 
@@ -76,8 +76,15 @@ def test_schema_covers_all_scalar_sections() -> None:
 def test_schema_includes_new_fields_without_labels() -> None:
     # Any new dataclass field must surface even without a label entry.
     schema = config_schema()
-    limits = {f["key"] for f in schema["sections"][1]["fields"]}
-    assert limits == {"limits.loopMax", "limits.hotTailKB", "limits.contextTokens"}
+    limits = {f["key"]: f for f in schema["sections"][1]["fields"]}
+    assert set(limits) == {
+        "limits.loopMax",
+        "limits.hotTailKB",
+        "limits.contextTokens",
+        "limits.softTimeoutS",
+    }
+    assert limits["limits.softTimeoutS"]["min"] == 1
+    assert limits["limits.softTimeoutS"]["max"] == 300
     # timezone follows the host system; apiKeyEnv is plumbing, not user-facing.
     # Both stay in the config file, the panel just skips them.
     timeline = {f["key"]: f.get("hidden") for f in schema["sections"][2]["fields"]}
@@ -136,6 +143,27 @@ def test_config_post_empty_key_keeps_old(tmp_path: Path) -> None:
         values2 = got2["values"]
         values2["defaultModel"] = "m-2"
         values2["providers"]["default"]["apiKey"] = ""
+        status, body = _call(httpd, "/api/config", method="POST", data=values2)
+        assert status == 200 and body["ok"] is True
+        saved = load(tmp_path / "config.json")
+        assert saved.providers["default"].apiKey == "sk-first"
+        assert saved.defaultModel == "m-2"
+    finally:
+        _stop(httpd, thread)
+
+
+def test_config_post_omitted_key_keeps_old(tmp_path: Path) -> None:
+    """A payload with no apiKey field must not wipe the stored secret."""
+    httpd, thread = _start(tmp_path)
+    try:
+        _, got = _call(httpd, "/api/config")
+        values = got["values"]
+        values["providers"]["default"]["apiKey"] = "sk-first"
+        _, _ = _call(httpd, "/api/config", method="POST", data=values)
+        _, got2 = _call(httpd, "/api/config")
+        values2 = got2["values"]
+        values2["defaultModel"] = "m-2"
+        del values2["providers"]["default"]["apiKey"]
         status, body = _call(httpd, "/api/config", method="POST", data=values2)
         assert status == 200 and body["ok"] is True
         saved = load(tmp_path / "config.json")
@@ -612,3 +640,134 @@ def test_providers_test_dispatches_responses_api(tmp_path: Path) -> None:
         stub.shutdown()
         sthread.join(timeout=2)
         stub.server_close()
+
+
+def test_merge_saved_key_keeps_omitted_and_null() -> None:
+    from dataclasses import replace
+
+    from thyca.config import merge_saved_keys
+
+    cfg = default_config()
+    cfg = replace(
+        cfg,
+        providers={
+            "default": replace(cfg.providers["default"], apiKey="sk-live"),
+        },
+    )
+    merged = merge_saved_keys(
+        {"providers": {"default": {"apiKey": "sk-new"}}}, cfg
+    )
+    assert merged["providers"]["default"]["apiKey"] == "sk-new"
+    for missing in ({}, {"apiKey": None}, {"apiKey": ""}):
+        merged = merge_saved_keys({"providers": {"default": dict(missing)}}, cfg)
+        assert merged["providers"]["default"]["apiKey"] == "sk-live"
+    # unknown ids still merge to None (env fallback), never another key
+    merged = merge_saved_keys({"providers": {"ghost": {}}}, cfg)
+    assert merged["providers"]["ghost"]["apiKey"] is None
+
+
+def test_config_post_explicit_null_key_keeps_old(tmp_path: Path) -> None:
+    httpd, thread = _start(tmp_path)
+    try:
+        _, got = _call(httpd, "/api/config")
+        values = got["values"]
+        values["providers"]["default"]["apiKey"] = "sk-first"
+        _, _ = _call(httpd, "/api/config", method="POST", data=values)
+        _, got2 = _call(httpd, "/api/config")
+        values2 = got2["values"]
+        values2["providers"]["default"]["apiKey"] = None
+        status, body = _call(httpd, "/api/config", method="POST", data=values2)
+        assert status == 200 and body["ok"] is True
+        saved = load(tmp_path / "config.json")
+        assert saved.providers["default"].apiKey == "sk-first"
+    finally:
+        _stop(httpd, thread)
+
+
+def test_config_post_save_failure_is_json_503(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom(*args, **kwargs) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr("thyca.serve.config_api.save", boom)
+    httpd, thread = _start(tmp_path)
+    try:
+        _, got = _call(httpd, "/api/config")
+        status, body = _call(httpd, "/api/config", method="POST", data=got["values"])
+        assert status == 503
+        assert body == {"error": "config unavailable"}
+    finally:
+        _stop(httpd, thread)
+
+
+# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
+import json
+import threading
+from pathlib import Path
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
+
+def test_x4_merge_saved_keys_single_home() -> None:
+    from dataclasses import replace
+
+    import thyca.serve.config_api as config_api
+    from thyca.config import default_config, merge_saved_keys
+
+    assert config_api.merge_saved_keys is merge_saved_keys
+    cfg = replace(
+        default_config(),
+        providers={"default": replace(default_config().providers["default"], apiKey="sk")},
+    )
+    assert merge_saved_keys({"providers": {"default": {}}}, cfg)["providers"][
+        "default"
+    ]["apiKey"] == "sk"
+    assert not hasattr(config_api, "_merge_saved_key")
+
+
+def _start_config_server(tmp_path: Path):
+    from thyca.config import default_config, save
+    from thyca.memory.facade import MemoryFacade
+    from thyca.serve import default_webui, make_server
+
+    save(default_config(), tmp_path / "config.json")
+    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    httpd = make_server(
+        host="127.0.0.1",
+        port=0,
+        webui=default_webui(),
+        facade=facade,
+        config_file=tmp_path / "config.json",
+    )
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    return httpd, thread
+
+
+def _post(httpd, path: str, data: dict) -> tuple[int, dict]:
+    body = json.dumps(data).encode()
+    request = Request(
+        f"http://127.0.0.1:{httpd.server_address[1]}{path}",
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urlopen(request, timeout=5) as response:
+            return response.status, json.loads(response.read().decode())
+    except HTTPError as exc:
+        return exc.code, json.loads(exc.read().decode())
+
+
+def test_m7_providers_test_explicit_empty_model_is_400(tmp_path: Path) -> None:
+    httpd, thread = _start_config_server(tmp_path)
+    try:
+        status, body = _post(
+            httpd, "/api/providers/test", {"providerId": "default", "model": ""}
+        )
+        assert status == 400
+        assert body == {"error": "invalid model"}
+    finally:
+        httpd.shutdown()
+        thread.join(timeout=2)
+        httpd.server_close()

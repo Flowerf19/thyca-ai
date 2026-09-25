@@ -1,5 +1,6 @@
 import { getJson } from "../../shared/js/http.js";
 import { rollingRange } from "../../shared/js/analytics-data.js";
+import { messageOf } from "../../shared/js/status.js";
 import {
   JOURNAL_PAGE_SIZE,
   journalPageCount,
@@ -29,7 +30,6 @@ import {
   watchTraceViewVisibility,
   showTimezoneWarning,
   setStatus,
-  messageOf,
   deepLinkUnavailable,
   updateNote,
   activeGroup,

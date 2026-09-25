@@ -22,7 +22,9 @@ from thyca.tools.mcp import (
     model_name,
     resolve_command,
 )
+from thyca.tools.gateway import ToolGateway
 from thyca.tools.registry import ToolRegistry
+from thyca.tools.task_store import TaskStore
 
 
 def test_call_timeout_is_30s() -> None:
@@ -164,7 +166,8 @@ async def test_manager_tool_specs_and_handler_unprefixed() -> None:
     assert spec.parameters == {"type": "object", "properties": {}}
     registry = ToolRegistry()
     registry.register(spec)
-    result = await registry.dispatch(
+    gateway = ToolGateway(registry, TaskStore())
+    result = await gateway.submit(
         ToolCall(id="c1", name="echo__ping", arguments={})
     )
     assert not result.is_error
@@ -319,13 +322,33 @@ async def test_handler_maps_is_error() -> None:
     await manager.spawn_all({"echo": McpServerCfg(command="true")})
     registry = ToolRegistry()
     registry.register(manager.tool_specs()[0])
-    result = await registry.dispatch(ToolCall(id="c2", name="echo__ping", arguments={}))
+    gateway = ToolGateway(registry, TaskStore())
+    result = await gateway.submit(ToolCall(id="c2", name="echo__ping", arguments={}))
     assert result.is_error
     assert result.content == "nope"
     await manager.shutdown()
 
 
-_ECHO = Path(__file__).resolve().parents[1] / "examples" / "echo.py"
+ECHO_SRC = '''\
+from mcp.server.fastmcp import FastMCP
+
+mcp = FastMCP("echo", log_level="WARNING")
+
+
+@mcp.tool()
+def ping() -> str:
+    return "pong"
+
+
+if __name__ == "__main__":
+    mcp.run()
+'''
+
+
+def _write_echo(tmp_path: Path, name: str = "echo_fixture.py") -> Path:
+    script = tmp_path / name
+    script.write_text(ECHO_SRC, encoding="utf-8")
+    return script
 
 
 @pytest.mark.asyncio
@@ -342,13 +365,14 @@ async def test_spawn_missing_binary() -> None:
 
 
 @pytest.mark.asyncio
-async def test_echo_stdio_list_call_shutdown() -> None:
+async def test_echo_stdio_list_call_shutdown(tmp_path: Path) -> None:
+    script = _write_echo(tmp_path)
     manager = MCPManager()
     diags = await manager.spawn_all(
         {
             "echo": McpServerCfg(
                 command=sys.executable,
-                args=[str(_ECHO)],
+                args=[str(script)],
             )
         }
     )
@@ -357,7 +381,8 @@ async def test_echo_stdio_list_call_shutdown() -> None:
     assert [spec.name for spec in specs] == ["echo__ping"]
     registry = ToolRegistry()
     registry.register(specs[0])
-    result = await registry.dispatch(ToolCall(id="c3", name="echo__ping", arguments={}))
+    gateway = ToolGateway(registry, TaskStore())
+    result = await gateway.submit(ToolCall(id="c3", name="echo__ping", arguments={}))
     assert not result.is_error
     assert "pong" in result.content
     await manager.shutdown()
@@ -365,14 +390,77 @@ async def test_echo_stdio_list_call_shutdown() -> None:
 
 
 @pytest.mark.asyncio
-async def test_echo_shutdown_from_other_task() -> None:
+async def test_echo_shutdown_from_other_task(tmp_path: Path) -> None:
+    script = _write_echo(tmp_path)
     manager = MCPManager()
 
     async def spawn() -> None:
         diags = await manager.spawn_all(
-            {"echo": McpServerCfg(command=sys.executable, args=[str(_ECHO)])}
+            {"echo": McpServerCfg(command=sys.executable, args=[str(script)])}
         )
         assert [diag.ok for diag in diags] == [True], diags
 
     await asyncio.create_task(spawn())
     await asyncio.create_task(manager.shutdown())
+
+
+@pytest.mark.asyncio
+async def test_killed_child_call_is_informative_and_stays_flagged(tmp_path: Path) -> None:
+    import signal
+
+    script = _write_echo(tmp_path, "doomed_echo.py")
+    manager = MCPManager()
+    diags = await manager.spawn_all(
+        {"doomed": McpServerCfg(command=sys.executable, args=[str(script)])}
+    )
+    assert [diag.ok for diag in diags] == [True]
+    try:
+        out = subprocess.run(
+            ["pgrep", "-f", str(script)], capture_output=True, text=True
+        )
+        os.kill(int(out.stdout.strip().split()[0]), signal.SIGKILL)
+        await asyncio.sleep(0.5)
+        proc = manager._live[0][0]
+        with pytest.raises(RuntimeError, match="doomed.*failed"):
+            await asyncio.wait_for(proc.call("ping", {}), timeout=15)
+        # Flagged, not a silent zombie: the next call is informative too.
+        with pytest.raises(RuntimeError, match="doomed"):
+            await asyncio.wait_for(proc.call("ping", {}), timeout=15)
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_recorded_failure_surfaces_after_session_gone() -> None:
+    proc = MCPProcess("gone", "unused", [], {})
+    proc._failure = RuntimeError("child exited")
+    with pytest.raises(RuntimeError, match="gone.*child exited"):
+        await proc.call("ping", {})
+
+
+@pytest.mark.asyncio
+async def test_dup_tool_name_first_wins_with_skip_diagnostic() -> None:
+    """spawn_all and tool_specs agree: first wins, dup yields a skip diag."""
+    session = _FakeSession()
+    session.tools = [
+        Tool(name="ping", inputSchema={"type": "object", "properties": {}}),
+        Tool(name="ping", inputSchema={"type": "object", "properties": {}}),
+    ]
+    manager = MCPManager(process_factory=_factory(session))
+    diags = await manager.spawn_all({"echo": McpServerCfg(command="true")})
+    assert [diag.ok for diag in diags] == [True, False]
+    assert "already registered" in diags[1].message
+    assert [spec.name for spec in manager.tool_specs()] == ["echo__ping"]
+    await manager.shutdown()
+
+
+# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
+def test_m4_resolve_command_narrow_match() -> None:
+    import sys
+
+    from thyca.tools.mcp import resolve_command
+
+    assert resolve_command("python3foo") == "python3foo"
+    assert resolve_command("python3") == sys.executable
+    assert resolve_command("python3.14") == sys.executable
+    assert resolve_command("/usr/bin/python3") == sys.executable

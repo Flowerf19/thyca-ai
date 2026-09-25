@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
-from thyca.core.protocol import ToolCall, ToolResult
 from thyca.tools.registry import ToolRegistry, ToolSpec
 
 
@@ -55,81 +52,119 @@ def test_duplicate_register_raises() -> None:
         registry.register(_echo_spec())
 
 
-@pytest.mark.asyncio
-async def test_dispatch_keeps_call_id_and_name() -> None:
+def test_get_returns_spec_or_none() -> None:
     registry = ToolRegistry()
-    registry.register(_echo_spec())
-    result = await registry.dispatch(ToolCall(id="c1", name="echo", arguments={"text": "hi"}))
-    assert result == ToolResult(tool_call_id="c1", name="echo", content="hi", is_error=False)
+    assert registry.get("echo") is None
+    spec = _echo_spec()
+    registry.register(spec)
+    assert registry.get("echo") is spec
 
 
-@pytest.mark.asyncio
-async def test_unknown_missing_extra_and_parse_error_do_not_run_handler() -> None:
-    hits = {"n": 0}
-
-    async def echo(args: dict) -> str:
-        hits["n"] += 1
-        return "ran"
-
+def test_validate_args_missing_and_extra() -> None:
     registry = ToolRegistry()
-    registry.register(_echo_spec(handler=echo))
-    unknown = await registry.dispatch(ToolCall(id="u", name="nope", arguments={"text": "x"}))
-    missing = await registry.dispatch(ToolCall(id="m", name="echo", arguments={}))
-    extra = await registry.dispatch(
-        ToolCall(id="e", name="echo", arguments={"text": "x", "bonus": 1})
+    spec = _echo_spec()
+    registry.register(spec)
+    assert registry.validate_args(spec, {"text": "hi"}) is None
+    assert registry.validate_args(spec, {}) == "missing argument: text"
+    assert registry.validate_args(spec, {"text": "x", "bonus": 1}).startswith(
+        "unexpected argument"
     )
-    parsed = await registry.dispatch(
-        ToolCall(id="p", name="echo", arguments={"text": "x"}, parse_error="bad json")
-    )
-    assert hits["n"] == 0
-    assert unknown.is_error and unknown.tool_call_id == "u"
-    assert missing.content == "missing argument: text"
-    assert extra.content.startswith("unexpected argument")
-    assert parsed.content == "bad json"
 
 
-@pytest.mark.asyncio
-async def test_handler_exception_and_result_cap() -> None:
-    async def boom(args: dict) -> str:
-        raise RuntimeError("failed")
-
-    async def huge(args: dict) -> str:
-        return "á" * 40_000
-
-    registry = ToolRegistry(result_cap=20)
-    registry.register(_echo_spec(name="boom", handler=boom))
-    registry.register(_echo_spec(name="huge", handler=huge))
-    err = await registry.dispatch(ToolCall(id="b", name="boom", arguments={"text": "x"}))
-    big = await registry.dispatch(ToolCall(id="h", name="huge", arguments={"text": "x"}))
-    assert err.is_error and err.content == "failed" and err.tool_call_id == "b"
-    assert not big.is_error
-    assert len(big.content.encode("utf-8")) <= 20
+def test_spec_rejects_empty_name_description_and_bad_parameters() -> None:
+    with pytest.raises(ValueError, match="ToolSpec.name"):
+        _echo_spec(name="")
+    with pytest.raises(ValueError, match="ToolSpec.description"):
+        _echo_spec(description="")
+    with pytest.raises(ValueError, match="ToolSpec.parameters"):
+        _echo_spec(parameters=[])
 
 
-@pytest.mark.asyncio
-async def test_same_resource_serializes_different_keys_overlap() -> None:
-    events: list[str] = []
+# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
+def _strict_spec(**overrides):
+    from thyca.tools.registry import ToolSpec
 
-    async def work(args: dict) -> str:
-        events.append(f"start-{args['text']}")
-        await asyncio.sleep(0.03)
-        events.append(f"end-{args['text']}")
-        return args["text"]
+    async def handler(args: dict) -> str:
+        return "ok"
+
+    fields = {
+        "name": "probe",
+        "description": "probe",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "count": {"type": "integer"},
+                "flag": {"type": "boolean"},
+                "tags": {"type": "array"},
+                "meta": {"type": "object"},
+            },
+            "required": ["name"],
+            "additionalProperties": False,
+        },
+        "handler": handler,
+    }
+    fields.update(overrides)
+    return ToolSpec(**fields)
+
+
+def test_x3_registry_rejects_mistyped_args() -> None:
+    from thyca.tools.registry import ToolRegistry
 
     registry = ToolRegistry()
-    registry.register(
-        _echo_spec(handler=work, resource_key=lambda args: args["text"])
+    spec = _strict_spec()
+    registry.register(spec)
+    assert registry.validate_args(spec, {"name": "x"}) is None
+    assert registry.validate_args(spec, {"name": "x", "count": 5.0}) is None
+    assert "missing argument" in (registry.validate_args(spec, {}) or "")
+    assert "unexpected argument" in (
+        registry.validate_args(spec, {"name": "x", "bonus": 1}) or ""
     )
-    same = await asyncio.gather(
-        registry.dispatch(ToolCall(id="a", name="echo", arguments={"text": "k"})),
-        registry.dispatch(ToolCall(id="b", name="echo", arguments={"text": "k"})),
+    assert registry.validate_args(spec, {"name": 123}) == (
+        "argument 'name' must be string, got integer"
     )
-    assert [r.content for r in same] == ["k", "k"]
-    assert events[:4] == ["start-k", "end-k", "start-k", "end-k"]
+    assert registry.validate_args(spec, {"name": "x", "count": True}) == (
+        "argument 'count' must be integer, got boolean"
+    )
+    assert registry.validate_args(spec, {"name": "x", "count": 2.5}) == (
+        "argument 'count' must be integer, got number"
+    )
+    assert registry.validate_args(spec, {"name": "x", "flag": 1}) == (
+        "argument 'flag' must be boolean, got integer"
+    )
+    assert registry.validate_args(spec, {"name": None}) == (
+        "argument 'name' must be string, got null"
+    )
 
-    events.clear()
-    await asyncio.gather(
-        registry.dispatch(ToolCall(id="c", name="echo", arguments={"text": "one"})),
-        registry.dispatch(ToolCall(id="d", name="echo", arguments={"text": "two"})),
+
+def test_x3_untyped_and_unknown_types_skip() -> None:
+    from thyca.tools.registry import ToolRegistry
+
+    registry = ToolRegistry()
+    spec = _strict_spec(
+        parameters={
+            "type": "object",
+            "properties": {"loose": {}, "weird": {"type": "mystery"}},
+            "additionalProperties": False,
+        }
     )
-    assert events[0].startswith("start-") and events[1].startswith("start-")
+    registry.register(spec)
+    assert registry.validate_args(spec, {"loose": 123, "weird": [1]}) is None
+
+
+def test_x3_malformed_type_shape_skips() -> None:
+    from thyca.tools.registry import ToolRegistry
+
+    registry = ToolRegistry()
+    spec = _strict_spec(
+        parameters={
+            "type": "object",
+            "properties": {"odd": {"type": 123}, "mixed": {"type": ["string", 456]}},
+            "additionalProperties": False,
+        }
+    )
+    registry.register(spec)
+    assert registry.validate_args(spec, {"odd": object(), "mixed": "x"}) is None
+    assert registry.validate_args(spec, {"mixed": 5}) == (
+        "argument 'mixed' must be string, got integer"
+    )

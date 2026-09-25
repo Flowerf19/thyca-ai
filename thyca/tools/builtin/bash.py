@@ -8,14 +8,19 @@ import signal
 import sys
 from typing import TYPE_CHECKING
 
+from thyca.tools.gateway.execution import (
+    Detached,
+    _int_arg,
+    current_execution,
+    render_exit,
+)
 from thyca.tools.registry import ToolSpec
 
 if TYPE_CHECKING:
-    from thyca.tools.builtin.background import BackgroundProcs
+    from thyca.tools.gateway.background import BackgroundProcs
 
 _TIMEOUT_DEFAULT = 30
 _TIMEOUT_BACKGROUND_DEFAULT = 1800
-_SOFT_DEFAULT = 60
 
 
 def select_shell() -> str:
@@ -37,32 +42,42 @@ def kill_process_group(pid: int) -> None:
 
 def bash_spec(background: BackgroundProcs | None = None) -> ToolSpec:
     async def handler(args: dict) -> str:
-        command = args.get("command")
-        if not isinstance(command, str) or not command.strip():
+        # Schema types arrive pre-checked by the registry (X3); only the
+        # non-blank command rule stays here as domain validation.
+        command = args["command"]
+        if not command.strip():
             raise ValueError("command must be a non-empty string")
         raw_bg = args.get("background")
-        if raw_bg is not None and not isinstance(raw_bg, bool):
-            raise ValueError("background must be a boolean")
+        execution = current_execution()
+        eid = execution.id if execution is not None else None
         if raw_bg:
             if background is None:
                 raise ValueError("background is not available in this context")
             raw = args.get("timeout")
             timeout = _TIMEOUT_BACKGROUND_DEFAULT if raw is None else parse_timeout(raw)
-            bid = await background.start(command, timeout, os.getcwd())
-            return (
+            bid = await background.start(command, timeout, os.getcwd(), id=eid)
+            message = (
                 f"started: {bid}\n"
                 f"running in background (timeout {timeout}s). "
-                "Poll progress and the result with bash_read."
+                "Poll progress and the result with tool_read."
             )
+            if execution is None:
+                return message
+            entry = background.get(bid)
+            assert entry is not None
+            return Detached(entry, message)
         if background is not None:
-            # Auto-escalate: quick commands return like foreground; a command
-            # still running after the soft window moves to background instead
-            # of blocking the turn.
+            # The gateway owns the soft timeout now: wait for the proc up to
+            # the hard cap; slow commands become tracked executions there.
             raw = args.get("timeout")
             hard = _TIMEOUT_BACKGROUND_DEFAULT if raw is None else parse_timeout(raw)
-            return await background.start_and_wait(
-                command, hard, os.getcwd(), _SOFT_DEFAULT
-            )
+            bid = await background.start(command, hard, os.getcwd(), id=eid)
+            entry = background.get(bid)
+            assert entry is not None
+            if execution is not None:
+                execution.attach_proc(entry)
+            await entry.done.wait()
+            return entry.render_plain()
         return await _run(command, parse_timeout(args.get("timeout")))
 
     return ToolSpec(
@@ -72,7 +87,7 @@ def bash_spec(background: BackgroundProcs | None = None) -> ToolSpec:
             "cwd is the process working directory. Commands that finish within "
             "~60 seconds return their result directly. A still-running command "
             "then automatically moves to background and the tool returns "
-            "'still running: bg<N>' — poll progress and the result with bash_read "
+            "'still running: exec<N>' — poll progress and the result with tool_read "
             "instead of re-running it. Use background: true when you know from "
             "the start the command is long (builds, OCR, servers): the id comes "
             "back immediately. timeout is the hard cap that kills the process "
@@ -91,20 +106,13 @@ def bash_spec(background: BackgroundProcs | None = None) -> ToolSpec:
         handler=handler,
         parallel_safe=False,
         resource_key=lambda _args: "bash",
-        escalates=True,
     )
 
 
 def parse_timeout(raw: object) -> int:
     if raw is None:
         return _TIMEOUT_DEFAULT
-    if isinstance(raw, bool):
-        raise ValueError("timeout must be a positive integer")
-    if isinstance(raw, float) and raw.is_integer():
-        raw = int(raw)
-    if not isinstance(raw, int) or raw < 1:
-        raise ValueError("timeout must be a positive integer")
-    return raw
+    return _int_arg(raw, "timeout", 1, "positive integer")
 
 
 async def _run(command: str, timeout: int) -> str:
@@ -130,6 +138,5 @@ async def _run(command: str, timeout: int) -> str:
         out, _ = await proc.communicate()
     text = (out or b"").decode("utf-8", errors="replace")
     if timed_out:
-        return f"exit: 124\ntimed_out: true\n{text}"
-    code = 124 if proc.returncode is None else proc.returncode
-    return f"exit: {code}\n{text}"
+        return render_exit(124, text, True)
+    return render_exit(proc.returncode, text, False)

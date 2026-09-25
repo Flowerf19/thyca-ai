@@ -1,7 +1,9 @@
 import { formatCompact } from "./format.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
-const compact = matchMedia("(max-width: 56rem)");
+const compact = typeof matchMedia === "function"
+  ? matchMedia("(max-width: 56rem)")
+  : { matches: false, addEventListener: () => {} };
 
 function niceCeiling(max) {
   if (!Number.isFinite(max) || max <= 0) return 1;

@@ -15,12 +15,14 @@ Config, load, save, ...`` keeps working.
 """
 from __future__ import annotations
 
+from .auth import merge_saved_keys
 from .compat import CONFIG_FILENAME, THYCA_DIR_NAME, _lock_path, default_dict, thyca_dir
 from .defaults import (
     DEFAULT_LIMITS_CONTEXT_TOKENS,
     DEFAULT_LIMITS_CONTEXT_TOKENS_MAX,
     DEFAULT_LIMITS_HOT_TAIL_KB,
     DEFAULT_LIMITS_LOOP_MAX,
+    DEFAULT_LIMITS_SOFT_TIMEOUT_S,
     DEFAULT_PROVIDER_API,
     DEFAULT_PROVIDER_API_KEY_ENV,
     DEFAULT_PROVIDER_BASE_URL,
@@ -38,11 +40,12 @@ from .models import ModelCfg, _model_to_dict
 from .parsing import _parse_dict
 from .pricing import PricingCfg
 from .providers import ProviderCfg, ProviderEntry
-from .root import Config
+from .root import Config, resolve_model_base_url
 from .schema import config_schema
 from .store import (
     GUIDE_NAME,
     FileLock,
+    atomic_write_text,
     config_path,
     default_config,
     ensure_default,
@@ -59,6 +62,7 @@ __all__ = [
     "DEFAULT_LIMITS_CONTEXT_TOKENS_MAX",
     "DEFAULT_LIMITS_HOT_TAIL_KB",
     "DEFAULT_LIMITS_LOOP_MAX",
+    "DEFAULT_LIMITS_SOFT_TIMEOUT_S",
     "DEFAULT_PROVIDER_API",
     "DEFAULT_PROVIDER_API_KEY_ENV",
     "DEFAULT_PROVIDER_BASE_URL",
@@ -74,6 +78,7 @@ __all__ = [
     "ConfigError",
     "FileLock",
     "LimitsCfg",
+    "atomic_write_text",
     "McpServerCfg",
     "ModelCfg",
     "PricingCfg",
@@ -90,6 +95,8 @@ __all__ = [
     "ensure_default",
     "ensure_thyca_dir",
     "load",
+    "merge_saved_keys",
+    "resolve_model_base_url",
     "save",
     "thyca_dir",
     "write_config_guide",

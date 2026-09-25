@@ -4,7 +4,7 @@ import json
 from contextvars import ContextVar
 from dataclasses import asdict
 
-from thyca.tools.memory import MemoryFacade
+from thyca.memory.facade import MemoryFacade
 from thyca.tools.registry import ToolRegistry, ToolSpec
 
 _chat_session_id: ContextVar[str | None] = ContextVar("thyca_memory_chat", default=None)
@@ -17,6 +17,20 @@ def bind_chat_session(session_id: str | None):
 
 def reset_chat_session(token) -> None:
     _chat_session_id.reset(token)
+
+
+def _limit(args: dict) -> int:
+    """Graceful limit: falsy/missing → default, unparseable → default."""
+    raw = args.get("limit") or 5
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return 5
+
+
+def _daily_key(_args: dict) -> str:
+    """Shared resource key: every daily mutation serializes on one lock."""
+    return "memory:daily"
 
 
 def register_memory_tools(
@@ -34,10 +48,11 @@ def register_memory_tools(
 
 def _remember_spec(facade: MemoryFacade) -> ToolSpec:
     async def handler(args: dict) -> str:
+        # Schema types arrive pre-checked by the registry (X3).
         return facade.remember(
-            str(args["topic"]),
-            str(args["summary"]),
-            content=str(args.get("content") or ""),
+            args["topic"],
+            args["summary"],
+            content=args.get("content") or "",
             proj=args.get("proj"),
             chat=_chat_session_id.get(),
         )
@@ -70,15 +85,15 @@ def _remember_spec(facade: MemoryFacade) -> ToolSpec:
         },
         handler=handler,
         parallel_safe=False,
-        resource_key=lambda _args: "memory:daily",
+        resource_key=_daily_key,
     )
 
 
 def _search_spec(facade: MemoryFacade) -> ToolSpec:
     async def handler(args: dict) -> str:
         result = facade.search(
-            str(args["query"]),
-            limit=int(args.get("limit") or 5),
+            args["query"],
+            limit=_limit(args),
             timeline_day=args.get("timeline_day"),
             proj=args.get("proj"),
             chat=args.get("chat"),
@@ -116,7 +131,7 @@ def _search_spec(facade: MemoryFacade) -> ToolSpec:
 
 def _recent_spec(facade: MemoryFacade) -> ToolSpec:
     async def handler(args: dict) -> str:
-        hits = facade.recent(limit=int(args.get("limit") or 5))
+        hits = facade.recent(limit=_limit(args))
         return json.dumps([asdict(hit) for hit in hits], ensure_ascii=False)
 
     return ToolSpec(
@@ -137,18 +152,16 @@ def _get_spec(facade: MemoryFacade) -> ToolSpec:
         return facade.get(
             chunk_id=args.get("chunk_id"),
             session_id=args.get("session_id"),
-            path=args.get("path"),
         )
 
     return ToolSpec(
         name="memory_get",
-        description="Read a memory leaf by chunk_id, session_id, or path.",
+        description="Read a memory leaf by exactly one of chunk_id, session_id.",
         parameters={
             "type": "object",
             "properties": {
                 "chunk_id": {"type": "string"},
                 "session_id": {"type": "string"},
-                "path": {"type": "string"},
             },
             "additionalProperties": False,
         },
@@ -159,7 +172,7 @@ def _get_spec(facade: MemoryFacade) -> ToolSpec:
 
 def _forget_spec(facade: MemoryFacade) -> ToolSpec:
     async def handler(args: dict) -> str:
-        facade.forget(str(args["session_id"]))
+        facade.forget(args["session_id"])
         return "forgotten"
 
     return ToolSpec(
@@ -178,7 +191,7 @@ def _forget_spec(facade: MemoryFacade) -> ToolSpec:
         },
         handler=handler,
         parallel_safe=False,
-        resource_key=lambda _args: "memory:daily",
+        resource_key=_daily_key,
     )
 
 
@@ -186,10 +199,10 @@ def _reinforce_spec(facade: MemoryFacade) -> ToolSpec:
     async def handler(args: dict) -> str:
         importance = args.get("importance")
         expires = facade.reinforce(
-            str(args["session_id"]),
+            args["session_id"],
             importance=int(importance) if importance is not None else None,
         )
-        return json.dumps({"session_id": str(args["session_id"]), "expires_at": expires}, ensure_ascii=False)
+        return json.dumps({"session_id": args["session_id"], "expires_at": expires}, ensure_ascii=False)
 
     return ToolSpec(
         name="memory_reinforce",
@@ -205,17 +218,21 @@ def _reinforce_spec(facade: MemoryFacade) -> ToolSpec:
         },
         handler=handler,
         parallel_safe=False,
-        resource_key=lambda _args: "memory:daily",
+        resource_key=_daily_key,
     )
 
 
 def _update_spec(facade: MemoryFacade) -> ToolSpec:
     async def handler(args: dict) -> str:
+        # Schema types arrive pre-checked by the registry (X3): present
+        # values are str, so only the strip lives here as domain validation.
+        topic = args.get("topic")
+        summary = args.get("summary")
         facade.update(
-            str(args["session_id"]),
-            topic=str(args["topic"]).strip() if args.get("topic") else None,
-            summary=str(args["summary"]).strip() if args.get("summary") else None,
-            content=str(args["content"]) if args.get("content") else None,
+            args["session_id"],
+            topic=topic.strip() if topic is not None else None,
+            summary=summary.strip() if summary is not None else None,
+            content=args.get("content"),
             proj=args.get("proj"),
         )
         return "updated"
@@ -224,7 +241,8 @@ def _update_spec(facade: MemoryFacade) -> ToolSpec:
         name="memory_update",
         description=(
             "Edit one L2 memory leaf's title and/or body by session_id. "
-            "The leaf's id stays stable; the search index is rebuilt after the edit."
+            "The leaf's id stays stable; the search index is rebuilt after the edit. "
+            "content requires summary; blank titles/summaries are rejected."
         ),
         parameters={
             "type": "object",
@@ -246,5 +264,5 @@ def _update_spec(facade: MemoryFacade) -> ToolSpec:
         },
         handler=handler,
         parallel_safe=False,
-        resource_key=lambda _args: "memory:daily",
+        resource_key=_daily_key,
     )

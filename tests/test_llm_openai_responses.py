@@ -60,6 +60,7 @@ def test_input_mapping() -> None:
         Message(role="system", content="sys"),
         Message(role="system", content=""),
         Message(role="user", content="hi"),
+        Message(role="user", content=None),
         Message(
             role="assistant",
             content="let me check",
@@ -67,11 +68,14 @@ def test_input_mapping() -> None:
         ),
         Message(role="assistant", content=None, tool_calls=None),
         Message(role="tool", content="out", tool_call_id="c1"),
-        Message(role="tool", content="x", tool_call_id=None),
     ]
+    # B2/F26: empty-system and user-None pass through as empty (provider
+    # decides); tool-without-id raises (see test_b2_contracts).
     assert _to_responses_input(messages) == [
         {"role": "system", "content": "sys"},
+        {"role": "system", "content": ""},
         {"role": "user", "content": "hi"},
+        {"role": "user", "content": ""},
         {"role": "assistant", "content": "let me check"},
         {"type": "function_call", "call_id": "c1", "name": "bash", "arguments": '{"cmd": "ls"}'},
         {"type": "function_call_output", "call_id": "c1", "output": "out"},
@@ -367,3 +371,144 @@ async def test_reasoning_summary_feeds_persist_and_cost_pipeline() -> None:
     pricing = {"demo-model": PricingCfg(input=1.0, cache=0.5, output=2.0)}
     cost = cost_for(reply.model or "demo-model", reply.usage, pricing)
     assert cost is not None and cost > 0
+
+
+@pytest.mark.asyncio
+async def test_nonstream_reasoning_and_content_redacted() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "model": "demo-model",
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [
+                            {"type": "output_text", "text": "leak sk-secret-key here"}
+                        ],
+                    },
+                    {
+                        "type": "reasoning",
+                        "summary": [
+                            {"type": "summary_text", "text": "think sk-secret-key loud"}
+                        ],
+                    },
+                ],
+            },
+        )
+
+    seen_reasoning: list[str] = []
+    seen_content: list[str] = []
+    connect = OpenAIResponses(_provider(), client=_client(handler))
+    reply = await connect.chat(
+        [Message(role="user", content="x")],
+        on_reasoning=seen_reasoning.append,
+        on_content=seen_content.append,
+    )
+    assert "sk-secret-key" not in (reply.reasoning or "")
+    assert "sk-secret-key" not in (reply.content or "")
+    assert "[redacted]" in (reply.reasoning or "")
+    assert "[redacted]" in (reply.content or "")
+    assert all("sk-secret-key" not in item for item in seen_reasoning)
+    assert all("sk-secret-key" not in item for item in seen_content)
+
+
+@pytest.mark.asyncio
+async def test_stream_content_and_split_chunk_key_redacted() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _sse(
+            {"type": "response.output_text.delta", "delta": "call sk-secret-key plz"},
+            {"type": "response.reasoning_summary_text.delta", "delta": "use sk-secr"},
+            {"type": "response.reasoning_summary_text.delta", "delta": "et-key now"},
+            {"type": "response.output_text.delta", "delta": " tail sk-secr"},
+            {"type": "response.output_text.delta", "delta": "et-key end"},
+            _completed(),
+        )
+
+    seen_reasoning: list[str] = []
+    seen_content: list[str] = []
+    connect = OpenAIResponses(_provider(), client=_client(handler))
+    reply = await connect.chat(
+        [Message(role="user", content="x")],
+        on_reasoning=seen_reasoning.append,
+        on_content=seen_content.append,
+    )
+    assert "sk-secret-key" not in (reply.reasoning or "")
+    assert "sk-secret-key" not in (reply.content or "")
+    assert "[redacted]" in (reply.reasoning or "")
+    assert "[redacted]" in (reply.content or "")
+    assert all("sk-secret-key" not in item for item in seen_reasoning)
+    assert all("sk-secret-key" not in item for item in seen_content)
+
+
+# Moved from tests/test_b2_contracts.py (B2 batch).
+from thyca.llm.responses_parse import parse_responses_payload
+
+def _provider() -> ProviderCfg:
+    return ProviderCfg(
+        baseUrl="https://api.example.com/v1",
+        model="demo-model",
+        apiKey="sk-secret-key",
+    )
+
+
+def _client(handler) -> httpx.AsyncClient:
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+
+def _chat_sse(*chunks: dict, done: bool = True) -> httpx.Response:
+    parts = [f"data: {json.dumps(chunk)}" for chunk in chunks]
+    if done:
+        parts.append("data: [DONE]")
+    return httpx.Response(
+        200,
+        text="\n\n".join(parts) + "\n\n",
+        headers={"Content-Type": "text/event-stream"},
+    )
+
+
+def test_f25_failed_or_incomplete_status_without_error_raises() -> None:
+    """Fails pre-fix: failed status without error yielded a silent empty turn."""
+    for status in ("failed", "incomplete"):
+        with pytest.raises(LLMError, match=f"provider response {status}"):
+            parse_responses_payload({"output": [], "status": status}, "sk")
+    ok = parse_responses_payload({"output": [], "status": "completed"}, "sk")
+    assert ok.finish_reason == "completed"
+
+
+async def test_f25_failed_completed_event_raises() -> None:
+    """Fails pre-fix: stream failed-completed without error was success."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _chat_sse(
+            {
+                "type": "response.completed",
+                "response": {"status": "failed", "model": "demo-model"},
+            }
+        )
+
+    connect = OpenAIResponses(_provider(), client=_client(handler))
+    with pytest.raises(LLMError, match="provider response failed"):
+        await connect.chat([Message(role="user", content="x")])
+
+
+def test_f26_tool_result_without_id_raises() -> None:
+    """Fails pre-fix: the id-less result was silently dropped."""
+    with pytest.raises(ValueError, match="tool_call_id"):
+        _to_responses_input([Message(role="tool", content="x", tool_call_id=None)])
+    with pytest.raises(ValueError, match="tool_call_id"):
+        _to_responses_input([Message(role="tool", content="x", tool_call_id="")])
+
+
+def test_f26_none_and_empty_pass_through_as_empty() -> None:
+    """Fails pre-fix: user-None and empty-system were dropped."""
+    assert _to_responses_input([Message(role="user", content=None)]) == [
+        {"role": "user", "content": ""}
+    ]
+    assert _to_responses_input([Message(role="system", content="")]) == [
+        {"role": "system", "content": ""}
+    ]
+    assert _to_responses_input([Message(role="system", content=None)]) == [
+        {"role": "system", "content": ""}
+    ]

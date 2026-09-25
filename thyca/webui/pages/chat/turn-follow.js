@@ -74,7 +74,6 @@ export async function followTurn(sessionId, startedAt) {
     // clears the per-round tool record), so the replay does not duplicate
     // notes an earlier attempt added.
     resetLiveStatus(live, startedAt);
-    live.article.querySelectorAll(".usage-row").forEach((node) => node.remove());
   } else {
     live = createLiveStatus(followHub.el.messageList, startedAt);
     liveTurns.set(sessionId, live);

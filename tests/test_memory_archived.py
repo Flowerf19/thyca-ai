@@ -1,12 +1,17 @@
 """Archived lexical memory — GOAL-002 / TASK-104-107."""
 from __future__ import annotations
 
+import sqlite3
+import threading
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from thyca.memory import ArchivedMemory, ArchiveError, Chunker
-from thyca.tools.memory import MemoryFacade
+from thyca.memory.archive_store import ArchiveStore
+from thyca.memory.chunk import Chunk
+from thyca.memory.facade import MemoryFacade
+from thyca.memory.usage import guarded, is_lock_error
 
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
@@ -85,10 +90,16 @@ def test_trigram_typo_and_get(tmp_path: Path) -> None:
     assert hits.hits
     session = archived.get(session_id=hits.hits[0].session_id)
     assert "thịt quay" in session or "bún bò" in session or "Luna" in session
-    raw = archived.get(path=str(tmp_path / "memory" / "2026-08-13.md"))
-    assert "cà phê" in raw
+    whole = archived.get(session_id=hits.hits[0].session_id)
+    assert "cà phê" in whole or "thịt quay" in whole or "Luna" in whole
+    for kwargs in ({}, {"chunk_id": "x", "session_id": "y"}):
+        try:
+            archived.get(**kwargs)
+            raise AssertionError(f"should reject {kwargs}")
+        except ArchiveError as exc:
+            assert "exactly one of chunk_id, session_id" in str(exc)
     try:
-        archived.get(path=str(tmp_path / "sessions" / "x.jsonl"))
+        archived.get(session_id="2026-08-13#zzzzzzzz")
         raise AssertionError("should reject")
     except ArchiveError:
         pass
@@ -158,7 +169,7 @@ def test_normalize_maps_d_stroke_to_d() -> None:
 
 def test_in_order_span_uses_full_leaf_not_snippet() -> None:
     from thyca.memory.archive_store import Hit
-    from thyca.tools.memory import _promote_in_order_span
+    from thyca.memory.rank import _promote_in_order_span
 
     chunker = Chunker()
     filler = "lorem " * 80
@@ -258,3 +269,173 @@ def test_norm_version_rebuilds_stale_d_stroke(tmp_path: Path) -> None:
     assert "do an" in rebuilt["text_norm"]
     hits = again.search("do an", now=at("2026-08-17"))
     assert any("token_dstroke" in hit.snippet for hit in hits.hits)
+
+
+# --- F21: usage transaction + shared-connection races + lock errors ---
+
+
+def _chunk(cid: str, path: str, sid: str) -> Chunk:
+    return Chunk(
+        chunk_id=cid,
+        path=path,
+        source_kind="daily",
+        timeline_day="2026-09-01",
+        session_id=sid,
+        session_title="t",
+        heading_raw="## 08:00",
+        leaf_ord=1,
+        line_start=1,
+        line_end=2,
+        text_raw="hello world leaf content here",
+        text_norm="hello world leaf content here",
+        content_hash="abc",
+    )
+
+
+def _seeded_store(tmp_path: Path) -> ArchiveStore:
+    store = ArchiveStore(tmp_path / "m.sqlite")
+    store.replace_source(
+        "/m/2026-09-01.md", "daily", "2026-09-01", 1, 9,
+        [_chunk("c1", "/m/2026-09-01.md", "2026-09-01#aaaaaaaa")],
+    )
+    store.usage.record_gets(["c1"], "2026-09-01#aaaaaaaa", "2026-09-01T00:00:00Z")
+    store.usage.record_searches(["c1"], "2026-09-01#aaaaaaaa", "2026-09-01T00:00:00Z")
+    return store
+
+
+def test_f21_drop_source_is_one_transaction(tmp_path: Path, monkeypatch) -> None:
+    store = _seeded_store(tmp_path)
+
+    def boom(chunk_ids: list[str]) -> None:
+        raise RuntimeError("crash between chunk delete and usage delete")
+
+    monkeypatch.setattr(store.usage, "_delete_ids", boom)
+    try:
+        store.drop_source("/m/2026-09-01.md")
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("expected the injected crash")
+
+    # Rollback covered everything: source, chunk, and both usage rows survive.
+    assert store.source_stat("/m/2026-09-01.md") == (1, 9)
+    assert store.chunk_ids() == ["c1"]
+    assert store.usage.get_map() == {"c1": (1, "2026-09-01T00:00:00Z")}
+    assert store.usage.search_map() == {"c1": (1, "2026-09-01T00:00:00Z")}
+    store.close()
+
+
+def test_f21_concurrent_record_and_read_never_collide(tmp_path: Path) -> None:
+    store = _seeded_store(tmp_path)
+    errors: list[BaseException] = []
+    now = "2026-09-01T00:00:00Z"
+
+    def worker(n: int) -> None:
+        try:
+            for i in range(25):
+                store.usage.record_searches(["c1"], "s", now)
+                store.usage.record_gets(["c1"], "s", now)
+                store.fts_search("hello", None, 5, now)
+                store.trigram_search("hello world", None, 5, now)
+                store.get_chunk("c1", now)
+                if i % 5 == 0:
+                    store.usage.search_map()
+        except BaseException as exc:  # noqa: BLE001 — collected, asserted below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(n,)) for n in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    assert store.usage.search_map()["c1"][0] == 1 + 8 * 25
+    assert store.usage.get_map()["c1"][0] == 1 + 8 * 25
+    store.close()
+
+
+def test_f21_cross_process_lock_surfaces_as_archive_error(tmp_path: Path) -> None:
+    store = _seeded_store(tmp_path)
+    store._db.execute("PRAGMA busy_timeout=0")
+    holder = sqlite3.connect(tmp_path / "m.sqlite")
+    holder.execute("BEGIN EXCLUSIVE")
+    try:
+        try:
+            store.usage.record_searches(["c1"], "s", "2026-09-01T00:00:00Z")
+        except ArchiveError as exc:
+            assert "locked" in str(exc)
+            assert isinstance(exc.__cause__, sqlite3.OperationalError)
+        else:
+            raise AssertionError("expected ArchiveError")
+        try:
+            store.replace_source("/m/x.md", "daily", "2026-09-01", 1, 1, [])
+        except ArchiveError as exc:
+            assert isinstance(exc.__cause__, sqlite3.OperationalError)
+        else:
+            raise AssertionError("expected ArchiveError")
+    finally:
+        holder.execute("ROLLBACK")
+        holder.close()
+        store.close()
+
+
+def test_f21_non_lock_operational_error_propagates_raw() -> None:
+    assert is_lock_error(sqlite3.OperationalError("database is locked"))
+    assert is_lock_error(sqlite3.OperationalError("database table is locked"))
+    assert not is_lock_error(sqlite3.OperationalError("no such table: chunks"))
+
+    class Probe:
+        import threading as _t
+
+        _lock = _t.RLock()
+        _error_cls = ArchiveError
+
+        @guarded
+        def bug(self) -> None:
+            raise sqlite3.OperationalError("no such table: chunks")
+
+        @guarded
+        def contention(self) -> None:
+            raise sqlite3.OperationalError("database is locked")
+
+    try:
+        Probe().bug()
+    except sqlite3.OperationalError as exc:
+        assert "no such table" in str(exc)
+    else:
+        raise AssertionError("expected raw OperationalError")
+    try:
+        Probe().contention()
+    except ArchiveError:
+        pass
+    else:
+        raise AssertionError("expected ArchiveError")
+
+
+# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
+def test_m5_split_parts_carry_own_spans_and_long_lines_split() -> None:
+    from thyca.memory.chunk import MAX_LEAF_CHARS, Chunker
+
+    chunker = Chunker()
+    body = "Sentence one is here. Sentence two follows along. Sentence three ends it."
+    assert len(body) < MAX_LEAF_CHARS
+    long_body = " ".join([body] * 12)
+    assert len(long_body) > MAX_LEAF_CHARS
+    text = f"## 08:00 — t\n- {long_body}\n- short tail\n"
+    chunks = chunker.chunk_markdown(
+        "/m/2026-08-01.md", text, source_kind="daily", timeline_day="2026-08-01"
+    )
+    assert len(chunks) >= 2
+    for chunk in chunks:
+        assert 1 <= chunk.line_start <= chunk.line_end <= 3
+        assert len(chunk.text_raw) <= MAX_LEAF_CHARS
+    single = "x" * 2000
+    chunks = chunker.chunk_markdown(
+        "/m/2026-08-01.md",
+        f"## 08:00 — t\n- {single}\n",
+        source_kind="daily",
+        timeline_day="2026-08-01",
+    )
+    assert len(chunks) >= 2
+    assert all(len(chunk.text_raw) <= MAX_LEAF_CHARS for chunk in chunks)
+    assert "".join(chunk.text_raw for chunk in chunks).replace(" ", "") == "-" + single

@@ -166,7 +166,10 @@ async function runTurn({ text }) {
         composerDeps.renderDetail({ ...(state.detail || {}), running: true });
         watchRunning(sessionId);
       } else {
-        const live = el.messageList.querySelector(".live-status:last-of-type");
+        // Last .live-status in document order: :last-of-type matches by
+        // element type, so any later <article> would steal the error brand.
+        const lives = el.messageList.querySelectorAll(".live-status");
+        const live = lives.length ? lives[lives.length - 1] : null;
         if (live) setChatBrand(live, { state: "error", status: sendErrorMessage(error) });
       }
     }

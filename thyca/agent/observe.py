@@ -35,9 +35,11 @@ class Observe:
         if stage.reply is None:
             raise ValueError("Stage.reply is required")
         meta = assistant_meta(stage, kind="llm")
+        # Same None->"" normalization the terminal assistant() applies: one
+        # assistant encoding on the tool path too.
         assistant = Message(
             role="assistant",
-            content=stage.reply.content,
+            content=stage.reply.content or "",
             tool_calls=stage.reply.tool_calls,
             meta=meta,
             reasoning=reasoning(stage),

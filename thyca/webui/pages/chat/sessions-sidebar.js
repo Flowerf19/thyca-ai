@@ -1,5 +1,6 @@
 import { deleteJson, getJson, patchJson } from "../../shared/js/http.js";
 import { cleanText, formatSessionTime } from "../../shared/js/format.js";
+import { messageOf } from "../../shared/js/status.js";
 
 // Sidebar session list: pager, rows, rename/delete dialogs. Receives the
 // entry-owned bindings (state/el plus entry functions) via init — never
@@ -65,10 +66,6 @@ export function revealSession(id) {
   if (!id) return;
   const index = sidebarDeps.state.sessions.findIndex((session) => String(session.id) === String(id));
   if (index !== -1) sidebarDeps.state.sessionPage = Math.floor(index / SESSIONS_PAGE_SIZE) + 1;
-}
-
-export function messageOf(error, fallback) {
-  return error instanceof Error && error.message ? error.message : fallback;
 }
 
 export function sessionKey() {

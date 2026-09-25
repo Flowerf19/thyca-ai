@@ -39,6 +39,8 @@ def apply_edits(text: str, edits: object) -> str:
         new = item.get("newText")
         if not isinstance(old, str) or not isinstance(new, str):
             raise ValueError("oldText and newText must be strings")
+        if not old:
+            raise ValueError("oldText must be non-empty")
         start = text.find(old)
         if start == -1:
             raise ValueError("oldText not found")
@@ -61,7 +63,8 @@ def apply_edits(text: str, edits: object) -> str:
 
 def edit_spec(guard: PathGuard) -> ToolSpec:
     async def handler(args: dict) -> str:
-        path = guard.deny_write(str(args["path"]))
+        # Schema types arrive pre-checked by the registry (X3): path is str.
+        path = guard.deny_write(args["path"])
         if not path.is_file():
             raise FileNotFoundError(f"not a file: {path}")
         updated = apply_edits(path.read_text(encoding="utf-8"), args.get("edits"))
@@ -77,5 +80,5 @@ def edit_spec(guard: PathGuard) -> ToolSpec:
         parameters=_PARAMETERS,
         handler=handler,
         parallel_safe=False,
-        resource_key=lambda args: str(guard.resolve(str(args["path"]))),
+        resource_key=guard.key,
     )

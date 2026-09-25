@@ -102,3 +102,39 @@ def test_proj_chat_roundtrip_and_old_heading_stays_empty() -> None:
     assert old is not None
     assert old.proj is None
     assert old.chat is None
+
+
+# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
+from datetime import datetime
+from zoneinfo import ZoneInfo
+from pathlib import Path
+
+def test_x8_read_text_file_policy(tmp_path: Path) -> None:
+    from thyca.memory.heading import read_text_file
+
+    assert read_text_file(tmp_path / "missing.md") is None
+    link = tmp_path / "link.md"
+    real = tmp_path / "real.md"
+    real.write_text("hi", encoding="utf-8")
+    link.symlink_to(real)
+    assert read_text_file(link) is None
+    assert read_text_file(real) == "hi"
+    bad = tmp_path / "bad.md"
+    bad.write_bytes(b"\xff\xfe binary")
+    with pytest.raises(UnicodeDecodeError):
+        read_text_file(bad)
+
+
+def test_x9_day_shared_by_active_and_archived(tmp_path: Path) -> None:
+    from thyca.memory.active import ActiveMemory
+    from thyca.memory.archived import ArchivedMemory
+    from thyca.memory.heading import day
+
+    zone = ZoneInfo("Asia/Ho_Chi_Minh")
+    assert day(datetime(2026, 1, 1, 23, 30), zone) == "2026-01-01"
+    assert day(datetime(2026, 1, 1, 17, 0, tzinfo=ZoneInfo("UTC")), zone) == "2026-01-02"
+    assert day(None, zone) == datetime.now(zone).date().isoformat()
+    active = ActiveMemory(tmp_path)
+    archived = ArchivedMemory(tmp_path)
+    moment = datetime(2026, 5, 5, 12, 0)
+    assert active._day(moment) == archived.day(moment) == "2026-05-05"

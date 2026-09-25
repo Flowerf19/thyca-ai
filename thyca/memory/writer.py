@@ -8,15 +8,16 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
+from thyca.config import atomic_write_text
 from thyca.memory.archive_store import ArchiveError
 from thyca.memory.heading import (
+    TTL_DAYS,
     HeadingMeta,
     expiry_ts,
     is_expired,
     is_visible,
-    parse_heading,
+    iter_session_blocks,
     render_heading,
-    resolve_entry_id,
 )
 
 
@@ -59,19 +60,15 @@ class MemoryWriter:
         with self.lock_for(path):
             if not path.is_file():
                 raise ArchiveError(f"memory file missing: {path}")
-            lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+            lines = _read_lines(path)
             found: HeadingMeta | None = None
             out: list[str] = []
-            seen: dict[str, int] = {}
-            for line in lines:
-                meta = parse_heading(line)
-                if meta is None:
-                    out.append(line)
-                    continue
-                seen[meta.title] = seen.get(meta.title, 0) + 1
-                resolved = resolve_entry_id(meta, str(path), seen[meta.title])
+            pos = 0
+            for meta, resolved, start, end in iter_session_blocks(lines, str(path)):
+                out.extend(lines[pos:start])
+                pos = end
                 if resolved != entry_id:
-                    out.append(line)
+                    out.extend(lines[start:end])
                     continue
                 if meta.entry_id is None:
                     meta = replace(meta, entry_id=resolved)
@@ -79,6 +76,9 @@ class MemoryWriter:
                 if found.entry_id is None:
                     found = replace(found, entry_id=resolved)
                 out.append(render_heading(found))
+                out.extend(lines[start + 1 : end])
+                break  # duplicate ids: first match wins, the rest stay verbatim
+            out.extend(lines[pos:])
             if found is None:
                 raise ArchiveError(f"session not found: {entry_id}")
             _atomic_write(path, "".join(out))
@@ -97,18 +97,20 @@ class MemoryWriter:
         body_lines: list[str] | None = None,
         proj: str | None = None,
         chat: str | None = None,
+        keep_details: bool = False,
     ) -> None:
         """Rewrite one session's title, body, and/or linking metadata in place.
 
         entry_id / importance / expires_at stay untouched — the id the index
         and callers hold never changes; only the visible text moves.
-        proj/chat only change when the caller passes them.
+        proj/chat only change when the caller passes them. keep_details keeps
+        the existing body lines after the summary line (summary-only update).
         """
         path, entry = self.locate(session_id)
         with self.lock_for(path):
             self._update_session(
                 path, entry, topic=topic, body_lines=body_lines,
-                proj=proj, chat=chat,
+                proj=proj, chat=chat, keep_details=keep_details,
             )
 
     def _update_session(
@@ -120,47 +122,45 @@ class MemoryWriter:
         body_lines: list[str] | None,
         proj: str | None = None,
         chat: str | None = None,
+        keep_details: bool = False,
     ) -> None:
         if not path.is_file():
             raise ArchiveError(f"memory file missing: {path}")
+        if topic is not None and not topic.strip():
+            raise ArchiveError("topic must not be blank")
         if topic is None and body_lines is None and proj is None and chat is None:
             return
-        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+        lines = _read_lines(path)
         out: list[str] = []
-        index = 0
+        pos = 0
         found = False
-        seen: dict[str, int] = {}
-        while index < len(lines):
-            meta = parse_heading(lines[index])
-            if meta is None:
-                out.append(lines[index])
-                index += 1
+        for meta, resolved, start, end in iter_session_blocks(lines, str(path)):
+            out.extend(lines[pos:start])
+            pos = end
+            if resolved != entry_id:
+                out.extend(lines[start:end])
                 continue
-            seen[meta.title] = seen.get(meta.title, 0) + 1
-            end = index + 1
-            while end < len(lines) and parse_heading(lines[end]) is None:
-                end += 1
-            resolved = resolve_entry_id(meta, str(path), seen[meta.title])
-            if resolved == entry_id:
-                found = True
-                new_meta = replace(
-                    meta,
-                    title=topic if topic is not None else meta.title,
-                    entry_id=meta.entry_id or resolved,
-                    proj=meta.proj if proj is None else proj,
-                    chat=meta.chat if chat is None else chat,
+            found = True
+            new_meta = replace(
+                meta,
+                title=topic if topic is not None else meta.title,
+                entry_id=meta.entry_id or resolved,
+                proj=meta.proj if proj is None else proj,
+                chat=meta.chat if chat is None else chat,
+            )
+            out.append(render_heading(new_meta))
+            if body_lines is not None:
+                merged = list(body_lines)
+                if keep_details:
+                    # Replace the old summary (first body line), keep the rest.
+                    merged.extend(lines[start + 1 : end][1:])
+                out.extend(
+                    line if line.endswith("\n") else f"{line}\n" for line in merged
                 )
-                out.append(render_heading(new_meta))
-                if body_lines is not None:
-                    out.extend(
-                        line if line.endswith("\n") else f"{line}\n" for line in body_lines
-                    )
-                else:
-                    out.extend(lines[index + 1 : end])
-                index = end
-                continue
-            out.extend(lines[index:end])
-            index = end
+            else:
+                out.extend(lines[start + 1 : end])
+            break  # duplicate ids: first match wins, the rest stay verbatim
+        out.extend(lines[pos:])
         if not found:
             raise ArchiveError(f"session not found: {entry_id}")
         _atomic_write(path, "".join(out))
@@ -171,6 +171,8 @@ class MemoryWriter:
         importance: int | None = None,
         now: datetime | None = None,
     ) -> str:
+        if importance is not None and importance not in TTL_DAYS:
+            raise ArchiveError(f"importance must be 1..5, got {importance}")
         path, entry = self.locate(session_id)
 
         def touch(meta: HeadingMeta) -> HeadingMeta:
@@ -186,33 +188,20 @@ class MemoryWriter:
         path, entry = self.locate(session_id)
         if not path.is_file():
             raise ArchiveError(f"session not found: {session_id}")
-        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-        captured: list[str] = []
-        taking = False
-        seen: dict[str, int] = {}
-        for line in lines:
-            meta = parse_heading(line)
-            if meta is not None:
-                if taking:
-                    break
-                seen[meta.title] = seen.get(meta.title, 0) + 1
-                if resolve_entry_id(meta, str(path), seen[meta.title]) == entry:
-                    if not is_visible(meta.expires_at, now):
-                        raise ArchiveError(f"session not found: {session_id}")
-                    taking = True
-                    captured.append(line)
+        lines = _read_lines(path)
+        for _meta, resolved, start, end in iter_session_blocks(lines, str(path)):
+            if resolved != entry:
                 continue
-            if taking:
-                captured.append(line)
-        if not captured:
-            raise ArchiveError(f"session not found: {session_id}")
-        return "".join(captured)
+            if not is_visible(_meta.expires_at, now):
+                raise ArchiveError(f"session not found: {session_id}")
+            return "".join(lines[start:end])
+        raise ArchiveError(f"session not found: {session_id}")
 
     def purge_expired(self, now: datetime) -> None:
         memory_dir = self.thyca_dir / "memory"
         dailies = sorted(memory_dir.glob("????-??-??.md")) if memory_dir.is_dir() else []
         for path in dailies:
-            if not path.is_file():
+            if not path.is_file() or path.is_symlink():
                 continue
             with self.lock_for(path):
                 self._purge(path, now)
@@ -220,57 +209,44 @@ class MemoryWriter:
     def _remove_session(self, path: Path, entry_id: str) -> None:
         if not path.is_file():
             raise ArchiveError(f"memory file missing: {path}")
-        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+        lines = _read_lines(path)
         out: list[str] = []
-        index = 0
+        pos = 0
         found = False
-        seen: dict[str, int] = {}
-        while index < len(lines):
-            meta = parse_heading(lines[index])
-            if meta is None:
-                out.append(lines[index])
-                index += 1
-                continue
-            seen[meta.title] = seen.get(meta.title, 0) + 1
-            end = index + 1
-            while end < len(lines) and parse_heading(lines[end]) is None:
-                end += 1
-            if resolve_entry_id(meta, str(path), seen[meta.title]) == entry_id:
+        for _meta, resolved, start, end in iter_session_blocks(lines, str(path)):
+            out.extend(lines[pos:start])
+            pos = end
+            if resolved == entry_id and not found:
                 found = True
-                index = end
-                continue
-            out.extend(lines[index:end])
-            index = end
+                continue  # duplicate ids: first match wins, the rest stay
+            out.extend(lines[start:end])
+        out.extend(lines[pos:])
         if not found:
             raise ArchiveError(f"session not found: {entry_id}")
         _atomic_write(path, "".join(out))
 
     def _purge(self, path: Path, now: datetime) -> None:
-        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+        lines = _read_lines(path)
         out: list[str] = []
-        index = 0
-        while index < len(lines):
-            meta = parse_heading(lines[index])
-            if meta is None:
-                out.append(lines[index])
-                index += 1
-                continue
-            end = index + 1
-            while end < len(lines) and parse_heading(lines[end]) is None:
-                end += 1
+        pos = 0
+        for meta, _resolved, start, end in iter_session_blocks(lines, str(path)):
+            out.extend(lines[pos:start])
+            pos = end
             if is_expired(meta.expires_at, now):
-                index = end
                 continue
-            out.extend(lines[index:end])
-            index = end
+            out.extend(lines[start:end])
+        out.extend(lines[pos:])
         _atomic_write(path, "".join(out))
 
 
+def _read_lines(path: Path) -> list[str]:
+    try:
+        return path.read_text(encoding="utf-8").splitlines(keepends=True)
+    except UnicodeDecodeError as exc:
+        raise ArchiveError(f"memory file is not valid UTF-8: {path}") from exc
+
+
 def _atomic_write(path: Path, text: str) -> None:
-    tmp = path.with_name(f".{path.name}.tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as stream:
-        stream.write(text)
-        stream.flush()
-        os.fsync(stream.fileno())
-    os.replace(tmp, path)
+    # The one atomic write lives in config.store (X7); this stays as the
+    # monkeypatch seam the lifecycle tests pin.
+    atomic_write_text(path, text)

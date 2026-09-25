@@ -37,7 +37,7 @@ class FakeDispatcher:
     calls: list[ToolCall] = field(default_factory=list)
     completed: list[str] = field(default_factory=list)
 
-    async def dispatch(self, call: ToolCall) -> ToolResult:
+    async def submit(self, call: ToolCall) -> ToolResult:
         self.calls.append(call)
         await asyncio.sleep(self.delays.get(call.id, 0))
         self.completed.append(call.id)
@@ -228,7 +228,8 @@ def test_one_tool_round_then_text_persists_complete_round(tmp_path: Path) -> Non
 
     messages = _load_messages(tmp_path, session.id)
     assert [message.role for message in messages] == ["user", "assistant", "tool", "assistant"]
-    assert messages[1].content is None
+    # Tool-path assistant rows normalize None to "" like terminal rows.
+    assert messages[1].content == ""
     assert messages[1].tool_calls == [call]
     assert messages[2].tool_call_id == "call-1"
     assert messages[2].content == "x"
@@ -461,4 +462,44 @@ def test_persist_user_false_does_not_append_user(tmp_path: Path) -> None:
     ]
     assert [message.content for message in llm.requests[0] if message.role == "user"] == [
         "hello"
+    ]
+
+
+def test_over_cap_turn_sends_compacted_history(tmp_path: Path) -> None:
+    from thyca.config import LimitsCfg
+
+    manager = SessionManager(tmp_path, limits=LimitsCfg(contextTokens=1000))
+    session = manager.create()
+    for i in range(10):
+        manager.append(Message(role="user", content=f"old-{i}-" + "x" * 500))
+        manager.append(Message(role="assistant", content=f"reply-{i}-" + "y" * 500))
+    llm = FakeLLM([ChatReply(content="ok")])
+
+    assert asyncio.run(_loop(manager, llm, FakeDispatcher({})).run("new question")) == "ok"
+
+    request = llm.requests[0]
+    assert request[-1] == Message(role="user", content="new question")
+    assert all("old-0-" not in (message.content or "") for message in request)
+    assert len(request) < 21
+    stored = _load_messages(tmp_path, session.id)
+    assert stored[0].role == "system" and "compaction" in (stored[0].content or "")
+
+
+# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
+def test_x23_single_delta_callback_routes_by_class() -> None:
+    from thyca.agent.loop import _delta_callback
+    from thyca.agent.reply import ContentDelta
+    from thyca.agent.thinking import ThinkingDelta
+
+    assert _delta_callback(None, 1, ContentDelta) is None
+    seen: list = []
+    on_r = _delta_callback(seen.append, 2, ThinkingDelta)
+    on_c = _delta_callback(seen.append, 3, ContentDelta)
+    assert on_r is not None and on_c is not None
+    on_r("")
+    on_r("t")
+    on_c("c")
+    assert [item.to_dict() for item in seen] == [
+        {"type": "llm.thinking", "round": 2, "delta": "t"},
+        {"type": "llm.content", "round": 3, "delta": "c"},
     ]

@@ -1,4 +1,5 @@
 import { getJson } from "../../shared/js/http.js";
+import { messageOf } from "../../shared/js/status.js";
 import {
   addModel,
   addProvider,
@@ -21,7 +22,7 @@ import {
   setStatus,
   syncProviderUi,
 } from "./provider-dom.js";
-import { clone, messageOf, presetFor, state } from "./provider-state.js";
+import { clone, presetFor, state } from "./provider-state.js";
 
 function bind() {
   el.providerId.addEventListener("change", () => {

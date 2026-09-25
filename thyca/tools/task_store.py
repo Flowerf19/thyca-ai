@@ -1,6 +1,6 @@
-"""Store for tool calls that outlived the registry's soft timeout.
+"""Store for tool calls that outlived the gateway's soft window.
 
-A handler still running when ``ToolRegistry``'s soft window expires keeps
+A handler still running when ``ToolGateway``'s soft timeout expires keeps
 executing as a tracked task; the model polls its final result with the
 ``tool_read`` tool. One store per app (daemon or one CLI run); handlers run
 on the app's own event loop, so no thread locking is needed.
@@ -11,15 +11,21 @@ import asyncio
 import itertools
 
 from thyca.core.protocol import ToolResult
-from thyca.tools.registry import ToolSpec
+from thyca.tools.gateway.execution import (
+    RETAINED_MAX_BYTES,
+    await_done,
+    head_bytes,
+    render_page,
+    unknown_id,
+)
 
-_READ_WAIT_MAX_S = 60
+_KILL_WAIT_S = 5.0
 
 
 class _TrackedTask:
     """One escalated tool call and its settled outcome."""
 
-    __slots__ = ("content", "done", "exposed", "id", "is_error", "task")
+    __slots__ = ("content", "done", "exposed", "id", "is_error", "overflow", "task")
 
     def __init__(self, tid: str, task: asyncio.Task) -> None:
         self.id = tid
@@ -27,21 +33,26 @@ class _TrackedTask:
         self.done = asyncio.Event()
         self.content: str | None = None
         self.is_error = True
+        # Bytes past retention that were never kept (readers see the gap).
+        self.overflow = 0
         # True once the synthetic "still running" answer exposed the id to
         # the model; never-exposed entries are dropped when they settle.
         self.exposed = False
 
 
 class TaskStore:
-    """Registry of escalated tool tasks, keyed by ``task<N>`` ids."""
+    """Registry of escalated tool tasks, keyed by gateway exec ids
+    (``task<N>`` fallback when tracking outside the gateway)."""
 
     def __init__(self) -> None:
         self._tasks: dict[str, _TrackedTask] = {}
         self._counter = itertools.count(1)
 
-    def track(self, task: asyncio.Task) -> _TrackedTask:
+    def track(self, task: asyncio.Task, *, id: str | None = None) -> _TrackedTask:
         """Start tracking a running handler task; returns its entry."""
-        tid = f"task{next(self._counter)}"
+        tid = id if id is not None else f"task{next(self._counter)}"
+        if tid in self._tasks:
+            raise ValueError(f"task already tracked: {tid}")
         entry = _TrackedTask(tid, task)
         self._tasks[tid] = entry
         task.add_done_callback(lambda t, entry=entry: self._settle(entry, t))
@@ -59,34 +70,40 @@ class TaskStore:
         # Retrieving result/exception here also marks them as retrieved,
         # avoiding "Task exception was never retrieved" warnings.
         if task.cancelled():
-            entry.content, entry.is_error = "task was cancelled", True
+            text, entry.is_error = "task was cancelled", True
         elif (exc := task.exception()) is not None:
-            entry.content, entry.is_error = str(exc), True
+            text, entry.is_error = str(exc), True
         else:
             raw = task.result()
             if isinstance(raw, ToolResult):
-                entry.content, entry.is_error = raw.content, raw.is_error
+                text, entry.is_error = raw.content, raw.is_error
             elif isinstance(raw, str):
-                entry.content, entry.is_error = raw, False
+                text, entry.is_error = raw, False
             else:
-                entry.content = "handler must return str or ToolResult"
+                text = "handler must return str or ToolResult"
                 entry.is_error = True
+        kept = head_bytes(text.encode("utf-8"), RETAINED_MAX_BYTES)
+        entry.content = kept.decode("utf-8")
+        entry.overflow = len(text.encode("utf-8")) - len(kept)
         entry.done.set()
         if not entry.exposed:
             # Cancelled mid-call: the id never reached the model, so nothing
             # can ever poll it — do not let the entry linger in the store.
             self._tasks.pop(entry.id, None)
 
-    async def read(self, tid: str, wait_s: int) -> ToolResult:
+    async def read(
+        self,
+        tid: str,
+        wait_s: int,
+        *,
+        offset: int | None = None,
+        limit: int | None = None,
+    ) -> ToolResult:
         entry = self._tasks.get(tid)
         if entry is None:
-            known = ", ".join(self.known_ids()) or "none"
-            raise ValueError(f"unknown task id: {tid} (known: {known})")
+            raise unknown_id("task", tid, self.known_ids())
         if wait_s > 0 and not entry.done.is_set():
-            try:
-                await asyncio.wait_for(entry.done.wait(), timeout=wait_s)
-            except TimeoutError:
-                pass
+            await await_done(entry.done, wait_s)
         if not entry.done.is_set():
             return ToolResult(
                 tool_call_id=tid,
@@ -94,50 +111,20 @@ class TaskStore:
                 content=f"status: running\n{tid} is still executing",
                 is_error=False,
             )
+        text = entry.content or ""
+        more = f'read more: tool_read id="{tid}"'
+        content = render_page(text, offset, limit, more=more, unstored=entry.overflow)
         return ToolResult(
             tool_call_id=tid,
             name="tool_read",
-            content=entry.content or "",
+            content=content,
             is_error=entry.is_error,
         )
 
-
-def tool_read_spec(store: TaskStore | None) -> ToolSpec:
-    async def handler(args: dict) -> ToolResult:
-        if store is None:
-            raise ValueError("no task store in this context")
-        tid = args.get("id")
-        if not isinstance(tid, str) or not tid.strip():
-            raise ValueError("id must be a non-empty string")
-        raw_wait = args.get("wait")
-        if raw_wait is None:
-            wait_s = 0
-        elif isinstance(raw_wait, bool) or not isinstance(raw_wait, int) or raw_wait < 0:
-            raise ValueError("wait must be a non-negative integer")
-        else:
-            wait_s = min(raw_wait, _READ_WAIT_MAX_S)
-        return await store.read(tid, wait_s)
-
-    return ToolSpec(
-        name="tool_read",
-        description=(
-            "Read the result of a tool call that moved to background after the "
-            "60-second soft timeout (the tool returned 'still running: task<N>'). "
-            "The task keeps running even if its turn is cancelled. wait: seconds "
-            "to wait for completion before replying (0..60, default 0)."
-        ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "id": {"type": "string"},
-                "wait": {"type": "integer"},
-            },
-            "required": ["id"],
-            "additionalProperties": False,
-        },
-        handler=handler,
-        parallel_safe=True,
-        # Reading a result is bounded by wait<=60s and must never be wrapped
-        # itself (recursive tracking would give every read a fresh task id).
-        escalates=True,
-    )
+    async def kill(self, tid: str) -> None:
+        """Cancel one tracked task and await its settle (kill grace, then give up)."""
+        entry = self._tasks.get(tid)
+        if entry is None:
+            raise unknown_id("task", tid, self.known_ids())
+        entry.task.cancel()
+        await await_done(entry.done, _KILL_WAIT_S)

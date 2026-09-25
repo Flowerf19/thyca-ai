@@ -3,13 +3,15 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from rapidfuzz import fuzz
 
 from thyca.memory.chunk import Chunk
-from thyca.memory.usage import LeafUsage
+from thyca.memory.heading import VISIBLE_SQL, format_ts
+from thyca.memory.usage import LeafUsage, guarded
 
 SCHEMA_VERSION = "6"
 # Bump when Chunker.normalize changes so stale text_norm rows rebuild.
@@ -56,10 +58,13 @@ class ArchiveStore:
 
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
+        self._lock = threading.RLock()
+        self._error_cls = ArchiveError
         self._db = self._connect(db_path)
         self._init_schema()
-        self.usage = LeafUsage(self._db)
+        self.usage = LeafUsage(self._db, lock=self._lock, error_cls=ArchiveError)
 
+    @guarded
     def close(self) -> None:
         self._db.close()
 
@@ -71,6 +76,7 @@ class ArchiveStore:
         db.execute("PRAGMA foreign_keys = ON")
         return db
 
+    @guarded
     def _init_schema(self) -> None:
         self._db.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
         row = self._db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
@@ -149,6 +155,7 @@ class ArchiveStore:
         )
         self._db.commit()
 
+    @guarded
     def replace_source(self, path: str, kind: str, day: str | None, mtime_ns: int, size: int, chunks: list[Chunk]) -> None:
         self._db.execute("BEGIN IMMEDIATE")
         try:
@@ -190,15 +197,24 @@ class ArchiveStore:
             self._db.rollback()
             raise
 
+    @guarded
     def drop_source(self, path: str) -> None:
         ids = [
             str(row["chunk_id"])
             for row in self._db.execute("SELECT chunk_id FROM chunks WHERE path = ?", (path,))
         ]
-        self._db.execute("DELETE FROM source_files WHERE path = ?", (path,))
-        self._db.commit()
-        self.usage.drop_ids(ids)
+        # One transaction: the cascade delete and the usage deletes commit
+        # together, so a crash between them cannot orphan usage rows.
+        self._db.execute("BEGIN IMMEDIATE")
+        try:
+            self._db.execute("DELETE FROM source_files WHERE path = ?", (path,))
+            self.usage._delete_ids(ids)
+            self._db.commit()
+        except Exception:
+            self._db.rollback()
+            raise
 
+    @guarded
     def source_stat(self, path: str) -> tuple[int, int] | None:
         row = self._db.execute(
             "SELECT mtime_ns, size_bytes FROM source_files WHERE path = ?",
@@ -208,6 +224,7 @@ class ArchiveStore:
             return None
         return int(row["mtime_ns"]), int(row["size_bytes"])
 
+    @guarded
     def fts_search(
         self,
         query: str,
@@ -221,14 +238,13 @@ class ArchiveStore:
         match = _safe_match(query)
         if match is None:
             return []
-        sql = """
+        sql = f"""
             SELECT c.*, snippet(chunks_fts, 0, '⟨', '⟩', '…', 6) AS snippet,
                    bm25(chunks_fts) AS bm25
             FROM chunks_fts
             JOIN chunks c ON c.row_id = chunks_fts.rowid
             WHERE chunks_fts MATCH ?
-              AND c.forgotten_at IS NULL
-              AND (c.expires_at IS NULL OR c.expires_at > ?)
+              AND {VISIBLE_SQL}
         """
         params: list[object] = [match, now]
         if timeline_day is not None:
@@ -241,10 +257,11 @@ class ArchiveStore:
             sql += " AND c.chat_session = ?"
             params.append(chat_session)
         sql += " ORDER BY bm25 ASC, c.chunk_id ASC LIMIT ?"
-        params.append(min(limit, CANDIDATE_CAP))
+        params.append(max(0, min(limit, CANDIDATE_CAP)))
         rows = self._db.execute(sql, params).fetchall()
         return [hit_from_row(row, "fts", bm25=row["bm25"], snippet=row["snippet"]) for row in rows]
 
+    @guarded
     def trigram_search(
         self,
         query_norm: str,
@@ -256,9 +273,8 @@ class ArchiveStore:
         chat_session: str | None = None,
     ) -> list[Hit]:
         tokens = [t for t in _NON_ALNUM.split(query_norm) if len(t) >= 3]
-        sql = """SELECT * FROM chunks
-                  WHERE forgotten_at IS NULL
-                    AND (expires_at IS NULL OR expires_at > ?)"""
+        sql = f"""SELECT * FROM chunks
+                  WHERE {VISIBLE_SQL}"""
         params: list[object] = [now]
         if timeline_day is not None:
             sql += " AND timeline_day = ?"
@@ -280,47 +296,52 @@ class ArchiveStore:
         scored.sort(key=lambda item: (-item[0], item[1]["chunk_id"]))
         return [
             hit_from_row(row, "trigram", score=score, snippet=row["text_raw"][:250])
-            for score, row in scored[: min(limit, CANDIDATE_CAP)]
+            for score, row in scored[: max(0, min(limit, CANDIDATE_CAP))]
         ]
 
+    @guarded
     def get_chunk(self, chunk_id: str, now: str) -> sqlite3.Row | None:
         return self._db.execute(
-            """SELECT * FROM chunks WHERE chunk_id = ?
-               AND forgotten_at IS NULL
-               AND (expires_at IS NULL OR expires_at > ?)""",
+            f"""SELECT * FROM chunks WHERE chunk_id = ?
+               AND {VISIBLE_SQL}""",
             (chunk_id, now),
         ).fetchone()
 
+    @guarded
     def get_session(self, session_id: str, now: str) -> list[sqlite3.Row]:
         return list(
             self._db.execute(
-                """SELECT * FROM chunks WHERE session_id = ?
-                   AND forgotten_at IS NULL
-                   AND (expires_at IS NULL OR expires_at > ?)
+                f"""SELECT * FROM chunks WHERE session_id = ?
+                   AND {VISIBLE_SQL}
                    ORDER BY leaf_ord ASC""",
                 (session_id, now),
             )
         )
 
+    @guarded
     def recent_rows(self, limit: int, now: str) -> list[sqlite3.Row]:
+        # Daily recency only: canonical profile leaves live in stats, not in
+        # the "recently updated notes" feed.
         return list(
             self._db.execute(
-                """SELECT c.* FROM chunks c
+                f"""SELECT c.* FROM chunks c
                    JOIN source_files s ON s.path = c.path
-                   WHERE c.forgotten_at IS NULL
-                     AND (c.expires_at IS NULL OR c.expires_at > ?)
+                   WHERE {VISIBLE_SQL} AND c.source_kind = 'daily'
                    ORDER BY s.mtime_ns DESC, c.leaf_ord ASC
                    LIMIT ?""",
-                (now, limit),
+                (now, max(0, limit)),
             )
         )
 
+    @guarded
     def list_paths(self) -> list[str]:
         return [row["path"] for row in self._db.execute("SELECT path FROM source_files")]
 
+    @guarded
     def chunk_ids(self) -> list[str]:
         return [row["chunk_id"] for row in self._db.execute("SELECT chunk_id FROM chunks")]
 
+    @guarded
     def rank_hays(self, chunk_ids: list[str]) -> dict[str, str]:
         """heading + text_norm for in-order ranking. Empty dict if no ids."""
         if not chunk_ids:
@@ -334,21 +355,24 @@ class ArchiveStore:
             row["chunk_id"]: f"{row['heading_raw']} {row['text_norm']}" for row in rows
         }
 
+    @guarded
     def visible_chunk_maps(self, now: str) -> list[dict[str, object]]:
         rows = self._db.execute(
-            """SELECT chunk_id, session_id, heading_raw, text_raw, source_kind,
+            f"""SELECT chunk_id, session_id, heading_raw, text_raw, source_kind,
                       timeline_day, expires_at
                FROM chunks
-               WHERE forgotten_at IS NULL
-                 AND (expires_at IS NULL OR expires_at > ?)""",
+               WHERE {VISIBLE_SQL}""",
             (now,),
         )
         return [dict(row) for row in rows]
 
-    def session_leaf_count(self, session_id: str) -> int:
+    @guarded
+    def session_leaf_count(self, session_id: str, now: str | None = None) -> int:
+        now_ts = now if now is not None else format_ts(None)
         row = self._db.execute(
-            "SELECT COUNT(*) AS n FROM chunks WHERE session_id = ?",
-            (session_id,),
+            f"""SELECT COUNT(*) AS n FROM chunks WHERE session_id = ?
+               AND {VISIBLE_SQL}""",
+            (session_id, now_ts),
         ).fetchone()
         return int(row["n"]) if row else 0
 

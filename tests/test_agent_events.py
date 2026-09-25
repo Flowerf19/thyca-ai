@@ -72,16 +72,16 @@ def test_bool_as_int_rejected() -> None:
         TurnEvent(type="llm.finished", round=1, tool_count=False)
 
 
-def test_invalid_name_becomes_public_tool() -> None:
+def test_invalid_name_is_sanitized_not_collapsed() -> None:
     path_like = TurnEvent(
         type="tool.started", round=1, call_id="call-1", name="/usr/bin/bash"
     )
-    assert path_like.name == "tool"
+    assert path_like.name == "_usr_bin_bash"
     oversized = TurnEvent(
         type="tool.started", round=1, call_id="call-1", name="a" * 65
     )
-    assert oversized.name == "tool"
-    assert oversized.to_dict()["name"] == "tool"
+    assert oversized.name == "a" * 64
+    assert oversized.to_dict()["name"] == "a" * 64
 
 
 def test_valid_mcp_name_kept() -> None:
@@ -131,14 +131,14 @@ def test_skill_event_rejects_extra_fields() -> None:
         )
 
 
-def test_bad_call_id_becomes_public_call() -> None:
+def test_bad_call_id_is_sanitized_not_collapsed() -> None:
     empty = TurnEvent(type="tool.started", round=1, call_id="", name="bash")
     assert empty.call_id == "call"
     path_like = TurnEvent(
         type="tool.started", round=1, call_id="../secret", name="bash"
     )
-    assert path_like.call_id == "call"
-    assert path_like.to_dict()["call_id"] == "call"
+    assert path_like.call_id == "___secret"
+    assert path_like.to_dict()["call_id"] == "___secret"
 
 
 def test_emit_event_none_is_noop() -> None:
@@ -197,3 +197,24 @@ def test_thinking_delta_rejects_empty() -> None:
     with pytest.raises(ValueError, match="round"):
         ThinkingDelta(round=0, delta="x")
 
+
+
+# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
+import pytest
+
+def test_x23_deltas_share_base() -> None:
+    from thyca.agent.delta import _Delta
+    from thyca.agent.reply import ContentDelta
+    from thyca.agent.thinking import ThinkingDelta
+
+    assert issubclass(ContentDelta, _Delta)
+    assert issubclass(ThinkingDelta, _Delta)
+    assert ContentDelta(round=1, delta="x").to_dict() == {
+        "type": "llm.content",
+        "round": 1,
+        "delta": "x",
+    }
+    assert ThinkingDelta(round=1, delta="x").to_dict()["type"] == "llm.thinking"
+    assert ContentDelta(round=1, delta="x") != ThinkingDelta(round=1, delta="x")
+    with pytest.raises(ValueError):
+        ContentDelta(round=0, delta="x")

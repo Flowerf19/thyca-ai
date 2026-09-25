@@ -14,7 +14,40 @@ from .pricing import PricingCfg
 from .providers import ProviderCfg, ProviderEntry
 from .root import Config
 from .timeline import TimelineCfg
-from .validation import _integer, _number, _text
+from .validation import _integer, _number, _optional_int, _text
+
+
+# Known-key sets, shared by _fields parsing and _unknown_keys collection so
+# the warn list cannot drift from what parsing accepts.
+_TOP_LEVEL_KEYS = (
+    "providers",
+    "provider",
+    "defaultProvider",
+    "defaultModel",
+    "mcpServers",
+    "timeline",
+    "limits",
+    "models",
+    "pricing",
+)
+_PROVIDER_ENTRY_KEYS = ("baseUrl", "apiKeyEnv", "reasoningEffort", "apiKey", "api")
+_LEGACY_PROVIDER_KEYS = _PROVIDER_ENTRY_KEYS + ("model",)
+_TIMELINE_KEYS = ("timezone",)
+_LIMITS_KEYS = ("loopMax", "hotTailKB", "contextTokens", "softTimeoutS")
+_MODEL_KEYS = (
+    "provider",
+    "baseUrl",
+    "input",
+    "cache",
+    "output",
+    "reasoningEffort",
+    "reasoningEfforts",
+    "loopMax",
+    "hotTailKB",
+    "contextTokens",
+)
+_MCP_SERVER_KEYS = ("command", "args", "env")
+_PRICING_KEYS = ("input", "cache", "cached_input", "output")
 
 
 def _fields(
@@ -25,6 +58,38 @@ def _fields(
     if not isinstance(raw, dict):
         raise ConfigError(f"{name} must be an object, got {type(raw).__name__}")
     return {key: raw[key] for key in names if key in raw}
+
+
+def _unknown_in(mapping: Any, known: tuple[str, ...], prefix: str) -> list[str]:
+    """Dotted paths (``prefix.key``) for keys parsing would ignore."""
+    if not isinstance(mapping, dict):
+        return []
+    return [f"{prefix}.{key}" for key in mapping if key not in known]
+
+
+def _unknown_keys(raw: dict[str, Any]) -> list[str]:
+    """Every unknown key in a raw config, dotted and sorted.
+
+    Pure collection for the load-time warning; parsing itself keeps ignoring
+    them (newer-config-on-older-binary must not break). Runs after a
+    successful parse, so shapes below are already validated.
+    """
+    found = [key for key in raw if key not in _TOP_LEVEL_KEYS]
+    providers = raw.get("providers")
+    if isinstance(providers, dict):
+        for name, value in providers.items():
+            found += _unknown_in(value, _PROVIDER_ENTRY_KEYS, f"providers.{name}")
+    else:
+        found += _unknown_in(raw.get("provider"), _LEGACY_PROVIDER_KEYS, "provider")
+    for name, value in (raw.get("models") or {}).items():
+        found += _unknown_in(value, _MODEL_KEYS, f"models.{name}")
+    for name, value in (raw.get("mcpServers") or {}).items():
+        found += _unknown_in(value, _MCP_SERVER_KEYS, f"mcpServers.{name}")
+    for name, value in (raw.get("pricing") or {}).items():
+        found += _unknown_in(value, _PRICING_KEYS, f"pricing.{name}")
+    found += _unknown_in(raw.get("timeline"), _TIMELINE_KEYS, "timeline")
+    found += _unknown_in(raw.get("limits"), _LIMITS_KEYS, "limits")
+    return sorted(found)
 
 
 def _parse_mcp_servers(raw: Any) -> dict[str, McpServerCfg]:
@@ -100,13 +165,17 @@ def _parse_models(raw: Any) -> dict[str, ModelCfg]:
             raise ConfigError("models keys must be non-empty strings")
         if not isinstance(value, dict):
             raise ConfigError(f"models[{name!r}] must be an object")
+        # Falsy-but-present provider/reasoningEffort (0, False) must fail
+        # type validation, not silently become "": only missing/None default.
+        provider = value.get("provider")
+        effort = value.get("reasoningEffort")
         result[name] = ModelCfg(
-            provider=value.get("provider") or "",
+            provider="" if provider is None else provider,
             baseUrl=value.get("baseUrl", ""),
             input=_number(value.get("input", 0), f"models[{name!r}].input"),
             cache=_number(value.get("cache", 0), f"models[{name!r}].cache"),
             output=_number(value.get("output", 0), f"models[{name!r}].output"),
-            reasoningEffort=value.get("reasoningEffort") or "",
+            reasoningEffort="" if effort is None else effort,
             reasoningEfforts=_parse_efforts(value.get("reasoningEfforts"), f"models[{name!r}].reasoningEfforts"),
             loopMax=_optional_int(value.get("loopMax"), f"models[{name!r}].loopMax"),
             hotTailKB=_optional_int(value.get("hotTailKB"), f"models[{name!r}].hotTailKB"),
@@ -129,15 +198,6 @@ def _parse_efforts(raw: Any, name: str) -> tuple[str, ...]:
     return tuple(raw)
 
 
-def _optional_int(value: object, name: str) -> int | None:
-    if value is None or value == "":
-        return None
-    if isinstance(value, float) and value.is_integer():
-        value = int(value)
-    _integer(value, name)
-    return int(value)
-
-
 def _parse_providers(raw: Any) -> dict[str, ProviderEntry]:
     if not isinstance(raw, dict):
         raise ConfigError(f"providers must be an object, got {type(raw).__name__}")
@@ -156,7 +216,7 @@ def _parse_providers(raw: Any) -> dict[str, ProviderEntry]:
                 **_fields(
                     value,
                     f"providers[{name!r}]",
-                    ("baseUrl", "apiKeyEnv", "reasoningEffort", "apiKey", "api"),
+                    _PROVIDER_ENTRY_KEYS,
                 )
             )
         except ConfigError as exc:
@@ -185,7 +245,7 @@ def _parse_provider_block(raw: dict[str, Any]) -> tuple[dict[str, ProviderEntry]
         **_fields(
             raw.get("provider", {}),
             "provider",
-            ("baseUrl", "apiKeyEnv", "model", "reasoningEffort", "apiKey", "api"),
+            _LEGACY_PROVIDER_KEYS,
         )
     )
     return (
@@ -233,7 +293,7 @@ def _parse_dict(raw: dict[str, Any]) -> Config:
             **_fields(
                 raw.get("timeline"),
                 "timeline",
-                ("timezone",),
+                _TIMELINE_KEYS,
                 null_means_default=True,
             )
         ),
@@ -241,7 +301,7 @@ def _parse_dict(raw: dict[str, Any]) -> Config:
             **_fields(
                 raw.get("limits"),
                 "limits",
-                ("loopMax", "hotTailKB", "contextTokens"),
+                _LIMITS_KEYS,
                 null_means_default=True,
             )
         ),

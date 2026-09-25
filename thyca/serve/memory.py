@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from thyca.memory.archived import ArchiveError
-from thyca.tools.memory import MemoryFacade
+from thyca.memory.facade import MemoryFacade
 
 
 def memory_endpoint(facade: MemoryFacade, kind: str, payload: dict) -> tuple[int, dict]:
@@ -34,23 +34,22 @@ def memory_endpoint(facade: MemoryFacade, kind: str, payload: dict) -> tuple[int
             return 200, {"ok": True}
         if kind == "reinforce":
             importance = payload.get("importance")
-            expires = facade.reinforce(
-                sid, importance=int(importance) if importance is not None else None
-            )
+            try:
+                importance_value = int(importance) if importance is not None else None
+            except (TypeError, ValueError):
+                return 400, {"error": "invalid importance"}
+            expires = facade.reinforce(sid, importance_value)
             return 200, {"ok": True, "expires_at": expires}
-        # kind == "update"
+        # kind == "update": pass through; MemoryFacade.update owns validation.
         topic = payload.get("topic")
         summary = payload.get("summary")
         content = payload.get("content")
-        if not isinstance(topic, str) and not isinstance(summary, str):
+        if topic is None and summary is None:
             return 400, {"error": "nothing to update"}
-        facade.update(
-            sid,
-            topic=topic.strip() if isinstance(topic, str) and topic.strip() else None,
-            summary=summary.strip() if isinstance(summary, str) else None,
-            content=content if isinstance(content, str) else None,
-        )
+        facade.update(sid, topic=topic, summary=summary, content=content)
         return 200, {"ok": True}
+    except ValueError as exc:
+        return 400, {"error": str(exc)}
     except ArchiveError:
         return 404, {"error": "session not found"}
     except Exception:

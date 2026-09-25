@@ -1,5 +1,6 @@
 import { getJson, postJson } from "../../shared/js/http.js";
 import { decodeHash } from "../../shared/js/format.js";
+import { makeSetStatus, messageOf } from "../../shared/js/status.js";
 import { formatMarkdown } from "../../shared/js/markdown.js";
 import { selectCanonical } from "../../shared/js/memory-data.js";
 
@@ -18,7 +19,9 @@ const el = {
   cancel: document.querySelector("#cancel-canonical"),
 };
 
-const compact = matchMedia("(max-width: 56rem)");
+const compact = typeof matchMedia === "function"
+  ? matchMedia("(max-width: 56rem)")
+  : { matches: false, addEventListener: () => {} };
 const state = {
   files: [],
   active: "",
@@ -27,19 +30,8 @@ const state = {
   chosen: false,
 };
 
-function messageOf(error, fallback) {
-  return error instanceof Error && error.message ? error.message : fallback;
-}
-
-function setStatus(message = "", kind = "") {
-  el.status.textContent = message;
-  el.status.className = `screen-status profile-status${kind ? ` is-${kind}` : ""}`;
-}
-
-function setDialogStatus(message = "", kind = "") {
-  el.dialogStatus.textContent = message;
-  el.dialogStatus.className = `screen-status${kind ? ` is-${kind}` : ""}`;
-}
+const setStatus = makeSetStatus(el.status, "screen-status profile-status");
+const setDialogStatus = makeSetStatus(el.dialogStatus);
 
 function syncPicking() {
   const picking = compact.matches && !state.chosen;
@@ -119,7 +111,9 @@ function show(name, { focus = false } = {}) {
     requestAnimationFrame(() => { surface.scrollTop = 0; });
   }
   const hash = `#${file.name}`;
-  if (location.hash !== hash) history.replaceState(null, "", hash);
+  // A bare hash already keeps the query; spell it out so a future edit
+  // cannot silently drop ?params on file switch.
+  if (location.hash !== hash) history.replaceState(null, "", `${location.pathname}${location.search}${hash}`);
   if (focus) activeNavButton()?.focus();
 }
 
@@ -212,5 +206,8 @@ function bind() {
   });
 }
 
-bind();
-void load();
+if (el.nav) {
+  // Not on profile.html (e.g. Node harness): els are null, nothing to bind.
+  bind();
+  void load();
+}

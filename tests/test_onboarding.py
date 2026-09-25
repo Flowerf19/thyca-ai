@@ -335,3 +335,44 @@ def test_provider_api_dispatches_to_wire_api() -> None:
         assert seen_resp[-1]["path"] == "/responses"
     finally:
         _stop(rhttpd, rthread)
+
+
+# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
+import pytest
+
+def test_x22_network_error_mapping_matrix() -> None:
+    import socket
+    from http.client import HTTPException
+    from urllib.error import HTTPError, URLError
+
+    from thyca.app.onboarding import ProviderProbeError, _map_network_error
+
+    def msg(exc: Exception, **kwargs) -> str:
+        mapped = _map_network_error(exc, 7.0, **kwargs)
+        assert isinstance(mapped, ProviderProbeError)
+        return str(mapped)
+
+    assert "bd" in msg(ProviderProbeError("bd"))
+    assert msg(ValueError("x")) == "baseUrl không hợp lệ"
+    http401 = HTTPError("u", 401, "x", {}, None)
+    assert msg(http401) == "API key bị từ chối (HTTP 401)"
+    http404 = HTTPError("u", 404, "x", {}, None)
+    assert msg(http404) == "provider trả HTTP 404"
+    assert msg(http404, model="m") == "model 'm' không có trên provider (HTTP 404)"
+    assert msg(HTTPError("u", 500, "x", {}, None)) == "provider trả HTTP 500"
+    assert msg(URLError(TimeoutError())) == "provider quá thời gian phản hồi (7s)"
+    assert msg(URLError(socket.timeout())) == "provider quá thời gian phản hồi (7s)"
+    assert msg(URLError("conn refused")) == "không kết nối được provider"
+    assert msg(TimeoutError()) == "provider quá thời gian phản hồi (7s)"
+    assert msg(OSError("down")) == "không kết nối được provider"
+    assert msg(HTTPException()) == "không kết nối được provider"
+    assert msg(RuntimeError("weird")) == "không kết nối được provider"
+
+
+def test_x22_scheme_check_stays_first() -> None:
+    from thyca.app.onboarding import ProviderProbeError, _request_json
+
+    with pytest.raises(ProviderProbeError, match="baseUrl phải bắt đầu"):
+        _request_json("ftp://x", "/models", "k", body=None, timeout=1.0, model="  ")
+    with pytest.raises(ProviderProbeError, match="cần model để test"):
+        _request_json("https://x", "/models", "k", body=None, timeout=1.0, model="  ")

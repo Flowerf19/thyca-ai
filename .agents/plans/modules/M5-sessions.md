@@ -102,13 +102,13 @@ Thứ tự tách file oversize: không có. File lớn nhất `store.py` (295 d�
 3. DIP: 3 import concrete xuyên module được chấp nhận giữ nguyên vì ổn định và không cycle —
    `manager.py:10` (`thyca.config`: `LimitsCfg`, `DEFAULT_TIMELINE_TIMEZONE`),
    `title.py:8` (`thyca.llm.llm_base`: `LLMError`, chỉ dùng trong `except` của `retitle_missing`),
-   `sessions/wire.py:16-17` (`thyca.agent.skill_event`: `skill_name_for_call`,
+   `sessions/wire.py:16-17` (`thyca.skills.skill_event`: `skill_name_for_call`,
    `thyca.config`: `Config` chỉ làm type annotation của `session_detail`).
 4. ISP/OCP: không tìm thấy evidence vi phạm trong module — public API là hàm thuần và
    exception classes nhỏ, không interface thừa, không nhánh `isinstance` đòi mở rộng.
 5. Cycle risks đã verify một chiều (grep ngày 2026-09-22 không có reverse import từ
    `thyca/sessions/` hay `session_wire.py` về `chat_app`/`bridge`/`serve`/`turn_state`/`cli`):
-   M5 phụ thuộc M1 (`agent.skill_event` qua wire), M2 (`llm_base.LLMError` qua `title.py`),
+   M5 phụ thuộc M1 (`skills.skill_event` qua wire), M2 (`llm_base.LLMError` qua `title.py`),
    M3 (`config` qua `manager.py` + wire), protocol (`Message`/`ToolCall` — thuộc M8,
    nếu M8 chuyển `protocol.py` sang `thyca/core/` thì M5 cập nhật import cơ học theo).
    Consumers của M5: M8 (`chat_app.py:27-30`, `cli.py:24`), M7 (`bridge.py:27-28`,

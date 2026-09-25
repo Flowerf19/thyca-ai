@@ -224,7 +224,7 @@ def stream_turn(
 ) -> None:
     """Pump one turn as NDJSON: headers, events, exactly one terminal item."""
     if not isinstance(text, str):
-        handler._json(400, {"error": "invalid text"})
+        handler._json(400, {"error": "invalid text: invalid"})
         return
     items: queue.Queue = queue.Queue()
     state = {"disconnected": False}

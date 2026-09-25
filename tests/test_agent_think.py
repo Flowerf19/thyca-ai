@@ -36,3 +36,87 @@ def test_think_writes_reply_on_stage() -> None:
     assert stage.llm_model == "gpt-4o-mini"
     assert isinstance(stage.llm_latency_ms, int)
     assert stage.llm_latency_ms >= 0
+
+
+def test_narrow_port_still_gets_text_deltas() -> None:
+    # NB: test/class names avoid the "on_content"/"on_reasoning" substrings:
+    # Think degrades by matching those in the TypeError text (which embeds
+    # the qualname), so a collision would mask the real kwarg.
+    seen: list[str] = []
+
+    class NarrowPort:
+        async def chat(self, messages, tools=None, on_content=None):
+            if on_content is not None:
+                on_content("live")
+            return ChatReply(content="done")
+
+    stage = Stage(messages=[Message(role="user", content="hi")], tools=None)
+    result = asyncio.run(
+        Think(NarrowPort()).think(
+            stage, on_reasoning=lambda chunk: None, on_content=seen.append
+        )
+    )
+    assert result.content == "done"
+    assert seen == ["live"]
+
+
+def test_wide_port_still_gets_thinking_deltas() -> None:
+    seen: list[str] = []
+
+    class WidePort:
+        async def chat(self, messages, tools=None, on_reasoning=None):
+            if on_reasoning is not None:
+                on_reasoning("thinking")
+            return ChatReply(content="done")
+
+    stage = Stage(messages=[Message(role="user", content="hi")], tools=None)
+    result = asyncio.run(
+        Think(WidePort()).think(
+            stage, on_reasoning=seen.append, on_content=lambda chunk: None
+        )
+    )
+    assert result.content == "done"
+    assert seen == ["thinking"]
+
+
+def test_reasoning_only_port_ignores_qualname_noise() -> None:
+    # Qualname embeds "on_reasoning" noise (class name); CPython quotes the
+    # truly rejected 'on_content'. Must retry reasoning-only.
+    seen: list[str] = []
+
+    class Port_on_reasoning:
+        async def chat(self, messages, tools=None, on_reasoning=None):
+            if on_reasoning is not None:
+                on_reasoning("thinking")
+            return ChatReply(content="done")
+
+    stage = Stage(messages=[Message(role="user", content="hi")], tools=None)
+    result = asyncio.run(
+        Think(Port_on_reasoning()).think(
+            stage, on_reasoning=seen.append, on_content=lambda chunk: None
+        )
+    )
+    assert result.content == "done"
+    assert seen == ["thinking"]
+
+
+def test_content_only_port_ignores_qualname_noise() -> None:
+    # True F12 collision: qualname embeds "on_content" noise (class name)
+    # while CPython quotes the truly rejected 'on_reasoning'. Old
+    # substring code retried reasoning-only here and lost the deltas.
+    seen: list[str] = []
+
+    class Port_on_content:
+        async def chat(self, messages, tools=None, on_content=None):
+            if on_content is not None:
+                on_content("live")
+            return ChatReply(content="done")
+
+    stage = Stage(messages=[Message(role="user", content="hi")], tools=None)
+    result = asyncio.run(
+        Think(Port_on_content()).think(
+            stage, on_reasoning=lambda chunk: None, on_content=seen.append
+        )
+    )
+    assert result.content == "done"
+    assert seen == ["live"]

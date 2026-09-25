@@ -177,3 +177,43 @@ def test_rules_point_to_seeded_skills() -> None:
 def test_packaged_templates_exist() -> None:
     assert (_PACKAGED_SKILLS / "create-skill" / "SKILL.md").is_file()
     assert (_PACKAGED_SKILLS / "create-mcp-tool" / "SKILL.md").is_file()
+
+
+# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
+from pathlib import Path
+
+def test_m1_bom_skill_is_valid(tmp_path: Path) -> None:
+    from thyca.skills import SkillStore
+
+    skill = tmp_path / "skills" / "bom-skill"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_bytes(
+        b'\xef\xbb\xbf---\nname: bom-skill\ndescription: d\n---\n'
+    )
+    metas = SkillStore(tmp_path).list_meta()
+    assert [(m.name, m.ok) for m in metas] == [("bom-skill", True)]
+
+
+def test_m1_skills_sorted_once_by_name(tmp_path: Path) -> None:
+    from thyca.skills import SkillStore
+
+    for name in ("b-skill", "a-skill"):
+        d = tmp_path / "skills" / name
+        d.mkdir(parents=True)
+        (d / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: d\n---\n", encoding="utf-8"
+        )
+    assert [m.name for m in SkillStore(tmp_path).list_meta()] == ["a-skill", "b-skill"]
+
+
+def test_default_thyca_dir_is_config_path_parent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Bare SkillStore() shares the one home default with config + compat."""
+    from thyca.config.compat import thyca_dir as compat_thyca_dir
+    from thyca.config.store import config_path
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    assert SkillStore().thyca_dir == config_path().parent == tmp_path / ".thyca"
+    with pytest.warns(DeprecationWarning):
+        assert compat_thyca_dir() == tmp_path / ".thyca"

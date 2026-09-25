@@ -9,23 +9,10 @@ import httpx
 
 from thyca.core.protocol import Message, ToolCall
 
+from ._http import cap, iter_sse_data, parse_json_bytes, redact
 from .llm_base import ChatReply, LLMError, normalize_usage
-from .openai_parse import parse_tool_calls
+from .openai_parse import parse_tool_calls, slots_to_calls
 from .streaming import ContentOut, ReasoningOut
-
-_BODY_CAP = 500
-
-
-def _redact(text: str, secret: str) -> str:
-    if secret and secret in text:
-        return text.replace(secret, "[redacted]")
-    return text
-
-
-def _cap(text: str) -> str:
-    if len(text) <= _BODY_CAP:
-        return text
-    return text[:_BODY_CAP] + "…"
 
 
 def _to_responses_tools(tools: list) -> list[dict[str, Any]]:
@@ -55,9 +42,11 @@ def _to_responses_tools(tools: list) -> list[dict[str, Any]]:
 def _message_items(message: Message) -> list[dict[str, Any]]:
     """One transcript message to zero or more ``input[]`` items."""
     if message.role == "system":
-        return [{"role": "system", "content": message.content}] if message.content else []
+        # Empty (or None) system content passes through as empty: the
+        # provider decides, mirroring the chat path which never drops.
+        return [{"role": "system", "content": message.content or ""}]
     if message.role == "user":
-        return [{"role": "user", "content": message.content}] if message.content is not None else []
+        return [{"role": "user", "content": message.content or ""}]
     if message.role == "assistant":
         items = (
             [{"role": "assistant", "content": message.content}]
@@ -73,7 +62,11 @@ def _message_items(message: Message) -> list[dict[str, Any]]:
             }
             for call in message.tool_calls or []
         ]
-    if message.role == "tool" and message.tool_call_id:
+    if message.role == "tool":
+        if not message.tool_call_id:
+            # Always a bug (a result must answer a call): fail fast instead
+            # of sending a function_call the provider sees as unanswered.
+            raise ValueError("tool message is missing tool_call_id")
         return [
             {
                 "type": "function_call_output",
@@ -95,27 +88,17 @@ def _function_slot(slots: dict[int, dict[str, str]], raw_index: object) -> dict[
     return slots.setdefault(index, {"call_id": "", "name": "", "arguments": ""})
 
 
-def _slots_to_calls(slots: dict[int, dict[str, str]]) -> list[ToolCall]:
-    if not slots:
-        return []
-    ordered = [slots[index] for index in sorted(slots)]
-    return parse_tool_calls(
-        [
-            {
-                "id": slot["call_id"],
-                "function": {"name": slot["name"], "arguments": slot["arguments"] or "{}"},
-            }
-            for slot in ordered
-        ]
-    )
-
-
 def parse_responses_payload(raw: dict, key: str) -> ChatReply:
     """Assemble a ChatReply from a non-streaming `/v1/responses` object."""
     if not isinstance(raw, dict):
         raise LLMError("provider response must be an object")
     if isinstance(raw.get("error"), dict):
-        raise LLMError(f"provider error: {_redact(_cap(json.dumps(raw['error'])), key)}")
+        raise LLMError(f"provider error: {redact(cap(json.dumps(raw['error'])), key)}")
+    status = raw.get("status")
+    # Failed means failed: a terminal bad status without an error object is
+    # still a provider error, never a silent empty turn.
+    if status in ("failed", "incomplete"):
+        raise LLMError(f"provider response {status}")
     output = raw.get("output")
     if not isinstance(output, list):
         raise LLMError("provider response missing output")
@@ -147,25 +130,18 @@ def parse_responses_payload(raw: dict, key: str) -> ChatReply:
     raw_usage = raw.get("usage")
     usage = normalize_usage(raw_usage, "openai_responses") if isinstance(raw_usage, dict) else None
     model = raw.get("model")
-    status = raw.get("status")
     return ChatReply(
-        content="".join(content_parts) or None,
+        content=redact("".join(content_parts), key) or None,
         tool_calls=parse_tool_calls(calls),
         usage=usage,
         finish_reason=status if isinstance(status, str) and status else "completed",
         model=model if isinstance(model, str) else None,
-        reasoning="".join(reasoning_parts) or None,
+        reasoning=redact("".join(reasoning_parts), key) or None,
     )
 
 
 def parse_responses_bytes(raw: bytes, key: str) -> ChatReply:
-    try:
-        payload = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise LLMError(_redact(_cap(raw.decode("utf-8", errors="replace")), key)) from exc
-    if not isinstance(payload, dict):
-        raise LLMError("provider response must be an object")
-    return parse_responses_payload(payload, key)
+    return parse_responses_payload(parse_json_bytes(raw, key), key)
 
 
 async def read_responses_sse(
@@ -177,26 +153,13 @@ async def read_responses_sse(
     content_parts: list[str] = []
     slots: dict[int, dict[str, str]] = {}
     reasoning = ReasoningOut(key, on_reasoning)
-    content_out = ContentOut(on_content)
+    content_out = ContentOut(on_content, key)
     usage: dict | None = None
     model: str | None = None
     status = ""
     completed = False
 
-    async for line in response.aiter_lines():
-        if not line or line.startswith(":"):
-            continue
-        if not line.startswith("data:"):
-            continue
-        data = line[5:].lstrip()
-        if data == "[DONE]":
-            break
-        try:
-            chunk = json.loads(data)
-        except json.JSONDecodeError as exc:
-            raise LLMError(_redact(_cap(data), key)) from exc
-        if not isinstance(chunk, dict):
-            continue
+    async for chunk in iter_sse_data(response, key):
         event = chunk.get("type")
         if event == "response.output_text.delta":
             delta = chunk.get("delta")
@@ -252,16 +215,18 @@ async def read_responses_sse(
                 error = finished.get("error")
                 if isinstance(error, dict) and error:
                     raise LLMError(
-                        f"provider error: {_redact(_cap(json.dumps(error)), key)}"
+                        f"provider error: {redact(cap(json.dumps(error)), key)}"
                     )
+                if status in ("failed", "incomplete"):
+                    raise LLMError(f"provider response {status}")
         # Unknown events (created, in_progress, subscription_usage, ...) are ignored.
 
     if not completed:
         raise LLMError("provider response incomplete")
-    content_out.flush()
+    content_out.finish()
     return ChatReply(
-        content="".join(content_parts) or None,
-        tool_calls=_slots_to_calls(slots),
+        content=redact("".join(content_parts), key) or None,
+        tool_calls=slots_to_calls(slots, id_key="call_id"),
         usage=usage,
         finish_reason=status or "completed",
         model=model,

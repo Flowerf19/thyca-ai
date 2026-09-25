@@ -35,8 +35,7 @@ Mở Thyca (`thyca --serve`, http://127.0.0.1:8765) → Cài đặt → **Provid
    và báo `OK (model · ms)` hoặc lỗi cụ thể. Thấy OK mới yên tâm dùng.
 6. Muốn kiểm tra lại bất cứ lúc nào: nút **Test API** của từng provider.
 
-Xóa provider còn model sẽ bị chặn — chuyển model sang provider khác trước.
-Đổi tên provider thì model đi theo, không phải gán lại.
+Xóa provider còn model thì WebUI hỏi chuyển model sang provider khác (chỉ chặn khi xóa provider cuối cùng hoặc model mặc định). Đổi tên provider thì model đi theo, không phải gán lại.
 
 ## 3. Sửa config bằng tay (khi không mở được WebUI)
 
@@ -73,10 +72,10 @@ Xóa provider còn model sẽ bị chặn — chuyển model sang provider khác
 ```
 
 - `baseUrl` phải bắt đầu `http://` hoặc `https://`, không kèm `/models` hay
-  `/chat/completions` (Thyca tự nối).
+  `/chat/completions` (Thyca tự nối). Sai định dạng vẫn lưu được nhưng sẽ rớt ở bước Kiểm tra/Test.
 - Mỗi model trong `models` nên ghi rõ `"provider"`. Bỏ trống nghĩa là dùng
   provider mặc định.
-- Xong thì chạy `thyca --version`: không báo lỗi tức file đúng định dạng.
+- Xong thì mở chat hoặc `thyca --serve`: lỗi định dạng sẽ báo ngay lúc khởi động.
   Rồi mở WebUI bấm **Test API** để chắc gọi được thật.
 
 ## 4. API key nằm ở `auth.json` (ưu tiên từ trên xuống)
@@ -102,7 +101,7 @@ Mỗi provider có 1 field `api` chọn cách Thyca nói chuyện với nó:
 - `openai_chat` (mặc định) — endpoint `/chat/completions`, chuẩn phổ thông,
   dùng được với hầu hết provider (OpenAI, OpenRouter, local, commandcode…).
 - `openai_responses` — endpoint `/responses`: cần khi provider chỉ trả thinking
-  qua API này (ví dụ meta.ai). Không có nó thì panel "đang suy nghĩ" của model
+  qua API này (theo tài liệu provider, ví dụ meta.ai). Không có nó thì panel "đang suy nghĩ" của model
   meta chỉ có đồng hồ, không có chữ (provider vẫn tính tiền reasoning).
 
 Đổi ở WebUI (dropdown "Kiểu API" trong phần Nhà cung cấp) hoặc sửa tay
@@ -117,14 +116,15 @@ dùng (`reasoningEffort`) phải nằm trong bộ đó, khung chat sẽ tự hi�
 mức khi bạn chọn model.
 
 Tra bộ mức trong tài liệu/API reference chính thức của model — không đoán mò.
-Model không hỗ trợ `reasoning_effort` (ví dụ gpt-4o) thì Thyca tự thử lại
-không kèm tham số này, không cần xóa tay.
+Model không hỗ trợ `reasoning_effort` (ví dụ gpt-4o) thì Thyca tự thử lại một lần
+không kèm tham số này khi provider trả 400 nêu đúng tham số đó, không cần xóa tay.
 
 ## 7. Các mục khác (đụng tới thì đọc)
 
 - **Giới hạn chung** (`limits`): `loopMax` 1–200 (số vòng agent mỗi lượt),
   `hotTailKB` 1–64 (nhớ nóng đưa vào prompt), `contextTokens` 1000–2000000
-  (trần ngữ cảnh). Từng model có thể khai riêng đè lên.
+  (trần ngữ cảnh), `softTimeoutS` 1–300 (giây chờ tool trước khi chuyển nền).
+  Từng model có thể khai riêng 3 mục đầu đè lên; `softTimeoutS` chỉ có ở chung.
 - **Giá token** (`models[...].input/cache/output`, USD/1M token): chỉ để tính
   chi phí hiển thị. Điền thì điền đủ cả 3, bỏ trống thì Thyca dùng bảng giá
   có sẵn. Đừng bịa giá — tra trang pricing của provider.
@@ -144,7 +144,7 @@ Phân biệt 2 nút: **Kiểm tra** chỉ thử key + lấy danh sách model;
 | `model '...' không có trên provider (HTTP 404)` | Model không thuộc provider đang gọi | Gán model đúng provider (mục 1–2) |
 | `API key bị từ chối (HTTP 401/403)` | Sai key hoặc key của provider khác | Dán lại đúng key của provider đó rồi Test |
 | `không kết nối được provider` / quá thời gian | Sai endpoint, mất mạng, hoặc máy chủ chậm | Kiểm tra `baseUrl`, thử lại |
-| `chưa có API key` | Provider chưa có key ở cả 3 cách (mục 4) | Điền key rồi lưu lại |
+| `chưa có API key` | Provider chưa có key ở cả 2 cách (mục 4) | Điền key rồi lưu lại |
 
 Xem chi tiết lỗi ở 3 nơi (message ở cả 3 là một, không chứa key):
 

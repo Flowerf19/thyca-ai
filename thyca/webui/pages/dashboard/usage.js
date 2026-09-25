@@ -18,12 +18,15 @@ const el = {
   legend: [...document.querySelectorAll(".usage-legend span")],
   units: [...document.querySelectorAll(".usage-toggle button")],
 };
-const compact = matchMedia("(max-width: 56rem)");
+const compact = typeof matchMedia === "function"
+  ? matchMedia("(max-width: 56rem)")
+  : { matches: false, addEventListener: () => {} };
 const leafIcon = '<svg class="usage-leaf" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18c4.2-7.5 7.5-10.8 12-12-1.2 4.8-4.7 8.1-12 12Z"/><path d="m7 17 6-6"/></svg>';
 let unit = "token";
 let payload = null;
 let usage = null;
 let series = [];
+let generation = 0; // rapid period changes: only the newest load may render
 
 const setStatus = makeSetStatus(el.status);
 
@@ -178,15 +181,19 @@ async function loadAllTraces(days) {
 }
 
 async function load() {
+  const current = ++generation;
   const days = Number(el.period.value) || 30;
   setStatus("Đang tổng hợp token từ trace…");
   try {
-    payload = await loadAllTraces(days);
+    const fresh = await loadAllTraces(days);
+    if (current !== generation) return; // a newer period load superseded this one
+    payload = fresh;
     usage = aggregateUsage(payload.traces);
     series = completeDays(usage.days, rollingRange(days));
     render();
     setStatus();
   } catch (error) {
+    if (current !== generation) return;
     payload = null;
     usage = null;
     series = [];
@@ -206,7 +213,9 @@ el.units.forEach((button) => {
 });
 el.period?.addEventListener("change", () => void load());
 compact.addEventListener("change", draw);
-new ResizeObserver(() => {
-  if (series.length) draw();
-}).observe(el.chart);
-void load();
+if (el.chart) {
+  new ResizeObserver(() => {
+    if (series.length) draw();
+  }).observe(el.chart);
+}
+if (el.total) void load();

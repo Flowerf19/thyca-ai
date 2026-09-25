@@ -1,4 +1,6 @@
 import { cleanText } from "../../shared/js/format.js";
+import { finiteCost } from "../../shared/js/analytics-data.js";
+import { collectTraceWindow } from "../../shared/js/dashboard-today.js";
 
 // Step/tool parsing lives in trace-steps.js; pricing lives in cost-data.js
 // (its only consumer). Both are re-exported here so existing trace-data.js
@@ -12,15 +14,6 @@ export {
   toolsFromDetail,
 } from "./trace-steps.js";
 export { selectedModelConfig, tokenCost } from "./cost-data.js";
-
-// Known turn cost: number (0 is real), or null when never priced. null and
-// "" both mean "no price recorded" — never fake zero (same semantics as
-// cost-data.js finiteCost).
-function finiteCost(value) {
-  if (value == null || value === "") return null;
-  const cost = Number(value);
-  return Number.isFinite(cost) ? cost : null;
-}
 
 export function groupTraceTurns(rows) {
   const groups = new Map();
@@ -151,71 +144,24 @@ export function formatStepPayload(value) {
 // {traces, total} — injected so tests run without fetch/DOM. Overlapping pages
 // dedupe on (session_id, turn_index). complete=false means the window was not
 // fully read: callers must show incomplete instead of treating rows as all.
+// The loop is the shared collectTraceWindow with the Trace policy: fetch
+// errors and short windows return instead of throwing, blank-session rows
+// are skipped but counted toward the total, and pages without a total end
+// the window when short.
 export async function collectTracePages(fetchPage, { limit = 200 } = {}) {
-  const rows = [];
-  const seen = new Set();
-  let offset = 0;
-  // Rows dropped for a missing session_id: they count toward the server's
-  // total but can never join `rows`, so completeness is judged on
-  // rows + skipped, not rows alone.
-  let skipped = 0;
-  for (;;) {
-    let page;
-    try {
-      page = await fetchPage({ limit, offset });
-    } catch (error) {
-      return { rows, complete: false, error };
-    }
-    const traces = Array.isArray(page?.traces) ? page.traces : [];
-    const total = Number(page?.total);
-    let added = 0;
-    for (const row of traces) {
-      const sessionId = cleanText(row?.session_id);
-      if (!sessionId) {
-        skipped += 1;
-        continue;
-      }
-      const key = `${sessionId}\u0000${Number(row?.turn_index)}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      rows.push(row);
-      added += 1;
-    }
-    if (!traces.length) {
-      // Window exhausted. Without a usable total there is nothing left to
-      // expect; with one, fewer rows than total means pages went missing.
-      if (!Number.isFinite(total)) return { rows, complete: true };
-      if (rows.length >= total) return { rows, complete: true };
-      return {
-        rows,
-        complete: false,
-        error: new Error(`Đọc được ${rows.length}/${total} lượt trong cửa sổ trace.`),
-      };
-    }
-    if (!added) {
-      // A full page of already-seen rows: the offset is not advancing —
-      // stop instead of looping forever.
-      return {
-        rows,
-        complete: false,
-        error: new Error("Trang dữ liệu lặp lại, không đọc tiếp được cửa sổ trace."),
-      };
-    }
-    offset += traces.length;
-    if (Number.isFinite(total) && offset >= total) {
-      // offset counts RAW page rows while dedupe collapses overlaps, so it can
-      // pass total while deduped rows are still missing (rows [0,1] then [1,2]
-      // with total 4 never read row 3). Only the deduped count — plus the rows
-      // skipped as invalid — proves the window was fully read.
-      if (rows.length + skipped >= total) return { rows, complete: true };
-      return {
-        rows,
-        complete: false,
-        error: new Error(`Đọc được ${rows.length}/${total} lượt trong cửa sổ trace.`),
-      };
-    }
-    if (!Number.isFinite(total) && traces.length < limit) return { rows, complete: true };
-  }
+  return collectTraceWindow(fetchPage, {
+    limit,
+    objectArg: true,
+    skipBlankSession: true,
+    indexKey: (value) => `${Number(value)}`,
+    catchFetchError: true,
+    tolerateMissingTotal: true,
+    checkCoverageOnRepeat: false,
+    onIncomplete: "return",
+    incompleteError: (site, ctx) => (site === "repeat-page"
+      ? new Error("Trang dữ liệu lặp lại, không đọc tiếp được cửa sổ trace.")
+      : new Error(`Đọc được ${ctx.rows}/${ctx.total} lượt trong cửa sổ trace.`)),
+  });
 }
 
 export function firstUserText(detail) {

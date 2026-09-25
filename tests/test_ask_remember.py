@@ -73,3 +73,15 @@ def test_read_only_does_not_mutate() -> None:
     messages = [_user(timedelta(minutes=20))]
     ask_remember(messages, NOW)
     assert len(messages) == 1
+
+
+def test_parse_ts_shared_by_validation_and_ask_remember() -> None:
+    """protocol.parse_ts is the one ts parser: Message + ask_remember agree."""
+    from thyca.core.protocol import parse_ts
+
+    assert parse_ts("2026-01-02T03:04:05Z") == datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
+    with pytest.raises(ValueError, match="ts must be ISO-8601"):
+        parse_ts("not-a-ts")
+    with pytest.raises(ValueError, match="ts must be ISO-8601"):
+        Message(role="user", content="x", ts="not-a-ts")
+    assert ask_remember([_user(timedelta(minutes=16))], NOW) is True

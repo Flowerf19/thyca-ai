@@ -6,6 +6,7 @@ rejects any non-loopback host.
 """
 from __future__ import annotations
 
+import ipaddress
 import signal
 import sys
 from http.server import ThreadingHTTPServer
@@ -13,12 +14,23 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from thyca.serve.routes import make_handler
-from thyca.tools.memory import MemoryFacade
+from thyca.memory.facade import MemoryFacade
 
 if TYPE_CHECKING:
     from thyca.app.chat_app import ChatApp
 
 LOOPBACK = frozenset({"127.0.0.1", "localhost"})
+
+
+def _is_loopback(host: str) -> bool:
+    """True for loopback binds: the ``localhost`` name or any loopback IP
+    (127.0.0.2, ::1, …), not just 127.0.0.1."""
+    if host in LOOPBACK:
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 class ServeError(RuntimeError):
@@ -59,16 +71,14 @@ def make_server(
     chat: ChatApp | None = None,
     config_file: Path | None = None,
 ) -> _QuietHTTPServer:
-    if host not in LOOPBACK:
+    if not _is_loopback(host):
         raise ServeError("bind must be loopback")
     root = webui.resolve()
     if not root.is_dir():
         raise ServeError(f"webui missing: {webui}")
-    httpd = _QuietHTTPServer(
+    return _QuietHTTPServer(
         (host, port), make_handler(root, facade, chat, config_file)
     )
-    httpd.allow_reuse_address = True
-    return httpd
 
 
 def run(

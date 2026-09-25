@@ -9,8 +9,11 @@ import hashlib
 import json
 import re
 import secrets
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from zoneinfo import ZoneInfo
 
 TTL_DAYS = {1: 3, 2: 7, 3: 30, 4: 90, 5: 180}
 DEFAULT_IMPORTANCE = 3
@@ -43,6 +46,27 @@ def utc_now(now: datetime | None = None) -> datetime:
     return now.astimezone(UTC)
 
 
+def day(now: datetime | None, tz: ZoneInfo) -> str:
+    """Calendar day of ``now`` in ``tz`` (naive reads as wall time in ``tz``).
+
+    The one day computation for active + archived so day boundaries cannot
+    drift between the prompt window and the index."""
+    moment = now or datetime.now(tz)
+    aware = moment.replace(tzinfo=tz) if moment.tzinfo is None else moment.astimezone(tz)
+    return aware.date().isoformat()
+
+
+def read_text_file(path: Path) -> str | None:
+    """UTF-8 text of ``path``, or None when missing/not-a-file/a symlink.
+
+    The one memory read policy: symlinks are never followed (treated as
+    absent), and undecodable/unreadable files raise (UnicodeDecodeError /
+    OSError) for callers to map to their typed errors (F18)."""
+    if not path.is_file() or path.is_symlink():
+        return None
+    return path.read_text(encoding="utf-8")
+
+
 def format_ts(now: datetime) -> str:
     return utc_now(now).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -59,6 +83,39 @@ def new_entry_id() -> str:
 
 def is_session_heading(line: str) -> bool:
     return parse_heading(line) is not None
+
+
+def iter_session_blocks(
+    lines: list[str], path: str
+) -> Iterator[tuple[HeadingMeta, str, int, int]]:
+    """Yield ``(meta, entry_id, start, end)`` for each session block in order.
+
+    The single scan every markdown mutation/chunk site shares, so duplicate
+    explicit ids resolve identically everywhere: callers act on the first
+    match and copy the rest verbatim.
+    """
+    seen: dict[str, int] = {}
+    index = 0
+    total = len(lines)
+    while index < total:
+        meta = parse_heading(lines[index])
+        if meta is None:
+            index += 1
+            continue
+        end = index + 1
+        while end < total and parse_heading(lines[end]) is None:
+            end += 1
+        seen[meta.title] = seen.get(meta.title, 0) + 1
+        yield meta, resolve_entry_id(meta, path, seen[meta.title]), index, end
+        index = end
+
+
+def format_body(summary: str, content: str = "") -> list[str]:
+    """One ``- summary`` line plus every content line indented two spaces."""
+    lines = [f"- {summary.strip()}"]
+    if content:
+        lines.extend(f"  {line}" for line in content.splitlines())
+    return lines
 
 
 def parse_heading(line: str) -> HeadingMeta | None:
@@ -120,6 +177,13 @@ def resolve_entry_id(meta: HeadingMeta, path: str, occurrence: int) -> str:
     if meta.entry_id is not None:
         return meta.entry_id
     return legacy_entry_id(path, meta.title, occurrence)
+
+
+#: SQL twin of is_visible(): visible rows have no forgotten stamp and no
+#: expiry in the past. The one predicate every archive_store query shares —
+#: column names stay unqualified (no archive join has a second table with
+#: these columns), so all seven call sites embed it verbatim.
+VISIBLE_SQL = "forgotten_at IS NULL AND (expires_at IS NULL OR expires_at > ?)"
 
 
 def is_visible(expires_at: str | None, now: datetime | None = None) -> bool:

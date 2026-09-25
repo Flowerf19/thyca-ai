@@ -1,4 +1,5 @@
 import { effortChoicesFor, fillEffortSelect } from "../../shared/js/reasoning-effort.js";
+import { makeSetStatus } from "../../shared/js/status.js";
 import {
   PRESETS,
   STANDARD_EFFORTS,
@@ -43,6 +44,7 @@ export const el = {
   limitsLoopMax: document.querySelector("#limits-loop-max"),
   limitsHotTailKB: document.querySelector("#limits-hot-tail-kb"),
   limitsContextTokens: document.querySelector("#limits-context-window"),
+  limitsSoftTimeoutS: document.querySelector("#limits-soft-timeout"),
   status: document.querySelector("#provider-status"),
   verify: document.querySelector("#verify-provider"),
   test: document.querySelector("#test-provider"),
@@ -50,10 +52,7 @@ export const el = {
   reset: document.querySelector(".settings-reset"),
 };
 
-export function setStatus(message = "", kind = "") {
-  el.status.textContent = message;
-  el.status.className = `screen-status${kind ? ` is-${kind}` : ""}`;
-}
+export const setStatus = makeSetStatus(el.status);
 
 function allControls() {
   return [
@@ -62,7 +61,7 @@ function allControls() {
     el.modelList, el.modelAdd, el.modelDefault, el.modelDelete, el.model,
     el.reasoning, el.reasoningEfforts, el.loopMax, el.hotTailKB, el.contextTokens,
     el.inputCost, el.cacheCost, el.outputCost,
-    el.limitsLoopMax, el.limitsHotTailKB, el.limitsContextTokens,
+    el.limitsLoopMax, el.limitsHotTailKB, el.limitsContextTokens, el.limitsSoftTimeoutS,
     el.verify, el.test, el.save, el.reset,
   ];
 }
@@ -182,6 +181,7 @@ export function renderLimits() {
   el.limitsLoopMax.value = limits.loopMax ?? 200;
   el.limitsHotTailKB.value = limits.hotTailKB ?? 4;
   el.limitsContextTokens.value = limits.contextTokens ?? 272000;
+  el.limitsSoftTimeoutS.value = limits.softTimeoutS ?? 60;
 }
 
 export function renderAll() {

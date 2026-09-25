@@ -5,7 +5,6 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
-_IDENTIFIER = re.compile(r"^[A-Za-z0-9_-]+$")
 _IDENTIFIER_MAX = 64
 
 _PUBLIC_NAME = "tool"
@@ -28,12 +27,12 @@ _ALLOWED_FIELDS: dict[str, frozenset[str]] = {
 
 
 def _public_identifier(value: object, fallback: str) -> str:
-    if (
-        isinstance(value, str)
-        and 0 < len(value) <= _IDENTIFIER_MAX
-        and _IDENTIFIER.fullmatch(value)
-    ):
-        return value
+    # Sanitize, don't collapse: distinct provider ids must stay correlatable
+    # across started/finished pairs instead of all becoming "call"/"tool".
+    if isinstance(value, str) and value:
+        cleaned = re.sub(r"[^A-Za-z0-9_-]", "_", value)[:_IDENTIFIER_MAX]
+        if cleaned:
+            return cleaned
     return fallback
 
 

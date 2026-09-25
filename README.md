@@ -32,7 +32,9 @@ Markdown dưới `~/.thyca` là nguồn sự thật, SQLite chỉ là index tìm
 
 - Những gì đáng nhớ được ghi vào `memory/YYYY-MM-DD.md` — file của **hôm nay** được inject thẳng vào ngữ cảnh mỗi lượt chat, nên bạn không cần "hỏi lại" thông tin mới ghi.
 - Qua ngày mới, file được đưa vào index (`memory_search`, FTS5 + trigram) — từ đó tìm được bằng từ khóa.
-- `SOUL.md` (tính cách), `USER.md` (thông tin về bạn), `IDENTITY.md` luôn nằm trong ngữ cảnh — sửa bằng màn Hồ sơ, có hiệu lực ngay phiên sau.
+- `IDENTITY.md` (danh tính/vai trò), `SOUL.md` (cách hành xử), `USER.md` (thông tin về bạn) được đọc lại mỗi lượt chat — sửa bằng màn Hồ sơ có hiệu lực ngay lượt sau, kể cả trong phiên đang dùng.
+
+`USER.md` mới có các mục trống và hướng dẫn AI duy trì dữ kiện bạn đã chia sẻ/xác nhận, không tự suy đoán. Ba template chỉ được chép khi file hồ sơ chưa tồn tại; nâng cấp không ghi đè hồ sơ hiện có.
 
 ## Cài đặt
 
@@ -94,7 +96,7 @@ Config mặc định dùng một provider OpenAI-compatible:
 
 ## Kiến trúc (tóm tắt cho người tò mò)
 
-Package `thyca/` chia module: `agent/` chạy loop 4 pha (assemble → think → act → observe), `tools/` giữ registry (bash + bash_read nền, read/write/edit, `memory_*`, MCP stdio), `memory/` tách Active (inject) và Archived (index), `llm/` là client OpenAI-compat (chat + responses), `skills/` là index Agent Skills, `core/` giữ wire types (`Message`/`ToolCall`), `app/` là chat orchestration + CLI, `serve/` + `webui/` là giao diện HTTP loopback. WebUI tổ chức page-first: `.html` flat, JS/CSS theo `pages/<trang>/`, đồ dùng chung ở `shared/`.
+Package `thyca/` chia module: `agent/` chạy loop 4 pha (assemble → think → act → observe), `tools/` giữ gateway thực thi + registry (bash nền đọc bằng `tool_read`/dừng bằng `tool_kill`, read/write/edit, `memory_*`, MCP stdio), `memory/` tách Active (inject) và Archived (index), `llm/` là client OpenAI-compat (chat + responses), `skills/` là index Agent Skills, `core/` giữ wire types (`Message`/`ToolCall`), `app/` là chat orchestration + CLI, `serve/` + `webui/` là giao diện HTTP loopback. WebUI tổ chức page-first: `.html` flat, JS/CSS theo `pages/<trang>/`, đồ dùng chung ở `shared/`.
 
 Skills theo chuẩn [Agent Skills](https://agentskills.io): `~/.thyca/skills/<name>/SKILL.md` — tạo bằng `write`, không cần tool mới.
 

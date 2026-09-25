@@ -143,39 +143,19 @@ def test_normalize_usage_unknown_shape_is_none() -> None:
     assert normalize_usage({"foo": 1}, "openai") is None
 
 
-def test_normalize_usage_anthropic_and_google() -> None:
-    anthropic = normalize_usage(
-        {
-            "input_tokens": 10,
-            "output_tokens": 3,
-            "cache_read_input_tokens": 4,
-            "cache_creation_input_tokens": 1,
-            "total_tokens": 13,
-        },
+def test_normalize_usage_unknown_provider_uses_generic_counters() -> None:
+    # OpenAI-only is deliberate: vendor-specific shapes are gone; unknown
+    # providers read the generic snake_case counters.
+    assert normalize_usage(
+        {"prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13},
         "anthropic",
-    )
-    assert anthropic == {
+    ) == {
         "prompt_tokens": 10,
-        "cached_tokens": 4,
+        "cached_tokens": 0,
         "completion_tokens": 3,
         "total_tokens": 13,
     }
-
-    google = normalize_usage(
-        {
-            "promptTokenCount": 20,
-            "candidatesTokenCount": 5,
-            "cachedContentTokenCount": 8,
-            "totalTokenCount": 25,
-        },
-        "google",
-    )
-    assert google == {
-        "prompt_tokens": 20,
-        "cached_tokens": 8,
-        "completion_tokens": 5,
-        "total_tokens": 25,
-    }
+    assert normalize_usage({"promptTokenCount": 20, "candidatesTokenCount": 5, "cachedContentTokenCount": 8, "totalTokenCount": 25}, "google") is None
 
 
 @pytest.mark.asyncio
@@ -685,3 +665,237 @@ def test_to_openai_message_roundtrips_reasoning_details() -> None:
     assert "reasoning_details" not in _to_openai_message(
         Message(role="user", content="hi")
     )
+
+
+@pytest.mark.asyncio
+async def test_nonstream_reasoning_and_content_redacted() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": "leak sk-secret-key here",
+                            "reasoning_content": "think sk-secret-key loud",
+                        },
+                        "finish_reason": "stop",
+                    }
+                ]
+            },
+        )
+
+    seen_reasoning: list[str] = []
+    seen_content: list[str] = []
+    connect = OpenAIChat(_provider(), client=_client(handler))
+    reply = await connect.chat(
+        [Message(role="user", content="x")],
+        on_reasoning=seen_reasoning.append,
+        on_content=seen_content.append,
+    )
+    assert "sk-secret-key" not in (reply.reasoning or "")
+    assert "sk-secret-key" not in (reply.content or "")
+    assert "[redacted]" in (reply.reasoning or "")
+    assert "[redacted]" in (reply.content or "")
+    assert all("sk-secret-key" not in item for item in seen_reasoning)
+    assert all("sk-secret-key" not in item for item in seen_content)
+
+
+@pytest.mark.asyncio
+async def test_stream_content_redacted() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _sse(
+            {"choices": [{"delta": {"content": "call sk-secret-key plz"}}]},
+            {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]},
+        )
+
+    seen: list[str] = []
+    connect = OpenAIChat(_provider(), client=_client(handler))
+    reply = await connect.chat(
+        [Message(role="user", content="x")], on_content=seen.append
+    )
+    assert "sk-secret-key" not in (reply.content or "")
+    assert "[redacted]" in (reply.content or "")
+    assert all("sk-secret-key" not in item for item in seen)
+
+
+@pytest.mark.asyncio
+async def test_split_chunk_key_redacted() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _sse(
+            {"choices": [{"delta": {"reasoning_content": "use sk-secr"}}]},
+            {"choices": [{"delta": {"reasoning_content": "et-key now"}}]},
+            {"choices": [{"delta": {"content": "a sk-secr"}}]},
+            {"choices": [{"delta": {"content": "et-key b"}, "finish_reason": "stop"}]},
+        )
+
+    seen_reasoning: list[str] = []
+    seen_content: list[str] = []
+    connect = OpenAIChat(_provider(), client=_client(handler))
+    reply = await connect.chat(
+        [Message(role="user", content="x")],
+        on_reasoning=seen_reasoning.append,
+        on_content=seen_content.append,
+    )
+    assert "sk-secret-key" not in (reply.reasoning or "")
+    assert "sk-secret-key" not in (reply.content or "")
+    assert "[redacted]" in (reply.reasoning or "")
+    assert "[redacted]" in (reply.content or "")
+    assert all("sk-secret-key" not in item for item in seen_reasoning)
+    assert all("sk-secret-key" not in item for item in seen_content)
+
+
+# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
+import asyncio
+import json
+
+def test_x5_redact_cap_single_home() -> None:
+    import thyca.app.onboarding as onboarding
+    import thyca.llm._http as http
+    import thyca.llm.openai_parse as chat_parse
+    import thyca.llm.responses_parse as resp_parse
+    import thyca.llm.streaming as streaming
+
+    assert onboarding.redact is http.redact
+    assert chat_parse.redact is http.redact
+    assert not hasattr(chat_parse, "cap")  # no error-caps left here at all
+    assert resp_parse.redact is http.redact
+    assert resp_parse.cap is http.cap
+    assert streaming.redact is http.redact
+    assert http.redact("sk-123 here", "sk-123") == "[redacted] here"
+    assert http.cap("x" * 600) == "x" * 500 + "…"
+    assert not hasattr(resp_parse, "_BODY_CAP")
+
+
+def test_x15_sse_preamble_shared() -> None:
+    import httpx
+
+    from thyca.llm._http import iter_sse_data
+    from thyca.llm.llm_base import LLMError
+
+    async def collect(payload: bytes):
+        response = httpx.Response(200, content=payload)
+        return [chunk async for chunk in iter_sse_data(response, "sk")]
+
+    chunks = asyncio.run(
+        collect(b': comment\n\nbad line\ndata: {"a": 1}\n\nnot-dict\ndata: [1]\ndata: [DONE]\ndata: {"b": 2}\n')
+    )
+    assert chunks == [{"a": 1}]
+    with pytest.raises(LLMError):
+        asyncio.run(collect(b'data: {"sk": 1, oops}\n'))
+
+
+def test_x15_bytes_and_slots_shared() -> None:
+    from thyca.llm._http import parse_json_bytes
+    from thyca.llm.llm_base import LLMError
+    from thyca.llm.openai_parse import slots_to_calls, parse_chat_bytes
+
+    assert parse_json_bytes(b'{"a": 1}', "k") == {"a": 1}
+    with pytest.raises(LLMError, match="must be an object"):
+        parse_json_bytes(b"[1]", "k")
+    with pytest.raises(LLMError):
+        parse_json_bytes(b"\xff not json", "k")
+    reply = parse_chat_bytes(
+        json.dumps(
+            {"choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}]}
+        ).encode(),
+        "k",
+    )
+    assert reply.content == "hi"
+    slots = {0: {"id": "c1", "name": "n", "arguments": "{}"}}
+    assert slots_to_calls(slots)[0].id == "c1"
+    rslots = {0: {"call_id": "c2", "name": "n", "arguments": "{}"}}
+    assert slots_to_calls(rslots, id_key="call_id")[0].id == "c2"
+
+
+def test_x15_emit_callbacks_shared() -> None:
+    from thyca.llm._http import BaseConnect
+    from thyca.llm.llm_base import ChatReply
+
+    seen: list[str] = []
+    reply = ChatReply(content="c", reasoning="r")
+    BaseConnect._emit_callbacks(reply, seen.append, seen.append)
+    assert seen == ["r", "c"]
+    BaseConnect._emit_callbacks(ChatReply(content=None), None, None)
+
+
+# Moved from tests/test_b2_contracts.py (B2 batch).
+def _provider() -> ProviderCfg:
+    return ProviderCfg(
+        baseUrl="https://api.example.com/v1",
+        model="demo-model",
+        apiKey="sk-secret-key",
+    )
+
+
+def _client(handler) -> httpx.AsyncClient:
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+
+def _chat_sse(*chunks: dict, done: bool = True) -> httpx.Response:
+    parts = [f"data: {json.dumps(chunk)}" for chunk in chunks]
+    if done:
+        parts.append("data: [DONE]")
+    return httpx.Response(
+        200,
+        text="\n\n".join(parts) + "\n\n",
+        headers={"Content-Type": "text/event-stream"},
+    )
+
+
+async def test_f24_truncated_chat_sse_is_provider_incomplete() -> None:
+    """Fails pre-fix: clean EOF without DONE/finish returned partial success."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _chat_sse(
+            {"choices": [{"delta": {"content": "part"}}]},
+            done=False,
+        )
+
+    connect = OpenAIChat(_provider(), client=_client(handler))
+    with pytest.raises(LLMError, match="provider response incomplete"):
+        await connect.chat([Message(role="user", content="x")])
+
+
+async def test_f24_done_or_finish_alone_is_complete() -> None:
+    """Pins new behavior: EITHER terminator counts as complete."""
+
+    def handler_done(request: httpx.Request) -> httpx.Response:
+        return _chat_sse({"choices": [{"delta": {"content": "ok"}}]})
+
+    reply = await OpenAIChat(_provider(), client=_client(handler_done)).chat(
+        [Message(role="user", content="x")]
+    )
+    assert reply.content == "ok"
+
+    def handler_finish(request: httpx.Request) -> httpx.Response:
+        return _chat_sse(
+            {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]},
+            done=False,
+        )
+
+    reply = await OpenAIChat(_provider(), client=_client(handler_finish)).chat(
+        [Message(role="user", content="x")]
+    )
+    assert reply.content == "ok"
+    assert reply.finish_reason == "stop"
+
+
+async def test_f27_array_delta_content_is_error() -> None:
+    """Fails pre-fix: array delta content fell through to empty success."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _chat_sse(
+            {
+                "choices": [
+                    {
+                        "delta": {"content": [{"type": "text", "text": "hi"}]},
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+        )
+
+    connect = OpenAIChat(_provider(), client=_client(handler))
+    with pytest.raises(LLMError, match="provider content must be string or null"):
+        await connect.chat([Message(role="user", content="x")])

@@ -11,7 +11,9 @@ const el = {
   status: document.querySelector("#memory-status"),
   viewButtons: [...document.querySelectorAll(".session-item[data-view]")],
 };
-const compact = matchMedia("(max-width: 56rem)");
+const compact = typeof matchMedia === "function"
+  ? matchMedia("(max-width: 56rem)")
+  : { matches: false, addEventListener: () => {} };
 
 // 1. Responsive search placement: the search cluster lives in the sidebar on
 // desktop and moves into the bar above the view folds on mobile.
@@ -207,7 +209,9 @@ function cancelEdit(origin) {
 // 4. Overview: 30-day bar chart plus the three stat cards.
 const SVG_NS = "http://www.w3.org/2000/svg";
 let overviewSvg = null;
-const chartObserver = new ResizeObserver(() => drawOverviewChart());
+const chartObserver = typeof ResizeObserver === "function"
+  ? new ResizeObserver(() => drawOverviewChart())
+  : null;
 
 function drawOverviewChart() {
   if (!overviewSvg) return;
@@ -236,8 +240,8 @@ function overviewChartCard() {
   svg.setAttribute("role", "img");
   article.append(svg);
   overviewSvg = svg;
-  chartObserver.disconnect();
-  chartObserver.observe(svg);
+  chartObserver?.disconnect();
+  chartObserver?.observe(svg);
   drawOverviewChart();
   return article;
 }
@@ -342,6 +346,11 @@ async function loadStats({ quiet = false } = {}) {
     setStatus();
   } catch (error) {
     el.list.replaceChildren();
+    // Mobile renders into the view sections, not #memory-list: clear those
+    // too or stale cards survive a failed reload on compact screens.
+    for (const section of el.viewSections) {
+      section.querySelector(".memory-view-body")?.replaceChildren();
+    }
     el.empty.hidden = false;
     el.empty.textContent = messageOf(error, "Không tải được bộ nhớ.");
     setStatus(messageOf(error, "Không tải được bộ nhớ."), "error");
@@ -382,5 +391,8 @@ function bind() {
   });
 }
 
-bind();
-void loadStats();
+if (el.list) {
+  // Not on memories.html (e.g. Node harness): els are null, nothing to bind.
+  bind();
+  void loadStats();
+}

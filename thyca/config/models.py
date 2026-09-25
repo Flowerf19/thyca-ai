@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from .defaults import DEFAULT_LIMITS_CONTEXT_TOKENS_MAX, REASONING_EFFORTS
+from .defaults import LIMIT_RANGES, REASONING_EFFORTS
 from .errors import ConfigError
 from .validation import _integer, _number
 
@@ -51,7 +51,7 @@ class ModelCfg:
             isinstance(level, str) and level.strip() for level in self.reasoningEfforts
         ):
             raise ConfigError(
-                "models[].reasoningEfforts must be a list of non-empty strings"
+                "models[].reasoningEfforts must be a tuple of non-empty strings"
             )
         if len(set(self.reasoningEfforts)) != len(self.reasoningEfforts):
             raise ConfigError("models[].reasoningEfforts must not contain duplicates")
@@ -66,13 +66,12 @@ class ModelCfg:
                 f"{'/'.join(REASONING_EFFORTS)} (or declare models[].reasoningEfforts), "
                 f"got {self.reasoningEffort!r}"
             )
-        for value, name, lower, upper in (
-            (self.loopMax, "models[].loopMax", 1, 200),
-            (self.hotTailKB, "models[].hotTailKB", 1, 64),
-            (self.contextTokens, "models[].contextTokens", 1000, DEFAULT_LIMITS_CONTEXT_TOKENS_MAX),
-        ):
+        for field_name in ("loopMax", "hotTailKB", "contextTokens"):
+            value = getattr(self, field_name)
             if value is None:
                 continue
+            lower, upper = LIMIT_RANGES[field_name]
+            name = f"models[].{field_name}"
             _integer(value, name)
             if not lower <= value <= upper:
                 raise ConfigError(f"{name} must be {lower}..{upper}, got {value}")

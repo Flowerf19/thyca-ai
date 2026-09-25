@@ -5,9 +5,9 @@ import re
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
-from thyca.llm.llm_base import LLMError
 from thyca.core.protocol import Message
 
+from .errors import SessionError
 from .models import Session
 
 if TYPE_CHECKING:
@@ -148,24 +148,38 @@ async def retitle_missing(
     chat: ChatFn, manager: SessionManager
 ) -> list[tuple[Session, str, str]]:
     named: list[tuple[Session, str, str]] = []
-    for session in manager.list_sessions():
-        if is_blank(session) or naming_messages(session) is None:
-            continue
-        if session.title_source == USER_TITLE_SOURCE and session.title:
-            continue
-        if session.title and accept_title(session.title, session):
-            continue
-        old = display_title(session)
-        try:
-            title = await propose_title(chat, session)
-        except LLMError:
-            continue
-        if title is None:
-            continue
-        manager.load(session.id)
-        stored = manager.set_title(title)
-        if stored is None:
-            continue
-        session.title = stored
-        named.append((session, old, stored))
+    # Same package: save the live current object so the batch cannot hijack
+    # it, and restore it without disk I/O (which could itself go stale).
+    with manager._lock:
+        saved_current = manager._session
+    try:
+        for session in manager.list_sessions():
+            if is_blank(session) or naming_messages(session) is None:
+                continue
+            if session.title_source == USER_TITLE_SOURCE and session.title:
+                continue
+            if session.title and accept_title(session.title, session):
+                continue
+            old = display_title(session)
+            try:
+                title = await propose_title(chat, session)
+            except Exception:
+                continue  # one bad proposal must not abort the batch
+            if title is None:
+                continue
+            try:
+                manager.load(session.id)
+            except SessionError:
+                continue  # deleted mid-batch: skip, do not abort
+            try:
+                stored = manager.set_title(title)
+            except SessionError:
+                continue
+            if stored is None:
+                continue
+            session.title = stored
+            named.append((session, old, stored))
+    finally:
+        with manager._lock:
+            manager._session = saved_current
     return named

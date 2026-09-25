@@ -13,7 +13,8 @@ _PARAMETERS = {
 
 def read_spec(guard: PathGuard) -> ToolSpec:
     async def handler(args: dict) -> str:
-        path = guard.resolve(str(args["path"]))
+        # Schema types arrive pre-checked by the registry (X3): path is str.
+        path = guard.resolve(args["path"])
         if not path.is_file():
             raise FileNotFoundError(f"not a file: {path}")
         return path.read_text(encoding="utf-8")
@@ -24,5 +25,5 @@ def read_spec(guard: PathGuard) -> ToolSpec:
         parameters=_PARAMETERS,
         handler=handler,
         parallel_safe=True,
-        resource_key=lambda args: str(guard.resolve(str(args["path"]))),
+        resource_key=guard.key,
     )

@@ -25,10 +25,6 @@ export function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-export function messageOf(error, fallback) {
-  return error instanceof Error && error.message ? error.message : fallback;
-}
-
 export function presetFor(url) {
   const normalized = String(url || "").replace(/\/$/, "");
   return Object.entries(PRESETS).find(([name, value]) => name !== "custom" && value.replace(/\/$/, "") === normalized)?.[0] || "custom";

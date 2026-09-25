@@ -11,3 +11,5 @@ def test_install_sh_is_pipe_safe() -> None:
     assert "uv tool install ." not in SCRIPT
     assert "dirname" not in SCRIPT
     assert "thyca --version" in SCRIPT
+    assert "thyca --seed || true" in SCRIPT
+    assert SCRIPT.index("thyca --version") < SCRIPT.index("thyca --seed")

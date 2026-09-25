@@ -11,9 +11,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs
 
-from thyca.agent.skill_event import skill_name_for_call
 from thyca.core.protocol import ToolCall
 from thyca.serve.trace import TurnSummary, aggregate, turns_from_session
+from thyca.sessions.wire import message_dict, tool_call_dict
 
 if TYPE_CHECKING:
     from thyca.app.chat_app import ChatApp
@@ -24,6 +24,11 @@ if TYPE_CHECKING:
 # source of truth — entries are re-parsed only when mtime_ns changes, and the
 # cache never holds more files than the newest-200 scan window.
 _TRACE_SCAN_CAP = 200
+# limit=all/0 still pages server-side: one response never carries more than
+# this many turns (200 files x all turns is unbounded otherwise). `total`
+# keeps the full count so clients page on with offset. A bound, not a
+# rejection: 2000 is far above any dashboard page.
+_TRACE_ALL_CAP = 2000
 _trace_scan_lock = threading.Lock()
 _trace_sessions: dict[Path, tuple[int, Session]] = {}
 
@@ -53,8 +58,13 @@ def cached_turns_for(store: SessionStore, session_id: str) -> list[TurnSummary]:
 
     Cache miss (or file turned corrupt) re-loads through ``store.load`` so the
     caller keeps the real ``SessionNotFound`` / ``SessionCorrupt`` semantics.
+    The cache touch stays under ``_trace_scan_lock``: ``collect_turns``
+    iterates/evicts the same dict, and ThreadingHTTPServer runs list +
+    detail on different threads (unlocked here used to raise ``RuntimeError:
+    dictionary changed size`` → 503 under concurrent dashboard loads).
     """
-    session = _cached_session(store, store.path_for(session_id))
+    with _trace_scan_lock:
+        session = _cached_session(store, store.path_for(session_id))
     if session is None:
         session = store.load(session_id)
     return turns_from_session(session)
@@ -119,7 +129,7 @@ def trace_list_payload(chat: ChatApp, query: str) -> dict:
     turns = _apply_trace_filters(collect_turns(chat), qs)
     total = len(turns)
     if limit_raw in ("0", "all"):
-        page = turns[offset:]
+        page = turns[offset : offset + _TRACE_ALL_CAP]
     else:
         try:
             limit = max(1, min(int(limit_raw), 200))
@@ -135,36 +145,17 @@ def trace_detail_payload(chat: ChatApp, session_id: str, turn_index: int) -> dic
         if t.turn_index == turn_index:
             payload = t.to_payload()
             payload["messages"] = [
-                {
-                    "role": m.role,
-                    "content": m.content,
-                    "ts": m.ts,
-                    "tool_calls": [
-                        trace_tool_call(c, chat.skills_root) for c in (m.tool_calls or [])
-                    ],
-                    "tool_call_id": m.tool_call_id,
-                    "meta": m.meta,
-                }
-                for m in t.messages
+                message_dict(m, chat.skills_root, include_args=True) for m in t.messages
             ]
             return payload
     raise ValueError("trace not found")
 
 
 def trace_tool_call(call: ToolCall, skills_root: Path) -> dict:
-    """Wire payload for a recorded call: id, name, arguments, optional skill.
+    """Trace payload for a recorded call: the wire shape plus arguments.
 
-    Skill classification still happens here so history replay matches the live
-    stream. Arguments stay on the payload so the Trace screen can show input JSON.
+    Thin delegate over the sessions-owned helper so history replay matches
+    the live stream; arguments stay on the payload so the Trace screen can
+    show input JSON. Kept as a named seam for trace callers.
     """
-    entry: dict = {
-        "id": call.id,
-        "name": call.name,
-        "arguments": call.arguments,
-    }
-    if call.parse_error:
-        entry["parse_error"] = call.parse_error
-    name = skill_name_for_call(call, skills_root)
-    if name is not None:
-        entry["skill"] = name
-    return entry
+    return tool_call_dict(call, skills_root, include_args=True)

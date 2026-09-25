@@ -4,6 +4,8 @@ import { PROVIDER_ID_RE, STANDARD_EFFORTS, state } from "./provider-state.js";
 export function positiveNumber(input, label, { min = 0, max = Number.POSITIVE_INFINITY, integer = false } = {}) {
   const value = Number(input.value);
   if (!Number.isFinite(value) || value < min || value > max || (integer && !Number.isInteger(value))) {
+    // Unbounded callers (prices) pass no max: never print "0–Infinity".
+    if (!Number.isFinite(max)) throw new Error(`${label} phải là số lớn hơn hoặc bằng ${min}.`);
     throw new Error(`${label} phải nằm trong khoảng ${min}–${max}.`);
   }
   return value;
@@ -49,6 +51,7 @@ export function applyFormToState(values) {
     loopMax: positiveNumber(el.limitsLoopMax, "Giới hạn chung: số vòng", { min: 1, max: 200, integer: true }),
     hotTailKB: positiveNumber(el.limitsHotTailKB, "Giới hạn chung: nhớ nóng", { min: 1, max: 64, integer: true }),
     contextTokens: positiveNumber(el.limitsContextTokens, "Giới hạn chung: ngữ cảnh", { min: 1000, max: 2_000_000, integer: true }),
+    softTimeoutS: positiveNumber(el.limitsSoftTimeoutS, "Giới hạn chung: soft timeout", { min: 1, max: 300, integer: true }),
   };
 
   const model = el.model.value.trim();
@@ -91,6 +94,8 @@ export function applyFormToState(values) {
     delete entry2.input;
     delete entry2.cache;
     delete entry2.output;
+    // Same as deleteModel: a price-less model must not keep a pricing mirror.
+    if (values.pricing) delete values.pricing[model];
   }
   if (efforts.length) entry2.reasoningEfforts = efforts;
   else delete entry2.reasoningEfforts;

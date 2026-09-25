@@ -7,6 +7,8 @@ from .protocol import (
     Message,
     ToolCall,
     ToolResult,
+    estimate_tokens,
+    truncate_to_cap,
     utc_now_ts,
 )
 
@@ -16,5 +18,7 @@ __all__ = [
     "Message",
     "ToolCall",
     "ToolResult",
+    "estimate_tokens",
+    "truncate_to_cap",
     "utc_now_ts",
 ]

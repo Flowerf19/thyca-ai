@@ -8,20 +8,9 @@ import httpx
 
 from thyca.core.protocol import ToolCall
 
+from ._http import iter_sse_data, parse_json_bytes, redact
 from .llm_base import ChatReply, LLMError, normalize_usage
 from .streaming import ContentOut, ReasoningOut
-
-
-def _redact(text: str, secret: str) -> str:
-    if secret and secret in text:
-        return text.replace(secret, "[redacted]")
-    return text
-
-
-def _cap(text: str, limit: int = 500) -> str:
-    if len(text) <= limit:
-        return text
-    return text[:limit] + "…"
 
 
 def _reasoning_text(payload: dict) -> str:
@@ -83,7 +72,8 @@ class _ReasoningDetailsOut:
     text/summary pieces concatenate (pi parity), anything else appends.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, key: str = "") -> None:
+        self._key = key
         self._items: list[dict] = []
 
     def add(self, raw: object) -> None:
@@ -118,7 +108,17 @@ class _ReasoningDetailsOut:
                 self._items.append(detail)
 
     def items(self) -> list[dict] | None:
-        return [dict(item) for item in self._items] or None
+        # Redact the merged text, not each chunk: a key split across two
+        # SSE chunks is whole only here.
+        out = []
+        for item in self._items:
+            copied = dict(item)
+            for field in ("text", "summary"):
+                value = copied.get(field)
+                if isinstance(value, str) and value:
+                    copied[field] = redact(value, self._key)
+            out.append(copied)
+        return out or None
 
 
 def parse_chat_payload(raw: dict, key: str) -> ChatReply:
@@ -145,27 +145,21 @@ def parse_chat_payload(raw: dict, key: str) -> ChatReply:
     if not isinstance(model, str):
         model = None
     reasoning = _reasoning_text(message)
-    details = _ReasoningDetailsOut()
+    details = _ReasoningDetailsOut(key)
     details.add(message.get("reasoning_details"))
     return ChatReply(
-        content=content,
+        content=redact(content, key) if isinstance(content, str) else content,
         tool_calls=parse_tool_calls(message.get("tool_calls")),
         usage=usage,
         finish_reason=finish,
         model=model,
-        reasoning=reasoning or None,
+        reasoning=redact(reasoning, key) or None,
         reasoning_details=details.items(),
     )
 
 
 def parse_chat_bytes(raw: bytes, key: str) -> ChatReply:
-    try:
-        payload = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise LLMError(_redact(_cap(raw.decode("utf-8", errors="replace")), key)) from exc
-    if not isinstance(payload, dict):
-        raise LLMError("provider response must be an object")
-    return parse_chat_payload(payload, key)
+    return parse_chat_payload(parse_json_bytes(raw, key), key)
 
 
 def parse_tool_calls(raw: object) -> list[ToolCall]:
@@ -215,30 +209,17 @@ async def read_sse_reply(
 ) -> ChatReply:
     content_parts: list[str] = []
     saw_content_str = False
-    saw_content_null = False
     saw_choice = False
     finish = ""
     model: str | None = None
     usage: dict | None = None
     slots: dict[int, dict[str, str]] = {}
     reasoning = ReasoningOut(key, on_reasoning)
-    content_out = ContentOut(on_content)
-    details = _ReasoningDetailsOut()
+    content_out = ContentOut(on_content, key)
+    details = _ReasoningDetailsOut(key)
+    saw_done: list[bool] = []
 
-    async for line in response.aiter_lines():
-        if not line or line.startswith(":"):
-            continue
-        if not line.startswith("data:"):
-            continue
-        data = line[5:].lstrip()
-        if data == "[DONE]":
-            break
-        try:
-            chunk = json.loads(data)
-        except json.JSONDecodeError as exc:
-            raise LLMError(_redact(_cap(data), key)) from exc
-        if not isinstance(chunk, dict):
-            continue
+    async for chunk in iter_sse_data(response, key, done=saw_done):
         if isinstance(chunk.get("model"), str) and chunk["model"]:
             model = chunk["model"]
         raw_usage = chunk.get("usage")
@@ -259,12 +240,15 @@ async def read_sse_reply(
             continue
         if "content" in delta:
             value = delta["content"]
-            if value is None:
-                saw_content_null = True
-            elif isinstance(value, str):
+            if isinstance(value, str):
                 saw_content_str = True
                 content_parts.append(value)
                 content_out.add(value)
+            elif value is not None:
+                # Array (or other non-string) delta content: the non-stream
+                # path raises on this shape, so the stream must too — no
+                # silent text loss.
+                raise LLMError("provider content must be string or null")
         piece = _reasoning_text(delta)
         if piece:
             reasoning.add(piece)
@@ -273,16 +257,15 @@ async def read_sse_reply(
 
     if not saw_choice:
         raise LLMError("provider response missing choices")
-    content_out.flush()
-    if saw_content_str:
-        content: str | None = "".join(content_parts)
-    elif saw_content_null:
-        content = None
-    else:
-        content = None
+    if not finish and not saw_done:
+        # Clean EOF with neither finish_reason nor [DONE]: the provider cut
+        # the stream, so this is provider-incomplete, never partial success.
+        raise LLMError("provider response incomplete")
+    content_out.finish()
+    content: str | None = redact("".join(content_parts), key) if saw_content_str else None
     return ChatReply(
         content=content,
-        tool_calls=_slots_to_calls(slots),
+        tool_calls=slots_to_calls(slots),
         usage=usage,
         finish_reason=finish,
         model=model,
@@ -317,14 +300,15 @@ def _merge_tool_deltas(slots: dict[int, dict[str, str]], raw: object) -> None:
             slot["arguments"] = json.dumps(arguments, ensure_ascii=False)
 
 
-def _slots_to_calls(slots: dict[int, dict[str, str]]) -> list[ToolCall]:
+def slots_to_calls(slots: dict[int, dict[str, str]], *, id_key: str = "id") -> list[ToolCall]:
+    """Index-slot tool calls to ToolCalls; the responses path passes ``id_key='call_id'``."""
     if not slots:
         return []
     ordered = [slots[index] for index in sorted(slots)]
     return parse_tool_calls(
         [
             {
-                "id": slot["id"],
+                "id": slot[id_key],
                 "function": {"name": slot["name"], "arguments": slot["arguments"] or "{}"},
             }
             for slot in ordered

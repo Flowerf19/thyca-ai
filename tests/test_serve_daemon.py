@@ -52,3 +52,34 @@ def test_cli_daemon_and_stop_flags(tmp_path: Path) -> None:
     err.truncate(0)
     assert cli.main(["--serve", "--stop"]) == 1
     assert "not running" in err.getvalue()
+
+
+def test_double_daemonize_before_pidfile_raises(tmp_path: Path, monkeypatch) -> None:
+    from thyca.serve.daemon import daemonize
+
+    class _Exited(Exception):
+        pass
+
+    monkeypatch.setattr(os, "fork", lambda: 1)  # parent branch, no real fork
+    monkeypatch.setattr(
+        os, "_exit", lambda code: (_ for _ in ()).throw(_Exited())
+    )
+    with pytest.raises(_Exited):
+        daemonize(tmp_path)  # claims the start lock, then "parent" exits
+    # The grandchild never ran, so no pidfile — but the start is claimed:
+    # the leaked lock fd stands in for the in-flight daemon.
+    assert not pid_file(tmp_path).is_file()
+    with pytest.raises(ServeError, match="already running"):
+        daemonize(tmp_path)
+
+
+# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
+def test_m7_loopback_covers_all_loopback_ips() -> None:
+    from thyca.serve.server import _is_loopback
+
+    assert _is_loopback("127.0.0.1")
+    assert _is_loopback("127.0.0.2")
+    assert _is_loopback("::1")
+    assert _is_loopback("localhost")
+    assert not _is_loopback("0.0.0.0")
+    assert not _is_loopback("example.com")

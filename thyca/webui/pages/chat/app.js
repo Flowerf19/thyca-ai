@@ -1,10 +1,10 @@
 import { getJson } from "../../shared/js/http.js";
 import { cleanText } from "../../shared/js/format.js";
+import { messageOf } from "../../shared/js/status.js";
 import { renderConversation, renderEmpty, renderError } from "./transcript.js";
 import { createLiveStatus } from "./live-status.js";
 import {
   initSessionsSidebar,
-  messageOf,
   refreshSessions,
   rememberActiveSession,
   renderSessions,

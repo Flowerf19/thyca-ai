@@ -10,13 +10,10 @@ DEFAULT_PRICES: dict[str, PricingCfg] = {
     "gpt-4o-mini": PricingCfg(input=0.15, cache=0.075, output=0.60),
     "gpt-5.6-luna": PricingCfg(input=0.20, cache=0.02, output=1.20),
     "muse-spark-1.2-contributor": PricingCfg(input=0.10, cache=0.002, output=0.20),
+    "muse-spark-1.3-contributor": PricingCfg(input=0.10, cache=0.002, output=0.20),
 }
 
 _DATE_SUFFIX = re.compile(r"-\d{4}-\d{2}-\d{2}$")
-
-
-def resolve_model(raw: str) -> str:
-    return raw.strip()
 
 
 def _candidates(model: str) -> list[str]:
@@ -55,7 +52,7 @@ def cost_for(
     """Return USD cost rounded to 6 decimals, or None when model/usage unknown."""
     if not model or not isinstance(usage, dict):
         return None
-    pricing = _lookup(resolve_model(model), pricing_cfg)
+    pricing = _lookup(model.strip(), pricing_cfg)
     if pricing is None:
         return None
     prompt = usage.get("prompt_tokens")

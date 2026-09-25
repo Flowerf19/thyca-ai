@@ -100,6 +100,28 @@ export function formatCost(value, digits = 6) {
   })}`;
 }
 
+/* Share as a percent string, or "—" when either side is unknown or the
+   denominator is not a positive number. Number(null) is 0, so unpriced
+   values are rejected before coercion — an unpriced row must never pose as
+   0%, and total=0 must not make NaN. One formatter for the Cost, Token and
+   Request journals (cost-data.js re-exports it for existing importers). */
+export function shareLabel(value, total) {
+  if (value == null || value === "") return "—";
+  const number = Number(value);
+  if (!Number.isFinite(number) || !Number.isFinite(total) || total <= 0) return "—";
+  return `${Math.round(number / total * 100)}%`;
+}
+
+/* Meter fill as a CSS var value, clamped to 0–100% for rendering safety;
+   null when unknown so the meter stays empty. */
+export function shareRatio(value, total) {
+  if (value == null || value === "") return null;
+  const number = Number(value);
+  if (!Number.isFinite(number) || !Number.isFinite(total) || total <= 0) return null;
+  const ratio = Math.min(Math.max(number / total * 100, 0), 100);
+  return `${ratio}%`;
+}
+
 export function formatDuration(value) {
   const ms = Number(value);
   if (!Number.isFinite(ms) || ms < 0) return "—";
@@ -125,18 +147,6 @@ export function decodeHash(hash) {
     return decodeURIComponent(raw);
   } catch {
     return raw;
-  }
-}
-
-export function providerLabel(baseUrl) {
-  try {
-    const host = new URL(String(baseUrl || "")).hostname.toLowerCase();
-    if (host.includes("openai.com")) return "OpenAI";
-    if (host.includes("openrouter.ai")) return "OpenRouter";
-    if (host.includes("localhost") || host === "127.0.0.1") return "Local";
-    return host || "OpenAI-compatible";
-  } catch {
-    return "OpenAI-compatible";
   }
 }
 

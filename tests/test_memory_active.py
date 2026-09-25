@@ -6,6 +6,8 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from thyca.llm.prompt_manager import PromptManager
 from thyca.memory import ActiveMemory, tail_text
 
@@ -23,13 +25,40 @@ def test_ensure_creates_missing_and_keeps_existing(tmp_path: Path) -> None:
     memory = ActiveMemory(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     memory.ensure_files(at("2026-08-17"))
     assert soul.read_text(encoding="utf-8") == "# existing soul\n"
-    assert (tmp_path / "USER.md").is_file()
-    assert (tmp_path / "IDENTITY.md").is_file()
-    assert "Thyca" in (tmp_path / "IDENTITY.md").read_text(encoding="utf-8")
+    for name in ("user", "identity"):
+        path = tmp_path / f"{name.upper()}.md"
+        assert path.read_text(encoding="utf-8") == PromptManager().template(name)
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert not (tmp_path / "MEMORY.md").exists()
     assert (tmp_path / "memory" / "2026-08-17.md").is_file()
     assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
     assert stat.S_IMODE((tmp_path / "memory").stat().st_mode) == 0o700
+
+
+@pytest.mark.parametrize("name", ["SOUL", "IDENTITY", "USER"])
+@pytest.mark.parametrize("kind", ["custom", "empty", "stub"])
+def test_ensure_never_replaces_existing_profiles(tmp_path: Path, name: str, kind: str) -> None:
+    content = {"custom": "# Custom\nNội dung đã lưu.\n", "empty": "", "stub": f"# {name.title()}\n"}[kind]
+    path = tmp_path / f"{name}.md"
+    path.write_text(content, encoding="utf-8")
+    memory = ActiveMemory(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    state = memory.open_session(at("2026-08-17"))
+    memory.ensure_files(at("2026-08-17"))
+    assert path.read_text(encoding="utf-8") == content
+    assert getattr(memory.refresh(state, at("2026-08-17")), name.lower()) == content
+
+
+def test_new_profiles_are_injected_from_packaged_templates(tmp_path: Path) -> None:
+    memory = ActiveMemory(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    state = memory.open_session(at("2026-08-17"))
+    snapshot = memory.refresh(state, at("2026-08-17"))
+    manager = PromptManager()
+    for name in ("identity", "soul", "user"):
+        assert getattr(snapshot, name) == manager.template(name)
+    text = manager.build(snapshot)
+    assert f"<identity>\n{snapshot.identity.strip()}\n</identity>" in text
+    assert f"<role>\n{snapshot.soul.strip()}\n</role>" in text
+    assert f"<user>\n{snapshot.user}\n</user>" in text
 
 
 def test_refresh_sees_canonical_and_today_not_previous_day(tmp_path: Path) -> None:
@@ -42,10 +71,12 @@ def test_refresh_sees_canonical_and_today_not_previous_day(tmp_path: Path) -> No
     assert not hasattr(snap, "yesterday")
     assert "previous day" not in PromptManager().build(snap)
     (tmp_path / "SOUL.md").write_text("# soul v2\n", encoding="utf-8")
+    (tmp_path / "IDENTITY.md").write_text("# identity v2\n", encoding="utf-8")
     (tmp_path / "USER.md").write_text("# user v2\n", encoding="utf-8")
     (tmp_path / "memory" / "2026-08-17.md").write_text("# today v2\n", encoding="utf-8")
     snap2 = memory.refresh(state, at("2026-08-17"))
     assert snap2.soul == "# soul v2\n"
+    assert snap2.identity == "# identity v2\n"
     assert snap2.user == "# user v2\n"
     assert snap2.today == "# today v2\n"
 
@@ -115,3 +146,45 @@ def test_refresh_strips_heading_comment(tmp_path: Path) -> None:
     snap = memory.refresh(memory.open_session(at("2026-08-17")), at("2026-08-17"))
     assert "thyca" not in snap.today
     assert snap.today.startswith("## 10:00 — cafe")
+
+
+# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
+import pytest
+from pathlib import Path
+
+def test_x16_active_loads_prompts_via_template(tmp_path: Path) -> None:
+    from thyca.llm.prompt_manager import PromptManager
+    from thyca.memory.active import ActiveMemory, _packaged
+
+    ActiveMemory(tmp_path).ensure_files()
+    assert (tmp_path / "SOUL.md").read_text(encoding="utf-8") == PromptManager().template(
+        "soul"
+    )
+    assert _packaged("soul", "fallback") == PromptManager().template("soul")
+
+
+def test_x16_active_keeps_missing_file_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    from thyca.llm import prompt_manager as pm
+    from thyca.memory.active import _packaged
+
+    def boom(self, name: str) -> str:
+        raise FileNotFoundError(name)
+
+    monkeypatch.setattr(pm.PromptManager, "template", boom)
+    assert _packaged("soul", "fallback") == "fallback"
+
+
+def test_m5_refresh_recreates_deleted_today(tmp_path: Path) -> None:
+    from datetime import datetime
+
+    from thyca.memory.active import ActiveMemory
+
+    memory = ActiveMemory(tmp_path)
+    now = datetime(2026, 8, 17, 12, 0)
+    state = memory.open_session(now)
+    assert state.today_path.is_file()
+    state.today_path.unlink()
+    snapshot = memory.refresh(state, now)
+    assert state.today_path.is_file()
+    assert "# 2026-08-17" in state.today_path.read_text(encoding="utf-8")
+    assert snapshot.today != ""

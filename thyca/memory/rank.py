@@ -1,6 +1,6 @@
 """Pure ranking policy for memory search hits.
 
-Extracted from ``tools/memory.py`` (SRP): the facade owns remember/forget /
+Extracted from ``memory/facade.py`` (SRP): the facade owns remember/forget /
 reinforce / get / search orchestration; scoring an in-order phrase span over
 normalized text is a pure policy with no I/O.
 """

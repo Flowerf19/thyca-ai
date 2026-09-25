@@ -35,7 +35,7 @@ nguyên path:
 | `thyca/agent/observe.py` | giữ nguyên | tách helper sang file mới (TASK-005) |
 | `thyca/agent/stage.py` | giữ nguyên | không đổi (dataclass đã tối giản) |
 | `thyca/agent/events.py` | giữ nguyên | không đổi (contract event đã ổn) |
-| `thyca/agent/skill_event.py` | giữ nguyên | bỏ import private M6 (TASK-006) |
+| `thyca/skills/skill_event.py` | giữ nguyên | bỏ import private M6 (TASK-006) |
 | `thyca/agent/reply.py` | giữ nguyên | không đổi |
 | `thyca/agent/README.md` | cập nhật | ghi ranh giới mới sau refactor (1 TASK, chỉ doc) |
 
@@ -51,7 +51,7 @@ Ranh mới duy nhất: 1 file mới `thyca/agent/meta.py` chứa meta-builder t�
 | TASK-003 | `thyca/agent/assemble.py:11-12`: bỏ `prompts or PromptManager()` tự dựng concrete trong constructor; đổi signature thành `def __init__(self, prompts: PromptManager) -> None` và sửa 2 call-site cùng module scope (`thyca/cli.py`, `thyca/chat_app.py` thuộc M8 — mở PR phối hợp, M1 cung cấp patch 1 dòng mỗi nơi truyền `PromptManager()` tường minh). Behavior mặc định giữ nguyên vì call-site vẫn truyền cùng object | | |
 | TASK-004 | `thyca/agent/act.py`: tách `Act._one` thành 2 hàm module `_build_result(call, dispatched_or_error)` (đóng gói `ToolResult` từ dispatch/exception/`parse_error`) và giữ `_one` chỉ lo emit event + gọi dispatcher; giữ nguyên cặp beat `tool.started`/`tool.finished` và `skill.*` classification, giữ đo latency từng tool trong `act` | | |
 | TASK-005 | `thyca/agent/observe.py`: chuyển `_assistant_meta`, `_tool_message`, `_reasoning`, `_reasoning_details` sang file mới `thyca/agent/meta.py` dưới dạng hàm public `assistant_meta(stage, *, kind)`, `tool_message(result, latency_ms, round_no)`; `Observe` chỉ còn persist (`compact`/`user`/`assistant`/`observe`/`loop_limit`) + `_order_results`. Import trong `observe.py` đổi sang `from .meta import ...`; không đổi nội dung meta | | |
-| TASK-006 | `thyca/agent/skill_event.py:24`: bỏ `from thyca.skills import _NAME_RE, NAME_MAX` (import private xuyên module sang M6); inline grammar ngay trong file này: `NAME_MAX = 64`, `_NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")` (copy byte-for-byte từ `thyca/skills.py:21,25`, comment dẫn nguồn), `is_skill_name`/`classify_skill_read`/`skill_name_for_call`/`public_skill_name` giữ nguyên logic | | |
+| TASK-006 | `thyca/skills/skill_event.py:24`: bỏ `from thyca.skills import _NAME_RE, NAME_MAX` (import private xuyên module sang M6); inline grammar ngay trong file này: `NAME_MAX = 64`, `_NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")` (copy byte-for-byte từ `thyca/skills.py:21,25`, comment dẫn nguồn), `is_skill_name`/`classify_skill_read`/`skill_name_for_call`/`public_skill_name` giữ nguyên logic | | |
 | TASK-007 | Cập nhật `thyca/agent/README.md`: sửa cây thư mục (thêm `meta.py`, `events.py`, `skill_event.py`, `thinking.py`, `reply.py` còn thiếu), ghi ranh giới `meta.py` (pure, không I/O) và quy tắc grammar skill (M6 sở hữu grammar, M1 giữ bản copy dẫn nguồn) | | |
 
 SOLID findings (có evidence, SRP là chính):
@@ -69,7 +69,7 @@ SOLID findings (có evidence, SRP là chính):
   tự dựng concrete dependency trong constructor. Sửa theo TASK-003 (inject bắt buộc).
   `Think` (`think.py:8-10`, `LLMPort` Protocol) và `Act` (`act.py:12-13`,
   `ToolDispatcher` Protocol) đã đúng DIP — giữ nguyên, làm mẫu.
-- DIP/ISP — `thyca/agent/skill_event.py:24`: `from thyca.skills import _NAME_RE, NAME_MAX`
+- DIP/ISP — `thyca/skills/skill_event.py:24`: `from thyca.skills import _NAME_RE, NAME_MAX`
   phụ thuộc vào private (dấu `_`) của module M6, tạo coupling ngược M1→M6 vào chi tiết
   scan-time. Sửa theo TASK-006 (copy grammar có dẫn nguồn, cắt import).
 - Không phát hiện OCP cần sửa: `TurnEvent._ALLOWED_FIELDS` (`events.py:30-41`) mở rộng

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "thyca-ai"
-version = "0.8.6.dev0"
+version = "0.8.6"
 description = "Thyca — personal harness"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -33,9 +33,10 @@ packages = ["thyca"]
 artifacts = ["thyca/webui/**/*.html", "thyca/webui/**/*.css", "thyca/webui/**/*.js", "thyca/webui/**/*.png", "thyca/webui/**/*.svg", "thyca/webui/vendor/*"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"thyca/llm/prompts/soul.md" = "thyca/llm/prompts/soul.md"
-"thyca/llm/prompts/identity.md" = "thyca/llm/prompts/identity.md"
-"thyca/read_after_config.md" = "thyca/read_after_config.md"
+"thyca/seeds/prompts/soul.md" = "thyca/seeds/prompts/soul.md"
+"thyca/seeds/prompts/identity.md" = "thyca/seeds/prompts/identity.md"
+"thyca/seeds/prompts/user.md" = "thyca/seeds/prompts/user.md"
+"thyca/seeds/guides/read_before_config.md" = "thyca/seeds/guides/read_before_config.md"
 
 [tool.ruff]
 line-length = 100

@@ -29,3 +29,16 @@ def test_factory_responses_injects_provider() -> None:
     connect = ConnectFactory.create("openai_responses", provider)
     assert isinstance(connect, OpenAIResponses)
     assert connect._provider is provider
+
+
+# Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
+def test_x15_connects_share_base() -> None:
+    from thyca.llm._http import BaseConnect
+    from thyca.llm.openai_chat import OpenAIChat
+    from thyca.llm.openai_responses import OpenAIResponses
+
+    assert issubclass(OpenAIChat, BaseConnect)
+    assert issubclass(OpenAIResponses, BaseConnect)
+    assert OpenAIChat.DROP_PARAM == "reasoning_effort"
+    assert OpenAIResponses.DROP_PARAM == "reasoning"
+    assert not hasattr(OpenAIChat, "_request") or "_request" not in OpenAIChat.__dict__

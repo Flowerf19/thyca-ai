@@ -11,18 +11,20 @@ import pytest
 from thyca.core.protocol import ToolCall
 from thyca.tools.builtin import register_file_tools
 from thyca.tools.builtin.bash import kill_process_group, parse_timeout, select_shell
+from thyca.tools.gateway import ToolGateway
 from thyca.tools.path_guard import PathGuard
 from thyca.tools.registry import ToolRegistry
+from thyca.tools.task_store import TaskStore
 
 
-def _registry(root: Path) -> ToolRegistry:
+def _gateway(root: Path) -> ToolGateway:
     registry = ToolRegistry()
     register_file_tools(registry, PathGuard(root))
-    return registry
+    return ToolGateway(registry, TaskStore())
 
 
-async def _bash(registry: ToolRegistry, command: str, **extra):
-    return await registry.dispatch(
+async def _bash(gateway: ToolGateway, command: str, **extra):
+    return await gateway.submit(
         ToolCall(id="b1", name="bash", arguments={"command": command, **extra})
     )
 
@@ -35,7 +37,7 @@ def test_select_shell_is_posix_bash() -> None:
 
 @pytest.mark.asyncio
 async def test_echo_ok(tmp_path: Path) -> None:
-    result = await _bash(_registry(tmp_path), "echo ok")
+    result = await _bash(_gateway(tmp_path), "echo ok")
     assert not result.is_error
     assert "exit: 0" in result.content
     assert "ok" in result.content
@@ -43,8 +45,8 @@ async def test_echo_ok(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_nonzero_exit_is_not_dispatch_error(tmp_path: Path) -> None:
-    result = await _bash(_registry(tmp_path), "false")
+async def test_nonzero_exit_is_not_submit_error(tmp_path: Path) -> None:
+    result = await _bash(_gateway(tmp_path), "false")
     assert not result.is_error
     assert "exit: 1" in result.content
 
@@ -53,7 +55,7 @@ async def test_nonzero_exit_is_not_dispatch_error(tmp_path: Path) -> None:
 async def test_timeout_kills_group(tmp_path: Path) -> None:
     marker = tmp_path / "still-running"
     result = await _bash(
-        _registry(tmp_path),
+        _gateway(tmp_path),
         f"sleep 5; echo alive > '{marker}'",
         timeout=1,
     )
@@ -79,30 +81,38 @@ def test_parse_timeout() -> None:
 
 
 @pytest.mark.asyncio
-async def test_output_capped_keeps_tail(tmp_path: Path) -> None:
-    result = await _bash(_registry(tmp_path), "python3 -c 'print(\"A\" * 40000 + \"TAIL\")'")
+async def test_output_capped_head_tail_with_marker(tmp_path: Path) -> None:
+    result = await _bash(_gateway(tmp_path), "python3 -c 'print(\"A\" * 40000 + \"TAIL\")'")
     assert not result.is_error
-    assert len(result.content.encode("utf-8")) <= 32_768
-    assert result.content.endswith("TAIL\n")
+    first, rest = result.content.split("\n", 1)
+    assert first == "exit: 0"
+    ahead, marker, tail = rest.split("\n", 2)
+    assert ahead == "A" * 8184
+    assert marker.startswith("[... clipped 7245 bytes")
+    assert "full output was not retained" in marker
+    assert tail.endswith("TAIL\n")
+    assert len(("exit: 0\n" + ahead + tail).encode("utf-8")) == 32_768
 
 
 @pytest.mark.asyncio
 async def test_schema_and_missing_command(tmp_path: Path) -> None:
-    registry = _registry(tmp_path)
+    registry = ToolRegistry()
+    register_file_tools(registry, PathGuard(tmp_path))
+    gateway = ToolGateway(registry, TaskStore())
     names = [item["function"]["name"] for item in registry.to_openai_schema()]
     assert "bash" in names
-    missing = await registry.dispatch(ToolCall(id="b1", name="bash", arguments={}))
+    missing = await gateway.submit(ToolCall(id="b1", name="bash", arguments={}))
     assert missing.is_error
     assert "missing argument" in missing.content
 
 
 @pytest.mark.asyncio
 async def test_two_bash_serialize(tmp_path: Path) -> None:
-    registry = _registry(tmp_path)
+    gateway = _gateway(tmp_path)
     stamp = tmp_path / "order.txt"
 
     async def one(tag: str) -> None:
-        await _bash(registry, f"echo {tag} >> '{stamp}'; sleep 0.15")
+        await _bash(gateway, f"echo {tag} >> '{stamp}'; sleep 0.15")
 
     start = time.monotonic()
     await asyncio.gather(one("a"), one("b"))

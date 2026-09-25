@@ -18,7 +18,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
+from thyca.app.turn_options import TEXT_MAX
 from thyca.serve import config_api
+from thyca.serve.errors import _with_json
 from thyca.serve.memory import memory_endpoint
 from thyca.serve.sessions_api import (
     session_create,
@@ -38,29 +40,23 @@ from thyca.serve.trace_api import (
     trace_stats_payload,
 )
 from thyca.sessions import SessionCorrupt, SessionNotFound
-from thyca.tools.memory import MemoryFacade
+from thyca.sessions.store import SESSION_ID_PATTERN
+from thyca.memory.facade import MemoryFacade
 
 if TYPE_CHECKING:
     from thyca.app.chat_app import ChatApp
 
-_SESSION_RE = re.compile(
-    r"^/api/sessions/(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_[0-9a-f]{4})$"
-)
-_TURN_RE = re.compile(
-    r"^/api/sessions/(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_[0-9a-f]{4})/turn$"
-)
-_TURN_STREAM_RE = re.compile(
-    r"^/api/sessions/(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_[0-9a-f]{4})/turn/stream$"
-)
-_TURN_CANCEL_RE = re.compile(
-    r"^/api/sessions/(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_[0-9a-f]{4})/turn/cancel$"
-)
+_SESSION_RE = re.compile(rf"^/api/sessions/({SESSION_ID_PATTERN})$")
+_TURN_RE = re.compile(rf"^/api/sessions/({SESSION_ID_PATTERN})/turn$")
+_TURN_STREAM_RE = re.compile(rf"^/api/sessions/({SESSION_ID_PATTERN})/turn/stream$")
+_TURN_CANCEL_RE = re.compile(rf"^/api/sessions/({SESSION_ID_PATTERN})/turn/cancel$")
 _TRACE_RE = re.compile(r"^/api/traces$")
 _TRACE_STATS_RE = re.compile(r"^/api/traces/stats$")
-_TRACE_DETAIL_RE = re.compile(
-    r"^/api/traces/(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_[0-9a-f]{4})/(\d+)$"
-)
-_BODY_CAP = 16_384
+_TRACE_DETAIL_RE = re.compile(rf"^/api/traces/({SESSION_ID_PATTERN})/(\d+)$")
+# Worst-case turn body: TEXT_MAX chars \u-escaped (12 bytes per non-BMP char)
+# plus the JSON envelope (model/effort/retry). Must stay above that so a
+# valid 4000-emoji turn is never rejected as "invalid body".
+_BODY_CAP = TEXT_MAX * 12 + 4096
 
 
 def make_handler(
@@ -152,6 +148,9 @@ def make_handler(
             if path.startswith("/api/sessions"):
                 self._json(404, {"error": "session not found"})
                 return
+            if path.startswith("/api/traces"):
+                self._json(404, {"error": "trace not found"})
+                return
             self._send(405, b"method not allowed", "text/plain; charset=utf-8")
 
         def do_DELETE(self) -> None:
@@ -170,13 +169,11 @@ def make_handler(
             return
 
         def _memory_post(self, kind: str) -> None:
-            try:
-                payload = self._read_json()
-            except ValueError:
-                self._json(400, {"error": "invalid body"})
-                return
-            status, body = memory_endpoint(facade, kind, payload)
-            self._json(status, body)
+            def run(payload: dict) -> None:
+                status, body = memory_endpoint(facade, kind, payload)
+                self._json(status, body)
+
+            _with_json(self, run)
 
         def _stats(self) -> None:
             try:
@@ -212,11 +209,8 @@ def make_handler(
             app = self._chat()
             if app is None:
                 return
-            try:
-                idx = int(turn_index)
-            except ValueError:
-                self._json(404, {"error": "trace not found"})
-                return
+            # _TRACE_DETAIL_RE only matches \d+: int() cannot fail here.
+            idx = int(turn_index)
             try:
                 self._json(200, trace_detail_payload(app, session_id, idx))
             except SessionNotFound:

@@ -193,16 +193,11 @@ export function sendIdleRemember() {
   void sendMessage();
 }
 
-function hostOf(baseUrl) {
-  try { return new URL(String(baseUrl || "")).host; } catch { return ""; }
-}
-
 export function fillComposerControls(payload, { keepSelection = false } = {}) {
   const { el } = composerDeps;
   const values = payload?.values || {};
   const defaultModel = values.defaultModel || "";
   const models = values.models && typeof values.models === "object" ? values.models : {};
-  const providers = values.providers && typeof values.providers === "object" ? values.providers : {};
   const catalog = [...new Set([defaultModel, ...Object.keys(models)].filter((id) => typeof id === "string" && id))];
   const providerOf = (id) => models[id]?.provider || values.defaultProvider || "default";
   const groups = new Map();
@@ -215,8 +210,7 @@ export function fillComposerControls(payload, { keepSelection = false } = {}) {
   el.model.replaceChildren(
     ...[...groups.entries()].map(([pid, ids]) => {
       const group = document.createElement("optgroup");
-      const host = hostOf(providers[pid]?.baseUrl);
-      group.label = host ? `${pid} — ${host}` : pid;
+      group.label = pid;
       for (const id of ids) {
         const option = document.createElement("option");
         option.value = id;

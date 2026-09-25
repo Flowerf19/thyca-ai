@@ -51,10 +51,6 @@
               <summary><h3 id="provider-group-heading">Nhà cung cấp</h3></summary>
               <div class="provider-columns">
                 <div>
-                  <div class="pick-head">
-                    <h3>Danh sách</h3>
-                    <span class="pick-count" id="provider-count"></span>
-                  </div>
                   <ul class="pick-list" id="provider-list" aria-label="Danh sách provider"></ul>
                   <button class="screen-button pick-add" id="provider-add" type="button">Thêm</button>
                 </div>
@@ -63,8 +59,6 @@
                     <h3 id="provider-detail-name">Chưa có provider</h3>
                     <span class="pick-badge" id="provider-detail-badge" hidden>Mặc định</span>
                     <div class="detail-actions">
-                      <button class="screen-button" id="verify-provider" type="button">Kiểm tra &amp; tải model</button>
-                      <button class="screen-button" id="test-provider" type="button">Test API</button>
                       <button class="screen-button is-primary" id="provider-create" type="button" hidden>Tạo provider</button>
                       <button class="screen-button" id="provider-cancel" type="button" hidden>Hủy</button>
                     </div>
@@ -79,24 +73,14 @@
                       <input type="text" name="provider-username" value="thyca-local" autocomplete="username" hidden tabindex="-1" aria-hidden="true" />
                       <input class="screen-input" id="provider-key" name="provider-key" type="password" autocomplete="new-password" maxlength="200" placeholder="Để trống để giữ khóa đã lưu" />
                     </div>
+                    <label for="provider">Kiểu endpoint</label>
+                    <select class="screen-select" id="provider" name="provider"><option value="openai">OpenAI</option><option value="openrouter">OpenRouter</option><option value="local">Local</option><option value="custom">OpenAI-compatible</option></select>
+                    <label for="provider-api">Kiểu API<span class="info-dot" title="Responses trả kèm thinking summaries để hiện suy nghĩ của model.">ⓘ</span></label>
+                    <select class="screen-select" id="provider-api" name="provider-api"><option value="openai_chat">Chat completions</option><option value="openai_responses">Responses</option></select>
                   </div>
-                  <details class="advanced">
-                    <summary>Nâng cao</summary>
-                    <div class="field-grid is-compact">
-                      <div class="mini-field">
-                        <label for="provider">Kiểu endpoint</label>
-                        <select class="screen-select" id="provider" name="provider"><option value="openai">OpenAI</option><option value="openrouter">OpenRouter</option><option value="local">Local</option><option value="custom">OpenAI-compatible</option></select>
-                      </div>
-                      <div class="mini-field">
-                        <label for="provider-api">Kiểu API<span class="info-dot" title="Responses trả kèm thinking summaries để hiện suy nghĩ của model.">ⓘ</span></label>
-                        <select class="screen-select" id="provider-api" name="provider-api"><option value="openai_chat">Chat completions</option><option value="openai_responses">Responses</option></select>
-                      </div>
-                      <div class="mini-field">
-                        <label for="provider-effort">Suy luận mặc định</label>
-                        <select class="screen-select" id="provider-effort" name="provider-effort"></select>
-                      </div>
-                    </div>
-                  </details>
+                  <div class="provider-verify-row">
+                    <button class="screen-button is-primary" id="verify-provider" type="button">Kiểm tra &amp; tải model</button>
+                  </div>
                 </div>
               </div>
             </details>
@@ -104,10 +88,6 @@
               <summary><h3 id="model-group-heading">Mô hình <span id="model-provider-name"></span></h3></summary>
               <div class="provider-columns">
                 <div>
-                  <div class="pick-head">
-                    <h3>Danh sách</h3>
-                    <span class="pick-count" id="model-count"></span>
-                  </div>
                   <ul class="pick-list" id="model-listbox" aria-label="Model của provider"></ul>
                   <button class="screen-button pick-add" id="model-add" type="button">Thêm</button>
                 </div>
@@ -123,59 +103,53 @@
                     </div>
                     <label for="reasoning-effort">Mức suy luận</label>
                     <select class="screen-select" id="reasoning-effort" name="reasoning-effort"></select>
+                    <label for="reasoning-custom" id="reasoning-custom-label" hidden>Tự đặt</label>
+                    <input class="screen-input" id="reasoning-custom" name="reasoning-custom" autocomplete="off" spellcheck="false" maxlength="120" placeholder="vd: low, high, xhigh" hidden />
+                  </div>
+                  <div class="mini-quad">
+                    <div>
+                      <label for="context-window" title="Đơn vị: token">Ngữ cảnh</label>
+                      <input class="screen-input" id="context-window" name="context-window" type="number" min="1000" max="2000000" step="1" value="128000" inputmode="numeric" />
+                    </div>
+                    <div>
+                      <label for="input-cost" title="USD / 1M token">Input cost</label>
+                      <input class="screen-input" id="input-cost" name="input-cost" type="number" min="0" step="any" placeholder="mặc định backend" />
+                    </div>
+                    <div>
+                      <label for="cache-input-cost" title="USD / 1M token">Cache cost</label>
+                      <input class="screen-input" id="cache-input-cost" name="cache-input-cost" type="number" min="0" step="any" placeholder="mặc định backend" />
+                    </div>
+                    <div>
+                      <label for="output-cost" title="USD / 1M token">Output cost</label>
+                      <input class="screen-input" id="output-cost" name="output-cost" type="number" min="0" step="any" placeholder="mặc định backend" />
+                    </div>
                   </div>
                   <div class="detail-actions" id="model-create-row" hidden>
                     <button class="screen-button is-primary" id="model-create" type="button">Tạo model</button>
                     <button class="screen-button" id="model-cancel" type="button">Hủy</button>
                   </div>
-                  <details class="advanced">
-                    <summary>Nâng cao</summary>
-                    <div class="field-grid is-compact">
-                      <div class="mini-field" hidden>
-                        <label for="loop-max">Vòng agent tối đa</label>
-                        <input class="screen-input" id="loop-max" name="loop-max" type="number" min="1" max="200" step="1" inputmode="numeric" />
-                      </div>
-                      <div class="mini-field" hidden>
-                        <label for="hot-tail-kb">Nhớ nóng (KB)</label>
-                        <input class="screen-input" id="hot-tail-kb" name="hot-tail-kb" type="number" min="1" max="64" step="1" inputmode="numeric" />
-                      </div>
-                      <div class="mini-field span-2">
-                        <label for="reasoning-efforts">Thinking map<span class="info-dot" title="Các mức model hỗ trợ, phân cách bằng dấu phẩy. Ví dụ: minimal, low, medium, high, max.">ⓘ</span></label>
-                        <input class="screen-input" id="reasoning-efforts" name="reasoning-efforts" autocomplete="off" spellcheck="false" placeholder="mặc định: low, high, max" />
-                      </div>
-                      <div class="mini-field">
-                        <label for="context-window">Ngữ cảnh (token)</label>
-                        <input class="screen-input" id="context-window" name="context-window" type="number" min="1000" max="2000000" step="1" value="128000" inputmode="numeric" />
-                      </div>
-                      <div class="mini-field is-wide">
-                        <span class="mini-legend" id="price-legend">Giá (USD / 1M token)</span>
-                        <div class="mini-trio" role="group" aria-labelledby="price-legend">
-                          <div>
-                            <label for="input-cost">Input</label>
-                            <input class="screen-input" id="input-cost" name="input-cost" type="number" min="0" step="any" placeholder="mặc định backend" />
-                          </div>
-                          <div>
-                            <label for="cache-input-cost">Cache input</label>
-                            <input class="screen-input" id="cache-input-cost" name="cache-input-cost" type="number" min="0" step="any" placeholder="mặc định backend" />
-                          </div>
-                          <div>
-                            <label for="output-cost">Output</label>
-                            <input class="screen-input" id="output-cost" name="output-cost" type="number" min="0" step="any" placeholder="mặc định backend" />
-                          </div>
-                        </div>
-                      </div>
+                  <div hidden>
+                    <div>
+                      <label for="loop-max">Vòng agent tối đa</label>
+                      <input class="screen-input" id="loop-max" name="loop-max" type="number" min="1" max="200" step="1" inputmode="numeric" />
                     </div>
-                  </details>
+                    <div>
+                      <label for="hot-tail-kb">Nhớ nóng (KB)</label>
+                      <input class="screen-input" id="hot-tail-kb" name="hot-tail-kb" type="number" min="1" max="64" step="1" inputmode="numeric" />
+                    </div>
+                    <input id="reasoning-efforts" name="reasoning-efforts" autocomplete="off" spellcheck="false" hidden />
+                  </div>
                 </div>
               </div>
             </details>
-            <details class="provider-group fold-section" id="limits-group">
+            <!-- System defaults: hidden from users, values still read on save. -->
+            <details class="provider-group fold-section" id="limits-group" hidden>
               <summary><h3 id="limits-heading">Giới hạn chung</h3></summary>
               <div class="fold-list">
-                <article class="fold-row settings-row"><div><h3><label for="limits-loop-max">Số vòng agent tối đa</label></h3></div><input class="screen-input" id="limits-loop-max" name="limits-loop-max" type="number" min="1" max="200" step="1" inputmode="numeric" /></article>
-                <article class="fold-row settings-row"><div><h3><label for="limits-hot-tail-kb">Dung lượng nhớ nóng</label></h3></div><div class="settings-field"><input class="screen-input" id="limits-hot-tail-kb" name="limits-hot-tail-kb" type="number" min="1" max="64" step="1" inputmode="numeric" /><span class="settings-unit">KB</span></div></article>
-                <article class="fold-row settings-row"><div><h3><label for="limits-context-window">Cửa sổ ngữ cảnh</label></h3></div><div class="settings-field"><input class="screen-input" id="limits-context-window" name="limits-context-window" type="number" min="1000" max="2000000" step="1" inputmode="numeric" /><span class="settings-unit">token</span></div></article>
-                <article class="fold-row settings-row"><div><h3><label for="limits-soft-timeout">Soft timeout chờ tool</label></h3></div><div class="settings-field"><input class="screen-input" id="limits-soft-timeout" name="limits-soft-timeout" type="number" min="1" max="300" step="1" inputmode="numeric" /><span class="settings-unit">giây</span></div></article>
+                <article class="fold-row settings-row"><div><h3><label for="limits-loop-max">Số vòng agent tối đa</label></h3></div><input class="screen-input" id="limits-loop-max" name="limits-loop-max" type="number" min="1" max="200" step="1" inputmode="numeric" readonly title="Giá trị mặc định của hệ thống" /></article>
+                <article class="fold-row settings-row"><div><h3><label for="limits-hot-tail-kb">Dung lượng nhớ nóng</label></h3></div><div class="settings-field"><input class="screen-input" id="limits-hot-tail-kb" name="limits-hot-tail-kb" type="number" min="1" max="64" step="1" inputmode="numeric" readonly title="Giá trị mặc định của hệ thống" /><span class="settings-unit">KB</span></div></article>
+                <article class="fold-row settings-row"><div><h3><label for="limits-context-window">Cửa sổ ngữ cảnh</label></h3></div><div class="settings-field"><input class="screen-input" id="limits-context-window" name="limits-context-window" type="number" min="1000" max="2000000" step="1" inputmode="numeric" readonly title="Giá trị mặc định của hệ thống" /><span class="settings-unit">token</span></div></article>
+                <article class="fold-row settings-row"><div><h3><label for="limits-soft-timeout">Soft timeout chờ tool</label></h3></div><div class="settings-field"><input class="screen-input" id="limits-soft-timeout" name="limits-soft-timeout" type="number" min="1" max="300" step="1" inputmode="numeric" readonly title="Giá trị mặc định của hệ thống" /><span class="settings-unit">giây</span></div></article>
               </div>
             </details>
             <div class="provider-actions">

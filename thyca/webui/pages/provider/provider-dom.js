@@ -1,4 +1,3 @@
-import { effortChoicesFor, fillEffortSelect } from "../../shared/js/reasoning-effort.js";
 import { makeSetStatus } from "../../shared/js/status.js";
 import {
   PRESETS,
@@ -14,7 +13,6 @@ export const el = {
   form: document.querySelector("#provider-form"),
   providerList: document.querySelector("#provider-list"),
   providerAdd: document.querySelector("#provider-add"),
-  providerCount: document.querySelector("#provider-count"),
   providerDetailName: document.querySelector("#provider-detail-name"),
   providerDetailBadge: document.querySelector("#provider-detail-badge"),
   providerNameLabel: document.querySelector("#provider-name-label"),
@@ -22,13 +20,14 @@ export const el = {
   providerCreate: document.querySelector("#provider-create"),
   providerCancel: document.querySelector("#provider-cancel"),
   provider: document.querySelector("#provider"),
+  // NOTE: provider has no effort control: the level belongs to the model.
+  // The stored provider value is preserved untouched (backend requires it
+  // non-empty as the inherit anchor).
   endpoint: document.querySelector("#provider-endpoint"),
   apiKey: document.querySelector("#provider-key"),
-  providerEffort: document.querySelector("#provider-effort"),
   providerApi: document.querySelector("#provider-api"),
   modelListbox: document.querySelector("#model-listbox"),
   modelAdd: document.querySelector("#model-add"),
-  modelCount: document.querySelector("#model-count"),
   modelProviderName: document.querySelector("#model-provider-name"),
   modelAddHead: document.querySelector("#model-add-head"),
   modelCreateRow: document.querySelector("#model-create-row"),
@@ -37,6 +36,8 @@ export const el = {
   model: document.querySelector("#model"),
   modelSuggest: document.querySelector("#model-suggest"),
   reasoning: document.querySelector("#reasoning-effort"),
+  reasoningCustomLabel: document.querySelector("#reasoning-custom-label"),
+  reasoningCustom: document.querySelector("#reasoning-custom"),
   reasoningEfforts: document.querySelector("#reasoning-efforts"),
   loopMax: document.querySelector("#loop-max"),
   hotTailKB: document.querySelector("#hot-tail-kb"),
@@ -50,7 +51,6 @@ export const el = {
   limitsSoftTimeoutS: document.querySelector("#limits-soft-timeout"),
   status: document.querySelector("#provider-status"),
   verify: document.querySelector("#verify-provider"),
-  test: document.querySelector("#test-provider"),
   save: document.querySelector("#save-provider"),
   reset: document.querySelector(".settings-reset"),
 };
@@ -82,12 +82,16 @@ export function clearFieldErrors() {
   for (const bad of el.form.querySelectorAll('[aria-invalid="true"]')) bad.removeAttribute("aria-invalid");
 }
 
-export function flagField(id) {
+// Mark without stealing focus (blur lint must never yank focus back).
+export function markField(id) {
   if (!id) return;
-  const node = el.form.querySelector(`#${CSS.escape(id)}`);
-  if (!node) return;
-  node.setAttribute("aria-invalid", "true");
-  if (typeof node.focus === "function") node.focus({ preventScroll: false });
+  el.form.querySelector(`#${CSS.escape(id)}`)?.setAttribute?.("aria-invalid", "true");
+}
+
+export function flagField(id) {
+  markField(id);
+  const node = id && el.form.querySelector(`#${CSS.escape(id)}`);
+  if (node && typeof node.focus === "function") node.focus({ preventScroll: false });
 }
 
 export function syncProviderUi({ replaceEndpoint = false } = {}) {
@@ -97,17 +101,95 @@ export function syncProviderUi({ replaceEndpoint = false } = {}) {
   if (replaceEndpoint && !custom) el.endpoint.value = PRESETS[preset];
 }
 
-export function fillEffortOptions(selected) {
-  fillEffortSelect(
-    el.reasoning,
-    effortChoicesFor(state.schema, state.values, el.model.value.trim()),
-    selected,
-    state.schema,
-  );
+// Level dropdown = [Mặc định | Tự đặt…]. Standard levels belong to default:
+// only a custom level is ever pinned. Blank (default) pins nothing — the
+// existing map drives choices, effective level falls through to the
+// provider/backend default.
+const CUSTOM_EFFORT = "__custom";
+let customPin = "";
+// Whether the user touched the effort dropdown since last render. Save only
+// drops a stored standard level when explicitly reset to Mặc định — never
+// as a side effect of opening the page.
+let effortTouched = false;
+
+export function isEffortTouched() {
+  return effortTouched;
 }
 
-export function fillProviderEffort(selected) {
-  fillEffortSelect(el.providerEffort, STANDARD_EFFORTS, selected, state.schema);
+function hideCustomRow() {
+  el.reasoningCustomLabel.hidden = true;
+  el.reasoningCustom.hidden = true;
+}
+
+// Render a stored pin: blank-or-standard shows Mặc định, custom shows the
+// custom row prefilled.
+export function renderReasoning(pinned) {
+  effortTouched = false;
+  el.reasoning.replaceChildren(
+    new Option("Mặc định", ""),
+    new Option("Tự đặt…", CUSTOM_EFFORT),
+  );
+  if (pinned && !STANDARD_EFFORTS.includes(pinned)) {
+    customPin = pinned;
+    el.reasoning.value = CUSTOM_EFFORT;
+    el.reasoningCustomLabel.hidden = false;
+    el.reasoningCustom.hidden = false;
+    el.reasoningCustom.value = pinned;
+  } else {
+    customPin = "";
+    el.reasoning.value = "";
+    hideCustomRow();
+  }
+}
+
+export function selectedReasoningEffort() {
+  return el.reasoning.value === CUSTOM_EFFORT ? customPin : "";
+}
+
+export function onReasoningChange() {
+  effortTouched = true;
+  if (el.reasoning.value === CUSTOM_EFFORT) {
+    el.reasoningCustomLabel.hidden = false;
+    el.reasoningCustom.hidden = false;
+    el.reasoningCustom.value = customPin;
+    el.reasoningCustom.removeAttribute("aria-invalid");
+    el.reasoningCustom.focus();
+  } else {
+    customPin = "";
+    hideCustomRow();
+  }
+}
+
+// Commit pending custom levels (comma-separated): empty reverts to default,
+// otherwise missing ones are appended to the (hidden) thinking map and the
+// first non-standard level becomes the pin (all-standard → plain default).
+export function commitCustomEffort() {
+  if (el.reasoning.value !== CUSTOM_EFFORT) return;
+  const customs = el.reasoningCustom.value.split(",").map((level) => level.trim()).filter(Boolean);
+  if (!customs.length) {
+    el.reasoning.value = "";
+    customPin = "";
+    hideCustomRow();
+    return;
+  }
+  const levels = el.reasoningEfforts.value.split(",").map((level) => level.trim()).filter(Boolean);
+  // Only customs enter the map: standard levels belong to Mặc định, and
+  // must never narrow the map as a side effect.
+  const nonStandard = [...new Set(customs)].filter((level) => !STANDARD_EFFORTS.includes(level));
+  const missing = nonStandard.filter((level) => !levels.includes(level));
+  if (missing.length) {
+    el.reasoningEfforts.value = [...levels, ...missing].join(", ");
+    setStatus(`Đã thêm mức "${missing.join(", ")}" cho model này.`, "");
+  }
+  const pin = nonStandard[0] || "";
+  customPin = pin;
+  if (!pin) {
+    el.reasoning.value = "";
+    hideCustomRow();
+    if (customs.length) setStatus("Các mức chuẩn dùng Mặc định là đủ.", "");
+    return;
+  }
+  hideCustomRow();
 }
 
 export function syncProviderApi(entry) {
@@ -210,6 +292,9 @@ export function bindModelSuggest() {
     } else if (event.key === "Escape") {
       if (suggestOpen) {
         event.preventDefault();
+        // Don't bubble: first Esc closes the popup, only the second one may
+        // cancel an add draft (document handler).
+        event.stopPropagation();
         setSuggestOpen(false);
       }
     }
@@ -306,11 +391,12 @@ export function renderProviders() {
     ],
   })));
   if (!ids.length) el.providerList.append(emptyRow("Chưa có provider — bấm Thêm."));
-  el.providerCount.textContent = ids.length ? `${ids.length}` : "";
   el.providerNameLabel.hidden = !adding;
   el.providerName.hidden = !adding;
+  // Verify hides only in provider-add mode. It stays during a model draft
+  // on purpose: config-read-only, and it only autofills an empty Model ID
+  // — never overwrites typed text.
   el.verify.hidden = adding;
-  el.test.hidden = adding;
   el.providerCreate.hidden = !adding;
   el.providerCancel.hidden = !adding;
   if (adding) {
@@ -324,7 +410,6 @@ export function renderProviders() {
     syncProviderUi();
     el.apiKey.value = "";
     el.apiKey.placeholder = "Dán API key";
-    fillProviderEffort(undefined);
     syncProviderApi({});
     return;
   }
@@ -338,7 +423,6 @@ export function renderProviders() {
   el.apiKey.placeholder = state.meta.providers?.[state.activeProvider]
     ? "•••••••• (đã lưu — để trống để giữ)"
     : "Dán API key";
-  fillProviderEffort(entry.reasoningEffort);
   syncProviderApi(entry);
   el.modelProviderName.textContent = state.activeProvider ? `· ${state.activeProvider}` : "";
 }
@@ -361,7 +445,6 @@ export function renderModels() {
     ],
   })));
   if (!names.length) el.modelListbox.append(emptyRow("Chưa có model — bấm Thêm."));
-  el.modelCount.textContent = names.length ? `${names.length}` : "";
   el.modelAddHead.hidden = !adding;
   el.modelCreateRow.hidden = !adding;
   if (adding) {
@@ -376,6 +459,7 @@ export function renderModels() {
 export function applyModel(name) {
   const values = state.values;
   if (!values) return;
+  hideCustomRow();
   for (const row of el.modelListbox.querySelectorAll(".pick-row")) {
     const on = row.dataset.id === name;
     row.classList.toggle("is-active", on);
@@ -386,8 +470,7 @@ export function applyModel(name) {
     }
   }
   const spec = modelSpec(name);
-  const providerEntry = values.providers?.[state.activeProvider] || {};
-  fillEffortOptions(spec.reasoningEffort || providerEntry.reasoningEffort);
+  renderReasoning(spec.reasoningEffort || "");
   el.reasoningEfforts.value = (spec.reasoningEfforts || []).join(", ");
   el.loopMax.value = spec.loopMax ?? values.limits?.loopMax ?? 200;
   el.hotTailKB.value = spec.hotTailKB ?? values.limits?.hotTailKB ?? 4;

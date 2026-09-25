@@ -1,4 +1,4 @@
-import { el } from "./provider-dom.js";
+import { el, isEffortTouched, markField, selectedReasoningEffort, setStatus } from "./provider-dom.js";
 import { PROVIDER_ID_RE, STANDARD_EFFORTS, state } from "./provider-state.js";
 
 // Lỗi gắn với một input: UI khoanh đỏ + focus đúng trường gây lỗi.
@@ -49,7 +49,8 @@ export function applyFormToState(values) {
   const entry = values.providers?.[pid];
   if (!entry) throw new Error("Chưa có provider nào — bấm Thêm trước.");
   entry.baseUrl = endpointValue();
-  entry.reasoningEffort = el.providerEffort.value;
+  // entry.reasoningEffort intentionally untouched: the level belongs to the
+  // model; the stored provider value is preserved as the inherit anchor.
   entry.api = el.providerApi.value === "openai_responses" ? "openai_responses" : "openai_chat";
   const typedKey = el.apiKey.value.trim();
   if (typedKey) entry.apiKey = typedKey;
@@ -68,6 +69,49 @@ export function applyFormToState(values) {
   return applyModelFormToState(values, model);
 }
 
+// Ba ô giá: để trống cả ba = dùng giá backend, ngược lại phải đủ 3 số.
+function parsePriceFields() {
+  const fields = [el.inputCost, el.cacheCost, el.outputCost];
+  const raws = fields.map((field) => field.value.trim());
+  if (raws.every((raw) => raw === "")) return null;
+  const emptyIndex = raws.findIndex((raw) => raw === "");
+  if (emptyIndex >= 0) {
+    throw new FieldError("Điền đủ cả ba giá Input, Cache và Output; hoặc để trống cả ba.", fields[emptyIndex].id);
+  }
+  const nums = raws.map(Number);
+  const badIndex = nums.findIndex((n) => !Number.isFinite(n) || n < 0);
+  if (badIndex >= 0) {
+    throw new FieldError("Giá phải là số lớn hơn hoặc bằng 0.", fields[badIndex].id);
+  }
+  const [input, cache, output] = nums;
+  return { input, cache, output };
+}
+
+// Lint khi rời ô: khoanh đỏ + dòng nhắc nhẹ, không cướp focus.
+export function lintPrices() {
+  try {
+    parsePriceFields();
+  } catch (error) {
+    if (error instanceof FieldError) markField(error.fieldId);
+    setStatus(error instanceof Error ? error.message : "Giá chưa đúng.", "");
+    return false;
+  }
+  for (const field of [el.inputCost, el.cacheCost, el.outputCost]) field.removeAttribute("aria-invalid");
+  return true;
+}
+
+export function lintContextWindow() {
+  try {
+    positiveNumber(el.contextTokens, "Cửa sổ ngữ cảnh", { min: 1000, max: 2_000_000, integer: true });
+  } catch (error) {
+    markField("context-window");
+    setStatus(error instanceof Error ? error.message : "Ngữ cảnh chưa đúng.", "");
+    return false;
+  }
+  el.contextTokens.removeAttribute("aria-invalid");
+  return true;
+}
+
 // Ghi các field model đang hiện vào state.values (dùng chung cho Lưu và Tạo
 // model). Ném FieldError khi invalid.
 export function applyModelFormToState(values, model) {
@@ -75,38 +119,40 @@ export function applyModelFormToState(values, model) {
   const loopMax = positiveNumber(el.loopMax, "Số vòng", { min: 1, max: 200, integer: true });
   const hotTailKB = positiveNumber(el.hotTailKB, "Dung lượng nhớ nóng", { min: 1, max: 64, integer: true });
   const contextTokens = positiveNumber(el.contextTokens, "Cửa sổ ngữ cảnh", { min: 1000, max: 2_000_000, integer: true });
-  const priceFields = [el.inputCost, el.cacheCost, el.outputCost];
-  const hasAnyPrice = priceFields.some((field) => field.value.trim() !== "");
-  if (hasAnyPrice && priceFields.some((field) => field.value.trim() === "")) {
-    const missing = priceFields.find((field) => field.value.trim() === "");
-    throw new FieldError("Điền đủ cả ba giá Input, Cache và Output; hoặc để trống cả ba.", missing?.id || "");
-  }
+  const prices = parsePriceFields();
   const efforts = el.reasoningEfforts.value.split(",").map((level) => level.trim()).filter(Boolean);
   if (new Set(efforts).size !== efforts.length) {
     throw new FieldError("Thinking map bị lặp mức.", "reasoning-efforts");
   }
-  if (efforts.length && !efforts.includes(el.reasoning.value)) {
-    throw new FieldError(`Mức suy luận "${el.reasoning.value}" không nằm trong thinking map.`, "reasoning-effort");
+  // Blank (Mặc định) pins no level: no match check, key omitted on save.
+  // A custom pin always lands in the map at commit time, so mismatch here
+  // means state drifted — still guarded.
+  const effort = selectedReasoningEffort();
+  if (effort && efforts.length && !efforts.includes(effort)) {
+    throw new FieldError(`Mức suy luận "${effort}" không nằm trong thinking map.`, "reasoning-effort");
   }
-  if (!efforts.length && !STANDARD_EFFORTS.includes(el.reasoning.value)) {
-    throw new FieldError(`Thinking map đang trống nên mức suy luận phải là ${STANDARD_EFFORTS.join("/")}, không phải "${el.reasoning.value}".`, "reasoning-effort");
+  if (effort && !efforts.length && !STANDARD_EFFORTS.includes(effort)) {
+    throw new FieldError(`Thinking map đang trống nên mức suy luận phải là ${STANDARD_EFFORTS.join("/")}, không phải "${effort}".`, "reasoning-effort");
   }
   values.models = { ...(values.models || {}) };
   const previous = values.models[model] || {};
   const entry2 = {
     ...previous,
     provider: previous.provider || pid,
-    reasoningEffort: el.reasoning.value,
     loopMax,
     hotTailKB,
     contextTokens,
   };
-  if (hasAnyPrice) {
-    entry2.input = positiveNumber(el.inputCost, "Chi phí input");
-    entry2.cache = positiveNumber(el.cacheCost, "Chi phí cache");
-    entry2.output = positiveNumber(el.outputCost, "Chi phí output");
+  if (effort) entry2.reasoningEffort = effort;
+  // Untouched + blank display keeps the stored value (no silent migration
+  // when a standard level normalizes to Mặc định on render).
+  else if (isEffortTouched()) delete entry2.reasoningEffort;
+  if (prices) {
+    entry2.input = prices.input;
+    entry2.cache = prices.cache;
+    entry2.output = prices.output;
     values.pricing = { ...(values.pricing || {}) };
-    values.pricing[model] = { input: entry2.input, cache: entry2.cache, output: entry2.output };
+    values.pricing[model] = { input: prices.input, cache: prices.cache, output: prices.output };
   } else {
     delete entry2.input;
     delete entry2.cache;

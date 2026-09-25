@@ -12,14 +12,14 @@ import {
   saveProvider,
   setDefaultModel,
   setDefaultProvider,
-  testProvider,
   verifyProvider,
 } from "./provider-actions.js";
 import {
   applyModel,
   bindModelSuggest,
+  commitCustomEffort,
   el,
-  fillEffortOptions,
+  onReasoningChange,
   refreshModelSuggest,
   renderAll,
   renderModels,
@@ -29,6 +29,7 @@ import {
   syncProviderUi,
 } from "./provider-dom.js";
 import { clone, presetFor, providerOf, state } from "./provider-state.js";
+import { lintContextWindow, lintPrices } from "./provider-validate.js";
 
 function handleMenuAction(action, id) {
   if (state.busy) return;
@@ -110,7 +111,6 @@ function bind() {
     // choices for the typed name, keeping the current selection if valid.
     if (state.adding === "model") {
       state.activeModel = name;
-      fillEffortOptions(el.reasoning.value);
       if (name && state.values?.models?.[name]) {
         setStatus(`Model "${name}" đã tồn tại (provider ${providerOf(name)}) — bấm Tạo để chọn nó.`, "");
       }
@@ -120,12 +120,34 @@ function bind() {
     applyModel(name);
   });
   el.modelAdd.addEventListener("click", addModel);
+  el.reasoning.addEventListener("change", onReasoningChange);
+  el.reasoningCustom.addEventListener("change", () => void commitCustomEffort());
+  el.reasoningCustom.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      commitCustomEffort();
+      // Commit hides the row: move focus back so it never strands on a
+      // hidden input. (Blur-commit intentionally leaves focus alone.)
+      el.reasoning.focus();
+    } else if (event.key === "Escape") {
+      // Exit the custom input only — don't let this Escape cancel add mode.
+      event.preventDefault();
+      event.stopPropagation();
+      el.reasoningCustom.value = "";
+      commitCustomEffort();
+      el.reasoning.focus();
+    }
+  });
   el.providerCreate.addEventListener("click", createProvider);
   el.providerCancel.addEventListener("click", cancelAdd);
   el.modelCreate.addEventListener("click", createModel);
   el.modelCancel.addEventListener("click", cancelAdd);
+  // Blur lint on the context + price row: red ring + quiet hint, no focus steal.
+  for (const field of [el.inputCost, el.cacheCost, el.outputCost]) {
+    field.addEventListener("change", () => void lintPrices());
+  }
+  el.contextTokens.addEventListener("change", () => void lintContextWindow());
   el.verify.addEventListener("click", () => void verifyProvider());
-  el.test.addEventListener("click", () => void testProvider());
   el.form.addEventListener("submit", (event) => {
     event.preventDefault();
     // Enter inside the form confirms the current mode: create the draft, or

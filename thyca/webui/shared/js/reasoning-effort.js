@@ -39,8 +39,10 @@ export function effortDefault(schema) {
   return effortField(schema)?.default;
 }
 
-// Fill a <select> with one option per choice and pick `selected`,
-// falling back to the schema default, then the last choice.
+// Fill a <select> with one option per choice and pick `selected`.
+// Config first: a configured level that no longer matches the available
+// choices lands on the first available choice — never a silent default.
+// The schema default only applies when nothing was configured at all.
 export function fillEffortSelect(select, choices, selected, schema) {
   const levels = choices?.length ? choices : effortChoices(schema);
   select.replaceChildren(
@@ -51,6 +53,10 @@ export function fillEffortSelect(select, choices, selected, schema) {
       return option;
     }),
   );
-  const fallback = effortDefault(schema) || levels[levels.length - 1];
-  select.value = levels.includes(selected) ? selected : fallback;
+  if (levels.includes(selected)) {
+    select.value = selected;
+    return;
+  }
+  const configured = selected !== undefined && selected !== null && selected !== "";
+  select.value = configured ? levels[0] : (effortDefault(schema) || levels[levels.length - 1]);
 }

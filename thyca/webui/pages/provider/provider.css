@@ -1,11 +1,7 @@
-/* Provider page: two-level pick layout. Core connection/model fields stay
-   visible; technical fields hide inside <details class="advanced">. Compact
-   inputs, group-only separators, solid card face so the paper pattern never
-   sits behind values. Scoped to .provider-shell — settings.html is untouched. */
-
-.provider-shell .screen-card {
-  background: var(--color-paper-card);
-}
+/* Provider page: pick-list layout. Core connection/model fields stay
+   visible; rarely-touched values live in hidden inputs. Compact inputs,
+   group-only separators, shared card face. Scoped to .provider-shell —
+   settings.html is untouched. */
 
 .provider-shell .screen-input,
 .provider-shell .screen-select {
@@ -32,32 +28,14 @@
 
 .provider-columns {
   display: grid;
-  grid-template-columns: minmax(0, 15rem) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 18rem) minmax(0, 1fr);
   gap: 0.75rem 1.25rem;
   align-items: start;
 }
 
 /* Pick lists: direct selection replaces the "đang sửa" dropdowns. */
-.pick-head {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.45rem;
-}
-
-.pick-head h3 {
-  margin: 0;
-  font-size: 0.92rem;
-  font-weight: 600;
-}
-
-.pick-count {
-  color: var(--color-muted);
-  font-size: 0.8rem;
-}
-
-/* Quiet add button: same voice as the Nâng cao summary (terra text +
-   marker, no box). Save stays the only filled primary button. */
+/* Quiet add button: terra text + marker, no box. Save stays the only
+   filled primary button. */
 .pick-add {
   width: auto;
   min-height: 0;
@@ -83,6 +61,17 @@
 }
 
 #model-create-row {
+  justify-content: flex-end;
+  margin-top: 0.55rem;
+}
+
+/* Plain flex row (NOT .Detail-actions): the button keeps full .screen-button
+   size, exactly like Lưu. */
+.provider-verify-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.4rem;
   margin-top: 0.55rem;
 }
 
@@ -101,7 +90,8 @@
   gap: 0.25rem;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
-  background: var(--color-paper-card);
+  /* Rows aren't editable: transparent, never the white input face. */
+  background: transparent;
 }
 
 .pick-row.is-active {
@@ -134,10 +124,6 @@
 
 .pick-badge {
   flex: none;
-  padding: 0.05rem 0.45rem;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-xs);
-  background: var(--color-paper-card);
   color: var(--color-accent-deep);
   font-size: 0.72rem;
   white-space: nowrap;
@@ -322,90 +308,34 @@
   cursor: help;
 }
 
-/* Compact advanced grids: short values sit 3-up with top labels instead of
-   full-width side-label rows. Wide fields (thinking map, price trio) span
-   the row; units fold into the labels. */
-.field-grid.is-compact {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  align-items: start;
-  gap: 0.6rem 0.75rem;
-}
-
-.mini-field {
+/* Context + prices share one compact row under the model detail: narrow
+   context field beside the price trio. Units fold into the labels. */
+.mini-quad {
   display: grid;
-  align-content: start;
-  gap: 0.25rem;
-  min-width: 0;
+  grid-template-columns: minmax(0, 1.3fr) repeat(3, minmax(0, 1fr));
+  align-items: start;
+  gap: 0.5rem 0.75rem;
+  margin-top: 0.6rem;
+  /* Line up with the input column above (mirrors .field-grid metrics). */
+  margin-left: calc(8.5rem + 0.75rem);
 }
 
-.mini-field.is-wide {
-  grid-column: 1 / -1;
-}
-
-.mini-field.span-2 {
-  grid-column: span 2;
-}
-
-.field-grid.is-compact label,
-.mini-legend {
+.mini-quad label {
   color: var(--color-muted);
   font-size: 0.8rem;
 }
 
-.mini-field .screen-input,
-.mini-field .screen-select,
-.mini-trio .screen-input {
+.mini-quad .screen-input {
   width: 100%;
 }
 
-.mini-trio {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.5rem 0.75rem;
-}
-
-.mini-trio > div {
+.mini-quad > div {
   display: grid;
   align-content: start;
   gap: 0.25rem;
   min-width: 0;
 }
 
-.advanced {
-  margin-top: 0.7rem;
-  padding-top: 0.55rem;
-  border-top: 1px dashed var(--color-border);
-}
-
-.advanced > summary {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.15rem 0;
-  color: var(--chat-brand-accent);
-  font-size: 0.88rem;
-  cursor: pointer;
-  list-style: none;
-}
-
-.advanced > summary::-webkit-details-marker,
-.advanced > summary::marker {
-  display: none;
-  content: "";
-}
-
-.advanced > summary::before {
-  content: "▸";
-  font-size: 0.75rem;
-}
-
-.advanced[open] > summary::before {
-  content: "▾";
-}
-
-.advanced .field-grid {
-  margin-top: 0.55rem;
-}
 
 /* Field-level errors: the offending input gets the ring + focus. */
 .provider-shell .screen-input[aria-invalid="true"],
@@ -431,6 +361,7 @@
 .provider-shell .fold-section > summary :is(h2, h3) {
   font-size: 1.05rem;
 }
+
 
 /* Routine info stays a quiet line; only success/error get the nudge card. */
 .provider-nudge:not(.is-error):not(.is-success) {
@@ -465,16 +396,11 @@
     gap: 0.25rem;
   }
 
-  .field-grid.is-compact {
+  .mini-quad {
     grid-template-columns: minmax(0, 1fr);
-    gap: 0.5rem;
   }
 
-  .mini-field.span-2 {
-    grid-column: 1 / -1;
-  }
-
-  .mini-trio {
-    grid-template-columns: minmax(0, 1fr);
+  .mini-quad {
+    margin-left: 0;
   }
 }

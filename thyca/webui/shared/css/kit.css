@@ -570,6 +570,10 @@
 }
 @media (hover: hover) and (pointer: fine) {
   .screen-button:not(:disabled):hover { border-color: var(--color-accent); }
+  .screen-button.is-primary:not(:disabled):hover {
+    border-color: var(--color-accent-deep);
+    background: var(--color-accent-deep);
+  }
   .screen-nav :is(a, button):not([aria-current="page"]):not([aria-selected="true"]):not(:disabled):hover {
     border-color: var(--color-divider);
     background: var(--color-paper-card);

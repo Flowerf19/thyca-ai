@@ -1,12 +1,16 @@
 import { getJson, postJson } from "../../shared/js/http.js";
+import { effortDefault } from "../../shared/js/reasoning-effort.js";
 import { messageOf } from "../../shared/js/status.js";
 import {
   applyModel,
   clearFieldErrors,
+  commitCustomEffort,
   el,
   flagField,
   refreshModelSuggest,
   renderAll,
+  renderModels,
+  renderProviders,
   setBusy,
   setStatus,
   showReadyPopup,
@@ -32,8 +36,12 @@ export function addProvider() {
     return;
   }
   clearFieldErrors();
+  // Entering fresh renders only this pane, so unsaved edits in the model
+  // pane survive. Switching from the other draft discards it (full render).
+  const switching = state.adding === "model";
   state.adding = "provider";
-  renderAll();
+  if (switching) renderAll();
+  else renderProviders();
   el.providerName.focus();
   setStatus("Điền tên, endpoint và key rồi bấm Tạo provider.", "");
 }
@@ -51,7 +59,8 @@ export function createProvider() {
       baseUrl: endpointValue(),
       apiKeyEnv: "THYCA_TOKEN",
       apiKey: el.apiKey.value.trim(),
-      reasoningEffort: el.providerEffort.value,
+      // Anchor for model inheritance (backend requires non-empty).
+      reasoningEffort: effortDefault(state.schema) || "high",
       api: el.providerApi.value === "openai_responses" ? "openai_responses" : "openai_chat",
     };
     state.values = values;
@@ -153,8 +162,10 @@ export function addModel() {
     return;
   }
   clearFieldErrors();
+  const switching = state.adding === "provider";
   state.adding = "model";
-  renderAll();
+  if (switching) renderAll();
+  else renderModels();
   el.model.focus();
   setStatus(`Điền Model ID rồi bấm Tạo model (thuộc provider "${state.activeProvider}").`, "");
 }
@@ -162,6 +173,7 @@ export function addModel() {
 export function createModel() {
   try {
     clearFieldErrors();
+    commitCustomEffort();
     const name = el.model.value.trim();
     if (!name) throw new FieldError("Nhập Model ID trước khi Tạo.", "model");
     const values = clone(state.values);
@@ -171,7 +183,7 @@ export function createModel() {
     state.activeModel = name;
     state.adding = null;
     renderAll();
-    if (exists) setStatus(`Model "${name}" đã tồn tại (provider ${providerOf(name)}).`, "");
+    if (exists) setStatus(`Model "${name}" đã tồn tại (provider ${providerOf(name)}) — edit chưa áp dụng.`, "");
     else setStatus(`Đã tạo model "${name}". Nhớ Lưu cấu hình.`, "success");
   } catch (error) {
     fail(error, "Không tạo được model.");
@@ -238,25 +250,6 @@ export async function verifyProvider() {
   }
 }
 
-export async function testProvider() {
-  clearFieldErrors();
-  setBusy(true);
-  setStatus("Đang test API…");
-  try {
-    const model = el.model.value.trim() || state.values?.defaultModel || "";
-    const result = await postJson("/api/providers/test", {
-      providerId: state.activeProvider,
-      model,
-    });
-    const latency = result.latencyMs != null ? ` · ${result.latencyMs}ms` : "";
-    setStatus(`Test API thành công: ${result.model}${latency}.`, "success");
-  } catch (error) {
-    fail(error, "Test API thất bại.");
-  } finally {
-    setBusy(false);
-  }
-}
-
 export async function saveProvider() {
   if (state.adding === "provider") {
     setStatus("Đang thêm provider mới — bấm Tạo provider (hoặc Hủy) trước khi Lưu.", "error");
@@ -269,6 +262,7 @@ export async function saveProvider() {
     return;
   }
   clearFieldErrors();
+  commitCustomEffort();
   setBusy(true);
   setStatus("Đang lưu cấu hình…");
   try {

@@ -62,19 +62,44 @@
   color: var(--color-accent-deep);
 }
 
+/* Shared nudge banner: the chat 15-minute idle reminder and provider notices
+   share one look. .chat-idle-nudge keeps its absolute composer placement;
+   .provider-nudge is the in-flow variant. (Fixes --radius-md, which never
+   existed in tokens.css, so the idle card rendered square.) */
+:is(.thyca-nudge, .chat-idle-nudge) {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 0.8rem 0.9rem;
+  border: var(--rule) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper-card);
+  box-shadow: 0 0.45rem 1.2rem var(--color-shell-shadow-soft);
+  color: var(--color-reading);
+  font-size: 0.9rem;
+}
 .chat-idle-nudge {
   position: absolute;
   inset-inline-end: 0;
   inset-block-end: calc(100% + 0.65rem);
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
   width: min(30rem, 100%);
-  padding: 0.8rem 0.9rem;
-  border: var(--rule) solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-paper-card);
-  box-shadow: 0 0.45rem 1.2rem var(--color-shell-shadow-soft);
+}
+.provider-nudge {
+  flex: 1 1 100%;
+  width: 100%;
+  min-height: 0;
+  margin: 0;
+}
+.provider-nudge:empty {
+  display: none;
+}
+:is(.thyca-nudge, .chat-idle-nudge).is-error {
+  border-color: var(--color-accent-deep);
+  color: var(--color-accent-deep);
+}
+:is(.thyca-nudge, .chat-idle-nudge).is-success {
+  border-color: var(--color-botanical);
+  color: var(--color-botanical);
 }
 
 .chat-idle-nudge[hidden] {
@@ -147,8 +172,8 @@ input:disabled {
   margin-block-start: 1.25rem;
 }
 
-.provider-actions .screen-status {
-  flex: 1 1 18rem;
+.provider-actions .provider-nudge {
+  flex: 1 1 100%;
   margin: 0;
 }
 

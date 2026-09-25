@@ -19,6 +19,8 @@ export const state = {
   activeProvider: "",
   activeModel: "",
   busy: false,
+  // Draft mode: null (browse/edit) | "provider" | "model" (empty add form).
+  adding: null,
 };
 
 export function clone(value) {

@@ -1,12 +1,21 @@
 import { el } from "./provider-dom.js";
 import { PROVIDER_ID_RE, STANDARD_EFFORTS, state } from "./provider-state.js";
 
+// Lỗi gắn với một input: UI khoanh đỏ + focus đúng trường gây lỗi.
+export class FieldError extends Error {
+  constructor(message, fieldId = "") {
+    super(message);
+    this.name = "FieldError";
+    this.fieldId = fieldId;
+  }
+}
+
 export function positiveNumber(input, label, { min = 0, max = Number.POSITIVE_INFINITY, integer = false } = {}) {
   const value = Number(input.value);
   if (!Number.isFinite(value) || value < min || value > max || (integer && !Number.isInteger(value))) {
     // Unbounded callers (prices) pass no max: never print "0–Infinity".
-    if (!Number.isFinite(max)) throw new Error(`${label} phải là số lớn hơn hoặc bằng ${min}.`);
-    throw new Error(`${label} phải nằm trong khoảng ${min}–${max}.`);
+    if (!Number.isFinite(max)) throw new FieldError(`${label} phải là số lớn hơn hoặc bằng ${min}.`, input.id || "");
+    throw new FieldError(`${label} phải nằm trong khoảng ${min}–${max}.`, input.id || "");
   }
   return value;
 }
@@ -17,10 +26,10 @@ export function endpointValue() {
   try {
     parsed = new URL(value);
   } catch {
-    throw new Error("Endpoint phải là URL hợp lệ.");
+    throw new FieldError("Endpoint phải là URL hợp lệ.", "provider-endpoint");
   }
   if (!new Set(["http:", "https:"]).has(parsed.protocol)) {
-    throw new Error("Endpoint phải bắt đầu bằng http:// hoặc https://.");
+    throw new FieldError("Endpoint phải bắt đầu bằng http:// hoặc https://.", "provider-endpoint");
   }
   return value;
 }
@@ -56,23 +65,31 @@ export function applyFormToState(values) {
 
   const model = el.model.value.trim();
   if (!model) return values;
+  return applyModelFormToState(values, model);
+}
+
+// Ghi các field model đang hiện vào state.values (dùng chung cho Lưu và Tạo
+// model). Ném FieldError khi invalid.
+export function applyModelFormToState(values, model) {
+  const pid = state.activeProvider;
   const loopMax = positiveNumber(el.loopMax, "Số vòng", { min: 1, max: 200, integer: true });
   const hotTailKB = positiveNumber(el.hotTailKB, "Dung lượng nhớ nóng", { min: 1, max: 64, integer: true });
   const contextTokens = positiveNumber(el.contextTokens, "Cửa sổ ngữ cảnh", { min: 1000, max: 2_000_000, integer: true });
   const priceFields = [el.inputCost, el.cacheCost, el.outputCost];
   const hasAnyPrice = priceFields.some((field) => field.value.trim() !== "");
   if (hasAnyPrice && priceFields.some((field) => field.value.trim() === "")) {
-    throw new Error("Điền đủ cả ba giá Input, Cache và Output; hoặc để trống cả ba.");
+    const missing = priceFields.find((field) => field.value.trim() === "");
+    throw new FieldError("Điền đủ cả ba giá Input, Cache và Output; hoặc để trống cả ba.", missing?.id || "");
   }
   const efforts = el.reasoningEfforts.value.split(",").map((level) => level.trim()).filter(Boolean);
   if (new Set(efforts).size !== efforts.length) {
-    throw new Error("Thinking map bị lặp mức.");
+    throw new FieldError("Thinking map bị lặp mức.", "reasoning-efforts");
   }
   if (efforts.length && !efforts.includes(el.reasoning.value)) {
-    throw new Error(`Mức suy luận "${el.reasoning.value}" không nằm trong thinking map.`);
+    throw new FieldError(`Mức suy luận "${el.reasoning.value}" không nằm trong thinking map.`, "reasoning-effort");
   }
   if (!efforts.length && !STANDARD_EFFORTS.includes(el.reasoning.value)) {
-    throw new Error(`Thinking map đang trống nên mức suy luận phải là ${STANDARD_EFFORTS.join("/")}, không phải "${el.reasoning.value}".`);
+    throw new FieldError(`Thinking map đang trống nên mức suy luận phải là ${STANDARD_EFFORTS.join("/")}, không phải "${el.reasoning.value}".`, "reasoning-effort");
   }
   values.models = { ...(values.models || {}) };
   const previous = values.models[model] || {};

@@ -464,3 +464,103 @@ def test_m4_resolve_command_narrow_match() -> None:
     assert resolve_command("python3") == sys.executable
     assert resolve_command("python3.14") == sys.executable
     assert resolve_command("/usr/bin/python3") == sys.executable
+
+
+def _server_cfg(**overrides) -> McpServerCfg:
+    fields: dict = {"command": "tavily", "args": [], "env": {}}
+    fields.update(overrides)
+    return McpServerCfg(**fields)
+
+
+@pytest.mark.asyncio
+async def test_sync_spawns_added_server() -> None:
+    manager = MCPManager(process_factory=_factory(_FakeSession()))
+    diags, removed = await manager.sync({"tavily": _server_cfg()})
+    assert [diag.ok for diag in diags] == [True]
+    assert removed == []
+    assert [spec.name for spec in manager.tool_specs()] == ["tavily__ping"]
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_sync_stops_removed_server_and_reports_names() -> None:
+    manager = MCPManager(process_factory=_factory(_FakeSession()))
+    await manager.spawn_all({"tavily": _server_cfg()})
+    proc = manager._live[0][0]
+    diags, removed = await manager.sync({})
+    assert diags == []
+    assert removed == ["tavily__ping"]
+    assert manager._live == []
+    assert manager.tool_specs() == []
+    assert proc._session is None  # aclosed
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_sync_keeps_unchanged_server_without_respawn() -> None:
+    manager = MCPManager(process_factory=_factory(_FakeSession()))
+    await manager.spawn_all({"tavily": _server_cfg()})
+    proc = manager._live[0][0]
+    diags, removed = await manager.sync({"tavily": _server_cfg()})
+    assert diags == []
+    assert removed == []
+    assert manager._live[0][0] is proc
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_sync_respawns_on_env_change() -> None:
+    started: list[str] = []
+    base = _factory(_FakeSession())
+
+    def make(name: str, cfg: McpServerCfg):
+        started.append(cfg.env.get("K", ""))
+        return base(name, cfg)
+
+    manager = MCPManager(process_factory=make)
+    await manager.spawn_all({"t": _server_cfg(env={"K": "1"})})
+    old = manager._live[0][0]
+    diags, removed = await manager.sync({"t": _server_cfg(env={"K": "2"})})
+    assert [diag.ok for diag in diags] == [True]
+    assert removed == ["t__ping"]
+    assert manager._live[0][0] is not old
+    assert started == ["1", "2"]
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_sync_failed_spawn_reports_diag_and_retries_next_sync() -> None:
+    class FailStart(_FakeSession):
+        async def initialize(self) -> object:
+            raise RuntimeError("boom")
+
+    manager = MCPManager(process_factory=_factory(FailStart()))
+    diags, removed = await manager.sync({"bad": _server_cfg()})
+    assert len(diags) == 1
+    assert diags[0].ok is False
+    assert "boom" in diags[0].message
+    assert removed == []
+    assert manager.tool_specs() == []
+    diags, _ = await manager.sync({"bad": _server_cfg()})
+    assert len(diags) == 1 and diags[0].ok is False
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_sync_stop_failure_is_swallowed() -> None:
+    class CloseFails(MCPProcess):
+        async def aclose(self) -> None:
+            raise RuntimeError("close boom")
+
+    session = _FakeSession()
+    manager = MCPManager(
+        process_factory=lambda name, cfg: CloseFails(
+            name, cfg.command, list(cfg.args), dict(cfg.env), session=session
+        )
+    )
+    await manager.spawn_all({"t": _server_cfg()})
+    diags, removed = await manager.sync({})
+    assert diags == []
+    assert removed == ["t__ping"]
+    assert manager._live == []
+    await manager.shutdown()

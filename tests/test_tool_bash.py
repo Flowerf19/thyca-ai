@@ -125,3 +125,78 @@ def test_kill_process_group_reaps_child() -> None:
     child = subprocess.Popen(["sleep", "30"], start_new_session=True)
     kill_process_group(child.pid)
     assert child.wait(timeout=2) is not None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "reboot",
+        "/sbin/reboot",
+        "sudo reboot",
+        "sudo systemctl reboot",
+        "echo hi; reboot",
+        "echo hi && sudo shutdown -h now",
+        "systemctl poweroff",
+        "systemctl --no-block kexec",
+        "pkill -f thyca",
+        "killall thyca-ai",
+        "/home/f/.local/bin/thyca --serve --stop",
+        "thyca --stop",
+        "FOO=1 reboot",
+        "echo $(reboot)",
+        "echo hi & reboot",
+        "sleep 1 & thyca --serve --stop",
+        "timeout 5s reboot",
+    ],
+)
+def test_self_kill_target_refused(command: str) -> None:
+    from thyca.tools.builtin.bash import _self_kill_target
+
+    assert _self_kill_target(command) is not None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo reboot",
+        "grep -r reboot .",
+        "git init",
+        "thyca --serve --daemon",
+        "thyca --version",
+        "systemctl status thyca",
+        "pgrep -af 'thyca --serve'",
+        "pkill myapp",
+        "kill 12345",
+        "echo done",
+        "echo a & echo b",
+        "ls 2>&1 | head",
+    ],
+)
+def test_self_kill_target_allowed(command: str) -> None:
+    from thyca.tools.builtin.bash import _self_kill_target
+
+    assert _self_kill_target(command) is None
+
+
+@pytest.mark.asyncio
+async def test_refused_command_is_tool_error_foreground_and_background(
+    tmp_path: Path,
+) -> None:
+    gateway = _gateway(tmp_path)
+    refused = await _bash(gateway, "thyca --serve --stop")
+    assert refused.is_error
+    assert "Refused" in refused.content
+    assert "next turn" in refused.content
+    # Guard runs before the background split, so this refuses even though
+    # this gateway has no background support.
+    bg = await _bash(gateway, "reboot", background=True)
+    assert bg.is_error
+    assert "Refused" in bg.content
+
+
+@pytest.mark.asyncio
+async def test_echo_reboot_still_runs(tmp_path: Path) -> None:
+    gateway = _gateway(tmp_path)
+    result = await _bash(gateway, "echo reboot")
+    assert not result.is_error
+    assert "reboot" in result.content

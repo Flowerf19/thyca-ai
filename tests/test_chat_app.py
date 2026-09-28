@@ -7,15 +7,19 @@ import time
 from pathlib import Path
 
 import pytest
+from mcp.types import CallToolResult, ListToolsResult, TextContent, Tool
 from test_serve_chat import FakeLLM, ScriptedLLM, _chat
 
 from thyca.agent.events import TurnEvent
+from thyca.app.chat_app import ChatApp
+from thyca.config import McpServerCfg, default_config, load, save
 from thyca.llm.llm_base import ChatReply, LLMError
 from thyca.memory.active import ActiveMemory
 from thyca.memory.heading import parse_heading
 from thyca.core.protocol import Message, ToolCall
 from thyca.sessions import SessionBusy, SessionManager
 from thyca.sessions.title import fallback_title
+from thyca.tools.mcp import MCPProcess
 
 
 def _types(events: list[TurnEvent]) -> list[str]:
@@ -980,7 +984,7 @@ def test_x24_naming_meta_matches_sidecar_shape() -> None:
 # Moved from tests/test_b2_contracts.py (B2 batch).
 from thyca.app.chat_app import InvalidTurnOption, InvalidTurnText
 from thyca.app.turn_options import _clean_turn_text, overlay_turn_cfg
-from thyca.config import Config, ModelCfg, default_config
+from thyca.config import Config, ModelCfg
 
 def test_f5_turn_effort_override_is_model_aware() -> None:
     """Fails pre-fix: per-turn junk effort sailed through overlay."""
@@ -1007,3 +1011,135 @@ def test_f10_clean_turn_text_reasons() -> None:
         _clean_turn_text("x" * 4001, retry=False)
     assert _clean_turn_text("  hi  ", retry=False) == "hi"
     assert _clean_turn_text(123, retry=True) == ""
+
+
+class _TavilySession:
+    """Fake MCP child exposing one `search` tool."""
+
+    def __init__(self) -> None:
+        self.initialized = False
+
+    async def initialize(self) -> object:
+        self.initialized = True
+        return object()
+
+    async def list_tools(self) -> ListToolsResult:
+        return ListToolsResult(
+            tools=[Tool(name="search", inputSchema={"type": "object", "properties": {}})]
+        )
+
+    async def call_tool(self, name, arguments=None, read_timeout_seconds=None, **kwargs):
+        return CallToolResult(
+            content=[TextContent(type="text", text="ok")], isError=False
+        )
+
+
+def _tavily_factory(started: list):
+    def make(name: str, cfg: McpServerCfg) -> MCPProcess:
+        started.append((name, dict(cfg.env)))
+        return MCPProcess(
+            name, cfg.command, list(cfg.args), dict(cfg.env), session=_TavilySession()
+        )
+
+    return make
+
+
+def _chat_with_mcp(tmp_path: Path, connect, factory) -> ChatApp:
+    save(default_config(), tmp_path / "config.json")
+    return ChatApp(
+        tmp_path, load(tmp_path / "config.json"), connect=connect, mcp_factory=factory
+    )
+
+
+def _saw_tool(llm, name: str) -> bool:
+    for tools in llm.tools:
+        if tools and any(item["function"]["name"] == name for item in tools):
+            return True
+    return False
+
+
+def _save_mcp(tmp_path: Path, servers: dict) -> None:
+    cfg = load(tmp_path / "config.json")
+    cfg.mcpServers.clear()
+    cfg.mcpServers.update(servers)
+    save(cfg, tmp_path / "config.json")
+
+
+def test_turn_hot_reloads_added_mcp_server(tmp_path: Path) -> None:
+    started: list = []
+    llm = FakeLLM(ChatReply(content="pong"))
+    app = _chat_with_mcp(tmp_path, llm, _tavily_factory(started))
+    try:
+        created = app.create()
+        app.turn(created["id"], "hi")
+        assert not _saw_tool(llm, "tavily__search")
+        _save_mcp(tmp_path, {"tavily": McpServerCfg(command="tavily")})
+        app.turn(created["id"], "search now")
+        assert _saw_tool(llm, "tavily__search")
+        assert started == [("tavily", {})]
+    finally:
+        app.shutdown()
+
+
+def test_turn_unloads_removed_mcp_server(tmp_path: Path) -> None:
+    started: list = []
+    llm = FakeLLM(ChatReply(content="pong"))
+    save(default_config(), tmp_path / "config.json")
+    _save_mcp(tmp_path, {"tavily": McpServerCfg(command="tavily")})
+    app = ChatApp(
+        tmp_path,
+        load(tmp_path / "config.json"),
+        connect=llm,
+        mcp_factory=_tavily_factory(started),
+    )
+    try:
+        created = app.create()
+        app.turn(created["id"], "hi")
+        assert _saw_tool(llm, "tavily__search")
+        seen_before = len(llm.tools)
+        _save_mcp(tmp_path, {})
+        app.turn(created["id"], "again")
+        for tools in llm.tools[seen_before:]:
+            if tools:
+                assert all(t["function"]["name"] != "tavily__search" for t in tools)
+    finally:
+        app.shutdown()
+
+
+def test_turn_respawns_mcp_server_on_env_change(tmp_path: Path) -> None:
+    started: list = []
+    llm = FakeLLM(ChatReply(content="pong"))
+    app = _chat_with_mcp(tmp_path, llm, _tavily_factory(started))
+    try:
+        created = app.create()
+        _save_mcp(tmp_path, {"t": McpServerCfg(command="t", env={"K": "1"})})
+        app.turn(created["id"], "hi")
+        assert _saw_tool(llm, "t__search")
+        _save_mcp(tmp_path, {"t": McpServerCfg(command="t", env={"K": "2"})})
+        app.turn(created["id"], "again")
+        assert started == [("t", {"K": "1"}), ("t", {"K": "2"})]
+        assert _saw_tool(llm, "t__search")
+    finally:
+        app.shutdown()
+
+
+def test_turn_completes_when_mcp_spawn_fails(tmp_path: Path) -> None:
+    class BoomSession(_TavilySession):
+        async def initialize(self) -> object:
+            raise RuntimeError("child exited")
+
+    def boom_factory(name: str, cfg: McpServerCfg) -> MCPProcess:
+        return MCPProcess(
+            name, cfg.command, list(cfg.args), dict(cfg.env), session=BoomSession()
+        )
+
+    llm = FakeLLM(ChatReply(content="pong"))
+    app = _chat_with_mcp(tmp_path, llm, boom_factory)
+    try:
+        created = app.create()
+        _save_mcp(tmp_path, {"bad": McpServerCfg(command="bad")})
+        turned = app.turn(created["id"], "hi")
+        assert turned["reply"] == "pong"
+        assert not _saw_tool(llm, "bad__search")
+    finally:
+        app.shutdown()

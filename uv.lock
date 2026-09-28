@@ -646,7 +646,7 @@ wheels = [
 
 [[package]]
 name = "thyca-ai"
-version = "0.86.1.dev0"
+version = "0.86.2.dev0"
 source = { editable = "." }
 dependencies = [
     { name = "filelock" },

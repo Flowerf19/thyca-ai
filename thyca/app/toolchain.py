@@ -96,8 +96,14 @@ def report_spawn_diags(diags: Iterable[StartupDiagnostic], *, err: TextIO) -> No
 def install_mcp_specs(
     registry: ToolRegistry, mcp: MCPManager, *, err: TextIO
 ) -> None:
-    """Register MCP tool specs; name clashes stay stderr warnings."""
+    """Register MCP tool specs; already-present names are skipped.
+
+    Idempotent for turn-start re-installs: cross-server clashes were already
+    reported as spawn diagnostics, so only genuinely new names register here.
+    """
     for spec in mcp.tool_specs():
+        if registry.get(spec.name) is not None:
+            continue
         try:
             registry.register(spec)
         except ValueError as exc:

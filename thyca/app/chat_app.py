@@ -22,7 +22,7 @@ from thyca.sessions import Session, SessionManager
 from thyca.sessions.store import SessionStore
 from thyca.sessions.title import is_blank
 from thyca.tools.gateway.background import BackgroundProcs
-from thyca.tools.mcp import MCPManager
+from thyca.tools.mcp import MCPManager, ProcessFactory
 from thyca.tools.memory_tools import bind_chat_session, reset_chat_session
 from thyca.tools.task_store import TaskStore
 from thyca.serve.turn_state import TurnHub, TurnState
@@ -58,7 +58,13 @@ class TurnInFlight(Exception):
 
 
 class ChatApp:
-    def __init__(self, root: Path, cfg: Config, connect: LLMPort | None = None) -> None:
+    def __init__(
+        self,
+        root: Path,
+        cfg: Config,
+        connect: LLMPort | None = None,
+        mcp_factory: ProcessFactory | None = None,
+    ) -> None:
         self._root = root
         self._config_file = root / "config.json"
         # Seed before re-read: _current_cfg falls back to _cfg on ConfigError.
@@ -82,14 +88,16 @@ class ChatApp:
         self._state = self._memory.open_session(datetime.now(self._zone))
         self._tasks = TaskStore()
         self._background = BackgroundProcs()
-        registry = build_tool_registry(root, cfg, self._background)
+        self._registry = build_tool_registry(root, cfg, self._background)
         self._gateway = build_tool_gateway(
-            registry,
+            self._registry,
             self._tasks,
             self._background,
             soft_timeout_s=cfg.effective_limits().softTimeoutS,
         )
-        self._mcp = MCPManager()
+        self._mcp = (
+            MCPManager() if mcp_factory is None else MCPManager(process_factory=mcp_factory)
+        )
         self._loop = asyncio.new_event_loop()
         self._ready = threading.Event()
         self._thread = threading.Thread(
@@ -102,6 +110,9 @@ class ChatApp:
         self._turns = TurnState()
         self._loop_turns = _LoopTurns(self._loop, self._turns)
         self._claim_lock = threading.Lock()
+        # Guards MCP sync (manager + registry + tools snapshot): concurrent
+        # turns share all three. Always taken before _claim_lock, never after.
+        self._mcp_lock = threading.Lock()
         self._stopped = False
         self._thread.start()
         try:
@@ -110,8 +121,8 @@ class ChatApp:
             report_spawn_diags(
                 self._submit(self._mcp.spawn_all(cfg.mcpServers)), err=sys.stderr
             )
-            install_mcp_specs(registry, self._mcp, err=sys.stderr)
-            self._tools = registry.to_openai_schema()
+            install_mcp_specs(self._registry, self._mcp, err=sys.stderr)
+            self._tools = self._registry.to_openai_schema()
             self._act = Act(self._gateway, skills_root=root / "skills")
         except BaseException:
             self.shutdown()
@@ -132,6 +143,20 @@ class ChatApp:
             if not is_blank(item)
         ]
         return {"model": self._current_cfg().provider.model, "sessions": sessions}
+
+    def _sync_mcp(self, turn_cfg: Config) -> None:
+        """Converge MCP servers to the current config file (hot-reload).
+
+        `mcpServers` edits apply on the next turn without restarting serve.
+        Per-server failures stay stderr diagnostics and never fail the turn.
+        """
+        with self._mcp_lock:
+            diags, removed = self._submit(self._mcp.sync(turn_cfg.mcpServers))
+            report_spawn_diags(diags, err=sys.stderr)
+            for name in removed:
+                self._registry.unregister(name)
+            install_mcp_specs(self._registry, self._mcp, err=sys.stderr)
+            self._tools = self._registry.to_openai_schema()
 
     def _current_cfg(self) -> Config:
         """Re-read the config file each turn so settings changes apply
@@ -199,9 +224,17 @@ class ChatApp:
     ) -> dict:
         cleaned = _clean_turn_text(text, retry=retry)
         turn_cfg = overlay_turn_cfg(self._current_cfg(), model, effort)
-        # The gateway is built once; refresh its soft window from current
+        # The gateway/memory are built once; refresh live knobs from current
         # config so Provider-page saves apply without a restart.
-        self._gateway.set_soft_timeout_s(turn_cfg.effective_limits().softTimeoutS)
+        limits = turn_cfg.effective_limits()
+        self._gateway.set_soft_timeout_s(limits.softTimeoutS)
+        # Global section, not effective: ActiveMemory is shared by concurrent
+        # turns, so a per-model value would race across turns. (softTimeoutS
+        # is global-only too; ModelCfg has no such field.)
+        self._memory.tail_kb = turn_cfg.limits.hotTailKB
+        self._memory.timezone_name = turn_cfg.timeline.timezone
+        self._zone = ZoneInfo(turn_cfg.timeline.timezone)
+        self._sync_mcp(turn_cfg)
         with self._claim_lock:
             hub = self._turns.claim(session_id)
             job = self._loop_turns.begin(session_id)

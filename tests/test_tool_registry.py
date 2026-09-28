@@ -168,3 +168,14 @@ def test_x3_malformed_type_shape_skips() -> None:
     assert registry.validate_args(spec, {"mixed": 5}) == (
         "argument 'mixed' must be string, got integer"
     )
+
+
+def test_unregister_removes_and_is_idempotent() -> None:
+    registry = ToolRegistry()
+    registry.register(_echo_spec())
+    assert registry.get("echo") is not None
+    registry.unregister("echo")
+    assert registry.get("echo") is None
+    assert registry.to_openai_schema() == []
+    registry.unregister("echo")  # no-op, no raise
+    registry.unregister("never-existed")

@@ -1,0 +1,1 @@
+Write a short notebook title for this conversation in the conversation's own language: 3–6 words (or a similarly brief phrase for CJK text), at most 32 characters. Keep proper names and technical terms as written. Return only the title: no quotation marks, no trailing punctuation, no explanation.

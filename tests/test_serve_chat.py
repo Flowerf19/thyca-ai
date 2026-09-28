@@ -156,8 +156,8 @@ def test_create_list_get_and_turn(tmp_path: Path) -> None:
             ("assistant", "pong"),
         ]
         assert llm.requests[0][-1].content == "ping"
-        assert len(llm.requests) == 2
-        assert llm.tools[1] is None
+        # One completed turn is below the naming threshold: no second call.
+        assert len(llm.requests) == 1
     finally:
         _stop(httpd, thread)
 
@@ -337,18 +337,18 @@ def test_session_title_display_not_utterance(tmp_path: Path) -> None:
     assert session_title(named) == "Cà phê với Hòa"
 
 
-def test_notebook_title_persists_and_skips_second_turn(tmp_path: Path) -> None:
+def test_notebook_title_names_on_second_turn_and_persists(tmp_path: Path) -> None:
     llm = ScriptedLLM(
         [
             ChatReply(content="pong"),
-            ChatReply(content='"Cà phê với Hòa."'),
             ChatReply(content="again"),
+            ChatReply(content='"Cà phê với Hòa."'),
         ]
     )
     app = _chat(tmp_path, llm)
     created = app.create()
     first = app.turn(created["id"], "alo")
-    assert first["title"] == "Cà phê với Hòa"
+    assert first["title"] == fallback_title(created["id"])
     assert first["reply"] == "pong"
     second = app.turn(created["id"], "thêm")
     assert second["title"] == "Cà phê với Hòa"
@@ -362,15 +362,17 @@ def test_notebook_title_persists_and_skips_second_turn(tmp_path: Path) -> None:
 def test_title_failure_keeps_turn_and_fallback(tmp_path: Path) -> None:
     class TitleBoom(FakeLLM):
         async def chat(self, messages, tools=None):
-            if len(self.requests) >= 1:
+            if tools is None:
                 self.requests.append(list(messages))
+                self.tools.append(tools)
                 raise LLMError("title failed")
             return await super().chat(messages, tools)
 
     llm = TitleBoom(ChatReply(content="pong"))
     app = _chat(tmp_path, llm)
     created = app.create()
-    turned = app.turn(created["id"], "alo")
+    app.turn(created["id"], "alo")
+    turned = app.turn(created["id"], "thêm")
     assert turned["reply"] == "pong"
     assert turned["title"] == fallback_title(created["id"])
     assert turned["title"] != "alo"
@@ -420,13 +422,10 @@ def test_stream_slow_turn_first_line_arrives_before_release(tmp_path: Path) -> N
         assert types == [
             "llm.started",
             "llm.finished",
-            "session.naming.started",
-            "session.naming.finished",
             "turn.completed",
         ]
         assert lines[0]["round"] == 1
         assert lines[1] == {"type": "llm.finished", "round": 1, "tool_count": 0}
-        assert lines[3]["updated"] is False
         completed = lines[-1]
         assert completed["type"] == "turn.completed"
         detail = completed["detail"]
@@ -615,8 +614,6 @@ def test_stream_tool_events_ordered_and_clean(tmp_path: Path) -> None:
             "tool.finished",
             "llm.started",
             "llm.finished",
-            "session.naming.started",
-            "session.naming.finished",
             "turn.completed",
         ]
         assert lines[2] == {"type": "llm.finished", "round": 1, "tool_count": 1}
@@ -1795,7 +1792,6 @@ def test_retry_last_user_turn(tmp_path: Path) -> None:
     llm = ScriptedLLM(
         [
             ChatReply(content="first"),
-            ChatReply(content='"Notebook."'),
             ChatReply(content="second"),
         ]
     )

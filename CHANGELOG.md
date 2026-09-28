@@ -2,6 +2,12 @@
 
 Thay đổi của Thyca, viết ngắn gọn cho người dùng.
 
+## 0.86.1.dev0 — Development
+
+- Tách rules và naming thành prompt Markdown đóng gói; SOUL tập trung vào chính sách ghi nhớ, IDENTITY mô tả vai trò và giới hạn khả năng.
+- Thử đặt tên phiên một lần khi có hai lượt trả lời hoàn tất; giữ fallback khi không đặt được, không gọi lại sau lỗi hoặc mở lại phiên. Giữ tên user tự đặt, hỗ trợ ngôn ngữ hội thoại và tên riêng. Nếu compaction làm mất lượt đầu, tên có thể được đặt muộn hoặc giữ fallback.
+- Đây là bản dev, chưa phải beta hay stable; không tự bỏ hậu tố dev khi nâng phiên bản.
+
 ## 0.8.6 — 25/09/2026
 
 - Sửa 2 lỗi mất dữ liệu: lưu config không key không còn xóa key đã lưu; cập nhật summary không còn xóa chi tiết đã nhớ.

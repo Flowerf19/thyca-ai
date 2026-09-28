@@ -1,6 +1,7 @@
 """Session-naming sidecar: title proposal + meta-only record (split from chat_app, M8)."""
 from __future__ import annotations
 
+import asyncio
 from time import perf_counter
 
 from thyca.agent.events import EventSink, TurnEvent, emit_event
@@ -8,9 +9,8 @@ from thyca.agent.meta import naming_meta
 from thyca.agent.think import LLMPort
 from thyca.config import Config
 from thyca.core.protocol import Message, utc_now_ts
-from thyca.llm.llm_base import LLMError
 from thyca.sessions import SessionManager
-from thyca.sessions.title import propose_title
+from thyca.sessions.title import NAMING_TURNS, completed_turn_count, propose_title
 from thyca.sessions.wire import session_title  # noqa: F401 — canonical alias, re-exported
 
 
@@ -27,6 +27,22 @@ async def _name_if_needed(
     session = sessions.current
     if session.title:
         return False
+    # One shot, even when the single attempt fails: a fallback title is not a
+    # reason to spend another LLM call, on this turn or after a reopen.
+    if session.naming_attempted:
+        return False
+    if completed_turn_count(session.messages) < NAMING_TURNS:
+        return False
+    # The attempt is consumed BEFORE any network call, so a crash, a
+    # cancellation, or a failed proposal can never spend a second LLM call
+    # on it. When the flag itself cannot persist, no model call is made.
+    # Single-process assumption: same-session turns are serialized by the
+    # claim lock and the flag file is the cross-reload record; two
+    # processes sharing a sessions dir could still double-fire.
+    try:
+        sessions.mark_naming_attempted()
+    except Exception:
+        return False
     emit_event(event_sink, TurnEvent(type="session.naming.started"))
     updated = False
     captured: dict = {}
@@ -38,18 +54,30 @@ async def _name_if_needed(
 
     started = perf_counter()
     try:
-        cleaned = await propose_title(spy, session)
-    except LLMError:
-        cleaned = None
-    latency_ms = int((perf_counter() - started) * 1000)
-    if cleaned is not None:
-        stored = sessions.set_title(cleaned)
-        updated = stored is not None
-        if updated:
-            _record_naming(captured.get("reply"), latency_ms, sessions, cfg)
-    emit_event(
-        event_sink, TurnEvent(type="session.naming.finished", updated=updated)
-    )
+        try:
+            cleaned = await propose_title(spy, session)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            cleaned = None
+        latency_ms = int((perf_counter() - started) * 1000)
+        if cleaned is not None:
+            try:
+                stored = sessions.set_title_if_missing(cleaned)
+            except Exception:
+                stored = None
+            if stored is not None:
+                updated = True
+                try:
+                    _record_naming(captured.get("reply"), latency_ms, sessions, cfg)
+                except Exception:
+                    pass  # title already stored; the meta record is best-effort
+    finally:
+        # Paired with started on every path, including cancellation: the
+        # flag was pre-persisted, so the attempt stays consumed on reload.
+        emit_event(
+            event_sink, TurnEvent(type="session.naming.finished", updated=updated)
+        )
     return updated
 
 

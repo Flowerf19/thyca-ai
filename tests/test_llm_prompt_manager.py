@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from thyca.llm.prompt_manager import PromptManager
@@ -71,7 +73,7 @@ def test_packaged_profile_templates(name: str) -> None:
     assert manager.template(f" {name.upper()} ") == template
 
 
-@pytest.mark.parametrize("name", ["unknown", "../user", "../../read_before_config", "user.md"])
+@pytest.mark.parametrize("name", ["unknown", "../user", "../../read_before_config", "user.md", "rules"])
 def test_unknown_template_is_rejected(name: str) -> None:
     with pytest.raises(ValueError, match="unknown prompt template"):
         PromptManager().template(name)
@@ -88,7 +90,8 @@ def test_packaged_persona_is_general_purpose() -> None:
     assert "general-purpose personal assistant" in identity
     assert "Coding is one capability, not your identity" in identity
     assert "identity does not depend on the interface or model" in identity
-    assert "not a team of subagents" in identity
+    assert "limited to the context and tools actually provided" in identity
+    assert "Do not assume hidden resources, agents, or permissions" in identity
     assert "Speak the user's language" in soul
     assert "Learn their preferred forms of address" in soul
     assert "do not impose a fixed pronoun style" in soul
@@ -98,16 +101,44 @@ def test_packaged_persona_is_general_purpose() -> None:
 
 def test_soul_covers_memory_lifecycle_and_boundaries() -> None:
     soul = " ".join(PromptManager().template("soul").split())
-    for name in ("remember", "search", "recent", "get", "update", "reinforce", "forget"):
-        assert f"memory_{name}" in soul
-    assert "Maintain ~/.thyca/USER.md with write/edit" in soul
-    assert "a tail of today's notes, not the entire file" in soul
-    assert "Today's notes are not in archive search" in soul
-    assert "Search is lexical" in soul
-    assert "obtain explicit user confirmation" in soul
+    assert "Recall relevant memory when a request depends on earlier conversations" in soul
+    assert "not as a ritual on every turn" in soul
+    assert "Try a better-grounded keyword or ask the user" in soul
+    assert "Verify current files, systems, or services" in soul
+    assert "when the user asks you to remember it" in soul
+    assert "only report it saved after a successful write" in soul
+    assert "Lasting facts and preferences about the user belong in USER.md" in soul
+    assert "belong in daily memory" in soul
+    assert "preserve events that were true at the time" in soul
+    assert "Do not delete historical notes merely because circumstances changed" in soul
     assert "Never persist credentials or secrets" in soul
     assert "Ask before storing sensitive personal information" in soul
     assert "Change SOUL.md or IDENTITY.md only when the user explicitly requests it" in soul
+
+
+def test_rules_loaded_from_packaged_file() -> None:
+    rules_path = Path(__file__).resolve().parents[1] / "thyca/seeds/prompts/rules.md"
+    rules = rules_path.read_text(encoding="utf-8").rstrip("\n")
+    manager = PromptManager()
+    assert manager.rules_section() == rules
+    assert manager.build(_hot()).endswith(f"<rules>\n{rules}\n</rules>")
+
+
+def test_runtime_guidance_has_one_owner() -> None:
+    manager = PromptManager()
+    soul = manager.template("soul")
+    rules = manager.rules_section()
+    assert "Check <skills>" in rules
+    assert "<skills>" not in soul
+    assert "Today's memory is automatically included in <today> as the daily file's tail" in rules
+    assert "even if the user has not repeated it in this conversation" in rules
+    assert "Do not search or reread information already present in <today>" in rules
+    assert "Today's daily file is not in archive search" in rules
+    assert "use read on" not in rules
+    assert "lexical" not in rules
+    # Tool descriptions own individual operations and their calling conventions.
+    for name in ("recent", "get", "reinforce", "forget"):
+        assert f"memory_{name}" not in soul
 
 
 def test_user_template_has_upkeep_and_empty_profile_sections() -> None:

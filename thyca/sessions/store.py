@@ -4,6 +4,7 @@ import json
 import os
 import re
 import secrets
+import threading
 from pathlib import Path
 
 from thyca.core.protocol import Message
@@ -15,6 +16,13 @@ from .models import Session
 #: from this so the grammar cannot drift between layers.
 SESSION_ID_PATTERN = r"\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_[0-9a-f]{4}"
 _ID_RE = re.compile(rf"^{SESSION_ID_PATTERN}$")
+
+# Serializes title check-and-set across every manager in this process: without
+# it a sidebar rename landing between the auto-namer's check and its append
+# loses to last-writer-wins. Leaf lock — never held while taking a manager
+# lock. Single-process only; two processes sharing a sessions dir can still
+# interleave (same assumption the per-manager lock already makes).
+_TITLE_LOCK = threading.Lock()
 
 
 class SessionStore:
@@ -89,10 +97,11 @@ class SessionStore:
             return None
         return None
 
-    def scan(self, path: Path) -> tuple[list[Message], str | None, str | None]:
+    def scan(self, path: Path) -> tuple[list[Message], str | None, str | None, bool]:
         result: list[Message] = []
         title: str | None = None
         title_source: str | None = None
+        naming_attempted = False
         known_calls: set[str] = set()
         try:
             with path.open("r", encoding="utf-8") as stream:
@@ -105,6 +114,8 @@ class SessionStore:
                     try:
                         payload = json.loads(line)
                         if _is_meta(payload):
+                            if _meta_attempted(payload):
+                                naming_attempted = True
                             extracted = _meta_title(payload)
                             if extracted:
                                 title = extracted
@@ -141,14 +152,16 @@ class SessionStore:
             raise SessionNotFound(path) from exc
         except OSError as exc:
             raise SessionCorrupt(path, None, exc) from exc
-        return result, title, title_source
+        return result, title, title_source, naming_attempted
 
     def load(self, session_id: str) -> Session:
         path = self.path_for(session_id)
         if not path.is_file() or path.is_symlink():
             raise SessionNotFound(path)
-        messages, title, title_source = self.scan(path)
-        return Session(session_id, path, messages, title, title_source)
+        messages, title, title_source, naming_attempted = self.scan(path)
+        return Session(
+            session_id, path, messages, title, title_source, naming_attempted
+        )
 
     def list_paths(self) -> list[Path]:
         if not self.sessions_dir.is_dir():
@@ -168,17 +181,41 @@ class SessionStore:
         for chosen in candidates:
             session_id = chosen.stem
             try:
-                messages, title, title_source = self.scan(chosen)
+                messages, title, title_source, naming_attempted = self.scan(chosen)
             except (SessionCorrupt, SessionNotFound):
                 continue
-            return Session(session_id, chosen, messages, title, title_source)
+            return Session(
+                session_id, chosen, messages, title, title_source, naming_attempted
+            )
         raise SessionNotFound(self.sessions_dir, "no valid sessions")
 
     def append(self, path: Path, msg: Message) -> None:
         self._append_json(path, msg.to_canonical_dict())
 
     def append_meta(self, path: Path, title: str, source: str | None = None) -> None:
-        self._append_json(path, _meta_payload(title, source))
+        with _TITLE_LOCK:
+            self._append_json(path, _meta_payload(title, source))
+
+    def append_title_if_missing(
+        self, path: Path, title: str, source: str | None = None
+    ) -> bool:
+        """Append a title meta line only when the file carries no title.
+
+        The check and the append share ``_TITLE_LOCK`` with every other
+        title append, so a concurrent rename cannot slip between them
+        (same process). Returns False when a title was already on disk and
+        nothing was written.
+        """
+        with _TITLE_LOCK:
+            found = self.read_title(path)
+            if found is not None and found[0]:
+                return False
+            self._append_json(path, _meta_payload(title, source))
+            return True
+
+    def append_naming_attempted(self, path: Path) -> None:
+        """Record the automatic naming step's one attempt, with no title."""
+        self._append_json(path, _meta_payload(None, None, naming_attempted=True))
 
     def _append_json(self, path: Path, payload: dict) -> None:
         try:
@@ -197,6 +234,7 @@ class SessionStore:
         messages: list[Message],
         title: str | None = None,
         title_source: str | None = None,
+        naming_attempted: bool = False,
     ) -> None:
         path = self.path_for(session_id)
         if path.resolve() != target.resolve():
@@ -206,8 +244,10 @@ class SessionStore:
             fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                    if title:
-                        meta = _meta_payload(title, title_source)
+                    if title or naming_attempted:
+                        meta = _meta_payload(
+                            title, title_source, naming_attempted=naming_attempted
+                        )
                         stream.write(
                             json.dumps(meta, ensure_ascii=False) + "\n"
                         )
@@ -276,11 +316,17 @@ def _lines_backwards(stream, chunk_size: int = 8192):
         yield pending
 
 
-def _meta_payload(title: str, source: str | None) -> dict:
+def _meta_payload(
+    title: str | None, source: str | None, *, naming_attempted: bool = False
+) -> dict:
     """The one meta-line builder shared by append and rewrite."""
-    payload: dict = {"type": "meta", "title": title}
-    if source:
-        payload["source"] = source
+    payload: dict = {"type": "meta"}
+    if title:
+        payload["title"] = title
+        if source:
+            payload["source"] = source
+    if naming_attempted:
+        payload["naming_attempted"] = True
     return payload
 
 
@@ -299,3 +345,7 @@ def _meta_title(payload: dict) -> str | None:
 def _meta_source(payload: dict) -> str | None:
     raw = payload.get("source")
     return raw.strip() if isinstance(raw, str) and raw.strip() else None
+
+
+def _meta_attempted(payload: dict) -> bool:
+    return payload.get("naming_attempted") is True

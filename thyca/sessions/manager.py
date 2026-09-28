@@ -167,6 +167,7 @@ class SessionManager:
                 kept,
                 title=session.title,
                 title_source=session.title_source,
+                naming_attempted=session.naming_attempted,
             )
             session.messages[:] = kept
             return True
@@ -194,14 +195,16 @@ class SessionManager:
                 messages,
                 title=session.title,
                 title_source=session.title_source,
+                naming_attempted=session.naming_attempted,
             )
             return True
 
     def compact_if_needed(self) -> bool:
         with self._lock:
             session = self._current_locked()
-            on_disk, title, title_source = self.store.scan(session.path)
+            on_disk, title, title_source, attempted = self.store.scan(session.path)
             session.messages[:] = on_disk
+            session.naming_attempted = session.naming_attempted or attempted
             if title:
                 session.title = title
                 session.title_source = title_source
@@ -214,6 +217,7 @@ class SessionManager:
                 compacted,
                 title=session.title,
                 title_source=session.title_source,
+                naming_attempted=session.naming_attempted,
             )
             session.messages[:] = compacted
             return True
@@ -235,6 +239,40 @@ class SessionManager:
             if title:
                 self._session.title = title
                 self._session.title_source = title_source
+
+    def mark_naming_attempted(self) -> None:
+        """Persist the automatic naming step's one attempt (success or not).
+
+        Only the automatic path calls this: explicit operations (sidebar
+        rename, batch retitle) never consume or check the flag.
+        """
+        with self._lock:
+            session = self._current_locked()
+            if session.naming_attempted:
+                return
+            self.store.append_naming_attempted(session.path)
+            session.naming_attempted = True
+
+    def set_title_if_missing(self, title: str) -> str | None:
+        """Store the automatic title only when no title is on disk.
+
+        Atomic against a concurrent sidebar rename (same process): when the
+        store reports a title already present, nothing is written and the
+        in-memory title is synced from disk so the turn answers with it.
+        """
+        with self._lock:
+            session = self._current_locked()
+            cleaned = sanitize_title(title)
+            if cleaned is None:
+                return None
+            if self.store.append_title_if_missing(session.path, cleaned, None):
+                session.title = cleaned
+                session.title_source = None
+                return cleaned
+            found = self.store.read_title(session.path)
+            if found is not None and found[0]:
+                session.title, session.title_source = found
+            return None
 
     def set_title(self, title: str, *, source: str | None = None) -> str | None:
         with self._lock:

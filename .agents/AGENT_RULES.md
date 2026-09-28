@@ -1,5 +1,11 @@
 # Agent rules
 
+## Release status — explicit user decision
+
+- Thyca hiện là **development**, phiên bản `0.86.1.dev0` (số `0.86.1` do user xác nhận, không tự sửa thành `0.8.6.1`).
+- Giữ hậu tố `.devN` theo chuẩn Python; không tự bỏ `dev`, chuyển sang beta/RC/stable, hoặc coi bản dev là release chính thức. Chỉ thay giai đoạn phát hành khi user yêu cầu rõ ràng.
+- Khi đổi version, đồng bộ `pyproject.toml`, `thyca/__init__.py`, `uv.lock` và README.
+
 - Chỉ làm task thuộc plan `in-progress` (hoặc bug/fix UI user vừa chỉ). Không thêm dependency, abstraction, hay feature ngoài task đó.
 - Không còn plan in-progress (2026-09-22): `backend-solid-refactor.md` done (nhánh `refactor/backend-solid`), `webui-solid-refactor.md` done (nhánh `refactor/webui-solid`) — cả hai chờ quyết merge main. Plans cũ ở `plans/done/`.
 - L2 hybrid thuộc v1. Đọc `.agents/decisions/2026-08-15-l2-hybrid-v1.md` trước khi đổi memory contract.

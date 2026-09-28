@@ -1,8 +1,8 @@
 """Display and naming policy for chat session titles."""
 from __future__ import annotations
 
-import re
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from thyca.core.protocol import Message
@@ -21,13 +21,33 @@ USER_TITLE_SOURCE = "user"
 # A title the user typed in the sidebar is shown as written — only the noise of
 # a multiline paste is cleaned, and the ceiling is a whole phrase, not a label.
 USER_TITLE_MAX = 120
+# Automatic naming fires once, after this many successfully completed turns.
+NAMING_TURNS = 2
 _SNIPPET = 400
-_CJK_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]")
-_NAMING_PROMPT = (
-    "Đặt tiêu đề sổ tay 3–6 chữ tiếng Việt, tối đa 32 ký tự, cho cuộc trò chuyện này. "
-    "Chỉ trả về tiêu đề tiếng Việt. Không chữ Hán, không ngoại ngữ, "
-    "không ngoặc kép, không dấu câu cuối, không giải thích."
-)
+_PROMPTS_DIR = Path(__file__).resolve().parents[1] / "seeds" / "prompts"
+# Cached naming instruction. Only successful reads land here: a transient
+# failure must be retried, not frozen in for the process lifetime.
+_INSTRUCTION_CACHE: str | None = None
+
+
+def naming_instruction() -> str | None:
+    """Standalone naming system message (never part of the chat prompt).
+
+    None when the packaged prompt is missing, blank, or unreadable: the
+    caller must skip the model call. There is no inline fallback — the
+    packaged ``naming.md`` is the only instruction source.
+    """
+    global _INSTRUCTION_CACHE
+    if _INSTRUCTION_CACHE is not None:
+        return _INSTRUCTION_CACHE
+    try:
+        text = (_PROMPTS_DIR / "naming.md").read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not text:
+        return None
+    _INSTRUCTION_CACHE = text
+    return text
 
 
 def sanitize_title(raw: str) -> str | None:
@@ -75,16 +95,14 @@ def fallback_title(session_id: str) -> str:
 
 def accept_title(raw: str, session: Session) -> str | None:
     cleaned = sanitize_title(raw)
-    if cleaned is None or _CJK_RE.search(cleaned):
+    if cleaned is None:
         return None
     folded = cleaned.casefold()
     for role in ("user", "assistant"):
-        text = _first_text(session.messages, role)
-        if text is None:
-            continue
-        echoed = sanitize_title(text.splitlines()[0])
-        if echoed and echoed.casefold() == folded:
-            return None
+        for text in _first_texts(session.messages, role):
+            echoed = sanitize_title(text.splitlines()[0])
+            if echoed and echoed.casefold() == folded:
+                return None
     return cleaned
 
 
@@ -109,25 +127,115 @@ def display_title(session: Session) -> str:
     return "Phiên trống"
 
 
+def completed_turn_count(messages: list[Message]) -> int:
+    """Successfully completed turns: the automatic naming threshold input."""
+    return len(_completed_turns(messages))
+
+
 def naming_messages(session: Session) -> list[Message] | None:
-    user = _first_text(session.messages, "user")
-    if user is None:
+    instruction = naming_instruction()
+    if instruction is None:
         return None
-    snippet = f"User: {_clip(user, _SNIPPET)}"
-    assistant = _first_text(session.messages, "assistant")
-    if assistant is not None:
-        snippet += f"\nThyca: {_clip(assistant, _SNIPPET)}"
+    snippet = _turns_snippet(_completed_turns(session.messages)[:NAMING_TURNS])
+    if snippet is None:
+        # No completed turn yet: an explicit retitle still gets the first
+        # user text as context. The automatic path never reaches this — it
+        # is gated on NAMING_TURNS completed turns before attempting.
+        user = _first_text(session.messages, "user")
+        if user is None:
+            return None
+        snippet = f"User: {_clip(user, _SNIPPET)}"
     return [
-        Message(role="system", content=_NAMING_PROMPT),
+        Message(role="system", content=instruction),
         Message(role="user", content=snippet),
     ]
 
 
-def _first_text(messages: list[Message], role: str) -> str | None:
+def _is_naming_row(item: Message) -> bool:
+    # Local copy of the sessions/wire predicate (which imports this module):
+    # naming rows are transcript-only records, never turn outcomes.
+    return (item.meta or {}).get("kind") == "naming"
+
+
+def _completed_turns(messages: list[Message]) -> list[list[Message]]:
+    """One slice per user message, keeping only completed turns."""
+    slices: list[list[Message]] = []
+    cur: list[Message] | None = None
     for item in messages:
+        if item.role == "system" or _is_naming_row(item):
+            continue
+        if item.role == "user":
+            if cur is not None:
+                slices.append(cur)
+            cur = [item]
+        elif cur is not None:
+            cur.append(item)
+    if cur is not None:
+        slices.append(cur)
+    return [slice_msgs for slice_msgs in slices if _slice_completed(slice_msgs)]
+
+
+def _slice_completed(slice_msgs: list[Message]) -> bool:
+    # Stricter than trace._turn_status (kept local: trace imports wire, which
+    # imports this module). Trace counts a turn with a terminal assistant
+    # message; naming needs a real reply to title from, so the terminal
+    # message itself must be an assistant's tool-free answer with text: a
+    # trailing tool message, a terminal assistant still holding tool_calls
+    # (results pending), or an empty reply means the turn never landed one.
+    # Unmatched call ids cannot reach here: scan rejects them on load and
+    # observe orders results exactly against calls before persisting.
+    if any(isinstance((item.meta or {}).get("error"), dict) for item in slice_msgs):
+        return False
+    last = slice_msgs[-1]
+    if last.role != "assistant" or last.tool_calls:
+        return False
+    if not (last.content and last.content.strip()):
+        return False
+    meta = last.meta or {}
+    if meta.get("status") == "loop_limit" or meta.get("finish_reason") == "error":
+        return False
+    if last.content.strip() == "loop limit reached":
+        return False
+    return True
+
+
+def _turns_snippet(turns: list[list[Message]]) -> str | None:
+    parts: list[str] = []
+    for turn in turns:
+        user = _slice_text(turn, "user")
+        if user is not None:
+            parts.append(f"User: {_clip(user, _SNIPPET)}")
+        assistant = _slice_text(turn, "assistant")
+        if assistant is not None:
+            parts.append(f"Thyca: {_clip(assistant, _SNIPPET)}")
+    if not parts:
+        return None
+    return "\n".join(parts)
+
+
+def _slice_text(turn: list[Message], role: str) -> str | None:
+    # The naming context wants the final answer, not intermediate tool-call
+    # commentary ("let me check that...") from earlier in the turn.
+    items = reversed(turn) if role == "assistant" else iter(turn)
+    for item in items:
         if item.role == role and item.content and item.content.strip():
             return item.content.strip()
     return None
+
+
+def _first_text(messages: list[Message], role: str) -> str | None:
+    found = _first_texts(messages, role, limit=1)
+    return found[0] if found else None
+
+
+def _first_texts(messages: list[Message], role: str, limit: int = 2) -> list[str]:
+    found: list[str] = []
+    for item in messages:
+        if item.role == role and item.content and item.content.strip():
+            found.append(item.content.strip())
+            if len(found) >= limit:
+                break
+    return found
 
 
 def _clip(text: str, limit: int) -> str:

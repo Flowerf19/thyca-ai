@@ -10,25 +10,6 @@ _STUB_SOUL = frozenset({"", "# Soul"})
 _STUB_IDENTITY = frozenset({"", "# Identity"})
 _STUB_USER = frozenset({"", "# User"})
 
-_RULES = (
-    "Use memory_remember only for daily L2 bullets (memory/YYYY-MM-DD.md).\n"
-    "To update your persona or profile, use write/edit on these exact paths:\n"
-    "  - ~/.thyca/SOUL.md\n"
-    "  - ~/.thyca/IDENTITY.md\n"
-    "  - ~/.thyca/USER.md\n"
-    "Do not write or edit L2 daily files or sessions under ~/.thyca.\n"
-    "You may write/edit ~/.thyca/config.json (provider keys, mcpServers). "
-    "Before reading or changing it, read ~/.thyca/read_before_config.md first.\n"
-    "Check <skills> before multi-step tasks; read a SKILL.md to follow it.\n"
-    "To author a skill load `create-skill`; to add a capability load `create-mcp-tool`.\n"
-    "memory_search is lexical-first. If search returns nothing, say so. Do not invent memories.\n"
-    "Today's daily memory file is NOT in the search index yet — it is injected into <today>. "
-    "memory_search returning nothing for today's memories is by design: don't retry or rebuild; "
-    "read the <today> block or the daily file directly.\n"
-    "bash runs immediately as the user, no sandbox — it can bypass PathGuard. "
-    "Do not use bash to write L2 daily files or sessions under ~/.thyca."
-)
-
 
 class PromptManager:
     def build(self, hot: ActiveSnapshot) -> str:
@@ -52,7 +33,7 @@ class PromptManager:
         return "\n".join(parts)
 
     def rules_section(self) -> str:
-        return _RULES
+        return (_PROMPTS_DIR / "rules.md").read_text(encoding="utf-8").rstrip("\n")
 
     def template(self, name: str) -> str:
         key = name.strip().lower()

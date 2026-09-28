@@ -43,11 +43,16 @@ from thyca.sessions.wire import (
 )
 from thyca.skills.skill_event import skill_name_for_call
 from thyca.sessions.title import (
+    NAMING_TURNS,
     USER_TITLE_MAX,
     accept_title,
+    completed_turn_count,
     display_title,
     fallback_title,
     is_blank,
+    naming_instruction,
+    naming_messages,
+    propose_title,
     retitle_missing,
     sanitize_title,
 )
@@ -412,10 +417,10 @@ def test_fallback_and_sanitize_title(tmp_path: Path) -> None:
     )
     assert accept_title("alo", session) is None
     assert accept_title("pong", session) is None
-    assert accept_title("打招呼", session) is None
+    assert accept_title("打招呼", session) == "打招呼"
     assert accept_title("Cà phê với Hòa", session) == "Cà phê với Hòa"
     session.title = "打招呼"
-    assert display_title(session) == "Sáng 24 thg 8"
+    assert display_title(session) == "打招呼"
 
 
 def test_retitle_missing_skips_named_and_empty(tmp_path: Path) -> None:
@@ -427,8 +432,11 @@ def test_retitle_missing_skips_named_and_empty(tmp_path: Path) -> None:
     named = manager.create()
     manager.append(msg("user", "xin chào"))
     manager.set_title("Đã có tên")
-    cjk = manager.create()
+    echoed = manager.create()
     manager.append(msg("user", "chào"))
+    manager.set_title("chào")
+    cjk = manager.create()
+    manager.append(msg("user", "chào buổi sáng"))
     manager.set_title("打招呼")
 
     class LLM:
@@ -437,18 +445,19 @@ def test_retitle_missing_skips_named_and_empty(tmp_path: Path) -> None:
 
     result = asyncio.run(retitle_missing(LLM().chat, SessionManager(tmp_path)))
     ids = {item[0].id: item[2] for item in result}
-    assert ids == {untitled.id: "Nhịp sáng", cjk.id: "Nhịp sáng"}
+    assert ids == {untitled.id: "Nhịp sáng", echoed.id: "Nhịp sáng"}
     assert SessionManager(tmp_path).load(untitled.id).title == "Nhịp sáng"
     assert SessionManager(tmp_path).load(named.id).title == "Đã có tên"
-    assert SessionManager(tmp_path).load(cjk.id).title == "Nhịp sáng"
+    assert SessionManager(tmp_path).load(echoed.id).title == "Nhịp sáng"
+    assert SessionManager(tmp_path).load(cjk.id).title == "打招呼"
     assert SessionManager(tmp_path).load(blank.id).title is None
 
 
 def test_user_title_is_verbatim_and_survives_compaction(tmp_path: Path) -> None:
     """A title the user typed is the authority on its own notebook.
 
-    The agent's naming policy refuses titles that echo the first message or
-    contain CJK; neither is this policy's business when the user wrote it.
+    The agent's naming policy refuses titles that echo the conversation;
+    that is not this policy's business when the user wrote it.
     """
     manager = SessionManager(tmp_path)
     session = manager.create()
@@ -498,12 +507,12 @@ def test_agent_title_still_goes_through_the_naming_policy(tmp_path: Path) -> Non
     session = manager.create()
     manager.append(msg("user", "alo"))
     manager.append(msg("assistant", "hey"))
-    # No source: the model's proposal keeps the old veting (32 chars, no CJK,
-    # not a copy of what the user said).
+    # No source: the model's proposal keeps the vetting (32 chars, not a copy
+    # of what was said). CJK is allowed — titles follow the conversation.
     assert manager.set_title("打招呼") == "打招呼"
     loaded = SessionManager(tmp_path).load(session.id)
     assert loaded.title_source is None
-    assert display_title(loaded) == fallback_title(session.id)
+    assert display_title(loaded) == "打招呼"
     assert manager.set_title("alo") == "alo"
     assert display_title(SessionManager(tmp_path).load(session.id)) == fallback_title(session.id)
 
@@ -581,8 +590,9 @@ def test_read_title_walks_the_tail_and_last_meta_wins(tmp_path: Path) -> None:
     store = SessionStore(tmp_path)
     assert store.read_title(session.path) == ("Tên mới", "user")
     # Equivalent to a full scan's answer, at a fraction of the work.
-    _messages, title, title_source = store.scan(session.path)
+    _messages, title, title_source, attempted = store.scan(session.path)
     assert (title, title_source) == ("Tên mới", "user")
+    assert attempted is False
     # No meta line at all → None (caller leaves the in-memory title alone).
     bare = SessionManager(tmp_path)
     empty = bare.create()
@@ -1125,3 +1135,314 @@ def test_wire_turns_match_trace_turn_slices(tmp_path: Path) -> None:
     assert session_summary(session)["turns"] == 2
     assert len(turn_slices(session.messages)) == 2
     assert len(serve_trace.turns_from_session(session)) == 2
+
+
+def test_completed_turn_count_only_counts_successful_turns() -> None:
+    assert NAMING_TURNS == 2
+    assert completed_turn_count([]) == 0
+    assert completed_turn_count([msg("user", "alo")]) == 0
+    ok = [msg("user", "alo"), msg("assistant", "pong")]
+    assert completed_turn_count(ok) == 1
+    # A failed turn (stamped user message) is not a completed one.
+    failed = [
+        msg("user", "boom", meta={"error": {"code": "llm_error", "message": "x"}}),
+        msg("assistant", "partial"),
+    ]
+    assert completed_turn_count(ok + failed) == 1
+    # Loop-limit and error-finish replies carry no usable answer either.
+    assert (
+        completed_turn_count(
+            [
+                msg("user", "a"),
+                msg("assistant", "loop limit reached"),
+                msg("user", "b"),
+                msg("assistant", "x", meta={"finish_reason": "error"}),
+                msg("user", "c"),
+                msg("assistant", "done", meta={"status": "loop_limit"}),
+            ]
+        )
+        == 0
+    )
+    # Naming rows and compaction markers are transcript-only, not outcomes.
+    assert (
+        completed_turn_count(
+            ok
+            + [
+                msg("assistant", None, meta={"kind": "naming", "latency_ms": 1}),
+                msg("system", "[compaction: summary]"),
+            ]
+        )
+        == 1
+    )
+
+
+def test_naming_messages_uses_first_two_completed_turns(tmp_path: Path) -> None:
+    session = Session(
+        "s", tmp_path,
+        [
+            msg("user", "alpha-topic user words"),
+            msg("assistant", "alpha reply words"),
+            msg("user", "beta-topic user words"),
+            msg("assistant", "beta reply words"),
+            msg("user", "gamma-topic user words"),
+            msg("assistant", "gamma reply words"),
+        ],
+    )
+    prompt = naming_messages(session)
+    assert prompt is not None
+    assert [item.role for item in prompt] == ["system", "user"]
+    assert prompt[0].content == naming_instruction()
+    context = prompt[1].content or ""
+    assert "alpha-topic user words" in context
+    assert "alpha reply words" in context
+    assert "beta-topic user words" in context
+    assert "beta reply words" in context
+    assert "gamma-topic" not in context
+    # Failed turns contribute neither count nor context.
+    failed = Session(
+        "s", tmp_path,
+        [
+            msg("user", "doomed", meta={"error": {"code": "c", "message": "m"}}),
+            msg("assistant", "partial"),
+        ],
+    )
+    fallback = naming_messages(failed)
+    assert fallback is not None
+    assert "doomed" in (fallback[1].content or "")
+
+
+def test_naming_messages_blank_session_has_no_context(tmp_path: Path) -> None:
+    assert naming_messages(Session("s", tmp_path, [])) is None
+    assert naming_messages(Session("s", tmp_path, [msg("user", "   ")])) is None
+
+
+def test_accept_title_rejects_echo_from_either_turn(tmp_path: Path) -> None:
+    session = Session(
+        "s", tmp_path,
+        [
+            msg("user", "alpha words here"),
+            msg("assistant", "alpha reply"),
+            msg("user", "beta words here"),
+            msg("assistant", "beta reply"),
+        ],
+    )
+    assert accept_title("beta words here", session) is None
+    assert accept_title("beta reply", session) is None
+    assert accept_title("alpha words here", session) is None
+    assert accept_title("Names, terms và 打招呼 stay", session) == (
+        "Names, terms và 打招呼 stay"
+    )
+
+
+def test_naming_attempted_persists_and_survives_rewrites(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path)
+    session = manager.create()
+    assert session.naming_attempted is False
+    manager.append(msg("user", "alo"))
+    manager.append(msg("assistant", "pong"))
+    manager.mark_naming_attempted()
+    assert SessionManager(tmp_path).load(session.id).naming_attempted is True
+    # Idempotent: no duplicate flag lines on a second call.
+    manager.mark_naming_attempted()
+    flag_lines = [
+        line
+        for line in session.path.read_text(encoding="utf-8").splitlines()
+        if "naming_attempted" in line
+    ]
+    assert len(flag_lines) == 1
+    # Rewrites keep the flag alongside the title.
+    manager.set_title("Tên hay")
+    manager.append(msg("user", "thêm"))
+    assert manager.truncate_to_last_user() is True
+    assert SessionManager(tmp_path).load(session.id).naming_attempted is True
+    assert manager.mark_turn_error("llm_error", "boom") is True
+    reloaded = SessionManager(tmp_path).load(session.id)
+    assert reloaded.naming_attempted is True
+    assert reloaded.title == "Tên hay"
+
+
+def test_naming_attempted_survives_compaction(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path)
+    session = manager.create()
+    manager.append(msg("user", "alo"))
+    manager.append(msg("assistant", "pong"))
+    manager.mark_naming_attempted()
+    sized = SessionManager(tmp_path, LimitsCfg(contextTokens=1000))
+    sized.load(session.id)
+    for i in range(8):
+        sized.append(msg("user", "u" * 300 + str(i)))
+        sized.append(msg("assistant", "a" * 300))
+    assert sized.compact_if_needed()
+    after = SessionManager(tmp_path).load(session.id)
+    assert after.naming_attempted is True
+
+
+def test_legacy_session_without_flag_loads_unattempted(tmp_path: Path) -> None:
+    path = tmp_path / "2026-01-01T00-00-00_abcd.jsonl"
+    user = msg("user", "alo")
+    assistant = msg("assistant", "pong")
+    path.write_text(
+        json.dumps({"type": "meta", "title": "Tên cũ"}, ensure_ascii=False)
+        + "\n"
+        + json.dumps(user.to_canonical_dict(), ensure_ascii=False)
+        + "\n"
+        + json.dumps(assistant.to_canonical_dict(), ensure_ascii=False)
+        + "\n",
+        encoding="utf-8",
+    )
+    loaded = SessionStore(tmp_path).load("2026-01-01T00-00-00_abcd")
+    assert (loaded.title, loaded.title_source) == ("Tên cũ", None)
+    assert loaded.naming_attempted is False
+
+
+def test_retitle_missing_ignores_the_automatic_attempt_flag(tmp_path: Path) -> None:
+    """The one-shot gate must not block an explicit batch retitle."""
+    manager = SessionManager(tmp_path)
+    session = manager.create()
+    manager.append(msg("user", "alpha-one distinct text"))
+    manager.append(msg("assistant", "reply one"))
+    manager.mark_naming_attempted()
+
+    class LLM:
+        async def chat(self, messages, tools=None):
+            return ChatReply(content="Nhịp sáng")
+
+    named = asyncio.run(retitle_missing(LLM().chat, SessionManager(tmp_path)))
+    assert [item[0].id for item in named] == [session.id]
+    reloaded = SessionManager(tmp_path).load(session.id)
+    assert reloaded.title == "Nhịp sáng"
+    assert reloaded.naming_attempted is True
+
+
+def test_naming_instruction_is_packaged_and_not_in_chat_prompt() -> None:
+    from thyca.llm.prompt_manager import PromptManager
+    from thyca.memory.active import ActiveSnapshot
+
+    prompts_dir = Path(__file__).resolve().parents[1] / "thyca" / "seeds" / "prompts"
+    assert naming_instruction() == (prompts_dir / "naming.md").read_text(
+        encoding="utf-8"
+    ).strip()
+    assert "own language" in naming_instruction()
+    assert "proper names" in naming_instruction()
+    # No blanket exclusion survives in the shipped instruction.
+    assert "Không chữ Hán" not in naming_instruction()
+    assert "không ngoại ngữ" not in naming_instruction()
+    pyproject = (prompts_dir.parents[2] / "pyproject.toml").read_text(encoding="utf-8")
+    assert '"thyca/seeds/prompts/naming.md" = "thyca/seeds/prompts/naming.md"' in pyproject
+    # The main chat prompt never carries the naming instruction.
+    hot = ActiveSnapshot(soul="soul-text", user="user-text", today="today-text")
+    assert naming_instruction() not in PromptManager().build(hot)
+
+
+async def test_missing_blank_unreadable_prompt_skips_model_call(tmp_path, monkeypatch) -> None:
+    import thyca.sessions.title as title_mod
+
+    real_dir = title_mod._PROMPTS_DIR
+    monkeypatch.setattr(title_mod, "_INSTRUCTION_CACHE", None)
+    session = Session(
+        "s", tmp_path,
+        [
+            msg("user", "alpha words"),
+            msg("assistant", "alpha reply"),
+            msg("user", "beta words"),
+            msg("assistant", "beta reply"),
+        ],
+    )
+
+    class Spy:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def chat(self, messages, tools=None):
+            self.calls += 1
+            return ChatReply(content="Must not be called")
+
+    async def assert_no_call(reason: str) -> None:
+        assert naming_instruction() is None, reason
+        assert naming_messages(session) is None, reason
+        spy = Spy()
+        assert await propose_title(spy.chat, session) is None, reason
+        assert spy.calls == 0, reason
+
+    # Missing directory.
+    monkeypatch.setattr(title_mod, "_PROMPTS_DIR", tmp_path / "absent-prompts")
+    await assert_no_call("missing")
+    # Blank file.
+    blank = tmp_path / "blank-prompts"
+    blank.mkdir()
+    (blank / "naming.md").write_text("  \n ", encoding="utf-8")
+    monkeypatch.setattr(title_mod, "_PROMPTS_DIR", blank)
+    await assert_no_call("blank")
+    # Unreadable prompt (a directory where the file should be).
+    blocked = tmp_path / "blocked-prompts"
+    blocked.mkdir()
+    (blocked / "naming.md").mkdir()
+    monkeypatch.setattr(title_mod, "_PROMPTS_DIR", blocked)
+    await assert_no_call("unreadable")
+    # Failures are not cached: the real prompt loads once visible again.
+    monkeypatch.setattr(title_mod, "_PROMPTS_DIR", real_dir)
+    assert naming_instruction() == (real_dir / "naming.md").read_text(
+        encoding="utf-8"
+    ).strip()
+    # ... and a successful read stays cached even if the dir vanishes.
+    monkeypatch.setattr(title_mod, "_PROMPTS_DIR", tmp_path / "absent-prompts")
+    assert naming_instruction() == (real_dir / "naming.md").read_text(
+        encoding="utf-8"
+    ).strip()
+
+
+def test_completed_turn_count_rejects_unfinished_tool_turns() -> None:
+    call = ToolCall(id="c1", name="bash", arguments={"cmd": "echo hi"})
+    # Terminal assistant still holding calls: results pending.
+    pending = [msg("user", "run it"), msg("assistant", "checking…", tool_calls=[call])]
+    assert completed_turn_count(pending) == 0
+    # Stopped before any reply text.
+    stopped = [msg("user", "run it"), msg("assistant", None, tool_calls=[call])]
+    assert completed_turn_count(stopped) == 0
+    # Results arrived but the final answer did not: trailing tool.
+    trailing = [*pending, msg("tool", "hi", tool_call_id="c1")]
+    assert completed_turn_count(trailing) == 0
+    # Empty terminal reply (the observe None->"" encoding) is not an answer.
+    assert completed_turn_count([msg("user", "alo"), msg("assistant", "")]) == 0
+    # The same exchange with its final answer lands the turn.
+    assert completed_turn_count([*trailing, msg("assistant", "done: hi")]) == 1
+
+
+def test_naming_context_uses_final_assistant_answer(tmp_path: Path) -> None:
+    call = ToolCall(id="c1", name="read", arguments={"path": "notes.md"})
+    session = Session(
+        "s", tmp_path,
+        [
+            msg("user", "alpha question here"),
+            msg("assistant", "intermediate commentary here", tool_calls=[call]),
+            msg("tool", "file contents here", tool_call_id="c1"),
+            msg("assistant", "final alpha answer here"),
+            msg("user", "beta question here"),
+            msg("assistant", "final beta answer here"),
+        ],
+    )
+    assert completed_turn_count(session.messages) == 2
+    prompt = naming_messages(session)
+    assert prompt is not None
+    context = prompt[1].content or ""
+    assert "alpha question here" in context
+    assert "final alpha answer here" in context
+    assert "final beta answer here" in context
+    assert "intermediate commentary here" not in context
+
+
+def test_set_title_if_missing_wins_and_loses_atomically(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path)
+    session = manager.create()
+    assert manager.set_title_if_missing("  ") is None
+    assert session.path.read_text(encoding="utf-8") == ""
+    assert manager.set_title_if_missing("Auto title") == "Auto title"
+    assert SessionManager(tmp_path).load(session.id).title == "Auto title"
+    # A rename from another manager (own store object, same file) lands
+    # first: nothing is overwritten and the stale view syncs to it.
+    other = SessionManager(tmp_path)
+    other.rename(session.id, "Tên tôi tự đặt")
+    assert manager.set_title_if_missing("Late auto") is None
+    assert manager.current.title == "Tên tôi tự đặt"
+    assert manager.current.title_source == "user"
+    assert SessionManager(tmp_path).load(session.id).title == "Tên tôi tự đặt"

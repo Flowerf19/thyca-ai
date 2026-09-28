@@ -163,7 +163,7 @@ def test_prompt_renders_skills_before_rules() -> None:
 
 
 def test_prompt_omits_skills_when_empty() -> None:
-    # "<skills>" appears inside _RULES text; the section only renders with a closing tag.
+    # "<skills>" appears inside rules.md text; the section only renders with a closing tag.
     assert "</skills>" not in PromptManager().build(_hot())
 
 

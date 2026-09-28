@@ -16,3 +16,6 @@ class Session:
     # A user title is displayed verbatim; the agent's naming policy only
     # filters what the model proposes.
     title_source: str | None = None
+    # The automatic naming step ran its one attempt (success or failure).
+    # Old sessions without the meta key load as False and stay eligible.
+    naming_attempted: bool = False

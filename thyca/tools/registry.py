@@ -42,6 +42,10 @@ class ToolRegistry:
             raise ValueError(f"tool already registered: {spec.name}")
         self._specs[spec.name] = spec
 
+    def unregister(self, name: str) -> None:
+        """Drop a spec; unknown names are a silent no-op (idempotent)."""
+        self._specs.pop(name, None)
+
     def get(self, name: str) -> ToolSpec | None:
         """Spec lookup for the gateway; None when unregistered."""
         return self._specs.get(name)

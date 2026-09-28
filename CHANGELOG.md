@@ -2,6 +2,12 @@
 
 Thay đổi của Thyca, viết ngắn gọn cho người dùng.
 
+## 0.86.2.dev0 — Development
+
+- Thêm/bớt/sửa MCP server trong config có hiệu lực ở lượt chat sau, không cần restart serve (trước đây phải restart, mà để agent tự restart thì turn đó chết luôn).
+- Chặn lệnh tự sát từ trong chat (`reboot`, `shutdown`, `thyca --serve --stop`...): báo rõ lý do thay vì giết serve đang chạy.
+- Đây là bản dev, chưa phải beta hay stable; không tự bỏ hậu tố dev khi nâng phiên bản.
+
 ## 0.86.1.dev0 — Development
 
 - Tách rules và naming thành prompt Markdown đóng gói; SOUL tập trung vào chính sách ghi nhớ, IDENTITY mô tả vai trò và giới hạn khả năng.

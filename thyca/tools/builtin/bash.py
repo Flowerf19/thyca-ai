@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
+import shlex
 import shutil
 import signal
 import sys
@@ -21,6 +23,66 @@ if TYPE_CHECKING:
 
 _TIMEOUT_DEFAULT = 30
 _TIMEOUT_BACKGROUND_DEFAULT = 1800
+
+# The agent must never kill the serve process hosting its own turn: stopping
+# serve mid-turn (e.g. `thyca --serve --stop` after editing mcpServers)
+# SIGTERMs the parent, so the turn never completes. Config edits already
+# apply on the next turn; a human restarts serve outside chat when needed.
+_SELF_KILL_BINARIES = frozenset(
+    {"reboot", "shutdown", "poweroff", "halt", "init", "telinit"}
+)
+_SYSTEMCTL_ACTIONS = frozenset({"reboot", "poweroff", "halt", "kexec"})
+_KILL_THYCA_BINARIES = frozenset({"pkill", "killall"})  # pgrep stays allowed: read-only diagnostics
+_WRAPPER_BINARIES = frozenset({"sudo", "env", "nohup", "nice", "timeout", "command"})
+_SEGMENT_SPLIT = re.compile(r"&&|\|\||[;|`\n()&]+")
+_DURATION_RE = re.compile(r"\d+[smhd]?")  # timeout/nice durations: 5, 5s, 2m ...
+
+
+def _self_kill_target(command: str) -> str | None:
+    """Self-kill attempt in ``command``, or None when allowed.
+
+    Each `;`/`&`/`&&`/`||`/`|`-separated segment is judged by its first token
+    (after sudo/env-style wrappers), so `echo reboot` stays allowed while
+    `sudo reboot` and `cmd; reboot` are refused. `kill <pid>` by raw pid is
+    intentionally not covered (the handler has no serve-root context), and
+    nested-exec wrappers beyond sudo/env/timeout (e.g. `bash -c`, `sudo -u`)
+    are best-effort: the guard targets accidental self-kills, not evasion.
+    """
+    for segment in _SEGMENT_SPLIT.split(command):
+        try:
+            tokens = shlex.split(segment, posix=True)
+        except ValueError:
+            tokens = segment.split()
+        idx = 0
+        wrapped = False
+        while idx < len(tokens):
+            token = tokens[idx]
+            base = token.rsplit("/", 1)[-1]
+            if base in _WRAPPER_BINARIES or "=" in token:
+                wrapped = True
+                idx += 1
+                continue
+            if wrapped and (
+                token.startswith("-")
+                or token.isnumeric()
+                or _DURATION_RE.fullmatch(token) is not None
+            ):
+                idx += 1
+                continue
+            break
+        if idx >= len(tokens):
+            continue
+        base = tokens[idx].rsplit("/", 1)[-1]
+        rest = tokens[idx + 1 :]
+        if base in _SELF_KILL_BINARIES:
+            return base
+        if base == "thyca" and "--stop" in rest:
+            return "thyca --stop"
+        if base == "systemctl" and any(arg in _SYSTEMCTL_ACTIONS for arg in rest):
+            return f"systemctl {next(arg for arg in rest if arg in _SYSTEMCTL_ACTIONS)}"
+        if base in _KILL_THYCA_BINARIES and any("thyca" in arg.lower() for arg in rest):
+            return f"{base} thyca"
+    return None
 
 
 def select_shell() -> str:
@@ -47,6 +109,13 @@ def bash_spec(background: BackgroundProcs | None = None) -> ToolSpec:
         command = args["command"]
         if not command.strip():
             raise ValueError("command must be a non-empty string")
+        target = _self_kill_target(command)
+        if target is not None:
+            raise ValueError(
+                f"Refused: {target} would stop Thyca itself or reboot the host. "
+                "mcpServers/model edits apply automatically on the next turn; "
+                "restart serve manually outside chat if truly needed."
+            )
         raw_bg = args.get("background")
         execution = current_execution()
         eid = execution.id if execution is not None else None
@@ -91,7 +160,9 @@ def bash_spec(background: BackgroundProcs | None = None) -> ToolSpec:
             "instead of re-running it. Use background: true when you know from "
             "the start the command is long (builds, OCR, servers): the id comes "
             "back immediately. timeout is the hard cap that kills the process "
-            "group; backgrounded commands default to 1800 seconds."
+            "group; backgrounded commands default to 1800 seconds. Commands "
+            "that would stop Thyca itself or reboot the host (reboot, "
+            "shutdown, thyca --stop, ...) are refused."
         ),
         parameters={
             "type": "object",

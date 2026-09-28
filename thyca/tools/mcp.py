@@ -277,6 +277,35 @@ class MCPManager:
     def __init__(self, process_factory: ProcessFactory | None = None) -> None:
         self._factory = process_factory or _default_process
         self._live: list[tuple[MCPProcess, list[Tool]]] = []
+        self._configs: dict[str, McpServerCfg] = {}
+
+    async def _spawn_one(
+        self, name: str, cfg: McpServerCfg, seen: set[str]
+    ) -> list[StartupDiagnostic]:
+        proc = self._factory(name, cfg)
+        try:
+            tools = await proc.start()
+        except Exception as exc:
+            try:
+                await proc.aclose()
+            except Exception:
+                pass
+            return [StartupDiagnostic(name, False, str(exc))]
+        self._live.append((proc, tools))
+        # Frozen copy: McpServerCfg.args/env are mutable containers, so the
+        # stored fingerprint must not alias the caller's object.
+        self._configs[name] = McpServerCfg(cfg.command, list(cfg.args), dict(cfg.env))
+        diags = [StartupDiagnostic(name, True, "")]
+        for _proc, tool, _spec, error in _canonical_tools([(proc, tools)], seen):
+            if error is None:
+                continue
+            raw_name = getattr(tool, "name", "unknown")
+            diags.append(
+                StartupDiagnostic(
+                    name, False, f"MCP tool {raw_name!r} skipped: {error}"
+                )
+            )
+        return diags
 
     async def spawn_all(self, servers: dict[str, McpServerCfg]) -> list[StartupDiagnostic]:
         if not servers:
@@ -285,28 +314,46 @@ class MCPManager:
         # One set across the loop: rebuilding tool_specs() per server was O(n²).
         seen = {spec.name for spec in self.tool_specs()}
         for name, cfg in servers.items():
-            proc = self._factory(name, cfg)
-            try:
-                tools = await proc.start()
-            except Exception as exc:
-                try:
-                    await proc.aclose()
-                except Exception:
-                    pass
-                diags.append(StartupDiagnostic(name, False, str(exc)))
-                continue
-            self._live.append((proc, tools))
-            diags.append(StartupDiagnostic(name, True, ""))
-            for _proc, tool, _spec, error in _canonical_tools([(proc, tools)], seen):
-                if error is None:
-                    continue
-                raw_name = getattr(tool, "name", "unknown")
-                diags.append(
-                    StartupDiagnostic(
-                        name, False, f"MCP tool {raw_name!r} skipped: {error}"
-                    )
-                )
+            diags.extend(await self._spawn_one(name, cfg, seen))
         return diags
+
+    async def sync(
+        self, servers: dict[str, McpServerCfg]
+    ) -> tuple[list[StartupDiagnostic], list[str]]:
+        """Converge live servers to ``servers``; per-server errors into diags.
+
+        Returns ``(diags, removed_spec_names)``: names the caller must
+        unregister (stopped servers' ``server__tool`` names, including ones
+        that were skipped at spawn — unregistering those is a harmless no-op).
+        Unchanged servers are untouched (same proc, no respawn). Never raises
+        for per-server failures; a failed respawn leaves the server stopped
+        and retries on the next sync.
+        """
+        removed: list[str] = []
+        keep = {name for name, cfg in servers.items() if self._configs.get(name) == cfg}
+        still: list[tuple[MCPProcess, list[Tool]]] = []
+        for proc, tools in self._live:
+            if proc.name in keep:
+                still.append((proc, tools))
+                continue
+            try:
+                await proc.aclose()
+            except Exception:
+                pass
+            self._configs.pop(proc.name, None)
+            removed.extend(
+                model_name(proc.name, getattr(tool, "name", "unknown"))
+                for tool in tools
+            )
+        self._live = still
+        diags: list[StartupDiagnostic] = []
+        live_names = {proc.name for proc, _tools in self._live}
+        seen = {spec.name for spec in self.tool_specs()}
+        for name, cfg in servers.items():
+            if name in live_names:
+                continue
+            diags.extend(await self._spawn_one(name, cfg, seen))
+        return diags, removed
 
     def tool_specs(self) -> list[ToolSpec]:
         seen: set[str] = set()
@@ -318,6 +365,7 @@ class MCPManager:
 
     async def shutdown(self) -> None:
         live, self._live = self._live, []
+        self._configs.clear()
         for proc, _tools in live:
             try:
                 await proc.aclose()

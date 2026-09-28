@@ -199,7 +199,13 @@ class SessionManager:
             )
             return True
 
-    def compact_if_needed(self) -> bool:
+    def compact_if_needed(
+        self,
+        *,
+        hot_tokens: int = 0,
+        tools_tokens: int = 0,
+        pending_user_tokens: int = 0,
+    ) -> bool:
         with self._lock:
             session = self._current_locked()
             on_disk, title, title_source, attempted = self.store.scan(session.path)
@@ -208,7 +214,13 @@ class SessionManager:
             if title:
                 session.title = title
                 session.title_source = title_source
-            compacted = self.compactor.compact(on_disk, self.limits.contextTokens)
+            compacted = self.compactor.compact(
+                on_disk,
+                self.limits.contextTokens,
+                hot_tokens=hot_tokens,
+                tools_tokens=tools_tokens,
+                pending_user_tokens=pending_user_tokens,
+            )
             if compacted is None:
                 return False
             self.store.rewrite(

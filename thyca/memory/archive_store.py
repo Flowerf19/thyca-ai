@@ -319,6 +319,24 @@ class ArchiveStore:
         )
 
     @guarded
+    def get_chunk_any(self, chunk_id: str) -> sqlite3.Row | None:
+        """Raw chunk row ignoring visibility (T6a miss classification)."""
+        return self._db.execute(
+            "SELECT * FROM chunks WHERE chunk_id = ?", (chunk_id,)
+        ).fetchone()
+
+    @guarded
+    def get_session_any(self, session_id: str) -> list[sqlite3.Row]:
+        """Raw session rows ignoring visibility (T6a miss classification)."""
+        return list(
+            self._db.execute(
+                """SELECT * FROM chunks WHERE session_id = ?
+                   ORDER BY leaf_ord ASC""",
+                (session_id,),
+            )
+        )
+
+    @guarded
     def recent_rows(self, limit: int, now: str) -> list[sqlite3.Row]:
         # Daily recency only: canonical profile leaves live in stats, not in
         # the "recently updated notes" feed.

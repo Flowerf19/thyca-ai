@@ -439,3 +439,17 @@ def test_m5_split_parts_carry_own_spans_and_long_lines_split() -> None:
     assert len(chunks) >= 2
     assert all(len(chunk.text_raw) <= MAX_LEAF_CHARS for chunk in chunks)
     assert "".join(chunk.text_raw for chunk in chunks).replace(" ", "") == "-" + single
+
+
+def test_identity_md_is_indexed_like_other_canonicals(tmp_path: Path) -> None:
+    (tmp_path / "SOUL.md").write_text("# soul\n", encoding="utf-8")
+    (tmp_path / "USER.md").write_text("# user\n", encoding="utf-8")
+    (tmp_path / "IDENTITY.md").write_text(
+        "# Identity\nuniqueword-identity-xyz\n", encoding="utf-8"
+    )
+    (tmp_path / "memory").mkdir()
+    archived = ArchivedMemory(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh", archive=archived)
+    archived.reindex(at("2026-08-17"))
+    found = facade.search("uniqueword-identity-xyz", now=at("2026-08-17"))
+    assert [hit.session_id for hit in found.hits] == ["canonical#identity"]

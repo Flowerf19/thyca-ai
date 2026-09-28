@@ -127,14 +127,22 @@ def test_compact_delegates_to_session_manager(tmp_path: Path) -> None:
     manager.create()
     called: list[bool] = []
 
-    def compact() -> bool:
+    seen: dict = {}
+
+    def compact(**kwargs) -> bool:
         called.append(True)
+        seen.update(kwargs)
         return True
 
     manager.compact_if_needed = compact  # type: ignore[method-assign]
 
     assert Observe(manager).compact() is True
     assert called == [True]
+    assert seen == {
+        "hot_tokens": 0,
+        "tools_tokens": 0,
+        "pending_user_tokens": 0,
+    }
 
 
 def test_observe_persists_reasoning_details(tmp_path: Path) -> None:

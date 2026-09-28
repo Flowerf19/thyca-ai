@@ -11,7 +11,15 @@ from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from thyca.config import DEFAULT_LIMITS_HOT_TAIL_KB, DEFAULT_TIMELINE_TIMEZONE
-from thyca.memory.heading import day, is_session_heading, read_text_file, strip_heading_comments
+from thyca.memory.heading import (
+    day,
+    is_session_heading,
+    iter_session_blocks,
+    read_text_file,
+    session_id,
+    strip_comment,
+    strip_heading_comments,
+)
 
 if TYPE_CHECKING:
     from thyca.skills import SkillStore
@@ -57,6 +65,7 @@ class ActiveSnapshot:
     today: str
     identity: str = ""
     skills: str = ""
+    today_elsewhere: str = ""
 
 
 class ActiveMemory:
@@ -107,7 +116,9 @@ class ActiveMemory:
         day = self._day(now)
         return ActiveState(day=day, today_path=self._daily_path(day))
 
-    def refresh(self, state: ActiveState, now: datetime) -> ActiveSnapshot:
+    def refresh(
+        self, state: ActiveState, now: datetime, session_id: str | None = None
+    ) -> ActiveSnapshot:
         today = self._day(now)
         if today != state.day:
             closed = state.day
@@ -121,12 +132,25 @@ class ActiveMemory:
             # reading as "" until rollover.
             self._secure_dir(self.memory_dir)
             self._create_if_missing(state.today_path, f"# {today}\n")
+        if session_id is None:
+            today_text, elsewhere_text = self._tail(self._read(state.today_path)), ""
+        else:
+            # Grouping needs the raw metadata comments; strip them from the
+            # injected same-session text afterwards, like the legacy path.
+            here_raw, elsewhere_text = split_today_by_session(
+                self._read_raw(state.today_path),
+                state.day,
+                str(state.today_path),
+                session_id,
+            )
+            today_text = self._tail(strip_heading_comments(here_raw))
         return ActiveSnapshot(
             soul=self._read(self.thyca_dir / "SOUL.md"),
             identity=self._read(self.thyca_dir / "IDENTITY.md"),
             user=self._read(self.thyca_dir / "USER.md"),
-            today=self._tail(self._read(state.today_path)),
+            today=today_text,
             skills=self._skills.index_text(),
+            today_elsewhere=elsewhere_text,
         )
 
     def _now(self) -> datetime:
@@ -170,17 +194,75 @@ class ActiveMemory:
         except OSError:
             pass
 
-    def _read(self, path: Path) -> str:
+    def _read_raw(self, path: Path) -> str:
         try:
             text = read_text_file(path)
         except (OSError, UnicodeDecodeError) as exc:
             raise ActiveMemoryError(f"cannot read {path}: {exc}") from exc
         if text is None:
             return ""
-        return strip_heading_comments(text)
+        return text
+
+    def _read(self, path: Path) -> str:
+        return strip_heading_comments(self._read_raw(path))
 
     def _tail(self, text: str) -> str:
         return tail_text(text, self._budget)
+
+
+ELSEWHERE_MAX_LINES = 25
+
+
+def split_today_by_session(
+    text: str, day_str: str, path: str, chat_id: str
+) -> tuple[str, str]:
+    """Split today's file into (this-session raw text, other-session index).
+
+    Same-session blocks keep full text with a pullable ``[day#id]`` suffix
+    on each heading (the metadata comment is replaced, not kept: the prompt
+    needs the id for memory_get/update/reinforce/forget, not the raw JSON).
+    The caller applies the byte budget, like the legacy path. Other blocks — and
+    unattributed ones, which cannot prove same-session — shrink to one
+    pullable index line each, so foreign topics can neither dominate
+    attention nor evict this session's own notes. ``path`` must be the same
+    absolute daily-file path the writer scans, otherwise legacy (comment-
+    less) entry ids in the index will not resolve via ``memory_get``.
+    Free text before the first session heading (day title, hand-written
+    notes) has no owner, so it joins the here portion; the caller still
+    applies the tail budget. When the index exceeds ELSEWHERE_MAX_LINES,
+    the oldest lines are dropped and a trailing marker records the count.
+    """
+    lines = text.splitlines(keepends=True)
+    here: list[str] = []
+    elsewhere: list[str] = []
+    first_start: int | None = None
+    for meta, entry_id, start, end in iter_session_blocks(lines, path):
+        if first_start is None:
+            first_start = start
+        if meta.chat == chat_id:
+            here.append(_here_block(lines, start, end, day_str, entry_id))
+        else:
+            elsewhere.append(
+                f"- {meta.time} — {meta.title} [{session_id(day_str, entry_id)}]"
+            )
+    prefix = "".join(lines) if first_start is None else "".join(lines[:first_start])
+    here_text = prefix + "".join(here)
+    if len(elsewhere) > ELSEWHERE_MAX_LINES:
+        omitted = len(elsewhere) - ELSEWHERE_MAX_LINES
+        kept = elsewhere[-ELSEWHERE_MAX_LINES:]
+        kept.append(f"[... {omitted} older lines omitted ...]")
+        return here_text, "\n".join(kept)
+    return here_text, "\n".join(elsewhere[-ELSEWHERE_MAX_LINES:])
+
+
+def _here_block(
+    lines: list[str], start: int, end: int, day_str: str, entry_id: str
+) -> str:
+    """One same-session block with ``[day#id]`` on its heading."""
+    head = strip_comment(lines[start])
+    ending = lines[start][len(lines[start].rstrip("\r\n")):]
+    first = f"{head} [{session_id(day_str, entry_id)}]{ending}"
+    return first + "".join(lines[start + 1 : end])
 
 
 def tail_text(text: str, budget_bytes: int) -> str:
@@ -196,11 +278,18 @@ def tail_text(text: str, budget_bytes: int) -> str:
         index = fence
     heading = _last_heading_at_or_before(text, index)
     if heading is not None:
-        return text[heading:]
-    nl = text.rfind("\n", 0, index)
-    if nl != -1:
-        return text[nl + 1 :]
-    return text[index:]
+        cut = heading
+    else:
+        nl = text.rfind("\n", 0, index)
+        cut = nl + 1 if nl != -1 else index
+    if cut == 0:
+        return text
+    result = text[cut:]
+    # One small encode: result is ~budget-sized, hidden may be huge.
+    hidden = len(raw) - len(result.encode("utf-8"))
+    if hidden <= 0:
+        return result
+    return f"[... truncated {hidden} bytes above ...]\n{result}"
 
 
 def _fence_start(text: str, index: int) -> int | None:

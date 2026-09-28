@@ -94,7 +94,8 @@ def test_soul_user_not_tailed_today_is(tmp_path: Path) -> None:
     snap = memory.refresh(memory.open_session(at("2026-08-17")), at("2026-08-17"))
     assert snap.soul == big
     assert snap.user == big
-    assert snap.today.startswith("## 11:00 — new")
+    assert snap.today.startswith("[... truncated ")
+    assert "\n## 11:00 — new\n" in snap.today
     assert "old" not in snap.today
 
 
@@ -121,19 +122,24 @@ def test_day_rollover_creates_today_and_fires_hook(tmp_path: Path) -> None:
 def test_tail_heading_newline_and_fence() -> None:
     budget = 64
     headed = "ignore\n## 09:00 — keep\n" + ("b" * 80)
-    assert tail_text(headed, budget).startswith("## 09:00 — keep")
+    out = tail_text(headed, budget)
+    assert out.startswith("[... truncated ")
+    assert "\n## 09:00 — keep\n" in out
     fenced = "pre\n```\n" + ("c" * 80) + "\n```\n"
     tailed = tail_text(fenced, budget)
-    assert tailed.startswith("```\n")
-    assert "```" in tailed[3:]
+    assert tailed.startswith("[... truncated ")
+    assert "\n```\n" in tailed
+    assert tailed.count("```") >= 2
 
 
 def test_tail_does_not_split_utf8() -> None:
     text = "á" * 80
     out = tail_text(text, 50)
     out.encode("utf-8")
-    assert out == "á" * (len(out))
-    assert not out.startswith("\ufffd")
+    assert out.startswith("[... truncated 110 bytes above ...]\n")
+    body = out.split("\n", 1)[1]
+    assert body == "á" * 25
+    assert not body.startswith("\ufffd")
 
 
 def test_refresh_strips_heading_comment(tmp_path: Path) -> None:
@@ -188,3 +194,206 @@ def test_m5_refresh_recreates_deleted_today(tmp_path: Path) -> None:
     assert state.today_path.is_file()
     assert "# 2026-08-17" in state.today_path.read_text(encoding="utf-8")
     assert snapshot.today != ""
+
+
+def _seed_today(tmp_path: Path, day: str, body: str) -> ActiveMemory:
+    memory = ActiveMemory(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    memory.open_session(at(day))
+    (tmp_path / "memory" / f"{day}.md").write_text(f"# {day}\n{body}", encoding="utf-8")
+    return memory
+
+
+def test_split_today_groups_by_session(tmp_path: Path) -> None:
+    memory = _seed_today(
+        tmp_path,
+        "2026-09-28",
+        "## 13:54 — own-note <!-- thyca {\"id\":\"aaaa1111\",\"imp\":3,\"chat\":\"SID-HERE\"} -->\n"
+        "- body OWN detail\n"
+        "## 15:04 — foreign-note <!-- thyca {\"id\":\"bbbb2222\",\"imp\":3,\"chat\":\"SID-OTHER\"} -->\n"
+        "- body FOREIGN detail\n",
+    )
+    state = memory.open_session(at("2026-09-28"))
+    snap = memory.refresh(state, at("2026-09-28"), session_id="SID-HERE")
+    assert "body OWN detail" in snap.today
+    assert "body FOREIGN detail" not in snap.today
+    assert "thyca {" not in snap.today  # metadata comments stripped, like legacy
+    assert snap.today_elsewhere == "- 15:04 — foreign-note [2026-09-28#bbbb2222]"
+
+
+def test_split_today_own_headings_carry_pullable_ids(tmp_path: Path) -> None:
+    from thyca.memory.facade import MemoryFacade
+
+    memory = _seed_today(
+        tmp_path,
+        "2026-09-28",
+        "## 13:54 — own-note <!-- thyca {\"id\":\"aaaa1111\",\"imp\":3,\"chat\":\"SID-HERE\"} -->\n"
+        "- body OWN detail\n",
+    )
+    state = memory.open_session(at("2026-09-28"))
+    snap = memory.refresh(state, at("2026-09-28"), session_id="SID-HERE")
+    assert "## 13:54 — own-note [2026-09-28#aaaa1111]" in snap.today
+    assert "thyca {" not in snap.today
+    # The visible id resolves through the write-back tools.
+    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    assert "OWN detail" in facade.get(session_id="2026-09-28#aaaa1111")
+
+
+def test_split_today_index_ids_are_pullable(tmp_path: Path) -> None:
+    from thyca.memory.facade import MemoryFacade
+
+    memory = _seed_today(
+        tmp_path,
+        "2026-09-28",
+        "## 15:04 — foreign-note <!-- thyca {\"id\":\"bbbb2222\",\"imp\":3,\"chat\":\"SID-OTHER\"} -->\n"
+        "- body FOREIGN detail\n"
+        "## 15:05 — legacy-note\n"
+        "- hand-written, no metadata\n",
+    )
+    state = memory.open_session(at("2026-09-28"))
+    snap = memory.refresh(state, at("2026-09-28"), session_id="SID-HERE")
+    assert snap.today == "# 2026-09-28\n"  # day title has no owner, stays in here
+    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    lines = snap.today_elsewhere.splitlines()
+    assert len(lines) == 2
+    foreign_sid = lines[0].split("[")[1].rstrip("]")
+    legacy_sid = lines[1].split("[")[1].rstrip("]")
+    assert "FOREIGN detail" in facade.get(session_id=foreign_sid)
+    assert "no metadata" in facade.get(session_id=legacy_sid)
+
+
+def test_refresh_without_session_keeps_legacy_full_tail(tmp_path: Path) -> None:
+    memory = _seed_today(
+        tmp_path,
+        "2026-09-28",
+        "## 13:54 — own-note <!-- thyca {\"id\":\"aaaa1111\",\"imp\":3,\"chat\":\"SID-HERE\"} -->\n"
+        "- body OWN detail\n"
+        "## 15:04 — foreign-note <!-- thyca {\"id\":\"bbbb2222\",\"imp\":3,\"chat\":\"SID-OTHER\"} -->\n"
+        "- body FOREIGN detail\n",
+    )
+    state = memory.open_session(at("2026-09-28"))
+    snap = memory.refresh(state, at("2026-09-28"))
+    assert "body OWN detail" in snap.today
+    assert "body FOREIGN detail" in snap.today
+    assert snap.today_elsewhere == ""
+
+
+def test_split_today_index_caps_at_25_lines(tmp_path: Path) -> None:
+    from thyca.memory import ELSEWHERE_MAX_LINES
+
+    assert ELSEWHERE_MAX_LINES == 25
+    blocks = "".join(
+        f"## 10:{i:02d} — note-{i:02d} <!-- thyca {{\"id\":\"{i:08x}\",\"imp\":3,\"chat\":\"SID-OTHER\"}} -->\n- detail {i:02d}\n"
+        for i in range(30)
+    )
+    memory = _seed_today(tmp_path, "2026-09-28", blocks)
+    state = memory.open_session(at("2026-09-28"))
+    snap = memory.refresh(state, at("2026-09-28"), session_id="SID-HERE")
+    lines = snap.today_elsewhere.splitlines()
+    assert len(lines) == 26  # 25 index lines + honesty marker
+    assert "note-29" in lines[-2]  # newest kept
+    assert lines[-1] == "[... 5 older lines omitted ...]"
+    assert "note-00" not in snap.today_elsewhere  # oldest dropped
+
+
+def test_split_duplicate_legacy_titles_resolve_to_own_bodies(tmp_path: Path) -> None:
+    """Occurrence counting stays global across the here/index partition."""
+    from thyca.memory.facade import MemoryFacade
+
+    memory = _seed_today(
+        tmp_path,
+        "2026-09-28",
+        "## 15:05 — dup <!-- thyca {\"id\":\"aaaa1111\",\"imp\":3,\"chat\":\"SID-HERE\"} -->\n"
+        "- first body HERE\n"
+        "## 15:06 — dup\n"
+        "- second body FOREIGN\n"
+        "## 15:07 — dup\n"
+        "- third body FOREIGN\n",
+    )
+    state = memory.open_session(at("2026-09-28"))
+    snap = memory.refresh(state, at("2026-09-28"), session_id="SID-HERE")
+    assert "first body HERE" in snap.today
+    lines = snap.today_elsewhere.splitlines()
+    assert len(lines) == 2
+    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    bodies = [
+        facade.get(session_id=line.split("[")[1].rstrip("]")) for line in lines
+    ]
+    assert "second body FOREIGN" in bodies[0]
+    assert "third body FOREIGN" in bodies[1]
+
+
+def test_t7_tail_marker_reports_hidden_bytes_and_skips_when_whole() -> None:
+    from thyca.memory.heading import is_session_heading, parse_heading
+
+    whole = "## 10:00 — a\n- short\n"
+    assert tail_text(whole, 1024) == whole  # no cut, no marker
+    big = "## 10:00 — old\n- old body\n## 11:00 — new\n" + ("x" * 2000) + "\n- keep\n"
+    out = tail_text(big, 64)
+    marker, _, body = out.partition("\n")
+    hidden = len(big.encode("utf-8")) - len(body.encode("utf-8"))
+    assert marker == f"[... truncated {hidden} bytes above ...]"
+    assert body.startswith("## 11:00 — new")
+    assert is_session_heading(marker + "\n") is False
+    assert parse_heading(marker) is None
+
+
+def test_t7_elsewhere_marker_only_when_capped(tmp_path: Path) -> None:
+    from thyca.memory.heading import is_session_heading
+
+    def seed(n: int) -> str:
+        blocks = "".join(
+            f"## 10:{i:02d} — note-{i:02d} <!-- thyca {{\"id\":\"{i:08x}\",\"imp\":3,\"chat\":\"SID-OTHER\"}} -->\n- d{i}\n"
+            for i in range(n)
+        )
+        memory = _seed_today(tmp_path, "2026-09-28", blocks)
+        state = memory.open_session(at("2026-09-28"))
+        return memory.refresh(state, at("2026-09-28"), session_id="SID-HERE").today_elsewhere
+
+    exact = seed(25)
+    assert len(exact.splitlines()) == 25
+    assert "older lines omitted" not in exact
+    over = seed(27)
+    lines = over.splitlines()
+    assert len(lines) == 26
+    assert lines[-1] == "[... 2 older lines omitted ...]"
+    assert is_session_heading(lines[-1] + "\n") is False
+
+
+def test_t7_session_path_keeps_free_text_before_first_heading(tmp_path: Path) -> None:
+    memory = _seed_today(
+        tmp_path,
+        "2026-09-28",
+        "free note before any heading\n"
+        "## 13:54 — own <!-- thyca {\"id\":\"aaaa1111\",\"imp\":3,\"chat\":\"SID-HERE\"} -->\n"
+        "- own body\n"
+        "## 15:04 — foreign <!-- thyca {\"id\":\"bbbb2222\",\"imp\":3,\"chat\":\"SID-OTHER\"} -->\n"
+        "- foreign body\n",
+    )
+    state = memory.open_session(at("2026-09-28"))
+    snap = memory.refresh(state, at("2026-09-28"), session_id="SID-HERE")
+    assert snap.today.startswith("# 2026-09-28\nfree note before any heading\n")
+    assert "own body" in snap.today
+    assert "foreign body" not in snap.today
+
+
+def test_t7_session_path_prefix_subject_to_tail_budget(tmp_path: Path) -> None:
+    memory = ActiveMemory(tmp_path, tail_kb=1, timezone_name="Asia/Ho_Chi_Minh")
+    memory.open_session(at("2026-09-28"))
+    (tmp_path / "memory" / "2026-09-28.md").write_text(
+        "# 2026-09-28\n" + ("p" * 2000) + "\n"
+        "## 13:54 — own <!-- thyca {\"id\":\"aaaa1111\",\"imp\":3,\"chat\":\"SID-HERE\"} -->\n"
+        "- own body\n",
+        encoding="utf-8",
+    )
+    state = memory.open_session(at("2026-09-28"))
+    snap = memory.refresh(state, at("2026-09-28"), session_id="SID-HERE")
+    assert snap.today.startswith("[... truncated ")
+    assert "own body" in snap.today
+
+
+def test_t7_session_path_without_headings_keeps_whole_file(tmp_path: Path) -> None:
+    memory = _seed_today(tmp_path, "2026-09-28", "just free notes\nno headings\n")
+    state = memory.open_session(at("2026-09-28"))
+    snap = memory.refresh(state, at("2026-09-28"), session_id="SID-HERE")
+    assert snap.today == "# 2026-09-28\njust free notes\nno headings\n"
+    assert snap.today_elsewhere == ""

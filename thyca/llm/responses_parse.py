@@ -39,6 +39,72 @@ def _to_responses_tools(tools: list) -> list[dict[str, Any]]:
     return out
 
 
+def _reasoning_summary_parts(raw: object, key: str) -> list[dict[str, Any]]:
+    """Validate reasoning summary[] parts; invalid entries dropped, never raises."""
+    out: list[dict[str, Any]] = []
+    if not isinstance(raw, list):
+        return out
+    for part in raw:
+        if not isinstance(part, dict):
+            continue
+        if part.get("type") != "summary_text":
+            continue
+        text = part.get("text")
+        if not isinstance(text, str) or not text:
+            continue
+        out.append({"type": "summary_text", "text": redact(text, key)})
+    return out
+
+
+def _reasoning_content_parts(raw: object, key: str) -> list[dict[str, Any]]:
+    """Validate reasoning content[] parts (reasoning_text); invalid dropped."""
+    out: list[dict[str, Any]] = []
+    if not isinstance(raw, list):
+        return out
+    for part in raw:
+        if not isinstance(part, dict):
+            continue
+        if part.get("type") != "reasoning_text":
+            continue
+        text = part.get("text")
+        if not isinstance(text, str) or not text:
+            continue
+        out.append({"type": "reasoning_text", "text": redact(text, key)})
+    return out
+
+
+def _responses_reasoning_detail(item: object, key: str = "") -> dict[str, Any] | None:
+    """Validate one reasoning item; None when unusable. Never raises.
+
+    Chat parity (openai_parse._reasoning_detail): type check, required-field
+    check, id passthrough, summary/text redacted, signature blobs untouched
+    and never capped (truncating would break round-trip).
+    """
+    if not isinstance(item, dict):
+        return None
+    if item.get("type") != "reasoning":
+        return None
+    out: dict[str, Any] = {"type": "reasoning"}
+    item_id = item.get("id")
+    if isinstance(item_id, str) and item_id:
+        out["id"] = item_id
+    summary = _reasoning_summary_parts(item.get("summary"), key)
+    if summary:
+        out["summary"] = summary
+    content = _reasoning_content_parts(item.get("content"), key)
+    if content:
+        out["content"] = content
+    encrypted = item.get("encrypted_content")
+    if isinstance(encrypted, str) and encrypted:
+        out["encrypted_content"] = encrypted
+    signature = item.get("signature")
+    if isinstance(signature, str) and signature:
+        out["signature"] = signature
+    if len(out) == 1:
+        return None
+    return out
+
+
 def _message_items(message: Message) -> list[dict[str, Any]]:
     """One transcript message to zero or more ``input[]`` items."""
     if message.role == "system":
@@ -48,12 +114,21 @@ def _message_items(message: Message) -> list[dict[str, Any]]:
     if message.role == "user":
         return [{"role": "user", "content": message.content or ""}]
     if message.role == "assistant":
+        # Round-trip prior reasoning items for tool-loop continuity (chat
+        # parity: _to_openai_message sends reasoning_details verbatim).
+        # Native reasoning items only; chat shapes/invalid ignored, never raises.
+        prefix: list[dict[str, Any]] = []
+        if message.reasoning_details:
+            for detail in message.reasoning_details:
+                validated = _responses_reasoning_detail(detail, "")
+                if validated is not None:
+                    prefix.append(validated)
         items = (
             [{"role": "assistant", "content": message.content}]
             if isinstance(message.content, str) and message.content
             else []
         )
-        return items + [
+        return prefix + items + [
             {
                 "type": "function_call",
                 "call_id": call.id,
@@ -104,6 +179,7 @@ def parse_responses_payload(raw: dict, key: str) -> ChatReply:
         raise LLMError("provider response missing output")
     content_parts: list[str] = []
     reasoning_parts: list[str] = []
+    details: list[dict[str, Any]] = []
     for item in output:
         if not isinstance(item, dict):
             continue
@@ -114,11 +190,13 @@ def parse_responses_payload(raw: dict, key: str) -> ChatReply:
                     if isinstance(text, str) and text:
                         content_parts.append(text)
         elif item.get("type") == "reasoning":
-            for part in item.get("summary") or []:
-                if isinstance(part, dict) and part.get("type") == "summary_text":
-                    text = part.get("text")
-                    if isinstance(text, str) and text:
-                        reasoning_parts.append(text)
+            # Reuse the validator (already redacted; the final redact below
+            # is idempotent) so non-list summary cannot iterate chars.
+            for part in _reasoning_summary_parts(item.get("summary"), key):
+                reasoning_parts.append(part["text"])
+            detail = _responses_reasoning_detail(item, key)
+            if detail is not None:
+                details.append(detail)
     calls = [
         {
             "id": item.get("call_id"),
@@ -137,6 +215,7 @@ def parse_responses_payload(raw: dict, key: str) -> ChatReply:
         finish_reason=status if isinstance(status, str) and status else "completed",
         model=model if isinstance(model, str) else None,
         reasoning=redact("".join(reasoning_parts), key) or None,
+        reasoning_details=details or None,
     )
 
 
@@ -152,6 +231,7 @@ async def read_responses_sse(
 ) -> ChatReply:
     content_parts: list[str] = []
     slots: dict[int, dict[str, str]] = {}
+    details: list[dict[str, Any]] = []
     reasoning = ReasoningOut(key, on_reasoning)
     content_out = ContentOut(on_content, key)
     usage: dict | None = None
@@ -192,7 +272,9 @@ async def read_responses_sse(
                     slot["arguments"] = arguments
         elif event == "response.output_item.done":
             item = chunk.get("item")
-            if isinstance(item, dict) and item.get("type") == "function_call":
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") == "function_call":
                 slot = _function_slot(slots, chunk.get("output_index"))
                 for field, target in (("call_id", "call_id"), ("name", "name")):
                     value = item.get(field)
@@ -201,6 +283,12 @@ async def read_responses_sse(
                 arguments = item.get("arguments")
                 if isinstance(arguments, str) and arguments and not slot["arguments"]:
                     slot["arguments"] = arguments
+            elif item.get("type") == "reasoning":
+                # Done carries the full item (id/summary/encrypted_content);
+                # added is id-only and would duplicate, so only done is kept.
+                detail = _responses_reasoning_detail(item, key)
+                if detail is not None:
+                    details.append(detail)
         elif event == "response.completed":
             completed = True
             finished = chunk.get("response")
@@ -231,6 +319,7 @@ async def read_responses_sse(
         finish_reason=status or "completed",
         model=model,
         reasoning=reasoning.text(),
+        reasoning_details=details or None,
     )
 
 

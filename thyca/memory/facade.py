@@ -10,6 +10,7 @@ from thyca.memory.archived import (
     CANDIDATE_CAP,
     DATE_RE,
     GET_SESSION_CAP,
+    NO_FALLBACK_PREFIXES,
     ArchivedMemory,
     ArchiveError,
     Hit,
@@ -207,12 +208,18 @@ class MemoryFacade:
                 sid = session_id or ""
                 rows = self.archive.store.get_session(sid, now_ts)
                 chunk_ids = [str(row["chunk_id"]) for row in rows[:GET_SESSION_CAP]]
-        except ArchiveError:
-            if session_id is None:
+        except ArchiveError as original:
+            if str(original).startswith(NO_FALLBACK_PREFIXES):
                 raise
-            text = self.writer.read_session(session_id, now=now)
-            sid = session_id
-            chunk_ids = self._session_leaf_ids(session_id, text)[:GET_SESSION_CAP]
+            if chunk_id is not None:
+                text, sid = self._read_chunk_fallback(chunk_id, now, original)
+                chunk_ids = [chunk_id]
+            elif session_id is None:
+                raise
+            else:
+                text = self.writer.read_session(session_id, now=now)
+                sid = session_id
+                chunk_ids = self._session_leaf_ids(session_id, text)[:GET_SESSION_CAP]
         if chunk_ids and sid:
             self.archive.store.usage.record_gets(chunk_ids, sid, now_ts)
         # sid is always a validated non-empty id here (blank selectors raise
@@ -226,7 +233,12 @@ class MemoryFacade:
             if chunk_id is not None:
                 return self.archive.get(chunk_id=chunk_id, now=now)
             return self.archive.get(session_id=sid, now=now)
-        except ArchiveError:
+        except ArchiveError as reread_miss:
+            if str(reread_miss).startswith(NO_FALLBACK_PREFIXES):
+                raise
+            if chunk_id is not None:
+                leaf, _ = self._read_chunk_fallback(chunk_id, now, reread_miss)
+                return leaf
             return self.writer.read_session(sid, now=now)
 
     def stats(self, now: datetime | None = None) -> MemoryStatsResult:
@@ -255,7 +267,11 @@ class MemoryFacade:
             isinstance(timeline_day, str) and DATE_RE.fullmatch(timeline_day)
         ):
             return SearchResult(warnings=["invalid timeline_day"])
+        requested_limit = limit
         limit = max(1, min(limit, 10))
+        warnings: list[str] = []
+        if limit != requested_limit:
+            warnings.append(f"limit clamped from {requested_limit} to {limit}")
         if not isinstance(query, str):
             return SearchResult(warnings=["invalid query"])
         if not query.strip():
@@ -264,6 +280,11 @@ class MemoryFacade:
             proj = _absolute_proj(proj)
         except ValueError:
             return SearchResult(warnings=["invalid proj"])
+        if timeline_day is not None and timeline_day >= self.archive.day(now):
+            warnings.append(
+                f"timeline_day {timeline_day} is not indexed "
+                "(today and future files are excluded)"
+            )
         fts = self.archive.fts_hits(
             query, timeline_day, now, CANDIDATE_CAP,
             project=proj, chat_session=chat,
@@ -273,6 +294,11 @@ class MemoryFacade:
             query, timeline_day, now, CANDIDATE_CAP,
             project=proj, chat_session=chat,
         )
+        if len(fts) >= CANDIDATE_CAP or len(trigram) >= CANDIDATE_CAP:
+            warnings.append(
+                f"candidate cap reached ({CANDIDATE_CAP}): "
+                "some matches may be hidden"
+            )
         seen = {hit.chunk_id for hit in hits}
         for hit in trigram:
             if hit.chunk_id not in seen:
@@ -280,7 +306,12 @@ class MemoryFacade:
                 seen.add(hit.chunk_id)
         hays = self.archive.store.rank_hays([hit.chunk_id for hit in hits])
         hits = _promote_in_order_span(query, hits, self.archive.chunker, hays)
-        hits = self.archive.with_counts(dedup_siblings(hits)[:limit], now)
+        deduped = dedup_siblings(hits)
+        hidden = len(hits) - len(deduped)
+        if hidden:
+            noun = "sibling hit" if hidden == 1 else "sibling hits"
+            warnings.append(f"dedup hid {hidden} {noun}")
+        hits = self.archive.with_counts(deduped[:limit], now)
         if hits:
             now_ts = format_ts(utc_now(now))
             by_session: dict[str, list[str]] = {}
@@ -288,7 +319,7 @@ class MemoryFacade:
                 by_session.setdefault(hit.session_id, []).append(hit.chunk_id)
             for sid, chunk_ids in by_session.items():
                 self.archive.store.usage.record_searches(chunk_ids, sid, now_ts)
-        return SearchResult(hits=hits)
+        return SearchResult(hits=hits, warnings=warnings)
 
     def recent(self, limit: int = 5, now: datetime | None = None) -> list[Hit]:
         limit = max(1, min(limit, 10))
@@ -358,6 +389,38 @@ class MemoryFacade:
         return self.archive.chunker.chunk_markdown(
             path, text, source_kind="daily", timeline_day=day
         )
+
+    def _read_chunk_fallback(
+        self, chunk_id: str, now: datetime | None, original: ArchiveError
+    ) -> tuple[str, str]:
+        """Leaf text + session id for a chunk missing from the index.
+
+        T8: chunk_id is "{session_id}#{ord}" (chunk.py), so a daily miss
+        resolves through the writer like a session miss — today's file is
+        not indexed. Canonical chunks are always indexed, so a miss there
+        (or an unparseable id) re-raises the index miss unchanged.
+        """
+        sid, sep, ord_part = chunk_id.rpartition("#")
+        if not sep or not sid or not ord_part.isdigit():
+            raise original
+        if sid.startswith("canonical#"):
+            raise original
+        try:
+            path, _ = self.writer.locate(sid)
+            whole = path.read_text(encoding="utf-8")
+        except (ArchiveError, OSError, UnicodeDecodeError):
+            raise original from None
+        day = sid.split("#", 1)[0]
+        # Whole file, not the single block: legacy comment-less headings
+        # resolve occurrence counts file-wide, so a lone block would mistag
+        # duplicate titles as occurrence 1 and miss their real chunk ids.
+        chunks = self.archive.chunker.chunk_markdown(
+            path, whole, source_kind="daily", timeline_day=day
+        )
+        for chunk in chunks:
+            if chunk.chunk_id == chunk_id:
+                return chunk.text_raw, sid
+        raise original from None
 
     def _session_leaf_ids(self, session_id: str, text: str) -> list[str]:
         path, _ = self.writer.locate(session_id)

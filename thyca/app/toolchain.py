@@ -67,15 +67,17 @@ def build_agent_loop(
     loop_max: int,
     model: str | None,
     pricing: dict | None,
+    context_tokens: int | None = None,
 ) -> AgentLoop:
     """Assemble one AgentLoop: the shared per-turn wiring for ChatApp and Cli.
 
     Both entry points wire the same five stages; only the act instance
     (ChatApp reuses one carrying skills_root, Cli builds one per run) and
     the per-turn pieces differ, so those stay parameters."""
+    prompts = PromptManager()
     return AgentLoop(
         sessions=sessions,
-        assemble=Assemble(PromptManager()),
+        assemble=Assemble(prompts),
         think=Think(connect),
         act=act,
         observe=Observe(sessions),
@@ -83,6 +85,8 @@ def build_agent_loop(
         tools=tools,
         model=model,
         pricing=pricing,
+        prompts=prompts,
+        context_tokens=context_tokens,
     )
 
 

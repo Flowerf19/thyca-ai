@@ -330,8 +330,13 @@ class ChatApp:
                     loop_max=limits.loopMax,
                     model=turn_cfg.provider.model,
                     pricing=turn_cfg.effective_pricing() or None,
+                    context_tokens=limits.contextTokens,
                 )
-                hot = self._memory.refresh(self._state, datetime.now(self._zone))
+                hot = self._memory.refresh(
+                    self._state,
+                    datetime.now(self._zone),
+                    session_id=sessions.current.id,
+                )
                 try:
                     reply = await loop.run(
                         text, hot=hot, event_sink=event_sink, persist_user=not retry

@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 
+from thyca.core.protocol import estimate_tokens as _chars_to_tokens
 from thyca.llm.pricing import cost_for
+from thyca.llm.prompt_manager import PromptManager
+from thyca.memory.active import ActiveSnapshot
 from thyca.sessions import SessionManager
 
 from .act import Act
 from .assemble import Assemble
 from .events import EventSink, TurnEvent, emit_event
 from .observe import Observe
+from .shrink import BACKSTOP_RATIO, shrink_stage_messages
 from .stage import Stage
 from .think import Think
 from .thinking import ThinkingDelta
@@ -56,7 +61,10 @@ class AgentLoop:
         tools: list | None = None,
         model: str | None = None,
         pricing: dict | None = None,
+        prompts: PromptManager | None = None,
+        context_tokens: int | None = None,
     ) -> None:
+        # context_tokens None disables the mid-turn guard (unit tests, no limits).
         self._sessions = sessions
         self._assemble = assemble
         self._think = think
@@ -66,6 +74,18 @@ class AgentLoop:
         self._tools = tools
         self._model = model
         self._pricing = pricing
+        self._prompts = prompts or PromptManager()
+        self._context_tokens = context_tokens
+
+    def _hot_tokens(self, hot: object) -> int:
+        if not isinstance(hot, ActiveSnapshot):
+            return 0
+        return _chars_to_tokens(self._prompts.build(hot))
+
+    def _tools_tokens(self) -> int:
+        if not self._tools:
+            return 0
+        return _chars_to_tokens(json.dumps(self._tools, ensure_ascii=False))
 
     async def run(
         self,
@@ -79,7 +99,13 @@ class AgentLoop:
 
         # Compact first: the stage must snapshot post-compaction history so
         # the turn tripping the cap sends the compacted tail to the LLM.
-        self._observe.compact()
+        # Overhead sizes (hot prompt, tools schema, pending user text) let
+        # the compactor reserve room for what assemble adds after this.
+        self._observe.compact(
+            hot_tokens=self._hot_tokens(hot),
+            tools_tokens=self._tools_tokens(),
+            pending_user_tokens=_chars_to_tokens(user_msg),
+        )
         stage = Stage(
             messages=list(self._sessions.current.messages),
             hot=hot,
@@ -91,11 +117,36 @@ class AgentLoop:
         else:
             self._assemble.assemble(stage, user_msg, append_user=False)
         emit_event(event_sink, TurnEvent(type="turn.accepted"))
+        # Index boundary for the shrink guard: entries below are pre-run
+        # history (round numbers restart every turn, so round-protection
+        # must not apply to them); entries at/above are this run's own.
+        run_start = len(stage.messages)
 
         for _ in range(self._loop_max):
             stage.round += 1
             # carry model/pricing so Observe/Trace can build meta without reading config
             stage.llm_model = self._model
+            if self._context_tokens is not None:
+                shrunk_messages, shrunk, hidden, estimate = shrink_stage_messages(
+                    stage.messages,
+                    current_round=stage.round,
+                    context_tokens=self._context_tokens,
+                    tools_tokens=self._tools_tokens(),
+                    run_start=run_start,
+                )
+                if shrunk:
+                    stage.messages = shrunk_messages
+                    emit_event(
+                        event_sink,
+                        TurnEvent(
+                            type="context.shrunk",
+                            round=stage.round,
+                            tool_count=shrunk,
+                            hidden_bytes=hidden,
+                        ),
+                    )
+                if estimate > int(self._context_tokens * BACKSTOP_RATIO):
+                    return self._observe.context_limit(stage)
             emit_event(event_sink, TurnEvent(type="llm.started", round=stage.round))
             round_no = stage.round
             on_reasoning = _delta_callback(event_sink, round_no, ThinkingDelta)

@@ -2,6 +2,16 @@
 
 Thay đổi của Thyca, viết ngắn gọn cho người dùng.
 
+## 0.86.3.dev0 — Development
+
+- Note hôm nay hết lẫn lộn giữa các phiên: phiên đang chat thấy đủ note của mình, note phiên khác chỉ hiện 1 dòng tiêu đề (đọc chi tiết khi cần) — không còn chuyện đang hỏi tool thì Thyca lôi dự án khác vào.
+- Note cùng phiên hiện kèm mã tra cứu để đọc lại/sửa/xóa trong ngày; note ghi từ CLI cũng gắn đúng phiên.
+- Phiên dài hết bị "mất trí nhớ thầm lặng": khi lịch sử cũ buộc phải lược, Thyca giờ thấy được phần tóm tắt còn lại thay vì quên hẳn.
+- Lượt tool chạy dài hết vỡ giữa chừng vì đầy context: kết quả cũ tự thu gọn (đọc lại hoặc chạy lại tùy loại khi cần), quá tải thì dừng gọn gàng thay vì lỗi nhà cung cấp.
+- Tìm kiếm trí nhớ trung thực hơn: báo rõ khi kết quả bị giới hạn, khi note đã hết hạn/bị xóa, và khi tìm trong ngày hôm nay (ngày hôm nay chỉ đọc trực tiếp, chưa tìm được).
+- Hồ sơ trống thì để trống: không còn tự thay tính cách/hồ sơ mẫu khi file chưa có nội dung.
+- Đây là bản dev, chưa phải beta hay stable; không tự bỏ hậu tố dev khi nâng phiên bản.
+
 ## 0.86.2.dev0 — Development
 
 - Thêm/bớt/sửa MCP server trong config có hiệu lực ở lượt chat sau, không cần restart serve (trước đây phải restart, mà để agent tự restart thì turn đó chết luôn).

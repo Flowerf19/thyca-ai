@@ -22,6 +22,7 @@ from thyca.sessions import SessionError, SessionManager, SessionNotFound
 from thyca.tools.gateway.background import BackgroundProcs
 from thyca.memory.facade import MemoryFacade
 from thyca.tools.mcp import MCPManager
+from thyca.tools.memory_tools import bind_chat_session, reset_chat_session
 from thyca.tools.task_store import TaskStore
 
 from thyca.app.toolchain import (
@@ -177,21 +178,31 @@ class Cli:
                 loop_max=limits.loopMax,
                 model=provider.model,
                 pricing=cfg.effective_pricing() or None,
+                context_tokens=limits.contextTokens,
             )
 
             prompts = PromptManager()
 
             async def turn(text: str) -> str:
-                hot = memory.refresh(state, datetime.now(zone))
-                if args.debug:
-                    system = prompts.build(hot)
-                    ui.debug(
-                        f"session={sessions.current.id} model={provider.model} "
-                        f"provider={cfg.provider_id_for(provider.model)} baseUrl={provider.baseUrl} "
-                        f"identity={'</identity>' in system} soul={'</role>' in system} "
-                        f"user={'</user>' in system} tools={len(schema)} system_chars={len(system)}"
+                # Same bind pattern as ChatApp: without it every CLI note
+                # lands with chat=None and its own session only sees the
+                # title-only elsewhere index.
+                token = bind_chat_session(sessions.current.id)
+                try:
+                    hot = memory.refresh(
+                        state, datetime.now(zone), session_id=sessions.current.id
                     )
-                return await loop.run(text, hot=hot)
+                    if args.debug:
+                        system = prompts.build(hot)
+                        ui.debug(
+                            f"session={sessions.current.id} model={provider.model} "
+                            f"provider={cfg.provider_id_for(provider.model)} baseUrl={provider.baseUrl} "
+                            f"identity={'</identity>' in system} soul={'</role>' in system} "
+                            f"user={'</user>' in system} tools={len(schema)} system_chars={len(system)}"
+                        )
+                    return await loop.run(text, hot=hot)
+                finally:
+                    reset_chat_session(token)
 
             try:
                 if args.print_mode:

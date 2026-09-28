@@ -47,9 +47,9 @@ class FakeDispatcher:
 def _wrap_compaction(manager: SessionManager, events: list[str]) -> None:
     original = manager.compact_if_needed
 
-    def compact() -> bool:
+    def compact(**kwargs) -> bool:
         events.append("compact")
-        return original()
+        return original(**kwargs)
 
     manager.compact_if_needed = compact  # type: ignore[method-assign]
 

@@ -64,7 +64,17 @@ def _to_openai_message(message: Message) -> dict[str, Any]:
     if message.reasoning_details:
         # Round-trip provider thinking signatures; absent for providers that
         # never emit them, so payloads there are byte-identical to before.
-        payload["reasoning_details"] = [dict(detail) for detail in message.reasoning_details]
+        # Responses-native items (type "reasoning") are not part of the
+        # Chat contract (chat shapes are reasoning.text/summary/encrypted):
+        # history persisted under Responses must not leak them onto the Chat
+        # wire after a model/provider switch. Chat shapes pass byte-identical.
+        kept = [
+            dict(detail)
+            for detail in message.reasoning_details
+            if isinstance(detail, dict) and detail.get("type") != "reasoning"
+        ]
+        if kept:
+            payload["reasoning_details"] = kept
     if message.tool_calls:
         payload["tool_calls"] = [
             {

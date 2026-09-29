@@ -115,13 +115,13 @@ class ToolGateway:
             text = await self._background.read(execution.proc.id, wait_s, **page)
             return ToolResult(
                 tool_call_id=id, name="tool_read", content=text,
-                is_error=execution.error,
+                is_error=execution.error, exec_ref=id,
             )
         assert execution.entry is not None
         result = await self._tasks.read(execution.entry.id, wait_s, **page)
         return ToolResult(
             tool_call_id=id, name="tool_read", content=result.content,
-            is_error=result.is_error,
+            is_error=result.is_error, exec_ref=id,
         )
 
     async def kill(self, id: str) -> str:
@@ -209,6 +209,7 @@ class ToolGateway:
                         "tool_read. It keeps running even if this turn is cancelled."
                     ),
                     is_error=False,
+                    exec_ref=execution.id,
                 )
             raw = task.result()
             if isinstance(raw, Detached):
@@ -230,11 +231,18 @@ class ToolGateway:
         self._evict_settled()
         if raw.entry.task is not None:
             raw.entry.task.add_done_callback(lambda t, e=execution: self._settle_proc(e))
-        return _result(call, self._cap(raw.message, execution.id), is_error=False)
+        return _result(call, self._cap(raw.message, execution.id), is_error=False, exec_ref=execution.id)
 
     def _resolve(self, call: ToolCall, raw: object) -> ToolResult:
         if isinstance(raw, ToolResult):
-            return _result(call, self._cap(raw.content, None), is_error=raw.is_error)
+            # exec_ref is gateway-minted: trust a handler-returned ref only
+            # when it names a live tracked execution, else shrink would
+            # promise a pointer to unretained/nonexistent output.
+            exec_ref = raw.exec_ref if raw.exec_ref in self._executions else None
+            return _result(
+                call, self._cap(raw.content, None),
+                is_error=raw.is_error, exec_ref=exec_ref,
+            )
         if not isinstance(raw, str):
             return _result(call, "handler must return str or ToolResult", is_error=True)
         return _result(call, self._cap(raw, None), is_error=False)
@@ -304,12 +312,15 @@ class ToolGateway:
         return cap_reply(content, self._result_cap, more=more)
 
 
-def _result(call: ToolCall, content: str, *, is_error: bool) -> ToolResult:
+def _result(
+    call: ToolCall, content: str, *, is_error: bool, exec_ref: str | None = None
+) -> ToolResult:
     return ToolResult(
         tool_call_id=call.id,
         name=call.name,
         content=content,
         is_error=is_error,
+        exec_ref=exec_ref,
     )
 
 

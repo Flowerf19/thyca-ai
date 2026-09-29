@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 
-from thyca.core.protocol import estimate_tokens as _chars_to_tokens
+from thyca.core.protocol import Message, estimate_tokens as _chars_to_tokens
 from thyca.llm.pricing import cost_for
 from thyca.llm.prompt_manager import PromptManager
 from thyca.memory.active import ActiveSnapshot
@@ -13,7 +13,7 @@ from .act import Act
 from .assemble import Assemble
 from .events import EventSink, TurnEvent, emit_event
 from .observe import Observe
-from .shrink import BACKSTOP_RATIO, shrink_stage_messages
+from .shrink import BACKSTOP_RATIO, estimate_wire_tokens, shrink_stage_messages
 from .stage import Stage
 from .think import Think
 from .thinking import ThinkingDelta
@@ -104,7 +104,11 @@ class AgentLoop:
         self._observe.compact(
             hot_tokens=self._hot_tokens(hot),
             tools_tokens=self._tools_tokens(),
-            pending_user_tokens=_chars_to_tokens(user_msg),
+            # Wire estimate, matching what the mid-turn guard counts for the
+            # assembled user message (raw chars undercount by ~8 tokens).
+            pending_user_tokens=estimate_wire_tokens(
+                [Message(role="user", content=user_msg)]
+            ),
         )
         stage = Stage(
             messages=list(self._sessions.current.messages),
@@ -133,6 +137,7 @@ class AgentLoop:
                     context_tokens=self._context_tokens,
                     tools_tokens=self._tools_tokens(),
                     run_start=run_start,
+                    live_exec_ids=self._act.live_exec_ids(),
                 )
                 if shrunk:
                     stage.messages = shrunk_messages

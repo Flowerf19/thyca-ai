@@ -7,17 +7,15 @@ from pathlib import Path
 from thyca.config import atomic_write_text
 from thyca.memory.active import ActiveMemory
 from thyca.memory.archived import (
-    CANDIDATE_CAP,
-    DATE_RE,
     GET_SESSION_CAP,
     NO_FALLBACK_PREFIXES,
     ArchivedMemory,
     ArchiveError,
     Hit,
     SearchResult,
-    dedup_siblings,
 )
 from thyca.memory.chunk import Chunk
+from thyca.memory.fallback import read_unindexed_chunk
 from thyca.memory.heading import (
     DEFAULT_IMPORTANCE,
     TTL_DAYS,
@@ -31,27 +29,10 @@ from thyca.memory.heading import (
     session_id,
     utc_now,
 )
-from thyca.memory.stats import CanonicalFile, MemoryStats, MemoryStatsResult
+from thyca.memory.search import _absolute_proj, lexical_search
+from thyca.memory.search import recent as _recent_search
+from thyca.memory.stats import CanonicalFile, MemoryStatsResult, build_stats
 from thyca.memory.writer import MemoryWriter
-from thyca.memory.rank import _promote_in_order_span
-
-
-def _absolute_proj(value: object) -> str | None:
-    # Local import: thyca.tools.__init__ re-exports MemoryFacade, so a
-    # top-level import here would cycle.
-    from thyca.tools.path_guard import absolutize
-
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise ValueError("proj must be an absolute path")
-    text = value.strip()
-    if not text:
-        return None
-    path = absolutize(text)
-    if not path.is_absolute():
-        raise ValueError("proj must be an absolute path")
-    return str(path)
 
 
 class MemoryFacade:
@@ -212,7 +193,9 @@ class MemoryFacade:
             if str(original).startswith(NO_FALLBACK_PREFIXES):
                 raise
             if chunk_id is not None:
-                text, sid = self._read_chunk_fallback(chunk_id, now, original)
+                text, sid = read_unindexed_chunk(
+                    self.archive, self.writer, chunk_id, now, original
+                )
                 chunk_ids = [chunk_id]
             elif session_id is None:
                 raise
@@ -237,20 +220,18 @@ class MemoryFacade:
             if str(reread_miss).startswith(NO_FALLBACK_PREFIXES):
                 raise
             if chunk_id is not None:
-                leaf, _ = self._read_chunk_fallback(chunk_id, now, reread_miss)
+                leaf, _ = read_unindexed_chunk(
+                    self.archive, self.writer, chunk_id, now, reread_miss
+                )
                 return leaf
             return self.writer.read_session(sid, now=now)
 
     def stats(self, now: datetime | None = None) -> MemoryStatsResult:
-        now_ts = format_ts(utc_now(now))
-        return MemoryStats.build(
-            self.archive.store.visible_chunk_maps(now_ts),
-            self._today_chunks(now),
-            self.archive.store.usage.get_map(),
-            self.archive.store.usage.search_map(),
-            today=self.archive.day(now),
-            now_ts=now_ts,
+        return build_stats(
+            self.archive,
+            today_chunks=self._today_chunks(now),
             files=self._canonical_files(),
+            now=now,
         )
 
     def search(
@@ -263,67 +244,18 @@ class MemoryFacade:
         proj: str | None = None,
         chat: str | None = None,
     ) -> SearchResult:
-        if timeline_day is not None and not (
-            isinstance(timeline_day, str) and DATE_RE.fullmatch(timeline_day)
-        ):
-            return SearchResult(warnings=["invalid timeline_day"])
-        requested_limit = limit
-        limit = max(1, min(limit, 10))
-        warnings: list[str] = []
-        if limit != requested_limit:
-            warnings.append(f"limit clamped from {requested_limit} to {limit}")
-        if not isinstance(query, str):
-            return SearchResult(warnings=["invalid query"])
-        if not query.strip():
-            return SearchResult(warnings=["empty query"])
-        try:
-            proj = _absolute_proj(proj)
-        except ValueError:
-            return SearchResult(warnings=["invalid proj"])
-        if timeline_day is not None and timeline_day >= self.archive.day(now):
-            warnings.append(
-                f"timeline_day {timeline_day} is not indexed "
-                "(today and future files are excluded)"
-            )
-        fts = self.archive.fts_hits(
-            query, timeline_day, now, CANDIDATE_CAP,
-            project=proj, chat_session=chat,
+        return lexical_search(
+            self.archive,
+            query,
+            limit=limit,
+            timeline_day=timeline_day,
+            now=now,
+            proj=proj,
+            chat=chat,
         )
-        hits: list[Hit] = list(fts)
-        trigram = self.archive.trigram_hits(
-            query, timeline_day, now, CANDIDATE_CAP,
-            project=proj, chat_session=chat,
-        )
-        if len(fts) >= CANDIDATE_CAP or len(trigram) >= CANDIDATE_CAP:
-            warnings.append(
-                f"candidate cap reached ({CANDIDATE_CAP}): "
-                "some matches may be hidden"
-            )
-        seen = {hit.chunk_id for hit in hits}
-        for hit in trigram:
-            if hit.chunk_id not in seen:
-                hits.append(hit)
-                seen.add(hit.chunk_id)
-        hays = self.archive.store.rank_hays([hit.chunk_id for hit in hits])
-        hits = _promote_in_order_span(query, hits, self.archive.chunker, hays)
-        deduped = dedup_siblings(hits)
-        hidden = len(hits) - len(deduped)
-        if hidden:
-            noun = "sibling hit" if hidden == 1 else "sibling hits"
-            warnings.append(f"dedup hid {hidden} {noun}")
-        hits = self.archive.with_counts(deduped[:limit], now)
-        if hits:
-            now_ts = format_ts(utc_now(now))
-            by_session: dict[str, list[str]] = {}
-            for hit in hits:
-                by_session.setdefault(hit.session_id, []).append(hit.chunk_id)
-            for sid, chunk_ids in by_session.items():
-                self.archive.store.usage.record_searches(chunk_ids, sid, now_ts)
-        return SearchResult(hits=hits, warnings=warnings)
 
     def recent(self, limit: int = 5, now: datetime | None = None) -> list[Hit]:
-        limit = max(1, min(limit, 10))
-        return self.archive.with_counts(self.archive.recent_hits(limit, now), now)
+        return _recent_search(self.archive, limit, now)
 
     @staticmethod
     def _reject_legacy_session(session_id: str | None) -> None:
@@ -389,38 +321,6 @@ class MemoryFacade:
         return self.archive.chunker.chunk_markdown(
             path, text, source_kind="daily", timeline_day=day
         )
-
-    def _read_chunk_fallback(
-        self, chunk_id: str, now: datetime | None, original: ArchiveError
-    ) -> tuple[str, str]:
-        """Leaf text + session id for a chunk missing from the index.
-
-        T8: chunk_id is "{session_id}#{ord}" (chunk.py), so a daily miss
-        resolves through the writer like a session miss — today's file is
-        not indexed. Canonical chunks are always indexed, so a miss there
-        (or an unparseable id) re-raises the index miss unchanged.
-        """
-        sid, sep, ord_part = chunk_id.rpartition("#")
-        if not sep or not sid or not ord_part.isdigit():
-            raise original
-        if sid.startswith("canonical#"):
-            raise original
-        try:
-            path, _ = self.writer.locate(sid)
-            whole = path.read_text(encoding="utf-8")
-        except (ArchiveError, OSError, UnicodeDecodeError):
-            raise original from None
-        day = sid.split("#", 1)[0]
-        # Whole file, not the single block: legacy comment-less headings
-        # resolve occurrence counts file-wide, so a lone block would mistag
-        # duplicate titles as occurrence 1 and miss their real chunk ids.
-        chunks = self.archive.chunker.chunk_markdown(
-            path, whole, source_kind="daily", timeline_day=day
-        )
-        for chunk in chunks:
-            if chunk.chunk_id == chunk_id:
-                return chunk.text_raw, sid
-        raise original from None
 
     def _session_leaf_ids(self, session_id: str, text: str) -> list[str]:
         path, _ = self.writer.locate(session_id)

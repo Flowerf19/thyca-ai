@@ -2,7 +2,7 @@
 
 Trợ lý cá nhân đa công việc, đang ở giai đoạn **trước beta (pre-beta)**. Thyca học dần từ những gì bạn chia sẻ và cách bạn làm việc để điều chỉnh cách hỗ trợ phù hợp nhất với bạn — từ trò chuyện, viết code, đọc và xử lý tài liệu đến những việc khác trong công việc hằng ngày.
 
-**Phiên bản hiện tại: 0.86.3.dev0 (development, chưa phải beta).**
+**Phiên bản hiện tại: 0.86.4.dev0 (development, chưa phải beta).**
 
 ## Nó làm được gì?
 

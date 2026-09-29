@@ -46,6 +46,9 @@ def _build_result(
         name=call.name,
         content=dispatched.content,
         is_error=dispatched.is_error,
+        # Gateway-attached provenance survives the rebuild; output text
+        # is never parsed for ids (a quoted exec<N> in docs is not a ref).
+        exec_ref=dispatched.exec_ref,
     )
 
 
@@ -112,6 +115,16 @@ class Act:
                 ),
             )
         return result
+
+    def live_exec_ids(self) -> set[str] | None:
+        """Retained execution ids when the dispatcher tracks them.
+
+        None for dispatchers without retention (plain function maps): the
+        shrink guard then trusts in-run gateway metadata alone."""
+        executions = getattr(self._dispatcher, "executions", None)
+        if not isinstance(executions, dict):
+            return None
+        return set(executions)
 
     def _skill_name(self, call: ToolCall) -> str | None:
         """Skill name when this call is a read inside the skills dir, else None."""

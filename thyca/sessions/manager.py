@@ -14,7 +14,14 @@ from .compaction import SessionCompactor
 from .errors import SessionBusy, SessionError
 from .models import Session
 from .store import SessionStore
-from .title import USER_TITLE_SOURCE, is_blank, sanitize_title, sanitize_user_title
+from .title import (
+    is_blank,
+    mark_naming_attempted,
+    refresh_title,
+    rename_session,
+    set_title,
+    set_title_if_missing,
+)
 
 
 def _last_user_index(messages: list[Message]) -> int | None:
@@ -235,86 +242,32 @@ class SessionManager:
             return True
 
     def refresh_title(self) -> None:
-        """Re-read the title a stored meta line carries.
-
-        A turn holds its own ``Session`` snapshot from load time; a title the
-        user typed in the meantime is on disk only. Without this the agent's
-        naming step would append its own meta line over the user's name.
-        """
+        """Re-read the title a stored meta line carries (see title module)."""
         with self._lock:
-            if self._session is None:
-                return
-            found = self.store.read_title(self._session.path)
-            if found is None:
-                return
-            title, title_source = found
-            if title:
-                self._session.title = title
-                self._session.title_source = title_source
+            refresh_title(self.store, self._session)
 
     def mark_naming_attempted(self) -> None:
-        """Persist the automatic naming step's one attempt (success or not).
-
-        Only the automatic path calls this: explicit operations (sidebar
-        rename, batch retitle) never consume or check the flag.
-        """
+        """Persist the automatic naming step's one attempt (see title module)."""
         with self._lock:
-            session = self._current_locked()
-            if session.naming_attempted:
-                return
-            self.store.append_naming_attempted(session.path)
-            session.naming_attempted = True
+            mark_naming_attempted(self.store, self._current_locked())
 
     def set_title_if_missing(self, title: str) -> str | None:
-        """Store the automatic title only when no title is on disk.
-
-        Atomic against a concurrent sidebar rename (same process): when the
-        store reports a title already present, nothing is written and the
-        in-memory title is synced from disk so the turn answers with it.
-        """
+        """Store the automatic title only when no title is on disk."""
         with self._lock:
-            session = self._current_locked()
-            cleaned = sanitize_title(title)
-            if cleaned is None:
-                return None
-            if self.store.append_title_if_missing(session.path, cleaned, None):
-                session.title = cleaned
-                session.title_source = None
-                return cleaned
-            found = self.store.read_title(session.path)
-            if found is not None and found[0]:
-                session.title, session.title_source = found
-            return None
+            return set_title_if_missing(
+                self.store, self._current_locked(), title
+            )
 
     def set_title(self, title: str, *, source: str | None = None) -> str | None:
         with self._lock:
-            session = self._current_locked()
-            cleaned = (
-                sanitize_user_title(title)
-                if source == USER_TITLE_SOURCE
-                else sanitize_title(title)
-            )
-            if cleaned is None:
-                return None
-            self.store.append_meta(session.path, cleaned, source)
-            session.title = cleaned
-            session.title_source = source
-            return cleaned
+            return set_title(self.store, self._current_locked(), title, source=source)
 
     def rename(self, session_id: str, title: str) -> str:
         """Set the title of any stored session, not only the current one."""
-        cleaned = sanitize_user_title(title)
-        if cleaned is None:
-            raise ValueError("empty title")
         with self._lock:
-            session = self.store.load(session_id)
-            self.store.append_meta(session.path, cleaned, USER_TITLE_SOURCE)
-            session.title = cleaned
-            session.title_source = USER_TITLE_SOURCE
-            if self._session is not None and self._session.id == session_id:
-                self._session.title = cleaned
-                self._session.title_source = USER_TITLE_SOURCE
-            return cleaned
+            return rename_session(
+                self.store, session_id, title, current=self._session
+            )
 
     def delete(self, session_id: str, *, keep: set[str] | None = None) -> None:
         """Remove a session file outright.

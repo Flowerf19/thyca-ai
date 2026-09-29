@@ -14,11 +14,11 @@ from thyca.agent.shrink import (
     REFETCH_HEAD_CHARS,
     TRIGGER_RATIO,
     estimate_wire_tokens,
-    find_exec_ids,
     shrink_stage_messages,
 )
 from thyca.agent.think import Think
 from thyca.core.protocol import Message, ToolCall, ToolResult
+from thyca.core.protocol import estimate_tokens as _chars_to_tokens
 from thyca.llm.llm_base import ChatReply
 from thyca.sessions import SessionManager
 
@@ -28,21 +28,40 @@ def _tool(content: str, round_no: int | None = None, call_id: str = "c1") -> Mes
     return Message(role="tool", content=content, tool_call_id=call_id, meta=meta)
 
 
-def test_find_exec_ids_markers() -> None:
-    assert find_exec_ids('out\nread more: tool_read id="exec3"') == {"exec3"}
-    assert find_exec_ids("still running: exec12\npoll") == {"exec12"}
-    assert find_exec_ids("started: exec7\nrunning") == {"exec7"}
-    assert find_exec_ids("plain output") == set()
-    assert find_exec_ids('tool_read id="exec1" and tool_read id="exec2"') == {
-        "exec1",
-        "exec2",
-    }
+def test_exec_ids_come_from_metadata_never_text() -> None:
+    # Quoted ids in output text are not references: without gateway
+    # metadata (or an original tool_read call) there is no pointer.
+    content = "x" * 3000 + '\nread more: tool_read id="exec3"'
+    messages = [_tool(content, 1)]
+    estimate = estimate_wire_tokens(messages)
+    context = int(estimate / 0.85)
+    shrunk, count, _, _ = shrink_stage_messages(
+        messages, current_round=10, context_tokens=context
+    )
+    assert count == 1
+    assert 'id="exec3"' not in (shrunk[0].content or "")
+    # Gateway-attached metadata is the authority: the pointer names it.
+    trusted = Message(
+        role="tool",
+        content="x" * 3000,
+        tool_call_id="c1",
+        meta={"round": 1, "exec_id": "exec3"},
+    )
+    shrunk, count, _, _ = shrink_stage_messages(
+        [trusted], current_round=10, context_tokens=context
+    )
+    assert count == 1
+    assert 'tool_read id="exec3"' in (shrunk[0].content or "")
 
 
 def test_refetchable_shape_head_plus_pointer() -> None:
     body = "x" * 3000
     content = f"{body}\nread more: tool_read id=\"exec9\""
-    messages = [_tool(content, 1)]
+    message = Message(
+        role="tool", content=content, tool_call_id="c1",
+        meta={"round": 1, "exec_id": "exec9"},
+    )
+    messages = [message]
     estimate = estimate_wire_tokens(messages)
     context = int(estimate / 0.85)
     shrunk, count, hidden, _ = shrink_stage_messages(
@@ -57,7 +76,7 @@ def test_refetchable_shape_head_plus_pointer() -> None:
     )
     assert shrunk[0].role == "tool"
     assert shrunk[0].tool_call_id == "c1"
-    assert shrunk[0].meta == {"round": 1}
+    assert shrunk[0].meta == {"round": 1, "exec_id": "exec9"}
     # Original untouched (in-memory-only).
     assert messages[0].content == content
 
@@ -78,7 +97,9 @@ def test_fastpath_shape_head_plus_rerun() -> None:
     )
 
 
-def test_ambiguous_exec_refs_kept_intact() -> None:
+def test_quoted_exec_refs_never_become_pointers() -> None:
+    # Two quoted ids in text used to block shrinking (ambiguity); text
+    # carries no authority now, so the output shrinks as a fast path.
     content = "z" * 3000 + '\ntool_read id="exec1" and tool_read id="exec2"'
     messages = [_tool(content, 1)]
     estimate = estimate_wire_tokens(messages)
@@ -86,8 +107,9 @@ def test_ambiguous_exec_refs_kept_intact() -> None:
     shrunk, count, _, _ = shrink_stage_messages(
         messages, current_round=10, context_tokens=context
     )
-    assert count == 0
-    assert shrunk[0].content == content
+    assert count == 1
+    assert 'id="exec1"' not in (shrunk[0].content or "")
+    assert 'id="exec2"' not in (shrunk[0].content or "")
 
 
 def test_last_three_rounds_protected() -> None:
@@ -99,7 +121,7 @@ def test_last_three_rounds_protected() -> None:
     )
     assert count >= 1
     # Rounds 3,4,5 never touched.
-    for original, new in zip(messages[2:], shrunk[2:]):
+    for original, new in zip(messages[2:], shrunk[2:], strict=True):
         assert new.content == original.content
     # At least round 1 (oldest eligible) shrunk.
     assert shrunk[0].content != messages[0].content
@@ -107,7 +129,12 @@ def test_last_three_rounds_protected() -> None:
 
 def test_refetchable_before_fastpath_despite_age() -> None:
     fastpath = _tool("f" * 6000, 1, call_id="old")
-    refetch = _tool("r" * 6000 + '\nread more: tool_read id="exec4"', 2, call_id="new")
+    refetch = Message(
+        role="tool",
+        content="r" * 6000 + '\nread more: tool_read id="exec4"',
+        tool_call_id="new",
+        meta={"round": 2, "exec_id": "exec4"},
+    )
     messages = [fastpath, refetch]
     # One shrink must suffice: total just over 80%, one refetch save drops under 70%.
     estimate = estimate_wire_tokens(messages)
@@ -199,7 +226,7 @@ def test_loop_shrink_history_then_continue_disk_intact(tmp_path: Path) -> None:
     events: list[TurnEvent] = []
     # History alone exceeds 80%: guard must shrink it in-memory and continue.
     history_estimate = estimate_wire_tokens(
-        [Message(role="user", content="new q")] + manager.current.messages
+        [Message(role="user", content="new q"), *manager.current.messages]
     )
     context = int(history_estimate / 0.85)
     loop = _loop(manager, llm, _FakeDispatcher({}), context)
@@ -211,10 +238,10 @@ def test_loop_shrink_history_then_continue_disk_intact(tmp_path: Path) -> None:
     assert shrunk_events[0].tool_count == 1
     assert (shrunk_events[0].hidden_bytes or 0) > 0
     # Wire saw the stub; disk keeps the full output.
-    wire_tool = [m for m in llm.requests[0] if m.role == "tool"][0]
+    wire_tool = next(m for m in llm.requests[0] if m.role == "tool")
     assert "[shrunk:" in (wire_tool.content or "")
     stored = SessionManager(tmp_path).load(session.id).messages
-    disk_tool = [m for m in stored if m.tool_call_id == "old-call"][0]
+    disk_tool = next(m for m in stored if m.tool_call_id == "old-call")
     assert disk_tool.content == big
     assert "[shrunk:" not in (disk_tool.content or "")
 
@@ -321,3 +348,98 @@ def test_loop_backstop_after_shrink_reports_both(tmp_path: Path) -> None:
     assert (stored[-1].meta or {}).get("status") == "context_limit"
     # Minimal backstop meta: no stale usage/cost from a previous round.
     assert "usage" not in (stored[-1].meta or {})
+
+
+def test_loop_live_exec_ids_reaches_think_under_pressure(tmp_path: Path) -> None:
+    # Bug 1: loop passed Act.live_exec_ids without parens (bound method, not
+    # a set), so any scanned in-run candidate crashed `in` with TypeError.
+    manager = SessionManager(tmp_path)
+    manager.create()
+    big = "x" * 8000
+    dispatcher = _FakeDispatcher(
+        {
+            "c1": ToolResult(
+                tool_call_id="c1", name="bash", content=big, exec_ref="exec1"
+            ),
+            "c2": ToolResult(tool_call_id="c2", name="bash", content="ok2"),
+            "c3": ToolResult(tool_call_id="c3", name="bash", content="ok3"),
+        }
+    )
+    dispatcher.executions = {"exec1": object()}  # gateway-style retention
+    llm = _FakeLLM(
+        [
+            ChatReply(
+                content="",
+                tool_calls=[ToolCall(id="c1", name="bash", arguments={})],
+            ),
+            ChatReply(
+                content="",
+                tool_calls=[ToolCall(id="c2", name="bash", arguments={})],
+            ),
+            ChatReply(
+                content="",
+                tool_calls=[ToolCall(id="c3", name="bash", arguments={})],
+            ),
+            ChatReply(content="done"),
+        ]
+    )
+    # Round-4 wire shape: only the round-1 tool escapes round protection
+    # (4 - 1 >= 3) and reaches the live-set membership check.
+    round4 = [
+        Message(role="user", content="go"),
+        Message(
+            role="assistant",
+            content="",
+            tool_calls=[ToolCall(id="c1", name="bash", arguments={})],
+        ),
+        Message(role="tool", content=big, tool_call_id="c1"),
+        Message(
+            role="assistant",
+            content="",
+            tool_calls=[ToolCall(id="c2", name="bash", arguments={})],
+        ),
+        Message(role="tool", content="ok2", tool_call_id="c2"),
+        Message(
+            role="assistant",
+            content="",
+            tool_calls=[ToolCall(id="c3", name="bash", arguments={})],
+        ),
+        Message(role="tool", content="ok3", tool_call_id="c3"),
+    ]
+    estimate = estimate_wire_tokens(round4)
+    context = int(estimate / 0.85)
+    assert estimate > int(context * TRIGGER_RATIO)  # guard must scan
+    assert estimate <= int(context * 0.95)  # ...but no backstop
+    loop = _loop(manager, llm, dispatcher, context)
+    events: list[TurnEvent] = []
+    assert asyncio.run(loop.run("go", event_sink=events.append)) == "done"
+    assert len(llm.requests) == 4
+    shrunk_events = [event for event in events if event.type == "context.shrunk"]
+    assert len(shrunk_events) == 1
+    assert shrunk_events[0].tool_count == 1
+    # Live-set membership trusted the id: refetchable pointer on the wire.
+    wire_c1 = next(m for m in llm.requests[3] if m.tool_call_id == "c1")
+    assert 'tool_read id="exec1"' in (wire_c1.content or "")
+
+
+def test_pending_user_uses_wire_estimate(tmp_path: Path) -> None:
+    # Bug 2: loop counted raw chars while the guard counts the wire payload
+    # (~8-token undercount). Compactor and guard must agree within a few.
+    manager = SessionManager(tmp_path)
+    manager.create()
+    seen: dict = {}
+    real_compact = manager.compact_if_needed
+
+    def spy(*args, **kwargs):
+        seen.update(kwargs)
+        return real_compact(*args, **kwargs)
+
+    manager.compact_if_needed = spy  # type: ignore[method-assign]
+    user_msg = "please summarize the logs"
+    llm = _FakeLLM([ChatReply(content="ok")])
+    loop = _loop(manager, llm, _FakeDispatcher({}), 4000)
+    assert asyncio.run(loop.run(user_msg)) == "ok"
+    wire = estimate_wire_tokens([Message(role="user", content=user_msg)])
+    assert abs(seen["pending_user_tokens"] - wire) <= 3
+    # Sensitivity: raw char-count really is several tokens short here.
+    assert wire - _chars_to_tokens(user_msg) >= 5

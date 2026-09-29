@@ -44,20 +44,20 @@ def test_t6a_expired_errors_name_the_cause(tmp_path: Path) -> None:
     )
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     sid, cid = "2026-08-13#eeeeeeee", "2026-08-13#eeeeeeee#1"
-    with pytest.raises(ArchiveError, match="^session expired: "):
+    with pytest.raises(ArchiveError, match=r"^session expired: "):
         facade.archive.get(session_id=sid)
-    with pytest.raises(ArchiveError, match="^chunk expired: "):
+    with pytest.raises(ArchiveError, match=r"^chunk expired: "):
         facade.archive.get(chunk_id=cid)
     # Facade must not mask the cause behind the writer fallback.
-    with pytest.raises(ArchiveError, match="^session expired: "):
+    with pytest.raises(ArchiveError, match=r"^session expired: "):
         facade.get(session_id=sid)
-    with pytest.raises(ArchiveError, match="^chunk expired: "):
+    with pytest.raises(ArchiveError, match=r"^chunk expired: "):
         facade.get(chunk_id=cid)
     # Live rows and never-existed ids keep their behavior.
     assert "still alive" in facade.get(session_id="2026-08-13#ffffffff")
-    with pytest.raises(ArchiveError, match="^session not found: "):
+    with pytest.raises(ArchiveError, match=r"^session not found: "):
         facade.archive.get(session_id="2026-08-13#zzzzzzzz")
-    with pytest.raises(ArchiveError, match="^chunk not found: "):
+    with pytest.raises(ArchiveError, match=r"^chunk not found: "):
         facade.archive.get(chunk_id="2026-08-13#zzzzzzzz#1")
 
 
@@ -74,13 +74,13 @@ def test_t6a_forgotten_errors_name_the_cause(tmp_path: Path) -> None:
         ("2026-08-14T00:00:00Z", cid),
     )
     facade.archive.store._db.commit()
-    with pytest.raises(ArchiveError, match="^session forgotten: "):
+    with pytest.raises(ArchiveError, match=r"^session forgotten: "):
         facade.archive.get(session_id=sid)
-    with pytest.raises(ArchiveError, match="^chunk forgotten: "):
+    with pytest.raises(ArchiveError, match=r"^chunk forgotten: "):
         facade.archive.get(chunk_id=cid)
-    with pytest.raises(ArchiveError, match="^session forgotten: "):
+    with pytest.raises(ArchiveError, match=r"^session forgotten: "):
         facade.get(session_id=sid)
-    with pytest.raises(ArchiveError, match="^chunk forgotten: "):
+    with pytest.raises(ArchiveError, match=r"^chunk forgotten: "):
         facade.get(chunk_id=cid)
 
 
@@ -91,9 +91,9 @@ def test_t6a_lookup_session_id_is_precise(tmp_path: Path) -> None:
         + "- this leaf expired long ago indeed\n",
     )
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
-    with pytest.raises(ArchiveError, match="^chunk expired: "):
+    with pytest.raises(ArchiveError, match=r"^chunk expired: "):
         facade.archive.lookup_session_id("2026-08-13#eeeeeeee#1")
-    with pytest.raises(ArchiveError, match="^chunk not found: "):
+    with pytest.raises(ArchiveError, match=r"^chunk not found: "):
         facade.archive.lookup_session_id("2026-08-13#zzzzzzzz#1")
 
 
@@ -107,6 +107,12 @@ def test_t6b_limit_clamp_warns(tmp_path: Path) -> None:
     assert facade.search("x", limit=5).warnings == []
     # Early validation returns keep their single warning.
     assert facade.search("", limit=0).warnings == ["empty query"]
+
+
+def test_t6b_empty_query_beats_invalid_proj(tmp_path: Path) -> None:
+    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    assert facade.search("", proj="relative").warnings == ["empty query"]
+    assert facade.search("x", proj="relative").warnings == ["invalid proj"]
 
 
 def test_t6b_dedup_warns_and_baseline_is_quiet(tmp_path: Path) -> None:
@@ -181,9 +187,9 @@ def test_t8_chunk_miss_stays_not_found(tmp_path: Path) -> None:
     sid = facade.remember("lunch", "eat pho today maybe uniquetokenzz")
     for bad in ("nohash", f"{sid}#9", "canonical#soul#99",
                 "2026-08-13#deadbeef#1"):
-        with pytest.raises(ArchiveError, match="^chunk not found: "):
+        with pytest.raises(ArchiveError, match=r"^chunk not found: "):
             facade.get(chunk_id=bad)
-    with pytest.raises(ArchiveError, match="^chunk not found: "):
+    with pytest.raises(ArchiveError, match=r"^chunk not found: "):
         facade.archive.get(chunk_id="2026-08-13#deadbeef#1")
 
 

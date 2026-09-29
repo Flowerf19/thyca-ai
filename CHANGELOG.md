@@ -2,6 +2,15 @@
 
 Thay đổi của Thyca, viết ngắn gọn cho người dùng.
 
+## 0.86.4.dev0 — Development
+
+- Đọc trí nhớ an toàn hơn: không đọc qua symlink, note hết hạn báo rõ thay vì tự gia hạn, file lỗi mã báo đúng lỗi thay vì "không tìm thấy".
+- Suy nghĩ (reasoning) giữ đúng qua các lượt tool: tóm tắt rỗng hợp lệ không còn bị mất, reasoning thiếu mã bị bỏ qua, đổi model giữa Responses và Chat không còn gửi sai định dạng.
+- Phiên dài hết bị chặn oan ở ngưỡng 95–100% context: tự nén trước khi dừng; lượt dừng vì đầy context hiện đúng trạng thái, không tính thành công hay tính thêm request.
+- Thu gọn output tool trung thực: chỉ hứa đọc lại khi output còn được lưu, output đã xóa báo rõ, không còn gợi ý đọc lại sai.
+- Sửa crash khi lượt tool dài vượt ngưỡng thu gọn giữa chừng.
+- Đây là bản dev, chưa phải beta hay stable; không tự bỏ hậu tố dev khi nâng phiên bản.
+
 ## 0.86.3.dev0 — Development
 
 - Note hôm nay hết lẫn lộn giữa các phiên: phiên đang chat thấy đủ note của mình, note phiên khác chỉ hiện 1 dòng tiêu đề (đọc chi tiết khi cần) — không còn chuyện đang hỏi tool thì Thyca lôi dự án khác vào.
@@ -11,6 +20,10 @@ Thay đổi của Thyca, viết ngắn gọn cho người dùng.
 - Tìm kiếm trí nhớ trung thực hơn: báo rõ khi kết quả bị giới hạn, khi note đã hết hạn/bị xóa, và khi tìm trong ngày hôm nay (ngày hôm nay chỉ đọc trực tiếp, chưa tìm được).
 - Hồ sơ trống thì để trống: không còn tự thay tính cách/hồ sơ mẫu khi file chưa có nội dung.
 - Sửa lỗi 400 ở Responses API khi reasoning vòng trước thiếu bản tóm tắt: chỉ gửi reasoning hợp lệ, phần thiếu bị bỏ qua thay vì làm sập lượt chat.
+- Đọc note trong ngày trung thực hơn: symlink không bị đọc theo/không bị thay thế, note hết hạn báo hết hạn thay vì tự gia hạn, file lỗi font báo đúng lỗi thay vì "không tìm thấy"; `memory_search(limit=0)` giữ cảnh báo giới hạn qua gateway.
+- Reasoning giữ bản tóm tắt rỗng hợp lệ (kể cả dạng mã hóa) khi gửi lại, đòi id dùng được, và không lọt reasoning dạng Responses sang đường Chat khi đổi model/provider giữa phiên.
+- Phiên gần đầy context giờ nén trước khi chạm ngưỡng dừng (hết vùng chết giữa nén và dừng), giữ tin nhắn retry và không tách rời cặp tool-call/kết quả; lượt dừng vì đầy context không còn tính là thành công trong Trace/đặt tên.
+- Kết quả tool dài thu gọn bằng con trỏ đọc lại đáng tin (từ gateway, không đoán từ chữ trong output): poll `tool_read` đọc tiếp bằng phân trang, id lạ trong tài liệu không thành con trỏ.
 - Đây là bản dev, chưa phải beta hay stable; không tự bỏ hậu tố dev khi nâng phiên bản.
 
 ## 0.86.2.dev0 — Development

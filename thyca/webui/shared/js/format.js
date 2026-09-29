@@ -154,5 +154,6 @@ export function statusLabel(status) {
   if (status === "completed") return "Thành công";
   if (status === "failed") return "Lỗi";
   if (status === "loop_limit") return "Chạm giới hạn";
+  if (status === "context_limit") return "Hết ngữ cảnh";
   return cleanText(status, "—");
 }

@@ -8,7 +8,12 @@ import pytest
 from thyca.config import ProviderCfg
 from thyca.llm.llm_base import LLMError, normalize_usage
 from thyca.llm.openai_responses import OpenAIResponses, _responses_url
-from thyca.llm.responses_parse import _to_responses_input, _to_responses_tools
+from thyca.llm.responses_parse import (
+    _responses_reasoning_detail,
+    _to_responses_input,
+    _to_responses_tools,
+    parse_responses_payload,
+)
 from thyca.core.protocol import Message, ToolCall
 
 
@@ -443,7 +448,6 @@ async def test_stream_content_and_split_chunk_key_redacted() -> None:
 
 
 # Moved from tests/test_b2_contracts.py (B2 batch).
-from thyca.llm.responses_parse import parse_responses_payload
 
 def _provider() -> ProviderCfg:
     return ProviderCfg(
@@ -516,7 +520,6 @@ def test_f26_none_and_empty_pass_through_as_empty() -> None:
 
 # T5: responses reasoning_details parity (chat path parses + round-trips;
 # responses path must too for multi-round tool-loop continuity).
-from thyca.llm.responses_parse import _responses_reasoning_detail
 
 
 def test_t5_nonstream_reasoning_details_parsed_and_invalid_ignored() -> None:

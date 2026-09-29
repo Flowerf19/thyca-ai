@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from thyca.memory.chunk import Chunk
-from thyca.memory.heading import is_expired
+from thyca.memory.heading import format_ts, is_expired, utc_now
 
 SNIPPET_LEN = 250
 EXPIRE_SOON_DAYS = 14
@@ -51,6 +51,26 @@ class MemoryStatsResult:
     suggest_removal: list[LeafStat] = field(default_factory=list)
     expiring: list[LeafStat] = field(default_factory=list)
     files: list[CanonicalFile] = field(default_factory=list)
+
+
+def build_stats(
+    archive,  # ArchivedMemory (untyped: stats must not import orchestration)
+    *,
+    today_chunks: list[Chunk],
+    files: list[CanonicalFile] | None,
+    now: datetime | None = None,
+) -> MemoryStatsResult:
+    """Assemble a stats report from archive maps plus unindexed inputs."""
+    now_ts = format_ts(utc_now(now))
+    return MemoryStats.build(
+        archive.store.visible_chunk_maps(now_ts),
+        today_chunks,
+        archive.store.usage.get_map(),
+        archive.store.usage.search_map(),
+        today=archive.day(now),
+        now_ts=now_ts,
+        files=files,
+    )
 
 
 class MemoryStats:

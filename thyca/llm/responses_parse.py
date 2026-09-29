@@ -15,6 +15,17 @@ from .openai_parse import parse_tool_calls, slots_to_calls
 from .streaming import ContentOut, ReasoningOut
 
 
+def _output_texts(raw: object) -> list[str]:
+    """Valid output_text strings from a message item's content list."""
+    if not isinstance(raw, list):
+        return []
+    return [
+        text
+        for part in raw
+        if isinstance(part, dict) and part.get("type") == "output_text"
+        for text in (part.get("text"),)
+        if isinstance(text, str) and text
+    ]
 def _to_responses_tools(tools: list) -> list[dict[str, Any]]:
     """Chat-schema tools (the ``Connect`` contract) to flat responses tools."""
     out: list[dict[str, Any]] = []
@@ -86,11 +97,17 @@ def _responses_reasoning_detail(item: object, key: str = "") -> dict[str, Any] |
         return None
     out: dict[str, Any] = {"type": "reasoning"}
     item_id = item.get("id")
-    if isinstance(item_id, str) and item_id:
+    if isinstance(item_id, str) and item_id.strip():
         out["id"] = item_id
-    summary = _reasoning_summary_parts(item.get("summary"), key)
-    if summary:
-        out["summary"] = summary
+    raw_summary = item.get("summary")
+    if isinstance(raw_summary, list):
+        summary = _reasoning_summary_parts(raw_summary, key)
+        if summary or not raw_summary:
+            # An explicitly present valid empty summary is kept: the
+            # official input schema requires summary but not nonemptiness.
+            # A nonempty raw list validating to nothing is malformed input
+            # and stays dropped.
+            out["summary"] = summary
     content = _reasoning_content_parts(item.get("content"), key)
     if content:
         out["content"] = content
@@ -110,12 +127,17 @@ def _reasoning_input_item(detail: dict[str, Any] | None) -> dict[str, Any] | Non
     if detail is None:
         return None
     summary = detail.get("summary")
-    if not isinstance(summary, list) or not summary:
+    if "summary" not in detail or not isinstance(summary, list):
+        # Missing or malformed summary (never the wire: live 400). An
+        # explicitly present empty list passes — empty is not missing.
+        return None
+    item_id = detail.get("id")
+    if not isinstance(item_id, str) or not item_id.strip():
+        # Native reasoning without a usable id cannot round-trip: the
+        # official input schema requires id alongside summary and type.
         return None
     item: dict[str, Any] = {"type": "reasoning", "summary": summary}
-    item_id = detail.get("id")
-    if isinstance(item_id, str) and item_id:
-        item["id"] = item_id
+    item["id"] = item_id
     encrypted = detail.get("encrypted_content")
     if isinstance(encrypted, str) and encrypted:
         item["encrypted_content"] = encrypted
@@ -136,8 +158,11 @@ def _message_items(message: Message) -> list[dict[str, Any]]:
         # Native reasoning items only; chat shapes/invalid ignored, never
         # raises. Providers require `summary` on reasoning inputs, so
         # summary-less items (id/encrypted-only) are dropped, and only the
-        # input-contract keys are sent (output-side content/signature would
-        # also fail strict validation).
+        # input-contract keys (id/summary/encrypted_content) are sent. The
+        # official input schema also permits `content`, but this path omits
+        # content/signature: output-observed fields with no evidenced
+        # acceptance on the supported compatible endpoint — do not re-add
+        # them without a passing transport test.
         prefix: list[dict[str, Any]] = []
         if message.reasoning_details:
             for detail in message.reasoning_details:
@@ -206,16 +231,14 @@ def parse_responses_payload(raw: dict, key: str) -> ChatReply:
         if not isinstance(item, dict):
             continue
         if item.get("type") == "message":
-            for part in item.get("content") or []:
-                if isinstance(part, dict) and part.get("type") == "output_text":
-                    text = part.get("text")
-                    if isinstance(text, str) and text:
-                        content_parts.append(text)
+            content_parts.extend(_output_texts(item.get("content")))
         elif item.get("type") == "reasoning":
             # Reuse the validator (already redacted; the final redact below
             # is idempotent) so non-list summary cannot iterate chars.
-            for part in _reasoning_summary_parts(item.get("summary"), key):
-                reasoning_parts.append(part["text"])
+            reasoning_parts.extend(
+                part["text"]
+                for part in _reasoning_summary_parts(item.get("summary"), key)
+            )
             detail = _responses_reasoning_detail(item, key)
             if detail is not None:
                 details.append(detail)

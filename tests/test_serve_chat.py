@@ -1646,7 +1646,7 @@ def test_stream_model_and_effort_reach_provider(tmp_path: Path, monkeypatch) -> 
         captured.append(provider)
         return Spy()
 
-    monkeypatch.setattr("thyca.app.chat_app.ConnectFactory.create", create)
+    monkeypatch.setattr("thyca.app.run_turn.ConnectFactory.create", create)
     cfg = default_config()
     cfg = replace(
         cfg,

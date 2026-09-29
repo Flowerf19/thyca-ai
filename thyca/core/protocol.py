@@ -125,10 +125,19 @@ class ToolResult:
     name: str
     content: str
     is_error: bool = False
+    #: Retained-engine execution behind this result (a pollable exec<N>),
+    #: or None when nothing was retained (fast inline results, errors).
+    #: Set only by the gateway from its own tracking — never parsed out
+    #: of output text — so shrink can promise a re-read pointer honestly.
+    exec_ref: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.tool_call_id, str) or not self.tool_call_id:
             raise ValueError("ToolResult.tool_call_id must be non-empty string")
+        if self.exec_ref is not None and (
+            not isinstance(self.exec_ref, str) or not self.exec_ref
+        ):
+            raise ValueError("ToolResult.exec_ref must be non-empty str or None")
 
 
 @dataclass(frozen=True)

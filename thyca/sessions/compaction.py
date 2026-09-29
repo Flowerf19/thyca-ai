@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from thyca.core.protocol import Message, estimate_tokens as _chars_to_tokens
+from thyca.core.context import BACKSTOP_RATIO
+from thyca.core.protocol import Message
+from thyca.core.protocol import estimate_tokens as _chars_to_tokens
 
 _EXCERPT_LIMIT = 1000
 # Reserved head budget for the prior marker's excerpt on re-compaction.
@@ -62,7 +64,14 @@ class SessionCompactor:
         pending_user_tokens: int = 0,
     ) -> list[Message] | None:
         overhead = hot_tokens + tools_tokens + pending_user_tokens
-        if sum(estimate_tokens(msg) for msg in messages) + overhead <= context_tokens:
+        # Fire at the backstop ratio, not at the cap: a turn that would
+        # die at the mid-turn guard must compact first (no dead zone).
+        # Overhead covers what assemble adds after this (hot prompt, tools
+        # schema, pending user text) so the estimate matches the guard's.
+        if (
+            sum(estimate_tokens(msg) for msg in messages) + overhead
+            <= int(context_tokens * BACKSTOP_RATIO)
+        ):
             return None
 
         leading = 0
@@ -83,9 +92,12 @@ class SessionCompactor:
         kept.reverse()
         tail = [msg for turn in kept for msg in turn]
         omitted = messages[:leading] + body[: len(body) - len(tail)]
-        if not omitted:
+        if len(tail) == len(body):
             # Overhead alone tripped the cap but every turn fits: shrinking
             # nothing must not mint a junk 0/0 marker (and churn the file).
+            # Subsumes `not omitted`, and covers omitted==[prior marker]
+            # with tail==body, which would otherwise re-wrap and clip the
+            # prior excerpt 1000->500 chars on every overhead-only trip.
             return None
         prior_parts: list[str] = []
         prior_messages = 0
@@ -167,9 +179,7 @@ class SessionCompactor:
         _, sep, tail = content.partition("excerpt: ")
         if not sep:
             return ""
-        if tail.endswith("]"):
-            tail = tail[:-1]
-        return tail
+        return tail.removesuffix("]")
 
     @staticmethod
     def _turns(messages: list[Message]) -> list[list[Message]]:

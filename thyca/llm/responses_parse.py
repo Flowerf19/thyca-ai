@@ -105,6 +105,23 @@ def _responses_reasoning_detail(item: object, key: str = "") -> dict[str, Any] |
     return out
 
 
+def _reasoning_input_item(detail: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Validated detail to a provider-acceptable reasoning input, or None."""
+    if detail is None:
+        return None
+    summary = detail.get("summary")
+    if not isinstance(summary, list) or not summary:
+        return None
+    item: dict[str, Any] = {"type": "reasoning", "summary": summary}
+    item_id = detail.get("id")
+    if isinstance(item_id, str) and item_id:
+        item["id"] = item_id
+    encrypted = detail.get("encrypted_content")
+    if isinstance(encrypted, str) and encrypted:
+        item["encrypted_content"] = encrypted
+    return item
+
+
 def _message_items(message: Message) -> list[dict[str, Any]]:
     """One transcript message to zero or more ``input[]`` items."""
     if message.role == "system":
@@ -116,13 +133,18 @@ def _message_items(message: Message) -> list[dict[str, Any]]:
     if message.role == "assistant":
         # Round-trip prior reasoning items for tool-loop continuity (chat
         # parity: _to_openai_message sends reasoning_details verbatim).
-        # Native reasoning items only; chat shapes/invalid ignored, never raises.
+        # Native reasoning items only; chat shapes/invalid ignored, never
+        # raises. Providers require `summary` on reasoning inputs, so
+        # summary-less items (id/encrypted-only) are dropped, and only the
+        # input-contract keys are sent (output-side content/signature would
+        # also fail strict validation).
         prefix: list[dict[str, Any]] = []
         if message.reasoning_details:
             for detail in message.reasoning_details:
                 validated = _responses_reasoning_detail(detail, "")
-                if validated is not None:
-                    prefix.append(validated)
+                item = _reasoning_input_item(validated)
+                if item is not None:
+                    prefix.append(item)
         items = (
             [{"role": "assistant", "content": message.content}]
             if isinstance(message.content, str) and message.content

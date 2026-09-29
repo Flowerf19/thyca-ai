@@ -760,6 +760,8 @@ def test_t5_reasoning_content_parts_parse_and_round_trip() -> None:
             "content": [{"type": "reasoning_text", "text": "deep thought"}],
         }
     ]
+    # Content-only details are kept in storage but never sent: providers
+    # require `summary` on reasoning inputs (live 400 otherwise).
     items = _to_responses_input(
         [
             Message(
@@ -769,8 +771,56 @@ def test_t5_reasoning_content_parts_parse_and_round_trip() -> None:
             )
         ]
     )
-    assert items[0]["type"] == "reasoning"
-    assert items[0]["content"] == [
-        {"type": "reasoning_text", "text": "deep thought"}
+    assert items == [{"role": "assistant", "content": "ok"}]
+    # With a summary present, the item round-trips minus output-side keys.
+    with_summary = [
+        {
+            "type": "reasoning",
+            "id": "rs_c",
+            "summary": [{"type": "summary_text", "text": "plan"}],
+            "content": [{"type": "reasoning_text", "text": "deep"}],
+        }
     ]
+    items = _to_responses_input(
+        [Message(role="assistant", content="ok", reasoning_details=with_summary)]
+    )
+    assert items[0] == {
+        "type": "reasoning",
+        "summary": [{"type": "summary_text", "text": "plan"}],
+        "id": "rs_c",
+    }
     assert items[1] == {"role": "assistant", "content": "ok"}
+
+
+def test_t5_input_drops_summary_less_reasoning_and_strips_output_keys() -> None:
+    # Live 400: `input[N]` missing required field `summary`. Id-only,
+    # encrypted-only, and content-only details must not reach the wire;
+    # output-side content/signature keys are stripped from survivors.
+    details = [
+        {"type": "reasoning", "id": "rs_only_id"},
+        {"type": "reasoning", "id": "rs_enc", "encrypted_content": "blob"},
+        {
+            "type": "reasoning",
+            "content": [{"type": "reasoning_text", "text": "deep"}],
+        },
+        {
+            "type": "reasoning",
+            "id": "rs_ok",
+            "summary": [{"type": "summary_text", "text": "plan"}],
+            "content": [{"type": "reasoning_text", "text": "deep"}],
+            "signature": "sig-blob",
+            "encrypted_content": "enc-blob",
+        },
+    ]
+    items = _to_responses_input(
+        [Message(role="assistant", content="ok", reasoning_details=details)]
+    )
+    assert items == [
+        {
+            "type": "reasoning",
+            "summary": [{"type": "summary_text", "text": "plan"}],
+            "id": "rs_ok",
+            "encrypted_content": "enc-blob",
+        },
+        {"role": "assistant", "content": "ok"},
+    ]

@@ -7,9 +7,10 @@ import pytest
 
 from thyca.config import ProviderCfg
 from thyca.llm.llm_base import LLMError, normalize_usage
-from thyca.llm.openai_responses import OpenAIResponses, _responses_url
-from thyca.llm.responses_parse import (
+from thyca.llm.openai_responses import (
+    OpenAIResponses,
     _responses_reasoning_detail,
+    _responses_url,
     _to_responses_input,
     _to_responses_tools,
     parse_responses_payload,

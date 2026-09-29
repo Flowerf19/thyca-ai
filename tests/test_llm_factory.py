@@ -13,6 +13,7 @@ def test_factory_openai_kinds() -> None:
     assert isinstance(ConnectFactory.create("openai"), OpenAIChat)
     assert isinstance(ConnectFactory.create("openai_compat"), OpenAIChat)
     assert isinstance(ConnectFactory.create("openai_responses"), OpenAIResponses)
+    assert isinstance(ConnectFactory.create("responses"), OpenAIResponses)
 
 
 def test_factory_unknown_kind() -> None:

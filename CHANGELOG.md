@@ -2,6 +2,13 @@
 
 Thay đổi của Thyca, viết ngắn gọn cho người dùng.
 
+## 0.86.5.dev0 — Development
+
+- Gọn lại code provider (nội bộ, không đổi tính năng): mỗi chuẩn API một module, dùng chung helper, bớt file trùng lặp.
+- Nút Test API giờ kiểm tra đúng đường chat thật (kèm mức reasoning đã lưu), hết chuyện test OK nhưng chat lỗi.
+- Responses thêm `store: false`: server không còn giữ response mồ côi; Thyca vốn đã tự quản lý hội thoại nên không ảnh hưởng gì.
+- Đây là bản dev, chưa phải beta hay stable; không tự bỏ hậu tố dev khi nâng phiên bản.
+
 ## 0.86.4.dev0 — Development
 
 - Đọc trí nhớ an toàn hơn: không đọc qua symlink, note hết hạn báo rõ thay vì tự gia hạn, file lỗi mã báo đúng lỗi thay vì "không tìm thấy".

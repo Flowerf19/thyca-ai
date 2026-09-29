@@ -5,20 +5,27 @@ messages never contain the API key.
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import re
 import socket
 import time
 from http.client import InvalidURL
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+import httpx
+
 from thyca import __version__
-from thyca.config import Config, ConfigError
-from thyca.llm._http import redact
+from thyca.config import Config, ConfigError, ProviderCfg
+from thyca.core.protocol import Message
+from thyca.llm.llm_base import ChatReply, Connect, LLMError
+from thyca.llm.llm_factory import ConnectFactory
 
 _PROBE_TIMEOUT_S = 10.0
 _TEST_TIMEOUT_S = 20.0
 _TEST_MESSAGE = "ping"
+_HTTP_STATUS_RE = re.compile(r"provider HTTP (\d+)")
 
 
 def _is_timeout_reason(reason: object) -> bool:
@@ -126,6 +133,114 @@ def validate_provider(
     return sorted(ids)
 
 
+async def _probe_turn(connect: Connect, timeout: float) -> ChatReply:
+    """One ping turn through the real wire; the client always closes here."""
+    try:
+        messages = [Message(role="user", content=_TEST_MESSAGE)]
+        return await asyncio.wait_for(connect.chat(messages), timeout)
+    finally:
+        await connect.aclose()
+
+
+def _map_connect_error(
+    exc: Exception,
+    *,
+    model: str,
+    timeout: float,
+    schema_error: str,
+    non_dict_error: str,
+) -> ProviderProbeError:
+    """Connect failures to the frozen probe messages (key-free, no new strings).
+
+    Transport causes stay visible via ``__cause__`` (``_request`` chains the
+    httpx error), so connection failures and undecodable bodies map exactly
+    instead of falling through to the schema message. ``non_dict_error`` keeps
+    the legacy split: responses treated a non-dict body as bad JSON while
+    chat treated it as a bad schema.
+    """
+    if isinstance(exc, ProviderProbeError):
+        return exc
+    if isinstance(exc, (InvalidURL, TypeError, UnicodeError, ValueError)):
+        return ProviderProbeError("baseUrl không hợp lệ")
+    if isinstance(exc, TimeoutError):
+        return ProviderProbeError(
+            f"provider quá thời gian phản hồi ({timeout:g}s)"
+        )
+    if isinstance(exc, LLMError):
+        message = str(exc)
+        status = _HTTP_STATUS_RE.match(message)
+        if status:
+            code = status.group(1)
+            if code in ("401", "403"):
+                return ProviderProbeError(f"API key bị từ chối (HTTP {code})")
+            if code == "404":
+                return ProviderProbeError(
+                    f"model {model!r} không có trên provider (HTTP 404)"
+                )
+            return ProviderProbeError(f"provider trả HTTP {code}")
+        if message == "provider timeout":
+            return ProviderProbeError(
+                f"provider quá thời gian phản hồi ({timeout:g}s)"
+            )
+        cause = exc.__cause__
+        if isinstance(cause, httpx.TimeoutException):
+            return ProviderProbeError(
+                f"provider quá thời gian phản hồi ({timeout:g}s)"
+            )
+        if isinstance(cause, httpx.RequestError):
+            return ProviderProbeError("không kết nối được provider")
+        if isinstance(cause, (json.JSONDecodeError, UnicodeDecodeError)):
+            return ProviderProbeError("provider trả JSON không hợp lệ")
+        if message.startswith("provider error: "):
+            return ProviderProbeError(
+                f"provider trả lỗi: {message[len('provider error: '):]}"
+            )
+        if message == "provider response must be an object":
+            return ProviderProbeError(non_dict_error)
+        return ProviderProbeError(schema_error)
+    return ProviderProbeError("không kết nối được provider")
+
+
+def _test_via_connect(
+    kind: str,
+    base_url: str,
+    api_key: str,
+    model: str,
+    timeout: float,
+    *,
+    schema_error: str,
+    non_dict_error: str,
+) -> dict:
+    """One ping turn through the real ``Connect.chat()`` wire.
+
+    Same ``{"model", "latency_ms"}`` contract and guard messages as the old
+    urllib probe, but the request is byte-identical to a real turn (stream +
+    reasoning effort), so "test OK but chat fails" can no longer hide.
+    """
+    if not base_url.startswith(("http://", "https://")):
+        raise ProviderProbeError("baseUrl phải bắt đầu bằng http:// hoặc https://")
+    if not model.strip():
+        raise ProviderProbeError("cần model để test")
+    try:
+        provider = ProviderCfg(baseUrl=base_url, apiKey=api_key, model=model)
+    except ConfigError as exc:
+        raise ProviderProbeError("không kết nối được provider") from exc
+    connect = ConnectFactory.create(kind, provider=provider)
+    started = time.perf_counter()
+    try:
+        reply = asyncio.run(_probe_turn(connect, timeout))
+    except Exception as exc:
+        raise _map_connect_error(
+            exc,
+            model=model,
+            timeout=timeout,
+            schema_error=schema_error,
+            non_dict_error=non_dict_error,
+        ) from exc
+    latency_ms = int((time.perf_counter() - started) * 1000)
+    return {"model": reply.model or model, "latency_ms": max(0, latency_ms)}
+
+
 def test_chat(
     base_url: str, api_key: str, model: str, *, timeout: float = _TEST_TIMEOUT_S
 ) -> dict:
@@ -134,35 +249,15 @@ def test_chat(
     Returns ``{"model": <echo or requested>, "latency_ms": <int>}``.
     Raises :class:`ProviderProbeError` with a key-free message on any failure.
     """
-    started = time.perf_counter()
-    body = json.dumps(
-        {
-            "model": model,
-            "messages": [{"role": "user", "content": _TEST_MESSAGE}],
-            "stream": False,
-        }
-    ).encode("utf-8")
-    raw = _request_json(
-        base_url, "/chat/completions", api_key, body=body, timeout=timeout, model=model
+    return _test_via_connect(
+        "openai_chat",
+        base_url,
+        api_key,
+        model,
+        timeout,
+        schema_error="provider trả schema /chat/completions không đúng",
+        non_dict_error="provider trả schema /chat/completions không đúng",
     )
-    latency_ms = int((time.perf_counter() - started) * 1000)
-    try:
-        payload = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ProviderProbeError("provider trả JSON không hợp lệ") from exc
-    choices = payload.get("choices") if isinstance(payload, dict) else None
-    if (
-        not isinstance(choices, list)
-        or not choices
-        or not isinstance(choices[0], dict)
-        or not isinstance((choices[0].get("message") or {}).get("content"), str)
-    ):
-        raise ProviderProbeError("provider trả schema /chat/completions không đúng")
-    echo = payload.get("model")
-    return {
-        "model": echo if isinstance(echo, str) and echo else model,
-        "latency_ms": max(0, latency_ms),
-    }
 
 
 def test_responses_chat(
@@ -173,45 +268,15 @@ def test_responses_chat(
     Same contract as :func:`test_chat`; verifies the Responses wire shape
     (``input`` in, ``output_text`` out).
     """
-    started = time.perf_counter()
-    body = json.dumps(
-        {
-            "model": model,
-            "input": [{"role": "user", "content": _TEST_MESSAGE}],
-            "stream": False,
-        }
-    ).encode("utf-8")
-    raw = _request_json(
-        base_url, "/responses", api_key, body=body, timeout=timeout, model=model
+    return _test_via_connect(
+        "openai_responses",
+        base_url,
+        api_key,
+        model,
+        timeout,
+        schema_error="provider trả schema /responses không đúng",
+        non_dict_error="provider trả JSON không hợp lệ",
     )
-    latency_ms = int((time.perf_counter() - started) * 1000)
-    try:
-        payload = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ProviderProbeError("provider trả JSON không hợp lệ") from exc
-    if not isinstance(payload, dict):
-        raise ProviderProbeError("provider trả JSON không hợp lệ")
-    error = payload.get("error")
-    if isinstance(error, dict) and error:
-        detail = redact(str(error.get("message", "")), api_key)
-        raise ProviderProbeError(f"provider trả lỗi: {detail}")
-    output = payload.get("output")
-    has_text = isinstance(output, list) and any(
-        isinstance(item, dict)
-        and item.get("type") == "message"
-        and any(
-            isinstance(part, dict) and part.get("type") == "output_text"
-            for part in item.get("content") or []
-        )
-        for item in output
-    )
-    if not has_text:
-        raise ProviderProbeError("provider trả schema /responses không đúng")
-    echo = payload.get("model")
-    return {
-        "model": echo if isinstance(echo, str) and echo else model,
-        "latency_ms": max(0, latency_ms),
-    }
 
 
 def test_provider_api(

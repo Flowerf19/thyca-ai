@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .defaults import (
     DEFAULT_PROVIDER_API,
@@ -17,6 +17,9 @@ from .errors import ConfigError
 from .secrets import _resolve_api_key
 from .validation import _text
 
+if TYPE_CHECKING:
+    from .models import ModelCfg
+
 
 def _provider_to_dict(entry: ProviderEntry) -> dict[str, Any]:
     """Wire form without secrets: keys live in auth.json, never config.json."""
@@ -25,44 +28,29 @@ def _provider_to_dict(entry: ProviderEntry) -> dict[str, Any]:
     return data
 
 
-def _provider_fields(entry: ProviderCfg | ProviderEntry, prefix: str) -> None:
-    for value, name in (
-        (entry.baseUrl, f"{prefix}.baseUrl"),
-        (entry.apiKeyEnv, f"{prefix}.apiKeyEnv"),
-    ):
-        _text(value, name)
-    _text(entry.apiKey, f"{prefix}.apiKey", allow_none=True, non_empty=True)
+def _check_shared(
+    baseUrl: str,
+    apiKeyEnv: str,
+    apiKey: str | None,
+    reasoningEffort: str,
+    api: str,
+) -> None:
+    """The one field check for stored entries and resolved connections."""
+    _text(baseUrl, "provider.baseUrl")
+    _text(apiKeyEnv, "provider.apiKeyEnv")
+    _text(apiKey, "provider.apiKey", allow_none=True, non_empty=True)
     # STRICT like ModelCfg: a non-http URL or junk effort never worked, so
     # fail at parse, not in the HTTP layer mid-turn.
-    if not entry.baseUrl.startswith(("http://", "https://")):
+    if not baseUrl.startswith(("http://", "https://")):
         raise ConfigError(
-            f"{prefix}.baseUrl must start with http:// or https://: {entry.baseUrl!r}"
+            f"provider.baseUrl must start with http:// or https://: {baseUrl!r}"
         )
-    if not isinstance(entry.reasoningEffort, str) or not entry.reasoningEffort.strip():
-        raise ConfigError(f"{prefix}.reasoningEffort must be a non-empty string")
-    if entry.api not in PROVIDER_APIS:
+    if not isinstance(reasoningEffort, str) or not reasoningEffort.strip():
+        raise ConfigError("provider.reasoningEffort must be a non-empty string")
+    if api not in PROVIDER_APIS:
         raise ConfigError(
-            f"{prefix}.api must be one of {'/'.join(PROVIDER_APIS)}, got {entry.api!r}"
+            f"provider.api must be one of {'/'.join(PROVIDER_APIS)}, got {api!r}"
         )
-
-
-@dataclass(frozen=True)
-class ProviderEntry:
-    """One named provider stored in ``Config.providers`` (no model: models point here)."""
-
-    baseUrl: str = DEFAULT_PROVIDER_BASE_URL
-    apiKeyEnv: str = DEFAULT_PROVIDER_API_KEY_ENV
-    apiKey: str | None = field(default=None, repr=False)
-    reasoningEffort: str = DEFAULT_PROVIDER_REASONING_EFFORT
-    api: str = DEFAULT_PROVIDER_API
-
-    def __post_init__(self) -> None:
-        _provider_fields(self, "provider")
-        # Stored entries are model-agnostic: custom levels live on models.
-        _check_global_effort(self.reasoningEffort, "provider.reasoningEffort")
-
-    def api_key(self) -> str:
-        return _resolve_api_key(self.apiKey, self.apiKeyEnv)
 
 
 def _check_global_effort(effort: str, name: str) -> None:
@@ -74,8 +62,56 @@ def _check_global_effort(effort: str, name: str) -> None:
         )
 
 
+def _check_effort_set(efforts: tuple[str, ...], effort: str) -> None:
+    """Own-set shape + membership; the global check applies only when empty."""
+    if not isinstance(efforts, tuple) or not all(
+        isinstance(level, str) and level.strip() for level in efforts
+    ):
+        raise ConfigError(
+            "provider.reasoningEfforts must be a tuple of non-empty strings"
+        )
+    if len(set(efforts)) != len(efforts):
+        raise ConfigError("provider.reasoningEfforts must not contain duplicates")
+    if efforts:
+        if effort not in efforts:
+            raise ConfigError(
+                f"provider.reasoningEffort {effort!r} is not in "
+                f"provider.reasoningEfforts ({'/'.join(efforts)})"
+            )
+    else:
+        _check_global_effort(effort, "provider.reasoningEffort")
+
+
+class _ApiKeyMixin:
+    """Shared secret resolution for stored entries and connections."""
+
+    apiKey: str | None
+    apiKeyEnv: str
+
+    def api_key(self) -> str:
+        return _resolve_api_key(self.apiKey, self.apiKeyEnv)
+
+
 @dataclass(frozen=True)
-class ProviderCfg:
+class ProviderEntry(_ApiKeyMixin):
+    """One named provider stored in ``Config.providers`` (no model: models point here)."""
+
+    baseUrl: str = DEFAULT_PROVIDER_BASE_URL
+    apiKeyEnv: str = DEFAULT_PROVIDER_API_KEY_ENV
+    apiKey: str | None = field(default=None, repr=False)
+    reasoningEffort: str = DEFAULT_PROVIDER_REASONING_EFFORT
+    api: str = DEFAULT_PROVIDER_API
+
+    def __post_init__(self) -> None:
+        _check_shared(
+            self.baseUrl, self.apiKeyEnv, self.apiKey, self.reasoningEffort, self.api
+        )
+        # Stored entries are model-agnostic: custom levels live on models.
+        _check_global_effort(self.reasoningEffort, "provider.reasoningEffort")
+
+
+@dataclass(frozen=True)
+class ProviderCfg(_ApiKeyMixin):
     """Resolved connection for one turn: a provider entry + the chosen model.
 
     ``reasoningEfforts`` is the chosen model's own set (empty when it declares
@@ -92,24 +128,39 @@ class ProviderCfg:
     reasoningEfforts: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        _provider_fields(self, "provider")
+        _check_shared(
+            self.baseUrl, self.apiKeyEnv, self.apiKey, self.reasoningEffort, self.api
+        )
         _text(self.model, "provider.model")
-        if not isinstance(self.reasoningEfforts, tuple) or not all(
-            isinstance(level, str) and level.strip() for level in self.reasoningEfforts
-        ):
-            raise ConfigError(
-                "provider.reasoningEfforts must be a tuple of non-empty strings"
-            )
-        if len(set(self.reasoningEfforts)) != len(self.reasoningEfforts):
-            raise ConfigError("provider.reasoningEfforts must not contain duplicates")
-        if self.reasoningEfforts:
-            if self.reasoningEffort not in self.reasoningEfforts:
-                raise ConfigError(
-                    f"provider.reasoningEffort {self.reasoningEffort!r} is not in "
-                    f"provider.reasoningEfforts ({'/'.join(self.reasoningEfforts)})"
-                )
-        else:
-            _check_global_effort(self.reasoningEffort, "provider.reasoningEffort")
+        _check_effort_set(self.reasoningEfforts, self.reasoningEffort)
 
-    def api_key(self) -> str:
-        return _resolve_api_key(self.apiKey, self.apiKeyEnv)
+
+def _base_url_for(entry_base_url: str, model_cfg: ModelCfg | None) -> str:
+    """Legacy per-model endpoint wins over its provider's URL (0.8.2 hatch)."""
+    if model_cfg is not None and model_cfg.baseUrl:
+        return model_cfg.baseUrl
+    return entry_base_url
+
+
+def resolve(
+    entry: ProviderEntry, model_id: str, model_cfg: ModelCfg | None = None
+) -> ProviderCfg:
+    """Pure resolution: a stored entry + model overrides → frozen connection.
+
+    A model's own reasoningEffort wins; its own set governs only that
+    override (an inherited entry effort stays on the global check).
+    """
+    effort = entry.reasoningEffort
+    own_set: tuple[str, ...] = ()
+    if model_cfg is not None and model_cfg.reasoningEffort:
+        effort = model_cfg.reasoningEffort
+        own_set = model_cfg.reasoningEfforts
+    return ProviderCfg(
+        baseUrl=_base_url_for(entry.baseUrl, model_cfg),
+        apiKeyEnv=entry.apiKeyEnv,
+        apiKey=entry.apiKey,
+        reasoningEffort=effort,
+        api=entry.api,
+        model=model_id,
+        reasoningEfforts=own_set,
+    )

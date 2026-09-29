@@ -14,8 +14,7 @@ import pytest
 from thyca.config import ProviderCfg
 from thyca.core.protocol import Message
 from thyca.llm.openai_chat import OpenAIChat, _to_openai_message
-from thyca.llm.openai_responses import OpenAIResponses
-from thyca.llm.responses_parse import _to_responses_input
+from thyca.llm.openai_responses import OpenAIResponses, _to_responses_input
 
 
 def _provider() -> ProviderCfg:

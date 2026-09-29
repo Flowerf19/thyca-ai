@@ -750,13 +750,12 @@ import asyncio
 import json
 
 def test_x5_redact_cap_single_home() -> None:
-    import thyca.app.onboarding as onboarding
     import thyca.llm._http as http
-    import thyca.llm.openai_parse as chat_parse
-    import thyca.llm.responses_parse as resp_parse
+    import thyca.llm.openai_chat as chat_parse
+    import thyca.llm.openai_responses as resp_parse
     import thyca.llm.streaming as streaming
 
-    assert onboarding.redact is http.redact
+    # No onboarding leg: onboarding handles no raw keys anymore (TASK-013).
     assert chat_parse.redact is http.redact
     assert not hasattr(chat_parse, "cap")  # no error-caps left here at all
     assert resp_parse.redact is http.redact
@@ -788,7 +787,7 @@ def test_x15_sse_preamble_shared() -> None:
 def test_x15_bytes_and_slots_shared() -> None:
     from thyca.llm._http import parse_json_bytes
     from thyca.llm.llm_base import LLMError
-    from thyca.llm.openai_parse import slots_to_calls, parse_chat_bytes
+    from thyca.llm.openai_chat import slots_to_calls, parse_chat_bytes
 
     assert parse_json_bytes(b'{"a": 1}', "k") == {"a": 1}
     with pytest.raises(LLMError, match="must be an object"):

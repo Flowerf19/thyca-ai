@@ -16,9 +16,8 @@ def _hot(**overrides: str) -> ActiveSnapshot:
 
 def test_build_order_identity_then_custom_soul() -> None:
     manager = PromptManager()
-    text = manager.build(_hot())
-    identity = manager.template("identity")
-    assert text.startswith(f"<identity>\n{identity}\n</identity>\n<role>\nsoul-text\n</role>\n")
+    text = manager.build(_hot(identity="identity-text"))
+    assert text.startswith("<identity>\nidentity-text\n</identity>\n<role>\nsoul-text\n</role>\n")
     assert "<user>\nuser-text\n</user>" in text
     assert text.index("<identity>") < text.index("<role>") < text.index("<user>")
     assert "<memory>" not in text
@@ -28,7 +27,7 @@ def test_build_order_identity_then_custom_soul() -> None:
     assert "create-skill" in text
     assert "create-mcp-tool" in text
     assert "no sandbox" in text
-    assert "Thyca" in identity
+    assert "Thyca" in manager.template("identity")
 
 
 def test_live_identity_wins_over_template() -> None:
@@ -39,19 +38,16 @@ def test_live_identity_wins_over_template() -> None:
 
 @pytest.mark.parametrize("soul", ["", "# Soul\n", " \n# Soul \n"])
 @pytest.mark.parametrize("user", ["", "# User\n", " \n# User \n"])
-def test_stub_soul_uses_packaged_template_and_omits_stub_user(soul: str, user: str) -> None:
-    manager = PromptManager()
-    text = manager.build(_hot(soul=soul, user=user))
-    assert f"<role>\n{manager.template('soul')}\n</role>" in text
-    assert "Name: Thyca" in text
+def test_stub_soul_and_stub_user_inject_nothing(soul: str, user: str) -> None:
+    text = PromptManager().build(_hot(soul=soul, user=user))
+    assert "<role>" not in text
     assert "</user>" not in text
 
 
 @pytest.mark.parametrize("identity", ["", "# Identity\n", " \n# Identity \n"])
-def test_stub_identity_uses_packaged_template(identity: str) -> None:
-    manager = PromptManager()
-    text = manager.build(_hot(identity=identity))
-    assert text.startswith(f"<identity>\n{manager.template('identity')}\n</identity>")
+def test_stub_identity_injects_nothing(identity: str) -> None:
+    text = PromptManager().build(_hot(identity=identity))
+    assert "<identity>" not in text
 
 
 def test_build_does_not_inject_previous_day_memory() -> None:
@@ -130,10 +126,13 @@ def test_runtime_guidance_has_one_owner() -> None:
     rules = manager.rules_section()
     assert "Check <skills>" in rules
     assert "<skills>" not in soul
-    assert "Today's memory is automatically included in <today> as the daily file's tail" in rules
-    assert "even if the user has not repeated it in this conversation" in rules
-    assert "Do not search or reread information already present in <today>" in rules
+    assert "<today> holds this session's notes for today" in rules
+    assert "even if the user has not repeated it" in rules
+    assert "Do not search or reread information already present there" in rules
     assert "Today's daily file is not in archive search" in rules
+    assert "<today_elsewhere>" in rules
+    assert "other/unattributed sessions' notes" in rules
+    assert "Never assume the user is still on those topics" in rules
     assert "use read on" not in rules
     assert "lexical" not in rules
     # Tool descriptions own individual operations and their calling conventions.
@@ -160,3 +159,14 @@ def test_user_template_has_upkeep_and_empty_profile_sections() -> None:
         assert f"## {heading}\n" in user
     profile = user[user.index("## Name and forms of address"):]
     assert all(not line.strip() or line.startswith("## ") for line in profile.splitlines())
+
+
+def test_today_elsewhere_section_rendered_only_when_nonempty() -> None:
+    manager = PromptManager()
+    without = manager.build(_hot())
+    assert "<today_elsewhere>\n" not in without  # rules mention it, but no section renders
+    with_index = manager.build(_hot(today_elsewhere="- 15:04 — other [2026-09-28#bbbb2222]"))
+    assert "<today_elsewhere>\n- 15:04 — other [2026-09-28#bbbb2222]\n</today_elsewhere>" in with_index
+    # Order: today, today_elsewhere, then skills/rules.
+    assert with_index.index("<today>") < with_index.index("<today_elsewhere>")
+    assert with_index.index("</today_elsewhere>") < with_index.index("<rules>")

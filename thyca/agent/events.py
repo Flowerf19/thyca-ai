@@ -10,7 +10,7 @@ _IDENTIFIER_MAX = 64
 _PUBLIC_NAME = "tool"
 _PUBLIC_CALL_ID = "call"
 
-_FIELDS = ("round", "tool_count", "call_id", "name", "ok", "updated", "attempt", "max_attempts")
+_FIELDS = ("round", "tool_count", "call_id", "name", "ok", "updated", "attempt", "max_attempts", "hidden_bytes")
 
 _ALLOWED_FIELDS: dict[str, frozenset[str]] = {
     "turn.accepted": frozenset(),
@@ -23,6 +23,7 @@ _ALLOWED_FIELDS: dict[str, frozenset[str]] = {
     "skill.finished": frozenset({"round", "call_id", "name", "ok"}),
     "session.naming.started": frozenset(),
     "session.naming.finished": frozenset({"updated"}),
+    "context.shrunk": frozenset({"round", "tool_count", "hidden_bytes"}),
 }
 
 
@@ -47,6 +48,7 @@ class TurnEvent:
     updated: bool | None = None
     attempt: int | None = None
     max_attempts: int | None = None
+    hidden_bytes: int | None = None
 
     def __post_init__(self) -> None:
         allowed = _ALLOWED_FIELDS.get(self.type)
@@ -64,6 +66,9 @@ class TurnEvent:
             elif field_name == "tool_count":
                 if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                     raise ValueError("tool_count must be an integer >= 0")
+            elif field_name == "hidden_bytes":
+                if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                    raise ValueError("hidden_bytes must be an integer >= 0")
             elif field_name == "ok":
                 if not isinstance(value, bool):
                     raise ValueError("ok must be a bool")

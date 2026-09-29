@@ -7,8 +7,14 @@ import pytest
 
 from thyca.config import ProviderCfg
 from thyca.llm.llm_base import LLMError, normalize_usage
-from thyca.llm.openai_responses import OpenAIResponses, _responses_url
-from thyca.llm.responses_parse import _to_responses_input, _to_responses_tools
+from thyca.llm.openai_responses import (
+    OpenAIResponses,
+    _responses_reasoning_detail,
+    _responses_url,
+    _to_responses_input,
+    _to_responses_tools,
+    parse_responses_payload,
+)
 from thyca.core.protocol import Message, ToolCall
 
 
@@ -443,7 +449,6 @@ async def test_stream_content_and_split_chunk_key_redacted() -> None:
 
 
 # Moved from tests/test_b2_contracts.py (B2 batch).
-from thyca.llm.responses_parse import parse_responses_payload
 
 def _provider() -> ProviderCfg:
     return ProviderCfg(
@@ -511,4 +516,315 @@ def test_f26_none_and_empty_pass_through_as_empty() -> None:
     ]
     assert _to_responses_input([Message(role="system", content=None)]) == [
         {"role": "system", "content": ""}
+    ]
+
+
+# T5: responses reasoning_details parity (chat path parses + round-trips;
+# responses path must too for multi-round tool-loop continuity).
+
+
+def test_t5_nonstream_reasoning_details_parsed_and_invalid_ignored() -> None:
+    reply = parse_responses_payload(
+        {
+            "model": "m",
+            "status": "completed",
+            "output": [
+                {
+                    "type": "reasoning",
+                    "id": "rs_1",
+                    "summary": [
+                        {"type": "summary_text", "text": "plan "},
+                        {"type": "summary_text", "text": "tools"},
+                        {"type": "bogus", "text": "nope"},
+                        {"type": "summary_text", "text": ""},
+                        "not-a-dict",
+                    ],
+                    "encrypted_content": "enc-blob",
+                    "status": "completed",
+                },
+                {"type": "reasoning", "summary": "not-a-list"},
+                {"type": "reasoning"},
+                {"type": "message", "content": [{"type": "output_text", "text": "ok"}]},
+            ],
+        },
+        "sk",
+    )
+    assert reply.reasoning == "plan tools"
+    assert reply.reasoning_details == [
+        {
+            "type": "reasoning",
+            "id": "rs_1",
+            "summary": [
+                {"type": "summary_text", "text": "plan "},
+                {"type": "summary_text", "text": "tools"},
+            ],
+            "encrypted_content": "enc-blob",
+        }
+    ]
+
+
+def test_t5_nonstream_no_reasoning_details_is_none() -> None:
+    reply = parse_responses_payload(
+        {
+            "status": "completed",
+            "output": [
+                {"type": "message", "content": [{"type": "output_text", "text": "hi"}]}
+            ],
+        },
+        "sk",
+    )
+    assert reply.reasoning_details is None
+
+
+def test_t5_nonstream_summary_redacted_encrypted_preserved() -> None:
+    reply = parse_responses_payload(
+        {
+            "status": "completed",
+            "output": [
+                {
+                    "type": "reasoning",
+                    "id": "rs_9",
+                    "summary": [{"type": "summary_text", "text": "leak sk-secret-key x"}],
+                    "encrypted_content": "opaque-blob",
+                }
+            ],
+        },
+        "sk-secret-key",
+    )
+    assert reply.reasoning_details is not None
+    assert reply.reasoning_details[0]["summary"][0]["text"] == "leak [redacted] x"
+    assert reply.reasoning_details[0]["encrypted_content"] == "opaque-blob"
+    assert "sk-secret-key" not in (reply.reasoning or "")
+
+
+def test_t5_details_never_capped() -> None:
+    big = "t" * 40_000
+    reply = parse_responses_payload(
+        {
+            "status": "completed",
+            "output": [{"type": "reasoning", "id": "rs_big", "summary": [{"type": "summary_text", "text": big}]}],
+        },
+        "sk",
+    )
+    assert reply.reasoning_details is not None
+    assert reply.reasoning_details[0]["summary"][0]["text"] == big
+
+
+@pytest.mark.asyncio
+async def test_t5_stream_reasoning_details_from_done_invalid_ignored() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _sse(
+            {
+                "type": "response.output_item.added",
+                "output_index": 0,
+                "item": {"type": "reasoning", "id": "rs_stream"},
+            },
+            {"type": "response.reasoning_summary_text.delta", "delta": "thinking"},
+            {
+                "type": "response.output_item.done",
+                "output_index": 0,
+                "item": {
+                    "type": "reasoning",
+                    "id": "rs_stream",
+                    "summary": [{"type": "summary_text", "text": "thinking"}],
+                    "encrypted_content": "enc-s",
+                },
+            },
+            {
+                "type": "response.output_item.done",
+                "output_index": 1,
+                "item": {"type": "reasoning"},
+            },
+            {"type": "response.output_text.delta", "delta": "ok"},
+            _completed(),
+        )
+
+    connect = OpenAIResponses(_provider(), client=_client(handler))
+    reply = await connect.chat([Message(role="user", content="x")])
+    assert reply.reasoning == "thinking"
+    # added is id-only and ignored; only the full done item is kept, once.
+    assert reply.reasoning_details == [
+        {
+            "type": "reasoning",
+            "id": "rs_stream",
+            "summary": [{"type": "summary_text", "text": "thinking"}],
+            "encrypted_content": "enc-s",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_t5_stream_no_reasoning_item_is_none() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _sse(
+            {"type": "response.reasoning_summary_text.delta", "delta": "ponder"},
+            {"type": "response.output_text.delta", "delta": "ok"},
+            _completed(),
+        )
+
+    connect = OpenAIResponses(_provider(), client=_client(handler))
+    reply = await connect.chat([Message(role="user", content="x")])
+    assert reply.reasoning == "ponder"
+    assert reply.reasoning_details is None
+
+
+def test_t5_input_roundtrips_reasoning_details() -> None:
+    details = [
+        {
+            "type": "reasoning",
+            "id": "rs_1",
+            "summary": [{"type": "summary_text", "text": "plan"}],
+            "encrypted_content": "enc",
+            "status": "completed",
+        },
+        {"type": "reasoning.text", "text": "chat-shape"},
+        {"type": "reasoning"},
+    ]
+    message = Message(
+        role="assistant",
+        content="working",
+        tool_calls=[ToolCall(id="c1", name="bash", arguments={})],
+        reasoning_details=details,
+    )
+    assert _to_responses_input([message]) == [
+        {
+            "type": "reasoning",
+            "id": "rs_1",
+            "summary": [{"type": "summary_text", "text": "plan"}],
+            "encrypted_content": "enc",
+        },
+        {"role": "assistant", "content": "working"},
+        {"type": "function_call", "call_id": "c1", "name": "bash", "arguments": "{}"},
+    ]
+    # Input items are copies; the stored details keep output-only fields.
+    assert details[0]["status"] == "completed"
+    plain = _to_responses_input([Message(role="assistant", content="hi")])
+    assert plain == [{"role": "assistant", "content": "hi"}]
+    # Only assistant turns carry reasoning; other roles ignore details.
+    assert _to_responses_input(
+        [Message(role="user", content="hi", reasoning_details=[{"type": "reasoning", "id": "rs_x"}])]
+    ) == [{"role": "user", "content": "hi"}]
+
+
+def test_t5_validator_never_raises() -> None:
+    assert _responses_reasoning_detail(None) is None
+    assert _responses_reasoning_detail({"type": "message"}) is None
+    assert _responses_reasoning_detail({"type": "reasoning", "id": 42}) is None
+    assert _responses_reasoning_detail({"type": "reasoning", "id": "rs_sig", "signature": "sig"}) == {
+        "type": "reasoning",
+        "id": "rs_sig",
+        "signature": "sig",
+    }
+
+
+def test_t5_roundtrip_parse_to_input_preserves_id() -> None:
+    reply = parse_responses_payload(
+        {
+            "status": "completed",
+            "output": [
+                {
+                    "type": "reasoning",
+                    "id": "rs_rt",
+                    "summary": [{"type": "summary_text", "text": "s"}],
+                    "encrypted_content": "e",
+                },
+                {"type": "message", "content": [{"type": "output_text", "text": "done"}]},
+            ],
+        },
+        "sk",
+    )
+    assert reply.reasoning_details is not None
+    message = Message(role="assistant", content="done", reasoning_details=reply.reasoning_details)
+    assert _to_responses_input([message])[0] == reply.reasoning_details[0]
+
+
+def test_t5_reasoning_content_parts_parse_and_round_trip() -> None:
+    reply = parse_responses_payload(
+        {
+            "status": "completed",
+            "output": [
+                {
+                    "type": "reasoning",
+                    "id": "rs_c",
+                    "content": [
+                        {"type": "reasoning_text", "text": "deep thought"},
+                        {"type": "bogus", "text": "nope"},
+                        "not-a-dict",
+                    ],
+                },
+                {"type": "message", "content": [{"type": "output_text", "text": "ok"}]},
+            ],
+        },
+        "sk",
+    )
+    assert reply.reasoning_details == [
+        {
+            "type": "reasoning",
+            "id": "rs_c",
+            "content": [{"type": "reasoning_text", "text": "deep thought"}],
+        }
+    ]
+    # Content-only details are kept in storage but never sent: providers
+    # require `summary` on reasoning inputs (live 400 otherwise).
+    items = _to_responses_input(
+        [
+            Message(
+                role="assistant",
+                content="ok",
+                reasoning_details=reply.reasoning_details,
+            )
+        ]
+    )
+    assert items == [{"role": "assistant", "content": "ok"}]
+    # With a summary present, the item round-trips minus output-side keys.
+    with_summary = [
+        {
+            "type": "reasoning",
+            "id": "rs_c",
+            "summary": [{"type": "summary_text", "text": "plan"}],
+            "content": [{"type": "reasoning_text", "text": "deep"}],
+        }
+    ]
+    items = _to_responses_input(
+        [Message(role="assistant", content="ok", reasoning_details=with_summary)]
+    )
+    assert items[0] == {
+        "type": "reasoning",
+        "summary": [{"type": "summary_text", "text": "plan"}],
+        "id": "rs_c",
+    }
+    assert items[1] == {"role": "assistant", "content": "ok"}
+
+
+def test_t5_input_drops_summary_less_reasoning_and_strips_output_keys() -> None:
+    # Live 400: `input[N]` missing required field `summary`. Id-only,
+    # encrypted-only, and content-only details must not reach the wire;
+    # output-side content/signature keys are stripped from survivors.
+    details = [
+        {"type": "reasoning", "id": "rs_only_id"},
+        {"type": "reasoning", "id": "rs_enc", "encrypted_content": "blob"},
+        {
+            "type": "reasoning",
+            "content": [{"type": "reasoning_text", "text": "deep"}],
+        },
+        {
+            "type": "reasoning",
+            "id": "rs_ok",
+            "summary": [{"type": "summary_text", "text": "plan"}],
+            "content": [{"type": "reasoning_text", "text": "deep"}],
+            "signature": "sig-blob",
+            "encrypted_content": "enc-blob",
+        },
+    ]
+    items = _to_responses_input(
+        [Message(role="assistant", content="ok", reasoning_details=details)]
+    )
+    assert items == [
+        {
+            "type": "reasoning",
+            "summary": [{"type": "summary_text", "text": "plan"}],
+            "id": "rs_ok",
+            "encrypted_content": "enc-blob",
+        },
+        {"role": "assistant", "content": "ok"},
     ]

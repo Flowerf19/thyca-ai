@@ -13,20 +13,21 @@ _STUB_USER = frozenset({"", "# User"})
 
 class PromptManager:
     def build(self, hot: ActiveSnapshot) -> str:
+        # Stub profile files inject nothing: no silent template substitution.
+        # (Templates still seed new files on creation via ActiveMemory.)
         soul = hot.soul.strip()
-        if soul in _STUB_SOUL:
-            soul = self.template("soul")
         identity = hot.identity.strip()
-        if identity in _STUB_IDENTITY:
-            identity = self.template("identity")
         user = hot.user.strip()
-        parts = [
-            _section("identity", identity),
-            _section("role", soul),
-        ]
+        parts = []
+        if identity not in _STUB_IDENTITY:
+            parts.append(_section("identity", identity))
+        if soul not in _STUB_SOUL:
+            parts.append(_section("role", soul))
         if user not in _STUB_USER:
             parts.append(_section("user", hot.user))
         parts.append(_section("today", hot.today))
+        if hot.today_elsewhere:
+            parts.append(_section("today_elsewhere", hot.today_elsewhere))
         if hot.skills:
             parts.append(_section("skills", hot.skills))
         parts.append(_section("rules", self.rules_section()))

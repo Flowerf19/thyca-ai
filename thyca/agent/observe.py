@@ -11,8 +11,18 @@ class Observe:
     def __init__(self, sessions: SessionManager) -> None:
         self._sessions = sessions
 
-    def compact(self) -> bool:
-        return self._sessions.compact_if_needed()
+    def compact(
+        self,
+        *,
+        hot_tokens: int = 0,
+        tools_tokens: int = 0,
+        pending_user_tokens: int = 0,
+    ) -> bool:
+        return self._sessions.compact_if_needed(
+            hot_tokens=hot_tokens,
+            tools_tokens=tools_tokens,
+            pending_user_tokens=pending_user_tokens,
+        )
 
     def user(self, stage: Stage) -> None:
         self._sessions.append(stage.messages[-1])
@@ -62,6 +72,21 @@ class Observe:
         meta = assistant_meta(stage, kind="llm")
         if meta is not None:
             meta["status"] = "loop_limit"
+        msg = Message(role="assistant", content=text, meta=meta)
+        self._sessions.append(msg)
+        stage.messages.append(msg)
+        return text
+
+    def context_limit(self, stage: Stage) -> str:
+        text = "context limit reached"
+        # Minimal meta on purpose: the backstop fires before think(), so
+        # stage.reply/usage/cost would still describe the previous round.
+        meta: dict = {"kind": "llm", "status": "context_limit"}
+        if stage.round:
+            meta["round"] = stage.round
+        model = getattr(stage, "llm_model", None)
+        if isinstance(model, str) and model.strip():
+            meta["model"] = model.strip()
         msg = Message(role="assistant", content=text, meta=meta)
         self._sessions.append(msg)
         stage.messages.append(msg)

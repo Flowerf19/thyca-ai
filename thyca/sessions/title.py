@@ -12,6 +12,7 @@ from .models import Session
 
 if TYPE_CHECKING:
     from .manager import SessionManager
+    from .store import SessionStore
 
 ChatFn = Callable[[list[Message], list | None], Awaitable]
 
@@ -186,6 +187,11 @@ def _slice_completed(slice_msgs: list[Message]) -> bool:
     # observe orders results exactly against calls before persisting.
     if any(isinstance((item.meta or {}).get("error"), dict) for item in slice_msgs):
         return False
+    # The context guard's synthetic stop never landed a reply: a turn
+    # ending (or interrupted by) one is not a completed turn, even when a
+    # real reply sits earlier in the same slice.
+    if any((item.meta or {}).get("status") == "context_limit" for item in slice_msgs):
+        return False
     last = slice_msgs[-1]
     if last.role != "assistant" or last.tool_calls:
         return False
@@ -242,6 +248,102 @@ def _clip(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     return text[:limit]
+
+
+def refresh_title(store: SessionStore, session: Session | None) -> None:
+    """Re-read the title a stored meta line carries into ``session``.
+
+    A turn holds its own ``Session`` snapshot from load time; a title the
+    user typed in the meantime is on disk only. Without this the agent's
+    naming step would append its own meta line over the user's name.
+    The caller holds the manager lock.
+    """
+    if session is None:
+        return
+    found = store.read_title(session.path)
+    if found is None:
+        return
+    title, title_source = found
+    if title:
+        session.title = title
+        session.title_source = title_source
+
+
+def mark_naming_attempted(store: SessionStore, session: Session) -> None:
+    """Persist the automatic naming step's one attempt (success or not).
+
+    Only the automatic path calls this: explicit operations (sidebar
+    rename, batch retitle) never consume or check the flag.
+    The caller holds the manager lock.
+    """
+    if session.naming_attempted:
+        return
+    store.append_naming_attempted(session.path)
+    session.naming_attempted = True
+
+
+def set_title_if_missing(
+    store: SessionStore, session: Session, title: str
+) -> str | None:
+    """Store the automatic title only when no title is on disk.
+
+    Atomic against a concurrent sidebar rename (same process): when the
+    store reports a title already present, nothing is written and the
+    in-memory title is synced from disk so the turn answers with it.
+    The caller holds the manager lock.
+    """
+    cleaned = sanitize_title(title)
+    if cleaned is None:
+        return None
+    if store.append_title_if_missing(session.path, cleaned, None):
+        session.title = cleaned
+        session.title_source = None
+        return cleaned
+    found = store.read_title(session.path)
+    if found is not None and found[0]:
+        session.title, session.title_source = found
+    return None
+
+
+def set_title(
+    store: SessionStore, session: Session, title: str, *, source: str | None = None
+) -> str | None:
+    """Append a title meta line; the caller holds the manager lock."""
+    cleaned = (
+        sanitize_user_title(title)
+        if source == USER_TITLE_SOURCE
+        else sanitize_title(title)
+    )
+    if cleaned is None:
+        return None
+    store.append_meta(session.path, cleaned, source)
+    session.title = cleaned
+    session.title_source = source
+    return cleaned
+
+
+def rename_session(
+    store: SessionStore,
+    session_id: str,
+    title: str,
+    *,
+    current: Session | None = None,
+) -> str:
+    """Set the title of any stored session, syncing ``current`` on match.
+
+    The caller holds the manager lock.
+    """
+    cleaned = sanitize_user_title(title)
+    if cleaned is None:
+        raise ValueError("empty title")
+    session = store.load(session_id)
+    store.append_meta(session.path, cleaned, USER_TITLE_SOURCE)
+    session.title = cleaned
+    session.title_source = USER_TITLE_SOURCE
+    if current is not None and current.id == session_id:
+        current.title = cleaned
+        current.title_source = USER_TITLE_SOURCE
+    return cleaned
 
 
 async def propose_title(chat: ChatFn, session: Session) -> str | None:

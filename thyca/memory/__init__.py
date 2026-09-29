@@ -1,8 +1,17 @@
-from .active import ActiveMemory, ActiveMemoryError, ActiveSnapshot, ActiveState, tail_text
+from .active import (
+    ELSEWHERE_MAX_LINES,
+    ActiveMemory,
+    ActiveMemoryError,
+    ActiveSnapshot,
+    ActiveState,
+    split_today_by_session,
+    tail_text,
+)
 from .archived import ArchivedMemory, ArchiveError, ArchiveStore, Hit, SearchResult
 from .chunk import Chunk, Chunker
 
 __all__ = [
+    "ELSEWHERE_MAX_LINES",
     "ActiveMemory",
     "ActiveMemoryError",
     "ActiveSnapshot",
@@ -14,5 +23,6 @@ __all__ = [
     "Chunker",
     "Hit",
     "SearchResult",
+    "split_today_by_session",
     "tail_text",
 ]

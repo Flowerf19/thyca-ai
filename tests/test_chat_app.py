@@ -694,10 +694,10 @@ def test_create_keeps_blank_session_with_running_turn(
     release = threading.Event()
     real_refresh = ActiveMemory.refresh
 
-    def gated_refresh(self, state, now):
+    def gated_refresh(self, state, now, *args, **kwargs):
         claimed.set()
         release.wait(5)
-        return real_refresh(self, state, now)
+        return real_refresh(self, state, now, *args, **kwargs)
 
     monkeypatch.setattr(ActiveMemory, "refresh", gated_refresh)
     app = _chat(tmp_path, FakeLLM(ChatReply(content="late")))
@@ -1141,5 +1141,34 @@ def test_turn_completes_when_mcp_spawn_fails(tmp_path: Path) -> None:
         turned = app.turn(created["id"], "hi")
         assert turned["reply"] == "pong"
         assert not _saw_tool(llm, "bad__search")
+    finally:
+        app.shutdown()
+
+
+def test_turn_injects_session_scoped_today(tmp_path: Path) -> None:
+    llm = FakeLLM(ChatReply(content="pong"))
+    app = _chat(tmp_path, llm)
+    try:
+        created = app.create()
+        sid = created["id"]
+        (day_file,) = list((tmp_path / "memory").glob("*.md"))
+        day = day_file.stem
+        day_file.write_text(
+            f"# {day}\n"
+            f"## 10:00 — own-note <!-- thyca {{\"id\":\"aaaa1111\",\"imp\":3,\"chat\":\"{sid}\"}} -->\n"
+            "- body OWN-UNIQUE detail\n"
+            "## 11:00 — foreign-note <!-- thyca {\"id\":\"bbbb2222\",\"imp\":3,\"chat\":\"OTHER-SID\"} -->\n"
+            "- body FOREIGN-UNIQUE detail\n",
+            encoding="utf-8",
+        )
+        app.turn(sid, "hi")
+        system = next(
+            m.content for msgs in llm.requests for m in msgs if m.role == "system"
+        )
+        assert "OWN-UNIQUE" in system
+        assert "FOREIGN-UNIQUE" not in system
+        assert "foreign-note" in system  # title survives in the index
+        assert f"{day}#bbbb2222" in system  # pullable id
+        assert "<today_elsewhere>" in system
     finally:
         app.shutdown()

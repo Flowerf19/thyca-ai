@@ -20,10 +20,16 @@ def reset_chat_session(token) -> None:
 
 
 def _limit(args: dict) -> int:
-    """Graceful limit: falsy/missing → default, unparseable → default."""
-    raw = args.get("limit") or 5
+    """Graceful limit: absent/None → default, explicit values pass through.
+
+    An explicit ``0`` (or negative) reaches the facade, which clamps it
+    with a warning — so the public clamp warning survives the gateway.
+    Only missing/None or unparseable input falls back to the default.
+    """
+    if "limit" not in args or args.get("limit") is None:
+        return 5
     try:
-        return int(raw)
+        return int(args["limit"])
     except (TypeError, ValueError):
         return 5
 

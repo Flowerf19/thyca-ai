@@ -5,17 +5,14 @@ import asyncio
 import sys
 import threading
 import time
-from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from thyca.agent.act import Act
-from thyca.agent.events import EventSink, TurnEvent, emit_event
+from thyca.agent.events import EventSink, TurnEvent
 from thyca.agent.think import LLMPort
 from thyca.config import Config, ConfigError, load
-from thyca.llm.llm_base import LLMError
-from thyca.llm.llm_factory import ConnectFactory
 from thyca.memory.active import ActiveMemory
 from thyca.sessions.wire import session_detail, session_summary
 from thyca.sessions import Session, SessionManager
@@ -23,14 +20,13 @@ from thyca.sessions.store import SessionStore
 from thyca.sessions.title import is_blank
 from thyca.tools.gateway.background import BackgroundProcs
 from thyca.tools.mcp import MCPManager, ProcessFactory
-from thyca.tools.memory_tools import bind_chat_session, reset_chat_session
 from thyca.tools.task_store import TaskStore
 from thyca.serve.turn_state import TurnHub, TurnState
 
 from thyca.app.loop_turns import _CANCEL_WAIT_S, _LoopTurns, TurnCancelled
-from thyca.app.naming import _name_if_needed, session_title
+from thyca.app.naming import session_title
+from thyca.app.run_turn import TurnRequest, TurnScope, run_turn
 from thyca.app.toolchain import (
-    build_agent_loop,
     build_tool_gateway,
     build_tool_registry,
     install_mcp_specs,
@@ -293,99 +289,26 @@ class ChatApp:
         effort: str | None,
         retry: bool,
     ) -> dict:
-        # Every turn owns its session state (config, SessionManager, current
-        # session). Nothing here is shared with a concurrent turn, so a slow
-        # provider call in one session cannot block or corrupt another.
-        sessions = SessionManager(
-            limits=turn_cfg.effective_limits(),
-            timezone_name=turn_cfg.timeline.timezone,
+        # Turn execution lives in app.run_turn; the app shell only
+        # assembles the shared scope and the detail builder here.
+        scope = TurnScope(
             store=self._sessions.store,
+            act=self._act,
+            tools=self._tools,
+            memory=self._memory,
+            state=self._state,
+            zone=self._zone,
+            injected_connect=self._injected_connect,
         )
-        sessions.load(session_id)
-        if retry and not sessions.truncate_to_last_user():
-            raise InvalidTurnOption("no user")
-        token = bind_chat_session(session_id)
-        try:
-            provider = turn_cfg.effective_provider()
-            if effort is not None:
-                # overlay_turn_cfg already approved this level model-aware;
-                # carry the model's own set so a custom level resolves.
-                chosen = turn_cfg.models.get(turn_cfg.defaultModel)
-                own_set = chosen.reasoningEfforts if chosen is not None else ()
-                provider = replace(
-                    provider, reasoningEffort=effort, reasoningEfforts=own_set
-                )
-            connect = self._injected_connect or ConnectFactory.create(
-                provider.api, provider
-            )
-            owns = self._injected_connect is None
-            self._wire_retry_events(connect, event_sink)
-            try:
-                limits = turn_cfg.effective_limits()
-                loop = build_agent_loop(
-                    sessions=sessions,
-                    connect=connect,
-                    act=self._act,
-                    tools=self._tools,
-                    loop_max=limits.loopMax,
-                    model=turn_cfg.provider.model,
-                    pricing=turn_cfg.effective_pricing() or None,
-                )
-                hot = self._memory.refresh(self._state, datetime.now(self._zone))
-                try:
-                    reply = await loop.run(
-                        text, hot=hot, event_sink=event_sink, persist_user=not retry
-                    )
-                except asyncio.CancelledError:
-                    raise
-                except LLMError as exc:
-                    self._mark_turn_error(sessions, "llm_error", str(exc))
-                    raise
-                except Exception:
-                    # Precise code stays in serve.log via bridge; the
-                    # transcript marker stays generic on purpose.
-                    self._mark_turn_error(sessions, "chat_unavailable", "chat unavailable")
-                    raise
-                await _name_if_needed(connect, sessions, turn_cfg, event_sink)
-                # The turn's own response is not a turn in flight: the client that
-                # just received it must not be told to wait for itself.
-                detail = self._detail(sessions.current, turn_cfg, running=False)
-                return {**detail, "reply": reply}
-            finally:
-                if owns:
-                    close = getattr(connect, "aclose", None)
-                    if close is not None:
-                        await close()
-        finally:
-            reset_chat_session(token)
-
-    @staticmethod
-    def _mark_turn_error(sessions: SessionManager, code: str, message: str) -> None:
-        """Best-effort transcript marker; never masks the original failure."""
-        try:
-            sessions.mark_turn_error(code, message)
-        except Exception:
-            pass
-
-    def _wire_retry_events(
-        self, connect: LLMPort, event_sink: EventSink | None
-    ) -> None:
-        """Surface provider transient retries as non-error TurnEvents."""
-        setter = getattr(connect, "set_retry_hook", None)
-        if not callable(setter):
-            return
-
-        def on_retry(attempt: int, max_attempts: int) -> None:
-            emit_event(
-                event_sink,
-                TurnEvent(
-                    type="llm.retry",
-                    attempt=attempt,
-                    max_attempts=max_attempts,
-                ),
-            )
-
-        setter(on_retry)
+        request = TurnRequest(
+            session_id=session_id,
+            text=text,
+            event_sink=event_sink,
+            turn_cfg=turn_cfg,
+            effort=effort,
+            retry=retry,
+        )
+        return await run_turn(scope, request, self._detail)
 
     def shutdown(self) -> None:
 

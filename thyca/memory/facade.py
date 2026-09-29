@@ -7,16 +7,15 @@ from pathlib import Path
 from thyca.config import atomic_write_text
 from thyca.memory.active import ActiveMemory
 from thyca.memory.archived import (
-    CANDIDATE_CAP,
-    DATE_RE,
     GET_SESSION_CAP,
+    NO_FALLBACK_PREFIXES,
     ArchivedMemory,
     ArchiveError,
     Hit,
     SearchResult,
-    dedup_siblings,
 )
 from thyca.memory.chunk import Chunk
+from thyca.memory.fallback import read_unindexed_chunk
 from thyca.memory.heading import (
     DEFAULT_IMPORTANCE,
     TTL_DAYS,
@@ -30,27 +29,10 @@ from thyca.memory.heading import (
     session_id,
     utc_now,
 )
-from thyca.memory.stats import CanonicalFile, MemoryStats, MemoryStatsResult
+from thyca.memory.search import _absolute_proj, lexical_search
+from thyca.memory.search import recent as _recent_search
+from thyca.memory.stats import CanonicalFile, MemoryStatsResult, build_stats
 from thyca.memory.writer import MemoryWriter
-from thyca.memory.rank import _promote_in_order_span
-
-
-def _absolute_proj(value: object) -> str | None:
-    # Local import: thyca.tools.__init__ re-exports MemoryFacade, so a
-    # top-level import here would cycle.
-    from thyca.tools.path_guard import absolutize
-
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise ValueError("proj must be an absolute path")
-    text = value.strip()
-    if not text:
-        return None
-    path = absolutize(text)
-    if not path.is_absolute():
-        raise ValueError("proj must be an absolute path")
-    return str(path)
 
 
 class MemoryFacade:
@@ -207,12 +189,20 @@ class MemoryFacade:
                 sid = session_id or ""
                 rows = self.archive.store.get_session(sid, now_ts)
                 chunk_ids = [str(row["chunk_id"]) for row in rows[:GET_SESSION_CAP]]
-        except ArchiveError:
-            if session_id is None:
+        except ArchiveError as original:
+            if str(original).startswith(NO_FALLBACK_PREFIXES):
                 raise
-            text = self.writer.read_session(session_id, now=now)
-            sid = session_id
-            chunk_ids = self._session_leaf_ids(session_id, text)[:GET_SESSION_CAP]
+            if chunk_id is not None:
+                text, sid = read_unindexed_chunk(
+                    self.archive, self.writer, chunk_id, now, original
+                )
+                chunk_ids = [chunk_id]
+            elif session_id is None:
+                raise
+            else:
+                text = self.writer.read_session(session_id, now=now)
+                sid = session_id
+                chunk_ids = self._session_leaf_ids(session_id, text)[:GET_SESSION_CAP]
         if chunk_ids and sid:
             self.archive.store.usage.record_gets(chunk_ids, sid, now_ts)
         # sid is always a validated non-empty id here (blank selectors raise
@@ -226,19 +216,22 @@ class MemoryFacade:
             if chunk_id is not None:
                 return self.archive.get(chunk_id=chunk_id, now=now)
             return self.archive.get(session_id=sid, now=now)
-        except ArchiveError:
+        except ArchiveError as reread_miss:
+            if str(reread_miss).startswith(NO_FALLBACK_PREFIXES):
+                raise
+            if chunk_id is not None:
+                leaf, _ = read_unindexed_chunk(
+                    self.archive, self.writer, chunk_id, now, reread_miss
+                )
+                return leaf
             return self.writer.read_session(sid, now=now)
 
     def stats(self, now: datetime | None = None) -> MemoryStatsResult:
-        now_ts = format_ts(utc_now(now))
-        return MemoryStats.build(
-            self.archive.store.visible_chunk_maps(now_ts),
-            self._today_chunks(now),
-            self.archive.store.usage.get_map(),
-            self.archive.store.usage.search_map(),
-            today=self.archive.day(now),
-            now_ts=now_ts,
+        return build_stats(
+            self.archive,
+            today_chunks=self._today_chunks(now),
             files=self._canonical_files(),
+            now=now,
         )
 
     def search(
@@ -251,48 +244,18 @@ class MemoryFacade:
         proj: str | None = None,
         chat: str | None = None,
     ) -> SearchResult:
-        if timeline_day is not None and not (
-            isinstance(timeline_day, str) and DATE_RE.fullmatch(timeline_day)
-        ):
-            return SearchResult(warnings=["invalid timeline_day"])
-        limit = max(1, min(limit, 10))
-        if not isinstance(query, str):
-            return SearchResult(warnings=["invalid query"])
-        if not query.strip():
-            return SearchResult(warnings=["empty query"])
-        try:
-            proj = _absolute_proj(proj)
-        except ValueError:
-            return SearchResult(warnings=["invalid proj"])
-        fts = self.archive.fts_hits(
-            query, timeline_day, now, CANDIDATE_CAP,
-            project=proj, chat_session=chat,
+        return lexical_search(
+            self.archive,
+            query,
+            limit=limit,
+            timeline_day=timeline_day,
+            now=now,
+            proj=proj,
+            chat=chat,
         )
-        hits: list[Hit] = list(fts)
-        trigram = self.archive.trigram_hits(
-            query, timeline_day, now, CANDIDATE_CAP,
-            project=proj, chat_session=chat,
-        )
-        seen = {hit.chunk_id for hit in hits}
-        for hit in trigram:
-            if hit.chunk_id not in seen:
-                hits.append(hit)
-                seen.add(hit.chunk_id)
-        hays = self.archive.store.rank_hays([hit.chunk_id for hit in hits])
-        hits = _promote_in_order_span(query, hits, self.archive.chunker, hays)
-        hits = self.archive.with_counts(dedup_siblings(hits)[:limit], now)
-        if hits:
-            now_ts = format_ts(utc_now(now))
-            by_session: dict[str, list[str]] = {}
-            for hit in hits:
-                by_session.setdefault(hit.session_id, []).append(hit.chunk_id)
-            for sid, chunk_ids in by_session.items():
-                self.archive.store.usage.record_searches(chunk_ids, sid, now_ts)
-        return SearchResult(hits=hits)
 
     def recent(self, limit: int = 5, now: datetime | None = None) -> list[Hit]:
-        limit = max(1, min(limit, 10))
-        return self.archive.with_counts(self.archive.recent_hits(limit, now), now)
+        return _recent_search(self.archive, limit, now)
 
     @staticmethod
     def _reject_legacy_session(session_id: str | None) -> None:

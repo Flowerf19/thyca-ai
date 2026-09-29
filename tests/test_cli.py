@@ -316,3 +316,30 @@ def test_print_model_override_routes_to_its_provider(tmp_path: Path) -> None:
         stub_b.shutdown()
         thread_b.join(timeout=2)
         stub_b.server_close()
+
+
+def test_print_tags_memory_with_cli_session(tmp_path: Path) -> None:
+    remember = ChatReply(
+        content=None,
+        tool_calls=[
+            ToolCall(
+                id="c1",
+                name="memory_remember",
+                arguments={"topic": "t", "summary": "s"},
+            )
+        ],
+    )
+
+    class SeqLLM:
+        def __init__(self) -> None:
+            self.requests: list[list[Message]] = []
+
+        async def chat(self, messages, tools=None):
+            self.requests.append(list(messages))
+            return remember if len(self.requests) == 1 else ChatReply(content="done")
+
+    cli, _out, _err = _cli(tmp_path, SeqLLM())
+    assert cli.main(["-p", "hi"]) == 0
+    session = SessionManager(tmp_path / "sessions").continue_last()
+    (day_file,) = list((tmp_path / "memory").glob("*.md"))
+    assert f'"chat":"{session.id}"' in day_file.read_text(encoding="utf-8")

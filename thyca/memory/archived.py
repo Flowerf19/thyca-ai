@@ -51,15 +51,16 @@ class ArchivedMemory:
         return day(now, self.zone())
 
     def lookup_session_id(self, chunk_id: str, now: datetime | None = None) -> str:
-        row = self.store.get_chunk(chunk_id, format_ts(now))
+        now_ts = format_ts(now)
+        row = self.store.get_chunk(chunk_id, now_ts)
         if row is None:
-            raise ArchiveError(f"chunk not found: {chunk_id}")
+            raise self._chunk_miss_error(chunk_id, now_ts)
         return str(row["session_id"])
 
     def reindex(self, now: datetime | None = None) -> None:
         today = self.day(now)
         wanted: set[str] = set()
-        for name in ("SOUL.md", "USER.md"):
+        for name in ("SOUL.md", "USER.md", "IDENTITY.md"):
             path = self.thyca_dir / name
             wanted.add(str(path))
             self._reindex_file(path, "canonical", None, today)
@@ -153,11 +154,11 @@ class ArchivedMemory:
         if chunk_id:
             row = self.store.get_chunk(chunk_id, now)
             if row is None:
-                raise ArchiveError(f"chunk not found: {chunk_id}")
+                raise self._chunk_miss_error(chunk_id, now)
             return row["text_raw"]
         rows = self.store.get_session(session_id or "", now)
         if not rows:
-            raise ArchiveError(f"session not found: {session_id}")
+            raise self._session_miss_error(session_id or "", now)
         heading = rows[0]["heading_raw"]
         body = [row["text_raw"] for row in rows[:GET_SESSION_CAP]]
         text = "\n".join([heading, *body] if heading else body)
@@ -189,6 +190,47 @@ class ArchivedMemory:
         chunks = self.chunker.chunk_markdown(path, text, source_kind=kind, timeline_day=day)
         self.store.replace_source(str(path), kind, day, stat.st_mtime_ns, stat.st_size, chunks)
 
+    def _chunk_miss_error(self, chunk_id: str, now: str) -> ArchiveError:
+        # T6a: VISIBLE_SQL collapses expired/forgotten/never-existed into
+        # one miss — re-read the raw row to name the real cause.
+        row = self.store.get_chunk_any(chunk_id)
+        if row is None:
+            return ArchiveError(f"chunk not found: {chunk_id}")
+        reason = _invisible_reason(row, now)
+        if reason is None:
+            return ArchiveError(f"chunk not found: {chunk_id}")
+        return ArchiveError(f"chunk {reason}: {chunk_id}")
+
+    def _session_miss_error(self, session_id: str, now: str) -> ArchiveError:
+        rows = self.store.get_session_any(session_id)
+        if not rows:
+            return ArchiveError(f"session not found: {session_id}")
+        reasons = {_invisible_reason(row, now) for row in rows} - {None}
+        if "forgotten" in reasons:
+            return ArchiveError(f"session forgotten: {session_id}")
+        if "expired" in reasons:
+            return ArchiveError(f"session expired: {session_id}")
+        return ArchiveError(f"session not found: {session_id}")
+
+
+#: Miss prefixes that must not fall back to the writer (T6a): the row is
+#: indexed but invisible, so the file holds the same expired/forgotten
+#: heading — falling back would mask the real cause as "not found".
+NO_FALLBACK_PREFIXES = (
+    "chunk expired:",
+    "chunk forgotten:",
+    "session expired:",
+    "session forgotten:",
+)
+
+
+def _invisible_reason(row, now: str) -> str | None:
+    if row["forgotten_at"] is not None:
+        return "forgotten"
+    expires_at = row["expires_at"]
+    if expires_at is not None and expires_at <= now:
+        return "expired"
+    return None
 
 
 def dedup_siblings(hits: list[Hit]) -> list[Hit]:

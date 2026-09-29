@@ -17,7 +17,7 @@ class TurnSummary:
     started_at: str  # ISO of first message
     ended_at: str
     model: str | None
-    status: str  # completed | failed | loop_limit
+    status: str  # completed | failed | loop_limit | context_limit
     rounds: int
     requests: int
     prompt_tokens: int | None
@@ -52,11 +52,22 @@ class TurnSummary:
         }
 
 
+def _is_context_stop(message: Message) -> bool:
+    """True for the guard's synthetic stop marker (no provider call behind it)."""
+    return (message.meta or {}).get("status") == "context_limit"
+
+
 def _turn_status(slice_msgs: list[Message]) -> str:
     # A stamped failure marker wins: a turn that died mid-loop may still end
     # on an assistant/tool message, which must not read as completed.
     if any(isinstance((m.meta or {}).get("error"), dict) for m in slice_msgs):
         return "failed"
+    # The context guard's synthetic stop is not a success: it made no
+    # provider call, so it must not count as a completed turn (naming
+    # threshold) or a request (trace totals). Already persisted rows
+    # carry the same meta, so they are handled too.
+    if any(_is_context_stop(m) for m in slice_msgs):
+        return "context_limit"
     # naming meta-messages are not turn outcomes — skip them, keep old semantics
     last = next(
         (m for m in reversed(slice_msgs) if not is_naming_message(m)),
@@ -84,7 +95,7 @@ def _sum_tokens(turn_msgs: list[Message]) -> tuple[int | None, int | None, int |
     model: str | None = None
     rounds = 0
     for msg in turn_msgs:
-        if msg.role != "assistant":
+        if msg.role != "assistant" or _is_context_stop(msg):
             continue
         meta = msg.meta or {}
         usage = meta.get("usage")
@@ -152,7 +163,9 @@ def turns_from_session(session: Session) -> list[TurnSummary]:
             (m.meta["error"] for m in sl if isinstance((m.meta or {}).get("error"), dict)),
             None,
         )
-        rounds = sum(1 for m in sl if m.role == "assistant")
+        rounds = sum(
+            1 for m in sl if m.role == "assistant" and not _is_context_stop(m)
+        )
         requests = rounds
         started = sl[0].ts if sl else ""
         ended = sl[-1].ts if sl else ""

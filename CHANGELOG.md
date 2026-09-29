@@ -2,6 +2,37 @@
 
 Thay đổi của Thyca, viết ngắn gọn cho người dùng.
 
+## 0.86.5.dev0 — Development
+
+- Gọn lại code provider (nội bộ, không đổi tính năng): mỗi chuẩn API một module, dùng chung helper, bớt file trùng lặp.
+- Nút Test API giờ kiểm tra đúng đường chat thật (kèm mức reasoning đã lưu), hết chuyện test OK nhưng chat lỗi.
+- Responses thêm `store: false`: server không còn giữ response mồ côi; Thyca vốn đã tự quản lý hội thoại nên không ảnh hưởng gì.
+- Đây là bản dev, chưa phải beta hay stable; không tự bỏ hậu tố dev khi nâng phiên bản.
+
+## 0.86.4.dev0 — Development
+
+- Đọc trí nhớ an toàn hơn: không đọc qua symlink, note hết hạn báo rõ thay vì tự gia hạn, file lỗi mã báo đúng lỗi thay vì "không tìm thấy".
+- Suy nghĩ (reasoning) giữ đúng qua các lượt tool: tóm tắt rỗng hợp lệ không còn bị mất, reasoning thiếu mã bị bỏ qua, đổi model giữa Responses và Chat không còn gửi sai định dạng.
+- Phiên dài hết bị chặn oan ở ngưỡng 95–100% context: tự nén trước khi dừng; lượt dừng vì đầy context hiện đúng trạng thái, không tính thành công hay tính thêm request.
+- Thu gọn output tool trung thực: chỉ hứa đọc lại khi output còn được lưu, output đã xóa báo rõ, không còn gợi ý đọc lại sai.
+- Sửa crash khi lượt tool dài vượt ngưỡng thu gọn giữa chừng.
+- Đây là bản dev, chưa phải beta hay stable; không tự bỏ hậu tố dev khi nâng phiên bản.
+
+## 0.86.3.dev0 — Development
+
+- Note hôm nay hết lẫn lộn giữa các phiên: phiên đang chat thấy đủ note của mình, note phiên khác chỉ hiện 1 dòng tiêu đề (đọc chi tiết khi cần) — không còn chuyện đang hỏi tool thì Thyca lôi dự án khác vào.
+- Note cùng phiên hiện kèm mã tra cứu để đọc lại/sửa/xóa trong ngày; note ghi từ CLI cũng gắn đúng phiên.
+- Phiên dài hết bị "mất trí nhớ thầm lặng": khi lịch sử cũ buộc phải lược, Thyca giờ thấy được phần tóm tắt còn lại thay vì quên hẳn.
+- Lượt tool chạy dài hết vỡ giữa chừng vì đầy context: kết quả cũ tự thu gọn (đọc lại hoặc chạy lại tùy loại khi cần), quá tải thì dừng gọn gàng thay vì lỗi nhà cung cấp.
+- Tìm kiếm trí nhớ trung thực hơn: báo rõ khi kết quả bị giới hạn, khi note đã hết hạn/bị xóa, và khi tìm trong ngày hôm nay (ngày hôm nay chỉ đọc trực tiếp, chưa tìm được).
+- Hồ sơ trống thì để trống: không còn tự thay tính cách/hồ sơ mẫu khi file chưa có nội dung.
+- Sửa lỗi 400 ở Responses API khi reasoning vòng trước thiếu bản tóm tắt: chỉ gửi reasoning hợp lệ, phần thiếu bị bỏ qua thay vì làm sập lượt chat.
+- Đọc note trong ngày trung thực hơn: symlink không bị đọc theo/không bị thay thế, note hết hạn báo hết hạn thay vì tự gia hạn, file lỗi font báo đúng lỗi thay vì "không tìm thấy"; `memory_search(limit=0)` giữ cảnh báo giới hạn qua gateway.
+- Reasoning giữ bản tóm tắt rỗng hợp lệ (kể cả dạng mã hóa) khi gửi lại, đòi id dùng được, và không lọt reasoning dạng Responses sang đường Chat khi đổi model/provider giữa phiên.
+- Phiên gần đầy context giờ nén trước khi chạm ngưỡng dừng (hết vùng chết giữa nén và dừng), giữ tin nhắn retry và không tách rời cặp tool-call/kết quả; lượt dừng vì đầy context không còn tính là thành công trong Trace/đặt tên.
+- Kết quả tool dài thu gọn bằng con trỏ đọc lại đáng tin (từ gateway, không đoán từ chữ trong output): poll `tool_read` đọc tiếp bằng phân trang, id lạ trong tài liệu không thành con trỏ.
+- Đây là bản dev, chưa phải beta hay stable; không tự bỏ hậu tố dev khi nâng phiên bản.
+
 ## 0.86.2.dev0 — Development
 
 - Thêm/bớt/sửa MCP server trong config có hiệu lực ở lượt chat sau, không cần restart serve (trước đây phải restart, mà để agent tự restart thì turn đó chết luôn).

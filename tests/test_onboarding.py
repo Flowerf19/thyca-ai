@@ -189,8 +189,9 @@ def test_chat_ok_returns_model_and_latency() -> None:
     assert result["latency_ms"] >= 0
     assert seen[0]["path"] == "/chat/completions"
     assert seen[0]["auth"] == "Bearer sk-secret"
-    assert seen[0]["body"]["stream"] is False
+    assert seen[0]["body"]["stream"] is True
     assert seen[0]["body"]["messages"] == [{"role": "user", "content": "ping"}]
+    assert seen[0]["body"]["reasoning_effort"] == "high"
 
 
 def test_chat_404_names_missing_model() -> None:
@@ -251,8 +252,9 @@ def test_responses_ok_returns_model_and_latency() -> None:
     assert result["latency_ms"] >= 0
     assert seen[0]["path"] == "/responses"
     assert seen[0]["auth"] == "Bearer sk-secret"
-    assert seen[0]["body"]["stream"] is False
+    assert seen[0]["body"]["stream"] is True
     assert seen[0]["body"]["input"] == [{"role": "user", "content": "ping"}]
+    assert seen[0]["body"]["reasoning"] == {"effort": "high", "summary": "auto"}
 
 
 def test_responses_404_names_missing_model() -> None:
@@ -278,7 +280,9 @@ def test_responses_auth_error_has_no_key() -> None:
 
 
 def test_responses_rejects_bad_schema() -> None:
-    httpd, thread = _chat_server(b'{"output": []}')
+    # The real Connect parser accepts an empty output list as an empty turn;
+    # a non-list output is what it rejects.
+    httpd, thread = _chat_server(b'{"output": {}}')
     try:
         base = f"http://127.0.0.1:{httpd.server_address[1]}"
         with pytest.raises(ProviderProbeError, match="schema"):

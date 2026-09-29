@@ -9,7 +9,7 @@ from .limits import LimitsCfg
 from .mcp import McpServerCfg
 from .models import ModelCfg, _model_to_dict
 from .pricing import PricingCfg
-from .providers import ProviderCfg, ProviderEntry, _provider_to_dict
+from .providers import ProviderCfg, ProviderEntry, _base_url_for, _provider_to_dict, resolve
 from .timeline import TimelineCfg
 
 
@@ -25,9 +25,7 @@ def resolve_model_base_url(entry_base_url: str, registered: ModelCfg | None) -> 
     and the provider test endpoint: a model with its own baseUrl (0.8.2 escape
     hatch) calls that endpoint; the new UI does not write it, but old configs
     keep working."""
-    if registered is not None and registered.baseUrl:
-        return registered.baseUrl
-    return entry_base_url
+    return _base_url_for(entry_base_url, registered)
 
 
 @dataclass(frozen=True)
@@ -85,28 +83,11 @@ class Config:
         """Resolved connection for one model: its provider's URL/key plus model overrides."""
         entry = self.providers.get(self.provider_id_for(model_id))
         if entry is None:
-            entry = self.providers.get(self.defaultProvider)
-        if entry is None:
+            # load() guarantees defaultProvider exists (parsing rejects an
+            # unknown id and empty providers), but hand-built Configs have no
+            # such guard: fall back to any entry, then built-in defaults.
             entry = next(iter(self.providers.values()), ProviderEntry())
-        effort = entry.reasoningEffort
-        registered = self.models.get(model_id)
-        base_url = resolve_model_base_url(entry.baseUrl, registered)
-        own_set: tuple[str, ...] = ()
-        if registered is not None:
-            if registered.reasoningEffort:
-                effort = registered.reasoningEffort
-                # The model's own set governs only its own override; an
-                # inherited entry effort stays on the global check.
-                own_set = registered.reasoningEfforts
-        return ProviderCfg(
-            baseUrl=base_url,
-            apiKeyEnv=entry.apiKeyEnv,
-            apiKey=entry.apiKey,
-            reasoningEffort=effort,
-            api=entry.api,
-            model=model_id,
-            reasoningEfforts=own_set,
-        )
+        return resolve(entry, model_id, self.models.get(model_id))
 
     def effective_provider(self) -> ProviderCfg:
         """Provider slice for the default model (single-provider callers)."""

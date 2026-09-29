@@ -104,6 +104,12 @@ def tool_message(
         if meta is None:
             meta = {}
         meta["round"] = round_no
+    if result.exec_ref is not None:
+        # Gateway-attached provenance, persisted so the shrink guard can
+        # promise a re-read pointer without parsing output text.
+        if meta is None:
+            meta = {}
+        meta["exec_id"] = result.exec_ref
     return Message(
         role="tool",
         content=result.content,

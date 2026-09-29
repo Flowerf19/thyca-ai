@@ -256,6 +256,39 @@ def test_estimate_deterministic_and_compaction_boundary(tmp_path: Path) -> None:
     assert tail_tokens <= int(1000 * 0.6) or len(_user_assistant_turns(loaded.messages[1:])) == 1
 
 
+def test_compact_overhead_triggers_when_transcript_alone_fits(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path, LimitsCfg(contextTokens=2000))
+    manager.create()
+    for i in range(4):
+        manager.append(msg("user", "u" * 300 + str(i)))
+        manager.append(msg("assistant", "a" * 300))
+    transcript = sum(estimate_tokens(m) for m in manager.current.messages)
+    assert transcript <= 2000
+    assert not manager.compact_if_needed()
+    assert manager.compact_if_needed(pending_user_tokens=2000 - transcript + 1)
+
+
+def test_compact_tail_budget_subtracts_overhead_and_marker() -> None:
+    from thyca.sessions.compaction import SessionCompactor, _marker_reserve_tokens
+
+    compactor = SessionCompactor()
+    messages: list[Message] = []
+    for i in range(8):
+        messages.append(msg("user", "u" * 300 + str(i)))
+        messages.append(msg("assistant", "a" * 300))
+    plain = compactor.compact(messages, 1200)
+    assert plain is not None
+    overhead = 100 + 100 + 100
+    lean = compactor.compact(
+        messages, 1200, hot_tokens=100, tools_tokens=100, pending_user_tokens=100
+    )
+    assert lean is not None
+    assert len(lean) <= len(plain)
+    tail_tokens = sum(estimate_tokens(m) for m in lean[1:])
+    expected = int((1200 - overhead - _marker_reserve_tokens()) * 0.6)
+    assert tail_tokens <= expected or len(_user_assistant_turns(lean[1:])) == 1
+
+
 def _user_assistant_turns(messages: list[Message]) -> list[list[Message]]:
     turns: list[list[Message]] = []
     current: list[Message] = []
@@ -274,11 +307,13 @@ def test_single_oversize_turn_kept(tmp_path: Path) -> None:
     session = manager.create()
     manager.append(msg("user", "u" * 8000))
     manager.append(msg("assistant", "a" * 8000))
-    assert manager.compact_if_needed()
+    # Nothing can be omitted (the lone turn must survive), so no junk
+    # 0/0 marker is minted and the file is left untouched.
+    assert not manager.compact_if_needed()
     roles = [item.role for item in session.messages]
-    assert roles == ["system", "user", "assistant"]
+    assert roles == ["user", "assistant"]
     loaded = manager.load(session.id)
-    assert [item.role for item in loaded.messages] == ["system", "user", "assistant"]
+    assert [item.role for item in loaded.messages] == ["user", "assistant"]
 
 
 def test_traversal_and_replace_failure_preserve_old(
@@ -1029,9 +1064,26 @@ def test_x17_shared_estimator() -> None:
 
     assert core_estimate("abcd") == 1
     assert core_estimate("") == 0
-    msg = Message(role="user", content="same")
-    assert session_estimate(msg) == core_estimate(
-        json.dumps(msg.to_canonical_dict(), ensure_ascii=False)
+    # Wire payload only: ts/meta/reasoning are stripped by both adapters,
+    # so they must not move the estimate.
+    base = Message(role="user", content="same")
+    noisy = Message(
+        role="user",
+        content="same",
+        ts="2026-01-02T00:00:00Z",
+        meta={"trace": "x" * 2000},
+        reasoning="r" * 2000,
+    )
+    assert session_estimate(noisy) == session_estimate(base)
+    assert session_estimate(base) == core_estimate(
+        json.dumps({"role": "user", "content": "same"}, ensure_ascii=False)
+    )
+    # reasoning_details rides the chat path uncapped: it stays counted.
+    signed = Message(
+        role="assistant", content="same", reasoning_details=[{"sig": "s" * 400}]
+    )
+    assert session_estimate(signed) > session_estimate(
+        Message(role="assistant", content="same")
     )
 
 
@@ -1446,3 +1498,117 @@ def test_set_title_if_missing_wins_and_loses_atomically(tmp_path: Path) -> None:
     assert manager.current.title == "Tên tôi tự đặt"
     assert manager.current.title_source == "user"
     assert SessionManager(tmp_path).load(session.id).title == "Tên tôi tự đặt"
+
+
+# --- T1: compaction excerpt is the tail, carried forward on re-compaction ---
+
+
+def _marker_excerpt(marker: Message) -> str:
+    return (marker.content or "").rsplit("excerpt: ", 1)[-1][:-1]
+
+
+def test_t1_excerpt_takes_tail_of_omitted_content() -> None:
+    from thyca.sessions import SessionCompactor
+
+    compactor = SessionCompactor()
+    messages: list[Message] = []
+    for i in range(8):
+        messages.append(msg("user", f"TURN{i}-USER-" + "u" * 300))
+        messages.append(msg("assistant", f"TURN{i}-ASST-" + "a" * 300))
+    result = compactor.compact(messages, 1000)
+    assert result is not None
+    tail_len = len(result) - 1
+    omitted = messages[: len(messages) - tail_len]
+    assert len(omitted) >= 4  # enough omitted history to clip the head away
+    excerpt_src = "\n".join(
+        m.content
+        for m in omitted
+        if m.role in ("user", "assistant") and m.content
+    )
+    assert len(excerpt_src) > 1000
+    excerpt = _marker_excerpt(result[0])
+    assert len(excerpt) <= 1000
+    assert excerpt_src.endswith(excerpt)  # tail, not head
+    newest = omitted[-2].content or ""
+    assert newest[:20] in excerpt  # most recent omitted turn survives
+    oldest = omitted[0].content or ""
+    assert oldest[:20] not in excerpt  # oldest clipped away
+
+
+def test_t1_clip_excerpt_tail_and_surrogate_safety() -> None:
+    from thyca.sessions.compaction import SessionCompactor
+
+    clip = SessionCompactor._clip_excerpt
+    assert clip("abcdef", 4) == "cdef"
+    assert clip("abc", 10) == "abc"
+    assert clip("", 5) == ""
+    assert clip("abcdef", 0) == ""
+    # Cut lands between a surrogate pair: the orphaned low surrogate drops.
+    assert clip("ab\ud800\udc00cd", 3) == "cd"
+    # Astral characters off the cut point pass through intact.
+    assert clip("ab\U0001f600cdef", 4) == "cdef"
+
+
+def test_t1_recompact_carries_prior_excerpt_and_counts(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path, LimitsCfg(contextTokens=1000))
+    session = manager.create()
+    for i in range(8):
+        manager.append(msg("user", f"gen1-TURN{i}-" + "u" * 300))
+        manager.append(msg("assistant", f"gen1-REPLY{i}-" + "a" * 300))
+    assert manager.compact_if_needed()
+    marker1 = manager.current.messages[0]
+    assert marker1.role == "system"
+    excerpt1 = _marker_excerpt(marker1)
+    meta1 = dict(marker1.meta or {})
+    assert meta1["omitted_messages"] > 0
+
+    for i in range(6):
+        manager.append(msg("user", f"gen2-TURN{i}-" + "v" * 300))
+        manager.append(msg("assistant", f"gen2-REPLY{i}-" + "b" * 300))
+    before = len(manager.current.messages)
+    assert manager.compact_if_needed()
+    compacted = manager.current.messages
+    # Single leading system marker: store.scan's contract.
+    assert compacted[0].role == "system"
+    assert all(m.role != "system" for m in compacted[1:])
+    excerpt2 = _marker_excerpt(compacted[0])
+    assert len(excerpt2) <= 1000
+    # Prior excerpt survives (capped to its head budget), newest stays.
+    prior_kept = excerpt1[-500:] if len(excerpt1) > 500 else excerpt1
+    assert prior_kept in excerpt2
+    assert "gen2-" in excerpt2
+    # Counts accumulate the carried-forward history, not just fresh omits.
+    meta2 = compacted[0].meta or {}
+    fresh_omitted = before - len(compacted)
+    assert fresh_omitted > 0
+    assert meta2["omitted_messages"] == meta1["omitted_messages"] + fresh_omitted
+    assert meta2["omitted_turns"] >= meta1["omitted_turns"]
+    assert meta2["omitted_chars"] > meta1["omitted_chars"]
+    # Output round-trips through store.scan (load path).
+    reloaded = SessionManager(tmp_path).load(session.id)
+    assert reloaded.messages[0].role == "system"
+    assert reloaded.messages[0].meta == meta2
+
+    # Markers stay bounded across repeated compactions.
+    for i in range(6):
+        manager.append(msg("user", f"gen3-TURN{i}-" + "w" * 300))
+        manager.append(msg("assistant", f"gen3-REPLY{i}-" + "c" * 300))
+    assert manager.compact_if_needed()
+    excerpt3 = _marker_excerpt(manager.current.messages[0])
+    assert len(excerpt3) <= 1000
+    assert "gen3-" in excerpt3
+    reloaded = SessionManager(tmp_path).load(session.id)
+    assert [m.role for m in reloaded.messages[:2]] != ["system", "system"]
+
+
+def test_compact_overhead_only_returns_none_without_junk_marker() -> None:
+    from thyca.sessions.compaction import SessionCompactor
+
+    compactor = SessionCompactor()
+    messages = [msg("user", "u" * 100), msg("assistant", "a" * 100)]
+    # Overhead alone trips the cap but every turn fits: shrink nothing,
+    # mint no "omitted 0 messages/0 turns" marker.
+    assert (
+        compactor.compact(messages, 1000, pending_user_tokens=1000) is None
+    )
+    assert compactor.compact([], 1000, pending_user_tokens=1000) is None

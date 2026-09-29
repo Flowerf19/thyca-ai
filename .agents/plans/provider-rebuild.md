@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 created: 2026-09-29
 last_updated: 2026-09-29
 ---
@@ -82,7 +82,11 @@ Thay đổi wire duy nhất có chủ ý: Responses payload thêm `"store": fals
 |----|------|------|------|
 | TASK-014 | Full `uv run pytest -q` + `ruff check` xanh; không file chết, không import chết | x | 2026-09-29 |
 | TASK-015 | Đo line count `thyca/llm` + `thyca/config/providers.py` trước/sau, ghi vào plan; cập nhật CHANGELOG (1 entry, nêu `store:false` là wire change duy nhất) | x | 2026-09-29 |
-| TASK-016 | Verify tay: Test API + chat 1 turn trên cả Meta (responses) và CommandCode (chat), đổi model giữa chừng (lọc `reasoning_details` khác chuẩn) | | |
+| TASK-016 | Verify tay: Test API + chat 1 turn trên cả Meta (responses) và CommandCode (chat), đổi model giữa chừng (lọc `reasoning_details` khác chuẩn) | x | 2026-09-29 |
+
+## Close-out
+
+Done 2026-09-29. User verified live on 0.86.5.dev0 (Meta + CommandCode Test API and chat, mid-session model switch): stable. Merged to main.
 
 ## Test Plan
 

@@ -815,6 +815,15 @@
     0.65rem 0.8rem 1.2rem var(--color-shell-shadow-soft);
 }
 
+/* Tall screens (F11 fullscreen on 1080p+, 3K at 100%): the 58.875rem cap
+   would leave a desk gap below the composer, so lift it and let the shell
+   fill the viewport. Shorter screens keep the cap. */
+@media (min-height: 60rem) {
+  .notebook-shell {
+    max-height: none;
+  }
+}
+
 .notebook-shell::before {
   content: "";
   position: absolute;

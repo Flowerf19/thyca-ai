@@ -53,7 +53,7 @@
 }
 
 .backend-state.is-error {
-  border: var(--rule) solid var(--color-danger, var(--color-accent));
+  border: var(--rule) solid var(--color-danger, var(--color-accent-deep));
   border-radius: var(--radius-card);
   background: var(--color-paper-card);
 }

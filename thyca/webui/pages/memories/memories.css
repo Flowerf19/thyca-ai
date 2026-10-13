@@ -340,3 +340,37 @@
     font-size: 0.92rem;
   }
 }
+
+/* Team v1: "Chờ cho cả đội nhớ" — candidate queue tab, visible only while
+   pending items exist (the module toggles [hidden]). Token-only. */
+.pending-view {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.pending-view[hidden] {
+  display: none;
+}
+
+.pending-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.pending-chip.is-active {
+  font-weight: 600;
+}
+
+.pending-card time {
+  color: var(--color-accent);
+  font-style: italic;
+}
+
+.pending-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-block-start: 0.5rem;
+}

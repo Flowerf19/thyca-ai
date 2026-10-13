@@ -67,3 +67,71 @@
 
   hydrate(read());
 })();
+
+/* Team v1 (FE-4): Cài đặt › Bot — read-only roster from GET /api/bots.
+   Separate IIFE so the preferences module above stays untouched. Changes go
+   through Thyca in chat; each row links there. Registry unavailable →
+   honest "chưa sẵn sàng" line, never fake rows. */
+(() => {
+  const TINTS = ["accent", "botanical", "success-ink", "ink", "accent-deep"];
+  const STATUS = { running: "đang làm", idle: "rảnh", paused: "tạm dừng", error: "lỗi" };
+
+  const tintFor = (id, tint) => {
+    if (id === "thyca") return "accent";
+    if (TINTS.includes(tint)) return tint;
+    let hash = 0;
+    const text = String(id || "");
+    for (let i = 0; i < text.length; i++) hash = (hash * 31 + text.charCodeAt(i)) >>> 0;
+    return TINTS[hash % TINTS.length];
+  };
+
+  const list = document.getElementById("bot-list");
+  const status = document.getElementById("bot-list-status");
+  if (!list || !status) return; // not on settings.html
+
+  const note = (text) => {
+    status.textContent = text;
+  };
+
+  fetch("/api/bots", { headers: { Accept: "application/json" } })
+    .then((response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.json();
+    })
+    .then((payload) => {
+      const raw = Array.isArray(payload) ? payload : payload?.bots;
+      const bots = (Array.isArray(raw) ? raw : []).filter(
+        (bot) => bot && typeof bot.id === "string" && bot.id,
+      );
+      if (!bots.length) {
+        note("Đội bot chưa sẵn sàng — mới có Thyca.");
+        return;
+      }
+      list.replaceChildren();
+      for (const bot of bots) {
+        const row = document.createElement("article");
+        row.className = "fold-row settings-row";
+        const info = document.createElement("div");
+        const name = document.createElement("h3");
+        name.textContent = bot.name || bot.id;
+        const sub = document.createElement("p");
+        sub.className = "screen-muted";
+        const parts = [bot.role, STATUS[bot.status]].filter(Boolean);
+        sub.textContent = parts.length ? parts.join(" · ") : bot.id;
+        info.append(name, sub);
+        const dot = document.createElement("span");
+        dot.className = "team-bot-dot";
+        dot.style.setProperty("--team-tint", `var(--color-${tintFor(bot.id, bot.tint)})`);
+        dot.setAttribute("aria-hidden", "true");
+        const link = document.createElement("a");
+        link.className = "screen-button";
+        link.href = "./index.html";
+        link.textContent = "Nhắn trong Chat";
+        row.append(dot, info, link);
+        list.append(row);
+      }
+    })
+    .catch(() => {
+      note("Đội bot chưa sẵn sàng — mới có Thyca.");
+    });
+})();

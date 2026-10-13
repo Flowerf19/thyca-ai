@@ -41,3 +41,12 @@
     overflow: auto;
   }
 }
+
+/* Team v1: Cài đặt › Bot — tint dot for the read-only roster. */
+.team-bot-dot {
+  flex: none;
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 999px;
+  background: var(--team-tint, var(--color-accent));
+}

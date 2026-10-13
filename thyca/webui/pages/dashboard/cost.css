@@ -165,3 +165,23 @@
   stroke: none;
   font: 12px var(--font-reading);
 }
+
+/* Team v1: chi phí theo bot — one row per bot, tint dot + recorded total. */
+.cost-bot-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+
+.cost-bot-row .team-bot-dot {
+  align-self: center;
+}
+
+.cost-bot-name {
+  color: var(--color-reading);
+  font-weight: 600;
+}
+
+.cost-bot-row .journal-meta {
+  margin-inline-start: auto;
+}

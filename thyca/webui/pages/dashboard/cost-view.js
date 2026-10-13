@@ -10,6 +10,7 @@ import {
   rollingRange,
 } from "../../shared/js/analytics-data.js";
 import { formatCost, formatInteger } from "../../shared/js/format.js";
+import { renderCostBots } from "./cost-bots.js";
 import { drawBarChart } from "../../shared/js/bar-chart.js";
 import {
   modelsPager,
@@ -131,6 +132,8 @@ function render() {
   drawCostChart();
   renderModels();
   renderSessions();
+  // Team v1: per-bot cost over the same fixed snapshot (never another period).
+  renderCostBots(view.rows);
 }
 
 async function load() {

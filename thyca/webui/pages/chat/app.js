@@ -1,7 +1,7 @@
 import { getJson } from "../../shared/js/http.js";
 import { cleanText } from "../../shared/js/format.js";
 import { messageOf } from "../../shared/js/status.js";
-import { renderConversation, renderEmpty, renderError } from "./transcript.js";
+import { renderConversation, renderEmpty, renderError, setTeamChoiceHandler } from "./transcript.js";
 import { createLiveStatus } from "./live-status.js";
 import {
   initSessionsSidebar,
@@ -34,10 +34,15 @@ import {
   initComposer,
   newFromContext,
   retryMessage,
+  sendChoiceText,
   sendIdleRemember,
   sendMessage,
   syncContext,
 } from "./composer.js";
+import { initTeamSidebar, syncTeamSessions, teamBots } from "./team-sidebar.js";
+import { initMention, mentionKeydown } from "./team-mention.js";
+import { initTeamStrip, renderTeamStrip } from "./team-strip.js";
+import { initTeamDrawer, openBotDrawer } from "./team-drawer.js";
 
 const el = {
   composer: document.querySelector("#composer"),
@@ -75,6 +80,7 @@ const el = {
   deleteCancel: document.querySelector("#cancel-delete"),
   chatTitle: document.querySelector("#chat-title"),
   back: document.querySelector("#chat-back"),
+  advanced: document.querySelector("#composer-advanced"),
 };
 
 // Mobile pick pattern (same as Hồ sơ/Cài đặt): the session list shows first,
@@ -156,6 +162,10 @@ function renderDetail(detail) {
   }
   syncContext(detail);
   renderSessions();
+  // Team modules live outside the four-file concat the node harnesses
+  // replay (imports stripped there): guard every cross-module call.
+  if (typeof renderTeamStrip === "function") renderTeamStrip();
+  if (typeof syncTeamSessions === "function") syncTeamSessions();
   requestAnimationFrame(() => scrollToBottom("auto"));
 }
 
@@ -223,6 +233,7 @@ function bind() {
     void sendMessage();
   });
   el.input.addEventListener("keydown", (event) => {
+    if (typeof mentionKeydown === "function" && mentionKeydown(event)) return;
     if (event.key !== "Enter" || event.shiftKey || event.isComposing || event.keyCode === 229) return;
     event.preventDefault();
     el.composer.requestSubmit();
@@ -235,6 +246,11 @@ function bind() {
     if (event.animationName === "composer-nudge") el.composer.classList.remove("is-nudging");
   });
   el.idleRemember.addEventListener("click", sendIdleRemember);
+  el.advanced?.addEventListener("click", () => {
+    // r9: the button exists but opens no real popover yet.
+    el.status.textContent = "Tùy chọn nâng cao chưa có trong v1.";
+  });
+  if (typeof setTeamChoiceHandler === "function") setTeamChoiceHandler((text) => sendChoiceText(text));
   el.idleDismiss.addEventListener("click", armIdle);
   el.contextCompact.addEventListener("click", () => void compactFromContext());
   el.contextFocus.addEventListener("keydown", (event) => {
@@ -319,9 +335,40 @@ const hub = {
   setRunning,
   syncComposer,
   armIdle,
+  // Team v1: roster/discovery for the strip, drawer and mention popup.
+  // teamBots/openBotDrawer resolve to the real imports in the browser;
+  // under the stripped harness they stay uncalled (never fake data).
+  teamRoster: () => (typeof teamBots === "function" ? teamBots() : []),
+  openBotDrawer: (botId) => {
+    if (typeof openBotDrawer === "function") openBotDrawer(botId);
+  },
+  messageThycaAbout: (botId) => {
+    el.input.value = botId ? `Thyca ơi, về ${botId}: ` : "Thyca ơi, ";
+    exitPicking();
+    el.input.focus();
+  },
+  afterTeamSession: async (detail) => {
+    if (detail && detail.id) {
+      state.activeId = String(detail.id);
+      rememberActiveSession(state.activeId);
+    }
+    await refreshSessions(state.activeId);
+    if (detail && detail.id) await loadSession(String(detail.id));
+    syncTeamSessions();
+  },
 };
 initSessionsSidebar(hub);
 initTurnFollow(hub);
 initComposer(hub);
+// Team entry points live in sibling modules (see renderDetail guard note).
+if (typeof initTeamStrip === "function") initTeamStrip(hub);
+if (typeof initTeamDrawer === "function") initTeamDrawer(hub);
+if (typeof initMention === "function") initMention(hub);
+if (typeof initTeamSidebar === "function") {
+  void initTeamSidebar(hub).then(() => {
+    if (typeof renderTeamStrip === "function") renderTeamStrip();
+    if (typeof syncTeamSessions === "function") syncTeamSessions();
+  });
+}
 
 void boot();

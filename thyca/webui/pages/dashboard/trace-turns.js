@@ -23,6 +23,7 @@ import {
 } from "./trace-data.js";
 import { el, state, stampNode, noteNode } from "./trace-view.js";
 import { activeGroup, setStatus, syncUrl } from "./trace-deeplink.js";
+import { renderDelegation } from "./trace-delegation.js";
 
 // Trace turn entries, numbered steps and the per-turn detail lifecycle.
 function turnStateFor(key) {
@@ -301,6 +302,9 @@ function renderStepsInto(turnState, body) {
   syncPager(turnState.pager, turnState.stepsPage, pages);
   body.append(turnState.pager.nav);
   body.append(ioBlock(detail));
+  // Team v1: delegation tree regroups the turn's own messages by trace meta.
+  const delegation = renderDelegation(detail);
+  if (delegation) body.append(delegation);
 }
 
 // Compact per-turn diagnostics the redesign had dropped, restored at the top

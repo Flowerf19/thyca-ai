@@ -983,3 +983,503 @@ button:active {
 .session-pager {
   margin-block: 0.75rem 0;
 }
+
+/* Team v1 (r9): Bot → Session sidebar, participant strip, per-bot messages,
+   @ mention popup, question/error cards, bot drawer. Only Thyca tokens —
+   no literal colors. */
+
+/* Sticky session title (r9 round 6). */
+.chat-title-head {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-content);
+  background: var(--color-paper-chat);
+}
+
+/* Date + version sit at the bottom-right corner on the chat page (r9 §4.2). */
+.chat-shell .site-header .header-line {
+  position: fixed;
+  right: 1.1rem;
+  bottom: 0.45rem;
+  z-index: var(--z-content);
+  margin: 0;
+  padding: 0;
+  border-bottom: 0;
+  font-size: 0.72rem;
+  pointer-events: none;
+}
+
+/* Participant strip: ≡ stays in the site header; bot names sit right,
+   visually right-to-left with thyca outermost (row-reverse over a
+   thyca-first DOM order). */
+.team-strip {
+  display: flex;
+  flex-direction: row-reverse;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 0.15rem 0.7rem;
+  margin: 0.15rem 0 0;
+  padding: 0;
+  text-align: right;
+  font-family: var(--font-reading);
+  font-size: 0.85rem;
+}
+
+.team-strip-name {
+  padding: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--team-tint, var(--color-accent));
+}
+
+.team-strip-name.is-running {
+  position: relative;
+  font-weight: 600;
+  overflow: hidden;
+}
+
+.team-strip-name.is-running::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 30%, var(--color-accent-soft) 50%, transparent 70%);
+  animation: team-shimmer 2.4s var(--ease-in-out) infinite;
+  pointer-events: none;
+}
+
+@keyframes team-shimmer {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+
+.team-strip-name.is-error {
+  color: var(--color-danger, var(--color-accent-deep));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .team-strip-name.is-running::after {
+    animation: none;
+  }
+}
+
+/* Level 1 bot rows: tint dot + name + status, same row shape as sessions. */
+.team-bot-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-reading);
+  text-align: start;
+}
+
+.team-bot-item:hover {
+  background: var(--color-accent-soft);
+}
+
+.team-bot-item.is-active {
+  background: var(--color-accent-soft);
+  font-weight: 600;
+}
+
+.team-bot-dot {
+  flex: none;
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: var(--radius-pill);
+  background: var(--team-tint, var(--color-accent));
+}
+
+.team-bot-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.team-bot-status {
+  margin-inline-start: auto;
+  color: var(--color-muted);
+  font-family: var(--font-reading);
+  font-size: 0.78rem;
+  font-style: italic;
+}
+
+.team-bot-status.is-running {
+  color: var(--color-botanical);
+}
+
+.team-bot-status.is-error {
+  color: var(--color-danger, var(--color-accent-deep));
+}
+
+.team-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.6rem 0.7rem;
+}
+
+.team-unavailable {
+  font-style: italic;
+}
+
+.team-shared-picker {
+  display: flex;
+  flex-basis: 100%;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.6rem;
+  border: var(--rule) solid var(--color-divider);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper-card);
+}
+
+.team-shared-title {
+  margin: 0;
+  font-weight: 600;
+}
+
+.team-shared-option {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Per-bot message: name text + tint left bar, no avatar, no glow. */
+.team-message {
+  border-inline-start: 0.2rem solid var(--team-tint, var(--color-accent));
+  box-shadow: none;
+}
+
+.team-message-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.3rem 0.6rem;
+  margin-block-end: 0.35rem;
+}
+
+.team-message-name {
+  color: var(--team-tint, var(--color-accent));
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.team-message-state {
+  color: var(--color-muted);
+  font-family: var(--font-reading);
+  font-size: 0.82rem;
+  font-style: italic;
+}
+
+/* Quyết định / handoff sit directly on the page (r9: no note-paper box). */
+.team-decision,
+.team-handoff {
+  margin-block: 0.5rem 0;
+  font-family: var(--font-reading);
+}
+
+.team-decision strong {
+  color: var(--color-accent);
+  font-style: italic;
+}
+
+/* Collapsed inter-bot exchange: one centered rule line. */
+.team-exchange {
+  margin-block: 0.5rem;
+}
+
+.team-exchange > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.team-exchange > summary::-webkit-details-marker {
+  display: none;
+}
+
+.team-exchange > summary::before,
+.team-exchange > summary::after {
+  content: "";
+  flex: 1 1 auto;
+  border-top: var(--rule) solid var(--color-divider);
+}
+
+.team-exchange-lead {
+  color: var(--color-muted);
+  font-family: var(--font-reading);
+  font-size: 0.82rem;
+  font-style: italic;
+}
+
+.team-exchange-toggle {
+  color: var(--color-accent);
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.team-exchange-row {
+  margin-block-start: 0.6rem;
+  padding-inline-start: 0.7rem;
+  border-inline-start: 0.15rem solid var(--team-tint, var(--color-divider));
+}
+
+/* Question / permission / error cards share one card shape. */
+.team-card {
+  margin-block-start: 0.7rem;
+  padding: 0.8rem 0.9rem;
+  border: var(--rule) solid var(--color-divider);
+  border-radius: var(--radius-card);
+  background: var(--color-paper-card);
+}
+
+.team-card h3 {
+  margin: 0 0 0.4rem;
+  font-family: var(--font-display);
+  font-size: 1rem;
+}
+
+.team-card-sub {
+  margin: 0 0 0.6rem;
+  color: var(--color-muted);
+  font-family: var(--font-reading);
+  font-size: 0.88rem;
+  font-style: italic;
+}
+
+.team-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.team-progress {
+  margin: 0 0 0.7rem;
+  padding: 0;
+  list-style: none;
+}
+
+.team-progress-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding-block: 0.15rem;
+}
+
+.team-progress-mark {
+  color: var(--color-botanical);
+  font-weight: 600;
+}
+
+.team-progress-row.is-todo .team-progress-mark {
+  color: var(--color-muted-soft);
+}
+
+.team-progress-row.is-stuck .team-progress-mark {
+  color: var(--color-danger, var(--color-accent-deep));
+}
+
+/* Composer: visible hint + @ popup + inert Nâng cao button. */
+.composer-team-hint {
+  margin: 0.35rem 0 0;
+  color: var(--color-muted);
+  font-size: 0.8rem;
+}
+
+.composer-team-hint kbd {
+  padding-inline: 0.3rem;
+  border: var(--rule) solid var(--color-divider);
+  border-radius: var(--radius-xs);
+  background: var(--color-paper-card);
+  font: inherit;
+}
+
+.composer {
+  position: relative;
+}
+
+.mention-popup {
+  position: absolute;
+  inset-inline: 0.75rem;
+  bottom: calc(100% - 2.5rem);
+  z-index: var(--z-content);
+  overflow-y: auto;
+  max-height: 12rem;
+  padding: 0.35rem;
+  border: var(--rule) solid var(--color-divider);
+  border-radius: var(--radius-card);
+  background: var(--color-paper-card);
+  box-shadow: 0 0.4rem 1.2rem var(--color-shell-shadow-soft);
+}
+
+.mention-item {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  text-align: start;
+}
+
+.mention-item.is-active {
+  background: var(--color-accent-soft);
+}
+
+.mention-item strong {
+  font-weight: 600;
+}
+
+.mention-role {
+  color: var(--color-muted);
+  font-size: 0.82rem;
+  font-style: italic;
+}
+
+.mention-plus {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.3rem;
+  height: 1.3rem;
+  flex: none;
+  border: var(--rule) dashed var(--color-divider);
+  border-radius: var(--radius-pill);
+  color: var(--color-muted);
+}
+
+.advanced-button {
+  padding: 0.3rem 0.2rem;
+  border-bottom: var(--rule) dotted var(--color-divider);
+  background: transparent;
+  color: var(--color-muted);
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+
+/* Bot drawer: read-only profile. */
+.bot-drawer {
+  max-width: min(26rem, calc(100vw - 2rem));
+}
+
+.bot-drawer-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.bot-drawer-head {
+  padding-inline-start: 0.7rem;
+  border-inline-start: 0.2rem solid var(--team-tint, var(--color-accent));
+}
+
+.bot-drawer-head h2 {
+  margin: 0;
+  font-family: var(--font-display);
+}
+
+.bot-drawer-role {
+  margin: 0.15rem 0 0;
+  color: var(--color-muted);
+  font-family: var(--font-reading);
+  font-style: italic;
+}
+
+.bot-drawer-close {
+  position: absolute;
+  top: 0.6rem;
+  right: 0.6rem;
+}
+
+.bot-drawer-desc {
+  margin: 0;
+  font-family: var(--font-reading);
+}
+
+.bot-drawer-section h3 {
+  margin: 0.6rem 0 0.25rem;
+  font-size: 0.95rem;
+}
+
+.bot-drawer-section ul {
+  margin: 0;
+  padding-inline-start: 1.1rem;
+}
+
+.bot-drawer-advanced summary {
+  cursor: pointer;
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.bot-drawer-specs {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.2rem 0.8rem;
+  margin: 0.4rem 0 0;
+  font-size: 0.88rem;
+}
+
+.bot-drawer-specs dt {
+  color: var(--color-muted);
+}
+
+.bot-drawer-specs dd {
+  margin: 0;
+}
+
+.bot-drawer-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  align-items: flex-start;
+}
+
+.bot-drawer-foot .screen-note {
+  margin: 0;
+}
+
+/* Team sidebar chrome: the level-2 back control is always visible (unlike
+   the mobile-only .screen-back), and the team section follows the same
+   mobile pick pattern as .sessions. */
+#team-nav-back {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  padding: 0.2rem 0.4rem 0.2rem 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-accent);
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+#team-nav-back[hidden] {
+  display: none;
+}
+
+.team-heading {
+  align-items: center;
+}
+
+@media (max-width: 56rem) {
+  #team-nav {
+    display: none;
+  }
+
+  .pick-shell.is-picking #team-nav:not([hidden]) {
+    display: flex !important;
+    flex-direction: column;
+    padding: 0.85rem 1rem 1.25rem;
+    pointer-events: auto;
+  }
+}

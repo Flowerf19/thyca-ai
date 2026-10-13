@@ -52,6 +52,7 @@
             <button class="session-item" type="button" data-view="used-more" aria-pressed="false"><span class="session-icon" aria-hidden="true"></span><span class="session-name">Dùng nhiều</span></button>
             <button class="session-item" type="button" data-view="searched-more" aria-pressed="false"><span class="session-icon" aria-hidden="true"></span><span class="session-name">Tìm nhiều</span></button>
             <button class="session-item" type="button" data-view="used-less" aria-pressed="false"><span class="session-icon" aria-hidden="true"></span><span class="session-name">Dùng ít</span></button>
+            <button class="session-item" id="pending-tab" type="button" aria-pressed="false" hidden><span class="session-icon" aria-hidden="true"></span><span class="session-name">Chờ cho cả đội nhớ</span></button>
           </nav>
         </section>
       </aside>
@@ -95,11 +96,19 @@
             </details>
           </section>
           <p id="memory-empty" class="memory-empty" hidden>Không tìm thấy mẩu nhật ký phù hợp.</p>
+          <section class="pending-view" id="pending-view" aria-label="Chờ cho cả đội nhớ" hidden>
+            <p class="screen-note memories-rule">Những điều các bot muốn cả đội cùng nhớ — duyệt mới ghi chung.</p>
+            <div class="screen-filters pending-filters" id="pending-filters" role="group" aria-label="Lọc theo bot"></div>
+            <div id="pending-list" class="memory-list" aria-live="polite"></div>
+            <p id="pending-empty" class="memory-empty" hidden>Không có đề xuất nào đang chờ.</p>
+            <p class="screen-note memory-status" id="pending-status" role="status" aria-live="polite"></p>
+          </section>
         </section>
       </section>
     </main>
 
     <script src="./shared/js/navigation.js" defer></script>
     <script type="module" src="./pages/memories/memories.js"></script>
+    <script type="module" src="./pages/memories/team-pending.js"></script>
   </body>
 </html>

@@ -175,3 +175,8 @@ export function finalAssistantText(detail) {
     .find((item) => item?.role === "assistant" && typeof item.content === "string" && item.content.trim());
   return cleanText(message?.content, "Không có nội dung assistant trong trace.");
 }
+
+/* Team v1: delegation tree over transcript messages carrying trace meta
+   (contract §6: bot_id/trace_id/parent_span_id). Implemented once in the
+   chat lane's team-data.js and re-exported here for the Trace view. */
+export { buildDelegationTree } from "../chat/team-data.js";

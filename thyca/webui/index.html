@@ -31,6 +31,14 @@
       </header>
 
       <aside class="sidebar" id="chat-sidebar" aria-label="Các phiên trò chuyện">
+        <section class="team" id="team-nav" aria-label="Đội bot" hidden>
+          <div class="sessions-heading team-heading">
+            <button class="screen-back" id="team-nav-back" type="button" hidden>‹ Đội</button>
+            <h2 id="team-nav-title">Đội</h2>
+          </div>
+          <nav class="session-list team-list" id="team-bot-list" aria-label="Bot trong đội" aria-live="polite"></nav>
+          <div class="team-actions" id="team-nav-actions"></div>
+        </section>
         <section class="sessions">
           <div class="sessions-heading">
             <h2>Phiên trò chuyện</h2>
@@ -51,6 +59,7 @@
           <header class="chat-title-head">
             <button class="screen-back" id="chat-back" type="button">‹ Phiên</button>
             <div class="screen-title"><h1 id="chat-title">Phiên trống</h1></div>
+            <p class="team-strip" id="team-strip" aria-label="Bot trong phiên" hidden></p>
           </header>
           <div class="conversation-scroll" id="conversation-scroll">
             <div class="conversation-content">
@@ -103,6 +112,7 @@
               <span class="context-meter" id="context-meter" hidden></span>
             </div>
             <div class="composer-send">
+              <button class="advanced-button" id="composer-advanced" type="button" title="Tùy chọn nâng cao chưa có trong v1">Nâng cao ▾</button>
               <label class="effort-control model-control" for="composer-model"><span class="effort-label">Model</span>
                 <select class="effort-select model-select" id="composer-model">
                   <option value="" disabled selected>Model</option>
@@ -115,6 +125,8 @@
               <button class="stop-button" id="stop-button" type="button" aria-label="Dừng">Dừng</button>
             </div>
           </div>
+          <p class="composer-team-hint" id="composer-team-hint">Gõ <kbd>@</kbd> để gọi một bot</p>
+          <div class="mention-popup" id="mention-popup" role="listbox" aria-label="Chọn bot để gọi" hidden></div>
           <p class="visually-hidden" id="composer-hint" role="status" aria-live="polite"></p>
           <div class="chat-idle-nudge" id="idle-nudge" hidden>
             <p>Phiên im 15 phút — Thyca có nên ghi nhớ điều gì không?</p>
@@ -160,6 +172,10 @@
           <button class="screen-button is-danger" id="confirm-delete" type="submit">Xóa phiên</button>
         </div>
       </form>
+    </dialog>
+
+    <dialog class="screen-dialog bot-drawer" id="bot-drawer" aria-labelledby="bot-drawer-name">
+      <div class="bot-drawer-body" id="bot-drawer-body"></div>
     </dialog>
 
     <script type="module" src="./pages/chat/app.js"></script>

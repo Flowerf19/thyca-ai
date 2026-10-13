@@ -166,22 +166,19 @@
   font: 12px var(--font-reading);
 }
 
-/* Team v1: chi phí theo bot — one row per bot, tint dot + recorded total. */
-.cost-bot-row {
-  display: flex;
-  align-items: baseline;
-  gap: 0.6rem;
-}
-
-.cost-bot-row .team-bot-dot {
-  align-self: center;
-}
-
+/* Team v1: chi phí theo bot — journal-entry anatomy like cost by
+   session, with a thicker per-bot tint meter. */
 .cost-bot-name {
   color: var(--color-reading);
   font-weight: 600;
 }
 
-.cost-bot-row .journal-meta {
-  margin-inline-start: auto;
+.cost-bots .journal-meter {
+  height: 0.55rem;
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+
+.cost-bots .journal-meter > span {
+  border-radius: inherit;
 }

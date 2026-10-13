@@ -74,7 +74,7 @@
    honest "chưa sẵn sàng" line, never fake rows. */
 (() => {
   const TINTS = ["accent", "botanical", "success-ink", "ink", "accent-deep"];
-  const STATUS = { running: "đang làm", idle: "rảnh", paused: "tạm dừng", error: "lỗi" };
+  const STATUS = { running: "đang làm", idle: "rảnh", active: "đang bật", paused: "tạm dừng", error: "lỗi" };
 
   const tintFor = (id, tint) => {
     if (id === "thyca") return "accent";
@@ -116,18 +116,21 @@
         name.textContent = bot.name || bot.id;
         const sub = document.createElement("p");
         sub.className = "screen-muted";
-        const parts = [bot.role, STATUS[bot.status]].filter(Boolean);
+        const parts = [bot.role, bot.system ? "luôn bật" : STATUS[bot.status]].filter(Boolean);
         sub.textContent = parts.length ? parts.join(" · ") : bot.id;
         info.append(name, sub);
+        const identity = document.createElement("div");
+        identity.className = "settings-field";
         const dot = document.createElement("span");
         dot.className = "team-bot-dot";
         dot.style.setProperty("--team-tint", `var(--color-${tintFor(bot.id, bot.tint)})`);
         dot.setAttribute("aria-hidden", "true");
+        identity.append(dot, info);
         const link = document.createElement("a");
         link.className = "screen-button";
         link.href = "./index.html";
         link.textContent = "Nhắn trong Chat";
-        row.append(dot, info, link);
+        row.append(identity, link);
         list.append(row);
       }
     })

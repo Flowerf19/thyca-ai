@@ -245,6 +245,15 @@ class BotRegistry:
                     "tint": card.tint,
                     "status": "paused" if card.paused else "active",
                     "system": card.system,
+                    # Read-only drawer specs (FE normalizeBots already
+                    # carries these display fields when supplied).
+                    "model": (
+                        {"id": card.model.id, "thinking": card.model.thinking}
+                        if card.model is not None else None
+                    ),
+                    "bash": card.bash,
+                    "skills": list(card.skills),
+                    "schedule": card.schedule,
                 }
             )
         return out

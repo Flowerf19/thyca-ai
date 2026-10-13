@@ -71,15 +71,19 @@ function render() {
       label.textContent = bot.name;
       row.append(plus, label);
     } else {
+      const main = document.createElement("span");
+      main.className = "mention-main";
       const name = document.createElement("strong");
       name.textContent = `@${bot.id}`;
-      row.append(name);
-      if (bot.name && bot.name !== bot.id) {
+      main.append(name);
+      const sub = bot.role || (bot.name && bot.name !== bot.id ? bot.name : "");
+      if (sub) {
         const role = document.createElement("span");
         role.className = "mention-role";
-        role.textContent = bot.role || bot.name;
-        row.append(role);
+        role.textContent = sub;
+        main.append(role);
       }
+      row.append(main);
     }
     row.addEventListener("mousedown", (event) => {
       // Mousedown (not click): the textarea blurs before click fires.

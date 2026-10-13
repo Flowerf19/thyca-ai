@@ -308,6 +308,32 @@ class MemoryFacade:
             self.archive.store.usage.keep_searches(live)
             self.archive.store.prune_dangling_edges(format_ts(utc_now(now)))
 
+    def candidate_preview(self, session_id: str) -> dict:
+        """Title + readable body for the candidate-review UI.
+
+        Read-only preview: it deliberately bypasses ``get`` so merely
+        listing pending proposals never records a use or renews TTL."""
+        try:
+            raw = self.writer.read_session(session_id)
+        except (ArchiveError, OSError):
+            return {"title": "", "text": ""}
+        lines = raw.splitlines()
+        if not lines:
+            return {"title": "", "text": ""}
+        meta = parse_heading(lines[0])
+        body: list[str] = []
+        for line in lines[1:]:
+            if line.startswith("- "):
+                body.append(line[2:])
+            elif line.startswith("  "):
+                body.append(line[2:])
+            else:
+                body.append(line)
+        text = "\n".join(body).strip()
+        if len(text) > 1000:
+            text = text[:999].rstrip() + "…"
+        return {"title": meta.title if meta else "", "text": text}
+
     # -- Team ownership (BE-4) -------------------------------------------
     def entry_bots(self, session_id: str) -> tuple[str, ...] | None:
         """Public owner list of one entry (None = legacy/team entry)."""

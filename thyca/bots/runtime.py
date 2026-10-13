@@ -153,6 +153,8 @@ class BotTurnResult:
     reply: str
     bot_id: str
     span_id: str
+    bot_name: str | None = None
+    bot_tint: str | None = None
     model: str | None = None
     usage: dict | None = None
     cost_usd: float | None = None
@@ -167,6 +169,10 @@ class BotTurnResult:
             "span_id": self.span_id,
             "parent_span_id": parent_span_id,
         }
+        if self.bot_name:
+            meta["bot_name"] = self.bot_name
+        if self.bot_tint:
+            meta["bot_tint"] = self.bot_tint
         if self.model is not None:
             meta["model"] = self.model
         if self.usage is not None:
@@ -515,6 +521,8 @@ class BotRuntime:
                     reply=reply,
                     bot_id=card.bot_id,
                     span_id=own_span,
+                    bot_name=card.name,
+                    bot_tint=card.tint,
                     model=agg_model,
                     usage=agg_usage,
                     cost_usd=agg_cost,

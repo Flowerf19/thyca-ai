@@ -42,24 +42,50 @@ export function renderCostBots(rows) {
     return;
   }
   const priced = groups.some((group) => group.costUsd != null);
+  const total = groups.reduce((sum, group) => sum + (group.costUsd || 0), 0);
   const list = document.createElement("ul");
   list.className = "journal cost-bots";
   for (const group of groups) {
     const row = document.createElement("li");
-    row.className = "journal-row cost-bot-row";
-    const dot = document.createElement("span");
-    dot.className = "team-bot-dot";
-    dot.style.setProperty("--team-tint", tintVarFor(group.botId, ""));
-    dot.setAttribute("aria-hidden", "true");
+    row.className = "journal-entry cost-bot-entry";
+    const gutter = document.createElement("span");
+    gutter.className = "journal-date";
+    gutter.textContent = `${group.turns} lượt`;
+    const body = document.createElement("div");
+    body.className = "journal-body";
+    const title = document.createElement("div");
+    title.className = "journal-row-title";
+    const heading = document.createElement("h3");
     const name = document.createElement("span");
     name.className = "cost-bot-name";
     name.dataset.botId = group.botId;
     name.textContent = group.botId || "chưa gắn bot";
-    const meta = document.createElement("span");
+    heading.append(name);
+    const amount = document.createElement("strong");
+    amount.className = "journal-amount";
+    amount.textContent = group.costUsd == null ? "—" : formatCost(group.costUsd, 4);
+    title.append(heading, amount);
+    const meter = document.createElement("div");
+    meter.className = "journal-meter";
+    meter.setAttribute("aria-hidden", "true");
+    const fill = document.createElement("span");
+    const share = group.costUsd != null && total > 0 ? (group.costUsd / total) * 100 : 0;
+    fill.style.setProperty("--share", `${share}%`);
+    fill.style.background = group.botId ? tintVarFor(group.botId, "") : "var(--color-muted)";
+    meter.append(fill);
+    const meta = document.createElement("p");
     meta.className = "journal-meta";
-    const turns = `${group.turns} lượt`;
-    meta.textContent = group.costUsd == null ? `${turns} · chưa định giá` : `${turns} · ${formatCost(group.costUsd, 4)} (số đã ghi nhận)`;
-    row.append(dot, name, meta);
+    for (const text of [
+      group.costUsd == null ? "chưa định giá" : `${Math.round(share)}%`,
+      group.requests ? `${group.requests} lần gọi model` : "",
+      group.costUsd != null && group.pricedTurns < group.turns ? "số đã ghi nhận" : "",
+    ].filter(Boolean)) {
+      const span = document.createElement("span");
+      span.textContent = text;
+      meta.append(span);
+    }
+    body.append(title, meter, meta);
+    row.append(gutter, body);
     list.append(row);
   }
   mount.append(list);

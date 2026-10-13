@@ -19,6 +19,7 @@ def candidates_list(facade: MemoryFacade) -> tuple[int, dict]:
                 "created_at": cand.created_at,
                 "decided_by": cand.decided_by,
                 "decided_at": cand.decided_at,
+                **facade.candidate_preview(cand.session_id),
             }
             for cand in queue.list_pending()
         ]

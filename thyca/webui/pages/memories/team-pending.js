@@ -53,22 +53,33 @@ function renderChips() {
   }
 }
 
+function candidateDate(item) {
+  const raw = item.createdAt || String(item.sessionId || "").split("#")[0];
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return "";
+  return `${date.getDate()}/${date.getMonth() + 1}`;
+}
+
 function candidateCard(item) {
   const article = document.createElement("article");
   article.className = "memory-card pending-card";
   const time = document.createElement("time");
-  time.textContent = botLabel(item);
+  if (item.createdAt) time.dateTime = item.createdAt;
+  time.textContent = candidateDate(item);
   article.append(time);
   const copy = document.createElement("div");
   copy.className = "memory-copy";
   const heading = document.createElement("h3");
-  heading.textContent = `Đề xuất từ ${botLabel(item)}`;
+  heading.textContent = item.title || `Đề xuất từ ${botLabel(item)}`;
   const description = document.createElement("p");
   description.textContent = item.text || "(trống)";
   copy.append(heading, description);
   article.append(copy);
   const actions = document.createElement("div");
   actions.className = "pending-actions";
+  const source = document.createElement("span");
+  source.className = "pending-source";
+  source.textContent = `từ ${botLabel(item)}`;
   const approve = document.createElement("button");
   approve.className = "screen-button is-primary";
   approve.type = "button";
@@ -81,7 +92,7 @@ function candidateCard(item) {
   reject.textContent = "Bỏ qua";
   reject.disabled = busy;
   reject.addEventListener("click", () => void decide(item.id, "reject"));
-  actions.append(approve, reject);
+  actions.append(source, reject, approve);
   article.append(actions);
   return article;
 }

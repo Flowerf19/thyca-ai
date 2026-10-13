@@ -861,6 +861,15 @@ class ChatApp:
                 if close is not None:
                     await close()
 
+    def _bot_display_meta(self, bot_id: str) -> dict:
+        """Display companions so transcript/Trace use the card's own
+        name+tint instead of the FE hash fallback."""
+        try:
+            card = self._bots.require(bot_id)
+        except Exception:
+            return {}
+        return {"bot_name": card.name, "bot_tint": card.tint}
+
     def _room_dm_owner(self, session_id: str) -> str | None:
         """Bot id if *session_id* is that bot's fixed DM, else None."""
         for session in self._sessions.list_sessions():
@@ -892,7 +901,7 @@ class ChatApp:
         room.append(Message(
             role="assistant",
             content=text,
-            meta={"bot_id": bot_id, "kind": "message"},
+            meta={"bot_id": bot_id, "kind": "message", **self._bot_display_meta(bot_id)},
         ))
         return {"ok": True, "session_id": dm["id"]}
 
@@ -922,12 +931,7 @@ class ChatApp:
         if bot_id not in participants:
             return {"ok": False, "error": f"bot is not a participant of this room: {bot_id}"}
         meta: dict = {"bot_id": bot_id, "kind": "card", "card": dict(card)}
-        try:
-            bot_card = self._bots.require(bot_id)
-            meta["bot_name"] = bot_card.name
-            meta["bot_tint"] = bot_card.tint
-        except Exception:
-            pass  # display companions only; the card itself must land
+        meta.update(self._bot_display_meta(bot_id))
         cfg = self._current_cfg()
         room = SessionManager(
             limits=cfg.effective_limits(),
@@ -1051,6 +1055,7 @@ class ChatApp:
             # refs ride in meta so the room row stays fetchable (CBE-3).
             meta: dict = {
                 "bot_id": envelope.sender,
+                **self._bot_display_meta(envelope.sender),
                 "kind": envelope.kind,
                 "trace_id": envelope.trace_id,
                 "parent_span_id": envelope.parent_span_id,

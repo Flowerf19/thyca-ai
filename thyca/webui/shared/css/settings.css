@@ -42,7 +42,22 @@
   }
 }
 
-/* Team v1: Cài đặt › Bot — tint dot for the read-only roster. */
+/* Team v1: Cài đặt › Bot — identity left, chat link right (the generic
+   two-column settings grid would otherwise put the dot/name/link into
+   three separate cells). */
+#bot-list .settings-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+#bot-list .settings-field {
+  min-width: 0;
+}
+
+#bot-list .settings-field h3,
+#bot-list .settings-field p {
+  margin: 0;
+}
+
 .team-bot-dot {
   flex: none;
   width: 0.65rem;

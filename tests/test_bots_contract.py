@@ -109,6 +109,9 @@ def test_contract_memory_candidates(tmp_path: Path) -> None:
         listed = _get(httpd, "/api/memory/candidates")
         assert len(listed["candidates"]) == 1
         assert listed["candidates"][0]["bot_id"] == "coder"
+        # Review UI gets the actual entry preview, not an opaque id.
+        assert listed["candidates"][0]["title"] == "gift"
+        assert "egg coffee" in listed["candidates"][0]["text"]
         decided = _post(httpd, f"/api/memory/candidates/{cand.id}/approve",
                         {"decided_by": "user"})
         assert decided["status"] == "approved"

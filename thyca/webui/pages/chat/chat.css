@@ -1399,7 +1399,9 @@ button:active {
 
 .mention-popup {
   position: absolute;
-  inset-inline: 0.75rem;
+  inset-inline-start: 0.75rem;
+  inset-inline-end: auto;
+  width: min(20rem, calc(100% - 1.5rem));
   bottom: calc(100% - 2.5rem);
   z-index: var(--z-content);
   overflow-y: auto;
@@ -1413,17 +1415,27 @@ button:active {
 
 .mention-item {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 0.5rem;
   width: 100%;
   padding: 0.45rem 0.6rem;
   border-radius: var(--radius-sm);
   background: transparent;
+  color: var(--chat-brand-ink);
+  font-family: var(--font-reading);
   text-align: start;
 }
 
+.mention-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+
 .mention-item.is-active {
-  background: var(--color-accent-soft);
+  background: var(--color-accent);
+  color: var(--color-accent-ink);
 }
 
 .mention-item strong {
@@ -1434,6 +1446,10 @@ button:active {
   color: var(--color-muted);
   font-size: 0.82rem;
   font-style: italic;
+}
+
+.mention-item.is-active .mention-role {
+  color: var(--color-accent-ink);
 }
 
 .mention-plus {
@@ -1457,15 +1473,21 @@ button:active {
   white-space: nowrap;
 }
 
-/* Bot drawer: read-only profile. */
+/* Bot drawer: read-only profile, anchored to the right edge like the
+   mock drawer instead of a centered modal. */
 .bot-drawer {
-  max-width: min(26rem, calc(100vw - 2rem));
+  width: min(24rem, calc(100vw - 2rem));
+  max-width: min(24rem, calc(100vw - 2rem));
+  height: min(52rem, calc(100dvh - 2rem));
+  max-height: calc(100dvh - 2rem);
+  margin: 1rem 1rem 1rem auto;
 }
 
 .bot-drawer-body {
   display: flex;
   flex-direction: column;
   gap: 0.7rem;
+  min-height: 100%;
 }
 
 .bot-drawer-head {
@@ -1533,6 +1555,7 @@ button:active {
   flex-direction: column;
   gap: 0.4rem;
   align-items: flex-start;
+  margin-top: auto;
 }
 
 .bot-drawer-foot .screen-note {

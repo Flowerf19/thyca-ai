@@ -363,14 +363,17 @@
   font-weight: 600;
 }
 
-.pending-card time {
-  color: var(--color-accent);
-  font-style: italic;
-}
-
 .pending-actions {
+  grid-column: 2;
+  grid-row: 3;
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 0.45rem;
-  margin-block-start: 0.5rem;
+  margin-block-start: 0.6rem;
+}
+
+.pending-source {
+  color: var(--color-muted);
+  font-family: var(--font-reading);
 }

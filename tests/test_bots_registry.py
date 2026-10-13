@@ -120,7 +120,10 @@ def test_registry_team_index_and_public_list(tmp_path: Path) -> None:
     public = registry.public_list()
     assert public[0]["id"] == "thyca"
     assert public[0]["status"] == "active"
-    assert set(public[0]) == {"id", "name", "role", "description", "tint", "status", "system"}
+    assert set(public[0]) == {
+        "id", "name", "role", "description", "tint", "status", "system",
+        "model", "bash", "skills", "schedule",
+    }
 
 
 def test_registry_skill_index_private_wins(tmp_path: Path) -> None:

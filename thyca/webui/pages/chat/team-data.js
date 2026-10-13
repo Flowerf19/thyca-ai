@@ -397,6 +397,9 @@ export function normalizeCandidates(payload) {
     .map((item) => ({
       id: String(item.id),
       botId: typeof item.bot_id === "string" ? item.bot_id : "",
+      sessionId: typeof item.session_id === "string" ? item.session_id : "",
+      title: typeof item.title === "string" ? item.title : "",
+      createdAt: typeof item.created_at === "string" ? item.created_at : "",
       text: typeof item.text === "string" ? item.text : (typeof item.summary === "string" ? item.summary : ""),
       status: typeof item.status === "string" ? item.status : "pending",
       decidedBy: typeof item.decided_by === "string" ? item.decided_by : "",

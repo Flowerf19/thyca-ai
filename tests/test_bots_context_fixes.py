@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import threading
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from thyca.config import default_config, load, save
 from thyca.core.protocol import Message, ToolCall
 from thyca.llm.llm_base import ChatReply
 from thyca.memory.identity import bind_bot_id, reset_bot_id
+from thyca.serve.trace import aggregate, turns_from_session
 from thyca.sessions import SessionManager
 from thyca.tools.registry import ToolRegistry
 
@@ -390,6 +392,126 @@ def test_bus_send_caps_ref_count_and_length() -> None:
     assert len(envelope.refs) == MAX_REFS
     assert all(len(ref) <= MAX_REF_CHARS for ref in envelope.refs)
     assert envelope.refs[0] == "r" * MAX_REF_CHARS
+
+
+# --- 8. Delivered truncated envelope carries the fetch marker -------------
+
+_BODY_TAIL = "TAIL-SENTINEL-END"
+
+
+class _DeliveryLLM:
+    """Thyca delegates ``body`` to coder; coder bot_fetches on the marker."""
+
+    def __init__(self, body: str) -> None:
+        self.body = body
+        self.prompts: list[str] = []
+
+    async def chat(self, messages, tools=None):
+        text = "\n".join(str(m.content or "") for m in messages)
+        self.prompts.append(text)
+        tool_text = "\n".join(
+            str(m.content or "") for m in messages if m.role == "tool"
+        )
+        if "PERSONA-CODER" in text:
+            if tool_text:
+                fetched = _BODY_TAIL in tool_text
+                return ChatReply(
+                    content="coder fetched full body" if fetched else "coder fetch missing",
+                    model="m-coder",
+                    usage={"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6},
+                )
+            match = re.search(
+                r"\[truncated: full body via bot_fetch span_id=(sp_[^\]]+)\]", text
+            )
+            if match:
+                return ChatReply(content=None, model="m-coder", tool_calls=[
+                    ToolCall(id="c-fetch", name="bot_fetch",
+                             arguments={"span_id": match.group(1)}),
+                ])
+            return ChatReply(content="coder reply", model="m-coder",
+                             usage={"prompt_tokens": 5, "completion_tokens": 1,
+                                    "total_tokens": 6})
+        if tool_text:
+            return ChatReply(content="thyca final", model="m",
+                             usage={"prompt_tokens": 5, "completion_tokens": 1,
+                                    "total_tokens": 6})
+        return ChatReply(content=None, model="m", tool_calls=[
+            ToolCall(id="t-delegate", name="bot_delegate",
+                     arguments={"bot_id": "coder", "task": self.body}),
+        ])
+
+
+def _run_delivery(tmp_path: Path, body: str):
+    llm = _DeliveryLLM(body)
+    app = _chat(tmp_path, llm)
+    try:
+        app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
+                                 description="Writes code.", persona="PERSONA-CODER"))
+        room = app.create(bots=["thyca", "coder"])["id"]
+        detail = app.turn(room, "please coordinate")
+        rows = app.get_payload(room)["messages"]
+        return llm, detail, rows
+    finally:
+        app.shutdown()
+
+
+def test_delivered_truncated_envelope_prompt_has_fetch_marker_and_recipient_fetches(
+    tmp_path: Path,
+) -> None:
+    body = "HEAD-" + "x" * 1500 + "-" + _BODY_TAIL
+    llm, detail, rows = _run_delivery(tmp_path, body)
+    assert detail["reply"] == "thyca final"
+    coder_prompts = [p for p in llm.prompts if "PERSONA-CODER" in p]
+    assert coder_prompts, "recipient bot never ran"
+    match = re.search(
+        r"\[truncated: full body via bot_fetch span_id=(sp_[^\]]+)\]",
+        coder_prompts[0],
+    )
+    assert match, "delivered recipient prompt lacks the truncation fetch marker"
+    # The marker's span is the envelope's own span (the room row for it).
+    envelope_rows = [
+        row for row in rows
+        if (row.get("meta") or {}).get("kind") == "delegate"
+    ]
+    assert envelope_rows and envelope_rows[0]["meta"]["span_id"] == match.group(1)
+    # The autonomous recipient acted on the marker: its bot_fetch (as the
+    # envelope's recipient) returned the full body past the 1000-char cut.
+    result_rows = [
+        row for row in rows
+        if (row.get("meta") or {}).get("bot_id") == "coder"
+        and (row.get("meta") or {}).get("kind") == "result"
+    ]
+    assert result_rows and result_rows[0]["content"] == "coder fetched full body"
+
+
+def test_delivered_short_envelope_prompt_has_no_fetch_marker(tmp_path: Path) -> None:
+    llm, detail, _rows = _run_delivery(tmp_path, "short task")
+    assert detail["reply"] == "thyca final"
+    coder_prompts = [p for p in llm.prompts if "PERSONA-CODER" in p]
+    assert coder_prompts
+    assert "[truncated:" not in coder_prompts[0]
+    assert "bot_fetch span_id=" not in coder_prompts[0]
+
+
+# --- 9. Thyca's own turns attribute to thyca in trace by_bot ----------------
+
+def test_plain_thyca_turn_attributes_to_thyca_not_unknown(tmp_path: Path) -> None:
+    app = _chat(tmp_path, _LLM(content="thyca reply"))
+    try:
+        room = app.create()["id"]
+        detail = app.turn(room, "hello thyca")
+        assert detail["reply"] == "thyca reply"
+        session = app.trace_store().load(room)
+        assistant = [m for m in session.messages if m.role == "assistant"]
+        assert assistant and all(
+            (m.meta or {}).get("bot_id") == "thyca" for m in assistant
+        )
+        turns = turns_from_session(session)
+        by_bot = {row["bot_id"]: row for row in aggregate(turns)["by_bot"]}
+        assert by_bot["thyca"]["requests"] >= 1
+        assert "unknown" not in by_bot
+    finally:
+        app.shutdown()
 
 
 def test_mailbox_render_clips_refs() -> None:

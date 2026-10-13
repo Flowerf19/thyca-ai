@@ -32,6 +32,10 @@ class PromptManager:
             parts.append(_section("skills", hot.skills))
         if hot.team:
             parts.append(_section("team", hot.team))
+        if hot.tasks:
+            parts.append(_section("open_tasks", hot.tasks))
+        if hot.recalled:
+            parts.append(_section("recalled", hot.recalled))
         parts.append(_section("rules", self.rules_section()))
         return "\n".join(parts)
 

@@ -156,7 +156,16 @@ def tick(app, now: datetime | None = None, *, idle_s: int = 900) -> dict:
 
 
 def _solo_room(app, bot_id: str) -> str:
-    """Find or create the bot's own 1-1 room (participants == [bot_id])."""
+    """The bot's fixed DM (CBE-5): scheduled/independent results land there.
+
+    Prefers the app's deterministic ``bot_dm`` lookup (marked session,
+    created lazily once). The participant-scan fallback keeps duck-typed
+    test doubles working; app turns and delivered rows are appended by
+    the app into whichever room the turn runs in, so a room's own work
+    still reports into that room, never into the DM."""
+    bot_dm = getattr(app, "bot_dm", None)
+    if callable(bot_dm):
+        return bot_dm(bot_id)["id"]
     for session in app._sessions.list_sessions():
         bots = session.bots if session.bots else ["thyca"]
         if bots == [bot_id]:

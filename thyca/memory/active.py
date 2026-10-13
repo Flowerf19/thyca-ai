@@ -66,10 +66,16 @@ class ActiveSnapshot:
     identity: str = ""
     skills: str = ""
     today_elsewhere: str = ""
-    # Team roster (BE-1/BE-2): "name — role — description" lines of every
-    # bot, injected for bot turns so bots know whom to call. Empty for the
-    # default single-user prompt (zero behavior change).
+    # Team roster (BE-1/BE-2, slimmed by CBE-2): "name — role" lines of
+    # every bot, injected for bot turns so bots know whom to call. Empty
+    # for the default single-user prompt (zero behavior change).
     team: str = ""
+    # Open-task index (CBE-4): compact "task · status · room" lines the
+    # bot runtime derives per turn. Empty outside bot turns.
+    tasks: str = ""
+    # Post-compaction memory hits (CBE-4): bounded lines re-injected on
+    # the first turn after a compaction. Empty otherwise.
+    recalled: str = ""
 
 
 class ActiveMemory:

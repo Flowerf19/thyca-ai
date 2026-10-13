@@ -23,6 +23,7 @@ from thyca.serve import config_api
 from thyca.serve.errors import _with_json
 from thyca.serve.memory import candidate_decide, candidates_list, memory_endpoint
 from thyca.serve.sessions_api import (
+    bot_dm,
     bots_list,
     session_bots,
     session_compact,
@@ -58,6 +59,7 @@ _TURN_CANCEL_RE = re.compile(rf"^/api/sessions/({SESSION_ID_PATTERN})/turn/cance
 _TRACE_RE = re.compile(r"^/api/traces$")
 _TRACE_STATS_RE = re.compile(r"^/api/traces/stats$")
 _TRACE_DETAIL_RE = re.compile(rf"^/api/traces/({SESSION_ID_PATTERN})/(\d+)$")
+_BOT_DM_RE = re.compile(r"^/api/bots/([a-z0-9]+(?:-[a-z0-9]+)*)/dm$")
 _CANDIDATE_RE = re.compile(r"^/api/memory/candidates/([A-Za-z0-9_-]+)/(approve|reject)$")
 # Worst-case turn body: TEXT_MAX chars \u-escaped (12 bytes per non-BMP char)
 # plus the JSON envelope (model/effort/retry). Must stay above that so a
@@ -93,6 +95,10 @@ def make_handler(
                 return
             if path == "/api/bots":
                 bots_list(self, chat)
+                return
+            match = _BOT_DM_RE.fullmatch(path)
+            if match:
+                bot_dm(self, chat, match.group(1))
                 return
             if _TRACE_STATS_RE.fullmatch(path):
                 self._trace_stats(parsed.query)

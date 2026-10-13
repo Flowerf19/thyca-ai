@@ -153,15 +153,17 @@ class BotRegistry:
         shutil.rmtree(self.bot_dir(bot_id), ignore_errors=True)
 
     def team_index_text(self) -> str:
-        """``name — role — description`` lines for every valid card.
+        """``name — role`` lines for every valid card (CBE-2).
 
         Injected into every bot's prompt like the skills index, so bots know
-        whom to call (master §2).
+        whom to call. Prompt-facing only: long card descriptions stay on
+        the card / public API and never ride every prompt. The id is the
+        name (folder grammar), so one field serves both.
         """
         lines = []
         for doc in self.list():
             if doc.ok and doc.card is not None and not doc.card.paused:
-                lines.append(f"- {doc.card.name} — {doc.card.role} — {doc.card.description}")
+                lines.append(f"- {doc.card.name} — {doc.card.role}")
             elif not doc.ok:
                 lines.append(f"- {(doc.card.bot_id if doc.card else '?')} (BOT.md invalid: {doc.error})")
         return "\n".join(lines)

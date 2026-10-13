@@ -45,6 +45,10 @@ class TurnScope:
     state: ActiveState
     zone: ZoneInfo
     injected_connect: LLMPort | None = None
+    # Open-task index for Thyca's own prompt (CBE-4): the same pure view
+    # bot turns inject, derived by ChatApp from the room transcript +
+    # bus. Empty = no section.
+    hot_tasks: str = ""
 
 
 @dataclass
@@ -126,6 +130,8 @@ async def run_turn(
                 datetime.now(scope.zone),
                 session_id=sessions.current.id,
             )
+            if scope.hot_tasks:
+                hot = replace(hot, tasks=scope.hot_tasks)
             try:
                 reply = await loop.run(
                     request.text,

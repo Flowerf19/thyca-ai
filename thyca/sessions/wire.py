@@ -102,6 +102,8 @@ def session_summary(session: Session) -> dict:
         # Team room participants (BE-3, contract §6): legacy sessions
         # without a bots meta line read as Thyca alone.
         "bots": list(session.bots) if session.bots else ["thyca"],
+        # Bot main window (CBE-5): bot id whose fixed DM this is, else null.
+        "dm": session.dm_bot,
     }
 
 
@@ -135,6 +137,7 @@ def session_detail(
         "title": session_title(session),
         "model": cfg.provider.model,
         "bots": list(session.bots) if session.bots else ["thyca"],
+        "dm": session.dm_bot,
         "messages": [message_dict(item, skills_root) for item in session.messages],
         "ask_remember": ask_remember(session.messages, datetime.now(UTC)),
         "context": context,

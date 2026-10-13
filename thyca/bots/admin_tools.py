@@ -61,6 +61,8 @@ def register_admin_tools(registry: ToolRegistry, deps: AdminDeps) -> None:
         _delegate_spec(deps),
         _stop_spec(deps),
         _send_spec(deps),
+        _fetch_spec(deps),
+        _task_open_spec(deps),
     ):
         if registry.get(spec.name) is None:
             registry.register(spec)
@@ -75,6 +77,7 @@ async def _send_and_deliver(
     payload: str,
     room: str = "",
     trace_id: str | None = None,
+    refs: tuple[str, ...] = (),
 ) -> str:
     """Enqueue one envelope and, in a live turn, run the recipient now.
 
@@ -94,6 +97,7 @@ async def _send_and_deliver(
         payload=payload,
         trace_id=trace_id or (ctx.trace_id if ctx is not None else None),
         parent_span_id=ctx.span_id if ctx is not None else None,
+        refs=refs,
     )
     reply = await deps.runtime.deliver(envelope)
     out: dict = {
@@ -125,13 +129,19 @@ def _send_spec(deps: AdminDeps) -> ToolSpec:
         if not isinstance(message, str) or not message.strip():
             return "missing argument: message"
         kind = args.get("kind") if isinstance(args.get("kind"), str) else "message"
+        raw_refs = args.get("refs")
+        refs = (
+            tuple(ref for ref in raw_refs if isinstance(ref, str) and ref.strip())
+            if isinstance(raw_refs, list)
+            else ()
+        )
         try:
             card = deps.bots.require(recipient)
             if card.paused:
                 return f"bot_send failed: bot is paused: {recipient}"
             return await _send_and_deliver(
                 deps, sender=sender, recipient=recipient, kind=kind,
-                payload=message.strip(),
+                payload=message.strip(), refs=refs,
             )
         except Exception as exc:
             return f"bot_send failed: {exc}"
@@ -143,7 +153,11 @@ def _send_spec(deps: AdminDeps) -> ToolSpec:
             "recipient bot runs its own turn immediately; its reply is "
             "returned to you and recorded in the room under its name. "
             "Your identity as sender is taken from your turn, never from "
-            "arguments. kind: delegate|message|help_request (default message)."
+            "arguments. kind: delegate|message|help_request (default message). "
+            "Large content should travel by reference: pass refs (file paths, "
+            "memory entry ids, span ids) and keep message short — bodies over "
+            "1000 chars are excerpted in the recipient's prompt, with the "
+            "full text fetchable via bot_fetch."
         ),
         parameters={
             "type": "object",
@@ -151,6 +165,7 @@ def _send_spec(deps: AdminDeps) -> ToolSpec:
                 "bot_id": {"type": "string"},
                 "message": {"type": "string"},
                 "kind": {"type": "string"},
+                "refs": {"type": "array", "items": {"type": "string"}},
             },
             "required": ["bot_id", "message"],
             "additionalProperties": False,
@@ -159,6 +174,89 @@ def _send_spec(deps: AdminDeps) -> ToolSpec:
         # parallel_safe: no gateway resource lock is held across the
         # nested recipient turn, so multi-hop bot->bot cannot deadlock
         # on the send tool's own lock.
+        parallel_safe=True,
+    )
+
+
+def _fetch_spec(deps: AdminDeps) -> ToolSpec:
+    async def handler(args: dict) -> str:
+        # Any in-flight bot may fetch: artifacts are keyed by unguessable
+        # span ids that only reach bots the envelope was sent to (CBE-3).
+        ctx = current_bot_turn_context()
+        if ctx is None and current_bot_id() is None:
+            return "denied: bot_fetch requires an in-flight bot turn"
+        span_id = args.get("span_id")
+        if not isinstance(span_id, str) or not span_id.strip():
+            return "missing argument: span_id"
+        body = deps.runtime.fetch_artifact(span_id.strip())
+        if body is None:
+            return json.dumps(
+                {"ok": False, "span_id": span_id.strip(),
+                 "error": "artifact not found (unknown or evicted)"},
+                ensure_ascii=False,
+            )
+        return json.dumps(
+            {"ok": True, "span_id": span_id.strip(), "content": body},
+            ensure_ascii=False,
+        )
+
+    return ToolSpec(
+        name="bot_fetch",
+        description=(
+            "Fetch the full body of an A2A envelope by span_id. Envelope "
+            "bodies in your prompt are excerpts (max 1000 chars); when an "
+            "envelope is marked truncated, call this with its span_id to "
+            "read the complete text. Content sent as refs (file paths / "
+            "memory ids) should be read with read/memory_get instead."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {"span_id": {"type": "string"}},
+            "required": ["span_id"],
+            "additionalProperties": False,
+        },
+        handler=handler,
+        parallel_safe=True,
+    )
+
+
+def _task_open_spec(deps: AdminDeps) -> ToolSpec:
+    async def handler(args: dict) -> str:
+        ctx = current_bot_turn_context()
+        sender = ctx.sender_id if ctx is not None else current_bot_id()
+        if sender is None:
+            return "denied: task_open requires an in-flight bot turn"
+        title = args.get("title") or args.get("task")
+        if not isinstance(title, str) or not title.strip():
+            return "missing argument: title"
+        # The event is this tool call itself, recorded in the bot's
+        # internal transcript: the task view (thyca.bots.tasks) derives
+        # the open task from it. No mutable task store is written.
+        return json.dumps(
+            {"ok": True, "task": title.strip(), "status": "open",
+             "bot_id": sender,
+             "room": ctx.room_id if ctx is not None else ""},
+            ensure_ascii=False,
+        )
+
+    return ToolSpec(
+        name="task_open",
+        description=(
+            "Open a task that outlives this turn (work born in plain chat, "
+            "not a delegation). Records a task_open event in your own "
+            "transcript; your open-task view in later prompts lists it "
+            "until a result/error event closes it. Args: title, optional room."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "room": {"type": "string"},
+            },
+            "required": ["title"],
+            "additionalProperties": False,
+        },
+        handler=handler,
         parallel_safe=True,
     )
 
@@ -529,15 +627,20 @@ def _stop_spec(deps: AdminDeps) -> ToolSpec:
     )
 
 
+#: ``bot_*`` names a child bot may hold: peer send/fetch (CBE-3).
+# ``task_open`` has no ``bot_`` prefix and passes the check naturally.
+CHILD_BOT_TOOLS = frozenset({"bot_send", "bot_fetch"})
+
+
 def visible_for_bot(schemas: list[dict] | None, bot_id: str | None) -> list[dict] | None:
     """Tool snapshot for one caller: children never see admin ``bot_*``
-    tools; ``bot_send`` (peer send, sender from ContextVar) is the one
-    ``bot_*`` name a child may see."""
+    tools; ``bot_send``/``bot_fetch`` (peer send/fetch, identity from
+    ContextVar) are the ``bot_*`` names a child may see."""
     if not schemas or bot_id is None or bot_id == "thyca":
         return schemas
     return [
         schema
         for schema in schemas
-        if schema.get("function", {}).get("name") == "bot_send"
+        if schema.get("function", {}).get("name") in CHILD_BOT_TOOLS
         or not str(schema.get("function", {}).get("name", "")).startswith("bot_")
     ]

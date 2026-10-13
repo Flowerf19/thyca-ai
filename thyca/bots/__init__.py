@@ -20,7 +20,9 @@ from thyca.bots.create_flow import (
 from thyca.bots.policy import BotPolicy
 from thyca.bots.registry import BotRegistry, RegistryError
 from thyca.bots.runtime import BotRuntime, filtered_tool_schemas
+from thyca.bots.artifacts import BusArtifactStore
 from thyca.bots.scheduler import due, tick
+from thyca.bots.tasks import OpenTask, derive_open_tasks, format_task_index
 
 __all__ = [
     "ADMIN_TOOL_NAMES",
@@ -32,13 +34,17 @@ __all__ = [
     "BotRegistry",
     "BotRuntime",
     "Bus",
+    "BusArtifactStore",
     "Envelope",
     "RegistryError",
     "answer_flow",
     "build_card",
     "current_question",
     "due",
+    "OpenTask",
+    "derive_open_tasks",
     "filtered_tool_schemas",
+    "format_task_index",
     "new_span_id",
     "new_trace_id",
     "parse_bot_card",

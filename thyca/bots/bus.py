@@ -12,11 +12,19 @@ import secrets
 import threading
 from dataclasses import dataclass, field
 
+from thyca.bots.artifacts import BusArtifactStore
 from thyca.core.protocol import utc_now_ts
 
 ENVELOPE_KINDS = frozenset(
     {"delegate", "message", "step", "status", "result", "help_request"}
 )
+
+#: Technical default (team-context layer 3): the prompt-facing body of an
+#: envelope is an excerpt of at most this many chars. The full body is
+#: kept in the bus artifact store keyed by ``span_id`` and fetched on
+#: demand via ``bot_fetch``; large content should travel as ``refs``
+#: (file paths / memory entry ids / span ids) instead of body text.
+EXCERPT_CHARS = 1000
 
 #: Technical default: max hops for one root trace_id. Recorded here (not a
 #: business rule): it only bounds infinite bot↔bot ping-pong, never content.
@@ -40,6 +48,13 @@ class Envelope:
     # This envelope's own span: room rows for it carry this id, and the
     # recipient turn's rows parent to it (FE delegation tree).
     span_id: str | None = None
+    # By-reference payloads (CBE-3): file paths, memory entry ids, or
+    # span ids the recipient resolves itself. ``payload`` stays the
+    # prompt-facing excerpt (<= EXCERPT_CHARS); when the sender's body
+    # was longer, the full text lives in the artifact store under
+    # ``span_id`` and ``truncated`` says so.
+    refs: tuple[str, ...] = ()
+    truncated: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -52,6 +67,8 @@ class Envelope:
             "span_id": self.span_id,
             "ts": self.ts,
             "payload": self.payload,
+            "refs": list(self.refs),
+            "truncated": self.truncated,
         }
 
 
@@ -74,12 +91,16 @@ class BusEvent:
 class Bus:
     """Per-bot mailboxes + hop-limited send. Thread-safe, in-process."""
 
-    def __init__(self, max_hops: int = MAX_HOPS) -> None:
+    def __init__(
+        self, max_hops: int = MAX_HOPS, artifacts: BusArtifactStore | None = None
+    ) -> None:
         self._max_hops = max_hops
         self._lock = threading.Lock()
         self._boxes: dict[str, queue.Queue[Envelope]] = {}
         self._hops: dict[str, int] = {}
         self._log: list[BusEvent] = []
+        #: Full bodies of excerpted envelopes, keyed by span_id (CBE-3).
+        self.artifacts = artifacts if artifacts is not None else BusArtifactStore()
 
     def register(self, bot_id: str) -> None:
         with self._lock:
@@ -100,11 +121,23 @@ class Bus:
         trace_id: str | None = None,
         parent_span_id: str | None = None,
         span_id: str | None = None,
+        refs: tuple[str, ...] | list[str] = (),
     ) -> Envelope:
         if kind not in ENVELOPE_KINDS:
             raise BusError(f"unknown envelope kind: {kind!r}")
         if not recipient or not isinstance(recipient, str):
             raise BusError("recipient must be a non-empty bot id")
+        if not isinstance(payload, str):
+            raise BusError("payload must be text")
+        clean_refs = tuple(
+            ref for ref in refs if isinstance(ref, str) and ref.strip()
+        )
+        own_span = span_id or new_span_id()
+        # Excerpt-cap the prompt-facing body; keep the full text in the
+        # bounded artifact store so prompts never carry large payloads.
+        truncated = len(payload) > EXCERPT_CHARS
+        if truncated:
+            self.artifacts.put(own_span, payload)
         envelope = Envelope(
             sender=sender,
             recipient=recipient,
@@ -113,8 +146,10 @@ class Bus:
             trace_id=trace_id or new_trace_id(),
             parent_span_id=parent_span_id,
             ts=utc_now_ts(),
-            payload=payload,
-            span_id=span_id or new_span_id(),
+            payload=payload[:EXCERPT_CHARS] if truncated else payload,
+            span_id=own_span,
+            refs=clean_refs,
+            truncated=truncated,
         )
         with self._lock:
             if recipient not in self._boxes:
@@ -181,6 +216,18 @@ class Bus:
             taken = [e for e in self._log if e.envelope.session_id == session_id]
             self._log = [e for e in self._log if e.envelope.session_id != session_id]
             return taken
+
+    def pending_for(self, bot_id: str) -> list[Envelope]:
+        """Snapshot of one bot's queued envelopes (no draining).
+
+        The task view (CBE-4) reads this: queued envelopes are open work
+        and unanswered outgoing mail, so it must see them without
+        consuming them."""
+        with self._lock:
+            box = self._boxes.get(bot_id)
+            if box is None:
+                return []
+            return list(box.queue)
 
     def pending(self, bot_id: str) -> int:
         with self._lock:

@@ -130,6 +130,23 @@ def bots_list(handler, app: ChatApp | None) -> None:
         _sessions_error(handler, exc)
 
 
+def bot_dm(handler, app: ChatApp | None, bot_id: str) -> None:
+    """``GET /api/bots/<bot_id>/dm`` — the bot's fixed DM (CBE-5).
+
+    Deterministic find-or-create: repeated calls return the same session
+    id. The payload is the session detail (``dm`` = bot id, ``bots`` =
+    [bot_id]) so the FE can open the main window directly. Unknown or
+    paused bots read as 404, matching the room-bots route style."""
+    if _missing_chat(handler, app):
+        return
+    try:
+        handler._json(200, app.bot_dm(bot_id))
+    except RegistryError as exc:
+        handler._json(404, {"error": str(exc)})
+    except Exception as exc:
+        _sessions_error(handler, exc)
+
+
 def session_turn(handler, app: ChatApp | None, session_id: str) -> None:
     from thyca.app.chat_app import InvalidTurnOption, InvalidTurnText, TurnCancelled
 

@@ -109,6 +109,33 @@ class SessionStore:
         with _TITLE_LOCK:
             self._append_json(path, _meta_payload(None, None, bots=cleaned))
 
+    def append_dm(self, path: Path, bot_id: str) -> None:
+        """Mark this session as ``bot_id``'s fixed DM (CBE-5)."""
+        if not isinstance(bot_id, str) or not bot_id:
+            raise SessionError("dm bot must be a non-empty bot id")
+        with _TITLE_LOCK:
+            self._append_json(path, _meta_payload(None, None, dm=bot_id))
+
+    def read_dm(self, path: Path) -> str | None:
+        """Last meta line's ``dm`` bot id, or None when never marked."""
+        try:
+            with path.open("rb") as stream:
+                for raw in _lines_backwards(stream):
+                    if b'"type"' not in raw or b"dm" not in raw:
+                        continue
+                    try:
+                        payload = json.loads(raw)
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        continue
+                    if not _is_meta(payload):
+                        continue
+                    dm = _meta_dm(payload)
+                    if dm:
+                        return dm
+        except OSError:
+            return None
+        return None
+
     def read_bots(self, path: Path) -> list[str] | None:
         """Last meta line's ``bots`` list, or None when never recorded."""
         try:
@@ -193,7 +220,7 @@ class SessionStore:
         messages, title, title_source, naming_attempted = self.scan(path)
         return Session(
             session_id, path, messages, title, title_source, naming_attempted,
-            self.read_bots(path),
+            self.read_bots(path), self.read_dm(path),
         )
 
     def list_paths(self) -> list[Path]:
@@ -219,7 +246,7 @@ class SessionStore:
                 continue
             return Session(
                 session_id, chosen, messages, title, title_source, naming_attempted,
-                self.read_bots(chosen),
+                self.read_bots(chosen), self.read_dm(chosen),
             )
         raise SessionNotFound(self.sessions_dir, "no valid sessions")
 
@@ -270,6 +297,7 @@ class SessionStore:
         title_source: str | None = None,
         naming_attempted: bool = False,
         bots: list[str] | None = None,
+        dm: str | None = None,
     ) -> None:
         path = self.path_for(session_id)
         if path.resolve() != target.resolve():
@@ -278,15 +306,18 @@ class SessionStore:
             # Preserve the room's participant list across compactions and
             # retries: the rewrite rebuilds the meta line from scratch.
             bots = self.read_bots(target)
+        if dm is None:
+            # Same preservation for the DM marker (CBE-5).
+            dm = self.read_dm(target)
         tmp = self.sessions_dir / f".{path.stem}.tmp.{secrets.token_hex(4)}"
         try:
             fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                    if title or naming_attempted or bots:
+                    if title or naming_attempted or bots or dm:
                         meta = _meta_payload(
                             title, title_source, naming_attempted=naming_attempted,
-                            bots=bots,
+                            bots=bots, dm=dm,
                         )
                         stream.write(
                             json.dumps(meta, ensure_ascii=False) + "\n"
@@ -358,7 +389,7 @@ def _lines_backwards(stream, chunk_size: int = 8192):
 
 def _meta_payload(
     title: str | None, source: str | None, *, naming_attempted: bool = False,
-    bots: list[str] | None = None,
+    bots: list[str] | None = None, dm: str | None = None,
 ) -> dict:
     """The one meta-line builder shared by append and rewrite."""
     payload: dict = {"type": "meta"}
@@ -370,7 +401,14 @@ def _meta_payload(
         payload["naming_attempted"] = True
     if bots:
         payload["bots"] = list(bots)
+    if dm:
+        payload["dm"] = dm
     return payload
+
+
+def _meta_dm(payload: dict) -> str | None:
+    raw = payload.get("dm")
+    return raw.strip() if isinstance(raw, str) and raw.strip() else None
 
 
 def _is_meta(payload: object) -> bool:

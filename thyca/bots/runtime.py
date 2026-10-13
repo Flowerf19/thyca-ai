@@ -7,6 +7,7 @@ continuity lives in the bot's memory/skills, not in a lifelong transcript.
 """
 from __future__ import annotations
 
+import inspect
 import json
 from dataclasses import replace
 from datetime import datetime
@@ -33,7 +34,7 @@ from thyca.bots.registry import BotRegistry, RegistryError
 from thyca.config import Config
 from thyca.llm.llm_factory import ConnectFactory
 from thyca.memory.identity import bind_bot_id, reset_bot_id
-from thyca.sessions import Session, SessionManager
+from thyca.sessions import Session, SessionManager, calibration_factor
 from thyca.sessions.store import SessionStore
 from thyca.tools.memory_tools import bind_chat_session, reset_chat_session
 
@@ -48,10 +49,13 @@ MEMORY_WRITE_TOOLS = frozenset(
 )
 MEMORY_PROPOSE_TOOL = "memory_propose_team"
 
-#: Peer-send tool available to child bots (sender identity comes from the
+#: Peer tools available to child bots (sender identity comes from the
 #: in-flight turn context, never from arguments). Exempt from the ``bot_*``
 #: admin-prefix drop, but still subject to the fail-closed allowlist.
+#: ``bot_fetch`` (CBE-3) reads full envelope bodies by span_id;
+#: ``task_open`` (CBE-4) records an open-task event in the transcript.
 SEND_TOOL_NAME = "bot_send"
+PEER_TOOL_NAMES = frozenset({"bot_send", "bot_fetch", "task_open"})
 
 
 def filtered_tool_schemas(
@@ -78,7 +82,7 @@ def filtered_tool_schemas(
         keep = {
             name
             for name in keep
-            if name == SEND_TOOL_NAME or not str(name).startswith(ADMIN_TOOL_PREFIX)
+            if name in PEER_TOOL_NAMES or not str(name).startswith(ADMIN_TOOL_PREFIX)
         }
     if not card.memory.read:
         keep -= MEMORY_READ_TOOLS
@@ -141,6 +145,15 @@ class BotTurnResult:
         return meta
 
 
+def _compaction_markers(messages: list) -> int:
+    return sum(
+        1
+        for message in messages
+        if getattr(message, "role", None) == "system"
+        and str(getattr(message, "content", None) or "").startswith("[compaction: ")
+    )
+
+
 def _aggregate_turn_meta(messages: list) -> tuple[str | None, dict | None, float | None, int | None]:
     """Sum model/usage/cost/latency over one turn's assistant rows."""
     model: str | None = None
@@ -175,6 +188,13 @@ class BotRuntime:
     #: tools run the recipient's turn immediately; unset (unit tests,
     #: direct handler calls) envelopes stay queued for the next turn.
     deliverer: Any = None
+    #: CBE-4 hooks installed by ChatApp (fakes in unit tests):
+    #: ``memory_flush(bot_id, messages, turn_cfg)`` extracts memories from
+    #: a bot transcript about to compact; ``memory_searcher(text, bot_id)``
+    #: returns bounded recalled-memory lines for the first post-compact
+    #: turn. Either may be sync or async; both are best-effort.
+    memory_flush: Any = None
+    memory_searcher: Any = None
 
     def __init__(
         self,
@@ -186,6 +206,9 @@ class BotRuntime:
         self._registry = registry
         self._bus = bus
         self._stores: dict[str, SessionStore] = {}
+        # (bot_id, room_id) pairs whose last turn compacted: the next turn
+        # re-injects relevant memory hits exactly once (CBE-4).
+        self._reinject_pending: set[tuple[str, str]] = set()
 
     def store_for(self, bot_id: str) -> SessionStore:
         store = self._stores.get(bot_id)
@@ -309,6 +332,65 @@ class BotRuntime:
                 skills=self._registry.skill_index_text(card.bot_id),
                 team=self._registry.team_index_text(),
             )
+            # CBE-4: open-task index (compact, counted in hot tokens via
+            # PromptManager.build) + one-shot post-compaction recall.
+            from thyca.bots.tasks import derive_open_tasks, format_task_index
+
+            open_tasks = derive_open_tasks(
+                list(sessions.current.messages),
+                self._pending_relevant(card.bot_id),
+                bot_id=card.bot_id,
+            )
+            if open_tasks:
+                hot = replace(
+                    hot, tasks=format_task_index(open_tasks[:20])
+                )
+            reinject_key = (card.bot_id, room_id)
+            if reinject_key in self._reinject_pending:
+                self._reinject_pending.discard(reinject_key)
+                if self.memory_searcher is not None and card.memory.read:
+                    try:
+                        lines = self.memory_searcher(text, card.bot_id)
+                        if inspect.isawaitable(lines):
+                            lines = await lines
+                        bounded = [str(line)[:200] for line in list(lines)[:5]]
+                        if bounded:
+                            hot = replace(hot, recalled="\n".join(bounded))
+                    except Exception:
+                        pass  # recall is best-effort; the turn must go on
+            # CBE-4 flush-before-compact: if this turn's pre-turn compact
+            # will fire (the session compactor's own plan, BACKSTOP
+            # semantics, hot+tools overhead counted), extract memories
+            # from the intact transcript FIRST, then let the loop compact.
+            markers_before = _compaction_markers(sessions.current.messages)
+            will_compact = False
+            if self.memory_flush is not None:
+                try:
+                    from thyca.core.protocol import estimate_tokens as _tok
+                    from thyca.llm.prompt_manager import PromptManager
+
+                    plan = sessions.compactor.plan(
+                        list(sessions.current.messages),
+                        turn_cfg.effective_limits().contextTokens,
+                        hot_tokens=_tok(PromptManager().build(hot)),
+                        tools_tokens=_tok(json.dumps(filtered or [], ensure_ascii=False)),
+                        pending_user_tokens=_tok(text),
+                        calibration=calibration_factor(
+                            list(sessions.current.messages), model=model
+                        ),
+                    )
+                    will_compact = plan is not None
+                except Exception:
+                    will_compact = False
+                if will_compact:
+                    try:
+                        flushed = self.memory_flush(
+                            card.bot_id, list(sessions.current.messages), turn_cfg
+                        )
+                        if inspect.isawaitable(flushed):
+                            await flushed
+                    except Exception:
+                        pass  # extraction is best-effort, never blocks compact
             own_span = span_id or new_span_id()
             allowed = None
             if not card.system:
@@ -348,6 +430,13 @@ class BotRuntime:
                     },
                 )
                 new_messages = list(sessions.current.messages)[before:]
+                # A compaction landed this turn (new marker, or the
+                # pre-turn plan said it would): queue the one-shot
+                # memory re-injection for this bot's next turn (CBE-4).
+                if will_compact or _compaction_markers(
+                    sessions.current.messages
+                ) > markers_before:
+                    self._reinject_pending.add(reinject_key)
                 agg_model, agg_usage, agg_cost, agg_latency = _aggregate_turn_meta(new_messages)
                 return BotTurnResult(
                     reply=reply,
@@ -380,6 +469,7 @@ class BotRuntime:
         payload: str,
         trace_id: str | None = None,
         parent_span_id: str | None = None,
+        refs: tuple[str, ...] | list[str] = (),
     ):
         """Send one A2A envelope (hop-limited by the bus)."""
         self._bus.register(recipient)
@@ -391,7 +481,12 @@ class BotRuntime:
             payload=payload,
             trace_id=trace_id,
             parent_span_id=parent_span_id,
+            refs=refs,
         )
+
+    def fetch_artifact(self, span_id: str) -> str | None:
+        """Full body of an excerpted envelope, or None (CBE-3)."""
+        return self._bus.artifacts.get(span_id)
 
     async def deliver(self, envelope: Envelope) -> str | None:
         """Run the recipient's turn for a just-sent envelope, if wired.
@@ -429,8 +524,27 @@ class BotRuntime:
                     f"- ({envelope.kind} from {envelope.sender}, "
                     f"trace {envelope.trace_id}):"
                 )
-            lines.append(envelope.payload[:2000])
+            # Envelope payload is already the <=1000-char excerpt (CBE-3).
+            lines.append(envelope.payload)
+            if envelope.refs:
+                lines.append(f"  refs: {', '.join(envelope.refs)}")
+            if envelope.truncated:
+                lines.append(
+                    f"  [truncated: full body via bot_fetch "
+                    f"span_id={envelope.span_id}]"
+                )
         return "\n".join(lines) + "\n\n" + text
+
+    def _pending_relevant(self, bot_id: str) -> list[Envelope]:
+        """Queued envelopes to or from ``bot_id`` (task-view input)."""
+        relevant = list(self._bus.pending_for(bot_id))
+        for doc in self._registry.list():
+            if not doc.ok or doc.card is None or doc.card.bot_id == bot_id:
+                continue
+            for envelope in self._bus.pending_for(doc.card.bot_id):
+                if envelope.sender == bot_id:
+                    relevant.append(envelope)
+        return relevant
 
     def zone(self) -> ZoneInfo:
         from thyca.config import DEFAULT_TIMELINE_TIMEZONE

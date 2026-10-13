@@ -354,6 +354,12 @@ class SessionManager:
                 self.store, session_id, title, current=self._session
             )
 
+    def set_dm(self, session_id: str, bot_id: str) -> None:
+        """Refresh the in-memory DM marker when it is current (CBE-5)."""
+        with self._lock:
+            if self._session is not None and self._session.id == session_id:
+                self._session.dm_bot = bot_id
+
     def set_bots(self, session_id: str, bots: list[str]) -> None:
         """Refresh the in-memory participant list when it is current.
 

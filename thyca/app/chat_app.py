@@ -117,6 +117,9 @@ class ChatApp:
         self._runtime = BotRuntime(root, self._bots, self._bus)
         # A2A delivery: send tools run the recipient's turn through here.
         self._runtime.deliverer = self._deliver_envelope
+        # CBE-4: flush-before-compact + post-compact recall hooks.
+        self._runtime.memory_flush = self._flush_bot_memory
+        self._runtime.memory_searcher = self._search_bot_memory
         # Thyca-only admin tools (BE-5): registered once on the shared
         # registry; the runtime hides every bot_* name from child bots and
         # each handler re-checks the caller, so a leak still cannot be used.
@@ -201,6 +204,78 @@ class ChatApp:
         """Public card list for GET /api/bots (contract §6)."""
         return self._bots.public_list()
 
+    def bot_dm(self, bot_id: str) -> dict:
+        """The bot's fixed DM session (CBE-5): find-or-create, marked.
+
+        Exactly one DM per bot: a room session with ``bots == [bot_id]``
+        and the ``dm`` meta marker, lazily created on first lookup. A
+        legacy unmarked solo room is adopted (marked) instead of making
+        a second window. Returns the session detail payload (``dm`` =
+        bot id, ``bots`` = [bot_id]). Unknown bots raise RegistryError."""
+        card = self._bots.require(bot_id)
+        if card.paused:
+            raise RegistryError(f"bot is paused: {bot_id}")
+        legacy = None
+        for session in self._sessions.list_sessions():
+            if session.dm_bot == bot_id:
+                return self.get_payload(session.id)
+            bots = list(session.bots) if session.bots else ["thyca"]
+            if bots == [bot_id] and legacy is None:
+                legacy = session
+        if legacy is not None:
+            self._sessions.store.append_dm(legacy.path, bot_id)
+            self._sessions.set_dm(legacy.id, bot_id)
+            return self.get_payload(legacy.id)
+        created = self.create(bots=[bot_id])
+        session = self._sessions.store.load(created["id"])
+        self._sessions.store.append_dm(session.path, bot_id)
+        return self.get_payload(created["id"])
+
+    async def _flush_bot_memory(self, bot_id: str, messages, turn_cfg) -> None:
+        """Extract memories from a bot transcript about to compact (CBE-4).
+
+        Same machinery and order as the room idle sweep: the existing
+        extractor runs on the intact transcript and writes through the
+        Thyca-privileged facade (per-bot owners come from the extractor
+        or default to this bot); compaction happens only after this
+        returns, in the caller. Best-effort: the runtime guards failures."""
+        from thyca.memory import jobs as mem_jobs
+
+        provider = turn_cfg.effective_provider()
+        connect = self._injected_connect or ConnectFactory.create(
+            provider.api, provider
+        )
+        owns = self._injected_connect is None
+        try:
+            transcript = mem_jobs.transcript_tail(list(messages))
+            if not transcript.strip():
+                return
+            extracted = await mem_jobs.extract_from_transcript(
+                connect, turn_cfg.provider.model, transcript
+            )
+            if extracted:
+                mem_jobs.apply_extracted(
+                    self.job_facade(), extracted, default_bot=bot_id
+                )
+        finally:
+            if owns:
+                close = getattr(connect, "aclose", None)
+                if close is not None:
+                    await close()
+
+    def _search_bot_memory(self, text: str, bot_id: str) -> list[str]:
+        """Bounded memory hits for a bot, read as the bot itself (CBE-4)."""
+        from thyca.memory.identity import bind_bot_id, reset_bot_id
+
+        token = bind_bot_id(bot_id)
+        try:
+            result = self.job_facade().search(text, limit=5)
+        finally:
+            reset_bot_id(token)
+        return [
+            f"- {hit.heading}: {hit.snippet}" for hit in result.hits[:5]
+        ]
+
     def job_facade(self):
         """Memory facade for the sidecar job (extract/candidates/promote).
 
@@ -284,7 +359,53 @@ class ChatApp:
             except Exception as exc:
                 entry["error"] = type(exc).__name__
             report[item.id] = entry
-        return {"now": now_ts, "rooms": report}
+        # Bot internal sessions (CBE-4): same extract-then-compact order
+        # for every (bot x room) transcript quiet past the idle window.
+        bot_report: dict[str, dict] = {}
+        for doc in self._bots.list():
+            if not doc.ok or doc.card is None:
+                continue
+            bot_id = doc.card.bot_id
+            try:
+                store = self._runtime.store_for(bot_id)
+                manager = SessionManager(
+                    limits=turn_cfg.effective_limits(),
+                    timezone_name=turn_cfg.timeline.timezone, store=store,
+                )
+                for item in manager.list_sessions():
+                    key = f"{bot_id}:{item.id}"
+                    try:
+                        last_ts = updated_at(item)
+                    except Exception:
+                        continue
+                    if not mem_jobs.should_idle_sweep(last_ts, now_ts, idle_s):
+                        continue
+                    entry = {"idle_since": last_ts}
+                    try:
+                        awaitable = self._flush_bot_memory(
+                            bot_id, list(item.messages), turn_cfg
+                        )
+                        self._submit(awaitable)
+                        manager.load(item.id)
+                        compacted = manager.compact_manual()
+                        entry["compacted"] = bool(compacted["compacted"])
+                        if entry["compacted"]:
+                            # Runtime keys re-injection by room id; the
+                            # sweep holds internal ids, so translate via
+                            # the bot's room map (unknown room: skip).
+                            reverse = {
+                                internal: room
+                                for room, internal in self._runtime._read_room_map(bot_id).items()
+                            }
+                            room_key = reverse.get(item.id)
+                            if room_key is not None:
+                                self._runtime._reinject_pending.add((bot_id, room_key))
+                    except Exception as exc:
+                        entry["error"] = type(exc).__name__
+                    bot_report[key] = entry
+            except Exception as exc:
+                bot_report[bot_id] = {"error": type(exc).__name__}
+        return {"now": now_ts, "rooms": report, "bots": bot_report}
 
     def get_payload(self, session_id: str) -> dict:
         session = self._sessions.store.load(session_id)
@@ -548,6 +669,17 @@ class ChatApp:
     ) -> dict:
         # Turn execution lives in app.run_turn; the app shell only
         # assembles the shared scope and the detail builder here.
+        # Thyca reads the same open-task view bots get (CBE-4): derived
+        # from this room's transcript + queued bus envelopes, no store.
+        from thyca.bots.tasks import derive_open_tasks, format_task_index
+
+        try:
+            room_messages = list(self._sessions.store.load(session_id).messages)
+        except Exception:
+            room_messages = []
+        thyca_tasks = derive_open_tasks(
+            room_messages, self._runtime._pending_relevant("thyca"), bot_id="thyca"
+        )
         scope = TurnScope(
             store=self._sessions.store,
             act=self._act,
@@ -556,6 +688,7 @@ class ChatApp:
             state=self._state,
             zone=self._zone,
             injected_connect=self._injected_connect,
+            hot_tasks=format_task_index(thyca_tasks[:20]) if thyca_tasks else "",
         )
         request = TurnRequest(
             session_id=session_id,
@@ -753,17 +886,24 @@ class ChatApp:
         never shift an index past live rows for other rooms."""
         for event in self._bus.drain_log(session_id):
             envelope = event.envelope
+            # Payload is already the <=1000-char prompt-facing excerpt;
+            # refs ride in meta so the room row stays fetchable (CBE-3).
+            meta: dict = {
+                "bot_id": envelope.sender,
+                "kind": envelope.kind,
+                "trace_id": envelope.trace_id,
+                "parent_span_id": envelope.parent_span_id,
+                "span_id": envelope.span_id,
+            }
+            if envelope.refs:
+                meta["refs"] = list(envelope.refs)[:8]
+            if envelope.truncated:
+                meta["truncated"] = True
             room.append(
                 Message(
                     role="assistant",
-                    content=envelope.payload[:2000],
-                    meta={
-                        "bot_id": envelope.sender,
-                        "kind": envelope.kind,
-                        "trace_id": envelope.trace_id,
-                        "parent_span_id": envelope.parent_span_id,
-                        "span_id": envelope.span_id,
-                    },
+                    content=envelope.payload,
+                    meta=meta,
                 )
             )
 

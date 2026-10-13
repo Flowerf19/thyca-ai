@@ -22,3 +22,6 @@ class Session:
     # Team room participants (BE-3): bot ids in this room. None means the
     # legacy default ("thyca" alone); populated by SessionStore.load.
     bots: list[str] | None = None
+    # Bot main window (CBE-5): the bot id whose fixed DM this session is,
+    # or None for ordinary rooms. Populated by SessionStore.load.
+    dm_bot: str | None = None

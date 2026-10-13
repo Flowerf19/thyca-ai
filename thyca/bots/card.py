@@ -28,6 +28,8 @@ _TINT_RE = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$")
 #: ``hidden_tools`` and memory/bash policies still win at filter time.
 BASELINE_BOT_TOOLS: tuple[str, ...] = (
     "bot_send",
+    "bot_fetch",
+    "task_open",
     "memory_remember",
     "memory_search",
     "memory_get",

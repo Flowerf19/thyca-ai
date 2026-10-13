@@ -1405,29 +1405,29 @@ def test_team_css_audit_deleted_vs_kept() -> None:
         assert keep in css, keep
 
 
-def test_chat_title_head_sticky_keeps_fade() -> None:
-    """Sticky session title (r9 round 6): opaque paper background plus a
-    soft ::after fade (~12-16px) melting the paper texture in, so the
-    header bottom edge is a gradient blend, not a hard cut line. The fade
-    reuses --color-paper-chat (no new literal colors) and never intercepts
-    clicks."""
+def test_chat_title_head_has_no_solid_background_or_fade() -> None:
+    """Session title is seamless with the shell paper texture.
+
+    Supersedes test_chat_title_head_sticky_keeps_fade (r9 round 6 sticky +
+    ::after fade). That fix assumed messages scroll under the title, but
+    .chat-title-head is a flex sibling above .conversation-scroll inside
+    .chat-canvas, so messages can never slide under it; the solid
+    var(--color-paper-chat) band only hid the .notebook-shell texture and
+    truncated botanical motifs at the head's bottom edge (reported as the
+    leaf being cut). Pin the regression away: no solid background, no
+    fade pseudo-element, no sticky on the head. The base rule (flex:none +
+    padding at the top of chat.css) must remain."""
     import re
 
     css = CHAT_CSS.read_text(encoding="utf-8")
     heads = re.findall(r"\.chat-title-head\s*\{[^}]*\}", css)
     assert heads, ".chat-title-head rule missing"
-    assert any("position: sticky" in block for block in heads)
-    assert any("var(--color-paper-chat)" in block for block in heads)
-    fade = re.search(r"\.chat-title-head::after\s*\{[^}]*\}", css)
-    assert fade, ".chat-title-head::after fade rule missing"
-    body = fade.group(0)
-    assert "var(--color-paper-chat)" in body, "fade must reuse the paper token"
-    assert re.search(r"linear-gradient\(to bottom", body), "fade must run downward"
-    assert "transparent" in body
-    assert re.search(r"pointer-events:\s*none", body)
-    height = re.search(r"height:\s*([0-9.]+)px", body)
-    assert height, "fade needs an explicit pixel height"
-    assert 12 <= float(height.group(1)) <= 16, height.group(1)
-    assert re.search(r"top:\s*100%", body), "fade must start at the header bottom edge"
-    # No literal colors in the fade: token + transparent keyword only.
-    assert not re.search(r"#[0-9a-fA-F]{3,8}\b|oklch\(|rgba?\(", body), body
+    assert any("flex: none" in block for block in heads), heads
+    for block in heads:
+        assert "background" not in block, block
+        assert "position: sticky" not in block, block
+        assert "var(--color-paper-chat)" not in block, block
+    assert not re.search(r"\.chat-title-head::after", css), (
+        ".chat-title-head::after fade must stay removed: it painted a "
+        "solid-to-transparent band over the shell texture"
+    )

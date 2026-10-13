@@ -16,8 +16,8 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from thyca.agent.events import EventSink
-from thyca.bots.bus import Bus, Envelope, new_span_id
-from thyca.bots.card import BotCard
+from thyca.bots.bus import MAX_REF_CHARS, MAX_REFS, Bus, Envelope, new_span_id
+from thyca.bots.card import BASELINE_BOT_TOOLS, BotCard
 from thyca.bots.context import (
     BotTurnContext,
     bind_bot_turn_context,
@@ -73,6 +73,15 @@ def filtered_tool_schemas(
     gateway poll tools (``tool_read``/``tool_kill``) stay visible only
     when the card lists them explicitly. The Thyca system card keeps the
     legacy full snapshot.
+
+    One exception, recorded by the context review: the current
+    ``BASELINE_BOT_TOOLS`` (peer send/fetch, ``task_open``, memory
+    basics) are always kept for non-system bots, even when a card was
+    written before a baseline tool existed and never listed it — a
+    pre-existing card must gain ``bot_fetch``/``task_open`` on load, not
+    only at creation. ``hidden_tools`` and the memory/bash policies
+    above still win: they removed their names from ``keep`` before this
+    allowlist is applied, so a baseline name they dropped stays dropped.
     """
     if schemas is None:
         return None
@@ -93,8 +102,9 @@ def filtered_tool_schemas(
     if card.bash == "deny":
         keep.discard("bash")
     if not card.system:
-        # Fail-closed: the card's list is exhaustive for child bots.
-        keep &= set(card.tools)
+        # Fail-closed: the card's list plus the always-kept baseline
+        # (see docstring) is exhaustive for child bots.
+        keep &= set(card.tools) | set(BASELINE_BOT_TOOLS)
     elif card.tools:
         keep &= set(card.tools) | {"tool_read", "tool_kill"}
     # NOTE: card.bash == "ask" keeps the bash tool: the ask-approval gate
@@ -346,8 +356,11 @@ class BotRuntime:
                     hot, tasks=format_task_index(open_tasks[:20])
                 )
             reinject_key = (card.bot_id, room_id)
-            if reinject_key in self._reinject_pending:
-                self._reinject_pending.discard(reinject_key)
+            # One-shot recall is consumed only on successful delivery:
+            # it stays armed here and is discarded after loop.run
+            # returns, so a failed turn re-offers it on the next turn.
+            recall_armed = reinject_key in self._reinject_pending
+            if recall_armed:
                 if self.memory_searcher is not None and card.memory.read:
                     try:
                         lines = self.memory_searcher(text, card.bot_id)
@@ -359,25 +372,48 @@ class BotRuntime:
                     except Exception:
                         pass  # recall is best-effort; the turn must go on
             # CBE-4 flush-before-compact: if this turn's pre-turn compact
-            # will fire (the session compactor's own plan, BACKSTOP
-            # semantics, hot+tools overhead counted), extract memories
-            # from the intact transcript FIRST, then let the loop compact.
+            # will fire, extract memories from the intact transcript
+            # FIRST, then let the loop compact. The prediction must match
+            # the loop's actual decision exactly (context review): the
+            # loop plans on the mailbox-prepended wire text (wire-token
+            # estimate of the assembled user message, not raw chars/4)
+            # and reserves the summarizer's body size
+            # (``SUMMARY_MAX_CHARS``, as ``compact_with_llm`` passes), so
+            # this pre-check mirrors both, against a mailbox snapshot
+            # (the real drain still happens just before loop.run).
+            #
+            # Policy decision (lane plan, recorded explicitly): this
+            # flush is *system-driven* extraction — Thyca extracting the
+            # bot's transcript through its privileged facade before the
+            # system compacts it. It is not the bot calling a memory
+            # tool, so a card's ``memory.write=false`` does not gate it;
+            # that policy still gates the bot's own ``memory_*`` tools
+            # in ``filtered_tool_schemas``/``BotPolicy``.
             markers_before = _compaction_markers(sessions.current.messages)
             will_compact = False
             if self.memory_flush is not None:
                 try:
+                    from thyca.agent.shrink import estimate_wire_tokens
+                    from thyca.core.protocol import Message as _Msg
                     from thyca.core.protocol import estimate_tokens as _tok
                     from thyca.llm.prompt_manager import PromptManager
+                    from thyca.sessions.summary import SUMMARY_MAX_CHARS
 
+                    wire_text = self._mailbox_text(
+                        self._bus.pending_for(card.bot_id), room_id, text
+                    )
                     plan = sessions.compactor.plan(
                         list(sessions.current.messages),
                         turn_cfg.effective_limits().contextTokens,
                         hot_tokens=_tok(PromptManager().build(hot)),
                         tools_tokens=_tok(json.dumps(filtered or [], ensure_ascii=False)),
-                        pending_user_tokens=_tok(text),
+                        pending_user_tokens=estimate_wire_tokens(
+                            [_Msg(role="user", content=wire_text)]
+                        ),
                         calibration=calibration_factor(
                             list(sessions.current.messages), model=model
                         ),
+                        body_chars=SUMMARY_MAX_CHARS,
                     )
                     will_compact = plan is not None
                 except Exception:
@@ -430,6 +466,11 @@ class BotRuntime:
                     },
                 )
                 new_messages = list(sessions.current.messages)[before:]
+                # The turn delivered successfully: only now is the
+                # one-shot recall consumed (a raised turn above keeps
+                # it armed for the next turn).
+                if recall_armed:
+                    self._reinject_pending.discard(reinject_key)
                 # A compaction landed this turn (new marker, or the
                 # pre-turn plan said it would): queue the one-shot
                 # memory re-injection for this bot's next turn (CBE-4).
@@ -484,9 +525,19 @@ class BotRuntime:
             refs=refs,
         )
 
-    def fetch_artifact(self, span_id: str) -> str | None:
-        """Full body of an excerpted envelope, or None (CBE-3)."""
-        return self._bus.artifacts.get(span_id)
+    def fetch_artifact(self, span_id: str, caller: str | None = None) -> str | None:
+        """Full body of an excerpted envelope, or None (CBE-3).
+
+        With a ``caller`` (the bot_fetch path), the body is returned
+        only when the caller is the envelope's sender or recipient;
+        without one this is the raw internal lookup."""
+        if caller is None:
+            return self._bus.artifacts.get(span_id)
+        return self._bus.artifacts.get_for(span_id, caller)
+
+    def artifact_parties(self, span_id: str) -> tuple[str | None, str | None] | None:
+        """(sender, recipient) recorded for an artifact, or None."""
+        return self._bus.artifacts.parties(span_id)
 
     async def deliver(self, envelope: Envelope) -> str | None:
         """Run the recipient's turn for a just-sent envelope, if wired.
@@ -509,7 +560,18 @@ class BotRuntime:
 
         A bot's turn starts by reading its mailbox; queued ``delegate`` /
         ``message`` envelopes arrive as context above the user's text."""
-        pending = self._bus.drain(bot_id)
+        return self._mailbox_text(self._bus.drain(bot_id), room_id, text)
+
+    @staticmethod
+    def _mailbox_text(pending: list[Envelope], room_id: str, text: str) -> str:
+        """Render queued envelopes above the turn text (pure).
+
+        Shared by delivery (drained envelopes) and the flush pre-check
+        (a pending snapshot), so the size the runtime predicts is the
+        size the loop actually assembles. Refs are clipped here too —
+        at most ``MAX_REFS`` entries of ``MAX_REF_CHARS`` chars, aligned
+        with the room transcript row's cap — so a hand-built envelope
+        that bypassed ``Bus.send`` cannot flood the prompt either."""
         if not pending:
             return text
         lines = [f"[A2A mailbox: {len(pending)} queued message(s)]"]
@@ -527,7 +589,10 @@ class BotRuntime:
             # Envelope payload is already the <=1000-char excerpt (CBE-3).
             lines.append(envelope.payload)
             if envelope.refs:
-                lines.append(f"  refs: {', '.join(envelope.refs)}")
+                clipped = ", ".join(
+                    ref[:MAX_REF_CHARS] for ref in envelope.refs[:MAX_REFS]
+                )
+                lines.append(f"  refs: {clipped}")
             if envelope.truncated:
                 lines.append(
                     f"  [truncated: full body via bot_fetch "

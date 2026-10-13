@@ -86,12 +86,15 @@ def test_memory_and_bash_filters() -> None:
                  bash="deny",
                  tools=("memory_search", "memory_remember", "memory_propose_team",
                         "bash", "read"))
+    # Legacy card without the newer baseline peer tools in `tools`:
+    # bot_fetch/task_open are always kept, while the memory and bash
+    # masking above still removes its own families.
     out = filtered_tool_schemas(
         _schemas("memory_search", "memory_remember", "memory_propose_team",
-                 "bash", "read"),
+                 "bash", "bot_fetch", "task_open", "read"),
         card,
     )
-    assert [s["function"]["name"] for s in out] == ["read"]
+    assert [s["function"]["name"] for s in out] == ["bot_fetch", "task_open", "read"]
 
 
 def test_child_empty_tools_allowlist_is_fail_closed() -> None:

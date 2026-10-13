@@ -129,8 +129,11 @@ def test_bot_send_accepts_refs_and_child_sees_fetch_not_admin(tmp_path: Path) ->
     assert "bot_fetch" in names and "bot_send" in names
     assert "bot_create" not in names
 
+    # Legacy card: written before bot_fetch/task_open existed, so its
+    # tools list cannot name them — they must still be kept as current
+    # baseline peer tools (hidden/memory/bash policies aside).
     card = BotCard(bot_id="coder", name="coder", role="C", description="D",
-                   persona="P", tools=("bot_fetch", "task_open", "read"))
+                   persona="P", tools=("read",))
     kept = {s["function"]["name"] for s in filtered_tool_schemas(schemas, card)}
     assert {"bot_fetch", "task_open", "read"} <= kept
     assert "bot_create" not in kept

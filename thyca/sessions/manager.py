@@ -117,7 +117,10 @@ class SessionManager:
 
         ``keep`` is every session with an in-flight turn: a turn writes its
         first message a moment after it starts, so an empty file may still
-        belong to a running turn.
+        belong to a running turn. Sessions marked as a bot's fixed DM
+        (``dm_bot``) are kept the same way: a DM is created lazily and
+        stays blank until its first turn, but it is the bot's one main
+        window — pruning it would silently mint a second DM later.
         """
         with self._lock:
             removed: list[str] = []
@@ -127,6 +130,8 @@ class SessionManager:
                 except SessionError:
                     continue
                 if keep and session.id in keep:
+                    continue
+                if session.dm_bot:
                     continue
                 if not is_blank(session):
                     continue

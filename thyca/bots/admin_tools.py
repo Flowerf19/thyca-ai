@@ -14,7 +14,7 @@ import json
 from dataclasses import replace
 from typing import Any
 
-from thyca.bots.bus import new_trace_id
+from thyca.bots.bus import new_span_id, new_trace_id
 from thyca.bots.card import BotCard, BotMemoryPolicy, BotModel, with_baseline_tools
 from thyca.bots.context import current_bot_turn_context
 from thyca.memory.identity import current_bot_id
@@ -180,23 +180,41 @@ def _send_spec(deps: AdminDeps) -> ToolSpec:
 
 def _fetch_spec(deps: AdminDeps) -> ToolSpec:
     async def handler(args: dict) -> str:
-        # Any in-flight bot may fetch: artifacts are keyed by unguessable
-        # span ids that only reach bots the envelope was sent to (CBE-3).
+        # Authorization (context review): the caller — from the in-flight
+        # turn context / bot ContextVar, never from arguments — must be
+        # the envelope's sender or recipient (recorded at Bus.send).
+        # Anyone else gets an honest denial with no content, exactly as
+        # if they had guessed a span id belonging to another pair.
         ctx = current_bot_turn_context()
-        if ctx is None and current_bot_id() is None:
+        caller = ctx.sender_id if ctx is not None else current_bot_id()
+        if caller is None:
             return "denied: bot_fetch requires an in-flight bot turn"
         span_id = args.get("span_id")
         if not isinstance(span_id, str) or not span_id.strip():
             return "missing argument: span_id"
-        body = deps.runtime.fetch_artifact(span_id.strip())
-        if body is None:
+        span_id = span_id.strip()
+        parties = deps.runtime.artifact_parties(span_id)
+        if parties is None:
             return json.dumps(
-                {"ok": False, "span_id": span_id.strip(),
+                {"ok": False, "span_id": span_id,
+                 "error": "artifact not found (unknown or evicted)"},
+                ensure_ascii=False,
+            )
+        if caller not in parties:
+            return json.dumps(
+                {"ok": False, "span_id": span_id,
+                 "error": "denied: artifact was not sent by or to this bot"},
+                ensure_ascii=False,
+            )
+        body = deps.runtime.fetch_artifact(span_id, caller=caller)
+        if body is None:  # evicted between the two lookups
+            return json.dumps(
+                {"ok": False, "span_id": span_id,
                  "error": "artifact not found (unknown or evicted)"},
                 ensure_ascii=False,
             )
         return json.dumps(
-            {"ok": True, "span_id": span_id.strip(), "content": body},
+            {"ok": True, "span_id": span_id, "content": body},
             ensure_ascii=False,
         )
 
@@ -231,9 +249,16 @@ def _task_open_spec(deps: AdminDeps) -> ToolSpec:
             return "missing argument: title"
         # The event is this tool call itself, recorded in the bot's
         # internal transcript: the task view (thyca.bots.tasks) derives
-        # the open task from it. No mutable task store is written.
+        # the open task from it. No mutable task store is written. The
+        # returned key (a fresh span id, echoed as ``span_id``/``key``/
+        # ``task_key``) links the task: the ack result in the transcript
+        # carries it, and a later result/error event whose
+        # ``parent_span_id`` is this key closes the task (a status/step
+        # event with the same parent updates its status instead).
+        key = new_span_id()
         return json.dumps(
             {"ok": True, "task": title.strip(), "status": "open",
+             "key": key, "span_id": key, "task_key": key,
              "bot_id": sender,
              "room": ctx.room_id if ctx is not None else ""},
             ensure_ascii=False,
@@ -245,7 +270,8 @@ def _task_open_spec(deps: AdminDeps) -> ToolSpec:
             "Open a task that outlives this turn (work born in plain chat, "
             "not a delegation). Records a task_open event in your own "
             "transcript; your open-task view in later prompts lists it "
-            "until a result/error event closes it. Args: title, optional room."
+            "until a result/error event linked to the returned key "
+            "(span_id) closes it. Args: title, optional room."
         ),
         parameters={
             "type": "object",

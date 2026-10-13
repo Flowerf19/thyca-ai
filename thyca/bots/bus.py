@@ -30,6 +30,13 @@ EXCERPT_CHARS = 1000
 #: business rule): it only bounds infinite bot↔bot ping-pong, never content.
 MAX_HOPS = 16
 
+#: Technical defaults for by-reference payloads (CBE-3 bounds): at most
+#: this many refs per envelope (the room transcript row already caps at
+#: 8, so every render layer agrees), each clipped to this many chars at
+#: send. Refs are pointers (paths / entry ids / span ids), never bodies.
+MAX_REFS = 8
+MAX_REF_CHARS = 512
+
 
 class BusError(RuntimeError):
     """Envelope rejected (unknown kind, hop limit, unknown recipient)."""
@@ -130,14 +137,20 @@ class Bus:
         if not isinstance(payload, str):
             raise BusError("payload must be text")
         clean_refs = tuple(
-            ref for ref in refs if isinstance(ref, str) and ref.strip()
-        )
+            ref[:MAX_REF_CHARS]
+            for ref in refs
+            if isinstance(ref, str) and ref.strip()
+        )[:MAX_REFS]
         own_span = span_id or new_span_id()
         # Excerpt-cap the prompt-facing body; keep the full text in the
         # bounded artifact store so prompts never carry large payloads.
+        # The store records sender+recipient: bot_fetch may only return
+        # the body to one of those two parties.
         truncated = len(payload) > EXCERPT_CHARS
         if truncated:
-            self.artifacts.put(own_span, payload)
+            self.artifacts.put(
+                own_span, payload, sender=sender, recipient=recipient
+            )
         envelope = Envelope(
             sender=sender,
             recipient=recipient,

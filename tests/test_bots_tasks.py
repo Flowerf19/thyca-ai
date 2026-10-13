@@ -136,6 +136,11 @@ def test_task_open_tool_records_event_args(tmp_path: Path) -> None:
         out = json.loads(asyncio.run(spec.handler({"title": "long research"})))
     finally:
         reset_bot_turn_context(token)
-    assert out == {"ok": True, "task": "long research", "status": "open",
-                   "bot_id": "coder", "room": "r1"}
+    # The ack carries the task's linked key (a fresh span id) so a later
+    # result/error event with parent_span_id == key can close it.
+    assert out["ok"] is True and out["task"] == "long research"
+    assert out["status"] == "open" and out["bot_id"] == "coder"
+    assert out["room"] == "r1"
+    assert out["span_id"].startswith("sp_")
+    assert out["key"] == out["span_id"] == out["task_key"]
     assert BotCard(bot_id="x", name="x", role="r", description="d").bot_id == "x"

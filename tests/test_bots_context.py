@@ -57,7 +57,9 @@ def _internal_messages(app: ChatApp, bot_id: str, room_id: str):
 
 def test_bot_instance_compacts_with_own_budget_and_overhead(tmp_path: Path) -> None:
     llm = _CaptureLLM()
-    app = _chat(tmp_path, llm, context_tokens=2000)
+    # 3000 (was 2000): legacy cards now always keep the baseline tools,
+    # whose schemas are real counted overhead in this budget.
+    app = _chat(tmp_path, llm, context_tokens=3000)
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="PERSONA-CODER"))
@@ -187,7 +189,8 @@ def test_bot_prompt_carries_task_index_counted_in_hot(tmp_path: Path) -> None:
 
 def test_flush_runs_before_compaction_and_recall_fires_once(tmp_path: Path) -> None:
     llm = _CaptureLLM()
-    app = _chat(tmp_path, llm, context_tokens=2000)
+    # 3000 (was 2000): see the baseline-overhead note above.
+    app = _chat(tmp_path, llm, context_tokens=3000)
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="PERSONA-CODER"))

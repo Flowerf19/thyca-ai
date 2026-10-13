@@ -144,6 +144,9 @@ class ChatApp:
         self._turns = TurnState()
         self._loop_turns = _LoopTurns(self._loop, self._turns)
         self._claim_lock = threading.Lock()
+        # Serializes bot_dm's scan/adopt/create so concurrent lookups can
+        # never mint two DMs for the same bot (CBE-5 race fix).
+        self._dm_lock = threading.Lock()
         # Guards MCP sync (manager + registry + tools snapshot): concurrent
         # turns share all three. Always taken before _claim_lock, never after.
         self._mcp_lock = threading.Lock()
@@ -211,25 +214,31 @@ class ChatApp:
         and the ``dm`` meta marker, lazily created on first lookup. A
         legacy unmarked solo room is adopted (marked) instead of making
         a second window. Returns the session detail payload (``dm`` =
-        bot id, ``bots`` = [bot_id]). Unknown bots raise RegistryError."""
+        bot id, ``bots`` = [bot_id]). Unknown bots raise RegistryError.
+
+        The whole scan -> adopt -> create sequence runs under
+        ``_dm_lock``: without it, two concurrent first lookups could
+        both miss the scan and each create a session, leaving the bot
+        with two competing "fixed" DMs."""
         card = self._bots.require(bot_id)
         if card.paused:
             raise RegistryError(f"bot is paused: {bot_id}")
-        legacy = None
-        for session in self._sessions.list_sessions():
-            if session.dm_bot == bot_id:
-                return self.get_payload(session.id)
-            bots = list(session.bots) if session.bots else ["thyca"]
-            if bots == [bot_id] and legacy is None:
-                legacy = session
-        if legacy is not None:
-            self._sessions.store.append_dm(legacy.path, bot_id)
-            self._sessions.set_dm(legacy.id, bot_id)
-            return self.get_payload(legacy.id)
-        created = self.create(bots=[bot_id])
-        session = self._sessions.store.load(created["id"])
-        self._sessions.store.append_dm(session.path, bot_id)
-        return self.get_payload(created["id"])
+        with self._dm_lock:
+            legacy = None
+            for session in self._sessions.list_sessions():
+                if session.dm_bot == bot_id:
+                    return self.get_payload(session.id)
+                bots = list(session.bots) if session.bots else ["thyca"]
+                if bots == [bot_id] and legacy is None:
+                    legacy = session
+            if legacy is not None:
+                self._sessions.store.append_dm(legacy.path, bot_id)
+                self._sessions.set_dm(legacy.id, bot_id)
+                return self.get_payload(legacy.id)
+            created = self.create(bots=[bot_id])
+            session = self._sessions.store.load(created["id"])
+            self._sessions.store.append_dm(session.path, bot_id)
+            return self.get_payload(created["id"])
 
     async def _flush_bot_memory(self, bot_id: str, messages, turn_cfg) -> None:
         """Extract memories from a bot transcript about to compact (CBE-4).
@@ -238,7 +247,12 @@ class ChatApp:
         extractor runs on the intact transcript and writes through the
         Thyca-privileged facade (per-bot owners come from the extractor
         or default to this bot); compaction happens only after this
-        returns, in the caller. Best-effort: the runtime guards failures."""
+        returns, in the caller. Best-effort: the runtime guards failures.
+
+        Policy decision (lane plan, explicit): this is Thyca-managed,
+        system-driven extraction tied to system compaction, so it runs
+        even for ``memory.write=false`` cards — that flag gates the
+        bot's own ``memory_*`` tools, not the system's housekeeping."""
         from thyca.memory import jobs as mem_jobs
 
         provider = turn_cfg.effective_provider()
@@ -361,6 +375,10 @@ class ChatApp:
             report[item.id] = entry
         # Bot internal sessions (CBE-4): same extract-then-compact order
         # for every (bot x room) transcript quiet past the idle window.
+        # Like the room sweep above, an internal session whose *room*
+        # has a turn in flight is skipped: ``running`` is keyed by room
+        # session id, so the bot's room map (built once per bot, before
+        # any compacting rewrites it) translates internal -> room.
         bot_report: dict[str, dict] = {}
         for doc in self._bots.list():
             if not doc.ok or doc.card is None:
@@ -372,7 +390,13 @@ class ChatApp:
                     limits=turn_cfg.effective_limits(),
                     timezone_name=turn_cfg.timeline.timezone, store=store,
                 )
+                room_by_internal = {
+                    internal: room
+                    for room, internal in self._runtime._read_room_map(bot_id).items()
+                }
                 for item in manager.list_sessions():
+                    if room_by_internal.get(item.id) in running:
+                        continue
                     key = f"{bot_id}:{item.id}"
                     try:
                         last_ts = updated_at(item)
@@ -392,12 +416,8 @@ class ChatApp:
                         if entry["compacted"]:
                             # Runtime keys re-injection by room id; the
                             # sweep holds internal ids, so translate via
-                            # the bot's room map (unknown room: skip).
-                            reverse = {
-                                internal: room
-                                for room, internal in self._runtime._read_room_map(bot_id).items()
-                            }
-                            room_key = reverse.get(item.id)
+                            # the room map built above (unknown: skip).
+                            room_key = room_by_internal.get(item.id)
                             if room_key is not None:
                                 self._runtime._reinject_pending.add((bot_id, room_key))
                     except Exception as exc:
@@ -520,7 +540,9 @@ class ChatApp:
     def create(self, bots: list[str] | None = None) -> dict:
         # Do not wait on any turn: create/list stay responsive while an LLM
         # call is in flight. Blank sessions belonging to a running turn must
-        # survive the prune — its transcript is still empty on disk.
+        # survive the prune — its transcript is still empty on disk. Blank
+        # bot DMs survive it too (discard_empty keeps ``dm_bot`` sessions:
+        # a lazily created DM is blank until its first turn).
         participants = self._clean_participants(bots) if bots is not None else None
         self._sessions.discard_empty(keep=set(self._turns.snapshot()))
         session = self._sessions.create()
@@ -535,7 +557,16 @@ class ChatApp:
         return list(session.bots) if session.bots else ["thyca"]
 
     def set_room_bots(self, session_id: str, bot_id: str, action: str) -> list[str]:
-        """Add/remove one bot from a room. Returns the new participant list."""
+        """Add/remove one bot from a room. Returns the new participant list.
+
+        DM integrity (chosen semantics, recorded in the lane plan): a
+        session marked as a bot's fixed DM protects its participants —
+        the DM's own bot cannot be removed from it, and no other bot
+        can be added (that would silently turn the private DM into a
+        shared room while the marker still claims it is the DM). There
+        is no marker-clearing/convert operation in v1, so both raise;
+        removing some *other* participant from a marked session stays
+        allowed, as it can only move the room back toward DM shape."""
         if action not in ("add", "remove"):
             raise ValueError("action must be add|remove")
         card = self._bots.require(bot_id)
@@ -543,6 +574,16 @@ class ChatApp:
         if action == "add" and card.paused:
             raise RegistryError(f"bot is paused: {bot_id}")
         session = self._sessions.store.load(session_id)
+        if session.dm_bot is not None:
+            if action == "add" and bot_id != session.dm_bot:
+                raise RegistryError(
+                    f"cannot add {bot_id} to {session.dm_bot}'s DM: "
+                    "a DM stays private to its bot"
+                )
+            if action == "remove" and bot_id == session.dm_bot:
+                raise RegistryError(
+                    f"cannot remove {bot_id} from its own DM"
+                )
         current = list(session.bots) if session.bots else ["thyca"]
         if action == "add":
             if bot_id not in current:

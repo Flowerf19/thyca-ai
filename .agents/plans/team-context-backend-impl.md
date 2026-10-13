@@ -183,6 +183,62 @@ commands after the authorized `git merge --ff-only integration/team-v1`.
 - Tests: DM created once (same id twice), marker in payload, unknown bot
   404, scheduler fires into DM, room work stays in room.
 
+## Post-review fixes (context review, backend)
+
+All findings fixed; regression coverage in
+`tests/test_bots_context_fixes.py` plus updated masking/budget tests:
+
+1. **bot_fetch authorization**: `BusArtifactStore` records sender +
+   recipient at `Bus.send`; `bot_fetch` resolves the caller from the
+   turn ContextVar and returns the body only to sender/recipient. A
+   third bot gets `ok: false` denied with no content; unknown spans
+   stay an honest not-found. (Supersedes lane decision 3's "any bot may
+   fetch" — unguessable ids alone were not authorization.)
+2. **Baseline tools on load**: `filtered_tool_schemas` always keeps the
+   current `BASELINE_BOT_TOOLS` for non-system bots, so pre-existing
+   cards gain `bot_fetch`/`task_open` without being rewritten;
+   `hidden_tools` and the memory/bash policies still win. The masking
+   test now uses a legacy card that never listed the new tools. Two
+   budget fixtures moved 2000 -> 3000 context tokens because baseline
+   schemas are real, counted overhead (assertions unchanged).
+3. **task_open lifecycle**: `task_open` returns a linked key (fresh
+   span id as `key`/`span_id`/`task_key`); the view keys the task by
+   that span, its ack never closes it, and a later result/error event
+   with `parent_span_id` == key closes it. Dead `task_open_calls` code
+   now guards ack exclusion for real.
+4. **bot_dm race**: `ChatApp.bot_dm` holds `_dm_lock` across
+   scan/adopt/create; 8 concurrent lookups mint exactly one DM.
+5. **Bot idle sweep**: skips internal sessions whose room (via the
+   room map built before compacting) is in `_turns.snapshot()`.
+6. **Flush prediction**: the runtime pre-check mirrors the loop —
+   mailbox-prepended wire-token estimate (rendered from a pending
+   snapshot, same `_mailbox_text`) and `body_chars=SUMMARY_MAX_CHARS`.
+   The post-compact recall one-shot is discarded only after a
+   successful `loop.run`; a failed turn keeps it armed.
+7. **Refs bounds**: `Bus.send` caps refs at `MAX_REFS=8` /
+   `MAX_REF_CHARS=512`; mailbox rendering clips the same way (aligned
+   with the room row's 8-cap).
+8. **DM marker integrity** (chosen semantics: *protect DM
+   participants*): `set_room_bots` cannot remove a DM's own bot or add
+   another bot to a DM (no marker-clearing/convert operation exists in
+   v1, so both raise `RegistryError`). Blank DMs survive
+   `create()`'s prune: `discard_empty` keeps `dm_bot` sessions like
+   running turns.
+9. **Task status = latest event**: `derive_open_tasks` lets linked
+   `status`/`step` meta rows (and tool result events) replace an open
+   task's status; latest wins.
+
+**Open policy question — resolved, behavior preserved**: the
+pre-compact flush writes memory even for `memory.write=false` cards.
+Decision: keep it. The flush is *system-driven* extraction — Thyca
+(the system) extracting a transcript through its privileged facade
+before system compaction compacts it — not the bot exercising a
+memory tool. `memory.write=false` still gates the bot's own
+`memory_*` tool schemas and gateway policy exactly as before. This is
+recorded here and in comments at both flush sites
+(`BotRuntime.run_bot_turn_detailed`, `ChatApp._flush_bot_memory`) so
+the behavior is a documented decision, never a silent default.
+
 ## Checks
 - Focused: `uv run pytest -q tests/test_bots_context.py tests/test_bots_bus_refs.py tests/test_bots_tasks.py tests/test_bots_dm.py` + existing bots/memory suites.
 - Full: `uv run pytest -q` (known pre-existing failure:

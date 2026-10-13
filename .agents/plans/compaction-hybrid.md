@@ -138,6 +138,15 @@ build verified to contain `seeds/prompts/compaction.md`. Self-review
 only; live browser/product-flow check with a real provider summary
 still outstanding (tests use fakes). Not yet committed/deployed.
 
+Live check 2026-10-13 (after deploy of `761d5f7`): real manual
+compact landed an LLM summary + `kind=compaction` sidecar and the
+meter dropped, but exposed a frontend bug — the shared 15s fetch
+timeout aborted the click and reported failure while the backend kept
+summarizing (provider read timeout is 300s). Fix (uncommitted):
+330s compact timeout, live "Đang gọn… (Xs)" progress on the chip,
+and success reconciliation by re-reading the session if the fetch is
+lost after the backend landed the rewrite.
+
 ## Proposed tasks (not approved)
 
 ### Phase 2: Rehydrate

@@ -922,6 +922,9 @@ def test_context_nudge_in_webui() -> None:
     assert "Gọn phiên" in html
     assert "instructions" in app
     assert "đã hiệu chuẩn" in app
+    assert "CONTEXT_COMPACT_TIMEOUT_MS = 330_000" in app
+    assert "Đang gọn phiên bằng bản tóm tắt" in app
+    assert "mất kết nối khi chờ, backend vẫn làm xong" in app
     assert "CONTEXT_SUGGEST_RATIO = 0.8" in app
     assert "CONTEXT_URGENT_RATIO = 0.9" in app
     assert "/compact" in app

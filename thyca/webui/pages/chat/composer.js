@@ -21,6 +21,10 @@ const idleArmed = new Set();
 export const CONTEXT_WARN_RATIO = 0.7;
 export const CONTEXT_SUGGEST_RATIO = 0.8;
 export const CONTEXT_URGENT_RATIO = 0.9;
+// A summary call may run to the provider read timeout (300s in
+// thyca/llm/_http.py); the shared 15s fetch default would abort the
+// click while the backend keeps compacting, then misreport failure.
+export const CONTEXT_COMPACT_TIMEOUT_MS = 330_000;
 const contextDismissed = new Map();
 let contextBusy = false;
 let contextNote = null;
@@ -126,17 +130,36 @@ export async function compactFromContext() {
   if (!sessionId) return;
   const { el } = composerDeps;
   const beforeRatio = contextRatio(composerDeps.state.detail);
+  const beforeMessages = Array.isArray(composerDeps.state.detail?.messages)
+    ? composerDeps.state.detail.messages.length
+    : 0;
   contextBusy = true;
   contextNote = null;
   for (const button of [el.contextCompact, el.contextNew, el.contextDismiss]) {
     if (button) button.disabled = true;
   }
   if (el.contextFocus) el.contextFocus.disabled = true;
+  // Live progress while the backend summarizes: real elapsed seconds,
+  // never a fake percentage. The summarizer can take a while and a
+  // silent frozen chip reads as a hang.
+  const compactLabel = el.contextCompact ? el.contextCompact.textContent : "";
+  if (el.contextCompact) el.contextCompact.textContent = "Đang gọn…";
+  if (el.contextNudge) el.contextNudge.setAttribute("aria-busy", "true");
+  const startedAt = Date.now();
+  const showProgress = () => {
+    if (!el.contextNudgeText || composerDeps.sessionKey() !== sessionId) return;
+    const seconds = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+    el.contextNudgeText.textContent = `Đang gọn phiên bằng bản tóm tắt… (${seconds}s)`;
+  };
+  showProgress();
+  const progressTimer = window.setInterval(showProgress, 1000);
   try {
     const body = el.model.value ? { model: el.model.value } : {};
     const focus = (el.contextFocus?.value || "").trim();
     if (focus) body.instructions = focus;
-    const detail = await postJson(`/api/sessions/${encodeURIComponent(sessionId)}/compact`, body);
+    const detail = await postJson(`/api/sessions/${encodeURIComponent(sessionId)}/compact`, body, {
+      timeoutMs: CONTEXT_COMPACT_TIMEOUT_MS,
+    });
     const afterRatio = contextRatio(detail);
     const done = detail?.compaction?.compacted === true;
     const beforePct = beforeRatio === null ? "?" : contextPct(beforeRatio);
@@ -161,15 +184,44 @@ export async function compactFromContext() {
     if (composerDeps.sessionKey() === sessionId) composerDeps.renderDetail(detail);
     await refreshSessions();
   } catch (error) {
-    const message = error instanceof Error && error.message.trim() ? error.message.trim() : "thử lại";
-    contextNote = {
-      sessionId,
-      text: `Chưa gọn được — ${message}.`,
-      showCompact: true,
-      showNew: true,
-    };
-    if (composerDeps.sessionKey() === sessionId) syncContext(composerDeps.state.detail);
+    // A dropped/timed-out fetch does not cancel the backend: the
+    // compaction may still have landed. Re-read the session and report
+    // what actually happened instead of a false failure.
+    let landed = null;
+    try {
+      const fresh = await getJson(`/api/sessions/${encodeURIComponent(sessionId)}`);
+      const afterMessages = Array.isArray(fresh?.messages) ? fresh.messages.length : 0;
+      if (beforeMessages > 0 && afterMessages > 0 && afterMessages < beforeMessages) landed = fresh;
+    } catch {
+      // Backend unreachable: fall through to the honest error below.
+    }
+    if (landed) {
+      if (el.contextFocus) el.contextFocus.value = "";
+      const afterRatio = contextRatio(landed);
+      const afterPct = afterRatio === null ? "?" : contextPct(afterRatio);
+      contextNote = {
+        sessionId,
+        text: `Đã gọn phiên (mất kết nối khi chờ, backend vẫn làm xong): còn ~${afterPct}% (${beforeMessages} → ${landed.messages.length} tin nhắn).`,
+        showCompact: false,
+        showNew: false,
+      };
+      contextDismissed.delete(sessionId);
+      if (composerDeps.sessionKey() === sessionId) composerDeps.renderDetail(landed);
+      await refreshSessions();
+    } else {
+      const message = error instanceof Error && error.message.trim() ? error.message.trim() : "thử lại";
+      contextNote = {
+        sessionId,
+        text: `Chưa gọn được — ${message}.`,
+        showCompact: true,
+        showNew: true,
+      };
+      if (composerDeps.sessionKey() === sessionId) syncContext(composerDeps.state.detail);
+    }
   } finally {
+    window.clearInterval(progressTimer);
+    if (el.contextCompact && compactLabel) el.contextCompact.textContent = compactLabel;
+    if (el.contextNudge) el.contextNudge.removeAttribute("aria-busy");
     contextBusy = false;
     for (const button of [el.contextCompact, el.contextNew, el.contextDismiss]) {
       if (button) button.disabled = false;

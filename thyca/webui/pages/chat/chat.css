@@ -1027,8 +1027,8 @@ button:active {
 
 /* Participant strip: lives in .site-header, right-aligned before the
    header-line; bot names sit right, visually right-to-left with thyca
-   outermost (row-reverse over a thyca-first DOM order). Type reuses the
-   header-line values (reading, italic, muted); each name tints per bot. */
+   outermost (row-reverse over a thyca-first DOM order). Type is the r9
+   spec (0.8rem var(--font-reading), upright); each name tints per bot. */
 .chat-shell .site-header .team-strip {
   display: flex;
   flex-direction: row-reverse;
@@ -1041,44 +1041,48 @@ button:active {
   padding: 0;
   color: var(--color-muted);
   font-family: var(--font-reading);
-  font-size: 0.88rem;
-  font-style: italic;
+  font-size: 0.8rem;
+  font-style: normal;
   line-height: 1.15;
 }
 
+/* Plain text, not a boxy button: no border, padding or fill of its own
+   (the global button reset already removes the border) — only the bot's
+   tint on the name itself. */
 .team-strip-name {
   padding: 0;
-  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--team-tint, var(--color-accent));
 }
 
-.team-strip-name.is-running {
-  position: relative;
+/* Working bot (r9 .top-name.is-busy): bolder, with the light sweep
+   running THROUGH the text itself (background-clip: text, tint kept as
+   the base of the gradient so the name never leaves its bot color). */
+.team-strip-name.is-busy {
   font-weight: 600;
-  overflow: hidden;
-}
-
-.team-strip-name.is-running::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(100deg, transparent 30%, var(--color-accent-soft) 50%, transparent 70%);
+  background-image: linear-gradient(100deg, var(--team-tint, var(--color-accent)) 35%, var(--color-accent-soft) 50%, var(--team-tint, var(--color-accent)) 65%);
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
   animation: team-shimmer 2.4s var(--ease-in-out) infinite;
-  pointer-events: none;
 }
 
 @keyframes team-shimmer {
-  from { transform: translateX(-100%); }
-  to { transform: translateX(100%); }
+  from { background-position: 120% 0; }
+  to { background-position: -120% 0; }
 }
 
 .team-strip-name.is-error {
   color: var(--color-danger, var(--color-accent-deep));
+  -webkit-text-fill-color: var(--color-danger, var(--color-accent-deep));
+  background: none;
+  animation: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .team-strip-name.is-running::after {
+  .team-strip-name.is-busy {
     animation: none;
   }
 }
@@ -1160,12 +1164,6 @@ button:active {
   line-height: 1.4;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* Collapsed history group: the toggle is a legacy .session-action word
-   button; only the group's block spacing has no legacy equivalent. */
-.team-history {
-  margin-block: 0.7rem 0.1rem;
 }
 
 /* Quyết định / handoff sit directly on the page (r9: no note-paper box).

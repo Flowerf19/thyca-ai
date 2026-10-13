@@ -90,8 +90,8 @@ export function sessionsForBot(sessions, botId) {
   });
 }
 
-/* True when a session is shared (more than one participant) — shared
-   rooms render in the sidebar's "Phiên chung" section. */
+/* True when a session is shared (more than one participant) — such a
+   session carries a participant annotation in the unified bot list. */
 export function isSharedSession(session) {
   return Array.isArray(session?.bots) && session.bots.length > 1;
 }
@@ -440,22 +440,16 @@ export function roomParticipantNames(session, roster) {
   return ids.map((id) => known.get(id) || id);
 }
 
-/* Collapsed-history slice ("Lịch sử phiên"): a bot's solo sessions except
-   its DM window, newest first. Ownership mirrors sessionsForBot: legacy
-   rooms without a bots list predate teams and belong to thyca alone, so
-   they count as thyca's solo sessions here. Shared rooms are excluded —
-   they live in the "Phiên chung" section, never duplicated here. */
-export function historyForBot(sessions, botId, dmId) {
+/* One bot's unified session list: its private sessions (DM included) and
+   the shared sessions it participates in, merged in a single list, newest
+   first. Ownership mirrors sessionsForBot: legacy rooms without a bots
+   list predate teams and belong to thyca alone, so Thyca's pre-team
+   sessions appear in Thyca's list like any other bot's sessions. The same
+   shared session therefore appears in every participating bot's list. */
+export function unifiedSessionsForBot(sessions, botId) {
   const id = String(botId || "");
-  const dm = String(dmId || "");
   if (!id) return [];
-  return (Array.isArray(sessions) ? sessions : [])
-    .filter((session) => {
-      if (!session || typeof session !== "object") return false;
-      if (dm && String(session.id) === dm) return false;
-      if (isSoloSession(session, id)) return true;
-      return id === TEAM_BOT_ID && !Array.isArray(session.bots);
-    })
+  return sessionsForBot(sessions, id)
     .slice()
     .sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")));
 }

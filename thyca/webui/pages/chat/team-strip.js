@@ -1,10 +1,13 @@
 import { TEAM_BOT_ID, tintVarFor } from "./team-data.js";
 
 // Participant strip (design r9 §4.2): the names of every bot in the room,
-// right-aligned, right-to-left with thyca outermost. A running bot renders
-// bolder with a light shimmer (disabled under prefers-reduced-motion); an
-// errored bot renders in danger red and still. Clicking a name opens the
-// read-only bot drawer. No "Dừng cả nhóm", no floating bar.
+// right-aligned, right-to-left with thyca outermost. Each name is plain
+// text in that bot's own tint (a borderless text button, so clicking it
+// still opens the read-only bot drawer). A working bot renders bolder
+// (600) with a light sweep through the text (disabled under
+// prefers-reduced-motion); an errored bot renders in danger red and
+// still. Type is the r9 spec: 0.8rem var(--font-reading), upright.
+// No "Dừng cả nhóm", no floating bar.
 let hub = null;
 let strip = null;
 
@@ -59,8 +62,12 @@ export function renderTeamStrip() {
     const bot = hub?.teamRoster?.().find?.((item) => item.id === id);
     button.textContent = bot?.name || id;
     button.style.setProperty("--team-tint", tintVarFor(id, bot?.tint));
-    if (running.has(id)) button.classList.add("is-running");
-    if (failed.has(id)) button.classList.add("is-error");
+    // Working state comes from the room turn (detail) or the bot's own
+    // roster status ("running" = đang làm, as the sidebar labels it);
+    // an errored bot is never animated, so error wins over busy.
+    const status = String(bot?.status || "");
+    if (failed.has(id) || status === "error") button.classList.add("is-error");
+    else if (running.has(id) || status === "running") button.classList.add("is-busy");
     button.setAttribute("aria-label", `Hồ sơ bot ${bot?.name || id}`);
     button.addEventListener("click", () => hub?.openBotDrawer?.(id));
     strip.append(button);

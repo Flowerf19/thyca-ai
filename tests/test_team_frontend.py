@@ -825,6 +825,25 @@ def _cards(node: str, body: str) -> object:
     return json.loads(result.stdout)
 
 
+def _strip(node: str, body: str) -> object:
+    """Run node with the fake-DOM prelude + team-strip.js (DOM is touched
+    only inside its functions, so the import is clean)."""
+    source = (
+        _FAKE_DOM
+        + f"import * as strip from '{STRIP_SRC.as_posix()}';\n"
+        + f"const main = async () => {{ {body} }};\n"
+        + "console.log(JSON.stringify(await main()));\n"
+    )
+    result = subprocess.run(
+        [node, "--input-type=module", "-e", source],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+    )
+    return json.loads(result.stdout)
+
+
 def test_team_brand_reuses_legacy_chat_brand(node: str) -> None:
     """The bot header is the legacy .chat-brand anatomy — stripe, lockup
     with h2 name, quill, italic status line — with per-bot tint through the
@@ -939,26 +958,32 @@ def test_room_participant_names_follow_roster(node: str) -> None:
     assert _run(node, "return api.roomParticipantNames({}, []);") == []
 
 
-def test_history_for_bot_excludes_dm_and_shared(node: str) -> None:
+def test_unified_sessions_merge_private_and_shared(node: str) -> None:
+    """One list per bot: private sessions (DM included) and shared sessions
+    merged, newest first, with no split. The same shared session appears
+    in every participating bot's list; Thyca's pre-team (legacy) sessions
+    are simply Thyca's sessions in that one list."""
     sessions = [
         {"id": "dm", "bots": ["thyca"], "dm": "thyca",
          "updated_at": "2026-06-01T00:00:00Z"},
         {"id": "old", "bots": ["thyca"], "updated_at": "2026-01-01T00:00:00Z"},
         {"id": "new", "bots": ["thyca"], "updated_at": "2026-05-01T00:00:00Z"},
         {"id": "shared", "bots": ["thyca", "b2"],
-         "updated_at": "2026-07-01T00:00:00Z"},
+         "updated_at": "2026-07-02T00:00:00Z"},
         {"id": "other", "bots": ["b2"], "updated_at": "2026-07-01T00:00:00Z"},
         # Legacy pre-team room: no bots list at all, still thyca's own.
         {"id": "legacy", "updated_at": "2026-03-01T00:00:00Z"},
     ]
     value = _run(node,
         f"const sessions = {json.dumps(sessions)};"
-        " return [api.historyForBot(sessions, 'thyca', 'dm').map(s => s.id),"
-        " api.historyForBot(sessions, 'b2', '').map(s => s.id),"
-        " api.historyForBot(sessions, 'nobody', ''),"
-        " api.historyForBot(sessions, '', '')];")
-    assert value[0] == ["new", "legacy", "old"]  # newest first, DM + shared out
-    assert value[1] == ["other"]  # other bots: only when any exist
+        " return [api.unifiedSessionsForBot(sessions, 'thyca').map(s => s.id),"
+        " api.unifiedSessionsForBot(sessions, 'b2').map(s => s.id),"
+        " api.unifiedSessionsForBot(sessions, 'nobody'),"
+        " api.unifiedSessionsForBot(sessions, '')];")
+    # DM + solo + legacy + shared together in ONE list, newest first.
+    assert value[0] == ["shared", "dm", "new", "legacy", "old"]
+    # The same shared session is in b2's one list too, with b2's private one.
+    assert value[1] == ["shared", "other"]
     assert value[2] == []
     assert value[3] == []
 
@@ -979,10 +1004,25 @@ def test_sidebar_agents_primary_no_level_two() -> None:
                  "openTeam", "showLegacy", "showTeamView",
                  "partitionBotSessions"):
         assert gone not in src, gone
-    # Single-level structure that replaces it.
-    for kept in ("Phiên chung", "Lịch sử phiên", "session-participants",
-                 "currentTeamBot", "historyForBot", "team-shared-create"):
+    # The split sections are gone: no separate shared section, no collapsed
+    # history group, no shared-only empty text, no chung/riêng labels.
+    for gone in ("Lịch sử phiên", "Chưa có phiên chung.",
+                 "team-shared-list", "team-history", "historyForBot",
+                 "historyGroup", "roomRow"):
+        assert gone not in src, gone
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    # No section heading for a separate shared list (the create flow's
+    # picker/aria wording for a new shared session is not a section).
+    for gone in ("<h2>Phiên chung</h2>", 'id="team-shared-list"', 'id="team-history"'):
+        assert gone not in html, gone
+    # Single unified list that replaces them.
+    for kept in ("session-participants", "currentTeamBot",
+                 "unifiedSessionsForBot", "unifiedRow", "team-session-list",
+                 "team-shared-create"):
         assert kept in src, kept
+    # Participant annotation only for multi-bot sessions, absent for solo.
+    assert "names.length > 1" in src
+    assert 'annotation.className = "session-participants"' in src
 
 
 def test_sidebar_picker_hidden_unless_picking() -> None:
@@ -1008,6 +1048,77 @@ def test_strip_in_site_header_hidden_under_two_bots() -> None:
     assert "names.length < 2" in strip
 
 
+def test_strip_names_tinted_plain_text_busy_and_error(node: str) -> None:
+    """Strip spec: each bot name carries its own tint, a working bot gets
+    .is-busy, an errored bot gets .is-error (never busy), and every name
+    is rendered as plain text content (no markup inside the name)."""
+    value = _strip(node,
+        "FakeNode.prototype.replaceChildren = function (...nodes)"
+        " { this.children = [...nodes]; };"
+        " const el = new FakeNode('p');"
+        " document.querySelector = (sel) => sel === '#team-strip' ? el : null;"
+        " strip.initTeamStrip({"
+        " state: { detail: { bots: ['thyca', 'coder', 'ghost'],"
+        " running: false, failedBots: [] } },"
+        " teamRoster: () => ["
+        " {id: 'thyca', name: 'Thyca', tint: 'accent', status: 'idle'},"
+        " {id: 'coder', name: 'Coder', tint: 'botanical', status: 'running'},"
+        " {id: 'ghost', name: 'Ghost', tint: 'ink', status: 'error'}],"
+        " openBotDrawer: () => {} });"
+        " strip.renderTeamStrip();"
+        " return el.children.map((c) => ({ tag: c.tagName,"
+        " text: c.textContent, cls: c.className,"
+        " tint: c._style['--team-tint'], kids: c.children.length }));")
+    assert [c["text"] for c in value] == ["Thyca", "Coder", "Ghost"]
+    assert [c["tint"] for c in value] == [
+        "var(--color-accent)", "var(--color-botanical)", "var(--color-ink)"]
+    assert all(c["kids"] == 0 for c in value)  # plain text, no inner markup
+    assert "is-busy" in value[1]["cls"].split()
+    assert "is-busy" not in value[0]["cls"].split()
+    assert "is-error" in value[2]["cls"].split()
+    assert "is-busy" not in value[2]["cls"].split()
+
+
+def test_strip_css_matches_r9_spec() -> None:
+    """r9 strip type + busy sweep: 0.8rem reading, upright, per-bot tint as
+    plain text; .is-busy is 600 with the sweep THROUGH the text
+    (background-clip: text) at 2.4s, off under prefers-reduced-motion;
+    .is-error is danger red with no animation. Tokens only."""
+    import re
+
+    css = CHAT_CSS.read_text(encoding="utf-8")
+    container = re.search(
+        r"\.chat-shell \.site-header \.team-strip\s*\{[^}]*\}", css)
+    assert container, ".team-strip container rule missing"
+    assert "font-size: 0.8rem" in container.group(0)
+    assert "font-family: var(--font-reading)" in container.group(0)
+    assert "font-style: normal" in container.group(0)
+    assert "italic" not in container.group(0)
+    name = re.search(r"\.team-strip-name\s*\{[^}]*\}", css)
+    assert name, ".team-strip-name rule missing"
+    assert "background: transparent" in name.group(0)
+    assert "color: var(--team-tint" in name.group(0)
+    assert "border" not in name.group(0)  # plain text, not a boxy button
+    busy = re.search(r"\.team-strip-name\.is-busy\s*\{[^}]*\}", css)
+    assert busy, ".team-strip-name.is-busy rule missing"
+    assert "font-weight: 600" in busy.group(0)
+    assert "background-clip: text" in busy.group(0)
+    assert "animation: team-shimmer 2.4s" in busy.group(0)
+    assert re.search(
+        r"@keyframes team-shimmer\s*\{[^}]*background-position", css)
+    assert not re.search(r"\.team-strip-name\.is-running", css)
+    assert not re.search(r"\.team-strip-name\.is-busy::after", css)
+    error = re.search(r"\.team-strip-name\.is-error\s*\{[^}]*\}", css)
+    assert error, ".team-strip-name.is-error rule missing"
+    assert "var(--color-danger" in error.group(0)
+    assert "animation: none" in error.group(0)
+    reduced = re.search(
+        r"@media \(prefers-reduced-motion: reduce\)\s*\{[^}]*"
+        r"\.team-strip-name\.is-busy\s*\{[^}]*animation:\s*none",
+        css)
+    assert reduced, "busy sweep must stop under prefers-reduced-motion"
+
+
 def test_team_nav_reuses_legacy_session_shell() -> None:
     """#team-nav carries the legacy .sessions class (layout, heading
     padding, mobile pick pattern from kit.css); the shared section reuses
@@ -1018,11 +1129,16 @@ def test_team_nav_reuses_legacy_session_shell() -> None:
     assert re.search(r'<section class="sessions" id="team-nav"', html)
     assert 'id="team-nav-back"' not in html
     assert 'id="team-bot-list"' in html
-    assert 'id="team-shared-list"' in html
-    assert 'id="team-history"' in html
+    assert 'id="team-session-list"' in html
+    assert 'id="team-shared-list"' not in html
+    assert 'id="team-history"' not in html
     assert re.search(r'<div id="team-nav-actions" hidden>', html)
+    # Shared creation keeps its entry point: the legacy .new-session "+" in
+    # the unified list's .sessions-heading area, before the one list.
     assert re.search(
         r'<button class="new-session" id="team-shared-create"', html)
+    assert html.index('id="team-sessions-heading"') < html.index('id="team-shared-create"')
+    assert html.index('id="team-shared-create"') < html.index('id="team-session-list"')
 
 
 def test_team_css_audit_deleted_vs_kept() -> None:
@@ -1032,14 +1148,13 @@ def test_team_css_audit_deleted_vs_kept() -> None:
     deleted = ("team-bot-item", "team-bot-name", "team-bot-status",
                "team-actions", "team-secondary-title", "team-unavailable",
                "team-shared-title", "team-heading", "team-nav-back",
-               "session-row.is-main")
+               "team-history", "session-row.is-main")
     for gone in deleted:
         assert gone not in css, gone
     kept = (".team-bot-dot",  # no legacy tint dot
             ".team-unread",  # no legacy unread badge
             ".team-strip[hidden]",  # flex outranks hidden (legacy pattern)
             ".session-participants",  # no legacy third line
-            ".team-history",  # no legacy collapsible group
             ".team-shared-picker",  # no legacy checkbox picker card
             ".team-shared-option",
             ".team-card",  # question/error cards

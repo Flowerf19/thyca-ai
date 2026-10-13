@@ -1012,21 +1012,8 @@ button:active {
   pointer-events: none;
 }
 
-/* Date + version sit at the bottom-right corner on the chat page (r9 §4.2). */
-.chat-shell .site-header .header-line {
-  position: fixed;
-  right: 1.1rem;
-  bottom: 0.45rem;
-  z-index: var(--z-content);
-  margin: 0;
-  padding: 0;
-  border-bottom: 0;
-  font-size: 0.72rem;
-  pointer-events: none;
-}
-
-/* Participant strip: lives in .site-header, right-aligned before the
-   header-line; bot names sit right, visually right-to-left with thyca
+/* Participant strip: lives in .site-header, right-aligned; bot names
+   sit right, visually right-to-left with thyca
    outermost (row-reverse over a thyca-first DOM order). Type is the r9
    spec (0.8rem var(--font-reading), upright); each name tints per bot. */
 .chat-shell .site-header .team-strip {

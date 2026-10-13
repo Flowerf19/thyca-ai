@@ -7,7 +7,7 @@ errors distinct from chunk-not-found, and preserve explicit limit=0.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -22,11 +22,22 @@ from thyca.tools.registry import ToolRegistry
 from thyca.tools.task_store import TaskStore
 
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
-TODAY = "2026-09-29"
+# Derived from the real clock: these tests exercise the *unindexed
+# today* path, and ArchivedMemory decides "today" by the real date at
+# reindex time — a hardcoded past day silently turns the fixture into
+# an archived file and the typed error surfaces from the indexer
+# instead (this test went red the day after its hardcoded date).
+TODAY = datetime.now(TZ).date().isoformat()
 
 
 def _now() -> datetime:
-    return datetime(2026, 9, 29, 10, 0, tzinfo=TZ)
+    day = datetime.now(TZ).date()
+    return datetime(day.year, day.month, day.day, 10, 0, tzinfo=TZ)
+
+
+def _fresh_exp() -> str:
+    return (datetime.now(timezone.utc) + timedelta(days=365)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ")
 
 
 def _seed(tmp_path: Path, body: str, day: str = TODAY) -> Path:
@@ -68,7 +79,7 @@ def test_expired_today_chunk_is_rejected_not_renewed(tmp_path: Path) -> None:
 def test_live_today_chunk_still_reads(tmp_path: Path) -> None:
     _seed(
         tmp_path,
-        _heading("eeeeeeee", "fresh note", "2027-09-12T00:00:00Z")
+        _heading("eeeeeeee", "fresh note", _fresh_exp())
         + "- this leaf is still alive\n",
     )
     facade = _facade(tmp_path)
@@ -81,7 +92,7 @@ def test_today_symlink_is_not_followed_or_replaced(tmp_path: Path) -> None:
     external = tmp_path / "external.md"
     external.write_text(
         "# external\n"
-        + _heading("eeeeeeee", "outside note", "2027-09-12T00:00:00Z")
+        + _heading("eeeeeeee", "outside note", _fresh_exp())
         + "- outside note here\n",
         encoding="utf-8",
     )
@@ -101,7 +112,7 @@ def test_today_symlink_is_not_followed_or_replaced(tmp_path: Path) -> None:
 def test_today_undecodable_file_keeps_typed_error(tmp_path: Path) -> None:
     path = tmp_path / "memory" / f"{TODAY}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(b"# 2026-09-29\n\xff not utf8 \xfe\n")
+    path.write_bytes(f"# {TODAY}\n".encode() + b"\xff not utf8 \xfe\n")
     facade = _facade(tmp_path)
     with pytest.raises(ArchiveError, match="not valid UTF-8"):
         facade.get(chunk_id=f"{TODAY}#eeeeeeee#1", now=_now())

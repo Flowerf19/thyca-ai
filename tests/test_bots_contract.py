@@ -113,12 +113,13 @@ def test_contract_memory_candidates(tmp_path: Path) -> None:
                         {"decided_by": "user"})
         assert decided["status"] == "approved"
         # Promoted with a stable id (today's file is unindexed: read the heading).
-        from datetime import datetime, timezone
+        # The day comes from the returned session id itself — the facade
+        # files by *its* timezone's day, which need not equal the UTC date.
         from thyca.memory.heading import parse_heading
 
-        today = datetime.now(timezone.utc).date().isoformat()
+        day = sid.split("#")[0]
         owners = None
-        for line in (tmp_path / "memory" / f"{today}.md").read_text(encoding="utf-8").splitlines():
+        for line in (tmp_path / "memory" / f"{day}.md").read_text(encoding="utf-8").splitlines():
             meta = parse_heading(line)
             if meta is not None and meta.entry_id == sid.split("#")[1]:
                 owners = meta.bots

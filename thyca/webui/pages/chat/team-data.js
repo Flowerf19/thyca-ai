@@ -2,12 +2,13 @@
    team-sidebar.js / team-mention.js / team-cards.js / team-drawer.js; data
    fetching stays at the call sites so these stay unit-testable under node.
 
-   Contract (docs/team-plan §6, frozen): room transcript events carry
-   meta {bot_id, kind, trace_id, parent_span_id}; GET /api/bots lists public
-   cards {id/name/role/description/tint/status}; sessions carry bots: string[];
-   memory candidates at GET /api/memory/candidates. The backend on main does
-   not serve these yet — every helper treats missing fields as "unavailable",
-   never as fake data. */
+   Contract (docs/team-plan §6, frozen, plus team-context CBE-5): room
+   transcript events carry meta {bot_id, kind, trace_id, parent_span_id};
+   GET /api/bots lists public cards {id/name/role/description/tint/status};
+   sessions carry bots: string[] plus dm (the bot id whose fixed main
+   window this session is, else null); GET /api/bots/<botId>/dm resolves
+   or creates that fixed DM. Every helper treats missing fields as
+   "unavailable" (pre-CBE-5 payloads carry no dm), never as fake data. */
 
 export const TEAM_BOT_ID = "thyca";
 
@@ -245,24 +246,54 @@ export function verifySharedSession(detail, botIds) {
   return { ok: wanted.length > 0 && missing.length === 0, missing };
 }
 
-/* Bot main window (team-context Layer 5, CFE-1). No DM marker exists in any
-   session payload on this branch (backend `_solo_room` in
-   thyca/bots/scheduler.py documents the solo convention: participants ==
-   [bot_id]). The frontend therefore resolves the main window client-side:
-   a solo session (bots exactly [botId]), remembered per bot in localStorage
-   (team-unread.js DM_KEY), else the newest solo session, else created via
-   POST /api/sessions {bots:[botId]} and verified with isMainSessionDetail. */
+/* Bot main window (team-context Layer 5, CFE-1). The backend marks the fixed
+   DM per bot (CBE-5: session payloads carry `dm`, resolved authoritatively
+   via GET /api/bots/<botId>/dm which also adopts a legacy unmarked solo
+   room). The frontend therefore prefers the dm-marked session below and
+   only falls back to client-side solo resolution (bots exactly [botId],
+   remembered per bot in localStorage via team-unread.js DM_KEY, else the
+   newest solo, else created via POST /api/sessions {bots:[botId]} and
+   verified with isMainSessionDetail) when the endpoint/marker is
+   unavailable (pre-CBE-5 backend). */
 export function isSoloSession(session, botId) {
   const id = String(botId || "");
   const bots = session && typeof session === "object" ? session.bots : null;
   return Array.isArray(bots) && bots.length === 1 && String(bots[0]) === id;
 }
 
+/* Strict guard for the DM endpoint answer: only a detail whose marker AND
+   participants name exactly this bot's fixed window opens as the main
+   window (same honesty rule as verifySharedSession for the shared flow). */
+export function isDmDetail(detail, botId) {
+  const id = String(botId || "");
+  if (!id || !detail || typeof detail !== "object") return false;
+  if (String(detail.dm || "") !== id) return false;
+  return Array.isArray(detail.bots) && detail.bots.length === 1
+    && String(detail.bots[0]) === id;
+}
+
 export function findMainSession(sessions, botId, rememberedId) {
   const list = Array.isArray(sessions) ? sessions : [];
+  const id = String(botId || "");
+  const remembered = String(rememberedId || "");
+  // The CBE-5 marker wins whenever the backend supplies it: the server
+  // keeps exactly one DM per bot, so the first marked hit is the window.
+  if (id) {
+    const marked = list.filter((session) => session && typeof session === "object"
+      && String(session.dm || "") === id);
+    if (marked.length) {
+      if (remembered) {
+        const kept = marked.find((session) => String(session.id) === remembered);
+        if (kept) return kept;
+      }
+      return marked[0];
+    }
+  }
+  // Legacy fallback (pre-CBE-5 payloads without dm): remembered solo
+  // session still wins when valid, else the newest solo, else null
+  // (the caller then POST-creates one).
   const solo = list.filter((session) => isSoloSession(session, botId));
   if (!solo.length) return null;
-  const remembered = String(rememberedId || "");
   if (remembered) {
     const kept = solo.find((session) => String(session.id) === remembered);
     if (kept) return kept;
@@ -321,8 +352,15 @@ export function botUnreadCount(messages, sinceTs) {
 /* Unread summary for one session. seen = {ts, count} from localStorage
    (team-unread.js). No seen → fresh:true: the caller stores a silent
    baseline, never a mass unread. With messages → exact attributed count;
-   list-only → staleness dot (summary.updated_at is the backend's
-   last-message stamp, message_count its length). */
+   list-only → staleness dot, and dot-only by design: the sidebar never
+   fetches per-session messages, so no count ever reaches the badge (the
+   count branch of the badge stays dormant until messages are in hand).
+   The list-only signal is conservative on purpose: only a strictly newer
+   last-message stamp means something arrived after the baseline. A bare
+   message_count drift is NOT a bot-attributed signal — sidecar rows
+   (naming/compaction, hidden from the transcript) and compaction rewrites
+   can shift the count without any user-visible bot activity — so count
+   drift without a newer stamp never dots. */
 export function summarizeUnread(seen, summary, messages) {
   if (!seen || typeof seen !== "object") return { unread: false, count: 0, fresh: true };
   if (messages !== undefined) {
@@ -330,8 +368,7 @@ export function summarizeUnread(seen, summary, messages) {
     return { unread: count > 0, count, fresh: false };
   }
   const record = summary && typeof summary === "object" ? summary : {};
-  const stale = String(record.updated_at || "") > String(seen.ts || "")
-    || Number(record.message_count) > Number(seen.count || 0);
+  const stale = String(record.updated_at || "") > String(seen.ts || "");
   return { unread: stale, count: 0, fresh: false };
 }
 

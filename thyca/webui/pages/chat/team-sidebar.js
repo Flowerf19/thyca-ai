@@ -31,8 +31,9 @@ import {
 // active bot keeps the legacy left accent bar via .is-active. Clicking an
 // agent opens its main (DM) window directly — there is no second level.
 // The sidebar is ONE list, the bot list: the selected bot's sessions (its
-// private sessions, DM included, and the shared sessions it takes part
-// in, merged as legacy rows) render directly under that bot's row inside
+// private sessions — its DM excluded, since the bot row itself opens that
+// DM — and the shared sessions it takes part in, merged as legacy rows)
+// render directly under that bot's row inside
 // the same list; other bots stay single rows. A multi-bot session adds a
 // participant annotation line. The same shared session appears under
 // every participating bot. A bot-row click both selects that bot (its
@@ -458,15 +459,26 @@ function render() {
       error.textContent = mainError;
       rows.push(error);
     }
-    // One merged list: this bot's private sessions (its DM among them)
-    // together with every shared session it participates in. Thyca's
-    // pre-team sessions are simply Thyca's sessions here.
-    const sessions = unifiedSessionsForBot(hub.state.sessions, me.id);
+    // One merged list: this bot's private sessions together with every
+    // shared session it participates in. Thyca's pre-team sessions are
+    // simply Thyca's sessions here. The bot's DM is NOT a row here: the
+    // bot row above already opens it (/api/bots/<id>/dm), so a DM row
+    // duplicated the bot row. unifiedSessionsForBot drops the dm-marked
+    // session; findMainSession additionally resolves the pre-marker DM
+    // (remembered/newest solo) so that fallback window is dropped too.
+    const main = findMainSession(hub.state.sessions, me.id, rememberedId);
+    const sessions = unifiedSessionsForBot(hub.state.sessions, me.id)
+      .filter((session) => !main || String(session.id) !== String(main.id));
     if (!sessions.length) {
-      const empty = document.createElement("p");
-      empty.className = "sidebar-state";
-      empty.textContent = "Chưa có phiên.";
-      rows.push(empty);
+      // A bot with only its DM expands to nothing (the bot row is the DM
+      // entry) — no empty text. The note stays only for a bot with no
+      // sessions at all.
+      if (!sessionsForBot(hub.state.sessions, me.id).length) {
+        const empty = document.createElement("p");
+        empty.className = "sidebar-state";
+        empty.textContent = "Chưa có phiên.";
+        rows.push(empty);
+      }
     } else {
       rows.push(...sessions.map((session) => unifiedRow(session, me.id)));
     }

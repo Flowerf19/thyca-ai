@@ -978,10 +978,17 @@ def test_room_participant_names_follow_roster(node: str) -> None:
 
 
 def test_unified_sessions_merge_private_and_shared(node: str) -> None:
-    """One list per bot: private sessions (DM included) and shared sessions
-    merged, newest first, with no split. The same shared session appears
-    in every participating bot's list; Thyca's pre-team (legacy) sessions
-    are simply Thyca's sessions in that one list."""
+    """One list per bot: private sessions and shared sessions merged,
+    newest first, with no split. The same shared session appears in every
+    participating bot's list; Thyca's pre-team (legacy) sessions are simply
+    Thyca's sessions in that one list.
+
+    SUPERSEDED expectation: this test previously asserted the DM is in the
+    list. Per the user decision behind this fix, the DM row is excluded —
+    the bot row itself opens the DM (/api/bots/<id>/dm), so a DM row under
+    it duplicated the bot row (the user saw "two Thyca entries" and asked
+    why Thyca has 2 sessions). Shared, private non-DM, and legacy non-DM
+    rows stay exactly as before."""
     sessions = [
         {"id": "dm", "bots": ["thyca"], "dm": "thyca",
          "updated_at": "2026-06-01T00:00:00Z"},
@@ -999,12 +1006,25 @@ def test_unified_sessions_merge_private_and_shared(node: str) -> None:
         " api.unifiedSessionsForBot(sessions, 'b2').map(s => s.id),"
         " api.unifiedSessionsForBot(sessions, 'nobody'),"
         " api.unifiedSessionsForBot(sessions, '')];")
-    # DM + solo + legacy + shared together in ONE list, newest first.
-    assert value[0] == ["shared", "dm", "new", "legacy", "old"]
+    # Solo + legacy + shared together in ONE list, newest first; the
+    # dm-marked DM (\"dm\") is excluded — the bot row is its entry.
+    assert value[0] == ["shared", "new", "legacy", "old"]
     # The same shared session is in b2's one list too, with b2's private one.
     assert value[1] == ["shared", "other"]
     assert value[2] == []
     assert value[3] == []
+
+
+def test_unified_sessions_dm_only_bot_lists_nothing(node: str) -> None:
+    """A bot whose only session is its DM yields an empty unified list:
+    the bot row is the DM entry, so there is nothing left to list."""
+    sessions = [
+        {"id": "dm", "bots": ["thyca"], "dm": "thyca",
+         "updated_at": "2026-06-01T00:00:00Z"},
+    ]
+    value = _run(node,
+        f"return api.unifiedSessionsForBot({json.dumps(sessions)}, 'thyca');")
+    assert value == []
 
 
 def test_sidebar_agents_primary_no_level_two() -> None:
@@ -1108,11 +1128,73 @@ def test_sidebar_sessions_render_under_active_bot_row(node: str) -> None:
     # Thyca is active (first participant of the open shared room): its
     # sessions sit directly under its bot row, newest first, and Coder
     # stays a single row — its private session is NOT in Thyca's list.
+    # The DM session (\"dm\") renders NO row: the Thyca bot row itself is
+    # the DM entry (supersedes the earlier expectation that listed it).
     assert [(row["bot"], row["sid"]) for row in value] == [
-        ("thyca", ""), ("", "shared"), ("", "dm"), ("coder", "")]
-    # Shared annotation still present on the multi-bot session row only.
+        ("thyca", ""), ("", "shared"), ("coder", "")]
+    # Shared annotation still present on the multi-bot session row.
     assert "Coder" in value[1]["text"] and "Thyca" in value[1]["text"]
-    assert "Coder" not in value[2]["text"]
+
+
+def test_sidebar_bot_with_only_dm_renders_zero_session_rows(node: str) -> None:
+    """Only-DM bot: expanding it renders zero session rows and no empty
+    text (clean), while the bot row still aggregates the DM's unread dot
+    (botUnread runs over sessionsForBot, DM included — unaffected by the
+    unified-list exclusion)."""
+    value = _sidebar(node,
+        "FakeNode.prototype.replaceChildren = function (...nodes)"
+        " { this.children = [...nodes]; };"
+        " FakeNode.prototype.removeAttribute = function (k)"
+        " { delete this.attributes[k]; };"
+        " FakeNode.prototype.querySelector = function (sel) {"
+        "  if (!sel.startsWith('#')) return null;"
+        "  const find = (el) => { for (const c of el.children || []) {"
+        "   if (c && c.id === sel.slice(1)) return c;"
+        "   const r = c && c.children ? find(c) : null;"
+        "   if (r) return r; } return null; };"
+        "  return find(this); };"
+        " const section = new FakeNode('section');"
+        " section.id = 'team-nav'; section.hidden = true;"
+        " const title = new FakeNode('h2'); title.id = 'team-nav-title';"
+        " const botNav = new FakeNode('nav'); botNav.id = 'team-bot-list';"
+        " const actions = new FakeNode('div');"
+        " actions.id = 'team-nav-actions'; actions.hidden = true;"
+        " const createBtn = new FakeNode('button');"
+        " createBtn.id = 'team-shared-create';"
+        " section.append(title, botNav, actions);"
+        " const registry = { '#team-nav': section,"
+        "  '#team-bot-list': botNav, '#team-nav-actions': actions,"
+        "  '#team-shared-create': createBtn };"
+        " document.querySelector = (sel) => registry[sel] || null;"
+        " document.addEventListener = () => {};"
+        " globalThis.window = { addEventListener: () => {} };"
+        " globalThis.localStorage = { getItem: (k) => k === 'thyca.team.seen.v1'"
+        "  ? JSON.stringify({dm: {ts: '2026-01-01T00:00:00Z', count: 1}}) : null,"
+        "  setItem: () => {} };"
+        " globalThis.fetch = async () => ({ ok: true, status: 200,"
+        "  json: async () => ({ bots: ["
+        "   {id: 'thyca', name: 'Thyca', role: 'chính', status: 'idle'},"
+        "   {id: 'coder', name: 'Coder', role: 'code', status: 'idle'}] }) });"
+        " await sidebar.initTeamSidebar({ state: { activeId: 'dm',"
+        "  detail: { id: 'dm', bots: ['thyca'] },"
+        "  sessions: ["
+        "   {id: 'dm', title: 'Riêng Thyca', bots: ['thyca'],"
+        "    dm: 'thyca', updated_at: '2026-06-01T00:00:00Z', turns: 2}] },"
+        " loadSession: async () => {}, afterTeamSession: async () => {},"
+        " teamRefresh: async () => {} });"
+        " return botNav.children.map((row) => ({"
+        "  bot: (row.children[0] && row.children[0].dataset.botId) || '',"
+        "  sid: (row.children[0] && row.children[0].dataset.sessionId) || '',"
+        "  text: row.textContent,"
+        "  kids: (row.children[0] ? row.children[0].children : [])"
+        "   .map((c) => c.className) }));")
+    # Exactly one Thyca entry (the bot row); zero session rows under it.
+    assert [(row["bot"], row["sid"]) for row in value] == [
+        ("thyca", ""), ("coder", "")]
+    # No empty-state text for the only-DM bot.
+    assert all("Chưa có phiên." not in row["text"] for row in value)
+    # The DM's unread still dots the Thyca bot row.
+    assert any("team-unread" in cls for cls in value[0]["kids"])
 
 
 def test_sidebar_picker_hidden_unless_picking() -> None:

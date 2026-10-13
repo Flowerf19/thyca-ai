@@ -440,16 +440,20 @@ export function roomParticipantNames(session, roster) {
   return ids.map((id) => known.get(id) || id);
 }
 
-/* One bot's unified session list: its private sessions (DM included) and
-   the shared sessions it participates in, merged in a single list, newest
-   first. Ownership mirrors sessionsForBot: legacy rooms without a bots
-   list predate teams and belong to thyca alone, so Thyca's pre-team
-   sessions appear in Thyca's list like any other bot's sessions. The same
-   shared session therefore appears in every participating bot's list. */
+/* One bot's unified session list: its private sessions and the shared
+   sessions it participates in, merged in a single list, newest first —
+   EXCLUDING its fixed DM (session.dm === botId): the bot row itself is
+   the DM entry (clicking it opens /api/bots/<id>/dm), so listing the DM
+   under the bot duplicated the bot row ("two Thyca entries"). Ownership
+   mirrors sessionsForBot: legacy rooms without a bots list predate teams
+   and belong to thyca alone, so Thyca's pre-team sessions appear in
+   Thyca's list like any other bot's sessions. The same shared session
+   therefore appears in every participating bot's list. */
 export function unifiedSessionsForBot(sessions, botId) {
   const id = String(botId || "");
   if (!id) return [];
   return sessionsForBot(sessions, id)
+    .filter((session) => String(session.dm || "") !== id)
     .slice()
     .sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")));
 }

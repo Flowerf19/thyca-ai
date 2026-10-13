@@ -245,6 +245,96 @@ export function verifySharedSession(detail, botIds) {
   return { ok: wanted.length > 0 && missing.length === 0, missing };
 }
 
+/* Bot main window (team-context Layer 5, CFE-1). No DM marker exists in any
+   session payload on this branch (backend `_solo_room` in
+   thyca/bots/scheduler.py documents the solo convention: participants ==
+   [bot_id]). The frontend therefore resolves the main window client-side:
+   a solo session (bots exactly [botId]), remembered per bot in localStorage
+   (team-unread.js DM_KEY), else the newest solo session, else created via
+   POST /api/sessions {bots:[botId]} and verified with isMainSessionDetail. */
+export function isSoloSession(session, botId) {
+  const id = String(botId || "");
+  const bots = session && typeof session === "object" ? session.bots : null;
+  return Array.isArray(bots) && bots.length === 1 && String(bots[0]) === id;
+}
+
+export function findMainSession(sessions, botId, rememberedId) {
+  const list = Array.isArray(sessions) ? sessions : [];
+  const solo = list.filter((session) => isSoloSession(session, botId));
+  if (!solo.length) return null;
+  const remembered = String(rememberedId || "");
+  if (remembered) {
+    const kept = solo.find((session) => String(session.id) === remembered);
+    if (kept) return kept;
+  }
+  // Newest solo session wins: updated_at is the backend's last-message
+  // stamp (wire.updated_at), so string order is chronological order.
+  return solo.slice().sort((a, b) => String(b.updated_at || "").localeCompare(
+    String(a.updated_at || ""),
+  ))[0] || null;
+}
+
+/* Split a bot's sessions into the pinned main window + the secondary list.
+   Unknown mainId (or a mainId that is no longer this bot's) → main null
+   and every session stays in others (the caller shows the resolving note). */
+export function partitionBotSessions(sessions, botId, mainId) {
+  const mine = sessionsForBot(sessions, botId);
+  const wanted = String(mainId || "");
+  const main = wanted ? (mine.find((session) => String(session.id) === wanted) || null) : null;
+  return { main, others: main ? mine.filter((session) => session !== main) : mine };
+}
+
+/* Created-session guard for the DM fallback: only treat a POST /api/sessions
+   {bots:[botId]} answer as the bot's main window when the returned
+   participants are exactly that solo room (same honesty rule as
+   verifySharedSession for the shared flow). */
+export function isMainSessionDetail(detail, botId) {
+  const id = String(botId || "");
+  if (!id || !detail || typeof detail !== "object") return false;
+  return Array.isArray(detail.bots) && detail.bots.length === 1 && String(detail.bots[0]) === id;
+}
+
+/* Unread attribution (CFE-2). A row counts as bot activity when it carries a
+   bot stamp and is user-visible: user rows never carry bot_id, and sidecar
+   kinds (naming/compaction) never render (transcript.js skips them). */
+const SIDECAR_KINDS = new Set(["naming", "compaction"]);
+
+export function isBotAttributed(message) {
+  if (!message || typeof message !== "object") return false;
+  if (message.role === "user") return false;
+  const meta = message.meta && typeof message.meta === "object" ? message.meta : {};
+  if (typeof meta.bot_id !== "string" || !meta.bot_id) return false;
+  return !SIDECAR_KINDS.has(String(meta.kind || ""));
+}
+
+export function botUnreadCount(messages, sinceTs) {
+  const floor = String(sinceTs || "");
+  let count = 0;
+  for (const message of Array.isArray(messages) ? messages : []) {
+    if (!isBotAttributed(message)) continue;
+    const ts = typeof message.ts === "string" ? message.ts : "";
+    if (ts && (!floor || ts > floor)) count += 1;
+  }
+  return count;
+}
+
+/* Unread summary for one session. seen = {ts, count} from localStorage
+   (team-unread.js). No seen → fresh:true: the caller stores a silent
+   baseline, never a mass unread. With messages → exact attributed count;
+   list-only → staleness dot (summary.updated_at is the backend's
+   last-message stamp, message_count its length). */
+export function summarizeUnread(seen, summary, messages) {
+  if (!seen || typeof seen !== "object") return { unread: false, count: 0, fresh: true };
+  if (messages !== undefined) {
+    const count = botUnreadCount(messages, seen.ts);
+    return { unread: count > 0, count, fresh: false };
+  }
+  const record = summary && typeof summary === "object" ? summary : {};
+  const stale = String(record.updated_at || "") > String(seen.ts || "")
+    || Number(record.message_count) > Number(seen.count || 0);
+  return { unread: stale, count: 0, fresh: false };
+}
+
 /* Memory candidates (GET /api/memory/candidates contract): pending items for
    the "Chờ cho cả đội nhớ" tab. Unknown shape → [] (tab stays hidden). */
 export function normalizeCandidates(payload) {

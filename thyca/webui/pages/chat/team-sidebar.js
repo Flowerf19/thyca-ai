@@ -3,12 +3,22 @@ import { cleanText, formatSessionTime } from "../../shared/js/format.js";
 import { messageOf } from "../../shared/js/status.js";
 import {
   TEAM_BOT_ID,
+  findMainSession,
+  isMainSessionDetail,
   isSharedSession,
   normalizeBots,
+  partitionBotSessions,
   sessionsForBot,
+  summarizeUnread,
   tintVarFor,
   verifySharedSession,
 } from "./team-data.js";
+import {
+  getRememberedDm,
+  getSeen,
+  markSeen,
+  rememberDm,
+} from "./team-unread.js";
 
 // Team sidebar: two levels Bot → Session (master plan §7 FE-1). Progressive
 // enhancement over sessions-sidebar.js: when GET /api/bots answers, the team
@@ -22,6 +32,10 @@ let sharedOpen = false;
 let sharedError = "";
 // Checkbox picks survive re-renders while the picker stays open.
 let sharedPicked = null;
+// Main-window (DM) resolve state for CFE-1: creation is async, level 2
+// renders immediately with known sessions while the fixed DM resolves.
+let mainResolving = false;
+let mainError = "";
 
 const STATUS_LABEL = {
   running: "đang làm",
@@ -78,6 +92,49 @@ function statusLabel(status) {
   return STATUS_LABEL[String(status || "")] || "";
 }
 
+/* Unread state for one session (CFE-2): first sight stores a silent baseline
+   (never a mass unread); later renders compare the summary against it.
+   Opening a session clears it (app.js marks seen in renderDetail). */
+function sessionUnread(session) {
+  const id = String(session?.id || "");
+  if (!id) return { unread: false, count: 0 };
+  const seen = getSeen(id);
+  if (!seen) {
+    markSeen(id, session);
+    return { unread: false, count: 0 };
+  }
+  const result = summarizeUnread(seen, session);
+  return { unread: result.unread, count: result.count };
+}
+
+function botUnread(botId) {
+  let count = 0;
+  let dot = false;
+  for (const session of sessionsForBot(hub?.state?.sessions, botId)) {
+    const state = sessionUnread(session);
+    if (state.unread) {
+      dot = true;
+      count += state.count;
+    }
+  }
+  return { unread: dot, count };
+}
+
+function unreadBadge(state) {
+  if (!state.unread) return null;
+  const badge = document.createElement("span");
+  badge.className = "team-unread";
+  if (state.count > 0) {
+    badge.textContent = String(state.count);
+    badge.setAttribute("aria-label", `${state.count} chưa đọc`);
+  } else {
+    badge.classList.add("is-dot");
+    badge.textContent = "";
+    badge.setAttribute("aria-label", "Có tin chưa đọc");
+  }
+  return badge;
+}
+
 function botRow(bot) {
   const button = document.createElement("button");
   button.type = "button";
@@ -92,6 +149,8 @@ function botRow(bot) {
   name.className = "team-bot-name";
   name.textContent = bot.name;
   button.append(dot, name);
+  const unread = unreadBadge(botUnread(bot.id));
+  if (unread) button.append(unread);
   const label = statusLabel(bot.status);
   if (label) {
     const badge = document.createElement("span");
@@ -99,14 +158,18 @@ function botRow(bot) {
     badge.textContent = label;
     button.append(badge);
   }
-  button.setAttribute("aria-label", label ? `${bot.name}, ${label}` : bot.name);
-  button.addEventListener("click", () => openBot(bot.id));
+  const unreadSuffix = unread
+    ? (unread.textContent ? `, ${unread.textContent} chưa đọc` : ", có tin chưa đọc")
+    : "";
+  button.setAttribute("aria-label", (label ? `${bot.name}, ${label}` : bot.name) + unreadSuffix);
+  button.addEventListener("click", () => void openBot(bot.id));
   return button;
 }
 
-function sessionRow(session) {
+function sessionRow(session, { main = false } = {}) {
   const row = document.createElement("div");
   row.className = "session-row";
+  if (main) row.classList.add("is-main");
   const button = document.createElement("button");
   button.type = "button";
   button.className = "session-item";
@@ -123,16 +186,23 @@ function sessionRow(session) {
   const time = document.createElement("time");
   time.dateTime = String(session.updated_at || "");
   const when = formatSessionTime(session.updated_at);
-  time.textContent = isSharedSession(session) ? `${when} · chung` : when;
+  const shared = isSharedSession(session);
+  time.textContent = main ? `${when} · Cửa sổ chính` : (shared ? `${when} · chung` : when);
   button.append(icon, name, time);
+  const unread = unreadBadge(sessionUnread(session));
+  if (unread) button.append(unread);
   button.addEventListener("click", () => {
-    if (matchMedia("(max-width: 56rem)").matches) {
-      document.querySelector(".chat-shell")?.classList.remove("is-picking");
-    }
+    exitPicking();
     void hub.loadSession(button.dataset.sessionId);
   });
   row.append(button);
   return row;
+}
+
+function exitPicking() {
+  if (matchMedia("(max-width: 56rem)").matches) {
+    document.querySelector(".chat-shell")?.classList.remove("is-picking");
+  }
 }
 
 function sharedPicker() {
@@ -210,13 +280,60 @@ async function createShared(botIds) {
   }
 }
 
-function openBot(botId) {
+/* CFE-1: clicking a bot opens its fixed DM/main session directly. Backend
+   provides no DM marker on this branch, so the main window resolves
+   client-side: remembered solo session → newest solo session → created via
+   the existing POST /api/sessions {bots:[bot]} semantics (verified with
+   isMainSessionDetail, never a fake main). Level 2 renders immediately with
+   known sessions while the DM resolves; the main window pins first. */
+async function openBot(botId) {
   level = 2;
   activeBot = botId;
   sharedOpen = false;
   sharedError = "";
   sharedPicked = null;
+  mainError = "";
+  mainResolving = true;
   render();
+  await resolveMain(botId);
+}
+
+async function resolveMain(botId) {
+  try {
+    if (!hub) return;
+    const main = findMainSession(hub.state.sessions, botId, getRememberedDm(botId));
+    if (main?.id) {
+      rememberDm(botId, main.id);
+      if (activeBot !== botId || level !== 2) return;
+      mainResolving = false;
+      render();
+      exitPicking();
+      await hub.loadSession(String(main.id));
+      return;
+    }
+    // No solo session yet: create the fixed DM. POST answers the full
+    // detail including bots, so the guard below keeps a backend that
+    // ignores {bots} from becoming a fake main window.
+    const detail = await postJson("/api/sessions", { bots: [botId] });
+    if (!isMainSessionDetail(detail, botId)) {
+      mainError = "Backend chưa trả về cửa sổ riêng cho bot này — chưa mở cửa sổ chính.";
+      return;
+    }
+    rememberDm(botId, detail.id);
+    if (activeBot !== botId || level !== 2) return;
+    exitPicking();
+    await hub.afterTeamSession(detail);
+  } catch (error) {
+    if (activeBot !== botId || level !== 2) return;
+    mainError = messageOf(error, "Chưa mở được cửa sổ chính của bot — backend đội bot chưa sẵn sàng.");
+  } finally {
+    if (activeBot === botId && level === 2) {
+      mainResolving = false;
+      render();
+    } else {
+      mainResolving = false;
+    }
+  }
 }
 
 function openTeam() {
@@ -225,6 +342,8 @@ function openTeam() {
   sharedOpen = false;
   sharedError = "";
   sharedPicked = null;
+  mainResolving = false;
+  mainError = "";
   render();
 }
 
@@ -256,16 +375,39 @@ function render() {
       back.hidden = false;
       back.onclick = openTeam;
     }
-    const mine = sessionsForBot(hub.state.sessions, activeBot);
-    if (!mine.length) {
+    const main = findMainSession(hub.state.sessions, activeBot, getRememberedDm(activeBot));
+    const { main: pinned, others } = partitionBotSessions(
+      hub.state.sessions, activeBot, main?.id,
+    );
+    if (mainError) {
+      const error = document.createElement("p");
+      error.className = "screen-status is-error";
+      error.setAttribute("role", "alert");
+      error.textContent = mainError;
+      list?.append(error);
+    }
+    if (pinned) list?.append(sessionRow(pinned, { main: true }));
+    else if (mainResolving) {
+      const resolving = document.createElement("p");
+      resolving.className = "sidebar-state";
+      resolving.textContent = "Đang mở cửa sổ chính…";
+      list?.append(resolving);
+    }
+    if (others.length) {
+      if (pinned) {
+        const sub = document.createElement("p");
+        sub.className = "team-secondary-title";
+        sub.textContent = "Phiên khác";
+        list?.append(sub);
+      }
+      for (const session of others) list?.append(sessionRow(session));
+    } else if (!pinned && !mainResolving) {
       const empty = document.createElement("p");
       empty.className = "sidebar-state";
       empty.textContent = bot
         ? `${bot.name} chưa có phiên nào — nhắn trong phiên hiện tại để bắt đầu.`
         : "Bot này chưa có phiên nào.";
       list?.append(empty);
-    } else {
-      for (const session of mine) list?.append(sessionRow(session));
     }
     const actions = section.querySelector("#team-nav-actions");
     actions?.replaceChildren(sharedToggleButton(), allSessionsButton(), sharedPicker());
@@ -328,7 +470,24 @@ export async function initTeamSidebar(entryHub) {
     }
     return;
   }
+  armTeamRefresh();
   render();
+}
+
+/* Background bot writes (scheduler DM notes, turns finished in another tab)
+   only surface when the session list reloads: refresh on window focus and
+   on return to the tab, team mode only. The legacy list path never arms
+   this (bots is empty without GET /api/bots). */
+let refreshArmed = false;
+function armTeamRefresh() {
+  if (refreshArmed) return;
+  refreshArmed = true;
+  const refresh = () => {
+    if (document.hidden || !bots.length || teamSection()?.hidden) return;
+    void hub?.teamRefresh?.();
+  };
+  window.addEventListener("focus", refresh);
+  document.addEventListener("visibilitychange", refresh);
 }
 
 // After a team session is created elsewhere (or sessions reload), the level-2

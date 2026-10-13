@@ -279,6 +279,112 @@ def test_pending_candidates_only_pending(node: str) -> None:
     assert value == ["1", "3"]
 
 
+def test_main_session_resolves_remembered_then_newest(node: str) -> None:
+    sessions = [
+        {"id": "old", "bots": ["b1"], "updated_at": "2026-01-01T00:00:00Z"},
+        {"id": "new", "bots": ["b1"], "updated_at": "2026-05-01T00:00:00Z"},
+        {"id": "shared", "bots": ["b1", "b2"], "updated_at": "2026-06-01T00:00:00Z"},
+        {"id": "legacy", "updated_at": "2026-07-01T00:00:00Z"},
+    ]
+    value = _run(
+        node,
+        f"const sessions = {json.dumps(sessions)};"
+        " return [api.findMainSession(sessions, 'b1', 'old')?.id,"
+        " api.findMainSession(sessions, 'b1', 'gone')?.id,"
+        " api.findMainSession(sessions, 'b1', '')?.id,"
+        " api.findMainSession(sessions, 'nobody', '')];",
+    )
+    assert value == ["old", "new", "new", None]
+
+
+def test_main_session_partition_pins_first(node: str) -> None:
+    sessions = [
+        {"id": "shared", "bots": ["b1", "b2"]},
+        {"id": "solo-old", "bots": ["b1"]},
+        {"id": "solo-new", "bots": ["b1"]},
+    ]
+    value = _run(
+        node,
+        f"const sessions = {json.dumps(sessions)};"
+        " const parts = api.partitionBotSessions(sessions, 'b1', 'solo-new');"
+        " return [parts.main.id, parts.others.map(s => s.id)];",
+    )
+    assert value == ["solo-new", ["shared", "solo-old"]]
+    stale = _run(
+        node,
+        f"const parts = api.partitionBotSessions({json.dumps(sessions)}, 'b1', 'gone');"
+        " return [parts.main, parts.others.map(s => s.id)];",
+    )
+    assert stale == [None, ["shared", "solo-old", "solo-new"]]
+
+
+def test_main_session_detail_guard(node: str) -> None:
+    value = _run(
+        node,
+        "return [api.isMainSessionDetail({bots: ['b1']}, 'b1'),"
+        " api.isMainSessionDetail({bots: ['b1', 'b2']}, 'b1'),"
+        " api.isMainSessionDetail({bots: ['thyca']}, 'b1'),"
+        " api.isMainSessionDetail({}, 'b1'),"
+        " api.isSoloSession({bots: ['b1']}, 'b1'),"
+        " api.isSoloSession({bots: ['b1', 'b2']}, 'b1'),"
+        " api.isSoloSession({}, 'thyca')];",
+    )
+    assert value == [True, False, False, False, True, False, False]
+
+
+def test_bot_attribution_skips_user_and_sidecars(node: str) -> None:
+    messages = [
+        {"role": "assistant", "ts": "2026-01-02T00:00:00Z",
+         "meta": {"bot_id": "b1", "kind": "llm"}},
+        {"role": "assistant", "ts": "2026-01-03T00:00:00Z",
+         "meta": {"bot_id": "b1", "kind": "naming"}},
+        {"role": "assistant", "ts": "2026-01-04T00:00:00Z",
+         "meta": {"bot_id": "b1", "kind": "compaction"}},
+        {"role": "assistant", "ts": "2026-01-05T00:00:00Z",
+         "meta": {"kind": "llm"}},
+        {"role": "user", "ts": "2026-01-06T00:00:00Z",
+         "meta": {"bot_id": "b1"}},
+        {"role": "assistant", "meta": {"bot_id": "b1"}},
+    ]
+    value = _run(
+        node,
+        f"const messages = {json.dumps(messages)};"
+        " return [api.botUnreadCount(messages, '2026-01-01T00:00:00Z'),"
+        " api.botUnreadCount(messages, '2026-01-02T00:00:00Z'),"
+        " api.isBotAttributed(messages[0]),"
+        " api.isBotAttributed(messages[1]),"
+        " api.isBotAttributed(messages[4])];",
+    )
+    # Only the kind=llm bot row with a stamp counts; sidecars, unstamped
+    # rows, unattributed rows and user rows never count.
+    assert value == [1, 0, True, False, False]
+
+
+def test_summarize_unread_baselines_stale_clears(node: str) -> None:
+    summary = {"id": "s1", "updated_at": "2026-02-01T00:00:00Z", "message_count": 4}
+    value = _run(
+        node,
+        f"const summary = {json.dumps(summary)};"
+        " return [api.summarizeUnread(null, summary),"
+        " api.summarizeUnread({ts: '2026-02-01T00:00:00Z', count: 4}, summary),"
+        " api.summarizeUnread({ts: '2026-01-01T00:00:00Z', count: 2}, summary),"
+        " api.summarizeUnread({ts: '2026-01-01T00:00:00Z', count: 9},"
+        " {id: 's1', updated_at: '2026-01-01T00:00:00Z', message_count: 9}),"
+        " api.summarizeUnread({ts: '2026-02-01T00:00:00Z', count: 4}, summary,"
+        " [{role: 'assistant', ts: '2026-03-01T00:00:00Z',"
+        " meta: {bot_id: 'b1', kind: 'llm'}}]),"
+        " api.summarizeUnread({ts: '2026-03-01T00:00:00Z', count: 5}, summary,"
+        " [{role: 'assistant', ts: '2026-03-01T00:00:00Z',"
+        " meta: {bot_id: 'b1', kind: 'llm'}}])];",
+    )
+    assert value[0] == {"unread": False, "count": 0, "fresh": True}
+    assert value[1] == {"unread": False, "count": 0, "fresh": False}
+    assert value[2]["unread"] is True and value[2]["count"] == 0  # stale dot
+    assert value[3]["unread"] is False  # same stamp+count: cleared
+    assert value[4] == {"unread": True, "count": 1, "fresh": False}
+    assert value[5]["unread"] is False  # seen covers the bot row
+
+
 def test_team_dom_modules_have_no_literal_colors() -> None:
     """FE-6: no new literal colors — team CSS/JS reference tokens only."""
     import re
@@ -286,7 +392,7 @@ def test_team_dom_modules_have_no_literal_colors() -> None:
     paths = [
         ROOT / "thyca" / "webui" / "pages" / "chat" / name
         for name in ("team-data.js", "team-sidebar.js", "team-mention.js", "team-strip.js",
-                     "team-cards.js", "team-drawer.js")
+                     "team-cards.js", "team-drawer.js", "team-unread.js")
     ] + [
         ROOT / "thyca" / "webui" / "pages" / "dashboard" / name
         for name in ("cost-bots.js", "trace-delegation.js")

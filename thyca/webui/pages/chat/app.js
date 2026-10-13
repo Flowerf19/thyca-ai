@@ -40,6 +40,7 @@ import {
   syncContext,
 } from "./composer.js";
 import { initTeamSidebar, syncTeamSessions, teamBots } from "./team-sidebar.js";
+import { markSeen } from "./team-unread.js";
 import { initMention, mentionKeydown } from "./team-mention.js";
 import { initTeamStrip, renderTeamStrip } from "./team-strip.js";
 import { initTeamDrawer, openBotDrawer } from "./team-drawer.js";
@@ -161,6 +162,9 @@ function renderDetail(detail) {
     liveTurns.delete(state.activeId);
   }
   syncContext(detail);
+  // Team CFE-2: opening a session clears its unread state (seen = newest
+  // message stamp + length). Static import like the other team modules.
+  if (typeof markSeen === "function" && detail?.id) markSeen(detail.id, detail);
   renderSessions();
   // Team modules live outside the four-file concat the node harnesses
   // replay (imports stripped there): guard every cross-module call.
@@ -354,6 +358,11 @@ const hub = {
     }
     await refreshSessions(state.activeId);
     if (detail && detail.id) await loadSession(String(detail.id));
+    syncTeamSessions();
+  },
+  // Team CFE-2: background bot writes surface on window focus / tab return.
+  teamRefresh: async () => {
+    await refreshSessions();
     syncTeamSessions();
   },
 };

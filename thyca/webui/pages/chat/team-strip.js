@@ -13,8 +13,10 @@ let strip = null;
 
 function participants() {
   const detail = hub?.state?.detail;
-  const bots = Array.isArray(detail?.bots) && detail.bots.length
-    ? detail.bots.map(String)
+  // An explicit empty roster means the room truly has no participants;
+  // a missing roster is the legacy single-bot case and defaults to thyca.
+  const bots = Array.isArray(detail?.bots)
+    ? detail.bots.map(String).filter(Boolean)
     : [TEAM_BOT_ID];
   // Right-to-left with thyca outermost: thyca last in DOM under
   // row-reverse, first otherwise — keep DOM order stable (roster order,
@@ -47,9 +49,10 @@ export function renderTeamStrip() {
   const running = runningBots();
   const failed = failedBots();
   strip.replaceChildren();
-  // Fewer than two bots is not a room: the strip stays out of the way
-  // entirely (solo DMs and legacy single-thread sessions show no strip).
-  if (names.length < 2) {
+  // Always show the room's participants, including a single bot in a
+  // DM (supersedes the earlier <2 hide). Hide only when there are
+  // truly no participants.
+  if (names.length === 0) {
     strip.hidden = true;
     return;
   }

@@ -1205,19 +1205,82 @@ def test_sidebar_picker_hidden_unless_picking() -> None:
     assert "team-shared-picker" in src
 
 
-def test_strip_in_site_header_hidden_under_two_bots() -> None:
-    """#team-strip lives in .site-header before the header-line (never in
-    .chat-canvas), and hides entirely for rooms with fewer than 2 bots."""
+def test_strip_in_site_header_shows_single_bot() -> None:
+    """#team-strip lives in .site-header (never in .chat-canvas) and
+    renders even a single-bot room. Supersession: this replaces the
+    earlier <2-bot hide, by user decision — a 1-bot DM hid the strip
+    and left the header with no bot name at all. The strip now hides
+    only when there are truly no participants."""
     import re
 
     html = INDEX_HTML.read_text(encoding="utf-8")
     header = re.search(r'<header class="site-header">(.*?)</header>', html, re.S).group(1)
     assert 'id="team-strip"' in header
-    assert header.index('id="team-strip"') < header.index("header-line")
     canvas = html.split('class="chat-canvas"', 1)[1]
     assert 'id="team-strip"' not in canvas
     strip = STRIP_SRC.read_text(encoding="utf-8")
-    assert "names.length < 2" in strip
+    assert "names.length < 2" not in strip
+    assert "names.length === 0" in strip
+
+
+def test_chat_page_hides_version_line_other_pages_keep_it() -> None:
+    """User decision: the date · Thyca · version line is hidden on the
+    chat page only (it rendered clipped at the bottom-right of the
+    shell). The element is removed from index.html rather than hidden
+    by CSS; other pages keep their .header-line in .site-header, and
+    navigation.js already guards #header-datetime / #header-edition
+    with existence checks, so its absence cannot error."""
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    assert "header-line" not in html
+    assert 'id="header-datetime"' not in html
+    assert 'id="header-edition"' not in html
+    for other in ("memories.html", "dashboard.html", "settings.html",
+                  "provider.html", "profile.html"):
+        page = (INDEX_HTML.parent / other).read_text(encoding="utf-8")
+        assert 'class="header-line"' in page, other
+        assert 'id="header-datetime"' in page, other
+        assert 'id="header-edition"' in page, other
+    navigation = (
+        INDEX_HTML.parent / "shared" / "js" / "navigation.js"
+    ).read_text(encoding="utf-8")
+    assert "if (headerTime)" in navigation
+    assert "if (headerEdition)" in navigation
+    # The dead chat-scoped bottom-right positioning must not linger.
+    css = CHAT_CSS.read_text(encoding="utf-8")
+    assert ".chat-shell .site-header .header-line" not in css
+
+
+def test_strip_single_bot_dm_renders_name_and_hides_when_empty(node: str) -> None:
+    """A 1-bot DM renders that bot's name in its tint (busy per current
+    rules); an explicitly empty roster is the only hidden case."""
+    value = _strip(node,
+        "FakeNode.prototype.replaceChildren = function (...nodes)"
+        " { this.children = [...nodes]; };"
+        " const el = new FakeNode('p');"
+        " document.querySelector = (sel) => sel === '#team-strip' ? el : null;"
+        " strip.initTeamStrip({"
+        " state: { detail: { bots: ['thyca'],"
+        " running: true, failedBots: [] } },"
+        " teamRoster: () => ["
+        " {id: 'thyca', name: 'Thyca', tint: 'accent', status: 'idle'}],"
+        " openBotDrawer: () => {} });"
+        " strip.renderTeamStrip();"
+        " const single = { hidden: el.hidden,"
+        "  names: el.children.map((c) => ({ text: c.textContent,"
+        "  cls: c.className, tint: c._style['--team-tint'],"
+        "  kids: c.children.length })) };"
+        " strip.initTeamStrip({"
+        " state: { detail: { bots: [], running: false, failedBots: [] } },"
+        " teamRoster: () => [], openBotDrawer: () => {} });"
+        " strip.renderTeamStrip();"
+        " return { single, emptyHidden: el.hidden,"
+        "  emptyCount: el.children.length };")
+    assert value["single"]["hidden"] is False
+    assert value["single"]["names"] == [{
+        "text": "Thyca", "cls": "team-strip-name is-busy",
+        "tint": "var(--color-accent)", "kids": 0}]
+    assert value["emptyHidden"] is True
+    assert value["emptyCount"] == 0
 
 
 def test_strip_names_tinted_plain_text_busy_and_error(node: str) -> None:

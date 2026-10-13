@@ -4,8 +4,10 @@ import { messageOf } from "../../shared/js/status.js";
 import {
   TEAM_BOT_ID,
   findMainSession,
+  isDmDetail,
   isMainSessionDetail,
   isSharedSession,
+  isSoloSession,
   normalizeBots,
   partitionBotSessions,
   sessionsForBot,
@@ -14,6 +16,7 @@ import {
   verifySharedSession,
 } from "./team-data.js";
 import {
+  forgetDmSession,
   getRememberedDm,
   getSeen,
   markSeen,
@@ -34,7 +37,12 @@ let sharedError = "";
 let sharedPicked = null;
 // Main-window (DM) resolve state for CFE-1: creation is async, level 2
 // renders immediately with known sessions while the fixed DM resolves.
+// mainToken guards rapid bot switching: every openBot mints a token and
+// only the resolve still owning it may touch mainResolving/mainError or
+// open a session (see resolveMain). Rapid taps must never land the user
+// in the first bot's window after they picked the second.
 let mainResolving = false;
+let mainToken = 0;
 let mainError = "";
 
 const STATUS_LABEL = {
@@ -94,7 +102,11 @@ function statusLabel(status) {
 
 /* Unread state for one session (CFE-2): first sight stores a silent baseline
    (never a mass unread); later renders compare the summary against it.
-   Opening a session clears it (app.js marks seen in renderDetail). */
+   Rendering is dot-only by design: the sidebar never fetches per-session
+   messages, so summarizeUnread's list-only path always yields count 0 and
+   the badge shows a dot (exact counts exist only in the pure helpers for
+   callers that already hold messages). Opening a session clears it (app.js
+   marks seen in renderDetail). */
 function sessionUnread(session) {
   const id = String(session?.id || "");
   if (!id) return { unread: false, count: 0 };
@@ -107,6 +119,9 @@ function sessionUnread(session) {
   return { unread: result.unread, count: result.count };
 }
 
+/* Level-1 aggregate stays a dot for the same reason: per-session counts
+   are always 0 list-side, so Σ counts never materialize — any unread
+   session dots its bot. */
 function botUnread(botId) {
   let count = 0;
   let dot = false;
@@ -189,11 +204,25 @@ function sessionRow(session, { main = false } = {}) {
   const shared = isSharedSession(session);
   time.textContent = main ? `${when} · Cửa sổ chính` : (shared ? `${when} · chung` : when);
   button.append(icon, name, time);
-  const unread = unreadBadge(sessionUnread(session));
+  const seen = sessionUnread(session);
+  const unread = unreadBadge(seen);
   if (unread) button.append(unread);
+  // Level-1 bot rows announce unread state in their aria-label; mirror the
+  // same cue here so level-2 session buttons are equally announced.
+  if (seen.unread) {
+    button.setAttribute("aria-label",
+      `${cleanText(session.title, "Phiên trống")}, có tin chưa đọc`);
+  }
   button.addEventListener("click", () => {
     exitPicking();
-    void hub.loadSession(button.dataset.sessionId);
+    const sid = button.dataset.sessionId;
+    // Lane plan: opening a solo session confirms it as the remembered DM,
+    // so the next openBot lands straight back here without re-resolving.
+    // Shared rooms never qualify (isSoloSession is exactly [activeBot]).
+    const opened = (hub?.state?.sessions || [])
+      .find((item) => String(item?.id) === sid);
+    if (opened && isSoloSession(opened, activeBot)) rememberDm(activeBot, sid);
+    void hub.loadSession(sid);
   });
   row.append(button);
   return row;
@@ -280,12 +309,13 @@ async function createShared(botIds) {
   }
 }
 
-/* CFE-1: clicking a bot opens its fixed DM/main session directly. Backend
-   provides no DM marker on this branch, so the main window resolves
-   client-side: remembered solo session → newest solo session → created via
-   the existing POST /api/sessions {bots:[bot]} semantics (verified with
-   isMainSessionDetail, never a fake main). Level 2 renders immediately with
-   known sessions while the DM resolves; the main window pins first. */
+/* CFE-1: clicking a bot opens its fixed DM/main session directly. Primary
+   path is the backend's authoritative window: GET /api/bots/<botId>/dm
+   (find-or-create server-side, verified with isDmDetail — never a fake
+   main). Solo + localStorage resolution (findMainSession) and POST create
+   stay only as the legacy fallback when the endpoint/marker is unavailable
+   (pre-CBE-5 backend). Level 2 renders immediately with known sessions
+   while the DM resolves; the main window pins first. */
 async function openBot(botId) {
   level = 2;
   activeBot = botId;
@@ -294,44 +324,78 @@ async function openBot(botId) {
   sharedPicked = null;
   mainError = "";
   mainResolving = true;
+  const token = ++mainToken;
   render();
-  await resolveMain(botId);
+  await resolveMain(botId, token);
 }
 
-async function resolveMain(botId) {
+async function resolveMain(botId, token) {
+  // Only the resolve that still owns the token may navigate or clear the
+  // resolving flag: rapid bot switching mints a new token per openBot, so
+  // a stale resolve bails after EVERY await instead of landing the user
+  // in the wrong bot's window or clearing the new bot's spinner.
+  const owned = () => token === mainToken && activeBot === botId && level === 2;
   try {
     if (!hub) return;
+    // Primary: the backend's fixed DM. It adopts a legacy unmarked solo
+    // room server-side, so no client-side guessing is needed when it works.
+    let detail = null;
+    try {
+      const dm = await getJson(`/api/bots/${encodeURIComponent(botId)}/dm`);
+      if (!owned()) return;
+      // Verified dm + bots: a backend answering without the marker (or
+      // for the wrong bot) falls through to the legacy path, never opens.
+      if (isDmDetail(dm, botId)) detail = dm;
+    } catch {
+      if (!owned()) return;
+      detail = null; // endpoint unavailable → legacy fallback below
+    }
+    if (detail?.id) {
+      rememberDm(botId, detail.id);
+      if (!owned()) return;
+      mainResolving = false;
+      render();
+      exitPicking();
+      await hub.afterTeamSession(detail);
+      if (!owned()) return;
+      return;
+    }
+    // Legacy fallback (pre-CBE-5 backend): remembered/newest solo session
+    // from the list, else POST-create one and verify it is exactly that.
     const main = findMainSession(hub.state.sessions, botId, getRememberedDm(botId));
     if (main?.id) {
       rememberDm(botId, main.id);
-      if (activeBot !== botId || level !== 2) return;
+      if (!owned()) return;
       mainResolving = false;
       render();
       exitPicking();
       await hub.loadSession(String(main.id));
+      if (!owned()) return;
       return;
     }
     // No solo session yet: create the fixed DM. POST answers the full
     // detail including bots, so the guard below keeps a backend that
     // ignores {bots} from becoming a fake main window.
-    const detail = await postJson("/api/sessions", { bots: [botId] });
-    if (!isMainSessionDetail(detail, botId)) {
+    const created = await postJson("/api/sessions", { bots: [botId] });
+    if (!owned()) return;
+    if (!isMainSessionDetail(created, botId)) {
       mainError = "Backend chưa trả về cửa sổ riêng cho bot này — chưa mở cửa sổ chính.";
       return;
     }
-    rememberDm(botId, detail.id);
-    if (activeBot !== botId || level !== 2) return;
+    rememberDm(botId, created.id);
+    if (!owned()) return;
     exitPicking();
-    await hub.afterTeamSession(detail);
+    await hub.afterTeamSession(created);
+    if (!owned()) return;
   } catch (error) {
-    if (activeBot !== botId || level !== 2) return;
+    if (!owned()) return;
     mainError = messageOf(error, "Chưa mở được cửa sổ chính của bot — backend đội bot chưa sẵn sàng.");
   } finally {
-    if (activeBot === botId && level === 2) {
+    // A stale resolve must not clear the newer bot's spinner: only the
+    // owner clears the flag (and re-renders the error/note if any).
+    if (owned()) {
       mainResolving = false;
       render();
-    } else {
-      mainResolving = false;
     }
   }
 }
@@ -342,6 +406,7 @@ function openTeam() {
   sharedOpen = false;
   sharedError = "";
   sharedPicked = null;
+  mainToken++; // invalidate any in-flight resolve (owned() also checks level)
   mainResolving = false;
   mainError = "";
   render();
@@ -374,6 +439,15 @@ function render() {
     if (back) {
       back.hidden = false;
       back.onclick = openTeam;
+    }
+    // Drop a remembered DM that no longer exists (deleted session): the
+    // list is authoritative here, so a missing id is stale, not loading.
+    // A blank-but-existing DM pruned from the list re-resolves via GET
+    // and is simply re-remembered — never a fake window.
+    const rememberedId = getRememberedDm(activeBot);
+    if (rememberedId
+      && !(hub.state.sessions || []).some((item) => String(item?.id) === rememberedId)) {
+      forgetDmSession(rememberedId);
     }
     const main = findMainSession(hub.state.sessions, activeBot, getRememberedDm(activeBot));
     const { main: pinned, others } = partitionBotSessions(

@@ -18,6 +18,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 TEAM = ROOT / "thyca" / "webui" / "pages" / "chat" / "team-data.js"
 MENTION = ROOT / "thyca" / "webui" / "pages" / "chat" / "team-mention.js"
+UNREAD = ROOT / "thyca" / "webui" / "pages" / "chat" / "team-unread.js"
 COST_DATA = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "cost-data.js"
 TRACE_DATA = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "trace-data.js"
 CHAT_CSS = ROOT / "thyca" / "webui" / "pages" / "chat" / "chat.css"
@@ -32,7 +33,8 @@ def node() -> str:
 
 
 def _run(node: str, body: str, via: str = "team") -> object:
-    module = {"team": TEAM, "mention": MENTION, "cost": COST_DATA, "trace": TRACE_DATA}[via]
+    module = {"team": TEAM, "mention": MENTION, "cost": COST_DATA,
+              "trace": TRACE_DATA, "unread": UNREAD}[via]
     source = (
         f"import * as api from '{module.as_posix()}';\n"
         f"const main = async () => {{ {body} }};\n"
@@ -400,3 +402,123 @@ def test_team_dom_modules_have_no_literal_colors() -> None:
     literal = re.compile(r"#[0-9a-fA-F]{3,8}\b|oklch\(|rgba?\(")
     offenders = {str(path): literal.findall(path.read_text(encoding="utf-8")) for path in paths}
     assert all(not hits for hits in offenders.values()), offenders
+
+
+def test_find_main_session_prefers_dm_marker(node: str) -> None:
+    """CBE-5: the dm-marked session wins over newer unmarked solos; another
+    bot's marker is ignored."""
+    sessions = [
+        {"id": "solo-new", "bots": ["b1"], "dm": None,
+         "updated_at": "2026-06-01T00:00:00Z"},
+        {"id": "dm", "bots": ["b1"], "dm": "b1",
+         "updated_at": "2026-01-01T00:00:00Z"},
+        {"id": "other-dm", "bots": ["b2"], "dm": "b2",
+         "updated_at": "2026-07-01T00:00:00Z"},
+        {"id": "shared", "bots": ["b1", "b2"], "dm": None,
+         "updated_at": "2026-08-01T00:00:00Z"},
+    ]
+    value = _run(
+        node,
+        f"const sessions = {json.dumps(sessions)};"
+        " return [api.findMainSession(sessions, 'b1', '')?.id,"
+        " api.findMainSession(sessions, 'b1', 'solo-new')?.id,"
+        " api.findMainSession(sessions, 'b1', 'dm')?.id,"
+        " api.findMainSession(sessions, 'b2', '')?.id,"
+        " api.findMainSession(sessions, 'nobody', '')];",
+    )
+    assert value == ["dm", "dm", "dm", "other-dm", None]
+
+
+def test_find_main_session_legacy_without_dm_field(node: str) -> None:
+    """Pre-CBE-5 payloads carry no dm key at all → newest-solo fallback."""
+    sessions = [
+        {"id": "old", "bots": ["b1"], "updated_at": "2026-01-01T00:00:00Z"},
+        {"id": "new", "bots": ["b1"], "updated_at": "2026-05-01T00:00:00Z"},
+    ]
+    value = _run(
+        node,
+        f"const sessions = {json.dumps(sessions)};"
+        " return [api.findMainSession(sessions, 'b1', '')?.id,"
+        " api.findMainSession(sessions, 'b1', 'old')?.id];",
+    )
+    assert value == ["new", "old"]
+
+
+def test_is_dm_detail_requires_marker_and_solo(node: str) -> None:
+    """The DM endpoint guard: marker + solo participants must both name the
+    bot. Legacy POST shapes (no marker) never pass."""
+    value = _run(
+        node,
+        "return [api.isDmDetail({id: 's', dm: 'b1', bots: ['b1']}, 'b1'),"
+        " api.isDmDetail({id: 's', dm: null, bots: ['b1']}, 'b1'),"
+        " api.isDmDetail({id: 's', bots: ['b1']}, 'b1'),"
+        " api.isDmDetail({id: 's', dm: 'b2', bots: ['b2']}, 'b1'),"
+        " api.isDmDetail({id: 's', dm: 'b1', bots: ['b1', 'b2']}, 'b1'),"
+        " api.isDmDetail(null, 'b1'),"
+        " api.isDmDetail({dm: 'b1', bots: ['b1']}, '')];",
+    )
+    assert value == [True, False, False, False, False, False, False]
+
+
+def test_summarize_unread_ignores_count_drift(node: str) -> None:
+    """Conservative list-only signal: count drift with no newer stamp
+    (sidecars/compaction the transcript hides) never dots; a strictly
+    newer stamp still dots."""
+    value = _run(
+        node,
+        "return [api.summarizeUnread({ts: '2026-02-01T00:00:00Z', count: 2},"
+        " {id: 's1', updated_at: '2026-02-01T00:00:00Z', message_count: 9}),"
+        " api.summarizeUnread({ts: '2026-01-01T00:00:00Z', count: 2},"
+        " {id: 's1', updated_at: '2026-02-01T00:00:00Z', message_count: 2})];",
+    )
+    assert value[0] == {"unread": False, "count": 0, "fresh": False}
+    assert value[1] == {"unread": True, "count": 0, "fresh": False}
+
+
+_STORAGE_STUB = (
+    "globalThis.localStorage = { _m: {},"
+    " getItem(k) { return Object.hasOwn(this._m, k) ? this._m[k] : null; },"
+    " setItem(k, v) { this._m[k] = String(v); },"
+    " removeItem(k) { delete this._m[k]; } };"
+)
+
+
+def test_team_unread_dm_remember_forget_roundtrip(node: str) -> None:
+    """forgetDmSession is wired (sidebar prunes deleted DMs): it drops only
+    the bot whose remembered id matches."""
+    value = _run(
+        node,
+        _STORAGE_STUB
+        + " api.rememberDm('b1', 's1');"
+        " api.rememberDm('b2', 's2');"
+        " const kept = [api.getRememberedDm('b1'), api.getRememberedDm('b2')];"
+        " api.forgetDmSession('s1');"
+        " return [kept, api.getRememberedDm('b1'), api.getRememberedDm('b2')];",
+        via="unread",
+    )
+    assert value == [["s1", "s2"], "", "s2"]
+
+
+def test_team_unread_readmap_rejects_arrays_and_corrupt(node: str) -> None:
+    """Array/corrupt storage reads as empty instead of indexable entries."""
+    value = _run(
+        node,
+        _STORAGE_STUB
+        + " globalThis.localStorage.setItem(api.SEEN_KEY, '[]');"
+        " const arrayGuard = api.getSeen('s1');"
+        " globalThis.localStorage.setItem(api.SEEN_KEY, '\"just-a-string\"');"
+        " const stringGuard = api.getSeen('s1');"
+        " globalThis.localStorage.setItem(api.SEEN_KEY, 'not-json{{{');"
+        " const corruptGuard = api.getSeen('s1');"
+        " const base = api.markSeen('s9',"
+        " {updated_at: '2026-02-01T00:00:00Z', message_count: 3});"
+        " return [arrayGuard, stringGuard, corruptGuard, base,"
+        " api.getSeen('s9'), api.getRememberedDm('b1')];",
+        via="unread",
+    )
+    assert value[0] is None
+    assert value[1] is None
+    assert value[2] is None
+    assert value[3] == {"ts": "2026-02-01T00:00:00Z", "count": 3}
+    assert value[4] == value[3]
+    assert value[5] == ""

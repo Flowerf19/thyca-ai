@@ -11,7 +11,10 @@ function readMap(key) {
     const raw = localStorage.getItem(key);
     if (!raw) return {};
     const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? parsed : {};
+    // Plain object only: a stored array/string (corrupt or cross-key
+    // collision) must read as empty, never as indexable entries.
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed;
   } catch {
     return {};
   }

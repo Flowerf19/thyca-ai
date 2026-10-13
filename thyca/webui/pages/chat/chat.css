@@ -1175,7 +1175,6 @@ button:active {
 .team-avatar-stack .team-avatar:last-child {
   bottom: 0;
   inset-inline-end: 0;
-  box-shadow: 0 0 0 2px var(--color-paper);
 }
 
 .team-bot-item.is-paused .team-avatar {

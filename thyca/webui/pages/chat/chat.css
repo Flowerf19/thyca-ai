@@ -1125,6 +1125,40 @@ button:active {
   font-style: italic;
 }
 
+/* CFE-1 main window pin + CFE-2 unread badge. Tokens only: the unread pill
+   reuses the accent pair, the secondary heading the muted reading tone. */
+.team-secondary-title {
+  margin: 0.7rem 0.7rem 0.1rem;
+  color: var(--color-muted);
+  font-family: var(--font-reading);
+  font-size: 0.78rem;
+  font-style: italic;
+}
+
+.session-row.is-main .session-item {
+  background: var(--color-accent-soft);
+}
+
+.team-unread {
+  flex: none;
+  min-width: 1.35rem;
+  padding: 0 0.4rem;
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
+  color: var(--color-accent-ink);
+  font-family: var(--font-ui);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.team-unread.is-dot {
+  min-width: 0;
+  width: 0.55rem;
+  height: 0.55rem;
+  padding: 0;
+}
+
 .team-shared-picker {
   display: flex;
   flex-basis: 100%;

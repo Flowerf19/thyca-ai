@@ -16,6 +16,7 @@ from typing import Any
 
 from thyca.bots.bus import new_trace_id
 from thyca.bots.card import BotCard, BotMemoryPolicy, BotModel
+from thyca.bots.context import current_bot_turn_context
 from thyca.memory.identity import current_bot_id
 from thyca.tools.registry import ToolRegistry, ToolSpec
 
@@ -59,9 +60,107 @@ def register_admin_tools(registry: ToolRegistry, deps: AdminDeps) -> None:
         _edit_card_spec(deps),
         _delegate_spec(deps),
         _stop_spec(deps),
+        _send_spec(deps),
     ):
         if registry.get(spec.name) is None:
             registry.register(spec)
+
+
+async def _send_and_deliver(
+    deps: AdminDeps,
+    *,
+    sender: str,
+    recipient: str,
+    kind: str,
+    payload: str,
+    room: str = "",
+    trace_id: str | None = None,
+) -> str:
+    """Enqueue one envelope and, in a live turn, run the recipient now.
+
+    Delivery is the production path: the recipient bot's own AgentLoop
+    turn runs (bounded by the bus per-trace hop limit applied at send),
+    its attributed result lands in the room transcript via ChatApp's
+    deliverer, and its reply is returned here for the sender's flow.
+    Outside a live turn (no deliverer/context) the envelope stays queued
+    for the recipient's next turn, reported honestly as ``queued``."""
+    ctx = current_bot_turn_context()
+    session_id = room or (ctx.room_id if ctx is not None else "")
+    envelope = deps.runtime.send(
+        sender=sender,
+        recipient=recipient,
+        kind=kind,
+        session_id=session_id,
+        payload=payload,
+        trace_id=trace_id or (ctx.trace_id if ctx is not None else None),
+        parent_span_id=ctx.span_id if ctx is not None else None,
+    )
+    reply = await deps.runtime.deliver(envelope)
+    out: dict = {
+        "ok": True,
+        "to": recipient,
+        "trace_id": envelope.trace_id,
+        "span_id": envelope.span_id,
+    }
+    if reply is not None:
+        out["delivered"] = True
+        out["reply"] = reply
+    else:
+        out["queued"] = deps.runtime._bus.pending(recipient)
+    return json.dumps(out, ensure_ascii=False)
+
+
+def _send_spec(deps: AdminDeps) -> ToolSpec:
+    async def handler(args: dict) -> str:
+        # Sender identity comes only from the in-flight turn context /
+        # bot ContextVar — never from arguments (there is no sender arg).
+        ctx = current_bot_turn_context()
+        sender = ctx.sender_id if ctx is not None else current_bot_id()
+        if sender is None:
+            return "denied: bot_send requires an in-flight bot turn"
+        recipient = args.get("bot_id")
+        message = args.get("message")
+        if not isinstance(recipient, str) or not recipient.strip():
+            return "missing argument: bot_id"
+        if not isinstance(message, str) or not message.strip():
+            return "missing argument: message"
+        kind = args.get("kind") if isinstance(args.get("kind"), str) else "message"
+        try:
+            card = deps.bots.require(recipient)
+            if card.paused:
+                return f"bot_send failed: bot is paused: {recipient}"
+            return await _send_and_deliver(
+                deps, sender=sender, recipient=recipient, kind=kind,
+                payload=message.strip(),
+            )
+        except Exception as exc:
+            return f"bot_send failed: {exc}"
+
+    return ToolSpec(
+        name="bot_send",
+        description=(
+            "Send a message/task to another bot and get its reply. The "
+            "recipient bot runs its own turn immediately; its reply is "
+            "returned to you and recorded in the room under its name. "
+            "Your identity as sender is taken from your turn, never from "
+            "arguments. kind: delegate|message|help_request (default message)."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "bot_id": {"type": "string"},
+                "message": {"type": "string"},
+                "kind": {"type": "string"},
+            },
+            "required": ["bot_id", "message"],
+            "additionalProperties": False,
+        },
+        handler=handler,
+        # parallel_safe: no gateway resource lock is held across the
+        # nested recipient turn, so multi-hop bot->bot cannot deadlock
+        # on the send tool's own lock.
+        parallel_safe=True,
+    )
 
 
 def _create_spec(deps: AdminDeps) -> ToolSpec:
@@ -297,33 +396,29 @@ def _delegate_spec(deps: AdminDeps) -> ToolSpec:
         if not isinstance(task, str) or not task.strip():
             return "missing argument: task"
         try:
-            deps.bots.require(bot_id)
+            card = deps.bots.require(bot_id)
+            if card.paused:
+                return f"bot_delegate failed: bot is paused: {bot_id}"
         except Exception as exc:
             return f"bot_delegate failed: {exc}"
         room = args.get("room") if isinstance(args.get("room"), str) else ""
-        envelope = deps.runtime.send(
-            sender="thyca",
-            recipient=bot_id,
-            kind="delegate",
-            session_id=room or "",
-            payload=task.strip(),
-            trace_id=args.get("trace_id") if isinstance(args.get("trace_id"), str) else None,
-        )
-        return json.dumps(
-            {
-                "ok": True,
-                "to": bot_id,
-                "trace_id": envelope.trace_id,
-                "queued": deps.runtime._bus.pending(bot_id),
-            },
-            ensure_ascii=False,
-        )
+        ctx = current_bot_turn_context()
+        sender = ctx.sender_id if ctx is not None else "thyca"
+        try:
+            return await _send_and_deliver(
+                deps, sender=sender, recipient=bot_id, kind="delegate",
+                payload=task.strip(), room=room,
+                trace_id=args.get("trace_id") if isinstance(args.get("trace_id"), str) else None,
+            )
+        except Exception as exc:
+            return f"bot_delegate failed: {exc}"
 
     return ToolSpec(
         name="bot_delegate",
         description=(
-            "Give a task to a bot (Thyca only). Queues a delegate envelope the "
-            "bot reads at its next turn; returns the trace_id to follow it."
+            "Give a task to a bot (Thyca only). The recipient bot runs its "
+            "own turn immediately and its reply is returned to you and "
+            "recorded in the room under its name; returns the trace_id too."
         ),
         parameters={
             "type": "object",
@@ -337,7 +432,8 @@ def _delegate_spec(deps: AdminDeps) -> ToolSpec:
             "additionalProperties": False,
         },
         handler=handler,
-        parallel_safe=False,
+        # No gateway lock held across the nested recipient turn.
+        parallel_safe=True,
     )
 
 
@@ -376,11 +472,14 @@ def _stop_spec(deps: AdminDeps) -> ToolSpec:
 
 
 def visible_for_bot(schemas: list[dict] | None, bot_id: str | None) -> list[dict] | None:
-    """Tool snapshot for one caller: children never see ``bot_*`` (BE-5)."""
+    """Tool snapshot for one caller: children never see admin ``bot_*``
+    tools; ``bot_send`` (peer send, sender from ContextVar) is the one
+    ``bot_*`` name a child may see."""
     if not schemas or bot_id is None or bot_id == "thyca":
         return schemas
     return [
         schema
         for schema in schemas
-        if not str(schema.get("function", {}).get("name", "")).startswith("bot_")
+        if schema.get("function", {}).get("name") == "bot_send"
+        or not str(schema.get("function", {}).get("name", "")).startswith("bot_")
     ]

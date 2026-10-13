@@ -1,6 +1,6 @@
 # Team v1 — backend lane implementation plan (BE-1..BE-6)
 
-Status: in-progress. Lane lead: BACKEND. Master plan: `docs/team-plan`
+Status: done (including the post-review fix pass below). Lane lead: BACKEND. Master plan: `docs/team-plan`
 (`.agents/plans/team-v1.md`, frozen incl. contract §6). Lane design doc:
 `docs/team-backend` (`.agents/plans/team-backend.md`).
 No sub-agent tool is available in this environment — all work is done
@@ -149,6 +149,50 @@ orchestrator (see §8).
 ### BE-6 (final verification)
 - `aggregate()` `by_bot` + meta consistency test; FE contract checklist
   (§6: every endpoint + payload field asserted in `tests/test_bots_contract.py`).
+
+## Post-review fix pass (verified findings, all fixed)
+
+1. **Card self-escalation (critical)**: `PathGuard` denies read/write/edit
+   of `~/.thyca/bots/**`, `~/.thyca/config.json`, and
+   `~/.thyca/skills-team/**` for any non-system in-flight bot;
+   `BotPolicy` repeats the check at the gateway (incl. bash references)
+   and enforces a bound allowlist. Tool filtering is fail-closed for
+   child bots: empty `tools` = no tools, `tool_read`/`tool_kill` only
+   when explicitly listed; Thyca's system card keeps full access.
+   `bot_send` is the one `bot_*` name children may hold.
+2. **A2A delivery executes**: `bot_delegate`/`bot_send` enqueue *and*
+   deliver — the recipient's own `BotRuntime` turn runs immediately
+   (bus hop limit bounds the chain), its reply is returned to the
+   sender's tool result, and its attributed rows land in the room
+   transcript. Sender identity comes from the turn ContextVar only.
+   Multi-hop bot→bot is covered by an integration test
+   (Thyca → coder → helper) in `tests/test_bots_fixes.py`.
+3. **Cost attribution**: bot turns aggregate their internal assistant
+   meta (model/usage/cost_usd/latency_ms) onto the room row
+   (`BotTurnResult.room_meta`), so serve trace `by_bot` sees real data.
+   Every bot room row also carries its own `span_id`; delivered rows
+   parent to their envelope span (FE delegation tree).
+4. **memory.read=false** strips all hot memory content (own + team)
+   from that bot's snapshot. **memory_propose_team** refuses entries
+   the proposing bot does not own. **Tracked executions** are stamped
+   with the in-flight bot and gateway read/kill are owner-scoped;
+   foreign ids read as unknown with no enumeration of others' ids.
+5. **Cron is standard cron**: Sunday=0 and 7, Monday=1 (`0 9 * * 1`),
+   DOM/DOW OR when both are restricted.
+6. **Fixed disclosure — scheduler/merge wiring**: team skill seeds now
+   ship in `thyca/seeds/skills-team/` (`create-skill`,
+   `create-mcp-tool`), the `or hot.skills` fallback is gone (a child's
+   skill index is exactly private + team), serve startup runs a
+   periodic scheduler tick (60s), and the idle sweep runs the merge
+   pass over freshly written entries — both jobs now have production
+   callers.
+7. **Fixed disclosure — candidate decision ordering**: the candidate
+   route records the decision first under one ordering for all callers
+   (caller-supplied `decided_by`, defaulting to `"user"` on the user
+   HTTP route), then promotes; a failed promotion reopens the
+   candidate. Also fixed in this pass: `_record_bus_events` drains the
+   bus log per room, paused bots are removable and skipped by the
+   responder, `tool_message` error rows keep `bot_id`.
 
 ## Non-goals / frozen constraints
 - Do NOT touch `thyca/llm/pricing.py`, `tests/test_llm_pricing.py`,

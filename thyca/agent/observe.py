@@ -85,7 +85,7 @@ class Observe:
         # Minimal meta on purpose: the backstop fires before think(), so
         # stage.reply/usage/cost would still describe the previous round.
         meta: dict = {"kind": "llm", "status": "context_limit"}
-        for key in ("bot_id", "trace_id", "parent_span_id"):
+        for key in ("bot_id", "trace_id", "parent_span_id", "span_id"):
             value = getattr(stage, key, None)
             if isinstance(value, str) and value:
                 meta[key] = value

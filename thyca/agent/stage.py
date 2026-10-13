@@ -35,6 +35,7 @@ class Stage:
     bot_id: str | None = None
     trace_id: str | None = None
     parent_span_id: str | None = None
+    span_id: str | None = None
 
     def __post_init__(self) -> None:
         if isinstance(self.round, bool) or not isinstance(self.round, int) or self.round < 0:

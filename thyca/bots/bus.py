@@ -37,6 +37,9 @@ class Envelope:
     parent_span_id: str | None
     ts: str
     payload: str
+    # This envelope's own span: room rows for it carry this id, and the
+    # recipient turn's rows parent to it (FE delegation tree).
+    span_id: str | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -46,6 +49,7 @@ class Envelope:
             "session_id": self.session_id,
             "trace_id": self.trace_id,
             "parent_span_id": self.parent_span_id,
+            "span_id": self.span_id,
             "ts": self.ts,
             "payload": self.payload,
         }
@@ -95,6 +99,7 @@ class Bus:
         payload: str,
         trace_id: str | None = None,
         parent_span_id: str | None = None,
+        span_id: str | None = None,
     ) -> Envelope:
         if kind not in ENVELOPE_KINDS:
             raise BusError(f"unknown envelope kind: {kind!r}")
@@ -109,6 +114,7 @@ class Bus:
             parent_span_id=parent_span_id,
             ts=utc_now_ts(),
             payload=payload,
+            span_id=span_id or new_span_id(),
         )
         with self._lock:
             if recipient not in self._boxes:
@@ -139,6 +145,42 @@ class Bus:
         except queue.Empty:
             pass
         return out
+
+    def take(self, envelope: Envelope) -> bool:
+        """Remove one specific queued envelope (delivery consumed it).
+
+        Delivery runs the recipient turn with the envelope payload as its
+        text, so the queued copy must not be re-delivered as mailbox
+        context on that same turn. Other queued envelopes stay queued."""
+        with self._lock:
+            box = self._boxes.get(envelope.recipient)
+            if box is None:
+                return False
+        kept: list[Envelope] = []
+        removed = False
+        try:
+            while True:
+                item = box.get_nowait()
+                if not removed and item == envelope:
+                    removed = True
+                    continue
+                kept.append(item)
+        except queue.Empty:
+            pass
+        for item in kept:
+            box.put(item)
+        return removed
+
+    def drain_log(self, session_id: str) -> list[BusEvent]:
+        """Take (remove) every logged event for one room.
+
+        Per-room draining replaces index-over-global-log bookkeeping:
+        the bus log is trimmed for growth, so a saved index can silently
+        point past live rows and drop or duplicate events."""
+        with self._lock:
+            taken = [e for e in self._log if e.envelope.session_id == session_id]
+            self._log = [e for e in self._log if e.envelope.session_id != session_id]
+            return taken
 
     def pending(self, bot_id: str) -> int:
         with self._lock:

@@ -14,6 +14,12 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from thyca.agent.act import Act
+from thyca.bots.bus import new_span_id, new_trace_id
+from thyca.bots.context import (
+    BotTurnContext,
+    bind_bot_turn_context,
+    reset_bot_turn_context,
+)
 from thyca.agent.events import EventSink, TurnEvent, emit_event
 from thyca.agent.think import LLMPort
 from thyca.app.naming import _name_if_needed
@@ -72,6 +78,22 @@ async def run_turn(
     if request.retry and not sessions.truncate_to_last_user():
         raise InvalidTurnOption("no user")
     token = bind_chat_session(request.session_id)
+    # Thyca's own turn context: admin/send tools take sender, room,
+    # trace, and span from here (never from tool arguments), and the
+    # turn's room rows carry this span for the FE delegation tree.
+    thyca_span = new_span_id()
+    thyca_trace = new_trace_id()
+    ctx_token = bind_bot_turn_context(
+        BotTurnContext(
+            sender_id="thyca",
+            room_id=request.session_id,
+            trace_id=thyca_trace,
+            span_id=thyca_span,
+            scope=scope,
+            turn_cfg=turn_cfg,
+            event_sink=request.event_sink,
+        )
+    )
     try:
         provider = turn_cfg.effective_provider()
         if request.effort is not None:
@@ -110,6 +132,7 @@ async def run_turn(
                     hot=hot,
                     event_sink=request.event_sink,
                     persist_user=not request.retry,
+                    bot_ctx={"span_id": thyca_span, "trace_id": thyca_trace},
                 )
             except asyncio.CancelledError:
                 raise
@@ -132,6 +155,7 @@ async def run_turn(
                 if close is not None:
                     await close()
     finally:
+        reset_bot_turn_context(ctx_token)
         reset_chat_session(token)
 
 

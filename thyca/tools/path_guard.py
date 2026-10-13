@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from thyca.memory.identity import current_bot_id
+
 
 def absolutize(value: str) -> Path:
     """~-expand + lexically normalize, without touching the filesystem.
@@ -42,7 +44,38 @@ class PathGuard:
             raise PathDenied(f"write denied: {target}")
         return target
 
+    def deny_read(self, path: str) -> Path:
+        """Resolve a read target, refusing bot-sensitive files to child bots."""
+        target = self.resolve(path)
+        if self._bot_sensitive(target):
+            raise PathDenied(f"read denied: {target}")
+        return target
+
+    def _bot_sensitive(self, target: Path) -> bool:
+        """Team-control files a non-system bot must never touch.
+
+        A child bot that could edit ``bots/**`` (any BOT.md), the live
+        ``config.json``, or the shared ``skills-team/**`` store could
+        escalate its own card, and the runtime re-reads the card on every
+        turn. The user (no bot bound) and the Thyca system bot keep full
+        access; every other in-flight bot is denied, read and write."""
+        bot_id = current_bot_id()
+        if bot_id is None or bot_id == "thyca":
+            return False
+        root = self.thyca_dir
+        if target == root / "config.json":
+            return True
+        for folder in (root / "bots", root / "skills-team"):
+            try:
+                target.relative_to(folder)
+            except ValueError:
+                continue
+            return True
+        return False
+
     def _blocked(self, target: Path) -> bool:
+        if self._bot_sensitive(target):
+            return True
         root = self.thyca_dir
         try:
             target.relative_to(root)

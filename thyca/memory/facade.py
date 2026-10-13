@@ -309,6 +309,10 @@ class MemoryFacade:
             self.archive.store.prune_dangling_edges(format_ts(utc_now(now)))
 
     # -- Team ownership (BE-4) -------------------------------------------
+    def entry_bots(self, session_id: str) -> tuple[str, ...] | None:
+        """Public owner list of one entry (None = legacy/team entry)."""
+        return self._lookup_bots(session_id, None)
+
     def forget_bot_entries(self, bot_id: str, now: datetime | None = None) -> int:
         """Drop one bot's private entries on bot deletion (BE-5).
 

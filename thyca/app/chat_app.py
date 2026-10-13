@@ -16,7 +16,7 @@ from thyca.agent.compacting import compact_with_llm
 from thyca.agent.events import EventSink, TurnEvent
 from thyca.agent.think import LLMPort
 from thyca.app.summarizing import LlmSummarizer
-from thyca.bots.bus import Bus, new_trace_id
+from thyca.bots.bus import Bus, new_span_id, new_trace_id
 from thyca.bots.policy import BotPolicy
 from thyca.bots.registry import BotRegistry, RegistryError
 from thyca.bots.runtime import BotRuntime
@@ -111,8 +111,12 @@ class ChatApp:
         self._bots = BotRegistry(root)
         self._bots.ensure_thyca()
         self._bus = Bus()
+        for _doc in self._bots.list():
+            if _doc.ok and _doc.card is not None:
+                self._bus.register(_doc.card.bot_id)
         self._runtime = BotRuntime(root, self._bots, self._bus)
-        self._bus_log_index = 0
+        # A2A delivery: send tools run the recipient's turn through here.
+        self._runtime.deliverer = self._deliver_envelope
         # Thyca-only admin tools (BE-5): registered once on the shared
         # registry; the runtime hides every bot_* name from child bots and
         # each handler re-checks the caller, so a leak still cannot be used.
@@ -248,9 +252,26 @@ class ChatApp:
                             connect, turn_cfg.provider.model, transcript
                         )
                     )
-                    applied = mem_jobs.apply_extracted(self.job_facade(), extracted)
+                    facade = self.job_facade()
+                    applied = mem_jobs.apply_extracted(facade, extracted)
                     entry["extracted"] = len(applied["written"])
                     entry["proposed"] = len(applied["proposed"])
+                    if applied["written"]:
+                        # Merge funnel production caller: freshly written
+                        # entries are the merge candidates; the reviewer
+                        # is the turn model, called only for candidates.
+                        from thyca.memory import merge as mem_merge
+
+                        async def _review(a: str, b: str, _c=connect) -> str:
+                            return await mem_merge.llm_review_pair(
+                                _c, turn_cfg.provider.model, a, b
+                            )
+
+                        merged = self._submit(
+                            mem_merge.run_merge_pass(facade, applied["written"], _review)
+                        )
+                        entry["merged"] = len(merged["linked"])
+                        entry["merge_reviews"] = merged["review_calls"]
                 finally:
                     if owns:
                         close = getattr(connect, "aclose", None)
@@ -397,7 +418,8 @@ class ChatApp:
         if action not in ("add", "remove"):
             raise ValueError("action must be add|remove")
         card = self._bots.require(bot_id)
-        if card.paused:
+        # Paused bots cannot join, but must always be removable.
+        if action == "add" and card.paused:
             raise RegistryError(f"bot is paused: {bot_id}")
         session = self._sessions.store.load(session_id)
         current = list(session.bots) if session.bots else ["thyca"]
@@ -451,7 +473,12 @@ class ChatApp:
         self._zone = ZoneInfo(turn_cfg.timeline.timezone)
         self._sync_mcp(turn_cfg)
         bots = self.room_bots(session_id)
-        responder = self._resolve_responder(bots, cleaned)
+        paused = {
+            doc.card.bot_id
+            for doc in self._bots.list()
+            if doc.ok and doc.card is not None and doc.card.paused
+        }
+        responder = self._resolve_responder(bots, cleaned, paused=paused)
         with self._claim_lock:
             hub = self._turns.claim(session_id)
             job = self._loop_turns.begin(session_id)
@@ -541,16 +568,21 @@ class ChatApp:
         return await run_turn(scope, request, self._detail)
 
     @staticmethod
-    def _resolve_responder(bots: list[str], text: str) -> str:
+    def _resolve_responder(
+        bots: list[str], text: str, paused: frozenset[str] | set[str] = frozenset()
+    ) -> str:
         """Who answers this room turn: @mention wins, else the room.
 
         A ``@<bot-id>`` mention names the responder inside a shared room;
         a 1-1 room is answered by its only bot; otherwise the first
-        participant (the default room's Thyca) answers."""
+        participant (the default room's Thyca) answers. Paused bots are
+        skipped: a paused mention falls through to the next active
+        participant instead of running a paused bot."""
+        active = [bot for bot in bots if bot not in paused]
         for mention in re.findall(r"@([a-z0-9]+(?:-[a-z0-9]+)*)", text):
-            if mention in bots:
+            if mention in active:
                 return mention
-        return bots[0] if bots else "thyca"
+        return active[0] if active else (bots[0] if bots else "thyca")
 
     async def _run_bot_turn(
         self,
@@ -594,8 +626,19 @@ class ChatApp:
                 injected_connect=connect,
             )
             trace_id = new_trace_id()
+            span_id = new_span_id()
+            if not retry:
+                # The user row lands before the turn runs so A2A rows
+                # delivered mid-turn order after it in the transcript.
+                early_room = SessionManager(
+                    limits=turn_cfg.effective_limits(),
+                    timezone_name=turn_cfg.timeline.timezone,
+                    store=self._sessions.store,
+                )
+                early_room.load(session_id)
+                early_room.append(Message(role="user", content=text))
             try:
-                reply = await self._runtime.run_bot_turn(
+                result = await self._runtime.run_bot_turn_detailed(
                     scope=scope,
                     card=card,
                     room_id=session_id,
@@ -603,7 +646,9 @@ class ChatApp:
                     turn_cfg=turn_cfg,
                     event_sink=event_sink,
                     trace_id=trace_id,
+                    span_id=span_id,
                 )
+                reply = result.reply
             except asyncio.CancelledError:
                 raise
             except LLMError as exc:
@@ -618,16 +663,19 @@ class ChatApp:
                 store=self._sessions.store,
             )
             room.load(session_id)
-            if not retry:
-                room.append(Message(role="user", content=text))
+            self._record_bus_events(room, session_id)
             room.append(
                 Message(
                     role="assistant",
                     content=reply,
-                    meta={"bot_id": bot_id, "kind": "message", "trace_id": trace_id},
+                    # Aggregated internal-turn meta (model/usage/cost/
+                    # latency) rides along so trace by_bot sees real
+                    # numbers for this bot's work.
+                    meta=result.room_meta(
+                        kind="message", trace_id=trace_id, parent_span_id=None
+                    ),
                 )
             )
-            self._record_bus_events(room, session_id)
             await _name_if_needed(connect, room, turn_cfg, event_sink)
             landed = self._detail(room.current, turn_cfg, running=False)
             return {**landed, "reply": reply}
@@ -637,17 +685,74 @@ class ChatApp:
                 if close is not None:
                     await close()
 
+    async def _deliver_envelope(self, envelope, ctx) -> str:
+        """A2A delivery: run the recipient bot's own turn, record it.
+
+        Installed as ``BotRuntime.deliverer``. The triggering envelope is
+        taken off the recipient's mailbox (its payload *is* the turn
+        text), the recipient runs in its private (bot x room) session,
+        and its reply lands in the room transcript under its own name
+        with aggregated cost meta and a span parented to the envelope.
+        The reply text is returned for the sender's tool result, so
+        multi-hop bot->bot flows compose inside one sender turn."""
+        room_id = envelope.session_id or ctx.room_id
+        try:
+            card = self._bots.require(envelope.recipient)
+        except Exception as exc:
+            return f"delivery failed: {exc}"
+        if card.paused:
+            return f"delivery failed: bot is paused: {envelope.recipient}"
+        self._bus.take(envelope)
+        span_id = new_span_id()
+        room: SessionManager | None = None
+        if room_id:
+            try:
+                room = SessionManager(
+                    limits=ctx.turn_cfg.effective_limits(),
+                    timezone_name=ctx.turn_cfg.timeline.timezone,
+                    store=self._sessions.store,
+                )
+                room.load(room_id)
+                self._record_bus_events(room, room_id)
+            except Exception:
+                room = None
+        try:
+            result = await self._runtime.run_bot_turn_detailed(
+                scope=ctx.scope,
+                card=card,
+                room_id=room_id or f"a2a:{envelope.sender}",
+                text=envelope.payload,
+                turn_cfg=ctx.turn_cfg,
+                event_sink=ctx.event_sink,
+                trace_id=envelope.trace_id,
+                parent_span_id=envelope.span_id,
+                span_id=span_id,
+            )
+        except Exception as exc:
+            return f"delivery failed: {type(exc).__name__}: {exc}"
+        if room is not None:
+            room.append(
+                Message(
+                    role="assistant",
+                    content=result.reply,
+                    meta=result.room_meta(
+                        kind="result",
+                        trace_id=envelope.trace_id,
+                        parent_span_id=envelope.span_id,
+                    ),
+                )
+            )
+        return result.reply
+
     def _record_bus_events(self, room: SessionManager, session_id: str) -> None:
-        """Append fresh A2A bus envelopes to the room transcript.
+        """Append fresh A2A bus envelopes for *this room* to its transcript.
 
         One row per envelope under the sender's name; the app layer is the
-        only writer (bots never touch the room transcript directly)."""
-        events = self._bus.log()[self._bus_log_index:]
-        self._bus_log_index += len(events)
-        for event in events:
+        only writer (bots never touch the room transcript directly). The
+        bus log is drained per room, so the bus's trimmed global log can
+        never shift an index past live rows for other rooms."""
+        for event in self._bus.drain_log(session_id):
             envelope = event.envelope
-            if envelope.session_id != session_id:
-                continue
             room.append(
                 Message(
                     role="assistant",
@@ -657,6 +762,7 @@ class ChatApp:
                         "kind": envelope.kind,
                         "trace_id": envelope.trace_id,
                         "parent_span_id": envelope.parent_span_id,
+                        "span_id": envelope.span_id,
                     },
                 )
             )

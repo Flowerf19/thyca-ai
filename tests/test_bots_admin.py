@@ -128,14 +128,23 @@ def test_cron_matcher() -> None:
 
 
 def test_due_minute_precision() -> None:
-    # Monday 2026-08-03 09:30.
+    # Monday 2026-08-03 09:30. Standard cron: Monday=1, Sunday=0 and 7.
     now = datetime(2026, 8, 3, 9, 30)
     assert due("30 9 * * *", now) is True
     assert due("31 9 * * *", now) is False
     assert due("* * * * *", now) is True
     assert due(None, now) is False
-    assert due("30 9 * * 0", now) is True  # Monday
-    assert due("30 9 * * 1", now) is False  # Tuesday
+    assert due("30 9 * * 1", now) is True  # Monday
+    assert due("30 9 * * 2", now) is False  # Tuesday
+    assert due("30 9 * * 0", now) is False  # Sunday
+    sunday = datetime(2026, 8, 2, 9, 30)
+    assert due("30 9 * * 0", sunday) is True
+    assert due("30 9 * * 7", sunday) is True
+    # DOM/DOW OR when both are restricted: Monday the 3rd fires on DOW,
+    # Tuesday the 15th fires on DOM, Wednesday the 16th on neither.
+    assert due("30 9 15 * 1", now) is True
+    assert due("30 9 15 * 1", datetime(2026, 9, 15, 9, 30)) is True
+    assert due("30 9 15 * 1", datetime(2026, 9, 16, 9, 30)) is False
     try:
         due("0 9 * *", now)
     except CronError:

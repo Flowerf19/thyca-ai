@@ -40,14 +40,21 @@ def candidate_decide(facade: MemoryFacade, candidate_id: str, approved: bool, de
         candidate = pending.get(candidate_id)
         if candidate is None:
             return 404, {"error": "candidate not found"}
+        # One ordering for every caller: record the decision first
+        # (with the caller-supplied decided_by; the HTTP user route
+        # defaults it to "user"), then promote on approve. A failed
+        # promotion reopens the candidate so queue state never claims
+        # a promotion that did not happen.
+        queue.decide(candidate_id, approved, decided_by)
         if approved:
             try:
                 facade.promote_to_team(candidate.session_id)
             except ArchiveError:
+                queue.reopen(candidate_id)
                 return 404, {"error": "entry not found"}
             except Exception:
+                queue.reopen(candidate_id)
                 return 503, {"error": "promote failed"}
-        queue.decide(candidate_id, approved, decided_by)
     except CandidateError as exc:
         return 404, {"error": str(exc)}
     except Exception:

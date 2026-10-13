@@ -145,7 +145,7 @@ class AgentLoop:
         if bot_ctx:
             # Team attribution (BE-6): the runtime names the bot + trace so
             # Observe stamps every appended row and Trace can group by bot.
-            for key in ("bot_id", "trace_id", "parent_span_id"):
+            for key in ("bot_id", "trace_id", "parent_span_id", "span_id"):
                 value = bot_ctx.get(key)
                 if isinstance(value, str) and value:
                     setattr(stage, key, value)

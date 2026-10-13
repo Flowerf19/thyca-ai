@@ -237,6 +237,16 @@ def _propose_team_spec(facade: MemoryFacade) -> ToolSpec:
         bot_id = current_bot_id()
         if bot_id is None or bot_id == "thyca":
             return "nothing to propose: Thyca and the user write team memory directly"
+        # Ownership: a bot may only propose entries it owns. Legacy
+        # entries (None = team) and other bots' entries are refused here
+        # (and team entries need no proposal); the queue trusts callers.
+        from thyca.memory.archived import ArchiveError
+
+        owners = facade.entry_bots(args["session_id"])
+        if owners is None or "team" in owners or bot_id not in owners:
+            raise ArchiveError(
+                f"bot '{bot_id}' can only propose team memory for its own entries"
+            )
         queue = CandidateQueue(facade.thyca_dir)
         candidate = queue.propose(bot_id, args["session_id"])
         return json.dumps(

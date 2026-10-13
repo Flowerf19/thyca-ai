@@ -83,13 +83,30 @@ def test_memory_and_bash_filters() -> None:
     from thyca.bots.card import BotMemoryPolicy
 
     card = _card(memory=BotMemoryPolicy(read=False, write=False, propose_team=False),
-                 bash="deny")
+                 bash="deny",
+                 tools=("memory_search", "memory_remember", "memory_propose_team",
+                        "bash", "read"))
     out = filtered_tool_schemas(
         _schemas("memory_search", "memory_remember", "memory_propose_team",
                  "bash", "read"),
         card,
     )
     assert [s["function"]["name"] for s in out] == ["read"]
+
+
+def test_child_empty_tools_allowlist_is_fail_closed() -> None:
+    # Non-system bot, empty `tools`: NO tools at all — poll tools are not
+    # implicit; they appear only when explicitly listed.
+    card = _card()
+    out = filtered_tool_schemas(_schemas("read", "tool_read", "tool_kill"), card)
+    assert out == []
+    card2 = _card(tools=("read", "tool_read"))
+    out2 = filtered_tool_schemas(_schemas("read", "tool_read", "tool_kill"), card2)
+    assert [s["function"]["name"] for s in out2] == ["read", "tool_read"]
+    # The Thyca system card keeps its full snapshot with an empty list.
+    thyca = _card(bot_id="thyca", name="thyca", system=True)
+    out3 = filtered_tool_schemas(_schemas("read", "bash"), thyca)
+    assert {s["function"]["name"] for s in out3} == {"read", "bash"}
 
 
 def test_gateway_policy_denies_hidden_by_name() -> None:

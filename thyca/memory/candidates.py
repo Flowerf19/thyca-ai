@@ -99,6 +99,24 @@ class CandidateQueue:
                 return Candidate(**record)
         raise CandidateError(f"unknown candidate: {candidate_id}")
 
+    def reopen(self, candidate_id: str) -> Candidate:
+        """Return a decided candidate to pending (compensating action).
+
+        Used when a decision was recorded but its follow-through (team
+        promotion) failed, so the queue never claims a promotion that
+        did not happen."""
+        with self._lock:
+            records = self._read()
+            for record in records:
+                if record.get("id") != candidate_id:
+                    continue
+                record["status"] = "pending"
+                record["decided_by"] = None
+                record["decided_at"] = None
+                self._write(records)
+                return Candidate(**record)
+        raise CandidateError(f"unknown candidate: {candidate_id}")
+
     def expire_older_than(self, days: int, *, now_ts: str | None = None) -> int:
         """Auto-reject pending rows older than ``days``. Returns the count.
 

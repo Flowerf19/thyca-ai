@@ -14,7 +14,7 @@ _PARAMETERS = {
 def read_spec(guard: PathGuard) -> ToolSpec:
     async def handler(args: dict) -> str:
         # Schema types arrive pre-checked by the registry (X3): path is str.
-        path = guard.resolve(args["path"])
+        path = guard.deny_read(args["path"])
         if not path.is_file():
             raise FileNotFoundError(f"not a file: {path}")
         return path.read_text(encoding="utf-8")

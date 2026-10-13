@@ -53,7 +53,7 @@ def _priced_cost(model: str | None, usage: dict | None, pricing: dict | None) ->
 
 def assistant_meta(stage: Stage, *, kind: str = "llm") -> dict:
     meta: dict = {"kind": kind}
-    for key in ("bot_id", "trace_id", "parent_span_id"):
+    for key in ("bot_id", "trace_id", "parent_span_id", "span_id"):
         value = getattr(stage, key, None)
         if isinstance(value, str) and value:
             meta[key] = value
@@ -126,7 +126,10 @@ def tool_message(
     if isinstance(bot_id, str) and bot_id:
         meta = {"bot_id": bot_id}
     if result.is_error:
-        meta = {"is_error": True}
+        # Error rows keep their bot attribution; is_error merges in.
+        if meta is None:
+            meta = {}
+        meta["is_error"] = True
     if latency_ms is not None:
         if meta is None:
             meta = {}

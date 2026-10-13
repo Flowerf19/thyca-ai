@@ -17,7 +17,8 @@ CRON_FIELDS = (
     ("hour", 0, 23),
     ("day", 1, 31),
     ("month", 1, 12),
-    ("weekday", 0, 6),  # Monday=0 .. Sunday=6 (datetime.weekday)
+    # Standard cron day-of-week: Sunday=0 (or 7), Monday=1 .. Saturday=6.
+    ("weekday", 0, 7),
 )
 
 
@@ -60,11 +61,30 @@ def match_field(expr: str, value: int, minimum: int, maximum: int) -> bool:
     return False
 
 
+def _dow_matches(expr: str, cron_dow: int) -> bool:
+    """Standard-cron DOW match; both 0 and 7 mean Sunday.
+
+    The matched candidate set is built over 0..7 and folded 7→0, so
+    ranges like ``5-7`` correctly mean Fri/Sat/Sun."""
+    matched = {
+        candidate % 7
+        for candidate in range(0, 8)
+        if match_field(expr, candidate, 0, 7)
+    }
+    return cron_dow in matched
+
+
+def _restricted(expr: str) -> bool:
+    return expr.strip() not in ("*", "*/1")
+
+
 def due(schedule: str | None, now: datetime) -> bool:
     """True when a card's cron schedule fires at ``now`` (minute precision).
 
-    Weekday is Monday=0 .. Sunday=6 (``datetime.weekday``); no Sun=0/7
-    alias — one convention, documented here."""
+    Standard cron semantics: Sunday is 0 *and* 7, Monday is 1
+    (``0 9 * * 1`` fires Monday 09:00); when both day-of-month and
+    day-of-week are restricted (neither is ``*``), a match on either
+    one fires (the classic Vixie-cron OR rule)."""
     if schedule is None:
         return False
     if not isinstance(schedule, str) or not schedule.strip():
@@ -72,11 +92,20 @@ def due(schedule: str | None, now: datetime) -> bool:
     parts = schedule.strip().split()
     if len(parts) != 5:
         raise CronError(f"cron needs 5 fields, got {schedule!r}")
-    values = [now.minute, now.hour, now.day, now.month, now.weekday()]
-    for (_name, minimum, maximum), expr, value in zip(CRON_FIELDS, parts, values):
-        if not match_field(expr, value, minimum, maximum):
-            return False
-    return True
+    minute_e, hour_e, dom_e, month_e, dow_e = parts
+    if not match_field(minute_e, now.minute, 0, 59):
+        return False
+    if not match_field(hour_e, now.hour, 0, 23):
+        return False
+    if not match_field(month_e, now.month, 1, 12):
+        return False
+    dom_ok = match_field(dom_e, now.day, 1, 31)
+    # datetime.weekday(): Mon=0..Sun=6 → cron: Mon=1..Sat=6, Sun=0.
+    cron_dow = (now.weekday() + 1) % 7
+    dow_ok = _dow_matches(dow_e, cron_dow)
+    if _restricted(dom_e) and _restricted(dow_e):
+        return dom_ok or dow_ok
+    return dom_ok and dow_ok
 
 
 def tick(app, now: datetime | None = None, *, idle_s: int = 900) -> dict:

@@ -484,17 +484,25 @@ function render() {
   const me = currentTeamBot();
   // ONE flat channel list ordered by latest activity (user decision
   // 2026-10-14): bot channels and group chats interleave purely by
-  // their newest session time — no bots-first grouping. A bot entry
-  // is its cluster (bot row + the selected bot's solo sessions under
-  // it); its activity is its newest session, DM included.
+  // each channel's own newest activity — type never breaks a tie by
+  // putting bots first. A bot entry is its cluster (bot row + the
+  // selected bot's solo sessions under it); its activity is only its
+  // own DM/solo activity, never a group it merely participates in
+  // (that group is a separate channel with its own timestamp).
   const entries = [];
   const botActivity = (botId) => sessionsForBot(hub.state.sessions, botId)
+    .filter((session) => !isSharedSession(session))
     .reduce((max, s) => (String(s.updated_at || "") > max ? String(s.updated_at || "") : max), "");
-  bots.forEach((bot, index) => {
+  bots.forEach((bot) => {
     const cluster = document.createElement("div");
     cluster.className = "team-cluster";
     cluster.append(botRow(bot));
-    entries.push({ t: botActivity(bot.id), i: index, node: cluster });
+    entries.push({
+      t: botActivity(bot.id),
+      k: String(bot.name || bot.id || ""),
+      id: String(bot.id || ""),
+      node: cluster,
+    });
     if (!me || bot.id !== me.id) return;
     const sub = document.createElement("div");
     sub.className = "team-cluster-sessions";
@@ -538,14 +546,17 @@ function render() {
     }
     if (!sub.childElementCount) sub.remove();
   });
-  groupSessions(hub.state.sessions).forEach((session, index) => {
+  groupSessions(hub.state.sessions).forEach((session) => {
     entries.push({
       t: String(session.updated_at || ""),
-      i: bots.length + index,
+      k: String(session.title || session.id || ""),
+      id: String(session.id || ""),
       node: unifiedRow(session, "", true),
     });
   });
-  entries.sort((a, b) => (a.t === b.t ? a.i - b.i : (a.t < b.t ? 1 : -1)));
+  entries.sort((a, b) => (a.t === b.t
+    ? (a.k.localeCompare(b.k) || a.id.localeCompare(b.id))
+    : (a.t < b.t ? 1 : -1)));
   list.replaceChildren(...entries.map((entry) => entry.node));
   const actions = actionsBox();
   if (actions) {

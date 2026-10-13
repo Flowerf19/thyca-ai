@@ -1138,17 +1138,17 @@ def test_sidebar_sessions_render_under_active_bot_row(node: str) -> None:
         "  bot: (row.children[0] && row.children[0].dataset.botId) || '',"
         "  sid: (row.children[0] && row.children[0].dataset.sessionId) || '',"
         "  text: row.textContent }));")
-    # Flat by latest activity (2026-10-14): here every channel ties on
-    # the shared room's timestamp, so registry order decides — Thyca
-    # (active; Coder's private session is NOT in Thyca's cluster),
-    # Coder, then the group chat as a channel of its own, ngang bot,
-    # not a sub-row of any participant.
-    # The DM session (\"dm\") renders NO row: the Thyca bot row itself is
-    # the DM entry (supersedes the earlier expectation that listed it).
+    # Flat by each channel's own latest activity (2026-10-14): bots do
+    # NOT inherit a group's timestamp just by participating in it, so
+    # the group (07-02) outranks Coder's private activity (07-01) and
+    # Thyca's DM activity (06-01) — no bot/group distinction in sorting.
+    # Coder's private session is NOT in Thyca's cluster. The DM session
+    # ("dm") renders NO row: the Thyca bot row itself is the DM entry
+    # (supersedes the earlier expectation that listed it).
     assert [(row["bot"], row["sid"]) for row in value] == [
-        ("thyca", ""), ("coder", ""), ("", "shared")]
+        ("", "shared"), ("coder", ""), ("thyca", "")]
     # Shared annotation still present on the group row's subline.
-    assert "Coder" in value[2]["text"] and "Thyca" in value[2]["text"]
+    assert "Coder" in value[0]["text"] and "Thyca" in value[0]["text"]
 
 
 def test_sidebar_bot_with_only_dm_renders_zero_session_rows(node: str) -> None:

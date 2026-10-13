@@ -333,6 +333,17 @@ export async function retryMessage() {
     if (state.activeId === sessionId) armIdle();
   }
 }
+// Answers picked on a team question/error card go out as a normal turn.
+// The composer must be idle; otherwise the chip stays put (no queue).
+export function sendChoiceText(text) {
+  if (!composerDeps || composerDeps.composerBusy()) return;
+  const label = String(text || "").trim();
+  if (!label) return;
+  composerDeps.el.input.value = label;
+  composerDeps.el.input.focus();
+  void sendMessage();
+}
+
 // Shared live-turn lifecycle for send and retry (they were ~50 duplicated
 // lines): mount the card, stream the turn, settle the transcript; follow or
 // brand the error; always release the registries. Returns the settlement for

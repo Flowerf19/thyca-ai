@@ -293,3 +293,8 @@ export function estimatedCostSplit(model, rates) {
     outputUsd: rates.output == null ? null : tokenCost(Number(model?.completion_tokens) || 0, rates.output),
   };
 }
+
+/* Team v1: cost per bot groups the same snapshot rows by their bot cost
+   meta (contract §6). Implemented once in the chat lane's team-data.js and
+   re-exported here so the Cost journal and the chat collapse share one rule. */
+export { aggregateBotCost } from "../chat/team-data.js";

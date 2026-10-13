@@ -227,3 +227,43 @@ html[data-theme="dusk"] #trace {
     padding-inline-start: 1rem;
   }
 }
+
+/* Team v1: delegation tree inside an opened turn disclosure. */
+.trace-delegation {
+  margin-block-start: 0.8rem;
+}
+
+.delegation-tree,
+.delegation-kids {
+  margin: 0.3rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.delegation-kids {
+  padding-inline-start: 1.1rem;
+  border-inline-start: var(--rule) solid var(--color-divider);
+}
+
+.delegation-node {
+  padding-block: 0.2rem;
+}
+
+.delegation-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.3rem 0.6rem;
+  padding-inline-start: 0.5rem;
+  border-inline-start: 0.15rem solid var(--team-tint, var(--color-divider));
+}
+
+.delegation-head strong {
+  color: var(--team-tint, var(--color-reading));
+}
+
+.delegation-head time {
+  margin-inline-start: auto;
+  color: var(--color-muted);
+  font-size: 0.8rem;
+}

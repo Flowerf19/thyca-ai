@@ -2,6 +2,18 @@ import { bindThinkingToggle, elapsedLabel, settledThinkingNote } from "./chat-th
 import { formatTime } from "../../shared/js/format.js";
 import { formatMarkdown } from "../../shared/js/markdown.js";
 import { chatBrandHeader, usageRow } from "./chat-view.js";
+import { exchangeDetails, teamArticleFor } from "./team-cards.js";
+import { isExchangeMessage } from "./team-data.js";
+
+// Card-chip answers (question / error / permission cards) are sent as a
+// normal user turn by the entry module, which owns the composer.
+let teamChoiceHandler = null;
+export function setTeamChoiceHandler(handler) {
+  teamChoiceHandler = typeof handler === "function" ? handler : null;
+}
+function sendTeamChoice(text) {
+  teamChoiceHandler?.(String(text || ""));
+}
 
 function assistantHeader({ expandable = false, latencyMs } = {}) {
   const status = Number.isFinite(latencyMs) && latencyMs >= 0
@@ -101,6 +113,8 @@ export function renderConversation(root, messages) {
   const pendingNames = [];
   const pendingParts = [];
   let pendingTs = "";
+  // Consecutive inter-bot bus events collapse behind one disclosure.
+  const pendingExchange = [];
 
   const flushAssistant = () => {
     if (!pendingParts.length) {
@@ -113,15 +127,35 @@ export function renderConversation(root, messages) {
     pendingTs = "";
   };
 
+  const flushExchange = () => {
+    if (!pendingExchange.length) return;
+    nodes.push(exchangeDetails(pendingExchange.splice(0)));
+  };
+
   for (const message of Array.isArray(messages) ? messages : []) {
     if (!message || message.role === "system") continue;
     if ((message.meta || {}).kind === "naming" || (message.meta || {}).kind === "compaction") continue;
     if (message.role === "user") {
       flushAssistant();
+      flushExchange();
       nodes.push(userMessage(message));
       continue;
     }
     if (message.role !== "assistant") continue;
+    if (isExchangeMessage(message)) {
+      flushAssistant();
+      pendingExchange.push(message);
+      continue;
+    }
+    flushExchange();
+    // A bot-identified message (or decision/handoff/card meta) renders as
+    // a team block; anything else keeps the legacy Thyca grouping below.
+    const team = teamArticleFor(message, { onChoice: sendTeamChoice });
+    if (team) {
+      flushAssistant();
+      nodes.push(team);
+      continue;
+    }
     for (const call of message.tool_calls || []) {
       if (!call) continue;
       // A skill load arrives tagged by the backend so replay keeps the skill
@@ -143,6 +177,7 @@ export function renderConversation(root, messages) {
     }
   }
   flushAssistant();
+  flushExchange();
   const last = nodes[nodes.length - 1];
   if (last?.classList.contains("message-user")) {
     last.querySelector("footer")?.prepend(againButton());

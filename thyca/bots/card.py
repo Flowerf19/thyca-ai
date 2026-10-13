@@ -22,6 +22,27 @@ BASH_MODES = frozenset({"ask", "allow", "deny"})
 #: Tint is a theme-token name, never a hex literal (contract §6/FE-6).
 _TINT_RE = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$")
 
+#: Tools every newly created bot receives so it can immediately talk to
+#: peers and use its own memory (peer send + remember/search/get/propose).
+#: Creation paths union these with explicitly requested tools; the card's
+#: ``hidden_tools`` and memory/bash policies still win at filter time.
+BASELINE_BOT_TOOLS: tuple[str, ...] = (
+    "bot_send",
+    "memory_remember",
+    "memory_search",
+    "memory_get",
+    "memory_propose_team",
+)
+
+
+def with_baseline_tools(tools) -> tuple[str, ...]:
+    """Baseline tools first, then explicit tools, deduplicated in order."""
+    merged: list[str] = list(BASELINE_BOT_TOOLS)
+    for name in tools or ():
+        if name not in merged:
+            merged.append(name)
+    return tuple(merged)
+
 
 @dataclass(frozen=True)
 class BotModel:

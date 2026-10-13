@@ -186,28 +186,43 @@ export function buildDelegationTree(messages) {
   return [...tracedOrder.flatMap((id) => tracedGroups.get(id)), ...untraced];
 }
 
-/* Cost per bot over trace/cost rows carrying bot cost meta. Rows in the
-   current backend have no bot_id — they land in the "" bucket, which the UI
-   renders as an honest "chưa gắn bot" line (recorded-known semantics like
-   overviewMetrics: sums are recorded, never claimed complete). */
+/* Cost per bot over trace/cost rows carrying bot cost meta. Rows with a
+   backend bot_breakdown credit each bot in the turn; rows without bot
+   meta land in the "" bucket, which the UI renders as an honest
+   "chưa gắn bot" line (recorded-known semantics like overviewMetrics:
+   sums are recorded, never claimed complete). */
 export function aggregateBotCost(rows) {
   const groups = new Map();
-  for (const row of Array.isArray(rows) ? rows : []) {
-    if (!row || typeof row !== "object") continue;
-    const botId = typeof row.bot_id === "string" ? row.bot_id : "";
+  const add = (botId, requests, rawCost) => {
     let group = groups.get(botId);
     if (!group) {
       group = { botId, turns: 0, requests: 0, costUsd: null, pricedTurns: 0 };
       groups.set(group.botId, group);
     }
     group.turns += 1;
-    group.requests += Number(row.requests) || 0;
+    group.requests += Number(requests) || 0;
     // null/blank = never priced (not $0) — same rule as turnCost().
-    const raw = row.cost_usd;
-    const cost = raw == null || raw === "" ? null : Number(raw);
+    const cost = rawCost == null || rawCost === "" ? null : Number(rawCost);
     if (cost != null && Number.isFinite(cost)) {
       group.costUsd = (group.costUsd ?? 0) + cost;
       group.pricedTurns += 1;
+    }
+  };
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (!row || typeof row !== "object") continue;
+    // Per-bot breakdown (backend bot_breakdown) wins when present: a turn
+    // that delegated credits each bot's own requests/cost, and each bot
+    // counts one participating turn. Absent/empty breakdown falls back
+    // to the row's single bot_id + turn totals (legacy rows).
+    const breakdown = Array.isArray(row.bot_breakdown)
+      ? row.bot_breakdown.filter((entry) => entry && typeof entry === "object")
+      : [];
+    if (breakdown.length) {
+      for (const entry of breakdown) {
+        add(typeof entry.bot_id === "string" ? entry.bot_id : "", entry.requests, entry.cost_usd);
+      }
+    } else {
+      add(typeof row.bot_id === "string" ? row.bot_id : "", row.requests, row.cost_usd);
     }
   }
   return [...groups.values()].sort((a, b) => (b.costUsd ?? -1) - (a.costUsd ?? -1)

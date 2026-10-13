@@ -190,6 +190,97 @@ def test_aggregate_by_model_and_unknown_cost() -> None:
     assert hours["09"] == 2
 
 
+def _assistant(bot_id, prompt, completion, cost, latency, ts=TS2):
+    meta = {
+        "kind": "llm", "model": "m", "latency_ms": latency,
+        "usage": {"prompt_tokens": prompt, "cached_tokens": 0,
+                  "completion_tokens": completion,
+                  "total_tokens": prompt + completion},
+        "cost_usd": cost,
+    }
+    if bot_id is not None:
+        meta["bot_id"] = bot_id
+    return Message(role="assistant", content="x", ts=ts, meta=meta)
+
+
+def test_multi_bot_slice_breakdown_attributes_each_bot() -> None:
+    session = _session(
+        "2026-08-26T09-12-03_mbot",
+        [
+            Message(role="user", content="go", ts=TS),
+            _assistant("thyca", 100, 10, 0.02, 100),
+            _assistant("helper", 50, 5, 0.01, 50),
+            _assistant("helper", 10, 1, 0.002, 10),
+            _assistant("buddy", 20, 2, 0.005, 20),
+        ],
+    )
+    (turn,) = turns_from_session(session)
+    # Legacy single-bot fields unchanged: first bot + whole-slice totals.
+    assert turn.bot_id == "thyca"
+    assert turn.requests == 4
+    assert turn.prompt_tokens == 180
+    assert turn.total_tokens == 198
+    assert turn.cost_usd == 0.037
+    assert turn.latency_ms == 180
+    breakdown = {e["bot_id"]: e for e in turn.bot_breakdown}
+    assert breakdown["thyca"]["requests"] == 1
+    assert breakdown["thyca"]["cost_usd"] == 0.02
+    assert breakdown["helper"]["requests"] == 2
+    assert breakdown["helper"]["prompt_tokens"] == 60
+    assert breakdown["helper"]["cost_usd"] == 0.012
+    assert breakdown["helper"]["latency_ms"] == 60
+    assert breakdown["buddy"]["total_tokens"] == 22
+    # Turn totals == sum of breakdown.
+    assert sum(e["requests"] for e in turn.bot_breakdown) == turn.requests
+    assert sum(e["prompt_tokens"] or 0 for e in turn.bot_breakdown) == turn.prompt_tokens
+    assert sum(e["total_tokens"] or 0 for e in turn.bot_breakdown) == turn.total_tokens
+    assert sum(e["cost_usd"] or 0 for e in turn.bot_breakdown) == turn.cost_usd
+    assert sum(e["latency_ms"] or 0 for e in turn.bot_breakdown) == turn.latency_ms
+    assert turn.to_payload()["bot_breakdown"] == turn.bot_breakdown
+    data = aggregate([turn])
+    by_bot = {row["bot_id"]: row for row in data["by_bot"]}
+    assert by_bot["thyca"]["requests"] == 1
+    assert by_bot["thyca"]["cost_usd"] == 0.02
+    assert by_bot["helper"]["requests"] == 2
+    assert by_bot["helper"]["cost_usd"] == 0.012
+    assert by_bot["helper"]["prompt_tokens"] == 60
+    assert by_bot["buddy"]["requests"] == 1
+    assert sum(r["requests"] for r in data["by_bot"]) == data["totals"]["requests"]
+    assert sum(r["cost_usd"] or 0 for r in data["by_bot"]) == data["totals"]["cost_usd"]
+
+
+def test_single_bot_breakdown_matches_turn_and_legacy_unknown() -> None:
+    session = _session(
+        "2026-08-26T09-12-03_sbot",
+        [
+            Message(role="user", content="go", ts=TS),
+            _assistant("coder", 10, 2, 0.001, 30),
+            _assistant("coder", 5, 1, 0.0005, 20),
+        ],
+    )
+    (turn,) = turns_from_session(session)
+    assert len(turn.bot_breakdown) == 1
+    entry = turn.bot_breakdown[0]
+    assert entry["bot_id"] == "coder"
+    assert entry["requests"] == turn.requests == 2
+    assert entry["prompt_tokens"] == turn.prompt_tokens
+    assert entry["cost_usd"] == turn.cost_usd
+    assert entry["latency_ms"] == turn.latency_ms
+    by_bot = {r["bot_id"]: r for r in aggregate([turn])["by_bot"]}
+    assert by_bot["coder"]["requests"] == 2
+    assert by_bot["coder"]["cost_usd"] == turn.cost_usd
+    # No bot_id anywhere: breakdown carries None, aggregate keeps "unknown".
+    legacy = turns_from_session(_session(
+        "2026-08-26T09-12-03_leg1",
+        [Message(role="user", content="go", ts=TS),
+         _assistant(None, 3, 1, None, 10)],
+    ))[0]
+    assert legacy.bot_breakdown[0]["bot_id"] is None
+    unknown = {r["bot_id"]: r for r in aggregate([legacy])["by_bot"]}
+    assert unknown["unknown"]["requests"] == 1
+    assert unknown["unknown"]["cost_usd"] is None
+
+
 def test_error_marker_forces_failed_and_payload() -> None:
     marked = _session(
         "2026-08-26T09-12-03_abcm",

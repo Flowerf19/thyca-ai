@@ -15,7 +15,7 @@ from dataclasses import replace
 from typing import Any
 
 from thyca.bots.bus import new_trace_id
-from thyca.bots.card import BotCard, BotMemoryPolicy, BotModel
+from thyca.bots.card import BotCard, BotMemoryPolicy, BotModel, with_baseline_tools
 from thyca.bots.context import current_bot_turn_context
 from thyca.memory.identity import current_bot_id
 from thyca.tools.registry import ToolRegistry, ToolSpec
@@ -163,11 +163,45 @@ def _send_spec(deps: AdminDeps) -> ToolSpec:
     )
 
 
+def _str_list_arg(args: dict, key: str) -> tuple[str, ...]:
+    value = args.get(key)
+    if value is None:
+        return ()
+    if not isinstance(value, (list, tuple)) or any(not isinstance(v, str) for v in value):
+        raise ValueError(f"{key} must be a list of strings")
+    return tuple(value)
+
+
+def _memory_arg(args: dict) -> BotMemoryPolicy:
+    value = args.get("memory")
+    if value is None:
+        return BotMemoryPolicy()
+    if not isinstance(value, dict):
+        raise ValueError("memory must be an object {read, write, propose_team}")
+    fields = {}
+    for key in ("read", "write", "propose_team"):
+        field_value = value.get(key, True)
+        if not isinstance(field_value, bool):
+            raise ValueError("memory must be an object {read, write, propose_team}")
+        fields[key] = field_value
+    return BotMemoryPolicy(**fields)
+
+
 def _create_spec(deps: AdminDeps) -> ToolSpec:
     async def handler(args: dict) -> str:
         denied = _deny_child()
         if denied:
             return denied
+        try:
+            explicit_tools = _str_list_arg(args, "tools")
+            hidden_tools = _str_list_arg(args, "hidden_tools")
+            skills = _str_list_arg(args, "skills")
+            memory = _memory_arg(args)
+        except ValueError as exc:
+            return f"bot_create failed: {exc}"
+        schedule = args.get("schedule")
+        if schedule is not None and not isinstance(schedule, str):
+            return "bot_create failed: schedule must be a string"
         try:
             card = BotCard(
                 bot_id=args["bot_id"],
@@ -175,8 +209,19 @@ def _create_spec(deps: AdminDeps) -> ToolSpec:
                 role=args.get("role", "Trợ lý"),
                 description=args.get("description", ""),
                 tint=args.get("tint", "accent"),
-                model=BotModel(id=args.get("model", "default")),
+                model=BotModel(
+                    id=args.get("model", "default"),
+                    thinking=args.get("thinking") if isinstance(args.get("thinking"), str) else None,
+                ),
+                skills=skills,
+                # Every created bot can immediately talk to peers and use
+                # its memory; explicit tools union on top. hidden_tools,
+                # bash and memory policies still win at filter time.
+                tools=with_baseline_tools(explicit_tools),
+                hidden_tools=hidden_tools,
                 bash=args.get("bash", "ask"),
+                memory=memory,
+                schedule=schedule or None,
                 persona=args.get("persona", ""),
             )
         except KeyError as exc:
@@ -189,14 +234,21 @@ def _create_spec(deps: AdminDeps) -> ToolSpec:
             created = deps.bots.create(card)
         except Exception as exc:
             return f"bot_create failed: {exc}"
-        return json.dumps({"ok": True, "bot_id": created.bot_id}, ensure_ascii=False)
+        return json.dumps(
+            {"ok": True, "bot_id": created.bot_id, "tools": list(created.tools)},
+            ensure_ascii=False,
+        )
 
     return ToolSpec(
         name="bot_create",
         description=(
             "Create a new team bot (Thyca only). Needs bot_id (a-z, 0-9, hyphens), "
             "role, description; optional model ('default' keeps Settings), "
-            "tint (theme token), bash (ask|allow|deny), persona text."
+            "thinking, tint (theme token), bash (ask|allow|deny), skills, tools, "
+            "hidden_tools, memory {read,write,propose_team}, schedule, persona. "
+            "Every created bot also receives the baseline tools (bot_send, "
+            "memory_remember, memory_search, memory_get, memory_propose_team) "
+            "unioned with `tools`; hidden_tools still blocks them."
         ),
         parameters={
             "type": "object",
@@ -205,8 +257,14 @@ def _create_spec(deps: AdminDeps) -> ToolSpec:
                 "role": {"type": "string"},
                 "description": {"type": "string"},
                 "model": {"type": "string"},
+                "thinking": {"type": "string"},
                 "tint": {"type": "string"},
                 "bash": {"type": "string"},
+                "skills": {"type": "array", "items": {"type": "string"}},
+                "tools": {"type": "array", "items": {"type": "string"}},
+                "hidden_tools": {"type": "array", "items": {"type": "string"}},
+                "memory": {"type": "object"},
+                "schedule": {"type": "string"},
                 "persona": {"type": "string"},
             },
             "required": ["bot_id"],

@@ -142,6 +142,39 @@ def test_aggregate_bot_cost_null_is_unpriced(node: str) -> None:
     assert by_bot[""]["pricedTurns"] == 1  # explicit 0 stays priced
 
 
+def test_aggregate_bot_cost_uses_breakdown_when_present(node: str) -> None:
+    rows = [
+        # Delegated turn: row.bot_id is the first bot (thyca) but helper
+        # did most of the work — breakdown must win over row.bot_id.
+        {"bot_id": "thyca", "requests": 3, "cost_usd": 0.03,
+         "bot_breakdown": [
+             {"bot_id": "thyca", "requests": 1, "cost_usd": 0.01},
+             {"bot_id": "helper", "requests": 2, "cost_usd": 0.02},
+         ]},
+        # No breakdown: legacy fallback to row.bot_id + turn totals.
+        {"bot_id": "helper", "requests": 1, "cost_usd": 0.005},
+        # Empty breakdown also falls back; unpriced stays unpriced.
+        {"bot_id": "helper", "requests": 1, "cost_usd": None, "bot_breakdown": []},
+        # Breakdown entry without bot_id lands in the unattributed bucket.
+        {"requests": 9, "cost_usd": 9,
+         "bot_breakdown": [{"requests": 1, "cost_usd": None}]},
+    ]
+    value = _run(node, f"return api.aggregateBotCost({json.dumps(rows)});")
+    by_bot = {group["botId"]: group for group in value}
+    assert by_bot["thyca"]["turns"] == 1
+    assert by_bot["thyca"]["requests"] == 1
+    assert by_bot["thyca"]["costUsd"] == pytest.approx(0.01)
+    assert by_bot["helper"]["turns"] == 3
+    assert by_bot["helper"]["requests"] == 2 + 1 + 1
+    assert by_bot["helper"]["costUsd"] == pytest.approx(0.025)
+    assert by_bot["helper"]["pricedTurns"] == 2
+    assert by_bot[""]["requests"] == 1
+    assert by_bot[""]["costUsd"] is None
+    # Requests/cost across groups reproduce the breakdown+fallback sums,
+    # never the delegated row's whole-turn totals counted for thyca alone.
+    assert sum(g["requests"] for g in value) == 1 + 2 + 1 + 1 + 1
+
+
 def test_cost_and_trace_data_reexport_team_helpers(node: str) -> None:
     cost = _run(node, "return api.aggregateBotCost([{bot_id: 'b', cost_usd: 1}])[0].botId;", via="cost")
     assert cost == "b"

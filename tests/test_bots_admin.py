@@ -81,6 +81,88 @@ def test_apply_card_edit() -> None:
         raise AssertionError("expected ValueError")
 
 
+def _create_via_tool(tmp_path: Path, args: dict):
+    import json as _json
+
+    from thyca.bots.admin_tools import AdminDeps, register_admin_tools
+    from thyca.bots.bus import Bus
+    from thyca.bots.registry import BotRegistry
+    from thyca.bots.runtime import BotRuntime
+
+    registry = BotRegistry(tmp_path)
+    registry.ensure_thyca()
+    tool_registry = ToolRegistry()
+    register_admin_tools(tool_registry,
+                         AdminDeps(registry, BotRuntime(tmp_path, registry, Bus()),
+                                   lambda: None))
+    spec = tool_registry.get("bot_create")
+    out = _json.loads(asyncio.run(spec.handler(args)))
+    assert out["ok"] is True, out
+    return registry.require(out["bot_id"]), out
+
+
+def _schemas(*names: str) -> list[dict]:
+    return [{"type": "function", "function": {"name": name}} for name in names]
+
+
+def test_bot_create_grants_baseline_tools(tmp_path: Path) -> None:
+    from thyca.bots.card import BASELINE_BOT_TOOLS
+    from thyca.bots.runtime import filtered_tool_schemas
+
+    card, out = _create_via_tool(tmp_path, {
+        "bot_id": "helper", "role": "Helper", "description": "Helps.",
+    })
+    assert set(BASELINE_BOT_TOOLS) <= set(card.tools)
+    assert set(out["tools"]) == set(card.tools)
+    schemas = _schemas(*BASELINE_BOT_TOOLS, "read", "bash")
+    names = [s["function"]["name"] for s in filtered_tool_schemas(schemas, card)]
+    # Baseline is in the filtered schema; unlisted tools stay fail-closed.
+    assert set(names) == set(BASELINE_BOT_TOOLS)
+
+
+def test_bot_create_explicit_tools_union_and_hidden_wins(tmp_path: Path) -> None:
+    from thyca.bots.runtime import filtered_tool_schemas
+
+    card, _ = _create_via_tool(tmp_path, {
+        "bot_id": "helper", "role": "Helper", "description": "Helps.",
+        "tools": ["read", "memory_search"],
+        "hidden_tools": ["memory_search", "bot_send"],
+    })
+    assert "read" in card.tools and "memory_remember" in card.tools
+    schemas = _schemas("bot_send", "memory_remember", "memory_search",
+                       "memory_get", "memory_propose_team", "read")
+    names = [s["function"]["name"] for s in filtered_tool_schemas(schemas, card)]
+    assert "read" in names and "memory_remember" in names
+    assert "memory_search" not in names  # hidden wins over explicit+baseline
+    assert "bot_send" not in names
+
+
+def test_bot_create_memory_policy_still_filters_baseline(tmp_path: Path) -> None:
+    from thyca.bots.runtime import filtered_tool_schemas
+
+    card, _ = _create_via_tool(tmp_path, {
+        "bot_id": "helper", "role": "Helper", "description": "Helps.",
+        "memory": {"read": False, "write": False, "propose_team": False},
+    })
+    schemas = _schemas("bot_send", "memory_remember", "memory_search",
+                       "memory_get", "memory_propose_team")
+    names = [s["function"]["name"] for s in filtered_tool_schemas(schemas, card)]
+    assert names == ["bot_send"]
+
+
+def test_build_card_grants_baseline_tools() -> None:
+    from thyca.bots.card import BASELINE_BOT_TOOLS
+
+    state = start_flow()
+    for text in ("R", "J", "D", "ask", "ok"):
+        state, _ = answer_flow(state, text)
+    assert state.done is True
+    card = build_card(state, "flowbot")
+    assert set(BASELINE_BOT_TOOLS) <= set(card.tools)
+    extra = build_card(state, "flowbot", tools=("read",))
+    assert set(BASELINE_BOT_TOOLS) < set(extra.tools) and "read" in extra.tools
+
+
 def test_create_flow_happy_path() -> None:
     state = start_flow()
     assert "vai trò" in current_question(state)

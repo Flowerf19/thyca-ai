@@ -3,7 +3,14 @@ from __future__ import annotations
 
 from thyca.bots.admin_tools import ADMIN_TOOL_NAMES, AdminDeps, register_admin_tools
 from thyca.bots.bus import Bus, Envelope, new_span_id, new_trace_id
-from thyca.bots.card import BotCard, BotCardDoc, parse_bot_card, render_bot_card
+from thyca.bots.card import (
+    BASELINE_BOT_TOOLS,
+    BotCard,
+    BotCardDoc,
+    parse_bot_card,
+    render_bot_card,
+    with_baseline_tools,
+)
 from thyca.bots.create_flow import (
     answer_flow,
     build_card,
@@ -18,6 +25,7 @@ from thyca.bots.scheduler import due, tick
 __all__ = [
     "ADMIN_TOOL_NAMES",
     "AdminDeps",
+    "BASELINE_BOT_TOOLS",
     "BotCard",
     "BotCardDoc",
     "BotPolicy",
@@ -38,4 +46,5 @@ __all__ = [
     "render_bot_card",
     "start_flow",
     "tick",
+    "with_baseline_tools",
 ]

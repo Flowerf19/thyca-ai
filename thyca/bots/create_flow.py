@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from thyca.bots.card import BotCard, BotMemoryPolicy, BotModel
+from thyca.bots.card import BotCard, BotMemoryPolicy, BotModel, with_baseline_tools
 
 STEPS = ("role", "main_job", "data_touched", "bash", "confirm")
 
@@ -95,6 +95,7 @@ def build_card(
     *,
     model: str = "default",
     tint: str = "accent",
+    tools: tuple[str, ...] | list[str] = (),
 ) -> BotCard:
     """Card from accepted answers + Settings defaults (model/tint)."""
     if not state.done:
@@ -118,6 +119,7 @@ def build_card(
         description=job[:1024] or role,
         tint=tint,
         model=BotModel(id=model),
+        tools=with_baseline_tools(tools),
         bash=bash,
         memory=BotMemoryPolicy(read=True, write=True, propose_team=True),
         persona=persona,

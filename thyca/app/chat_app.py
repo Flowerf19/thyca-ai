@@ -128,7 +128,8 @@ class ChatApp:
         register_admin_tools(
             self._registry,
             AdminDeps(self._bots, self._runtime, self.job_facade,
-                      dm_post=self.post_bot_dm_message),
+                      dm_post=self.post_bot_dm_message,
+                      card_post=self.post_bot_card),
         )
         self._mcp = (
             MCPManager() if mcp_factory is None else MCPManager(process_factory=mcp_factory)
@@ -894,6 +895,48 @@ class ChatApp:
             meta={"bot_id": bot_id, "kind": "message"},
         ))
         return {"ok": True, "session_id": dm["id"]}
+
+    def post_bot_card(self, bot_id: str, card: dict,
+                      current_room_id: str = "", content: str = "") -> dict:
+        """Post a structured question/error card into the current room.
+
+        The ``ask_user``/``report_error`` landing path: the card rides
+        on an assistant row's ``meta.card`` (the FE renderer was ready
+        before this contract extension existed). Privacy gates mirror
+        A2A recording: another bot's DM never receives the card, and a
+        non-DM room only accepts cards from its participants."""
+        if not current_room_id:
+            return {"ok": False, "error": "no current room for a card"}
+        session = next(
+            (s for s in self._sessions.list_sessions() if s.id == current_room_id),
+            None,
+        )
+        if session is None:
+            return {"ok": False, "error": f"unknown room: {current_room_id}"}
+        if session.dm_bot is not None and session.dm_bot != bot_id:
+            return {"ok": False, "error": (
+                "current room is another bot's private DM; return the "
+                "question/problem to that bot or use message_user in "
+                "your own DM")}
+        participants = list(session.bots) if session.bots else ["thyca"]
+        if bot_id not in participants:
+            return {"ok": False, "error": f"bot is not a participant of this room: {bot_id}"}
+        meta: dict = {"bot_id": bot_id, "kind": "card", "card": dict(card)}
+        try:
+            bot_card = self._bots.require(bot_id)
+            meta["bot_name"] = bot_card.name
+            meta["bot_tint"] = bot_card.tint
+        except Exception:
+            pass  # display companions only; the card itself must land
+        cfg = self._current_cfg()
+        room = SessionManager(
+            limits=cfg.effective_limits(),
+            timezone_name=cfg.timeline.timezone,
+            store=self._sessions.store,
+        )
+        room.load(current_room_id)
+        room.append(Message(role="assistant", content=content, meta=meta))
+        return {"ok": True, "session_id": current_room_id}
 
     def _promote_participant(self, session_id: str, bot_id: str) -> None:
         """Add a delivery recipient to a normal room's participants.

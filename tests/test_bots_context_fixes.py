@@ -670,3 +670,104 @@ def test_delegate_in_plain_room_promotes_recipient_to_participant(tmp_path: Path
             "a plain (non-DM) room records the participant's work")
     finally:
         app.shutdown()
+
+
+# --- 11. Structured cards: ask_user / report_error (meta.card) ---------------
+
+class _AskUserLLM:
+    """Thyca asks a multiple-choice question via ask_user, then wraps up."""
+
+    async def chat(self, messages, tools=None):
+        tool_text = "\n".join(
+            str(m.content or "") for m in messages if m.role == "tool"
+        )
+        usage = {"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6}
+        if tool_text:
+            assert "waiting_for_user" in tool_text
+            return ChatReply(content="Bạn chọn giúp mình nhé.", model="m", usage=usage)
+        return ChatReply(content=None, model="m", tool_calls=[
+            ToolCall(id="t-ask", name="ask_user", arguments={
+                "title": "Bot được chạy lệnh ở mức nào?",
+                "subtitle": "Hỏi trước là an toàn nhất.",
+                "options": ["Hỏi trước", "Cho phép", "Không"],
+            }),
+        ])
+
+
+def test_ask_user_posts_question_card_in_thyca_dm(tmp_path: Path) -> None:
+    app = _chat(tmp_path, _AskUserLLM())
+    try:
+        thyca_dm = app.bot_dm("thyca")["id"]
+        detail = app.turn(thyca_dm, "tạo bot giúp mình")
+        assert detail["reply"] == "Bạn chọn giúp mình nhé."
+        cards = [r for r in _rows(app, thyca_dm)
+                 if ((r.get("meta") or {}).get("card") or {}).get("type") == "question"]
+        assert len(cards) == 1
+        assert cards[0]["meta"]["bot_id"] == "thyca"
+        assert cards[0]["meta"]["card"]["title"] == "Bot được chạy lệnh ở mức nào?"
+        assert cards[0]["meta"]["card"]["options"] == ["Hỏi trước", "Cho phép", "Không"]
+    finally:
+        app.shutdown()
+
+
+class _ReportErrorLLM:
+    """Coder gets stuck and posts an error card instead of plain text."""
+
+    async def chat(self, messages, tools=None):
+        text = "\n".join(str(m.content or "") for m in messages)
+        tool_text = "\n".join(
+            str(m.content or "") for m in messages if m.role == "tool"
+        )
+        usage = {"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6}
+        assert "PERSONA-CODER" in text
+        if tool_text:
+            assert "waiting_for_user" in tool_text
+            return ChatReply(content="coder stopped", model="m-coder", usage=usage)
+        return ChatReply(content=None, model="m-coder", tool_calls=[
+            ToolCall(id="c-err", name="report_error", arguments={
+                "summary": "Bước kiểm tra bị treo quá lâu nên mình dừng lại.",
+                "progress": [
+                    {"label": "Tìm nguyên nhân", "state": "done"},
+                    {"label": "Kiểm tra tự động", "state": "stuck"},
+                    {"label": "Nhờ bot khác xem lại", "state": "todo"},
+                ],
+                "choices": ["Thử lại, chờ lâu hơn", "Giao bot khác", "Bỏ qua bước này"],
+            }),
+        ])
+
+
+def test_report_error_posts_error_card_in_room(tmp_path: Path) -> None:
+    app = _chat(tmp_path, _ReportErrorLLM())
+    try:
+        app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
+                                 description="Writes code.", persona="PERSONA-CODER"))
+        room = app.create(bots=["coder"])["id"]
+        detail = app.turn(room, "fix giúp mình")
+        assert detail["reply"] == "coder stopped"
+        cards = [r for r in _rows(app, room)
+                 if ((r.get("meta") or {}).get("card") or {}).get("type") == "error"]
+        assert len(cards) == 1
+        card = cards[0]["meta"]["card"]
+        assert cards[0]["meta"]["bot_id"] == "coder"
+        assert card["progress"][1] == {"label": "Kiểm tra tự động", "state": "stuck"}
+        assert card["choices"][0] == "Thử lại, chờ lâu hơn"
+        assert "bị treo" in (cards[0].get("content") or "")
+    finally:
+        app.shutdown()
+
+
+def test_post_bot_card_rejected_in_another_bots_dm(tmp_path: Path) -> None:
+    app = _chat(tmp_path, _LLM())
+    try:
+        app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
+                                 description="Writes code.", persona="PERSONA-CODER"))
+        thyca_dm = app.bot_dm("thyca")["id"]
+        result = app.post_bot_card(
+            "coder",
+            {"type": "question", "title": "?", "options": ["A", "B"]},
+            thyca_dm,
+        )
+        assert result["ok"] is False
+        assert _bot_rows(_rows(app, thyca_dm), "coder") == []
+    finally:
+        app.shutdown()

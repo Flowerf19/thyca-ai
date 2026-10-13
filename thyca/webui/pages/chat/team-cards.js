@@ -16,10 +16,11 @@ import {
 //
 // Accepted meta shapes: bot_id/kind/trace_id/parent_span_id ride on the
 // frozen contract (§6); bot_name/bot_state/bot_tint are display-only
-// companions. meta.decision / meta.handoff / meta.card are NOT in contract
-// §6 — they are a proposed extension the backend must emit before these
-// cards appear (FE-3 is UI-ready only). Without them the caller takes the
-// legacy transcript path, so a plain session renders byte-identical.
+// companions. meta.card is emitted by the backend ask_user/report_error
+// tools (contract extension landed 2026-10-14). meta.decision /
+// meta.handoff remain a proposed extension. Without any of them the
+// caller takes the legacy transcript path, so a plain session renders
+// byte-identical.
 // - {bot_id, bot_name?, bot_state?} on an assistant message → per-bot block
 //   whose header IS the legacy .chat-brand anatomy (stripe, lockup with
 //   h2 name + quill, italic status line) with per-bot tint wired through

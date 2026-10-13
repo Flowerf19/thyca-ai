@@ -42,6 +42,8 @@ class Chunk:
     forgotten_at: str | None = None
     project: str | None = None
     chat_session: str | None = None
+    # Team owners (BE-4): mirrors HeadingMeta.bots; None = legacy team entry.
+    bots: tuple[str, ...] | None = None
 
 
 class Chunker:
@@ -86,6 +88,7 @@ class Chunker:
                         forgotten_at=session.get("forgotten_at"),
                         project=session.get("project"),
                         chat_session=session.get("chat_session"),
+                        bots=session.get("bots"),
                     )
                 )
         return chunks
@@ -132,6 +135,7 @@ def _sessions(
                 "forgotten_at": None,
                 "project": meta.proj,
                 "chat_session": meta.chat,
+                "bots": meta.bots,
             }
         )
     return sessions

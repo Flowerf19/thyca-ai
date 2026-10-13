@@ -2,7 +2,58 @@
 from __future__ import annotations
 
 from thyca.memory.archived import ArchiveError
+from thyca.memory.candidates import CandidateError, CandidateQueue
 from thyca.memory.facade import MemoryFacade
+
+
+def candidates_list(facade: MemoryFacade) -> tuple[int, dict]:
+    """``GET /api/memory/candidates`` — pending team-memory proposals."""
+    try:
+        queue = CandidateQueue(facade.thyca_dir)
+        items = [
+            {
+                "id": cand.id,
+                "bot_id": cand.bot_id,
+                "session_id": cand.session_id,
+                "status": cand.status,
+                "created_at": cand.created_at,
+                "decided_by": cand.decided_by,
+                "decided_at": cand.decided_at,
+            }
+            for cand in queue.list_pending()
+        ]
+    except CandidateError:
+        return 503, {"error": "candidates unavailable"}
+    except Exception:
+        return 503, {"error": "candidates unavailable"}
+    return 200, {"candidates": items}
+
+
+def candidate_decide(facade: MemoryFacade, candidate_id: str, approved: bool, decided_by: str) -> tuple[int, dict]:
+    """``POST /api/memory/candidates/<id>/approve|reject`` (user path).
+
+    Approve promotes the entry to team memory with a stable id; reject
+    leaves no residue. Both record ``decided_by`` for the audit trail."""
+    try:
+        queue = CandidateQueue(facade.thyca_dir)
+        pending = {cand.id: cand for cand in queue.list_pending()}
+        candidate = pending.get(candidate_id)
+        if candidate is None:
+            return 404, {"error": "candidate not found"}
+        if approved:
+            try:
+                facade.promote_to_team(candidate.session_id)
+            except ArchiveError:
+                return 404, {"error": "entry not found"}
+            except Exception:
+                return 503, {"error": "promote failed"}
+        queue.decide(candidate_id, approved, decided_by)
+    except CandidateError as exc:
+        return 404, {"error": str(exc)}
+    except Exception:
+        return 503, {"error": "decision failed"}
+    return 200, {"ok": True, "id": candidate_id,
+                  "status": "approved" if approved else "rejected"}
 
 
 def memory_endpoint(facade: MemoryFacade, kind: str, payload: dict) -> tuple[int, dict]:

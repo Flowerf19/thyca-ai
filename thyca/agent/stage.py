@@ -29,6 +29,12 @@ class Stage:
     # calibrated value would make future ratios decay toward 1.
     llm_estimate_tokens: int | None = None
     tool_latencies: dict[str, int] = field(default_factory=dict)
+    # Team attribution (BE-6): which bot ran this turn and in which
+    # delegation chain. Set by the bot runtime before run(); None means
+    # the default Thyca/CLI turn. Read by Observe into Message.meta.
+    bot_id: str | None = None
+    trace_id: str | None = None
+    parent_span_id: str | None = None
 
     def __post_init__(self) -> None:
         if isinstance(self.round, bool) or not isinstance(self.round, int) or self.round < 0:

@@ -23,6 +23,7 @@ from thyca.sessions import SessionManager
 from thyca.tools.builtin import register_file_tools
 from thyca.tools.gateway.background import BackgroundProcs
 from thyca.tools.gateway import ToolGateway
+from thyca.tools.gateway.policy import Policy
 from thyca.tools.gateway.gateway import tool_kill_spec, tool_read_spec
 from thyca.tools.mcp import MCPManager, StartupDiagnostic
 from thyca.memory.facade import MemoryFacade
@@ -50,10 +51,11 @@ def build_tool_gateway(
     background: BackgroundProcs,
     *,
     soft_timeout_s: int,
+    policy: Policy | None = None,
 ) -> ToolGateway:
     """Assemble the execution front door over the registry + engines,
     and register its poll tools (tool_read, tool_kill)."""
-    gateway = ToolGateway(registry, tasks, background, soft_timeout_s=soft_timeout_s)
+    gateway = ToolGateway(registry, tasks, background, soft_timeout_s=soft_timeout_s, policy=policy)
     registry.register(tool_read_spec(gateway))
     registry.register(tool_kill_spec(gateway))
     return gateway

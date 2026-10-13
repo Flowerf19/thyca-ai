@@ -66,6 +66,10 @@ class ActiveSnapshot:
     identity: str = ""
     skills: str = ""
     today_elsewhere: str = ""
+    # Team roster (BE-1/BE-2): "name — role — description" lines of every
+    # bot, injected for bot turns so bots know whom to call. Empty for the
+    # default single-user prompt (zero behavior change).
+    team: str = ""
 
 
 class ActiveMemory:
@@ -117,7 +121,8 @@ class ActiveMemory:
         return ActiveState(day=day, today_path=self._daily_path(day))
 
     def refresh(
-        self, state: ActiveState, now: datetime, session_id: str | None = None
+        self, state: ActiveState, now: datetime, session_id: str | None = None,
+        reader: str | None = None,
     ) -> ActiveSnapshot:
         today = self._day(now)
         if today != state.day:
@@ -132,10 +137,11 @@ class ActiveMemory:
             # reading as "" until rollover.
             self._secure_dir(self.memory_dir)
             self._create_if_missing(state.today_path, f"# {today}\n")
-        return self._snapshot(state.today_path, state.day, session_id)
+        return self._snapshot(state.today_path, state.day, session_id, reader)
 
     def peek(
-        self, state: ActiveState, now: datetime, session_id: str | None = None
+        self, state: ActiveState, now: datetime, session_id: str | None = None,
+        reader: str | None = None,
     ) -> ActiveSnapshot:
         """Read-only snapshot for estimates (context meter, compact budget).
 
@@ -146,10 +152,11 @@ class ActiveMemory:
         """
         today = self._day(now)
         path = state.today_path if today == state.day else self._daily_path(today)
-        return self._snapshot(path, today, session_id)
+        return self._snapshot(path, today, session_id, reader)
 
     def _snapshot(
-        self, today_path: Path, day_str: str, session_id: str | None
+        self, today_path: Path, day_str: str, session_id: str | None,
+        reader: str | None = None,
     ) -> ActiveSnapshot:
         if session_id is None:
             today_text, elsewhere_text = self._tail(self._read(today_path)), ""
@@ -161,6 +168,7 @@ class ActiveMemory:
                 day_str,
                 str(today_path),
                 session_id,
+                reader=reader,
             )
             today_text = self._tail(strip_heading_comments(here_raw))
         return ActiveSnapshot(
@@ -232,8 +240,22 @@ class ActiveMemory:
 ELSEWHERE_MAX_LINES = 25
 
 
+def visible_to(bots: tuple[str, ...] | None, reader: str | None) -> bool:
+    """True when ``reader`` may see an entry owned by ``bots`` (BE-4).
+
+    The user (no reader) and Thyca see everything; legacy entries (None)
+    read as team; a child bot sees its own + team entries, never another
+    bot's private entries."""
+    if reader is None or reader == "thyca":
+        return True
+    if bots is None:
+        return True
+    return reader in bots or "team" in bots
+
+
 def split_today_by_session(
-    text: str, day_str: str, path: str, chat_id: str
+    text: str, day_str: str, path: str, chat_id: str,
+    reader: str | None = None,
 ) -> tuple[str, str]:
     """Split today's file into (this-session raw text, other-session index).
 
@@ -258,6 +280,10 @@ def split_today_by_session(
     for meta, entry_id, start, end in iter_session_blocks(lines, path):
         if first_start is None:
             first_start = start
+        if not visible_to(meta.bots, reader):
+            # Another bot's private entry: hidden entirely, not even as an
+            # index line (master §4 hot-prompt rule).
+            continue
         if meta.chat == chat_id:
             here.append(_here_block(lines, start, end, day_str, entry_id))
         else:

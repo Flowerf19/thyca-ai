@@ -9,7 +9,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = "6"
+SCHEMA_VERSION = "7"
 # Bump when Chunker.normalize changes so stale text_norm rows rebuild.
 NORM_VERSION = "2"
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
@@ -27,15 +27,28 @@ def init_schema(db: sqlite3.Connection) -> None:
         db.commit()
     elif row["value"] != SCHEMA_VERSION:
         migrate(db, row["value"])
+    # The script cannot create this index itself: on an existing pre-v7
+    # database the chunks table has no bots column until migrate() adds it.
+    db.execute("CREATE INDEX IF NOT EXISTS chunks_bots ON chunks(bots)")
     ensure_norm_version(db)
 
 
 def migrate(db: sqlite3.Connection, from_version: str) -> None:
+    if from_version == "6":
+        # Non-destructive v6 → v7: team owners column + related-edges table.
+        add_team_columns(db)
+        db.execute(
+            "UPDATE meta SET value = ? WHERE key = 'schema_version'",
+            (SCHEMA_VERSION,),
+        )
+        db.commit()
+        return
     if from_version in {"3", "4", "5"}:
         # CREATE IF NOT EXISTS does not alter the existing chunks table.
         # Add the v6 columns explicitly for every non-destructive upgrade
         # path, including databases that skipped an intermediate release.
         add_linking_columns(db)
+        add_team_columns(db)
         if from_version in {"3", "4"}:
             db.execute(
                 """CREATE TABLE IF NOT EXISTS leaf_searches(
@@ -75,6 +88,27 @@ def add_linking_columns(db: sqlite3.Connection) -> None:
     for name in ("project", "chat_session"):
         if name not in columns:
             db.execute(f"ALTER TABLE chunks ADD COLUMN {name} TEXT")
+    # Existing rows contain no heading metadata. Keep the derived rows
+    # until the normal reindex pass, but ensure unchanged files are read.
+    db.execute("UPDATE source_files SET mtime_ns = -1")
+
+
+def add_team_columns(db: sqlite3.Connection) -> None:
+    """v6 → v7 team-memory columns + graph table (idempotent)."""
+    columns = {str(row["name"]) for row in db.execute("PRAGMA table_info(chunks)")}
+    if "bots" not in columns:
+        db.execute("ALTER TABLE chunks ADD COLUMN bots TEXT")
+    db.execute(
+        """CREATE TABLE IF NOT EXISTS related_edges(
+          a_session   TEXT NOT NULL,
+          b_session   TEXT NOT NULL,
+          reason      TEXT NOT NULL DEFAULT '',
+          created_at  TEXT NOT NULL,
+          PRIMARY KEY (a_session, b_session),
+          CHECK(a_session < b_session)
+        )"""
+    )
+    db.execute("CREATE INDEX IF NOT EXISTS related_edges_b ON related_edges(b_session)")
     # Existing rows contain no heading metadata. Keep the derived rows
     # until the normal reindex pass, but ensure unchanged files are read.
     db.execute("UPDATE source_files SET mtime_ns = -1")

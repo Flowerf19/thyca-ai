@@ -34,11 +34,25 @@ CREATE TABLE IF NOT EXISTS chunks(
   forgotten_at   TEXT,
   project        TEXT,
   chat_session   TEXT,
+  bots           TEXT,
   UNIQUE(path, session_id, leaf_ord)
 );
 
 CREATE INDEX IF NOT EXISTS chunks_day ON chunks(timeline_day, session_id, leaf_ord);
 CREATE INDEX IF NOT EXISTS chunks_path ON chunks(path);
+
+-- Team memory graph (BE-4): undirected `related` edges between memory
+-- session ids (YYYY-MM-DD#entry). No FK: edges drop when either endpoint
+-- is forgotten/expired (the purge/forget paths call drop_edges_of).
+CREATE TABLE IF NOT EXISTS related_edges(
+  a_session   TEXT NOT NULL,
+  b_session   TEXT NOT NULL,
+  reason      TEXT NOT NULL DEFAULT '',
+  created_at  TEXT NOT NULL,
+  PRIMARY KEY (a_session, b_session),
+  CHECK(a_session < b_session)
+);
+CREATE INDEX IF NOT EXISTS related_edges_b ON related_edges(b_session);
 
 CREATE TABLE IF NOT EXISTS leaf_gets(
   chunk_id     TEXT PRIMARY KEY,

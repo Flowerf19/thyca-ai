@@ -46,6 +46,7 @@ def lexical_search(
     now: datetime | None = None,
     proj: str | None = None,
     chat: str | None = None,
+    reader: str | None = None,
 ) -> SearchResult:
     """FTS + trigram search with clamp/dedup warnings and usage recording."""
     if timeline_day is not None and not (
@@ -72,12 +73,12 @@ def lexical_search(
         )
     fts = archive.fts_hits(
         query, timeline_day, now, CANDIDATE_CAP,
-        project=proj, chat_session=chat,
+        project=proj, chat_session=chat, reader=reader,
     )
     hits: list[Hit] = list(fts)
     trigram = archive.trigram_hits(
         query, timeline_day, now, CANDIDATE_CAP,
-        project=proj, chat_session=chat,
+        project=proj, chat_session=chat, reader=reader,
     )
     if len(fts) >= CANDIDATE_CAP or len(trigram) >= CANDIDATE_CAP:
         warnings.append(
@@ -108,8 +109,9 @@ def lexical_search(
 
 
 def recent(
-    archive: ArchivedMemory, limit: int = 5, now: datetime | None = None
+    archive: ArchivedMemory, limit: int = 5, now: datetime | None = None,
+    reader: str | None = None,
 ) -> list[Hit]:
     """Most recently updated archived hits, clamped like the facade."""
     limit = max(1, min(limit, 10))
-    return archive.with_counts(archive.recent_hits(limit, now), now)
+    return archive.with_counts(archive.recent_hits(limit, now, reader=reader), now)

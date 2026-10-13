@@ -60,7 +60,8 @@ class Observe:
         ordered = self._order_results(stage.reply.tool_calls, stage.results)
         latencies = getattr(stage, "tool_latencies", {}) or {}
         tool_messages = [
-            tool_message(result, latency_ms=latencies.get(result.tool_call_id), round_no=stage.round)
+            tool_message(result, latency_ms=latencies.get(result.tool_call_id), round_no=stage.round,
+                           bot_id=getattr(stage, "bot_id", None))
             for result in ordered
         ]
         added = [assistant, *tool_messages]
@@ -84,6 +85,10 @@ class Observe:
         # Minimal meta on purpose: the backstop fires before think(), so
         # stage.reply/usage/cost would still describe the previous round.
         meta: dict = {"kind": "llm", "status": "context_limit"}
+        for key in ("bot_id", "trace_id", "parent_span_id"):
+            value = getattr(stage, key, None)
+            if isinstance(value, str) and value:
+                meta[key] = value
         if stage.round:
             meta["round"] = stage.round
         model = getattr(stage, "llm_model", None)

@@ -99,6 +99,9 @@ def session_summary(session: Session) -> dict:
         # Turns the way Trace counts them: one per user message. Raw
         # message_count would read as inflated by tool traffic.
         "turns": len(turn_slices(session.messages)),
+        # Team room participants (BE-3, contract §6): legacy sessions
+        # without a bots meta line read as Thyca alone.
+        "bots": list(session.bots) if session.bots else ["thyca"],
     }
 
 
@@ -131,6 +134,7 @@ def session_detail(
         "id": session.id,
         "title": session_title(session),
         "model": cfg.provider.model,
+        "bots": list(session.bots) if session.bots else ["thyca"],
         "messages": [message_dict(item, skills_root) for item in session.messages],
         "ask_remember": ask_remember(session.messages, datetime.now(UTC)),
         "context": context,

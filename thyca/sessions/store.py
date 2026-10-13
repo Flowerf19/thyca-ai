@@ -97,6 +97,38 @@ class SessionStore:
             return None
         return None
 
+    def append_bots(self, path: Path, bots: list[str]) -> None:
+        """Record the room's participant list (last meta line wins).
+
+        Team rooms (BE-3): ``bots`` is the validated participant list.
+        Shares ``_TITLE_LOCK`` with title appends so a concurrent rename
+        cannot interleave between the check and the write (same process)."""
+        cleaned = [bot for bot in bots if isinstance(bot, str) and bot]
+        if not cleaned:
+            raise SessionError("bots must be a non-empty list of bot ids")
+        with _TITLE_LOCK:
+            self._append_json(path, _meta_payload(None, None, bots=cleaned))
+
+    def read_bots(self, path: Path) -> list[str] | None:
+        """Last meta line's ``bots`` list, or None when never recorded."""
+        try:
+            with path.open("rb") as stream:
+                for raw in _lines_backwards(stream):
+                    if b'"type"' not in raw or b"bots" not in raw:
+                        continue
+                    try:
+                        payload = json.loads(raw)
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        continue
+                    if not _is_meta(payload):
+                        continue
+                    bots = _meta_bots(payload)
+                    if bots:
+                        return bots
+        except OSError:
+            return None
+        return None
+
     def scan(self, path: Path) -> tuple[list[Message], str | None, str | None, bool]:
         result: list[Message] = []
         title: str | None = None
@@ -160,7 +192,8 @@ class SessionStore:
             raise SessionNotFound(path)
         messages, title, title_source, naming_attempted = self.scan(path)
         return Session(
-            session_id, path, messages, title, title_source, naming_attempted
+            session_id, path, messages, title, title_source, naming_attempted,
+            self.read_bots(path),
         )
 
     def list_paths(self) -> list[Path]:
@@ -185,7 +218,8 @@ class SessionStore:
             except (SessionCorrupt, SessionNotFound):
                 continue
             return Session(
-                session_id, chosen, messages, title, title_source, naming_attempted
+                session_id, chosen, messages, title, title_source, naming_attempted,
+                self.read_bots(chosen),
             )
         raise SessionNotFound(self.sessions_dir, "no valid sessions")
 
@@ -235,18 +269,24 @@ class SessionStore:
         title: str | None = None,
         title_source: str | None = None,
         naming_attempted: bool = False,
+        bots: list[str] | None = None,
     ) -> None:
         path = self.path_for(session_id)
         if path.resolve() != target.resolve():
             raise SessionError("rewrite target does not match session id")
+        if bots is None:
+            # Preserve the room's participant list across compactions and
+            # retries: the rewrite rebuilds the meta line from scratch.
+            bots = self.read_bots(target)
         tmp = self.sessions_dir / f".{path.stem}.tmp.{secrets.token_hex(4)}"
         try:
             fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                    if title or naming_attempted:
+                    if title or naming_attempted or bots:
                         meta = _meta_payload(
-                            title, title_source, naming_attempted=naming_attempted
+                            title, title_source, naming_attempted=naming_attempted,
+                            bots=bots,
                         )
                         stream.write(
                             json.dumps(meta, ensure_ascii=False) + "\n"
@@ -317,7 +357,8 @@ def _lines_backwards(stream, chunk_size: int = 8192):
 
 
 def _meta_payload(
-    title: str | None, source: str | None, *, naming_attempted: bool = False
+    title: str | None, source: str | None, *, naming_attempted: bool = False,
+    bots: list[str] | None = None,
 ) -> dict:
     """The one meta-line builder shared by append and rewrite."""
     payload: dict = {"type": "meta"}
@@ -327,6 +368,8 @@ def _meta_payload(
             payload["source"] = source
     if naming_attempted:
         payload["naming_attempted"] = True
+    if bots:
+        payload["bots"] = list(bots)
     return payload
 
 
@@ -349,3 +392,11 @@ def _meta_source(payload: dict) -> str | None:
 
 def _meta_attempted(payload: dict) -> bool:
     return payload.get("naming_attempted") is True
+
+
+def _meta_bots(payload: dict) -> list[str] | None:
+    raw = payload.get("bots")
+    if not isinstance(raw, list) or not raw:
+        return None
+    bots = [item for item in raw if isinstance(item, str) and item]
+    return bots or None

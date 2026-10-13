@@ -21,8 +21,10 @@ from urllib.parse import urlparse
 from thyca.app.turn_options import TEXT_MAX
 from thyca.serve import config_api
 from thyca.serve.errors import _with_json
-from thyca.serve.memory import memory_endpoint
+from thyca.serve.memory import candidate_decide, candidates_list, memory_endpoint
 from thyca.serve.sessions_api import (
+    bots_list,
+    session_bots,
     session_compact,
     session_create,
     session_delete,
@@ -48,6 +50,7 @@ if TYPE_CHECKING:
     from thyca.app.chat_app import ChatApp
 
 _SESSION_RE = re.compile(rf"^/api/sessions/({SESSION_ID_PATTERN})$")
+_SESSION_BOTS_RE = re.compile(rf"^/api/sessions/({SESSION_ID_PATTERN})/bots$")
 _TURN_RE = re.compile(rf"^/api/sessions/({SESSION_ID_PATTERN})/turn$")
 _COMPACT_RE = re.compile(rf"^/api/sessions/({SESSION_ID_PATTERN})/compact$")
 _TURN_STREAM_RE = re.compile(rf"^/api/sessions/({SESSION_ID_PATTERN})/turn/stream$")
@@ -55,6 +58,7 @@ _TURN_CANCEL_RE = re.compile(rf"^/api/sessions/({SESSION_ID_PATTERN})/turn/cance
 _TRACE_RE = re.compile(r"^/api/traces$")
 _TRACE_STATS_RE = re.compile(r"^/api/traces/stats$")
 _TRACE_DETAIL_RE = re.compile(rf"^/api/traces/({SESSION_ID_PATTERN})/(\d+)$")
+_CANDIDATE_RE = re.compile(r"^/api/memory/candidates/([A-Za-z0-9_-]+)/(approve|reject)$")
 # Worst-case turn body: TEXT_MAX chars \u-escaped (12 bytes per non-BMP char)
 # plus the JSON envelope (model/effort/retry). Must stay above that so a
 # valid 4000-emoji turn is never rejected as "invalid body".
@@ -74,6 +78,10 @@ def make_handler(
             if path == "/api/memory/stats":
                 self._stats()
                 return
+            if path == "/api/memory/candidates":
+                status, body = candidates_list(facade)
+                self._json(status, body)
+                return
             if path == "/api/config/status":
                 config_api.config_status(self, config_file)
                 return
@@ -82,6 +90,9 @@ def make_handler(
                 return
             if path == "/api/sessions":
                 session_list(self, chat)
+                return
+            if path == "/api/bots":
+                bots_list(self, chat)
                 return
             if _TRACE_STATS_RE.fullmatch(path):
                 self._trace_stats(parsed.query)
@@ -132,8 +143,27 @@ def make_handler(
             if path == "/api/memory/canonical":
                 self._memory_post("canonical")
                 return
+            match = _CANDIDATE_RE.fullmatch(path)
+            if match:
+                def run(payload: dict, _match=match) -> None:
+                    decided_by = payload.get("decided_by")
+                    if decided_by is not None and not isinstance(decided_by, str):
+                        self._json(400, {"error": "invalid decided_by"})
+                        return
+                    status, body = candidate_decide(
+                        facade, _match.group(1), _match.group(2) == "approve",
+                        decided_by or "user",
+                    )
+                    self._json(status, body)
+
+                _with_json(self, run)
+                return
             if path == "/api/sessions":
                 session_create(self, chat)
+                return
+            match = _SESSION_BOTS_RE.fullmatch(path)
+            if match:
+                session_bots(self, chat, match.group(1))
                 return
             match = _TURN_RE.fullmatch(path)
             if match:

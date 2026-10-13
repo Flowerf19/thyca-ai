@@ -96,6 +96,7 @@ class AgentLoop:
         hot: object = None,
         event_sink: EventSink | None = None,
         persist_user: bool = True,
+        bot_ctx: dict | None = None,
     ) -> str:
         if self._loop_max < 1:
             raise ValueError("loop_max must be positive")
@@ -141,6 +142,13 @@ class AgentLoop:
             hot=hot,
             tools=self._tools,
         )
+        if bot_ctx:
+            # Team attribution (BE-6): the runtime names the bot + trace so
+            # Observe stamps every appended row and Trace can group by bot.
+            for key in ("bot_id", "trace_id", "parent_span_id"):
+                value = bot_ctx.get(key)
+                if isinstance(value, str) and value:
+                    setattr(stage, key, value)
         if persist_user:
             self._assemble.assemble(stage, user_msg)
             self._observe.user(stage)

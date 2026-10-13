@@ -19,3 +19,6 @@ class Session:
     # The automatic naming step ran its one attempt (success or failure).
     # Old sessions without the meta key load as False and stay eligible.
     naming_attempted: bool = False
+    # Team room participants (BE-3): bot ids in this room. None means the
+    # legacy default ("thyca" alone); populated by SessionStore.load.
+    bots: list[str] | None = None

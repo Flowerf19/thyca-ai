@@ -354,6 +354,15 @@ class SessionManager:
                 self.store, session_id, title, current=self._session
             )
 
+    def set_bots(self, session_id: str, bots: list[str]) -> None:
+        """Refresh the in-memory participant list when it is current.
+
+        Disk is owned by ``SessionStore.append_bots``; this only keeps a
+        loaded current session from serving a stale roster."""
+        with self._lock:
+            if self._session is not None and self._session.id == session_id:
+                self._session.bots = list(bots)
+
     def delete(self, session_id: str, *, keep: set[str] | None = None) -> None:
         """Remove a session file outright.
 

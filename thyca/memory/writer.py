@@ -206,6 +206,32 @@ class MemoryWriter:
             with self.lock_for(path):
                 self._purge(path, now)
 
+    def remove_bot_entries(self, bot_id: str) -> int:
+        """Drop private entries owned exactly by ``[bot_id]`` (BE-5 delete).
+
+        Team entries (``team``), legacy entries (no field), and group
+        entries stay with the team. Returns the removed block count."""
+        memory_dir = self.thyca_dir / "memory"
+        dailies = sorted(memory_dir.glob("????-??-??.md")) if memory_dir.is_dir() else []
+        removed = 0
+        for path in dailies:
+            if not path.is_file() or path.is_symlink():
+                continue
+            with self.lock_for(path):
+                lines = _read_lines(path)
+                out: list[str] = []
+                pos = 0
+                for meta, _resolved, start, end in iter_session_blocks(lines, str(path)):
+                    out.extend(lines[pos:start])
+                    pos = end
+                    if meta.bots is not None and list(meta.bots) == [bot_id]:
+                        removed += 1
+                        continue
+                    out.extend(lines[start:end])
+                out.extend(lines[pos:])
+                _atomic_write(path, "".join(out))
+        return removed
+
     def _remove_session(self, path: Path, entry_id: str) -> None:
         if not path.is_file():
             raise ArchiveError(f"memory file missing: {path}")

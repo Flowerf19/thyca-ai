@@ -87,10 +87,11 @@ class ArchivedMemory:
         *,
         project: str | None = None,
         chat_session: str | None = None,
+        reader: str | None = None,
     ) -> list[Hit]:
         return self.store.fts_search(
             query, timeline_day, limit, format_ts(now),
-            project=project, chat_session=chat_session,
+            project=project, chat_session=chat_session, reader=reader,
         )
 
     def trigram_hits(
@@ -102,16 +103,17 @@ class ArchivedMemory:
         *,
         project: str | None = None,
         chat_session: str | None = None,
+        reader: str | None = None,
     ) -> list[Hit]:
         return self.store.trigram_search(
             self.chunker.normalize(query), timeline_day, limit, format_ts(now),
-            project=project, chat_session=chat_session,
+            project=project, chat_session=chat_session, reader=reader,
         )
 
-    def recent_hits(self, limit: int, now: datetime | None = None) -> list[Hit]:
+    def recent_hits(self, limit: int, now: datetime | None = None, *, reader: str | None = None) -> list[Hit]:
         return [
             hit_from_row(row, "recent", snippet=row["text_raw"][:250])
-            for row in self.store.recent_rows(limit, format_ts(now))
+            for row in self.store.recent_rows(limit, format_ts(now), reader=reader)
         ]
 
     def with_counts(self, hits: list[Hit], now: datetime | None = None) -> list[Hit]:

@@ -1,6 +1,7 @@
 """SQLite I/O for the archived leaf index (split from archived.py)."""
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 import threading
@@ -45,6 +46,8 @@ class Hit:
     has_more: bool = False
     line_start: int = 1
     line_end: int = 1
+    # Team owners (BE-4): None = legacy team entry.
+    bots: tuple[str, ...] | None = None
 
 
 @dataclass
@@ -95,8 +98,8 @@ class ArchiveStore:
                     """INSERT INTO chunks(
                         chunk_id, path, source_kind, timeline_day, session_id, session_title,
                         heading_raw, leaf_ord, line_start, line_end, text_raw, text_norm,
-                        content_hash, expires_at, forgotten_at, project, chat_session
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        content_hash, expires_at, forgotten_at, project, chat_session, bots
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         chunk.chunk_id,
                         chunk.path,
@@ -115,6 +118,7 @@ class ArchiveStore:
                         chunk.forgotten_at,
                         chunk.project,
                         chunk.chat_session,
+                        encode_bots(chunk.bots),
                     ),
                 )
             self._db.commit()
@@ -159,6 +163,7 @@ class ArchiveStore:
         *,
         project: str | None = None,
         chat_session: str | None = None,
+        reader: str | None = None,
     ) -> list[Hit]:
         match = _safe_match(query)
         if match is None:
@@ -181,6 +186,9 @@ class ArchiveStore:
         if chat_session is not None:
             sql += " AND c.chat_session = ?"
             params.append(chat_session)
+        clause, clause_params = _reader_clause("c.bots", reader)
+        sql += clause
+        params.extend(clause_params)
         sql += " ORDER BY bm25 ASC, c.chunk_id ASC LIMIT ?"
         params.append(max(0, min(limit, CANDIDATE_CAP)))
         rows = self._db.execute(sql, params).fetchall()
@@ -196,6 +204,7 @@ class ArchiveStore:
         *,
         project: str | None = None,
         chat_session: str | None = None,
+        reader: str | None = None,
     ) -> list[Hit]:
         tokens = [t for t in _NON_ALNUM.split(query_norm) if len(t) >= 3]
         sql = f"""SELECT * FROM chunks
@@ -210,6 +219,9 @@ class ArchiveStore:
         if chat_session is not None:
             sql += " AND chat_session = ?"
             params.append(chat_session)
+        clause, clause_params = _reader_clause("bots", reader)
+        sql += clause
+        params.extend(clause_params)
         scored: list[tuple[float, sqlite3.Row]] = []
         for row in self._db.execute(sql, params):
             text = row["text_norm"]
@@ -262,17 +274,94 @@ class ArchiveStore:
         )
 
     @guarded
-    def recent_rows(self, limit: int, now: str) -> list[sqlite3.Row]:
+    def session_bots(self, session_id: str) -> tuple[str, ...] | None:
+        """Owner list of one memory session; None = legacy (team) entry.
+
+        Unknown sessions also read as None — callers check existence first
+        (get_session_any) when the distinction matters."""
+        row = self._db.execute(
+            "SELECT bots FROM chunks WHERE session_id = ? LIMIT 1",
+            (session_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return decode_bots(row["bots"])
+
+    @guarded
+    def add_related(self, a_session: str, b_session: str, reason: str, now: str) -> bool:
+        """Link two memory sessions as related (undirected, canonical order).
+
+        Returns False for self-links (no-op); duplicate pairs are ignored."""
+        if a_session == b_session:
+            return False
+        first, second = sorted((a_session, b_session))
+        self._db.execute(
+            """INSERT OR IGNORE INTO related_edges(a_session, b_session, reason, created_at)
+               VALUES (?, ?, ?, ?)""",
+            (first, second, reason if isinstance(reason, str) else "", now),
+        )
+        return True
+
+    @guarded
+    def related_of(self, session_id: str) -> list[tuple[str, str]]:
+        """Every ``(other, reason)`` pair linked to ``session_id``."""
+        rows = self._db.execute(
+            """SELECT a_session, b_session, reason FROM related_edges
+               WHERE a_session = ? OR b_session = ?""",
+            (session_id, session_id),
+        )
+        out = []
+        for row in rows:
+            other = row["b_session"] if row["a_session"] == session_id else row["a_session"]
+            out.append((str(other), str(row["reason"])))
+        return out
+
+    @guarded
+    def all_related(self) -> list[tuple[str, str]]:
+        """Every ``(a, b)`` edge pair (canonical order) for clustering."""
+        return [
+            (str(row["a_session"]), str(row["b_session"]))
+            for row in self._db.execute("SELECT a_session, b_session FROM related_edges")
+        ]
+
+    @guarded
+    def drop_edges_of(self, session_id: str) -> None:
+        """Drop every edge touching ``session_id`` (forget/expire path)."""
+        self._db.execute(
+            "DELETE FROM related_edges WHERE a_session = ? OR b_session = ?",
+            (session_id, session_id),
+        )
+
+    @guarded
+    def prune_dangling_edges(self, now: str) -> int:
+        """Drop edges whose endpoint has no visible chunk left.
+
+        The one reaper the facade runs after every index refresh, so an
+        expired/purged entry's edges fall off the graph with it."""
+        cursor = self._db.execute(
+            f"""DELETE FROM related_edges
+               WHERE a_session NOT IN (
+                   SELECT DISTINCT session_id FROM chunks WHERE {VISIBLE_SQL}
+               ) OR b_session NOT IN (
+                   SELECT DISTINCT session_id FROM chunks WHERE {VISIBLE_SQL}
+               )""",
+            (now, now),
+        )
+        return cursor.rowcount if cursor.rowcount is not None else 0
+
+    @guarded
+    def recent_rows(self, limit: int, now: str, *, reader: str | None = None) -> list[sqlite3.Row]:
         # Daily recency only: canonical profile leaves live in stats, not in
         # the "recently updated notes" feed.
+        clause, clause_params = _reader_clause("c.bots", reader)
         return list(
             self._db.execute(
                 f"""SELECT c.* FROM chunks c
                    JOIN source_files s ON s.path = c.path
-                   WHERE {VISIBLE_SQL} AND c.source_kind = 'daily'
+                   WHERE {VISIBLE_SQL} AND c.source_kind = 'daily'{clause}
                    ORDER BY s.mtime_ns DESC, c.leaf_ord ASC
                    LIMIT ?""",
-                (now, max(0, limit)),
+                (now, *clause_params, max(0, limit)),
             )
         )
 
@@ -320,6 +409,52 @@ class ArchiveStore:
         return int(row["n"]) if row else 0
 
 
+_READER_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
+
+def encode_bots(bots: tuple[str, ...] | list[str] | None) -> str | None:
+    """Owner list → JSON column value; None stays NULL (legacy team)."""
+    if bots is None:
+        return None
+    cleaned = [item for item in bots if isinstance(item, str) and item]
+    return json.dumps(cleaned, ensure_ascii=False) if cleaned else None
+
+
+def decode_bots(raw: object) -> tuple[str, ...] | None:
+    """JSON column value → owner tuple; NULL/invalid reads as None (team)."""
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        return None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(data, list):
+        return None
+    cleaned = tuple(item for item in data if isinstance(item, str) and item)
+    return cleaned or None
+
+
+def _reader_clause(column: str, reader: str | None) -> tuple[str, list[object]]:
+    """SQL visibility filter for one reader bot (BE-4).
+
+    No reader (user/CLI) and Thyca see everything (empty clause). A child
+    bot sees legacy rows (NULL = team), team rows, and its own rows —
+    other bots' private rows stay hidden. Bot ids are charset-safe, so the
+    JSON-substring LIKE cannot escape its quotes; an invalid reader
+    matches nothing instead of everything."""
+    if reader is None or reader == "thyca":
+        return "", []
+    if not isinstance(reader, str) or not _READER_RE.fullmatch(reader):
+        return " AND 1 = 0", []
+    return (
+        f" AND ({column} IS NULL OR {column} LIKE '%\"team\"%'"
+        f" OR {column} LIKE '%\"{reader}\"%')",
+        [],
+    )
+
+
 def _safe_match(query: str) -> str | None:
     terms: list[str] = []
     seen: set[str] = set()
@@ -346,6 +481,13 @@ def hit_from_row(
     bm25: float | None = None,
     snippet: str | None = None,
 ) -> Hit:
+    bots = None
+    try:
+        keys = row.keys()
+    except Exception:
+        keys = ()
+    if "bots" in keys:
+        bots = decode_bots(row["bots"])
     return Hit(
         path=row["path"],
         source_kind=row["source_kind"],
@@ -360,6 +502,7 @@ def hit_from_row(
         leaf_ord=int(row["leaf_ord"]),
         line_start=int(row["line_start"]),
         line_end=int(row["line_end"]),
+        bots=bots,
     )
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import sys
 import threading
 import time
@@ -15,8 +16,14 @@ from thyca.agent.compacting import compact_with_llm
 from thyca.agent.events import EventSink, TurnEvent
 from thyca.agent.think import LLMPort
 from thyca.app.summarizing import LlmSummarizer
+from thyca.bots.bus import Bus, new_trace_id
+from thyca.bots.policy import BotPolicy
+from thyca.bots.registry import BotRegistry, RegistryError
+from thyca.bots.runtime import BotRuntime
+from thyca.core.protocol import Message
 from thyca.config import Config, ConfigError, load
-from thyca.core.protocol import estimate_tokens as _chars_to_tokens
+from thyca.core.protocol import Message, estimate_tokens as _chars_to_tokens
+from thyca.llm.llm_base import LLMError
 from thyca.llm.llm_factory import ConnectFactory
 from thyca.llm.prompt_manager import PromptManager
 from thyca.memory.active import ActiveMemory, ActiveSnapshot
@@ -30,8 +37,8 @@ from thyca.tools.task_store import TaskStore
 from thyca.serve.turn_state import TurnHub, TurnState
 
 from thyca.app.loop_turns import _CANCEL_WAIT_S, _LoopTurns, TurnCancelled
-from thyca.app.naming import session_title
-from thyca.app.run_turn import TurnRequest, TurnScope, run_turn
+from thyca.app.naming import _name_if_needed, session_title
+from thyca.app.run_turn import TurnRequest, TurnScope, mark_turn_error, run_turn
 from thyca.app.toolchain import (
     build_tool_gateway,
     build_tool_registry,
@@ -96,6 +103,24 @@ class ChatApp:
             self._tasks,
             self._background,
             soft_timeout_s=cfg.effective_limits().softTimeoutS,
+            policy=BotPolicy(),
+        )
+        # Team (BE-1..BE-3): bot registry + A2A bus + per-card runtime.
+        # ensure_thyca seeds the system card on first run; BotPolicy above
+        # denies hidden_tools at submit time for bot turns (allow-all else).
+        self._bots = BotRegistry(root)
+        self._bots.ensure_thyca()
+        self._bus = Bus()
+        self._runtime = BotRuntime(root, self._bots, self._bus)
+        self._bus_log_index = 0
+        # Thyca-only admin tools (BE-5): registered once on the shared
+        # registry; the runtime hides every bot_* name from child bots and
+        # each handler re-checks the caller, so a leak still cannot be used.
+        from thyca.bots.admin_tools import AdminDeps, register_admin_tools
+
+        register_admin_tools(
+            self._registry,
+            AdminDeps(self._bots, self._runtime, self.job_facade),
         )
         self._mcp = (
             MCPManager() if mcp_factory is None else MCPManager(process_factory=mcp_factory)
@@ -167,6 +192,78 @@ class ChatApp:
             return load(self._config_file)
         except ConfigError:
             return self._cfg
+
+    def bots_list(self) -> list[dict]:
+        """Public card list for GET /api/bots (contract §6)."""
+        return self._bots.public_list()
+
+    def job_facade(self):
+        """Memory facade for the sidecar job (extract/candidates/promote).
+
+        Lazily built and cached: the constructor reindexes, so sharing one
+        instance beats rebuilding it per sweep. Locks are shared process-wide."""
+        from thyca.memory.facade import MemoryFacade
+
+        facade = getattr(self, "_job_facade", None)
+        if facade is None:
+            facade = MemoryFacade(self._root, timezone_name=self._cfg.timeline.timezone)
+            self._job_facade = facade
+        return facade
+
+    def sweep_idle_sessions(self, idle_s: int = 900) -> dict:
+        """Backend idle trigger (BE-4): extract memories, then compact.
+
+        Every room quiet past ``idle_s`` gets its transcript extracted
+        first and compacted after — never the reverse. Rooms with a turn
+        (or compact) in flight are skipped. Best-effort per room: one
+        room's failure never blocks the rest. Returns a per-room report."""
+        from thyca.core.protocol import utc_now_ts
+        from thyca.memory import jobs as mem_jobs
+        from thyca.sessions.wire import updated_at
+
+        now_ts = utc_now_ts()
+        running = set(self._turns.snapshot())
+        report: dict[str, dict] = {}
+        turn_cfg = self._current_cfg()
+        for item in self._sessions.list_sessions():
+            if item.id in running:
+                continue
+            try:
+                last_ts = updated_at(item)
+            except Exception:
+                continue
+            if not mem_jobs.should_idle_sweep(last_ts, now_ts, idle_s):
+                continue
+            entry: dict = {"idle_since": last_ts}
+            try:
+                provider = turn_cfg.effective_provider()
+                connect = self._injected_connect or ConnectFactory.create(
+                    provider.api, provider
+                )
+                owns = self._injected_connect is None
+                try:
+                    transcript = mem_jobs.transcript_tail(list(item.messages))
+                    extracted = self._submit(
+                        mem_jobs.extract_from_transcript(
+                            connect, turn_cfg.provider.model, transcript
+                        )
+                    )
+                    applied = mem_jobs.apply_extracted(self.job_facade(), extracted)
+                    entry["extracted"] = len(applied["written"])
+                    entry["proposed"] = len(applied["proposed"])
+                finally:
+                    if owns:
+                        close = getattr(connect, "aclose", None)
+                        if close is not None:
+                            self._submit(close())
+                detail = self.compact_session(item.id)
+                entry["compacted"] = bool(
+                    (detail.get("compaction") or {}).get("compacted", False)
+                )
+            except Exception as exc:
+                entry["error"] = type(exc).__name__
+            report[item.id] = entry
+        return {"now": now_ts, "rooms": report}
 
     def get_payload(self, session_id: str) -> dict:
         session = self._sessions.store.load(session_id)
@@ -278,13 +375,58 @@ class ChatApp:
         self._sessions.store.load(session_id)
         return None
 
-    def create(self) -> dict:
+    def create(self, bots: list[str] | None = None) -> dict:
         # Do not wait on any turn: create/list stay responsive while an LLM
         # call is in flight. Blank sessions belonging to a running turn must
         # survive the prune — its transcript is still empty on disk.
+        participants = self._clean_participants(bots) if bots is not None else None
         self._sessions.discard_empty(keep=set(self._turns.snapshot()))
         session = self._sessions.create()
+        if participants is not None:
+            self._sessions.store.append_bots(session.path, participants)
+            session.bots = list(participants)
         return self._detail(session, self._current_cfg())
+
+    def room_bots(self, session_id: str) -> list[str]:
+        """Participant list of a room; legacy rooms read as Thyca alone."""
+        session = self._sessions.store.load(session_id)
+        return list(session.bots) if session.bots else ["thyca"]
+
+    def set_room_bots(self, session_id: str, bot_id: str, action: str) -> list[str]:
+        """Add/remove one bot from a room. Returns the new participant list."""
+        if action not in ("add", "remove"):
+            raise ValueError("action must be add|remove")
+        card = self._bots.require(bot_id)
+        if card.paused:
+            raise RegistryError(f"bot is paused: {bot_id}")
+        session = self._sessions.store.load(session_id)
+        current = list(session.bots) if session.bots else ["thyca"]
+        if action == "add":
+            if bot_id not in current:
+                current.append(bot_id)
+        else:
+            if bot_id not in current:
+                raise RegistryError(f"bot not in room: {bot_id}")
+            current = [bot for bot in current if bot != bot_id]
+            if not current:
+                raise RegistryError("room must keep at least one bot")
+        self._sessions.store.append_bots(session.path, current)
+        self._sessions.set_bots(session_id, current)
+        return current
+
+    def _clean_participants(self, bots: list[str]) -> list[str]:
+        if not isinstance(bots, list) or not bots:
+            raise ValueError("bots must be a non-empty list of bot ids")
+        cleaned: list[str] = []
+        for bot_id in bots:
+            if not isinstance(bot_id, str) or not bot_id:
+                raise ValueError("bots must be a non-empty list of bot ids")
+            card = self._bots.require(bot_id)
+            if card.paused:
+                raise RegistryError(f"bot is paused: {bot_id}")
+            if bot_id not in cleaned:
+                cleaned.append(bot_id)
+        return cleaned
 
     def turn(
         self,
@@ -308,6 +450,8 @@ class ChatApp:
         self._memory.timezone_name = turn_cfg.timeline.timezone
         self._zone = ZoneInfo(turn_cfg.timeline.timezone)
         self._sync_mcp(turn_cfg)
+        bots = self.room_bots(session_id)
+        responder = self._resolve_responder(bots, cleaned)
         with self._claim_lock:
             hub = self._turns.claim(session_id)
             job = self._loop_turns.begin(session_id)
@@ -318,18 +462,27 @@ class ChatApp:
                 if event_sink is not None:
                     event_sink(event)
 
-            try:
-                detail = self._loop_turns.submit(
-                    job,
-                    self._run_turn(
-                        session_id,
-                        cleaned,
-                        sink,
-                        turn_cfg=turn_cfg,
-                        effort=effort,
-                        retry=retry,
-                    ),
+            if responder == "thyca":
+                coro = self._run_turn(
+                    session_id,
+                    cleaned,
+                    sink,
+                    turn_cfg=turn_cfg,
+                    effort=effort,
+                    retry=retry,
                 )
+            else:
+                coro = self._run_bot_turn(
+                    session_id,
+                    cleaned,
+                    sink,
+                    turn_cfg=turn_cfg,
+                    effort=effort,
+                    retry=retry,
+                    bot_id=responder,
+                )
+            try:
+                detail = self._loop_turns.submit(job, coro)
             except TurnCancelled:
                 hub.publish(("cancelled", None))
                 raise
@@ -386,6 +539,127 @@ class ChatApp:
             retry=retry,
         )
         return await run_turn(scope, request, self._detail)
+
+    @staticmethod
+    def _resolve_responder(bots: list[str], text: str) -> str:
+        """Who answers this room turn: @mention wins, else the room.
+
+        A ``@<bot-id>`` mention names the responder inside a shared room;
+        a 1-1 room is answered by its only bot; otherwise the first
+        participant (the default room's Thyca) answers."""
+        for mention in re.findall(r"@([a-z0-9]+(?:-[a-z0-9]+)*)", text):
+            if mention in bots:
+                return mention
+        return bots[0] if bots else "thyca"
+
+    async def _run_bot_turn(
+        self,
+        session_id: str,
+        text: str,
+        event_sink: EventSink | None = None,
+        *,
+        turn_cfg: Config,
+        effort: str | None,
+        retry: bool,
+        bot_id: str,
+    ) -> dict:
+        """Run one bot turn and record it into the room transcript.
+
+        The bot thinks in its private (bot × room) session; the room only
+        ever gains rows written here by the app layer (user row + the
+        bot's reply + fresh bus events), each stamped with
+        ``bot_id/kind/trace_id`` (contract §6/BE-6)."""
+        card = self._bots.require(bot_id)
+        sessions = SessionManager(
+            limits=turn_cfg.effective_limits(),
+            timezone_name=turn_cfg.timeline.timezone,
+            store=self._sessions.store,
+        )
+        sessions.load(session_id)
+        if retry and not sessions.truncate_to_last_user():
+            raise InvalidTurnOption("no user")
+        provider = turn_cfg.effective_provider()
+        connect = self._injected_connect or ConnectFactory.create(
+            provider.api, provider
+        )
+        owns = self._injected_connect is None
+        try:
+            scope = TurnScope(
+                store=self._sessions.store,
+                act=self._act,
+                tools=self._tools,
+                memory=self._memory,
+                state=self._state,
+                zone=self._zone,
+                injected_connect=connect,
+            )
+            trace_id = new_trace_id()
+            try:
+                reply = await self._runtime.run_bot_turn(
+                    scope=scope,
+                    card=card,
+                    room_id=session_id,
+                    text=text,
+                    turn_cfg=turn_cfg,
+                    event_sink=event_sink,
+                    trace_id=trace_id,
+                )
+            except asyncio.CancelledError:
+                raise
+            except LLMError as exc:
+                mark_turn_error(sessions, "llm_error", str(exc))
+                raise
+            except Exception:
+                mark_turn_error(sessions, "chat_unavailable", "chat unavailable")
+                raise
+            room = SessionManager(
+                limits=turn_cfg.effective_limits(),
+                timezone_name=turn_cfg.timeline.timezone,
+                store=self._sessions.store,
+            )
+            room.load(session_id)
+            if not retry:
+                room.append(Message(role="user", content=text))
+            room.append(
+                Message(
+                    role="assistant",
+                    content=reply,
+                    meta={"bot_id": bot_id, "kind": "message", "trace_id": trace_id},
+                )
+            )
+            self._record_bus_events(room, session_id)
+            await _name_if_needed(connect, room, turn_cfg, event_sink)
+            landed = self._detail(room.current, turn_cfg, running=False)
+            return {**landed, "reply": reply}
+        finally:
+            if owns:
+                close = getattr(connect, "aclose", None)
+                if close is not None:
+                    await close()
+
+    def _record_bus_events(self, room: SessionManager, session_id: str) -> None:
+        """Append fresh A2A bus envelopes to the room transcript.
+
+        One row per envelope under the sender's name; the app layer is the
+        only writer (bots never touch the room transcript directly)."""
+        events = self._bus.log()[self._bus_log_index:]
+        self._bus_log_index += len(events)
+        for event in events:
+            envelope = event.envelope
+            if envelope.session_id != session_id:
+                continue
+            room.append(
+                Message(
+                    role="assistant",
+                    content=envelope.payload[:2000],
+                    meta={
+                        "bot_id": envelope.sender,
+                        "kind": envelope.kind,
+                        "trace_id": envelope.trace_id,
+                        "parent_span_id": envelope.parent_span_id,
+                    },
+                )
+            )
 
     def shutdown(self) -> None:
 

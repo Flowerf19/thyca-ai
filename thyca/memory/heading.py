@@ -36,6 +36,10 @@ class HeadingMeta:
     expires_at: str | None = None
     proj: str | None = None
     chat: str | None = None
+    # Team owners (BE-4): which bots own this entry. None = legacy entry
+    # (no field on disk) which reads as team-visible. ["team"] = shared
+    # team memory; ["<bot>"] = that bot's private memory.
+    bots: tuple[str, ...] | None = None
 
 
 def utc_now(now: datetime | None = None) -> datetime:
@@ -125,8 +129,8 @@ def parse_heading(line: str) -> HeadingMeta | None:
     time, title, comment = match.group(1), match.group(2).strip(), match.group(3) or ""
     if not title:
         return None
-    entry_id, importance, expires_at, proj, chat = _parse_comment(comment)
-    return HeadingMeta(time, title, entry_id, importance, expires_at, proj, chat)
+    entry_id, importance, expires_at, proj, chat, bots = _parse_comment(comment)
+    return HeadingMeta(time, title, entry_id, importance, expires_at, proj, chat, bots)
 
 
 def render_heading(meta: HeadingMeta) -> str:
@@ -143,6 +147,8 @@ def render_heading(meta: HeadingMeta) -> str:
         payload["proj"] = meta.proj
     if meta.chat:
         payload["chat"] = meta.chat
+    if meta.bots is not None:
+        payload["bots"] = list(meta.bots)
     body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     return f"## {meta.time} — {meta.title} <!-- thyca {body} -->\n"
 
@@ -196,24 +202,24 @@ def is_expired(expires_at: str | None, now: datetime | None = None) -> bool:
     return bool(expires_at) and not is_visible(expires_at, now)
 
 
-def _parse_comment(comment: str) -> tuple[str | None, int, str | None, str | None, str | None]:
+def _parse_comment(comment: str) -> tuple[str | None, int, str | None, str | None, str | None, tuple[str, ...] | None]:
     raw = comment.strip()
     if not raw:
-        return None, DEFAULT_IMPORTANCE, None, None, None
+        return None, DEFAULT_IMPORTANCE, None, None, None, None
     if raw.startswith("thyca"):
         rest = raw[5:].lstrip()
         if rest.startswith("{"):
             return _from_json(rest)
-    return (*_from_legacy(raw), None, None)
+    return (*_from_legacy(raw), None, None, None)
 
 
-def _from_json(blob: str) -> tuple[str | None, int, str | None, str | None, str | None]:
+def _from_json(blob: str) -> tuple[str | None, int, str | None, str | None, str | None, tuple[str, ...] | None]:
     try:
         data = json.loads(blob)
     except json.JSONDecodeError:
-        return None, DEFAULT_IMPORTANCE, None, None, None
+        return None, DEFAULT_IMPORTANCE, None, None, None, None
     if not isinstance(data, dict):
-        return None, DEFAULT_IMPORTANCE, None, None, None
+        return None, DEFAULT_IMPORTANCE, None, None, None, None
     entry = data.get("id")
     entry_id = entry if isinstance(entry, str) and ENTRY_ID_RE.fullmatch(entry) else None
     importance = _coerce_imp(data.get("imp"))
@@ -223,7 +229,8 @@ def _from_json(blob: str) -> tuple[str | None, int, str | None, str | None, str 
     chat = data.get("chat")
     proj = proj if isinstance(proj, str) and proj else None
     chat = chat if isinstance(chat, str) and chat else None
-    return entry_id, importance, expires_at, proj, chat
+    bots = _coerce_bots(data.get("bots"))
+    return entry_id, importance, expires_at, proj, chat, bots
 
 
 def _from_legacy(raw: str) -> tuple[str | None, int, str | None]:
@@ -234,6 +241,16 @@ def _from_legacy(raw: str) -> tuple[str | None, int, str | None]:
     exp = attrs.get("exp")
     expires_at = exp if exp and EXP_RE.fullmatch(exp) else None
     return entry_id, importance, expires_at
+
+
+def _coerce_bots(value: object) -> tuple[str, ...] | None:
+    """Bots owner list, or None when absent/invalid (legacy = team)."""
+    if value is None:
+        return None
+    if not isinstance(value, list) or not value:
+        return None
+    cleaned = [item for item in value if isinstance(item, str) and item and len(item) <= 64]
+    return tuple(cleaned) or None
 
 
 def _coerce_imp(value: object) -> int:

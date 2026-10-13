@@ -29,6 +29,9 @@ class TurnSummary:
     # raw slice for detail endpoint
     messages: list[Message]
     error: dict | None = None
+    # Team attribution (BE-6): bot that ran this turn + delegation trace.
+    bot_id: str | None = None
+    trace_id: str | None = None
 
     def to_payload(self) -> dict:
         """Public JSON shape for /api/traces* — the single source of the field list."""
@@ -49,6 +52,8 @@ class TurnSummary:
             "cost_usd": self.cost_usd,
             "latency_ms": self.latency_ms,
             "error": self.error,
+            "bot_id": self.bot_id,
+            "trace_id": self.trace_id,
         }
 
 
@@ -169,6 +174,16 @@ def turns_from_session(session: Session) -> list[TurnSummary]:
         requests = rounds
         started = sl[0].ts if sl else ""
         ended = sl[-1].ts if sl else ""
+        bot_id = next(
+            (str((m.meta or {}).get("bot_id")) for m in sl
+             if isinstance((m.meta or {}).get("bot_id"), str) and (m.meta or {}).get("bot_id")),
+            None,
+        )
+        trace_id = next(
+            (str((m.meta or {}).get("trace_id")) for m in sl
+             if isinstance((m.meta or {}).get("trace_id"), str) and (m.meta or {}).get("trace_id")),
+            None,
+        )
         out.append(
             TurnSummary(
                 session_id=session.id,
@@ -188,6 +203,8 @@ def turns_from_session(session: Session) -> list[TurnSummary]:
                 latency_ms=latency,
                 messages=list(sl),
                 error=error,
+                bot_id=bot_id,
+                trace_id=trace_id,
             )
         )
     return out
@@ -273,6 +290,27 @@ def aggregate(turns: list[TurnSummary]) -> dict:
         {"status": status, "requests": sum(x.requests for x in group)}
         for status, group in sorted(by_status_map.items())
     ]
+    # by_bot (BE-6): same rollup shape as by_model, grouped by the bot
+    # that ran the turn. Turns without attribution count as "unknown"
+    # (legacy single-bot transcripts) so old data never breaks the shape.
+    by_bot_map: dict[str, list[TurnSummary]] = defaultdict(list)
+    for t in turns:
+        by_bot_map[t.bot_id or "unknown"].append(t)
+    by_bot = []
+    for bot_id, group in sorted(by_bot_map.items()):
+        lat = sorted([x.latency_ms for x in group if isinstance(x.latency_ms, int)])
+        requests, cost = _sum_group(group)
+        by_bot.append({
+            "bot_id": bot_id,
+            "requests": requests,
+            "prompt_tokens": sum(x.prompt_tokens or 0 for x in group),
+            "cached_tokens": sum(x.cached_tokens or 0 for x in group),
+            "completion_tokens": sum(x.completion_tokens or 0 for x in group),
+            "total_tokens": sum(x.total_tokens or 0 for x in group),
+            "cost_usd": cost,
+            "latency_ms_p50": _percentile(lat, 0.5),
+            "last_started_at": max((x.started_at for x in group if x.started_at), default=""),
+        })
     by_hour_map: dict[str, list[TurnSummary]] = defaultdict(list)
     for t in turns:
         hour = ""
@@ -289,6 +327,7 @@ def aggregate(turns: list[TurnSummary]) -> dict:
     return {
         "totals": totals,
         "by_model": by_model,
+        "by_bot": by_bot,
         "by_day": by_day,
         "by_hour": by_hour,
         "by_status": by_status,

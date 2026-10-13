@@ -230,7 +230,8 @@ def test_debug_prints_prompt_flags(
     assert "identity=True" in dbg
     has_user = user is None or user.strip() not in {"", "# User"}
     assert f"user={has_user}" in dbg
-    assert "tools=13" in dbg
+    # 14 = 4 file + 8 memory (incl. memory_propose_team, Team v1 BE-4) + tool_read + tool_kill.
+    assert "tools=14" in dbg
 
 
 def test_print_llm_error_is_safe(tmp_path: Path) -> None:

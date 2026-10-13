@@ -58,6 +58,7 @@ const el = {
   contextMeter: document.querySelector("#context-meter"),
   contextNudge: document.querySelector("#context-nudge"),
   contextNudgeText: document.querySelector("#context-nudge-text"),
+  contextFocus: document.querySelector("#context-focus"),
   contextCompact: document.querySelector("#context-compact"),
   contextNew: document.querySelector("#context-new"),
   contextDismiss: document.querySelector("#context-dismiss"),
@@ -236,6 +237,12 @@ function bind() {
   el.idleRemember.addEventListener("click", sendIdleRemember);
   el.idleDismiss.addEventListener("click", armIdle);
   el.contextCompact.addEventListener("click", () => void compactFromContext());
+  el.contextFocus.addEventListener("keydown", (event) => {
+    // Inside the composer <form>: Enter compacts, it must not send.
+    if (event.key !== "Enter" || event.isComposing) return;
+    event.preventDefault();
+    void compactFromContext();
+  });
   el.contextNew.addEventListener("click", newFromContext);
   el.contextDismiss.addEventListener("click", dismissContext);
   el.renameCancel.addEventListener("click", () => el.renameDialog.close());

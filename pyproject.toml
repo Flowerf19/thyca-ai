@@ -38,6 +38,7 @@ artifacts = ["thyca/webui/**/*.html", "thyca/webui/**/*.css", "thyca/webui/**/*.
 "thyca/seeds/prompts/user.md" = "thyca/seeds/prompts/user.md"
 "thyca/seeds/prompts/rules.md" = "thyca/seeds/prompts/rules.md"
 "thyca/seeds/prompts/naming.md" = "thyca/seeds/prompts/naming.md"
+"thyca/seeds/prompts/compaction.md" = "thyca/seeds/prompts/compaction.md"
 "thyca/seeds/guides/read_before_config.md" = "thyca/seeds/guides/read_before_config.md"
 
 [tool.ruff]

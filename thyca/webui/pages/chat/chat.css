@@ -657,6 +657,28 @@
   font-weight: 600;
 }
 
+/* The context chip reuses .chat-idle-nudge; only its optional focus
+   line needs page CSS (full row under the prompt, above the buttons). */
+#context-nudge {
+  flex-wrap: wrap;
+}
+
+.context-focus {
+  flex: 1 1 100%;
+  min-width: 0;
+  min-height: 2.2rem;
+  padding: 0.35rem 0.6rem;
+  border: var(--rule) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper-input);
+  color: var(--color-reading);
+  font-size: 0.9rem;
+}
+
+.context-focus[hidden] {
+  display: none;
+}
+
 .effort-control {
   display: flex;
   align-items: center;

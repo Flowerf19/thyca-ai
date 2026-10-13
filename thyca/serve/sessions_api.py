@@ -189,11 +189,14 @@ def session_turn_follow(handler, app: ChatApp | None, session_id: str) -> None:
 def session_compact(handler, app: ChatApp | None, session_id: str) -> None:
     """``POST /api/sessions/<id>/compact`` — manual Gọn phiên.
 
-    Body is ``{}`` or ``{"model": "..."}`` (the composer's per-turn
-    override, so the tail budget matches the model on screen). Returns
-    the fresh session detail plus a ``compaction`` summary.
+    Body is ``{}``, ``{"model": "..."}`` (the composer's per-turn
+    override, so the tail budget matches the model on screen), and/or
+    ``{"instructions": "..."}`` (keep/drop focus for the summarizer,
+    capped like the prompt policy). Returns the fresh session detail
+    plus a ``compaction`` summary.
     """
     from thyca.app.chat_app import InvalidTurnOption
+    from thyca.sessions.summary import INSTRUCTIONS_MAX_CHARS
 
     if _missing_chat(handler, app):
         return
@@ -205,8 +208,20 @@ def session_compact(handler, app: ChatApp | None, session_id: str) -> None:
         ):
             handler._json(400, {"error": "invalid model"})
             return
+        instructions = payload.get("instructions")
+        if instructions is not None and (
+            not isinstance(instructions, str)
+            or len(instructions) > INSTRUCTIONS_MAX_CHARS
+        ):
+            handler._json(400, {"error": "invalid instructions"})
+            return
+        if isinstance(instructions, str) and not instructions.strip():
+            instructions = None
         try:
-            handler._json(200, app.compact_session(session_id, model=model))
+            handler._json(
+                200,
+                app.compact_session(session_id, model=model, instructions=instructions),
+            )
         except InvalidTurnOption as exc:
             handler._json(400, {"error": str(exc)})
         except Exception as exc:

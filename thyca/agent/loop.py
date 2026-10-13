@@ -7,10 +7,11 @@ from thyca.core.protocol import Message, estimate_tokens as _chars_to_tokens
 from thyca.llm.pricing import cost_for
 from thyca.llm.prompt_manager import PromptManager
 from thyca.memory.active import ActiveSnapshot
-from thyca.sessions import SessionManager
+from thyca.sessions import SessionManager, calibration_factor
 
 from .act import Act
 from .assemble import Assemble
+from .compacting import Summarizer, compact_with_llm
 from .events import EventSink, TurnEvent, emit_event
 from .observe import Observe
 from .shrink import BACKSTOP_RATIO, estimate_wire_tokens, shrink_stage_messages
@@ -63,6 +64,7 @@ class AgentLoop:
         pricing: dict | None = None,
         prompts: PromptManager | None = None,
         context_tokens: int | None = None,
+        summarizer: Summarizer | None = None,
     ) -> None:
         # context_tokens None disables the mid-turn guard (unit tests, no limits).
         self._sessions = sessions
@@ -76,6 +78,7 @@ class AgentLoop:
         self._pricing = pricing
         self._prompts = prompts or PromptManager()
         self._context_tokens = context_tokens
+        self._summarizer = summarizer
 
     def _hot_tokens(self, hot: object) -> int:
         if not isinstance(hot, ActiveSnapshot):
@@ -97,19 +100,42 @@ class AgentLoop:
         if self._loop_max < 1:
             raise ValueError("loop_max must be positive")
 
+        # One calibration factor for the whole turn, learned from stored
+        # (estimate, prompt_tokens) pairs for this model. Fixed per turn
+        # so pre-turn compact, shrink and backstop agree; pairs landed by
+        # this turn only affect the next one.
+        calibration = calibration_factor(
+            list(self._sessions.current.messages), model=self._model
+        )
         # Compact first: the stage must snapshot post-compaction history so
         # the turn tripping the cap sends the compacted tail to the LLM.
         # Overhead sizes (hot prompt, tools schema, pending user text) let
         # the compactor reserve room for what assemble adds after this.
-        self._observe.compact(
-            hot_tokens=self._hot_tokens(hot),
-            tools_tokens=self._tools_tokens(),
-            # Wire estimate, matching what the mid-turn guard counts for the
-            # assembled user message (raw chars undercount by ~8 tokens).
-            pending_user_tokens=estimate_wire_tokens(
-                [Message(role="user", content=user_msg)]
-            ),
+        pending_tokens = estimate_wire_tokens(
+            [Message(role="user", content=user_msg)]
         )
+        if self._summarizer is None:
+            self._observe.compact(
+                hot_tokens=self._hot_tokens(hot),
+                tools_tokens=self._tools_tokens(),
+                # Wire estimate, matching what the mid-turn guard counts for the
+                # assembled user message (raw chars undercount by ~8 tokens).
+                pending_user_tokens=pending_tokens,
+                calibration=calibration,
+            )
+        else:
+            # LLM summary first; compact_with_llm falls back to the same
+            # rule-based compact above on any summarizer failure.
+            await compact_with_llm(
+                self._summarizer,
+                self._sessions,
+                model=self._model,
+                pricing=self._pricing,
+                hot_tokens=self._hot_tokens(hot),
+                tools_tokens=self._tools_tokens(),
+                pending_user_tokens=pending_tokens,
+                calibration=calibration,
+            )
         stage = Stage(
             messages=list(self._sessions.current.messages),
             hot=hot,
@@ -138,6 +164,7 @@ class AgentLoop:
                     tools_tokens=self._tools_tokens(),
                     run_start=run_start,
                     live_exec_ids=self._act.live_exec_ids(),
+                    calibration=calibration,
                 )
                 if shrunk:
                     stage.messages = shrunk_messages
@@ -152,6 +179,11 @@ class AgentLoop:
                     )
                 if estimate > int(self._context_tokens * BACKSTOP_RATIO):
                     return self._observe.context_limit(stage)
+                # Raw (uncalibrated) size of the exact payload about to be
+                # sent; persisted beside provider usage for calibration.
+                stage.llm_estimate_tokens = estimate_wire_tokens(
+                    stage.messages, self._tools_tokens()
+                )
             emit_event(event_sink, TurnEvent(type="llm.started", round=stage.round))
             round_no = stage.round
             on_reasoning = _delta_callback(event_sink, round_no, ThinkingDelta)
@@ -173,6 +205,9 @@ class AgentLoop:
                 return self._observe.assistant(stage)
             await self._act.act(stage, event_sink)
             self._observe.observe(stage)
+            # The pair is persisted now; a following loop_limit row must
+            # not duplicate it (it reuses this stage's meta builders).
+            stage.llm_estimate_tokens = None
             if stage.round == self._loop_max:
                 return self._observe.loop_limit(stage)
 

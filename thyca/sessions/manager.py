@@ -212,6 +212,7 @@ class SessionManager:
         hot_tokens: int = 0,
         tools_tokens: int = 0,
         pending_user_tokens: int = 0,
+        calibration: float = 1.0,
     ) -> bool:
         with self._lock:
             return self._compact_locked(
@@ -219,6 +220,7 @@ class SessionManager:
                 hot_tokens=hot_tokens,
                 tools_tokens=tools_tokens,
                 pending_user_tokens=pending_user_tokens,
+                calibration=calibration,
             )["compacted"]
 
     def compact_manual(
@@ -226,6 +228,7 @@ class SessionManager:
         *,
         hot_tokens: int = 0,
         tools_tokens: int = 0,
+        calibration: float = 1.0,
     ) -> dict:
         """User-triggered compact: same tail policy, no 95% threshold.
 
@@ -240,6 +243,7 @@ class SessionManager:
                 hot_tokens=hot_tokens,
                 tools_tokens=tools_tokens,
                 pending_user_tokens=0,
+                calibration=calibration,
             )
 
     def _compact_locked(
@@ -249,6 +253,7 @@ class SessionManager:
         hot_tokens: int,
         tools_tokens: int,
         pending_user_tokens: int,
+        calibration: float = 1.0,
     ) -> dict:
         session = self._current_locked()
         on_disk, title, title_source, attempted = self.store.scan(session.path)
@@ -265,6 +270,7 @@ class SessionManager:
             tools_tokens=tools_tokens,
             pending_user_tokens=pending_user_tokens,
             force=force,
+            calibration=calibration,
         )
         if compacted is None:
             return {
@@ -286,6 +292,39 @@ class SessionManager:
             "messages_before": before,
             "messages_after": len(compacted),
         }
+
+    def apply_compaction(
+        self, compacted: list[Message], *, expected: list[Message]
+    ) -> bool:
+        """Rewrite with a caller-rendered compaction if disk still matches.
+
+        The LLM summary path plans from a snapshot, then spends seconds
+        summarizing off-lock. Rewriting blindly would lose anything
+        appended meanwhile, so the on-disk transcript must still equal
+        ``expected`` (title meta lines are not messages and are picked up
+        from the rescan either way). False means: caller falls back to a
+        fresh rule-based compact; current is left at the rescanned state.
+        """
+        with self._lock:
+            session = self._current_locked()
+            on_disk, title, title_source, attempted = self.store.scan(session.path)
+            session.messages[:] = on_disk
+            session.naming_attempted = session.naming_attempted or attempted
+            if title:
+                session.title = title
+                session.title_source = title_source
+            if on_disk != list(expected):
+                return False
+            self.store.rewrite(
+                session.id,
+                session.path,
+                compacted,
+                title=session.title,
+                title_source=session.title_source,
+                naming_attempted=session.naming_attempted,
+            )
+            session.messages[:] = list(compacted)
+            return True
 
     def refresh_title(self) -> None:
         """Re-read the title a stored meta line carries (see title module)."""

@@ -800,8 +800,9 @@ def test_compact_session_forces_and_reports(tmp_path: Path) -> None:
         created = app.create()
         _seed_long_session(tmp_path, created["id"])
         before = app.get_payload(created["id"])
-        result = app.compact_session(created["id"])
+        result = app.compact_session(created["id"], instructions="keep the goal")
         assert result["compaction"]["compacted"] is True
+        assert result["compaction"]["summary"] == "llm"
         assert result["compaction"]["messages_before"] == 8
         assert result["compaction"]["messages_after"] < 8
         assert len(result["messages"]) == result["compaction"]["messages_after"]
@@ -862,6 +863,19 @@ def test_compact_over_http(tmp_path: Path) -> None:
             assert exc.code == 400
         else:
             raise AssertionError("expected 400")
+        try:
+            urlopen(
+                Request(
+                    _url(httpd, f"/api/sessions/{created['id']}/compact"),
+                    data=json.dumps({"instructions": "x" * 501}).encode("utf-8"),
+                    method="POST", headers={"Content-Type": "application/json"},
+                ), timeout=2,
+            )
+        except HTTPError as exc:
+            assert exc.code == 400
+            assert json.loads(exc.read().decode("utf-8")) == {"error": "invalid instructions"}
+        else:
+            raise AssertionError("expected 400")
     finally:
         _stop(httpd, thread)
         app.shutdown()
@@ -903,7 +917,11 @@ def test_context_nudge_in_webui() -> None:
     )
     assert 'id="context-nudge"' in html
     assert 'id="context-meter"' in html
+    assert 'id="context-focus"' in html
+    assert "Giữ ý chính gì?" in html
     assert "Gọn phiên" in html
+    assert "instructions" in app
+    assert "đã hiệu chuẩn" in app
     assert "CONTEXT_SUGGEST_RATIO = 0.8" in app
     assert "CONTEXT_URGENT_RATIO = 0.9" in app
     assert "/compact" in app

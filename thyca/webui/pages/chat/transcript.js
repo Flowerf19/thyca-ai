@@ -115,7 +115,7 @@ export function renderConversation(root, messages) {
 
   for (const message of Array.isArray(messages) ? messages : []) {
     if (!message || message.role === "system") continue;
-    if ((message.meta || {}).kind === "naming") continue;
+    if ((message.meta || {}).kind === "naming" || (message.meta || {}).kind === "compaction") continue;
     if (message.role === "user") {
       flushAssistant();
       nodes.push(userMessage(message));

@@ -23,6 +23,11 @@ class Stage:
     llm_latency_ms: int | None = None
     llm_model: str | None = None
     llm_cost_usd: float | None = None
+    # Raw wire estimate for this round's outgoing payload, set by the loop
+    # before think() and persisted next to provider usage so later turns
+    # can calibrate the estimator per model. Raw on purpose: storing the
+    # calibrated value would make future ratios decay toward 1.
+    llm_estimate_tokens: int | None = None
     tool_latencies: dict[str, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:

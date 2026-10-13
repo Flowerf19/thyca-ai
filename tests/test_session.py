@@ -327,6 +327,53 @@ def test_context_usage_includes_overhead() -> None:
     assert full["estimated_tokens"] == bare["estimated_tokens"] + 100
     assert full["context_tokens"] == 1000
     assert full["ratio"] == full["estimated_tokens"] / 1000
+    assert full["calibration"] == 1.0
+    scaled = context_usage(messages, 1000, calibration=2.0)
+    assert scaled["estimated_tokens"] == bare["estimated_tokens"] * 2
+    assert scaled["transcript_tokens"] == bare["transcript_tokens"]
+    assert scaled["calibration"] == 2.0
+
+
+def _pair(model: str, actual: int, estimated: int) -> Message:
+    return Message(
+        role="assistant",
+        content="x",
+        ts=_TS,
+        meta={
+            "kind": "llm",
+            "model": model,
+            "usage": {"prompt_tokens": actual},
+            "estimate_tokens": estimated,
+        },
+    )
+
+
+def test_calibration_factor_median_clamp_and_model_filter() -> None:
+    from thyca.sessions import calibration_factor
+
+    assert calibration_factor([], model="m") == 1.0
+    pairs =([
+        _pair("m", 120, 100),
+        _pair("m", 130, 100),
+        _pair("m", 500, 100),
+        _pair("other", 200, 100),
+    ])
+    # Median of in-band ratios for m (1.2, 1.3); the 5.0 outlier drops.
+    assert calibration_factor(pairs, model="m") == 1.25
+    assert calibration_factor(pairs, model="other") == 2.0
+    assert calibration_factor(pairs, model="absent") == 1.0
+    # A wildly low provider count is an outlier, not a factor near zero.
+    assert calibration_factor([_pair("m", 5, 100)], model="m") == 1.0
+
+
+def test_calibration_makes_auto_compact_fire_earlier(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path, LimitsCfg(contextTokens=1000))
+    manager.create()
+    for i in range(3):
+        manager.append(msg("user", "u" * 300 + str(i)))
+        manager.append(msg("assistant", "a" * 300))
+    assert not manager.compact_if_needed()
+    assert manager.compact_if_needed(calibration=2.5)
 
 
 def test_manual_compact_forces_below_threshold(tmp_path: Path) -> None:
@@ -953,6 +1000,21 @@ def test_x1_assemble_and_trace_use_canonical_predicate(tmp_path: Path) -> None:
     ])
     (turn,) = serve_trace.turns_from_session(session)
     assert turn.status == "completed"  # naming row skipped as a turn outcome
+
+
+def test_compaction_sidecar_is_transcript_only_like_naming(tmp_path: Path) -> None:
+    sidecar = Message(role="assistant", content=None, ts=_TS, meta={"kind": "compaction"})
+    user = Message(role="user", content="hi", ts=_TS)
+    stage = Stage(messages=[user, sidecar])
+    Assemble().assemble(stage, "next")
+    assert all((m.meta or {}).get("kind") != "compaction" for m in stage.messages)
+    session = Session("s", tmp_path / "s.jsonl", [
+        Message(role="user", content="q", ts=_TS),
+        Message(role="assistant", content="a", ts=_TS, meta={"kind": "llm"}),
+        sidecar,
+    ])
+    (turn,) = serve_trace.turns_from_session(session)
+    assert turn.status == "completed"
 
 
 def _old_chat_call(call: ToolCall, root) -> dict:

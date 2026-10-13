@@ -107,6 +107,11 @@ class TurnState:
         # used from inside itself.
         self._lock = threading.Lock()
         self._turns: dict[str, _Turn] = {}
+        # Sessions with a manual LLM compaction in flight. Unlike the
+        # sync rule path (rewrite under this lock), summarization spends
+        # seconds off-lock, so the session needs its own busy marker that
+        # claim/delete honor for the whole operation.
+        self._compacts: set[str] = set()
 
     def snapshot(self) -> dict[str, str]:
         """Copy of the in-flight map, for callers that only need to read it."""
@@ -136,11 +141,22 @@ class TurnState:
         instead of a silent queue behind the first one's LLM call.
         """
         with self._lock:
-            if session_id in self._turns:
+            if session_id in self._turns or session_id in self._compacts:
                 raise SessionBusy(session_id)
             hub = TurnHub()
             self._turns[session_id] = _Turn(utc_now_ts(), hub)
             return hub
+
+    def begin_compact(self, session_id: str) -> None:
+        """Take a session for manual compaction, or raise SessionBusy."""
+        with self._lock:
+            if session_id in self._turns or session_id in self._compacts:
+                raise SessionBusy(session_id)
+            self._compacts.add(session_id)
+
+    def end_compact(self, session_id: str) -> None:
+        with self._lock:
+            self._compacts.discard(session_id)
 
     def attach(self, session_id: str, job: _TurnJob) -> None:
         """Pin the loop job to a claimed turn (the _LoopTurns.begin half)."""
@@ -174,7 +190,7 @@ class TurnState:
         next write and silently dropping the earlier history.
         """
         with self._lock:
-            manager.delete(session_id, keep=set(self._turns))
+            manager.delete(session_id, keep=set(self._turns) | self._compacts)
 
     def compact_unclaimed(
         self,
@@ -183,6 +199,7 @@ class TurnState:
         *,
         hot_tokens: int = 0,
         tools_tokens: int = 0,
+        calibration: float = 1.0,
     ) -> dict:
         """Manually compact a session unless a turn holds it.
 
@@ -194,8 +211,10 @@ class TurnState:
         sessions wait only for one file rewrite.
         """
         with self._lock:
-            if session_id in self._turns:
+            if session_id in self._turns or session_id in self._compacts:
                 raise SessionBusy(session_id)
             return manager.compact_manual(
-                hot_tokens=hot_tokens, tools_tokens=tools_tokens
+                hot_tokens=hot_tokens,
+                tools_tokens=tools_tokens,
+                calibration=calibration,
             )

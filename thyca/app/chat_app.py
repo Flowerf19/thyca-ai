@@ -11,14 +11,17 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from thyca.agent.act import Act
+from thyca.agent.compacting import compact_with_llm
 from thyca.agent.events import EventSink, TurnEvent
 from thyca.agent.think import LLMPort
+from thyca.app.summarizing import LlmSummarizer
 from thyca.config import Config, ConfigError, load
 from thyca.core.protocol import estimate_tokens as _chars_to_tokens
+from thyca.llm.llm_factory import ConnectFactory
 from thyca.llm.prompt_manager import PromptManager
 from thyca.memory.active import ActiveMemory, ActiveSnapshot
 from thyca.sessions.wire import session_detail, session_summary
-from thyca.sessions import Session, SessionManager, context_usage
+from thyca.sessions import Session, SessionManager, calibration_factor, context_usage
 from thyca.sessions.store import SessionStore
 from thyca.sessions.title import is_blank
 from thyca.tools.gateway.background import BackgroundProcs
@@ -180,14 +183,20 @@ class ChatApp:
         self._turns.delete_unclaimed(self._sessions, session_id)
 
     def compact_session(
-        self, session_id: str, model: str | None = None
+        self,
+        session_id: str,
+        model: str | None = None,
+        instructions: str | None = None,
     ) -> dict:
         """Manually compact one idle session; return its fresh detail.
 
         Mirrors turn setup (live knobs + MCP sync + per-operation
         SessionManager) so the tail budget uses the same limits and
-        overhead the next turn would. A turn in flight raises
-        ``SessionBusy`` via the TurnState gate.
+        overhead the next turn would. Summarization runs on the loop
+        thread with the session's own model under the TurnState compact
+        gate; a turn in flight (or another compact) raises
+        ``SessionBusy``. Any summarizer failure falls back to the
+        rule-based excerpt inside ``compact_with_llm``.
         """
         turn_cfg = overlay_turn_cfg(self._current_cfg(), model, None)
         self._memory.tail_kb = turn_cfg.limits.hotTailKB
@@ -200,15 +209,49 @@ class ChatApp:
             store=self._sessions.store,
         )
         sessions.load(session_id)
-        hot_tokens, tools_tokens = self._overhead_tokens(session_id)
-        result = self._turns.compact_unclaimed(
-            sessions,
-            session_id,
-            hot_tokens=hot_tokens,
-            tools_tokens=tools_tokens,
-        )
-        detail = self._detail(sessions.current, turn_cfg, running=False)
+        self._turns.begin_compact(session_id)
+        try:
+            result = self._submit(
+                self._compact_async(sessions, session_id, turn_cfg, instructions)
+            )
+            detail = self._detail(sessions.current, turn_cfg, running=False)
+        finally:
+            self._turns.end_compact(session_id)
         return {**detail, "compaction": result}
+
+    async def _compact_async(
+        self,
+        sessions: SessionManager,
+        session_id: str,
+        turn_cfg: Config,
+        instructions: str | None,
+    ) -> dict:
+        provider = turn_cfg.effective_provider()
+        connect = self._injected_connect or ConnectFactory.create(
+            provider.api, provider
+        )
+        owns = self._injected_connect is None
+        try:
+            hot_tokens, tools_tokens = self._overhead_tokens(session_id)
+            return await compact_with_llm(
+                LlmSummarizer(connect),
+                sessions,
+                model=turn_cfg.provider.model,
+                pricing=turn_cfg.effective_pricing() or None,
+                hot_tokens=hot_tokens,
+                tools_tokens=tools_tokens,
+                force=True,
+                instructions=instructions,
+                calibration=calibration_factor(
+                    list(sessions.current.messages),
+                    model=turn_cfg.provider.model,
+                ),
+            )
+        finally:
+            if owns:
+                close = getattr(connect, "aclose", None)
+                if close is not None:
+                    await close()
 
     def default_model(self) -> str:
         """Default model id (for failure logs when the turn omits model)."""
@@ -399,6 +442,7 @@ class ChatApp:
             cfg.effective_limits().contextTokens,
             hot_tokens=hot_tokens,
             tools_tokens=tools_tokens,
+            calibration=calibration_factor(session.messages, model=cfg.provider.model),
         )
 
     def _detail(

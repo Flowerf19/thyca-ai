@@ -152,10 +152,10 @@ def naming_messages(session: Session) -> list[Message] | None:
     ]
 
 
-def _is_naming_row(item: Message) -> bool:
+def _is_sidecar_row(item: Message) -> bool:
     # Local copy of the sessions/wire predicate (which imports this module):
-    # naming rows are transcript-only records, never turn outcomes.
-    return (item.meta or {}).get("kind") == "naming"
+    # sidecar rows are transcript-only records, never turn outcomes.
+    return (item.meta or {}).get("kind") in {"naming", "compaction"}
 
 
 def _completed_turns(messages: list[Message]) -> list[list[Message]]:
@@ -163,7 +163,7 @@ def _completed_turns(messages: list[Message]) -> list[list[Message]]:
     slices: list[list[Message]] = []
     cur: list[Message] | None = None
     for item in messages:
-        if item.role == "system" or _is_naming_row(item):
+        if item.role == "system" or _is_sidecar_row(item):
             continue
         if item.role == "user":
             if cur is not None:

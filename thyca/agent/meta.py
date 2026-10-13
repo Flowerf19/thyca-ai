@@ -66,6 +66,9 @@ def assistant_meta(stage: Stage, *, kind: str = "llm") -> dict:
     usage = _usage_copy(getattr(stage, "reply", None))
     if usage is not None:
         meta["usage"] = usage
+    estimate = getattr(stage, "llm_estimate_tokens", None)
+    if isinstance(estimate, int) and not isinstance(estimate, bool) and estimate > 0:
+        meta["estimate_tokens"] = estimate
     cost = getattr(stage, "llm_cost_usd", None)
     if isinstance(cost, (int, float)):
         meta["cost_usd"] = float(cost)
@@ -85,6 +88,27 @@ def naming_meta(reply: object, latency_ms: int, cfg: Config) -> dict:
     if usage is not None:
         meta["usage"] = usage
     price = _priced_cost(model, usage, cfg.effective_pricing() or None)
+    if price is not None:
+        meta["cost_usd"] = price
+    return meta
+
+
+def compaction_meta(
+    reply: object, latency_ms: int, model: str | None, pricing: dict | None
+) -> dict:
+    """Meta for the compaction sidecar record: naming's cost rules.
+
+    Takes model/pricing directly (the agent loop carries those, not a
+    full Config) so auto and manual paths build the same record.
+    """
+    usage = _usage_copy(reply)
+    resolved = _clean_model(getattr(reply, "model", None) or model)
+    meta: dict = {"kind": "compaction", "latency_ms": max(0, latency_ms)}
+    if resolved is not None:
+        meta["model"] = resolved
+    if usage is not None:
+        meta["usage"] = usage
+    price = _priced_cost(resolved, usage, pricing)
     if price is not None:
         meta["cost_usd"] = price
     return meta

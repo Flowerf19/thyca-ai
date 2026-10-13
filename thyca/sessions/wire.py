@@ -24,7 +24,7 @@ from . import (
     SessionNotFound,
 )
 from .ask_remember import ask_remember
-from .compaction import context_usage
+from .compaction import calibration_factor, context_usage
 from .title import display_title
 
 
@@ -40,6 +40,21 @@ def is_naming_message(message: Message) -> bool:
     reach the model or count as turn outcomes.
     """
     return (message.meta or {}).get("kind") == "naming"
+
+
+_SIDECAR_KINDS = frozenset({"naming", "compaction"})
+
+
+def is_sidecar_message(message: Message) -> bool:
+    """True for meta-only sidecar rows (naming + compaction cost records).
+
+    Broader than :func:`is_naming_message`: every surface that must keep
+    a sidecar out of the model feed or out of turn outcomes uses this,
+    so a compaction summary call is recorded for Trace/cost exactly like
+    naming without ever being sent back to a provider (strict providers
+    reject its null content) or counted as a reply.
+    """
+    return (message.meta or {}).get("kind") in _SIDECAR_KINDS
 
 
 def updated_at(session: Session) -> str:
@@ -108,7 +123,9 @@ def session_detail(
     """
     if context is None:
         context = context_usage(
-            session.messages, cfg.effective_limits().contextTokens
+            session.messages,
+            cfg.effective_limits().contextTokens,
+            calibration=calibration_factor(session.messages, model=cfg.provider.model),
         )
     detail = {
         "id": session.id,

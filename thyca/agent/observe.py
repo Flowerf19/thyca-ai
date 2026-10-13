@@ -17,11 +17,13 @@ class Observe:
         hot_tokens: int = 0,
         tools_tokens: int = 0,
         pending_user_tokens: int = 0,
+        calibration: float = 1.0,
     ) -> bool:
         return self._sessions.compact_if_needed(
             hot_tokens=hot_tokens,
             tools_tokens=tools_tokens,
             pending_user_tokens=pending_user_tokens,
+            calibration=calibration,
         )
 
     def user(self, stage: Stage) -> None:

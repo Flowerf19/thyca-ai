@@ -8,6 +8,7 @@ Thay đổi của Thyca, viết ngắn gọn cho người dùng.
 - Nút Test API giờ kiểm tra đúng đường chat thật (kèm mức reasoning đã lưu), hết chuyện test OK nhưng chat lỗi.
 - Responses thêm `store: false`: server không còn giữ response mồ côi; Thyca vốn đã tự quản lý hội thoại nên không ảnh hưởng gì.
 - Phiên dài hiện % ngữ cảnh ngay trên ô soạn tin; từ ~80% hiện gợi ý im lặng kiểu phiên im với nút Gọn phiên / Phiên mới: gọn tay dùng chung thuật toán tự động (giữ đuôi lượt hoàn chỉnh, không gọi LLM), gọn khi phiên đang chạy báo bận thay vì đè mất lượt.
+- Gọn phiên giờ tóm tắt phần cũ bằng chính model đang chat (cả khi bấm tay lẫn tự động ở 95%), kèm ô "Giữ ý chính gì?" không bắt buộc; tóm tắt lỗi thì tự rơi về cách cắt cũ, không kẹt lượt. Số % ngữ cảnh được hiệu chuẩn theo số token thật nhà cung cấp trả về cho từng model thay vì chỉ chia 4 như trước.
 - Đây là bản dev, chưa phải beta hay stable; không tự bỏ hậu tố dev khi nâng phiên bản.
 
 ## 0.86.4.dev0 — Development

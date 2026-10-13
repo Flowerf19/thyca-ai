@@ -1,5 +1,5 @@
 ---
-status: draft
+status: in-progress
 created: 2026-10-13
 last_updated: 2026-10-13
 ---
@@ -32,9 +32,8 @@ practical advantage.
   carried context at task boundaries.
 - Approved so far (implemented, uncommitted, see "Already landed"):
   rule-based manual compact + context meter + quiet suggestion chip.
-- Everything below Phase 1+ is **proposal only** — a draft plan records
-  the design, it does not approve execution. Open questions block
-  Phase 1 until answered.
+- Phase 1 was approved (user, 2026-10-13, including the proposed
+  defaults below) and is implemented; Phases 2–4 remain proposals.
 - Out of scope here: multi-bot/orchestrator + shared/private memory
   (separate direction; this plan is its prerequisite — each bot will
   need its own SessionManager/context budget/shrink state).
@@ -90,53 +89,70 @@ dismissing an error note does not suppress the suggestion bucket.
 - Usage display is real wire numbers only ("No ambient copy",
   `chat-status.js`); old last-turn usage meter stays dropped
   (`test_chat_meter.py` pins forbidden ids/names).
+- Token counting (user, 2026-10-13): calibrate the estimator from
+  provider-reported `prompt_tokens` already stored in transcript meta,
+  per model, with the `/4` heuristic as fallback. No new dependency in
+  the first step — `tiktoken` is exact only for OpenAI models, while
+  the models in daily use (Muse via OpenAI-compat gateways) publish no
+  tokenizer; calibration corrects the bias for the actual model.
+  Revisit a BPE library only if calibrated residual error stays large.
+- Summarizer model (user, 2026-10-13): the session's chat model (same
+  provider/effort resolution as the turn, naming-style sidecar call).
+- LLM summary on **both** paths (user, 2026-10-13): manual and auto.
+  Rule-based excerpt remains the failure fallback on both, so a
+  summarizer error can never block a turn or a manual compact.
+- Summary contract (user confirmed proposed defaults, 2026-10-13):
+  4000-char cap, prior summaries merged into one, apply immediately
+  (no preview/undo). Seed prompt `seeds/prompts/compaction.md`
+  (strategic structure: Goal/Done/Current state/Files/Errors &
+  fixes/Constraints/Next), packaged via wheel force-include.
+- Calibration storage (confirmed default): transcript
+  `(estimate_tokens, usage.prompt_tokens)` pairs, per-model median of
+  the last 10 in-band ratios, clamped to [0.5, 2.5], exposed as
+  `detail.context.calibration`.
 
-## Open questions (block Phase 1)
+## Open questions (block Phase 2 only)
 
-1. Summarizer model: session model, or a configurable cheaper model?
-   Reasoning effort for the summary call? Cost must land in Trace like
-   naming (`kind` meta) — confirm shape.
-2. Summary contract: max length (chars/tokens), language (follow
-   conversation), must-keep slots (goal, decisions, files+paths —
-   never file bodies — errors/fixes, user constraints, next steps).
-   One merged summary vs stacked prior summaries on re-compaction?
-3. Does auto-compact also summarise with the LLM, or stay rule-based
-   with LLM only on manual? (Cost + latency if an auto summary fires
-   mid-flow; Claude/Codex do LLM on both.)
-4. Destructive rewrite UX: apply immediately (current), preview first,
-   or apply with an undo/backup window? Manual currently has no undo.
-5. Rehydrate scope for Thyca: recent files derivable from recent
+1. Rehydrate scope for Thyca: recent files derivable from recent
    `read`/`edit` tool calls. Thyca has no todo/plan system — explicitly
    out until one exists. Confirm file count/size caps and PathGuard
    behavior for files that moved/grew.
 
+## Phase 1 landed (2026-10-13, uncommitted)
+
+| ID | Task | Done | Date |
+|----|------|------|------|
+| TASK-100 | Persist raw pre-call estimate in assistant meta; `calibration_factor()` per-model median (last 10 in-band pairs, clamped [0.5, 2.5]) applied in compactor, shrink guard and `context_usage`; `/4` when no pairs | x | 2026-10-13 |
+| TASK-101 | `sessions/compaction.py`: `CompactionPlan` + `plan()`/`excerpt_body()`/`render()` split; marker prefix + meta counts unchanged; `apply_compaction()` re-validates the snapshot before rewrite | x | 2026-10-13 |
+| TASK-102 | `sessions/summary.py` + seed `compaction.md` (force-included in wheel, verified by building it) + `app/summarizing.py` sidecar on the session model; `kind=compaction` meta-only record (assemble/trace/title/transcript treat sidecars like naming); input = user/assistant text + tool names/paths, capped 120k chars tail-biased | x | 2026-10-13 |
+| TASK-103 | Manual: loop-thread summarization under new `TurnState` compact gate; API `instructions` (≤500 chars, 400 on bad shape); WebUI "Giữ ý chính gì?" input + calibration tooltip + summary wording in the confirmation note | x | 2026-10-13 |
+| TASK-104 | Auto: implemented inside `AgentLoop.run` via injected summarizer (covers WebUI **and** CLI through `build_agent_loop`, superseding the run_turn-only sketch); failure falls back to rule compact in the same turn | x | 2026-10-13 |
+| TASK-105 | Prior bodies merged by the summarizer prompt (prior block + merged output, 4000-char cap on accept); excerpt fallback keeps the old reserve-clip chaining | x | 2026-10-13 |
+
+Phase 1 verification 2026-10-13: focused suites green (compaction
+unit/LLM orchestration incl. changed-transcript fallback and loop
+auto path, session, chat/serve, trace, WebUI node suites). Full
+`uv run pytest -q` → **1177 passed, 1 failed** — the same
+pre-existing date failure as the MVP run, no new failures. Wheel
+build verified to contain `seeds/prompts/compaction.md`. Self-review
+only; live browser/product-flow check with a real provider summary
+still outstanding (tests use fakes). Not yet committed/deployed.
+
 ## Proposed tasks (not approved)
-
-Follow dependencies, not task-number order.
-
-### Phase 1: Instruction-guided LLM summary (manual first)
-
-| ID | Task | Prereq |
-|----|------|--------|
-| TASK-101 | `sessions/compaction.py`: split tail selection from marker rendering so a summary text can replace the excerpt without changing turn safety; keep `[compaction: …]` prefix + meta counts for store/assemble compatibility | Q2 |
-| TASK-102 | New summarizer call site in `app/` (mirror naming: standalone, no tools, failure never fails the compact — fall back to excerpt); prompt lives in `seeds/prompts/` like naming | Q1, Q2 |
-| TASK-103 | `ChatApp.compact_session(..., instructions=None)` + API body `{"model"?, "instructions"?}` (length-capped, 400 on bad shape); WebUI optional 1-line "giữ gì" input in the nudge | TASK-102, Q4 |
-| TASK-104 | Prior-summary chaining per Q2 (merge or stack) with total cap; re-compaction tests | TASK-101 |
-| TASK-105 | Decide auto path per Q3; if LLM-on-auto, gate by the same fallback and never block the turn past the backstop | Q3 |
 
 ### Phase 2: Rehydrate
 
 | ID | Task | Prereq |
 |----|------|--------|
-| TASK-201 | Recent-files collector: last N distinct paths from kept + just-omitted `read` calls, re-read capped via existing read/PathGuard rules; missing/oversize files degrade to path-only mentions | Q5, Phase 1 |
+| TASK-201 | Recent-files collector: last N distinct paths from kept + just-omitted `read` calls, re-read capped via existing read/PathGuard rules; missing/oversize files degrade to path-only mentions | Q1, Phase 1 |
 | TASK-202 | Continuation cue as part of the summary message (not a new role); verify assemble keeps marker hoisting and providers accept the shape on chat + responses | TASK-201 |
 
-### Phase 3: Token accuracy + output reserve
+### Phase 3: Tokenizer library + output reserve (only if calibration is not enough)
 
 | ID | Task | Prereq |
 |----|------|--------|
-| TASK-301 | Measure heuristic error (`len/4`) against real provider `prompt_tokens` already stored in `Message.meta` over representative sessions (code/CJK/Vietnamese/tool JSON); publish numbers before adding any dependency | — |
-| TASK-302 | If error warrants it: tokenizer in `llm/` adapters only (core stays stdlib-only), heuristic remains fallback; recalibrate 0.7/0.8/0.9/0.95 together | TASK-301 |
+| TASK-301 | Measure calibrated residual error against stored `prompt_tokens` over representative sessions (code/CJK/Vietnamese/tool JSON); publish numbers before adding any dependency | TASK-100 |
+| TASK-302 | If residual warrants it: BPE tokenizer (`tiktoken`) in `llm/` only (core stays stdlib-only), calibrated `/4` remains fallback; recalibrate 0.7/0.8/0.9/0.95 together. Needs explicit dependency approval | TASK-301 |
 | TASK-303 | Explicit output/reasoning reserve in the effective budget (today only the 5% headroom covers output) | TASK-301 |
 
 ### Phase 4: Surfaces
@@ -144,7 +160,7 @@ Follow dependencies, not task-number order.
 | ID | Task | Prereq |
 |----|------|--------|
 | TASK-401 | `context.compacted` TurnEvent (allowlist in `agent/events.py`) so a following client sees the rewrite live; Trace shows compact turns distinctly | Phase 1 |
-| TASK-402 | CLI parity: REPL command for manual compact (exact spelling is a product choice — decide with Q4) | Phase 1 |
+| TASK-402 | CLI parity: REPL command for manual compact (exact spelling is a product choice) | Phase 1 |
 | TASK-403 | Cache hot-token estimate per landed turn to drop the duplicate peek/scan in `_detail` | — |
 
 ## Test plan (per phase, before calling it done)
@@ -169,7 +185,8 @@ Follow dependencies, not task-number order.
 - Summary hallucination silently replaces facts — mitigate with
   path-only file references, caps, and fallback; never summarise away
   the only copy without the marker counts staying truthful.
-- Cost surprise on auto-summarize for 1M sessions — Q3 default should
-  stay manual-only until measured.
+- Cost surprise on auto-summarize for 1M sessions — accepted by the
+  user (LLM on both paths); mitigated by summarizing user/assistant
+  text only, input caps, and the rule-based fallback.
 - Stored-data compatibility: old markers must keep loading; any marker
   format change needs store/assemble/trace tests in the same change.

@@ -503,3 +503,31 @@ def test_x23_single_delta_callback_routes_by_class() -> None:
         {"type": "llm.thinking", "round": 2, "delta": "t"},
         {"type": "llm.content", "round": 3, "delta": "c"},
     ]
+
+
+def test_loop_records_raw_estimate_beside_usage(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path)
+    session = manager.create()
+    llm = FakeLLM(
+        [ChatReply(content="ok", usage={"prompt_tokens": 12}, model="m")]
+    )
+    loop = AgentLoop(
+        sessions=manager,
+        assemble=Assemble(),
+        think=Think(llm),
+        act=Act(FakeDispatcher({})),
+        observe=Observe(manager),
+        loop_max=3,
+        model="m",
+        context_tokens=100_000,
+    )
+    assert asyncio.run(loop.run("hello")) == "ok"
+    assistant = _load_messages(tmp_path, session.id)[-1]
+    assert assistant.meta["usage"]["prompt_tokens"] == 12
+    estimate = assistant.meta["estimate_tokens"]
+    assert isinstance(estimate, int) and estimate > 0
+    # The recorded pair is usable for the next turn's calibration.
+    from thyca.sessions import calibration_factor
+
+    factor = calibration_factor([assistant], model="m")
+    assert factor == 12 / estimate

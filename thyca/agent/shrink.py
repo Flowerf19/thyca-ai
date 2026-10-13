@@ -13,6 +13,7 @@ id may be dead, so old rows get honest text instead of a pointer.
 """
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Collection
 from dataclasses import replace
@@ -180,11 +181,15 @@ def shrink_stage_messages(
     tools_tokens: int = 0,
     run_start: int = 0,
     live_exec_ids: Collection[str] | None = None,
+    calibration: float = 1.0,
 ) -> tuple[list[Message], int, int, int]:
     """Shrink oldest eligible tool outputs until under 70% of cap.
 
     Returns ``(new_messages, shrunk_count, hidden_bytes, estimate)`` where
-    ``estimate`` is the post-shrink wire estimate (for the 95% backstop).
+    ``estimate`` is the post-shrink **calibrated** wire estimate (for the
+    95% backstop). Internal trigger/target math stays in raw units
+    against ``cap / calibration`` so this guard and the pre-turn
+    compactor cannot drift apart.
     Eligible = tool role, not already shrunk, outside the last 3 rounds.
     ``run_start`` is the index where this run's own messages begin: history
     before it restarts round numbering every turn, so round-protection would
@@ -195,9 +200,18 @@ def shrink_stage_messages(
     Re-fetchable outputs shrink first (oldest first), delta polls next,
     fast-path last.
     """
+    factor = (
+        min(2.5, max(0.5, float(calibration)))
+        if isinstance(calibration, (int, float))
+        and not isinstance(calibration, bool)
+        and math.isfinite(float(calibration))
+        and float(calibration) > 0
+        else 1.0
+    )
+    cap_raw = context_tokens / factor
     estimate = estimate_wire_tokens(messages, tools_tokens)
-    if estimate <= int(context_tokens * TRIGGER_RATIO):
-        return list(messages), 0, 0, estimate
+    if estimate <= int(cap_raw * TRIGGER_RATIO):
+        return list(messages), 0, 0, round(estimate * factor)
     calls_by_id = _calls_by_id(messages)
     candidates: list[tuple[int, int, str | None, bool, bool]] = []
     for index, message in enumerate(messages):
@@ -240,7 +254,7 @@ def shrink_stage_messages(
     shrunk_messages = list(messages)
     shrunk_count = 0
     hidden_total = 0
-    target = int(context_tokens * TARGET_RATIO)
+    target = int(cap_raw * TARGET_RATIO)
     for _, index, exec_id, delta, evicted in candidates:
         original = shrunk_messages[index]
         assert isinstance(original.content, str)
@@ -260,4 +274,4 @@ def shrink_stage_messages(
         hidden_total += hidden
         if estimate < target:
             break
-    return shrunk_messages, shrunk_count, hidden_total, estimate
+    return shrunk_messages, shrunk_count, hidden_total, round(estimate * factor)

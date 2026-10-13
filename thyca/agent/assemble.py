@@ -3,7 +3,7 @@ from __future__ import annotations
 from thyca.llm.prompt_manager import PromptManager
 from thyca.memory.active import ActiveSnapshot
 from thyca.core.protocol import Message
-from thyca.sessions.wire import is_naming_message
+from thyca.sessions.wire import is_sidecar_message
 
 from .stage import Stage
 
@@ -21,7 +21,7 @@ class Assemble:
     def assemble(self, stage: Stage, user_msg: str, *, append_user: bool = True) -> None:
         if append_user and not isinstance(user_msg, str):
             raise ValueError("user_msg must be a string")
-        # Naming rows are transcript-only (assistant with null content and no
+        # Sidecar rows are transcript-only (assistant with null content and no
         # tool calls): strict providers 400 on them, so they never reach the
         # model. Canonical predicate lives in sessions/wire (shared with trace).
         # Compaction markers are the only history system rows the model may
@@ -30,12 +30,12 @@ class Assemble:
         markers = [
             message
             for message in stage.messages
-            if _is_compaction_marker(message) and not is_naming_message(message)
+            if _is_compaction_marker(message) and not is_sidecar_message(message)
         ]
         messages = [
             message
             for message in stage.messages
-            if message.role != "system" and not is_naming_message(message)
+            if message.role != "system" and not is_sidecar_message(message)
         ]
         insert_at = 0
         if isinstance(stage.hot, ActiveSnapshot):

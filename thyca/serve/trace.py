@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from thyca.core.protocol import Message
 from thyca.sessions import Session
-from thyca.sessions.wire import is_naming_message, turn_slices
+from thyca.sessions.wire import is_sidecar_message, turn_slices
 
 
 @dataclass
@@ -68,9 +68,9 @@ def _turn_status(slice_msgs: list[Message]) -> str:
     # carry the same meta, so they are handled too.
     if any(_is_context_stop(m) for m in slice_msgs):
         return "context_limit"
-    # naming meta-messages are not turn outcomes — skip them, keep old semantics
+    # sidecar meta-messages are not turn outcomes — skip them, keep old semantics
     last = next(
-        (m for m in reversed(slice_msgs) if not is_naming_message(m)),
+        (m for m in reversed(slice_msgs) if not is_sidecar_message(m)),
         None,
     )
     if last is None or last.role != "assistant":

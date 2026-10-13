@@ -66,17 +66,23 @@ export function syncContext(detail) {
   const est = Number(detail.context.estimated_tokens || 0);
   const cap = Number(detail.context.context_tokens || 0);
   el.contextMeter.title = `Khoảng ${est.toLocaleString("vi-VN")} / ${cap.toLocaleString("vi-VN")} token (ước lượng)`;
+  const calibration = Number(detail.context.calibration || 1);
+  if (Number.isFinite(calibration) && calibration !== 1) {
+    el.contextMeter.title += ` · đã hiệu chuẩn ×${calibration.toFixed(2)} theo số token thật`;
+  }
   el.contextMeter.classList.toggle("is-warn", ratio >= CONTEXT_WARN_RATIO && ratio < CONTEXT_URGENT_RATIO);
   el.contextMeter.classList.toggle("is-urgent", ratio >= CONTEXT_URGENT_RATIO);
   if (!el.contextNudge) return;
   if (contextNote && contextNote.sessionId === sessionId) {
     el.contextNudgeText.textContent = contextNote.text;
+    if (el.contextFocus) el.contextFocus.hidden = !contextNote.showCompact;
     el.contextCompact.hidden = !contextNote.showCompact;
     el.contextNew.hidden = !contextNote.showNew;
     el.contextNudge.hidden = false;
     hideIdle();
     return;
   }
+  if (el.contextFocus) el.contextFocus.hidden = false;
   el.contextCompact.hidden = false;
   el.contextNew.hidden = false;
   if (detail.running === true || composerDeps.composerBusy() || ratio < CONTEXT_SUGGEST_RATIO) {
@@ -109,6 +115,7 @@ export function dismissContext() {
 
 export function newFromContext() {
   contextNote = null;
+  if (composerDeps.el.contextFocus) composerDeps.el.contextFocus.value = "";
   hideContext();
   composerDeps.newSession();
 }
@@ -124,17 +131,23 @@ export async function compactFromContext() {
   for (const button of [el.contextCompact, el.contextNew, el.contextDismiss]) {
     if (button) button.disabled = true;
   }
+  if (el.contextFocus) el.contextFocus.disabled = true;
   try {
     const body = el.model.value ? { model: el.model.value } : {};
+    const focus = (el.contextFocus?.value || "").trim();
+    if (focus) body.instructions = focus;
     const detail = await postJson(`/api/sessions/${encodeURIComponent(sessionId)}/compact`, body);
     const afterRatio = contextRatio(detail);
     const done = detail?.compaction?.compacted === true;
     const beforePct = beforeRatio === null ? "?" : contextPct(beforeRatio);
     const afterPct = afterRatio === null ? "?" : contextPct(afterRatio);
+    if (done && el.contextFocus) el.contextFocus.value = "";
     contextNote = done
       ? {
           sessionId,
-          text: `Đã gọn phiên: từ ~${beforePct}% còn ~${afterPct}% (${detail.compaction.messages_before} → ${detail.compaction.messages_after} tin nhắn).`,
+          text: detail.compaction.summary === "llm"
+            ? `Đã gọn phiên bằng bản tóm tắt: từ ~${beforePct}% còn ~${afterPct}% (${detail.compaction.messages_before} → ${detail.compaction.messages_after} tin nhắn).`
+            : `Đã gọn phiên: từ ~${beforePct}% còn ~${afterPct}% (${detail.compaction.messages_before} → ${detail.compaction.messages_after} tin nhắn).`,
           showCompact: false,
           showNew: false,
         }
@@ -161,6 +174,7 @@ export async function compactFromContext() {
     for (const button of [el.contextCompact, el.contextNew, el.contextDismiss]) {
       if (button) button.disabled = false;
     }
+    if (el.contextFocus) el.contextFocus.disabled = false;
   }
 }
 

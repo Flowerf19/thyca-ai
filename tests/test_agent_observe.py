@@ -142,6 +142,7 @@ def test_compact_delegates_to_session_manager(tmp_path: Path) -> None:
         "hot_tokens": 0,
         "tools_tokens": 0,
         "pending_user_tokens": 0,
+        "calibration": 1.0,
     }
 
 

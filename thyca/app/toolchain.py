@@ -16,6 +16,7 @@ from thyca.agent.assemble import Assemble
 from thyca.agent.loop import AgentLoop
 from thyca.agent.observe import Observe
 from thyca.agent.think import LLMPort, Think
+from thyca.app.summarizing import LlmSummarizer
 from thyca.config import Config
 from thyca.llm.prompt_manager import PromptManager
 from thyca.sessions import SessionManager
@@ -87,6 +88,7 @@ def build_agent_loop(
         pricing=pricing,
         prompts=prompts,
         context_tokens=context_tokens,
+        summarizer=LlmSummarizer(connect),
     )
 
 

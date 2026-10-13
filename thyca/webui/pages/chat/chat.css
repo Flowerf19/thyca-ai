@@ -988,29 +988,17 @@ button:active {
    @ mention popup, question/error cards, bot drawer. Only Thyca tokens —
    no literal colors. */
 
-/* Sticky session title (r9 round 6): opaque paper keeps the title legible
-   while messages scroll; the ::after fade melts the paper texture in so
-   the header bottom edge is a gradient blend, not a hard cut line.
-   position: sticky already makes the head the positioned ancestor for the
-   fade, so no extra position here (position: relative would kill the
-   stick). z-index stays above .to-bottom (5) and .composer (4). */
-.chat-title-head {
-  position: sticky;
-  top: 0;
-  z-index: var(--z-content);
-  background: var(--color-paper-chat);
-}
-
-.chat-title-head::after {
-  content: "";
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
-  height: 14px;
-  background: linear-gradient(to bottom, var(--color-paper-chat), transparent);
-  pointer-events: none;
-}
+/* Session title: no background of its own. The head is a flex sibling
+   above .conversation-scroll inside .chat-canvas (index.html), so
+   messages scroll inside that pane and can never slide under the title.
+   Leaving the head transparent lets the shell paper texture
+   (.notebook-shell::before) show through continuously — a solid band
+   (previous r9 round-6 sticky + ::after fade) truncated botanical
+   motifs at the head's bottom edge. Sticky is dropped too: .chat-canvas
+   is not a scroll container, so top:0 on its first flex item never
+   stuck and served nothing in this layout (checked desktop, the
+   max-width:56rem rules in kit.css/chat.css, and pick-shell: in every
+   layout the head stays above, never inside, the scrolling pane). */
 
 /* Date + version sit at the bottom-right corner on the chat page (r9 §4.2). */
 .chat-shell .site-header .header-line {

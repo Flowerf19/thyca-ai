@@ -1190,6 +1190,20 @@ button:active {
   font-size: 0.86rem;
 }
 
+/* Group chats are channels at bot level, not sub-sessions: same row
+   scale as bot rows, listed after the bot clusters. */
+.team-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  border-top: var(--rule) solid var(--color-divider);
+  padding-top: 0.35rem;
+}
+
+.team-group-item .session-name {
+  font-size: 0.94rem;
+}
+
 /* Tint dot stays for the shared-room picker options (compact context). */
 .team-bot-dot {
   grid-column: 1;
@@ -1602,7 +1616,8 @@ button:active {
     display: none;
   }
 
-  .is-rail .team-bot-item {
+  .is-rail .team-bot-item,
+  .is-rail .team-group-item {
     grid-template-columns: 1.85rem;
     justify-items: center;
     min-height: 0;
@@ -1610,13 +1625,28 @@ button:active {
   }
 
   .is-rail .team-bot-item .session-name,
-  .is-rail .team-bot-item time {
+  .is-rail .team-bot-item time,
+  .is-rail .team-group-item .session-name,
+  .is-rail .team-group-item time {
     display: none;
   }
 
-  .is-rail .team-bot-item .team-unread {
+  .is-rail .team-bot-item .team-unread,
+  .is-rail .team-group-item .team-unread {
     position: absolute;
     top: 0.05rem;
     inset-inline-end: 0.05rem;
+  }
+
+  .is-rail .team-groups {
+    align-items: center;
+    border-top: 0;
+    padding-top: 0;
+  }
+
+  .is-rail .team-groups::before {
+    content: "";
+    width: 1.6rem;
+    border-top: var(--rule) solid var(--color-divider);
   }
 }

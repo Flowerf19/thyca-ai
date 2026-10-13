@@ -1078,10 +1078,9 @@ def test_sidebar_agents_primary_no_level_two() -> None:
 
 
 def test_sidebar_sessions_render_under_active_bot_row(node: str) -> None:
-    """Structural order: ONE list (#team-bot-list) holds every bot row;
-    the active bot's unified sessions render directly under its row,
-    inside that same list, before the next bot's row. Other bots stay
-    single rows. A shared session keeps its participant annotation."""
+    """Structural order: ONE list (#team-bot-list) — bot rows first
+    (the active bot's solo sessions in its cluster), then group chats
+    at bot level. A group row keeps its participant annotation."""
     value = _sidebar(node,
         "FakeNode.prototype.replaceChildren = function (...nodes)"
         " { this.children = [...nodes]; };"
@@ -1138,15 +1137,16 @@ def test_sidebar_sessions_render_under_active_bot_row(node: str) -> None:
         "  bot: (row.children[0] && row.children[0].dataset.botId) || '',"
         "  sid: (row.children[0] && row.children[0].dataset.sessionId) || '',"
         "  text: row.textContent }));")
-    # Thyca is active (first participant of the open shared room): its
-    # sessions sit directly under its bot row, newest first, and Coder
-    # stays a single row — its private session is NOT in Thyca's list.
+    # Bots first (Thyca active; Coder stays a single row — its private
+    # session is NOT in Thyca's cluster), then the group chat at top
+    # level, ngang bot (2026-10-14): a shared session is a channel of
+    # its own, not a sub-row of any participant.
     # The DM session (\"dm\") renders NO row: the Thyca bot row itself is
     # the DM entry (supersedes the earlier expectation that listed it).
     assert [(row["bot"], row["sid"]) for row in value] == [
-        ("thyca", ""), ("", "shared"), ("coder", "")]
-    # Shared annotation still present on the multi-bot session row.
-    assert "Coder" in value[1]["text"] and "Thyca" in value[1]["text"]
+        ("thyca", ""), ("coder", ""), ("", "shared")]
+    # Shared annotation still present on the group row's subline.
+    assert "Coder" in value[2]["text"] and "Thyca" in value[2]["text"]
 
 
 def test_sidebar_bot_with_only_dm_renders_zero_session_rows(node: str) -> None:

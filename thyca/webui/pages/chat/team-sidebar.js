@@ -4,8 +4,10 @@ import { messageOf } from "../../shared/js/status.js";
 import {
   TEAM_BOT_ID,
   findMainSession,
+  groupSessions,
   isDmDetail,
   isMainSessionDetail,
+  isSharedSession,
   isSoloSession,
   normalizeBots,
   roomParticipantNames,
@@ -252,13 +254,20 @@ function botRow(bot) {
    shared session, the participant names onto one line. Opening works
    like the legacy list: solo rooms confirm the remembered DM, shared
    rooms just open. */
-function unifiedRow(session, botId = "") {
+function unifiedRow(session, botId = "", group = false) {
   const row = document.createElement("div");
   row.className = "session-row";
   const button = document.createElement("button");
   button.type = "button";
-  button.className = "session-item team-session-item";
+  button.className = group
+    ? "session-item team-session-item team-group-item"
+    : "session-item team-session-item";
   button.dataset.sessionId = String(session.id || "");
+  if (group) {
+    const first = bots.find((bot) => bot.id === String(session.bots?.[0] || ""));
+    button.style.setProperty("--team-tint", tintVarFor(first?.id, first?.tint));
+    button.title = `Nhóm chat: ${cleanText(session.title, "Phiên trống")}`;
+  }
   const selected = button.dataset.sessionId === hub.state.activeId;
   button.classList.toggle("is-active", selected);
   if (selected) button.setAttribute("aria-current", "page");
@@ -304,7 +313,7 @@ function sharedPicker() {
   const wrap = document.createElement("div");
   wrap.className = "team-shared-picker";
   const title = document.createElement("p");
-  title.textContent = "Chọn bot cho phiên chung";
+  title.textContent = "Chọn bot cho nhóm chat";
   wrap.append(title);
   if (!sharedPicked) sharedPicked = new Set(hub.state.detail?.bots || [activeBot || TEAM_BOT_ID]);
   const picked = sharedPicked;
@@ -336,7 +345,7 @@ function sharedPicker() {
   const create = document.createElement("button");
   create.type = "button";
   create.className = "screen-button is-primary";
-  create.textContent = "Tạo phiên chung";
+  create.textContent = "Tạo nhóm chat";
   create.addEventListener("click", () => void createShared([...picked]));
   wrap.append(create);
   return wrap;
@@ -346,7 +355,7 @@ async function createShared(botIds) {
   sharedError = "";
   const chosen = botIds.filter(Boolean);
   if (chosen.length < 2) {
-    sharedError = "Phiên chung cần ít nhất hai bot.";
+    sharedError = "Nhóm chat cần ít nhất hai bot.";
     render();
     return;
   }
@@ -359,8 +368,8 @@ async function createShared(botIds) {
     const check = verifySharedSession(detail, chosen);
     if (!check.ok) {
       sharedError = check.missing.length
-        ? `Backend chưa hỗ trợ phiên chung (thiếu ${check.missing.join(", ")} trong phiên mới) — chưa mở phiên chung.`
-        : "Backend chưa hỗ trợ phiên chung — chưa mở phiên chung.";
+        ? `Backend chưa hỗ trợ nhóm chat (thiếu ${check.missing.join(", ")} trong nhóm mới) — chưa mở nhóm chat.`
+        : "Backend chưa hỗ trợ nhóm chat — chưa mở nhóm chat.";
       render();
       return;
     }
@@ -368,7 +377,7 @@ async function createShared(botIds) {
     sharedPicked = null;
     await hub.afterTeamSession(detail);
   } catch (error) {
-    sharedError = messageOf(error, "Chưa tạo được phiên chung — backend đội bot chưa sẵn sàng.");
+    sharedError = messageOf(error, "Chưa tạo được nhóm chat — backend đội bot chưa sẵn sàng.");
     render();
   }
 }
@@ -497,16 +506,18 @@ function render() {
       error.textContent = mainError;
       sub.append(error);
     }
-    // One merged list: this bot's private sessions together with every
-    // shared session it participates in. Thyca's pre-team sessions are
-    // simply Thyca's sessions here. The bot's DM is NOT a row here: the
-    // bot row above already opens it (/api/bots/<id>/dm), so a DM row
+    // This bot's private (solo) sessions only. Shared sessions are not
+    // sub-sessions of any bot — they are group chats and render at top
+    // level below (2026-10-14). Thyca's pre-team sessions are simply
+    // Thyca's sessions here. The bot's DM is NOT a row here: the bot
+    // row above already opens it (/api/bots/<id>/dm), so a DM row
     // duplicated the bot row. unifiedSessionsForBot drops the dm-marked
     // session; findMainSession additionally resolves the pre-marker DM
     // (remembered/newest solo) so that fallback window is dropped too.
     const main = findMainSession(hub.state.sessions, me.id, rememberedId);
     const sessions = unifiedSessionsForBot(hub.state.sessions, me.id)
-      .filter((session) => !main || String(session.id) !== String(main.id));
+      .filter((session) => !main || String(session.id) !== String(main.id))
+      .filter((session) => !isSharedSession(session));
     if (!sessions.length) {
       // A bot with only its DM expands to nothing (the bot row is the DM
       // entry) — no empty text. The note stays only for a bot with no
@@ -521,6 +532,16 @@ function render() {
       sub.append(...sessions.map((session) => unifiedRow(session, me.id)));
     }
     if (!sub.childElementCount) sub.remove();
+  }
+  // Group chats sit at the same level as bots, after them, newest
+  // first — each bot row is a private channel, each group row a
+  // shared channel, in BOTH the expanded list and the rail.
+  const groups = groupSessions(hub.state.sessions);
+  if (groups.length) {
+    const wrap = document.createElement("div");
+    wrap.className = "team-groups";
+    wrap.append(...groups.map((session) => unifiedRow(session, "", true)));
+    rows.push(wrap);
   }
   list.replaceChildren(...rows);
   const actions = actionsBox();

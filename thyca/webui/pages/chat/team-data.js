@@ -96,6 +96,15 @@ export function isSharedSession(session) {
   return Array.isArray(session?.bots) && session.bots.length > 1;
 }
 
+/* Group chats: shared sessions are first-class channels in their own
+   right (not a bot's sub-sessions), newest first. */
+export function groupSessions(sessions) {
+  return (Array.isArray(sessions) ? sessions : [])
+    .filter((session) => isSharedSession(session))
+    .slice()
+    .sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")));
+}
+
 /* @ mention candidates: id/name substring, case-insensitive; empty query
    returns the full roster in order. */
 export function mentionCandidates(bots, query) {

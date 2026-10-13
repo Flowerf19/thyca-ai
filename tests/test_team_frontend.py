@@ -844,6 +844,25 @@ def _strip(node: str, body: str) -> object:
     return json.loads(result.stdout)
 
 
+def _sidebar(node: str, body: str) -> object:
+    """Run node with the fake-DOM prelude + team-sidebar.js. The body
+    stubs document/fetch/localStorage, then drives initTeamSidebar."""
+    source = (
+        _FAKE_DOM
+        + f"import * as sidebar from '{SIDEBAR_SRC.as_posix()}';\n"
+        + f"const main = async () => {{ {body} }};\n"
+        + "console.log(JSON.stringify(await main()));\n"
+    )
+    result = subprocess.run(
+        [node, "--input-type=module", "-e", source],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+    )
+    return json.loads(result.stdout)
+
+
 def test_team_brand_reuses_legacy_chat_brand(node: str) -> None:
     """The bot header is the legacy .chat-brand anatomy — stripe, lockup
     with h2 name, quill, italic status line — with per-bot tint through the
@@ -1015,14 +1034,85 @@ def test_sidebar_agents_primary_no_level_two() -> None:
     # picker/aria wording for a new shared session is not a section).
     for gone in ("<h2>Phiên chung</h2>", 'id="team-shared-list"', 'id="team-history"'):
         assert gone not in html, gone
+    # The separate "Phiên" sessions section is gone entirely: no heading,
+    # no container, no second list — the bot list is the only sidebar list.
+    for gone in ("<h2>Phiên</h2>", 'id="team-sessions"',
+                 'id="team-sessions-heading"', 'id="team-session-list"'):
+        assert gone not in html, gone
+    assert 'id="team-session-list"' not in src
     # Single unified list that replaces them.
-    for kept in ("session-participants", "currentTeamBot",
-                 "unifiedSessionsForBot", "unifiedRow", "team-session-list",
+    for kept in ("\"stack\"", "currentTeamBot",
+                 "unifiedSessionsForBot", "unifiedRow",
                  "team-shared-create"):
         assert kept in src, kept
+    assert 'id="team-bot-list"' in html
     # Participant annotation only for multi-bot sessions, absent for solo.
     assert "names.length > 1" in src
-    assert 'annotation.className = "session-participants"' in src
+    # Participant annotation is the mockup's .stack line (team-v4 handoff).
+    assert 'annotation.className = "stack"' in src
+
+
+def test_sidebar_sessions_render_under_active_bot_row(node: str) -> None:
+    """Structural order: ONE list (#team-bot-list) holds every bot row;
+    the active bot's unified sessions render directly under its row,
+    inside that same list, before the next bot's row. Other bots stay
+    single rows. A shared session keeps its participant annotation."""
+    value = _sidebar(node,
+        "FakeNode.prototype.replaceChildren = function (...nodes)"
+        " { this.children = [...nodes]; };"
+        " FakeNode.prototype.removeAttribute = function (k)"
+        " { delete this.attributes[k]; };"
+        " FakeNode.prototype.querySelector = function (sel) {"
+        "  if (!sel.startsWith('#')) return null;"
+        "  const find = (el) => { for (const c of el.children || []) {"
+        "   if (c && c.id === sel.slice(1)) return c;"
+        "   const r = c && c.children ? find(c) : null;"
+        "   if (r) return r; } return null; };"
+        "  return find(this); };"
+        " const section = new FakeNode('section');"
+        " section.id = 'team-nav'; section.hidden = true;"
+        " const title = new FakeNode('h2'); title.id = 'team-nav-title';"
+        " const botNav = new FakeNode('nav'); botNav.id = 'team-bot-list';"
+        " const actions = new FakeNode('div');"
+        " actions.id = 'team-nav-actions'; actions.hidden = true;"
+        " const createBtn = new FakeNode('button');"
+        " createBtn.id = 'team-shared-create';"
+        " section.append(title, botNav, actions);"
+        " const registry = { '#team-nav': section,"
+        "  '#team-bot-list': botNav, '#team-nav-actions': actions,"
+        "  '#team-shared-create': createBtn };"
+        " document.querySelector = (sel) => registry[sel] || null;"
+        " document.addEventListener = () => {};"
+        " globalThis.window = { addEventListener: () => {} };"
+        " globalThis.localStorage = { getItem: () => null,"
+        "  setItem: () => {} };"
+        " globalThis.fetch = async () => ({ ok: true, status: 200,"
+        "  json: async () => ({ bots: ["
+        "   {id: 'thyca', name: 'Thyca', role: 'chính', status: 'idle'},"
+        "   {id: 'coder', name: 'Coder', role: 'code', status: 'idle'}] }) });"
+        " await sidebar.initTeamSidebar({ state: { activeId: 'shared',"
+        "  detail: { id: 'shared', bots: ['thyca', 'coder'] },"
+        "  sessions: ["
+        "   {id: 'dm', title: 'Riêng Thyca', bots: ['thyca'],"
+        "    dm: 'thyca', updated_at: '2026-06-01T00:00:00Z', turns: 2},"
+        "   {id: 'shared', title: 'Phiên chung', bots: ['thyca', 'coder'],"
+        "    updated_at: '2026-07-02T00:00:00Z', turns: 3},"
+        "   {id: 'coder-only', title: 'Riêng Coder', bots: ['coder'],"
+        "    updated_at: '2026-07-01T00:00:00Z', turns: 1}] },"
+        " loadSession: async () => {}, afterTeamSession: async () => {},"
+        " teamRefresh: async () => {} });"
+        " return botNav.children.map((row) => ({"
+        "  bot: (row.children[0] && row.children[0].dataset.botId) || '',"
+        "  sid: (row.children[0] && row.children[0].dataset.sessionId) || '',"
+        "  text: row.textContent }));")
+    # Thyca is active (first participant of the open shared room): its
+    # sessions sit directly under its bot row, newest first, and Coder
+    # stays a single row — its private session is NOT in Thyca's list.
+    assert [(row["bot"], row["sid"]) for row in value] == [
+        ("thyca", ""), ("", "shared"), ("", "dm"), ("coder", "")]
+    # Shared annotation still present on the multi-bot session row only.
+    assert "Coder" in value[1]["text"] and "Thyca" in value[1]["text"]
+    assert "Coder" not in value[2]["text"]
 
 
 def test_sidebar_picker_hidden_unless_picking() -> None:
@@ -1121,7 +1211,7 @@ def test_strip_css_matches_r9_spec() -> None:
 
 def test_team_nav_reuses_legacy_session_shell() -> None:
     """#team-nav carries the legacy .sessions class (layout, heading
-    padding, mobile pick pattern from kit.css); the shared section reuses
+    padding, mobile pick pattern from kit.css); shared creation reuses
     .sessions-heading + .new-session instead of parallel chrome."""
     import re
 
@@ -1129,16 +1219,18 @@ def test_team_nav_reuses_legacy_session_shell() -> None:
     assert re.search(r'<section class="sessions" id="team-nav"', html)
     assert 'id="team-nav-back"' not in html
     assert 'id="team-bot-list"' in html
-    assert 'id="team-session-list"' in html
+    assert 'id="team-session-list"' not in html
+    assert 'id="team-sessions"' not in html
     assert 'id="team-shared-list"' not in html
     assert 'id="team-history"' not in html
     assert re.search(r'<div id="team-nav-actions" hidden>', html)
-    # Shared creation keeps its entry point: the legacy .new-session "+" in
-    # the unified list's .sessions-heading area, before the one list.
+    # Shared creation keeps its entry point without a "Phiên" heading: the
+    # legacy .new-session "+" sits in the bot list's (Đội) .sessions-heading
+    # area, before the one bot list.
     assert re.search(
         r'<button class="new-session" id="team-shared-create"', html)
-    assert html.index('id="team-sessions-heading"') < html.index('id="team-shared-create"')
-    assert html.index('id="team-shared-create"') < html.index('id="team-session-list"')
+    assert html.index('id="team-nav-title"') < html.index('id="team-shared-create"')
+    assert html.index('id="team-shared-create"') < html.index('id="team-bot-list"')
 
 
 def test_team_css_audit_deleted_vs_kept() -> None:
@@ -1154,7 +1246,7 @@ def test_team_css_audit_deleted_vs_kept() -> None:
     kept = (".team-bot-dot",  # no legacy tint dot
             ".team-unread",  # no legacy unread badge
             ".team-strip[hidden]",  # flex outranks hidden (legacy pattern)
-            ".session-participants",  # no legacy third line
+            ".session-item .stack",  # mockup participant-names line
             ".team-shared-picker",  # no legacy checkbox picker card
             ".team-shared-option",
             ".team-card",  # question/error cards

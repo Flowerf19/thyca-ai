@@ -30,13 +30,13 @@ import {
 // name in .session-name and "role · status" in the italic <time> line. The
 // active bot keeps the legacy left accent bar via .is-active. Clicking an
 // agent opens its main (DM) window directly — there is no second level.
-// Below the agent list, the current bot's sessions form ONE unified list:
-// its private sessions (DM included) and the shared sessions it takes
-// part in, merged as legacy rows; a multi-bot session adds a participant
-// annotation line. The same shared session appears in every participating
-// bot's list. Interaction kept from the current build: a bot-row click
-// both selects that bot (its unified list renders under the bot list)
-// and resolves/opens its DM as the main window.
+// The sidebar is ONE list, the bot list: the selected bot's sessions (its
+// private sessions, DM included, and the shared sessions it takes part
+// in, merged as legacy rows) render directly under that bot's row inside
+// the same list; other bots stay single rows. A multi-bot session adds a
+// participant annotation line. The same shared session appears under
+// every participating bot. A bot-row click both selects that bot (its
+// sessions expand beneath it) and resolves/opens its DM as main window.
 //
 // Progressive enhancement over sessions-sidebar.js: when GET /api/bots
 // answers, this section replaces the legacy session list; when the backend
@@ -74,14 +74,6 @@ function teamSection() {
 
 function botList() {
   return document.querySelector("#team-bot-list");
-}
-
-function sessionsWrap() {
-  return document.querySelector("#team-sessions");
-}
-
-function sessionList() {
-  return document.querySelector("#team-session-list");
 }
 
 function actionsBox() {
@@ -244,7 +236,7 @@ function unifiedRow(session, botId = "") {
   const names = roomParticipantNames(session, bots);
   if (names.length > 1) {
     const annotation = document.createElement("span");
-    annotation.className = "session-participants";
+    annotation.className = "stack";
     annotation.textContent = names.join(" · ");
     button.append(annotation);
   }
@@ -443,15 +435,17 @@ function render() {
   showTeam();
   const head = section.querySelector("#team-nav-title");
   if (head) head.textContent = "Đội";
-  botList()?.replaceChildren(...bots.map(botRow));
-  const wrap = sessionsWrap();
-  const list = sessionList();
-  if (list) list.replaceChildren();
+  const list = botList();
+  if (!list) return;
   // Drop a remembered DM that no longer exists (deleted session): the
   // list is authoritative here, so a missing id is stale, not loading.
   const me = currentTeamBot();
-  if (wrap) wrap.hidden = !me;
-  if (me && list) {
+  // ONE list: every bot is a row; the selected bot's sessions render
+  // directly under its row, inside this same list.
+  const rows = [];
+  for (const bot of bots) {
+    rows.push(botRow(bot));
+    if (!me || bot.id !== me.id) continue;
     const rememberedId = getRememberedDm(me.id);
     if (rememberedId
       && !(hub.state.sessions || []).some((item) => String(item?.id) === rememberedId)) {
@@ -462,7 +456,7 @@ function render() {
       error.className = "screen-status is-error";
       error.setAttribute("role", "alert");
       error.textContent = mainError;
-      list.append(error);
+      rows.push(error);
     }
     // One merged list: this bot's private sessions (its DM among them)
     // together with every shared session it participates in. Thyca's
@@ -472,11 +466,12 @@ function render() {
       const empty = document.createElement("p");
       empty.className = "sidebar-state";
       empty.textContent = "Chưa có phiên.";
-      list.append(empty);
+      rows.push(empty);
     } else {
-      list.append(...sessions.map((session) => unifiedRow(session, me.id)));
+      rows.push(...sessions.map((session) => unifiedRow(session, me.id)));
     }
   }
+  list.replaceChildren(...rows);
   const actions = actionsBox();
   if (actions) {
     actions.replaceChildren();

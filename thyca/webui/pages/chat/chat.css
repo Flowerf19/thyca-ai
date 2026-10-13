@@ -1151,16 +1151,17 @@ button:active {
   content: none;
 }
 
-/* Shared-room participant annotation: the third line of a legacy row
-   (grid column 2, row 3), muted italic. Legacy rows stop at two lines. */
-.session-participants {
+/* Shared-room participant annotation, ported from the team-v4 handoff
+   (.session-item .stack, team-v4.css): the participant-names line under
+   the title, grid column 2. Overflow ellipsis is the real-data
+   adaptation for long bot names; legacy rows stop at two lines. */
+.session-item .stack {
   grid-column: 2;
   grid-row: 3;
+  margin-top: 0.15rem;
   overflow: hidden;
   color: var(--color-muted);
-  font-family: var(--font-reading);
-  font-size: 0.72rem;
-  font-style: italic;
+  font: italic 0.74rem var(--font-reading);
   line-height: 1.4;
   text-overflow: ellipsis;
   white-space: nowrap;

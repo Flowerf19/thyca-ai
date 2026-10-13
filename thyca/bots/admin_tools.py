@@ -34,10 +34,13 @@ ADMIN_TOOL_NAMES = (
 class AdminDeps:
     """Everything admin handlers need (wired once by ChatApp)."""
 
-    def __init__(self, bots, runtime, facade_fn) -> None:
+    def __init__(self, bots, runtime, facade_fn, dm_post=None) -> None:
         self.bots = bots
         self.runtime = runtime
         self.facade_fn = facade_fn
+        #: ``(bot_id, text, current_room_id) -> dict`` landing a message
+        #: in the bot's own DM (ChatApp owns DM resolution + room writes).
+        self.dm_post = dm_post
 
 
 def _caller() -> str | None:
@@ -63,6 +66,7 @@ def register_admin_tools(registry: ToolRegistry, deps: AdminDeps) -> None:
         _send_spec(deps),
         _fetch_spec(deps),
         _task_open_spec(deps),
+        _message_user_spec(deps),
     ):
         if registry.get(spec.name) is None:
             registry.register(spec)
@@ -151,7 +155,9 @@ def _send_spec(deps: AdminDeps) -> ToolSpec:
         description=(
             "Send a message/task to another bot and get its reply. The "
             "recipient bot runs its own turn immediately; its reply is "
-            "returned to you and recorded in the room under its name. "
+            "returned to you (in a shared room it is also recorded under "
+            "its name; in a private DM it is not shown there — summarize "
+            "it yourself). "
             "Your identity as sender is taken from your turn, never from "
             "arguments. kind: delegate|message|help_request (default message). "
             "Large content should travel by reference: pass refs (file paths, "
@@ -231,6 +237,50 @@ def _fetch_spec(deps: AdminDeps) -> ToolSpec:
             "type": "object",
             "properties": {"span_id": {"type": "string"}},
             "required": ["span_id"],
+            "additionalProperties": False,
+        },
+        handler=handler,
+        parallel_safe=True,
+    )
+
+
+def _message_user_spec(deps: AdminDeps) -> ToolSpec:
+    async def handler(args: dict) -> str:
+        # Identity from the in-flight turn only: a bot can post solely
+        # into its own DM, under its own name (no bot_id argument).
+        ctx = current_bot_turn_context()
+        sender = ctx.sender_id if ctx is not None else current_bot_id()
+        if sender is None:
+            return "denied: message_user requires an in-flight bot turn"
+        message = args.get("message")
+        if not isinstance(message, str) or not message.strip():
+            return "missing argument: message"
+        if deps.dm_post is None:
+            return "message_user failed: DM posting is unavailable here"
+        try:
+            result = deps.dm_post(
+                sender, message.strip(),
+                ctx.room_id if ctx is not None else "",
+            )
+        except Exception as exc:
+            return f"message_user failed: {exc}"
+        return json.dumps(result, ensure_ascii=False)
+
+    return ToolSpec(
+        name="message_user",
+        description=(
+            "Post a message to the user in YOUR OWN private DM window, "
+            "under your name. Use this when you are asked to message the "
+            "user privately/directly, or when something should be "
+            "discussed with the user privately instead of in the current "
+            "room. The message does not appear in the current room. If "
+            "you are already talking in your own DM with the user, just "
+            "reply normally instead."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {"message": {"type": "string"}},
+            "required": ["message"],
             "additionalProperties": False,
         },
         handler=handler,
@@ -371,7 +421,8 @@ def _create_spec(deps: AdminDeps) -> ToolSpec:
             "thinking, tint (theme token), bash (ask|allow|deny), skills, tools, "
             "hidden_tools, memory {read,write,propose_team}, schedule, persona. "
             "Every created bot also receives the baseline tools (bot_send, "
-            "memory_remember, memory_search, memory_get, memory_propose_team) "
+            "message_user, memory_remember, memory_search, memory_get, "
+            "memory_propose_team) "
             "unioned with `tools`; hidden_tools still blocks them."
         ),
         parameters={

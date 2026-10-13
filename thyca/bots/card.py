@@ -39,6 +39,7 @@ BASELINE_BOT_TOOLS: tuple[str, ...] = (
     "bot_send",
     "bot_fetch",
     "task_open",
+    "message_user",
     "memory_remember",
     "memory_search",
     "memory_get",

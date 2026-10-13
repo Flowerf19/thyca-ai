@@ -27,6 +27,17 @@ chính mình.
     thắng khi mâu thuẫn; trống cũng an toàn (không còn fallback).
 - Bus chặn `sender == recipient` (tự gửi luôn là nhầm danh tính).
 
-Chưa thuộc gói này: luật ghi row A2A vào phòng gốc kể cả DM 1-1
-(`chat_app._deliver_envelope`/`_record_bus_events`) — chờ user chốt
-DM giữ 1-1 tuyệt đối hay phòng thường được promote thành team session.
+## Bổ sung cùng ngày — luật kênh riêng (user chốt)
+
+"User nhắn riêng phải trả lời riêng. Bot cần bàn riêng với user thì
+nhắn DM."
+
+- DM cố định là kênh riêng tuyệt đối (user + bot chủ kênh): app không
+  ghi bất kỳ row A2A nào vào DM của bot khác. Bot nhận delegate vẫn
+  chạy trong session nội bộ, reply về làm tool result cho bot gửi —
+  bot gửi tự báo cáo dưới tên mình. Result chỉ được ghi vào một DM khi
+  bot nhận là chủ DM đó (việc lịch/độc lập báo về nhà).
+- Tool baseline `message_user`: bot đăng tin cho user vào DM của chính
+  nó (danh tính từ turn context, không có tham số bot_id). Đang ở ngay
+  trong DM của mình thì bị từ chối kèm hướng dẫn trả lời bình thường,
+  tránh đăng trùng.

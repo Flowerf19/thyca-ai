@@ -528,3 +528,128 @@ def test_mailbox_render_clips_refs() -> None:
     entries = refs_line.removeprefix("  refs: ").split(", ")
     assert len(entries) == MAX_REFS
     assert all(len(entry) <= MAX_REF_CHARS for entry in entries)
+
+
+# --- 10. DM privacy + message_user (user decision 2026-10-13) ----------------
+
+_GREETING = "GREETING-FROM-CODER"
+
+
+class _DmFlowLLM:
+    """Thyca delegates to coder; coder greets the user via message_user.
+
+    ``greet=False`` instead makes coder answer plainly (its reply then
+    returns to Thyca as a tool result only)."""
+
+    def __init__(self, *, greet: bool) -> None:
+        self.greet = greet
+
+    async def chat(self, messages, tools=None):
+        text = "\n".join(str(m.content or "") for m in messages)
+        tool_text = "\n".join(
+            str(m.content or "") for m in messages if m.role == "tool"
+        )
+        usage = {"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6}
+        if "PERSONA-CODER" in text:
+            if tool_text:
+                return ChatReply(content="coder done", model="m-coder",
+                                 usage=usage)
+            if self.greet:
+                return ChatReply(content=None, model="m-coder", tool_calls=[
+                    ToolCall(id="c-dm", name="message_user",
+                             arguments={"message": _GREETING}),
+                ])
+            return ChatReply(content="coder plain answer", model="m-coder",
+                             usage=usage)
+        if tool_text:
+            return ChatReply(content="thyca summary", model="m", usage=usage)
+        return ChatReply(content=None, model="m", tool_calls=[
+            ToolCall(id="t-delegate", name="bot_delegate",
+                     arguments={"bot_id": "coder", "task": "say hi to the user"}),
+        ])
+
+
+def _rows(app: ChatApp, session_id: str) -> list[dict]:
+    return app.get_payload(session_id)["messages"]
+
+
+def _bot_rows(rows: list[dict], bot_id: str) -> list[dict]:
+    return [r for r in rows if (r.get("meta") or {}).get("bot_id") == bot_id]
+
+
+def _dm_flow(tmp_path: Path, *, greet: bool):
+    app = _chat(tmp_path, _DmFlowLLM(greet=greet))
+    try:
+        app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
+                                 description="Writes code.", persona="PERSONA-CODER"))
+        thyca_dm = app.bot_dm("thyca")["id"]
+        detail = app.turn(thyca_dm, "nhờ coder nhắn riêng chào mình")
+        return app, thyca_dm, detail
+    except Exception:
+        app.shutdown()
+        raise
+
+
+def test_delegate_from_thyca_dm_records_no_other_bot_rows(tmp_path: Path) -> None:
+    app, thyca_dm, detail = _dm_flow(tmp_path, greet=False)
+    try:
+        assert detail["reply"] == "thyca summary"
+        rows = _rows(app, thyca_dm)
+        assert _bot_rows(rows, "coder") == [], (
+            "a fixed DM must never show another bot speaking in it")
+        kinds = {(r.get("meta") or {}).get("kind") for r in rows}
+        assert "delegate" not in kinds and "result" not in kinds
+        # The recipient really ran — privately, in its internal session.
+        internal = app._runtime.internal_session("coder", thyca_dm)
+        msgs = app._runtime.store_for("coder").load(internal.id).messages
+        assert any("say hi to the user" in (m.content or "") for m in msgs)
+    finally:
+        app.shutdown()
+
+
+def test_message_user_lands_in_coders_own_dm_only(tmp_path: Path) -> None:
+    app, thyca_dm, detail = _dm_flow(tmp_path, greet=True)
+    try:
+        assert detail["reply"] == "thyca summary"
+        coder_dm = app.bot_dm("coder")["id"]
+        dm_rows = _rows(app, coder_dm)
+        greetings = [r for r in _bot_rows(dm_rows, "coder")
+                     if _GREETING in (r.get("content") or "")]
+        assert greetings, "message_user must post into the bot's own DM"
+        thyca_rows = _rows(app, thyca_dm)
+        assert _bot_rows(thyca_rows, "coder") == []
+        assert all(_GREETING not in (r.get("content") or "") for r in thyca_rows)
+    finally:
+        app.shutdown()
+
+
+class _DirectDmLLM:
+    """Coder, already in its own DM, still tries message_user."""
+
+    async def chat(self, messages, tools=None):
+        tool_text = "\n".join(
+            str(m.content or "") for m in messages if m.role == "tool"
+        )
+        usage = {"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6}
+        if tool_text:
+            assert "already in your private DM" in tool_text
+            return ChatReply(content="coder direct reply", model="m-coder",
+                             usage=usage)
+        return ChatReply(content=None, model="m-coder", tool_calls=[
+            ToolCall(id="c-dm", name="message_user",
+                     arguments={"message": "DOUBLE-GREETING"}),
+        ])
+
+
+def test_message_user_inside_own_dm_does_not_double_post(tmp_path: Path) -> None:
+    app = _chat(tmp_path, _DirectDmLLM())
+    try:
+        app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
+                                 description="Writes code.", persona="PERSONA-CODER"))
+        coder_dm = app.bot_dm("coder")["id"]
+        detail = app.turn(coder_dm, "chào coder")
+        assert detail["reply"] == "coder direct reply"
+        rows = _rows(app, coder_dm)
+        assert all("DOUBLE-GREETING" not in (r.get("content") or "") for r in rows)
+    finally:
+        app.shutdown()

@@ -127,7 +127,8 @@ class ChatApp:
 
         register_admin_tools(
             self._registry,
-            AdminDeps(self._bots, self._runtime, self.job_facade),
+            AdminDeps(self._bots, self._runtime, self.job_facade,
+                      dm_post=self.post_bot_dm_message),
         )
         self._mcp = (
             MCPManager() if mcp_factory is None else MCPManager(process_factory=mcp_factory)
@@ -859,6 +860,41 @@ class ChatApp:
                 if close is not None:
                     await close()
 
+    def _room_dm_owner(self, session_id: str) -> str | None:
+        """Bot id if *session_id* is that bot's fixed DM, else None."""
+        for session in self._sessions.list_sessions():
+            if session.id == session_id:
+                return session.dm_bot
+        return None
+
+    def post_bot_dm_message(self, bot_id: str, text: str,
+                            current_room_id: str = "") -> dict:
+        """Post *text* into *bot_id*'s own DM under its own name.
+
+        The ``message_user`` tool's landing path (user decision
+        2026-10-13): a bot that needs to talk privately with the user
+        writes into its own DM window — never into the room its current
+        turn happens to run in. Refused when the current turn already
+        runs in that DM, where a normal reply is the private answer."""
+        dm = self.bot_dm(bot_id)
+        if current_room_id and current_room_id == dm["id"]:
+            return {"ok": False, "error": (
+                "you are already in your private DM with the user; "
+                "just reply normally")}
+        cfg = self._current_cfg()
+        room = SessionManager(
+            limits=cfg.effective_limits(),
+            timezone_name=cfg.timeline.timezone,
+            store=self._sessions.store,
+        )
+        room.load(dm["id"])
+        room.append(Message(
+            role="assistant",
+            content=text,
+            meta={"bot_id": bot_id, "kind": "message"},
+        ))
+        return {"ok": True, "session_id": dm["id"]}
+
     async def _deliver_envelope(self, envelope, ctx) -> str:
         """A2A delivery: run the recipient bot's own turn, record it.
 
@@ -868,7 +904,14 @@ class ChatApp:
         and its reply lands in the room transcript under its own name
         with aggregated cost meta and a span parented to the envelope.
         The reply text is returned for the sender's tool result, so
-        multi-hop bot->bot flows compose inside one sender turn."""
+        multi-hop bot->bot flows compose inside one sender turn.
+
+        DM privacy (user decision 2026-10-13): a fixed DM is strictly
+        user + its owner bot, so nothing A2A is recorded into someone
+        else's DM — the recipient still runs and its reply still
+        returns to the sender, who reports it under its own name. A
+        result may land in a DM only when the recipient owns that DM
+        (scheduled/independent work reporting home)."""
         room_id = envelope.session_id or ctx.room_id
         try:
             card = self._bots.require(envelope.recipient)
@@ -914,7 +957,8 @@ class ChatApp:
             )
         except Exception as exc:
             return f"delivery failed: {type(exc).__name__}: {exc}"
-        if room is not None:
+        dm_owner = self._room_dm_owner(room_id) if room_id else None
+        if room is not None and (dm_owner is None or dm_owner == envelope.recipient):
             room.append(
                 Message(
                     role="assistant",
@@ -934,8 +978,15 @@ class ChatApp:
         One row per envelope under the sender's name; the app layer is the
         only writer (bots never touch the room transcript directly). The
         bus log is drained per room, so the bus's trimmed global log can
-        never shift an index past live rows for other rooms."""
-        for event in self._bus.drain_log(session_id):
+        never shift an index past live rows for other rooms.
+
+        A fixed DM never receives A2A rows (strictly user + owner): its
+        envelopes are still drained so the per-room cursor advances,
+        they are just not written into the private transcript."""
+        events = self._bus.drain_log(session_id)
+        if self._room_dm_owner(session_id) is not None:
+            return
+        for event in events:
             envelope = event.envelope
             # Payload is already the <=1000-char prompt-facing excerpt;
             # refs ride in meta so the room row stays fetchable (CBE-3).

@@ -55,7 +55,7 @@ MEMORY_PROPOSE_TOOL = "memory_propose_team"
 #: ``bot_fetch`` (CBE-3) reads full envelope bodies by span_id;
 #: ``task_open`` (CBE-4) records an open-task event in the transcript.
 SEND_TOOL_NAME = "bot_send"
-PEER_TOOL_NAMES = frozenset({"bot_send", "bot_fetch", "task_open"})
+PEER_TOOL_NAMES = frozenset({"bot_send", "bot_fetch", "task_open", "message_user"})
 
 
 def _layered_soul(shared_soul: str, persona: str) -> str:

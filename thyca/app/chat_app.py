@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 import threading
 import time
@@ -13,9 +14,11 @@ from thyca.agent.act import Act
 from thyca.agent.events import EventSink, TurnEvent
 from thyca.agent.think import LLMPort
 from thyca.config import Config, ConfigError, load
-from thyca.memory.active import ActiveMemory
+from thyca.core.protocol import estimate_tokens as _chars_to_tokens
+from thyca.llm.prompt_manager import PromptManager
+from thyca.memory.active import ActiveMemory, ActiveSnapshot
 from thyca.sessions.wire import session_detail, session_summary
-from thyca.sessions import Session, SessionManager
+from thyca.sessions import Session, SessionManager, context_usage
 from thyca.sessions.store import SessionStore
 from thyca.sessions.title import is_blank
 from thyca.tools.gateway.background import BackgroundProcs
@@ -176,6 +179,37 @@ class ChatApp:
         """Drop the notebook. Memory leaves written from it are left alone."""
         self._turns.delete_unclaimed(self._sessions, session_id)
 
+    def compact_session(
+        self, session_id: str, model: str | None = None
+    ) -> dict:
+        """Manually compact one idle session; return its fresh detail.
+
+        Mirrors turn setup (live knobs + MCP sync + per-operation
+        SessionManager) so the tail budget uses the same limits and
+        overhead the next turn would. A turn in flight raises
+        ``SessionBusy`` via the TurnState gate.
+        """
+        turn_cfg = overlay_turn_cfg(self._current_cfg(), model, None)
+        self._memory.tail_kb = turn_cfg.limits.hotTailKB
+        self._memory.timezone_name = turn_cfg.timeline.timezone
+        self._zone = ZoneInfo(turn_cfg.timeline.timezone)
+        self._sync_mcp(turn_cfg)
+        sessions = SessionManager(
+            limits=turn_cfg.effective_limits(),
+            timezone_name=turn_cfg.timeline.timezone,
+            store=self._sessions.store,
+        )
+        sessions.load(session_id)
+        hot_tokens, tools_tokens = self._overhead_tokens(session_id)
+        result = self._turns.compact_unclaimed(
+            sessions,
+            session_id,
+            hot_tokens=hot_tokens,
+            tools_tokens=tools_tokens,
+        )
+        detail = self._detail(sessions.current, turn_cfg, running=False)
+        return {**detail, "compaction": result}
+
     def default_model(self) -> str:
         """Default model id (for failure logs when the turn omits model)."""
         return self._current_cfg().defaultModel
@@ -330,6 +364,43 @@ class ChatApp:
         """Session store for read-only scan surfaces (e.g. /api/traces)."""
         return self._sessions.store
 
+    def _overhead_tokens(self, session_id: str) -> tuple[int, int]:
+        """(hot, tools) sizes the next turn would add, AgentLoop-style.
+
+        Reads via ``peek`` (never ``refresh``): a GET must not roll the
+        day, recreate files, or race a turn's real refresh on shared
+        state. Best-effort for read paths: a memory file that fails to
+        read must not blank the transcript, so hot degrades to 0 (the
+        ratio becomes a lower bound) while a real turn still surfaces
+        the error.
+        """
+        tools_tokens = (
+            _chars_to_tokens(json.dumps(self._tools, ensure_ascii=False))
+            if self._tools
+            else 0
+        )
+        try:
+            hot = self._memory.peek(
+                self._state, datetime.now(self._zone), session_id=session_id
+            )
+            hot_tokens = (
+                _chars_to_tokens(PromptManager().build(hot))
+                if isinstance(hot, ActiveSnapshot)
+                else 0
+            )
+        except Exception:
+            hot_tokens = 0
+        return hot_tokens, tools_tokens
+
+    def _context_usage(self, session: Session, cfg: Config) -> dict:
+        hot_tokens, tools_tokens = self._overhead_tokens(session.id)
+        return context_usage(
+            session.messages,
+            cfg.effective_limits().contextTokens,
+            hot_tokens=hot_tokens,
+            tools_tokens=tools_tokens,
+        )
+
     def _detail(
         self, session: Session, cfg: Config, *, running: bool | None = None
     ) -> dict:
@@ -341,4 +412,5 @@ class ChatApp:
             skills_root=self.skills_root,
             running=running,
             started_at=started_at,
+            context=self._context_usage(session, cfg),
         )

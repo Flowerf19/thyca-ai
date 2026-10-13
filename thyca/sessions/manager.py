@@ -214,32 +214,78 @@ class SessionManager:
         pending_user_tokens: int = 0,
     ) -> bool:
         with self._lock:
-            session = self._current_locked()
-            on_disk, title, title_source, attempted = self.store.scan(session.path)
-            session.messages[:] = on_disk
-            session.naming_attempted = session.naming_attempted or attempted
-            if title:
-                session.title = title
-                session.title_source = title_source
-            compacted = self.compactor.compact(
-                on_disk,
-                self.limits.contextTokens,
+            return self._compact_locked(
+                force=False,
                 hot_tokens=hot_tokens,
                 tools_tokens=tools_tokens,
                 pending_user_tokens=pending_user_tokens,
+            )["compacted"]
+
+    def compact_manual(
+        self,
+        *,
+        hot_tokens: int = 0,
+        tools_tokens: int = 0,
+    ) -> dict:
+        """User-triggered compact: same tail policy, no 95% threshold.
+
+        Returns exact before/after message counts so callers can report
+        what happened without re-deriving marker arithmetic. A transcript
+        that already fits the tail budget is an honest no-op
+        (``compacted`` False, counts equal), never a junk marker.
+        """
+        with self._lock:
+            return self._compact_locked(
+                force=True,
+                hot_tokens=hot_tokens,
+                tools_tokens=tools_tokens,
+                pending_user_tokens=0,
             )
-            if compacted is None:
-                return False
-            self.store.rewrite(
-                session.id,
-                session.path,
-                compacted,
-                title=session.title,
-                title_source=session.title_source,
-                naming_attempted=session.naming_attempted,
-            )
-            session.messages[:] = compacted
-            return True
+
+    def _compact_locked(
+        self,
+        *,
+        force: bool,
+        hot_tokens: int,
+        tools_tokens: int,
+        pending_user_tokens: int,
+    ) -> dict:
+        session = self._current_locked()
+        on_disk, title, title_source, attempted = self.store.scan(session.path)
+        session.messages[:] = on_disk
+        session.naming_attempted = session.naming_attempted or attempted
+        if title:
+            session.title = title
+            session.title_source = title_source
+        before = len(on_disk)
+        compacted = self.compactor.compact(
+            on_disk,
+            self.limits.contextTokens,
+            hot_tokens=hot_tokens,
+            tools_tokens=tools_tokens,
+            pending_user_tokens=pending_user_tokens,
+            force=force,
+        )
+        if compacted is None:
+            return {
+                "compacted": False,
+                "messages_before": before,
+                "messages_after": before,
+            }
+        self.store.rewrite(
+            session.id,
+            session.path,
+            compacted,
+            title=session.title,
+            title_source=session.title_source,
+            naming_attempted=session.naming_attempted,
+        )
+        session.messages[:] = compacted
+        return {
+            "compacted": True,
+            "messages_before": before,
+            "messages_after": len(compacted),
+        }
 
     def refresh_title(self) -> None:
         """Re-read the title a stored meta line carries (see title module)."""

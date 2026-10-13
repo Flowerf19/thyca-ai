@@ -24,6 +24,7 @@ from . import (
     SessionNotFound,
 )
 from .ask_remember import ask_remember
+from .compaction import context_usage
 from .title import display_title
 
 
@@ -93,19 +94,29 @@ def session_detail(
     skills_root: Path | None = None,
     running: bool | None = None,
     started_at: str | None = None,
+    context: dict | None = None,
 ) -> dict:
     """Wire payload for one session.
 
     ``running`` is passed in when the caller already knows the answer (the turn
     itself); otherwise the caller supplies ``started_at`` for the session it is
     asking about, or leaves both unset for "not running".
+
+    ``context`` is the caller's overhead-aware usage snapshot (hot prompt +
+    tools schema measured where they live). Without it this falls back to a
+    transcript-only lower bound so pure wire callers stay I/O-free.
     """
+    if context is None:
+        context = context_usage(
+            session.messages, cfg.effective_limits().contextTokens
+        )
     detail = {
         "id": session.id,
         "title": session_title(session),
         "model": cfg.provider.model,
         "messages": [message_dict(item, skills_root) for item in session.messages],
         "ask_remember": ask_remember(session.messages, datetime.now(UTC)),
+        "context": context,
     }
     # A turn in flight is invisible on disk until it finishes writing, so
     # the client is told here: it can wait instead of guessing.

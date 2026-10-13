@@ -40,6 +40,34 @@ def estimate_tokens(msg: Message) -> int:
     return _chars_to_tokens(json.dumps(payload, ensure_ascii=False))
 
 
+def context_usage(
+    messages: list[Message],
+    context_tokens: int,
+    *,
+    hot_tokens: int = 0,
+    tools_tokens: int = 0,
+    pending_user_tokens: int = 0,
+) -> dict:
+    """Wire-estimate snapshot for UI hints: transcript + turn overhead.
+
+    Uses the same estimator the compactor and the mid-turn guard use, so a
+    displayed ratio means the same thing as the 80%/95% thresholds. Pure:
+    callers that cannot measure overhead pass 0 and get a transcript-only
+    lower bound.
+    """
+    transcript = sum(estimate_tokens(msg) for msg in messages)
+    overhead = hot_tokens + tools_tokens + pending_user_tokens
+    estimated = transcript + overhead
+    ratio = estimated / context_tokens if context_tokens > 0 else 0.0
+    return {
+        "estimated_tokens": estimated,
+        "transcript_tokens": transcript,
+        "overhead_tokens": overhead,
+        "context_tokens": context_tokens,
+        "ratio": ratio,
+    }
+
+
 def _marker_reserve_tokens() -> int:
     """Worst-case marker cost: a full-excerpt probe, counted like any message."""
     probe = Message(
@@ -62,13 +90,15 @@ class SessionCompactor:
         hot_tokens: int = 0,
         tools_tokens: int = 0,
         pending_user_tokens: int = 0,
+        force: bool = False,
     ) -> list[Message] | None:
         overhead = hot_tokens + tools_tokens + pending_user_tokens
         # Fire at the backstop ratio, not at the cap: a turn that would
         # die at the mid-turn guard must compact first (no dead zone).
         # Overhead covers what assemble adds after this (hot prompt, tools
         # schema, pending user text) so the estimate matches the guard's.
-        if (
+        # ``force`` is the manual path: same turn-safe tail, no threshold.
+        if not force and (
             sum(estimate_tokens(msg) for msg in messages) + overhead
             <= int(context_tokens * BACKSTOP_RATIO)
         ):

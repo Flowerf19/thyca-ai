@@ -186,6 +186,35 @@ def session_turn_follow(handler, app: ChatApp | None, session_id: str) -> None:
         hub.drop(items)
 
 
+def session_compact(handler, app: ChatApp | None, session_id: str) -> None:
+    """``POST /api/sessions/<id>/compact`` — manual Gọn phiên.
+
+    Body is ``{}`` or ``{"model": "..."}`` (the composer's per-turn
+    override, so the tail budget matches the model on screen). Returns
+    the fresh session detail plus a ``compaction`` summary.
+    """
+    from thyca.app.chat_app import InvalidTurnOption
+
+    if _missing_chat(handler, app):
+        return
+
+    def run(payload: dict) -> None:
+        model = payload.get("model")
+        if model is not None and (
+            not isinstance(model, str) or not model.strip()
+        ):
+            handler._json(400, {"error": "invalid model"})
+            return
+        try:
+            handler._json(200, app.compact_session(session_id, model=model))
+        except InvalidTurnOption as exc:
+            handler._json(400, {"error": str(exc)})
+        except Exception as exc:
+            _sessions_error(handler, exc)
+
+    _with_json(handler, run)
+
+
 def session_rename(handler, app: ChatApp | None, path: str) -> None:
     """``PATCH /api/sessions/<id>`` — store a title the user typed."""
     if _missing_chat(handler, app):

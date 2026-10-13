@@ -316,6 +316,61 @@ def test_single_oversize_turn_kept(tmp_path: Path) -> None:
     assert [item.role for item in loaded.messages] == ["user", "assistant"]
 
 
+def test_context_usage_includes_overhead() -> None:
+    from thyca.sessions import context_usage
+
+    messages = [msg("user", "hello"), msg("assistant", "hi there")]
+    bare = context_usage(messages, 1000)
+    full = context_usage(messages, 1000, hot_tokens=40, tools_tokens=60)
+    assert full["transcript_tokens"] == bare["transcript_tokens"]
+    assert full["overhead_tokens"] == 100
+    assert full["estimated_tokens"] == bare["estimated_tokens"] + 100
+    assert full["context_tokens"] == 1000
+    assert full["ratio"] == full["estimated_tokens"] / 1000
+
+
+def test_manual_compact_forces_below_threshold(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path, LimitsCfg(contextTokens=1000))
+    session = manager.create()
+    for i in range(4):
+        manager.append(msg("user", "u" * 300 + str(i)))
+        manager.append(msg("assistant", "a" * 300))
+    # Under the 95% auto threshold, over the 60% tail budget: auto is a
+    # no-op, manual must still compact with the same turn-safe tail.
+    assert not manager.compact_if_needed()
+    result = manager.compact_manual()
+    assert result["compacted"] is True
+    assert result["messages_before"] == 8
+    assert result["messages_after"] < 8
+    loaded = manager.load(session.id)
+    assert len(loaded.messages) == result["messages_after"]
+    assert loaded.messages[0].role == "system"
+    assert (loaded.messages[0].content or "").startswith("[compaction: omitted ")
+
+
+def test_manual_compact_noop_when_already_fits(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path, LimitsCfg(contextTokens=1000))
+    session = manager.create()
+    manager.append(msg("user", "hi"))
+    manager.append(msg("assistant", "hello"))
+    result = manager.compact_manual()
+    assert result == {"compacted": False, "messages_before": 2, "messages_after": 2}
+    loaded = manager.load(session.id)
+    assert [item.role for item in loaded.messages] == ["user", "assistant"]
+
+
+def test_manual_compact_keeps_incomplete_tail(tmp_path: Path) -> None:
+    manager = SessionManager(tmp_path, LimitsCfg(contextTokens=1000))
+    manager.create()
+    for i in range(4):
+        manager.append(msg("user", "u" * 300 + str(i)))
+        manager.append(msg("assistant", "a" * 300))
+    manager.append(msg("user", "pending-question"))
+    result = manager.compact_manual()
+    assert result["compacted"] is True
+    assert manager.current.messages[-1].content == "pending-question"
+
+
 def test_traversal_and_replace_failure_preserve_old(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

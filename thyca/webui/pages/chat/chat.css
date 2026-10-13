@@ -629,6 +629,34 @@
   height: 1.1rem;
 }
 
+/* Context estimate for the active session (real wire numbers, like the
+   idle nudge's 15 minutes — never ambient copy). Warn/urgent only recolor
+   the same quiet label; the actionable hint is #context-nudge. */
+.context-meter {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.4rem;
+  padding: 0.35rem 0;
+  color: var(--color-muted-soft);
+  font-family: var(--font-display);
+  font-size: 0.82rem;
+  font-style: italic;
+  white-space: nowrap;
+}
+
+.context-meter[hidden] {
+  display: none;
+}
+
+.context-meter.is-warn {
+  color: var(--chat-brand-accent);
+}
+
+.context-meter.is-urgent {
+  color: var(--color-accent-deep);
+  font-weight: 600;
+}
+
 .effort-control {
   display: flex;
   align-items: center;

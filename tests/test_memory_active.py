@@ -81,6 +81,21 @@ def test_refresh_sees_canonical_and_today_not_previous_day(tmp_path: Path) -> No
     assert snap2.today == "# today v2\n"
 
 
+def test_peek_reads_without_rolling_state_or_creating(tmp_path: Path) -> None:
+    closed: list[str] = []
+    memory = ActiveMemory(
+        tmp_path, timezone_name="Asia/Ho_Chi_Minh", on_day_close=closed.append
+    )
+    state = memory.open_session(at("2026-08-17"))
+    peeked = memory.peek(state, at("2026-08-18"))
+    assert peeked.today == ""
+    assert state.day == "2026-08-17"
+    assert closed == []
+    assert not (tmp_path / "memory" / "2026-08-18.md").exists()
+    (tmp_path / "memory" / "2026-08-17.md").write_text("# today peek\n", encoding="utf-8")
+    assert memory.peek(state, at("2026-08-17")).today == "# today peek\n"
+
+
 def test_soul_user_not_tailed_today_is(tmp_path: Path) -> None:
     memory = ActiveMemory(tmp_path, tail_kb=1, timezone_name="Asia/Ho_Chi_Minh")
     memory.ensure_files(at("2026-08-17"))

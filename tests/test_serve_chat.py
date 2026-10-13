@@ -764,6 +764,109 @@ def test_session_payload_includes_ask_remember(tmp_path: Path) -> None:
     app.shutdown()
 
 
+def test_session_payload_includes_context(tmp_path: Path) -> None:
+    app = _chat(tmp_path, FakeLLM(ChatReply(content="x")))
+    try:
+        created = app.create()
+        for payload in (created, app.turn(created["id"], "hi"), app.get_payload(created["id"])):
+            ctx = payload["context"]
+            assert ctx["estimated_tokens"] == ctx["transcript_tokens"] + ctx["overhead_tokens"]
+            assert ctx["context_tokens"] > 0
+            assert abs(ctx["ratio"] - ctx["estimated_tokens"] / ctx["context_tokens"]) < 1e-9
+            # Hot prompt + tools schema are real turn overhead, not zero.
+            assert ctx["overhead_tokens"] > 0
+    finally:
+        app.shutdown()
+
+
+def _chat_small_context(tmp_path: Path) -> ChatApp:
+    cfg = default_config()
+    cfg = replace(cfg, limits=replace(cfg.limits, contextTokens=1000))
+    save(cfg, tmp_path / "config.json")
+    return ChatApp(tmp_path, load(tmp_path / "config.json"), connect=FakeLLM(ChatReply(content="x")))
+
+
+def _seed_long_session(tmp_path: Path, session_id: str) -> None:
+    manager = SessionManager(tmp_path / "sessions")
+    manager.load(session_id)
+    for i in range(4):
+        manager.append(Message(role="user", content="u" * 300 + str(i)))
+        manager.append(Message(role="assistant", content="a" * 300))
+
+
+def test_compact_session_forces_and_reports(tmp_path: Path) -> None:
+    app = _chat_small_context(tmp_path)
+    try:
+        created = app.create()
+        _seed_long_session(tmp_path, created["id"])
+        before = app.get_payload(created["id"])
+        result = app.compact_session(created["id"])
+        assert result["compaction"]["compacted"] is True
+        assert result["compaction"]["messages_before"] == 8
+        assert result["compaction"]["messages_after"] < 8
+        assert len(result["messages"]) == result["compaction"]["messages_after"]
+        assert result["messages"][0]["role"] == "system"
+        assert result["context"]["ratio"] < before["context"]["ratio"]
+    finally:
+        app.shutdown()
+
+
+def test_compact_session_refuses_mid_turn(tmp_path: Path) -> None:
+    app = _chat(tmp_path, FakeLLM(ChatReply(content="x")))
+    try:
+        created = app.create()
+        app._turns.claim(created["id"])
+        try:
+            app.compact_session(created["id"])
+        except SessionBusy:
+            pass
+        else:
+            raise AssertionError("expected SessionBusy")
+        finally:
+            app._turns.release(created["id"])
+    finally:
+        app.shutdown()
+
+
+def test_compact_over_http(tmp_path: Path) -> None:
+    app = _chat_small_context(tmp_path)
+    httpd, thread = _start(tmp_path, app)
+    try:
+        created = _json(httpd, "/api/sessions", method="POST", data=b"")
+        _seed_long_session(tmp_path, created["id"])
+        compacted = _json(
+            httpd, f"/api/sessions/{created['id']}/compact", method="POST", data=b"{}"
+        )
+        assert compacted["compaction"]["compacted"] is True
+        assert "context" in compacted
+        try:
+            urlopen(
+                Request(
+                    _url(httpd, "/api/sessions/2026-01-01T00-00-00_ffff/compact"),
+                    data=b"{}", method="POST", headers={"Content-Type": "application/json"},
+                ), timeout=2,
+            )
+        except HTTPError as exc:
+            assert exc.code == 404
+        else:
+            raise AssertionError("expected 404")
+        try:
+            urlopen(
+                Request(
+                    _url(httpd, f"/api/sessions/{created['id']}/compact"),
+                    data=b'{"model": "nope-not-registered"}', method="POST",
+                    headers={"Content-Type": "application/json"},
+                ), timeout=2,
+            )
+        except HTTPError as exc:
+            assert exc.code == 400
+        else:
+            raise AssertionError("expected 400")
+    finally:
+        _stop(httpd, thread)
+        app.shutdown()
+
+
 def test_chat_mobile_pick_pattern() -> None:
     """Chat follows the Hồ sơ/Cài đặt mobile pattern: the session list shows
     first (pick-shell), a tapped row or + reveals the conversation, ‹ Phiên
@@ -791,6 +894,21 @@ def test_idle_remember_nudge_in_webui() -> None:
     assert "idleArmed" in app
     assert "idleFromNudge" in app
     assert not app.rstrip().endswith("armIdle();")
+
+def test_context_nudge_in_webui() -> None:
+    html = (WEBUI / "index.html").read_text(encoding="utf-8")
+    app = "\n".join(
+        (WEBUI / "pages" / "chat" / name).read_text(encoding="utf-8")
+        for name in ("sessions-sidebar.js", "turn-follow.js", "composer.js", "app.js")
+    )
+    assert 'id="context-nudge"' in html
+    assert 'id="context-meter"' in html
+    assert "Gọn phiên" in html
+    assert "CONTEXT_SUGGEST_RATIO = 0.8" in app
+    assert "CONTEXT_URGENT_RATIO = 0.9" in app
+    assert "/compact" in app
+    assert "syncContext" in app
+    assert "contextDismissed" in app
 
 def test_retry_hook_emits_llm_retry_events(tmp_path: Path) -> None:
     """ChatApp wires OpenAIChat-style retry hooks to non-error TurnEvents."""

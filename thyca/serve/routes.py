@@ -23,6 +23,7 @@ from thyca.serve import config_api
 from thyca.serve.errors import _with_json
 from thyca.serve.memory import memory_endpoint
 from thyca.serve.sessions_api import (
+    session_compact,
     session_create,
     session_delete,
     session_get,
@@ -48,6 +49,7 @@ if TYPE_CHECKING:
 
 _SESSION_RE = re.compile(rf"^/api/sessions/({SESSION_ID_PATTERN})$")
 _TURN_RE = re.compile(rf"^/api/sessions/({SESSION_ID_PATTERN})/turn$")
+_COMPACT_RE = re.compile(rf"^/api/sessions/({SESSION_ID_PATTERN})/compact$")
 _TURN_STREAM_RE = re.compile(rf"^/api/sessions/({SESSION_ID_PATTERN})/turn/stream$")
 _TURN_CANCEL_RE = re.compile(rf"^/api/sessions/({SESSION_ID_PATTERN})/turn/cancel$")
 _TRACE_RE = re.compile(r"^/api/traces$")
@@ -144,6 +146,10 @@ def make_handler(
             match = _TURN_CANCEL_RE.fullmatch(path)
             if match:
                 session_turn_cancel(self, chat, match.group(1))
+                return
+            match = _COMPACT_RE.fullmatch(path)
+            if match:
+                session_compact(self, chat, match.group(1))
                 return
             if path.startswith("/api/sessions"):
                 self._json(404, {"error": "session not found"})

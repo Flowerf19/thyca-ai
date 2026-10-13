@@ -28,11 +28,15 @@ import {
 import {
   armIdle,
   clearNudge,
+  compactFromContext,
+  dismissContext,
   fillComposerControls,
   initComposer,
+  newFromContext,
   retryMessage,
   sendIdleRemember,
   sendMessage,
+  syncContext,
 } from "./composer.js";
 
 const el = {
@@ -51,6 +55,12 @@ const el = {
   idleNudge: document.querySelector("#idle-nudge"),
   idleRemember: document.querySelector("#idle-remember"),
   idleDismiss: document.querySelector("#idle-dismiss"),
+  contextMeter: document.querySelector("#context-meter"),
+  contextNudge: document.querySelector("#context-nudge"),
+  contextNudgeText: document.querySelector("#context-nudge-text"),
+  contextCompact: document.querySelector("#context-compact"),
+  contextNew: document.querySelector("#context-new"),
+  contextDismiss: document.querySelector("#context-dismiss"),
   renameDialog: document.querySelector("#rename-dialog"),
   renameForm: document.querySelector("#rename-form"),
   renameId: document.querySelector("#rename-id"),
@@ -143,6 +153,7 @@ function renderDetail(detail) {
   } else if (!streamingSessions.has(state.activeId)) {
     liveTurns.delete(state.activeId);
   }
+  syncContext(detail);
   renderSessions();
   requestAnimationFrame(() => scrollToBottom("auto"));
 }
@@ -186,6 +197,7 @@ function newSession() {
   renderSessions();
   renderEmpty(el.messageList);
   setRunning(false);
+  syncContext(null);
   armIdle();
   el.input.focus();
 }
@@ -223,6 +235,9 @@ function bind() {
   });
   el.idleRemember.addEventListener("click", sendIdleRemember);
   el.idleDismiss.addEventListener("click", armIdle);
+  el.contextCompact.addEventListener("click", () => void compactFromContext());
+  el.contextNew.addEventListener("click", newFromContext);
+  el.contextDismiss.addEventListener("click", dismissContext);
   el.renameCancel.addEventListener("click", () => el.renameDialog.close());
   el.renameForm.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -267,6 +282,7 @@ async function boot() {
     else {
       state.activeId = "";
       state.detail = null;
+      syncContext(null);
       renderEmpty(el.messageList);
       el.messageList.setAttribute("aria-busy", "false");
       el.input.focus();

@@ -8,12 +8,22 @@ import { setChatBrand } from "./chat-view.js";
 import { refreshSessions } from "./sessions-sidebar.js";
 import { liveTurns, showTurnDetail, streamingSessions, watchRunning } from "./turn-follow.js";
 
-// Composer: send/stop/retry + idle-nudge. Entry bindings via init; registries from turn-follow.js.
+// Composer: send/stop/retry + idle-nudge + context-nudge. Entry bindings via init; registries from turn-follow.js.
 const IDLE_MS = 15 * 60 * 1000;
 export const IDLE_REMEMBER = "Hãy nhớ những điều đáng giữ trong phiên này.";
 let idleTimer = 0;
 let idleFromNudge = false;
 const idleArmed = new Set();
+// Context hint thresholds mirror the backend guards: shrink starts at 80%,
+// auto-compact/backstop at 95%. Warn colors the label, suggest shows the
+// chip, urgent rewords it. Ratios come from detail.context (server wire
+// estimate), never from a client-side recount.
+export const CONTEXT_WARN_RATIO = 0.7;
+export const CONTEXT_SUGGEST_RATIO = 0.8;
+export const CONTEXT_URGENT_RATIO = 0.9;
+const contextDismissed = new Map();
+let contextBusy = false;
+let contextNote = null;
 
 let composerDeps = null;
 export function initComposer(hub) {
@@ -21,6 +31,137 @@ export function initComposer(hub) {
 }
 function hideIdle() {
   composerDeps.el.idleNudge.hidden = true;
+}
+
+export function hideContext() {
+  if (composerDeps?.el.contextNudge) composerDeps.el.contextNudge.hidden = true;
+}
+
+function contextRatio(detail) {
+  const ratio = detail?.context?.ratio;
+  return typeof ratio === "number" && Number.isFinite(ratio) ? ratio : null;
+}
+
+function contextPct(ratio) {
+  return Math.round(ratio * 100);
+}
+
+// Meter + suggestion for one landed detail. Called from renderDetail, so
+// loads, turn landings, polls and compact responses all stay in sync.
+// Quiet by design: a small label always, a chip only past the suggest
+// threshold, and never while a turn is running.
+export function syncContext(detail) {
+  if (!composerDeps) return;
+  const { el } = composerDeps;
+  const ratio = contextRatio(detail);
+  const sessionId = String(detail?.id || "");
+  if (!el.contextMeter || ratio === null || !sessionId) {
+    if (el.contextMeter) el.contextMeter.hidden = true;
+    hideContext();
+    return;
+  }
+  const pct = contextPct(ratio);
+  el.contextMeter.hidden = false;
+  el.contextMeter.textContent = `Ngữ cảnh ~${pct}%`;
+  const est = Number(detail.context.estimated_tokens || 0);
+  const cap = Number(detail.context.context_tokens || 0);
+  el.contextMeter.title = `Khoảng ${est.toLocaleString("vi-VN")} / ${cap.toLocaleString("vi-VN")} token (ước lượng)`;
+  el.contextMeter.classList.toggle("is-warn", ratio >= CONTEXT_WARN_RATIO && ratio < CONTEXT_URGENT_RATIO);
+  el.contextMeter.classList.toggle("is-urgent", ratio >= CONTEXT_URGENT_RATIO);
+  if (!el.contextNudge) return;
+  if (contextNote && contextNote.sessionId === sessionId) {
+    el.contextNudgeText.textContent = contextNote.text;
+    el.contextCompact.hidden = !contextNote.showCompact;
+    el.contextNew.hidden = !contextNote.showNew;
+    el.contextNudge.hidden = false;
+    hideIdle();
+    return;
+  }
+  el.contextCompact.hidden = false;
+  el.contextNew.hidden = false;
+  if (detail.running === true || composerDeps.composerBusy() || ratio < CONTEXT_SUGGEST_RATIO) {
+    if (ratio < CONTEXT_SUGGEST_RATIO) contextDismissed.delete(sessionId);
+    el.contextNudge.hidden = true;
+    return;
+  }
+  const dismissed = contextDismissed.get(sessionId);
+  const reshow = dismissed !== undefined && ratio >= dismissed + 0.1;
+  const urgentNew = ratio >= CONTEXT_URGENT_RATIO && dismissed !== undefined && dismissed < CONTEXT_URGENT_RATIO;
+  if (dismissed !== undefined && !reshow && !urgentNew) {
+    el.contextNudge.hidden = true;
+    return;
+  }
+  el.contextNudgeText.textContent = ratio >= CONTEXT_URGENT_RATIO
+    ? `Phiên sắp đầy ngữ cảnh (~${pct}%) — sắp tự gọn ở 95%. Gọn ngay?`
+    : `Phiên đang dài (~${pct}% ngữ cảnh) — gọn bớt phần cũ?`;
+  el.contextNudge.hidden = false;
+  hideIdle();
+}
+
+export function dismissContext() {
+  const detail = composerDeps.state.detail;
+  const ratio = contextRatio(detail);
+  const key = composerDeps.sessionKey();
+  if (key && ratio !== null && !contextNote) contextDismissed.set(key, ratio);
+  contextNote = null;
+  hideContext();
+}
+
+export function newFromContext() {
+  contextNote = null;
+  hideContext();
+  composerDeps.newSession();
+}
+
+export async function compactFromContext() {
+  if (contextBusy || composerDeps.composerBusy()) return;
+  const sessionId = composerDeps.sessionKey();
+  if (!sessionId) return;
+  const { el } = composerDeps;
+  const beforeRatio = contextRatio(composerDeps.state.detail);
+  contextBusy = true;
+  contextNote = null;
+  for (const button of [el.contextCompact, el.contextNew, el.contextDismiss]) {
+    if (button) button.disabled = true;
+  }
+  try {
+    const body = el.model.value ? { model: el.model.value } : {};
+    const detail = await postJson(`/api/sessions/${encodeURIComponent(sessionId)}/compact`, body);
+    const afterRatio = contextRatio(detail);
+    const done = detail?.compaction?.compacted === true;
+    const beforePct = beforeRatio === null ? "?" : contextPct(beforeRatio);
+    const afterPct = afterRatio === null ? "?" : contextPct(afterRatio);
+    contextNote = done
+      ? {
+          sessionId,
+          text: `Đã gọn phiên: từ ~${beforePct}% còn ~${afterPct}% (${detail.compaction.messages_before} → ${detail.compaction.messages_after} tin nhắn).`,
+          showCompact: false,
+          showNew: false,
+        }
+      : {
+          sessionId,
+          text: `Phiên chưa gọn thêm được (~${afterPct}%) — mở phiên mới nếu muốn bắt đầu sạch.`,
+          showCompact: false,
+          showNew: true,
+        };
+    contextDismissed.delete(sessionId);
+    if (composerDeps.sessionKey() === sessionId) composerDeps.renderDetail(detail);
+    await refreshSessions();
+  } catch (error) {
+    const message = error instanceof Error && error.message.trim() ? error.message.trim() : "thử lại";
+    contextNote = {
+      sessionId,
+      text: `Chưa gọn được — ${message}.`,
+      showCompact: true,
+      showNew: true,
+    };
+    if (composerDeps.sessionKey() === sessionId) syncContext(composerDeps.state.detail);
+  } finally {
+    contextBusy = false;
+    for (const button of [el.contextCompact, el.contextNew, el.contextDismiss]) {
+      if (button) button.disabled = false;
+    }
+  }
 }
 
 // Nudge for an action that cannot say no: a short shake plus a polite hint
@@ -46,6 +187,8 @@ function noteSend(sessionId) {
 async function showIdle() {
   const key = composerDeps.sessionKey();
   if (!key || composerDeps.composerBusy() || !idleArmed.has(key)) return;
+  // One nudge at a time, same composer slot: a visible context hint wins.
+  if (composerDeps.el.contextNudge && !composerDeps.el.contextNudge.hidden) return;
   try {
     const detail = await getJson(`/api/sessions/${encodeURIComponent(key)}`);
     if (composerDeps.sessionKey() !== key || !idleArmed.has(key) || detail?.ask_remember !== true) return;
@@ -88,6 +231,8 @@ export async function sendMessage() {
 
   clearNudge();
   hideIdle();
+  hideContext();
+  contextNote = null;
   window.clearTimeout(idleTimer);
   el.input.value = "";
   const done = await runTurn({ text });
@@ -108,6 +253,8 @@ export async function retryMessage() {
 
   clearNudge();
   hideIdle();
+  hideContext();
+  contextNote = null;
   window.clearTimeout(idleTimer);
   const done = await runTurn({ text: null });
   if (done) {

@@ -132,15 +132,34 @@ class ActiveMemory:
             # reading as "" until rollover.
             self._secure_dir(self.memory_dir)
             self._create_if_missing(state.today_path, f"# {today}\n")
+        return self._snapshot(state.today_path, state.day, session_id)
+
+    def peek(
+        self, state: ActiveState, now: datetime, session_id: str | None = None
+    ) -> ActiveSnapshot:
+        """Read-only snapshot for estimates (context meter, compact budget).
+
+        Same bytes :meth:`refresh` would inject today, but never mutates
+        ``state``, never creates a daily file, and never fires the
+        day-close hook — safe to call from read paths concurrent with a
+        turn's real refresh.
+        """
+        today = self._day(now)
+        path = state.today_path if today == state.day else self._daily_path(today)
+        return self._snapshot(path, today, session_id)
+
+    def _snapshot(
+        self, today_path: Path, day_str: str, session_id: str | None
+    ) -> ActiveSnapshot:
         if session_id is None:
-            today_text, elsewhere_text = self._tail(self._read(state.today_path)), ""
+            today_text, elsewhere_text = self._tail(self._read(today_path)), ""
         else:
             # Grouping needs the raw metadata comments; strip them from the
             # injected same-session text afterwards, like the legacy path.
             here_raw, elsewhere_text = split_today_by_session(
-                self._read_raw(state.today_path),
-                state.day,
-                str(state.today_path),
+                self._read_raw(today_path),
+                day_str,
+                str(today_path),
                 session_id,
             )
             today_text = self._tail(strip_heading_comments(here_raw))

@@ -100,6 +100,7 @@
                 <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8.5" y="3.5" width="7" height="12" rx="3.5" fill="none" stroke="currentColor" stroke-width="1.7" /><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M8.5 21h7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></svg>
                 <span>Nói</span>
               </button>
+              <span class="context-meter" id="context-meter" hidden></span>
             </div>
             <div class="composer-send">
               <label class="effort-control model-control" for="composer-model"><span class="effort-label">Model</span>
@@ -120,6 +121,14 @@
             <div>
               <button class="screen-button is-primary" id="idle-remember" type="button">Nhớ</button>
               <button class="screen-button" id="idle-dismiss" type="button">Để sau</button>
+            </div>
+          </div>
+          <div class="chat-idle-nudge" id="context-nudge" hidden>
+            <p id="context-nudge-text">Phiên đang dài — gọn bớt ngữ cảnh cũ?</p>
+            <div>
+              <button class="screen-button is-primary" id="context-compact" type="button">Gọn phiên</button>
+              <button class="screen-button" id="context-new" type="button">Phiên mới</button>
+              <button class="screen-button" id="context-dismiss" type="button">Để sau</button>
             </div>
           </div>
         </form>

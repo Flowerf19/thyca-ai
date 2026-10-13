@@ -41,3 +41,17 @@ nhắn DM."
   nó (danh tính từ turn context, không có tham số bot_id). Đang ở ngay
   trong DM của mình thì bị từ chối kèm hướng dẫn trả lời bình thường,
   tránh đăng trùng.
+
+## Bổ sung 2026-10-14 — trình bày sidebar (user duyệt theo mock tự đưa)
+
+- Hàng bot có avatar slot cố định (hiện là chữ cái đầu trên nền tint;
+  avatar thật/sinh sau này thay vào đúng ô), sao ✦ cho Thyca quản lý,
+  xám khi tạm dừng; chọn = pill wash theo tint.
+- Session là cụm con thụt dưới bot (guide dọc, chữ nhỏ, dòng phụ muted
+  gồm giờ · lượt · tên thành viên); phiên chung = hai vòng tint chồng.
+- Rail thu gọn desktop: chỉ avatar các bot, tooltip tên · vai trò,
+  nhớ lựa chọn theo trình duyệt.
+- Tạo bot không khai tint → gán tint ít dùng nhất trong bảng đội.
+- Phòng thường: bot nhận delegate lần đầu được thêm vào participants
+  (session thành team session); envelope message/help_request có trace
+  cũng vào dòng gộp "Xem các bot đã làm gì".

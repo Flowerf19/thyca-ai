@@ -824,12 +824,14 @@
   }
 }
 
+/* One continuous paper layer across the whole shell — header, frame,
+   gutters, sidebar and workspace all sit on the same background. */
 .notebook-shell::before {
   content: "";
   position: absolute;
   z-index: var(--z-base);
-  inset: 2.75rem 1.25rem 1.25rem;
-  border-radius: var(--radius-chat);
+  inset: 0;
+  border-radius: var(--radius-shell);
   background-color: var(--color-paper-chat);
   background-image:
     linear-gradient(color-mix(in oklab, var(--color-paper-chat) 42%, transparent), color-mix(in oklab, var(--color-paper-chat) 42%, transparent)),

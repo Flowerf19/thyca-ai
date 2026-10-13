@@ -7,7 +7,7 @@ import { usageLine } from "./chat-status.js";
 export { renderConversation, renderEmpty, renderError } from "./transcript.js";
 export { createLiveStatus, resetLiveStatus, updateLiveStatus } from "./live-status.js";
 
-export function chatBrandHeader({ state = "idle", status = "đã viết", expandable = false } = {}) {
+export function chatBrandHeader({ state = "idle", status = "đã viết", expandable = false, name = "Thyca" } = {}) {
   const header = document.createElement("header");
   header.className = "chat-brand";
   header.dataset.state = state;
@@ -19,7 +19,7 @@ export function chatBrandHeader({ state = "idle", status = "đã viết", expand
   const lockup = document.createElement("div");
   lockup.className = "chat-brand-lockup";
   const heading = document.createElement("h2");
-  heading.textContent = "Thyca";
+  heading.textContent = name;
   const quill = document.createElement("span");
   quill.className = "chat-brand-quill";
   quill.setAttribute("aria-hidden", "true");

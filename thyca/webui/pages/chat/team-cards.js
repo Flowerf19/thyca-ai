@@ -1,6 +1,13 @@
 import { formatMarkdown } from "../../shared/js/markdown.js";
 import { formatTime } from "../../shared/js/format.js";
-import { isExchangeMessage, tintVarFor } from "./team-data.js";
+import { settledThinkingNote } from "./chat-thinking.js";
+import { chatBrandHeader } from "./chat-view.js";
+import {
+  TEAM_BOT_ID,
+  isExchangeMessage,
+  teamStatusLabel,
+  tintVarFor,
+} from "./team-data.js";
 
 // Team transcript cards (r9 §4.3/4.5/4.7 + master §7 FE-2/FE-3). Every card
 // renders only from contract meta on the message; without that meta the
@@ -14,7 +21,12 @@ import { isExchangeMessage, tintVarFor } from "./team-data.js";
 // cards appear (FE-3 is UI-ready only). Without them the caller takes the
 // legacy transcript path, so a plain session renders byte-identical.
 // - {bot_id, bot_name?, bot_state?} on an assistant message → per-bot block
-//   (name text + tint left bar, no avatar, no glow).
+//   whose header IS the legacy .chat-brand anatomy (stripe, lockup with
+//   h2 name + quill, italic status line) with per-bot tint wired through
+//   the existing --chat-brand-accent variable — no parallel team CSS.
+//   Thyca rows keep the legacy --chat-brand-ink name; other bots tint the
+//   name via their tint var. The status line (bot_state or "đã viết") stays
+//   the thinking toggle whenever the message carries reasoning.
 // - {kind: delegate|step|status} → one exchange line inside the collapse.
 // - {decision: string} → "Quyết định" plain line (r9: no note-paper box).
 // - {handoff: string} → handoff plain line (no box).
@@ -26,7 +38,11 @@ import { isExchangeMessage, tintVarFor } from "./team-data.js";
 
 export function botDisplayName(message) {
   const meta = message?.meta || {};
-  return String(meta.bot_name || meta.bot_id || "Thyca");
+  if (meta.bot_name) return String(meta.bot_name);
+  // The old header always read "Thyca": a bare thyca id (no display
+  // companion from the backend) must not render lowercase at h2 scale.
+  if (String(meta.bot_id || "") === TEAM_BOT_ID) return "Thyca";
+  return String(meta.bot_id || "Thyca");
 }
 
 function markdownBody(text) {
@@ -65,21 +81,31 @@ export function teamArticleFor(message, { onChoice } = {}) {
 
   const article = document.createElement("article");
   article.className = "live-card message-assistant team-message";
-  article.style.setProperty("--team-tint", tintVarFor(botId, meta.bot_tint));
+  const tint = tintVarFor(botId || TEAM_BOT_ID, meta.bot_tint);
+  article.style.setProperty("--team-tint", tint);
+  // The header reuses the legacy .chat-brand builder verbatim (same stripe,
+  // lockup, quill, status-line nodes and classes as the old Thyca header);
+  // only the name text and the tint variable differ per bot. Blocks without
+  // a bot identity keep the previous header-less shape. The transcript
+  // binds the thinking toggle onto .chat-brand-line when reasoning exists.
   if (botId) {
-    const head = document.createElement("header");
-    head.className = "team-message-head";
-    const name = document.createElement("span");
-    name.className = "team-message-name";
-    name.textContent = botDisplayName(message);
-    head.append(name);
-    if (typeof meta.bot_state === "string" && meta.bot_state.trim()) {
-      const state = document.createElement("span");
-      state.className = "team-message-state";
-      state.textContent = meta.bot_state.trim();
-      head.append(state);
+    const thought = typeof message.reasoning === "string" && message.reasoning.trim()
+      ? settledThinkingNote(message.reasoning)
+      : null;
+    const head = chatBrandHeader({
+      status: teamStatusLabel(meta),
+      expandable: Boolean(thought),
+      name: botDisplayName(message),
+    });
+    head.dataset.bot = botId;
+    head.style.setProperty("--chat-brand-accent", tint);
+    if (botId !== TEAM_BOT_ID) {
+      // Thyca keeps the legacy --chat-brand-ink name; other bots read in
+      // their own tint, through the existing tint variable (no new color).
+      head.querySelector("h2")?.style.setProperty("color", tint);
     }
     article.append(head);
+    if (thought) article.append(thought.note);
   }
   if (content) article.append(markdownBody(message.content));
   if (hasDecision) article.append(decisionLine(meta.decision));

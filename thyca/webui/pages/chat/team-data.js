@@ -90,8 +90,8 @@ export function sessionsForBot(sessions, botId) {
   });
 }
 
-/* True when a session is shared (more than one participant) — rendered with
-   a "chung" label in level 2 of the sidebar. */
+/* True when a session is shared (more than one participant) — shared
+   rooms render in the sidebar's "Phiên chung" section. */
 export function isSharedSession(session) {
   return Array.isArray(session?.bots) && session.bots.length > 1;
 }
@@ -408,4 +408,62 @@ export async function runGuardedStages(guard, stages) {
     await step();
   }
   return true;
+}
+
+/* Team sidebar second pass (old-UI anatomy): agents and shared rooms reuse
+   the legacy session-row shape, so the row text needs the same second line
+   the old sidebar renders — "Hôm qua · 10 lượt" via sessionMetaLine — plus
+   a participant annotation for multi-agent rooms and the collapsed-history
+   slice. All pure (node-tested); the row DOM stays in team-sidebar.js. */
+
+/* Second line of a room/history row, mirroring sessions-sidebar.js
+   sessionMeta: when it happened, then how many turns it holds. The caller
+   supplies the already-formatted `when` (formatSessionTime) so this module
+   stays dependency-free. */
+export function sessionMetaLine(when, turns) {
+  const stamp = String(when || "");
+  const count = Number(turns);
+  if (!Number.isFinite(count) || count <= 0) return stamp;
+  return stamp ? `${stamp} · ${count} lượt` : `${count} lượt`;
+}
+
+/* Display names of a room's participants in roster order (session.bots
+   order), falling back to the raw id for bots the roster does not know.
+   Rendered as the annotation third line under a shared-room row title. */
+export function roomParticipantNames(session, roster) {
+  const ids = Array.isArray(session?.bots) ? session.bots.map(String) : [];
+  const known = new Map(
+    (Array.isArray(roster) ? roster : [])
+      .filter((bot) => bot && typeof bot.id === "string" && bot.id)
+      .map((bot) => [bot.id, typeof bot.name === "string" && bot.name ? bot.name : bot.id]),
+  );
+  return ids.map((id) => known.get(id) || id);
+}
+
+/* Collapsed-history slice ("Lịch sử phiên"): a bot's solo sessions except
+   its DM window, newest first. Ownership mirrors sessionsForBot: legacy
+   rooms without a bots list predate teams and belong to thyca alone, so
+   they count as thyca's solo sessions here. Shared rooms are excluded —
+   they live in the "Phiên chung" section, never duplicated here. */
+export function historyForBot(sessions, botId, dmId) {
+  const id = String(botId || "");
+  const dm = String(dmId || "");
+  if (!id) return [];
+  return (Array.isArray(sessions) ? sessions : [])
+    .filter((session) => {
+      if (!session || typeof session !== "object") return false;
+      if (dm && String(session.id) === dm) return false;
+      if (isSoloSession(session, id)) return true;
+      return id === TEAM_BOT_ID && !Array.isArray(session.bots);
+    })
+    .slice()
+    .sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")));
+}
+
+/* Bot message status line: the backend's bot_state when it says something,
+   otherwise the legacy settled default ("đã viết") — the same words the
+   old Thyca header shows, so a bot without state reads exactly like one. */
+export function teamStatusLabel(meta) {
+  const state = typeof meta?.bot_state === "string" ? meta.bot_state.trim() : "";
+  return state || "đã viết";
 }

@@ -44,8 +44,9 @@ export function renderTeamStrip() {
   const running = runningBots();
   const failed = failedBots();
   strip.replaceChildren();
-  if (names.length <= 1 && names[0] === TEAM_BOT_ID && !hub?.teamRoster?.().length) {
-    // Solo Thyca with no team registry: the strip stays out of the way.
+  // Fewer than two bots is not a room: the strip stays out of the way
+  // entirely (solo DMs and legacy single-thread sessions show no strip).
+  if (names.length < 2) {
     strip.hidden = true;
     return;
   }

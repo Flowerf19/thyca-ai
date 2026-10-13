@@ -150,9 +150,15 @@ export function renderConversation(root, messages) {
     flushExchange();
     // A bot-identified message (or decision/handoff/card meta) renders as
     // a team block; anything else keeps the legacy Thyca grouping below.
+    // The team header reuses the legacy .chat-brand anatomy, so its status
+    // line takes the same thinking toggle when the message thought first.
     const team = teamArticleFor(message, { onChoice: sendTeamChoice });
     if (team) {
       flushAssistant();
+      bindThinkingToggle(team.querySelector(".chat-brand-line"), {
+        bodies: [...team.querySelectorAll(".thinking-body")],
+        notes: [...team.querySelectorAll(".thinking-note")],
+      });
       nodes.push(team);
       continue;
     }

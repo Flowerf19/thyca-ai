@@ -19,6 +19,10 @@ ROOT = Path(__file__).resolve().parents[1]
 TEAM = ROOT / "thyca" / "webui" / "pages" / "chat" / "team-data.js"
 MENTION = ROOT / "thyca" / "webui" / "pages" / "chat" / "team-mention.js"
 UNREAD = ROOT / "thyca" / "webui" / "pages" / "chat" / "team-unread.js"
+CARDS = ROOT / "thyca" / "webui" / "pages" / "chat" / "team-cards.js"
+SIDEBAR_SRC = ROOT / "thyca" / "webui" / "pages" / "chat" / "team-sidebar.js"
+STRIP_SRC = ROOT / "thyca" / "webui" / "pages" / "chat" / "team-strip.js"
+INDEX_HTML = ROOT / "thyca" / "webui" / "index.html"
 COST_DATA = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "cost-data.js"
 TRACE_DATA = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "trace-data.js"
 CHAT_CSS = ROOT / "thyca" / "webui" / "pages" / "chat" / "chat.css"
@@ -597,20 +601,20 @@ def _live_copy_offset() -> str:
     return match.group(1).strip()
 
 
-def test_team_message_head_aligns_with_body_column() -> None:
-    """The tint bar is the article border, so the name header must carry the
-    same inline offset as .live-copy — otherwise the name sits ~3px from
-    the bar while the body starts a full stripe+gap further in."""
+def test_team_brand_header_needs_no_offset_rule() -> None:
+    """The team header IS the legacy .chat-brand flex block (stripe +
+    gap + body), so the name column == body column structurally — the old
+    .team-message-head manual padding is gone and no team rule may
+    re-introduce an inline offset on the brand header."""
     import re
 
     css = CHAT_CSS.read_text(encoding="utf-8")
-    match = re.search(
-        r"\.team-message\s*>\s*\.team-message-head\s*\{[^}]*"
-        r"padding-inline-start:\s*([^;]+);",
-        css,
-    )
-    assert match, ".team-message > .team-message-head offset rule missing"
-    assert match.group(1).strip() == _live_copy_offset()
+    assert not re.search(r"\.team-message-head", css), "parallel head CSS is gone"
+    assert not re.search(r"\.team-message\s*>\s*\.chat-brand\s*\{[^}]*padding-inline-start", css)
+    sidebar = SIDEBAR_SRC.read_text(encoding="utf-8")
+    assert "team-message-head" not in sidebar
+    cards = CARDS.read_text(encoding="utf-8")
+    assert "chatBrandHeader" in cards
 
 
 def test_team_decision_handoff_align_with_body_column() -> None:
@@ -713,3 +717,337 @@ def test_team_alignment_leaves_legacy_rules_untouched() -> None:
                 ".reply-live",
             )
         ), selector_text
+
+
+# --- Second pass: old-UI anatomy (agents-primary sidebar, legacy brand) ---
+
+_FAKE_DOM = """
+class FakeNode {
+  constructor(tag) {
+    this.tagName = String(tag || "div").toUpperCase();
+    this.children = [];
+    this.attributes = {};
+    this.dataset = {};
+    this._style = {};
+    this.style = {
+      setProperty: (k, v) => { this._style[k] = String(v); },
+      getPropertyValue: (k) => this._style[k] || "",
+    };
+    this.className = "";
+    this._text = "";
+    this._html = "";
+    this.hidden = false;
+    this.id = "";
+    this.type = "";
+    this.value = "";
+    this.checked = false;
+    this.dateTime = "";
+  }
+  set textContent(v) { this.children = []; this._text = String(v); }
+  get textContent() {
+    return this._text + this.children.map((c) =>
+      (c && typeof c.textContent === "string") ? c.textContent : "").join("");
+  }
+  set innerHTML(v) { this.children = []; this._text = ""; this._html = String(v); }
+  get innerHTML() { return this._html; }
+  setAttribute(k, v) { this.attributes[k] = String(v); }
+  getAttribute(k) { return Object.hasOwn(this.attributes, k) ? this.attributes[k] : null; }
+  get classList() {
+    const el = this;
+    const list = () => String(el.className || "").split(/\s+/).filter(Boolean);
+    return {
+      add: (...cs) => { el.className = [...new Set([...list(), ...cs])].join(" "); },
+      remove: (...cs) => { el.className = list().filter((c) => !cs.includes(c)).join(" "); },
+      toggle: (c, force) => {
+        const has = list().includes(c);
+        const on = force === undefined ? !has : !!force;
+        if (on && !has) el.classList.add(c);
+        if (!on && has) el.classList.remove(c);
+        return on;
+      },
+      contains: (c) => list().includes(c),
+    };
+  }
+  addEventListener() {}
+  append(...nodes) {
+    for (const n of nodes) this.children.push(typeof n === "string" ? { textContent: n } : n);
+  }
+  appendChild(n) { this.append(n); return n; }
+  insertBefore(n, ref) {
+    const i = this.children.indexOf(ref);
+    if (i < 0) this.children.push(n); else this.children.splice(i, 0, n);
+    return n;
+  }
+  querySelector(sel) { return queryAll(this, sel)[0] || null; }
+  querySelectorAll(sel) { return queryAll(this, sel); }
+}
+function matchesPart(el, part) {
+  if (!el || !el.tagName) return false;
+  if (part.startsWith(".")) return String(el.className || "").split(/\\s+/).includes(part.slice(1));
+  return String(el.tagName).toLowerCase() === part.toLowerCase();
+}
+function queryAll(root, sel) {
+  const out = [];
+  const walk = (el) => {
+    for (const child of el.children || []) {
+      if (child && child.tagName && matchesPart(child, sel)) out.push(child);
+      if (child && child.children) walk(child);
+    }
+  };
+  walk(root);
+  return out;
+}
+globalThis.document = {
+  createElement: (tag) => new FakeNode(tag),
+  createElementNS: (ns, tag) => new FakeNode(tag),
+  createTextNode: (text) => ({ textContent: String(text) }),
+};
+"""
+
+
+def _cards(node: str, body: str) -> object:
+    """Run node with the fake-DOM prelude + team-cards.js (which imports
+    cleanly: markdown/format/team-data/chat-thinking/chat-view touch the DOM
+    only inside functions)."""
+    source = (
+        _FAKE_DOM
+        + f"import * as cards from '{CARDS.as_posix()}';\n"
+        + f"const main = async () => {{ {body} }};\n"
+        + "console.log(JSON.stringify(await main()));\n"
+    )
+    result = subprocess.run(
+        [node, "--input-type=module", "-e", source],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+    )
+    return json.loads(result.stdout)
+
+
+def test_team_brand_reuses_legacy_chat_brand(node: str) -> None:
+    """The bot header is the legacy .chat-brand anatomy — stripe, lockup
+    with h2 name, quill, italic status line — with per-bot tint through the
+    existing --chat-brand-accent variable. No .team-message-head remains."""
+    value = _cards(node,
+        "const a = cards.teamArticleFor({role: 'assistant', content: 'Chào',"
+        " meta: {bot_id: 'coder', bot_name: 'Coder', bot_state: 'đang code',"
+        " bot_tint: 'botanical'}});"
+        " const head = a.querySelector('.chat-brand');"
+        " return {"
+        " article: a.className,"
+        " head: head && head.className,"
+        " bot: head && head.dataset.bot,"
+        " stripe: !!a.querySelector('.chat-brand-stripe'),"
+        " lockup: !!a.querySelector('.chat-brand-lockup'),"
+        " name: a.querySelector('h2') && a.querySelector('h2').textContent,"
+        " quill: !!a.querySelector('.chat-brand-quill'),"
+        " status: a.querySelector('.chat-brand-status')"
+        " && a.querySelector('.chat-brand-status').textContent,"
+        " headTint: head && head._style['--chat-brand-accent'],"
+        " legacyHead: !!a.querySelector('.team-message-head'),"
+        " legacyName: !!a.querySelector('.team-message-name'),"
+        " lineTag: a.querySelector('.chat-brand-line')"
+        " && a.querySelector('.chat-brand-line').tagName,"
+        "};")
+    assert "team-message" in value["article"]
+    assert value["head"] == "chat-brand"
+    assert value["bot"] == "coder"
+    assert value["stripe"] is True
+    assert value["lockup"] is True
+    assert value["name"] == "Coder"
+    assert value["quill"] is True
+    assert value["status"] == "đang code"
+    assert value["headTint"] == "var(--color-botanical)"
+    assert value["legacyHead"] is False
+    assert value["legacyName"] is False
+    assert value["lineTag"] == "P"  # no reasoning → plain status line
+
+
+def test_team_brand_thyca_keeps_ink_and_default_status(node: str) -> None:
+    """Thyca rows keep the legacy --chat-brand-ink name (no inline color)
+    and read the legacy default status when the backend sends no state."""
+    value = _cards(node,
+        "const a = cards.teamArticleFor({role: 'assistant', content: 'Ừ',"
+        " meta: {bot_id: 'thyca'}});"
+        " const h2 = a.querySelector('h2');"
+        " return [h2 && h2.textContent,"
+        " h2 && h2._style.color,"
+        " a.querySelector('.chat-brand-status')"
+        " && a.querySelector('.chat-brand-status').textContent,"
+        " a.querySelector('.chat-brand')._style['--chat-brand-accent']];")
+    assert value[0] == "Thyca"
+    assert value[1] is None  # no inline color → legacy ink rule wins
+    assert value[2] == "đã viết"
+    assert value[3] == "var(--color-accent)"
+
+
+def test_team_brand_status_line_toggles_thinking(node: str) -> None:
+    """Reasoning on a bot message renders the thinking note behind an
+    expandable (button) status line; without reasoning the line stays a
+    plain paragraph."""
+    value = _cards(node,
+        "const withThought = cards.teamArticleFor({role: 'assistant',"
+        " content: 'Xong', reasoning: 'vì sao', meta: {bot_id: 'coder'}});"
+        " const plain = cards.teamArticleFor({role: 'assistant',"
+        " content: 'Xong', meta: {bot_id: 'coder'}});"
+        " return [!!withThought.querySelector('.thinking-note'),"
+        " withThought.querySelector('.chat-brand-line').tagName,"
+        " !!plain.querySelector('.thinking-note'),"
+        " plain.querySelector('.chat-brand-line').tagName];")
+    assert value == [True, "BUTTON", False, "P"]
+
+
+def test_team_brand_no_warm_glow_and_no_article_bar() -> None:
+    """r9 removed the ::before wash for team; the stripe inside the header
+    carries the tint, so no article border bar and no parallel head CSS."""
+    import re
+
+    css = CHAT_CSS.read_text(encoding="utf-8")
+    assert re.search(
+        r"\.team-message\s+\.chat-brand-body::before\s*\{[^}]*content:\s*none",
+        css,
+    ), "wash-kill rule missing"
+    for gone in ("team-message-head", "team-message-name", "team-message-state"):
+        assert gone not in css, gone
+    assert not re.search(r"\.team-message\s*\{[^}]*border-inline-start", css)
+
+
+def test_team_status_label_defaults_to_legacy(node: str) -> None:
+    value = _run(node,
+        "return [api.teamStatusLabel({bot_state: ' đang chạy '}),"
+        " api.teamStatusLabel({}), api.teamStatusLabel(null),"
+        " api.teamStatusLabel({bot_state: '   '})];")
+    assert value == ["đang chạy", "đã viết", "đã viết", "đã viết"]
+
+
+def test_session_meta_line_mirrors_legacy(node: str) -> None:
+    value = _run(node,
+        "return [api.sessionMetaLine('Hôm qua', 10),"
+        " api.sessionMetaLine('Hôm qua', 0),"
+        " api.sessionMetaLine('Hôm qua', null),"
+        " api.sessionMetaLine('', 3)];")
+    assert value == ["Hôm qua · 10 lượt", "Hôm qua", "Hôm qua", "3 lượt"]
+
+
+def test_room_participant_names_follow_roster(node: str) -> None:
+    session = {"bots": ["thyca", "coder", "ghost"]}
+    roster = [{"id": "thyca", "name": "Thyca"}, {"id": "coder", "name": "Coder"}]
+    value = _run(node,
+        f"return api.roomParticipantNames({json.dumps(session)}, {json.dumps(roster)});")
+    assert value == ["Thyca", "Coder", "ghost"]
+    assert _run(node, "return api.roomParticipantNames({}, []);") == []
+
+
+def test_history_for_bot_excludes_dm_and_shared(node: str) -> None:
+    sessions = [
+        {"id": "dm", "bots": ["thyca"], "dm": "thyca",
+         "updated_at": "2026-06-01T00:00:00Z"},
+        {"id": "old", "bots": ["thyca"], "updated_at": "2026-01-01T00:00:00Z"},
+        {"id": "new", "bots": ["thyca"], "updated_at": "2026-05-01T00:00:00Z"},
+        {"id": "shared", "bots": ["thyca", "b2"],
+         "updated_at": "2026-07-01T00:00:00Z"},
+        {"id": "other", "bots": ["b2"], "updated_at": "2026-07-01T00:00:00Z"},
+        # Legacy pre-team room: no bots list at all, still thyca's own.
+        {"id": "legacy", "updated_at": "2026-03-01T00:00:00Z"},
+    ]
+    value = _run(node,
+        f"const sessions = {json.dumps(sessions)};"
+        " return [api.historyForBot(sessions, 'thyca', 'dm').map(s => s.id),"
+        " api.historyForBot(sessions, 'b2', '').map(s => s.id),"
+        " api.historyForBot(sessions, 'nobody', ''),"
+        " api.historyForBot(sessions, '', '')];")
+    assert value[0] == ["new", "legacy", "old"]  # newest first, DM + shared out
+    assert value[1] == ["other"]  # other bots: only when any exist
+    assert value[2] == []
+    assert value[3] == []
+
+
+def test_sidebar_agents_primary_no_level_two() -> None:
+    """Agents replace sessions as the primary list: legacy row classes,
+    no level-2 picker screen, no intermediate labels or toggles."""
+    src = SIDEBAR_SRC.read_text(encoding="utf-8")
+    # Legacy anatomy reused for agent rows.
+    assert '"session-row"' in src
+    assert '"session-item"' in src
+    assert '"session-name"' in src
+    assert '"Đội"' in src
+    # The level-2 session-picker screen is gone entirely.
+    for gone in ("Tất cả phiên", "Cửa sổ chính", "Phiên khác",
+                 "team-nav-back", "level === 2", "level = 2",
+                 "is-main", "sharedToggleButton", "allSessionsButton",
+                 "openTeam", "showLegacy", "showTeamView",
+                 "partitionBotSessions"):
+        assert gone not in src, gone
+    # Single-level structure that replaces it.
+    for kept in ("Phiên chung", "Lịch sử phiên", "session-participants",
+                 "currentTeamBot", "historyForBot", "team-shared-create"):
+        assert kept in src, kept
+
+
+def test_sidebar_picker_hidden_unless_picking() -> None:
+    """No empty picker pill: the actions box carries [hidden] unless the
+    user is actively picking bots for a shared room."""
+    src = SIDEBAR_SRC.read_text(encoding="utf-8")
+    assert "actions.hidden = !sharedOpen" in src
+    assert "team-shared-picker" in src
+
+
+def test_strip_in_site_header_hidden_under_two_bots() -> None:
+    """#team-strip lives in .site-header before the header-line (never in
+    .chat-canvas), and hides entirely for rooms with fewer than 2 bots."""
+    import re
+
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    header = re.search(r'<header class="site-header">(.*?)</header>', html, re.S).group(1)
+    assert 'id="team-strip"' in header
+    assert header.index('id="team-strip"') < header.index("header-line")
+    canvas = html.split('class="chat-canvas"', 1)[1]
+    assert 'id="team-strip"' not in canvas
+    strip = STRIP_SRC.read_text(encoding="utf-8")
+    assert "names.length < 2" in strip
+
+
+def test_team_nav_reuses_legacy_session_shell() -> None:
+    """#team-nav carries the legacy .sessions class (layout, heading
+    padding, mobile pick pattern from kit.css); the shared section reuses
+    .sessions-heading + .new-session instead of parallel chrome."""
+    import re
+
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    assert re.search(r'<section class="sessions" id="team-nav"', html)
+    assert 'id="team-nav-back"' not in html
+    assert 'id="team-bot-list"' in html
+    assert 'id="team-shared-list"' in html
+    assert 'id="team-history"' in html
+    assert re.search(r'<div id="team-nav-actions" hidden>', html)
+    assert re.search(
+        r'<button class="new-session" id="team-shared-create"', html)
+
+
+def test_team_css_audit_deleted_vs_kept() -> None:
+    """Second-pass audit pin: parallel styles deleted, irreducible
+    minimum kept (each kept rule has no legacy equivalent)."""
+    css = CHAT_CSS.read_text(encoding="utf-8")
+    deleted = ("team-bot-item", "team-bot-name", "team-bot-status",
+               "team-actions", "team-secondary-title", "team-unavailable",
+               "team-shared-title", "team-heading", "team-nav-back",
+               "session-row.is-main")
+    for gone in deleted:
+        assert gone not in css, gone
+    kept = (".team-bot-dot",  # no legacy tint dot
+            ".team-unread",  # no legacy unread badge
+            ".team-strip[hidden]",  # flex outranks hidden (legacy pattern)
+            ".session-participants",  # no legacy third line
+            ".team-history",  # no legacy collapsible group
+            ".team-shared-picker",  # no legacy checkbox picker card
+            ".team-shared-option",
+            ".team-card",  # question/error cards
+            ".team-exchange",  # inter-bot collapse
+            ".team-decision",
+            ".mention-popup",  # @ popup
+            ".bot-drawer",  # read-only profile
+            ".composer-team-hint",
+            )
+    for keep in kept:
+        assert keep in css, keep

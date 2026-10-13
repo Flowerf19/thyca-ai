@@ -4,12 +4,14 @@ import { messageOf } from "../../shared/js/status.js";
 import {
   TEAM_BOT_ID,
   findMainSession,
+  historyForBot,
   isDmDetail,
   isMainSessionDetail,
   isSharedSession,
   isSoloSession,
   normalizeBots,
-  partitionBotSessions,
+  roomParticipantNames,
+  sessionMetaLine,
   sessionsForBot,
   summarizeUnread,
   tintVarFor,
@@ -23,28 +25,37 @@ import {
   rememberDm,
 } from "./team-unread.js";
 
-// Team sidebar: two levels Bot → Session (master plan §7 FE-1). Progressive
-// enhancement over sessions-sidebar.js: when GET /api/bots answers, the team
-// section replaces the legacy session list; when the backend is not there
-// yet, the legacy list stays exactly as today plus one muted note.
+// Team sidebar: agents are the primary list, reusing the legacy session-row
+// anatomy (sessions-sidebar.js + kit.css .session-item): each agent row is a
+// .session-row > button.session-item with the tint dot in the icon cell, the
+// name in .session-name and "role · status" in the italic <time> line. The
+// active bot keeps the legacy left accent bar via .is-active. Clicking an
+// agent opens its main (DM) window directly — there is no second level.
+// Shared rooms live in their own "Phiên chung" section below, also as
+// legacy rows (plus a participant annotation line), and the active bot's
+// non-DM sessions collapse under "Lịch sử phiên".
+//
+// Progressive enhancement over sessions-sidebar.js: when GET /api/bots
+// answers, this section replaces the legacy session list; when the backend
+// is not there yet, the legacy list stays exactly as today plus one muted
+// note.
 let hub = null;
 let bots = [];
-let level = 1;
 let activeBot = "";
+let historyOpen = false;
 let sharedOpen = false;
 let sharedError = "";
 // Checkbox picks survive re-renders while the picker stays open.
 let sharedPicked = null;
-// Main-window (DM) resolve state for CFE-1: creation is async, level 2
-// renders immediately with known sessions while the fixed DM resolves.
-// mainToken guards rapid bot switching: every openBot mints a token and
-// only the resolve still owning it may touch mainResolving/mainError or
-// navigate (see resolveMain). Ownership is re-checked after every await,
-// and resolveMain hands its `owned` closure into hub.afterTeamSession as a
-// guard, so a stale navigation already inside the hub (past resolveMain's
-// last checkpoint, mid-refresh) still aborts instead of loading the first
-// bot's DM over the second bot's window.
-let mainResolving = false;
+// Main-window (DM) resolve state for CFE-1: creation is async, so openBot
+// highlights immediately while the fixed DM resolves. mainToken guards
+// rapid bot switching: every openBot mints a token and only the resolve
+// still owning it may touch mainError or navigate (see resolveMain).
+// Ownership is re-checked after every await, and resolveMain hands its
+// `owned` closure into hub.afterTeamSession as a guard, so a stale
+// navigation already inside the hub (past resolveMain's last checkpoint,
+// mid-refresh) still aborts instead of loading the first bot's DM over the
+// second bot's window.
 let mainToken = 0;
 let mainError = "";
 
@@ -59,8 +70,26 @@ function teamSection() {
   return document.querySelector("#team-nav");
 }
 
+function botList() {
+  return document.querySelector("#team-bot-list");
+}
+
+function historyBox() {
+  return document.querySelector("#team-history");
+}
+
+function sharedList() {
+  return document.querySelector("#team-shared-list");
+}
+
+function actionsBox() {
+  return document.querySelector("#team-nav-actions");
+}
+
 function legacySection() {
-  return document.querySelector("#chat-sidebar .sessions");
+  // #team-nav carries the legacy .sessions class for its layout, so the
+  // legacy list must exclude it explicitly.
+  return document.querySelector("#chat-sidebar .sessions:not(#team-nav)");
 }
 
 function showTeam() {
@@ -69,38 +98,18 @@ function showTeam() {
   if (legacy) legacy.hidden = true;
 }
 
-function showLegacy() {
-  teamSection()?.setAttribute("hidden", "");
-  const legacy = legacySection();
-  if (legacy) legacy.hidden = false;
-}
-
-// Way back from the legacy list to the team view (the "Tất cả phiên"
-// button above is otherwise a one-way door). Keeps the current level —
-// returning from legacy must not reset where the user was browsing.
-export function showTeamView() {
-  if (!bots.length) return;
-  render();
-}
-
-// The legacy heading is static HTML that sessions-sidebar never rebuilds
-// (it only replaces #session-list children), so a button placed here
-// survives every renderSessions() call.
-function ensureLegacyBackButton() {
-  const heading = document.querySelector("#chat-sidebar .sessions .sessions-heading");
-  if (!heading || heading.querySelector("[data-team-back]")) return;
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "session-action";
-  button.dataset.teamBack = "1";
-  button.textContent = "Đội bot";
-  button.setAttribute("aria-label", "Về danh sách bot");
-  button.addEventListener("click", showTeamView);
-  heading.append(button);
-}
-
 function statusLabel(status) {
   return STATUS_LABEL[String(status || "")] || "";
+}
+
+/* The bot whose window is on screen: the open session names it when it is
+   a solo room, otherwise the last bot opened this tab. Drives the .is-active
+   accent bar and the collapsed-history group. */
+export function currentTeamBot() {
+  const detail = hub?.state?.detail;
+  const participants = Array.isArray(detail?.bots) ? detail.bots.map(String) : [];
+  const id = (participants.length === 1 ? participants[0] : "") || activeBot;
+  return bots.find((bot) => bot.id === id) || null;
 }
 
 /* Unread state for one session (CFE-2): first sight stores a silent baseline
@@ -122,7 +131,7 @@ function sessionUnread(session) {
   return { unread: result.unread, count: result.count };
 }
 
-/* Level-1 aggregate stays a dot for the same reason: per-session counts
+/* Agent aggregate stays a dot for the same reason: per-session counts
    are always 0 list-side, so Σ counts never materialize — any unread
    session dots its bot. */
 function botUnread(botId) {
@@ -153,41 +162,60 @@ function unreadBadge(state) {
   return badge;
 }
 
+function unreadSuffix(state) {
+  if (!state?.unread) return "";
+  return state.count > 0 ? `, ${state.count} chưa đọc` : ", có tin chưa đọc";
+}
+
+/* Agent row: legacy .session-row shape. The tint dot sits in the icon cell
+   (grid column 1, both rows — see .team-bot-dot); the name and the
+   "role · status" line reuse .session-name and <time> verbatim, so the row
+   reads exactly like an old session row. */
 function botRow(bot) {
+  const row = document.createElement("div");
+  row.className = "session-row";
   const button = document.createElement("button");
   button.type = "button";
-  button.className = "team-bot-item";
+  button.className = "session-item";
   button.dataset.botId = bot.id;
-  if (bot.id === activeBot && level === 2) button.classList.add("is-active");
+  const current = currentTeamBot();
+  const selected = !!current && current.id === bot.id;
+  button.classList.toggle("is-active", selected);
+  if (selected) button.setAttribute("aria-current", "page");
   const dot = document.createElement("span");
   dot.className = "team-bot-dot";
   dot.style.setProperty("--team-tint", tintVarFor(bot.id, bot.tint));
   dot.setAttribute("aria-hidden", "true");
   const name = document.createElement("span");
-  name.className = "team-bot-name";
+  name.className = "session-name";
   name.textContent = bot.name;
   button.append(dot, name);
-  const unread = unreadBadge(botUnread(bot.id));
+  const sub = [bot.role, statusLabel(bot.status)].filter(Boolean).join(" · ");
+  if (sub) {
+    const line = document.createElement("time");
+    line.textContent = sub;
+    button.append(line);
+  }
+  const seen = botUnread(bot.id);
+  const unread = unreadBadge(seen);
   if (unread) button.append(unread);
   const label = statusLabel(bot.status);
-  if (label) {
-    const badge = document.createElement("span");
-    badge.className = `team-bot-status is-${bot.status}`;
-    badge.textContent = label;
-    button.append(badge);
-  }
-  const unreadSuffix = unread
-    ? (unread.textContent ? `, ${unread.textContent} chưa đọc` : ", có tin chưa đọc")
-    : "";
-  button.setAttribute("aria-label", (label ? `${bot.name}, ${label}` : bot.name) + unreadSuffix);
+  button.setAttribute("aria-label",
+    (bot.role ? `${bot.name}, ${bot.role}` : bot.name)
+    + (label ? `, ${label}` : "")
+    + unreadSuffix(seen));
   button.addEventListener("click", () => void openBot(bot.id));
-  return button;
+  row.append(button);
+  return row;
 }
 
-function sessionRow(session, { main = false } = {}) {
+/* History / shared-room rows: the old session-row format untouched (quill
+   icon, bold title, italic "time · lượt" line). Opening one works like the
+   legacy list: solo rooms confirm the remembered DM, shared rooms just open.
+   Shared rooms add one annotation line with the participating agent names. */
+function historyRow(session, botId = "") {
   const row = document.createElement("div");
   row.className = "session-row";
-  if (main) row.classList.add("is-main");
   const button = document.createElement("button");
   button.type = "button";
   button.className = "session-item";
@@ -203,15 +231,11 @@ function sessionRow(session, { main = false } = {}) {
   name.textContent = cleanText(session.title, "Phiên trống");
   const time = document.createElement("time");
   time.dateTime = String(session.updated_at || "");
-  const when = formatSessionTime(session.updated_at);
-  const shared = isSharedSession(session);
-  time.textContent = main ? `${when} · Cửa sổ chính` : (shared ? `${when} · chung` : when);
+  time.textContent = sessionMetaLine(formatSessionTime(session.updated_at), session.turns);
   button.append(icon, name, time);
   const seen = sessionUnread(session);
   const unread = unreadBadge(seen);
   if (unread) button.append(unread);
-  // Level-1 bot rows announce unread state in their aria-label; mirror the
-  // same cue here so level-2 session buttons are equally announced.
   if (seen.unread) {
     button.setAttribute("aria-label",
       `${cleanText(session.title, "Phiên trống")}, có tin chưa đọc`);
@@ -219,15 +243,27 @@ function sessionRow(session, { main = false } = {}) {
   button.addEventListener("click", () => {
     exitPicking();
     const sid = button.dataset.sessionId;
-    // Lane plan: opening a solo session confirms it as the remembered DM,
-    // so the next openBot lands straight back here without re-resolving.
-    // Shared rooms never qualify (isSoloSession is exactly [activeBot]).
     const opened = (hub?.state?.sessions || [])
       .find((item) => String(item?.id) === sid);
-    if (opened && isSoloSession(opened, activeBot)) rememberDm(activeBot, sid);
+    if (opened && botId && isSoloSession(opened, botId)) rememberDm(botId, sid);
     void hub.loadSession(sid);
   });
   row.append(button);
+  return row;
+}
+
+function roomRow(session) {
+  const row = historyRow(session);
+  const button = row.querySelector(".session-item");
+  const names = roomParticipantNames(session, bots);
+  if (button && names.length > 1) {
+    const annotation = document.createElement("span");
+    annotation.className = "session-participants";
+    annotation.textContent = names.join(" · ");
+    const badge = button.querySelector(".team-unread");
+    if (badge) button.insertBefore(annotation, badge);
+    else button.append(annotation);
+  }
   return row;
 }
 
@@ -237,12 +273,39 @@ function exitPicking() {
   }
 }
 
+/* Collapsed history group for the active bot ("Lịch sử phiên"): the toggle
+   reuses the legacy .session-action word-button; the rows hide behind the
+   plain hidden attribute (a block div, so no display override fights it). */
+function historyGroup(bot, past) {
+  const wrap = document.createElement("div");
+  wrap.className = "team-history";
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "session-action";
+  toggle.setAttribute("aria-expanded", String(historyOpen));
+  const paint = () => {
+    toggle.textContent = `Lịch sử phiên · ${past.length} ${historyOpen ? "▾" : "▸"}`;
+  };
+  paint();
+  const list = document.createElement("div");
+  list.hidden = !historyOpen;
+  list.append(...past.map((session) => historyRow(session, bot.id)));
+  toggle.addEventListener("click", () => {
+    historyOpen = !historyOpen;
+    toggle.setAttribute("aria-expanded", String(historyOpen));
+    list.hidden = !historyOpen;
+    paint();
+  });
+  wrap.append(toggle, list);
+  return wrap;
+}
+
+/* Shared-room picker: rendered only while actively picking (the actions box
+   carries [hidden] otherwise, so no empty pill ever shows). */
 function sharedPicker() {
   const wrap = document.createElement("div");
   wrap.className = "team-shared-picker";
-  if (!sharedOpen) return wrap;
   const title = document.createElement("p");
-  title.className = "team-shared-title";
   title.textContent = "Chọn bot cho phiên chung";
   wrap.append(title);
   if (!sharedPicked) sharedPicked = new Set(hub.state.detail?.bots || [activeBot || TEAM_BOT_ID]);
@@ -317,29 +380,27 @@ async function createShared(botIds) {
    (find-or-create server-side, verified with isDmDetail — never a fake
    main). Solo + localStorage resolution (findMainSession) and POST create
    stay only as the legacy fallback when the endpoint/marker is unavailable
-   (pre-CBE-5 backend). Level 2 renders immediately with known sessions
-   while the DM resolves; the main window pins first. */
+   (pre-CBE-5 backend). The list highlights at once; the DM lands when it
+   resolves. */
 async function openBot(botId) {
-  level = 2;
   activeBot = botId;
+  historyOpen = false;
   sharedOpen = false;
   sharedError = "";
   sharedPicked = null;
   mainError = "";
-  mainResolving = true;
   const token = ++mainToken;
   render();
   await resolveMain(botId, token);
 }
 
 async function resolveMain(botId, token) {
-  // Only the resolve that still owns the token may navigate or clear the
-  // resolving flag: rapid bot switching mints a new token per openBot, so
-  // a stale resolve bails after EVERY await instead of landing the user
-  // in the wrong bot's window or clearing the new bot's spinner. The two
-  // afterTeamSession handoffs below carry the same ownership (guard arg)
-  // because that hub call awaits internally (see the mainToken note above).
-  const owned = () => token === mainToken && activeBot === botId && level === 2;
+  // Only the resolve that still owns the token may navigate or record the
+  // error: rapid bot switching mints a new token per openBot, so a stale
+  // resolve bails after EVERY await instead of landing the user in the
+  // wrong bot's window. The two afterTeamSession handoffs below carry the
+  // same ownership (guard arg) because that hub call awaits internally.
+  const owned = () => token === mainToken && activeBot === botId;
   try {
     if (!hub) return;
     // Primary: the backend's fixed DM. It adopts a legacy unmarked solo
@@ -358,7 +419,6 @@ async function resolveMain(botId, token) {
     if (detail?.id) {
       rememberDm(botId, detail.id);
       if (!owned()) return;
-      mainResolving = false;
       render();
       exitPicking();
       await hub.afterTeamSession(detail, owned);
@@ -371,7 +431,6 @@ async function resolveMain(botId, token) {
     if (main?.id) {
       rememberDm(botId, main.id);
       if (!owned()) return;
-      mainResolving = false;
       render();
       exitPicking();
       await hub.loadSession(String(main.id));
@@ -396,25 +455,10 @@ async function resolveMain(botId, token) {
     if (!owned()) return;
     mainError = messageOf(error, "Chưa mở được cửa sổ chính của bot — backend đội bot chưa sẵn sàng.");
   } finally {
-    // A stale resolve must not clear the newer bot's spinner: only the
-    // owner clears the flag (and re-renders the error/note if any).
-    if (owned()) {
-      mainResolving = false;
-      render();
-    }
+    // A stale resolve must not touch the newer bot's state: only the owner
+    // re-renders the error/note if any.
+    if (owned()) render();
   }
-}
-
-function openTeam() {
-  level = 1;
-  activeBot = "";
-  sharedOpen = false;
-  sharedError = "";
-  sharedPicked = null;
-  mainToken++; // invalidate any in-flight resolve (owned() also checks level)
-  mainResolving = false;
-  mainError = "";
-  render();
 }
 
 export function renderTeamSidebar() {
@@ -425,96 +469,52 @@ function render() {
   const section = teamSection();
   if (!section || !bots.length) return;
   showTeam();
-  ensureLegacyBackButton();
-  const list = section.querySelector("#team-bot-list");
-  list?.replaceChildren();
-  if (level === 1) {
-    const head = section.querySelector("#team-nav-title");
-    if (head) head.textContent = "Đội";
-    const back = section.querySelector("#team-nav-back");
-    if (back) back.hidden = true;
-    for (const bot of bots) list?.append(botRow(bot));
-    const actions = section.querySelector("#team-nav-actions");
-    actions?.replaceChildren(sharedToggleButton(), allSessionsButton(), sharedPicker());
-  } else {
-    const bot = bots.find((item) => item.id === activeBot);
-    const head = section.querySelector("#team-nav-title");
-    if (head) head.textContent = bot ? bot.name : "Đội";
-    const back = section.querySelector("#team-nav-back");
-    if (back) {
-      back.hidden = false;
-      back.onclick = openTeam;
-    }
-    // Drop a remembered DM that no longer exists (deleted session): the
-    // list is authoritative here, so a missing id is stale, not loading.
-    // A blank-but-existing DM pruned from the list re-resolves via GET
-    // and is simply re-remembered — never a fake window.
-    const rememberedId = getRememberedDm(activeBot);
+  const head = section.querySelector("#team-nav-title");
+  if (head) head.textContent = "Đội";
+  botList()?.replaceChildren(...bots.map(botRow));
+  const history = historyBox();
+  history?.replaceChildren();
+  if (mainError) {
+    const error = document.createElement("p");
+    error.className = "screen-status is-error";
+    error.setAttribute("role", "alert");
+    error.textContent = mainError;
+    history?.append(error);
+  }
+  // Drop a remembered DM that no longer exists (deleted session): the
+  // list is authoritative here, so a missing id is stale, not loading.
+  const me = currentTeamBot();
+  if (me) {
+    const rememberedId = getRememberedDm(me.id);
     if (rememberedId
       && !(hub.state.sessions || []).some((item) => String(item?.id) === rememberedId)) {
       forgetDmSession(rememberedId);
     }
-    const main = findMainSession(hub.state.sessions, activeBot, getRememberedDm(activeBot));
-    const { main: pinned, others } = partitionBotSessions(
-      hub.state.sessions, activeBot, main?.id,
-    );
-    if (mainError) {
-      const error = document.createElement("p");
-      error.className = "screen-status is-error";
-      error.setAttribute("role", "alert");
-      error.textContent = mainError;
-      list?.append(error);
-    }
-    if (pinned) list?.append(sessionRow(pinned, { main: true }));
-    else if (mainResolving) {
-      const resolving = document.createElement("p");
-      resolving.className = "sidebar-state";
-      resolving.textContent = "Đang mở cửa sổ chính…";
-      list?.append(resolving);
-    }
-    if (others.length) {
-      if (pinned) {
-        const sub = document.createElement("p");
-        sub.className = "team-secondary-title";
-        sub.textContent = "Phiên khác";
-        list?.append(sub);
-      }
-      for (const session of others) list?.append(sessionRow(session));
-    } else if (!pinned && !mainResolving) {
+    const dm = findMainSession(hub.state.sessions, me.id, getRememberedDm(me.id));
+    const past = historyForBot(hub.state.sessions, me.id, dm?.id);
+    // Thyca's pre-team sessions stay reachable here; other bots show their
+    // non-DM sessions the same way only when any exist.
+    if (past.length) history?.append(historyGroup(me, past));
+  }
+  const rooms = (hub.state.sessions || []).filter(isSharedSession);
+  const shared = sharedList();
+  if (shared) {
+    shared.replaceChildren();
+    if (!rooms.length) {
       const empty = document.createElement("p");
       empty.className = "sidebar-state";
-      empty.textContent = bot
-        ? `${bot.name} chưa có phiên nào — nhắn trong phiên hiện tại để bắt đầu.`
-        : "Bot này chưa có phiên nào.";
-      list?.append(empty);
+      empty.textContent = "Chưa có phiên chung.";
+      shared.append(empty);
+    } else {
+      shared.append(...rooms.map(roomRow));
     }
-    const actions = section.querySelector("#team-nav-actions");
-    actions?.replaceChildren(sharedToggleButton(), allSessionsButton(), sharedPicker());
   }
-}
-
-function sharedToggleButton() {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "screen-button";
-  button.textContent = sharedOpen ? "Đóng" : "＋ Phiên chung";
-  button.setAttribute("aria-expanded", String(sharedOpen));
-  button.addEventListener("click", () => {
-    sharedOpen = !sharedOpen;
-    sharedError = "";
-    render();
-  });
-  return button;
-}
-
-function allSessionsButton() {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "session-action";
-  button.textContent = "Tất cả phiên";
-  button.setAttribute("aria-label", "Xem tất cả phiên");
-  button.addEventListener("click", showLegacy);
-  return button;
+  const actions = actionsBox();
+  if (actions) {
+    actions.replaceChildren();
+    actions.hidden = !sharedOpen;
+    if (sharedOpen) actions.append(sharedPicker());
+  }
 }
 
 export function teamBots() {
@@ -529,6 +529,11 @@ export async function initTeamSidebar(entryHub) {
   hub = entryHub;
   const section = teamSection();
   if (!section) return;
+  document.querySelector("#team-shared-create")?.addEventListener("click", () => {
+    sharedOpen = !sharedOpen;
+    sharedError = "";
+    render();
+  });
   let payload = null;
   try {
     payload = await getJson("/api/bots");
@@ -541,9 +546,10 @@ export async function initTeamSidebar(entryHub) {
     // The note lives AFTER #session-list — renderSessions() rebuilds that
     // nav on every load (replaceChildren), so anything inside it is wiped.
     const nav = document.querySelector("#session-list");
-    if (nav && !nav.parentElement?.querySelector(".team-unavailable")) {
+    if (nav && !nav.parentElement?.querySelector("[data-team-note]")) {
       const note = document.createElement("p");
-      note.className = "sidebar-state team-unavailable";
+      note.className = "sidebar-state";
+      note.dataset.teamNote = "1";
       note.textContent = "Đội bot chưa sẵn sàng — hiện tất cả phiên.";
       nav.after(note);
     }
@@ -569,8 +575,8 @@ function armTeamRefresh() {
   document.addEventListener("visibilitychange", refresh);
 }
 
-// After a team session is created elsewhere (or sessions reload), the level-2
-// list must follow the newest state.
+// After a team session is created elsewhere (or sessions reload), the lists
+// must follow the newest state.
 export function syncTeamSessions() {
   if (bots.length && !teamSection()?.hidden) render();
 }

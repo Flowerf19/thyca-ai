@@ -1009,20 +1009,25 @@ button:active {
   pointer-events: none;
 }
 
-/* Participant strip: ≡ stays in the site header; bot names sit right,
-   visually right-to-left with thyca outermost (row-reverse over a
-   thyca-first DOM order). */
-.team-strip {
+/* Participant strip: lives in .site-header, right-aligned before the
+   header-line; bot names sit right, visually right-to-left with thyca
+   outermost (row-reverse over a thyca-first DOM order). Type reuses the
+   header-line values (reading, italic, muted); each name tints per bot. */
+.chat-shell .site-header .team-strip {
   display: flex;
   flex-direction: row-reverse;
   flex-wrap: wrap;
-  justify-content: flex-start;
+  align-items: baseline;
+  justify-content: flex-end;
   gap: 0.15rem 0.7rem;
-  margin: 0.15rem 0 0;
+  min-width: 0;
+  margin: 0 0 0 auto;
   padding: 0;
-  text-align: right;
+  color: var(--color-muted);
   font-family: var(--font-reading);
-  font-size: 0.85rem;
+  font-size: 0.88rem;
+  font-style: italic;
+  line-height: 1.15;
 }
 
 .team-strip-name {
@@ -1062,82 +1067,22 @@ button:active {
   }
 }
 
-/* Level 1 bot rows: tint dot + name + status, same row shape as sessions. */
-.team-bot-item {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  width: 100%;
-  padding: 0.55rem 0.7rem;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-reading);
-  text-align: start;
-}
-
-.team-bot-item:hover {
-  background: var(--color-accent-soft);
-}
-
-.team-bot-item.is-active {
-  background: var(--color-accent-soft);
-  font-weight: 600;
-}
-
+/* Agent rows reuse the legacy .session-item grid verbatim; only the tint
+   dot (icon cell, both rows) has no legacy equivalent. Name, "role ·
+   status" subtitle, hover wash and the .is-active accent bar all come
+   from kit.css — no parallel row styles. */
 .team-bot-dot {
-  flex: none;
+  grid-column: 1;
+  grid-row: 1 / -1;
+  place-self: center;
   width: 0.65rem;
   height: 0.65rem;
   border-radius: var(--radius-pill);
   background: var(--team-tint, var(--color-accent));
 }
 
-.team-bot-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.team-bot-status {
-  margin-inline-start: auto;
-  color: var(--color-muted);
-  font-family: var(--font-reading);
-  font-size: 0.78rem;
-  font-style: italic;
-}
-
-.team-bot-status.is-running {
-  color: var(--color-botanical);
-}
-
-.team-bot-status.is-error {
-  color: var(--color-danger, var(--color-accent-deep));
-}
-
-.team-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  padding: 0.6rem 0.7rem;
-}
-
-.team-unavailable {
-  font-style: italic;
-}
-
-/* CFE-1 main window pin + CFE-2 unread badge. Tokens only: the unread pill
-   reuses the accent pair, the secondary heading the muted reading tone. */
-.team-secondary-title {
-  margin: 0.7rem 0.7rem 0.1rem;
-  color: var(--color-muted);
-  font-family: var(--font-reading);
-  font-size: 0.78rem;
-  font-style: italic;
-}
-
-.session-row.is-main .session-item {
-  background: var(--color-accent-soft);
-}
+/* CFE-2 unread badge. Tokens only: the unread pill reuses the accent
+   pair. Legacy rows have no badge, so this cannot reuse anything. */
 
 .team-unread {
   flex: none;
@@ -1170,46 +1115,41 @@ button:active {
   background: var(--color-paper-card);
 }
 
-.team-shared-title {
-  margin: 0;
-  font-weight: 600;
-}
-
 .team-shared-option {
   display: flex;
   align-items: center;
   gap: 0.5rem;
 }
 
-/* Per-bot message: name text + tint left bar, no avatar, no glow. */
-.team-message {
-  border-inline-start: 0.2rem solid var(--team-tint, var(--color-accent));
-  box-shadow: none;
+/* Per-bot message: the header IS the legacy .chat-brand block (stripe,
+   lockup, quill, italic status line), tinted per bot through the existing
+   --chat-brand-accent variable. The single team override kills the warm
+   ::before wash (r9) — stripe shape/shadow, h2 scale, status type and the
+   body/footer column offsets all stay legacy. No tint bar on the article:
+   the stripe inside the header carries it. */
+.team-message .chat-brand-body::before {
+  content: none;
 }
 
-.team-message > .team-message-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.3rem 0.6rem;
-  margin-block-end: 0.35rem;
-  /* The tint bar is the article's own border, so inset the name to the
-     body text column (same offset as .live-copy) — never touching the bar. */
-  padding-inline-start: calc(var(--chat-brand-stripe) + var(--chat-brand-gap));
-}
-
-.team-message-name {
-  color: var(--team-tint, var(--color-accent));
-  font-family: var(--font-display);
-  font-size: 1.05rem;
-  font-weight: 600;
-}
-
-.team-message-state {
+/* Shared-room participant annotation: the third line of a legacy row
+   (grid column 2, row 3), muted italic. Legacy rows stop at two lines. */
+.session-participants {
+  grid-column: 2;
+  grid-row: 3;
+  overflow: hidden;
   color: var(--color-muted);
   font-family: var(--font-reading);
-  font-size: 0.82rem;
+  font-size: 0.72rem;
   font-style: italic;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Collapsed history group: the toggle is a legacy .session-action word
+   button; only the group's block spacing has no legacy equivalent. */
+.team-history {
+  margin-block: 0.7rem 0.1rem;
 }
 
 /* Quyết định / handoff sit directly on the page (r9: no note-paper box).
@@ -1343,10 +1283,6 @@ button:active {
   border-radius: var(--radius-xs);
   background: var(--color-paper-card);
   font: inherit;
-}
-
-.composer {
-  position: relative;
 }
 
 .mention-popup {
@@ -1491,9 +1427,8 @@ button:active {
   margin: 0;
 }
 
-/* Team sidebar chrome: the level-2 back control is always visible (unlike
-   the mobile-only .screen-back), and the team section follows the same
-   mobile pick pattern as .sessions.
+/* Team sidebar chrome: #team-nav reuses the legacy .sessions class, so the
+   mobile pick pattern comes from kit.css untouched.
 
    [hidden] must win over the flex display rules: kit.css .sessions and the
    local .team-strip both set display:flex, which outranks the hidden
@@ -1510,37 +1445,4 @@ button:active {
 
 .team-strip[hidden] {
   display: none;
-}
-#team-nav-back {
-  display: inline-flex;
-  align-items: center;
-  flex: none;
-  padding: 0.2rem 0.4rem 0.2rem 0;
-  border: 0;
-  background: transparent;
-  color: var(--color-accent);
-  font: inherit;
-  font-size: 0.9rem;
-  cursor: pointer;
-}
-
-#team-nav-back[hidden] {
-  display: none;
-}
-
-.team-heading {
-  align-items: center;
-}
-
-@media (max-width: 56rem) {
-  #team-nav {
-    display: none;
-  }
-
-  .pick-shell.is-picking #team-nav:not([hidden]) {
-    display: flex !important;
-    flex-direction: column;
-    padding: 0.85rem 1rem 1.25rem;
-    pointer-events: auto;
-  }
 }

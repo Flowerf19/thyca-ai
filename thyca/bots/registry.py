@@ -15,6 +15,7 @@ from pathlib import Path
 from thyca.bots.card import (
     CARD_FILENAME,
     LEGACY_CARD_FILENAME,
+    TEAM_TINTS,
     BotCard,
     BotCardDoc,
     parse_bot_card,
@@ -119,6 +120,19 @@ class BotRegistry:
 
     def exists(self, bot_id: str) -> bool:
         return self.existing_card_path(bot_id) is not None
+
+    def suggest_tint(self) -> str:
+        """Least-used display tint among existing cards (FE palette).
+
+        Creation without an explicit tint used to hard-default every
+        bot to ``accent``, so the whole team rendered one color. The
+        suggested value is still just a card field — explicit tints
+        always win, and the FE falls back by hash for unknown values."""
+        counts = {tint: 0 for tint in TEAM_TINTS}
+        for doc in self.list():
+            if doc.card is not None and doc.card.tint in counts:
+                counts[doc.card.tint] += 1
+        return min(TEAM_TINTS, key=lambda tint: counts[tint])
 
     def create(self, card: BotCard) -> BotCard:
         """Write a new bot directory from a validated card."""

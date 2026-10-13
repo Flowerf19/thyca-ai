@@ -31,6 +31,12 @@ BASH_MODES = frozenset({"ask", "allow", "deny"})
 #: Tint is a theme-token name, never a hex literal (contract §6/FE-6).
 _TINT_RE = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$")
 
+#: The team palette (mirrors BOT_TINTS in team-data.js — the tokens the
+#: webui resolves through var(--color-…)). Used only to suggest a
+#: distinct tint at creation time; any other token-shaped value in a
+#: card stays valid and wins.
+TEAM_TINTS: tuple[str, ...] = ("accent", "botanical", "success-ink", "ink", "accent-deep")
+
 #: Tools every newly created bot receives so it can immediately talk to
 #: peers and use its own memory (peer send + remember/search/get/propose).
 #: Creation paths union these with explicitly requested tools; the card's

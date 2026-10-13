@@ -166,29 +166,67 @@ function unreadSuffix(state) {
   return state.count > 0 ? `, ${state.count} chưa đọc` : ", có tin chưa đọc";
 }
 
-/* Agent row: legacy .session-row shape. The tint dot sits in the icon cell
-   (grid column 1, both rows — see .team-bot-dot); the name and the
-   "role · status" line reuse .session-name and <time> verbatim, so the row
-   reads exactly like an old session row. */
+/* Avatar slot (user-approved presentation, 2026-10-14): a fixed cell in
+   the legacy icon column. Until real/generated avatars exist it shows
+   the twin's initial on its tint; the manager carries a small star.
+   Single participant → one slot; a shared session → overlapped pair. */
+function avatarSlot(bot, mini = false) {
+  const slot = document.createElement("span");
+  slot.className = mini ? "team-avatar is-mini" : "team-avatar";
+  slot.style.setProperty("--team-tint", tintVarFor(bot?.id, bot?.tint));
+  slot.setAttribute("aria-hidden", "true");
+  const letter = document.createElement("span");
+  letter.className = "team-avatar-letter";
+  letter.textContent = String(bot?.name || bot?.id || "?").trim().charAt(0).toUpperCase() || "?";
+  slot.append(letter);
+  if (!mini && (bot?.system || bot?.id === TEAM_BOT_ID)) {
+    const star = document.createElement("span");
+    star.className = "team-avatar-star";
+    star.textContent = "\u2726";
+    slot.append(star);
+  }
+  return slot;
+}
+
+function sessionIcon(session) {
+  const ids = Array.isArray(session?.bots) ? session.bots.map(String) : [];
+  const members = ids.map((id) => bots.find((bot) => bot.id === id)).filter(Boolean);
+  if (members.length > 1) {
+    const stack = document.createElement("span");
+    stack.className = "team-avatar-stack";
+    stack.setAttribute("aria-hidden", "true");
+    stack.append(...members.slice(0, 2).map((bot) => avatarSlot(bot, true)));
+    return stack;
+  }
+  if (members.length === 1) return avatarSlot(members[0], true);
+  const icon = document.createElement("span");
+  icon.className = "session-icon";
+  icon.setAttribute("aria-hidden", "true");
+  return icon;
+}
+
+/* Agent row: legacy .session-row shape. The avatar slot sits in the icon
+   cell (grid column 1, both rows); the name and the "role · status"
+   line reuse .session-name and <time> verbatim. Selection is a soft
+   wash pill in the bot's tint (chat.css, scoped to the team list). */
 function botRow(bot) {
   const row = document.createElement("div");
   row.className = "session-row";
   const button = document.createElement("button");
   button.type = "button";
-  button.className = "session-item";
+  button.className = "session-item team-bot-item";
   button.dataset.botId = bot.id;
+  button.style.setProperty("--team-tint", tintVarFor(bot.id, bot.tint));
+  button.title = bot.role ? `${bot.name} \u00b7 ${bot.role}` : bot.name;
+  button.classList.toggle("is-paused", String(bot.status || "") === "paused");
   const current = currentTeamBot();
   const selected = !!current && current.id === bot.id;
   button.classList.toggle("is-active", selected);
   if (selected) button.setAttribute("aria-current", "page");
-  const dot = document.createElement("span");
-  dot.className = "team-bot-dot";
-  dot.style.setProperty("--team-tint", tintVarFor(bot.id, bot.tint));
-  dot.setAttribute("aria-hidden", "true");
   const name = document.createElement("span");
   name.className = "session-name";
   name.textContent = bot.name;
-  button.append(dot, name);
+  button.append(avatarSlot(bot), name);
   const sub = [bot.role, statusLabel(bot.status)].filter(Boolean).join(" · ");
   if (sub) {
     const line = document.createElement("time");
@@ -208,39 +246,33 @@ function botRow(bot) {
   return row;
 }
 
-/* Unified-list rows: the old session-row format untouched (quill icon,
-   bold title, italic "time · lượt" line) for private and shared sessions
-   alike — no category label on the row. Opening one works like the legacy
-   list: solo rooms confirm the remembered DM, shared rooms just open. A
-   session with multiple participating bots adds one annotation line with
-   their names; a solo session has no annotation line. */
+/* Unified-list rows: a subordinate child of the bot row above (smaller
+   title, muted subline, indented cluster — chat.css), so a session can
+   never read as another bot. The subline merges time/turns and, for a
+   shared session, the participant names onto one line. Opening works
+   like the legacy list: solo rooms confirm the remembered DM, shared
+   rooms just open. */
 function unifiedRow(session, botId = "") {
   const row = document.createElement("div");
   row.className = "session-row";
   const button = document.createElement("button");
   button.type = "button";
-  button.className = "session-item";
+  button.className = "session-item team-session-item";
   button.dataset.sessionId = String(session.id || "");
   const selected = button.dataset.sessionId === hub.state.activeId;
   button.classList.toggle("is-active", selected);
   if (selected) button.setAttribute("aria-current", "page");
-  const icon = document.createElement("span");
-  icon.className = "session-icon";
-  icon.setAttribute("aria-hidden", "true");
   const name = document.createElement("span");
   name.className = "session-name";
   name.textContent = cleanText(session.title, "Phiên trống");
+  const names = roomParticipantNames(session, bots);
   const time = document.createElement("time");
   time.dateTime = String(session.updated_at || "");
-  time.textContent = sessionMetaLine(formatSessionTime(session.updated_at), session.turns);
-  button.append(icon, name, time);
-  const names = roomParticipantNames(session, bots);
-  if (names.length > 1) {
-    const annotation = document.createElement("span");
-    annotation.className = "stack";
-    annotation.textContent = names.join(" · ");
-    button.append(annotation);
-  }
+  time.textContent = [
+    sessionMetaLine(formatSessionTime(session.updated_at), session.turns),
+    names.length > 1 ? names.join(" \u00b7 ") : "",
+  ].filter(Boolean).join(" \u00b7 ");
+  button.append(sessionIcon(session), name, time);
   const seen = sessionUnread(session);
   const unread = unreadBadge(seen);
   if (unread) button.append(unread);
@@ -441,12 +473,18 @@ function render() {
   // Drop a remembered DM that no longer exists (deleted session): the
   // list is authoritative here, so a missing id is stale, not loading.
   const me = currentTeamBot();
-  // ONE list: every bot is a row; the selected bot's sessions render
-  // directly under its row, inside this same list.
+  // ONE list of bot clusters: every bot is a row; the selected bot's
+  // sessions render in an indented cluster directly under its row.
   const rows = [];
   for (const bot of bots) {
-    rows.push(botRow(bot));
+    const cluster = document.createElement("div");
+    cluster.className = "team-cluster";
+    cluster.append(botRow(bot));
+    rows.push(cluster);
     if (!me || bot.id !== me.id) continue;
+    const sub = document.createElement("div");
+    sub.className = "team-cluster-sessions";
+    cluster.append(sub);
     const rememberedId = getRememberedDm(me.id);
     if (rememberedId
       && !(hub.state.sessions || []).some((item) => String(item?.id) === rememberedId)) {
@@ -457,7 +495,7 @@ function render() {
       error.className = "screen-status is-error";
       error.setAttribute("role", "alert");
       error.textContent = mainError;
-      rows.push(error);
+      sub.append(error);
     }
     // One merged list: this bot's private sessions together with every
     // shared session it participates in. Thyca's pre-team sessions are
@@ -477,11 +515,12 @@ function render() {
         const empty = document.createElement("p");
         empty.className = "sidebar-state";
         empty.textContent = "Chưa có phiên.";
-        rows.push(empty);
+        sub.append(empty);
       }
     } else {
-      rows.push(...sessions.map((session) => unifiedRow(session, me.id)));
+      sub.append(...sessions.map((session) => unifiedRow(session, me.id)));
     }
+    if (!sub.childElementCount) sub.remove();
   }
   list.replaceChildren(...rows);
   const actions = actionsBox();
@@ -500,10 +539,33 @@ export function teamBotById(id) {
   return bots.find((bot) => bot.id === String(id || "")) || null;
 }
 
+/* Collapsed rail (user-approved presentation): the sidebar shrinks to an
+   avatar-only rail (bots only — sessions return when expanded). The
+   choice persists per browser; CSS lives in chat.css (.is-rail). */
+const RAIL_KEY = "thyca.teamRail";
+
+function railStored() {
+  try { return localStorage.getItem(RAIL_KEY) === "1"; } catch { return false; }
+}
+
+function applyRail() {
+  const on = railStored();
+  document.querySelector(".chat-shell")?.classList.toggle("is-rail", on);
+  const toggle = document.querySelector("#team-rail-toggle");
+  if (toggle) {
+    toggle.setAttribute("aria-pressed", String(on));
+    toggle.setAttribute("aria-label", on ? "Mở rộng thanh đội" : "Thu gọn thanh đội");
+  }
+}
+
 export async function initTeamSidebar(entryHub) {
   hub = entryHub;
   const section = teamSection();
   if (!section) return;
+  document.querySelector("#team-rail-toggle")?.addEventListener("click", () => {
+    try { localStorage.setItem(RAIL_KEY, railStored() ? "0" : "1"); } catch { /* private mode: session-only */ }
+    applyRail();
+  });
   document.querySelector("#team-shared-create")?.addEventListener("click", () => {
     sharedOpen = !sharedOpen;
     sharedError = "";
@@ -516,6 +578,7 @@ export async function initTeamSidebar(entryHub) {
     payload = null;
   }
   bots = normalizeBots(payload);
+  if (bots.length) applyRail();
   if (!bots.length) {
     // Backend has no team registry yet: legacy list stays, one muted note.
     // The note lives AFTER #session-list — renderSessions() rebuilds that

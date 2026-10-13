@@ -895,6 +895,20 @@ class ChatApp:
         ))
         return {"ok": True, "session_id": dm["id"]}
 
+    def _promote_participant(self, session_id: str, bot_id: str) -> None:
+        """Add a delivery recipient to a normal room's participants.
+
+        A plain session becomes a team session when work is delegated
+        in it (frontend plan §4.1): without this the room shows the
+        recipient's rows while its participant list denies membership.
+        DMs never promote (private by definition; set_room_bots also
+        guards them) — the caller checks ownership first."""
+        try:
+            if bot_id not in self.room_bots(session_id):
+                self.set_room_bots(session_id, bot_id, "add")
+        except Exception:
+            pass  # promotion is presentational; delivery must not fail on it
+
     async def _deliver_envelope(self, envelope, ctx) -> str:
         """A2A delivery: run the recipient bot's own turn, record it.
 
@@ -922,6 +936,7 @@ class ChatApp:
         self._bus.take(envelope)
         span_id = new_span_id()
         room: SessionManager | None = None
+        dm_owner = self._room_dm_owner(room_id) if room_id else None
         if room_id:
             try:
                 room = SessionManager(
@@ -930,6 +945,8 @@ class ChatApp:
                     store=self._sessions.store,
                 )
                 room.load(room_id)
+                if dm_owner is None:
+                    self._promote_participant(room_id, envelope.recipient)
                 self._record_bus_events(room, room_id)
             except Exception:
                 room = None
@@ -957,7 +974,6 @@ class ChatApp:
             )
         except Exception as exc:
             return f"delivery failed: {type(exc).__name__}: {exc}"
-        dm_owner = self._room_dm_owner(room_id) if room_id else None
         if room is not None and (dm_owner is None or dm_owner == envelope.recipient):
             room.append(
                 Message(

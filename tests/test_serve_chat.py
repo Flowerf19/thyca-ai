@@ -1742,8 +1742,15 @@ def test_chat_row_uses_the_shared_session_item() -> None:
 
 
 def test_hovering_a_row_keeps_its_divider() -> None:
-    """The pointer wash does not hide the line above the row it lights up."""
+    """The pointer wash does not hide the line above the row it lights up.
+
+    Scoped to the legacy session list: the team bot list deliberately
+    uses cluster dividers instead of per-row rules (presentation pass
+    2026-10-14), so its #team-bot-list blocks are excluded here."""
+    import re
+
     css = (WEBUI / "pages" / "chat" / "chat.css").read_text(encoding="utf-8")
+    css = re.sub(r"#team-bot-list[^{]*\{[^}]*\}", "", css)
 
     # The wash is the only hover change: the row's own top rule stays, so the
     # divider between it and the session above keeps showing.

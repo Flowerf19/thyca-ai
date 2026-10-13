@@ -382,7 +382,9 @@ def _create_spec(deps: AdminDeps) -> ToolSpec:
                 name=args["bot_id"],
                 role=args.get("role", "Trợ lý"),
                 description=args.get("description", ""),
-                tint=args.get("tint", "accent"),
+                # No explicit tint → least-used team tint, so twins are
+                # distinguishable by color instead of all rendering accent.
+                tint=args.get("tint") or deps.bots.suggest_tint(),
                 model=BotModel(
                     id=args.get("model", "default"),
                     thinking=args.get("thinking") if isinstance(args.get("thinking"), str) else None,

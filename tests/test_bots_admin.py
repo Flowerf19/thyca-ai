@@ -233,3 +233,35 @@ def test_due_minute_precision() -> None:
         pass
     else:
         raise AssertionError("expected CronError")
+
+
+def test_suggest_tint_picks_least_used_and_create_uses_it(tmp_path: Path) -> None:
+    import json
+
+    from thyca.bots.admin_tools import AdminDeps, register_admin_tools
+    from thyca.bots.bus import Bus
+    from thyca.bots.card import TEAM_TINTS
+    from thyca.bots.registry import BotRegistry
+    from thyca.bots.runtime import BotRuntime
+
+    registry = BotRegistry(tmp_path)
+    registry.ensure_thyca()  # thyca holds accent
+    tool_registry = ToolRegistry()
+    register_admin_tools(tool_registry,
+                         AdminDeps(registry, BotRuntime(tmp_path, registry, Bus()),
+                                   lambda: None))
+    create = tool_registry.get("bot_create")
+
+    async def make(bot_id: str, **extra) -> str:
+        out = await create.handler(
+            {"bot_id": bot_id, "role": "R", "description": "D.", **extra})
+        assert json.loads(out)["ok"], out
+        return registry.require(bot_id).tint
+
+    first = asyncio.run(make("twin-a"))
+    second = asyncio.run(make("twin-b"))
+    assert first in TEAM_TINTS and second in TEAM_TINTS
+    assert first != "accent", "accent is Thyca's; a fresh twin must differ"
+    assert second != first, "consecutive creations spread across the palette"
+    explicit = asyncio.run(make("twin-c", tint="ink"))
+    assert explicit == "ink", "an explicit tint always wins over the suggestion"

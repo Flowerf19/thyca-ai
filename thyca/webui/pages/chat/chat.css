@@ -1062,10 +1062,135 @@ button:active {
   }
 }
 
-/* Agent rows reuse the legacy .session-item grid verbatim; only the tint
-   dot (icon cell, both rows) has no legacy equivalent. Name, "role ·
-   status" subtitle, hover wash and the .is-active accent bar all come
-   from kit.css — no parallel row styles. */
+/* Agent rows reuse the legacy .session-item grid verbatim; the list's
+   presentation layer (user-approved, 2026-10-14) is scoped to the team
+   list only: one cluster per bot with its sessions indented beneath,
+   selection as a soft tint pill instead of the kit blur+bar, an avatar
+   slot (initial on tint) in the legacy icon cell, overlapped minis for
+   shared sessions. Kit rules for other screens are untouched. */
+#team-nav .sessions-heading h2 {
+  margin-inline-end: auto;
+}
+
+#team-shared-create {
+  border-style: dashed;
+}
+
+#team-bot-list .session-item {
+  border-block-start-color: transparent;
+  border-radius: var(--radius-sm);
+}
+
+#team-bot-list .session-item.is-active {
+  background: color-mix(in oklab, var(--team-tint, var(--color-accent)) 13%, transparent);
+}
+
+#team-bot-list .session-item.is-active::before,
+#team-bot-list .session-item.is-active::after {
+  content: none;
+}
+
+.team-cluster {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.team-cluster + .team-cluster {
+  border-top: var(--rule) solid var(--color-divider);
+  padding-top: 0.35rem;
+}
+
+.team-cluster-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-inline-start: 1.15rem;
+  padding-inline-start: 0.5rem;
+  border-inline-start: var(--rule) solid var(--color-divider);
+}
+
+.team-avatar {
+  grid-column: 1;
+  grid-row: 1 / -1;
+  place-self: center;
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: var(--radius-pill);
+  background: var(--team-tint, var(--color-accent));
+  color: var(--color-accent-ink);
+}
+
+.team-avatar-letter {
+  font-family: var(--font-display);
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.team-avatar.is-mini {
+  width: 1.15rem;
+  height: 1.15rem;
+}
+
+.team-avatar.is-mini .team-avatar-letter {
+  font-size: 0.55rem;
+}
+
+.team-avatar-star {
+  position: absolute;
+  top: -0.3rem;
+  inset-inline-end: -0.3rem;
+  padding: 0.06rem;
+  border-radius: var(--radius-pill);
+  background: var(--color-paper);
+  color: var(--color-accent-deep);
+  font-size: 0.6rem;
+  line-height: 1;
+}
+
+.team-avatar-stack {
+  grid-column: 1;
+  grid-row: 1 / -1;
+  place-self: center;
+  position: relative;
+  width: 1.85rem;
+  height: 1.85rem;
+}
+
+.team-avatar-stack .team-avatar {
+  position: absolute;
+}
+
+.team-avatar-stack .team-avatar:first-child {
+  top: 0;
+  inset-inline-start: 0;
+}
+
+.team-avatar-stack .team-avatar:last-child {
+  bottom: 0;
+  inset-inline-end: 0;
+  box-shadow: 0 0 0 2px var(--color-paper);
+}
+
+.team-bot-item.is-paused .team-avatar {
+  filter: grayscale(1);
+  opacity: 0.55;
+}
+
+.team-bot-item.is-paused .session-name,
+.team-session-item time {
+  color: var(--color-muted);
+}
+
+.team-session-item .session-name {
+  font-size: 0.86rem;
+}
+
+/* Tint dot stays for the shared-room picker options (compact context). */
 .team-bot-dot {
   grid-column: 1;
   grid-row: 1 / -1;
@@ -1126,21 +1251,8 @@ button:active {
   content: none;
 }
 
-/* Shared-room participant annotation, ported from the team-v4 handoff
-   (.session-item .stack, team-v4.css): the participant-names line under
-   the title, grid column 2. Overflow ellipsis is the real-data
-   adaptation for long bot names; legacy rows stop at two lines. */
-.session-item .stack {
-  grid-column: 2;
-  grid-row: 3;
-  margin-top: 0.15rem;
-  overflow: hidden;
-  color: var(--color-muted);
-  font: italic 0.74rem var(--font-reading);
-  line-height: 1.4;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+/* Participant names ride the session row's single muted time line
+   (time · lượt · tên các bot) — no third row. */
 
 /* Quyết định / handoff sit directly on the page (r9: no note-paper box).
    Same text-column offset as .live-copy so they align with the body. */
@@ -1435,4 +1547,73 @@ button:active {
 
 .team-strip[hidden] {
   display: none;
+}
+
+/* Collapsed team rail (desktop only; mobile keeps the pick flow): the
+   sidebar shrinks to avatar slots — bots only, name/role on the native
+   title tooltip, sessions return when expanded. */
+@media (min-width: 56.01rem) {
+  .chat-shell.is-rail {
+    grid-template-columns: 5.4rem minmax(0, 1fr);
+  }
+
+  .is-rail .sidebar {
+    margin-inline-start: 0.55rem;
+  }
+
+  .is-rail #team-nav.sessions {
+    align-items: center;
+    padding: 1.1rem 0.3rem 0.8rem;
+  }
+
+  .is-rail #team-nav .sessions-heading {
+    flex-direction: column;
+    gap: 0.45rem;
+    padding-inline-end: 0;
+  }
+
+  .is-rail #team-nav .sessions-heading h2 {
+    display: none;
+  }
+
+  .is-rail #team-rail-toggle svg {
+    transform: scaleX(-1);
+  }
+
+  .is-rail #team-bot-list {
+    align-items: center;
+    margin-block-start: 0.6rem;
+  }
+
+  .is-rail .team-cluster {
+    align-items: center;
+  }
+
+  .is-rail .team-cluster + .team-cluster {
+    border-top: 0;
+    padding-top: 0;
+  }
+
+  .is-rail .team-cluster-sessions,
+  .is-rail #team-nav-actions {
+    display: none;
+  }
+
+  .is-rail .team-bot-item {
+    grid-template-columns: 1.85rem;
+    justify-items: center;
+    min-height: 0;
+    padding: 0.35rem;
+  }
+
+  .is-rail .team-bot-item .session-name,
+  .is-rail .team-bot-item time {
+    display: none;
+  }
+
+  .is-rail .team-bot-item .team-unread {
+    position: absolute;
+    top: 0.05rem;
+    inset-inline-end: 0.05rem;
+  }
 }

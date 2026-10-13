@@ -1033,7 +1033,10 @@ def test_sidebar_agents_primary_no_level_two() -> None:
     src = SIDEBAR_SRC.read_text(encoding="utf-8")
     # Legacy anatomy reused for agent rows.
     assert '"session-row"' in src
-    assert '"session-item"' in src
+    # Bot/session rows subtype the legacy item (presentation pass,
+    # 2026-10-14): same anatomy, team-bot-item / team-session-item.
+    assert '"session-item team-bot-item"' in src
+    assert '"session-item team-session-item"' in src
     assert '"session-name"' in src
     assert '"Đội"' in src
     # The level-2 session-picker screen is gone entirely.
@@ -1061,15 +1064,17 @@ def test_sidebar_agents_primary_no_level_two() -> None:
         assert gone not in html, gone
     assert 'id="team-session-list"' not in src
     # Single unified list that replaces them.
-    for kept in ("\"stack\"", "currentTeamBot",
+    for kept in ("team-cluster", "currentTeamBot",
                  "unifiedSessionsForBot", "unifiedRow",
                  "team-shared-create"):
         assert kept in src, kept
     assert 'id="team-bot-list"' in html
     # Participant annotation only for multi-bot sessions, absent for solo.
     assert "names.length > 1" in src
-    # Participant annotation is the mockup's .stack line (team-v4 handoff).
-    assert 'annotation.className = "stack"' in src
+    # Participant names ride the single muted time line now (supersedes
+    # the mockup .stack third row, presentation pass 2026-10-14).
+    assert "names.length > 1 ? names.join(" in src
+    assert 'className = "stack"' not in src
 
 
 def test_sidebar_sessions_render_under_active_bot_row(node: str) -> None:
@@ -1080,6 +1085,9 @@ def test_sidebar_sessions_render_under_active_bot_row(node: str) -> None:
     value = _sidebar(node,
         "FakeNode.prototype.replaceChildren = function (...nodes)"
         " { this.children = [...nodes]; };"
+        " FakeNode.prototype.remove = function () {};"
+        " Object.defineProperty(FakeNode.prototype, 'childElementCount'," 
+        "  { get() { return this.children.length; } });"
         " FakeNode.prototype.removeAttribute = function (k)"
         " { delete this.attributes[k]; };"
         " FakeNode.prototype.querySelector = function (sel) {"
@@ -1121,7 +1129,12 @@ def test_sidebar_sessions_render_under_active_bot_row(node: str) -> None:
         "    updated_at: '2026-07-01T00:00:00Z', turns: 1}] },"
         " loadSession: async () => {}, afterTeamSession: async () => {},"
         " teamRefresh: async () => {} });"
-        " return botNav.children.map((row) => ({"
+        " const flat = [];"
+        " for (const cluster of botNav.children)"
+        "  for (const row of cluster.children) {"
+        "   if (row.className === 'team-cluster-sessions')"
+        "    flat.push(...row.children); else flat.push(row); }"
+        " return flat.map((row) => ({"
         "  bot: (row.children[0] && row.children[0].dataset.botId) || '',"
         "  sid: (row.children[0] && row.children[0].dataset.sessionId) || '',"
         "  text: row.textContent }));")
@@ -1144,6 +1157,9 @@ def test_sidebar_bot_with_only_dm_renders_zero_session_rows(node: str) -> None:
     value = _sidebar(node,
         "FakeNode.prototype.replaceChildren = function (...nodes)"
         " { this.children = [...nodes]; };"
+        " FakeNode.prototype.remove = function () {};"
+        " Object.defineProperty(FakeNode.prototype, 'childElementCount'," 
+        "  { get() { return this.children.length; } });"
         " FakeNode.prototype.removeAttribute = function (k)"
         " { delete this.attributes[k]; };"
         " FakeNode.prototype.querySelector = function (sel) {"
@@ -1182,7 +1198,12 @@ def test_sidebar_bot_with_only_dm_renders_zero_session_rows(node: str) -> None:
         "    dm: 'thyca', updated_at: '2026-06-01T00:00:00Z', turns: 2}] },"
         " loadSession: async () => {}, afterTeamSession: async () => {},"
         " teamRefresh: async () => {} });"
-        " return botNav.children.map((row) => ({"
+        " const flat = [];"
+        " for (const cluster of botNav.children)"
+        "  for (const row of cluster.children) {"
+        "   if (row.className === 'team-cluster-sessions')"
+        "    flat.push(...row.children); else flat.push(row); }"
+        " return flat.map((row) => ({"
         "  bot: (row.children[0] && row.children[0].dataset.botId) || '',"
         "  sid: (row.children[0] && row.children[0].dataset.sessionId) || '',"
         "  text: row.textContent,"
@@ -1256,6 +1277,9 @@ def test_strip_single_bot_dm_renders_name_and_hides_when_empty(node: str) -> Non
     value = _strip(node,
         "FakeNode.prototype.replaceChildren = function (...nodes)"
         " { this.children = [...nodes]; };"
+        " FakeNode.prototype.remove = function () {};"
+        " Object.defineProperty(FakeNode.prototype, 'childElementCount'," 
+        "  { get() { return this.children.length; } });"
         " const el = new FakeNode('p');"
         " document.querySelector = (sel) => sel === '#team-strip' ? el : null;"
         " strip.initTeamStrip({"
@@ -1290,6 +1314,9 @@ def test_strip_names_tinted_plain_text_busy_and_error(node: str) -> None:
     value = _strip(node,
         "FakeNode.prototype.replaceChildren = function (...nodes)"
         " { this.children = [...nodes]; };"
+        " FakeNode.prototype.remove = function () {};"
+        " Object.defineProperty(FakeNode.prototype, 'childElementCount'," 
+        "  { get() { return this.children.length; } });"
         " const el = new FakeNode('p');"
         " document.querySelector = (sel) => sel === '#team-strip' ? el : null;"
         " strip.initTeamStrip({"
@@ -1382,16 +1409,21 @@ def test_team_css_audit_deleted_vs_kept() -> None:
     """Second-pass audit pin: parallel styles deleted, irreducible
     minimum kept (each kept rule has no legacy equivalent)."""
     css = CHAT_CSS.read_text(encoding="utf-8")
-    deleted = ("team-bot-item", "team-bot-name", "team-bot-status",
+    # team-bot-item returned deliberately in the 2026-10-14 presentation
+    # pass (avatar slot / paused state on the bot item); the mockup
+    # .stack line left in the same pass (names ride the time line).
+    deleted = ("team-bot-name", "team-bot-status",
                "team-actions", "team-secondary-title", "team-unavailable",
                "team-shared-title", "team-heading", "team-nav-back",
-               "team-history", "session-row.is-main")
+               "team-history", "session-row.is-main", "session-item .stack")
     for gone in deleted:
         assert gone not in css, gone
-    kept = (".team-bot-dot",  # no legacy tint dot
+    kept = (".team-bot-dot",  # picker tint dot (compact context)
+            ".team-avatar",  # avatar slot (initial on tint)
+            ".team-cluster",  # bot + its sessions as one cluster
+            ".is-rail",  # collapsed avatar rail
             ".team-unread",  # no legacy unread badge
             ".team-strip[hidden]",  # flex outranks hidden (legacy pattern)
-            ".session-item .stack",  # mockup participant-names line
             ".team-shared-picker",  # no legacy checkbox picker card
             ".team-shared-option",
             ".team-card",  # question/error cards
@@ -1431,3 +1463,18 @@ def test_chat_title_head_has_no_solid_background_or_fade() -> None:
         ".chat-title-head::after fade must stay removed: it painted a "
         "solid-to-transparent band over the shell texture"
     )
+
+
+def test_sidebar_avatar_slot_and_rail_present() -> None:
+    """Presentation pass (2026-10-14): avatar slots with manager star,
+    overlapped minis for shared sessions, collapsed rail toggle."""
+    src = SIDEBAR_SRC.read_text(encoding="utf-8")
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    css = CHAT_CSS.read_text(encoding="utf-8")
+    for kept in ("team-avatar", "team-avatar-star", "team-avatar-stack",
+                 "avatarSlot", "sessionIcon", "is-paused", "applyRail",
+                 "team-rail-toggle"):
+        assert kept in src or kept in css, kept
+    assert 'id="team-rail-toggle"' in html
+    assert ".chat-shell.is-rail" in css
+    assert "team-cluster-sessions" in css

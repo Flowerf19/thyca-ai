@@ -653,3 +653,20 @@ def test_message_user_inside_own_dm_does_not_double_post(tmp_path: Path) -> None
         assert all("DOUBLE-GREETING" not in (r.get("content") or "") for r in rows)
     finally:
         app.shutdown()
+
+
+def test_delegate_in_plain_room_promotes_recipient_to_participant(tmp_path: Path) -> None:
+    app = _chat(tmp_path, _DmFlowLLM(greet=False))
+    try:
+        app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
+                                 description="Writes code.", persona="PERSONA-CODER"))
+        room = app.create(bots=["thyca"])["id"]
+        assert app.room_bots(room) == ["thyca"]
+        app.turn(room, "ask coder for help")
+        # A plain session becomes a team session on first delegation:
+        # membership now matches the bot rows in its transcript.
+        assert "coder" in app.room_bots(room)
+        assert _bot_rows(_rows(app, room), "coder"), (
+            "a plain (non-DM) room records the participant's work")
+    finally:
+        app.shutdown()

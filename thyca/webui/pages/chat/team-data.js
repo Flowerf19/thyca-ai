@@ -107,14 +107,20 @@ export function mentionCandidates(bots, query) {
 }
 
 /* Split a room transcript into display runs: user turns and thyca-or-named
-   bot messages stay as-is; consecutive inter-bot bus events
-   (kind delegate|step|status) collapse into one {type:"exchange"} run
-   rendered behind "Xem các bot đã làm gì". Messages without meta keep the
-   legacy single-thread rendering. */
+   bot messages stay as-is; consecutive inter-bot bus events collapse into
+   one {type:"exchange"} run rendered behind "Xem các bot đã làm gì".
+   Envelope rows of kind message|help_request count as exchange only when
+   they carry a trace (recorded bus traffic); a trace-less message row is
+   a bot speaking in the room (e.g. a message_user DM post) and stays
+   visible. Messages without meta keep the legacy single-thread rendering. */
 const EXCHANGE_KINDS = new Set(["delegate", "step", "status"]);
+const TRACED_EXCHANGE_KINDS = new Set(["message", "help_request"]);
 
 export function isExchangeMessage(message) {
-  return EXCHANGE_KINDS.has(String(message?.meta?.kind || ""));
+  const meta = message?.meta || {};
+  const kind = String(meta.kind || "");
+  if (EXCHANGE_KINDS.has(kind)) return true;
+  return TRACED_EXCHANGE_KINDS.has(kind) && !!meta.trace_id;
 }
 
 export function splitExchange(messages) {

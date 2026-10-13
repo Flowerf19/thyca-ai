@@ -890,12 +890,22 @@ class ChatApp:
                 self._record_bus_events(room, room_id)
             except Exception:
                 room = None
+        # Delivery bypasses the mailbox render (Bus.take above), so a
+        # truncated envelope must carry the same bot_fetch marker that
+        # render provides: without it the recipient cannot know its
+        # prompt is only the excerpt or fetch the full body (CBE-3).
+        text = envelope.payload
+        if envelope.truncated:
+            text = (
+                f"{text}\n  [truncated: full body via bot_fetch "
+                f"span_id={envelope.span_id}]"
+            )
         try:
             result = await self._runtime.run_bot_turn_detailed(
                 scope=ctx.scope,
                 card=card,
                 room_id=room_id or f"a2a:{envelope.sender}",
-                text=envelope.payload,
+                text=text,
                 turn_cfg=ctx.turn_cfg,
                 event_sink=ctx.event_sink,
                 trace_id=envelope.trace_id,

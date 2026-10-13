@@ -138,7 +138,11 @@ async def run_turn(
                     hot=hot,
                     event_sink=request.event_sink,
                     persist_user=not request.retry,
-                    bot_ctx={"span_id": thyca_span, "trace_id": thyca_trace},
+                    bot_ctx={
+                        "bot_id": "thyca",
+                        "span_id": thyca_span,
+                        "trace_id": thyca_trace,
+                    },
                 )
             except asyncio.CancelledError:
                 raise

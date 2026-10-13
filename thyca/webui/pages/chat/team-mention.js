@@ -21,11 +21,23 @@ function roster() {
 }
 
 function currentQuery() {
-  const value = input ? input.value : "";
-  const caret = input ? input.selectionStart ?? value.length : value.length;
-  const before = value.slice(0, caret);
-  const match = before.match(/@([\p{L}\p{N}_-]*)$/u);
-  return match ? { query: match[1], start: caret - match[0].length } : null;
+  if (!input) return null;
+  const value = input.value;
+  const caret = input.selectionStart ?? value.length;
+  return mentionQueryAt(value, caret);
+}
+
+/* Pure @-query extraction (node-testable): the popup opens only when the @
+   starts the text or follows whitespace — an email like name@gmail.com
+   must never trigger it. Returns {query, start} with start at the @, or
+   null when no popup should open. */
+export function mentionQueryAt(value, caret) {
+  const text = String(value || "");
+  const pos = Math.min(Math.max(Number(caret) || 0, 0), text.length);
+  const before = text.slice(0, pos);
+  const match = before.match(/(?:^|\s)@([\p{L}\p{N}_-]*)$/u);
+  if (!match) return null;
+  return { query: match[1], start: pos - match[1].length - 1 };
 }
 
 function close() {
@@ -113,6 +125,10 @@ function choose(index) {
 
 export function mentionKeydown(event) {
   if (!popup || popup.hidden || !items.length) return false;
+  // Vietnamese IME: while composing, Enter commits the preedit — the popup
+  // must not steal it. app.js sends only after its own isComposing guard,
+  // so returning false here hands the key back to the IME untouched.
+  if (event.isComposing || event.keyCode === 229) return false;
   if (event.key === "ArrowDown") {
     event.preventDefault();
     active = (active + 1) % items.length;

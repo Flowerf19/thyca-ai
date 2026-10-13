@@ -3,9 +3,10 @@ import { buildDelegationTree } from "./trace-data.js";
 import { tintVarFor } from "../chat/team-data.js";
 
 // Delegation tree (FE-5): appended to an opened turn disclosure, grouping the
-// turn's messages by bot_id/trace_id/parent_span_id meta (contract §6).
-// Messages are the backend's own transcript — the tree only regroups them.
-// Without trace meta the block says so honestly instead of inventing lanes.
+// turn's messages by bot_id/trace_id/parent_span_id meta (contract §6) plus
+// span_id when the backend emits it. Messages are the backend's own
+// transcript — the tree only regroups them. Without trace meta the block
+// says so honestly instead of inventing lanes.
 function nodeLabel(node) {
   const bot = node.botId || "thyca";
   const kind = node.kind ? ` · ${node.kind}` : "";
@@ -69,8 +70,10 @@ export function renderDelegation(detail) {
   title.textContent = "Cây giao việc";
   wrap.append(title);
   const roots = buildDelegationTree(messages);
-  const traced = roots.some((node) => node.traceId || node.children.length
-    || (node.message?.meta && ("trace_id" in node.message.meta || "parent_span_id" in node.message.meta)));
+  const traced = roots.some((node) => node.traceId || node.spanId || node.children.length
+    || (node.message?.meta && ("trace_id" in node.message.meta
+      || "parent_span_id" in node.message.meta
+      || "span_id" in node.message.meta)));
   if (!traced) {
     const note = document.createElement("p");
     note.className = "screen-note";

@@ -7,7 +7,12 @@ import { isExchangeMessage, tintVarFor } from "./team-data.js";
 // caller falls back to the legacy transcript path, so a plain session
 // renders byte-identical to today.
 //
-// Accepted meta shapes (contract §6 extends Message.meta):
+// Accepted meta shapes: bot_id/kind/trace_id/parent_span_id ride on the
+// frozen contract (§6); bot_name/bot_state/bot_tint are display-only
+// companions. meta.decision / meta.handoff / meta.card are NOT in contract
+// §6 — they are a proposed extension the backend must emit before these
+// cards appear (FE-3 is UI-ready only). Without them the caller takes the
+// legacy transcript path, so a plain session renders byte-identical.
 // - {bot_id, bot_name?, bot_state?} on an assistant message → per-bot block
 //   (name text + tint left bar, no avatar, no glow).
 // - {kind: delegate|step|status} → one exchange line inside the collapse.

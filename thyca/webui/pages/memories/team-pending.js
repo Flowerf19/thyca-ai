@@ -118,11 +118,25 @@ function showPending() {
   render();
 }
 
-function hidePending() {
+function hidePending({ restore = false } = {}) {
   if (!tab || !view) return;
+  const wasActive = !view.hidden;
   tab.classList.remove("is-active");
   tab.setAttribute("aria-pressed", "false");
   view.hidden = true;
+  if (restore && wasActive) {
+    // The queue emptied while the pending view was on screen. showPending()
+    // hid #memory-list and every .memory-view, so without this the
+    // workspace stays blank. Re-activate the built-in overview through its
+    // own button so memories.js renders itself; fall back to unhiding the
+    // list when that button is absent.
+    const overview = document.querySelector('.session-item[data-view="overview"]');
+    if (overview) overview.click();
+    else {
+      const listNode = document.querySelector("#memory-list");
+      if (listNode) listNode.hidden = false;
+    }
+  }
 }
 
 async function decide(id, action) {
@@ -157,7 +171,7 @@ async function load({ quiet = false } = {}) {
   items = next;
   if (!items.some((item) => (item.botId || "") === filter)) filter = "";
   tab.hidden = items.length === 0;
-  if (!items.length) hidePending();
+  if (!items.length) hidePending({ restore: true });
   else if (!view.hidden) render();
 }
 

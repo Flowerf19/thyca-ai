@@ -72,29 +72,38 @@ export function renderBotDrawer(bot) {
     const canTitle = document.createElement("h3");
     canTitle.textContent = "Làm được gì";
     can.append(canTitle);
-    const canList = document.createElement("ul");
-    const abilities = Array.isArray(data.abilities) && data.abilities.length
-      ? data.abilities
-      : ["Nhận việc từ Thyca trong phiên chung", "Hỏi lại khi thiếu thông tin"];
-    for (const item of abilities) {
-      const row = document.createElement("li");
-      row.textContent = String(item);
-      canList.append(row);
+    // No invented abilities: when the registry supplies none, say so.
+    if (Array.isArray(data.abilities) && data.abilities.length) {
+      const canList = document.createElement("ul");
+      for (const item of data.abilities) {
+        const row = document.createElement("li");
+        row.textContent = String(item);
+        canList.append(row);
+      }
+      can.append(canList);
+    } else {
+      const note = document.createElement("p");
+      note.className = "screen-note";
+      note.textContent = "Chưa có dữ liệu về khả năng của bot này.";
+      can.append(note);
     }
-    can.append(canList);
     const cantTitle = document.createElement("h3");
     cantTitle.textContent = "Không làm";
     can.append(cantTitle);
-    const cantList = document.createElement("ul");
-    const limits = Array.isArray(data.limits) && data.limits.length
-      ? data.limits
-      : ["Tự ghi vào trí nhớ của cả đội"];
-    for (const item of limits) {
-      const row = document.createElement("li");
-      row.textContent = String(item);
-      cantList.append(row);
+    if (Array.isArray(data.limits) && data.limits.length) {
+      const cantList = document.createElement("ul");
+      for (const item of data.limits) {
+        const row = document.createElement("li");
+        row.textContent = String(item);
+        cantList.append(row);
+      }
+      can.append(cantList);
+    } else {
+      const note = document.createElement("p");
+      note.className = "screen-note";
+      note.textContent = "Chưa có dữ liệu về giới hạn của bot này.";
+      can.append(note);
     }
-    can.append(cantList);
     body.append(can);
 
     const advanced = document.createElement("details");

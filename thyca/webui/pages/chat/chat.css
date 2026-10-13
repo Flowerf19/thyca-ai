@@ -1449,7 +1449,24 @@ button:active {
 
 /* Team sidebar chrome: the level-2 back control is always visible (unlike
    the mobile-only .screen-back), and the team section follows the same
-   mobile pick pattern as .sessions. */
+   mobile pick pattern as .sessions.
+
+   [hidden] must win over the flex display rules: kit.css .sessions and the
+   local .team-strip both set display:flex, which outranks the hidden
+   attribute team-sidebar.js / team-strip.js toggle. The picking-scoped
+   rule keeps the mobile list/conversation pattern intact — it only ever
+   shows sections that are not hidden. */
+.sessions[hidden] {
+  display: none;
+}
+
+.pick-shell.is-picking .sessions[hidden] {
+  display: none !important;
+}
+
+.team-strip[hidden] {
+  display: none;
+}
 #team-nav-back {
   display: inline-flex;
   align-items: center;

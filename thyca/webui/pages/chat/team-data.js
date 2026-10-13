@@ -34,9 +34,29 @@ export function tintVarFor(botId, tint) {
 }
 
 /* Normalize GET /api/bots payloads. Tolerant: {bots:[…]} or a bare array;
-   anything else (backend missing, error page) → []. Entries keep only the
-   public card fields; status defaults to "unknown" (rendered muted, never
-   as a fake running/error badge). */
+   anything else (backend missing, error page) → []. Entries keep the public
+   card fields plus the optional detail fields the drawer renders
+   (abilities/limits/model/bash/skills/schedule) — passed through verbatim
+   when the backend supplies them, empty otherwise. The drawer renders an
+   honest "chưa có dữ liệu" for empties; nothing here is ever invented. */
+function stringList(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => String(item ?? "").trim())
+    .filter((text) => text.length > 0);
+}
+
+function textField(value) {
+  if (typeof value === "string") return value;
+  if (value == null) return "";
+  if (typeof value === "object") {
+    // Card model is {id, thinking}: keep the model id as the readable line.
+    if (typeof value.id === "string") return value.id;
+    return "";
+  }
+  return String(value);
+}
+
 export function normalizeBots(payload) {
   const list = Array.isArray(payload) ? payload : payload?.bots;
   if (!Array.isArray(list)) return [];
@@ -49,6 +69,12 @@ export function normalizeBots(payload) {
       description: typeof bot.description === "string" ? bot.description : "",
       tint: tintForBot(bot.id, bot.tint),
       status: typeof bot.status === "string" && bot.status ? bot.status : "unknown",
+      abilities: stringList(bot.abilities),
+      limits: stringList(bot.limits),
+      model: textField(bot.model),
+      bash: textField(bot.bash),
+      skills: stringList(bot.skills),
+      schedule: textField(bot.schedule),
     }));
 }
 
@@ -139,7 +165,25 @@ export function buildDelegationTree(messages) {
     if (parent && parent !== node) parent.children.push(node);
     else roots.push(node);
   }
-  return roots;
+  // Same-trace roots cluster (first-seen trace order, stable within a
+  // trace); messages without trace meta stay last in arrival order. Without
+  // span_id the backend gives no parent links, so every node stays a root
+  // and the caller renders the flat honest note — never an invented tree.
+  const tracedOrder = [];
+  const tracedGroups = new Map();
+  const untraced = [];
+  for (const node of roots) {
+    if (node.traceId) {
+      if (!tracedGroups.has(node.traceId)) {
+        tracedGroups.set(node.traceId, []);
+        tracedOrder.push(node.traceId);
+      }
+      tracedGroups.get(node.traceId).push(node);
+    } else {
+      untraced.push(node);
+    }
+  }
+  return [...tracedOrder.flatMap((id) => tracedGroups.get(id)), ...untraced];
 }
 
 /* Cost per bot over trace/cost rows carrying bot cost meta. Rows in the
@@ -168,6 +212,22 @@ export function aggregateBotCost(rows) {
   }
   return [...groups.values()].sort((a, b) => (b.costUsd ?? -1) - (a.costUsd ?? -1)
     || a.botId.localeCompare(b.botId, "vi"));
+}
+
+/* POST /api/sessions {bots} guard: the backend may answer while ignoring
+   the bots field and return a plain session. Only open the result as a
+   shared room when the returned participants cover every requested bot;
+   otherwise the caller shows the unavailable note instead of a fake
+   shared room. Pure — node-testable. */
+export function verifySharedSession(detail, botIds) {
+  const wanted = [...new Set(
+    (Array.isArray(botIds) ? botIds : []).map(String).filter(Boolean),
+  )];
+  const got = new Set(
+    Array.isArray(detail?.bots) ? detail.bots.map(String) : [],
+  );
+  const missing = wanted.filter((id) => !got.has(id));
+  return { ok: wanted.length > 0 && missing.length === 0, missing };
 }
 
 /* Memory candidates (GET /api/memory/candidates contract): pending items for

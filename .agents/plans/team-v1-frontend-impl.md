@@ -153,7 +153,7 @@ review → full tests → report.
 
 - FE-1 done (team-data.js + team-sidebar.js; graceful legacy fallback).
 - FE-2 done (strip, mention, transcript team path, sticky title, hint, Nâng cao).
-- FE-3 done (question/error cards, no approve button).
+- FE-3 UI ready, pending contract extension for card meta (question/error/decision/handoff renderers land, no approve button; the backend must emit meta.card/meta.decision/meta.handoff for cards to appear — contract §6 covers only bot_id/kind/trace_id/parent_span_id).
 - FE-4 done (drawer + Settings › Bot; drawer opens from strip).
 - FE-5 done (pending tab hidden-unless-pending; cost-bots block; delegation tree).
 - FE-6 done (--color-danger from accent-deep; no new literals).

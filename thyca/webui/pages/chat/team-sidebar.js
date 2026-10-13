@@ -7,6 +7,7 @@ import {
   normalizeBots,
   sessionsForBot,
   tintVarFor,
+  verifySharedSession,
 } from "./team-data.js";
 
 // Team sidebar: two levels Bot → Session (master plan §7 FE-1). Progressive
@@ -47,6 +48,30 @@ function showLegacy() {
   teamSection()?.setAttribute("hidden", "");
   const legacy = legacySection();
   if (legacy) legacy.hidden = false;
+}
+
+// Way back from the legacy list to the team view (the "Tất cả phiên"
+// button above is otherwise a one-way door). Keeps the current level —
+// returning from legacy must not reset where the user was browsing.
+export function showTeamView() {
+  if (!bots.length) return;
+  render();
+}
+
+// The legacy heading is static HTML that sessions-sidebar never rebuilds
+// (it only replaces #session-list children), so a button placed here
+// survives every renderSessions() call.
+function ensureLegacyBackButton() {
+  const heading = document.querySelector("#chat-sidebar .sessions .sessions-heading");
+  if (!heading || heading.querySelector("[data-team-back]")) return;
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "session-action";
+  button.dataset.teamBack = "1";
+  button.textContent = "Đội bot";
+  button.setAttribute("aria-label", "Về danh sách bot");
+  button.addEventListener("click", showTeamView);
+  heading.append(button);
 }
 
 function statusLabel(status) {
@@ -165,7 +190,17 @@ async function createShared(botIds) {
   try {
     // Contract §6: POST /api/sessions accepts {bots}. The backend on main
     // does not yet — the honest failure below is the unavailable state.
+    // And when it answers while ignoring {bots}, verifySharedSession keeps
+    // us from opening the plain session as a fake shared room.
     const detail = await postJson("/api/sessions", { bots: chosen });
+    const check = verifySharedSession(detail, chosen);
+    if (!check.ok) {
+      sharedError = check.missing.length
+        ? `Backend chưa hỗ trợ phiên chung (thiếu ${check.missing.join(", ")} trong phiên mới) — chưa mở phiên chung.`
+        : "Backend chưa hỗ trợ phiên chung — chưa mở phiên chung.";
+      render();
+      return;
+    }
     sharedOpen = false;
     sharedPicked = null;
     await hub.afterTeamSession(detail);
@@ -201,6 +236,7 @@ function render() {
   const section = teamSection();
   if (!section || !bots.length) return;
   showTeam();
+  ensureLegacyBackButton();
   const list = section.querySelector("#team-bot-list");
   list?.replaceChildren();
   if (level === 1) {
@@ -281,12 +317,14 @@ export async function initTeamSidebar(entryHub) {
   bots = normalizeBots(payload);
   if (!bots.length) {
     // Backend has no team registry yet: legacy list stays, one muted note.
+    // The note lives AFTER #session-list — renderSessions() rebuilds that
+    // nav on every load (replaceChildren), so anything inside it is wiped.
     const nav = document.querySelector("#session-list");
-    if (nav && !nav.querySelector(".team-unavailable")) {
+    if (nav && !nav.parentElement?.querySelector(".team-unavailable")) {
       const note = document.createElement("p");
       note.className = "sidebar-state team-unavailable";
       note.textContent = "Đội bot chưa sẵn sàng — hiện tất cả phiên.";
-      nav.prepend(note);
+      nav.after(note);
     }
     return;
   }

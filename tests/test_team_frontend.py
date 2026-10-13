@@ -17,8 +17,10 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 TEAM = ROOT / "thyca" / "webui" / "pages" / "chat" / "team-data.js"
+MENTION = ROOT / "thyca" / "webui" / "pages" / "chat" / "team-mention.js"
 COST_DATA = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "cost-data.js"
 TRACE_DATA = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "trace-data.js"
+CHAT_CSS = ROOT / "thyca" / "webui" / "pages" / "chat" / "chat.css"
 
 
 @pytest.fixture(scope="module")
@@ -30,7 +32,7 @@ def node() -> str:
 
 
 def _run(node: str, body: str, via: str = "team") -> object:
-    module = {"team": TEAM, "cost": COST_DATA, "trace": TRACE_DATA}[via]
+    module = {"team": TEAM, "mention": MENTION, "cost": COST_DATA, "trace": TRACE_DATA}[via]
     source = (
         f"import * as api from '{module.as_posix()}';\n"
         f"const main = async () => {{ {body} }};\n"
@@ -145,6 +147,93 @@ def test_cost_and_trace_data_reexport_team_helpers(node: str) -> None:
     assert cost == "b"
     tree = _run(node, "return api.buildDelegationTree([{meta: {bot_id: 'a', span_id: 's'}}]).length;", via="trace")
     assert tree == 1
+
+
+def test_normalize_bots_keeps_card_fields(node: str) -> None:
+    """H2: real card fields survive normalizeBots; absent fields stay empty
+    (the drawer renders an honest note) — never invented."""
+    value = _run(
+        node,
+        "return api.normalizeBots({bots: ["
+        " {id: 'b1', abilities: ['code'], limits: ['no rm'],"
+        " model: 'm1', bash: 'ask', skills: ['s1'], schedule: 'daily'},"
+        " {id: 'b2', model: {id: 'm2', thinking: 'high'}},"
+        "]});",
+    )
+    full, bare = value
+    assert full["abilities"] == ["code"]
+    assert full["limits"] == ["no rm"]
+    assert full["model"] == "m1"
+    assert full["bash"] == "ask"
+    assert full["skills"] == ["s1"]
+    assert full["schedule"] == "daily"
+    assert bare["model"] == "m2"
+    assert bare["abilities"] == []
+    assert bare["limits"] == []
+    assert bare["skills"] == []
+    assert bare["bash"] == ""
+    assert bare["schedule"] == ""
+
+
+def test_verify_shared_session(node: str) -> None:
+    """M3: only a detail covering every requested bot opens as shared."""
+    value = _run(
+        node,
+        "return [api.verifySharedSession({bots: ['a', 'b']}, ['a', 'b']),"
+        " api.verifySharedSession({id: 's1'}, ['a', 'b']),"
+        " api.verifySharedSession({bots: ['a']}, ['a', 'b']),"
+        " api.verifySharedSession(null, ['a'])];",
+    )
+    assert value[0] == {"ok": True, "missing": []}
+    assert value[1]["ok"] is False
+    assert value[1]["missing"] == ["a", "b"]
+    assert value[2] == {"ok": False, "missing": ["b"]}
+    assert value[3]["ok"] is False
+
+
+def test_mention_query_requires_boundary(node: str) -> None:
+    """M2: emails must not open the popup; start/whitespace @ must."""
+    value = _run(
+        node,
+        "return [api.mentionQueryAt('a@gmail.com', 11),"
+        " api.mentionQueryAt('@thy', 4),"
+        " api.mentionQueryAt('nhờ @cod', 8),"
+        " api.mentionQueryAt('a@gmail @b', 10)];",
+        via="mention",
+    )
+    assert value[0] is None
+    assert value[1] == {"query": "thy", "start": 0}
+    assert value[2] == {"query": "cod", "start": 4}
+    assert value[3] == {"query": "b", "start": 8}
+
+
+def test_delegation_tree_clusters_same_trace(node: str) -> None:
+    """H3: same-trace roots cluster; untraced roots stay last in order."""
+    messages = [
+        {"meta": {"bot_id": "a", "trace_id": "t1", "span_id": "s1"}},
+        {"content": "plain"},
+        {"meta": {"bot_id": "b", "trace_id": "t1", "span_id": "s2"}},
+        {"meta": {"bot_id": "c", "trace_id": "t2", "span_id": "s3"}},
+    ]
+    value = _run(
+        node,
+        f"return api.buildDelegationTree({json.dumps(messages)})"
+        ".map(n => [n.botId, n.traceId]);",
+    )
+    assert value == [["a", "t1"], ["b", "t1"], ["c", "t2"], ["", ""]]
+
+
+def test_hidden_attribute_beats_flex_display() -> None:
+    """H1/L3: scoped [hidden] rules outrank the flex display shorthands."""
+    import re
+
+    css = CHAT_CSS.read_text(encoding="utf-8")
+    assert re.search(r"\.sessions\[hidden\]\s*\{[^}]*display:\s*none", css)
+    assert re.search(
+        r"\.pick-shell\.is-picking\s+\.sessions\[hidden\]\s*\{[^}]*display:\s*none\s*!important",
+        css,
+    )
+    assert re.search(r"\.team-strip\[hidden\]\s*\{[^}]*display:\s*none", css)
 
 
 def test_pending_candidates_only_pending(node: str) -> None:

@@ -582,3 +582,134 @@ def test_after_team_session_guard_wiring() -> None:
     assert "hub.afterTeamSession(created, owned)" in sidebar
     # createShared keeps the guard-free call: exactly one remains.
     assert sidebar.count("hub.afterTeamSession(detail);") == 1
+
+
+_OFFSET_EXPR = r"calc\(var\(--chat-brand-stripe\) \+ var\(--chat-brand-gap\)\)"
+
+
+def _live_copy_offset() -> str:
+    """The body text column: .live-copy padding-inline-start expression."""
+    import re
+
+    css = CHAT_CSS.read_text(encoding="utf-8")
+    match = re.search(r"\.live-copy\s*\{[^}]*padding-inline-start:\s*([^;]+);", css)
+    assert match, ".live-copy offset rule missing"
+    return match.group(1).strip()
+
+
+def test_team_message_head_aligns_with_body_column() -> None:
+    """The tint bar is the article border, so the name header must carry the
+    same inline offset as .live-copy — otherwise the name sits ~3px from
+    the bar while the body starts a full stripe+gap further in."""
+    import re
+
+    css = CHAT_CSS.read_text(encoding="utf-8")
+    match = re.search(
+        r"\.team-message\s*>\s*\.team-message-head\s*\{[^}]*"
+        r"padding-inline-start:\s*([^;]+);",
+        css,
+    )
+    assert match, ".team-message > .team-message-head offset rule missing"
+    assert match.group(1).strip() == _live_copy_offset()
+
+
+def test_team_decision_handoff_align_with_body_column() -> None:
+    """Decision/handoff lines are direct article children with no box of
+    their own: same text-column offset as .live-copy."""
+    import re
+
+    css = CHAT_CSS.read_text(encoding="utf-8")
+    expected = _live_copy_offset()
+    for name in ("team-decision", "team-handoff"):
+        match = re.search(
+            rf"\.team-message\s*>\s*\.{name}\b[^{{]*\{{[^}}]*"
+            r"padding-inline-start:\s*([^;]+);",
+            css,
+        )
+        assert match, f".team-message > .{name} offset rule missing"
+        assert match.group(1).strip() == expected
+
+
+def test_team_card_box_starts_at_body_column() -> None:
+    """Question/error cards are boxes: the whole box (margin, not padding)
+    starts at the body text column so its border aligns with body text."""
+    import re
+
+    css = CHAT_CSS.read_text(encoding="utf-8")
+    match = re.search(
+        r"\.team-message\s*>\s*\.team-card\s*\{[^}]*"
+        r"margin-inline-start:\s*([^;]+);",
+        css,
+    )
+    assert match, ".team-message > .team-card box-offset rule missing"
+    assert match.group(1).strip() == _live_copy_offset()
+
+
+def test_team_footer_not_double_padded() -> None:
+    """The footer already aligns via the shared .message-assistant rule;
+    no team-scoped footer padding may stack on top of it."""
+    import re
+
+    css = CHAT_CSS.read_text(encoding="utf-8")
+    shared = re.findall(r"\.message-assistant\s*>\s*footer\s*\{", css)
+    assert len(shared) == 1, shared
+    assert _live_copy_offset() in re.search(
+        r"\.message-assistant\s*>\s*footer\s*\{[^}]*\}", css
+    ).group(0)
+    assert not re.search(
+        r"\.team-message[^{]*footer[^{]*\{[^}]*padding-inline-start", css
+    ), "team footer must not add a second inline padding"
+
+
+def test_team_exchange_summary_stays_full_width() -> None:
+    """The collapsed exchange renders at conversation root (never inside a
+    team article) as a centered rule line: intentionally full-width, so its
+    summary takes no text-column offset. Its rows keep their own tint bar
+    and already align name with body."""
+    import re
+
+    css = CHAT_CSS.read_text(encoding="utf-8")
+    summary = re.search(r"\.team-exchange\s*>\s*summary\s*\{[^}]*\}", css)
+    assert summary, ".team-exchange > summary rule missing"
+    assert "padding-inline-start" not in summary.group(0)
+    assert re.search(
+        r"\.team-exchange-row\s*\{(?=[^}]*border-inline-start:)(?=[^}]*padding-inline-start:)[^}]*\}",
+        css,
+    ), ".team-exchange-row must keep its own bar + inset"
+
+
+def test_team_alignment_leaves_legacy_rules_untouched() -> None:
+    """Legacy (non-team) selectors keep exactly one offset each and no
+    team selector leaks into them: plain sessions render byte-identical."""
+    import re
+
+    css = CHAT_CSS.read_text(encoding="utf-8")
+    expected = _live_copy_offset()
+    for selector in (
+        r"\.live-copy",
+        r"\.message-assistant\s*>\s*footer",
+        r"\.usage-row",
+        r"\.thinking-note",
+        r"\.reply-live",
+    ):
+        blocks = re.findall(selector + r"\s*\{[^}]*\}", css)
+        hits = [block for block in blocks if "padding-inline-start" in block]
+        assert len(hits) == 1, (selector, len(hits))
+        assert expected in hits[0], selector
+    # Every rule carrying the text-column offset belongs to a team scope or
+    # to one of the five legacy selectors above — nothing else may shift.
+    for selector_text in re.findall(
+        r"([^{}]+)\{[^}]*padding-inline-start:\s*" + _OFFSET_EXPR + r"[^}]*\}",
+        css,
+    ):
+        lowered = selector_text.lower()
+        assert "team" in lowered or any(
+            legacy in selector_text
+            for legacy in (
+                ".live-copy",
+                ".message-assistant",
+                ".usage-row",
+                ".thinking-note",
+                ".reply-live",
+            )
+        ), selector_text

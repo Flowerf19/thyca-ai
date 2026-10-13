@@ -1187,12 +1187,15 @@ button:active {
   box-shadow: none;
 }
 
-.team-message-head {
+.team-message > .team-message-head {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: 0.3rem 0.6rem;
   margin-block-end: 0.35rem;
+  /* The tint bar is the article's own border, so inset the name to the
+     body text column (same offset as .live-copy) — never touching the bar. */
+  padding-inline-start: calc(var(--chat-brand-stripe) + var(--chat-brand-gap));
 }
 
 .team-message-name {
@@ -1209,10 +1212,12 @@ button:active {
   font-style: italic;
 }
 
-/* Quyết định / handoff sit directly on the page (r9: no note-paper box). */
-.team-decision,
-.team-handoff {
+/* Quyết định / handoff sit directly on the page (r9: no note-paper box).
+   Same text-column offset as .live-copy so they align with the body. */
+.team-message > .team-decision,
+.team-message > .team-handoff {
   margin-block: 0.5rem 0;
+  padding-inline-start: calc(var(--chat-brand-stripe) + var(--chat-brand-gap));
   font-family: var(--font-reading);
 }
 
@@ -1266,6 +1271,11 @@ button:active {
 }
 
 /* Question / permission / error cards share one card shape. */
+.team-message > .team-card {
+  /* The whole box (not just its text) starts at the body text column. */
+  margin-inline-start: calc(var(--chat-brand-stripe) + var(--chat-brand-gap));
+}
+
 .team-card {
   margin-block-start: 0.7rem;
   padding: 0.8rem 0.9rem;

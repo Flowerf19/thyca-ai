@@ -1,9 +1,11 @@
-"""Agent Card (BOT.md) parsing and validation.
+"""Twin Card (TWIN.md) parsing and validation.
 
-File-first like skills (decision 2026-08-28): each bot is a directory
-``<bot-id>/`` containing ``BOT.md`` with YAML frontmatter (``name`` +
+File-first like skills (decision 2026-08-28): each twin bot is a directory
+``<bot-id>/`` containing ``TWIN.md`` with YAML frontmatter (``name`` +
 card fields) plus a markdown body (persona / ways of working). This module
 only parses and validates; :mod:`thyca.bots.registry` owns the directory.
+Cards written by earlier builds as ``BOT.md`` remain readable (registry
+fallback); new writes always use ``TWIN.md``.
 """
 from __future__ import annotations
 
@@ -16,6 +18,13 @@ import yaml
 from thyca.skills.store import _FM_RE, _NAME_RE, DESCRIPTION_MAX, NAME_MAX
 
 VERSION = 1
+
+#: Card file names. ``TWIN.md`` is canonical (user decision 2026-10-13:
+#: every bot in the team is a twin of Thyca); ``BOT.md`` is the legacy
+#: name kept readable for directories created before the rename.
+CARD_FILENAME = "TWIN.md"
+LEGACY_CARD_FILENAME = "BOT.md"
+CARD_FILENAMES = (CARD_FILENAME, LEGACY_CARD_FILENAME)
 
 BASH_MODES = frozenset({"ask", "allow", "deny"})
 
@@ -61,7 +70,7 @@ class BotMemoryPolicy:
 
 @dataclass(frozen=True)
 class BotCard:
-    """Validated view of one ``BOT.md``. ``bot_id`` is the folder name."""
+    """Validated view of one ``TWIN.md``. ``bot_id`` is the folder name."""
 
     bot_id: str
     name: str
@@ -89,7 +98,7 @@ class BotCardDoc:
 
 
 def parse_bot_card(text: str, bot_id: str) -> BotCardDoc:
-    """Parse + validate ``BOT.md`` text for folder ``bot_id``.
+    """Parse + validate ``TWIN.md`` text for folder ``bot_id``.
 
     Returns ``ok=False`` with a short machine-readable ``error`` instead of
     raising, so a broken card shows up as a warning line (skills-store
@@ -194,7 +203,7 @@ def parse_bot_card(text: str, bot_id: str) -> BotCardDoc:
 
 
 def render_bot_card(card: BotCard) -> str:
-    """Serialize a card back to ``BOT.md`` text (frontmatter + persona)."""
+    """Serialize a card back to ``TWIN.md`` text (frontmatter + persona)."""
     payload: dict[str, object] = {
         "name": card.name,
         "role": card.role,
@@ -226,6 +235,32 @@ def render_bot_card(card: BotCard) -> str:
         payload["paused"] = True
     front = yaml.safe_dump(payload, allow_unicode=True, sort_keys=False)
     return f"---\n{front}---\n{card.persona.strip()}\n"
+
+
+def identity_text(card: BotCard) -> str:
+    """The ``<identity>`` prompt section for one twin, derived from its card.
+
+    Identity is two-layered (user decision 2026-10-13): the shared soul
+    (``SOUL.md``) governs how every twin behaves and never names anyone;
+    who-this-bot-is comes only from its own card. Child turns must never
+    receive Thyca's ``IDENTITY.md`` — that leak made children introduce
+    themselves as Thyca and delegate to themselves in third person.
+    """
+    lines = ["# Identity", "", f"Name: {card.name}"]
+    if card.role.strip():
+        lines.append(f"Role: {card.role.strip()}")
+    if card.description.strip():
+        lines.append(card.description.strip())
+    lines += [
+        "",
+        "You are a twin bot in Thyca's team: you share the team's soul "
+        "(voice, values, working rules) but you are your own bot with "
+        "your own name, role, memory, and skills. Thyca is the team's "
+        "manager bot, a teammate — not you. When you introduce yourself "
+        "or refer to yourself, use your own name above; refer to Thyca "
+        "and other bots as teammates.",
+    ]
+    return "\n".join(lines)
 
 
 def read_bot_file(path: Path, bot_id: str) -> BotCardDoc:

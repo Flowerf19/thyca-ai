@@ -1,9 +1,10 @@
-"""Bot registry: ``~/.thyca/bots/<bot-id>/`` directories + BOT.md cards.
+"""Bot registry: ``~/.thyca/bots/<bot-id>/`` directories + TWIN.md cards.
 
-Backend owns the registry (master plan §2): each bot is a folder with a
-``BOT.md`` Agent Card (parsed by :mod:`thyca.bots.card`), a private
-``skills/`` dir, and a private ``sessions/`` dir. Team-shared skills live
-in ``~/.thyca/skills-team/`` (seeded from packaged defaults).
+Backend owns the registry (master plan §2): each twin bot is a folder
+with a ``TWIN.md`` card (parsed by :mod:`thyca.bots.card`; legacy
+``BOT.md`` cards stay readable), a private ``skills/`` dir, and a
+private ``sessions/`` dir. Team-shared skills live in
+``~/.thyca/skills-team/`` (seeded from packaged defaults).
 """
 from __future__ import annotations
 
@@ -12,6 +13,8 @@ from dataclasses import replace
 from pathlib import Path
 
 from thyca.bots.card import (
+    CARD_FILENAME,
+    LEGACY_CARD_FILENAME,
     BotCard,
     BotCardDoc,
     parse_bot_card,
@@ -26,7 +29,7 @@ SYSTEM_BOT_ID = "thyca"
 _PACKAGED_BOTS = Path(__file__).resolve().parents[1] / "seeds" / "bots"
 _PACKAGED_TEAM_SKILLS = Path(__file__).resolve().parents[1] / "seeds" / "skills-team"
 
-CARD_FILENAME = "BOT.md"
+__all__ = ["BotRegistry", "CARD_FILENAME", "RegistryError", "SYSTEM_BOT_ID"]
 
 
 class RegistryError(RuntimeError):
@@ -52,7 +55,27 @@ class BotRegistry:
         return self.root / bot_id
 
     def card_path(self, bot_id: str) -> Path:
+        """Write target for the card (always the canonical ``TWIN.md``)."""
         return self.bot_dir(bot_id) / CARD_FILENAME
+
+    def existing_card_path(self, bot_id: str) -> Path | None:
+        """The card file to read: ``TWIN.md`` wins, legacy ``BOT.md``
+        remains readable for directories created before the rename."""
+        for name in (CARD_FILENAME, LEGACY_CARD_FILENAME):
+            path = self.bot_dir(bot_id) / name
+            if path.is_file():
+                return path
+        return None
+
+    def _write_card(self, bot_id: str, card: BotCard) -> None:
+        """Write the canonical card and drop any legacy copy, so the two
+        names can never disagree about one bot's identity."""
+        target = self.card_path(bot_id)
+        target.write_text(render_bot_card(card), encoding="utf-8")
+        target.chmod(0o600)
+        legacy = self.bot_dir(bot_id) / LEGACY_CARD_FILENAME
+        if legacy.is_file():
+            legacy.unlink()
 
     def ensure_thyca(self) -> BotCard:
         """Seed the Thyca system card on first run; return the loaded card."""
@@ -61,8 +84,8 @@ class BotRegistry:
         self.team_skills_root.mkdir(parents=True, exist_ok=True)
         self.team_skills_root.chmod(0o700)
         self._ensure_team_skill_defaults()
-        target = self.card_path(SYSTEM_BOT_ID)
-        if not target.is_file():
+        if self.existing_card_path(SYSTEM_BOT_ID) is None:
+            target = self.card_path(SYSTEM_BOT_ID)
             template = _PACKAGED_BOTS / SYSTEM_BOT_ID / CARD_FILENAME
             if not template.is_file():
                 raise RegistryError("packaged Thyca card missing")
@@ -83,8 +106,8 @@ class BotRegistry:
         return docs
 
     def get(self, bot_id: str) -> BotCardDoc:
-        path = self.card_path(bot_id)
-        if not path.is_file():
+        path = self.existing_card_path(bot_id)
+        if path is None:
             return BotCardDoc(None, ok=False, error="unknown bot")
         return read_bot_file(path, bot_id)
 
@@ -95,7 +118,7 @@ class BotRegistry:
         return doc.card
 
     def exists(self, bot_id: str) -> bool:
-        return self.card_path(bot_id).is_file()
+        return self.existing_card_path(bot_id) is not None
 
     def create(self, card: BotCard) -> BotCard:
         """Write a new bot directory from a validated card."""
@@ -107,8 +130,7 @@ class BotRegistry:
         dest = self.bot_dir(card.bot_id)
         dest.mkdir(parents=True, exist_ok=True)
         dest.chmod(0o700)
-        self.card_path(card.bot_id).write_text(render_bot_card(card), encoding="utf-8")
-        self.card_path(card.bot_id).chmod(0o600)
+        self._write_card(card.bot_id, card)
         (dest / "skills").mkdir(exist_ok=True)
         (dest / "sessions").mkdir(exist_ok=True)
         return doc.card
@@ -130,7 +152,7 @@ class BotRegistry:
         # pause/restore own that transition.
         if card.paused != current.paused:
             raise RegistryError("use pause/restore to change paused state")
-        self.card_path(bot_id).write_text(render_bot_card(card), encoding="utf-8")
+        self._write_card(bot_id, card)
         return doc.card
 
     def set_paused(self, bot_id: str, paused: bool) -> BotCard:
@@ -138,7 +160,7 @@ class BotRegistry:
         if card.system and paused:
             raise RegistryError("the Thyca system bot cannot be paused")
         updated = replace(card, paused=paused)
-        self.card_path(bot_id).write_text(render_bot_card(updated), encoding="utf-8")
+        self._write_card(bot_id, updated)
         return updated
 
     def delete(self, bot_id: str) -> None:
@@ -165,7 +187,7 @@ class BotRegistry:
             if doc.ok and doc.card is not None and not doc.card.paused:
                 lines.append(f"- {doc.card.name} — {doc.card.role}")
             elif not doc.ok:
-                lines.append(f"- {(doc.card.bot_id if doc.card else '?')} (BOT.md invalid: {doc.error})")
+                lines.append(f"- {(doc.card.bot_id if doc.card else '?')} (TWIN.md invalid: {doc.error})")
         return "\n".join(lines)
 
     def skill_index_text(self, bot_id: str) -> str:

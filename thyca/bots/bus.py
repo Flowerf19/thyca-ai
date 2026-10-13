@@ -134,6 +134,10 @@ class Bus:
             raise BusError(f"unknown envelope kind: {kind!r}")
         if not recipient or not isinstance(recipient, str):
             raise BusError("recipient must be a non-empty bot id")
+        if sender == recipient:
+            # A bot messaging itself is always an identity mix-up (it
+            # thinks it is someone else); never queue the envelope.
+            raise BusError(f"sender and recipient are the same bot: {sender!r}")
         if not isinstance(payload, str):
             raise BusError("payload must be text")
         clean_refs = tuple(

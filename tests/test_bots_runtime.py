@@ -124,3 +124,12 @@ def test_gateway_policy_denies_hidden_by_name() -> None:
     finally:
         reset_hidden_tools(token)
     policy.check(call)  # allow-all again after reset
+
+
+def test_bus_rejects_self_send() -> None:
+    bus = Bus()
+    bus.register("coder")
+    with pytest.raises(BusError):
+        bus.send(sender="coder", recipient="coder", kind="message",
+                 session_id="r", payload="note to self")
+    assert bus.pending("coder") == 0

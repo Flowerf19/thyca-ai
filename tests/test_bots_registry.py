@@ -1,4 +1,4 @@
-"""BE-1: Agent Card parsing/validation + BotRegistry + Thyca seed."""
+"""BE-1: TWIN.md card parsing/validation + BotRegistry + Thyca seed."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -81,7 +81,7 @@ def test_registry_seeds_thyca_system_card(tmp_path: Path) -> None:
     card = registry.ensure_thyca()
     assert card.bot_id == "thyca"
     assert card.system is True
-    assert (tmp_path / "bots" / "thyca" / "BOT.md").is_file()
+    assert (tmp_path / "bots" / "thyca" / "TWIN.md").is_file()
 
 
 def test_registry_create_pause_restore_delete(tmp_path: Path) -> None:
@@ -137,3 +137,28 @@ def test_registry_skill_index_private_wins(tmp_path: Path) -> None:
     index = registry.skill_index_text("thyca")
     assert "private copy" in index
     assert "team copy" not in index
+
+
+# --- TWIN.md rename (2026-10-13): legacy BOT.md readable, writes canonical --
+
+def test_legacy_bot_md_card_stays_readable(tmp_path: Path) -> None:
+    folder = tmp_path / "bots" / "coder"
+    folder.mkdir(parents=True)
+    (folder / "BOT.md").write_text(VALID, encoding="utf-8")
+    registry = BotRegistry(tmp_path)
+    doc = registry.get("coder")
+    assert doc.ok and doc.card is not None
+    assert doc.card.bot_id == "coder"
+    assert registry.exists("coder")
+
+
+def test_update_card_migrates_legacy_bot_md_to_twin_md(tmp_path: Path) -> None:
+    folder = tmp_path / "bots" / "coder"
+    folder.mkdir(parents=True)
+    (folder / "BOT.md").write_text(VALID, encoding="utf-8")
+    registry = BotRegistry(tmp_path)
+    card = registry.require("coder")
+    registry.update_card("coder", card)
+    assert (folder / "TWIN.md").is_file()
+    assert not (folder / "BOT.md").exists(), "legacy copy must not linger"
+    assert registry.require("coder").role == "Coder"

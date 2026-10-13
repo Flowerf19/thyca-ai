@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 
 from thyca.agent.events import EventSink
 from thyca.bots.bus import MAX_REF_CHARS, MAX_REFS, Bus, Envelope, new_span_id
-from thyca.bots.card import BASELINE_BOT_TOOLS, BotCard
+from thyca.bots.card import BASELINE_BOT_TOOLS, BotCard, identity_text
 from thyca.bots.context import (
     BotTurnContext,
     bind_bot_turn_context,
@@ -30,7 +30,7 @@ from thyca.bots.policy import (
     reset_allowed_tools,
     reset_hidden_tools,
 )
-from thyca.bots.registry import BotRegistry, RegistryError
+from thyca.bots.registry import SYSTEM_BOT_ID, BotRegistry, RegistryError
 from thyca.config import Config
 from thyca.llm.llm_factory import ConnectFactory
 from thyca.memory.identity import bind_bot_id, reset_bot_id
@@ -56,6 +56,29 @@ MEMORY_PROPOSE_TOOL = "memory_propose_team"
 #: ``task_open`` (CBE-4) records an open-task event in the transcript.
 SEND_TOOL_NAME = "bot_send"
 PEER_TOOL_NAMES = frozenset({"bot_send", "bot_fetch", "task_open"})
+
+
+def _layered_soul(shared_soul: str, persona: str) -> str:
+    """Compose the ``<role>`` section: shared soul + this twin's overlay.
+
+    Every twin (Thyca included) rides the shared SOUL.md; the card's
+    persona body is appended as the bot's own working notes and wins
+    where it conflicts. Empty persona simply leaves the shared soul —
+    there is deliberately no fallback direction to invert.
+    """
+    own = (persona or "").strip()
+    shared = (shared_soul or "").strip()
+    if not own:
+        return shared_soul
+    overlay = (
+        "## Your own working notes\n\n"
+        "These come from your own TWIN.md. They refine the shared soul "
+        "above for you specifically and win where they conflict.\n\n"
+        f"{own}"
+    )
+    if not shared or shared == "# Soul":
+        return overlay
+    return f"{shared}\n\n{overlay}"
 
 
 def filtered_tool_schemas(
@@ -334,9 +357,18 @@ class BotRuntime:
                 # memory.read=false: the hot snapshot carries no memory
                 # content at all for this bot (own or team).
                 hot = replace(hot, today="", today_elsewhere="")
+            # Two-layer identity (user decision 2026-10-13): the shared
+            # soul (SOUL.md — voice/values only, names nobody) stays for
+            # every twin; a child bot's persona is its own overlay on top,
+            # never a replacement-or-fallback. The <identity> slot for a
+            # child comes from its own TWIN.md — Thyca's IDENTITY.md must
+            # never ride a child turn (that leak made children answer as
+            # Thyca). Thyca itself keeps its real identity section.
+            is_manager = card.system or card.bot_id == SYSTEM_BOT_ID
             hot = replace(
                 hot,
-                soul=card.persona or hot.soul,
+                soul=_layered_soul(hot.soul, card.persona),
+                identity=hot.identity if is_manager else identity_text(card),
                 # Exactly private + team skills for this bot; never fall
                 # back to Thyca's private index from the shared snapshot.
                 skills=self._registry.skill_index_text(card.bot_id),

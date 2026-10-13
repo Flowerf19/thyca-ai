@@ -244,3 +244,53 @@ def test_no_flush_when_no_compaction_due(tmp_path: Path) -> None:
         assert calls == []
     finally:
         app.shutdown()
+
+
+# --- Two-layer twin identity (2026-10-13) -----------------------------------
+
+def _marker_home(tmp_path: Path, app: ChatApp) -> None:
+    (tmp_path / "SOUL.md").write_text(
+        "# Soul\n\nSHARED-SOUL-MARKER: shared team voice.\n", encoding="utf-8")
+    (tmp_path / "IDENTITY.md").write_text(
+        "# Identity\n\nName: Thyca\nTHYCA-IDENTITY-MARKER\n", encoding="utf-8")
+
+
+def test_child_prompt_own_identity_shared_soul_persona_overlay(tmp_path: Path) -> None:
+    llm = _CaptureLLM()
+    app = _chat(tmp_path, llm)
+    try:
+        _marker_home(tmp_path, app)
+        app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
+                                 description="Writes code.", persona="PERSONA-CODER"))
+        room = app.create(bots=["coder"])["id"]
+        app.turn(room, "who are you?")
+        prompts = [p for p in llm.prompts if "PERSONA-CODER" in p]
+        assert prompts, "child main prompt must carry its persona overlay"
+        prompt = prompts[-1]
+        # Own identity from TWIN.md, shared soul, persona overlay …
+        assert "Name: coder" in prompt
+        assert "SHARED-SOUL-MARKER" in prompt
+        # … and never Thyca's IDENTITY.md (the child-as-Thyca leak).
+        assert "THYCA-IDENTITY-MARKER" not in prompt
+        assert "Name: Thyca" not in prompt
+    finally:
+        app.shutdown()
+
+
+def test_child_empty_persona_keeps_own_identity_and_shared_soul(tmp_path: Path) -> None:
+    llm = _CaptureLLM()
+    app = _chat(tmp_path, llm)
+    try:
+        _marker_home(tmp_path, app)
+        app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper",
+                                 description="Helps out.", persona=""))
+        room = app.create(bots=["helper"])["id"]
+        app.turn(room, "who are you?")
+        prompts = [p for p in llm.prompts if "Name: helper" in p]
+        assert prompts, "empty persona must still yield the twin's own identity"
+        prompt = prompts[-1]
+        assert "SHARED-SOUL-MARKER" in prompt
+        assert "THYCA-IDENTITY-MARKER" not in prompt
+        assert "Name: Thyca" not in prompt
+    finally:
+        app.shutdown()

@@ -54,7 +54,7 @@ class PathGuard:
     def _bot_sensitive(self, target: Path) -> bool:
         """Team-control files a non-system bot must never touch.
 
-        A child bot that could edit ``bots/**`` (any BOT.md), the live
+        A child bot that could edit ``bots/**`` (any TWIN.md), the live
         ``config.json``, or the shared ``skills-team/**`` store could
         escalate its own card, and the runtime re-reads the card on every
         turn. The user (no bot bound) and the Thyca system bot keep full

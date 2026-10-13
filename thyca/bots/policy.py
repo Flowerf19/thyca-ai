@@ -11,7 +11,8 @@ depth behind the schema filter:
   files (``bots/**``, ``config.json``, ``skills-team/**``) — the same rule
   :class:`PathGuard` enforces inside the handlers;
 * ``bash`` may not reference those targets by absolute/``~`` path or by
-  ``BOT.md`` name (bash otherwise bypasses PathGuard by design).
+  ``TWIN.md`` name (legacy ``BOT.md`` included) — bash otherwise
+  bypasses PathGuard by design.
 
 The denied/allowed sets travel on ContextVars bound by the bot runtime
 for the in-flight turn; the default (no bot) allows all — zero behavior
@@ -22,6 +23,7 @@ from __future__ import annotations
 from contextvars import ContextVar
 from pathlib import Path
 
+from thyca.bots.card import CARD_FILENAMES
 from thyca.bots.context import current_bot_turn_context
 from thyca.core.protocol import ToolCall
 from thyca.memory.identity import current_bot_id
@@ -115,6 +117,7 @@ class BotPolicy(Policy):
         if call.name == "bash":
             command = call.arguments.get("command") if isinstance(call.arguments, dict) else None
             if isinstance(command, str) and (
-                _targets_protected(command) or "BOT.md" in command
+                _targets_protected(command)
+                or any(name in command for name in CARD_FILENAMES)
             ):
                 raise PolicyDenied("bot may not access team-control files via bash")

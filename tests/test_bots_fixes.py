@@ -1,7 +1,7 @@
 """Post-review fixes: self-escalation, A2A delivery, cost, ownership.
 
 Security regressions are mandatory coverage here: a child bot must gain
-nothing by trying to edit its own (or any) BOT.md, the live config, or
+nothing by trying to edit its own (or any) TWIN.md, the live config, or
 the team skill store, and must not enumerate other bots' executions.
 """
 from __future__ import annotations
@@ -44,7 +44,7 @@ def _as(bot_id: str | None):
 
 def test_child_bot_cannot_read_write_edit_team_control_files(tmp_path: Path) -> None:
     (tmp_path / "bots" / "coder").mkdir(parents=True)
-    card_file = tmp_path / "bots" / "coder" / "BOT.md"
+    card_file = tmp_path / "bots" / "coder" / "TWIN.md"
     card_file.write_text("original card", encoding="utf-8")
     (tmp_path / "config.json").write_text('{"secret": 1}', encoding="utf-8")
     (tmp_path / "skills-team" / "x").mkdir(parents=True)
@@ -102,7 +102,7 @@ def test_gateway_policy_denies_child_paths_bash_and_unlisted_tools(tmp_path: Pat
     try:
         with pytest.raises(PolicyDenied):
             policy.check(ToolCall(id="1", name="write", arguments={
-                "path": str(tmp_path / "bots" / "coder" / "BOT.md"), "content": "x"}))
+                "path": str(tmp_path / "bots" / "coder" / "TWIN.md"), "content": "x"}))
         with pytest.raises(PolicyDenied):
             policy.check(ToolCall(id="2", name="bash", arguments={
                 "command": "cat ~/.thyca/config.json"}))

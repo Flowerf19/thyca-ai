@@ -1142,13 +1142,13 @@ button:active {
 
 .team-avatar-star {
   position: absolute;
-  top: -0.3rem;
-  inset-inline-end: -0.3rem;
-  padding: 0.06rem;
+  top: -0.36rem;
+  inset-inline-end: -0.36rem;
+  padding: 0.07rem;
   border-radius: var(--radius-pill);
   background: var(--color-paper);
   color: var(--color-accent-deep);
-  font-size: 0.6rem;
+  font-size: 0.72rem;
   line-height: 1;
 }
 
@@ -1205,6 +1205,9 @@ button:active {
    pair. Legacy rows have no badge, so this cannot reuse anything. */
 
 .team-unread {
+  grid-column: 3;
+  grid-row: 1 / -1;
+  place-self: center;
   flex: none;
   min-width: 1.35rem;
   padding: 0 0.4rem;

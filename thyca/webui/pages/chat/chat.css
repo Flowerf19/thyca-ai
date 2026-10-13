@@ -1096,7 +1096,9 @@ button:active {
   gap: 0.35rem;
 }
 
-.team-cluster + .team-cluster {
+/* Flat activity-ordered list: one hairline between top-level channels
+   (bot cluster or group row), whatever comes next. */
+#team-bot-list > :not(:first-child) {
   border-top: var(--rule) solid var(--color-divider);
   padding-top: 0.35rem;
 }
@@ -1191,15 +1193,7 @@ button:active {
 }
 
 /* Group chats are channels at bot level, not sub-sessions: same row
-   scale as bot rows, listed after the bot clusters. */
-.team-groups {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  border-top: var(--rule) solid var(--color-divider);
-  padding-top: 0.35rem;
-}
-
+   scale as bot rows. */
 .team-group-item .session-name {
   font-size: 0.94rem;
 }
@@ -1606,7 +1600,7 @@ button:active {
     align-items: center;
   }
 
-  .is-rail .team-cluster + .team-cluster {
+  .is-rail #team-bot-list > :not(:first-child) {
     border-top: 0;
     padding-top: 0;
   }
@@ -1616,10 +1610,15 @@ button:active {
     display: none;
   }
 
+  /* Shrink-wrap the button so the selected wash hugs the avatar
+     symmetrically (kit forces width:100% on row buttons, which left
+     the avatar off-center inside a full-width pill). */
   .is-rail .team-bot-item,
   .is-rail .team-group-item {
     grid-template-columns: 1.85rem;
     justify-items: center;
+    width: auto;
+    margin-inline: auto;
     min-height: 0;
     padding: 0.35rem;
   }
@@ -1638,15 +1637,4 @@ button:active {
     inset-inline-end: 0.05rem;
   }
 
-  .is-rail .team-groups {
-    align-items: center;
-    border-top: 0;
-    padding-top: 0;
-  }
-
-  .is-rail .team-groups::before {
-    content: "";
-    width: 1.6rem;
-    border-top: var(--rule) solid var(--color-divider);
-  }
 }

@@ -1129,18 +1129,20 @@ def test_sidebar_sessions_render_under_active_bot_row(node: str) -> None:
         " loadSession: async () => {}, afterTeamSession: async () => {},"
         " teamRefresh: async () => {} });"
         " const flat = [];"
-        " for (const cluster of botNav.children)"
-        "  for (const row of cluster.children) {"
+        " for (const item of botNav.children) {"
+        "  if (item.className === 'session-row') { flat.push(item); continue; }"
+        "  for (const row of item.children) {"
         "   if (row.className === 'team-cluster-sessions')"
-        "    flat.push(...row.children); else flat.push(row); }"
+        "    flat.push(...row.children); else flat.push(row); } }"
         " return flat.map((row) => ({"
         "  bot: (row.children[0] && row.children[0].dataset.botId) || '',"
         "  sid: (row.children[0] && row.children[0].dataset.sessionId) || '',"
         "  text: row.textContent }));")
-    # Bots first (Thyca active; Coder stays a single row — its private
-    # session is NOT in Thyca's cluster), then the group chat at top
-    # level, ngang bot (2026-10-14): a shared session is a channel of
-    # its own, not a sub-row of any participant.
+    # Flat by latest activity (2026-10-14): here every channel ties on
+    # the shared room's timestamp, so registry order decides — Thyca
+    # (active; Coder's private session is NOT in Thyca's cluster),
+    # Coder, then the group chat as a channel of its own, ngang bot,
+    # not a sub-row of any participant.
     # The DM session (\"dm\") renders NO row: the Thyca bot row itself is
     # the DM entry (supersedes the earlier expectation that listed it).
     assert [(row["bot"], row["sid"]) for row in value] == [
@@ -1199,10 +1201,11 @@ def test_sidebar_bot_with_only_dm_renders_zero_session_rows(node: str) -> None:
         " loadSession: async () => {}, afterTeamSession: async () => {},"
         " teamRefresh: async () => {} });"
         " const flat = [];"
-        " for (const cluster of botNav.children)"
-        "  for (const row of cluster.children) {"
+        " for (const item of botNav.children) {"
+        "  if (item.className === 'session-row') { flat.push(item); continue; }"
+        "  for (const row of item.children) {"
         "   if (row.className === 'team-cluster-sessions')"
-        "    flat.push(...row.children); else flat.push(row); }"
+        "    flat.push(...row.children); else flat.push(row); } }"
         " return flat.map((row) => ({"
         "  bot: (row.children[0] && row.children[0].dataset.botId) || '',"
         "  sid: (row.children[0] && row.children[0].dataset.sessionId) || '',"

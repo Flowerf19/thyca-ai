@@ -482,15 +482,20 @@ function render() {
   // Drop a remembered DM that no longer exists (deleted session): the
   // list is authoritative here, so a missing id is stale, not loading.
   const me = currentTeamBot();
-  // ONE list of bot clusters: every bot is a row; the selected bot's
-  // sessions render in an indented cluster directly under its row.
-  const rows = [];
-  for (const bot of bots) {
+  // ONE flat channel list ordered by latest activity (user decision
+  // 2026-10-14): bot channels and group chats interleave purely by
+  // their newest session time — no bots-first grouping. A bot entry
+  // is its cluster (bot row + the selected bot's solo sessions under
+  // it); its activity is its newest session, DM included.
+  const entries = [];
+  const botActivity = (botId) => sessionsForBot(hub.state.sessions, botId)
+    .reduce((max, s) => (String(s.updated_at || "") > max ? String(s.updated_at || "") : max), "");
+  bots.forEach((bot, index) => {
     const cluster = document.createElement("div");
     cluster.className = "team-cluster";
     cluster.append(botRow(bot));
-    rows.push(cluster);
-    if (!me || bot.id !== me.id) continue;
+    entries.push({ t: botActivity(bot.id), i: index, node: cluster });
+    if (!me || bot.id !== me.id) return;
     const sub = document.createElement("div");
     sub.className = "team-cluster-sessions";
     cluster.append(sub);
@@ -532,18 +537,16 @@ function render() {
       sub.append(...sessions.map((session) => unifiedRow(session, me.id)));
     }
     if (!sub.childElementCount) sub.remove();
-  }
-  // Group chats sit at the same level as bots, after them, newest
-  // first — each bot row is a private channel, each group row a
-  // shared channel, in BOTH the expanded list and the rail.
-  const groups = groupSessions(hub.state.sessions);
-  if (groups.length) {
-    const wrap = document.createElement("div");
-    wrap.className = "team-groups";
-    wrap.append(...groups.map((session) => unifiedRow(session, "", true)));
-    rows.push(wrap);
-  }
-  list.replaceChildren(...rows);
+  });
+  groupSessions(hub.state.sessions).forEach((session, index) => {
+    entries.push({
+      t: String(session.updated_at || ""),
+      i: bots.length + index,
+      node: unifiedRow(session, "", true),
+    });
+  });
+  entries.sort((a, b) => (a.t === b.t ? a.i - b.i : (a.t < b.t ? 1 : -1)));
+  list.replaceChildren(...entries.map((entry) => entry.node));
   const actions = actionsBox();
   if (actions) {
     actions.replaceChildren();

@@ -1564,12 +1564,12 @@ button:active {
    sidebar shrinks to avatar slots — bots only, name/role on the native
    title tooltip, sessions return when expanded. */
 @media (min-width: 56.01rem) {
+  /* Keep the sidebar's normal 1.25rem inline-start margin so its edge
+     stays aligned with the shell's inner paper layer; widening the
+     rail column preserves the previous card width without exposing a
+     pale strip of the outer shell inside the rail. */
   .chat-shell.is-rail {
-    grid-template-columns: 5.4rem minmax(0, 1fr);
-  }
-
-  .is-rail .sidebar {
-    margin-inline-start: 0.55rem;
+    grid-template-columns: 6.1rem minmax(0, 1fr);
   }
 
   .is-rail #team-nav.sessions {

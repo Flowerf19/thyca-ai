@@ -39,8 +39,11 @@ let sharedPicked = null;
 // renders immediately with known sessions while the fixed DM resolves.
 // mainToken guards rapid bot switching: every openBot mints a token and
 // only the resolve still owning it may touch mainResolving/mainError or
-// open a session (see resolveMain). Rapid taps must never land the user
-// in the first bot's window after they picked the second.
+// navigate (see resolveMain). Ownership is re-checked after every await,
+// and resolveMain hands its `owned` closure into hub.afterTeamSession as a
+// guard, so a stale navigation already inside the hub (past resolveMain's
+// last checkpoint, mid-refresh) still aborts instead of loading the first
+// bot's DM over the second bot's window.
 let mainResolving = false;
 let mainToken = 0;
 let mainError = "";
@@ -333,7 +336,9 @@ async function resolveMain(botId, token) {
   // Only the resolve that still owns the token may navigate or clear the
   // resolving flag: rapid bot switching mints a new token per openBot, so
   // a stale resolve bails after EVERY await instead of landing the user
-  // in the wrong bot's window or clearing the new bot's spinner.
+  // in the wrong bot's window or clearing the new bot's spinner. The two
+  // afterTeamSession handoffs below carry the same ownership (guard arg)
+  // because that hub call awaits internally (see the mainToken note above).
   const owned = () => token === mainToken && activeBot === botId && level === 2;
   try {
     if (!hub) return;
@@ -356,7 +361,7 @@ async function resolveMain(botId, token) {
       mainResolving = false;
       render();
       exitPicking();
-      await hub.afterTeamSession(detail);
+      await hub.afterTeamSession(detail, owned);
       if (!owned()) return;
       return;
     }
@@ -385,7 +390,7 @@ async function resolveMain(botId, token) {
     rememberDm(botId, created.id);
     if (!owned()) return;
     exitPicking();
-    await hub.afterTeamSession(created);
+    await hub.afterTeamSession(created, owned);
     if (!owned()) return;
   } catch (error) {
     if (!owned()) return;

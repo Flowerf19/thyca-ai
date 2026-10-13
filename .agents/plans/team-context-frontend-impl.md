@@ -156,3 +156,16 @@ Thyca-only users never enter team mode → zero behavior delta.
   stamp-only staleness + readMap array guard + level-2 aria cue;
   `forgetDmSession` wired (stale-DM prune) and solo row taps re-remember.
   Independent review still outstanding (no sub-agent tool in this env).
+- 2026-10-13 (frontend race-fix lead): re-review REQUEST CHANGES on the
+  above race claim closed — the token alone did not cover afterTeamSession's
+  internal awaits. Navigation itself is now ownership-aware:
+  hub.afterTeamSession(detail, guard) runs its adopt-id / refreshSessions /
+  loadSession stages through the minimal runGuardedStages helper
+  (team-data.js), re-checking the resolveMain `owned` closure at entry,
+  after the internal refresh await, and immediately before load, aborting
+  silently on a stale owner so a rapid bot switch mid-refresh can no longer
+  let the stale DM clobber state.activeId. Both resolveMain handoffs pass
+  `owned`; createShared stays guard-free (byte-identical). Node regression
+  test for the guard sequencing + wiring pin added to
+  tests/test_team_frontend.py. Independent re-review outstanding (no
+  sub-agent tool in this env).

@@ -391,3 +391,21 @@ export function normalizeCandidates(payload) {
 export function pendingCandidates(candidates) {
   return normalizeCandidates(candidates).filter((item) => item.status === "pending");
 }
+
+/* Ownership-guarded sequencing for multi-await navigations (rapid-switch
+   race fix). Runs each async stage in order, re-checking `guard()` before
+   the first stage and after every await; returns false on the first failed
+   check (later stages never run) and true when every stage completed. The
+   caller aborts silently on false without touching navigation state.
+   hub.afterTeamSession (app.js) runs its stages through here — adopt id,
+   refreshSessions, loadSession — so a stale bot switch landing mid-refresh
+   cannot clobber state.activeId or load the wrong DM. */
+export async function runGuardedStages(guard, stages) {
+  const owned = typeof guard === "function" ? guard : () => true;
+  const steps = Array.isArray(stages) ? stages : [];
+  for (const step of steps) {
+    if (!owned()) return false;
+    await step();
+  }
+  return true;
+}

@@ -522,3 +522,63 @@ def test_team_unread_readmap_rejects_arrays_and_corrupt(node: str) -> None:
     assert value[3] == {"ts": "2026-02-01T00:00:00Z", "count": 3}
     assert value[4] == value[3]
     assert value[5] == ""
+
+
+def test_guarded_stages_recheck_owner_before_every_stage(node: str) -> None:
+    """Race-guard sequencing used by hub.afterTeamSession (adopt id →
+    refreshSessions → loadSession): the owner check runs before the first
+    stage and after every await, and a stale owner aborts before later
+    stages run. Fails if any checkpoint is removed — e.g. without the
+    per-stage check the stale run below would reach "load" and return True.
+    (Real DOM timing across tabs is still review-only; this pins the pure
+    sequencing contract the wiring test below attaches to app.js.)"""
+    value = _run(
+        node,
+        "const freshLog = [];"
+        " const fresh = await api.runGuardedStages(() => true, ["
+        " async () => { freshLog.push('adopt'); },"
+        " async () => { freshLog.push('refresh'); },"
+        " async () => { freshLog.push('load'); }]);"
+        " const entryLog = [];"
+        " const entry = await api.runGuardedStages(() => false,"
+        " [async () => { entryLog.push('adopt'); }]);"
+        " const staleLog = [];"
+        " let owner = true;"
+        " const stale = await api.runGuardedStages(() => owner, ["
+        " async () => { staleLog.push('adopt'); },"
+        " async () => { await Promise.resolve(); owner = false;"
+        " staleLog.push('refresh'); },"
+        " async () => { staleLog.push('load'); }]);"
+        " const fallback = await api.runGuardedStages(undefined,"
+        " [async () => {}]);"
+        " return [fresh, freshLog, entry, entryLog,"
+        " stale, staleLog, fallback];",
+    )
+    assert value[0] is True
+    assert value[1] == ["adopt", "refresh", "load"]
+    assert value[2] is False
+    assert value[3] == []
+    assert value[4] is False
+    assert value[5] == ["adopt", "refresh"]  # stale switch mid-refresh: no load
+    assert value[6] is True  # guard-free callers (createShared) run everything
+
+
+def test_after_team_session_guard_wiring() -> None:
+    """Wiring pin (DOM-bound, not node-runnable — labeled honestly): the hub
+    entry takes the resolveMain ownership guard with entry/post-refresh/
+    pre-load checkpoints via runGuardedStages, both resolveMain handoffs
+    pass `owned`, and createShared keeps its guard-free call. Fails if the
+    guard parameter, the staged checkpoints, or either handoff is removed."""
+    import re
+
+    app = (ROOT / "thyca" / "webui" / "pages" / "chat" / "app.js").read_text(encoding="utf-8")
+    sidebar = (ROOT / "thyca" / "webui" / "pages" / "chat" / "team-sidebar.js").read_text(encoding="utf-8")
+    helper = TEAM.read_text(encoding="utf-8")
+    assert "afterTeamSession: async (detail, guard = () => true)" in app
+    assert "runGuardedStages(guard," in app
+    assert re.search(r"export async function runGuardedStages\(guard, stages\)", helper)
+    assert "if (!owned()) return false;" in helper
+    assert "hub.afterTeamSession(detail, owned)" in sidebar
+    assert "hub.afterTeamSession(created, owned)" in sidebar
+    # createShared keeps the guard-free call: exactly one remains.
+    assert sidebar.count("hub.afterTeamSession(detail);") == 1

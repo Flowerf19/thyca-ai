@@ -40,6 +40,7 @@ import {
   syncContext,
 } from "./composer.js";
 import { initTeamSidebar, syncTeamSessions, teamBots } from "./team-sidebar.js";
+import { runGuardedStages } from "./team-data.js";
 import { markSeen } from "./team-unread.js";
 import { initMention, mentionKeydown } from "./team-mention.js";
 import { initTeamStrip, renderTeamStrip } from "./team-strip.js";
@@ -351,13 +352,29 @@ const hub = {
     exitPicking();
     el.input.focus();
   },
-  afterTeamSession: async (detail) => {
-    if (detail && detail.id) {
-      state.activeId = String(detail.id);
-      rememberActiveSession(state.activeId);
-    }
-    await refreshSessions(state.activeId);
-    if (detail && detail.id) await loadSession(String(detail.id));
+  // Ownership-aware navigation (rapid-switch race fix): resolveMain passes
+  // its `owned` closure as guard; the stages re-check it before adopting
+  // the id, after the refresh await, and immediately before loading, so a
+  // stale navigation already inside the hub aborts silently instead of
+  // clobbering the newer bot's state.activeId / DM. Callers without a
+  // guard (createShared) keep the previous unconditional behavior.
+  afterTeamSession: async (detail, guard = () => true) => {
+    const id = detail && detail.id ? String(detail.id) : "";
+    const navigated = await runGuardedStages(guard, [
+      async () => {
+        if (id) {
+          state.activeId = id;
+          rememberActiveSession(state.activeId);
+        }
+      },
+      async () => {
+        await refreshSessions(state.activeId);
+      },
+      async () => {
+        if (id) await loadSession(id);
+      },
+    ]);
+    if (!navigated) return;
     syncTeamSessions();
   },
   // Team CFE-2: background bot writes surface on window focus / tab return.

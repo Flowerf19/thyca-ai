@@ -10,7 +10,17 @@ _IDENTIFIER_MAX = 64
 _PUBLIC_NAME = "tool"
 _PUBLIC_CALL_ID = "call"
 
-_FIELDS = ("round", "tool_count", "call_id", "name", "ok", "updated", "attempt", "max_attempts", "hidden_bytes")
+_FIELDS = ("round", "tool_count", "call_id", "name", "ok", "updated", "attempt", "max_attempts", "hidden_bytes", "bot_id")
+
+_BOT_ID_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+
+def _clean_bot_id(value: object) -> str | None:
+    """Bot ids are card folder names; anything else is dropped, never
+    forwarded (telemetry must not break a turn on a bad stamp)."""
+    if isinstance(value, str) and len(value) <= 64 and _BOT_ID_RE.fullmatch(value):
+        return value
+    return None
 
 _ALLOWED_FIELDS: dict[str, frozenset[str]] = {
     "turn.accepted": frozenset(),
@@ -49,6 +59,7 @@ class TurnEvent:
     attempt: int | None = None
     max_attempts: int | None = None
     hidden_bytes: int | None = None
+    bot_id: str | None = None
 
     def __post_init__(self) -> None:
         allowed = _ALLOWED_FIELDS.get(self.type)
@@ -56,6 +67,10 @@ class TurnEvent:
             raise ValueError(f"unknown event type {self.type!r}")
         for field_name in _FIELDS:
             value = getattr(self, field_name)
+            if field_name == "bot_id":
+                # Attribution stamp, allowed on every event type.
+                object.__setattr__(self, "bot_id", _clean_bot_id(value))
+                continue
             if field_name not in allowed:
                 if value is not None:
                     raise ValueError(f"unexpected field {field_name!r} for {self.type!r}")

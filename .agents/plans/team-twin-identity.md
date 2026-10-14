@@ -77,3 +77,23 @@ nhắn DM."
   drawer neo phải, Cài đặt › Bot 2 cột ngay hàng, Ký ức chờ duyệt có tiêu
   đề + nội dung + "từ bot", Chi phí theo bot theo anatomy journal-entry
   với thanh tint. Full suite 1367 passed.
+
+## Bổ sung 2026-10-14 — Agent Status trong Agent Card API (user chốt)
+
+Avatar design cần trạng thái thật theo từng bot; live event cũ chỉ có
+tool/skill/llm theo lượt và session `running` theo phòng, không có
+`bot_id`. Thiết kế đã chốt và triển khai:
+
+- Card tĩnh (`TWIN.md`) không lưu trạng thái động. `GET /api/bots`
+  ghép thêm `agent_status` từ `AgentStatusTracker` in-memory
+  (`thyca/bots/status.py`); field cũ `status: active|paused` giữ nguyên.
+- Enum: `offline|idle|thinking|running|waiting|done|error`. Paused →
+  offline; `llm.*` → thinking; tool/skill/A2A → running; `ask_user` →
+  waiting; `report_error`/turn lỗi → error; turn xong → done.
+- `done` latch 60 giây; waiting/error latch tới khi user nhắn lại
+  trong đúng phòng hoặc bot bắt đầu lượt mới ở đó. Restart mất latch
+  (trạng thái là live, không phải lịch sử).
+- `TurnEvent` và thinking/content delta mang thêm `bot_id`
+  (Stage đã có sẵn); tracker keyed theo span nên bot chạy lồng A2A
+  hoặc song song nhiều phòng vẫn phân biệt được. Status chỉ chứa
+  metadata vận hành — không prompt/content/tool args/results.

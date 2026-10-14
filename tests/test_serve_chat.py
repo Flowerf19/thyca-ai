@@ -413,7 +413,7 @@ def test_stream_slow_turn_first_line_arrives_before_release(tmp_path: Path) -> N
         )
         first = json.loads(response.readline().decode("utf-8"))
         assert response.status == 200
-        assert first == {"type": "turn.accepted"}
+        assert first == {"type": "turn.accepted", "bot_id": "thyca"}
         # Headers + first line went out while the Slow LLM is still blocked.
         assert release.is_set() is False
         release.set()
@@ -425,7 +425,7 @@ def test_stream_slow_turn_first_line_arrives_before_release(tmp_path: Path) -> N
             "turn.completed",
         ]
         assert lines[0]["round"] == 1
-        assert lines[1] == {"type": "llm.finished", "round": 1, "tool_count": 0}
+        assert lines[1] == {"type": "llm.finished", "round": 1, "tool_count": 0, "bot_id": "thyca"}
         completed = lines[-1]
         assert completed["type"] == "turn.completed"
         detail = completed["detail"]
@@ -460,7 +460,7 @@ def test_stream_disconnect_does_not_cancel_turn(tmp_path: Path) -> None:
             data=b'{"text":"stay"}',
         )
         first = json.loads(response.readline().decode("utf-8"))
-        assert first == {"type": "turn.accepted"}
+        assert first == {"type": "turn.accepted", "bot_id": "thyca"}
         response.close()
         release.set()
         stored = None
@@ -616,12 +616,13 @@ def test_stream_tool_events_ordered_and_clean(tmp_path: Path) -> None:
             "llm.finished",
             "turn.completed",
         ]
-        assert lines[2] == {"type": "llm.finished", "round": 1, "tool_count": 1}
+        assert lines[2] == {"type": "llm.finished", "round": 1, "tool_count": 1, "bot_id": "thyca"}
         assert lines[3] == {
             "type": "tool.started",
             "round": 1,
             "call_id": "call-1",
             "name": "bash",
+            "bot_id": "thyca",
         }
         assert lines[4] == {
             "type": "tool.finished",
@@ -629,6 +630,7 @@ def test_stream_tool_events_ordered_and_clean(tmp_path: Path) -> None:
             "call_id": "call-1",
             "name": "bash",
             "ok": False,
+            "bot_id": "thyca",
         }
         # Intermediate lines never carry user text, tool args, results, or stacks.
         blob = b"".join(raws[:-1]).decode("utf-8")
@@ -955,7 +957,7 @@ def test_retry_hook_emits_llm_retry_events(tmp_path: Path) -> None:
     payload = app.turn(created["id"], "ping", event_sink=events.append)
     assert payload["reply"] == "ok"
     retries = [e for e in events if e.type == "llm.retry"]
-    assert retries == [TurnEvent(type="llm.retry", attempt=1, max_attempts=3)]
+    assert retries == [TurnEvent(type="llm.retry", attempt=1, max_attempts=3, bot_id="thyca")]
     app.shutdown()
 
 
@@ -1079,7 +1081,7 @@ def test_busy_session_reports_running_and_refuses_a_second_turn(tmp_path: Path) 
             f"/api/sessions/{session_id}/turn/stream",
             data=b'{"text":"first"}',
         )
-        assert json.loads(response.readline().decode("utf-8")) == {"type": "turn.accepted"}
+        assert json.loads(response.readline().decode("utf-8")) == {"type": "turn.accepted", "bot_id": "thyca"}
         try:
             # The reloaded page reads exactly this to know a turn is in flight.
             detail = _json(httpd, f"/api/sessions/{session_id}")
@@ -1130,7 +1132,7 @@ def test_follow_stream_replays_and_tails_a_running_turn(tmp_path: Path) -> None:
             f"/api/sessions/{session_id}/turn/stream",
             data=b'{"text":"hello follow"}',
         )
-        assert json.loads(starter.readline().decode("utf-8")) == {"type": "turn.accepted"}
+        assert json.loads(starter.readline().decode("utf-8")) == {"type": "turn.accepted", "bot_id": "thyca"}
         assert started.wait(2)
         follower = urlopen(
             Request(
@@ -1141,7 +1143,7 @@ def test_follow_stream_replays_and_tails_a_running_turn(tmp_path: Path) -> None:
         )
         assert follower.status == 200
         assert follower.headers.get_content_type() == "application/x-ndjson"
-        assert json.loads(follower.readline().decode("utf-8")) == {"type": "turn.accepted"}
+        assert json.loads(follower.readline().decode("utf-8")) == {"type": "turn.accepted", "bot_id": "thyca"}
         release.set()
         starter_types = [item["type"] for item in _stream_lines(starter)]
         follower_lines = _stream_lines(follower)
@@ -1176,8 +1178,8 @@ def test_stream_emits_thinking_deltas_and_persists(tmp_path: Path) -> None:
         assert types[0] == "turn.accepted"
         assert types[1] == "llm.started"
         assert thinking == [
-            {"type": "llm.thinking", "round": 1, "delta": "First I check"},
-            {"type": "llm.thinking", "round": 1, "delta": " the chords"},
+            {"type": "llm.thinking", "round": 1, "delta": "First I check", "bot_id": "thyca"},
+            {"type": "llm.thinking", "round": 1, "delta": " the chords", "bot_id": "thyca"},
         ]
         assert "llm.finished" in types
         assert types[-1] == "turn.completed"
@@ -1210,8 +1212,8 @@ def test_stream_emits_content_deltas_alongside_thinking(tmp_path: Path) -> None:
         lines = _stream_lines(response)
         content = [item for item in lines if item["type"] == "llm.content"]
         assert content == [
-            {"type": "llm.content", "round": 1, "delta": "Xin "},
-            {"type": "llm.content", "round": 1, "delta": "chào"},
+            {"type": "llm.content", "round": 1, "delta": "Xin ", "bot_id": "thyca"},
+            {"type": "llm.content", "round": 1, "delta": "chào", "bot_id": "thyca"},
         ]
         assert any(item["type"] == "llm.thinking" for item in lines)
         assert lines[-1]["type"] == "turn.completed"
@@ -1272,7 +1274,7 @@ def test_follow_stream_survives_starter_disconnect(tmp_path: Path) -> None:
             f"/api/sessions/{session_id}/turn/stream",
             data=b'{"text":"stay"}',
         )
-        assert json.loads(starter.readline().decode("utf-8")) == {"type": "turn.accepted"}
+        assert json.loads(starter.readline().decode("utf-8")) == {"type": "turn.accepted", "bot_id": "thyca"}
         assert started.wait(2)
         follower = urlopen(
             Request(
@@ -1281,7 +1283,7 @@ def test_follow_stream_survives_starter_disconnect(tmp_path: Path) -> None:
             ),
             timeout=10,
         )
-        assert json.loads(follower.readline().decode("utf-8")) == {"type": "turn.accepted"}
+        assert json.loads(follower.readline().decode("utf-8")) == {"type": "turn.accepted", "bot_id": "thyca"}
         starter.close()
         release.set()
         lines = _stream_lines(follower)
@@ -1895,7 +1897,7 @@ def test_cancel_in_flight_turn(tmp_path: Path) -> None:
             data=b'{"text":"hold"}',
         )
         first = json.loads(response.readline().decode("utf-8"))
-        assert first == {"type": "turn.accepted"}
+        assert first == {"type": "turn.accepted", "bot_id": "thyca"}
         assert started.wait(2)
         follower = urlopen(
             Request(
@@ -1904,7 +1906,7 @@ def test_cancel_in_flight_turn(tmp_path: Path) -> None:
             ),
             timeout=10,
         )
-        assert json.loads(follower.readline().decode("utf-8")) == {"type": "turn.accepted"}
+        assert json.loads(follower.readline().decode("utf-8")) == {"type": "turn.accepted", "bot_id": "thyca"}
         cancelled = _json(
             httpd,
             f"/api/sessions/{session_id}/turn/cancel",
@@ -1949,7 +1951,7 @@ def test_retry_last_user_turn(tmp_path: Path) -> None:
         first = _stream_lines(_stream(httpd, path, data=b'{"text":"hello"}'))
         assert first[-1]["type"] == "turn.completed"
         retried = _stream_lines(_stream(httpd, path, data=b'{"retry":true}'))
-        assert retried[0] == {"type": "turn.accepted"}
+        assert retried[0] == {"type": "turn.accepted", "bot_id": "thyca"}
         assert retried[-1]["type"] == "turn.completed"
         stored = SessionManager(tmp_path / "sessions").load(session_id)
         users = [item for item in stored.messages if item.role == "user"]
@@ -1989,7 +1991,7 @@ def test_retry_last_user_turn(tmp_path: Path) -> None:
             f"/api/sessions/{busy['id']}/turn/stream",
             data=b'{"text":"first"}',
         )
-        assert json.loads(response.readline().decode("utf-8")) == {"type": "turn.accepted"}
+        assert json.loads(response.readline().decode("utf-8")) == {"type": "turn.accepted", "bot_id": "thyca"}
         assert started.wait(2)
         try:
             code, body = _http_error(
@@ -2030,7 +2032,7 @@ def test_cancel_then_retry_keeps_one_user(tmp_path: Path) -> None:
         session_id = created["id"]
         path = f"/api/sessions/{session_id}/turn/stream"
         response = _stream(httpd, path, data=b'{"text":"hold"}')
-        assert json.loads(response.readline().decode("utf-8")) == {"type": "turn.accepted"}
+        assert json.loads(response.readline().decode("utf-8")) == {"type": "turn.accepted", "bot_id": "thyca"}
         assert started.wait(2)
         assert _json(httpd, f"{path.replace('/stream', '/cancel')}", method="POST", data=b"") == {
             "ok": True
@@ -2302,7 +2304,7 @@ def test_cancelled_turn_leaves_no_error_marker(tmp_path: Path) -> None:
         response = _stream(
             httpd, f"/api/sessions/{session_id}/turn/stream", data=b'{"text":"hold"}'
         )
-        assert json.loads(response.readline().decode("utf-8")) == {"type": "turn.accepted"}
+        assert json.loads(response.readline().decode("utf-8")) == {"type": "turn.accepted", "bot_id": "thyca"}
         assert started.wait(2)
         cancelled = _json(
             httpd, f"/api/sessions/{session_id}/turn/cancel", method="POST", data=b""

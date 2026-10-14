@@ -20,6 +20,7 @@ from thyca.bots.bus import Bus, new_span_id, new_trace_id
 from thyca.bots.policy import BotPolicy
 from thyca.bots.registry import BotRegistry, RegistryError
 from thyca.bots.runtime import BotRuntime
+from thyca.bots.status import AgentStatusTracker
 from thyca.core.protocol import Message
 from thyca.config import Config, ConfigError, load
 from thyca.core.protocol import Message, estimate_tokens as _chars_to_tokens
@@ -114,7 +115,10 @@ class ChatApp:
         for _doc in self._bots.list():
             if _doc.ok and _doc.card is not None:
                 self._bus.register(_doc.card.bot_id)
-        self._runtime = BotRuntime(root, self._bots, self._bus)
+        self._agent_status = AgentStatusTracker()
+        self._runtime = BotRuntime(
+            root, self._bots, self._bus, status_tracker=self._agent_status
+        )
         # A2A delivery: send tools run the recipient's turn through here.
         self._runtime.deliverer = self._deliver_envelope
         # CBE-4: flush-before-compact + post-compact recall hooks.
@@ -206,8 +210,25 @@ class ChatApp:
             return self._cfg
 
     def bots_list(self) -> list[dict]:
-        """Public card list for GET /api/bots (contract §6)."""
-        return self._bots.public_list()
+        """Public card list for GET /api/bots (contract §6).
+
+        Static card fields come from the registry; ``agent_status`` is
+        the live runtime snapshot merged in here (never stored on the
+        card itself)."""
+        cards = self._bots.public_list()
+        paused = {
+            card["id"]: card["status"] == "paused" for card in cards
+        }
+        self._agent_status.retain(paused.keys())
+        statuses = self._agent_status.snapshot_all(paused)
+        for card in cards:
+            card["agent_status"] = statuses.get(
+                card["id"],
+                self._agent_status.snapshot(
+                    card["id"], paused=paused.get(card["id"], False)
+                ),
+            )
+        return cards
 
     def bot_dm(self, bot_id: str) -> dict:
         """The bot's fixed DM session (CBE-5): find-or-create, marked.
@@ -442,6 +463,7 @@ class ChatApp:
     def delete_session(self, session_id: str) -> None:
         """Drop the notebook. Memory leaves written from it are left alone."""
         self._turns.delete_unclaimed(self._sessions, session_id)
+        self._agent_status.forget_room(session_id)
 
     def compact_session(
         self,
@@ -646,6 +668,11 @@ class ChatApp:
         with self._claim_lock:
             hub = self._turns.claim(session_id)
             job = self._loop_turns.begin(session_id)
+        if not retry:
+            # A fresh user message answers any waiting/error card in
+            # this room; a retry replays the same message and must not.
+            # Only after the claim: a refused (busy) turn posted nothing.
+            self._agent_status.note_user_message(session_id)
         try:
 
             def sink(event: TurnEvent) -> None:
@@ -732,6 +759,7 @@ class ChatApp:
             zone=self._zone,
             injected_connect=self._injected_connect,
             hot_tasks=format_task_index(thyca_tasks[:20]) if thyca_tasks else "",
+            status_tracker=self._agent_status,
         )
         request = TurnRequest(
             session_id=session_id,
@@ -852,7 +880,7 @@ class ChatApp:
                     ),
                 )
             )
-            await _name_if_needed(connect, room, turn_cfg, event_sink)
+            await _name_if_needed(connect, room, turn_cfg, event_sink, bot_id=bot_id)
             landed = self._detail(room.current, turn_cfg, running=False)
             return {**landed, "reply": reply}
         finally:
@@ -940,6 +968,8 @@ class ChatApp:
         )
         room.load(current_room_id)
         room.append(Message(role="assistant", content=content, meta=meta))
+        card_type = card.get("type") if isinstance(card, dict) else None
+        self._agent_status.note_card_posted(bot_id, current_room_id, card_type)
         return {"ok": True, "session_id": current_room_id}
 
     def _promote_participant(self, session_id: str, bot_id: str) -> None:

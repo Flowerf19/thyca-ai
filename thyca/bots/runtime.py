@@ -7,6 +7,7 @@ continuity lives in the bot's memory/skills, not in a lifelong transcript.
 """
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 from dataclasses import replace
@@ -31,6 +32,7 @@ from thyca.bots.policy import (
     reset_hidden_tools,
 )
 from thyca.bots.registry import SYSTEM_BOT_ID, BotRegistry, RegistryError
+from thyca.bots.status import AgentStatusTracker
 from thyca.config import Config
 from thyca.llm.llm_factory import ConnectFactory
 from thyca.memory.identity import bind_bot_id, reset_bot_id
@@ -240,14 +242,23 @@ class BotRuntime:
         thyca_dir: Path,
         registry: BotRegistry,
         bus: Bus,
+        status_tracker: AgentStatusTracker | None = None,
     ) -> None:
         self._dir = Path(thyca_dir)
         self._registry = registry
         self._bus = bus
+        # Live agent status (GET /api/bots merges snapshots into cards).
+        # ChatApp injects its shared tracker; direct runtime users get a
+        # private one so tracked turns never leak between app instances.
+        self._status = status_tracker or AgentStatusTracker()
         self._stores: dict[str, SessionStore] = {}
         # (bot_id, room_id) pairs whose last turn compacted: the next turn
         # re-injects relevant memory hits exactly once (CBE-4).
         self._reinject_pending: set[tuple[str, str]] = set()
+
+    @property
+    def status_tracker(self) -> AgentStatusTracker:
+        return self._status
 
     def store_for(self, bot_id: str) -> SessionStore:
         store = self._stores.get(bot_id)
@@ -324,14 +335,37 @@ class BotRuntime:
         """
         if card.paused:
             raise RegistryError(f"bot is paused: {card.bot_id}")
-        store = self.store_for(card.bot_id)
-        sessions = SessionManager(
-            limits=turn_cfg.effective_limits(),
-            timezone_name=turn_cfg.timeline.timezone,
-            store=store,
+        # Status begins before any setup that can fail or wait (store,
+        # connect, loop build, memory flush): a setup failure is still
+        # this bot's failed turn, and preparation time is working time.
+        own_span = span_id or new_span_id()
+        self._status.begin_turn(
+            card.bot_id, room_id, trace_id=trace_id, span_id=own_span
         )
-        internal = self.internal_session(card.bot_id, room_id)
-        sessions.load(internal.id)
+        raw_sink = event_sink
+
+        def tracked_sink(event, _sink=raw_sink) -> None:
+            self._status.observe_event(card.bot_id, own_span, event)
+            if _sink is not None:
+                _sink(event)
+
+        try:
+            store = self.store_for(card.bot_id)
+            sessions = SessionManager(
+                limits=turn_cfg.effective_limits(),
+                timezone_name=turn_cfg.timeline.timezone,
+                store=store,
+            )
+            internal = self.internal_session(card.bot_id, room_id)
+            sessions.load(internal.id)
+        except asyncio.CancelledError:
+            self._status.finish_turn(card.bot_id, own_span, "cancelled")
+            raise
+        except Exception as exc:
+            self._status.finish_turn(
+                card.bot_id, own_span, "error", code=type(exc).__name__
+            )
+            raise
 
         provider = turn_cfg.effective_provider()
         model = turn_cfg.provider.model
@@ -341,7 +375,16 @@ class BotRuntime:
         # (ChatApp), which imports this module — top-level would cycle.
         from thyca.app.toolchain import build_agent_loop
 
-        connect = scope.injected_connect or ConnectFactory.create(provider.api, provider)
+        try:
+            connect = scope.injected_connect or ConnectFactory.create(provider.api, provider)
+        except asyncio.CancelledError:
+            self._status.finish_turn(card.bot_id, own_span, "cancelled")
+            raise
+        except Exception as exc:
+            self._status.finish_turn(
+                card.bot_id, own_span, "error", code=type(exc).__name__
+            )
+            raise
         owns = scope.injected_connect is None
         try:
             filtered = filtered_tool_schemas(scope.tools, card)
@@ -465,7 +508,6 @@ class BotRuntime:
                             await flushed
                     except Exception:
                         pass  # extraction is best-effort, never blocks compact
-            own_span = span_id or new_span_id()
             allowed = None
             if not card.system:
                 allowed = frozenset(
@@ -485,7 +527,7 @@ class BotRuntime:
                     parent_span_id=parent_span_id,
                     scope=scope,
                     turn_cfg=turn_cfg,
-                    event_sink=event_sink,
+                    event_sink=tracked_sink,
                     thyca_dir=self._dir,
                 )
             )
@@ -495,7 +537,7 @@ class BotRuntime:
                 reply = await loop.run(
                     text,
                     hot=hot,
-                    event_sink=event_sink,
+                    event_sink=tracked_sink,
                     bot_ctx={
                         "bot_id": card.bot_id,
                         "trace_id": trace_id,
@@ -517,6 +559,7 @@ class BotRuntime:
                 ) > markers_before:
                     self._reinject_pending.add(reinject_key)
                 agg_model, agg_usage, agg_cost, agg_latency = _aggregate_turn_meta(new_messages)
+                self._status.finish_turn(card.bot_id, own_span, "done")
                 return BotTurnResult(
                     reply=reply,
                     bot_id=card.bot_id,
@@ -528,12 +571,30 @@ class BotRuntime:
                     cost_usd=agg_cost,
                     latency_ms=agg_latency,
                 )
+            except asyncio.CancelledError:
+                self._status.finish_turn(card.bot_id, own_span, "cancelled")
+                raise
+            except Exception as exc:
+                self._status.finish_turn(
+                    card.bot_id, own_span, "error", code=type(exc).__name__
+                )
+                raise
             finally:
                 reset_bot_turn_context(ctx_token)
                 reset_allowed_tools(allowed_token)
                 reset_hidden_tools(hidden_token)
                 reset_chat_session(chat_token)
                 reset_bot_id(bot_token)
+        except asyncio.CancelledError:
+            # The loop-level finish already ran; this is a no-op then,
+            # and covers setup failures before the loop started.
+            self._status.finish_turn(card.bot_id, own_span, "cancelled")
+            raise
+        except Exception as exc:
+            self._status.finish_turn(
+                card.bot_id, own_span, "error", code=type(exc).__name__
+            )
+            raise
         finally:
             if owns:
                 close = getattr(connect, "aclose", None)

@@ -20,6 +20,7 @@ from thyca.bots.context import (
     bind_bot_turn_context,
     reset_bot_turn_context,
 )
+from thyca.bots.status import AgentStatusTracker
 from thyca.agent.events import EventSink, TurnEvent, emit_event
 from thyca.agent.think import LLMPort
 from thyca.app.naming import _name_if_needed
@@ -49,6 +50,9 @@ class TurnScope:
     # bot turns inject, derived by ChatApp from the room transcript +
     # bus. Empty = no section.
     hot_tasks: str = ""
+    # Shared live agent-status tracker (ChatApp owns it; GET /api/bots
+    # merges its snapshots into Agent Cards).
+    status_tracker: Any = None
 
 
 @dataclass
@@ -87,6 +91,17 @@ async def run_turn(
     # turn's room rows carry this span for the FE delegation tree.
     thyca_span = new_span_id()
     thyca_trace = new_trace_id()
+    status = scope.status_tracker or AgentStatusTracker()
+    status.begin_turn(
+        "thyca", request.session_id, trace_id=thyca_trace, span_id=thyca_span
+    )
+    raw_sink = request.event_sink
+
+    def tracked_sink(event, _sink=raw_sink) -> None:
+        status.observe_event("thyca", thyca_span, event)
+        if _sink is not None:
+            _sink(event)
+
     ctx_token = bind_bot_turn_context(
         BotTurnContext(
             sender_id="thyca",
@@ -95,7 +110,7 @@ async def run_turn(
             span_id=thyca_span,
             scope=scope,
             turn_cfg=turn_cfg,
-            event_sink=request.event_sink,
+            event_sink=tracked_sink,
         )
     )
     try:
@@ -112,7 +127,7 @@ async def run_turn(
             provider.api, provider
         )
         owns = scope.injected_connect is None
-        wire_retry_events(connect, request.event_sink)
+        wire_retry_events(connect, tracked_sink)
         try:
             limits = turn_cfg.effective_limits()
             loop = build_agent_loop(
@@ -136,7 +151,7 @@ async def run_turn(
                 reply = await loop.run(
                     request.text,
                     hot=hot,
-                    event_sink=request.event_sink,
+                    event_sink=tracked_sink,
                     persist_user=not request.retry,
                     bot_ctx={
                         "bot_id": "thyca",
@@ -154,16 +169,25 @@ async def run_turn(
                 # transcript marker stays generic on purpose.
                 mark_turn_error(sessions, "chat_unavailable", "chat unavailable")
                 raise
-            await _name_if_needed(connect, sessions, turn_cfg, request.event_sink)
+            await _name_if_needed(
+                connect, sessions, turn_cfg, tracked_sink, bot_id="thyca"
+            )
             # The turn's own response is not a turn in flight: the client that
             # just received it must not be told to wait for itself.
             landed = detail(sessions.current, turn_cfg, running=False)
+            status.finish_turn("thyca", thyca_span, "done")
             return {**landed, "reply": reply}
         finally:
             if owns:
                 close = getattr(connect, "aclose", None)
                 if close is not None:
                     await close()
+    except asyncio.CancelledError:
+        status.finish_turn("thyca", thyca_span, "cancelled")
+        raise
+    except Exception as exc:
+        status.finish_turn("thyca", thyca_span, "error", code=type(exc).__name__)
+        raise
     finally:
         reset_bot_turn_context(ctx_token)
         reset_chat_session(token)
@@ -194,6 +218,7 @@ def wire_retry_events(
                 type="llm.retry",
                 attempt=attempt,
                 max_attempts=max_attempts,
+                bot_id="thyca",
             ),
         )
 

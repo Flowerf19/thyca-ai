@@ -189,6 +189,33 @@ def test_thinking_delta_to_dict_exact_keys() -> None:
     }
 
 
+def test_bot_id_stamp_rides_events_and_deltas() -> None:
+    assert TurnEvent(type="llm.started", round=1, bot_id="coder").to_dict() == {
+        "type": "llm.started",
+        "round": 1,
+        "bot_id": "coder",
+    }
+    # A bad stamp is telemetry noise: dropped, never raised.
+    assert TurnEvent(type="llm.started", round=1, bot_id="../secret").bot_id is None
+    assert TurnEvent(type="llm.started", round=1).bot_id is None
+
+    from thyca.agent.reply import ContentDelta
+    from thyca.agent.thinking import ThinkingDelta
+
+    assert ThinkingDelta(round=1, delta="x", bot_id="coder").to_dict() == {
+        "type": "llm.thinking",
+        "round": 1,
+        "delta": "x",
+        "bot_id": "coder",
+    }
+    assert ContentDelta(round=1, delta="x", bot_id="bad id").bot_id is None
+    assert ContentDelta(round=1, delta="x").to_dict() == {
+        "type": "llm.content",
+        "round": 1,
+        "delta": "x",
+    }
+
+
 def test_thinking_delta_rejects_empty() -> None:
     from thyca.agent.thinking import ThinkingDelta
 

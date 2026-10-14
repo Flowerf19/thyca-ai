@@ -25,6 +25,7 @@ def _delta_callback(
     event_sink: EventSink | None,
     round_no: int,
     cls: type[ThinkingDelta] | type[ContentDelta],
+    bot_id: str | None = None,
 ) -> Callable[[str], None] | None:
     """One live-delta callback: reasoning and content differ only in class."""
     if event_sink is None:
@@ -34,7 +35,7 @@ def _delta_callback(
         if not delta:
             return
         try:
-            event_sink(cls(round=round_no, delta=delta))  # type: ignore[arg-type]
+            event_sink(cls(round=round_no, delta=delta, bot_id=bot_id))  # type: ignore[arg-type]
         except Exception:
             pass
 
@@ -154,7 +155,7 @@ class AgentLoop:
             self._observe.user(stage)
         else:
             self._assemble.assemble(stage, user_msg, append_user=False)
-        emit_event(event_sink, TurnEvent(type="turn.accepted"))
+        emit_event(event_sink, TurnEvent(type="turn.accepted", bot_id=stage.bot_id))
         # Index boundary for the shrink guard: entries below are pre-run
         # history (round numbers restart every turn, so round-protection
         # must not apply to them); entries at/above are this run's own.
@@ -183,6 +184,7 @@ class AgentLoop:
                             round=stage.round,
                             tool_count=shrunk,
                             hidden_bytes=hidden,
+                            bot_id=stage.bot_id,
                         ),
                     )
                 if estimate > int(self._context_tokens * BACKSTOP_RATIO):
@@ -192,10 +194,13 @@ class AgentLoop:
                 stage.llm_estimate_tokens = estimate_wire_tokens(
                     stage.messages, self._tools_tokens()
                 )
-            emit_event(event_sink, TurnEvent(type="llm.started", round=stage.round))
+            emit_event(
+                event_sink,
+                TurnEvent(type="llm.started", round=stage.round, bot_id=stage.bot_id),
+            )
             round_no = stage.round
-            on_reasoning = _delta_callback(event_sink, round_no, ThinkingDelta)
-            on_content = _delta_callback(event_sink, round_no, ContentDelta)
+            on_reasoning = _delta_callback(event_sink, round_no, ThinkingDelta, stage.bot_id)
+            on_content = _delta_callback(event_sink, round_no, ContentDelta, stage.bot_id)
             await self._think.think(
                 stage, on_reasoning=on_reasoning, on_content=on_content
             )
@@ -207,6 +212,7 @@ class AgentLoop:
                     type="llm.finished",
                     round=stage.round,
                     tool_count=len(stage.reply.tool_calls),
+                    bot_id=stage.bot_id,
                 ),
             )
             if not stage.reply.tool_calls:

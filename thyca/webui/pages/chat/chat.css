@@ -1150,7 +1150,12 @@ button:active {
 }
 
 /* Group chats are channels at bot level, not sub-sessions: same row
-   scale as bot rows. */
+   scale as bot rows. The composite team avatar is wider than the
+   legacy icon cell, so the row's first column grows to fit it. */
+.team-group-item {
+  grid-template-columns: 2.5rem minmax(0, 1fr) auto;
+}
+
 .team-group-item .session-name {
   font-size: 0.94rem;
 }

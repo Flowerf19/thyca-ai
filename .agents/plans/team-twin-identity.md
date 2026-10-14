@@ -55,3 +55,25 @@ nhắn DM."
 - Phòng thường: bot nhận delegate lần đầu được thêm vào participants
   (session thành team session); envelope message/help_request có trace
   cũng vào dòng gộp "Xem các bot đã làm gì".
+
+## Bổ sung 2026-10-14 — thẻ hỏi/lỗi có cấu trúc + rà mockup (đã verify live)
+
+- Tool baseline `ask_user` / `report_error`: bot hỏi user hoặc báo lỗi
+  bằng thẻ có cấu trúc thay vì nhắn chữ. Backend `post_bot_card` ghi row
+  `meta={bot_id, kind:"card", card, bot_name, bot_tint}` với gate y như DM
+  (không phòng trống, không DM của bot khác, phải là participant).
+  Contract `meta.card`: question `{type,title,subtitle?,options[2..5]}` /
+  error `{type,progress[{label,done|stuck|todo}],choices[2..5],hint?}`.
+- Verify live trên demo: Thyca gọi `ask_user` → thẻ hiện 3 chip; bấm
+  "Cho phép" gửi lựa chọn, bot tiếp tục tạo `tro-ly-hoc-tap` (bash allow)
+  đúng ý user. `report_error` → thẻ hiện 2 bước + hint + 2 nút.
+- Kèm theo: `bot_name`/`bot_tint` ghi sẵn trên mọi row message/A2A/envelope
+  (runtime `BotTurnResult` + `_bot_display_meta`) để transcript/Trace dùng
+  đúng tint card thay vì hash fallback.
+- `GET /api/bots` thêm `model/bash/skills/schedule` (drawer Nâng cao đọc);
+  `GET /api/memory/candidates` thêm `title/text` preview (read-only,
+  không chạm get/TTL).
+- Rà mockup đã sửa + chụp duyệt: mention gọn (tên + vai trò, có bot mới),
+  drawer neo phải, Cài đặt › Bot 2 cột ngay hàng, Ký ức chờ duyệt có tiêu
+  đề + nội dung + "từ bot", Chi phí theo bot theo anatomy journal-entry
+  với thanh tint. Full suite 1367 passed.

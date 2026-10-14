@@ -27,6 +27,7 @@ class Element {
     this.dataset = {};
     this.attributes = {};
     this.className = '';
+    this.style = { setProperty: () => {}, getPropertyValue: () => '' };
     this.value = '';
     this.text = '';
     this.classList = {

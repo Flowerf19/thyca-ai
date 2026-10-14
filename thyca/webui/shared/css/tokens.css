@@ -5,16 +5,20 @@
  */
 
 :root {
-  --color-desk-top: oklch(46.8% 0.103 42.5);
-  --color-desk-mid: oklch(42% 0.09 41.4);
-  --color-desk-bottom: oklch(31.8% 0.073 42.8);
+  --color-bg-frame: #E8DAC3;
+  --color-bg-surface: #FBF4E5;
+  --color-bg-selected: #F4E9D7;
+
+  --color-desk-top: var(--color-bg-frame);
+  --color-desk-mid: var(--color-bg-frame);
+  --color-desk-bottom: var(--color-bg-frame);
   --color-shell-shadow: oklch(21.7% 0.047 45.8 / 0.72);
   --color-shell-shadow-soft: oklch(25% 0.06 44 / 0.32);
 
-  --color-paper: oklch(94.3% 0.023 71.8);
-  --color-paper-chat: oklch(96.4% 0.019 80.1);
-  --color-paper-card: oklch(97.4% 0.011 63.4);
-  --color-paper-input: oklch(96.7% 0.011 71.9);
+  --color-paper: var(--color-bg-frame);
+  --color-paper-chat: var(--color-bg-surface);
+  --color-paper-card: var(--color-bg-surface);
+  --color-paper-input: var(--color-bg-surface);
   --color-paper-edge: oklch(82% 0.045 72);
   --color-border: oklch(87.4% 0.024 69.6);
   --color-divider: oklch(78.6% 0.042 69.6);
@@ -31,6 +35,33 @@
   --color-accent-soft: oklch(89.2% 0.049 72.2);
   --color-accent-ink: oklch(95.6% 0.021 65.3);
   --color-botanical: oklch(51.3% 0.049 68.6);
+
+  --note-do: #BE5530;
+  --note-re: #865580;
+  --note-mi: #2B7A72;
+  --note-fa: #386288;
+  --note-sol: #537E56;
+  --note-la: #C48324;
+  --note-si: #735238;
+  --note-star: #D4912A;
+  --note-bg: #F9DFD5;
+  --note-fold: #E8BEB0;
+  --note-lines: rgba(217, 93, 57, 0.16);
+  --status-done: #4A8759;
+  --status-waiting: #3E6B94;
+  --status-error: #B84239;
+  --status-offline: #B5A898;
+  --avatar-eye: #2B211B;
+  --avatar-eye-offline: #786D61;
+  --avatar-star-offline: #BDB2A6;
+  --avatar-hollow: #F7EDE2;
+  --avatar-hollow-offline: #DFD5C8;
+  --avatar-think: #8C7662;
+  --avatar-halo: rgba(190, 85, 48, 0.10);
+  --avatar-halo-ring: rgba(180, 90, 50, 0.42);
+  --avatar-crescent: rgba(31, 20, 14, 0.14);
+  --avatar-stamp-ink: #9E4020;
+
   --color-watermark: oklch(87.9% 0.037 80.6 / 0.58);
   --color-focus: oklch(51.7% 0.134 36.5);
   --chat-brand-ink: #3d2a1f;
@@ -41,7 +72,7 @@
   --chat-user-tick: color-mix(in srgb, var(--chat-brand-accent) 35%, transparent);
   --ink: var(--chat-brand-ink);
   --terra: var(--chat-brand-accent);
-  --composer-bg: rgba(255, 252, 250, 0.82);
+  --composer-bg: var(--color-bg-surface);
   --composer-border: rgba(61, 42, 31, 0.12);
 
   --font-display: "Fraunces", ui-serif, Georgia, serif;
@@ -103,10 +134,10 @@ body {
 html[data-type-scale="small"] { font-size: 93.75%; }
 html[data-type-scale="large"] { font-size: 112.5%; }
 html[data-theme="dusk"] {
-  --color-desk-top: oklch(32% 0.06 42);
-  --color-desk-mid: oklch(28% 0.05 42);
-  --color-paper: oklch(88% 0.03 72);
-  --color-paper-chat: oklch(90% 0.025 80);
+  --color-desk-top: var(--color-bg-frame);
+  --color-desk-mid: var(--color-bg-frame);
+  --color-paper: var(--color-bg-frame);
+  --color-paper-chat: var(--color-bg-surface);
 }
 
 button,

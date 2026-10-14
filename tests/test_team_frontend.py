@@ -9,6 +9,7 @@ Mirrors the eval style of tests/test_webui_format.py.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -26,8 +27,13 @@ INDEX_HTML = ROOT / "thyca" / "webui" / "index.html"
 COST_DATA = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "cost-data.js"
 TRACE_DATA = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "trace-data.js"
 CHAT_CSS = ROOT / "thyca" / "webui" / "pages" / "chat" / "chat.css"
+KIT_CSS = ROOT / "thyca" / "webui" / "shared" / "css" / "kit.css"
+TOKENS_CSS = ROOT / "thyca" / "webui" / "shared" / "css" / "tokens.css"
 AVATAR = ROOT / "thyca" / "webui" / "shared" / "js" / "bot-avatar.js"
 AVATAR_CSS = ROOT / "thyca" / "webui" / "shared" / "css" / "bot-avatar.css"
+CHAT_BOT = ROOT / "thyca" / "webui" / "shared" / "js" / "chat-bot.js"
+TRANSCRIPT = ROOT / "thyca" / "webui" / "pages" / "chat" / "transcript.js"
+LIVE = ROOT / "thyca" / "webui" / "pages" / "chat" / "live-status.js"
 
 
 @pytest.fixture(scope="module")
@@ -40,7 +46,8 @@ def node() -> str:
 
 def _run(node: str, body: str, via: str = "team") -> object:
     module = {"team": TEAM, "mention": MENTION, "cost": COST_DATA,
-              "trace": TRACE_DATA, "unread": UNREAD, "avatar": AVATAR}[via]
+              "trace": TRACE_DATA, "unread": UNREAD, "avatar": AVATAR,
+              "chatbot": CHAT_BOT}[via]
     source = (
         f"import * as api from '{module.as_posix()}';\n"
         f"const main = async () => {{ {body} }};\n"
@@ -846,6 +853,43 @@ def _strip(node: str, body: str) -> object:
     return json.loads(result.stdout)
 
 
+def _transcript(node: str, body: str) -> object:
+    """Run node with the fake-DOM prelude + transcript.js (which imports
+    cleanly: DOM is touched only inside its functions)."""
+    source = (
+        _FAKE_DOM
+        + f"import * as transcript from '{TRANSCRIPT.as_posix()}';\n"
+        + f"const main = async () => {{ {body} }};\n"
+        + "console.log(JSON.stringify(await main()));\n"
+    )
+    result = subprocess.run(
+        [node, "--input-type=module", "-e", source],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+    )
+    return json.loads(result.stdout)
+
+
+def _live(node: str, body: str) -> object:
+    """Run node with the fake-DOM prelude + live-status.js."""
+    source = (
+        _FAKE_DOM
+        + f"import * as live from '{LIVE.as_posix()}';\n"
+        + f"const main = async () => {{ {body} }};\n"
+        + "console.log(JSON.stringify(await main()));\n"
+    )
+    result = subprocess.run(
+        [node, "--input-type=module", "-e", source],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+    )
+    return json.loads(result.stdout)
+
+
 def _sidebar(node: str, body: str) -> object:
     """Run node with the fake-DOM prelude + team-sidebar.js. The body
     stubs document/fetch/localStorage, then drives initTeamSidebar."""
@@ -881,7 +925,7 @@ def test_team_brand_reuses_legacy_chat_brand(node: str) -> None:
         " stripe: !!a.querySelector('.chat-brand-stripe'),"
         " lockup: !!a.querySelector('.chat-brand-lockup'),"
         " name: a.querySelector('h2') && a.querySelector('h2').textContent,"
-        " quill: !!a.querySelector('.chat-brand-quill'),"
+        " quill: !!a.querySelector('.chat-brand-avatar'),"
         " status: a.querySelector('.chat-brand-status')"
         " && a.querySelector('.chat-brand-status').textContent,"
         " headTint: head && head._style['--chat-brand-accent'],"
@@ -891,22 +935,23 @@ def test_team_brand_reuses_legacy_chat_brand(node: str) -> None:
         " && a.querySelector('.chat-brand-line').tagName,"
         "};")
     assert "team-message" in value["article"]
-    assert value["head"] == "chat-brand"
     assert value["bot"] == "coder"
     assert value["stripe"] is True
     assert value["lockup"] is True
     assert value["name"] == "Coder"
     assert value["quill"] is True
     assert value["status"] == "đang code"
-    assert value["headTint"] == "var(--color-botanical)"
+    assert value["headTint"] == (
+        "var(--avatar-tint, var(--team-tint, var(--color-accent)))")
+    assert value["head"] == "chat-brand avatar-variant-single-flag"
     assert value["legacyHead"] is False
     assert value["legacyName"] is False
     assert value["lineTag"] == "P"  # no reasoning → plain status line
 
 
 def test_team_brand_thyca_keeps_ink_and_default_status(node: str) -> None:
-    """Thyca rows keep the legacy --chat-brand-ink name (no inline color)
-    and read the legacy default status when the backend sends no state."""
+    """Thyca rows keep the shared accent var (no inline color) and read
+    the legacy default status when the backend sends no state."""
     value = _cards(node,
         "const a = cards.teamArticleFor({role: 'assistant', content: 'Ừ',"
         " meta: {bot_id: 'thyca'}});"
@@ -915,11 +960,14 @@ def test_team_brand_thyca_keeps_ink_and_default_status(node: str) -> None:
         " h2 && h2._style.color,"
         " a.querySelector('.chat-brand-status')"
         " && a.querySelector('.chat-brand-status').textContent,"
-        " a.querySelector('.chat-brand')._style['--chat-brand-accent']];")
+        " a.querySelector('.chat-brand')._style['--chat-brand-accent'],"
+        " a.querySelector('.chat-brand').className];")
     assert value[0] == "Thyca"
-    assert value[1] is None  # no inline color → legacy ink rule wins
+    assert value[1] is None  # no inline color → shared accent var wins
     assert value[2] == "đã viết"
-    assert value[3] == "var(--color-accent)"
+    assert value[3] == (
+        "var(--avatar-tint, var(--team-tint, var(--color-accent)))")
+    assert value[4] == "chat-brand avatar-variant-star"
 
 
 def test_team_brand_status_line_toggles_thinking(node: str) -> None:
@@ -1148,9 +1196,10 @@ def test_sidebar_sessions_render_under_active_bot_row(node: str) -> None:
     # ("dm") renders NO row: the Thyca bot row itself is the DM entry
     # (supersedes the earlier expectation that listed it).
     assert [(row["bot"], row["sid"]) for row in value] == [
-        ("", "shared"), ("coder", ""), ("thyca", "")]
+        ("", "shared"), ("coder", ""), ("thyca", ""), ("", "")]
     # Shared annotation still present on the group row's subline.
     assert "Coder" in value[0]["text"] and "Thyca" in value[0]["text"]
+    assert "+ Phiên mới" in value[-1]["text"]
 
 
 def test_sidebar_bot_with_only_dm_renders_zero_session_rows(node: str) -> None:
@@ -1216,7 +1265,7 @@ def test_sidebar_bot_with_only_dm_renders_zero_session_rows(node: str) -> None:
         "   .map((c) => c.className) }));")
     # Exactly one Thyca entry (the bot row); zero session rows under it.
     assert [(row["bot"], row["sid"]) for row in value] == [
-        ("thyca", ""), ("coder", "")]
+        ("thyca", ""), ("", ""), ("coder", "")]
     # No empty-state text for the only-DM bot.
     assert all("Chưa có phiên." not in row["text"] for row in value)
     # The DM's unread still dots the Thyca bot row.
@@ -1524,3 +1573,935 @@ def test_bot_avatar_css_has_no_design_hex() -> None:
     assert not re.search(r"#[0-9a-fA-F]{3,8}\b", css), (
         "avatar CSS must resolve colours through shared tokens")
     assert "botLookAround" in css and "botBounce" in css
+
+
+def test_chat_surfaces_and_imagery_unchanged() -> None:
+    """Page chrome is untouched: chat.css adds no sidebar/workspace surface
+    or palette overrides, and kit.css keeps its own backgrounds, imagery,
+    canvas/title transparency, and shell texture."""
+    import re
+
+    css = CHAT_CSS.read_text(encoding="utf-8")
+    kit = KIT_CSS.read_text(encoding="utf-8")
+    assert not re.search(r"\.chat-shell\s*\{", css), (
+        "no .chat-shell palette block")
+    for absent in ("--bg-paper", "--bg-card", "--border-paper",
+                   "--text-main", "--text-muted", "--status-ring"):
+        assert absent not in css, absent
+    for block in re.findall(r"\.chat-shell \.(?:sidebar|workspace)\s*\{[^}]*\}", css):
+        assert "background" not in block and "--status-ring" not in block, block
+    assert not re.search(r"\.team-bot-item\.is-active\s*\{[^}]*background", css)
+    assert "#3d2a1f" in css
+    canvas = re.findall(r"\.chat-canvas\s*\{[^}]*\}", css)
+    assert canvas, ".chat-canvas rule missing"
+    assert any("background: transparent" in block for block in canvas), canvas
+    sidebar = re.findall(r"\.sidebar\s*\{[^}]*\}", kit)
+    workspace = re.findall(r"\.workspace\s*\{[^}]*\}", kit)
+    assert any("background: transparent" in block for block in sidebar), sidebar
+    assert any("background: transparent" in block for block in workspace), workspace
+    assert ".notebook-shell" in kit
+    assert "thyca-bg-paper.png" in kit
+    assert re.search(r"\.notebook-shell::before\s*\{[^}]*url\(", kit), (
+        "notebook paper texture layer must be preserved")
+    tokens = TOKENS_CSS.read_text(encoding="utf-8")
+    blocks = re.findall(r"body\s*\{[^}]*\}", tokens)
+    assert any("background-image" in block for block in blocks), (
+        "outer desk gradient on body must be preserved")
+
+
+def test_chat_avatar_variant_tint_map() -> None:
+    """Every avatar variant maps to its reference note colour through a
+    chat-scoped --avatar-tint, leaving card tint metadata untouched."""
+    css = CHAT_CSS.read_text(encoding="utf-8")
+    expected = {
+        "star": "note-do",
+        "hollow": "note-re",
+        "single-flag": "note-mi",
+        "double-flag": "note-fa",
+        "dotted": "note-sol",
+        "fermata": "note-la",
+        "plain": "note-si",
+    }
+    for variant, note in expected.items():
+        rule = f".chat-shell .avatar-variant-{variant}"
+        assert rule in css, rule
+        assert f"--avatar-tint: var(--{note})" in css, (variant, note)
+    assert ".bot-drawer .avatar-variant-star" in css
+
+
+def test_avatar_reference_tokens_and_css() -> None:
+    """Shared tokens carry the Vintage Ink palette; avatar CSS resolves
+    halo/offline/badge/flag/stem colours through them."""
+    tokens = TOKENS_CSS.read_text(encoding="utf-8")
+    for token in ("--note-do: #BE5530", "--note-re: #865580",
+                  "--note-mi: #2B7A72", "--note-fa: #386288",
+                  "--note-sol: #537E56", "--note-la: #C48324",
+                  "--note-si: #735238", "--note-star: #D4912A",
+                  "--avatar-eye: #2B211B", "--avatar-eye-offline: #786D61",
+                  "--status-offline: #B5A898",
+                  "--avatar-star-offline: #BDB2A6",
+                  "--avatar-hollow: #F7EDE2",
+                  "--avatar-hollow-offline: #DFD5C8",
+                  "--avatar-think: #8C7662", "--status-done: #4A8759",
+                  "--status-waiting: #3E6B94", "--status-error: #B84239",
+                  "--avatar-halo: rgba(190, 85, 48, 0.10)",
+                  "--avatar-halo-ring: rgba(180, 90, 50, 0.42)",
+                  "--avatar-crescent: rgba(31, 20, 14, 0.14)",
+                  "--avatar-stamp-ink: #9E4020"):
+        assert token in tokens, token
+    css = AVATAR_CSS.read_text(encoding="utf-8")
+    assert "fill: var(--avatar-tint, var(--team-tint, var(--color-accent)))" in css
+    assert "stroke: var(--avatar-tint, var(--team-tint, var(--color-accent)))" in css
+    assert "fill: var(--avatar-halo)" in css
+    assert "stroke: var(--avatar-halo-ring)" in css
+    assert "stroke-dasharray: 4 3.5" in css
+    assert "fill: var(--avatar-crescent)" in css
+    assert "fill: var(--avatar-hollow-offline)" in css
+    assert "var(--status-offline)" in css
+    assert "var(--avatar-eye-offline)" in css
+    assert "var(--avatar-stamp-ink)" in css
+    assert "mix-blend-mode: multiply" in css
+    assert "isolation: isolate" in css
+    assert "stroke-width: 1.1" in css and "stroke-width: 2.6" in css
+    assert "stroke-width: 1.6" in css and "stroke-width: 1.4" in css
+    assert "stroke-width: 1.35" in css and "stroke-width: 3.6" in css
+    assert re.search(r"\.bot-team-pair \.avatar-team-stem \{\s*stroke-width: 3;", css)
+    assert re.search(r"\.bot-team-pair \.avatar-beam \{\s*stroke-width: 4;", css)
+    assert "var(--font-reading)" in css
+
+
+def test_avatar_variant_classes_and_geometry(node: str) -> None:
+    """SVG emits validated avatar-variant-* classes, dedicated flag and
+    stem classes, variant gaze delays, and the reference beam endpoint."""
+    value = _run(
+        node,
+        "const hollow = api.botAvatarSVG({id: 'd', avatar: 'hollow'}, {size: 32});"
+        " const single = api.botAvatarSVG({id: 's', avatar: 'single-flag'}, {size: 32});"
+        " const dbl = api.botAvatarSVG({id: 'x', avatar: 'double-flag'}, {size: 32});"
+        " const run = api.botAvatarSVG({id: 'r', avatar: 'dotted',"
+        "   agentStatus: {state: 'running'}}, {size: 32});"
+        " const team = api.teamAvatarSVG(["
+        "  {id: 'a', avatar: 'single-flag', tint: 'accent', agentStatus: {state: 'running'}},"
+        "  {id: 'b', avatar: 'hollow', tint: 'ink', status: 'paused'},"
+        "  {id: 'c', avatar: 'fermata', tint: 'botanical'}], {size: 40});"
+        " const pair = api.teamAvatarSVG([{id: 'a'}, {id: 'b'}], {size: 40});"
+        " return [hollow.includes('bot-single avatar-variant-hollow'),"
+        "  hollow.includes('--gaze-delay: -1.3s'),"
+        "  hollow.includes('rx=\"7.2\"'), hollow.includes('avatar-crescent'),"
+        "  hollow.includes('rx=\"10.4\"'), hollow.includes('rx=\"1.8\"'),"
+        "  hollow.includes('bot-ink-layer'),"
+        "  single.includes('avatar-flag'),"
+        "  (dbl.match(/avatar-flag-double/g) || []).length,"
+        "  run.includes('floating-note-stem'),"
+        "  team.includes('avatar-team-stem avatar-variant-single-flag'),"
+        "  team.includes('bot-node is-offline avatar-variant-hollow'),"
+        "  team.includes('avatar-team-stem avatar-variant-hollow is-offline'),"
+        "  team.includes('avatar-team-stem avatar-variant-fermata'),"
+        "  team.includes('floating-note avatar-variant-single-flag'),"
+        "  team.includes('team-floating-note-stem'),"
+        "  team.includes('M 15,17.8 L 41.6,13.3'),"
+        "  team.includes('bot-core bot-ink-layer'),"
+        "  team.includes('rx=\"6\" ry=\"4.5\"'),"
+        "  team.includes('bot-team-trio'),"
+        "  pair.includes('bot-team-pair'),"
+        "  !pair.includes('bot-team-trio'),"
+        "  pair.includes('M 18.4,16.3 L 37,12.8'),"
+        "  pair.includes('rx=\"7.2\" ry=\"5.3\"'),"
+        "  pair.includes('scale(0.72)'),"
+        "  pair.includes('scale(1.2)'),"
+        "  pair.includes('translate(14, 36)'),"
+        "  pair.includes('translate(30, 34)'),"
+        "  pair.includes('x1=\"19.8\"'),"
+        "  pair.includes('x1=\"35.8\"'),"
+        "  !pair.includes('avatar-extra'),"
+        "  team.includes('bot-team avatar-variant')];",
+        via="avatar",
+    )
+    assert value == [True, True, True, True, True, True, True, True, 2,
+                     True, True, True, True, True, True, True, True,
+                     True, True, True, True, True, True, True, True,
+                     True, True, True, True, True, True, False]
+
+
+def test_avatar_extra_tag_tracks_folded_members(node: str) -> None:
+    """The +N vintage stamp state comes from folded extra members only:
+    all extras offline wins; otherwise any extra running. The stamp is a
+    circle badge that never fills orange and stays out of the ink layer."""
+    value = _run(
+        node,
+        "const visRun = api.teamAvatarSVG(["
+        "  {id: 'a', agentStatus: {state: 'running'}}, {id: 'b'}, {id: 'c'},"
+        "  {id: 'd'}, {id: 'e'}]);"
+        " const extraOff = api.teamAvatarSVG(["
+        "  {id: 'a', agentStatus: {state: 'running'}}, {id: 'b'}, {id: 'c'},"
+        "  {id: 'd', status: 'paused'}, {id: 'e', status: 'paused'}]);"
+        " const extraRun = api.teamAvatarSVG(["
+        "  {id: 'a'}, {id: 'b'}, {id: 'c'},"
+        "  {id: 'd', agentStatus: {state: 'running'}}, {id: 'e'}]);"
+        " const mixed = api.teamAvatarSVG(["
+        "  {id: 'a'}, {id: 'b'}, {id: 'c'},"
+        "  {id: 'd', status: 'paused'}, {id: 'e', agentStatus: {state: 'running'}}]);"
+        " const two = api.teamAvatarSVG([{id: 'a'}, {id: 'b'}]);"
+        " const triRun = api.teamAvatarSVG(["
+        "  {id: 'a', agentStatus: {state: 'running'}}, {id: 'b'}, {id: 'c'}]);"
+        " const five = api.teamAvatarSVG(["
+        "  {id: 'a'}, {id: 'b'}, {id: 'c'}, {id: 'd'}, {id: 'e'}]);"
+        " const four = api.teamAvatarSVG(["
+        "  {id: 'a', agentStatus: {state: 'thinking'}}, {id: 'b'}, {id: 'c'},"
+        "  {id: 'd'}]);"
+        " return [visRun.includes('class=\"avatar-extra\"'),"
+        "  extraOff.includes('avatar-extra is-offline'),"
+        "  extraRun.includes('avatar-extra is-running'),"
+        "  mixed.includes('avatar-extra is-running'),"
+        "  two.includes('avatar-extra'),"
+        "  visRun.includes('<circle cx=\"8.5\" cy=\"9.5\" r=\"6.2\"'),"
+        "  visRun.includes('>+2<'),"
+        "  five.indexOf('avatar-extra') > five.indexOf('bot-ink-layer'),"
+        "  visRun.includes('cx=\"22.5\" cy=\"9\"'),"
+        "  triRun.includes('cx=\"17.9\"'),"
+        "  (four.match(/think-dot/g) || []).length,"
+        "  four.includes('cx=\"19.5\" cy=\"9\"'),"
+        "  four.includes('cx=\"25.5\" cy=\"4.6\"')];",
+        via="avatar",
+    )
+    assert value == [True, True, True, True, False, True, True, True,
+                     True, True, 3, True, True]
+
+
+def test_avatar_member_counts_and_states(node: str) -> None:
+    """Zero/one/two-member teams still render; selected now emits the
+    plain output (halo removed by design), the single core is 1.25× while
+    the team keeps native geometry."""
+    value = _run(
+        node,
+        "const none = api.teamAvatarSVG([], {size: 32});"
+        " const one = api.teamAvatarSVG([{id: 'a', avatar: 'dotted'}], {size: 32});"
+        " const two = api.teamAvatarSVG([{id: 'a'}, {id: 'b'}], {size: 32});"
+        " const sel = api.botAvatarSVG({id: 'a'}, {size: 32, selected: true});"
+        " const selTeam = api.teamAvatarSVG([{id: 'a'}, {id: 'b'}], {selected: true});"
+        " const plain = api.botAvatarSVG({id: 'a'}, {size: 32});"
+        " return [none.includes('bot-single'), one.includes('bot-single'),"
+        "  one.includes('avatar-variant-dotted'), two.includes('bot-team'),"
+        "  !two.includes('avatar-extra'),"
+        "  sel === plain,"
+        "  !sel.includes('avatar-halo'), !selTeam.includes('avatar-halo'),"
+        "  !sel.includes('avatar-selected-paper'),"
+        "  !sel.includes('avatar-selected-lines'),"
+        "  !sel.includes('avatar-selected-fold'),"
+        "  sel.includes('scale(1.25)'), !two.includes('scale(1.25)')];",
+        via="avatar",
+    )
+    assert value == [True] * 13
+
+
+def test_avatar_reduced_motion_disables_all_animations() -> None:
+    """The reduced-motion block covers every animation the avatar can run."""
+    import re
+
+    css = AVATAR_CSS.read_text(encoding="utf-8")
+    block = re.search(
+        r"@media \(prefers-reduced-motion: reduce\)\s*\{(.*)\}\s*$",
+        css, re.S)
+    assert block, "reduced-motion media rule missing"
+    body = block.group(1)
+    for selector in ("eye-gaze", "eyes-open", "node-bounce-target",
+                     "floating-note", "think-dot-1", "think-dot-2",
+                     "think-dot-3"):
+        assert selector in body, selector
+    assert "animation: none" in body
+    assert "haloRotate" not in css and "selected-ring-spin" not in css
+
+
+def test_avatar_ring_uses_existing_surface_token() -> None:
+    """Badge ring and stamp fill ride the shared surface token so the
+    cream ring matches the current paper on every page."""
+    import re
+
+    css = AVATAR_CSS.read_text(encoding="utf-8")
+    chat = CHAT_CSS.read_text(encoding="utf-8")
+    badge = re.findall(r"\.avatar-badge circle\s*\{[^}]*\}", css)
+    extra = re.findall(r"\.avatar-extra circle\s*\{[^}]*\}", css)
+    assert badge and "stroke: var(--color-bg-surface)" in badge[0], badge
+    assert extra and "fill: var(--color-bg-surface)" in extra[0], extra
+    assert "--status-ring" not in css and "--status-ring" not in chat
+
+
+def test_sidebar_rows_avatar_name_layout() -> None:
+    """Bot/session rows: avatar in a fixed first column on the name line,
+    title and metadata share the text column with ellipsis pinned, and
+    the collapsed rail keeps a 64px hit target at 48px artwork."""
+    import re
+
+    css = CHAT_CSS.read_text(encoding="utf-8")
+    src = SIDEBAR_SRC.read_text(encoding="utf-8")
+
+    row = re.search(r"#team-bot-list \.session-item\s*\{([^}]*)\}", css)
+    assert row, "scoped row grid missing"
+    assert "grid-template-columns: 3rem minmax(0, 1fr) auto" in row.group(1)
+    assert "column-gap: 0.5rem" in row.group(1)
+    name = re.search(
+        r"#team-bot-list \.session-item \.session-name\s*\{([^}]*)\}", css)
+    assert name, "scoped name rule missing"
+    for decl in ("grid-column: 2", "grid-row: 1", "min-width: 0",
+                 "overflow: hidden", "text-overflow: ellipsis",
+                 "white-space: nowrap"):
+        assert decl in name.group(1), decl
+    meta = re.search(r"#team-bot-list \.session-item time\s*\{([^}]*)\}", css)
+    assert meta, "scoped metadata rule missing"
+    for decl in ("grid-column: 2", "grid-row: 2", "justify-self: stretch",
+                 "min-width: 0", "overflow: hidden", "text-overflow: ellipsis",
+                 "white-space: nowrap"):
+        assert decl in meta.group(1), decl
+    sub = re.search(
+        r"#team-bot-list \.team-session-item:not\(\.team-group-item\)"
+        r"\s*\{([^}]*)\}", css)
+    assert sub, "solo session row rule missing"
+    assert "grid-template-columns: minmax(0, 1fr) auto" in sub.group(1)
+    subname = re.search(
+        r"#team-bot-list \.team-session-item:not\(\.team-group-item\)"
+        r" \.session-name\s*\{([^}]*)\}", css)
+    assert subname and "grid-column: 1" in subname.group(1)
+    submeta = re.search(
+        r"#team-bot-list \.team-session-item:not\(\.team-group-item\)"
+        r" time\s*\{([^}]*)\}", css)
+    assert submeta and "grid-column: 1" in submeta.group(1)
+    subunread = re.search(
+        r"#team-bot-list \.team-session-item:not\(\.team-group-item\)"
+        r" \.team-unread\s*\{([^}]*)\}", css)
+    assert subunread and "grid-column: 2" in subunread.group(1)
+    group = re.search(r"#team-bot-list \.team-group-item\s*\{([^}]*)\}", css)
+    assert group and "grid-template-columns: 3rem minmax(0, 1fr) auto" in group.group(1)
+
+    avatar = re.search(r"^\.team-avatar\s*\{([^}]*)\}", css, re.M)
+    assert avatar and "grid-row: 1;" in avatar.group(1)
+    assert "grid-row: 1 / -1" not in avatar.group(1)
+    assert "width: 3rem" in avatar.group(1)
+    mini = re.search(r"\.team-avatar\.is-mini\s*\{([^}]*)\}", css)
+    assert mini and "width: 2rem" in mini.group(1)
+    groupav = re.search(r"\.team-avatar\.is-group\s*\{([^}]*)\}", css)
+    assert groupav and "width: 3rem" in groupav.group(1)
+
+    rail = re.search(r"\.chat-shell\.is-rail\s*\{([^}]*)\}", css)
+    assert rail and "7.6rem" in rail.group(1)
+    railrow = re.search(
+        r"\.is-rail #team-bot-list \.team-bot-item,\s*"
+        r"\.is-rail #team-bot-list \.team-group-item\s*\{([^}]*)\}",
+        css)
+    assert railrow, "rail row rule missing"
+    assert "grid-template-columns: 3.5rem" in railrow.group(1)
+    assert "padding: 0.5rem" in railrow.group(1)
+    railav = re.search(r"\.is-rail \.team-avatar\s*\{([^}]*)\}", css)
+    assert railav and "width: 3.5rem" in railav.group(1)
+    assert "grid-row: 1 / -1" in railav.group(1)
+    collapsed = re.search(
+        r"\.is-rail \.team-cluster-sessions,\s*\.is-rail #team-nav-actions"
+        r"\s*\{([^}]*)\}", css)
+    assert collapsed and "display: none" in collapsed.group(1), (
+        "subordinate sessions stay hidden while collapsed")
+
+    assert "size: mini ? 32 : 48" in src
+    assert "avatarSlot(members[0], true, selected)" in src, (
+        "single-member session icon must forward selected for the halo")
+    assert "teamAvatarSVG(members, { size: 48, selected })" in src
+    assert "if (group) button.append(sessionIcon(session, selected));" in src, (
+        "solo subordinate sessions render no avatar slot")
+    assert 'className = "team-new-session"' in src
+    assert '"+ Phiên mới"' in src
+    newbtn = re.search(r"\.team-new-session\s*\{([^}]*)\}", css)
+    assert newbtn, "new-session button styling missing"
+
+_TEAM_NAV_SETUP = """
+FakeNode.prototype.replaceChildren = function (...nodes)
+ { this.children = [...nodes]; };
+FakeNode.prototype.remove = function () {};
+Object.defineProperty(FakeNode.prototype, 'childElementCount',
+ { get() { return this.children.length; } });
+FakeNode.prototype.removeAttribute = function (k)
+ { delete this.attributes[k]; };
+FakeNode.prototype.after = function () {};
+FakeNode.prototype.addEventListener = function (type, fn) {
+  (this._handlers || (this._handlers = {}))[type] = fn;
+};
+FakeNode.prototype.querySelector = function (sel) {
+  if (!sel.startsWith('#')) return null;
+  const find = (el) => { for (const c of el.children || []) {
+   if (c && c.id === sel.slice(1)) return c;
+   const r = c && c.children ? find(c) : null;
+   if (r) return r; } return null; };
+  return find(this); };
+const nav = new FakeNode('nav'); nav.id = 'session-list';
+const section = new FakeNode('section');
+section.id = 'team-nav'; section.hidden = true;
+const title = new FakeNode('h2'); title.id = 'team-nav-title';
+const botNav = new FakeNode('nav'); botNav.id = 'team-bot-list';
+const actions = new FakeNode('div');
+actions.id = 'team-nav-actions'; actions.hidden = true;
+const sharedBtn = new FakeNode('button');
+sharedBtn.id = 'team-shared-create';
+section.append(title, botNav, actions);
+const registry = { '#team-nav': section,
+ '#team-bot-list': botNav, '#team-nav-actions': actions,
+ '#team-shared-create': sharedBtn };
+document.querySelector = (sel) => registry[sel] || null;
+document.addEventListener = () => {};
+document.hidden = false;
+globalThis.matchMedia = () => ({ matches: false });
+globalThis.window = { addEventListener: () => {} };
+const writes = [];
+globalThis.localStorage = {
+  getItem: (k) => null,
+  setItem: (k, v) => { writes.push(k); },
+};
+const subOf = (botId) => {
+  for (const item of botNav.children) {
+    const head = item.children && item.children[0];
+    const headBtn = head && head.children && head.children[0];
+    if (!headBtn || headBtn.dataset.botId !== botId) continue;
+    return item.children.find(
+      (c) => c.className === 'team-cluster-sessions') || null;
+  }
+  return null;
+};
+const findRow = (sid) => {
+  const out = [];
+  const walk = (el) => { for (const c of el.children || []) {
+    if (c.dataset && c.dataset.sessionId === sid) out.push(c);
+    if (c.children) walk(c); } };
+  walk(botNav);
+  return out[0] || null;
+};
+const newBtn = (botId) => {
+  const sub = subOf(botId);
+  return sub ? sub.children.find(
+    (c) => c.className === 'team-new-session') || null : null;
+};
+const tick = () => new Promise((r) => setTimeout(r, 5));
+"""
+
+
+def test_solo_subordinate_session_rows_have_no_avatar(node: str) -> None:
+    """A solo subordinate session row is name + metadata only — no
+    session-icon or avatar slot — while the top-level group row keeps
+    its composite team avatar in the icon column."""
+    value = _sidebar(node,
+        _TEAM_NAV_SETUP
+        + "globalThis.fetch = async () => ({ ok: true, status: 200,"
+        "  json: async () => ({ bots: ["
+        "   {id: 'thyca', name: 'Thyca', role: 'chính', status: 'idle'},"
+        "   {id: 'coder', name: 'Coder', role: 'code', status: 'idle'}] }) });"
+        " await sidebar.initTeamSidebar({ state: { activeId: 'dm',"
+        "  detail: { id: 'dm', bots: ['thyca'] },"
+        "  sessions: ["
+        "   {id: 'dm', title: 'Riêng Thyca', bots: ['thyca'],"
+        "    dm: 'thyca', updated_at: '2026-06-01T00:00:00Z', turns: 2},"
+        "   {id: 'side', title: 'Phiên phụ', bots: ['thyca'],"
+        "    updated_at: '2026-06-02T00:00:00Z', turns: 1},"
+        "   {id: 'shared', title: 'Phiên chung', bots: ['thyca', 'coder'],"
+        "    updated_at: '2026-07-02T00:00:00Z', turns: 3}] },"
+        " loadSession: async () => {}, afterTeamSession: async () => {},"
+        " teamRefresh: async () => {} });"
+        " const sub = subOf('thyca');"
+        " const sideBtn = findRow('side');"
+        " const groupBtn = findRow('shared');"
+        " return {"
+        "  subKids: sub ? sub.children.map((c) => c.className) : null,"
+        "  sideKids: sideBtn.children.map((c) => c.tagName + ':' + c.className),"
+        "  groupKids: groupBtn.children.map((c) => c.tagName + ':' + c.className),"
+        "  groupTeam: (groupBtn.children[0]._html || '').includes('bot-team')};")
+    assert value["subKids"] == ["team-new-session", "session-row"]
+    assert value["sideKids"] == ["SPAN:session-name", "TIME:"]
+    assert value["groupKids"][0] == "SPAN:team-avatar is-group"
+    assert value["groupTeam"] is True
+
+
+def test_new_session_button_renders_when_no_sessions(node: str) -> None:
+    """The selected bot's cluster always leads with the create button —
+    even with zero subordinate sessions — labelled for that bot."""
+    value = _sidebar(node,
+        _TEAM_NAV_SETUP
+        + "globalThis.fetch = async () => ({ ok: true, status: 200,"
+        "  json: async () => ({ bots: ["
+        "   {id: 'thyca', name: 'Thyca', role: 'chính', status: 'idle'},"
+        "   {id: 'coder', name: 'Coder', role: 'code', status: 'idle'}] }) });"
+        " await sidebar.initTeamSidebar({ state: { activeId: 'dm',"
+        "  detail: { id: 'dm', bots: ['thyca'] },"
+        "  sessions: ["
+        "   {id: 'dm', title: 'Riêng Thyca', bots: ['thyca'],"
+        "    dm: 'thyca', updated_at: '2026-06-01T00:00:00Z', turns: 2}] },"
+        " loadSession: async () => {}, afterTeamSession: async () => {},"
+        " teamRefresh: async () => {} });"
+        " const sub = subOf('thyca');"
+        " const btn = newBtn('thyca');"
+        " return { subKids: sub.children.map((c) => c.className),"
+        "  type: btn.type, tag: btn.tagName,"
+        "  label: btn.getAttribute('aria-label'), text: btn.textContent,"
+        "  disabled: !!btn.disabled,"
+        "  coderBtn: !!newBtn('coder') };")
+    assert value["subKids"] == ["team-new-session"]
+    assert value["tag"] == "BUTTON" and value["type"] == "button"
+    assert value["label"] == "Tạo phiên mới với Thyca"
+    assert "+ Phiên mới" in value["text"]
+    assert value["disabled"] is False
+    assert value["coderBtn"] is False
+
+
+def test_new_session_create_posts_and_navigates(node: str) -> None:
+    """Clicking the create button POSTs exactly {bots:[selected]} to
+    /api/sessions, hands the fresh solo detail to hub.afterTeamSession,
+    and never writes the fixed-DM memory."""
+    value = _sidebar(node,
+        _TEAM_NAV_SETUP
+        + "const posts = [];"
+        " const handed = [];"
+        " globalThis.fetch = async (url, opts) => {"
+        "  if (opts && opts.method === 'POST') {"
+        "   posts.push({ url, body: JSON.parse(opts.body) });"
+        "   return { ok: true, status: 200,"
+        "    json: async () => ({ id: 'side-9', bots: ['thyca'],"
+        "     title: 'Phiên mới' }) }; }"
+        "  return { ok: true, status: 200,"
+        "   json: async () => ({ bots: ["
+        "    {id: 'thyca', name: 'Thyca', role: 'chính', status: 'idle'},"
+        "    {id: 'coder', name: 'Coder', role: 'code', status: 'idle'}] }) }; };"
+        " await sidebar.initTeamSidebar({ state: { activeId: 'dm',"
+        "  detail: { id: 'dm', bots: ['thyca'] },"
+        "  sessions: ["
+        "   {id: 'dm', title: 'Riêng Thyca', bots: ['thyca'],"
+        "    dm: 'thyca', updated_at: '2026-06-01T00:00:00Z', turns: 2}] },"
+        " loadSession: async () => {},"
+        " afterTeamSession: async (d, guard) => {"
+        "  handed.push({ id: d.id, ok: guard() }); },"
+        " teamRefresh: async () => {} });"
+        " newBtn('thyca')._handlers.click();"
+        " await tick(); await tick();"
+        " const btn = newBtn('thyca');"
+        " return { posts, handed, writes,"
+        "  reenabled: btn ? !btn.disabled : null,"
+        "  text: btn && btn.textContent,"
+        "  errors: subOf('thyca').children"
+        "   .filter((c) => String(c.className).includes('is-error')).length };")
+    assert value["posts"] == [
+        {"url": "/api/sessions", "body": {"bots": ["thyca"]}}]
+    assert value["handed"] == [{"id": "side-9", "ok": True}]
+    assert "thyca.team.dm.v1" not in value["writes"], value["writes"]
+    assert value["reenabled"] is True
+    assert "+ Phiên mới" in value["text"]
+    assert value["errors"] == 0
+
+
+def test_new_session_create_rejects_invalid_detail(node: str) -> None:
+    """A POST answer that is not exactly a fresh solo for the requested
+    bot — wrong bot, missing id, dm-marked, or multi-bot — is refused:
+    honest error shown, no afterTeamSession handoff."""
+    cases = [
+        "{ id: 'x', bots: ['coder'] }",
+        "{ bots: ['thyca'] }",
+        "{ id: 'x', bots: ['thyca'], dm: 'thyca' }",
+        "{ id: 'x', bots: ['thyca', 'coder'] }",
+    ]
+    for detail in cases:
+        value = _sidebar(node,
+            _TEAM_NAV_SETUP
+            + "const handed = [];"
+            f" globalThis.fetch = async (url, opts) => {{"
+            "  if (opts && opts.method === 'POST') {"
+            f"   return {{ ok: true, status: 200, json: async () => ({detail}) }}; }}"
+            "  return { ok: true, status: 200,"
+            "   json: async () => ({ bots: ["
+            "    {id: 'thyca', name: 'Thyca', role: 'chính', status: 'idle'},"
+            "    {id: 'coder', name: 'Coder', role: 'code', status: 'idle'}] }) }; };"
+            " await sidebar.initTeamSidebar({ state: { activeId: 'dm',"
+            "  detail: { id: 'dm', bots: ['thyca'] },"
+            "  sessions: ["
+            "   {id: 'dm', title: 'Riêng Thyca', bots: ['thyca'],"
+            "    dm: 'thyca', updated_at: '2026-06-01T00:00:00Z', turns: 2}] },"
+            " loadSession: async () => {},"
+            " afterTeamSession: async (d) => { handed.push(d.id); },"
+            " teamRefresh: async () => {} });"
+            " newBtn('thyca')._handlers.click();"
+            " await tick(); await tick();"
+            " const sub = subOf('thyca');"
+            " const err = sub.children.find((c) =>"
+            "  String(c.className).includes('is-error'));"
+            " const btn = newBtn('thyca');"
+            " return { handed, error: err ? err.textContent : '',"
+            "  reenabled: btn ? !btn.disabled : null };")
+        assert value["handed"] == [], detail
+        assert "chưa mở phiên" in value["error"], detail
+        assert value["reenabled"] is True, detail
+
+
+def test_new_session_create_failure_shows_error(node: str) -> None:
+    """A failed POST surfaces the backend message scoped to the bot and
+    the button is usable again."""
+    value = _sidebar(node,
+        _TEAM_NAV_SETUP
+        + "globalThis.fetch = async (url, opts) => {"
+        "  if (opts && opts.method === 'POST') {"
+        "   return { ok: false, status: 500,"
+        "    json: async () => ({ error: 'server nổ' }) }; }"
+        "  return { ok: true, status: 200,"
+        "   json: async () => ({ bots: ["
+        "    {id: 'thyca', name: 'Thyca', role: 'chính', status: 'idle'},"
+        "    {id: 'coder', name: 'Coder', role: 'code', status: 'idle'}] }) }; };"
+        " await sidebar.initTeamSidebar({ state: { activeId: 'dm',"
+        "  detail: { id: 'dm', bots: ['thyca'] },"
+        "  sessions: ["
+        "   {id: 'dm', title: 'Riêng Thyca', bots: ['thyca'],"
+        "    dm: 'thyca', updated_at: '2026-06-01T00:00:00Z', turns: 2}] },"
+        " loadSession: async () => {}, afterTeamSession: async () => {},"
+        " teamRefresh: async () => {} });"
+        " newBtn('thyca')._handlers.click();"
+        " await tick(); await tick();"
+        " const sub = subOf('thyca');"
+        " const err = sub.children.find((c) =>"
+        "  String(c.className).includes('is-error'));"
+        " const btn = newBtn('thyca');"
+        " return { error: err ? err.textContent : '',"
+        "  role: err ? err.getAttribute('role') : '',"
+        "  order: sub.children.map((c) => c.className),"
+        "  reenabled: btn ? !btn.disabled : null };")
+    assert value["error"] == "server nổ"
+    assert value["role"] == "alert"
+    assert value["order"][0] == "team-new-session"
+    assert "is-error" in value["order"][1]
+    assert value["reenabled"] is True
+
+
+def test_new_session_pending_blocks_duplicates_and_stale(node: str) -> None:
+    """While a create is in flight the button is disabled and duplicate
+    clicks do not POST again; switching bots mid-flight makes the late
+    resolution stale — no navigation, pending clears."""
+    value = _sidebar(node,
+        _TEAM_NAV_SETUP
+        + "const posts = [];"
+        " const handed = [];"
+        " let resolvePost = null;"
+        " globalThis.fetch = async (url, opts) => {"
+        "  if (opts && opts.method === 'POST') {"
+        "   posts.push({ url, body: JSON.parse(opts.body) });"
+        "   return await new Promise((r) => { resolvePost = r; }); }"
+        "  if (String(url).includes('/dm')) {"
+        "   return { ok: false, status: 404, json: async () => null }; }"
+        "  return { ok: true, status: 200,"
+        "   json: async () => ({ bots: ["
+        "    {id: 'thyca', name: 'Thyca', role: 'chính', status: 'idle'},"
+        "    {id: 'coder', name: 'Coder', role: 'code', status: 'idle'}] }) }; };"
+        " await sidebar.initTeamSidebar({ state: { activeId: 'dm',"
+        "  detail: { id: 'dm', bots: ['thyca'] },"
+        "  sessions: ["
+        "   {id: 'dm', title: 'Riêng Thyca', bots: ['thyca'],"
+        "    dm: 'thyca', updated_at: '2026-06-01T00:00:00Z', turns: 2},"
+        "   {id: 'coder-dm', title: 'Riêng Coder', bots: ['coder'],"
+        "    dm: 'coder', updated_at: '2026-06-03T00:00:00Z', turns: 1}] },"
+        " loadSession: async () => {},"
+        " afterTeamSession: async (d) => { handed.push(d.id); },"
+        " teamRefresh: async () => {} });"
+        " const btn1 = newBtn('thyca');"
+        " btn1._handlers.click();"
+        " await tick();"
+        " const pending = newBtn('thyca');"
+        " const midState = { disabled: !!pending.disabled,"
+        "  text: pending.textContent };"
+        " pending._handlers.click();"
+        " await tick();"
+        " const postsAfterDup = posts.length;"
+        " const coderRow = botNav.children.map((c) =>"
+        "  c.children && c.children[0]).filter(Boolean).find((r) =>"
+        "  r.children[0] && r.children[0].dataset"
+        "  && r.children[0].dataset.botId === 'coder');"
+        " coderRow.children[0]._handlers.click();"
+        " await tick(); await tick();"
+        " resolvePost({ ok: true, status: 200,"
+        "  json: async () => ({ id: 'stale', bots: ['thyca'] }) });"
+        " await tick(); await tick();"
+        " const btn2 = newBtn('thyca');"
+        " return { posts, handed, midState, postsAfterDup,"
+        "  thycaActive: botNav.children.map((c) =>"
+        "   c.children && c.children[0]).filter(Boolean).some((r) =>"
+        "   r.children[0] && r.children[0].dataset"
+        "   && r.children[0].dataset.botId === 'thyca'"
+        "   && String(r.children[0].className).includes('is-active')),"
+        "  reenabled: btn2 ? !btn2.disabled : null };")
+    assert value["posts"] == [
+        {"url": "/api/sessions", "body": {"bots": ["thyca"]}}]
+    assert value["postsAfterDup"] == 1
+    assert value["midState"]["disabled"] is True
+    assert "Đang tạo" in value["midState"]["text"]
+    assert value["handed"] == []
+    assert value["thycaActive"] is True
+    assert value["reenabled"] is True
+
+
+def test_new_session_stale_after_clicking_session_row(node: str) -> None:
+    """Clicking an existing subordinate session while a create is in
+    flight invalidates the create (token bump): the late POST answer
+    cannot navigate away from the session the user chose, and the
+    button settles back."""
+    value = _sidebar(node,
+        _TEAM_NAV_SETUP
+        + "const posts = [];"
+        " const handed = [];"
+        " const loaded = [];"
+        " let resolvePost = null;"
+        " globalThis.fetch = async (url, opts) => {"
+        "  if (opts && opts.method === 'POST') {"
+        "   posts.push({ url, body: JSON.parse(opts.body) });"
+        "   return await new Promise((r) => { resolvePost = r; }); }"
+        "  return { ok: true, status: 200,"
+        "   json: async () => ({ bots: ["
+        "    {id: 'thyca', name: 'Thyca', role: 'chính', status: 'idle'},"
+        "    {id: 'coder', name: 'Coder', role: 'code', status: 'idle'}] }) }; };"
+        " await sidebar.initTeamSidebar({ state: { activeId: 'dm',"
+        "  detail: { id: 'dm', bots: ['thyca'] },"
+        "  sessions: ["
+        "   {id: 'dm', title: 'Riêng Thyca', bots: ['thyca'],"
+        "    dm: 'thyca', updated_at: '2026-06-01T00:00:00Z', turns: 2},"
+        "   {id: 'side', title: 'Phiên phụ', bots: ['thyca'],"
+        "    updated_at: '2026-06-02T00:00:00Z', turns: 1}] },"
+        " loadSession: async (id) => { loaded.push(id); },"
+        " afterTeamSession: async (d) => { handed.push(d.id); },"
+        " teamRefresh: async () => {} });"
+        " newBtn('thyca')._handlers.click();"
+        " await tick();"
+        " findRow('side')._handlers.click();"
+        " await tick();"
+        " resolvePost({ ok: true, status: 200,"
+        "  json: async () => ({ id: 'created', bots: ['thyca'] }) });"
+        " await tick(); await tick();"
+        " const btn = newBtn('thyca');"
+        " return { posts, handed, loaded,"
+        "  reenabled: btn ? !btn.disabled : null };")
+    assert value["posts"] == [
+        {"url": "/api/sessions", "body": {"bots": ["thyca"]}}]
+    assert value["loaded"] == ["side"]
+    assert value["handed"] == []
+    assert value["reenabled"] is True
+
+
+def test_is_exchange_requires_parent_for_traced_message(node: str) -> None:
+    """A traced root message (kind message, no parent span) is the room's
+    visible reply — only nested bus traffic (truthy parent_span_id)
+    collapses; traced help_request keeps its existing semantics."""
+    value = _run(
+        node,
+        "const m = (meta) => ({ role: 'assistant', content: 'x', meta });"
+        " return ["
+        " api.isExchangeMessage(m({kind: 'message', trace_id: 't'})),"
+        " api.isExchangeMessage(m({kind: 'message', trace_id: 't',"
+        "   parent_span_id: null})),"
+        " api.isExchangeMessage(m({kind: 'message', trace_id: 't',"
+        "   parent_span_id: ''})),"
+        " api.isExchangeMessage(m({kind: 'message', trace_id: 't',"
+        "   parent_span_id: 's1'})),"
+        " api.isExchangeMessage(m({kind: 'help_request', trace_id: 't'})),"
+        " api.isExchangeMessage(m({kind: 'help_request'})),"
+        " api.isExchangeMessage(m({kind: 'message'})),"
+        " api.isExchangeMessage(m({kind: 'delegate'})),"
+        " api.isExchangeMessage(m({kind: 'step', trace_id: 't'}))];",
+    )
+    assert value == [False, False, False, True, True, False, False, True, True]
+
+
+def test_chat_bot_for_turn_mentions_paused_and_unknown(node: str) -> None:
+    """chatBotForTurn mirrors the backend responder rule: an @mention of
+    an active participant wins, paused bots are skipped, solo resolves
+    its only bot, and unknown ids surface their own id — never Thyca."""
+    value = _run(
+        node,
+        "api.setChatBotRoster([{id:'thyca',name:'Thyca',status:'active'},"
+        " {id:'designer',name:'Designer',status:'active'},"
+        " {id:'muse',name:'Muse',status:'paused'}]);"
+        " const detail = {bots:['thyca','designer','muse'], messages:["
+        "  {role:'user', content:'@muse vẽ giúp'}]};"
+        " return ["
+        " api.chatBotForTurn(detail).id,"
+        " api.chatBotForTurn({bots:['thyca','designer']},"
+        "  '@designer làm đi').id,"
+        " api.chatBotForTurn({bots:['designer']}).id,"
+        " api.chatBotForTurn({bots:['unknown-bot']}).name,"
+        " api.chatBotForTurn({bots:['thyca','designer'], messages:["
+        "  {role:'user', content:'@designer cũ'},"
+        "  {role:'assistant', content:'ok'},"
+        "  {role:'user', content:'làm tiếp'}]}).id,"
+        " api.chatBotForTurn({}).id];",
+        via="chatbot",
+    )
+    assert value == ["thyca", "designer", "designer",
+                     "unknown-bot", "thyca", "thyca"]
+
+
+def test_chat_bot_for_message_roster_and_meta_overrides(node: str) -> None:
+    """chatBotForMessage resolves the roster profile for meta.bot_id,
+    honours valid bot_name/bot_tint/bot_avatar overrides, and falls back
+    only through the caller context before defaulting to Thyca."""
+    value = _run(
+        node,
+        "api.setChatBotRoster([{id:'designer',name:'Designer',"
+        " tint:'botanical',avatar:'hollow',status:'active'}]);"
+        " const r = api.chatBotForMessage({meta:{bot_id:'designer'}});"
+        " const o = api.chatBotForMessage({meta:{bot_id:'designer',"
+        "  bot_name:'D',bot_tint:'ink',bot_avatar:'fermata'}});"
+        " const u = api.chatBotForMessage({meta:{bot_id:'ghost'}});"
+        " const l = api.chatBotForMessage({content:'x'});"
+        " const f = api.chatBotForMessage({content:'x'},"
+        "  {id:'solo',name:'Solo'});"
+        " return [r.name, r.tint, r.avatar, o.name, o.tint, o.avatar,"
+        "  u.name, l.id, f.id];",
+        via="chatbot",
+    )
+    assert value == ["Designer", "botanical", "hollow",
+                     "D", "ink", "fermata", "ghost", "thyca", "solo"]
+
+
+def test_root_traced_message_stays_visible_as_team_card(node: str) -> None:
+    """The backend's finalized reply is a root traced message (kind
+    message + trace_id + parent_span_id null): it renders the bot's own
+    team card — roster name and avatar, content visible — while nested
+    step/message traffic still collapses behind the exchange details."""
+    value = _transcript(node,
+        f"const cb = await import('{CHAT_BOT.as_posix()}');\n"
+        "FakeNode.prototype.replaceChildren = function (...nodes)"
+        " { this.children = [...nodes]; };"
+        "cb.setChatBotRoster([{id:'designer',name:'Designer',"
+        " tint:'botanical',avatar:'hollow',status:'active'},"
+        " {id:'thyca',name:'Thyca',status:'active'}]);"
+        " const root = new FakeNode('div');"
+        " transcript.renderConversation(root, ["
+        "  {role:'assistant',content:'xong nhé',"
+        "   meta:{kind:'message',bot_id:'designer',trace_id:'t1',"
+        "    parent_span_id:null}},"
+        "  {role:'assistant',content:'bus msg',"
+        "   meta:{kind:'message',bot_id:'designer',trace_id:'t1',"
+        "    parent_span_id:'s9'}},"
+        "  {role:'assistant',content:'step row',"
+        "   meta:{kind:'step',bot_id:'coder'}}], {});"
+        " const cards = root.children.map((c) => String(c.className));"
+        " const card = root.children.find((c) =>"
+        "  String(c.className).includes('team-message'));"
+        " const av = card && card.querySelector('.chat-brand-avatar');"
+        " return {cards,"
+        "  name: card && card.querySelector('h2').textContent,"
+        "  hollow: av && av._html.includes('avatar-variant-hollow'),"
+        "  scaled: av && av._html.includes('scale(1.25)'),"
+        "  quill: !!(card && card.querySelector('.chat-brand-quill')),"
+        "  content: card && card.querySelector('.markdown-body')"
+        "   && card.querySelector('.markdown-body')._html.includes('xong nhé'),"
+        "  exchange: !!root.querySelector('.team-exchange')};")
+    assert any("team-message" in cls for cls in value["cards"])
+    assert value["name"] == "Designer"
+    assert value["hollow"] is True
+    assert value["scaled"] is True
+    assert value["quill"] is False
+    assert value["content"] is True
+    assert value["exchange"] is True
+
+
+def test_legacy_aggregation_splits_on_bot_change(node: str) -> None:
+    """Reasoning/tool-only bot rows keep the legacy aggregation, but a
+    change of bot identity splits the card; a solo-context fallback
+    attributes unidentified rows to that bot, never in a multi room."""
+    value = _transcript(node,
+        f"const cb = await import('{CHAT_BOT.as_posix()}');\n"
+        "FakeNode.prototype.replaceChildren = function (...nodes)"
+        " { this.children = [...nodes]; };"
+        "cb.setChatBotRoster([{id:'designer',name:'Designer',"
+        " status:'active'},{id:'thyca',name:'Thyca',status:'active'}]);"
+        " const root = new FakeNode('div');"
+        " transcript.renderConversation(root, ["
+        "  {role:'assistant',reasoning:'think a',content:'one'},"
+        "  {role:'assistant',reasoning:'think b',"
+        "   meta:{bot_id:'designer'}}], {});"
+        " const multi = root.querySelectorAll('.message-assistant')"
+        "  .map((c) => c.querySelector('h2').textContent);"
+        " const solo = new FakeNode('div');"
+        " transcript.renderConversation(solo, ["
+        "  {role:'assistant',content:'hi'}],"
+        "  {bot:{id:'designer',name:'Designer'}});"
+        " const shared = new FakeNode('div');"
+        " transcript.renderConversation(shared, ["
+        "  {role:'assistant',content:'hi'}], {bot:null});"
+        " return [multi, solo.querySelector('h2').textContent,"
+        "  shared.querySelector('h2').textContent];")
+    assert value[0] == ["Thyca", "Designer"]
+    assert value[1] == "Designer"
+    assert value[2] == "Thyca"
+
+
+def test_live_status_names_and_avatars_the_responding_bot(node: str) -> None:
+    """The live card carries the responding bot's name in the header and
+    aria-label and renders that bot's avatar; state updates regenerate
+    the same bot's avatar (busy → thinking, idle → done)."""
+    value = _live(node,
+        f"const cb = await import('{CHAT_BOT.as_posix()}');\n"
+        "cb.setChatBotRoster([{id:'designer',name:'Designer',"
+        " avatar:'hollow',status:'active'}]);"
+        " const root = new FakeNode('div');"
+        " const l = live.createLiveStatus(root, null,"
+        "  {id:'designer',name:'Designer',avatar:'hollow'});"
+        " const av1 = l.brand.querySelector('.chat-brand-avatar');"
+        " const state1 = av1 && av1._html.includes('is-thinking');"
+        " live.updateLiveStatus(l, {type:'turn.completed'});"
+        " const av2 = l.brand.querySelector('.chat-brand-avatar');"
+        " return {aria: l.article.getAttribute('aria-label'),"
+        "  name: l.brand.querySelector('h2').textContent,"
+        "  thinking: state1,"
+        "  done: av2 && av2._html.includes('is-done'),"
+        "  hollow: av2 && av2._html.includes('avatar-variant-hollow'),"
+        "  badge: av2 && av2._html.includes('avatar-badge-done')};")
+    assert value["aria"] == "Designer đang trả lời"
+    assert value["name"] == "Designer"
+    assert value["thinking"] is True
+    assert value["done"] is True
+    assert value["hollow"] is True
+    assert value["badge"] is True
+
+
+def test_team_article_resolves_profile_without_opts(node: str) -> None:
+    """A direct teamArticleFor call (no opts.bot — e.g. an expanded
+    exchange row) still renders the real bot: roster name, avatar variant
+    on the header, avatar markup, and the shared accent var — not a
+    Thyca header wearing a Designer name."""
+    value = _cards(node,
+        "const cb = await import('" + CHAT_BOT.as_posix() + "');"
+        " cb.setChatBotRoster([{id:'designer',name:'Designer',"
+        " tint:'botanical',avatar:'hollow',status:'active'}]);"
+        " const a = cards.teamArticleFor({role:'assistant',content:'x',"
+        "  meta:{bot_id:'designer'}});"
+        " const b = cards.teamArticleFor({role:'assistant',content:'y',"
+        "  meta:{bot_id:'designer',bot_avatar:'fermata'}});"
+        " const headA = a.querySelector('.chat-brand');"
+        " const avA = a.querySelector('.chat-brand-avatar');"
+        " return {"
+        "  name: a.querySelector('h2') && a.querySelector('h2').textContent,"
+        "  headCls: headA && headA.className,"
+        "  accent: headA && headA._style['--chat-brand-accent'],"
+        "  hollow: avA && avA._html.includes('avatar-variant-hollow'),"
+        "  bCls: b.querySelector('.chat-brand').className,"
+        "  bFermata: b.querySelector('.chat-brand-avatar')"
+        "   ._html.includes('avatar-variant-fermata'),"
+        "  teamTint: a._style['--team-tint']};")
+    assert value["name"] == "Designer"
+    assert value["headCls"] == "chat-brand avatar-variant-hollow"
+    assert value["accent"] == (
+        "var(--avatar-tint, var(--team-tint, var(--color-accent)))")
+    assert value["hollow"] is True
+    assert value["bCls"] == "chat-brand avatar-variant-fermata"
+    assert value["bFermata"] is True
+    assert value["teamTint"] == "var(--color-success-ink)"
+
+
+def test_composer_shared_history_keeps_legacy_fallback() -> None:
+    """The optimistic transcript must not attribute old meta-less rows to
+    the newly mentioned bot: only a solo session may pass a bot fallback
+    to renderConversation; the live card still resolves the current text."""
+    src = (ROOT / "thyca" / "webui" / "pages" / "chat" / "composer.js")\
+        .read_text(encoding="utf-8")
+    i = src.find("renderConversation(el.messageList, optimistic")
+    assert i != -1
+    segment = src[i:i + 400]
+    assert "state.detail.bots.length === 1" in segment
+    assert "chatBotForTurn(state.detail, text)" in segment
+    live_i = src.find("createLiveStatus(el.messageList")
+    assert live_i != -1
+    assert "chatBotForTurn(state.detail, text)" in src[live_i:live_i + 200]

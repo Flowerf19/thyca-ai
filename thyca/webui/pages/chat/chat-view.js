@@ -1,4 +1,6 @@
 import { usageLine } from "./chat-status.js";
+import { avatarVariantFor, botAvatarSVG } from "../../shared/js/bot-avatar.js";
+import { chatBotForMessage } from "../../shared/js/chat-bot.js";
 
 // Brand + usage-row kit shared by the settled transcript and the live card.
 // The implementations live in transcript.js (settled) and live-status.js
@@ -6,11 +8,29 @@ import { usageLine } from "./chat-status.js";
 // existing `chat-view.js` imports keep working.
 export { renderConversation, renderEmpty, renderError } from "./transcript.js";
 export { createLiveStatus, resetLiveStatus, updateLiveStatus } from "./live-status.js";
+export { chatBotForMessage, chatBotForTurn } from "../../shared/js/chat-bot.js";
 
-export function chatBrandHeader({ state = "idle", status = "đã viết", expandable = false, name = "Thyca" } = {}) {
+const BRAND_AVATAR_STATE = { busy: "thinking", idle: "done", error: "error" };
+
+function brandAvatarProfile(bot, state) {
+  const profile = bot && typeof bot === "object"
+    ? bot
+    : chatBotForMessage(null);
+  const mapped = BRAND_AVATAR_STATE[String(state || "")];
+  if (!mapped) return profile;
+  return { ...profile, status: "running", agentStatus: { state: mapped } };
+}
+
+export function chatBrandHeader({ state = "idle", status = "đã viết", expandable = false, name = "", bot = null } = {}) {
+  const profile = bot && typeof bot === "object" ? bot : chatBotForMessage(null);
+  const avatarBot = brandAvatarProfile(profile, state);
   const header = document.createElement("header");
-  header.className = "chat-brand";
+  header.className = `chat-brand avatar-variant-${avatarVariantFor(profile)}`;
+  header.style.setProperty(
+    "--chat-brand-accent",
+    "var(--avatar-tint, var(--team-tint, var(--color-accent)))");
   header.dataset.state = state;
+  header._botProfile = profile;
   const stripe = document.createElement("span");
   stripe.className = "chat-brand-stripe";
   stripe.setAttribute("aria-hidden", "true");
@@ -18,12 +38,13 @@ export function chatBrandHeader({ state = "idle", status = "đã viết", expand
   body.className = "chat-brand-body";
   const lockup = document.createElement("div");
   lockup.className = "chat-brand-lockup";
+  const avatar = document.createElement("span");
+  avatar.className = "chat-brand-avatar";
+  avatar.setAttribute("aria-hidden", "true");
+  avatar.innerHTML = botAvatarSVG(avatarBot, { size: 48 });
   const heading = document.createElement("h2");
-  heading.textContent = name;
-  const quill = document.createElement("span");
-  quill.className = "chat-brand-quill";
-  quill.setAttribute("aria-hidden", "true");
-  lockup.append(heading, quill);
+  heading.textContent = name || profile.name || "Thyca";
+  lockup.append(avatar, heading);
   const line = document.createElement(expandable ? "button" : "p");
   line.className = "chat-brand-line";
   if (expandable) line.type = "button";
@@ -56,6 +77,11 @@ export function setChatBrand(target, { state, status } = {}) {
   if (state) {
     header.dataset.state = state;
     if (state === "error") article?.classList.add("is-error");
+    const slot = header.querySelector(".chat-brand-avatar");
+    if (slot) {
+      slot.innerHTML = botAvatarSVG(
+        brandAvatarProfile(header._botProfile, state), { size: 48 });
+    }
   }
   if (status) {
     const label = header.querySelector(".chat-brand-status");

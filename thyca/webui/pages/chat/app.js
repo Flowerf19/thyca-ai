@@ -1,6 +1,7 @@
 import { getJson } from "../../shared/js/http.js";
 import { cleanText } from "../../shared/js/format.js";
 import { messageOf } from "../../shared/js/status.js";
+import { chatBotForTurn } from "../../shared/js/chat-bot.js";
 import { renderConversation, renderEmpty, renderError, setTeamChoiceHandler } from "./transcript.js";
 import { createLiveStatus } from "./live-status.js";
 import {
@@ -143,7 +144,10 @@ function renderDetail(detail) {
   rememberActiveSession(state.activeId);
   setChatTitle(detail?.title);
   const messages = Array.isArray(detail?.messages) ? detail.messages : [];
-  if (!renderConversation(el.messageList, messages)) renderEmpty(el.messageList);
+  const fallbackBot = Array.isArray(detail?.bots) && detail.bots.length === 1
+    ? chatBotForTurn(detail)
+    : null;
+  if (!renderConversation(el.messageList, messages, { bot: fallbackBot })) renderEmpty(el.messageList);
   setRunning(detail?.running === true);
   if (state.running) {
     // A turn streaming in this tab gets its own card back — same object, so
@@ -157,7 +161,8 @@ function renderDetail(detail) {
       el.messageList.append(live.article);
       live.thinking?.resume();
     } else {
-      liveTurns.set(state.activeId, createLiveStatus(el.messageList, detail.started_at));
+      liveTurns.set(state.activeId, createLiveStatus(el.messageList, detail.started_at,
+        chatBotForTurn(detail)));
     }
   } else if (!streamingSessions.has(state.activeId)) {
     liveTurns.delete(state.activeId);

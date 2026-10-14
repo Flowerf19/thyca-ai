@@ -128,13 +128,13 @@ export function mentionCandidates(bots, query) {
    a bot speaking in the room (e.g. a message_user DM post) and stays
    visible. Messages without meta keep the legacy single-thread rendering. */
 const EXCHANGE_KINDS = new Set(["delegate", "step", "status"]);
-const TRACED_EXCHANGE_KINDS = new Set(["message", "help_request"]);
 
 export function isExchangeMessage(message) {
   const meta = message?.meta || {};
   const kind = String(meta.kind || "");
   if (EXCHANGE_KINDS.has(kind)) return true;
-  return TRACED_EXCHANGE_KINDS.has(kind) && !!meta.trace_id;
+  if (kind === "help_request") return !!meta.trace_id;
+  return kind === "message" && !!meta.trace_id && !!meta.parent_span_id;
 }
 
 export function splitExchange(messages) {

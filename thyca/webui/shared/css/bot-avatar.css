@@ -5,135 +5,255 @@
 .bot-svg {
   display: block;
   overflow: visible;
+  cursor: pointer;
   user-select: none;
+  isolation: isolate;
+}
+
+.bot-svg .bot-ink-layer {
+  mix-blend-mode: multiply;
 }
 
 .bot-svg .avatar-main {
-  fill: var(--team-tint, var(--color-accent));
+  fill: var(--avatar-tint, var(--team-tint, var(--color-accent)));
   stroke: none;
 }
 
 .bot-svg .avatar-stem {
   fill: none;
-  stroke: var(--team-tint, var(--color-accent));
-  stroke-width: 3.6;
+  stroke: var(--avatar-tint, var(--team-tint, var(--color-accent)));
+  stroke-width: 3.4;
   stroke-linecap: round;
 }
 
+.bot-svg .avatar-flag {
+  fill: var(--avatar-tint, var(--team-tint, var(--color-accent)));
+  stroke: var(--avatar-tint, var(--team-tint, var(--color-accent)));
+  stroke-width: 1.1;
+  stroke-linejoin: round;
+}
+
+.bot-svg .avatar-flag-double {
+  stroke-width: 1;
+}
+
+.bot-svg .floating-note-stem {
+  fill: none;
+  stroke: var(--avatar-tint, var(--team-tint, var(--color-accent)));
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+
+.bot-svg .avatar-team-stem {
+  fill: none;
+  stroke: var(--avatar-tint, var(--team-tint, var(--color-accent)));
+  stroke-width: 2.6;
+  stroke-linecap: round;
+}
+
+.bot-svg .avatar-team-stem.is-offline {
+  stroke: var(--status-offline);
+  opacity: 0.68;
+}
+
+.bot-svg.bot-team-pair .avatar-team-stem {
+  stroke-width: 3;
+}
+
+.bot-svg .team-floating-note-stem {
+  fill: none;
+  stroke: var(--avatar-tint, var(--team-tint, var(--color-accent)));
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .bot-svg .avatar-fermata {
-  stroke-width: 2.5;
+  stroke-width: 2.4;
 }
 
 .bot-svg .avatar-star {
-  fill: var(--color-accent-deep);
+  fill: var(--note-star);
   stroke: none;
 }
 
 .bot-svg .avatar-hollow {
-  fill: var(--color-paper-card);
+  fill: var(--avatar-hollow);
+  stroke: none;
+}
+
+.bot-svg .avatar-crescent {
+  fill: var(--avatar-crescent);
   stroke: none;
 }
 
 .bot-svg .avatar-eye-fill {
-  fill: var(--color-ink);
+  fill: var(--avatar-eye);
   stroke: none;
 }
 
 .bot-svg .avatar-eye-line {
   fill: none;
-  stroke: var(--color-ink);
+  stroke: var(--avatar-eye);
   stroke-width: 2;
   stroke-linecap: round;
 }
 
-.bot-svg .is-offline .avatar-main,
-.bot-svg .bot-node.is-offline .avatar-main {
-  fill: var(--color-muted-soft);
+.bot-svg .avatar-eye-error {
+  stroke-width: 1.9;
 }
 
-.bot-svg .bot-node.is-offline .avatar-stem {
-  stroke: var(--color-muted-soft);
+.bot-svg .is-offline .avatar-main,
+.bot-svg .bot-node.is-offline .avatar-main {
+  fill: var(--status-offline);
+}
+
+.bot-svg .bot-node.is-offline .avatar-stem,
+.bot-svg .bot-node.is-offline .floating-note-stem {
+  stroke: var(--status-offline);
+}
+
+.bot-svg .is-offline .avatar-flag,
+.bot-svg .bot-node.is-offline .avatar-flag {
+  fill: var(--status-offline);
+  stroke: var(--status-offline);
+}
+
+.bot-svg .is-offline .avatar-eye-line,
+.bot-svg .bot-node.is-offline .avatar-eye-line {
+  stroke: var(--avatar-eye-offline);
 }
 
 .bot-svg .bot-node.is-offline .avatar-star {
-  fill: var(--color-muted-soft);
+  fill: var(--avatar-star-offline);
+}
+
+.bot-svg .bot-node.is-offline .avatar-hollow {
+  fill: var(--avatar-hollow-offline);
+}
+
+.bot-svg.bot-team .bot-node.is-offline {
+  opacity: 0.68;
 }
 
 /* Selected: sticky-note paper behind the note (design v1.1). */
 .bot-svg .avatar-selected-paper {
-  fill: var(--color-accent-soft);
+  fill: var(--note-bg);
   stroke: none;
 }
 
 .bot-svg .avatar-selected-lines line {
-  stroke: var(--color-divider);
+  stroke: var(--note-lines);
   stroke-width: 1;
 }
 
 .bot-svg .avatar-selected-fold {
-  fill: var(--color-paper-edge);
+  fill: var(--note-fold);
   stroke: none;
+}
+
+.bot-svg .avatar-halo {
+  fill: var(--avatar-halo);
+  stroke: none;
+}
+
+.bot-svg .avatar-halo-ring {
+  fill: none;
+  stroke: var(--avatar-halo-ring);
+  stroke-width: 1.25;
+  stroke-dasharray: 4 3.5;
+}
+
+.bot-svg .avatar-halo-star {
+  fill: var(--note-star);
+  stroke: none;
+  opacity: 0.85;
 }
 
 /* Status badges (bottom-right of the 48 grid). */
 .bot-svg .avatar-badge circle {
-  stroke: var(--color-paper-card);
-  stroke-width: 2;
+  stroke: var(--color-bg-surface);
+  stroke-width: 1.8;
 }
 
 .bot-svg .avatar-badge-done circle {
-  fill: var(--color-success-ink);
+  fill: var(--status-done);
 }
 
 .bot-svg .avatar-badge-waiting circle {
-  fill: var(--color-status-waiting);
+  fill: var(--status-waiting);
 }
 
 .bot-svg .avatar-badge-error circle {
-  fill: var(--color-danger);
+  fill: var(--status-error);
 }
 
 .bot-svg .avatar-badge path,
 .bot-svg .avatar-badge line {
   fill: none;
-  stroke: var(--color-paper-card);
+  stroke: var(--color-bg-surface);
   stroke-width: 1.8;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
 
+.bot-svg .avatar-badge-done path {
+  stroke-width: 1.7;
+}
+
 .bot-svg .avatar-badge .avatar-badge-dot {
-  fill: var(--color-paper-card);
+  fill: var(--color-bg-surface);
   stroke: none;
 }
 
 /* Team composite: shared beam + folded +N tag. */
 .bot-svg .avatar-beam {
   fill: none;
-  stroke: var(--team-tint, var(--color-accent));
-  stroke-width: 4;
+  stroke: var(--note-do);
+  stroke-width: 3.6;
   stroke-linecap: round;
 }
 
 .bot-svg .avatar-beam.is-offline {
-  stroke: var(--color-muted-soft);
+  stroke: var(--status-offline);
+  opacity: 0.68;
 }
 
-.bot-svg .avatar-extra rect {
-  fill: var(--color-accent-deep);
-  stroke: var(--color-paper-card);
-  stroke-width: 1.5;
+.bot-svg.bot-team-pair .avatar-beam {
+  stroke-width: 4;
+}
+
+.bot-svg .avatar-extra circle {
+  fill: var(--color-bg-surface);
+  stroke: var(--note-do);
+  stroke-width: 1.35;
+}
+
+.bot-svg .avatar-extra.is-running circle {
+  stroke: var(--note-do);
+}
+
+.bot-svg .avatar-extra.is-offline circle {
+  stroke: var(--status-offline);
 }
 
 .bot-svg .avatar-extra text {
-  fill: var(--color-accent-ink);
-  font-family: var(--font-ui);
+  fill: var(--avatar-stamp-ink);
+  font-family: var(--font-reading);
   font-size: 8.2px;
-  font-weight: 800;
+  font-weight: 700;
+}
+
+.bot-svg .avatar-extra.is-running text {
+  fill: var(--note-do);
+}
+
+.bot-svg .avatar-extra.is-offline text {
+  fill: var(--status-offline);
 }
 
 .bot-svg .avatar-think circle {
-  fill: var(--color-muted);
+  fill: var(--avatar-think);
   stroke: none;
 }
 
@@ -160,19 +280,23 @@
 
 @keyframes botFloatNote {
   0% { transform: translate(0, 2px) scale(0.8); opacity: 0; }
-  30%, 80% { opacity: 1; }
-  100% { transform: translate(3px, -5px) scale(1.05); opacity: 0; }
+  30%, 80% { opacity: 0.9; }
+  100% { transform: translate(2.5px, -5px) scale(1.05); opacity: 0; }
 }
 
 @keyframes botDotPulse {
-  0%, 100% { opacity: 0.25; transform: translateY(0); }
-  50% { opacity: 1; transform: translateY(-1.6px); }
+  0%, 100% { opacity: 0.3; transform: translateY(0); }
+  50% { opacity: 0.95; transform: translateY(-1.5px); }
 }
 
 .bot-svg .bot-node.is-idle .eye-gaze,
 .bot-svg .bot-node.is-waiting .eye-gaze {
   animation: botLookAround 6.5s infinite ease-in-out;
   animation-delay: var(--gaze-delay, 0s);
+}
+
+.bot-svg .eye-gaze {
+  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .bot-svg .bot-node.is-idle .eyes-open,
@@ -190,11 +314,11 @@
 }
 
 .bot-svg .bot-node.is-running .node-bounce-target {
-  animation: botBounce 0.8s infinite ease-in-out;
+  animation: botBounce 0.85s infinite ease-in-out;
 }
 
 .bot-svg .floating-note {
-  animation: botFloatNote 1.5s infinite ease-out;
+  animation: botFloatNote 1.6s infinite ease-out;
 }
 
 .bot-svg .think-dot-1 { animation: botDotPulse 1.2s infinite 0.0s; }

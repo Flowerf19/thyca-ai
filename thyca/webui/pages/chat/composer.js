@@ -2,6 +2,7 @@ import { ApiError, getJson, postJson } from "../../shared/js/http.js";
 import { postNdjson } from "../../shared/js/streams.js";
 import { effortChoicesFor, effortDefaultFor, fillEffortSelect } from "../../shared/js/reasoning-effort.js";
 import { sendErrorMessage } from "./chat-status.js";
+import { chatBotForTurn } from "../../shared/js/chat-bot.js";
 import { renderConversation } from "./transcript.js";
 import { createLiveStatus, updateLiveStatus } from "./live-status.js";
 import { setChatBrand } from "./chat-view.js";
@@ -363,9 +364,13 @@ async function runTurn({ text }) {
         ? state.detail.messages
         : [];
       const optimistic = [...previous, { role: "user", content: text, ts: new Date().toISOString() }];
-      renderConversation(el.messageList, optimistic);
+      renderConversation(el.messageList, optimistic,
+        { bot: Array.isArray(state.detail?.bots) && state.detail.bots.length === 1
+            ? chatBotForTurn(state.detail, text)
+            : null });
     }
-    const live = createLiveStatus(el.messageList);
+    const live = createLiveStatus(el.messageList, undefined,
+      chatBotForTurn(state.detail, text));
     liveTurns.set(sessionId, live);
     scrollToBottom();
     const detail = await postNdjson(

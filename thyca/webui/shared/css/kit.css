@@ -151,7 +151,7 @@
 .thyca-search {
   --ink: #3d2a1f;
   --terra: #a65a42;
-  --fill: #f5e9da;
+  --fill: var(--color-paper-input);
   --border: rgba(61, 42, 31, 0.18);
   --border-strong: rgba(166, 90, 66, 0.35);
   --muted: rgba(61, 42, 31, 0.52);
@@ -174,11 +174,11 @@
 }
 .thyca-search:hover {
   border-color: rgba(61, 42, 31, 0.2);
-  background: rgba(245, 233, 218, 0.72);
+  background: color-mix(in srgb, var(--color-bg-surface) 70%, var(--color-bg-frame));
 }
 .thyca-search:focus-within {
   border-color: var(--border-strong);
-  background: #fffcfa;
+  background: var(--color-bg-surface);
   box-shadow:
     0 1px 0 rgba(255, 255, 255, 0.8) inset,
     0 0 0 3px rgba(166, 90, 66, 0.12),
@@ -547,8 +547,8 @@
   border-radius: var(--radius-chat);
   background-color: var(--color-paper);
   background-image:
-    linear-gradient(color-mix(in oklab, var(--color-paper-chat) 42%, transparent), color-mix(in oklab, var(--color-paper-chat) 42%, transparent)),
-    url("../../images/thyca-bg-menu.png");
+    linear-gradient(color-mix(in oklab, var(--color-paper-chat) 65%, transparent), color-mix(in oklab, var(--color-paper-chat) 65%, transparent)),
+    url("../../images/thyca-bg-paper.png");
   background-position: center;
   background-size: cover;
   color: var(--color-reading);
@@ -701,7 +701,7 @@
   .screen-shell .session-item::after { content: none; }
   .screen-shell .session-item.is-active {
     border-color: var(--color-accent);
-    background: var(--chat-brand-wash);
+    background: var(--color-bg-selected);
   }
   .screen-shell .session-icon { width: 1.1rem; height: 1.1rem; margin: 0; }
   .screen-shell .session-item time { display: none; }
@@ -753,7 +753,7 @@
     z-index: -1;
     inset: 0.2rem 0.15rem;
     border-radius: 50%;
-    background: var(--chat-brand-wash);
+    background: var(--color-bg-selected);
     filter: blur(10px);
     pointer-events: none;
   }
@@ -805,8 +805,8 @@
   border-radius: var(--radius-shell);
   background-color: var(--color-paper);
   background-image:
-    linear-gradient(color-mix(in oklab, var(--color-paper-chat) 42%, transparent), color-mix(in oklab, var(--color-paper-chat) 42%, transparent)),
-    url("../../images/thyca-bg-outer.png");
+    linear-gradient(color-mix(in oklab, var(--color-paper-chat) 65%, transparent), color-mix(in oklab, var(--color-paper-chat) 65%, transparent)),
+    url("../../images/thyca-bg-paper.png");
   background-position: center;
   background-size: cover;
   box-shadow:
@@ -834,7 +834,7 @@
   border-radius: var(--radius-shell);
   background-color: var(--color-paper-chat);
   background-image:
-    linear-gradient(color-mix(in oklab, var(--color-paper-chat) 42%, transparent), color-mix(in oklab, var(--color-paper-chat) 42%, transparent)),
+    linear-gradient(color-mix(in oklab, var(--color-paper-chat) 65%, transparent), color-mix(in oklab, var(--color-paper-chat) 65%, transparent)),
     url("../../images/thyca-bg-paper.png");
   background-position: center;
   background-size: cover;
@@ -1019,7 +1019,7 @@
   z-index: -1;
   inset: 0.2rem 0.15rem;
   border-radius: 50%;
-  background: var(--chat-brand-wash);
+  background: var(--color-bg-selected);
   filter: blur(10px);
   pointer-events: none;
 }

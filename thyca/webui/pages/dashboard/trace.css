@@ -9,7 +9,7 @@
    image or gradient; nothing relies on the paper showing through, and no
    global pre/pseudo overlay paints on top of .trace-code. */
 #trace {
-  --trace-code-bg: oklch(92.5% 0.012 71.9);
+  --trace-code-bg: var(--color-bg-frame);
   --trace-code-ink: oklch(28% 0.05 44);
 }
 

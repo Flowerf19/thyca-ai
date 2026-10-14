@@ -1,5 +1,26 @@
 /* Chat page: conversation, composer and responsive rules (ex-styles.css).
    App shell + session list moved to shared/css/kit.css at merge (cross-page). */
+.chat-shell .avatar-variant-star,
+.bot-drawer .avatar-variant-star { --avatar-tint: var(--note-do); }
+
+.chat-shell .avatar-variant-hollow,
+.bot-drawer .avatar-variant-hollow { --avatar-tint: var(--note-re); }
+
+.chat-shell .avatar-variant-single-flag,
+.bot-drawer .avatar-variant-single-flag { --avatar-tint: var(--note-mi); }
+
+.chat-shell .avatar-variant-double-flag,
+.bot-drawer .avatar-variant-double-flag { --avatar-tint: var(--note-fa); }
+
+.chat-shell .avatar-variant-dotted,
+.bot-drawer .avatar-variant-dotted { --avatar-tint: var(--note-sol); }
+
+.chat-shell .avatar-variant-fermata,
+.bot-drawer .avatar-variant-fermata { --avatar-tint: var(--note-la); }
+
+.chat-shell .avatar-variant-plain,
+.bot-drawer .avatar-variant-plain { --avatar-tint: var(--note-si); }
+
 .chat-canvas {
   position: relative;
   display: flex;
@@ -209,7 +230,7 @@
 
 .chat-brand h2 {
   margin: 0;
-  color: var(--chat-brand-ink);
+  color: var(--chat-brand-accent);
   font-family: var(--font-display);
   font-size: 1.55rem;
   font-style: normal;
@@ -218,14 +239,12 @@
   line-height: 1.15;
 }
 
-.chat-brand-quill {
-  display: inline-block;
+.chat-brand-avatar {
+  display: inline-grid;
+  place-items: center;
   flex: 0 0 auto;
-  width: 22px;
-  height: 22px;
-  background: var(--chat-brand-accent);
-  -webkit-mask: url("../../images/thyca-icons/long-vit.svg") center / contain no-repeat;
-  mask: url("../../images/thyca-icons/long-vit.svg") center / contain no-repeat;
+  width: 3rem;
+  height: 3rem;
 }
 
 .chat-brand-line {
@@ -1079,10 +1098,75 @@ button:active {
 #team-bot-list .session-item {
   border-block-start-color: transparent;
   border-radius: var(--radius-sm);
+  grid-template-columns: 3rem minmax(0, 1fr) auto;
+  column-gap: 0.5rem;
+}
+
+#team-bot-list .session-item .session-name {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#team-bot-list .session-item time {
+  grid-column: 2;
+  grid-row: 2;
+  justify-self: stretch;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#team-bot-list .team-session-item:not(.team-group-item) {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+#team-bot-list .team-session-item:not(.team-group-item) .session-name {
+  grid-column: 1;
+}
+
+#team-bot-list .team-session-item:not(.team-group-item) time {
+  grid-column: 1;
+}
+
+#team-bot-list .team-session-item:not(.team-group-item) .team-unread {
+  grid-column: 2;
+}
+
+.team-new-session {
+  display: block;
+  width: 100%;
+  padding: 0.3rem 0.55rem;
+  border: var(--rule) dashed var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--chat-brand-accent);
+  font-family: var(--font-reading);
+  font-size: 0.8rem;
+  font-style: italic;
+  text-align: start;
+  cursor: pointer;
+}
+
+.team-new-session:hover:not(:disabled) {
+  color: var(--chat-brand-ink);
+}
+
+.team-new-session:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+#team-bot-list .team-group-item {
+  grid-template-columns: 3rem minmax(0, 1fr) auto;
 }
 
 #team-bot-list .session-item.is-active {
-  background: color-mix(in oklab, var(--team-tint, var(--color-accent)) 13%, transparent);
+  background: var(--color-bg-selected);
 }
 
 #team-bot-list .session-item.is-active::before,
@@ -1116,13 +1200,13 @@ button:active {
    in the legacy icon column; the cell itself is transparent now. */
 .team-avatar {
   grid-column: 1;
-  grid-row: 1 / -1;
+  grid-row: 1;
   place-self: center;
   position: relative;
   display: grid;
   place-items: center;
-  width: 2rem;
-  height: 2rem;
+  width: 3rem;
+  height: 3rem;
 }
 
 .team-avatar > svg {
@@ -1131,13 +1215,13 @@ button:active {
 }
 
 .team-avatar.is-mini {
-  width: 1.5rem;
-  height: 1.5rem;
+  width: 2rem;
+  height: 2rem;
 }
 
 .team-avatar.is-group {
-  width: 2.5rem;
-  height: 2.5rem;
+  width: 3rem;
+  height: 3rem;
 }
 
 .team-bot-item.is-paused .session-name,
@@ -1583,7 +1667,7 @@ button:active {
      rail column preserves the previous card width without exposing a
      pale strip of the outer shell inside the rail. */
   .chat-shell.is-rail {
-    grid-template-columns: 6.1rem minmax(0, 1fr);
+    grid-template-columns: 7.6rem minmax(0, 1fr);
   }
 
   .is-rail #team-nav.sessions {
@@ -1627,19 +1711,20 @@ button:active {
   /* Shrink-wrap the button so the selected wash hugs the avatar
      symmetrically (kit forces width:100% on row buttons, which left
      the avatar off-center inside a full-width pill). */
-  .is-rail .team-bot-item,
-  .is-rail .team-group-item {
-    grid-template-columns: 2.5rem;
+  .is-rail #team-bot-list .team-bot-item,
+  .is-rail #team-bot-list .team-group-item {
+    grid-template-columns: 3.5rem;
     justify-items: center;
     width: auto;
     margin-inline: auto;
     min-height: 0;
-    padding: 0.35rem;
+    padding: 0.5rem;
   }
 
   .is-rail .team-avatar {
-    width: 2.5rem;
-    height: 2.5rem;
+    grid-row: 1 / -1;
+    width: 3.5rem;
+    height: 3.5rem;
   }
 
   .is-rail .team-bot-item .session-name,

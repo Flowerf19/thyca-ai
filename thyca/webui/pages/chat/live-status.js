@@ -6,10 +6,11 @@ import {
 import { bindThinkingToggle, createThinkingNote, elapsedLabel } from "./chat-thinking.js";
 import { chatBrandHeader, fillUsageRow, setChatBrand, usageRowSkeleton } from "./chat-view.js";
 
-export function createLiveStatus(root, startedAt) {
+export function createLiveStatus(root, startedAt, bot = null) {
   const article = document.createElement("article");
   article.className = "live-card live-status";
-  article.setAttribute("aria-label", "Thyca đang trả lời");
+  article.setAttribute("aria-label",
+    `${(bot && bot.name) || "Thyca"} đang trả lời`);
   article.setAttribute("aria-live", "polite");
   const live = {
     article,
@@ -37,6 +38,7 @@ export function createLiveStatus(root, startedAt) {
     state: "busy",
     status: `đang suy nghĩ · ${elapsedLabel(0)}`,
     expandable: true,
+    bot,
   });
   bindThinkingToggle(header.querySelector(".chat-brand-line"), { bodies: [notesWrap] });
   article.append(header, notesWrap);

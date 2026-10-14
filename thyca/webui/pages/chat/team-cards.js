@@ -2,6 +2,7 @@ import { formatMarkdown } from "../../shared/js/markdown.js";
 import { formatTime } from "../../shared/js/format.js";
 import { settledThinkingNote } from "./chat-thinking.js";
 import { chatBrandHeader } from "./chat-view.js";
+import { chatBotForMessage } from "../../shared/js/chat-bot.js";
 import {
   TEAM_BOT_ID,
   isExchangeMessage,
@@ -63,7 +64,7 @@ function stamp(message) {
 
 // One assistant message that carries a bot identity → per-bot article.
 // Returns null when the message has no bot meta (legacy path owns it).
-export function teamArticleFor(message, { onChoice } = {}) {
+export function teamArticleFor(message, { onChoice, bot = null } = {}) {
   if (!message || message.role !== "assistant") return null;
   const meta = message.meta || {};
   const botId = typeof meta.bot_id === "string" && meta.bot_id ? meta.bot_id : "";
@@ -93,18 +94,16 @@ export function teamArticleFor(message, { onChoice } = {}) {
     const thought = typeof message.reasoning === "string" && message.reasoning.trim()
       ? settledThinkingNote(message.reasoning)
       : null;
+    const profile = bot || chatBotForMessage(message);
     const head = chatBrandHeader({
       status: teamStatusLabel(meta),
       expandable: Boolean(thought),
-      name: botDisplayName(message),
+      name: String(meta.bot_name || "") || profile.name || botDisplayName(message),
+      bot: profile,
     });
     head.dataset.bot = botId;
-    head.style.setProperty("--chat-brand-accent", tint);
-    if (botId !== TEAM_BOT_ID) {
-      // Thyca keeps the legacy --chat-brand-ink name; other bots read in
-      // their own tint, through the existing tint variable (no new color).
-      head.querySelector("h2")?.style.setProperty("color", tint);
-    }
+    // Thyca keeps the legacy --chat-brand-ink name; other bots read in
+    // their own tint, through the existing tint variable (no new color).
     article.append(head);
     if (thought) article.append(thought.note);
   }

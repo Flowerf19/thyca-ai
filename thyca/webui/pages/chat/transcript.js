@@ -2,6 +2,7 @@ import { bindThinkingToggle, elapsedLabel, settledThinkingNote } from "./chat-th
 import { formatTime } from "../../shared/js/format.js";
 import { formatMarkdown } from "../../shared/js/markdown.js";
 import { chatBrandHeader, usageRow } from "./chat-view.js";
+import { chatBotForMessage } from "../../shared/js/chat-bot.js";
 import { exchangeDetails, teamArticleFor } from "./team-cards.js";
 import { isExchangeMessage } from "./team-data.js";
 
@@ -15,11 +16,11 @@ function sendTeamChoice(text) {
   teamChoiceHandler?.(String(text || ""));
 }
 
-function assistantHeader({ expandable = false, latencyMs } = {}) {
+function assistantHeader({ expandable = false, latencyMs, bot = null } = {}) {
   const status = Number.isFinite(latencyMs) && latencyMs >= 0
     ? `đã viết · ${elapsedLabel(Math.round(latencyMs / 1000))}`
     : "đã viết";
-  return chatBrandHeader({ state: "idle", status, expandable });
+  return chatBrandHeader({ state: "idle", status, expandable, bot });
 }
 
 function userMessage(message) {
@@ -42,7 +43,7 @@ function userMessage(message) {
   return article;
 }
 
-function assistantMessage(segments, ts) {
+function assistantMessage(segments, ts, bot = null) {
   const article = document.createElement("article");
   article.className = "live-card message-assistant";
   const blocks = segments.map((segment) => ({
@@ -58,6 +59,7 @@ function assistantMessage(segments, ts) {
   const header = assistantHeader({
     expandable: thoughts.length > 0,
     latencyMs,
+    bot,
   });
   article.append(header);
   if (thoughts.length) {
@@ -108,11 +110,12 @@ function foldToolOnlyParts(parts) {
   }
 }
 
-export function renderConversation(root, messages) {
+export function renderConversation(root, messages, { bot: fallbackBot = null } = {}) {
   const nodes = [];
   const pendingNames = [];
   const pendingParts = [];
   let pendingTs = "";
+  let pendingBot = null;
   // Consecutive inter-bot bus events collapse behind one disclosure.
   const pendingExchange = [];
 
@@ -122,9 +125,10 @@ export function renderConversation(root, messages) {
       return;
     }
     foldToolOnlyParts(pendingParts);
-    nodes.push(assistantMessage(pendingParts.splice(0), pendingTs));
+    nodes.push(assistantMessage(pendingParts.splice(0), pendingTs, pendingBot));
     pendingNames.length = 0;
     pendingTs = "";
+    pendingBot = null;
   };
 
   const flushExchange = () => {
@@ -148,11 +152,12 @@ export function renderConversation(root, messages) {
       continue;
     }
     flushExchange();
+    const messageBot = chatBotForMessage(message, fallbackBot);
     // A bot-identified message (or decision/handoff/card meta) renders as
     // a team block; anything else keeps the legacy Thyca grouping below.
     // The team header reuses the legacy .chat-brand anatomy, so its status
     // line takes the same thinking toggle when the message thought first.
-    const team = teamArticleFor(message, { onChoice: sendTeamChoice });
+    const team = teamArticleFor(message, { onChoice: sendTeamChoice, bot: messageBot });
     if (team) {
       flushAssistant();
       bindThinkingToggle(team.querySelector(".chat-brand-line"), {
@@ -162,6 +167,11 @@ export function renderConversation(root, messages) {
       nodes.push(team);
       continue;
     }
+    if (pendingBot
+      && String(pendingBot.id || "") !== String(messageBot.id || "")) {
+      flushAssistant();
+    }
+    if (!pendingBot) pendingBot = messageBot;
     for (const call of message.tool_calls || []) {
       if (!call) continue;
       // A skill load arrives tagged by the backend so replay keeps the skill

@@ -1,4 +1,5 @@
 import { ApiError, getJson, postJson } from "../../shared/js/http.js";
+import { chatBotForTurn } from "../../shared/js/chat-bot.js";
 import { getNdjson } from "../../shared/js/streams.js";
 import { createLiveStatus, resetLiveStatus, updateLiveStatus } from "./live-status.js";
 import { refreshSessions } from "./sessions-sidebar.js";
@@ -75,7 +76,8 @@ export async function followTurn(sessionId, startedAt) {
     // notes an earlier attempt added.
     resetLiveStatus(live, startedAt);
   } else {
-    live = createLiveStatus(followHub.el.messageList, startedAt);
+    live = createLiveStatus(followHub.el.messageList, startedAt,
+      chatBotForTurn(followHub.state?.detail));
     liveTurns.set(sessionId, live);
   }
   try {

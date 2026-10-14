@@ -26,6 +26,7 @@ class Element {
     this.dataset = {};
     this.attributes = {};
     this.className = '';
+    this.style = { setProperty: () => {}, getPropertyValue: () => '' };
     this.text = '';
     this.classList = {
       contains: name => this.className.split(' ').includes(name),
@@ -214,6 +215,7 @@ class Element {
     this.dataset = {};
     this.attributes = {};
     this.className = '';
+    this.style = { setProperty: () => {}, getPropertyValue: () => '' };
     this.text = '';
     this.classList = {
       contains: name => this.className.split(' ').includes(name),

@@ -1,4 +1,5 @@
 import { botAvatarSVG, teamAvatarSVG } from "../../shared/js/bot-avatar.js";
+import { setChatBotRoster } from "../../shared/js/chat-bot.js";
 import { getJson, postJson } from "../../shared/js/http.js";
 import { cleanText, formatSessionTime } from "../../shared/js/format.js";
 import { messageOf } from "../../shared/js/status.js";
@@ -64,6 +65,9 @@ let sharedPicked = null;
 // second bot's window.
 let mainToken = 0;
 let mainError = "";
+let newSessionBot = "";
+let newSessionError = "";
+let newSessionErrorBot = "";
 
 const STATUS_LABEL = {
   running: "đang làm",
@@ -179,7 +183,7 @@ function avatarSlot(bot, mini = false, selected = false) {
   slot.className = mini ? "team-avatar is-mini" : "team-avatar";
   slot.style.setProperty("--team-tint", tintVarFor(bot?.id, bot?.tint));
   slot.setAttribute("aria-hidden", "true");
-  slot.innerHTML = botAvatarSVG(bot, { size: mini ? 24 : 32, selected });
+  slot.innerHTML = botAvatarSVG(bot, { size: mini ? 32 : 48, selected });
   return slot;
 }
 
@@ -192,10 +196,10 @@ function sessionIcon(session, selected = false) {
     const first = members[0];
     team.style.setProperty("--team-tint", tintVarFor(first?.id, first?.tint));
     team.setAttribute("aria-hidden", "true");
-    team.innerHTML = teamAvatarSVG(members, { size: 40, selected });
+    team.innerHTML = teamAvatarSVG(members, { size: 48, selected });
     return team;
   }
-  if (members.length === 1) return avatarSlot(members[0], true);
+  if (members.length === 1) return avatarSlot(members[0], true, selected);
   const icon = document.createElement("span");
   icon.className = "session-icon";
   icon.setAttribute("aria-hidden", "true");
@@ -276,7 +280,8 @@ function unifiedRow(session, botId = "", group = false) {
     sessionMetaLine(formatSessionTime(session.updated_at), session.turns),
     names.length > 1 ? names.join(" \u00b7 ") : "",
   ].filter(Boolean).join(" \u00b7 ");
-  button.append(sessionIcon(session, selected), name, time);
+  if (group) button.append(sessionIcon(session, selected));
+  button.append(name, time);
   const seen = sessionUnread(session);
   const unread = unreadBadge(seen);
   if (unread) button.append(unread);
@@ -285,6 +290,7 @@ function unifiedRow(session, botId = "", group = false) {
       `${cleanText(session.title, "Phiên trống")}, có tin chưa đọc`);
   }
   button.addEventListener("click", () => {
+    mainToken += 1;
     exitPicking();
     const sid = button.dataset.sessionId;
     const opened = (hub?.state?.sessions || [])
@@ -373,6 +379,37 @@ async function createShared(botIds) {
     await hub.afterTeamSession(detail);
   } catch (error) {
     sharedError = messageOf(error, "Chưa tạo được nhóm chat — backend đội bot chưa sẵn sàng.");
+    render();
+  }
+}
+
+async function createBotSession(botId) {
+  if (!hub || newSessionBot) return;
+  activeBot = botId;
+  const token = ++mainToken;
+  const owned = () => token === mainToken && activeBot === botId;
+  newSessionBot = botId;
+  newSessionError = "";
+  newSessionErrorBot = "";
+  render();
+  try {
+    const detail = await postJson("/api/sessions", { bots: [botId] });
+    if (!owned()) return;
+    if (!isMainSessionDetail(detail, botId)
+        || !String(detail.id || "") || detail.dm) {
+      newSessionError = "Backend chưa trả về phiên mới đúng cho bot này — chưa mở phiên.";
+      newSessionErrorBot = botId;
+      return;
+    }
+    exitPicking();
+    await hub.afterTeamSession(detail, owned);
+    if (!owned()) return;
+  } catch (error) {
+    if (!owned()) return;
+    newSessionError = messageOf(error, "Chưa tạo được phiên mới — backend đội bot chưa sẵn sàng.");
+    newSessionErrorBot = botId;
+  } finally {
+    if (newSessionBot === botId) newSessionBot = "";
     render();
   }
 }
@@ -502,6 +539,21 @@ function render() {
     const sub = document.createElement("div");
     sub.className = "team-cluster-sessions";
     cluster.append(sub);
+    const create = document.createElement("button");
+    create.type = "button";
+    create.className = "team-new-session";
+    create.setAttribute("aria-label", `Tạo phiên mới với ${me.name}`);
+    create.textContent = newSessionBot === me.id ? "Đang tạo…" : "+ Phiên mới";
+    create.disabled = !!newSessionBot;
+    create.addEventListener("click", () => void createBotSession(me.id));
+    sub.append(create);
+    if (newSessionError && newSessionErrorBot === me.id) {
+      const error = document.createElement("p");
+      error.className = "screen-status is-error";
+      error.setAttribute("role", "alert");
+      error.textContent = newSessionError;
+      sub.append(error);
+    }
     const rememberedId = getRememberedDm(me.id);
     if (rememberedId
       && !(hub.state.sessions || []).some((item) => String(item?.id) === rememberedId)) {
@@ -608,6 +660,7 @@ export async function initTeamSidebar(entryHub) {
     payload = null;
   }
   bots = normalizeBots(payload);
+  setChatBotRoster(bots);
   if (bots.length) applyRail();
   if (!bots.length) {
     // Backend has no team registry yet: legacy list stays, one muted note.

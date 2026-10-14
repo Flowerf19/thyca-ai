@@ -14,10 +14,12 @@ from pathlib import Path
 
 from thyca.bots.card import (
     CARD_FILENAME,
+    CHILD_AVATAR_VARIANTS,
     LEGACY_CARD_FILENAME,
     TEAM_TINTS,
     BotCard,
     BotCardDoc,
+    effective_avatar,
     parse_bot_card,
     read_bot_file,
     render_bot_card,
@@ -134,6 +136,20 @@ class BotRegistry:
                 counts[doc.card.tint] += 1
         return min(TEAM_TINTS, key=lambda tint: counts[tint])
 
+    def suggest_avatar(self) -> str:
+        """Least-used child avatar variant among existing cards.
+
+        Mirrors :meth:`suggest_tint`: creation without an explicit
+        avatar persists the suggestion, so twins stay distinguishable
+        instead of every new bot rendering the same note shape."""
+        counts = {variant: 0 for variant in CHILD_AVATAR_VARIANTS}
+        for doc in self.list():
+            if doc.card is not None and not doc.card.system:
+                variant = effective_avatar(doc.card)
+                if variant in counts:
+                    counts[variant] += 1
+        return min(CHILD_AVATAR_VARIANTS, key=lambda variant: counts[variant])
+
     def create(self, card: BotCard) -> BotCard:
         """Write a new bot directory from a validated card."""
         doc = parse_bot_card(render_bot_card(card), card.bot_id)
@@ -243,6 +259,7 @@ class BotRegistry:
                     "role": card.role,
                     "description": card.description,
                     "tint": card.tint,
+                    "avatar": effective_avatar(card),
                     "status": "paused" if card.paused else "active",
                     "system": card.system,
                     # Read-only drawer specs (FE normalizeBots already

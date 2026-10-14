@@ -97,3 +97,19 @@ tool/skill/llm theo lượt và session `running` theo phòng, không có
   (Stage đã có sẵn); tracker keyed theo span nên bot chạy lồng A2A
   hoặc song song nhiều phòng vẫn phân biệt được. Status chỉ chứa
   metadata vận hành — không prompt/content/tool args/results.
+
+## Bổ sung 2026-10-14 — Avatar design v1.1 đã port (SVG)
+
+- Agent Card thêm field tùy chọn `avatar` (star|hollow|single-flag|
+  double-flag|dotted|fermata|plain); star chỉ dành cho Thyca. Bot tạo
+  mới không khai avatar → persist variant ít dùng nhất
+  (`suggest_avatar`, cặp đôi với `suggest_tint`); card cũ không có
+  field → `effective_avatar` ổn định theo bot id (CRC32), không cần
+  migrate file.
+- Renderer `shared/js/bot-avatar.js` port geometry từ design file
+  (7 variant, 7 state, selected giấy note, team 3 nốt + `+N`, badge
+  error>waiting>done) nhưng màu luôn qua `--team-tint`/token chung —
+  không copy hex của design. Trạng thái lấy từ `agent_status`.
+- Đã gắn: sidebar bot + rail, hàng nhóm chat (team avatar), mention,
+  drawer hồ sơ (48px), Cài đặt › Bot. Chưa gắn: transcript header,
+  Trace, Dashboard chi phí.

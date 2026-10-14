@@ -3,6 +3,7 @@ name: thyca
 role: Quản lý đội bot
 description: Bot quản lý của đội — điều phối công việc, tạo bot mới, duyệt trí nhớ chung.
 tint: accent
+avatar: star
 version: 1
 model:
   id: default

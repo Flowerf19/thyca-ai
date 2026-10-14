@@ -144,6 +144,9 @@ svg {
   --color-chart-input: oklch(78% 0.077 65);
   --color-chart-cache: oklch(87% 0.054 72);
   --color-success-ink: oklch(43% 0.085 155);
+  /* Bot avatar status badge (waiting): the one hue the paper palette
+     has no equivalent for in the avatar design. */
+  --color-status-waiting: oklch(51% 0.11 250);
   --font-mono: ui-monospace, "SFMono-Regular", Menlo, monospace;
 }
 

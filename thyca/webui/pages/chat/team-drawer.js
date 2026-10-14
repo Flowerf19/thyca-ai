@@ -1,3 +1,4 @@
+import { botAvatarSVG } from "../../shared/js/bot-avatar.js";
 import { tintVarFor } from "./team-data.js";
 
 // Bot profile drawer (r9 §4.6): read-only. Anything the user wants changed
@@ -25,6 +26,7 @@ function specRows(bot) {
   };
   push("ID", bot.id);
   push("Vai trò", bot.role);
+  push("Avatar", bot.avatar);
   push("Model", bot.model);
   push("Quyền chạy lệnh", bot.bash);
   push("Kỹ năng", bot.skills);
@@ -42,16 +44,26 @@ export function renderBotDrawer(bot) {
   const head = document.createElement("header");
   head.className = "bot-drawer-head";
   head.style.setProperty("--team-tint", tintVarFor(data?.id, data?.tint));
+  if (data) {
+    const avatar = document.createElement("span");
+    avatar.className = "bot-drawer-avatar";
+    avatar.setAttribute("aria-hidden", "true");
+    avatar.innerHTML = botAvatarSVG(data, { size: 48 });
+    head.append(avatar);
+  }
+  const heading = document.createElement("div");
+  heading.className = "bot-drawer-heading";
   const name = document.createElement("h2");
   name.id = "bot-drawer-name";
   name.textContent = data?.name || data?.id || "Chưa có hồ sơ bot";
-  head.append(name);
+  heading.append(name);
   if (data?.role) {
     const role = document.createElement("p");
     role.className = "bot-drawer-role";
     role.textContent = data.role;
-    head.append(role);
+    heading.append(role);
   }
+  head.append(heading);
   head.append(closeButton(dialog));
   body.append(head);
 

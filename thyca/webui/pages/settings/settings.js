@@ -89,6 +89,21 @@
   const status = document.getElementById("bot-list-status");
   if (!list || !status) return; // not on settings.html
 
+  // Note avatars (shared SVG renderer, loaded as a module; this file
+  // stays a classic script). Rows render immediately and the avatar
+  // fills in when the module lands.
+  let renderAvatar = null;
+  const avatarNodes = new Map();
+  const fillAvatar = (bot, node) => {
+    if (renderAvatar && node) node.innerHTML = renderAvatar(bot, { size: 32 });
+  };
+  import("./shared/js/bot-avatar.js")
+    .then((mod) => {
+      renderAvatar = mod.botAvatarSVG;
+      for (const { bot, node } of avatarNodes.values()) fillAvatar(bot, node);
+    })
+    .catch(() => {});
+
   const note = (text) => {
     status.textContent = text;
   };
@@ -121,11 +136,13 @@
         info.append(name, sub);
         const identity = document.createElement("div");
         identity.className = "settings-field";
-        const dot = document.createElement("span");
-        dot.className = "team-bot-dot";
-        dot.style.setProperty("--team-tint", `var(--color-${tintFor(bot.id, bot.tint)})`);
-        dot.setAttribute("aria-hidden", "true");
-        identity.append(dot, info);
+        const avatar = document.createElement("span");
+        avatar.className = "settings-bot-avatar";
+        avatar.style.setProperty("--team-tint", `var(--color-${tintFor(bot.id, bot.tint)})`);
+        avatar.setAttribute("aria-hidden", "true");
+        avatarNodes.set(bot.id, { bot, node: avatar });
+        fillAvatar(bot, avatar);
+        identity.append(avatar, info);
         const link = document.createElement("a");
         link.className = "screen-button";
         link.href = "./index.html";

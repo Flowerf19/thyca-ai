@@ -1112,6 +1112,8 @@ button:active {
   border-inline-start: var(--rule) solid var(--color-divider);
 }
 
+/* Avatar cell: the SVG note avatar (shared/css/bot-avatar.css) sits
+   in the legacy icon column; the cell itself is transparent now. */
 .team-avatar {
   grid-column: 1;
   grid-row: 1 / -1;
@@ -1119,67 +1121,23 @@ button:active {
   position: relative;
   display: grid;
   place-items: center;
-  width: 1.75rem;
-  height: 1.75rem;
-  border-radius: var(--radius-pill);
-  background: var(--team-tint, var(--color-accent));
-  color: var(--color-accent-ink);
+  width: 2rem;
+  height: 2rem;
 }
 
-.team-avatar-letter {
-  font-family: var(--font-display);
-  font-size: 0.82rem;
-  font-weight: 600;
-  line-height: 1;
+.team-avatar > svg {
+  width: 100%;
+  height: 100%;
 }
 
 .team-avatar.is-mini {
-  width: 1.15rem;
-  height: 1.15rem;
+  width: 1.5rem;
+  height: 1.5rem;
 }
 
-.team-avatar.is-mini .team-avatar-letter {
-  font-size: 0.55rem;
-}
-
-.team-avatar-star {
-  position: absolute;
-  top: -0.36rem;
-  inset-inline-end: -0.36rem;
-  padding: 0.07rem;
-  border-radius: var(--radius-pill);
-  background: var(--color-paper);
-  color: var(--color-accent-deep);
-  font-size: 0.72rem;
-  line-height: 1;
-}
-
-.team-avatar-stack {
-  grid-column: 1;
-  grid-row: 1 / -1;
-  place-self: center;
-  position: relative;
-  width: 1.85rem;
-  height: 1.85rem;
-}
-
-.team-avatar-stack .team-avatar {
-  position: absolute;
-}
-
-.team-avatar-stack .team-avatar:first-child {
-  top: 0;
-  inset-inline-start: 0;
-}
-
-.team-avatar-stack .team-avatar:last-child {
-  bottom: 0;
-  inset-inline-end: 0;
-}
-
-.team-bot-item.is-paused .team-avatar {
-  filter: grayscale(1);
-  opacity: 0.55;
+.team-avatar.is-group {
+  width: 2.5rem;
+  height: 2.5rem;
 }
 
 .team-bot-item.is-paused .session-name,
@@ -1426,6 +1384,19 @@ button:active {
   text-align: start;
 }
 
+.mention-avatar {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  flex: none;
+}
+
+.mention-avatar > svg {
+  width: 100%;
+  height: 100%;
+}
+
 .mention-main {
   display: flex;
   flex-direction: column;
@@ -1491,8 +1462,24 @@ button:active {
 }
 
 .bot-drawer-head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
   padding-inline-start: 0.7rem;
   border-inline-start: 0.2rem solid var(--team-tint, var(--color-accent));
+}
+
+.bot-drawer-avatar {
+  display: grid;
+  place-items: center;
+  width: 3rem;
+  height: 3rem;
+  flex: none;
+}
+
+.bot-drawer-avatar > svg {
+  width: 100%;
+  height: 100%;
 }
 
 .bot-drawer-head h2 {
@@ -1637,12 +1624,17 @@ button:active {
      the avatar off-center inside a full-width pill). */
   .is-rail .team-bot-item,
   .is-rail .team-group-item {
-    grid-template-columns: 1.85rem;
+    grid-template-columns: 2.5rem;
     justify-items: center;
     width: auto;
     margin-inline: auto;
     min-height: 0;
     padding: 0.35rem;
+  }
+
+  .is-rail .team-avatar {
+    width: 2.5rem;
+    height: 2.5rem;
   }
 
   .is-rail .team-bot-item .session-name,

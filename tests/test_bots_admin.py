@@ -265,3 +265,38 @@ def test_suggest_tint_picks_least_used_and_create_uses_it(tmp_path: Path) -> Non
     assert second != first, "consecutive creations spread across the palette"
     explicit = asyncio.run(make("twin-c", tint="ink"))
     assert explicit == "ink", "an explicit tint always wins over the suggestion"
+
+
+def test_bot_create_avatar_suggestion_and_explicit(tmp_path: Path) -> None:
+    import json
+
+    from thyca.bots.admin_tools import AdminDeps, register_admin_tools
+    from thyca.bots.bus import Bus
+    from thyca.bots.card import CHILD_AVATAR_VARIANTS
+    from thyca.bots.registry import BotRegistry
+    from thyca.bots.runtime import BotRuntime
+
+    registry = BotRegistry(tmp_path)
+    registry.ensure_thyca()
+    tool_registry = ToolRegistry()
+    register_admin_tools(tool_registry,
+                         AdminDeps(registry, BotRuntime(tmp_path, registry, Bus()),
+                                   lambda: None))
+    create = tool_registry.get("bot_create")
+
+    async def make(bot_id: str, **extra) -> str:
+        out = await create.handler(
+            {"bot_id": bot_id, "role": "R", "description": "D.", **extra})
+        assert json.loads(out)["ok"], out
+        return registry.require(bot_id).avatar
+
+    first = asyncio.run(make("twin-a"))
+    second = asyncio.run(make("twin-b"))
+    assert first in CHILD_AVATAR_VARIANTS and second in CHILD_AVATAR_VARIANTS
+    assert first != second, "consecutive creations spread across note shapes"
+    assert asyncio.run(make("twin-c", avatar="dotted")) == "dotted"
+    # The star belongs to Thyca alone.
+    out = asyncio.run(create.handler(
+        {"bot_id": "twin-d", "role": "R", "description": "D.", "avatar": "star"}))
+    assert "reserved for Thyca" in out
+    assert not registry.exists("twin-d")

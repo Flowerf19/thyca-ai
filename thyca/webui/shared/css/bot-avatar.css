@@ -1,0 +1,214 @@
+/* Bot avatar system (design v1.1 port): SVG note avatars whose colour
+   is the bot's own --team-tint. Geometry/animation only — every colour
+   below is a shared token, never a design-file hex. */
+
+.bot-svg {
+  display: block;
+  overflow: visible;
+  user-select: none;
+}
+
+.bot-svg .avatar-main {
+  fill: var(--team-tint, var(--color-accent));
+  stroke: none;
+}
+
+.bot-svg .avatar-stem {
+  fill: none;
+  stroke: var(--team-tint, var(--color-accent));
+  stroke-width: 3.6;
+  stroke-linecap: round;
+}
+
+.bot-svg .avatar-fermata {
+  stroke-width: 2.5;
+}
+
+.bot-svg .avatar-star {
+  fill: var(--color-accent-deep);
+  stroke: none;
+}
+
+.bot-svg .avatar-hollow {
+  fill: var(--color-paper-card);
+  stroke: none;
+}
+
+.bot-svg .avatar-eye-fill {
+  fill: var(--color-ink);
+  stroke: none;
+}
+
+.bot-svg .avatar-eye-line {
+  fill: none;
+  stroke: var(--color-ink);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.bot-svg .is-offline .avatar-main,
+.bot-svg .bot-node.is-offline .avatar-main {
+  fill: var(--color-muted-soft);
+}
+
+.bot-svg .bot-node.is-offline .avatar-stem {
+  stroke: var(--color-muted-soft);
+}
+
+.bot-svg .bot-node.is-offline .avatar-star {
+  fill: var(--color-muted-soft);
+}
+
+/* Selected: sticky-note paper behind the note (design v1.1). */
+.bot-svg .avatar-selected-paper {
+  fill: var(--color-accent-soft);
+  stroke: none;
+}
+
+.bot-svg .avatar-selected-lines line {
+  stroke: var(--color-divider);
+  stroke-width: 1;
+}
+
+.bot-svg .avatar-selected-fold {
+  fill: var(--color-paper-edge);
+  stroke: none;
+}
+
+/* Status badges (bottom-right of the 48 grid). */
+.bot-svg .avatar-badge circle {
+  stroke: var(--color-paper-card);
+  stroke-width: 2;
+}
+
+.bot-svg .avatar-badge-done circle {
+  fill: var(--color-success-ink);
+}
+
+.bot-svg .avatar-badge-waiting circle {
+  fill: var(--color-status-waiting);
+}
+
+.bot-svg .avatar-badge-error circle {
+  fill: var(--color-danger);
+}
+
+.bot-svg .avatar-badge path,
+.bot-svg .avatar-badge line {
+  fill: none;
+  stroke: var(--color-paper-card);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.bot-svg .avatar-badge .avatar-badge-dot {
+  fill: var(--color-paper-card);
+  stroke: none;
+}
+
+/* Team composite: shared beam + folded +N tag. */
+.bot-svg .avatar-beam {
+  fill: none;
+  stroke: var(--team-tint, var(--color-accent));
+  stroke-width: 4;
+  stroke-linecap: round;
+}
+
+.bot-svg .avatar-beam.is-offline {
+  stroke: var(--color-muted-soft);
+}
+
+.bot-svg .avatar-extra rect {
+  fill: var(--color-accent-deep);
+  stroke: var(--color-paper-card);
+  stroke-width: 1.5;
+}
+
+.bot-svg .avatar-extra text {
+  fill: var(--color-accent-ink);
+  font-family: var(--font-ui);
+  font-size: 8.2px;
+  font-weight: 800;
+}
+
+.bot-svg .avatar-think circle {
+  fill: var(--color-muted);
+  stroke: none;
+}
+
+/* --- Motion (design v1.1 keyframes, amplitudes unchanged) --- */
+
+@keyframes botLookAround {
+  0%, 12% { transform: translate(0px, 0px); }
+  18%, 34% { transform: translate(-2.2px, -0.4px); }
+  40%, 48% { transform: translate(0px, 0px); }
+  54%, 70% { transform: translate(2.2px, -1.0px); }
+  76%, 88% { transform: translate(-1.1px, 0.9px); }
+  94%, 100% { transform: translate(0px, 0px); }
+}
+
+@keyframes botBlink {
+  0%, 92%, 100% { transform: scaleY(1); }
+  96% { transform: scaleY(0.08); }
+}
+
+@keyframes botBounce {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-1.8px); }
+}
+
+@keyframes botFloatNote {
+  0% { transform: translate(0, 2px) scale(0.8); opacity: 0; }
+  30%, 80% { opacity: 1; }
+  100% { transform: translate(3px, -5px) scale(1.05); opacity: 0; }
+}
+
+@keyframes botDotPulse {
+  0%, 100% { opacity: 0.25; transform: translateY(0); }
+  50% { opacity: 1; transform: translateY(-1.6px); }
+}
+
+.bot-svg .bot-node.is-idle .eye-gaze,
+.bot-svg .bot-node.is-waiting .eye-gaze {
+  animation: botLookAround 6.5s infinite ease-in-out;
+  animation-delay: var(--gaze-delay, 0s);
+}
+
+.bot-svg .bot-node.is-idle .eyes-open,
+.bot-svg .bot-node.is-waiting .eyes-open {
+  transform-origin: center -2.2px;
+  animation: botBlink 4.2s infinite ease-in-out;
+  animation-delay: var(--gaze-delay, 0s);
+}
+
+/* Hover: the bot stops wandering and looks straight at the user. */
+.bot-svg:hover .eye-gaze,
+.bot-hover-trigger:hover .bot-svg .eye-gaze {
+  animation: none !important;
+  transform: translate(0px, 0px) scale(1.08) !important;
+}
+
+.bot-svg .bot-node.is-running .node-bounce-target {
+  animation: botBounce 0.8s infinite ease-in-out;
+}
+
+.bot-svg .floating-note {
+  animation: botFloatNote 1.5s infinite ease-out;
+}
+
+.bot-svg .think-dot-1 { animation: botDotPulse 1.2s infinite 0.0s; }
+.bot-svg .think-dot-2 { animation: botDotPulse 1.2s infinite 0.2s; }
+.bot-svg .think-dot-3 { animation: botDotPulse 1.2s infinite 0.4s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .bot-svg .eye-gaze,
+  .bot-svg .eyes-open,
+  .bot-svg .node-bounce-target,
+  .bot-svg .floating-note,
+  .bot-svg .think-dot-1,
+  .bot-svg .think-dot-2,
+  .bot-svg .think-dot-3 {
+    animation: none !important;
+  }
+}

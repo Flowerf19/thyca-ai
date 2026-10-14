@@ -69,6 +69,11 @@ export function normalizeBots(payload) {
       role: typeof bot.role === "string" ? bot.role : "",
       description: typeof bot.description === "string" ? bot.description : "",
       tint: tintForBot(bot.id, bot.tint),
+      avatar: typeof bot.avatar === "string" ? bot.avatar : "",
+      system: bot.system === true,
+      agentStatus: bot.agent_status && typeof bot.agent_status === "object"
+        ? bot.agent_status
+        : (bot.agentStatus && typeof bot.agentStatus === "object" ? bot.agentStatus : null),
       status: typeof bot.status === "string" && bot.status ? bot.status : "unknown",
       abilities: stringList(bot.abilities),
       limits: stringList(bot.limits),

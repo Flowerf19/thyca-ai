@@ -1,3 +1,4 @@
+import { botAvatarSVG } from "../../shared/js/bot-avatar.js";
 import { mentionCandidates } from "./team-data.js";
 
 // @ mention popup (design r9 §4.4): ↑/↓ to move, Enter to insert, Esc to
@@ -71,6 +72,12 @@ function render() {
       label.textContent = bot.name;
       row.append(plus, label);
     } else {
+      const avatar = document.createElement("span");
+      avatar.className = "mention-avatar";
+      avatar.setAttribute("aria-hidden", "true");
+      avatar.style.setProperty("--team-tint", `var(--color-${bot.tint || "accent"})`);
+      avatar.innerHTML = botAvatarSVG(bot, { size: 32 });
+      row.append(avatar);
       const main = document.createElement("span");
       main.className = "mention-main";
       const name = document.createElement("strong");

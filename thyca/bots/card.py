@@ -10,6 +10,7 @@ fallback); new writes always use ``TWIN.md``.
 from __future__ import annotations
 
 import re
+import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -36,6 +37,30 @@ _TINT_RE = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$")
 #: distinct tint at creation time; any other token-shaped value in a
 #: card stays valid and wins.
 TEAM_TINTS: tuple[str, ...] = ("accent", "botanical", "success-ink", "ink", "accent-deep")
+
+#: Avatar note variants (design "Bot Avatar System" v1.1). The shape is
+#: a card property; the colour stays the card's ``tint``. ``star`` is
+#: reserved for the Thyca manager; child bots use the other six.
+AVATAR_VARIANTS: tuple[str, ...] = (
+    "star", "hollow", "single-flag", "double-flag", "dotted", "fermata", "plain",
+)
+CHILD_AVATAR_VARIANTS: tuple[str, ...] = AVATAR_VARIANTS[1:]
+
+#: Exact legacy ids from the design registry (plus their thyca- forms).
+_AVATAR_BY_ID: dict[str, str] = {
+    "designer": "hollow",
+    "thyca-designer": "hollow",
+    "coder": "single-flag",
+    "thyca-coder": "single-flag",
+    "researcher": "double-flag",
+    "thyca-researcher": "double-flag",
+    "bot-a": "dotted",
+    "thyca-bot-a": "dotted",
+    "bot-b": "fermata",
+    "thyca-bot-b": "fermata",
+    "generic": "plain",
+    "thyca-generic": "plain",
+}
 
 #: Tools every newly created bot receives so it can immediately talk to
 #: peers and use its own memory (peer send + remember/search/get/propose).
@@ -86,6 +111,7 @@ class BotCard:
     role: str
     description: str
     tint: str = "accent"
+    avatar: str | None = None
     version: int = VERSION
     model: BotModel | None = None
     skills: tuple[str, ...] = ()
@@ -150,6 +176,10 @@ def parse_bot_card(text: str, bot_id: str) -> BotCardDoc:
         return BotCardDoc(None, ok=False, error="invalid tint (theme token, no hex)")
     tint = tint.strip()
 
+    avatar = data.get("avatar")
+    if avatar is not None and avatar not in AVATAR_VARIANTS:
+        return BotCardDoc(None, ok=False, error=f"invalid avatar (want one of {', '.join(AVATAR_VARIANTS)})")
+
     version = data.get("version", VERSION)
     if version != VERSION:
         return BotCardDoc(None, ok=False, error=f"unsupported version (want {VERSION})")
@@ -195,6 +225,7 @@ def parse_bot_card(text: str, bot_id: str) -> BotCardDoc:
             role=role.strip(),
             description=description,
             tint=tint,
+            avatar=avatar,
             version=VERSION,
             model=model,
             skills=skills,
@@ -220,6 +251,8 @@ def render_bot_card(card: BotCard) -> str:
         "tint": card.tint,
         "version": card.version,
     }
+    if card.avatar is not None:
+        payload["avatar"] = card.avatar
     if card.model is not None:
         model: dict[str, object] = {"id": card.model.id}
         if card.model.thinking:
@@ -244,6 +277,25 @@ def render_bot_card(card: BotCard) -> str:
         payload["paused"] = True
     front = yaml.safe_dump(payload, allow_unicode=True, sort_keys=False)
     return f"---\n{front}---\n{card.persona.strip()}\n"
+
+
+def effective_avatar(card: BotCard) -> str:
+    """The avatar variant a card renders with.
+
+    An explicit ``avatar`` field wins; the manager is always the star;
+    design-registry ids keep their shapes; every other legacy card
+    gets a stable per-id variant so existing teams gain distinct
+    avatars without rewriting any ``TWIN.md``."""
+    if card.system or card.bot_id == "thyca":
+        return "star"
+    if card.avatar in AVATAR_VARIANTS:
+        return str(card.avatar)
+    known = _AVATAR_BY_ID.get(card.bot_id)
+    if known is not None:
+        return known
+    return CHILD_AVATAR_VARIANTS[
+        zlib.crc32(card.bot_id.encode("utf-8")) % len(CHILD_AVATAR_VARIANTS)
+    ]
 
 
 def identity_text(card: BotCard) -> str:

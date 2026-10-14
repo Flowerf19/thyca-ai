@@ -58,6 +58,19 @@
   margin: 0;
 }
 
+.settings-bot-avatar {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  flex: none;
+}
+
+.settings-bot-avatar > svg {
+  width: 100%;
+  height: 100%;
+}
+
 .team-bot-dot {
   flex: none;
   width: 0.65rem;

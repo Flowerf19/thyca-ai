@@ -15,7 +15,13 @@ from dataclasses import replace
 from typing import Any
 
 from thyca.bots.bus import new_span_id, new_trace_id
-from thyca.bots.card import BotCard, BotMemoryPolicy, BotModel, with_baseline_tools
+from thyca.bots.card import (
+    AVATAR_VARIANTS,
+    BotCard,
+    BotMemoryPolicy,
+    BotModel,
+    with_baseline_tools,
+)
 from thyca.bots.context import current_bot_turn_context
 from thyca.memory.identity import current_bot_id
 from thyca.tools.registry import ToolRegistry, ToolSpec
@@ -560,6 +566,14 @@ def _create_spec(deps: AdminDeps) -> ToolSpec:
         schedule = args.get("schedule")
         if schedule is not None and not isinstance(schedule, str):
             return "bot_create failed: schedule must be a string"
+        avatar = args.get("avatar")
+        if avatar == "star":
+            return "bot_create failed: avatar 'star' is reserved for Thyca"
+        if avatar is not None and avatar not in AVATAR_VARIANTS:
+            return (
+                "bot_create failed: invalid avatar (want one of "
+                + ", ".join(AVATAR_VARIANTS) + ")"
+            )
         try:
             card = BotCard(
                 bot_id=args["bot_id"],
@@ -569,6 +583,9 @@ def _create_spec(deps: AdminDeps) -> ToolSpec:
                 # No explicit tint → least-used team tint, so twins are
                 # distinguishable by color instead of all rendering accent.
                 tint=args.get("tint") or deps.bots.suggest_tint(),
+                # No explicit avatar → least-used note shape, persisted
+                # on the card like the suggested tint.
+                avatar=avatar or deps.bots.suggest_avatar(),
                 model=BotModel(
                     id=args.get("model", "default"),
                     thinking=args.get("thinking") if isinstance(args.get("thinking"), str) else None,
@@ -604,7 +621,8 @@ def _create_spec(deps: AdminDeps) -> ToolSpec:
         description=(
             "Create a new team bot (Thyca only). Needs bot_id (a-z, 0-9, hyphens), "
             "role, description; optional model ('default' keeps Settings), "
-            "thinking, tint (theme token), bash (ask|allow|deny), skills, tools, "
+            "thinking, tint (theme token), avatar (star|hollow|single-flag|"
+            "double-flag|dotted|fermata|plain), bash (ask|allow|deny), skills, tools, "
             "hidden_tools, memory {read,write,propose_team}, schedule, persona. "
             "Every created bot also receives the baseline tools (bot_send, "
             "message_user, ask_user, report_error, memory_remember, "
@@ -621,6 +639,7 @@ def _create_spec(deps: AdminDeps) -> ToolSpec:
                 "model": {"type": "string"},
                 "thinking": {"type": "string"},
                 "tint": {"type": "string"},
+                "avatar": {"type": "string"},
                 "bash": {"type": "string"},
                 "skills": {"type": "array", "items": {"type": "string"}},
                 "tools": {"type": "array", "items": {"type": "string"}},
@@ -721,7 +740,7 @@ def _delete_spec(deps: AdminDeps) -> ToolSpec:
 
 
 _EDITABLE_FIELDS = (
-    "role", "description", "tint", "model", "thinking",
+    "role", "description", "tint", "avatar", "model", "thinking",
     "skills", "tools", "hidden_tools", "bash", "schedule", "persona",
 )
 
@@ -738,6 +757,14 @@ def apply_card_edit(card: BotCard, patch: dict) -> BotCard:
         updated = replace(updated, description=str(patch["description"]))
     if "tint" in patch:
         updated = replace(updated, tint=str(patch["tint"]))
+    if "avatar" in patch:
+        if patch["avatar"] == "star" and not card.system:
+            raise ValueError("avatar 'star' is reserved for Thyca")
+        if patch["avatar"] not in AVATAR_VARIANTS:
+            raise ValueError(
+                "invalid avatar (want one of " + ", ".join(AVATAR_VARIANTS) + ")"
+            )
+        updated = replace(updated, avatar=str(patch["avatar"]))
     if "model" in patch or "thinking" in patch:
         model_id = str(patch.get("model", card.model.id if card.model else "default"))
         thinking = patch.get("thinking", card.model.thinking if card.model else None)
@@ -779,7 +806,7 @@ def _edit_card_spec(deps: AdminDeps) -> ToolSpec:
         name="bot_edit_card",
         description=(
             "Edit a bot's Agent Card (Thyca only; bots cannot self-edit). "
-            "Patch any of: role, description, tint, model, thinking, skills, "
+            "Patch any of: role, description, tint, avatar, model, thinking, skills, "
             "tools, hidden_tools, bash, schedule, persona."
         ),
         parameters={
@@ -789,6 +816,7 @@ def _edit_card_spec(deps: AdminDeps) -> ToolSpec:
                 "role": {"type": "string"},
                 "description": {"type": "string"},
                 "tint": {"type": "string"},
+                "avatar": {"type": "string"},
                 "model": {"type": "string"},
                 "thinking": {"type": "string"},
                 "skills": {"type": "array"},

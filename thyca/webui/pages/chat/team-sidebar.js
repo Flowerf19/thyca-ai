@@ -1,3 +1,4 @@
+import { botAvatarSVG, teamAvatarSVG } from "../../shared/js/bot-avatar.js";
 import { getJson, postJson } from "../../shared/js/http.js";
 import { cleanText, formatSessionTime } from "../../shared/js/format.js";
 import { messageOf } from "../../shared/js/status.js";
@@ -168,37 +169,31 @@ function unreadSuffix(state) {
   return state.count > 0 ? `, ${state.count} chưa đọc` : ", có tin chưa đọc";
 }
 
-/* Avatar slot (user-approved presentation, 2026-10-14): a fixed cell in
-   the legacy icon column. Until real/generated avatars exist it shows
-   the twin's initial on its tint; the manager carries a small star.
-   Single participant → one slot; a shared session → overlapped pair. */
-function avatarSlot(bot, mini = false) {
+/* Avatar slot: the design v1.1 note avatar (SVG port in shared/js/
+   bot-avatar.js) in the legacy icon column. Shape comes from the
+   bot's Agent Card avatar, colour from its tint, state from the
+   backend agent_status. Single participant → one avatar; a shared
+   session → the composite team avatar (3 heads + +N). */
+function avatarSlot(bot, mini = false, selected = false) {
   const slot = document.createElement("span");
   slot.className = mini ? "team-avatar is-mini" : "team-avatar";
   slot.style.setProperty("--team-tint", tintVarFor(bot?.id, bot?.tint));
   slot.setAttribute("aria-hidden", "true");
-  const letter = document.createElement("span");
-  letter.className = "team-avatar-letter";
-  letter.textContent = String(bot?.name || bot?.id || "?").trim().charAt(0).toUpperCase() || "?";
-  slot.append(letter);
-  if (!mini && (bot?.system || bot?.id === TEAM_BOT_ID)) {
-    const star = document.createElement("span");
-    star.className = "team-avatar-star";
-    star.textContent = "\u2726";
-    slot.append(star);
-  }
+  slot.innerHTML = botAvatarSVG(bot, { size: mini ? 24 : 32, selected });
   return slot;
 }
 
-function sessionIcon(session) {
+function sessionIcon(session, selected = false) {
   const ids = Array.isArray(session?.bots) ? session.bots.map(String) : [];
   const members = ids.map((id) => bots.find((bot) => bot.id === id)).filter(Boolean);
   if (members.length > 1) {
-    const stack = document.createElement("span");
-    stack.className = "team-avatar-stack";
-    stack.setAttribute("aria-hidden", "true");
-    stack.append(...members.slice(0, 2).map((bot) => avatarSlot(bot, true)));
-    return stack;
+    const team = document.createElement("span");
+    team.className = "team-avatar is-group";
+    const first = members[0];
+    team.style.setProperty("--team-tint", tintVarFor(first?.id, first?.tint));
+    team.setAttribute("aria-hidden", "true");
+    team.innerHTML = teamAvatarSVG(members, { size: 40, selected });
+    return team;
   }
   if (members.length === 1) return avatarSlot(members[0], true);
   const icon = document.createElement("span");
@@ -228,7 +223,7 @@ function botRow(bot) {
   const name = document.createElement("span");
   name.className = "session-name";
   name.textContent = bot.name;
-  button.append(avatarSlot(bot), name);
+  button.append(avatarSlot(bot, false, selected), name);
   const sub = [bot.role, statusLabel(bot.status)].filter(Boolean).join(" · ");
   if (sub) {
     const line = document.createElement("time");
@@ -281,7 +276,7 @@ function unifiedRow(session, botId = "", group = false) {
     sessionMetaLine(formatSessionTime(session.updated_at), session.turns),
     names.length > 1 ? names.join(" \u00b7 ") : "",
   ].filter(Boolean).join(" \u00b7 ");
-  button.append(sessionIcon(session), name, time);
+  button.append(sessionIcon(session, selected), name, time);
   const seen = sessionUnread(session);
   const unread = unreadBadge(seen);
   if (unread) button.append(unread);

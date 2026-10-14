@@ -26,6 +26,8 @@ INDEX_HTML = ROOT / "thyca" / "webui" / "index.html"
 COST_DATA = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "cost-data.js"
 TRACE_DATA = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "trace-data.js"
 CHAT_CSS = ROOT / "thyca" / "webui" / "pages" / "chat" / "chat.css"
+AVATAR = ROOT / "thyca" / "webui" / "shared" / "js" / "bot-avatar.js"
+AVATAR_CSS = ROOT / "thyca" / "webui" / "shared" / "css" / "bot-avatar.css"
 
 
 @pytest.fixture(scope="module")
@@ -38,7 +40,7 @@ def node() -> str:
 
 def _run(node: str, body: str, via: str = "team") -> object:
     module = {"team": TEAM, "mention": MENTION, "cost": COST_DATA,
-              "trace": TRACE_DATA, "unread": UNREAD}[via]
+              "trace": TRACE_DATA, "unread": UNREAD, "avatar": AVATAR}[via]
     source = (
         f"import * as api from '{module.as_posix()}';\n"
         f"const main = async () => {{ {body} }};\n"
@@ -1469,15 +1471,56 @@ def test_chat_title_head_has_no_solid_background_or_fade() -> None:
 
 
 def test_sidebar_avatar_slot_and_rail_present() -> None:
-    """Presentation pass (2026-10-14): avatar slots with manager star,
-    overlapped minis for shared sessions, collapsed rail toggle."""
+    """Avatar design port (2026-10-14): SVG note avatars in the legacy
+    icon column, composite team avatar for shared sessions, rail."""
     src = SIDEBAR_SRC.read_text(encoding="utf-8")
     html = INDEX_HTML.read_text(encoding="utf-8")
     css = CHAT_CSS.read_text(encoding="utf-8")
-    for kept in ("team-avatar", "team-avatar-star", "team-avatar-stack",
+    for kept in ("team-avatar", "botAvatarSVG", "teamAvatarSVG",
                  "avatarSlot", "sessionIcon", "is-paused", "applyRail",
                  "team-rail-toggle"):
         assert kept in src or kept in css, kept
     assert 'id="team-rail-toggle"' in html
     assert ".chat-shell.is-rail" in css
     assert "team-cluster-sessions" in css
+    assert "shared/css/bot-avatar.css" in html
+
+
+def test_normalize_bots_keeps_avatar_and_agent_status(node: str) -> None:
+    value = _run(
+        node,
+        "return api.normalizeBots({bots: [{id: 'coder', avatar: 'dotted',"
+        " agent_status: {state: 'thinking'}, system: false}]});",
+    )
+    assert value[0]["avatar"] == "dotted"
+    assert value[0]["agentStatus"]["state"] == "thinking"
+
+
+def test_bot_avatar_variants_states_and_team(node: str) -> None:
+    value = _run(
+        node,
+        "const single = api.botAvatarSVG({id: 'coder', avatar: 'single-flag', tint: 'botanical'}, {size: 32});"
+        " const thyca = api.botAvatarSVG({id: 'thyca'}, {size: 32});"
+        " const err = api.botAvatarSVG({id: 'x', agentStatus: {state: 'error'}}, {size: 32});"
+        " const team = api.teamAvatarSVG(["
+        "  {id: 'a', tint: 'accent'}, {id: 'b', tint: 'ink'},"
+        "  {id: 'c', tint: 'botanical'}, {id: 'd', tint: 'ink'},"
+        "  {id: 'e', tint: 'ink'}], {size: 40});"
+        " return [single.includes('bot-single'), single.includes('is-idle'),"
+        "  thyca.includes('avatar-star'), err.includes('avatar-badge-error'),"
+        "  team.includes('bot-team'), team.includes('+2'),"
+        "  api.teamBadgeState([{agentStatus: {state: 'done'}}, {agentStatus: {state: 'error'}}]),"
+        "  api.avatarVariantFor({id: 'thyca-demo'}),"
+        "  api.avatarStateFor({status: 'paused', agentStatus: {state: 'running'}})];",
+        via="avatar",
+    )
+    assert value == [True, True, True, True, True, True, "error", "dotted", "offline"]
+
+
+def test_bot_avatar_css_has_no_design_hex() -> None:
+    import re
+
+    css = AVATAR_CSS.read_text(encoding="utf-8")
+    assert not re.search(r"#[0-9a-fA-F]{3,8}\b", css), (
+        "avatar CSS must resolve colours through shared tokens")
+    assert "botLookAround" in css and "botBounce" in css

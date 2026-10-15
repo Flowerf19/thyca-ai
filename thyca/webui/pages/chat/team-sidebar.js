@@ -746,36 +746,10 @@ export function teamBotById(id) {
   return bots.find((bot) => bot.id === String(id || "")) || null;
 }
 
-/* Collapsed rail (user-approved presentation): the sidebar shrinks to an
-   avatar-only rail (bots only — sessions return when expanded). The
-   choice persists per browser; CSS lives in chat.css (.is-rail). */
-const RAIL_KEY = "thyca.teamRail";
-
-function railStored() {
-  try {
-    const stored = localStorage.getItem(RAIL_KEY);
-    return stored === null ? true : stored === "1";
-  } catch { return true; }
-}
-
-function applyRail() {
-  const on = railStored();
-  document.querySelector(".chat-shell")?.classList.toggle("is-rail", on);
-  const toggle = document.querySelector("#team-rail-toggle");
-  if (toggle) {
-    toggle.setAttribute("aria-pressed", String(on));
-    toggle.setAttribute("aria-label", on ? "Mở rộng thanh đội" : "Thu gọn thanh đội");
-  }
-}
-
 export async function initTeamSidebar(entryHub) {
   hub = entryHub;
   const section = teamSection();
   if (!section) return;
-  document.querySelector("#team-rail-toggle")?.addEventListener("click", () => {
-    try { localStorage.setItem(RAIL_KEY, railStored() ? "0" : "1"); } catch { /* private mode: session-only */ }
-    applyRail();
-  });
   document.querySelector("#team-shared-create")?.addEventListener("click", () => {
     sharedOpen = !sharedOpen;
     sharedError = "";
@@ -789,8 +763,7 @@ export async function initTeamSidebar(entryHub) {
   }
   bots = normalizeBots(payload);
   setChatBotRoster(bots);
-  if (bots.length) applyRail();
-  if (!bots.length) {
+    if (!bots.length) {
     // Backend has no team registry yet: legacy list stays, one muted note.
     // The note lives AFTER #session-list — renderSessions() rebuilds that
     // nav on every load (replaceChildren), so anything inside it is wiped.

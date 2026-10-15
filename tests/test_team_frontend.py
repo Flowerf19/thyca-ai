@@ -1475,7 +1475,6 @@ def test_team_css_audit_deleted_vs_kept() -> None:
     kept = (".team-bot-dot",  # picker tint dot (compact context)
             ".team-avatar",  # avatar slot (initial on tint)
             ".team-cluster",  # bot + its sessions as one cluster
-            ".is-rail",  # collapsed avatar rail
             ".team-unread",  # no legacy unread badge
             ".team-strip[hidden]",  # flex outranks hidden (legacy pattern)
             ".team-shared-picker",  # no legacy checkbox picker card
@@ -1519,18 +1518,15 @@ def test_chat_title_head_has_no_solid_background_or_fade() -> None:
     )
 
 
-def test_sidebar_avatar_slot_and_rail_present() -> None:
+def test_sidebar_avatar_slot_present() -> None:
     """Avatar design port (2026-10-14): SVG note avatars in the legacy
-    icon column, composite team avatar for shared sessions, rail."""
+    icon column, composite team avatar for shared sessions."""
     src = SIDEBAR_SRC.read_text(encoding="utf-8")
     html = INDEX_HTML.read_text(encoding="utf-8")
     css = CHAT_CSS.read_text(encoding="utf-8")
     for kept in ("team-avatar", "botAvatarSVG", "teamAvatarSVG",
-                 "avatarSlot", "sessionIcon", "is-paused", "applyRail",
-                 "team-rail-toggle"):
+                 "avatarSlot", "sessionIcon", "is-paused"):
         assert kept in src or kept in css, kept
-    assert 'id="team-rail-toggle"' in html
-    assert ".chat-shell.is-rail" in css
     assert "team-cluster-sessions" in css
     assert "shared/css/bot-avatar.css" in html
 
@@ -1889,37 +1885,6 @@ def test_sidebar_rows_avatar_name_layout() -> None:
     assert mini and "width: 2rem" in mini.group(1)
     groupav = re.search(r"\.team-avatar\.is-group\s*\{([^}]*)\}", css)
     assert groupav and "width: 3rem" in groupav.group(1)
-
-    rail = re.search(r"\.chat-shell\.is-rail\s*\{([^}]*)\}", css)
-    assert rail and (
-        "grid-template-columns: calc(7rem + 1.25rem + 0.18rem) minmax(0, 1fr)"
-        in rail.group(1)
-    ), "112px rail plus the shared sidebar frame margins"
-    railrow = re.search(
-        r"\.is-rail #team-bot-list \.team-bot-item,\s*"
-        r"\.is-rail #team-bot-list \.team-group-item\s*\{([^}]*)\}",
-        css)
-    assert railrow, "rail row rule missing"
-    assert "grid-template-columns: minmax(0, 1fr)" in railrow.group(1)
-    assert "width: 5.75rem" in railrow.group(1)
-    railav = re.search(r"\.is-rail \.team-avatar\s*\{([^}]*)\}", css)
-    assert railav and "width: 4rem" in railav.group(1)
-    assert "height: 4rem" in railav.group(1)
-    assert "grid-row: 1;" in railav.group(1)
-    railname = re.search(
-        r"\.is-rail #team-bot-list \.team-bot-item \.session-name,\s*"
-        r"\.is-rail #team-bot-list \.team-group-item \.session-name\s*\{([^}]*)\}",
-        css)
-    assert railname, "compact bot/group names must stay visible below avatars"
-    for decl in ("display: block", "grid-column: 1", "grid-row: 2",
-                 "text-align: center"):
-        assert decl in railname.group(1), decl
-    assert "display: none" not in railname.group(1)
-    collapsed = re.search(
-        r"\.is-rail \.team-cluster-sessions,\s*\.is-rail #team-nav-actions"
-        r"\s*\{([^}]*)\}", css)
-    assert collapsed and "display: none" in collapsed.group(1), (
-        "subordinate sessions stay hidden while collapsed")
 
     assert "size: mini ? 32 : 48" in src
     assert "avatarSlot(members[0], true, selected)" in src, (

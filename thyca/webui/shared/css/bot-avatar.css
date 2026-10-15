@@ -348,17 +348,6 @@
   position: relative;
 }
 
-/* v3.5 stage: the warm carved-wood pedestal vignette behind each avatar —
-   slot clips like the demo's webgl-stage-wrap so canvas/img/SVG sit inside. */
-:is(.team-avatar, .chat-brand-avatar, .bot-drawer-avatar, .mention-avatar, .settings-bot-avatar) {
-  border: 1px solid var(--stage-border);
-  border-radius: 0.75rem;
-  background: radial-gradient(circle at 50% 42%,
-    var(--stage-top) 0%, var(--stage-mid) 72%, var(--stage-edge) 100%);
-  box-shadow: inset 0 2px 14px var(--stage-inner);
-  overflow: hidden;
-}
-
 .team-avatar > canvas,
 .team-avatar > img.team-avatar-3d,
 canvas.avatar-3d-live,

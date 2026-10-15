@@ -120,13 +120,13 @@ export function createAvatar3DController() {
       size = renderer.getSize(new THREE.Vector2());
       ratio = renderer.getPixelRatio();
       renderer.setPixelRatio(1);
-      renderer.setSize(128, 128, false);
+      renderer.setSize(256, 256, false);
     } catch { return; }
     for (const f of followers.values()) {
       try {
         f.model.animate(elapsed, { reducedMotion });
         renderer.render(f.scene, f.camera);
-        f.ctx.drawImage(canvas, 0, 0, 128, 128);
+        f.ctx.drawImage(canvas, 0, 0, 256, 256);
       } catch { /* drop the follower frame, keep painting the rest */ }
     }
     try {
@@ -355,7 +355,7 @@ export function createAvatar3DController() {
       temporaryModel.group.rotation.set(0.02, 0.38, 0);
       thumbnailScene.add(temporaryModel.group);
       renderer.setPixelRatio(1);
-      renderer.setSize(128, 128, false);
+      renderer.setSize(256, 256, false);
       temporaryModel.animate(0, { reducedMotion: true });
       renderer.render(thumbnailScene, thumbnailCamera);
       image = canvas.toDataURL("image/png") || null;
@@ -417,7 +417,7 @@ export function createAvatar3DController() {
     }
     if (existing) disposeFollower(existing);
     const cnv = document.createElement("canvas");
-    cnv.width = 128; cnv.height = 128;
+    cnv.width = 256; cnv.height = 256;
     cnv.className = "avatar-3d-live";
     cnv.setAttribute("aria-hidden", "true");
     const ctx = cnv.getContext("2d");

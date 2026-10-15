@@ -83,8 +83,6 @@ export function setChatBrand(target, { state, status } = {}) {
     if (slot) {
       const profile = brandAvatarProfile(header._botProfile, state);
       slot.innerHTML = botAvatarSVG(profile, { size: 48 });
-      // Live card gets the animated 3D model (state effects); settled
-      // transcript headers get the cached snapshot.
       if (article?.classList?.contains("live-status")) {
         void followAvatar3D(`chat:${profile?.id || "live"}`, slot, { bot: profile })
           .then((ok) => { if (!ok) upgradeAvatarImg(slot, { bot: profile }); });

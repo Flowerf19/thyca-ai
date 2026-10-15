@@ -242,6 +242,7 @@ export function createAvatar3DController() {
         // v3.5 verbatim: raw output (no encoding/tone-mapping) + shadow maps.
         renderer.setClearColor(0x000000, 0);
         renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
         canvas = renderer.domElement;
         canvas.setAttribute("aria-hidden", "true");
         scene = new THREE.Scene();

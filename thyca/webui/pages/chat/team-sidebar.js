@@ -162,13 +162,14 @@ function sheetPager(botId, page, pageCount) {
   return pager;
 }
 
-/* Expanded = shows its session sheet below the envelope row. Only the
-   current bot expands (the row opens the DM and unrolls the sheet in one
-   gesture); folding is a pure view toggle remembered via closedIds. */
+/* Expanded = shows its session sheet below the envelope row. A clicked
+   bot (activeBot) expands at once — its paper and sessions render while
+   its DM is still resolving; with no pending click the open session's
+   bot expands. Folding is a pure view toggle remembered via closedIds. */
 function botExpanded(bot) {
-  const me = currentTeamBot();
   const id = String(bot?.id || "");
-  return Boolean(id && me && id === me.id && !closedIds.has(id));
+  if (!id || closedIds.has(id)) return false;
+  return id === (activeBot || currentTeamBot()?.id || "");
 }
 
 /* The bot whose unified list is on screen: the open session names it when
@@ -257,32 +258,40 @@ function isPinnedBot(botId) {
 }
 
 /* Pinning sorts the letter to the top of the list. Thyca is pinned by
-   design — a permanent mark, not a toggle. */
+   design — a permanent mark, not a toggle. The control is a paper pin
+   glyph, not a word. */
 function pinControl(row, bot) {
   const pinned = isPinnedBot(bot.id);
   row.classList.toggle("is-pinned", pinned);
   const actions = document.createElement("span");
   actions.className = "session-actions";
+  const pinSvg = '<svg viewBox="0 0 24 24" aria-hidden="true">'
+    + '<use href="#g-pin"/></svg>';
   if (bot.id === TEAM_BOT_ID) {
     const mark = document.createElement("span");
     mark.className = "session-action is-pinned-mark";
-    mark.textContent = "Ghim";
-    mark.setAttribute("aria-hidden", "true");
+    mark.innerHTML = pinSvg;
+    mark.title = "Đã ghim";
     actions.append(mark);
   } else {
-    actions.append(rowAction(
-      "session-action",
+    const button = rowAction(
+      "session-action is-pin",
       pinned ? `Bỏ ghim ${bot.name}` : `Ghim ${bot.name} lên đầu`,
-      pinned ? "Bỏ ghim" : "Ghim",
+      "",
       () => {
         setPin(bot.id, !pinned);
         render();
       },
-    ));
+    );
+    button.innerHTML = pinSvg;
+    button.title = pinned ? "Bỏ ghim" : "Ghim lên đầu";
+    actions.append(button);
   }
   row.append(actions);
 }
 
+/* Open group letter: the flap holds just the group's Đổi tên/Xóa —
+   the same plain .session-action words session rows get on hover. */
 function groupFlap(session) {
   const flap = document.createElement("div");
   flap.className = "team-bot-flap";
@@ -293,33 +302,6 @@ function groupFlap(session) {
     rowAction("session-action is-delete", `Xóa nhóm ${title}`, "Xóa",
       () => openDelete(session)),
   );
-  const label = document.createElement("span");
-  label.className = "team-flap-label";
-  const members = new Set((Array.isArray(session?.bots) ? session.bots : []).map(String));
-  const candidates = bots.filter((bot) => !members.has(bot.id));
-  if (!candidates.length) {
-    label.textContent = "Đã đủ bot trong nhóm.";
-    flap.append(label);
-  }
-  for (const bot of candidates) {
-    const add = rowAction(
-      "session-action team-flap-add",
-      `Thêm ${bot.name} vào nhóm`,
-      `+ ${bot.name}`,
-      async () => {
-        add.disabled = true;
-        try {
-          await postJson(`/api/sessions/${encodeURIComponent(session.id)}/bots`,
-            { bot_id: bot.id, action: "add" });
-          await hub?.teamRefresh?.();
-        } catch (error) {
-          add.disabled = false;
-          add.textContent = messageOf(error, "Lỗi — thử lại");
-        }
-      },
-    );
-    flap.append(add);
-  }
   return flap;
 }
 
@@ -484,17 +466,22 @@ function unifiedRow(session, botId = "", group = false) {
     void hub.loadSession(sid);
   });
   const title = cleanText(session.title, "Phiên trống");
-  const actions = document.createElement("span");
-  actions.className = "session-actions";
-  if (!group) {
+  row.append(button);
+  if (group) {
+    // Group letters get the same pin toggle as bot letters — the paper
+    // pin glyph, not a word. Đổi tên/Xóa live in the opened flap.
+    pinControl(row, { id: `g:${button.dataset.sessionId}`, name: title });
+  } else {
+    const actions = document.createElement("span");
+    actions.className = "session-actions";
     actions.append(rowAction(
       "session-action", `Đặt tên cho phiên ${title}`, "Đổi tên",
       () => openRename(session)));
+    actions.append(rowAction(
+      "session-action is-delete", `Xóa phiên ${title}`, "Xóa",
+      () => openDelete(session)));
+    row.append(actions);
   }
-  actions.append(rowAction(
-    "session-action is-delete", `Xóa phiên ${title}`, "Xóa",
-    () => openDelete(session)));
-  row.append(button, actions);
   return row;
 }
 
@@ -763,7 +750,7 @@ function render() {
     // edge holding just the "+ Phiên mới" line; the sheet slides below.
     const flap = document.createElement("div");
     flap.className = "team-bot-flap";
-    if (me && bot.id === me.id && mainError) flap.append(errorNote(mainError));
+    if (mainError) flap.append(errorNote(mainError));
     if (newSessionError && newSessionErrorBot === bot.id) {
       flap.append(errorNote(newSessionError));
     }
@@ -828,6 +815,7 @@ function render() {
       k: String(session.title || session.id || ""),
       id: sid,
       node,
+      pin: isPinnedBot(`g:${sid}`),
     });
   });
   // Pinned bots lead the list (Thyca always first among them — it is

@@ -1153,9 +1153,12 @@ button:active {
 
 /* Open letter: the seam lifts (unsealed), the card's bottom corners go
    square where the flap continues the paper, and an inner shadow reads
-   as the envelope's open mouth. */
+   as the envelope's open mouth. The cover takes the same tint wash as
+   the flap below, lighter — an open letter reads as one hue. */
 #team-bot-list .team-bot-item.is-open,
 #team-bot-list .team-group-item.is-open {
+  background-color: color-mix(in srgb, var(--color-paper-card) 90%,
+    var(--team-tint, var(--color-bg-frame)) 10%);
   background-image: none;
   border-end-start-radius: 0;
   border-end-end-radius: 0;
@@ -1163,9 +1166,9 @@ button:active {
 }
 
 /* The opened flap: the card's paper continues downward into a strip
-   holding the letter's actions — the DM/group's Đổi tên/Xóa reuse the
-   plain .session-action words (same convention as session rows) plus
-   the "+ Phiên mới"/member lines; errors take a full row. */
+   holding the letter's lines — a group letter's Đổi tên/Xóa reuse the
+   plain .session-action words (same convention as session rows), a bot
+   letter carries "+ Phiên mới"; errors take a full row. */
 .team-bot-flap {
   position: relative;
   display: flex;
@@ -1187,13 +1190,6 @@ button:active {
 
 .team-bot-flap > .screen-status {
   flex-basis: 100%;
-}
-
-.team-flap-label {
-  color: var(--color-muted);
-  font-family: var(--font-reading);
-  font-size: 0.72rem;
-  font-style: italic;
 }
 
 /* Inside the flap the create line is plain italic text on paper — the
@@ -1233,8 +1229,8 @@ button:active {
   inset-inline-end: 1.5rem;
 }
 
-/* Pinned letters keep their pin state in view: Thyca's mark is static,
-   other pinned bots show Bỏ ghim without waiting for hover. */
+/* Pinned letters keep their pin in view: Thyca's mark is static, other
+   pinned bots show their pin without waiting for hover. */
 #team-bot-list .session-row.is-pinned .session-actions {
   opacity: 1;
   pointer-events: auto;
@@ -1242,12 +1238,44 @@ button:active {
 
 #team-bot-list .session-row.is-pinned .session-name,
 #team-bot-list .session-row.is-pinned time {
-  padding-inline-end: 4.4rem;
+  padding-inline-end: 2.6rem;
+}
+
+.session-action.is-pin,
+.session-action.is-pinned-mark {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+
+.session-action.is-pin svg,
+.session-action.is-pinned-mark svg {
+  display: block;
+  width: 0.95rem;
+  height: 0.95rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* An unpinned letter offers a ghost pin on hover; a pinned one keeps a
+   solid accent pin — hovering it readies the un-pin. */
+.session-action.is-pin {
+  color: var(--color-muted);
+}
+
+.session-row.is-pinned .session-action.is-pin {
+  color: var(--chat-brand-accent);
+}
+
+.session-action.is-pin:hover {
+  color: var(--color-accent-deep);
 }
 
 .session-action.is-pinned-mark {
-  color: var(--color-muted);
-  text-decoration: none;
+  color: var(--chat-brand-accent);
   cursor: default;
 }
 
@@ -1469,9 +1497,11 @@ button:active {
   height: 2.5rem;
 }
 
+/* The stacked-seal group mark keeps the same cell as a single seal, so
+   a group letter stands no taller than a bot letter. */
 .team-avatar.is-group {
-  width: 3.75rem;
-  height: 3.75rem;
+  width: 2.75rem;
+  height: 2.75rem;
 }
 
 .team-bot-item.is-paused .session-name,
@@ -1484,10 +1514,9 @@ button:active {
 }
 
 /* Group chats are channels at bot level, not sub-sessions: same row
-   scale as bot rows. The composite team avatar is wider than the
-   legacy icon cell, so the row's first column grows to fit it. */
+   scale as bot rows. */
 .team-group-item {
-  grid-template-columns: 3.75rem minmax(0, 1fr) auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
 }
 
 .team-group-item .session-name {

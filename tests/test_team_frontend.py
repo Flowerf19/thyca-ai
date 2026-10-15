@@ -1796,7 +1796,7 @@ def test_sidebar_rows_avatar_name_layout() -> None:
     mini = re.search(r"\.team-avatar\.is-mini\s*\{([^}]*)\}", css)
     assert mini and "width: 2.5rem" in mini.group(1)
     groupav = re.search(r"\.team-avatar\.is-group\s*\{([^}]*)\}", css)
-    assert groupav and "width: 3.75rem" in groupav.group(1)
+    assert groupav and "width: 2.75rem" in groupav.group(1)
 
     assert "botMark(bot, { selected })" in src
     assert "avatarSlot(members[0], true, selected)" in src, (
@@ -2126,6 +2126,14 @@ def test_new_session_pending_blocks_duplicates_and_stale(node: str) -> None:
         " await tick(); await tick();"
         " resolvePost({ ok: true, status: 200,"
         "  json: async () => ({ id: 'stale', bots: ['thyca'] }) });"
+        " await tick(); await tick();"
+        # The clicked bot's envelope opened at once (paper before the
+        # DM resolves) — fold back to thyca to reach its create line.
+        " const thycaRow = botNav.children.map((c) =>"
+        "  c.children && c.children[0]).filter(Boolean).find((r) =>"
+        "  r.children[0] && r.children[0].dataset"
+        "  && r.children[0].dataset.botId === 'thyca');"
+        " thycaRow.children[0]._handlers.click();"
         " await tick(); await tick();"
         " const btn2 = newBtn('thyca');"
         " return { posts, handed, midState, postsAfterDup,"

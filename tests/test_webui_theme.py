@@ -19,7 +19,7 @@ def test_shared_background_primitives_and_aliases() -> None:
     css = TOKENS_CSS.read_text(encoding="utf-8")
     assert "--color-bg-frame: #E8DAC3" in css
     assert "--color-bg-surface: #FBF4E5" in css
-    assert "--color-bg-selected: #F4E9D7" in css
+    assert "--color-bg-selected: #EADBC8" in css
     for alias in ("--color-desk-top", "--color-desk-mid", "--color-desk-bottom",
                   "--color-paper"):
         assert f"{alias}: var(--color-bg-frame)" in css, alias

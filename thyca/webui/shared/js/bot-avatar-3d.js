@@ -10,15 +10,17 @@ function canonicalize(value) {
   return Object.fromEntries(Object.keys(value).sort().map(key => [key, canonicalize(value[key])]));
 }
 
-// Wooden turntable pedestal from the v3.5 reference: the disc that the
-// carved note stands on. Scene-level (it does not rotate with the model).
+// Soft contact shadow instead of a solid disc: the note stands on paper, not
+// on a wooden sticker. ShadowMaterial renders only the shadow (multiply
+// smoky brown), everything else stays transparent.
 function makePedestal(THREE) {
-  const geo = new THREE.CylinderGeometry(1.85, 2.0, 0.24, 48);
-  const mat = new THREE.MeshStandardMaterial({ color: 0xdcc5a5, roughness: 0.75, metalness: 0.05 });
-  const pedestal = new THREE.Mesh(geo, mat);
-  pedestal.position.y = -1.78;
-  pedestal.receiveShadow = true;
-  return pedestal;
+  const geo = new THREE.CircleGeometry(2.0, 48);
+  const mat = new THREE.ShadowMaterial({ color: 0x8c7355, opacity: 0.32 });
+  const ground = new THREE.Mesh(geo, mat);
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = -1.78;
+  ground.receiveShadow = true;
+  return ground;
 }
 
 export function createAvatar3DController() {

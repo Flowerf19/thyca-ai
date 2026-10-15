@@ -7,7 +7,7 @@
 :root {
   --color-bg-frame: #E8DAC3;
   --color-bg-surface: #FBF4E5;
-  --color-bg-selected: #F4E9D7;
+  --color-bg-selected: #EADBC8;
 
   --color-desk-top: var(--color-bg-frame);
   --color-desk-mid: var(--color-bg-frame);
@@ -21,7 +21,7 @@
   --color-paper-input: var(--color-bg-surface);
   --color-paper-edge: oklch(82% 0.045 72);
   --color-border: oklch(87.4% 0.024 69.6);
-  --color-divider: oklch(78.6% 0.042 69.6);
+  --color-divider: #C8B59B;
 
   --color-ink: oklch(30.9% 0.064 43.9);
   --color-reading: oklch(33.5% 0.021 70);
@@ -36,32 +36,32 @@
   --color-accent-ink: oklch(95.6% 0.021 65.3);
   --color-botanical: oklch(51.3% 0.049 68.6);
 
-  --note-do: #C85A32;
-  --note-re: #9E5A6D;
-  --note-mi: #5E8C6A;
-  --note-fa: #9C7A33;
-  --note-sol: #5B7285;
-  --note-la: #8A6742;
-  --note-si: #3B4D54;
-  --note-star: #C9962E;
+  --note-do: #B8734B;
+  --note-re: #9E6B60;
+  --note-mi: #C8A986;
+  --note-fa: #A5894E;
+  --note-sol: #84796A;
+  --note-la: #8A5A40;
+  --note-si: #7C5841;
+  --note-star: #BF8F34;
   --note-gold: var(--note-star);
   --note-cream: #FAF3E6;
   --note-ink: #26160D;
 
-  --wood-star-light: #DE8260;
-  --wood-star-side: #9A3F1E;
-  --wood-hollow-light: #BC7E90;
-  --wood-hollow-side: #733B4B;
-  --wood-single-flag-light: #7FAD8B;
-  --wood-single-flag-side: #3E6347;
-  --wood-double-flag-light: #BC9A4E;
-  --wood-double-flag-side: #6B5220;
-  --wood-dotted-light: #7E96A8;
-  --wood-dotted-side: #3C4E5C;
-  --wood-fermata-light: #AD8A5F;
-  --wood-fermata-side: #5E4530;
-  --wood-plain-light: #5C7078;
-  --wood-plain-side: #22323A;
+  --wood-star-light: #D09266;
+  --wood-star-side: #7E4E30;
+  --wood-hollow-light: #BB8A7E;
+  --wood-hollow-side: #6E453D;
+  --wood-single-flag-light: #DEC7A6;
+  --wood-single-flag-side: #8F7352;
+  --wood-double-flag-light: #C0A96E;
+  --wood-double-flag-side: #6F5C32;
+  --wood-dotted-light: #A39785;
+  --wood-dotted-side: #5A5044;
+  --wood-fermata-light: #AA7B5E;
+  --wood-fermata-side: #5D3B28;
+  --wood-plain-light: #9C7A5F;
+  --wood-plain-side: #523A29;
   --wood-offline-base: #9E9080;
   --wood-offline-side: #5E5348;
   /* Stage vignette derived from the page palette, not the v3.5 demo hexes,

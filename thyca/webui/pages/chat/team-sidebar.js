@@ -1,4 +1,4 @@
-import { botMark, botMarkGroup } from "../../shared/js/bot-avatar.js";
+import { avatarStateFor, botMark, botMarkGroup } from "../../shared/js/bot-avatar.js";
 import { setChatBotRoster } from "../../shared/js/chat-bot.js";
 import { getJson, postJson } from "../../shared/js/http.js";
 import { cleanText, formatSessionTime } from "../../shared/js/format.js";
@@ -102,6 +102,19 @@ function showTeam() {
 
 function statusLabel(status) {
   return STATUS_LABEL[String(status || "")] || "";
+}
+
+/* Live activity beats the static role line, per the design's META map:
+   a thinking/running bot reads "đang nghĩ…/đang viết…" in the sidebar. */
+const LIVE_LABEL = {
+  thinking: "đang nghĩ…", running: "đang viết…",
+  done: "vừa xong", error: "lỗi · thử lại",
+};
+
+function botSubLabel(bot) {
+  const live = LIVE_LABEL[avatarStateFor(bot)];
+  if (live) return live;
+  return [bot.role, statusLabel(bot.status)].filter(Boolean).join(" · ");
 }
 
 /* The bot whose unified list is on screen: the open session names it when
@@ -231,7 +244,7 @@ function botRow(bot) {
   name.className = "session-name";
   name.textContent = bot.name;
   button.append(avatarSlot(bot, false, selected), name);
-  const sub = [bot.role, statusLabel(bot.status)].filter(Boolean).join(" · ");
+  const sub = botSubLabel(bot);
   if (sub) {
     const line = document.createElement("time");
     line.textContent = sub;

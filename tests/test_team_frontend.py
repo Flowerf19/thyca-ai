@@ -1524,7 +1524,7 @@ def test_sidebar_avatar_slot_present() -> None:
     src = SIDEBAR_SRC.read_text(encoding="utf-8")
     html = INDEX_HTML.read_text(encoding="utf-8")
     css = CHAT_CSS.read_text(encoding="utf-8")
-    for kept in ("team-avatar", "botMark", "botMarkForTeam",
+    for kept in ("team-avatar", "botMark", "botMarkGroup",
                  "avatarSlot", "sessionIcon", "is-paused"):
         assert kept in src or kept in css, kept
     assert "team-cluster-sessions" in css
@@ -1547,11 +1547,11 @@ def test_bot_avatar_variants_states_and_team(node: str) -> None:
         "const single = api.botMark({id: 'coder', avatar: 'single-flag', tint: 'botanical'});"
         " const err = api.botMark({id: 'x', agentStatus: {state: 'error'}});"
         " const run = api.botMark({id: 'r', agentStatus: {state: 'running'}});"
-        " const team = api.botMarkForTeam(["
+        " const team = api.botMarkGroup(["
         "  {id: 'a', tint: 'accent'}, {id: 'b', tint: 'ink'}]);"
         " return [single.includes('mk-wax'), single.includes('data-state=\"idle\"'),"
         "  single.includes('wax-body'), err.includes('data-state=\"error\"'),"
-        "  run.includes('data-state=\"writing\"'), team.includes('mk-wax'),"
+        "  run.includes('data-state=\"writing\"'), team.includes('gm-stack'),"
         "  api.avatarVariantFor({id: 'thyca-demo'}),"
         "  api.avatarStateFor({status: 'paused', agentStatus: {state: 'running'}})];",
         via="avatar",
@@ -1686,21 +1686,23 @@ def test_avatar_wax_mark_contract(node: str) -> None:
         " const err = api.botMark({id: 'x', agentStatus: {state: 'error'}});"
         " const run = api.botMark({id: 'y', agentStatus: {state: 'running'}});"
         " const idle = api.botMark({id: 'z'});"
-        " const team = api.botMarkForTeam([{id: 'coder'}, {id: 'designer'}]);"
-        " const empty = api.botMarkForTeam([]);"
+        " const team = api.botMarkGroup([{id: 'coder'}, {id: 'designer'}, {id: 'writer'}, {id: 'research'}]);"
+        " const empty = api.botMarkGroup([]);"
         " const strip = (m) => m.replace(/wx\\d+/g, 'wx');"
         " return [a.includes('mk mk-wax'), a.includes('wax-body'),"
-        "  a.includes('#g-note'), a.includes('aria-hidden'),"
+        "  a.includes('glyph'), a.includes('aria-hidden'),"
         "  strip(a) === strip(a2), strip(a) !== strip(b),"
         "  sel.includes('data-selected'),"
         "  !a.includes('data-selected=\"true\"'),"
         "  err.includes('data-state=\"error\"'),"
         "  run.includes('data-state=\"writing\"'),"
         "  idle.includes('data-state=\"idle\"'),"
-        "  strip(team) === strip(a), empty.includes('mk-wax')];",
+        "  team.includes('gm-stack'), team.includes('+2'),"
+        "  (team.match(/gm-slot/g) || []).length === 2,"
+        "  empty.includes('mk-wax')];",
         via="avatar",
     )
-    assert value == [True] * 13
+    assert value == [True] * 15
 
 
 
@@ -1795,10 +1797,10 @@ def test_sidebar_rows_avatar_name_layout() -> None:
     groupav = re.search(r"\.team-avatar\.is-group\s*\{([^}]*)\}", css)
     assert groupav and "width: 3rem" in groupav.group(1)
 
-    assert "botMark(bot, { selected, state: selected ? null : \"idle\" })" in src
+    assert "botMark(bot, { selected })" in src
     assert "avatarSlot(members[0], true, selected)" in src, (
         "single-member session icon must forward selected for the halo")
-    assert "botMarkForTeam(members, { selected, state: selected ? null : \"idle\" })" in src
+    assert "botMarkGroup(members, { selected })" in src
     assert "if (group) button.append(sessionIcon(session, selected));" in src, (
         "solo subordinate sessions render no avatar slot")
     assert 'className = "team-new-session"' in src

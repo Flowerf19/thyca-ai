@@ -1,4 +1,4 @@
-import { botMark, botMarkForTeam } from "../../shared/js/bot-avatar.js";
+import { botMark, botMarkGroup } from "../../shared/js/bot-avatar.js";
 import { setChatBotRoster } from "../../shared/js/chat-bot.js";
 import { getJson, postJson } from "../../shared/js/http.js";
 import { cleanText, formatSessionTime } from "../../shared/js/format.js";
@@ -183,7 +183,7 @@ function avatarSlot(bot, mini = false, selected = false) {
   slot.className = mini ? "team-avatar is-mini" : "team-avatar";
   slot.style.setProperty("--team-tint", tintVarFor(bot?.id, bot?.tint));
   slot.setAttribute("aria-hidden", "true");
-  slot.innerHTML = botMark(bot, { selected, state: selected ? null : "idle" });
+  slot.innerHTML = botMark(bot, { selected });
   return slot;
 }
 
@@ -196,7 +196,7 @@ function sessionIcon(session, selected = false) {
     const first = members[0];
     team.style.setProperty("--team-tint", tintVarFor(first?.id, first?.tint));
     team.setAttribute("aria-hidden", "true");
-    team.innerHTML = botMarkForTeam(members, { selected, state: selected ? null : "idle" });
+    team.innerHTML = botMarkGroup(members, { selected });
     return team;
   }
   if (members.length === 1) return avatarSlot(members[0], true, selected);

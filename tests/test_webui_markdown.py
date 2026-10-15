@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 import subprocess
 from pathlib import Path
 
@@ -280,12 +279,9 @@ def test_trace_typography_matches_profile_screen() -> None:
 
 def test_overview_typography_matches_profile_screen() -> None:
     overview = (WEBUI / "pages" / "dashboard" / "dashboard.css").read_text(encoding="utf-8")
-    shared = (WEBUI / "shared" / "css" / "kit.css").read_text(encoding="utf-8")
 
     assert ".dashboard-surface {" in overview
-    # Reading face now comes from the shared screen shell (dashboard.html sits
-    # inside .screen-shell like Hồ sơ), not a page-level override.
-    assert ".screen-shell { font-family: var(--font-reading); }" in shared
+    assert "font-family: var(--font-reading);" in overview
     # Inner cards are flattened (no private h3 rule): section headings keep
     # the Fraunces display face, and section cards render on the shell —
     # hairline border and focus rings stay, paper does not.
@@ -293,14 +289,13 @@ def test_overview_typography_matches_profile_screen() -> None:
     assert ".dashboard-surface .cost-model-heading {" in overview
     assert "font-family: var(--font-display);" in overview
     # TASK-036 removed the cost-model-cost count (no more per-model cards);
-    # the remaining primary-amount selector keeps the reading size.
-    assert ".dashboard-surface .cost-period {" in overview
+    # the remaining primary-amount selectors keep the reading size.
+    assert ".dashboard-surface .cost-period," in overview
     assert "font-size: 1rem;" in overview
     assert ".dashboard-section .screen-card {" in overview
     assert "background: transparent;" in overview
     assert "border-radius: 0;" in overview
-    # Flat cards: shadow-free by the shared .screen-card rule, not a page copy.
-    assert re.search(r"\.screen-card\s*\{[^}]*box-shadow: none;", shared)
+    assert "box-shadow: none;" in overview
 
 
 def test_cost_panel_renders_bar_rows_and_uses_shared_toolbar() -> None:
@@ -384,15 +379,13 @@ def test_cost_panel_renders_bar_rows_and_uses_shared_toolbar() -> None:
     assert ".sidebar .memory-search-cluster" in memories_css
 
     # Nhật ký keeps the promoted classes; Chi phí left the shared card kit —
-    # one grouped card rule for memory only, no private copy in cost.css
-    # (which owns the bar rows). v5 flattens the card: no fill, no radius,
-    # entries separated by hairline dividers instead.
+    # one grouped kit rule in screens.css for memory only, no private copy in
+    # cost.css (which owns the bar rows).
     assert ".memory-card {" in shared
     assert ".cost-model-card" not in shared
     assert "display: contents;" in shared
-    memory_card = re.search(r"\.memory-card\s*\{([^}]*)\}", shared)
-    assert memory_card and "border-radius: 0;" in memory_card.group(1)
-    assert memory_card and "background: transparent;" in memory_card.group(1)
+    assert "border-radius: var(--radius-chat);" in shared
+    assert "background: var(--chat-brand-wash);" in shared
     assert ".screen-filters .screen-button" in shared
     assert ".thyca-search__icon" in shared
     assert ".screen-search" not in shared

@@ -240,8 +240,9 @@ export function createAvatar3DController() {
       if (!renderer) {
         renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, powerPreference: "low-power" });
         renderer.setClearColor(0x000000, 0);
-        // v3.5 renders raw: no output-encoding/tone-mapping, so the carved
-        // wood palette keeps its full saturation (bolder look).
+        renderer.outputEncoding = THREE.sRGBEncoding;
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.05;
         renderer.shadowMap.enabled = true;
         canvas = renderer.domElement;
         canvas.setAttribute("aria-hidden", "true");

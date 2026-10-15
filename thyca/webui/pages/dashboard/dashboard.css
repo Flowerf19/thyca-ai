@@ -12,20 +12,56 @@
   margin-block-end: 1rem;
 }
 
-/* Keep the chart heading on the dashboard's display face. */
-.dashboard-surface .cost-model-heading {
-  font-family: var(--font-display);
-}
-
-.dashboard-surface .cost-period {
+/* Overview uses the same readable typography as Hồ sơ. Keep the dashboard's
+   chart/KPI hierarchy, but remove the list-card italic/UI deltas. */
+.dashboard-surface {
+  font-family: var(--font-reading);
   font-size: 1rem;
 }
 
-/* Flat surface for the Request/Usage sections: retain the transparent,
-   square panels; shared cards provide the remaining presentation. */
+/* h2 keeps the shared 1.7rem Fraunces; card h3 stays on the profile standard
+   (Source Serif, 1.15rem) instead of the display face. */
+.dashboard-surface .cost-model-heading {
+  font-family: var(--font-display);
+  font-style: normal;
+}
+
+/* Controls and primary amounts use the page's base reading size. */
+.dashboard-surface .cost-period,
+.dashboard-surface .usage-legend,
+.dashboard-surface .usage-toggle button {
+  font-family: var(--font-reading);
+  font-size: 1rem;
+  font-style: normal;
+}
+
+/* Secondary information follows the Nhật ký card metadata scale. */
+.dashboard-surface .usage-summary footer,
+.dashboard-surface .usage-total-right span,
+.dashboard-surface #request-range {
+  font-family: var(--font-reading);
+  font-size: 0.85rem;
+  font-style: normal;
+}
+
+/* Request and Sử dụng token are switch views like Trace and Chi phí;
+   the class keeps the flat screen-card rules below applying to their inner
+   panels. Spacing between blocks comes from the surface gap, not margins. */
+.dashboard-block.dashboard-section {
+  min-width: 0;
+}
+
+/* Mobile pick pattern (same as Hồ sơ/Cài đặt): no pill override needed —
+   kit's .pick-shell rules show the destination list first and hide it once
+   a view is chosen. Switching stays real on every viewport. */
+
+/* Flat surface for the Request/Usage sections: the user asked for flat, not
+   cream panels. Only the decorative card background/radius/shadow go — the
+   hairline border, focus rings, buttons and code contrast stay. */
 .dashboard-section .screen-card {
   background: transparent;
   border-radius: 0;
+  box-shadow: none;
 }
 
 /* Per-model horizontal bar chart (TASK-036): one flat chart per section —

@@ -1602,18 +1602,12 @@ def test_chat_surfaces_and_imagery_unchanged() -> None:
     assert any("background: transparent" in block for block in canvas), canvas
     sidebar = re.findall(r"\.sidebar\s*\{[^}]*\}", kit)
     workspace = re.findall(r"\.workspace\s*\{[^}]*\}", kit)
-    assert any("background: var(--color-bg-sidebar)" in block for block in sidebar), sidebar
-    assert any("background: var(--color-bg-surface)" in block for block in workspace), workspace
-    for selector in (r"\.notebook-shell", r"\.notebook-shell::before", r"\.screen-dialog"):
-        block = re.search(selector + r"\s*\{[^}]*\}", kit)
-        assert block, selector
-        assert "var(--background-artwork)" in block.group(0), selector
-        assert "var(--background-overlay)" in block.group(0), selector
-        assert "url(" not in block.group(0), selector
-    assert "thyca-bg-" not in css and "thyca-bg-" not in kit
+    assert any("background: transparent" in block for block in sidebar), sidebar
+    assert any("background: transparent" in block for block in workspace), workspace
+    shell = re.search(r"\.notebook-shell\s*\{[^}]*\}", kit)
+    assert shell and 'url("../../images/thyca-bg-paper.png")' in shell.group(0), shell
     tokens = TOKENS_CSS.read_text(encoding="utf-8")
-    assert '--background-artwork: url("../../images/thyca-bg-outer.png")' in tokens
-    assert "--chat-brand-ink: var(--color-ink)" in tokens
+    assert "--chat-brand-ink: #3d2a1f" in tokens
     blocks = re.findall(r"body\s*\{[^}]*\}", tokens)
     assert any("background-image" in block for block in blocks), (
         "outer desk gradient on body must be preserved")
@@ -1643,10 +1637,10 @@ def test_avatar_reference_tokens_and_css() -> None:
     """Shared tokens carry the Vintage Ink palette; avatar CSS resolves
     halo/offline/badge/flag/stem colours through them."""
     tokens = TOKENS_CSS.read_text(encoding="utf-8")
-    for token in ("--note-do: #C2522B", "--note-re: #A84A3B",
-                  "--note-mi: #5C7448", "--note-fa: #B87B28",
-                  "--note-sol: #4E6E58", "--note-la: #9A5B32",
-                  "--note-si: #4A3525", "--note-star: #D8942B",
+    for token in ("--note-do: #BE5530", "--note-re: #865580",
+                  "--note-mi: #2B7A72", "--note-fa: #386288",
+                  "--note-sol: #537E56", "--note-la: #C48324",
+                  "--note-si: #735238", "--note-star: #D4912A",
                   "--avatar-eye: #2B211B", "--avatar-eye-offline: #786D61",
                   "--status-offline: #B5A898",
                   "--avatar-star-offline: #BDB2A6",

@@ -50,9 +50,6 @@
 }
 
 .markdown-body code {
-  padding: 0.08em 0.28em;
-  border-radius: var(--radius-xs);
-  background: var(--color-bg-selected);
   font-size: 0.86em;
 }
 
@@ -66,13 +63,6 @@
   white-space: pre;
 }
 
-.markdown-body pre code {
-  padding: 0;
-  border-radius: 0;
-  background: transparent;
-  font-size: inherit;
-}
-
 .markdown-body blockquote {
   padding-inline-start: 1rem;
   border-inline-start: 0.16rem solid var(--color-accent);
@@ -81,7 +71,6 @@
 
 .markdown-body a {
   color: var(--color-accent-deep);
-  overflow-wrap: anywhere;
   text-decoration-thickness: 0.08em;
   text-underline-offset: 0.14em;
 }

@@ -1870,9 +1870,19 @@ const findRow = (sid) => {
   walk(botNav);
   return out[0] || null;
 };
+const flapOf = (botId) => {
+  for (const item of botNav.children) {
+    const head = item.children && item.children[0];
+    const headBtn = head && head.children && head.children[0];
+    if (!headBtn || headBtn.dataset.botId !== botId) continue;
+    return item.children.find(
+      (c) => c.className === 'team-bot-flap') || null;
+  }
+  return null;
+};
 const newBtn = (botId) => {
-  const sub = subOf(botId);
-  return sub ? sub.children.find(
+  const flap = flapOf(botId);
+  return flap ? flap.children.find(
     (c) => c.className === 'team-new-session') || null : null;
 };
 const tick = () => new Promise((r) => setTimeout(r, 5));
@@ -1908,7 +1918,8 @@ def test_solo_subordinate_session_rows_have_no_avatar(node: str) -> None:
         "  sideKids: sideBtn.children.map((c) => c.tagName + ':' + c.className),"
         "  groupKids: groupBtn.children.map((c) => c.tagName + ':' + c.className),"
         "  groupTeam: (groupBtn.children[0]._html || '').includes('mk-wax')};")
-    assert value["subKids"] == ["session-row", "team-new-session"]
+    # "+ Phiên mới" lives on the open flap now; the sheet holds sessions only.
+    assert value["subKids"] == ["session-row"]
     assert value["sideKids"] == ["SPAN:session-name", "TIME:"]
     assert value["groupKids"][0] == "SPAN:team-avatar is-group"
     assert value["groupTeam"] is True
@@ -1930,9 +1941,9 @@ def test_new_session_button_renders_when_no_sessions(node: str) -> None:
         "    dm: 'thyca', updated_at: '2026-06-01T00:00:00Z', turns: 2}] },"
         " loadSession: async () => {}, afterTeamSession: async () => {},"
         " teamRefresh: async () => {} });"
-        " const sub = subOf('thyca');"
+        " const flap = flapOf('thyca');"
         " const btn = newBtn('thyca');"
-        " return { subKids: sub.children.map((c) => c.className),"
+        " return { subKids: flap.children.map((c) => c.className),"
         "  type: btn.type, tag: btn.tagName,"
         "  label: btn.getAttribute('aria-label'), text: btn.textContent,"
         "  disabled: !!btn.disabled,"
@@ -1978,7 +1989,7 @@ def test_new_session_create_posts_and_navigates(node: str) -> None:
         " return { posts, handed, writes,"
         "  reenabled: btn ? !btn.disabled : null,"
         "  text: btn && btn.textContent,"
-        "  errors: subOf('thyca').children"
+        "  errors: flapOf('thyca').children"
         "   .filter((c) => String(c.className).includes('is-error')).length };")
     assert value["posts"] == [
         {"url": "/api/sessions", "body": {"bots": ["thyca"]}}]
@@ -2020,8 +2031,8 @@ def test_new_session_create_rejects_invalid_detail(node: str) -> None:
             " teamRefresh: async () => {} });"
             " newBtn('thyca')._handlers.click();"
             " await tick(); await tick();"
-            " const sub = subOf('thyca');"
-            " const err = sub.children.find((c) =>"
+            " const flap = flapOf('thyca');"
+            " const err = flap.children.find((c) =>"
             "  String(c.className).includes('is-error'));"
             " const btn = newBtn('thyca');"
             " return { handed, error: err ? err.textContent : '',"
@@ -2053,13 +2064,13 @@ def test_new_session_create_failure_shows_error(node: str) -> None:
         " teamRefresh: async () => {} });"
         " newBtn('thyca')._handlers.click();"
         " await tick(); await tick();"
-        " const sub = subOf('thyca');"
-        " const err = sub.children.find((c) =>"
+        " const flap = flapOf('thyca');"
+        " const err = flap.children.find((c) =>"
         "  String(c.className).includes('is-error'));"
         " const btn = newBtn('thyca');"
         " return { error: err ? err.textContent : '',"
         "  role: err ? err.getAttribute('role') : '',"
-        "  order: sub.children.map((c) => c.className),"
+        "  order: flap.children.map((c) => c.className),"
         "  reenabled: btn ? !btn.disabled : null };")
     assert value["error"] == "server nổ"
     assert value["role"] == "alert"

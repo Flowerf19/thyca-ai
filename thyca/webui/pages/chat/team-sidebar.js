@@ -602,11 +602,27 @@ function render() {
       node: cluster,
     });
     if (!botExpanded(bot)) return;
+    // The open envelope's flap: a paper strip joined to the card's bottom
+    // edge holding the "+ Phiên mới" line; the session sheet slides out
+    // beneath it.
+    const flap = document.createElement("div");
+    flap.className = "team-bot-flap";
+    if (me && bot.id === me.id && mainError) flap.append(errorNote(mainError));
+    if (newSessionError && newSessionErrorBot === bot.id) {
+      flap.append(errorNote(newSessionError));
+    }
+    const create = document.createElement("button");
+    create.type = "button";
+    create.className = "team-new-session";
+    create.setAttribute("aria-label", `Tạo phiên mới với ${bot.name}`);
+    create.textContent = newSessionBot === bot.id ? "Đang tạo…" : "+ Phiên mới";
+    create.disabled = !!newSessionBot;
+    create.addEventListener("click", () => void createBotSession(bot.id));
+    flap.append(create);
+    cluster.append(flap);
     const sub = document.createElement("div");
     sub.className = "team-cluster-sessions";
     if (freshOpen.delete(bot.id)) sub.classList.add("is-fresh");
-    cluster.append(sub);
-    if (me && bot.id === me.id && mainError) sub.append(errorNote(mainError));
     const rememberedId = getRememberedDm(bot.id);
     if (rememberedId
       && !(hub.state.sessions || []).some((item) => String(item?.id) === rememberedId)) {
@@ -637,17 +653,7 @@ function render() {
     } else {
       sub.append(...sessions.map((session) => unifiedRow(session, bot.id)));
     }
-    if (newSessionError && newSessionErrorBot === bot.id) {
-      sub.append(errorNote(newSessionError));
-    }
-    const create = document.createElement("button");
-    create.type = "button";
-    create.className = "team-new-session";
-    create.setAttribute("aria-label", `Tạo phiên mới với ${bot.name}`);
-    create.textContent = newSessionBot === bot.id ? "Đang tạo…" : "+ Phiên mới";
-    create.disabled = !!newSessionBot;
-    create.addEventListener("click", () => void createBotSession(bot.id));
-    sub.append(create);
+    if (sub.childElementCount) cluster.append(sub);
   });
   groupSessions(hub.state.sessions).forEach((session) => {
     entries.push({

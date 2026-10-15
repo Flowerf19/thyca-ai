@@ -1,6 +1,5 @@
 import { usageLine } from "./chat-status.js";
-import { avatarVariantFor, botAvatarSVG } from "../../shared/js/bot-avatar.js";
-import { upgradeAvatarImg, followAvatar3D } from "../../shared/js/avatar-3d-bus.js";
+import { avatarVariantFor, botMark } from "../../shared/js/bot-avatar.js";
 import { chatBotForMessage } from "../../shared/js/chat-bot.js";
 
 // Brand + usage-row kit shared by the settled transcript and the live card.
@@ -42,8 +41,7 @@ export function chatBrandHeader({ state = "idle", status = "đã viết", expand
   const avatar = document.createElement("span");
   avatar.className = "chat-brand-avatar";
   avatar.setAttribute("aria-hidden", "true");
-  avatar.innerHTML = botAvatarSVG(avatarBot, { size: 48 });
-  upgradeAvatarImg(avatar, { bot: avatarBot });
+  avatar.innerHTML = botMark(avatarBot);
   const heading = document.createElement("h2");
   heading.textContent = name || profile.name || "Thyca";
   lockup.append(avatar, heading);
@@ -82,13 +80,7 @@ export function setChatBrand(target, { state, status } = {}) {
     const slot = header.querySelector(".chat-brand-avatar");
     if (slot) {
       const profile = brandAvatarProfile(header._botProfile, state);
-      slot.innerHTML = botAvatarSVG(profile, { size: 48 });
-      if (article?.classList?.contains("live-status")) {
-        void followAvatar3D(`chat:${profile?.id || "live"}`, slot, { bot: profile })
-          .then((ok) => { if (!ok) upgradeAvatarImg(slot, { bot: profile }); });
-      } else {
-        upgradeAvatarImg(slot, { bot: profile });
-      }
+      slot.innerHTML = botMark(profile);
     }
   }
   if (status) {

@@ -299,3 +299,51 @@ export function teamAvatarSVG(members, { size = 48, selected = false } = {}) {
     + badgeSVG(teamBadgeState(list))
     + "</svg>";
 }
+
+/* Wax-seal bot marks (chosen design, thyca-bot-design.html): a wobbly seal
+   blob per bot id + gold note glyph; state/selection drive CSS animation.
+   Pure CSS/SVG — no canvas. */
+
+let waxUid = 0;
+
+function waxPath(seed, r = 27, amp = 2.6, n = 13) {
+  let s = 0;
+  for (const ch of String(seed)) s = (s * 31 + ch.charCodeAt(0)) >>> 0;
+  const rand = () => (s = (s * 1664525 + 1013904223) >>> 0) / 4294967296;
+  const pts = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    const rr = r + (rand() * 2 - 1) * amp;
+    pts.push([32 + Math.cos(a) * rr, 32 + Math.sin(a) * rr]);
+  }
+  let d = `M${pts[0][0].toFixed(2)} ${pts[0][1].toFixed(2)}`;
+  for (let i = 0; i < n; i++) {
+    const p0 = pts[(i - 1 + n) % n], p1 = pts[i], p2 = pts[(i + 1) % n], p3 = pts[(i + 2) % n];
+    d += `C${(p1[0] + (p2[0] - p0[0]) / 6).toFixed(2)} ${(p1[1] + (p2[1] - p0[1]) / 6).toFixed(2)} `
+      + `${(p2[0] - (p3[0] - p1[0]) / 6).toFixed(2)} ${(p2[1] - (p3[1] - p1[1]) / 6).toFixed(2)} `
+      + `${p2[0].toFixed(2)} ${p2[1].toFixed(2)}`;
+  }
+  return d + "Z";
+}
+
+const WAX_STATE = { thinking: "thinking", running: "writing", done: "done", error: "error" };
+
+export function botMark(bot, { selected = false } = {}) {
+  const state = WAX_STATE[avatarStateFor(bot)] || "idle";
+  const d = waxPath(bot?.id || "thyca");
+  const id = `wx${waxUid++}`;
+  return `<span class="mk mk-wax" data-state="${state}" data-selected="${selected}" `
+    + `style="--bot:var(--avatar-tint, var(--team-tint, var(--color-accent)))" aria-hidden="true">`
+    + `<svg class="base" viewBox="0 0 64 64"><clipPath id="${id}"><path d="${d}"/></clipPath>`
+    + `<path class="wax-body" d="${d}"/><path d="${d}" fill="url(#waxShade)"/><path d="${d}" fill="url(#waxHl)"/>`
+    + `<g clip-path="url(#${id})"><rect class="wax-sheen" x="0" y="0" width="64" height="64" fill="url(#waxSheen)"/></g>`
+    + `<circle class="wax-ring-hi" cx="32" cy="32" r="19.5"/><circle class="wax-ring" cx="32" cy="32" r="19.5"/>`
+    + `<circle class="wax-notch" cx="32" cy="32" r="16.4"/>`
+    + `<path class="wax-crack" d="M40 7.5l-2.6 6.4 3 3.2-3.4 5.6"/></svg>`
+    + `<span class="glyph"><svg viewBox="0 0 24 24"><use href="#g-note"/></svg></span></span>`;
+}
+
+export function botMarkForTeam(members, { selected = false } = {}) {
+  const list = Array.isArray(members) ? members : [];
+  return botMark(list[0] || {}, { selected });
+}

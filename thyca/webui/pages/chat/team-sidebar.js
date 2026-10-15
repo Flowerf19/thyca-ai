@@ -1,6 +1,4 @@
-import { botAvatarSVG, teamAvatarSVG } from "../../shared/js/bot-avatar.js";
-import { createAvatar3DController } from "../../shared/js/bot-avatar-3d.js";
-import { avatar3dThumb, markAvatar3DDead, registerAvatar3D, upgradeAvatarImg } from "../../shared/js/avatar-3d-bus.js";
+import { botMark, botMarkForTeam } from "../../shared/js/bot-avatar.js";
 import { setChatBotRoster } from "../../shared/js/chat-bot.js";
 import { getJson, postJson } from "../../shared/js/http.js";
 import { cleanText, formatSessionTime } from "../../shared/js/format.js";
@@ -185,7 +183,7 @@ function avatarSlot(bot, mini = false, selected = false) {
   slot.className = mini ? "team-avatar is-mini" : "team-avatar";
   slot.style.setProperty("--team-tint", tintVarFor(bot?.id, bot?.tint));
   slot.setAttribute("aria-hidden", "true");
-  slot.innerHTML = botAvatarSVG(bot, { size: mini ? 32 : 48, selected });
+  slot.innerHTML = botMark(bot, { selected });
   return slot;
 }
 
@@ -198,7 +196,7 @@ function sessionIcon(session, selected = false) {
     const first = members[0];
     team.style.setProperty("--team-tint", tintVarFor(first?.id, first?.tint));
     team.setAttribute("aria-hidden", "true");
-    team.innerHTML = teamAvatarSVG(members, { size: 48, selected });
+    team.innerHTML = botMarkForTeam(members, { selected });
     return team;
   }
   if (members.length === 1) return avatarSlot(members[0], true, selected);
@@ -610,132 +608,12 @@ function render() {
     ? (a.k.localeCompare(b.k) || a.id.localeCompare(b.id))
     : (a.t < b.t ? 1 : -1)));
   list.replaceChildren(...entries.map((entry) => entry.node));
-  syncAvatar3D(list);
   const actions = actionsBox();
   if (actions) {
     actions.replaceChildren();
     actions.hidden = !sharedOpen;
     if (sharedOpen) actions.append(sharedPicker());
   }
-}
-
-/* 3D avatar rail (v5 progressive enhancement): one controller owns the
-   single live canvas — the selected channel gets the live model, every
-   other avatar slot gets a cached snapshot <img>. Any missing capability
-   (no WebGL/observers, Node test DOM) leaves the SVG fallback untouched. */
-let avatar3d = null;
-let avatar3dDead = false;
-let avatar3dToken = 0;
-let avatar3dLiveSlot = null;
-let gazeArmed = false;
-
-function avatar3dSupported() {
-  return typeof document !== "undefined"
-    && !!document.documentElement
-    && typeof document.createElement === "function"
-    && typeof getComputedStyle === "function"
-    && typeof matchMedia === "function"
-    && typeof IntersectionObserver === "function"
-    && typeof ResizeObserver === "function"
-    && typeof requestAnimationFrame === "function";
-}
-
-function avatar3dMembers(session) {
-  return (Array.isArray(session?.bots) ? session.bots : [])
-    .map((id) => bots.find((bot) => bot.id === String(id)))
-    .filter(Boolean);
-}
-
-function syncAvatar3D(list) {
-  if (!avatar3dSupported() || avatar3dDead) return;
-  if (!avatar3d) {
-    avatar3d = createAvatar3DController();
-    registerAvatar3D(avatar3d);
-  }
-  const token = ++avatar3dToken;
-  const liveBot = currentTeamBot();
-  const detail = hub?.state?.detail;
-  const sharedId = detail && isSharedSession(detail) ? String(detail.id || "") : "";
-  const jobs = [];
-  for (const button of list.querySelectorAll(".team-bot-item")) {
-    const bot = bots.find((item) => item.id === button.dataset.botId);
-    const slot = button.querySelector(".team-avatar");
-    if (!bot || !slot) continue;
-    jobs.push({ key: `sb:${bot.id}`, slot, input: { bot }, live: !sharedId && liveBot?.id === bot.id });
-  }
-  for (const button of list.querySelectorAll(".team-group-item")) {
-    const session = (hub?.state?.sessions || [])
-      .find((item) => String(item?.id) === button.dataset.sessionId);
-    const slot = button.querySelector(".team-avatar");
-    if (!session || !slot) continue;
-    jobs.push({
-      key: `sb:session-${session.id}`,
-      slot,
-      input: { bot: { id: `session-${session.id}` }, members: avatar3dMembers(session) },
-      live: String(session.id) === sharedId,
-    });
-  }
-  // Hide the fallback SVG up front so a fresh slot never flashes flat art
-  // before its canvas arrives; failures below restore it.
-  const unhide = (slot) => slot?.querySelectorAll("svg").forEach((svg) => {
-    svg.style.visibility = "";
-    delete svg.dataset.avatar3dHidden;
-  });
-  for (const job of jobs) {
-    job.slot.querySelectorAll("svg").forEach((svg) => {
-      svg.dataset.avatar3dHidden = "true";
-      svg.style.visibility = "hidden";
-    });
-  }
-
-  void (async () => {
-    for (const job of jobs) {
-      if (!job.live) continue;
-      avatar3dLiveSlot = null;
-      const ok = await avatar3d.mount(job.slot, job.input).catch(() => false);
-      if (token !== avatar3dToken) return;
-      if (!ok) {
-        avatar3dDead = true;
-        markAvatar3DDead();
-        for (const other of jobs) unhide(other.slot);
-        return;
-      }
-      avatar3dLiveSlot = job.slot;
-    }
-    avatar3d.pruneFollowers?.(new Set(jobs.map((job) => job.key)), "sb:");
-    for (const job of jobs) {
-      if (job.live) continue;
-      if (token !== avatar3dToken) return;
-      // Inactive slots stay animated too: one WebGL context repaints each
-      // slot's own 2D canvas per frame; snapshot <img> is the fallback.
-      const live = await avatar3d.follow(job.key, job.slot, job.input).catch(() => false);
-      if (token !== avatar3dToken) return;
-      if (!live) {
-        upgradeAvatarImg(job.slot, job.input);
-        void avatar3dThumb?.(job.input).then((url) => { if (!url) unhide(job.slot); });
-      }
-    }
-  })();
-}
-
-/* Eyes follow the conversation pointer (v5): passive listener, clicks pass
-   through untouched; leaving the canvas resets to a neutral gaze. */
-function armAvatar3DGaze() {
-  if (gazeArmed || !avatar3dSupported()) return;
-  const area = document.querySelector(".chat-canvas");
-  if (!area) return;
-  gazeArmed = true;
-  area.addEventListener("pointermove", (event) => {
-    if (!avatar3d || !avatar3dLiveSlot?.isConnected) return;
-    const bounds = area.getBoundingClientRect();
-    if (!bounds.width) return;
-    const avatar = avatar3dLiveSlot.getBoundingClientRect();
-    const x = Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width));
-    avatar3d.gaze(0.07 + x * 0.07,
-      Math.max(-0.10, Math.min(0.10,
-        -(event.clientY - avatar.top - avatar.height / 2) / 450 * 0.10)));
-  }, { passive: true });
-  area.addEventListener("pointerleave", () => avatar3d?.gaze(0, 0));
 }
 
 export function teamBots() {
@@ -778,7 +656,6 @@ export async function initTeamSidebar(entryHub) {
     return;
   }
   armTeamRefresh();
-  armAvatar3DGaze();
   render();
 }
 

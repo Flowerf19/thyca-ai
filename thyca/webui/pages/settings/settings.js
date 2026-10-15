@@ -89,45 +89,18 @@
   const status = document.getElementById("bot-list-status");
   if (!list || !status) return; // not on settings.html
 
-  // Note avatars (shared SVG renderer, loaded as a module; this file
-  // stays a classic script). Rows render immediately and the avatar
-  // fills in when the module lands.
+  // Wax-seal avatar marks (shared renderer, loaded as a module; this file
+  // stays a classic script). Rows render immediately and the mark fills in
+  // when the module lands.
   let renderAvatar = null;
-  let avatar3d = null;
-  let bus = null;
-  let liveTaken = false;
   const avatarNodes = new Map();
-  const apply3d = (bot, node) => {
-    if (!avatar3d || !node.isConnected) return;
-    if (!liveTaken) {
-      liveTaken = true;
-      void avatar3d.mount(node, { bot })
-        .then((ok) => { if (!ok) bus.upgradeAvatarImg(node, { bot }); });
-      return;
-    }
-    bus.upgradeAvatarImg(node, { bot });
-  };
   const fillAvatar = (bot, node) => {
-    if (renderAvatar && node) {
-      node.innerHTML = renderAvatar(bot, { size: 32 });
-      apply3d(bot, node);
-    }
+    if (renderAvatar && node) node.innerHTML = renderAvatar(bot);
   };
   import("./shared/js/bot-avatar.js")
     .then((mod) => {
-      renderAvatar = mod.botAvatarSVG;
+      renderAvatar = mod.botMark;
       for (const { bot, node } of avatarNodes.values()) fillAvatar(bot, node);
-    })
-    .catch(() => {});
-  Promise.all([
-    import("./shared/js/bot-avatar-3d.js"),
-    import("./shared/js/avatar-3d-bus.js"),
-  ])
-    .then(([mod3d, modBus]) => {
-      avatar3d = mod3d.createAvatar3DController();
-      bus = modBus;
-      bus.registerAvatar3D(avatar3d);
-      for (const { bot, node } of avatarNodes.values()) apply3d(bot, node);
     })
     .catch(() => {});
 

@@ -1,5 +1,4 @@
-import { botAvatarSVG } from "../../shared/js/bot-avatar.js";
-import { upgradeAvatarImg } from "../../shared/js/avatar-3d-bus.js";
+import { botMark } from "../../shared/js/bot-avatar.js";
 import { tintVarFor } from "./team-data.js";
 
 // Bot profile drawer (r9 §4.6): read-only. Anything the user wants changed
@@ -49,8 +48,7 @@ export function renderBotDrawer(bot) {
     const avatar = document.createElement("span");
     avatar.className = "bot-drawer-avatar";
     avatar.setAttribute("aria-hidden", "true");
-    avatar.innerHTML = botAvatarSVG(data, { size: 48 });
-    upgradeAvatarImg(avatar, { bot: data });
+    avatar.innerHTML = botMark(data);
     head.append(avatar);
   }
   const heading = document.createElement("div");

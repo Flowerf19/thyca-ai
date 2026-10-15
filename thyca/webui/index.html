@@ -136,7 +136,7 @@
 
         <footer class="site-footer">
         <form class="composer" id="composer" aria-label="Soạn tin nhắn">
-          <label class="letter-label" for="message">Gửi Thyca,</label>
+          <label class="letter-label" for="message"><span class="letter-label-mark" id="composer-label-mark" aria-hidden="true" hidden></span><span id="composer-label-text">Gửi Thyca,</span></label>
           <textarea id="message" name="message" rows="1" maxlength="4000" placeholder="Viết vài dòng cho Thyca…"></textarea>
           <div class="composer-toolbar">
             <div class="composer-tools">
@@ -149,6 +149,7 @@
                 <span>Nói</span>
               </button>
               <span class="context-meter" id="context-meter" hidden></span>
+              <span class="composer-team-hint" id="composer-team-hint">Gõ <kbd>@</kbd> để gọi một bot</span>
             </div>
             <div class="composer-send">
               <button class="advanced-button" id="composer-advanced" type="button" title="Tùy chọn nâng cao chưa có trong v1">Nâng cao ▾</button>
@@ -164,7 +165,6 @@
               <button class="stop-button" id="stop-button" type="button" aria-label="Dừng">Dừng</button>
             </div>
           </div>
-          <p class="composer-team-hint" id="composer-team-hint">Gõ <kbd>@</kbd> để gọi một bot</p>
           <div class="mention-popup" id="mention-popup" role="listbox" aria-label="Chọn bot để gọi" hidden></div>
           <p class="visually-hidden" id="composer-hint" role="status" aria-live="polite"></p>
           <div class="chat-idle-nudge" id="idle-nudge" hidden>

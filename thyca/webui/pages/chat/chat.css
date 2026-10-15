@@ -539,8 +539,8 @@
   z-index: 4;
   isolation: isolate;
   flex: 0 0 auto;
-  margin: 0.2rem 1.45rem 1.5rem;
-  padding: 1rem 1.25rem 0.75rem;
+  margin: 0.2rem 1.45rem 0.9rem;
+  padding: 0.6rem 1.1rem 0.55rem;
   border: var(--rule) solid var(--composer-border);
   border-radius: 0.875rem;
   background: var(--composer-bg);
@@ -588,7 +588,9 @@
 }
 
 .letter-label {
-  display: block;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
   margin-block-end: 0;
   color: var(--chat-brand-accent);
   font-family: var(--font-display);
@@ -596,14 +598,32 @@
   font-style: italic;
 }
 
+/* The addressee's seal rides the label: a bot's mark for a solo room,
+   the stacked group mark for a shared one. */
+.letter-label-mark {
+  display: inline-flex;
+  flex: none;
+  width: 1.55rem;
+  height: 1.55rem;
+}
+
+.letter-label-mark[hidden] {
+  display: none;
+}
+
+.letter-label-mark > * {
+  width: 100%;
+  height: 100%;
+}
+
 .composer textarea {
   display: block;
   width: 100%;
   min-width: 0;
-  min-height: min(6.25rem, 20dvh);
+  min-height: min(2.8rem, 20dvh);
   max-height: min(15rem, 30dvh);
   margin: 0;
-  padding: 0.875rem 0;
+  padding: 0.35rem 0;
   resize: vertical;
   overflow: auto;
   border: 0;
@@ -628,7 +648,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-  padding-block-start: 0.625rem;
+  padding-block-start: 0.4rem;
   border-block-start: var(--rule) solid var(--color-divider);
 }
 
@@ -922,8 +942,8 @@ button:active {
   .composer {
     position: relative;
     inset: auto;
-    margin: 0.4rem 0.75rem calc(0.75rem + env(safe-area-inset-bottom));
-    padding: 0.85rem 1rem 0.65rem;
+    margin: 0.4rem 0.75rem calc(0.6rem + env(safe-area-inset-bottom));
+    padding: 0.6rem 1rem 0.5rem;
     border-radius: 0.875rem;
   }
 
@@ -1708,11 +1728,11 @@ button:active {
   color: var(--color-danger, var(--color-accent-deep));
 }
 
-/* Composer: visible hint + @ popup + inert Nâng cao button. */
+/* Composer: the @ hint rides the tools row instead of its own line. */
 .composer-team-hint {
-  margin: 0.35rem 0 0;
   color: var(--color-muted);
-  font-size: 0.8rem;
+  font-size: 0.75rem;
+  white-space: nowrap;
 }
 
 .composer-team-hint kbd {

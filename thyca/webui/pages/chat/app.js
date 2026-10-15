@@ -41,7 +41,8 @@ import {
   syncContext,
 } from "./composer.js";
 import { initTeamSidebar, syncTeamSessions, teamBots } from "./team-sidebar.js";
-import { runGuardedStages } from "./team-data.js";
+import { botMark, botMarkGroup } from "../../shared/js/bot-avatar.js";
+import { runGuardedStages, tintVarFor } from "./team-data.js";
 import { markSeen } from "./team-unread.js";
 import { initMention, mentionKeydown } from "./team-mention.js";
 import { initTeamStrip, renderTeamStrip } from "./team-strip.js";
@@ -138,6 +139,40 @@ function syncComposer() {
   el.messageList.setAttribute("aria-busy", String(busy));
 }
 
+/* Composer addressee (prototype): the letter label carries the room's
+   seal — a bot's mark for a solo room, the stacked group mark for a
+   shared one — reading "Gửi <bot>," / "Gửi cả nhóm,"; the placeholder
+   names the room too. */
+function syncComposerAddressee(detail) {
+  const mark = document.querySelector("#composer-label-mark");
+  const text = document.querySelector("#composer-label-text");
+  if (!mark || !text || !el.input) return;
+  const ids = Array.isArray(detail?.bots) ? detail.bots.map(String) : [];
+  const roster = teamBots();
+  const members = ids.map((id) => roster.find((bot) => bot.id === id))
+    .filter(Boolean);
+  const group = ids.length > 1;
+  const first = members[0] || (ids[0] ? { id: ids[0] } : null)
+    || roster.find((bot) => bot.id === "thyca") || null;
+  text.textContent = group
+    ? "Gửi cả nhóm,"
+    : `Gửi ${first?.name || ids[0] || "Thyca"},`;
+  const room = group
+    ? cleanText(detail?.title, "nhóm")
+    : (first?.name || "Thyca");
+  el.input.placeholder = `Viết vài dòng cho ${room}…`;
+  if (first?.id) mark.style.setProperty("--team-tint", tintVarFor(first.id, first.tint));
+  if (group && typeof botMarkGroup === "function") {
+    mark.innerHTML = botMarkGroup(
+      members.length ? members : ids.map((id) => ({ id })));
+  } else if (first && typeof botMark === "function") {
+    mark.innerHTML = botMark(first);
+  } else {
+    mark.innerHTML = "";
+  }
+  mark.hidden = !mark.innerHTML;
+}
+
 function renderDetail(detail) {
   state.detail = detail;
   state.activeId = String(detail?.id || state.activeId || "");
@@ -176,6 +211,7 @@ function renderDetail(detail) {
   // replay (imports stripped there): guard every cross-module call.
   if (typeof renderTeamStrip === "function") renderTeamStrip();
   if (typeof syncTeamSessions === "function") syncTeamSessions();
+  if (typeof teamBots === "function") syncComposerAddressee(detail);
   requestAnimationFrame(() => scrollToBottom("auto"));
 }
 

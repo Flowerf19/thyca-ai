@@ -366,11 +366,11 @@ img.avatar-3d-img {
 .mk .glyph svg { width: 46%; height: 46%; stroke-width: 1.9; overflow: visible; }
 .mk-wax > svg.base { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; stroke: none; filter: drop-shadow(0 1.5px 1.2px rgba(61,42,31,0.38)) drop-shadow(0 0 0.5px rgba(61,42,31,0.3)); }
 .mk-wax .wax-body { fill: var(--bot); }
-.mk-wax .wax-ring { fill: none; stroke: color-mix(in srgb, var(--bot) 55%, #1d0f08); stroke-width: 1.4; }
+.mk-wax .wax-ring { fill: none; stroke: color-mix(in srgb, var(--bot) 55%, var(--wax-ink)); stroke-width: 1.4; }
 .mk-wax .wax-ring-hi { fill: none; stroke: rgba(255,236,214,0.32); stroke-width: 1; transform: translate(0.7px,0.9px); }
-.mk-wax .wax-notch { fill: none; stroke: color-mix(in srgb, var(--bot) 45%, #1d0f08); stroke-width: 1.3; stroke-dasharray: 1.1 3.1; transform-box: fill-box; transform-origin: center; }
+.mk-wax .wax-notch { fill: none; stroke: color-mix(in srgb, var(--bot) 45%, var(--wax-ink)); stroke-width: 1.3; stroke-dasharray: 1.1 3.1; transform-box: fill-box; transform-origin: center; }
 .mk-wax .wax-sheen { transform: translateX(-70px); }
-.mk-wax .wax-crack { fill: none; stroke: color-mix(in srgb, var(--bot) 35%, #120804); stroke-width: 1.3; opacity: 0; }
+.mk-wax .wax-crack { fill: none; stroke: color-mix(in srgb, var(--bot) 35%, var(--wax-ink-deep)); stroke-width: 1.3; opacity: 0; }
 .mk-wax .glyph { color: var(--bot-gold); }
 .mk-wax .glyph svg { filter: drop-shadow(0 -0.6px 0 rgba(30,14,6,0.45)) drop-shadow(0 0.6px 0 rgba(255,240,215,0.25)); }
 .mk-wax[data-state="idle"] .wax-sheen { animation: wax-sheen 7s var(--ease-in-out) infinite; }
@@ -378,12 +378,12 @@ img.avatar-3d-img {
 .mk-wax[data-state="writing"] .glyph svg { animation: wax-glyph-glow 1.6s var(--ease-in-out) infinite alternate; }
 .mk-wax[data-state="done"] { animation: wax-seal-press 560ms var(--ease-out) both; }
 .mk-wax[data-state="done"] .glyph svg { animation: wax-glyph-flash 900ms var(--ease-out) both; }
-.mk-wax[data-state="error"] .wax-body { fill: color-mix(in srgb, var(--bot) 45%, #8d8279); }
+.mk-wax[data-state="error"] .wax-body { fill: color-mix(in srgb, var(--bot) 45%, var(--wax-error)); }
 .mk-wax[data-state="error"] .wax-crack { opacity: 1; }
-.mk-wax[data-state="error"] .glyph { color: #d9cbb4; }
+.mk-wax[data-state="error"] .glyph { color: var(--wax-error-glyph); }
 @keyframes wax-sheen { 0%, 62% { transform: translateX(-70px); } 100% { transform: translateX(70px); } }
 @keyframes wax-seal-press { 0% { transform: scale(1.1) translateY(-2px); } 55% { transform: scale(0.96); } 100% { transform: none; } }
-@keyframes wax-glyph-flash { 0% { filter: brightness(1.9) drop-shadow(0 0 4px #fff3c8); } 100% { filter: none; } }
+@keyframes wax-glyph-flash { 0% { filter: brightness(1.9) drop-shadow(0 0 4px var(--wax-flash)); } 100% { filter: none; } }
 @keyframes wax-glyph-glow { from { opacity: .75; } to { opacity: 1; filter: drop-shadow(0 0 2.5px rgba(255,228,170,0.9)); } }
 @keyframes wax-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .mk-wax * { animation: none !important; } }

@@ -1524,7 +1524,7 @@ def test_sidebar_avatar_slot_present() -> None:
     src = SIDEBAR_SRC.read_text(encoding="utf-8")
     html = INDEX_HTML.read_text(encoding="utf-8")
     css = CHAT_CSS.read_text(encoding="utf-8")
-    for kept in ("team-avatar", "botAvatarSVG", "teamAvatarSVG",
+    for kept in ("team-avatar", "botMark", "botMarkForTeam",
                  "avatarSlot", "sessionIcon", "is-paused"):
         assert kept in src or kept in css, kept
     assert "team-cluster-sessions" in css
@@ -1544,22 +1544,19 @@ def test_normalize_bots_keeps_avatar_and_agent_status(node: str) -> None:
 def test_bot_avatar_variants_states_and_team(node: str) -> None:
     value = _run(
         node,
-        "const single = api.botAvatarSVG({id: 'coder', avatar: 'single-flag', tint: 'botanical'}, {size: 32});"
-        " const thyca = api.botAvatarSVG({id: 'thyca'}, {size: 32});"
-        " const err = api.botAvatarSVG({id: 'x', agentStatus: {state: 'error'}}, {size: 32});"
-        " const team = api.teamAvatarSVG(["
-        "  {id: 'a', tint: 'accent'}, {id: 'b', tint: 'ink'},"
-        "  {id: 'c', tint: 'botanical'}, {id: 'd', tint: 'ink'},"
-        "  {id: 'e', tint: 'ink'}], {size: 40});"
-        " return [single.includes('bot-single'), single.includes('is-idle'),"
-        "  thyca.includes('avatar-star'), err.includes('avatar-badge-error'),"
-        "  team.includes('bot-team'), team.includes('+2'),"
-        "  api.teamBadgeState([{agentStatus: {state: 'done'}}, {agentStatus: {state: 'error'}}]),"
+        "const single = api.botMark({id: 'coder', avatar: 'single-flag', tint: 'botanical'});"
+        " const err = api.botMark({id: 'x', agentStatus: {state: 'error'}});"
+        " const run = api.botMark({id: 'r', agentStatus: {state: 'running'}});"
+        " const team = api.botMarkForTeam(["
+        "  {id: 'a', tint: 'accent'}, {id: 'b', tint: 'ink'}]);"
+        " return [single.includes('mk-wax'), single.includes('data-state=\"idle\"'),"
+        "  single.includes('wax-body'), err.includes('data-state=\"error\"'),"
+        "  run.includes('data-state=\"writing\"'), team.includes('mk-wax'),"
         "  api.avatarVariantFor({id: 'thyca-demo'}),"
         "  api.avatarStateFor({status: 'paused', agentStatus: {state: 'running'}})];",
         via="avatar",
     )
-    assert value == [True, True, True, True, True, True, "error", "dotted", "offline"]
+    assert value == [True, True, True, True, True, True, "dotted", "offline"]
 
 
 def test_bot_avatar_css_has_no_design_hex() -> None:
@@ -1673,128 +1670,37 @@ def test_avatar_reference_tokens_and_css() -> None:
     assert "var(--font-reading)" in css
 
 
-def test_avatar_variant_classes_and_geometry(node: str) -> None:
-    """SVG emits validated avatar-variant-* classes, dedicated flag and
-    stem classes, variant gaze delays, and the reference beam endpoint."""
+def test_avatar_wax_mark_contract(node: str) -> None:
+    """Wax-seal marks (thyca-bot-design.html): seeded blob per bot id,
+    gold note glyph, state via data-state, selection via data-selected;
+    team marks reuse the first member's seal."""
     value = _run(
         node,
-        "const hollow = api.botAvatarSVG({id: 'd', avatar: 'hollow'}, {size: 32});"
-        " const single = api.botAvatarSVG({id: 's', avatar: 'single-flag'}, {size: 32});"
-        " const dbl = api.botAvatarSVG({id: 'x', avatar: 'double-flag'}, {size: 32});"
-        " const run = api.botAvatarSVG({id: 'r', avatar: 'dotted',"
-        "   agentStatus: {state: 'running'}}, {size: 32});"
-        " const team = api.teamAvatarSVG(["
-        "  {id: 'a', avatar: 'single-flag', tint: 'accent', agentStatus: {state: 'running'}},"
-        "  {id: 'b', avatar: 'hollow', tint: 'ink', status: 'paused'},"
-        "  {id: 'c', avatar: 'fermata', tint: 'botanical'}], {size: 40});"
-        " const pair = api.teamAvatarSVG([{id: 'a'}, {id: 'b'}], {size: 40});"
-        " return [hollow.includes('bot-single avatar-variant-hollow'),"
-        "  hollow.includes('--gaze-delay: -1.3s'),"
-        "  hollow.includes('rx=\"7.2\"'), hollow.includes('avatar-crescent'),"
-        "  hollow.includes('rx=\"10.4\"'), hollow.includes('rx=\"1.8\"'),"
-        "  hollow.includes('bot-ink-layer'),"
-        "  single.includes('avatar-flag'),"
-        "  (dbl.match(/avatar-flag-double/g) || []).length,"
-        "  run.includes('floating-note-stem'),"
-        "  team.includes('avatar-team-stem avatar-variant-single-flag'),"
-        "  team.includes('bot-node is-offline avatar-variant-hollow'),"
-        "  team.includes('avatar-team-stem avatar-variant-hollow is-offline'),"
-        "  team.includes('avatar-team-stem avatar-variant-fermata'),"
-        "  team.includes('floating-note avatar-variant-single-flag'),"
-        "  team.includes('team-floating-note-stem'),"
-        "  team.includes('M 15,17.8 L 41.6,13.3'),"
-        "  team.includes('bot-core bot-ink-layer'),"
-        "  team.includes('rx=\"6\" ry=\"4.5\"'),"
-        "  team.includes('bot-team-trio'),"
-        "  pair.includes('bot-team-pair'),"
-        "  !pair.includes('bot-team-trio'),"
-        "  pair.includes('M 18.4,16.3 L 37,12.8'),"
-        "  pair.includes('rx=\"7.2\" ry=\"5.3\"'),"
-        "  pair.includes('scale(0.72)'),"
-        "  pair.includes('scale(1.2)'),"
-        "  pair.includes('translate(14, 36)'),"
-        "  pair.includes('translate(30, 34)'),"
-        "  pair.includes('x1=\"19.8\"'),"
-        "  pair.includes('x1=\"35.8\"'),"
-        "  !pair.includes('avatar-extra'),"
-        "  team.includes('bot-team avatar-variant')];",
-        via="avatar",
-    )
-    assert value == [True, True, True, True, True, True, True, True, 2,
-                     True, True, True, True, True, True, True, True,
-                     True, True, True, True, True, True, True, True,
-                     True, True, True, True, True, True, False]
-
-
-def test_avatar_extra_tag_tracks_folded_members(node: str) -> None:
-    """The +N vintage stamp state comes from folded extra members only:
-    all extras offline wins; otherwise any extra running. The stamp is a
-    circle badge that never fills orange and stays out of the ink layer."""
-    value = _run(
-        node,
-        "const visRun = api.teamAvatarSVG(["
-        "  {id: 'a', agentStatus: {state: 'running'}}, {id: 'b'}, {id: 'c'},"
-        "  {id: 'd'}, {id: 'e'}]);"
-        " const extraOff = api.teamAvatarSVG(["
-        "  {id: 'a', agentStatus: {state: 'running'}}, {id: 'b'}, {id: 'c'},"
-        "  {id: 'd', status: 'paused'}, {id: 'e', status: 'paused'}]);"
-        " const extraRun = api.teamAvatarSVG(["
-        "  {id: 'a'}, {id: 'b'}, {id: 'c'},"
-        "  {id: 'd', agentStatus: {state: 'running'}}, {id: 'e'}]);"
-        " const mixed = api.teamAvatarSVG(["
-        "  {id: 'a'}, {id: 'b'}, {id: 'c'},"
-        "  {id: 'd', status: 'paused'}, {id: 'e', agentStatus: {state: 'running'}}]);"
-        " const two = api.teamAvatarSVG([{id: 'a'}, {id: 'b'}]);"
-        " const triRun = api.teamAvatarSVG(["
-        "  {id: 'a', agentStatus: {state: 'running'}}, {id: 'b'}, {id: 'c'}]);"
-        " const five = api.teamAvatarSVG(["
-        "  {id: 'a'}, {id: 'b'}, {id: 'c'}, {id: 'd'}, {id: 'e'}]);"
-        " const four = api.teamAvatarSVG(["
-        "  {id: 'a', agentStatus: {state: 'thinking'}}, {id: 'b'}, {id: 'c'},"
-        "  {id: 'd'}]);"
-        " return [visRun.includes('class=\"avatar-extra\"'),"
-        "  extraOff.includes('avatar-extra is-offline'),"
-        "  extraRun.includes('avatar-extra is-running'),"
-        "  mixed.includes('avatar-extra is-running'),"
-        "  two.includes('avatar-extra'),"
-        "  visRun.includes('<circle cx=\"8.5\" cy=\"9.5\" r=\"6.2\"'),"
-        "  visRun.includes('>+2<'),"
-        "  five.indexOf('avatar-extra') > five.indexOf('bot-ink-layer'),"
-        "  visRun.includes('cx=\"22.5\" cy=\"9\"'),"
-        "  triRun.includes('cx=\"17.9\"'),"
-        "  (four.match(/think-dot/g) || []).length,"
-        "  four.includes('cx=\"19.5\" cy=\"9\"'),"
-        "  four.includes('cx=\"25.5\" cy=\"4.6\"')];",
-        via="avatar",
-    )
-    assert value == [True, True, True, True, False, True, True, True,
-                     True, True, 3, True, True]
-
-
-def test_avatar_member_counts_and_states(node: str) -> None:
-    """Zero/one/two-member teams still render; selected now emits the
-    plain output (halo removed by design), the single core is 1.25× while
-    the team keeps native geometry."""
-    value = _run(
-        node,
-        "const none = api.teamAvatarSVG([], {size: 32});"
-        " const one = api.teamAvatarSVG([{id: 'a', avatar: 'dotted'}], {size: 32});"
-        " const two = api.teamAvatarSVG([{id: 'a'}, {id: 'b'}], {size: 32});"
-        " const sel = api.botAvatarSVG({id: 'a'}, {size: 32, selected: true});"
-        " const selTeam = api.teamAvatarSVG([{id: 'a'}, {id: 'b'}], {selected: true});"
-        " const plain = api.botAvatarSVG({id: 'a'}, {size: 32});"
-        " return [none.includes('bot-single'), one.includes('bot-single'),"
-        "  one.includes('avatar-variant-dotted'), two.includes('bot-team'),"
-        "  !two.includes('avatar-extra'),"
-        "  sel === plain,"
-        "  !sel.includes('avatar-halo'), !selTeam.includes('avatar-halo'),"
-        "  !sel.includes('avatar-selected-paper'),"
-        "  !sel.includes('avatar-selected-lines'),"
-        "  !sel.includes('avatar-selected-fold'),"
-        "  sel.includes('scale(1.25)'), !two.includes('scale(1.25)')];",
+        "const a = api.botMark({id: 'coder'});"
+        " const a2 = api.botMark({id: 'coder'});"
+        " const b = api.botMark({id: 'designer'});"
+        " const sel = api.botMark({id: 'coder'}, {selected: true});"
+        " const err = api.botMark({id: 'x', agentStatus: {state: 'error'}});"
+        " const run = api.botMark({id: 'y', agentStatus: {state: 'running'}});"
+        " const idle = api.botMark({id: 'z'});"
+        " const team = api.botMarkForTeam([{id: 'coder'}, {id: 'designer'}]);"
+        " const empty = api.botMarkForTeam([]);"
+        " const strip = (m) => m.replace(/wx\\d+/g, 'wx');"
+        " return [a.includes('mk mk-wax'), a.includes('wax-body'),"
+        "  a.includes('#g-note'), a.includes('aria-hidden'),"
+        "  strip(a) === strip(a2), strip(a) !== strip(b),"
+        "  sel.includes('data-selected'),"
+        "  !a.includes('data-selected=\"true\"'),"
+        "  err.includes('data-state=\"error\"'),"
+        "  run.includes('data-state=\"writing\"'),"
+        "  idle.includes('data-state=\"idle\"'),"
+        "  strip(team) === strip(a), empty.includes('mk-wax')];",
         via="avatar",
     )
     assert value == [True] * 13
+
+
+
 
 
 def test_avatar_reduced_motion_disables_all_animations() -> None:
@@ -1886,10 +1792,10 @@ def test_sidebar_rows_avatar_name_layout() -> None:
     groupav = re.search(r"\.team-avatar\.is-group\s*\{([^}]*)\}", css)
     assert groupav and "width: 3rem" in groupav.group(1)
 
-    assert "size: mini ? 32 : 48" in src
+    assert "botMark(bot, { selected })" in src
     assert "avatarSlot(members[0], true, selected)" in src, (
         "single-member session icon must forward selected for the halo")
-    assert "teamAvatarSVG(members, { size: 48, selected })" in src
+    assert "botMarkForTeam(members, { selected })" in src
     assert "if (group) button.append(sessionIcon(session, selected));" in src, (
         "solo subordinate sessions render no avatar slot")
     assert 'className = "team-new-session"' in src
@@ -1994,7 +1900,7 @@ def test_solo_subordinate_session_rows_have_no_avatar(node: str) -> None:
         "  subKids: sub ? sub.children.map((c) => c.className) : null,"
         "  sideKids: sideBtn.children.map((c) => c.tagName + ':' + c.className),"
         "  groupKids: groupBtn.children.map((c) => c.tagName + ':' + c.className),"
-        "  groupTeam: (groupBtn.children[0]._html || '').includes('bot-team')};")
+        "  groupTeam: (groupBtn.children[0]._html || '').includes('mk-wax')};")
     assert value["subKids"] == ["team-new-session", "session-row"]
     assert value["sideKids"] == ["SPAN:session-name", "TIME:"]
     assert value["groupKids"][0] == "SPAN:team-avatar is-group"
@@ -2367,10 +2273,11 @@ def test_root_traced_message_stays_visible_as_team_card(node: str) -> None:
         " const card = root.children.find((c) =>"
         "  String(c.className).includes('team-message'));"
         " const av = card && card.querySelector('.chat-brand-avatar');"
+        " const head = card && card.querySelector('.chat-brand');"
         " return {cards,"
         "  name: card && card.querySelector('h2').textContent,"
-        "  hollow: av && av._html.includes('avatar-variant-hollow'),"
-        "  scaled: av && av._html.includes('scale(1.25)'),"
+        "  hollow: head && head.className.includes('avatar-variant-hollow'),"
+        "  wax: av && av._html.includes('mk-wax'),"
         "  quill: !!(card && card.querySelector('.chat-brand-quill')),"
         "  content: card && card.querySelector('.markdown-body')"
         "   && card.querySelector('.markdown-body')._html.includes('xong nhé'),"
@@ -2378,7 +2285,7 @@ def test_root_traced_message_stays_visible_as_team_card(node: str) -> None:
     assert any("team-message" in cls for cls in value["cards"])
     assert value["name"] == "Designer"
     assert value["hollow"] is True
-    assert value["scaled"] is True
+    assert value["wax"] is True
     assert value["quill"] is False
     assert value["content"] is True
     assert value["exchange"] is True
@@ -2427,15 +2334,16 @@ def test_live_status_names_and_avatars_the_responding_bot(node: str) -> None:
         " const l = live.createLiveStatus(root, null,"
         "  {id:'designer',name:'Designer',avatar:'hollow'});"
         " const av1 = l.brand.querySelector('.chat-brand-avatar');"
-        " const state1 = av1 && av1._html.includes('is-thinking');"
+        " const state1 = av1 && av1._html.includes('data-state=\"thinking\"');"
         " live.updateLiveStatus(l, {type:'turn.completed'});"
         " const av2 = l.brand.querySelector('.chat-brand-avatar');"
+        " const head = l.brand;"
         " return {aria: l.article.getAttribute('aria-label'),"
         "  name: l.brand.querySelector('h2').textContent,"
         "  thinking: state1,"
-        "  done: av2 && av2._html.includes('is-done'),"
-        "  hollow: av2 && av2._html.includes('avatar-variant-hollow'),"
-        "  badge: av2 && av2._html.includes('avatar-badge-done')};")
+        "  done: av2 && av2._html.includes('data-state=\"done\"'),"
+        "  hollow: head.className.includes('avatar-variant-hollow'),"
+        "  badge: av2 && av2._html.includes('mk-wax')};")
     assert value["aria"] == "Designer đang trả lời"
     assert value["name"] == "Designer"
     assert value["thinking"] is True
@@ -2463,10 +2371,10 @@ def test_team_article_resolves_profile_without_opts(node: str) -> None:
         "  name: a.querySelector('h2') && a.querySelector('h2').textContent,"
         "  headCls: headA && headA.className,"
         "  accent: headA && headA._style['--chat-brand-accent'],"
-        "  hollow: avA && avA._html.includes('avatar-variant-hollow'),"
+        "  hollow: avA && avA._html.includes('mk-wax'),"
         "  bCls: b.querySelector('.chat-brand').className,"
         "  bFermata: b.querySelector('.chat-brand-avatar')"
-        "   ._html.includes('avatar-variant-fermata'),"
+        "   ._html.includes('mk-wax'),"
         "  teamTint: a._style['--team-tint']};")
     assert value["name"] == "Designer"
     assert value["headCls"] == "chat-brand avatar-variant-hollow"

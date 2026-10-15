@@ -97,11 +97,11 @@ function waxPath(seed, r = 27, amp = 2.6, n = 13) {
 
 const WAX_STATE = { thinking: "thinking", running: "writing", done: "done", error: "error" };
 
-export function botMark(bot, { selected = false } = {}) {
-  const state = WAX_STATE[avatarStateFor(bot)] || "idle";
+export function botMark(bot, { selected = false, state = null } = {}) {
+  const mkState = state || WAX_STATE[avatarStateFor(bot)] || "idle";
   const d = waxPath(bot?.id || "thyca");
   const id = `wx${waxUid++}`;
-  return `<span class="mk mk-wax" data-state="${state}" data-selected="${selected}" `
+  return `<span class="mk mk-wax" data-state="${mkState}" data-selected="${selected}" `
     + `style="--bot:var(--avatar-tint, var(--team-tint, var(--color-accent)))" aria-hidden="true">`
     + `<svg class="base" viewBox="0 0 64 64"><clipPath id="${id}"><path d="${d}"/></clipPath>`
     + `<path class="wax-body" d="${d}"/><path d="${d}" fill="url(#waxShade)"/><path d="${d}" fill="url(#waxHl)"/>`
@@ -112,7 +112,7 @@ export function botMark(bot, { selected = false } = {}) {
     + `<span class="glyph"><svg viewBox="0 0 24 24"><use href="#g-note"/></svg></span></span>`;
 }
 
-export function botMarkForTeam(members, { selected = false } = {}) {
+export function botMarkForTeam(members, { selected = false, state = null } = {}) {
   const list = Array.isArray(members) ? members : [];
-  return botMark(list[0] || {}, { selected });
+  return botMark(list[0] || {}, { selected, state });
 }

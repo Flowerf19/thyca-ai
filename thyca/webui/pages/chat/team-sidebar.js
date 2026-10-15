@@ -183,7 +183,7 @@ function avatarSlot(bot, mini = false, selected = false) {
   slot.className = mini ? "team-avatar is-mini" : "team-avatar";
   slot.style.setProperty("--team-tint", tintVarFor(bot?.id, bot?.tint));
   slot.setAttribute("aria-hidden", "true");
-  slot.innerHTML = botMark(bot, { selected });
+  slot.innerHTML = botMark(bot, { selected, state: selected ? null : "idle" });
   return slot;
 }
 
@@ -196,7 +196,7 @@ function sessionIcon(session, selected = false) {
     const first = members[0];
     team.style.setProperty("--team-tint", tintVarFor(first?.id, first?.tint));
     team.setAttribute("aria-hidden", "true");
-    team.innerHTML = botMarkForTeam(members, { selected });
+    team.innerHTML = botMarkForTeam(members, { selected, state: selected ? null : "idle" });
     return team;
   }
   if (members.length === 1) return avatarSlot(members[0], true, selected);

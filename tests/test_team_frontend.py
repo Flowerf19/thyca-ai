@@ -1792,10 +1792,10 @@ def test_sidebar_rows_avatar_name_layout() -> None:
     groupav = re.search(r"\.team-avatar\.is-group\s*\{([^}]*)\}", css)
     assert groupav and "width: 3rem" in groupav.group(1)
 
-    assert "botMark(bot, { selected })" in src
+    assert "botMark(bot, { selected, state: selected ? null : \"idle\" })" in src
     assert "avatarSlot(members[0], true, selected)" in src, (
         "single-member session icon must forward selected for the halo")
-    assert "botMarkForTeam(members, { selected })" in src
+    assert "botMarkForTeam(members, { selected, state: selected ? null : \"idle\" })" in src
     assert "if (group) button.append(sessionIcon(session, selected));" in src, (
         "solo subordinate sessions render no avatar slot")
     assert 'className = "team-new-session"' in src

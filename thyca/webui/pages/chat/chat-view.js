@@ -1,6 +1,7 @@
 import { usageLine } from "./chat-status.js";
 import { avatarVariantFor, botMark } from "../../shared/js/bot-avatar.js";
 import { chatBotForMessage } from "../../shared/js/chat-bot.js";
+import { tintVarFor } from "./team-data.js";
 
 // Brand + usage-row kit shared by the settled transcript and the live card.
 // The implementations live in transcript.js (settled) and live-status.js
@@ -26,6 +27,7 @@ export function chatBrandHeader({ state = "idle", status = "đã viết", expand
   const avatarBot = brandAvatarProfile(profile, state);
   const header = document.createElement("header");
   header.className = `chat-brand avatar-variant-${avatarVariantFor(profile)}`;
+  header.style.setProperty("--avatar-tint", tintVarFor(profile.id, profile.tint));
   header.style.setProperty(
     "--chat-brand-accent",
     "var(--avatar-tint, var(--team-tint, var(--color-accent)))");

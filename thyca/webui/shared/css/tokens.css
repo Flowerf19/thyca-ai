@@ -36,14 +36,40 @@
   --color-accent-ink: oklch(95.6% 0.021 65.3);
   --color-botanical: oklch(51.3% 0.049 68.6);
 
-  --note-do: #BE5530;
-  --note-re: #865580;
-  --note-mi: #2B7A72;
-  --note-fa: #386288;
-  --note-sol: #537E56;
-  --note-la: #C48324;
-  --note-si: #735238;
-  --note-star: #D4912A;
+  --note-do: #C2522B;
+  --note-re: #A84A3B;
+  --note-mi: #5C7448;
+  --note-fa: #B87B28;
+  --note-sol: #4E6E58;
+  --note-la: #9A5B32;
+  --note-si: #4A3525;
+  --note-star: #D8942B;
+  --note-gold: var(--note-star);
+  --note-cream: #FAF3E6;
+  --note-ink: #26160D;
+
+  --wood-star-light: #DE6E46;
+  --wood-star-side: #7A2D12;
+  --wood-hollow-light: #C66656;
+  --wood-hollow-side: #68271D;
+  --wood-single-flag-light: #789262;
+  --wood-single-flag-side: #354627;
+  --wood-double-flag-light: #D4963E;
+  --wood-double-flag-side: #734912;
+  --wood-dotted-light: #688C73;
+  --wood-dotted-side: #2B4232;
+  --wood-fermata-light: #B8764A;
+  --wood-fermata-side: #5E3318;
+  --wood-plain-light: #694E3A;
+  --wood-plain-side: #261910;
+  --wood-offline-base: #9E9080;
+  --wood-offline-side: #5E5348;
+  /* v3.5 stage backdrop behind each carved-wood avatar */
+  --stage-top: #FFF9EE;
+  --stage-mid: #EFE0C9;
+  --stage-edge: #E2CEB0;
+  --stage-border: #DECBB0;
+  --stage-inner: rgba(80, 50, 20, 0.09);
   --note-bg: #F9DFD5;
   --note-fold: #E8BEB0;
   --note-lines: rgba(217, 93, 57, 0.16);

@@ -239,10 +239,8 @@ export function createAvatar3DController() {
       modelRef = modelModule;
       if (!renderer) {
         renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, powerPreference: "low-power" });
+        // v3.5 verbatim: raw output (no encoding/tone-mapping) + shadow maps.
         renderer.setClearColor(0x000000, 0);
-        renderer.outputEncoding = THREE.sRGBEncoding;
-        renderer.toneMapping = THREE.ACESFilmicToneMapping;
-        renderer.toneMappingExposure = 1.05;
         renderer.shadowMap.enabled = true;
         canvas = renderer.domElement;
         canvas.setAttribute("aria-hidden", "true");

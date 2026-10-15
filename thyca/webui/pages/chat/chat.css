@@ -1228,8 +1228,8 @@ button:active {
   position: relative;
   display: grid;
   place-items: center;
-  width: 3rem;
-  height: 3rem;
+  width: 4rem;
+  height: 4rem;
 }
 
 .team-avatar > svg {

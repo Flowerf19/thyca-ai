@@ -1633,10 +1633,10 @@ def test_avatar_reference_tokens_and_css() -> None:
     """Shared tokens carry the Vintage Ink palette; avatar CSS resolves
     halo/offline/badge/flag/stem colours through them."""
     tokens = TOKENS_CSS.read_text(encoding="utf-8")
-    for token in ("--note-do: #BE5530", "--note-re: #865580",
-                  "--note-mi: #2B7A72", "--note-fa: #386288",
-                  "--note-sol: #537E56", "--note-la: #C48324",
-                  "--note-si: #735238", "--note-star: #D4912A",
+    for token in ("--note-do: #C2522B", "--note-re: #A84A3B",
+                  "--note-mi: #5C7448", "--note-fa: #B87B28",
+                  "--note-sol: #4E6E58", "--note-la: #9A5B32",
+                  "--note-si: #4A3525", "--note-star: #D8942B",
                   "--avatar-eye: #2B211B", "--avatar-eye-offline: #786D61",
                   "--status-offline: #B5A898",
                   "--avatar-star-offline: #BDB2A6",
@@ -1880,7 +1880,7 @@ def test_sidebar_rows_avatar_name_layout() -> None:
     avatar = re.search(r"^\.team-avatar\s*\{([^}]*)\}", css, re.M)
     assert avatar and "grid-row: 1;" in avatar.group(1)
     assert "grid-row: 1 / -1" not in avatar.group(1)
-    assert "width: 3rem" in avatar.group(1)
+    assert "width: 4rem" in avatar.group(1)
     mini = re.search(r"\.team-avatar\.is-mini\s*\{([^}]*)\}", css)
     assert mini and "width: 2rem" in mini.group(1)
     groupav = re.search(r"\.team-avatar\.is-group\s*\{([^}]*)\}", css)

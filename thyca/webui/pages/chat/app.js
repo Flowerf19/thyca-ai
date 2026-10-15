@@ -387,6 +387,11 @@ const hub = {
     await refreshSessions();
     syncTeamSessions();
   },
+  // Rename/delete dialogs live in sessions-sidebar; the team list re-reads
+  // the shared sessions state after them.
+  onSessionsChanged: () => {
+    if (typeof syncTeamSessions === "function") syncTeamSessions();
+  },
 };
 initSessionsSidebar(hub);
 initTurnFollow(hub);

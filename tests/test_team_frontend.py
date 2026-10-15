@@ -1188,18 +1188,17 @@ def test_sidebar_sessions_render_under_active_bot_row(node: str) -> None:
         "  bot: (row.children[0] && row.children[0].dataset.botId) || '',"
         "  sid: (row.children[0] && row.children[0].dataset.sessionId) || '',"
         "  text: row.textContent }));")
-    # Flat by each channel's own latest activity (2026-10-14): bots do
-    # NOT inherit a group's timestamp just by participating in it, so
-    # the group (07-02) outranks Coder's private activity (07-01) and
-    # Thyca's DM activity (06-01) — no bot/group distinction in sorting.
-    # Coder's private session is NOT in Thyca's cluster. The DM session
-    # ("dm") renders NO row: the Thyca bot row itself is the DM entry
-    # (supersedes the earlier expectation that listed it).
+    # Pinned letters lead: Thyca is pinned by design so its cluster tops
+    # the list even though the group (07-02) and Coder (07-01) have newer
+    # activity than Thyca's DM (06-01). Within the open cluster the bot
+    # row is followed by its flap (Đổi tên/Xóa/+ Phiên mới). Coder's
+    # private session is NOT in Thyca's cluster. The DM session ("dm")
+    # renders NO row: the Thyca bot row itself is the DM entry.
     assert [(row["bot"], row["sid"]) for row in value] == [
-        ("", "shared"), ("coder", ""), ("thyca", ""), ("", "")]
+        ("thyca", ""), ("", ""), ("", "shared"), ("coder", "")]
     # Shared annotation still present on the group row's subline.
-    assert "Coder" in value[0]["text"] and "Thyca" in value[0]["text"]
-    assert "+ Phiên mới" in value[-1]["text"]
+    assert "Coder" in value[2]["text"] and "Thyca" in value[2]["text"]
+    assert "+ Phiên mới" in value[1]["text"]
 
 
 def test_sidebar_bot_with_only_dm_renders_zero_session_rows(node: str) -> None:
@@ -1926,8 +1925,10 @@ def test_solo_subordinate_session_rows_have_no_avatar(node: str) -> None:
 
 
 def test_new_session_button_renders_when_no_sessions(node: str) -> None:
-    """The selected bot's cluster always leads with the create button —
-    even with zero subordinate sessions — labelled for that bot."""
+    """The selected bot's open flap holds the DM's Đổi tên/Xóa actions
+    (plain .session-action words, like session rows) then the create
+    button — even with zero subordinate sessions — labelled for that
+    bot."""
     value = _sidebar(node,
         _TEAM_NAV_SETUP
         + "globalThis.fetch = async () => ({ ok: true, status: 200,"
@@ -1948,7 +1949,8 @@ def test_new_session_button_renders_when_no_sessions(node: str) -> None:
         "  label: btn.getAttribute('aria-label'), text: btn.textContent,"
         "  disabled: !!btn.disabled,"
         "  coderBtn: !!newBtn('coder') };")
-    assert value["subKids"] == ["team-new-session"]
+    assert value["subKids"] == [
+        "session-action", "session-action is-delete", "team-new-session"]
     assert value["tag"] == "BUTTON" and value["type"] == "button"
     assert value["label"] == "Tạo phiên mới với Thyca"
     assert "+ Phiên mới" in value["text"]
@@ -2074,10 +2076,10 @@ def test_new_session_create_failure_shows_error(node: str) -> None:
         "  reenabled: btn ? !btn.disabled : null };")
     assert value["error"] == "server nổ"
     assert value["role"] == "alert"
-    # Sealed-letter spec: "+ Phiên mới" trails the list; its error note
-    # sits just above it.
+    # Sealed-letter spec: "+ Phiên mới" trails the flap; its error note
+    # sits above the DM's Đổi tên/Xóa words and the create line.
     assert "is-error" in value["order"][0]
-    assert value["order"][1] == "team-new-session"
+    assert value["order"][-1] == "team-new-session"
     assert value["reenabled"] is True
 
 

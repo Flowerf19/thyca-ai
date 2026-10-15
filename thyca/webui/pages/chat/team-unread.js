@@ -96,3 +96,22 @@ export function forgetDmSession(sessionId) {
   }
   if (changed) writeMap(DM_KEY, map);
 }
+
+/* Pinned bots: {id: true}. Thyca is pinned by design (sorted first and
+   never unpin-able) — the sidebar checks TEAM_BOT_ID itself, so the store
+   only carries user-picked ids. */
+export const PIN_KEY = "thyca.team.pins.v1";
+
+export function getPins() {
+  const map = readMap(PIN_KEY);
+  return new Set(Object.keys(map).filter((key) => map[key] === true));
+}
+
+export function setPin(botId, on) {
+  const bot = String(botId || "");
+  if (!bot) return;
+  const map = readMap(PIN_KEY);
+  if (on) map[bot] = true;
+  else delete map[bot];
+  writeMap(PIN_KEY, map);
+}

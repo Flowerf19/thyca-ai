@@ -189,7 +189,7 @@ export async function refreshSessions(revealId = "") {
 
 // Titles are the user's own text: it is stored as written and returned to the
 // row verbatim, so the dialog reopens showing exactly what was saved.
-function openRename(session) {
+export function openRename(session) {
   const { el } = sidebarDeps;
   const id = String(session.id || "");
   if (!id) return;
@@ -223,9 +223,10 @@ export async function submitRename() {
   el.renameDialog.close();
   if (id === state.activeId) sidebarDeps.setChatTitle(title);
   await refreshSessions(id); // renamed row may sit on another page
+  sidebarDeps.onSessionsChanged?.();
 }
 
-function openDelete(session) {
+export function openDelete(session) {
   const { state, el } = sidebarDeps;
   const id = String(session.id || "");
   if (!id) return;
@@ -253,4 +254,5 @@ export async function submitDelete() {
   el.deleteDialog.close();
   if (state.activeId === id) sidebarDeps.newSession();
   await refreshSessions();
+  sidebarDeps.onSessionsChanged?.();
 }

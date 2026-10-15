@@ -22,11 +22,14 @@ import {
 } from "./team-data.js";
 import {
   forgetDmSession,
+  getPins,
   getRememberedDm,
   getSeen,
   markSeen,
   rememberDm,
+  setPin,
 } from "./team-unread.js";
+import { openDelete, openRename } from "./sessions-sidebar.js";
 
 // Team sidebar: agents are the primary list, reusing the legacy session-row
 // anatomy (sessions-sidebar.js + kit.css .session-item): each agent row is a
@@ -57,6 +60,13 @@ let activeBot = "";
    so streamed-status re-renders never replay it. */
 const closedIds = new Set();
 const freshOpen = new Set();
+/* Group letters open the same way as bot bars: click expands a flap with
+   the member picker and opens the room; click again folds it. */
+const openGroups = new Set();
+/* Session sheet paging: newest PAGE_SIZE rows per page, remembered per
+   bot across re-renders. */
+const PAGE_SIZE = 5;
+const pageByBot = new Map();
 let sharedOpen = false;
 let sharedError = "";
 // Checkbox picks survive re-renders while the picker stays open.
@@ -122,6 +132,34 @@ function botSubLabel(bot) {
   const live = LIVE_LABEL[avatarStateFor(bot)];
   if (live) return live;
   return [bot.role, statusLabel(bot.status)].filter(Boolean).join(" · ");
+}
+
+function sheetPager(botId, page, pageCount) {
+  const pager = document.createElement("div");
+  pager.className = "team-sheet-pager";
+  const turn = (delta) => {
+    pageByBot.set(botId, page + delta);
+    render();
+  };
+  const prev = document.createElement("button");
+  prev.type = "button";
+  prev.className = "team-sheet-page";
+  prev.textContent = "‹ Trước";
+  prev.disabled = page <= 0;
+  prev.setAttribute("aria-label", "Trang phiên trước");
+  prev.addEventListener("click", () => turn(-1));
+  const label = document.createElement("span");
+  label.className = "team-sheet-page-label";
+  label.textContent = `${page + 1} / ${pageCount}`;
+  const next = document.createElement("button");
+  next.type = "button";
+  next.className = "team-sheet-page";
+  next.textContent = "Sau ›";
+  next.disabled = page >= pageCount - 1;
+  next.setAttribute("aria-label", "Trang phiên sau");
+  next.addEventListener("click", () => turn(1));
+  pager.append(prev, label, next);
+  return pager;
 }
 
 /* Expanded = shows its session sheet below the envelope row. Only the
@@ -202,11 +240,92 @@ function unreadSuffix(state) {
   return state.count > 0 ? `, ${state.count} chưa đọc` : ", có tin chưa đọc";
 }
 
-/* Avatar slot: the design v1.1 note avatar (SVG port in shared/js/
-   bot-avatar.js) in the legacy icon column. Shape comes from the
-   bot's Agent Card avatar, colour from its tint, state from the
-   backend agent_status. Single participant → one avatar; a shared
-   session → the composite team avatar (3 heads + +N). */
+/* Row action button, same convention as sessions-sidebar (word, not
+   glyph): sits in .session-actions on the row wrapper, hover-revealed. */
+function rowAction(className, label, text, onClick) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = className;
+  button.textContent = text;
+  button.setAttribute("aria-label", label);
+  button.addEventListener("click", onClick);
+  return button;
+}
+
+function isPinnedBot(botId) {
+  return botId === TEAM_BOT_ID || getPins().has(botId);
+}
+
+/* Pinning sorts the letter to the top of the list. Thyca is pinned by
+   design — a permanent mark, not a toggle. */
+function pinControl(row, bot) {
+  const pinned = isPinnedBot(bot.id);
+  row.classList.toggle("is-pinned", pinned);
+  const actions = document.createElement("span");
+  actions.className = "session-actions";
+  if (bot.id === TEAM_BOT_ID) {
+    const mark = document.createElement("span");
+    mark.className = "session-action is-pinned-mark";
+    mark.textContent = "Ghim";
+    mark.setAttribute("aria-hidden", "true");
+    actions.append(mark);
+  } else {
+    actions.append(rowAction(
+      "session-action",
+      pinned ? `Bỏ ghim ${bot.name}` : `Ghim ${bot.name} lên đầu`,
+      pinned ? "Bỏ ghim" : "Ghim",
+      () => {
+        setPin(bot.id, !pinned);
+        render();
+      },
+    ));
+  }
+  row.append(actions);
+}
+
+function groupFlap(session) {
+  const flap = document.createElement("div");
+  flap.className = "team-bot-flap";
+  const title = cleanText(session.title, "Phiên trống");
+  flap.append(
+    rowAction("session-action", `Đổi tên nhóm ${title}`, "Đổi tên",
+      () => openRename(session)),
+    rowAction("session-action is-delete", `Xóa nhóm ${title}`, "Xóa",
+      () => openDelete(session)),
+  );
+  const label = document.createElement("span");
+  label.className = "team-flap-label";
+  const members = new Set((Array.isArray(session?.bots) ? session.bots : []).map(String));
+  const candidates = bots.filter((bot) => !members.has(bot.id));
+  if (!candidates.length) {
+    label.textContent = "Đã đủ bot trong nhóm.";
+    flap.append(label);
+  }
+  for (const bot of candidates) {
+    const add = rowAction(
+      "session-action team-flap-add",
+      `Thêm ${bot.name} vào nhóm`,
+      `+ ${bot.name}`,
+      async () => {
+        add.disabled = true;
+        try {
+          await postJson(`/api/sessions/${encodeURIComponent(session.id)}/bots`,
+            { bot_id: bot.id, action: "add" });
+          await hub?.teamRefresh?.();
+        } catch (error) {
+          add.disabled = false;
+          add.textContent = messageOf(error, "Lỗi — thử lại");
+        }
+      },
+    );
+    flap.append(add);
+  }
+  return flap;
+}
+
+/* Avatar slot: the wax-seal mark in the legacy icon column. Colour from
+   the bot's Agent Card tint, state from agent_status; a shared session
+   shows the stacked group mark. */
 function avatarSlot(bot, mini = false, selected = false) {
   const slot = document.createElement("span");
   slot.className = mini ? "team-avatar is-mini" : "team-avatar";
@@ -293,6 +412,7 @@ function botRow(bot) {
     void openBot(bot.id);
   });
   row.append(button);
+  pinControl(row, bot);
   return row;
 }
 
@@ -338,16 +458,43 @@ function unifiedRow(session, botId = "", group = false) {
     button.setAttribute("aria-label",
       `${cleanText(session.title, "Phiên trống")}, có tin chưa đọc`);
   }
+  if (group) {
+    const sid = String(session.id || "");
+    button.classList.toggle("is-open", openGroups.has(sid));
+    button.setAttribute("aria-expanded", openGroups.has(sid) ? "true" : "false");
+    const caret = document.createElement("span");
+    caret.className = "team-bot-caret";
+    caret.setAttribute("aria-hidden", "true");
+    button.append(caret);
+  }
   button.addEventListener("click", () => {
     mainToken += 1;
     exitPicking();
     const sid = button.dataset.sessionId;
+    if (group && openGroups.has(sid)) {
+      // Fold only — the open room is untouched.
+      openGroups.delete(sid);
+      render();
+      return;
+    }
+    if (group) openGroups.add(sid);
     const opened = (hub?.state?.sessions || [])
       .find((item) => String(item?.id) === sid);
     if (opened && botId && isSoloSession(opened, botId)) rememberDm(botId, sid);
     void hub.loadSession(sid);
   });
-  row.append(button);
+  const title = cleanText(session.title, "Phiên trống");
+  const actions = document.createElement("span");
+  actions.className = "session-actions";
+  if (!group) {
+    actions.append(rowAction(
+      "session-action", `Đặt tên cho phiên ${title}`, "Đổi tên",
+      () => openRename(session)));
+  }
+  actions.append(rowAction(
+    "session-action is-delete", `Xóa phiên ${title}`, "Xóa",
+    () => openDelete(session)));
+  row.append(button, actions);
   return row;
 }
 
@@ -600,16 +747,32 @@ function render() {
       k: String(bot.name || bot.id || ""),
       id: String(bot.id || ""),
       node: cluster,
+      pin: isPinnedBot(bot.id),
     });
     if (!botExpanded(bot)) return;
+    const rememberedId = getRememberedDm(bot.id);
+    if (rememberedId
+      && !(hub.state.sessions || []).some((item) => String(item?.id) === rememberedId)) {
+      forgetDmSession(rememberedId);
+    }
+    const main = findMainSession(hub.state.sessions, bot.id, rememberedId);
     // The open envelope's flap: a paper strip joined to the card's bottom
-    // edge holding the "+ Phiên mới" line; the session sheet slides out
-    // beneath it.
+    // edge holding the DM's Đổi tên/Xóa (same .session-action as plain
+    // session rows) plus the "+ Phiên mới" line; the sheet slides below.
     const flap = document.createElement("div");
     flap.className = "team-bot-flap";
     if (me && bot.id === me.id && mainError) flap.append(errorNote(mainError));
     if (newSessionError && newSessionErrorBot === bot.id) {
       flap.append(errorNote(newSessionError));
+    }
+    if (main) {
+      const dmTitle = cleanText(main.title, "Phiên trống");
+      flap.append(
+        rowAction("session-action", `Đổi tên phiên ${dmTitle}`, "Đổi tên",
+          () => openRename(main)),
+        rowAction("session-action is-delete", `Xóa phiên ${dmTitle}`, "Xóa",
+          () => openDelete(main)),
+      );
     }
     const create = document.createElement("button");
     create.type = "button";
@@ -623,11 +786,6 @@ function render() {
     const sub = document.createElement("div");
     sub.className = "team-cluster-sessions";
     if (freshOpen.delete(bot.id)) sub.classList.add("is-fresh");
-    const rememberedId = getRememberedDm(bot.id);
-    if (rememberedId
-      && !(hub.state.sessions || []).some((item) => String(item?.id) === rememberedId)) {
-      forgetDmSession(rememberedId);
-    }
     // This bot's private (solo) sessions only. Shared sessions are not
     // sub-sessions of any bot — they are group chats and render at top
     // level below (2026-10-14). Thyca's pre-team sessions are simply
@@ -636,7 +794,6 @@ function render() {
     // duplicated the bot row. unifiedSessionsForBot drops the dm-marked
     // session; findMainSession additionally resolves the pre-marker DM
     // (remembered/newest solo) so that fallback window is dropped too.
-    const main = findMainSession(hub.state.sessions, bot.id, rememberedId);
     const sessions = unifiedSessionsForBot(hub.state.sessions, bot.id)
       .filter((session) => !main || String(session.id) !== String(main.id))
       .filter((session) => !isSharedSession(session));
@@ -651,21 +808,40 @@ function render() {
         sub.append(empty);
       }
     } else {
-      sub.append(...sessions.map((session) => unifiedRow(session, bot.id)));
+      const pageCount = Math.ceil(sessions.length / PAGE_SIZE);
+      const page = Math.min(pageByBot.get(bot.id) || 0, pageCount - 1);
+      sub.append(...sessions
+        .slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE)
+        .map((session) => unifiedRow(session, bot.id)));
+      if (pageCount > 1) sub.append(sheetPager(bot.id, page, pageCount));
     }
     if (sub.childElementCount) cluster.append(sub);
   });
   groupSessions(hub.state.sessions).forEach((session) => {
+    const sid = String(session.id || "");
+    let node = unifiedRow(session, "", true);
+    if (openGroups.has(sid)) {
+      const cluster = document.createElement("div");
+      cluster.className = "team-cluster";
+      cluster.append(node, groupFlap(session));
+      node = cluster;
+    }
     entries.push({
       t: String(session.updated_at || ""),
       k: String(session.title || session.id || ""),
-      id: String(session.id || ""),
-      node: unifiedRow(session, "", true),
+      id: sid,
+      node,
     });
   });
-  entries.sort((a, b) => (a.t === b.t
-    ? (a.k.localeCompare(b.k) || a.id.localeCompare(b.id))
-    : (a.t < b.t ? 1 : -1)));
+  // Pinned bots lead the list (Thyca always first among them — it is
+  // pinned by design); everything else sorts by latest activity.
+  entries.sort((a, b) => (Number(b.pin || false) - Number(a.pin || false))
+    || ((a.pin && b.pin && a.id !== b.id)
+      ? (a.id === TEAM_BOT_ID ? -1 : b.id === TEAM_BOT_ID ? 1 : 0)
+      : 0)
+    || (a.t === b.t
+      ? (a.k.localeCompare(b.k) || a.id.localeCompare(b.id))
+      : (a.t < b.t ? 1 : -1)));
   list.replaceChildren(...entries.map((entry) => entry.node));
   const actions = actionsBox();
   if (actions) {

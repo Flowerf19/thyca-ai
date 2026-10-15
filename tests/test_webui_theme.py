@@ -74,7 +74,7 @@ def test_selected_rows_use_shared_selected_token() -> None:
             "chat.css").read_text(encoding="utf-8")
     team = re.search(
         r"#team-bot-list \.session-item\.is-active\s*\{([^}]*)\}", chat)
-    assert team and "background: transparent" in team.group(1), (
+    assert team and "background-color: transparent" in team.group(1), (
         "selected bot row stays transparent — the tint glow/bar pseudo-"
         "elements carry the active state")
     before = re.search(

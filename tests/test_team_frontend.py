@@ -1587,7 +1587,7 @@ def test_chat_surfaces_and_imagery_unchanged() -> None:
     ):
         assert not re.search(r"#[0-9a-fA-F]{3,8}\b|(?:rgba?|hsla?|oklch)\(|url\(", block), block
     selected = re.search(r"#team-bot-list \.session-item\.is-active\s*\{[^}]*\}", css)
-    assert selected and "background: transparent" in selected.group(0)
+    assert selected and "background-color: transparent" in selected.group(0)
     glow = re.search(
         r"#team-bot-list \.session-item\.is-active::before\s*\{[^}]*\}", css)
     assert glow and "var(--team-tint)" in glow.group(0)
@@ -1908,7 +1908,7 @@ def test_solo_subordinate_session_rows_have_no_avatar(node: str) -> None:
         "  sideKids: sideBtn.children.map((c) => c.tagName + ':' + c.className),"
         "  groupKids: groupBtn.children.map((c) => c.tagName + ':' + c.className),"
         "  groupTeam: (groupBtn.children[0]._html || '').includes('mk-wax')};")
-    assert value["subKids"] == ["team-new-session", "session-row"]
+    assert value["subKids"] == ["session-row", "team-new-session"]
     assert value["sideKids"] == ["SPAN:session-name", "TIME:"]
     assert value["groupKids"][0] == "SPAN:team-avatar is-group"
     assert value["groupTeam"] is True
@@ -2063,8 +2063,10 @@ def test_new_session_create_failure_shows_error(node: str) -> None:
         "  reenabled: btn ? !btn.disabled : null };")
     assert value["error"] == "server nổ"
     assert value["role"] == "alert"
-    assert value["order"][0] == "team-new-session"
-    assert "is-error" in value["order"][1]
+    # Sealed-letter spec: "+ Phiên mới" trails the list; its error note
+    # sits just above it.
+    assert "is-error" in value["order"][0]
+    assert value["order"][1] == "team-new-session"
     assert value["reenabled"] is True
 
 

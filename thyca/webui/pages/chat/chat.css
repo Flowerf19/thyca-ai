@@ -1125,15 +1125,24 @@ button:active {
   column-gap: 0.75rem;
 }
 
-/* Envelope rows (wax-sidebar mockup): each top-level row is a letter —
-   cream card, thin edge, two diagonal fold lines meeting at centre. */
+/* Envelope rows (sealed-letter spec): each top-level row is a letter —
+   cream card, thin edge, soft shadow. Two crease lines run from the
+   left corners and converge under the wax seal's centre, so the seal
+   reads as pinning the fold; the flap triangle carries a whisper of
+   darker paper. */
+#team-bot-list .team-bot-item {
+  --seal-cx: 2.125rem; /* padding .75 + seal 2.75/2 */
+}
+#team-bot-list .team-group-item {
+  --seal-cx: 2.625rem; /* padding .75 + stack 3.75/2 */
+}
 #team-bot-list .team-bot-item,
 #team-bot-list .team-group-item {
   --fold: color-mix(in srgb, var(--color-divider) 62%, transparent);
   min-height: 4.25rem;
   padding: 0.55rem 0.9rem 0.55rem 0.75rem;
   border: var(--rule) solid var(--color-divider);
-  border-radius: 0.65rem;
+  border-radius: 0.45rem;
   background-color: var(--color-paper-card);
   background-image:
     linear-gradient(to top right,
@@ -1141,11 +1150,35 @@ button:active {
       var(--fold) calc(50% + 0.5px), transparent calc(50% + 0.5px)),
     linear-gradient(to bottom right,
       transparent calc(50% - 0.5px), var(--fold) calc(50% - 0.5px),
-      var(--fold) calc(50% + 0.5px), transparent calc(50% + 0.5px));
-  background-size: 4.4rem 50%;
-  background-position: left top, left bottom;
+      var(--fold) calc(50% + 0.5px), transparent calc(50% + 0.5px)),
+    conic-gradient(from 225deg at var(--seal-cx) 50%,
+      rgba(122, 92, 66, 0.05) 0deg 90deg, transparent 90deg);
+  background-size: var(--seal-cx) 50%, var(--seal-cx) 50%, 100% 100%;
+  background-position: left top, left bottom, left top;
   background-repeat: no-repeat;
   box-shadow: 0 1px 2px rgba(61, 42, 31, 0.07);
+}
+
+/* The expand caret lives in its own trailing column so the unread badge
+   keeps column 3. */
+#team-bot-list .team-bot-item {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+}
+
+.team-bot-caret {
+  grid-column: 4;
+  grid-row: 1 / 3;
+  place-self: center;
+  width: 0.42rem;
+  height: 0.42rem;
+  border-right: 1.5px solid var(--color-muted);
+  border-bottom: 1.5px solid var(--color-muted);
+  transform: rotate(-45deg);
+  transition: transform var(--dur-short) var(--ease-out);
+}
+
+#team-bot-list .team-bot-item.is-open .team-bot-caret {
+  transform: rotate(45deg);
 }
 
 #team-bot-list .session-item .session-name {
@@ -1214,7 +1247,9 @@ button:active {
 /* Design (thyca-bot-design.html): active row = soft tint glow + tint bar,
    not a flat selected fill. */
 #team-bot-list .session-item.is-active {
-  background: transparent;
+  /* background-color only — a shorthand here would wipe the envelope
+     crease background-image on letter rows. */
+  background-color: transparent;
 }
 
 #team-bot-list .session-item.is-active::before {
@@ -1233,6 +1268,18 @@ button:active {
 #team-bot-list .team-group-item.is-active::after {
   inset-block: 0.7rem;
   inset-inline-start: -0.55rem;
+}
+
+/* Selected bot bar = light terracotta wash over the letter (the blurred
+   pill glow stays reserved for inner session rows). */
+#team-bot-list .team-bot-item.is-active,
+#team-bot-list .team-group-item.is-active {
+  background-color: color-mix(in srgb, var(--team-tint) 10%, var(--color-paper-card));
+}
+
+#team-bot-list .team-bot-item.is-active::before,
+#team-bot-list .team-group-item.is-active::before {
+  content: none;
 }
 
 .team-cluster {

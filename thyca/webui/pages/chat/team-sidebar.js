@@ -50,6 +50,11 @@ import {
 let hub = null;
 let bots = [];
 let activeBot = "";
+/* Sealed-letter rows: a bot bar is a collapsible header for its session
+   list. The current bot starts expanded (same shape as before); user
+   toggles are remembered across live-state re-renders. */
+const openIds = new Set();
+const closedIds = new Set();
 let sharedOpen = false;
 let sharedError = "";
 // Checkbox picks survive re-renders while the picker stays open.
@@ -115,6 +120,16 @@ function botSubLabel(bot) {
   const live = LIVE_LABEL[avatarStateFor(bot)];
   if (live) return live;
   return [bot.role, statusLabel(bot.status)].filter(Boolean).join(" · ");
+}
+
+/* Expanded = shows its session list below the envelope row. The current
+   bot is expanded by default until the user folds it; other bots expand
+   only by user click. */
+function botExpanded(bot) {
+  const me = currentTeamBot();
+  const id = String(bot?.id || "");
+  if (!id) return false;
+  return me && id === me.id ? !closedIds.has(id) : openIds.has(id);
 }
 
 /* The bot whose unified list is on screen: the open session names it when
@@ -253,12 +268,30 @@ function botRow(bot) {
   const seen = botUnread(bot.id);
   const unread = unreadBadge(seen);
   if (unread) button.append(unread);
+  const expanded = botExpanded(bot);
+  button.classList.toggle("is-open", expanded);
+  button.setAttribute("aria-expanded", expanded ? "true" : "false");
+  const caret = document.createElement("span");
+  caret.className = "team-bot-caret";
+  caret.setAttribute("aria-hidden", "true");
+  button.append(caret);
   const label = statusLabel(bot.status);
   button.setAttribute("aria-label",
     (bot.role ? `${bot.name}, ${bot.role}` : bot.name)
     + (label ? `, ${label}` : "")
     + unreadSuffix(seen));
-  button.addEventListener("click", () => void openBot(bot.id));
+  button.addEventListener("click", () => {
+    const me = currentTeamBot();
+    if (botExpanded(bot)) {
+      // Fold only — the open chat (if this bot's) is untouched.
+      if (me && bot.id === me.id) closedIds.add(bot.id);
+      else openIds.delete(bot.id);
+      render();
+      return;
+    }
+    closedIds.delete(bot.id);
+    void openBot(bot.id);
+  });
   row.append(button);
   return row;
 }
@@ -551,6 +584,13 @@ function render() {
   const botActivity = (botId) => sessionsForBot(hub.state.sessions, botId)
     .filter((session) => !isSharedSession(session))
     .reduce((max, s) => (String(s.updated_at || "") > max ? String(s.updated_at || "") : max), "");
+  const errorNote = (text) => {
+    const error = document.createElement("p");
+    error.className = "screen-status is-error";
+    error.setAttribute("role", "alert");
+    error.textContent = text;
+    return error;
+  };
   bots.forEach((bot) => {
     const cluster = document.createElement("div");
     cluster.className = "team-cluster";
@@ -561,36 +601,15 @@ function render() {
       id: String(bot.id || ""),
       node: cluster,
     });
-    if (!me || bot.id !== me.id) return;
+    if (!botExpanded(bot)) return;
     const sub = document.createElement("div");
     sub.className = "team-cluster-sessions";
     cluster.append(sub);
-    const create = document.createElement("button");
-    create.type = "button";
-    create.className = "team-new-session";
-    create.setAttribute("aria-label", `Tạo phiên mới với ${me.name}`);
-    create.textContent = newSessionBot === me.id ? "Đang tạo…" : "+ Phiên mới";
-    create.disabled = !!newSessionBot;
-    create.addEventListener("click", () => void createBotSession(me.id));
-    sub.append(create);
-    if (newSessionError && newSessionErrorBot === me.id) {
-      const error = document.createElement("p");
-      error.className = "screen-status is-error";
-      error.setAttribute("role", "alert");
-      error.textContent = newSessionError;
-      sub.append(error);
-    }
-    const rememberedId = getRememberedDm(me.id);
+    if (me && bot.id === me.id && mainError) sub.append(errorNote(mainError));
+    const rememberedId = getRememberedDm(bot.id);
     if (rememberedId
       && !(hub.state.sessions || []).some((item) => String(item?.id) === rememberedId)) {
       forgetDmSession(rememberedId);
-    }
-    if (mainError) {
-      const error = document.createElement("p");
-      error.className = "screen-status is-error";
-      error.setAttribute("role", "alert");
-      error.textContent = mainError;
-      sub.append(error);
     }
     // This bot's private (solo) sessions only. Shared sessions are not
     // sub-sessions of any bot — they are group chats and render at top
@@ -600,24 +619,34 @@ function render() {
     // duplicated the bot row. unifiedSessionsForBot drops the dm-marked
     // session; findMainSession additionally resolves the pre-marker DM
     // (remembered/newest solo) so that fallback window is dropped too.
-    const main = findMainSession(hub.state.sessions, me.id, rememberedId);
-    const sessions = unifiedSessionsForBot(hub.state.sessions, me.id)
+    const main = findMainSession(hub.state.sessions, bot.id, rememberedId);
+    const sessions = unifiedSessionsForBot(hub.state.sessions, bot.id)
       .filter((session) => !main || String(session.id) !== String(main.id))
       .filter((session) => !isSharedSession(session));
     if (!sessions.length) {
       // A bot with only its DM expands to nothing (the bot row is the DM
       // entry) — no empty text. The note stays only for a bot with no
       // sessions at all.
-      if (!sessionsForBot(hub.state.sessions, me.id).length) {
+      if (!sessionsForBot(hub.state.sessions, bot.id).length) {
         const empty = document.createElement("p");
         empty.className = "sidebar-state";
         empty.textContent = "Chưa có phiên.";
         sub.append(empty);
       }
     } else {
-      sub.append(...sessions.map((session) => unifiedRow(session, me.id)));
+      sub.append(...sessions.map((session) => unifiedRow(session, bot.id)));
     }
-    if (!sub.childElementCount) sub.remove();
+    if (newSessionError && newSessionErrorBot === bot.id) {
+      sub.append(errorNote(newSessionError));
+    }
+    const create = document.createElement("button");
+    create.type = "button";
+    create.className = "team-new-session";
+    create.setAttribute("aria-label", `Tạo phiên mới với ${bot.name}`);
+    create.textContent = newSessionBot === bot.id ? "Đang tạo…" : "+ Phiên mới";
+    create.disabled = !!newSessionBot;
+    create.addEventListener("click", () => void createBotSession(bot.id));
+    sub.append(create);
   });
   groupSessions(hub.state.sessions).forEach((session) => {
     entries.push({

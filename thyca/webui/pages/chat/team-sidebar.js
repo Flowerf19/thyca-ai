@@ -515,6 +515,16 @@ async function resolveMain(botId, token) {
   }
 }
 
+/* Push a live turn state (thinking/running/done/error) onto a bot's row —
+   the chat card is the source of truth; /api/bots only refreshes on load. */
+export function teamBotLive(botId, state) {
+  const bot = bots.find((item) => item.id === String(botId || ""));
+  if (!bot) return;
+  if (bot.agentStatus?.state === state) return;
+  bot.agentStatus = { ...(bot.agentStatus || {}), state };
+  render();
+}
+
 export function renderTeamSidebar() {
   render();
 }

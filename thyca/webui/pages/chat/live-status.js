@@ -5,6 +5,7 @@ import {
 } from "./chat-status.js";
 import { bindThinkingToggle, createThinkingNote, elapsedLabel } from "./chat-thinking.js";
 import { chatBrandHeader, fillUsageRow, setChatBrand, usageRowSkeleton } from "./chat-view.js";
+import { teamBotLive } from "./team-sidebar.js";
 
 export function createLiveStatus(root, startedAt, bot = null) {
   const article = document.createElement("article");
@@ -133,8 +134,11 @@ export function updateLiveStatus(live, event) {
   if (event?.type === "llm.started" && event.round > 1) {
     startThinkingSegment(live);
   }
+  const nextBrand = brandState(event);
+  teamBotLive(live.brand?._botProfile?.id, nextBrand === "busy" ? "thinking"
+    : nextBrand === "error" ? "error" : "done");
   setChatBrand(live, {
-    state: brandState(event),
+    state: nextBrand,
     status: event?.type === "turn.failed" ? TURN_FAILED_STATUS : undefined,
   });
   const starts = event?.type === "tool.started" || event?.type === "skill.started";

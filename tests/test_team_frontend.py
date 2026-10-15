@@ -1633,10 +1633,10 @@ def test_avatar_reference_tokens_and_css() -> None:
     """Shared tokens carry the Vintage Ink palette; avatar CSS resolves
     halo/offline/badge/flag/stem colours through them."""
     tokens = TOKENS_CSS.read_text(encoding="utf-8")
-    for token in ("--note-do: #BE5530", "--note-re: #865580",
-                  "--note-mi: #2B7A72", "--note-fa: #386288",
-                  "--note-sol: #537E56", "--note-la: #C48324",
-                  "--note-si: #735238", "--note-star: #D4912A",
+    for token in ("--note-do: #C85A32", "--note-re: #9E5A6D",
+                  "--note-mi: #5E8C6A", "--note-fa: #9C7A33",
+                  "--note-sol: #5B7285", "--note-la: #8A6742",
+                  "--note-si: #3B4D54", "--note-star: #C9962E",
                   "--avatar-eye: #2B211B", "--avatar-eye-offline: #786D61",
                   "--status-offline: #B5A898",
                   "--avatar-star-offline: #BDB2A6",

@@ -1,13 +1,13 @@
 import { avatarVariantFor, avatarStateFor, teamBadgeState } from "./bot-avatar.js";
 
 const WOOD = {
-  star: ["#BE5530", "#D97A52", "#7A3318", "do"],
-  hollow: ["#865580", "#A6749F", "#563152", "re"],
-  "single-flag": ["#2B7A72", "#479E94", "#16473F", "mi"],
-  "double-flag": ["#386288", "#5A86AC", "#1E3A55", "fa"],
-  dotted: ["#537E56", "#73A576", "#2E4E30", "sol"],
-  fermata: ["#C48324", "#DFA44A", "#7D5010", "la"],
-  plain: ["#735238", "#95745A", "#452F1E", "si"],
+  star: ["#C85A32", "#DE8260", "#9A3F1E", "do"],
+  hollow: ["#9E5A6D", "#BC7E90", "#733B4B", "re"],
+  "single-flag": ["#5E8C6A", "#7FAD8B", "#3E6347", "mi"],
+  "double-flag": ["#9C7A33", "#BC9A4E", "#6B5220", "fa"],
+  dotted: ["#5B7285", "#7E96A8", "#3C4E5C", "sol"],
+  fermata: ["#8A6742", "#AD8A5F", "#5E4530", "la"],
+  plain: ["#3B4D54", "#5C7078", "#22323A", "si"],
 };
 
 function woodTexture(THREE, base, light, side, canvasFactory) {

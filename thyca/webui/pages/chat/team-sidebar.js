@@ -757,22 +757,12 @@ function render() {
     }
     const main = findMainSession(hub.state.sessions, bot.id, rememberedId);
     // The open envelope's flap: a paper strip joined to the card's bottom
-    // edge holding the DM's Đổi tên/Xóa (same .session-action as plain
-    // session rows) plus the "+ Phiên mới" line; the sheet slides below.
+    // edge holding just the "+ Phiên mới" line; the sheet slides below.
     const flap = document.createElement("div");
     flap.className = "team-bot-flap";
     if (me && bot.id === me.id && mainError) flap.append(errorNote(mainError));
     if (newSessionError && newSessionErrorBot === bot.id) {
       flap.append(errorNote(newSessionError));
-    }
-    if (main) {
-      const dmTitle = cleanText(main.title, "Phiên trống");
-      flap.append(
-        rowAction("session-action", `Đổi tên phiên ${dmTitle}`, "Đổi tên",
-          () => openRename(main)),
-        rowAction("session-action is-delete", `Xóa phiên ${dmTitle}`, "Xóa",
-          () => openDelete(main)),
-      );
     }
     const create = document.createElement("button");
     create.type = "button";

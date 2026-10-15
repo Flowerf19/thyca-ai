@@ -1925,10 +1925,8 @@ def test_solo_subordinate_session_rows_have_no_avatar(node: str) -> None:
 
 
 def test_new_session_button_renders_when_no_sessions(node: str) -> None:
-    """The selected bot's open flap holds the DM's Đổi tên/Xóa actions
-    (plain .session-action words, like session rows) then the create
-    button — even with zero subordinate sessions — labelled for that
-    bot."""
+    """The selected bot's open flap holds just the create button —
+    even with zero subordinate sessions — labelled for that bot."""
     value = _sidebar(node,
         _TEAM_NAV_SETUP
         + "globalThis.fetch = async () => ({ ok: true, status: 200,"
@@ -1949,8 +1947,7 @@ def test_new_session_button_renders_when_no_sessions(node: str) -> None:
         "  label: btn.getAttribute('aria-label'), text: btn.textContent,"
         "  disabled: !!btn.disabled,"
         "  coderBtn: !!newBtn('coder') };")
-    assert value["subKids"] == [
-        "session-action", "session-action is-delete", "team-new-session"]
+    assert value["subKids"] == ["team-new-session"]
     assert value["tag"] == "BUTTON" and value["type"] == "button"
     assert value["label"] == "Tạo phiên mới với Thyca"
     assert "+ Phiên mới" in value["text"]
@@ -2076,8 +2073,8 @@ def test_new_session_create_failure_shows_error(node: str) -> None:
         "  reenabled: btn ? !btn.disabled : null };")
     assert value["error"] == "server nổ"
     assert value["role"] == "alert"
-    # Sealed-letter spec: "+ Phiên mới" trails the flap; its error note
-    # sits above the DM's Đổi tên/Xóa words and the create line.
+    # Sealed-letter spec: "+ Phiên mới" is the flap's only line; its
+    # error note sits above it.
     assert "is-error" in value["order"][0]
     assert value["order"][-1] == "team-new-session"
     assert value["reenabled"] is True

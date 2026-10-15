@@ -741,6 +741,9 @@ function render() {
   bots.forEach((bot) => {
     const cluster = document.createElement("div");
     cluster.className = "team-cluster";
+    // The tint lives on the cluster so the flap/sheet paper can take the
+    // bot's colour — they are siblings of the button, not descendants.
+    cluster.style.setProperty("--team-tint", tintVarFor(bot.id, bot.tint));
     cluster.append(botRow(bot));
     entries.push({
       t: botActivity(bot.id),
@@ -813,6 +816,10 @@ function render() {
     if (openGroups.has(sid)) {
       const cluster = document.createElement("div");
       cluster.className = "team-cluster";
+      const first = bots.find(
+        (bot) => bot.id === String(session.bots?.[0] || ""));
+      cluster.style.setProperty("--team-tint",
+        tintVarFor(first?.id, first?.tint));
       cluster.append(node, groupFlap(session));
       node = cluster;
     }

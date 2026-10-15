@@ -1179,7 +1179,9 @@ button:active {
   border: var(--rule) solid var(--color-divider);
   border-block-start: 0;
   border-radius: 0 0 0.45rem 0.45rem;
-  background-color: color-mix(in srgb, var(--color-paper-card) 72%, var(--color-bg-frame));
+  /* The opened paper takes a whisper of the letter's own tint. */
+  background-color: color-mix(in srgb, var(--color-paper-card) 84%,
+    var(--team-tint, var(--color-bg-frame)) 16%);
   box-shadow: inset 0 6px 6px -5px rgba(61, 42, 31, 0.28);
 }
 
@@ -1374,7 +1376,9 @@ button:active {
   border: var(--rule) solid var(--color-divider);
   border-block-start: 0;
   border-radius: 0 0 0.45rem 0.45rem;
-  background-color: color-mix(in srgb, var(--color-paper-card) 78%, var(--color-bg-frame));
+  /* Same tint wash as the flap above, lighter — pulled-out paper. */
+  background-color: color-mix(in srgb, var(--color-paper-card) 90%,
+    var(--team-tint, var(--color-bg-frame)) 10%);
   box-shadow: inset 0 6px 6px -5px rgba(61, 42, 31, 0.3),
     0 1px 2px rgba(61, 42, 31, 0.05);
 }

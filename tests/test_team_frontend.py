@@ -1587,7 +1587,10 @@ def test_chat_surfaces_and_imagery_unchanged() -> None:
     ):
         assert not re.search(r"#[0-9a-fA-F]{3,8}\b|(?:rgba?|hsla?|oklch)\(|url\(", block), block
     selected = re.search(r"#team-bot-list \.session-item\.is-active\s*\{[^}]*\}", css)
-    assert selected and "background: var(--color-bg-selected)" in selected.group(0)
+    assert selected and "background: transparent" in selected.group(0)
+    glow = re.search(
+        r"#team-bot-list \.session-item\.is-active::before\s*\{[^}]*\}", css)
+    assert glow and "var(--team-tint)" in glow.group(0)
     mention = re.search(r"\.mention-item\s*\{[^}]*\}", css)
     assert mention and "color: var(--chat-brand-ink)" in mention.group(0)
     canvas = re.findall(r"\.chat-canvas\s*\{[^}]*\}", css)
@@ -1748,8 +1751,8 @@ def test_sidebar_rows_avatar_name_layout() -> None:
 
     row = re.search(r"#team-bot-list \.session-item\s*\{([^}]*)\}", css)
     assert row, "scoped row grid missing"
-    assert "grid-template-columns: 3rem minmax(0, 1fr) auto" in row.group(1)
-    assert "column-gap: 0.5rem" in row.group(1)
+    assert "grid-template-columns: auto minmax(0, 1fr) auto" in row.group(1)
+    assert "column-gap: 0.75rem" in row.group(1)
     name = re.search(
         r"#team-bot-list \.session-item \.session-name\s*\{([^}]*)\}", css)
     assert name, "scoped name rule missing"
@@ -1781,12 +1784,12 @@ def test_sidebar_rows_avatar_name_layout() -> None:
         r" \.team-unread\s*\{([^}]*)\}", css)
     assert subunread and "grid-column: 2" in subunread.group(1)
     group = re.search(r"#team-bot-list \.team-group-item\s*\{([^}]*)\}", css)
-    assert group and "grid-template-columns: 3rem minmax(0, 1fr) auto" in group.group(1)
+    assert group and "grid-template-columns: auto minmax(0, 1fr) auto" in group.group(1)
 
     avatar = re.search(r"^\.team-avatar\s*\{([^}]*)\}", css, re.M)
-    assert avatar and "grid-row: 1;" in avatar.group(1)
-    assert "grid-row: 1 / -1" not in avatar.group(1)
-    assert "width: 4rem" in avatar.group(1)
+    assert avatar and "grid-row: 1 / 3;" in avatar.group(1)
+    
+    assert "width: 2.125rem" in avatar.group(1)
     mini = re.search(r"\.team-avatar\.is-mini\s*\{([^}]*)\}", css)
     assert mini and "width: 2rem" in mini.group(1)
     groupav = re.search(r"\.team-avatar\.is-group\s*\{([^}]*)\}", css)

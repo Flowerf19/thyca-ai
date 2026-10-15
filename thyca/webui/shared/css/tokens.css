@@ -5,45 +5,70 @@
  */
 
 :root {
-  --color-bg-frame: #E8DAC3;
-  --color-bg-surface: #FBF4E5;
-  --color-bg-selected: #F4E9D7;
+  --color-bg-desk: #eeeae2;
+  --color-bg-frame: #f1ece2;
+  --color-bg-surface: #faf7f0;
+  --color-bg-sidebar: #f9f5eb;
+  --color-bg-selected: #eee5d7;
+  --color-bg-input: #fdfbf6;
+  --background-artwork: url("../../images/thyca-bg-outer.png");
+  --background-overlay: rgba(250, 247, 240, 0.65);
 
-  --color-desk-top: var(--color-bg-frame);
-  --color-desk-mid: var(--color-bg-frame);
-  --color-desk-bottom: var(--color-bg-frame);
-  --color-shell-shadow: oklch(21.7% 0.047 45.8 / 0.72);
-  --color-shell-shadow-soft: oklch(25% 0.06 44 / 0.32);
+  --color-desk-top: var(--color-bg-desk);
+  --color-desk-mid: var(--color-bg-desk);
+  --color-desk-bottom: var(--color-bg-desk);
+  --color-shell-shadow: rgba(59, 51, 42, 0.14);
+  --color-shell-shadow-soft: rgba(59, 51, 42, 0.07);
 
   --color-paper: var(--color-bg-frame);
   --color-paper-chat: var(--color-bg-surface);
   --color-paper-card: var(--color-bg-surface);
-  --color-paper-input: var(--color-bg-surface);
-  --color-paper-edge: oklch(82% 0.045 72);
-  --color-border: oklch(87.4% 0.024 69.6);
-  --color-divider: oklch(78.6% 0.042 69.6);
+  --color-paper-input: var(--color-bg-input);
+  --color-paper-edge: #e0d6c6;
+  --color-border: #e0d6c6;
+  --color-divider: #e0d6c6;
 
-  --color-ink: oklch(30.9% 0.064 43.9);
-  --color-reading: oklch(33.5% 0.021 70);
-  --color-muted: oklch(48.2% 0.033 68.6);
-  --color-muted-soft: oklch(57.6% 0.041 66.9);
-  --color-accent: oklch(55.5% 0.13 38.2);
-  --color-accent-deep: oklch(51.7% 0.134 36.5);
+  --color-ink: #3b332a;
+  --color-reading: #3b332a;
+  --color-muted: #8a7c69;
+  --color-muted-soft: #8a7c69;
+  --color-accent: #a85b43;
+  --color-accent-deep: #a85b43;
   /* Team r9: bot lỗi dùng màu này. Định nghĩa từ accent-deep để không
      thêm mã màu literal mới — CSS team chỉ dùng token sẵn có. */
   --color-danger: var(--color-accent-deep);
-  --color-accent-soft: oklch(89.2% 0.049 72.2);
-  --color-accent-ink: oklch(95.6% 0.021 65.3);
+  --color-accent-soft: #eee5d7;
+  --color-accent-ink: #fdfbf6;
   --color-botanical: oklch(51.3% 0.049 68.6);
 
-  --note-do: #BE5530;
-  --note-re: #865580;
-  --note-mi: #2B7A72;
-  --note-fa: #386288;
-  --note-sol: #537E56;
-  --note-la: #C48324;
-  --note-si: #735238;
-  --note-star: #D4912A;
+  --note-do: #C2522B;
+  --note-re: #A84A3B;
+  --note-mi: #5C7448;
+  --note-fa: #B87B28;
+  --note-sol: #4E6E58;
+  --note-la: #9A5B32;
+  --note-si: #4A3525;
+  --note-star: #D8942B;
+  --note-gold: var(--note-star);
+  --note-cream: #FAF3E6;
+  --note-ink: #26160D;
+
+  --wood-star-light: #DE6E46;
+  --wood-star-side: #7A2D12;
+  --wood-hollow-light: #C66656;
+  --wood-hollow-side: #68271D;
+  --wood-single-flag-light: #789262;
+  --wood-single-flag-side: #354627;
+  --wood-double-flag-light: #D4963E;
+  --wood-double-flag-side: #734912;
+  --wood-dotted-light: #688C73;
+  --wood-dotted-side: #2B4232;
+  --wood-fermata-light: #B8764A;
+  --wood-fermata-side: #5E3318;
+  --wood-plain-light: #694E3A;
+  --wood-plain-side: #261910;
+  --wood-offline-base: #9E9080;
+  --wood-offline-side: #5E5348;
   --note-bg: #F9DFD5;
   --note-fold: #E8BEB0;
   --note-lines: rgba(217, 93, 57, 0.16);
@@ -63,17 +88,17 @@
   --avatar-stamp-ink: #9E4020;
 
   --color-watermark: oklch(87.9% 0.037 80.6 / 0.58);
-  --color-focus: oklch(51.7% 0.134 36.5);
-  --chat-brand-ink: #3d2a1f;
-  --chat-brand-accent: #a65a42;
-  --chat-brand-wash: rgba(255, 222, 192, 0.42);
+  --color-focus: var(--color-accent);
+  --chat-brand-ink: var(--color-ink);
+  --chat-brand-accent: var(--color-accent);
+  --chat-brand-wash: rgba(238, 229, 215, 0.72);
   /* A ghost of the brand colour: the user's tick is the same ink as Thyca's
      stripe, kept thin and faint so the two never read as the same mark. */
   --chat-user-tick: color-mix(in srgb, var(--chat-brand-accent) 35%, transparent);
   --ink: var(--chat-brand-ink);
   --terra: var(--chat-brand-accent);
-  --composer-bg: var(--color-bg-surface);
-  --composer-border: rgba(61, 42, 31, 0.12);
+  --composer-bg: var(--color-bg-input);
+  --composer-border: #d8cbb8;
 
   --font-display: "Fraunces", ui-serif, Georgia, serif;
   --font-reading: "Source Serif 4", ui-serif, Georgia, serif;
@@ -134,8 +159,8 @@ body {
 html[data-type-scale="small"] { font-size: 93.75%; }
 html[data-type-scale="large"] { font-size: 112.5%; }
 html[data-theme="dusk"] {
-  --color-desk-top: var(--color-bg-frame);
-  --color-desk-mid: var(--color-bg-frame);
+  --color-desk-top: var(--color-bg-desk);
+  --color-desk-mid: var(--color-bg-desk);
   --color-paper: var(--color-bg-frame);
   --color-paper-chat: var(--color-bg-surface);
 }

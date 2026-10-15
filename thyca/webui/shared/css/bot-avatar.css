@@ -336,3 +336,26 @@
     animation: none !important;
   }
 }
+
+/* v5 3D progressive enhancement: the live canvas / cached snapshot fill the
+   avatar slot over the hidden SVG fallback. Decorative layers — the slot is
+   already aria-hidden — so they never receive pointer events. */
+.team-avatar,
+.chat-brand-avatar,
+.bot-drawer-avatar,
+.mention-avatar,
+.settings-bot-avatar {
+  position: relative;
+}
+
+.team-avatar > canvas,
+.team-avatar > img.team-avatar-3d,
+canvas.avatar-3d-live,
+img.avatar-3d-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  user-select: none;
+}

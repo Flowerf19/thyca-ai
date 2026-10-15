@@ -1,23 +1,23 @@
 .settings-row {
   display: grid;
   grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.15fr);
-  gap: 1rem 2rem;
+  gap: var(--space-sm) var(--space-lg);
   align-items: center;
-  padding: 1.1rem 0;
+  padding: var(--space-md) 0;
 }
 .settings-row > * { min-width: 0; }
 .settings-row :is(.screen-select, .screen-input) { width: 100%; }
-.settings-field { display: flex; align-items: center; gap: 0.75rem; }
+.settings-field { display: flex; align-items: center; gap: var(--space-sm); }
 .settings-field .screen-input { flex: 1; min-width: 0; }
 .settings-unit { flex: none; color: var(--color-muted); font-size: 0.88rem; white-space: nowrap; }
-.settings-check { display: inline-flex; align-items: center; gap: 0.7rem; min-height: 2.75rem; }
+.settings-check { display: inline-flex; align-items: center; gap: var(--space-xs); min-height: 2.75rem; }
 .settings-check input { width: 1.15rem; height: 1.15rem; accent-color: var(--color-accent); }
 .model-note {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 0.6rem;
-  margin-top: 0.65rem;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
   color: var(--color-muted);
   font-size: 0.9rem;
 }
@@ -25,14 +25,14 @@
   display: flex;
   flex-direction: column;
 }
-.settings-shell .screen-card .fold-section + .fold-section { margin-block-start: 1.25rem; }
+.settings-shell .screen-card .fold-section + .fold-section { margin-block-start: var(--space-lg); }
 .settings-shell .screen-card > .settings-reset {
   align-self: flex-end;
-  margin-block-start: 1rem;
+  margin-block-start: var(--space-md);
 }
-#giao-dien { scroll-margin-top: 1rem; }
+#giao-dien { scroll-margin-top: var(--space-md); }
 @media (max-width: 68.75rem) {
-  .settings-row { grid-template-columns: minmax(0, 1fr); gap: 0.55rem; }
+  .settings-row { grid-template-columns: minmax(0, 1fr); gap: var(--space-xs); }
 }
 @media (max-width: 56rem) {
   .settings-shell .workspace,

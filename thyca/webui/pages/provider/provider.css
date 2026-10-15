@@ -1,18 +1,6 @@
-/* Provider page: pick-list layout. Core connection/model fields stay
-   visible; rarely-touched values live in hidden inputs. Compact inputs,
-   group-only separators, shared card face. Scoped to .provider-shell —
-   settings.html is untouched. */
-
-.provider-shell .screen-input,
-.provider-shell .screen-select {
-  min-height: 2.3rem;
-  padding: 0.4rem 0.65rem;
-  font-size: 0.92rem;
-}
-
-.provider-shell .screen-button {
-  min-height: 2.3rem;
-}
+/* Provider page: keep shared setting controls and rows; own only the
+   provider-specific pick-list and detail layout. Core connection/model
+   fields stay visible; rarely-touched values live in hidden inputs. */
 
 .provider-group {
   padding: 1rem 0;
@@ -65,8 +53,8 @@
   margin-top: 0.55rem;
 }
 
-/* Plain flex row (NOT .Detail-actions): the button keeps full .screen-button
-   size, exactly like Lưu. */
+/* Plain flex row (NOT .detail-actions): the button keeps shared .screen-button
+   sizing, exactly like Lưu. */
 .provider-verify-row {
   display: flex;
   flex-wrap: wrap;
@@ -283,12 +271,6 @@
   margin-left: auto;
 }
 
-.detail-actions .screen-button {
-  min-height: 2.1rem;
-  padding: 0.3rem 0.7rem;
-  font-size: 0.85rem;
-}
-
 .field-grid {
   display: grid;
   grid-template-columns: 8.5rem minmax(0, 1fr);
@@ -343,25 +325,6 @@
   border-color: var(--color-accent-deep);
   box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-accent-deep) 18%, transparent);
 }
-
-/* Giới hạn chung keeps fold rows, but compact and rule-free like the rest. */
-.provider-shell .fold-row {
-  border: 0;
-}
-
-.provider-shell .settings-row {
-  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
-  padding: 0.45rem 0;
-}
-
-.provider-shell .settings-row h3 {
-  font-size: 0.92rem;
-}
-
-.provider-shell .fold-section > summary :is(h2, h3) {
-  font-size: 1.05rem;
-}
-
 
 /* Routine info stays a quiet line; only success/error get the nudge card. */
 .provider-nudge:not(.is-error):not(.is-success) {

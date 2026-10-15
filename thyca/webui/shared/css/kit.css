@@ -149,12 +149,12 @@
    only place the widget and (rarely) --sm/--lg. Tokens stay local so they
    do not fight the notebook :root. */
 .thyca-search {
-  --ink: #3d2a1f;
-  --terra: #a65a42;
+  --ink: var(--color-ink);
+  --terra: var(--color-accent);
   --fill: var(--color-paper-input);
-  --border: rgba(61, 42, 31, 0.18);
-  --border-strong: rgba(166, 90, 66, 0.35);
-  --muted: rgba(61, 42, 31, 0.52);
+  --border: var(--color-border);
+  --border-strong: color-mix(in oklab, var(--color-accent) 35%, var(--color-border));
+  --muted: var(--color-muted);
   --search-h: 40px;
   position: relative;
   display: flex;
@@ -168,21 +168,21 @@
   border: 1px solid var(--border);
   border-radius: 6px;
   box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.55) inset,
-    0 1px 2px rgba(61, 42, 31, 0.04);
+    0 1px 0 color-mix(in oklab, var(--color-paper-input) 55%, transparent) inset,
+    0 1px 2px color-mix(in oklab, var(--color-ink) 4%, transparent);
   transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
 .thyca-search:hover {
-  border-color: rgba(61, 42, 31, 0.2);
+  border-color: color-mix(in oklab, var(--color-ink) 20%, var(--color-border));
   background: color-mix(in srgb, var(--color-bg-surface) 70%, var(--color-bg-frame));
 }
 .thyca-search:focus-within {
   border-color: var(--border-strong);
   background: var(--color-bg-surface);
   box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.8) inset,
-    0 0 0 3px rgba(166, 90, 66, 0.12),
-    0 2px 6px rgba(61, 42, 31, 0.06);
+    0 1px 0 color-mix(in oklab, var(--color-paper-input) 80%, transparent) inset,
+    0 0 0 3px color-mix(in oklab, var(--color-accent) 12%, transparent),
+    0 2px 6px color-mix(in oklab, var(--color-ink) 6%, transparent);
 }
 .thyca-search__icon {
   flex: 0 0 auto;
@@ -243,7 +243,7 @@
   pointer-events: auto;
 }
 .thyca-search__clear:hover {
-  background: rgba(61, 42, 31, 0.08);
+  background: color-mix(in oklab, var(--color-ink) 8%, transparent);
   color: var(--ink);
 }
 .thyca-search__clear svg {
@@ -277,9 +277,9 @@
 .screen-card {
   min-width: 0;
   padding: var(--space-lg);
-  border: var(--rule) solid var(--color-border);
-  border-radius: var(--radius-chat);
-  background: var(--chat-brand-wash);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper-card);
   box-shadow: none;
 }
 .screen-badge {
@@ -287,9 +287,9 @@
   align-items: center;
   gap: var(--space-xs);
   padding: 0.2rem 0.65rem;
-  border: var(--rule) solid var(--color-border);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-xs);
-  background: var(--chat-brand-wash);
+  background: var(--color-paper-card);
   color: var(--color-accent-deep);
   font-size: 0.875rem;
   white-space: nowrap;
@@ -488,9 +488,9 @@
   min-height: 2.75rem;
   max-width: 100%;
   padding: 0.65rem 1rem;
-  border: var(--rule) solid var(--color-divider);
-  border-radius: var(--radius-sm);
-  background: var(--color-paper-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xs);
+  background: var(--color-paper-input);
   color: var(--color-ink);
   font: inherit;
 }
@@ -515,25 +515,26 @@
   opacity: 0.65;
 }
 
-.screen-nav { display: grid; gap: var(--space-xs); padding: 1.4rem 1.6rem; }
+.screen-nav { display: grid; gap: 0.35rem; padding: 0.75rem; }
 .screen-nav a, .screen-nav button {
   display: flex;
   align-items: center;
   gap: var(--space-md);
-  min-height: 3.6rem;
-  padding: 0.75rem 1rem;
-  border: var(--rule) solid transparent;
-  border-radius: 0;
+  min-height: 3rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs);
   background: transparent;
-  color: var(--color-ink);
+  color: var(--color-muted);
   text-align: start;
   text-decoration: none;
   white-space: nowrap;
 }
 .screen-nav [aria-current="page"], .screen-nav [aria-selected="true"] {
-  border-radius: var(--radius-sm);
-  background: var(--color-accent);
-  color: var(--color-accent-ink);
+  border-color: var(--color-border);
+  border-radius: var(--radius-xs);
+  background: var(--color-bg-selected);
+  color: var(--color-ink);
 }
 .screen-nav svg { width: 1.45rem; height: 1.45rem; flex: 0 0 auto; }
 .screen-dialog {
@@ -541,14 +542,12 @@
   height: fit-content;
   max-height: calc(100dvh - 2rem);
   margin: auto;
-  padding: var(--space-lg);
+  padding: 1.25rem;
   overflow: auto;
-  border: var(--rule) solid var(--color-divider);
-  border-radius: var(--radius-chat);
+  border: 1px solid var(--color-border);
+  border-radius: 0.875rem;
   background-color: var(--color-paper);
-  background-image:
-    linear-gradient(color-mix(in oklab, var(--color-paper-chat) 65%, transparent), color-mix(in oklab, var(--color-paper-chat) 65%, transparent)),
-    url("../../images/thyca-bg-paper.png");
+  background-image: linear-gradient(var(--background-overlay), var(--background-overlay)), var(--background-artwork);
   background-position: center;
   background-size: cover;
   color: var(--color-reading);
@@ -556,7 +555,7 @@
   box-shadow: 0 1rem 3rem var(--color-shell-shadow-soft);
 }
 .screen-dialog::backdrop { background: var(--color-shell-shadow); }
-.screen-dialog h2 { margin: 0; font-family: var(--font-display); font-size: 1.5rem; }
+.screen-dialog h2 { margin: 0; color: var(--color-ink); font-family: var(--font-display); font-size: 1.35rem; }
 .screen-dialog .screen-nav { padding: 0; }
 .screen-dialog .screen-heading { margin-block-end: 1rem; }
 .screen-dialog form { display: grid; gap: var(--space-md); }
@@ -797,22 +796,19 @@
   display: grid;
   grid-template-columns: 20.25rem minmax(0, 1fr);
   grid-template-rows: 2.75rem minmax(0, 1fr) auto;
-  width: 100%;
-  height: calc(100dvh - 2.3rem);
-  min-height: 43rem;
+  width: min(100%, 90rem);
+  height: calc(100dvh - 1.75rem);
+  min-height: min(43rem, calc(100dvh - 1.75rem));
   max-height: 58.875rem;
+  margin-inline: auto;
   overflow: hidden;
-  border-radius: var(--radius-shell);
+  border: 1px solid var(--color-border);
+  border-radius: 1.25rem;
   background-color: var(--color-paper);
-  background-image:
-    linear-gradient(color-mix(in oklab, var(--color-paper-chat) 65%, transparent), color-mix(in oklab, var(--color-paper-chat) 65%, transparent)),
-    url("../../images/thyca-bg-paper.png");
+  background-image: linear-gradient(var(--background-overlay), var(--background-overlay)), var(--background-artwork);
   background-position: center;
   background-size: cover;
-  box-shadow:
-    0 0.72rem 0 var(--color-paper-edge),
-    0 2.05rem 2.3rem var(--color-shell-shadow),
-    0.65rem 0.8rem 1.2rem var(--color-shell-shadow-soft);
+  box-shadow: 0 0.5rem 1.5rem var(--color-shell-shadow-soft);
 }
 
 /* Tall screens (F11 fullscreen on 1080p+, 3K at 100%): the 58.875rem cap
@@ -831,11 +827,9 @@
   position: absolute;
   z-index: var(--z-base);
   inset: 0;
-  border-radius: var(--radius-shell);
+  border-radius: 1.25rem;
   background-color: var(--color-paper-chat);
-  background-image:
-    linear-gradient(color-mix(in oklab, var(--color-paper-chat) 65%, transparent), color-mix(in oklab, var(--color-paper-chat) 65%, transparent)),
-    url("../../images/thyca-bg-paper.png");
+  background-image: linear-gradient(var(--background-overlay), var(--background-overlay)), var(--background-artwork);
   background-position: center;
   background-size: cover;
   pointer-events: none;
@@ -849,27 +843,33 @@
   display: flex;
   align-items: center;
   min-width: 0;
-  padding-inline: 1.55rem 1.85rem;
-  border-radius: var(--radius-shell) var(--radius-shell) 0 0;
+  padding-inline: 1rem;
+  border-radius: 1.25rem 1.25rem 0 0;
   background: transparent;
+}
+
+.site-header .menu-button {
+  flex: 0 0 2.25rem;
+  width: 2.25rem;
+  height: 2.25rem;
+  color: var(--color-ink);
 }
 
 .header-line {
   display: flex;
   align-items: baseline;
   justify-content: flex-end;
-  gap: 0.7rem;
+  gap: 0.65rem;
   width: max-content;
   max-width: 100%;
   margin: 0 0 0 auto;
   min-height: 1.15rem;
-  padding: 0 0.2rem 0.12rem;
+  padding: 0;
   overflow: hidden;
-  border-bottom: var(--rule) solid var(--color-divider);
   color: var(--color-muted);
-  font-family: var(--font-reading);
-  font-size: 0.88rem;
-  font-style: italic;
+  font-family: var(--font-ui);
+  font-size: 0.78rem;
+  font-style: normal;
   line-height: 1.15;
   white-space: nowrap;
 }
@@ -889,10 +889,10 @@
   min-height: 0;
   margin: 0 0.18rem 1.25rem 1.25rem;
   overflow: hidden;
-  border: var(--rule) solid var(--color-border);
-  border-radius: var(--radius-chat);
-  background: transparent;
-  box-shadow: 0 0.55rem 1.35rem var(--color-shell-shadow-soft);
+  border: 1px solid var(--color-border);
+  border-radius: 0.875rem;
+  background: var(--color-bg-sidebar);
+  box-shadow: 0 2px 8px var(--color-shell-shadow-soft);
 }
 
 .icon-button,
@@ -1145,10 +1145,10 @@
   min-height: 0;
   margin: 0 1.25rem 1.25rem 0.18rem;
   overflow: hidden;
-  border: var(--rule) solid var(--color-border);
-  border-radius: var(--radius-chat);
-  background: transparent;
-  box-shadow: 0 0.55rem 1.35rem var(--color-shell-shadow-soft);
+  border: 1px solid var(--color-border);
+  border-radius: 0.875rem;
+  background: var(--color-bg-surface);
+  box-shadow: 0 2px 8px var(--color-shell-shadow-soft);
 }
 
 .site-footer {
@@ -1163,6 +1163,7 @@
 @media (max-width: 75rem) {
   .notebook-shell {
     grid-template-columns: 16.5rem minmax(0, 1fr);
+    width: calc(100% - 1.75rem);
   }
 
   .sessions {
@@ -1186,7 +1187,9 @@
     width: 100%;
     height: 100dvh;
     min-height: 0;
+    margin: 0;
     overflow: hidden;
+    border: 0;
     border-radius: 0;
     box-shadow: none;
   }

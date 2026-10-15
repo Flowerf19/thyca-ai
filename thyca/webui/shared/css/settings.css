@@ -61,8 +61,8 @@
 .settings-bot-avatar {
   display: grid;
   place-items: center;
-  width: 2rem;
-  height: 2rem;
+  width: 2.5rem;
+  height: 2.5rem;
   flex: none;
 }
 

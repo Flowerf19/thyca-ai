@@ -74,9 +74,17 @@ def test_selected_rows_use_shared_selected_token() -> None:
             "chat.css").read_text(encoding="utf-8")
     team = re.search(
         r"#team-bot-list \.session-item\.is-active\s*\{([^}]*)\}", chat)
-    assert team and "background: var(--color-bg-selected)" in team.group(1)
-    assert "team-tint" not in team.group(1), (
-        "selected bot row must not tint-mix the card colour")
+    assert team and "background: transparent" in team.group(1), (
+        "selected bot row stays transparent — the tint glow/bar pseudo-"
+        "elements carry the active state")
+    before = re.search(
+        r"#team-bot-list \.session-item\.is-active::before\s*\{([^}]*)\}",
+        chat)
+    assert before and "var(--team-tint)" in before.group(1)
+    after = re.search(
+        r"#team-bot-list \.session-item\.is-active::after\s*\{([^}]*)\}",
+        chat)
+    assert after and "var(--team-tint)" in after.group(1)
     screen = re.search(
         r"\.screen-shell \.session-item\.is-active\s*\{([^}]*)\}", kit)
     assert screen and "background: var(--color-bg-selected)" in screen.group(1)

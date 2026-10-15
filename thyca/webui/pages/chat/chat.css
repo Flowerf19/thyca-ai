@@ -257,8 +257,8 @@
   display: inline-grid;
   place-items: center;
   flex: 0 0 auto;
-  width: 3rem;
-  height: 3rem;
+  width: 3.5rem;
+  height: 3.5rem;
 }
 
 .chat-brand-line {
@@ -1235,8 +1235,8 @@ button:active {
   position: relative;
   display: grid;
   place-items: center;
-  width: 2.125rem;
-  height: 2.125rem;
+  width: 2.75rem;
+  height: 2.75rem;
 }
 
 /* v3.5 stage backdrop on the chat shell itself: one shared warm vignette
@@ -1253,13 +1253,13 @@ button:active {
 }
 
 .team-avatar.is-mini {
-  width: 2rem;
-  height: 2rem;
+  width: 2.5rem;
+  height: 2.5rem;
 }
 
 .team-avatar.is-group {
-  width: 3rem;
-  height: 3rem;
+  width: 3.75rem;
+  height: 3.75rem;
 }
 
 .team-bot-item.is-paused .session-name,
@@ -1275,7 +1275,7 @@ button:active {
    scale as bot rows. The composite team avatar is wider than the
    legacy icon cell, so the row's first column grows to fit it. */
 .team-group-item {
-  grid-template-columns: 2.5rem minmax(0, 1fr) auto;
+  grid-template-columns: 3.75rem minmax(0, 1fr) auto;
 }
 
 .team-group-item .session-name {
@@ -1514,8 +1514,8 @@ button:active {
 .mention-avatar {
   display: grid;
   place-items: center;
-  width: 2rem;
-  height: 2rem;
+  width: 2.5rem;
+  height: 2.5rem;
   flex: none;
 }
 
@@ -1601,8 +1601,8 @@ button:active {
 .bot-drawer-avatar {
   display: grid;
   place-items: center;
-  width: 3rem;
-  height: 3rem;
+  width: 3.5rem;
+  height: 3.5rem;
   flex: none;
 }
 

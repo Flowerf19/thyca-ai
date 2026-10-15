@@ -1791,11 +1791,11 @@ def test_sidebar_rows_avatar_name_layout() -> None:
     avatar = re.search(r"^\.team-avatar\s*\{([^}]*)\}", css, re.M)
     assert avatar and "grid-row: 1 / 3;" in avatar.group(1)
     
-    assert "width: 2.125rem" in avatar.group(1)
+    assert "width: 2.75rem" in avatar.group(1)
     mini = re.search(r"\.team-avatar\.is-mini\s*\{([^}]*)\}", css)
-    assert mini and "width: 2rem" in mini.group(1)
+    assert mini and "width: 2.5rem" in mini.group(1)
     groupav = re.search(r"\.team-avatar\.is-group\s*\{([^}]*)\}", css)
-    assert groupav and "width: 3rem" in groupav.group(1)
+    assert groupav and "width: 3.75rem" in groupav.group(1)
 
     assert "botMark(bot, { selected })" in src
     assert "avatarSlot(members[0], true, selected)" in src, (

@@ -1,5 +1,6 @@
 import { usageLine } from "./chat-status.js";
 import { avatarVariantFor, botAvatarSVG } from "../../shared/js/bot-avatar.js";
+import { upgradeAvatarImg, followAvatar3D } from "../../shared/js/avatar-3d-bus.js";
 import { chatBotForMessage } from "../../shared/js/chat-bot.js";
 
 // Brand + usage-row kit shared by the settled transcript and the live card.
@@ -42,6 +43,7 @@ export function chatBrandHeader({ state = "idle", status = "đã viết", expand
   avatar.className = "chat-brand-avatar";
   avatar.setAttribute("aria-hidden", "true");
   avatar.innerHTML = botAvatarSVG(avatarBot, { size: 48 });
+  upgradeAvatarImg(avatar, { bot: avatarBot });
   const heading = document.createElement("h2");
   heading.textContent = name || profile.name || "Thyca";
   lockup.append(avatar, heading);
@@ -79,8 +81,16 @@ export function setChatBrand(target, { state, status } = {}) {
     if (state === "error") article?.classList.add("is-error");
     const slot = header.querySelector(".chat-brand-avatar");
     if (slot) {
-      slot.innerHTML = botAvatarSVG(
-        brandAvatarProfile(header._botProfile, state), { size: 48 });
+      const profile = brandAvatarProfile(header._botProfile, state);
+      slot.innerHTML = botAvatarSVG(profile, { size: 48 });
+      // Live card gets the animated 3D model (state effects); settled
+      // transcript headers get the cached snapshot.
+      if (article?.classList?.contains("live-status")) {
+        void followAvatar3D(`chat:${profile?.id || "live"}`, slot, { bot: profile })
+          .then((ok) => { if (!ok) upgradeAvatarImg(slot, { bot: profile }); });
+      } else {
+        upgradeAvatarImg(slot, { bot: profile });
+      }
     }
   }
   if (status) {

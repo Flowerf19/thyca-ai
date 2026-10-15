@@ -1576,34 +1576,44 @@ def test_bot_avatar_css_has_no_design_hex() -> None:
 
 
 def test_chat_surfaces_and_imagery_unchanged() -> None:
-    """Page chrome is untouched: chat.css adds no sidebar/workspace surface
-    or palette overrides, and kit.css keeps its own backgrounds, imagery,
-    canvas/title transparency, and shell texture."""
+    """v5 chrome reuses shared palette, distinct surface and artwork tokens;
+    chat may place the shell but must not define a page-local theme.
+    Canvas/title transparency and the shell texture remain preserved."""
     import re
 
     css = CHAT_CSS.read_text(encoding="utf-8")
     kit = KIT_CSS.read_text(encoding="utf-8")
-    assert not re.search(r"\.chat-shell\s*\{", css), (
-        "no .chat-shell palette block")
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
     for absent in ("--bg-paper", "--bg-card", "--border-paper",
                    "--text-main", "--text-muted", "--status-ring"):
         assert absent not in css, absent
-    for block in re.findall(r"\.chat-shell \.(?:sidebar|workspace)\s*\{[^}]*\}", css):
-        assert "background" not in block and "--status-ring" not in block, block
-    assert not re.search(r"\.team-bot-item\.is-active\s*\{[^}]*background", css)
-    assert "#3d2a1f" in css
+    assert not re.search(r"--(?:color|note|background)-[\w-]+\s*:", css), (
+        "shared palette/artwork tokens belong in tokens.css, not chat.css")
+    for block in re.findall(
+        r"\.chat-shell(?:\.is-rail)?(?: \.(?:sidebar|workspace))?\s*\{[^}]*\}", css
+    ):
+        assert not re.search(r"#[0-9a-fA-F]{3,8}\b|(?:rgba?|hsla?|oklch)\(|url\(", block), block
+    selected = re.search(r"#team-bot-list \.session-item\.is-active\s*\{[^}]*\}", css)
+    assert selected and "background: var(--color-bg-selected)" in selected.group(0)
+    mention = re.search(r"\.mention-item\s*\{[^}]*\}", css)
+    assert mention and "color: var(--chat-brand-ink)" in mention.group(0)
     canvas = re.findall(r"\.chat-canvas\s*\{[^}]*\}", css)
     assert canvas, ".chat-canvas rule missing"
     assert any("background: transparent" in block for block in canvas), canvas
     sidebar = re.findall(r"\.sidebar\s*\{[^}]*\}", kit)
     workspace = re.findall(r"\.workspace\s*\{[^}]*\}", kit)
-    assert any("background: transparent" in block for block in sidebar), sidebar
-    assert any("background: transparent" in block for block in workspace), workspace
-    assert ".notebook-shell" in kit
-    assert "thyca-bg-paper.png" in kit
-    assert re.search(r"\.notebook-shell::before\s*\{[^}]*url\(", kit), (
-        "notebook paper texture layer must be preserved")
+    assert any("background: var(--color-bg-sidebar)" in block for block in sidebar), sidebar
+    assert any("background: var(--color-bg-surface)" in block for block in workspace), workspace
+    for selector in (r"\.notebook-shell", r"\.notebook-shell::before", r"\.screen-dialog"):
+        block = re.search(selector + r"\s*\{[^}]*\}", kit)
+        assert block, selector
+        assert "var(--background-artwork)" in block.group(0), selector
+        assert "var(--background-overlay)" in block.group(0), selector
+        assert "url(" not in block.group(0), selector
+    assert "thyca-bg-" not in css and "thyca-bg-" not in kit
     tokens = TOKENS_CSS.read_text(encoding="utf-8")
+    assert '--background-artwork: url("../../images/thyca-bg-outer.png")' in tokens
+    assert "--chat-brand-ink: var(--color-ink)" in tokens
     blocks = re.findall(r"body\s*\{[^}]*\}", tokens)
     assert any("background-image" in block for block in blocks), (
         "outer desk gradient on body must be preserved")
@@ -1633,10 +1643,10 @@ def test_avatar_reference_tokens_and_css() -> None:
     """Shared tokens carry the Vintage Ink palette; avatar CSS resolves
     halo/offline/badge/flag/stem colours through them."""
     tokens = TOKENS_CSS.read_text(encoding="utf-8")
-    for token in ("--note-do: #BE5530", "--note-re: #865580",
-                  "--note-mi: #2B7A72", "--note-fa: #386288",
-                  "--note-sol: #537E56", "--note-la: #C48324",
-                  "--note-si: #735238", "--note-star: #D4912A",
+    for token in ("--note-do: #C2522B", "--note-re: #A84A3B",
+                  "--note-mi: #5C7448", "--note-fa: #B87B28",
+                  "--note-sol: #4E6E58", "--note-la: #9A5B32",
+                  "--note-si: #4A3525", "--note-star: #D8942B",
                   "--avatar-eye: #2B211B", "--avatar-eye-offline: #786D61",
                   "--status-offline: #B5A898",
                   "--avatar-star-offline: #BDB2A6",
@@ -1652,6 +1662,9 @@ def test_avatar_reference_tokens_and_css() -> None:
     css = AVATAR_CSS.read_text(encoding="utf-8")
     assert "fill: var(--avatar-tint, var(--team-tint, var(--color-accent)))" in css
     assert "stroke: var(--avatar-tint, var(--team-tint, var(--color-accent)))" in css
+    star = re.search(r"\.avatar-star\s*\{[^}]*\}", css)
+    assert star and "fill: var(--note-star)" in star.group(0), (
+        "the tiny gold star is separate from Thyca's note-do body tint")
     assert "fill: var(--avatar-halo)" in css
     assert "stroke: var(--avatar-halo-ring)" in css
     assert "stroke-dasharray: 4 3.5" in css
@@ -1829,7 +1842,9 @@ def test_avatar_ring_uses_existing_surface_token() -> None:
 def test_sidebar_rows_avatar_name_layout() -> None:
     """Bot/session rows: avatar in a fixed first column on the name line,
     title and metadata share the text column with ellipsis pinned, and
-    the collapsed rail keeps a 64px hit target at 48px artwork."""
+    the compact v5 rail shows names in 92px slots inside a 112px rail.
+    Expanded/compact SVG fallback artwork stays 48/56px; enhanced 3D
+    slots may independently grow to 64/86px."""
     import re
 
     css = CHAT_CSS.read_text(encoding="utf-8")
@@ -1882,17 +1897,30 @@ def test_sidebar_rows_avatar_name_layout() -> None:
     assert groupav and "width: 3rem" in groupav.group(1)
 
     rail = re.search(r"\.chat-shell\.is-rail\s*\{([^}]*)\}", css)
-    assert rail and "7.6rem" in rail.group(1)
+    assert rail and (
+        "grid-template-columns: calc(7rem + 1.25rem + 0.18rem) minmax(0, 1fr)"
+        in rail.group(1)
+    ), "112px rail plus the shared sidebar frame margins"
     railrow = re.search(
         r"\.is-rail #team-bot-list \.team-bot-item,\s*"
         r"\.is-rail #team-bot-list \.team-group-item\s*\{([^}]*)\}",
         css)
     assert railrow, "rail row rule missing"
-    assert "grid-template-columns: 3.5rem" in railrow.group(1)
-    assert "padding: 0.5rem" in railrow.group(1)
+    assert "grid-template-columns: minmax(0, 1fr)" in railrow.group(1)
+    assert "width: 5.75rem" in railrow.group(1)
     railav = re.search(r"\.is-rail \.team-avatar\s*\{([^}]*)\}", css)
-    assert railav and "width: 3.5rem" in railav.group(1)
-    assert "grid-row: 1 / -1" in railav.group(1)
+    assert railav and "width: 4rem" in railav.group(1)
+    assert "height: 4rem" in railav.group(1)
+    assert "grid-row: 1;" in railav.group(1)
+    railname = re.search(
+        r"\.is-rail #team-bot-list \.team-bot-item \.session-name,\s*"
+        r"\.is-rail #team-bot-list \.team-group-item \.session-name\s*\{([^}]*)\}",
+        css)
+    assert railname, "compact bot/group names must stay visible below avatars"
+    for decl in ("display: block", "grid-column: 1", "grid-row: 2",
+                 "text-align: center"):
+        assert decl in railname.group(1), decl
+    assert "display: none" not in railname.group(1)
     collapsed = re.search(
         r"\.is-rail \.team-cluster-sessions,\s*\.is-rail #team-nav-actions"
         r"\s*\{([^}]*)\}", css)

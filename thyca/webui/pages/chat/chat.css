@@ -1125,6 +1125,29 @@ button:active {
   column-gap: 0.75rem;
 }
 
+/* Envelope rows (wax-sidebar mockup): each top-level row is a letter —
+   cream card, thin edge, two diagonal fold lines meeting at centre. */
+#team-bot-list .team-bot-item,
+#team-bot-list .team-group-item {
+  --fold: color-mix(in srgb, var(--color-divider) 62%, transparent);
+  min-height: 4.25rem;
+  padding: 0.55rem 0.9rem 0.55rem 0.75rem;
+  border: var(--rule) solid var(--color-divider);
+  border-radius: 0.65rem;
+  background-color: var(--color-paper-card);
+  background-image:
+    linear-gradient(to top right,
+      transparent calc(50% - 0.5px), var(--fold) calc(50% - 0.5px),
+      var(--fold) calc(50% + 0.5px), transparent calc(50% + 0.5px)),
+    linear-gradient(to bottom right,
+      transparent calc(50% - 0.5px), var(--fold) calc(50% - 0.5px),
+      var(--fold) calc(50% + 0.5px), transparent calc(50% + 0.5px));
+  background-size: 4.4rem 50%;
+  background-position: left top, left bottom;
+  background-repeat: no-repeat;
+  box-shadow: 0 1px 2px rgba(61, 42, 31, 0.07);
+}
+
 #team-bot-list .session-item .session-name {
   grid-column: 2;
   grid-row: 1;
@@ -1204,17 +1227,24 @@ button:active {
   background: var(--team-tint);
 }
 
+/* On envelope rows the bar floats just off the card's left edge, like
+   the mockup's detached spine. */
+#team-bot-list .team-bot-item.is-active::after,
+#team-bot-list .team-group-item.is-active::after {
+  inset-block: 0.7rem;
+  inset-inline-start: -0.55rem;
+}
+
 .team-cluster {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
 }
 
-/* Flat activity-ordered list: one hairline between top-level channels
-   (bot cluster or group row), whatever comes next. */
-#team-bot-list > :not(:first-child) {
-  border-top: var(--rule) solid var(--color-divider);
-  padding-top: 0.35rem;
+/* Envelope rows carry their own edges — the list just breathes between
+   cards instead of drawing hairlines. */
+#team-bot-list {
+  gap: 0.55rem;
 }
 
 .team-cluster-sessions {

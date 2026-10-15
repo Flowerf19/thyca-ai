@@ -1785,8 +1785,10 @@ def test_sidebar_rows_avatar_name_layout() -> None:
         r"#team-bot-list \.team-session-item:not\(\.team-group-item\)"
         r" \.team-unread\s*\{([^}]*)\}", css)
     assert subunread and "grid-column: 2" in subunread.group(1)
-    group = re.search(r"#team-bot-list \.team-group-item\s*\{([^}]*)\}", css)
-    assert group and "grid-template-columns: auto minmax(0, 1fr) auto" in group.group(1)
+    group = re.search(
+        r"#team-bot-list \.team-group-item\s*\{[^}]*"
+        r"grid-template-columns: auto minmax\(0, 1fr\) auto[^}]*\}", css)
+    assert group, "group row must keep the three-column grid"
 
     avatar = re.search(r"^\.team-avatar\s*\{([^}]*)\}", css, re.M)
     assert avatar and "grid-row: 1 / 3;" in avatar.group(1)

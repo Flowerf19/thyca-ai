@@ -1126,37 +1126,36 @@ button:active {
 }
 
 /* Envelope rows (sealed-letter spec): each top-level row is a letter —
-   cream card, thin edge, soft shadow. Two crease lines run from the
-   left corners and converge under the wax seal's centre, so the seal
-   reads as pinning the fold; the flap triangle carries a whisper of
-   darker paper. */
-#team-bot-list .team-bot-item {
-  --seal-cx: 2.125rem; /* padding .75 + seal 2.75/2 */
-}
-#team-bot-list .team-group-item {
-  --seal-cx: 2.625rem; /* padding .75 + stack 3.75/2 */
-}
+   cream card, thin edge, soft shadow. The bottom flap crease runs the
+   card's width near its lower edge with a whisper of folded-paper shade
+   beneath; the wax seal presses onto the crease from the left. */
 #team-bot-list .team-bot-item,
 #team-bot-list .team-group-item {
   --fold: color-mix(in srgb, var(--color-divider) 62%, transparent);
   min-height: 4.25rem;
-  padding: 0.55rem 0.9rem 0.55rem 0.75rem;
+  padding: 0.55rem 0.9rem 0.5rem 0.75rem;
   border: var(--rule) solid var(--color-divider);
   border-radius: 0.45rem;
   background-color: var(--color-paper-card);
-  background-image:
-    linear-gradient(to top right,
-      transparent calc(50% - 0.5px), var(--fold) calc(50% - 0.5px),
-      var(--fold) calc(50% + 0.5px), transparent calc(50% + 0.5px)),
-    linear-gradient(to bottom right,
-      transparent calc(50% - 0.5px), var(--fold) calc(50% - 0.5px),
-      var(--fold) calc(50% + 0.5px), transparent calc(50% + 0.5px)),
-    conic-gradient(from 225deg at var(--seal-cx) 50%,
-      rgba(122, 92, 66, 0.05) 0deg 90deg, transparent 90deg);
-  background-size: var(--seal-cx) 50%, var(--seal-cx) 50%, 100% 100%;
-  background-position: left top, left bottom, left top;
-  background-repeat: no-repeat;
+  background-image: linear-gradient(to bottom,
+    transparent calc(100% - 0.85rem - 0.5px),
+    var(--fold) calc(100% - 0.85rem - 0.5px) calc(100% - 0.85rem + 0.5px),
+    rgba(122, 92, 66, 0.045) calc(100% - 0.85rem + 0.5px));
   box-shadow: 0 1px 2px rgba(61, 42, 31, 0.07);
+}
+
+/* Seal rides low so it presses onto the flap crease. */
+#team-bot-list .team-bot-item .team-avatar,
+#team-bot-list .team-group-item .team-avatar {
+  transform: translateY(0.12rem);
+}
+
+/* Open mouth: the crease deepens and a soft inner shadow reads as the
+   envelope's throat the session sheet slides from. */
+#team-bot-list .team-bot-item.is-open {
+  --fold: color-mix(in srgb, var(--color-divider) 80%, var(--color-muted));
+  box-shadow: 0 1px 2px rgba(61, 42, 31, 0.07),
+    inset 0 -5px 6px -5px rgba(61, 42, 31, 0.25);
 }
 
 /* The expand caret lives in its own trailing column so the unread badge
@@ -1294,13 +1293,36 @@ button:active {
   gap: 0.55rem;
 }
 
+/* The pulled-out sheet: all sessions on one paper leaf, narrower than
+   the envelope and tucked under its bottom edge so it reads as sliding
+   from the mouth. The card is positioned, so it covers the tuck. */
 .team-cluster-sessions {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
-  margin-inline-start: 1.15rem;
-  padding-inline-start: 0.5rem;
-  border-inline-start: var(--rule) solid var(--color-divider);
+  margin: -0.55rem 0.4rem 0;
+  padding: 0.7rem 0.45rem 0.55rem;
+  border: var(--rule) solid var(--color-divider);
+  border-block-start: 0;
+  border-radius: 0 0 0.45rem 0.45rem;
+  background-color: color-mix(in srgb, var(--color-paper-card) 78%, var(--color-bg-frame));
+  box-shadow: inset 0 6px 6px -5px rgba(61, 42, 31, 0.3),
+    0 1px 2px rgba(61, 42, 31, 0.05);
+}
+
+/* Slide-out plays once per user toggle (.is-fresh is consumed on render)
+   — streamed-status re-renders never replay it. */
+.team-cluster-sessions.is-fresh {
+  animation: sheet-slip 340ms var(--ease-out) both;
+}
+
+@keyframes sheet-slip {
+  from { transform: translateY(-45%); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .team-cluster-sessions.is-fresh { animation: none; }
 }
 
 /* Avatar cell: the SVG note avatar (shared/css/bot-avatar.css) sits

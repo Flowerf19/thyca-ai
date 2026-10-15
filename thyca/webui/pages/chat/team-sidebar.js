@@ -51,10 +51,12 @@ let hub = null;
 let bots = [];
 let activeBot = "";
 /* Sealed-letter rows: a bot bar is a collapsible header for its session
-   list. The current bot starts expanded (same shape as before); user
-   toggles are remembered across live-state re-renders. */
-const openIds = new Set();
+   sheet. The current bot starts expanded (same shape as before); a user
+   fold survives live-state re-renders via closedIds. freshOpen marks the
+   sheet that should play its slide-out once — it is consumed on render
+   so streamed-status re-renders never replay it. */
 const closedIds = new Set();
+const freshOpen = new Set();
 let sharedOpen = false;
 let sharedError = "";
 // Checkbox picks survive re-renders while the picker stays open.
@@ -122,14 +124,13 @@ function botSubLabel(bot) {
   return [bot.role, statusLabel(bot.status)].filter(Boolean).join(" · ");
 }
 
-/* Expanded = shows its session list below the envelope row. The current
-   bot is expanded by default until the user folds it; other bots expand
-   only by user click. */
+/* Expanded = shows its session sheet below the envelope row. Only the
+   current bot expands (the row opens the DM and unrolls the sheet in one
+   gesture); folding is a pure view toggle remembered via closedIds. */
 function botExpanded(bot) {
   const me = currentTeamBot();
   const id = String(bot?.id || "");
-  if (!id) return false;
-  return me && id === me.id ? !closedIds.has(id) : openIds.has(id);
+  return Boolean(id && me && id === me.id && !closedIds.has(id));
 }
 
 /* The bot whose unified list is on screen: the open session names it when
@@ -281,15 +282,14 @@ function botRow(bot) {
     + (label ? `, ${label}` : "")
     + unreadSuffix(seen));
   button.addEventListener("click", () => {
-    const me = currentTeamBot();
     if (botExpanded(bot)) {
       // Fold only — the open chat (if this bot's) is untouched.
-      if (me && bot.id === me.id) closedIds.add(bot.id);
-      else openIds.delete(bot.id);
+      closedIds.add(bot.id);
       render();
       return;
     }
     closedIds.delete(bot.id);
+    freshOpen.add(bot.id);
     void openBot(bot.id);
   });
   row.append(button);
@@ -604,6 +604,7 @@ function render() {
     if (!botExpanded(bot)) return;
     const sub = document.createElement("div");
     sub.className = "team-cluster-sessions";
+    if (freshOpen.delete(bot.id)) sub.classList.add("is-fresh");
     cluster.append(sub);
     if (me && bot.id === me.id && mainError) sub.append(errorNote(mainError));
     const rememberedId = getRememberedDm(bot.id);

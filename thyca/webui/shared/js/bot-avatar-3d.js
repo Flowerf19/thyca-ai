@@ -340,6 +340,7 @@ export function createAvatar3DController() {
       thumbnailScene.add(new THREE.AmbientLight(0xfff3de, 0.78));
       const keyLight = new THREE.DirectionalLight(0xfff7e8, 0.95);
       keyLight.position.set(4, 6, 5);
+      keyLight.castShadow = true;
       thumbnailScene.add(keyLight);
       const rimLight = new THREE.DirectionalLight(0xe8a86b, 0.45);
       rimLight.position.set(-5, -2, -3);
@@ -428,6 +429,7 @@ export function createAvatar3DController() {
       followerScene.add(new THREE.AmbientLight(0xfff3de, 0.78));
       const followerKey = new THREE.DirectionalLight(0xfff7e8, 0.95);
       followerKey.position.set(4, 6, 5);
+      followerKey.castShadow = true;
       followerScene.add(followerKey);
       const followerRim = new THREE.DirectionalLight(0xe8a86b, 0.45);
       followerRim.position.set(-5, -2, -3);

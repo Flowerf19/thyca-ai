@@ -57,6 +57,19 @@ class BotRegistry:
     def bot_dir(self, bot_id: str) -> Path:
         return self.root / bot_id
 
+    def bot_user_text(self, bot_id: str) -> str:
+        """This bot's own USER.md, or "" when missing/unreadable (phase 1E).
+
+        The sweep writes it; prompts read it. Never raises for a missing
+        file — symlinks are treated as absent like the memory read policy."""
+        path = self.bot_dir(bot_id) / "USER.md"
+        try:
+            if not path.is_file() or path.is_symlink():
+                return ""
+            return path.read_text(encoding="utf-8")
+        except OSError:
+            return ""
+
     def card_path(self, bot_id: str) -> Path:
         """Write target for the card (always the canonical ``TWIN.md``)."""
         return self.bot_dir(bot_id) / CARD_FILENAME

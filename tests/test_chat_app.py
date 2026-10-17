@@ -603,6 +603,12 @@ def test_two_sessions_run_turns_in_parallel(tmp_path: Path) -> None:
     # One connect per turn is what the factory does; the injected one is
     # shared, so make each chat call independent instead of stateful.
     app = _chat(tmp_path, Gated())
+    from thyca.bots.card import BotCard
+
+    app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
+                             description="Codes.", persona="You code."))
+    # Phase 2B: create() with no bots is Thyca's DM singleton, so the
+    # parallel session below is a group (parallelism is model-agnostic).
     slow_id = app.create()["id"]
     errors: list[BaseException] = []
     slow: dict = {}
@@ -619,7 +625,7 @@ def test_two_sessions_run_turns_in_parallel(tmp_path: Path) -> None:
     try:
         # The second session is idle: its turn must complete while the first
         # one is still parked in the provider call.
-        other_id = app.create()["id"]
+        other_id = app.create(bots=["thyca", "coder"])["id"]
         started_at = time.monotonic()
         quick = app.turn(other_id, "fast")
         elapsed = time.monotonic() - started_at
@@ -701,6 +707,10 @@ def test_create_keeps_blank_session_with_running_turn(
 
     monkeypatch.setattr(ActiveMemory, "refresh", gated_refresh)
     app = _chat(tmp_path, FakeLLM(ChatReply(content="late")))
+    from thyca.bots.card import BotCard
+
+    app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
+                             description="Codes.", persona="You code."))
     running_id = app.create()["id"]
     assert app.get_payload(running_id)["messages"] == []
     errors: list[BaseException] = []
@@ -715,7 +725,9 @@ def test_create_keeps_blank_session_with_running_turn(
     worker.start()
     assert claimed.wait(2)
     try:
-        fresh = app.create()
+        # Phase 2B: the no-bots create is the DM singleton (== running_id
+        # here), so the "fresh" session is a group.
+        fresh = app.create(bots=["thyca", "coder"])
         assert fresh["id"] != running_id
         assert (tmp_path / "sessions" / f"{running_id}.jsonl").exists()
     finally:

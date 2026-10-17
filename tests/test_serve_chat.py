@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import threading
 import time
 from dataclasses import dataclass, field, replace
@@ -268,6 +269,10 @@ def test_create_during_in_flight_turn(tmp_path: Path) -> None:
             return ChatReply(content="late")
 
     app = _chat(tmp_path, Slow())
+    from thyca.bots.card import BotCard
+
+    app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
+                             description="Codes.", persona="You code."))
     first = app.create()["id"]
     errors: list[BaseException] = []
     result: dict = {}
@@ -292,7 +297,11 @@ def test_create_during_in_flight_turn(tmp_path: Path) -> None:
     maker.start()
     maker.join(2)
     assert not maker.is_alive(), "create blocked by in-flight turn lock"
-    assert created.get("id") and created["id"] != first
+    # Phase 2B: the no-bots create is the same DM, so the concurrent
+    # create opens a group instead — still blank and non-blocking.
+    group = app.create(bots=["thyca", "coder"])
+    assert group["id"] != first
+    created.update(group)
     assert created["messages"] == []
     # Turn session must still receive the reply after create ran mid-flight.
     release.set()
@@ -747,11 +756,21 @@ def test_chat_nav_opens_new_session() -> None:
 
 def test_create_prunes_previous_blank(tmp_path: Path) -> None:
     app = _chat(tmp_path, FakeLLM(ChatReply(content="x")))
+    from thyca.bots.card import BotCard
+
+    app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
+                             description="Codes.", persona="You code."))
     first = app.create()
     assert app.list_payload()["sessions"] == []
-    second = app.create()
-    assert not (tmp_path / "sessions" / f"{first['id']}.jsonl").exists()
-    assert (tmp_path / "sessions" / f"{second['id']}.jsonl").exists()
+    # Phase 2B: repeated creates return the same DM singleton; a fresh
+    # group still prunes the previous blank group.
+    assert app.create()["id"] == first["id"]
+    g1 = app.create(bots=["thyca", "coder"])
+    g2 = app.create(bots=["thyca", "coder"])
+    assert g1["id"] != g2["id"]
+    assert not (tmp_path / "sessions" / f"{g1['id']}.jsonl").exists()
+    assert (tmp_path / "sessions" / f"{g2['id']}.jsonl").exists()
+    assert (tmp_path / "sessions" / f"{first['id']}.jsonl").exists()
     app.shutdown()
 
 
@@ -1317,7 +1336,9 @@ def test_webui_keeps_streaming_card_across_session_switch() -> None:
     assert "const live = liveTurns.get(state.activeId);" in render
     assert "el.messageList.append(live.article);" in render
     assert "live.thinking?.resume();" in render
-    assert "createLiveStatus(el.messageList, detail.started_at)" in render
+    assert re.search(
+        r"createLiveStatus\(el\.messageList,\s*detail\.started_at", render
+    )
     # A detached card must not drag the visible conversation around.
     assert "if (state.activeId === sessionId) scrollToBottom();" in send_message
 
@@ -1337,7 +1358,9 @@ def test_webui_follows_a_turn_it_did_not_start() -> None:
     # events as the starter. Poll is only the fallback if that stream is gone.
     assert "RUNNING_POLL_MS = 2000" in app
     assert "detail && detail.running === true" in app
-    assert "createLiveStatus(el.messageList, detail.started_at)" in app
+    assert re.search(
+        r"createLiveStatus\(el\.messageList,\s*detail\.started_at", app
+    )
     assert "async function followTurn" in app
     assert "void followTurn(sessionId, detail.started_at)" in load_session
     assert "abortFollow()" in load_session
@@ -1369,7 +1392,6 @@ def test_webui_follows_a_turn_it_did_not_start() -> None:
     # imported (a missing ApiError import threw at runtime, not at load).
     # Every name the module uses has to be in the import list, not just the
     # first one: assert the name itself, wherever it sits in the braces.
-    import re
 
     names = re.findall(r'import \{([^}]*)\}\s*from "\.\./\.\./shared/js/(?:api|http|streams)\.js"', app)
     assert names, "app.js must import from ../../shared/js/{api,http,streams}.js"
@@ -1937,13 +1959,18 @@ def test_cancel_in_flight_turn(tmp_path: Path) -> None:
 
 
 def test_retry_last_user_turn(tmp_path: Path) -> None:
+    from thyca.bots.card import BotCard
+
     llm = ScriptedLLM(
         [
             ChatReply(content="first"),
             ChatReply(content="second"),
         ]
     )
-    httpd, thread = _start(tmp_path, _chat(tmp_path, llm))
+    app = _chat(tmp_path, llm)
+    app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
+                             description="Codes.", persona="You code."))
+    httpd, thread = _start(tmp_path, app)
     try:
         created = _json(httpd, "/api/sessions", method="POST", data=b"")
         session_id = created["id"]
@@ -1965,7 +1992,9 @@ def test_retry_last_user_turn(tmp_path: Path) -> None:
         think_users = [item.content for item in llm.requests[-1] if item.role == "user"]
         assert think_users == ["hello"]
 
-        empty = _json(httpd, "/api/sessions", method="POST", data=b"")
+        # A fresh group (not the DM singleton) has no user row: retry is 400.
+        empty = _json(httpd, "/api/sessions", method="POST",
+                      data=b'{"bots":["thyca","coder"]}')
         code, body = _http_error(
             httpd, f"/api/sessions/{empty['id']}/turn/stream", b'{"retry":true}'
         )

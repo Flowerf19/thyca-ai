@@ -1729,3 +1729,15 @@ def test_compact_overhead_only_returns_none_without_junk_marker() -> None:
         compactor.compact(messages, 1000, pending_user_tokens=1000) is None
     )
     assert compactor.compact([], 1000, pending_user_tokens=1000) is None
+
+
+def test_ensure_dm_finds_marked_creates_marked(tmp_path: Path) -> None:
+    from thyca.sessions import SessionManager
+
+    manager = SessionManager(tmp_path / "sessions")
+    first = manager.ensure_dm("coder")
+    assert first.dm_bot == "coder"
+    assert first.bots == ["coder"]
+    second = manager.ensure_dm("coder")
+    assert second.id == first.id
+    assert SessionManager(tmp_path / "sessions").ensure_dm("other").id != first.id

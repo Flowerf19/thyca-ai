@@ -18,6 +18,7 @@ from thyca.memory.heading import (
     is_visible,
     iter_session_blocks,
     render_heading,
+    validate_task_meta,
 )
 
 
@@ -98,12 +99,19 @@ class MemoryWriter:
         proj: str | None = None,
         chat: str | None = None,
         keep_details: bool = False,
+        task: str | None = None,
+        cont: str | None = None,
+        kind: str | None = None,
+        status: str | None = None,
+        habit: str | None = None,
+        habit_explicit: bool | None = None,
     ) -> None:
         """Rewrite one session's title, body, and/or linking metadata in place.
 
         entry_id / importance / expires_at stay untouched — the id the index
         and callers hold never changes; only the visible text moves.
-        proj/chat only change when the caller passes them. keep_details keeps
+        proj/chat/task/cont/kind/status/habit/habit_explicit only change when
+        the caller passes them (omit = keep). keep_details keeps
         the existing body lines after the summary line (summary-only update).
         """
         path, entry = self.locate(session_id)
@@ -111,6 +119,8 @@ class MemoryWriter:
             self._update_session(
                 path, entry, topic=topic, body_lines=body_lines,
                 proj=proj, chat=chat, keep_details=keep_details,
+                task=task, cont=cont, kind=kind, status=status, habit=habit,
+                habit_explicit=habit_explicit,
             )
 
     def _update_session(
@@ -123,12 +133,29 @@ class MemoryWriter:
         proj: str | None = None,
         chat: str | None = None,
         keep_details: bool = False,
+        task: str | None = None,
+        cont: str | None = None,
+        kind: str | None = None,
+        status: str | None = None,
+        habit: str | None = None,
+        habit_explicit: bool | None = None,
     ) -> None:
         if not path.is_file():
             raise ArchiveError(f"memory file missing: {path}")
         if topic is not None and not topic.strip():
             raise ArchiveError("topic must not be blank")
-        if topic is None and body_lines is None and proj is None and chat is None:
+        if (
+            topic is None
+            and body_lines is None
+            and proj is None
+            and chat is None
+            and task is None
+            and cont is None
+            and kind is None
+            and status is None
+            and habit is None
+            and habit_explicit is None
+        ):
             return
         lines = _read_lines(path)
         out: list[str] = []
@@ -147,7 +174,20 @@ class MemoryWriter:
                 entry_id=meta.entry_id or resolved,
                 proj=meta.proj if proj is None else proj,
                 chat=meta.chat if chat is None else chat,
+                task=meta.task if task is None else task,
+                cont=meta.cont if cont is None else cont,
+                kind=meta.kind if kind is None else kind,
+                status=meta.status if status is None else status,
+                habit=meta.habit if habit is None else habit,
+                habit_explicit=meta.habit_explicit if habit_explicit is None else habit_explicit,
             )
+            try:
+                validate_task_meta(
+                    new_meta.task, new_meta.cont, new_meta.kind,
+                    new_meta.status, new_meta.habit, new_meta.habit_explicit,
+                )
+            except ValueError as exc:
+                raise ArchiveError(str(exc)) from exc
             out.append(render_heading(new_meta))
             if body_lines is not None:
                 merged = list(body_lines)

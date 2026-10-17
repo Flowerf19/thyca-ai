@@ -91,7 +91,7 @@ def test_memory_and_bash_filters() -> None:
     # masking above still removes its own families.
     out = filtered_tool_schemas(
         _schemas("memory_search", "memory_remember", "memory_propose_team",
-                 "bash", "bot_fetch", "task_open", "read"),
+                 "bash", "bot_fetch", "task_open", "read", "memory_tasks"),
         card,
     )
     assert [s["function"]["name"] for s in out] == ["bot_fetch", "task_open", "read"]
@@ -133,3 +133,22 @@ def test_bus_rejects_self_send() -> None:
         bus.send(sender="coder", recipient="coder", kind="message",
                  session_id="r", payload="note to self")
     assert bus.pending("coder") == 0
+
+
+def test_memory_tasks_in_baseline_read_gated_hidden_wins() -> None:
+    from thyca.bots.card import BASELINE_BOT_TOOLS, BotMemoryPolicy
+
+    assert "memory_tasks" in BASELINE_BOT_TOOLS
+    # Default card: visible like the other read tools.
+    card = _card(tools=("memory_tasks", "read"))
+    out = filtered_tool_schemas(_schemas("memory_tasks", "read"), card)
+    assert [s["function"]["name"] for s in out] == ["memory_tasks", "read"]
+    # memory.read=false hides it even when listed by hand.
+    nor = _card(memory=BotMemoryPolicy(read=False, write=True, propose_team=True),
+                tools=("memory_tasks", "read"))
+    assert [s["function"]["name"]
+            for s in filtered_tool_schemas(_schemas("memory_tasks", "read"), nor)] == ["read"]
+    # hidden_tools still wins.
+    hid = _card(tools=("memory_tasks", "read"), hidden_tools=("memory_tasks",))
+    assert [s["function"]["name"]
+            for s in filtered_tool_schemas(_schemas("memory_tasks", "read"), hid)] == ["read"]

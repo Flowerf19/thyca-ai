@@ -48,6 +48,14 @@ class Hit:
     line_end: int = 1
     # Team owners (BE-4): None = legacy team entry.
     bots: tuple[str, ...] | None = None
+    # Task + habits (phase 1A): None = legacy entry without the key.
+    task: str | None = None
+    cont: str | None = None
+    kind: str | None = None
+    status: str | None = None
+    habit: str | None = None
+    # Phase 1E: user explicitly stated the habit.
+    habit_explicit: bool = False
 
 
 @dataclass
@@ -98,8 +106,9 @@ class ArchiveStore:
                     """INSERT INTO chunks(
                         chunk_id, path, source_kind, timeline_day, session_id, session_title,
                         heading_raw, leaf_ord, line_start, line_end, text_raw, text_norm,
-                        content_hash, expires_at, forgotten_at, project, chat_session, bots
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        content_hash, expires_at, forgotten_at, project, chat_session, bots,
+                        task, cont, kind, status, habit, habit_explicit
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         chunk.chunk_id,
                         chunk.path,
@@ -119,6 +128,12 @@ class ArchiveStore:
                         chunk.project,
                         chunk.chat_session,
                         encode_bots(chunk.bots),
+                        chunk.task,
+                        chunk.cont,
+                        chunk.kind,
+                        chunk.status,
+                        chunk.habit,
+                        1 if chunk.habit_explicit else 0,
                     ),
                 )
             self._db.commit()
@@ -164,6 +179,9 @@ class ArchiveStore:
         project: str | None = None,
         chat_session: str | None = None,
         reader: str | None = None,
+        task: str | None = None,
+        kind: str | None = None,
+        status: str | None = None,
     ) -> list[Hit]:
         match = _safe_match(query)
         if match is None:
@@ -186,6 +204,15 @@ class ArchiveStore:
         if chat_session is not None:
             sql += " AND c.chat_session = ?"
             params.append(chat_session)
+        if task is not None:
+            sql += " AND c.task = ?"
+            params.append(task)
+        if kind is not None:
+            sql += " AND c.kind = ?"
+            params.append(kind)
+        if status is not None:
+            sql += " AND c.status = ?"
+            params.append(status)
         clause, clause_params = _reader_clause("c.bots", reader)
         sql += clause
         params.extend(clause_params)
@@ -205,6 +232,9 @@ class ArchiveStore:
         project: str | None = None,
         chat_session: str | None = None,
         reader: str | None = None,
+        task: str | None = None,
+        kind: str | None = None,
+        status: str | None = None,
     ) -> list[Hit]:
         tokens = [t for t in _NON_ALNUM.split(query_norm) if len(t) >= 3]
         sql = f"""SELECT * FROM chunks
@@ -219,6 +249,15 @@ class ArchiveStore:
         if chat_session is not None:
             sql += " AND chat_session = ?"
             params.append(chat_session)
+        if task is not None:
+            sql += " AND task = ?"
+            params.append(task)
+        if kind is not None:
+            sql += " AND kind = ?"
+            params.append(kind)
+        if status is not None:
+            sql += " AND status = ?"
+            params.append(status)
         clause, clause_params = _reader_clause("bots", reader)
         sql += clause
         params.extend(clause_params)
@@ -274,6 +313,60 @@ class ArchiveStore:
         )
 
     @guarded
+    def has_task(self, task: str) -> bool:
+        """True when any chunk already carries this task id (phase 1A)."""
+        row = self._db.execute(
+            "SELECT 1 FROM chunks WHERE task = ? LIMIT 1",
+            (task,),
+        ).fetchone()
+        return row is not None
+
+    @guarded
+    def task_session_rows(self, now: str, *, reader: str | None = None) -> list[sqlite3.Row]:
+        """One row per (task, session) for visible task entries (phase 1A).
+
+        Leaves of one session share a heading, so per-session aggregates
+        are exact: title/status/bots are uniform within a session."""
+        clause, clause_params = _reader_clause("bots", reader)
+        return list(
+            self._db.execute(
+                f"""SELECT task, session_id,
+                           MIN(timeline_day) AS first_day,
+                           MAX(timeline_day) AS last_day,
+                           MIN(line_start) AS first_line,
+                           MAX(line_start) AS last_line,
+                           MAX(session_title) AS title,
+                           MAX(status) AS status,
+                           MAX(bots) AS bots
+                    FROM chunks
+                    WHERE task IS NOT NULL AND {VISIBLE_SQL}{clause}
+                    GROUP BY task, session_id""",
+                (now, *clause_params),
+            )
+        )
+
+    @guarded
+    def habit_rows(self, now: str, *, reader: str | None = None) -> list[sqlite3.Row]:
+        """One row per habit session for the sweep (phase 1E).
+
+        Leaves of one session share a heading, so per-session aggregates
+        are exact."""
+        clause, clause_params = _reader_clause("bots", reader)
+        return list(
+            self._db.execute(
+                f"""SELECT session_id,
+                           MIN(timeline_day) AS day,
+                           MAX(habit) AS habit,
+                           MAX(habit_explicit) AS explicit,
+                           MAX(bots) AS bots
+                    FROM chunks
+                    WHERE kind = 'habit' AND {VISIBLE_SQL}{clause}
+                    GROUP BY session_id""",
+                (now, *clause_params),
+            )
+        )
+
+    @guarded
     def session_bots(self, session_id: str) -> tuple[str, ...] | None:
         """Owner list of one memory session; None = legacy (team) entry.
 
@@ -286,68 +379,6 @@ class ArchiveStore:
         if row is None:
             return None
         return decode_bots(row["bots"])
-
-    @guarded
-    def add_related(self, a_session: str, b_session: str, reason: str, now: str) -> bool:
-        """Link two memory sessions as related (undirected, canonical order).
-
-        Returns False for self-links (no-op); duplicate pairs are ignored."""
-        if a_session == b_session:
-            return False
-        first, second = sorted((a_session, b_session))
-        self._db.execute(
-            """INSERT OR IGNORE INTO related_edges(a_session, b_session, reason, created_at)
-               VALUES (?, ?, ?, ?)""",
-            (first, second, reason if isinstance(reason, str) else "", now),
-        )
-        return True
-
-    @guarded
-    def related_of(self, session_id: str) -> list[tuple[str, str]]:
-        """Every ``(other, reason)`` pair linked to ``session_id``."""
-        rows = self._db.execute(
-            """SELECT a_session, b_session, reason FROM related_edges
-               WHERE a_session = ? OR b_session = ?""",
-            (session_id, session_id),
-        )
-        out = []
-        for row in rows:
-            other = row["b_session"] if row["a_session"] == session_id else row["a_session"]
-            out.append((str(other), str(row["reason"])))
-        return out
-
-    @guarded
-    def all_related(self) -> list[tuple[str, str]]:
-        """Every ``(a, b)`` edge pair (canonical order) for clustering."""
-        return [
-            (str(row["a_session"]), str(row["b_session"]))
-            for row in self._db.execute("SELECT a_session, b_session FROM related_edges")
-        ]
-
-    @guarded
-    def drop_edges_of(self, session_id: str) -> None:
-        """Drop every edge touching ``session_id`` (forget/expire path)."""
-        self._db.execute(
-            "DELETE FROM related_edges WHERE a_session = ? OR b_session = ?",
-            (session_id, session_id),
-        )
-
-    @guarded
-    def prune_dangling_edges(self, now: str) -> int:
-        """Drop edges whose endpoint has no visible chunk left.
-
-        The one reaper the facade runs after every index refresh, so an
-        expired/purged entry's edges fall off the graph with it."""
-        cursor = self._db.execute(
-            f"""DELETE FROM related_edges
-               WHERE a_session NOT IN (
-                   SELECT DISTINCT session_id FROM chunks WHERE {VISIBLE_SQL}
-               ) OR b_session NOT IN (
-                   SELECT DISTINCT session_id FROM chunks WHERE {VISIBLE_SQL}
-               )""",
-            (now, now),
-        )
-        return cursor.rowcount if cursor.rowcount is not None else 0
 
     @guarded
     def recent_rows(self, limit: int, now: str, *, reader: str | None = None) -> list[sqlite3.Row]:
@@ -482,12 +513,18 @@ def hit_from_row(
     snippet: str | None = None,
 ) -> Hit:
     bots = None
+    extra: dict[str, str | None] = {}
     try:
         keys = row.keys()
     except Exception:
         keys = ()
     if "bots" in keys:
         bots = decode_bots(row["bots"])
+    for name in ("task", "cont", "kind", "status", "habit"):
+        value = row[name] if name in keys else None
+        extra[name] = value if isinstance(value, str) and value else None
+    explicit = row["habit_explicit"] if "habit_explicit" in keys else 0
+    extra["habit_explicit"] = bool(explicit)
     return Hit(
         path=row["path"],
         source_kind=row["source_kind"],
@@ -503,6 +540,12 @@ def hit_from_row(
         line_start=int(row["line_start"]),
         line_end=int(row["line_end"]),
         bots=bots,
+        task=extra["task"],
+        cont=extra["cont"],
+        kind=extra["kind"],
+        status=extra["status"],
+        habit=extra["habit"],
+        habit_explicit=bool(extra["habit_explicit"]),
     )
 
 

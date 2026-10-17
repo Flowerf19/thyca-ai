@@ -412,3 +412,36 @@ def test_t7_session_path_without_headings_keeps_whole_file(tmp_path: Path) -> No
     snap = memory.refresh(state, at("2026-09-28"), session_id="SID-HERE")
     assert snap.today == "# 2026-09-28\njust free notes\nno headings\n"
     assert snap.today_elsewhere == ""
+
+
+# --- Phase 1D: twin identity hardened at the source --------------------------
+
+IDENTITY_MARKER = "THYCA-IDENTITY-MARKER-1D"
+
+
+def _profile_home(tmp_path: Path) -> None:
+    (tmp_path / "SOUL.md").write_text("# Soul\nShared voice.\n", encoding="utf-8")
+    (tmp_path / "IDENTITY.md").write_text(
+        f"# Identity\n\nName: Thyca\n{IDENTITY_MARKER}\n", encoding="utf-8")
+    (tmp_path / "USER.md").write_text("# User\n", encoding="utf-8")
+
+
+def test_snapshot_child_reader_carries_no_thyca_identity(tmp_path: Path) -> None:
+    _profile_home(tmp_path)
+    memory = ActiveMemory(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    state = memory.open_session(at("2026-09-01"))
+    hot = memory.refresh(state, at("2026-09-01"), reader="coder")
+    assert hot.identity == ""
+    assert IDENTITY_MARKER not in PromptManager().build(hot)
+    # Peek follows the same rule (same _snapshot path).
+    assert memory.peek(state, at("2026-09-01"), reader="coder").identity == ""
+
+
+def test_snapshot_privileged_readers_keep_identity(tmp_path: Path) -> None:
+    _profile_home(tmp_path)
+    memory = ActiveMemory(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    state = memory.open_session(at("2026-09-01"))
+    for reader in (None, "thyca"):
+        hot = memory.refresh(state, at("2026-09-01"), reader=reader)
+        assert IDENTITY_MARKER in hot.identity
+        assert IDENTITY_MARKER in PromptManager().build(hot)

@@ -188,3 +188,27 @@ def test_file_specs_share_guard_key(tmp_path: Path) -> None:
         keys.append(spec.resource_key(args))
     assert keys[0] == keys[1] == keys[2] == guard.key(args)
     assert guard.key(args) == str(guard.resolve(args["path"]))
+
+
+@pytest.mark.asyncio
+async def test_read_denies_sessions_for_child_bot(tmp_path: Path) -> None:
+    from thyca.memory.identity import bind_bot_id, reset_bot_id
+
+    target = tmp_path / "sessions" / "room.jsonl"
+    target.parent.mkdir()
+    target.write_text('{"role":"user"}\n', encoding="utf-8")
+    # Unbound (user) and Thyca keep full read access.
+    assert not (await _call(_gateway(tmp_path), "read", path=str(target))).is_error
+    token = bind_bot_id("thyca")
+    try:
+        assert not (await _call(_gateway(tmp_path), "read", path=str(target))).is_error
+    finally:
+        reset_bot_id(token)
+    # A child bot is denied the whole sessions tree (phase 2A).
+    token = bind_bot_id("coder")
+    try:
+        denied = await _call(_gateway(tmp_path), "read", path=str(target))
+    finally:
+        reset_bot_id(token)
+    assert denied.is_error
+    assert "read denied" in denied.content

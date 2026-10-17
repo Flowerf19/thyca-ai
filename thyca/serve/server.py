@@ -88,7 +88,7 @@ SCHEDULER_INTERVAL_S = 60.0
 
 
 def scheduler_tick_once(chat: ChatApp) -> dict:
-    """One production scheduler pass (idle sweep + merge + due bots)."""
+    """One production scheduler pass (idle sweep + dedupe + due bots)."""
     from thyca.bots.scheduler import tick
 
     return tick(chat)

@@ -67,6 +67,22 @@ class TurnInFlight(Exception):
     """Cancel wait expired while the turn was still running."""
 
 
+def _mark_room_error(sessions, session_id: str, code: str, message: str) -> None:
+    """Mark a failed turn on a fresh room view (phase 2A fix).
+
+    The bot path appends the current user row through a separate manager
+    (early_room), so the long-lived ``sessions`` view is stale by the time
+    the turn fails — marking on it would rewrite the file from that stale
+    view and drop the just-appended user row. Reload first; a failed
+    reload still falls back to marking on the old view (best-effort).
+    """
+    try:
+        sessions.load(session_id)
+    except Exception:
+        pass
+    mark_turn_error(sessions, code, message)
+
+
 class ChatApp:
     def __init__(
         self,
@@ -124,6 +140,8 @@ class ChatApp:
         # CBE-4: flush-before-compact + post-compact recall hooks.
         self._runtime.memory_flush = self._flush_bot_memory
         self._runtime.memory_searcher = self._search_bot_memory
+        # Phase 1C: open memory-task catalog lines per bot.
+        self._runtime.memory_task_index = self._memory_task_index
         # Thyca-only admin tools (BE-5): registered once on the shared
         # registry; the runtime hides every bot_* name from child bots and
         # each handler re-checks the caller, so a leak still cannot be used.
@@ -233,35 +251,32 @@ class ChatApp:
     def bot_dm(self, bot_id: str) -> dict:
         """The bot's fixed DM session (CBE-5): find-or-create, marked.
 
-        Exactly one DM per bot: a room session with ``bots == [bot_id]``
-        and the ``dm`` meta marker, lazily created on first lookup. A
-        legacy unmarked solo room is adopted (marked) instead of making
-        a second window. Returns the session detail payload (``dm`` =
-        bot id, ``bots`` = [bot_id]). Unknown bots raise RegistryError.
+        Exactly one DM per bot: only a room session already carrying the
+        ``dm`` marker for this bot is adopted — an unmarked solo room is
+        an ordinary group under the phase-2B model, never silently
+        converted. Otherwise a fresh DM is created and marked. Returns
+        the session detail payload (``dm`` = bot id, ``bots`` = [bot_id],
+        ``kind`` = "dm"). Unknown bots raise RegistryError.
 
-        The whole scan -> adopt -> create sequence runs under
+        The whole scan -> create sequence runs under
         ``_dm_lock``: without it, two concurrent first lookups could
         both miss the scan and each create a session, leaving the bot
         with two competing "fixed" DMs."""
         card = self._bots.require(bot_id)
         if card.paused:
             raise RegistryError(f"bot is paused: {bot_id}")
+        # Shared helper owns find-or-create; this lock keeps the
+        # concurrent one-DM guarantee (the helper itself is lock-free).
+        # Prune only on the create path: an existing DM returns at once
+        # (rework 2B — pruning on every lookup could eat a freshly made
+        # blank group when opening another bot's DM).
         with self._dm_lock:
-            legacy = None
             for session in self._sessions.list_sessions():
                 if session.dm_bot == bot_id:
                     return self.get_payload(session.id)
-                bots = list(session.bots) if session.bots else ["thyca"]
-                if bots == [bot_id] and legacy is None:
-                    legacy = session
-            if legacy is not None:
-                self._sessions.store.append_dm(legacy.path, bot_id)
-                self._sessions.set_dm(legacy.id, bot_id)
-                return self.get_payload(legacy.id)
-            created = self.create(bots=[bot_id])
-            session = self._sessions.store.load(created["id"])
-            self._sessions.store.append_dm(session.path, bot_id)
-            return self.get_payload(created["id"])
+            self._sessions.discard_empty(keep=set(self._turns.snapshot()))
+            session = self._sessions.ensure_dm(bot_id)
+            return self.get_payload(session.id)
 
     async def _flush_bot_memory(self, bot_id: str, messages, turn_cfg) -> None:
         """Extract memories from a bot transcript about to compact (CBE-4).
@@ -287,13 +302,52 @@ class ChatApp:
             transcript = mem_jobs.transcript_tail(list(messages))
             if not transcript.strip():
                 return
+            from thyca.memory.identity import bind_bot_id, reset_bot_id
+
+            facade = self.job_facade()
+            token = bind_bot_id(bot_id)
+            try:
+                open_tasks = facade.tasks(status="open").get("tasks", [])
+            finally:
+                reset_bot_id(token)
             extracted = await mem_jobs.extract_from_transcript(
-                connect, turn_cfg.provider.model, transcript
+                connect, turn_cfg.provider.model, transcript,
+                open_tasks=open_tasks,
             )
             if extracted:
-                mem_jobs.apply_extracted(
-                    self.job_facade(), extracted, default_bot=bot_id
+                applied = mem_jobs.apply_extracted(
+                    facade, extracted, default_bot=bot_id,
+                    open_tasks=open_tasks,
                 )
+                if applied["written"]:
+                    # Dedupe now triggers here, per bot: freshly written
+                    # entries are reviewed for team duplicates. Best-effort
+                    # like every hook on this path — a dedupe failure never
+                    # breaks the flush (or the compaction after it).
+                    try:
+                        from thyca.memory import dedupe as mem_dedupe
+
+                        await mem_dedupe.propose_duplicates(
+                            facade, applied["written"],
+                            lambda a, b: mem_dedupe.llm_review_pair(
+                                connect, turn_cfg.provider.model, a, b),
+                        )
+                    except Exception:
+                        pass
+            # Phase 1E habit sweep (best-effort, never breaks the flush):
+            # newly-qualified habit labels append to this bot's own USER.md.
+            try:
+                from thyca.memory import habits as mem_habits
+
+                sweep_token = bind_bot_id(bot_id)
+                try:
+                    mem_habits.sweep_bot_habits(
+                        facade, bot_id, self._bots.bot_dir(bot_id) / "USER.md"
+                    )
+                finally:
+                    reset_bot_id(sweep_token)
+            except Exception:
+                pass
         finally:
             if owns:
                 close = getattr(connect, "aclose", None)
@@ -312,6 +366,18 @@ class ChatApp:
         return [
             f"- {hit.heading}: {hit.snippet}" for hit in result.hits[:5]
         ]
+
+    def _memory_task_index(self, bot_id: str) -> str:
+        """Open memory-task catalog lines for one bot (phase 1C)."""
+        from thyca.memory.facade import format_task_catalog
+        from thyca.memory.identity import bind_bot_id, reset_bot_id
+
+        token = bind_bot_id(bot_id)
+        try:
+            catalog = self.job_facade().tasks(status="open")
+        finally:
+            reset_bot_id(token)
+        return format_task_catalog(catalog.get("tasks", []))
 
     def job_facade(self):
         """Memory facade for the sidecar job (extract/candidates/promote).
@@ -352,43 +418,59 @@ class ChatApp:
                 continue
             entry: dict = {"idle_since": last_ts}
             try:
-                provider = turn_cfg.effective_provider()
-                connect = self._injected_connect or ConnectFactory.create(
-                    provider.api, provider
-                )
-                owns = self._injected_connect is None
-                try:
-                    transcript = mem_jobs.transcript_tail(list(item.messages))
-                    extracted = self._submit(
-                        mem_jobs.extract_from_transcript(
-                            connect, turn_cfg.provider.model, transcript
-                        )
+                participants = list(item.bots) if item.bots else ["thyca"]
+                if participants != ["thyca"]:
+                    # Group memory works like DMs: each bot extracts its
+                    # own part through its internal job, so the room sweep
+                    # never extracts here — it only compacts below.
+                    # Child DMs keep their phase marker; anything else
+                    # with a child bot reports per-bot ownership.
+                    if item.dm_bot is not None and item.dm_bot != "thyca":
+                        entry["skipped"] = "child_dm"
+                    else:
+                        entry["skipped"] = "per_bot_jobs"
+                else:
+                    provider = turn_cfg.effective_provider()
+                    connect = self._injected_connect or ConnectFactory.create(
+                        provider.api, provider
                     )
-                    facade = self.job_facade()
-                    applied = mem_jobs.apply_extracted(facade, extracted)
-                    entry["extracted"] = len(applied["written"])
-                    entry["proposed"] = len(applied["proposed"])
-                    if applied["written"]:
-                        # Merge funnel production caller: freshly written
-                        # entries are the merge candidates; the reviewer
-                        # is the turn model, called only for candidates.
-                        from thyca.memory import merge as mem_merge
-
-                        async def _review(a: str, b: str, _c=connect) -> str:
-                            return await mem_merge.llm_review_pair(
-                                _c, turn_cfg.provider.model, a, b
+                    owns = self._injected_connect is None
+                    try:
+                        transcript = mem_jobs.transcript_tail(list(item.messages))
+                        facade = self.job_facade()
+                        open_tasks = facade.tasks(status="open").get("tasks", [])
+                        extracted = self._submit(
+                            mem_jobs.extract_from_transcript(
+                                connect, turn_cfg.provider.model, transcript,
+                                open_tasks=open_tasks,
                             )
-
-                        merged = self._submit(
-                            mem_merge.run_merge_pass(facade, applied["written"], _review)
                         )
-                        entry["merged"] = len(merged["linked"])
-                        entry["merge_reviews"] = merged["review_calls"]
-                finally:
-                    if owns:
-                        close = getattr(connect, "aclose", None)
-                        if close is not None:
-                            self._submit(close())
+                        applied = mem_jobs.apply_extracted(
+                            facade, extracted, open_tasks=open_tasks
+                        )
+                        entry["extracted"] = len(applied["written"])
+                        entry["proposed"] = len(applied["proposed"])
+                        if applied["written"]:
+                            # Dedupe production caller: freshly written
+                            # entries are the duplicate candidates; the reviewer
+                            # is the turn model, called only for candidates.
+                            from thyca.memory import dedupe as mem_dedupe
+
+                            async def _review(a: str, b: str, _c=connect) -> str:
+                                return await mem_dedupe.llm_review_pair(
+                                    _c, turn_cfg.provider.model, a, b
+                                )
+
+                            duplicates = self._submit(
+                                mem_dedupe.propose_duplicates(facade, applied["written"], _review)
+                            )
+                            entry["duplicates_proposed"] = len(duplicates["proposed"])
+                            entry["duplicate_reviews"] = duplicates["review_calls"]
+                    finally:
+                        if owns:
+                            close = getattr(connect, "aclose", None)
+                            if close is not None:
+                                self._submit(close())
                 detail = self.compact_session(item.id)
                 entry["compacted"] = bool(
                     (detail.get("compaction") or {}).get("compacted", False)
@@ -448,7 +530,50 @@ class ChatApp:
                     bot_report[key] = entry
             except Exception as exc:
                 bot_report[bot_id] = {"error": type(exc).__name__}
-        return {"now": now_ts, "rooms": report, "bots": bot_report}
+        # Team habit aggregation runs once per sweep, after the local
+        # sweeps above may have written bot USER.md files this same pass.
+        try:
+            habits_aggregated = self.aggregate_changed_bot_habits()
+        except Exception:
+            habits_aggregated = []
+        return {"now": now_ts, "rooms": report, "bots": bot_report,
+                "habits_aggregated": habits_aggregated}
+
+    def aggregate_changed_bot_habits(self) -> list[str]:
+        """Aggregate team habits when bot USER.md files changed.
+
+        Tracks ``(mtime_ns, size)`` per bot file (missing file → None).
+        The first scan after startup counts as changed so edits made
+        while serve was down are picked up (aggregation is idempotent).
+        Signatures update only on success; a failure keeps the old ones
+        so the next sweep retries. Best-effort: never raises.
+        """
+        from thyca.memory import habits as mem_habits
+
+        try:
+            paths = {}
+            for doc in self._bots.list():
+                if doc.ok and doc.card is not None:
+                    paths[doc.card.bot_id] = (
+                        self._bots.bot_dir(doc.card.bot_id) / "USER.md"
+                    )
+            current: dict[str, tuple[int, int] | None] = {}
+            for bot_id, path in paths.items():
+                try:
+                    stat = path.stat() if path.is_file() else None
+                except OSError:
+                    stat = None
+                current[bot_id] = (
+                    None if stat is None else (stat.st_mtime_ns, stat.st_size))
+            previous = getattr(self, "_bot_user_signatures", None)
+            if previous is not None and current == previous:
+                return []
+            added = mem_habits.aggregate_team_habits(
+                paths, self._root / "USER.md", facade=self.job_facade())
+            self._bot_user_signatures = current
+            return added
+        except Exception:
+            return []
 
     def get_payload(self, session_id: str) -> dict:
         session = self._sessions.store.load(session_id)
@@ -567,12 +692,22 @@ class ChatApp:
         # survive the prune — its transcript is still empty on disk. Blank
         # bot DMs survive it too (discard_empty keeps ``dm_bot`` sessions:
         # a lazily created DM is blank until its first turn).
-        participants = self._clean_participants(bots) if bots is not None else None
+        # Phase 2B user-facing model: exactly dm or group. Only None or
+        # an empty list means Thyca's DM; anything else goes to validation
+        # as-is (a stray string must hit the list check, not split chars).
+        if bots is None or bots == []:
+            bots = ["thyca"]
+        participants = self._clean_participants(bots)
+        if len(participants) == 1:
+            return self.bot_dm(participants[0])
+        return self._create_group_session(participants)
+
+    def _create_group_session(self, participants: list[str]) -> dict:
+        """Fresh multi-bot group session (phase 2B; callers validated)."""
         self._sessions.discard_empty(keep=set(self._turns.snapshot()))
         session = self._sessions.create()
-        if participants is not None:
-            self._sessions.store.append_bots(session.path, participants)
-            session.bots = list(participants)
+        self._sessions.store.append_bots(session.path, participants)
+        session.bots = list(participants)
         return self._detail(session, self._current_cfg())
 
     def room_bots(self, session_id: str) -> list[str]:
@@ -759,6 +894,8 @@ class ChatApp:
             zone=self._zone,
             injected_connect=self._injected_connect,
             hot_tasks=format_task_index(thyca_tasks[:20]) if thyca_tasks else "",
+            hot_memory_tasks=self._memory_task_index("thyca"),
+            hot_bot_user=self._bots.bot_user_text("thyca"),
             status_tracker=self._agent_status,
         )
         request = TurnRequest(
@@ -787,6 +924,20 @@ class ChatApp:
             if mention in active:
                 return mention
         return active[0] if active else (bots[0] if bots else "thyca")
+
+    def _room_cursor(self, bot_id: str, room_id: str) -> tuple[int, str] | None:
+        """This bot's room-context cursor (truth lives in the room map)."""
+        try:
+            return self._runtime.room_cursor(bot_id, room_id)
+        except Exception:
+            return None
+
+    def _room_delta_for(self, bot_id: str, room_id: str,
+                        room_messages: list) -> tuple[str, tuple[int, str] | None]:
+        """Unread public room text + next cursor for one bot (phase 2A)."""
+        from thyca.bots.room_context import room_delta
+
+        return room_delta(room_messages, bot_id, self._room_cursor(bot_id, room_id))
 
     async def _run_bot_turn(
         self,
@@ -819,6 +970,33 @@ class ChatApp:
             provider.api, provider
         )
         owns = self._injected_connect is None
+        # Phase 2A rework: cursor truth lives in the room map. The delta
+        # covers room history BEFORE the current user row; after a
+        # successful turn the cursor advances past that row too (DMs skip
+        # all of this — strictly private).
+        room_context, room_cursor, room_after = "", None, None
+        current_msg = None
+        is_dm = self._room_dm_owner(session_id) is not None
+        if not retry:
+            current_msg = Message(role="user", content=text)
+        if not is_dm:
+            try:
+                from thyca.bots.room_context import fingerprint as _fp
+                from thyca.bots.room_context import public_room_messages as _prm
+
+                prior = list(sessions.current.messages)
+                room_context, room_cursor = self._room_delta_for(
+                    bot_id, session_id, prior)
+                if current_msg is not None and text.strip():
+                    room_after = (
+                        len(_prm(prior, bot_id)) + 1,
+                        _fp({"ts": current_msg.ts, "speaker": "user",
+                             "content": text}),
+                    )
+                else:
+                    room_after = room_cursor
+            except Exception:
+                room_context, room_cursor, room_after = "", None, None
         try:
             scope = TurnScope(
                 store=self._sessions.store,
@@ -834,13 +1012,18 @@ class ChatApp:
             if not retry:
                 # The user row lands before the turn runs so A2A rows
                 # delivered mid-turn order after it in the transcript.
+                # Same object fingerprinted for the post-turn cursor.
                 early_room = SessionManager(
                     limits=turn_cfg.effective_limits(),
                     timezone_name=turn_cfg.timeline.timezone,
                     store=self._sessions.store,
                 )
                 early_room.load(session_id)
-                early_room.append(Message(role="user", content=text))
+                early_room.append(
+                    current_msg
+                    if current_msg is not None
+                    else Message(role="user", content=text)
+                )
             try:
                 result = await self._runtime.run_bot_turn_detailed(
                     scope=scope,
@@ -851,15 +1034,18 @@ class ChatApp:
                     event_sink=event_sink,
                     trace_id=trace_id,
                     span_id=span_id,
+                    room_context=room_context,
+                    room_cursor=room_cursor,
+                    room_cursor_after=room_after,
                 )
                 reply = result.reply
             except asyncio.CancelledError:
                 raise
             except LLMError as exc:
-                mark_turn_error(sessions, "llm_error", str(exc))
+                _mark_room_error(sessions, session_id, "llm_error", str(exc))
                 raise
             except Exception:
-                mark_turn_error(sessions, "chat_unavailable", "chat unavailable")
+                _mark_room_error(sessions, session_id, "chat_unavailable", "chat unavailable")
                 raise
             room = SessionManager(
                 limits=turn_cfg.effective_limits(),
@@ -1037,6 +1223,17 @@ class ChatApp:
                 f"{text}\n  [truncated: full body via bot_fetch "
                 f"span_id={envelope.span_id}]"
             )
+        # Phase 2A: the recipient reads the room's public history before
+        # handling this envelope. Computed AFTER recording bus events: the
+        # fresh envelope row carries bus_event=True so it can never leak
+        # into its own delta. Skipped for DM rooms.
+        room_context, room_cursor = "", None
+        if room is not None and dm_owner is None:
+            try:
+                room_context, room_cursor = self._room_delta_for(
+                    envelope.recipient, room_id, list(room.current.messages))
+            except Exception:
+                room_context, room_cursor = "", None
         try:
             result = await self._runtime.run_bot_turn_detailed(
                 scope=ctx.scope,
@@ -1048,6 +1245,8 @@ class ChatApp:
                 trace_id=envelope.trace_id,
                 parent_span_id=envelope.span_id,
                 span_id=span_id,
+                room_context=room_context,
+                room_cursor=room_cursor,
             )
         except Exception as exc:
             return f"delivery failed: {type(exc).__name__}: {exc}"
@@ -1083,10 +1282,13 @@ class ChatApp:
             envelope = event.envelope
             # Payload is already the <=1000-char prompt-facing excerpt;
             # refs ride in meta so the room row stays fetchable (CBE-3).
+            # bus_event marks A2A control rows so the public room filter
+            # (phase 2A) skips them absolutely; kind stays for FE/trace.
             meta: dict = {
                 "bot_id": envelope.sender,
                 **self._bot_display_meta(envelope.sender),
                 "kind": envelope.kind,
+                "bus_event": True,
                 "trace_id": envelope.trace_id,
                 "parent_span_id": envelope.parent_span_id,
                 "span_id": envelope.span_id,

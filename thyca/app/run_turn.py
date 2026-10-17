@@ -50,6 +50,11 @@ class TurnScope:
     # bot turns inject, derived by ChatApp from the room transcript +
     # bus. Empty = no section.
     hot_tasks: str = ""
+    # Open memory-task catalog for Thyca's own prompt (phase 1C), from
+    # the job facade under Thyca privileges. Empty = no section.
+    hot_memory_tasks: str = ""
+    # Thyca's own USER.md for its prompt (phase 1E). Empty = no section.
+    hot_bot_user: str = ""
     # Shared live agent-status tracker (ChatApp owns it; GET /api/bots
     # merges its snapshots into Agent Cards).
     status_tracker: Any = None
@@ -147,6 +152,10 @@ async def run_turn(
             )
             if scope.hot_tasks:
                 hot = replace(hot, tasks=scope.hot_tasks)
+            if scope.hot_memory_tasks:
+                hot = replace(hot, memory_tasks=scope.hot_memory_tasks)
+            if scope.hot_bot_user:
+                hot = replace(hot, bot_user=scope.hot_bot_user)
             try:
                 reply = await loop.run(
                     request.text,

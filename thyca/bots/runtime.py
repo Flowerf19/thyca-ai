@@ -34,6 +34,7 @@ from thyca.bots.policy import (
 from thyca.bots.registry import SYSTEM_BOT_ID, BotRegistry, RegistryError
 from thyca.bots.status import AgentStatusTracker
 from thyca.config import Config
+from thyca.core.protocol import Message
 from thyca.llm.llm_factory import ConnectFactory
 from thyca.memory.identity import bind_bot_id, reset_bot_id
 from thyca.sessions import Session, SessionManager, calibration_factor
@@ -45,7 +46,7 @@ from thyca.tools.memory_tools import bind_chat_session, reset_chat_session
 #: import) is the seam so this module never cycles on admin_tools.
 ADMIN_TOOL_PREFIX = "bot_"
 
-MEMORY_READ_TOOLS = frozenset({"memory_search", "memory_recent", "memory_get"})
+MEMORY_READ_TOOLS = frozenset({"memory_search", "memory_recent", "memory_get", "memory_tasks"})
 MEMORY_WRITE_TOOLS = frozenset(
     {"memory_remember", "memory_update", "memory_forget", "memory_reinforce"}
 )
@@ -236,6 +237,10 @@ class BotRuntime:
     #: turn. Either may be sync or async; both are best-effort.
     memory_flush: Any = None
     memory_searcher: Any = None
+    #: Phase 1C hook installed by ChatApp: ``memory_task_index(bot_id)``
+    #: returns the open memory-task catalog lines for one bot's prompt.
+    #: Sync or async; best-effort like the CBE-4 hooks above.
+    memory_task_index: Any = None
 
     def __init__(
         self,
@@ -280,7 +285,7 @@ class BotRuntime:
         """The bot's private session for one room (created on first use)."""
         store = self.store_for(bot_id)
         mapping = self._read_room_map(bot_id)
-        internal_id = mapping.get(room_id)
+        internal_id = self._internal_id_of(mapping.get(room_id))
         if internal_id is not None:
             try:
                 return store.load(internal_id)
@@ -304,12 +309,17 @@ class BotRuntime:
         trace_id: str | None = None,
         parent_span_id: str | None = None,
         span_id: str | None = None,
+        room_context: str = "",
+        room_cursor: tuple[int, str] | None = None,
+        room_cursor_after: tuple[int, str] | None = None,
     ) -> str:
         """Run one bot turn; return only the reply text."""
         result = await self.run_bot_turn_detailed(
             scope=scope, card=card, room_id=room_id, text=text,
             turn_cfg=turn_cfg, event_sink=event_sink, trace_id=trace_id,
             parent_span_id=parent_span_id, span_id=span_id,
+            room_context=room_context, room_cursor=room_cursor,
+            room_cursor_after=room_cursor_after,
         )
         return result.reply
 
@@ -325,6 +335,9 @@ class BotRuntime:
         trace_id: str | None = None,
         parent_span_id: str | None = None,
         span_id: str | None = None,
+        room_context: str = "",
+        room_cursor: tuple[int, str] | None = None,
+        room_cursor_after: tuple[int, str] | None = None,
     ) -> BotTurnResult:
         """Run one turn of ``card`` in its internal session for ``room_id``.
 
@@ -366,6 +379,27 @@ class BotRuntime:
                 card.bot_id, own_span, "error", code=type(exc).__name__
             )
             raise
+        if room_context:
+            # Phase 2A: unread public room history lands as one synthetic
+            # user row BEFORE compact prediction/flush, so the prediction
+            # accounts for it and the extractor never sees it as the bot's
+            # own words (jobs.transcript_tail skips kind="room_context").
+            # The cursor rides in meta for the next turn's delta.
+            count, last_fp = room_cursor if room_cursor is not None else (0, "")
+            sessions.append(
+                Message(
+                    role="user",
+                    content=room_context,
+                    meta={
+                        "kind": "room_context",
+                        "room_cursor": count,
+                        "room_fingerprint": last_fp,
+                    },
+                )
+            )
+            # The map is the cursor's source of truth; the row above
+            # keeps the same values for traceability only.
+            self.set_room_cursor(card.bot_id, room_id, room_cursor)
 
         provider = turn_cfg.effective_provider()
         model = turn_cfg.provider.model
@@ -406,13 +440,21 @@ class BotRuntime:
                 # memory.read=false: the hot snapshot carries no memory
                 # content at all for this bot (own or team).
                 hot = replace(hot, today="", today_elsewhere="")
-            # Two-layer identity (user decision 2026-10-13): the shared
-            # soul (SOUL.md — voice/values only, names nobody) stays for
-            # every twin; a child bot's persona is its own overlay on top,
-            # never a replacement-or-fallback. The <identity> slot for a
-            # child comes from its own TWIN.md — Thyca's IDENTITY.md must
-            # never ride a child turn (that leak made children answer as
-            # Thyca). Thyca itself keeps its real identity section.
+            else:
+                # Phase 1E: this bot's own USER.md rides as <bot_user>.
+                bot_user_text = self._registry.bot_user_text(card.bot_id)
+                if bot_user_text.strip():
+                    hot = replace(hot, bot_user=bot_user_text)
+            # Two-layer identity (user decision 2026-10-13, hardened at the
+            # source in phase 1D): the shared soul (SOUL.md — voice/values
+            # only, names nobody) stays for every twin; a child bot's
+            # persona is its own overlay on top, never a replacement-or-
+            # fallback. The snapshot for a child already carries no
+            # identity (ActiveMemory only loads IDENTITY.md for privileged
+            # readers), and the <identity> slot is set here from its own
+            # TWIN.md as defense in depth — Thyca's IDENTITY.md must never
+            # ride a child turn (that leak made children answer as Thyca).
+            # Thyca itself keeps its real identity section.
             is_manager = card.system or card.bot_id == SYSTEM_BOT_ID
             hot = replace(
                 hot,
@@ -436,6 +478,17 @@ class BotRuntime:
                 hot = replace(
                     hot, tasks=format_task_index(open_tasks[:20])
                 )
+            # Phase 1C: open memory-task catalog (separate section from
+            # runtime open tasks above; empty when the bot sees no tasks).
+            if self.memory_task_index is not None and card.memory.read:
+                try:
+                    index = self.memory_task_index(card.bot_id)
+                    if inspect.isawaitable(index):
+                        index = await index
+                    if index:
+                        hot = replace(hot, memory_tasks=str(index))
+                except Exception:
+                    pass  # catalog is best-effort; the turn must go on
             reinject_key = (card.bot_id, room_id)
             # One-shot recall is consumed only on successful delivery:
             # it stays armed here and is discarded after loop.run
@@ -546,6 +599,11 @@ class BotRuntime:
                     },
                 )
                 new_messages = list(sessions.current.messages)[before:]
+                # The turn's own user message is now read: advance past it.
+                # Errors/cancels skip this, so a failed turn's message is
+                # still unread next turn (only the delivered delta stays).
+                if room_cursor_after is not None:
+                    self.set_room_cursor(card.bot_id, room_id, room_cursor_after)
                 # The turn delivered successfully: only now is the
                 # one-shot recall consumed (a raised turn above keeps
                 # it armed for the next turn).
@@ -712,6 +770,59 @@ class BotRuntime:
                     relevant.append(envelope)
         return relevant
 
+    def room_cursor(self, bot_id: str, room_id: str) -> tuple[int, str] | None:
+        """This bot's room-context cursor: map first, legacy meta second.
+
+        A stored map cursor wins. When the map has no cursor yet (old
+        string shape, or dict without cursor keys) but the internal
+        session already carries phase-2A synthetic rows, the newest such
+        row seeds the cursor so history is not redelivered from scratch.
+        Never creates an internal session just to read a cursor."""
+        mapping = self._read_room_map(bot_id)
+        entry = mapping.get(room_id)
+        if isinstance(entry, dict):
+            count, fingerprint = entry.get("room_cursor"), entry.get("room_fingerprint")
+            if isinstance(count, int) and isinstance(fingerprint, str):
+                return (count, fingerprint)
+        internal_id = self._internal_id_of(entry)
+        if internal_id is None:
+            return None
+        try:
+            messages = self.store_for(bot_id).load(internal_id).messages
+        except Exception:
+            return None
+        for message in reversed(messages):
+            meta = message.meta or {}
+            if isinstance(meta, dict) and meta.get("kind") == "room_context":
+                count, fingerprint = meta.get("room_cursor"), meta.get("room_fingerprint")
+                if isinstance(count, int) and isinstance(fingerprint, str):
+                    return (count, fingerprint)
+        return None
+
+    def set_room_cursor(self, bot_id: str, room_id: str,
+                        cursor: tuple[int, str] | None) -> None:
+        """Persist a room-context cursor (phase 2A rework).
+
+        A None cursor writes nothing. The internal session id is always
+        preserved; when the bot has no internal session for the room,
+        nothing is created or written — callers only persist after a
+        session already exists."""
+        if cursor is None:
+            return
+        count, fingerprint = cursor
+        if not isinstance(count, int) or not isinstance(fingerprint, str):
+            return
+        mapping = self._read_room_map(bot_id)
+        internal_id = self._internal_id_of(mapping.get(room_id))
+        if internal_id is None:
+            return
+        mapping[room_id] = {
+            "session": internal_id,
+            "room_cursor": count,
+            "room_fingerprint": fingerprint,
+        }
+        self._write_room_map(bot_id, mapping)
+
     def zone(self) -> ZoneInfo:
         from thyca.config import DEFAULT_TIMELINE_TIMEZONE
 
@@ -720,7 +831,12 @@ class BotRuntime:
         except Exception:
             return ZoneInfo("UTC")
 
-    def _read_room_map(self, bot_id: str) -> dict[str, str]:
+    def _read_room_map(self, bot_id: str) -> dict:
+        """Room map: old values are plain internal session ids.
+
+        New values are ``{"session": id, "room_cursor": int,
+        "room_fingerprint": fp}`` once a cursor exists; readers accept
+        both shapes."""
         path = self._room_map_path(bot_id)
         try:
             raw = path.read_text(encoding="utf-8")
@@ -732,9 +848,14 @@ class BotRuntime:
             return {}
         if not isinstance(data, dict):
             return {}
-        return {k: v for k, v in data.items() if isinstance(k, str) and isinstance(v, str)}
+        return {k: v for k, v in data.items() if isinstance(k, str)}
 
-    def _write_room_map(self, bot_id: str, mapping: dict[str, str]) -> None:
+    def _internal_id_of(self, entry) -> str | None:
+        if isinstance(entry, dict):
+            entry = entry.get("session")
+        return entry if isinstance(entry, str) and entry else None
+
+    def _write_room_map(self, bot_id: str, mapping: dict) -> None:
         from thyca.config import atomic_write_text
 
         path = self._room_map_path(bot_id)

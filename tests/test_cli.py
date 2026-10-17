@@ -230,8 +230,8 @@ def test_debug_prints_prompt_flags(
     assert "identity=True" in dbg
     has_user = user is None or user.strip() not in {"", "# User"}
     assert f"user={has_user}" in dbg
-    # 14 = 4 file + 8 memory (incl. memory_propose_team, Team v1 BE-4) + tool_read + tool_kill.
-    assert "tools=14" in dbg
+    # 15 = 4 file + 9 memory (incl. memory_propose_team, Team v1 BE-4, memory_tasks phase 1A) + tool_read + tool_kill.
+    assert "tools=15" in dbg
 
 
 def test_print_llm_error_is_safe(tmp_path: Path) -> None:
@@ -344,3 +344,40 @@ def test_print_tags_memory_with_cli_session(tmp_path: Path) -> None:
     session = SessionManager(tmp_path / "sessions").continue_last()
     (day_file,) = list((tmp_path / "memory").glob("*.md"))
     assert f'"chat":"{session.id}"' in day_file.read_text(encoding="utf-8")
+
+
+def test_default_opens_thyca_dm(tmp_path: Path) -> None:
+    cli, _out, _err = _cli(tmp_path, FakeLLM(ChatReply(content="hi")))
+    assert cli.main(["-p", "hello"]) == 0
+    sessions = list((tmp_path / "sessions").glob("*.jsonl"))
+    assert len(sessions) == 1
+    manager = SessionManager(tmp_path / "sessions")
+    session = manager.load(sessions[0].stem)
+    assert session.dm_bot == "thyca"
+    assert session.bots == ["thyca"]
+
+
+def test_continue_opens_dm_despite_newer_group(tmp_path: Path) -> None:
+    cli, _out, _err = _cli(tmp_path, FakeLLM(ChatReply(content="hi")))
+    assert cli.main(["-p", "first"]) == 0
+    # A newer group session exists on disk (e.g. from serve).
+    manager = SessionManager(tmp_path / "sessions")
+    group = manager.create()
+    manager.store.append_bots(group.path, ["thyca", "coder"])
+    cli2, _out2, _err2 = _cli(tmp_path, FakeLLM(ChatReply(content="again")))
+    assert cli2.main(["--continue", "-p", "second"]) == 0
+    current = SessionManager(tmp_path / "sessions").load(
+        SessionManager(tmp_path / "sessions").continue_last().id)
+    assert current.dm_bot == "thyca"
+
+
+def test_session_flag_loads_group_by_id(tmp_path: Path) -> None:
+    cli, _out, _err = _cli(tmp_path, FakeLLM(ChatReply(content="hi")))
+    assert cli.main(["-p", "first"]) == 0
+    manager = SessionManager(tmp_path / "sessions")
+    group = manager.create()
+    manager.store.append_bots(group.path, ["thyca", "coder"])
+    cli2, _out2, _err2 = _cli(tmp_path, FakeLLM(ChatReply(content="in-group")))
+    assert cli2.main(["--session", group.id, "-p", "hello"]) == 0
+    reloaded = SessionManager(tmp_path / "sessions").load(group.id)
+    assert [m.content for m in reloaded.messages][-1] == "in-group"

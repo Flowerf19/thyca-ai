@@ -442,8 +442,7 @@ def test_paused_bot_removable_and_responder_skips_paused(tmp_path: Path) -> None
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="C",
                                  description="D", persona="P"))
-        created = app.create()
-        assert app.set_room_bots(created["id"], "coder", "add") == ["thyca", "coder"]
+        created = app.create(bots=["thyca", "coder"])
         app._bots.set_paused("coder", True)
         # Removable while paused; a paused mention is skipped for Thyca.
         assert app.set_room_bots(created["id"], "coder", "remove") == ["thyca"]

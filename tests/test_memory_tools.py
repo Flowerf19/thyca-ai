@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from thyca.core.protocol import ToolCall
@@ -24,9 +26,11 @@ async def test_memory_remember_and_get_roundtrip(tmp_path) -> None:
         )
     )
     assert not remembered.is_error
-    assert remembered.content[10] == "#"
+    payload = json.loads(remembered.content)
+    assert payload["session_id"][10] == "#"
+    assert payload["task_id"] is None
     got = await gateway.submit(
-        ToolCall(id="g1", name="memory_get", arguments={"session_id": remembered.content})
+        ToolCall(id="g1", name="memory_get", arguments={"session_id": payload["session_id"]})
     )
     assert not got.is_error
     assert "cafedenunique" in got.content
@@ -62,16 +66,17 @@ async def test_memory_update_keeps_session_id(tmp_path) -> None:
         )
     )
     assert not remembered.is_error
+    sid = json.loads(remembered.content)["session_id"]
     updated = await gateway.submit(
         ToolCall(
             id="u1",
             name="memory_update",
-            arguments={"session_id": remembered.content, "topic": "tra da"},
+            arguments={"session_id": sid, "topic": "tra da"},
         )
     )
     assert not updated.is_error
     got = await gateway.submit(
-        ToolCall(id="g1", name="memory_get", arguments={"session_id": remembered.content})
+        ToolCall(id="g1", name="memory_get", arguments={"session_id": sid})
     )
     assert not got.is_error
     assert "tra da" in got.content
@@ -103,6 +108,7 @@ async def test_remember_injects_bound_chat_and_update_rejects_chat(tmp_path) -> 
     finally:
         reset_chat_session(token)
     assert not remembered.is_error
+    sid = json.loads(remembered.content)["session_id"]
     daily = next((tmp_path / "memory").glob("*.md"))
     meta = next(m for line in daily.read_text(encoding="utf-8").splitlines() if (m := parse_heading(line)))
     assert meta.chat == "2026-09-16T14-39-01_a1b2"
@@ -112,7 +118,7 @@ async def test_remember_injects_bound_chat_and_update_rejects_chat(tmp_path) -> 
         ToolCall(
             id="u1",
             name="memory_update",
-            arguments={"session_id": remembered.content, "chat": "nope"},
+            arguments={"session_id": sid, "chat": "nope"},
         )
     )
     assert refused.is_error

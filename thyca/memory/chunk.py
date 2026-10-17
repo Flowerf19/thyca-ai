@@ -44,6 +44,14 @@ class Chunk:
     chat_session: str | None = None
     # Team owners (BE-4): mirrors HeadingMeta.bots; None = legacy team entry.
     bots: tuple[str, ...] | None = None
+    # Task + habits (phase 1A): mirrors the heading JSON keys.
+    task: str | None = None
+    cont: str | None = None
+    kind: str | None = None
+    status: str | None = None
+    habit: str | None = None
+    # Phase 1E: user explicitly stated the habit. Only True persists.
+    habit_explicit: bool = False
 
 
 class Chunker:
@@ -89,6 +97,12 @@ class Chunker:
                         project=session.get("project"),
                         chat_session=session.get("chat_session"),
                         bots=session.get("bots"),
+                        task=session.get("task"),
+                        cont=session.get("cont"),
+                        kind=session.get("kind"),
+                        status=session.get("status"),
+                        habit=session.get("habit"),
+                        habit_explicit=bool(session.get("habit_explicit")),
                     )
                 )
         return chunks
@@ -136,6 +150,12 @@ def _sessions(
                 "project": meta.proj,
                 "chat_session": meta.chat,
                 "bots": meta.bots,
+                "task": meta.task,
+                "cont": meta.cont,
+                "kind": meta.kind,
+                "status": meta.status,
+                "habit": meta.habit,
+                "habit_explicit": meta.habit_explicit,
             }
         )
     return sessions

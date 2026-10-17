@@ -57,15 +57,19 @@ class PathGuard:
         A child bot that could edit ``bots/**`` (any TWIN.md), the live
         ``config.json``, or the shared ``skills-team/**`` store could
         escalate its own card, and the runtime re-reads the card on every
-        turn. The user (no bot bound) and the Thyca system bot keep full
-        access; every other in-flight bot is denied, read and write."""
+        turn. Room/internal transcripts under ``sessions/`` are denied too
+        (phase 2A): a bot reads room history only through the curated
+        room-context delta, never by opening transcript files — this also
+        keeps other bots' DMs unreadable from disk. The user (no bot
+        bound) and the Thyca system bot keep full access; every other
+        in-flight bot is denied, read and write."""
         bot_id = current_bot_id()
         if bot_id is None or bot_id == "thyca":
             return False
         root = self.thyca_dir
         if target == root / "config.json":
             return True
-        for folder in (root / "bots", root / "skills-team"):
+        for folder in (root / "bots", root / "skills-team", root / "sessions"):
             try:
                 target.relative_to(folder)
             except ValueError:

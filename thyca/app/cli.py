@@ -20,7 +20,7 @@ from thyca.llm.prompt_manager import PromptManager
 from thyca.memory.active import ActiveMemory
 from thyca.sessions import SessionError, SessionManager, SessionNotFound
 from thyca.tools.gateway.background import BackgroundProcs
-from thyca.memory.facade import MemoryFacade
+from thyca.memory.facade import MemoryFacade, format_task_catalog
 from thyca.tools.mcp import MCPManager
 from thyca.tools.memory_tools import bind_chat_session, reset_chat_session
 from thyca.tools.task_store import TaskStore
@@ -134,8 +134,10 @@ class Cli:
             self._open_session(sessions, args)
         except SessionNotFound as exc:
             if args.cont and not args.session:
+                from thyca.bots.registry import SYSTEM_BOT_ID
+
                 try:
-                    sessions.create()
+                    sessions.ensure_dm(SYSTEM_BOT_ID)
                 except SessionError as create_exc:
                     ui.error(str(create_exc))
                     return 1
@@ -151,6 +153,15 @@ class Cli:
             tail_kb=limits.hotTailKB,
             timezone_name=cfg.timeline.timezone,
         )
+        # Phase 1C: one shared facade for the memory-task prompt section
+        # (reused every turn; today's entries merge live per call).
+
+        task_facade = MemoryFacade(root, timezone_name=cfg.timeline.timezone)
+        # Phase 1E: Thyca's own USER.md rides as <bot_user> (read per turn,
+        # missing file reads as empty).
+        from thyca.bots.registry import BotRegistry
+
+        cli_bots = BotRegistry(root)
         zone = ZoneInfo(cfg.timeline.timezone)
         state = memory.open_session(datetime.now(zone))
         tasks = TaskStore()
@@ -191,6 +202,13 @@ class Cli:
                 try:
                     hot = memory.refresh(
                         state, datetime.now(zone), session_id=sessions.current.id
+                    )
+                    hot = replace(
+                        hot,
+                        memory_tasks=format_task_catalog(
+                            task_facade.tasks(status="open").get("tasks", [])
+                        ),
+                        bot_user=cli_bots.bot_user_text("thyca"),
                     )
                     if args.debug:
                         system = prompts.build(hot)
@@ -287,12 +305,18 @@ class Cli:
         return 0
 
     def _open_session(self, sessions: SessionManager, args: argparse.Namespace) -> None:
+        # Phase 2B: the CLI lives in Thyca's fixed DM — default and
+        # --continue both open it (find-or-create) instead of minting a
+        # plain session or resuming whatever is newest. --session still
+        # loads exactly the session named (DM or group, if it exists).
+        from thyca.bots.registry import SYSTEM_BOT_ID
+
         if args.session:
             sessions.load(args.session)
         elif args.cont:
-            sessions.continue_last()
+            sessions.ensure_dm(SYSTEM_BOT_ID)
         else:
-            sessions.create()
+            sessions.ensure_dm(SYSTEM_BOT_ID)
 
     async def _oneshot(self, prompt: str, turn, ui: ChatUi) -> int:
         try:

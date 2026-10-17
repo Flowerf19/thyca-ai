@@ -64,6 +64,9 @@ class ActiveSnapshot:
     user: str
     today: str
     identity: str = ""
+    # Phase 1E: this bot's own USER.md (bot-inferred profile, lower
+    # confidence than the shared USER.md). Empty unless wired per turn.
+    bot_user: str = ""
     skills: str = ""
     today_elsewhere: str = ""
     # Team roster (BE-1/BE-2, slimmed by CBE-2): "name — role" lines of
@@ -73,6 +76,10 @@ class ActiveSnapshot:
     # Open-task index (CBE-4): compact "task · status · room" lines the
     # bot runtime derives per turn. Empty outside bot turns.
     tasks: str = ""
+    # Open memory-task catalog (phase 1C): "task_id: title · last active
+    # day · bots" lines from facade.tasks(status="open"). A different
+    # concept from runtime open tasks above — never merged.
+    memory_tasks: str = ""
     # Post-compaction memory hits (CBE-4): bounded lines re-injected on
     # the first turn after a compaction. Empty otherwise.
     recalled: str = ""
@@ -179,7 +186,15 @@ class ActiveMemory:
             today_text = self._tail(strip_heading_comments(here_raw))
         return ActiveSnapshot(
             soul=self._read(self.thyca_dir / "SOUL.md"),
-            identity=self._read(self.thyca_dir / "IDENTITY.md"),
+            # Twin identity at the source (phase 1D): only privileged
+            # readers (None = user, "thyca") receive Thyca's IDENTITY.md.
+            # A child bot's snapshot carries no identity here; the bot
+            # runtime sets its own <identity> from its TWIN.md instead.
+            identity=(
+                self._read(self.thyca_dir / "IDENTITY.md")
+                if reader is None or reader == "thyca"
+                else ""
+            ),
             user=self._read(self.thyca_dir / "USER.md"),
             today=today_text,
             skills=self._skills.index_text(),

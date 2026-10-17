@@ -260,8 +260,10 @@ def test_dm_participants_protected_and_blank_dm_survives_prune(tmp_path: Path) -
         assert app.room_bots(dm_id) == ["coder"]
         assert app._sessions.store.load(dm_id).dm_bot == "coder"
         # Ordinary rooms keep working exactly as before.
-        assert app.set_room_bots(other["id"], "coder", "add") == ["thyca", "coder"]
-        assert app.set_room_bots(other["id"], "coder", "remove") == ["thyca"]
+        group = app.create(bots=["thyca", "helper"])
+        assert group["kind"] == "group"
+        assert app.set_room_bots(group["id"], "helper", "remove") == ["thyca"]
+        assert app.set_room_bots(group["id"], "helper", "add") == ["thyca", "helper"]
     finally:
         app.shutdown()
 
@@ -660,7 +662,7 @@ def test_delegate_in_plain_room_promotes_recipient_to_participant(tmp_path: Path
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="PERSONA-CODER"))
-        room = app.create(bots=["thyca"])["id"]
+        room = app._sessions.create().id  # legacy plain room, no bots meta
         assert app.room_bots(room) == ["thyca"]
         app.turn(room, "ask coder for help")
         # A plain session becomes a team session on first delegation:
@@ -769,5 +771,92 @@ def test_post_bot_card_rejected_in_another_bots_dm(tmp_path: Path) -> None:
         )
         assert result["ok"] is False
         assert _bot_rows(_rows(app, thyca_dm), "coder") == []
+    finally:
+        app.shutdown()
+
+
+def _old_dm(app, bot_id: str):
+    from thyca.sessions import SessionManager
+
+    from thyca.core.protocol import Message
+
+    dm_id = app.bot_dm(bot_id)["id"]
+    manager = SessionManager(store=app._sessions.store)
+    manager.load(dm_id)
+    manager.append(Message(role="user", content="old private note",
+                           ts="2020-01-01T10:00:00Z"))
+    manager.append(Message(role="assistant", content="old private reply",
+                           ts="2020-01-01T10:01:00Z"))
+    return dm_id
+
+
+def test_room_sweep_skips_child_dm_extraction(tmp_path: Path) -> None:
+    import asyncio
+    import json as _json
+
+    from thyca.bots.card import BotCard
+
+    class HabitLLM:
+        async def chat(self, messages, tools=None):
+            return type("R", (), {"content": _json.dumps([{
+                "topic": "t", "summary": "s"}])})()
+
+    app = _chat(tmp_path, HabitLLM())
+    try:
+        app._bots.create(BotCard(bot_id="coder", name="coder", role="C",
+                                 description="d", persona=""))
+        dm_id = _old_dm(app, "coder")
+        report = app.sweep_idle_sessions(idle_s=900)
+        entry = report["rooms"][dm_id]
+        assert entry["skipped"] == "child_dm"
+        assert "extracted" not in entry
+        # Nothing was written from the room path: no daily file holds an
+        # entry (an empty day header from the compact path is fine).
+        assert all("## " not in path.read_text(encoding="utf-8")
+                   for path in (tmp_path / "memory").glob("*.md"))
+        # The same bot's internal flush still extracts as before.
+        from thyca.core.protocol import Message
+
+        asyncio.run(app._flush_bot_memory(
+            "coder",
+            [Message(role="user", content="remember this",
+                     ts="2020-01-01T10:00:00Z")],
+            app._current_cfg(),
+        ))
+        assert list((tmp_path / "memory").glob("*.md")) != []
+    finally:
+        app.shutdown()
+
+
+def test_room_sweep_extracts_thyca_dm_skips_mixed_group(tmp_path: Path) -> None:
+    import json as _json
+
+    from thyca.bots.card import BotCard
+    from thyca.sessions import SessionManager
+
+    from thyca.core.protocol import Message
+
+    class HabitLLM:
+        async def chat(self, messages, tools=None):
+            return type("R", (), {"content": _json.dumps([{
+                "topic": "t", "summary": "s"}])})()
+
+    app = _chat(tmp_path, HabitLLM())
+    try:
+        app._bots.create(BotCard(bot_id="coder", name="coder", role="C",
+                                 description="d", persona=""))
+        thyca_dm = _old_dm(app, "thyca")
+        group = app.create(bots=["thyca", "coder"])["id"]
+        manager = SessionManager(store=app._sessions.store)
+        manager.load(group)
+        manager.append(Message(role="user", content="old group note",
+                               ts="2020-01-01T10:00:00Z"))
+        report = app.sweep_idle_sessions(idle_s=900)
+        assert "skipped" not in report["rooms"][thyca_dm]
+        assert report["rooms"][thyca_dm]["extracted"] == 1
+        # A mixed group is per-bot business: no room extraction or dedupe,
+        # but the transcript still compacts.
+        assert report["rooms"][group]["skipped"] == "per_bot_jobs"
+        assert "extracted" not in report["rooms"][group]
     finally:
         app.shutdown()

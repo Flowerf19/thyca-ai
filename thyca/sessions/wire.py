@@ -104,6 +104,8 @@ def session_summary(session: Session) -> dict:
         "bots": list(session.bots) if session.bots else ["thyca"],
         # Bot main window (CBE-5): bot id whose fixed DM this is, else null.
         "dm": session.dm_bot,
+        # User-facing channel model (phase 2B): exactly dm or group.
+        "kind": "dm" if session.dm_bot else "group",
     }
 
 
@@ -138,6 +140,7 @@ def session_detail(
         "model": cfg.provider.model,
         "bots": list(session.bots) if session.bots else ["thyca"],
         "dm": session.dm_bot,
+        "kind": "dm" if session.dm_bot else "group",
         "messages": [message_dict(item, skills_root) for item in session.messages],
         "ask_remember": ask_remember(session.messages, datetime.now(UTC)),
         "context": context,

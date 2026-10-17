@@ -95,9 +95,14 @@ export function sessionsForBot(sessions, botId) {
   });
 }
 
-/* True when a session is shared (more than one participant) — such a
-   session carries a participant annotation in the unified bot list. */
+/* True when a session is a group channel: kind wins when the backend
+   supplies it (a group reduced to one bot stays a top-level group),
+   otherwise more than one participant. */
 export function isSharedSession(session) {
+  if (session && typeof session === "object"
+      && typeof session.kind === "string") {
+    return session.kind === "group";
+  }
   return Array.isArray(session?.bots) && session.bots.length > 1;
 }
 
@@ -283,10 +288,13 @@ export function isSoloSession(session, botId) {
 
 /* Strict guard for the DM endpoint answer: only a detail whose marker AND
    participants name exactly this bot's fixed window opens as the main
-   window (same honesty rule as verifySharedSession for the shared flow). */
+   window (same honesty rule as verifySharedSession for the shared flow).
+   When the backend supplies kind, it must read "dm" too — a kind/dm
+   mismatch is rejected. */
 export function isDmDetail(detail, botId) {
   const id = String(botId || "");
   if (!id || !detail || typeof detail !== "object") return false;
+  if (typeof detail.kind === "string" && detail.kind !== "dm") return false;
   if (String(detail.dm || "") !== id) return false;
   return Array.isArray(detail.bots) && detail.bots.length === 1
     && String(detail.bots[0]) === id;
@@ -298,9 +306,11 @@ export function findMainSession(sessions, botId, rememberedId) {
   const remembered = String(rememberedId || "");
   // The CBE-5 marker wins whenever the backend supplies it: the server
   // keeps exactly one DM per bot, so the first marked hit is the window.
+  // With kind present, only a kind="dm" hit counts as marked.
   if (id) {
     const marked = list.filter((session) => session && typeof session === "object"
-      && String(session.dm || "") === id);
+      && String(session.dm || "") === id
+      && (typeof session.kind !== "string" || session.kind === "dm"));
     if (marked.length) {
       if (remembered) {
         const kept = marked.find((session) => String(session.id) === remembered);
@@ -309,10 +319,12 @@ export function findMainSession(sessions, botId, rememberedId) {
       return marked[0];
     }
   }
-  // Legacy fallback (pre-CBE-5 payloads without dm): remembered solo
-  // session still wins when valid, else the newest solo, else null
-  // (the caller then POST-creates one).
-  const solo = list.filter((session) => isSoloSession(session, botId));
+  // Legacy fallback (payloads without kind, plus kind="dm" solo windows
+  // whose marker is missing): remembered solo still wins when valid,
+  // else the newest solo, else null. A kind="group" room never resolves
+  // as anyone's main window, even reduced to one bot.
+  const solo = list.filter((session) => isSoloSession(session, botId)
+    && (typeof session.kind !== "string" || session.kind === "dm"));
   if (!solo.length) return null;
   if (remembered) {
     const kept = solo.find((session) => String(session.id) === remembered);
@@ -338,11 +350,14 @@ export function partitionBotSessions(sessions, botId, mainId) {
 /* Created-session guard for the DM fallback: only treat a POST /api/sessions
    {bots:[botId]} answer as the bot's main window when the returned
    participants are exactly that solo room (same honesty rule as
-   verifySharedSession for the shared flow). */
+   verifySharedSession for the shared flow). Accepts the phase-2B DM shape
+   (kind + marker + solo participants) alongside the legacy solo shape. */
 export function isMainSessionDetail(detail, botId) {
   const id = String(botId || "");
   if (!id || !detail || typeof detail !== "object") return false;
-  return Array.isArray(detail.bots) && detail.bots.length === 1 && String(detail.bots[0]) === id;
+  if (!(Array.isArray(detail.bots) && detail.bots.length === 1
+      && String(detail.bots[0]) === id)) return false;
+  return typeof detail.kind !== "string" || detail.kind === "dm";
 }
 
 /* Unread attribution (CFE-2). A row counts as bot activity when it carries a
@@ -476,7 +491,8 @@ export function unifiedSessionsForBot(sessions, botId) {
   const id = String(botId || "");
   if (!id) return [];
   return sessionsForBot(sessions, id)
-    .filter((session) => String(session.dm || "") !== id)
+    .filter((session) => String(session.dm || "") !== id
+      && String(session.kind || "") !== "dm")
     .slice()
     .sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")));
 }

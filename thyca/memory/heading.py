@@ -18,6 +18,10 @@ from zoneinfo import ZoneInfo
 TTL_DAYS = {1: 3, 2: 7, 3: 30, 4: 90, 5: 180}
 DEFAULT_IMPORTANCE = 3
 ENTRY_ID_RE = re.compile(r"^[0-9a-f]{8}$")
+TASK_ID_RE = re.compile(r"^task-[0-9a-f]{8}$")
+TASK_STATUSES = ("open", "done")
+#: Phase 1A accepts only habit memories; other kinds are a later phase.
+TASK_KINDS = ("habit",)
 EXP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
 _HEADING_RE = re.compile(
@@ -40,6 +44,17 @@ class HeadingMeta:
     # (no field on disk) which reads as team-visible. ["team"] = shared
     # team memory; ["<bot>"] = that bot's private memory.
     bots: tuple[str, ...] | None = None
+    # Task + habits (phase 1A): shared task id, previous memory in the
+    # same task, habit kind + label, task status. None = legacy entry
+    # (no field on disk), same backward-compat rule as proj/chat/bots.
+    task: str | None = None
+    cont: str | None = None
+    kind: str | None = None
+    status: str | None = None
+    habit: str | None = None
+    # Phase 1E: user explicitly stated this habit (not inferred). Only
+    # written when True; absent reads as False like other missing keys.
+    habit_explicit: bool = False
 
 
 def utc_now(now: datetime | None = None) -> datetime:
@@ -83,6 +98,50 @@ def expiry_ts(importance: int, now: datetime | None = None) -> str:
 
 def new_entry_id() -> str:
     return secrets.token_hex(4)
+
+
+def new_task_id() -> str:
+    """System-generated shared task id (phase 1A)."""
+    return f"task-{secrets.token_hex(4)}"
+
+
+def validate_task_meta(
+    task: str | None,
+    cont: str | None,
+    kind: str | None,
+    status: str | None,
+    habit: str | None,
+    habit_explicit: bool = False,
+) -> None:
+    """Validate one entry's phase-1A task/habit fields (all-or-nothing set).
+
+    Raises ValueError with a specific message on the first violation."""
+    if task is not None and (
+        not isinstance(task, str) or TASK_ID_RE.fullmatch(task) is None
+    ):
+        raise ValueError(f"task must match task-<8 hex>, got {task!r}")
+    if status is not None and status not in TASK_STATUSES:
+        raise ValueError(f"status must be one of {list(TASK_STATUSES)}, got {status!r}")
+    if kind is not None and kind not in TASK_KINDS:
+        raise ValueError(f"kind must be one of {list(TASK_KINDS)}, got {kind!r}")
+    if status is not None and task is None:
+        raise ValueError("status requires task")
+    if cont is not None:
+        if task is None:
+            raise ValueError("cont requires task")
+        if not isinstance(cont, str) or not cont or "#" not in cont:
+            raise ValueError(f"cont must be a memory session id, got {cont!r}")
+    if kind == "habit" and (not isinstance(habit, str) or not habit.strip()):
+        raise ValueError("kind='habit' requires a non-empty habit label")
+    if habit is not None and kind is None:
+        raise ValueError("habit requires kind")
+    if habit is not None:
+        if "\n" in habit or "\r" in habit:
+            raise ValueError("habit must be a single line")
+        if "<!--" in habit:
+            raise ValueError("habit must not contain markup")
+    if habit_explicit and kind != "habit":
+        raise ValueError("habit_explicit requires kind='habit' with a habit label")
 
 
 def is_session_heading(line: str) -> bool:
@@ -129,8 +188,9 @@ def parse_heading(line: str) -> HeadingMeta | None:
     time, title, comment = match.group(1), match.group(2).strip(), match.group(3) or ""
     if not title:
         return None
-    entry_id, importance, expires_at, proj, chat, bots = _parse_comment(comment)
-    return HeadingMeta(time, title, entry_id, importance, expires_at, proj, chat, bots)
+    entry_id, importance, expires_at, proj, chat, bots, task, cont, kind, status, habit, habit_explicit = _parse_comment(comment)
+    return HeadingMeta(time, title, entry_id, importance, expires_at, proj, chat, bots,
+                        task, cont, kind, status, habit, habit_explicit)
 
 
 def render_heading(meta: HeadingMeta) -> str:
@@ -149,6 +209,18 @@ def render_heading(meta: HeadingMeta) -> str:
         payload["chat"] = meta.chat
     if meta.bots is not None:
         payload["bots"] = list(meta.bots)
+    if meta.task is not None:
+        payload["task"] = meta.task
+    if meta.cont is not None:
+        payload["cont"] = meta.cont
+    if meta.kind is not None:
+        payload["kind"] = meta.kind
+    if meta.status is not None:
+        payload["status"] = meta.status
+    if meta.habit is not None:
+        payload["habit"] = meta.habit
+    if meta.habit_explicit:
+        payload["habit_explicit"] = True
     body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     return f"## {meta.time} — {meta.title} <!-- thyca {body} -->\n"
 
@@ -202,24 +274,24 @@ def is_expired(expires_at: str | None, now: datetime | None = None) -> bool:
     return bool(expires_at) and not is_visible(expires_at, now)
 
 
-def _parse_comment(comment: str) -> tuple[str | None, int, str | None, str | None, str | None, tuple[str, ...] | None]:
+def _parse_comment(comment: str) -> tuple[str | None, int, str | None, str | None, str | None, tuple[str, ...] | None, str | None, str | None, str | None, str | None, str | None, bool]:
     raw = comment.strip()
     if not raw:
-        return None, DEFAULT_IMPORTANCE, None, None, None, None
+        return None, DEFAULT_IMPORTANCE, None, None, None, None, None, None, None, None, None, False
     if raw.startswith("thyca"):
         rest = raw[5:].lstrip()
         if rest.startswith("{"):
             return _from_json(rest)
-    return (*_from_legacy(raw), None, None, None)
+    return (*_from_legacy(raw), None, None, None, None, None, None, None, None, False)
 
 
-def _from_json(blob: str) -> tuple[str | None, int, str | None, str | None, str | None, tuple[str, ...] | None]:
+def _from_json(blob: str) -> tuple[str | None, int, str | None, str | None, str | None, tuple[str, ...] | None, str | None, str | None, str | None, str | None, str | None, bool]:
     try:
         data = json.loads(blob)
     except json.JSONDecodeError:
-        return None, DEFAULT_IMPORTANCE, None, None, None, None
+        return None, DEFAULT_IMPORTANCE, None, None, None, None, None, None, None, None, None, False
     if not isinstance(data, dict):
-        return None, DEFAULT_IMPORTANCE, None, None, None, None
+        return None, DEFAULT_IMPORTANCE, None, None, None, None, None, None, None, None, None, False
     entry = data.get("id")
     entry_id = entry if isinstance(entry, str) and ENTRY_ID_RE.fullmatch(entry) else None
     importance = _coerce_imp(data.get("imp"))
@@ -230,7 +302,20 @@ def _from_json(blob: str) -> tuple[str | None, int, str | None, str | None, str 
     proj = proj if isinstance(proj, str) and proj else None
     chat = chat if isinstance(chat, str) and chat else None
     bots = _coerce_bots(data.get("bots"))
-    return entry_id, importance, expires_at, proj, chat, bots
+    task = data.get("task")
+    task = task if isinstance(task, str) and TASK_ID_RE.fullmatch(task) else None
+    cont = data.get("cont")
+    cont = cont if isinstance(cont, str) and cont and "#" in cont else None
+    kind = data.get("kind")
+    kind = kind if kind in TASK_KINDS else None
+    status = data.get("status")
+    status = status if status in TASK_STATUSES else None
+    habit = data.get("habit")
+    habit = habit if isinstance(habit, str) and habit.strip() else None
+    if kind is None:
+        habit = None
+    habit_explicit = data.get("habit_explicit") is True
+    return entry_id, importance, expires_at, proj, chat, bots, task, cont, kind, status, habit, habit_explicit
 
 
 def _from_legacy(raw: str) -> tuple[str | None, int, str | None]:

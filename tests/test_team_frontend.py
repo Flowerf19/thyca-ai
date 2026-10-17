@@ -340,11 +340,15 @@ def test_main_session_detail_guard(node: str) -> None:
         " api.isMainSessionDetail({bots: ['b1', 'b2']}, 'b1'),"
         " api.isMainSessionDetail({bots: ['thyca']}, 'b1'),"
         " api.isMainSessionDetail({}, 'b1'),"
+        " api.isMainSessionDetail({bots: ['b1'], dm: 'b1', kind: 'dm'}, 'b1'),"
+        " api.isMainSessionDetail({bots: ['b1'], kind: 'group'}, 'b1'),"
+        " api.isMainSessionDetail({bots: ['b1'], dm: 'b1', kind: 'group'}, 'b1'),"
         " api.isSoloSession({bots: ['b1']}, 'b1'),"
         " api.isSoloSession({bots: ['b1', 'b2']}, 'b1'),"
         " api.isSoloSession({}, 'thyca')];",
     )
-    assert value == [True, False, False, False, True, False, False]
+    assert value == [True, False, False, False, True, False, False,
+                    True, False, False]
 
 
 def test_bot_attribution_skips_user_and_sidecars(node: str) -> None:
@@ -468,9 +472,30 @@ def test_is_dm_detail_requires_marker_and_solo(node: str) -> None:
         " api.isDmDetail({id: 's', dm: 'b2', bots: ['b2']}, 'b1'),"
         " api.isDmDetail({id: 's', dm: 'b1', bots: ['b1', 'b2']}, 'b1'),"
         " api.isDmDetail(null, 'b1'),"
-        " api.isDmDetail({dm: 'b1', bots: ['b1']}, '')];",
+        " api.isDmDetail({dm: 'b1', bots: ['b1']}, ''),"
+        " api.isDmDetail({id: 's', dm: 'b1', bots: ['b1'], kind: 'dm'}, 'b1'),"
+        " api.isDmDetail({id: 's', dm: 'b1', bots: ['b1'], kind: 'group'}, 'b1'),"
+        " api.isDmDetail({id: 's', bots: ['b1'], kind: 'group'}, 'b1')];",
     )
-    assert value == [True, False, False, False, False, False, False]
+    assert value == [True, False, False, False, False, False, False,
+                    True, False, False]
+
+
+def test_shared_session_kind_wins_over_participants(node: str) -> None:
+    """Phase 2B: kind decides sharedness; a group reduced to one bot
+    stays a top-level group, and kind/dm mismatches never read as DM."""
+    value = _run(
+        node,
+        "return [api.isSharedSession({bots: ['b1'], kind: 'group'}),"
+        " api.isSharedSession({bots: ['b1', 'b2'], kind: 'dm'}),"
+        " api.isSharedSession({bots: ['b1']}),"
+        " api.isSharedSession({bots: ['b1', 'b2']}),"
+        " api.findMainSession([{id: 'weird', bots: ['b1'], dm: 'b1',"
+        "  kind: 'group', updated_at: '2026-09-01T00:00:00Z'},"
+        "  {id: 'solo', bots: ['b1'], updated_at: '2026-08-01T00:00:00Z'},"
+        " ], 'b1', '')?.id];",
+    )
+    assert value == [True, False, False, True, "solo"]
 
 
 def test_summarize_unread_ignores_count_drift(node: str) -> None:
@@ -1191,14 +1216,14 @@ def test_sidebar_sessions_render_under_active_bot_row(node: str) -> None:
     # Pinned letters lead: Thyca is pinned by design so its cluster tops
     # the list even though the group (07-02) and Coder (07-01) have newer
     # activity than Thyca's DM (06-01). Within the open cluster the bot
-    # row is followed by its flap (Đổi tên/Xóa/+ Phiên mới). Coder's
+    # row is followed by its flap (Đổi tên/Xóa/Tin nhắn riêng). Coder's
     # private session is NOT in Thyca's cluster. The DM session ("dm")
     # renders NO row: the Thyca bot row itself is the DM entry.
     assert [(row["bot"], row["sid"]) for row in value] == [
         ("thyca", ""), ("", ""), ("", "shared"), ("coder", "")]
     # Shared annotation still present on the group row's subline.
     assert "Coder" in value[2]["text"] and "Thyca" in value[2]["text"]
-    assert "+ Phiên mới" in value[1]["text"]
+    assert value[1]["text"] == "Tin nhắn riêng"
 
 
 def test_sidebar_bot_with_only_dm_renders_zero_session_rows(node: str) -> None:
@@ -1805,7 +1830,7 @@ def test_sidebar_rows_avatar_name_layout() -> None:
     assert "if (group) button.append(sessionIcon(session, selected));" in src, (
         "solo subordinate sessions render no avatar slot")
     assert 'className = "team-new-session"' in src
-    assert '"+ Phiên mới"' in src
+    assert '"Tin nhắn riêng"' in src
     newbtn = re.search(r"\.team-new-session\s*\{([^}]*)\}", css)
     assert newbtn, "new-session button styling missing"
 
@@ -1925,8 +1950,8 @@ def test_solo_subordinate_session_rows_have_no_avatar(node: str) -> None:
 
 
 def test_new_session_button_renders_when_no_sessions(node: str) -> None:
-    """The selected bot's open flap holds just the create button —
-    even with zero subordinate sessions — labelled for that bot."""
+    """FE-SESSION-1: the open flap holds just the DM button — labelled
+    for private messages, never disabled, no POST flow."""
     value = _sidebar(node,
         _TEAM_NAV_SETUP
         + "globalThis.fetch = async () => ({ ok: true, status: 200,"
@@ -1949,26 +1974,29 @@ def test_new_session_button_renders_when_no_sessions(node: str) -> None:
         "  coderBtn: !!newBtn('coder') };")
     assert value["subKids"] == ["team-new-session"]
     assert value["tag"] == "BUTTON" and value["type"] == "button"
-    assert value["label"] == "Tạo phiên mới với Thyca"
-    assert "+ Phiên mới" in value["text"]
+    assert value["label"] == "Mở tin nhắn riêng với Thyca"
+    assert "Tin nhắn riêng" in value["text"]
+    assert "+ Phiên mới" not in value["text"]
     assert value["disabled"] is False
     assert value["coderBtn"] is False
 
 
-def test_new_session_create_posts_and_navigates(node: str) -> None:
-    """Clicking the create button POSTs exactly {bots:[selected]} to
-    /api/sessions, hands the fresh solo detail to hub.afterTeamSession,
-    and never writes the fixed-DM memory."""
+def test_dm_button_opens_dm_without_post(node: str) -> None:
+    """FE-SESSION-1: clicking the flap button resolves the fixed DM
+    (GET /api/bots/<id>/dm) and hands it to hub.afterTeamSession —
+    no POST to /api/sessions in this flow."""
     value = _sidebar(node,
         _TEAM_NAV_SETUP
         + "const posts = [];"
         " const handed = [];"
         " globalThis.fetch = async (url, opts) => {"
         "  if (opts && opts.method === 'POST') {"
-        "   posts.push({ url, body: JSON.parse(opts.body) });"
+        "   posts.push(String(url));"
+        "   return { ok: false, status: 500, json: async () => ({}) }; }"
+        "  if (String(url).includes('/dm')) {"
         "   return { ok: true, status: 200,"
-        "    json: async () => ({ id: 'side-9', bots: ['thyca'],"
-        "     title: 'Phiên mới' }) }; }"
+        "    json: async () => ({ id: 'dm', bots: ['thyca'], dm: 'thyca',"
+        "     kind: 'dm', title: 'Riêng Thyca' }) }; }"
         "  return { ok: true, status: 200,"
         "   json: async () => ({ bots: ["
         "    {id: 'thyca', name: 'Thyca', role: 'chính', status: 'idle'},"
@@ -1984,72 +2012,24 @@ def test_new_session_create_posts_and_navigates(node: str) -> None:
         " teamRefresh: async () => {} });"
         " newBtn('thyca')._handlers.click();"
         " await tick(); await tick();"
-        " const btn = newBtn('thyca');"
-        " return { posts, handed, writes,"
-        "  reenabled: btn ? !btn.disabled : null,"
-        "  text: btn && btn.textContent,"
-        "  errors: flapOf('thyca').children"
+        " return { posts, handed, errors: flapOf('thyca').children"
         "   .filter((c) => String(c.className).includes('is-error')).length };")
-    assert value["posts"] == [
-        {"url": "/api/sessions", "body": {"bots": ["thyca"]}}]
-    assert value["handed"] == [{"id": "side-9", "ok": True}]
-    assert "thyca.team.dm.v1" not in value["writes"], value["writes"]
-    assert value["reenabled"] is True
-    assert "+ Phiên mới" in value["text"]
+    assert value["handed"] == [{"id": "dm", "ok": True}]
+    assert value["posts"] == []
     assert value["errors"] == 0
 
 
-def test_new_session_create_rejects_invalid_detail(node: str) -> None:
-    """A POST answer that is not exactly a fresh solo for the requested
-    bot — wrong bot, missing id, dm-marked, or multi-bot — is refused:
-    honest error shown, no afterTeamSession handoff."""
-    cases = [
-        "{ id: 'x', bots: ['coder'] }",
-        "{ bots: ['thyca'] }",
-        "{ id: 'x', bots: ['thyca'], dm: 'thyca' }",
-        "{ id: 'x', bots: ['thyca', 'coder'] }",
-    ]
-    for detail in cases:
-        value = _sidebar(node,
-            _TEAM_NAV_SETUP
-            + "const handed = [];"
-            f" globalThis.fetch = async (url, opts) => {{"
-            "  if (opts && opts.method === 'POST') {"
-            f"   return {{ ok: true, status: 200, json: async () => ({detail}) }}; }}"
-            "  return { ok: true, status: 200,"
-            "   json: async () => ({ bots: ["
-            "    {id: 'thyca', name: 'Thyca', role: 'chính', status: 'idle'},"
-            "    {id: 'coder', name: 'Coder', role: 'code', status: 'idle'}] }) }; };"
-            " await sidebar.initTeamSidebar({ state: { activeId: 'dm',"
-            "  detail: { id: 'dm', bots: ['thyca'] },"
-            "  sessions: ["
-            "   {id: 'dm', title: 'Riêng Thyca', bots: ['thyca'],"
-            "    dm: 'thyca', updated_at: '2026-06-01T00:00:00Z', turns: 2}] },"
-            " loadSession: async () => {},"
-            " afterTeamSession: async (d) => { handed.push(d.id); },"
-            " teamRefresh: async () => {} });"
-            " newBtn('thyca')._handlers.click();"
-            " await tick(); await tick();"
-            " const flap = flapOf('thyca');"
-            " const err = flap.children.find((c) =>"
-            "  String(c.className).includes('is-error'));"
-            " const btn = newBtn('thyca');"
-            " return { handed, error: err ? err.textContent : '',"
-            "  reenabled: btn ? !btn.disabled : null };")
-        assert value["handed"] == [], detail
-        assert "chưa mở phiên" in value["error"], detail
-        assert value["reenabled"] is True, detail
-
-
-def test_new_session_create_failure_shows_error(node: str) -> None:
-    """A failed POST surfaces the backend message scoped to the bot and
-    the button is usable again."""
+def test_dm_resolve_rejects_wrong_bot_detail(node: str) -> None:
+    """FE-SESSION-1: a DM endpoint answer for the wrong bot is refused —
+    no afterTeamSession handoff for it (legacy list path may still load)."""
     value = _sidebar(node,
         _TEAM_NAV_SETUP
-        + "globalThis.fetch = async (url, opts) => {"
-        "  if (opts && opts.method === 'POST') {"
-        "   return { ok: false, status: 500,"
-        "    json: async () => ({ error: 'server nổ' }) }; }"
+        + "const handed = [];"
+        " const loaded = [];"
+        " globalThis.fetch = async (url, opts) => {"
+        "  if (String(url).includes('/dm')) {"
+        "   return { ok: true, status: 200,"
+        "    json: async () => ({ id: 'x', dm: 'coder', bots: ['coder'] }) }; }"
         "  return { ok: true, status: 200,"
         "   json: async () => ({ bots: ["
         "    {id: 'thyca', name: 'Thyca', role: 'chính', status: 'idle'},"
@@ -2059,6 +2039,35 @@ def test_new_session_create_failure_shows_error(node: str) -> None:
         "  sessions: ["
         "   {id: 'dm', title: 'Riêng Thyca', bots: ['thyca'],"
         "    dm: 'thyca', updated_at: '2026-06-01T00:00:00Z', turns: 2}] },"
+        " loadSession: async (id) => { loaded.push(id); },"
+        " afterTeamSession: async (d) => { handed.push(d.id); },"
+        " teamRefresh: async () => {} });"
+        " newBtn('thyca')._handlers.click();"
+        " await tick(); await tick();"
+        " return { handed, loaded };")
+    assert value["handed"] == []
+    # Legacy fallback still loads the marked DM from the list.
+    assert value["loaded"] == ["dm"]
+
+
+def test_dm_resolve_failure_shows_error(node: str) -> None:
+    """FE-SESSION-1: DM endpoint down, no legacy session, POST fallback down
+    → the flap shows the scoped error note with alert role."""
+    value = _sidebar(node,
+        _TEAM_NAV_SETUP
+        + " globalThis.fetch = async (url, opts) => {"
+        "  if (String(url).includes('/dm')) {"
+        "   return { ok: false, status: 500,"
+        "    json: async () => ({ error: 'no dm' }) }; }"
+        "  if (opts && opts.method === 'POST') {"
+        "   return { ok: false, status: 500,"
+        "    json: async () => ({ error: 'no create' }) }; }"
+        "  return { ok: true, status: 200,"
+        "   json: async () => ({ bots: ["
+        "    {id: 'thyca', name: 'Thyca', role: 'chính', status: 'idle'},"
+        "    {id: 'coder', name: 'Coder', role: 'code', status: 'idle'}] }) }; };"
+        " await sidebar.initTeamSidebar({ state: { activeId: '',"
+        "  detail: null, sessions: [] },"
         " loadSession: async () => {}, afterTeamSession: async () => {},"
         " teamRefresh: async () => {} });"
         " newBtn('thyca')._handlers.click();"
@@ -2069,105 +2078,68 @@ def test_new_session_create_failure_shows_error(node: str) -> None:
         " const btn = newBtn('thyca');"
         " return { error: err ? err.textContent : '',"
         "  role: err ? err.getAttribute('role') : '',"
-        "  order: flap.children.map((c) => c.className),"
-        "  reenabled: btn ? !btn.disabled : null };")
-    assert value["error"] == "server nổ"
+        "  order: flap.children.map((c) => c.className) };")
+    assert value["error"] == "no create"  # backend message wins via messageOf
     assert value["role"] == "alert"
-    # Sealed-letter spec: "+ Phiên mới" is the flap's only line; its
-    # error note sits above it.
+    # Sealed-letter spec: the flap button stays last; the error sits above.
     assert "is-error" in value["order"][0]
     assert value["order"][-1] == "team-new-session"
-    assert value["reenabled"] is True
 
 
-def test_new_session_pending_blocks_duplicates_and_stale(node: str) -> None:
-    """While a create is in flight the button is disabled and duplicate
-    clicks do not POST again; switching bots mid-flight makes the late
-    resolution stale — no navigation, pending clears."""
+def test_dm_resolve_stale_across_bot_switch(node: str) -> None:
+    """FE-SESSION-1: switching bots mid-resolve invalidates the late DM
+    answer — only the currently owned bot navigates."""
     value = _sidebar(node,
         _TEAM_NAV_SETUP
-        + "const posts = [];"
-        " const handed = [];"
-        " let resolvePost = null;"
+        + "const handed = [];"
+        " const resolvers = {};"
         " globalThis.fetch = async (url, opts) => {"
-        "  if (opts && opts.method === 'POST') {"
-        "   posts.push({ url, body: JSON.parse(opts.body) });"
-        "   return await new Promise((r) => { resolvePost = r; }); }"
         "  if (String(url).includes('/dm')) {"
-        "   return { ok: false, status: 404, json: async () => null }; }"
+        "   const bot = String(url).includes('coder') ? 'coder' : 'thyca';"
+        "   return await new Promise((r) => { resolvers[bot] = r; }); }"
         "  return { ok: true, status: 200,"
         "   json: async () => ({ bots: ["
         "    {id: 'thyca', name: 'Thyca', role: 'chính', status: 'idle'},"
         "    {id: 'coder', name: 'Coder', role: 'code', status: 'idle'}] }) }; };"
-        " await sidebar.initTeamSidebar({ state: { activeId: 'dm',"
-        "  detail: { id: 'dm', bots: ['thyca'] },"
-        "  sessions: ["
-        "   {id: 'dm', title: 'Riêng Thyca', bots: ['thyca'],"
-        "    dm: 'thyca', updated_at: '2026-06-01T00:00:00Z', turns: 2},"
-        "   {id: 'coder-dm', title: 'Riêng Coder', bots: ['coder'],"
-        "    dm: 'coder', updated_at: '2026-06-03T00:00:00Z', turns: 1}] },"
+        " await sidebar.initTeamSidebar({ state: { activeId: '',"
+        "  detail: null, sessions: [] },"
         " loadSession: async () => {},"
         " afterTeamSession: async (d) => { handed.push(d.id); },"
         " teamRefresh: async () => {} });"
-        " const btn1 = newBtn('thyca');"
-        " btn1._handlers.click();"
-        " await tick();"
-        " const pending = newBtn('thyca');"
-        " const midState = { disabled: !!pending.disabled,"
-        "  text: pending.textContent };"
-        " pending._handlers.click();"
-        " await tick();"
-        " const postsAfterDup = posts.length;"
-        " const coderRow = botNav.children.map((c) =>"
-        "  c.children && c.children[0]).filter(Boolean).find((r) =>"
-        "  r.children[0] && r.children[0].dataset"
-        "  && r.children[0].dataset.botId === 'coder');"
-        " coderRow.children[0]._handlers.click();"
-        " await tick(); await tick();"
-        " resolvePost({ ok: true, status: 200,"
-        "  json: async () => ({ id: 'stale', bots: ['thyca'] }) });"
-        " await tick(); await tick();"
-        # The clicked bot's envelope opened at once (paper before the
-        # DM resolves) — fold back to thyca to reach its create line.
         " const thycaRow = botNav.children.map((c) =>"
         "  c.children && c.children[0]).filter(Boolean).find((r) =>"
         "  r.children[0] && r.children[0].dataset"
         "  && r.children[0].dataset.botId === 'thyca');"
-        " thycaRow.children[0]._handlers.click();"
+        " const coderRow = botNav.children.map((c) =>"
+        "  c.children && c.children[0]).filter(Boolean).find((r) =>"
+        "  r.children[0] && r.children[0].dataset"
+        "  && r.children[0].dataset.botId === 'coder');"
+        " newBtn('thyca')._handlers.click();"
+        " await tick();"
+        " coderRow.children[0]._handlers.click();"
         " await tick(); await tick();"
-        " const btn2 = newBtn('thyca');"
-        " return { posts, handed, midState, postsAfterDup,"
-        "  thycaActive: botNav.children.map((c) =>"
-        "   c.children && c.children[0]).filter(Boolean).some((r) =>"
-        "   r.children[0] && r.children[0].dataset"
-        "   && r.children[0].dataset.botId === 'thyca'"
-        "   && String(r.children[0].className).includes('is-active')),"
-        "  reenabled: btn2 ? !btn2.disabled : null };")
-    assert value["posts"] == [
-        {"url": "/api/sessions", "body": {"bots": ["thyca"]}}]
-    assert value["postsAfterDup"] == 1
-    assert value["midState"]["disabled"] is True
-    assert "Đang tạo" in value["midState"]["text"]
-    assert value["handed"] == []
-    assert value["thycaActive"] is True
-    assert value["reenabled"] is True
+        " resolvers['thyca']({ ok: true, status: 200,"
+        "  json: async () => ({ id: 'dm-t', bots: ['thyca'], dm: 'thyca' }) });"
+        " await tick(); await tick();"
+        " resolvers['coder']({ ok: true, status: 200,"
+        "  json: async () => ({ id: 'dm-c', bots: ['coder'], dm: 'coder' }) });"
+        " await tick(); await tick();"
+        " return { handed };")
+    assert value["handed"] == ["dm-c"]
 
 
-def test_new_session_stale_after_clicking_session_row(node: str) -> None:
-    """Clicking an existing subordinate session while a create is in
-    flight invalidates the create (token bump): the late POST answer
-    cannot navigate away from the session the user chose, and the
-    button settles back."""
+def test_dm_resolve_stale_after_clicking_session_row(node: str) -> None:
+    """FE-SESSION-1: clicking an existing session while the DM resolves
+    invalidates it (token bump): the late DM answer cannot navigate away
+    from the session the user chose."""
     value = _sidebar(node,
         _TEAM_NAV_SETUP
-        + "const posts = [];"
-        " const handed = [];"
+        + "const handed = [];"
         " const loaded = [];"
-        " let resolvePost = null;"
+        " let resolveDm = null;"
         " globalThis.fetch = async (url, opts) => {"
-        "  if (opts && opts.method === 'POST') {"
-        "   posts.push({ url, body: JSON.parse(opts.body) });"
-        "   return await new Promise((r) => { resolvePost = r; }); }"
+        "  if (String(url).includes('/dm')) {"
+        "   return await new Promise((r) => { resolveDm = r; }); }"
         "  return { ok: true, status: 200,"
         "   json: async () => ({ bots: ["
         "    {id: 'thyca', name: 'Thyca', role: 'chính', status: 'idle'},"
@@ -2186,17 +2158,12 @@ def test_new_session_stale_after_clicking_session_row(node: str) -> None:
         " await tick();"
         " findRow('side')._handlers.click();"
         " await tick();"
-        " resolvePost({ ok: true, status: 200,"
-        "  json: async () => ({ id: 'created', bots: ['thyca'] }) });"
+        " resolveDm({ ok: true, status: 200,"
+        "  json: async () => ({ id: 'dm', bots: ['thyca'], dm: 'thyca' }) });"
         " await tick(); await tick();"
-        " const btn = newBtn('thyca');"
-        " return { posts, handed, loaded,"
-        "  reenabled: btn ? !btn.disabled : null };")
-    assert value["posts"] == [
-        {"url": "/api/sessions", "body": {"bots": ["thyca"]}}]
+        " return { handed, loaded };")
     assert value["loaded"] == ["side"]
     assert value["handed"] == []
-    assert value["reenabled"] is True
 
 
 def test_is_exchange_requires_parent_for_traced_message(node: str) -> None:

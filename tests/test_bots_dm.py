@@ -68,15 +68,19 @@ def test_bot_dm_unknown_bot_raises(tmp_path: Path) -> None:
         app.shutdown()
 
 
-def test_bot_dm_adopts_legacy_solo_room(tmp_path: Path) -> None:
+def test_bot_dm_ignores_unmarked_solo_room(tmp_path: Path) -> None:
     app = _chat(tmp_path, connect=_LLM())
     try:
         _make_bot(app)
-        legacy = app.create(bots=["coder"])  # unmarked solo room (pre-CBE-5)
-        assert legacy["dm"] is None
+        # Raw unmarked solo room (pre-CBE-5 style): phase 2B treats it as
+        # an ordinary group, never adopts it as the DM.
+        raw = app._sessions.create()
+        app._sessions.store.append_bots(raw.path, ["coder"])
+        assert app._sessions.store.load(raw.id).dm_bot is None
         dm = app.bot_dm("coder")
-        assert dm["id"] == legacy["id"]
+        assert dm["id"] != raw.id
         assert dm["dm"] == "coder"
+        assert dm["kind"] == "dm"
     finally:
         app.shutdown()
 
@@ -138,5 +142,31 @@ def test_dm_route_shape(tmp_path: Path) -> None:
         missing = Handler()
         dm_endpoint(missing, app, "ghost")  # type: ignore[arg-type]
         assert missing.status == 404
+    finally:
+        app.shutdown()
+
+
+def test_bot_dm_lookup_does_not_prune_blank_group(tmp_path: Path) -> None:
+    app = _chat(tmp_path, connect=_LLM())
+    try:
+        _make_bot(app)
+        _make_bot(app, bot_id="helper")
+        dm = app.bot_dm("coder")  # DM exists from here on.
+        group = app.create(bots=["coder", "helper"])  # blank group
+        assert app.bot_dm("coder")["id"] == dm["id"]
+        assert (tmp_path / "sessions" / f"{group['id']}.jsonl").exists()
+    finally:
+        app.shutdown()
+
+
+def test_first_bot_dm_prunes_previous_blank(tmp_path: Path) -> None:
+    app = _chat(tmp_path, connect=_LLM())
+    try:
+        _make_bot(app)
+        stray = app._sessions.create()
+        assert stray.path.is_file()
+        dm = app.bot_dm("coder")  # first lookup: create path prunes.
+        assert dm["dm"] == "coder"
+        assert not stray.path.exists()
     finally:
         app.shutdown()

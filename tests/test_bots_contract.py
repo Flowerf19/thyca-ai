@@ -83,13 +83,14 @@ def test_contract_session_bots_add_remove(tmp_path: Path) -> None:
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="C",
                                  description="D", persona="P"))
-        created = _post(httpd, "/api/sessions", {})
-        out = _post(httpd, f"/api/sessions/{created['id']}/bots",
-                    {"bot_id": "coder", "action": "add"})
-        assert out == {"ok": True, "id": created["id"], "bots": ["thyca", "coder"]}
+        created = _post(httpd, "/api/sessions", {"bots": ["thyca", "coder"]})
+        assert created["kind"] == "group"
         out = _post(httpd, f"/api/sessions/{created['id']}/bots",
                     {"bot_id": "coder", "action": "remove"})
         assert out["bots"] == ["thyca"]
+        out = _post(httpd, f"/api/sessions/{created['id']}/bots",
+                    {"bot_id": "coder", "action": "add"})
+        assert out == {"ok": True, "id": created["id"], "bots": ["thyca", "coder"]}
     finally:
         httpd.shutdown()
         app.shutdown()

@@ -82,9 +82,6 @@ let sharedPicked = null;
 // second bot's window.
 let mainToken = 0;
 let mainError = "";
-let newSessionBot = "";
-let newSessionError = "";
-let newSessionErrorBot = "";
 
 const STATUS_LABEL = {
   running: "đang làm",
@@ -566,36 +563,9 @@ async function createShared(botIds) {
   }
 }
 
-async function createBotSession(botId) {
-  if (!hub || newSessionBot) return;
-  activeBot = botId;
-  const token = ++mainToken;
-  const owned = () => token === mainToken && activeBot === botId;
-  newSessionBot = botId;
-  newSessionError = "";
-  newSessionErrorBot = "";
-  render();
-  try {
-    const detail = await postJson("/api/sessions", { bots: [botId] });
-    if (!owned()) return;
-    if (!isMainSessionDetail(detail, botId)
-        || !String(detail.id || "") || detail.dm) {
-      newSessionError = "Backend chưa trả về phiên mới đúng cho bot này — chưa mở phiên.";
-      newSessionErrorBot = botId;
-      return;
-    }
-    exitPicking();
-    await hub.afterTeamSession(detail, owned);
-    if (!owned()) return;
-  } catch (error) {
-    if (!owned()) return;
-    newSessionError = messageOf(error, "Chưa tạo được phiên mới — backend đội bot chưa sẵn sàng.");
-    newSessionErrorBot = botId;
-  } finally {
-    if (newSessionBot === botId) newSessionBot = "";
-    render();
-  }
-}
+/* FE-SESSION-1: no more solo-session creation. The flap button opens the
+   bot's fixed DM through the standard openBot resolve (GET
+   /api/bots/<id>/dm); groups are created only from the shared flow. */
 
 /* CFE-1: clicking a bot opens its fixed DM/main session directly. Primary
    path is the backend's authoritative window: GET /api/bots/<botId>/dm
@@ -624,8 +594,8 @@ async function resolveMain(botId, token) {
   const owned = () => token === mainToken && activeBot === botId;
   try {
     if (!hub) return;
-    // Primary: the backend's fixed DM. It adopts a legacy unmarked solo
-    // room server-side, so no client-side guessing is needed when it works.
+    // Primary: the backend's fixed DM (find-or-create server-side,
+    // verified with isDmDetail — never a fake main).
     let detail = null;
     try {
       const dm = await getJson(`/api/bots/${encodeURIComponent(botId)}/dm`);
@@ -646,8 +616,9 @@ async function resolveMain(botId, token) {
       if (!owned()) return;
       return;
     }
-    // Legacy fallback (pre-CBE-5 backend): remembered/newest solo session
-    // from the list, else POST-create one and verify it is exactly that.
+    // Legacy fallback (payloads without kind/dm): remembered/newest solo
+    // session from the list, else POST-create one and verify it is exactly
+    // that. The phase-2B backend answers POST 1-bot with its fixed DM.
     const main = findMainSession(hub.state.sessions, botId, getRememberedDm(botId));
     if (main?.id) {
       rememberDm(botId, main.id);
@@ -751,16 +722,12 @@ function render() {
     const flap = document.createElement("div");
     flap.className = "team-bot-flap";
     if (mainError) flap.append(errorNote(mainError));
-    if (newSessionError && newSessionErrorBot === bot.id) {
-      flap.append(errorNote(newSessionError));
-    }
     const create = document.createElement("button");
     create.type = "button";
     create.className = "team-new-session";
-    create.setAttribute("aria-label", `Tạo phiên mới với ${bot.name}`);
-    create.textContent = newSessionBot === bot.id ? "Đang tạo…" : "+ Phiên mới";
-    create.disabled = !!newSessionBot;
-    create.addEventListener("click", () => void createBotSession(bot.id));
+    create.setAttribute("aria-label", `Mở tin nhắn riêng với ${bot.name}`);
+    create.textContent = "Tin nhắn riêng";
+    create.addEventListener("click", () => void openBot(bot.id));
     flap.append(create);
     cluster.append(flap);
     const sub = document.createElement("div");

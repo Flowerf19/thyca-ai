@@ -112,6 +112,30 @@ class SessionManager:
                     continue
             return sessions
 
+    def ensure_dm(self, bot_id: str) -> Session:
+        """Find-or-create one bot's fixed DM (phase 2B shared helper).
+
+        Only a session already carrying the ``dm`` marker is adopted;
+        otherwise a fresh session is created and marked (bots + dm).
+        No locking: single-threaded callers use it directly, while
+        ChatApp.bot_dm wraps it in ``_dm_lock`` for the concurrent
+        one-DM guarantee."""
+        for path in self.store.list_paths():
+            try:
+                session = self.store.load(path.stem)
+            except SessionError:
+                continue
+            if session.dm_bot == bot_id:
+                with self._lock:
+                    self._session = session
+                return session
+        session = self.create()
+        self.store.append_bots(session.path, [bot_id])
+        self.store.append_dm(session.path, bot_id)
+        session.bots = [bot_id]
+        session.dm_bot = bot_id
+        return session
+
     def discard_empty(self, keep: set[str] | None = None) -> list[str]:
         """Drop blank sessions except the ones named in ``keep``.
 

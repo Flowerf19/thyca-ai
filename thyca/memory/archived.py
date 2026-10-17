@@ -88,10 +88,14 @@ class ArchivedMemory:
         project: str | None = None,
         chat_session: str | None = None,
         reader: str | None = None,
+        task: str | None = None,
+        kind: str | None = None,
+        status: str | None = None,
     ) -> list[Hit]:
         return self.store.fts_search(
             query, timeline_day, limit, format_ts(now),
             project=project, chat_session=chat_session, reader=reader,
+            task=task, kind=kind, status=status,
         )
 
     def trigram_hits(
@@ -104,10 +108,14 @@ class ArchivedMemory:
         project: str | None = None,
         chat_session: str | None = None,
         reader: str | None = None,
+        task: str | None = None,
+        kind: str | None = None,
+        status: str | None = None,
     ) -> list[Hit]:
         return self.store.trigram_search(
             self.chunker.normalize(query), timeline_day, limit, format_ts(now),
             project=project, chat_session=chat_session, reader=reader,
+            task=task, kind=kind, status=status,
         )
 
     def recent_hits(self, limit: int, now: datetime | None = None, *, reader: str | None = None) -> list[Hit]:
@@ -117,27 +125,15 @@ class ArchivedMemory:
         ]
 
     def with_counts(self, hits: list[Hit], now: datetime | None = None) -> list[Hit]:
+        from dataclasses import replace as _replace
+
         now_ts = format_ts(now)
         counted: list[Hit] = []
         for hit in hits:
             count = self.store.session_leaf_count(hit.session_id, now_ts)
             counted.append(
-                Hit(
-                    path=hit.path,
-                    source_kind=hit.source_kind,
-                    chunk_id=hit.chunk_id,
-                    timeline_day=hit.timeline_day,
-                    session_id=hit.session_id,
-                    heading=hit.heading,
-                    snippet=hit.snippet,
-                    score=hit.score,
-                    match_type=hit.match_type,
-                    bm25=hit.bm25,
-                    leaf_ord=hit.leaf_ord,
-                    session_leaf_count=count,
-                    has_more=count > 1,
-                    line_start=hit.line_start,
-                    line_end=hit.line_end,
+                _replace(
+                    hit, session_leaf_count=count, has_more=count > 1,
                 )
             )
         return counted

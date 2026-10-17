@@ -30,6 +30,9 @@ class Element {
     this.className = '';
     this.value = '';
     this.text = '';
+    // Phase 2B-era brand headers call el.style.setProperty (chat-view.js);
+    // real browsers always have it, so the fake needs it too.
+    this.style = { setProperty() {}, removeProperty() {} };
     this.classList = {
       contains: name => this.className.split(' ').includes(name),
       add: (...names) => {

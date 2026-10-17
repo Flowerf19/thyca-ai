@@ -25,6 +25,8 @@ class PromptManager:
             parts.append(_section("role", soul))
         if user not in _STUB_USER:
             parts.append(_section("user", hot.user))
+        if hot.bot_user.strip() and hot.bot_user.strip() != "# User":
+            parts.append(_section("bot_user", hot.bot_user))
         parts.append(_section("today", hot.today))
         if hot.today_elsewhere:
             parts.append(_section("today_elsewhere", hot.today_elsewhere))
@@ -34,6 +36,8 @@ class PromptManager:
             parts.append(_section("team", hot.team))
         if hot.tasks:
             parts.append(_section("open_tasks", hot.tasks))
+        if hot.memory_tasks:
+            parts.append(_section("memory_tasks", hot.memory_tasks))
         if hot.recalled:
             parts.append(_section("recalled", hot.recalled))
         parts.append(_section("rules", self.rules_section()))

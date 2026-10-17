@@ -32,10 +32,32 @@ def test_create_accepts_bots_and_payload_carries_them(tmp_path: Path) -> None:
         _coder(app)
         detail = app.create(bots=["thyca", "coder"])
         assert detail["bots"] == ["thyca", "coder"]
+        assert detail["kind"] == "group"
         assert app.get_payload(detail["id"])["bots"] == ["thyca", "coder"]
-        # Legacy default without bots.
+        # No bots: Thyca's DM (phase 2B), not a plain session.
         plain = app.create()
         assert plain["bots"] == ["thyca"]
+        assert plain["dm"] == "thyca"
+        assert plain["kind"] == "dm"
+    finally:
+        app.shutdown()
+
+
+def test_create_single_bot_resolves_to_that_dm(tmp_path: Path) -> None:
+    app = _chat(tmp_path)
+    try:
+        _coder(app)
+        first = app.create(bots=["coder"])
+        second = app.create(bots=["coder"])
+        assert first["id"] == second["id"]
+        assert first["dm"] == "coder"
+        assert first["kind"] == "dm"
+        # Duplicate ids in one call dedupe to the same DM.
+        assert app.create(bots=["coder", "coder"])["id"] == first["id"]
+        # Two-bot calls always mint fresh groups.
+        g1 = app.create(bots=["thyca", "coder"])["id"]
+        g2 = app.create(bots=["thyca", "coder"])["id"]
+        assert g1 != g2
     finally:
         app.shutdown()
 
@@ -57,9 +79,12 @@ def test_add_remove_bot_round_trip(tmp_path: Path) -> None:
     app = _chat(tmp_path)
     try:
         _coder(app)
-        created = app.create()
+        # Add/remove runs on a group (create() with no bots is Thyca's DM).
+        created = app.create(bots=["thyca", "coder"])
+        assert created["kind"] == "group"
+        assert app.set_room_bots(created["id"], "coder", "remove") == ["thyca"]
+        assert app.room_bots(created["id"]) == ["thyca"]
         assert app.set_room_bots(created["id"], "coder", "add") == ["thyca", "coder"]
-        assert app.room_bots(created["id"]) == ["thyca", "coder"]
         assert app.set_room_bots(created["id"], "coder", "remove") == ["thyca"]
         with pytest.raises(RegistryError):
             app.set_room_bots(created["id"], "thyca", "remove")
@@ -148,3 +173,33 @@ def test_trace_groups_by_bot() -> None:
     by_bot = {row["bot_id"]: row for row in data["by_bot"]}
     assert by_bot["coder"]["requests"] == 1
     assert by_bot["unknown"]["requests"] == 1
+
+
+def test_wire_kind_dm_group_legacy(tmp_path: Path) -> None:
+    app = _chat(tmp_path)
+    try:
+        _coder(app)
+        dm = app.bot_dm("coder")
+        assert app.get_payload(dm["id"])["kind"] == "dm"
+        group = app.create(bots=["thyca", "coder"])
+        assert app.get_payload(group["id"])["kind"] == "group"
+        # Legacy session without any meta line reads as group.
+        raw = app._sessions.create()
+        assert app.get_payload(raw.id)["kind"] == "group"
+        assert app.get_payload(raw.id)["bots"] == ["thyca"]
+    finally:
+        app.shutdown()
+
+
+def test_create_rejects_stray_string_accepts_empty(tmp_path: Path) -> None:
+    import pytest as _pytest
+
+    app = _chat(tmp_path)
+    try:
+        _coder(app)
+        with _pytest.raises(ValueError, match="non-empty list"):
+            app.create(bots="coder")
+        assert app.create(bots=[])["dm"] == "thyca"
+        assert app.create()["dm"] == "thyca"
+    finally:
+        app.shutdown()

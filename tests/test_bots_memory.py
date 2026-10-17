@@ -1,4 +1,4 @@
-"""BE-4: bots field end-to-end, ownership, candidates, edges, hot hiding."""
+"""BE-4: bots field end-to-end, ownership, candidates, hot hiding."""
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
@@ -174,17 +174,13 @@ def test_child_cannot_promote(tmp_path: Path) -> None:
         reset_bot_id(token)
 
 
-def test_related_edges_drop_on_forget(tmp_path: Path) -> None:
+def test_forget_removes_entry_and_reads_miss(tmp_path: Path) -> None:
     facade = _facade(tmp_path)
     a = facade.remember("alpha", "first aa", now=T0)
     b = facade.remember("beta", "second bb", now=T0)
-    store = facade.archive.store
-    from thyca.memory.heading import format_ts, utc_now
-
-    store.add_related(a, b, "liên quan", format_ts(utc_now(None)))
-    assert store.related_of(a)
     facade.forget(a, now=T1)
-    assert store.related_of(b) == []
+    assert facade.archive.store.get_session_any(a) == []
+    assert facade.archive.store.get_session_any(b) != []
 
 
 def test_hot_prompt_hides_other_private(tmp_path: Path) -> None:

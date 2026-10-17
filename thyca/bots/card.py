@@ -63,9 +63,10 @@ _AVATAR_BY_ID: dict[str, str] = {
 }
 
 #: Tools every newly created bot receives so it can immediately talk to
-#: peers and use its own memory (peer send + remember/search/get/propose).
-#: Creation paths union these with explicitly requested tools; the card's
-#: ``hidden_tools`` and memory/bash policies still win at filter time.
+#: peers and use its own memory (peer send + remember/search/get/propose +
+#: open task catalog). Creation paths union these with explicitly requested
+#: tools; the card's ``hidden_tools`` and memory/bash policies still win
+#: at filter time.
 BASELINE_BOT_TOOLS: tuple[str, ...] = (
     "bot_send",
     "bot_fetch",
@@ -77,6 +78,7 @@ BASELINE_BOT_TOOLS: tuple[str, ...] = (
     "memory_search",
     "memory_get",
     "memory_propose_team",
+    "memory_tasks",
 )
 
 

@@ -1958,3 +1958,20 @@ button:active {
 .team-strip[hidden] {
   display: none;
 }
+
+/* Exchange avatars: layout/size only — seals come from the shared avatar CSS. */
+.team-exchange-avatar {
+  --bot-avatar-size: 1.7rem;
+}
+.team-exchange > summary {
+  gap: 0.5rem;
+}
+.team-exchange-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+}
+.team-exchange-content {
+  min-width: 0;
+  flex: 1;
+}

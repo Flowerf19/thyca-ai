@@ -180,6 +180,10 @@ def parse_extraction(text: str) -> list[ExtractedMemory]:
             task = new_task = None
         cont = cont if isinstance(cont, str) and cont.strip() else None
         kind = kind if isinstance(kind, str) and kind.strip() else None
+        # Checkpoints are deliberate in-turn memory writes, never an
+        # extractor output; a checkpoint kind here keeps only its task link.
+        if kind == "checkpoint":
+            kind = None
         status = status if isinstance(status, str) and status.strip() else None
         habit = habit.strip() if isinstance(habit, str) and habit.strip() else None
         habit_explicit = item.get("habit_explicit") is True

@@ -308,7 +308,7 @@ def test_index_html_parses() -> None:
         "index.html": './pages/chat/app.js',
         "memories.html": './pages/memories/memories.js',
         "provider.html": './pages/provider/provider.js',
-        "dashboard.html": './pages/dashboard/cost.js',
+        "dashboard.html": './pages/dashboard/overview.js',
         "profile.html": './pages/profile/profile.js',
     }
     for name, script in expected.items():
@@ -327,7 +327,7 @@ def test_index_html_parses() -> None:
 def test_cli_serve_flag_conflicts(tmp_path: Path) -> None:
     args = build_parser().parse_args(["--serve"])
     assert args.serve
-    assert args.port == 8765
+    assert args.port == 19502
     out, err = StringIO(), StringIO()
     cli = Cli(thyca_dir=tmp_path, stdin=StringIO(""), stdout=out, stderr=err)
     assert cli.main(["--serve", "-p", "hi"]) == 2

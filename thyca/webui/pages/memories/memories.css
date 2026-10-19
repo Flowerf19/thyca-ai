@@ -377,3 +377,21 @@
   color: var(--color-muted);
   font-family: var(--font-reading);
 }
+
+/* Pending avatars: layout only — seals come from the shared avatar CSS. */
+.pending-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+.pending-avatar {
+  --bot-avatar-size: 1.9rem;
+}
+.pending-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.pending-chip .bot-avatar-slot {
+  --bot-avatar-size: 1.4rem;
+}

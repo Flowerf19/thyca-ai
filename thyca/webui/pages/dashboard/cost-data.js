@@ -11,10 +11,6 @@
 import { cleanText, formatInteger } from "../../shared/js/format.js";
 import { completeDays, finiteCost, splitPromptTokens } from "../../shared/js/analytics-data.js";
 
-/* Group key for rows whose session_id is missing/blank — rendered as its own
-   explicit group instead of being dropped or silently merged. */
-export const NO_SESSION_KEY = "(không có session)";
-
 /* One row per turn, deduped on (session_id, turn_index). Blank session_id is
    stringified so the dedupe key stays unique. */
 function dedupeTurns(rows) {
@@ -134,63 +130,6 @@ export function modelTurnCoverage(rows) {
     if (turnCost(row) != null) entry.pricedTurns += 1;
   }
   return coverage;
-}
-
-/* One entry per session (blank id → NO_SESSION_KEY). Title comes from the
-   newest turn that carries one — the list arrives newest-first, so the first
-   title seen wins; no per-session detail request is made. costUsd keeps the
-   same null/partial semantics as overviewMetrics. */
-export function aggregateSessions(rows) {
-  const sessions = new Map();
-  for (const row of dedupeTurns(rows)) {
-    const sessionId = cleanText(row.session_id);
-    const key = sessionId || NO_SESSION_KEY;
-    let group = sessions.get(key);
-    if (!group) {
-      group = {
-        key,
-        sessionId: sessionId || null,
-        title: "",
-        turns: 0,
-        requests: 0,
-        costUsd: null,
-        pricedTurns: 0,
-        inputTokens: 0,
-        cacheTokens: 0,
-        outputTokens: 0,
-        lastStartedAt: "",
-      };
-      sessions.set(key, group);
-    }
-    group.turns += 1;
-    group.requests += Number(row.requests) || 0;
-    const cost = turnCost(row);
-    if (cost != null) {
-      group.costUsd = (group.costUsd ?? 0) + cost;
-      group.pricedTurns += 1;
-    }
-    const { input, cache } = splitPromptTokens(row.prompt_tokens, row.cached_tokens);
-    group.inputTokens += input;
-    group.cacheTokens += cache;
-    group.outputTokens += Number(row.completion_tokens) || 0;
-    if (cleanText(row.started_at) > group.lastStartedAt) group.lastStartedAt = cleanText(row.started_at);
-    if (!group.title && cleanText(row.title)) group.title = cleanText(row.title);
-  }
-  const list = [...sessions.values()];
-  /* Cost desc (priced first, unpriced last), then recency, then key for a
-     deterministic order. */
-  return list.sort((a, b) => rankCost(a) - rankCost(b)
-    || (rankCost(a) === 0 ? costValue(b) - costValue(a) : 0)
-    || cleanText(b.lastStartedAt).localeCompare(cleanText(a.lastStartedAt))
-    || a.key.localeCompare(b.key, "vi"));
-}
-
-function costValue(group) {
-  return group.costUsd ?? 0;
-}
-
-function rankCost(group) {
-  return group.costUsd == null ? 1 : 0;
 }
 
 /* Fixed share denominator: the sum over the whole snapshot's model rows,

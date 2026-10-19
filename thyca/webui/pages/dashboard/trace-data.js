@@ -24,9 +24,13 @@ export function groupTraceTurns(rows) {
     if (!group) {
       group = {
         sessionId,
-        title: cleanText(row?.title, sessionId),
+        title: cleanText(row?.title),
         startedAt: cleanText(row?.started_at),
         endedAt: cleanText(row?.ended_at),
+        kind: typeof row?.session_kind === "string" ? row.session_kind : "",
+        dm: typeof row?.session_dm === "string" ? row.session_dm : "",
+        bots: Array.isArray(row?.session_bots)
+          ? row.session_bots.map(String).filter(Boolean) : [],
         totalTokens: 0,
         costUsd: null,
         pricedTurns: 0,
@@ -36,6 +40,15 @@ export function groupTraceTurns(rows) {
       groups.set(sessionId, group);
     }
     group.turns.push(row);
+    if (!group.kind && typeof row?.session_kind === "string" && row.session_kind) {
+      group.kind = row.session_kind;
+    }
+    if (!group.dm && typeof row?.session_dm === "string" && row.session_dm) {
+      group.dm = row.session_dm;
+    }
+    if (!group.bots.length && Array.isArray(row?.session_bots)) {
+      group.bots = row.session_bots.map(String).filter(Boolean);
+    }
     if (String(row.started_at || "") > group.startedAt) group.startedAt = String(row.started_at || "");
     if (String(row.ended_at || "") > group.endedAt) group.endedAt = String(row.ended_at || "");
     group.totalTokens += Number(row.total_tokens) || 0;
@@ -58,6 +71,49 @@ export function groupTraceTurns(rows) {
     }))
     .sort((a, b) => b.startedAt.localeCompare(a.startedAt) || b.sessionId.localeCompare(a.sessionId));
 }
+
+/* Bots in a trace group: participants first, then turn/breakdown
+   contributors not already listed (null/"unknown"/blanks dropped). */
+export function traceGroupBotIds(group) {
+  const seen = new Set();
+  const out = [];
+  const take = (id) => {
+    const key = String(id || "");
+    if (!key || key === "unknown" || seen.has(key)) return;
+    seen.add(key);
+    out.push(key);
+  };
+  if (group && typeof group === "object") {
+    for (const id of Array.isArray(group.bots) ? group.bots : []) take(id);
+    for (const turn of Array.isArray(group.turns) ? group.turns : []) {
+      if (!turn || typeof turn !== "object") continue;
+      take(turn.bot_id);
+      const breakdown = Array.isArray(turn.bot_breakdown) ? turn.bot_breakdown : [];
+      for (const entry of breakdown) take(entry && entry.bot_id);
+    }
+  }
+  return out;
+}
+
+/* Bot ids offered by the Trace filter: thyca first, the rest by id. */
+export function traceBotOptions(groups) {
+  const seen = new Set();
+  for (const group of Array.isArray(groups) ? groups : []) {
+    for (const id of traceGroupBotIds(group)) seen.add(id);
+  }
+  const rest = [...seen].filter((id) => id !== "thyca").sort((a, b) => a.localeCompare(b, "vi"));
+  return seen.has("thyca") ? ["thyca", ...rest] : rest;
+}
+
+/* Filter trace groups by bot ("" = all). A group matches when the bot is
+   a participant or contributed to one of its turns. */
+export function filterTraceGroups(groups, botId) {
+  const id = String(botId || "");
+  if (!id) return Array.isArray(groups) ? groups : [];
+  return (Array.isArray(groups) ? groups : []).filter((group) =>
+    traceGroupBotIds(group).includes(id));
+}
+
 
 export function formatRecordText(value) {
   if (value == null || value === "") return "—";

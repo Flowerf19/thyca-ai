@@ -1,7 +1,7 @@
 ---
-status: in-progress
+status: done
 created: 2026-09-28
-last_updated: 2026-09-28
+last_updated: 2026-10-19
 ---
 
 # Session-scoped <today> injection (0.86.3)
@@ -63,3 +63,8 @@ full-tail behavior (old tests/callers unaffected).
 - CLI plumbing (`session_id=`) has no dedicated test (same one-line pattern as chat e2e).
 - `<today>` empty when the session has no notes yet (rules explain it).
 - Review round (meta/muse-spark-1.3, max thinking, fresh context): Approve with fixes; 4 Minor fixed (single strip→tail in refresh, `day_str` rename, pinned id→content assertions, duplicate-legacy-titles test). Full suite 1056 passed, ruff at baseline 188, `git diff --check` clean.
+
+## Close-out (2026-10-19)
+
+Status lật `done`: mọi task đã hoàn thành từ 2026-09-28; kiểm chứng lại
+tại cây hiện tại — full `uv run pytest -q` → **1550 passed**.

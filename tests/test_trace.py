@@ -326,3 +326,122 @@ def test_completed_turn_has_no_error() -> None:
     (turn,) = turns_from_session(ok)
     assert turn.status == "completed"
     assert turn.to_payload()["error"] is None
+
+
+def test_row_requests_truthful_counting() -> None:
+    """Bus rows cost 0; aggregated rows report their own count; cards cost 0."""
+    session = _session(
+        "2026-08-26T09-12-03_mixd",
+        [
+            Message(role="user", content="go", ts=TS),
+            # Plain llm row: one real call.
+            Message(role="assistant", content="a", ts=TS2,
+                    meta={"kind": "llm", "bot_id": "thyca"}),
+            # Bus envelope row (sender side): no call.
+            Message(role="assistant", content="fwd", ts=TS2,
+                    meta={"bot_id": "thyca", "kind": "delegate",
+                          "bus_event": True}),
+            # Legacy bus message (pre-marker): no model/usage + parent.
+            Message(role="assistant", content="old fwd", ts=TS2,
+                    meta={"bot_id": "thyca", "kind": "message",
+                          "parent_span_id": "sp_1"}),
+            # Aggregated internal turn of 4 rounds.
+            Message(role="assistant", content="done", ts=TS2,
+                    meta={"bot_id": "coder", "kind": "result",
+                          "model": "m",
+                          "usage": {"prompt_tokens": 4, "cached_tokens": 0,
+                                    "completion_tokens": 4, "total_tokens": 8},
+                          "requests": 4}),
+            # App-written card: its model call sits in an aggregate.
+            Message(role="assistant", content="", ts=TS2,
+                    meta={"bot_id": "coder", "kind": "card",
+                          "card": {"type": "question"}}),
+        ],
+    )
+    (turn,) = turns_from_session(session)
+    assert turn.requests == 1 + 4
+    by_bot = {e["bot_id"]: e for e in turn.bot_breakdown}
+    assert by_bot["thyca"]["requests"] == 1
+    assert by_bot["coder"]["requests"] == 4
+    data = aggregate([turn])
+    assert data["totals"]["requests"] == 5
+    bots = {b["bot_id"]: b for b in data["by_bot"]}
+    assert bots["thyca"]["requests"] == 1
+    assert bots["coder"]["requests"] == 4
+
+
+def test_turns_carry_session_channel_fields(tmp_path=None) -> None:
+    from pathlib import Path as _Path
+
+    def _s(sid, bots, dm, messages):
+        return Session(sid, _Path(f"{sid}.jsonl"), messages, None, bots=bots, dm_bot=dm)
+
+    user = Message(role="user", content="go", ts=TS)
+    final = Message(role="assistant", content="done", ts=TS2, meta={"kind": "llm"})
+    dm_turns = turns_from_session(_s("dm1", ["coder"], "coder", [user, final]))
+    assert dm_turns[0].session_kind == "dm"
+    assert dm_turns[0].session_dm == "coder"
+    assert dm_turns[0].session_bots == ["coder"]
+    group_turns = turns_from_session(
+        _s("g1", ["thyca", "coder"], None, [user, final]))
+    assert group_turns[0].session_kind == "group"
+    assert group_turns[0].session_dm is None
+    assert group_turns[0].session_bots == ["thyca", "coder"]
+    legacy_turns = turns_from_session(_s("old", None, None, [user, final]))
+    assert legacy_turns[0].session_kind == "group"
+    assert legacy_turns[0].session_dm is None
+    assert legacy_turns[0].session_bots == ["thyca"]
+    payload = dm_turns[0].to_payload()
+    assert (payload["session_kind"], payload["session_dm"],
+            payload["session_bots"]) == ("dm", "coder", ["coder"])
+
+
+def test_row_tool_calls_truthful_counting() -> None:
+    """Root rows count len(tool_calls); aggregated rows report their own
+    tool_call_count (never plus their body list); bus/card/context-stop 0."""
+    from thyca.core.protocol import ToolCall
+
+    def call(cid):
+        return ToolCall(id=cid, name="read", arguments={})
+
+    session = _session(
+        "2026-08-26T09-12-03_mixt",
+        [
+            Message(role="user", content="go", ts=TS),
+            # Root row with two real tool calls.
+            Message(role="assistant", content="a", ts=TS2,
+                    tool_calls=[call("c1"), call("c2")],
+                    meta={"kind": "llm", "bot_id": "thyca"}),
+            # Aggregated internal turn: meta count wins over the body list.
+            Message(role="assistant", content="done", ts=TS2,
+                    tool_calls=[call("c9")],
+                    meta={"bot_id": "coder", "kind": "result",
+                          "model": "m", "requests": 4, "tool_call_count": 5}),
+            # Bus envelope row: no calls.
+            Message(role="assistant", content="fwd", ts=TS2,
+                    tool_calls=[call("cb")],
+                    meta={"bot_id": "thyca", "kind": "delegate",
+                          "bus_event": True}),
+            # App-written card: no calls.
+            Message(role="assistant", content="", ts=TS2,
+                    tool_calls=[call("cc")],
+                    meta={"bot_id": "coder", "kind": "card",
+                          "card": {"type": "question"}}),
+            # Context-stop marker: no calls.
+            Message(role="assistant", content="stop", ts=TS2,
+                    tool_calls=[call("cs")],
+                    meta={"kind": "llm", "status": "context_limit"}),
+        ],
+    )
+    (turn,) = turns_from_session(session)
+    assert turn.tool_calls == 2 + 5
+    by_bot = {e["bot_id"]: e for e in turn.bot_breakdown}
+    assert by_bot["thyca"]["tool_calls"] == 2
+    assert by_bot["coder"]["tool_calls"] == 5
+    payload = turn.to_payload()
+    assert payload["tool_calls"] == 7
+    data = aggregate([turn])
+    assert data["totals"]["tool_calls"] == 7
+    bots = {b["bot_id"]: b for b in data["by_bot"]}
+    assert bots["thyca"]["tool_calls"] == 2
+    assert bots["coder"]["tool_calls"] == 5

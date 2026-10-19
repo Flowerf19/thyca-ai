@@ -119,12 +119,6 @@
   font-size: 0.83rem;
 }
 
-/* Session journal mirrors the by-model chart inset: rows sit in from the
-   section heading on both sides instead of running edge to edge. */
-#cost-sessions {
-  padding-inline: 1rem;
-}
-
 #cost-status {
   text-align: center;
 }
@@ -181,4 +175,22 @@
 
 .cost-bots .journal-meter > span {
   border-radius: inherit;
+}
+
+/* Cost per bot avatar: the h3 itself is flex so the seal centers with
+   the name (an inline-grid slot alone sits on the text baseline); size
+   only — the seal itself comes from the shared avatar CSS. */
+.cost-bot-entry .journal-row-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.cost-bot-entry h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.cost-bot-avatar {
+  --bot-avatar-size: 2.2rem;
 }

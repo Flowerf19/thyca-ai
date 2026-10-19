@@ -152,3 +152,58 @@ def test_memory_tasks_in_baseline_read_gated_hidden_wins() -> None:
     hid = _card(tools=("memory_tasks", "read"), hidden_tools=("memory_tasks",))
     assert [s["function"]["name"]
             for s in filtered_tool_schemas(_schemas("memory_tasks", "read"), hid)] == ["read"]
+
+
+def test_aggregate_counts_internal_rounds_not_rows() -> None:
+    from thyca.bots.runtime import _aggregate_turn_meta
+    from thyca.core.protocol import Message
+
+    def row(kind=None, **meta):
+        return Message(role="assistant", content="x", meta={"kind": kind, **meta})
+
+    model, usage, cost, latency, requests, tool_calls = _aggregate_turn_meta([
+        row("llm", model="m", usage={"prompt_tokens": 3}, cost_usd=0.1),
+        row("llm", model="m", usage={"prompt_tokens": 5}, cost_usd=0.2),
+        Message(role="tool", content="out"),
+        Message(role="assistant", content="stop",
+                meta={"kind": "llm", "status": "context_limit"}),
+    ])
+    assert requests == 2
+    assert tool_calls == 0
+    assert usage == {"prompt_tokens": 8}
+    assert cost == pytest.approx(0.3)
+
+
+def test_aggregate_counts_tool_calls_on_same_rows() -> None:
+    from thyca.bots.runtime import _aggregate_turn_meta
+    from thyca.core.protocol import Message, ToolCall
+
+    def call(cid):
+        return ToolCall(id=cid, name="read", arguments={})
+
+    _, _, _, _, requests, tool_calls = _aggregate_turn_meta([
+        Message(role="assistant", content="a",
+                tool_calls=[call("c1"), call("c2")],
+                meta={"kind": "llm"}),
+        Message(role="assistant", content="b",
+                tool_calls=[call("c3")],
+                meta={"kind": "llm"}),
+        Message(role="assistant", content="stop",
+                tool_calls=[call("c4")],
+                meta={"kind": "llm", "status": "context_limit"}),
+    ])
+    assert requests == 2
+    assert tool_calls == 3
+
+
+def test_room_meta_carries_request_count() -> None:
+    from thyca.bots.runtime import BotTurnResult
+
+    result = BotTurnResult(
+        reply="done", bot_id="coder", span_id="sp_1", model="m",
+        usage={"prompt_tokens": 2}, cost_usd=0.01, latency_ms=5,
+        requests=3, tool_calls=4,
+    )
+    meta = result.room_meta(kind="result", trace_id="t", parent_span_id=None)
+    assert meta["requests"] == 3
+    assert meta["tool_call_count"] == 4

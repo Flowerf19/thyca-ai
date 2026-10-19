@@ -1,6 +1,4 @@
 import {
-  NO_SESSION_KEY,
-  aggregateSessions,
   knownCostTotal,
   modelTurnCoverage,
   priceRates,
@@ -21,8 +19,8 @@ import {
 } from "../../shared/js/pager.js";
 import { view, sort, el } from "./cost-view.js";
 
-// Row renderers for the Cost journal: model/session entries plus the two
-// paged lists. Journal paging state lives here with the lists it drives;
+// Row renderers for the Cost journal: model entries plus the paged list.
+// Journal paging state lives here with the list it drives;
 // the view (cost-view.js) restarts it on a fresh snapshot, search or sort.
 
 // Open/closed "Đơn giá" disclosures, keyed by model name inside the current
@@ -32,27 +30,15 @@ const openPricing = new Set();
 
 let modelsPage = 1;
 let modelsPages = 1;
-let sessionsPage = 1;
-let sessionsPages = 1;
 
 const modelsPager = buildPager((delta) => {
   modelsPage = journalClampPage(modelsPage + delta, modelsPages);
   renderModels();
 });
-const sessionsPager = buildPager((delta) => {
-  sessionsPage = journalClampPage(sessionsPage + delta, sessionsPages);
-  renderSessions();
-});
 
-// Paging restarts shared with the view: a fresh snapshot restarts both
-// journals, a new sort restarts the models journal.
+// Paging restarts shared with the view: a fresh snapshot restarts the journal.
 function resetModelsPage() {
   modelsPage = 1;
-}
-
-function resetPagingForSnapshot() {
-  modelsPage = 1;
-  sessionsPage = 1;
 }
 
 // Search re-renders the models list from the fixed snapshot; the share
@@ -78,7 +64,7 @@ function metricMeta(node, parts) {
 
 function partialNote(pricedTurns, turns) {
   if (pricedTurns >= turns) return "";
-  // One coverage style for model/session rows ("đã định giá N"), never a
+  // One coverage style for model rows ("đã định giá N"), never a
   // second denominator.
   return `đã định giá ${formatInteger(pricedTurns)}`;
 }
@@ -150,56 +136,6 @@ function modelEntry(model, denominator, coverage) {
   return item;
 }
 
-function sessionEntry(session, denominator) {
-  const entry = document.createElement("li");
-  entry.className = "journal-entry";
-  const gutter = document.createElement("span");
-  gutter.className = "journal-date";
-  gutter.textContent = `${formatInteger(session.turns)} lượt`;
-  const body = document.createElement("div");
-  body.className = "journal-body";
-  const title = document.createElement("div");
-  title.className = "journal-row-title";
-  const name = document.createElement("h3");
-  if (session.sessionId) {
-    // Omitted turn = newest turn of the session in the trace viewer.
-    const link = document.createElement("a");
-    link.href = `./trace.html?session=${encodeURIComponent(session.sessionId)}`;
-    link.textContent = session.title || session.sessionId;
-    name.append(link);
-  } else {
-    name.textContent = NO_SESSION_KEY;
-  }
-  const amount = document.createElement("strong");
-  amount.className = "journal-amount";
-  amount.textContent = session.costUsd == null ? "—" : formatCost(session.costUsd);
-  title.append(name, amount);
-  const meter = document.createElement("div");
-  meter.className = "journal-meter";
-  meter.setAttribute("aria-hidden", "true");
-  const fill = document.createElement("span");
-  const ratio = shareRatio(session.costUsd, denominator);
-  if (ratio != null) fill.style.setProperty("--share", ratio);
-  meter.append(fill);
-  const meta = document.createElement("p");
-  meta.className = "journal-meta";
-  for (const text of [
-    `${formatInteger(session.requests)} lần gọi model`,
-    `Đầu vào ${formatInteger(session.inputTokens)} token`,
-    `Cache ${formatInteger(session.cacheTokens)} token`,
-    `Đầu ra ${formatInteger(session.outputTokens)} token`,
-    partialNote(session.pricedTurns, session.turns),
-    session.sessionId ? "" : "dòng này gom các lượt thiếu session ID",
-  ].filter(Boolean)) {
-    const span = document.createElement("span");
-    span.textContent = text;
-    meta.append(span);
-  }
-  body.append(title, meter, meta);
-  entry.append(gutter, body);
-  return entry;
-}
-
 function renderModels() {
   if (!view) return; // no snapshot (mid-load or after failure): render nothing
   const models = view.stats?.by_model || [];
@@ -231,38 +167,13 @@ function renderModels() {
   }
 }
 
-function renderSessions() {
-  if (!view) return; // no snapshot (mid-load or after failure): render nothing
-  const denominator = view.overview.costUsd;
-  const sessions = aggregateSessions(view.rows);
-  sessionsPages = journalPageCount(sessions.length);
-  sessionsPage = journalClampPage(sessionsPage, sessionsPages);
-  const start = (sessionsPage - 1) * JOURNAL_PAGE_SIZE;
-  el.sessions.replaceChildren(
-    ...sessions.slice(start, start + JOURNAL_PAGE_SIZE).map((session) => sessionEntry(session, denominator)),
-  );
-  syncPager(sessionsPager, sessionsPage, sessionsPages);
-  if (!sessions.length) el.sessions.append(emptyItem("Chưa có phiên nào trong khoảng này."));
-}
-
-/* Empty states stay valid list children instead of a bare <p> inside <ul>. */
-function emptyItem(text) {
-  const item = document.createElement("li");
-  item.className = "screen-note";
-  item.textContent = text;
-  return item;
-}
-
 export {
   modelsPager,
-  sessionsPager,
   openPricing,
   metricValue,
   metricMeta,
   partialNote,
   renderModels,
-  renderSessions,
   resetModelsPage,
-  resetPagingForSnapshot,
   onCostSearch,
 };

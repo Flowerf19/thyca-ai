@@ -83,8 +83,13 @@ def test_validate_task_meta_rejections() -> None:
         validate_task_meta("task-1234abcd", None, None, None, "label")
     with pytest.raises(ValueError, match="must be one of"):
         validate_task_meta("task-1234abcd", None, "project", None, None)
+    with pytest.raises(ValueError, match="checkpoint.*requires task"):
+        validate_task_meta(None, None, "checkpoint", None, None)
+    with pytest.raises(ValueError, match="does not take a habit"):
+        validate_task_meta("task-1234abcd", None, "checkpoint", None, "label")
     # Valid sets pass.
     validate_task_meta("task-1234abcd", "2026-09-01#deadbeef", "habit", "open", "label")
+    validate_task_meta("task-1234abcd", None, "checkpoint", "open", None)
     validate_task_meta("task-1234abcd", None, None, "done", None)
     validate_task_meta(None, None, None, None, None)
 
@@ -138,6 +143,32 @@ def test_rebuild_from_markdown_keeps_task_cont(tmp_path) -> None:
     assert len(hits) == 2
     second = next(h for h in hits if h.session_id == second_sid)
     assert second.cont == first
+
+
+def test_checkpoint_roundtrip_search_catalog_and_rebuild(tmp_path) -> None:
+    facade = MemoryFacade(tmp_path, timezone_name=TZ)
+    tid = facade.new_task_id()
+    first = facade.remember("goal", "start checkpointtoken", now=at(1),
+                            task=tid, status="open")
+    checkpoint = facade.remember(
+        "goal", "state checkpointtoken next step", now=at(2), task=tid,
+        cont=first, kind="checkpoint", status="open")
+    facade._refresh_index(at(5))
+    hits = facade.search("checkpointtoken", now=at(5), kind="checkpoint").hits
+    assert len(hits) == 1
+    hit = hits[0]
+    assert (hit.session_id, hit.task, hit.cont, hit.kind, hit.status) == (
+        checkpoint, tid, first, "checkpoint", "open")
+    entry = facade.tasks(now=at(5))["tasks"][0]
+    assert entry["latest_session_id"] == checkpoint
+    assert entry["entry_count"] == 2
+    (tmp_path / "memory.sqlite").unlink()
+    rebuilt = MemoryFacade(tmp_path, timezone_name=TZ)
+    rebuilt._refresh_index(at(5))
+    rebuilt_hits = rebuilt.search(
+        "checkpointtoken", now=at(5), kind="checkpoint").hits
+    assert len(rebuilt_hits) == 1
+    assert rebuilt_hits[0].cont == first
 
 
 # -- memory_tasks ------------------------------------------------------------
@@ -513,7 +544,14 @@ def test_update_and_reinforce_keep_task_fields(tmp_path) -> None:
     facade.update(sid, status="done", now=at(3))
     facade._refresh_index(at(5))
     assert facade.search("beta", now=at(5), status="done").hits
+    with pytest.raises(Exception, match="does not take a habit"):
+        facade.update(sid, kind="checkpoint", now=at(3))
+    facade.update(first, kind="checkpoint", now=at(3))
+    facade._refresh_index(at(5))
+    assert facade.search("alpha", now=at(5), kind="checkpoint").hits
     plain = facade.remember("plain", "no task here", now=at(1))
+    with pytest.raises(Exception, match="checkpoint.*requires task"):
+        facade.update(plain, kind="checkpoint", now=at(3))
     with pytest.raises(Exception, match="status requires task"):
         facade.update(plain, status="done", now=at(3))
 
@@ -565,3 +603,42 @@ async def test_tool_remember_rejects_task_plus_new_task(tmp_path) -> None:
                    "task": "task-1234abcd", "new_task": True}))
     assert result.is_error
     assert "new_task cannot be combined with task" in result.content
+
+
+@pytest.mark.asyncio
+async def test_tool_checkpoint_contract(tmp_path) -> None:
+    facade = MemoryFacade(tmp_path, timezone_name=TZ)
+    registry = ToolRegistry()
+    register_memory_tools(registry, facade)
+    gateway = ToolGateway(registry, TaskStore())
+
+    async def submit(name, args):
+        return await gateway.submit(ToolCall(id=name, name=name, arguments=args))
+
+    created_result = await submit("memory_remember", {
+        "topic": "goal", "summary": "state one; next two",
+        "new_task": True, "kind": "checkpoint"})
+    assert not created_result.is_error, created_result.content
+    created = json.loads(created_result.content)
+    second_result = await submit("memory_remember", {
+        "topic": "goal", "summary": "state two; next three",
+        "task": created["task_id"], "cont": created["session_id"],
+        "kind": "checkpoint"})
+    assert not second_result.is_error, second_result.content
+    second = json.loads(second_result.content)
+    got = await submit("memory_get", {"session_id": second["session_id"]})
+    assert not got.is_error
+    assert "state two; next three" in got.content
+    catalog = json.loads((await submit("memory_tasks", {})).content)
+    entry = next(t for t in catalog["tasks"] if t["task_id"] == created["task_id"])
+    assert entry["entry_count"] == 2
+    assert entry["latest_session_id"] == second["session_id"]
+    no_task = await submit("memory_remember", {
+        "topic": "orphan", "summary": "state", "kind": "checkpoint"})
+    assert no_task.is_error
+    assert "checkpoint" in no_task.content and "requires task" in no_task.content
+    with_habit = await submit("memory_remember", {
+        "topic": "goal", "summary": "state", "task": created["task_id"],
+        "kind": "checkpoint", "habit": "label"})
+    assert with_habit.is_error
+    assert "does not take a habit" in with_habit.content

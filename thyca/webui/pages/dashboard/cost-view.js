@@ -14,19 +14,16 @@ import { renderCostBots } from "./cost-bots.js";
 import { drawBarChart } from "../../shared/js/bar-chart.js";
 import {
   modelsPager,
-  sessionsPager,
   openPricing,
   metricValue,
   metricMeta,
   renderModels,
-  renderSessions,
   resetModelsPage,
-  resetPagingForSnapshot,
   onCostSearch,
 } from "./cost-rows.js";
 
 // Cost journal view: snapshot state, loading and overview rendering. Row
-// entries and the two paged lists live in cost-rows.js; the shared journal
+// entries and the paged list live in cost-rows.js; the shared journal
 // pager comes from shared/js/pager.js.
 
 const el = {
@@ -36,7 +33,6 @@ const el = {
   totalMeta: document.querySelector("#cost-total-meta"),
   chart: document.querySelector("#cost-chart"),
   models: document.querySelector("#cost-models"),
-  sessions: document.querySelector("#cost-sessions"),
   status: document.querySelector("#cost-status"),
   retry: document.querySelector("#cost-retry"),
   search: document.querySelector("#model-search"),
@@ -121,9 +117,7 @@ function resetView() {
   for (const node of [el.totalMeta]) node.replaceChildren();
   el.chart?.replaceChildren();
   el.models.replaceChildren();
-  el.sessions.replaceChildren();
   modelsPager.nav.hidden = true; // no stale pager while the new period loads
-  sessionsPager.nav.hidden = true;
 }
 
 function render() {
@@ -131,7 +125,6 @@ function render() {
   renderOverview();
   drawCostChart();
   renderModels();
-  renderSessions();
   // Team v1: per-bot cost over the same fixed snapshot (never another period).
   renderCostBots(view.rows);
 }
@@ -167,7 +160,7 @@ async function load() {
       config,
       overview: overviewMetrics(rowsResult.value),
     };
-    resetPagingForSnapshot(); // fresh snapshot: restart both journals at page 1
+    resetModelsPage(); // fresh snapshot: restart the journal at page 1
     openPricing.clear(); // disclosure state belongs to the old snapshot
     render();
     setStatus(config ? "" : "Không đọc được cấu hình — phần đơn giá hiển thị không đầy đủ.");
@@ -202,7 +195,6 @@ function bootCostJournal() {
     });
   });
   el.models.after(modelsPager.nav); // pager below the list, no layout shift
-  el.sessions.after(sessionsPager.nav);
   if (el.chart) new ResizeObserver(() => drawCostChart()).observe(el.chart);
   void load();
 }

@@ -20,8 +20,8 @@ DEFAULT_IMPORTANCE = 3
 ENTRY_ID_RE = re.compile(r"^[0-9a-f]{8}$")
 TASK_ID_RE = re.compile(r"^task-[0-9a-f]{8}$")
 TASK_STATUSES = ("open", "done")
-#: Phase 1A accepts only habit memories; other kinds are a later phase.
-TASK_KINDS = ("habit",)
+#: Accepted memory kinds: habit observations and task checkpoints.
+TASK_KINDS = ("habit", "checkpoint")
 EXP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
 _HEADING_RE = re.compile(
@@ -133,6 +133,10 @@ def validate_task_meta(
             raise ValueError(f"cont must be a memory session id, got {cont!r}")
     if kind == "habit" and (not isinstance(habit, str) or not habit.strip()):
         raise ValueError("kind='habit' requires a non-empty habit label")
+    if kind == "checkpoint" and task is None:
+        raise ValueError("kind='checkpoint' requires task")
+    if kind == "checkpoint" and habit is not None:
+        raise ValueError("kind='checkpoint' does not take a habit label")
     if habit is not None and kind is None:
         raise ValueError("habit requires kind")
     if habit is not None:

@@ -1,7 +1,7 @@
 ---
-status: in-progress
+status: done
 created: 2026-08-14
-last_updated: 2026-08-24
+last_updated: 2026-10-19
 ---
 
 # Service — MCP (`thyca/tools/mcp.py`)
@@ -165,7 +165,7 @@ IDs 312–314 giữ. Wording cũ quá to → thu hẹp. Chi tiết mới = TASK-
 | ID | Task | Done | Date |
 |----|------|------|------|
 | TASK-330 | `tool_specs` → `ToolSpec` đúng contract (prefix, `inputSchema`, `parallel_safe=False`, `resource_key=lambda _: f"mcp:{server}"`, handler gọi tên không prefix, `isError` → `is_error`). Fake session: assert `call_tool` nhận `"ping"` và `read_timeout_seconds=timedelta(seconds=30)` | x | 2026-08-24 |
-| TASK-331 | `Cli._run`: spawn → in diagnostic stderr → `register` → schema sau MCP → `finally` `shutdown`. Không đụng `Act`. `mcpServers: {}` giữ `tools=7` | | |
+| TASK-331 | `Cli._run`: spawn → in diagnostic stderr → `register` → schema sau MCP → `finally` `shutdown`. Không đụng `Act`. `mcpServers: {}` giữ `tools=7` | x | 2026-10-19 |
 
 ### GOAL-004: ChatApp loop-thread + shutdown serve
 
@@ -178,8 +178,8 @@ IDs 312–314 giữ. Wording cũ quá to → thu hẹp. Chi tiết mới = TASK-
 
 | ID | Task | Done | Date |
 |----|------|------|------|
-| TASK-313 | ~~Fault tolerance: startup + death + timeout + shutdown mọi process~~ — **thu hẹp 2026-08-24**: chỉ startup — missing binary / `initialize` fail → `StartupDiagnostic`, stderr thyca, 0 tool server đó, process thyca sống | | |
-| TASK-334 | Call timeout (`McpError`) và session chết giữa chừng → `ToolResult.is_error`, AgentLoop sống. `mcpServers: {}` không spawn. `shutdown` đóng child (CLI `finally` + serve exit) | | |
+| TASK-313 | ~~Fault tolerance: startup + death + timeout + shutdown mọi process~~ — **thu hẹp 2026-08-24**: chỉ startup — missing binary / `initialize` fail → `StartupDiagnostic`, stderr thyca, 0 tool server đó, process thyca sống | x | 2026-10-19 |
+| TASK-334 | Call timeout (`McpError`) và session chết giữa chừng → `ToolResult.is_error`, AgentLoop sống. `mcpServers: {}` không spawn. `shutdown` đóng child (CLI `finally` + serve exit) | x | 2026-10-19 |
 
 ### GOAL-006: examples/echo + skill + integration
 
@@ -187,7 +187,14 @@ IDs 312–314 giữ. Wording cũ quá to → thu hẹp. Chi tiết mới = TASK-
 |----|------|------|------|
 | TASK-314 | ~~`skills/create-mcp-tool.md` + `examples/echo` + doc config/stderr/lifecycle~~ — **thu hẹp 2026-08-24**: chỉ `examples/echo.py` FastMCP 1 tool `ping` → `"pong"`, `mcp.run()` stdio. Không phải installed package — test/skill dùng `sys.executable` + path file | x | 2026-08-24 |
 | TASK-335 | `skills/create-mcp-tool.md` mỏng: copy echo, thêm `mcpServers`, restart thyca (không hot reload), stderr child ra terminal không vào model. Không resources/HTTP/search/another-brain | x | 2026-08-24 |
-| TASK-336 | Integration (không live LLM): subprocess echo list+call+shutdown; missing binary; ChatApp hai turn `echo__ping` (`spawn_all` == 1); empty config không gọi `stdio_client` | | |
+| TASK-336 | Integration (không live LLM): subprocess echo list+call+shutdown; missing binary; ChatApp hai turn `echo__ping` (`spawn_all` == 1); empty config không gọi `stdio_client` | x | 2026-10-19 |
+
+Close-out 2026-10-19: TASK-331/313/334/336 đã có trong cây hiện tại
+(CLI spawn/install/shutdown ở `app/cli.py` + `app/toolchain.py`,
+`StartupDiagnostic` ở `tools/mcp.py`, test echo thật +
+`test_spawn_missing_binary` trong `tests/test_mcp.py`, ChatApp hot-reload
+vượt plan này). Hành vi landed qua `mcp-hot-reload` (2026-09-28);
+các ô được tick tại thời điểm kiểm chứng, full suite **1550 passed**.
 
 Xong khi (đo được):
 

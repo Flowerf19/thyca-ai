@@ -1,3 +1,4 @@
+import { botMark } from "../../shared/js/bot-avatar.js";
 import { formatTime } from "../../shared/js/format.js";
 import { buildDelegationTree } from "./trace-data.js";
 import { tintVarFor } from "../chat/team-data.js";
@@ -30,6 +31,16 @@ function renderNode(node) {
   item.style.setProperty("--team-tint", tintVarFor(node.botId, node.message?.meta?.bot_tint));
   const head = document.createElement("div");
   head.className = "delegation-head";
+  const avatar = document.createElement("span");
+  avatar.className = "bot-avatar-slot delegation-avatar";
+  avatar.setAttribute("aria-hidden", "true");
+  const meta = node.message?.meta || {};
+  avatar.innerHTML = botMark({
+    id: node.botId || "thyca",
+    name: typeof meta.bot_name === "string" ? meta.bot_name : "",
+    tint: typeof meta.bot_tint === "string" ? meta.bot_tint : "",
+  }, { state: "idle" });
+  head.append(avatar);
   const who = document.createElement("strong");
   who.textContent = nodeLabel(node);
   head.append(who);
@@ -77,7 +88,7 @@ export function renderDelegation(detail) {
   if (!traced) {
     const note = document.createElement("p");
     note.className = "screen-note";
-    note.textContent = "Lượt này chưa có dữ liệu giao việc (backend chưa gắn trace_id).";
+    note.textContent = "Chưa có dữ liệu giao việc.";
     wrap.append(note);
     return wrap;
   }

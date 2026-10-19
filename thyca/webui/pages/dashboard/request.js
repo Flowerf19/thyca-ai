@@ -1,8 +1,10 @@
 import { getJson } from "../../shared/js/http.js";
+import { botMark } from "../../shared/js/bot-avatar.js";
 import { byName, byRecent, completeDays, modelName, rollingRange, traceRangeUrl } from "../../shared/js/analytics-data.js";
 import { svg } from "../../shared/js/bar-chart.js";
 import { makeSetStatus, messageOf } from "../../shared/js/status.js";
 import { cleanText, formatDate, formatInteger, shareLabel } from "../../shared/js/format.js";
+import { tintVarFor } from "../chat/team-data.js";
 
 const el = {
   period: document.querySelector("#request-period"),
@@ -10,6 +12,7 @@ const el = {
   range: document.querySelector("#request-range"),
   chart: document.querySelector("#request-chart"),
   models: document.querySelector("#request-models"),
+  bots: document.querySelector("#request-bots"),
   status: document.querySelector("#request-status"),
   search: document.querySelector("#request-model-search"),
   sorts: [...document.querySelectorAll("[data-req-sort]")],
@@ -137,6 +140,7 @@ function render() {
   // narrows the rows never changes what a bar of a given length means.
   const max = Math.max(...(stats.by_model || []).map((row) => Number(row.requests) || 0), 0);
   el.models.replaceChildren(modelChart(rows, total, max));
+  renderBots(total);
   el.sorts.forEach((button) => {
     button.setAttribute("aria-pressed", String(button.dataset.reqSort === sort));
   });
@@ -150,6 +154,112 @@ function render() {
       : "Chưa có request nào trong khoảng này.";
     el.models.append(empty);
   }
+}
+
+/* Request theo bot: same bar chart as models, one row per bot with its
+   seal. No search/sort of its own by design: default order is requests
+   desc, ties by name/id. Share uses the full-data total like the model
+   chart. The "unknown" row (no bot meta) keeps an empty slot for
+   alignment — never an invented mark. */
+let botRoster = null;
+
+async function loadBotRoster() {
+  if (botRoster) return botRoster;
+  botRoster = new Map();
+  try {
+    const payload = await getJson("/api/bots");
+    const list = Array.isArray(payload) ? payload : payload?.bots;
+    for (const bot of Array.isArray(list) ? list : []) {
+      if (bot && typeof bot.id === "string" && bot.id) botRoster.set(bot.id, bot);
+    }
+  } catch {
+    // Registry unavailable: ids render as-is.
+  }
+  return botRoster;
+}
+
+function botDisplayName(botId, roster) {
+  if (!botId || (botId === "unknown" && !roster?.has(botId))) {
+    return "chưa gắn bot";
+  }
+  const bot = roster?.get(botId);
+  const name = bot && typeof bot.name === "string" && bot.name ? bot.name : "";
+  return name || botId;
+}
+
+/* The backend buckets unattributed turns under bot_id "unknown". That is
+   not a bot — unless the roster really contains such an id — so it gets
+   the empty aligned slot like a blank id. */
+function isUnattributed(botId, roster) {
+  return !botId || (botId === "unknown" && !roster?.has(botId));
+}
+
+function botChart(byBot, total, max, roster) {
+  const list = document.createElement("ul");
+  list.className = "request-model-chart";
+  const rows = (Array.isArray(byBot) ? byBot : [])
+    .filter((row) => (Number(row?.requests) || 0) > 0)
+    .sort((a, b) => (Number(b.requests) || 0) - (Number(a.requests) || 0)
+      || String(a.bot_id || "").localeCompare(String(b.bot_id || ""), "vi"));
+  rows.forEach((row) => {
+    const botId = typeof row.bot_id === "string" ? row.bot_id : "";
+    const unattributed = isUnattributed(botId, roster);
+    const item = document.createElement("li");
+    item.className = "request-model-row";
+    const head = document.createElement("div");
+    head.className = "request-model-head";
+    const avatar = document.createElement("span");
+    avatar.className = "bot-avatar-slot request-bot-avatar";
+    avatar.setAttribute("aria-hidden", "true");
+    if (!unattributed) {
+      avatar.dataset.botId = botId;
+      avatar.style.setProperty("--team-tint", tintVarFor(botId, ""));
+      const bot = roster?.get(botId);
+      avatar.innerHTML = botMark(bot || { id: botId }, { state: "idle" });
+    }
+    const name = document.createElement("span");
+    name.className = "request-model-name";
+    name.dataset.botId = unattributed ? "" : botId;
+    name.textContent = botDisplayName(botId, roster);
+    const count = document.createElement("span");
+    count.className = "request-model-count";
+    count.textContent = formatInteger(row.requests);
+    const share = document.createElement("span");
+    share.className = "request-model-share";
+    share.textContent = shareLabel(row.requests, total);
+    const bar = document.createElement("span");
+    bar.className = "request-model-bar";
+    bar.setAttribute("aria-hidden", "true");
+    const fill = document.createElement("span");
+    fill.className = "request-model-fill";
+    fill.style.width = max > 0 ? `${(Number(row.requests) || 0) / max * 100}%` : "0%";
+    bar.append(fill);
+    head.append(avatar, name, count, share);
+    item.append(head, bar);
+    list.append(item);
+  });
+  return list;
+}
+
+function renderBots(total) {
+  if (!el.bots) return;
+  const byBot = Array.isArray(stats?.by_bot) ? stats.by_bot : [];
+  const max = Math.max(...byBot.map((row) => Number(row.requests) || 0), 0);
+  const paint = (roster) => {
+    const chart = botChart(byBot, total, max, roster);
+    el.bots.replaceChildren(chart);
+    if (!chart.children.length) {
+      const empty = document.createElement("p");
+      empty.className = "screen-note";
+      empty.textContent = "Chưa có request nào trong khoảng này.";
+      el.bots.append(empty);
+    }
+  };
+  paint(botRoster);
+  void loadBotRoster().then((roster) => {
+    if (!el.bots?.isConnected) return;
+    paint(roster);
+  });
 }
 
 async function load() {
@@ -168,6 +278,7 @@ async function load() {
     if (generation !== loadId) return;
     stats = null;
     el.models?.replaceChildren();
+    el.bots?.replaceChildren();
     el.chart?.replaceChildren();
     setStatus(messageOf(error, "Không tải được request."), "error");
   }

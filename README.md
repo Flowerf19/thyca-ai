@@ -43,7 +43,7 @@ Cần Linux, Python 3.14+, `uv`, và API key của một provider OpenAI-compati
 ```bash
 curl -LsSf https://raw.githubusercontent.com/Flowerf19/thyca-ai/main/install.sh | sh
 thyca --version
-thyca --serve        # mở http://127.0.0.1:8765
+thyca --serve        # mở http://127.0.0.1:19502
 ```
 
 Lần đầu mở WebUI khi chưa có API key, panel **Cài đặt** tự mở: điền Base URL + API key, bấm **Tải danh sách model**, chọn model, **Lưu**. Config ghi vào `~/.thyca/config.json` (mode 0600).

@@ -394,3 +394,16 @@ img.avatar-3d-img {
 .gm-slot .mk { width: 100%; height: 100%; }
 .gm .mk-wax .cut { fill: none; stroke: var(--color-paper-chat); stroke-width: 5; }
 .gm-coin { position: absolute; z-index: 5; display: grid; place-items: center; border-radius: 50%; background: radial-gradient(circle at 35% 30%, var(--color-paper-input), var(--color-paper-card)); box-shadow: 0 0 0 1.5px var(--color-paper-chat), 0 0 0 2.4px var(--color-divider), 0 1px 2px rgba(61,42,31,0.25); color: var(--chat-brand-ink); font: 600 calc(var(--gsize) * 0.22)/1 var(--font-ui); letter-spacing: -0.02em; }
+
+/* ---- Shared avatar slot: one reusable mount for any screen ---- */
+.bot-avatar-slot {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: var(--bot-avatar-size, 2.5rem);
+  height: var(--bot-avatar-size, 2.5rem);
+}
+.bot-avatar-slot > svg, .bot-avatar-slot .mk, .bot-avatar-slot .gm {
+  width: 100%;
+  height: 100%;
+}

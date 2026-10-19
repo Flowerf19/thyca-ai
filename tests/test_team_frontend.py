@@ -30,6 +30,7 @@ CHAT_CSS = ROOT / "thyca" / "webui" / "pages" / "chat" / "chat.css"
 KIT_CSS = ROOT / "thyca" / "webui" / "shared" / "css" / "kit.css"
 TOKENS_CSS = ROOT / "thyca" / "webui" / "shared" / "css" / "tokens.css"
 AVATAR = ROOT / "thyca" / "webui" / "shared" / "js" / "bot-avatar.js"
+PENDING = ROOT / "thyca" / "webui" / "pages" / "memories" / "team-pending.js"
 AVATAR_CSS = ROOT / "thyca" / "webui" / "shared" / "css" / "bot-avatar.css"
 CHAT_BOT = ROOT / "thyca" / "webui" / "shared" / "js" / "chat-bot.js"
 TRANSCRIPT = ROOT / "thyca" / "webui" / "pages" / "chat" / "transcript.js"
@@ -47,7 +48,7 @@ def node() -> str:
 def _run(node: str, body: str, via: str = "team") -> object:
     module = {"team": TEAM, "mention": MENTION, "cost": COST_DATA,
               "trace": TRACE_DATA, "unread": UNREAD, "avatar": AVATAR,
-              "chatbot": CHAT_BOT}[via]
+              "chatbot": CHAT_BOT, "pending": PENDING}[via]
     source = (
         f"import * as api from '{module.as_posix()}';\n"
         f"const main = async () => {{ {body} }};\n"
@@ -282,6 +283,59 @@ def test_hidden_attribute_beats_flex_display() -> None:
         css,
     )
     assert re.search(r"\.team-strip\[hidden\]\s*\{[^}]*display:\s*none", css)
+
+
+def test_pending_avatar_slot_and_roster_patch(node: str) -> None:
+    """FE pending avatars: card slot + seal with roster name; unknown bot
+    keeps an empty slot and its fallback text; chips carry seals."""
+    value = _run(
+        node,
+        "globalThis.document = {"
+        " createElement: (tag) => {"
+        "  const el = { tag, children: [], className: '',"
+        "   textContent: '', innerHTML: '', dataset: {},"
+        "   setAttribute() {},"
+        "   append(...n) { el.children.push(...n.flat()); },"
+        "   classList: { toggle() {} },"
+        "   addEventListener() {},"
+        "   querySelector(sel) {"
+        "    const cls = sel.startsWith('.') ? sel.slice(1) : null;"
+        "    const walk = (node) => {"
+        "     for (const c of node.children || []) {"
+        "      if (typeof c === 'string') continue;"
+        "      if (cls && String(c.className || '').split(' ').includes(cls)) return c;"
+        "      const hit = walk(c);"
+        "      if (hit) return hit;"
+        "     }"
+        "     return null;"
+        "    };"
+        "    return walk(el);"
+        "   },"
+        "  };"
+        "  return el;"
+        " },"
+        " createTextNode: (text) => ({ textContent: text }),"
+        "};"
+        " const card = api.candidateCard({id: 'c1', botId: 'coder',"
+        " title: 'T', text: 'x'},"
+        " new Map([['coder', {id: 'coder', name: 'Coder'}]]));"
+        " const slot = card.querySelector('.pending-avatar');"
+        " const ghost = api.candidateCard({id: 'c2', title: 'T', text: 'x'});"
+        " const chip = api.filterChip('coder', true, null);"
+        " const all = api.filterChip('', true, null);"
+        " const textOf = (node) => [(node.textContent || ''),"
+        "  ...node.children.map((c) =>"
+        "  typeof c === 'string' ? c : textOf(c))].join(' ');"
+        " return [slot.innerHTML.includes('mk-wax'),"
+        "  textOf(card).includes('Coder'),"
+        "  ghost.querySelector('.pending-avatar').innerHTML === '',"
+        "  textOf(ghost).includes('không rõ bot'),"
+        "  chip.querySelector('.pending-avatar').innerHTML.includes('mk-wax'),"
+        "  all.querySelector('.pending-avatar'),"
+        "  textOf(all).trim()];",
+        via="pending",
+    )
+    assert value == [True, True, True, True, True, None, "Tất cả bot"]
 
 
 def test_pending_candidates_only_pending(node: str) -> None:
@@ -697,6 +751,40 @@ def test_team_footer_not_double_padded() -> None:
     assert not re.search(
         r"\.team-message[^{]*footer[^{]*\{[^}]*padding-inline-start", css
     ), "team footer must not add a second inline padding"
+
+
+def test_exchange_details_avatar_summary_and_rows(node: str) -> None:
+    """FE exchange avatars: summary carries the group seal, each row the
+    sender's seal; messages without bot_id get an empty aligned slot;
+    lead/toggle text unchanged."""
+    value = _cards(
+        node,
+        "const msgs = ["
+        " {role: 'assistant', content: 'one',"
+        "  meta: {kind: 'step', bot_id: 'coder'}},"
+        " {role: 'assistant', content: 'two',"
+        "  meta: {kind: 'step', bot_id: 'designer'}},"
+        " ];"
+        " const el = cards.exchangeDetails(msgs);"
+        " const sumSlot = el.querySelector('.team-exchange-avatar');"
+        " const rows = el.querySelectorAll('.team-exchange-row');"
+        " const marks = rows.map((r) =>"
+        "  r.querySelector('.team-exchange-avatar').innerHTML.includes('mk-wax'));"
+        " const lead = el.querySelector('.team-exchange-lead').textContent;"
+        " const toggle = el.querySelector('.team-exchange-toggle').textContent;"
+        " const bare = cards.exchangeDetails([{role: 'assistant', content: 'x', meta: {}}]);"
+        " const bareSlot = bare.querySelector('.team-exchange-avatar');"
+        " return [sumSlot.innerHTML.includes('gm-stack'), marks,"
+        "  lead, toggle,"
+        "  bareSlot.innerHTML === '',"
+        "  rows[0].querySelector('.team-exchange-content') !== null];",
+    )
+    assert value[0] is True
+    assert value[1] == [True, True]
+    assert "coder" in value[2] and "designer" in value[2]
+    assert value[3] == "Xem các bot đã làm gì"
+    assert value[4] is True
+    assert value[5] is True
 
 
 def test_team_exchange_summary_stays_full_width() -> None:
@@ -1540,6 +1628,39 @@ def test_chat_title_head_has_no_solid_background_or_fade() -> None:
         ".chat-title-head::after fade must stay removed: it painted a "
         "solid-to-transparent band over the shell texture"
     )
+
+
+def test_avatar_defs_live_in_js_not_index_html() -> None:
+    """Shared defs moved to bot-avatar.js: index.html carries no inline
+    defs; dashboard links the shared avatar CSS."""
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    assert "waxShade" not in html
+    assert "<defs>" not in html
+    dashboard = (ROOT / "thyca" / "webui" / "dashboard.html").read_text(
+        encoding="utf-8")
+    assert "./shared/css/bot-avatar.css" in dashboard
+
+
+def test_avatar_defs_ensure_once_and_dom_safe(node: str) -> None:
+    value = _run(
+        node,
+        "const seen = [];"
+        " const doc = {"
+        "  _defs: false,"
+        "  querySelector(sel) { return sel === '#waxShade' && this._defs ? {} : null; },"
+        "  body: { prepend(el) { doc._defs = true; seen.push(el.innerHTML); } },"
+        "  createElement() { return { setAttribute() {}, innerHTML: '' }; },"
+        " };"
+        " const first = api.ensureBotAvatarDefs(doc);"
+        " const second = api.ensureBotAvatarDefs(doc);"
+        " const noDoc = api.ensureBotAvatarDefs(null);"
+        " const mark = api.botMark({id: 'coder'});"
+        " return [first, second, noDoc, seen.length,"
+        "  seen[0].includes('waxShade') && seen[0].includes('g-quill'),"
+        "  mark.includes('mk-wax')];",
+        via="avatar",
+    )
+    assert value == [True, False, False, 1, True, True]
 
 
 def test_sidebar_avatar_slot_present() -> None:

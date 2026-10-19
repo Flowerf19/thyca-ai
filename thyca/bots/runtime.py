@@ -162,6 +162,13 @@ class BotTurnResult:
     usage: dict | None = None
     cost_usd: float | None = None
     latency_ms: int | None = None
+    #: Real model calls inside the internal turn (assistant rows minus
+    #: context-stop markers); stamped onto the room row so trace counts
+    #: the bot's true requests instead of one row.
+    requests: int = 0
+    #: Real tool calls inside the internal turn (assistant rows minus
+    #: context-stop markers); stamped onto the room row like requests.
+    tool_calls: int = 0
 
     def room_meta(self, *, kind: str, trace_id: str | None,
                   parent_span_id: str | None) -> dict:
@@ -182,6 +189,10 @@ class BotTurnResult:
             meta["usage"] = self.usage
         if self.cost_usd is not None:
             meta["cost_usd"] = self.cost_usd
+        if isinstance(self.requests, int) and self.requests >= 0:
+            meta["requests"] = self.requests
+        if isinstance(self.tool_calls, int) and self.tool_calls >= 0:
+            meta["tool_call_count"] = self.tool_calls
         if self.latency_ms is not None:
             meta["latency_ms"] = self.latency_ms
         return meta
@@ -196,16 +207,23 @@ def _compaction_markers(messages: list) -> int:
     )
 
 
-def _aggregate_turn_meta(messages: list) -> tuple[str | None, dict | None, float | None, int | None]:
-    """Sum model/usage/cost/latency over one turn's assistant rows."""
+def _aggregate_turn_meta(messages: list) -> tuple[str | None, dict | None, float | None, int | None, int, int]:
+    """Sum model/usage/cost/latency over one turn's assistant rows.
+
+    Also counts real model calls and real tool calls: same row set, minus
+    context-stop markers (which made no provider call)."""
     model: str | None = None
     usage: dict | None = None
     cost: float | None = None
     latency: int | None = None
+    requests = 0
+    tool_calls = 0
     for message in messages:
         if getattr(message, "role", None) != "assistant":
             continue
         meta = getattr(message, "meta", None) or {}
+        if meta.get("status") == "context_limit":
+            continue
         if isinstance(meta.get("model"), str) and meta["model"].strip():
             model = meta["model"].strip()
         raw_usage = meta.get("usage")
@@ -219,7 +237,10 @@ def _aggregate_turn_meta(messages: list) -> tuple[str | None, dict | None, float
             cost = (cost or 0.0) + float(meta["cost_usd"])
         if isinstance(meta.get("latency_ms"), int) and meta["latency_ms"] >= 0:
             latency = (latency or 0) + meta["latency_ms"]
-    return model, usage, cost, latency
+        requests += 1
+        calls = getattr(message, "tool_calls", None) or []
+        tool_calls += len(calls)
+    return model, usage, cost, latency, requests, tool_calls
 
 
 class BotRuntime:
@@ -616,7 +637,7 @@ class BotRuntime:
                     sessions.current.messages
                 ) > markers_before:
                     self._reinject_pending.add(reinject_key)
-                agg_model, agg_usage, agg_cost, agg_latency = _aggregate_turn_meta(new_messages)
+                agg_model, agg_usage, agg_cost, agg_latency, agg_requests, agg_tool_calls = _aggregate_turn_meta(new_messages)
                 self._status.finish_turn(card.bot_id, own_span, "done")
                 return BotTurnResult(
                     reply=reply,
@@ -628,6 +649,8 @@ class BotRuntime:
                     usage=agg_usage,
                     cost_usd=agg_cost,
                     latency_ms=agg_latency,
+                    requests=agg_requests,
+                    tool_calls=agg_tool_calls,
                 )
             except asyncio.CancelledError:
                 self._status.finish_turn(card.bot_id, own_span, "cancelled")

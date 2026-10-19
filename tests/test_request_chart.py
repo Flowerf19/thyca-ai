@@ -34,19 +34,30 @@ const el = {};
 const createdTags = [];
 function makeNode() {
   const node = {
-    children: [], attrs: {}, dataset: {}, style: {}, listeners: {},
+    children: [], attrs: {}, dataset: {},
+    style: { _props: {}, setProperty(k, v) { this._props[k] = v; } },
+    listeners: {},
     className: "", textContent: "", value: "", tag: "",
+    isConnected: true,
+    querySelector(sel) {
+      const cls = sel.startsWith('.') ? sel.slice(1) : null;
+      return node.children.find((c) => String(c.className || '').split(/\s+/).includes(cls)) || null;
+    },
     setAttribute(name, val) { node.attrs[name] = String(val); },
     append(...nodes) { node.children.push(...nodes); },
     replaceChildren(...nodes) { node.children = [...nodes]; },
     addEventListener(type, fn) { (node.listeners[type] ||= []).push(fn); },
+    querySelector(sel) {
+      const cls = sel.startsWith('.') ? sel.slice(1) : null;
+      return node.children.find((c) => String(c.className || '').split(/\s+/).includes(cls)) || null;
+    },
     getBoundingClientRect() { return { width: 720, height: 168 }; },
   };
   return node;
 }
 for (const id of ["request-period", "request-total", "request-range",
-                  "request-chart", "request-models", "request-status",
-                  "request-model-search"]) {
+                  "request-chart", "request-models", "request-bots",
+                  "request-status", "request-model-search"]) {
   el[id] = makeNode();
 }
 el["request-period"].value = "30";
@@ -80,6 +91,7 @@ const pick = (root, cls) =>
   root.children.find((n) => String(n.className).split(/\\s+/).includes(cls));
 function snapshot() {
   const models = el["request-models"];
+  const bots = el["request-bots"];
   const chart = pick(models, "request-model-chart");
   return {
     createdTags,
@@ -95,6 +107,19 @@ function snapshot() {
     }) : null,
     note: models.children.filter((n) => String(n.className).includes("screen-note"))
       .map((n) => n.textContent),
+    botRows: bots ? bots.children.filter((n) => String(n.className).includes("request-model-chart"))
+      .flatMap((ul) => ul.children).map((li) => {
+      const head = li.children[0];
+      const slot = head.children.find((c) => String(c.className).includes("bot-avatar-slot"));
+      const get = (cls) => { const n = head.children.find((c) => String(c.className).includes(cls)); return n ? n.textContent : null; };
+      return {
+        avatar: !!slot, mark: slot ? String(slot.innerHTML || "").includes("mk-wax") : false,
+        name: get("request-model-name"), count: get("request-model-count"),
+        share: get("request-model-share"),
+      };
+    }) : null,
+    botNote: bots ? bots.children.filter((n) => String(n.className).includes("screen-note"))
+      .map((n) => n.textContent) : null,
     status: el["request-status"].textContent,
     total: el["request-total"].textContent,
     pressed: Object.fromEntries(sorts.map((b) => [b.dataset.reqSort, b.attrs["aria-pressed"]])),
@@ -258,3 +283,49 @@ def test_period_change_never_keeps_a_stale_response(node: str) -> None:
     assert "stale-30d" not in json.dumps(outcome["final"])
     assert outcome["final"]["status"] == ""
     assert len(outcome["urls"]) == 2 and outcome["urls"][0] != outcome["urls"][1]
+
+
+TWO_BOTS = json.dumps({
+    "totals": {"requests": 10},
+    "by_day": [],
+    "by_model": [
+        {"model": "m", "requests": 10, "last_started_at": "2026-09-20T09:00:00Z"},
+    ],
+    "by_bot": [
+        {"bot_id": "coder", "requests": 7, "last_started_at": "2026-09-20T09:00:00Z"},
+        {"bot_id": "designer", "requests": 2, "last_started_at": "2026-09-19T09:00:00Z"},
+        {"bot_id": "unknown", "requests": 1, "last_started_at": "2026-09-18T09:00:00Z"},
+        {"bot_id": "", "requests": 0, "last_started_at": "2026-09-18T09:00:00Z"},
+    ],
+    "bots": [
+        {"id": "coder", "name": "Coder", "tint": "botanical"},
+        {"id": "designer", "name": "Designer"},
+    ],
+})
+
+
+def test_request_bots_avatar_sort_and_unknown(node: str) -> None:
+    state = _run(node, "", TWO_BOTS)
+    rows = state["botRows"]
+    # Requests desc, zero-request rows dropped, unknown kept with empty slot.
+    assert [(r["name"], r["count"], r["share"]) for r in rows] == [
+        ("Coder", "7", "70%"),
+        ("Designer", "2", "20%"),
+        ("chưa gắn bot", "1", "10%"),
+    ]
+    assert [r["avatar"] for r in rows] == [True, True, True]
+    # Backend "unknown" bucket is unattributed: aligned slot, no seal.
+    assert [r["mark"] for r in rows] == [True, True, False]
+    # Roster patch renamed ids to card names and marks carry seals.
+    assert state["botNote"] == []
+
+
+def test_request_unknown_id_in_roster_renders_as_real_bot(node: str) -> None:
+    """If /api/bots really contains id 'unknown', it is a bot: mark shown."""
+    payload = dict(__import__("json").loads(TWO_BOTS))
+    payload["bots"] = payload["bots"] + [{"id": "unknown", "name": "Nemo"}]
+    import json as _json
+
+    state = _run(node, "", _json.dumps(payload))
+    rows = {r["name"]: r for r in state["botRows"]}
+    assert rows["Nemo"]["mark"] is True

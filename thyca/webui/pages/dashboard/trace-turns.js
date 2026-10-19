@@ -22,6 +22,7 @@ import {
   formatTraceTimestamp,
 } from "./trace-data.js";
 import { el, state, stampNode, noteNode } from "./trace-view.js";
+import { botMark, botMarkGroup } from "../../shared/js/bot-avatar.js";
 import { activeGroup, setStatus, syncUrl } from "./trace-deeplink.js";
 import { renderDelegation } from "./trace-delegation.js";
 
@@ -62,6 +63,19 @@ function turnEntry(group, summary, position) {
   body.className = "journal-body";
 
   const heading = document.createElement("h3");
+  const turnBots = Array.isArray(summary.bot_breakdown)
+    && summary.bot_breakdown.length
+    ? summary.bot_breakdown.map((entry) => entry?.bot_id).filter(Boolean)
+    : (typeof summary.bot_id === "string" && summary.bot_id ? [summary.bot_id] : []);
+  if (turnBots.length) {
+    const avatar = document.createElement("span");
+    avatar.className = "bot-avatar-slot trace-turn-avatar";
+    avatar.setAttribute("aria-hidden", "true");
+    avatar.innerHTML = turnBots.length === 1
+      ? botMark({ id: turnBots[0] }, { state: "idle" })
+      : botMarkGroup(turnBots.map((id) => ({ id })), { state: "idle" });
+    heading.append(avatar);
+  }
   const title = document.createElement("span");
   title.className = "trace-turn-title";
   title.textContent = `Lượt ${Number(summary.turn_index) + 1}`;
@@ -103,7 +117,7 @@ function turnEntry(group, summary, position) {
   fold.className = "trace-turn-fold";
   fold.open = turnState.open;
   const summaryLine = document.createElement("summary");
-  summaryLine.textContent = "Xem các bước & dữ liệu";
+  summaryLine.textContent = "Các bước";
   const foldBody = document.createElement("div");
   foldBody.className = "trace-turn-body";
   fold.append(summaryLine, foldBody);
@@ -160,7 +174,7 @@ function stepDataFold(step, index, turnState) {
   fold.className = "trace-step-data";
   fold.open = turnState.stepOpen.has(index);
   const summary = document.createElement("summary");
-  summary.textContent = "Xem dữ liệu bước";
+  summary.textContent = "Dữ liệu";
   fold.append(summary);
   const sections = step.type === "tool"
     ? [
@@ -263,7 +277,7 @@ function renderStepsInto(turnState, body) {
   if (!detail) {
     const note = document.createElement("p");
     note.className = "trace-step-note";
-    note.textContent = turnState.error || "Đang tải các bước & dữ liệu…";
+    note.textContent = turnState.error || "Đang tải các bước…";
     body.append(note);
     return;
   }
@@ -283,7 +297,7 @@ function renderStepsInto(turnState, body) {
   if (!nodes.length) {
     const empty = document.createElement("li");
     empty.className = "trace-steps-empty";
-    empty.textContent = "Không có bước nào được ghi trong trace này.";
+    empty.textContent = "Chưa có bước được ghi nhận.";
     nodes.push(empty);
   }
   list.replaceChildren(...nodes);
@@ -369,7 +383,7 @@ async function fillTurnBody(group, summary, turnState, body) {
   if (!turnState.detail && !turnState.pending) {
     fresh = true;
     body.replaceChildren();
-    body.append(noteNode("Đang tải các bước & dữ liệu…"));
+    body.append(noteNode("Đang tải các bước…"));
     await ensureDetail(group, summary, turnState);
     // The turn may have been re-rendered while the detail was in flight
     // (turn paging, session switch): the arrival refreshes THIS body if it

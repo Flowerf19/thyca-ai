@@ -87,8 +87,12 @@ def _remember_spec(facade: MemoryFacade) -> ToolSpec:
             "(memory_tasks) or search to reuse an existing task id: pass it "
             "as task to continue, or new_task=true to mint a fresh one. "
             "Only set status='done' when the whole task is finished, not "
-            "when your own part is done. kind='habit' is only for repeated "
-            "habit/preference observations, with habit as a short label."
+            "when your own part is done — and only the bot coordinating "
+            "or opening the task (or the user) closes it; everyone else "
+            "leaves it open. kind='habit' is only for repeated "
+            "habit/preference observations, with habit as a short label. "
+            "kind='checkpoint' is only for a task checkpoint recording "
+            "the current state and next step."
         ),
         parameters={
             "type": "object",
@@ -130,15 +134,17 @@ def _remember_spec(facade: MemoryFacade) -> ToolSpec:
                 "kind": {
                     "type": "string",
                     "description": (
-                        "Memory kind; phase 1A accepts only 'habit' for repeated "
-                        "habit/preference observations."
+                        "Memory kind: 'habit' for a repeated habit/preference "
+                        "observation, or 'checkpoint' for a task checkpoint "
+                        "(requires task or new_task)."
                     ),
                 },
                 "status": {
                     "type": "string",
                     "description": (
                         "Task status 'open' or 'done'. Requires task. Only set "
-                        "'done' when the whole task is finished."
+                        "'done' when the whole task is finished, and only if "
+                        "you coordinate or opened the task (or the user asks)."
                     ),
                 },
                 "habit": {
@@ -206,7 +212,7 @@ def _search_spec(facade: MemoryFacade) -> ToolSpec:
                 },
                 "kind": {
                     "type": "string",
-                    "description": "Filter to leaves of this kind (phase 1A: 'habit').",
+                    "description": "Filter to leaves of this kind ('habit', 'checkpoint').",
                 },
                 "status": {
                     "type": "string",
@@ -457,13 +463,14 @@ def _update_spec(facade: MemoryFacade) -> ToolSpec:
                 },
                 "kind": {
                     "type": "string",
-                    "description": "Memory kind (phase 1A: 'habit'). Omit to keep.",
+                    "description": "Memory kind ('habit', 'checkpoint'). Omit to keep.",
                 },
                 "status": {
                     "type": "string",
                     "description": (
                         "Task status 'open' or 'done'. Only 'done' when the "
-                        "whole task is finished. Omit to keep."
+                        "whole task is finished, and only by its coordinator "
+                        "or opener (or the user). Omit to keep."
                     ),
                 },
                 "habit": {

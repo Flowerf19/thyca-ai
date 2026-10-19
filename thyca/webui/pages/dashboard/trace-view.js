@@ -21,6 +21,12 @@ import {
   traceTimeFormatter,
 } from "./trace-data.js";
 import { turnEntry, turnStateFor, invalidateTurnDetails } from "./trace-turns.js";
+import { botMark, botMarkGroup } from "../../shared/js/bot-avatar.js";
+import {
+  filterTraceGroups,
+  traceBotOptions,
+  traceGroupBotIds,
+} from "./trace-data.js";
 import {
   syncSessionUrl,
   clearTraceUrl,
@@ -46,6 +52,7 @@ const el = {
   period: document.querySelector("#trace-period"),
   note: document.querySelector("#trace-note"),
   picker: document.querySelector("#trace-picker"),
+  botFilters: document.querySelector("#trace-bot-filters"),
   sessions: document.querySelector("#trace-sessions"),
   session: document.querySelector("#trace-session"),
   sessionTitle: document.querySelector("#trace-session-title"),
@@ -58,6 +65,10 @@ const el = {
 const state = {
   groups: [],
   groupIndex: 0,
+  // Bot filter ("" = all): the list shows matching groups only, but
+  // selection keeps absolute group indices so deep-links still resolve.
+  botFilter: "",
+  botRoster: null,
   config: null,
   time: null,
   generation: 0,
@@ -130,7 +141,12 @@ function sessionEntry(group, index) {
   const open = document.createElement("button");
   open.type = "button";
   open.className = "journal-row-title trace-session-open";
-  open.textContent = cleanText(group.title, group.sessionId);
+  open.textContent = cleanText(group.title, "Phiên trống");
+  const avatar = document.createElement("span");
+  avatar.className = "bot-avatar-slot trace-session-avatar";
+  avatar.setAttribute("aria-hidden", "true");
+  avatar.innerHTML = sessionAvatarMark(group);
+  open.prepend(avatar);
   const selected = index === state.groupIndex;
   open.setAttribute("aria-current", selected ? "page" : "false");
   open.addEventListener("click", () => void selectGroup(index));
@@ -152,30 +168,124 @@ function sessionEntry(group, index) {
   return item;
 }
 
+// Channel avatar for one session row: the DM owner's seal, or the
+// stacked group seal from participants (falling back to turn
+// contributors when the payload predates session fields). Decorative.
+function sessionAvatarMark(group) {
+  const bots = Array.isArray(group?.bots) && group.bots.length
+    ? group.bots.map(String).filter(Boolean)
+    : traceGroupBotIds(group);
+  if (String(group?.kind) === "dm") {
+    const owner = String(group?.dm || "") || bots[0] || "thyca";
+    return botMark({ id: owner }, { state: "idle" });
+  }
+  if (!bots.length) return "";
+  return botMarkGroup(bots.map((id) => ({ id })), { state: "idle" });
+}
+
+/* Bot filter chips above the session list: "Tất cả" plus one button per
+   bot present in the loaded window, each with its seal, name and matching
+   session count. Roster names patch in once; fetch failure keeps ids. */
+function renderBotFilters() {
+  if (!el.botFilters) return;
+  const options = traceBotOptions(state.groups);
+  const counts = new Map();
+  for (const id of options) {
+    counts.set(id, filterTraceGroups(state.groups, id).length);
+  }
+  const paint = (roster) => {
+    const nameOf = (id) => {
+      const bot = roster?.get(id);
+      const name = bot && typeof bot.name === "string" && bot.name ? bot.name : "";
+      return name || id;
+    };
+    const chip = (id, label, count) => {
+      const button = document.createElement("button");
+      button.className = "screen-button";
+      button.type = "button";
+      button.setAttribute("aria-pressed", String(state.botFilter === id));
+      const avatar = document.createElement("span");
+      avatar.className = "bot-avatar-slot trace-filter-avatar";
+      avatar.setAttribute("aria-hidden", "true");
+      if (id) avatar.innerHTML = botMark({ id }, { state: "idle" });
+      const text = document.createElement("span");
+      text.textContent = count != null ? `${label} · ${count}` : label;
+      button.append(avatar, text);
+      button.addEventListener("click", () => {
+        state.botFilter = id;
+        state.sessionPage = 1;
+        renderSessions();
+      });
+      return button;
+    };
+    const wrap = document.createElement("div");
+    wrap.className = "screen-filters";
+    wrap.setAttribute("role", "group");
+    wrap.setAttribute("aria-label", "Lọc phiên theo bot");
+    wrap.append(chip("", "Tất cả", state.groups.length));
+    for (const id of options) wrap.append(chip(id, nameOf(id), counts.get(id)));
+    el.botFilters.replaceChildren(wrap);
+  };
+  paint(state.botRoster);
+  void loadBotRoster().then((roster) => {
+    if (!el.botFilters?.isConnected) return;
+    paint(roster);
+  });
+}
+
+let botRosterPromise = null;
+
+async function loadBotRoster() {
+  if (state.botRoster) return state.botRoster;
+  if (!botRosterPromise) {
+    botRosterPromise = (async () => {
+      const roster = new Map();
+      try {
+        const payload = await getJson("/api/bots");
+        const list = Array.isArray(payload) ? payload : payload?.bots;
+        for (const bot of Array.isArray(list) ? list : []) {
+          if (bot && typeof bot.id === "string" && bot.id) roster.set(bot.id, bot);
+        }
+      } catch {
+        // Registry unavailable: ids render as-is.
+      }
+      state.botRoster = roster;
+      return roster;
+    })();
+  }
+  return botRosterPromise;
+}
+
 // Session list of the loaded window, rendered in the MAIN AREA of the view,
 // paged 12 sessions per page (TASK-033). The pager sits OUTSIDE the list
 // (sibling right after the <ul>) and is stored on state, so re-renders move —
 // never duplicate — it.
 function renderSessions() {
   if (!el.sessions) return;
-  const pages = journalPageCount(state.groups.length);
+  // The filter narrows the list; indices passed to sessionEntry stay
+  // absolute into state.groups so selection/deep-links keep working.
+  const visible = filterTraceGroups(state.groups, state.botFilter);
+  const pages = journalPageCount(visible.length);
   state.sessionPage = journalClampPage(state.sessionPage, pages);
   const start = (state.sessionPage - 1) * JOURNAL_PAGE_SIZE;
-  const nodes = state.groups
+  const nodes = visible
     .slice(start, start + JOURNAL_PAGE_SIZE)
-    .map((group, offset) => sessionEntry(group, start + offset));
+    .map((group) => sessionEntry(group, state.groups.indexOf(group)));
   if (!nodes.length) {
     const empty = document.createElement("li");
     empty.className = "screen-note";
-    empty.textContent = "Chưa có trace nào.";
+    empty.textContent = state.botFilter
+      ? "Chưa có phiên của bot trong kỳ."
+      : "Chưa có trace.";
     nodes.push(empty);
   }
   el.sessions.replaceChildren(...nodes);
+  renderBotFilters();
   if (!state.sessionPager) {
     state.sessionPager = buildPager((delta) => {
       // Recompute at click time: the pager node outlives any single pages
       // count (the list is empty when it is first created at boot).
-      const total = journalPageCount(state.groups.length);
+      const total = journalPageCount(filterTraceGroups(state.groups, state.botFilter).length);
       state.sessionPage = journalClampPage(state.sessionPage + delta, total);
       renderSessions();
     });
@@ -197,7 +307,7 @@ function showSession(selected) {
 function renderTurns() {
   const group = activeGroup();
   if (!el.turns || !group) return;
-  el.sessionTitle.textContent = cleanText(group.title, group.sessionId);
+  el.sessionTitle.textContent = cleanText(group.title, "Phiên trống");
   el.copy.disabled = false;
   el.copyLabel.textContent = `ID: ${group.sessionId}`;
   // Turn list paging (TASK-033): 12 turns per page, the page kept PER SESSION
@@ -292,7 +402,7 @@ async function boot() {
   watchTraceViewVisibility();
   showSession(false);
   renderSessions();
-  setStatus("Đang đọc trace backend…");
+  setStatus("Đang tải trace…");
   // An explicit ?session= deep link resolves against the UNFILTERED API
   // window, independently of the default period: otherwise an older session
   // (outside the rolling range) would be reported missing even though the
@@ -367,11 +477,11 @@ function reloadTrace() {
   const generation = ++state.generation;
   showSession(false);
   renderSessions();
-  setStatus("Đang đọc trace backend…");
+  setStatus("Đang tải trace…");
   return loadAllTurns().then((traceResult) => applyTraceResult(
     { status: "fulfilled", value: traceResult },
     { deepLink: false, generation },
   ));
 }
 
-export { el, state, stampNode, noteNode, boot, selectGroup, backToSessions, reloadTrace };
+export { el, state, stampNode, noteNode, boot, selectGroup, backToSessions, reloadTrace, sessionEntry, renderSessions };

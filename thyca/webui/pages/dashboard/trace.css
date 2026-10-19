@@ -18,6 +18,49 @@ html[data-theme="dusk"] #trace {
   --trace-code-ink: oklch(89% 0.02 80);
 }
 
+/* Typography follows Chat exactly: --font-display titles 1.25rem/600/1.25
+   (.chat-brand h2), --font-reading body 0.9375rem/1.8 (.live-copy),
+   secondary metadata --font-ui 0.75rem/1.5 (assistant footer, Be Vietnam
+   Pro), payload code --font-mono at 0.86em of the 15px body. */
+#trace {
+  font-family: var(--font-reading);
+  font-size: 0.9375rem;
+  line-height: 1.8;
+}
+
+#trace .screen-title :is(h1, h2),
+#trace .cost-model-heading,
+#trace .journal-body h3 {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-style: normal;
+  font-weight: 600;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+#trace .journal-date,
+#trace .journal-meta,
+#trace .journal-status,
+#trace .screen-status,
+#trace .screen-note,
+#trace .trace-note,
+#trace .trace-step-note,
+#trace .trace-steps-empty,
+#trace .trace-io-label,
+#trace .delegation-head time,
+#trace .trace-turn-fold summary,
+#trace .trace-step-data > summary {
+  font-family: var(--font-ui);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+/* Controls inherit the body size instead of the dashboard's 1rem label. */
+#trace .cost-period {
+  font-size: 0.9375rem;
+}
+
 /* Journal lists sit inset from section headings on both sides, like the
    by-model charts — rows never run edge to edge. */
 #trace-sessions,
@@ -92,7 +135,6 @@ html[data-theme="dusk"] #trace {
 #trace .trace-turn-fold summary {
   width: fit-content;
   color: var(--color-muted);
-  font-size: 0.875rem;
   cursor: pointer;
   list-style: none;
 }
@@ -154,7 +196,7 @@ html[data-theme="dusk"] #trace {
 #trace .trace-step-num {
   color: var(--color-muted);
   font-family: var(--font-mono);
-  font-size: 0.85rem;
+  font-size: 0.75rem;
   font-variant-numeric: tabular-nums;
 }
 
@@ -169,7 +211,6 @@ html[data-theme="dusk"] #trace {
 #trace .trace-step-note {
   margin: 0.4rem 0 0;
   color: var(--color-muted);
-  font-size: 0.875rem;
   font-style: italic;
 }
 
@@ -182,7 +223,6 @@ html[data-theme="dusk"] #trace {
 #trace .trace-step-data > summary {
   cursor: pointer;
   color: var(--color-muted);
-  font-size: 0.8rem;
 }
 
 #trace .trace-step-data[open] > summary {
@@ -201,7 +241,6 @@ html[data-theme="dusk"] #trace {
 #trace .trace-io-label {
   margin: 0.8rem 0 0;
   color: var(--color-muted);
-  font-size: 0.78rem;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -216,7 +255,7 @@ html[data-theme="dusk"] #trace {
   background: var(--trace-code-bg);
   color: var(--trace-code-ink);
   font-family: var(--font-mono);
-  font-size: 0.85rem;
+  font-size: 0.86em;
   line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -252,18 +291,51 @@ html[data-theme="dusk"] #trace {
 .delegation-head {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
   gap: 0.3rem 0.6rem;
   padding-inline-start: 0.5rem;
   border-inline-start: 0.15rem solid var(--team-tint, var(--color-divider));
+}
+
+.delegation-avatar {
+  --bot-avatar-size: 1.7rem;
+}
+
+.trace-turn-avatar {
+  --bot-avatar-size: 1.8rem;
+}
+
+h3:has(> .trace-turn-avatar) {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .delegation-head strong {
   color: var(--team-tint, var(--color-reading));
 }
 
-.delegation-head time {
+#trace .delegation-head time {
   margin-inline-start: auto;
   color: var(--color-muted);
-  font-size: 0.8rem;
+}
+
+/* Trace-per-agent filter + channel avatars: layout/size only, the seals
+   come from the shared avatar CSS. */
+#trace-bot-filters {
+  margin-block-end: 0.6rem;
+}
+#trace-bot-filters .screen-button {
+  gap: 0.4rem;
+}
+.trace-filter-avatar {
+  --bot-avatar-size: 1.4rem;
+}
+.trace-session-avatar {
+  --bot-avatar-size: 1.8rem;
+}
+#trace h3 .trace-session-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
 }

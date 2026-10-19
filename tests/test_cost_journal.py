@@ -44,7 +44,7 @@ def node() -> str:
 
 def _eval(node: str, expression: str) -> object:
     source = (
-        f"import {{ NO_SESSION_KEY, overviewMetrics, aggregateSessions, knownCostTotal,"
+        f"import {{ overviewMetrics, knownCostTotal,"
         f" knownTokenTotal, modelTokens, dailyCosts, shareLabel, shareRatio, priceRates,"
         f" estimatedCostSplit, turnCost, modelTurnCoverage, averageDisplay }}"
         f" from '{SCRIPT.as_posix()}';\n"
@@ -106,52 +106,36 @@ def test_average_basis_zero_when_every_priced_turn_failed(node: str) -> None:
     assert overview["averageTurns"] == 0 and overview["averageCostUsd"] is None
 
 
-def test_session_aggregation_dedupes_and_groups(node: str) -> None:
+def test_overview_still_dedupes_repeated_turns(node: str) -> None:
+    """Turn dedupe on (session_id, turn_index) stays for the overview even
+    though the per-session journal is gone."""
     rows = [
         {"session_id": "s1", "turn_index": 1, "requests": 2, "cost_usd": 0.02,
-         "prompt_tokens": 50, "cached_tokens": 0, "completion_tokens": 20,
-         "title": "Phiên mới", "started_at": "2026-09-19T10:00:00Z"},
+         "prompt_tokens": 50, "cached_tokens": 0, "completion_tokens": 20},
         # exact duplicate of the row above (same session_id + turn_index)
         {"session_id": "s1", "turn_index": 1, "requests": 2, "cost_usd": 0.02,
-         "prompt_tokens": 50, "cached_tokens": 0, "completion_tokens": 20,
-         "title": "Phiên mới", "started_at": "2026-09-19T10:00:00Z"},
+         "prompt_tokens": 50, "cached_tokens": 0, "completion_tokens": 20},
         {"session_id": "s1", "turn_index": 0, "requests": 1, "cost_usd": None,
-         "prompt_tokens": 10, "cached_tokens": 0, "completion_tokens": 1,
-         "title": "Phiên cũ", "started_at": "2026-09-19T09:00:00Z"},
-        {"session_id": "", "turn_index": 0, "requests": 1, "cost_usd": 0.5,
-         "prompt_tokens": 5, "cached_tokens": 0, "completion_tokens": 2,
-         "started_at": "2026-09-18T08:00:00Z"},
+         "prompt_tokens": 10, "cached_tokens": 0, "completion_tokens": 1},
     ]
-    sessions = _eval(node, "aggregateSessions($rows)".replace("$rows", json.dumps(rows)))
-    assert len(sessions) == 2  # dedupe collapsed the repeated turn
-    by_key = {s["key"]: s for s in sessions}
-    # Cost-desc across groups: the priced 0.5 missing-id group outranks s1
-    # (0.02); assert order by cost, not by position luck.
-    costs = [s["costUsd"] for s in sessions]
-    assert costs == sorted([c for c in costs if c is not None], reverse=True) + \
-        [c for c in costs if c is None]
-    top = by_key["(không có session)"]
-    assert top["costUsd"] == pytest.approx(0.5)
-    assert top["sessionId"] is None and top["title"] == "" and top["turns"] == 1
-    s1 = by_key["s1"]
-    assert s1["turns"] == 2
-    assert s1["requests"] == 3
-    assert s1["costUsd"] == pytest.approx(0.02)  # null turn contributes nothing
-    assert s1["pricedTurns"] == 1  # partial: one of two turns unpriced
-    assert s1["title"] == "Phiên mới"  # newest turn's title, no N+1 fetch
+    overview = _eval(node, "overviewMetrics($rows)".replace("$rows", json.dumps(rows)))
+    assert overview["turns"] == 2  # duplicate collapsed
+    assert overview["requests"] == 3
+    assert overview["costUsd"] == pytest.approx(0.02)
 
 
-def test_session_order_priced_desc_unpriced_last(node: str) -> None:
-    rows = [
-        {"session_id": "paid-big", "turn_index": 0, "cost_usd": 0.5,
-         "started_at": "2026-09-19T08:00:00Z"},
-        {"session_id": "paid-small", "turn_index": 0, "cost_usd": 0.1,
-         "started_at": "2026-09-19T09:00:00Z"},  # newer but cheaper
-        {"session_id": "unpriced", "turn_index": 0, "cost_usd": None,
-         "started_at": "2026-09-19T10:00:00Z"},  # newest but unpriced
-    ]
-    sessions = _eval(node, "aggregateSessions($rows)".replace("$rows", json.dumps(rows)))
-    assert [s["key"] for s in sessions] == ["paid-big", "paid-small", "unpriced"]
+def test_no_per_session_journal_remains() -> None:
+    """Static pins: the per-session cost journal is gone from markup and
+    cost JS (Trace keeps its own session list)."""
+    html = (ROOT / "thyca" / "webui" / "dashboard.html").read_text(encoding="utf-8")
+    assert "Chi phí theo phiên" not in html
+    assert "cost-sessions" not in html
+    for name in ("cost-view.js", "cost-rows.js", "cost-data.js"):
+        src = (ROOT / "thyca" / "webui" / "pages" / "dashboard" / name).read_text(
+            encoding="utf-8")
+        assert "aggregateSessions" not in src, name
+        assert "renderSessions" not in src, name
+        assert "NO_SESSION_KEY" not in src, name
 
 
 def test_null_vs_zero_cost_semantics(node: str) -> None:
@@ -168,7 +152,6 @@ def test_null_vs_zero_cost_semantics(node: str) -> None:
     assert nothing_priced["costUsd"] is None and nothing_priced["pricedTurns"] == 0
     assert zero_real["costUsd"] == 0 and zero_real["pricedTurns"] == 1
     assert missing is None and garbage is None
-    assert _eval(node, "aggregateSessions([])") == []
 
 
 def test_share_denominator_fixed_and_nan_free(node: str) -> None:
@@ -335,7 +318,7 @@ def test_load_drops_snapshot_and_labels_recorded_known_costs() -> None:
     missing-turn coverage comes from the loaded rows."""
     script = _cost_script()
     assert script.count("view = null;") == 3  # declaration, load start, accepted failure
-    assert script.count("if (!view) return;") == 3  # render, models, sessions
+    assert script.count("if (!view) return;") == 2  # render, models
     # Sums/averages are recorded-known: a priced turn never proves every
     # model call inside it was priced, so no full-coverage claim.
     assert "số đã ghi nhận" in script
@@ -420,18 +403,16 @@ def test_pager_clamps_at_both_bounds(node):
 def test_pager_resets_on_filter_sort_and_snapshot(node):
     script = _cost_script()
     # Search input, sort click and a fresh snapshot each restart at page 1
-    # (the 4th hit is the `let modelsPage = 1` declaration).
-    assert script.count("modelsPage = 1;") == 4
-    assert script.count("sessionsPage = 1;") == 2
-    # Both journals slice the in-memory snapshot; the share denominator and
-    # aggregation still run on the FULL set, never on the page slice.
+    # (the 3rd hit is the `let modelsPage = 1` declaration).
+    assert script.count("modelsPage = 1;") == 3
+    assert "sessionsPage" not in script
+    # The models journal slices the in-memory snapshot; the share
+    # denominator and aggregation still run on the FULL set, never on
+    # the page slice.
     assert "rows.slice(start, start + JOURNAL_PAGE_SIZE)" in script
-    assert "sessions.slice(start, start + JOURNAL_PAGE_SIZE)" in script
     assert "knownCostTotal(models)" in script
-    assert "aggregateSessions(view.rows)" in script
     # Page state is clamped back into range before every render.
     assert "modelsPage = journalClampPage(modelsPage, modelsPages)" in script
-    assert "sessionsPage = journalClampPage(sessionsPage, sessionsPages)" in script
     # Pager reuses the shared button styles and Vietnamese labels.
     assert 'setAttribute("aria-label", "Trang trước")' in script
     assert 'setAttribute("aria-label", "Trang sau")' in script
@@ -534,3 +515,88 @@ def test_average_display_full_coverage_single_line(node: str) -> None:
     )
     assert display["value"] == pytest.approx(0.2)
     assert display["meta"] == ["2 lượt hợp lệ"]
+
+_FAKE_DOM = r"""
+class Element {
+  constructor(tag = 'div') {
+    this.tag = tag;
+    this.children = [];
+    this.className = '';
+    this.textContent = '';
+    this.innerHTML = '';
+    this.dataset = {};
+    this.attributes = {};
+    this.style = { _props: {}, setProperty(k, v) { this._props[k] = v; } };
+    this._handlers = {};
+  }
+  setAttribute(k, v) { this.attributes[k] = String(v); }
+  append(...nodes) { for (const n of nodes.flat()) this.children.push(n); }
+  replaceChildren(...nodes) { this.children = []; this.append(...nodes); }
+  addEventListener(t, f) { this._handlers[t] = f; }
+  querySelectorAll(sel) {
+    const cls = sel.startsWith('.') ? sel.slice(1) : null;
+    const out = [];
+    const walk = (node) => {
+      for (const child of node.children || []) {
+        if (typeof child === 'string') continue;
+        if (cls && String(child.className || '').split(' ').includes(cls)) out.push(child);
+        walk(child);
+      }
+    };
+    walk(this);
+    return out;
+  }
+  querySelector(sel) { return this.querySelectorAll(sel)[0] ?? null; }
+}
+const mount = new Element('div');
+mount.isConnected = true;
+globalThis.document = {
+  createElement: (tag) => new Element(tag),
+  querySelector: (sel) => sel === '#cost-bots' ? mount : null,
+  body: { prepend() {} },
+};
+globalThis.fetch = async (url) => ({
+  ok: true,
+  json: async () => ({ bots: [
+    {id: 'coder', name: 'Coder', tint: 'botanical'},
+  ] }),
+});
+""".strip()
+
+
+def _render_eval(node: str, expression: str) -> object:
+    source = (
+        _FAKE_DOM + "\n"
+        "const api = await import('./thyca/webui/pages/dashboard/cost-bots.js');\n"
+        "const main = async () => { " + expression + " };\n"
+        "console.log(JSON.stringify(await main()));\n"
+    )
+    result = subprocess.run(
+        [node, "--input-type=module", "-e", source],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+    )
+    return json.loads(result.stdout)
+
+
+def test_cost_bot_rows_have_avatar_slots(node: str) -> None:
+    value = _render_eval(
+        node,
+        "api.renderCostBots([{bot_id: 'coder', turns: 2, requests: 3,"
+        " cost_usd: 0.01, pricedTurns: 1},"
+        " {bot_id: '', turns: 1, requests: 0, cost_usd: null, pricedTurns: 0}]);"
+        " await new Promise((r) => setTimeout(r, 5));"
+        " const slots = mount.querySelectorAll('.bot-avatar-slot');"
+        " const marks = mount.querySelectorAll('.cost-bot-avatar')"
+        "  .map((s) => s.innerHTML.includes('mk-wax'));"
+        " const names = mount.querySelectorAll('.cost-bot-name')"
+        "  .map((s) => s.textContent);"
+        " return [slots.length, marks, names];",
+    )
+    # Both rows keep an aligned slot; only the known bot gets a mark,
+    # and the roster patch renames it to the card name.
+    assert value[0] == 2
+    assert value[1] == [True, False]
+    assert value[2] == ["Coder", "chưa gắn bot"]

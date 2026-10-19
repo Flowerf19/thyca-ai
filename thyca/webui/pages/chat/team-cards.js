@@ -1,5 +1,6 @@
 import { formatMarkdown } from "../../shared/js/markdown.js";
 import { formatTime } from "../../shared/js/format.js";
+import { botMark, botMarkGroup } from "../../shared/js/bot-avatar.js";
 import { settledThinkingNote } from "./chat-thinking.js";
 import { chatBrandHeader } from "./chat-view.js";
 import { chatBotForMessage } from "../../shared/js/chat-bot.js";
@@ -151,6 +152,20 @@ export function exchangeDetails(messages) {
   const details = document.createElement("details");
   details.className = "team-exchange";
   const summary = document.createElement("summary");
+  const seal = document.createElement("span");
+  seal.className = "bot-avatar-slot team-exchange-avatar";
+  seal.setAttribute("aria-hidden", "true");
+  if (names.length) {
+    const seen = new Set();
+    const members = [];
+    for (const item of list) {
+      const id = String(item?.meta?.bot_id || "");
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      members.push(chatBotForMessage(item) || { id });
+    }
+    seal.innerHTML = botMarkGroup(members, { state: "idle" });
+  }
   const lead = document.createElement("span");
   lead.className = "team-exchange-lead";
   lead.textContent = names.length
@@ -159,19 +174,27 @@ export function exchangeDetails(messages) {
   const open = document.createElement("span");
   open.className = "team-exchange-toggle";
   open.textContent = "Xem các bot đã làm gì";
-  summary.append(lead, open);
+  summary.append(seal, lead, open);
   details.append(summary);
   for (const item of list) {
+    const botId = String(item?.meta?.bot_id || "");
     const row = document.createElement("div");
     row.className = "team-exchange-row";
     row.style.setProperty("--team-tint", tintVarFor(item?.meta?.bot_id, item?.meta?.bot_tint));
+    const face = document.createElement("span");
+    face.className = "bot-avatar-slot team-exchange-avatar";
+    face.setAttribute("aria-hidden", "true");
+    if (botId) face.innerHTML = botMark(chatBotForMessage(item) || { id: botId }, { state: "idle" });
+    const content = document.createElement("div");
+    content.className = "team-exchange-content";
     const who = document.createElement("strong");
     who.textContent = botDisplayName(item);
-    row.append(who);
+    content.append(who);
     const body = typeof item.content === "string" && item.content.trim()
       ? markdownBody(item.content)
       : null;
-    if (body) row.append(body);
+    if (body) content.append(body);
+    row.append(face, content);
     details.append(row);
   }
   details.addEventListener("toggle", () => {

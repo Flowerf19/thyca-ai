@@ -132,11 +132,14 @@ def test_parse_extraction_sanitizes_side_fields_but_keeps_memory() -> None:
         {"topic": "t2", "summary": "s2", "task": "task-bbbbbbbb",
          "new_task": "Also new"},
         {"topic": "t3", "summary": "s3", "kind": "habit"},
+        {"topic": "t4", "summary": "s4", "task": "task-cccccccc",
+         "kind": "checkpoint"},
     ]))
     assert [(i.topic, i.task, i.new_task, i.kind, i.status, i.habit) for i in items] == [
         ("t", None, None, None, None, None),
         ("t2", None, None, None, None, None),
         ("t3", None, None, None, None, None),
+        ("t4", "task-cccccccc", None, None, None, None),
     ]
 
 

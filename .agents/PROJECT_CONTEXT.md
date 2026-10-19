@@ -7,7 +7,7 @@
 Một process `thyca`. Entry: `uv run thyca --help` (`thyca/app/cli.py:main`).
 
 - **CLI:** `-p` one-shot, REPL, `--continue` / `--session` / `--model` / `--debug`.
-- **Serve:** `--serve` (mặc định `127.0.0.1:8765`), `--daemon`, `--stop`, `--port`. Code ở `thyca/serve/` (server/routes/bridge/sessions_api/config_api/trace/trace_api/turn_state/memory/daemon).
+- **Serve:** `--serve` (mặc định `127.0.0.1:19502`), `--daemon`, `--stop`, `--port`. Code ở `thyca/serve/` (server/routes/bridge/sessions_api/config_api/trace/trace_api/turn_state/memory/daemon).
 - **Config:** `~/.thyca/config.json` — `provider`, `mcpServers`, `timeline`, `limits`, optional `pricing` (USD / 1M tokens: `input` / `cache` / `output`; alias đọc `cached_input`). Secret chỉ qua `provider.apiKey` hoặc env `apiKeyEnv`.
 - **Session:** `thyca/sessions/` (4 class SOLID + `wire.py`). JSONL dưới `~/.thyca/sessions/`.
 - **Memory:** markdown là nguồn sự thật. ActiveMemory inject full `SOUL.md` / `USER.md` / `IDENTITY.md` + daily tail `hotTailKB`. L2 lexical (FTS5 + trigram, TTL) qua `MemoryFacade`; `memory_remember` ghi `memory/YYYY-MM-DD.md`. Không `MEMORY.md`.

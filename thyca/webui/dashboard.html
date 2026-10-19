@@ -13,9 +13,11 @@
     <link rel="stylesheet" href="./shared/css/kit.css" />
     <link rel="stylesheet" href="./shared/css/states.css" />
     <link rel="stylesheet" href="./shared/css/markdown.css" />
+    <link rel="stylesheet" href="./shared/css/bot-avatar.css" />
     <link rel="stylesheet" href="./pages/dashboard/cost.css" />
     <link rel="stylesheet" href="./pages/dashboard/usage.css" />
     <link rel="stylesheet" href="./pages/dashboard/dashboard.css" />
+    <link rel="stylesheet" href="./pages/dashboard/overview.css" />
     <link rel="stylesheet" href="./pages/dashboard/trace.css" />
   </head>
   <body>
@@ -34,152 +36,27 @@
           <div class="sessions-heading">
             <h2>Dashboard</h2>
           </div>
-          <nav class="session-list" aria-label="Mục dashboard">
-            <button class="session-item is-active" type="button" data-view="usage" aria-pressed="true"><span class="session-icon" aria-hidden="true"></span><span class="session-name">Sử dụng token</span></button>
-            <button class="session-item" type="button" data-view="request" aria-pressed="false"><span class="session-icon" aria-hidden="true"></span><span class="session-name">Request</span></button>
-            <button class="session-item" type="button" data-view="cost" aria-pressed="false"><span class="session-icon" aria-hidden="true"></span><span class="session-name">Chi phí</span></button>
-            <button class="session-item" type="button" data-view="trace" aria-pressed="false"><span class="session-icon" aria-hidden="true"></span><span class="session-name">Trace</span></button>
-          </nav>
+          <nav class="session-list" id="overview-nav" aria-label="Chọn Chung, bot hoặc group bot"></nav>
         </section>
       </aside>
       <section class="workspace" aria-label="Bảng tổng quan">
         <section class="screen-surface dashboard-surface" aria-label="Chi phí và sử dụng">
-          <section class="dashboard-block dashboard-section" id="request" aria-labelledby="request-heading">
-              <header class="screen-heading">
-                <button class="screen-back" type="button">‹ Dashboard</button>
-                <div class="screen-title"><h1 id="request-heading">Request</h1></div>
-                <label class="cost-period">
-                  <select class="screen-select" id="request-period" aria-label="Khoảng thời gian">
-                    <option value="30">30 ngày qua</option>
-                    <option value="7">7 ngày qua</option>
-                    <option value="1">Hôm nay</option>
-                  </select>
-                </label>
-              </header>
-              <article class="screen-card cost-chart-card">
-                <div class="cost-chart-top">
-                  <span class="cost-chart-total">Tổng request <strong id="request-total">—</strong></span>
-                  <p id="request-range">Đang tải…</p>
-                </div>
-                <svg id="request-chart" viewBox="0 0 720 230" role="img" aria-label="Biểu đồ request theo ngày"></svg>
-              </article>
-              <h2 class="cost-model-heading">Request theo mô hình</h2>
-              <div class="screen-filter-row">
-                <div class="screen-filters" role="group" aria-label="Sắp xếp mô hình">
-                  <button class="screen-button" type="button" data-req-sort="req-desc" aria-pressed="true">Cao nhất</button>
-                  <button class="screen-button" type="button" data-req-sort="req-asc" aria-pressed="false">Thấp nhất</button>
-                  <button class="screen-button" type="button" data-req-sort="recent" aria-pressed="false">Gần nhất</button>
-                </div>
-                <div class="thyca-search thyca-search--sm" role="search">
-                  <svg class="thyca-search__icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="1.6"/>
-                    <path d="M16.2 16.2 20 20" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
-                  </svg>
-                  <input class="thyca-search__input" id="request-model-search" type="search" placeholder="Tìm mô hình…" autocomplete="off" aria-label="Tìm theo tên mô hình">
-                  <button type="button" class="thyca-search__clear" aria-label="Xóa">
-                    <svg viewBox="0 0 12 12" fill="none" aria-hidden="true">
-                      <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-                    </svg>
-                  </button>
-                </div>
-              </div>
-              <div class="request-models" id="request-models"></div>
-              <p class="screen-status" id="request-status" role="status" aria-live="polite"></p>
-            </section>
-
-          <section class="dashboard-block dashboard-section" id="su-dung" aria-labelledby="usage-heading">
-              <header class="screen-heading">
-                <button class="screen-back" type="button">‹ Dashboard</button>
-                <div class="screen-title"><h1 id="usage-heading">Sử dụng token</h1></div>
-                <label class="cost-period">
-                  <select id="usage-month" class="screen-select" aria-label="Khoảng thời gian">
-                    <option value="30">30 ngày qua</option>
-                    <option value="7">7 ngày qua</option>
-                    <option value="1">Hôm nay</option>
-                  </select>
-                </label>
-              </header>
-              <article class="screen-card usage-chart-card">
-                <div class="usage-chart-top">
-                  <div class="usage-legend">
-                    <span class="input">Input</span>
-                    <span class="cache">Cache read</span>
-                    <span class="output">Output</span>
-                  </div>
-                  <div class="usage-toggle" role="group" aria-label="Đơn vị biểu đồ">
-                    <button type="button" aria-pressed="true" data-unit="token">Token</button>
-                    <button type="button" aria-pressed="false" data-unit="turn">Lượt</button>
-                  </div>
-                </div>
-                <svg id="usage-chart" viewBox="0 0 900 300" role="img" aria-label="Biểu đồ token theo ngày"></svg>
-              </article>
-              <section class="usage-summaries" id="usage-summaries"></section>
-              <article class="screen-card usage-total">
-                <span class="usage-avatar" aria-hidden="true">
-                  <svg viewBox="0 0 48 48"><path d="M24 38V13" /><path d="M24 20c-7-1-11-6-10-12M24 23c7-2 11-7 10-13M24 29c-6-1-10-5-9-10M24 34c5-1 8-4 8-9" /><path class="avatar-leaf" d="M18 17c-5 0-8-3-8-7 5 0 8 2 8 7ZM29 18c5-1 8-4 8-8-5 0-8 3-8 8ZM19 28c-5 0-8-3-8-7 5 0 8 2 8 7ZM29 32c5-1 8-4 8-8-5 0-8 3-8 8Z" /><circle cx="24" cy="12" r="2.2" /><circle cx="15" cy="21" r="1.5" /><circle cx="33" cy="24" r="1.5" /></svg>
-                </span>
-                <div>
-                  <span>Tổng cộng</span>
-                  <strong id="usage-total">— <small>token</small></strong>
-                </div>
-                <div class="usage-total-right">
-                  <strong id="usage-turns">— <small>lượt</small></strong>
-                  <span id="usage-period">đang tải…</span>
-                </div>
-              </article>
-              <h2 class="cost-model-heading">Token theo mô hình</h2>
-              <div class="request-models" id="usage-models"></div>
-              <p class="screen-status" id="usage-status" role="status" aria-live="polite"></p>
-          </section>
-
-          <section class="dashboard-block dashboard-section" id="chi-phi" aria-labelledby="cost-heading" hidden>
+          <section class="dashboard-block dashboard-section" id="overview" aria-labelledby="overview-heading">
             <header class="screen-heading">
-              <button class="screen-back" type="button">‹ Dashboard</button>
-              <div class="screen-title"><h1 id="cost-heading">Chi phí</h1></div>
+              <div class="screen-title"><h1 id="overview-heading">Tổng quan</h1></div>
+            </header>
+            <div class="headrow">
               <label class="cost-period">
-                <select class="screen-select" id="cost-period" aria-label="Khoảng thời gian">
+                <select class="screen-select" id="overview-period" aria-label="Khoảng thời gian">
                   <option value="30">30 ngày qua</option>
                   <option value="7">7 ngày qua</option>
                   <option value="1">Hôm nay</option>
                 </select>
               </label>
-            </header>
-            <ul class="screen-note" id="cost-coverage"></ul>
-            <article class="screen-card cost-chart-card">
-              <div class="cost-chart-top">
-                <span class="cost-chart-total">Tổng chi phí <strong id="cost-total">—</strong></span>
-                <span class="journal-meta" id="cost-total-meta"></span>
-                <svg class="usage-leaf" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 18c4.2-7.5 7.5-10.8 12-12-1.2 4.8-4.7 8.1-12 12Z"/><path d="m7 17 6-6"/></svg>
-              </div>
-              <svg id="cost-chart" viewBox="0 0 720 230" role="img" aria-label="Biểu đồ chi phí theo ngày"></svg>
-            </article>
-            <h2 class="cost-journal-heading">Chi phí theo mô hình</h2>
-            <div class="screen-filter-row">
-              <div class="screen-filters" role="group" aria-label="Sắp xếp mô hình">
-                <button class="screen-button" type="button" data-sort="cost-desc" aria-pressed="true">Cao nhất</button>
-                <button class="screen-button" type="button" data-sort="cost-asc" aria-pressed="false">Thấp nhất</button>
-                <button class="screen-button" type="button" data-sort="recent" aria-pressed="false">Gần nhất</button>
-              </div>
-              <div class="thyca-search thyca-search--sm" role="search">
-                <svg class="thyca-search__icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="1.6"/>
-                  <path d="M16.2 16.2 20 20" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
-                </svg>
-                <input class="thyca-search__input" id="model-search" type="search" placeholder="Tìm mô hình…" autocomplete="off" aria-label="Tìm theo tên mô hình">
-                <button type="button" class="thyca-search__clear" aria-label="Xóa">
-                  <svg viewBox="0 0 12 12" fill="none" aria-hidden="true">
-                    <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-                  </svg>
-                </button>
-              </div>
+              <p class="screen-status" id="overview-range" aria-live="polite"></p>
             </div>
-            <div class="request-models" id="cost-models"></div>
-            <h2 class="cost-journal-heading">Chi phí theo phiên</h2>
-            <ul class="journal" id="cost-sessions"></ul>
-            <h2 class="cost-journal-heading">Chi phí theo bot</h2>
-            <div class="request-models" id="cost-bots"></div>
-            <p class="screen-status" id="cost-status" role="status" aria-live="polite"></p>
-            <button class="screen-button" type="button" id="cost-retry" hidden>Thử lại</button>
+            <div id="overview-content" aria-live="polite"></div>
+            <p class="screen-status" id="overview-status" role="status" aria-live="polite"></p>
           </section>
 
           <section class="dashboard-block" id="trace" aria-labelledby="trace-heading" hidden>
@@ -191,7 +68,7 @@
                   <option value="30">30 ngày qua</option>
                   <option value="7">7 ngày qua</option>
                   <option value="1">Hôm nay</option>
-                  <option value="all">Toàn bộ cửa sổ (200 phiên mới nhất)</option>
+                  <option value="all">200 phiên mới nhất</option>
                 </select>
               </label>
               <button class="screen-button" id="trace-back" type="button" hidden>‹ Phiên</button>
@@ -199,7 +76,8 @@
             <p class="screen-status" id="trace-status" role="status" aria-live="polite"></p>
             <p class="screen-status trace-note" id="trace-note" hidden></p>
             <section id="trace-picker" aria-label="Phiên trò chuyện">
-              <h2 class="cost-model-heading">Phiên trò chuyện</h2>
+              <h2 class="cost-model-heading">Phiên</h2>
+              <div class="screen-filter-row" id="trace-bot-filters" role="group" aria-label="Lọc phiên theo bot"></div>
               <ul class="journal" id="trace-sessions"></ul>
             </section>
             <section id="trace-session" hidden aria-label="Nhật ký thực thi của phiên">
@@ -217,9 +95,7 @@
       </section>
     </main>
     <script src="./shared/js/navigation.js" defer></script>
-    <script type="module" src="./pages/dashboard/cost.js"></script>
-    <script type="module" src="./pages/dashboard/request.js"></script>
-    <script type="module" src="./pages/dashboard/usage.js"></script>
+    <script type="module" src="./pages/dashboard/overview.js"></script>
     <script type="module" src="./pages/dashboard/trace.js"></script>
     <script type="module" src="./pages/dashboard/dashboard.js"></script>
   </body>

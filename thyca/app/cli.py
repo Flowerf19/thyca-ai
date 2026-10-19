@@ -46,7 +46,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--serve", action="store_true", help="serve webui + memory stats on 127.0.0.1")
     parser.add_argument("--daemon", action="store_true", help="detach --serve from the terminal")
     parser.add_argument("--stop", action="store_true", help="stop a background --serve")
-    parser.add_argument("--port", type=int, default=8765, help="port for --serve (default 8765)")
+    parser.add_argument("--port", type=int, default=19502, help="port for --serve (default 19502)")
     parser.add_argument("prompt", nargs="*", help="prompt for -p mode")
     return parser
 

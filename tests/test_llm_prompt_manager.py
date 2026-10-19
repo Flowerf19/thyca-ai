@@ -61,6 +61,13 @@ def test_build_is_deterministic() -> None:
     assert manager.build(hot) == manager.build(hot)
 
 
+def test_context_budget_renders_after_rules_only_when_present() -> None:
+    manager = PromptManager()
+    text = manager.build(_hot(context_budget="used=83% state=prepare"))
+    assert text.endswith("<context_budget>\nused=83% state=prepare\n</context_budget>")
+    assert "<context_budget>" not in manager.build(_hot())
+
+
 @pytest.mark.parametrize("name", ["soul", "identity", "user"])
 def test_packaged_profile_templates(name: str) -> None:
     manager = PromptManager()

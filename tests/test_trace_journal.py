@@ -591,6 +591,14 @@ def test_turn_diagnostics_line_renders_in_disclosure(steps_dom: dict) -> None:
     assert dom["turnDiag"] == "Vào: 120 · Cache: 40 · Ra: 30 · 2 vòng"
 
 
+def test_disclosure_labels_use_short_copy(steps_dom: dict) -> None:
+    """Turn and step payload disclosures use the short labels; the fold
+    mechanics themselves are unchanged."""
+    dom = steps_dom
+    assert dom["foldSummaryText"] == "Các bước"
+    assert dom["stepDataSummaryText"] == "Dữ liệu"
+
+
 def test_step_meta_includes_recorded_timestamp(steps_dom: dict) -> None:
     """Every recorded step keeps its wall-clock time (UTC here) next to the
     duration on the existing meta line; the scenario ends on steps page 3."""
@@ -653,6 +661,17 @@ class Element {
     for (const node of this.children) node.parentNode = null;
     this.children = [];
     this.append(...nodes);
+  }
+  prepend(...nodes) {
+    const flat = [];
+    for (const node of nodes) {
+      if (node.parentNode) {
+        node.parentNode.children = node.parentNode.children.filter((n) => n !== node);
+      }
+      node.parentNode = this;
+      flat.push(node);
+    }
+    this.children.unshift(...flat);
   }
   set textContent(value) { this.replaceChildren(); this.text = String(value); }
   get textContent() { return this.text + this.children.map((n) => n.textContent).join(""); }
@@ -953,6 +972,10 @@ if (SCENARIO === "steps") {
 
   const page1 = qa(".trace-step-data");
   result.page1Count = page1.length;
+  // Disclosure labels: short "Các bước" on the turn fold, "Dữ liệu" on each
+  // step payload fold (first child of each <details>).
+  result.foldSummaryText = turnFold.children[0].textContent;
+  result.stepDataSummaryText = page1[0].children[0].textContent;
   result.page1FirstNum = q(".trace-step-num").textContent;
   result.step0 = sections(page1[0]);
   result.step2 = sections(page1[2]);
@@ -1623,3 +1646,286 @@ def test_visible_turn_still_updates_url_and_status(visible_turn_dom: dict) -> No
     assert "turn=" not in urls[0]
     assert "session=s1&turn=0" in urls[1]
     assert urls[1].endswith("#trace")
+
+
+_FAKE_DOM = r"""
+class Element {
+  constructor(tag = 'div') {
+    this.tag = tag;
+    this.children = [];
+    this.className = '';
+    this.textContent = '';
+    this.text = '';
+    this.innerHTML = '';
+    this.dataset = {};
+    this.attributes = {};
+    this.hidden = false;
+    this.disabled = false;
+    this.open = false;
+    this.value = '';
+    this.dateTime = '';
+    this.style = { setProperty() {}, removeProperty() {} };
+    this._handlers = {};
+  }
+  setAttribute(k, v) { this.attributes[k] = String(v); }
+  getAttribute(k) { return this.attributes[k] ?? null; }
+  append(...nodes) { for (const n of nodes.flat()) this.children.push(n); }
+  prepend(...nodes) { this.children.unshift(...nodes.flat()); }
+  addEventListener(type, fn) { this._handlers[type] = fn; }
+  get text() { return this.textContent + this.children.map((c) => typeof c === 'string' ? c : (c.text ?? '')).join(''); }
+  set text(v) { this.textContent = v; }
+  querySelectorAll(sel) {
+    const cls = sel.startsWith('.') ? sel.slice(1) : null;
+    const out = [];
+    const walk = (node) => {
+      for (const child of node.children || []) {
+        if (typeof child === 'string') continue;
+        if (cls && String(child.className || '').split(' ').includes(cls)) out.push(child);
+        walk(child);
+      }
+    };
+    walk(this);
+    return out;
+  }
+  querySelector(sel) { return this.querySelectorAll(sel)[0] ?? null; }
+}
+globalThis.document = {
+  createElement: (tag) => new Element(tag),
+  querySelector: () => null,
+  body: { prepend() {} },
+};
+globalThis.window = { addEventListener() {} };
+globalThis.matchMedia = () => ({ matches: false });
+globalThis.requestAnimationFrame = (cb) => cb();
+""".strip()
+
+
+def _render_eval(node: str, module: str, expression: str) -> object:
+    source = (
+        _FAKE_DOM + "\n"
+        f"const api = await import('{module}');\n"
+        f"const main = async () => {{ {expression} }};\n"
+        "console.log(JSON.stringify(await main()));\n"
+    )
+    result = subprocess.run(
+        [node, "--input-type=module", "-e", source],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+    )
+    return json.loads(result.stdout)
+
+
+def test_delegation_node_has_avatar_slot(node: str) -> None:
+    value = _render_eval(
+        node,
+        "./thyca/webui/pages/dashboard/trace-delegation.js",
+        "const el = api.renderDelegation({ messages: ["
+        " {role: 'assistant', content: 'hi', ts: '2026-09-01T10:00:00Z',"
+        "  meta: {bot_id: 'coder', bot_name: 'Coder', trace_id: 't1'}}]});"
+        " const slot = el.querySelector('.bot-avatar-slot');"
+        " return [!!slot, slot.innerHTML.includes('mk-wax'),"
+        "  el.querySelector('.delegation-head').children.length > 1];",
+    )
+    assert value == [True, True, True]
+
+
+def test_turn_entry_avatar_single_multi_and_none(node: str) -> None:
+    value = _render_eval(
+        node,
+        "./thyca/webui/pages/dashboard/trace-turns.js",
+        "const one = api.turnEntry({sessionId: 's'}, {...{turn_index: 0, status: 'completed', model: 'm', started_at: '2026-09-01T10:00:00Z'},"
+        " bot_id: 'coder', bot_breakdown: [{bot_id: 'coder'}]} , 0);"
+        " const many = api.turnEntry({sessionId: 's'}, {...{turn_index: 0, status: 'completed', model: 'm', started_at: '2026-09-01T10:00:00Z'},"
+        " bot_breakdown: [{bot_id: 'a'}, {bot_id: 'b'}]}, 1);"
+        " const none = api.turnEntry({sessionId: 's'}, {turn_index: 0, status: 'completed', model: 'm', started_at: '2026-09-01T10:00:00Z'}, 2);"
+        " const ones = one.querySelector('.trace-turn-avatar').innerHTML;"
+        " const manyAv = many.querySelector('.trace-turn-avatar').innerHTML;"
+        " const nones = none.querySelectorAll('.mk-wax').length;"
+        " const slots = one.querySelectorAll('.trace-turn-avatar').length"
+        "  + many.querySelectorAll('.trace-turn-avatar').length;"
+        " return [ones.includes('mk-wax'), manyAv.includes('gm-stack'),"
+        "  nones, slots];",
+    )
+    assert value == [True, True, 0, 2]
+
+
+def test_trace_group_bot_ids_and_filter(node: str) -> None:
+    source = (
+        "import { groupTraceTurns, traceGroupBotIds, traceBotOptions,"
+        " filterTraceGroups }"
+        f" from '{TRACE_DATA.as_posix()}';\n"
+        "const rows = ["
+        "  {session_id: 'dm', turn_index: 0, title: 'd',"
+        "   started_at: '2026-09-01T10:00:00Z',"
+        "   session_kind: 'dm', session_dm: 'coder', session_bots: ['coder'],"
+        "   bot_id: 'coder', bot_breakdown: [{bot_id: 'coder'}]},"
+        "  {session_id: 'g', turn_index: 0, title: 'g',"
+        "   started_at: '2026-09-02T10:00:00Z',"
+        "   session_kind: 'group', session_dm: null,"
+        "   session_bots: ['thyca', 'coder'],"
+        "   bot_id: 'thyca',"
+        "   bot_breakdown: [{bot_id: 'thyca'}, {bot_id: 'helper'}]},"
+        "  {session_id: 'old', turn_index: 0, title: 'o',"
+        "   started_at: '2026-09-03T10:00:00Z',"
+        "   bot_id: 'solo', bot_breakdown: []},"
+        " ];"
+        " const gs = groupTraceTurns(rows);"
+        " const byId = Object.fromEntries(gs.map((g) => [g.sessionId, g]));"
+        " console.log(JSON.stringify({"
+        "  kinds: [byId.dm.kind, byId.g.kind, byId.old.kind],"
+        "  dmBots: byId.dm.bots,"
+        "  idsDm: traceGroupBotIds(byId.dm),"
+        "  idsG: traceGroupBotIds(byId.g),"
+        "  idsOld: traceGroupBotIds(byId.old),"
+        "  options: traceBotOptions(gs),"
+        "  coder: filterTraceGroups(gs, 'coder').map((g) => g.sessionId),"
+        "  helper: filterTraceGroups(gs, 'helper').map((g) => g.sessionId),"
+        "  solo: filterTraceGroups(gs, 'solo').map((g) => g.sessionId),"
+        "  all: filterTraceGroups(gs, '').map((g) => g.sessionId),"
+        "  none: filterTraceGroups(gs, 'ghost'),"
+        " }));"
+    )
+    result = subprocess.run(
+        [node, "--input-type=module", "-e", source],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+    )
+    groups = json.loads(result.stdout)
+    assert groups["kinds"] == ["dm", "group", ""]
+    assert groups["dmBots"] == ["coder"]
+    assert groups["idsDm"] == ["coder"]
+    assert groups["idsG"] == ["thyca", "coder", "helper"]
+    assert groups["idsOld"] == ["solo"]
+    assert groups["options"][0] == "thyca"
+    assert set(groups["options"]) == {"thyca", "coder", "helper", "solo"}
+    assert groups["coder"] == ["g", "dm"]
+    assert groups["helper"] == ["g"]
+    assert groups["solo"] == ["old"]
+    assert groups["all"] == ["old", "g", "dm"]
+    assert groups["none"] == []
+
+
+_TRACE_VIEW_DOM = r"""
+class Element {
+  constructor(tag = 'div') {
+    this.tag = tag;
+    this.children = [];
+    this.className = '';
+    this.textContent = '';
+    this.innerHTML = '';
+    this.dataset = {};
+    this.attributes = {};
+    this.hidden = false;
+    this.style = { setProperty() {}, removeProperty() {} };
+    this._handlers = {};
+  }
+  setAttribute(k, v) { this.attributes[k] = String(v); }
+  append(...nodes) { for (const n of nodes.flat()) this.children.push(n); }
+  prepend(...nodes) { this.children.unshift(...nodes.flat()); }
+  after(...nodes) { this.children.push(...nodes.flat()); }
+  replaceChildren(...nodes) { this.children = [...nodes.flat()]; }
+  addEventListener(t, f) { this._handlers[t] = f; }
+  querySelectorAll(sel) {
+    const cls = sel.startsWith('.') ? sel.slice(1) : null;
+    const out = [];
+    const walk = (node) => {
+      for (const child of node.children || []) {
+        if (typeof child === 'string') continue;
+        if (cls && String(child.className || '').split(' ').includes(cls)) out.push(child);
+        walk(child);
+      }
+    };
+    walk(this);
+    return out;
+  }
+  querySelector(sel) { return this.querySelectorAll(sel)[0] ?? null; }
+}
+const byId = {};
+for (const id of ['trace-sessions', 'trace-bot-filters']) {
+  byId[id] = new Element('div');
+}
+globalThis.document = {
+  createElement: (tag) => new Element(tag),
+  querySelector: (sel) => byId[sel.slice(1)] ?? null,
+  querySelectorAll: () => [],
+  body: { prepend() {} },
+};
+globalThis.window = { addEventListener() {} };
+globalThis.matchMedia = () => ({ matches: false });
+globalThis.requestAnimationFrame = (cb) => cb();
+""".strip()
+
+
+def _trace_view_eval(node: str, expression: str) -> object:
+    source = (
+        _TRACE_VIEW_DOM + "\n"
+        "const api = await import('./thyca/webui/pages/dashboard/trace-view.js');\n"
+        "const main = async () => { " + expression + " };\n"
+        "console.log(JSON.stringify(await main()));\n"
+    )
+    result = subprocess.run(
+        [node, "--input-type=module", "-e", source],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+    )
+    return json.loads(result.stdout)
+
+
+def _trace_groups_js() -> str:
+    return (
+        "api.state.groups = ["
+        " {sessionId: 'dm', title: 'DM', kind: 'dm', dm: 'coder',"
+        "  bots: ['coder'], startedAt: '2026-09-01', turns: ["
+        "   {turn_index: 0, bot_id: 'coder', bot_breakdown: [{bot_id: 'coder'}]}]},"
+        " {sessionId: 'g', title: 'Group', kind: 'group', dm: '',"
+        "  bots: ['thyca', 'coder'], startedAt: '2026-09-02',"
+        "  turns: [{turn_index: 0, bot_id: 'thyca',"
+        "   bot_breakdown: [{bot_id: 'thyca'}, {bot_id: 'helper'}]}]},"
+        " {sessionId: 'solo', title: 'Solo', kind: 'group', dm: '',"
+        "  bots: ['solo'], startedAt: '2026-09-03', turns: ["
+        "   {turn_index: 0, bot_id: 'solo', bot_breakdown: []}]},"
+        "];"
+        " api.state.groupIndex = -1;"
+        " api.state.sessionPage = 1;"
+    )
+
+
+def test_trace_session_avatar_dm_and_group(node: str) -> None:
+    value = _trace_view_eval(
+        node,
+        _trace_groups_js()
+        + " const dmEl = api.sessionEntry(api.state.groups[0], 0);"
+        + " const gEl = api.sessionEntry(api.state.groups[1], 0);"
+        + " return [dmEl.querySelector('.trace-session-avatar').innerHTML.includes('mk-wax'),"
+        + "  gEl.querySelector('.trace-session-avatar').innerHTML.includes('gm-stack')];",
+    )
+    assert value == [True, True]
+
+
+def test_trace_filter_chips_and_list(node: str) -> None:
+    value = _trace_view_eval(
+        node,
+        _trace_groups_js()
+        + " api.state.botFilter = '';"
+        + " api.renderSessions();"
+        + " const chips = byId['trace-bot-filters'].querySelectorAll('.screen-button')"
+        + "  .map((b) => b.children.map((c) => c.textContent).join(' '));"
+        + " const all = byId['trace-sessions'].children"
+        + "  .filter((n) => n.tag === 'li').length;"
+        + " api.state.botFilter = 'helper';"
+        + " api.state.sessionPage = 1;"
+        + " api.renderSessions();"
+        + " const heads = byId['trace-sessions'].querySelectorAll('.trace-session-open')"
+        + "  .map((b) => b.textContent);"
+        + " return [chips, all, heads];",
+    )
+    assert "Tất cả" in value[0][0]
+    assert any("coder" in c for c in value[0])
+    assert value[1] == 3
+    assert value[2] == ["Group"]

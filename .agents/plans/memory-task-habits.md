@@ -1,7 +1,7 @@
 ---
 status: in-progress
 created: 2026-10-16
-last_updated: 2026-10-16
+last_updated: 2026-10-19
 ---
 
 # Memory task + habits — phase 1A backend (đã chốt) và các phase sau (mở)
@@ -399,7 +399,108 @@ Metadata end-to-end (đi đúng đường v6/v7):
 - Full `uv run pytest -q` → **1485 passed, 2 failed, 6 errors**.
   Fail/error y hệt baseline (webui streaming cũ). Ròng +3. Không fail mới.
 
-## Dọn baseline test cũ (done 2026-10-16) — full xanh, 0 failed/errors
+## UI avatar theo màn — Trace done (2026-10-17)
+
+- Defs dùng chung: khối SVG từ index.html vào `bot-avatar.js` +
+  `ensureBotAvatarDefs` (chèn 1 lần, guard fake-DOM); `botMark/Group` tự
+  ensure; index.html xoá defs; `.bot-avatar-slot` dùng chung trong CSS.
+- Trace: delegation node + turn heading (1 bot → mark, nhiều → stack,
+  không bot → không avatar, state tĩnh idle); dashboard.html link CSS.
+## UI Request theo bot + đếm request thật (done 2026-10-17)
+
+Rework: backend bucket "unknown" được coi là chưa gắn bot trừ khi roster
+thật sự có id đó (slot trống, tên "chưa gắn bot"); test dùng đúng payload
+backend + ca roster-có-unknown. Full suite **1516 passed, 0 failed**.
+
+- Đếm: `_aggregate_turn_meta` thêm requests nội bộ (assistant rows trừ
+  context-stop) → `BotTurnResult.requests` → meta room row; `trace.py`
+  `_row_requests` duy nhất cho turn total + breakdown (bus_event/bus
+  kinds/card cũ/card = 0, meta.requests được tôn trọng, còn lại 1).
+- UI: `request.js` khối Request theo bot từ `stats.by_bot` (avatar idle,
+  tên roster, sort requests desc, share tổng, bar cùng thang, unknown
+  slot trống, empty-note, roster patch 1 lần); CSS size 2.2rem.
+- Kiểm chứng: request_chart + trace/runtime + markdown xanh; full suite
+  **1515 passed, 0 failed, 0 errors** (ròng +4: request test, 2 runtime,
+  1 trace-semantics; 2 context_recovery fail giữa chừng đã sửa bằng
+  context-stop → 0 trong helper chung). Asset qua daemon (không restart):
+  request.js + dashboard.html mới đã phục vụ.
+
+- Xoá: heading + `#cost-sessions` (dashboard.html); renderSessions/
+  sessionEntry/sessionsPager + state phân trang + export (cost-rows.js);
+  `aggregateSessions` + `NO_SESSION_KEY` (cost-data.js; dedupeTurns cho
+  overview/bot/model giữ nguyên); rule `#cost-sessions` (cost.css).
+- Giữ: Tổng chi phí, biểu đồ ngày, theo mô hình, theo bot; Trace theo
+  phiên, API traces, aggregate backend.
+- Tests: 2 test session-aggregate → 1 test dedupe-qua-overview +
+  assert tĩnh (HTML/JS không còn cost-sessions); pager/load assertions
+  cập nhật theo code mới; markdown test chuyển journal-kit asserts sang
+  cost-bots.js.
+- Chi phí theo group là việc riêng chưa làm.
+- Kiểm chứng: focused cost/markdown xanh; full suite **1511 passed,
+  0 failed, 0 errors** (ròng 0: bỏ 2 test session-aggregate, thêm
+  test dedupe-qua-overview + test static-pins). Asset qua daemon
+  (không restart): cost-view.js và dashboard.html phục vụ đều 0 hit
+  cost-sessions.
+
+- `cost-bots.js`: slot `.bot-avatar-slot.cost-bot-avatar` trước tên
+  (mark ngay khi dựng, `--team-tint` = tint meter); roster patch cả tên
+  lẫn mark từ bot object thật; hàng chưa-gắn-bot giữ slot trống.
+  CSS chỉ flex h3 + size 2.2rem. Không đổi gom/sắp xếp/meter/meta.
+- Kiểm chứng: cost_journal + team_frontend + trace_journal + webui_format
+  xanh; full suite **1511 passed, 0 failed, 0 errors**. Không fail mới.
+## UI Token theo bot + fix lệch cost (done 2026-10-17)
+
+- Cost: h3 của cost-bot-entry thành flex align-center (theo pattern
+  Request head), giữ DOM.
+- Usage: heading + `#usage-bots` sau Token theo mô hình; `aggregateBotTokens`
+  từ payload.traces (ưu tiên breakdown, fallback bot_id, turns = số entry
+  tham gia, sort token desc); hàng reuse request-model-* + avatar idle +
+  meta calls/Đầu vào/Cache/Đầu ra; unknown merge + slot trống (roster thật
+  có id đó thì là bot thật); roster patch 1 lần; empty-note khi không token.
+- Kiểm chứng: dashboard/cost/request/markdown xanh; full suite **1519
+  passed, 0 failed, 0 errors**. Không fail mới.
+- Còn mở: team-cards + memories pending.
+
+## UI Trace theo agent (done 2026-10-17)
+
+- Backend: TurnSummary + `session_kind/session_dm/session_bots` từ Session
+  vào to_payload; không đổi cách tính nào khác.
+- FE: groupTraceTurns giữ kind/dm/bots; helpers thuần traceGroupBotIds
+  (participants trước) / traceBotOptions (thyca trước) / filterTraceGroups;
+  hàng `#trace-bot-filters` (class filter sẵn có, wrap được) với chips
+  Tất cả + bot (avatar idle + tên roster + số phiên); list lọc giữ index
+  tuyệt đối, pager đếm theo list lọc, đổi filter về page 1; sessionEntry
+  avatar kênh (DM → seal chủ DM, group → stack participants/bots,
+  aria-hidden); empty-note khi filter rỗng; deep-link/selectGroup giữ
+  nguyên (filter mặc định Tất cả nên deep-link cũ không đổi).
+- Kiểm chứng: trace/team_frontend xanh; full suite **1523 passed,
+  0 failed, 0 errors**. Không fail mới.
+- Còn mở: team-cards (memories pending done dưới đây).
+
+## UI team-cards/exchange (done 2026-10-17) — danh sách màn avatar đã hết
+
+- `team-cards.js`: summary mang group seal (botMarkGroup, profile từ
+  message đầu mỗi bot); mỗi row thêm avatar slot trước tên + bọc who/body
+  vào div content (giữ border tint + thứ tự); message không bot_id → slot
+  trống; question/error card không thêm avatar (đã dưới header có avatar).
+- CSS chỉ layout/size (slot 1.7rem, summary/row flex, content min-width).
+- Kiểm chứng: team_frontend + format + markdown xanh; full suite **1525
+  passed, 0 failed, 0 errors**. Không fail mới.
+- Màn avatar đã xong: Trace, Cost, Request, Usage, Memories pending,
+  team-cards (+ sidebar/mention/drawer/settings/transcript có từ trước).
+
+## UI Nhật ký chờ duyệt (done 2026-10-17)
+
+- `team-pending.js`: avatar slot + seal idle trong source card và filter
+  chips (Tất cả bot không avatar); roster fetch 1 lần, patch tên+mark qua
+  repaint (bỏ qua khi busy); item không botId giữ slot trống + text cũ.
+  Export avatarSlotFor/candidateCard/filterChip cho test; bind() guard
+  khi không có document.
+- CSS chỉ layout (source inline-flex, size 1.9/1.4rem); memories.html link
+  avatar CSS.
+- Kiểm chứng: team_frontend + cost + webui_format xanh; full suite **1524
+  passed, 0 failed, 0 errors**. Không fail mới.
+- Còn mở: team-cards.
 
 - Cụm serve_chat (2 assert): chuỗi khóa xuống dòng + arg thứ 3 → regex
   `createLiveStatus\(el\.messageList,\s*detail\.started_at` (ý nghĩa giữ
@@ -430,6 +531,53 @@ Metadata end-to-end (đi đúng đường v6/v7):
 - Kiểm chứng: test_team_frontend 84 passed, webui_format xanh; full suite
   (dưới).
 
+## FE-DASHBOARD-1 — redesign Dashboard gộp 1 màn (done 2026-10-17)
+
+- Màu theo bot cho overview (2026-10-17): roster giữ tint/avatar/system, helper botTintStyle (--team-tint/--avatar-tint từ tintVarFor, không viết lại), gắn lên seal/sidebar/tr/seals; stack token 3 sắc độ color-mix của chính bot (In 80%+đen / Out thuần / Cache 35%+trong suốt), unknown fallback accent.
+- Bảng agent → biểu đồ thanh ngang chọn chỉ số (2026-10-17): segmented Token/Cost/Request/Tool (mặc định Token), sort + badge theo chỉ số đang chọn, thanh màu bot (token stack 3 đoạn, còn lại đơn sắc), state module không refetch.
+- Bảng agent rút gọn 5→3 cột (2026-10-17): Agent (hạng+avatar+tên+badge) | Mức sử dụng (tổng token+% + 1 thanh stack In/Ca/Out theo % tổng + meta request/tool) | Chi phí (% tổng); mobile Agent+Chi phí hàng đầu, Mức sử dụng full width.
+- Bảng agent duy nhất ở Chung thay brow xếp hạng + bỏ panel so sánh ở bot view (2026-10-17): table Agent|Chi phí|Request|Gọi tool|Token, badge cao nhất + is-max 4 cột, token kèm split In/Ca/Out; mobile bảng thành hàng xếp chồng 2 cột metric.
+
+
+- Đếm tool call thật thay ô Lượt ở summary (2026-10-17): runtime
+  `_aggregate_turn_meta` đếm len(tool_calls) cùng tập rows, `BotTurnResult.
+  tool_calls` → room_meta `tool_call_count`; trace `_row_tool_calls`
+  (meta thắng body, bus/card/context-stop = 0) → TurnSummary/breakdown/
+  totals/by_bot. Summary Chung + bot view: 6 ô Input/Cache/Output/
+  Request/Gọi tool/Chi phí (hint TB/request); group view giữ Lượt.
+  Giới hạn dữ liệu cũ: room row bot con trước thay đổi này không có
+  tool_call_count nên phần nội bộ đếm 0 — không bịa số. Daemon đang chạy
+  backend cũ: API chưa có tool_calls cho tới khi restart serve.
+
+
+- Chuẩn hoá cỡ chữ overview theo thang Chat (2026-10-17): sidebar nav tên 0.94rem reading / meta 0.72rem; nội dung gốc reading 1rem, summary value 1.5rem; chỉ CSS overview.css, không chạm Trace/kit.
+
+
+- Một màn duy nhất theo prototype `index-compact.html` (số prototype là
+  MOCK, chỉ lấy DNA trình bày): sidebar là entity selector
+  (Chung / theo bot / theo group bot), nội dung thay theo thực thể.
+- Mới: `pages/dashboard/overview.js` (snapshot song song traces paged +
+  stats + bots + sessions; aggregates thuần export để test:
+  `aggregateOverview/ByBot/Groups/Models`, `timelineForBot/ForGroup`,
+  `aggregateGroupBots`; 3 view Chung/bot/group; sidebar render vào
+  `#overview-nav`; click trace row → deep link `?session=&turn=#trace` qua
+  `location.assign`) + `pages/dashboard/overview.css` (scoped `#overview`,
+  chỉ token Thyca).
+- `dashboard.html`: 3 section usage/request/cost → 1 section `#overview`
+  (trace-head + period + `#overview-content`); GIỮ section `#trace` chi
+  tiết; bỏ 3 script entry cũ, thêm overview.js; giữ mọi CSS cũ cho Trace.
+- `dashboard.js`: 2 trạng thái overview/trace; hash legacy về overview
+  (strip hash + params); back Trace → overview.
+- Model dữ liệu: DM tính vào bot sở hữu (không vào group); group gom theo
+  đúng session group thật (sessionMap kind, fallback row session_kind);
+  unknown bucket chỉ hiện ở Tổng quan; latency turn chỉ gán cho actor
+  (không double-count); avatar = botMark/botMarkGroup idle, unknown = slot
+  trống. Không đổi backend, không đổi Trace detail.
+- Modules cũ (usage.js/request.js/cost*.js) giữ nguyên làm thư viện + test
+  logic giữ nguyên; chỉ cập nhật test khóa markup dashboard.html/switcher.
+- Kiểm chứng: aggregates unit mới, boot switcher 2-state, full suite xanh
+  (dưới).
+
 ## Phase sau (mở — một số điểm đã chốt hướng, chưa triển khai)
 
 - Bỏ luồng "+ Phiên mới" tạo phiên solo (`createBotSession` POST
@@ -439,6 +587,53 @@ Metadata end-to-end (đi đúng đường v6/v7):
   (createBotSession/isDmDetail/findMainSession/verifySharedSession).
 - Lưu ý: backend Phase 2B đã đổi contract POST 1-bot → DM nên FE hiện tại
   sẽ lệch cho tới khi task này làm.
+
+## FE-DASHBOARD-1 — redesign Dashboard gộp 1 màn (done 2026-10-17)
+
+- Màu theo bot cho overview (2026-10-17): roster giữ tint/avatar/system, helper botTintStyle (--team-tint/--avatar-tint từ tintVarFor, không viết lại), gắn lên seal/sidebar/tr/seals; stack token 3 sắc độ color-mix của chính bot (In 80%+đen / Out thuần / Cache 35%+trong suốt), unknown fallback accent.
+- Bảng agent → biểu đồ thanh ngang chọn chỉ số (2026-10-17): segmented Token/Cost/Request/Tool (mặc định Token), sort + badge theo chỉ số đang chọn, thanh màu bot (token stack 3 đoạn, còn lại đơn sắc), state module không refetch.
+- Bảng agent rút gọn 5→3 cột (2026-10-17): Agent (hạng+avatar+tên+badge) | Mức sử dụng (tổng token+% + 1 thanh stack In/Ca/Out theo % tổng + meta request/tool) | Chi phí (% tổng); mobile Agent+Chi phí hàng đầu, Mức sử dụng full width.
+- Bảng agent duy nhất ở Chung thay brow xếp hạng + bỏ panel so sánh ở bot view (2026-10-17): table Agent|Chi phí|Request|Gọi tool|Token, badge cao nhất + is-max 4 cột, token kèm split In/Ca/Out; mobile bảng thành hàng xếp chồng 2 cột metric.
+
+
+- Đếm tool call thật thay ô Lượt ở summary (2026-10-17): runtime
+  `_aggregate_turn_meta` đếm len(tool_calls) cùng tập rows, `BotTurnResult.
+  tool_calls` → room_meta `tool_call_count`; trace `_row_tool_calls`
+  (meta thắng body, bus/card/context-stop = 0) → TurnSummary/breakdown/
+  totals/by_bot. Summary Chung + bot view: 6 ô Input/Cache/Output/
+  Request/Gọi tool/Chi phí (hint TB/request); group view giữ Lượt.
+  Giới hạn dữ liệu cũ: room row bot con trước thay đổi này không có
+  tool_call_count nên phần nội bộ đếm 0 — không bịa số. Daemon đang chạy
+  backend cũ: API chưa có tool_calls cho tới khi restart serve.
+
+
+- Chuẩn hoá cỡ chữ overview theo thang Chat (2026-10-17): sidebar nav tên 0.94rem reading / meta 0.72rem; nội dung gốc reading 1rem, summary value 1.5rem; chỉ CSS overview.css, không chạm Trace/kit.
+
+
+- Một màn duy nhất theo prototype `index-compact.html` (số prototype là
+  MOCK, chỉ lấy DNA trình bày): sidebar là entity selector
+  (Chung / theo bot / theo group bot), nội dung thay theo thực thể.
+- Mới: `pages/dashboard/overview.js` (snapshot song song traces paged +
+  stats + bots + sessions; aggregates thuần export để test:
+  `aggregateOverview/ByBot/Groups/Models`, `timelineForBot/ForGroup`,
+  `aggregateGroupBots`; 3 view Chung/bot/group; sidebar render vào
+  `#overview-nav`; click trace row → deep link `?session=&turn=#trace` qua
+  `location.assign`) + `pages/dashboard/overview.css` (scoped `#overview`,
+  chỉ token Thyca).
+- `dashboard.html`: 3 section usage/request/cost → 1 section `#overview`
+  (trace-head + period + `#overview-content`); GIỮ section `#trace` chi
+  tiết; bỏ 3 script entry cũ, thêm overview.js; giữ mọi CSS cũ cho Trace.
+- `dashboard.js`: 2 trạng thái overview/trace; hash legacy về overview
+  (strip hash + params); back Trace → overview.
+- Model dữ liệu: DM tính vào bot sở hữu (không vào group); group gom theo
+  đúng session group thật (sessionMap kind, fallback row session_kind);
+  unknown bucket chỉ hiện ở Tổng quan; latency turn chỉ gán cho actor
+  (không double-count); avatar = botMark/botMarkGroup idle, unknown = slot
+  trống. Không đổi backend, không đổi Trace detail.
+- Modules cũ (usage.js/request.js/cost*.js) giữ nguyên làm thư viện + test
+  logic giữ nguyên; chỉ cập nhật test khóa markup dashboard.html/switcher.
+- Kiểm chứng: aggregates unit mới, boot switcher 2-state, full suite xanh
+  (dưới).
 
 ## Phase sau (mở — một số điểm đã chốt hướng, chưa triển khai)
 
@@ -469,3 +664,21 @@ Metadata end-to-end (đi đúng đường v6/v7):
 - Task mở/giao việc (quyết định đã chốt, không thuộc phase 1A): bất kỳ bot
   nào cũng mở được task (hệ thống sinh id), công bố id trong phòng; bot mở
   tạm điều phối và chỉ điều phối/user đóng task chung.
+
+## Đối chiếu đóng backend đã chốt (2026-10-19)
+
+- Hai mục "Phase sau" trong file này là bản cũ/trùng: gỡ related,
+  extractor task/habit, habit sweep + aggregation, `<memory_tasks>` vào
+  prompt, kênh dm/group, group context công khai và gia cố identity twin
+  đã triển khai ở Phase 1B–1F, 1D, 2A, 2B và các mục done ngày 2026-10-17
+  ở trên. Đọc các mục done làm căn cứ hiện hành.
+- Bổ sung nốt quy tắc đã chốt vào tool description: chỉ bot điều phối/
+  người mở task (hoặc user) mới đóng task (`memory_remember` +
+  `memory_update`). Memory kind mở thêm `checkpoint` (bắt buộc gắn task)
+  cho cơ chế bot chủ động checkpoint; extractor không tự sinh kind này.
+- Kiểm chứng tại cây hiện tại: full `uv run pytest -q` xanh; port mặc
+  định đã đổi sang 19502 (quyết định 2026-10-19) và daemon live trên
+  cổng này có `tool_calls` ở cả list và stats.
+- Còn mở duy nhất trong hướng này: công bố task id trong phòng + bot mở
+  tạm điều phối qua sự kiện phòng (draft `team-context`, chưa kích hoạt).
+  Plan giữ `in-progress`; commit chờ lệnh riêng.

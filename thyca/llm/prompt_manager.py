@@ -41,6 +41,8 @@ class PromptManager:
         if hot.recalled:
             parts.append(_section("recalled", hot.recalled))
         parts.append(_section("rules", self.rules_section()))
+        if hot.context_budget:
+            parts.append(_section("context_budget", hot.context_budget))
         return "\n".join(parts)
 
     def rules_section(self) -> str:

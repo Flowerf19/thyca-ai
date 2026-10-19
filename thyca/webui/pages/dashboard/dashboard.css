@@ -109,6 +109,14 @@
   font-variant-numeric: tabular-nums;
 }
 
+.request-bot-avatar {
+  --bot-avatar-size: 2.2rem;
+}
+
+.request-model-head:has(> .request-bot-avatar) {
+  align-items: center;
+}
+
 .request-model-bar {
   display: block;
   height: 0.55rem;

@@ -83,6 +83,9 @@ class ActiveSnapshot:
     # Post-compaction memory hits (CBE-4): bounded lines re-injected on
     # the first turn after a compaction. Empty otherwise.
     recalled: str = ""
+    # Ephemeral per-turn context budget signal computed by AgentLoop
+    # (used/context state/checkpoint freshness). Empty unless wired.
+    context_budget: str = ""
 
 
 class ActiveMemory:

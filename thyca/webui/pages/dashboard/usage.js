@@ -1,4 +1,6 @@
 import { getJson } from "../../shared/js/http.js";
+import { botMark } from "../../shared/js/bot-avatar.js";
+import { tintVarFor } from "../chat/team-data.js";
 import { aggregateUsage, completeDays, rollingRange, splitPromptTokens, traceRangeUrl } from "../../shared/js/analytics-data.js";
 import { knownTokenTotal, modelTokens, shareLabel, shareRatio } from "./cost-data.js";
 import { drawBarChart } from "../../shared/js/bar-chart.js";
@@ -15,6 +17,7 @@ const el = {
   range: document.querySelector("#usage-period"),
   status: document.querySelector("#usage-status"),
   models: document.querySelector("#usage-models"),
+  bots: document.querySelector("#usage-bots"),
   legend: [...document.querySelectorAll(".usage-legend span")],
   units: [...document.querySelectorAll(".usage-toggle button")],
 };
@@ -145,6 +148,154 @@ function renderModels() {
   list.className = "request-model-chart";
   list.replaceChildren(...rows.map((model) => modelTokenEntry(model, knownTokenTotal(rows))));
   el.models.replaceChildren(list);
+  renderBots();
+}
+
+/* Token per bot from the same loaded trace snapshot — no extra request.
+   Each row prefers its bot_breakdown (per-bot requests/tokens); rows
+   without a breakdown fall back to bot_id + the row's own numbers, like
+   aggregateBotCost. Turns count participations (one breakdown entry =
+   one participating turn). Sorted tokens desc, ties by name/id. */
+let botRoster = null;
+
+async function loadBotRoster() {
+  if (botRoster) return botRoster;
+  botRoster = new Map();
+  try {
+    const payload = await getJson("/api/bots");
+    const list = Array.isArray(payload) ? payload : payload?.bots;
+    for (const bot of Array.isArray(list) ? list : []) {
+      if (bot && typeof bot.id === "string" && bot.id) botRoster.set(bot.id, bot);
+    }
+  } catch {
+    // Registry unavailable: ids render as-is.
+  }
+  return botRoster;
+}
+
+function isUnattributedBot(botId, roster) {
+  return !botId || (botId === "unknown" && !roster?.has(botId));
+}
+
+function botTokenName(botId, roster) {
+  if (isUnattributedBot(botId, roster)) return "chưa gắn bot";
+  const bot = roster?.get(botId);
+  const name = bot && typeof bot.name === "string" && bot.name ? bot.name : "";
+  return name || botId;
+}
+
+function aggregateBotTokens(traces) {
+  const byBot = new Map();
+  for (const row of Array.isArray(traces) ? traces : []) {
+    const breakdown = Array.isArray(row?.bot_breakdown)
+      ? row.bot_breakdown.filter((entry) => entry && typeof entry === "object")
+      : [];
+    const parts = breakdown.length
+      ? breakdown.map((entry) => ({
+          botId: typeof entry.bot_id === "string" ? entry.bot_id : "",
+          requests: entry.requests,
+          prompt_tokens: entry.prompt_tokens,
+          cached_tokens: entry.cached_tokens,
+          completion_tokens: entry.completion_tokens,
+        }))
+      : [{
+          botId: typeof row?.bot_id === "string" ? row.bot_id : "",
+          requests: row?.requests,
+          prompt_tokens: row?.prompt_tokens,
+          cached_tokens: row?.cached_tokens,
+          completion_tokens: row?.completion_tokens,
+        }];
+    for (const part of parts) {
+      const key = part.botId;
+      const current = byBot.get(key)
+        || { bot_id: key, turns: 0, requests: 0, prompt_tokens: 0, cached_tokens: 0, completion_tokens: 0 };
+      current.turns += 1;
+      current.requests += Number(part.requests) || 0;
+      current.prompt_tokens += Number(part.prompt_tokens) || 0;
+      current.cached_tokens += Number(part.cached_tokens) || 0;
+      current.completion_tokens += Number(part.completion_tokens) || 0;
+      byBot.set(key, current);
+    }
+  }
+  return [...byBot.values()].sort((a, b) => modelTokens(b) - modelTokens(a)
+    || String(a.bot_id || "").localeCompare(String(b.bot_id || ""), "vi"));
+}
+
+export { aggregateBotTokens, botTokenEntry };
+
+function botTokenEntry(bot, denominator, roster) {
+  const botId = bot.bot_id || "";
+  const unattributed = isUnattributedBot(botId, roster);
+  const tokens = modelTokens(bot);
+  const item = document.createElement("li");
+  item.className = "request-model-row";
+  const head = document.createElement("div");
+  head.className = "request-model-head";
+  const avatar = document.createElement("span");
+  avatar.className = "bot-avatar-slot request-bot-avatar";
+  avatar.setAttribute("aria-hidden", "true");
+  if (!unattributed) {
+    avatar.dataset.botId = botId;
+    avatar.style.setProperty("--team-tint", tintVarFor(botId, ""));
+    const card = roster?.get(botId);
+    avatar.innerHTML = botMark(card || { id: botId }, { state: "idle" });
+  }
+  const name = document.createElement("span");
+  name.className = "request-model-name";
+  name.dataset.botId = unattributed ? "" : botId;
+  name.textContent = botTokenName(botId, roster);
+  const amount = document.createElement("span");
+  amount.className = "request-model-count";
+  amount.textContent = `${formatInteger(tokens)} token`;
+  const share = document.createElement("span");
+  share.className = "request-model-share";
+  share.textContent = shareLabel(tokens, denominator);
+  const bar = document.createElement("span");
+  bar.className = "request-model-bar";
+  bar.setAttribute("aria-hidden", "true");
+  const fill = document.createElement("span");
+  fill.className = "request-model-fill";
+  fill.style.width = shareRatio(tokens, denominator) ?? "0%";
+  bar.append(fill);
+  head.append(avatar, name, amount, share);
+  item.append(head, bar);
+  const meta = document.createElement("p");
+  meta.className = "journal-meta";
+  const calls = document.createElement("span");
+  calls.textContent = `${formatInteger(bot.requests)} lần gọi model`;
+  meta.append(calls);
+  const { input, cache } = splitPromptTokens(bot.prompt_tokens, bot.cached_tokens);
+  const output = bot.completion_tokens;
+  for (const [label, value] of [["Đầu vào", input], ["Cache", cache], ["Đầu ra", output]]) {
+    const token = document.createElement("span");
+    token.textContent = `${label} ${formatCompact(value)} token`;
+    meta.append(token);
+  }
+  meta.title = `Đầu vào ${formatInteger(input)} token · Cache ${formatInteger(cache)} token · Đầu ra ${formatInteger(output)} token`;
+  item.append(meta);
+  return item;
+}
+
+function renderBots() {
+  if (!el.bots) return;
+  const paint = (roster) => {
+    const rows = aggregateBotTokens(payload?.traces).filter((bot) => modelTokens(bot) > 0);
+    const list = document.createElement("ul");
+    list.className = "request-model-chart";
+    list.replaceChildren(...rows.map((bot) => botTokenEntry(bot, knownTokenTotal(rows), roster)));
+    el.bots.replaceChildren(list);
+    if (!rows.length) {
+      const empty = document.createElement("p");
+      empty.className = "screen-note";
+      empty.textContent = "Chưa có token nào trong khoảng này.";
+      el.bots.append(empty);
+    }
+  };
+  paint(botRoster);
+  void loadBotRoster().then((roster) => {
+    if (!el.bots?.isConnected) return;
+    paint(roster);
+  });
 }
 
 function setStrong(root, value, unitText) {

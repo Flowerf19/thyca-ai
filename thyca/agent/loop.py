@@ -2,16 +2,18 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from dataclasses import replace
 
 from thyca.core.protocol import Message, estimate_tokens as _chars_to_tokens
 from thyca.llm.pricing import cost_for
 from thyca.llm.prompt_manager import PromptManager
 from thyca.memory.active import ActiveSnapshot
-from thyca.sessions import SessionManager, calibration_factor
+from thyca.sessions import SessionManager, calibration_factor, context_usage
 
 from .act import Act
 from .assemble import Assemble
 from .compacting import Summarizer, compact_with_llm
+from .context_budget import checkpoint_state, format_context_budget
 from .events import EventSink, TurnEvent, emit_event
 from .observe import Observe
 from .shrink import BACKSTOP_RATIO, estimate_wire_tokens, shrink_stage_messages
@@ -91,6 +93,78 @@ class AgentLoop:
             return 0
         return _chars_to_tokens(json.dumps(self._tools, ensure_ascii=False))
 
+    def _tool_names(self) -> set[str] | None:
+        # None means the caller supplied no schema list (unit wiring);
+        # production paths always pass the turn's filtered schemas.
+        if self._tools is None:
+            return None
+        names: set[str] = set()
+        for tool in self._tools:
+            name: object = None
+            if isinstance(tool, dict):
+                function = tool.get("function")
+                if isinstance(function, dict):
+                    name = function.get("name")
+                if not isinstance(name, str):
+                    name = tool.get("name")
+            else:
+                name = getattr(tool, "name", None)
+            if isinstance(name, str) and name:
+                names.add(name)
+        return names
+
+    def _with_context_budget(
+        self, hot: object, *, pending_tokens: int, calibration: float
+    ) -> object:
+        # The signal is computed on the post-compaction transcript so the
+        # bot sees the budget it actually starts this turn with. The
+        # baseline snapshot (signal cleared) sizes the hot prompt, so the
+        # estimate matches the compactor/guard inputs.
+        if not isinstance(hot, ActiveSnapshot) or self._context_tokens is None:
+            return hot
+        baseline = replace(hot, context_budget="")
+        messages = list(self._sessions.current.messages)
+        baseline_hot = self._hot_tokens(baseline)
+        tools_tokens = self._tools_tokens()
+        tool_names = self._tool_names()
+        can_read = tool_names is None or bool(
+            tool_names & {"memory_search", "memory_recent", "memory_get", "memory_tasks"}
+        )
+        can_write = tool_names is None or "memory_remember" in tool_names
+
+        def _usage(signal_text: str) -> dict:
+            signal_tokens = (
+                _chars_to_tokens(f"<context_budget>\n{signal_text}\n</context_budget>")
+                if signal_text
+                else 0
+            )
+            return context_usage(
+                messages,
+                self._context_tokens,
+                hot_tokens=baseline_hot + signal_tokens,
+                tools_tokens=tools_tokens,
+                pending_user_tokens=pending_tokens,
+                calibration=calibration,
+            )
+
+        def _signal(usage: dict) -> str:
+            return format_context_budget(
+                usage,
+                checkpoint=checkpoint_state(
+                    messages,
+                    context_tokens=self._context_tokens,
+                    current_ratio=float(usage.get("ratio") or 0.0),
+                    calibration=calibration,
+                ),
+                can_read=can_read,
+                can_write=can_write,
+            )
+
+        # Two passes: the second estimate prices the signal section
+        # itself, so the displayed state matches the assembled payload.
+        first = _signal(_usage(""))
+        return replace(baseline, context_budget=_signal(_usage(first)))
+
     async def run(
         self,
         user_msg: str,
@@ -138,6 +212,9 @@ class AgentLoop:
                 pending_user_tokens=pending_tokens,
                 calibration=calibration,
             )
+        hot = self._with_context_budget(
+            hot, pending_tokens=pending_tokens, calibration=calibration
+        )
         stage = Stage(
             messages=list(self._sessions.current.messages),
             hot=hot,

@@ -735,13 +735,58 @@ async function resolveMain(botId, token) {
   }
 }
 
+/* Live turn activity, keyed by bot id: the description area of the bot
+   card shows it while the bot works and clears when the turn ends. */
+const liveActivity = new Map(); // botId -> { done: string[], tools: Map<callKey, name> }
+
+function liveDescription(entry, state) {
+  if (!entry) return "";
+  const done = entry.done || [];
+  const active = [...(entry.tools?.values() || [])];
+  let text = state === "thinking" ? "đang nghĩ…" : "đang viết…";
+  if (active.length) text += ` · đang gọi ${active.join(", ")}`;
+  else if (done.length) text += ` · đã gọi ${done.join(", ")}`;
+  return text;
+}
+
 /* Push a live turn state (thinking/running/done/error) onto a bot's row —
-   the chat card is the source of truth; /api/bots only refreshes on load. */
+   the chat card is the source of truth; /api/bots only refreshes on load.
+   The turn ending (done/error) clears the live activity so the static
+   description returns. */
 export function teamBotLive(botId, state) {
   const bot = bots.find((item) => item.id === String(botId || ""));
   if (!bot) return;
+  if (state === "done" || state === "error") {
+    liveActivity.delete(bot.id);
+  } else if (state === "thinking" || state === "running") {
+    if (!liveActivity.has(bot.id)) {
+      liveActivity.set(bot.id, { done: [], tools: new Map() });
+    }
+  }
   if (bot.agentStatus?.state === state) return;
   bot.agentStatus = { ...(bot.agentStatus || {}), state };
+  render();
+}
+
+/* Live tool call record: started=true adds the call to the card's activity
+   line, finished moves it to the completed list (the turn ending clears
+   both). Same event stream the settled transcript folds into usage rows. */
+export function teamBotTool(botId, callKey, name, active) {
+  const bot = bots.find((item) => item.id === String(botId || ""));
+  if (!bot) return;
+  let entry = liveActivity.get(bot.id);
+  if (!entry) {
+    entry = { done: [], tools: new Map() };
+    liveActivity.set(bot.id, entry);
+  }
+  const toolName = String(name || "tool");
+  if (active) {
+    entry.tools.set(callKey, toolName);
+  } else {
+    const finished = entry.tools.get(callKey) || toolName;
+    entry.tools.delete(callKey);
+    if (!entry.done.includes(finished)) entry.done.push(finished);
+  }
   render();
 }
 
@@ -854,6 +899,9 @@ function render() {
     const main = findMainSession(sessionsNow, bot.id, rememberedId);
     const description = typeof bot.description === "string"
       ? bot.description.trim() : "";
+    // TURN-CURATE: live activity (đang nghĩ… + tool calls) replaces the
+    // static description while the bot works; it clears when the turn ends.
+    const liveLine = liveDescription(liveActivity.get(bot.id), bot.agentStatus?.state);
     const sessions = unifiedSessionsForBot(sessionsNow, bot.id)
       .filter((session) => !main || String(session.id) !== String(main.id))
       .filter((session) => !isSharedSession(session));
@@ -861,7 +909,7 @@ function render() {
     const page = Math.min(pageByBot.get(bot.id) || 0, Math.max(0, pageCount - 1));
     const pageSessions = sessions.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
     const bodyFingerprint = JSON.stringify([
-      description, mainError, hub.state.activeId, page, pageCount,
+      description, liveLine, mainError, hub.state.activeId, page, pageCount,
       pageSessions.map((session) => [
         session.id, session.title, session.updated_at, session.turns,
         roomParticipantNames(session, bots),
@@ -879,10 +927,11 @@ function render() {
       const oldPager = oldChildren.find((child) =>
         child.classList?.contains("team-sheet-pager"));
       const content = [];
-      if (description) {
+      if (description || liveLine) {
         const paragraph = oldDescription || document.createElement("p");
         paragraph.className = "team-bot-description";
-        if (paragraph.textContent !== description) paragraph.textContent = description;
+        const text = liveLine || description;
+        if (paragraph.textContent !== text) paragraph.textContent = text;
         content.push(paragraph);
       }
       if (mainError) {

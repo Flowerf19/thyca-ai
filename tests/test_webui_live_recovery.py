@@ -242,25 +242,27 @@ def recovery() -> dict:
     return json.loads(result.stdout)
 
 
-def test_running_polls_render_saved_reasoning_before_stop(recovery: dict) -> None:
+def test_running_polls_keep_live_card_without_reasoning_notes(recovery: dict) -> None:
     assert recovery["initial"]["followFailures"] == 1
     assert recovery["initial"]["running"] is True
     assert recovery["initial"]["reasoning"] == ""
+    # Reasoning is no longer rendered in the live card (it lives on the
+    # sidebar bot card): polls keep the minimal card mounted.
     assert recovery["firstPoll"]["running"] is True
-    assert "saved first round" in recovery["firstPoll"]["reasoning"]
+    assert recovery["firstPoll"]["reasoning"] == ""
     assert recovery["secondPoll"]["running"] is True
-    assert "saved first round" in recovery["secondPoll"]["reasoning"]
-    assert "saved second round" in recovery["secondPoll"]["reasoning"]
+    assert recovery["secondPoll"]["reasoning"] == ""
 
 
-def test_fallback_keeps_live_card_and_resumes_clock_on_return(recovery: dict) -> None:
+def test_fallback_keeps_live_card_and_stays_clockless(recovery: dict) -> None:
     assert recovery["initial"]["tracked"] is True
     assert recovery["secondPoll"]["tracked"] is True
     assert recovery["away"] == {"connected": False, "timers": 0}
     assert recovery["returned"]["sameCard"] is True
     assert recovery["returned"]["connected"] is True
-    assert recovery["returned"]["after"] != recovery["returned"]["before"]
-    assert "4 giây" in recovery["returned"]["after"]
+    # The elapsed "đang suy nghĩ · Xs" clock moved to the sidebar card too.
+    assert recovery["returned"]["before"] == ""
+    assert recovery["returned"]["after"] == ""
 
 
 def test_terminal_poll_renders_transcript_and_releases_live_card(recovery: dict) -> None:

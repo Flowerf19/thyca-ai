@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
+from thyca.memory.archive_store import decode_bots
 from thyca.memory.chunk import Chunk
 from thyca.memory.heading import format_ts, is_expired, utc_now
 
@@ -32,6 +33,11 @@ class LeafStat:
     is_today: bool = False
     search_count: int = 0
     last_search_at: str | None = None
+    bots: tuple[str, ...] | None = None
+    kind: str | None = None
+    task: str | None = None
+    status: str | None = None
+    habit: str | None = None
 
 
 @dataclass(frozen=True)
@@ -51,6 +57,9 @@ class MemoryStatsResult:
     suggest_removal: list[LeafStat] = field(default_factory=list)
     expiring: list[LeafStat] = field(default_factory=list)
     files: list[CanonicalFile] = field(default_factory=list)
+    # Echo the applied owner filter, so a client cannot label global data
+    # as scoped when a server/proxy ignores the query parameter.
+    bot_id: str | None = None
 
 
 def build_stats(
@@ -59,6 +68,7 @@ def build_stats(
     today_chunks: list[Chunk],
     files: list[CanonicalFile] | None,
     now: datetime | None = None,
+    bot_id: str | None = None,
 ) -> MemoryStatsResult:
     """Assemble a stats report from archive maps plus unindexed inputs."""
     now_ts = format_ts(utc_now(now))
@@ -70,6 +80,19 @@ def build_stats(
         today=archive.day(now),
         now_ts=now_ts,
         files=files,
+        bot_id=bot_id,
+    )
+
+
+def _belongs_to(owners: tuple[str, ...] | None, bot_id: str | None) -> bool:
+    """Owner selection, not a claim about which bot used a memory.
+
+    The overall view includes every visible leaf once. Individual views
+    exclude team/unassigned entries even when shared data is readable by
+    that bot. Never infer ownership from titles, body text, or origin.
+    """
+    return bot_id is None or (
+        owners is not None and "team" not in owners and bot_id in owners
     )
 
 
@@ -85,13 +108,18 @@ class MemoryStats:
         today: str,
         now_ts: str,
         files: list[CanonicalFile] | None = None,
+        bot_id: str | None = None,
     ) -> MemoryStatsResult:
         by_id: dict[str, LeafStat] = {}
         for row in archived:
+            if not _belongs_to(decode_bots(row.get("bots")), bot_id):
+                continue
             stat = _from_archived(row, gets, searches, today)
             if stat is not None:
                 by_id[stat.chunk_id] = stat
         for chunk in today_chunks:
+            if not _belongs_to(chunk.bots, bot_id):
+                continue
             if chunk.chunk_id in by_id:
                 continue
             if is_expired(chunk.expires_at, _parse_ts(now_ts)):
@@ -118,7 +146,8 @@ class MemoryStats:
             leaves=leaves,
             suggest_removal=suggest,
             expiring=expiring_soon(leaves, now_ts),
-            files=list(files or ()),
+            files=list(files or ()) if bot_id is None else [],
+            bot_id=bot_id,
         )
 
 
@@ -150,6 +179,11 @@ def _from_archived(
         last_search_at=last_search,
         expires_at=str(expires) if expires else None,
         is_today=timeline_day == today,
+        bots=decode_bots(row.get("bots")),
+        kind=row.get("kind"),
+        task=row.get("task"),
+        status=row.get("status"),
+        habit=row.get("habit"),
     )
 
 
@@ -175,6 +209,11 @@ def _from_today(
         last_search_at=last_search,
         expires_at=chunk.expires_at,
         is_today=True,
+        bots=chunk.bots,
+        kind=chunk.kind,
+        task=chunk.task,
+        status=chunk.status,
+        habit=chunk.habit,
     )
 
 

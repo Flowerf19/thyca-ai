@@ -50,6 +50,9 @@ class OpenTask:
     room: str = ""
     waiting_on: str | None = None
     key: str = ""
+    # Explicit memory-task link (task-<8hex>) when the runtime row was
+    # created with one. Never inferred from the title.
+    memory_task_id: str | None = None
 
     def index_line(self) -> str:
         line = f"- {self.task} · {self.status} · {self.room or '-'}"
@@ -212,10 +215,12 @@ def derive_open_tasks(
                     or ack_payload.get("task_key")
                 )
                 linked = linked if isinstance(linked, str) and linked else call.id
+                work_link = args.get("memory_task_id")
+                work_link = work_link if isinstance(work_link, str) else None
                 open_task(
                     f"call:{call.id}",
                     OpenTask(task=_clip(title), status="open", room=room,
-                             key=linked),
+                             key=linked, memory_task_id=work_link),
                     alias=(call.id, linked),
                 )
                 continue

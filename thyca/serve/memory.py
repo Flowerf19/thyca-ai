@@ -6,10 +6,21 @@ from thyca.memory.candidates import CandidateError, CandidateQueue
 from thyca.memory.facade import MemoryFacade
 
 
-def candidates_list(facade: MemoryFacade) -> tuple[int, dict]:
-    """``GET /api/memory/candidates`` — pending team-memory proposals."""
+def candidates_list(
+    facade: MemoryFacade, *, bot_id: str | None = None,
+) -> tuple[int, dict]:
+    """``GET /api/memory/candidates`` — pending proposals, optionally owner-scoped."""
     try:
         queue = CandidateQueue(facade.thyca_dir)
+        candidates = queue.list_pending()
+        if bot_id is not None:
+            candidates = [candidate for candidate in candidates if candidate.bot_id == bot_id]
+        # Batch previews: one scan per day file instead of one full-file
+        # parse per candidate (the per-session path re-parsed the same
+        # files for every pending row, making the list O(n x file size)).
+        previews = facade.candidate_previews(
+            [candidate.session_id for candidate in candidates]
+        )
         items = [
             {
                 "id": cand.id,
@@ -19,15 +30,15 @@ def candidates_list(facade: MemoryFacade) -> tuple[int, dict]:
                 "created_at": cand.created_at,
                 "decided_by": cand.decided_by,
                 "decided_at": cand.decided_at,
-                **facade.candidate_preview(cand.session_id),
+                **previews.get(cand.session_id, {"title": "", "text": ""}),
             }
-            for cand in queue.list_pending()
+            for cand in candidates
         ]
     except CandidateError:
         return 503, {"error": "candidates unavailable"}
     except Exception:
         return 503, {"error": "candidates unavailable"}
-    return 200, {"candidates": items}
+    return 200, {"bot_id": bot_id, "candidates": items}
 
 
 def candidate_decide(facade: MemoryFacade, candidate_id: str, approved: bool, decided_by: str) -> tuple[int, dict]:

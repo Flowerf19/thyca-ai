@@ -1,5 +1,10 @@
 import { cleanText, splitMemoryHeading } from "./format.js";
 
+export function memoryScopeMatches(payload, botId) {
+  if (botId) return payload?.bot_id === botId;
+  return payload?.bot_id === null || payload?.bot_id === undefined;
+}
+
 function memoryFromLeaf(leaf) {
   const heading = splitMemoryHeading(leaf);
   return {

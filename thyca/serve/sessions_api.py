@@ -14,6 +14,7 @@ import re
 import sys
 import traceback
 from typing import TYPE_CHECKING
+from urllib.parse import parse_qs
 
 from thyca.bots.registry import RegistryError
 
@@ -145,6 +146,54 @@ def bot_dm(handler, app: ChatApp | None, bot_id: str) -> None:
         handler._json(404, {"error": str(exc)})
     except Exception as exc:
         _sessions_error(handler, exc)
+
+
+def bot_operations(
+    handler, app: ChatApp | None, bot_id: str, session_id: str, query: str,
+) -> None:
+    """Read one bot's operational view in one exact room."""
+    from thyca.app.turn_options import InvalidTurnOption, validate_turn_options
+    from thyca.bots.timeline import TimelineError
+    from thyca.sessions import SessionCorrupt, SessionError, SessionNotFound
+
+    if _missing_chat(handler, app):
+        return
+    try:
+        params = parse_qs(
+            query, keep_blank_values=True, strict_parsing=True, max_num_fields=2,
+        )
+    except ValueError:
+        handler._json(400, {"error": "invalid query"})
+        return
+    if set(params) - {"model", "effort"} or any(
+        len(values) != 1 for values in params.values()
+    ):
+        handler._json(400, {"error": "invalid query"})
+        return
+    try:
+        model, effort, _ = validate_turn_options({
+            key: values[0] for key, values in params.items()
+        })
+    except InvalidTurnOption:
+        handler._json(400, {"error": "invalid model or effort"})
+        return
+    try:
+        payload = app.bot_operations(
+            session_id, bot_id, model=model, effort=effort,
+        )
+    except InvalidTurnOption:
+        handler._json(400, {"error": "invalid model or effort"})
+    except RegistryError:
+        handler._json(404, {"error": "bot or room not found"})
+    except SessionNotFound:
+        handler._json(404, {"error": "session not found"})
+    except (TimelineError, FileNotFoundError, SessionCorrupt, SessionError, OSError):
+        handler._json(503, {"error": "bot information unavailable"})
+    except Exception:
+        traceback.print_exc(file=sys.stderr)
+        handler._json(503, {"error": "bot information unavailable"})
+    else:
+        handler._json(200, payload)
 
 
 def session_turn(handler, app: ChatApp | None, session_id: str) -> None:
@@ -347,3 +396,40 @@ def session_delete(handler, app: ChatApp | None, path: str) -> None:
         handler._json(mapped[0], {"error": mapped[1]})
     else:
         handler._json(200, {"ok": True, "id": match.group(1)})
+
+
+_PRIVATE_FOLLOWUP_RE = re.compile(
+    rf"^/api/sessions/({SESSION_ID_PATTERN})/private-followup$")
+
+
+def session_private_followup(handler, app, session_id: str) -> None:
+    """POST /api/sessions/<dm>/private-followup — native consent card.
+
+    Body: {pending_id, revision, choice: approve|keep_private|cancel}.
+    All real work lives in ``PrivateFollowupService`` — this handler only
+    parses safe types and maps typed service errors to fixed codes."""
+    if _missing_chat(handler, app):
+        return
+    from thyca.app.private_followups import (
+        ConsentError,
+        PrivateFollowupService,
+    )
+
+    def run(payload: dict) -> None:
+        try:
+            out = PrivateFollowupService(app).decide(
+                session_id,
+                payload.get("pending_id"),
+                payload.get("revision"),
+                payload.get("choice"),
+            )
+        except ConsentError as exc:
+            handler._json(exc.status, {"error": str(exc)})
+            return
+        except Exception:
+            traceback.print_exc(file=sys.stderr)
+            handler._json(503, {"error": "chat unavailable"})
+            return
+        handler._json(200, out)
+
+    _with_json(handler, run)

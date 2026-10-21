@@ -1,8 +1,7 @@
-import { deleteJson, getJson, patchJson } from "../../shared/js/http.js";
+import { getJson } from "../../shared/js/http.js";
 import { cleanText, formatSessionTime } from "../../shared/js/format.js";
-import { messageOf } from "../../shared/js/status.js";
 
-// Sidebar session list: pager, rows, rename/delete dialogs. Receives the
+// Sidebar session list: pager and rows. Receives the
 // entry-owned bindings (state/el plus entry functions) via init — never
 // imports app.js back.
 let sidebarDeps = null;
@@ -61,7 +60,7 @@ function syncPager(pager, page, pages) {
   pager.label.textContent = `${page} / ${pages}`;
 }
 
-// After create/rename/open: flip to the page that holds this session.
+// After create/open: flip to the page that holds this session.
 export function revealSession(id) {
   if (!id) return;
   const index = sidebarDeps.state.sessions.findIndex((session) => String(session.id) === String(id));
@@ -81,18 +80,6 @@ export function rememberActiveSession(id) {
   }
 }
 
-// Row action: a word, not a glyph. What it says and which row it belongs to
-// both live in the label; the look is .session-action in shared/css/kit.css.
-function rowAction(className, label, text, onClick) {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = className;
-  button.textContent = text;
-  button.setAttribute("aria-label", label);
-  button.addEventListener("click", onClick);
-  return button;
-}
-
 // Mobile pick pattern: a tapped row reveals its conversation (boot-time and
 // retry loads must NOT exit picking — only real taps do).
 function exitPickingOnTap() {
@@ -102,8 +89,7 @@ function exitPickingOnTap() {
 }
 
 function sessionButton(session) {
-  // Buttons cannot nest, so the row is a button and the two actions sit next
-  // to it inside one positioned wrapper.
+  // The row is a single navigation button.
   const row = document.createElement("div");
   row.className = "session-row";
   const button = document.createElement("button");
@@ -131,21 +117,7 @@ function sessionButton(session) {
     void sidebarDeps.loadSession(button.dataset.sessionId);
   });
 
-  const title = cleanText(session.title, "Phiên trống");
-  const actions = document.createElement("span");
-  actions.className = "session-actions";
-  actions.append(
-    rowAction(
-      "session-action",
-      `Đặt tên cho phiên ${title}`,
-      "Đổi tên",
-      () => openRename(session),
-    ),
-    rowAction("session-action is-delete", `Xóa phiên ${title}`, "Xóa", () =>
-      openDelete(session),
-    ),
-  );
-  row.append(button, actions);
+  row.append(button);
   return row;
 }
 
@@ -169,7 +141,7 @@ export function renderSessions() {
     return;
   }
   const pages = sessionsPageCount(state.sessions.length);
-  state.sessionPage = clampPage(state.sessionPage, pages); // clamp after deletes
+  state.sessionPage = clampPage(state.sessionPage, pages); // clamp after list changes
   const start = (state.sessionPage - 1) * SESSIONS_PAGE_SIZE;
   el.sessionList.replaceChildren(
     ...state.sessions.slice(start, start + SESSIONS_PAGE_SIZE).map(sessionButton),
@@ -185,74 +157,4 @@ export async function refreshSessions(revealId = "") {
   if (revealId) revealSession(revealId);
   renderSessions();
   return payload;
-}
-
-// Titles are the user's own text: it is stored as written and returned to the
-// row verbatim, so the dialog reopens showing exactly what was saved.
-export function openRename(session) {
-  const { el } = sidebarDeps;
-  const id = String(session.id || "");
-  if (!id) return;
-  el.renameId.value = id;
-  el.renameName.value = cleanText(session.title, "");
-  el.renameStatus.textContent = "";
-  el.renameDialog.showModal();
-  el.renameName.select();
-}
-
-export async function submitRename() {
-  const { state, el } = sidebarDeps;
-  // One submission at a time: a double Enter would send the same title twice.
-  if (state.saving) return;
-  const id = el.renameId.value;
-  const title = el.renameName.value.trim();
-  if (!id || !title) {
-    el.renameStatus.textContent = "Tên phiên không được để trống.";
-    return;
-  }
-  state.saving = true;
-  el.renameStatus.textContent = "Đang lưu…";
-  try {
-    await patchJson(`/api/sessions/${encodeURIComponent(id)}`, { title });
-  } catch (error) {
-    el.renameStatus.textContent = messageOf(error, "Không đổi được tên phiên.");
-    return;
-  } finally {
-    state.saving = false;
-  }
-  el.renameDialog.close();
-  if (id === state.activeId) sidebarDeps.setChatTitle(title);
-  await refreshSessions(id); // renamed row may sit on another page
-  sidebarDeps.onSessionsChanged?.();
-}
-
-export function openDelete(session) {
-  const { state, el } = sidebarDeps;
-  const id = String(session.id || "");
-  if (!id) return;
-  state.deleteId = id;
-  el.deleteNote.textContent = `“${cleanText(session.title, "Phiên trống")}” sẽ mất hẳn khỏi sổ. Những mẩu nhật ký đã ghi từ phiên này vẫn còn.`;
-  el.deleteStatus.textContent = "";
-  el.deleteDialog.showModal();
-}
-
-export async function submitDelete() {
-  const { state, el } = sidebarDeps;
-  if (state.saving) return;
-  const id = state.deleteId;
-  if (!id) return;
-  state.saving = true;
-  el.deleteStatus.textContent = "Đang xóa…";
-  try {
-    await deleteJson(`/api/sessions/${encodeURIComponent(id)}`);
-  } catch (error) {
-    el.deleteStatus.textContent = messageOf(error, "Không xóa được phiên.");
-    return;
-  } finally {
-    state.saving = false;
-  }
-  el.deleteDialog.close();
-  if (state.activeId === id) sidebarDeps.newSession();
-  await refreshSessions();
-  sidebarDeps.onSessionsChanged?.();
 }

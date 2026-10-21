@@ -1,13 +1,13 @@
 """Execute memories.js inline-edit concurrency with a minimal DOM harness.
 
-Mobile renders one editor copy per matching view section, so a mutation in
-flight must disable every rendered (and newly rendered) editor control, guard
-start/cancel, and clear only the submitted draft identity. Focus must land on
-the editor the user actually opened and return to its row action on cancel.
+Every category is rendered in the same scrollable layout on both breakpoints,
+so a mutation in flight must disable every editor copy, guard scope changes,
+and clear only the submitted draft identity. Focus follows the opened row.
 """
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -35,6 +35,7 @@ class Element {
     this.hidden = false;
     this.disabled = false;
     this.id = '';
+    this.style = { setProperty: () => {} };
     this.listeners = {};
     this.classList = {
       contains: name => this.className.split(' ').includes(name),
@@ -90,6 +91,7 @@ class Element {
   get textContent() { return this.text + this.children.map(node => node.textContent).join(''); }
   setAttribute(key, value) { this.attributes[key] = String(value); }
   getAttribute(key) { return this.attributes[key] ?? null; }
+  removeAttribute(key) { delete this.attributes[key]; }
   addEventListener(type, fn) { (this.listeners[type] ??= []).push(fn); }
   focus() { FOCUSED = this; }
   closest(selector) {
@@ -149,15 +151,28 @@ function collect(root, selector, includeSelf) {
 
 const forest = [];
 const mount = node => { node.root = true; forest.push(node); return node; };
+const documentListeners = {};
+globalThis.CustomEvent = class {
+  constructor(type, options = {}) { this.type = type; this.detail = options.detail; this.defaultPrevented = false; this.cancelable = options.cancelable; }
+  preventDefault() { if (this.cancelable) this.defaultPrevented = true; }
+};
 globalThis.document = {
   createElement: tag => new Element(tag),
   createElementNS: (_namespace, tag) => new Element(tag),
+  addEventListener(type, fn) { (documentListeners[type] ??= []).push(fn); },
+  dispatchEvent(event) { for (const fn of documentListeners[event.type] ?? []) fn(event); return !event.defaultPrevented; },
   querySelectorAll(selector) { return forest.flatMap(root => collect(root, selector, true)); },
   querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; },
 };
 
-const list = mount(new Element('ul'));
-list.id = 'memory-list';
+const workspace = mount(new Element('main'));
+workspace.id = 'memory-workspace';
+const titleNode = mount(new Element('h1'));
+titleNode.id = 'memory-scope-title';
+const descriptionNode = mount(new Element('p'));
+descriptionNode.id = 'memory-scope-description';
+const list = mount(new Element('div'));
+list.id = 'memory-sections';
 const empty = mount(new Element('p'));
 empty.id = 'memory-empty';
 const status = mount(new Element('p'));
@@ -169,9 +184,17 @@ const sections = ['overview', 'day', 'used-more', 'searched-more', 'used-less'].
   const body = new Element('div');
   body.className = 'memory-view-body';
   section.append(body);
-  mount(section);
+  list.append(section);
   return section;
 });
+const globalNav = mount(new Element('nav'));
+globalNav.id = 'memory-global-nav';
+const globalButton = new Element('button');
+globalButton.className = 'session-item';
+globalButton.dataset.memoryScope = '';
+globalNav.append(globalButton);
+const botNav = mount(new Element('nav'));
+botNav.id = 'memory-bot-list';
 const bar = mount(new Element('div'));
 bar.className = 'memory-search-bar';
 const cluster = new Element('div');
@@ -201,6 +224,23 @@ const media = {
   addEventListener(type, fn) { (this.listeners[type] ??= []).push(fn); },
 };
 globalThis.matchMedia = () => media;
+const bootScope = process.env.BOOT_SCOPE || '';
+globalThis.location = {
+  href: `http://localhost/memories.html${bootScope ? `?bot_id=${bootScope}` : ''}`,
+  pathname: '/memories.html',
+  search: bootScope ? `?bot_id=${bootScope}` : '',
+  hash: '',
+};
+globalThis.history = {
+  state: null,
+  replaceState(_state, _title, url) {
+    const next = new URL(url, location.href);
+    location.href = next.href;
+    location.pathname = next.pathname;
+    location.search = next.search;
+    location.hash = next.hash;
+  },
+};
 globalThis.ResizeObserver = class { observe() {} disconnect() {} unobserve() {} };
 globalThis.confirm = () => true;
 const settle = async () => {
@@ -209,10 +249,21 @@ const settle = async () => {
 
 // Transport and data helpers are behind hooks so each scenario can swap them
 // while the page module holds only the wrapper bindings.
-const hooks = { leaves: [], getJson: async () => ({}), postJson: async () => ({}) };
+const hooks = {
+  leaves: [],
+  getJson: async url => {
+    if (url === '/api/bots') return { bots: [{ id: 'coder', name: 'Coder' }] };
+    if (url.startsWith('/api/memory/stats?bot_id=')) {
+      const botId = new URL(url, location.href).searchParams.get('bot_id');
+      return { bot_id: botId, total: 0, leaves: [] };
+    }
+    return { bot_id: null, total: 0, leaves: [] };
+  },
+  postJson: async () => ({}),
+};
 const calls = { gets: [], posts: [] };
 const deps = {
-  getJson: async url => { calls.gets.push(url); return hooks.getJson(url); },
+  getJson: async (url, options) => { calls.gets.push(url); return hooks.getJson(url, options); },
   postJson: async (url, body) => { calls.posts.push({ url, body }); return hooks.postJson(url, body); },
   completeDays: rows => rows,
   rollingRange: () => [],
@@ -221,11 +272,24 @@ const deps = {
   formatDateTime: value => value,
   formatInteger: value => String(value),
   selectMemories: () => hooks.leaves, // every view shows every leaf
+  memoryScopeMatches: (payload, botId) => botId ? payload?.bot_id === botId : payload?.bot_id == null,
+  botMark: () => '',
+  botLookFor: () => ({ tint: 'accent' }),
+  ensureBotAvatarDefs: () => {},
+  createBotEnvelope: (_bot, header) => {
+    const node = new Element('div');
+    const viewport = new Element('div');
+    const paper = new Element('div');
+    viewport.append(paper);
+    node.append(header, viewport);
+    return { node, header, button: header.children[0], viewport, paper };
+  },
+  setBotEnvelopeOpen: () => {},
 };
 const source = fs.readFileSync('./thyca/webui/pages/memories/memories.js', 'utf8')
   .replace(/^import[\s\S]*?from .*?;\n/gm, '');
 const page = new Function(...Object.keys(deps), source + `
-  return { state, el, render, startEdit, cancelEdit, mutateMemory };
+  return { state, el, render, startEdit, cancelEdit, mutateMemory, selectScope, loadStats };
 `)(...Object.values(deps));
 
 const inSection = view => sections.find(section => section.dataset.view === view);
@@ -291,8 +355,8 @@ hooks.postJson = () => new Promise((resolve, reject) => { release = resolve; sce
 const saving = page.mutateMemory('/api/memory/update', { session_id: 's1', topic: 'T', summary: 'S' }, 'Đã cập nhật');
 await settle();
 
-// Resize across the breakpoint mid-mutation: the desktop re-render (day view)
-// must rebuild the single editor disabled, not live.
+// Resize across the breakpoint mid-mutation: the same category sections
+// remain rendered and every editor copy must stay disabled.
 media.matches = false;
 fire(viewButtons.find(button => button.dataset.view === 'day'), 'click');
 fire(media, 'change');
@@ -405,17 +469,138 @@ media.matches = false;
 fire(viewButtons.find(button => button.dataset.view === 'day'), 'click');
 fire(media, 'change');
 fire(page.el.list.querySelectorAll('.row-action')[0], 'click');
-const desktop = { tag: FOCUSED?.className, inList: FOCUSED?.closest('#memory-list') != null };
+const desktop = { tag: FOCUSED?.className, inList: FOCUSED?.closest('#memory-sections') != null };
 fire(page.el.list.querySelector('.memory-edit'), 'keydown', { key: 'Escape', isComposing: false });
 const desktopCancel = {
   isRowAction: FOCUSED?.classList.contains('row-action') ?? false,
-  inList: FOCUSED?.closest('#memory-list') != null,
+  inList: FOCUSED?.closest('#memory-sections') != null,
 };
 console.log(JSON.stringify({ opened, cancelled, desktop, desktopCancel }));
 """
 
 
-def _run_scenario(scenario: str) -> dict:
+_SCENARIO_SCOPE_RACE = r"""
+await settle();
+const requests = [];
+hooks.getJson = (url, options) => new Promise((resolve, reject) => {
+  requests.push({ url, signal: options?.signal, resolve, reject });
+});
+const draft = { id: 'm1', sessionId: 's1', topic: 'Draft', summary: 'Keep me' };
+await page.selectScope('coder');
+await settle();
+page.state.editing = draft;
+await page.selectScope('researcher');
+await settle();
+const beforeResolve = { urls: requests.map(request => request.url), abortedA: requests[0]?.signal?.aborted };
+requests[0].resolve({ bot_id: null, total: 900, leaves: [leaf] });
+requests[1].resolve({ bot_id: 'researcher', total: 2, leaves: [] });
+await settle();
+const afterResolve = {
+  scope: page.state.scopeId,
+  total: page.state.stats.total,
+  leaves: page.state.stats.leaves.length,
+  draftKept: page.state.editing === draft,
+  staleGlobalIgnored: !status.textContent.includes('không khớp') && page.state.stats.total === 2,
+};
+await page.selectScope('coder');
+await settle();
+await page.selectScope('researcher');
+await settle();
+requests[2].reject(new Error('stale scope failure'));
+requests[3].resolve({ bot_id: 'researcher', total: 3, leaves: [] });
+await settle();
+const staleErrorIgnored = page.state.stats.total === 3 && !status.textContent.includes('stale scope failure');
+page.state.pending = true;
+await page.selectScope('coder');
+const blocked = page.state.scopeId === 'researcher';
+page.state.pending = false;
+console.log(JSON.stringify({ beforeResolve, afterResolve, staleErrorIgnored, blocked }));
+""";
+
+_SCENARIO_INITIAL_SCOPE = r"""
+await settle();
+console.log(JSON.stringify({
+  scope: page.state.scopeId,
+  invalid: page.state.scopeInvalid,
+  total: page.state.stats.total ?? null,
+  leaves: page.state.stats.leaves.length,
+  chartCards: document.querySelectorAll('.memory-chart-card').length,
+  overviewCards: document.querySelectorAll('.memory-overview').length,
+  title: titleNode.textContent,
+  empty: empty.textContent,
+  status: status.textContent,
+  requests: calls.gets,
+  bots: page.state.bots.map(bot => bot.id),
+  search: location.search,
+}));
+""";
+
+_SCENARIO_SCOPE_ECHO = r"""
+await settle();
+const requests = [];
+hooks.getJson = (url, options) => new Promise((resolve, reject) => {
+  requests.push({ url, signal: options?.signal, resolve, reject });
+});
+await page.selectScope('coder');
+await settle();
+requests[0].resolve({ bot_id: null, total: 81, leaves: [leaf] });
+await settle();
+const globalMismatchRejected = page.state.stats.leaves.length === 0
+  && page.state.stats.total === undefined
+  && status.textContent.includes('không khớp')
+  && document.querySelectorAll('.memory-card').length === 0
+  && document.querySelectorAll('.memory-overview').length === 0
+  && document.querySelectorAll('.memory-chart-card').length === 0;
+await page.selectScope('researcher');
+await settle();
+requests[1].resolve({ bot_id: 'researcher', total: 1, leaves: [] });
+await settle();
+await page.selectScope('coder');
+await settle();
+requests[2].resolve({ bot_id: 'researcher', total: 91, leaves: [] });
+await settle();
+const otherBotMismatchRejected = page.state.stats.leaves.length === 0
+  && page.state.stats.total === undefined
+  && status.textContent.includes('không khớp')
+  && document.querySelectorAll('.memory-card').length === 0
+  && document.querySelectorAll('.memory-overview').length === 0
+  && document.querySelectorAll('.memory-chart-card').length === 0;
+await page.selectScope('researcher');
+await settle();
+requests[3].resolve({ bot_id: 'researcher', total: 1, leaves: [] });
+await settle();
+await page.selectScope('coder');
+await settle();
+requests[4].resolve({ bot_id: null, total: 0, leaves: [] });
+await settle();
+const scopeChecks = {
+  urls: requests.map(request => request.url),
+  globalMismatchRejected,
+  otherBotMismatchRejected,
+  emptyGlobalMismatchRejected: page.state.stats.leaves.length === 0
+    && page.state.stats.total === undefined
+    && status.textContent.includes('không khớp')
+    && document.querySelectorAll('.memory-card').length === 0
+    && document.querySelectorAll('.memory-overview').length === 0
+    && document.querySelectorAll('.memory-chart-card').length === 0,
+  currentScope: page.state.scopeId,
+};
+hooks.postJson = async () => ({});
+hooks.getJson = async () => ({ bot_id: null, total: 0, leaves: [] });
+await page.mutateMemory('/api/memory/update', { session_id: 's', topic: 'T', summary: 'S' }, 'Đã lưu');
+await settle();
+console.log(JSON.stringify({
+  ...scopeChecks,
+  refreshErrorPreserved: page.state.statsError
+    && status.textContent.includes('không khớp')
+    && !status.classList.contains('is-success')
+    && document.querySelectorAll('.memory-overview').length === 0
+    && document.querySelectorAll('.memory-chart-card').length === 0,
+  status: status.textContent,
+}));
+""";
+
+def _run_scenario(scenario: str, boot_scope: str = "") -> dict:
     node = shutil.which("node")
     if not node:
         pytest.skip("node not installed")
@@ -423,6 +608,7 @@ def _run_scenario(scenario: str) -> dict:
     result = subprocess.run(
         [node, "--input-type=module", "-e", script],
         cwd=ROOT, check=True, capture_output=True, text=True, timeout=15,
+        env={**os.environ, "BOOT_SCOPE": boot_scope},
     )
     return json.loads(result.stdout)
 
@@ -452,9 +638,44 @@ def focus() -> dict:
     return _run_scenario(_SCENARIO_FOCUS)
 
 
-def test_mobile_renders_four_editor_copies_and_disables_all(copies: dict) -> None:
-    """One memory matches all four list views on mobile: every editor copy
-    must answer to one mutation, not just the last one rendered."""
+@pytest.fixture(scope="module")
+def scope_race() -> dict:
+    return _run_scenario(_SCENARIO_SCOPE_RACE)
+
+
+@pytest.fixture(scope="module")
+def scope_echo() -> dict:
+    return _run_scenario(_SCENARIO_SCOPE_ECHO)
+
+
+def test_direct_bot_url_validates_roster_before_scoped_load() -> None:
+    state = _run_scenario(_SCENARIO_INITIAL_SCOPE, boot_scope="coder")
+    assert state["scope"] == "coder"
+    assert state["invalid"] is False
+    assert state["total"] == 0
+    assert state["chartCards"] == 1
+    assert state["overviewCards"] == 1
+    assert state["title"] == "Nhật ký của Coder"
+    assert state["requests"] == ["/api/bots", "/api/memory/stats?bot_id=coder"]
+    assert state["search"] == "?bot_id=coder"
+
+
+def test_unknown_direct_bot_url_stays_empty_and_never_falls_back_global() -> None:
+    state = _run_scenario(_SCENARIO_INITIAL_SCOPE, boot_scope="missing")
+    assert state["scope"] is None
+    assert state["invalid"] is True
+    assert state["total"] is None
+    assert state["leaves"] == 0
+    assert state["chartCards"] == 0
+    assert state["overviewCards"] == 0
+    assert state["title"] == "Không thể mở nhật ký bot"
+    assert state["requests"] == ["/api/bots"]
+    assert "xác thực bot" in state["empty"]
+
+
+
+def test_categories_render_four_editor_copies_and_disable_all(copies: dict) -> None:
+    """One memory appears in four category sections; every editor copy is bound."""
     assert copies["editors"] == 4
     assert copies["editingId"] == "m1"
     assert copies["controlCount"] == 24
@@ -474,8 +695,38 @@ def test_success_clears_draft_and_editors(copies: dict) -> None:
 
 
 def test_resize_during_pending_rebuilds_editors_disabled(resize_error: dict) -> None:
-    assert resize_error["desktop"] == {"editors": 1, "allDisabled": True}
+    assert resize_error["desktop"] == {"editors": 4, "allDisabled": True}
     assert resize_error["mobile"] == {"editors": 4, "allDisabled": True}
+
+
+def test_scope_switch_ignores_stale_data_preserves_draft_and_guards_mutation(scope_race: dict) -> None:
+    assert scope_race["beforeResolve"]["urls"] == [
+        "/api/memory/stats?bot_id=coder",
+        "/api/memory/stats?bot_id=researcher",
+    ]
+    assert scope_race["beforeResolve"]["abortedA"] is True
+    assert scope_race["afterResolve"] == {
+        "scope": "researcher", "total": 2, "leaves": 0,
+        "draftKept": True, "staleGlobalIgnored": True,
+    }
+    assert scope_race["staleErrorIgnored"] is True
+    assert scope_race["blocked"] is True
+
+
+def test_stats_echo_rejects_global_and_other_bot_payloads(scope_echo: dict) -> None:
+    assert scope_echo["urls"] == [
+        "/api/memory/stats?bot_id=coder",
+        "/api/memory/stats?bot_id=researcher",
+        "/api/memory/stats?bot_id=coder",
+        "/api/memory/stats?bot_id=researcher",
+        "/api/memory/stats?bot_id=coder",
+    ]
+    assert scope_echo["globalMismatchRejected"] is True
+    assert scope_echo["otherBotMismatchRejected"] is True
+    assert scope_echo["emptyGlobalMismatchRejected"] is True
+    assert scope_echo["currentScope"] == "coder"
+    assert scope_echo["refreshErrorPreserved"] is True
+    assert "không khớp" in scope_echo["status"]
 
 
 def test_failure_preserves_draft_and_reenables_editor(resize_error: dict) -> None:

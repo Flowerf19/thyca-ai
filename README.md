@@ -12,7 +12,7 @@ Màn **Trò chuyện** là nơi chat chính: suy nghĩ thật của model hiện
 
 ![Màn trò chuyện](docs/images/webui-chat.png)
 
-Màn **Nhật ký** là toàn bộ ký ức của Thyca, xem theo ngày, theo mức dùng, kèm tìm kiếm từ khóa.
+Màn **Nhật ký** mặc định mở **Tổng quan** trên một trang cho ký ức của mọi bot, gồm cả mục dùng chung; khi chọn một bot, chỉ các mục thuộc bot đó mới hiện. Các phần theo ngày, theo lượt dùng và theo lượt tìm nối tiếp nhau trên cùng trang; số lượt dùng/tìm là bộ đếm đã ghi trên các mục thuộc phạm vi, không cho biết bot nào đã thực hiện thao tác. Trên điện thoại, mở **Mục lục** → **Nhật ký** để chọn **Tổng quan** hoặc một bot.
 
 ![Màn nhật ký](docs/images/webui-memories.png)
 
@@ -20,7 +20,7 @@ Màn **Hồ sơ** cho bạn sửa trực tiếp USER.md / SOUL.md / IDENTITY.md 
 
 ![Màn hồ sơ](docs/images/webui-profile.png)
 
-Màn **Trace** ghi lại từng lượt tool call với input/output đầy đủ, màn **Dashboard** vẽ token, request và chi phí theo ngày, theo model (4 tab: Sử dụng token, Request, Chi phí, Trace).
+Lịch sử **Trò chuyện** giữ gọn tin nhắn người dùng và câu trả lời tổng hợp; suy nghĩ vẫn được stream lúc lượt chạy. Màn **Trace** đọc chi tiết reasoning và tool input/output từ timeline canonical theo đúng cửa sổ/lượt, kể cả sau compact. Màn **Dashboard** vẽ token, request và chi phí theo ngày, theo model (4 tab: Sử dụng token, Request, Chi phí, Trace).
 
 ![Màn Trace](docs/images/webui-trace.png)
 

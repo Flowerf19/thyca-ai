@@ -140,12 +140,21 @@ def tick(app, now: datetime | None = None, *, idle_s: int = 900) -> dict:
             report["skipped"].append(f"{card.bot_id}: {exc}")
             continue
         try:
-            room_id = _solo_room(app, card.bot_id)
-            detail = app.turn(
-                room_id,
-                f"[scheduled {card.schedule}] Đến giờ làm việc định kỳ. "
-                "Thực hiện nhiệm vụ thường lệ của bạn rồi báo cáo ngắn gọn.",
-            )
+            scheduled_turn = getattr(app, "scheduled_turn", None)
+            if callable(scheduled_turn):
+                detail = scheduled_turn(
+                    card.bot_id,
+                    f"[scheduled {card.schedule}] Đến giờ làm việc định kỳ. "
+                    "Thực hiện nhiệm vụ thường lệ của bạn rồi báo cáo ngắn gọn.",
+                )
+                room_id = detail["id"]
+            else:
+                room_id = _solo_room(app, card.bot_id)
+                detail = app.turn(
+                    room_id,
+                    f"[scheduled {card.schedule}] Đến giờ làm việc định kỳ. "
+                    "Thực hiện nhiệm vụ thường lệ của bạn rồi báo cáo ngắn gọn.",
+                )
             report["fired"].append({"bot_id": card.bot_id, "room": room_id,
                                     "reply": str(detail.get("reply", ""))[:500]})
         except SessionBusy:

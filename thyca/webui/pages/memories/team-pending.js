@@ -1,17 +1,8 @@
 import { getJson, postJson } from "../../shared/js/http.js";
 import { botMark } from "../../shared/js/bot-avatar.js";
 import { pendingCandidates } from "../chat/team-data.js";
+import { memoryScopeMatches } from "../../shared/js/memory-data.js";
 
-// Nhật ký › "Chờ cho cả đội nhớ" (FE-5, r9 §4.8): the tab exists in the DOM
-// but stays hidden unless the candidate queue is non-empty (contract §6:
-// GET /api/memory/candidates, POST …/<id>/approve|reject). This module is
-// separate from memories.js (whose node harness replays that file alone),
-// so it owns its own nav button + section and deactivates itself whenever
-// one of the built-in views is chosen.
-const TAB_ID = "pending-tab";
-const VIEW_ID = "pending-view";
-
-let tab = null;
 let view = null;
 let chips = null;
 let list = null;
@@ -19,7 +10,13 @@ let empty = null;
 let status = null;
 let items = [];
 let filter = "";
+let scopeId = null;
+let invalidInitialScope = false;
 let busy = false;
+let loadToken = 0;
+let loadController = null;
+let roster = null;
+let rosterPromise = null;
 
 function setStatus(text = "", kind = "") {
   if (!status) return;
@@ -31,11 +28,6 @@ function botLabel(item) {
   return item.botId || "không rõ bot";
 }
 
-// Bot registry snapshot for display names + card avatars (pattern shared
-// with cost-bots/request): fetched once, ids render as-is on failure.
-let roster = null;
-let rosterPromise = null;
-
 async function loadRoster() {
   if (roster) return roster;
   if (!rosterPromise) {
@@ -43,12 +35,12 @@ async function loadRoster() {
       const map = new Map();
       try {
         const payload = await getJson("/api/bots");
-        const list = Array.isArray(payload) ? payload : payload?.bots;
-        for (const bot of Array.isArray(list) ? list : []) {
+        const bots = Array.isArray(payload) ? payload : payload?.bots;
+        for (const bot of Array.isArray(bots) ? bots : []) {
           if (bot && typeof bot.id === "string" && bot.id) map.set(bot.id, bot);
         }
       } catch {
-        // Registry unavailable: ids render as-is.
+        // Registry unavailable: display owner ids without falling back in data scope.
       }
       roster = map;
       return map;
@@ -61,12 +53,9 @@ function botDisplayName(item, known = roster) {
   const id = item?.botId || (typeof item === "string" ? item : "");
   if (!id) return "không rõ bot";
   const bot = known?.get(id);
-  const name = bot && typeof bot.name === "string" && bot.name ? bot.name : "";
-  return name || id;
+  return bot && typeof bot.name === "string" && bot.name ? bot.name : id;
 }
 
-/* Avatar slot for one bot id: empty (aligned) when unknown, else the idle
-   seal — from the roster card when known so tint/avatar match the card. */
 export function avatarSlotFor(botId, known = roster) {
   const slot = document.createElement("span");
   slot.className = "bot-avatar-slot pending-avatar";
@@ -80,32 +69,28 @@ export function avatarSlotFor(botId, known = roster) {
 }
 
 function filters() {
-  const bots = [...new Set(items.map((item) => item.botId || ""))].sort((a, b) => a.localeCompare(b, "vi"));
+  if (scopeId) return [scopeId];
+  const bots = [...new Set(items.map((item) => item.botId || ""))]
+    .sort((a, b) => a.localeCompare(b, "vi"));
   return ["", ...bots];
 }
 
 function renderChips() {
   if (!chips) return;
+  chips.hidden = Boolean(scopeId);
   chips.replaceChildren();
-  for (const bot of filters()) {
-    chips.append(filterChip(bot, filter === bot));
-  }
+  if (scopeId) return;
+  for (const bot of filters()) chips.append(filterChip(bot, filter === bot));
 }
 
-/* One filter chip: seal + name for a bot, plain "Tất cả bot" for "".
-   Exported for tests; the click handler is injected so node harnesses
-   can observe selection without the module render loop. */
 export function filterChip(bot, active, onSelect) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "screen-button pending-chip";
   button.setAttribute("aria-pressed", String(active));
   button.classList.toggle("is-active", active);
-  if (!bot) {
-    button.textContent = "Tất cả bot";
-  } else {
-    button.append(avatarSlotFor(bot), document.createTextNode(botDisplayName({ botId: bot })));
-  }
+  if (!bot) button.textContent = "Tất cả bot";
+  else button.append(avatarSlotFor(bot), document.createTextNode(botDisplayName({ botId: bot })));
   button.addEventListener("click", () => {
     if (typeof onSelect === "function") onSelect(bot);
     else {
@@ -166,69 +151,44 @@ export function candidateCard(item, known = roster) {
 function render() {
   if (!view || !list) return;
   renderChips();
-  const shown = filter ? items.filter((item) => (item.botId || "") === filter) : items;
+  const shown = filter && !scopeId
+    ? items.filter((item) => (item.botId || "") === filter)
+    : items;
   list.replaceChildren(...shown.map((item) => candidateCard(item)));
   if (empty) {
     empty.hidden = shown.length > 0;
-    empty.textContent = items.length
+    if (shown.length) empty.textContent = "";
+    else if (status?.classList.contains("is-error")) {
+      empty.hidden = false;
+      empty.textContent = status.textContent;
+    } else empty.textContent = items.length
       ? "Không có đề xuất nào của bot này."
       : "Không có đề xuất nào đang chờ.";
   }
   if (busy) {
     for (const button of list.querySelectorAll("button")) button.disabled = true;
   }
+  view.hidden = shown.length === 0 && !status?.classList.contains("is-error");
   void refreshRoster();
 }
 
-/* Refresh display names + seals once the roster arrives. Skipped while a
-   decision is in flight so the busy state is never disturbed; the next
-   render picks the cached roster up. Paint-once: the second pass renders
-   with names and stops. */
 let rosterPainted = false;
 
 async function refreshRoster() {
   await loadRoster();
-  if (busy || rosterPainted) return;
-  if (!list?.isConnected) return;
+  if (busy || rosterPainted || !list?.isConnected) return;
   rosterPainted = true;
   render();
 }
 
-function showPending() {
-  if (!tab || !view) return;
-  document.querySelectorAll("#memory-list").forEach((node) => { node.hidden = true; });
-  document.querySelectorAll(".memory-view").forEach((node) => { node.hidden = true; });
-  const emptyNote = document.querySelector("#memory-empty");
-  if (emptyNote) emptyNote.hidden = true;
-  document.querySelectorAll(".session-item[data-view]").forEach((button) => {
-    button.classList.remove("is-active");
-    button.setAttribute("aria-pressed", "false");
-  });
-  tab.classList.add("is-active");
-  tab.setAttribute("aria-pressed", "true");
-  view.hidden = false;
-  render();
+export function candidateRequestUrl(botId) {
+  return botId
+    ? `/api/memory/candidates?bot_id=${encodeURIComponent(botId)}`
+    : "/api/memory/candidates";
 }
 
-function hidePending({ restore = false } = {}) {
-  if (!tab || !view) return;
-  const wasActive = !view.hidden;
-  tab.classList.remove("is-active");
-  tab.setAttribute("aria-pressed", "false");
-  view.hidden = true;
-  if (restore && wasActive) {
-    // The queue emptied while the pending view was on screen. showPending()
-    // hid #memory-list and every .memory-view, so without this the
-    // workspace stays blank. Re-activate the built-in overview through its
-    // own button so memories.js renders itself; fall back to unhiding the
-    // list when that button is absent.
-    const overview = document.querySelector('.session-item[data-view="overview"]');
-    if (overview) overview.click();
-    else {
-      const listNode = document.querySelector("#memory-list");
-      if (listNode) listNode.hidden = false;
-    }
-  }
+function requestUrl() {
+  return candidateRequestUrl(scopeId);
 }
 
 async function decide(id, action) {
@@ -249,44 +209,74 @@ async function decide(id, action) {
 }
 
 async function load({ quiet = false } = {}) {
-  if (!tab || !view) return;
-  if (!quiet) setStatus("Đang đọc đề xuất…");
-  let next = [];
-  try {
-    next = pendingCandidates(await getJson("/api/memory/candidates"));
-    if (!quiet) setStatus();
-  } catch {
-    // Backend has no candidate queue yet: the tab stays hidden, quietly.
-    next = [];
-    if (!quiet) setStatus();
+  if (!view || !list) return;
+  if (invalidInitialScope) {
+    items = [];
+    list.replaceChildren();
+    setStatus("Liên kết phạm vi bot không hợp lệ. Hãy chọn Tổng quan hoặc làm mới trang.", "error");
+    view.hidden = false;
+    render();
+    return;
   }
-  items = next;
-  if (!items.some((item) => (item.botId || "") === filter)) filter = "";
-  tab.hidden = items.length === 0;
-  if (!items.length) hidePending({ restore: true });
-  else if (!view.hidden) render();
+  const token = ++loadToken;
+  loadController?.abort();
+  const controller = new AbortController();
+  loadController = controller;
+  const requestedScope = scopeId;
+  items = [];
+  filter = "";
+  list.replaceChildren();
+  if (!quiet) setStatus("Đang đọc đề xuất…");
+  view.hidden = !requestedScope;
+  try {
+    const payload = await getJson(requestUrl(), { signal: controller.signal });
+    if (token !== loadToken || requestedScope !== scopeId) return;
+    if (!memoryScopeMatches(payload, requestedScope)) {
+      throw new Error("Phản hồi đề xuất không khớp phạm vi đã chọn. Hãy làm mới trang để đồng bộ máy chủ.");
+    }
+    items = pendingCandidates(payload);
+    if (!items.some((item) => (item.botId || "") === filter)) filter = "";
+    setStatus();
+    view.hidden = items.length === 0;
+  } catch (error) {
+    if (token !== loadToken || requestedScope !== scopeId) return;
+    const scopeMismatch = error instanceof Error && error.message.includes("không khớp phạm vi");
+    const showError = Boolean(requestedScope || scopeMismatch);
+    setStatus(showError
+      ? (error instanceof Error && error.message ? error.message : "Không tải được đề xuất.")
+      : "", showError ? "error" : "");
+    view.hidden = !showError;
+  } finally {
+    if (token === loadToken && requestedScope === scopeId) {
+      if (loadController === controller) loadController = null;
+      render();
+    }
+  }
 }
 
 function bind() {
-  tab = document.querySelector(`#${TAB_ID}`);
-  view = document.querySelector(`#${VIEW_ID}`);
+  view = document.querySelector("#pending-view");
   chips = document.querySelector("#pending-filters");
   list = document.querySelector("#pending-list");
   empty = document.querySelector("#pending-empty");
   status = document.querySelector("#pending-status");
-  if (!tab || !view || !list) return; // not on memories.html (node harness)
-  tab.addEventListener("click", showPending);
-  document.querySelectorAll(".session-item[data-view]").forEach((button) => {
-    button.addEventListener("click", hidePending);
+  if (!view || !list) return;
+  document.addEventListener("memory-scope-before-change", (event) => {
+    if (busy) event.preventDefault();
   });
-  // A viewport crossing rebuilds the built-in views; the pending section
-  // would otherwise linger next to the rebuilt list.
-  if (typeof matchMedia === "function") {
-    matchMedia("(max-width: 56rem)").addEventListener?.("change", hidePending);
+  document.addEventListener("memory-scope-changed", (event) => {
+    scopeId = event.detail?.botId || null;
+    invalidInitialScope = false;
+    void load();
+  });
+  const requestedIds = new URLSearchParams(location.search).getAll("bot_id");
+  if (requestedIds.length) {
+    invalidInitialScope = requestedIds.length !== 1
+      || requestedIds[0].length > 64
+      || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(requestedIds[0]);
+    if (!invalidInitialScope) scopeId = requestedIds[0];
   }
   void load();
 }
 
-// Guarded for node harnesses: pure-helper tests import this module
-// without a DOM; bind() itself already no-ops off memories.html.
 if (typeof document !== "undefined") bind();

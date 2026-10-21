@@ -182,10 +182,10 @@ class BotRegistry:
         """Replace the card of an existing bot (bots cannot self-edit —
         callers enforce who may invoke this; see admin tools)."""
         current = self.require(bot_id)
-        if current.system and card.bot_id != bot_id:
+        if (current.system or bot_id == "thyca") and card.name != current.name:
             raise RegistryError("cannot rename the system bot")
         if card.bot_id != bot_id:
-            raise RegistryError("card name must match bot id")
+            raise RegistryError("card id must match bot id")
         if current.system and not card.system:
             raise RegistryError("cannot unset system on the Thyca card")
         doc = parse_bot_card(render_bot_card(card), bot_id)
@@ -215,7 +215,7 @@ class BotRegistry:
         card = self.require(bot_id)
         if card.system:
             raise RegistryError("the Thyca system bot cannot be deleted")
-        shutil.rmtree(self.bot_dir(bot_id), ignore_errors=True)
+        shutil.rmtree(self.bot_dir(bot_id))
 
     def team_index_text(self) -> str:
         """``name — role`` lines for every valid card (CBE-2).

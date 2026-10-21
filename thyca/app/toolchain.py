@@ -29,19 +29,22 @@ from thyca.tools.mcp import MCPManager, StartupDiagnostic
 from thyca.memory.facade import MemoryFacade
 from thyca.tools.memory_tools import register_memory_tools
 from thyca.tools.path_guard import PathGuard
+from thyca.tools.profile_tools import register_profile_tools
 from thyca.tools.registry import ToolRegistry
+from thyca.tools.session_tools import register_session_tools
 from thyca.tools.task_store import TaskStore
 
 
 def build_tool_registry(
     root: Path, cfg: Config, background: BackgroundProcs
 ) -> ToolRegistry:
-    """Assemble the file/memory tool registry (no gateway tools, no MCP, no spawn)."""
+    """Assemble the file/memory/profile tool registry (no gateway tools, no MCP, no spawn)."""
     registry = ToolRegistry()
     register_file_tools(registry, PathGuard(root), background)
-    register_memory_tools(
-        registry, MemoryFacade(root, timezone_name=cfg.timeline.timezone)
-    )
+    facade = MemoryFacade(root, timezone_name=cfg.timeline.timezone)
+    register_memory_tools(registry, facade)
+    register_profile_tools(registry, facade)
+    register_session_tools(registry)
     return registry
 
 

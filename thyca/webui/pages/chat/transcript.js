@@ -12,8 +12,8 @@ let teamChoiceHandler = null;
 export function setTeamChoiceHandler(handler) {
   teamChoiceHandler = typeof handler === "function" ? handler : null;
 }
-function sendTeamChoice(text) {
-  teamChoiceHandler?.(String(text || ""));
+function sendTeamChoice(text, metadata) {
+  teamChoiceHandler?.(String(text || ""), metadata || null);
 }
 
 function assistantHeader({ expandable = false, latencyMs, bot = null } = {}) {

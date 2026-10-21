@@ -195,133 +195,17 @@ def parse_bot_habits(text: str) -> list[str]:
     return labels
 
 
-SHARED_AUTO_COMMENT = (
-    "<!-- Block này do Thyca tự tổng hợp từ thói quen nhiều bot cùng quan sát; "
-    "độ tin thấp hơn nội dung user tự khai. -->"
-)
+def strip_auto_habits(text: str) -> str:
+    """Remove ONLY the exact auto-generated habits block.
 
-
-def aggregate_team_habits(bot_user_paths: dict[str, Path],
-                          shared_user_path, facade=None) -> list[str]:
-    """Promote habits seen in ≥2 bots to the shared USER.md (phase 1F).
-
-    Display label comes from the smallest sorted bot_id (deterministic).
-    Append-only inside the shared auto-block: existing auto lines and
-    manual bullets in ``## Habits`` are never duplicated or touched.
-    Missing/unreadable bot files are skipped. Returns added labels.
-
-    When ``facade`` is given, the shared-file read-modify-write runs
-    under its writer lock (same mechanism as the per-bot sweep).
-    """
-    per_bot: dict[str, list[str]] = {}
-    for bot_id in sorted(bot_user_paths):
-        try:
-            path = Path(bot_user_paths[bot_id])
-            text = path.read_text(encoding="utf-8") if path.is_file() else ""
-        except OSError:
-            continue
-        labels = parse_bot_habits(text)
-        if labels:
-            per_bot[bot_id] = labels
-    groups: dict[str, dict[str, str]] = {}
-    for bot_id, labels in per_bot.items():
-        for label in labels:
-            collapsed = " ".join(label.split())
-            if not collapsed or "<!--" in collapsed:
-                continue
-            groups.setdefault(Chunker.normalize(collapsed), {})[bot_id] = collapsed
-    wanted: dict[str, str] = {}
-    for key, by_bot in groups.items():
-        if len(by_bot) >= 2:
-            wanted[key] = by_bot[sorted(by_bot)[0]]
-    if not wanted:
-        return []
-    import contextlib
-
-    shared = Path(shared_user_path)
-    lock = facade.writer.lock_for(shared) if facade is not None else contextlib.nullcontext()
-    with lock:
-        return _aggregate_into_shared(shared, wanted)
-
-
-def _aggregate_into_shared(shared: Path, wanted: dict[str, str]) -> list[str]:
-    from thyca.config import atomic_write_text
-
-    try:
-        text = shared.read_text(encoding="utf-8") if shared.is_file() else ""
-    except OSError:
-        return []
-    if "## Habits" not in text:
-        if not text:
-            text = "# User\n"
-        if not text.endswith("\n"):
-            text += "\n"
-        text += f"\n## Habits\n{SHARED_AUTO_COMMENT}\n{AUTO_START}\n{AUTO_END}\n"
-    elif AUTO_START not in text or AUTO_END not in text:
-        text = _insert_block_under_habits(text)
-    existing = _block_keys(text) | _manual_habit_keys(text)
-    fresh = [(key, label) for key, label in wanted.items() if key not in existing]
-    if not fresh:
-        return []
-    head, sep, tail = text.partition(AUTO_START)
-    block, _, rest = tail.partition(AUTO_END)
-    if not block.endswith("\n"):
-        block += "\n"
-    new_text = (
-        head + AUTO_START + block
-        + "".join(f"- {label}\n" for _, label in sorted(fresh))
-        + AUTO_END + rest
-    )
-    try:
-        shared.parent.mkdir(parents=True, exist_ok=True)
-    except OSError:
-        return []
-    atomic_write_text(shared, new_text)
-    try:
-        shared.chmod(0o600)
-    except OSError:
-        pass
-    return [label for _, label in sorted(fresh)]
-
-
-def _insert_block_under_habits(text: str) -> str:
-    """Insert an empty auto-block right under the ## Habits heading."""
-    lines = text.splitlines(keepends=True)
-    out: list[str] = []
-    inserted = False
-    for line in lines:
-        out.append(line)
-        if not inserted and line.strip() == "## Habits":
-            out.append(f"{SHARED_AUTO_COMMENT}\n{AUTO_START}\n{AUTO_END}\n")
-            inserted = True
-    if not inserted:
-        out.append(f"{SHARED_AUTO_COMMENT}\n{AUTO_START}\n{AUTO_END}\n")
-    return "".join(out)
-
-
-def _manual_habit_keys(text: str) -> set[str]:
-    """Normalized manual bullets in ## Habits, outside the auto-block."""
-    lines = text.splitlines()
-    start = next(
-        (i for i, line in enumerate(lines) if line.strip() == "## Habits"),
-        None,
-    )
-    if start is None:
-        return set()
-    end = next(
-        (i for i in range(start + 1, len(lines))
-         if lines[i].startswith("## ")),
-        len(lines),
-    )
-    section = "\n".join(lines[start + 1:end])
-    # Strip the auto-block region before scanning manual bullets.
-    head, _, tail = section.partition(AUTO_START)
-    _, _, after = tail.partition(AUTO_END)
-    keys = set()
-    for line in (head + "\n" + after).splitlines():
-        stripped = line.strip()
-        if stripped.startswith("- "):
-            label = stripped[2:].strip()
-            if label and not label.startswith("<!--"):
-                keys.add(Chunker.normalize(label))
-    return keys
+    Returns the manual profile text unchanged around it. A well-formed
+    block drops through AUTO_END; a start marker without its end hides
+    the rest of the file (the tail is auto-generated garbage, not user
+    content). No file rewrite — projection-time stripping only."""
+    if not isinstance(text, str) or AUTO_START not in text:
+        return text if isinstance(text, str) else ""
+    head, _, tail = text.partition(AUTO_START)
+    if AUTO_END not in tail:
+        return head.rstrip("\n") + ("\n" if head.endswith("\n") else "")
+    _, _, rest = tail.partition(AUTO_END)
+    return head + rest

@@ -1,5 +1,5 @@
 import { botMark } from "../../shared/js/bot-avatar.js";
-import { mentionCandidates } from "./team-data.js";
+import { mentionCandidates, tintVarFor } from "./team-data.js";
 
 // @ mention popup (design r9 §4.4): ↑/↓ to move, Enter to insert, Esc to
 // close. The last row is always "Nhờ Thyca tạo bot mới" — it inserts a plain
@@ -75,7 +75,7 @@ function render() {
       const avatar = document.createElement("span");
       avatar.className = "mention-avatar";
       avatar.setAttribute("aria-hidden", "true");
-      avatar.style.setProperty("--team-tint", `var(--color-${bot.tint || "accent"})`);
+      avatar.style.setProperty("--team-tint", tintVarFor(bot.id));
       avatar.innerHTML = botMark(bot);
       row.append(avatar);
       const main = document.createElement("span");

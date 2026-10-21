@@ -54,6 +54,24 @@ def running_pid(root: Path) -> int | None:
     return None
 
 
+def claim_server_lock(root: Path) -> int:
+    """Hold the serve.lock flock for the lifetime of a server.
+
+    The returned fd must stay open while the server runs: flock dies with
+    the process, so no stale cleanup is ever needed. A separate file
+    (never unlinked, unlike the pidfile) keeps the lock stable. One
+    server per data dir: a second one would share memory.sqlite and
+    wedge every reader of the archive index.
+    """
+    lock_fd = os.open(lock_file(root), os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o644)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(lock_fd)
+        raise ServeError("already running (start in progress)") from None
+    return lock_fd
+
+
 def daemonize(root: Path) -> None:
     existing = running_pid(root)
     if existing is not None:
@@ -65,12 +83,7 @@ def daemonize(root: Path) -> None:
     # raises below. The fd stays open in the daemon (inherited across fork),
     # so the lock needs no stale cleanup: it dies with the daemon. A separate
     # file (never unlinked, unlike the pidfile) keeps the lock stable.
-    lock_fd = os.open(lock_file(root), os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o644)
-    try:
-        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        os.close(lock_fd)
-        raise ServeError("already running (start in progress)") from None
+    _lock_fd = claim_server_lock(root)
     if os.fork() > 0:
         os._exit(0)
     os.setsid()

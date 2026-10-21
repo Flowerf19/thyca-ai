@@ -8,12 +8,11 @@ from thyca.core.protocol import Message, estimate_tokens as _chars_to_tokens
 from thyca.llm.pricing import cost_for
 from thyca.llm.prompt_manager import PromptManager
 from thyca.memory.active import ActiveSnapshot
-from thyca.sessions import SessionManager, calibration_factor, context_usage
+from thyca.sessions import SessionManager, calibration_factor
 
 from .act import Act
 from .assemble import Assemble
 from .compacting import Summarizer, compact_with_llm
-from .context_budget import checkpoint_state, format_context_budget
 from .events import EventSink, TurnEvent, emit_event
 from .observe import Observe
 from .shrink import BACKSTOP_RATIO, estimate_wire_tokens, shrink_stage_messages
@@ -119,51 +118,25 @@ class AgentLoop:
         # The signal is computed on the post-compaction transcript so the
         # bot sees the budget it actually starts this turn with. The
         # baseline snapshot (signal cleared) sizes the hot prompt, so the
-        # estimate matches the compactor/guard inputs.
-        if not isinstance(hot, ActiveSnapshot) or self._context_tokens is None:
-            return hot
-        baseline = replace(hot, context_budget="")
-        messages = list(self._sessions.current.messages)
-        baseline_hot = self._hot_tokens(baseline)
-        tools_tokens = self._tools_tokens()
+        # estimate matches the compactor/guard inputs. (WS-3: math and
+        # format live in WorkspaceContextBuilder; same inputs, same timing.)
         tool_names = self._tool_names()
         can_read = tool_names is None or bool(
             tool_names & {"memory_search", "memory_recent", "memory_get", "memory_tasks"}
         )
         can_write = tool_names is None or "memory_remember" in tool_names
+        from thyca.bots.workspace_context import WorkspaceContextBuilder
 
-        def _usage(signal_text: str) -> dict:
-            signal_tokens = (
-                _chars_to_tokens(f"<context_budget>\n{signal_text}\n</context_budget>")
-                if signal_text
-                else 0
-            )
-            return context_usage(
-                messages,
-                self._context_tokens,
-                hot_tokens=baseline_hot + signal_tokens,
-                tools_tokens=tools_tokens,
-                pending_user_tokens=pending_tokens,
-                calibration=calibration,
-            )
-
-        def _signal(usage: dict) -> str:
-            return format_context_budget(
-                usage,
-                checkpoint=checkpoint_state(
-                    messages,
-                    context_tokens=self._context_tokens,
-                    current_ratio=float(usage.get("ratio") or 0.0),
-                    calibration=calibration,
-                ),
-                can_read=can_read,
-                can_write=can_write,
-            )
-
-        # Two passes: the second estimate prices the signal section
-        # itself, so the displayed state matches the assembled payload.
-        first = _signal(_usage(""))
-        return replace(baseline, context_budget=_signal(_usage(first)))
+        return WorkspaceContextBuilder.with_context_budget(
+            hot,
+            messages=list(self._sessions.current.messages),
+            context_tokens=self._context_tokens,
+            pending_tokens=pending_tokens,
+            calibration=calibration,
+            tools_tokens=self._tools_tokens(),
+            can_read=can_read,
+            can_write=can_write,
+        )
 
     async def run(
         self,
@@ -172,6 +145,8 @@ class AgentLoop:
         event_sink: EventSink | None = None,
         persist_user: bool = True,
         bot_ctx: dict | None = None,
+        persisted_user_msg: str | None = None,
+        on_hot_ready: Callable[[object], None] | None = None,
     ) -> str:
         if self._loop_max < 1:
             raise ValueError("loop_max must be positive")
@@ -215,6 +190,11 @@ class AgentLoop:
         hot = self._with_context_budget(
             hot, pending_tokens=pending_tokens, calibration=calibration
         )
+        if on_hot_ready is not None:
+            try:
+                on_hot_ready(hot)
+            except Exception:
+                pass
         stage = Stage(
             messages=list(self._sessions.current.messages),
             hot=hot,
@@ -223,13 +203,18 @@ class AgentLoop:
         if bot_ctx:
             # Team attribution (BE-6): the runtime names the bot + trace so
             # Observe stamps every appended row and Trace can group by bot.
-            for key in ("bot_id", "trace_id", "parent_span_id", "span_id"):
+            for key in ("bot_id", "trace_id", "parent_span_id", "span_id",
+                        "channel", "window_id", "work_id"):
                 value = bot_ctx.get(key)
                 if isinstance(value, str) and value:
                     setattr(stage, key, value)
         if persist_user:
             self._assemble.assemble(stage, user_msg)
-            self._observe.user(stage)
+            persisted = None
+            if persisted_user_msg is not None:
+                persisted = replace(
+                    stage.messages[-1], content=persisted_user_msg)
+            self._observe.user(stage, persisted_message=persisted)
         else:
             self._assemble.assemble(stage, user_msg, append_user=False)
         emit_event(event_sink, TurnEvent(type="turn.accepted", bot_id=stage.bot_id))

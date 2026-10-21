@@ -83,9 +83,16 @@ class ActiveSnapshot:
     # Post-compaction memory hits (CBE-4): bounded lines re-injected on
     # the first turn after a compaction. Empty otherwise.
     recalled: str = ""
+    # Unread public room history for this turn (canonical-only bot
+    # turns): ephemeral wire input, never persisted. Empty unless wired
+    # per turn — the registry cursor tracks what was delivered.
+    room_history: str = ""
     # Ephemeral per-turn context budget signal computed by AgentLoop
     # (used/context state/checkpoint freshness). Empty unless wired.
     context_budget: str = ""
+    channel_brief: str = ""
+    # WS-4: private-followup index line (DM full ref; group waiting only).
+    private_followup: str = ""
 
 
 class ActiveMemory:
@@ -138,9 +145,10 @@ class ActiveMemory:
 
     def refresh(
         self, state: ActiveState, now: datetime, session_id: str | None = None,
-        reader: str | None = None,
+        reader: str | None = None, *, tail_kb: int | None = None,
+        timezone_name: str | None = None,
     ) -> ActiveSnapshot:
-        today = self._day(now)
+        today = self._day(now, timezone_name)
         if today != state.day:
             closed = state.day
             state.day = today
@@ -153,11 +161,14 @@ class ActiveMemory:
             # reading as "" until rollover.
             self._secure_dir(self.memory_dir)
             self._create_if_missing(state.today_path, f"# {today}\n")
-        return self._snapshot(state.today_path, state.day, session_id, reader)
+        return self._snapshot(
+            state.today_path, state.day, session_id, reader, tail_kb
+        )
 
     def peek(
         self, state: ActiveState, now: datetime, session_id: str | None = None,
-        reader: str | None = None,
+        reader: str | None = None, *, tail_kb: int | None = None,
+        timezone_name: str | None = None,
     ) -> ActiveSnapshot:
         """Read-only snapshot for estimates (context meter, compact budget).
 
@@ -166,27 +177,38 @@ class ActiveMemory:
         day-close hook — safe to call from read paths concurrent with a
         turn's real refresh.
         """
-        today = self._day(now)
+        today = self._day(now, timezone_name)
         path = state.today_path if today == state.day else self._daily_path(today)
-        return self._snapshot(path, today, session_id, reader)
+        return self._snapshot(path, today, session_id, reader, tail_kb)
 
     def _snapshot(
         self, today_path: Path, day_str: str, session_id: str | None,
-        reader: str | None = None,
+        reader: str | None = None, tail_kb: int | None = None,
     ) -> ActiveSnapshot:
         if session_id is None:
-            today_text, elsewhere_text = self._tail(self._read(today_path)), ""
+            today_text, elsewhere_text = self._tail(
+                self._read(today_path), tail_kb=tail_kb
+            ), ""
         else:
             # Grouping needs the raw metadata comments; strip them from the
             # injected same-session text afterwards, like the legacy path.
+            from thyca.memory.visibility import current_memory_view
+
+            view = current_memory_view()
             here_raw, elsewhere_text = split_today_by_session(
                 self._read_raw(today_path),
                 day_str,
                 str(today_path),
                 session_id,
                 reader=reader,
+                origin_ok=(
+                    view.can_read_origin if view is not None else None
+                ),
+                include_prefix=not (view is not None and view.is_group),
             )
-            today_text = self._tail(strip_heading_comments(here_raw))
+            today_text = self._tail(
+                strip_heading_comments(here_raw), tail_kb=tail_kb
+            )
         return ActiveSnapshot(
             soul=self._read(self.thyca_dir / "SOUL.md"),
             # Twin identity at the source (phase 1D): only privileged
@@ -207,14 +229,14 @@ class ActiveMemory:
     def _now(self) -> datetime:
         return datetime.now(self._zone())
 
-    def _zone(self) -> ZoneInfo:
+    def _zone(self, timezone_name: str | None = None) -> ZoneInfo:
         try:
-            return ZoneInfo(self.timezone_name)
+            return ZoneInfo(timezone_name or self.timezone_name)
         except (ZoneInfoNotFoundError, ValueError, KeyError):
             return ZoneInfo(DEFAULT_TIMELINE_TIMEZONE)
 
-    def _day(self, now: datetime) -> str:
-        return day(now, self._zone())
+    def _day(self, now: datetime, timezone_name: str | None = None) -> str:
+        return day(now, self._zone(timezone_name))
 
     def _daily_path(self, day: str) -> Path:
         return self.memory_dir / f"{day}.md"
@@ -257,8 +279,9 @@ class ActiveMemory:
     def _read(self, path: Path) -> str:
         return strip_heading_comments(self._read_raw(path))
 
-    def _tail(self, text: str) -> str:
-        return tail_text(text, self._budget)
+    def _tail(self, text: str, *, tail_kb: int | None = None) -> str:
+        budget = self._budget if tail_kb is None else tail_kb * 1024
+        return tail_text(text, budget)
 
 
 ELSEWHERE_MAX_LINES = 25
@@ -280,6 +303,8 @@ def visible_to(bots: tuple[str, ...] | None, reader: str | None) -> bool:
 def split_today_by_session(
     text: str, day_str: str, path: str, chat_id: str,
     reader: str | None = None,
+    origin_ok=None,
+    include_prefix: bool = True,
 ) -> tuple[str, str]:
     """Split today's file into (this-session raw text, other-session index).
 
@@ -308,13 +333,21 @@ def split_today_by_session(
             # Another bot's private entry: hidden entirely, not even as an
             # index line (master §4 hot-prompt rule).
             continue
+        if origin_ok is not None and not origin_ok(meta.chat):
+            # Origin window not readable in this turn's view (WS-3):
+            # hidden entirely, like the owner rule above.
+            continue
         if meta.chat == chat_id:
             here.append(_here_block(lines, start, end, day_str, entry_id))
         else:
             elsewhere.append(
                 f"- {meta.time} — {meta.title} [{session_id(day_str, entry_id)}]"
             )
-    prefix = "".join(lines) if first_start is None else "".join(lines[:first_start])
+    prefix = (
+        ("".join(lines) if first_start is None else "".join(lines[:first_start]))
+        if include_prefix
+        else ""
+    )
     here_text = prefix + "".join(here)
     if len(elsewhere) > ELSEWHERE_MAX_LINES:
         omitted = len(elsewhere) - ELSEWHERE_MAX_LINES

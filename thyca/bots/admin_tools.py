@@ -23,6 +23,7 @@ from thyca.bots.card import (
     with_baseline_tools,
 )
 from thyca.bots.context import current_bot_turn_context
+from thyca.core.channel import ChannelAction
 from thyca.memory.identity import current_bot_id
 from thyca.tools.registry import ToolRegistry, ToolSpec
 
@@ -40,13 +41,23 @@ ADMIN_TOOL_NAMES = (
 class AdminDeps:
     """Everything admin handlers need (wired once by ChatApp)."""
 
-    def __init__(self, bots, runtime, facade_fn, dm_post=None, card_post=None) -> None:
+    def __init__(self, bots, runtime, facade_fn, dm_post=None, card_post=None, room_post=None, dm_resolve=None, channel_actions=None) -> None:
+        self.channel_actions = channel_actions
         self.bots = bots
         self.runtime = runtime
         self.facade_fn = facade_fn
+        #: ``(bot_id) -> session_id`` resolving the bot's fixed DM window
+        #: (ask_private targets the DM of record, not the current room).
+        self.dm_resolve = dm_resolve
+        #: ``(bot_id, text, room_id) -> dict`` landing a plain status row
+        #: in the origin room (e.g. the group waiting status).
+        self.room_post = room_post
         #: ``(bot_id, text, current_room_id) -> dict`` landing a message
         #: in the bot's own DM (ChatApp owns DM resolution + room writes).
         self.dm_post = dm_post
+        #: ``(bot_id, card) -> dict`` landing a structured card in the
+        #: bot's own DM (consent preview for private follow-ups).
+        self.dm_card_post = None
         #: ``(bot_id, card, current_room_id, content) -> dict`` landing a
         #: structured question/error card in the current room (ChatApp
         #: owns room membership/DM-privacy gates + transcript writes).
@@ -270,10 +281,21 @@ def _message_user_spec(deps: AdminDeps) -> ToolSpec:
         if deps.dm_post is None:
             return "message_user failed: DM posting is unavailable here"
         try:
-            result = deps.dm_post(
-                sender, message.strip(),
-                ctx.room_id if ctx is not None else "",
-            )
+            dm_id = deps.dm_resolve(sender) if getattr(
+                deps, "dm_resolve", None) is not None else None
+            if dm_id and deps.channel_actions is not None and ctx is not None:
+                result = deps.channel_actions.dispatch(
+                    ChannelAction(
+                        kind="post", target_window=dm_id,
+                        text=message.strip(),
+                    ),
+                    channel_id="webui", ctx=ctx,
+                )
+            else:
+                result = deps.dm_post(
+                    sender, message.strip(),
+                    ctx.room_id if ctx is not None else "",
+                )
         except Exception as exc:
             return f"message_user failed: {exc}"
         return json.dumps(result, ensure_ascii=False)
@@ -369,7 +391,17 @@ def _ask_user_spec(deps: AdminDeps) -> ToolSpec:
         if isinstance(subtitle, str) and subtitle.strip():
             card["subtitle"] = subtitle.strip()
         try:
-            result = deps.card_post(sender, card, room_id, "")
+            if deps.channel_actions is not None:
+                result = deps.channel_actions.dispatch(
+                    ChannelAction(
+                        kind="ask_choice", target_window=room_id,
+                        text="", card=card,
+                    ),
+                    channel_id="webui",
+                    ctx=current_bot_turn_context(),
+                )
+            else:
+                result = deps.card_post(sender, card, room_id, "")
         except Exception as exc:
             return f"ask_user failed: {exc}"
         if isinstance(result, dict) and result.get("ok"):
@@ -495,14 +527,22 @@ def _task_open_spec(deps: AdminDeps) -> ToolSpec:
         # carries it, and a later result/error event whose
         # ``parent_span_id`` is this key closes the task (a status/step
         # event with the same parent updates its status instead).
+        memory_task_id = args.get("memory_task_id")
+        if memory_task_id is not None:
+            from thyca.core.channel import WORK_REF_RE
+
+            if not isinstance(memory_task_id, str) or not WORK_REF_RE.fullmatch(
+                memory_task_id
+            ):
+                return "invalid argument: memory_task_id (need task-<8 hex>)"
         key = new_span_id()
-        return json.dumps(
-            {"ok": True, "task": title.strip(), "status": "open",
-             "key": key, "span_id": key, "task_key": key,
-             "bot_id": sender,
-             "room": ctx.room_id if ctx is not None else ""},
-            ensure_ascii=False,
-        )
+        ack = {"ok": True, "task": title.strip(), "status": "open",
+               "key": key, "span_id": key, "task_key": key,
+               "bot_id": sender,
+               "room": ctx.room_id if ctx is not None else ""}
+        if memory_task_id:
+            ack["memory_task_id"] = memory_task_id
+        return json.dumps(ack, ensure_ascii=False)
 
     return ToolSpec(
         name="task_open",
@@ -511,13 +551,19 @@ def _task_open_spec(deps: AdminDeps) -> ToolSpec:
             "not a delegation). Records a task_open event in your own "
             "transcript; your open-task view in later prompts lists it "
             "until a result/error event linked to the returned key "
-            "(span_id) closes it. Args: title, optional room."
+            "(span_id) closes it. Args: title, optional room. "
+            "Optionally link an existing memory task with memory_task_id "
+            "(task-<8 hex>); never infer the link from a title."
         ),
         parameters={
             "type": "object",
             "properties": {
                 "title": {"type": "string"},
                 "room": {"type": "string"},
+                "memory_task_id": {
+                    "type": "string",
+                    "pattern": "task-[0-9a-f]{8}",
+                },
             },
             "required": ["title"],
             "additionalProperties": False,

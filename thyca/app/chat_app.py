@@ -1,4 +1,4 @@
-"""Loopback chat: list/create sessions and run one AgentLoop turn."""
+"""Loopback chat facade for room sessions and workspace turns."""
 from __future__ import annotations
 
 import asyncio
@@ -7,13 +7,16 @@ import re
 import sys
 import threading
 import time
+from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
+from typing import TextIO
 from zoneinfo import ZoneInfo
 
 from thyca.agent.act import Act
 from thyca.agent.compacting import compact_with_llm
-from thyca.agent.events import EventSink, TurnEvent
+from thyca.agent.events import EventSink
 from thyca.agent.think import LLMPort
 from thyca.app.summarizing import LlmSummarizer
 from thyca.bots.bus import Bus, new_span_id, new_trace_id
@@ -21,7 +24,6 @@ from thyca.bots.policy import BotPolicy
 from thyca.bots.registry import BotRegistry, RegistryError
 from thyca.bots.runtime import BotRuntime
 from thyca.bots.status import AgentStatusTracker
-from thyca.core.protocol import Message
 from thyca.config import Config, ConfigError, load
 from thyca.core.protocol import Message, estimate_tokens as _chars_to_tokens
 from thyca.llm.llm_base import LLMError
@@ -29,7 +31,13 @@ from thyca.llm.llm_factory import ConnectFactory
 from thyca.llm.prompt_manager import PromptManager
 from thyca.memory.active import ActiveMemory, ActiveSnapshot
 from thyca.sessions.wire import session_detail, session_summary
-from thyca.sessions import Session, SessionManager, calibration_factor, context_usage
+from thyca.sessions import (
+    Session,
+    SessionBusy,
+    SessionManager,
+    calibration_factor,
+    context_usage,
+)
 from thyca.sessions.store import SessionStore
 from thyca.sessions.title import is_blank
 from thyca.tools.gateway.background import BackgroundProcs
@@ -39,14 +47,28 @@ from thyca.serve.turn_state import TurnHub, TurnState
 
 from thyca.app.loop_turns import _CANCEL_WAIT_S, _LoopTurns, TurnCancelled
 from thyca.app.naming import _name_if_needed, session_title
-from thyca.app.run_turn import TurnRequest, TurnScope, mark_turn_error, run_turn
+from thyca.bots.context import BotTurnScope, current_bot_turn_context
 from thyca.app.toolchain import (
     build_tool_gateway,
     build_tool_registry,
     install_mcp_specs,
     report_spawn_diags,
 )
-from thyca.app.turn_options import InvalidTurnOption, InvalidTurnText, _clean_turn_text, overlay_turn_cfg
+from thyca.app.turn_options import (
+    InvalidTurnOption,
+    InvalidTurnText,
+    _clean_turn_text,
+    overlay_turn_cfg,
+    resolve_bot_cfg,
+)
+from thyca.app.webui_channel import WebUIChannelAdapter
+from thyca.app.workspace_turns import WorkspaceTurnService
+from thyca.bots.channels import ChannelActionService, ChannelRegistry
+from thyca.bots.private_followups import (
+    PrivateFollowupError,
+    PrivateFollowupStore,
+)
+from thyca.bots.workspace import WorkspaceTurnConflict
 
 __all__ = [
     "ChatApp",
@@ -67,22 +89,6 @@ class TurnInFlight(Exception):
     """Cancel wait expired while the turn was still running."""
 
 
-def _mark_room_error(sessions, session_id: str, code: str, message: str) -> None:
-    """Mark a failed turn on a fresh room view (phase 2A fix).
-
-    The bot path appends the current user row through a separate manager
-    (early_room), so the long-lived ``sessions`` view is stale by the time
-    the turn fails — marking on it would rewrite the file from that stale
-    view and drop the just-appended user row. Reload first; a failed
-    reload still falls back to marking on the old view (best-effort).
-    """
-    try:
-        sessions.load(session_id)
-    except Exception:
-        pass
-    mark_turn_error(sessions, code, message)
-
-
 class ChatApp:
     def __init__(
         self,
@@ -90,8 +96,10 @@ class ChatApp:
         cfg: Config,
         connect: LLMPort | None = None,
         mcp_factory: ProcessFactory | None = None,
+        stderr: TextIO | None = None,
     ) -> None:
         self._root = root
+        self._stderr = stderr if stderr is not None else sys.stderr
         self._config_file = root / "config.json"
         # Seed before re-read: _current_cfg falls back to _cfg on ConfigError.
         self._cfg = cfg
@@ -142,17 +150,40 @@ class ChatApp:
         self._runtime.memory_searcher = self._search_bot_memory
         # Phase 1C: open memory-task catalog lines per bot.
         self._runtime.memory_task_index = self._memory_task_index
+        self._runtime.memory_task_catalog = self._memory_task_rows
+        self._webui = WebUIChannelAdapter()
+        self._turn_service = WorkspaceTurnService(
+            self, self._runtime.workspaces
+        )
         # Thyca-only admin tools (BE-5): registered once on the shared
         # registry; the runtime hides every bot_* name from child bots and
         # each handler re-checks the caller, so a leak still cannot be used.
         from thyca.bots.admin_tools import AdminDeps, register_admin_tools
 
-        register_admin_tools(
-            self._registry,
-            AdminDeps(self._bots, self._runtime, self.job_facade,
-                      dm_post=self.post_bot_dm_message,
-                      card_post=self.post_bot_card),
+        _deps = AdminDeps(
+            self._bots, self._runtime, self.job_facade,
+            dm_post=self.post_bot_dm_message,
+            card_post=self.post_bot_card,
+            room_post=self.post_bot_room_message,
+            dm_resolve=lambda bid: self.bot_dm(bid)["id"],
         )
+        _deps.dm_card_post = self.post_bot_dm_card
+        register_admin_tools(self._registry, _deps)
+        from thyca.bots.channel_tools import register_channel_tools
+
+        register_channel_tools(self._registry, _deps)
+        from thyca.app.webui_channel import WebUIOutboundAdapter
+
+        self._channel_registry = ChannelRegistry()
+        self._channel_registry.register(WebUIOutboundAdapter(
+            dm_post=self.post_bot_dm_message,
+            dm_card_post=self.post_bot_dm_card,
+            room_post=self.post_bot_room_message,
+            card_post=self.post_bot_card,
+            session_for=lambda sid: self._sessions.store.load(sid),
+        ))
+        self._channel_actions = ChannelActionService(self._channel_registry)
+        _deps.channel_actions = self._channel_actions
         self._mcp = (
             MCPManager() if mcp_factory is None else MCPManager(process_factory=mcp_factory)
         )
@@ -163,8 +194,8 @@ class ChatApp:
         )
         # session_id -> started_at for every turn in flight. Turns are keyed by
         # session, not serialized globally: a slow turn in one session must not
-        # block another (nor its own UI, which reads this map). Shared with the
-        # delete gate so a claim cannot slip between check and unlink.
+        # block another (nor its own UI, which reads this map). The claim lock
+        # coordinates each app-level turn/compaction start with its loop job.
         self._turns = TurnState()
         self._loop_turns = _LoopTurns(self._loop, self._turns)
         self._claim_lock = threading.Lock()
@@ -180,9 +211,9 @@ class ChatApp:
             if not self._ready.wait(timeout=5):
                 raise RuntimeError("mcp loop thread failed to start")
             report_spawn_diags(
-                self._submit(self._mcp.spawn_all(cfg.mcpServers)), err=sys.stderr
+                self._submit(self._mcp.spawn_all(cfg.mcpServers)), err=self._stderr
             )
-            install_mcp_specs(self._registry, self._mcp, err=sys.stderr)
+            install_mcp_specs(self._registry, self._mcp, err=self._stderr)
             self._tools = self._registry.to_openai_schema()
             self._act = Act(self._gateway, skills_root=root / "skills")
         except BaseException:
@@ -201,7 +232,7 @@ class ChatApp:
         sessions = [
             session_summary(item)
             for item in self._sessions.list_sessions()
-            if not is_blank(item)
+            if not is_blank(item) or (item.dm_bot is None and item.bots is not None)
         ]
         return {"model": self._current_cfg().provider.model, "sessions": sessions}
 
@@ -213,10 +244,10 @@ class ChatApp:
         """
         with self._mcp_lock:
             diags, removed = self._submit(self._mcp.sync(turn_cfg.mcpServers))
-            report_spawn_diags(diags, err=sys.stderr)
+            report_spawn_diags(diags, err=self._stderr)
             for name in removed:
                 self._registry.unregister(name)
-            install_mcp_specs(self._registry, self._mcp, err=sys.stderr)
+            install_mcp_specs(self._registry, self._mcp, err=self._stderr)
             self._tools = self._registry.to_openai_schema()
 
     def _current_cfg(self) -> Config:
@@ -239,13 +270,20 @@ class ChatApp:
         }
         self._agent_status.retain(paused.keys())
         statuses = self._agent_status.snapshot_all(paused)
+        from thyca.bots.private_followups import PrivateFollowupStore
+        from thyca.bots.status import workspace_status
+
+        pf_store = PrivateFollowupStore(self._root)
         for card in cards:
-            card["agent_status"] = statuses.get(
+            snap = statuses.get(
                 card["id"],
                 self._agent_status.snapshot(
                     card["id"], paused=paused.get(card["id"], False)
                 ),
             )
+            pending = pf_store.active(card["id"])
+            card["agent_status"] = workspace_status(
+                snap, pending=pending, channel="webui")
         return cards
 
     def bot_dm(self, bot_id: str) -> dict:
@@ -274,11 +312,28 @@ class ChatApp:
             for session in self._sessions.list_sessions():
                 if session.dm_bot == bot_id:
                     return self.get_payload(session.id)
-            self._sessions.discard_empty(keep=set(self._turns.snapshot()))
+            keep = set(self._turns.snapshot())
+            ctx = current_bot_turn_context()
+            if ctx is not None and ctx.room_id:
+                keep.add(ctx.room_id)
+            from thyca.bots.private_followups import PrivateFollowupStore
+
+            pf_store = PrivateFollowupStore(self._root)
+            for other in self._bots.list():
+                card = getattr(other, "card", other)
+                other_id = getattr(card, "bot_id", None)
+                if not isinstance(other_id, str) or not other_id:
+                    continue
+                pending = pf_store.active(other_id)
+                if pending is not None:
+                    keep.add(pending.origin_window)
+                    keep.add(pending.dm_window)
+            self._sessions.discard_empty(keep=keep)
             session = self._sessions.ensure_dm(bot_id)
             return self.get_payload(session.id)
 
-    async def _flush_bot_memory(self, bot_id: str, messages, turn_cfg) -> None:
+    async def _flush_bot_memory(self, bot_id: str, messages, turn_cfg,
+                                room_id: str | None = None) -> None:
         """Extract memories from a bot transcript about to compact (CBE-4).
 
         Same machinery and order as the room idle sweep: the existing
@@ -290,7 +345,11 @@ class ChatApp:
         Policy decision (lane plan, explicit): this is Thyca-managed,
         system-driven extraction tied to system compaction, so it runs
         even for ``memory.write=false`` cards — that flag gates the
-        bot's own ``memory_*`` tools, not the system's housekeeping."""
+        bot's own ``memory_*`` tools, not the system's housekeeping.
+
+        TURN-CURATE: the runtime skips this hook entirely when the agent
+        recorded a checkpoint in the segment (it already wrote what
+        matters before compacting itself via the ``compact`` tool)."""
         from thyca.memory import jobs as mem_jobs
 
         provider = turn_cfg.effective_provider()
@@ -317,7 +376,7 @@ class ChatApp:
             if extracted:
                 applied = mem_jobs.apply_extracted(
                     facade, extracted, default_bot=bot_id,
-                    open_tasks=open_tasks,
+                    open_tasks=open_tasks, chat=room_id,
                 )
                 if applied["written"]:
                     # Dedupe now triggers here, per bot: freshly written
@@ -367,6 +426,17 @@ class ChatApp:
             f"- {hit.heading}: {hit.snippet}" for hit in result.hits[:5]
         ]
 
+    def _memory_task_rows(self, bot_id: str) -> list:
+        """Raw open-task catalog rows for one bot (WS-3 projection)."""
+        from thyca.memory.identity import bind_bot_id, reset_bot_id
+
+        token = bind_bot_id(bot_id)
+        try:
+            catalog = self.job_facade().tasks(status="open")
+        finally:
+            reset_bot_id(token)
+        return list(catalog.get("tasks", []))
+
     def _memory_task_index(self, bot_id: str) -> str:
         """Open memory-task catalog lines for one bot (phase 1C)."""
         from thyca.memory.facade import format_task_catalog
@@ -393,162 +463,123 @@ class ChatApp:
         return facade
 
     def sweep_idle_sessions(self, idle_s: int = 900) -> dict:
-        """Backend idle trigger (BE-4): extract memories, then compact.
-
-        Every room quiet past ``idle_s`` gets its transcript extracted
-        first and compacted after — never the reverse. Rooms with a turn
-        (or compact) in flight are skipped. Best-effort per room: one
-        room's failure never blocks the rest. Returns a per-room report."""
+        """Sweep idle canonical bot timelines once, under their workspace lease."""
         from thyca.core.protocol import utc_now_ts
         from thyca.memory import jobs as mem_jobs
         from thyca.sessions.wire import updated_at
 
         now_ts = utc_now_ts()
         running = set(self._turns.snapshot())
-        report: dict[str, dict] = {}
-        turn_cfg = self._current_cfg()
-        for item in self._sessions.list_sessions():
-            if item.id in running:
-                continue
-            try:
-                last_ts = updated_at(item)
-            except Exception:
-                continue
-            if not mem_jobs.should_idle_sweep(last_ts, now_ts, idle_s):
-                continue
-            entry: dict = {"idle_since": last_ts}
-            try:
-                participants = list(item.bots) if item.bots else ["thyca"]
-                if participants != ["thyca"]:
-                    # Group memory works like DMs: each bot extracts its
-                    # own part through its internal job, so the room sweep
-                    # never extracts here — it only compacts below.
-                    # Child DMs keep their phase marker; anything else
-                    # with a child bot reports per-bot ownership.
-                    if item.dm_bot is not None and item.dm_bot != "thyca":
-                        entry["skipped"] = "child_dm"
-                    else:
-                        entry["skipped"] = "per_bot_jobs"
-                else:
-                    provider = turn_cfg.effective_provider()
-                    connect = self._injected_connect or ConnectFactory.create(
-                        provider.api, provider
-                    )
-                    owns = self._injected_connect is None
-                    try:
-                        transcript = mem_jobs.transcript_tail(list(item.messages))
-                        facade = self.job_facade()
-                        open_tasks = facade.tasks(status="open").get("tasks", [])
-                        extracted = self._submit(
-                            mem_jobs.extract_from_transcript(
-                                connect, turn_cfg.provider.model, transcript,
-                                open_tasks=open_tasks,
-                            )
-                        )
-                        applied = mem_jobs.apply_extracted(
-                            facade, extracted, open_tasks=open_tasks
-                        )
-                        entry["extracted"] = len(applied["written"])
-                        entry["proposed"] = len(applied["proposed"])
-                        if applied["written"]:
-                            # Dedupe production caller: freshly written
-                            # entries are the duplicate candidates; the reviewer
-                            # is the turn model, called only for candidates.
-                            from thyca.memory import dedupe as mem_dedupe
-
-                            async def _review(a: str, b: str, _c=connect) -> str:
-                                return await mem_dedupe.llm_review_pair(
-                                    _c, turn_cfg.provider.model, a, b
-                                )
-
-                            duplicates = self._submit(
-                                mem_dedupe.propose_duplicates(facade, applied["written"], _review)
-                            )
-                            entry["duplicates_proposed"] = len(duplicates["proposed"])
-                            entry["duplicate_reviews"] = duplicates["review_calls"]
-                    finally:
-                        if owns:
-                            close = getattr(connect, "aclose", None)
-                            if close is not None:
-                                self._submit(close())
-                detail = self.compact_session(item.id)
-                entry["compacted"] = bool(
-                    (detail.get("compaction") or {}).get("compacted", False)
-                )
-            except Exception as exc:
-                entry["error"] = type(exc).__name__
-            report[item.id] = entry
-        # Bot internal sessions (CBE-4): same extract-then-compact order
-        # for every (bot x room) transcript quiet past the idle window.
-        # Like the room sweep above, an internal session whose *room*
-        # has a turn in flight is skipped: ``running`` is keyed by room
-        # session id, so the bot's room map (built once per bot, before
-        # any compacting rewrites it) translates internal -> room.
+        base_cfg = self._current_cfg()
+        # Every bot, including Thyca, is swept only through canonical
+        # workspace timelines; public room transcripts are read models.
         bot_report: dict[str, dict] = {}
+
+        async def _sweep_workspace_window(
+            bot_id: str, window_id: str, bot_cfg: Config
+        ):
+            async with self._runtime.workspaces.lease(bot_id):
+                # Bindings and transcript may have changed while waiting
+                # for the lease. Never compact a pre-lease snapshot.
+                binding = self._runtime.workspaces.store.get_binding(
+                    bot_id, window_id)
+                if binding is None or binding.internal_session_id is None:
+                    return None
+                session_id = binding.internal_session_id
+                window = binding.window
+                if window is None:
+                    try:
+                        room_session = self._sessions.store.load(window_id)
+                        window = self._webui.window_for(room_session)
+                    except Exception:
+                        return None
+                sweep_manager = SessionManager(
+                    limits=bot_cfg.effective_limits(),
+                    timezone_name=bot_cfg.timeline.timezone,
+                    store=self._runtime._canonical_store(
+                        bot_id, window, session_id),
+                )
+                try:
+                    sweep_item = sweep_manager.load(session_id)
+                    last_ts = updated_at(sweep_item)
+                except Exception:
+                    return None
+                if not mem_jobs.should_idle_sweep(last_ts, now_ts, idle_s):
+                    return None
+                entry = {"idle_since": last_ts}
+                try:
+                    await self._flush_bot_memory(
+                        bot_id, list(sweep_item.messages), bot_cfg,
+                        room_id=window_id,
+                    )
+                    sweep_manager.load(session_id)
+                    compacted = sweep_manager.compact_manual()
+                    entry["compacted"] = bool(compacted["compacted"])
+                    if entry["compacted"]:
+                        self._runtime._reinject_pending.add(
+                            (bot_id, window_id))
+                except Exception as exc:
+                    entry["error"] = type(exc).__name__
+                return f"{bot_id}:{session_id}", entry
+
         for doc in self._bots.list():
             if not doc.ok or doc.card is None:
                 continue
             bot_id = doc.card.bot_id
+            bot_cfg = resolve_bot_cfg(base_cfg, doc.card)
             try:
-                store = self._runtime.store_for(bot_id)
-                manager = SessionManager(
-                    limits=turn_cfg.effective_limits(),
-                    timezone_name=turn_cfg.timeline.timezone, store=store,
-                )
-                room_by_internal = {
-                    internal: room
-                    for room, internal in self._runtime._read_room_map(bot_id).items()
-                }
-                for item in manager.list_sessions():
-                    if room_by_internal.get(item.id) in running:
-                        continue
-                    key = f"{bot_id}:{item.id}"
-                    try:
-                        last_ts = updated_at(item)
-                    except Exception:
-                        continue
-                    if not mem_jobs.should_idle_sweep(last_ts, now_ts, idle_s):
-                        continue
-                    entry = {"idle_since": last_ts}
-                    try:
-                        awaitable = self._flush_bot_memory(
-                            bot_id, list(item.messages), turn_cfg
-                        )
-                        self._submit(awaitable)
-                        manager.load(item.id)
-                        compacted = manager.compact_manual()
-                        entry["compacted"] = bool(compacted["compacted"])
-                        if entry["compacted"]:
-                            # Runtime keys re-injection by room id; the
-                            # sweep holds internal ids, so translate via
-                            # the room map built above (unknown: skip).
-                            room_key = room_by_internal.get(item.id)
-                            if room_key is not None:
-                                self._runtime._reinject_pending.add((bot_id, room_key))
-                    except Exception as exc:
-                        entry["error"] = type(exc).__name__
-                    bot_report[key] = entry
+                bindings = self._runtime.workspaces.store.load(bot_id)
             except Exception as exc:
                 bot_report[bot_id] = {"error": type(exc).__name__}
-        # Team habit aggregation runs once per sweep, after the local
-        # sweeps above may have written bot USER.md files this same pass.
+                continue
+            if not bindings:
+                continue
+            for window_id in bindings:
+                if window_id in running or self._runtime.workspaces.busy(bot_id):
+                    continue
+                try:
+                    result = self._submit(
+                        _sweep_workspace_window(bot_id, window_id, bot_cfg))
+                except Exception as exc:
+                    bot_report[f"{bot_id}:{window_id}"] = {
+                        "error": type(exc).__name__}
+                    continue
+                if result is not None:
+                    key, entry = result
+                    bot_report[key] = entry
+        # TURN-CURATE: shared-profile aggregation (Thyca reviews per-bot
+        # profile blocks and writes the merged set via profile_update).
         try:
-            habits_aggregated = self.aggregate_changed_bot_habits()
+            profiles_aggregated = self.aggregate_team_profiles()
         except Exception:
-            habits_aggregated = []
-        return {"now": now_ts, "rooms": report, "bots": bot_report,
-                "habits_aggregated": habits_aggregated}
+            profiles_aggregated = {"error": "profile aggregation failed"}
+        return {"now": now_ts, "rooms": {}, "bots": bot_report,
+                "profiles_aggregated": profiles_aggregated}
 
-    def aggregate_changed_bot_habits(self) -> list[str]:
-        """Aggregate team habits when bot USER.md files changed.
+    def _user_direct_profile_observations(self) -> list[dict]:
+        """kind='habit' observations the user stated directly (no owner)."""
+        from thyca.memory.habits import habit_observations
 
-        Tracks ``(mtime_ns, size)`` per bot file (missing file → None).
-        The first scan after startup counts as changed so edits made
-        while serve was down are picked up (aggregation is idempotent).
-        Signatures update only on success; a failure keeps the old ones
-        so the next sweep retries. Best-effort: never raises.
+        try:
+            records = habit_observations(self.job_facade(), None)
+        except Exception:
+            return []
+        return [
+            record for record in records if record.get("bots") is None
+        ]
+
+    def aggregate_team_profiles(self) -> dict:
+        """Scheduled Thyca turn: review per-bot profile blocks → shared USER.md.
+
+        TURN-CURATE aggregation: one prompt carries every bot's
+        ``## Profile`` block with provenance, user-direct observations,
+        the current shared block, and bot cards as scope context; Thyca
+        reviews (dedupe / scope / conflict) and writes the merged set
+        through the ``profile_update`` tool. Runs at most once a day, or
+        immediately when bot profile files changed. Best-effort: never
+        raises.
         """
-        from thyca.memory import habits as mem_habits
+        from thyca.memory import profile as mem_profile
 
         try:
             paths = {}
@@ -565,15 +596,104 @@ class ChatApp:
                     stat = None
                 current[bot_id] = (
                     None if stat is None else (stat.st_mtime_ns, stat.st_size))
-            previous = getattr(self, "_bot_user_signatures", None)
-            if previous is not None and current == previous:
-                return []
-            added = mem_habits.aggregate_team_habits(
-                paths, self._root / "USER.md", facade=self.job_facade())
-            self._bot_user_signatures = current
-            return added
+            previous = getattr(self, "_profile_signatures", None)
+            now = time.time()
+            last = getattr(self, "_profile_last_run", 0.0)
+            if previous is not None and current == previous and now - last < 24 * 3600:
+                return {"ran": False}
+            blocks: dict[str, list[str]] = {}
+            for bot_id, path in paths.items():
+                try:
+                    text = path.read_text(encoding="utf-8") if path.is_file() else ""
+                except OSError:
+                    text = ""
+                lines = mem_profile.parse_profile_lines(text)
+                if lines:
+                    blocks[bot_id] = lines
+            shared = self._root / "USER.md"
+            try:
+                shared_text = (
+                    shared.read_text(encoding="utf-8") if shared.is_file() else ""
+                )
+            except OSError:
+                shared_text = ""
+            current_profile = mem_profile.profile_block_lines(shared_text)
+            user_direct = self._user_direct_profile_observations()
+            if not any(blocks.values()) and not user_direct:
+                self._profile_signatures = current
+                self._profile_last_run = now
+                return {"ran": False}
+            prompt = self._profile_aggregation_prompt(
+                blocks, user_direct, current_profile
+            )
+            detail = self.scheduled_turn("thyca", prompt)
+            # Migration cleanup: the legacy ## Habits auto block drops only
+            # when every legacy line already lives in the ## Profile block.
+            try:
+                mem_profile.maybe_strip_legacy_block(
+                    shared, lock_for=self.job_facade().writer.lock_for
+                )
+            except Exception:
+                pass
+            self._profile_signatures = current
+            self._profile_last_run = now
+            return {"ran": True, "reply": str(detail.get("reply", ""))[:200]}
         except Exception:
-            return []
+            return {"error": "profile aggregation failed"}
+
+    def _profile_aggregation_prompt(
+        self,
+        blocks: dict[str, list[str]],
+        user_direct: list[dict],
+        current_profile: list[str],
+    ) -> str:
+        parts = [
+            "Nhiệm vụ định kỳ: tổng hợp hồ sơ (profile) của user vào USER.md chung.",
+            "",
+            "PROFILE TỪNG BOT ĐÃ TỰ GHI (dòng có qualifier như 'Discord: ...' "
+            "chỉ đúng ở kênh/bot đó):",
+        ]
+        for bot_id in sorted(blocks):
+            card = self._profile_card_line(bot_id)
+            parts.append(f"### bot {bot_id}{card}")
+            parts.extend(f"- {line}" for line in blocks[bot_id])
+        parts.append("")
+        parts.append("USER NÓI TRỰC TIẾP (tin cậy cao nhất, kèm ngày):")
+        for obs in user_direct:
+            day = obs.get("timeline_day") or "?"
+            explicit = " explicit" if obs.get("habit_explicit") else ""
+            parts.append(f"- {obs.get('habit', '')}  (ngày {day}{explicit})")
+        parts.append("")
+        parts.append("PROFILE CHUNG HIỆN TẠI (auto block — thay thế toàn bộ khi cần):")
+        parts.extend(f"- {line}" for line in current_profile)
+        parts.append("")
+        parts.append(
+            "QUY TẮC TỔNG HỢP:\n"
+            "1. Gộp các dòng cùng nghĩa (biến thể câu); dòng chỉ đúng ở 1 "
+            "kênh/bot thì GIỮ qualifier ('Discord: ...'); dòng được ≥2 "
+            "bot/kênh độc lập xác nhận thì thành universal (bỏ qualifier).\n"
+            "2. User nói trực tiếp luôn thắng; cùng phạm vi mâu thuẫn thì ưu "
+            "tiên dòng mới hơn (ngày).\n"
+            "3. Chỉ giữ fact bền về user (sở thích, ưu tiên, tên gọi, phong "
+            "cách, mục tiêu...); bỏ chuyện vặt, tạm thời, bí mật, credential, "
+            "nội dung không phải về user.\n"
+            "4. Gọi profile_update với lines = danh sách ĐẦY ĐỦ bạn muốn giữ "
+            "trong auto block (KHÔNG phải diff). Nếu kết quả không khác gì "
+            "hiện tại thì KHÔNG gọi tool.\n"
+            "Trả lời ngắn gọn."
+        )
+        return "\n".join(parts)
+
+    def _profile_card_line(self, bot_id: str) -> str:
+        try:
+            card = self._bots.require(bot_id)
+        except Exception:
+            return ""
+        persona = " ".join((card.persona or "").split())[:200]
+        line = f" | role: {card.role} | desc: {card.description[:200]}"
+        if persona:
+            line += f" | persona: {persona}"
+        return line
 
     def get_payload(self, session_id: str) -> dict:
         session = self._sessions.store.load(session_id)
@@ -596,43 +716,122 @@ class ChatApp:
         model: str | None = None,
         instructions: str | None = None,
     ) -> dict:
-        """Manually compact one idle session; return its fresh detail.
+        """Compact each participating bot's existing canonical context.
 
-        Mirrors turn setup (live knobs + MCP sync + per-operation
-        SessionManager) so the tail budget uses the same limits and
-        overhead the next turn would. Summarization runs on the loop
-        thread with the session's own model under the TurnState compact
-        gate; a turn in flight (or another compact) raises
-        ``SessionBusy``. Any summarizer failure falls back to the
-        rule-based excerpt inside ``compact_with_llm``.
+        The room remains a read model. Existing bindings are reloaded and
+        compacted sequentially under each bot's workspace lease; absent
+        contexts are reported without creating bindings.
         """
-        turn_cfg = overlay_turn_cfg(self._current_cfg(), model, None)
-        self._memory.tail_kb = turn_cfg.limits.hotTailKB
-        self._memory.timezone_name = turn_cfg.timeline.timezone
-        self._zone = ZoneInfo(turn_cfg.timeline.timezone)
-        self._sync_mcp(turn_cfg)
-        sessions = SessionManager(
-            limits=turn_cfg.effective_limits(),
-            timezone_name=turn_cfg.timeline.timezone,
-            store=self._sessions.store,
-        )
-        sessions.load(session_id)
-        self._turns.begin_compact(session_id)
+        base_cfg = self._current_cfg()
+        if model is not None:
+            base_cfg = overlay_turn_cfg(base_cfg, model, None)
+        self._memory.tail_kb = base_cfg.limits.hotTailKB
+        self._memory.timezone_name = base_cfg.timeline.timezone
+        self._zone = ZoneInfo(base_cfg.timeline.timezone)
+        self._sync_mcp(base_cfg)
+        with self._claim_lock:
+            room = self._sessions.store.load(session_id)
+            self._turns.begin_compact(session_id)
         try:
-            result = self._submit(
-                self._compact_async(sessions, session_id, turn_cfg, instructions)
-            )
-            detail = self._detail(sessions.current, turn_cfg, running=False)
+            per_bot: dict[str, dict] = {}
+            for bot_id in room.bots or ["thyca"]:
+                try:
+                    binding = self._runtime.workspaces.store.get_binding(
+                        bot_id, session_id
+                    )
+                except Exception as exc:
+                    per_bot[bot_id] = {
+                        "compacted": False,
+                        "error": type(exc).__name__,
+                    }
+                    continue
+                if binding is None or binding.internal_session_id is None:
+                    per_bot[bot_id] = {
+                        "compacted": False,
+                        "skipped": "no_existing_context",
+                    }
+                    continue
+
+                card = self._bots.require(bot_id)
+                bot_cfg = resolve_bot_cfg(
+                    base_cfg, card, model_override=model
+                )
+
+                async def compact_one(_bot_id=bot_id, _cfg=bot_cfg):
+                    async with self._runtime.workspaces.lease(_bot_id):
+                        fresh = self._runtime.workspaces.store.get_binding(
+                            _bot_id, session_id
+                        )
+                        if fresh is None or fresh.internal_session_id is None:
+                            return {
+                                "compacted": False,
+                                "skipped": "no_existing_context",
+                            }
+                        internal_id = fresh.internal_session_id
+                        window = fresh.window or self._webui.window_for(room)
+                        sessions = SessionManager(
+                            limits=_cfg.effective_limits(),
+                            timezone_name=_cfg.timeline.timezone,
+                            store=self._runtime._canonical_store(
+                                _bot_id, window, internal_id
+                            ),
+                        )
+                        sessions.load(internal_id)
+                        flush_error = None
+                        try:
+                            await self._flush_bot_memory(
+                                _bot_id,
+                                list(sessions.current.messages),
+                                _cfg,
+                                room_id=session_id,
+                            )
+                        except Exception as exc:
+                            flush_error = type(exc).__name__
+                        sessions.load(internal_id)
+                        result = await self._compact_async(
+                            sessions,
+                            session_id,
+                            _cfg,
+                            instructions,
+                            bot_id=_bot_id,
+                        )
+                        if result.get("compacted"):
+                            self._runtime._reinject_pending.add(
+                                (_bot_id, session_id)
+                            )
+                        if flush_error is not None:
+                            result["flush_error"] = flush_error
+                        return result
+
+                try:
+                    per_bot[bot_id] = self._submit(compact_one())
+                except Exception as exc:
+                    per_bot[bot_id] = {
+                        "compacted": False,
+                        "error": type(exc).__name__,
+                    }
+            detail = self._detail(room, base_cfg, running=False)
         finally:
             self._turns.end_compact(session_id)
-        return {**detail, "compaction": result}
+        return {
+            **detail,
+            "compaction": {
+                "compacted": any(
+                    result.get("compacted") is True
+                    for result in per_bot.values()
+                ),
+                "per_bot": per_bot,
+            },
+        }
 
     async def _compact_async(
         self,
         sessions: SessionManager,
-        session_id: str,
+        room_id: str,
         turn_cfg: Config,
         instructions: str | None,
+        *,
+        bot_id: str,
     ) -> dict:
         provider = turn_cfg.effective_provider()
         connect = self._injected_connect or ConnectFactory.create(
@@ -640,7 +839,9 @@ class ChatApp:
         )
         owns = self._injected_connect is None
         try:
-            hot_tokens, tools_tokens = self._overhead_tokens(session_id)
+            hot_tokens, tools_tokens = self._overhead_tokens(
+                room_id, turn_cfg=turn_cfg, bot_id=bot_id
+            )
             return await compact_with_llm(
                 LlmSummarizer(connect),
                 sessions,
@@ -779,134 +980,45 @@ class ChatApp:
         model: str | None = None,
         effort: str | None = None,
         retry: bool = False,
+        diagnostic_sink: Callable[[dict], None] | None = None,
     ) -> dict:
-        cleaned = _clean_turn_text(text, retry=retry)
-        turn_cfg = overlay_turn_cfg(self._current_cfg(), model, effort)
-        # The gateway/memory are built once; refresh live knobs from current
-        # config so Provider-page saves apply without a restart.
-        limits = turn_cfg.effective_limits()
-        self._gateway.set_soft_timeout_s(limits.softTimeoutS)
-        # Global section, not effective: ActiveMemory is shared by concurrent
-        # turns, so a per-model value would race across turns. (softTimeoutS
-        # is global-only too; ModelCfg has no such field.)
-        self._memory.tail_kb = turn_cfg.limits.hotTailKB
-        self._memory.timezone_name = turn_cfg.timeline.timezone
-        self._zone = ZoneInfo(turn_cfg.timeline.timezone)
-        self._sync_mcp(turn_cfg)
-        bots = self.room_bots(session_id)
-        paused = {
-            doc.card.bot_id
-            for doc in self._bots.list()
-            if doc.ok and doc.card is not None and doc.card.paused
-        }
-        responder = self._resolve_responder(bots, cleaned, paused=paused)
-        with self._claim_lock:
-            hub = self._turns.claim(session_id)
-            job = self._loop_turns.begin(session_id)
-        if not retry:
-            # A fresh user message answers any waiting/error card in
-            # this room; a retry replays the same message and must not.
-            # Only after the claim: a refused (busy) turn posted nothing.
-            self._agent_status.note_user_message(session_id)
-        try:
+        _clean_turn_text(text, retry=retry)
+        session = self._sessions.store.load(session_id)
+        window = self._webui.window_for(session)
+        event = self._webui.event_for(session, text)
+        return self._turn_service.run(
+            event,
+            window=window,
+            event_sink=event_sink,
+            model=model,
+            effort=effort,
+            retry=retry,
+            diagnostic_sink=diagnostic_sink,
+        )
 
-            def sink(event: TurnEvent) -> None:
-                hub.publish(event)
-                if event_sink is not None:
-                    event_sink(event)
-
-            if responder == "thyca":
-                coro = self._run_turn(
-                    session_id,
-                    cleaned,
-                    sink,
-                    turn_cfg=turn_cfg,
-                    effort=effort,
-                    retry=retry,
-                )
-            else:
-                coro = self._run_bot_turn(
-                    session_id,
-                    cleaned,
-                    sink,
-                    turn_cfg=turn_cfg,
-                    effort=effort,
-                    retry=retry,
-                    bot_id=responder,
-                )
-            try:
-                detail = self._loop_turns.submit(job, coro)
-            except TurnCancelled:
-                hub.publish(("cancelled", None))
-                raise
-            except Exception as exc:
-                hub.publish(("failed", exc))
-                raise
-            hub.publish(("completed", detail))
-            return detail
-        finally:
-            with self._claim_lock:
-                self._loop_turns.end(session_id, job)
-                self._turns.release(session_id)
+    def scheduled_turn(self, bot_id: str, text: str) -> dict:
+        """Scheduler entry: system-actor turn in the bot's fixed DM."""
+        return self._turn_service.run_system(bot_id, text)
 
     def cancel(self, session_id: str) -> None:
+        from thyca.app.private_followups import PrivateFollowupService
+
         with self._claim_lock:
-            if self._turns.hub(session_id) is None:
-                self._sessions.store.load(session_id)
-                raise SessionIdle()
-            self._loop_turns.request_cancel(session_id)
+            running = self._turns.hub(session_id) is not None
+            if running:
+                self._loop_turns.request_cancel(session_id)
+        if not running:
+            if PrivateFollowupService(self).cancel_window(session_id):
+                return
+            self._sessions.store.load(session_id)
+            raise SessionIdle()
         deadline = time.monotonic() + _CANCEL_WAIT_S
         while time.monotonic() < deadline:
             if self._turns.hub(session_id) is None:
+                PrivateFollowupService(self).cancel_window(session_id)
                 return
             time.sleep(0.05)
         raise TurnInFlight("turn still in flight")
-
-    async def _run_turn(
-        self,
-        session_id: str,
-        text: str,
-        event_sink: EventSink | None = None,
-        *,
-        turn_cfg: Config,
-        effort: str | None,
-        retry: bool,
-    ) -> dict:
-        # Turn execution lives in app.run_turn; the app shell only
-        # assembles the shared scope and the detail builder here.
-        # Thyca reads the same open-task view bots get (CBE-4): derived
-        # from this room's transcript + queued bus envelopes, no store.
-        from thyca.bots.tasks import derive_open_tasks, format_task_index
-
-        try:
-            room_messages = list(self._sessions.store.load(session_id).messages)
-        except Exception:
-            room_messages = []
-        thyca_tasks = derive_open_tasks(
-            room_messages, self._runtime._pending_relevant("thyca"), bot_id="thyca"
-        )
-        scope = TurnScope(
-            store=self._sessions.store,
-            act=self._act,
-            tools=self._tools,
-            memory=self._memory,
-            state=self._state,
-            zone=self._zone,
-            injected_connect=self._injected_connect,
-            hot_tasks=format_task_index(thyca_tasks[:20]) if thyca_tasks else "",
-            hot_memory_tasks=self._memory_task_index("thyca"),
-            hot_bot_user=self._bots.bot_user_text("thyca"),
-            status_tracker=self._agent_status,
-        )
-        request = TurnRequest(
-            session_id=session_id,
-            text=text,
-            event_sink=event_sink,
-            turn_cfg=turn_cfg,
-            effort=effort,
-            retry=retry,
-        )
-        return await run_turn(scope, request, self._detail)
 
     @staticmethod
     def _resolve_responder(
@@ -926,7 +1038,7 @@ class ChatApp:
         return active[0] if active else (bots[0] if bots else "thyca")
 
     def _room_cursor(self, bot_id: str, room_id: str) -> tuple[int, str] | None:
-        """This bot's room-context cursor (truth lives in the room map)."""
+        """This bot's room-context cursor (truth lives in the registry)."""
         try:
             return self._runtime.room_cursor(bot_id, room_id)
         except Exception:
@@ -949,6 +1061,8 @@ class ChatApp:
         effort: str | None,
         retry: bool,
         bot_id: str,
+        model_override: str | None = None,
+        diagnostic_sink: Callable[[dict], None] | None = None,
     ) -> dict:
         """Run one bot turn and record it into the room transcript.
 
@@ -957,6 +1071,11 @@ class ChatApp:
         bot's reply + fresh bus events), each stamped with
         ``bot_id/kind/trace_id`` (contract §6/BE-6)."""
         card = self._bots.require(bot_id)
+        operation_cfg = turn_cfg
+        turn_cfg = resolve_bot_cfg(
+            operation_cfg, card, model_override=model_override
+        )
+        turn_cfg = overlay_turn_cfg(turn_cfg, None, effort)
         sessions = SessionManager(
             limits=turn_cfg.effective_limits(),
             timezone_name=turn_cfg.timeline.timezone,
@@ -966,6 +1085,12 @@ class ChatApp:
         if retry and not sessions.truncate_to_last_user():
             raise InvalidTurnOption("no user")
         provider = turn_cfg.effective_provider()
+        if effort is not None:
+            selected = turn_cfg.models.get(turn_cfg.defaultModel)
+            own_set = selected.reasoningEfforts if selected is not None else ()
+            provider = replace(
+                provider, reasoningEffort=effort, reasoningEfforts=own_set
+            )
         connect = self._injected_connect or ConnectFactory.create(
             provider.api, provider
         )
@@ -978,7 +1103,24 @@ class ChatApp:
         current_msg = None
         is_dm = self._room_dm_owner(session_id) is not None
         if not retry:
-            current_msg = Message(role="user", content=text)
+            from thyca.app.turn_event import current_channel_event
+            from thyca.core.channel import WORK_REF_RE
+
+            _ev = current_channel_event()
+            _row_meta = None
+            if _ev is not None:
+                _row_meta = {
+                    "event_id": _ev.event_id,
+                    "channel_id": _ev.channel_id,
+                    "window_id": _ev.window_id,
+                    "actor_kind": _ev.actor.kind,
+                }
+                _wr = getattr(_ev, "work_ref", None)
+                if isinstance(_wr, str) and WORK_REF_RE.fullmatch(_wr):
+                    _row_meta["work_id"] = _wr
+            current_msg = Message(
+                role="user", content=text,
+                meta=_row_meta if _row_meta else None)
         if not is_dm:
             try:
                 from thyca.bots.room_context import fingerprint as _fp
@@ -998,7 +1140,7 @@ class ChatApp:
             except Exception:
                 room_context, room_cursor, room_after = "", None, None
         try:
-            scope = TurnScope(
+            scope = BotTurnScope(
                 store=self._sessions.store,
                 act=self._act,
                 tools=self._tools,
@@ -1024,28 +1166,42 @@ class ChatApp:
                     if current_msg is not None
                     else Message(role="user", content=text)
                 )
+                self._consume_dm_pending(
+                    bot_id, session_id, room=early_room)
             try:
                 result = await self._runtime.run_bot_turn_detailed(
                     scope=scope,
                     card=card,
                     room_id=session_id,
                     text=text,
-                    turn_cfg=turn_cfg,
+                    turn_cfg=operation_cfg,
                     event_sink=event_sink,
                     trace_id=trace_id,
                     span_id=span_id,
-                    room_context=room_context,
-                    room_cursor=room_cursor,
+                    room_text=room_context,
                     room_cursor_after=room_after,
+                    workspace_claimed=True,
+                    retry=retry,
+                    model_override=model_override,
+                    effort=effort,
+                    diagnostic_sink=diagnostic_sink,
                 )
                 reply = result.reply
             except asyncio.CancelledError:
                 raise
             except LLMError as exc:
-                _mark_room_error(sessions, session_id, "llm_error", str(exc))
+                try:
+                    sessions.load(session_id)
+                    sessions.mark_turn_error("llm_error", str(exc))
+                except Exception:
+                    pass
                 raise
             except Exception:
-                _mark_room_error(sessions, session_id, "chat_unavailable", "chat unavailable")
+                try:
+                    sessions.load(session_id)
+                    sessions.mark_turn_error("chat_unavailable", "chat unavailable")
+                except Exception:
+                    pass
                 raise
             room = SessionManager(
                 limits=turn_cfg.effective_limits(),
@@ -1091,8 +1247,42 @@ class ChatApp:
                 return session.dm_bot
         return None
 
+    def _consume_dm_pending(self, bot_id: str, session_id: str,
+                            room) -> None:
+        """A DM answer to a waiting private follow-up -> received.
+
+        Runs right after the user row is persisted (never on retry, so a
+        replays can't double-consume). The stored answer_ref points at
+        the real transcript row; the raw body is never copied into the
+        pending."""
+        from thyca.app.turn_event import current_channel_event
+        from thyca.bots.private_followups import PrivateFollowupStore
+
+        ev = current_channel_event()
+        if ev is None or not ev.event_id:
+            return
+        if getattr(ev.actor, "kind", None) != "user":
+            return
+        session = self._sessions.store.load(session_id)
+        if session.dm_bot != bot_id:
+            return
+        store = PrivateFollowupStore(self._root)
+        pending = store.active(bot_id)
+        if pending is None or pending.status != "waiting_private":
+            return
+        if pending.dm_window != session_id:
+            return
+        row_index = len(self._sessions.store.load(session_id).messages) - 1
+        store.receive(
+            bot_id,
+            pending.pending_id,
+            answer_event_id=ev.event_id,
+            answer_ref=f"{session_id}:{row_index}",
+            idempotency_key=ev.event_id,
+        )
+
     def post_bot_dm_message(self, bot_id: str, text: str,
-                            current_room_id: str = "") -> dict:
+                            current_room_id: str = "", meta: dict | None = None) -> dict:
         """Post *text* into *bot_id*'s own DM under its own name.
 
         The ``message_user`` tool's landing path (user decision
@@ -1112,12 +1302,102 @@ class ChatApp:
             store=self._sessions.store,
         )
         room.load(dm["id"])
+        if meta and meta.get("kind") == "private_question":
+            for m in reversed(list(room.current.messages)):
+                m_meta = m.meta or {}
+                if m_meta.get("pfq_marker") == meta.get("pfq_marker"):
+                    return {"ok": True, "session_id": dm["id"],
+                            "deduped": True}
+        row_meta = {"bot_id": bot_id, "kind": "message",
+                    **self._bot_display_meta(bot_id)}
+        if meta:
+            row_meta.update(meta)
         room.append(Message(
             role="assistant",
             content=text,
-            meta={"bot_id": bot_id, "kind": "message", **self._bot_display_meta(bot_id)},
+            meta=row_meta,
         ))
         return {"ok": True, "session_id": dm["id"]}
+
+    def post_bot_dm_card(self, bot_id: str, card: dict) -> dict:
+        """Post a structured card into the bot's OWN DM window."""
+        dm = self.bot_dm(bot_id)
+        cfg = self._current_cfg()
+        room = SessionManager(
+            limits=cfg.effective_limits(),
+            timezone_name=cfg.timeline.timezone,
+            store=self._sessions.store,
+        )
+        room.load(dm["id"])
+        pf = card.get("private_followup") if isinstance(card, dict) else None
+        if isinstance(pf, dict) and pf.get("pending_id"):
+            for m in reversed(list(room.current.messages)):
+                m_card = (m.meta or {}).get("card") or {}
+                m_pf = m_card.get("private_followup") or {}
+                if (
+                    m_pf.get("pending_id") == pf.get("pending_id")
+                    and m_pf.get("revision") == pf.get("revision")
+                ):
+                    return {"ok": True, "session_id": dm["id"],
+                            "deduped": True}
+        room.append(Message(
+            role="assistant",
+            content=card.get("title", "question"),
+            meta={"bot_id": bot_id, "kind": "card", "card": dict(card),
+                  **self._bot_display_meta(bot_id)},
+        ))
+        return {"ok": True, "session_id": dm["id"]}
+
+    def post_bot_room_message(self, bot_id: str, text: str,
+                              room_id: str, meta: dict | None = None) -> dict:
+        """Post a plain status row into a room the bot participates in.
+
+        ``meta`` is for trusted internal callers only — when it carries a
+        ``pending_id`` marker the room is scanned first and a matching
+        row means the write already happened (crash-safe resume): the
+        existing row is returned instead of a duplicate."""
+        if not room_id:
+            return {"ok": False, "error": "no room"}
+        session = next(
+            (s for s in self._sessions.list_sessions() if s.id == room_id),
+            None,
+        )
+        if session is None:
+            return {"ok": False, "error": f"unknown room: {room_id}"}
+        if session.dm_bot is not None and session.dm_bot != bot_id:
+            return {"ok": False, "error": "room is another bot's DM"}
+        participants = list(session.bots) if session.bots else ["thyca"]
+        if bot_id not in participants:
+            return {"ok": False, "error": f"not a participant: {bot_id}"}
+        cfg = self._current_cfg()
+        room = SessionManager(
+            limits=cfg.effective_limits(),
+            timezone_name=cfg.timeline.timezone,
+            store=self._sessions.store,
+        )
+        room.load(room_id)
+        marker = (meta or {}).get("pending_id")
+        if marker is not None:
+            for m in reversed(list(room.current.messages)):
+                m_meta = m.meta or {}
+                if (
+                    m_meta.get("pending_id") == marker
+                    and m_meta.get("kind") == (meta or {}).get("kind")
+                    and m_meta.get("proposal_revision") == (meta or {}).get("proposal_revision")
+                    and m_meta.get("bot_id") == bot_id
+                ):
+                    return {"ok": True, "session_id": room_id,
+                            "deduped": True}
+        row_meta = {"bot_id": bot_id, "kind": "status",
+                    **self._bot_display_meta(bot_id)}
+        if meta:
+            row_meta.update(meta)
+        room.append(Message(
+            role="assistant",
+            content=text,
+            meta=row_meta,
+        ))
+        return {"ok": True, "session_id": room_id}
 
     def post_bot_card(self, bot_id: str, card: dict,
                       current_room_id: str = "", content: str = "") -> dict:
@@ -1153,6 +1433,16 @@ class ChatApp:
             store=self._sessions.store,
         )
         room.load(current_room_id)
+        from thyca.app.turn_event import current_channel_event
+        from thyca.core.channel import WORK_REF_RE
+
+        _ev = current_channel_event()
+        if _ev is not None:
+            meta.setdefault("channel", _ev.channel_id)
+            meta.setdefault("window_id", _ev.window_id)
+            _wr = getattr(_ev, "work_ref", None)
+            if isinstance(_wr, str) and WORK_REF_RE.fullmatch(_wr):
+                meta.setdefault("work_id", _wr)
         room.append(Message(role="assistant", content=content, meta=meta))
         card_type = card.get("type") if isinstance(card, dict) else None
         self._agent_status.note_card_posted(bot_id, current_room_id, card_type)
@@ -1189,6 +1479,34 @@ class ChatApp:
         returns to the sender, who reports it under its own name. A
         result may land in a DM only when the recipient owns that DM
         (scheduled/independent work reporting home)."""
+        try:
+            async with self._runtime.workspaces.lease(envelope.recipient):
+                from thyca.memory.visibility import (
+                    MemoryView,
+                    bound_memory_view,
+                )
+
+                window = None
+                rid = envelope.session_id or ctx.room_id
+                if rid:
+                    try:
+                        window = self._webui.window_for(
+                            self._sessions.store.load(rid)
+                        )
+                    except Exception:
+                        window = None
+                with bound_memory_view(
+                    MemoryView(
+                        window=window,
+                        bot_id=envelope.recipient,
+                        thyca_dir=self._root,
+                    )
+                ):
+                    return await self._deliver_envelope_claimed(envelope, ctx)
+        except WorkspaceTurnConflict as exc:
+            return f"delivery failed: {exc}"
+
+    async def _deliver_envelope_claimed(self, envelope, ctx) -> str:
         room_id = envelope.session_id or ctx.room_id
         try:
             card = self._bots.require(envelope.recipient)
@@ -1235,18 +1553,34 @@ class ChatApp:
             except Exception:
                 room_context, room_cursor = "", None
         try:
+            if room_id:
+                try:
+                    window = self._webui.window_for(
+                        self._sessions.store.load(room_id)
+                    )
+                except Exception:
+                    window = None
+                if window is not None:
+                    self._runtime.workspaces.store.bind_window(
+                        envelope.recipient, window
+                    )
             result = await self._runtime.run_bot_turn_detailed(
-                scope=ctx.scope,
+                scope=replace(
+                    ctx.scope, injected_connect=self._injected_connect
+                ),
                 card=card,
                 room_id=room_id or f"a2a:{envelope.sender}",
                 text=text,
                 turn_cfg=ctx.turn_cfg,
                 event_sink=ctx.event_sink,
+                model_override=ctx.model_override,
+                effort=ctx.effort_override,
                 trace_id=envelope.trace_id,
                 parent_span_id=envelope.span_id,
                 span_id=span_id,
-                room_context=room_context,
-                room_cursor=room_cursor,
+                room_text=room_context,
+                room_cursor_after=room_cursor,
+                workspace_claimed=True,
             )
         except Exception as exc:
             return f"delivery failed: {type(exc).__name__}: {exc}"
@@ -1325,42 +1659,228 @@ class ChatApp:
         """Session store for read-only scan surfaces (e.g. /api/traces)."""
         return self._sessions.store
 
-    def _overhead_tokens(self, session_id: str) -> tuple[int, int]:
-        """(hot, tools) sizes the next turn would add, AgentLoop-style.
+    def trace_execution_messages(
+        self, session_id: str, bot_id: str, span_id: str
+    ) -> list[Message]:
+        """Read canonical execution rows for a trusted room/bot/span tuple."""
+        from thyca.bots.timeline import TraceExecutionError, WorkspaceTimeline
 
-        Reads via ``peek`` (never ``refresh``): a GET must not roll the
-        day, recreate files, or race a turn's real refresh on shared
-        state. Best-effort for read paths: a memory file that fails to
-        read must not blank the transcript, so hot degrades to 0 (the
-        ratio becomes a lower bound) while a real turn still surfaces
-        the error.
-        """
-        tools_tokens = (
-            _chars_to_tokens(json.dumps(self._tools, ensure_ascii=False))
-            if self._tools
-            else 0
+        room = self._sessions.store.load(session_id)
+        window = self._webui.window_for(room)
+        if bot_id not in window.participants:
+            raise TraceExecutionError(
+                "execution bot is not a participant in the referenced room"
+            )
+        binding = self._runtime.workspaces.store.get_binding(bot_id, session_id)
+        if binding is None or binding.internal_session_id is None:
+            raise TraceExecutionError(
+                "canonical execution binding is missing for this room and bot"
+            )
+        if (
+            binding.window is None
+            or binding.window.window_id != window.window_id
+        ):
+            raise TraceExecutionError(
+                "canonical execution binding does not match the referenced room"
+            )
+        timeline_path = (
+            self._root / "bots" / bot_id / "workspace" / "timeline.jsonl"
         )
+        if not timeline_path.is_file():
+            raise TraceExecutionError(
+                "canonical execution timeline is missing for this room and bot"
+            )
         try:
-            hot = self._memory.peek(
-                self._state, datetime.now(self._zone), session_id=session_id
+            timeline = WorkspaceTimeline(self._root, bot_id, create=False)
+        except FileNotFoundError as exc:
+            raise TraceExecutionError(
+                "canonical execution timeline disappeared while reading"
+            ) from exc
+        messages = timeline.messages_for_span(window, span_id)
+        if not messages:
+            raise TraceExecutionError(
+                "canonical execution span is missing from the room timeline"
             )
-            hot_tokens = (
-                _chars_to_tokens(PromptManager().build(hot))
-                if isinstance(hot, ActiveSnapshot)
-                else 0
+        return messages
+
+    def bot_operations(
+        self, session_id: str, bot_id: str, *,
+        model: str | None = None, effort: str | None = None,
+    ) -> dict:
+        """Read operational data for exactly one room participant.
+
+        Model/context describe the selected next-turn configuration, not a
+        guess at an in-flight provider request. Actual historical usage and
+        costs come from original canonical events, including retries.
+        """
+        from thyca.bots.timeline import WorkspaceTimeline
+        from thyca.bots.usage import usage_for_window
+        from thyca.llm.pricing import pricing_for
+        from thyca.sessions.wire import turn_slices
+
+        room = self._sessions.store.load(session_id)
+        window = self._webui.window_for(room)
+        if bot_id not in window.participants:
+            raise RegistryError("bot is not a participant in this room")
+        card = self._bots.require(bot_id)
+        base = self._current_cfg()
+        if model is not None:
+            base = overlay_turn_cfg(base, model, None)
+        cfg = resolve_bot_cfg(base, card, model_override=model)
+        cfg = overlay_turn_cfg(cfg, None, effort)
+        provider = cfg.effective_provider()
+        effective_effort = effort if effort is not None else provider.reasoningEffort
+        canonical = self._workspace_session(room, bot_id, cfg)
+        messages = list(canonical.messages) if canonical is not None else []
+        history = []
+        if canonical is not None:
+            timeline = WorkspaceTimeline(self._root, bot_id, create=False)
+            history = timeline.messages_for_window(window)
+        usage = usage_for_window(history)
+        latest = usage["last_turn"]
+        trace = None
+        if latest is not None:
+            for index, rows in enumerate(turn_slices(room.messages)):
+                if any(
+                    (message.meta or {}).get("bot_id") == bot_id
+                    and (message.meta or {}).get("span_id") == latest["span_id"]
+                    for message in rows
+                ):
+                    trace = {"session_id": session_id, "turn_index": index}
+                    break
+        hot_tokens, tools_tokens = self._overhead_tokens(
+            session_id, turn_cfg=cfg, bot_id=bot_id, strict=True,
+        )
+        context = context_usage(
+            messages, cfg.effective_limits().contextTokens,
+            hot_tokens=hot_tokens, tools_tokens=tools_tokens,
+            calibration=calibration_factor(messages, model=cfg.defaultModel),
+        )
+        rates = pricing_for(cfg.defaultModel, cfg.effective_pricing() or None)
+        return {
+            "bot_id": bot_id,
+            "session_id": session_id,
+            "model": {
+                "id": cfg.defaultModel,
+                "provider": cfg.provider_id_for(cfg.defaultModel),
+                "reasoning_effort": effective_effort,
+                "scope": "next_turn_configuration",
+            },
+            "context": {**context, "estimated": True},
+            **usage,
+            "rates": None if rates is None else {
+                "currency": "USD", "per_tokens": 1_000_000,
+                "input": rates.input, "output": rates.output, "cache": rates.cache,
+            },
+            "trace": trace,
+        }
+
+    def _workspace_session(self, room: Session, bot_id: str, cfg: Config) -> Session | None:
+        """Read an existing canonical context without creating its binding."""
+        binding = self._runtime.workspaces.store.get_binding(bot_id, room.id)
+        if binding is None or binding.internal_session_id is None:
+            return None
+        window = binding.window or self._webui.window_for(room)
+        from thyca.bots.timeline import WorkspaceTimeline
+
+        timeline = WorkspaceTimeline(self._root, bot_id, create=False)
+        return timeline.project(window, session_id=binding.internal_session_id)
+
+    def _overhead_tokens(
+        self, session_id: str, *, turn_cfg: Config, bot_id: str,
+        strict: bool = False,
+    ) -> tuple[int, int]:
+        """Estimate shared hot/tool overhead, excluding query-only inputs.
+
+        The meter cannot know the next user text, mailbox batch, or
+        query-specific post-compaction recall; those are omitted rather than
+        fabricated. Runtime and meter use the same prepared-input composer.
+        """
+        tools_tokens = 0
+        try:
+            from thyca.bots.tasks import derive_open_tasks
+            from thyca.bots.workspace_context import build_workspace_hot
+            from thyca.memory.visibility import MemoryView, bound_memory_view
+            from thyca.bots.runtime import filtered_tool_schemas
+
+            room = self._sessions.store.load(session_id)
+            window = self._webui.window_for(room)
+            doc = self._bots.get(bot_id)
+            card = doc.card if doc.ok else None
+            filtered = filtered_tool_schemas(self._tools, card) if card else self._tools
+            tools_tokens = _chars_to_tokens(
+                json.dumps(filtered or [], ensure_ascii=False)
             )
+            canonical = self._workspace_session(room, bot_id, turn_cfg)
+            messages = list(canonical.messages) if canonical is not None else []
+            room_delta = ""
+            if room.dm_bot is None:
+                room_delta, _ = self._room_delta_for(
+                    bot_id, session_id, list(room.messages)
+                )
+            limits = turn_cfg.effective_limits()
+            zone = ZoneInfo(turn_cfg.timeline.timezone)
+            pending = PrivateFollowupStore(self._root).active(bot_id)
+            with bound_memory_view(
+                MemoryView(window=window, bot_id=bot_id, thyca_dir=self._root)
+            ):
+                hot = self._memory.peek(
+                    self._state,
+                    datetime.now(zone),
+                    session_id=session_id,
+                    reader=None if card is None or card.system or bot_id == "thyca" else bot_id,
+                    tail_kb=limits.hotTailKB,
+                    timezone_name=turn_cfg.timeline.timezone,
+                )
+                bot_tasks = derive_open_tasks(
+                    messages,
+                    self._runtime._pending_relevant(bot_id),
+                    bot_id=bot_id,
+                )
+                memory_read = card is None or card.memory.read
+                hot = build_workspace_hot(
+                    hot,
+                    thyca_dir=self._root,
+                    bot_id=bot_id,
+                    window=window,
+                    card=card,
+                    runtime_tasks=tuple(bot_tasks[:20]),
+                    memory_catalog=(
+                        tuple(self._memory_task_rows(bot_id)) if memory_read else ()
+                    ),
+                    room_delta=room_delta,
+                    bot_user=(
+                        self._bots.bot_user_text(bot_id) if memory_read else ""
+                    ),
+                    skills=self._bots.skill_index_text(bot_id),
+                    team=self._bots.team_index_text(),
+                    pending_followup=pending,
+                )
+            hot_tokens = _chars_to_tokens(PromptManager().build(hot))
         except Exception:
+            if strict:
+                raise
             hot_tokens = 0
         return hot_tokens, tools_tokens
 
     def _context_usage(self, session: Session, cfg: Config) -> dict:
-        hot_tokens, tools_tokens = self._overhead_tokens(session.id)
+        responder = session.dm_bot or self._resolve_responder(
+            list(session.bots or ["thyca"]), ""
+        )
+        card = self._bots.require(responder)
+        context_cfg = resolve_bot_cfg(cfg, card)
+        canonical = self._workspace_session(session, responder, context_cfg)
+        messages = list(canonical.messages) if canonical is not None else []
+        model = context_cfg.defaultModel
+        hot_tokens, tools_tokens = self._overhead_tokens(
+            session.id, turn_cfg=context_cfg, bot_id=responder
+        )
         return context_usage(
-            session.messages,
-            cfg.effective_limits().contextTokens,
+            messages,
+            context_cfg.effective_limits().contextTokens,
             hot_tokens=hot_tokens,
             tools_tokens=tools_tokens,
-            calibration=calibration_factor(session.messages, model=cfg.provider.model),
+            calibration=calibration_factor(messages, model=model),
         )
 
     def _detail(

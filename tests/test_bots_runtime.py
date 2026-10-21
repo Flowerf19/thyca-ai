@@ -7,7 +7,7 @@ from thyca.bots.bus import Bus, BusError
 from thyca.bots.card import BotCard
 from thyca.bots.policy import BotPolicy, bind_hidden_tools, reset_hidden_tools
 from thyca.bots.runtime import filtered_tool_schemas
-from thyca.core.protocol import ToolCall
+from thyca.core.protocol import Message, ToolCall
 from thyca.tools.gateway.policy import PolicyDenied
 
 
@@ -59,6 +59,18 @@ def _card(**overrides) -> BotCard:
                 description="Codes.", persona="persona")
     base.update(overrides)
     return BotCard(**base)
+
+
+def test_compact_tool_is_baseline_for_child_bots() -> None:
+    # A pre-existing card that never listed "compact" still gains it via
+    # BASELINE_BOT_TOOLS (the same rule that grants memory_* retroactively);
+    # tools outside the card list and baseline stay dropped.
+    card = _card(tools=("read",))
+    out = filtered_tool_schemas(_schemas("read", "compact", "write"), card)
+    names = [s["function"]["name"] for s in out]
+    assert "compact" in names
+    assert "read" in names
+    assert "write" not in names
 
 
 def test_hidden_tools_win_over_allowlist() -> None:
@@ -152,6 +164,92 @@ def test_memory_tasks_in_baseline_read_gated_hidden_wins() -> None:
     hid = _card(tools=("memory_tasks", "read"), hidden_tools=("memory_tasks",))
     assert [s["function"]["name"]
             for s in filtered_tool_schemas(_schemas("memory_tasks", "read"), hid)] == ["read"]
+
+
+def test_private_followup_tools_in_baseline() -> None:
+    from thyca.bots.card import BASELINE_BOT_TOOLS
+
+    assert "ask_private" in BASELINE_BOT_TOOLS
+    assert "private_followup" in BASELINE_BOT_TOOLS
+    card = _card(tools=())
+    out = filtered_tool_schemas(
+        _schemas("ask_private", "private_followup", "read"), card)
+    assert [s["function"]["name"] for s in out] == [
+        "ask_private", "private_followup"]
+
+
+def test_loop_limit_marker_does_not_double_count_aggregate_or_trace(
+    tmp_path,
+) -> None:
+    from thyca.bots.runtime import (
+        BotTurnResult,
+        _aggregate_turn_meta,
+        _aggregate_turn_rounds,
+    )
+    from thyca.sessions import SessionManager
+    from thyca.serve.trace import turns_from_session
+
+    call = ToolCall(id="c1", name="read", arguments={})
+    meta = {
+        "kind": "llm",
+        "bot_id": "coder",
+        "model": "m",
+        "usage": {"prompt_tokens": 11, "completion_tokens": 2},
+        "cost_usd": 0.01,
+        "latency_ms": 5,
+        "span_id": "sp_1",
+    }
+    rows = [
+        Message(role="assistant", content="", tool_calls=[call], meta=meta),
+        Message(
+            role="assistant",
+            content="loop limit reached",
+            meta={**meta, "status": "loop_limit"},
+        ),
+    ]
+    model, usage, cost, latency, requests, tool_calls = _aggregate_turn_meta(rows)
+    rounds = _aggregate_turn_rounds(rows)
+    assert (model, usage, cost, latency, requests, tool_calls, rounds) == (
+        "m",
+        {"prompt_tokens": 11, "completion_tokens": 2},
+        0.01,
+        5,
+        1,
+        1,
+        1,
+    )
+
+    aggregate = BotTurnResult(
+        reply="loop limit reached",
+        bot_id="coder",
+        span_id="sp_1",
+        model=model,
+        usage=usage,
+        cost_usd=cost,
+        latency_ms=latency,
+        requests=requests,
+        tool_calls=tool_calls,
+        rounds=rounds,
+        status="loop_limit",
+    )
+    manager = SessionManager(tmp_path)
+    session = manager.create()
+    manager.append(Message(role="user", content="go"))
+    manager.append(
+        Message(
+            role="assistant",
+            content=aggregate.reply,
+            meta=aggregate.room_meta(
+                kind="message", trace_id="tr_1", parent_span_id=None
+            ),
+        )
+    )
+    turn = turns_from_session(manager.current)[0]
+    assert turn.status == "loop_limit"
+    assert (turn.rounds, turn.requests, turn.tool_calls) == (1, 1, 1)
+    assert (turn.prompt_tokens, turn.completion_tokens) == (11, 2)
+    assert turn.cost_usd == 0.01
+    assert turn.latency_ms == 5
 
 
 def test_aggregate_counts_internal_rounds_not_rows() -> None:

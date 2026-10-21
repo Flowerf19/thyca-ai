@@ -198,6 +198,34 @@ class Bus:
             pass
         return out
 
+    def drain_matching(self, bot_id: str, predicate) -> list[Envelope]:
+        """Take only queued envelopes matching ``predicate`` (atomic).
+
+        Non-matching envelopes stay queued — e.g. a DM-originated A2A
+        must not drain into a group turn's mailbox text."""
+        with self._lock:
+            box = self._boxes.get(bot_id)
+            if box is None:
+                return []
+            snapshot: list[Envelope] = []
+            try:
+                while True:
+                    snapshot.append(box.get_nowait())
+            except queue.Empty:
+                pass
+            kept: list[Envelope] = []
+            out: list[Envelope] = []
+            try:
+                for item in snapshot:
+                    (out if predicate(item) else kept).append(item)
+            except Exception:
+                for item in snapshot:
+                    box.put(item)
+                raise
+            for item in kept:
+                box.put(item)
+            return out
+
     def take(self, envelope: Envelope) -> bool:
         """Remove one specific queued envelope (delivery consumed it).
 

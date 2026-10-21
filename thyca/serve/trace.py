@@ -44,6 +44,9 @@ class TurnSummary:
     # Real tool calls behind this turn (sum of _row_tool_calls). Last so
     # older kwarg constructors keep working.
     tool_calls: int = 0
+    channel: str | None = None
+    window_id: str | None = None
+    work_id: str | None = None
 
     def to_payload(self) -> dict:
         """Public JSON shape for /api/traces* — the single source of the field list."""
@@ -71,12 +74,19 @@ class TurnSummary:
             "session_kind": self.session_kind,
             "session_dm": self.session_dm,
             "session_bots": list(self.session_bots),
+            "channel": self.channel,
+            "window_id": self.window_id,
+            "work_id": self.work_id,
         }
 
 
-def _is_context_stop(message: Message) -> bool:
-    """True for the guard's synthetic stop marker (no provider call behind it)."""
-    return (message.meta or {}).get("status") == "context_limit"
+def _is_synthetic_stop(message: Message) -> bool:
+    """True for a synthetic context/loop stop marker, not a provider call."""
+    meta = message.meta or {}
+    return (
+        meta.get("status") in {"context_limit", "loop_limit"}
+        and meta.get("kind") != "message"
+    )
 
 
 def _turn_status(slice_msgs: list[Message]) -> str:
@@ -88,7 +98,7 @@ def _turn_status(slice_msgs: list[Message]) -> str:
     # provider call, so it must not count as a completed turn (naming
     # threshold) or a request (trace totals). Already persisted rows
     # carry the same meta, so they are handled too.
-    if any(_is_context_stop(m) for m in slice_msgs):
+    if any((m.meta or {}).get("status") == "context_limit" for m in slice_msgs):
         return "context_limit"
     # sidecar meta-messages are not turn outcomes — skip them, keep old semantics
     last = next(
@@ -117,7 +127,7 @@ def _sum_tokens(turn_msgs: list[Message]) -> tuple[int | None, int | None, int |
     model: str | None = None
     rounds = 0
     for msg in turn_msgs:
-        if msg.role != "assistant" or _is_context_stop(msg):
+        if msg.role != "assistant" or _is_synthetic_stop(msg):
             continue
         meta = msg.meta or {}
         usage = meta.get("usage")
@@ -182,21 +192,21 @@ def _row_requests(message: Message) -> int:
     """Real model calls behind ONE assistant row (0 or more).
 
     The single rule for turn totals and per-bot breakdowns so the two
-    can never drift: bus rows and context-stop markers cost 0; an aggregated room row reports its
+    can never drift: bus rows and synthetic stop markers cost 0; an aggregated room row reports its
     own count; app-written card rows cost 0 (their model call already
     sits in an internal aggregate); everything else is one call.
     Non-assistant rows always cost 0.
     """
     if getattr(message, "role", None) != "assistant":
         return 0
-    meta = message.meta or {}
-    if meta.get("status") == "context_limit":
-        return 0  # guard marker: no provider call behind it.
-    if meta.get("bus_event") is True:
+    if _is_synthetic_stop(message):
         return 0
+    meta = message.meta or {}
     count = meta.get("requests")
     if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
         return count
+    if meta.get("bus_event") is True:
+        return 0
     kind = meta.get("kind")
     if kind in _BUS_KINDS:
         return 0
@@ -216,15 +226,15 @@ def _row_tool_calls(message: Message) -> int:
     """Real tool calls behind ONE assistant row.
 
     Mirrors :func:`_row_requests` exclusions (non-assistant rows,
-    context-stop markers, bus rows, app-written card rows cost 0); an
+    synthetic stop markers, bus rows, app-written card rows cost 0); an
     aggregated room row reports its own ``tool_call_count`` instead of
     its body list; everything else counts ``len(message.tool_calls)``.
     """
     if getattr(message, "role", None) != "assistant":
         return 0
-    meta = message.meta or {}
-    if meta.get("status") == "context_limit":
+    if _is_synthetic_stop(message):
         return 0
+    meta = message.meta or {}
     if meta.get("bus_event") is True:
         return 0
     count = meta.get("tool_call_count")
@@ -239,6 +249,15 @@ def _row_tool_calls(message: Message) -> int:
     return len(calls)
 
 
+def _row_rounds(message: Message) -> int:
+    if getattr(message, "role", None) != "assistant" or _is_synthetic_stop(message):
+        return 0
+    rounds = (message.meta or {}).get("rounds")
+    if isinstance(rounds, int) and not isinstance(rounds, bool) and rounds >= 0:
+        return rounds
+    return 1
+
+
 def _bot_breakdown(turn_msgs: list[Message]) -> list[dict]:
     """Per-bot subtotals over a turn slice's assistant rows.
 
@@ -250,7 +269,7 @@ def _bot_breakdown(turn_msgs: list[Message]) -> list[dict]:
     Context-stop markers are excluded, matching turn ``requests``."""
     groups: dict[str | None, list[Message]] = {}
     for msg in turn_msgs:
-        if msg.role != "assistant" or _is_context_stop(msg):
+        if msg.role != "assistant" or _is_synthetic_stop(msg):
             continue
         raw = (msg.meta or {}).get("bot_id")
         bot_id = raw if isinstance(raw, str) and raw else None
@@ -287,7 +306,9 @@ def turns_from_session(session: Session) -> list[TurnSummary]:
             None,
         )
         rounds = sum(
-            1 for m in sl if m.role == "assistant" and not _is_context_stop(m)
+            _row_rounds(m)
+            for m in sl
+            if m.role == "assistant" and not _is_synthetic_stop(m)
         )
         requests = sum(_row_requests(m) for m in sl)
         tool_calls = sum(_row_tool_calls(m) for m in sl)
@@ -301,6 +322,14 @@ def turns_from_session(session: Session) -> list[TurnSummary]:
         trace_id = next(
             (str((m.meta or {}).get("trace_id")) for m in sl
              if isinstance((m.meta or {}).get("trace_id"), str) and (m.meta or {}).get("trace_id")),
+            None,
+        )
+        from thyca.core.channel import WORK_REF_RE
+
+        work_id = next(
+            (str((m.meta or {}).get("work_id")) for m in sl
+             if isinstance((m.meta or {}).get("work_id"), str)
+             and WORK_REF_RE.fullmatch((m.meta or {})["work_id"])),
             None,
         )
         out.append(
@@ -329,6 +358,9 @@ def turns_from_session(session: Session) -> list[TurnSummary]:
                 session_kind=kind,
                 session_dm=session.dm_bot,
                 session_bots=bots,
+                channel="webui",
+                window_id=session.id,
+                work_id=work_id,
             )
         )
     return out

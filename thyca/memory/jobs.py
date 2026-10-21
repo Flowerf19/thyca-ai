@@ -60,7 +60,7 @@ def transcript_tail(messages: list[Message], max_chars: int = 12000) -> str:
     for message in messages:
         if message.role not in ("user", "assistant"):
             continue
-        if (message.meta or {}).get("kind") in ("naming", "compaction", "room_context"):
+        if (message.meta or {}).get("kind") in ("naming", "compaction"):
             continue
         text = message.content or ""
         if text.strip():
@@ -219,7 +219,7 @@ def parse_extraction(text: str) -> list[ExtractedMemory]:
 
 
 def apply_extracted(facade, items: list[ExtractedMemory], *, default_bot: str = "thyca",
-                    open_tasks=()) -> dict:
+                    open_tasks=(), chat: str | None = None) -> dict:
     """Write extracted memories as the sidecar (Thyca privileges).
 
     Per-bot entries land in that bot's notebook; team-worthy ones are
@@ -265,7 +265,7 @@ def apply_extracted(facade, items: list[ExtractedMemory], *, default_bot: str = 
                         cont = known[task].get("latest_session_id")
             sid = facade.remember(
                 item.topic, item.summary, content=item.content,
-                importance=item.importance, bots=owners,
+                importance=item.importance, bots=owners, chat=chat,
                 task=task, cont=cont, kind=item.kind,
                 status=status, habit=item.habit,
                 habit_explicit=item.habit_explicit,

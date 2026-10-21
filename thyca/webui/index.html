@@ -16,6 +16,7 @@
     <link rel="stylesheet" href="./shared/css/states.css" />
     <link rel="stylesheet" href="./shared/css/markdown.css" />
     <link rel="stylesheet" href="./shared/css/bot-avatar.css" />
+    <link rel="stylesheet" href="./shared/css/bot-envelope.css" />
     <link rel="stylesheet" href="./pages/chat/chat.css" />
     <link rel="icon" href="data:," />
   </head>
@@ -108,7 +109,6 @@
                 <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8.5" y="3.5" width="7" height="12" rx="3.5" fill="none" stroke="currentColor" stroke-width="1.7" /><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M8.5 21h7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></svg>
                 <span>Nói</span>
               </button>
-              <span class="context-meter" id="context-meter" hidden></span>
               <span class="composer-team-hint" id="composer-team-hint">Gõ <kbd>@</kbd> để gọi một bot</span>
             </div>
             <div class="composer-send">
@@ -134,44 +134,10 @@
               <button class="screen-button" id="idle-dismiss" type="button">Để sau</button>
             </div>
           </div>
-          <div class="chat-idle-nudge" id="context-nudge" hidden>
-            <p id="context-nudge-text">Phiên đang dài — gọn bớt ngữ cảnh cũ?</p>
-            <input class="context-focus" id="context-focus" type="text" maxlength="500" placeholder="Giữ ý chính gì? (không bắt buộc)" autocomplete="off" />
-            <div>
-              <button class="screen-button is-primary" id="context-compact" type="button">Gọn phiên</button>
-              <button class="screen-button" id="context-new" type="button">Phiên mới</button>
-              <button class="screen-button" id="context-dismiss" type="button">Để sau</button>
-            </div>
-          </div>
         </form>
         </footer>
       </section>
     </main>
-
-    <dialog class="screen-dialog" id="rename-dialog" aria-labelledby="rename-title">
-      <form method="dialog" id="rename-form">
-        <h2 id="rename-title">Đặt tên phiên</h2>
-        <input type="hidden" id="rename-id">
-        <label for="rename-name">Tên phiên<input class="screen-input" id="rename-name" required maxlength="120" autocomplete="off"></label>
-        <p class="screen-status" id="rename-status" role="status" aria-live="polite"></p>
-        <div class="screen-toolbar">
-          <button class="screen-button" id="cancel-rename" type="button">Hủy</button>
-          <button class="screen-button is-primary" type="submit">Lưu tên</button>
-        </div>
-      </form>
-    </dialog>
-
-    <dialog class="screen-dialog" id="delete-dialog" aria-labelledby="delete-title">
-      <form method="dialog" id="delete-form">
-        <h2 id="delete-title">Xóa phiên này?</h2>
-        <p class="screen-note" id="delete-note"></p>
-        <p class="screen-status" id="delete-status" role="status" aria-live="polite"></p>
-        <div class="screen-toolbar">
-          <button class="screen-button" id="cancel-delete" type="button">Hủy</button>
-          <button class="screen-button is-danger" id="confirm-delete" type="submit">Xóa phiên</button>
-        </div>
-      </form>
-    </dialog>
 
     <dialog class="screen-dialog bot-drawer" id="bot-drawer" aria-labelledby="bot-drawer-name">
       <div class="bot-drawer-body" id="bot-drawer-body"></div>

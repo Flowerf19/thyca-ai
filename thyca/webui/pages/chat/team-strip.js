@@ -64,13 +64,25 @@ export function renderTeamStrip() {
     button.dataset.botId = id;
     const bot = hub?.teamRoster?.().find?.((item) => item.id === id);
     button.textContent = bot?.name || id;
-    button.style.setProperty("--team-tint", tintVarFor(id, bot?.tint));
+    button.style.setProperty("--team-tint", tintVarFor(id));
     // Working state comes from the room turn (detail) or the bot's own
     // roster status ("running" = đang làm, as the sidebar labels it);
     // an errored bot is never animated, so error wins over busy.
     const status = String(bot?.status || "");
     if (failed.has(id) || status === "error") button.classList.add("is-error");
     else if (running.has(id) || status === "running") button.classList.add("is-busy");
+    // TURN-CURATE: agent tự quản lý context — chỉ hiển thị % trên card bot
+    // (room 1-1) thay vì meter/nudge trong khung chat.
+    if (names.length === 1) {
+      const ratio = Number(hub?.state?.detail?.context?.ratio);
+      if (Number.isFinite(ratio) && ratio > 0) {
+        const badge = document.createElement("span");
+        badge.className = "team-strip-context";
+        badge.textContent = `~${Math.round(ratio * 100)}%`;
+        badge.title = `Ngữ cảnh phiên ~${Math.round(ratio * 100)}% — agent tự quản lý`;
+        button.append(badge);
+      }
+    }
     button.setAttribute("aria-label", `Hồ sơ bot ${bot?.name || id}`);
     button.addEventListener("click", () => hub?.openBotDrawer?.(id));
     strip.append(button);

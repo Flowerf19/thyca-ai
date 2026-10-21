@@ -516,6 +516,31 @@
 }
 
 .screen-nav { display: grid; gap: var(--space-xs); padding: 1.4rem 1.6rem; }
+.screen-nav-entry { display: grid; gap: var(--space-xs); }
+.memory-scope-submenu { display: grid; gap: var(--space-xs); padding-inline-start: 1.35rem; }
+.memory-scope-submenu[hidden] { display: none; }
+.screen-nav .memory-scope-submenu .memory-scope-choice {
+  min-height: 3rem;
+  padding-inline-start: 1.25rem;
+  white-space: normal;
+}
+.screen-nav .memory-scope-submenu .memory-scope-state {
+  margin: 0;
+  padding: 0.45rem 1rem;
+  color: var(--color-muted);
+  font-size: 0.875rem;
+  white-space: normal;
+}
+.screen-nav .memory-scope-submenu .memory-scope-state.is-error { color: var(--color-accent-deep); }
+@media (max-width: 56rem) {
+  .screen-nav .memory-navigation-entry > a::after {
+    content: "⌄";
+    margin-inline-start: auto;
+    color: var(--color-muted);
+    transition: transform var(--dur-short) var(--ease-out);
+  }
+  .screen-nav .memory-navigation-entry > a[aria-expanded="true"]::after { transform: rotate(180deg); }
+}
 .screen-nav a, .screen-nav button {
   display: flex;
   align-items: center;
@@ -1078,10 +1103,8 @@
   white-space: nowrap;
 }
 
-/* Row actions: đặt tên and xóa as plain underlined words at the right end of
-   the row, using the type of the row's own second line so the two read as one.
-   Out of the way until the row is pointed at (or reached by keyboard); touch
-   has no hover, so there they stay visible instead. */
+/* Row accessories sit at the right edge, out of the way until pointed at
+   or reached by keyboard. Touch has no hover, so they stay visible there. */
 .session-actions {
   position: absolute;
   z-index: 1;
@@ -1118,10 +1141,6 @@
   transition: color var(--dur-short) var(--ease-out);
 }
 
-.session-action.is-delete {
-  color: var(--color-accent-deep);
-}
-
 /* The actions cover the tail of both lines: they make room instead of running
    underneath. Only where the actions overlay the row at all — on touch they
    sit in their own column and the row keeps its full width. */
@@ -1130,7 +1149,7 @@
   .session-row:focus-within .session-name,
   .session-row:hover time,
   .session-row:focus-within time {
-    padding-inline-end: 5.2rem;
+    padding-inline-end: 2.6rem;
   }
 }
 

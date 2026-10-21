@@ -302,8 +302,6 @@ function makeApp(turnId) {
         release = () => resolve({ id: turnId, running: false, messages: [] });
       });
     },
-    async patchJson() { return {}; },
-    async deleteJson() { return {}; },
   };
   const sources = [
     './thyca/webui/pages/chat/sessions-sidebar.js',

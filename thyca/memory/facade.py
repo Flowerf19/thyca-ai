@@ -24,6 +24,7 @@ from thyca.memory.heading import (
     format_body,
     format_ts,
     is_visible,
+    iter_session_blocks,
     new_entry_id,
     new_task_id,
     parse_heading,
@@ -37,7 +38,22 @@ from thyca.memory.identity import current_bot_id
 from thyca.memory.search import _absolute_proj, lexical_search
 from thyca.memory.search import recent as _recent_search
 from thyca.memory.stats import CanonicalFile, MemoryStatsResult, build_stats
-from thyca.memory.writer import MemoryWriter
+from thyca.memory.writer import MemoryWriter, _read_lines
+
+
+def _preview_text(block: list[str]) -> str:
+    """Body text of one session block: bullets unindented, capped at 1000."""
+    body: list[str] = []
+    for line in block[1:]:
+        line = line.rstrip("\r\n")
+        if line.startswith("- ") or line.startswith("  "):
+            body.append(line[2:])
+        else:
+            body.append(line)
+    text = "\n".join(body).strip()
+    if len(text) > 1000:
+        text = text[:999].rstrip() + "…"
+    return text
 
 
 class MemoryFacade:
@@ -165,6 +181,10 @@ class MemoryFacade:
         rows = self.archive.store.task_session_rows(now_ts, reader=reader)
         members_by_session: dict[str, dict] = {}
         for row in rows:
+            keys = row.keys()
+            origin = row["chat"] if "chat" in keys else None
+            if not self._entry_readable(origin, row["bots"]):
+                continue
             members_by_session[str(row["session_id"])] = {
                 "task": str(row["task"]),
                 "session_id": str(row["session_id"]),
@@ -197,6 +217,10 @@ class MemoryFacade:
             by_session: dict[str, list] = {}
             for chunk in today_chunks:
                 if chunk.task is None or chunk.session_id in members_by_session:
+                    continue
+                if not self._entry_readable(
+                        getattr(chunk, "chat_session", None),
+                        encode_bots(chunk.bots)):
                     continue
                 by_session.setdefault(chunk.session_id, []).append(chunk)
             for session_id, leaves in by_session.items():
@@ -275,7 +299,6 @@ class MemoryFacade:
         return {"tasks": catalog[:limit], "warnings": warnings}
 
     def forget(self, session_id: str, now: datetime | None = None) -> None:
-        self._reject_legacy_session(session_id)
         self._check_mutate(session_id, "forget", now)
         # The writer owns per-file locking and locates under mutation_lock:
         # no facade-side pre-locate (TOCTOU + double locate).
@@ -299,7 +322,6 @@ class MemoryFacade:
         habit: str | None = None,
         habit_explicit: bool = False,
     ) -> None:
-        self._reject_legacy_session(session_id)
         normalized_proj = _absolute_proj(proj)
         for name, value in (("topic", topic), ("summary", summary), ("content", content)):
             if value is not None and not isinstance(value, str):
@@ -353,7 +375,6 @@ class MemoryFacade:
         importance: int | None = None,
         now: datetime | None = None,
     ) -> str:
-        self._reject_legacy_session(session_id)
         if importance is not None and importance not in TTL_DAYS:
             raise ValueError(f"importance must be 1..5, got {importance}")
         self._check_mutate(session_id, "reinforce", now)
@@ -373,7 +394,6 @@ class MemoryFacade:
 
         from thyca.memory.identity import current_bot_id as _bot
 
-        self._reject_legacy_session(session_id)
         reader = _bot()
         if reader is not None and reader != "thyca":
             raise ArchiveError(f"bot '{reader}' cannot promote to team memory")
@@ -389,7 +409,6 @@ class MemoryFacade:
         session_id: str | None = None,
         now: datetime | None = None,
     ) -> str:
-        self._reject_legacy_session(session_id)
         provided = [
             (name, value)
             for name, value in (
@@ -403,8 +422,6 @@ class MemoryFacade:
         name, value = provided[0]
         if not isinstance(value, str) or not value.strip():
             raise ArchiveError(f"{name} must be a non-empty string")
-        if chunk_id is not None and chunk_id.startswith("memory#"):
-            raise ArchiveError("MEMORY.md is no longer supported")
         now_ts = format_ts(utc_now(now))
         try:
             text = self.archive.get(chunk_id=chunk_id, session_id=session_id, now=now)
@@ -429,6 +446,31 @@ class MemoryFacade:
                 text = self.writer.read_session(session_id, now=now)
                 sid = session_id
                 chunk_ids = self._session_leaf_ids(session_id, text)[:GET_SESSION_CAP]
+        if not sid.startswith("canonical#"):
+            self._check_read(sid, now)
+            origin_chat = None
+            try:
+                origin_rows = self.archive.store.get_session(sid, now_ts)
+            except ArchiveError:
+                origin_rows = []
+            if origin_rows:
+                keys = origin_rows[0].keys()
+                if "chat_session" in keys:
+                    origin_chat = origin_rows[0]["chat_session"]
+            if origin_chat is None and isinstance(text, str):
+                # Provenance comes only from the REAL first session
+                # heading's metadata comment — never a body token.
+                from thyca.memory.heading import parse_heading
+
+                for line in text.splitlines():
+                    if not line.startswith("## "):
+                        break
+                    meta = parse_heading(line)
+                    if meta is not None:
+                        origin_chat = meta.chat
+                    break
+            if not self._origin_allowed(origin_chat):
+                raise ArchiveError("entry is not readable in this window")
         if chunk_ids and sid:
             self.archive.store.usage.record_gets(chunk_ids, sid, now_ts)
         # sid is always a validated non-empty id here (blank selectors raise
@@ -436,8 +478,19 @@ class MemoryFacade:
         if sid.startswith("canonical#"):
             # Canonical reads are profile content, not daily memory: return
             # the fetched text without TTL renewal or profile-file mutation.
+            # Under a group window the auto-generated habits block (which
+            # can carry private DM labels) is projected out, same as the
+            # hot snapshot — raw profile files are already PathGuard-denied.
+            from thyca.memory.visibility import current_memory_view
+
+            _view = current_memory_view()
+            if _view is not None and getattr(
+                _view.window, "kind", None
+            ) == "group" and isinstance(text, str):
+                from thyca.memory.habits import strip_auto_habits
+
+                return strip_auto_habits(text)
             return text
-        self._check_read(sid, now)
         if self._may_mutate(sid, now):
             self.reinforce(sid, now=now)
             try:
@@ -457,12 +510,15 @@ class MemoryFacade:
         # extend their TTL: return the already-fetched text as-is.
         return text
 
-    def stats(self, now: datetime | None = None) -> MemoryStatsResult:
+    def stats(
+        self, now: datetime | None = None, *, bot_id: str | None = None,
+    ) -> MemoryStatsResult:
         return build_stats(
             self.archive,
             today_chunks=self._today_chunks(now),
-            files=self._canonical_files(),
+            files=self._canonical_files() if bot_id is None else [],
             now=now,
+            bot_id=bot_id,
         )
 
     def search(
@@ -496,9 +552,27 @@ class MemoryFacade:
         return _recent_search(self.archive, limit, now, reader=current_bot_id())
 
     @staticmethod
-    def _reject_legacy_session(session_id: str | None) -> None:
-        if isinstance(session_id, str) and session_id.startswith("memory#"):
-            raise ArchiveError("MEMORY.md is no longer supported")
+    def _entry_readable(chat: str | None, bots) -> bool:
+        from thyca.memory.visibility import current_memory_view
+
+        view = current_memory_view()
+        if view is None:
+            return True
+        if bots is not None and not isinstance(bots, tuple):
+            try:
+                from thyca.memory.archive_store import decode_bots
+
+                bots = decode_bots(bots)
+            except Exception:
+                bots = None
+        return view.can_read_entry(chat, bots)
+
+    @staticmethod
+    def _origin_allowed(chat: str | None) -> bool:
+        from thyca.memory.visibility import current_memory_view
+
+        view = current_memory_view()
+        return view is None or view.can_read_origin(chat)
 
     def _refresh_index(self, now: datetime | None = None) -> None:
         with self.writer.mutation_lock():
@@ -510,30 +584,54 @@ class MemoryFacade:
             self.archive.store.usage.keep_searches(live)
 
     def candidate_preview(self, session_id: str) -> dict:
-        """Title + readable body for the candidate-review UI.
+        """Title + readable body for one candidate (see ``candidate_previews``)."""
+        return self.candidate_previews([session_id]).get(
+            session_id, {"title": "", "text": ""}
+        )
 
-        Read-only preview: it deliberately bypasses ``get`` so merely
-        listing pending proposals never records a use or renews TTL."""
-        try:
-            raw = self.writer.read_session(session_id)
-        except (ArchiveError, OSError):
-            return {"title": "", "text": ""}
-        lines = raw.splitlines()
-        if not lines:
-            return {"title": "", "text": ""}
-        meta = parse_heading(lines[0])
-        body: list[str] = []
-        for line in lines[1:]:
-            if line.startswith("- "):
-                body.append(line[2:])
-            elif line.startswith("  "):
-                body.append(line[2:])
+    def candidate_previews(self, session_ids: list[str]) -> dict[str, dict]:
+        """Titles + readable bodies for many candidate sessions (batch).
+
+        One scan per day file instead of one full-file parse per session:
+        the per-session path was O(sessions x file size), so a growing
+        pending queue made every list request re-parse the same files.
+        Semantics match the single-session path: read-only (no use/TTL
+        effects), visibility-checked, and missing/invisible sessions get
+        an empty preview.
+        """
+        by_day: dict[str, list[tuple[str, str]]] = {}
+        out: dict[str, dict] = {}
+        for sid in session_ids:
+            if not isinstance(sid, str) or "#" not in sid:
+                out[sid] = {"title": "", "text": ""}
+                continue
+            prefix, entry = sid.split("#", 1)
+            if len(prefix) == 10 and prefix[4] == "-" and prefix[7] == "-":
+                by_day.setdefault(prefix, []).append((sid, entry))
             else:
-                body.append(line)
-        text = "\n".join(body).strip()
-        if len(text) > 1000:
-            text = text[:999].rstrip() + "…"
-        return {"title": meta.title if meta else "", "text": text}
+                out[sid] = {"title": "", "text": ""}
+        for day, pairs in by_day.items():
+            path = self.thyca_dir / "memory" / f"{day}.md"
+            try:
+                lines = _read_lines(path)
+            except (ArchiveError, OSError):
+                for sid, _entry in pairs:
+                    out[sid] = {"title": "", "text": ""}
+                continue
+            targets = {entry for _sid, entry in pairs}
+            found: dict[str, tuple[HeadingMeta, list[str]]] = {}
+            for meta, resolved, start, end in iter_session_blocks(lines, str(path)):
+                # First match wins, like read_session's scan.
+                if resolved in targets and resolved not in found:
+                    found[resolved] = (meta, lines[start:end])
+            for sid, entry in pairs:
+                hit = found.get(entry)
+                if hit is None or not is_visible(hit[0].expires_at):
+                    out[sid] = {"title": "", "text": ""}
+                    continue
+                meta, block = hit
+                out[sid] = {"title": meta.title, "text": _preview_text(block)}
+        return out
 
     # -- Team ownership (BE-4) -------------------------------------------
     def entry_bots(self, session_id: str) -> tuple[str, ...] | None:

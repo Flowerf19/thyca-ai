@@ -1,9 +1,7 @@
 /* Bot avatar system (design "Bot Avatar System" v1.1, ported).
 
-   Geometry is ported from the approved design file; colours are NOT:
-   every fill/stroke resolves through the bot's own --team-tint (its
-   Agent Card tint) and the shared theme tokens, so an avatar follows
-   the card, not a fixed palette. Inputs are whitelist-only (variant,
+   Geometry is ported from the approved design file; each bot's tint and
+   glyph come from the shared stable-id look. Inputs are whitelist-only (variant,
    state, numeric size) — bot names/ids never enter the SVG markup, so
    the returned string is safe to inject as innerHTML. */
 
@@ -72,32 +70,17 @@ export function ensureBotAvatarDefs(doc = globalThis.document) {
   }
 }
 
-export const AVATAR_VARIANTS = [
-  "star", "hollow", "single-flag", "double-flag", "dotted", "fermata", "plain",
-];
-const CHILD_VARIANTS = AVATAR_VARIANTS.slice(1);
 export const AVATAR_STATES = [
   "offline", "idle", "thinking", "running", "waiting", "done", "error",
 ];
 
-const VARIANT_BY_ID = {
-  designer: "hollow",
-  "thyca-designer": "hollow",
-  coder: "single-flag",
-  "thyca-coder": "single-flag",
-  researcher: "double-flag",
-  "thyca-researcher": "double-flag",
-  "bot-a": "dotted",
-  "thyca-bot-a": "dotted",
-  "bot-b": "fermata",
-  "thyca-bot-b": "fermata",
-  generic: "plain",
-  "thyca-generic": "plain",
-};
+export const BOT_LOOK_TINTS = [
+  "accent", "botanical", "success-ink", "ink", "accent-deep",
+];
+const BOT_LOOK_GLYPHS = ["quill", "code", "nib", "note", "lens", "brush"];
 
-/* CRC32 over the UTF-8 bytes — identical to the backend's
-   zlib.crc32 fallback in effective_avatar, so a legacy card renders
-   the same shape whichever side computes it. */
+/* CRC32 over UTF-8 bytes; domain-prefixed inputs keep tint and glyph
+   derivation separate while remaining deterministic for a bot id. */
 function crc32Of(text) {
   let crc = 0xffffffff;
   for (const byte of new TextEncoder().encode(String(text || ""))) {
@@ -107,19 +90,6 @@ function crc32Of(text) {
     }
   }
   return (crc ^ 0xffffffff) >>> 0;
-}
-
-/* The variant a bot renders with: explicit card avatar wins, Thyca is
-   always the star, design ids keep their shapes, anything else gets a
-   stable per-id child variant (mirrors the backend's effective_avatar
-   for cards served by an older backend without the field). */
-export function avatarVariantFor(bot) {
-  if (!bot || typeof bot !== "object") return "plain";
-  if (bot.system || bot.id === "thyca") return "star";
-  if (AVATAR_VARIANTS.includes(bot.avatar)) return bot.avatar;
-  const known = VARIANT_BY_ID[String(bot.id || "")];
-  if (known) return known;
-  return CHILD_VARIANTS[crc32Of(bot.id) % CHILD_VARIANTS.length];
 }
 
 /* Display state for one bot: the backend agent_status wins; the legacy
@@ -162,23 +132,20 @@ function waxPath(seed, r = 27, amp = 2.6, n = 13) {
 
 const WAX_STATE = { thinking: "thinking", running: "writing", done: "done", error: "error" };
 
-/* Per-bot look from the chosen design (thyca-bot-design.html): each seal
-   carries its own pigment + glyph. Unknown ids fall back to the variant
-   tint and the note glyph. */
-const MARK_LOOK = {
-  thyca: ["#A65A42", "quill"],
-  coder: ["#5C7448", "code"],
-  writer: ["#B8863C", "nib"],
-  "nhac-viec": ["#6B4A33", "note"],
-  research: ["#3E5A5C", "lens"],
-};
+export function botMarkStateFor(bot) {
+  return WAX_STATE[avatarStateFor(bot)] || "idle";
+}
 
-function markLook(bot) {
-  const id = String(bot?.id || "");
-  for (const key of Object.keys(MARK_LOOK)) {
-    if (id === key || id.endsWith(`-${key}`) || id.startsWith(`${key}-`)) return MARK_LOOK[key];
-  }
-  return [null, "note"];
+/* One stable visual identity per immutable bot id. Appearance ignores card
+   tint/avatar, role, system status, and display name. */
+export function botLookFor(botOrId) {
+  const id = botOrId && typeof botOrId === "object"
+    ? String(botOrId.id || botOrId.bot_id || "")
+    : String(botOrId || "");
+  return {
+    tint: BOT_LOOK_TINTS[crc32Of(`tint:${id}`) % BOT_LOOK_TINTS.length],
+    glyph: BOT_LOOK_GLYPHS[crc32Of(`glyph:${id}`) % BOT_LOOK_GLYPHS.length],
+  };
 }
 
 function glyphSvg(name) {
@@ -189,13 +156,17 @@ function glyphSvg(name) {
 
 export function botMark(bot, { selected = false, state = null, cut = false } = {}) {
   ensureBotAvatarDefs();
-  const mkState = state || WAX_STATE[avatarStateFor(bot)] || "idle";
-  const [color, glyph] = markLook(bot);
-  const tint = color || "var(--avatar-tint, var(--team-tint, var(--color-accent)))";
-  const d = waxPath(bot?.id || "thyca");
+  const mkState = state || botMarkStateFor(bot);
+  const look = botLookFor(bot);
+  const botId = bot && typeof bot === "object"
+    ? String(bot.id || bot.bot_id || "")
+    : String(bot || "");
+  const tint = `var(--color-${look.tint})`;
+  const glyph = look.glyph;
+  const d = waxPath(botId);
   const id = `wx${waxUid++}`;
   return `<span class="mk mk-wax" data-state="${mkState}" data-selected="${selected}" `
-    + `style="--bot:${tint}" aria-hidden="true">`
+    + `style="--bot:${tint};--team-tint:${tint};--avatar-tint:${tint}" aria-hidden="true">`
     + `<svg class="base" viewBox="0 0 64 64"><clipPath id="${id}"><path d="${d}"/></clipPath>`
     + (cut ? `<path class="cut" d="${d}"/>` : "")
     + `<path class="wax-body" d="${d}"/><path d="${d}" fill="url(#waxShade)"/><path d="${d}" fill="url(#waxHl)"/>`
@@ -227,7 +198,7 @@ export function botMarkGroup(members, { selected = false, state = null } = {}) {
       cut: true,
     });
     const [l, t, w] = pos[i];
-    return `<span class="gm-slot" style="left:${l}%;top:${t}%;width:${w}%;height:${w}%">${m}</span>`;
+    return `<span class="gm-slot" data-seal-slot="${i}" style="left:${l}%;top:${t}%;width:${w}%;height:${w}%">${m}</span>`;
   }).reverse().join("");
   const extra = list.length - shown.length;
   const coin = extra > 0

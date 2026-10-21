@@ -11,8 +11,6 @@ import {
   renderSessions,
   revealSession,
   sessionKey,
-  submitDelete,
-  submitRename,
 } from "./sessions-sidebar.js";
 import {
   abortFollow,
@@ -29,24 +27,29 @@ import {
 import {
   armIdle,
   clearNudge,
-  compactFromContext,
-  dismissContext,
   fillComposerControls,
   initComposer,
-  newFromContext,
   retryMessage,
   sendChoiceText,
   sendIdleRemember,
   sendMessage,
-  syncContext,
 } from "./composer.js";
-import { initTeamSidebar, syncTeamSessions, teamBots } from "./team-sidebar.js";
+import {
+  initTeamSidebar,
+  syncTeamSessions,
+  teamBots,
+} from "./team-sidebar.js";
 import { botMark, botMarkGroup } from "../../shared/js/bot-avatar.js";
 import { runGuardedStages, tintVarFor } from "./team-data.js";
 import { markSeen } from "./team-unread.js";
 import { initMention, mentionKeydown } from "./team-mention.js";
 import { initTeamStrip, renderTeamStrip } from "./team-strip.js";
-import { initTeamDrawer, openBotDrawer } from "./team-drawer.js";
+import {
+  closeBotDrawerForNavigation,
+  initTeamDrawer,
+  openBotDrawer,
+  refreshBotDrawerForRoom,
+} from "./team-drawer.js";
 
 const el = {
   composer: document.querySelector("#composer"),
@@ -64,24 +67,6 @@ const el = {
   idleNudge: document.querySelector("#idle-nudge"),
   idleRemember: document.querySelector("#idle-remember"),
   idleDismiss: document.querySelector("#idle-dismiss"),
-  contextMeter: document.querySelector("#context-meter"),
-  contextNudge: document.querySelector("#context-nudge"),
-  contextNudgeText: document.querySelector("#context-nudge-text"),
-  contextFocus: document.querySelector("#context-focus"),
-  contextCompact: document.querySelector("#context-compact"),
-  contextNew: document.querySelector("#context-new"),
-  contextDismiss: document.querySelector("#context-dismiss"),
-  renameDialog: document.querySelector("#rename-dialog"),
-  renameForm: document.querySelector("#rename-form"),
-  renameId: document.querySelector("#rename-id"),
-  renameName: document.querySelector("#rename-name"),
-  renameStatus: document.querySelector("#rename-status"),
-  renameCancel: document.querySelector("#cancel-rename"),
-  deleteDialog: document.querySelector("#delete-dialog"),
-  deleteForm: document.querySelector("#delete-form"),
-  deleteNote: document.querySelector("#delete-note"),
-  deleteStatus: document.querySelector("#delete-status"),
-  deleteCancel: document.querySelector("#cancel-delete"),
   chatTitle: document.querySelector("#chat-title"),
   back: document.querySelector("#chat-back"),
   advanced: document.querySelector("#composer-advanced"),
@@ -102,9 +87,6 @@ const state = {
   sending: false,
   running: false,
   loadGeneration: 0,
-  deleteId: "",
-  // True while a rename/delete request is in flight: one submission at a time.
-  saving: false,
   // Page of the sidebar session list (SESSIONS_PAGE_SIZE per page).
   sessionPage: 1,
 };
@@ -161,7 +143,7 @@ function syncComposerAddressee(detail) {
     ? cleanText(detail?.title, "nhóm")
     : (first?.name || "Thyca");
   el.input.placeholder = `Viết vài dòng cho ${room}…`;
-  if (first?.id) mark.style.setProperty("--team-tint", tintVarFor(first.id, first.tint));
+  if (first?.id) mark.style.setProperty("--team-tint", tintVarFor(first.id));
   if (group && typeof botMarkGroup === "function") {
     mark.innerHTML = botMarkGroup(
       members.length ? members : ids.map((id) => ({ id })));
@@ -202,7 +184,6 @@ function renderDetail(detail) {
   } else if (!streamingSessions.has(state.activeId)) {
     liveTurns.delete(state.activeId);
   }
-  syncContext(detail);
   // Team CFE-2: opening a session clears its unread state (seen = newest
   // message stamp + length). Static import like the other team modules.
   if (typeof markSeen === "function" && detail?.id) markSeen(detail.id, detail);
@@ -211,6 +192,9 @@ function renderDetail(detail) {
   // replay (imports stripped there): guard every cross-module call.
   if (typeof renderTeamStrip === "function") renderTeamStrip();
   if (typeof syncTeamSessions === "function") syncTeamSessions();
+  if (typeof refreshBotDrawerForRoom === "function") {
+    refreshBotDrawerForRoom(state.activeId);
+  }
   if (typeof teamBots === "function") syncComposerAddressee(detail);
   requestAnimationFrame(() => scrollToBottom("auto"));
 }
@@ -218,6 +202,7 @@ function renderDetail(detail) {
 async function loadSession(sessionId) {
   if (!sessionId) return;
   const generation = ++state.loadGeneration;
+  closeBotDrawerForNavigation();
   abortFollow();
   clearRunningPoll();
   state.activeId = sessionId;
@@ -247,6 +232,7 @@ function newSession() {
   abortFollow();
   clearRunningPoll();
   ++state.loadGeneration;
+  closeBotDrawerForNavigation();
   state.activeId = "";
   state.detail = null;
   rememberActiveSession("");
@@ -254,7 +240,6 @@ function newSession() {
   renderSessions();
   renderEmpty(el.messageList);
   setRunning(false);
-  syncContext(null);
   armIdle();
   el.input.focus();
 }
@@ -296,30 +281,8 @@ function bind() {
     // r9: the button exists but opens no real popover yet.
     el.status.textContent = "Tùy chọn nâng cao chưa có trong v1.";
   });
-  if (typeof setTeamChoiceHandler === "function") setTeamChoiceHandler((text) => sendChoiceText(text));
+  if (typeof setTeamChoiceHandler === "function") setTeamChoiceHandler((text, metadata) => sendChoiceText(text, metadata));
   el.idleDismiss.addEventListener("click", armIdle);
-  el.contextCompact.addEventListener("click", () => void compactFromContext());
-  el.contextFocus.addEventListener("keydown", (event) => {
-    // Inside the composer <form>: Enter compacts, it must not send.
-    if (event.key !== "Enter" || event.isComposing) return;
-    event.preventDefault();
-    void compactFromContext();
-  });
-  el.contextNew.addEventListener("click", newFromContext);
-  el.contextDismiss.addEventListener("click", dismissContext);
-  el.renameCancel.addEventListener("click", () => el.renameDialog.close());
-  el.renameForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    void submitRename();
-  });
-  el.deleteCancel.addEventListener("click", () => el.deleteDialog.close());
-  el.deleteDialog.addEventListener("close", () => {
-    state.deleteId = "";
-  });
-  el.deleteForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    void submitDelete();
-  });
   el.scroll.addEventListener("scroll", updateToBottom, { passive: true });
   el.toBottom.addEventListener("click", () => scrollToBottom());
   if (typeof ResizeObserver === "function") {
@@ -351,7 +314,6 @@ async function boot() {
     else {
       state.activeId = "";
       state.detail = null;
-      syncContext(null);
       renderEmpty(el.messageList);
       el.messageList.setAttribute("aria-busy", "false");
       el.input.focus();
@@ -370,7 +332,6 @@ const hub = {
   el,
   loadSession,
   newSession,
-  setChatTitle,
   sessionKey,
   rememberActiveSession,
   renderDetail,
@@ -385,6 +346,10 @@ const hub = {
   // teamBots/openBotDrawer resolve to the real imports in the browser;
   // under the stripped harness they stay uncalled (never fake data).
   teamRoster: () => (typeof teamBots === "function" ? teamBots() : []),
+  botOperationOptions: () => ({
+    model: el.model?.value || "",
+    effort: el.effort?.value || "",
+  }),
   openBotDrawer: (botId) => {
     if (typeof openBotDrawer === "function") openBotDrawer(botId);
   },
@@ -404,6 +369,7 @@ const hub = {
     const navigated = await runGuardedStages(guard, [
       async () => {
         if (id) {
+          closeBotDrawerForNavigation();
           state.activeId = id;
           rememberActiveSession(state.activeId);
         }
@@ -422,11 +388,6 @@ const hub = {
   teamRefresh: async () => {
     await refreshSessions();
     syncTeamSessions();
-  },
-  // Rename/delete dialogs live in sessions-sidebar; the team list re-reads
-  // the shared sessions state after them.
-  onSessionsChanged: () => {
-    if (typeof syncTeamSessions === "function") syncTeamSessions();
   },
 };
 initSessionsSidebar(hub);

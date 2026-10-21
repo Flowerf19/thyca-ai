@@ -96,6 +96,50 @@ def test_peek_reads_without_rolling_state_or_creating(tmp_path: Path) -> None:
     assert memory.peek(state, at("2026-08-17")).today == "# today peek\n"
 
 
+def test_per_call_tail_and_timezone_overrides_do_not_mutate_shared_memory(
+    tmp_path: Path,
+) -> None:
+    memory = ActiveMemory(
+        tmp_path, tail_kb=1, timezone_name="UTC"
+    )
+    now = datetime(2026, 8, 17, 19, 0, tzinfo=ZoneInfo("UTC"))
+    state = memory.open_session(now)
+    next_day = tmp_path / "memory" / "2026-08-18.md"
+    content = (
+        "# next day\n## 10:00 — old\n"
+        + "x" * 800
+        + "\n## 12:00 — new\n"
+        + "y" * 800
+        + "\n"
+    )
+    next_day.write_text(content, encoding="utf-8")
+
+    full = memory.peek(
+        state,
+        now,
+        tail_kb=2,
+        timezone_name="Asia/Ho_Chi_Minh",
+    )
+    short = memory.peek(
+        state,
+        now,
+        tail_kb=1,
+        timezone_name="Asia/Ho_Chi_Minh",
+    )
+    assert full.today == content
+    assert "truncated" in short.today
+    assert state.day == "2026-08-17"
+
+    refreshed = memory.refresh(
+        state,
+        now,
+        tail_kb=2,
+        timezone_name="Asia/Ho_Chi_Minh",
+    )
+    assert refreshed.today == content
+    assert state.day == "2026-08-18"
+
+
 def test_soul_user_not_tailed_today_is(tmp_path: Path) -> None:
     memory = ActiveMemory(tmp_path, tail_kb=1, timezone_name="Asia/Ho_Chi_Minh")
     memory.ensure_files(at("2026-08-17"))

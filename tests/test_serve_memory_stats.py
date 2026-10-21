@@ -68,6 +68,7 @@ def test_stats_json_and_static(tmp_path: Path) -> None:
             assert response.headers.get_content_type() == "application/json"
             assert "no-store" in (response.headers.get("Cache-Control") or "")
             payload = json.loads(response.read().decode("utf-8"))
+        assert payload["bot_id"] is None
         assert payload["total"] == 1
         assert payload["used"] == 1
         assert payload["unused"] == 0
@@ -77,18 +78,122 @@ def test_stats_json_and_static(tmp_path: Path) -> None:
         assert payload["leaves"][0]["search_count"] == 0
         with urlopen(_url(httpd, "/memories.html"), timeout=2) as response:
             html = response.read().decode("utf-8")
-        assert 'id="memory-list"' in html
+        assert 'id="memory-sections"' in html
+        assert 'id="memory-bot-list"' in html
+        assert 'id="memory-global-nav"' in html
+        assert 'data-view="used-more"' in html
+        assert 'class="session-item" type="button" data-view=' not in html
+        assert './shared/css/bot-envelope.css' in html
         assert './pages/memories/memories.js' in html
         with urlopen(_url(httpd, "/pages/memories/memories.js"), timeout=2) as response:
             assert "javascript" in response.headers.get_content_type()
             memory_js = response.read()
-        assert b'getJson("/api/memory/stats")' in memory_js
+        assert b'scopeUrl("/api/memory/stats", requestedScope)' in memory_js
+        assert b'getJson("/api/bots")' in memory_js
         assert b'"/api/memory/update"' in memory_js
         mapping = (WEBUI / "shared" / "js" / "memory-data.js").read_text(encoding="utf-8")
         assert "selectMemories" in mapping
         assert 'view === "used-more"' in mapping
     finally:
         _stop(httpd, thread)
+
+
+def test_scoped_memory_stats_and_candidate_ownership(tmp_path: Path) -> None:
+    from thyca.bots.card import BotCard
+    from thyca.bots.registry import BotRegistry
+    from thyca.memory.candidates import CandidateQueue
+
+    registry = BotRegistry(tmp_path)
+    registry.create(BotCard(bot_id="coder", name="Coder", role="C",
+                            description="D", persona="P"))
+    registry.create(BotCard(bot_id="researcher", name="Researcher", role="R",
+                            description="D", persona="P"))
+    httpd, thread, facade = _start(tmp_path)
+    try:
+        now = _fresh_now()
+        own = facade.remember("Own", "coder private note", bots=["coder"], now=now)
+        facade.remember("Other", "researcher private note", bots=["researcher"], now=now)
+        facade.remember("Team", "shared note", bots=["team"], now=now)
+        scoped_stats = json.loads(urlopen(_url(httpd, "/api/memory/stats?bot_id=coder"), timeout=2)
+                                  .read().decode("utf-8"))
+        assert scoped_stats["bot_id"] == "coder"
+        assert scoped_stats["total"] == 1
+        global_stats = json.loads(urlopen(_url(httpd, "/api/memory/stats"), timeout=2)
+                                  .read().decode("utf-8"))
+        assert global_stats["bot_id"] is None
+        assert global_stats["total"] == 3
+
+        queue = CandidateQueue(tmp_path)
+        coder_candidate = queue.propose("coder", own)
+        other_sid = facade.remember("Other proposal", "research note", bots=["researcher"], now=now)
+        queue.propose("researcher", other_sid)
+        scoped = json.loads(urlopen(_url(httpd, "/api/memory/candidates?bot_id=coder"), timeout=2)
+                            .read().decode("utf-8"))
+        assert scoped["bot_id"] == "coder"
+        assert [item["id"] for item in scoped["candidates"]] == [coder_candidate.id]
+        # Batch previews carry the live title/body of each proposed entry.
+        assert scoped["candidates"][0]["title"] == "Own"
+        assert scoped["candidates"][0]["text"] == "coder private note"
+        all_candidates = json.loads(urlopen(_url(httpd, "/api/memory/candidates"), timeout=2)
+                                    .read().decode("utf-8"))
+        assert all_candidates["bot_id"] is None
+        assert len(all_candidates["candidates"]) == 2
+
+        for path in (
+            "/api/memory/stats?bot_id=",
+            "/api/memory/stats?bot_id=not_a_bot",
+            "/api/memory/stats?bot_id=coder&bot_id=coder",
+            "/api/memory/stats?unexpected=1",
+            "/api/memory/candidates?bot_id=missing",
+            "/api/memory/candidates?bot_id=coder&extra=1",
+        ):
+            try:
+                urlopen(_url(httpd, path), timeout=2)
+            except HTTPError as exc:
+                assert exc.code == (404 if "=missing" in path else 400), path
+            else:
+                raise AssertionError(f"expected scoped request rejection: {path}")
+    finally:
+        _stop(httpd, thread)
+
+
+def test_candidate_previews_batch_scans_each_day_file_once(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import thyca.memory.facade as facade_mod
+    from thyca.memory.candidates import CandidateQueue
+
+    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    now = _fresh_now()
+    a = facade.remember("Alpha", "note a", now=now)
+    b = facade.remember("Beta", "note b", now=now)
+    queue = CandidateQueue(tmp_path)
+    queue.propose("coder", a)
+    queue.propose("coder", b)
+    reads = []
+    real_read_lines = facade_mod._read_lines
+
+    def counting(path) -> list[str]:
+        reads.append(path)
+        return real_read_lines(path)
+
+    monkeypatch.setattr(facade_mod, "_read_lines", counting)
+    previews = facade.candidate_previews([a, b, "2026-10-20#deadbeef"])
+    assert previews[a] == {"title": "Alpha", "text": "note a"}
+    assert previews[b] == {"title": "Beta", "text": "note b"}
+    assert previews["2026-10-20#deadbeef"] == {"title": "", "text": ""}
+    # One attempt per day file (the missing 2026-10-20 file included),
+    # not one full-file parse per session.
+    assert len(reads) == 2
+
+
+def test_candidate_previews_invisible_sessions_are_empty(tmp_path: Path) -> None:
+    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    sid = facade.remember(
+        "Gone", "expired note", importance=1,
+        now=datetime(2020, 1, 1, 10, 0, tzinfo=TZ),
+    )
+    assert facade.candidate_previews([sid]) == {sid: {"title": "", "text": ""}}
 
 
 def test_forget_endpoint(tmp_path: Path) -> None:
@@ -316,6 +421,8 @@ def test_index_html_parses() -> None:
         HTMLParser().feed(raw)
         assert script in raw
         assert './shared/js/navigation.js' in raw
+        if name in {"index.html", "memories.html"}:
+            assert './shared/css/bot-envelope.css' in raw
     # Trace moved into the Dashboard: trace.html is a thin redirect that
     # preserves old deep-link params and loads no app script of its own.
     raw = (WEBUI / "trace.html").read_text(encoding="utf-8")

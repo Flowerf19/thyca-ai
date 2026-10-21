@@ -28,18 +28,13 @@ function nodeText(node) {
 function renderNode(node) {
   const item = document.createElement("li");
   item.className = "delegation-node";
-  item.style.setProperty("--team-tint", tintVarFor(node.botId, node.message?.meta?.bot_tint));
+  item.style.setProperty("--team-tint", tintVarFor(node.botId));
   const head = document.createElement("div");
   head.className = "delegation-head";
   const avatar = document.createElement("span");
   avatar.className = "bot-avatar-slot delegation-avatar";
   avatar.setAttribute("aria-hidden", "true");
-  const meta = node.message?.meta || {};
-  avatar.innerHTML = botMark({
-    id: node.botId || "thyca",
-    name: typeof meta.bot_name === "string" ? meta.bot_name : "",
-    tint: typeof meta.bot_tint === "string" ? meta.bot_tint : "",
-  }, { state: "idle" });
+  avatar.innerHTML = botMark({ id: node.botId }, { state: "idle" });
   head.append(avatar);
   const who = document.createElement("strong");
   who.textContent = nodeLabel(node);

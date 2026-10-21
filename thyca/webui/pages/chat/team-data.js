@@ -10,28 +10,23 @@
    or creates that fixed DM. Every helper treats missing fields as
    "unavailable" (pre-CBE-5 payloads carry no dm), never as fake data. */
 
+import { BOT_LOOK_TINTS, botLookFor } from "../../shared/js/bot-avatar.js";
+
 export const TEAM_BOT_ID = "thyca";
+export const BOT_TINTS = BOT_LOOK_TINTS;
 
-/* Tint tokens the team design allows (team-frontend.md §5). Card `tint` wins
-   when it names one of these; otherwise a stable hash fallback. `thyca` is
-   always accent. No hex here — tints resolve to var(--color-…) at render. */
-export const BOT_TINTS = ["accent", "botanical", "success-ink", "ink", "accent-deep"];
-
-export function tintForBot(botId, tint) {
-  if (String(botId || "") === TEAM_BOT_ID) return "accent";
-  if (BOT_TINTS.includes(String(tint || ""))) return String(tint);
-  const id = String(botId || "");
-  let hash = 0;
-  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
-  return BOT_TINTS[hash % BOT_TINTS.length];
+export function tintForBot(botId) {
+  return botLookFor(botId).tint;
 }
 
 export function tintVar(tint) {
-  return `var(--color-${tintForBot("", tint)})`;
+  const token = BOT_LOOK_TINTS.includes(String(tint || ""))
+    ? String(tint) : "accent";
+  return `var(--color-${token})`;
 }
 
-export function tintVarFor(botId, tint) {
-  return `var(--color-${tintForBot(botId, tint)})`;
+export function tintVarFor(botId) {
+  return `var(--color-${botLookFor(botId).tint})`;
 }
 
 /* Normalize GET /api/bots payloads. Tolerant: {bots:[…]} or a bare array;
@@ -68,7 +63,7 @@ export function normalizeBots(payload) {
       name: typeof bot.name === "string" && bot.name ? bot.name : String(bot.id),
       role: typeof bot.role === "string" ? bot.role : "",
       description: typeof bot.description === "string" ? bot.description : "",
-      tint: tintForBot(bot.id, bot.tint),
+      tint: tintForBot(bot.id),
       avatar: typeof bot.avatar === "string" ? bot.avatar : "",
       system: bot.system === true,
       agentStatus: bot.agent_status && typeof bot.agent_status === "object"

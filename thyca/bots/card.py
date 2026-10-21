@@ -10,6 +10,7 @@ fallback); new writes always use ``TWIN.md``.
 from __future__ import annotations
 
 import re
+import unicodedata
 import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -73,12 +74,15 @@ BASELINE_BOT_TOOLS: tuple[str, ...] = (
     "task_open",
     "message_user",
     "ask_user",
+    "ask_private",
+    "private_followup",
     "report_error",
     "memory_remember",
     "memory_search",
     "memory_get",
     "memory_propose_team",
     "memory_tasks",
+    "compact",
 )
 
 
@@ -155,12 +159,18 @@ def parse_bot_card(text: str, bot_id: str) -> BotCardDoc:
     body = text[match.end():]
 
     name = data.get("name")
-    if not isinstance(name, str) or not name.strip():
+    if not isinstance(name, str):
         return BotCardDoc(None, ok=False, error="missing name")
-    if not _NAME_RE.fullmatch(name) or len(name) > NAME_MAX:
-        return BotCardDoc(None, ok=False, error="invalid name (a-z, 0-9, hyphens)")
-    if name != bot_id:
-        return BotCardDoc(None, ok=False, error="name does not match folder")
+    if any(
+        unicodedata.category(char) == "Cc" or char in "\u2028\u2029"
+        for char in name
+    ):
+        return BotCardDoc(None, ok=False, error="invalid name (control characters)")
+    name = name.strip()
+    if not name:
+        return BotCardDoc(None, ok=False, error="missing name")
+    if len(name) > 120:
+        return BotCardDoc(None, ok=False, error="name longer than 120 chars")
 
     role = data.get("role")
     if not isinstance(role, str) or not role.strip():

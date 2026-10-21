@@ -236,7 +236,7 @@ function botTokenEntry(bot, denominator, roster) {
   avatar.setAttribute("aria-hidden", "true");
   if (!unattributed) {
     avatar.dataset.botId = botId;
-    avatar.style.setProperty("--team-tint", tintVarFor(botId, ""));
+    avatar.style.setProperty("--team-tint", tintVarFor(botId));
     const card = roster?.get(botId);
     avatar.innerHTML = botMark(card || { id: botId }, { state: "idle" });
   }

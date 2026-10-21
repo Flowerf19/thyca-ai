@@ -16,11 +16,13 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from thyca.agent.events import EventSink
+from thyca.agent.compacting import compact_with_llm
+from thyca.agent.events import EventSink, wire_retry_events
 from thyca.bots.bus import MAX_REF_CHARS, MAX_REFS, Bus, Envelope, new_span_id
 from thyca.bots.card import BASELINE_BOT_TOOLS, BotCard, identity_text
 from thyca.bots.context import (
     BotTurnContext,
+    BotTurnScope,
     bind_bot_turn_context,
     current_bot_turn_context,
     reset_bot_turn_context,
@@ -31,13 +33,16 @@ from thyca.bots.policy import (
     reset_allowed_tools,
     reset_hidden_tools,
 )
-from thyca.bots.registry import SYSTEM_BOT_ID, BotRegistry, RegistryError
+from thyca.bots.registry import BotRegistry, RegistryError
 from thyca.bots.status import AgentStatusTracker
+from thyca.bots.workspace import WorkspaceRegistry, WorkspaceTurnConflict
 from thyca.config import Config
+from thyca.core.channel import WindowRef
 from thyca.core.protocol import Message
+from thyca.llm.llm_base import LLMError
 from thyca.llm.llm_factory import ConnectFactory
 from thyca.memory.identity import bind_bot_id, reset_bot_id
-from thyca.sessions import Session, SessionManager, calibration_factor
+from thyca.sessions import SessionManager, calibration_factor
 from thyca.sessions.store import SessionStore
 from thyca.tools.memory_tools import bind_chat_session, reset_chat_session
 
@@ -98,7 +103,7 @@ def filtered_tool_schemas(
     empty ``tools`` means NO tools at all — nothing is implicit, and the
     gateway poll tools (``tool_read``/``tool_kill``) stay visible only
     when the card lists them explicitly. The Thyca system card keeps the
-    legacy full snapshot.
+    full snapshot (root/tools parity).
 
     One exception, recorded by the context review: the current
     ``BASELINE_BOT_TOOLS`` (peer send/fetch, ``task_open``, memory
@@ -142,6 +147,41 @@ def filtered_tool_schemas(
     ]
 
 
+def _force_compact(connect, sessions, model: str, turn_cfg) -> dict:
+    """Agent-invoked compaction of the current session (TURN-CURATE).
+
+    ``LlmSummarizer`` lives under ``thyca.app`` which imports this module,
+    so it is imported lazily at call time (mid-turn, all modules loaded).
+    """
+    from thyca.app.summarizing import LlmSummarizer
+
+    return compact_with_llm(
+        LlmSummarizer(connect),
+        sessions,
+        model=model,
+        pricing=turn_cfg.effective_pricing() or None,
+        force=True,
+    )
+
+
+def _segment_checkpointed(messages, context_tokens: int) -> bool:
+    """True when the agent recorded a checkpoint in the current segment.
+
+    Reuses the context-budget evidence rule (kind='checkpoint' + task link
+    after the last compaction marker); band freshness is irrelevant here —
+    any checkpoint means the agent already wrote what matters, so the
+    system's mono extraction can stand down.
+    """
+    from thyca.agent.context_budget import checkpoint_state
+
+    return checkpoint_state(
+        messages,
+        context_tokens=context_tokens,
+        # Band 0: every recorded checkpoint counts, stale or not.
+        current_ratio=0.0,
+    ) != "none"
+
+
 from dataclasses import dataclass as _dataclass
 
 
@@ -166,9 +206,14 @@ class BotTurnResult:
     #: context-stop markers); stamped onto the room row so trace counts
     #: the bot's true requests instead of one row.
     requests: int = 0
+    rounds: int = 0
+    status: str | None = None
     #: Real tool calls inside the internal turn (assistant rows minus
     #: context-stop markers); stamped onto the room row like requests.
     tool_calls: int = 0
+    channel: str | None = None
+    window_id: str | None = None
+    work_id: str | None = None
 
     def room_meta(self, *, kind: str, trace_id: str | None,
                   parent_span_id: str | None) -> dict:
@@ -193,8 +238,18 @@ class BotTurnResult:
             meta["requests"] = self.requests
         if isinstance(self.tool_calls, int) and self.tool_calls >= 0:
             meta["tool_call_count"] = self.tool_calls
+        if isinstance(self.rounds, int) and self.rounds >= 0:
+            meta["rounds"] = self.rounds
+        if self.status is not None:
+            meta["status"] = self.status
         if self.latency_ms is not None:
             meta["latency_ms"] = self.latency_ms
+        if self.channel:
+            meta["channel"] = self.channel
+        if self.window_id:
+            meta["window_id"] = self.window_id
+        if self.work_id:
+            meta["work_id"] = self.work_id
         return meta
 
 
@@ -222,7 +277,7 @@ def _aggregate_turn_meta(messages: list) -> tuple[str | None, dict | None, float
         if getattr(message, "role", None) != "assistant":
             continue
         meta = getattr(message, "meta", None) or {}
-        if meta.get("status") == "context_limit":
+        if meta.get("status") in {"context_limit", "loop_limit"}:
             continue
         if isinstance(meta.get("model"), str) and meta["model"].strip():
             model = meta["model"].strip()
@@ -243,6 +298,17 @@ def _aggregate_turn_meta(messages: list) -> tuple[str | None, dict | None, float
     return model, usage, cost, latency, requests, tool_calls
 
 
+def _aggregate_turn_rounds(messages: list) -> int:
+    return sum(
+        1
+        for message in messages
+        if getattr(message, "role", None) == "assistant"
+        and (getattr(message, "meta", None) or {}).get("kind") == "llm"
+        and (getattr(message, "meta", None) or {}).get("status")
+        not in {"context_limit", "loop_limit"}
+    )
+
+
 class BotRuntime:
     """Per-bot loop factory + internal (bot × room) sessions + bus send."""
 
@@ -252,7 +318,8 @@ class BotRuntime:
     #: direct handler calls) envelopes stay queued for the next turn.
     deliverer: Any = None
     #: CBE-4 hooks installed by ChatApp (fakes in unit tests):
-    #: ``memory_flush(bot_id, messages, turn_cfg)`` extracts memories from
+    #: ``memory_flush(bot_id, messages, turn_cfg, room_id=...)`` extracts
+    #: memories from
     #: a bot transcript about to compact; ``memory_searcher(text, bot_id)``
     #: returns bounded recalled-memory lines for the first post-compact
     #: turn. Either may be sync or async; both are best-effort.
@@ -262,6 +329,7 @@ class BotRuntime:
     #: returns the open memory-task catalog lines for one bot's prompt.
     #: Sync or async; best-effort like the CBE-4 hooks above.
     memory_task_index: Any = None
+    memory_task_catalog: Any = None
 
     def __init__(
         self,
@@ -277,7 +345,7 @@ class BotRuntime:
         # ChatApp injects its shared tracker; direct runtime users get a
         # private one so tracked turns never leak between app instances.
         self._status = status_tracker or AgentStatusTracker()
-        self._stores: dict[str, SessionStore] = {}
+        self._workspaces = WorkspaceRegistry(self._dir)
         # (bot_id, room_id) pairs whose last turn compacted: the next turn
         # re-injects relevant memory hits exactly once (CBE-4).
         self._reinject_pending: set[tuple[str, str]] = set()
@@ -286,42 +354,49 @@ class BotRuntime:
     def status_tracker(self) -> AgentStatusTracker:
         return self._status
 
-    def store_for(self, bot_id: str) -> SessionStore:
-        store = self._stores.get(bot_id)
-        if store is None:
-            sessions_dir = self._dir / "bots" / bot_id / "sessions"
-            sessions_dir.mkdir(parents=True, exist_ok=True)
-            try:
-                sessions_dir.chmod(0o700)
-            except OSError:
-                pass
-            store = SessionStore(sessions_dir)
-            self._stores[bot_id] = store
-        return store
+    @property
+    def workspaces(self) -> WorkspaceRegistry:
+        """Authoritative workspace registry (WS-1): window bindings."""
+        return self._workspaces
 
-    def _room_map_path(self, bot_id: str) -> Path:
-        return self._dir / "bots" / bot_id / "room_sessions.json"
+    def _canonical_store(
+        self, bot_id: str, window: WindowRef, session_id: str
+    ) -> CanonicalSessionStore:
+        """Canonical journal store for one ``(bot, window)`` turn."""
+        from thyca.bots.timeline import CanonicalSessionStore, WorkspaceTimeline
+
+        return CanonicalSessionStore(
+            self._dir / "bots" / bot_id / "sessions",
+            timeline=WorkspaceTimeline(self._dir, bot_id),
+            window=window,
+            session_id=session_id,
+        )
 
     def internal_session(self, bot_id: str, room_id: str) -> Session:
-        """The bot's private session for one room (created on first use)."""
-        store = self.store_for(bot_id)
-        mapping = self._read_room_map(bot_id)
-        internal_id = self._internal_id_of(mapping.get(room_id))
-        if internal_id is not None:
-            try:
-                return store.load(internal_id)
-            except Exception:
-                pass
-        manager = SessionManager(store=store)
-        session = manager.create()
-        mapping[room_id] = session.id
-        self._write_room_map(bot_id, mapping)
-        return session
+        """The bot's canonical session for one room (created on first use).
+
+        The registry carries the stable session id addressing the bot's
+        timeline stream; the transcript itself lives in the journal (no
+        session file is created). Real window metadata binds when the room
+        resolves to one. Synthetic rooms receive a private bot view.
+        """
+        binding = self._workspaces.store.ensure_session(bot_id, room_id)
+        window = self._window_for_room(room_id)
+        if window is None:
+            window = WindowRef(
+                window_id=room_id, channel_id="webui", kind="dm",
+                participants=(bot_id,),
+            )
+        if binding.window != window:
+            binding = self._workspaces.store.bind_window(bot_id, window)
+        return self._canonical_store(
+            bot_id, window, binding.internal_session_id).load(
+                binding.internal_session_id)
 
     async def run_bot_turn(
         self,
         *,
-        scope: Any,
+        scope: BotTurnScope,
         card: BotCard,
         room_id: str,
         text: str,
@@ -330,24 +405,29 @@ class BotRuntime:
         trace_id: str | None = None,
         parent_span_id: str | None = None,
         span_id: str | None = None,
-        room_context: str = "",
-        room_cursor: tuple[int, str] | None = None,
+        room_text: str = "",
         room_cursor_after: tuple[int, str] | None = None,
+        retry: bool = False,
+        model_override: str | None = None,
+        effort: str | None = None,
     ) -> str:
         """Run one bot turn; return only the reply text."""
         result = await self.run_bot_turn_detailed(
             scope=scope, card=card, room_id=room_id, text=text,
             turn_cfg=turn_cfg, event_sink=event_sink, trace_id=trace_id,
             parent_span_id=parent_span_id, span_id=span_id,
-            room_context=room_context, room_cursor=room_cursor,
+            room_text=room_text,
             room_cursor_after=room_cursor_after,
+            retry=retry,
+            model_override=model_override,
+            effort=effort,
         )
         return result.reply
 
     async def run_bot_turn_detailed(
         self,
         *,
-        scope: Any,
+        scope: BotTurnScope,
         card: BotCard,
         room_id: str,
         text: str,
@@ -356,16 +436,132 @@ class BotRuntime:
         trace_id: str | None = None,
         parent_span_id: str | None = None,
         span_id: str | None = None,
-        room_context: str = "",
-        room_cursor: tuple[int, str] | None = None,
+        room_text: str = "",
         room_cursor_after: tuple[int, str] | None = None,
+        workspace_claimed: bool = False,
+        retry: bool = False,
+        model_override: str | None = None,
+        effort: str | None = None,
+        diagnostic_sink=None,
     ) -> BotTurnResult:
-        """Run one turn of ``card`` in its internal session for ``room_id``.
+        """Lease-gated entry: one active turn per bot (WS-2).
 
-        ``scope`` is the app's :class:`TurnScope` (act/memory/state/zone +
+        ``workspace_claimed=True`` is an internal contract from callers
+        that already hold this bot's lease for the current task — it is
+        validated against the registry, never trusted blindly."""
+        if workspace_claimed:
+            if not self._workspaces.holds(card.bot_id):
+                raise WorkspaceTurnConflict(
+                    f"workspace_claimed without lease: {card.bot_id}"
+                )
+            self._registry.require(card.bot_id)
+        from thyca.app.turn_options import overlay_turn_cfg, resolve_bot_cfg
+        operation_cfg = turn_cfg
+        turn_cfg = resolve_bot_cfg(
+            operation_cfg, card, model_override=model_override
+        )
+        turn_cfg = overlay_turn_cfg(turn_cfg, None, effort)
+        from thyca.memory.visibility import (
+            MemoryView,
+            bound_memory_view,
+            current_memory_view,
+        )
+
+        current = current_memory_view()
+        if (
+            current is not None
+            and current.bot_id == card.bot_id
+            and current.window is not None
+            and current.window.window_id == room_id
+        ):
+            view = current
+        else:
+            view = MemoryView(
+                window=self._window_for_room(room_id),
+                bot_id=card.bot_id,
+                thyca_dir=self._dir,
+            )
+        if workspace_claimed:
+            with bound_memory_view(view):
+                return await self._run_bot_turn_detailed(
+                    scope=scope, card=card, room_id=room_id, text=text,
+                    turn_cfg=turn_cfg, context_cfg=operation_cfg,
+                    event_sink=event_sink, trace_id=trace_id,
+                    parent_span_id=parent_span_id, span_id=span_id,
+                    room_text=room_text,
+                    room_cursor_after=room_cursor_after,
+                    retry=retry,
+                    model_override=model_override,
+                    effort=effort,
+                    diagnostic_sink=diagnostic_sink,
+                )
+        async with self._workspaces.lease(card.bot_id):
+            # A queued turn must not recreate workspace state after deletion.
+            self._registry.require(card.bot_id)
+            with bound_memory_view(view):
+                return await self._run_bot_turn_detailed(
+                    scope=scope, card=card, room_id=room_id, text=text,
+                    turn_cfg=turn_cfg, context_cfg=operation_cfg,
+                    event_sink=event_sink, trace_id=trace_id,
+                    parent_span_id=parent_span_id, span_id=span_id,
+                    room_text=room_text,
+                    room_cursor_after=room_cursor_after,
+                    retry=retry,
+                    model_override=model_override,
+                    effort=effort,
+                    diagnostic_sink=diagnostic_sink,
+                )
+
+    def _window_for_room(self, room_id: str):
+        """WindowRef for a real room session; None for synthetic rooms.
+
+        Only a genuinely missing session means "synthetic room -> private
+        fallback"; corrupt/permission failures propagate rather than
+        silently downgrade."""
+        from thyca.core.channel import WindowRef
+        from thyca.sessions.errors import SessionNotFound
+
+        try:
+            session = SessionStore(self._dir / "sessions").load(room_id)
+        except (SessionNotFound, FileNotFoundError):
+            return None
+        return WindowRef(
+            window_id=session.id,
+            channel_id="webui",
+            kind="dm" if session.dm_bot is not None else "group",
+            participants=tuple(session.bots) if session.bots else ("thyca",),
+        )
+
+    async def _run_bot_turn_detailed(
+        self,
+        *,
+        scope: BotTurnScope,
+        card: BotCard,
+        room_id: str,
+        text: str,
+        turn_cfg: Config,
+        context_cfg: Config,
+        event_sink: EventSink | None = None,
+        trace_id: str | None = None,
+        parent_span_id: str | None = None,
+        span_id: str | None = None,
+        room_text: str = "",
+        room_cursor_after: tuple[int, str] | None = None,
+        retry: bool = False,
+        model_override: str | None = None,
+        effort: str | None = None,
+        diagnostic_sink=None,
+    ) -> BotTurnResult:
+        """Run one turn of ``card`` in its canonical session for ``room_id``.
+
+        ``scope`` is the app's :class:`BotTurnScope` (act/memory/state/zone +
         connect); the session store, tool snapshot, hot prompt, model, and
         attribution context are the bot's own. Returns the reply plus the
         internal turn's aggregated assistant meta for room attribution.
+
+        ``room_text`` is the unread public room delta for this turn: it
+        rides the wire ephemerally (never persisted — the registry cursor
+        advances past it only on a successful turn).
         """
         if card.paused:
             raise RegistryError(f"bot is paused: {card.bot_id}")
@@ -384,14 +580,42 @@ class BotRuntime:
                 _sink(event)
 
         try:
-            store = self.store_for(card.bot_id)
+            from thyca.memory.visibility import current_memory_view
+
+            _window = None
+            _view = current_memory_view()
+            if _view is not None:
+                _window = _view.window
+            if _window is None:
+                _window = self._window_for_room(room_id)
+            if _window is None:
+                # Synthetic room (A2A without a room): a private window
+                # scoped to this bot, matching the private-view fallback.
+                from thyca.core.channel import WindowRef
+
+                _window = WindowRef(
+                    window_id=room_id, channel_id="webui", kind="dm",
+                    participants=(card.bot_id,),
+                )
+            # Real window metadata binds inside internal_session;
+            # synthetic rooms keep binding.window unset (projection
+            # scoping uses the local _window either way). NB: the
+            # binding's window_id is the room id in both cases.
+            internal = self.internal_session(card.bot_id, room_id)
+            session_id = internal.id
+            store = self._canonical_store(
+                card.bot_id, _window, session_id)
             sessions = SessionManager(
                 limits=turn_cfg.effective_limits(),
                 timezone_name=turn_cfg.timeline.timezone,
                 store=store,
             )
-            internal = self.internal_session(card.bot_id, room_id)
-            sessions.load(internal.id)
+            sessions.load(session_id)
+            if retry:
+                from thyca.app.turn_options import InvalidTurnOption
+
+                if not sessions.truncate_to_last_user():
+                    raise InvalidTurnOption("no user")
         except asyncio.CancelledError:
             self._status.finish_turn(card.bot_id, own_span, "cancelled")
             raise
@@ -400,38 +624,16 @@ class BotRuntime:
                 card.bot_id, own_span, "error", code=type(exc).__name__
             )
             raise
-        if room_context:
-            # Phase 2A: unread public room history lands as one synthetic
-            # user row BEFORE compact prediction/flush, so the prediction
-            # accounts for it and the extractor never sees it as the bot's
-            # own words (jobs.transcript_tail skips kind="room_context").
-            # The cursor rides in meta for the next turn's delta.
-            count, last_fp = room_cursor if room_cursor is not None else (0, "")
-            sessions.append(
-                Message(
-                    role="user",
-                    content=room_context,
-                    meta={
-                        "kind": "room_context",
-                        "room_cursor": count,
-                        "room_fingerprint": last_fp,
-                    },
-                )
-            )
-            # The map is the cursor's source of truth; the row above
-            # keeps the same values for traceability only.
-            self.set_room_cursor(card.bot_id, room_id, room_cursor)
 
         provider = turn_cfg.effective_provider()
         model = turn_cfg.provider.model
-        if card.model is not None and card.model.id != "default":
-            model = card.model.id
         # Local import: thyca.app.toolchain pulls thyca.app.__init__
         # (ChatApp), which imports this module — top-level would cycle.
         from thyca.app.toolchain import build_agent_loop
 
         try:
             connect = scope.injected_connect or ConnectFactory.create(provider.api, provider)
+            wire_retry_events(connect, tracked_sink, bot_id=card.bot_id)
         except asyncio.CancelledError:
             self._status.finish_turn(card.bot_id, own_span, "cancelled")
             raise
@@ -453,89 +655,112 @@ class BotRuntime:
                 pricing=turn_cfg.effective_pricing() or None,
                 context_tokens=turn_cfg.effective_limits().contextTokens,
             )
+            limits = turn_cfg.effective_limits()
             hot = scope.memory.refresh(
-                scope.state, datetime.now(scope.zone), session_id=room_id,
+                scope.state,
+                datetime.now(scope.zone),
+                session_id=room_id,
                 reader=None if card.system or card.bot_id == "thyca" else card.bot_id,
+                tail_kb=limits.hotTailKB,
+                timezone_name=turn_cfg.timeline.timezone,
             )
-            if not card.memory.read:
-                # memory.read=false: the hot snapshot carries no memory
-                # content at all for this bot (own or team).
-                hot = replace(hot, today="", today_elsewhere="")
-            else:
-                # Phase 1E: this bot's own USER.md rides as <bot_user>.
-                bot_user_text = self._registry.bot_user_text(card.bot_id)
-                if bot_user_text.strip():
-                    hot = replace(hot, bot_user=bot_user_text)
-            # Two-layer identity (user decision 2026-10-13, hardened at the
-            # source in phase 1D): the shared soul (SOUL.md — voice/values
-            # only, names nobody) stays for every twin; a child bot's
-            # persona is its own overlay on top, never a replacement-or-
-            # fallback. The snapshot for a child already carries no
-            # identity (ActiveMemory only loads IDENTITY.md for privileged
-            # readers), and the <identity> slot is set here from its own
-            # TWIN.md as defense in depth — Thyca's IDENTITY.md must never
-            # ride a child turn (that leak made children answer as Thyca).
-            # Thyca itself keeps its real identity section.
-            is_manager = card.system or card.bot_id == SYSTEM_BOT_ID
-            hot = replace(
-                hot,
-                soul=_layered_soul(hot.soul, card.persona),
-                identity=hot.identity if is_manager else identity_text(card),
-                # Exactly private + team skills for this bot; never fall
-                # back to Thyca's private index from the shared snapshot.
-                skills=self._registry.skill_index_text(card.bot_id),
-                team=self._registry.team_index_text(),
+            bot_user_text = (
+                self._registry.bot_user_text(card.bot_id)
+                if card.memory.read
+                else ""
             )
             # CBE-4: open-task index (compact, counted in hot tokens via
             # PromptManager.build) + one-shot post-compaction recall.
-            from thyca.bots.tasks import derive_open_tasks, format_task_index
+            from thyca.bots.tasks import derive_open_tasks
 
             open_tasks = derive_open_tasks(
                 list(sessions.current.messages),
                 self._pending_relevant(card.bot_id),
                 bot_id=card.bot_id,
             )
-            if open_tasks:
-                hot = replace(
-                    hot, tasks=format_task_index(open_tasks[:20])
-                )
             # Phase 1C: open memory-task catalog (separate section from
             # runtime open tasks above; empty when the bot sees no tasks).
-            if self.memory_task_index is not None and card.memory.read:
+            catalog_rows: tuple = ()
+            index = ""
+            if card.memory.read:
                 try:
-                    index = self.memory_task_index(card.bot_id)
-                    if inspect.isawaitable(index):
-                        index = await index
-                    if index:
-                        hot = replace(hot, memory_tasks=str(index))
+                    if self.memory_task_catalog is not None:
+                        rows = self.memory_task_catalog(card.bot_id)
+                        if inspect.isawaitable(rows):
+                            rows = await rows
+                        catalog_rows = tuple(rows or ())
+                    elif self.memory_task_index is not None:
+                        index = self.memory_task_index(card.bot_id)
+                        if inspect.isawaitable(index):
+                            index = await index
+                        index = str(index) if index else ""
                 except Exception:
-                    pass  # catalog is best-effort; the turn must go on
+                    # catalog is best-effort; the turn must go on
+                    catalog_rows = ()
+                    index = ""
             reinject_key = (card.bot_id, room_id)
             # One-shot recall is consumed only on successful delivery:
             # it stays armed here and is discarded after loop.run
             # returns, so a failed turn re-offers it on the next turn.
             recall_armed = reinject_key in self._reinject_pending
-            if recall_armed:
-                if self.memory_searcher is not None and card.memory.read:
-                    try:
-                        lines = self.memory_searcher(text, card.bot_id)
-                        if inspect.isawaitable(lines):
-                            lines = await lines
-                        bounded = [str(line)[:200] for line in list(lines)[:5]]
-                        if bounded:
-                            hot = replace(hot, recalled="\n".join(bounded))
-                    except Exception:
-                        pass  # recall is best-effort; the turn must go on
+            bounded: list[str] = []
+            if recall_armed and self.memory_searcher is not None and card.memory.read:
+                try:
+                    lines = self.memory_searcher(text, card.bot_id)
+                    if inspect.isawaitable(lines):
+                        lines = await lines
+                    bounded = [str(line)[:200] for line in list(lines)[:5]]
+                except Exception:
+                    bounded = []  # recall is best-effort; the turn must go on
+            # The builder composes the final snapshot BEFORE the compact
+            # prediction below, so every injected section — including the
+            # channel brief — is priced by PromptManager.build(hot).
+            from thyca.bots.workspace_context import build_workspace_hot
+            from thyca.memory.visibility import current_memory_view
+            from thyca.bots.private_followups import PrivateFollowupStore
+
+            _view = current_memory_view()
+            _window = _view.window if _view is not None else None
+            _pf_store = PrivateFollowupStore(self._dir)
+            try:
+                _active_pf = _pf_store.active(card.bot_id)
+            except Exception:
+                _active_pf = None
+            hot = build_workspace_hot(
+                hot,
+                thyca_dir=self._dir,
+                bot_id=card.bot_id,
+                window=_window,
+                card=card,
+                runtime_tasks=tuple(open_tasks[:20]),
+                memory_catalog=catalog_rows,
+                memory_task_text=index,
+                recalled=bounded,
+                room_delta=room_text,
+                bot_user=bot_user_text,
+                skills=self._registry.skill_index_text(card.bot_id),
+                team=self._registry.team_index_text(),
+                pending_followup=_active_pf,
+            )
+            # Freeze the visible mailbox batch once before compact planning.
+            # The exact same wire text is used by the plan and AgentLoop;
+            # envelopes arriving later remain queued for the next turn.
+            wire_text = text if retry else self._prepend_mailbox(card.bot_id, room_id, text)
+            # The raw user row persists BEFORE the compact prediction so
+            # the plan and the loop's own pre-run compact see the exact
+            # same transcript (and the flush below can extract from the
+            # current text). The mailbox rides the wire only
+            # (persist_user=False at loop.run) and the room delta rides
+            # the hot snapshot (room_history section, ephemeral).
             # CBE-4 flush-before-compact: if this turn's pre-turn compact
             # will fire, extract memories from the intact transcript
-            # FIRST, then let the loop compact. The prediction must match
-            # the loop's actual decision exactly (context review): the
-            # loop plans on the mailbox-prepended wire text (wire-token
-            # estimate of the assembled user message, not raw chars/4)
-            # and reserves the summarizer's body size
-            # (``SUMMARY_MAX_CHARS``, as ``compact_with_llm`` passes), so
-            # this pre-check mirrors both, against a mailbox snapshot
-            # (the real drain still happens just before loop.run).
+            # FIRST, then let the loop compact. The current user row is
+            # added by AgentLoop after its compact decision (not included
+            # in that plan twice); the provider-facing wire text contains
+            # the same frozen mailbox batch while the transcript row stays
+            # raw. The prediction matches the loop's input and reserves the
+            # summarizer's body size (``SUMMARY_MAX_CHARS``, as
+            # ``compact_with_llm`` passes).
             #
             # Policy decision (lane plan, recorded explicitly): this
             # flush is *system-driven* extraction — Thyca extracting the
@@ -554,9 +779,6 @@ class BotRuntime:
                     from thyca.llm.prompt_manager import PromptManager
                     from thyca.sessions.summary import SUMMARY_MAX_CHARS
 
-                    wire_text = self._mailbox_text(
-                        self._bus.pending_for(card.bot_id), room_id, text
-                    )
                     plan = sessions.compactor.plan(
                         list(sessions.current.messages),
                         turn_cfg.effective_limits().contextTokens,
@@ -574,14 +796,36 @@ class BotRuntime:
                 except Exception:
                     will_compact = False
                 if will_compact:
-                    try:
-                        flushed = self.memory_flush(
-                            card.bot_id, list(sessions.current.messages), turn_cfg
-                        )
-                        if inspect.isawaitable(flushed):
-                            await flushed
-                    except Exception:
-                        pass  # extraction is best-effort, never blocks compact
+                    # TURN-CURATE: when the agent already recorded a
+                    # checkpoint in this segment, it has decided what to
+                    # keep — the system's mono extraction stands down
+                    # instead of writing duplicates behind its back. The
+                    # mono path stays as the safety net for segments where
+                    # the agent did not write anything.
+                    if not _segment_checkpointed(
+                        list(sessions.current.messages),
+                        turn_cfg.effective_limits().contextTokens,
+                    ):
+                        try:
+                            flush_kwargs = {}
+                            try:
+                                params = inspect.signature(
+                                    self.memory_flush).parameters
+                                if "room_id" in params or any(
+                                    p.kind is inspect.Parameter.VAR_KEYWORD
+                                    for p in params.values()
+                                ):
+                                    flush_kwargs["room_id"] = room_id
+                            except (TypeError, ValueError):
+                                pass
+                            flushed = self.memory_flush(
+                                card.bot_id, list(sessions.current.messages),
+                                turn_cfg, **flush_kwargs
+                            )
+                            if inspect.isawaitable(flushed):
+                                await flushed
+                        except Exception:
+                            pass  # extraction is best-effort, never blocks compact
             allowed = None
             if not card.system:
                 allowed = frozenset(
@@ -600,26 +844,81 @@ class BotRuntime:
                     span_id=own_span,
                     parent_span_id=parent_span_id,
                     scope=scope,
-                    turn_cfg=turn_cfg,
+                    turn_cfg=context_cfg,
+                    model_override=model_override,
+                    effort_override=effort,
                     event_sink=tracked_sink,
                     thyca_dir=self._dir,
+                    window=_window,
+                    pending_private_id=(
+                        _active_pf.pending_id if _active_pf is not None else None
+                    ),
+                    # TURN-CURATE: the agent calls the ``compact`` tool; the
+                    # callback force-compacts THIS turn's session through the
+                    # same summarizer the pre-turn compact uses. The agent is
+                    # expected to have written durable facts to memory first.
+                    compact=lambda: _force_compact(
+                        connect, sessions, model, turn_cfg
+                    ),
                 )
             )
             try:
-                before = len(sessions.current.messages)
-                text = self._prepend_mailbox(card.bot_id, room_id, text)
+                _ev = None
+                try:
+                    from thyca.app.turn_event import current_channel_event
+                    _ev = current_channel_event()
+                except Exception:
+                    pass
+                _bot_ctx = {
+                    "bot_id": card.bot_id,
+                    "trace_id": trace_id,
+                    "parent_span_id": parent_span_id,
+                    "span_id": own_span,
+                }
+                if _window is not None:
+                    _bot_ctx["channel"] = getattr(
+                        _window, "channel_id", None) or "webui"
+                    _bot_ctx["window_id"] = getattr(
+                        _window, "window_id", None) or room_id
+                    if (
+                        _ev is not None
+                        and getattr(_ev, "window_id", None)
+                        == _bot_ctx["window_id"]
+                    ):
+                        _wr = getattr(_ev, "work_ref", None)
+                        from thyca.core.channel import WORK_REF_RE
+                        if isinstance(_wr, str) and WORK_REF_RE.fullmatch(
+                            _wr
+                        ):
+                            _bot_ctx["work_id"] = _wr
+                on_hot_ready = None
+                if diagnostic_sink is not None:
+                    from thyca.llm.prompt_manager import PromptManager
+
+                    def on_hot_ready(final_hot) -> None:
+                        diagnostic_sink({
+                            "session_id": room_id,
+                            "model": model,
+                            "provider": turn_cfg.provider_id_for(model),
+                            "base_url": turn_cfg.effective_provider_for(model).baseUrl,
+                            "system": PromptManager().build(final_hot),
+                            "tools": list(filtered or []),
+                        })
+
                 reply = await loop.run(
-                    text,
+                    wire_text,
                     hot=hot,
                     event_sink=tracked_sink,
-                    bot_ctx={
-                        "bot_id": card.bot_id,
-                        "trace_id": trace_id,
-                        "parent_span_id": parent_span_id,
-                        "span_id": own_span,
-                    },
+                    bot_ctx=_bot_ctx,
+                    persisted_user_msg=text,
+                    persist_user=not retry,
+                    on_hot_ready=on_hot_ready,
                 )
-                new_messages = list(sessions.current.messages)[before:]
+                new_messages = [
+                    message
+                    for message in sessions.current.messages
+                    if (getattr(message, "meta", None) or {}).get("span_id") == own_span
+                ]
                 # The turn's own user message is now read: advance past it.
                 # Errors/cancels skip this, so a failed turn's message is
                 # still unread next turn (only the delivered delta stays).
@@ -638,7 +937,32 @@ class BotRuntime:
                 ) > markers_before:
                     self._reinject_pending.add(reinject_key)
                 agg_model, agg_usage, agg_cost, agg_latency, agg_requests, agg_tool_calls = _aggregate_turn_meta(new_messages)
+                agg_rounds = _aggregate_turn_rounds(new_messages)
+                agg_status = next(
+                    (
+                        status
+                        for status in ("context_limit", "loop_limit")
+                        if any(
+                            (getattr(message, "meta", None) or {}).get("status") == status
+                            for message in new_messages
+                        )
+                    ),
+                    None,
+                )
                 self._status.finish_turn(card.bot_id, own_span, "done")
+                _res_channel = getattr(
+                    _window, "channel_id", None) or "webui" if _window else None
+                _res_window = getattr(
+                    _window, "window_id", None) if _window else None
+                _res_work = None
+                if (
+                    _ev is not None
+                    and getattr(_ev, "window_id", None) == _res_window
+                ):
+                    _wr = getattr(_ev, "work_ref", None)
+                    from thyca.core.channel import WORK_REF_RE
+                    if isinstance(_wr, str) and WORK_REF_RE.fullmatch(_wr):
+                        _res_work = _wr
                 return BotTurnResult(
                     reply=reply,
                     bot_id=card.bot_id,
@@ -651,11 +975,30 @@ class BotRuntime:
                     latency_ms=agg_latency,
                     requests=agg_requests,
                     tool_calls=agg_tool_calls,
+                    rounds=agg_rounds,
+                    status=agg_status,
+                    channel=_res_channel,
+                    window_id=_res_window,
+                    work_id=_res_work,
                 )
             except asyncio.CancelledError:
                 self._status.finish_turn(card.bot_id, own_span, "cancelled")
                 raise
             except Exception as exc:
+                try:
+                    # Mark the canonical user row; the app marks the
+                    # public room row separately. This is journaled like
+                    # every other canonical write.
+                    # Best-effort: never masks the in-flight failure.
+                    sessions.mark_turn_error(
+                        *(
+                            ("llm_error", str(exc))
+                            if isinstance(exc, LLMError)
+                            else ("chat_unavailable", "chat unavailable")
+                        )
+                    )
+                except Exception:
+                    pass
                 self._status.finish_turn(
                     card.bot_id, own_span, "error", code=type(exc).__name__
                 )
@@ -742,7 +1085,17 @@ class BotRuntime:
 
         A bot's turn starts by reading its mailbox; queued ``delegate`` /
         ``message`` envelopes arrive as context above the user's text."""
-        return self._mailbox_text(self._bus.drain(bot_id), room_id, text)
+        from thyca.memory.visibility import current_memory_view
+
+        view = current_memory_view()
+        if view is None:
+            pending = self._bus.drain(bot_id)
+        else:
+            pending = self._bus.drain_matching(
+                bot_id,
+                lambda env: view.can_read_origin(env.session_id),
+            )
+        return self._mailbox_text(pending, room_id, text)
 
     @staticmethod
     def _mailbox_text(pending: list[Envelope], room_id: str, text: str) -> str:
@@ -784,67 +1137,43 @@ class BotRuntime:
 
     def _pending_relevant(self, bot_id: str) -> list[Envelope]:
         """Queued envelopes to or from ``bot_id`` (task-view input)."""
-        relevant = list(self._bus.pending_for(bot_id))
+        from thyca.memory.visibility import current_memory_view
+
+        view = current_memory_view()
+
+        def readable(envelope) -> bool:
+            return view is None or view.can_read_origin(envelope.session_id)
+
+        relevant = [
+            e for e in self._bus.pending_for(bot_id) if readable(e)]
         for doc in self._registry.list():
             if not doc.ok or doc.card is None or doc.card.bot_id == bot_id:
                 continue
             for envelope in self._bus.pending_for(doc.card.bot_id):
-                if envelope.sender == bot_id:
+                if envelope.sender == bot_id and readable(envelope):
                     relevant.append(envelope)
         return relevant
 
     def room_cursor(self, bot_id: str, room_id: str) -> tuple[int, str] | None:
-        """This bot's room-context cursor: map first, legacy meta second.
+        """This bot's room-context cursor from the registry binding.
 
-        A stored map cursor wins. When the map has no cursor yet (old
-        string shape, or dict without cursor keys) but the internal
-        session already carries phase-2A synthetic rows, the newest such
-        row seeds the cursor so history is not redelivered from scratch.
-        Never creates an internal session just to read a cursor."""
-        mapping = self._read_room_map(bot_id)
-        entry = mapping.get(room_id)
-        if isinstance(entry, dict):
-            count, fingerprint = entry.get("room_cursor"), entry.get("room_fingerprint")
-            if isinstance(count, int) and isinstance(fingerprint, str):
-                return (count, fingerprint)
-        internal_id = self._internal_id_of(entry)
-        if internal_id is None:
-            return None
+        Read-only: never creates a binding just to read a cursor."""
         try:
-            messages = self.store_for(bot_id).load(internal_id).messages
+            binding = self._workspaces.store.get_binding(bot_id, room_id)
         except Exception:
             return None
-        for message in reversed(messages):
-            meta = message.meta or {}
-            if isinstance(meta, dict) and meta.get("kind") == "room_context":
-                count, fingerprint = meta.get("room_cursor"), meta.get("room_fingerprint")
-                if isinstance(count, int) and isinstance(fingerprint, str):
-                    return (count, fingerprint)
-        return None
+        return binding.cursor if binding is not None else None
 
     def set_room_cursor(self, bot_id: str, room_id: str,
                         cursor: tuple[int, str] | None) -> None:
-        """Persist a room-context cursor (phase 2A rework).
+        """Persist a room-context cursor on the registry binding.
 
-        A None cursor writes nothing. The internal session id is always
-        preserved; when the bot has no internal session for the room,
-        nothing is created or written — callers only persist after a
-        session already exists."""
-        if cursor is None:
-            return
-        count, fingerprint = cursor
-        if not isinstance(count, int) or not isinstance(fingerprint, str):
-            return
-        mapping = self._read_room_map(bot_id)
-        internal_id = self._internal_id_of(mapping.get(room_id))
-        if internal_id is None:
-            return
-        mapping[room_id] = {
-            "session": internal_id,
-            "room_cursor": count,
-            "room_fingerprint": fingerprint,
-        }
-        self._write_room_map(bot_id, mapping)
+        A None cursor writes nothing; an unknown window writes nothing
+        (callers only persist after the binding exists)."""
+        try:
+            self._workspaces.store.set_cursor(bot_id, room_id, cursor)
+        except Exception:
+            pass
 
     def zone(self) -> ZoneInfo:
         from thyca.config import DEFAULT_TIMELINE_TIMEZONE
@@ -853,34 +1182,3 @@ class BotRuntime:
             return ZoneInfo(DEFAULT_TIMELINE_TIMEZONE)
         except Exception:
             return ZoneInfo("UTC")
-
-    def _read_room_map(self, bot_id: str) -> dict:
-        """Room map: old values are plain internal session ids.
-
-        New values are ``{"session": id, "room_cursor": int,
-        "room_fingerprint": fp}`` once a cursor exists; readers accept
-        both shapes."""
-        path = self._room_map_path(bot_id)
-        try:
-            raw = path.read_text(encoding="utf-8")
-        except OSError:
-            return {}
-        try:
-            data = json.loads(raw)
-        except ValueError:
-            return {}
-        if not isinstance(data, dict):
-            return {}
-        return {k: v for k, v in data.items() if isinstance(k, str)}
-
-    def _internal_id_of(self, entry) -> str | None:
-        if isinstance(entry, dict):
-            entry = entry.get("session")
-        return entry if isinstance(entry, str) and entry else None
-
-    def _write_room_map(self, bot_id: str, mapping: dict) -> None:
-        from thyca.config import atomic_write_text
-
-        path = self._room_map_path(bot_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_text(path, json.dumps(mapping, ensure_ascii=False))

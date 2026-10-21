@@ -329,7 +329,7 @@ function esc(value) {
 export function botTintStyle(botId, roster) {
   if (!botId) return "";
   const bot = roster instanceof Map ? roster.get(botId) : null;
-  const tint = tintVarFor(botId, bot?.tint || undefined);
+  const tint = tintVarFor(botId);
   return `--team-tint:${tint};--avatar-tint:${tint}`;
 }
 
@@ -864,8 +864,6 @@ function rosterFrom(payload) {
     .map((bot) => ({
       id: String(bot.id || ""),
       name: cleanText(bot.name) || String(bot.id || ""),
-      tint: typeof bot.tint === "string" ? bot.tint : "",
-      avatar: typeof bot.avatar === "string" ? bot.avatar : "",
       system: typeof bot.system === "string" ? bot.system : "",
     }))
     .filter((bot) => bot.id);

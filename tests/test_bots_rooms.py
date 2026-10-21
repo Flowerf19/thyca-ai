@@ -43,6 +43,30 @@ def test_create_accepts_bots_and_payload_carries_them(tmp_path: Path) -> None:
         app.shutdown()
 
 
+def test_list_payload_keeps_blank_explicit_group_only(tmp_path: Path) -> None:
+    app = _chat(tmp_path)
+    try:
+        _coder(app)
+        blank_dm = app.create()
+        group = app.create(bots=["thyca", "coder"])
+        assert group["messages"] == []
+
+        listed = app.list_payload()["sessions"]
+        assert [row["id"] for row in listed] == [group["id"]]
+        assert listed[0]["turns"] == 0
+        assert listed[0]["kind"] == "group"
+        assert listed[0]["bots"] == ["thyca", "coder"]
+
+        plain = app._sessions.create()
+        assert blank_dm["dm"] == "thyca" and blank_dm["messages"] == []
+        refreshed = {row["id"]: row for row in app.list_payload()["sessions"]}
+        assert refreshed[group["id"]]["kind"] == "group"
+        assert plain.id not in refreshed
+        assert blank_dm["id"] not in refreshed
+    finally:
+        app.shutdown()
+
+
 def test_create_single_bot_resolves_to_that_dm(tmp_path: Path) -> None:
     app = _chat(tmp_path)
     try:

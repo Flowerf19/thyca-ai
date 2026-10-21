@@ -84,7 +84,7 @@ export function teamArticleFor(message, { onChoice, bot = null } = {}) {
 
   const article = document.createElement("article");
   article.className = "live-card message-assistant team-message";
-  const tint = tintVarFor(botId || TEAM_BOT_ID, meta.bot_tint);
+  const tint = tintVarFor(botId || TEAM_BOT_ID);
   article.style.setProperty("--team-tint", tint);
   // The header reuses the legacy .chat-brand builder verbatim (same stripe,
   // lockup, quill, status-line nodes and classes as the old Thyca header);
@@ -180,7 +180,7 @@ export function exchangeDetails(messages) {
     const botId = String(item?.meta?.bot_id || "");
     const row = document.createElement("div");
     row.className = "team-exchange-row";
-    row.style.setProperty("--team-tint", tintVarFor(item?.meta?.bot_id, item?.meta?.bot_tint));
+    row.style.setProperty("--team-tint", tintVarFor(item?.meta?.bot_id));
     const face = document.createElement("span");
     face.className = "bot-avatar-slot team-exchange-avatar";
     face.setAttribute("aria-hidden", "true");
@@ -205,7 +205,7 @@ export function exchangeDetails(messages) {
   return details;
 }
 
-function choiceChips(options, onChoice) {
+function choiceChips(options, onChoice, metadata = null) {
   const wrap = document.createElement("div");
   wrap.className = "team-choices";
   for (const option of Array.isArray(options) ? options : []) {
@@ -215,7 +215,11 @@ function choiceChips(options, onChoice) {
     chip.type = "button";
     chip.className = "screen-button team-choice";
     chip.textContent = label;
-    chip.addEventListener("click", () => onChoice?.(label));
+    const choiceId = typeof option === "object" && option !== null
+      ? String(option.id || "")
+      : "";
+    chip.addEventListener("click", () =>
+      onChoice?.(label, metadata ? { ...metadata, choice: choiceId } : null));
     wrap.append(chip);
   }
   return wrap;
@@ -234,7 +238,14 @@ export function questionCard(card, onChoice) {
     sub.textContent = card.subtitle.trim();
     section.append(sub);
   }
-  section.append(choiceChips(card.options, onChoice));
+  section.append(choiceChips(
+    card.options, onChoice,
+    card.private_followup ? {
+      pending_id: card.private_followup.pending_id,
+      revision: card.private_followup.revision,
+      private_followup: true,
+    } : null,
+  ));
   return section;
 }
 

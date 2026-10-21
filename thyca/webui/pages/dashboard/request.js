@@ -213,7 +213,7 @@ function botChart(byBot, total, max, roster) {
     avatar.setAttribute("aria-hidden", "true");
     if (!unattributed) {
       avatar.dataset.botId = botId;
-      avatar.style.setProperty("--team-tint", tintVarFor(botId, ""));
+      avatar.style.setProperty("--team-tint", tintVarFor(botId));
       const bot = roster?.get(botId);
       avatar.innerHTML = botMark(bot || { id: botId }, { state: "idle" });
     }

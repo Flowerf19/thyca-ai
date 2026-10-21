@@ -26,8 +26,14 @@ class Observe:
             calibration=calibration,
         )
 
-    def user(self, stage: Stage) -> None:
-        self._sessions.append(stage.messages[-1])
+    def user(self, stage: Stage, persisted_message: Message | None = None) -> None:
+        """Persist the user input, optionally distinct from wire text.
+
+        Channel executors may assemble an ephemeral mailbox prefix into
+        the provider-facing user message while retaining the raw user
+        text in the canonical transcript.
+        """
+        self._sessions.append(persisted_message or stage.messages[-1])
 
     def assistant(self, stage: Stage) -> str:
         content = "" if stage.reply is None else (stage.reply.content or "")
@@ -60,8 +66,13 @@ class Observe:
         ordered = self._order_results(stage.reply.tool_calls, stage.results)
         latencies = getattr(stage, "tool_latencies", {}) or {}
         tool_messages = [
-            tool_message(result, latency_ms=latencies.get(result.tool_call_id), round_no=stage.round,
-                           bot_id=getattr(stage, "bot_id", None))
+            tool_message(
+                result,
+                latency_ms=latencies.get(result.tool_call_id),
+                round_no=stage.round,
+                bot_id=getattr(stage, "bot_id", None),
+                stage=stage,
+            )
             for result in ordered
         ]
         added = [assistant, *tool_messages]

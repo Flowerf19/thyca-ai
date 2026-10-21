@@ -1,6 +1,7 @@
 """BE-1: TWIN.md card parsing/validation + BotRegistry + Thyca seed."""
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -42,15 +43,26 @@ def test_parse_valid_card() -> None:
     assert doc.card.persona.strip().startswith("# Coder persona")
 
 
-def test_parse_name_must_match_folder() -> None:
-    doc = parse_bot_card(VALID, "other")
-    assert not doc.ok
-    assert "folder" in doc.error
+def test_parse_display_name_is_independent_from_folder_id() -> None:
+    doc = parse_bot_card(
+        VALID.replace("name: coder", "name: 'Trợ lý viết code'"), "coder"
+    )
+    assert doc.ok and doc.card is not None
+    assert doc.card.bot_id == "coder"
+    assert doc.card.name == "Trợ lý viết code"
 
 
-def test_parse_rejects_bad_names() -> None:
-    for bad in ("Coder", "has space", "x" * 65, "UPPER"):
-        doc = parse_bot_card(VALID.replace("name: coder", f"name: {bad}"), bad.lower())
+def test_parse_rejects_invalid_display_names() -> None:
+    valid = parse_bot_card(VALID, "coder").card
+    assert valid is not None
+    for name in ("", "   ", "x" * 121, "two\nlines", "bad\x01name"):
+        doc = parse_bot_card(render_bot_card(replace(valid, name=name)), "coder")
+        assert not doc.ok, repr(name)
+
+
+def test_parse_rejects_invalid_folder_ids() -> None:
+    for bad in ("../etc", "has space", "x" * 65, "UPPER"):
+        doc = parse_bot_card(VALID, bad)
         assert not doc.ok, bad
 
 
@@ -99,6 +111,10 @@ def test_registry_create_pause_restore_delete(tmp_path: Path) -> None:
     assert "coder" not in registry.team_index_text()
     registry.set_paused("coder", False)
     assert "coder" in registry.team_index_text()
+    renamed = registry.update_card("coder", replace(card, name="code-helper"))
+    assert renamed.bot_id == "coder"
+    assert renamed.name == "code-helper"
+    assert registry.list()[0].card.bot_id == "coder"
     registry.delete("coder")
     assert not registry.exists("coder")
 
@@ -110,6 +126,18 @@ def test_registry_protects_system_bot(tmp_path: Path) -> None:
         registry.delete("thyca")
     with pytest.raises(RegistryError):
         registry.set_paused("thyca", True)
+
+    card = registry.require("thyca")
+    with pytest.raises(RegistryError, match="cannot rename"):
+        registry.update_card("thyca", replace(card, name="Thyca trợ lý"))
+    assert registry.require("thyca") == card
+
+    updated = registry.update_card(
+        "thyca", replace(card, description="Updated system description."),
+    )
+    assert updated.name == card.name
+    assert updated.system is True
+    assert updated.description == "Updated system description."
 
 
 def test_registry_team_index_and_public_list(tmp_path: Path) -> None:

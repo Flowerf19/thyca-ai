@@ -35,10 +35,20 @@ class _CaptureLLM:
                                 "total_tokens": 12})
 
 
-def _seed_history(app: ChatApp, bot_id: str, room_id: str, *, marker: str) -> None:
+def _internal_store(app: ChatApp, bot_id: str, room_id: str):
+    """Canonical journal store + session id for a bot's room binding."""
     internal = app._runtime.internal_session(bot_id, room_id)
-    manager = SessionManager(store=app._runtime.store_for(bot_id))
-    manager.load(internal.id)
+    window = app._runtime._window_for_room(room_id)
+    assert window is not None, f"no window for room {room_id}"
+    store = app._runtime._canonical_store(
+        bot_id, window, internal.id)
+    return store, internal.id
+
+
+def _seed_history(app: ChatApp, bot_id: str, room_id: str, *, marker: str) -> None:
+    store, session_id = _internal_store(app, bot_id, room_id)
+    manager = SessionManager(store=store)
+    manager.load(session_id)
     for index in range(10):
         manager.append(Message(
             role="user", content=f"{marker}-{index} " + "u" * 500,
@@ -49,20 +59,21 @@ def _seed_history(app: ChatApp, bot_id: str, room_id: str, *, marker: str) -> No
 
 
 def _internal_messages(app: ChatApp, bot_id: str, room_id: str):
-    internal = app._runtime.internal_session(bot_id, room_id)
-    return app._runtime.store_for(bot_id).load(internal.id).messages
+    store, session_id = _internal_store(app, bot_id, room_id)
+    return store.load(session_id).messages
 
 
 # --- CBE-1: per-instance budget ------------------------------------------
 
 def test_bot_instance_compacts_with_own_budget_and_overhead(tmp_path: Path) -> None:
     llm = _CaptureLLM()
-    # 4800 (was 4400/4000/3400/3000/2000): legacy cards now always keep the baseline
-    # tools, whose schemas are real counted overhead in this budget;
-    # message_user, then ask_user/report_error, then memory_tasks (phase 1A),
-    # then memory_tasks in baseline (review rework),
+    # 5400 (was 5200/4800/4400/4000/3400/3000/2000): legacy cards now always keep
+    # the baseline tools, whose schemas are real counted overhead in this
+    # budget; message_user, then ask_user/report_error, then memory_tasks
+    # (phase 1A), then memory_tasks in baseline (review rework), then the
+    # private follow-up channel tools, then the compact tool (TURN-CURATE)
     # raised it again.
-    app = _chat(tmp_path, llm, context_tokens=4800)
+    app = _chat(tmp_path, llm, context_tokens=5400)
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="PERSONA-CODER"))
@@ -172,9 +183,9 @@ def test_bot_prompt_carries_task_index_counted_in_hot(tmp_path: Path) -> None:
                                  description="Writes code.", persona="PERSONA-CODER",
                                  tools=("task_open",)))
         room = app.create(bots=["coder"])["id"]
-        internal = app._runtime.internal_session("coder", room)
-        manager = SessionManager(store=app._runtime.store_for("coder"))
-        manager.load(internal.id)
+        store, session_id = _internal_store(app, "coder", room)
+        manager = SessionManager(store=store)
+        manager.load(session_id)
         manager.append(Message(
             role="assistant", content="", ts="2026-08-01T10:00:00Z",
             tool_calls=[ToolCall(id="t1", name="task_open",
@@ -192,8 +203,9 @@ def test_bot_prompt_carries_task_index_counted_in_hot(tmp_path: Path) -> None:
 
 def test_flush_runs_before_compaction_and_recall_fires_once(tmp_path: Path) -> None:
     llm = _CaptureLLM()
-    # 4800 (was 4400/4000/3400/3000/2000): see the baseline-overhead note above.
-    app = _chat(tmp_path, llm, context_tokens=4800)
+    # 5400 (was 5200/...): the baseline tool set (incl. the compact tool)
+    # is counted overhead in this budget, like the first test above.
+    app = _chat(tmp_path, llm, context_tokens=5400)
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="PERSONA-CODER"))
@@ -230,6 +242,128 @@ def test_flush_runs_before_compaction_and_recall_fires_once(tmp_path: Path) -> N
         assert all(
             "egg coffee fact" not in prompt for prompt in llm.prompts[prompts_before:]
         ), "recall is a one-shot re-injection, not a permanent prompt tax"
+    finally:
+        app.shutdown()
+
+
+def test_no_flush_when_agent_checkpointed_segment(tmp_path: Path) -> None:
+    llm = _CaptureLLM()
+    app = _chat(tmp_path, llm, context_tokens=5400)
+    try:
+        app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
+                                 description="Writes code.", persona="PERSONA-CODER"))
+        room = app.create(bots=["coder"])["id"]
+        _seed_history(app, "coder", room, marker="CKPT")
+        # Agent đã chủ động ghi checkpoint (kind='checkpoint' + task link)
+        # trong segment này — hệ thống phải đứng yên, không chạy mono.
+        store, session_id = _internal_store(app, "coder", room)
+        manager = SessionManager(store=store)
+        manager.load(session_id)
+        manager.append(Message(
+            role="assistant", content="",
+            tool_calls=[ToolCall(
+                id="call-ckpt", name="memory_remember",
+                arguments={"topic": "Goal", "summary": "Done A; next B",
+                           "kind": "checkpoint", "task": "task-1234abcd"},
+            )],
+            ts="2026-08-01T10:20:00Z",
+        ))
+        manager.append(Message(
+            role="tool", content='{"session_id": "2026-08-01#abc"}',
+            tool_call_id="call-ckpt", ts="2026-08-01T10:20:30Z",
+        ))
+        calls: list[str] = []
+        app._runtime.memory_flush = lambda bot_id, messages, cfg: calls.append(bot_id)
+        app.turn(room, "first turn")
+        assert calls == [], "checkpointed segment must skip the mono flush"
+        assert any(
+            (m.content or "").startswith("[compaction: ")
+            for m in _internal_messages(app, "coder", room)
+        ), "the turn still compacts"
+    finally:
+        app.shutdown()
+
+
+def test_aggregate_team_profiles_runs_thyca_turn_and_strips_legacy(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from thyca.memory.habits import AUTO_END as LEGACY_END
+    from thyca.memory.habits import AUTO_START as LEGACY_START
+    from thyca.memory.profile import PROFILE_AUTO_END, PROFILE_AUTO_START
+
+    llm = _CaptureLLM()
+    app = _chat(tmp_path, llm)
+    try:
+        app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
+                                 description="Writes code.", persona="PERSONA-CODER"))
+        bot_user = app._bots.bot_dir("coder") / "USER.md"
+        bot_user.parent.mkdir(parents=True, exist_ok=True)
+        bot_user.write_text(
+            f"# User — bot tự ghi\n## Profile\n{PROFILE_AUTO_START}\n"
+            f"- coder fact\n{PROFILE_AUTO_END}\n",
+            encoding="utf-8",
+        )
+        shared = tmp_path / "USER.md"
+        shared.write_text(
+            f"# User\n## Profile\n{PROFILE_AUTO_START}\n- coder fact\n"
+            f"{PROFILE_AUTO_END}\n## Habits\n{LEGACY_START}\n- coder fact\n"
+            f"{LEGACY_END}\n",
+            encoding="utf-8",
+        )
+        calls = []
+        monkeypatch.setattr(
+            app, "scheduled_turn",
+            lambda bot_id, text: (calls.append((bot_id, text)), {"id": "dm"})[1],
+        )
+        result = app.aggregate_team_profiles()
+        assert result["ran"] is True
+        assert len(calls) == 1
+        assert calls[0][0] == "thyca"
+        prompt = calls[0][1]
+        assert "coder fact" in prompt
+        assert "Writes code." in prompt  # card context injected
+        # Legacy ## Habits block đã strip vì line nằm trong profile block.
+        text = shared.read_text(encoding="utf-8")
+        assert "## Habits" not in text
+        assert "## Profile" in text
+    finally:
+        app.shutdown()
+
+
+def test_aggregate_team_profiles_skips_within_window(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from thyca.memory.profile import PROFILE_AUTO_END, PROFILE_AUTO_START
+
+    llm = _CaptureLLM()
+    app = _chat(tmp_path, llm)
+    try:
+        app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
+                                 description="Writes code.", persona=""))
+        bot_user = app._bots.bot_dir("coder") / "USER.md"
+        bot_user.parent.mkdir(parents=True, exist_ok=True)
+        bot_user.write_text(
+            f"# User — bot tự ghi\n## Profile\n{PROFILE_AUTO_START}\n"
+            f"- coder fact\n{PROFILE_AUTO_END}\n",
+            encoding="utf-8",
+        )
+        calls = []
+        monkeypatch.setattr(
+            app, "scheduled_turn",
+            lambda bot_id, text: (calls.append((bot_id, text)), {"id": "dm"})[1],
+        )
+        assert app.aggregate_team_profiles()["ran"] is True
+        assert app.aggregate_team_profiles()["ran"] is False  # trong 24h
+        assert len(calls) == 1
+    finally:
+        app.shutdown()
+
+
+def test_aggregate_team_profiles_skips_without_input(tmp_path: Path) -> None:
+    llm = _CaptureLLM()
+    app = _chat(tmp_path, llm)
+    try:
+        assert app.aggregate_team_profiles()["ran"] is False
     finally:
         app.shutdown()
 
@@ -301,13 +435,15 @@ def test_child_empty_persona_keeps_own_identity_and_shared_soul(tmp_path: Path) 
 
 # --- Phase 1C: extractor catalog per bot + <memory_tasks> section ---------
 
-def _seed_task(app: ChatApp, bot_id: str | None, topic: str, task_id: str):
+def _seed_task(app: ChatApp, bot_id: str | None, topic: str, task_id: str,
+               chat: str | None = None):
     from thyca.memory.identity import bind_bot_id, reset_bot_id
 
     facade = app.job_facade()
     token = bind_bot_id(bot_id) if bot_id else None
     try:
-        return facade.remember(topic, f"work on {topic}", task=task_id)
+        return facade.remember(topic, f"work on {topic}", task=task_id,
+                               chat=chat)
     finally:
         if token is not None:
             reset_bot_id(token)
@@ -352,9 +488,9 @@ def test_child_prompt_memory_tasks_filtered_per_bot(tmp_path: Path) -> None:
                                  role="Designer", description="Draws.", persona=""))
         coder_task = "task-c0de0002"
         designer_task = "task-dec0ded2"
-        _seed_task(app, "coder", "build it", coder_task)
-        _seed_task(app, "designer", "draw it", designer_task)
         room = app.create(bots=["coder"])["id"]
+        _seed_task(app, "coder", "build it", coder_task, chat=room)
+        _seed_task(app, "designer", "draw it", designer_task, chat=room)
         app.turn(room, "status?")
         prompts = [p for p in llm.prompts if "<memory_tasks>" in p]
         assert prompts, "child prompt must carry the memory-task catalog"
@@ -506,11 +642,38 @@ def test_shared_user_habit_reaches_prompt_through_user_section(tmp_path: Path) -
 
 # --- Phase 2A: public room context -----------------------------------------
 
+def _internal_rows(app: ChatApp, bot_id: str, room_id: str):
+    """Raw canonical transcript rows for a bot's room binding."""
+    return list(_internal_messages(app, bot_id, room_id))
+
+
+def _delta_prompts(llm, since: int = 0) -> list[str]:
+    """Wire prompts carrying an ephemeral room-delta block.
+
+    The delta rides the hot snapshot (``<room_history>``) and is never
+    persisted, so per-turn delivery is observed on the wire, scoped to
+    prompts captured after index ``since``.
+    """
+    return [p for p in llm.prompts[since:]
+            if "lịch sử phòng chưa đọc" in p or "Tin mới trong phòng" in p]
+
+
+def _room_history_section(prompt: str) -> str:
+    """The ``<room_history>`` delta section of one wire prompt.
+
+    Content assertions scope to the delta itself: the surrounding prompt
+    legitimately carries task indexes and the current user text.
+    """
+    start = prompt.find("<room_history>")
+    end = prompt.find("</room_history>")
+    assert start != -1 and end != -1, "no room_history section on the wire"
+    return prompt[start:end]
+
+
 def _room_context_blocks(app: ChatApp, bot_id: str, room_id: str) -> list[str]:
-    internal = app._runtime.internal_session(bot_id, room_id)
-    store = app._runtime.store_for(bot_id)
-    messages = store.load(internal.id).messages
-    return [m.content or "" for m in messages
+    # Canonical-only: no synthetic room_context rows are ever persisted.
+    # Kept as a guard — must always be empty.
+    return [m.content or "" for m in _internal_rows(app, bot_id, room_id)
             if isinstance(m.meta, dict) and m.meta.get("kind") == "room_context"]
 
 
@@ -548,14 +711,18 @@ def test_first_turn_sees_public_history_not_secrets(tmp_path: Path) -> None:
         store.append(Message(role="tool", content="SECRET-TOOL-OUTPUT",
                              tool_call_id="t1",
                              ts="2026-10-16T10:02:00Z"))
+        since = len(llm.prompts)
         app.turn(room, "@coder go")
-        blocks = _room_context_blocks(app, "coder", room)
+        # Nothing persisted — and the wire carried exactly one delta.
+        assert _room_context_blocks(app, "coder", room) == []
+        blocks = _delta_prompts(llm, since)
         assert len(blocks) == 1
-        assert "user asks about deploy" in blocks[0]
-        assert "ok reply" in blocks[0]
-        assert "SECRET-ENVELOPE" not in blocks[0]
-        assert "SECRET-TOOL-OUTPUT" not in blocks[0]
-        assert "lịch sử phòng chưa đọc" in blocks[0]
+        delta = _room_history_section(blocks[0])
+        assert "user asks about deploy" in delta
+        assert "ok reply" in delta
+        assert "SECRET-ENVELOPE" not in delta
+        assert "SECRET-TOOL-OUTPUT" not in delta
+        assert "lịch sử phòng chưa đọc" in delta
     finally:
         app.shutdown()
 
@@ -565,12 +732,14 @@ def test_second_turn_gets_no_repeat_of_answered_message(tmp_path: Path) -> None:
     app = _chat(tmp_path, llm)
     try:
         room = _seed_room_pair(app)
+        seeded = len(llm.prompts)
         app.turn(room, "@coder go")
-        assert len(_room_context_blocks(app, "coder", room)) == 1
+        assert len(_delta_prompts(llm, seeded)) == 1
+        seen = len(llm.prompts)
         # The first turn's user row was marked read on success: the next
         # turn delivers nothing already answered.
         app.turn(room, "@coder again")
-        assert len(_room_context_blocks(app, "coder", room)) == 1
+        assert _delta_prompts(llm, seen) == []
     finally:
         app.shutdown()
 
@@ -589,13 +758,16 @@ def test_next_turn_gets_only_fresh_message(tmp_path: Path) -> None:
                              meta={"bot_id": "designer", "kind": "message",
                                    "parent_span_id": None},
                              ts="2026-10-16T10:05:00Z"))
+        since = len(llm.prompts)
         app.turn(room, "@coder update?")
-        blocks = _room_context_blocks(app, "coder", room)
-        assert len(blocks) == 2
-        assert "DESIGNER-NEWS" in blocks[-1]
-        assert "user asks about deploy" not in blocks[-1]
-        assert "@coder go" not in blocks[-1]
-        assert "Tin mới trong phòng" in blocks[-1]
+        assert _room_context_blocks(app, "coder", room) == []
+        blocks = _delta_prompts(llm, since)
+        assert len(blocks) == 1
+        delta = _room_history_section(blocks[-1])
+        assert "DESIGNER-NEWS" in delta
+        assert "user asks about deploy" not in delta
+        assert "@coder go" not in delta
+        assert "Tin mới trong phòng" in delta
     finally:
         app.shutdown()
 
@@ -607,8 +779,10 @@ def test_dm_turn_produces_no_room_context(tmp_path: Path) -> None:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona=""))
         dm = app.bot_dm("coder")["id"]
+        since = len(llm.prompts)
         app.turn(dm, "private hello")
         assert _room_context_blocks(app, "coder", dm) == []
+        assert _delta_prompts(llm, since) == []
     finally:
         app.shutdown()
 
@@ -616,7 +790,7 @@ def test_dm_turn_produces_no_room_context(tmp_path: Path) -> None:
 def test_deliver_excludes_current_envelope_from_delta(tmp_path: Path) -> None:
     import asyncio
 
-    from thyca.app.run_turn import TurnScope
+    from thyca.bots.context import BotTurnScope
     from thyca.bots.bus import new_span_id, new_trace_id
     from thyca.bots.context import BotTurnContext
 
@@ -627,7 +801,7 @@ def test_deliver_excludes_current_envelope_from_delta(tmp_path: Path) -> None:
         envelope = app._runtime.send(
             sender="designer", recipient="coder", kind="delegate",
             session_id=room, payload="SECRET-DELEGATE-PAYLOAD")
-        scope = TurnScope(
+        scope = BotTurnScope(
             store=app._sessions.store, act=app._act, tools=app._tools,
             memory=app._memory, state=app._state, zone=app._zone,
             injected_connect=llm,
@@ -636,13 +810,17 @@ def test_deliver_excludes_current_envelope_from_delta(tmp_path: Path) -> None:
             sender_id="designer", room_id=room, trace_id=new_trace_id(),
             span_id=new_span_id(), scope=scope, turn_cfg=app._current_cfg(),
         )
+        since = len(llm.prompts)
         reply = asyncio.run(app._deliver_envelope(envelope, ctx))
         assert reply == "ok reply"
-        blocks = _room_context_blocks(app, "coder", room)
+        # Nothing persisted — the wire carried exactly one delta.
+        assert _room_context_blocks(app, "coder", room) == []
+        blocks = _delta_prompts(llm, since)
         assert len(blocks) == 1
-        assert "SECRET-DELEGATE-PAYLOAD" not in blocks[0]
-        assert "user asks about deploy" in blocks[0]
-        assert "ok reply" in blocks[0]
+        delta = _room_history_section(blocks[0])
+        assert "SECRET-DELEGATE-PAYLOAD" not in delta
+        assert "user asks about deploy" in delta
+        assert "ok reply" in delta
         # Cursor stops at the delivered delta: the live envelope is not
         # counted as read room history.
         cursor = app._runtime.room_cursor("coder", room)
@@ -654,7 +832,7 @@ def test_deliver_excludes_current_envelope_from_delta(tmp_path: Path) -> None:
 def test_failed_turn_keeps_current_message_unread(tmp_path: Path) -> None:
     import asyncio
 
-    from thyca.app.run_turn import TurnScope
+    from thyca.bots.context import BotTurnScope
     from thyca.llm.llm_base import ChatReply
 
     class DownLLM:
@@ -666,7 +844,7 @@ def test_failed_turn_keeps_current_message_unread(tmp_path: Path) -> None:
     try:
         room = _seed_room_pair(app)
         card = app._bots.require("coder")
-        scope = TurnScope(
+        scope = BotTurnScope(
             store=app._sessions.store, act=app._act, tools=app._tools,
             memory=app._memory, state=app._state, zone=app._zone,
             injected_connect=DownLLM(),
@@ -674,66 +852,75 @@ def test_failed_turn_keeps_current_message_unread(tmp_path: Path) -> None:
         with __import__("pytest").raises(RuntimeError):
             asyncio.run(app._runtime.run_bot_turn_detailed(
                 scope=scope, card=card, room_id=room, text="@coder go",
-                turn_cfg=app._current_cfg(), room_context="CTX",
-                room_cursor=(2, "fpdelta"), room_cursor_after=(3, "fpcur"),
+                turn_cfg=app._current_cfg(), room_text="CTX",
+                room_cursor_after=(3, "fpcur"),
             ))
-        # The delivered delta persisted; the current message did not advance.
-        assert app._runtime.room_cursor("coder", room) == (2, "fpdelta")
-        blocks = _room_context_blocks(app, "coder", room)
-        assert len(blocks) == 1 and blocks[0] == "CTX"
+        # The ephemeral delta was never persisted and the cursor never
+        # advanced: the failed turn journaled only its error-marked user row.
+        assert app._runtime.room_cursor("coder", room) is None
+        rows = _internal_rows(app, "coder", room)
+        assert not [m for m in rows
+                    if isinstance(m.meta, dict)
+                    and m.meta.get("kind") == "room_context"]
+        assert any((m.content or "") == "@coder go"
+                   and (m.meta or {}).get("error", {}).get("code")
+                   for m in rows if m.role == "user")
         # A later success with the same after-cursor does advance it.
-        scope2 = TurnScope(
+        scope2 = BotTurnScope(
             store=app._sessions.store, act=app._act, tools=app._tools,
             memory=app._memory, state=app._state, zone=app._zone,
             injected_connect=llm,
         )
         asyncio.run(app._runtime.run_bot_turn_detailed(
             scope=scope2, card=card, room_id=room, text="@coder go",
-            turn_cfg=app._current_cfg(), room_context="",
-            room_cursor=(2, "fpdelta"), room_cursor_after=(3, "fpcur"),
+            turn_cfg=app._current_cfg(), room_text="",
+            room_cursor_after=(3, "fpcur"),
         ))
         assert app._runtime.room_cursor("coder", room) == (3, "fpcur")
     finally:
         app.shutdown()
 
 
-def test_room_map_old_shape_new_shape_and_legacy_meta(tmp_path: Path) -> None:
+def test_registry_binding_cursor_roundtrip(tmp_path: Path) -> None:
     import json
 
     from thyca.bots.bus import Bus
     from thyca.bots.registry import BotRegistry
     from thyca.bots.runtime import BotRuntime
-    from thyca.sessions import SessionManager
 
     registry = BotRegistry(tmp_path)
     runtime = BotRuntime(tmp_path, registry, Bus())
-    # Old string shape reads (no cursor yet).
+    # First binding mints a stable canonical session id (no cursor yet).
     internal = runtime.internal_session("coder", "room1")
+    binding = runtime.workspaces.store.get_binding("coder", "room1")
+    assert binding is not None and binding.internal_session_id == internal.id
     assert runtime.room_cursor("coder", "room1") is None
-    # Roundtrip: write keeps the session id in the new shape.
+    again = runtime.internal_session("coder", "room1")
+    assert again.id == internal.id
+    # Roundtrip: cursor persists in the one current registry shape.
     runtime.set_room_cursor("coder", "room1", (3, "fpabc"))
     assert runtime.room_cursor("coder", "room1") == (3, "fpabc")
-    raw = json.loads((tmp_path / "bots" / "coder" / "room_sessions.json")
-                     .read_text(encoding="utf-8"))
-    assert raw["room1"]["session"] == internal.id
-    # Legacy migration: old string shape + synthetic meta seeds the cursor.
-    store = SessionManager(store=runtime.store_for("coder"))
-    store.load(internal.id)
-    store.append(Message(role="user", content="old delta",
-                         meta={"kind": "room_context", "room_cursor": 5,
-                               "room_fingerprint": "fpold"}))
-    raw["room1"] = internal.id
-    (tmp_path / "bots" / "coder" / "room_sessions.json").write_text(
-        json.dumps(raw), encoding="utf-8")
-    assert runtime.room_cursor("coder", "room1") == (5, "fpold")
-    # No internal session: nothing is created or written for a cursor.
+    raw = json.loads((tmp_path / "bots" / "coder" / "workspace"
+                       / "registry.json").read_text(encoding="utf-8"))
+    entry = raw["windows"]["room1"]
+    assert entry["session"] == internal.id
+    assert (entry["room_cursor"], entry["room_fingerprint"]) == (3, "fpabc")
+    # No room_sessions.json mirror is ever written.
+    assert not (tmp_path / "bots" / "coder" / "room_sessions.json").exists()
+    assert not (tmp_path / "bots" / "coder"
+                / "room_sessions.json.bak").exists()
+    # No binding: nothing is created or written for a cursor.
     assert runtime.room_cursor("coder", "noroom") is None
+    assert runtime._workspaces.store.get_binding("coder", "noroom") is None
     runtime.set_room_cursor("coder", "noroom", (1, "x"))
-    assert "noroom" not in runtime._read_room_map("coder")
+    assert runtime.room_cursor("coder", "noroom") is None
+    assert runtime._workspaces.store.get_binding("coder", "noroom") is None
     # None cursor writes nothing.
-    before = dict(runtime._read_room_map("coder"))
+    before = (tmp_path / "bots" / "coder" / "workspace"
+              / "registry.json").read_bytes()
     runtime.set_room_cursor("coder", "room1", None)
-    assert runtime._read_room_map("coder") == before
+    assert (tmp_path / "bots" / "coder" / "workspace"
+            / "registry.json").read_bytes() == before
 
 
 def test_failed_bot_turn_keeps_user_row_with_error_marker(tmp_path: Path) -> None:
@@ -744,9 +931,12 @@ def test_failed_bot_turn_keeps_user_row_with_error_marker(tmp_path: Path) -> Non
     class FlakyLLM:
         def __init__(self) -> None:
             self.calls = 0
+            self.prompts: list[str] = []
 
         async def chat(self, messages, tools=None):
             self.calls += 1
+            self.prompts.append(
+                "\n".join(str(m.content or "") for m in messages))
             if self.calls == 2:
                 raise RuntimeError("provider down")
             return ChatReply(content="ok reply", model="m",
@@ -768,13 +958,15 @@ def test_failed_bot_turn_keeps_user_row_with_error_marker(tmp_path: Path) -> Non
         assert len(user_rows) == 1
         error = (user_rows[0].meta or {}).get("error") or {}
         assert error.get("code") == "chat_unavailable"
-        # The failed turn delivered its delta but did not advance past it.
-        assert app._runtime.room_cursor("coder", room)[0] == 2
+        # The failed turn delivered nothing, so no cursor advanced: the
+        # ephemeral delta was never marked read (no pre-write on failure).
+        assert app._runtime.room_cursor("coder", room) is None
         # Next turn still sees the kept user row as unread delta.
+        since = len(llm.prompts)
         app.turn(room, "@coder retry?")
-        blocks = _room_context_blocks(app, "coder", room)
-        assert len(blocks) == 2
-        assert "@coder go" in blocks[-1]
+        blocks = _delta_prompts(llm, since)
+        assert len(blocks) == 1
+        assert "@coder go" in _room_history_section(blocks[-1])
     finally:
         app.shutdown()
 

@@ -58,6 +58,10 @@
   margin: 0;
 }
 
+#bot-list .settings-field h3 {
+  color: var(--team-tint, var(--color-reading));
+}
+
 .settings-bot-avatar {
   display: grid;
   place-items: center;

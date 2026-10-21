@@ -34,7 +34,8 @@ def _candidates(model: str) -> list[str]:
     return names
 
 
-def _lookup(model: str, pricing_cfg: dict[str, PricingCfg] | None) -> PricingCfg | None:
+def pricing_for(model: str, pricing_cfg: dict[str, PricingCfg] | None = None) -> PricingCfg | None:
+    """Resolve the same effective unit rates used for recorded request cost."""
     keys = _candidates(model)
     if pricing_cfg:
         for name in keys:
@@ -52,7 +53,7 @@ def cost_for(
     """Return USD cost rounded to 6 decimals, or None when model/usage unknown."""
     if not model or not isinstance(usage, dict):
         return None
-    pricing = _lookup(model.strip(), pricing_cfg)
+    pricing = pricing_for(model.strip(), pricing_cfg)
     if pricing is None:
         return None
     prompt = usage.get("prompt_tokens")

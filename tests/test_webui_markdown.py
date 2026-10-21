@@ -548,7 +548,7 @@ def test_chat_sidebar_pager_markers() -> None:
     """TASK-020: the chat session list paginates at 12 per page. The pager
     math is the marker-delimited pure block (executed in Node by the journal
     tests); here we lock the wiring markers. The DOM behavior (active row
-    stays marked, jumps on create/rename/open) is browser-test territory."""
+    stays marked, and follows session creation/open) is browser-test territory."""
     script = "\n".join(
         (WEBUI / "pages" / "chat" / name).read_text(encoding="utf-8")
         for name in ("sessions-sidebar.js", "turn-follow.js", "composer.js", "app.js")
@@ -557,13 +557,11 @@ def test_chat_sidebar_pager_markers() -> None:
     assert "sessionsPageCount(state.sessions.length)" in script
     assert "state.sessionPage = clampPage(state.sessionPage, pages)" in script
     assert "state.sessions.slice(start, start + SESSIONS_PAGE_SIZE)" in script
-    # Create (both send paths), rename and open flip to the page holding the
-    # session; delete only clamps via renderSessions. The send paths guard the
-    # reveal: a background completion must not hijack the page the user paged
-    # or navigated to (behavioral regression: tests/test_webui_concurrent_streams.py).
+    # Session creation (both send paths) and opening reveal the relevant page.
+    # Send paths guard against background completion hijacking the page the
+    # user paged or navigated to (tests/test_webui_concurrent_streams.py).
     assert script.count('state.activeId === sessionId && state.sessionPage === pageAtSend ? sessionId : ""') == 2
     assert "await refreshSessions(\n      state.activeId === sessionId" in script
-    assert "await refreshSessions(id); // renamed row may sit on another page" in script
     assert "revealSession(sessionId); // opening a session shows the page that holds it" in script
     assert "function revealSession(id)" in script
     # Pager reuses shared button styles and Vietnamese labels.

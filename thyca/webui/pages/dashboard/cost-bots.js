@@ -74,7 +74,7 @@ export function renderCostBots(rows) {
     if (group.botId) {
       avatar.dataset.botId = group.botId;
       // Same tint source as the meter so the seal matches its bar.
-      avatar.style.setProperty("--team-tint", tintVarFor(group.botId, ""));
+      avatar.style.setProperty("--team-tint", tintVarFor(group.botId));
       avatar.innerHTML = botMark({ id: group.botId }, { state: "idle" });
     }
     const name = document.createElement("span");
@@ -92,7 +92,7 @@ export function renderCostBots(rows) {
     const fill = document.createElement("span");
     const share = group.costUsd != null && total > 0 ? (group.costUsd / total) * 100 : 0;
     fill.style.setProperty("--share", `${share}%`);
-    fill.style.background = group.botId ? tintVarFor(group.botId, "") : "var(--color-muted)";
+    fill.style.background = group.botId ? tintVarFor(group.botId) : "var(--color-muted)";
     meter.append(fill);
     const meta = document.createElement("p");
     meta.className = "journal-meta";

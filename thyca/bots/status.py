@@ -418,3 +418,43 @@ def last_result_at(result: dict | None) -> datetime | None:
         return datetime.strptime(raw, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
     except ValueError:
         return None
+
+
+def workspace_status(
+    snapshot: dict,
+    *,
+    pending=None,
+    channel: str = "webui",
+) -> dict:
+    """Public status shape for one bot's workspace lane.
+
+    Pure copy — never mutates ``snapshot``. A nonterminal private
+    follow-up projects as generic ``waiting``/``phase='private'`` with
+    ``waiting_on={'kind':'private','state':'waiting_private'}``; the
+    question, raw answer, proposal and received-ready state never reach
+    this public payload. Active thinking/running keeps its state and may
+    attach ``work_id`` only when its room matches the pending's windows.
+    """
+    out = dict(snapshot)
+    out["channel"] = channel
+    out["window_id"] = out.get("room_id")
+    out.setdefault("work_id", None)
+    if pending is None or pending.status in (
+        "done", "cancelled", "resumed", "expired"
+    ):
+        return out
+    state = out.get("state")
+    if state in ("offline", "thinking", "running", "error"):
+        if out.get("room_id") in (pending.origin_window, pending.dm_window):
+            out["work_id"] = pending.work_id
+        return out
+    out.update(
+        state="waiting",
+        phase="private",
+        room_id=pending.origin_window,
+        window_id=pending.origin_window,
+        waiting_on={"kind": "private", "state": "waiting_private"},
+        work_id=pending.work_id,
+        pending_private_id=pending.pending_id,
+    )
+    return out

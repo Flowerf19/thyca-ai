@@ -57,6 +57,28 @@ def test_apply_extracted_writes_private_and_proposes(tmp_path: Path) -> None:
     assert owners == ("coder",)
 
 
+def test_apply_extracted_stamps_origin_chat(tmp_path: Path) -> None:
+    from thyca.memory.heading import parse_heading
+
+    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    out = jobs.apply_extracted(
+        facade,
+        [jobs.ExtractedMemory(topic="origin", summary="origin-token",
+                              bots=("coder",))],
+        chat="2026-10-19T14-14-58_b12b",
+    )
+    sid = out["written"][0]
+    day, entry_id = sid.split("#")
+    meta = next(
+        parsed
+        for line in (tmp_path / "memory" / f"{day}.md").read_text(
+            encoding="utf-8").splitlines()
+        if (parsed := parse_heading(line)) is not None
+        and parsed.entry_id == entry_id
+    )
+    assert meta.chat == "2026-10-19T14-14-58_b12b"
+
+
 def test_extract_from_transcript_uses_model_json(tmp_path: Path) -> None:
     import asyncio
     import json
@@ -263,7 +285,9 @@ def test_apply_done_status_and_habit_land_in_store(tmp_path: Path) -> None:
     assert by_id["task-aaaaaaaa"]["status"] == "done"
 
 
-def test_transcript_tail_skips_room_context() -> None:
+def test_transcript_tail_treats_room_context_rows_as_ordinary_text() -> None:
+    # Canonical-only turns do not persist synthetic room_context rows; the
+    # transcript extractor no longer carries the old kind-based skip.
     tail = jobs.transcript_tail([
         Message(role="user", content="hi", ts="2026-10-16T10:00:00Z"),
         Message(role="user", content="Tin CÔNG KHAI", ts="2026-10-16T10:01:00Z",
@@ -271,4 +295,4 @@ def test_transcript_tail_skips_room_context() -> None:
                       "room_fingerprint": "abc"}),
     ])
     assert "hi" in tail
-    assert "CÔNG KHAI" not in tail
+    assert "CÔNG KHAI" in tail

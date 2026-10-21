@@ -37,6 +37,50 @@ if (menuButtons.length) {
     <nav class="screen-nav" aria-label="Các màn Thyca"></nav>`;
   const nav = dialog.querySelector("nav");
   const currentPage = location.pathname.split("/").pop() || "index.html";
+  const compact = matchMedia("(max-width: 56rem)");
+  const botIdPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+  function scopeLink(botId, botName) {
+    const link = document.createElement("a");
+    link.className = "memory-scope-choice";
+    link.href = `./memories.html${botId ? `?bot_id=${encodeURIComponent(botId)}` : ""}`;
+    link.textContent = botName;
+    const currentIds = new URLSearchParams(location.search).getAll("bot_id");
+    if (currentPage === "memories.html"
+      && (botId ? currentIds.length === 1 && currentIds[0] === botId : currentIds.length === 0)) {
+      link.setAttribute("aria-current", "page");
+    }
+    link.addEventListener("click", (event) => {
+      if (currentPage !== "memories.html") return;
+      const selection = new CustomEvent("thyca:memory-scope", {
+        detail: { botId, botName: botId ? botName : "" },
+      });
+      document.dispatchEvent(selection);
+      if (selection.detail.accepted === true) {
+        event.preventDefault();
+        dialog.close();
+      } else if (selection.detail.accepted === false) {
+        event.preventDefault();
+        const submenu = link.parentNode;
+        submenu.querySelector(".memory-scope-feedback")?.remove();
+        const status = document.createElement("p");
+        status.className = "memory-scope-state memory-scope-feedback is-error";
+        status.setAttribute("role", "status");
+        status.textContent = "Phạm vi chưa đổi được. Hãy hoàn tất thao tác đang chờ rồi thử lại.";
+        submenu.append(status);
+      }
+    });
+    return link;
+  }
+
+  function scopeState(message, error = false) {
+    const note = document.createElement("p");
+    note.className = `memory-scope-state${error ? " is-error" : ""}`;
+    note.setAttribute("role", error ? "alert" : "status");
+    note.textContent = message;
+    return note;
+  }
+
   for (const [path, label, icon] of routes) {
     const link = document.createElement("a");
     link.href = `./${path}`;
@@ -45,7 +89,71 @@ if (menuButtons.length) {
     if (path === currentPage || (path === "settings.html" && currentPage === "provider.html")) {
       link.setAttribute("aria-current", "page");
     }
-    nav.append(link);
+    if (path !== "memories.html") {
+      nav.append(link);
+      continue;
+    }
+
+    const entry = document.createElement("div");
+    entry.className = "screen-nav-entry memory-navigation-entry";
+    const submenu = document.createElement("div");
+    submenu.id = "screen-navigation-memory-scopes";
+    submenu.className = "memory-scope-submenu";
+    submenu.setAttribute("role", "group");
+    submenu.setAttribute("aria-label", "Phạm vi Nhật ký");
+    submenu.hidden = true;
+    link.setAttribute("aria-expanded", "false");
+    link.setAttribute("aria-controls", submenu.id);
+
+    let botsLoaded = false;
+    let loadingBots = false;
+    async function loadBots() {
+      if (botsLoaded || loadingBots) return;
+      loadingBots = true;
+      submenu.replaceChildren(scopeLink(null, "Tổng quan"), scopeState("Đang tải danh sách bot…"));
+      try {
+        const response = await fetch("/api/bots", { cache: "no-store" });
+        if (!response.ok) throw new Error("Bot list unavailable");
+        const payload = await response.json();
+        const bots = Array.isArray(payload) ? payload : payload?.bots;
+        if (!Array.isArray(bots)) throw new Error("Invalid bot list");
+        const choices = bots
+          .filter((bot) => bot && typeof bot.id === "string"
+            && bot.id.length <= 64 && botIdPattern.test(bot.id))
+          .map((bot) => scopeLink(bot.id, String(bot.name || bot.id)));
+        submenu.replaceChildren(scopeLink(null, "Tổng quan"), ...choices);
+        if (!choices.length) submenu.append(scopeState("Chưa có bot nào."));
+        botsLoaded = true;
+      } catch {
+        const retry = document.createElement("button");
+        retry.type = "button";
+        retry.className = "memory-scope-choice";
+        retry.textContent = "Thử tải lại danh sách bot";
+        retry.addEventListener("click", () => void loadBots());
+        submenu.replaceChildren(
+          scopeLink(null, "Tổng quan"),
+          scopeState("Không tải được danh sách bot.", true),
+          retry,
+        );
+      } finally {
+        loadingBots = false;
+      }
+    }
+
+    link.addEventListener("click", (event) => {
+      if (!compact.matches) return;
+      event.preventDefault();
+      submenu.hidden = !submenu.hidden;
+      link.setAttribute("aria-expanded", String(!submenu.hidden));
+      if (!submenu.hidden) void loadBots();
+    });
+    compact.addEventListener("change", () => {
+      if (compact.matches) return;
+      submenu.hidden = true;
+      link.setAttribute("aria-expanded", "false");
+    });
+    entry.append(link, submenu);
+    nav.append(entry);
   }
   document.body.append(dialog);
 

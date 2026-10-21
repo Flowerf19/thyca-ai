@@ -27,6 +27,12 @@ class PromptManager:
             parts.append(_section("user", hot.user))
         if hot.bot_user.strip() and hot.bot_user.strip() != "# User":
             parts.append(_section("bot_user", hot.bot_user))
+        if getattr(hot, "channel_brief", ""):
+            parts.append(_section("channel", hot.channel_brief))
+        if getattr(hot, "private_followup", ""):
+            parts.append(_section("private_followup", hot.private_followup))
+        if getattr(hot, "room_history", ""):
+            parts.append(_section("room_history", hot.room_history))
         parts.append(_section("today", hot.today))
         if hot.today_elsewhere:
             parts.append(_section("today_elsewhere", hot.today_elsewhere))

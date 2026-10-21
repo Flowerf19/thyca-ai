@@ -146,6 +146,7 @@ const cards = [];
 let followFailures = 0;
 const dependencies = {
   ...view, ...format,
+  closeBotDrawerForNavigation() {},
   createLiveStatus(...args) {
     const live = view.createLiveStatus(...args);
     cards.push(live);

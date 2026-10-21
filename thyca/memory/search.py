@@ -120,6 +120,14 @@ def lexical_search(
     if hidden:
         noun = "sibling hit" if hidden == 1 else "sibling hits"
         warnings.append(f"dedup hid {hidden} {noun}")
+    from thyca.memory.visibility import current_memory_view
+
+    view = current_memory_view()
+    if view is not None:
+        deduped = [
+            hit for hit in deduped
+            if view.can_read_entry(hit.chat_session, hit.bots)
+        ]
     hits = archive.with_counts(deduped[:limit], now)
     if hits:
         now_ts = format_ts(utc_now(now))
@@ -137,4 +145,13 @@ def recent(
 ) -> list[Hit]:
     """Most recently updated archived hits, clamped like the facade."""
     limit = max(1, min(limit, 10))
-    return archive.with_counts(archive.recent_hits(limit, now, reader=reader), now)
+    from thyca.memory.visibility import current_memory_view
+
+    view = current_memory_view()
+    pool = archive.recent_hits(CANDIDATE_CAP, now, reader=reader)
+    if view is not None:
+        pool = [
+            hit for hit in pool
+            if view.can_read_entry(hit.chat_session, hit.bots)
+        ]
+    return archive.with_counts(pool[:limit], now)

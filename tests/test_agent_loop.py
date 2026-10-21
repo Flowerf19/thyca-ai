@@ -145,6 +145,55 @@ def test_tool_round_then_text_emits_round_and_tool_events(tmp_path: Path) -> Non
     assert messages[-1].content == "finished"
 
 
+def test_loop_limit_marker_is_not_a_second_model_call(tmp_path: Path) -> None:
+    call = ToolCall(id="call-1", name="echo", arguments={})
+
+    class SlowLLM(FakeLLM):
+        async def chat(self, messages, tools=None):
+            await asyncio.sleep(0.01)
+            return await super().chat(messages, tools)
+
+    llm = SlowLLM([
+        ChatReply(
+            content=None,
+            tool_calls=[call],
+            model="m",
+            usage={"prompt_tokens": 11, "completion_tokens": 2},
+        )
+    ])
+    dispatcher = FakeDispatcher({
+        "call-1": ToolResult(tool_call_id="call-1", name="echo", content="result")
+    })
+    manager = SessionManager(tmp_path)
+    manager.create()
+    loop = AgentLoop(
+        sessions=manager,
+        assemble=Assemble(),
+        think=Think(llm),
+        act=Act(dispatcher),
+        observe=Observe(manager),
+        loop_max=1,
+        model="m",
+        pricing={"m": PricingCfg(input=909.09, cache=0, output=0)},
+    )
+    assert asyncio.run(loop.run("stop after one")) == "loop limit reached"
+
+    from thyca.bots.runtime import _aggregate_turn_meta, _aggregate_turn_rounds
+
+    rows = manager.current.messages
+    actual, marker = rows[1], rows[-1]
+    assert marker.content == "loop limit reached"
+    assert marker.meta["status"] == "loop_limit"
+    model, usage, cost, latency, requests, tool_calls = _aggregate_turn_meta(rows)
+    assert model == "m"
+    assert usage == {"prompt_tokens": 11, "completion_tokens": 2}
+    assert cost == 0.01
+    assert latency == actual.meta["latency_ms"] > 0
+    assert requests == 1
+    assert tool_calls == 1
+    assert _aggregate_turn_rounds(rows) == 1
+
+
 def test_loop_max_emits_no_finished_for_skipped_round(tmp_path: Path) -> None:
     manager = SessionManager(tmp_path)
     session = manager.create()

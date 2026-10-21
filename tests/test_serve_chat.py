@@ -10,6 +10,7 @@ from dataclasses import dataclass, field, replace
 from io import StringIO
 from pathlib import Path
 from urllib.error import HTTPError
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from thyca.agent.events import TurnEvent
@@ -106,6 +107,151 @@ def _json(httpd, path: str, *, method: str = "GET", data: bytes | None = None) -
     with urlopen(request, timeout=5) as response:
         assert response.headers.get_content_type() == "application/json"
         return json.loads(response.read().decode("utf-8"))
+
+
+def _json_result(httpd, path: str) -> tuple[int, dict]:
+    try:
+        return 200, _json(httpd, path)
+    except HTTPError as exc:
+        return exc.code, json.loads(exc.read().decode("utf-8"))
+
+
+def test_bot_operations_endpoint_scope_options_and_read_only(tmp_path: Path) -> None:
+    from thyca.bots.card import BotCard
+
+    app = _chat(tmp_path)
+    try:
+        app._bots.create(BotCard(
+            bot_id="coder", name="Coder", role="Coder", description="Codes.",
+            persona="You code.",
+        ))
+        dm = app.create()
+        group = app.create(bots=["thyca", "coder"])
+        timeline = tmp_path / "bots" / "coder" / "workspace" / "timeline.jsonl"
+        assert not timeline.exists()
+        httpd, thread = _start(tmp_path, app)
+        try:
+            options = urlencode({
+                "model": app._current_cfg().defaultModel,
+                "effort": app._current_cfg().provider.reasoningEffort,
+            })
+            status, payload = _json_result(
+                httpd,
+                f"/api/bots/coder/rooms/{group['id']}/operations?{options}",
+            )
+            assert status == 200
+            assert set(payload) == {
+                "bot_id", "session_id", "model", "context", "last_turn",
+                "conversation", "rates", "trace",
+            }
+            assert payload["bot_id"] == "coder" and payload["session_id"] == group["id"]
+            assert payload["model"]["scope"] == "next_turn_configuration"
+            assert payload["model"]["id"] == app._current_cfg().defaultModel
+            assert payload["model"]["reasoning_effort"] == app._current_cfg().provider.reasoningEffort
+            assert payload["context"]["estimated"] is True
+            assert payload["last_turn"] is None
+            assert payload["conversation"]["requests"] == 0
+            assert payload["conversation"]["cost_usd"] is None
+            assert all(value is None for value in payload["conversation"]["usage"].values())
+            forbidden = {"apiKey", "baseURL", "messages", "prompts", "reasoning_details", "arguments"}
+            def keys(value):
+                if isinstance(value, dict):
+                    for key, child in value.items():
+                        yield key
+                        yield from keys(child)
+                elif isinstance(value, list):
+                    for child in value:
+                        yield from keys(child)
+            assert forbidden.isdisjoint(keys(payload))
+            assert not timeline.exists()
+            assert app._runtime.workspaces.store.get_binding("coder", group["id"]) is None
+
+            for query in (
+                "?unknown=value", "?model=one&model=two", "?effort=",
+                "?model=bogus", "?effort=unknown",
+                f"?model={'x' * 201}",
+            ):
+                status, body = _json_result(
+                    httpd,
+                    f"/api/bots/coder/rooms/{group['id']}/operations{query}",
+                )
+                assert status == 400, body
+            for bot_id, session_id in (
+                ("ghost", group["id"]), ("coder", "2026-10-20T09-00-00_dead"),
+                ("coder", dm["id"]),
+            ):
+                status, body = _json_result(
+                    httpd,
+                    f"/api/bots/{bot_id}/rooms/{session_id}/operations",
+                )
+                assert status == 404
+                if session_id == "2026-10-20T09-00-00_dead":
+                    assert body == {"error": "session not found"}
+            assert not timeline.exists()
+            assert app._runtime.workspaces.store.get_binding("coder", group["id"]) is None
+        finally:
+            _stop(httpd, thread)
+    finally:
+        app.shutdown()
+
+
+def test_bot_operations_measurement_failure_is_sanitized_503(tmp_path: Path) -> None:
+    from thyca.bots.card import BotCard
+
+    app = _chat(tmp_path)
+    try:
+        app._bots.create(BotCard(
+            bot_id="coder", name="Coder", role="Coder", description="Codes.",
+            persona="You code.",
+        ))
+        room = app.create(bots=["thyca", "coder"])
+
+        def broken_peek(*args, **kwargs):
+            raise OSError(f"provider failure at {tmp_path}/private.conf")
+
+        app._memory.peek = broken_peek
+        httpd, thread = _start(tmp_path, app)
+        try:
+            status, body = _json_result(
+                httpd, f"/api/bots/coder/rooms/{room['id']}/operations",
+            )
+            assert status == 503
+            assert body == {"error": "bot information unavailable"}
+            assert str(tmp_path) not in json.dumps(body)
+            assert not (tmp_path / "bots" / "coder" / "workspace" / "timeline.jsonl").exists()
+        finally:
+            _stop(httpd, thread)
+    finally:
+        app.shutdown()
+
+
+def test_bot_operations_missing_timeline_is_503_without_repair(tmp_path: Path) -> None:
+    from thyca.bots.card import BotCard
+
+    app = _chat(tmp_path)
+    try:
+        app._bots.create(BotCard(
+            bot_id="coder", name="Coder", role="Coder", description="Codes.",
+            persona="You code.",
+        ))
+        group = app.create(bots=["thyca", "coder"])
+        app._runtime.internal_session("coder", group["id"])
+        timeline = tmp_path / "bots" / "coder" / "workspace" / "timeline.jsonl"
+        assert timeline.is_file()
+        timeline.unlink()
+        httpd, thread = _start(tmp_path, app)
+        try:
+            status, body = _json_result(
+                httpd, f"/api/bots/coder/rooms/{group['id']}/operations",
+            )
+            assert status == 503
+            assert body == {"error": "bot information unavailable"}
+            assert str(tmp_path) not in json.dumps(body)
+            assert not timeline.exists()
+        finally:
+            _stop(httpd, thread)
+    finally:
+        app.shutdown()
 
 
 def test_list_empty_without_and_with_chat(tmp_path: Path) -> None:
@@ -815,20 +961,22 @@ def _seed_long_session(tmp_path: Path, session_id: str) -> None:
         manager.append(Message(role="assistant", content="a" * 300))
 
 
-def test_compact_session_forces_and_reports(tmp_path: Path) -> None:
+def test_compact_session_skips_absent_canonical_context(tmp_path: Path) -> None:
     app = _chat_small_context(tmp_path)
     try:
         created = app.create()
         _seed_long_session(tmp_path, created["id"])
         before = app.get_payload(created["id"])
         result = app.compact_session(created["id"], instructions="keep the goal")
-        assert result["compaction"]["compacted"] is True
-        assert result["compaction"]["summary"] == "llm"
-        assert result["compaction"]["messages_before"] == 8
-        assert result["compaction"]["messages_after"] < 8
-        assert len(result["messages"]) == result["compaction"]["messages_after"]
-        assert result["messages"][0]["role"] == "system"
-        assert result["context"]["ratio"] < before["context"]["ratio"]
+        assert result["compaction"]["compacted"] is False
+        assert result["compaction"]["per_bot"]["thyca"] == {
+            "compacted": False,
+            "skipped": "no_existing_context",
+        }
+        assert result["messages"] == before["messages"]
+        assert app._runtime.workspaces.store.get_binding(
+            "thyca", created["id"]
+        ) is None
     finally:
         app.shutdown()
 
@@ -850,16 +998,40 @@ def test_compact_session_refuses_mid_turn(tmp_path: Path) -> None:
         app.shutdown()
 
 
+def _seed_canonical_long_session(app: ChatApp, session_id: str) -> int:
+    room = app._sessions.store.load(session_id)
+    window = app._webui.window_for(room)
+    binding = app._runtime.workspaces.store.bind_window("thyca", window)
+    store = app._runtime._canonical_store(
+        "thyca", window, binding.internal_session_id
+    )
+    manager = SessionManager(store=store)
+    manager.load(binding.internal_session_id)
+    for i in range(4):
+        manager.append(Message(role="user", content="canonical user " + "u" * 300 + str(i)))
+        manager.append(Message(role="assistant", content="canonical reply " + "a" * 300))
+    return len(manager.current.messages)
+
+
 def test_compact_over_http(tmp_path: Path) -> None:
     app = _chat_small_context(tmp_path)
     httpd, thread = _start(tmp_path, app)
     try:
         created = _json(httpd, "/api/sessions", method="POST", data=b"")
         _seed_long_session(tmp_path, created["id"])
+        public_before = app.get_payload(created["id"])["messages"]
+        canonical_before = _seed_canonical_long_session(app, created["id"])
         compacted = _json(
             httpd, f"/api/sessions/{created['id']}/compact", method="POST", data=b"{}"
         )
-        assert compacted["compaction"]["compacted"] is True
+        assert compacted["compaction"]["per_bot"]["thyca"]["compacted"] is True
+        assert compacted["messages"] == public_before
+        binding = app._runtime.workspaces.store.get_binding("thyca", created["id"])
+        canonical = app._runtime._canonical_store(
+            "thyca", app._webui.window_for(app._sessions.store.load(created["id"])),
+            binding.internal_session_id,
+        ).load(binding.internal_session_id)
+        assert canonical_before > len(canonical.messages)
         assert "context" in compacted
         try:
             urlopen(
@@ -1025,36 +1197,78 @@ def test_session_detail_tags_skill_loads(tmp_path: Path) -> None:
     skills_root = tmp_path / "skills"
     skill_md = skills_root / "create-skill"
     skill_md.mkdir(parents=True)
-    (skill_md / "SKILL.md").write_text("---\nname: create-skill\n---\n", encoding="utf-8")
-    llm = ScriptedLLM(
-        [
-            ChatReply(
-                content=None,
-                tool_calls=[
-                    ToolCall(
-                        id="call-1",
-                        name="read",
-                        arguments={"path": str(skill_md / "SKILL.md")},
-                    ),
-                    ToolCall(id="call-2", name="read", arguments={"path": str(tmp_path / "notes.md")}),
-                ],
-            ),
-            ChatReply(content="xong"),
-        ]
-    )
-    httpd, thread = _start(tmp_path, _chat(tmp_path, llm))
+    skill_path = skill_md / "SKILL.md"
+    skill_path.write_text("---\nname: create-skill\n---\nskill body\n", encoding="utf-8")
+    notes_path = tmp_path / "notes.md"
+
+    class ThinkingToolLLM:
+        def __init__(self) -> None:
+            self.round = 0
+
+        async def chat(self, messages, tools=None, on_reasoning=None):
+            self.round += 1
+            thought = "I will read the skill" if self.round == 1 else "The skill is loaded"
+            if on_reasoning:
+                on_reasoning(thought)
+            if self.round == 1:
+                return ChatReply(
+                    content=None,
+                    reasoning=thought,
+                    tool_calls=[
+                        ToolCall(
+                            id="call-1", name="read",
+                            arguments={"path": str(skill_path)},
+                        ),
+                        ToolCall(
+                            id="call-2", name="read",
+                            arguments={"path": str(notes_path)},
+                        ),
+                    ],
+                )
+            return ChatReply(content="xong", reasoning=thought)
+
+    httpd, thread = _start(tmp_path, _chat(tmp_path, ThinkingToolLLM()))
     try:
         created = _json(httpd, "/api/sessions", method="POST", data=b"")
         body = json.dumps({"text": "viết skill"}).encode("utf-8")
-        _json(httpd, f"/api/sessions/{created['id']}/turn", method="POST", data=body)
-        detail = _json(httpd, f"/api/sessions/{created['id']}")
-        calls = next(
-            item["tool_calls"] for item in detail["messages"] if item.get("tool_calls")
+        stream = _stream(
+            httpd, f"/api/sessions/{created['id']}/turn/stream", data=body
         )
-        # The skill read carries its name so replay can label it a skill; the
-        # ordinary read stays a plain tool call, and arguments stay off payload.
-        assert calls[0] == {"id": "call-1", "name": "read", "skill": "create-skill"}
-        assert calls[1] == {"id": "call-2", "name": "read"}
+        events = _stream_lines(stream)
+        assert any(event["type"] == "llm.thinking" for event in events)
+
+        detail = _json(httpd, f"/api/sessions/{created['id']}")
+        assert all("tool_calls" not in item for item in detail["messages"])
+        assert all("reasoning" not in item for item in detail["messages"])
+        assert [item["content"] for item in detail["messages"] if item["role"] == "assistant"] == ["xong"]
+
+        trace = _json(httpd, f"/api/traces/{created['id']}/0")
+        calls = next(item["tool_calls"] for item in trace["messages"] if item.get("tool_calls"))
+        assert calls[0] == {
+            "id": "call-1", "name": "read",
+            "arguments": {"path": str(skill_path)}, "skill": "create-skill",
+        }
+        assert calls[1] == {
+            "id": "call-2", "name": "read",
+            "arguments": {"path": str(notes_path)},
+        }
+        assistant_call = next(
+            item for item in trace["messages"]
+            if item["role"] == "assistant" and item.get("tool_calls")
+        )
+        assert assistant_call["reasoning"] == "I will read the skill"
+        tool_rows = [item for item in trace["messages"] if item["role"] == "tool"]
+        assert {item["tool_call_id"] for item in tool_rows} == {"call-1", "call-2"}
+        assert all(item["content"] for item in tool_rows)
+        assert all(
+            item["meta"]["span_id"] == assistant_call["meta"]["span_id"]
+            for item in tool_rows
+        )
+        final = next(
+            item for item in trace["messages"]
+            if item["role"] == "assistant" and item.get("content") == "xong"
+        )
+        assert final["reasoning"] == "The skill is loaded"
     finally:
         _stop(httpd, thread)
 
@@ -1203,9 +1417,18 @@ def test_stream_emits_thinking_deltas_and_persists(tmp_path: Path) -> None:
         assert "llm.finished" in types
         assert types[-1] == "turn.completed"
         detail = _json(httpd, f"/api/sessions/{created['id']}")
-        assistant = next(item for item in detail["messages"] if item["role"] == "assistant" and item.get("content") == "yes")
-        assert assistant["reasoning"] == "First I check the chords"
+        assistant = next(
+            item for item in detail["messages"]
+            if item["role"] == "assistant" and item.get("content") == "yes"
+        )
         assert assistant["content"] == "yes"
+        assert "reasoning" not in assistant
+        trace = _json(httpd, f"/api/traces/{created['id']}/0")
+        execution = next(
+            item for item in trace["messages"]
+            if item["role"] == "assistant" and item.get("content") == "yes"
+        )
+        assert execution["reasoning"] == "First I check the chords"
     finally:
         _stop(httpd, thread)
 
@@ -1398,10 +1621,8 @@ def test_webui_follows_a_turn_it_did_not_start() -> None:
     imported = {name.strip() for group in names for name in group.split(",") if name.strip()}
     assert {
         "ApiError",
-        "deleteJson",
         "getJson",
         "getNdjson",
-        "patchJson",
         "postJson",
         "postNdjson",
     } <= imported
@@ -1546,66 +1767,38 @@ def test_delete_refuses_a_session_mid_turn(tmp_path: Path) -> None:
         app.shutdown()
 
 
-def test_webui_has_row_actions_for_rename_and_delete() -> None:
-    """The sidebar row carries both actions; hover reveals, keyboard reaches."""
-    app = "\n".join(
-        (WEBUI / "pages" / "chat" / name).read_text(encoding="utf-8")
-        for name in ("sessions-sidebar.js", "turn-follow.js", "composer.js", "app.js")
-    )
+def test_chat_ui_has_no_direct_rename_delete_controls_or_dialogs() -> None:
+    """No chat sidebar entity exposes rename/delete UI or stale handlers."""
+    sidebar = (WEBUI / "pages" / "chat" / "sessions-sidebar.js").read_text(
+        encoding="utf-8")
+    team = (WEBUI / "pages" / "chat" / "team-sidebar.js").read_text(
+        encoding="utf-8")
+    app = (WEBUI / "pages" / "chat" / "app.js").read_text(encoding="utf-8")
     html = (WEBUI / "index.html").read_text(encoding="utf-8")
-    css = (WEBUI / "shared" / "css" / "kit.css").read_text(
-        encoding="utf-8"
-    ) + (WEBUI / "pages" / "chat" / "chat.css").read_text(encoding="utf-8")
+    css = (WEBUI / "pages" / "chat" / "chat.css").read_text(encoding="utf-8")
+    kit_css = (WEBUI / "shared" / "css" / "kit.css").read_text(encoding="utf-8")
     api = (WEBUI / "shared" / "js" / "http.js").read_text(encoding="utf-8")
+    admin = (Path(__file__).resolve().parents[1] / "thyca" / "bots" / "admin_tools.py").read_text(
+        encoding="utf-8")
 
-    assert 'patchJson(`/api/sessions/${encodeURIComponent(id)}`, { title })' in app
-    assert 'deleteJson(`/api/sessions/${encodeURIComponent(id)}`)' in app
+    visible = "\\n".join((sidebar, team, app, html))
+    assert not re.search(r"\brefreshBotDrawer\b", visible)
+    for removed in (
+        "openRename", "openDelete", "submitRename", "submitDelete",
+        "rename-dialog", "delete-dialog", "rename-form", "delete-form",
+        "rename-id", "delete-id", "renameStatus", "deleteStatus",
+        "state.saving", "deleteId", "patchJson", "deleteJson",
+        "refreshTeamBots", "onBotDeleted",
+        "onBotRosterChanged", "onSessionsChanged",
+    ):
+        assert removed not in visible
+    assert "team-bot-flap" not in css
+    assert ".session-action.is-delete" not in kit_css
     assert "export function patchJson" in api
     assert "export function deleteJson" in api
-
-    # Both row actions keep the dialog's own buttons reachable, and the row
-    # button stays a sibling so pressing it never triggers an action.
-    assert 'row.append(button, actions);' in app
-    assert "button.addEventListener(\"click\", onClick);" in app
-
-    # Two dialogs, the same .screen-dialog the mục lục uses.
-    assert 'id="rename-dialog"' in html
-    assert 'class="screen-dialog"' in html
-    assert 'id="delete-dialog"' in html
-    assert 'id="rename-name"' in html
-    assert 'maxlength="120"' in html
-    assert "screen-button is-danger" in html
-
-    # Words, not glyphs: no icon element and no mask art on the actions.
-    assert "session-action-icon" not in app
-    assert "session-action-icon" not in css
-    # The send button still masks the pen; the row actions do not use art.
-    action_block = css[css.index("/* Row actions:"):css.index(".workspace {")]
-    assert "but-may.svg" not in action_block
-    assert "tay.svg" not in action_block
-    # Both carry their word as text, and name their row in the label.
-    assert '"Đổi tên",' in app
-    assert '"Xóa", () =>' in app
-    assert "`Đặt tên cho phiên ${title}`" in app
-    assert "`Xóa phiên ${title}`" in app
-    action = css[css.index(".session-action {") :][:700]
-    assert "text-decoration: underline;" in action
-    assert "text-decoration-thickness: 1px;" in action
-    assert "text-underline-offset: 3px;" in action
-    assert "font-family: var(--font-ui);" in action
-    assert "font-size: 0.72rem;" in action
-    # Hidden until the row is pointed at, reachable by keyboard, and visible
-    # on touch where hover does not exist.
-    assert ".session-row:hover .session-actions" in css
-    assert ".session-row:focus-within .session-actions" in css
-    assert "@media (hover: none)" in css
-    # Centred on the row; both lines make room for the words.
-    assert "inset-block: 0;" in css
-    assert "align-items: center;" in css
-    assert "padding-inline-end: 5.2rem;" in css
-    # Second line carries when and how many turns.
-    assert "lượt`;" in app or "lượt" in app
-    assert "function sessionMeta(session)" in app
+    assert "name=\"bot_delete\"" in admin or 'name="bot_delete"' in admin
+    assert "bot_edit_card" in admin
+    assert 'id="bot-drawer"' in html
 
 
 def test_rename_midturn_survives_the_agent_naming_step(tmp_path: Path) -> None:
@@ -1687,21 +1880,15 @@ def test_delete_racing_a_claim_does_not_lose_the_transcript(tmp_path: Path) -> N
         app.shutdown()
 
 
-def test_webui_submits_a_rename_or_delete_once() -> None:
-    """A double submit must not send the same request twice."""
-    app = "\n".join(
-        (WEBUI / "pages" / "chat" / name).read_text(encoding="utf-8")
-        for name in ("sessions-sidebar.js", "turn-follow.js", "composer.js", "app.js")
-    )
-    rename = app[app.index("async function submitRename()") : app.index("function openDelete")]
-    remove = app[app.index("async function submitDelete()"):]
-
-    assert "if (state.saving) return;" in rename
-    assert "if (state.saving) return;" in remove
-    assert "state.saving = true;" in rename and "state.saving = true;" in remove
-    assert "finally {\n    state.saving = false;" in rename
-    assert "finally {\n    state.saving = false;" in remove
-    assert "saving: false," in app
+def test_session_rename_delete_http_apis_remain_wired() -> None:
+    """Removing chat UI controls does not remove the session HTTP APIs."""
+    root = Path(__file__).resolve().parents[1]
+    routes = (root / "thyca" / "serve" / "routes.py").read_text(encoding="utf-8")
+    api = (root / "thyca" / "serve" / "sessions_api.py").read_text(encoding="utf-8")
+    assert "session_rename(self, app, path)" in routes
+    assert "session_delete(self, app, path)" in routes
+    assert "def session_rename(" in api
+    assert "def session_delete(" in api
 
 
 def test_chat_row_uses_the_shared_session_item() -> None:
@@ -1816,7 +2003,7 @@ def test_stream_model_and_effort_reach_provider(tmp_path: Path, monkeypatch) -> 
         captured.append(provider)
         return Spy()
 
-    monkeypatch.setattr("thyca.app.run_turn.ConnectFactory.create", create)
+    monkeypatch.setattr("thyca.app.chat_app.ConnectFactory.create", create)
     cfg = default_config()
     cfg = replace(
         cfg,
@@ -2262,8 +2449,8 @@ def test_failed_turn_marks_transcript_and_trace(tmp_path: Path) -> None:
         assert lines[-1]["type"] == "turn.failed"
         stored = SessionManager(tmp_path / "sessions").load(created["id"])
         users = [item for item in stored.messages if item.role == "user"]
-        assert users[-1].meta == {
-            "error": {"code": "llm_error", "message": "provider HTTP 404: model gone"}
+        assert users[-1].meta["error"] == {
+            "code": "llm_error", "message": "provider HTTP 404: model gone"
         }
         traces = _json(httpd, "/api/traces")
         mine = [row for row in traces["traces"] if row["session_id"] == created["id"]]
@@ -2369,8 +2556,8 @@ def test_unexpected_turn_error_marks_chat_unavailable(tmp_path: Path) -> None:
         }
         stored = SessionManager(tmp_path / "sessions").load(created["id"])
         users = [item for item in stored.messages if item.role == "user"]
-        assert users[-1].meta == {
-            "error": {"code": "chat_unavailable", "message": "chat unavailable"}
+        assert users[-1].meta["error"] == {
+            "code": "chat_unavailable", "message": "chat unavailable"
         }
     finally:
         _stop(httpd, thread)

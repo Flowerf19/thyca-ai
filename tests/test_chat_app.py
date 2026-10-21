@@ -627,9 +627,9 @@ def test_two_sessions_run_turns_in_parallel(tmp_path: Path) -> None:
         # one is still parked in the provider call.
         other_id = app.create(bots=["thyca", "coder"])["id"]
         started_at = time.monotonic()
-        quick = app.turn(other_id, "fast")
+        quick = app.turn(other_id, "@coder fast")
         elapsed = time.monotonic() - started_at
-        assert quick["reply"] == "reply:fast"
+        assert quick["reply"] == "reply:@coder fast"
         assert elapsed < 2, f"second session waited on the first turn: {elapsed:.2f}s"
     finally:
         release.set()
@@ -643,7 +643,8 @@ def test_two_sessions_run_turns_in_parallel(tmp_path: Path) -> None:
     slow_messages = [(item.role, item.content) for item in store.load(slow_id).messages]
     fast_messages = [(item.role, item.content) for item in store.load(other_id).messages]
     assert slow_messages[:2] == [("user", "slow"), ("assistant", "reply:slow")]
-    assert fast_messages[:2] == [("user", "fast"), ("assistant", "reply:fast")]
+    assert fast_messages[:2] == [
+        ("user", "@coder fast"), ("assistant", "reply:@coder fast")]
     assert not any("fast" in (content or "") for _role, content in slow_messages)
     assert not any("slow" in (content or "") for _role, content in fast_messages)
     app.shutdown()
@@ -995,7 +996,11 @@ def test_x24_naming_meta_matches_sidecar_shape() -> None:
 
 # Moved from tests/test_b2_contracts.py (B2 batch).
 from thyca.app.chat_app import InvalidTurnOption, InvalidTurnText
-from thyca.app.turn_options import _clean_turn_text, overlay_turn_cfg
+from thyca.app.turn_options import (
+    SYSTEM_TEXT_MAX,
+    _clean_turn_text,
+    overlay_turn_cfg,
+)
 from thyca.config import Config, ModelCfg
 
 def test_f5_turn_effort_override_is_model_aware() -> None:
@@ -1023,6 +1028,18 @@ def test_f10_clean_turn_text_reasons() -> None:
         _clean_turn_text("x" * 4001, retry=False)
     assert _clean_turn_text("  hi  ", retry=False) == "hi"
     assert _clean_turn_text(123, retry=True) == ""
+
+
+def test_system_turn_text_uses_larger_cap() -> None:
+    # System prompts (curation, profile aggregation) carry injected data
+    # beyond the user-message cap; the system cap still bounds them.
+    with pytest.raises(InvalidTurnText, match="^too long$"):
+        _clean_turn_text("x" * (SYSTEM_TEXT_MAX + 1), retry=False,
+                         text_max=SYSTEM_TEXT_MAX)
+    assert _clean_turn_text("x" * 5000, retry=False,
+                            text_max=SYSTEM_TEXT_MAX) == "x" * 5000
+    with pytest.raises(InvalidTurnText, match="^too long$"):
+        _clean_turn_text("x" * 5000, retry=False)
 
 
 class _TavilySession:

@@ -116,9 +116,42 @@
   margin-top: 0.9rem;
 }
 
-/* Desktop keeps the sidebar search. Mobile: the field sits slimmer, always
-   visible, just above the "Theo ngày" fold (JS moves the label into the bar). */
+/* Desktop keeps the sidebar search and an unboxed global-scope choice.
+   Mobile moves only the search field into the page toolbar. */
 .memory-search-bar { display: none; }
+#memory-global-nav.memory-scope-list { display: grid; gap: 0; margin-block: 0; overflow: visible; }
+#memory-global-nav .memory-global-choice {
+  width: 100%;
+  min-height: 2.75rem;
+  padding: 0.5rem 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--color-muted);
+  text-align: start;
+}
+#memory-global-nav .memory-global-choice[aria-current="page"] {
+  color: var(--color-accent-deep);
+  font-weight: 500;
+}
+.memory-roster-error {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0.75rem 0.65rem;
+  padding: 0.65rem;
+  border: var(--rule) solid var(--color-border);
+  color: var(--color-accent-deep);
+  font-size: 0.85rem;
+}
+.memory-roster-error p { margin: 0; }
+.memory-roster-error button {
+  justify-self: start;
+  min-height: 2rem;
+  padding: 0.25rem 0.4rem;
+}
+.memory-section-empty { margin: 0.5rem 0 0.9rem; }
+.pending-view { margin-block-start: 1.4rem; padding-block-start: 1rem; border-block-start: var(--rule) solid var(--color-divider); }
+.pending-view h2 { margin: 0; font-family: var(--font-reading); font-size: 1.2rem; font-weight: 500; }
 
 @media (max-width: 56rem) {
   /* Sit "Nhật ký" on the header row, after the hamburger — the static
@@ -137,9 +170,11 @@
   }
   .memories-shell .sessions-heading h2 { font-size: 1.15rem; }
   .memories-shell .session-list { display: none; }
+  #memory-global-nav,
+  #memory-bot-list { display: none; }
   .memory-search-bar {
     display: block;
-    margin: 0 0 0.9rem;
+    margin: 0 0 0.75rem;
   }
   .memory-search-bar .thyca-search {
     --search-h: 34px;

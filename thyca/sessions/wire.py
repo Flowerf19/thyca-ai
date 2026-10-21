@@ -106,6 +106,8 @@ def session_summary(session: Session) -> dict:
         "dm": session.dm_bot,
         # User-facing channel model (phase 2B): exactly dm or group.
         "kind": "dm" if session.dm_bot else "group",
+        "channel": "webui",
+        "window_id": session.id,
     }
 
 
@@ -141,6 +143,8 @@ def session_detail(
         "bots": list(session.bots) if session.bots else ["thyca"],
         "dm": session.dm_bot,
         "kind": "dm" if session.dm_bot else "group",
+        "channel": "webui",
+        "window_id": session.id,
         "messages": [message_dict(item, skills_root) for item in session.messages],
         "ask_remember": ask_remember(session.messages, datetime.now(UTC)),
         "context": context,
@@ -162,8 +166,7 @@ def message_dict(
     The one message-dict helper for the chat payload and the trace detail.
     ``include_args=True`` pins the trace shape: arguments inline, and
     ``tool_calls``/``tool_call_id``/``meta`` always present (possibly
-    empty/None), with reasoning omitted — the ``/api/traces/<id>/<n>``
-    contract.
+    empty/None), with reasoning included only on Trace detail.
     """
     payload: dict = {
         "role": message.role,
@@ -180,8 +183,10 @@ def message_dict(
         payload["tool_call_id"] = message.tool_call_id
     if message.meta is not None or include_args:
         payload["meta"] = dict(message.meta) if message.meta is not None else None
-    if message.reasoning and not include_args:
+    if include_args and message.reasoning:
         payload["reasoning"] = message.reasoning
+    if include_args and message.reasoning_details:
+        payload["reasoning_details"] = message.reasoning_details
     return payload
 
 

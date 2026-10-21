@@ -5,6 +5,7 @@ import asyncio
 import json
 import re
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -51,6 +52,13 @@ class _LLM:
 def _msg(role: str, content: str = "", **kw) -> Message:
     kw.setdefault("ts", "2026-08-01T10:00:00Z")
     return Message(role=role, content=content, **kw)
+
+
+def _internal_store(app: ChatApp, bot_id: str, room_id: str):
+    internal = app._runtime.internal_session(bot_id, room_id)
+    window = app._runtime._window_for_room(room_id)
+    assert window is not None
+    return internal, app._runtime._canonical_store(bot_id, window, internal.id)
 
 
 # --- 1. bot_fetch authorization -------------------------------------------
@@ -189,8 +197,8 @@ def test_task_open_end_to_end_in_bot_transcript(tmp_path: Path) -> None:
         detail = app.turn(room, "start the long research please")
         assert detail["reply"] == "opened reply"
 
-        internal = app._runtime.internal_session("coder", room)
-        manager = SessionManager(store=app._runtime.store_for("coder"))
+        internal, store = _internal_store(app, "coder", room)
+        manager = SessionManager(store=store)
         manager.load(internal.id)
         tasks = derive_open_tasks(list(manager.current.messages), bot_id="coder")
         assert len(tasks) == 1 and tasks[0].task == "long research"
@@ -270,20 +278,25 @@ def test_dm_participants_protected_and_blank_dm_survives_prune(tmp_path: Path) -
 
 # --- 5. Idle sweep skips rooms with a turn in flight --------------------------
 
+def _seed_idle_bot_transcript(app: ChatApp, room: str):
+    internal, store = _internal_store(app, "coder", room)
+    manager = SessionManager(store=store)
+    manager.load(internal.id)
+    for index in range(8):
+        manager.append(_msg("user", f"q{index} " + "u" * 400,
+                            ts=f"2020-01-01T10:{index:02d}:00Z"))
+        manager.append(_msg("assistant", f"a{index} " + "a" * 400,
+                            ts=f"2020-01-01T10:{index:02d}:30Z"))
+    return internal, store
+
+
 def test_bot_idle_sweep_skips_internal_session_of_busy_room(tmp_path: Path) -> None:
     app = _chat(tmp_path, _LLM(content="[]"), context_tokens=2000)
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="P"))
         room = app.create(bots=["coder"])["id"]
-        internal = app._runtime.internal_session("coder", room)
-        manager = SessionManager(store=app._runtime.store_for("coder"))
-        manager.load(internal.id)
-        for index in range(8):
-            manager.append(_msg("user", f"q{index} " + "u" * 400,
-                                ts=f"2020-01-01T10:{index:02d}:00Z"))
-            manager.append(_msg("assistant", f"a{index} " + "a" * 400,
-                                ts=f"2020-01-01T10:{index:02d}:30Z"))
+        internal, store = _seed_idle_bot_transcript(app, room)
 
         app._turns.claim(room)
         try:
@@ -292,14 +305,110 @@ def test_bot_idle_sweep_skips_internal_session_of_busy_room(tmp_path: Path) -> N
             app._turns.release(room)
         key = f"coder:{internal.id}"
         assert key not in report["bots"], "busy room's bot session must be skipped"
-        messages = app._runtime.store_for("coder").load(internal.id).messages
+        messages = _internal_store(app, "coder", room)[1].load(internal.id).messages
         assert not any((m.content or "").startswith("[compaction: ") for m in messages)
 
         report = app.sweep_idle_sessions(idle_s=900)
         assert report["bots"][key]["compacted"] is True
-        messages = app._runtime.store_for("coder").load(internal.id).messages
+        messages = _internal_store(app, "coder", room)[1].load(internal.id).messages
         assert any((m.content or "").startswith("[compaction: ") for m in messages)
     finally:
+        app.shutdown()
+
+
+def test_bot_idle_sweep_skips_when_workspace_lease_is_already_held(
+    tmp_path: Path,
+) -> None:
+    app = _chat(tmp_path, _LLM(content="[]"), context_tokens=2000)
+    release = threading.Event()
+    acquired = threading.Event()
+    try:
+        app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
+                                 description="Writes code.", persona="P"))
+        room = app.create(bots=["thyca"])["id"]
+        internal, store = _seed_idle_bot_transcript(app, room)
+
+        async def hold_lease():
+            async with app._runtime.workspaces.lease("coder"):
+                acquired.set()
+                await asyncio.to_thread(release.wait)
+
+        holder = asyncio.run_coroutine_threadsafe(hold_lease(), app._loop)
+        assert acquired.wait(5)
+        report = app.sweep_idle_sessions(idle_s=900)
+        assert f"coder:{internal.id}" not in report["bots"]
+        assert not any(
+            (m.content or "").startswith("[compaction: ")
+            for m in store.load(internal.id).messages
+        )
+        release.set()
+        holder.result(timeout=5)
+    finally:
+        release.set()
+        app.shutdown()
+
+
+def test_bot_idle_sweep_holds_workspace_lease_through_compaction(
+    tmp_path: Path,
+) -> None:
+    app = _chat(tmp_path, _LLM(), context_tokens=2000)
+    flush_entered = threading.Event()
+    release_flush = threading.Event()
+    sweep_result: list[dict] = []
+    sweep_error: list[BaseException] = []
+    turn_result: list[dict] = []
+    turn_error: list[BaseException] = []
+    try:
+        app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
+                                 description="Writes code.", persona="P"))
+        room = app.create(bots=["coder"])["id"]
+        internal, store = _seed_idle_bot_transcript(app, room)
+        before = len(store.load(internal.id).messages)
+
+        async def blocked_flush(bot_id, messages, cfg, room_id=None):
+            flush_entered.set()
+            await asyncio.to_thread(release_flush.wait)
+
+        app._flush_bot_memory = blocked_flush
+
+        def sweep():
+            try:
+                sweep_result.append(app.sweep_idle_sessions(idle_s=900))
+            except BaseException as exc:
+                sweep_error.append(exc)
+
+        def turn():
+            try:
+                turn_result.append(app.turn(room, "LEASE-BLOCKED-TURN"))
+            except BaseException as exc:
+                turn_error.append(exc)
+
+        sweep_thread = threading.Thread(target=sweep)
+        sweep_thread.start()
+        assert flush_entered.wait(5)
+        assert app._runtime.workspaces.busy("coder")
+
+        turn_thread = threading.Thread(target=turn)
+        turn_thread.start()
+        deadline = time.monotonic() + 5
+        while app._turns.hub(room) is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert app._turns.hub(room) is not None
+        assert len(store.load(internal.id).messages) == before
+
+        release_flush.set()
+        sweep_thread.join(timeout=10)
+        turn_thread.join(timeout=10)
+        assert not sweep_thread.is_alive()
+        assert not turn_thread.is_alive()
+        assert sweep_error == []
+        assert turn_error == []
+        assert sweep_result
+        assert turn_result
+        assert any("LEASE-BLOCKED-TURN" in (m.content or "")
+                   for m in store.load(internal.id).messages)
+    finally:
+        release_flush.set()
         app.shutdown()
 
 
@@ -318,8 +427,8 @@ def test_flush_prediction_counts_mailbox_wire_and_summary_reserve(
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="PERSONA-CODER"))
         room = app.create(bots=["coder"])["id"]
-        internal = app._runtime.internal_session("coder", room)
-        manager = SessionManager(store=app._runtime.store_for("coder"))
+        internal, store = _internal_store(app, "coder", room)
+        manager = SessionManager(store=store)
         manager.load(internal.id)
         for index in range(2):
             manager.append(_msg("user", f"q{index} " + "u" * 200,
@@ -336,9 +445,119 @@ def test_flush_prediction_counts_mailbox_wire_and_summary_reserve(
         app.turn(room, "hi")
         assert flush_calls == [("coder", False)], (
             "flush must run once, on the intact transcript, before compact")
-        messages = app._runtime.store_for("coder").load(internal.id).messages
+        messages = _internal_store(app, "coder", room)[1].load(internal.id).messages
         assert any((m.content or "").startswith("[compaction: ") for m in messages)
     finally:
+        app.shutdown()
+
+
+def test_mailbox_batch_is_frozen_across_flush_and_next_turn(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    from thyca.agent.shrink import estimate_wire_tokens
+    from thyca.sessions.compaction import SessionCompactor
+
+    llm = _LLM()
+    app = _chat(tmp_path, llm, context_tokens=30000)
+    flush_entered = threading.Event()
+    release_flush = threading.Event()
+    flush_calls: list[bool] = []
+    plan_tokens: list[int] = []
+    frozen: dict[str, str] = {}
+    try:
+        app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
+                                 description="Writes code.", persona="PERSONA-CODER"))
+        room = app.create(bots=["coder"])["id"]
+        internal, store = _internal_store(app, "coder", room)
+        manager = SessionManager(store=store)
+        manager.load(internal.id)
+        for index in range(50):
+            manager.append(_msg("user", f"q{index} " + "u" * 1200,
+                                ts=f"2026-08-01T10:{index:02d}:00Z"))
+            manager.append(_msg("assistant", f"a{index} " + "a" * 1200,
+                                ts=f"2026-08-01T10:{index:02d}:30Z"))
+        for _ in range(5):
+            app._runtime.send(sender="thyca", recipient="coder", kind="message",
+                              session_id=room, payload="FROZEN-MAILBOX-" + "m" * 880)
+
+        original_prepend = app._runtime._prepend_mailbox
+
+        def capture_frozen(bot_id, room_id, text):
+            wire_text = original_prepend(bot_id, room_id, text)
+            frozen["text"] = wire_text
+            return wire_text
+
+        monkeypatch.setattr(app._runtime, "_prepend_mailbox", capture_frozen)
+        original_plan = SessionCompactor.plan
+
+        def capture_plan(self, messages, context_tokens, **kwargs):
+            plan_tokens.append(kwargs.get("pending_user_tokens", 0))
+            return original_plan(self, messages, context_tokens, **kwargs)
+
+        monkeypatch.setattr(SessionCompactor, "plan", capture_plan)
+
+        async def blocked_flush(bot_id, messages, cfg, room_id=None):
+            flush_calls.append(any(
+                (m.content or "").startswith("[compaction: ") for m in messages
+            ))
+            flush_entered.set()
+            await asyncio.to_thread(release_flush.wait)
+
+        app._runtime.memory_flush = blocked_flush
+        turn_errors: list[BaseException] = []
+
+        def first_turn():
+            try:
+                app.turn(room, "FIRST-FROZEN-TURN")
+            except BaseException as exc:
+                turn_errors.append(exc)
+
+        turn_thread = threading.Thread(target=first_turn)
+        turn_thread.start()
+        assert flush_entered.wait(5)
+        late = "LATE-THRESHOLD-MESSAGE-" + "z" * 1200
+        app._runtime.send(sender="thyca", recipient="coder", kind="message",
+                          session_id=room, payload=late)
+        release_flush.set()
+        turn_thread.join(timeout=10)
+        assert not turn_thread.is_alive()
+        assert turn_errors == []
+        assert flush_calls == [False], "flush must precede actual compaction"
+
+        first_prompt = next(
+            (p for p in llm.prompts if "FIRST-FROZEN-TURN" in p),
+            "",
+        )
+        assert first_prompt, llm.prompts
+        assert "FROZEN-MAILBOX-" in first_prompt
+        assert late not in first_prompt
+        assert plan_tokens[0] == estimate_wire_tokens([
+            Message(role="user", content=frozen["text"])
+        ])
+        assert plan_tokens[0] == plan_tokens[1]
+        projected = store.load(internal.id).messages
+        assert any((m.content or "").startswith("[compaction: ")
+                   for m in projected)
+        assert any(m.role == "user" and m.content == "FIRST-FROZEN-TURN"
+                   for m in projected)
+        assert all("FROZEN-MAILBOX-" not in (m.content or "")
+                   and "LATE-THRESHOLD-MESSAGE-" not in (m.content or "")
+                   for m in projected)
+        assert app._runtime._bus.pending("coder") == 1
+        assert app._runtime._bus.pending_for("coder")[0].payload == late[:1000]
+
+        app._runtime.memory_flush = lambda *args, **kwargs: None
+        before = len(llm.prompts)
+        app.turn(room, "SECOND-FROZEN-TURN")
+        assert any(late[:1000] in prompt for prompt in llm.prompts[before:])
+        assert app._runtime._bus.pending("coder") == 0
+        projected = store.load(internal.id).messages
+        assert any(m.role == "user" and m.content == "SECOND-FROZEN-TURN"
+                   for m in projected)
+        assert all("LATE-THRESHOLD-MESSAGE-" not in (m.content or "")
+                   for m in projected)
+    finally:
+        release_flush.set()
         app.shutdown()
 
 
@@ -602,8 +821,8 @@ def test_delegate_from_thyca_dm_records_no_other_bot_rows(tmp_path: Path) -> Non
         kinds = {(r.get("meta") or {}).get("kind") for r in rows}
         assert "delegate" not in kinds and "result" not in kinds
         # The recipient really ran — privately, in its internal session.
-        internal = app._runtime.internal_session("coder", thyca_dm)
-        msgs = app._runtime.store_for("coder").load(internal.id).messages
+        internal, store = _internal_store(app, "coder", thyca_dm)
+        msgs = store.load(internal.id).messages
         assert any("say hi to the user" in (m.content or "") for m in msgs)
     finally:
         app.shutdown()
@@ -790,7 +1009,7 @@ def _old_dm(app, bot_id: str):
     return dm_id
 
 
-def test_room_sweep_skips_child_dm_extraction(tmp_path: Path) -> None:
+def test_idle_sweep_ignores_public_room_transcripts(tmp_path: Path) -> None:
     import asyncio
     import json as _json
 
@@ -805,11 +1024,10 @@ def test_room_sweep_skips_child_dm_extraction(tmp_path: Path) -> None:
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="C",
                                  description="d", persona=""))
-        dm_id = _old_dm(app, "coder")
+        _old_dm(app, "coder")
         report = app.sweep_idle_sessions(idle_s=900)
-        entry = report["rooms"][dm_id]
-        assert entry["skipped"] == "child_dm"
-        assert "extracted" not in entry
+        assert report["rooms"] == {}
+        assert report["bots"] == {}
         # Nothing was written from the room path: no daily file holds an
         # entry (an empty day header from the compact path is fine).
         assert all("## " not in path.read_text(encoding="utf-8")
@@ -828,35 +1046,25 @@ def test_room_sweep_skips_child_dm_extraction(tmp_path: Path) -> None:
         app.shutdown()
 
 
-def test_room_sweep_extracts_thyca_dm_skips_mixed_group(tmp_path: Path) -> None:
-    import json as _json
-
+def test_idle_sweep_does_not_extract_from_root_or_group_room(tmp_path: Path) -> None:
     from thyca.bots.card import BotCard
     from thyca.sessions import SessionManager
-
     from thyca.core.protocol import Message
 
-    class HabitLLM:
-        async def chat(self, messages, tools=None):
-            return type("R", (), {"content": _json.dumps([{
-                "topic": "t", "summary": "s"}])})()
-
-    app = _chat(tmp_path, HabitLLM())
+    app = _chat(tmp_path, _LLM())
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="C",
                                  description="d", persona=""))
-        thyca_dm = _old_dm(app, "thyca")
+        _old_dm(app, "thyca")
         group = app.create(bots=["thyca", "coder"])["id"]
         manager = SessionManager(store=app._sessions.store)
         manager.load(group)
         manager.append(Message(role="user", content="old group note",
                                ts="2020-01-01T10:00:00Z"))
+        before = list(manager.current.messages)
         report = app.sweep_idle_sessions(idle_s=900)
-        assert "skipped" not in report["rooms"][thyca_dm]
-        assert report["rooms"][thyca_dm]["extracted"] == 1
-        # A mixed group is per-bot business: no room extraction or dedupe,
-        # but the transcript still compacts.
-        assert report["rooms"][group]["skipped"] == "per_bot_jobs"
-        assert "extracted" not in report["rooms"][group]
+        assert report["rooms"] == {}
+        assert report["bots"] == {}
+        assert app._sessions.store.load(group).messages == before
     finally:
         app.shutdown()

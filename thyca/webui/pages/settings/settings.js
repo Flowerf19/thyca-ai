@@ -73,17 +73,7 @@
    through Thyca in chat; each row links there. Registry unavailable →
    honest "chưa sẵn sàng" line, never fake rows. */
 (() => {
-  const TINTS = ["accent", "botanical", "success-ink", "ink", "accent-deep"];
   const STATUS = { running: "đang làm", idle: "rảnh", active: "đang bật", paused: "tạm dừng", error: "lỗi" };
-
-  const tintFor = (id, tint) => {
-    if (id === "thyca") return "accent";
-    if (TINTS.includes(tint)) return tint;
-    let hash = 0;
-    const text = String(id || "");
-    for (let i = 0; i < text.length; i++) hash = (hash * 31 + text.charCodeAt(i)) >>> 0;
-    return TINTS[hash % TINTS.length];
-  };
 
   const list = document.getElementById("bot-list");
   const status = document.getElementById("bot-list-status");
@@ -93,16 +83,24 @@
   // stays a classic script). Rows render immediately and the mark fills in
   // when the module lands.
   let renderAvatar = null;
+  let botLookFor = null;
   const avatarNodes = new Map();
   const fillAvatar = (bot, node) => {
-    if (renderAvatar && node) node.innerHTML = renderAvatar(bot);
+    if (!node || !botLookFor) return;
+    const tint = `var(--color-${botLookFor(bot).tint})`;
+    node.style.setProperty("--team-tint", tint);
+    node.parentElement?.style.setProperty("--team-tint", tint);
+    if (renderAvatar) node.innerHTML = renderAvatar(bot);
   };
-  import("./shared/js/bot-avatar.js")
+  import("../../shared/js/bot-avatar.js")
     .then((mod) => {
       renderAvatar = mod.botMark;
+      botLookFor = mod.botLookFor;
       for (const { bot, node } of avatarNodes.values()) fillAvatar(bot, node);
     })
-    .catch(() => {});
+    .catch((error) => {
+      console.error("Không tải được biểu tượng bot trên trang cài đặt.", error);
+    });
 
   const note = (text) => {
     status.textContent = text;
@@ -138,18 +136,16 @@
         identity.className = "settings-field";
         const avatar = document.createElement("span");
         avatar.className = "settings-bot-avatar";
-        avatar.style.setProperty("--team-tint", `var(--color-${tintFor(bot.id, bot.tint)})`);
         avatar.setAttribute("aria-hidden", "true");
         avatarNodes.set(bot.id, { bot, node: avatar });
-        fillAvatar(bot, avatar);
         identity.append(avatar, info);
+        fillAvatar(bot, avatar);
         const link = document.createElement("a");
         link.className = "screen-button";
         link.href = "./index.html";
         link.textContent = "Nhắn trong Chat";
         row.append(identity, link);
         list.append(row);
-        apply3d(bot, avatar);
       }
     })
     .catch(() => {

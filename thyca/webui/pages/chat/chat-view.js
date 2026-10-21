@@ -1,5 +1,5 @@
 import { usageLine } from "./chat-status.js";
-import { avatarVariantFor, botMark } from "../../shared/js/bot-avatar.js";
+import { botMark } from "../../shared/js/bot-avatar.js";
 import { chatBotForMessage } from "../../shared/js/chat-bot.js";
 import { tintVarFor } from "./team-data.js";
 
@@ -26,8 +26,9 @@ export function chatBrandHeader({ state = "idle", status = "đã viết", expand
   const profile = bot && typeof bot === "object" ? bot : chatBotForMessage(null);
   const avatarBot = brandAvatarProfile(profile, state);
   const header = document.createElement("header");
-  header.className = `chat-brand avatar-variant-${avatarVariantFor(profile)}`;
-  header.style.setProperty("--avatar-tint", tintVarFor(profile.id, profile.tint));
+  header.className = "chat-brand";
+  header.style.setProperty("--avatar-tint", tintVarFor(profile.id));
+  header.style.setProperty("--team-tint", tintVarFor(profile.id));
   header.style.setProperty(
     "--chat-brand-accent",
     "var(--avatar-tint, var(--team-tint, var(--color-accent)))");

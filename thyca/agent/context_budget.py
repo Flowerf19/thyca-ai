@@ -154,12 +154,15 @@ def format_context_budget(
             "memory_remember with kind='checkpoint' and task/new_task to "
             "record only the durable delta (goal, decisions, open work, "
             "next step, references). Do not dump the transcript, secrets, "
-            "or DM content."
+            "or DM content. After recording, call compact to summarize the "
+            "session and free context."
         )
     else:
         guidance = (
             "You may proactively checkpoint at a task boundary: call "
             "memory_remember with kind='checkpoint' and task/new_task, "
-            "reusing ids and references instead of copying memory text."
+            "reusing ids and references instead of copying memory text. "
+            "After checkpointing a finished task, you may call compact to "
+            "free context."
         )
     return f"{head}\n{guidance}"

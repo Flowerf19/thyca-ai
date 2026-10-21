@@ -23,10 +23,12 @@ UNREAD = ROOT / "thyca" / "webui" / "pages" / "chat" / "team-unread.js"
 CARDS = ROOT / "thyca" / "webui" / "pages" / "chat" / "team-cards.js"
 SIDEBAR_SRC = ROOT / "thyca" / "webui" / "pages" / "chat" / "team-sidebar.js"
 STRIP_SRC = ROOT / "thyca" / "webui" / "pages" / "chat" / "team-strip.js"
+DRAWER_SRC = ROOT / "thyca" / "webui" / "pages" / "chat" / "team-drawer.js"
 INDEX_HTML = ROOT / "thyca" / "webui" / "index.html"
 COST_DATA = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "cost-data.js"
 TRACE_DATA = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "trace-data.js"
 CHAT_CSS = ROOT / "thyca" / "webui" / "pages" / "chat" / "chat.css"
+ENVELOPE_CSS = ROOT / "thyca" / "webui" / "shared" / "css" / "bot-envelope.css"
 KIT_CSS = ROOT / "thyca" / "webui" / "shared" / "css" / "kit.css"
 TOKENS_CSS = ROOT / "thyca" / "webui" / "shared" / "css" / "tokens.css"
 AVATAR = ROOT / "thyca" / "webui" / "shared" / "js" / "bot-avatar.js"
@@ -35,6 +37,7 @@ AVATAR_CSS = ROOT / "thyca" / "webui" / "shared" / "css" / "bot-avatar.css"
 CHAT_BOT = ROOT / "thyca" / "webui" / "shared" / "js" / "chat-bot.js"
 TRANSCRIPT = ROOT / "thyca" / "webui" / "pages" / "chat" / "transcript.js"
 LIVE = ROOT / "thyca" / "webui" / "pages" / "chat" / "live-status.js"
+MEMORY_DATA = ROOT / "thyca" / "webui" / "shared" / "js" / "memory-data.js"
 
 
 @pytest.fixture(scope="module")
@@ -48,7 +51,8 @@ def node() -> str:
 def _run(node: str, body: str, via: str = "team") -> object:
     module = {"team": TEAM, "mention": MENTION, "cost": COST_DATA,
               "trace": TRACE_DATA, "unread": UNREAD, "avatar": AVATAR,
-              "chatbot": CHAT_BOT, "pending": PENDING}[via]
+              "chatbot": CHAT_BOT, "pending": PENDING,
+              "memory": MEMORY_DATA}[via]
     source = (
         f"import * as api from '{module.as_posix()}';\n"
         f"const main = async () => {{ {body} }};\n"
@@ -64,30 +68,73 @@ def _run(node: str, body: str, via: str = "team") -> object:
     return json.loads(result.stdout)
 
 
-def test_thyca_tint_pinned_and_card_tint_wins(node: str) -> None:
-    value = _run(node, "return [api.tintForBot('thyca', 'botanical'), api.tintForBot('other', 'ink')];")
-    assert value == ["accent", "ink"]
-
-
-def test_unknown_tint_falls_back_deterministically(node: str) -> None:
+def test_bot_tint_is_stable_for_immutable_id(node: str) -> None:
     value = _run(
         node,
-        "return api.tintForBot('my-bot', 'not-a-token') === api.tintForBot('my-bot', '')"
-        " && api.BOT_TINTS.includes(api.tintForBot('my-bot', 'not-a-token'));",
+        f"const avatar = await import('{AVATAR.as_posix()}');"
+        " const look = avatar.botLookFor('coder');"
+        " const normalized = api.normalizeBots({bots: [{id: 'coder', tint: 'accent'}]})[0];"
+        " return [api.BOT_TINTS === avatar.BOT_LOOK_TINTS,"
+        " api.tintForBot('coder') === look.tint,"
+        " api.tintVarFor('coder') === `var(--color-${look.tint})`,"
+        " normalized.tint === look.tint,"
+        " api.tintVar('botanical'), api.tintVar('unknown')];",
+    )
+    assert value == [True, True, True, True, "var(--color-botanical)", "var(--color-accent)"]
+
+
+def test_tint_ignores_old_card_values(node: str) -> None:
+    value = _run(
+        node,
+        "const a = api.normalizeBots({bots: [{id: 'my-bot', tint: 'accent'}]})[0];"
+        " const b = api.normalizeBots({bots: [{id: 'my-bot', tint: 'ink'}]})[0];"
+        " return a.tint === b.tint && api.BOT_TINTS.includes(a.tint);",
     )
     assert value is True
+
+
+def test_bot_look_is_id_stable_and_drives_mark(node: str) -> None:
+    value = _run(
+        node,
+        "const id = 'thyca-coder';"
+        " const first = api.botLookFor({id, name: 'Coder', role: 'Coder',"
+        "  tint: 'accent', avatar: 'star', system: true});"
+        " const renamed = api.botLookFor({id, name: 'Đã đổi tên', role: 'Other',"
+        "  tint: 'ink', avatar: 'plain', system: false});"
+        " const mark = api.botMark({id, name: 'Renamed', tint: 'ink', avatar: 'star'});"
+        " const tint = `var(--color-${first.tint})`;"
+        " return [first, renamed, api.BOT_LOOK_TINTS.includes(first.tint),"
+        "  ['quill','code','nib','note','lens','brush'].includes(first.glyph),"
+        "  mark.includes(`style=\"--bot:${tint};--team-tint:${tint};--avatar-tint:${tint}\"`),"
+        "  mark.includes(`href=\"#g-${first.glyph}\"`),"
+        "  api.botLookFor('thyca').tint === api.botLookFor({id:'thyca',system:true}).tint,"
+        "  api.botLookFor('researcher').glyph === api.botLookFor({id:'researcher',role:'research'}).glyph];",
+        via="avatar",
+    )
+    assert value[0] == value[1]
+    assert value[2:] == [True, True, True, True, True, True]
+
+
+def test_settings_avatar_uses_shared_module_and_surfaces_import_errors() -> None:
+    source = (ROOT / "thyca/webui/pages/settings/settings.js").read_text(
+        encoding="utf-8")
+    assert 'import("../../shared/js/bot-avatar.js")' in source
+    assert '.catch((error) => {' in source
+    assert "console.error(\"Không tải được biểu tượng bot trên trang cài đặt.\", error)" in source
+    assert "apply3d(bot, avatar)" not in source
 
 
 def test_normalize_bots_tolerates_missing_backend(node: str) -> None:
     value = _run(
         node,
         "return [api.normalizeBots(null), api.normalizeBots({}),"
-        " api.normalizeBots({bots: [{id: 'thyca'}, {id: ''}, null]})];",
+        " api.normalizeBots({bots: [{id: 'thyca'}, {id: ''}, null]}),"
+        " api.tintForBot('thyca')];",
     )
     assert value[0] == []
     assert value[1] == []
     assert [bot["id"] for bot in value[2]] == ["thyca"]
-    assert value[2][0]["tint"] == "accent"
+    assert value[2][0]["tint"] == value[3]
     assert value[2][0]["status"] == "unknown"
 
 
@@ -338,6 +385,22 @@ def test_pending_avatar_slot_and_roster_patch(node: str) -> None:
     assert value == [True, True, True, True, True, None, "Tất cả bot"]
 
 
+def test_memory_scope_echo_requires_exact_scoped_owner_and_null_global(node: str) -> None:
+    value = _run(
+        node,
+        "return [api.memoryScopeMatches({}, null),"
+        " api.memoryScopeMatches({bot_id: null}, null),"
+        " api.memoryScopeMatches({bot_id: 'coder'}, null),"
+        " api.memoryScopeMatches({bot_id: 'coder'}, 'coder'),"
+        " api.memoryScopeMatches({bot_id: null}, 'coder'),"
+        " api.memoryScopeMatches({bot_id: 'researcher'}, 'coder')];",
+        via="memory",
+    )
+    assert value == [True, True, False, True, False, False]
+    source = PENDING.read_text(encoding="utf-8")
+    assert source.index("if (!memoryScopeMatches(payload, requestedScope))") < source.index("items = pendingCandidates(payload)")
+
+
 def test_pending_candidates_only_pending(node: str) -> None:
     payload = {"candidates": [
         {"id": 1, "bot_id": "a", "text": "t", "status": "pending"},
@@ -346,6 +409,24 @@ def test_pending_candidates_only_pending(node: str) -> None:
     ]}
     value = _run(node, f"return api.pendingCandidates({json.dumps(payload)}).map(c => c.id);")
     assert value == ["1", "3"]
+
+
+def test_pending_candidate_requests_are_owner_scoped_and_race_guarded(node: str) -> None:
+    value = _run(
+        node,
+        "return [api.candidateRequestUrl(null),"
+        " api.candidateRequestUrl('coder')];",
+        via="pending",
+    )
+    assert value == [
+        "/api/memory/candidates",
+        "/api/memory/candidates?bot_id=coder",
+    ]
+    source = PENDING.read_text(encoding="utf-8")
+    assert "if (busy) event.preventDefault()" in source
+    assert "loadController?.abort()" in source
+    assert "requestedScope !== scopeId" in source
+    assert "items = [];" in source
 
 
 def test_main_session_resolves_remembered_then_newest(node: str) -> None:
@@ -676,6 +757,21 @@ def test_after_team_session_guard_wiring() -> None:
     assert sidebar.count("hub.afterTeamSession(detail);") == 1
 
 
+def test_operational_drawer_is_wired_to_room_navigation_and_turn_options() -> None:
+    app = (ROOT / "thyca" / "webui" / "pages" / "chat" / "app.js").read_text(encoding="utf-8")
+    drawer = DRAWER_SRC.read_text(encoding="utf-8")
+    assert "initTeamDrawer(hub);" in app
+    assert "botOperationOptions: () => ({" in app
+    assert "model: el.model?.value || \"\"" in app
+    assert "effort: el.effort?.value || \"\"" in app
+    assert "refreshBotDrawerForRoom(state.activeId);" in app
+    assert app.count("closeBotDrawerForNavigation();") >= 3
+    assert "context.roomId === String(state?.activeId || \"\")" in drawer
+    assert "context.roomId === String(state?.detail?.id || \"\")" in drawer
+    assert "context.loadGeneration === state?.loadGeneration" in drawer
+    assert "requestController.signal" in drawer
+
+
 _OFFSET_EXPR = r"calc\(var\(--chat-brand-stripe\) \+ var\(--chat-brand-gap\)\)"
 
 
@@ -864,13 +960,15 @@ class FakeNode {
     this.value = "";
     this.checked = false;
     this.dateTime = "";
+    this.parentNode = null;
+    this.inert = false;
   }
-  set textContent(v) { this.children = []; this._text = String(v); }
+  set textContent(v) { this.replaceChildren(); this._text = String(v); }
   get textContent() {
     return this._text + this.children.map((c) =>
       (c && typeof c.textContent === "string") ? c.textContent : "").join("");
   }
-  set innerHTML(v) { this.children = []; this._text = ""; this._html = String(v); }
+  set innerHTML(v) { this.replaceChildren(); this._text = ""; this._html = String(v); }
   get innerHTML() { return this._html; }
   setAttribute(k, v) { this.attributes[k] = String(v); }
   getAttribute(k) { return Object.hasOwn(this.attributes, k) ? this.attributes[k] : null; }
@@ -891,15 +989,32 @@ class FakeNode {
     };
   }
   addEventListener() {}
-  append(...nodes) {
-    for (const n of nodes) this.children.push(typeof n === "string" ? { textContent: n } : n);
-  }
-  appendChild(n) { this.append(n); return n; }
+  append(...nodes) { for (const n of nodes) this.insertBefore(n, null); }
+  appendChild(n) { return this.insertBefore(n, null); }
   insertBefore(n, ref) {
-    const i = this.children.indexOf(ref);
-    if (i < 0) this.children.push(n); else this.children.splice(i, 0, n);
-    return n;
+    const node = typeof n === "string" ? { textContent: n } : n;
+    if (node === ref) return node;
+    if (node.parentNode) {
+      const old = node.parentNode.children.indexOf(node);
+      if (old >= 0) node.parentNode.children.splice(old, 1);
+    }
+    const index = ref == null ? -1 : this.children.indexOf(ref);
+    if (index < 0) this.children.push(node); else this.children.splice(index, 0, node);
+    node.parentNode = this;
+    return node;
   }
+  replaceChildren(...nodes) {
+    for (const child of this.children) if (child?.parentNode === this) child.parentNode = null;
+    this.children = [];
+    this.append(...nodes);
+  }
+  removeChild(node) {
+    const index = this.children.indexOf(node);
+    if (index >= 0) { this.children.splice(index, 1); node.parentNode = null; }
+    return node;
+  }
+  remove() { if (this.parentNode) this.parentNode.removeChild(this); }
+  removeAttribute(k) { delete this.attributes[k]; }
   querySelector(sel) { return queryAll(this, sel)[0] || null; }
   querySelectorAll(sel) { return queryAll(this, sel); }
 }
@@ -955,6 +1070,32 @@ def _strip(node: str, body: str) -> object:
         + f"import * as strip from '{STRIP_SRC.as_posix()}';\n"
         + f"const main = async () => {{ {body} }};\n"
         + "console.log(JSON.stringify(await main()));\n"
+    )
+    result = subprocess.run(
+        [node, "--input-type=module", "-e", source],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+    )
+    return json.loads(result.stdout)
+
+
+def _drawer(node: str, body: str) -> object:
+    source = (
+        _FAKE_DOM
+        + "FakeNode.prototype.replaceChildren=function(...nodes){this.children=[...nodes];};"
+        + "FakeNode.prototype.addEventListener=function(type,fn){"
+        " (this._handlers||(this._handlers={}))[type]=fn;};"
+        + f"import * as drawer from '{DRAWER_SRC.as_posix()}';"
+        + "const dialog=new FakeNode('dialog');dialog.open=false;"
+        "dialog.showModal=()=>{dialog.open=true};"
+        "dialog.close=()=>{dialog.open=false;dialog._handlers?.close?.()};"
+        "const body=new FakeNode('div');"
+        "document.querySelector=(sel)=>sel==='#bot-drawer'?dialog:"
+        " (sel==='#bot-drawer-body'?body:null);"
+        + f"const main=async()=>{{{body}}};"
+        "console.log(JSON.stringify(await main()));"
     )
     result = subprocess.run(
         [node, "--input-type=module", "-e", source],
@@ -1056,7 +1197,7 @@ def test_team_brand_reuses_legacy_chat_brand(node: str) -> None:
     assert value["status"] == "đang code"
     assert value["headTint"] == (
         "var(--avatar-tint, var(--team-tint, var(--color-accent)))")
-    assert value["head"] == "chat-brand avatar-variant-single-flag"
+    assert value["head"] == "chat-brand"
     assert value["legacyHead"] is False
     assert value["legacyName"] is False
     assert value["lineTag"] == "P"  # no reasoning → plain status line
@@ -1080,7 +1221,7 @@ def test_team_brand_thyca_keeps_ink_and_default_status(node: str) -> None:
     assert value[2] == "đã viết"
     assert value[3] == (
         "var(--avatar-tint, var(--team-tint, var(--color-accent)))")
-    assert value[4] == "chat-brand avatar-variant-star"
+    assert value[4] == "chat-brand"
 
 
 def test_team_brand_status_line_toggles_thinking(node: str) -> None:
@@ -1226,8 +1367,11 @@ def test_sidebar_agents_primary_no_level_two() -> None:
                  'id="team-sessions-heading"', 'id="team-session-list"'):
         assert gone not in html, gone
     assert 'id="team-session-list"' not in src
+    envelope = (ROOT / "thyca/webui/shared/js/bot-envelope.js").read_text(encoding="utf-8")
     # Single unified list that replaces them.
-    for kept in ("team-cluster", "currentTeamBot",
+    assert "createBotEnvelope" in src
+    assert "team-cluster team-envelope" in envelope
+    for kept in ("currentTeamBot",
                  "unifiedSessionsForBot", "unifiedRow",
                  "team-shared-create"):
         assert kept in src, kept
@@ -1291,27 +1435,21 @@ def test_sidebar_sessions_render_under_active_bot_row(node: str) -> None:
         "    updated_at: '2026-07-01T00:00:00Z', turns: 1}] },"
         " loadSession: async () => {}, afterTeamSession: async () => {},"
         " teamRefresh: async () => {} });"
-        " const flat = [];"
-        " for (const item of botNav.children) {"
-        "  if (item.className === 'session-row') { flat.push(item); continue; }"
-        "  for (const row of item.children) {"
-        "   if (row.className === 'team-cluster-sessions')"
-        "    flat.push(...row.children); else flat.push(row); } }"
+        " const flat=botNav.querySelectorAll('.session-row');"
         " return flat.map((row) => ({"
         "  bot: (row.children[0] && row.children[0].dataset.botId) || '',"
         "  sid: (row.children[0] && row.children[0].dataset.sessionId) || '',"
-        "  text: row.textContent }));")
-    # Pinned letters lead: Thyca is pinned by design so its cluster tops
+        "  text: row.textContent }));")    # Pinned letters lead: Thyca is pinned by design so its cluster tops
     # the list even though the group (07-02) and Coder (07-01) have newer
-    # activity than Thyca's DM (06-01). Within the open cluster the bot
-    # row is followed by its flap (Đổi tên/Xóa/Tin nhắn riêng). Coder's
-    # private session is NOT in Thyca's cluster. The DM session ("dm")
-    # renders NO row: the Thyca bot row itself is the DM entry.
+    # activity than Thyca's DM (06-01). The root row has no direct CRUD UI.
+    # Coder's private session is NOT in Thyca's cluster. The DM session
+    # ("dm") renders NO row: the Thyca bot row itself is the DM entry.
     assert [(row["bot"], row["sid"]) for row in value] == [
-        ("thyca", ""), ("", ""), ("", "shared"), ("coder", "")]
+        ("thyca", ""), ("", "shared"), ("coder", "")]
     # Shared annotation still present on the group row's subline.
-    assert "Coder" in value[2]["text"] and "Thyca" in value[2]["text"]
-    assert value[1]["text"] == "Tin nhắn riêng"
+    assert "Coder" in value[1]["text"] and "Thyca" in value[1]["text"]
+    assert all("Đổi tên" not in row["text"] and "Xóa" not in row["text"]
+               for row in value if row["bot"] == "thyca")
 
 
 def test_sidebar_bot_with_only_dm_renders_zero_session_rows(node: str) -> None:
@@ -1363,21 +1501,15 @@ def test_sidebar_bot_with_only_dm_renders_zero_session_rows(node: str) -> None:
         "    dm: 'thyca', updated_at: '2026-06-01T00:00:00Z', turns: 2}] },"
         " loadSession: async () => {}, afterTeamSession: async () => {},"
         " teamRefresh: async () => {} });"
-        " const flat = [];"
-        " for (const item of botNav.children) {"
-        "  if (item.className === 'session-row') { flat.push(item); continue; }"
-        "  for (const row of item.children) {"
-        "   if (row.className === 'team-cluster-sessions')"
-        "    flat.push(...row.children); else flat.push(row); } }"
+        " const flat=botNav.querySelectorAll('.session-row');"
         " return flat.map((row) => ({"
         "  bot: (row.children[0] && row.children[0].dataset.botId) || '',"
         "  sid: (row.children[0] && row.children[0].dataset.sessionId) || '',"
         "  text: row.textContent,"
         "  kids: (row.children[0] ? row.children[0].children : [])"
-        "   .map((c) => c.className) }));")
-    # Exactly one Thyca entry (the bot row); zero session rows under it.
+        "   .map((c) => c.className) }));")    # Exactly one Thyca entry (the bot row); zero session rows under it.
     assert [(row["bot"], row["sid"]) for row in value] == [
-        ("thyca", ""), ("", ""), ("coder", "")]
+        ("thyca", ""), ("coder", "")]
     # No empty-state text for the only-DM bot.
     assert all("Chưa có phiên." not in row["text"] for row in value)
     # The DM's unread still dots the Thyca bot row.
@@ -1390,6 +1522,203 @@ def test_sidebar_picker_hidden_unless_picking() -> None:
     src = SIDEBAR_SRC.read_text(encoding="utf-8")
     assert "actions.hidden = !sharedOpen" in src
     assert "team-shared-picker" in src
+
+
+def test_shared_picker_creation_refreshes_and_selects_blank_group(node: str) -> None:
+    value = _sidebar(node,
+        _TEAM_NAV_SETUP
+        + "const state={activeId:'root-dm',detail:{id:'root-dm',"
+        " bots:['thyca'],dm:'thyca',kind:'dm'},sessions:["
+        " {id:'root-dm',title:'Thyca DM',bots:['thyca'],dm:'thyca',kind:'dm'}]};"
+        " const requests=[]; const handed=[];"
+        " const created={id:'new-group',title:'Phiên trống',"
+        "  bots:['thyca','coder'],dm:null,kind:'group',messages:[],running:false};"
+        " const summary={id:'new-group',title:'Phiên trống',"
+        "  bots:['thyca','coder'],dm:null,kind:'group',turns:0,"
+        "  updated_at:'2026-10-20T00:00:00Z'};"
+        " globalThis.fetch=async(url,options={})=>{"
+        "  const path=String(url); const method=options.method||'GET';"
+        "  requests.push({path,method});"
+        "  if(path==='/api/bots') return {ok:true,status:200,json:async()=>({bots:["
+        "   {id:'thyca',name:'Thyca',status:'idle'},"
+        "   {id:'coder',name:'Coder',status:'idle'}]})};"
+        "  if(path==='/api/sessions'&&method==='POST')"
+        "   return {ok:true,status:200,json:async()=>created};"
+        "  if(path==='/api/sessions') return {ok:true,status:200,json:async()=>({"
+        "   sessions:[state.sessions[0],summary]})};"
+        "  if(path==='/api/sessions/new-group')"
+        "   return {ok:true,status:200,json:async()=>created};"
+        "  throw new Error('unexpected request '+method+' '+path);};"
+        " const afterTeamSession=async(detail)=>{handed.push(detail.id);"
+        "  state.activeId=detail.id;"
+        "  state.sessions=(await (await fetch('/api/sessions')).json()).sessions;"
+        "  state.detail=await (await fetch('/api/sessions/'+detail.id)).json();"
+        "  sidebar.renderTeamSidebar();};"
+        " await sidebar.initTeamSidebar({state,loadSession:async()=>{},"
+        "  afterTeamSession,teamRefresh:async()=>{}});"
+        " sharedBtn._handlers.click();"
+        " const picker=actions.children.find((item)=>"
+        "  item.className==='team-shared-picker');"
+        " const coder=picker.children.find((item)=>"
+        "  item.className==='team-shared-option'&&item.children[0].value==='coder');"
+        " coder.children[0].checked=true; coder.children[0]._handlers.change();"
+        " picker.children.find((item)=>item.textContent==='Tạo nhóm chat')"
+        "  ._handlers.click(); await tick(); await tick(); await tick();"
+        " const group=findRow('new-group');"
+        " return {handed,activeId:state.activeId,turns:"
+        "  state.sessions.find((item)=>item.id==='new-group')?.turns,"
+        "  visible:!!group,selected:group?.classList.contains('is-active')||false,"
+        "  paths:requests.map((item)=>item.path)};")
+    assert value == {
+        "handed": ["new-group"],
+        "activeId": "new-group",
+        "turns": 0,
+        "visible": True,
+        "selected": True,
+        "paths": ["/api/bots", "/api/sessions", "/api/sessions", "/api/sessions/new-group"],
+    }
+
+
+def test_bot_drawer_renders_operational_data_options_and_trace(node: str) -> None:
+    value = _drawer(node,
+        "const requests=[]; const model=new FakeNode('select');model.value='model/a';"
+        "const effort=new FakeNode('select');effort.value='high';"
+        "const state={activeId:'room-1',"
+        "detail:{id:'room-1',bots:['coder']},loadGeneration:7};"
+        "const payload={bot_id:'coder',session_id:'room-1',"
+        "model:{id:'model-next',provider:'provider-x',reasoning_effort:'high',"
+        "scope:'next_turn_configuration'},context:{estimated_tokens:0,"
+        "transcript_tokens:0,overhead_tokens:0,context_tokens:32000,"
+        "ratio:0,calibration:1},last_turn:{model:'model-used',requests:2,"
+        "usage:{prompt_tokens:80,cached_tokens:0,completion_tokens:20,"
+        "total_tokens:100},cost_usd:null,known_cost_usd:0,unpriced_requests:1},"
+        "conversation:{requests:4,usage:{prompt_tokens:80,cached_tokens:0,"
+        "completion_tokens:20,total_tokens:100},cost_usd:null,"
+        "known_cost_usd:0,unpriced_requests:1},rates:{currency:'USD',"
+        "per_tokens:1000000,input:0,output:2.5,cache:1.25},"
+        "trace:{session_id:'room&one',turn_index:0}};"
+        "globalThis.fetch=async(url,options)=>{requests.push({url,signal:options.signal});"
+        "return {ok:true,status:200,json:async()=>payload};};"
+        "const hub={state,teamRoster:()=>[{id:'coder',name:'Coder',role:'Helper',"
+        "description:'must not be repeated'}],botOperationOptions:()=>({"
+        "model:model.value,effort:effort.value}),el:{model,effort}};"
+        "drawer.initTeamDrawer(hub);drawer.openBotDrawer('coder');"
+        "await new Promise((resolve)=>setTimeout(resolve,10));"
+        "const first=body.textContent;const link=body.querySelector('a');"
+        "const progress=body.querySelector('progress');"
+        "model.value='model-b';model._handlers.change();"
+        "await new Promise((resolve)=>setTimeout(resolve,10));"
+        "return {first,updated:body.textContent,link:link&&link.href,"
+        "progress:progress&&progress.value,aria:progress&&progress.getAttribute('aria-label'),"
+        "paths:requests.map((request)=>request.url),"
+        "duplicateDescription:first.includes('must not be repeated')};")
+    assert "model-next" in value["first"]
+    assert "model-used" in value["first"]
+    assert "Coder" in value["first"]
+    assert "Helper" not in value["first"]
+    assert "Lượt đã ghi nhận gần nhất" in value["first"]
+    assert "Đã ghi nhận $0.0000; còn 1 request chưa có giá" in value["first"]
+    assert "0 token" in value["first"]
+    assert "$0.0000" in value["first"]
+    assert "must not be repeated" not in value["first"]
+    assert value["link"] == "/dashboard.html?session=room%26one&turn=0#trace"
+    assert value["progress"] == 0
+    assert value["aria"] == "Tỷ lệ ngữ cảnh ước tính 0%"
+    assert value["paths"] == [
+        "/api/bots/coder/rooms/room-1/operations?model=model%2Fa&effort=high",
+        "/api/bots/coder/rooms/room-1/operations?model=model-b&effort=high",
+    ]
+    assert "model-next" in value["updated"]
+    assert value["duplicateDescription"] is False
+
+
+def test_bot_drawer_ignores_stale_room_bot_and_closed_responses(node: str) -> None:
+    value = _drawer(node,
+        "const pending=[];const state={activeId:'room-1',"
+        "detail:{id:'room-1',bots:['coder','thyca']},loadGeneration:1};"
+        "globalThis.fetch=(url,options)=>new Promise((resolve)=>"
+        "pending.push({url,signal:options.signal,resolve}));"
+        "const hub={state,teamRoster:()=>[{id:'coder',name:'Coder'},"
+        "{id:'thyca',name:'Thyca'}],botOperationOptions:()=>({model:'',effort:''})};"
+        "const response=(name)=>({ok:true,status:200,json:async()=>({"
+        "model:{id:name},context:{estimated_tokens:0,transcript_tokens:0,"
+        "overhead_tokens:0,context_tokens:10,ratio:0},last_turn:null,"
+        "conversation:{requests:0,usage:{prompt_tokens:null,cached_tokens:null,"
+        "completion_tokens:null,total_tokens:null},cost_usd:null,"
+        "known_cost_usd:null,unpriced_requests:0},rates:null,trace:null})});"
+        "drawer.initTeamDrawer(hub);drawer.openBotDrawer('coder');"
+        "drawer.openBotDrawer('thyca');pending[1].resolve(response('fresh-thyca'));"
+        "await new Promise((resolve)=>setTimeout(resolve,10));"
+        "pending[0].resolve(response('stale-coder'));"
+        "await new Promise((resolve)=>setTimeout(resolve,10));"
+        "const afterBot=body.textContent;const aborted=pending[0].signal.aborted;"
+        "drawer.openBotDrawer('coder');state.activeId='room-2';"
+        "state.detail={id:'room-2',bots:['coder']};state.loadGeneration=2;"
+        "pending[2].resolve(response('stale-room'));"
+        "await new Promise((resolve)=>setTimeout(resolve,10));"
+        "const afterRoom=body.textContent;drawer.openBotDrawer('coder');"
+        "const closed=pending[3];drawer.closeBotDrawerForNavigation();"
+        "closed.resolve(response('stale-closed'));"
+        "await new Promise((resolve)=>setTimeout(resolve,10));"
+        "return {afterBot,afterRoom,aborted,closedSignal:closed.signal.aborted,"
+        "dialogOpen:document.querySelector('#bot-drawer').open};")
+    assert "fresh-thyca" in value["afterBot"]
+    assert "stale-coder" not in value["afterBot"]
+    assert value["aborted"] is True
+    assert "stale-room" not in value["afterRoom"]
+    assert value["closedSignal"] is True
+    assert value["dialogOpen"] is False
+
+
+def test_bot_drawer_retry_status_css_stays_compact() -> None:
+    css = CHAT_CSS.read_text(encoding="utf-8")
+    operations = re.search(r"\.bot-drawer-operations\s*\{([^}]*)\}", css)
+    status = re.search(r"\.bot-ops-status\s*\{([^}]*)\}", css)
+    retry = re.search(r"\.bot-ops-retry\s*\{([^}]*)\}", css)
+    assert operations and "align-content: start" in operations.group(1)
+    assert status and "display: flex" in status.group(1)
+    assert "align-self: start" in status.group(1)
+    assert retry and "align-self: flex-start" in retry.group(1)
+    assert "width: auto" in retry.group(1)
+    assert "height: auto" in retry.group(1)
+
+
+def test_bot_drawer_missing_context_and_errors_are_honest_and_retryable(node: str) -> None:
+    value = _drawer(node,
+        "let calls=0;const state={activeId:'',detail:null,loadGeneration:0};"
+        "globalThis.fetch=async()=>{calls++;if(calls===1)return {ok:false,status:503,"
+        "json:async()=>({error:'internal /private/path'})};"
+        "return {ok:true,status:200,json:async()=>({model:{id:'recovered'},"
+        "context:{estimated_tokens:0,transcript_tokens:0,overhead_tokens:0,"
+        "context_tokens:1,ratio:0},last_turn:null,conversation:{requests:0,"
+        "usage:{prompt_tokens:null,cached_tokens:null,completion_tokens:null,"
+        "total_tokens:null},cost_usd:null,known_cost_usd:null,"
+        "unpriced_requests:0},rates:null,trace:null})};};"
+        "const hub={state,teamRoster:()=>[{id:'coder',name:'Coder'}],"
+        "botOperationOptions:()=>({model:'',effort:''})};"
+        "drawer.initTeamDrawer(hub);drawer.openBotDrawer('coder');"
+        "const missing={calls,text:body.textContent};"
+        "state.activeId='room-1';state.detail={id:'room-1',bots:['coder']};"
+        "state.loadGeneration=1;drawer.openBotDrawer('coder');"
+        "await new Promise((resolve)=>setTimeout(resolve,10));"
+        "const error=body.textContent;const retry=body.querySelector('.bot-ops-retry');"
+        "const status=body.querySelector('.bot-ops-status');"
+        "const alert=body.querySelector('.screen-status');"
+        "const retryType=retry.type;const retryClass=retry.className;"
+        "const alertRole=alert.getAttribute('role');"
+        "retry._handlers.click();await new Promise((resolve)=>setTimeout(resolve,10));"
+        "return {missing,error,after:body.textContent,calls,status:status?.className,"
+        "retryType,retryClass,alertRole};")
+    assert value["missing"]["calls"] == 0
+    assert "Chọn cuộc trò chuyện" in value["missing"]["text"]
+    assert "Không tải được thông tin vận hành." in value["error"]
+    assert "/private/path" not in value["error"]
+    assert value["status"] == "bot-ops-status"
+    assert value["retryType"] == "button"
+    assert value["retryClass"] == "screen-button bot-ops-retry"
+    assert value["alertRole"] == "alert"
+    assert "recovered" in value["after"]
+    assert value["calls"] == 2
 
 
 def test_strip_in_site_header_shows_single_bot() -> None:
@@ -1468,7 +1797,7 @@ def test_strip_single_bot_dm_renders_name_and_hides_when_empty(node: str) -> Non
     assert value["single"]["hidden"] is False
     assert value["single"]["names"] == [{
         "text": "Thyca", "cls": "team-strip-name is-busy",
-        "tint": "var(--color-accent)", "kids": 0}]
+        "tint": "var(--color-success-ink)", "kids": 0}]
     assert value["emptyHidden"] is True
     assert value["emptyCount"] == 0
 
@@ -1499,7 +1828,7 @@ def test_strip_names_tinted_plain_text_busy_and_error(node: str) -> None:
         " tint: c._style['--team-tint'], kids: c.children.length }));")
     assert [c["text"] for c in value] == ["Thyca", "Coder", "Ghost"]
     assert [c["tint"] for c in value] == [
-        "var(--color-accent)", "var(--color-botanical)", "var(--color-ink)"]
+        "var(--color-success-ink)", "var(--color-botanical)", "var(--color-ink)"]
     assert all(c["kids"] == 0 for c in value)  # plain text, no inner markup
     assert "is-busy" in value[1]["cls"].split()
     assert "is-busy" not in value[0]["cls"].split()
@@ -1575,6 +1904,7 @@ def test_team_css_audit_deleted_vs_kept() -> None:
     """Second-pass audit pin: parallel styles deleted, irreducible
     minimum kept (each kept rule has no legacy equivalent)."""
     css = CHAT_CSS.read_text(encoding="utf-8")
+    envelope_css = ENVELOPE_CSS.read_text(encoding="utf-8")
     # team-bot-item returned deliberately in the 2026-10-14 presentation
     # pass (avatar slot / paused state on the bot item); the mockup
     # .stack line left in the same pass (names ride the time line).
@@ -1599,7 +1929,7 @@ def test_team_css_audit_deleted_vs_kept() -> None:
             ".composer-team-hint",
             )
     for keep in kept:
-        assert keep in css, keep
+        assert keep in (css + envelope_css), keep
 
 
 def test_chat_title_head_has_no_solid_background_or_fade() -> None:
@@ -1669,11 +1999,13 @@ def test_sidebar_avatar_slot_present() -> None:
     src = SIDEBAR_SRC.read_text(encoding="utf-8")
     html = INDEX_HTML.read_text(encoding="utf-8")
     css = CHAT_CSS.read_text(encoding="utf-8")
+    envelope_css = ENVELOPE_CSS.read_text(encoding="utf-8")
     for kept in ("team-avatar", "botMark", "botMarkGroup",
                  "avatarSlot", "sessionIcon", "is-paused"):
         assert kept in src or kept in css, kept
-    assert "team-cluster-sessions" in css
+    assert "team-cluster-sessions" in envelope_css
     assert "shared/css/bot-avatar.css" in html
+    assert "shared/css/bot-envelope.css" in html
 
 
 def test_normalize_bots_keeps_avatar_and_agent_status(node: str) -> None:
@@ -1697,11 +2029,10 @@ def test_bot_avatar_variants_states_and_team(node: str) -> None:
         " return [single.includes('mk-wax'), single.includes('data-state=\"idle\"'),"
         "  single.includes('wax-body'), err.includes('data-state=\"error\"'),"
         "  run.includes('data-state=\"writing\"'), team.includes('gm-stack'),"
-        "  api.avatarVariantFor({id: 'thyca-demo'}),"
         "  api.avatarStateFor({status: 'paused', agentStatus: {state: 'running'}})];",
         via="avatar",
     )
-    assert value == [True, True, True, True, True, True, "dotted", "offline"]
+    assert value == [True, True, True, True, True, True, "offline"]
 
 
 def test_bot_avatar_css_has_no_design_hex() -> None:
@@ -1754,24 +2085,14 @@ def test_chat_surfaces_and_imagery_unchanged() -> None:
         "outer desk gradient on body must be preserved")
 
 
-def test_chat_avatar_variant_tint_map() -> None:
-    """Every avatar variant maps to its reference note colour through a
-    chat-scoped --avatar-tint, leaving card tint metadata untouched."""
+def test_chat_header_has_no_per_variant_color_override() -> None:
     css = CHAT_CSS.read_text(encoding="utf-8")
-    expected = {
-        "star": "note-do",
-        "hollow": "note-re",
-        "single-flag": "note-mi",
-        "double-flag": "note-fa",
-        "dotted": "note-sol",
-        "fermata": "note-la",
-        "plain": "note-si",
-    }
-    for variant, note in expected.items():
-        rule = f".chat-shell .avatar-variant-{variant}"
-        assert rule in css, rule
-        assert f"--avatar-tint: var(--{note})" in css, (variant, note)
-    assert ".bot-drawer .avatar-variant-star" in css
+    chat_view = (ROOT / "thyca/webui/pages/chat/chat-view.js").read_text(
+        encoding="utf-8")
+    assert ".avatar-variant-" not in css
+    assert "avatarVariantFor" not in chat_view
+    assert 'header.className = "chat-brand"' in chat_view
+    assert "tintVarFor(profile.id)" in chat_view
 
 
 def test_avatar_reference_tokens_and_css() -> None:
@@ -1889,11 +2210,12 @@ def test_sidebar_rows_avatar_name_layout() -> None:
     """Bot/session rows: avatar in a fixed first column on the name line,
     title and metadata share the text column with ellipsis pinned, and
     the compact v5 rail shows names in 92px slots inside a 112px rail.
-    Expanded/compact SVG fallback artwork stays 48/56px; enhanced 3D
-    slots may independently grow to 64/86px."""
+    Base/compact slots remain unchanged; reference-sized seals are anchored
+    within the envelope and group header."""
     import re
 
     css = CHAT_CSS.read_text(encoding="utf-8")
+    envelope_css = ENVELOPE_CSS.read_text(encoding="utf-8")
     src = SIDEBAR_SRC.read_text(encoding="utf-8")
 
     row = re.search(r"#team-bot-list \.session-item\s*\{([^}]*)\}", css)
@@ -1931,9 +2253,17 @@ def test_sidebar_rows_avatar_name_layout() -> None:
         r" \.team-unread\s*\{([^}]*)\}", css)
     assert subunread and "grid-column: 2" in subunread.group(1)
     group = re.search(
-        r"#team-bot-list \.team-group-item\s*\{[^}]*"
-        r"grid-template-columns: auto minmax\(0, 1fr\) auto[^}]*\}", css)
-    assert group, "group row must keep the three-column grid"
+        r"#team-bot-list \.team-dossier \.team-group-item\s*\{([^}]*)\}", css)
+    assert group and "position: relative" in group.group(1)
+    group_avatar = re.search(
+        r"#team-bot-list \.team-dossier \.team-group-item > \.team-avatar,"
+        r"\s*#team-bot-list \.team-dossier \.team-group-item > \.session-icon\s*\{([^}]*)\}", css)
+    assert group_avatar and "width: 46px" in group_avatar.group(1)
+    assert "height: 44px" in group_avatar.group(1)
+    assert "inset-inline-start: calc(16px - var(--rule))" in group_avatar.group(1)
+    assert "inset-block-start: calc(11px - var(--rule))" in group_avatar.group(1)
+    assert "grid-area: auto" in group_avatar.group(1)
+    assert "place-self: start" in group_avatar.group(1)
 
     avatar = re.search(r"^\.team-avatar\s*\{([^}]*)\}", css, re.M)
     assert avatar and "grid-row: 1 / 3;" in avatar.group(1)
@@ -1943,22 +2273,45 @@ def test_sidebar_rows_avatar_name_layout() -> None:
     assert mini and "width: 2.5rem" in mini.group(1)
     groupav = re.search(r"\.team-avatar\.is-group\s*\{([^}]*)\}", css)
     assert groupav and "width: 2.75rem" in groupav.group(1)
+    envelope = re.search(r":is\(#team-bot-list, #memory-bot-list\) \.team-envelope\s*\{([^}]*)\}", envelope_css)
+    assert envelope and "--team-header-height: 2.75rem" in envelope.group(1)
+    assert "--team-seal-size: 3.25rem" in envelope.group(1)
+    assert "grid-template-rows: var(--team-header-height) 0fr" in envelope.group(1)
+    botavatar = re.search(
+        r":is\(#team-bot-list, #memory-bot-list\) \.team-envelope \.team-bot-item > \.team-avatar\s*\{([^}]*)\}", envelope_css,
+    )
+    assert botavatar and "position: absolute" in botavatar.group(1)
+    assert "inset-inline-start: calc(16px - var(--rule))" in botavatar.group(1)
+    assert "inset-block-start: calc(9px - var(--rule))" in botavatar.group(1)
+    assert "grid-area: auto" in botavatar.group(1)
+    assert "place-self: start" in botavatar.group(1)
+    assert "width: var(--team-seal-size)" in botavatar.group(1)
+    assert "translate(-3px, -8px) scale(0.82) rotate(-12deg)" in envelope_css
+    assert "padding: 0 2.5rem 0 82px" in envelope_css
+    assert "font-size: 1rem" in envelope_css
+    assert "grid-template-rows: var(--team-header-height) 1fr" in envelope_css
 
     assert "botMark(bot, { selected })" in src
     assert "avatarSlot(members[0], true, selected)" in src, (
         "single-member session icon must forward selected for the halo")
     assert "botMarkGroup(members, { selected })" in src
-    assert "if (group) button.append(sessionIcon(session, selected));" in src, (
-        "solo subordinate sessions render no avatar slot")
-    assert 'className = "team-new-session"' in src
-    assert '"Tin nhắn riêng"' in src
-    newbtn = re.search(r"\.team-new-session\s*\{([^}]*)\}", css)
-    assert newbtn, "new-session button styling missing"
+    assert "patchGroupAvatar(button, session, selected)" in src
+    assert "avatarSlot(members[0], true, selected)" in src, (
+        "single-member groups keep the shared mark and selected state")
+    assert "managementFlap" not in src
+    assert "groupFlap" not in src
+    assert "openRename" not in src
+    assert "openDelete" not in src
+    assert ".team-bot-flap" not in css
+    assert "Chưa có phiên." not in src
+    assert 'paragraph.className = "team-bot-description"' in src
+    description = re.search(r"\.team-bot-description\s*\{([^}]*)\}", envelope_css)
+    assert description
+    assert "var(--color-reading)" in description.group(1)
+    assert "var(--font-reading)" in description.group(1)
+    assert '.team-new-session' not in css
 
 _TEAM_NAV_SETUP = """
-FakeNode.prototype.replaceChildren = function (...nodes)
- { this.children = [...nodes]; };
-FakeNode.prototype.remove = function () {};
 Object.defineProperty(FakeNode.prototype, 'childElementCount',
  { get() { return this.children.length; } });
 FakeNode.prototype.removeAttribute = function (k)
@@ -2002,8 +2355,15 @@ const subOf = (botId) => {
     const head = item.children && item.children[0];
     const headBtn = head && head.children && head.children[0];
     if (!headBtn || headBtn.dataset.botId !== botId) continue;
-    return item.children.find(
-      (c) => c.className === 'team-cluster-sessions') || null;
+    const walk = (el) => {
+      for (const child of el.children || []) {
+        if (child.classList.contains('team-cluster-sessions')) return child;
+        const found = child.children && walk(child);
+        if (found) return found;
+      }
+      return null;
+    };
+    return walk(item);
   }
   return null;
 };
@@ -2015,20 +2375,13 @@ const findRow = (sid) => {
   walk(botNav);
   return out[0] || null;
 };
-const flapOf = (botId) => {
+const botHeadBtn = (botId) => {
   for (const item of botNav.children) {
     const head = item.children && item.children[0];
-    const headBtn = head && head.children && head.children[0];
-    if (!headBtn || headBtn.dataset.botId !== botId) continue;
-    return item.children.find(
-      (c) => c.className === 'team-bot-flap') || null;
+    const button = head && head.children && head.children[0];
+    if (button && button.dataset.botId === botId) return button;
   }
   return null;
-};
-const newBtn = (botId) => {
-  const flap = flapOf(botId);
-  return flap ? flap.children.find(
-    (c) => c.className === 'team-new-session') || null : null;
 };
 const tick = () => new Promise((r) => setTimeout(r, 5));
 """
@@ -2063,47 +2416,451 @@ def test_solo_subordinate_session_rows_have_no_avatar(node: str) -> None:
         "  sideKids: sideBtn.children.map((c) => c.tagName + ':' + c.className),"
         "  groupKids: groupBtn.children.map((c) => c.tagName + ':' + c.className),"
         "  groupTeam: (groupBtn.children[0]._html || '').includes('mk-wax')};")
-    # "+ Phiên mới" lives on the open flap now; the sheet holds sessions only.
+    # The lower paper contains only the bot description and its session rows.
     assert value["subKids"] == ["session-row"]
     assert value["sideKids"] == ["SPAN:session-name", "TIME:"]
     assert value["groupKids"][0] == "SPAN:team-avatar is-group"
     assert value["groupTeam"] is True
 
 
-def test_new_session_button_renders_when_no_sessions(node: str) -> None:
-    """FE-SESSION-1: the open flap holds just the DM button — labelled
-    for private messages, never disabled, no POST flow."""
+def test_sidebar_keeps_navigation_pins_and_expansion_without_crud(node: str) -> None:
+    """Bot/group controls are removed while navigation, pinning, and
+    expansion remain intact."""
     value = _sidebar(node,
         _TEAM_NAV_SETUP
-        + "globalThis.fetch = async () => ({ ok: true, status: 200,"
-        "  json: async () => ({ bots: ["
-        "   {id: 'thyca', name: 'Thyca', role: 'chính', status: 'idle'},"
-        "   {id: 'coder', name: 'Coder', role: 'code', status: 'idle'}] }) });"
-        " await sidebar.initTeamSidebar({ state: { activeId: 'dm',"
-        "  detail: { id: 'dm', bots: ['thyca'] },"
+        + "const requests = []; const loaded = []; const storage = {};"
+        " globalThis.localStorage = {getItem: (k) => storage[k] || null,"
+        "  setItem: (k, v) => {storage[k] = v;}};"
+        " globalThis.fetch = async (url) => {"
+        "  const path = String(url); requests.push(path);"
+        "  const dm = path.match(/\\/api\\/bots\\/([^/]+)\\/dm$/);"
+        "  if (dm) { const id = decodeURIComponent(dm[1]);"
+        "   return {ok: true, status: 200, json: async () => ({"
+        "    id: id + '-dm', bots: [id], dm: id, kind: 'dm'})}; }"
+        "  return {ok: true, status: 200, json: async () => ({bots: ["
+        "   {id: 'thyca', name: 'Thyca', role: 'chính', status: 'idle',"
+        "    system: true, description: 'Root description'},"
+        "   {id: 'coder', name: 'Coder', role: 'code', status: 'idle',"
+        "    description: 'Child description'}]})};"
+        " };"
+        " await sidebar.initTeamSidebar({ state: { activeId: 'coder-dm',"
+        "  detail: {id: 'coder-dm', dm: 'coder', bots: ['coder']},"
         "  sessions: ["
-        "   {id: 'dm', title: 'Riêng Thyca', bots: ['thyca'],"
-        "    dm: 'thyca', updated_at: '2026-06-01T00:00:00Z', turns: 2}] },"
-        " loadSession: async () => {}, afterTeamSession: async () => {},"
-        " teamRefresh: async () => {} });"
-        " const flap = flapOf('thyca');"
-        " const btn = newBtn('thyca');"
-        " return { subKids: flap.children.map((c) => c.className),"
-        "  type: btn.type, tag: btn.tagName,"
-        "  label: btn.getAttribute('aria-label'), text: btn.textContent,"
-        "  disabled: !!btn.disabled,"
-        "  coderBtn: !!newBtn('coder') };")
-    assert value["subKids"] == ["team-new-session"]
-    assert value["tag"] == "BUTTON" and value["type"] == "button"
-    assert value["label"] == "Mở tin nhắn riêng với Thyca"
-    assert "Tin nhắn riêng" in value["text"]
-    assert "+ Phiên mới" not in value["text"]
-    assert value["disabled"] is False
-    assert value["coderBtn"] is False
+        "   {id: 'root-dm', dm: 'thyca', bots: ['thyca'], title: 'Thyca DM'},"
+        "   {id: 'coder-dm', dm: 'coder', bots: ['coder'], title: 'Coder DM'},"
+        "   {id: 'side', bots: ['coder'], title: 'Coder notes'},"
+        "   {id: 'shared', kind: 'group', bots: ['thyca', 'coder'],"
+        "    title: 'Shared room'}] },"
+        " loadSession: async (id) => {loaded.push(id); sidebar.renderTeamSidebar();},"
+        " afterTeamSession: async () => {}, teamRefresh: async () => {} });"
+        " const walk = (node, out = []) => {out.push(node);"
+        "  for (const child of node.children || []) walk(child, out); return out;};"
+        " const clusterFor = (id) => botNav.children.find((item) =>"
+        "  item.classList.contains('team-cluster') && item.children[0]?.children[0]"
+        "  ?.dataset.botId === id);"
+        " const rootButton = botHeadBtn('thyca');"
+        " const rootLabel = rootButton.getAttribute('aria-label');"
+        " const rootPinned = clusterFor('thyca').children[0].classList"
+        "  .contains('is-pinned');"
+        " const directActionButtons = walk(botNav).filter((item) =>"
+        "  item.tagName === 'BUTTON' && /(?:bot|nhóm)/i.test("
+        "   item.textContent + ' ' + (item.getAttribute('aria-label') || '')));"
+        " const flapCount = walk(botNav).filter((item) =>"
+        "  item.className === 'team-bot-flap').length;"
+        " rootButton._handlers.click(); await tick(); await tick();"
+        " const rootDmRequested = requests.includes('/api/bots/thyca/dm');"
+        " const childButton = botHeadBtn('coder');"
+        " const childLabel = childButton.getAttribute('aria-label');"
+        " const childCluster = clusterFor('coder');"
+        " const childPin = childCluster.children[0].children[1].children"
+        "  .find((item) => item.tagName === 'BUTTON');"
+        " childPin._handlers.click();"
+        " const pinnedAfterToggle = clusterFor('coder').children[0].classList"
+        "  .contains('is-pinned');"
+        " childButton._handlers.click(); await tick(); await tick();"
+        " const childOpen = botHeadBtn('coder').getAttribute('aria-expanded');"
+        " const childDescriptionVisible = !!subOf('coder')?.children.find((item) =>"
+        "  item.className === 'team-bot-description');"
+        " botHeadBtn('coder')._handlers.click();"
+        " const childFolded = botHeadBtn('coder').getAttribute('aria-expanded');"
+        " const childPaper=subOf('coder');"
+        " const childSheetHidden=childPaper?.inert===true"
+        "  && childPaper.getAttribute('aria-hidden')==='true';"
+        " botHeadBtn('coder')._handlers.click(); await tick(); await tick();"
+        " const childReopened = botHeadBtn('coder').getAttribute('aria-expanded');"
+        " const childLabelAfter = botHeadBtn('coder').getAttribute('aria-label');"
+        " const side = findRow('side'); side._handlers.click();"
+        " const group = findRow('shared'); group._handlers.click();"
+        " const groupOpen = findRow('shared').getAttribute('aria-expanded');"
+        " findRow('shared')._handlers.click();"
+        " const groupFolded = findRow('shared').getAttribute('aria-expanded');"
+        " return {rootLabel, rootPinned, rootDmRequested, directActionButtons,"
+        "  flapCount, pinnedAfterToggle, childLabel, childLabelAfter, childOpen,"
+        "  childDescriptionVisible, childFolded, childSheetHidden, childReopened,"
+        "  loaded, groupOpen, groupFolded};")
+    assert value["rootLabel"].startswith("Thyca, chính, ")
+    assert value["rootPinned"] is True
+    assert value["rootDmRequested"] is True
+    assert value["directActionButtons"] == []
+    assert value["flapCount"] == 0
+    assert value["pinnedAfterToggle"] is True
+    assert "rảnh" in value["childLabel"]
+    assert value["childLabelAfter"] == value["childLabel"]
+    assert value["childOpen"] == "true" and value["childDescriptionVisible"] is True
+    assert value["childFolded"] == "false" and value["childSheetHidden"] is True
+    assert value["childReopened"] == "true"
+    assert value["loaded"] == ["side", "shared"]
+    assert value["groupOpen"] == "true" and value["groupFolded"] == "false"
+
+
+def test_layered_sidebar_keeps_keyed_pockets_and_truthful_group_dossier(
+    node: str,
+) -> None:
+    value = _sidebar(node,
+        _TEAM_NAV_SETUP
+        + "const state={activeId:'root-dm',"
+        " detail:{id:'root-dm',bots:['thyca'],dm:'thyca',kind:'dm'},sessions:["
+        " {id:'root-dm',title:'Thyca DM',bots:['thyca'],dm:'thyca',kind:'dm'},"
+        " {id:'coder-dm',title:'Coder DM',bots:['coder'],dm:'coder',kind:'dm'},"
+        " {id:'notes',title:'Coder notes',bots:['coder'],updated_at:'2026-10-20'},"
+        " {id:'shared',title:'Shared room',kind:'group',bots:['thyca','coder','ghost','coder'],"
+        "  updated_at:'2026-10-21',turns:4,messages:[{content:'PRIVATE_SENTINEL'}],"
+        "  objective:'PRIVATE_OBJECTIVE',summary:'PRIVATE_SUMMARY'}]};"
+        " const roster=[{id:'thyca',name:'Thyca',role:'Main',status:'idle',"
+        "  description:'Root description'},"
+        " {id:'coder',name:'Coder',role:'Builder',status:'idle',"
+        "  description:'Child description'}];"
+        " const loaded=[];"
+        " globalThis.fetch=async(url)=>{const path=String(url);"
+        "  if(path==='/api/bots')return {ok:true,status:200,json:async()=>({bots:roster})};"
+        "  if(path==='/api/bots/coder/dm')return {ok:true,status:200,json:async()=>({"
+        "   id:'coder-dm',bots:['coder'],dm:'coder',kind:'dm'})};"
+        "  throw new Error('unexpected '+path);};"
+        " const loadSession=async(id)=>{loaded.push(id);state.activeId=id;"
+        "  state.detail={id,bots:['thyca','coder'],kind:'group'};"
+        "  sidebar.renderTeamSidebar();};"
+        " const afterTeamSession=async(detail)=>{state.activeId=detail.id;"
+        "  state.detail=detail;sidebar.renderTeamSidebar();};"
+        " await sidebar.initTeamSidebar({state,loadSession,afterTeamSession,"
+        "  teamRoster:()=>roster,teamRefresh:async()=>{}});"
+        " const rootPaper=subOf('thyca'),childPaper=subOf('coder');"
+        " const root=botHeadBtn('thyca'),child=botHeadBtn('coder');"
+        " const hierarchy=root.parentNode.parentNode;const initialRootClass=hierarchy.className;"
+        " const rootDescription=rootPaper.children.find(x=>x.className==='team-bot-description')?.textContent||'';"
+        " const childDescription=childPaper.children.find(x=>x.className==='team-bot-description')?.textContent||'';"
+        " const idleIds=[root,child].map(b=>b.children.some(x=>x.tagName==='TIME'));"
+        " child._handlers.click();await tick();await tick();await tick();"
+        " const childOpen=botHeadBtn('coder');"
+        " const childSame=subOf('coder')===childPaper;"
+        " const childAvatar=childOpen.children.find(x=>x.classList.contains('team-avatar'));"
+        " sidebar.teamBotLive('coder','thinking');"
+        " const refreshedChild=botHeadBtn('coder');"
+        " const childSameAfterStatus=subOf('coder')===childPaper;"
+        " const childAvatarSame=refreshedChild.children.find(x=>x.classList.contains('team-avatar'))===childAvatar;"
+        " const liveText=botHeadBtn('coder').children.find(x=>x.tagName==='TIME')?.textContent||'';"
+        " botHeadBtn('coder')._handlers.click();"
+        " const closed={expanded:botHeadBtn('coder').getAttribute('aria-expanded'),"
+        "  inert:childPaper.inert,hidden:childPaper.getAttribute('aria-hidden')};"
+        " const groupButton=findRow('shared');const dossier=groupButton.parentNode.parentNode;"
+        " const groupMark=groupButton.children.find(x=>x.classList.contains('team-avatar'));"
+        " const groupPaper=dossier.children[1].children[0];"
+        " const closedGroup={className:dossier.className,expanded:groupButton.getAttribute('aria-expanded'),"
+        "  inert:groupPaper.inert,meta:groupButton.children.find(x=>x.tagName==='TIME')?.textContent||''};"
+        " groupButton._handlers.click();"
+        " const openedGroupButton=findRow('shared');const openedDossier=openedGroupButton.parentNode.parentNode;"
+        " const openedPaper=openedDossier.children[1].children[0];"
+        " const heading=openedPaper.children.find(x=>x.className==='team-dossier-members-heading');"
+        " const members=openedPaper.children.find(x=>x.className==='team-dossier-members');"
+        " const groupSame=openedPaper===groupPaper;"
+        " const membersBefore=[...members.children];"
+        " const memberNamesBefore=members.children.map(x=>x.textContent);"
+        " const memberTags=members.children.map(x=>x.tagName);"
+        " sidebar.teamBotLive('coder','running');"
+        " const refreshedGroup=findRow('shared');"
+        " const refreshedMembers=refreshedGroup.parentNode.parentNode.children[1].children[0]"
+        "  .children.find(x=>x.className==='team-dossier-members');"
+        " const groupMarkSame=refreshedGroup.children.find(x=>x.classList.contains('team-avatar'))===groupMark;"
+        " const membersSame=membersBefore.every((x,i)=>refreshedMembers.children[i]===x);"
+        " const noReopen=dossier.className.includes('is-open');"
+        " const groupText=openedPaper.textContent;"
+        " state.sessions.find(x=>x.id==='shared').bots=['thyca','ghost'];"
+        " sidebar.renderTeamSidebar();"
+        " const updatedGroup=findRow('shared');"
+        " const updatedPaper=updatedGroup.parentNode.parentNode.children[1].children[0];"
+        " const updatedMembers=updatedPaper.children.find(x=>x.className==='team-dossier-members');"
+        " const membershipUpdate={paperSame:updatedPaper===openedPaper,"
+        "  rootSame:updatedMembers.children[0]===membersBefore[0],"
+        "  ghostSame:updatedMembers.children[1]===membersBefore[2],"
+        "  coderRemoved:!updatedMembers.children.includes(membersBefore[1]),"
+        "  names:updatedMembers.children.map(x=>x.textContent),"
+        "  markSame:updatedGroup.children.find(x=>x.classList.contains('team-avatar'))===groupMark};"
+        " updatedGroup._handlers.click();"
+        " const membershipCollapsed=updatedGroup.getAttribute('aria-expanded');"
+        " return {hierarchy:initialRootClass,rootDescription,childDescription,idleIds,"
+        "  childSame,childSameAfterStatus,childAvatarSame,liveText,closed,closedGroup,groupSame,"
+        "  groupMarkSame,membersSame,noReopen,membershipUpdate,membershipCollapsed,"
+        "  expandedGroup:findRow('shared').getAttribute('aria-expanded'),"
+        "  members:memberNamesBefore,memberTags,headingTag:heading.tagName,"
+        "  headingText:heading.textContent,"
+        "  groupText,loaded};");
+    assert value["hierarchy"] == "team-cluster team-envelope is-open"
+    assert value["rootDescription"] == "Root description"
+    assert value["childDescription"] == "Child description"
+    assert value["idleIds"] == [False, False]
+    assert value["childSame"] is True and value["childSameAfterStatus"] is True
+    assert value["childAvatarSame"] is True
+    assert value["liveText"] == "đang nghĩ…"
+    assert value["closed"] == {"expanded": "false", "inert": True, "hidden": "true"}
+    assert value["closedGroup"]["className"].startswith("team-dossier")
+    assert value["closedGroup"]["expanded"] == "false"
+    assert value["closedGroup"]["inert"] is True
+    assert "Thyca" in value["closedGroup"]["meta"] and "Coder" in value["closedGroup"]["meta"]
+    assert value["groupSame"] is True and value["expandedGroup"] == "false"
+    assert value["groupMarkSame"] is True and value["membersSame"] is True
+    assert value["noReopen"] is True
+    assert value["membershipUpdate"] == {
+        "paperSame": True, "rootSame": True, "ghostSame": True,
+        "coderRemoved": True, "names": ["Thyca", "ghost"], "markSame": True,
+    }
+    assert value["membershipCollapsed"] == "false"
+    assert value["members"] == ["Thyca", "Coder", "ghost"]
+    assert len(set(value["members"])) == len(value["members"])
+    assert value["memberTags"] == ["LI", "LI", "LI"]
+    assert value["headingTag"] == "H3"
+    assert value["headingText"] == "Các bot tham gia"
+    assert "PRIVATE_SENTINEL" not in value["groupText"]
+    assert "PRIVATE_OBJECTIVE" not in value["groupText"]
+    assert "PRIVATE_SUMMARY" not in value["groupText"]
+    assert "Root description" not in value["groupText"]
+    assert "Child description" not in value["groupText"]
+    assert value["loaded"] == ["shared"]
+
+
+def test_sidebar_expansion_is_exclusive_and_stale_dm_cannot_reopen_entry(node: str) -> None:
+    value = _sidebar(node,
+        _TEAM_NAV_SETUP
+        + "const state={activeId:'root-dm',detail:{id:'root-dm',dm:'thyca',bots:['thyca'],kind:'dm'},sessions:["
+        " {id:'root-dm',dm:'thyca',bots:['thyca'],kind:'dm',title:'Thyca'},"
+        " {id:'coder-dm',dm:'coder',bots:['coder'],kind:'dm',title:'Coder'},"
+        " {id:'group-a',kind:'group',bots:['thyca','coder'],title:'Group A'},"
+        " {id:'group-b',kind:'group',bots:['thyca','coder'],title:'Group B'}]};"
+        " const roster=[{id:'thyca',name:'Thyca',status:'idle'},"
+        "  {id:'coder',name:'Coder',status:'idle'}];let releaseCoder;let coderCalls=0;"
+        " globalThis.fetch=async(url)=>{const path=String(url);"
+        "  if(path==='/api/bots')return {ok:true,status:200,json:async()=>({bots:roster})};"
+        "  if(path==='/api/bots/coder/dm'){coderCalls++;if(coderCalls===1)return new Promise(resolve=>{releaseCoder=()=>resolve({ok:true,status:200,json:async()=>({id:'coder-dm',bots:['coder'],dm:'coder',kind:'dm'})})});}"
+        "  const dm=path.match(/\\/api\\/bots\\/([^/]+)\\/dm$/);"
+        "  if(dm){const id=decodeURIComponent(dm[1]);return {ok:true,status:200,json:async()=>({id:id+'-dm',bots:[id],dm:id,kind:'dm'})};}"
+        "  throw new Error('unexpected '+path);};"
+        " const snapshots=[];const opened=()=>botNav.children.filter(x=>x.classList.contains('is-open')).map(x=>x.classList.contains('team-dossier')?'group:'+x.children[0].children[0].dataset.sessionId:'bot:'+x.children[0].children[0].dataset.botId);"
+        " const check=()=>{const keys=opened();if(keys.length>1)throw new Error('multiple expanded entries '+keys);snapshots.push(keys)};"
+        " await sidebar.initTeamSidebar({state,loadSession:async id=>{state.activeId=id;state.detail=state.sessions.find(x=>x.id===id);sidebar.renderTeamSidebar()},afterTeamSession:async detail=>{state.activeId=detail.id;state.detail=detail;sidebar.renderTeamSidebar()},teamRefresh:async()=>{}});"
+        " check();if(JSON.stringify(snapshots.at(-1))!==JSON.stringify(['bot:thyca']))throw new Error('initial selection not expanded');"
+        " botHeadBtn('coder')._handlers.click();check();"
+        " findRow('group-a')._handlers.click();await tick();check();"
+        " if(state.activeId!=='group-a'||JSON.stringify(opened())!==JSON.stringify(['group:group-a']))throw new Error('group did not replace pending bot');"
+        " releaseCoder();await tick();await tick();check();"
+        " if(state.activeId!=='group-a'||JSON.stringify(opened())!==JSON.stringify(['group:group-a']))throw new Error('stale DM navigated/reopened');"
+        " const coderCard=botNav.children.find(x=>x.classList.contains('team-cluster')&&x.children[0].children[0].dataset.botId==='coder');"
+        " coderCard.children[0].children[1].children.find(x=>x.tagName==='BUTTON')._handlers.click();check();"
+        " if(JSON.stringify(opened())!==JSON.stringify(['group:group-a']))throw new Error('pin changed expansion');"
+        " findRow('group-b')._handlers.click();await tick();check();"
+        " if(state.activeId!=='group-b'||JSON.stringify(opened())!==JSON.stringify(['group:group-b']))throw new Error('group B did not replace group A');"
+        " botHeadBtn('coder')._handlers.click();await tick();await tick();check();"
+        " if(JSON.stringify(opened())!==JSON.stringify(['bot:coder']))throw new Error('bot did not replace group');"
+        " botHeadBtn('coder')._handlers.click();check();"
+        " if(state.activeId!=='coder-dm'||opened().length)throw new Error('fold changed selected chat or left entry open');"
+        " sidebar.teamBotLive('coder','thinking');check();"
+        " findRow('group-a')._handlers.click();await tick();check();"
+        " findRow('group-a')._handlers.click();check();"
+        " sidebar.teamBotLive('thyca','done');check();"
+        " return {snapshots,activeId:state.activeId,finalOpen:opened(),coderCalls};");
+    assert all(len(snapshot) <= 1 for snapshot in value["snapshots"])
+    assert value["finalOpen"] == []
+    assert value["activeId"] == "group-a"
+    assert value["coderCalls"] == 2
+
+
+def test_layered_sidebar_css_reveal_paper_motion_and_dossier_scope() -> None:
+    import re
+
+    css = CHAT_CSS.read_text(encoding="utf-8")
+    envelope_css = ENVELOPE_CSS.read_text(encoding="utf-8")
+    envelope_js = (ROOT / "thyca/webui/shared/js/bot-envelope.js").read_text(encoding="utf-8")
+    src = SIDEBAR_SRC.read_text(encoding="utf-8")
+    envelope = re.search(r":is\(#team-bot-list, #memory-bot-list\) \.team-envelope\s*\{([^}]*)\}", envelope_css)
+    assert envelope and "grid-template-rows: var(--team-header-height) 0fr" in envelope.group(1)
+    assert "transition: grid-template-rows 450ms var(--team-spring)" in envelope.group(1)
+    assert "padding-block-end: 1.5rem" in envelope.group(1)
+    assert "team-envelope.is-open" in envelope_css and "grid-template-rows: var(--team-header-height) 1fr" in envelope_css
+    assert "margin: 0 7px" in envelope_css and "border-inline:" in envelope_css
+    assert "border-block-start: var(--rule) dashed" in css
+    assert "inset 0 8px 10px -6px" in envelope_css
+    description_rule = re.search(
+        r":is\(#team-bot-list, #memory-bot-list\) \.team-envelope \.team-bot-description\s*\{([^}]*)\}", envelope_css,
+    )
+    assert description_rule and "margin-block-start: var(--team-seal-protrusion)" in description_rule.group(1)
+    assert "team-bot-description::before" not in css
+    assert "team-bot-description::after" not in css
+    assert "float: left" not in description_rule.group(1) and "text-indent" not in description_rule.group(1)
+    assert "text-align: start" in re.search(
+        r":is\(#team-bot-list, #memory-bot-list\) \.team-envelope \.team-bot-description\s*\{([^}]*)\}", envelope_css,
+    ).group(1)
+    assert "calc(var(--team-seal-protrusion) + 1.25rem)" not in css
+    assert "team-dossier.is-open" in css
+    assert 'list-style-type: "- "' in css
+    assert "team-dossier-thread" not in css and "team-dossier-member::before" not in css
+    assert "team-dossier-members-heading" in src
+    assert 'document.createElement("ul")' in src and 'document.createElement("li")' in src
+    assert "width: 46px" in css and "height: 44px" in css
+    assert "rotate(-14deg) scale(1.06)" in css and "rotate(12deg) scale(1.06)" in css
+    assert 'data-seal-slot=\"${i}\"' in (ROOT / "thyca/webui/shared/js/bot-avatar.js").read_text()
+    assert "aria-controls" in src and "aria-hidden" in src
+    assert "setBotEnvelopeOpen(card, expanded)" in src
+    assert "card.viewport.inert = !expanded" in envelope_js
+    assert "card.paper.inert = !expanded" in envelope_js
+    assert "card.bodyFingerprint !== bodyFingerprint" in src
+    assert "reconcileChildren(card.paper, content)" in src
+    assert "reconcileChildren(list" in src
+    assert "team-cluster-sessions.is-fresh" not in css
+    assert "prefers-reduced-motion: reduce" in envelope_css and "prefers-reduced-motion: reduce" in css
+    reduced = envelope_css[envelope_css.index("@media (prefers-reduced-motion: reduce)"):]
+    assert "transition-duration: 0s" in reduced and "transform: none" in reduced
+    assert "team-pocket-viewport" in reduced
+    assert "team-dossier-viewport" in css[css.index("@media (prefers-reduced-motion: reduce)"):]
+
+
+@pytest.mark.parametrize("sessions, expected_child_rows", [
+    ([], 0),
+    ([
+        {"id": "root-dm", "dm": "thyca", "bots": ["thyca"]},
+        {"id": "coder-dm", "dm": "coder", "bots": ["coder"]},
+        {"id": "coder-side", "bots": ["coder"], "title": "Notes"},
+    ], 1),
+])
+def test_expanded_bot_descriptions_ignore_session_count(
+    node: str, sessions: list[dict], expected_child_rows: int,
+) -> None:
+    value = _sidebar(node,
+        _TEAM_NAV_SETUP
+        + f"const sessions = {json.dumps(sessions, ensure_ascii=False)};"
+        " globalThis.fetch = async (url) => {"
+        "  const dm = String(url).match(/\\/api\\/bots\\/([^/]+)\\/dm$/);"
+        "  if (dm) {const id = decodeURIComponent(dm[1]); return {ok:true,status:200,"
+        "   json:async()=>({id:id+'-dm',bots:[id],dm:id,kind:'dm'})};}"
+        "  return {ok:true,status:200,json:async()=>({bots:["
+        "   {id:'thyca',name:'Thyca',role:'main',status:'idle',system:true,"
+        "    description:'<b>Root &amp; Thyca</b>'},"
+        "   {id:'coder',name:'Coder',role:'code',status:'idle',"
+        "    description:'Child description'}]})};};"
+        " await sidebar.initTeamSidebar({state:{activeId:'root-dm',"
+        "  detail:{id:'root-dm',dm:'thyca',bots:['thyca']},sessions},"
+        " loadSession:async()=>{},afterTeamSession:async()=>{},teamRefresh:async()=>{}});"
+        " const walk=(node,out=[])=>{out.push(node);for(const c of node.children||[])walk(c,out);return out;};"
+        " const desc=(paper)=>paper?.children.filter((item)=>"
+        "  item.className==='team-bot-description')||[];"
+        " const rootBefore=subOf('thyca'), rootDesc=desc(rootBefore)[0];"
+        " const rootCount=desc(rootBefore).length, rootText=rootDesc?.textContent||'';"
+        " const rootHtml=rootDesc ? rootDesc.innerHTML : null;"
+        " botHeadBtn('coder')._handlers.click(); await tick(); await tick();"
+        " const child=subOf('coder'), childDesc=desc(child)[0];"
+        " return {rootCount,childCount:desc(child).length,rootText,rootHtml,"
+        "  childText:childDesc?.textContent||'',"
+        "  childRows:child?.children.filter((item)=>item.className==='session-row').length||0,"
+        "  childFirst:child?.children[0]?.className||'',"
+        "  placeholder:walk(botNav).some((item)=>item.textContent==='Chưa có phiên.')};")
+    assert value == {
+        "rootCount": 1,
+        "childCount": 1,
+        "rootText": "<b>Root &amp; Thyca</b>",
+        "rootHtml": "",
+        "childText": "Child description",
+        "childRows": expected_child_rows,
+        "childFirst": "team-bot-description",
+        "placeholder": False,
+    }
+
+
+def test_blank_bot_descriptions_are_omitted(node: str) -> None:
+    value = _sidebar(node,
+        _TEAM_NAV_SETUP
+        + "globalThis.fetch = async (url) => {"
+        " const dm=String(url).match(/\\/api\\/bots\\/([^/]+)\\/dm$/);"
+        " if(dm){const id=decodeURIComponent(dm[1]);return {ok:true,status:200,"
+        "  json:async()=>({id:id+'-dm',bots:[id],dm:id,kind:'dm'})};}"
+        " return {ok:true,status:200,json:async()=>({bots:["
+        " {id:'thyca',name:'Thyca',role:'main',system:true,description:'  '},"
+        " {id:'coder',name:'Coder',role:'code',description:'\\n\\t'}]})};};"
+        " await sidebar.initTeamSidebar({state:{activeId:'root-dm',"
+        "  detail:{id:'root-dm',dm:'thyca',bots:['thyca']},sessions:[]},"
+        " loadSession:async()=>{},afterTeamSession:async()=>{},teamRefresh:async()=>{}});"
+        " const rootAbsent=!subOf('thyca')?.children.some((item)=>"
+        "  item.className==='team-bot-description');"
+        " botHeadBtn('coder')._handlers.click(); await tick(); await tick();"
+        " const walk=(node,out=[])=>{out.push(node);for(const c of node.children||[])walk(c,out);return out;};"
+        " return {rootAbsent,childAbsent:!subOf('coder')?.children.some((item)=>"
+        "  item.className==='team-bot-description'),"
+        "  placeholders:walk(botNav).filter((item)=>item.textContent==='Chưa có phiên.').length};")
+    assert value == {"rootAbsent": True, "childAbsent": True, "placeholders": 0}
+
+
+def test_idle_bot_subtitles_are_absent_and_live_labels_preserve_description(
+    node: str,
+) -> None:
+    value = _sidebar(node,
+        _TEAM_NAV_SETUP
+        + "globalThis.fetch = async (url) => {"
+        " const dm=String(url).match(/\\/api\\/bots\\/([^/]+)\\/dm$/);"
+        " if(dm){const id=decodeURIComponent(dm[1]);return {ok:true,status:200,"
+        "  json:async()=>({id:id+'-dm',bots:[id],dm:id,kind:'dm'})};}"
+        " return {ok:true,status:200,json:async()=>({bots:["
+        "  {id:'thyca',name:'Thyca',role:'Quản lý',status:'idle',system:true,"
+        "   description:'Root description'},"
+        "  {id:'coder',name:'Coder',role:'Coder role',status:'idle',"
+        "   description:'Child description'},"
+        "  {id:'thyca-discord',name:'Thyca Discord',role:'Discord',status:'idle'},"
+        "  {id:'waiter',name:'Waiter',role:'Waiter role',status:'running',"
+        "   agent_status:{waiting_on:{kind:'private'}}},"
+        "  {id:'offline',name:'Offline',role:'Offline role',status:'paused'},"
+        "  {id:'errorbot',name:'Error',role:'Error role',status:'error'}]})};};"
+        " await sidebar.initTeamSidebar({state:{activeId:'root-dm',"
+        "  detail:{id:'root-dm',dm:'thyca',bots:['thyca']},sessions:[]},"
+        " loadSession:async()=>{},afterTeamSession:async()=>{},teamRefresh:async()=>{}});"
+        " const subtitle=(id)=>botHeadBtn(id).children.find((item)=>"
+        "  item.tagName==='TIME')?.textContent||'';"
+        " const description=(id)=>subOf(id)?.children.find((item)=>"
+        "  item.className==='team-bot-description')?.textContent||'';"
+        " const rootDescription=description('thyca');"
+        " const idle={root:subtitle('thyca'),child:subtitle('coder'),"
+        "  discord:subtitle('thyca-discord')};"
+        " botHeadBtn('coder')._handlers.click(); await tick(); await tick();"
+        " const childDescriptionBefore=description('coder');"
+        " const childFirst=subOf('coder')?.children[0]?.className||'';"
+        " sidebar.teamBotLive('thyca','thinking');"
+        " const rootThinking=subtitle('thyca');"
+        " sidebar.teamBotLive('coder','running');"
+        " const childRunning=subtitle('coder');"
+        " const privateWait=subtitle('waiter');"
+        " const offline=subtitle('offline');"
+        " const error=subtitle('errorbot');"
+        " return {idle,rootThinking,childRunning,privateWait,offline,error,rootDescription,"
+        "  childDescriptionBefore,childDescriptionAfter:description('coder'),childFirst};")
+    assert value == {
+        "idle": {"root": "", "child": "", "discord": ""},
+        "rootThinking": "đang nghĩ…",
+        "childRunning": "đang viết…",
+        "privateWait": "Đang chờ thông tin riêng",
+        "offline": "tạm dừng",
+        "error": "lỗi · thử lại",
+        "rootDescription": "Root description",
+        "childDescriptionBefore": "Child description",
+        "childDescriptionAfter": "Child description",
+        "childFirst": "team-bot-description",
+    }
 
 
 def test_dm_button_opens_dm_without_post(node: str) -> None:
-    """FE-SESSION-1: clicking the flap button resolves the fixed DM
+    """FE-SESSION-1: clicking the bot row resolves the fixed DM
     (GET /api/bots/<id>/dm) and hands it to hub.afterTeamSession —
     no POST to /api/sessions in this flow."""
     value = _sidebar(node,
@@ -2122,8 +2879,8 @@ def test_dm_button_opens_dm_without_post(node: str) -> None:
         "   json: async () => ({ bots: ["
         "    {id: 'thyca', name: 'Thyca', role: 'chính', status: 'idle'},"
         "    {id: 'coder', name: 'Coder', role: 'code', status: 'idle'}] }) }; };"
-        " await sidebar.initTeamSidebar({ state: { activeId: 'dm',"
-        "  detail: { id: 'dm', bots: ['thyca'] },"
+        " await sidebar.initTeamSidebar({ state: { activeId: 'coder-dm',"
+        "  detail: { id: 'coder-dm', dm:'coder', bots: ['coder'] },"
         "  sessions: ["
         "   {id: 'dm', title: 'Riêng Thyca', bots: ['thyca'],"
         "    dm: 'thyca', updated_at: '2026-06-01T00:00:00Z', turns: 2}] },"
@@ -2131,9 +2888,9 @@ def test_dm_button_opens_dm_without_post(node: str) -> None:
         " afterTeamSession: async (d, guard) => {"
         "  handed.push({ id: d.id, ok: guard() }); },"
         " teamRefresh: async () => {} });"
-        " newBtn('thyca')._handlers.click();"
+        " botHeadBtn('thyca')._handlers.click();"
         " await tick(); await tick();"
-        " return { posts, handed, errors: flapOf('thyca').children"
+        " return { posts, handed, errors: (subOf('thyca')?.children || [])"
         "   .filter((c) => String(c.className).includes('is-error')).length };")
     assert value["handed"] == [{"id": "dm", "ok": True}]
     assert value["posts"] == []
@@ -2155,15 +2912,15 @@ def test_dm_resolve_rejects_wrong_bot_detail(node: str) -> None:
         "   json: async () => ({ bots: ["
         "    {id: 'thyca', name: 'Thyca', role: 'chính', status: 'idle'},"
         "    {id: 'coder', name: 'Coder', role: 'code', status: 'idle'}] }) }; };"
-        " await sidebar.initTeamSidebar({ state: { activeId: 'dm',"
-        "  detail: { id: 'dm', bots: ['thyca'] },"
+        " await sidebar.initTeamSidebar({ state: { activeId: 'coder-dm',"
+        "  detail: { id: 'coder-dm', dm:'coder', bots: ['coder'] },"
         "  sessions: ["
         "   {id: 'dm', title: 'Riêng Thyca', bots: ['thyca'],"
         "    dm: 'thyca', updated_at: '2026-06-01T00:00:00Z', turns: 2}] },"
         " loadSession: async (id) => { loaded.push(id); },"
         " afterTeamSession: async (d) => { handed.push(d.id); },"
         " teamRefresh: async () => {} });"
-        " newBtn('thyca')._handlers.click();"
+        " botHeadBtn('thyca')._handlers.click();"
         " await tick(); await tick();"
         " return { handed, loaded };")
     assert value["handed"] == []
@@ -2173,7 +2930,7 @@ def test_dm_resolve_rejects_wrong_bot_detail(node: str) -> None:
 
 def test_dm_resolve_failure_shows_error(node: str) -> None:
     """FE-SESSION-1: DM endpoint down, no legacy session, POST fallback down
-    → the flap shows the scoped error note with alert role."""
+    → the lower paper shows the scoped error note with alert role."""
     value = _sidebar(node,
         _TEAM_NAV_SETUP
         + " globalThis.fetch = async (url, opts) => {"
@@ -2191,20 +2948,19 @@ def test_dm_resolve_failure_shows_error(node: str) -> None:
         "  detail: null, sessions: [] },"
         " loadSession: async () => {}, afterTeamSession: async () => {},"
         " teamRefresh: async () => {} });"
-        " newBtn('thyca')._handlers.click();"
+        " botHeadBtn('thyca')._handlers.click();"
         " await tick(); await tick();"
-        " const flap = flapOf('thyca');"
-        " const err = flap.children.find((c) =>"
+        " const lower = subOf('thyca');"
+        " const err = lower.children.find((c) =>"
         "  String(c.className).includes('is-error'));"
-        " const btn = newBtn('thyca');"
+        " const btn = botHeadBtn('thyca');"
         " return { error: err ? err.textContent : '',"
         "  role: err ? err.getAttribute('role') : '',"
-        "  order: flap.children.map((c) => c.className) };")
+        "  order: lower.children.map((c) => c.className) };")
     assert value["error"] == "no create"  # backend message wins via messageOf
     assert value["role"] == "alert"
-    # Sealed-letter spec: the flap button stays last; the error sits above.
-    assert "is-error" in value["order"][0]
-    assert value["order"][-1] == "team-new-session"
+    # The scoped status stays in the lower description/session paper.
+    assert value["order"][-1] == "screen-status is-error"
 
 
 def test_dm_resolve_stale_across_bot_switch(node: str) -> None:
@@ -2235,7 +2991,7 @@ def test_dm_resolve_stale_across_bot_switch(node: str) -> None:
         "  c.children && c.children[0]).filter(Boolean).find((r) =>"
         "  r.children[0] && r.children[0].dataset"
         "  && r.children[0].dataset.botId === 'coder');"
-        " newBtn('thyca')._handlers.click();"
+        " botHeadBtn('thyca')._handlers.click();"
         " await tick();"
         " coderRow.children[0]._handlers.click();"
         " await tick(); await tick();"
@@ -2265,8 +3021,8 @@ def test_dm_resolve_stale_after_clicking_session_row(node: str) -> None:
         "   json: async () => ({ bots: ["
         "    {id: 'thyca', name: 'Thyca', role: 'chính', status: 'idle'},"
         "    {id: 'coder', name: 'Coder', role: 'code', status: 'idle'}] }) }; };"
-        " await sidebar.initTeamSidebar({ state: { activeId: 'dm',"
-        "  detail: { id: 'dm', bots: ['thyca'] },"
+        " await sidebar.initTeamSidebar({ state: { activeId: 'coder-dm',"
+        "  detail: { id: 'coder-dm', dm:'coder', bots: ['coder'] },"
         "  sessions: ["
         "   {id: 'dm', title: 'Riêng Thyca', bots: ['thyca'],"
         "    dm: 'thyca', updated_at: '2026-06-01T00:00:00Z', turns: 2},"
@@ -2275,7 +3031,7 @@ def test_dm_resolve_stale_after_clicking_session_row(node: str) -> None:
         " loadSession: async (id) => { loaded.push(id); },"
         " afterTeamSession: async (d) => { handed.push(d.id); },"
         " teamRefresh: async () => {} });"
-        " newBtn('thyca')._handlers.click();"
+        " botHeadBtn('thyca')._handlers.click();"
         " await tick();"
         " findRow('side')._handlers.click();"
         " await tick();"
@@ -2339,27 +3095,34 @@ def test_chat_bot_for_turn_mentions_paused_and_unknown(node: str) -> None:
                      "unknown-bot", "thyca", "thyca"]
 
 
-def test_chat_bot_for_message_roster_and_meta_overrides(node: str) -> None:
-    """chatBotForMessage resolves the roster profile for meta.bot_id,
-    honours valid bot_name/bot_tint/bot_avatar overrides, and falls back
-    only through the caller context before defaulting to Thyca."""
+def test_chat_bot_for_message_uses_current_name_and_shared_look(node: str) -> None:
+    """Current roster names win over historical metadata; historical tint
+    and avatar never override the id-derived look."""
     value = _run(
         node,
-        "api.setChatBotRoster([{id:'designer',name:'Designer',"
+        f"const avatar = await import('{AVATAR.as_posix()}');"
+        " api.setChatBotRoster([{id:'designer',name:'Designer',"
         " tint:'botanical',avatar:'hollow',status:'active'}]);"
         " const r = api.chatBotForMessage({meta:{bot_id:'designer'}});"
-        " const o = api.chatBotForMessage({meta:{bot_id:'designer',"
-        "  bot_name:'D',bot_tint:'ink',bot_avatar:'fermata'}});"
-        " const u = api.chatBotForMessage({meta:{bot_id:'ghost'}});"
-        " const l = api.chatBotForMessage({content:'x'});"
-        " const f = api.chatBotForMessage({content:'x'},"
+        " const old = api.chatBotForMessage({meta:{bot_id:'designer',"
+        "  bot_name:'Old name',bot_tint:'ink',bot_avatar:'fermata'}});"
+        " const ghost = api.chatBotForMessage({meta:{bot_id:'ghost'}});"
+        " const plain = api.chatBotForMessage({content:'x'});"
+        " const fallback = api.chatBotForMessage({content:'x'},"
         "  {id:'solo',name:'Solo'});"
-        " return [r.name, r.tint, r.avatar, o.name, o.tint, o.avatar,"
-        "  u.name, l.id, f.id];",
+        " return {r:[r.name,r.tint,r.avatar], old:[old.name,old.tint,old.avatar],"
+        " ghost:[ghost.name,ghost.tint,ghost.avatar], plain:[plain.id,plain.tint,plain.avatar],"
+        " fallback:[fallback.id,fallback.name,fallback.tint,fallback.avatar],"
+        " looks:Object.fromEntries(['designer','ghost','thyca','solo'].map(id =>"
+        "  [id,avatar.botLookFor(id)]))};",
         via="chatbot",
     )
-    assert value == ["Designer", "botanical", "hollow",
-                     "D", "ink", "fermata", "ghost", "thyca", "solo"]
+    looks = value["looks"]
+    assert value["r"] == ["Designer", looks["designer"]["tint"], looks["designer"]["glyph"]]
+    assert value["old"] == value["r"]
+    assert value["ghost"] == ["ghost", looks["ghost"]["tint"], looks["ghost"]["glyph"]]
+    assert value["plain"] == ["thyca", looks["thyca"]["tint"], looks["thyca"]["glyph"]]
+    assert value["fallback"] == ["solo", "Solo", looks["solo"]["tint"], looks["solo"]["glyph"]]
 
 
 def test_root_traced_message_stays_visible_as_team_card(node: str) -> None:
@@ -2391,7 +3154,7 @@ def test_root_traced_message_stays_visible_as_team_card(node: str) -> None:
         " const head = card && card.querySelector('.chat-brand');"
         " return {cards,"
         "  name: card && card.querySelector('h2').textContent,"
-        "  hollow: head && head.className.includes('avatar-variant-hollow'),"
+        "  header: head && head.className === 'chat-brand',"
         "  wax: av && av._html.includes('mk-wax'),"
         "  quill: !!(card && card.querySelector('.chat-brand-quill')),"
         "  content: card && card.querySelector('.markdown-body')"
@@ -2399,7 +3162,7 @@ def test_root_traced_message_stays_visible_as_team_card(node: str) -> None:
         "  exchange: !!root.querySelector('.team-exchange')};")
     assert any("team-message" in cls for cls in value["cards"])
     assert value["name"] == "Designer"
-    assert value["hollow"] is True
+    assert value["header"] is True
     assert value["wax"] is True
     assert value["quill"] is False
     assert value["content"] is True
@@ -2457,48 +3220,47 @@ def test_live_status_names_and_avatars_the_responding_bot(node: str) -> None:
         "  name: l.brand.querySelector('h2').textContent,"
         "  thinking: state1,"
         "  done: av2 && av2._html.includes('data-state=\"done\"'),"
-        "  hollow: head.className.includes('avatar-variant-hollow'),"
+        "  header: head.className === 'chat-brand',"
         "  badge: av2 && av2._html.includes('mk-wax')};")
     assert value["aria"] == "Designer đang trả lời"
     assert value["name"] == "Designer"
     assert value["thinking"] is True
     assert value["done"] is True
-    assert value["hollow"] is True
+    assert value["header"] is True
     assert value["badge"] is True
 
 
-def test_team_article_resolves_profile_without_opts(node: str) -> None:
-    """A direct teamArticleFor call (no opts.bot — e.g. an expanded
-    exchange row) still renders the real bot: roster name, avatar variant
-    on the header, avatar markup, and the shared accent var — not a
-    Thyca header wearing a Designer name."""
+def test_team_article_resolves_shared_look_without_opts(node: str) -> None:
+    """Current roster data and old message metadata all resolve through
+    the same id-derived color and glyph."""
     value = _cards(node,
-        "const cb = await import('" + CHAT_BOT.as_posix() + "');"
+        f"const avatar = await import('{AVATAR.as_posix()}');\n"
+        f"const cb = await import('{CHAT_BOT.as_posix()}');"
         " cb.setChatBotRoster([{id:'designer',name:'Designer',"
         " tint:'botanical',avatar:'hollow',status:'active'}]);"
         " const a = cards.teamArticleFor({role:'assistant',content:'x',"
         "  meta:{bot_id:'designer'}});"
         " const b = cards.teamArticleFor({role:'assistant',content:'y',"
-        "  meta:{bot_id:'designer',bot_avatar:'fermata'}});"
+        "  meta:{bot_id:'designer',bot_tint:'ink',bot_avatar:'fermata'}});"
         " const headA = a.querySelector('.chat-brand');"
         " const avA = a.querySelector('.chat-brand-avatar');"
-        " return {"
-        "  name: a.querySelector('h2') && a.querySelector('h2').textContent,"
-        "  headCls: headA && headA.className,"
-        "  accent: headA && headA._style['--chat-brand-accent'],"
-        "  hollow: avA && avA._html.includes('mk-wax'),"
-        "  bCls: b.querySelector('.chat-brand').className,"
-        "  bFermata: b.querySelector('.chat-brand-avatar')"
-        "   ._html.includes('mk-wax'),"
-        "  teamTint: a._style['--team-tint']};")
+        " const avB = b.querySelector('.chat-brand-avatar');"
+        " const look = avatar.botLookFor('designer');"
+        " const tint = `var(--color-${look.tint})`;"
+        " return {name:a.querySelector('h2').textContent,"
+        "  headCls:headA.className, avatarTint:headA._style['--avatar-tint'],"
+        "  teamTint:a._style['--team-tint'], markTint:avA._html.includes(`--bot:${tint}`),"
+        "  markGlyph:avA._html.includes(`href=\"#g-${look.glyph}\"`),"
+        "  staleGlyphIgnored:avB._html.includes(`href=\"#g-${look.glyph}\"`),"
+        "  look};")
     assert value["name"] == "Designer"
-    assert value["headCls"] == "chat-brand avatar-variant-hollow"
-    assert value["accent"] == (
-        "var(--avatar-tint, var(--team-tint, var(--color-accent)))")
-    assert value["hollow"] is True
-    assert value["bCls"] == "chat-brand avatar-variant-fermata"
-    assert value["bFermata"] is True
-    assert value["teamTint"] == "var(--color-success-ink)"
+    assert value["headCls"] == "chat-brand"
+    tint = f"var(--color-{value['look']['tint']})"
+    assert value["avatarTint"] == tint
+    assert value["teamTint"] == tint
+    assert value["markTint"] is True
+    assert value["markGlyph"] is True
+    assert value["staleGlyphIgnored"] is True
 
 
 def test_composer_shared_history_keeps_legacy_fallback() -> None:

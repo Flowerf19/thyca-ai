@@ -56,6 +56,8 @@ class Hit:
     habit: str | None = None
     # Phase 1E: user explicitly stated the habit.
     habit_explicit: bool = False
+    # WS-3: origin window (window provenance) — additive, end of fields.
+    chat_session: str | None = None
 
 
 @dataclass
@@ -337,7 +339,8 @@ class ArchiveStore:
                            MAX(line_start) AS last_line,
                            MAX(session_title) AS title,
                            MAX(status) AS status,
-                           MAX(bots) AS bots
+                           MAX(bots) AS bots,
+                           MAX(chat_session) AS chat
                     FROM chunks
                     WHERE task IS NOT NULL AND {VISIBLE_SQL}{clause}
                     GROUP BY task, session_id""",
@@ -422,7 +425,7 @@ class ArchiveStore:
     def visible_chunk_maps(self, now: str) -> list[dict[str, object]]:
         rows = self._db.execute(
             f"""SELECT chunk_id, session_id, heading_raw, text_raw, source_kind,
-                      timeline_day, expires_at
+                      timeline_day, expires_at, bots, kind, task, status, habit
                FROM chunks
                WHERE {VISIBLE_SQL}""",
             (now,),
@@ -546,6 +549,11 @@ def hit_from_row(
         status=extra["status"],
         habit=extra["habit"],
         habit_explicit=bool(extra["habit_explicit"]),
+        chat_session=(
+            row["chat_session"]
+            if "chat_session" in keys and isinstance(row["chat_session"], str)
+            else None
+        ),
     )
 
 

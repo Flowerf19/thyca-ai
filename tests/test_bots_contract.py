@@ -103,11 +103,12 @@ def test_contract_memory_candidates(tmp_path: Path) -> None:
     httpd = _serve(app, tmp_path)
     try:
         empty = _get(httpd, "/api/memory/candidates")
-        assert empty == {"candidates": []}
+        assert empty == {"bot_id": None, "candidates": []}
         facade = app.job_facade()
         sid = facade.remember("gift", "egg coffee")
         cand = CandidateQueue(tmp_path).propose("coder", sid)
         listed = _get(httpd, "/api/memory/candidates")
+        assert listed["bot_id"] is None
         assert len(listed["candidates"]) == 1
         assert listed["candidates"][0]["bot_id"] == "coder"
         # Review UI gets the actual entry preview, not an opaque id.

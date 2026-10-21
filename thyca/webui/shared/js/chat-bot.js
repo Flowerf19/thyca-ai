@@ -1,4 +1,4 @@
-import { AVATAR_VARIANTS } from "./bot-avatar.js";
+import { botLookFor } from "./bot-avatar.js";
 
 let roster = [];
 
@@ -27,18 +27,14 @@ function resolveBot(id) {
 
 export function chatBotForMessage(message, fallback = null) {
   const meta = (message && typeof message === "object" ? message.meta : null) || {};
-  const id = String(meta.bot_id || "");
-  const base = id ? resolveBot(id) : (fallback || resolveBot("thyca"));
-  const name = typeof meta.bot_name === "string" && meta.bot_name.trim()
-    ? meta.bot_name
-    : base.name;
-  const tint = typeof meta.bot_tint === "string" && meta.bot_tint.trim()
-    ? meta.bot_tint
-    : base.tint;
-  const avatar = AVATAR_VARIANTS.includes(meta.bot_avatar)
-    ? meta.bot_avatar
-    : base.avatar;
-  return { ...base, name, tint, avatar };
+  const id = String(meta.bot_id || fallback?.id || "thyca");
+  const current = id ? rosterBot(id) : null;
+  const base = current || (fallback?.id === id ? fallback : synthesizedBot(id));
+  const historicalName = typeof meta.bot_name === "string" && meta.bot_name.trim()
+    ? meta.bot_name : "";
+  const name = current?.name || historicalName || base.name;
+  const tint = botLookFor(id).tint;
+  return { ...base, id, name, tint, avatar: botLookFor(id).glyph };
 }
 
 const MENTION_RE = /@([a-z0-9]+(?:-[a-z0-9]+)*)/g;

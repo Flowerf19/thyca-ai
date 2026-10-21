@@ -1,6 +1,7 @@
-import { avatarStateFor, botMark, botMarkGroup } from "../../shared/js/bot-avatar.js";
+import { avatarStateFor, botMark, botMarkGroup, botMarkStateFor } from "../../shared/js/bot-avatar.js";
 import { setChatBotRoster } from "../../shared/js/chat-bot.js";
 import { getJson, postJson } from "../../shared/js/http.js";
+import { createBotEnvelope, setBotEnvelopeOpen } from "../../shared/js/bot-envelope.js";
 import { cleanText, formatSessionTime } from "../../shared/js/format.js";
 import { messageOf } from "../../shared/js/status.js";
 import {
@@ -29,14 +30,14 @@ import {
   rememberDm,
   setPin,
 } from "./team-unread.js";
-import { openDelete, openRename } from "./sessions-sidebar.js";
 
 // Team sidebar: agents are the primary list, reusing the legacy session-row
 // anatomy (sessions-sidebar.js + kit.css .session-item): each agent row is a
 // .session-row > button.session-item with the tint dot in the icon cell, the
-// name in .session-name and "role · status" in the italic <time> line. The
-// active bot keeps the legacy left accent bar via .is-active. Clicking an
-// agent opens its main (DM) window directly — there is no second level.
+// name in .session-name and meaningful non-idle status in the italic <time>
+// line. Idle rows omit the duplicate id. The active bot keeps the legacy left
+// accent bar via .is-active. Clicking an agent opens its main (DM) window
+// directly — there is no second level.
 // The sidebar is ONE list, the bot list: the selected bot's sessions (its
 // private sessions — its DM excluded, since the bot row itself opens that
 // DM — and the shared sessions it takes part in, merged as legacy rows)
@@ -53,16 +54,11 @@ import { openDelete, openRename } from "./sessions-sidebar.js";
 let hub = null;
 let bots = [];
 let activeBot = "";
-/* Sealed-letter rows: a bot bar is a collapsible header for its session
-   sheet. The current bot starts expanded (same shape as before); a user
-   fold survives live-state re-renders via closedIds. freshOpen marks the
-   sheet that should play its slide-out once — it is consumed on render
-   so streamed-status re-renders never replay it. */
-const closedIds = new Set();
-const freshOpen = new Set();
-/* Group letters open the same way as bot bars: click expands a flap with
-   the member picker and opens the room; click again folds it. */
-const openGroups = new Set();
+/* One explicit entry owns the open paper at a time. Null follows the current
+   selection until the user opens or folds an entry; an empty string is an
+   intentional all-closed state that survives status rerenders. */
+let expandedEntry = null;
+const nodeByKey = new Map();
 /* Session sheet paging: newest PAGE_SIZE rows per page, remembered per
    bot across re-renders. */
 const PAGE_SIZE = 5;
@@ -126,47 +122,67 @@ const LIVE_LABEL = {
 };
 
 function botSubLabel(bot) {
-  const live = LIVE_LABEL[avatarStateFor(bot)];
+  const status = bot.agentStatus || bot.agent_status || {};
+  if (status.waiting_on?.kind === "private") return "Đang chờ thông tin riêng";
+  const state = avatarStateFor(bot);
+  const live = LIVE_LABEL[state];
   if (live) return live;
-  return [bot.role, statusLabel(bot.status)].filter(Boolean).join(" · ");
+  return state === "idle" ? "" : statusLabel(bot.status);
 }
 
-function sheetPager(botId, page, pageCount) {
-  const pager = document.createElement("div");
+function sheetPager(botId, page, pageCount, existing = null) {
+  const pager = existing || document.createElement("div");
   pager.className = "team-sheet-pager";
-  const turn = (delta) => {
-    pageByBot.set(botId, page + delta);
-    render();
-  };
-  const prev = document.createElement("button");
+  const prev = pager.children[0] || document.createElement("button");
   prev.type = "button";
   prev.className = "team-sheet-page";
   prev.textContent = "‹ Trước";
   prev.disabled = page <= 0;
   prev.setAttribute("aria-label", "Trang phiên trước");
-  prev.addEventListener("click", () => turn(-1));
-  const label = document.createElement("span");
+  if (!prev._pagerBound) {
+    prev.addEventListener("click", () => {
+      pageByBot.set(botId, Math.max(0, (pageByBot.get(botId) || 0) - 1));
+      render();
+    });
+    prev._pagerBound = true;
+  }
+  const label = pager.children[1] || document.createElement("span");
   label.className = "team-sheet-page-label";
   label.textContent = `${page + 1} / ${pageCount}`;
-  const next = document.createElement("button");
+  const next = pager.children[2] || document.createElement("button");
   next.type = "button";
   next.className = "team-sheet-page";
   next.textContent = "Sau ›";
   next.disabled = page >= pageCount - 1;
   next.setAttribute("aria-label", "Trang phiên sau");
-  next.addEventListener("click", () => turn(1));
-  pager.append(prev, label, next);
+  if (!next._pagerBound) {
+    next.addEventListener("click", () => {
+      pageByBot.set(botId, (pageByBot.get(botId) || 0) + 1);
+      render();
+    });
+    next._pagerBound = true;
+  }
+  reconcileChildren(pager, [prev, label, next]);
   return pager;
 }
 
-/* Expanded = shows its session sheet below the envelope row. A clicked
-   bot (activeBot) expands at once — its paper and sessions render while
-   its DM is still resolving; with no pending click the open session's
-   bot expands. Folding is a pure view toggle remembered via closedIds. */
+/* Expanded = this entry owns the shared open-paper slot. Until a user
+   toggles an entry, derive the default from the current selected session. */
+function defaultExpandedEntry() {
+  const detail = hub?.state?.detail;
+  if (isSharedSession(detail) && detail?.id) return `group:${String(detail.id)}`;
+  const participants = Array.isArray(detail?.bots) ? detail.bots.map(String) : [];
+  const id = (participants.length === 1 ? participants[0] : "") || activeBot;
+  return id ? `bot:${id}` : "";
+}
+
+function entryExpanded(key) {
+  return (expandedEntry === null ? defaultExpandedEntry() : expandedEntry) === key;
+}
+
 function botExpanded(bot) {
   const id = String(bot?.id || "");
-  if (!id || closedIds.has(id)) return false;
-  return id === (activeBot || currentTeamBot()?.id || "");
+  return !!id && entryExpanded(`bot:${id}`);
 }
 
 /* The bot whose unified list is on screen: the open session names it when
@@ -260,58 +276,96 @@ function isPinnedBot(botId) {
 function pinControl(row, bot) {
   const pinned = isPinnedBot(bot.id);
   row.classList.toggle("is-pinned", pinned);
-  const actions = document.createElement("span");
-  actions.className = "session-actions";
+  let actions = [...row.children].find((child) => child.className === "session-actions");
+  if (!actions) {
+    actions = document.createElement("span");
+    actions.className = "session-actions";
+    row.append(actions);
+  }
   const pinSvg = '<svg viewBox="0 0 24 24" aria-hidden="true">'
     + '<use href="#g-pin"/></svg>';
   if (bot.id === TEAM_BOT_ID) {
-    const mark = document.createElement("span");
-    mark.className = "session-action is-pinned-mark";
-    mark.innerHTML = pinSvg;
-    mark.title = "Đã ghim";
-    actions.append(mark);
-  } else {
-    const button = rowAction(
-      "session-action is-pin",
-      pinned ? `Bỏ ghim ${bot.name}` : `Ghim ${bot.name} lên đầu`,
-      "",
-      () => {
-        setPin(bot.id, !pinned);
-        render();
-      },
-    );
+    if (!actions.children.length) {
+      const mark = document.createElement("span");
+      mark.className = "session-action is-pinned-mark";
+      mark.innerHTML = pinSvg;
+      mark.title = "Đã ghim";
+      actions.append(mark);
+    }
+    return;
+  }
+  let button = [...actions.children].find((child) => child.classList.contains("is-pin"));
+  if (!button) {
+    button = rowAction("session-action is-pin", "", "", () => {
+      const id = button.dataset.pinId;
+      setPin(id, !isPinnedBot(id));
+      render();
+    });
     button.innerHTML = pinSvg;
-    button.title = pinned ? "Bỏ ghim" : "Ghim lên đầu";
     actions.append(button);
   }
-  row.append(actions);
+  button.dataset.pinId = bot.id;
+  button.setAttribute("aria-label", pinned
+    ? `Bỏ ghim ${bot.name}` : `Ghim ${bot.name} lên đầu`);
+  button.title = pinned ? "Bỏ ghim" : "Ghim lên đầu";
 }
 
-/* Open group letter: the flap holds just the group's Đổi tên/Xóa —
-   the same plain .session-action words session rows get on hover. */
-function groupFlap(session) {
-  const flap = document.createElement("div");
-  flap.className = "team-bot-flap";
-  const title = cleanText(session.title, "Phiên trống");
-  flap.append(
-    rowAction("session-action", `Đổi tên nhóm ${title}`, "Đổi tên",
-      () => openRename(session)),
-    rowAction("session-action is-delete", `Xóa nhóm ${title}`, "Xóa",
-      () => openDelete(session)),
-  );
-  return flap;
-}
-
-/* Avatar slot: the wax-seal mark in the legacy icon column. Colour from
-   the bot's Agent Card tint, state from agent_status; a shared session
-   shows the stacked group mark. */
+/* Avatar slot: the wax-seal mark in the legacy icon column. Colour and
+   glyph follow the stable bot id; state comes from agent_status. */
 function avatarSlot(bot, mini = false, selected = false) {
   const slot = document.createElement("span");
   slot.className = mini ? "team-avatar is-mini" : "team-avatar";
-  slot.style.setProperty("--team-tint", tintVarFor(bot?.id, bot?.tint));
+  slot.style.setProperty("--team-tint", tintVarFor(bot?.id));
   slot.setAttribute("aria-hidden", "true");
+  slot.dataset.markKey = String(bot?.id || "");
   slot.innerHTML = botMark(bot, { selected });
   return slot;
+}
+
+function patchWaxMark(slot, bot, selected) {
+  const mark = slot.querySelector?.(".mk-wax");
+  if (!mark) return;
+  mark.dataset.state = botMarkStateFor(bot);
+  mark.dataset.selected = String(selected);
+}
+
+function patchBotAvatar(slot, bot, selected) {
+  if (!slot) return avatarSlot(bot, false, selected);
+  const key = String(bot?.id || "");
+  slot.className = "team-avatar";
+  slot.style.setProperty("--team-tint", tintVarFor(bot?.id));
+  if (slot.dataset.markKey !== key) {
+    slot.innerHTML = botMark(bot, { selected });
+    slot.dataset.markKey = key;
+  }
+  patchWaxMark(slot, bot, selected);
+  return slot;
+}
+
+function patchGroupAvatar(button, session, selected) {
+  const existing = [...button.children].find((child) =>
+    child.classList?.contains("team-avatar") || child.classList?.contains("session-icon"));
+  const desired = sessionIcon(session, selected);
+  if (!desired) return existing || null;
+  const ids = (session.bots || []).map(String);
+  const members = ids.map((id) => bots.find((bot) => bot.id === id)).filter(Boolean);
+  const key = ids.join(",");
+  const icon = existing || desired;
+  icon.className = desired.className;
+  icon.setAttribute("aria-hidden", "true");
+  if (members.length) icon.style.setProperty("--team-tint", tintVarFor(members[0]?.id));
+  if (icon.dataset.markKey !== key) {
+    icon.innerHTML = desired.innerHTML;
+    icon.dataset.markKey = key;
+  }
+  const stack = icon.querySelector?.(".gm-stack");
+  if (stack) {
+    stack.dataset.selected = String(selected);
+    const lead = icon.querySelector?.('.gm-slot[data-seal-slot="0"] .mk-wax');
+    if (lead && members[0]) lead.dataset.state = botMarkStateFor(members[0]);
+  } else if (members[0]) patchWaxMark(icon, members[0], selected);
+  desired.remove();
+  return icon;
 }
 
 function sessionIcon(session, selected = false) {
@@ -321,7 +375,7 @@ function sessionIcon(session, selected = false) {
     const team = document.createElement("span");
     team.className = "team-avatar is-group";
     const first = members[0];
-    team.style.setProperty("--team-tint", tintVarFor(first?.id, first?.tint));
+    team.style.setProperty("--team-tint", tintVarFor(first?.id));
     team.setAttribute("aria-hidden", "true");
     team.innerHTML = botMarkGroup(members, { selected });
     return team;
@@ -334,63 +388,83 @@ function sessionIcon(session, selected = false) {
 }
 
 /* Agent row: legacy .session-row shape. The avatar slot sits in the icon
-   cell (grid column 1, both rows); the name and the "role · status"
-   line reuse .session-name and <time> verbatim. Selection is a soft
+   cell (grid column 1, both rows); the name and meaningful active status
+   reuse .session-name and <time> verbatim. Idle rows omit the duplicate id.
+   Selection is a soft
    wash pill in the bot's tint (chat.css, scoped to the team list). */
-function botRow(bot) {
-  const row = document.createElement("div");
-  row.className = "session-row";
-  const button = document.createElement("button");
+function botRow(bot, existingRow = null) {
+  const row = existingRow || document.createElement("div");
+  row.className = "session-row team-envelope-header";
+  const button = [...row.children].find((child) => child.classList?.contains("team-bot-item"))
+    || document.createElement("button");
   button.type = "button";
   button.className = "session-item team-bot-item";
   button.dataset.botId = bot.id;
-  button.style.setProperty("--team-tint", tintVarFor(bot.id, bot.tint));
+  button.style.setProperty("--team-tint", tintVarFor(bot.id));
   button.title = bot.role ? `${bot.name} \u00b7 ${bot.role}` : bot.name;
   button.classList.toggle("is-paused", String(bot.status || "") === "paused");
   const current = currentTeamBot();
-  // An open group session owns the single selected row — the bot row that
-  // merely happens to be currentTeamBot must not also read as selected.
   const selected = !!current && current.id === bot.id
     && !isSharedSession(hub?.state?.detail);
   button.classList.toggle("is-active", selected);
   if (selected) button.setAttribute("aria-current", "page");
-  const name = document.createElement("span");
+  else button.removeAttribute("aria-current");
+  const avatar = patchBotAvatar([...button.children].find((child) =>
+    child.classList?.contains("team-avatar")), bot, selected);
+  let name = [...button.children].find((child) => child.classList?.contains("session-name"));
+  if (!name) name = document.createElement("span");
   name.className = "session-name";
-  name.textContent = bot.name;
-  button.append(avatarSlot(bot, false, selected), name);
+  if (name.textContent !== bot.name) name.textContent = bot.name;
+  const content = [avatar, name];
   const sub = botSubLabel(bot);
+  let line = [...button.children].find((child) => child.tagName === "TIME");
   if (sub) {
-    const line = document.createElement("time");
-    line.textContent = sub;
-    button.append(line);
-  }
+    if (!line) line = document.createElement("time");
+    if (line.textContent !== sub) line.textContent = sub;
+    content.push(line);
+  } else line?.remove();
   const seen = botUnread(bot.id);
-  const unread = unreadBadge(seen);
-  if (unread) button.append(unread);
+  let unread = [...button.children].find((child) => child.classList?.contains("team-unread"));
+  if (seen.unread) {
+    if (!unread) unread = unreadBadge(seen);
+    else {
+      unread.classList.toggle("is-dot", seen.count === 0);
+      unread.textContent = seen.count > 0 ? String(seen.count) : "";
+      unread.setAttribute("aria-label", seen.count > 0
+        ? `${seen.count} chưa đọc` : "Có tin chưa đọc");
+    }
+    content.push(unread);
+  } else unread?.remove();
   const expanded = botExpanded(bot);
   button.classList.toggle("is-open", expanded);
+  button.classList.toggle("has-status", !!sub);
   button.setAttribute("aria-expanded", expanded ? "true" : "false");
-  const caret = document.createElement("span");
-  caret.className = "team-bot-caret";
-  caret.setAttribute("aria-hidden", "true");
-  button.append(caret);
+  let caret = [...button.children].find((child) => child.classList?.contains("team-bot-caret"));
+  if (!caret) {
+    caret = document.createElement("span");
+    caret.className = "team-bot-caret";
+    caret.setAttribute("aria-hidden", "true");
+  }
+  content.push(caret);
+  reconcileChildren(button, content);
   const label = statusLabel(bot.status);
   button.setAttribute("aria-label",
     (bot.role ? `${bot.name}, ${bot.role}` : bot.name)
     + (label ? `, ${label}` : "")
     + unreadSuffix(seen));
-  button.addEventListener("click", () => {
-    if (botExpanded(bot)) {
-      // Fold only — the open chat (if this bot's) is untouched.
-      closedIds.add(bot.id);
+  if (!button._teamBotBound) button.addEventListener("click", () => {
+    const id = button.dataset.botId;
+    const key = `bot:${id}`;
+    if (entryExpanded(key)) {
+      expandedEntry = "";
       render();
       return;
     }
-    closedIds.delete(bot.id);
-    freshOpen.add(bot.id);
-    void openBot(bot.id);
+    expandedEntry = key;
+    void openBot(id);
   });
-  row.append(button);
+  button._teamBotBound = true;
+  if (button.parentNode !== row) row.append(button);
   pinControl(row, bot);
   return row;
 }
@@ -401,10 +475,11 @@ function botRow(bot) {
    shared session, the participant names onto one line. Opening works
    like the legacy list: solo rooms confirm the remembered DM, shared
    rooms just open. */
-function unifiedRow(session, botId = "", group = false) {
-  const row = document.createElement("div");
-  row.className = "session-row";
-  const button = document.createElement("button");
+function unifiedRow(session, botId = "", group = false, existingRow = null) {
+  const row = existingRow || document.createElement("div");
+  row.className = group ? "session-row team-group-header" : "session-row";
+  const button = [...row.children].find((child) => child.classList?.contains("team-session-item"))
+    || document.createElement("button");
   button.type = "button";
   button.className = group
     ? "session-item team-session-item team-group-item"
@@ -412,73 +487,80 @@ function unifiedRow(session, botId = "", group = false) {
   button.dataset.sessionId = String(session.id || "");
   if (group) {
     const first = bots.find((bot) => bot.id === String(session.bots?.[0] || ""));
-    button.style.setProperty("--team-tint", tintVarFor(first?.id, first?.tint));
+    button.style.setProperty("--team-tint", tintVarFor(first?.id));
     button.title = `Nhóm chat: ${cleanText(session.title, "Phiên trống")}`;
   }
   const selected = button.dataset.sessionId === hub.state.activeId;
   button.classList.toggle("is-active", selected);
   if (selected) button.setAttribute("aria-current", "page");
-  const name = document.createElement("span");
+  else button.removeAttribute("aria-current");
+  const content = [];
+  if (group) content.push(patchGroupAvatar(button, session, selected));
+  let name = [...button.children].find((child) => child.classList?.contains("session-name"));
+  if (!name) name = document.createElement("span");
   name.className = "session-name";
-  name.textContent = cleanText(session.title, "Phiên trống");
+  const title = cleanText(session.title, "Phiên trống");
+  if (name.textContent !== title) name.textContent = title;
   const names = roomParticipantNames(session, bots);
-  const time = document.createElement("time");
+  let time = [...button.children].find((child) => child.tagName === "TIME");
+  if (!time) time = document.createElement("time");
   time.dateTime = String(session.updated_at || "");
-  time.textContent = [
+  const meta = [
     sessionMetaLine(formatSessionTime(session.updated_at), session.turns),
     names.length > 1 ? names.join(" \u00b7 ") : "",
   ].filter(Boolean).join(" \u00b7 ");
-  if (group) button.append(sessionIcon(session, selected));
-  button.append(name, time);
+  if (time.textContent !== meta) time.textContent = meta;
+  content.push(name, time);
   const seen = sessionUnread(session);
-  const unread = unreadBadge(seen);
-  if (unread) button.append(unread);
+  let unread = [...button.children].find((child) => child.classList?.contains("team-unread"));
   if (seen.unread) {
-    button.setAttribute("aria-label",
-      `${cleanText(session.title, "Phiên trống")}, có tin chưa đọc`);
+    if (!unread) unread = unreadBadge(seen);
+    else {
+      unread.classList.toggle("is-dot", seen.count === 0);
+      unread.textContent = seen.count > 0 ? String(seen.count) : "";
+    }
+    content.push(unread);
+    button.setAttribute("aria-label", `${title}, có tin chưa đọc`);
+  } else {
+    unread?.remove();
+    button.removeAttribute("aria-label");
   }
   if (group) {
     const sid = String(session.id || "");
-    button.classList.toggle("is-open", openGroups.has(sid));
-    button.setAttribute("aria-expanded", openGroups.has(sid) ? "true" : "false");
-    const caret = document.createElement("span");
-    caret.className = "team-bot-caret";
-    caret.setAttribute("aria-hidden", "true");
-    button.append(caret);
+    const expanded = entryExpanded(`group:${sid}`);
+    button.classList.toggle("is-open", expanded);
+    button.setAttribute("aria-expanded", expanded ? "true" : "false");
+    let caret = [...button.children].find((child) => child.classList?.contains("team-bot-caret"));
+    if (!caret) {
+      caret = document.createElement("span");
+      caret.className = "team-bot-caret";
+      caret.setAttribute("aria-hidden", "true");
+    }
+    content.push(caret);
   }
-  button.addEventListener("click", () => {
+  reconcileChildren(button, content);
+  if (!button._teamSessionBound) button.addEventListener("click", () => {
     mainToken += 1;
     exitPicking();
     const sid = button.dataset.sessionId;
-    if (group && openGroups.has(sid)) {
-      // Fold only — the open room is untouched.
-      openGroups.delete(sid);
+    const key = `group:${sid}`;
+    if (group && entryExpanded(key)) {
+      expandedEntry = "";
       render();
       return;
     }
-    if (group) openGroups.add(sid);
+    if (group) expandedEntry = key;
     const opened = (hub?.state?.sessions || [])
       .find((item) => String(item?.id) === sid);
     if (opened && botId && isSoloSession(opened, botId)) rememberDm(botId, sid);
     void hub.loadSession(sid);
   });
-  const title = cleanText(session.title, "Phiên trống");
-  row.append(button);
-  if (group) {
-    // Group letters get the same pin toggle as bot letters — the paper
-    // pin glyph, not a word. Đổi tên/Xóa live in the opened flap.
-    pinControl(row, { id: `g:${button.dataset.sessionId}`, name: title });
-  } else {
-    const actions = document.createElement("span");
-    actions.className = "session-actions";
-    actions.append(rowAction(
-      "session-action", `Đặt tên cho phiên ${title}`, "Đổi tên",
-      () => openRename(session)));
-    actions.append(rowAction(
-      "session-action is-delete", `Xóa phiên ${title}`, "Xóa",
-      () => openDelete(session)));
-    row.append(actions);
-  }
+  button._teamSessionBound = true;
+  if (button.parentNode !== row) row.append(button);
+  if (group) pinControl(row, {
+    id: `g:${button.dataset.sessionId}`,
+    name: cleanText(session.title, "Phiên trống"),
+  });
   return row;
 }
 
@@ -511,7 +593,7 @@ function sharedPicker() {
     });
     const dot = document.createElement("span");
     dot.className = "team-bot-dot";
-    dot.style.setProperty("--team-tint", tintVarFor(bot.id, bot.tint));
+    dot.style.setProperty("--team-tint", tintVarFor(bot.id));
     dot.setAttribute("aria-hidden", "true");
     label.append(box, dot, document.createTextNode(bot.name));
     wrap.append(label);
@@ -563,7 +645,7 @@ async function createShared(botIds) {
   }
 }
 
-/* FE-SESSION-1: no more solo-session creation. The flap button opens the
+/* FE-SESSION-1: no more solo-session creation. The bot row opens the
    bot's fixed DM through the standard openBot resolve (GET
    /api/bots/<id>/dm); groups are created only from the shared flow. */
 
@@ -667,6 +749,68 @@ export function renderTeamSidebar() {
   render();
 }
 
+function reconcileChildren(parent, desired) {
+  desired.forEach((node, index) => {
+    const current = parent.children[index] || null;
+    if (current !== node) parent.insertBefore(node, current);
+  });
+  while (parent.children.length > desired.length) {
+    parent.children[parent.children.length - 1].remove();
+  }
+}
+
+function makeBotCard(bot) {
+  return { key: `bot:${bot.id}`, ...createBotEnvelope(bot, botRow(bot)) };
+}
+
+function makeGroupDossier(session) {
+  const sid = String(session.id || "");
+  const shell = document.createElement("div");
+  shell.className = "team-dossier";
+  const first = bots.find((bot) => bot.id === String(session.bots?.[0] || ""));
+  shell.style.setProperty("--team-tint", tintVarFor(first?.id));
+  const header = unifiedRow(session, "", true);
+  const viewport = document.createElement("div");
+  viewport.className = "team-dossier-viewport";
+  const paper = document.createElement("div");
+  paper.className = "team-dossier-paper";
+  paper.id = `team-group-pocket-${encodeURIComponent(sid)}`;
+  viewport.append(paper);
+  shell.append(header, viewport);
+  return { key: `group:${sid}`, node: shell, header, button: header.children[0], viewport, paper };
+}
+
+function updateGroupPaper(card, session) {
+  let heading = [...card.paper.children].find((child) =>
+    child.classList?.contains("team-dossier-members-heading"));
+  if (!heading) heading = document.createElement("h3");
+  heading.className = "team-dossier-members-heading";
+  if (heading.textContent !== "Các bot tham gia") heading.textContent = "Các bot tham gia";
+  let members = [...card.paper.children].find((child) =>
+    child.classList?.contains("team-dossier-members"));
+  if (!members) members = document.createElement("ul");
+  members.className = "team-dossier-members";
+  const existing = new Map([...members.children].map((member) =>
+    [member.dataset.memberKey, member]));
+  const ids = [...new Set(Array.isArray(session.bots)
+    ? session.bots.map(String).filter(Boolean) : [])];
+  const desired = ids.map((id) => {
+    const key = id;
+    let member = existing.get(key);
+    if (!member) {
+      member = document.createElement("li");
+      member.className = "team-dossier-member";
+      member.dataset.memberId = id;
+      member.dataset.memberKey = key;
+    }
+    const label = bots.find((item) => item.id === id)?.name || id;
+    if (member.textContent !== label) member.textContent = label;
+    return member;
+  });
+  reconcileChildren(members, desired);
+  reconcileChildren(card.paper, [heading, members]);
+}
+
 function render() {
   const section = teamSection();
   if (!section || !bots.length) return;
@@ -675,18 +819,10 @@ function render() {
   if (head) head.textContent = "Đội";
   const list = botList();
   if (!list) return;
-  // Drop a remembered DM that no longer exists (deleted session): the
-  // list is authoritative here, so a missing id is stale, not loading.
-  const me = currentTeamBot();
-  // ONE flat channel list ordered by latest activity (user decision
-  // 2026-10-14): bot channels and group chats interleave purely by
-  // each channel's own newest activity — type never breaks a tie by
-  // putting bots first. A bot entry is its cluster (bot row + the
-  // selected bot's solo sessions under it); its activity is only its
-  // own DM/solo activity, never a group it merely participates in
-  // (that group is a separate channel with its own timestamp).
+  const sessionsNow = hub.state.sessions || [];
   const entries = [];
-  const botActivity = (botId) => sessionsForBot(hub.state.sessions, botId)
+  const wantedKeys = new Set();
+  const botActivity = (botId) => sessionsForBot(sessionsNow, botId)
     .filter((session) => !isSharedSession(session))
     .reduce((max, s) => (String(s.updated_at || "") > max ? String(s.updated_at || "") : max), "");
   const errorNote = (text) => {
@@ -697,96 +833,119 @@ function render() {
     return error;
   };
   bots.forEach((bot) => {
-    const cluster = document.createElement("div");
-    cluster.className = "team-cluster";
-    // The tint lives on the cluster so the flap/sheet paper can take the
-    // bot's colour — they are siblings of the button, not descendants.
-    cluster.style.setProperty("--team-tint", tintVarFor(bot.id, bot.tint));
-    cluster.append(botRow(bot));
-    entries.push({
-      t: botActivity(bot.id),
-      k: String(bot.name || bot.id || ""),
-      id: String(bot.id || ""),
-      node: cluster,
-      pin: isPinnedBot(bot.id),
-    });
-    if (!botExpanded(bot)) return;
+    const key = `bot:${bot.id}`;
+    wantedKeys.add(key);
+    let card = nodeByKey.get(key);
+    if (!card) {
+      card = makeBotCard(bot);
+      nodeByKey.set(key, card);
+    }
+    card.header = botRow(bot, card.header);
+    card.button = card.header.children[0];
+    card.button.setAttribute("aria-controls", card.paper.id);
+    card.node.style.setProperty("--team-tint", tintVarFor(bot.id));
+    const expanded = botExpanded(bot);
+    setBotEnvelopeOpen(card, expanded);
     const rememberedId = getRememberedDm(bot.id);
     if (rememberedId
-      && !(hub.state.sessions || []).some((item) => String(item?.id) === rememberedId)) {
+      && !sessionsNow.some((item) => String(item?.id) === rememberedId)) {
       forgetDmSession(rememberedId);
     }
-    const main = findMainSession(hub.state.sessions, bot.id, rememberedId);
-    // The open envelope's flap: a paper strip joined to the card's bottom
-    // edge holding just the "+ Phiên mới" line; the sheet slides below.
-    const flap = document.createElement("div");
-    flap.className = "team-bot-flap";
-    if (mainError) flap.append(errorNote(mainError));
-    const create = document.createElement("button");
-    create.type = "button";
-    create.className = "team-new-session";
-    create.setAttribute("aria-label", `Mở tin nhắn riêng với ${bot.name}`);
-    create.textContent = "Tin nhắn riêng";
-    create.addEventListener("click", () => void openBot(bot.id));
-    flap.append(create);
-    cluster.append(flap);
-    const sub = document.createElement("div");
-    sub.className = "team-cluster-sessions";
-    if (freshOpen.delete(bot.id)) sub.classList.add("is-fresh");
-    // This bot's private (solo) sessions only. Shared sessions are not
-    // sub-sessions of any bot — they are group chats and render at top
-    // level below (2026-10-14). Thyca's pre-team sessions are simply
-    // Thyca's sessions here. The bot's DM is NOT a row here: the bot
-    // row above already opens it (/api/bots/<id>/dm), so a DM row
-    // duplicated the bot row. unifiedSessionsForBot drops the dm-marked
-    // session; findMainSession additionally resolves the pre-marker DM
-    // (remembered/newest solo) so that fallback window is dropped too.
-    const sessions = unifiedSessionsForBot(hub.state.sessions, bot.id)
+    const main = findMainSession(sessionsNow, bot.id, rememberedId);
+    const description = typeof bot.description === "string"
+      ? bot.description.trim() : "";
+    const sessions = unifiedSessionsForBot(sessionsNow, bot.id)
       .filter((session) => !main || String(session.id) !== String(main.id))
       .filter((session) => !isSharedSession(session));
-    if (!sessions.length) {
-      // A bot with only its DM expands to nothing (the bot row is the DM
-      // entry) — no empty text. The note stays only for a bot with no
-      // sessions at all.
-      if (!sessionsForBot(hub.state.sessions, bot.id).length) {
-        const empty = document.createElement("p");
-        empty.className = "sidebar-state";
-        empty.textContent = "Chưa có phiên.";
-        sub.append(empty);
+    const pageCount = Math.ceil(sessions.length / PAGE_SIZE);
+    const page = Math.min(pageByBot.get(bot.id) || 0, Math.max(0, pageCount - 1));
+    const pageSessions = sessions.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+    const bodyFingerprint = JSON.stringify([
+      description, mainError, hub.state.activeId, page, pageCount,
+      pageSessions.map((session) => [
+        session.id, session.title, session.updated_at, session.turns,
+        roomParticipantNames(session, bots),
+      ]),
+    ]);
+    if (card.bodyFingerprint !== bodyFingerprint) {
+      const oldChildren = [...card.paper.children];
+      const oldRows = new Map(oldChildren
+        .filter((child) => child.classList?.contains("session-row"))
+        .map((child) => [child.children[0]?.dataset.sessionId, child]));
+      const oldDescription = oldChildren.find((child) =>
+        child.classList?.contains("team-bot-description"));
+      const oldError = oldChildren.find((child) =>
+        child.classList?.contains("screen-status"));
+      const oldPager = oldChildren.find((child) =>
+        child.classList?.contains("team-sheet-pager"));
+      const content = [];
+      if (description) {
+        const paragraph = oldDescription || document.createElement("p");
+        paragraph.className = "team-bot-description";
+        if (paragraph.textContent !== description) paragraph.textContent = description;
+        content.push(paragraph);
       }
-    } else {
-      const pageCount = Math.ceil(sessions.length / PAGE_SIZE);
-      const page = Math.min(pageByBot.get(bot.id) || 0, pageCount - 1);
-      sub.append(...sessions
-        .slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE)
-        .map((session) => unifiedRow(session, bot.id)));
-      if (pageCount > 1) sub.append(sheetPager(bot.id, page, pageCount));
+      if (mainError) {
+        const error = oldError || errorNote(mainError);
+        if (error.textContent !== mainError) error.textContent = mainError;
+        content.push(error);
+      }
+      content.push(...pageSessions.map((session) => unifiedRow(
+        session, bot.id, false, oldRows.get(String(session.id)) || null,
+      )));
+      if (pageCount > 1) content.push(sheetPager(bot.id, page, pageCount, oldPager));
+      reconcileChildren(card.paper, content);
+      card.bodyFingerprint = bodyFingerprint;
     }
-    if (sub.childElementCount) cluster.append(sub);
+    card.paper.classList.toggle("has-status", !!botSubLabel(bot));
+    entries.push({
+      t: botActivity(bot.id), k: String(bot.name || bot.id || ""),
+      id: String(bot.id || ""), node: card.node, pin: isPinnedBot(bot.id),
+    });
   });
-  groupSessions(hub.state.sessions).forEach((session) => {
+  const groups = groupSessions(sessionsNow);
+  const liveGroupIds = new Set(groups.map((session) => String(session.id || "")));
+  if (expandedEntry?.startsWith("group:")
+      && !liveGroupIds.has(expandedEntry.slice(6))) expandedEntry = "";
+  groups.forEach((session) => {
     const sid = String(session.id || "");
-    let node = unifiedRow(session, "", true);
-    if (openGroups.has(sid)) {
-      const cluster = document.createElement("div");
-      cluster.className = "team-cluster";
-      const first = bots.find(
-        (bot) => bot.id === String(session.bots?.[0] || ""));
-      cluster.style.setProperty("--team-tint",
-        tintVarFor(first?.id, first?.tint));
-      cluster.append(node, groupFlap(session));
-      node = cluster;
+    const key = `group:${sid}`;
+    wantedKeys.add(key);
+    let card = nodeByKey.get(key);
+    if (!card) {
+      card = makeGroupDossier(session);
+      nodeByKey.set(key, card);
     }
+    card.header = unifiedRow(session, "", true, card.header);
+    card.button = card.header.children[0];
+    card.button.setAttribute("aria-controls", card.paper.id);
+    const first = bots.find((bot) => bot.id === String(session.bots?.[0] || ""));
+    card.node.style.setProperty("--team-tint", tintVarFor(first?.id));
+    const expanded = entryExpanded(`group:${sid}`);
+    card.node.classList.toggle("is-open", expanded);
+    card.button.setAttribute("aria-expanded", expanded ? "true" : "false");
+    card.viewport.setAttribute("aria-hidden", expanded ? "false" : "true");
+    card.viewport.inert = !expanded;
+    card.paper.setAttribute("aria-hidden", expanded ? "false" : "true");
+    card.paper.inert = !expanded;
+    updateGroupPaper(card, session);
     entries.push({
       t: String(session.updated_at || ""),
       k: String(session.title || session.id || ""),
-      id: sid,
-      node,
-      pin: isPinnedBot(`g:${sid}`),
+      id: sid, node: card.node, pin: isPinnedBot(`g:${sid}`),
     });
   });
-  // Pinned bots lead the list (Thyca always first among them — it is
-  // pinned by design); everything else sorts by latest activity.
+  for (const [key, card] of nodeByKey) {
+    if (!wantedKeys.has(key)) {
+      card.node.remove();
+      nodeByKey.delete(key);
+      if (key.startsWith("bot:")) {
+        const id = key.slice(4);
+        if (expandedEntry === key) expandedEntry = "";
+        pageByBot.delete(id);
+      }
+    }
+  }
   entries.sort((a, b) => (Number(b.pin || false) - Number(a.pin || false))
     || ((a.pin && b.pin && a.id !== b.id)
       ? (a.id === TEAM_BOT_ID ? -1 : b.id === TEAM_BOT_ID ? 1 : 0)
@@ -794,7 +953,7 @@ function render() {
     || (a.t === b.t
       ? (a.k.localeCompare(b.k) || a.id.localeCompare(b.id))
       : (a.t < b.t ? 1 : -1)));
-  list.replaceChildren(...entries.map((entry) => entry.node));
+  reconcileChildren(list, entries.map((entry) => entry.node));
   const actions = actionsBox();
   if (actions) {
     actions.replaceChildren();

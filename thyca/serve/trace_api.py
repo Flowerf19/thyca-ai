@@ -144,8 +144,28 @@ def trace_detail_payload(chat: ChatApp, session_id: str, turn_index: int) -> dic
     for t in turns:
         if t.turn_index == turn_index:
             payload = t.to_payload()
+            messages = []
+            for message in t.messages:
+                meta = message.meta or {}
+                if (
+                    message.role == "assistant"
+                    and meta.get("kind") == "message"
+                    and meta.get("bus_event") is not True
+                    and isinstance(meta.get("bot_id"), str)
+                    and meta.get("bot_id")
+                    and isinstance(meta.get("span_id"), str)
+                    and meta.get("span_id")
+                ):
+                    messages.extend(
+                        chat.trace_execution_messages(
+                            session_id, meta["bot_id"], meta["span_id"]
+                        )
+                    )
+                else:
+                    messages.append(message)
             payload["messages"] = [
-                message_dict(m, chat.skills_root, include_args=True) for m in t.messages
+                message_dict(m, chat.skills_root, include_args=True)
+                for m in messages
             ]
             return payload
     raise ValueError("trace not found")

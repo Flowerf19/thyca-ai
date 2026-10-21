@@ -2,10 +2,18 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import TYPE_CHECKING
 
 from thyca.config import REASONING_EFFORTS, Config
 
+if TYPE_CHECKING:
+    from thyca.bots.card import BotCard
+
 TEXT_MAX = 4000
+#: System-generated turn prompts (scheduled tasks, curation, profile
+#: aggregation) carry injected data, so the user-message cap does not fit;
+#: the prompt itself stays bounded by the context budget downstream.
+SYSTEM_TEXT_MAX = 24000
 MODEL_MAX = 200
 
 
@@ -50,6 +58,19 @@ def validate_turn_options(payload: dict) -> tuple[str | None, str | None, bool]:
     return model, effort, retry
 
 
+def resolve_bot_cfg(
+    cfg: Config, card: BotCard, *, model_override: str | None = None
+) -> Config:
+    """Resolve operation > explicit card model > configured default."""
+    card_model = card.model.id if card.model is not None else "default"
+    selected = (
+        model_override
+        if model_override is not None
+        else card_model if card_model != "default" else cfg.defaultModel
+    )
+    return replace(cfg, defaultModel=selected)
+
+
 def overlay_turn_cfg(cfg: Config, model: str | None, effort: str | None) -> Config:
     chosen = cfg.defaultModel if model is None else model
     if chosen != cfg.defaultModel and chosen not in cfg.models:
@@ -76,7 +97,7 @@ def overlay_turn_cfg(cfg: Config, model: str | None, effort: str | None) -> Conf
     return replace(cfg, defaultModel=chosen)
 
 
-def _clean_turn_text(text: object, *, retry: bool) -> str:
+def _clean_turn_text(text: object, *, retry: bool, text_max: int = TEXT_MAX) -> str:
     if retry:
         return ""
     if not isinstance(text, str):
@@ -84,6 +105,6 @@ def _clean_turn_text(text: object, *, retry: bool) -> str:
     cleaned = text.strip()
     if not cleaned:
         raise InvalidTurnText("empty")
-    if len(cleaned) > TEXT_MAX:
+    if len(cleaned) > text_max:
         raise InvalidTurnText("too long")
     return cleaned

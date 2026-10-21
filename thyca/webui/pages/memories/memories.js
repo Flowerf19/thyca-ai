@@ -2,43 +2,53 @@ import { getJson, postJson } from "../../shared/js/http.js";
 import { completeDays, rollingRange } from "../../shared/js/analytics-data.js";
 import { drawBarChart } from "../../shared/js/bar-chart.js";
 import { formatDate, formatDateTime, formatInteger } from "../../shared/js/format.js";
-import { selectMemories } from "../../shared/js/memory-data.js";
+import { memoryScopeMatches, selectMemories } from "../../shared/js/memory-data.js";
+import { botMark, botLookFor, ensureBotAvatarDefs } from "../../shared/js/bot-avatar.js";
+import { createBotEnvelope, setBotEnvelopeOpen } from "../../shared/js/bot-envelope.js";
+
 const el = {
-  list: document.querySelector("#memory-list"),
+  workspace: document.querySelector("#memory-workspace"),
+  list: document.querySelector("#memory-sections"),
   empty: document.querySelector("#memory-empty"),
+  title: document.querySelector("#memory-scope-title"),
+  description: document.querySelector("#memory-scope-description"),
   viewSections: [...document.querySelectorAll(".memory-view")],
   search: document.querySelector("#memory-search"),
   status: document.querySelector("#memory-status"),
-  viewButtons: [...document.querySelectorAll(".session-item[data-view]")],
+  globalNav: document.querySelector("#memory-global-nav"),
+  botNav: document.querySelector("#memory-bot-list"),
 };
 const compact = typeof matchMedia === "function"
   ? matchMedia("(max-width: 56rem)")
   : { matches: false, addEventListener: () => {} };
 
-// 1. Responsive search placement: the search cluster lives in the sidebar on
-// desktop and moves into the bar above the view folds on mobile.
-function placeSearch() {
+function placeControls() {
   const cluster = el.search?.closest(".memory-search-cluster");
   const bar = document.querySelector(".memory-search-bar");
+  const sessions = document.querySelector("#memory-nav");
   if (!cluster) return;
   if (compact.matches) {
     if (bar && cluster.parentNode !== bar) bar.append(cluster);
-  } else {
-    const sessions = document.querySelector(".sessions");
-    const list = sessions?.querySelector(".session-list");
-    if (sessions && list && cluster.nextElementSibling !== list) sessions.insertBefore(cluster, list);
+  } else if (sessions && (cluster.parentNode !== sessions
+    || cluster.nextElementSibling !== el.globalNav)) {
+    sessions.insertBefore(cluster, el.globalNav);
   }
 }
 
 const state = {
   stats: { leaves: [] },
-  view: "overview",
-  // Inline edit state: the edited card re-renders from here, so a search
-  // keystroke or a resize rebuild keeps the draft instead of losing it.
+  statsError: true,
+  scopeId: null,
+  scopeName: "",
+  scopeInvalid: false,
+  bots: [],
+  // Drafts stay in memory while changing scope and reappear when that scope
+  // is selected again; a save/forget/reinforce request cannot change scope.
   editing: null, // { id, sessionId, topic, summary }
-  // True while a save/forget/reinforce request is in flight: one mutation at
-  // a time, editors stay disabled, start/cancel are refused.
   pending: false,
+  scopeToken: 0,
+  statsRequest: 0,
+  statsController: null,
 };
 
 function messageOf(error, fallback) {
@@ -46,21 +56,151 @@ function messageOf(error, fallback) {
 }
 
 function setStatus(message = "", kind = "") {
+  if (!el.status) return;
   el.status.textContent = message;
   el.status.className = `screen-note memory-status screen-status${kind ? ` is-${kind}` : ""}`;
 }
 
 function setBusy(busy) {
-  el.list.setAttribute("aria-busy", String(busy));
-  // Every rendered editor responds, not just the last one created: mobile
-  // renders one editor copy per matching view section.
+  el.list?.setAttribute("aria-busy", String(busy));
   for (const form of document.querySelectorAll(".memory-edit")) {
     for (const control of form.querySelectorAll("button, input, textarea")) control.disabled = busy;
   }
+  for (const button of document.querySelectorAll("[data-memory-scope]")) button.disabled = busy;
 }
 
-// 2. Card render: one memory leaf becomes an article row; the row being
-// edited renders the inline editor instead of its copy block.
+function botRow(bot) {
+  const row = document.createElement("div");
+  row.className = "session-row team-envelope-header";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "session-item team-bot-item";
+  button.dataset.memoryScope = String(bot.id || "");
+  button.setAttribute("aria-label", `Xem nhật ký của ${bot.name || bot.id}`);
+  const avatar = document.createElement("span");
+  avatar.className = "team-avatar";
+  avatar.style.setProperty("--team-tint", `var(--color-${botLookFor(bot).tint})`);
+  avatar.setAttribute("aria-hidden", "true");
+  avatar.innerHTML = botMark(bot);
+  const name = document.createElement("span");
+  name.className = "session-name";
+  name.textContent = bot.name || bot.id;
+  const role = document.createElement("time");
+  role.textContent = bot.role || bot.id;
+  const caret = document.createElement("span");
+  caret.className = "team-bot-caret";
+  caret.setAttribute("aria-hidden", "true");
+  button.append(avatar, name, role, caret);
+  row.append(button);
+  button.addEventListener("click", () => selectScope(bot.id, bot.name));
+  return row;
+}
+
+function renderScopes() {
+  if (!el.botNav) return;
+  ensureBotAvatarDefs();
+  const active = state.scopeId || "";
+  const global = el.globalNav?.querySelector("[data-memory-scope='']");
+  if (global) {
+    global.classList.toggle("is-active", !active && !state.scopeInvalid);
+    global.setAttribute("aria-pressed", String(!active && !state.scopeInvalid));
+    if (!active && !state.scopeInvalid) global.setAttribute("aria-current", "page");
+    else global.removeAttribute("aria-current");
+    global.disabled = state.pending;
+  }
+  const old = new Map([...el.botNav.children].map((card) => [card.dataset.botId, card]));
+  const desired = state.bots.map((bot) => {
+    let card = old.get(bot.id);
+    if (!card) {
+      const envelope = createBotEnvelope(bot, botRow(bot));
+      card = envelope.node;
+      card.dataset.botId = bot.id;
+      card._envelope = envelope;
+    } else {
+      const button = card._envelope.button;
+      const row = botRow(bot);
+      const freshButton = row.children[0];
+      const avatar = freshButton.children[0];
+      const existingAvatar = button.children[0];
+      if (existingAvatar) {
+        existingAvatar.innerHTML = avatar.innerHTML;
+        existingAvatar.style.setProperty("--team-tint", `var(--color-${botLookFor(bot).tint})`);
+      }
+      button.children[1].textContent = bot.name || bot.id;
+      button.children[2].textContent = bot.role || bot.id;
+      button.setAttribute("aria-label", `Xem nhật ký của ${bot.name || bot.id}`);
+    }
+    card._envelope ||= {
+      node: card,
+      header: card.children[0],
+      button: card.children[0].children[0],
+      viewport: card.children[1],
+      paper: card.children[1].children[0],
+    };
+    const description = bot.description?.trim();
+    let note = card._envelope.paper.querySelector(".team-bot-description");
+    if (description) {
+      if (!note) {
+        note = document.createElement("p");
+        note.className = "team-bot-description";
+      }
+      note.textContent = description;
+      card._envelope.paper.replaceChildren(note);
+    } else if (note) card._envelope.paper.replaceChildren();
+    card._envelope.button.classList.toggle("is-active", bot.id === active);
+    if (bot.id === active) card._envelope.button.setAttribute("aria-current", "page");
+    else card._envelope.button.removeAttribute("aria-current");
+    setBotEnvelopeOpen(card._envelope, bot.id === active);
+    card._envelope.button.disabled = state.pending;
+    return card;
+  });
+  el.botNav.replaceChildren(...desired);
+}
+
+function scopeUrl(path, botId = state.scopeId) {
+  return botId ? `${path}?bot_id=${encodeURIComponent(botId)}` : path;
+}
+
+const BOT_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+function replaceScopeUrl(botId) {
+  const url = new URL(location.href);
+  if (botId) url.searchParams.set("bot_id", botId);
+  else url.searchParams.delete("bot_id");
+  history.replaceState(history.state, "", `${url.pathname}${url.search}${url.hash}`);
+}
+
+function selectScope(botId = null, botName = "") {
+  const nextId = botId || null;
+  if (state.pending || (nextId && (nextId.length > 64 || !BOT_ID_PATTERN.test(nextId)))) return false;
+  if (nextId && state.bots.length && !state.bots.some((bot) => bot.id === nextId)) return false;
+  if (nextId === state.scopeId && !state.scopeInvalid) return true;
+  const changing = new CustomEvent("memory-scope-before-change", {
+    cancelable: true,
+    detail: { botId: nextId },
+  });
+  document.dispatchEvent(changing);
+  if (changing.defaultPrevented) return false;
+  state.scopeId = nextId;
+  state.scopeInvalid = false;
+  state.scopeName = botName || state.bots.find((bot) => bot.id === nextId)?.name || nextId || "";
+  state.scopeToken += 1;
+  state.stats = { leaves: [] };
+  state.statsError = true;
+  replaceScopeUrl(nextId);
+  el.empty.hidden = true;
+  el.title.textContent = nextId ? `Nhật ký của ${state.scopeName}` : "Nhật ký của bạn";
+  el.description.textContent = nextId
+    ? `Những trang bộ nhớ thuộc bot ${state.scopeName}.`
+    : "Những trang Thyca ghi lại từ các cuộc trò chuyện.";
+  render();
+  document.dispatchEvent(new CustomEvent("memory-scope-changed", {
+    detail: { botId: nextId },
+  }));
+  void loadStats();
+  return true;
+}
+
 function memoryCard(memory) {
   const article = document.createElement("article");
   article.className = "memory-card";
@@ -69,8 +209,6 @@ function memoryCard(memory) {
   time.textContent = memory.date === "Không rõ ngày" ? memory.date : formatDate(memory.date);
   article.append(time);
   if (state.editing?.id === memory.id) {
-    // Edit-in-place: the card turns into the editor on the page itself —
-    // no dialog. The date gutter and grid stay untouched.
     article.classList.add("is-editing");
     article.append(editForm(memory));
     return article;
@@ -106,11 +244,6 @@ function memoryCard(memory) {
   return article;
 }
 
-// 3. Inline editor: the card turns into the edit form in place. The draft
-// lives in state.editing so re-renders never lose it; focus follows the
-// visible copy on mobile (one editor copy per view section).
-// The editor lives on the card itself: same entry grid, boxless fields that
-// only gain a dashed underline on hover/focus.
 function editForm(memory) {
   const form = document.createElement("form");
   form.className = "memory-edit";
@@ -166,8 +299,11 @@ function editForm(memory) {
     event.preventDefault();
     const topic = state.editing.topic.trim();
     const summary = state.editing.summary.trim();
-    if (!topic || !summary) return;
-    void mutateMemory("/api/memory/update", { session_id: state.editing.sessionId, topic, summary }, "Đã cập nhật trang.");
+    if (topic && summary) {
+      void mutateMemory("/api/memory/update", {
+        session_id: state.editing.sessionId, topic, summary,
+      }, "Đã cập nhật trang.");
+    }
   });
   form.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !event.isComposing) {
@@ -178,15 +314,12 @@ function editForm(memory) {
   return form;
 }
 
-// Mobile renders one editor copy per matching view section. Focus follows the
-// copy the user actually opened, and cancel puts focus back on that row's
-// action button. Both capture their section before render detaches the row.
 function firstVisible(nodes) {
   return nodes.find((node) => node.offsetParent !== null) ?? null;
 }
 
 function startEdit(memory, origin) {
-  if (state.pending) return; // a mutation is in flight; the draft must not move
+  if (state.pending) return;
   const section = origin?.closest(".memory-view") ?? null;
   state.editing = { id: memory.id, sessionId: memory.sessionId, topic: memory.title, summary: memory.description };
   render();
@@ -206,7 +339,6 @@ function cancelEdit(origin) {
   (firstVisible(actions) ?? actions[0])?.focus();
 }
 
-// 4. Overview: 30-day bar chart plus the three stat cards.
 const SVG_NS = "http://www.w3.org/2000/svg";
 let overviewSvg = null;
 const chartObserver = typeof ResizeObserver === "function"
@@ -220,8 +352,6 @@ function drawOverviewChart() {
     const day = String(leaf?.timeline_day || "");
     if (/^\d{4}-\d{2}-\d{2}$/.test(day)) counts.set(day, (counts.get(day) || 0) + 1);
   }
-  // completeDays zero-fills the 30-day window; days without data come back
-  // without `value`, so coerce to 0.
   const rows = completeDays([...counts].map(([day, value]) => ({ day, value })), rollingRange(30))
     .map(({ day, value }) => ({ day, value: value || 0 }));
   drawBarChart(overviewSvg, rows.map((row) => ({
@@ -246,16 +376,16 @@ function overviewChartCard() {
   return article;
 }
 
-function overviewCards() {
+function overviewStats() {
   const leaves = state.stats.leaves;
-  const pages = state.stats.total ?? leaves.length;
-  const uses = leaves.reduce((sum, leaf) => sum + Math.max(0, Number(leaf.get_count) || 0), 0);
-  const searches = leaves.reduce((sum, leaf) => sum + Math.max(0, Number(leaf.search_count) || 0), 0);
-  return [
-    ["Mẩu nhật ký", pages],
-    ["Lần dùng", uses],
-    ["Lần tìm", searches],
-  ].map(([title, count]) => {
+  const values = [
+    ["Mẩu nhật ký", state.stats.total ?? leaves.length],
+    ["Lần dùng", leaves.reduce((sum, leaf) => sum + Math.max(0, Number(leaf.get_count) || 0), 0)],
+    ["Lần tìm", leaves.reduce((sum, leaf) => sum + Math.max(0, Number(leaf.search_count) || 0), 0)],
+  ];
+  const wrap = document.createElement("div");
+  wrap.className = "memory-overview";
+  for (const [title, count] of values) {
     const article = document.createElement("article");
     article.className = "screen-card";
     const heading = document.createElement("h3");
@@ -263,136 +393,177 @@ function overviewCards() {
     const value = document.createElement("strong");
     value.textContent = formatInteger(count);
     article.append(heading, value);
-    return article;
-  });
-}
-
-function overviewStats() {
-  const wrap = document.createElement("div");
-  wrap.className = "memory-overview";
-  wrap.append(...overviewCards());
+    wrap.append(article);
+  }
   return wrap;
 }
 
-// 5. Render dispatch + data: per-view rows, desktop/mobile render, stats
-// load, single-flight mutations, and event binding.
 function renderRows(view) {
   const rows = selectMemories(state.stats.leaves, { view, query: el.search.value });
-  // Dates live in each entry's left gutter, so the day view needs no separate
-  // day headings between groups.
-  const nodes = rows.map((memory) => memoryCard(memory));
-  return { rows, nodes };
+  return rows.map((memory) => memoryCard(memory));
 }
 
 function render() {
-  if (compact.matches) {
-    // Mobile: every view is its own collapsible section on one scrolling page.
-    el.list.hidden = true;
-    el.empty.hidden = true;
-    for (const section of el.viewSections) {
-      section.hidden = false;
-      const body = section.querySelector(".memory-view-body");
-      if (section.dataset.view === "overview") {
-        body.replaceChildren(overviewChartCard(), overviewStats());
-        continue;
-      }
-      const { nodes } = renderRows(section.dataset.view);
-      body.replaceChildren(...nodes);
-      if (!nodes.length) {
-        const note = document.createElement("p");
-        note.className = "screen-note";
-        note.textContent = "Không tìm thấy mẩu nhật ký phù hợp.";
-        body.append(note);
-      }
+  if (!el.list) return;
+  placeControls();
+  for (const section of el.viewSections) {
+    const body = section.querySelector(".memory-view-body");
+    if (section.dataset.view === "overview") {
+      if (state.statsError) {
+        chartObserver?.disconnect();
+        overviewSvg = null;
+        body.replaceChildren();
+      } else body.replaceChildren(overviewChartCard(), overviewStats());
+      continue;
     }
-  } else {
-    for (const section of el.viewSections) section.hidden = true;
-    if (state.view === "overview") {
-      el.list.replaceChildren(overviewChartCard(), overviewStats());
-      el.list.hidden = false;
-      el.empty.hidden = true;
-    } else {
-      const { rows, nodes } = renderRows(state.view);
-      el.list.replaceChildren(...nodes);
-      el.list.hidden = false;
-      el.empty.hidden = rows.length > 0;
-      el.empty.textContent = "Không tìm thấy mẩu nhật ký phù hợp.";
+    const nodes = renderRows(section.dataset.view);
+    body.replaceChildren(...nodes);
+    if (!nodes.length) {
+      const note = document.createElement("p");
+      note.className = "screen-note memory-section-empty";
+      note.textContent = el.search.value
+        ? "Không tìm thấy mẩu nhật ký phù hợp."
+        : "Chưa có mẩu nhật ký trong mục này.";
+      body.append(note);
     }
   }
-  el.viewButtons.forEach((button) => {
-    const active = button.dataset.view === state.view;
-    button.classList.toggle("is-active", active);
-    button.setAttribute("aria-pressed", String(active));
-  });
-  // A re-render while a mutation is in flight (search keystroke, resize,
-  // view switch) must rebuild the editor copies in the busy state, not live.
   if (state.pending) setBusy(true);
+  renderScopes();
 }
-compact.addEventListener("change", () => {
-  placeSearch();
-  render();
-});
 
 async function loadStats({ quiet = false } = {}) {
+  const scopeToken = state.scopeToken;
+  const request = ++state.statsRequest;
+  state.statsController?.abort();
+  const controller = new AbortController();
+  state.statsController = controller;
   if (!quiet) setStatus("Đang đọc bộ nhớ…");
-  el.list.setAttribute("aria-busy", "true");
+  el.workspace.setAttribute("aria-busy", "true");
+  const requestedScope = state.scopeId;
   try {
-    const stats = await getJson("/api/memory/stats");
-    state.stats = {
-      ...stats,
-      leaves: Array.isArray(stats.leaves) ? stats.leaves : [],
-    };
+    const stats = await getJson(scopeUrl("/api/memory/stats", requestedScope), { signal: controller.signal });
+    if (scopeToken !== state.scopeToken || request !== state.statsRequest) return false;
+    if (!memoryScopeMatches(stats, requestedScope)) {
+      throw new Error("Phản hồi bộ nhớ không khớp phạm vi đã chọn. Hãy làm mới trang để đồng bộ máy chủ.");
+    }
+    state.stats = { ...stats, leaves: Array.isArray(stats.leaves) ? stats.leaves : [] };
+    state.statsError = false;
+    el.empty.hidden = true;
     render();
     setStatus();
+    return true;
   } catch (error) {
-    el.list.replaceChildren();
-    // Mobile renders into the view sections, not #memory-list: clear those
-    // too or stale cards survive a failed reload on compact screens.
-    for (const section of el.viewSections) {
-      section.querySelector(".memory-view-body")?.replaceChildren();
-    }
+    if (scopeToken !== state.scopeToken || request !== state.statsRequest) return false;
+    state.stats = { leaves: [] };
+    state.statsError = true;
+    render();
     el.empty.hidden = false;
     el.empty.textContent = messageOf(error, "Không tải được bộ nhớ.");
     setStatus(messageOf(error, "Không tải được bộ nhớ."), "error");
+    return false;
   } finally {
-    el.list.setAttribute("aria-busy", "false");
+    if (scopeToken === state.scopeToken && request === state.statsRequest) {
+      el.workspace.setAttribute("aria-busy", "false");
+      if (state.statsController === controller) state.statsController = null;
+    }
   }
 }
 
+async function loadRoster() {
+  try {
+    const payload = await getJson("/api/bots");
+    const roster = Array.isArray(payload) ? payload : payload?.bots;
+    state.bots = (Array.isArray(roster) ? roster : [])
+      .filter((bot) => bot && typeof bot.id === "string" && bot.id);
+    renderScopes();
+    return true;
+  } catch {
+    state.bots = [];
+    renderScopes();
+    return false;
+  }
+}
+
+function initialBotScope() {
+  const ids = new URLSearchParams(location.search).getAll("bot_id");
+  if (!ids.length) return { present: false };
+  const id = ids.length === 1 ? ids[0] : "";
+  return {
+    present: true,
+    id,
+    valid: Boolean(id && id.length <= 64 && BOT_ID_PATTERN.test(id)),
+  };
+}
+
+function rejectInitialScope(message) {
+  state.scopeInvalid = true;
+  state.stats = { leaves: [] };
+  state.statsError = true;
+  state.scopeToken += 1;
+  state.statsRequest += 1;
+  state.statsController?.abort();
+  el.title.textContent = "Không thể mở nhật ký bot";
+  el.description.textContent = "Không thể xác thực phạm vi bot trong liên kết này.";
+  el.empty.hidden = false;
+  el.empty.textContent = message;
+  render();
+  setStatus(message, "error");
+  el.workspace?.setAttribute("aria-busy", "false");
+}
+
 async function mutateMemory(path, body, success) {
-  if (state.pending) return; // one mutation at a time; no duplicate requests
-  const draft = state.editing; // identity: only the submitted draft may be cleared
+  if (state.pending) return;
+  const draft = state.editing;
   state.pending = true;
   setBusy(true);
   setStatus("Đang lưu…");
   try {
     await postJson(path, body);
-    // A draft started after this request began keeps its text.
     if (state.editing === draft) state.editing = null;
-    await loadStats({ quiet: true });
-    setStatus(success, "success");
+    const refreshed = await loadStats({ quiet: true });
+    if (refreshed) setStatus(success, "success");
   } catch (error) {
-    // Failure keeps the draft on screen, re-enabled.
     setStatus(messageOf(error, "Không lưu được."), "error");
   } finally {
     state.pending = false;
     setBusy(false);
+    renderScopes();
   }
 }
 
 function bind() {
-  placeSearch();
-  el.search.addEventListener("input", render);
-  el.viewButtons.forEach((button) => {
-    button.addEventListener("click", () => {
-      state.view = button.dataset.view || "day";
-      render();
-    });
+  placeControls();
+  el.search?.addEventListener("input", render);
+  el.globalNav?.querySelector("[data-memory-scope='']")?.addEventListener("click", () => selectScope(null));
+  document.addEventListener("thyca:memory-scope", (event) => {
+    const detail = event.detail || {};
+    detail.accepted = selectScope(detail.botId ?? null, detail.botName || "");
+  });
+  compact.addEventListener("change", () => {
+    placeControls();
+    render();
   });
 }
 
-if (el.list) {
-  // Not on memories.html (e.g. Node harness): els are null, nothing to bind.
+async function initialize() {
   bind();
+  const initial = initialBotScope();
+  if (initial.present) {
+    if (!initial.valid) {
+      rejectInitialScope("Mã bot trong liên kết không hợp lệ. Chọn Tổng quan hoặc làm mới trang.");
+      return;
+    }
+    const rosterAvailable = await loadRoster();
+    const bot = state.bots.find((item) => item.id === initial.id);
+    if (!rosterAvailable || !bot) {
+      rejectInitialScope("Không thể xác thực bot trong liên kết. Hãy làm mới trang hoặc chọn Tổng quan.");
+      return;
+    }
+    selectScope(bot.id, bot.name);
+    return;
+  }
+  if (!compact.matches) void loadRoster();
   void loadStats();
 }
+
+if (el.list) void initialize();

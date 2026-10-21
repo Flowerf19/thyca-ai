@@ -127,3 +127,23 @@ def emit_event(sink: EventSink | None, event: TurnEvent) -> None:
     except Exception:
         # Telemetry must never break a turn; do not log (could leak).
         pass
+
+
+def wire_retry_events(connect, event_sink: EventSink | None, *, bot_id: str) -> None:
+    """Surface provider transient retries as non-error, attributed events."""
+    setter = getattr(connect, "set_retry_hook", None)
+    if not callable(setter):
+        return
+
+    def on_retry(attempt: int, max_attempts: int) -> None:
+        emit_event(
+            event_sink,
+            TurnEvent(
+                type="llm.retry",
+                attempt=attempt,
+                max_attempts=max_attempts,
+                bot_id=bot_id,
+            ),
+        )
+
+    setter(on_retry)

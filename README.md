@@ -111,3 +111,7 @@ Nhìn xa hơn: `.agents/README.md` (hướng dẫn cho agent contributor), `.age
 ## Đang ở giai đoạn nào?
 
 WebUI và CLI đang ở giai đoạn trước beta (pre-beta), bộ nhớ L2 chạy ổn định, có usage/cost tracking. Chưa làm: Telegram/Discord, subagent, plan mode, confirmation gate, vector/semantic search (đã cân nhắc và bỏ — lexical đủ cho hiện tại).
+
+## License
+
+Released under the [MIT License](LICENSE). Copyright (c) 2026 Nguyễn Hoà (Flowerf19).

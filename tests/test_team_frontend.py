@@ -1294,10 +1294,11 @@ def test_shell_markup_header_sidebar_and_dialogs(node: str) -> None:
     assert 'class="page-links"' in header
     assert 'data-page-link="memories" class="is-current" aria-current="page"' in header
     assert 'data-page-link="chat"' in header and 'data-page-link="settings"' in header
-    # The "Backend trực tiếp" prototype badge and the header menu button did
-    # not survive the rebuild.
+    # The "Backend trực tiếp" prototype badge did not survive the rebuild;
+    # the menu button came back as the mobile-only sidebar trigger.
     assert 'prototype-badge' not in header
-    assert 'menu-button' not in header
+    assert 'class="icon-button menu-button"' in header
+    assert 'aria-controls="chat-sidebar"' in header
     assert 'class="sessions-heading"' in side and '>Đội<' in side
     assert 'class="bot-count"' in side
     assert 'class="session-list" id="team-bot-list"' in side

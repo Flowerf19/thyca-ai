@@ -1091,17 +1091,21 @@ def test_chat_mobile_pick_pattern() -> None:
     """On mobile the bot/session list is an off-canvas overlay, not a separate
     pick screen: `.mobile-open` slides it in over the content, the backdrop
     or Esc closes it, and loading a session closes it too — the same shared
-    wiring every page gets from share/shell-app.js. No page ships a
-    .menu-button trigger anymore (the shared header dropped it), so the
-    wiring touches it only through optional chaining."""
+    wiring every page gets from share/shell-app.js. The header's
+    .menu-button is the mobile-only trigger (hidden on desktop)."""
     html = (WEBUI / "ui" / "chat" / "index.html").read_text(encoding="utf-8")
     chat = (WEBUI / "ui" / "chat" / "js" / "chat.js").read_text(encoding="utf-8")
     shell_app = (WEBUI / "ui" / "share" / "shell-app.js").read_text(encoding="utf-8")
     sidebar_css = (WEBUI / "ui" / "share" / "sidebar.css").read_text(encoding="utf-8")
+    base_css = (WEBUI / "ui" / "share" / "base.css").read_text(encoding="utf-8")
 
     assert 'class="sidebar" id="chat-sidebar"' in html
     assert 'id="mobile-overlay"' in html
-    assert "menu-button" not in html
+    assert 'class="icon-button menu-button"' in html
+    assert 'aria-controls="chat-sidebar"' in html
+    # Hidden on desktop, revealed under the 850px breakpoint.
+    assert ".menu-button{display:none}" in base_css
+    assert ".menu-button{display:inline-flex}" in base_css
     assert "screen-shell" not in html
     # The pick-shell two-pane pattern is gone: under 850px the sidebar sits
     # translated off-canvas until .mobile-open slides it over the content.
@@ -1111,9 +1115,10 @@ def test_chat_mobile_pick_pattern() -> None:
     assert "function closeMobile" in shell_app
     assert "mobile-open" in shell_app
     assert "$('#mobile-overlay').onclick = closeMobile" in shell_app
-    # The menu button is optional in the shared wiring — pages that don't
-    # ship one still get Esc/backdrop/session-load closing for free.
+    # The menu button toggles the overlay on mobile; the wiring uses optional
+    # chaining so it stays safe if a page ever drops the element.
     assert "$('.menu-button')" in shell_app
+    assert "$('.menu-button')?.setAttribute" in shell_app
     assert "matchMedia('(max-width:850px)')" in shell_app
     # Opening a session (group row tap, deep link, drawer row) reveals the
     # conversation by closing the overlay.

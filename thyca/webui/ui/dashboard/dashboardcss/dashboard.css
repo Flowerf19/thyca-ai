@@ -15,6 +15,7 @@
    keeps the full width instead of breaking mid-phrase. */
 .dashboard-shell .page-nav{flex-wrap:wrap}
 .dashboard-shell .page-title{flex:1 1 440px}
+@media(max-width:850px){.dashboard-shell .page-title{flex-basis:auto}}
 .dashboard-shell .page-actions{row-gap:7px}
 .range-field{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--muted)}
 .range-field input{border:1px solid #d1c1a2;border-radius:8px;background:#fff9ea;color:var(--ink);padding:7px 8px;font:12px var(--sans)}

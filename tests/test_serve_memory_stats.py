@@ -96,7 +96,6 @@ def test_stats_json_and_static(tmp_path: Path) -> None:
         # also owns the stats/leaves rendering and the leaf actions.
         assert b'id="memory-stats"' in memory_js
         assert b'id="memory-leaves"' in memory_js
-        assert b'id="memory-bot"' in memory_js
         assert b'id="memory-search"' in memory_js
         assert b'data-act="reinforce"' in memory_js
         assert b'data-act="edit"' in memory_js
@@ -105,6 +104,18 @@ def test_stats_json_and_static(tmp_path: Path) -> None:
         assert b"'/api/memory/update'" in memory_js
         assert b"'/api/memory/reinforce'" in memory_js
         assert b"'/api/memory/forget'" in memory_js
+        # The old #memory-bot select is gone: kind/usage filter through the
+        # ghost selects, bot scope is a sidebar pick (selectBot -> ?bot=<id>)
+        # shown as a scope card with a "Bỏ lọc" clear, and long leaf lists
+        # page 60 at a time through .mem-pager.
+        assert b'id="memory-bot"' not in memory_js
+        assert b'id="memory-kind"' in memory_js
+        assert b'id="memory-use"' in memory_js
+        assert b'id="memory-scope-card"' in memory_js
+        assert b'mem-scope-clear' in memory_js
+        assert b"'?bot=' + encodeURIComponent" in memory_js
+        assert b'LEAF_PAGE = 60' in memory_js
+        assert b'mem-pager' in memory_js
         with urlopen(_url(httpd, "/ui/share/data.js"), timeout=2) as response:
             shared_data = response.read()
         assert b"getJson('/api/bots')" in shared_data
@@ -323,27 +334,34 @@ def test_default_webui_has_index() -> None:
 
 
 def test_profile_screen_renders_markdown() -> None:
-    """Hồ sơ is its own screen: hash-routed file rail + markdown body.
+    """Hồ sơ is its own screen: one tab per relationship ("Bạn và <bot>") —
+    the shared tab renders the canonical files as markdown cards, other bots
+    a read-only TWIN.md card.
 
     In the rebuilt UI the page is a shell — emitShell('profile') injects the
-    shared header/sidebar and profile.js fills .workspace — so the rail,
-    markdown pipeline and edit dialog are asserted on the files that now own
-    them (script for page markup, share/shell.js for navigation)."""
+    shared header/sidebar and profile.js fills .workspace — so the tab/doc
+    markup, markdown pipeline and edit dialog are asserted on the files that
+    now own them (script for page markup, share/util.js for navigation)."""
     html = (WEBUI / "ui" / "profile" / "index.html").read_text(encoding="utf-8")
     script = (WEBUI / "ui" / "profile" / "js" / "profile.js").read_text(encoding="utf-8")
     css = (WEBUI / "ui" / "profile" / "profilecss" / "profile.css").read_text(encoding="utf-8")
-    shell = (WEBUI / "ui" / "share" / "shell.js").read_text(encoding="utf-8")
+    util = (WEBUI / "ui" / "share" / "util.js").read_text(encoding="utf-8")
     shell_css = (WEBUI / "ui" / "share" / "app-shell.css").read_text(encoding="utf-8")
     memories = (WEBUI / "ui" / "memories" / "js" / "memories.js").read_text(encoding="utf-8")
     memories_html = (WEBUI / "ui" / "memories" / "index.html").read_text(encoding="utf-8")
 
-    # Navigation is the shared SHELL_PAGES table, one row per screen.
-    assert "['profile', 'Hồ sơ', '../profile/index.html']" in shell
+    # Navigation is the shared SHELL_PAGES table, one row per screen — it
+    # lives in util.js so chat's static markup renders the same nav.
+    assert "['profile', 'Hồ sơ', '../profile/index.html']" in util
     assert "emitShell('profile')" in html
     assert 'src="js/profile.js"' in html
     assert "../share/shell.js" in html
-    # The file rail is markup the script injects into the shell's .workspace.
-    assert 'id="profile-nav"' in script
+    # The script fills the shell's .workspace: sidebar bot cards act as the
+    # tabs ("Bạn và <bot>"), the shared (thyca) tab carrying the editable
+    # canonical docs.
+    assert 'id="profile-root"' in script
+    assert "'Bạn và '" in script
+    assert "sharedBotId" in script
     # The edit dialog is still one dialog with a real editor textarea — its
     # larger footprint is page CSS, not a shared dialog size.
     assert 'id="edit-dialog"' in html
@@ -360,20 +378,23 @@ def test_profile_screen_renders_markdown() -> None:
     assert 'data-view="profile"' not in memories_html
     assert "/api/memory/canonical" not in memories
 
-    # Switching files must not rebuild the list: the removed button would take
-    # keyboard focus with it, and the loader status must not outlive the load.
-    assert "function markNav()" in script
-    show_body = script[script.index("function show(") : script.index("async function loadFiles")]
-    assert "markNav();" in show_body
-    assert "renderNav();" not in show_body
+    # Switching tabs re-renders the docs, deep-links ?bot=<id>, and a #<file>
+    # hash scrolls the shared tab to that card — the loader status must not
+    # outlive the load.
+    show_body = script[script.index("function showTab") : script.index("async function loadFiles")]
+    assert "renderContent();" in show_body
+    assert "'?bot=' + encodeURIComponent" in show_body
+    assert "scrollIntoView" in show_body
     load_body = script[script.index("async function loadFiles") : script.index("function setBusy")]
-    assert "renderNav();" in load_body
-    assert "decodeHash()" in load_body
-    assert "setStatus(el.status);" in show_body
+    assert "selectCanonical(stats.files)" in load_body
+    assert "renderContent();" in load_body
+    assert "setStatus(el.status);" in load_body
     # A stray escape in the hash must not throw out of the hashchange handler;
     # the guard is a local try/catch helper in profile.js now.
     assert "function decodeHash()" in script
     assert "try { return decodeURIComponent" in script
+    assert "addEventListener('hashchange'" in script
+    assert "'file-' + wanted" in script
 
     # Blanking a profile is a real action, so it asks first rather than being
     # blocked by native `required` validation.
@@ -381,8 +402,8 @@ def test_profile_screen_renders_markdown() -> None:
     assert "required" not in html
     assert 'confirm(`Xoá trắng nội dung “${name}”?`)' in script
 
-    # Switching files moves focus to the nav button, whose own label announces
-    # the file; re-reading a whole file body would be noise.
+    # Switching tabs moves focus to the sidebar bot card, whose own label
+    # announces the bot; re-reading a whole file body would be noise.
     assert 'id="profile-content" aria-live' not in script
 
     # Heading and file card share the surface width (no centred 75% column),
@@ -391,11 +412,15 @@ def test_profile_screen_renders_markdown() -> None:
     assert ".page-status[hidden]" in shell_css
     assert "node.hidden = !text" in script
 
-    # Rail rows are .profile-file buttons carrying the file's title + blurb —
-    # the old shared .session-item grid did not survive the rebuild.
-    assert 'class="profile-file"' in script
-    assert 'aria-current="page"' in script
-    assert ".profile-file" in css
+    # Canonical files render as .profile-doc paper cards with a data-edit
+    # button; non-shared bots get a read-only .profile-bot TWIN.md card —
+    # the old .profile-file rail and .session-item grid did not survive.
+    assert 'class="paper-card profile-doc"' in script
+    assert 'data-edit="' in script
+    assert ".profile-doc" in css
+    assert ".profile-doc + .profile-doc" in css
+    assert 'class="paper-card profile-bot"' in script
+    assert "profile-readonly" in script
     assert "session-body" not in script
 
 

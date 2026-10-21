@@ -890,7 +890,10 @@ def test_chat_nav_opens_new_session() -> None:
     assert 'id="composer"' in html
 
     # Clicking + fills and shows the dialog — it must not hit the network.
-    open_body = sidebar[sidebar.index("$('#team-shared-create').onclick"):]
+    # The button only exists in chat's static markup, so the shared sidebar
+    # guards before binding it.
+    assert "const teamSharedCreate=$('#team-shared-create');" in sidebar
+    open_body = sidebar[sidebar.index("teamSharedCreate.onclick"):]
     open_body = open_body[: open_body.index("\n")]
     assert "$('#group-dialog').showModal()" in open_body
     assert "getJson" not in open_body
@@ -1086,9 +1089,11 @@ def test_compact_over_http(tmp_path: Path) -> None:
 
 def test_chat_mobile_pick_pattern() -> None:
     """On mobile the bot/session list is an off-canvas overlay, not a separate
-    pick screen: the menu button slides it in (`.mobile-open`), the backdrop
+    pick screen: `.mobile-open` slides it in over the content, the backdrop
     or Esc closes it, and loading a session closes it too — the same shared
-    wiring every page gets from share/shell-app.js."""
+    wiring every page gets from share/shell-app.js. No page ships a
+    .menu-button trigger anymore (the shared header dropped it), so the
+    wiring touches it only through optional chaining."""
     html = (WEBUI / "ui" / "chat" / "index.html").read_text(encoding="utf-8")
     chat = (WEBUI / "ui" / "chat" / "js" / "chat.js").read_text(encoding="utf-8")
     shell_app = (WEBUI / "ui" / "share" / "shell-app.js").read_text(encoding="utf-8")
@@ -1096,7 +1101,7 @@ def test_chat_mobile_pick_pattern() -> None:
 
     assert 'class="sidebar" id="chat-sidebar"' in html
     assert 'id="mobile-overlay"' in html
-    assert "menu-button" in html
+    assert "menu-button" not in html
     assert "screen-shell" not in html
     # The pick-shell two-pane pattern is gone: under 850px the sidebar sits
     # translated off-canvas until .mobile-open slides it over the content.
@@ -1106,6 +1111,10 @@ def test_chat_mobile_pick_pattern() -> None:
     assert "function closeMobile" in shell_app
     assert "mobile-open" in shell_app
     assert "$('#mobile-overlay').onclick = closeMobile" in shell_app
+    # The menu button is optional in the shared wiring — pages that don't
+    # ship one still get Esc/backdrop/session-load closing for free.
+    assert "$('.menu-button')" in shell_app
+    assert "matchMedia('(max-width:850px)')" in shell_app
     # Opening a session (group row tap, deep link, drawer row) reveals the
     # conversation by closing the overlay.
     load_session = chat[chat.index("async function loadSession") : chat.index("async function selectBot")]
@@ -1903,6 +1912,7 @@ def test_chat_rows_use_the_shared_sidebar_markup() -> None:
     sidebar = (WEBUI / "ui" / "share" / "sidebar.js").read_text(encoding="utf-8")
     sidebar_css = (WEBUI / "ui" / "share" / "sidebar.css").read_text(encoding="utf-8")
     shell = (WEBUI / "ui" / "share" / "shell.js").read_text(encoding="utf-8")
+    html = (WEBUI / "ui" / "chat" / "index.html").read_text(encoding="utf-8")
     trace = (WEBUI / "ui" / "trace" / "js" / "trace.js").read_text(encoding="utf-8")
     trace_css = (WEBUI / "ui" / "trace" / "tracecss" / "trace.css").read_text(encoding="utf-8")
 
@@ -1916,9 +1926,15 @@ def test_chat_rows_use_the_shared_sidebar_markup() -> None:
     # The bot drawer lists that bot's sessions as .info-session rows.
     assert 'class="info-session"' in sidebar
     assert ".info-session" in sidebar_css
-    # The skeleton those rows render into ships in the shared shell markup.
+    # The skeleton those rows render into: #team-bot-list ships in the shared
+    # shell markup on every page, but "Hội thoại chung" only exists on chat —
+    # its #group-list lives in chat's static sidebar and renderGroups no-ops
+    # on pages without it.
     assert 'id="team-bot-list"' in shell
-    assert 'id="group-list"' in shell
+    assert 'id="group-list"' not in shell
+    assert 'id="group-list"' in html
+    assert "Hội thoại chung" in html
+    assert "if(!gl)return" in sidebar
     # Trace's session list: one paper card per session, .tl-turn row buttons.
     assert 'class="paper-card tl-session"' in trace
     assert 'class="tl-turn"' in trace

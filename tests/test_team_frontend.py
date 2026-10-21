@@ -1282,7 +1282,9 @@ def test_drawer_session_button_routes_to_session(node: str) -> None:
 
 def test_shell_markup_header_sidebar_and_dialogs(node: str) -> None:
     """shell.js emits the shared chrome: header nav (is-current + aria-current),
-    the team sidebar skeleton and the three dialogs + toast/announcer."""
+    the team-only sidebar skeleton and the dialogs + toast/announcer. Group
+    chrome is chat-only — the "Hội thoại chung" section + create button ship
+    in chat's static markup, not the shared sidebar."""
     out = _run(node, """
         return { header: thycaHeader('memories'), side: thycaSidebarMarkup(), dlg: thycaDialogs(),
                  pages: SHELL_PAGES.map(p => p[0]) };
@@ -1292,14 +1294,26 @@ def test_shell_markup_header_sidebar_and_dialogs(node: str) -> None:
     assert 'class="page-links"' in header
     assert 'data-page-link="memories" class="is-current" aria-current="page"' in header
     assert 'data-page-link="chat"' in header and 'data-page-link="settings"' in header
-    assert 'class="prototype-badge"' in header
+    # The "Backend trực tiếp" prototype badge and the header menu button did
+    # not survive the rebuild.
+    assert 'prototype-badge' not in header
+    assert 'menu-button' not in header
     assert 'class="sessions-heading"' in side and '>Đội<' in side
-    assert 'class="bot-count"' in side and 'id="team-shared-create"' in side
+    assert 'class="bot-count"' in side
     assert 'class="session-list" id="team-bot-list"' in side
-    assert 'class="section-label"' in side and "Hội thoại chung" in side
-    assert 'id="group-list"' in side
     assert 'id="open-customize"' in side and 'id="motion-toggle"' in side
     assert 'class="splitter"' in side
+    # Shared sidebars carry the roster only — group conversations only make
+    # sense on the chat page, so the section + its list live in chat's own
+    # static markup.
+    assert 'id="team-shared-create"' not in side
+    assert 'class="section-label"' not in side
+    assert "Hội thoại chung" not in side
+    assert 'id="group-list"' not in side
+    chat_html = INDEX_HTML.read_text(encoding="utf-8")
+    assert 'id="team-shared-create"' in chat_html
+    assert 'id="group-list"' in chat_html
+    assert "Hội thoại chung" in chat_html
     for did in ("mobile-overlay", "expressions-dialog", "bot-drawer", "group-dialog",
                 "group-form", "group-options", "toast", "announcer", "bot-drawer-body"):
         assert f'id="{did}"' in dlg

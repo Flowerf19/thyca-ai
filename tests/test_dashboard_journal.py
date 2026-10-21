@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 WEBUI = ROOT / "thyca" / "webui" / "ui"
 DASH_JS = WEBUI / "dashboard" / "js" / "dashboard.js"
 DASH_HTML = WEBUI / "dashboard" / "index.html"
-SHELL_JS = WEBUI / "share" / "shell.js"
+UTIL_JS = WEBUI / "share" / "util.js"
 
 # Same stub surface as test_cost_journal.py / test_request_chart.py plus
 # toast capture: real util.js semantics for $/$$/escapeHTML/icon, a per-id
@@ -167,8 +167,10 @@ def test_page_markup_covers_every_region() -> None:
 
 def test_shell_navigation_lists_dashboard_and_trace() -> None:
     """The shared SHELL_PAGES nav keeps Sử dụng and Trace as sibling pages
-    (no standalone journal routes) and marks the current page."""
-    src = SHELL_JS.read_text(encoding="utf-8")
+    (no standalone journal routes) and marks the current page. The table
+    lives in util.js so every page — emitShell pages and chat's static
+    markup alike — renders the same nav."""
+    src = UTIL_JS.read_text(encoding="utf-8")
     assert "['dashboard', 'Sử dụng', '../dashboard/index.html']" in src
     assert "['trace', 'Trace', '../trace/index.html']" in src
     assert 'is-current' in src and 'aria-current="page"' in src

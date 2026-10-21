@@ -87,13 +87,14 @@ def test_shell_artwork_and_page_ornaments_retained() -> None:
 
 def test_current_page_and_selected_bot_marks() -> None:
     """Selection states ride shared marks: the header links light up the
-    current page, the sidebar marks the selected bot card."""
-    app = APP_SHELL_CSS.read_text(encoding="utf-8")
-    current = _block(app, ".page-links a.is-current")
+    current page (the rule lives in base.css so chat's hydrated nav gets it
+    too), the sidebar marks the selected bot card."""
+    base = BASE_CSS.read_text(encoding="utf-8")
+    current = _block(base, ".page-links a.is-current")
     assert "var(--forest)" in current
     assert "inset 0 0 0 1px" in current
-    js = SHELL_JS.read_text(encoding="utf-8")
-    assert 'class="is-current" aria-current="page"' in js
+    util = (UI / "share" / "util.js").read_text(encoding="utf-8")
+    assert 'class="is-current" aria-current="page"' in util
     sidebar = SIDEBAR_CSS.read_text(encoding="utf-8")
     assert _block(sidebar, ".bot-card[data-selected=true]")
 

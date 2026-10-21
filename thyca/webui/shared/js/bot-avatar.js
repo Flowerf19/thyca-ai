@@ -46,7 +46,7 @@ const BOT_AVATAR_DEFS = `<svg width="0" height="0" style="position:absolute" ari
 <symbol id="g-lens" viewBox="0 0 24 24"><circle cx="10.4" cy="10.4" r="6"/><path d="M14.8 14.8 20.4 20.4M7.6 8.8a3.2 3.2 0 0 1 2.4-1.6"/></symbol>
 <symbol id="g-brush" viewBox="0 0 24 24"><path d="M14.2 4.6 19.4 9.8 11 18.2 5.8 13Z"/><path d="M5.8 13c-2 1-2.6 3.6-3 6.6 3-.4 5.6-1 7-3.2"/><path d="M16.8 7.2 18.6 5.4"/></symbol>
 <symbol id="g-team" viewBox="0 0 24 24"><circle cx="12" cy="7.6" r="3"/><circle cx="7" cy="15.6" r="3"/><circle cx="17" cy="15.6" r="3"/></symbol>
-<symbol id="g-pin" viewBox="0 0 24 24"><path d="M12 17v4.5"/><path d="M9 10.7a2 2 0 0 1-1.1 1.8l-1.8.9A2 2 0 0 0 5 15.2v.8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.8a2 2 0 0 0-1.1-1.8l-1.8-.9a2 2 0 0 1-1.1-1.8V6h1a2 2 0 1 0 0-4H8a2 2 0 1 0 0 4h1z"/></symbol>
+<symbol id="g-star" viewBox="0 0 24 24"><path d="M12 3.5 14.4 8.8 20.2 9.7 15.9 13.8 16.9 19.5 12 16.9 7.1 19.5 8.1 13.8 3.8 9.7 9.6 8.8Z"/></symbol>
 </defs></svg>
 `;
 

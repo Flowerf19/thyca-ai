@@ -283,7 +283,7 @@ function pinControl(row, bot) {
     row.append(actions);
   }
   const pinSvg = '<svg viewBox="0 0 24 24" aria-hidden="true">'
-    + '<use href="#g-pin"/></svg>';
+    + '<use href="#g-star"/></svg>';
   if (bot.id === TEAM_BOT_ID) {
     if (!actions.children.length) {
       const mark = document.createElement("span");
@@ -456,7 +456,7 @@ function botRow(bot, existingRow = null) {
     const id = button.dataset.botId;
     const key = `bot:${id}`;
     if (entryExpanded(key)) {
-      expandedEntry = "";
+      // Already open: keep it open — no re-fetch, no fold away.
       render();
       return;
     }

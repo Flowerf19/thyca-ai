@@ -2206,7 +2206,7 @@ def test_sidebar_rows_avatar_name_layout() -> None:
     assert "place-self: start" in botavatar.group(1)
     assert "width: var(--team-seal-size)" in botavatar.group(1)
     assert "translate(-3px, -8px) scale(0.82) rotate(-12deg)" in envelope_css
-    assert "padding: 0 2.5rem 0 82px" in envelope_css
+    assert "padding: 0 1rem 0 82px" in envelope_css
     assert "font-size: 1rem" in envelope_css
     assert "grid-template-rows: var(--team-header-height) 1fr" in envelope_css
 
@@ -2401,10 +2401,10 @@ def test_sidebar_keeps_navigation_pins_and_expansion_without_crud(node: str) -> 
         " const childDescriptionVisible = !!subOf('coder')?.children.find((item) =>"
         "  item.className === 'team-bot-description');"
         " botHeadBtn('coder')._handlers.click();"
-        " const childFolded = botHeadBtn('coder').getAttribute('aria-expanded');"
+        " const childStillOpen = botHeadBtn('coder').getAttribute('aria-expanded');"
         " const childPaper=subOf('coder');"
-        " const childSheetHidden=childPaper?.inert===true"
-        "  && childPaper.getAttribute('aria-hidden')==='true';"
+        " const childSheetStillVisible=childPaper?.inert===false"
+        "  && childPaper.getAttribute('aria-hidden')==='false';"
         " botHeadBtn('coder')._handlers.click(); await tick(); await tick();"
         " const childReopened = botHeadBtn('coder').getAttribute('aria-expanded');"
         " const childLabelAfter = botHeadBtn('coder').getAttribute('aria-label');"
@@ -2415,7 +2415,7 @@ def test_sidebar_keeps_navigation_pins_and_expansion_without_crud(node: str) -> 
         " const groupFolded = findRow('shared').getAttribute('aria-expanded');"
         " return {rootLabel, rootPinned, rootDmRequested, directActionButtons,"
         "  flapCount, pinnedAfterToggle, childLabel, childLabelAfter, childOpen,"
-        "  childDescriptionVisible, childFolded, childSheetHidden, childReopened,"
+        "  childDescriptionVisible, childStillOpen, childSheetStillVisible, childReopened,"
         "  loaded, groupOpen, groupFolded};")
     assert value["rootLabel"].startswith("Thyca, chính, ")
     assert value["rootPinned"] is True
@@ -2426,7 +2426,8 @@ def test_sidebar_keeps_navigation_pins_and_expansion_without_crud(node: str) -> 
     assert "rảnh" in value["childLabel"]
     assert value["childLabelAfter"] == value["childLabel"]
     assert value["childOpen"] == "true" and value["childDescriptionVisible"] is True
-    assert value["childFolded"] == "false" and value["childSheetHidden"] is True
+    # Clicking the already-open bot keeps it open — bot rows never fold away.
+    assert value["childStillOpen"] == "true" and value["childSheetStillVisible"] is True
     assert value["childReopened"] == "true"
     assert value["loaded"] == ["side", "shared"]
     assert value["groupOpen"] == "true" and value["groupFolded"] == "false"
@@ -2478,7 +2479,7 @@ def test_layered_sidebar_keeps_keyed_pockets_and_truthful_group_dossier(
         " const childAvatarSame=refreshedChild.children.find(x=>x.classList.contains('team-avatar'))===childAvatar;"
         " const liveText=botHeadBtn('coder').children.find(x=>x.tagName==='TIME')?.textContent||'';"
         " botHeadBtn('coder')._handlers.click();"
-        " const closed={expanded:botHeadBtn('coder').getAttribute('aria-expanded'),"
+        " const afterSecondClick={expanded:botHeadBtn('coder').getAttribute('aria-expanded'),"
         "  inert:childPaper.inert,hidden:childPaper.getAttribute('aria-hidden')};"
         " const groupButton=findRow('shared');const dossier=groupButton.parentNode.parentNode;"
         " const groupMark=groupButton.children.find(x=>x.classList.contains('team-avatar'));"
@@ -2516,7 +2517,7 @@ def test_layered_sidebar_keeps_keyed_pockets_and_truthful_group_dossier(
         " updatedGroup._handlers.click();"
         " const membershipCollapsed=updatedGroup.getAttribute('aria-expanded');"
         " return {hierarchy:initialRootClass,rootDescription,childDescription,idleIds,"
-        "  childSame,childSameAfterStatus,childAvatarSame,liveText,closed,closedGroup,groupSame,"
+        "  childSame,childSameAfterStatus,childAvatarSame,liveText,afterSecondClick,closedGroup,groupSame,"
         "  groupMarkSame,membersSame,noReopen,membershipUpdate,membershipCollapsed,"
         "  expandedGroup:findRow('shared').getAttribute('aria-expanded'),"
         "  members:memberNamesBefore,memberTags,headingTag:heading.tagName,"
@@ -2529,7 +2530,8 @@ def test_layered_sidebar_keeps_keyed_pockets_and_truthful_group_dossier(
     assert value["childSame"] is True and value["childSameAfterStatus"] is True
     assert value["childAvatarSame"] is True
     assert value["liveText"] == "đang nghĩ…"
-    assert value["closed"] == {"expanded": "false", "inert": True, "hidden": "true"}
+    # Clicking the already-open bot keeps it open (bot rows never fold).
+    assert value["afterSecondClick"] == {"expanded": "true", "inert": False, "hidden": "false"}
     assert value["closedGroup"]["className"].startswith("team-dossier")
     assert value["closedGroup"]["expanded"] == "false"
     assert value["closedGroup"]["inert"] is True
@@ -2588,7 +2590,7 @@ def test_sidebar_expansion_is_exclusive_and_stale_dm_cannot_reopen_entry(node: s
         " botHeadBtn('coder')._handlers.click();await tick();await tick();check();"
         " if(JSON.stringify(opened())!==JSON.stringify(['bot:coder']))throw new Error('bot did not replace group');"
         " botHeadBtn('coder')._handlers.click();check();"
-        " if(state.activeId!=='coder-dm'||opened().length)throw new Error('fold changed selected chat or left entry open');"
+        " if(state.activeId!=='coder-dm'||JSON.stringify(opened())!==JSON.stringify(['bot:coder']))throw new Error('clicking the open bot must keep it open');"
         " sidebar.teamBotLive('coder','thinking');check();"
         " findRow('group-a')._handlers.click();await tick();check();"
         " findRow('group-a')._handlers.click();check();"

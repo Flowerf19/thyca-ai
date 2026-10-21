@@ -1103,11 +1103,19 @@ button:active {
   transform: rotate(45deg);
 }
 
-/* Letter rows end in a caret column — the hover actions sit inboard of
-   it instead of covering it. */
+/* The star pin lives in the top-left corner of bot rows and shared
+   session rows: the name/status line hugs the bottom crease and the
+   right edge holds only the caret, so the corner above the seal is
+   the one free spot. */
 #team-bot-list .session-row:has(> .team-bot-item) .session-actions,
 #team-bot-list .session-row:has(> .team-group-item) .session-actions {
-  inset-inline-end: 1.25rem;
+  position: absolute;
+  inset-inline-start: 0.35rem;
+  inset-inline-end: auto;
+  inset-block-start: 0.3rem;
+  inset-block-end: auto;
+  z-index: 5;
+  align-items: flex-start;
 }
 
 /* Pinned letters keep their pin in view: Thyca's mark is static, other

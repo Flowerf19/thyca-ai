@@ -121,14 +121,19 @@ export async function followTurn(sessionId, startedAt) {
   }
 }
 
-// Keep the transcript, selection, collapsed panels and scroll position intact
-// while a polled turn is still running: the live card (brand + streamed
-// reply) stays mounted; reasoning now lives on the sidebar bot card.
+// Keep the transcript, selection, collapsed panels and scroll position intact.
+// Only reasoning appended since the last full render belongs in the live card.
 export function renderPolledProgress(detail) {
   const live = liveTurns.get(detail.id);
   if (!live || (live.startedAt && live.startedAt !== detail.started_at)) {
     followHub.renderDetail(detail);
+    return;
   }
+  const rendered = followHub.state.detail?.id === detail.id ? (followHub.state.detail.messages?.length || 0) : 0;
+  const reasoning = (detail.messages || []).slice(rendered)
+    .filter((message) => message.role === "assistant" && typeof message.reasoning === "string")
+    .map((message) => message.reasoning).filter(Boolean).join("\n\n");
+  if (reasoning) live.thinking?.sync(reasoning);
 }
 
 // Follow unavailable: show persisted progress without waiting for Stop.

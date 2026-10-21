@@ -2775,9 +2775,7 @@ def test_idle_bot_subtitles_are_absent_and_live_labels_preserve_description(
         "error": "lỗi · thử lại",
         "rootDescription": "Root description",
         "childDescriptionBefore": "Child description",
-        # TURN-CURATE: live activity replaces the static description while
-        # the bot works (restored when the turn ends).
-        "childDescriptionAfter": "đang viết…",
+        "childDescriptionAfter": "Child description",
         "childFirst": "team-bot-description",
     }
 

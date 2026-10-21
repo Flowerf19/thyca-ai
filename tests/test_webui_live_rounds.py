@@ -1,9 +1,8 @@
-"""Execute the live turn card with real modules.
+"""Execute the live thinking panel across LLM rounds with real modules.
 
-The live card is minimal: brand header + streaming reply only. Live
-activity (đang nghĩ…, tool calls) is routed to the bot card's sidebar
-description instead of rendering notes/usage rows in the chat. A
-re-follow rebuilds the reply instead of duplicating it.
+Each LLM round keeps its own usage row after its reply text (tools execute
+after think), like the settled transcript: note, reply, usage per round.
+A re-follow rebuilds segments instead of duplicating them.
 """
 from __future__ import annotations
 
@@ -103,11 +102,16 @@ globalThis.clearInterval = id => intervals.delete(id);
 const view = await import('./thyca/webui/pages/chat/chat-view.js');
 const host = new Element(); host.root = true;
 const live = view.createLiveStatus(host, Date.now() - 12000);
-const replyTexts = () => [...host.querySelectorAll('.reply-live')].map(n => n.textContent);
-const forbidden = () => ({
-  notes: host.querySelectorAll('.thinking-note').length,
-  usage: host.querySelectorAll('.usage-row').length,
-});
+const segments = () => live.notes.map(note => ({
+  text: note.body.querySelector('.thought-output').textContent,
+  caretSettled: note.body.querySelector('.streaming-caret')?.hidden === true,
+}));
+const usage = () => [...live.notesWrap.querySelectorAll('.usage-row')].map(node =>
+  `${node.querySelector('.usage-label').textContent} ${node.querySelector('.usage-row-body').textContent}`);
+const order = () => [...live.notesWrap.children].map(node =>
+  node.classList.contains('thinking-note') ? 'note'
+  : node.classList.contains('usage-row') ? 'usage'
+  : node.classList.contains('reply-live') ? 'reply' : node.tag);
 
 view.updateLiveStatus(live, { type: 'llm.started', round: 1 });
 view.updateLiveStatus(live, { type: 'llm.thinking', round: 1, delta: 'round one ' });
@@ -116,18 +120,24 @@ view.updateLiveStatus(live, { type: 'llm.content', round: 1, delta: 'Xin ' });
 view.updateLiveStatus(live, { type: 'llm.content', round: 1, delta: 'chào' });
 view.updateLiveStatus(live, { type: 'tool.started', name: 'bash', call_id: 'b1' });
 view.updateLiveStatus(live, { type: 'tool.finished', name: 'bash', call_id: 'b1' });
-const afterRound1 = { replies: replyTexts(), forbidden: forbidden() };
+const afterRound1 = { segments: segments(), usage: usage(), order: order() };
+const replyTexts = () => [...live.notesWrap.querySelectorAll('.reply-live')].map(n => n.textContent);
 
 view.updateLiveStatus(live, { type: 'llm.started', round: 2 });
-view.updateLiveStatus(live, { type: 'llm.content', round: 2, delta: ' round two' });
-const afterRound2 = { replies: replyTexts(), forbidden: forbidden() };
+const atRound2Start = { segments: segments(), usage: usage(), order: order(), replies: replyTexts() };
+view.updateLiveStatus(live, { type: 'llm.thinking', round: 2, delta: 'round two' });
+view.updateLiveStatus(live, { type: 'llm.content', round: 2, delta: 'round two reply' });
+const afterRound2 = { segments: segments(), usage: usage(), order: order(), replies: replyTexts() };
+view.updateLiveStatus(live, { type: 'tool.started', name: 'read', call_id: 'r2' });
+view.updateLiveStatus(live, { type: 'tool.finished', name: 'read', call_id: 'r2' });
+const afterRound2Tools = { segments: segments(), usage: usage(), order: order(), replies: replyTexts() };
 
 view.updateLiveStatus(live, { type: 'turn.completed' });
-const afterCompleted = { replies: replyTexts(), forbidden: forbidden() };
+const afterCompleted = segments();
 
 view.resetLiveStatus(live, live.startedAt);
-const afterRefollowReset = replyTexts();
-console.log(JSON.stringify({ afterRound1, afterRound2, afterCompleted, afterRefollowReset }));
+const afterRefollowReset = segments();
+console.log(JSON.stringify({ afterRound1, atRound2Start, afterRound2, afterRound2Tools, afterCompleted, afterRefollowReset }));
 """
 
 
@@ -143,29 +153,55 @@ def rounds() -> dict:
     return json.loads(result.stdout)
 
 
-def test_live_card_streams_reply_only_no_notes_or_usage(rounds: dict) -> None:
+def test_round_one_streams_and_keeps_tool_line(rounds: dict) -> None:
     assert rounds["afterRound1"] == {
+        "segments": [{"text": "round one thoughts", "caretSettled": False}],
+        "usage": ["Đã dùng: bash x1"],
+        "order": ["note", "reply", "usage"],
+    }
+
+
+def test_round_two_adds_a_segment_and_keeps_the_previous(rounds: dict) -> None:
+    assert rounds["atRound2Start"] == {
+        "segments": [
+            {"text": "round one thoughts", "caretSettled": True},
+            {"text": "", "caretSettled": False},
+        ],
+        "usage": ["Đã dùng: bash x1"],
+        "order": ["note", "reply", "usage", "note"],
         "replies": ["Xin chào"],
-        "forbidden": {"notes": 0, "usage": 0},
     }
-
-
-def test_second_round_appends_to_the_same_reply(rounds: dict) -> None:
     assert rounds["afterRound2"] == {
-        "replies": ["Xin chào round two"],
-        "forbidden": {"notes": 0, "usage": 0},
+        "segments": [
+            {"text": "round one thoughts", "caretSettled": True},
+            {"text": "round two", "caretSettled": False},
+        ],
+        "usage": ["Đã dùng: bash x1"],
+        "order": ["note", "reply", "usage", "note", "reply"],
+        "replies": ["Xin chào", "round two reply"],
     }
 
 
-def test_completion_keeps_the_streamed_reply(rounds: dict) -> None:
-    assert rounds["afterCompleted"] == {
-        "replies": ["Xin chào round two"],
-        "forbidden": {"notes": 0, "usage": 0},
+def test_each_round_keeps_its_own_tool_line(rounds: dict) -> None:
+    assert rounds["afterRound2Tools"] == {
+        "segments": [
+            {"text": "round one thoughts", "caretSettled": True},
+            {"text": "round two", "caretSettled": False},
+        ],
+        "usage": ["Đã dùng: bash x1", "Đã dùng: read x1"],
+        "order": ["note", "reply", "usage", "note", "reply", "usage"],
+        "replies": ["Xin chào", "round two reply"],
     }
 
 
-def test_refollow_rebuilds_the_reply_instead_of_duplicating(rounds: dict) -> None:
-    assert rounds["afterRefollowReset"] == []
+def test_completion_settles_every_segment(rounds: dict) -> None:
+    assert all(segment["caretSettled"] for segment in rounds["afterCompleted"])
+
+
+def test_refollow_rebuilds_segments_instead_of_duplicating(rounds: dict) -> None:
+    assert rounds["afterRefollowReset"] == [
+        {"text": "", "caretSettled": False},
+    ]
 
 
 _FOLD_SCRIPT = r"""

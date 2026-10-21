@@ -73,12 +73,9 @@
 :is(#team-bot-list, #memory-bot-list) .team-envelope .team-bot-item {
   position: relative;
   z-index: 2;
-  display: grid;
-  grid-area: auto;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  grid-template-rows: 1fr 0.85rem;
-  align-content: stretch;
-  align-items: center;
+  display: flex;
+  align-items: flex-end;
+  gap: 0.45rem;
   width: 100%;
   height: var(--team-header-height);
   min-height: 0;
@@ -123,23 +120,27 @@
 }
 
 :is(#team-bot-list, #memory-bot-list) .team-envelope .team-bot-item .session-name {
-  grid-column: 1;
-  grid-row: 1;
-  align-self: end;
-  padding-block-end: 0.05rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-block-end: 0.1rem;
   color: var(--team-tint, var(--color-accent));
   font-size: 1rem;
   line-height: 1.1;
   text-align: start;
 }
 
+/* Status/role rides the name line, right after the name; bottom-aligned so
+   the name block hugs the envelope crease (the old sub-line is gone). */
 :is(#team-bot-list, #memory-bot-list) .team-envelope .team-bot-item time {
-  grid-column: 1;
-  grid-row: 2;
-  align-self: start;
-  min-height: 0.85rem;
+  flex: none;
+  padding-block-end: 0.13rem;
+  min-width: 0;
+  color: var(--color-muted);
   font-size: 0.68rem;
-  line-height: 0.85rem;
+  line-height: 1.1;
   text-align: start;
 }
 
@@ -148,8 +149,8 @@
 }
 
 :is(#team-bot-list, #memory-bot-list) .team-envelope .team-bot-item .team-unread {
-  grid-column: 2;
-  grid-row: 1 / 3;
+  flex: none;
+  align-self: center;
 }
 
 :is(#team-bot-list, #memory-bot-list) .team-envelope .team-avatar {
@@ -159,9 +160,9 @@
 }
 
 :is(#team-bot-list, #memory-bot-list) .team-envelope .team-bot-caret {
-  grid-column: 3;
-  grid-row: 1 / 3;
-  place-self: center;
+  flex: none;
+  align-self: center;
+  margin-inline-start: auto;
   width: 0.42rem;
   height: 0.42rem;
   border-right: 1.5px solid var(--color-muted);

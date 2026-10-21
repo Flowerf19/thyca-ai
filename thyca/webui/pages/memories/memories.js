@@ -94,7 +94,11 @@ function botRow(bot) {
   name.className = "session-name";
   name.textContent = bot.name || bot.id;
   const role = document.createElement("time");
-  role.textContent = bot.role || bot.id;
+  // The role rides the name line; a role identical to the name is just
+  // noise there, so it is dropped instead of duplicated.
+  const roleText = bot.role && bot.role !== bot.name ? bot.role : "";
+  role.textContent = roleText;
+  role.hidden = !roleText;
   const caret = document.createElement("span");
   caret.className = "team-bot-caret";
   caret.setAttribute("aria-hidden", "true");
@@ -136,7 +140,10 @@ function renderScopes() {
         existingAvatar.style.setProperty("--team-tint", `var(--color-${botLookFor(bot).tint})`);
       }
       button.children[1].textContent = bot.name || bot.id;
-      button.children[2].textContent = bot.role || bot.id;
+      const roleLine = button.children[2];
+      const roleText = bot.role && bot.role !== bot.name ? bot.role : "";
+      roleLine.textContent = roleText;
+      roleLine.hidden = !roleText;
       button.setAttribute("aria-label", `Xem nhật ký của ${bot.name || bot.id}`);
     }
     card._envelope ||= {

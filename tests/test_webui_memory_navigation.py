@@ -38,7 +38,7 @@ def _header(current: str = "memories") -> dict:
     const run = new Function('document', 'window', util + shell + `
       return {{ header: thycaHeader({json.dumps(current)}), pages: SHELL_PAGES }};
     `);
-    console.log(JSON.stringify(run({{ querySelector: () => null }}, {{}})));
+    console.log(JSON.stringify(run({{ querySelector: () => null, querySelectorAll: () => [] }}, {{}})));
     """
     result = subprocess.run(
         [node, "--input-type=module", "-e", script],

@@ -33,8 +33,7 @@ const SHELL_PAGES = [
 const pageLinksMarkup = current => SHELL_PAGES.map(([id, label, href]) =>
   `<a href="${href}" data-page-link="${id}"${id === current ? ' class="is-current" aria-current="page"' : ''}>${label}</a>`).join('');
 
-/* Pages with static markup (chat) carry an empty
-   <nav class="page-links" data-page-nav="<id>"> — fill it the moment the
+/* Pages with static markup (chat) carry empty
+   <nav ... data-page-nav="<id>"> containers — fill each the moment the
    registry exists; emitShell pages embed the links already. */
-const pageNavEl = document.querySelector('[data-page-nav]');
-if (pageNavEl) pageNavEl.innerHTML = pageLinksMarkup(pageNavEl.dataset.pageNav);
+$$('[data-page-nav]').forEach(el => { el.innerHTML = pageLinksMarkup(el.dataset.pageNav); });

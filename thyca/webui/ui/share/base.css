@@ -69,7 +69,10 @@ button:hover{filter:brightness(.97)}
 .site-header{padding:0 15px}
 .site-kicker{display:none}
 .header-rule{display:none}
-.page-links{display:none}
+.wordmark{display:none}
+.header-right{flex:1;min-width:0;justify-content:flex-end}
+.page-links{overflow-x:auto;max-width:100%;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.page-links::-webkit-scrollbar{display:none}
 .menu-button{display:inline-flex}
 .head-actions .icon-button{display:none}
 }

@@ -11,6 +11,8 @@ escalated into a higher band.
 from __future__ import annotations
 
 import math
+import re
+from pathlib import Path
 
 from thyca.core.context import BACKSTOP_RATIO
 from thyca.core.protocol import Message
@@ -18,6 +20,61 @@ from thyca.core.protocol import Message
 PREPARE_RATIO = 0.8
 MANDATORY_RATIO = 0.9
 _BANDS = ("roomy", "prepare", "mandatory", "backstop")
+
+# Guidance text lives in seeds/prompts/context-budget.md (like the
+# compaction summary prompt); code only picks the template and fills
+# {action}/{urgency}/{lookup}. Missing file → inline fallbacks so the
+# agent always gets guidance.
+_PROMPTS_DIR = Path(__file__).resolve().parents[1] / "seeds" / "prompts"
+_GUIDANCE_CACHE: dict[str, str] | None = None
+
+_FALLBACK_GUIDANCE = {
+    "recorded": (
+        "A checkpoint is recorded in memory for this segment; update it only "
+        "when the goal, decisions or next step change."
+    ),
+    "no-write": (
+        "Memory write tools are unavailable for this bot; do not attempt an "
+        "in-turn checkpoint. The system summary fallback will preserve "
+        "context at compaction."
+    ),
+    "pressure": (
+        "{action} {urgency} before large work: {lookup}call memory_remember "
+        "with kind='checkpoint' and task/new_task to record only the durable "
+        "delta (goal, decisions, open work, next step, references). Do not "
+        "dump the transcript, secrets, or DM content. After recording, call "
+        "compact to summarize the session and free context."
+    ),
+    "roomy": (
+        "You may proactively checkpoint at a task boundary: call "
+        "memory_remember with kind='checkpoint' and task/new_task, reusing "
+        "ids and references instead of copying memory text. After "
+        "checkpointing a finished task, you may call compact to free context."
+    ),
+}
+
+
+def _guidance_templates() -> dict[str, str]:
+    global _GUIDANCE_CACHE
+    if _GUIDANCE_CACHE is not None:
+        return _GUIDANCE_CACHE
+    templates: dict[str, str] = {}
+    try:
+        text = (_PROMPTS_DIR / "context-budget.md").read_text(encoding="utf-8")
+    except OSError:
+        _GUIDANCE_CACHE = dict(_FALLBACK_GUIDANCE)
+        return _GUIDANCE_CACHE
+    section: str | None = None
+    for line in text.splitlines():
+        match = re.match(r"^\[([a-z-]+)\]$", line.strip())
+        if match:
+            section = match.group(1)
+            templates[section] = ""
+        elif section is not None:
+            templates[section] += line + "\n"
+    loaded = {key: value.strip() for key, value in templates.items() if value.strip()}
+    _GUIDANCE_CACHE = loaded or dict(_FALLBACK_GUIDANCE)
+    return _GUIDANCE_CACHE
 
 
 def _band_index(ratio: float) -> int:
@@ -129,17 +186,11 @@ def format_context_budget(
         f"used={percent}% remaining≈{remaining:,} tokens "
         f"state={state} checkpoint={checkpoint}"
     )
+    templates = _guidance_templates()
     if checkpoint == "recorded":
-        guidance = (
-            "A checkpoint is recorded in memory for this segment; update it "
-            "only when the goal, decisions or next step change."
-        )
+        guidance = templates["recorded"]
     elif not can_write:
-        guidance = (
-            "Memory write tools are unavailable for this bot; do not attempt "
-            "an in-turn checkpoint. The system summary fallback will "
-            "preserve context at compaction."
-        )
+        guidance = templates["no-write"]
     elif state in ("prepare", "mandatory", "backstop"):
         urgency = "now" if state != "prepare" else "soon"
         action = "Refresh the checkpoint" if checkpoint == "stale" else "Checkpoint"
@@ -149,20 +200,9 @@ def format_context_budget(
             if can_read
             else "reuse task/entry ids already in context, then "
         )
-        guidance = (
-            f"{action} {urgency} before large work: {lookup}call "
-            "memory_remember with kind='checkpoint' and task/new_task to "
-            "record only the durable delta (goal, decisions, open work, "
-            "next step, references). Do not dump the transcript, secrets, "
-            "or DM content. After recording, call compact to summarize the "
-            "session and free context."
+        guidance = templates["pressure"].format(
+            action=action, urgency=urgency, lookup=lookup
         )
     else:
-        guidance = (
-            "You may proactively checkpoint at a task boundary: call "
-            "memory_remember with kind='checkpoint' and task/new_task, "
-            "reusing ids and references instead of copying memory text. "
-            "After checkpointing a finished task, you may call compact to "
-            "free context."
-        )
+        guidance = templates["roomy"]
     return f"{head}\n{guidance}"

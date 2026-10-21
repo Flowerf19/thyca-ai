@@ -13,7 +13,7 @@ button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-vis
 button:hover{filter:brightness(.97)}
 [hidden]{display:none!important}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
-.notebook-shell{height:calc(100dvh - 28px);margin:14px;border-radius:24px;background:radial-gradient(ellipse at 90% 10%,#fef9ee 0,transparent 45%),#f5eddd;border:1px solid #fffc;box-shadow:0 12px 48px #574b3120;display:grid;grid-template-rows:47px minmax(0,1fr);overflow:hidden;position:relative}
+.notebook-shell{height:calc(100dvh - 28px);margin:14px;border-radius:24px;background:radial-gradient(ellipse at 90% 10%,#fef9ee 0,transparent 45%),#f5eddd;border:1px solid #fffc;box-shadow:0 12px 48px #574b3120;display:grid;grid-template-rows:47px minmax(0,1fr);grid-template-columns:minmax(0,1fr);overflow:hidden;position:relative}
 .site-header{display:flex;align-items:center;justify-content:space-between;padding:0 23px;color:var(--muted);gap:18px}
 .header-left,.header-right{display:flex;align-items:center;gap:14px}
 .wordmark{font:italic 22px var(--serif);color:var(--forest);letter-spacing:-.7px}
@@ -30,7 +30,7 @@ button:hover{filter:brightness(.97)}
 .icon-button{width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;border-radius:8px;color:var(--muted)}
 .icon-button:hover{background:#b7a47a16}
 .menu-button{display:none}
-.main-grid{display:grid;grid-template-columns:var(--sidebar-width) 12px minmax(0,1fr);padding:0 12px 12px;min-height:0;gap:0}
+.main-grid{display:grid;grid-template-columns:var(--sidebar-width) 12px minmax(0,1fr);padding:0 12px 12px;min-height:0;min-width:0;gap:0}
 .dots{display:inline-flex;gap:4px;align-items:center;flex-shrink:0}
 .dots i{width:4px;height:4px;border-radius:50%;background:currentColor;display:block;opacity:.65}
 .dots i:nth-child(2){animation-delay:.22s!important}

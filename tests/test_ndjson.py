@@ -1,10 +1,12 @@
-"""NDJSON stream decoding — webui/shared/js/api.js (postNdjson).
+"""NDJSON stream decoding — webui/ui/chat/js/chat.js (readNdjson).
 
-The old standalone decoder (webui/js/shared/ndjson.js) no longer exists: the
-new UI decodes NDJSON inline inside postNdjson. These tests drive postNdjson
-with a stubbed fetch whose body yields byte chunks, so chunk-split lines,
-multibyte UTF-8 splits, empty lines and malformed JSON are covered without a
-browser or server.
+The old decoder (webui/shared/js/streams.js -> api.js) is gone with the UI
+rebuild. The new classic-script UI decodes inline: sendTurn/followRunningTurn
+own the fetch + !ok check, and ``readNdjson(stream, onEvent)`` consumes the
+response *body* — split lines, UTF-8 chunks, trailing flush. Per-line JSON
+errors are skipped (one bad line must not kill a turn), and terminal-event
+tracking moved up a layer: an unsettled stream is recovered by finishTurn(),
+a turn.failed event is handled by handleStreamEvent (see test_turn_status.py).
 """
 from __future__ import annotations
 
@@ -16,7 +18,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-API = ROOT / "thyca" / "webui" / "shared" / "js" / "api.js"
+CHAT_JS = ROOT / "thyca" / "webui" / "ui" / "chat" / "js" / "chat.js"
 
 
 @pytest.fixture(scope="module")
@@ -28,46 +30,25 @@ def node() -> str:
 
 
 _PREAMBLE = f"""
-import {{ postNdjson }} from '{API.as_posix()}';
+import {{ loadScripts }} from './tests/webui_dom.mjs';
+const {{ readNdjson }} = loadScripts(['{CHAT_JS.as_posix()}'], 'return {{ readNdjson }};');
 const enc = (s) => new TextEncoder().encode(s);
-const mkResp = (chunks, ok = true) => ({{
-  ok,
-  status: ok ? 200 : 500,
-  json: async () => (ok ? null : {{ error: 'boom' }}),
-  body: ok ? {{ getReader: () => {{
-    let i = 0;
-    return {{ read: async () => (i < chunks.length ? {{ done: false, value: chunks[i++] }} : {{ done: true, value: undefined }}) }};
-  }} }} : null,
-}});
+const mkStream = (chunks) => {{
+  let i = 0;
+  return {{ getReader: () => ({{
+    read: async () => (i < chunks.length ? {{ done: false, value: chunks[i++] }} : {{ done: true, value: undefined }}),
+  }}) }};
+}};
 async function run(chunks) {{
   const events = [];
-  globalThis.fetch = async () => mkResp(chunks);
-  const detail = await postNdjson('/api/x', {{}}, (e) => events.push(e));
-  return {{ events, detail }};
+  await readNdjson(mkStream(chunks), (e) => events.push(e));
+  return {{ events }};
 }}
 """
 
 
 def _eval(node: str, expression: str) -> object:
     source = _PREAMBLE + f"console.log(JSON.stringify(await {expression}));\n"
-    result = subprocess.run(
-        [node, "--input-type=module", "-e", source],
-        check=True,
-        capture_output=True,
-        text=True,
-        cwd=ROOT,
-    )
-    return json.loads(result.stdout)
-
-
-def _eval_err(node: str, expression: str) -> str:
-    source = (
-        _PREAMBLE
-        + "try { await "
-        + expression
-        + "; console.log(JSON.stringify('no-throw')); }\n"
-        + "catch (error) { console.log(JSON.stringify(error.message)); }\n"
-    )
     result = subprocess.run(
         [node, "--input-type=module", "-e", source],
         check=True,
@@ -89,7 +70,8 @@ def test_one_chunk_two_full_lines(node: str) -> None:
         "llm.started",
         "turn.completed",
     ]
-    assert out["detail"] == {"id": "x"}
+    # The terminal event's detail rides along for finishTurn(token, detail).
+    assert out["events"][-1]["detail"] == {"id": "x"}
 
 
 def test_line_split_across_two_chunks(node: str) -> None:
@@ -132,33 +114,39 @@ def test_empty_lines_ignored(node: str) -> None:
     assert [e["type"] for e in out["events"]] == ["turn.accepted", "turn.completed"]
 
 
-def test_malformed_json_line_throws_public_error(node: str) -> None:
-    assert (
-        _eval_err(node, "run([enc('{\"type\": broken}\\n')])")
-        == "Luồng trả lời từ backend không hợp lệ."
+def test_malformed_json_line_is_skipped(node: str) -> None:
+    """A bad line no longer kills the turn: the decoder skips it and keeps
+    consuming — the stream stays live for the events that follow."""
+    out = _eval(
+        node,
+        "run([enc('{\"type\":\"turn.accepted\"}\\n{\"type\": broken}\\n"
+        "{\"type\":\"turn.completed\",\"detail\":{\"id\":\"x\"}}\\n')])",
     )
+    assert [e["type"] for e in out["events"]] == ["turn.accepted", "turn.completed"]
 
 
-def test_incomplete_garbage_on_flush_throws(node: str) -> None:
-    assert (
-        _eval_err(node, "run([enc('not-json')])")
-        == "Luồng trả lời từ backend không hợp lệ."
+def test_garbage_on_flush_yields_no_events(node: str) -> None:
+    assert _eval(node, "run([enc('not-json')])") == {"events": []}
+
+
+def test_stream_end_without_terminal_resolves(node: str) -> None:
+    """readNdjson no longer throws on a missing terminal event — the caller
+    settles the turn instead (sendTurn/followRunningTurn call finishTurn when
+    token.phase never reached 'settled')."""
+    assert _eval(node, "run([enc('{\"type\":\"turn.accepted\"}\\n')])") == {
+        "events": [{"type": "turn.accepted"}]
+    }
+    source = CHAT_JS.read_text(encoding="utf-8")
+    assert "token.phase !== 'settled'" in source
+    assert source.count("finishTurn(token)") >= 2
+
+
+def test_failed_terminal_passes_through_as_event(node: str) -> None:
+    """turn.failed is data for handleStreamEvent (cancelTurn + error state),
+    not a thrown error at the decode layer."""
+    out = _eval(
+        node,
+        "run([enc('{\"type\":\"turn.accepted\"}\\n"
+        "{\"type\":\"turn.failed\",\"message\":\"hết hạn mức\"}\\n')])",
     )
-
-
-def test_missing_terminal_event_throws(node: str) -> None:
-    assert (
-        _eval_err(node, "run([enc('{\"type\":\"turn.accepted\"}\\n')])")
-        == "Luồng trả lời kết thúc quá sớm."
-    )
-
-
-def test_failed_terminal_throws_public_message(node: str) -> None:
-    assert (
-        _eval_err(
-            node,
-            "run([enc('{\"type\":\"turn.accepted\"}\\n"
-            "{\"type\":\"turn.failed\",\"message\":\"hết hạn mức\"}\\n')])",
-        )
-        == "hết hạn mức"
-    )
+    assert out["events"][-1] == {"type": "turn.failed", "message": "hết hạn mức"}

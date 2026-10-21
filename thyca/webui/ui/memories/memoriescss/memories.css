@@ -1,0 +1,74 @@
+/* Nhật ký page: layout delta + leaf list on top of share/app-shell.css.
+   .workspace becomes a fixed nav + scrolling body; all reusable chrome
+   (paper-card, field, chip, quiet-button, empty-note) comes from share/. */
+
+/* page-nav + page-scroll share the workspace height. */
+.memories-shell .workspace{display:grid;grid-template-rows:auto minmax(0,1fr)}
+.memories-shell .page-scroll{height:auto;min-height:0}
+
+/* Toolbar inside .page-actions. */
+.mem-kind-field,.mem-use-field{width:auto}
+#memory-kind:has(option[value=""]:checked),
+#memory-use:has(option[value=""]:checked){color:var(--muted)}
+.mem-scope-clear{margin-left:auto;flex-shrink:0}
+#memory-search{width:min(230px,34vw)}
+
+/* Bot scope summary — only while one bot is selected. */
+.mem-scope{display:flex;align-items:center;gap:18px}
+.mem-scope .seal-avatar{width:64px;height:64px}
+.mem-scope-main{min-width:0}
+.mem-scope-name{margin:0;font:500 25px/1.15 var(--serif);color:#4e4028}
+.mem-scope-meta{margin:5px 0 0;font-size:12px;color:var(--muted)}
+.mem-scope-role{color:#8a7c62}
+
+/* Stats tiles. */
+.mem-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:12px}
+.mem-stat{border:1px solid #e4d8c0;border-radius:12px;padding:13px 15px;background:#fffbf1a6}
+.mem-stat b{display:block;font:500 29px/1.15 var(--serif);color:#54452f;font-variant-numeric:tabular-nums}
+.mem-stat span{font-size:11px;color:var(--muted);letter-spacing:.3px}
+.mem-stat.m-warn b{color:#8a6528}
+.mem-stat.m-danger b{color:#9c4f3f}
+
+/* List header: loading status line + visible count. */
+.mem-list-top{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:10px;min-height:18px}
+.mem-count{font-size:11px;color:var(--muted)}
+
+/* Day groups. */
+.mem-day+.mem-day{margin-top:21px}
+.mem-day-title{display:flex;align-items:baseline;gap:10px;margin:0 0 2px;padding-bottom:7px;border-bottom:1px solid #e2d6bb;font:500 15.5px var(--serif);color:#685633}
+.mem-day-title small{font:400 11px var(--sans);color:var(--muted)}
+
+/* One memory leaf. */
+.mem-leaf{display:flex;gap:16px;padding:13px 4px 14px;border-bottom:1px dashed #e6dcc4}
+.mem-day .mem-leaf:last-child{border-bottom:0}
+.mem-leaf-main{flex:1;min-width:0}
+.mem-leaf-head{display:flex;align-items:baseline;gap:10px}
+.mem-leaf-title{margin:0;font:500 15.5px/1.35 var(--serif);color:#4e4028;overflow-wrap:anywhere}
+.mem-leaf-time{flex-shrink:0;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.mem-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:5px}
+.mem-chips:empty{display:none}
+.mem-snippet{margin:6px 0 8px;font-size:13px;line-height:1.65;color:#675a44;overflow-wrap:anywhere}
+.mem-snippet p{margin:0}
+.mem-snippet ul{margin:.2em 0;padding-left:1.2em}
+.mem-snippet pre{white-space:pre-wrap}
+.mem-meta{display:flex;flex-wrap:wrap;font-size:11.5px;color:var(--muted)}
+.mem-meta>span+span:before{content:'·';margin:0 8px;color:#bcab8d}
+.mem-sid{font:10.5px ui-monospace,SFMono-Regular,Menlo,monospace}
+.mem-expiring{color:#8a6528}
+.mem-actions{display:flex;flex-direction:column;gap:6px;flex-shrink:0}
+.mem-actions .quiet-button{justify-content:center;white-space:nowrap}
+.quiet-button.is-danger{color:#9c4f3f;border-color:#d8b39d}
+.quiet-button.is-danger:hover{background:#fdeee6}
+
+/* Edit dialog fields. */
+#memory-edit-dialog .field+.field{margin-top:15px}
+#memory-edit-dialog .dialog-actions{gap:9px}
+
+.mem-pager{display:flex;align-items:center;justify-content:center;gap:14px;margin-top:14px}
+.mem-pager-info{font-size:11px;color:var(--muted);letter-spacing:.3px}
+
+@media(max-width:700px){
+.mem-leaf{flex-direction:column;gap:10px}
+.mem-actions{flex-direction:row;flex-wrap:wrap}
+#memory-search{width:100%;flex:1 1 160px}
+}

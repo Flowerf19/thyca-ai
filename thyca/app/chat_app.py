@@ -274,6 +274,8 @@ class ChatApp:
         from thyca.bots.status import workspace_status
 
         pf_store = PrivateFollowupStore(self._root)
+        from thyca.bots.runtime import filtered_tool_schemas
+
         for card in cards:
             snap = statuses.get(
                 card["id"],
@@ -284,6 +286,23 @@ class ChatApp:
             pending = pf_store.active(card["id"])
             card["agent_status"] = workspace_status(
                 snap, pending=pending, channel="webui")
+            # Drawer fields: persona + the EFFECTIVE tool list (same
+            # filter the runtime applies — baseline + allowlist -
+            # hidden - memory/bash policy), not the raw card rows.
+            doc = self._bots.get(card["id"])
+            if doc is not None and doc.ok and doc.card is not None:
+                card["persona"] = (doc.card.persona or "").strip()
+                card["memory"] = {
+                    "read": doc.card.memory.read,
+                    "write": doc.card.memory.write,
+                }
+                card["tools"] = [
+                    {
+                        "name": (s.get("function") or {}).get("name", ""),
+                        "description": (s.get("function") or {}).get("description", ""),
+                    }
+                    for s in filtered_tool_schemas(self._tools, doc.card) or []
+                ]
         return cards
 
     def bot_dm(self, bot_id: str) -> dict:

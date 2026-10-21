@@ -1,0 +1,53 @@
+/* Settings page only — layout and pieces not covered by share/app-shell.css.
+   Every rule is scoped under .settings-shell except the two opt-in dataset
+   hooks (data-type-scale / data-ornaments), which only apply once this page
+   sets them. */
+
+/* .page-scroll is height:100% in app-shell.css; inside a flex column it must
+   flex instead, or the fixed .page-nav would push the scroll area down. */
+.settings-shell .workspace{display:flex;flex-direction:column}
+.settings-shell .page-nav{flex-shrink:0}
+.settings-shell .page-scroll{flex:1;min-height:0;height:auto}
+
+/* Config form — fields are generated from GET /api/config schema.sections
+   (limits + timeline); each section is a titled group over .card-grid. */
+.cfg-section{margin-bottom:20px}
+.cfg-section:last-of-type{margin-bottom:0}
+.cfg-section-title{margin:0 0 12px;font:600 11px var(--sans);letter-spacing:.8px;text-transform:uppercase;color:#7a6b4f}
+.field-range{display:block;margin-top:3px;font-size:10px;letter-spacing:.2px;color:#a5987c;text-transform:none}
+.form-footer{display:flex;align-items:center;gap:14px;margin-top:20px;flex-wrap:wrap}
+.form-hint{font-size:12px;color:var(--muted)}
+
+/* Đội bot — read-only roster. avatar() ships the seal markup + palette vars;
+   the row only places it. */
+.bot-roster{display:grid;gap:10px}
+.bot-row{display:flex;align-items:center;gap:14px;border:1px solid #e0d3bc;border-radius:12px;background:#fffbf1ad;padding:10px 15px}
+.bot-row .seal-avatar{width:46px;height:46px}
+.bot-row-info{display:grid;min-width:0;flex:1;gap:1px}
+.bot-row-info strong{font:600 15px var(--sans);color:#4d4232}
+.bot-row-info>span{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bot-row .quiet-button{flex-shrink:0}
+@media(max-width:640px){.bot-row{flex-wrap:wrap}.bot-row .quiet-button{margin-left:auto}}
+
+/* Giao diện (máy này) — localStorage-only prefs (key: thyca.ui.preferences).
+   Nothing here calls the API. */
+.pref-rows{display:grid;gap:14px;max-width:480px}
+.pref-rows .field{max-width:230px}
+
+/* Ornament pref: js sets .workspace[data-ornaments] — hiding both decorative
+   strokes emitShell drew into the workspace (.ornament vine + .staff). */
+.workspace[data-ornaments="off"]>.ornament,.workspace[data-ornaments="off"]>.staff{display:none}
+
+/* Type scale: the sheet is px-based, so font-size alone would change nothing —
+   the whole notebook zooms instead, with height/width divided back so the
+   shell keeps filling the desk frame at every breakpoint. */
+html[data-type-scale="small"] .notebook-shell{zoom:.93;height:calc((100dvh - 28px)/.93);width:calc((100vw - 28px)/.93)}
+html[data-type-scale="large"] .notebook-shell{zoom:1.07;height:calc((100dvh - 28px)/1.07);width:calc((100vw - 28px)/1.07)}
+@media(max-width:850px){
+html[data-type-scale="small"] .notebook-shell{height:calc((100dvh - 16px)/.93);width:calc((100vw - 16px)/.93)}
+html[data-type-scale="large"] .notebook-shell{height:calc((100dvh - 16px)/1.07);width:calc((100vw - 16px)/1.07)}
+}
+@media(max-width:520px){
+html[data-type-scale="small"] .notebook-shell{height:calc(100dvh/.93);width:calc(100vw/.93)}
+html[data-type-scale="large"] .notebook-shell{height:calc(100dvh/1.07);width:calc(100vw/1.07)}
+}

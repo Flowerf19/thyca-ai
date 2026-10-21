@@ -1,11 +1,15 @@
-"""Node tests for the Chi phí journal helpers — webui/pages/dashboard/cost-data.js.
+"""Node tests for the dashboard cost surface — ui/dashboard/js/dashboard.js.
 
-Covers session aggregation (dedupe on session_id+turn_index, missing-session
-group, turn vs request counts), overview metrics (null vs zero cost, partial
-pricing, cache split), the fixed pre-search share denominator, and the
-estimate-only pricing split. Paging failure semantics are checked against
-fetchAllTraces (dashboard-today.js). Mirrors the eval style of
-test_dashboard_journal.py.
+The old Chi phí view (cost-data.js / cost-view.js / cost-rows.js /
+cost-bots.js and the shared journal pager) was not ported: pricing
+estimates, per-model share denominators, the per-session cost journal and
+the average-per-turn card are gone. The new Dashboard keeps cost on a
+recorded basis: the "Chi phí" stat card, the "Token" card's
+vào/cache/ra split, the by_day cost metric and the "Lượt gần nhất" table —
+all fed by GET /api/traces/stats + GET /api/traces. These tests pin that
+replacement contract. The page is a classic script ('use strict', shared
+globals), so the harness evals it in Node with a stubbed global surface,
+mirroring the old import-based eval style.
 """
 from __future__ import annotations
 
@@ -17,21 +21,54 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "cost-data.js"
-TODAY_SCRIPT = ROOT / "thyca" / "webui" / "shared" / "js" / "dashboard-today.js"
-COST_JS = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "cost.js"
-COST_VIEW = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "cost-view.js"
-COST_ROWS = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "cost-rows.js"
-PAGER_JS = ROOT / "thyca" / "webui" / "shared" / "js" / "pager.js"
+DASH_JS = ROOT / "thyca" / "webui" / "ui" / "dashboard" / "js" / "dashboard.js"
+DASH_HTML = ROOT / "thyca" / "webui" / "ui" / "dashboard" / "index.html"
 
-
-def _cost_script() -> str:
-    """Concat of the Cost journal modules (entry + view + rows + shared
-    pager): substring pins read the split files, asserts stay unchanged."""
-    return "\n".join(
-        path.read_text(encoding="utf-8")
-        for path in (COST_JS, COST_VIEW, COST_ROWS, PAGER_JS)
-    )
+# Same stub surface as test_request_chart.py: real util.js semantics for
+# $/$$/escapeHTML/icon, a per-id element registry, and the data-layer
+# globals dashboard.js expects.
+STUBS = r"""
+class El {
+  constructor(tag = 'div') {
+    this.tag = tag; this.value = ''; this.textContent = ''; this._html = '';
+    this.hidden = false; this.disabled = false; this.dataset = {}; this.attrs = {};
+    this.listeners = {}; this.children = []; this.options = []; this.className = '';
+    this.style = {};
+  }
+  set innerHTML(v) { this._html = String(v); }
+  get innerHTML() { return this._html; }
+  setAttribute(k, v) { this.attrs[k] = String(v); }
+  addEventListener(t, f) { (this.listeners[t] ||= []).push(f); }
+  replaceChildren(...n) { this.children = n; this.options = n; }
+  insertAdjacentHTML(_p, h) { this._html = (this._html || '') + h; }
+  set onclick(f) { this.listeners.click = [f]; }
+  set onchange(f) { this.listeners.change = [f]; }
+}
+const __els = {};
+const __el = (id) => __els[id] ||= new El();
+const __workspace = new El();
+globalThis.document = {
+  querySelector: (s) => s === '.workspace' ? __workspace
+    : s.startsWith('#') ? __el(s.slice(1)) : null,
+  querySelectorAll: () => [],
+  createElement: (t) => new El(t),
+};
+globalThis.location = { hash: '', search: '', pathname: '/dashboard/index.html', href: '' };
+globalThis.window = {};
+globalThis.$ = (s, r = document) => r.querySelector(s);
+globalThis.$$ = (s, r = document) => [...r.querySelectorAll(s)];
+globalThis.icon = (n) => `<svg data-i="${n}"></svg>`;
+globalThis.escapeHTML = (str) => String(str).replace(/[&<>"']/g, (ch) =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+globalThis.__roster = {};
+globalThis.getBot = (id) => globalThis.__roster[id] || null;
+globalThis.avatar = (b) => `<ava:${b.id}/>`;
+globalThis.toast = () => {};
+globalThis.bootShell = async () => {};
+const __jsonCalls = [];
+let __jsonResponder = async (url) => { throw new Error('unexpected ' + url); };
+globalThis.getJson = (url) => { __jsonCalls.push(String(url)); return __jsonResponder(String(url)); };
+"""
 
 
 @pytest.fixture(scope="module")
@@ -42,561 +79,323 @@ def node() -> str:
     return binary
 
 
-def _eval(node: str, expression: str) -> object:
-    source = (
-        f"import {{ overviewMetrics, knownCostTotal,"
-        f" knownTokenTotal, modelTokens, dailyCosts, shareLabel, shareRatio, priceRates,"
-        f" estimatedCostSplit, turnCost, modelTurnCoverage, averageDisplay }}"
-        f" from '{SCRIPT.as_posix()}';\n"
-        f"import {{ fetchAllTraces }} from '{TODAY_SCRIPT.as_posix()}';\n"
-        f"console.log(JSON.stringify(await ({expression})));\n"
+def _eval_dash(node: str, body: str) -> object:
+    """Eval dashboard.js (classic script) with stubs, then run `body` inside
+    the same scope so module-level functions/state are reachable."""
+    src = DASH_JS.read_text(encoding="utf-8")
+    program = (
+        STUBS
+        + "\nconst __src = " + json.dumps(src) + ";\n"
+        + "const __body = " + json.dumps(body) + ";\n"
+        + "eval(__src + '\\n;' + __body);\n"
     )
     result = subprocess.run(
-        [node, "--input-type=module", "-e", source],
+        [node, "--input-type=module", "-e", program],
         check=True,
         capture_output=True,
         text=True,
         cwd=ROOT,
     )
     return json.loads(result.stdout)
-
-
-def test_turn_count_vs_request_count(node: str) -> None:
-    rows = [
-        {"session_id": "s1", "turn_index": 0, "requests": 3, "cost_usd": 0.01,
-         "prompt_tokens": 100, "cached_tokens": 40, "completion_tokens": 10},
-        {"session_id": "s1", "turn_index": 1, "requests": 2, "cost_usd": 0.02,
-         "prompt_tokens": 50, "cached_tokens": 0, "completion_tokens": 20},
-    ]
-    overview = _eval(node, "overviewMetrics($rows)".replace("$rows", json.dumps(rows)))
-    assert overview["turns"] == 2  # turns, not the 5 model requests
-    assert overview["requests"] == 5
-    assert overview["costUsd"] == pytest.approx(0.03)
-    assert overview["pricedTurns"] == 2
-    assert overview["averageTurns"] == 2  # no status on these rows → not failed
-    assert overview["averageCostUsd"] == pytest.approx(0.03)
-    assert overview["inputTokens"] == 60 + 50  # prompt minus cache subset
-    assert overview["cacheTokens"] == 40
-    assert overview["outputTokens"] == 30
-
-
-def test_average_skips_failed_and_counts_only_priced_turns(node: str) -> None:
-    # The per-turn average runs over priced, non-failed turns: a failed turn's
-    # recorded cost stays in the total but is skipped from the average basis,
-    # and unpriced turns cannot contribute either way.
-    rows = [
-        {"session_id": "s1", "turn_index": 0, "status": "failed", "cost_usd": 0.5},
-        {"session_id": "s1", "turn_index": 1, "status": "completed", "cost_usd": 0.2},
-        {"session_id": "s1", "turn_index": 2, "status": "completed", "cost_usd": None},
-        {"session_id": "s1", "turn_index": 3, "status": "loop_limit", "cost_usd": 0.1},
-    ]
-    overview = _eval(node, "overviewMetrics($rows)".replace("$rows", json.dumps(rows)))
-    assert overview["turns"] == 4 and overview["pricedTurns"] == 3
-    assert overview["costUsd"] == pytest.approx(0.8)  # total keeps the failed cost
-    assert overview["averageTurns"] == 2  # failed turn skipped, loop_limit kept
-    assert overview["averageCostUsd"] == pytest.approx(0.3)
-
-
-def test_average_basis_zero_when_every_priced_turn_failed(node: str) -> None:
-    rows = [
-        {"session_id": "s1", "turn_index": 0, "status": "failed", "cost_usd": 0.5},
-        {"session_id": "s1", "turn_index": 1, "status": "completed", "cost_usd": None},
-    ]
-    overview = _eval(node, "overviewMetrics($rows)".replace("$rows", json.dumps(rows)))
-    assert overview["averageTurns"] == 0 and overview["averageCostUsd"] is None
-
-
-def test_overview_still_dedupes_repeated_turns(node: str) -> None:
-    """Turn dedupe on (session_id, turn_index) stays for the overview even
-    though the per-session journal is gone."""
-    rows = [
-        {"session_id": "s1", "turn_index": 1, "requests": 2, "cost_usd": 0.02,
-         "prompt_tokens": 50, "cached_tokens": 0, "completion_tokens": 20},
-        # exact duplicate of the row above (same session_id + turn_index)
-        {"session_id": "s1", "turn_index": 1, "requests": 2, "cost_usd": 0.02,
-         "prompt_tokens": 50, "cached_tokens": 0, "completion_tokens": 20},
-        {"session_id": "s1", "turn_index": 0, "requests": 1, "cost_usd": None,
-         "prompt_tokens": 10, "cached_tokens": 0, "completion_tokens": 1},
-    ]
-    overview = _eval(node, "overviewMetrics($rows)".replace("$rows", json.dumps(rows)))
-    assert overview["turns"] == 2  # duplicate collapsed
-    assert overview["requests"] == 3
-    assert overview["costUsd"] == pytest.approx(0.02)
 
 
 def test_no_per_session_journal_remains() -> None:
-    """Static pins: the per-session cost journal is gone from markup and
-    cost JS (Trace keeps its own session list)."""
-    html = (ROOT / "thyca" / "webui" / "dashboard.html").read_text(encoding="utf-8")
+    """Static pins: the per-session cost journal was dropped with the old
+    dashboard (Trace keeps its own session list); nothing in the new page
+    re-introduces it."""
+    html = DASH_HTML.read_text(encoding="utf-8")
+    src = DASH_JS.read_text(encoding="utf-8")
     assert "Chi phí theo phiên" not in html
     assert "cost-sessions" not in html
-    for name in ("cost-view.js", "cost-rows.js", "cost-data.js"):
-        src = (ROOT / "thyca" / "webui" / "pages" / "dashboard" / name).read_text(
-            encoding="utf-8")
-        assert "aggregateSessions" not in src, name
-        assert "renderSessions" not in src, name
-        assert "NO_SESSION_KEY" not in src, name
+    for gone in ("aggregateSessions", "renderSessions", "NO_SESSION_KEY",
+                 "modelTurnCoverage", "estimatedCostSplit", "priceRates"):
+        assert gone not in src, gone
 
 
 def test_null_vs_zero_cost_semantics(node: str) -> None:
-    result = _eval(
+    """fmtCost: null/garbage/NaN render the em dash; a real recorded zero is
+    a true $0 price, never confused with missing data."""
+    result = _eval_dash(
         node,
-        "[" + ", ".join([
-            "overviewMetrics([{'session_id':'a','turn_index':0,'cost_usd':null}])",
-            "overviewMetrics([{'session_id':'b','turn_index':0,'cost_usd':0}])",
-            "turnCost({'cost_usd':undefined})",
-            "turnCost({'cost_usd':'nope'})",
-        ]) + "]",
+        "console.log(JSON.stringify([fmtCost(null), fmtCost(undefined),"
+        " fmtCost('nope'), fmtCost(NaN), fmtCost(0), fmtCost(0.5),"
+        " fmtCost(2), fmtCost(0.000001)]))",
     )
-    nothing_priced, zero_real, missing, garbage = result
-    assert nothing_priced["costUsd"] is None and nothing_priced["pricedTurns"] == 0
-    assert zero_real["costUsd"] == 0 and zero_real["pricedTurns"] == 1
-    assert missing is None and garbage is None
+    nothing, missing, garbage, nan, zero, half, two, tiny = result
+    assert nothing == "—" and missing == "—" and garbage == "—" and nan == "—"
+    assert zero == "$0.000000"
+    assert half == "$0.5000"   # 4 decimals under $1
+    assert two == "$2.00"      # 2 decimals at $1+
+    assert tiny == "$0.000001"  # 6 decimals under $0.01
 
 
-def test_share_denominator_fixed_and_nan_free(node: str) -> None:
-    models = [
-        {"model": "a", "cost_usd": 0.75},
-        {"model": "b", "cost_usd": 0.25},
-        {"model": "free", "cost_usd": None},
-    ]
-    result = _eval(
+def test_share_denominator_and_vi_format(node: str) -> None:
+    """share(): percent of the period total with vi-VN decimals — one
+    decimal under 10%, integer above; an empty denominator reads 0%, never
+    NaN or Infinity."""
+    result = _eval_dash(
         node,
-        "[" + ", ".join([
-            f"knownCostTotal({json.dumps(models)})",
-            "knownCostTotal([])",
-            f"shareLabel(0.75, knownCostTotal({json.dumps(models)}))",
-            "shareLabel(0.1, 0)",
-            "shareLabel(0.1, null)",
-            f"shareRatio(0.25, knownCostTotal({json.dumps(models)}))",
-            "shareRatio(0.25, 0)",
-        ]) + "]",
+        "console.log(JSON.stringify([share(0.75, 1), share(0.25, 1),"
+        " share(0.056, 1), share(1, 0), share(null, 10),"
+        " share(0.9999, 1)]))",
     )
-    total, empty, share, zero_total, null_total, ratio, zero_ratio = result
-    assert total == pytest.approx(1.0)
-    assert empty is None  # nothing priced → no denominator, no NaN
-    assert share == "75%"
-    assert zero_total == "—" and null_total == "—"
-    assert float(str(ratio).rstrip("%")) == pytest.approx(25.0)  # numeric, string cosmetic
-    assert zero_ratio is None
+    big, small, frac, empty_den, null_num, almost = result
+    assert big == "75%" and small == "25%"
+    assert frac == "5,6%"          # vi-VN decimal comma, one decimal
+    assert empty_den == "0%"       # no fake share on a zero total
+    assert null_num == "0%"
+    assert almost == "100%"        # rounded, not "99,99%" noise
 
 
-def test_share_guards_null_and_clamps(node: str) -> None:
-    result = _eval(
-        node,
-        "[" + ", ".join([
-            "shareLabel(null, 10)",
-            "shareLabel('', 10)",
-            "shareRatio(null, 10)",
-            "shareRatio(20, 10)",  # over 100% is clamped for rendering
-            "shareRatio(-5, 10)",
-            "shareLabel(5, 1e999)",  # non-finite denominator
-        ]) + "]",
-    )
-    null_label, empty_label, null_ratio, over, under, inf_total = result
-    assert null_label == "—" and empty_label == "—"  # unpriced never renders 0%
-    assert null_ratio is None
-    assert float(str(over).rstrip("%")) == 100.0
-    assert float(str(under).rstrip("%")) == 0.0
-    assert inf_total == "—"
-
-
-def test_pricing_rates_and_estimate_labeling(node: str) -> None:
-    config = {"pricing": {"m1": {"input": 2, "cache": 0.5, "output": 8}},
-              "models": {"m2": {"input": 1}}}
-    rows = {"prompt_tokens": 1_000_000, "cached_tokens": 400_000, "completion_tokens": 100_000}
-    result = _eval(
-        node,
-        "[" + ", ".join([
-            f"priceRates({json.dumps(config)}, 'm1')",
-            f"priceRates({json.dumps(config)}, 'm2')",
-            f"priceRates({json.dumps(config)}, 'unknown')",
-            f"estimatedCostSplit({json.dumps(rows)}, priceRates({json.dumps(config)}, 'm1'))",
-            f"estimatedCostSplit({json.dumps(rows)}, null)",
-        ]) + "]",
-    )
-    rates_m1, rates_m2, rates_unknown, split, no_rates = result
-    assert rates_m1 == {"input": 2, "cache": 0.5, "output": 8}
-    assert rates_m2 == {"input": 1, "cache": None, "output": None}
-    assert rates_unknown is None
-    assert split["inputUsd"] == pytest.approx(1.2)  # 600k uncached * $2/M
-    assert split["cacheUsd"] == pytest.approx(0.2)  # 400k * $0.5/M
-    assert split["outputUsd"] == pytest.approx(0.8)
-    assert no_rates is None  # unpriced model must not derive dollars
-
-
-def test_pricing_null_rate_is_unknown_zero_is_free(node: str) -> None:
-    result = _eval(
-        node,
-        "[" + ", ".join([
-            f"priceRates({json.dumps({'pricing': {'a': {'input': None, 'cache': 1}}})}, 'a')",
-            f"priceRates({json.dumps({'pricing': {'a': {'input': 0, 'cache': 0, 'output': 0}}})}, 'a')",
-            f"priceRates({json.dumps({'pricing': {'a': {'input': '', 'cache': 'x'}}})}, 'a')",
-            f"estimatedCostSplit({json.dumps({'prompt_tokens': 1000, 'cached_tokens': 0, 'completion_tokens': 100})}, priceRates({json.dumps({'pricing': {'a': {'input': 0}}})}, 'a'))",
-        ]) + "]",
-    )
-    null_field, all_zero, blank, zero_split = result
-    assert null_field == {"input": None, "cache": 1, "output": None}  # null ≠ free
-    assert all_zero == {"input": 0, "cache": 0, "output": 0}  # explicit free stays 0
-    assert blank is None  # all unknown → no rates, no false $0
-    assert zero_split == {"inputUsd": 0, "cacheUsd": None, "outputUsd": None}  # only configured rate applies
-
-
-def test_paging_multiple_pages_and_midway_failure(node: str) -> None:
-    # 250 unique rows arrive as a 200-row page plus a 50-row page.
-    expression = """(async () => {
-      const row = (i) => ({ session_id: 's' + i, turn_index: 0 });
-      const first = { total: 250, traces: Array.from({ length: 200 }, (_, i) => row(i)) };
-      const second = { total: 250, traces: Array.from({ length: 50 }, (_, i) => row(200 + i)) };
-      const ok = await fetchAllTraces(async (offset) => (offset === 0 ? first : second));
-      const failed = await fetchAllTraces(async (offset) => {
-        if (offset === 200) throw new Error('boom');
-        return offset === 0 ? first : second;
-      }).then(() => 'no-error', (error) => 'error: ' + error.message);
-      return [ok.length, new Set(ok.map((r) => r.session_id)).size, failed];
-    })()"""
-    count, unique, failed = _eval(node, expression)
-    assert count == 250
-    assert unique == 250
-    assert failed.startswith("error: boom")  # rejects instead of partial totals
-
-
-def test_paging_overlap_must_cover_every_unique_turn(node: str) -> None:
-    # Overlapping pages advance the offset by batch length while adding fewer
-    # unique turns: [0,1] then [1,2] reaches offset 4 with only 3 unique rows.
-    # With total=4 that is an incomplete window, never a complete answer.
-    expression = """(async () => {
-      const row = (i) => ({ session_id: 's', turn_index: i });
-      const incomplete = await fetchAllTraces(async (offset) => (
-        offset === 0
-          ? { total: 4, traces: [row(0), row(1)] }
-          : { total: 4, traces: [row(1), row(2)] }
-      )).then(() => 'no-error', (error) => `${error.name}:${error.offset}:${error.total}`);
-      // The same overlap is complete once total matches the unique coverage.
-      const complete = await fetchAllTraces(async (offset) => (
-        offset === 0
-          ? { total: 3, traces: [row(0), row(1)] }
-          : { total: 3, traces: [row(1), row(2)] }
-      ));
-      return [incomplete, complete.length];
-    })()"""
-    incomplete, complete = _eval(node, expression)
-    assert incomplete == "TracesIncompleteError:4:4"
-    assert complete == 3
-
-
-def test_model_turn_coverage_derives_missing_turns_from_rows(node: str) -> None:
-    # stats.by_model carries no turn count, so per-model missing-turn coverage
-    # is derived from the loaded rows: dedupe on (session_id, turn_index),
-    # group like the backend (model or "unknown"), count zero cost as priced
-    # and missing cost as not priced.
-    rows = [
-        {"session_id": "s1", "turn_index": 0, "model": "m1", "cost_usd": 0.1},
-        {"session_id": "s1", "turn_index": 1, "model": "m1", "cost_usd": None},
-        # exact duplicate (same session + turn) must not be counted twice
-        {"session_id": "s1", "turn_index": 1, "model": "m1", "cost_usd": None},
-        {"session_id": "s2", "turn_index": 0, "model": "m2", "cost_usd": 0},
-        {"session_id": "s3", "turn_index": 0, "model": "", "cost_usd": None},
-    ]
-    coverage = _eval(
-        node,
-        "Object.fromEntries(modelTurnCoverage($rows))".replace("$rows", json.dumps(rows)),
-    )
-    assert coverage == {
-        "m1": {"turns": 2, "pricedTurns": 1},
-        "m2": {"turns": 1, "pricedTurns": 1},  # explicit 0 is a real price
-        "unknown": {"turns": 1, "pricedTurns": 0},
+def test_hero_cards_carry_the_cost_and_token_split(node: str) -> None:
+    """The stat grid keeps: Lượt = model requests, Gọi tool, Token with the
+    vào/cache/ra split (cache lives inside prompt — shown, not re-added),
+    Chi phí with the per-request average, Độ trễ p50 with the p90 hint."""
+    totals = {
+        "requests": 5, "tool_calls": 7, "prompt_tokens": 150,
+        "cached_tokens": 30, "completion_tokens": 15, "total_tokens": 165,
+        "cost_usd": 0.03, "latency_ms_p50": 1200, "latency_ms_p90": 3400,
     }
-    assert _eval(node, "Object.fromEntries(modelTurnCoverage([]))") == {}
-
-
-def test_load_drops_snapshot_and_labels_recorded_known_costs() -> None:
-    """cost.js reload markers: the old snapshot is dropped the moment a load
-    starts (search/sort/pagers must not resurrect the previous period), the
-    renderers refuse to draw without a snapshot, an accepted failure resets
-    the DOM, the overview is labeled as recorded-known amounts, and per-model
-    missing-turn coverage comes from the loaded rows."""
-    script = _cost_script()
-    assert script.count("view = null;") == 3  # declaration, load start, accepted failure
-    assert script.count("if (!view) return;") == 2  # render, models
-    # Sums/averages are recorded-known: a priced turn never proves every
-    # model call inside it was priced, so no full-coverage claim.
-    assert "số đã ghi nhận" in script
-    assert "modelTurnCoverage(view.rows)" in script
-    assert "partialNote(coverage.pricedTurns, coverage.turns)" in script
-
-
-def test_pricing_disclosures_persist_across_repages() -> None:
-    """TASK-018 follow-up: open/closed "Đơn giá" state is kept per model name
-    within the fixed snapshot and cleared only on a fresh snapshot, so paging
-    and filtering never collapse an open disclosure."""
-    script = _cost_script()
-    assert "const openPricing = new Set();" in script
-    assert "details.open = openPricing.has(model.model);" in script
-    assert "openPricing.add(model.model);" in script
-    assert "openPricing.delete(model.model);" in script
-    assert "openPricing.clear(); // disclosure state belongs to the old snapshot" in script
-
-
-def test_multi_model_session_tokens_split_not_double_counted(node: str) -> None:
-    rows = [
-        {"session_id": "s1", "turn_index": 0, "requests": 1, "cost_usd": 0.01,
-         "prompt_tokens": 200, "cached_tokens": 200, "completion_tokens": 5},
-    ]
-    overview = _eval(node, "overviewMetrics($rows)".replace("$rows", json.dumps(rows)))
-    assert overview["inputTokens"] == 0  # all prompt tokens cached
-    assert overview["cacheTokens"] == 200
-    assert overview["inputTokens"] + overview["cacheTokens"] == 200
-
-
-def test_overview_prompt_tokens_is_full_input_side(node: str) -> None:
-    # The overview "Token đầu vào" value is promptTokens = uncached + cache
-    # (cache is a subset of prompt), matching the 'N% qua cache' note —
-    # never cache double-counted.
-    rows = [
-        {"session_id": "s1", "turn_index": 0, "prompt_tokens": 300,
-         "cached_tokens": 100, "completion_tokens": 10},
-        {"session_id": "s1", "turn_index": 1, "prompt_tokens": 50,
-         "cached_tokens": None, "completion_tokens": 2},
-    ]
-    overview = _eval(node, "overviewMetrics($rows)".replace("$rows", json.dumps(rows)))
-    assert overview["promptTokens"] == 350
-    assert overview["inputTokens"] + overview["cacheTokens"] == overview["promptTokens"]
-    assert overview["cacheTokens"] == 100
-
-
-# --- Journal pager (TASK-018): pure math runs in Node via the marker block;
-# --- the DOM paging itself is browser-test responsibility (TASK-019).
-
-
-def _pager_block(path):
-    text = path.read_text(encoding="utf-8")
-    block = text.split("// >>> journal-pager", 1)[1]
-    block = block[block.index("\n") + 1:]  # skip the rest of the marker line
-    return block.split("// <<< journal-pager", 1)[0]
-
-
-def _run_pager(node, path, expression):
-    source = _pager_block(path) + "\nconsole.log(JSON.stringify(" + expression + "));\n"
-    result = subprocess.run([node, "--input-type=module", "-e", source], check=True, capture_output=True, text=True)
-    return json.loads(result.stdout)
-
-
-def test_pager_math_thirteen_items_make_two_pages(node):
-    result = _run_pager(
+    html = _eval_dash(
         node,
-        PAGER_JS,
-        "[journalPageCount(13), journalPageCount(12), journalPageCount(0), journalPageCount(1), journalPageCount(25, 10)]",
+        f"renderStats({{ totals: {json.dumps(totals)} }});\n"
+        "console.log(JSON.stringify(document.querySelector('#stat-grid').innerHTML));",
     )
-    assert result == [2, 1, 1, 1, 3]
+    assert ">Lượt</p>" in html and ">5</p>" in html
+    assert "request tới model" in html
+    assert ">Gọi tool</p>" in html and ">7</p>" in html
+    assert ">Token</p>" in html
+    # Cache is a subset of prompt: both shown, and the card total is the
+    # server total (165 = 150 + 15), never 150 + 30 + 15.
+    assert "vào 150 · cache 30 · ra 15" in html
+    assert ">165</p>" in html
+    assert ">Chi phí</p>" in html and "$0.0300" in html
+    assert "TB $0.006000 / request" in html  # 0.03 / 5 requests
+    assert ">Độ trễ p50</p>" in html
+    assert "1,2 giây" in html and "p90 3,4 giây" in html
 
 
-def test_pager_clamps_at_both_bounds(node):
-    result = _run_pager(
+def test_cost_card_without_any_priced_turn(node: str) -> None:
+    """cost_usd == null on the totals means no turn recorded a price: the
+    card shows the em dash + the explicit hint, never $0."""
+    html = _eval_dash(
         node,
-        PAGER_JS,
-        "[journalClampPage(0, 2), journalClampPage(1, 2), journalClampPage(2, 2), journalClampPage(3, 2), journalClampPage(-5, 3)]",
+        "renderStats({ totals: { requests: 3, cost_usd: null,"
+        " latency_ms_p50: null, latency_ms_p90: null } });\n"
+        "console.log(JSON.stringify(document.querySelector('#stat-grid').innerHTML));",
     )
-    assert result == [1, 1, 2, 2, 1]
+    assert "chưa có lượt nào ghi nhận giá" in html
+    assert ">—</p>" in html
+    assert "$0" not in html
+    assert "TB " not in html
 
 
-def test_pager_resets_on_filter_sort_and_snapshot(node):
-    script = _cost_script()
-    # Search input, sort click and a fresh snapshot each restart at page 1
-    # (the 3rd hit is the `let modelsPage = 1` declaration).
-    assert script.count("modelsPage = 1;") == 3
-    assert "sessionsPage" not in script
-    # The models journal slices the in-memory snapshot; the share
-    # denominator and aggregation still run on the FULL set, never on
-    # the page slice.
-    assert "rows.slice(start, start + JOURNAL_PAGE_SIZE)" in script
-    assert "knownCostTotal(models)" in script
-    # Page state is clamped back into range before every render.
-    assert "modelsPage = journalClampPage(modelsPage, modelsPages)" in script
-    # Pager reuses the shared button styles and Vietnamese labels.
-    assert 'setAttribute("aria-label", "Trang trước")' in script
-    assert 'setAttribute("aria-label", "Trang sau")' in script
-    assert 'className = "screen-button journal-pager-step"' in script
-
-
-def test_model_token_total_never_double_counts_cache(node: str) -> None:
-    # Token-by-model total is the whole prompt side plus completion; cache is
-    # already inside prompt_tokens, so prompt + completion is the full count.
-    rows = [
-        {"prompt_tokens": 300, "cached_tokens": 100, "completion_tokens": 10},
-        {"prompt_tokens": 50, "cached_tokens": None, "completion_tokens": 2},
-    ]
-    totals = _eval(node, "[$rows.map(modelTokens)]".replace("$rows", json.dumps(rows)))
-    assert totals == [[310, 52]]
-    assert _eval(node, "knownTokenTotal($rows)".replace("$rows", json.dumps(rows))) == 362
-    assert _eval(node, "knownTokenTotal([])") is None
+def test_multi_model_turn_tokens_split_not_double_counted(node: str) -> None:
+    """A turn whose prompt side is all cache: the hint still shows
+    input/cache/output once each — cache is inside prompt, never stacked
+    on top."""
+    html = _eval_dash(
+        node,
+        "renderStats({ totals: { requests: 1, prompt_tokens: 200,"
+        " cached_tokens: 200, completion_tokens: 5, total_tokens: 205,"
+        " cost_usd: null, latency_ms_p50: null, latency_ms_p90: null } });\n"
+        "console.log(JSON.stringify(document.querySelector('#stat-grid').innerHTML));",
+    )
+    assert "vào 200 · cache 200 · ra 5" in html
+    assert ">205</p>" in html  # prompt + completion, cache not re-added
 
 
 def test_daily_costs_zero_fill_missing_days(node: str) -> None:
+    """dayColumns: the range drives the columns — every day in [from, to]
+    gets a bucket (sparse days fill with 0 requests / null cost), payload
+    days outside the range are dropped, a broken 'day' key never lands."""
     by_day = [
-        {"day": "2026-09-20", "cost_usd": 0.5},
-        {"day": "2026-09-22", "cost_usd": None},
-        {"day": "nope", "cost_usd": 99},
+        {"day": "2026-09-20", "requests": 4, "cost_usd": 0.5},
+        {"day": "2026-09-22", "requests": 1, "cost_usd": None},
+        {"day": "nope", "requests": 99, "cost_usd": 99},
+        {"day": "2026-10-01", "requests": 7, "cost_usd": 0.7},
     ]
-    days = _eval(
+    days = _eval_dash(
         node,
-        "dailyCosts($rows, { from: '2026-09-20', to: '2026-09-22', days: 3 })"
-        .replace("$rows", json.dumps(by_day)),
+        f"rangeFrom = '2026-09-20'; rangeTo = '2026-09-22';\n"
+        f"console.log(JSON.stringify(dayColumns({json.dumps(by_day)})))",
     )
     assert days == [
-        {"day": "2026-09-20", "value": 0.5},
-        {"day": "2026-09-21", "value": 0},
-        {"day": "2026-09-22", "value": 0},
+        {"day": "2026-09-20", "requests": 4, "cost_usd": 0.5},
+        {"day": "2026-09-21", "requests": 0, "cost_usd": None},
+        {"day": "2026-09-22", "requests": 1, "cost_usd": None},
     ]
 
 
-def test_average_display_value_and_meta(node: str) -> None:
-    rows = [
-        {"session_id": "s1", "turn_index": 0, "status": "completed", "cost_usd": 0.2},
-        {"session_id": "s1", "turn_index": 1, "status": "failed", "cost_usd": 0.5},
-        {"session_id": "s1", "turn_index": 2, "status": "completed", "cost_usd": None},
-        {"session_id": "s1", "turn_index": 3, "status": "completed", "cost_usd": 0.1},
-    ]
-    display = _eval(
+def test_day_columns_fall_back_to_sparse_buckets_on_wide_ranges(node: str) -> None:
+    """Past the column cap (or with an unset/inverted range) the sparse
+    by_day buckets render as-is instead of fabricating hundreds of empty
+    days."""
+    by_day = [{"day": "2026-01-01", "requests": 1, "cost_usd": 0.1}]
+    same = _eval_dash(
         node,
-        "averageDisplay(overviewMetrics($rows))".replace("$rows", json.dumps(rows)),
+        f"rangeFrom = '2026-01-01'; rangeTo = '2026-06-01';\n"
+        f"console.log(JSON.stringify(dayColumns({json.dumps(by_day)})))",
     )
-    assert display["value"] == pytest.approx(0.15)
-    assert display["meta"] == [
-        "2 lượt hợp lệ",
-        "bỏ 1 lỗi · 1 chưa định giá",
-    ]
-
-
-def test_average_display_skip_line_lists_only_present_causes(node: str) -> None:
-    # Unpriced-only basis skips the failed part and vice versa, so the skip
-    # line never mentions a cause with zero turns.
-    unpriced_only = [
-        {"session_id": "s1", "turn_index": 0, "status": "completed", "cost_usd": 0.2},
-        {"session_id": "s1", "turn_index": 1, "status": "completed", "cost_usd": None},
-    ]
-    display = _eval(
+    assert same == by_day
+    inverted = _eval_dash(
         node,
-        "averageDisplay(overviewMetrics($rows))".replace("$rows", json.dumps(unpriced_only)),
+        f"rangeFrom = '2026-09-22'; rangeTo = '2026-09-20';\n"
+        f"console.log(JSON.stringify(dayColumns({json.dumps(by_day)})))",
     )
-    assert display["meta"] == ["1 lượt hợp lệ", "bỏ 1 chưa định giá"]
-    failed_only = [
-        {"session_id": "s1", "turn_index": 0, "status": "completed", "cost_usd": 0.2},
-        {"session_id": "s1", "turn_index": 1, "status": "failed", "cost_usd": 0.5},
-    ]
-    display = _eval(
+    assert inverted == by_day
+    unset = _eval_dash(
         node,
-        "averageDisplay(overviewMetrics($rows))".replace("$rows", json.dumps(failed_only)),
+        f"rangeFrom = ''; rangeTo = '';\n"
+        f"console.log(JSON.stringify(dayColumns({json.dumps(by_day)})))",
     )
-    assert display["meta"] == ["1 lượt hợp lệ", "bỏ 1 lỗi"]
+    assert unset == by_day
 
 
-def test_average_display_empty_basis(node: str) -> None:
-    rows = [
-        {"session_id": "s1", "turn_index": 0, "status": "failed", "cost_usd": 0.5},
-    ]
-    display = _eval(
+def test_day_chart_metric_switch(node: str) -> None:
+    """The by_day card's Lượt/Chi phí toggle swaps the column metric:
+    cost_usd mode bars scale on cost (null cost = zero height), requests
+    mode on request counts."""
+    stats = {
+        "by_day": [
+            {"day": "2026-09-20", "requests": 1, "cost_usd": 0.9},
+            {"day": "2026-09-21", "requests": 9, "cost_usd": 0.1},
+            {"day": "2026-09-22", "requests": 0, "cost_usd": None},
+        ]
+    }
+    out = _eval_dash(
         node,
-        "averageDisplay(overviewMetrics($rows))".replace("$rows", json.dumps(rows)),
+        f"statsData = {json.dumps(stats)};\n"
+        "rangeFrom = ''; rangeTo = '';   // sparse buckets as-is\n"
+        "dayMetric = 'requests'; renderDayChart();\n"
+        "const req = document.querySelector('#chart-day').innerHTML;\n"
+        "dayMetric = 'cost_usd'; renderDayChart();\n"
+        "const cost = document.querySelector('#chart-day').innerHTML;\n"
+        "console.log(JSON.stringify({ req, cost }))",
     )
-    assert display == {"value": None, "meta": ["không có lượt nào đủ giá để tính trung bình"]}
-    empty = _eval(node, "averageDisplay(overviewMetrics([]))")
-    assert empty == {"value": None, "meta": ["chưa có lượt nào"]}
-
-
-def test_average_display_full_coverage_single_line(node: str) -> None:
-    rows = [
-        {"session_id": "s1", "turn_index": 0, "status": "completed", "cost_usd": 0.0},
-        {"session_id": "s1", "turn_index": 1, "status": "completed", "cost_usd": 0.4},
+    req_heights = [
+        float(h) for h in
+        [p.split('height:')[1].split('%')[0] for p in out["req"].split('dc-bar')[1:]]
     ]
-    display = _eval(
+    cost_heights = [
+        float(h) for h in
+        [p.split('height:')[1].split('%')[0] for p in out["cost"].split('dc-bar')[1:]]
+    ]
+    # Requests: 1/9, 9/9, 0 — middle day is the tallest.
+    assert req_heights[0] == pytest.approx(1 / 9 * 100)
+    assert req_heights[1] == 100.0
+    # Cost: 0.9/0.9, 0.1/0.9 — the first day wins.
+    assert cost_heights[0] == 100.0
+    assert cost_heights[1] == pytest.approx(1 / 9 * 100)
+    assert "Chi phí theo ngày" in out["cost"] or 'aria-label="Chi phí' in out["cost"]
+    # Zero days keep a visible zero-height track, not a missing bar.
+    assert "is-zero" in out["req"]
+
+
+def test_paging_multiple_pages_and_midway_failure(node: str) -> None:
+    """"Tải thêm" is server paging: page 1 is 15 rows, the next request asks
+    limit=50&offset=<rows so far>, rows accumulate, and a midway failure is
+    an explicit error state — never a silent partial list."""
+    out = _eval_dash(
         node,
-        "averageDisplay(overviewMetrics($rows))".replace("$rows", json.dumps(rows)),
+        """(async () => {
+          const row = (i) => ({ session_id: 's' + i, turn_index: 0 });
+          const pages = {
+            0: Array.from({ length: 15 }, (_, i) => row(i)),
+            15: Array.from({ length: 50 }, (_, i) => row(15 + i)),
+          };
+          __jsonResponder = async (url) => {
+            const q = new URLSearchParams(url.split('?')[1]);
+            const off = Number(q.get('offset'));
+            if (off >= 65) throw new Error('backend died');
+            return { traces: pages[off] || [], total: 100 };
+          };
+          await loadTraces(true);
+          await loadTraces(false);
+          const ok = { rows: traceState.rows.length, total: traceState.total,
+            more: document.querySelector('#trace-more').hidden,
+            urls: __jsonCalls.slice(-2) };
+          await loadTraces(false);
+          const afterError = { error: traceState.error,
+            rows: traceState.rows.length,
+            status: document.querySelector('#trace-status').textContent,
+            statusHidden: document.querySelector('#trace-status').hidden };
+          return { ok, afterError };
+        })().then((v) => console.log(JSON.stringify(v)))""",
     )
-    assert display["value"] == pytest.approx(0.2)
-    assert display["meta"] == ["2 lượt hợp lệ"]
-
-_FAKE_DOM = r"""
-class Element {
-  constructor(tag = 'div') {
-    this.tag = tag;
-    this.children = [];
-    this.className = '';
-    this.textContent = '';
-    this.innerHTML = '';
-    this.dataset = {};
-    this.attributes = {};
-    this.style = { _props: {}, setProperty(k, v) { this._props[k] = v; } };
-    this._handlers = {};
-  }
-  setAttribute(k, v) { this.attributes[k] = String(v); }
-  append(...nodes) { for (const n of nodes.flat()) this.children.push(n); }
-  replaceChildren(...nodes) { this.children = []; this.append(...nodes); }
-  addEventListener(t, f) { this._handlers[t] = f; }
-  querySelectorAll(sel) {
-    const cls = sel.startsWith('.') ? sel.slice(1) : null;
-    const out = [];
-    const walk = (node) => {
-      for (const child of node.children || []) {
-        if (typeof child === 'string') continue;
-        if (cls && String(child.className || '').split(' ').includes(cls)) out.push(child);
-        walk(child);
-      }
-    };
-    walk(this);
-    return out;
-  }
-  querySelector(sel) { return this.querySelectorAll(sel)[0] ?? null; }
-}
-const mount = new Element('div');
-mount.isConnected = true;
-globalThis.document = {
-  createElement: (tag) => new Element(tag),
-  querySelector: (sel) => sel === '#cost-bots' ? mount : null,
-  body: { prepend() {} },
-};
-globalThis.fetch = async (url) => ({
-  ok: true,
-  json: async () => ({ bots: [
-    {id: 'coder', name: 'Coder', tint: 'botanical'},
-  ] }),
-});
-""".strip()
+    assert out["ok"]["rows"] == 65
+    assert out["ok"]["total"] == 100
+    assert out["ok"]["more"] is False  # still more to fetch
+    assert out["ok"]["urls"][0].endswith("limit=15&offset=0")
+    assert out["ok"]["urls"][1].endswith("limit=50&offset=15")
+    # Midway failure: explicit error, rows kept — nothing silently partial.
+    assert out["afterError"]["error"] == "backend died"
+    assert out["afterError"]["rows"] == 65
+    assert "Không tải được danh sách lượt" in out["afterError"]["status"]
+    assert out["afterError"]["statusHidden"] is False
 
 
-def _render_eval(node: str, expression: str) -> object:
-    source = (
-        _FAKE_DOM + "\n"
-        "const api = await import('./thyca/webui/pages/dashboard/cost-bots.js');\n"
-        "const main = async () => { " + expression + " };\n"
-        "console.log(JSON.stringify(await main()));\n"
+def test_load_more_hidden_at_total_and_rows_render(node: str) -> None:
+    """"Hiển thị X trong Y lượt" tracks the loaded window; the button hides
+    once rows reach total (and during loads), and each row links its turn
+    to the trace page deep link."""
+    out = _eval_dash(
+        node,
+        """(async () => {
+          const row = (i) => ({ session_id: 's x', title: 'T', turn_index: i,
+            started_at: '2026-09-20T10:00:00', model: 'm', status: 'completed',
+            requests: 1, tool_calls: 0, total_tokens: 5, cost_usd: 0.001,
+            latency_ms: 40 });
+          __jsonResponder = async (url) => {
+            const q = new URLSearchParams(url.split('?')[1]);
+            const off = Number(q.get('offset'));
+            const lim = Number(q.get('limit'));
+            return { traces: Array.from(
+              { length: Math.min(lim, 20 - off) }, (_, i) => row(off + i)),
+              total: 20 };
+          };
+          await loadTraces(true);
+          const first = {
+            count: document.querySelector('#trace-count').textContent,
+            more: document.querySelector('#trace-more').hidden,
+            html: document.querySelector('#trace-rows').innerHTML };
+          await loadTraces(false);
+          return { first,
+            second: { count: document.querySelector('#trace-count').textContent,
+              more: document.querySelector('#trace-more').hidden } };
+        })().then((v) => console.log(JSON.stringify(v)))""",
     )
-    result = subprocess.run(
-        [node, "--input-type=module", "-e", source],
-        check=True,
-        capture_output=True,
-        text=True,
-        cwd=ROOT,
-    )
-    return json.loads(result.stdout)
+    assert out["first"]["count"] == "Hiển thị 15 trong 20 lượt"
+    assert out["first"]["more"] is False
+    # Deep-link convention: ../trace/index.html#<session>/<turn>, encoded.
+    assert 'data-href="../trace/index.html#s%20x/0"' in out["first"]["html"]
+    assert out["second"]["count"] == "Hiển thị 20 trong 20 lượt"
+    assert out["second"]["more"] is True
 
 
 def test_cost_bot_rows_have_avatar_slots(node: str) -> None:
-    value = _render_eval(
+    """Every by_bot row keeps an aligned avatar slot: a seal for roster
+    bots, the dashed '?' chip for unattributed ('unknown') rows — and the
+    roster patch names the row."""
+    by_bot = [
+        {"bot_id": "coder", "requests": 3, "tool_calls": 1,
+         "total_tokens": 30, "cost_usd": 0.01,
+         "last_started_at": "2026-09-20T09:00:00Z"},
+        {"bot_id": "unknown", "requests": 1, "tool_calls": 0,
+         "total_tokens": 10, "cost_usd": None,
+         "last_started_at": "2026-09-18T09:00:00Z"},
+    ]
+    html = _eval_dash(
         node,
-        "api.renderCostBots([{bot_id: 'coder', turns: 2, requests: 3,"
-        " cost_usd: 0.01, pricedTurns: 1},"
-        " {bot_id: '', turns: 1, requests: 0, cost_usd: null, pricedTurns: 0}]);"
-        " await new Promise((r) => setTimeout(r, 5));"
-        " const slots = mount.querySelectorAll('.bot-avatar-slot');"
-        " const marks = mount.querySelectorAll('.cost-bot-avatar')"
-        "  .map((s) => s.innerHTML.includes('mk-wax'));"
-        " const names = mount.querySelectorAll('.cost-bot-name')"
-        "  .map((s) => s.textContent);"
-        " return [slots.length, marks, names];",
+        "globalThis.__roster = { coder: { id: 'coder', name: 'Coder',"
+        " color: '#123', state: 'idle' } };\n"
+        f"statsData = {{ by_bot: {json.dumps(by_bot)}, totals: {{ requests: 4 }} }};\n"
+        "renderBotRows();\n"
+        "console.log(JSON.stringify(document.querySelector('#rows-bot').innerHTML));",
     )
-    # Both rows keep an aligned slot; only the known bot gets a mark,
-    # and the roster patch renames it to the card name.
-    assert value[0] == 2
-    assert value[1] == [True, False]
-    assert value[2] == ["Coder", "chưa gắn bot"]
+    # Both rows keep an aligned slot; only the known bot gets a seal.
+    assert html.count('<span class="row-avatar') == 2
+    assert "<ava:coder/>" in html
+    assert '<span class="row-avatar id-chip" title="unknown">?</span>' in html
+    assert ">Coder</span>" in html
+    assert "Chưa gắn bot" in html

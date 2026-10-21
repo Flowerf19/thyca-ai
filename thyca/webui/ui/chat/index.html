@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#f1e9d8"><title>Thyca — Sổ trò chuyện</title><link rel="icon" href="data:,">
+<!-- Chat UI wired to the real Thyca backend (js/data.js fetches live data;
+     js/chat.js streams turns). Based on the approved prototype design.
+     API: GET /api/bots, GET /api/bots/<id>/dm, GET /api/sessions,
+          GET/PATCH /api/sessions/<id>, POST /api/sessions, GET /api/config,
+          POST /api/sessions/<id>/turn/stream, POST /api/sessions/<id>/turn/cancel,
+          GET /api/sessions/<id>/turn/stream (replay an in-flight turn).
+     NDJSON mapping: turn.accepted -> waiting; llm.started/llm.thinking -> thinking;
+       tool.started -> working; llm.content -> writing; turn.completed -> done;
+       turn.failed -> error. See window.ThycaPrototype below for the adapter surface.
+     Each bot has one color; derivePalette generates its wax, stamp, paper and accents.
+     Original wax seal bodies and rims are preserved; the visible face matches the approved reference.
+     Original glyph markup is retained but hidden under the new expressive face. Semantic states never change randomly. An interruptible idle layer supplies random gaze, gestures and short local card comments.
+     The original stylesheet was not attached; eight lifecycle states plus mention/confused/group are implemented.
+     Completion returns to idle after 1600 ms; mentions overlay for 500 ms.
+     notifyText(botId, delta) moves musical notes from visible text, not a free-running loop.
+     setGroupActivity(groupId, speakerId) synchronizes rims on a shared clock.
+     Error/offline cancel active mock streams; offline prevents new mock sends.
+-->
+<link rel="stylesheet" href="../share/fonts.css">
+<link rel="stylesheet" href="../share/base.css">
+<link rel="stylesheet" href="../share/sidebar.css">
+<link rel="stylesheet" href="../share/avatars/avatars.css">
+<link rel="stylesheet" href="../share/avatars/studio.css">
+<link rel="stylesheet" href="../share/markdown.css">
+<link rel="stylesheet" href="chatcss/chat.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+
+<radialgradient id="waxHl" cx="0.34" cy="0.28" r="0.55"><stop offset="0" stop-color="#fff" stop-opacity="0.5" /><stop offset="1" stop-color="#fff" stop-opacity="0" /></radialgradient>
+<radialgradient id="waxShade" cx="0.62" cy="0.7" r="0.6"><stop offset="0.45" stop-color="#000" stop-opacity="0" /><stop offset="1" stop-color="#000" stop-opacity="0.28" /></radialgradient>
+<lineargradient id="waxSheen" x1="0" x2="1" y1="0" y2="0.3"><stop offset="0.35" stop-color="#fff" stop-opacity="0" /><stop offset="0.5" stop-color="#fff" stop-opacity="0.42" /><stop offset="0.65" stop-color="#fff" stop-opacity="0" /></lineargradient>
+<symbol id="g-quill" viewBox="0 0 640 427"><g transform="translate(0.000000,427.000000) scale(0.100000,-0.100000)" fill="currentColor" stroke="none">
+  <path d="M4535 3930 c-322 -73 -494 -211 -567 -454 l-18 -61 5 77 c2 43 14
+105 25 139 12 34 19 63 17 65 -7 7 -206 -116 -304 -189 -55 -41 -151 -120
+-214 -175 -274 -241 -376 -411 -413 -688 l-13 -99 -8 90 c-5 59 -4 123 4 184
+6 52 10 96 8 98 -7 7 -139 -140 -203 -226 -76 -102 -134 -211 -163 -303 -22
+-72 -41 -225 -42 -342 l-1 -71 -22 115 c-13 63 -27 142 -31 174 l-7 59 -31
+-49 c-89 -144 -133 -290 -147 -497 -11 -164 -28 -287 -39 -287 -4 0 -12 19
+-19 43 -6 23 -23 56 -37 72 l-26 30 5 -57 c8 -72 -10 -285 -30 -362 -9 -33
+-11 -63 -7 -67 5 -5 50 62 103 153 473 817 1034 1478 1746 2058 322 263 318
+252 -21 -55 -661 -597 -1122 -1140 -1604 -1888 -67 -103 -136 -213 -153 -244
+-30 -54 -31 -56 -13 -69 27 -20 32 -18 86 30 112 100 261 176 438 223 82 21
+99 28 84 37 -32 18 -185 20 -244 3 -138 -41 -2 26 183 89 192 66 284 118 403
+226 58 52 188 208 181 216 -2 2 -40 -8 -83 -22 -44 -13 -130 -34 -191 -46 -61
+-11 -130 -27 -153 -35 -23 -9 -44 -13 -47 -11 -7 8 115 60 259 111 262 93 380
+163 529 314 113 115 284 350 268 367 -4 3 -23 -3 -45 -14 -79 -40 -316 -101
+-346 -89 -7 3 -4 6 7 6 39 2 232 73 319 118 122 63 227 144 332 256 76 80 211
+264 202 274 -2 2 -25 -6 -50 -17 -63 -28 -178 -56 -262 -65 -38 -3 -81 -9 -95
+-12 -14 -3 -22 -2 -18 2 4 4 69 23 145 41 183 45 268 86 348 167 59 61 158
+227 144 242 -3 3 -26 -6 -50 -20 -45 -26 -158 -65 -188 -65 -9 0 21 18 66 40
+105 51 183 123 223 203 32 65 60 176 60 240 l0 37 -102 -1 c-61 0 -136 -8
+-183 -19z M2180 1105 c-21 -25 -6 -48 58 -88 47 -30 68 -38 88 -33 20 5 25 12
+22 34 -2 20 -17 37 -58 64 -59 40 -90 47 -110 23z M2090 954 c-36 -36 -99 -91
+-140 -122 -41 -31 -78 -61 -81 -66 -4 -5 -10 -39 -14 -75 -9 -90 -39 -224 -64
+-291 -43 -114 -23 -93 98 102 59 96 91 157 91 175 0 34 16 53 45 53 25 0 45
+-18 45 -40 0 -20 -31 -50 -51 -50 -13 0 -35 -33 -178 -253 -24 -37 -41 -71
+-37 -74 3 -3 32 20 63 51 49 48 269 206 304 218 6 2 17 44 26 93 8 50 31 132
+50 183 19 52 33 95 31 97 -13 11 -107 65 -114 65 -5 0 -39 -30 -74 -66z" />
+</g></symbol>
+<symbol id="g-code" viewBox="0 0 24 24"><path d="M8.5 6.5 3.5 12l5 5.5M15.5 6.5l5 5.5-5 5.5M13.2 4.8l-2.4 14.4" /></symbol>
+<symbol id="g-nib" viewBox="0 0 24 24"><path d="M12 2.8 6.6 10l1.8 7.4h7.2l1.8-7.4Z" /><path d="M12 2.8v7.1" /><circle cx="12" cy="11.6" r="1.3" /><path d="M8.6 20.6h6.8" /></symbol>
+<symbol id="g-note" viewBox="0 0 24 24"><path d="M9 17.6V5.9l10.2-2.2v11.6" /><path d="M9 9.4l10.2-2.2" /><ellipse cx="6.6" cy="17.8" rx="2.5" ry="2.1" /><ellipse cx="16.8" cy="15.6" rx="2.5" ry="2.1" /></symbol>
+<symbol id="g-lens" viewBox="0 0 24 24"><circle cx="10.4" cy="10.4" r="6" /><path d="M14.8 14.8 20.4 20.4M7.6 8.8a3.2 3.2 0 0 1 2.4-1.6" /></symbol>
+<symbol id="g-brush" viewBox="0 0 24 24"><path d="M14.2 4.6 19.4 9.8 11 18.2 5.8 13Z" /><path d="M5.8 13c-2 1-2.6 3.6-3 6.6 3-.4 5.6-1 7-3.2" /><path d="M16.8 7.2 18.6 5.4" /></symbol>
+<symbol id="g-team" viewBox="0 0 24 24"><circle cx="12" cy="7.6" r="3" /><circle cx="7" cy="15.6" r="3" /><circle cx="17" cy="15.6" r="3" /></symbol>
+<symbol id="g-star" viewBox="0 0 24 24"><path d="M12 3.5 14.4 8.8 20.2 9.7 15.9 13.8 16.9 19.5 12 16.9 7.1 19.5 8.1 13.8 3.8 9.7 9.6 8.8Z" /></symbol>
+
+<symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></symbol><symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol><symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol><symbol id="i-star" viewBox="0 0 24 24"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9Z"/></symbol><symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7v.2"/></symbol><symbol id="i-list" viewBox="0 0 24 24"><path d="M7 6h13M7 12h13M7 18h13M3 6h.1M3 12h.1M3 18h.1"/></symbol><symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4.5 4.5L19 7"/></symbol><symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-5-5 5 5-5 5"/></symbol><symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol><symbol id="i-clip" viewBox="0 0 24 24"><path d="m8 12 6.5-6.5a3 3 0 0 1 4.2 4.2l-9 9a5 5 0 0 1-7.1-7.1l9-9a2 2 0 0 1 2.8 2.8L6 14a1 1 0 0 0 1.4 1.4l8-8"/></symbol><symbol id="i-retry" viewBox="0 0 24 24"><path d="M4 9a8 8 0 1 1 0 6M4 4v5h5"/></symbol><symbol id="i-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7Z"/></symbol><symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></symbol><symbol id="i-face" viewBox="0 0 24 24"><path d="M12 2 15 4l4 .5.5 4 2 3.5-2 3-.5 4-4 .5-3 2-3-2-4-.5-.5-4-2-3 2-3.5.5-4L9 4Z"/><circle cx="12" cy="12" r="5"/></symbol><symbol id="i-leaf" viewBox="0 0 24 24"><path d="M5 19C1 8 9 3 20 4c1 12-6 17-15 15Zm0 0L16 8"/></symbol><symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol><symbol id="i-send" viewBox="0 0 24 24"><path d="m4 12 16-8-5 16-4-6-7-2Zm7 2 9-10"/></symbol><symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V3H3v13h5"/></symbol>
+</defs></svg>
+<main class="notebook-shell chat-shell" aria-label="Thyca — sổ trò chuyện">
+<header class="site-header"><div class="header-left"><span class="wordmark">thyca</span><span class="header-rule"></span><span class="site-kicker">Nơi những ý tưởng thành lời</span></div><div class="header-right"><nav class="page-links" data-page-nav="chat" aria-label="Điều hướng"></nav></div></header>
+<div class="main-grid">
+<aside class="sidebar" id="chat-sidebar" aria-label="Đội bot và hội thoại">
+ <div class="sessions-heading"><h2 id="team-nav-title">Đội</h2><span class="bot-count">3 người bạn</span><button class="new-session" id="team-shared-create" aria-label="Tạo nhóm chat" title="Tạo nhóm chat"><svg class="icon"><use href="#i-plus"/></svg></button></div>
+ <div class="side-scroll"><nav class="session-list" id="team-bot-list" aria-label="Bot trong đội"></nav><h3 class="section-label">Hội thoại chung</h3><div id="group-list"></div></div>
+ <footer class="sidebar-footer"><button id="open-customize"><svg class="icon"><use href="#i-face"/></svg>Custom bot</button><button class="motion-button" id="motion-toggle" aria-label="Tạm dừng chuyển động" aria-pressed="false" title="Tạm dừng chuyển động"><svg class="icon"><use href="#i-pause"/></svg></button></footer>
+</aside>
+<div class="splitter" role="separator" tabindex="0" aria-label="Thay đổi chiều rộng thanh bot" aria-orientation="vertical" aria-valuemin="310" aria-valuemax="470" aria-valuenow="374" title="Kéo để thay đổi chiều rộng · dùng phím trái/phải"></div>
+<section class="workspace" aria-label="Nội dung trò chuyện">
+ <svg class="ornament" viewBox="0 0 280 520" fill="none" stroke="currentColor" stroke-width="1" aria-hidden="true"><path d="M228 510C200 410 87 346 117 225S210 105 237 11"/><path d="M211 465C138 458 124 414 123 393c43 7 67 35 88 72ZM181 419c54-33 63-73 55-102-38 31-49 66-55 102ZM140 357c-70-13-91-44-92-77 43 10 76 41 92 77ZM120 301c59-17 79-52 82-86-39 15-69 48-82 86ZM119 235c-42-25-48-58-42-88 28 20 41 49 42 88ZM151 169c44 2 72-18 88-48-37-1-68 17-88 48ZM184 119c-31-31-33-58-22-83 20 23 26 52 22 83ZM220 59c33-3 47-26 50-47-27 7-44 23-50 47Z"/></svg>
+ <svg class="staff" viewBox="0 0 420 300" fill="none" stroke="currentColor" aria-hidden="true"><path d="M0 140Q180 180 420 60M0 152Q180 192 420 72M0 164Q180 204 420 84M0 176Q180 216 420 96M0 188Q180 228 420 108"/><path d="M220 142v-58l37-8v55" stroke-width="2"/><ellipse cx="214" cy="144" rx="8" ry="5" fill="currentColor"/><ellipse cx="251" cy="133" rx="8" ry="5" fill="currentColor"/></svg>
+ <header class="chat-title-head"><div class="screen-title"><div class="eyebrow" id="session-eyebrow">Sổ trò chuyện · 01</div><h1 id="chat-title">Kế hoạch tuần</h1></div><div class="head-actions"><button class="quiet-button" id="run-demo"><svg class="icon"><use href="#i-play"/></svg><span>Chạy mẫu</span></button><button class="icon-button" id="session-info" aria-label="Thông tin phiên"><svg class="icon"><use href="#i-info"/></svg></button></div></header>
+ <section class="chat-canvas" aria-label="Tin nhắn"><div class="conversation-scroll" id="conversation-scroll"><div class="conversation-content"><div class="day-divider">Hôm nay, một khởi đầu mới</div><div class="message-list" id="message-list" aria-live="polite"></div></div></div><button class="to-bottom" id="to-bottom" aria-label="Xuống cuối cuộc trò chuyện" hidden><svg class="icon"><use href="#i-chevron"/></svg></button></section>
+ <footer class="site-footer"><form class="composer" id="composer"><label class="letter-label" for="message" id="composer-label-text">Gửi thyca,</label><div class="file-chip" id="file-chip" hidden><span></span><button type="button" id="remove-file" aria-label="Bỏ tệp">×</button></div><textarea id="message" name="message" rows="2" maxlength="4000" placeholder="Viết vài dòng cho thyca…"></textarea><div class="composer-toolbar"><div class="composer-tools"><button class="attach-button" type="button" id="attach-file" title="Chọn tệp để thử giao diện"><svg class="icon"><use href="#i-clip"/></svg><span>Tệp</span></button><span class="composer-team-hint">Gõ <kbd>@</kbd> để gọi một bot</span></div><div class="composer-send"><label class="effort-control model-control" for="composer-model"><span>Model</span><select id="composer-model" class="effort-select"><option value="minimax/minimax-m3.1-flash:free">minimax-m3.1</option></select></label><label class="effort-control" for="thinking-effort"><span>Suy nghĩ</span><select id="thinking-effort" class="effort-select"><option value="default">Mặc định</option><option value="low">Nhanh</option><option value="high">Kỹ hơn</option></select></label><button class="send-button" id="send-message" type="submit">Gửi<svg class="icon"><use href="#i-send"/></svg></button><button class="stop-button" id="stop-button" type="button" hidden><svg class="icon"><use href="#i-stop"/></svg>Dừng</button></div></div><div class="mention-popup" id="mention-popup" role="listbox" aria-label="Chọn bot" hidden></div><input type="file" id="file-input" hidden></form><div class="composer-hint"><span>Đang kết nối máy chủ Thyca</span><span>Enter gửi · Shift + Enter xuống dòng</span></div></footer>
+</section>
+</div>
+</main>
+<div class="mobile-overlay" id="mobile-overlay" hidden></div>
+<dialog class="screen-dialog" id="expressions-dialog" aria-labelledby="expressions-title">
+<div class="dialog-heading"><div><h2 id="expressions-title">Một con dấu, nhiều tâm trạng.</h2><p>Đôi mắt kể chuyện, vành dấu giữ nhịp. Thử từng biểu cảm hoặc xem trọn một lượt làm việc.</p></div><button class="icon-button dialog-close" aria-label="Đóng"><svg class="icon"><use href="#i-close"/></svg></button></div>
+<div class="dialog-body"><div class="dialog-controls"><label for="expression-bot">Người bạn</label><select id="expression-bot"><option value="thyca">thyca</option><option value="coder">Coder</option><option value="researcher">Researcher</option></select><label for="bot-color">Màu bot</label><input type="color" id="bot-color" value="#315e4c" aria-label="Màu của bot" style="width:28px;height:28px;border:0;background:none;padding:0;cursor:pointer"><div class="palette-preview" id="palette-preview"></div></div>
+<div class="studio-tabs" role="tablist" aria-label="Nhóm biểu cảm"><button type="button" class="studio-tab" id="work-tab" role="tab" aria-selected="true" aria-controls="lifecycle-panel">Khi làm việc <small>11</small></button><button type="button" class="studio-tab" id="idle-tab" role="tab" aria-selected="false" aria-controls="idle-panel" tabindex="-1">Lúc rảnh <small>8</small></button></div>
+<section class="expression-stage" id="expression-stage" aria-label="Biểu cảm đang xem"><div class="stage-portrait" id="lab-portrait"></div><div class="stage-copy"><div class="stage-kicker"><span class="status-dot"></span><span id="lab-bot-name">thyca</span><span>·</span><span>Cận cảnh</span></div><h3 id="lab-state"></h3><p id="lab-description"></p><p class="lab-speech" id="lab-speech"></p></div></section>
+<div class="lab-actions"><button type="button" class="lab-primary" id="lab-play"><svg class="icon"><use href="#i-play"/></svg>Chạy trọn một lượt</button><button type="button" id="lab-replay"><svg class="icon"><use href="#i-retry"/></svg>Phát lại biểu cảm</button><button type="button" id="lab-done"><svg class="icon"><use href="#i-star"/></svg>Thử hoàn tất</button><button type="button" id="lab-stop" hidden>Dừng</button><span id="lab-playback-note">Chọn biểu cảm để xem chuyển động.</span></div>
+<div id="lifecycle-panel" role="tabpanel" aria-labelledby="work-tab"><h3 class="expression-section-title">Tám nhịp làm việc <small>Gắn với trạng thái của bot</small></h3><div class="expression-grid" id="expression-grid"></div>
+<h3 class="expression-section-title">Những phản xạ nhỏ <small>Khi được gọi, cần hỏi và cùng làm</small></h3><div class="expression-grid" id="expression-extras"></div>
+<section class="group-preview" id="group-preview" hidden><p class="group-preview-title">Cùng một nhịp. Chọn người đang nói.</p><div class="group-preview-members" id="group-preview-members"></div></section>
+</div><section id="idle-panel" role="tabpanel" aria-labelledby="idle-tab" hidden><h3 class="idle-panel-heading">Rảnh một chút, vui một chút.</h3><p class="idle-panel-copy">Mắt thỉnh thoảng nhìn quanh. Một cử chỉ nhỏ, một câu nói vu vơ — rồi lại yên lặng. Mỗi người bạn có một nhịp riêng.</p><div class="idle-controls"><label><input type="checkbox" id="idle-auto-toggle" checked>Ngẫu nhiên khi rảnh</label><label><input type="checkbox" id="idle-comments-toggle" checked>Thỉnh thoảng nói nhỏ</label><button type="button" class="idle-random-button" id="idle-random"><svg class="icon"><use href="#i-retry"/></svg>Ngẫu nhiên ngay</button></div><div id="idle-expression-grid"></div><p class="idle-preview-hint">Lời nhắn xuất hiện trên thẻ bot. Khi bạn gọi hoặc giao việc, bot trở lại tập trung ngay.</p></section>
+<p class="dialog-note">Mỗi bot giữ màu và nhịp chớp mắt riêng. Biểu cảm theo trạng thái công việc; lúc rảnh có thêm cử chỉ và lời nhắn ngẫu nhiên, có thể tắt riêng.</p></div></dialog>
+<dialog class="screen-dialog" id="bot-drawer" aria-labelledby="bot-drawer-name"><div class="dialog-heading"><div><h2 id="bot-drawer-name">Thông tin bot</h2><p id="bot-drawer-subtitle">Một người bạn trong đội.</p></div><button class="icon-button dialog-close" aria-label="Đóng"><svg class="icon"><use href="#i-close"/></svg></button></div><div class="dialog-body" id="bot-drawer-body"></div></dialog>
+<dialog class="screen-dialog" id="group-dialog" aria-labelledby="group-dialog-title"><div class="dialog-heading"><div><h2 id="group-dialog-title">Một cuộc trò chuyện chung.</h2><p>Chọn những người bạn sẽ cùng tham gia.</p></div><button class="icon-button dialog-close" aria-label="Đóng"><svg class="icon"><use href="#i-close"/></svg></button></div><form class="dialog-body group-form" id="group-form"><label class="sr-only" for="group-title">Tên hội thoại</label><input type="text" id="group-title" maxlength="70" placeholder="Tên cuộc trò chuyện" required><div id="group-options"></div><div class="dialog-actions"><button class="primary-action" type="submit">Tạo hội thoại</button></div></form></dialog>
+
+<div class="toast" role="status" id="toast" hidden></div><div class="sr-only" role="status" aria-live="polite" id="announcer"></div>
+<script src="../share/util.js"></script>
+<script type="module" src="../share/markdown.js"></script>
+<script src="../share/data.js"></script>
+<script src="js/data.js"></script>
+<script src="../share/avatars/avatars.js"></script>
+<script src="../share/avatars/idle.js"></script>
+<script src="../share/sidebar.js"></script>
+<script src="../share/avatars/studio.js"></script>
+<script src="../share/shell-app.js"></script>
+<script src="js/chat.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

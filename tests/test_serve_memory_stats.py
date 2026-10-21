@@ -76,24 +76,45 @@ def test_stats_json_and_static(tmp_path: Path) -> None:
         assert payload["untouched"] == 0
         assert payload["leaves"][0]["get_count"] == 1
         assert payload["leaves"][0]["search_count"] == 0
-        with urlopen(_url(httpd, "/memories.html"), timeout=2) as response:
+        with urlopen(_url(httpd, "/ui/memories/"), timeout=2) as response:
             html = response.read().decode("utf-8")
-        assert 'id="memory-sections"' in html
-        assert 'id="team-bot-list"' in html
-        assert 'id="memory-overview-link"' in html
-        assert 'data-view="used-more"' in html
+        # The rebuilt page is a shell: emitShell() injects header/sidebar at
+        # runtime, so the served HTML only carries stylesheet + script tags.
+        assert "emitShell('memories')" in html
+        assert 'src="js/memories.js"' in html
+        assert "../share/shell.js" in html
+        assert "../share/sidebar.css" in html
+        assert "../share/app-shell.css" in html
         assert 'class="session-item" type="button" data-view=' not in html
-        assert './shared/css/bot-envelope.css' in html
-        assert './pages/memories/memories.js' in html
-        with urlopen(_url(httpd, "/pages/memories/memories.js"), timeout=2) as response:
+        with urlopen(_url(httpd, "/ui/share/shell.js"), timeout=2) as response:
+            shell_js = response.read()
+        assert b'id="team-bot-list"' in shell_js
+        with urlopen(_url(httpd, "/ui/memories/js/memories.js"), timeout=2) as response:
             assert "javascript" in response.headers.get_content_type()
             memory_js = response.read()
-        assert b'scopeUrl("/api/memory/stats", requestedScope)' in memory_js
-        assert b'getJson("/api/bots")' in memory_js
-        assert b'"/api/memory/update"' in memory_js
-        mapping = (WEBUI / "shared" / "js" / "memory-data.js").read_text(encoding="utf-8")
-        assert "selectMemories" in mapping
-        assert 'view === "used-more"' in mapping
+        # Page markup lives in PAGE_HTML inside memories.js; the served file
+        # also owns the stats/leaves rendering and the leaf actions.
+        assert b'id="memory-stats"' in memory_js
+        assert b'id="memory-leaves"' in memory_js
+        assert b'id="memory-bot"' in memory_js
+        assert b'id="memory-search"' in memory_js
+        assert b'data-act="reinforce"' in memory_js
+        assert b'data-act="edit"' in memory_js
+        assert b'data-act="forget"' in memory_js
+        assert b"/api/memory/stats?bot_id=" in memory_js
+        assert b"'/api/memory/update'" in memory_js
+        assert b"'/api/memory/reinforce'" in memory_js
+        assert b"'/api/memory/forget'" in memory_js
+        with urlopen(_url(httpd, "/ui/share/data.js"), timeout=2) as response:
+            shared_data = response.read()
+        assert b"getJson('/api/bots')" in shared_data
+        mapping = memory_js.decode("utf-8")
+        # Leaf filtering is a text search over title/snippet plus the
+        # server-computed expiring/suggest_removal chips — the old
+        # data-view="used-more" buckets did not survive the rebuild.
+        assert "filteredLeaves" in mapping
+        assert "stats.expiring" in mapping
+        assert "suggest_removal" in mapping
     finally:
         _stop(httpd, thread)
 
@@ -262,115 +283,153 @@ def test_stats_error_is_503(tmp_path: Path) -> None:
 def test_default_webui_has_index() -> None:
     assert WEBUI.name == "webui"
     for name in (
-        "index.html",
-        "memories.html",
-        "profile.html",
-        "trace.html",
-        "provider.html",
-        "dashboard.html",
+        "ui/chat/index.html",
+        "ui/memories/index.html",
+        "ui/profile/index.html",
+        "ui/trace/index.html",
+        "ui/provider/index.html",
+        "ui/dashboard/index.html",
+        "ui/settings/index.html",
     ):
         assert (WEBUI / name).is_file()
-    for name in ("pages/chat/app.js", "pages/memories/memories.js", "pages/profile/profile.js", "pages/dashboard/trace.js", "pages/provider/provider.js", "pages/dashboard/cost.js", "pages/dashboard/usage.js"):
-        assert (WEBUI / name).is_file()
-    raw = (WEBUI / "pages" / "memories" / "memories.js").read_text(encoding="utf-8")
-    assert '"/api/memory/update"' in raw
-    assert '"/api/memory/reinforce"' in raw
-    assert '"/api/memory/forget"' in raw
+    for name in (
+        "ui/chat/js/app.js",
+        "ui/chat/js/chat.js",
+        "ui/chat/js/data.js",
+        "ui/memories/js/memories.js",
+        "ui/profile/js/profile.js",
+        "ui/trace/js/trace.js",
+        "ui/provider/js/provider.js",
+        "ui/dashboard/js/dashboard.js",
+        "ui/settings/js/settings.js",
+        "ui/share/data.js",
+        "ui/share/shell.js",
+        "ui/share/shell-app.js",
+        "ui/share/sidebar.js",
+        "ui/share/util.js",
+        "ui/share/avatars/avatars.js",
+        "ui/share/avatars/idle.js",
+        "ui/share/avatars/studio.js",
+    ):
+        assert (WEBUI / name).is_file(), name
+    raw = (WEBUI / "ui" / "memories" / "js" / "memories.js").read_text(encoding="utf-8")
+    assert "'/api/memory/update'" in raw
+    assert "'/api/memory/reinforce'" in raw
+    assert "'/api/memory/forget'" in raw
     # Hồ sơ is its own screen now: the canonical write lives there.
     assert "canonical" not in raw
-    profile = (WEBUI / "pages" / "profile" / "profile.js").read_text(encoding="utf-8")
-    assert 'postJson("/api/memory/canonical"' in profile
+    profile = (WEBUI / "ui" / "profile" / "js" / "profile.js").read_text(encoding="utf-8")
+    assert "postJson('/api/memory/canonical'" in profile
 
 
 def test_profile_screen_renders_markdown() -> None:
-    """Hồ sơ is its own screen: mục lục route, file switcher, markdown body."""
-    html = (WEBUI / "profile.html").read_text(encoding="utf-8")
-    script = (WEBUI / "pages" / "profile" / "profile.js").read_text(encoding="utf-8")
-    css = (WEBUI / "pages" / "profile" / "profile.css").read_text(encoding="utf-8")
-    navigation = (WEBUI / "shared" / "js" / "navigation.js").read_text(encoding="utf-8")
-    memories = (WEBUI / "memories.html").read_text(encoding="utf-8")
+    """Hồ sơ is its own screen: hash-routed file rail + markdown body.
 
-    assert '["profile.html", "Hồ sơ"' in navigation
-    assert 'id="profile-nav"' in html
-    assert "./pages/profile/profile.js" in html
-    assert "./shared/js/navigation.js" in html
-    # The edit dialog moves across unchanged; only its size grows.
-    assert 'id="canonical-dialog"' in html
-    assert "min(56rem, calc(100vw - 2rem))" in css
-    # Body text is markdown, rendered by the shared chat renderer.
-    assert 'from "../../shared/js/markdown.js"' in script
-    assert "formatMarkdown(file.content)" in script
+    In the rebuilt UI the page is a shell — emitShell('profile') injects the
+    shared header/sidebar and profile.js fills .workspace — so the rail,
+    markdown pipeline and edit dialog are asserted on the files that now own
+    them (script for page markup, share/shell.js for navigation)."""
+    html = (WEBUI / "ui" / "profile" / "index.html").read_text(encoding="utf-8")
+    script = (WEBUI / "ui" / "profile" / "js" / "profile.js").read_text(encoding="utf-8")
+    css = (WEBUI / "ui" / "profile" / "profilecss" / "profile.css").read_text(encoding="utf-8")
+    shell = (WEBUI / "ui" / "share" / "shell.js").read_text(encoding="utf-8")
+    shell_css = (WEBUI / "ui" / "share" / "app-shell.css").read_text(encoding="utf-8")
+    memories = (WEBUI / "ui" / "memories" / "js" / "memories.js").read_text(encoding="utf-8")
+    memories_html = (WEBUI / "ui" / "memories" / "index.html").read_text(encoding="utf-8")
+
+    # Navigation is the shared SHELL_PAGES table, one row per screen.
+    assert "['profile', 'Hồ sơ', '../profile/index.html']" in shell
+    assert "emitShell('profile')" in html
+    assert 'src="js/profile.js"' in html
+    assert "../share/shell.js" in html
+    # The file rail is markup the script injects into the shell's .workspace.
+    assert 'id="profile-nav"' in script
+    # The edit dialog is still one dialog with a real editor textarea — its
+    # larger footprint is page CSS, not a shared dialog size.
+    assert 'id="edit-dialog"' in html
+    assert "#edit-dialog" in css
+    assert "min-height:46vh" in css
+    # Body text is markdown, rendered by the shared chat renderer (a module,
+    # so profile.js falls back to escaped paragraphs before it evaluates).
+    assert "../share/markdown.js" in html
+    assert "window.formatMarkdown" in script
+    assert "contentHtml(file.content)" in script
     assert "selectCanonical" in script
-    assert 'postJson("/api/memory/canonical"' in script
+    assert "postJson('/api/memory/canonical'" in script
     # Nhật ký no longer carries the profile view or its dialog.
-    assert 'data-view="profile"' not in memories
-    assert "canonical" not in memories
+    assert 'data-view="profile"' not in memories_html
+    assert "/api/memory/canonical" not in memories
 
     # Switching files must not rebuild the list: the removed button would take
     # keyboard focus with it, and the loader status must not outlive the load.
     assert "function markNav()" in script
-    show_body = script[script.index("function show(") : script.index("function activeNavButton")]
+    show_body = script[script.index("function show(") : script.index("async function loadFiles")]
     assert "markNav();" in show_body
     assert "renderNav();" not in show_body
-    load_body = script[script.index("async function load()") : script.index("function openDialog")]
+    load_body = script[script.index("async function loadFiles") : script.index("function setBusy")]
     assert "renderNav();" in load_body
-    assert "setStatus();" in show_body
+    assert "decodeHash()" in load_body
+    assert "setStatus(el.status);" in show_body
     # A stray escape in the hash must not throw out of the hashchange handler;
-    # the guard lives in the shared helper (tests/test_webui_format.py).
-    assert 'import { decodeHash } from "../../shared/js/format.js";' in script
-    assert "decodeHash(location.hash)" in script
-    assert "decodeURIComponent(" not in script
+    # the guard is a local try/catch helper in profile.js now.
+    assert "function decodeHash()" in script
+    assert "try { return decodeURIComponent" in script
 
     # Blanking a profile is a real action, so it asks first rather than being
     # blocked by native `required` validation.
-    assert 'id="canonical-content" spellcheck' in html
+    assert 'id="edit-content" spellcheck' in html
     assert "required" not in html
-    assert 'confirm(`Xoá nội dung “${name}”?`)' in script
+    assert 'confirm(`Xoá trắng nội dung “${name}”?`)' in script
 
     # Switching files moves focus to the nav button, whose own label announces
     # the file; re-reading a whole file body would be noise.
-    assert 'id="profile-content" aria-live' not in html
+    assert 'id="profile-content" aria-live' not in script
 
-    # Heading and file card share the surface width, same as dashboard/memories
-    # (no centred 75% column).
+    # Heading and file card share the surface width (no centred 75% column),
+    # and an empty status line holds no space — it is hidden, not just blank.
     assert "max-width: 75%;" not in css
+    assert ".page-status[hidden]" in shell_css
+    assert "node.hidden = !text" in script
 
-    # Sidebar rows reuse the shape dashboard.html and memories.html use, so the
-    # shared .session-item/.session-name rules apply unchanged (measured: row
-    # 58.4px tall, name 41px in, 15.04px — identical on all three screens).
-    assert 'className = "session-body"' not in script
-    assert 'icon.className = "session-icon"' in script
-    assert 'name.className = "session-name"' in script
-
-    # Spacing matches the screens that put a heading above content: 1rem under
-    # the heading (same as .dashboard-block > .screen-heading), and an empty
-    # status line holds no space (measured: heading 71px + 16px gap on both).
-    assert ".profile-surface > .screen-heading {" in css
-    assert "margin-block-end: 1rem;" in css
-    assert ".profile-status:empty {" in css
+    # Rail rows are .profile-file buttons carrying the file's title + blurb —
+    # the old shared .session-item grid did not survive the rebuild.
+    assert 'class="profile-file"' in script
+    assert 'aria-current="page"' in script
+    assert ".profile-file" in css
+    assert "session-body" not in script
 
 
 def test_index_html_parses() -> None:
+    """Each page is ui/<page>/index.html loading js/<page>.js; every page but
+    chat emits the shared shell (chat ships its own static markup)."""
     expected = {
-        "index.html": './pages/chat/app.js',
-        "memories.html": './pages/memories/memories.js',
-        "provider.html": './pages/provider/provider.js',
-        "dashboard.html": './pages/dashboard/overview.js',
-        "profile.html": './pages/profile/profile.js',
+        "chat": "js/app.js",
+        "memories": "js/memories.js",
+        "provider": "js/provider.js",
+        "dashboard": "js/dashboard.js",
+        "profile": "js/profile.js",
+        "trace": "js/trace.js",
+        "settings": "js/settings.js",
     }
-    for name, script in expected.items():
-        raw = (WEBUI / name).read_text(encoding="utf-8")
+    for page, script in expected.items():
+        raw = (WEBUI / "ui" / page / "index.html").read_text(encoding="utf-8")
         HTMLParser().feed(raw)
-        assert script in raw
-        assert './shared/js/navigation.js' in raw
-        if name in {"index.html", "memories.html"}:
-            assert './shared/css/bot-envelope.css' in raw
-    # Trace moved into the Dashboard: trace.html is a thin redirect that
-    # preserves old deep-link params and loads no app script of its own.
-    raw = (WEBUI / "trace.html").read_text(encoding="utf-8")
-    HTMLParser().feed(raw)
-    assert './trace.js' not in raw
-    assert 'location.replace("./dashboard.html" + location.search + "#trace")' in raw
+        assert f'src="{script}"' in raw
+        assert "../share/util.js" in raw
+        assert "../share/data.js" in raw
+        assert "../share/sidebar.css" in raw
+        if page == "chat":
+            # Chat keeps its own static markup; the other pages call
+            # emitShell() synchronously before sidebar/studio bind.
+            assert "emitShell" not in raw
+            assert 'src="js/chat.js"' in raw
+            assert 'src="js/data.js"' in raw
+        else:
+            assert "../share/shell.js" in raw
+            assert f"emitShell('{page}')" in raw
+    # Trace is a real page again — its own picker/detail script, no redirect.
+    raw = (WEBUI / "ui" / "trace" / "index.html").read_text(encoding="utf-8")
+    assert "location.replace" not in raw
 
 
 def test_cli_serve_flag_conflicts(tmp_path: Path) -> None:

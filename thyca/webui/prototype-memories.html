@@ -1,0 +1,5130 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Prototype — Màn Nhật ký (Thyca)</title>
+  <!--
+    PROTOTYPE TĨNH của memories.html — DOM mock = markup memories.js sinh ra.
+    Sidebar dùng chung anatomy chat (chat-shell + bot envelopes), nhưng
+    hàng bot chỉ có TÊN (không role); pocket mở = description của bot.
+    "Tổng quan" là pill trong heading, không phải hàng bot.
+
+    BẢNG API MÀN NHẬT KÝ (memories.js):
+      GET  /api/bots                          roster → danh sách phạm vi (sidebar)
+      GET  /api/memory/stats[?bot_id=<id>]    toàn bộ nhật ký: chart 30 ngày,
+                                              stats, các mục Theo ngày/Dùng nhiều/
+                                              Tìm nhiều/Dùng ít
+      POST /api/memory/update   {session_id, topic, summary}   form sửa trang
+      POST /api/memory/reinforce {session_id}                  nút Gia hạn
+      POST /api/memory/forget   {session_id}                   nút Quên
+  -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600&family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;1,9..144,500&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;1,8..60,400&display=swap" rel="stylesheet" />
+  <style>
+/* ===== ./shared/css/tokens.css ===== */
+/* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4
+ * genre: editorial · macrostructure: Workbench · theme: studied-DNA (user image)
+ * tone: cream paper, terracotta leather, quiet botanical notebook
+ * fonts: Fraunces · Source Serif 4 · Be Vietnam Pro
+ */
+
+:root {
+  --color-bg-frame: #E8DAC3;
+  --color-bg-surface: #FBF4E5;
+  --color-bg-selected: #EADBC8;
+
+  --color-desk-top: var(--color-bg-frame);
+  --color-desk-mid: var(--color-bg-frame);
+  --color-desk-bottom: var(--color-bg-frame);
+  --color-shell-shadow: oklch(21.7% 0.047 45.8 / 0.72);
+  --color-shell-shadow-soft: oklch(25% 0.06 44 / 0.32);
+
+  --color-paper: var(--color-bg-frame);
+  --color-paper-chat: var(--color-bg-surface);
+  --color-paper-card: var(--color-bg-surface);
+  --color-paper-input: var(--color-bg-surface);
+  --color-paper-edge: oklch(82% 0.045 72);
+  --color-border: oklch(87.4% 0.024 69.6);
+  --color-divider: #C8B59B;
+
+  --color-ink: oklch(30.9% 0.064 43.9);
+  --color-reading: oklch(33.5% 0.021 70);
+  --color-muted: oklch(48.2% 0.033 68.6);
+  --color-muted-soft: oklch(57.6% 0.041 66.9);
+  --color-accent: oklch(55.5% 0.13 38.2);
+  --color-accent-deep: oklch(51.7% 0.134 36.5);
+  /* Team r9: bot lỗi dùng màu này. Định nghĩa từ accent-deep để không
+     thêm mã màu literal mới — CSS team chỉ dùng token sẵn có. */
+  --color-danger: var(--color-accent-deep);
+  --color-accent-soft: oklch(89.2% 0.049 72.2);
+  --color-accent-ink: oklch(95.6% 0.021 65.3);
+  --color-botanical: oklch(51.3% 0.049 68.6);
+
+  --note-do: #B8734B;
+  --note-re: #9E6B60;
+  --note-mi: #C8A986;
+  --note-fa: #A5894E;
+  --note-sol: #84796A;
+  --note-la: #8A5A40;
+  --note-si: #7C5841;
+  --note-star: #BF8F34;
+  --note-gold: var(--note-star);
+  --note-cream: #FAF3E6;
+  --note-ink: #26160D;
+  --bot-gold: #E8CF98;
+  --wax-ink: #1D0F08;
+  --wax-ink-deep: #120804;
+  --wax-error: #8D8279;
+  --wax-error-glyph: #D9CBB4;
+  --wax-flash: #FFF3C8;
+
+  --wood-star-light: #D09266;
+  --wood-star-side: #7E4E30;
+  --wood-hollow-light: #BB8A7E;
+  --wood-hollow-side: #6E453D;
+  --wood-single-flag-light: #DEC7A6;
+  --wood-single-flag-side: #8F7352;
+  --wood-double-flag-light: #C0A96E;
+  --wood-double-flag-side: #6F5C32;
+  --wood-dotted-light: #A39785;
+  --wood-dotted-side: #5A5044;
+  --wood-fermata-light: #AA7B5E;
+  --wood-fermata-side: #5D3B28;
+  --wood-plain-light: #9C7A5F;
+  --wood-plain-side: #523A29;
+  --wood-offline-base: #9E9080;
+  --wood-offline-side: #5E5348;
+  /* Stage vignette derived from the page palette, not the v3.5 demo hexes,
+     so the shell reads as one continuous surface instead of a pasted panel. */
+  --stage-top: var(--color-bg-surface);
+  --stage-mid: color-mix(in oklab, var(--color-bg-surface) 55%, var(--color-bg-frame));
+  --stage-edge: var(--color-bg-frame);
+  --stage-border: var(--color-border);
+  --stage-inner: rgba(80, 50, 20, 0.09);
+  --note-bg: #F9DFD5;
+  --note-fold: #E8BEB0;
+  --note-lines: rgba(217, 93, 57, 0.16);
+  --status-done: #4A8759;
+  --status-waiting: #3E6B94;
+  --status-error: #B84239;
+  --status-offline: #B5A898;
+  --avatar-eye: #2B211B;
+  --avatar-eye-offline: #786D61;
+  --avatar-star-offline: #BDB2A6;
+  --avatar-hollow: #F7EDE2;
+  --avatar-hollow-offline: #DFD5C8;
+  --avatar-think: #8C7662;
+  --avatar-halo: rgba(190, 85, 48, 0.10);
+  --avatar-halo-ring: rgba(180, 90, 50, 0.42);
+  --avatar-crescent: rgba(31, 20, 14, 0.14);
+  --avatar-stamp-ink: #9E4020;
+
+  --color-watermark: oklch(87.9% 0.037 80.6 / 0.58);
+  --color-focus: oklch(51.7% 0.134 36.5);
+  --chat-brand-ink: #3d2a1f;
+  --chat-brand-accent: #a65a42;
+  --chat-brand-wash: rgba(255, 222, 192, 0.42);
+  /* A ghost of the brand colour: the user's tick is the same ink as Thyca's
+     stripe, kept thin and faint so the two never read as the same mark. */
+  --chat-user-tick: color-mix(in srgb, var(--chat-brand-accent) 35%, transparent);
+  --ink: var(--chat-brand-ink);
+  --terra: var(--chat-brand-accent);
+  --composer-bg: var(--color-bg-surface);
+  --composer-border: rgba(61, 42, 31, 0.12);
+
+  --font-display: "Fraunces", ui-serif, Georgia, serif;
+  --font-reading: "Source Serif 4", ui-serif, Georgia, serif;
+  --font-ui: "Be Vietnam Pro", ui-sans-serif, sans-serif;
+
+  --space-xs: 0.5rem;
+  --space-sm: 0.75rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+
+  --radius-xs: 0.5rem;
+  --radius-sm: 0.75rem;
+  --radius-card: 1rem;
+  --radius-chat: 1.25rem;
+  --radius-shell: 1.75rem;
+  --radius-pill: 999px;
+
+  --rule: 1px;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-micro: 120ms;
+  --dur-short: 220ms;
+  --z-base: 1;
+  --z-paper: 10;
+  --z-content: 20;
+}
+
+html,
+body {
+  min-width: 0;
+  min-height: 100%;
+  overflow-x: clip;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-height: 100dvh;
+  margin: 0;
+  padding: 1.15rem;
+  color: var(--color-reading);
+  background-color: var(--color-desk-mid);
+  background-image:
+    radial-gradient(ellipse at 50% -22%, var(--color-desk-top) 0%, transparent 68%),
+    linear-gradient(to bottom, transparent 45%, var(--color-desk-bottom) 118%);
+  background-size: auto;
+  font-family: var(--font-ui);
+  font-size: 100%;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* Preferences set in Cài đặt (navigation.js mirrors them onto <html> on every
+   page); they live here so each page honors them, not just settings/provider. */
+html[data-type-scale="small"] { font-size: 93.75%; }
+html[data-type-scale="large"] { font-size: 112.5%; }
+html[data-theme="dusk"] {
+  --color-desk-top: var(--color-bg-frame);
+  --color-desk-mid: var(--color-bg-frame);
+  --color-paper: var(--color-bg-frame);
+  --color-paper-chat: var(--color-bg-surface);
+}
+
+button,
+textarea {
+  font: inherit;
+}
+
+button {
+  border: 0;
+  cursor: pointer;
+}
+
+svg {
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.65;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+/* Screen base + chart/mono tokens, moved from shared/css/screens.css (W6 TASK-006). */
+:root {
+  --color-chart-input: oklch(78% 0.077 65);
+  --color-chart-cache: oklch(87% 0.054 72);
+  --color-success-ink: oklch(43% 0.085 155);
+  /* Bot avatar status badge (waiting): the one hue the paper palette
+     has no equivalent for in the avatar design. */
+  --color-status-waiting: oklch(51% 0.11 250);
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
+[hidden] { display: none !important; }
+
+a { color: inherit; }
+
+</style>
+  <style>
+/* ===== ./shared/css/kit.css ===== */
+/* Hallmark · macrostructure: Workbench · theme: studied-DNA (Thyca references)
+ * Shared notebook screens · existing palette, typography and repaired corners.
+ * Pre-emit critique: P5 H4 E4 S5 R5 V4
+ */
+
+
+.screen-shell { font-family: var(--font-reading); }
+.screen-shell .screen-surface h2,
+.screen-shell .screen-surface h3 { font-weight: 500; }
+.screen-shell .screen-surface h2 { font-style: normal; margin: 0; font-size: 1.7rem; line-height: 1.25; }
+.screen-shell .screen-surface h3 { margin: 0; }
+/* All screen h3 headings use the Hồ sơ typography standard. Dynamic
+   .markdown-body headings keep their separate content styling in markdown.css. */
+.screen-shell .screen-surface h3 {
+  font-style: normal;
+  font-size: 1.15rem;
+}
+.screen-shell .screen-surface p { margin-block: 0.4rem; }
+.screen-shell input, .screen-shell select, .screen-shell textarea, .screen-shell button { font: inherit; }
+
+.screen-surface {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  margin: 0;
+  padding: 1.75rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.screen-heading, .screen-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+  margin-block-end: var(--space-lg);
+}
+.screen-heading > *, .screen-toolbar > * { min-width: 0; }
+.screen-heading h2 { color: var(--color-ink); }
+.screen-muted { color: var(--color-muted); }
+.screen-note { color: var(--color-muted); font-size: 0.875rem; }
+.screen-back { display: none; }
+
+/* Page title · Nhật ký's centred reading-face with hairline ticks. Shared by
+   Hồ sơ, Chi phí, Sử dụng token. */
+.screen-title {
+  display: flex;
+  flex: 1 1 100%;
+  justify-content: center;
+  align-items: center;
+  gap: 0.8rem;
+  color: var(--color-accent-deep);
+}
+.screen-title :is(h1, h2),
+.screen-shell .screen-surface .screen-title :is(h1, h2) {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  margin: 0;
+  color: inherit;
+  font-family: var(--font-reading);
+  font-size: 1.25rem;
+  font-style: normal;
+  font-weight: 500;
+}
+.screen-title :is(h1, h2)::before,
+.screen-title :is(h1, h2)::after {
+  content: "";
+  width: 1.35rem;
+  border-top: 1px solid var(--color-divider);
+}
+.screen-title + .screen-muted,
+.screen-title + .screen-note {
+  flex: 1 1 100%;
+  margin: 0.15rem 0 0;
+  text-align: center;
+}
+
+/* Toolbar above a list: the filter pills on one side, the search field on the
+   other. Shared by Nhật ký (sidebar), "Chi phí theo mô hình" and the usage
+   chart header. The bottom margin is a list-toolbar delta only. */
+.screen-filter-row,
+.usage-chart-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.screen-filter-row {
+  margin-block-end: 1rem;
+}
+.screen-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+/* Sort chips reuse the fold-h3 lighter: terra mark + text, darker on hover/pressed.
+   Usage token/lượt toggle keeps its own segmented look below. */
+.screen-filters .screen-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  min-height: 0;
+  padding: 0.15rem 0.2rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--chat-brand-accent);
+  font-size: 1.15rem;
+  transition: color var(--dur-short) var(--ease-out);
+}
+.screen-filters .screen-button::before {
+  content: "";
+  flex: 0 0 0.28rem;
+  width: 0.28rem;
+  height: 1.15rem;
+  border-radius: 99px;
+  background: var(--chat-brand-accent);
+  box-shadow: 0 0 0.35rem color-mix(in oklab, var(--chat-brand-accent) 35%, transparent);
+  transition: background var(--dur-short) var(--ease-out), box-shadow var(--dur-short) var(--ease-out);
+}
+.screen-filters .screen-button[aria-pressed='true'] {
+  color: color-mix(in oklab, var(--chat-brand-accent) 35%, var(--color-ink));
+  background: transparent;
+}
+.screen-filters .screen-button[aria-pressed='true']::before {
+  background: color-mix(in oklab, var(--chat-brand-accent) 35%, var(--color-ink));
+  box-shadow: 0 0 0.4rem color-mix(in oklab, var(--chat-brand-accent) 50%, transparent);
+}
+@media (hover: hover) and (pointer: fine) {
+  .screen-filters .screen-button:not(:disabled):hover {
+    border-color: transparent;
+    color: color-mix(in oklab, var(--chat-brand-accent) 35%, var(--color-ink));
+    background: transparent;
+  }
+  .screen-filters .screen-button:not(:disabled):hover::before {
+    background: color-mix(in oklab, var(--chat-brand-accent) 35%, var(--color-ink));
+    box-shadow: 0 0 0.4rem color-mix(in oklab, var(--chat-brand-accent) 50%, transparent);
+  }
+}
+.usage-toggle button[aria-pressed='true'] {
+  background: color-mix(in oklab, var(--color-accent-soft) 60%, var(--color-paper-card));
+}
+/* Shared search · fill-cream C. Every screen uses .thyca-search; page files
+   only place the widget and (rarely) --sm/--lg. Tokens stay local so they
+   do not fight the notebook :root. */
+.thyca-search {
+  --ink: #3d2a1f;
+  --terra: #a65a42;
+  --fill: var(--color-paper-input);
+  --border: rgba(61, 42, 31, 0.18);
+  --border-strong: rgba(166, 90, 66, 0.35);
+  --muted: rgba(61, 42, 31, 0.52);
+  --search-h: 40px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  min-height: var(--search-h);
+  padding: 0 12px 0 14px;
+  gap: 10px;
+  background: var(--fill);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.55) inset,
+    0 1px 2px rgba(61, 42, 31, 0.04);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+.thyca-search:hover {
+  border-color: rgba(61, 42, 31, 0.2);
+  background: color-mix(in srgb, var(--color-bg-surface) 70%, var(--color-bg-frame));
+}
+.thyca-search:focus-within {
+  border-color: var(--border-strong);
+  background: var(--color-bg-surface);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.8) inset,
+    0 0 0 3px rgba(166, 90, 66, 0.12),
+    0 2px 6px rgba(61, 42, 31, 0.06);
+}
+.thyca-search__icon {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+  display: block;
+}
+.thyca-search:focus-within .thyca-search__icon { color: var(--terra); }
+.thyca-search__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  box-shadow: none;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.3;
+  color: var(--ink);
+  padding: 10px 0;
+  caret-color: var(--terra);
+}
+.thyca-search__input:focus,
+.thyca-search__input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+.thyca-search__input::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+.thyca-search__input::-webkit-search-cancel-button,
+.thyca-search__input::-webkit-search-decoration {
+  -webkit-appearance: none;
+  appearance: none;
+}
+.thyca-search__clear {
+  flex: 0 0 auto;
+  width: 0;
+  height: 22px;
+  border-radius: 50%;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: transparent;
+  color: var(--muted);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease, width 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+.thyca-search.is-filled .thyca-search__clear {
+  width: 22px;
+  opacity: 1;
+  pointer-events: auto;
+}
+.thyca-search__clear:hover {
+  background: rgba(61, 42, 31, 0.08);
+  color: var(--ink);
+}
+.thyca-search__clear svg {
+  width: 12px;
+  height: 12px;
+  display: block;
+}
+.thyca-search--sm { --search-h: 34px; padding: 0 10px 0 12px; gap: 8px; }
+.thyca-search--sm .thyca-search__input { font-size: 13px; padding: 7px 0; }
+.thyca-search--sm .thyca-search__icon { width: 14px; height: 14px; }
+.screen-filter-row .thyca-search {
+  width: min(20rem, 100%);
+  flex: 0 1 20rem;
+}
+
+/* Quiet ⋮ action: row actions on cards, and the header action on Hồ sơ. */
+.row-action {
+  align-self: center;
+  width: 1.35rem;
+  height: 1.85rem;
+  padding: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--color-accent-deep);
+  font-size: 1.25rem;
+  letter-spacing: 0;
+}
+
+.screen-icon { flex: 0 0 auto; width: 1.4rem; height: 1.4rem; }
+
+.screen-card {
+  min-width: 0;
+  padding: var(--space-lg);
+  border: var(--rule) solid var(--color-border);
+  border-radius: var(--radius-chat);
+  background: var(--chat-brand-wash);
+  box-shadow: none;
+}
+.screen-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 0.2rem 0.65rem;
+  border: var(--rule) solid var(--color-border);
+  border-radius: var(--radius-xs);
+  background: var(--chat-brand-wash);
+  color: var(--color-accent-deep);
+  font-size: 0.875rem;
+  white-space: nowrap;
+}
+
+/* Journal kit · shared, opt-in via the Dashboard/Trace shells only. One row
+   per entry: tabular date in the left gutter, terracotta dash on the body,
+   hairline rule between entries. Memories keeps its own .memory-* rules; page
+   files (dashboard.css, trace.css) add placement deltas on top. */
+:is(.dashboard-shell, .trace-shell) {
+  /* Muted error red for the kit, scoped here so the global root palette is
+     untouched; terracotta (--chat-brand-accent / --color-accent-deep) stays
+     reserved for the dash and section marks. */
+  --journal-error-ink: oklch(48% 0.11 25);
+}
+:is(.dashboard-shell, .trace-shell) .journal-entry {
+  list-style: none;
+}
+:is(.dashboard-shell, .trace-shell) .journal-entry {
+  display: grid;
+  grid-template-columns: 5.6rem minmax(0, 1fr);
+  column-gap: 1.4rem;
+  align-items: start;
+  padding: 1.05rem 0;
+  border-block-end: var(--rule) solid var(--color-divider);
+}
+:is(.dashboard-shell, .trace-shell) .journal-date {
+  padding-top: 0.2rem;
+  color: var(--color-muted);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+:is(.dashboard-shell, .trace-shell) .journal-body {
+  position: relative;
+  min-width: 0;
+  padding-inline-start: 1.4rem;
+}
+:is(.dashboard-shell, .trace-shell) .journal-body::before {
+  content: "—";
+  position: absolute;
+  inset-inline-start: 0;
+  color: var(--chat-brand-accent);
+}
+:is(.dashboard-shell, .trace-shell) .journal-body h3 {
+  margin: 0;
+  color: var(--color-ink);
+  overflow-wrap: anywhere;
+}
+:is(.dashboard-shell, .trace-shell) .journal-body h3 a {
+  color: inherit;
+  text-decoration: none;
+}
+@media (hover: hover) and (pointer: fine) {
+  :is(.dashboard-shell, .trace-shell) .journal-body h3 a:hover {
+    text-decoration: underline;
+    text-underline-offset: 0.2em;
+  }
+}
+:is(.dashboard-shell, .trace-shell) .journal-status {
+  margin-inline-start: 0.6rem;
+  color: var(--color-success-ink);
+  font-size: 0.78rem;
+  font-weight: 400;
+  white-space: nowrap;
+}
+:is(.dashboard-shell, .trace-shell) .journal-status.is-error {
+  color: var(--journal-error-ink);
+}
+:is(.dashboard-shell, .trace-shell) .journal-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 1rem;
+  margin-block-start: 0.3rem;
+  color: var(--color-muted);
+  font-size: 0.83rem;
+}
+:is(.dashboard-shell, .trace-shell) .journal-meta > * + *::before {
+  content: "\00b7";
+  margin-inline-end: 1rem;
+  color: var(--color-muted-soft);
+}
+:is(.dashboard-shell, .trace-shell) .journal-value {
+  display: block;
+  margin-block-start: 0.1rem;
+  color: var(--color-ink);
+  font-family: var(--font-display);
+  font-size: 1.9rem;
+  font-weight: 500;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+}
+:is(.dashboard-shell, .trace-shell) .journal-row-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+:is(.dashboard-shell, .trace-shell) .journal-amount {
+  color: var(--color-ink);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+:is(.dashboard-shell, .trace-shell) .journal-meter {
+  height: 3px;
+  margin: 0.75rem 0;
+  background: color-mix(in oklab, var(--color-divider) 70%, transparent);
+}
+:is(.dashboard-shell, .trace-shell) .journal-meter > span {
+  display: block;
+  height: 100%;
+  width: var(--share, 0%);
+  background: var(--chat-brand-accent);
+}
+@media (max-width: 56rem) {
+  :is(.dashboard-shell, .trace-shell) .journal-entry {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 0.15rem;
+  }
+  :is(.dashboard-shell, .trace-shell) .journal-date {
+    padding-inline-start: 1.4rem;
+  }
+  :is(.dashboard-shell, .trace-shell) .journal-row-title {
+    flex-wrap: wrap;
+  }
+}
+
+/* Fold section kit · section headers that collapse/expand their content:
+   details.fold-section > summary > :is(h2, h3), content after the summary. The
+   terracotta lighter mark lives on the heading, so every screen (trace,
+   Cài đặt, Nhật ký mobile) keeps one shared look and behaviour.
+   Open by default — click the heading to collapse. */
+.fold-section > summary {
+  cursor: pointer;
+  list-style: none;
+  margin: -0.35rem -0.7rem;
+  padding: 0.35rem 0.7rem;
+}
+.fold-section > summary:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 3px;
+}
+.fold-section > summary::-webkit-details-marker,
+.fold-section > summary::marker {
+  display: none;
+  content: "";
+}
+.fold-section > summary :is(h2, h3) {
+  display: flex;
+  align-items: center;
+  gap: 0.28rem;
+  margin: 0;
+  color: var(--chat-brand-accent);
+  transition: color var(--dur-short) var(--ease-out);
+}
+.fold-section > summary :is(h2, h3)::before {
+  content: "";
+  flex: 0 0 0.28rem;
+  width: 0.28rem;
+  height: 1.15rem;
+  border-radius: 99px;
+  background: var(--chat-brand-accent);
+  box-shadow: 0 0 0.35rem color-mix(in oklab, var(--chat-brand-accent) 35%, transparent);
+  transition: background var(--dur-short) var(--ease-out), box-shadow var(--dur-short) var(--ease-out);
+}
+@media (hover: hover) and (pointer: fine) {
+  .fold-section > summary:hover :is(h2, h3) {
+    color: color-mix(in oklab, var(--chat-brand-accent) 35%, var(--color-ink));
+  }
+  .fold-section > summary:hover :is(h2, h3)::before {
+    background: color-mix(in oklab, var(--chat-brand-accent) 35%, var(--color-ink));
+    box-shadow: 0 0 0.4rem color-mix(in oklab, var(--chat-brand-accent) 50%, transparent);
+  }
+}
+.fold-section[open] > summary :is(h2, h3) {
+  margin: 0 0 0.7rem;
+}
+
+/* Settings card rows: provider.html / settings.html render each setting as an
+   article.fold-row inside .fold-list, separated by a hairline rule. (The old
+   collapsible summary kit — .fold-row > summary, .fold-row--plain and the
+   .fold-row-*/.call-* sub-elements — is gone: no page renders summaries.) */
+.screen-card.fold-list,
+.fold-list {
+  padding: 0;
+  overflow: hidden;
+}
+.fold-row {
+  border-block-end: 1px solid var(--color-border);
+}
+.fold-row:last-child {
+  border: 0;
+}
+
+.screen-button, .screen-select, .screen-input {
+  min-height: 2.75rem;
+  max-width: 100%;
+  padding: 0.65rem 1rem;
+  border: var(--rule) solid var(--color-divider);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper-card);
+  color: var(--color-ink);
+  font: inherit;
+}
+.screen-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.screen-button.is-primary {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: var(--color-accent-ink);
+}
+.screen-input { width: 100%; min-width: 0; }
+.screen-select { cursor: pointer; }
+.screen-button:disabled {
+  cursor: not-allowed;
+  color: var(--color-muted);
+  opacity: 0.65;
+}
+
+.screen-nav { display: grid; gap: var(--space-xs); padding: 1.4rem 1.6rem; }
+.screen-nav-entry { display: grid; gap: var(--space-xs); }
+.memory-scope-submenu { display: grid; gap: var(--space-xs); padding-inline-start: 1.35rem; }
+.memory-scope-submenu[hidden] { display: none; }
+.screen-nav .memory-scope-submenu .memory-scope-choice {
+  min-height: 3rem;
+  padding-inline-start: 1.25rem;
+  white-space: normal;
+}
+.screen-nav .memory-scope-submenu .memory-scope-state {
+  margin: 0;
+  padding: 0.45rem 1rem;
+  color: var(--color-muted);
+  font-size: 0.875rem;
+  white-space: normal;
+}
+.screen-nav .memory-scope-submenu .memory-scope-state.is-error { color: var(--color-accent-deep); }
+@media (max-width: 56rem) {
+  .screen-nav .memory-navigation-entry > a::after {
+    content: "⌄";
+    margin-inline-start: auto;
+    color: var(--color-muted);
+    transition: transform var(--dur-short) var(--ease-out);
+  }
+  .screen-nav .memory-navigation-entry > a[aria-expanded="true"]::after { transform: rotate(180deg); }
+}
+.screen-nav a, .screen-nav button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  min-height: 3.6rem;
+  padding: 0.75rem 1rem;
+  border: var(--rule) solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--color-ink);
+  text-align: start;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.screen-nav [aria-current="page"], .screen-nav [aria-selected="true"] {
+  border-radius: var(--radius-sm);
+  background: var(--color-accent);
+  color: var(--color-accent-ink);
+}
+.screen-nav svg { width: 1.45rem; height: 1.45rem; flex: 0 0 auto; }
+.screen-dialog {
+  width: min(32rem, calc(100vw - 2rem));
+  height: fit-content;
+  max-height: calc(100dvh - 2rem);
+  margin: auto;
+  padding: var(--space-lg);
+  overflow: auto;
+  border: var(--rule) solid var(--color-divider);
+  border-radius: var(--radius-chat);
+  background-color: var(--color-paper);
+  background-image:
+    linear-gradient(color-mix(in oklab, var(--color-paper-chat) 65%, transparent), color-mix(in oklab, var(--color-paper-chat) 65%, transparent)),
+    url("images/thyca-bg-paper.png");
+  background-position: center;
+  background-size: cover;
+  color: var(--color-reading);
+  font-family: var(--font-reading);
+  box-shadow: 0 1rem 3rem var(--color-shell-shadow-soft);
+}
+.screen-dialog::backdrop { background: var(--color-shell-shadow); }
+.screen-dialog h2 { margin: 0; font-family: var(--font-display); font-size: 1.5rem; }
+.screen-dialog .screen-nav { padding: 0; }
+.screen-dialog .screen-heading { margin-block-end: 1rem; }
+.screen-dialog form { display: grid; gap: var(--space-md); }
+.screen-dialog label { display: grid; gap: var(--space-xs); }
+.screen-dialog textarea { min-height: 6rem; resize: vertical; }
+.screen-dialog .screen-toolbar { justify-content: flex-end; margin: 0; }
+
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 3px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .screen-button:not(:disabled):hover { border-color: var(--color-accent); }
+  .screen-button.is-primary:not(:disabled):hover {
+    border-color: var(--color-accent-deep);
+    background: var(--color-accent-deep);
+  }
+  .screen-nav :is(a, button):not([aria-current="page"]):not([aria-selected="true"]):not(:disabled):hover {
+    border-color: var(--color-divider);
+    background: var(--color-paper-card);
+  }
+}
+
+/* Compact journal pagers (TASK-034): one restrained row of text controls
+   shared by the Dashboard/Trace journals (.journal-pager) and the chat
+   session list (.session-pager). The buttons keep the .screen-button hook
+   from the markup, but the card look (paper background, hairline box,
+   radius, shadow) is reset inside the pager only — what remains is
+   terracotta serif text, underline on hover, a 44px touch box and the
+   global focus-visible ring. No decorative counters; the plain x/y label
+   stays modest and tabular. Rows wrap instead of overflowing on narrow
+   screens; nothing hides overflow here. */
+:is(.dashboard-shell, .trace-shell) .journal-pager,
+.session-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem 0.9rem;
+}
+
+:is(.dashboard-shell, .trace-shell) .journal-pager .journal-pager-step,
+.session-pager .session-pager-step {
+  appearance: none;
+  min-height: 2.75rem; /* 44px touch target, as .screen-button */
+  min-width: 0;
+  margin: 0;
+  padding: 0.25rem 0.4rem;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--color-accent-deep);
+  font: inherit;
+  white-space: nowrap;
+  text-decoration: none;
+  text-underline-offset: 0.22em;
+  cursor: pointer;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  :is(.dashboard-shell, .trace-shell) .journal-pager .journal-pager-step:not(:disabled):hover,
+  .session-pager .session-pager-step:not(:disabled):hover {
+    color: var(--color-ink);
+    text-decoration: underline;
+  }
+}
+
+:is(.dashboard-shell, .trace-shell) .journal-pager .journal-pager-step:not(:disabled):active,
+.session-pager .session-pager-step:not(:disabled):active {
+  color: var(--color-ink);
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+}
+
+:is(.dashboard-shell, .trace-shell) .journal-pager .journal-pager-step:disabled,
+.session-pager .session-pager-step:disabled {
+  color: var(--color-muted-soft);
+  opacity: 0.6;
+  text-decoration: none;
+  cursor: not-allowed;
+}
+
+:is(.dashboard-shell, .trace-shell) .journal-pager .journal-pager-label,
+.session-pager .session-pager-label {
+  min-width: 3.25rem;
+  color: var(--color-muted);
+  font-size: 0.875rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+:is(.dashboard-shell, .trace-shell) .journal-pager {
+  margin-block-start: 1rem;
+}
+@media (max-width: 56rem) {
+  .screen-shell { max-height: none; }
+  /* The screens' file switcher stays reachable on mobile — an in-flow compact
+     pill row under the header for the three screens that opted in
+     (dashboard stacks its sections on one page instead — see dashboard.css).
+     The overlay sidebar this replaces used to overlap the
+     header line and the content below. */
+  .screen-shell .sidebar {
+    position: static;
+    height: auto;
+    flex: none;
+    margin: 0;
+    pointer-events: auto;
+  }
+  .memories-shell .sessions {
+    display: flex !important;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.2rem 0.9rem;
+    padding: 0.1rem 1rem 0.45rem;
+    pointer-events: auto;
+  }
+  .screen-shell .sidebar > * { display: none; }
+  .screen-shell .sessions-heading { padding-inline-end: 0; flex: none; }
+  .screen-shell .sessions-heading h2 { font-size: 0.95rem; white-space: nowrap; }
+  .screen-shell .session-list {
+    flex: 1 1 100%;
+    flex-direction: row;
+    margin-block-start: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    gap: 0.3rem;
+    scrollbar-width: none;
+  }
+  .screen-shell .session-item {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    min-height: 0;
+    padding: 0.28rem 0.7rem;
+    border: var(--rule) solid var(--color-border);
+    border-radius: var(--radius-pill);
+    background: var(--color-paper-card);
+  }
+  .screen-shell .session-item::before,
+  .screen-shell .session-item::after { content: none; }
+  .screen-shell .session-item.is-active {
+    border-color: var(--color-accent);
+    background: var(--color-bg-selected);
+  }
+  .screen-shell .session-icon { width: 1.1rem; height: 1.1rem; margin: 0; }
+  .screen-shell .session-item time { display: none; }
+  .screen-filter-row { align-items: stretch; flex-direction: column; }
+  /* Column direction turns the row's flex-basis into height: without this
+     reset the search box renders 20rem tall on mobile (memories search is
+     exempt — it never sits in a filter row). */
+  .screen-shell .screen-filter-row .thyca-search { flex: none; width: 100%; }
+  .screen-surface { margin: 0; padding: 1rem; border-inline: 0; border-block-end: 0; border-radius: 0; }
+  .screen-card { padding: 1rem; }
+  /* Trace, Cài đặt, Hồ sơ: pick from the list first, then show the paper. */
+  .pick-shell.is-picking .workspace { display: none; }
+  .pick-shell:not(.is-picking) .sidebar { display: none; }
+  .pick-shell.is-picking .sidebar {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    pointer-events: auto;
+  }
+  .pick-shell.is-picking .sessions {
+    display: flex !important;
+    flex-direction: column;
+    padding: 0.85rem 1rem 1.25rem;
+    pointer-events: auto;
+  }
+  .pick-shell.is-picking .sessions-heading h2 { font-size: 1.15rem; }
+  .pick-shell.is-picking .session-list {
+    flex: 1;
+    flex-direction: column;
+    margin-block-start: 1rem;
+    overflow-x: hidden;
+    overflow-y: auto;
+    gap: 0.35rem;
+  }
+  .pick-shell.is-picking .session-item {
+    display: grid;
+    grid-template-columns: 1.85rem minmax(0, 1fr);
+    min-height: 3.65rem;
+    padding: 0.4rem 0.85rem 0.4rem 0.55rem;
+    border: var(--rule) solid transparent;
+    border-block-start-color: var(--color-divider);
+    border-radius: 0;
+    background: transparent;
+  }
+  .pick-shell.is-picking .session-item time { display: block; }
+  .pick-shell.is-picking .session-item.is-active::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: 0.2rem 0.15rem;
+    border-radius: 50%;
+    background: var(--color-bg-selected);
+    filter: blur(10px);
+    pointer-events: none;
+  }
+  .pick-shell.is-picking .session-item.is-active::after {
+    content: "";
+    position: absolute;
+    inset-block: 0.55rem;
+    inset-inline-start: 0;
+    width: 4px;
+    border-radius: 99px;
+    background: var(--chat-brand-accent);
+  }
+  .pick-shell:not(.is-picking) .screen-back {
+    display: inline-flex;
+    align-items: center;
+    flex: none;
+    padding: 0.2rem 0.4rem 0.2rem 0;
+    border: 0;
+    background: transparent;
+    color: var(--chat-brand-accent);
+    font: inherit;
+    font-size: 1rem;
+    cursor: pointer;
+  }
+}
+@media (max-width: 28rem) {
+  .screen-heading { align-items: stretch; flex-direction: column; }
+  .screen-shell h2 { font-size: 1.45rem; overflow-wrap: anywhere; }
+  .screen-select { width: 100%; }
+}
+
+
+/* App shell restored from pages/chat/chat.css (merge fix): these rules
+   (.notebook-shell grid, site-header, sidebar, session list, workspace,
+   icon-button, responsive shell overrides, reduced-motion) apply to EVERY
+   page. W6 TASK-007 misfiled them as chat-only, breaking dashboard and
+   other pages (unstyled shell). Moved verbatim; order within file kept. */
+.notebook-shell {
+  position: relative;
+  z-index: var(--z-paper);
+  display: grid;
+  grid-template-columns: 20.25rem minmax(0, 1fr);
+  grid-template-rows: 2.75rem minmax(0, 1fr) auto;
+  width: 100%;
+  height: calc(100dvh - 2.3rem);
+  min-height: 43rem;
+  max-height: 58.875rem;
+  overflow: hidden;
+  border-radius: var(--radius-shell);
+  background-color: var(--color-paper);
+  background-image:
+    linear-gradient(color-mix(in oklab, var(--color-paper-chat) 65%, transparent), color-mix(in oklab, var(--color-paper-chat) 65%, transparent)),
+    url("images/thyca-bg-paper.png");
+  background-position: center;
+  background-size: cover;
+  box-shadow:
+    0 0.72rem 0 var(--color-paper-edge),
+    0 2.05rem 2.3rem var(--color-shell-shadow),
+    0.65rem 0.8rem 1.2rem var(--color-shell-shadow-soft);
+}
+
+/* Tall screens (F11 fullscreen on 1080p+, 3K at 100%): the 58.875rem cap
+   would leave a desk gap below the composer, so lift it and let the shell
+   fill the viewport. Shorter screens keep the cap. */
+@media (min-height: 60rem) {
+  .notebook-shell {
+    max-height: none;
+  }
+}
+
+/* One continuous paper layer across the whole shell — header, frame,
+   gutters, sidebar and workspace all sit on the same background. */
+.notebook-shell::before {
+  content: "";
+  position: absolute;
+  z-index: var(--z-base);
+  inset: 0;
+  border-radius: var(--radius-shell);
+  background-color: var(--color-paper-chat);
+  background-image:
+    linear-gradient(color-mix(in oklab, var(--color-paper-chat) 65%, transparent), color-mix(in oklab, var(--color-paper-chat) 65%, transparent)),
+    url("images/thyca-bg-paper.png");
+  background-position: center;
+  background-size: cover;
+  pointer-events: none;
+}
+
+.site-header {
+  position: relative;
+  z-index: var(--z-content);
+  grid-column: 1 / -1;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding-inline: 1.55rem 1.85rem;
+  border-radius: var(--radius-shell) var(--radius-shell) 0 0;
+  background: transparent;
+}
+
+.header-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 0.7rem;
+  width: max-content;
+  max-width: 100%;
+  margin: 0 0 0 auto;
+  min-height: 1.15rem;
+  padding: 0 0.2rem 0.12rem;
+  overflow: hidden;
+  border-bottom: var(--rule) solid var(--color-divider);
+  color: var(--color-muted);
+  font-family: var(--font-reading);
+  font-size: 0.88rem;
+  font-style: italic;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
+#header-edition {
+  font-size: 0.72rem;
+}
+
+.sidebar {
+  position: relative;
+  z-index: var(--z-content);
+  grid-column: 1;
+  grid-row: 2 / -1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  margin: 0 0.18rem 1.25rem 1.25rem;
+  overflow: hidden;
+  border: var(--rule) solid var(--color-border);
+  border-radius: var(--radius-chat);
+  background: transparent;
+  box-shadow: 0 0.55rem 1.35rem var(--color-shell-shadow-soft);
+}
+
+.icon-button,
+.new-session {
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--color-muted);
+  transition: color var(--dur-short) var(--ease-out), transform var(--dur-micro) var(--ease-out), background-color var(--dur-short) var(--ease-out);
+}
+
+.icon-button {
+  width: 2.75rem;
+  height: 2.75rem;
+}
+
+.icon-button svg {
+  width: 1.65rem;
+  height: 1.65rem;
+  stroke-width: 1.75;
+}
+
+.sessions {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  padding: 1.95rem 0.65rem 1rem 1.55rem;
+  font-family: var(--font-ui);
+}
+
+.sessions-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding-inline-end: 0.65rem;
+}
+
+.sessions-heading h2 {
+  margin: 0;
+  color: var(--chat-brand-ink);
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-style: normal;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.2;
+}
+
+.new-session {
+  width: 2.5rem;
+  height: 2.35rem;
+  border: var(--rule) solid var(--color-divider);
+}
+
+.new-session svg {
+  width: 1.1rem;
+  height: 1.1rem;
+  stroke-width: 1.7;
+}
+
+/* One thin, faint scrollbar for the chat sidebar, the conversation pane, and
+   the screen surfaces (kit.css never re-sets these). */
+.session-list,
+.conversation-scroll,
+.screen-surface {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-divider) transparent;
+}
+
+.session-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-height: 0;
+  margin-block-start: 1.5rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* The row is the positioning context for its hover actions: the button keeps
+   its own layout, the actions are laid over the right end of it. */
+.session-row {
+  position: relative;
+}
+
+.session-item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1.85rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.08rem;
+  min-height: 3.65rem;
+  padding: 0.4rem 0.85rem 0.4rem 0.55rem;
+  isolation: isolate;
+  border: var(--rule) solid transparent;
+  border-block-start-color: var(--color-divider);
+  border-radius: 0;
+  background: transparent;
+  color: var(--chat-brand-accent);
+  text-align: start;
+  text-decoration: none;
+  transition: color var(--dur-short) var(--ease-out), background-color var(--dur-short) var(--ease-out), transform var(--dur-micro) var(--ease-out);
+}
+
+/* The first row of the list carries no rule above it. Chat rows are wrapped
+   in .session-row to hold their hover actions; every other screen puts the
+   .session-item straight into the list. */
+.session-list > .session-row:first-child .session-item,
+.session-list > .session-item:first-child {
+  border-block-start: 0;
+}
+
+.session-row .session-item {
+  width: 100%;
+}
+
+.session-item.is-active::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0.2rem 0.15rem;
+  border-radius: 50%;
+  background: var(--color-bg-selected);
+  filter: blur(10px);
+  pointer-events: none;
+}
+
+.session-item.is-active::after {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  inset-block: 0.55rem;
+  inset-inline-start: 0;
+  width: 4px;
+  border-radius: 99px;
+  background: var(--chat-brand-accent);
+}
+
+.session-icon {
+  grid-column: 1;
+  grid-row: 1;
+  width: 1.85rem;
+  height: 1.85rem;
+  margin-inline-end: -0.35rem;
+  background: currentColor;
+  -webkit-mask: url("images/thyca-icons/canh-cay.svg") left center / contain no-repeat;
+  mask: url("images/thyca-icons/canh-cay.svg") left center / contain no-repeat;
+}
+
+/* Chat and Trace carry a time line: the leaf spans both rows so the meta
+   sits against it. Hồ sơ / Nhật ký have no <time>, so their icon stays put. */
+.session-item:has(time) .session-icon {
+  grid-row: 1 / -1;
+}
+
+.session-name {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--chat-brand-ink);
+  font-family: var(--font-reading);
+  font-size: 0.94rem;
+  font-weight: 500;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-item time {
+  grid-column: 2;
+  grid-row: 2;
+  justify-self: start;
+  color: var(--chat-brand-accent);
+  font-family: var(--font-reading);
+  font-size: 0.72rem;
+  font-style: italic;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* Row accessories sit at the right edge, out of the way until pointed at
+   or reached by keyboard. Touch has no hover, so they stay visible there. */
+.session-actions {
+  position: absolute;
+  z-index: 1;
+  inset-block: 0;
+  inset-inline-end: 0.55rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-short) var(--ease-out);
+}
+
+.session-row:hover .session-actions,
+.session-row:focus-within .session-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.session-action {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--chat-brand-accent);
+  font-family: var(--font-ui);
+  font-size: 0.72rem;
+  line-height: 1;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  white-space: nowrap;
+  transition: color var(--dur-short) var(--ease-out);
+}
+
+/* The actions cover the tail of both lines: they make room instead of running
+   underneath. Only where the actions overlay the row at all — on touch they
+   sit in their own column and the row keeps its full width. */
+@media (hover: hover) and (pointer: fine) {
+  .session-row:hover .session-name,
+  .session-row:focus-within .session-name,
+  .session-row:hover time,
+  .session-row:focus-within time {
+    padding-inline-end: 2.6rem;
+  }
+}
+
+.workspace {
+  position: relative;
+  z-index: var(--z-content);
+  grid-column: 2;
+  grid-row: 2 / 4;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  margin: 0 1.25rem 1.25rem 0.18rem;
+  overflow: hidden;
+  border: var(--rule) solid var(--color-border);
+  border-radius: var(--radius-chat);
+  background: transparent;
+  box-shadow: 0 0.55rem 1.35rem var(--color-shell-shadow-soft);
+}
+
+.site-footer {
+  position: relative;
+  z-index: 6;
+  flex: 0 0 auto;
+  min-width: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+@media (max-width: 75rem) {
+  .notebook-shell {
+    grid-template-columns: 16.5rem minmax(0, 1fr);
+  }
+
+  .sessions {
+    padding-inline-start: 1.55rem;
+  }
+
+  .session-item {
+    grid-template-columns: 1.75rem minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 56rem) {
+  body {
+    padding: 0;
+    background: var(--color-paper);
+  }
+
+  .notebook-shell {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .notebook-shell::before {
+    inset: 0;
+    border-radius: 0;
+  }
+
+  .sidebar {
+    position: absolute;
+    z-index: calc(var(--z-content) + 1);
+    inset: 0 0 auto;
+    display: block;
+    height: 4rem;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    pointer-events: none;
+  }
+
+  .site-header {
+    height: 2.75rem;
+    padding-inline: 0.75rem 1rem;
+    border-radius: 0;
+  }
+
+
+  .sessions {
+    display: none;
+  }
+
+  .workspace {
+    flex: 1 1 auto;
+    height: auto;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .site-footer {
+    display: block;
+    border-radius: 0;
+  }
+}
+
+@media (max-width: 28rem) {
+  .header-line {
+    font-size: 0.8rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+html[data-reduce-motion="on"] *,
+html[data-reduce-motion="on"] *::before,
+html[data-reduce-motion="on"] *::after {
+  scroll-behavior: auto !important;
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}
+
+</style>
+  <style>
+/* ===== ./shared/css/states.css ===== */
+/* Backend integration states for the Thyca notebook UI. */
+
+.message-list {
+  display: contents;
+}
+
+.sidebar-state {
+  margin: 0;
+  padding: 1rem 0.75rem;
+  color: var(--color-muted);
+  font-family: var(--font-reading);
+  font-size: 0.9rem;
+}
+
+.conversation-empty,
+.backend-state,
+.memory-empty {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  justify-items: center;
+  align-self: center;
+  gap: 0.55rem;
+  width: min(100%, 34rem);
+  margin: auto;
+  padding: 2rem;
+  color: var(--color-muted);
+  text-align: center;
+}
+
+.conversation-empty > span {
+  color: var(--color-accent);
+  font-family: var(--font-display);
+  font-size: 2.4rem;
+  line-height: 1;
+}
+
+.conversation-empty h2,
+.backend-state strong {
+  margin: 0;
+  color: var(--color-ink);
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  font-style: normal;
+  font-weight: 600;
+}
+
+.conversation-empty p,
+.backend-state p {
+  margin: 0;
+  font-family: var(--font-reading);
+  line-height: 1.5;
+}
+
+.backend-state.is-error {
+  border: var(--rule) solid var(--color-danger, var(--color-accent-deep));
+  border-radius: var(--radius-card);
+  background: var(--color-paper-card);
+}
+
+.live-status.is-error .chat-brand-line {
+  color: var(--color-accent-deep);
+}
+
+/* Shared nudge banner: the chat 15-minute idle reminder and provider notices
+   share one look. .chat-idle-nudge keeps its absolute composer placement;
+   .provider-nudge is the in-flow variant. (Fixes --radius-md, which never
+   existed in tokens.css, so the idle card rendered square.) */
+:is(.thyca-nudge, .chat-idle-nudge) {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 0.8rem 0.9rem;
+  border: var(--rule) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper-card);
+  box-shadow: 0 0.45rem 1.2rem var(--color-shell-shadow-soft);
+  color: var(--color-reading);
+  font-size: 0.9rem;
+}
+.chat-idle-nudge {
+  position: absolute;
+  inset-inline-end: 0;
+  inset-block-end: calc(100% + 0.65rem);
+  width: min(30rem, 100%);
+}
+.provider-nudge {
+  flex: 1 1 100%;
+  width: 100%;
+  min-height: 0;
+  margin: 0;
+}
+.provider-nudge:empty {
+  display: none;
+}
+:is(.thyca-nudge, .chat-idle-nudge).is-error {
+  border-color: var(--color-accent-deep);
+  color: var(--color-accent-deep);
+}
+:is(.thyca-nudge, .chat-idle-nudge).is-success {
+  border-color: var(--color-botanical);
+  color: var(--color-botanical);
+}
+
+.chat-idle-nudge[hidden] {
+  display: none;
+}
+
+.chat-idle-nudge p {
+  flex: 1;
+  margin: 0;
+  color: var(--color-reading);
+  font-size: 0.9rem;
+}
+
+.chat-idle-nudge > div {
+  display: flex;
+  gap: var(--space-xs);
+}
+
+.chat-idle-nudge .screen-button {
+  min-height: 2.4rem;
+  padding: 0.45rem 0.75rem;
+}
+
+/* W6 TASK-014: merged the styles.css `display: none` copy here (complementary
+   declarations in one file keep the computed style). */
+.composer.is-loading .send-button {
+  display: none;
+  cursor: progress;
+  opacity: 0.72;
+}
+
+button:disabled,
+textarea:disabled,
+select:disabled,
+input:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.screen-status {
+  min-height: 1.35rem;
+  color: var(--color-muted);
+  font-family: var(--font-ui);
+  font-size: 0.82rem;
+}
+
+.screen-status.is-error {
+  color: var(--color-accent-deep);
+}
+
+.screen-status.is-success {
+  color: var(--color-botanical);
+}
+
+[aria-busy="true"] {
+  cursor: progress;
+}
+
+.screen-button.is-danger {
+  border-color: var(--color-accent-deep);
+  color: var(--color-accent-deep);
+}
+
+.provider-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  margin-block-start: 1.25rem;
+}
+
+.provider-actions .provider-nudge {
+  flex: 1 1 100%;
+  margin: 0;
+}
+
+#trace-status {
+  margin: 0 0 0.75rem;
+}
+
+#turn-detail[hidden],
+#tool-calls[hidden] {
+  display: none;
+}
+
+@media (max-width: 56rem) {
+  .chat-idle-nudge {
+    inset-inline: 0;
+    width: 100%;
+  }
+
+  .provider-actions {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+
+  .provider-actions .screen-button {
+    flex: none;
+  }
+}
+
+</style>
+  <style>
+/* ===== ./shared/css/markdown.css ===== */
+/* Markdown rendering (W6 TASK-010): .markdown-body* + .md-table-wrap moved
+   verbatim from shared/css/backend.css. */
+.markdown-body > :first-child {
+  margin-block-start: 0;
+}
+
+.markdown-body > :last-child {
+  margin-block-end: 0;
+}
+
+.markdown-body p,
+.markdown-body ul,
+.markdown-body ol,
+.markdown-body blockquote,
+.markdown-body pre,
+.markdown-body .md-table-wrap {
+  margin-block: 0.7rem;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  padding-inline-start: 1.35rem;
+}
+
+.markdown-body li + li {
+  margin-block-start: 0.25rem;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4 {
+  margin: 1rem 0 0.45rem;
+  color: var(--color-ink);
+  font-family: var(--font-display);
+  font-style: normal;
+  font-weight: 600;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.markdown-body h1 { font-size: 1.5rem; }
+.markdown-body h2 { font-size: 1.3rem; }
+.markdown-body h3,
+.markdown-body h4 { font-size: 1.12rem; }
+
+.markdown-body pre,
+.markdown-body code {
+  font-family: var(--font-mono, ui-monospace, "SFMono-Regular", Menlo, monospace);
+}
+
+.markdown-body code {
+  font-size: 0.86em;
+}
+
+.markdown-body pre {
+  max-width: 100%;
+  padding: 0.8rem 1rem;
+  overflow: auto;
+  border: var(--rule) solid var(--color-border);
+  border-radius: var(--radius-xs);
+  background: var(--color-paper);
+  white-space: pre;
+}
+
+.markdown-body blockquote {
+  padding-inline-start: 1rem;
+  border-inline-start: 0.16rem solid var(--color-accent);
+  color: var(--color-muted);
+}
+
+.markdown-body a {
+  color: var(--color-accent-deep);
+  text-decoration-thickness: 0.08em;
+  text-underline-offset: 0.14em;
+}
+
+.markdown-body img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-sm);
+}
+
+.md-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.markdown-body table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+}
+
+.markdown-body th,
+.markdown-body td {
+  padding: 0.45rem 0.65rem;
+  border: var(--rule) solid var(--color-border);
+  text-align: start;
+  vertical-align: top;
+}
+
+@media (max-width: 56rem) {
+  .markdown-body pre {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+}
+
+</style>
+  <style>
+/* ===== ./shared/css/bot-avatar.css ===== */
+/* Bot avatar system (design v1.1 port): SVG note avatars whose colour
+   is the bot's own --team-tint. Geometry/animation only — every colour
+   below is a shared token, never a design-file hex. */
+
+.bot-svg {
+  display: block;
+  overflow: visible;
+  cursor: pointer;
+  user-select: none;
+  isolation: isolate;
+}
+
+.bot-svg .bot-ink-layer {
+  mix-blend-mode: multiply;
+}
+
+.bot-svg .avatar-main {
+  fill: var(--avatar-tint, var(--team-tint, var(--color-accent)));
+  stroke: none;
+}
+
+.bot-svg .avatar-stem {
+  fill: none;
+  stroke: var(--avatar-tint, var(--team-tint, var(--color-accent)));
+  stroke-width: 3.4;
+  stroke-linecap: round;
+}
+
+.bot-svg .avatar-flag {
+  fill: var(--avatar-tint, var(--team-tint, var(--color-accent)));
+  stroke: var(--avatar-tint, var(--team-tint, var(--color-accent)));
+  stroke-width: 1.1;
+  stroke-linejoin: round;
+}
+
+.bot-svg .avatar-flag-double {
+  stroke-width: 1;
+}
+
+.bot-svg .floating-note-stem {
+  fill: none;
+  stroke: var(--avatar-tint, var(--team-tint, var(--color-accent)));
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+
+.bot-svg .avatar-team-stem {
+  fill: none;
+  stroke: var(--avatar-tint, var(--team-tint, var(--color-accent)));
+  stroke-width: 2.6;
+  stroke-linecap: round;
+}
+
+.bot-svg .avatar-team-stem.is-offline {
+  stroke: var(--status-offline);
+  opacity: 0.68;
+}
+
+.bot-svg.bot-team-pair .avatar-team-stem {
+  stroke-width: 3;
+}
+
+.bot-svg .team-floating-note-stem {
+  fill: none;
+  stroke: var(--avatar-tint, var(--team-tint, var(--color-accent)));
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.bot-svg .avatar-fermata {
+  stroke-width: 2.4;
+}
+
+.bot-svg .avatar-star {
+  fill: var(--note-star);
+  stroke: none;
+}
+
+.bot-svg .avatar-hollow {
+  fill: var(--avatar-hollow);
+  stroke: none;
+}
+
+.bot-svg .avatar-crescent {
+  fill: var(--avatar-crescent);
+  stroke: none;
+}
+
+.bot-svg .avatar-eye-fill {
+  fill: var(--avatar-eye);
+  stroke: none;
+}
+
+.bot-svg .avatar-eye-line {
+  fill: none;
+  stroke: var(--avatar-eye);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.bot-svg .avatar-eye-error {
+  stroke-width: 1.9;
+}
+
+.bot-svg .is-offline .avatar-main,
+.bot-svg .bot-node.is-offline .avatar-main {
+  fill: var(--status-offline);
+}
+
+.bot-svg .bot-node.is-offline .avatar-stem,
+.bot-svg .bot-node.is-offline .floating-note-stem {
+  stroke: var(--status-offline);
+}
+
+.bot-svg .is-offline .avatar-flag,
+.bot-svg .bot-node.is-offline .avatar-flag {
+  fill: var(--status-offline);
+  stroke: var(--status-offline);
+}
+
+.bot-svg .is-offline .avatar-eye-line,
+.bot-svg .bot-node.is-offline .avatar-eye-line {
+  stroke: var(--avatar-eye-offline);
+}
+
+.bot-svg .bot-node.is-offline .avatar-star {
+  fill: var(--avatar-star-offline);
+}
+
+.bot-svg .bot-node.is-offline .avatar-hollow {
+  fill: var(--avatar-hollow-offline);
+}
+
+.bot-svg.bot-team .bot-node.is-offline {
+  opacity: 0.68;
+}
+
+/* Selected: sticky-note paper behind the note (design v1.1). */
+.bot-svg .avatar-selected-paper {
+  fill: var(--note-bg);
+  stroke: none;
+}
+
+.bot-svg .avatar-selected-lines line {
+  stroke: var(--note-lines);
+  stroke-width: 1;
+}
+
+.bot-svg .avatar-selected-fold {
+  fill: var(--note-fold);
+  stroke: none;
+}
+
+.bot-svg .avatar-halo {
+  fill: var(--avatar-halo);
+  stroke: none;
+}
+
+.bot-svg .avatar-halo-ring {
+  fill: none;
+  stroke: var(--avatar-halo-ring);
+  stroke-width: 1.25;
+  stroke-dasharray: 4 3.5;
+}
+
+.bot-svg .avatar-halo-star {
+  fill: var(--note-star);
+  stroke: none;
+  opacity: 0.85;
+}
+
+/* Status badges (bottom-right of the 48 grid). */
+.bot-svg .avatar-badge circle {
+  stroke: var(--color-bg-surface);
+  stroke-width: 1.8;
+}
+
+.bot-svg .avatar-badge-done circle {
+  fill: var(--status-done);
+}
+
+.bot-svg .avatar-badge-waiting circle {
+  fill: var(--status-waiting);
+}
+
+.bot-svg .avatar-badge-error circle {
+  fill: var(--status-error);
+}
+
+.bot-svg .avatar-badge path,
+.bot-svg .avatar-badge line {
+  fill: none;
+  stroke: var(--color-bg-surface);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.bot-svg .avatar-badge-done path {
+  stroke-width: 1.7;
+}
+
+.bot-svg .avatar-badge .avatar-badge-dot {
+  fill: var(--color-bg-surface);
+  stroke: none;
+}
+
+/* Team composite: shared beam + folded +N tag. */
+.bot-svg .avatar-beam {
+  fill: none;
+  stroke: var(--note-do);
+  stroke-width: 3.6;
+  stroke-linecap: round;
+}
+
+.bot-svg .avatar-beam.is-offline {
+  stroke: var(--status-offline);
+  opacity: 0.68;
+}
+
+.bot-svg.bot-team-pair .avatar-beam {
+  stroke-width: 4;
+}
+
+.bot-svg .avatar-extra circle {
+  fill: var(--color-bg-surface);
+  stroke: var(--note-do);
+  stroke-width: 1.35;
+}
+
+.bot-svg .avatar-extra.is-running circle {
+  stroke: var(--note-do);
+}
+
+.bot-svg .avatar-extra.is-offline circle {
+  stroke: var(--status-offline);
+}
+
+.bot-svg .avatar-extra text {
+  fill: var(--avatar-stamp-ink);
+  font-family: var(--font-reading);
+  font-size: 8.2px;
+  font-weight: 700;
+}
+
+.bot-svg .avatar-extra.is-running text {
+  fill: var(--note-do);
+}
+
+.bot-svg .avatar-extra.is-offline text {
+  fill: var(--status-offline);
+}
+
+.bot-svg .avatar-think circle {
+  fill: var(--avatar-think);
+  stroke: none;
+}
+
+/* --- Motion (design v1.1 keyframes, amplitudes unchanged) --- */
+
+@keyframes botLookAround {
+  0%, 12% { transform: translate(0px, 0px); }
+  18%, 34% { transform: translate(-2.2px, -0.4px); }
+  40%, 48% { transform: translate(0px, 0px); }
+  54%, 70% { transform: translate(2.2px, -1.0px); }
+  76%, 88% { transform: translate(-1.1px, 0.9px); }
+  94%, 100% { transform: translate(0px, 0px); }
+}
+
+@keyframes botBlink {
+  0%, 92%, 100% { transform: scaleY(1); }
+  96% { transform: scaleY(0.08); }
+}
+
+@keyframes botBounce {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-1.8px); }
+}
+
+@keyframes botFloatNote {
+  0% { transform: translate(0, 2px) scale(0.8); opacity: 0; }
+  30%, 80% { opacity: 0.9; }
+  100% { transform: translate(2.5px, -5px) scale(1.05); opacity: 0; }
+}
+
+@keyframes botDotPulse {
+  0%, 100% { opacity: 0.3; transform: translateY(0); }
+  50% { opacity: 0.95; transform: translateY(-1.5px); }
+}
+
+.bot-svg .bot-node.is-idle .eye-gaze,
+.bot-svg .bot-node.is-waiting .eye-gaze {
+  animation: botLookAround 6.5s infinite ease-in-out;
+  animation-delay: var(--gaze-delay, 0s);
+}
+
+.bot-svg .eye-gaze {
+  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.bot-svg .bot-node.is-idle .eyes-open,
+.bot-svg .bot-node.is-waiting .eyes-open {
+  transform-origin: center -2.2px;
+  animation: botBlink 4.2s infinite ease-in-out;
+  animation-delay: var(--gaze-delay, 0s);
+}
+
+/* Hover: the bot stops wandering and looks straight at the user. */
+.bot-svg:hover .eye-gaze,
+.bot-hover-trigger:hover .bot-svg .eye-gaze {
+  animation: none !important;
+  transform: translate(0px, 0px) scale(1.08) !important;
+}
+
+.bot-svg .bot-node.is-running .node-bounce-target {
+  animation: botBounce 0.85s infinite ease-in-out;
+}
+
+.bot-svg .floating-note {
+  animation: botFloatNote 1.6s infinite ease-out;
+}
+
+.bot-svg .think-dot-1 { animation: botDotPulse 1.2s infinite 0.0s; }
+.bot-svg .think-dot-2 { animation: botDotPulse 1.2s infinite 0.2s; }
+.bot-svg .think-dot-3 { animation: botDotPulse 1.2s infinite 0.4s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .bot-svg .eye-gaze,
+  .bot-svg .eyes-open,
+  .bot-svg .node-bounce-target,
+  .bot-svg .floating-note,
+  .bot-svg .think-dot-1,
+  .bot-svg .think-dot-2,
+  .bot-svg .think-dot-3 {
+    animation: none !important;
+  }
+}
+
+/* v5 3D progressive enhancement: the live canvas / cached snapshot fill the
+   avatar slot over the hidden SVG fallback. Decorative layers — the slot is
+   already aria-hidden — so they never receive pointer events. */
+.team-avatar,
+.chat-brand-avatar,
+.bot-drawer-avatar,
+.mention-avatar,
+.settings-bot-avatar {
+  position: relative;
+}
+
+.team-avatar > canvas,
+.team-avatar > img.team-avatar-3d,
+canvas.avatar-3d-live,
+img.avatar-3d-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* ---- Wax seal bot marks (thyca-bot-design.html, chosen "dấu sáp") ---- */
+.mk { --size: 100%; position: relative; display: inline-block; flex: none; width: var(--size); height: var(--size); }
+.mk .glyph { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
+.mk .glyph svg { width: 46%; height: 46%; stroke-width: 1.9; overflow: visible; }
+.mk-wax > svg.base { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; stroke: none; filter: drop-shadow(0 1.5px 1.2px rgba(61,42,31,0.38)) drop-shadow(0 0 0.5px rgba(61,42,31,0.3)); }
+.mk-wax .wax-body { fill: var(--bot); }
+.mk-wax .wax-ring { fill: none; stroke: color-mix(in srgb, var(--bot) 55%, var(--wax-ink)); stroke-width: 1.4; }
+.mk-wax .wax-ring-hi { fill: none; stroke: rgba(255,236,214,0.32); stroke-width: 1; transform: translate(0.7px,0.9px); }
+.mk-wax .wax-notch { fill: none; stroke: color-mix(in srgb, var(--bot) 45%, var(--wax-ink)); stroke-width: 1.3; stroke-dasharray: 1.1 3.1; transform-box: fill-box; transform-origin: center; }
+.mk-wax .wax-sheen { transform: translateX(-70px); }
+.mk-wax .wax-crack { fill: none; stroke: color-mix(in srgb, var(--bot) 35%, var(--wax-ink-deep)); stroke-width: 1.3; opacity: 0; }
+.mk-wax .glyph { color: var(--bot-gold); }
+.mk-wax .glyph svg { filter: drop-shadow(0 -0.6px 0 rgba(30,14,6,0.45)) drop-shadow(0 0.6px 0 rgba(255,240,215,0.25)); }
+.mk-wax[data-state="thinking"] .wax-sheen, .mk-wax[data-state="writing"] .wax-sheen { animation: wax-sheen 7s var(--ease-in-out) infinite; }
+.mk-wax[data-state="thinking"] .wax-notch, .mk-wax[data-state="writing"] .wax-notch { animation: wax-spin 7s linear infinite; }
+.mk-wax[data-state="writing"] .glyph svg { animation: wax-glyph-glow 1.6s var(--ease-in-out) infinite alternate; }
+.mk-wax[data-state="done"] { animation: wax-seal-press 560ms var(--ease-out) both; }
+.mk-wax[data-state="done"] .glyph svg { animation: wax-glyph-flash 900ms var(--ease-out) both; }
+.mk-wax[data-state="error"] .wax-body { fill: color-mix(in srgb, var(--bot) 45%, var(--wax-error)); }
+.mk-wax[data-state="error"] .wax-crack { opacity: 1; }
+.mk-wax[data-state="error"] .glyph { color: var(--wax-error-glyph); }
+@keyframes wax-sheen { 0%, 62% { transform: translateX(-70px); } 100% { transform: translateX(70px); } }
+@keyframes wax-seal-press { 0% { transform: scale(1.1) translateY(-2px); } 55% { transform: scale(0.96); } 100% { transform: none; } }
+@keyframes wax-glyph-flash { 0% { filter: brightness(1.9) drop-shadow(0 0 4px var(--wax-flash)); } 100% { filter: none; } }
+@keyframes wax-glyph-glow { from { opacity: .75; } to { opacity: 1; filter: drop-shadow(0 0 2.5px rgba(255,228,170,0.9)); } }
+@keyframes wax-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .mk-wax * { animation: none !important; } }
+
+/* ---- Group mark: stacked seals (thyca-bot-group-avatar.html, "stack") ---- */
+.gm { --gsize: 100%; position: relative; display: inline-block; flex: none; width: var(--gsize); height: var(--gsize); }
+.gm-slot { position: absolute; }
+.gm-slot .mk { width: 100%; height: 100%; }
+.gm .mk-wax .cut { fill: none; stroke: var(--color-paper-chat); stroke-width: 5; }
+.gm-coin { position: absolute; z-index: 5; display: grid; place-items: center; border-radius: 50%; background: radial-gradient(circle at 35% 30%, var(--color-paper-input), var(--color-paper-card)); box-shadow: 0 0 0 1.5px var(--color-paper-chat), 0 0 0 2.4px var(--color-divider), 0 1px 2px rgba(61,42,31,0.25); color: var(--chat-brand-ink); font: 600 calc(var(--gsize) * 0.22)/1 var(--font-ui); letter-spacing: -0.02em; }
+
+/* ---- Shared avatar slot: one reusable mount for any screen ---- */
+.bot-avatar-slot {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: var(--bot-avatar-size, 2.5rem);
+  height: var(--bot-avatar-size, 2.5rem);
+}
+.bot-avatar-slot > svg, .bot-avatar-slot .mk, .bot-avatar-slot .gm {
+  width: 100%;
+  height: 100%;
+}
+
+</style>
+  <style>
+/* ===== ./shared/css/bot-envelope.css ===== */
+/* Presentational bot envelope shared by the team sidebar and memory scope
+   picker. Scope to those two lists; chat-only session rows remain local. */
+.team-bot-description {
+  margin: 0;
+  color: var(--color-reading);
+  font-family: var(--font-reading);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+:is(#team-bot-list, #memory-bot-list) .team-envelope {
+  --team-header-height: 2.75rem;
+  --team-seal-size: 3.25rem;
+  --team-spring: cubic-bezier(0.22, 1, 0.36, 1);
+  --team-seal-protrusion: calc(var(--team-seal-size) - var(--team-header-height));
+  position: relative;
+  display: grid;
+  grid-template-rows: var(--team-header-height) 0fr;
+  gap: 0;
+  min-width: 0;
+  padding-block-end: 1.5rem;
+  overflow: visible;
+  border: var(--rule) solid color-mix(in srgb,
+    var(--team-tint, var(--color-divider)) 24%, var(--color-divider));
+  border-radius: 0.5rem;
+  margin-block-end: 0.75rem;
+  background: color-mix(in srgb, var(--color-paper-card) 91%,
+    var(--team-tint, var(--color-bg-frame)) 9%);
+  box-shadow: 0 1px 3px rgba(61, 42, 31, 0.08);
+  transition: grid-template-rows 450ms var(--team-spring),
+    padding-block-end 350ms var(--team-spring),
+    margin-block-end 350ms var(--team-spring),
+    box-shadow 350ms var(--team-spring);
+}
+
+:is(#team-bot-list, #memory-bot-list) .team-envelope::before {
+  position: absolute;
+  z-index: 1;
+  inset-block-start: var(--team-header-height);
+  inset-inline: 18px 14px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb,
+    var(--color-divider) 92%, transparent) 18%, color-mix(in srgb,
+    var(--color-divider) 92%, transparent) 88%, transparent);
+  box-shadow: 0 1px 2px rgba(74, 62, 50, 0.12);
+  transition: inset-inline 400ms var(--team-spring), background 400ms var(--team-spring),
+    box-shadow 400ms var(--team-spring);
+  content: "";
+  pointer-events: none;
+}
+
+:is(#team-bot-list, #memory-bot-list) .team-envelope.is-open {
+  grid-template-rows: var(--team-header-height) 1fr;
+  padding-block-end: 7px;
+  margin-block-end: 0.75rem;
+  box-shadow: 0 8px 20px rgba(74, 62, 50, 0.12);
+}
+
+:is(#team-bot-list, #memory-bot-list) .team-envelope.is-open::before {
+  inset-inline: 7px;
+  background: color-mix(in srgb, var(--color-divider) 88%, var(--color-reading));
+  box-shadow: 0 3px 6px rgba(55, 43, 30, 0.22);
+}
+
+:is(#team-bot-list, #memory-bot-list) .team-envelope > .team-envelope-header {
+  z-index: 2;
+  height: var(--team-header-height);
+  min-width: 0;
+}
+
+:is(#team-bot-list, #memory-bot-list) .team-envelope .team-bot-item {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: flex-end;
+  gap: 0.45rem;
+  width: 100%;
+  height: var(--team-header-height);
+  min-height: 0;
+  padding: 0 1rem 0 82px;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+:is(#team-bot-list, #memory-bot-list) .team-envelope .team-bot-item.is-open,
+:is(#team-bot-list, #memory-bot-list) .team-envelope .team-bot-item.is-active {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+:is(#team-bot-list, #memory-bot-list) .team-envelope .team-bot-item > .team-avatar {
+  position: absolute;
+  z-index: 4;
+  inset-inline-start: calc(16px - var(--rule));
+  inset-inline-end: auto;
+  inset-block-start: calc(9px - var(--rule));
+  inset-block-end: auto;
+  grid-area: auto;
+  grid-column: auto;
+  grid-row: auto;
+  place-self: start;
+  margin: 0;
+  width: var(--team-seal-size);
+  height: var(--team-seal-size);
+  filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.22));
+  transform-origin: center;
+  transition: transform 450ms var(--team-spring), filter 450ms var(--team-spring);
+}
+
+:is(#team-bot-list, #memory-bot-list) .team-envelope.is-open .team-bot-item > .team-avatar {
+  filter: drop-shadow(1px 5px 6px rgba(0, 0, 0, 0.26));
+  transform: translate(-3px, -8px) scale(0.82) rotate(-12deg);
+}
+
+:is(#team-bot-list, #memory-bot-list) .team-envelope .team-bot-item .session-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-block-end: 0.1rem;
+  color: var(--team-tint, var(--color-accent));
+  font-size: 1rem;
+  line-height: 1.1;
+  text-align: start;
+}
+
+/* Status/role rides the name line, right after the name; bottom-aligned so
+   the name block hugs the envelope crease (the old sub-line is gone). */
+:is(#team-bot-list, #memory-bot-list) .team-envelope .team-bot-item time {
+  flex: none;
+  padding-block-end: 0.13rem;
+  min-width: 0;
+  color: var(--color-muted);
+  font-size: 0.68rem;
+  line-height: 1.1;
+  text-align: start;
+}
+
+:is(#team-bot-list, #memory-bot-list) .team-envelope .team-bot-item.has-status time {
+  white-space: nowrap;
+}
+
+:is(#team-bot-list, #memory-bot-list) .team-envelope .team-bot-item .team-unread {
+  flex: none;
+  align-self: center;
+}
+
+:is(#team-bot-list, #memory-bot-list) .team-envelope .team-avatar {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+:is(#team-bot-list, #memory-bot-list) .team-envelope .team-bot-caret {
+  flex: none;
+  align-self: center;
+  margin-inline-start: auto;
+  width: 0.42rem;
+  height: 0.42rem;
+  border-right: 1.5px solid var(--color-muted);
+  border-bottom: 1.5px solid var(--color-muted);
+  transform: rotate(-45deg);
+  transition: transform var(--dur-short) var(--ease-out);
+}
+
+:is(#team-bot-list, #memory-bot-list) .team-envelope .team-bot-item.is-open .team-bot-caret {
+  transform: rotate(45deg);
+}
+
+:is(#team-bot-list, #memory-bot-list) .team-envelope .team-pocket-viewport {
+  display: grid;
+  grid-template-rows: 0fr;
+  min-height: 0;
+  overflow: hidden;
+  perspective: 700px;
+  transition: grid-template-rows 450ms var(--team-spring);
+}
+
+:is(#team-bot-list, #memory-bot-list) .team-envelope.is-open .team-pocket-viewport {
+  grid-template-rows: 1fr;
+}
+
+:is(#team-bot-list, #memory-bot-list) .team-envelope .team-cluster-sessions {
+  display: grid;
+  gap: 0.35rem;
+  align-content: start;
+  min-height: 0;
+  margin: 0 7px;
+  padding: 12px 13px 13px;
+  overflow: hidden;
+  border: 0;
+  border-inline: var(--rule) solid color-mix(in srgb,
+    var(--team-tint, var(--color-divider)) 18%, var(--color-divider));
+  border-block-end: var(--rule) solid color-mix(in srgb,
+    var(--team-tint, var(--color-divider)) 18%, var(--color-divider));
+  border-radius: 0 0 6px 6px;
+  background-color: color-mix(in srgb, var(--color-paper-card) 96%,
+    var(--team-tint, var(--color-bg-frame)) 4%);
+  background-image: repeating-linear-gradient(transparent 0, transparent 20px,
+    color-mix(in srgb, var(--color-divider) 13%, transparent) 21px);
+  box-shadow: inset 0 8px 10px -6px rgba(60, 48, 35, 0.25),
+    0 2px 4px rgba(60, 48, 35, 0.06);
+  opacity: 0;
+  transform-origin: top center;
+  transform: translateY(-8px) rotateX(-12deg);
+  transition: opacity 300ms ease, transform 450ms var(--team-spring);
+}
+
+:is(#team-bot-list, #memory-bot-list) .team-envelope.is-open .team-cluster-sessions {
+  opacity: 1;
+  transform: translateY(0) rotateX(0deg);
+}
+
+:is(#team-bot-list, #memory-bot-list) .team-envelope .team-bot-description {
+  position: relative;
+  z-index: 1;
+  margin-block-start: var(--team-seal-protrusion);
+  font-size: 0.84375rem;
+  line-height: 1.52;
+  text-align: start;
+}
+
+:is(#team-bot-list, #memory-bot-list) .team-envelope .team-sheet-pager button {
+  position: relative;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :is(#team-bot-list, #memory-bot-list) .team-envelope,
+  :is(#team-bot-list, #memory-bot-list) .team-envelope::before,
+  :is(#team-bot-list, #memory-bot-list) .team-envelope .team-pocket-viewport,
+  :is(#team-bot-list, #memory-bot-list) .team-envelope .team-cluster-sessions,
+  :is(#team-bot-list, #memory-bot-list) .team-envelope .team-bot-item > .team-avatar,
+  :is(#team-bot-list, #memory-bot-list) .team-envelope .team-bot-caret {
+    transition-duration: 0s;
+    transition-delay: 0s;
+  }
+  :is(#team-bot-list, #memory-bot-list) .team-envelope.is-open .team-bot-item > .team-avatar {
+    transform: none;
+  }
+  :is(#team-bot-list, #memory-bot-list) .team-envelope.is-open .team-cluster-sessions {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+</style>
+  <style>
+/* ===== ./pages/chat/chat.css ===== */
+/* Chat page: conversation, composer and responsive rules (ex-styles.css).
+   App shell + session list moved to shared/css/kit.css at merge (cross-page). */
+.chat-canvas {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+.chat-title-head {
+  flex: none;
+  padding: 1.625rem 1.25rem 0;
+}
+
+.chat-title-head .screen-title :is(h1, h2) {
+  min-width: 0;
+  max-width: 100%;
+  gap: 0.75rem;
+  color: var(--color-muted);
+  font-size: 0.75rem;
+  font-weight: 400;
+  letter-spacing: 0.03em;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+
+.chat-title-head .screen-title :is(h1, h2)::before,
+.chat-title-head .screen-title :is(h1, h2)::after {
+  width: 1.75rem;
+  flex: 0 0 1.75rem;
+}
+
+.conversation-scroll {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: clip;
+  overflow-y: auto;
+  scroll-behavior: smooth;
+}
+
+.conversation-scroll::-webkit-scrollbar {
+  width: 0.55rem;
+}
+
+.conversation-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.conversation-scroll::-webkit-scrollbar-thumb {
+  border: 0.15rem solid transparent;
+  border-radius: var(--radius-pill);
+  background: var(--color-divider);
+  background-clip: padding-box;
+}
+
+/* W6 TASK-014: merged the backend.css `min-height: 100%` copy here (it loaded
+   last so it won); single definition keeps the computed style. */
+.conversation-content {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  min-width: 0;
+  min-height: 100%;
+  padding: 2.25rem 1.25rem 1.5rem;
+}
+
+/* No fill: the right-aligned block plus its ink tick carry the turn, so the
+   paper stays the paper. The tick is the thin, faint counterpart to
+   .chat-brand-stripe — same accent, much less of it. */
+.message-user {
+  position: relative;
+  z-index: 2;
+  align-self: end;
+  width: fit-content;
+  max-width: 75%;
+  min-height: 0;
+  margin-inline-start: auto;
+  margin-inline-end: 0;
+  padding: 0;
+  border-inline-start: 2px solid var(--chat-user-tick);
+  padding-inline-start: 1rem;
+  color: var(--color-reading);
+}
+
+.message-user p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font-family: var(--font-reading);
+  font-size: 0.9375rem;
+  line-height: 1.8;
+  text-align: start;
+}
+
+.message-user footer:has(.again) {
+  justify-content: space-between;
+  opacity: 1;
+}
+
+.message-user footer:has(.again) time,
+.message-user footer:has(.again) .read-mark {
+  opacity: 1;
+}
+
+.message-user footer {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.35rem;
+  margin-block-start: 0.45rem;
+  color: var(--color-muted-soft);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  opacity: 1;
+}
+
+/* Turns share one column gap; users sit closer to each other than to Thyca. */
+.message-user + .message-user {
+  margin-block-start: calc(var(--space-sm) - var(--space-lg));
+}
+
+.read-mark {
+  width: 0.78rem;
+  height: 0.7rem;
+  color: var(--color-accent-deep);
+  stroke-width: 1.7;
+}
+
+.live-card {
+  --chat-brand-stripe: 2px;
+  --chat-brand-gap: 1rem;
+  position: relative;
+  z-index: 3;
+  display: flex;
+  align-self: stretch;
+  flex-direction: column;
+  width: auto;
+  min-height: 0;
+  margin-inline-end: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  animation: card-arrive 420ms var(--ease-out) both;
+}
+
+@keyframes card-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(0.55rem) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.chat-brand {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  gap: var(--chat-brand-gap);
+  width: max-content;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0;
+  background: none;
+}
+
+.chat-brand[data-state="busy"] {
+  --chat-brand-wash: rgba(255, 228, 196, 0.48);
+}
+
+.chat-brand[data-state="error"] {
+  --chat-brand-wash: rgba(248, 208, 212, 0.45);
+}
+
+.chat-brand-stripe {
+  flex: 0 0 var(--chat-brand-stripe);
+  width: var(--chat-brand-stripe);
+  margin-block: 0;
+  border-radius: 0;
+  background: var(--chat-brand-accent);
+  box-shadow: none;
+}
+
+.chat-brand-body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3125rem;
+  min-width: 0;
+  padding: 0;
+  isolation: isolate;
+}
+
+.chat-brand-body::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: -0.05rem -0.15rem;
+  border-radius: 50%;
+  background: var(--chat-brand-wash);
+  filter: blur(11px);
+  pointer-events: none;
+}
+
+.chat-brand-lockup {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.chat-brand h2 {
+  margin: 0;
+  color: var(--chat-brand-accent);
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-style: normal;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1.25;
+}
+
+.chat-brand-avatar {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 3.5rem;
+  height: 3.5rem;
+}
+
+.chat-brand-line {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+  padding-inline-start: 0;
+  color: var(--chat-brand-accent);
+  font-family: var(--font-display);
+  font-size: 0.75rem;
+  font-style: italic;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.chat-brand-ink {
+  display: none;
+  flex: 0 0 auto;
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 50%;
+  background: var(--chat-brand-accent);
+  box-shadow: 0 0 0.35rem color-mix(in oklab, var(--chat-brand-accent) 55%, transparent);
+}
+
+.chat-brand[data-state="busy"] .chat-brand-ink {
+  display: inline-block;
+  animation: ink-breathe 1.8s var(--ease-in-out) infinite;
+}
+
+@keyframes ink-breathe {
+  0%, 100% { opacity: 0.35; transform: scale(0.82); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+.live-copy {
+  margin: 0.625rem 0 0;
+  padding-block-end: var(--space-sm);
+  padding-inline-start: calc(var(--chat-brand-stripe) + var(--chat-brand-gap));
+  color: var(--color-reading);
+  font-family: var(--font-reading);
+  font-size: 0.9375rem;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+
+.message-assistant > footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-block-start: 0.45rem;
+  padding-inline-start: calc(var(--chat-brand-stripe) + var(--chat-brand-gap));
+}
+
+.again {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0;
+  border: 0;
+  background: none;
+  color: var(--color-muted);
+  font-family: var(--font-display);
+  font-size: 0.75rem;
+  font-style: italic;
+}
+
+.again svg {
+  width: 0.88rem;
+  height: 0.88rem;
+}
+
+.again:hover {
+  color: var(--chat-brand-accent);
+}
+
+.message-assistant > footer time {
+  margin-inline-start: auto;
+  color: var(--color-muted-soft);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  opacity: 1;
+}
+
+.usage-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0;
+  padding-block: 0.85rem 0.65rem;
+  padding-inline-start: calc(var(--chat-brand-stripe) + var(--chat-brand-gap));
+  min-height: 2.4rem;
+}
+
+.usage-row-body {
+  flex: 1;
+  min-width: 0;
+  color: var(--color-muted);
+  font-family: var(--font-reading);
+  font-size: 0.75rem;
+  font-style: italic;
+}
+
+.usage-label {
+  margin: 0;
+  width: max-content;
+  padding-block-end: 0.08rem;
+  border-bottom: var(--rule) solid var(--color-divider);
+  color: var(--color-muted);
+  font-family: var(--font-display);
+  font-size: 0.75rem;
+  font-style: italic;
+  font-weight: 500;
+}
+
+.chat-brand-line.thinking-toggle {
+  width: fit-content;
+  max-width: 100%;
+  padding-block: 0;
+  padding-inline-end: 0;
+  border: 0;
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
+}
+
+.chat-brand-line.thinking-toggle:hover .chat-brand-status {
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--chat-brand-accent) 40%, transparent);
+  text-underline-offset: 0.3em;
+}
+
+.thinking-toggle .chevron {
+  width: 0.75rem;
+  height: 0.75rem;
+  flex: 0 0 auto;
+  color: var(--color-muted-soft);
+  transition: transform var(--dur-short) var(--ease-out);
+}
+
+.thinking-toggle[aria-expanded="true"] .chevron {
+  transform: rotate(180deg);
+}
+
+.thinking-note {
+  margin: 0.35rem 0 0;
+  padding-inline-start: calc(var(--chat-brand-stripe) + var(--chat-brand-gap));
+}
+
+.reply-live {
+  margin: 0.35rem 0 0;
+  padding-inline-start: calc(var(--chat-brand-stripe) + var(--chat-brand-gap));
+  font-family: var(--font-reading);
+  white-space: pre-wrap;
+}
+
+.thinking-note.is-collapsed {
+  margin: 0;
+}
+
+.thinking-body {
+  position: relative;
+  width: 100%;
+  padding: 0 0 0.15rem 1.1rem;
+}
+
+.thinking-body::before {
+  content: "";
+  position: absolute;
+  inset-block: 0.35rem 0.2rem;
+  inset-inline-start: 0;
+  width: 1px;
+  background: linear-gradient(var(--color-paper-edge), transparent);
+}
+
+.thought-text {
+  margin: 0;
+  color: var(--color-muted);
+  font-family: var(--font-reading);
+  font-size: 0.9375rem;
+  font-style: italic;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+
+.streaming-caret {
+  display: inline-block;
+  width: 0.6rem;
+  height: 1.5px;
+  margin-inline-start: 0.3rem;
+  vertical-align: 0.08em;
+  border-radius: 50%;
+  background: var(--chat-brand-accent);
+  transform: rotate(-24deg);
+  animation: ink-breathe 1.7s var(--ease-in-out) infinite;
+}
+
+.ink-token {
+  animation: thinking-ink 420ms var(--ease-out) both;
+}
+
+.thought-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.45rem 1.25rem;
+  margin-block-start: 0.75rem;
+}
+
+.search-event {
+  display: flex;
+  flex: 1 1 12rem;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  color: var(--color-muted);
+  font-family: var(--font-reading);
+  font-size: 0.82rem;
+  font-style: italic;
+}
+
+.search-event::before {
+  content: "—";
+  color: var(--color-muted-soft);
+}
+
+.search-event.working {
+  animation: ink-breathe 1.9s var(--ease-in-out) infinite;
+}
+
+@keyframes thinking-ink {
+  from { opacity: 0.2; }
+  to { opacity: 1; }
+}
+
+.music-watermark {
+  position: absolute;
+  z-index: -1;
+  inset-inline-end: 0.5rem;
+  inset-block-end: 1rem;
+  width: 25rem;
+  height: 13rem;
+  color: var(--color-watermark);
+  opacity: 0.065;
+  transform: rotate(-2deg);
+  pointer-events: none;
+}
+
+.music-watermark svg {
+  width: 100%;
+  height: 100%;
+}
+
+.staff-lines,
+.treble {
+  fill: none;
+  stroke: currentColor;
+}
+
+.staff-lines {
+  stroke-width: 1.7;
+}
+
+.treble {
+  stroke-width: 6;
+}
+
+.water-notes {
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-width: 5;
+}
+
+.composer {
+  position: relative;
+  z-index: 4;
+  isolation: isolate;
+  flex: 0 0 auto;
+  margin: 0.2rem 1.45rem 0.9rem;
+  padding: 0.6rem 1.1rem 0.55rem;
+  border: var(--rule) solid var(--composer-border);
+  border-radius: 0.875rem;
+  background: var(--composer-bg);
+  box-shadow: 0 0.25rem 0.75rem var(--color-shell-shadow-soft);
+  transition: border-color var(--dur-short) var(--ease-out), box-shadow var(--dur-short) var(--ease-out);
+}
+
+.composer:focus-within {
+  border-color: color-mix(in srgb, var(--chat-brand-accent) 35%, var(--composer-border));
+}
+
+/* Empty submit: one quick shake, then still. Motion is suppressed wholesale
+   under prefers-reduced-motion, so the hint text is the fallback. */
+@keyframes composer-nudge {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-0.35rem); }
+  50% { transform: translateX(0.3rem); }
+  80% { transform: translateX(-0.15rem); }
+}
+
+.composer.is-nudging {
+  animation: composer-nudge 160ms var(--ease-in-out);
+}
+
+.to-bottom {
+  position: absolute;
+  z-index: 5;
+  inset-inline-end: 3.2rem;
+  inset-block-end: 1.25rem;
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  padding: 0;
+  border: var(--rule) solid var(--color-border);
+  border-radius: var(--radius-pill);
+  background: var(--color-paper-card);
+  color: var(--color-accent-deep);
+  box-shadow: 0 0.35rem 0.9rem var(--color-shell-shadow-soft);
+}
+
+.to-bottom svg {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.letter-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-block-end: 0;
+  color: var(--chat-brand-accent);
+  font-family: var(--font-display);
+  font-size: 0.875rem;
+  font-style: italic;
+}
+
+/* The addressee's seal rides the label: a bot's mark for a solo room,
+   the stacked group mark for a shared one. */
+.letter-label-mark {
+  display: inline-flex;
+  flex: none;
+  width: 1.55rem;
+  height: 1.55rem;
+}
+
+.letter-label-mark[hidden] {
+  display: none;
+}
+
+.letter-label-mark > * {
+  width: 100%;
+  height: 100%;
+}
+
+.composer textarea {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: min(2.8rem, 20dvh);
+  max-height: min(15rem, 30dvh);
+  margin: 0;
+  padding: 0.35rem 0;
+  resize: vertical;
+  overflow: auto;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--color-reading);
+  caret-color: var(--chat-brand-accent);
+  font-family: var(--font-reading);
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+.composer textarea::placeholder {
+  color: var(--color-muted-soft);
+  font-style: italic;
+  opacity: 1;
+}
+
+.composer-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding-block-start: 0.4rem;
+  border-block-start: var(--rule) solid var(--color-divider);
+}
+
+.composer-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.875rem;
+  min-width: 0;
+}
+
+.attach-button,
+.voice-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  min-height: 2.4rem;
+  padding: 0.3125rem 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-muted);
+  font-family: var(--font-ui);
+  font-size: 0.75rem;
+  font-style: normal;
+}
+
+.attach-button:disabled,
+.voice-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.attach-button svg,
+.voice-button svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.effort-control {
+  display: flex;
+  align-items: center;
+  gap: 0.3125rem;
+  min-width: 0;
+  color: var(--color-muted);
+  font-family: var(--font-ui);
+  font-size: 0.75rem;
+  font-style: normal;
+}
+
+.effort-select {
+  min-height: 2.4rem;
+  min-width: 0;
+  max-width: 8rem;
+  padding: 0.25rem 0.2rem 0.25rem 0.25rem;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--chat-brand-accent);
+  font-family: var(--font-ui);
+  font-size: 0.75rem;
+  font-style: normal;
+  outline: none;
+  box-shadow: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.effort-select:focus-visible,
+.model-select:focus-visible {
+  border: 0;
+  outline: 2px solid var(--color-focus);
+  outline-offset: 3px;
+  box-shadow: none;
+}
+
+.model-select {
+  width: max-content;
+  max-width: 8.75rem;
+  padding-inline: 0.25rem 0;
+  field-sizing: content;
+  outline: none;
+  box-shadow: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.composer-send {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem 0.875rem;
+  min-width: 0;
+  margin-inline-start: auto;
+}
+
+.model-control {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 16rem;
+}
+
+.send-button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  min-width: 4.5rem;
+  min-height: 2.5rem;
+  padding: 0.5625rem 1.375rem;
+  border: var(--rule) solid var(--color-accent);
+  border-radius: var(--radius-xs);
+  background: var(--color-accent);
+  color: var(--color-accent-ink);
+  font-family: var(--font-display);
+  font-size: 0.875rem;
+  font-style: normal;
+  box-shadow: none;
+  transition: background-color var(--dur-short) var(--ease-out), color var(--dur-short) var(--ease-out);
+}
+
+.send-button:disabled {
+  border-color: var(--color-border);
+  background: var(--color-bg-selected);
+  color: var(--color-muted-soft);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.stop-button {
+  display: none;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-width: 4.5rem;
+  min-height: 2.5rem;
+  padding: 0.5625rem 1.375rem;
+  border: var(--rule) solid var(--color-accent);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--color-accent);
+  font-family: var(--font-display);
+  font-size: 0.875rem;
+  font-style: normal;
+}
+
+.composer.is-loading .stop-button {
+  display: inline-flex;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .icon-button:hover,
+  .new-session:hover {
+    color: var(--color-accent-deep);
+    background: color-mix(in oklab, var(--color-accent-soft) 52%, transparent);
+  }
+
+  .session-action:hover {
+    color: var(--color-accent-deep);
+  }
+
+  .attach-button:hover:not(:disabled),
+  .voice-button:hover:not(:disabled) {
+    color: var(--chat-brand-accent);
+  }
+
+  /* Pointer over a row: the peach wash appears and nothing else changes. The
+     row keeps its own top rule — dropping it read as the line above the row
+     going missing. */
+  .session-item:not(.is-active):hover::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: 0.25rem 0.2rem;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--chat-brand-wash) 55%, transparent);
+    filter: blur(10px);
+    pointer-events: none;
+  }
+
+  .send-button:hover:not(:disabled) {
+    background: color-mix(in oklab, var(--chat-brand-accent) 88%, var(--chat-brand-ink));
+  }
+}
+
+button:active {
+  transform: translateY(1px);
+}
+
+@media (hover: none) {
+  /* No pointer to reveal them: on touch the actions stay visible, and the row
+     gives them a column of their own instead of overlaying the name. */
+  .session-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .session-actions {
+    position: static;
+    opacity: 1;
+    pointer-events: auto;
+    padding-inline-end: 0.35rem;
+  }
+}
+
+@media (max-width: 56rem) {
+  /* Pick pattern needs an in-flow sidebar (kit only provides this under
+     .screen-shell, which chat skips to keep its desktop UI typeface). */
+  .chat-shell .sidebar {
+    position: static;
+    height: auto;
+    flex: none;
+    margin: 0;
+    pointer-events: auto;
+  }
+
+  .chat-canvas {
+    margin: 0;
+    border-inline: 0;
+    border-block-end: 0;
+    border-radius: 0;
+  }
+
+  .conversation-content {
+    gap: var(--space-lg);
+    padding: 1.5rem 0.85rem 1.25rem;
+  }
+
+  .live-card {
+    width: auto;
+    min-height: 0;
+    margin: 0;
+  }
+
+  .music-watermark {
+    display: none;
+  }
+
+  .composer {
+    position: relative;
+    inset: auto;
+    margin: 0.4rem 0.75rem calc(0.6rem + env(safe-area-inset-bottom));
+    padding: 0.6rem 1rem 0.5rem;
+    border-radius: 0.875rem;
+  }
+
+  .to-bottom {
+    inset-inline-end: 1.25rem;
+    inset-block-end: 1.25rem;
+  }
+
+  .send-button {
+    min-width: 4.8rem;
+    flex-basis: 100%;
+    margin-inline-start: auto;
+    align-self: flex-end;
+  }
+
+  .stop-button {
+    flex-basis: 100%;
+    margin-inline-start: auto;
+    align-self: flex-end;
+  }
+
+  .composer-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.35rem;
+  }
+
+  .composer-tools {
+    flex-wrap: nowrap;
+  }
+
+  .composer-send {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    flex: none;
+    align-items: center;
+    gap: 0.35rem 0.75rem;
+    min-width: 0;
+    margin-inline-start: 0;
+  }
+
+  .model-control {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .effort-control {
+    flex: 0 1 auto;
+    width: auto;
+    max-width: none;
+    white-space: nowrap;
+  }
+
+  .effort-label {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .model-select {
+    flex: 0 1 auto;
+    width: max-content;
+    min-width: 0;
+    max-width: 100%;
+    field-sizing: content;
+  }
+
+  .effort-select {
+    flex: 0 0 auto;
+    width: auto;
+    field-sizing: content;
+  }
+}
+@media (max-width: 28rem) {
+  .message-user p,
+  .composer textarea {
+    font-size: 1rem;
+  }
+
+  .live-copy {
+    font-size: 1rem;
+  }
+
+  .thinking-body {
+    padding-inline-start: 0.85rem;
+  }
+
+  .thought-text {
+    font-size: 0.9rem;
+  }
+}
+
+/* Pager for the chat sidebar session list only (TASK-034): the restrained
+   compact design is shared with the dashboard/trace .journal-pager and lives
+   in shared/css/kit.css; only the chat's placement margin stays here. Global
+   .screen-button is untouched. */
+.session-pager {
+  margin-block: 0.75rem 0;
+}
+
+/* Team v1 (r9): Bot → Session sidebar, participant strip, per-bot messages,
+   @ mention popup, question/error cards, bot drawer. Only Thyca tokens —
+   no literal colors. */
+
+/* Session title: no background of its own. The head is a flex sibling
+   above .conversation-scroll inside .chat-canvas (index.html), so
+   messages scroll inside that pane and can never slide under the title.
+   Leaving the head transparent lets the shell paper texture
+   (.notebook-shell::before) show through continuously — a solid band
+   (previous r9 round-6 sticky + ::after fade) truncated botanical
+   motifs at the head's bottom edge. Sticky is dropped too: .chat-canvas
+   is not a scroll container, so top:0 on its first flex item never
+   stuck and served nothing in this layout (checked desktop, the
+   max-width:56rem rules in kit.css/chat.css, and pick-shell: in every
+   layout the head stays above, never inside, the scrolling pane). */
+
+/* Participant strip: lives in .site-header, right-aligned; bot names
+   sit right, visually right-to-left with thyca
+   outermost (row-reverse over a thyca-first DOM order). Type is the r9
+   spec (0.8rem var(--font-reading), upright); each name tints per bot. */
+.chat-shell .site-header .team-strip {
+  display: flex;
+  flex-direction: row-reverse;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 0.15rem 0.7rem;
+  min-width: 0;
+  margin: 0 0 0 auto;
+  padding: 0;
+  color: var(--color-muted);
+  font-family: var(--font-reading);
+  font-size: 0.8rem;
+  font-style: normal;
+  line-height: 1.15;
+}
+
+/* Plain text, not a boxy button: no border, padding or fill of its own
+   (the global button reset already removes the border) — only the bot's
+   tint on the name itself. */
+.team-strip-name {
+  padding: 0;
+  background: transparent;
+  color: var(--team-tint, var(--color-accent));
+}
+
+/* TURN-CURATE: context % badge on the bot card (replaces the chat meter). */
+.team-strip-context {
+  margin-left: 0.5em;
+  padding: 0.05em 0.45em;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--color-ink-soft);
+  background: var(--color-paper-soft);
+}
+
+/* Working bot (r9 .top-name.is-busy): bolder, with the light sweep
+   running THROUGH the text itself (background-clip: text, tint kept as
+   the base of the gradient so the name never leaves its bot color). */
+.team-strip-name.is-busy {
+  font-weight: 600;
+  background-image: linear-gradient(100deg, var(--team-tint, var(--color-accent)) 35%, var(--color-accent-soft) 50%, var(--team-tint, var(--color-accent)) 65%);
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: team-shimmer 2.4s var(--ease-in-out) infinite;
+}
+
+@keyframes team-shimmer {
+  from { background-position: 120% 0; }
+  to { background-position: -120% 0; }
+}
+
+.team-strip-name.is-error {
+  color: var(--color-danger, var(--color-accent-deep));
+  -webkit-text-fill-color: var(--color-danger, var(--color-accent-deep));
+  background: none;
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .team-strip-name.is-busy {
+    animation: none;
+  }
+}
+
+/* Agent rows reuse the legacy .session-item grid verbatim; the list's
+   presentation layer (user-approved, 2026-10-14) is scoped to the team
+   list only: one cluster per bot with its sessions indented beneath,
+   selection as a soft tint pill instead of the kit blur+bar, an avatar
+   slot (initial on tint) in the legacy icon cell, overlapped minis for
+   shared sessions. Kit rules for other screens are untouched. */
+#team-nav .sessions-heading h2 {
+  margin-inline-end: auto;
+}
+
+#team-shared-create {
+  border-style: dashed;
+}
+
+#team-bot-list .session-item {
+  border-block-start-color: transparent;
+  border-radius: var(--radius-sm);
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  column-gap: 0.75rem;
+}
+
+
+.team-bot-caret {
+  grid-column: 4;
+  grid-row: 1 / 3;
+  place-self: center;
+  width: 0.42rem;
+  height: 0.42rem;
+  border-right: 1.5px solid var(--color-muted);
+  border-bottom: 1.5px solid var(--color-muted);
+  transform: rotate(-45deg);
+  transition: transform var(--dur-short) var(--ease-out);
+}
+
+#team-bot-list .team-bot-item.is-open .team-bot-caret,
+#team-bot-list .team-group-item.is-open .team-bot-caret {
+  transform: rotate(45deg);
+}
+
+/* The star pin lives in the top-left corner of bot rows and shared
+   session rows: the name/status line hugs the bottom crease and the
+   right edge holds only the caret, so the corner above the seal is
+   the one free spot. */
+#team-bot-list .session-row:has(> .team-bot-item) .session-actions,
+#team-bot-list .session-row:has(> .team-group-item) .session-actions {
+  position: absolute;
+  inset-inline-start: 0.35rem;
+  inset-inline-end: auto;
+  inset-block-start: 0.3rem;
+  inset-block-end: auto;
+  z-index: 5;
+  align-items: flex-start;
+}
+
+/* Pinned letters keep their pin in view: Thyca's mark is static, other
+   pinned bots show their pin without waiting for hover. */
+#team-bot-list .session-row.is-pinned .session-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.session-action.is-pin,
+.session-action.is-pinned-mark {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+
+.session-action.is-pin svg,
+.session-action.is-pinned-mark svg {
+  display: block;
+  width: 0.95rem;
+  height: 0.95rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* An unpinned letter offers a ghost pin on hover; a pinned one keeps a
+   solid accent pin — hovering it readies the un-pin. */
+.session-action.is-pin {
+  color: var(--color-muted);
+}
+
+.session-row.is-pinned .session-action.is-pin {
+  color: var(--chat-brand-accent);
+}
+
+.session-action.is-pin:hover {
+  color: var(--color-accent-deep);
+}
+
+.session-action.is-pinned-mark {
+  color: var(--chat-brand-accent);
+  cursor: default;
+}
+
+#team-bot-list .session-item .session-name {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#team-bot-list .session-item time {
+  grid-column: 2;
+  grid-row: 2;
+  justify-self: stretch;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#team-bot-list .team-session-item:not(.team-group-item) {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+#team-bot-list .team-session-item:not(.team-group-item) .session-name {
+  grid-column: 1;
+}
+
+#team-bot-list .team-session-item:not(.team-group-item) time {
+  grid-column: 1;
+}
+
+#team-bot-list .team-session-item:not(.team-group-item) .team-unread {
+  grid-column: 2;
+}
+
+.team-session-item time {
+  color: var(--color-muted);
+}
+
+.team-session-item .session-name {
+  font-size: 0.86rem;
+}
+
+/* Design (thyca-bot-design.html): active row = soft tint glow + tint bar,
+   not a flat selected fill. */
+#team-bot-list .session-item.is-active {
+  /* background-color only — a shorthand here would wipe the envelope
+     crease background-image on letter rows. */
+  background-color: transparent;
+}
+
+#team-bot-list .session-item.is-active::before {
+  background: color-mix(in srgb, var(--team-tint) 16%, rgba(255, 222, 192, 0.42));
+}
+
+#team-bot-list .session-item.is-active::after {
+  inset-block: 0.55rem;
+  width: 4px;
+  background: var(--team-tint);
+}
+
+/* On envelope rows the bar floats just off the card's left edge, like
+   the mockup's detached spine. */
+#team-bot-list .team-bot-item.is-active::after,
+#team-bot-list .team-group-item.is-active::after {
+  inset-block: 0.7rem;
+  inset-inline-start: -0.55rem;
+}
+
+/* Selected bot bar = light terracotta wash over the letter (the blurred
+   pill glow stays reserved for inner session rows). */
+/* Envelope rows carry their own edges — the list just breathes between
+   cards instead of drawing hairlines. */
+#team-bot-list {
+  gap: 0.55rem;
+}
+
+/* Sheet pager: quiet centred controls at the foot of the pulled-out
+   sheet, only rendered when a bot has more than one page of sessions. */
+.team-sheet-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  padding-block-start: 0.15rem;
+}
+
+.team-sheet-page {
+  border: 0;
+  background: transparent;
+  padding: 0.1rem 0.35rem;
+  color: var(--chat-brand-accent);
+  font-family: var(--font-reading);
+  font-size: 0.78rem;
+  font-style: italic;
+  cursor: pointer;
+}
+
+.team-sheet-page:hover:not(:disabled) {
+  color: var(--chat-brand-ink);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.team-sheet-page:disabled {
+  color: var(--color-muted);
+  opacity: 0.55;
+  cursor: default;
+}
+
+.team-sheet-page-label {
+  color: var(--color-muted);
+  font-family: var(--font-reading);
+  font-size: 0.72rem;
+  font-style: italic;
+}
+
+/* Avatar cell: the SVG note avatar (shared/css/bot-avatar.css) sits
+   in the legacy icon column; the cell itself is transparent now. */
+.team-avatar {
+  grid-column: 1;
+  grid-row: 1 / 3;
+  place-self: center;
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+}
+
+/* v3.5 stage backdrop on the chat shell itself: one shared warm vignette
+   behind sidebar + conversation; inner surfaces stay transparent. */
+.chat-shell.notebook-shell {
+  background-color: var(--stage-edge);
+  background-image: radial-gradient(circle at 50% 42%,
+    var(--stage-top) 0%, var(--stage-mid) 72%, var(--stage-edge) 100%);
+}
+
+.team-avatar > svg {
+  width: 100%;
+  height: 100%;
+}
+
+.team-avatar.is-mini {
+  width: 2.5rem;
+  height: 2.5rem;
+}
+
+/* The stacked-seal group mark keeps the same cell as a single seal, so
+   a group letter stands no taller than a bot letter. */
+.team-avatar.is-group {
+  width: 2.75rem;
+  height: 2.75rem;
+}
+
+/* Tint dot stays for the shared-room picker options (compact context). */
+.team-bot-dot {
+  grid-column: 1;
+  grid-row: 1 / -1;
+  place-self: center;
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: var(--radius-pill);
+  background: var(--team-tint, var(--color-accent));
+}
+
+/* CFE-2 unread badge. Tokens only: the unread pill reuses the accent
+   pair. Legacy rows have no badge, so this cannot reuse anything. */
+
+.team-unread {
+  grid-column: 3;
+  grid-row: 1 / -1;
+  place-self: center;
+  flex: none;
+  min-width: 1.35rem;
+  padding: 0 0.4rem;
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
+  color: var(--color-accent-ink);
+  font-family: var(--font-ui);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.team-unread.is-dot {
+  min-width: 0;
+  width: 0.55rem;
+  height: 0.55rem;
+  padding: 0;
+}
+
+.team-shared-picker {
+  display: flex;
+  flex-basis: 100%;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.6rem;
+  border: var(--rule) solid var(--color-divider);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper-card);
+}
+
+.team-shared-option {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Per-bot message: the header IS the legacy .chat-brand block (stripe,
+   lockup, quill, italic status line), tinted per bot through the existing
+   --chat-brand-accent variable. The single team override kills the warm
+   ::before wash (r9) — stripe shape/shadow, h2 scale, status type and the
+   body/footer column offsets all stay legacy. No tint bar on the article:
+   the stripe inside the header carries it. */
+.team-message .chat-brand-body::before {
+  content: none;
+}
+
+/* Dossier paper motion stays local to the chat-only group presentation. */
+#team-bot-list .team-dossier .team-dossier-viewport {
+  display: grid;
+  grid-template-rows: 0fr;
+  min-height: 0;
+  overflow: hidden;
+  perspective: 700px;
+  transition: grid-template-rows 450ms var(--team-spring);
+}
+
+#team-bot-list .team-dossier.is-open .team-dossier-viewport {
+  grid-template-rows: 1fr;
+}
+
+/* Group dossiers keep their complete two-line channel header, then reveal
+   a names-only participant list; no private conversation data is used. */
+#team-bot-list .team-dossier {
+  --team-spring: cubic-bezier(0.22, 1, 0.36, 1);
+  position: relative;
+  display: grid;
+  grid-template-rows: auto 0fr;
+  gap: 0;
+  min-width: 0;
+  margin-block-end: 0.75rem;
+  overflow: visible;
+  border: var(--rule) solid color-mix(in srgb,
+    var(--team-tint, var(--color-divider)) 24%, var(--color-divider));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-paper-card) 93%,
+    var(--team-tint, var(--color-bg-frame)) 7%);
+  box-shadow: 0 1px 3px rgba(61, 42, 31, 0.08);
+  transition: grid-template-rows 450ms var(--team-spring),
+    margin-block-end 350ms var(--team-spring), box-shadow 400ms var(--team-spring);
+}
+
+#team-bot-list .team-dossier.is-open {
+  grid-template-rows: auto 1fr;
+  margin-block-end: 1.25rem;
+  box-shadow: 0 3px 0 -1px color-mix(in srgb, var(--color-divider) 70%, transparent),
+    0 3px 0 0 color-mix(in srgb, var(--team-tint) 28%, var(--color-divider)),
+    0 6px 0 -2px color-mix(in srgb, var(--color-paper-card) 82%, var(--team-tint)),
+    0 6px 0 -1px color-mix(in srgb, var(--team-tint) 32%, var(--color-divider)),
+    0 10px 18px rgba(45, 52, 38, 0.15);
+}
+
+#team-bot-list .team-dossier > .team-group-header {
+  z-index: 2;
+  min-width: 0;
+}
+
+#team-bot-list .team-dossier .team-group-item {
+  position: relative;
+  display: grid;
+  grid-area: auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-rows: 1.15rem 0.3rem 0.9rem;
+  align-content: center;
+  align-items: center;
+  width: 100%;
+  min-height: 4.25rem;
+  padding: 0.625rem 0.875rem 0.625rem 4.75rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+#team-bot-list .team-dossier .team-group-item.is-active,
+#team-bot-list .team-dossier .team-group-item.is-open {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+#team-bot-list .team-dossier .team-group-item > .team-avatar,
+#team-bot-list .team-dossier .team-group-item > .session-icon {
+  position: absolute;
+  z-index: 2;
+  inset-inline-start: calc(16px - var(--rule));
+  inset-inline-end: auto;
+  inset-block-start: calc(11px - var(--rule));
+  inset-block-end: auto;
+  grid-area: auto;
+  grid-column: auto;
+  grid-row: auto;
+  place-self: start;
+  margin: 0;
+  width: 46px;
+  height: 44px;
+  overflow: visible;
+}
+
+#team-bot-list .team-dossier .team-group-item .session-name {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+  color: var(--color-reading);
+  font-size: 0.875rem;
+  font-weight: 700;
+  text-align: start;
+}
+
+#team-bot-list .team-dossier .team-group-item time {
+  position: relative;
+  grid-column: 1;
+  grid-row: 3;
+  min-width: 0;
+  color: var(--color-muted);
+  font-size: 0.75rem;
+  font-style: italic;
+  text-align: start;
+}
+
+#team-bot-list .team-dossier .team-group-item time::before {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-start: -0.25rem;
+  height: 1px;
+  background: linear-gradient(90deg, color-mix(in srgb,
+    var(--team-tint) 34%, var(--color-divider)), transparent 95%);
+  content: "";
+}
+
+#team-bot-list .team-dossier .team-group-item .team-unread {
+  grid-column: 2;
+  grid-row: 1 / 4;
+}
+
+#team-bot-list .team-dossier .team-group-item .team-bot-caret {
+  grid-column: 3;
+  grid-row: 1 / 4;
+}
+
+#team-bot-list .team-dossier .gm-slot {
+  transition: transform 450ms var(--team-spring), filter 350ms ease;
+}
+
+#team-bot-list .team-dossier.is-open .gm-slot[data-seal-slot="0"] {
+  transform: translate(-4px, -3px) rotate(-14deg) scale(1.06);
+}
+
+#team-bot-list .team-dossier.is-open .gm-slot[data-seal-slot="1"] {
+  transform: translate(4px, 3px) rotate(12deg) scale(1.06);
+  filter: drop-shadow(-2px 4px 5px rgba(0, 0, 0, 0.28));
+}
+
+#team-bot-list .team-dossier-viewport {
+  position: relative;
+}
+
+#team-bot-list .team-dossier-paper {
+  position: relative;
+  min-height: 0;
+  margin: 0 7px 7px;
+  padding: 10px 12px;
+  border: var(--rule) solid color-mix(in srgb,
+    var(--team-tint, var(--color-divider)) 20%, var(--color-divider));
+  border-block-start: var(--rule) dashed color-mix(in srgb,
+    var(--team-tint, var(--color-divider)) 32%, var(--color-divider));
+  border-radius: 0 0 6px 6px;
+  background: color-mix(in srgb, var(--color-paper-card) 97%,
+    var(--team-tint, var(--color-bg-frame)) 3%);
+  box-shadow: inset 0 6px 8px -6px rgba(45, 52, 38, 0.2);
+}
+
+#team-bot-list .team-dossier-members-heading {
+  margin: 0 0 0.2rem 1.2rem;
+  color: var(--color-reading);
+  font-family: var(--font-reading);
+  font-size: 0.8rem;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+#team-bot-list .team-dossier-members {
+  margin: 0;
+  padding-inline-start: 1.2rem;
+  color: var(--color-reading);
+  font-family: var(--font-reading);
+  font-size: 0.8rem;
+  font-weight: 400;
+  line-height: 1.5;
+  list-style-type: "- ";
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #team-bot-list .team-dossier,
+  #team-bot-list .team-dossier .team-dossier-viewport,
+  #team-bot-list .team-dossier .team-bot-caret,
+  #team-bot-list .team-dossier .gm-slot {
+    transition-duration: 0s;
+    transition-delay: 0s;
+  }
+  #team-bot-list .team-dossier .gm-slot {
+    transform: none;
+  }
+}
+
+/* Participant names ride the session row's single muted time line
+   (time · lượt · tên các bot) — no third row. */
+
+/* Quyết định / handoff sit directly on the page (r9: no note-paper box).
+   Same text-column offset as .live-copy so they align with the body. */
+.team-message > .team-decision,
+.team-message > .team-handoff {
+  margin-block: 0.5rem 0;
+  padding-inline-start: calc(var(--chat-brand-stripe) + var(--chat-brand-gap));
+  font-family: var(--font-reading);
+}
+
+.team-decision strong {
+  color: var(--color-accent);
+  font-style: italic;
+}
+
+/* Collapsed inter-bot exchange: one centered rule line. */
+.team-exchange {
+  margin-block: 0.5rem;
+}
+
+.team-exchange > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.team-exchange > summary::-webkit-details-marker {
+  display: none;
+}
+
+.team-exchange > summary::before,
+.team-exchange > summary::after {
+  content: "";
+  flex: 1 1 auto;
+  border-top: var(--rule) solid var(--color-divider);
+}
+
+.team-exchange-lead {
+  color: var(--color-muted);
+  font-family: var(--font-reading);
+  font-size: 0.82rem;
+  font-style: italic;
+}
+
+.team-exchange-toggle {
+  color: var(--color-accent);
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.team-exchange-row {
+  margin-block-start: 0.6rem;
+  padding-inline-start: 0.7rem;
+  border-inline-start: 0.15rem solid var(--team-tint, var(--color-divider));
+}
+
+/* Question / permission / error cards share one card shape. */
+.team-message > .team-card {
+  /* The whole box (not just its text) starts at the body text column. */
+  margin-inline-start: calc(var(--chat-brand-stripe) + var(--chat-brand-gap));
+}
+
+.team-card {
+  margin-block-start: 0.7rem;
+  padding: 0.8rem 0.9rem;
+  border: var(--rule) solid var(--color-divider);
+  border-radius: var(--radius-card);
+  background: var(--color-paper-card);
+}
+
+.team-card h3 {
+  margin: 0 0 0.4rem;
+  font-family: var(--font-display);
+  font-size: 1rem;
+}
+
+.team-card-sub {
+  margin: 0 0 0.6rem;
+  color: var(--color-muted);
+  font-family: var(--font-reading);
+  font-size: 0.88rem;
+  font-style: italic;
+}
+
+.team-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.team-progress {
+  margin: 0 0 0.7rem;
+  padding: 0;
+  list-style: none;
+}
+
+.team-progress-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding-block: 0.15rem;
+}
+
+.team-progress-mark {
+  color: var(--color-botanical);
+  font-weight: 600;
+}
+
+.team-progress-row.is-todo .team-progress-mark {
+  color: var(--color-muted-soft);
+}
+
+.team-progress-row.is-stuck .team-progress-mark {
+  color: var(--color-danger, var(--color-accent-deep));
+}
+
+/* Composer: the @ hint rides the tools row instead of its own line. */
+.composer-team-hint {
+  color: var(--color-muted);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.composer-team-hint kbd {
+  padding-inline: 0.3rem;
+  border: var(--rule) solid var(--color-divider);
+  border-radius: var(--radius-xs);
+  background: var(--color-paper-card);
+  font: inherit;
+}
+
+.mention-popup {
+  position: absolute;
+  inset-inline-start: 0.75rem;
+  inset-inline-end: auto;
+  width: min(20rem, calc(100% - 1.5rem));
+  bottom: calc(100% - 2.5rem);
+  z-index: var(--z-content);
+  overflow-y: auto;
+  max-height: 12rem;
+  padding: 0.35rem;
+  border: var(--rule) solid var(--color-divider);
+  border-radius: var(--radius-card);
+  background: var(--color-paper-card);
+  box-shadow: 0 0.4rem 1.2rem var(--color-shell-shadow-soft);
+}
+
+.mention-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--chat-brand-ink);
+  font-family: var(--font-reading);
+  text-align: start;
+}
+
+.mention-avatar {
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  flex: none;
+}
+
+.mention-avatar > svg {
+  width: 100%;
+  height: 100%;
+}
+
+.mention-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.mention-item.is-active {
+  background: var(--color-accent);
+  color: var(--color-accent-ink);
+}
+
+.mention-item strong {
+  font-weight: 600;
+}
+
+.mention-role {
+  color: var(--color-muted);
+  font-size: 0.82rem;
+  font-style: italic;
+}
+
+.mention-item.is-active .mention-role {
+  color: var(--color-accent-ink);
+}
+
+.mention-plus {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.3rem;
+  height: 1.3rem;
+  flex: none;
+  border: var(--rule) dashed var(--color-divider);
+  border-radius: var(--radius-pill);
+  color: var(--color-muted);
+}
+
+.advanced-button {
+  min-height: 2.4rem;
+  padding: 0.3rem 0.2rem;
+  border-bottom: var(--rule) dotted var(--color-divider);
+  background: transparent;
+  color: var(--color-muted);
+  font-family: var(--font-ui);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+/* Bot drawer: read-only profile, anchored to the right edge like the
+   mock drawer instead of a centered modal. */
+.bot-drawer {
+  width: min(24rem, calc(100vw - 2rem));
+  max-width: min(24rem, calc(100vw - 2rem));
+  height: min(52rem, calc(100dvh - 2rem));
+  max-height: calc(100dvh - 2rem);
+  margin: 1rem 1rem 1rem auto;
+}
+
+.bot-drawer-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.bot-drawer-head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding-inline-start: 0.7rem;
+  border-inline-start: 0.2rem solid var(--team-tint, var(--color-accent));
+}
+
+.bot-drawer-avatar {
+  display: grid;
+  place-items: center;
+  width: 3.5rem;
+  height: 3.5rem;
+  flex: none;
+}
+
+.bot-drawer-avatar > svg {
+  width: 100%;
+  height: 100%;
+}
+
+.bot-drawer-head h2 {
+  margin: 0;
+  font-family: var(--font-display);
+}
+
+.bot-drawer-close {
+  position: absolute;
+  top: 0.6rem;
+  right: 0.6rem;
+}
+
+.bot-drawer-operations {
+  display: grid;
+  flex: 1 1 auto;
+  align-content: start;
+  gap: 0.55rem;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.bot-drawer-section h3 {
+  margin: 0.6rem 0 0.25rem;
+  font-size: 0.95rem;
+}
+
+.bot-drawer-specs {
+  display: grid;
+  grid-template-columns: minmax(5.5rem, auto) minmax(0, 1fr);
+  gap: 0.2rem 0.8rem;
+  margin: 0.4rem 0 0;
+  font-size: 0.88rem;
+}
+
+.bot-drawer-specs dt {
+  color: var(--color-muted);
+}
+
+.bot-drawer-specs dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.bot-drawer-operations.is-status {
+  align-content: start;
+}
+
+.bot-ops-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  align-self: start;
+  gap: 0.5rem;
+}
+
+.bot-ops-block {
+  border-top: var(--rule) dotted var(--color-divider);
+  padding-top: 0.25rem;
+}
+
+.bot-ops-progress {
+  display: block;
+  width: 100%;
+  height: 0.55rem;
+  margin-top: 0.5rem;
+  accent-color: var(--color-accent);
+}
+
+.bot-ops-trace-link {
+  color: var(--color-accent);
+  text-underline-offset: 0.15em;
+}
+
+.bot-ops-retry {
+  align-self: flex-start;
+  justify-self: start;
+  width: auto;
+  height: auto;
+}
+
+.bot-drawer-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  align-items: flex-start;
+  margin-top: auto;
+}
+
+.bot-drawer-foot .screen-note {
+  margin: 0;
+}
+
+/* Team sidebar chrome: #team-nav reuses the legacy .sessions class, so the
+   mobile pick pattern comes from kit.css untouched.
+
+   [hidden] must win over the flex display rules: kit.css .sessions and the
+   local .team-strip both set display:flex, which outranks the hidden
+   attribute team-sidebar.js / team-strip.js toggle. The picking-scoped
+   rule keeps the mobile list/conversation pattern intact — it only ever
+   shows sections that are not hidden. */
+.sessions[hidden] {
+  display: none;
+}
+
+.pick-shell.is-picking .sessions[hidden] {
+  display: none !important;
+}
+
+.team-strip[hidden] {
+  display: none;
+}
+
+/* Exchange avatars: layout/size only — seals come from the shared avatar CSS. */
+.team-exchange-avatar {
+  --bot-avatar-size: 1.7rem;
+}
+.team-exchange > summary {
+  gap: 0.5rem;
+}
+.team-exchange-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+}
+.team-exchange-content {
+  min-width: 0;
+  flex: 1;
+}
+
+</style>
+  <style>
+/* ===== ./pages/memories/memories.css ===== */
+.memories-surface {
+  padding: 1.75rem 1.8rem;
+}
+
+.memories-rule {
+  text-align: center;
+  margin: 0.15rem 0 1.5rem;
+}
+
+/* The search field sits in the sidebar, so it keeps the sidebar's own gutter;
+   the field itself is the shared .thyca-search (kit.css). */
+.sidebar .memory-search-cluster {
+  margin: 1rem 0.65rem 0 0;
+}
+/* Nhật ký heading keeps the team-nav anatomy (title left, no actions). */
+#memory-nav .sessions-heading h2 {
+  margin-inline-end: auto;
+}
+/* The all-bots "Tổng quan" switch lives in the sidebar heading as a plain
+   pill (not a bot row — the bot list stays strictly bot envelopes). */
+.memory-overview-link {
+  min-height: 0;
+  padding: 0.2rem 0.6rem;
+  border: var(--rule) solid transparent;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-muted);
+  font: inherit;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+.memory-overview-link.is-active {
+  color: var(--color-accent-deep);
+  border-color: color-mix(in srgb, var(--color-accent) 42%, transparent);
+  background: var(--color-bg-selected);
+}
+.memory-chart-card {
+  min-height: 19rem;
+}
+
+/* Flat surface like dashboard Request/Usage (dashboard.css): no cream panel
+   on the overview — keep only the hairline border from .screen-card. */
+.memory-chart-card,
+.memory-overview .screen-card {
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.memory-chart-card svg {
+  width: 100%;
+  height: 16rem;
+  margin-top: 0.4rem;
+  /* tokens.css gives every svg an icon stroke; bars and axis text are fills,
+     grid lines re-declare their own stroke. */
+  stroke: none;
+}
+
+.memory-bar {
+  fill: var(--color-accent);
+  stroke: none;
+}
+
+/* Shared bar-chart helper (shared/js/bar-chart.js) emits .usage-grid lines
+   + .usage-axis labels for every chart, including this one. Those rules live
+   in pages/dashboard/usage.css (dashboard-only), so scope them here for the
+   memory chart card — otherwise grid + day/value labels render invisible. */
+.memory-chart-card .usage-grid {
+  stroke: var(--color-divider);
+  stroke-width: 1;
+}
+.memory-chart-card .usage-axis {
+  fill: var(--color-muted);
+  stroke: none;
+  font: 12px var(--font-reading);
+}
+
+.memory-overview {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin-top: 0.9rem;
+}
+.memory-overview strong {
+  display: block;
+  margin-top: 0.35rem;
+  color: var(--chat-brand-accent);
+  font-family: var(--font-display);
+  font-size: 1.7rem;
+  font-weight: 500;
+  line-height: 1;
+}
+.memory-search-cluster .memory-status {
+  margin: 0.35rem 0 0;
+  text-align: start;
+}
+.memory-status:empty { display: none; }
+
+/* Notebook dash: each entry opens with a terracotta "—" beside its title, as
+   in the sổ design. The date sits in the left gutter (kit.css journal kit). */
+.memory-copy h3 {
+  position: relative;
+}
+.memory-copy h3::before {
+  content: "—";
+  position: absolute;
+  left: -1.4rem;
+  color: var(--chat-brand-accent);
+}
+
+/* List kit, copy, tags, more, list: kit.css journal kit. */
+.memory-copy p {
+  text-align: justify;
+}
+
+/* Tags row doubles as the entry's meta line: muted words separated by "·",
+   with the ⋮ action at the right end. */
+.memory-meta {
+  display: flex;
+  flex-wrap: wrap;
+  grid-column: 2;
+  grid-row: 3;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.memory-meta .memory-more {
+  margin-inline-start: auto;
+}
+
+/* Mobile (≤56rem) stacks the four view sections on one page — headers are
+   the shared fold-section kit; the pill switcher is desktop furniture. */
+.memory-view {
+  border-top: var(--rule) solid var(--color-divider);
+  padding-block-start: 0.9rem;
+}
+
+.memory-view + .memory-view {
+  margin-top: 0.9rem;
+}
+
+/* Desktop keeps the sidebar search and an unboxed global-scope choice.
+   Mobile moves only the search field into the page toolbar. */
+.memory-search-bar { display: none; }
+.memory-roster-error {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0.75rem 0.65rem;
+  padding: 0.65rem;
+  border: var(--rule) solid var(--color-border);
+  color: var(--color-accent-deep);
+  font-size: 0.85rem;
+}
+.memory-roster-error p { margin: 0; }
+.memory-roster-error button {
+  justify-self: start;
+  min-height: 2rem;
+  padding: 0.25rem 0.4rem;
+}
+.memory-section-empty { margin: 0.5rem 0 0.9rem; }
+
+@media (max-width: 56rem) {
+  /* Mobile: the search field moves into the page toolbar (the sidebar
+     search is only desktop furniture; chat-shell + pick-shell handle the
+     rest of the mobile layout, same as the chat page). */
+  .memory-search-bar {
+    display: block;
+    margin: 0 0 0.75rem;
+  }
+  .memory-search-bar .thyca-search {
+    --search-h: 34px;
+    padding: 0 10px 0 12px;
+    gap: 8px;
+  }
+  .memory-search-bar .thyca-search .thyca-search__input { font-size: 13px; padding: 7px 0; }
+  .memory-search-bar .thyca-search .thyca-search__icon { width: 14px; height: 14px; }
+  .memory-chart-card {
+    min-height: 17rem;
+  }
+  .memory-chart-card svg {
+    height: 14rem;
+  }
+  .memory-overview { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Inline edit (no dialog): clicking ⋮ turns the card itself into the editor —
+   same entry grid (date gutter + copy column), boxless fields that only gain
+   a dashed underline on hover/focus, the terracotta dash marking the title
+   like every other row. Actions sit on the tag row: dismiss/data/primary,
+   danger pushed to the far end. Tokens only. */
+.memory-edit {
+  display: contents;
+}
+.memory-edit-line {
+  position: relative;
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+}
+.memory-edit-line::before {
+  content: "—";
+  position: absolute;
+  left: -1.4rem;
+  color: var(--chat-brand-accent);
+}
+.memory-edit-title,
+.memory-edit-text {
+  width: 100%;
+  padding: 0 0 0.15rem;
+  border: 0;
+  border-block-end: var(--rule) dashed transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--color-ink);
+  font: inherit;
+  font-family: var(--font-reading);
+}
+.memory-edit-title {
+  font-size: 1.15rem;
+}
+.memory-edit-text {
+  grid-column: 2;
+  grid-row: 2;
+  min-height: 3.5rem;
+  max-height: 16rem;
+  margin-block-start: 0.2rem;
+  color: var(--color-muted);
+  font-size: 1rem;
+  line-height: 1.55;
+  text-align: justify;
+  resize: vertical;
+  field-sizing: content;
+}
+.memory-edit-title:hover,
+.memory-edit-text:hover,
+.memory-edit-title:focus-visible,
+.memory-edit-text:focus-visible {
+  border-block-end-color: var(--color-divider);
+}
+.memory-edit-actions {
+  grid-column: 2;
+  grid-row: 3;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 1.15rem;
+}
+/* Text links, not boxed buttons — the row reads as part of the written page.
+   Hierarchy through colour only: neutral ink for dismiss/data, terracotta for
+   the primary save, the journal-kit muted red for the destructive Quên. */
+.memory-edit-actions button {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--color-ink);
+  font: inherit;
+  white-space: nowrap;
+  text-decoration: underline;
+  text-decoration-color: var(--color-divider);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.3rem;
+}
+.memory-edit-actions button:not(:disabled):hover {
+  border: 0;
+  text-decoration-color: var(--color-accent);
+}
+.memory-edit-actions .is-primary {
+  background: transparent;
+  color: var(--color-accent-deep);
+  font-weight: 500;
+}
+.memory-edit-actions .is-danger {
+  margin-inline-start: auto;
+  color: var(--journal-error-ink, oklch(48% 0.11 25));
+}
+.memory-card.is-editing {
+  border-block-end-color: var(--color-divider);
+}
+@media (max-width: 56rem) {
+  .memory-edit-line::before {
+    display: none;
+  }
+}
+
+/* W6 shared push (TASK-008): .memory-* journal kit + mobile rules moved verbatim
+   from shared/css/screens.css; shared keeps the .journal-* kit only. */
+/* Journal kit — Nhật ký (.memory-*). No cards: entries written
+   straight onto the paper (notebook look). One row per entry: tabular date in
+   the left gutter, terracotta dash on the body, then title, summary, tags.
+   Page files keep only deltas (justify, nowrap, colors). Chi phí renders
+   bar rows instead. */
+.memory-list {
+  display: grid;
+}
+.memory-card {
+  display: grid;
+  grid-template-columns: 5.6rem minmax(0, 1fr);
+  column-gap: 1.4rem;
+  row-gap: 0.1rem;
+  padding: 1.05rem 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  border-block-end: var(--rule) solid var(--color-divider);
+}
+/* Wrapper holds no box, so children are placed on the entry's own grid. */
+.memory-copy {
+  display: contents;
+}
+.memory-copy h3 {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: center;
+  min-width: 0;
+  margin: 0;
+  color: var(--color-ink);
+  font-family: var(--font-reading);
+}
+.memory-copy p {
+  grid-column: 2;
+  grid-row: 2;
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 1rem;
+  font-style: normal;
+  overflow-wrap: anywhere;
+}
+.memory-more {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+}
+.memory-card > time {
+  grid-column: 1;
+  grid-row: 1;
+  justify-self: start;
+  align-self: baseline;
+  padding-top: 0.2rem;
+  color: var(--color-muted);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.memory-chart-card {
+  padding: 1rem 1.25rem;
+}
+@media (max-width: 56rem) {
+  .memory-card {
+    grid-template-columns: 5rem minmax(0, 1fr);
+    column-gap: 0.8rem;
+    padding: 0.85rem 0;
+  }
+  .memory-card > time {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .memory-copy h3::before {
+    left: -0.8rem;
+  }
+  .memory-copy h3 {
+    font-size: 1.15rem;
+  }
+  .memory-copy p {
+    font-size: 0.92rem;
+  }
+}
+
+</style>
+  <style>
+    :root {
+      --tint-thyca: var(--color-accent);
+      --tint-thyca-discord: var(--color-ink);
+      --tint-thyca-coder: var(--color-botanical);
+      --tint-thyca-research: var(--color-success-ink);
+    }
+    /* Prototype-only: thanh bar chart tĩnh (production vẽ bằng drawBarChart). */
+    .memory-chart-card svg { width: 100%; height: 150px; display: block; }
+    .memory-chart-card .memory-bar { fill: var(--color-accent); }
+  </style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<radialGradient id="waxHl" cx="0.34" cy="0.28" r="0.55"><stop offset="0" stop-color="#fff" stop-opacity="0.5"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+<radialGradient id="waxShade" cx="0.62" cy="0.7" r="0.6"><stop offset="0.45" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity="0.28"/></radialGradient>
+<linearGradient id="waxSheen" x1="0" x2="1" y1="0" y2="0.3"><stop offset="0.35" stop-color="#fff" stop-opacity="0"/><stop offset="0.5" stop-color="#fff" stop-opacity="0.42"/><stop offset="0.65" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<symbol id="g-quill" viewBox="0 0 640 427"><g transform="translate(0.000000,427.000000) scale(0.100000,-0.100000)" fill="currentColor" stroke="none">
+  <path d="M4535 3930 c-322 -73 -494 -211 -567 -454 l-18 -61 5 77 c2 43 14
+105 25 139 12 34 19 63 17 65 -7 7 -206 -116 -304 -189 -55 -41 -151 -120
+-214 -175 -274 -241 -376 -411 -413 -688 l-13 -99 -8 90 c-5 59 -4 123 4 184
+6 52 10 96 8 98 -7 7 -139 -140 -203 -226 -76 -102 -134 -211 -163 -303 -22
+-72 -41 -225 -42 -342 l-1 -71 -22 115 c-13 63 -27 142 -31 174 l-7 59 -31
+-49 c-89 -144 -133 -290 -147 -497 -11 -164 -28 -287 -39 -287 -4 0 -12 19
+-19 43 -6 23 -23 56 -37 72 l-26 30 5 -57 c8 -72 -10 -285 -30 -362 -9 -33
+-11 -63 -7 -67 5 -5 50 62 103 153 473 817 1034 1478 1746 2058 322 263 318
+252 -21 -55 -661 -597 -1122 -1140 -1604 -1888 -67 -103 -136 -213 -153 -244
+-30 -54 -31 -56 -13 -69 27 -20 32 -18 86 30 112 100 261 176 438 223 82 21
+99 28 84 37 -32 18 -185 20 -244 3 -138 -41 -2 26 183 89 192 66 284 118 403
+226 58 52 188 208 181 216 -2 2 -40 -8 -83 -22 -44 -13 -130 -34 -191 -46 -61
+-11 -130 -27 -153 -35 -23 -9 -44 -13 -47 -11 -7 8 115 60 259 111 262 93 380
+163 529 314 113 115 284 350 268 367 -4 3 -23 -3 -45 -14 -79 -40 -316 -101
+-346 -89 -7 3 -4 6 7 6 39 2 232 73 319 118 122 63 227 144 332 256 76 80 211
+264 202 274 -2 2 -25 -6 -50 -17 -63 -28 -178 -56 -262 -65 -38 -3 -81 -9 -95
+-12 -14 -3 -22 -2 -18 2 4 4 69 23 145 41 183 45 268 86 348 167 59 61 158
+227 144 242 -3 3 -26 -6 -50 -20 -45 -26 -158 -65 -188 -65 -9 0 21 18 66 40
+105 51 183 123 223 203 32 65 60 176 60 240 l0 37 -102 -1 c-61 0 -136 -8
+-183 -19z M2180 1105 c-21 -25 -6 -48 58 -88 47 -30 68 -38 88 -33 20 5 25 12
+22 34 -2 20 -17 37 -58 64 -59 40 -90 47 -110 23z M2090 954 c-36 -36 -99 -91
+-140 -122 -41 -31 -78 -61 -81 -66 -4 -5 -10 -39 -14 -75 -9 -90 -39 -224 -64
+-291 -43 -114 -23 -93 98 102 59 96 91 157 91 175 0 34 16 53 45 53 25 0 45
+-18 45 -40 0 -20 -31 -50 -51 -50 -13 0 -35 -33 -178 -253 -24 -37 -41 -71
+-37 -74 3 -3 32 20 63 51 49 48 269 206 304 218 6 2 17 44 26 93 8 50 31 132
+50 183 19 52 33 95 31 97 -13 11 -107 65 -114 65 -5 0 -39 -30 -74 -66z"/>
+</g></symbol>
+<symbol id="g-code" viewBox="0 0 24 24"><path d="M8.5 6.5 3.5 12l5 5.5M15.5 6.5l5 5.5-5 5.5M13.2 4.8l-2.4 14.4"/></symbol>
+<symbol id="g-nib" viewBox="0 0 24 24"><path d="M12 2.8 6.6 10l1.8 7.4h7.2l1.8-7.4Z"/><path d="M12 2.8v7.1"/><circle cx="12" cy="11.6" r="1.3"/><path d="M8.6 20.6h6.8"/></symbol>
+<symbol id="g-note" viewBox="0 0 24 24"><path d="M9 17.6V5.9l10.2-2.2v11.6"/><path d="M9 9.4l10.2-2.2"/><ellipse cx="6.6" cy="17.8" rx="2.5" ry="2.1"/><ellipse cx="16.8" cy="15.6" rx="2.5" ry="2.1"/></symbol>
+<symbol id="g-lens" viewBox="0 0 24 24"><circle cx="10.4" cy="10.4" r="6"/><path d="M14.8 14.8 20.4 20.4M7.6 8.8a3.2 3.2 0 0 1 2.4-1.6"/></symbol>
+<symbol id="g-brush" viewBox="0 0 24 24"><path d="M14.2 4.6 19.4 9.8 11 18.2 5.8 13Z"/><path d="M5.8 13c-2 1-2.6 3.6-3 6.6 3-.4 5.6-1 7-3.2"/><path d="M16.8 7.2 18.6 5.4"/></symbol>
+<symbol id="g-team" viewBox="0 0 24 24"><circle cx="12" cy="7.6" r="3"/><circle cx="7" cy="15.6" r="3"/><circle cx="17" cy="15.6" r="3"/></symbol>
+<symbol id="g-star" viewBox="0 0 24 24"><path d="M12 3.5 14.4 8.8 20.2 9.7 15.9 13.8 16.9 19.5 12 16.9 7.1 19.5 8.1 13.8 3.8 9.7 9.6 8.8Z"/></symbol>
+</defs></svg>
+
+<main class="notebook-shell chat-shell memories-shell pick-shell" aria-label="Nhật ký">
+  <header class="site-header">
+        <button class="icon-button menu-button" type="button" aria-label="Mở mục lục">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6.5h16M4 12h16M4 17.5h11" /></svg>
+        </button>
+    <!-- renderStrip(): chip phạm vi đang xem — tên bot (tint riêng) hoặc "Tổng quan" -->
+    <p class="team-strip" id="team-strip" aria-label="Phạm vi nhật ký">
+      <span class="team-strip-name" style="--team-tint:var(--tint-thyca)">thyca</span>
+    </p>
+  </header>
+  <aside class="sidebar" aria-label="Điều hướng nhật ký">
+    <section class="sessions" id="memory-nav">
+      <div class="sessions-heading">
+        <h2>Nhật ký</h2>
+        <!-- selectScope(null) → GET /api/memory/stats (không bot_id) = nhật ký mọi bot -->
+        <button class="memory-overview-link" id="memory-overview-link" type="button" data-memory-scope="" aria-pressed="false">Tổng quan</button>
+      </div>
+      <div class="memory-search-cluster">
+        <!-- Tìm kiếm lọc phía client trên state.stats (không gọi API) -->
+        <div class="thyca-search" role="search">
+          <svg class="thyca-search__icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="1.6"/>
+            <path d="M16.2 16.2 20 20" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+          </svg>
+          <input class="thyca-search__input" id="memory-search" type="search" placeholder="Tìm trong nhật ký…" autocomplete="off" aria-label="Tìm trong nhật ký">
+          <button type="button" class="thyca-search__clear" aria-label="Xóa">
+            <svg viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+        <p class="screen-note memory-status" id="memory-status" role="status" aria-live="polite"></p>
+      </div>
+      <!-- API: GET /api/bots — renderScopes() dựng mỗi bot một envelope;
+           click bot → selectScope(id) → GET /api/memory/stats?bot_id=<id> -->
+      <nav class="session-list memory-scope-list" id="team-bot-list" aria-label="Chọn phạm vi nhật ký" aria-live="polite">
+<div class="team-cluster team-envelope is-open" data-bot-id="thyca" style="--team-tint:var(--tint-thyca)">
+  <div class="session-row team-envelope-header">
+    <button type="button" class="session-item team-bot-item is-open is-active" data-memory-scope="thyca" aria-expanded="true" aria-label="Xem nhật ký của thyca" aria-current="page">
+      <span class="team-avatar" style="--team-tint:var(--tint-thyca)" aria-hidden="true"><span class="mk mk-wax" data-state="done" data-selected="false" style="--bot:var(--color-success-ink);--team-tint:var(--color-success-ink);--avatar-tint:var(--color-success-ink)" aria-hidden="true"><svg class="base" viewBox="0 0 64 64"><clipPath id="wx3"><path d="M57.20 32.00C57.14 36.04 56.55 40.33 54.91 44.02C53.26 47.72 50.64 52.13 47.31 54.18C43.99 56.24 38.96 56.20 34.95 56.34C30.95 56.47 27.39 55.84 23.28 54.98C19.18 54.12 12.89 54.04 10.33 51.20C7.78 48.35 8.32 42.11 7.96 37.93C7.59 33.75 7.43 30.03 8.13 26.12C8.83 22.20 9.79 17.66 12.18 14.44C14.56 11.21 18.55 8.65 22.43 6.77C26.32 4.90 31.55 2.41 35.50 3.20C39.45 3.99 42.83 8.77 46.12 11.54C49.41 14.31 53.40 16.39 55.25 19.80C57.09 23.21 57.25 27.96 57.20 32.00Z"/></clipPath><path class="wax-body" d="M57.20 32.00C57.14 36.04 56.55 40.33 54.91 44.02C53.26 47.72 50.64 52.13 47.31 54.18C43.99 56.24 38.96 56.20 34.95 56.34C30.95 56.47 27.39 55.84 23.28 54.98C19.18 54.12 12.89 54.04 10.33 51.20C7.78 48.35 8.32 42.11 7.96 37.93C7.59 33.75 7.43 30.03 8.13 26.12C8.83 22.20 9.79 17.66 12.18 14.44C14.56 11.21 18.55 8.65 22.43 6.77C26.32 4.90 31.55 2.41 35.50 3.20C39.45 3.99 42.83 8.77 46.12 11.54C49.41 14.31 53.40 16.39 55.25 19.80C57.09 23.21 57.25 27.96 57.20 32.00Z"/><path d="M57.20 32.00C57.14 36.04 56.55 40.33 54.91 44.02C53.26 47.72 50.64 52.13 47.31 54.18C43.99 56.24 38.96 56.20 34.95 56.34C30.95 56.47 27.39 55.84 23.28 54.98C19.18 54.12 12.89 54.04 10.33 51.20C7.78 48.35 8.32 42.11 7.96 37.93C7.59 33.75 7.43 30.03 8.13 26.12C8.83 22.20 9.79 17.66 12.18 14.44C14.56 11.21 18.55 8.65 22.43 6.77C26.32 4.90 31.55 2.41 35.50 3.20C39.45 3.99 42.83 8.77 46.12 11.54C49.41 14.31 53.40 16.39 55.25 19.80C57.09 23.21 57.25 27.96 57.20 32.00Z" fill="url(#waxShade)"/><path d="M57.20 32.00C57.14 36.04 56.55 40.33 54.91 44.02C53.26 47.72 50.64 52.13 47.31 54.18C43.99 56.24 38.96 56.20 34.95 56.34C30.95 56.47 27.39 55.84 23.28 54.98C19.18 54.12 12.89 54.04 10.33 51.20C7.78 48.35 8.32 42.11 7.96 37.93C7.59 33.75 7.43 30.03 8.13 26.12C8.83 22.20 9.79 17.66 12.18 14.44C14.56 11.21 18.55 8.65 22.43 6.77C26.32 4.90 31.55 2.41 35.50 3.20C39.45 3.99 42.83 8.77 46.12 11.54C49.41 14.31 53.40 16.39 55.25 19.80C57.09 23.21 57.25 27.96 57.20 32.00Z" fill="url(#waxHl)"/><g clip-path="url(#wx3)"><rect class="wax-sheen" x="0" y="0" width="64" height="64" fill="url(#waxSheen)"/></g><circle class="wax-ring-hi" cx="32" cy="32" r="19.5"/><circle class="wax-ring" cx="32" cy="32" r="19.5"/><circle class="wax-notch" cx="32" cy="32" r="16.4"/><path class="wax-crack" d="M40 7.5l-2.6 6.4 3 3.2-3.4 5.6"/></svg><span class="glyph"><svg viewBox="0 0 24 24"><use href="#g-lens"/></svg></span></span></span>
+      <span class="session-name">thyca</span>
+      <span class="team-bot-caret" aria-hidden="true"></span>
+    </button>
+  </div>
+  <div class="team-pocket-viewport" aria-hidden="false">
+    <div class="team-cluster-sessions" id="team-bot-pocket-thyca"><p class="team-bot-description">Bot quản lý của đội — điều phối công việc, tạo bot mới, duyệt trí nhớ chung.</p></div>
+  </div>
+</div>
+<div class="team-cluster team-envelope" data-bot-id="thyca-coder" style="--team-tint:var(--tint-thyca-coder)">
+  <div class="session-row team-envelope-header">
+    <button type="button" class="session-item team-bot-item" data-memory-scope="thyca-coder" aria-expanded="false" aria-label="Xem nhật ký của coder">
+      <span class="team-avatar" style="--team-tint:var(--tint-thyca-coder)" aria-hidden="true"><span class="mk mk-wax" data-state="thinking" data-selected="false" style="--bot:var(--color-botanical);--team-tint:var(--color-botanical);--avatar-tint:var(--color-botanical)" aria-hidden="true"><svg class="base" viewBox="0 0 64 64"><clipPath id="wx11"><path d="M59.14 32.00C58.73 36.15 56.25 39.82 54.46 43.79C52.68 47.76 51.63 53.17 48.45 55.83C45.26 58.48 39.85 59.10 35.37 59.73C30.88 60.35 25.20 61.44 21.55 59.57C17.89 57.69 16.01 51.99 13.42 48.46C10.82 44.94 7.55 42.31 5.96 38.42C4.38 34.52 2.71 28.92 3.92 25.08C5.13 21.24 10.14 18.42 13.22 15.36C16.31 12.31 18.72 8.79 22.43 6.76C26.14 4.74 31.26 2.84 35.49 3.23C39.73 3.61 44.25 6.46 47.83 9.07C51.41 11.68 55.08 15.08 56.96 18.90C58.85 22.72 59.56 27.85 59.14 32.00Z"/></clipPath><path class="wax-body" d="M59.14 32.00C58.73 36.15 56.25 39.82 54.46 43.79C52.68 47.76 51.63 53.17 48.45 55.83C45.26 58.48 39.85 59.10 35.37 59.73C30.88 60.35 25.20 61.44 21.55 59.57C17.89 57.69 16.01 51.99 13.42 48.46C10.82 44.94 7.55 42.31 5.96 38.42C4.38 34.52 2.71 28.92 3.92 25.08C5.13 21.24 10.14 18.42 13.22 15.36C16.31 12.31 18.72 8.79 22.43 6.76C26.14 4.74 31.26 2.84 35.49 3.23C39.73 3.61 44.25 6.46 47.83 9.07C51.41 11.68 55.08 15.08 56.96 18.90C58.85 22.72 59.56 27.85 59.14 32.00Z"/><path d="M59.14 32.00C58.73 36.15 56.25 39.82 54.46 43.79C52.68 47.76 51.63 53.17 48.45 55.83C45.26 58.48 39.85 59.10 35.37 59.73C30.88 60.35 25.20 61.44 21.55 59.57C17.89 57.69 16.01 51.99 13.42 48.46C10.82 44.94 7.55 42.31 5.96 38.42C4.38 34.52 2.71 28.92 3.92 25.08C5.13 21.24 10.14 18.42 13.22 15.36C16.31 12.31 18.72 8.79 22.43 6.76C26.14 4.74 31.26 2.84 35.49 3.23C39.73 3.61 44.25 6.46 47.83 9.07C51.41 11.68 55.08 15.08 56.96 18.90C58.85 22.72 59.56 27.85 59.14 32.00Z" fill="url(#waxShade)"/><path d="M59.14 32.00C58.73 36.15 56.25 39.82 54.46 43.79C52.68 47.76 51.63 53.17 48.45 55.83C45.26 58.48 39.85 59.10 35.37 59.73C30.88 60.35 25.20 61.44 21.55 59.57C17.89 57.69 16.01 51.99 13.42 48.46C10.82 44.94 7.55 42.31 5.96 38.42C4.38 34.52 2.71 28.92 3.92 25.08C5.13 21.24 10.14 18.42 13.22 15.36C16.31 12.31 18.72 8.79 22.43 6.76C26.14 4.74 31.26 2.84 35.49 3.23C39.73 3.61 44.25 6.46 47.83 9.07C51.41 11.68 55.08 15.08 56.96 18.90C58.85 22.72 59.56 27.85 59.14 32.00Z" fill="url(#waxHl)"/><g clip-path="url(#wx11)"><rect class="wax-sheen" x="0" y="0" width="64" height="64" fill="url(#waxSheen)"/></g><circle class="wax-ring-hi" cx="32" cy="32" r="19.5"/><circle class="wax-ring" cx="32" cy="32" r="19.5"/><circle class="wax-notch" cx="32" cy="32" r="16.4"/><path class="wax-crack" d="M40 7.5l-2.6 6.4 3 3.2-3.4 5.6"/></svg><span class="glyph"><svg viewBox="0 0 24 24"><use href="#g-brush"/></svg></span></span></span>
+      <span class="session-name">coder</span>
+      <span class="team-bot-caret" aria-hidden="true"></span>
+    </button>
+  </div>
+  <div class="team-pocket-viewport">
+    <div class="team-cluster-sessions" id="team-bot-pocket-thyca-coder"></div>
+  </div>
+</div>
+<div class="team-cluster team-envelope" data-bot-id="thyca-research" style="--team-tint:var(--tint-thyca-research)">
+  <div class="session-row team-envelope-header">
+    <button type="button" class="session-item team-bot-item" data-memory-scope="thyca-research" aria-expanded="false" aria-label="Xem nhật ký của research">
+      <span class="team-avatar" style="--team-tint:var(--tint-thyca-research)" aria-hidden="true"><span class="mk mk-wax" data-state="idle" data-selected="false" style="--bot:var(--color-botanical);--team-tint:var(--color-botanical);--avatar-tint:var(--color-botanical)" aria-hidden="true"><svg class="base" viewBox="0 0 64 64"><clipPath id="wx15"><path d="M59.40 32.00C59.57 36.50 60.21 42.06 58.20 45.75C56.18 49.44 51.15 52.24 47.29 54.16C43.44 56.08 39.25 56.69 35.07 57.29C30.89 57.88 26.04 59.05 22.23 57.75C18.43 56.45 14.89 52.75 12.23 49.51C9.58 46.27 7.19 42.29 6.29 38.34C5.39 34.38 5.62 29.59 6.82 25.79C8.02 22.00 10.87 18.76 13.47 15.59C16.07 12.41 18.77 8.61 22.42 6.74C26.07 4.86 31.13 3.94 35.36 4.34C39.59 4.73 44.17 6.68 47.81 9.09C51.45 11.50 55.26 14.96 57.19 18.78C59.12 22.60 59.23 27.50 59.40 32.00Z"/></clipPath><path class="wax-body" d="M59.40 32.00C59.57 36.50 60.21 42.06 58.20 45.75C56.18 49.44 51.15 52.24 47.29 54.16C43.44 56.08 39.25 56.69 35.07 57.29C30.89 57.88 26.04 59.05 22.23 57.75C18.43 56.45 14.89 52.75 12.23 49.51C9.58 46.27 7.19 42.29 6.29 38.34C5.39 34.38 5.62 29.59 6.82 25.79C8.02 22.00 10.87 18.76 13.47 15.59C16.07 12.41 18.77 8.61 22.42 6.74C26.07 4.86 31.13 3.94 35.36 4.34C39.59 4.73 44.17 6.68 47.81 9.09C51.45 11.50 55.26 14.96 57.19 18.78C59.12 22.60 59.23 27.50 59.40 32.00Z"/><path d="M59.40 32.00C59.57 36.50 60.21 42.06 58.20 45.75C56.18 49.44 51.15 52.24 47.29 54.16C43.44 56.08 39.25 56.69 35.07 57.29C30.89 57.88 26.04 59.05 22.23 57.75C18.43 56.45 14.89 52.75 12.23 49.51C9.58 46.27 7.19 42.29 6.29 38.34C5.39 34.38 5.62 29.59 6.82 25.79C8.02 22.00 10.87 18.76 13.47 15.59C16.07 12.41 18.77 8.61 22.42 6.74C26.07 4.86 31.13 3.94 35.36 4.34C39.59 4.73 44.17 6.68 47.81 9.09C51.45 11.50 55.26 14.96 57.19 18.78C59.12 22.60 59.23 27.50 59.40 32.00Z" fill="url(#waxShade)"/><path d="M59.40 32.00C59.57 36.50 60.21 42.06 58.20 45.75C56.18 49.44 51.15 52.24 47.29 54.16C43.44 56.08 39.25 56.69 35.07 57.29C30.89 57.88 26.04 59.05 22.23 57.75C18.43 56.45 14.89 52.75 12.23 49.51C9.58 46.27 7.19 42.29 6.29 38.34C5.39 34.38 5.62 29.59 6.82 25.79C8.02 22.00 10.87 18.76 13.47 15.59C16.07 12.41 18.77 8.61 22.42 6.74C26.07 4.86 31.13 3.94 35.36 4.34C39.59 4.73 44.17 6.68 47.81 9.09C51.45 11.50 55.26 14.96 57.19 18.78C59.12 22.60 59.23 27.50 59.40 32.00Z" fill="url(#waxHl)"/><g clip-path="url(#wx15)"><rect class="wax-sheen" x="0" y="0" width="64" height="64" fill="url(#waxSheen)"/></g><circle class="wax-ring-hi" cx="32" cy="32" r="19.5"/><circle class="wax-ring" cx="32" cy="32" r="19.5"/><circle class="wax-notch" cx="32" cy="32" r="16.4"/><path class="wax-crack" d="M40 7.5l-2.6 6.4 3 3.2-3.4 5.6"/></svg><span class="glyph"><svg viewBox="0 0 24 24"><use href="#g-note"/></svg></span></span></span>
+      <span class="session-name">research</span>
+      <span class="team-bot-caret" aria-hidden="true"></span>
+    </button>
+  </div>
+  <div class="team-pocket-viewport">
+    <div class="team-cluster-sessions" id="team-bot-pocket-thyca-research"></div>
+  </div>
+</div>
+<div class="team-cluster team-envelope" data-bot-id="thyca-discord" style="--team-tint:var(--tint-thyca-discord)">
+  <div class="session-row team-envelope-header">
+    <button type="button" class="session-item team-bot-item" data-memory-scope="thyca-discord" aria-expanded="false" aria-label="Xem nhật ký của thyca-discord">
+      <span class="team-avatar" style="--team-tint:var(--tint-thyca-discord)" aria-hidden="true"><span class="mk mk-wax" data-state="idle" data-selected="false" style="--bot:var(--color-botanical);--team-tint:var(--color-botanical);--avatar-tint:var(--color-botanical)" aria-hidden="true"><svg class="base" viewBox="0 0 64 64"><clipPath id="wx5"><path d="M60.26 32.00C60.54 36.39 60.06 41.86 57.94 45.62C55.82 49.37 51.31 52.19 47.55 54.53C43.78 56.86 39.62 58.94 35.35 59.61C31.08 60.27 25.85 60.15 21.94 58.52C18.03 56.89 14.44 53.20 11.88 49.83C9.32 46.45 7.88 42.38 6.59 38.26C5.30 34.15 3.04 28.96 4.14 25.13C5.23 21.31 10.23 18.66 13.17 15.32C16.11 11.97 18.12 6.69 21.79 5.08C25.46 3.46 30.93 4.87 35.20 5.63C39.47 6.39 43.90 7.39 47.42 9.66C50.93 11.93 54.15 15.53 56.29 19.25C58.43 22.97 59.98 27.61 60.26 32.00Z"/></clipPath><path class="wax-body" d="M60.26 32.00C60.54 36.39 60.06 41.86 57.94 45.62C55.82 49.37 51.31 52.19 47.55 54.53C43.78 56.86 39.62 58.94 35.35 59.61C31.08 60.27 25.85 60.15 21.94 58.52C18.03 56.89 14.44 53.20 11.88 49.83C9.32 46.45 7.88 42.38 6.59 38.26C5.30 34.15 3.04 28.96 4.14 25.13C5.23 21.31 10.23 18.66 13.17 15.32C16.11 11.97 18.12 6.69 21.79 5.08C25.46 3.46 30.93 4.87 35.20 5.63C39.47 6.39 43.90 7.39 47.42 9.66C50.93 11.93 54.15 15.53 56.29 19.25C58.43 22.97 59.98 27.61 60.26 32.00Z"/><path d="M60.26 32.00C60.54 36.39 60.06 41.86 57.94 45.62C55.82 49.37 51.31 52.19 47.55 54.53C43.78 56.86 39.62 58.94 35.35 59.61C31.08 60.27 25.85 60.15 21.94 58.52C18.03 56.89 14.44 53.20 11.88 49.83C9.32 46.45 7.88 42.38 6.59 38.26C5.30 34.15 3.04 28.96 4.14 25.13C5.23 21.31 10.23 18.66 13.17 15.32C16.11 11.97 18.12 6.69 21.79 5.08C25.46 3.46 30.93 4.87 35.20 5.63C39.47 6.39 43.90 7.39 47.42 9.66C50.93 11.93 54.15 15.53 56.29 19.25C58.43 22.97 59.98 27.61 60.26 32.00Z" fill="url(#waxShade)"/><path d="M60.26 32.00C60.54 36.39 60.06 41.86 57.94 45.62C55.82 49.37 51.31 52.19 47.55 54.53C43.78 56.86 39.62 58.94 35.35 59.61C31.08 60.27 25.85 60.15 21.94 58.52C18.03 56.89 14.44 53.20 11.88 49.83C9.32 46.45 7.88 42.38 6.59 38.26C5.30 34.15 3.04 28.96 4.14 25.13C5.23 21.31 10.23 18.66 13.17 15.32C16.11 11.97 18.12 6.69 21.79 5.08C25.46 3.46 30.93 4.87 35.20 5.63C39.47 6.39 43.90 7.39 47.42 9.66C50.93 11.93 54.15 15.53 56.29 19.25C58.43 22.97 59.98 27.61 60.26 32.00Z" fill="url(#waxHl)"/><g clip-path="url(#wx5)"><rect class="wax-sheen" x="0" y="0" width="64" height="64" fill="url(#waxSheen)"/></g><circle class="wax-ring-hi" cx="32" cy="32" r="19.5"/><circle class="wax-ring" cx="32" cy="32" r="19.5"/><circle class="wax-notch" cx="32" cy="32" r="16.4"/><path class="wax-crack" d="M40 7.5l-2.6 6.4 3 3.2-3.4 5.6"/></svg><span class="glyph"><svg viewBox="0 0 24 24"><use href="#g-code"/></svg></span></span></span>
+      <span class="session-name">thyca-discord</span>
+      <span class="team-bot-caret" aria-hidden="true"></span>
+    </button>
+  </div>
+  <div class="team-pocket-viewport">
+    <div class="team-cluster-sessions" id="team-bot-pocket-thyca-discord"></div>
+  </div>
+</div>
+      </nav>
+      <div class="memory-roster-error" id="memory-roster-error" role="status" hidden>
+        <p id="memory-roster-status">Không tải được danh sách bot.</p>
+        <!-- retry: GET /api/bots -->
+        <button class="screen-button" id="memory-roster-retry" type="button">Thử tải lại</button>
+      </div>
+    </section>
+  </aside>
+
+  <section class="workspace" aria-label="Nội dung nhật ký">
+    <section class="chat-canvas" aria-label="Nhật ký đã chọn">
+      <header class="chat-title-head">
+        <button class="screen-back" id="memory-back" type="button">‹ Nhật ký</button>
+        <div class="screen-title"><h1 id="memory-scope-title">Nhật ký của thyca</h1></div>
+      </header>
+      <!-- API: GET /api/memory/stats — loadStats() đổ toàn bộ khối dưới -->
+      <section class="screen-surface memories-surface" id="memory-workspace" aria-label="Bộ nhớ đã chọn">
+        <p class="screen-note memories-rule" id="memory-scope-description">Những trang bộ nhớ thuộc bot thyca.</p>
+        <p id="memory-empty" class="memory-empty" hidden></p>
+        <div class="memory-search-bar"></div>
+        <div id="memory-sections" aria-live="polite">
+          <section class="memory-view" data-view="overview">
+            <details class="fold-section" open>
+              <summary><h3>Tổng quan</h3></summary>
+              <div class="memory-view-body">
+                <!-- overviewChartCard(): bar chart 30 ngày vẽ bằng drawBarChart (SVG tĩnh ở đây) -->
+                <article class="screen-card memory-chart-card">
+                  <svg role="img" viewBox="0 0 340 160" aria-label="Biểu đồ mẩu nhật ký theo ngày">
+                    <line x1="10" y1="140" x2="330" y2="140" stroke="var(--color-line)" stroke-width="1"/>
+                    <rect x="18" y="132" width="12" height="8" rx="3" class="memory-bar"/><rect x="40" y="128" width="12" height="12" rx="3" class="memory-bar"/><rect x="62" y="135" width="12" height="5" rx="3" class="memory-bar"/><rect x="84" y="120" width="12" height="20" rx="3" class="memory-bar"/><rect x="106" y="114" width="12" height="26" rx="3" class="memory-bar"/><rect x="128" y="126" width="12" height="14" rx="3" class="memory-bar"/><rect x="150" y="131" width="12" height="9" rx="3" class="memory-bar"/><rect x="172" y="110" width="12" height="30" rx="3" class="memory-bar"/><rect x="194" y="118" width="12" height="22" rx="3" class="memory-bar"/><rect x="216" y="124" width="12" height="16" rx="3" class="memory-bar"/><rect x="238" y="134" width="12" height="6" rx="3" class="memory-bar"/><rect x="260" y="122" width="12" height="18" rx="3" class="memory-bar"/><rect x="282" y="116" width="12" height="24" rx="3" class="memory-bar"/><rect x="304" y="128" width="12" height="12" rx="3" class="memory-bar"/>
+                  </svg>
+                </article>
+                <!-- overviewStats(): 3 thẻ tổng -->
+                <div class="memory-overview">
+                  <article class="screen-card"><h3>Mẩu nhật ký</h3><strong>128</strong></article>
+                  <article class="screen-card"><h3>Lần dùng</h3><strong>412</strong></article>
+                  <article class="screen-card"><h3>Lần tìm</h3><strong>96</strong></article>
+                </div>
+              </div>
+            </details>
+          </section>
+          <section class="memory-view" data-view="day">
+            <details class="fold-section" open>
+              <summary><h3>Theo ngày</h3></summary>
+              <div class="memory-view-body">
+                <article class="memory-card" data-memory-id="m-1">
+              <time>21/10/2026</time>
+              <div class="memory-copy"><h3>Hòa thích review code ngắn gọn</h3><p>Phản hồi dạng bullet, ví dụ cụ thể hơn lý thuyết dài.</p></div>
+              <div class="memory-meta"><span>14 lần dùng</span><span>3 lần tìm</span>
+                <button class="memory-more row-action" type="button" aria-label="Sửa trang Hòa thích review code ngắn gọn">⋮</button>
+              </div>
+            </article>
+                <article class="memory-card is-editing" data-memory-id="m-2">
+              <time>20/10/2026</time>
+              <form class="memory-edit">
+                <div class="memory-edit-line"><input class="memory-edit-title" required maxlength="120" autocomplete="off" value="Dự án Thyca — kiến trúc nhớ" aria-label="Tiêu đề trang" /></div>
+                <textarea class="memory-edit-text" required maxlength="400" aria-label="Mô tả trang">Markdown theo ngày là nguồn thật; SQLite chỉ là index/archive.</textarea>
+                <div class="memory-edit-actions">
+                  <button class="screen-button" type="button">Hủy</button>
+                  <!-- POST /api/memory/reinforce -->
+                  <button class="screen-button" type="button">Gia hạn</button>
+                  <!-- POST /api/memory/update {session_id, topic, summary} -->
+                  <button class="screen-button is-primary" type="submit">Lưu trang</button>
+                  <!-- POST /api/memory/forget {session_id} -->
+                  <button class="screen-button is-danger" type="button">Quên</button>
+                </div>
+              </form>
+            </article>
+                <article class="memory-card" data-memory-id="m-1">
+              <time>19/10/2026</time>
+              <div class="memory-copy"><h3>Ưu tiên tiếng Việt</h3><p>Trả lời mặc định bằng tiếng Việt trừ khi được yêu cầu khác.</p></div>
+              <div class="memory-meta"><span>22 lần dùng</span><span>8 lần tìm</span>
+                <button class="memory-more row-action" type="button" aria-label="Sửa trang Ưu tiên tiếng Việt">⋮</button>
+              </div>
+            </article>
+              </div>
+            </details>
+          </section>
+          <section class="memory-view" data-view="used-more">
+            <details class="fold-section" open>
+              <summary><h3>Dùng nhiều</h3></summary>
+              <div class="memory-view-body">
+                <article class="memory-card" data-memory-id="m-1">
+              <time>19/10/2026</time>
+              <div class="memory-copy"><h3>Ưu tiên tiếng Việt</h3><p>Trả lời mặc định bằng tiếng Việt trừ khi được yêu cầu khác.</p></div>
+              <div class="memory-meta"><span>22 lần dùng</span><span>8 lần tìm</span>
+                <button class="memory-more row-action" type="button" aria-label="Sửa trang Ưu tiên tiếng Việt">⋮</button>
+              </div>
+            </article>
+              </div>
+            </details>
+          </section>
+          <section class="memory-view" data-view="searched-more">
+            <details class="fold-section" open>
+              <summary><h3>Tìm nhiều</h3></summary>
+              <div class="memory-view-body">
+                <article class="memory-card" data-memory-id="m-1">
+              <time>20/10/2026</time>
+              <div class="memory-copy"><h3>Dự án Thyca — kiến trúc nhớ</h3><p>Markdown theo ngày là nguồn thật; SQLite chỉ là index/archive.</p></div>
+              <div class="memory-meta"><span>9 lần dùng</span><span>5 lần tìm</span>
+                <button class="memory-more row-action" type="button" aria-label="Sửa trang Dự án Thyca — kiến trúc nhớ">⋮</button>
+              </div>
+            </article>
+              </div>
+            </details>
+          </section>
+          <section class="memory-view" data-view="used-less">
+            <details class="fold-section" open>
+              <summary><h3>Dùng ít</h3></summary>
+              <div class="memory-view-body">
+                <p class="screen-note memory-section-empty">Chưa có mẩu nhật ký trong mục này.</p>
+              </div>
+            </details>
+          </section>
+        </div>
+      </section>
+    </section>
+  </section>
+</main>
+</body>
+</html>

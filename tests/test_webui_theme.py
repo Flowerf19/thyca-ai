@@ -1,6 +1,7 @@
-"""Shared background sync: two primitives (--color-bg-frame for outer/frame,
---color-bg-surface for content/sidebar/chat/panels) drive every surface
-token across all root pages, including the dusk overrides."""
+"""Shared theme tokens: ui/share/base.css owns the single :root palette every
+rebuilt page inherits. Each ui/<page>/index.html links the same stack —
+fonts.css, base.css, sidebar.css, the avatar sheets, then (except chat, which
+keeps its own workspace chrome) app-shell.css plus its page sheet."""
 from __future__ import annotations
 
 import re
@@ -8,110 +9,120 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WEBUI = ROOT / "thyca" / "webui"
-TOKENS_CSS = WEBUI / "shared" / "css" / "tokens.css"
-KIT_CSS = WEBUI / "shared" / "css" / "kit.css"
-TRACE_CSS = WEBUI / "pages" / "dashboard" / "trace.css"
-ROOT_PAGES = ("index.html", "dashboard.html", "memories.html",
-              "profile.html", "provider.html", "settings.html")
+UI = WEBUI / "ui"
+BASE_CSS = UI / "share" / "base.css"
+APP_SHELL_CSS = UI / "share" / "app-shell.css"
+SIDEBAR_CSS = UI / "share" / "sidebar.css"
+MARKDOWN_CSS = UI / "share" / "markdown.css"
+SHELL_JS = UI / "share" / "shell.js"
+
+# Pages that render inside emitShell()'s shared chrome all link app-shell.css;
+# chat keeps its own static markup + chatcss/chat.css instead.
+SHELL_PAGES = ("dashboard", "memories", "profile", "provider", "settings", "trace")
+ALL_PAGES = ("chat",) + SHELL_PAGES
+
+SHARED_LINKS = (
+    "../share/fonts.css",
+    "../share/base.css",
+    "../share/sidebar.css",
+    "../share/avatars/avatars.css",
+    "../share/avatars/studio.css",
+)
 
 
-def test_shared_background_primitives_and_aliases() -> None:
-    css = TOKENS_CSS.read_text(encoding="utf-8")
-    assert "--color-bg-frame: #E8DAC3" in css
-    assert "--color-bg-surface: #FBF4E5" in css
-    assert "--color-bg-selected: #EADBC8" in css
-    for alias in ("--color-desk-top", "--color-desk-mid", "--color-desk-bottom",
-                  "--color-paper"):
-        assert f"{alias}: var(--color-bg-frame)" in css, alias
-    for alias in ("--color-paper-chat", "--color-paper-card",
-                  "--color-paper-input", "--composer-bg"):
-        assert f"{alias}: var(--color-bg-surface)" in css, alias
-    root = re.search(r":root\s*\{(.*?)\}", css, re.S).group(1)
-    assert "oklch" not in re.search(
-        r"--color-(?:desk|paper|composer)[^:]*:[^;]*;", root).group(0)
+def _block(css: str, selector: str) -> str:
+    match = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", css)
+    return match.group(1) if match else ""
 
 
-def test_dusk_aliases_same_shared_backgrounds() -> None:
-    css = TOKENS_CSS.read_text(encoding="utf-8")
-    dusk = re.search(
-        r"html\[data-theme=\"dusk\"\]\s*\{([^}]*)\}", css)
-    assert dusk, "dusk override block missing"
-    block = dusk.group(1)
-    for alias in ("--color-desk-top", "--color-desk-mid", "--color-paper"):
-        assert f"{alias}: var(--color-bg-frame)" in block, alias
-    assert "--color-paper-chat: var(--color-bg-surface)" in block
-    assert "oklch" not in block, "dusk must not keep the old palette values"
+def test_base_tokens_define_the_paper_palette() -> None:
+    css = BASE_CSS.read_text(encoding="utf-8")
+    root = _block(css, ":root")
+    for token in (
+        "--paper:#fbf5e8", "--paper-deep:#f0e7d4", "--ink:#3c372c",
+        "--muted:#877d69", "--line:#d9ccb4", "--forest:#315d4c",
+        "--rust:#aa5638", "--sidebar-width:374px",
+    ):
+        assert token in root, token
+    assert "'Thyca Serif'" in root and "--serif" in root
+    assert "'Thyca Sans'" in root and "--sans" in root
+    # The rebuild has one palette: no oklch theme overrides survive anywhere.
+    for sheet in UI.rglob("*.css"):
+        assert "oklch" not in sheet.read_text(encoding="utf-8"), sheet.name
 
 
-def test_root_pages_share_tokens_stylesheet() -> None:
-    for page in ROOT_PAGES:
-        html = (WEBUI / page).read_text(encoding="utf-8")
-        assert 'href="./shared/css/tokens.css"' in html, page
-    shim = (WEBUI / "trace.html").read_text(encoding="utf-8")
-    assert "location.replace" in shim or "url=./dashboard.html" in shim
+def test_every_page_links_the_shared_stylesheets() -> None:
+    for page in ALL_PAGES:
+        html = (UI / page / "index.html").read_text(encoding="utf-8")
+        for href in SHARED_LINKS:
+            assert f'href="{href}"' in html, f"{page}: {href}"
+        assert f'href="{page}css/{page}.css"' in html, page
+    for page in SHELL_PAGES:
+        html = (UI / page / "index.html").read_text(encoding="utf-8")
+        assert 'href="../share/app-shell.css"' in html, page
+    # Chat keeps its own workspace chrome — no app-shell, its own sheet.
+    chat = (UI / "chat" / "index.html").read_text(encoding="utf-8")
+    assert "../share/app-shell.css" not in chat
+    assert 'href="../share/markdown.css"' in chat
 
 
-def test_artwork_and_frame_imagery_retained() -> None:
-    kit = KIT_CSS.read_text(encoding="utf-8")
-    assert kit.count("thyca-bg-paper.png") == 3, (
-        "shell, paper layer, and dialogs share the same artwork")
-    assert "thyca-bg-outer.png" not in kit
-    assert "thyca-bg-menu.png" not in kit
-    assert re.search(r"\.notebook-shell\s*\{[^}]*url\(", kit)
-    assert re.search(r"\.notebook-shell::before\s*\{[^}]*url\(", kit)
-    assert re.search(r"\.screen-dialog\s*\{[^}]*url\(", kit)
-    overlay = "var(--color-paper-chat) 65%, transparent"
-    assert kit.count(overlay) == 6, (
-        "all shared paper overlays keep artwork visible at 65%")
-    tokens = TOKENS_CSS.read_text(encoding="utf-8")
-    blocks = re.findall(r"body\s*\{[^}]*\}", tokens)
-    assert any("background-image" in block for block in blocks)
+def test_shell_artwork_and_page_ornaments_retained() -> None:
+    """The paper world survives: the notebook shell keeps its gradient frame,
+    and every workspace carries the same ornament + staff line art."""
+    base = BASE_CSS.read_text(encoding="utf-8")
+    shell = _block(base, ".notebook-shell")
+    assert "radial-gradient" in shell
+    assert "border-radius:24px" in shell
+    app = APP_SHELL_CSS.read_text(encoding="utf-8")
+    assert "linear-gradient" in _block(app, ".workspace")
+    assert ".workspace>.ornament" in app
+    assert ".workspace>.staff" in app
+    # shell.js inserts the same two SVG ornaments chat draws inline.
+    js = SHELL_JS.read_text(encoding="utf-8")
+    assert 'class="ornament"' in js
+    assert 'class="staff"' in js
+    chat = (UI / "chat" / "index.html").read_text(encoding="utf-8")
+    assert 'class="ornament"' in chat and 'class="staff"' in chat
 
 
-def test_selected_rows_use_shared_selected_token() -> None:
-    kit = KIT_CSS.read_text(encoding="utf-8")
-    chat = (ROOT / "thyca" / "webui" / "pages" / "chat" /
-            "chat.css").read_text(encoding="utf-8")
-    team = re.search(
-        r"#team-bot-list \.session-item\.is-active\s*\{([^}]*)\}", chat)
-    assert team and "background-color: transparent" in team.group(1), (
-        "selected bot row stays transparent — the tint glow/bar pseudo-"
-        "elements carry the active state")
-    before = re.search(
-        r"#team-bot-list \.session-item\.is-active::before\s*\{([^}]*)\}",
-        chat)
-    assert before and "var(--team-tint)" in before.group(1)
-    after = re.search(
-        r"#team-bot-list \.session-item\.is-active::after\s*\{([^}]*)\}",
-        chat)
-    assert after and "var(--team-tint)" in after.group(1)
-    screen = re.search(
-        r"\.screen-shell \.session-item\.is-active\s*\{([^}]*)\}", kit)
-    assert screen and "background: var(--color-bg-selected)" in screen.group(1)
-    for block in re.findall(r"\.session-item\.is-active::before\s*\{[^}]*\}", kit):
-        assert "var(--color-bg-selected)" in block, block
+def test_current_page_and_selected_bot_marks() -> None:
+    """Selection states ride shared marks: the header links light up the
+    current page, the sidebar marks the selected bot card."""
+    app = APP_SHELL_CSS.read_text(encoding="utf-8")
+    current = _block(app, ".page-links a.is-current")
+    assert "var(--forest)" in current
+    assert "inset 0 0 0 1px" in current
+    js = SHELL_JS.read_text(encoding="utf-8")
+    assert 'class="is-current" aria-current="page"' in js
+    sidebar = SIDEBAR_CSS.read_text(encoding="utf-8")
+    assert _block(sidebar, ".bot-card[data-selected=true]")
 
 
-def test_search_widget_uses_surface_tokens() -> None:
-    kit = KIT_CSS.read_text(encoding="utf-8")
-    for gone in ("#f5e9da", "#fffcfa", "rgba(245, 233, 218"):
-        assert gone not in kit, gone
-    assert "--fill: var(--color-paper-input)" in kit
-    hover = re.search(r"\.thyca-search:hover\s*\{([^}]*)\}", kit)
-    assert hover and "var(--color-bg-surface)" in hover.group(1)
-    assert "var(--color-bg-frame)" in hover.group(1)
-    focus = re.search(r"\.thyca-search:focus-within\s*\{([^}]*)\}", kit)
-    assert focus and "background: var(--color-bg-surface)" in focus.group(1)
-    assert "box-shadow" in focus.group(1)
+def test_inline_fields_use_the_paper_surface() -> None:
+    """Search/scope inputs share one surface + focus treatment — the
+    memories toolbar's #memory-search is an .inline-field."""
+    app = APP_SHELL_CSS.read_text(encoding="utf-8")
+    field = _block(app, ".field input,.field select,.field textarea,.inline-field")
+    assert "background:#fff9ea" in field
+    focus = _block(app, ".field input:focus,.field select:focus,.field textarea:focus,.inline-field:focus")
+    assert "outline:2px solid" in focus
+    memories = (UI / "memories" / "memoriescss" / "memories.css").read_text(encoding="utf-8")
+    assert "#memory-search" in memories
+    page_js = (UI / "memories" / "js" / "memories.js").read_text(encoding="utf-8")
+    assert 'class="inline-field" id="memory-search"' in page_js
 
 
-def test_trace_code_bg_frame_light_dark_pairing_kept() -> None:
-    css = TRACE_CSS.read_text(encoding="utf-8")
-    light = re.search(r"#trace\s*\{([^}]*)\}", css)
-    assert light and "--trace-code-bg: var(--color-bg-frame)" in light.group(1)
-    assert "--trace-code-ink" in light.group(1)
-    dusk = re.search(r"html\[data-theme=\"dusk\"\]\s*#trace\s*\{([^}]*)\}", css)
-    assert dusk, "dusk trace block missing"
-    assert re.search(r"--trace-code-bg:\s*oklch\(24%", dusk.group(1)), (
-        "dusk keeps its dark syntax surface")
-    assert re.search(r"--trace-code-ink:\s*oklch\(89%", dusk.group(1))
+def test_trace_code_keeps_the_light_syntax_surface() -> None:
+    """Trace payload code sits on a light inset surface; failed tool output
+    gets the warm error pairing instead of a theme swap."""
+    css = (UI / "trace" / "tracecss" / "trace.css").read_text(encoding="utf-8")
+    code = _block(css, ".tl-code")
+    assert "background:#fff8ec" in code
+    assert "ui-monospace" in code
+    err = _block(css, ".tl-code.tl-code-err")
+    assert "background:#fdf0ea" in err
+    assert "color:#944f3d" in err
+    # Assistant replies keep the shared markdown surface.
+    md = MARKDOWN_CSS.read_text(encoding="utf-8")
+    assert ".md-table-wrap" in md
+    assert "ui-monospace" in md

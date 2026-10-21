@@ -1,24 +1,26 @@
-"""Node tests for the Request panel (GOAL-011 TASK-036).
+"""Node tests for the dashboard "Theo model" / "Theo bot" rows and the
+stale-response guards — thyca/webui/ui/dashboard/js/dashboard.js.
 
-"Request theo mô hình" is ONE horizontal bar chart: every model bar shares
-the same baseline and the same max scale, names/counts are real text (long
-or hostile names never become markup), and the share denominator stays the
-full-data total even when the search narrows the rows. The boot behavior runs
-request.js against a minimal fake DOM in Node with a stubbed fetch, mirroring
-the eval style of test_dashboard_journal.py.
+The old Request view (request.js: one SVG bar chart, model search, sort
+buttons, full-data share denominator) was not ported: the new Dashboard
+renders by_model/by_bot straight from GET /api/traces/stats as simple rows
+(sorted server data, escaped names, roster avatars) and guards every load
+with a latest-request-wins sequence. These tests cover that replacement
+contract. The new files are classic scripts ('use strict', shared globals),
+so the harness evals dashboard.js in Node with a stubbed global surface —
+the successor of the import-based eval style.
 """
 from __future__ import annotations
 
 import json
 import shutil
 import subprocess
-import uuid
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-REQUEST_JS = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "request.js"
+DASH_JS = ROOT / "thyca" / "webui" / "ui" / "dashboard" / "js" / "dashboard.js"
 
 
 @pytest.fixture(scope="module")
@@ -29,116 +31,67 @@ def node() -> str:
     return binary
 
 
-HARNESS = """
-const el = {};
-const createdTags = [];
-function makeNode() {
-  const node = {
-    children: [], attrs: {}, dataset: {},
-    style: { _props: {}, setProperty(k, v) { this._props[k] = v; } },
-    listeners: {},
-    className: "", textContent: "", value: "", tag: "",
-    isConnected: true,
-    querySelector(sel) {
-      const cls = sel.startsWith('.') ? sel.slice(1) : null;
-      return node.children.find((c) => String(c.className || '').split(/\s+/).includes(cls)) || null;
-    },
-    setAttribute(name, val) { node.attrs[name] = String(val); },
-    append(...nodes) { node.children.push(...nodes); },
-    replaceChildren(...nodes) { node.children = [...nodes]; },
-    addEventListener(type, fn) { (node.listeners[type] ||= []).push(fn); },
-    querySelector(sel) {
-      const cls = sel.startsWith('.') ? sel.slice(1) : null;
-      return node.children.find((c) => String(c.className || '').split(/\s+/).includes(cls)) || null;
-    },
-    getBoundingClientRect() { return { width: 720, height: 168 }; },
-  };
-  return node;
+# Minimal global surface for dashboard.js: real util.js semantics for
+# $/$$/escapeHTML/icon, a per-id element registry, and data-layer stubs the
+# page expects (getBot/getJson/toast/avatar/bootShell). boot() is stripped:
+# tests drive the individual render/load functions directly.
+STUBS = r"""
+class El {
+  constructor(tag = 'div') {
+    this.tag = tag; this.value = ''; this.textContent = ''; this._html = '';
+    this.hidden = false; this.disabled = false; this.dataset = {}; this.attrs = {};
+    this.listeners = {}; this.children = []; this.options = []; this.className = '';
+    this.style = {};
+  }
+  set innerHTML(v) { this._html = String(v); }
+  get innerHTML() { return this._html; }
+  setAttribute(k, v) { this.attrs[k] = String(v); }
+  addEventListener(t, f) { (this.listeners[t] ||= []).push(f); }
+  replaceChildren(...n) { this.children = n; this.options = n; }
+  insertAdjacentHTML(_p, h) { this._html = (this._html || '') + h; }
+  set onclick(f) { this.listeners.click = [f]; }
+  set onchange(f) { this.listeners.change = [f]; }
 }
-for (const id of ["request-period", "request-total", "request-range",
-                  "request-chart", "request-models", "request-bots",
-                  "request-status", "request-model-search"]) {
-  el[id] = makeNode();
-}
-el["request-period"].value = "30";
-const sorts = ["req-desc", "req-asc", "recent"].map((key) => {
-  const button = makeNode();
-  button.dataset.reqSort = key;
-  return button;
-});
+const __els = {};
+const __el = (id) => __els[id] ||= new El();
+const __workspace = new El();
 globalThis.document = {
-  querySelector: (sel) => (sel.startsWith("#") ? el[sel.slice(1)] || null : null),
-  querySelectorAll: () => sorts,
-  createElement: (tag) => { const n = makeNode(); n.tag = tag; createdTags.push(tag); return n; },
-  createElementNS: (_ns, tag) => { const n = makeNode(); n.tag = tag; return n; },
+  querySelector: (s) => s === '.workspace' ? __workspace
+    : s.startsWith('#') ? __el(s.slice(1)) : null,
+  querySelectorAll: () => [],
+  createElement: (t) => new El(t),
 };
-globalThis.matchMedia = () => ({ matches: false, addEventListener() {} });
-globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
-const pending = [];
-const MANUAL = __MANUAL__;
-let responder = MANUAL
-  ? (record) => new Promise((resolve) => { record.resolve = resolve; })
-  : () => (__PAYLOAD__);
-globalThis.fetch = async (url) => {
-  const record = { url: String(url), resolve: null };
-  pending.push(record);
-  return { ok: true, json: async () => responder(record) };
-};
-await import("__REQUEST_URI__");
-const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
-await tick();
-const pick = (root, cls) =>
-  root.children.find((n) => String(n.className).split(/\\s+/).includes(cls));
-function snapshot() {
-  const models = el["request-models"];
-  const bots = el["request-bots"];
-  const chart = pick(models, "request-model-chart");
-  return {
-    createdTags,
-    rows: chart ? chart.children.map((li) => {
-      const head = pick(li, "request-model-head");
-      const bar = pick(li, "request-model-bar");
-      return {
-        name: pick(head, "request-model-name").textContent,
-        count: pick(head, "request-model-count").textContent,
-        share: pick(head, "request-model-share").textContent,
-        width: pick(bar, "request-model-fill").style.width,
-      };
-    }) : null,
-    note: models.children.filter((n) => String(n.className).includes("screen-note"))
-      .map((n) => n.textContent),
-    botRows: bots ? bots.children.filter((n) => String(n.className).includes("request-model-chart"))
-      .flatMap((ul) => ul.children).map((li) => {
-      const head = li.children[0];
-      const slot = head.children.find((c) => String(c.className).includes("bot-avatar-slot"));
-      const get = (cls) => { const n = head.children.find((c) => String(c.className).includes(cls)); return n ? n.textContent : null; };
-      return {
-        avatar: !!slot, mark: slot ? String(slot.innerHTML || "").includes("mk-wax") : false,
-        name: get("request-model-name"), count: get("request-model-count"),
-        share: get("request-model-share"),
-      };
-    }) : null,
-    botNote: bots ? bots.children.filter((n) => String(n.className).includes("screen-note"))
-      .map((n) => n.textContent) : null,
-    status: el["request-status"].textContent,
-    total: el["request-total"].textContent,
-    pressed: Object.fromEntries(sorts.map((b) => [b.dataset.reqSort, b.attrs["aria-pressed"]])),
-  };
-}
-const fire = (node, type) => node.listeners[type][0]();
+globalThis.location = { hash: '', search: '', pathname: '/dashboard/index.html', href: '' };
+globalThis.window = {};
+globalThis.$ = (s, r = document) => r.querySelector(s);
+globalThis.$$ = (s, r = document) => [...r.querySelectorAll(s)];
+globalThis.icon = (n) => `<svg data-i="${n}"></svg>`;
+globalThis.escapeHTML = (str) => String(str).replace(/[&<>"']/g, (ch) =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+// Roster stub: tests register bots here; avatar() marks roster bots.
+globalThis.__roster = {};
+globalThis.getBot = (id) => globalThis.__roster[id] || null;
+globalThis.avatar = (b) => `<ava:${b.id}/>`;
+globalThis.toast = () => {};
+globalThis.bootShell = async () => {};
+const __jsonCalls = [];
+let __jsonResponder = async (url) => { throw new Error('unexpected ' + url); };
+globalThis.getJson = (url) => { __jsonCalls.push(String(url)); return __jsonResponder(String(url)); };
 """
 
 
-def _run(node: str, body: str, payload: str, *, manual: bool = False) -> dict:
-    source = (
-        HARNESS.replace("__PAYLOAD__", payload)
-        .replace("__MANUAL__", "true" if manual else "false")
-        .replace("__REQUEST_URI__", REQUEST_JS.as_uri() + f"?test={uuid.uuid4().hex}")
-        + body
-        + "\nconsole.log(JSON.stringify(snapshot()));\n"
+def _eval_dash(node: str, body: str) -> object:
+    """Eval dashboard.js (classic script) with stubs, then run `body` inside
+    the same scope so module-level functions/state are reachable."""
+    src = DASH_JS.read_text(encoding="utf-8")
+    program = (
+        STUBS
+        + "\nconst __src = " + json.dumps(src) + ";\n"
+        + "const __body = " + json.dumps(body) + ";\n"
+        + "eval(__src + '\\n;' + __body);\n"
     )
     result = subprocess.run(
-        [node, "--input-type=module", "-e", source],
+        [node, "--input-type=module", "-e", program],
         check=True,
         capture_output=True,
         text=True,
@@ -147,185 +100,226 @@ def _run(node: str, body: str, payload: str, *, manual: bool = False) -> dict:
     return json.loads(result.stdout)
 
 
-THREE_MODELS = json.dumps({
-    "totals": {"requests": 100},
-    "by_day": [{"day": "2026-09-20", "requests": 4}],
-    "by_model": [
-        {"model": "gpt-5.6-luna", "requests": 50, "last_started_at": "2026-09-20T09:00:00Z"},
-        {"model": "muse-spark-1.2-contributor", "requests": 30, "last_started_at": "2026-09-19T09:00:00Z"},
-        {"model": "a-very-long-model-name-with-date-suffix-20250929", "requests": 20, "last_started_at": "2026-09-18T09:00:00Z"},
-    ],
-})
-
-
-def test_one_chart_with_shared_scale_and_full_denominator(node: str) -> None:
-    body = """
-    fire(el["request-model-search"], "input");
-    """
-    state = _run(node, body, THREE_MODELS)
-    assert state["total"] == "100"
-    # One chart, one row per model, sorted by requests desc by default.
-    assert [row["name"] for row in state["rows"]] == [
+def test_model_rows_sorted_by_tokens_desc(node: str) -> None:
+    """"Model trong kỳ": one row per model, sorted by total_tokens desc,
+    name/requests/tokens/p50/cost as real text."""
+    models = [
+        {"model": "muse-spark-1.2-contributor", "requests": 30,
+         "total_tokens": 300, "cost_usd": 0.01, "latency_ms_p50": 900,
+         "last_started_at": "2026-09-19T09:00:00Z"},
+        {"model": "gpt-5.6-luna", "requests": 50,
+         "total_tokens": 5000, "cost_usd": 0.02, "latency_ms_p50": 1200,
+         "last_started_at": "2026-09-20T09:00:00Z"},
+        {"model": "a-very-long-model-name-with-date-suffix-20250929",
+         "requests": 20, "total_tokens": 200, "cost_usd": None,
+         "latency_ms_p50": None, "last_started_at": ""},
+    ]
+    rows = _eval_dash(
+        node,
+        f"statsData = {{ by_model: {json.dumps(models)} }};\n"
+        "renderModelRows();\n"
+        "console.log(JSON.stringify(document.querySelector('#rows-model').innerHTML));",
+    )
+    names = [
+        m.split('title="')[1].split('"')[0]
+        for m in rows.split('<span class="model-name"')[1:]
+    ]
+    assert names == [
         "gpt-5.6-luna",
         "muse-spark-1.2-contributor",
         "a-very-long-model-name-with-date-suffix-20250929",
     ]
-    # All bars are measured on the same scale (largest value = 100%).
-    assert [row["width"] for row in state["rows"]] == ["100%", "60%", "40%"]
-    # Counts and shares are real text; share uses the full-data total (100),
-    # which equals the row sum here.
-    assert [row["count"] for row in state["rows"]] == ["50", "30", "20"]
-    assert [row["share"] for row in state["rows"]] == ["50%", "30%", "20%"]
-    assert state["note"] == []
-    assert state["pressed"] == {"req-desc": "true", "req-asc": "false", "recent": "false"}
+    assert "50 request" in rows
+    assert "5.000 token" in rows  # vi-VN grouping
+    assert "p50 1,2 giây" in rows
+    assert "$0.0200" in rows
+    assert "$0.0100" in rows
+    # Null cost renders the em dash, never an invented $0.
+    assert '<span class="model-cost">—</span>' in rows
 
 
-def test_search_filters_rows_but_denominator_stays_full(node: str) -> None:
-    body = """
-    el["request-model-search"].value = "muse";
-    fire(el["request-model-search"], "input");
-    """
-    state = _run(node, body, THREE_MODELS)
-    assert [row["name"] for row in state["rows"]] == ["muse-spark-1.2-contributor"]
-    # The bar scale stays relative to all models, not the filtered subset…
-    assert state["rows"][0]["width"] == "60%"
-    # …and the share is still computed against the full-data total.
-    assert state["rows"][0]["share"] == "30%"
-
-
-def test_sort_buttons_reorder_rows(node: str) -> None:
-    body = """
-    fire(sorts.find((b) => b.dataset.reqSort === "req-asc"), "click");
-    """
-    state = _run(node, body, THREE_MODELS)
-    assert [row["count"] for row in state["rows"]] == ["20", "30", "50"]
-    # Bars do not rescale per sort: the largest model is still 100%.
-    assert [row["width"] for row in state["rows"]] == ["40%", "60%", "100%"]
-    assert state["pressed"]["req-asc"] == "true"
-
-
-def test_empty_zero_and_single_model_are_honest(node: str) -> None:
-    empty = _run(node, "", json.dumps({"totals": {"requests": 0}, "by_day": [], "by_model": []}))
-    assert empty["rows"] == [] or empty["rows"] is None
-    assert empty["note"] == ["Chưa có request nào trong khoảng này."]
-
-    zero = _run(node, "", json.dumps({
-        "totals": {"requests": 0}, "by_day": [],
-        "by_model": [{"model": "unknown", "requests": 0}],
-    }))
-    # A zero-request model draws no bar and no fake data appears.
-    assert not zero["rows"]
-    assert zero["note"] == ["Chưa có request nào trong khoảng này."]
-
-    one = _run(node, "", json.dumps({
-        "totals": {"requests": 7}, "by_day": [],
-        "by_model": [{"model": "solo-model", "requests": 7}],
-    }))
-    assert len(one["rows"]) == 1
-    assert one["rows"][0]["width"] == "100%"
-    assert one["rows"][0]["share"] == "100%"
+def test_empty_zero_and_missing_models_are_honest(node: str) -> None:
+    """An empty by_model renders the empty note; a model with no p50/cost
+    keeps its em dashes."""
+    rows = _eval_dash(
+        node,
+        "statsData = { by_model: [] };\n"
+        "renderModelRows();\n"
+        "console.log(JSON.stringify(document.querySelector('#rows-model').innerHTML));",
+    )
+    assert "Chưa có lượt nào trong kỳ." in rows
+    one = _eval_dash(
+        node,
+        'statsData = { by_model: [{model: "solo-model", requests: 7,'
+        ' total_tokens: 70, cost_usd: 0, latency_ms_p50: 40,'
+        ' last_started_at: "2026-09-20T09:00:00Z"}] };\n'
+        "renderModelRows();\n"
+        "console.log(JSON.stringify(document.querySelector('#rows-model').innerHTML));",
+    )
+    assert one.count('class="model-row"') == 1
+    assert "solo-model" in one
+    assert "p50 40 ms" in one
+    # A real zero cost is recorded pricing, not missing data.
+    assert "$0.000000" in one
 
 
 def test_long_and_hostile_names_stay_text(node: str) -> None:
-    payload = json.dumps({
-        "totals": {"requests": 3},
-        "by_day": [],
-        "by_model": [{"model": "<img src=x onerror=alert(1)>", "requests": 3}],
-    })
-    body = """
-    fire(el["request-model-search"], "input");
-    """
-    state = _run(node, body, payload)
-    # The raw hostile string is preserved as text, never parsed into markup.
-    assert state["rows"][0]["name"] == "<img src=x onerror=alert(1)>"
-    assert not any(tag not in {"ul", "li", "div", "span", "p"} for tag in state["createdTags"])
+    """A hostile model id is escaped everywhere it renders — name and the
+    title attribute — never parsed into markup."""
+    rows = _eval_dash(
+        node,
+        'statsData = { by_model: [{model: "<img src=x onerror=alert(1)>",'
+        ' requests: 3, total_tokens: 30}] };\n'
+        "renderModelRows();\n"
+        "console.log(JSON.stringify(document.querySelector('#rows-model').innerHTML));",
+    )
+    assert "<img src=x onerror=alert(1)>" not in rows
+    assert "&lt;img src=x onerror=alert(1)&gt;" in rows
 
 
 def test_period_change_never_keeps_a_stale_response(node: str) -> None:
-    # MANUAL mode keeps every response deferred so the test controls the
-    # resolution order, including the boot-time request.
-    body = """
-    el["request-period"].value = "7";
-    fire(el["request-period"], "change");
-    await tick();
-    const slowUrl = pending[0].url;
-    const fastUrl = pending[1].url;
-    if (slowUrl === fastUrl) throw new Error("period change must request a new range");
-    // The newer (7-day) request resolves first…
-    pending[1].resolve({
-      totals: {"requests": 5}, "by_day": [],
-      "by_model": [{"model": "fresh-7d", "requests": 5}],
-    });
-    await tick();
-    const afterFast = snapshot();
-    // …then the older (30-day) request lands late and must be ignored.
-    pending[0].resolve({
-      totals: {"requests": 900}, "by_day": [],
-      "by_model": [{"model": "stale-30d", "requests": 900}],
-    });
-    await tick();
-    result = { afterFast, final: snapshot(), urls: [slowUrl, fastUrl] };
-    """
-    source = (
-        HARNESS.replace("__PAYLOAD__", THREE_MODELS)
-        .replace("__MANUAL__", "true")
-        .replace("__REQUEST_URI__", REQUEST_JS.as_uri() + f"?test={uuid.uuid4().hex}")
-        + "let result;\n" + body
-        + "\nconsole.log(JSON.stringify(result));\n"
+    """Range apply issues a NEW stats request; a late response from the
+    previous range is dropped by the statsSeq guard and never repaints."""
+    outcome = _eval_dash(
+        node,
+        """(async () => {
+          const pending = [];
+          __jsonResponder = (url) => new Promise((resolve) => {
+            pending.push({ url, resolve });
+          });
+          rangeFrom = '2026-09-01'; rangeTo = '2026-09-30';
+          const first = loadStats();
+          rangeFrom = '2026-09-20'; rangeTo = '2026-09-26';
+          const second = loadStats();
+          // The newer request resolves first…
+          pending[1].resolve({ totals: { requests: 5 }, by_model: [
+            { model: 'fresh-7d', requests: 5, total_tokens: 50 }] });
+          await second;
+          const afterFast = document.querySelector('#rows-model').innerHTML;
+          // …then the older response lands late and must be ignored.
+          pending[0].resolve({ totals: { requests: 900 }, by_model: [
+            { model: 'stale-30d', requests: 900, total_tokens: 9000 }] });
+          await new Promise((r) => setTimeout(r, 5));
+          return { afterFast,
+            final: document.querySelector('#rows-model').innerHTML,
+            stats: statsData.totals.requests,
+            statUrls: __jsonCalls.filter((u) => u.includes('stats')) };
+        })().then((v) => console.log(JSON.stringify(v)))""",
     )
-    outcome = json.loads(subprocess.run(
-        [node, "--input-type=module", "-e", source],
-        check=True, capture_output=True, text=True, cwd=ROOT,
-    ).stdout)
-    assert "fresh-7d" in json.dumps(outcome["afterFast"]["rows"])
-    assert outcome["final"]["rows"][0]["name"] == "fresh-7d"
-    assert outcome["final"]["total"] == "5"
-    assert "stale-30d" not in json.dumps(outcome["final"])
-    assert outcome["final"]["status"] == ""
-    assert len(outcome["urls"]) == 2 and outcome["urls"][0] != outcome["urls"][1]
+    assert "fresh-7d" in outcome["afterFast"]
+    assert "stale-30d" not in outcome["final"]
+    assert outcome["stats"] == 5
+    # The two range-bound stats requests, in order (boot's own stats call
+    # already landed or errored out before this scenario runs).
+    assert outcome["statUrls"][-2:] == [
+        "/api/traces/stats?from=2026-09-01&to=2026-09-30",
+        "/api/traces/stats?from=2026-09-20&to=2026-09-26",
+    ]
 
 
-TWO_BOTS = json.dumps({
-    "totals": {"requests": 10},
-    "by_day": [],
-    "by_model": [
-        {"model": "m", "requests": 10, "last_started_at": "2026-09-20T09:00:00Z"},
-    ],
-    "by_bot": [
-        {"bot_id": "coder", "requests": 7, "last_started_at": "2026-09-20T09:00:00Z"},
-        {"bot_id": "designer", "requests": 2, "last_started_at": "2026-09-19T09:00:00Z"},
-        {"bot_id": "unknown", "requests": 1, "last_started_at": "2026-09-18T09:00:00Z"},
-        {"bot_id": "", "requests": 0, "last_started_at": "2026-09-18T09:00:00Z"},
-    ],
-    "bots": [
-        {"id": "coder", "name": "Coder", "tint": "botanical"},
-        {"id": "designer", "name": "Designer"},
-    ],
-})
+def test_stats_and_trace_responses_have_independent_guards(node: str) -> None:
+    """loadStats and loadTraces keep separate sequences: a stale LIST answer
+    is dropped without disturbing a just-rendered stats card."""
+    outcome = _eval_dash(
+        node,
+        """(async () => {
+          const pending = [];
+          __jsonResponder = (url) => new Promise((resolve) => {
+            pending.push({ url, resolve });
+          });
+          loadStats();
+          loadTraces(true);
+          loadTraces(true);   // the user re-filters: a newer list request wins
+          pending[0].resolve({ totals: { requests: 9 }, by_model: [] });
+          pending[2].resolve({ traces: [{ session_id: 's2', turn_index: 0 }],
+                               total: 1 });
+          await new Promise((r) => setTimeout(r, 5));
+          // The stale first list page arrives late and must be dropped.
+          pending[1].resolve({ traces: [{ session_id: 'old', turn_index: 0 }],
+                               total: 99 });
+          await new Promise((r) => setTimeout(r, 5));
+          return { rows: traceState.rows.map((t) => t.session_id),
+            total: traceState.total, stats: statsData.totals.requests,
+            html: document.querySelector('#trace-rows').innerHTML };
+        })().then((v) => console.log(JSON.stringify(v)))""",
+    )
+    assert outcome["rows"] == ["s2"]
+    assert outcome["total"] == 1
+    assert outcome["stats"] == 9
+    assert "old" not in outcome["html"]
+
+
+def _bot_rows_eval(node: str, by_bot: list, roster: dict) -> str:
+    return _eval_dash(
+        node,
+        f"globalThis.__roster = {json.dumps(roster)};\n"
+        f"statsData = {{ by_bot: {json.dumps(by_bot)},"
+        "  totals: { requests: 10 } };\n"
+        "renderBotRows();\n"
+        "console.log(JSON.stringify(document.querySelector('#rows-bot').innerHTML));",
+    )
 
 
 def test_request_bots_avatar_sort_and_unknown(node: str) -> None:
-    state = _run(node, "", TWO_BOTS)
-    rows = state["botRows"]
-    # Requests desc, zero-request rows dropped, unknown kept with empty slot.
-    assert [(r["name"], r["count"], r["share"]) for r in rows] == [
-        ("Coder", "7", "70%"),
-        ("Designer", "2", "20%"),
-        ("chưa gắn bot", "1", "10%"),
+    """by_bot rows: requests desc, roster bots get a seal + card name,
+    unattributed turns render 'Chưa gắn bot' with the '?' chip, and the
+    share label uses the period total."""
+    by_bot = [
+        {"bot_id": "designer", "requests": 2, "tool_calls": 1,
+         "total_tokens": 20, "cost_usd": 0.001,
+         "last_started_at": "2026-09-19T09:00:00Z"},
+        {"bot_id": "coder", "requests": 7, "tool_calls": 3,
+         "total_tokens": 70, "cost_usd": 0.007,
+         "last_started_at": "2026-09-20T09:00:00Z"},
+        {"bot_id": "unknown", "requests": 1, "tool_calls": 0,
+         "total_tokens": 10, "cost_usd": None,
+         "last_started_at": "2026-09-18T09:00:00Z"},
     ]
-    assert [r["avatar"] for r in rows] == [True, True, True]
-    # Backend "unknown" bucket is unattributed: aligned slot, no seal.
-    assert [r["mark"] for r in rows] == [True, True, False]
-    # Roster patch renamed ids to card names and marks carry seals.
-    assert state["botNote"] == []
+    roster = {
+        "coder": {"id": "coder", "name": "Coder", "color": "#123", "state": "idle"},
+        "designer": {"id": "designer", "name": "Designer", "color": "#456", "state": "idle"},
+    }
+    rows = _bot_rows_eval(node, by_bot, roster)
+    order = [n for n in ("Coder", "Designer", "Chưa gắn bot")]
+    assert rows.index("Coder") < rows.index("Designer") < rows.index("Chưa gắn bot")
+    assert "<ava:coder/>" in rows and "<ava:designer/>" in rows
+    # Unattributed: no seal, dashed '?' chip carrying the raw bucket id.
+    assert '<span class="row-avatar id-chip" title="unknown">?</span>' in rows
+    assert "Chưa gắn bot" in rows
+    # Shares are against the 10-request period total.
+    assert "70%" in rows and "20%" in rows and "10%" in rows
+    assert 'aria-label="70% tổng request"' in rows
 
 
 def test_request_unknown_id_in_roster_renders_as_real_bot(node: str) -> None:
-    """If /api/bots really contains id 'unknown', it is a bot: mark shown."""
-    payload = dict(__import__("json").loads(TWO_BOTS))
-    payload["bots"] = payload["bots"] + [{"id": "unknown", "name": "Nemo"}]
-    import json as _json
+    """If /api/bots really contains id 'unknown', it is a bot: seal + card
+    name instead of the '?' fallback."""
+    by_bot = [{"bot_id": "unknown", "requests": 1, "tool_calls": 0,
+               "total_tokens": 10, "cost_usd": None,
+               "last_started_at": "2026-09-18T09:00:00Z"}]
+    rows = _bot_rows_eval(
+        node, by_bot,
+        {"unknown": {"id": "unknown", "name": "Nemo", "color": "#789", "state": "idle"}},
+    )
+    assert "<ava:unknown/>" in rows
+    assert "Nemo" in rows
+    assert "id-chip" not in rows
 
-    state = _run(node, "", _json.dumps(payload))
-    rows = {r["name"]: r for r in state["botRows"]}
-    assert rows["Nemo"]["mark"] is True
+
+def test_bot_row_meta_and_share_bar(node: str) -> None:
+    """Each bot row keeps the compact meta line (requests · tool · tokens ·
+    cost · last activity) and a share bar scaled to the largest bot."""
+    by_bot = [
+        {"bot_id": "coder", "requests": 8, "tool_calls": 2,
+         "total_tokens": 80, "cost_usd": 0.004,
+         "last_started_at": "2026-09-20T09:00:00Z"},
+        {"bot_id": "designer", "requests": 2, "tool_calls": 0,
+         "total_tokens": 20, "cost_usd": 0.001,
+         "last_started_at": "2026-09-19T09:00:00Z"},
+    ]
+    rows = _bot_rows_eval(node, by_bot, {})
+    assert "8 request · 2 tool · 80 token · $0.0040" in rows
+    # Biggest bot takes the full bar; the smaller keeps a visible minimum.
+    assert 'style="width:100%' in rows or "width:100;" in rows or "width:100%" in rows
+    assert "80% tổng request" in rows
+    assert "20% tổng request" in rows

@@ -1,9 +1,14 @@
-"""Trace detail mapping — webui/pages/dashboard/trace-data.js.
+"""Trace detail mapping — thyca/webui/ui/trace/js/trace.js.
 
-The old replay helper (webui/js/trace/score.js::traceScoreFromEvents) was not
-ported: the new trace screen reads tool calls straight from the trace detail
-payload via toolsFromDetail, groups session turns via groupTraceTurns, and
-prices tokens via tokenCost. These tests cover that replacement contract.
+The old trace-data.js helpers (toolsFromDetail, toolBatchesFromDetail,
+activityStepsFromDetail, groupToolCalls, tokenCost, selectedModelConfig)
+were not ported: the new Trace page renders the execution journal straight
+from ``detail.messages`` — one numbered ``.tl-step`` per tool call matched
+to its result by tool_call_id, orphan results as their own step, session
+cards via sessionGroups/sessionCardHtml, and no client-side pricing. These
+tests cover that replacement contract. The page is a classic script
+('use strict', shared globals), so the harness evals it in Node with a
+stubbed global surface, mirroring the old import-based eval style.
 """
 from __future__ import annotations
 
@@ -15,7 +20,59 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-TRACE_DATA = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "trace-data.js"
+TRACE_JS = ROOT / "thyca" / "webui" / "ui" / "trace" / "js" / "trace.js"
+
+# Global surface for trace.js: real util.js semantics for $/$$/escapeHTML/
+# icon, a per-id element registry, and the data-layer globals the page
+# expects (getBot/avatar/paletteStyle/getJson/toast/bootShell). window gets
+# no formatMarkdown: the escaped-paragraph fallback is what this file pins.
+STUBS = r"""
+class El {
+  constructor(tag = 'div') {
+    this.tag = tag; this.value = ''; this.textContent = ''; this._html = '';
+    this.hidden = false; this.disabled = false; this.dataset = {}; this.attrs = {};
+    this.listeners = {}; this.children = []; this.options = []; this.className = '';
+    this.scrollTop = 0; this.style = {};
+  }
+  set innerHTML(v) { this._html = String(v); }
+  get innerHTML() { return this._html; }
+  setAttribute(k, v) { this.attrs[k] = String(v); }
+  addEventListener(t, f) { (this.listeners[t] ||= []).push(f); }
+  replaceChildren(...n) { this.children = n; this.options = n; }
+  insertAdjacentHTML(_p, h) { this._html = (this._html || '') + h; }
+  set onclick(f) { this.listeners.click = [f]; }
+  set onchange(f) { this.listeners.change = [f]; }
+}
+const __els = {};
+const __el = (id) => __els[id] ||= new El();
+const __workspace = new El();
+globalThis.document = {
+  querySelector: (s) => s === '.workspace' ? __workspace
+    : s.startsWith('#') ? __el(s.slice(1)) : null,
+  querySelectorAll: () => [],
+  createElement: (t) => new El(t),
+  addEventListener() {},
+};
+const __urls = [];
+globalThis.location = { hash: '', search: '', pathname: '/trace/index.html' };
+globalThis.history = { replaceState: (_a, _b, u) => __urls.push(String(u)) };
+globalThis.window = {};
+globalThis.addEventListener = () => {};
+globalThis.$ = (s, r = document) => r.querySelector(s);
+globalThis.$$ = (s, r = document) => [...r.querySelectorAll(s)];
+globalThis.icon = (n) => `<svg data-i="${n}"></svg>`;
+globalThis.escapeHTML = (str) => String(str).replace(/[&<>"']/g, (ch) =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+globalThis.__roster = {};
+globalThis.getBot = (id) => globalThis.__roster[id] || null;
+globalThis.avatar = (b) => `<ava:${b.id}/>`;
+globalThis.paletteStyle = (b) => `--c:${b.color || '#000'}`;
+globalThis.toast = () => {};
+globalThis.bootShell = async () => {};
+const __jsonCalls = [];
+let __jsonResponder = async (url) => { throw new Error('unexpected ' + url); };
+globalThis.getJson = (url) => { __jsonCalls.push(String(url)); return __jsonResponder(String(url)); };
+"""
 
 
 @pytest.fixture(scope="module")
@@ -26,15 +83,18 @@ def node() -> str:
     return binary
 
 
-def _eval(node: str, expression: str) -> object:
-    source = (
-        f"import {{ toolsFromDetail, toolBatchesFromDetail, activityStepsFromDetail, groupToolCalls, groupTraceTurns, selectedModelConfig,"
-        f" tokenCost, firstUserText, finalAssistantText, formatRecordText, asArguments }}"
-        f" from '{TRACE_DATA.as_posix()}';\n"
-        f"console.log(JSON.stringify({expression}));\n"
+def _eval_trace(node: str, body: str) -> object:
+    """Eval trace.js (classic script) with stubs, then run `body` inside
+    the same scope so module-level functions/state are reachable."""
+    src = TRACE_JS.read_text(encoding="utf-8")
+    program = (
+        STUBS
+        + "\nconst __src = " + json.dumps(src) + ";\n"
+        + "const __body = " + json.dumps(body) + ";\n"
+        + "eval(__src + '\\n;' + __body);\n"
     )
     result = subprocess.run(
-        [node, "--input-type=module", "-e", source],
+        [node, "--input-type=module", "-e", program],
         check=True,
         capture_output=True,
         text=True,
@@ -44,35 +104,36 @@ def _eval(node: str, expression: str) -> object:
 
 
 def test_skill_call_keeps_raw_name_and_skill(node: str) -> None:
-    detail = {
-        "messages": [
-            {"role": "user", "content": "go"},
-            {
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [
-                    {"id": "c1", "name": "read", "skill": "codereview",
-                     "arguments": {"path": "SKILL.md"}},
-                    {"id": "c2", "name": "read", "arguments": {"path": "notes.md"}},
-                ],
-            },
-            {"role": "tool", "tool_call_id": "c1", "content": "out1",
-             "meta": {"latency_ms": 120}},
-            {"role": "tool", "tool_call_id": "c2", "content": "out2",
-             "meta": {"latency_ms": 5}},
-            {"role": "assistant", "content": "done"},
-        ]
-    }
-    tools = _eval(node, f"toolsFromDetail({json.dumps(detail)})")
-    assert tools == [
-        {"id": "c1", "name": "read", "skill": "codereview",
-         "arguments": {"path": "SKILL.md"}, "output": "out1", "latencyMs": 120},
-        {"id": "c2", "name": "read", "skill": None,
-         "arguments": {"path": "notes.md"}, "output": "out2", "latencyMs": 5},
-    ]
+    """A skill load keeps its skill id as the step title with the raw tool
+    name demoted to the meta line; a plain call shows its own name."""
+    call = {"id": "c1", "name": "read", "skill": "codereview",
+            "arguments": {"path": "SKILL.md"}}
+    res = {"role": "tool", "tool_call_id": "c1", "content": "out1",
+           "meta": {"latency_ms": 120}}
+    html = _eval_trace(
+        node,
+        f"console.log(JSON.stringify("
+        f" stepHtml(1, {json.dumps(call)}, {json.dumps(res)})"
+        f" + '|' + stepHtml(2, {{id: 'c2', name: 'read',"
+        "   arguments: {path: 'notes.md'}},"
+        f"  {{role: 'tool', tool_call_id: 'c2', content: 'out2',"
+        "   meta: {latency_ms: 5}})))",
+    )
+    skill_step, plain_step = html.split("|")
+    assert '<p class="tl-step-title">codereview' in skill_step
+    assert "tool read" in skill_step          # raw name kept in meta
+    assert "120 ms" in skill_step
+    assert "c1" in skill_step                 # call id in the meta bits
+    assert "&quot;path&quot;: &quot;SKILL.md&quot;" in skill_step
+    assert "out1" in skill_step
+    assert '<p class="tl-step-title">read' in plain_step
+    assert "tool read" not in plain_step      # no redundant meta for name==skill
+    assert "5 ms" in plain_step
 
 
 def test_tool_batches_preserve_parallel_assistant_calls(node: str) -> None:
+    """Calls stay under the assistant round that issued them: two assistant
+    messages render two step lists, first-seen order kept per list."""
     detail = {
         "messages": [
             {"role": "user", "content": "go"},
@@ -85,14 +146,21 @@ def test_tool_batches_preserve_parallel_assistant_calls(node: str) -> None:
             ]},
         ]
     }
-    batches = _eval(node, f"toolBatchesFromDetail({json.dumps(detail)})")
-    assert [[call["name"] for call in batch] for batch in batches] == [
-        ["memory_recent", "bash"],
-        ["read"],
+    html = _eval_trace(node, f"console.log(JSON.stringify(timelineHtml({json.dumps(detail)})))")
+    lists = html.split('<ol class="tl-steps">')[1:]
+    assert len(lists) == 2
+    first_titles = [
+        p.split('<p class="tl-step-title">')[1].split("<")[0]
+        for p in lists[0].split('<li class="tl-step')[1:]
     ]
+    assert first_titles == ["memory_recent", "bash"]
+    assert '<p class="tl-step-title">read' in lists[1]
 
 
-def test_activity_steps_insert_thinking_between_tool_rounds(node: str) -> None:
+def test_activity_steps_keep_real_message_order(node: str) -> None:
+    """The journal order is the real message order: user bubble, an
+    assistant item per response (content + its tool steps), the naming
+    sidecar as a quiet meta line."""
     detail = {
         "messages": [
             {"role": "user", "content": "go"},
@@ -108,204 +176,212 @@ def test_activity_steps_insert_thinking_between_tool_rounds(node: str) -> None:
                 {"id": "c3", "name": "bash"},
                 {"id": "c4", "name": "bash"},
             ], "meta": {"latency_ms": 50}},
-            {"role": "assistant", "content": "done", "meta": {"kind": "naming"}},
-            {"role": "assistant", "content": "done", "meta": {"latency_ms": 12}},
+            {"role": "assistant", "content": "Đặt tên",
+             "meta": {"kind": "naming"}},
+            {"role": "assistant", "content": "done",
+             "meta": {"latency_ms": 12}},
         ]
     }
-    steps = _eval(node, f"activityStepsFromDetail({json.dumps(detail)})")
-    assert [step["type"] for step in steps] == [
-        "thinking", "tools", "thinking", "tools", "thinking",
+    html = _eval_trace(node, f"console.log(JSON.stringify(timelineHtml({json.dumps(detail)})))")
+    order = [
+        html.index("tl-item-user"),
+        html.index(">bash<"),           # first round's first step
+        html.index(">done<") if ">done<" in html else html.index("done"),
     ]
-    assert steps[0]["latencyMs"] == 40
-    assert steps[1]["groups"][0]["name"] == "bash"
-    assert steps[1]["groups"][0]["count"] == 2
-    assert steps[-1]["content"] == "done"
+    assert order[0] < order[1] < order[2]
+    # Four calls, each its own numbered step — never merged by name.
+    assert html.count('class="tl-step-num"') == 4
+    assert "01" in html and "04" in html
+    # The naming assistant renders as the quiet sidecar line, not a bubble.
+    assert "Đổi tên phiên" in html
+    assert "tl-meta" in html
 
 
-def test_string_arguments_are_parsed(node: str) -> None:
+def test_string_arguments_render_raw_with_parse_flag(node: str) -> None:
+    """Arguments arrive as recorded (dict, or the raw string when the model
+    emitted unparseable JSON): the input block prints them verbatim and
+    parse_error is flagged — nothing crashes on a string payload."""
     detail = {
         "messages": [
             {"role": "assistant", "content": None,
              "tool_calls": [{"id": "c1", "name": "bash",
-                             "arguments": "{\"command\": \"ls\"}"}]},
+                             "arguments": "{bad json",
+                             "parse_error": "invalid json"}]},
         ]
     }
-    tools = _eval(node, f"toolsFromDetail({json.dumps(detail)})")
-    assert tools[0]["arguments"] == {"command": "ls"}
+    html = _eval_trace(node, f"console.log(JSON.stringify(timelineHtml({json.dumps(detail)})))")
+    assert "Lỗi cú pháp" in html
+    assert "invalid json" in html
+    assert "{bad json" in html
+    assert "Parse error" in html
 
 
-def test_format_record_text_shows_tool_input(node: str) -> None:
-    assert _eval(node, 'formatRecordText({limit: 3})') == "limit: 3"
-    assert _eval(
-        node, "formatRecordText({command: 'echo ok'})"
-    ) == "command: echo ok"
-    assert _eval(node, 'formatRecordText({})') == "—"
-    assert _eval(node, 'asArguments("{\\"limit\\": 3}")') == {"limit": 3}
-    detail = {
-        "messages": [
-            {"role": "assistant", "content": None,
-             "tool_calls": [{"id": "c1", "name": "memory_recent",
-                             "arguments": {"limit": 3}}]},
-            {"role": "tool", "tool_call_id": "c1", "content": "ok"},
-        ]
-    }
-    tools = _eval(node, f"toolsFromDetail({json.dumps(detail)})")
-    assert _eval(
-        node, f"formatRecordText({json.dumps(tools[0]['arguments'])})"
-    ) == "limit: 3"
-    assert tools[0]["arguments"]["limit"] == 3
+def test_step_input_shows_arguments_json(node: str) -> None:
+    """The step's Input block is the recorded arguments as pretty JSON —
+    the tool's real input is always inspectable."""
+    call = {"id": "c1", "name": "memory_recent", "arguments": {"limit": 3}}
+    html = _eval_trace(
+        node,
+        f"console.log(JSON.stringify(stepHtml(1, {json.dumps(call)}, null)))",
+    )
+    assert '<p class="tl-io-label">Input</p>' in html
+    assert "&quot;limit&quot;: 3" in html  # escaped pretty JSON in the pre
 
 
-def test_tool_without_result_has_null_output(node: str) -> None:
-    detail = {
-        "messages": [
-            {"role": "user", "content": "go"},
-            {"role": "assistant", "content": None,
-             "tool_calls": [{"id": "c1", "name": "bash"}]},
-            {"role": "assistant", "content": "done"},
-        ]
-    }
-    tools = _eval(node, f"toolsFromDetail({json.dumps(detail)})")
-    assert tools == [
-        {"id": "c1", "name": "bash", "skill": None,
-         "arguments": {}, "output": None, "latencyMs": None}
-    ]
+def test_tool_without_result_shows_placeholder(node: str) -> None:
+    """A call whose result never recorded gets an explicit placeholder —
+    never a faked empty output."""
+    html = _eval_trace(
+        node,
+        "console.log(JSON.stringify(stepHtml(1,"
+        " {id: 'c1', name: 'bash'}, null)))",
+    )
+    assert "Chưa ghi nhận output." in html
 
 
 def test_missing_tool_name_falls_back_to_tool(node: str) -> None:
+    html = _eval_trace(
+        node,
+        "console.log(JSON.stringify(stepHtml(1, {id: 'c1'}, null)))",
+    )
+    assert '<p class="tl-step-title">tool' in html
+
+
+def test_step_output_distinguishes_missing_empty_zero_false(node: str) -> None:
+    """Missing result = the placeholder; empty string = '(trống)'; a
+    recorded 0/false renders verbatim — the falsy trap stays closed."""
+    call = {"id": "c1", "name": "bash"}
+    out = _eval_trace(
+        node,
+        "console.log(JSON.stringify(["
+        " stepHtml(1, {id:'c1',name:'bash'}, null),"
+        " stepHtml(2, {id:'c2',name:'bash'}, {role:'tool',tool_call_id:'c2',content:''}),"
+        " stepHtml(3, {id:'c3',name:'bash'}, {role:'tool',tool_call_id:'c3',content:0}),"
+        " stepHtml(4, {id:'c4',name:'bash'}, {role:'tool',tool_call_id:'c4',content:false})"
+        "]))",
+    )
+    missing, empty, zero, falsey = out
+    assert "Chưa ghi nhận output." in missing
+    assert "(trống)" in empty
+    assert ">0</pre>" in zero
+    assert ">false</pre>" in falsey
+
+
+def test_recorded_tool_error_flag_marks_the_step(node: str) -> None:
+    """meta.is_error on the result marks the step s-error with the 'Thực
+    thi lỗi' flag and the error-tinted code surface."""
+    call = {"id": "c1", "name": "bash"}
+    res = {"role": "tool", "tool_call_id": "c1", "content": "boom",
+           "meta": {"is_error": True, "latency_ms": 9}}
+    html = _eval_trace(
+        node,
+        f"console.log(JSON.stringify(stepHtml(1, {json.dumps(call)}, {json.dumps(res)})))",
+    )
+    assert 'tl-step s-error' in html
+    assert "Thực thi lỗi" in html
+    assert "tl-code-err" in html
+    assert "boom" in html
+    assert "9 ms" in html
+
+
+def test_missing_latency_absent_but_zero_stays_zero(node: str) -> None:
+    """A result without latency_ms shows no duration (never a fake 0 ms —
+    Number(null) === 0), while a recorded 0 prints '0 ms'."""
+    out = _eval_trace(
+        node,
+        "console.log(JSON.stringify(["
+        " stepHtml(1, {id:'c1',name:'bash'},"
+        "  {role:'tool',tool_call_id:'c1',content:'ok',meta:{latency_ms:0}}),"
+        " stepHtml(2, {id:'c2',name:'bash'},"
+        "  {role:'tool',tool_call_id:'c2',content:'ok',meta:{}})]))",
+    )
+    zero, missing = out
+    assert "0 ms" in zero
+    assert " ms" not in missing
+    # The call id still rides the meta line on both.
+    assert "c1" in zero and "c2" in missing
+
+
+def test_orphan_tool_result_gets_its_own_step(node: str) -> None:
+    """A tool result with no matching call renders as its own numbered
+    step ('Kết quả tool' + call id) — never dropped silently."""
     detail = {
         "messages": [
-            {"role": "assistant", "content": None, "tool_calls": [{"id": "c1"}]},
+            {"role": "assistant", "content": "hi"},
+            {"role": "tool", "tool_call_id": "ghost", "content": "late out",
+             "meta": {"latency_ms": 3, "is_error": True}},
         ]
     }
-    tools = _eval(node, f"toolsFromDetail({json.dumps(detail)})")
-    assert tools[0]["name"] == "tool"
+    html = _eval_trace(node, f"console.log(JSON.stringify(timelineHtml({json.dumps(detail)})))")
+    assert "Kết quả tool" in html
+    assert "Thực thi lỗi" in html
+    assert "call ghost" in html
+    assert "late out" in html
 
 
-def test_group_tool_calls_keeps_first_seen_order(node: str) -> None:
-    tools = [
-        {"id": "a1", "name": "memory_recent", "skill": None,
-         "arguments": {"limit": 3}, "output": "m1", "latencyMs": 4},
-        {"id": "b1", "name": "bash", "skill": None,
-         "arguments": {"command": "ls"}, "output": "o1", "latencyMs": 10},
-        {"id": "a2", "name": "memory_recent", "skill": None,
-         "arguments": {"limit": 5}, "output": "m2", "latencyMs": 6},
-        {"id": "b2", "name": "bash", "skill": None,
-         "arguments": {"command": "pwd"}, "output": "o2", "latencyMs": None},
-    ]
-    groups = _eval(node, f"groupToolCalls({json.dumps(tools)})")
-    assert [g["name"] for g in groups] == ["memory_recent", "bash"]
-    assert [g["kind"] for g in groups] == ["tool", "tool"]
-    assert [g["count"] for g in groups] == [2, 2]
-    assert groups[0]["latencyMs"] == 10
-    assert groups[1]["latencyMs"] == 10
-    assert [c["order"] for c in groups[0]["calls"]] == [1, 2]
-    assert groups[1]["calls"][1] == {
-        "order": 2, "id": "b2", "arguments": {"command": "pwd"},
-        "output": "o2", "latencyMs": None,
-    }
-
-
-def test_group_tool_calls_separates_skill_loads(node: str) -> None:
-    tools = [
-        {"id": "s1", "name": "read", "skill": "create-skill",
-         "arguments": {"path": "SKILL.md"}, "output": "x", "latencyMs": 2},
-        {"id": "r1", "name": "read", "skill": None,
-         "arguments": {"path": "notes.md"}, "output": "y", "latencyMs": 3},
-        {"id": "s2", "name": "read", "skill": "code-reviewer",
-         "arguments": {"path": "SKILL.md"}, "output": "z", "latencyMs": 1},
-    ]
-    groups = _eval(node, f"groupToolCalls({json.dumps(tools)})")
-    assert [(g["name"], g["kind"], g["count"]) for g in groups] == [
-        ("create-skill", "skill", 1),
-        ("read", "tool", 1),
-        ("code-reviewer", "skill", 1),
-    ]
-    assert groups[0]["calls"][0]["order"] == 1
-
-
-def test_group_tool_calls_without_rows_or_latency(node: str) -> None:
-    assert _eval(node, "groupToolCalls([])") == []
-    assert _eval(node, "groupToolCalls(undefined)") == []
-    groups = _eval(node, "groupToolCalls([{id: 'b1', name: 'bash', latencyMs: null}])")
-    assert groups[0]["latencyMs"] is None
-    assert groups[0]["calls"][0]["arguments"] == {}
-
-
-def test_missing_latency_is_null_but_zero_stays_zero(node: str) -> None:
-    """A call without latency_ms must not print "0ms" (Number(null) === 0)."""
-
-    def detail(meta: dict) -> dict:
-        return {
-            "messages": [
-                {"role": "assistant", "content": None,
-                 "tool_calls": [{"id": "c1", "name": "bash"}]},
-                {"role": "tool", "tool_call_id": "c1", "content": "ok", "meta": meta},
-            ]
-        }
-
-    assert _eval(node, f"toolsFromDetail({json.dumps(detail({'latency_ms': 0}))})")[0][
-        "latencyMs"
-    ] == 0
-    assert _eval(node, f"toolsFromDetail({json.dumps(detail({}))})")[0]["latencyMs"] is None
-    assert _eval(node, f"toolsFromDetail({json.dumps(detail({'latency_ms': -5}))})")[0][
-        "latencyMs"
-    ] is None
-    groups = _eval(node, f"groupToolCalls(toolsFromDetail({json.dumps(detail({}))}))")
-    assert groups[0]["latencyMs"] is None
-    zero = _eval(node, f"groupToolCalls(toolsFromDetail({json.dumps(detail({'latency_ms': 0}))}))")
-    assert zero[0]["latencyMs"] == 0
-
-
-def test_group_trace_turns_sorts_and_sums(node: str) -> None:
+def test_session_groups_first_seen_order_and_card(node: str) -> None:
+    """Session grouping keeps the API's newest-first order (first-seen
+    session_id, turns in payload order); the card takes the newest turn's
+    title, turn count, kind label and the failed-turn chip."""
     rows = [
-        {"session_id": "s1", "title": "  Demo  ", "turn_index": 1,
-         "started_at": "2026-09-08T10:01:00", "ended_at": "2026-09-08T10:01:05",
-         "total_tokens": 30, "latency_ms": 50, "cost_usd": 0.00001},
-        {"session_id": "s1", "title": "Demo", "turn_index": 0,
-         "started_at": "2026-09-08T10:00:00", "ended_at": "2026-09-08T10:00:04",
-         "total_tokens": 24, "latency_ms": 40, "cost_usd": 0.000006},
-        {"session_id": "s2", "title": "Older", "turn_index": 0,
-         "started_at": "2026-09-07T09:00:00", "ended_at": "2026-09-07T09:00:02",
-         "total_tokens": 10, "latency_ms": 20, "cost_usd": None},
-        {"title": "no session", "turn_index": 0},
+        {"session_id": "g1", "turn_index": 2, "title": "Nhóm",
+         "started_at": "2026-09-08T10:02:00", "status": "failed",
+         "session_kind": "group", "session_bots": ["a", "b"]},
+        {"session_id": "g1", "turn_index": 0, "title": "Nhóm",
+         "started_at": "2026-09-08T10:00:00", "status": "completed",
+         "session_kind": "group", "session_bots": ["a", "b"]},
+        {"session_id": "d1", "turn_index": 0, "title": "DM",
+         "started_at": "2026-09-07T09:00:00", "status": "completed",
+         "session_kind": "dm", "session_dm": "a"},
     ]
-    groups = _eval(node, f"groupTraceTurns({json.dumps(rows)})")
-    assert [g["sessionId"] for g in groups] == ["s1", "s2"]
-    first = groups[0]
-    assert first["title"] == "Demo"
-    assert [t["turn_index"] for t in first["turns"]] == [0, 1]
-    assert first["totalTokens"] == 54
-    assert first["latencyMs"] == 90
-    assert first["costUsd"] == pytest.approx(0.000016)
-    assert groups[1]["costUsd"] is None
-
-
-def test_token_cost_prices_per_million(node: str) -> None:
-    assert _eval(node, "tokenCost(1000000, 2.5)") == pytest.approx(2.5)
-    assert _eval(node, "tokenCost(500000, 10)") == pytest.approx(5.0)
-    assert _eval(node, "tokenCost('x', 2.5)") is None
-    assert _eval(node, "tokenCost(100, undefined)") is None
-    # NOTE: Number(null) === 0 nên rate null cho ra 0, không phải null.
-    # Trường hợp này không xảy ra thực tế (thiếu giá → undefined → null).
-
-
-def test_selected_model_config_prefers_models_over_pricing(node: str) -> None:
-    values = {
-        "models": {"gpt-4o-mini": {"input": 1, "baseUrl": "https://x"}},
-        "pricing": {"gpt-4o-mini": {"input": 2}},
-    }
-    assert _eval(
-        node, f"selectedModelConfig({json.dumps(values)}, 'gpt-4o-mini')"
-    ) == {"input": 1, "baseUrl": "https://x"}
-    assert (
-        _eval(node, "selectedModelConfig({pricing: {m: {input: 2}}}, 'm')")
-        == {"input": 2}
+    out = _eval_trace(
+        node,
+        f"tr.rows = {json.dumps(rows)};\n"
+        "const gs = sessionGroups();\n"
+        "console.log(JSON.stringify({"
+        " ids: gs.map((g) => g.sid),"
+        " turnOrder: gs[0].turns.map((t) => t.turn_index),"
+        " card: sessionCardHtml(gs[0]) }))",
     )
-    assert _eval(node, "selectedModelConfig({}, 'unknown')") is None
+    assert out["ids"] == ["g1", "d1"]
+    # Payload order is kept (newest first) — the API already sorted.
+    assert out["turnOrder"] == [2, 0]
+    card = out["card"]
+    assert "<h2" in card and "Nhóm" in card
+    assert "2 lượt" in card
+    assert "Hội thoại chung" in card
+    assert "1 lượt lỗi" in card  # failed-turn chip from the group's turns
 
 
-def test_first_and_final_text(node: str) -> None:
+def test_session_card_kind_dm_and_seals(node: str) -> None:
+    """DM sessions read 'Trò chuyện riêng'; seals come from the union of
+    session_bots/breakdown/bot_id/session_dm, capped at 3 + '+N'."""
+    rows = [
+        {"session_id": "d1", "turn_index": 0, "title": "DM",
+         "started_at": "2026-09-07T09:00:00", "status": "completed",
+         "session_kind": "dm", "session_dm": "coder"},
+        {"session_id": "g", "turn_index": 0, "title": "G",
+         "started_at": "2026-09-08T09:00:00", "status": "completed",
+         "session_kind": "group",
+         "session_bots": ["a", "b", "c", "d"]},
+    ]
+    out = _eval_trace(
+        node,
+        f"tr.rows = {json.dumps(rows)};\n"
+        "const gs = sessionGroups();\n"
+        "console.log(JSON.stringify({"
+        " dm: sessionCardHtml(gs[0]), grp: sessionCardHtml(gs[1]),"
+        " ids: groupBotIds(gs[1]) }))",
+    )
+    assert "Trò chuyện riêng" in out["dm"]
+    assert out["ids"] == ["a", "b", "c", "d"]
+    assert "+1" in out["grp"]               # 4 ids → 3 seals + '+1'
+    assert 'class="tl-botid"' in out["dm"]  # no roster → id chip fallback
+
+
+def test_first_user_and_final_assistant_render_in_order(node: str) -> None:
+    """The first user message and the final assistant reply both land in
+    the timeline, in order — the journal needs no separate IO block."""
     detail = {
         "messages": [
             {"role": "assistant", "content": "first assistant"},
@@ -314,8 +390,38 @@ def test_first_and_final_text(node: str) -> None:
             {"role": "assistant", "content": "final answer"},
         ]
     }
-    assert _eval(node, f"firstUserText({json.dumps(detail)})") == "hello"
-    assert _eval(node, f"finalAssistantText({json.dumps(detail)})") == "final answer"
-    assert _eval(node, "firstUserText({messages: []})") == (
-        "Không có nội dung user trong trace."
-    )
+    html = _eval_trace(node, f"console.log(JSON.stringify(timelineHtml({json.dumps(detail)})))")
+    assert "hello" in html and "first assistant" in html
+    assert "final answer" in html
+    assert html.index("hello") < html.index("final answer")
+    # The whitespace-only assistant message still keeps its item shell.
+    assert html.count("tl-item-assistant") == 3
+
+
+def test_empty_or_missing_messages(node: str) -> None:
+    """A turn that recorded no messages renders the explicit empty note —
+    never a blank page or a crash."""
+    for expr in ("timelineHtml({})", "timelineHtml({messages: []})",
+                 "timelineHtml({messages: null})"):
+        html = _eval_trace(node, f"console.log(JSON.stringify({expr}))")
+        assert "Lượt này không ghi message nào" in html
+
+
+def test_reasoning_folds_encrypted_and_text_parts(node: str) -> None:
+    """reasoning + reasoning_details collapse into one 'Suy nghĩ' fold;
+    encrypted parts keep a marker, text/summary parts join verbatim."""
+    detail = {
+        "messages": [
+            {"role": "assistant", "content": "answer",
+             "reasoning": "thought one",
+             "reasoning_details": [
+                 {"type": "reasoning.text", "text": "thought two"},
+                 {"type": "reasoning.summary", "summary": "recap"},
+                 {"type": "reasoning.encrypted"},
+             ]},
+        ]
+    }
+    html = _eval_trace(node, f"console.log(JSON.stringify(timelineHtml({json.dumps(detail)})))")
+    assert '<details class="tl-reason"><summary>Suy nghĩ</summary>' in html
+    assert "thought one" in html and "thought two" in html and "recap" in html
+    assert "(đoạn suy nghĩ đã mã hoá)" in html

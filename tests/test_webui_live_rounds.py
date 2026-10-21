@@ -1,8 +1,15 @@
-"""Execute the live thinking panel across LLM rounds with real modules.
+"""Live turn across LLM rounds — webui/ui/chat/js/chat.js handleStreamEvent.
 
-Each LLM round keeps its own usage row after its reply text (tools execute
-after think), like the settled transcript: note, reply, usage per round.
-A re-follow rebuilds segments instead of duplicating them.
+The old live-view modules (chat-view.js live status panel, per-round thinking
+segments and usage rows on the message) are gone with the UI rebuild. Live
+activity now streams onto the bot card's pocket feed: consecutive thinking
+rounds fold in place into "ThinkingxN" (only while the think line is still
+the feed's last entry), each tool block after a think/write row opens its
+own 'đã dùng …' line, and reply text accumulates in a single .stream-text
+node on the live message (markdown re-rendered at llm.finished boundaries).
+The stored transcript (renderTranscript) keeps one article per assistant
+message with a 'Đã dùng: …' usage pill — reasoning is not rendered there
+by design.
 """
 from __future__ import annotations
 
@@ -15,129 +22,151 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
+_TUI_TAIL = """return {
+  handleStreamEvent, sendTurn, followRunningTurn, finishTurn, cancelTurn,
+  renderTranscript, updateCard, card, normalizeBot, getBot, refreshSessions,
+  readNdjson, busy, runs, bots, groups,
+  get currentSession() { return currentSession; },
+  set currentSession(v) { currentSession = v; },
+  get selectedBot() { return selectedBot; },
+  set selectedBot(v) { selectedBot = v; },
+};"""
+
 _SCRIPT = r"""
-import assert from 'node:assert/strict';
+import { installDom, loadScripts, CHAT_CHAIN } from './tests/webui_dom.mjs';
+const doc = installDom();
+const ui = loadScripts(CHAT_CHAIN, TAIL);
+const result = {};
+const settle = async () => { for (let i = 0; i < 6; i++) await new Promise(r => setImmediate(r)); };
 
-class Element {
-  constructor(tag = 'div') {
-    this.tag = tag;
-    this.children = [];
-    this.parentNode = null;
-    this.dataset = {};
-    this.attributes = {};
-    this.className = '';
-    this.style = { setProperty: () => {}, getPropertyValue: () => '' };
-    this.text = '';
-    this.classList = {
-      contains: name => this.className.split(' ').includes(name),
-      add: (...names) => {
-        this.className = [...new Set([...this.className.split(' '), ...names])].join(' ');
-      },
-      remove: (...names) => {
-        this.className = this.className.split(' ').filter(name => !names.includes(name)).join(' ');
-      },
-      toggle: (name, force) => {
-        if (force ?? !this.classList.contains(name)) this.classList.add(name);
-        else this.classList.remove(name);
-      },
-    };
-  }
-  get isConnected() { return Boolean(this.root || this.parentNode?.isConnected); }
-  remove() {
-    if (this.parentNode) {
-      this.parentNode.children = this.parentNode.children.filter(node => node !== this);
-    }
-    this.parentNode = null;
-  }
-  append(...nodes) {
-    for (const node of nodes) {
-      node.remove();
-      node.parentNode = this;
-      this.children.push(node);
-    }
-  }
-  prepend(...nodes) {
-    for (const node of [...nodes].reverse()) {
-      node.remove();
-      node.parentNode = this;
-      this.children.unshift(node);
-    }
-  }
-  replaceChildren(...nodes) {
-    for (const node of [...this.children]) node.remove();
-    this.text = '';
-    this.append(...nodes);
-  }
-  set textContent(value) { this.replaceChildren(); this.text = String(value); }
-  get textContent() { return this.text + this.children.map(node => node.textContent).join(''); }
-  setAttribute(key, value) { this.attributes[key] = String(value); }
-  getAttribute(key) { return this.attributes[key] ?? null; }
-  querySelectorAll(selector) {
-    const matches = node => selector.startsWith('.')
-      ? node.classList.contains(selector.slice(1)) : node.tag === selector;
-    return this.children.flatMap(node => [
-      ...(matches(node) ? [node] : []), ...node.querySelectorAll(selector),
-    ]);
-  }
-  querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
-  addEventListener() {}
-  scrollTo() {}
-}
-globalThis.document = {
-  createElement: tag => new Element(tag),
-  createElementNS: (_namespace, tag) => new Element(tag),
-  createTextNode: text => {
-    const node = new Element('#text');
-    node.text = String(text);
-    return node;
-  },
-  querySelector: () => { const node = new Element(); node.root = true; return node; },
+ui.bots.push(ui.normalizeBot({ id: 'thyca', name: 'Thyca', role: 'bạn', agent_status: { state: 'idle' } }, 0));
+doc.querySelector('#team-bot-list').innerHTML = ui.bots.map(ui.card).join('');
+ui.updateCard(ui.bots[0]);
+const b = ui.bots[0];
+ui.selectedBot = 'thyca';
+ui.currentSession = 's1';
+globalThis.fetch = async (url) => {
+  if (url === '/api/sessions') return { ok: true, json: async () => ({ sessions: [] }) };
+  return { ok: false, status: 404, json: async () => ({ error: 'no route ' + url }) };
 };
-globalThis.requestAnimationFrame = callback => callback();
-const intervals = new Map();
-let serial = 0;
-globalThis.setInterval = callback => { intervals.set(++serial, callback); return serial; };
-globalThis.clearInterval = id => intervals.delete(id);
 
-const view = await import('./thyca/webui/pages/chat/chat-view.js');
-const host = new Element(); host.root = true;
-const live = view.createLiveStatus(host, Date.now() - 12000);
-const segments = () => live.notes.map(note => ({
-  text: note.body.querySelector('.thought-output').textContent,
-  caretSettled: note.body.querySelector('.streaming-caret')?.hidden === true,
-}));
-const usage = () => [...live.notesWrap.querySelectorAll('.usage-row')].map(node =>
-  `${node.querySelector('.usage-label').textContent} ${node.querySelector('.usage-row-body').textContent}`);
-const order = () => [...live.notesWrap.children].map(node =>
-  node.classList.contains('thinking-note') ? 'note'
-  : node.classList.contains('usage-row') ? 'usage'
-  : node.classList.contains('reply-live') ? 'reply' : node.tag);
+const feed = () => b.feed.filter(f => !f.exiting).map(f => ({ kind: f.kind, text: f.text, done: !!f.done }));
+const node = doc.createElement('article');
+node.innerHTML = `<header class="message-byline"><span>Thyca</span><time>đang lắng nghe</time></header><div class="live-copy"></div>`;
+doc.querySelector('#message-list').append(node);
+const token = { botId: 'thyca', sessionId: 's1', start: Date.now(), node, phase: 'waiting', timers: [], tools: [] };
+ui.runs.set('s1', token);
+const fire = (ev) => ui.handleStreamEvent(token, ev);
+const streamText = () => node.querySelector('.stream-text')?.textContent ?? null;
+const streamNodes = () => node.querySelectorAll('.stream-text').length;
 
-view.updateLiveStatus(live, { type: 'llm.started', round: 1 });
-view.updateLiveStatus(live, { type: 'llm.thinking', round: 1, delta: 'round one ' });
-view.updateLiveStatus(live, { type: 'llm.thinking', round: 1, delta: 'thoughts' });
-view.updateLiveStatus(live, { type: 'llm.content', round: 1, delta: 'Xin ' });
-view.updateLiveStatus(live, { type: 'llm.content', round: 1, delta: 'chào' });
-view.updateLiveStatus(live, { type: 'tool.started', name: 'bash', call_id: 'b1' });
-view.updateLiveStatus(live, { type: 'tool.finished', name: 'bash', call_id: 'b1' });
-const afterRound1 = { segments: segments(), usage: usage(), order: order() };
-const replyTexts = () => [...live.notesWrap.querySelectorAll('.reply-live')].map(n => n.textContent);
+// Round 1: think then reply — both feed lines stay open while the round runs.
+fire({ type: 'turn.accepted' });
+fire({ type: 'llm.started', round: 1 });
+fire({ type: 'llm.thinking', round: 1, delta: 'round one ' });
+fire({ type: 'llm.thinking', round: 1, delta: 'thoughts' });
+fire({ type: 'llm.content', round: 1, delta: 'Xin ' });
+fire({ type: 'llm.content', round: 1, delta: 'chào' });
+result.midWrite = { feed: feed(), streamText: streamText(), streamNodes: streamNodes() };
+fire({ type: 'llm.finished', round: 1 });
+result.afterRound1 = { feed: feed() };
 
-view.updateLiveStatus(live, { type: 'llm.started', round: 2 });
-const atRound2Start = { segments: segments(), usage: usage(), order: order(), replies: replyTexts() };
-view.updateLiveStatus(live, { type: 'llm.thinking', round: 2, delta: 'round two' });
-view.updateLiveStatus(live, { type: 'llm.content', round: 2, delta: 'round two reply' });
-const afterRound2 = { segments: segments(), usage: usage(), order: order(), replies: replyTexts() };
-view.updateLiveStatus(live, { type: 'tool.started', name: 'read', call_id: 'r2' });
-view.updateLiveStatus(live, { type: 'tool.finished', name: 'read', call_id: 'r2' });
-const afterRound2Tools = { segments: segments(), usage: usage(), order: order(), replies: replyTexts() };
+// Tool block after the reply: its own 'đã dùng' line.
+fire({ type: 'tool.started', name: 'bash', call_id: 'b1' });
+fire({ type: 'tool.finished', name: 'bash', call_id: 'b1' });
+result.afterTools1 = { feed: feed() };
 
-view.updateLiveStatus(live, { type: 'turn.completed' });
-const afterCompleted = segments();
+// Round 2 thinks only — a fresh think line is pushed after the tools row.
+fire({ type: 'llm.started', round: 2 });
+fire({ type: 'llm.thinking', round: 2, delta: 'round two' });
+fire({ type: 'llm.finished', round: 2 });
+result.afterRound2 = { feed: feed() };
 
-view.resetLiveStatus(live, live.startedAt);
-const afterRefollowReset = segments();
-console.log(JSON.stringify({ afterRound1, atRound2Start, afterRound2, afterRound2Tools, afterCompleted, afterRefollowReset }));
+// Round 3 thinks again with nothing pushed between: the last think line
+// folds in place into Thinkingx2, then content shares the one .stream-text.
+fire({ type: 'llm.started', round: 3 });
+fire({ type: 'llm.thinking', round: 3, delta: 'round three' });
+result.round3Think = { feed: feed() };
+fire({ type: 'llm.content', round: 3, delta: 'round three reply' });
+result.round3Write = { feed: feed(), streamText: streamText(), streamNodes: streamNodes() };
+fire({ type: 'llm.finished', round: 3 });
+fire({ type: 'tool.started', name: 'read', call_id: 'r3' });
+fire({ type: 'tool.finished', name: 'read', call_id: 'r3' });
+result.finalFeed = { feed: feed() };
+
+fire({ type: 'turn.completed', detail: { id: 's1', running: false, messages: [
+  { role: 'assistant', content: 'done s1', meta: { bot_id: 'thyca' } },
+] } });
+await settle();
+result.afterCompleted = {
+  feed: feed(),
+  listHasDone: doc.querySelector('#message-list').textContent.includes('done s1'),
+  tracked: ui.runs.has('s1'),
+};
+
+// --- re-follow: the replay stream builds one fresh live node, deltas apply
+//     once, and the stored transcript swaps in at turn.completed ---
+ui.currentSession = 's2';
+const queue = [];
+let waiter = null;
+const reader = { read: () => new Promise(resolve => {
+  if (queue.length) resolve(queue.shift()); else waiter = resolve;
+}) };
+const push = (line) => {
+  const chunk = line === null ? { done: true } : { done: false, value: new TextEncoder().encode(line) };
+  if (waiter) { const w = waiter; waiter = null; w(chunk); } else queue.push(chunk);
+};
+globalThis.fetch = async (url) => {
+  if (url.endsWith('/turn/stream')) return { ok: true, status: 200, body: { getReader: () => reader } };
+  if (url === '/api/sessions') return { ok: true, json: async () => ({ sessions: [] }) };
+  return { ok: true, json: async () => ({ id: 's2', running: false, messages: [] }) };
+};
+ui.followRunningTurn('s2');
+await settle();
+push(JSON.stringify({ type: 'turn.accepted' }) + '\n');
+push(JSON.stringify({ type: 'llm.content', delta: 'replay-one' }) + '\n');
+await settle();
+const followNode = doc.querySelector('#message-list .running-response');
+result.refollowMid = {
+  liveNodes: doc.querySelectorAll('#message-list .running-response').length,
+  streamNodes: followNode?.querySelectorAll('.stream-text').length ?? -1,
+  streamText: followNode?.querySelector('.stream-text')?.textContent ?? null,
+};
+push(JSON.stringify({ type: 'turn.completed', detail: { id: 's2', running: false,
+  messages: [{ role: 'assistant', content: 'replay-one', meta: { bot_id: 'thyca' } }] } }) + '\n');
+push(null);
+await settle();
+const listText = doc.querySelector('#message-list').textContent;
+result.refollowDone = {
+  liveNodes: doc.querySelectorAll('#message-list .running-response').length,
+  occurrences: listText.split('replay-one').length - 1,
+  tracked: ui.runs.has('s2'),
+};
+
+// --- stored transcript: one article per assistant message, usage pill per
+//     message's tool_calls; reasoning/system/tool/kind-filtered entries out ---
+const detail = { messages: [
+  { role: 'system', content: 'sys' },
+  { role: 'user', content: 'hỏi thời tiết' },
+  { role: 'assistant', reasoning: 'User wants sequential: search, reply, check.',
+    tool_calls: [{ name: 'tavily-search__web_search' }] },
+  { role: 'assistant', tool_calls: [{ name: 'bash' }] },
+  { role: 'assistant', content: 'Search xong rồi. Vài tin hôm nay:', meta: { bot_id: 'thyca' } },
+  { role: 'assistant', tool_calls: [{ name: 'bash' }] },
+  { role: 'assistant', content: 'Nhiệt độ: 45°C — vẫn mát.', meta: { bot_id: 'thyca' } },
+  { role: 'assistant', content: 'internal', meta: { kind: 'naming', bot_id: 'thyca' } },
+  { role: 'tool', content: 'tool out' },
+] };
+doc.querySelector('#message-list').innerHTML = ui.renderTranscript(detail);
+const articles = [...doc.querySelectorAll('#message-list .message-assistant')];
+result.transcript = {
+  users: doc.querySelectorAll('#message-list .message-user').length,
+  assistants: articles.length,
+  pills: articles.map(a => a.querySelector('.usage-pill')?.textContent.trim() ?? null),
+  copies: articles.map(a => a.querySelector('.live-copy')?.textContent ?? null),
+  hasReasoning: doc.querySelector('#message-list').textContent.includes('User wants sequential'),
+};
+console.log(JSON.stringify(result));
 """
 
 
@@ -146,206 +175,95 @@ def rounds() -> dict:
     node = shutil.which("node")
     if not node:
         pytest.skip("node not installed")
+    script = _SCRIPT.replace("TAIL", json.dumps(_TUI_TAIL))
     result = subprocess.run(
-        [node, "--input-type=module", "-e", _SCRIPT],
+        [node, "--input-type=module", "-e", script],
         cwd=ROOT, check=True, capture_output=True, text=True, timeout=10,
     )
     return json.loads(result.stdout)
 
 
-def test_round_one_streams_and_keeps_tool_line(rounds: dict) -> None:
-    assert rounds["afterRound1"] == {
-        "segments": [{"text": "round one thoughts", "caretSettled": False}],
-        "usage": ["Đã dùng: bash x1"],
-        "order": ["note", "reply", "usage"],
-    }
-
-
-def test_round_two_adds_a_segment_and_keeps_the_previous(rounds: dict) -> None:
-    assert rounds["atRound2Start"] == {
-        "segments": [
-            {"text": "round one thoughts", "caretSettled": True},
-            {"text": "", "caretSettled": False},
-        ],
-        "usage": ["Đã dùng: bash x1"],
-        "order": ["note", "reply", "usage", "note"],
-        "replies": ["Xin chào"],
-    }
-    assert rounds["afterRound2"] == {
-        "segments": [
-            {"text": "round one thoughts", "caretSettled": True},
-            {"text": "round two", "caretSettled": False},
-        ],
-        "usage": ["Đã dùng: bash x1"],
-        "order": ["note", "reply", "usage", "note", "reply"],
-        "replies": ["Xin chào", "round two reply"],
-    }
-
-
-def test_each_round_keeps_its_own_tool_line(rounds: dict) -> None:
-    assert rounds["afterRound2Tools"] == {
-        "segments": [
-            {"text": "round one thoughts", "caretSettled": True},
-            {"text": "round two", "caretSettled": False},
-        ],
-        "usage": ["Đã dùng: bash x1", "Đã dùng: read x1"],
-        "order": ["note", "reply", "usage", "note", "reply", "usage"],
-        "replies": ["Xin chào", "round two reply"],
-    }
-
-
-def test_completion_settles_every_segment(rounds: dict) -> None:
-    assert all(segment["caretSettled"] for segment in rounds["afterCompleted"])
-
-
-def test_refollow_rebuilds_segments_instead_of_duplicating(rounds: dict) -> None:
-    assert rounds["afterRefollowReset"] == [
-        {"text": "", "caretSettled": False},
+def test_round_one_streams_think_and_reply(rounds: dict) -> None:
+    """While the round runs the think/write lines stay open; llm.finished
+    settles them ('đang viết' -> 'đã gửi phản hồi')."""
+    assert rounds["midWrite"]["feed"] == [
+        {"kind": "think", "text": "Thinking", "done": False},
+        {"kind": "write", "text": "đang viết phản hồi", "done": False},
+    ]
+    assert rounds["midWrite"]["streamText"] == "Xin chào"
+    assert rounds["midWrite"]["streamNodes"] == 1
+    assert rounds["afterRound1"]["feed"] == [
+        {"kind": "think", "text": "Thinking", "done": True},
+        {"kind": "write", "text": "đã gửi phản hồi", "done": True},
     ]
 
 
-_FOLD_SCRIPT = r"""
-import assert from 'node:assert/strict';
-
-class Element {
-  constructor(tag = 'div') {
-    this.tag = tag;
-    this.children = [];
-    this.parentNode = null;
-    this.dataset = {};
-    this.attributes = {};
-    this.className = '';
-    this.style = { setProperty: () => {}, getPropertyValue: () => '' };
-    this.text = '';
-    this.classList = {
-      contains: name => this.className.split(' ').includes(name),
-      add: (...names) => {
-        this.className = [...new Set([...this.className.split(' '), ...names])].join(' ');
-      },
-      remove: (...names) => {
-        this.className = this.className.split(' ').filter(name => !names.includes(name)).join(' ');
-      },
-      toggle: (name, force) => {
-        if (force ?? !this.classList.contains(name)) this.classList.add(name);
-        else this.classList.remove(name);
-      },
-    };
-  }
-  get isConnected() { return Boolean(this.root || this.parentNode?.isConnected); }
-  remove() {
-    if (this.parentNode) {
-      this.parentNode.children = this.parentNode.children.filter(node => node !== this);
+def test_tool_block_after_reply_gets_its_own_line(rounds: dict) -> None:
+    assert rounds["afterTools1"]["feed"][-1] == {
+        "kind": "tools", "text": "đã dùng bash", "done": True,
     }
-    this.parentNode = null;
-  }
-  append(...nodes) {
-    for (const node of nodes) {
-      node.remove();
-      node.parentNode = this;
-      this.children.push(node);
+    assert len(rounds["afterTools1"]["feed"]) == 3
+
+
+def test_consecutive_thinking_rounds_fold_in_place(rounds: dict) -> None:
+    """A think line after the tools row is fresh; the next thinking round
+    (nothing pushed between) folds it into Thinkingx2."""
+    assert rounds["afterRound2"]["feed"][-1] == {
+        "kind": "think", "text": "Thinking", "done": True,
     }
-  }
-  prepend(...nodes) {
-    for (const node of [...nodes].reverse()) {
-      node.remove();
-      node.parentNode = this;
-      this.children.unshift(node);
+    assert rounds["round3Think"]["feed"][-1] == {
+        "kind": "think", "text": "Thinkingx2", "done": False,
     }
-  }
-  replaceChildren(...nodes) {
-    for (const node of [...this.children]) node.remove();
-    this.text = '';
-    this.append(...nodes);
-  }
-  set textContent(value) { this.replaceChildren(); this.text = String(value); }
-  get textContent() { return this.text + this.children.map(node => node.textContent).join(''); }
-  setAttribute(key, value) { this.attributes[key] = String(value); }
-  getAttribute(key) { return this.attributes[key] ?? null; }
-  querySelectorAll(selector) {
-    const matches = node => selector.startsWith('.')
-      ? node.classList.contains(selector.slice(1)) : node.tag === selector;
-    return this.children.flatMap(node => [
-      ...(matches(node) ? [node] : []), ...node.querySelectorAll(selector),
-    ]);
-  }
-  querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
-  addEventListener() {}
-  scrollTo() {}
-}
-globalThis.document = {
-  createElement: tag => new Element(tag),
-  createElementNS: (_namespace, tag) => new Element(tag),
-  createTextNode: text => {
-    const node = new Element('#text');
-    node.text = String(text);
-    return node;
-  },
-  querySelector: () => { const node = new Element(); node.root = true; return node; },
-};
-
-const view = await import('./thyca/webui/pages/chat/chat-view.js');
-// Same shape as the reported turn: think+search, then a silent bash round,
-// content, another silent bash round, content.
-const messages = [
-  { role: 'assistant', reasoning: 'User wants sequential: search, reply, check.',
-    tool_calls: [{ name: 'tavily-search__web_search' }] },
-  { role: 'assistant', tool_calls: [{ name: 'bash' }] },
-  { role: 'assistant', content: 'Search xong rồi. Vài tin hôm nay:' },
-  { role: 'assistant', tool_calls: [{ name: 'bash' }] },
-  { role: 'assistant', content: 'Nhiệt độ: 45°C — vẫn mát.' },
-];
-const root = new Element(); root.root = true;
-view.renderConversation(root, messages);
-const notes = [...root.querySelectorAll('.thinking-note')];
-const article = root.querySelector('.message-assistant');
-console.log(JSON.stringify({
-  notes: notes.map(note => ({
-    text: note.querySelector('.thought-output')?.textContent ?? '',
-    hidden: note.hidden === true,
-  })),
-  usageRows: root.querySelectorAll('.usage-row').map(node => ({
-    label: node.querySelector('.usage-label')?.textContent ?? '',
-    body: node.querySelector('.usage-row-body')?.textContent ?? '',
-  })),
-  contentCount: root.querySelectorAll('.live-copy').length,
-  order: [...article.children].map(node =>
-    node.classList.contains('thinking-note') ? 'note'
-    : node.classList.contains('usage-row') ? 'usage'
-    : node.classList.contains('live-copy') ? 'content' : node.tag),
-}));
-"""
 
 
-@pytest.fixture(scope="module")
-def folded() -> dict:
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node not installed")
-    result = subprocess.run(
-        [node, "--input-type=module", "-e", _FOLD_SCRIPT],
-        cwd=ROOT, check=True, capture_output=True, text=True, timeout=10,
-    )
-    return json.loads(result.stdout)
+def test_round_two_shares_the_same_stream_text(rounds: dict) -> None:
+    assert rounds["round3Write"]["streamText"] == "Xin chàoround three reply"
+    assert rounds["round3Write"]["streamNodes"] == 1
+    assert rounds["round3Write"]["feed"][-1] == {
+        "kind": "write", "text": "đang viết phản hồi", "done": False,
+    }
 
 
-def test_silent_tool_rounds_fold_into_the_previous_thinking_line(folded: dict) -> None:
-    assert folded["notes"] == [
-        {"text": "User wants sequential: search, reply, check.", "hidden": False},
+def test_each_tool_block_keeps_its_own_line(rounds: dict) -> None:
+    """The read call opens a fresh tools line below the new think/write rows
+    instead of folding into round 1's bash line. The pocket feed windows to
+    the last three entries — the older bash line has already exited."""
+    assert rounds["finalFeed"]["feed"] == [
+        {"kind": "think", "text": "Thinkingx2", "done": True},
+        {"kind": "write", "text": "đã gửi phản hồi", "done": True},
+        {"kind": "tools", "text": "đã dùng read", "done": True},
     ]
-    assert folded["usageRows"] == [
-        {"label": "Đã dùng:", "body": "tavily-search__web_search x1, bash x1"},
-        {"label": "Đã dùng:", "body": "bash x1"},
-    ]
-    assert folded["contentCount"] == 2
 
 
-def test_tool_line_after_content_stays_attached_to_that_content(folded: dict) -> None:
-    assert folded["order"] == [
-        "header",
-        "note",
-        "usage",
-        "content",
-        "content",
-        "usage",
-        "footer",
+def test_completion_settles_feed_and_swaps_in_transcript(rounds: dict) -> None:
+    feed = rounds["afterCompleted"]["feed"]
+    assert feed and all(entry["done"] for entry in feed)
+    assert rounds["afterCompleted"]["listHasDone"] is True
+    assert rounds["afterCompleted"]["tracked"] is False
+
+
+def test_refollow_rebuilds_live_node_without_duplicating(rounds: dict) -> None:
+    mid = rounds["refollowMid"]
+    assert mid["liveNodes"] == 1
+    assert mid["streamNodes"] == 1
+    assert mid["streamText"] == "replay-one"
+    done = rounds["refollowDone"]
+    assert done["liveNodes"] == 0
+    assert done["occurrences"] == 1  # only the stored transcript shows it
+    assert done["tracked"] is False
+
+
+def test_transcript_renders_articles_and_tool_pills(rounds: dict) -> None:
+    assert rounds["transcript"]["users"] == 1
+    assert rounds["transcript"]["assistants"] == 5
+    assert rounds["transcript"]["pills"] == [
+        "Đã dùng: tavily-search__web_search",
+        "Đã dùng: bash",
+        None,
+        "Đã dùng: bash",
+        None,
     ]
+    assert rounds["transcript"]["copies"][2] == "Search xong rồi. Vài tin hôm nay:"
+    assert rounds["transcript"]["copies"][4] == "Nhiệt độ: 45°C — vẫn mát."
+    # Reasoning is a live-card concern; the stored transcript drops it.
+    assert rounds["transcript"]["hasReasoning"] is False

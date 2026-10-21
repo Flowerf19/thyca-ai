@@ -1,0 +1,84 @@
+/* Shared base: tokens, reset, shell chrome, header, dialogs, toast. */
+:root{--paper:#fbf5e8;--paper-deep:#f0e7d4;--ink:#3c372c;--muted:#877d69;--line:#d9ccb4;--forest:#315d4c;--rust:#aa5638;--sidebar-width:374px;--serif:'Thyca Serif',Georgia,'Times New Roman',serif;--sans:'Thyca Sans',Arial,sans-serif;--shadow:0 6px 22px #5140240c,0 1px 3px #5b483016}
+*{box-sizing:border-box}
+body{margin:0;background:#e9dfcb;color:var(--ink);font:14px var(--sans);height:100dvh;overflow:hidden}
+button,input,textarea,select{font:inherit}
+button{cursor:pointer;color:inherit}
+button:disabled{cursor:not-allowed;opacity:.45}
+button,select{touch-action:manipulation}
+button{border:0;background:none}
+a{color:inherit}
+svg.icon{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--forest);outline-offset:4px}
+button:hover{filter:brightness(.97)}
+[hidden]{display:none!important}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+.notebook-shell{height:calc(100dvh - 28px);margin:14px;border-radius:24px;background:radial-gradient(ellipse at 90% 10%,#fef9ee 0,transparent 45%),#f5eddd;border:1px solid #fffc;box-shadow:0 12px 48px #574b3120;display:grid;grid-template-rows:47px minmax(0,1fr);overflow:hidden;position:relative}
+.site-header{display:flex;align-items:center;justify-content:space-between;padding:0 23px;color:var(--muted);gap:18px}
+.header-left,.header-right{display:flex;align-items:center;gap:14px}
+.wordmark{font:italic 22px var(--serif);color:var(--forest);letter-spacing:-.7px}
+.header-rule{width:28px;height:1px;background:var(--line)}
+.site-kicker{font-size:10px;letter-spacing:1.9px;text-transform:uppercase}
+.prototype-badge{font-size:10px;letter-spacing:.3px;background:#eee5d2;border-radius:20px;padding:5px 9px}
+.prototype-badge:before{content:'';display:inline-block;background:#9a966d;width:5px;height:5px;border-radius:50%;margin-right:6px}
+/* Header page nav — shared chrome rendered from util.js on every page,
+   so its styles live here next to .site-header, not in app-shell. */
+.page-links{display:flex;gap:2px}
+.page-links a{font-size:12px;color:var(--muted);text-decoration:none;padding:5px 10px;border-radius:7px;white-space:nowrap}
+.page-links a:hover{color:var(--ink);background:#f3ead6}
+.page-links a.is-current{color:var(--forest);font-weight:600;background:#eef0e2;box-shadow:inset 0 0 0 1px #cfd8bf}
+.icon-button{width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;border-radius:8px;color:var(--muted)}
+.icon-button:hover{background:#b7a47a16}
+.main-grid{display:grid;grid-template-columns:var(--sidebar-width) 12px minmax(0,1fr);padding:0 12px 12px;min-height:0;gap:0}
+.dots{display:inline-flex;gap:4px;align-items:center;flex-shrink:0}
+.dots i{width:4px;height:4px;border-radius:50%;background:currentColor;display:block;opacity:.65}
+.dots i:nth-child(2){animation-delay:.22s!important}
+.dots i:nth-child(3){animation-delay:.44s!important}
+.splitter{position:relative;cursor:col-resize;touch-action:none;border-radius:8px}
+.splitter:after{content:'';position:absolute;width:2px;height:32px;left:5px;top:48%;border-radius:2px;background:#c7b79a;opacity:.55}
+.splitter:hover:after,.splitter:focus-visible:after{height:60px;background:var(--forest);opacity:1}
+.resizing{cursor:col-resize;user-select:none}
+/* Original wax-seal SVGs from the supplied prototype. All four source states
+   are supported. The upload did not include shared/css/bot-avatar.css;
+   these self-contained styles implement its named visual parts. */
+.screen-dialog{padding:0;border:1px solid #cfbea0;border-radius:17px;color:var(--ink);background:#fbf5e8;box-shadow:0 20px 70px #30291b40;width:min(740px,calc(100vw - 32px));max-height:calc(100dvh - 48px);overflow:auto}
+.screen-dialog::backdrop{background:#3e372e55;backdrop-filter:blur(5px)}
+.dialog-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;padding:25px 27px 18px;border-bottom:1px solid var(--line)}
+.dialog-heading h2{font:500 27px var(--serif);margin:0 0 7px}
+.dialog-heading p{font-size:12px;line-height:1.6;color:var(--muted);margin:0;max-width:510px}
+.dialog-body{padding:24px 27px}
+.dialog-controls{display:flex;align-items:center;gap:12px;margin-bottom:18px;flex-wrap:wrap}
+.dialog-controls label{font-size:12px;color:var(--muted)}
+.dialog-controls select{border:1px solid #cdbd9e;border-radius:6px;padding:6px;background:#fff8e8;color:#62553f}
+.primary-action{background:var(--forest);border-radius:7px;color:#fff5de;padding:11px 17px;font:16px var(--serif)}
+.dialog-actions{display:flex;justify-content:flex-end;margin-top:20px}
+.toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:100;background:#435747;color:#fff9e9;padding:12px 19px;border-radius:10px;box-shadow:var(--shadow);font-size:12px;max-width:90vw;text-align:center}
+.mobile-overlay{position:fixed;inset:0;z-index:10;background:#29261d50;backdrop-filter:blur(3px)}
+.motion-paused *,.motion-paused *:before,.motion-paused *:after{animation-play-state:paused!important}
+@media(min-width:1600px){
+:root{--sidebar-width:400px}
+}
+@media(max-width:1150px){
+:root{--sidebar-width:330px}
+}
+@media(max-width:850px){
+.notebook-shell{margin:8px;height:calc(100dvh - 16px);border-radius:18px}
+.main-grid{grid-template-columns:1fr;padding:0 8px 8px}
+.splitter{display:none}
+.site-header{padding:0 15px}
+.site-kicker{display:none}
+.header-rule{display:none}
+.page-links{display:none}
+.head-actions .icon-button{display:none}
+}
+@media(max-width:520px){
+.notebook-shell{margin:0;height:100dvh;border-radius:0;border:none;grid-template-rows:46px minmax(0,1fr)}
+.main-grid{padding:0 5px 5px}
+.prototype-badge{font-size:9px}
+.dialog-heading{padding:20px}
+.dialog-body{padding:20px}
+.screen-dialog{max-height:calc(100dvh - 24px)}
+}
+@media(prefers-reduced-motion:reduce){
+*,*:before,*:after{animation:none!important;transition:none!important;scroll-behavior:auto!important}
+}

@@ -96,10 +96,20 @@ def collect_turns(chat: ChatApp) -> list[TurnSummary]:
 def _apply_trace_filters(turns: list[TurnSummary], qs: dict) -> list[TurnSummary]:
     model = (qs.get("model", [""])[0] or "").strip()
     status = (qs.get("status", [""])[0] or "").strip()
+    bot = (qs.get("bot_id", [""])[0] or "").strip()
     q = (qs.get("q", [""])[0] or "").strip().lower()
     frm = (qs.get("from", [""])[0] or "").strip()
     to = (qs.get("to", [""])[0] or "").strip()
     filtered = turns
+    if bot:
+        # bot_id is the real attribution (which bot ran the turn). Session
+        # DM/participation only fills in for old turns recorded before
+        # per-turn attribution existed.
+        filtered = [
+            t for t in filtered
+            if (t.bot_id or t.session_dm) == bot
+            or (t.bot_id is None and bot in t.session_bots)
+        ]
     if model and model != "all":
         filtered = [t for t in filtered if (t.model or "unknown") == model]
     if status and status != "all":

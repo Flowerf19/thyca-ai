@@ -1,0 +1,121 @@
+/* Trace page: session/turn picker + per-turn detail timeline.
+   Chrome classes (page-nav, page-scroll, paper-card, field, quiet-button,
+   chip, meta-list, status-line, empty-note, page-status) come from
+   share/app-shell.css; this file only carries trace-local styles. */
+
+/* Fixed page-nav + scrolling body share the workspace height. */
+.trace-shell .workspace{display:flex;flex-direction:column}
+.trace-shell .page-scroll{flex:1;min-height:0}
+
+/* ---------- filter bar ---------- */
+.tl-filters{display:flex;align-items:flex-end;gap:10px 14px;flex-wrap:wrap;margin-bottom:18px;padding:14px 16px}
+.tl-mini{display:inline-flex;flex-direction:column;gap:5px;font-size:11px;color:var(--muted);letter-spacing:.3px}
+.tl-mini input,.tl-mini select{border:1px solid #d1c1a2;border-radius:8px;background:#fff9ea;color:var(--ink);padding:7px 9px;font:12.5px var(--sans);min-width:0}
+.tl-mini input:focus,.tl-mini select:focus{outline:2px solid #56705b66;outline-offset:1px;border-color:#8d9a77}
+.tl-mini.tl-q{flex:1;min-width:180px}
+
+/* ---------- session cards ---------- */
+.tl-sessions{display:grid;gap:14px}
+.tl-session{padding:17px 20px 9px}
+.tl-session-head{display:flex;align-items:flex-start;gap:11px}
+.tl-session-seals{display:flex;flex-shrink:0;align-items:center;padding-top:2px}
+.tl-session-seals .seal-avatar{width:34px;height:34px;margin-left:-8px}
+.tl-session-seals .seal-avatar:first-child{margin-left:0}
+.tl-session-seals .tl-botid{margin-left:-8px;max-width:64px}
+.tl-session-seals .tl-botid:first-child{margin-left:0}
+.tl-session-seals .tl-more-bots{margin-left:5px;font-size:10.5px;color:var(--muted)}
+.tl-session-main{min-width:0;flex:1}
+.tl-session-title{margin:0;font:500 16.5px/1.3 var(--serif);color:#52452f;overflow-wrap:anywhere}
+.tl-session-meta{margin:4px 0 0;font-size:11.5px;color:var(--muted);display:flex;flex-wrap:wrap;gap:3px 0}
+.tl-session-meta>span+span:before{content:'·';margin:0 8px;color:#bcab8d}
+.tl-sid,.tl-mono{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;color:#8a795c}
+
+/* ---------- turn rows inside a session card ---------- */
+.tl-turns{list-style:none;margin:6px 0 0;padding:0}
+.tl-turn{display:flex;align-items:center;gap:12px;width:100%;text-align:left;padding:8px 10px;border:0;border-top:1px dashed #e6dcc4;background:none;font:inherit;color:inherit;cursor:pointer;border-radius:8px}
+.tl-turn:hover,.tl-turn:focus-visible{background:#fff7e4}
+.tl-turn-idx{flex-shrink:0;width:36px;font:600 12px ui-monospace,SFMono-Regular,Menlo,monospace;color:#8a795c}
+.tl-turn-main{flex:1;min-width:0}
+.tl-turn-line{display:flex;align-items:baseline;gap:7px;font-size:13px;color:#4e4230;min-width:0}
+.tl-turn-line b{font-weight:600}
+.tl-turn-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.tl-turn-sub{margin-top:2px;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.tl-turn-sub>span+span:before{content:'·';margin:0 7px;color:#bcab8d}
+
+/* ---------- status chips ---------- */
+.tl-chip{flex:none;display:inline-flex;align-items:center;border-radius:999px;padding:3px 10px;font-size:10.5px;border:1px solid #d7c8ad;background:#f4ecd9;color:#6c5e46;white-space:nowrap}
+.tl-chip.s-ok{border-color:#a8b795;background:#eef2e3;color:#465c3e}
+.tl-chip.s-warn{border-color:#ddc69a;background:#fbf2dc;color:#8a6a2f}
+.tl-chip.s-error{border-color:#d8ac98;background:#fbe9e2;color:#944f3d}
+
+/* ---------- pagination footer ---------- */
+.tl-foot{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:16px}
+.tl-foot .status-line{flex:1}
+
+/* ---------- detail: back + head card ---------- */
+.tl-back{margin-bottom:14px}
+.tl-back .icon{transform:scaleX(-1)}
+.tl-detail-head .eyebrow{display:flex;align-items:center;gap:12px}
+.tl-detail-title{margin:6px 0 14px;font:500 23px/1.25 var(--serif);color:#51432c;overflow-wrap:anywhere}
+.tl-detail-meta{max-width:none}
+.tl-bots{display:inline-flex;flex-wrap:wrap;gap:5px 12px;align-items:center}
+.tl-bot{display:inline-flex;align-items:center;gap:6px}
+.tl-bot .seal-avatar{width:26px;height:26px}
+/* Bot id shown as plain text/chip when the bot is no longer in the roster. */
+.tl-botid{display:inline-flex;align-items:center;height:26px;padding:0 9px;border:1px dashed #d5c6aa;border-radius:8px;background:#f3ebda;font:600 10.5px ui-monospace,SFMono-Regular,Menlo,monospace;color:#8a795c;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tl-error-line{margin:12px 0 0;padding:10px 13px;border:1px solid #e0b6a4;border-radius:9px;background:#fdf0ea;color:#944f3d;font-size:12.5px;line-height:1.55;overflow-wrap:anywhere}
+.tl-error-line b{display:block;font-size:11px;letter-spacing:.5px;text-transform:uppercase}
+
+/* ---------- timeline ---------- */
+.tl-timeline{display:grid;gap:20px;margin-top:20px}
+
+/* user message — same reading as chat's .message-user */
+.tl-item-user{display:flex;justify-content:flex-end}
+.tl-user{max-width:82%;padding:13px 17px 10px;border-radius:14px 14px 3px 14px;background:#eee6d56b;border:1px solid #e2d7c2}
+.tl-user p{margin:0;font:15.5px/1.6 var(--serif);color:#4c4433;white-space:pre-wrap;overflow-wrap:anywhere}
+.tl-user footer{display:flex;justify-content:flex-end;margin-top:7px}
+.tl-user time{font-size:9.5px;color:#a2937a}
+
+/* assistant block — byline like chat's .message-byline */
+.tl-byline{display:flex;align-items:center;gap:9px;font:600 16px var(--serif);color:var(--bot-ink,var(--forest))}
+.tl-byline .seal-avatar{width:34px;height:34px}
+.tl-byline time{color:var(--muted);font:10.5px var(--sans);font-weight:400}
+.tl-byline-meta{font:10.5px var(--sans);color:var(--muted);font-weight:400}
+.tl-byline:after{content:'';height:1px;flex:1;background:#dfd6c370}
+.tl-body{margin-top:9px;font:15.5px/1.7 var(--serif);color:#433d30}
+.tl-body p{margin:0 0 11px}
+.tl-msg-meta{font:11px var(--sans);color:var(--muted);margin-top:5px}
+.tl-error{margin:9px 0 0;font-size:12.5px;color:#9c4f3f}
+
+/* reasoning fold */
+.tl-reason{margin-top:9px}
+.tl-reason summary{cursor:pointer;font-size:12px;font-weight:600;color:#8a6f45;width:max-content}
+.tl-reason[open] summary{margin-bottom:7px}
+
+/* sidecar/system rows — a quiet metadata line, not a bubble */
+.tl-meta{display:flex;align-items:baseline;gap:9px;padding:3px 2px;font-size:11.5px;color:var(--muted)}
+.tl-meta-kind{flex:none;font-size:10px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;color:#8a795c}
+.tl-meta.s-warn .tl-meta-kind{color:#8a6a2f}
+.tl-meta.s-error .tl-meta-kind{color:#944f3d}
+.tl-meta-text{min-width:0;overflow-wrap:anywhere}
+.tl-meta time{margin-left:auto;font-size:10px;flex:none}
+
+/* ---------- execution steps (proto-step shape) ---------- */
+.tl-steps{list-style:none;margin:10px 0 0;padding:0;display:grid}
+.tl-step{display:grid;grid-template-columns:30px minmax(0,1fr);gap:9px;padding:9px 0;border-top:1px solid #e8ddc6}
+.tl-step-num{font:500 12px ui-monospace,SFMono-Regular,Menlo,monospace;color:#a99a7b;padding-top:2px}
+.tl-step-title{margin:0;font-size:13px;font-weight:600;color:#4e4230}
+.tl-step.s-error .tl-step-title{color:#944f3d}
+.tl-step-flag{display:inline-flex;border-radius:999px;padding:1px 8px;margin-left:7px;font-size:9.5px;font-weight:600;background:#fbe9e2;color:#944f3d;border:1px solid #d8ac98;vertical-align:1px}
+.tl-step-meta{margin:2px 0 0;font-size:11px;color:var(--muted)}
+.tl-step-data{margin-top:6px}
+.tl-step-data summary{cursor:pointer;font-size:11.5px;color:#8a6f45;font-weight:600;width:max-content}
+.tl-io-label{margin:9px 0 3px;font-size:9.5px;letter-spacing:.6px;text-transform:uppercase;color:var(--muted);font-weight:600}
+.tl-code{margin:0;padding:9px 11px;border-radius:8px;background:#fff8ec;border:1px solid #e8ddc6;font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere;max-height:320px;overflow:auto}
+.tl-code.tl-code-err{border-color:#e2b6a4;background:#fdf0ea;color:#944f3d}
+
+@media(max-width:640px){
+  .tl-user{max-width:94%}
+  .tl-turn{flex-wrap:wrap}
+  .tl-chip{margin-left:46px}
+}

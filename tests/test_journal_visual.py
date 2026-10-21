@@ -1,12 +1,11 @@
-"""Static CSS contracts for the compact pagers and the opaque Trace code
-surface (GOAL-011 TASK-034/035).
+"""Static CSS contracts for the rewritten WebUI (``thyca/webui/ui/``).
 
-These assertions pin the scoped stylesheet contract only: which file owns
-which rules, that the card-looking .screen-button appearance is reset inside
-the pagers, and that the payload code blocks no longer sit on the paper
-token. They are NOT visual acceptance — real Chrome screenshots (desktop
-1440 / mobile 320-414, light and dusk) remain the gate for how the pager and
-code surface look after integration.
+The old pager styles lived in ``shared/css/kit.css`` + per-page files that no
+longer exist; the new UI pages ``Tải thêm`` through a plain ``.quiet-button``
+and renders Trace code payloads through a scoped ``.tl-code`` surface in
+``ui/trace/tracecss/trace.css``. These assertions pin the scoped stylesheet
+contract only — real Chrome screenshots (desktop 1440 / mobile 320-414,
+light and dusk) remain the gate for how the surfaces look after integration.
 """
 from __future__ import annotations
 
@@ -14,72 +13,60 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WEBUI = ROOT / "thyca" / "webui"
+UI = WEBUI / "ui"
 
 
-def _read(name: str) -> str:
-    return (WEBUI / name).read_text(encoding="utf-8")
+def _read(rel: str) -> str:
+    return (UI / rel).read_text(encoding="utf-8")
 
 
-def test_compact_pager_is_shared_in_screens_css() -> None:
-    """One shared block styles the dashboard/trace .journal-pager and the chat
-    .session-pager; neither may inherit the card .screen-button look."""
-    screens = _read("shared/css/kit.css")
-    assert ":is(.dashboard-shell, .trace-shell) .journal-pager" in screens
-    assert ".session-pager" in screens
-    # The old card appearance is reset inside the pager scope only.
-    for reset in (
-        "background: none",
-        "border: 0",
-        "border-radius: 0",
-        "box-shadow: none",
-    ):
-        assert reset in screens
-    # Touch target, restrained states and a modest tabular label.
-    assert "min-height: 2.75rem" in screens
-    assert "text-decoration: underline" in screens
-    assert ":disabled" in screens
-    assert "font-variant-numeric: tabular-nums" in screens
+def _css_files() -> list[Path]:
+    return sorted(UI.rglob("*.css"))
 
 
-def test_old_pager_rules_are_gone_from_cost_and_styles() -> None:
-    """cost.css no longer styles .journal-pager (it used to hit Cost and Trace
-    at once) and styles.css keeps only the chat pager's placement margin."""
-    cost = _read("pages/dashboard/cost.css")
-    styles = _read("pages/chat/chat.css")
-    assert ".journal-pager" not in cost
-    assert ".session-pager .screen-button" not in styles
-    assert ".session-pager-label" not in styles
-    # Chat spacing stays, scoped to the pager itself.
-    assert ".session-pager {" in styles
-    assert "margin-block: 0.75rem 0" in styles
+def test_no_legacy_pager_or_screen_button_styles() -> None:
+    """The 12/page .journal-pager/.session-pager navs and the card
+    .screen-button look were dropped with the old UI: no stylesheet under
+    ui/ may still select them. Pagination is a server-driven "Tải thêm"
+    button (ui/trace + ui/dashboard #trace-more)."""
+    for path in _css_files():
+        css = path.read_text(encoding="utf-8")
+        assert ".journal-pager" not in css, path.name
+        assert ".session-pager" not in css, path.name
+        assert ".screen-button" not in css, path.name
 
 
-def test_pager_scoping_does_not_touch_global_button() -> None:
-    """The global .screen-button base/hover blocks stay as they were; the
-    pager block itself never selects .screen-button — it hooks the pager
-    classes only, so other screens' buttons keep their card look."""
-    screens = _read("shared/css/kit.css")
-    assert ".screen-button, .screen-select, .screen-input {" in screens
-    assert (
-        ".screen-button:not(:disabled):hover { border-color: var(--color-accent); }"
-        in screens
-    )
-    block = screens[screens.index("Compact journal pagers") : screens.index("@media (max-width: 56rem)", screens.index("Compact journal pagers"))]
-    for legacy in (".journal-pager .screen-button", ".session-pager .screen-button"):
-        assert legacy not in block
-    assert "journal-pager-step" in block and "session-pager-step" in block
+def test_load_more_is_a_plain_quiet_button() -> None:
+    """Both paged lists reuse the shared .quiet-button for "Tải thêm"; the
+    footer keeps its own styles only."""
+    for rel in ("dashboard/js/dashboard.js", "trace/js/trace.js"):
+        src = _read(rel)
+        assert 'class="quiet-button" id="trace-more"' in src, rel
+        assert "Tải thêm" in src, rel
+    shell_css = _read("share/app-shell.css")
+    assert ".quiet-button" in shell_css
+    # The button base style stays global — no page-scoped button resets.
+    assert ".quiet-button:hover" in shell_css
 
 
 def test_trace_code_uses_opaque_scoped_surface() -> None:
-    """Input/Output code blocks (turn and tool steps share .trace-code) sit on
-    an opaque flat surface scoped to #trace, never the paper token."""
-    trace = _read("pages/dashboard/trace.css")
-    assert "--trace-code-bg:" in trace
-    assert "--trace-code-ink:" in trace
-    assert "background: var(--trace-code-bg)" in trace
-    assert "color: var(--trace-code-ink)" in trace
-    assert "var(--color-paper-input)" not in trace
-    # Dusk gets its own surface; no texture/image/gradient anywhere.
-    assert 'html[data-theme="dusk"] #trace' in trace
+    """Input/Output code blocks (.tl-code, shared by tool steps and orphan
+    results) sit on an opaque flat surface with a border — never the paper
+    token — and the error variant keeps its own tint."""
+    trace = _read("trace/tracecss/trace.css")
+    assert ".tl-code{" in trace
+    block = trace[trace.index(".tl-code{"):]
+    block = block[: block.index("}")]
+    assert "background:#fff8ec" in block
+    assert "border:1px solid" in block
+    assert "white-space:pre-wrap" in block
+    assert "overflow-wrap:anywhere" in block
+    # Scroll cap keeps long payloads inside the card.
+    assert "max-height:320px" in block
+    err = trace[trace.index(".tl-code.tl-code-err{"):]
+    err = err[: err.index("}")]
+    assert "background:#fdf0ea" in err
+    assert "color:#944f3d" in err
+    # No texture/image/gradient anywhere in the trace stylesheet.
     for banned in ("url(", "linear-gradient", "radial-gradient"):
         assert banned not in trace

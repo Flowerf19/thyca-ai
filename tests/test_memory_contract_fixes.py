@@ -5,6 +5,8 @@ GOAL-001 (update validation) tests live here; GOAL-002/003 follow.
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from thyca.core.protocol import ToolCall
@@ -35,6 +37,7 @@ async def test_update_content_without_summary_is_rejected(tmp_path) -> None:
             )
         )
     ).content
+    sid = json.loads(sid)["session_id"]
     before = _daily_text(tmp_path)
     refused = await gateway.submit(
         ToolCall(
@@ -63,6 +66,7 @@ async def test_update_content_with_title_but_no_summary_is_rejected(tmp_path) ->
             )
         )
     ).content
+    sid = json.loads(sid)["session_id"]
     before = _daily_text(tmp_path)
     refused = await gateway.submit(
         ToolCall(
@@ -90,6 +94,7 @@ async def test_update_with_no_fields_and_blank_fields_rejected(tmp_path) -> None
             )
         )
     ).content
+    sid = json.loads(sid)["session_id"]
     before = _daily_text(tmp_path)
     for arguments in (
         {"session_id": sid},
@@ -119,6 +124,7 @@ async def test_update_positive_cases_still_work(tmp_path) -> None:
             )
         )
     ).content
+    sid = json.loads(sid)["session_id"]
     # Title-only keeps the body.
     ok = await gateway.submit(
         ToolCall(id="u1", name="memory_update", arguments={"session_id": sid, "topic": "tra da"})

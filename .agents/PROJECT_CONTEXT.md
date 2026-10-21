@@ -1,29 +1,23 @@
 # Project context
 
-`thyca-ai` 0.8.5.dev0 — harness trợ lý cá nhân (terminal + webui local). Cảm hứng pi (vòng lặp nhỏ, ít abstraction). Không phải coding agent, không clone OpenClaw/Hermes.
+`thyca-ai` is a local personal-assistant harness. The source tree and tests are authoritative; plans and older decision records may describe superseded designs.
 
-## Runtime (verified 2026-09-22)
+## Current runtime
 
-Một process `thyca`. Entry: `uv run thyca --help` (`thyca/app/cli.py:main`).
+- Version: `0.86.5.dev0` (verified in `pyproject.toml` and `thyca/__init__.py`).
+- Entry points: CLI in `thyca/app/cli.py`; loopback WebUI in `thyca/serve/`.
+- Root and child turns share `BotRuntime` through `ChatApp` and `WorkspaceTurnService`. The CLI adapts into `ChatApp.turn`; there is no separate root turn executor or `thyca/app/run_turn.py`.
+- `WorkspaceStore` is authoritative for bot/window bindings and cursors. Each bot's `WorkspaceTimeline` is the sole canonical execution store. Public room sessions are aggregate read models, not execution transcripts. There is no `room_sessions.json` migration path, shadow timeline, promotion/demotion, cutover, or rollback API.
+- Chat history keeps the user message and aggregate assistant reply. Live thinking deltas are streamed while a turn runs. Trace detail resolves trusted bot/span references to original canonical `message` events in the exact room window; it excludes `view_reset` copies, so execution detail survives compaction without duplicates.
+- Manual compaction handles every room participant independently, only when that bot already has a canonical context. The result reports each participant under `per_bot`; it does not create missing bindings.
+- Effective model precedence: explicit operation override, then a non-default bot-card model, then the configured global default. The context meter is an estimate and omits inputs it cannot know at read time: the next user text, future mailbox batch, and query-specific recall.
 
-- **CLI:** `-p` one-shot, REPL, `--continue` / `--session` / `--model` / `--debug`.
-- **Serve:** `--serve` (mặc định `127.0.0.1:8765`), `--daemon`, `--stop`, `--port`. Code ở `thyca/serve/` (server/routes/bridge/sessions_api/config_api/trace/trace_api/turn_state/memory/daemon).
-- **Config:** `~/.thyca/config.json` — `provider`, `mcpServers`, `timeline`, `limits`, optional `pricing` (USD / 1M tokens: `input` / `cache` / `output`; alias đọc `cached_input`). Secret chỉ qua `provider.apiKey` hoặc env `apiKeyEnv`.
-- **Session:** `thyca/sessions/` (4 class SOLID + `wire.py`). JSONL dưới `~/.thyca/sessions/`.
-- **Memory:** markdown là nguồn sự thật. ActiveMemory inject full `SOUL.md` / `USER.md` / `IDENTITY.md` + daily tail `hotTailKB`. L2 lexical (FTS5 + trigram, TTL) qua `MemoryFacade`; `memory_remember` ghi `memory/YYYY-MM-DD.md`. Không `MEMORY.md`.
-- **LLM:** `ConnectFactory` → `OpenAIChat` (`openai_chat`) / `OpenAIResponses` (`openai_responses`, per-provider `api`). `ChatReply.usage` chuẩn hóa `prompt_tokens` / `cached_tokens` / `completion_tokens` / `total_tokens` (+ `reasoning_tokens?`); `ChatReply.model` echo từ provider. `thyca/llm/pricing.py` `cost_for` — unknown model → `None`. Google/Anthropic qua factory vẫn lỗi (chưa implement).
-- **Loop:** `assemble → think → act → observe`. Think/Act đo `perf_counter`. Observe ghi `Message.meta` (`kind`, `round`, `model`, `latency_ms`, `usage`, `cost_usd`, `finish_reason`); tool message: `latency_ms` / `round`. Naming title chưa persist `kind: "naming"`.
-- **Tools:** registry builtin `memory_remember|search|recent|get|forget|reinforce|update` + MCP stdio (`thyca/tools/mcp.py`). Skills index ở `thyca/skills/` (store + templates). Wire types (`Message`/`ToolCall`) ở `thyca/core/protocol.py` (leaf, stdlib-only).
-- **WebUI:** `webui/` — Chat / Memories (Hồ sơ = USER.md rồi SOUL.md / IDENTITY.md) / Trace. API loopback `/api/sessions*`, `/api/memory*`, `/api/traces*`.
+## Data and safety
 
-## Ngoài scope hiện tại
+The user authorized a reset that deleted all `~/.thyca` data, including memories, config, keys, and skills. Do not inspect, access, or recreate `~/.thyca` or its contents. Do not add API-key examples to project guidance. Preserve unrelated working-tree changes and untracked user artifacts.
 
-Telegram/Discord, subagent, plan mode, GUI popup, confirmation gate, ANN/vector DB, catalog hàng chục provider. Embedding runtime đã gỡ (580ae03).
+Serve is loopback-only. Do not expose secrets, internal paths, or stack traces through APIs. Memory Markdown remains its source of truth; SQLite is a derived index. Read `.agents/AGENT_RULES.md` and relevant decisions/plans before changing memory contracts.
 
-## Tests
+## Verification and review status
 
-`uv run pytest -q`. Baseline 2026-09-22: **719 passed / 0 fail** (fail `test_debug_prints_prompt_flags` cũ không tái hiện — tools count đã khớp; nếu đỏ lại thì là regression).
-
-Layout backend: `thyca/{agent,llm,config,memory,sessions,tools,skills,serve,app,core}/` — top-level chỉ còn `__init__.py` + `__main__.py`; entry serve qua `thyca/serve/`, chat/CLI qua `thyca/app/`. Layout webui: `webui/*.html` flat + `pages/<trang>/` + `shared/{css,js}/`.
-
-Chi tiết plan: `plans/backend-solid-refactor.md` (in-progress, GOAL-004); history: `plans/done/thyca-harness-v1.md`, `plans/done/l2-memory-retrieval.md`, decision `2026-08-15-l2-hybrid-v1.md`.
+Use `uv run pytest -q` for the full gate and `git diff --check` for whitespace validation. A focused test or fake provider does not establish full-suite status, browser behavior, or real-provider quality. Independent review of the current canonical workspace work is outstanding; do not claim it is complete.

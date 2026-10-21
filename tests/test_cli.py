@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from thyca.app.cli import Cli
-from thyca.config import McpServerCfg, default_config, load, save
+from thyca.config import ModelCfg, McpServerCfg, default_config, load, save
 from thyca.llm.llm_base import ChatReply, LLMError
 from thyca.core.protocol import Message, ToolCall
 from thyca.tools.mcp import StartupDiagnostic
@@ -20,10 +20,12 @@ from thyca.sessions import SessionError, SessionManager
 class FakeLLM:
     reply: ChatReply
     requests: list[list[Message]] = field(default_factory=list)
+    schemas: list[list[dict] | None] = field(default_factory=list)
     model: str | None = None
 
     async def chat(self, messages: list[Message], tools: list | None = None) -> ChatReply:
         self.requests.append(list(messages))
+        self.schemas.append(tools)
         return self.reply
 
 
@@ -56,6 +58,14 @@ def test_prompt_without_p_exits_2(tmp_path: Path) -> None:
     cli, _out, err = _cli(tmp_path, FakeLLM(ChatReply(content="x")))
     assert cli.main(["hello"]) == 2
     assert "requires -p" in err.getvalue()
+
+
+def test_cli_reports_config_error_without_traceback(tmp_path: Path) -> None:
+    (tmp_path / "config.json").write_text("not json", encoding="utf-8")
+    cli, _out, err = _cli(tmp_path, FakeLLM(ChatReply(content="unused")))
+    assert cli.main(["-p", "hi"]) == 1
+    assert "Traceback" not in err.getvalue()
+    assert "config" in err.getvalue().lower()
 
 
 def test_missing_session_exits_nonzero(tmp_path: Path) -> None:
@@ -121,6 +131,10 @@ def test_cli_registers_and_closes_configured_mcp_tools(tmp_path: Path, monkeypat
             self.servers = servers
             return []
 
+        async def sync(self, servers):
+            self.servers = servers
+            return [], set()
+
         def tool_specs(self):
             async def ping(_args: dict) -> str:
                 return "pong"
@@ -138,7 +152,7 @@ def test_cli_registers_and_closes_configured_mcp_tools(tmp_path: Path, monkeypat
             self.closed = True
 
     manager = FakeManager()
-    monkeypatch.setattr("thyca.app.cli.MCPManager", lambda: manager)
+    monkeypatch.setattr("thyca.app.chat_app.MCPManager", lambda: manager)
     cfg = replace(
         default_config(),
         mcpServers={"echo": McpServerCfg(command="ignored")},
@@ -180,13 +194,16 @@ def test_cli_mcp_diagnostic_includes_server_name(tmp_path: Path, monkeypatch) ->
         async def spawn_all(self, servers):
             return [StartupDiagnostic("remote", False, "failed to start")]
 
+        async def sync(self, servers):
+            return [], set()
+
         def tool_specs(self):
             return []
 
         async def shutdown(self) -> None:
             return
 
-    monkeypatch.setattr("thyca.app.cli.MCPManager", FakeManager)
+    monkeypatch.setattr("thyca.app.chat_app.MCPManager", FakeManager)
     cli, _out, err = _cli(tmp_path, FakeLLM(ChatReply(content="ok")))
 
     assert cli.main(["-p", "hi"]) == 0
@@ -194,11 +211,20 @@ def test_cli_mcp_diagnostic_includes_server_name(tmp_path: Path, monkeypatch) ->
 
 
 def test_model_override_does_not_persist(tmp_path: Path) -> None:
-    save(default_config(), tmp_path / "config.json")
+    cfg = replace(default_config(), models={"override-model": ModelCfg()})
+    save(cfg, tmp_path / "config.json")
     before = load(tmp_path / "config.json").provider.model
     cli, _out, _err = _cli(tmp_path, FakeLLM(ChatReply(content="ok")))
     assert cli.main(["--model", "override-model", "-p", "hi"]) == 0
     assert load(tmp_path / "config.json").provider.model == before
+
+
+def test_unknown_model_override_is_rejected_cleanly(tmp_path: Path) -> None:
+    save(default_config(), tmp_path / "config.json")
+    cli, _out, err = _cli(tmp_path, FakeLLM(ChatReply(content="unused")))
+    assert cli.main(["--model", "unknown-model", "-p", "hi"]) == 1
+    assert "invalid model" in err.getvalue()
+    assert "Traceback" not in err.getvalue()
 
 
 def test_repl_eof_exits_0(tmp_path: Path) -> None:
@@ -222,7 +248,8 @@ def test_debug_prints_prompt_flags(
         (tmp_path / "IDENTITY.md").write_text("# Custom identity\nName: Local\n", encoding="utf-8")
     if user is not None:
         (tmp_path / "USER.md").write_text(user, encoding="utf-8")
-    cli, _out, err = _cli(tmp_path, FakeLLM(ChatReply(content="ok")))
+    llm = FakeLLM(ChatReply(content="ok"))
+    cli, _out, err = _cli(tmp_path, llm)
     assert cli.main(["--debug", "-p", "hi"]) == 0
     dbg = err.getvalue()
     assert "debug " in dbg
@@ -230,7 +257,10 @@ def test_debug_prints_prompt_flags(
     assert "identity=True" in dbg
     has_user = user is None or user.strip() not in {"", "# User"}
     assert f"user={has_user}" in dbg
-    assert "tools=13" in dbg
+    assert "tools=" in dbg
+    assert f"tools={len(llm.schemas[0] or [])}" in dbg
+    system = llm.requests[0][0].content or ""
+    assert f"system_chars={len(system)}" in dbg
 
 
 def test_print_llm_error_is_safe(tmp_path: Path) -> None:
@@ -246,76 +276,100 @@ def test_print_llm_error_is_safe(tmp_path: Path) -> None:
     assert raw not in err.getvalue()
 
 
-def test_print_model_override_routes_to_its_provider(tmp_path: Path) -> None:
-    import threading
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+def test_cli_factory_receives_registered_provider(tmp_path: Path, monkeypatch) -> None:
+    from thyca.app.chat_app import ConnectFactory
+    from thyca.config import ModelCfg, ProviderEntry
+
+    cfg = replace(
+        default_config(),
+        providers={
+            "default": ProviderEntry(baseUrl="https://a.invalid/v1"),
+            "second": ProviderEntry(baseUrl="https://b.invalid/v1"),
+        },
+        defaultModel="model-a",
+        models={"model-a": ModelCfg(), "model-b": ModelCfg(provider="second")},
+    )
+    save(cfg, tmp_path / "config.json")
+    captured = []
+    llm = FakeLLM(ChatReply(content="stub-ok", model="model-b"))
+
+    def create(api, provider):
+        captured.append((api, provider))
+        return llm
+
+    monkeypatch.setattr(ConnectFactory, "create", create)
+    cli, out, _err = _cli(tmp_path, None)
+    assert cli.main(["-p", "--model", "model-b", "hi"]) == 0
+    assert out.getvalue().strip() == "stub-ok"
+    assert len(captured) == 1
+    api, provider = captured[0]
+    assert api == cfg.providers["second"].api
+    assert provider.model == "model-b"
+    assert provider.baseUrl == "https://b.invalid/v1"
+
+
+def test_print_model_override_routes_to_its_provider_http_auth(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import httpx
 
     from thyca.config import ModelCfg, ProviderEntry
 
-    calls_a: list = []
-    calls_b: list = []
+    calls_a: list[dict] = []
+    calls_b: list[dict] = []
 
-    def _stub(calls: list, reply_model: str):
-        class Handler(BaseHTTPRequestHandler):
-            def do_POST(self) -> None:
-                length = int(self.headers.get("Content-Length", "0"))
-                raw = self.rfile.read(length) if length else b""
-                body = json.loads(raw.decode("utf-8"))
-                calls.append(
-                    {
-                        "auth": self.headers.get("Authorization"),
-                        "model": body.get("model"),
-                    }
-                )
-                payload = json.dumps(
-                    {
-                        "model": reply_model,
-                        "choices": [{"message": {"content": "stub-ok"}}],
-                    }
-                ).encode()
-
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(payload)))
-                self.end_headers()
-                self.wfile.write(payload)
-
-            def log_message(self, format: str, *args: object) -> None:
-                return
-
-        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        return server, thread
-
-    stub_a, thread_a = _stub(calls_a, "model-a")
-    stub_b, thread_b = _stub(calls_b, "model-b")
-    try:
-        base_a = f"http://127.0.0.1:{stub_a.server_address[1]}"
-        base_b = f"http://127.0.0.1:{stub_b.server_address[1]}"
-        cfg = default_config()
-        cfg = replace(
-            cfg,
-            providers={
-                "default": ProviderEntry(baseUrl=base_a, apiKey="sk-a"),
-                "second": ProviderEntry(baseUrl=base_b, apiKey="sk-b"),
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content.decode("utf-8"))
+        call = {
+            "url": str(request.url),
+            "auth": request.headers.get("Authorization"),
+            "model": body.get("model"),
+        }
+        if request.url.host == "a.invalid":
+            calls_a.append(call)
+            reply_model = "model-a"
+        else:
+            calls_b.append(call)
+            reply_model = "model-b"
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "application/json"},
+            json={
+                "model": reply_model,
+                "choices": [{"message": {"content": "stub-ok"}}],
             },
-            defaultModel="model-a",
-            models={"model-a": ModelCfg(), "model-b": ModelCfg(provider="second")},
         )
-        save(cfg, tmp_path / "config.json")
-        cli, out, _err = _cli(tmp_path, None)
-        assert cli.main(["-p", "--model", "model-b", "hi"]) == 0
-        assert "stub-ok" in out.getvalue()
-        assert calls_a == []
-        assert calls_b == [{"auth": "Bearer sk-b", "model": "model-b"}]
-    finally:
-        stub_a.shutdown()
-        thread_a.join(timeout=2)
-        stub_a.server_close()
-        stub_b.shutdown()
-        thread_b.join(timeout=2)
-        stub_b.server_close()
+
+    original_client = httpx.AsyncClient
+
+    def client_factory(*args, **kwargs):
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return original_client(*args, **kwargs)
+
+    monkeypatch.setattr("thyca.llm._http.httpx.AsyncClient", client_factory)
+    cfg = replace(
+        default_config(),
+        providers={
+            "default": ProviderEntry(
+                baseUrl="https://a.invalid/v1", apiKey="sk-a"
+            ),
+            "second": ProviderEntry(
+                baseUrl="https://b.invalid/v1", apiKey="sk-b"
+            ),
+        },
+        defaultModel="model-a",
+        models={"model-a": ModelCfg(), "model-b": ModelCfg(provider="second")},
+    )
+    save(cfg, tmp_path / "config.json")
+    cli, out, _err = _cli(tmp_path, None)
+    assert cli.main(["-p", "--model", "model-b", "hi"]) == 0
+    assert out.getvalue().strip() == "stub-ok"
+    assert calls_a == []
+    assert calls_b == [{
+        "url": "https://b.invalid/v1/chat/completions",
+        "auth": "Bearer sk-b",
+        "model": "model-b",
+    }]
 
 
 def test_print_tags_memory_with_cli_session(tmp_path: Path) -> None:
@@ -343,3 +397,40 @@ def test_print_tags_memory_with_cli_session(tmp_path: Path) -> None:
     session = SessionManager(tmp_path / "sessions").continue_last()
     (day_file,) = list((tmp_path / "memory").glob("*.md"))
     assert f'"chat":"{session.id}"' in day_file.read_text(encoding="utf-8")
+
+
+def test_default_opens_thyca_dm(tmp_path: Path) -> None:
+    cli, _out, _err = _cli(tmp_path, FakeLLM(ChatReply(content="hi")))
+    assert cli.main(["-p", "hello"]) == 0
+    sessions = list((tmp_path / "sessions").glob("*.jsonl"))
+    assert len(sessions) == 1
+    manager = SessionManager(tmp_path / "sessions")
+    session = manager.load(sessions[0].stem)
+    assert session.dm_bot == "thyca"
+    assert session.bots == ["thyca"]
+
+
+def test_continue_opens_dm_despite_newer_group(tmp_path: Path) -> None:
+    cli, _out, _err = _cli(tmp_path, FakeLLM(ChatReply(content="hi")))
+    assert cli.main(["-p", "first"]) == 0
+    # A newer group session exists on disk (e.g. from serve).
+    manager = SessionManager(tmp_path / "sessions")
+    group = manager.create()
+    manager.store.append_bots(group.path, ["thyca", "coder"])
+    cli2, _out2, _err2 = _cli(tmp_path, FakeLLM(ChatReply(content="again")))
+    assert cli2.main(["--continue", "-p", "second"]) == 0
+    current = SessionManager(tmp_path / "sessions").load(
+        SessionManager(tmp_path / "sessions").continue_last().id)
+    assert current.dm_bot == "thyca"
+
+
+def test_session_flag_loads_group_by_id(tmp_path: Path) -> None:
+    cli, _out, _err = _cli(tmp_path, FakeLLM(ChatReply(content="hi")))
+    assert cli.main(["-p", "first"]) == 0
+    manager = SessionManager(tmp_path / "sessions")
+    group = manager.create()
+    manager.store.append_bots(group.path, ["thyca", "coder"])
+    cli2, _out2, _err2 = _cli(tmp_path, FakeLLM(ChatReply(content="in-group")))
+    assert cli2.main(["--session", group.id, "-p", "hello"]) == 0
+    reloaded = SessionManager(tmp_path / "sessions").load(group.id)
+    assert [m.content for m in reloaded.messages][-1] == "in-group"

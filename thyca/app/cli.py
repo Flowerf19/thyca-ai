@@ -6,32 +6,15 @@ import argparse
 import asyncio
 import sys
 from dataclasses import replace
-from datetime import datetime
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
-from thyca.agent.act import Act
 from thyca.agent.think import LLMPort
 from thyca.app.chat_ui import ChatUi
+from thyca.app.turn_options import InvalidTurnOption
 from thyca.config import ConfigError, load
 from thyca.llm.llm_base import LLMError
-from thyca.llm.llm_factory import ConnectFactory
-from thyca.llm.prompt_manager import PromptManager
-from thyca.memory.active import ActiveMemory
-from thyca.sessions import SessionError, SessionManager, SessionNotFound
-from thyca.tools.gateway.background import BackgroundProcs
 from thyca.memory.facade import MemoryFacade
-from thyca.tools.mcp import MCPManager
-from thyca.tools.memory_tools import bind_chat_session, reset_chat_session
-from thyca.tools.task_store import TaskStore
-
-from thyca.app.toolchain import (
-    build_agent_loop,
-    build_tool_gateway,
-    build_tool_registry,
-    install_mcp_specs,
-    report_spawn_diags,
-)
+from thyca.sessions import SessionError
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -46,7 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--serve", action="store_true", help="serve webui + memory stats on 127.0.0.1")
     parser.add_argument("--daemon", action="store_true", help="detach --serve from the terminal")
     parser.add_argument("--stop", action="store_true", help="stop a background --serve")
-    parser.add_argument("--port", type=int, default=8765, help="port for --serve (default 8765)")
+    parser.add_argument("--port", type=int, default=19502, help="port for --serve (default 19502)")
     parser.add_argument("prompt", nargs="*", help="prompt for -p mode")
     return parser
 
@@ -113,6 +96,8 @@ class Cli:
             return 0
 
     async def _run(self, args: argparse.Namespace) -> int:
+        from thyca.app.chat_app import ChatApp
+
         root = self._thyca_dir if self._thyca_dir is not None else Path.home() / ".thyca"
         ui = ChatUi(self._stdout, self._stderr)
         try:
@@ -121,101 +106,48 @@ class Cli:
             ui.error(str(exc))
             return 1
 
-        if args.model:
-            cfg = replace(cfg, defaultModel=args.model.strip())
-        provider = cfg.effective_provider()
-        limits = cfg.effective_limits()
-        sessions = SessionManager(
-            root / "sessions",
-            limits=limits,
-            timezone_name=cfg.timeline.timezone,
-        )
+        app = None
         try:
-            self._open_session(sessions, args)
-        except SessionNotFound as exc:
-            if args.cont and not args.session:
-                try:
-                    sessions.create()
-                except SessionError as create_exc:
-                    ui.error(str(create_exc))
-                    return 1
+            app = ChatApp(root, cfg, connect=self._connect, stderr=self._stderr)
+            if args.session:
+                app.get_payload(args.session)
+                session_id = args.session
             else:
-                ui.error(str(exc))
-                return 1
-        except SessionError as exc:
-            ui.error(str(exc))
-            return 1
+                session_id = app.bot_dm("thyca")["id"]
+            model = args.model.strip() if args.model else None
+            banner_cfg = replace(cfg, defaultModel=model) if model else cfg
+            provider = banner_cfg.effective_provider()
 
-        memory = ActiveMemory(
-            root,
-            tail_kb=limits.hotTailKB,
-            timezone_name=cfg.timeline.timezone,
-        )
-        zone = ZoneInfo(cfg.timeline.timezone)
-        state = memory.open_session(datetime.now(zone))
-        tasks = TaskStore()
-        background = BackgroundProcs()
-        registry = build_tool_registry(root, cfg, background)
-        gateway = build_tool_gateway(
-            registry,
-            tasks,
-            background,
-            soft_timeout_s=cfg.effective_limits().softTimeoutS,
-        )
-        manager = MCPManager()
-        try:
-            report_spawn_diags(
-                await manager.spawn_all(cfg.mcpServers), err=self._stderr
-            )
-            install_mcp_specs(registry, manager, err=self._stderr)
-            schema = registry.to_openai_schema()
-            connect = self._connect or ConnectFactory.create(provider.api, provider)
-            loop = build_agent_loop(
-                sessions=sessions,
-                connect=connect,
-                act=Act(gateway),
-                tools=schema,
-                loop_max=limits.loopMax,
-                model=provider.model,
-                pricing=cfg.effective_pricing() or None,
-                context_tokens=limits.contextTokens,
-            )
-
-            prompts = PromptManager()
+            def diagnostics(report: dict) -> None:
+                system = report["system"]
+                ui.debug(
+                    f"session={report['session_id']} model={report['model']} "
+                    f"provider={report['provider']} baseUrl={report['base_url']} "
+                    f"identity={'</identity>' in system} soul={'</role>' in system} "
+                    f"user={'</user>' in system} tools={len(report['tools'])} "
+                    f"system_chars={len(system)}"
+                )
 
             async def turn(text: str) -> str:
-                # Same bind pattern as ChatApp: without it every CLI note
-                # lands with chat=None and its own session only sees the
-                # title-only elsewhere index.
-                token = bind_chat_session(sessions.current.id)
-                try:
-                    hot = memory.refresh(
-                        state, datetime.now(zone), session_id=sessions.current.id
-                    )
-                    if args.debug:
-                        system = prompts.build(hot)
-                        ui.debug(
-                            f"session={sessions.current.id} model={provider.model} "
-                            f"provider={cfg.provider_id_for(provider.model)} baseUrl={provider.baseUrl} "
-                            f"identity={'</identity>' in system} soul={'</role>' in system} "
-                            f"user={'</user>' in system} tools={len(schema)} system_chars={len(system)}"
-                        )
-                    return await loop.run(text, hot=hot)
-                finally:
-                    reset_chat_session(token)
+                detail = await asyncio.to_thread(
+                    app.turn,
+                    session_id,
+                    text,
+                    model=model,
+                    diagnostic_sink=diagnostics if args.debug else None,
+                )
+                return detail["reply"]
 
-            try:
-                if args.print_mode:
-                    return await self._oneshot(" ".join(args.prompt), turn, ui)
-                ui.banner(sessions.current.id, provider.model)
-                return await self._repl(turn, ui)
-            finally:
-                close = getattr(connect, "aclose", None)
-                if close is not None:
-                    await close()
+            if args.print_mode:
+                return await self._oneshot(" ".join(args.prompt), turn, ui)
+            ui.banner(session_id, provider.model)
+            return await self._repl(turn, ui)
+        except (ConfigError, LLMError, SessionError, InvalidTurnOption) as exc:
+            ui.error(str(exc))
+            return 1
         finally:
-            await gateway.shutdown()
-            await manager.shutdown()
+            if app is not None:
+                await asyncio.to_thread(app.shutdown)
 
     def _seed(self) -> int:
         from thyca.config import GUIDE_NAME, ConfigError, ensure_thyca_dir, write_config_guide
@@ -243,7 +175,13 @@ class Cli:
     def _serve(self, port: int, *, daemon: bool = False, stop: bool = False) -> int:
         from thyca.app.chat_app import ChatApp
         from thyca.serve import ServeError, default_webui, run
-        from thyca.serve.daemon import daemonize, log_file, stop_daemon
+        from thyca.serve.daemon import (
+            claim_server_lock,
+            daemonize,
+            log_file,
+            running_pid,
+            stop_daemon,
+        )
 
         root = self._thyca_dir if self._thyca_dir is not None else Path.home() / ".thyca"
         ui = ChatUi(self._stdout, self._stderr, color=False)
@@ -268,13 +206,29 @@ class Cli:
             except ServeError as exc:
                 ui.error(str(exc))
                 return 1
+        else:
+            # One server per data dir. A foreground instance beside a
+            # daemon (or another foreground) would share memory.sqlite:
+            # both write the archive index, and the losing writer holds
+            # its transaction open until every reader wedges. The daemon
+            # path guards inside daemonize(); here the pidfile check
+            # gives the friendly message and the flock is the hard stop.
+            try:
+                existing = running_pid(root)
+                if existing is not None:
+                    raise ServeError(f"already running (pid {existing})")
+                # Held for this frame's lifetime, which spans run() below.
+                _lock_fd = claim_server_lock(root)
+            except ServeError as exc:
+                ui.error(str(exc))
+                return 1
         try:
             run(
                 host="127.0.0.1",
                 port=port,
                 webui=default_webui(),
                 facade=MemoryFacade(root, timezone_name=cfg.timeline.timezone),
-                chat=ChatApp(root, cfg, connect=self._connect),
+                chat=ChatApp(root, cfg, connect=self._connect, stderr=self._stderr),
                 stdout=self._stdout,
                 config_file=root / "config.json",
             )
@@ -286,19 +240,11 @@ class Cli:
             return 1
         return 0
 
-    def _open_session(self, sessions: SessionManager, args: argparse.Namespace) -> None:
-        if args.session:
-            sessions.load(args.session)
-        elif args.cont:
-            sessions.continue_last()
-        else:
-            sessions.create()
-
     async def _oneshot(self, prompt: str, turn, ui: ChatUi) -> int:
         try:
             print(await turn(prompt), file=self._stdout)
             return 0
-        except (LLMError, ConfigError, SessionError) as exc:
+        except (LLMError, ConfigError, SessionError, InvalidTurnOption) as exc:
             ui.error(str(exc))
             return 1
 
@@ -314,7 +260,7 @@ class Cli:
                 continue
             try:
                 ui.assistant(await turn(text))
-            except (LLMError, ConfigError, SessionError) as exc:
+            except (LLMError, ConfigError, SessionError, InvalidTurnOption) as exc:
                 ui.error(str(exc))
 
 

@@ -286,26 +286,6 @@ def test_expired_deleted_on_reindex(tmp_path: Path) -> None:
     assert facade.search("ttl-purge-token-zzzx", now=t0 + timedelta(days=4)).hits == []
 
 
-def test_legacy_memory_selectors_are_rejected(tmp_path: Path) -> None:
-    (tmp_path / "SOUL.md").write_text("# Soul\n", encoding="utf-8")
-    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
-    for action in (
-        lambda: facade.get(session_id="memory#abcdef12"),
-        lambda: facade.get(
-            chunk_id="memory#abcdef12#1", session_id="memory#abcdef12"
-        ),
-        lambda: facade.forget("memory#abcdef12"),
-        lambda: facade.reinforce("memory#abcdef12"),
-        lambda: facade.update("memory#abcdef12", topic="nope"),
-    ):
-        try:
-            action()
-        except Exception as exc:
-            assert "MEMORY.md" in str(exc)
-        else:
-            raise AssertionError("expected legacy MEMORY.md selector rejection")
-
-
 def test_reject_forget_soul(tmp_path: Path) -> None:
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     (tmp_path / "SOUL.md").write_text("# Soul\n", encoding="utf-8")

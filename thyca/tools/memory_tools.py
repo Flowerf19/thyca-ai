@@ -50,24 +50,47 @@ def register_memory_tools(
     registry.register(_forget_spec(facade))
     registry.register(_reinforce_spec(facade))
     registry.register(_update_spec(facade))
+    registry.register(_tasks_spec(facade))
 
 
 def _remember_spec(facade: MemoryFacade) -> ToolSpec:
     async def handler(args: dict) -> str:
         # Schema types arrive pre-checked by the registry (X3).
-        return facade.remember(
+        task = args.get("task")
+        if args.get("new_task"):
+            if task:
+                raise ValueError("new_task cannot be combined with task")
+            task = facade.new_task_id()
+        sid = facade.remember(
             args["topic"],
             args["summary"],
             content=args.get("content") or "",
             proj=args.get("proj"),
             chat=_chat_session_id.get(),
+            task=task,
+            cont=args.get("cont"),
+            kind=args.get("kind"),
+            status=args.get("status"),
+            habit=args.get("habit"),
+            habit_explicit=args.get("habit_explicit") is True,
         )
+        return json.dumps({"session_id": sid, "task_id": task}, ensure_ascii=False)
 
     return ToolSpec(
         name="memory_remember",
         description=(
             "Append an L2 memory heading+bullet to today's daily file. "
-            "Do not use this for SOUL/USER/IDENTITY — write/edit those files."
+            "Do not use this for SOUL/USER/IDENTITY — write/edit those files. "
+            "Before opening a new task, check the open-task catalog "
+            "(memory_tasks) or search to reuse an existing task id: pass it "
+            "as task to continue, or new_task=true to mint a fresh one. "
+            "Only set status='done' when the whole task is finished, not "
+            "when your own part is done — and only the bot coordinating "
+            "or opening the task (or the user) closes it; everyone else "
+            "leaves it open. kind='habit' is only for repeated "
+            "habit/preference observations, with habit as a short label. "
+            "kind='checkpoint' is only for a task checkpoint recording "
+            "the current state and next step."
         ),
         parameters={
             "type": "object",
@@ -83,6 +106,58 @@ def _remember_spec(facade: MemoryFacade) -> ToolSpec:
                         "Use the real repo/workdir root, never a short name or "
                         "relative path. Omit for general or user-level memories "
                         "that belong to no project."
+                    ),
+                },
+                "task": {
+                    "type": "string",
+                    "description": (
+                        "Existing task id (task-<8 hex>) to continue. "
+                        "Cannot be combined with new_task."
+                    ),
+                },
+                "new_task": {
+                    "type": "boolean",
+                    "description": (
+                        "Mint a fresh system task id for a new goal. "
+                        "Cannot be combined with task."
+                    ),
+                },
+                "cont": {
+                    "type": "string",
+                    "description": (
+                        "Previous memory session id in the same task. "
+                        "Requires task."
+                    ),
+                },
+                "kind": {
+                    "type": "string",
+                    "description": (
+                        "Memory kind: 'habit' for a repeated habit/preference "
+                        "observation, or 'checkpoint' for a task checkpoint "
+                        "(requires task or new_task)."
+                    ),
+                },
+                "status": {
+                    "type": "string",
+                    "description": (
+                        "Task status 'open' or 'done'. Requires task. Only set "
+                        "'done' when the whole task is finished, and only if "
+                        "you coordinate or opened the task (or the user asks)."
+                    ),
+                },
+                "habit": {
+                    "type": "string",
+                    "description": (
+                        "Short habit label. Required with kind='habit', "
+                        "forbidden without kind."
+                    ),
+                },
+                "habit_explicit": {
+                    "type": "boolean",
+                    "description": (
+                        "True only when the user explicitly states a lasting "
+                        "habit/preference ('I usually/always/like...'), not "
+                        "inferred from events. Requires kind='habit'."
                     ),
                 },
             },
@@ -103,6 +178,9 @@ def _search_spec(facade: MemoryFacade) -> ToolSpec:
             timeline_day=args.get("timeline_day"),
             proj=args.get("proj"),
             chat=args.get("chat"),
+            task=args.get("task"),
+            kind=args.get("kind"),
+            status=args.get("status"),
         )
         return json.dumps(asdict(result), ensure_ascii=False)
 
@@ -125,6 +203,18 @@ def _search_spec(facade: MemoryFacade) -> ToolSpec:
                 "chat": {
                     "type": "string",
                     "description": "Filter to leaves saved during this chat session id.",
+                },
+                "task": {
+                    "type": "string",
+                    "description": "Filter to leaves in this task (task-<8 hex>).",
+                },
+                "kind": {
+                    "type": "string",
+                    "description": "Filter to leaves of this kind ('habit', 'checkpoint').",
+                },
+                "status": {
+                    "type": "string",
+                    "description": "Filter to leaves with this task status ('open', 'done').",
                 },
             },
             "required": ["query"],
@@ -228,6 +318,49 @@ def _reinforce_spec(facade: MemoryFacade) -> ToolSpec:
     )
 
 
+def _tasks_spec(facade: MemoryFacade) -> ToolSpec:
+    async def handler(args: dict) -> str:
+        raw_limit = args.get("limit")
+        catalog = facade.tasks(
+            status=args.get("status"),
+            date_from=args.get("date_from"),
+            date_to=args.get("date_to"),
+            limit=20 if raw_limit is None else raw_limit,
+        )
+        return json.dumps(catalog, ensure_ascii=False)
+
+    return ToolSpec(
+        name="memory_tasks",
+        description=(
+            "Browse the task catalog by status and/or active date range, "
+            "instead of keyword search for questions like "
+            "'what tasks were open last week'. Only tasks with entries "
+            "you may read appear."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "description": "Filter to tasks with this status ('open', 'done').",
+                },
+                "date_from": {
+                    "type": "string",
+                    "description": "Only tasks active on or after YYYY-MM-DD (inclusive).",
+                },
+                "date_to": {
+                    "type": "string",
+                    "description": "Only tasks active on or before YYYY-MM-DD (inclusive).",
+                },
+                "limit": {"type": "integer"},
+            },
+            "additionalProperties": False,
+        },
+        handler=handler,
+        parallel_safe=True,
+    )
+
+
 def _update_spec(facade: MemoryFacade) -> ToolSpec:
     async def handler(args: dict) -> str:
         # Schema types arrive pre-checked by the registry (X3): present
@@ -240,6 +373,12 @@ def _update_spec(facade: MemoryFacade) -> ToolSpec:
             summary=summary.strip() if summary is not None else None,
             content=args.get("content"),
             proj=args.get("proj"),
+            task=args.get("task"),
+            cont=args.get("cont"),
+            kind=args.get("kind"),
+            status=args.get("status"),
+            habit=args.get("habit"),
+            habit_explicit=args.get("habit_explicit") or False,
         )
         return "updated"
 
@@ -262,6 +401,43 @@ def _update_spec(facade: MemoryFacade) -> ToolSpec:
                     "description": (
                         "New project root path (absolute) for this memory. "
                         "Omit to keep the current value."
+                    ),
+                },
+                "task": {
+                    "type": "string",
+                    "description": "Task id (task-<8 hex>). Omit to keep the current value.",
+                },
+                "cont": {
+                    "type": "string",
+                    "description": (
+                        "Previous memory session id in the same task. "
+                        "Omit to keep the current value."
+                    ),
+                },
+                "kind": {
+                    "type": "string",
+                    "description": "Memory kind ('habit', 'checkpoint'). Omit to keep.",
+                },
+                "status": {
+                    "type": "string",
+                    "description": (
+                        "Task status 'open' or 'done'. Only 'done' when the "
+                        "whole task is finished, and only by its coordinator "
+                        "or opener (or the user). Omit to keep."
+                    ),
+                },
+                "habit": {
+                    "type": "string",
+                    "description": (
+                        "Short habit label (required with kind='habit'). "
+                        "Omit to keep."
+                    ),
+                },
+                "habit_explicit": {
+                    "type": "boolean",
+                    "description": (
+                        "True marks a user-stated habit (requires kind='habit'). "
+                        "Omit to keep."
                     ),
                 },
             },

@@ -1,9 +1,12 @@
-"""Execute app.js concurrent-send ownership with real view and thinking modules.
+"""Concurrent turns across sessions — webui/ui/chat/js/chat.js sendTurn.
 
-Two turns can stream at once (send in A, switch to B, send there). Returning
-to A must reuse its live card without opening a second reader for a stream
-this tab already owns — a second reader replays the same deltas and duplicates
-every one of them on the card.
+Two turns can stream at once (send in A, switch to B, send there): ``runs``
+is keyed by sessionId and sendTurn only refuses a second send on the *same*
+session. Returning to a session whose turn is still in flight re-joins via
+GET turn/stream replay (followRunningTurn) on a fresh live node — the stored
+transcript replaces it when the terminal event lands. The old UI's
+"reuse the card without a second reader" contract is deliberately replaced
+by replay re-follow; this file pins the new one.
 """
 from __future__ import annotations
 
@@ -16,214 +19,135 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
-# Shared minimal DOM surface used by the production chat view and thinking
-# panel, plus the settle helper; prepended to every scenario script.
-_HARNESS = r"""
-// Minimal DOM surface used by the production chat view and thinking panel.
-class Element {
-  constructor(tag = 'div') {
-    this.tag = tag;
-    this.children = [];
-    this.parentNode = null;
-    this.dataset = {};
-    this.attributes = {};
-    this.className = '';
-    this.value = '';
-    this.text = '';
-    this.classList = {
-      contains: name => this.className.split(' ').includes(name),
-      add: (...names) => {
-        this.className = [...new Set([...this.className.split(' '), ...names])].join(' ');
-      },
-      remove: (...names) => {
-        this.className = this.className.split(' ').filter(name => !names.includes(name)).join(' ');
-      },
-      toggle: (name, force) => {
-        if (force ?? !this.classList.contains(name)) this.classList.add(name);
-        else this.classList.remove(name);
-      },
-    };
-  }
-  get isConnected() { return Boolean(this.root || this.parentNode?.isConnected); }
-  remove() {
-    if (this.parentNode) {
-      this.parentNode.children = this.parentNode.children.filter(node => node !== this);
-    }
-    this.parentNode = null;
-  }
-  append(...nodes) {
-    for (const node of nodes) {
-      node.remove();
-      node.parentNode = this;
-      this.children.push(node);
-    }
-  }
-  prepend(...nodes) {
-    for (const node of [...nodes].reverse()) {
-      node.remove();
-      node.parentNode = this;
-      this.children.unshift(node);
-    }
-  }
-  after(...nodes) {
-    const parent = this.parentNode;
-    if (!parent) return;
-    const index = parent.children.indexOf(this);
-    for (const node of [...nodes].reverse()) {
-      node.remove();
-      node.parentNode = parent;
-      parent.children.splice(index + 1, 0, node);
-    }
-  }
-  replaceChildren(...nodes) {
-    for (const node of [...this.children]) node.remove();
-    this.text = '';
-    this.append(...nodes);
-  }
-  set textContent(value) { this.replaceChildren(); this.text = String(value); }
-  get textContent() { return this.text + this.children.map(node => node.textContent).join(''); }
-  setAttribute(key, value) { this.attributes[key] = String(value); }
-  getAttribute(key) { return this.attributes[key] ?? null; }
-  querySelectorAll(selector) {
-    const matches = node => selector.startsWith('.')
-      ? node.classList.contains(selector.slice(1)) : node.tag === selector;
-    return this.children.flatMap(node => [
-      ...(matches(node) ? [node] : []), ...node.querySelectorAll(selector),
-    ]);
-  }
-  querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
-  addEventListener() {}
-  focus() {}
-  scrollTo() {}
-}
-const roots = new Map();
-globalThis.document = {
-  createElement: tag => new Element(tag),
-  createElementNS: (_namespace, tag) => new Element(tag),
-  querySelector(selector) {
-    if (!roots.has(selector)) {
-      const node = new Element();
-      node.root = true;
-      roots.set(selector, node);
-    }
-    return roots.get(selector);
-  },
-};
-globalThis.sessionStorage = { setItem() {}, removeItem() {} };
-globalThis.matchMedia = () => ({ matches: false });
-globalThis.requestAnimationFrame = callback => callback();
-Date.now = () => Date.parse('2026-09-18T00:00:00Z');
-const intervals = new Map();
-let serial = 0;
-globalThis.setInterval = callback => { intervals.set(++serial, callback); return serial; };
-globalThis.clearInterval = id => intervals.delete(id);
-globalThis.window = {
-  setTimeout(callback) { intervals.set(++serial, callback); return serial; },
-  clearTimeout: id => intervals.delete(id),
-};
-const settle = async () => {
-  for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
-};
-"""
+_TUI_TAIL = """return {
+  sendTurn, loadSession, followRunningTurn, handleStreamEvent, renderTranscript,
+  updateCard, card, normalizeBot, getBot, refreshSessions, busy, runs, bots,
+  groups, histories,
+  get currentSession() { return currentSession; },
+  set currentSession(v) { currentSession = v; },
+  get selectedBot() { return selectedBot; },
+  set selectedBot(v) { selectedBot = v; },
+  get run() { return run; },
+};"""
 
 _SCRIPT = r"""
-import fs from 'node:fs';
-""" + _HARNESS + r"""
-const view = await import('./thyca/webui/pages/chat/chat-view.js');
-const format = await import('./thyca/webui/shared/js/format.js');
-const followCalls = [];
-const posts = [];
-let resolveA;
-let aRunning = false;
-const doneB = { id: 'B', running: false, messages: [{ role: 'assistant', content: 'done B' }] };
-const dependencies = {
-  ...view, ...format,
-  SEND_ERROR_STATUS: 'Không gửi được.',
-  ApiError: class ApiError extends Error {
-    constructor(message, status) { super(message); this.status = status; }
-  },
-  async getJson(url) {
-    if (url === '/api/sessions') return { sessions: [] };
-    const id = url.split('/').pop();
-    return { id, running: id === 'A' && aRunning, messages: [] };
-  },
-  async getNdjson(url) {
-    followCalls.push(url);
-    throw new Error('follow must not open for a stream this tab owns');
-  },
-  async postJson() { return {}; },
-  async postNdjson(url, _body, onEvent) {
-    posts.push(url);
-    if (url.includes('/A/')) {
-      onEvent({ type: 'turn.accepted' });
-      onEvent({ type: 'llm.thinking', round: 1, delta: 'A-one ' });
-      onEvent({ type: 'tool.started', name: 'bash', call_id: 't1' });
-      return new Promise(resolve => { resolveA = resolve; });
-    }
-    onEvent({ type: 'turn.accepted' });
-    onEvent({ type: 'llm.thinking', round: 1, delta: 'B-one' });
-    onEvent({ type: 'turn.completed', detail: doneB });
-    return doneB;
-  },
-};
-const sources = [
-  './thyca/webui/pages/chat/sessions-sidebar.js',
-  './thyca/webui/pages/chat/turn-follow.js',
-  './thyca/webui/pages/chat/composer.js',
-  './thyca/webui/pages/chat/app.js',
-];
-const source = sources
-  .map(path => fs.readFileSync(path, 'utf8'))
-  .join('\n')
-  .replace(/^import[\s\S]*?from .*?;\n/gm, '')
-  .replace(/^export (?=async function|function|const)/gm, '')
-  .replace('void boot();', '');
-const app = new Function(...Object.keys(dependencies), source + `
-  return { loadSession, sendMessage, state, el, liveTurns, streamingSessions };
-`)(...Object.values(dependencies));
+import { installDom, loadScripts, CHAT_CHAIN } from './tests/webui_dom.mjs';
+const doc = installDom();
+const ui = loadScripts(CHAT_CHAIN, TAIL);
 const result = {};
-const cardText = () => [...app.liveTurns.values()]
-  .map(live => [...live.notesWrap.children].map(node => node.textContent).join(''))
-  .join('|');
+const settle = async () => { for (let i = 0; i < 6; i++) await new Promise(r => setImmediate(r)); };
 
-await app.loadSession('A');
-await settle();
-app.el.input.value = 'hi A';
-const pendingA = app.sendMessage();
-await settle();
-result.a = {
-  posts: posts.length, text: cardText(),
-  tracked: app.streamingSessions.has('A'),
+ui.bots.push(ui.normalizeBot({ id: 'thyca', name: 'Thyca', role: 'bạn', agent_status: { state: 'idle' } }, 0));
+doc.querySelector('#team-bot-list').innerHTML = ui.bots.map(ui.card).join('');
+ui.updateCard(ui.bots[0]);
+ui.selectedBot = 'thyca';
+ui.currentSession = 'A';
+
+// --- fetch routing: POST turn/stream (A held open, B completes),
+//     GET turn/stream (follow replay), GET session detail + list. ---
+const posts = [], follows = [];
+const queueA = [];
+let waiterA = null;
+const readerA = {
+  read: () => new Promise(resolve => {
+    if (queueA.length) resolve(queueA.shift());
+    else waiterA = resolve;
+  }),
+};
+const pushA = (line) => {
+  const chunk = { done: false, value: new TextEncoder().encode(line) };
+  if (waiterA) { const w = waiterA; waiterA = null; w(chunk); } else queueA.push(chunk);
+};
+const ndjsonBody = (events) => {
+  const bytes = new TextEncoder().encode(events.map(JSON.stringify).join('\n') + '\n');
+  let sent = false;
+  return { getReader: () => ({ read: async () => (sent ? { done: true } : (sent = true, { done: false, value: bytes })) }) };
+};
+const sessions = {
+  A: { id: 'A', title: 'Phiên A', running: false, messages: [] },
+  B: { id: 'B', title: 'Phiên B', running: false, messages: [] },
+};
+globalThis.fetch = async (url, opts = {}) => {
+  const method = opts.method || 'GET';
+  if (method === 'POST' && url.endsWith('/turn/stream')) {
+    posts.push(url);
+    if (url.includes('/A/')) return { ok: true, status: 200, body: { getReader: () => readerA } };
+    return { ok: true, status: 200, body: ndjsonBody([
+      { type: 'turn.accepted' },
+      { type: 'llm.content', delta: 'B đang trả lời' },
+      { type: 'turn.completed', detail: { id: 'B', running: false,
+        messages: [{ role: 'assistant', content: 'done B', meta: { bot_id: 'thyca' } }] } },
+    ]) };
+  }
+  if (method === 'GET' && url.endsWith('/turn/stream')) {
+    follows.push(url);
+    return { ok: true, status: 200, body: ndjsonBody([
+      { type: 'turn.accepted' },
+      { type: 'llm.content', delta: 'A vẫn đang viết' },
+      { type: 'turn.completed', detail: { id: 'A', running: false,
+        messages: [{ role: 'assistant', content: 'done A', meta: { bot_id: 'thyca' } }] } },
+    ]) };
+  }
+  if (method === 'GET' && url === '/api/sessions') {
+    return { ok: true, json: async () => ({ sessions: [] }) };
+  }
+  if (method === 'GET' && url.startsWith('/api/sessions/')) {
+    const id = decodeURIComponent(url.split('/').pop());
+    return { ok: true, json: async () => sessions[id] };
+  }
+  return { ok: false, status: 404, json: async () => ({ error: 'no route ' + url }) };
 };
 
-await app.loadSession('B');
-await settle();
-app.el.input.value = 'hi B';
-await app.sendMessage();
-await settle();
-result.b = { posts: posts.length, tracked: [...app.streamingSessions] };
+const listText = () => doc.querySelector('#message-list').textContent;
 
-await app.loadSession('A');
+// 1. Send in A; the POST stream stays open mid-turn.
+await ui.loadSession('A');
+await settle();
+const pendingA = ui.sendTurn('hi A');
+await settle();
+pushA(JSON.stringify({ type: 'turn.accepted' }) + '\n');
+pushA(JSON.stringify({ type: 'llm.content', delta: 'A-one ' }) + '\n');
+await settle();
+result.sentA = {
+  posts: posts.length,
+  tracked: [...ui.runs.keys()],
+  phase: ui.runs.get('A')?.phase,
+  streamText: doc.querySelector('#message-list .stream-text')?.textContent ?? null,
+  stopShown: doc.querySelector('#stop-button').hidden === false,
+};
+const tokenA = ui.runs.get('A');
+
+// 2. Switch to B and send there: both turns stay tracked under their own key.
+await ui.loadSession('B');
+await settle();
+await ui.sendTurn('hi B');
+await settle();
+result.sentB = {
+  posts: posts.length,
+  tracked: [...ui.runs.keys()],
+  current: ui.currentSession,
+  listHasDoneB: listText().includes('done B'),
+};
+
+// 3. Back to A while still running: a replay reader re-joins the turn —
+//    no second POST, the runs token is replaced by the follow token.
+sessions.A = { ...sessions.A, running: true };
+await ui.loadSession('A');
 await settle();
 result.backToA = {
-  followCalls: followCalls.length,
-  text: cardText(),
-  tracked: app.streamingSessions.has('A'),
+  follows: follows.length,
+  posts: posts.length,
+  replacedToken: ui.runs.get('A') !== tokenA,
 };
-
-aRunning = true;
-resolveA({
-  id: 'A', running: false,
-  messages: [{ role: 'assistant', content: 'done A', reasoning: 'A-thought' }],
-});
-await pendingA;
 await settle();
-result.doneA = {
-  followCalls: followCalls.length,
-  reasoning: app.el.messageList.querySelectorAll('.thought-output')
-    .map(node => node.textContent).join('|'),
-  tracked: [...app.streamingSessions],
+result.settledA = {
+  tracked: [...ui.runs.keys()],
+  listHasDoneA: listText().includes('done A'),
+  liveNodes: doc.querySelectorAll('#message-list .running-response').length,
 };
+// Close the orphaned POST reader so nothing dangles.
+if (waiterA) waiterA({ done: true });
+await pendingA.catch(() => {});
 console.log(JSON.stringify(result));
 """
 
@@ -233,162 +157,34 @@ def concurrent() -> dict:
     node = shutil.which("node")
     if not node:
         pytest.skip("node not installed")
+    script = _SCRIPT.replace("TAIL", json.dumps(_TUI_TAIL))
     result = subprocess.run(
-        [node, "--input-type=module", "-e", _SCRIPT],
+        [node, "--input-type=module", "-e", script],
         cwd=ROOT, check=True, capture_output=True, text=True, timeout=10,
     )
     return json.loads(result.stdout)
 
 
-def test_second_send_keeps_first_stream_ownership(concurrent: dict) -> None:
-    assert concurrent["a"] == {"posts": 1, "text": "A-one Đang dùng:bash", "tracked": True}
-    assert concurrent["b"]["posts"] == 2
-    assert concurrent["b"]["tracked"] == ["A"]
+def test_two_sessions_stream_at_once(concurrent: dict) -> None:
+    """runs keys by sessionId: the send in A stays tracked while B runs."""
+    assert concurrent["sentA"]["tracked"] == ["A"]
+    assert concurrent["sentA"]["phase"] == "writing"
+    assert concurrent["sentA"]["streamText"] == "A-one "
+    assert concurrent["sentA"]["stopShown"] is True
+    assert concurrent["sentB"]["posts"] == 2
+    assert concurrent["sentB"]["tracked"] == ["A"]
+    assert concurrent["sentB"]["listHasDoneB"] is True
 
 
-def test_returning_to_streaming_session_reuses_card_without_second_reader(
-    concurrent: dict,
-) -> None:
-    assert concurrent["backToA"]["followCalls"] == 0
-    assert concurrent["backToA"]["text"] == "A-one Đang dùng:bash"
-    assert concurrent["backToA"]["tracked"] is True
+def test_returning_to_running_session_refollows_via_replay(concurrent: dict) -> None:
+    """New contract: loadSession on a running session opens GET turn/stream
+    (replay) once — never a second POST — and the follow token takes over."""
+    assert concurrent["backToA"]["follows"] == 1
+    assert concurrent["backToA"]["posts"] == 2
+    assert concurrent["backToA"]["replacedToken"] is True
 
 
-def test_finishing_the_first_stream_renders_once_and_cleans_up(
-    concurrent: dict,
-) -> None:
-    assert concurrent["doneA"]["followCalls"] == 0
-    assert concurrent["doneA"]["reasoning"] == "A-thought"
-    assert concurrent["doneA"]["tracked"] == []
-
-
-# A background turn completion refreshes the sidebar; the reveal of the
-# session's row must respect what the user did to the pager meanwhile.
-_REVEAL_SCRIPT = r"""
-import fs from 'node:fs';
-""" + _HARNESS + r"""
-const view = await import('./thyca/webui/pages/chat/chat-view.js');
-const format = await import('./thyca/webui/shared/js/format.js');
-// 25 sessions fill three 12-per-page pages; a session created by the turn
-// lands at the end (page 3) only once the turn completes.
-const sessions = Array.from({ length: 25 }, (_, i) => ({
-  id: `s${i}`, title: `Phiên ${i}`, updated_at: '', turns: 1,
-}));
-const created = { id: 'new', title: 'Phiên mới', updated_at: '', turns: 1 };
-
-function makeApp(turnId) {
-  let turnDone = false;
-  let release;
-  const deps = {
-    ...view, ...format,
-    SEND_ERROR_STATUS: 'Không gửi được.',
-    ApiError: class ApiError extends Error {
-      constructor(message, status) { super(message); this.status = status; }
-    },
-    async getJson(url) {
-      if (url === '/api/sessions') {
-        return { sessions: turnDone ? [...sessions, created] : sessions };
-      }
-      return { id: url.split('/').pop(), running: false, messages: [] };
-    },
-    async getNdjson() { throw new Error('follow must not run here'); },
-    async postJson() { return { id: turnId }; },
-    async postNdjson(_url, _body, onEvent) {
-      onEvent({ type: 'turn.accepted' });
-      return new Promise(resolve => {
-        release = () => resolve({ id: turnId, running: false, messages: [] });
-      });
-    },
-    async patchJson() { return {}; },
-    async deleteJson() { return {}; },
-  };
-  const sources = [
-    './thyca/webui/pages/chat/sessions-sidebar.js',
-    './thyca/webui/pages/chat/turn-follow.js',
-    './thyca/webui/pages/chat/composer.js',
-    './thyca/webui/pages/chat/app.js',
-  ];
-  const source = sources
-    .map(path => fs.readFileSync(path, 'utf8'))
-    .join('\n')
-    .replace(/^import[\s\S]*?from .*?;\n/gm, '')
-    .replace(/^export (?=async function|function|const)/gm, '')
-    .replace('void boot();', '');
-  const app = new Function(...Object.keys(deps), source + `
-    return { state, el, loadSession, sendMessage, refreshSessions };
-  `)(...Object.values(deps));
-  return { app, finish: () => { turnDone = true; release(); } };
-}
-
-const result = {};
-
-// The user pages to the last page mid-turn: completion must leave the pager
-// where they put it.
-const paged = makeApp('s0');
-await paged.app.refreshSessions();
-await paged.app.loadSession('s0');
-await settle();
-paged.app.el.input.value = 'xin chào';
-const pendingPaged = paged.app.sendMessage();
-await settle();
-paged.app.state.sessionPage = 3;
-paged.finish();
-await pendingPaged;
-await settle();
-result.paged = { page: paged.app.state.sessionPage, active: paged.app.state.activeId };
-
-// The user opens another session mid-turn: completion must not flip to the
-// finished session's page.
-const navigated = makeApp('s0');
-await navigated.app.refreshSessions();
-await navigated.app.loadSession('s0');
-await settle();
-navigated.app.el.input.value = 'xin chào';
-const pendingNavigated = navigated.app.sendMessage();
-await settle();
-await navigated.app.loadSession('s20');
-await settle();
-navigated.finish();
-await pendingNavigated;
-await settle();
-result.navigated = { page: navigated.app.state.sessionPage, active: navigated.app.state.activeId };
-
-// Still on the composer with the just-created session: the completion may
-// reveal its page.
-const stayed = makeApp('new');
-await stayed.app.refreshSessions();
-await settle();
-stayed.app.el.input.value = 'xin chào';
-const pendingStayed = stayed.app.sendMessage();
-await settle();
-stayed.finish();
-await pendingStayed;
-await settle();
-result.stayed = { page: stayed.app.state.sessionPage, active: stayed.app.state.activeId };
-
-console.log(JSON.stringify(result));
-"""
-
-
-@pytest.fixture(scope="module")
-def reveal() -> dict:
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node not installed")
-    result = subprocess.run(
-        [node, "--input-type=module", "-e", _REVEAL_SCRIPT],
-        cwd=ROOT, check=True, capture_output=True, text=True, timeout=15,
-    )
-    return json.loads(result.stdout)
-
-
-def test_background_completion_leaves_pager_where_the_user_put_it(reveal: dict) -> None:
-    assert reveal["paged"] == {"page": 3, "active": "s0"}
-
-
-def test_background_completion_does_not_reveal_after_navigation(reveal: dict) -> None:
-    assert reveal["navigated"] == {"page": 2, "active": "s20"}
-
-
-def test_completion_still_reveals_just_created_session(reveal: dict) -> None:
-    assert reveal["stayed"] == {"page": 3, "active": "new"}
+def test_replayed_terminal_renders_stored_transcript(concurrent: dict) -> None:
+    assert concurrent["settledA"]["tracked"] == []
+    assert concurrent["settledA"]["listHasDoneA"] is True
+    assert concurrent["settledA"]["liveNodes"] == 0

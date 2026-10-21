@@ -23,12 +23,17 @@ from thyca.memory.heading import (
     expiry_ts,
     format_body,
     format_ts,
+    is_visible,
     new_entry_id,
+    new_task_id,
+    parse_heading,
     read_text_file,
     render_heading,
     session_id,
     utc_now,
+    validate_task_meta,
 )
+from thyca.memory.identity import current_bot_id
 from thyca.memory.search import _absolute_proj, lexical_search
 from thyca.memory.search import recent as _recent_search
 from thyca.memory.stats import CanonicalFile, MemoryStatsResult, build_stats
@@ -60,6 +65,13 @@ class MemoryFacade:
         now: datetime | None = None,
         proj: str | None = None,
         chat: str | None = None,
+        bots: list[str] | tuple[str, ...] | None = None,
+        task: str | None = None,
+        cont: str | None = None,
+        kind: str | None = None,
+        status: str | None = None,
+        habit: str | None = None,
+        habit_explicit: bool = False,
     ) -> str:
         if not isinstance(topic, str) or not topic.strip():
             raise ValueError("topic must be a non-empty string")
@@ -67,7 +79,11 @@ class MemoryFacade:
             raise ValueError("summary must be a non-empty string")
         if not isinstance(content, str):
             raise ValueError("content must be a string")
+        validate_task_meta(task, cont, kind, status, habit, habit_explicit)
+        if isinstance(habit, str):
+            habit = " ".join(habit.split())
         normalized_proj = _absolute_proj(proj)
+        owners = _resolve_owners(bots, current_bot_id())
         with self.writer.mutation_lock():
             self.active.ensure_files(now)
             moment = utc_now(now)
@@ -84,6 +100,13 @@ class MemoryFacade:
                 expires_at=expiry_ts(importance, moment),
                 proj=normalized_proj,
                 chat=chat if isinstance(chat, str) and chat.strip() else None,
+                bots=owners,
+                task=task,
+                cont=cont,
+                kind=kind,
+                status=status,
+                habit=habit.strip() if isinstance(habit, str) else None,
+                habit_explicit=bool(habit_explicit),
             )
             leaf = "\n".join(format_body(summary, content))
             with self.writer.lock_for(path):
@@ -94,8 +117,173 @@ class MemoryFacade:
                 self._refresh_index(now)
             return sid
 
+    def new_task_id(self, tries: int = 8) -> str:
+        """Mint a task id not already present in the store (phase 1A)."""
+        for _ in range(max(1, tries)):
+            candidate = new_task_id()
+            if not self.archive.store.has_task(candidate):
+                return candidate
+        raise ArchiveError("could not mint a unique task id")
+
+    def tasks(
+        self,
+        *,
+        status: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        limit: int = 20,
+        now: datetime | None = None,
+    ) -> dict:
+        """Group visible task entries into a task catalog (phase 1A).
+
+        Returns ``{"tasks": [...], "warnings": [...]}``. A child bot
+        only sees entries it may read, so a task made solely of another
+        bot's entries never appears for it."""
+        from thyca.memory.archive_store import DATE_RE, decode_bots, encode_bots
+        from thyca.memory.heading import TASK_STATUSES
+
+        warnings: list[str] = []
+        if status is not None and status not in TASK_STATUSES:
+            raise ValueError(
+                f"status must be one of {list(TASK_STATUSES)}, got {status!r}"
+            )
+        for name, value in (("date_from", date_from), ("date_to", date_to)):
+            if value is not None and (
+                not isinstance(value, str) or DATE_RE.fullmatch(value) is None
+            ):
+                raise ValueError(f"{name} must be YYYY-MM-DD, got {value!r}")
+        requested_limit = limit
+        try:
+            limit = int(limit)
+        except (TypeError, ValueError):
+            limit = 20
+        limit = max(1, min(limit, 50))
+        if limit != requested_limit:
+            warnings.append(f"limit clamped from {requested_limit} to {limit}")
+        now_ts = format_ts(utc_now(now))
+        reader = current_bot_id()
+        rows = self.archive.store.task_session_rows(now_ts, reader=reader)
+        members_by_session: dict[str, dict] = {}
+        for row in rows:
+            keys = row.keys()
+            origin = row["chat"] if "chat" in keys else None
+            if not self._entry_readable(origin, row["bots"]):
+                continue
+            members_by_session[str(row["session_id"])] = {
+                "task": str(row["task"]),
+                "session_id": str(row["session_id"]),
+                "first_day": str(row["first_day"]),
+                "last_day": str(row["last_day"]),
+                "first_line": int(row["first_line"]),
+                "last_line": int(row["last_line"]),
+                "title": str(row["title"]),
+                "status": row["status"],
+                "bots": row["bots"],
+            }
+        # A task opened today is not indexed yet (today's daily file only
+        # enters SQLite after day-close), but the catalog must show it so
+        # "check memory_tasks before opening a task" works same-day.
+        # Same visibility rule as the store reader clause / _check_read:
+        # no reader (user) and Thyca see everything; a child bot sees
+        # legacy (None), team, and its own entries only.
+        today = self.archive.day(now)
+        try:
+            today_text = read_text_file(self.thyca_dir / "memory" / f"{today}.md")
+        except (OSError, UnicodeDecodeError):
+            today_text = None
+        if today_text:
+            today_chunks = self.archive.chunker.chunk_markdown(
+                str(self.thyca_dir / "memory" / f"{today}.md"),
+                today_text,
+                source_kind="daily",
+                timeline_day=today,
+            )
+            by_session: dict[str, list] = {}
+            for chunk in today_chunks:
+                if chunk.task is None or chunk.session_id in members_by_session:
+                    continue
+                if not self._entry_readable(
+                        getattr(chunk, "chat_session", None),
+                        encode_bots(chunk.bots)):
+                    continue
+                by_session.setdefault(chunk.session_id, []).append(chunk)
+            for session_id, leaves in by_session.items():
+                first = leaves[0]
+                if not is_visible(first.expires_at, now):
+                    continue
+                owners = first.bots
+                if reader is not None and reader != "thyca":
+                    if owners is not None and "team" not in owners and reader not in owners:
+                        continue
+                members_by_session[session_id] = {
+                    "task": str(first.task),
+                    "session_id": session_id,
+                    "first_day": today,
+                    "last_day": today,
+                    "first_line": min(leaf.line_start for leaf in leaves),
+                    "last_line": max(leaf.line_start for leaf in leaves),
+                    "title": first.session_title,
+                    "status": first.status,
+                    # Same JSON-string shape as the store rows so the
+                    # shared grouping below decodes both uniformly.
+                    "bots": encode_bots(first.bots),
+                }
+        grouped: dict[str, list] = {}
+        for member in members_by_session.values():
+            grouped.setdefault(member["task"], []).append(member)
+        catalog = []
+        for task_id, members in grouped.items():
+            ordered = sorted(
+                members,
+                key=lambda r: (str(r["first_day"]), int(r["first_line"])),
+            )
+            latest = max(
+                members,
+                key=lambda r: (str(r["last_day"]), int(r["last_line"])),
+            )
+            latest_status = "open"
+            latest_session_id = str(latest["session_id"])
+            for member in sorted(
+                members,
+                key=lambda r: (str(r["last_day"]), int(r["last_line"])),
+                reverse=True,
+            ):
+                candidate = member["status"]
+                if isinstance(candidate, str) and candidate:
+                    latest_status = candidate
+                    break
+            if status is not None and latest_status != status:
+                continue
+            first_day = str(ordered[0]["first_day"])
+            last_day = str(latest["last_day"])
+            if date_from is not None and last_day < date_from:
+                continue
+            if date_to is not None and first_day > date_to:
+                continue
+            owners: set[str] = set()
+            for member in members:
+                decoded = decode_bots(member["bots"])
+                if decoded:
+                    owners.update(decoded)
+                else:
+                    owners.add("team")
+            catalog.append(
+                {
+                    "task_id": task_id,
+                    "title": str(ordered[0]["title"]),
+                    "status": latest_status,
+                    "latest_session_id": latest_session_id,
+                    "entry_count": len(members),
+                    "first_day": first_day,
+                    "last_day": last_day,
+                    "bots": sorted(owners),
+                }
+            )
+        catalog.sort(key=lambda item: item["last_day"], reverse=True)
+        return {"tasks": catalog[:limit], "warnings": warnings}
+
     def forget(self, session_id: str, now: datetime | None = None) -> None:
-        self._reject_legacy_session(session_id)
+        self._check_mutate(session_id, "forget", now)
         # The writer owns per-file locking and locates under mutation_lock:
         # no facade-side pre-locate (TOCTOU + double locate).
         with self.writer.mutation_lock():
@@ -111,8 +299,13 @@ class MemoryFacade:
         content: str | None = None,
         now: datetime | None = None,
         proj: str | None = None,
+        task: str | None = None,
+        cont: str | None = None,
+        kind: str | None = None,
+        status: str | None = None,
+        habit: str | None = None,
+        habit_explicit: bool = False,
     ) -> None:
-        self._reject_legacy_session(session_id)
         normalized_proj = _absolute_proj(proj)
         for name, value in (("topic", topic), ("summary", summary), ("content", content)):
             if value is not None and not isinstance(value, str):
@@ -123,7 +316,21 @@ class MemoryFacade:
             raise ValueError("summary must not be blank")
         if content is not None and summary is None:
             raise ValueError("content requires summary")
-        if topic is None and summary is None and content is None and normalized_proj is None:
+        for name, value in (("task", task), ("cont", cont), ("kind", kind), ("status", status)):
+            if value is not None and (not isinstance(value, str) or not value):
+                raise ValueError(f"{name} must be a non-empty string")
+        if habit is not None and (not isinstance(habit, str) or not habit.strip()):
+            raise ValueError("habit must be a non-empty string")
+        if isinstance(habit, str):
+            habit = " ".join(habit.split())
+        if habit_explicit and not isinstance(habit_explicit, bool):
+            raise ValueError("habit_explicit must be a boolean")
+        if (
+            topic is None and summary is None and content is None
+            and normalized_proj is None and task is None and cont is None
+            and kind is None and status is None and habit is None
+            and not habit_explicit
+        ):
             raise ValueError("nothing to update")
         topic = topic.strip() if topic is not None else None
         body_lines = None
@@ -135,10 +342,14 @@ class MemoryFacade:
                 body_lines = format_body(summary)
             else:
                 body_lines = format_body(summary, content)
+        self._check_mutate(session_id, "update", now)
         with self.writer.mutation_lock():
             self.writer.update_session(
                 session_id, topic=topic, body_lines=body_lines,
                 proj=normalized_proj, keep_details=keep_details,
+                task=task, cont=cont, kind=kind, status=status,
+                habit=habit.strip() if habit is not None else None,
+                habit_explicit=habit_explicit if habit_explicit else None,
             )
             self._refresh_index(now)
 
@@ -148,9 +359,9 @@ class MemoryFacade:
         importance: int | None = None,
         now: datetime | None = None,
     ) -> str:
-        self._reject_legacy_session(session_id)
         if importance is not None and importance not in TTL_DAYS:
             raise ValueError(f"importance must be 1..5, got {importance}")
+        self._check_mutate(session_id, "reinforce", now)
         with self.writer.mutation_lock():
             exp = self.writer.reinforce(session_id, importance, now)
             self._refresh_index(now)
@@ -163,7 +374,6 @@ class MemoryFacade:
         session_id: str | None = None,
         now: datetime | None = None,
     ) -> str:
-        self._reject_legacy_session(session_id)
         provided = [
             (name, value)
             for name, value in (
@@ -177,8 +387,6 @@ class MemoryFacade:
         name, value = provided[0]
         if not isinstance(value, str) or not value.strip():
             raise ArchiveError(f"{name} must be a non-empty string")
-        if chunk_id is not None and chunk_id.startswith("memory#"):
-            raise ArchiveError("MEMORY.md is no longer supported")
         now_ts = format_ts(utc_now(now))
         try:
             text = self.archive.get(chunk_id=chunk_id, session_id=session_id, now=now)
@@ -203,6 +411,31 @@ class MemoryFacade:
                 text = self.writer.read_session(session_id, now=now)
                 sid = session_id
                 chunk_ids = self._session_leaf_ids(session_id, text)[:GET_SESSION_CAP]
+        if not sid.startswith("canonical#"):
+            self._check_read(sid, now)
+            origin_chat = None
+            try:
+                origin_rows = self.archive.store.get_session(sid, now_ts)
+            except ArchiveError:
+                origin_rows = []
+            if origin_rows:
+                keys = origin_rows[0].keys()
+                if "chat_session" in keys:
+                    origin_chat = origin_rows[0]["chat_session"]
+            if origin_chat is None and isinstance(text, str):
+                # Provenance comes only from the REAL first session
+                # heading's metadata comment — never a body token.
+                from thyca.memory.heading import parse_heading
+
+                for line in text.splitlines():
+                    if not line.startswith("## "):
+                        break
+                    meta = parse_heading(line)
+                    if meta is not None:
+                        origin_chat = meta.chat
+                    break
+            if not self._origin_allowed(origin_chat):
+                raise ArchiveError("entry is not readable in this window")
         if chunk_ids and sid:
             self.archive.store.usage.record_gets(chunk_ids, sid, now_ts)
         # sid is always a validated non-empty id here (blank selectors raise
@@ -210,28 +443,47 @@ class MemoryFacade:
         if sid.startswith("canonical#"):
             # Canonical reads are profile content, not daily memory: return
             # the fetched text without TTL renewal or profile-file mutation.
-            return text
-        self.reinforce(sid, now=now)
-        try:
-            if chunk_id is not None:
-                return self.archive.get(chunk_id=chunk_id, now=now)
-            return self.archive.get(session_id=sid, now=now)
-        except ArchiveError as reread_miss:
-            if str(reread_miss).startswith(NO_FALLBACK_PREFIXES):
-                raise
-            if chunk_id is not None:
-                leaf, _ = read_unindexed_chunk(
-                    self.archive, self.writer, chunk_id, now, reread_miss
-                )
-                return leaf
-            return self.writer.read_session(sid, now=now)
+            # Under a group window the auto-generated habits block (which
+            # can carry private DM labels) is projected out, same as the
+            # hot snapshot — raw profile files are already PathGuard-denied.
+            from thyca.memory.visibility import current_memory_view
 
-    def stats(self, now: datetime | None = None) -> MemoryStatsResult:
+            _view = current_memory_view()
+            if _view is not None and getattr(
+                _view.window, "kind", None
+            ) == "group" and isinstance(text, str):
+                from thyca.memory.habits import strip_auto_habits
+
+                return strip_auto_habits(text)
+            return text
+        if self._may_mutate(sid, now):
+            self.reinforce(sid, now=now)
+            try:
+                if chunk_id is not None:
+                    return self.archive.get(chunk_id=chunk_id, now=now)
+                return self.archive.get(session_id=sid, now=now)
+            except ArchiveError as reread_miss:
+                if str(reread_miss).startswith(NO_FALLBACK_PREFIXES):
+                    raise
+                if chunk_id is not None:
+                    leaf, _ = read_unindexed_chunk(
+                        self.archive, self.writer, chunk_id, now, reread_miss
+                    )
+                    return leaf
+                return self.writer.read_session(sid, now=now)
+        # A bot reading outside its own entries (team/legacy) must not
+        # extend their TTL: return the already-fetched text as-is.
+        return text
+
+    def stats(
+        self, now: datetime | None = None, *, bot_id: str | None = None,
+    ) -> MemoryStatsResult:
         return build_stats(
             self.archive,
             today_chunks=self._today_chunks(now),
-            files=self._canonical_files(),
+            files=self._canonical_files() if bot_id is None else [],
             now=now,
+            bot_id=bot_id,
         )
 
     def search(
@@ -243,6 +495,9 @@ class MemoryFacade:
         now: datetime | None = None,
         proj: str | None = None,
         chat: str | None = None,
+        task: str | None = None,
+        kind: str | None = None,
+        status: str | None = None,
     ) -> SearchResult:
         return lexical_search(
             self.archive,
@@ -252,15 +507,37 @@ class MemoryFacade:
             now=now,
             proj=proj,
             chat=chat,
+            reader=current_bot_id(),
+            task=task,
+            kind=kind,
+            status=status,
         )
 
     def recent(self, limit: int = 5, now: datetime | None = None) -> list[Hit]:
-        return _recent_search(self.archive, limit, now)
+        return _recent_search(self.archive, limit, now, reader=current_bot_id())
 
     @staticmethod
-    def _reject_legacy_session(session_id: str | None) -> None:
-        if isinstance(session_id, str) and session_id.startswith("memory#"):
-            raise ArchiveError("MEMORY.md is no longer supported")
+    def _entry_readable(chat: str | None, bots) -> bool:
+        from thyca.memory.visibility import current_memory_view
+
+        view = current_memory_view()
+        if view is None:
+            return True
+        if bots is not None and not isinstance(bots, tuple):
+            try:
+                from thyca.memory.archive_store import decode_bots
+
+                bots = decode_bots(bots)
+            except Exception:
+                bots = None
+        return view.can_read_entry(chat, bots)
+
+    @staticmethod
+    def _origin_allowed(chat: str | None) -> bool:
+        from thyca.memory.visibility import current_memory_view
+
+        view = current_memory_view()
+        return view is None or view.can_read_origin(chat)
 
     def _refresh_index(self, now: datetime | None = None) -> None:
         with self.writer.mutation_lock():
@@ -270,6 +547,73 @@ class MemoryFacade:
             live.update(chunk.chunk_id for chunk in self._today_chunks(now))
             self.archive.store.usage.keep_gets(live)
             self.archive.store.usage.keep_searches(live)
+
+    # -- Team ownership (BE-4) -------------------------------------------
+    def forget_bot_entries(self, bot_id: str, now: datetime | None = None) -> int:
+        """Drop one bot's private entries on bot deletion (BE-5).
+
+        Only entries owned exactly by ``[bot_id]`` go; team, legacy, and
+        group entries stay with the team. Edges of removed entries drop
+        via the refresh reaper."""
+        with self.writer.mutation_lock():
+            removed = self.writer.remove_bot_entries(bot_id)
+            self._refresh_index(now)
+            return removed
+
+    def _lookup_bots(
+        self, session_id: str, now: datetime | None
+    ) -> tuple[str, ...] | None:
+        """Owner list of one entry; None = legacy/team entry.
+
+        Indexed rows first; today's not-yet-indexed file falls back to the
+        raw heading. Unknown sessions read as None (callers that need the
+        distinction check existence separately)."""
+        bots = self.archive.store.session_bots(session_id)
+        if bots is not None:
+            return bots
+        if self.archive.store.get_session_any(session_id):
+            return None
+        try:
+            text = self.writer.read_session(session_id, now=now)
+        except ArchiveError:
+            return None
+        first = text.splitlines()[0] if text.splitlines() else ""
+        meta = parse_heading(first)
+        return meta.bots if meta is not None else None
+
+    def _may_mutate(self, session_id: str, now: datetime | None = None) -> bool:
+        """True when the in-flight caller may edit/delete/renew an entry.
+
+        The user (no bot bound) and Thyca may touch everything. A child
+        bot may only touch its own non-team entries."""
+        reader = current_bot_id()
+        if reader is None or reader == "thyca":
+            return True
+        bots = self._lookup_bots(session_id, now)
+        if bots is None:
+            return False
+        return reader in bots and "team" not in bots
+
+    def _check_mutate(self, session_id: str, op: str, now: datetime | None = None) -> None:
+        if self._may_mutate(session_id, now):
+            return
+        reader = current_bot_id()
+        bots = self._lookup_bots(session_id, now)
+        kind = "team" if (bots is None or "team" in (bots or ())) else "another bot's"
+        raise ArchiveError(f"bot '{reader}' cannot {op} {kind} memory: {session_id}")
+
+    def _check_read(self, session_id: str, now: datetime | None = None) -> None:
+        """Raise unless the in-flight caller may read an entry.
+
+        Read is wider than mutate: a child bot reads its own entries plus
+        team/legacy entries, never another bot's private entries."""
+        reader = current_bot_id()
+        if reader is None or reader == "thyca":
+            return
+        bots = self._lookup_bots(session_id, now)
+        if bots is None or reader in bots or "team" in bots:
+            return
+        raise ArchiveError(f"bot '{reader}' cannot read another bot's memory: {session_id}")
 
     CANONICAL_NAMES = ("SOUL.md", "USER.md", "IDENTITY.md")
 
@@ -329,3 +673,50 @@ class MemoryFacade:
             path, text, source_kind="daily", timeline_day=day
         )
         return [chunk.chunk_id for chunk in chunks if chunk.session_id == session_id]
+
+
+def _resolve_owners(
+    bots: list[str] | tuple[str, ...] | None, reader: str | None
+) -> tuple[str, ...] | None:
+    """Owner list for a new entry (BE-4).
+
+    Default is ``[self]`` for a bot turn, legacy ``None`` (team) for the
+    user. An explicit list is validated; a child bot may never claim
+    ``"team"`` — promotion goes through the candidate queue."""
+    if bots is None:
+        if reader is None:
+            return None
+        return (reader,)
+    if not isinstance(bots, (list, tuple)) or not bots:
+        raise ValueError("bots must be a non-empty list of bot ids")
+    cleaned = []
+    for item in bots:
+        if not isinstance(item, str) or not item or len(item) > 64:
+            raise ValueError("bots must be a non-empty list of bot ids")
+        if item not in cleaned:
+            cleaned.append(item)
+    if reader is not None and reader != "thyca" and "team" in cleaned:
+        raise ArchiveError(f"bot '{reader}' cannot write team memory directly")
+    return tuple(cleaned)
+
+
+def format_task_catalog(entries: list[dict], *, limit: int = 20) -> str:
+    """Render open memory tasks as prompt index lines (phase 1C).
+
+    One line per task: ``- <task_id>: <title ≤80 chars> · last active
+    <last_day> · bots <a, b>``. At most ``limit`` lines.
+    """
+    lines = []
+    for entry in entries[: max(0, limit)]:
+        if not isinstance(entry, dict):
+            continue
+        title = str(entry.get("title", ""))
+        if len(title) > 80:
+            title = title[:79].rstrip() + "…"
+        bots = entry.get("bots") or []
+        lines.append(
+            f"- {entry.get('task_id', '?')}: {title} · "
+            f"last active {entry.get('last_day', '?')} · "
+            f"bots {', '.join(str(b) for b in bots)}"
+        )
+    return "\n".join(lines)

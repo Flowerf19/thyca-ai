@@ -1,15 +1,13 @@
-# Thyca agent docs
+# Contributor guide
 
-Đọc theo thứ tự này:
+Read the project context and working rules first:
 
-1. `PROJECT_CONTEXT.md` — runtime, ranh giới, env
-2. `AGENT_RULES.md` — an toàn, workflow, gotcha đã verify
-3. `decisions/2026-08-15-l2-hybrid-v1.md` — L2 hybrid thuộc v1
-4. `decisions/2026-08-28-skills-agent-skills-v1.md` — skills file-first, không tool mới
-5. Plans refactor đã done cả 2 (2026-09-22, chờ merge main): `plans/backend-solid-refactor.md` (nhánh `refactor/backend-solid`, 8 modules) + `plans/webui-solid-refactor.md` (nhánh `refactor/webui-solid`, 6 modules); plans cũ ở `plans/done/`
-6. `plans/modules/{M<n>,W<n>}-<name>.md` — plan từng module (đã done cả 14, kèm close-out evidence)
-7. `plans/services/*.md` — contract từng service
+1. `PROJECT_CONTEXT.md` — current runtime, canonical storage, data-safety, and verification status.
+2. `AGENT_RULES.md` — permissions, workflow, and verified project constraints.
+3. Relevant decisions under `decisions/`; read the L2 hybrid decision before changing memory contracts.
+4. Relevant plans under `plans/`. `plans/bot-workspace-channels.md` contains historical workstream evidence; its **Current canonical-only hard cut** section is authoritative. Migration/shadow plans and their old “waiting for promotion” status are superseded.
+5. Relevant service or module plans only when they affect the task.
 
-Runtime **0.8.5.dev0**: CLI (`thyca/app/cli.py`: `-p`, REPL, `--continue` / `--session` / `--model`), Config (multi-provider + `auth.json`, `reasoningEffort`), Provider/Settings WebUI (schema-driven, fetch models, onboarding), Session JSONL, ActiveMemory + L2 lexical + Skills index (`thyca/skills/`), LLM OpenAI-compat chat + responses (`normalize_usage` + `cost_for`), Agent Loop 4 pha (ghi `Message.meta` usage/cost/latency), Tools registry + `memory_*` + MCP stdio, `thyca/core/protocol.py` wire types, WebUI `thyca --serve` (`thyca/serve/`: Chat / Memories / Trace / Dashboard).
+The package version is `0.86.5.dev0` (verify against `pyproject.toml`). Root and child turns use the shared `BotRuntime`; CLI adapts through `ChatApp.turn`. `WorkspaceStore` and per-bot `WorkspaceTimeline` are authoritative. Public room history is compact; canonical span detail is available through Trace. Do not infer current behavior from superseded plans.
 
-Đừng bịa command hoặc feature. Evidence = tree hiện tại, không phải chat.
+Run the approved focused checks for the change; run `uv run pytest -q` only when the task calls for the full gate. Preserve unrelated dirty files and untracked user artifacts. Do not access or recreate the user-authorized-reset `~/.thyca` data. Do not claim independent review or real-provider quality without evidence.

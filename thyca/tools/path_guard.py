@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from thyca.memory.identity import current_bot_id
+
 
 def absolutize(value: str) -> Path:
     """~-expand + lexically normalize, without touching the filesystem.
@@ -42,7 +44,84 @@ class PathGuard:
             raise PathDenied(f"write denied: {target}")
         return target
 
+    def deny_read(self, path: str) -> Path:
+        """Resolve a read target, refusing bot-sensitive files to child bots."""
+        target = self.resolve(path)
+        if self._bot_sensitive(target):
+            raise PathDenied(f"read denied: {target}")
+        if self._group_sensitive(target):
+            raise PathDenied(f"read denied: {target}")
+        return target
+
+    def _group_sensitive(self, target: Path) -> bool:
+        """Raw private state paths denied only while a GROUP view is bound.
+
+        Root memory daily files, room transcripts, per-bot workspace
+        private state (private_followups), raw sqlite indexes and user
+        profile files bypass the visibility-filtered facade, so a group
+        turn reads them only through memory_get/search — never from disk.
+        No bound view, CLI and private windows keep the old behavior."""
+        from thyca.memory.visibility import current_memory_view
+
+        view = current_memory_view()
+        if view is None or getattr(view.window, "kind", None) != "group":
+            return False
+        root = self.thyca_dir
+        try:
+            target.relative_to(root)
+        except ValueError:
+            return False
+        for folder in (root / "memory", root / "sessions"):
+            try:
+                target.relative_to(folder)
+            except ValueError:
+                continue
+            return True
+        if target.name.startswith("memory.sqlite"):
+            return True
+        if target == root / "USER.md":
+            return True
+        bots_dir = root / "bots"
+        try:
+            rel = target.relative_to(bots_dir)
+        except ValueError:
+            return False
+        parts = rel.parts
+        if len(parts) >= 2 and parts[-1] == "USER.md":
+            return True
+        if len(parts) >= 2 and parts[1] == "workspace":
+            return True
+        return False
+
+    def _bot_sensitive(self, target: Path) -> bool:
+        """Team-control files a non-system bot must never touch.
+
+        A child bot that could edit ``bots/**`` (any TWIN.md), the live
+        ``config.json``, or the shared ``skills-team/**`` store could
+        escalate its own card, and the runtime re-reads the card on every
+        turn. Room/internal transcripts under ``sessions/`` are denied too
+        (phase 2A): a bot reads room history only through the curated
+        room-context delta, never by opening transcript files — this also
+        keeps other bots' DMs unreadable from disk. The user (no bot
+        bound) and the Thyca system bot keep full access; every other
+        in-flight bot is denied, read and write."""
+        bot_id = current_bot_id()
+        if bot_id is None or bot_id == "thyca":
+            return False
+        root = self.thyca_dir
+        if target == root / "config.json":
+            return True
+        for folder in (root / "bots", root / "skills-team", root / "sessions"):
+            try:
+                target.relative_to(folder)
+            except ValueError:
+                continue
+            return True
+        return False
+
     def _blocked(self, target: Path) -> bool:
+        if self._bot_sensitive(target):
+            return True
         root = self.thyca_dir
         try:
             target.relative_to(root)

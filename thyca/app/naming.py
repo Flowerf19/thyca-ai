@@ -19,6 +19,7 @@ async def _name_if_needed(
     sessions: SessionManager,
     cfg: Config,
     event_sink: EventSink | None = None,
+    bot_id: str | None = None,
 ) -> bool:
     # The user may have named the notebook from the sidebar while this turn
     # was running. Re-read the title from disk so the model does not
@@ -43,7 +44,9 @@ async def _name_if_needed(
         sessions.mark_naming_attempted()
     except Exception:
         return False
-    emit_event(event_sink, TurnEvent(type="session.naming.started"))
+    emit_event(
+        event_sink, TurnEvent(type="session.naming.started", bot_id=bot_id)
+    )
     updated = False
     captured: dict = {}
 
@@ -76,7 +79,8 @@ async def _name_if_needed(
         # Paired with started on every path, including cancellation: the
         # flag was pre-persisted, so the attempt stays consumed on reload.
         emit_event(
-            event_sink, TurnEvent(type="session.naming.finished", updated=updated)
+            event_sink,
+            TurnEvent(type="session.naming.finished", updated=updated, bot_id=bot_id),
         )
     return updated
 

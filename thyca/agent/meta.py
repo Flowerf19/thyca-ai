@@ -51,8 +51,18 @@ def _priced_cost(model: str | None, usage: dict | None, pricing: dict | None) ->
     return cost_for(model, usage, pricing)
 
 
+def _stage_attribution(stage: Stage) -> dict:
+    meta = {}
+    for key in ("bot_id", "trace_id", "parent_span_id", "span_id",
+                "channel", "window_id", "work_id"):
+        value = getattr(stage, key, None)
+        if isinstance(value, str) and value:
+            meta[key] = value
+    return meta
+
+
 def assistant_meta(stage: Stage, *, kind: str = "llm") -> dict:
-    meta: dict = {"kind": kind}
+    meta: dict = {"kind": kind, **_stage_attribution(stage)}
     if stage.round:
         meta["round"] = stage.round
     model = _clean_model(
@@ -115,11 +125,19 @@ def compaction_meta(
 
 
 def tool_message(
-    result: ToolResult, latency_ms: int | None = None, round_no: int | None = None
+    result: ToolResult, latency_ms: int | None = None, round_no: int | None = None,
+    bot_id: str | None = None, stage: Stage | None = None,
 ) -> Message:
-    meta: dict | None = None
+    meta: dict | None = _stage_attribution(stage) if stage is not None else None
+    if not meta:
+        meta = None
+    if meta is None and isinstance(bot_id, str) and bot_id:
+        meta = {"bot_id": bot_id}
     if result.is_error:
-        meta = {"is_error": True}
+        # Error rows keep their bot attribution; is_error merges in.
+        if meta is None:
+            meta = {}
+        meta["is_error"] = True
     if latency_ms is not None:
         if meta is None:
             meta = {}

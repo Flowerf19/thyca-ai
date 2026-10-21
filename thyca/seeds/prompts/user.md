@@ -19,6 +19,11 @@ not an invitation to infer or invent.
 - Never store credentials or secrets. Obtain consent before adding
   sensitive personal information.
 
+## Habits
+<!-- Habits Thyca tự tổng hợp từ quan sát của nhiều bot (auto); nội dung user tự khai luôn thắng. -->
+<!-- habits:auto:start -->
+<!-- habits:auto:end -->
+
 ## Name and forms of address
 
 ## Language and communication preferences

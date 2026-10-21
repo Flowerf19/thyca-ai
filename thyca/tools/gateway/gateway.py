@@ -25,6 +25,7 @@ from thyca.tools.gateway.execution import (
     reset_execution,
     unknown_id,
 )
+from thyca.memory.identity import current_bot_id
 from thyca.tools.gateway.policy import Policy, PolicyDenied
 from thyca.tools.registry import ToolSpec
 
@@ -154,7 +155,7 @@ class ToolGateway:
         self._executions.clear()
 
     async def _run(self, spec: ToolSpec, call: ToolCall) -> ToolResult:
-        execution = Execution(self._ids.next(), spec.name, TASK)
+        execution = Execution(self._ids.next(), spec.name, TASK, owner=current_bot_id())
         self._executions[execution.id] = execution
         try:
             return await self._track(spec, call, execution)
@@ -275,6 +276,17 @@ class ToolGateway:
 
     def _lookup(self, id: str) -> Execution:
         execution = self._executions.get(id)
+        caller = current_bot_id()
+        if caller is not None and caller != "thyca":
+            # Bot callers only ever see their own executions: another
+            # bot's id (or a user/Thyca execution) reads as unknown, and
+            # the known-id listing never enumerates other owners' ids.
+            own = sorted(
+                eid for eid, item in self._executions.items() if item.owner == caller
+            )
+            if execution is None or execution.owner != caller:
+                raise unknown_id("execution", id, own)
+            return execution
         if execution is None:
             raise unknown_id("execution", id, sorted(self._executions))
         return execution

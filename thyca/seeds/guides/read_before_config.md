@@ -21,7 +21,7 @@ thêm model, gán đúng provider cho nó (mục 2).
 
 ## 2. Cấu hình bằng WebUI (nên dùng cách này)
 
-Mở Thyca (`thyca --serve`, http://127.0.0.1:8765) → Cài đặt → **Provider**:
+Mở Thyca (`thyca --serve`, http://127.0.0.1:19502) → Cài đặt → **Provider**:
 
 1. **Thêm provider**: bấm Thêm, đặt tên ngắn (chữ, số, `_`, `-`), nhập endpoint
    và dán API key của đúng provider đó.

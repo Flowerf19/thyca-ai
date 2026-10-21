@@ -15,7 +15,13 @@ from thyca.memory.archived import (
     SearchResult,
     dedup_siblings,
 )
-from thyca.memory.heading import format_ts, utc_now
+from thyca.memory.heading import (
+    TASK_ID_RE,
+    TASK_KINDS,
+    TASK_STATUSES,
+    format_ts,
+    utc_now,
+)
 from thyca.memory.rank import _promote_in_order_span
 
 
@@ -46,6 +52,10 @@ def lexical_search(
     now: datetime | None = None,
     proj: str | None = None,
     chat: str | None = None,
+    reader: str | None = None,
+    task: str | None = None,
+    kind: str | None = None,
+    status: str | None = None,
 ) -> SearchResult:
     """FTS + trigram search with clamp/dedup warnings and usage recording."""
     if timeline_day is not None and not (
@@ -65,6 +75,18 @@ def lexical_search(
         proj = _absolute_proj(proj)
     except ValueError:
         return SearchResult(warnings=["invalid proj"])
+    for name, value, allowed in (
+        ("task", task, None),
+        ("kind", kind, TASK_KINDS),
+        ("status", status, TASK_STATUSES),
+    ):
+        if value is not None and (
+            not isinstance(value, str)
+            or not value
+            or (allowed is not None and value not in allowed)
+            or (name == "task" and TASK_ID_RE.fullmatch(value) is None)
+        ):
+            return SearchResult(warnings=[f"invalid {name}"])
     if timeline_day is not None and timeline_day >= archive.day(now):
         warnings.append(
             f"timeline_day {timeline_day} is not indexed "
@@ -72,12 +94,14 @@ def lexical_search(
         )
     fts = archive.fts_hits(
         query, timeline_day, now, CANDIDATE_CAP,
-        project=proj, chat_session=chat,
+        project=proj, chat_session=chat, reader=reader,
+        task=task, kind=kind, status=status,
     )
     hits: list[Hit] = list(fts)
     trigram = archive.trigram_hits(
         query, timeline_day, now, CANDIDATE_CAP,
-        project=proj, chat_session=chat,
+        project=proj, chat_session=chat, reader=reader,
+        task=task, kind=kind, status=status,
     )
     if len(fts) >= CANDIDATE_CAP or len(trigram) >= CANDIDATE_CAP:
         warnings.append(
@@ -96,6 +120,14 @@ def lexical_search(
     if hidden:
         noun = "sibling hit" if hidden == 1 else "sibling hits"
         warnings.append(f"dedup hid {hidden} {noun}")
+    from thyca.memory.visibility import current_memory_view
+
+    view = current_memory_view()
+    if view is not None:
+        deduped = [
+            hit for hit in deduped
+            if view.can_read_entry(hit.chat_session, hit.bots)
+        ]
     hits = archive.with_counts(deduped[:limit], now)
     if hits:
         now_ts = format_ts(utc_now(now))
@@ -108,8 +140,18 @@ def lexical_search(
 
 
 def recent(
-    archive: ArchivedMemory, limit: int = 5, now: datetime | None = None
+    archive: ArchivedMemory, limit: int = 5, now: datetime | None = None,
+    reader: str | None = None,
 ) -> list[Hit]:
     """Most recently updated archived hits, clamped like the facade."""
     limit = max(1, min(limit, 10))
-    return archive.with_counts(archive.recent_hits(limit, now), now)
+    from thyca.memory.visibility import current_memory_view
+
+    view = current_memory_view()
+    pool = archive.recent_hits(CANDIDATE_CAP, now, reader=reader)
+    if view is not None:
+        pool = [
+            hit for hit in pool
+            if view.can_read_entry(hit.chat_session, hit.bots)
+        ]
+    return archive.with_counts(pool[:limit], now)

@@ -96,10 +96,20 @@ def collect_turns(chat: ChatApp) -> list[TurnSummary]:
 def _apply_trace_filters(turns: list[TurnSummary], qs: dict) -> list[TurnSummary]:
     model = (qs.get("model", [""])[0] or "").strip()
     status = (qs.get("status", [""])[0] or "").strip()
+    bot = (qs.get("bot_id", [""])[0] or "").strip()
     q = (qs.get("q", [""])[0] or "").strip().lower()
     frm = (qs.get("from", [""])[0] or "").strip()
     to = (qs.get("to", [""])[0] or "").strip()
     filtered = turns
+    if bot:
+        # bot_id is the real attribution (which bot ran the turn). Session
+        # DM/participation only fills in for old turns recorded before
+        # per-turn attribution existed.
+        filtered = [
+            t for t in filtered
+            if (t.bot_id or t.session_dm) == bot
+            or (t.bot_id is None and bot in t.session_bots)
+        ]
     if model and model != "all":
         filtered = [t for t in filtered if (t.model or "unknown") == model]
     if status and status != "all":
@@ -144,8 +154,28 @@ def trace_detail_payload(chat: ChatApp, session_id: str, turn_index: int) -> dic
     for t in turns:
         if t.turn_index == turn_index:
             payload = t.to_payload()
+            messages = []
+            for message in t.messages:
+                meta = message.meta or {}
+                if (
+                    message.role == "assistant"
+                    and meta.get("kind") == "message"
+                    and meta.get("bus_event") is not True
+                    and isinstance(meta.get("bot_id"), str)
+                    and meta.get("bot_id")
+                    and isinstance(meta.get("span_id"), str)
+                    and meta.get("span_id")
+                ):
+                    messages.extend(
+                        chat.trace_execution_messages(
+                            session_id, meta["bot_id"], meta["span_id"]
+                        )
+                    )
+                else:
+                    messages.append(message)
             payload["messages"] = [
-                message_dict(m, chat.skills_root, include_args=True) for m in t.messages
+                message_dict(m, chat.skills_root, include_args=True)
+                for m in messages
             ]
             return payload
     raise ValueError("trace not found")

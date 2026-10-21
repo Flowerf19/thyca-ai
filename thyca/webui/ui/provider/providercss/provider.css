@@ -1,0 +1,61 @@
+/* Provider & model screen: entry rows, forms, defaults selects and the
+   quick-verify result. Shared paper/shell styles come from ../share/*.css.
+   Every rule is scoped under .provider-shell. */
+
+/* .page-scroll is height:100% in app-shell.css; inside a flex column it must
+   flex instead, or the fixed .page-nav would push the scroll area down. */
+.provider-shell .workspace{display:flex;flex-direction:column}
+.provider-shell .page-nav{flex-shrink:0}
+.provider-shell .page-scroll{flex:1;min-height:0;height:auto}
+
+/* Page actions in the header strip. */
+.provider-shell .page-actions .primary-action{display:inline-flex;align-items:center;gap:8px}
+.provider-shell .page-actions .icon{width:14px;height:14px}
+
+/* ---- Provider / model rows ------------------------------------------- */
+.provider-shell .entry-list{display:grid;gap:10px;margin:0 0 20px;padding:0;list-style:none}
+.provider-shell .entry-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;align-items:start;border:1px solid #e0d3bc;border-radius:12px;background:#fffbf1ad;padding:14px 16px}
+.provider-shell .entry-row[data-default="true"]{border-color:#bdae8f;background:#fff6e2ad}
+.provider-shell .entry-heading{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.provider-shell .entry-name{font:600 17px var(--serif);color:#574831;overflow-wrap:anywhere}
+.provider-shell .entry-meta{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:6px;font-size:11.5px;color:#8a7c64;line-height:1.55}
+.provider-shell .entry-url{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;overflow-wrap:anywhere}
+.provider-shell .row-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.provider-shell .row-actions .quiet-button{padding:6px 10px;font-size:11px}
+.provider-shell .row-actions .icon{width:13px;height:13px}
+.provider-shell .quiet-button.is-danger{color:#9c4f3f;border-color:#d8ac98}
+.provider-shell .quiet-button.is-danger:hover{background:#fff0e8}
+
+/* Key + default chips on a row heading. */
+.provider-shell .chip .icon{width:11px;height:11px}
+.provider-shell .key-chip.has-key{border-color:#9fb08d;background:#eef2e3;color:#465c3e}
+.provider-shell .key-chip.no-key{border-color:#d8b8a0;background:#fdf0e6;color:#8a5432}
+
+/* Inline "Kiểm tra" result under a provider row. */
+.provider-shell .test-result{display:block;margin-top:8px;font-size:11.5px;color:#877d69;min-height:15px}
+.provider-shell .test-result.s-ok{color:#456344}
+.provider-shell .test-result.s-error{color:#9c4f3f}
+
+/* ---- Add / edit forms ------------------------------------------------- */
+.provider-shell .form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:13px 16px}
+.provider-shell .form-grid>.panel-title,.provider-shell .form-grid>.form-actions,.provider-shell .form-grid>.field-wide{grid-column:1/-1}
+.provider-shell .form-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.provider-shell .form-actions .primary-action{display:inline-flex;align-items:center;gap:8px}
+.provider-shell .form-actions .icon{width:14px;height:14px}
+.provider-shell .field-hint{font-size:11px;color:#94866d;line-height:1.55}
+.provider-shell .field-hint em{font-style:normal;color:#7c6e55}
+.provider-shell input[aria-invalid="true"],.provider-shell select[aria-invalid="true"]{border-color:#c05c4b;outline:2px solid #c05c4b33}
+
+/* ---- Defaults + verify ------------------------------------------------ */
+.provider-shell .defaults-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:13px 16px;margin-bottom:18px}
+.provider-shell .verify-result{margin-top:16px}
+.provider-shell .verify-result .status-line{margin-bottom:10px}
+.provider-shell .verify-models{margin-top:4px}
+.provider-shell .verify-models .chip{cursor:pointer;padding:6px 12px}
+.provider-shell .verify-models .chip:hover{background:#eef2e3;border-color:#8e9b78}
+.provider-shell .card-copy code{font:12px ui-monospace,Menlo,Consolas,monospace;background:#f1e7d1;border-radius:4px;padding:1px 5px}
+
+@media(max-width:850px){
+.provider-shell .entry-row{grid-template-columns:1fr}
+.provider-shell .row-actions{justify-content:flex-start}
+}

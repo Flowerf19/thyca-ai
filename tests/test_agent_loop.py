@@ -145,6 +145,55 @@ def test_tool_round_then_text_emits_round_and_tool_events(tmp_path: Path) -> Non
     assert messages[-1].content == "finished"
 
 
+def test_loop_limit_marker_is_not_a_second_model_call(tmp_path: Path) -> None:
+    call = ToolCall(id="call-1", name="echo", arguments={})
+
+    class SlowLLM(FakeLLM):
+        async def chat(self, messages, tools=None):
+            await asyncio.sleep(0.01)
+            return await super().chat(messages, tools)
+
+    llm = SlowLLM([
+        ChatReply(
+            content=None,
+            tool_calls=[call],
+            model="m",
+            usage={"prompt_tokens": 11, "completion_tokens": 2},
+        )
+    ])
+    dispatcher = FakeDispatcher({
+        "call-1": ToolResult(tool_call_id="call-1", name="echo", content="result")
+    })
+    manager = SessionManager(tmp_path)
+    manager.create()
+    loop = AgentLoop(
+        sessions=manager,
+        assemble=Assemble(),
+        think=Think(llm),
+        act=Act(dispatcher),
+        observe=Observe(manager),
+        loop_max=1,
+        model="m",
+        pricing={"m": PricingCfg(input=909.09, cache=0, output=0)},
+    )
+    assert asyncio.run(loop.run("stop after one")) == "loop limit reached"
+
+    from thyca.bots.runtime import _aggregate_turn_meta, _aggregate_turn_rounds
+
+    rows = manager.current.messages
+    actual, marker = rows[1], rows[-1]
+    assert marker.content == "loop limit reached"
+    assert marker.meta["status"] == "loop_limit"
+    model, usage, cost, latency, requests, tool_calls = _aggregate_turn_meta(rows)
+    assert model == "m"
+    assert usage == {"prompt_tokens": 11, "completion_tokens": 2}
+    assert cost == 0.01
+    assert latency == actual.meta["latency_ms"] > 0
+    assert requests == 1
+    assert tool_calls == 1
+    assert _aggregate_turn_rounds(rows) == 1
+
+
 def test_loop_max_emits_no_finished_for_skipped_round(tmp_path: Path) -> None:
     manager = SessionManager(tmp_path)
     session = manager.create()
@@ -531,3 +580,231 @@ def test_loop_records_raw_estimate_beside_usage(tmp_path: Path) -> None:
 
     factor = calibration_factor([assistant], model="m")
     assert factor == 12 / estimate
+
+
+def test_loop_injects_context_budget_signal(tmp_path: Path) -> None:
+    from thyca.memory.active import ActiveSnapshot
+
+    manager = SessionManager(tmp_path)
+    manager.create()
+    manager.append(
+        Message(
+            role="assistant",
+            content="",
+            tool_calls=[
+                ToolCall(
+                    id="call-1",
+                    name="memory_remember",
+                    arguments={
+                        "topic": "Goal",
+                        "summary": "State",
+                        "task": "task-1234abcd",
+                        "kind": "checkpoint",
+                    },
+                )
+            ],
+        )
+    )
+    manager.append(
+        Message(
+            role="tool",
+            content='{"session_id": "2026-10-19#abc", "task_id": "task-1234abcd"}',
+            tool_call_id="call-1",
+        )
+    )
+    llm = FakeLLM([ChatReply(content="ok")])
+    loop = AgentLoop(
+        sessions=manager,
+        assemble=Assemble(),
+        think=Think(llm),
+        act=Act(FakeDispatcher({})),
+        observe=Observe(manager),
+        loop_max=3,
+        context_tokens=100_000,
+    )
+
+    assert (
+        asyncio.run(
+            loop.run("next", hot=ActiveSnapshot(soul="s", user="u", today="t"))
+        )
+        == "ok"
+    )
+    system = llm.requests[0][0]
+    assert system.role == "system"
+    assert "<context_budget>" in (system.content or "")
+    assert "state=roomy" in (system.content or "")
+    assert "checkpoint=recorded" in (system.content or "")
+
+
+def test_loop_context_budget_warns_before_backstop(tmp_path: Path) -> None:
+    from thyca.memory.active import ActiveSnapshot
+
+    manager = SessionManager(tmp_path)
+    manager.create()
+    manager.append(Message(role="user", content="x" * 6500))
+    manager.append(Message(role="assistant", content="y" * 4500))
+    llm = FakeLLM([ChatReply(content="ok")])
+    loop = AgentLoop(
+        sessions=manager,
+        assemble=Assemble(),
+        think=Think(llm),
+        act=Act(FakeDispatcher({})),
+        observe=Observe(manager),
+        loop_max=3,
+        context_tokens=4000,
+    )
+
+    assert (
+        asyncio.run(
+            loop.run("next", hot=ActiveSnapshot(soul="s", user="u", today="t"))
+        )
+        == "ok"
+    )
+    system_text = llm.requests[0][0].content or ""
+    assert "checkpoint=none" in system_text
+    assert "state=prepare" in system_text or "state=mandatory" in system_text
+    assert "Checkpoint" in system_text
+
+
+def test_loop_checkpoint_tool_call_is_seen_next_turn(tmp_path: Path) -> None:
+    import json
+
+    from thyca.memory.active import ActiveSnapshot
+    from thyca.memory.facade import MemoryFacade
+    from thyca.tools.gateway import ToolGateway
+    from thyca.tools.memory_tools import register_memory_tools
+    from thyca.tools.registry import ToolRegistry
+    from thyca.tools.task_store import TaskStore
+
+    manager = SessionManager(tmp_path)
+    session = manager.create()
+    facade = MemoryFacade(tmp_path / "home", timezone_name="Asia/Ho_Chi_Minh")
+    registry = ToolRegistry()
+    register_memory_tools(registry, facade)
+    gateway = ToolGateway(registry, TaskStore())
+    call = ToolCall(
+        id="cp-1",
+        name="memory_remember",
+        arguments={
+            "topic": "Goal",
+            "summary": "Done A; next B",
+            "new_task": True,
+            "kind": "checkpoint",
+        },
+    )
+    llm = FakeLLM([
+        ChatReply(
+            content=None,
+            tool_calls=[call],
+            usage={"prompt_tokens": 1000},
+            model="m",
+        ),
+        ChatReply(content="saved"),
+        ChatReply(content="continued"),
+    ])
+    loop = AgentLoop(
+        sessions=manager,
+        assemble=Assemble(),
+        think=Think(llm),
+        act=Act(gateway),
+        observe=Observe(manager),
+        loop_max=3,
+        tools=[
+            {"type": "function", "function": {"name": "memory_remember"}},
+            {"type": "function", "function": {"name": "memory_search"}},
+            {"type": "function", "function": {"name": "memory_tasks"}},
+        ],
+        model="m",
+        context_tokens=100_000,
+    )
+    hot = ActiveSnapshot(soul="s", user="u", today="t")
+    assert asyncio.run(loop.run("start", hot=hot)) == "saved"
+    stored = _load_messages(tmp_path, session.id)
+    tool_result = next(m for m in stored if m.role == "tool")
+    checkpoint = json.loads(tool_result.content or "{}")
+    assert checkpoint["task_id"].startswith("task-")
+    assert "Done A; next B" in facade.get(session_id=checkpoint["session_id"])
+    assert asyncio.run(loop.run("continue", hot=hot)) == "continued"
+    next_system = llm.requests[2][0].content or ""
+    assert "checkpoint=recorded" in next_system
+
+
+def test_loop_context_budget_marks_old_checkpoint_stale(tmp_path: Path) -> None:
+    from thyca.memory.active import ActiveSnapshot
+
+    manager = SessionManager(tmp_path)
+    manager.create()
+    manager.append(
+        Message(
+            role="assistant",
+            content="",
+            tool_calls=[
+                ToolCall(
+                    id="cp-1",
+                    name="memory_remember",
+                    arguments={
+                        "topic": "Goal",
+                        "summary": "Old state",
+                        "task": "task-1234abcd",
+                        "kind": "checkpoint",
+                    },
+                )
+            ],
+            meta={"usage": {"prompt_tokens": 1000}},
+        )
+    )
+    manager.append(
+        Message(
+            role="tool",
+            content='{"session_id": "2026-10-19#abc", "task_id": "task-1234abcd"}',
+            tool_call_id="cp-1",
+        )
+    )
+    manager.append(Message(role="user", content="x" * 6500))
+    manager.append(Message(role="assistant", content="y" * 4500))
+    llm = FakeLLM([ChatReply(content="ok")])
+    loop = AgentLoop(
+        sessions=manager,
+        assemble=Assemble(),
+        think=Think(llm),
+        act=Act(FakeDispatcher({})),
+        observe=Observe(manager),
+        loop_max=3,
+        context_tokens=4000,
+    )
+    assert (
+        asyncio.run(
+            loop.run("next", hot=ActiveSnapshot(soul="s", user="u", today="t"))
+        )
+        == "ok"
+    )
+    system_text = llm.requests[0][0].content or ""
+    assert "checkpoint=stale" in system_text
+    assert "Refresh the checkpoint" in system_text
+
+
+def test_loop_context_budget_respects_unavailable_memory_tools(tmp_path: Path) -> None:
+    from thyca.memory.active import ActiveSnapshot
+
+    manager = SessionManager(tmp_path)
+    manager.create()
+    llm = FakeLLM([ChatReply(content="ok")])
+    loop = AgentLoop(
+        sessions=manager,
+        assemble=Assemble(),
+        think=Think(llm),
+        act=Act(FakeDispatcher({})),
+        observe=Observe(manager),
+        loop_max=3,
+        tools=[],
+        context_tokens=100_000,
+    )
+    assert (
+        asyncio.run(
+            loop.run("next", hot=ActiveSnapshot(soul="s", user="u", today="t"))
+        )
+        == "ok"
+    )
+    system_text = llm.requests[0][0].content or ""
+    assert "Memory write tools are unavailable" in system_text
+    assert "call memory_remember" not in system_text

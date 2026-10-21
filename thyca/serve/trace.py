@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from thyca.core.protocol import Message
 from thyca.sessions import Session
@@ -29,6 +29,24 @@ class TurnSummary:
     # raw slice for detail endpoint
     messages: list[Message]
     error: dict | None = None
+    # Team attribution (BE-6): bot that ran this turn + delegation trace.
+    bot_id: str | None = None
+    trace_id: str | None = None
+    # Per-bot subtotals inside this turn slice (assistant rows grouped by
+    # their meta bot_id). Empty for manually built summaries; aggregate()
+    # and the FE fall back to the single bot_id/turn totals then.
+    bot_breakdown: list[dict] = field(default_factory=list)
+    # Owning session's channel shape (phase: trace-per-agent filter).
+    # Copied from the Session so the FE can filter/group without a join.
+    session_kind: str = "group"
+    session_dm: str | None = None
+    session_bots: list[str] = field(default_factory=list)
+    # Real tool calls behind this turn (sum of _row_tool_calls). Last so
+    # older kwarg constructors keep working.
+    tool_calls: int = 0
+    channel: str | None = None
+    window_id: str | None = None
+    work_id: str | None = None
 
     def to_payload(self) -> dict:
         """Public JSON shape for /api/traces* — the single source of the field list."""
@@ -42,6 +60,7 @@ class TurnSummary:
             "status": self.status,
             "rounds": self.rounds,
             "requests": self.requests,
+            "tool_calls": self.tool_calls,
             "prompt_tokens": self.prompt_tokens,
             "cached_tokens": self.cached_tokens,
             "completion_tokens": self.completion_tokens,
@@ -49,12 +68,25 @@ class TurnSummary:
             "cost_usd": self.cost_usd,
             "latency_ms": self.latency_ms,
             "error": self.error,
+            "bot_id": self.bot_id,
+            "trace_id": self.trace_id,
+            "bot_breakdown": [dict(entry) for entry in self.bot_breakdown],
+            "session_kind": self.session_kind,
+            "session_dm": self.session_dm,
+            "session_bots": list(self.session_bots),
+            "channel": self.channel,
+            "window_id": self.window_id,
+            "work_id": self.work_id,
         }
 
 
-def _is_context_stop(message: Message) -> bool:
-    """True for the guard's synthetic stop marker (no provider call behind it)."""
-    return (message.meta or {}).get("status") == "context_limit"
+def _is_synthetic_stop(message: Message) -> bool:
+    """True for a synthetic context/loop stop marker, not a provider call."""
+    meta = message.meta or {}
+    return (
+        meta.get("status") in {"context_limit", "loop_limit"}
+        and meta.get("kind") != "message"
+    )
 
 
 def _turn_status(slice_msgs: list[Message]) -> str:
@@ -66,7 +98,7 @@ def _turn_status(slice_msgs: list[Message]) -> str:
     # provider call, so it must not count as a completed turn (naming
     # threshold) or a request (trace totals). Already persisted rows
     # carry the same meta, so they are handled too.
-    if any(_is_context_stop(m) for m in slice_msgs):
+    if any((m.meta or {}).get("status") == "context_limit" for m in slice_msgs):
         return "context_limit"
     # sidecar meta-messages are not turn outcomes — skip them, keep old semantics
     last = next(
@@ -95,7 +127,7 @@ def _sum_tokens(turn_msgs: list[Message]) -> tuple[int | None, int | None, int |
     model: str | None = None
     rounds = 0
     for msg in turn_msgs:
-        if msg.role != "assistant" or _is_context_stop(msg):
+        if msg.role != "assistant" or _is_synthetic_stop(msg):
             continue
         meta = msg.meta or {}
         usage = meta.get("usage")
@@ -151,9 +183,119 @@ def _sum_tokens(turn_msgs: list[Message]) -> tuple[int | None, int | None, int |
     return prompt, cached, completion, total, cost, latency, model
 
 
+#: Bus envelope kinds from before the bus_event marker existed; such rows
+#: carry no model call of their own.
+_BUS_KINDS = frozenset({"delegate", "step", "status", "help_request"})
+
+
+def _row_requests(message: Message) -> int:
+    """Real model calls behind ONE assistant row (0 or more).
+
+    The single rule for turn totals and per-bot breakdowns so the two
+    can never drift: bus rows and synthetic stop markers cost 0; an aggregated room row reports its
+    own count; app-written card rows cost 0 (their model call already
+    sits in an internal aggregate); everything else is one call.
+    Non-assistant rows always cost 0.
+    """
+    if getattr(message, "role", None) != "assistant":
+        return 0
+    if _is_synthetic_stop(message):
+        return 0
+    meta = message.meta or {}
+    count = meta.get("requests")
+    if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
+        return count
+    if meta.get("bus_event") is True:
+        return 0
+    kind = meta.get("kind")
+    if kind in _BUS_KINDS:
+        return 0
+    if (
+        kind == "message"
+        and meta.get("parent_span_id") is not None
+        and not meta.get("model")
+        and not meta.get("usage")
+    ):
+        return 0
+    if kind == "card":
+        return 0
+    return 1
+
+
+def _row_tool_calls(message: Message) -> int:
+    """Real tool calls behind ONE assistant row.
+
+    Mirrors :func:`_row_requests` exclusions (non-assistant rows,
+    synthetic stop markers, bus rows, app-written card rows cost 0); an
+    aggregated room row reports its own ``tool_call_count`` instead of
+    its body list; everything else counts ``len(message.tool_calls)``.
+    """
+    if getattr(message, "role", None) != "assistant":
+        return 0
+    if _is_synthetic_stop(message):
+        return 0
+    meta = message.meta or {}
+    if meta.get("bus_event") is True:
+        return 0
+    count = meta.get("tool_call_count")
+    if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
+        return count
+    kind = meta.get("kind")
+    if kind in _BUS_KINDS:
+        return 0
+    if kind == "card":
+        return 0
+    calls = getattr(message, "tool_calls", None) or []
+    return len(calls)
+
+
+def _row_rounds(message: Message) -> int:
+    if getattr(message, "role", None) != "assistant" or _is_synthetic_stop(message):
+        return 0
+    rounds = (message.meta or {}).get("rounds")
+    if isinstance(rounds, int) and not isinstance(rounds, bool) and rounds >= 0:
+        return rounds
+    return 1
+
+
+def _bot_breakdown(turn_msgs: list[Message]) -> list[dict]:
+    """Per-bot subtotals over a turn slice's assistant rows.
+
+    Groups by each assistant row's meta ``bot_id`` (missing/blank ->
+    ``None``, which aggregate()/FE map to their unattributed bucket).
+    Each entry reuses :func:`_sum_tokens` on its own subset so token /
+    cost / latency semantics (None = never reported) match the turn
+    totals exactly: summing the entries reproduces the turn totals.
+    Context-stop markers are excluded, matching turn ``requests``."""
+    groups: dict[str | None, list[Message]] = {}
+    for msg in turn_msgs:
+        if msg.role != "assistant" or _is_synthetic_stop(msg):
+            continue
+        raw = (msg.meta or {}).get("bot_id")
+        bot_id = raw if isinstance(raw, str) and raw else None
+        groups.setdefault(bot_id, []).append(msg)
+    entries: list[dict] = []
+    for bot_id, msgs in groups.items():
+        prompt, cached, completion, total, cost, latency, _model = _sum_tokens(msgs)
+        entries.append({
+            "bot_id": bot_id,
+            "requests": sum(_row_requests(msg) for msg in msgs),
+            "tool_calls": sum(_row_tool_calls(msg) for msg in msgs),
+            "prompt_tokens": prompt,
+            "cached_tokens": cached,
+            "completion_tokens": completion,
+            "total_tokens": total,
+            "cost_usd": cost,
+            "latency_ms": latency,
+        })
+    return entries
+
+
 def turns_from_session(session: Session) -> list[TurnSummary]:
     # Grouping shared with the wire turns count (turn_slices): system
     # compaction markers excluded, one slice per user message.
+    bots = list(session.bots) if session.bots else ["thyca"]
+    kind = "dm" if session.dm_bot else "group"
     slices = turn_slices(session.messages)
     out: list[TurnSummary] = []
     for idx, sl in enumerate(slices):
@@ -164,11 +306,32 @@ def turns_from_session(session: Session) -> list[TurnSummary]:
             None,
         )
         rounds = sum(
-            1 for m in sl if m.role == "assistant" and not _is_context_stop(m)
+            _row_rounds(m)
+            for m in sl
+            if m.role == "assistant" and not _is_synthetic_stop(m)
         )
-        requests = rounds
+        requests = sum(_row_requests(m) for m in sl)
+        tool_calls = sum(_row_tool_calls(m) for m in sl)
         started = sl[0].ts if sl else ""
         ended = sl[-1].ts if sl else ""
+        bot_id = next(
+            (str((m.meta or {}).get("bot_id")) for m in sl
+             if isinstance((m.meta or {}).get("bot_id"), str) and (m.meta or {}).get("bot_id")),
+            None,
+        )
+        trace_id = next(
+            (str((m.meta or {}).get("trace_id")) for m in sl
+             if isinstance((m.meta or {}).get("trace_id"), str) and (m.meta or {}).get("trace_id")),
+            None,
+        )
+        from thyca.core.channel import WORK_REF_RE
+
+        work_id = next(
+            (str((m.meta or {}).get("work_id")) for m in sl
+             if isinstance((m.meta or {}).get("work_id"), str)
+             and WORK_REF_RE.fullmatch((m.meta or {})["work_id"])),
+            None,
+        )
         out.append(
             TurnSummary(
                 session_id=session.id,
@@ -180,6 +343,7 @@ def turns_from_session(session: Session) -> list[TurnSummary]:
                 status=status,
                 rounds=rounds,
                 requests=requests,
+                tool_calls=tool_calls,
                 prompt_tokens=prompt,
                 cached_tokens=cached,
                 completion_tokens=completion,
@@ -188,6 +352,15 @@ def turns_from_session(session: Session) -> list[TurnSummary]:
                 latency_ms=latency,
                 messages=list(sl),
                 error=error,
+                bot_id=bot_id,
+                trace_id=trace_id,
+                bot_breakdown=_bot_breakdown(sl),
+                session_kind=kind,
+                session_dm=session.dm_bot,
+                session_bots=bots,
+                channel="webui",
+                window_id=session.id,
+                work_id=work_id,
             )
         )
     return out
@@ -212,10 +385,21 @@ def _sum_group(group: list[TurnSummary]) -> tuple[int, float | None]:
     return sum(t.requests for t in group), cost
 
 
+def _sum_tool_calls(group: list) -> int:
+    """Shared tool_calls rollup over turns or breakdown entries."""
+    total = 0
+    for item in group:
+        value = item.tool_calls if isinstance(item, TurnSummary) else item.get("tool_calls")
+        if isinstance(value, int) and not isinstance(value, bool):
+            total += value
+    return total
+
+
 def aggregate(turns: list[TurnSummary]) -> dict:
     total_requests, total_cost = _sum_group(turns)
     totals = {
         "requests": total_requests,
+        "tool_calls": _sum_tool_calls(turns),
         "prompt_tokens": sum(t.prompt_tokens or 0 for t in turns),
         "cached_tokens": sum(t.cached_tokens or 0 for t in turns),
         "completion_tokens": sum(t.completion_tokens or 0 for t in turns),
@@ -273,6 +457,58 @@ def aggregate(turns: list[TurnSummary]) -> dict:
         {"status": status, "requests": sum(x.requests for x in group)}
         for status, group in sorted(by_status_map.items())
     ]
+    # by_bot (BE-6): same rollup shape as by_model, but summed from each
+    # turn's per-bot breakdown so delegated child work is credited to the
+    # child, not the turn's first bot. Turns without a breakdown (manually
+    # built summaries) fall back to their single bot_id + turn totals.
+    # Turns without attribution count as "unknown" (legacy single-bot
+    # transcripts) so old data never breaks the shape.
+    by_bot_acc: dict[str, dict] = {}
+    for t in turns:
+        entries = [e for e in (t.bot_breakdown or []) if isinstance(e, dict)]
+        if not entries:
+            entries = [{
+                "bot_id": t.bot_id, "requests": t.requests,
+                "tool_calls": t.tool_calls,
+                "prompt_tokens": t.prompt_tokens, "cached_tokens": t.cached_tokens,
+                "completion_tokens": t.completion_tokens,
+                "total_tokens": t.total_tokens, "cost_usd": t.cost_usd,
+                "latency_ms": t.latency_ms,
+            }]
+        for entry in entries:
+            raw_bot = entry.get("bot_id")
+            key = raw_bot if isinstance(raw_bot, str) and raw_bot else "unknown"
+            acc = by_bot_acc.setdefault(key, {
+                "requests": 0, "tool_calls": 0, "prompt_tokens": 0, "cached_tokens": 0,
+                "completion_tokens": 0, "total_tokens": 0,
+                "costs": [], "latencies": [], "last_started_at": "",
+            })
+            req = entry.get("requests")
+            acc["requests"] += req if isinstance(req, int) else 0
+            acc["tool_calls"] += _sum_tool_calls([entry])
+            for field_name in ("prompt_tokens", "cached_tokens", "completion_tokens", "total_tokens"):
+                value = entry.get(field_name)
+                acc[field_name] += value if isinstance(value, int) else 0
+            if isinstance(entry.get("cost_usd"), (int, float)):
+                acc["costs"].append(float(entry["cost_usd"]))
+            if isinstance(entry.get("latency_ms"), int):
+                acc["latencies"].append(entry["latency_ms"])
+            if t.started_at and t.started_at > acc["last_started_at"]:
+                acc["last_started_at"] = t.started_at
+    by_bot = []
+    for bot_id, acc in sorted(by_bot_acc.items()):
+        by_bot.append({
+            "bot_id": bot_id,
+            "requests": acc["requests"],
+            "tool_calls": acc["tool_calls"],
+            "prompt_tokens": acc["prompt_tokens"],
+            "cached_tokens": acc["cached_tokens"],
+            "completion_tokens": acc["completion_tokens"],
+            "total_tokens": acc["total_tokens"],
+            "cost_usd": round(sum(acc["costs"]), 6) if acc["costs"] else None,
+            "latency_ms_p50": _percentile(sorted(acc["latencies"]), 0.5),
+            "last_started_at": acc["last_started_at"],
+        })
     by_hour_map: dict[str, list[TurnSummary]] = defaultdict(list)
     for t in turns:
         hour = ""
@@ -289,6 +525,7 @@ def aggregate(turns: list[TurnSummary]) -> dict:
     return {
         "totals": totals,
         "by_model": by_model,
+        "by_bot": by_bot,
         "by_day": by_day,
         "by_hour": by_hour,
         "by_status": by_status,

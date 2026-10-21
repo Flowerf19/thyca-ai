@@ -34,6 +34,13 @@ CREATE TABLE IF NOT EXISTS chunks(
   forgotten_at   TEXT,
   project        TEXT,
   chat_session   TEXT,
+  bots           TEXT,
+  task           TEXT,
+  cont           TEXT,
+  kind           TEXT,
+  status         TEXT,
+  habit          TEXT,
+  habit_explicit INTEGER NOT NULL DEFAULT 0,
   UNIQUE(path, session_id, leaf_ord)
 );
 

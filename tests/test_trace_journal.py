@@ -1,15 +1,20 @@
-"""Trace execution journal + deep-link time helpers — webui/pages/dashboard/trace-data.js.
+"""Trace page contract — thyca/webui/ui/trace/js/trace.js + index.html.
 
-executionStepsFromDetail is the flat journal behind the Trace screen: real
-message order, tool calls kept per call (id preserved, never merged by name)
-and nested only under the assistant round that issued them.
-traceTimeFormatter/formatTraceTimestamp render timestamps in the IANA zone
-from /api/config instead of the viewer's zone.
+The old trace surface (12/12/1 session/turn pagers in dashboard-today.js,
+collect_trace_pages dedupe paging, scroll-reveal deep links, separate
+session CRUD) was not ported. The new page is list+detail inside the shared
+shell: GET /api/traces?from&to&limit&offset&q&model&status paged 50-at-a-time
+behind "Tải thêm", sessions grouped by session_id in first-seen order, turn
+detail at GET /api/traces/<sid>/<turn>, deep links #<sid>/<turn> and
+?s=<sid>&t=<turn>, and seq guards on both the list and detail requests.
+These tests pin that contract. The page is a classic script ('use strict',
+shared globals), so the harness evals it in Node with a stubbed global
+surface, mirroring the old import-based eval style.
 """
 from __future__ import annotations
 
 import json
-import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -17,21 +22,65 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-TRACE_DATA = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "trace-data.js"
-TRACE_JS = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "trace.js"
-TRACE_VIEW = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "trace-view.js"
-TRACE_TURNS = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "trace-turns.js"
-TRACE_DEEPLINK = ROOT / "thyca" / "webui" / "pages" / "dashboard" / "trace-deeplink.js"
-PAGER_JS = ROOT / "thyca" / "webui" / "shared" / "js" / "pager.js"
+WEBUI = ROOT / "thyca" / "webui" / "ui"
+TRACE_JS = WEBUI / "trace" / "js" / "trace.js"
+TRACE_HTML = WEBUI / "trace" / "index.html"
 
-
-def _trace_script() -> str:
-    """Concat of the Trace journal modules (entry + view + turns + deeplink
-    + shared pager): substring pins read the split files, asserts unchanged."""
-    return "\n".join(
-        path.read_text(encoding="utf-8")
-        for path in (TRACE_JS, TRACE_VIEW, TRACE_TURNS, TRACE_DEEPLINK, PAGER_JS)
-    )
+# Same stub surface as test_trace_score.py plus: deferreds, toast capture,
+# window listener capture (hashchange), and a getJson responder boot can see.
+STUBS = r"""
+class El {
+  constructor(tag = 'div') {
+    this.tag = tag; this.value = ''; this.textContent = ''; this._html = '';
+    this.hidden = false; this.disabled = false; this.dataset = {}; this.attrs = {};
+    this.listeners = {}; this.children = []; this.options = []; this.className = '';
+    this.scrollTop = 0; this.style = {};
+  }
+  set innerHTML(v) { this._html = String(v); }
+  get innerHTML() { return this._html; }
+  setAttribute(k, v) { this.attrs[k] = String(v); }
+  addEventListener(t, f) { (this.listeners[t] ||= []).push(f); }
+  replaceChildren(...n) { this.children = n; this.options = n; }
+  insertAdjacentHTML(_p, h) { this._html = (this._html || '') + h; }
+  set onclick(f) { this.listeners.click = [f]; }
+  set onchange(f) { this.listeners.change = [f]; }
+}
+const __els = {};
+const __el = (id) => __els[id] ||= new El();
+const __workspace = new El();
+globalThis.document = {
+  querySelector: (s) => s === '.workspace' ? __workspace
+    : s.startsWith('#') ? __el(s.slice(1)) : null,
+  querySelectorAll: () => [],
+  createElement: (t) => new El(t),
+  addEventListener() {},
+};
+const __urls = [];
+globalThis.location = { hash: '', search: '', pathname: '/trace/index.html' };
+globalThis.history = { replaceState: (_a, _b, u) => __urls.push(String(u)) };
+globalThis.window = {};
+const __winListeners = {};
+globalThis.addEventListener = (t, f) => { (__winListeners[t] ||= []).push(f); };
+globalThis.$ = (s, r = document) => r.querySelector(s);
+globalThis.$$ = (s, r = document) => [...r.querySelectorAll(s)];
+globalThis.icon = (n) => `<svg data-i="${n}"></svg>`;
+globalThis.escapeHTML = (str) => String(str).replace(/[&<>"']/g, (ch) =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+globalThis.__roster = {};
+globalThis.getBot = (id) => globalThis.__roster[id] || null;
+globalThis.avatar = (b) => `<ava:${b.id}/>`;
+globalThis.paletteStyle = (b) => `--c:${b.color || '#000'}`;
+const __toasts = [];
+globalThis.toast = (m) => __toasts.push(String(m));
+globalThis.bootShell = async () => {
+  globalThis.__roster.coder = { id: 'coder', name: 'Coder', color: '#123', state: 'idle' };
+};
+const __jsonCalls = [];
+const __pending = [];
+let __jsonResponder = async (url) => { throw new Error('unexpected ' + url); };
+globalThis.getJson = (url) => { __jsonCalls.push(String(url)); return __jsonResponder(String(url)); };
+const __deferred = () => { let res; const p = new Promise(r => { res = r; }); p.__res = res; return p; };
+"""
 
 
 @pytest.fixture(scope="module")
@@ -42,15 +91,21 @@ def node() -> str:
     return binary
 
 
-def _eval(node: str, expression: str) -> object:
-    source = (
-        f"import {{ executionStepsFromDetail, traceTimeFormatter, formatTraceTimestamp,"
-        f" collectTracePages, formatStepPayload, groupTraceTurns }}"
-        f" from '{TRACE_DATA.as_posix()}';\n"
-        f"console.log(JSON.stringify({expression}));\n"
+def _eval_trace(node: str, body: str, setup: str = "") -> object:
+    """Eval trace.js (classic script) with stubs, then run `body` inside
+    the same scope so module-level functions/state are reachable. `setup`
+    runs before the source — use it to plant location.hash or a getJson
+    responder the boot-time fetches should see."""
+    src = TRACE_JS.read_text(encoding="utf-8")
+    program = (
+        STUBS
+        + setup + "\n"
+        + "\nconst __src = " + json.dumps(src) + ";\n"
+        + "const __body = " + json.dumps(body) + ";\n"
+        + "eval(__src + '\\n;' + __body);\n"
     )
     result = subprocess.run(
-        [node, "--input-type=module", "-e", source],
+        [node, "--input-type=module", "-e", program],
         check=True,
         capture_output=True,
         text=True,
@@ -59,1567 +114,539 @@ def _eval(node: str, expression: str) -> object:
     return json.loads(result.stdout)
 
 
-def _eval_async(node: str, expression: str) -> object:
-    """_eval for promise expressions; errors serialize as {message} strings."""
-    source = (
-        f"import {{ executionStepsFromDetail, traceTimeFormatter, formatTraceTimestamp,"
-        f" collectTracePages, formatStepPayload, groupTraceTurns }}"
-        f" from '{TRACE_DATA.as_posix()}';\n"
-        f"Promise.resolve({expression})"
-        f".then((v) => console.log(JSON.stringify(v)));\n"
+def test_page_is_a_single_screen_shell_document() -> None:
+    """index.html keeps the shared script order (markdown.js is the only
+    module), emitShell('trace') before the bind-time scripts, one screen."""
+    html = TRACE_HTML.read_text(encoding="utf-8")
+    order = [
+        '<script src="../share/util.js">',
+        '<script type="module" src="../share/markdown.js"></script>',
+        '<script src="../share/data.js">',
+        '<script src="../share/shell.js">',
+        "<script>emitShell('trace');</script>",
+        '<script src="../share/avatars/avatars.js">',
+        '<script src="../share/sidebar.js">',
+        '<script src="../share/avatars/studio.js">',
+        '<script src="../share/shell-app.js">',
+        '<script src="js/trace.js">',
+    ]
+    pos = [html.index(s) for s in order]
+    assert pos == sorted(pos), "shared shell scripts must load in order"
+    for gone in ("session-pager", "journal-pager", "pager-button",
+                 "turn-list", "session-list-view"):
+        assert gone not in html, gone
+
+
+def test_page_markup_covers_list_and_detail() -> None:
+    """PAGE_HTML carries the filter bar, session list + 'Tải thêm' footer,
+    the hidden detail section with its back button and both status lines —
+    plus the API + deep-link pins in comments."""
+    src = TRACE_JS.read_text(encoding="utf-8")
+    for needle in (
+        'id="trace-reload"', 'id="trace-scroll"', 'id="trace-list-view"',
+        'id="trace-status"', 'id="trace-filters"',
+        'id="f-from"', 'id="f-to"', 'id="f-model"', 'id="f-status"',
+        'id="f-q"', 'id="trace-sessions"', 'id="trace-count"',
+        'id="trace-more"', 'id="trace-detail-view"', 'id="trace-back"',
+        'id="trace-detail-status"', 'id="trace-detail-body"',
+        'value="completed"', 'value="failed"',
+        'value="context_limit"', 'value="loop_limit"',
+        '/api/traces?', '/api/traces/',
+        '#<session_id>/<turn_index>', '?s=<session_id>&t=<turn_index>',
+    ):
+        assert needle in src, needle
+    assert 'hidden>' in src                       # detail view starts hidden
+    assert not re.search(r"^\s*(import|export)\s", src, re.M)  # classic script
+    # Page size is the 50-row "Tải thêm" contract, not the old 12/12/1.
+    assert "TRACE_PAGE_SIZE = 50" in src
+
+
+def test_route_from_url_parses_both_forms(node: str) -> None:
+    """#<sid>/<turn> (encoded sid allowed) and ?s=<sid>&t=<turn> both
+    resolve; malformed halves return null — never a bogus fetch."""
+    out = _eval_trace(
+        node,
+        """(() => {
+          const probe = (hash, search) => {
+            location.hash = hash; location.search = search;
+            return routeFromUrl(); };
+          console.log(JSON.stringify([
+            probe('#abc/3', ''), probe('#s%20x/0', ''), probe('#abc', ''),
+            probe('#/3', ''), probe('#abc/x', ''), probe('#a/b/c', ''),
+            probe('', '?s=abc&t=4'), probe('', '?s=abc'),
+            probe('', '?s=abc&t=x'), probe('', '?t=4'), probe('', ''),
+            probe('#h/1', '?s=abc&t=4'),
+          ]));
+        })()""",
     )
-    result = subprocess.run(
-        [node, "--input-type=module", "-e", source],
-        check=True,
-        capture_output=True,
-        text=True,
-        cwd=ROOT,
+    assert out[0] == {"sid": "abc", "turn": 3}
+    assert out[1] == {"sid": "s x", "turn": 0}     # sid decoded, turn kept
+    assert out[2] is None and out[3] is None        # no slash / empty sid
+    assert out[4] is None                           # turn must be digits
+    assert out[5] is None                           # 'b/c' is not a turn
+    assert out[6] == {"sid": "abc", "turn": 4}
+    assert out[7] is None and out[8] is None and out[9] is None
+    assert out[10] is None
+    assert out[11] == {"sid": "h", "turn": 1}       # hash wins over query
+
+
+def test_boot_loads_list_and_follows_hash_route(node: str) -> None:
+    """boot() queries the list AND opens the routed turn: one
+    /api/traces?limit=50&offset=0 plus /api/traces/<sid>/<turn>, mode
+    switches to detail, the URL hash stays canonical."""
+    detail = {"session_id": "s x", "turn_index": 0, "title": "Routed",
+              "status": "completed", "messages": [],
+              "model": "m", "started_at": "2026-09-20T10:00:00"}
+    out = _eval_trace(
+        node,
+        "(async () => {\n"
+        "await new Promise(r => setTimeout(r, 0));\n"
+        "return { calls: __jsonCalls, mode: tr.mode, key: tr.detailKey,\n"
+        " body: document.querySelector('#trace-detail-body').innerHTML,\n"
+        " urls: __urls };\n"
+        "})().then((v) => console.log(JSON.stringify(v)))",
+        setup="location.hash = '#s%20x/0';\n"
+        "__jsonResponder = async (url) => url.includes('traces/s')"
+        f" ? {json.dumps(detail)} : {{ traces: [], total: 0 }};\n",
     )
-    return json.loads(result.stdout)
+    list_call = next(u for u in out["calls"] if "?" in u)
+    detail_call = next(u for u in out["calls"] if "traces/s" in u)
+    assert list_call.startswith("/api/traces?")
+    assert "limit=50" in list_call and "offset=0" in list_call
+    assert detail_call == "/api/traces/s%20x/0"
+    assert out["mode"] == "detail" and out["key"] == "s x/0"
+    assert "Routed" in out["body"]
+    assert any("#s%20x/0" in u for u in out["urls"])
 
 
-def test_steps_follow_real_message_order(node: str) -> None:
-    detail = {
-        "messages": [
-            {"role": "user", "content": "go", "ts": "2026-09-08T10:00:00"},
-            {
-                "role": "assistant",
-                "content": "thinking hard",
-                "ts": "2026-09-08T10:00:01",
-                "meta": {"latency_ms": 40},
-                "tool_calls": [
-                    {"id": "c1", "name": "read", "arguments": {"path": "a.md"}},
-                    {"id": "c2", "name": "bash", "arguments": {"command": "ls"}},
-                ],
-            },
-            {"role": "tool", "tool_call_id": "c1", "content": "out1",
-             "meta": {"latency_ms": 12}},
-            {"role": "tool", "tool_call_id": "c2", "content": "out2",
-             "meta": {"latency_ms": 7}},
-            {"role": "assistant", "content": "done", "ts": "2026-09-08T10:00:02",
-             "meta": {"latency_ms": 5}},
-        ]
-    }
-    steps = _eval(node, f"executionStepsFromDetail({json.dumps(detail)})")
-    assert [step["type"] for step in steps] == [
-        "input", "thinking", "tool", "tool", "output",
-    ]
-    assert steps[0] == {"type": "input", "ts": "2026-09-08T10:00:00", "content": "go"}
-    assert steps[2] == {
-        "type": "tool", "ts": "2026-09-08T10:00:01", "id": "c1", "name": "read",
-        "skill": None, "parseError": None, "isError": False,
-        "arguments": {"path": "a.md"},
-        "output": "out1", "latencyMs": 12,
-    }
-    assert steps[3]["id"] == "c2"
-    assert steps[3]["latencyMs"] == 7
-    assert steps[4] == {
-        "type": "output", "ts": "2026-09-08T10:00:02",
-        "content": "done", "latencyMs": 5,
-    }
+def test_boot_without_route_stays_on_the_picker(node: str) -> None:
+    """No hash/query -> only the list fetch, mode stays 'list', no detail
+    request and no URL rewrite."""
+    out = _eval_trace(
+        node,
+        "(async () => {\n"
+        "await new Promise(r => setTimeout(r, 0));\n"
+        "return { calls: __jsonCalls, mode: tr.mode, urls: __urls,\n"
+        " body: document.querySelector('#trace-detail-body').innerHTML };\n"
+        "})().then((v) => console.log(JSON.stringify(v)))",
+        setup="__jsonResponder = async () => ({ traces: [], total: 0 });\n",
+    )
+    assert len(out["calls"]) == 1
+    assert out["calls"][0].startswith("/api/traces?")
+    assert out["mode"] == "list" and out["urls"] == []
 
 
-def test_same_name_calls_stay_separate_per_round(node: str) -> None:
-    """Group-by-name would lose the real execution order; each call keeps its id."""
-    detail = {
-        "messages": [
-            {"role": "assistant", "content": None, "tool_calls": [
-                {"id": "b1", "name": "bash", "arguments": {"command": "ls"}},
-                {"id": "b2", "name": "bash", "arguments": {"command": "pwd"}},
-            ]},
-            {"role": "tool", "tool_call_id": "b1", "content": "ls-out"},
-            {"role": "tool", "tool_call_id": "b2", "content": "pwd-out"},
-        ]
-    }
-    steps = _eval(node, f"executionStepsFromDetail({json.dumps(detail)})")
-    assert [(step["type"], step.get("id")) for step in steps] == [
-        ("thinking", None), ("tool", "b1"), ("tool", "b2"),
-    ]
-    assert [step["arguments"] for step in steps[1:]] == [
-        {"command": "ls"}, {"command": "pwd"},
-    ]
+def test_load_traces_pages_50_and_accumulates(node: str) -> None:
+    """"Tải thêm" asks limit=50&offset=<rows so far>; rows concat, total
+    tracks the server, and the footer hides the button at the total."""
+    rows = lambda base, n: [
+        {"session_id": "s", "turn_index": base + i, "title": "T",
+         "started_at": "2026-09-20T10:00:00", "status": "completed"}
+        for i in range(n)]
+    out = _eval_trace(
+        node,
+        """(async () => {
+          __jsonResponder = async (url) => {
+            const q = new URLSearchParams(url.split('?')[1]);
+            const off = Number(q.get('offset')), lim = Number(q.get('limit'));
+            const mk = (b, n) => Array.from({ length: n }, (_, i) =>
+              ({ session_id: 's', turn_index: b + i, title: 'T',
+                 started_at: '2026-09-20T10:00:00', status: 'completed' }));
+            return { traces: mk(off, Math.min(lim, 70 - off)), total: 70 };
+          };
+          await loadTraces(true);
+          const first = { rows: tr.rows.length,
+            more: document.querySelector('#trace-more').hidden,
+            count: document.querySelector('#trace-count').textContent };
+          await loadTraces(false);
+          return { first,
+            second: { rows: tr.rows.length,
+              more: document.querySelector('#trace-more').hidden,
+              count: document.querySelector('#trace-count').textContent },
+            urls: __jsonCalls.slice(-2) };
+        })().then((v) => console.log(JSON.stringify(v)))""",
+    )
+    assert out["first"]["rows"] == 50
+    assert out["first"]["more"] is False  # 50 < 70 — still more
+    assert out["first"]["count"] == "Hiển thị 50 trong 70 lượt"
+    assert out["second"]["rows"] == 70
+    assert out["second"]["more"] is True  # rows == total
+    assert out["second"]["count"] == "Hiển thị 70 trong 70 lượt"
+    assert "limit=50&offset=0" in out["urls"][0]
+    assert "limit=50&offset=50" in out["urls"][1]
 
 
-def test_naming_messages_and_tool_rows_are_skipped(node: str) -> None:
-    detail = {
-        "messages": [
-            {"role": "user", "content": "go"},
-            {"role": "assistant", "content": "Đặt tên", "meta": {"kind": "naming"}},
-            {"role": "tool", "tool_call_id": "c1", "content": "orphan"},
-            {"role": "assistant", "content": 42, "tool_calls": []},
-        ]
-    }
-    steps = _eval(node, f"executionStepsFromDetail({json.dumps(detail)})")
-    # The naming assistant and stray tool rows are not steps; a non-string
-    # assistant content degrades to "" instead of crashing.
-    assert [step["type"] for step in steps] == ["input", "output"]
-    assert steps[1]["content"] == ""
-    assert steps[1]["ts"] is None
+def test_load_traces_error_keeps_rows_and_shows_status(node: str) -> None:
+    """A midway failure is an explicit error line — rows already loaded
+    stay; "Tải thêm" hides while the error stands."""
+    out = _eval_trace(
+        node,
+        """(async () => {
+          __jsonResponder = async (url) => {
+            const q = new URLSearchParams(url.split('?')[1]);
+            if (Number(q.get('offset')) >= 50) throw new Error('backend died');
+            return { traces: Array.from({ length: 50 }, (_, i) =>
+              ({ session_id: 's', turn_index: i })), total: 80 };
+          };
+          await loadTraces(true);
+          await loadTraces(false);
+          return { error: tr.error, rows: tr.rows.length,
+            status: document.querySelector('#trace-status').textContent,
+            statusHidden: document.querySelector('#trace-status').hidden,
+            more: document.querySelector('#trace-more').hidden };
+        })().then((v) => console.log(JSON.stringify(v)))""",
+    )
+    assert out["error"] == "backend died"
+    assert out["rows"] == 50                       # partial page kept
+    assert "Không tải được danh sách lượt" in out["status"]
+    assert out["statusHidden"] is False
+    assert out["more"] is True                     # error hides the button
 
 
-def test_parse_error_kept_and_missing_result_is_not_invented(node: str) -> None:
-    detail = {
-        "messages": [
-            {"role": "assistant", "content": None, "tool_calls": [
-                {"id": "c1", "name": "bash", "arguments": "{bad json",
-                 "parse_error": "invalid json"},
-                {"id": "c2", "name": "read"},
-            ]},
-            {"role": "tool", "tool_call_id": "c2", "content": "",
-             "meta": {"latency_ms": 0}},
-        ]
-    }
-    steps = _eval(node, f"executionStepsFromDetail({json.dumps(detail)})")
-    assert steps[1]["parseError"] == "invalid json"
-    assert steps[1]["output"] is None
-    assert steps[1]["isError"] is False
-    assert steps[1]["latencyMs"] is None
-    # Empty result content is still a recorded (but empty) result; zero latency
-    # is real. meta.is_error is the only trusted failure flag.
-    assert steps[2]["output"] == ""
-    assert steps[2]["latencyMs"] == 0
-    assert steps[2]["isError"] is False
+def test_filters_ride_the_query_and_q_trims(node: str) -> None:
+    """Every filter lands on /api/traces — from/to/q/model/status; the
+    search box trims whitespace; empty filters send nothing."""
+    out = _eval_trace(
+        node,
+        """(async () => {
+          const ids = ['f-from', 'f-to', 'f-model', 'f-status', 'f-q'];
+          const v = { 'f-from': '2026-09-01', 'f-to': '2026-09-30',
+            'f-model': 'glm-5', 'f-status': 'failed', 'f-q': '  tìm  ' };
+          ids.forEach(id => { document.querySelector('#' + id).value = v[id]; });
+          syncFilters();
+          const before = __jsonCalls.length;
+          await loadTraces(true);
+          return { url: __jsonCalls[before], filters: { ...tr.filters } };
+        })().then((v) => console.log(JSON.stringify(v)))""",
+    )
+    q = out["url"]
+    assert "from=2026-09-01" in q and "to=2026-09-30" in q
+    assert "q=t%C3%ACm" in q or "q=t%C3%ACm%20" in q.replace("+", "%20")
+    assert "model=glm-5" in q and "status=failed" in q
+    assert out["filters"]["q"] == "tìm"
 
 
-def test_recorded_tool_error_flag_maps_to_iserror(node: str) -> None:
-    """agent/observe.py writes meta.is_error on failed tool calls — keep it."""
-    detail = {
-        "messages": [
-            {"role": "assistant", "content": None, "tool_calls": [
-                {"id": "c1", "name": "bash"},
-                {"id": "c2", "name": "read"},
-            ]},
-            {"role": "tool", "tool_call_id": "c1", "content": "boom",
-             "meta": {"is_error": True, "latency_ms": 9}},
-            {"role": "tool", "tool_call_id": "c2", "content": "ok"},
-        ]
-    }
-    steps = _eval(node, f"executionStepsFromDetail({json.dumps(detail)})")
-    assert steps[1]["isError"] is True
-    assert steps[1]["output"] == "boom"
-    assert steps[2]["isError"] is False
+def test_reload_list_rejects_an_inverted_range(node: str) -> None:
+    """Từ > Đến in the filter bar is a toast — the list is not refetched."""
+    out = _eval_trace(
+        node,
+        """(async () => {
+          tr.filters.from = '2026-09-22'; tr.filters.to = '2026-09-20';
+          const before = __jsonCalls.length;
+          reloadList();
+          return { calls: __jsonCalls.length - before, toasts: __toasts };
+        })().then((v) => console.log(JSON.stringify(v)))""",
+    )
+    assert out["calls"] == 0
+    assert out["toasts"] == ["Ngày bắt đầu phải trước hoặc bằng ngày kết thúc."]
 
 
-def test_format_step_payload_keeps_literal_and_empty(node: str) -> None:
-    """null means 'omit the block'; a literal '—' or empty string is a real
-    payload value and must render verbatim, never collapse to nothing."""
-    assert _eval(node, "formatStepPayload(null)") is None
-    assert _eval(node, "formatStepPayload('—')") == "—"
-    assert _eval(node, "formatStepPayload('')") == ""
-    assert _eval(node, "formatStepPayload({limit: 3})") == "limit: 3"
-    assert _eval(node, "formatStepPayload({})") == "—"
+def test_stale_list_response_is_dropped(node: str) -> None:
+    """tr.request guard: a newer query wins — the in-flight older page
+    resolves into the void, rows are exactly the newer result."""
+    out = _eval_trace(
+        node,
+        """(async () => {
+          __jsonResponder = (url) => {
+            const p = __deferred(); __pending.push({ url, p }); return p; };
+          const pOld = loadTraces(false);
+          const pNew = loadTraces(true);
+          __pending[1].p.__res({ traces: [{ session_id: 's', turn_index: 0,
+            title: 'new' }], total: 1 });
+          await pNew;
+          __pending[0].p.__res({ traces: [{ session_id: 'x', turn_index: 0,
+            title: 'old' }], total: 9 });
+          await pOld;
+          return { rows: tr.rows.map((r) => r.title), total: tr.total };
+        })().then((v) => console.log(JSON.stringify(v)))""",
+    )
+    assert out["rows"] == ["new"]
+    assert out["total"] == 1
 
 
-def test_collect_trace_pages_reads_past_first_page(node: str) -> None:
-    """520 rows with limit 200: three pages, all kept, complete window."""
+def test_open_turn_fetches_detail_and_rewrites_the_url(node: str) -> None:
+    """openTurn(sid, turn): detail endpoint is encodeURIComponent'd, mode
+    flips to detail, and history.replaceState writes #<sid>/<turn> — no
+    push, no reload."""
+    detail = {"session_id": "s x", "turn_index": 2, "title": "Deep",
+              "status": "failed", "messages": [],
+              "model": "m", "started_at": "2026-09-20T10:00:00",
+              "error": {"code": "Boom", "message": "kaput"}}
+    out = _eval_trace(
+        node,
+        f"(async () => {{\n"
+        f"__jsonResponder = async () => ({json.dumps(detail)});\n"
+        "await openTurn('s x', 2);\n"
+        "return { calls: __jsonCalls.slice(-1), mode: tr.mode,\n"
+        " key: tr.detailKey, urls: __urls,\n"
+        " body: document.querySelector('#trace-detail-body').innerHTML };\n"
+        "})().then((v) => console.log(JSON.stringify(v)))",
+    )
+    assert out["calls"] == ["/api/traces/s%20x/2"]
+    assert out["mode"] == "detail" and out["key"] == "s x/2"
+    assert out["urls"] == ["/trace/index.html#s%20x/2"]
+    assert "Deep" in out["body"] and "kaput" in out["body"]
+    assert "Boom" in out["body"]
+
+
+def test_open_turn_error_shows_note_but_keeps_the_url(node: str) -> None:
+    """A failed detail fetch leaves the deep link in the URL (reload can
+    retry), shows the scoped error + the empty note, keeps detailKey."""
+    out = _eval_trace(
+        node,
+        "(async () => {\n"
+        "__jsonResponder = async () => { throw new Error('gone'); };\n"
+        "await openTurn('s', 0);\n"
+        "return { err: tr.detailError, key: tr.detailKey, urls: __urls,\n"
+        " status: document.querySelector('#trace-detail-status').textContent,\n"
+        " body: document.querySelector('#trace-detail-body').innerHTML };\n"
+        "})().then((v) => console.log(JSON.stringify(v)))",
+    )
+    assert out["err"] == "gone"
+    assert out["key"] == "s/0"
+    assert out["urls"] == ["/trace/index.html#s/0"]
+    assert "Không đọc được lượt s/0" in out["status"]
+    assert "Không mở được trace này" in out["body"]
+
+
+def test_detail_seq_drops_a_stale_turn(node: str) -> None:
+    """Opening turn B while turn A is in flight: A's late payload never
+    paints — the detail is B, exactly once."""
+    out = _eval_trace(
+        node,
+        """(async () => {
+          __jsonResponder = (url) => {
+            const p = __deferred(); __pending.push({ url, p }); return p; };
+          const pa = openTurn('a', 0);
+          const pb = openTurn('b', 1);
+          __pending[1].p.__res({ session_id: 'b', turn_index: 1,
+            title: 'B', status: 'completed', messages: [] });
+          await pb;
+          __pending[0].p.__res({ session_id: 'a', turn_index: 0,
+            title: 'A', status: 'completed', messages: [] });
+          await pa;
+          return { key: tr.detailKey,
+            title: tr.detail && tr.detail.title };
+        })().then((v) => console.log(JSON.stringify(v)))""",
+    )
+    assert out["key"] == "b/1"
+    assert out["title"] == "B"
+
+
+def test_back_to_list_restores_mode_scroll_and_url(node: str) -> None:
+    """Back returns to the picker: mode 'list', detail cleared, the saved
+    scroll restored, the URL back to the bare page — and any in-flight
+    detail fetch is orphaned via detailRequest."""
+    out = _eval_trace(
+        node,
+        """(async () => {
+          __jsonResponder = async () => ({ session_id: 's', turn_index: 0,
+            title: 'T', status: 'completed', messages: [] });
+          document.querySelector('#trace-scroll').scrollTop = 42;
+          await openTurn('s', 0);
+          const reqs = tr.detailRequest;
+          document.querySelector('#trace-scroll').scrollTop = 0;
+          backToList();
+          return { mode: tr.mode, detail: tr.detail, key: tr.detailKey,
+            bumped: tr.detailRequest > reqs, urls: __urls,
+            scroll: document.querySelector('#trace-scroll').scrollTop };
+        })().then((v) => console.log(JSON.stringify(v)))""",
+    )
+    assert out["mode"] == "list"
+    assert out["detail"] is None and out["key"] == ""
+    assert out["bumped"] is True
+    assert out["urls"][-1] == "/trace/index.html"   # hash stripped
+    assert out["scroll"] == 42                       # list scroll restored
+
+
+def test_turn_click_delegation_and_hashchange(node: str) -> None:
+    """wirePage: a click on a .tl-turn inside #trace-sessions opens that
+    turn; hashchange reopens the routed turn or drops back to the list."""
+    detail = {"session_id": "s", "turn_index": 1, "title": "X",
+              "status": "completed", "messages": []}
+    out = _eval_trace(
+        node,
+        f"(async () => {{\n"
+        f"__jsonResponder = async () => ({json.dumps(detail)});\n"
+        "const click = document.querySelector('#trace-sessions').listeners.click[0];\n"
+        "click({ target: { closest: (s) => s === '.tl-turn'\n"
+        "  ? { dataset: { session: 's', turn: '1' } } : null } });\n"
+        "await new Promise(r => setTimeout(r, 0));\n"
+        "const afterClick = { key: tr.detailKey, mode: tr.mode };\n"
+        "location.hash = '#z/3';\n"
+        "const onHash = __winListeners.hashchange[0];\n"
+        "onHash();\n"
+        "await new Promise(r => setTimeout(r, 0));\n"
+        "const afterHash = { key: tr.detailKey };\n"
+        "location.hash = '';\n"
+        "onHash();\n"
+        "return { afterClick, afterHash, mode: tr.mode };\n"
+        "})().then((v) => console.log(JSON.stringify(v)))",
+    )
+    assert out["afterClick"] == {"key": "s/1", "mode": "detail"}
+    assert out["afterHash"]["key"] == "z/3"
+    assert out["mode"] == "list"
+
+
+def test_reload_button_re_reads_the_open_turn(node: str) -> None:
+    """In detail mode the reload button re-fetches the SAME turn without
+    touching the URL; on the picker it re-queries the list."""
+    detail = {"session_id": "s", "turn_index": 0, "title": "T",
+              "status": "completed", "messages": []}
+    out = _eval_trace(
+        node,
+        f"(async () => {{\n"
+        f"__jsonResponder = async () => ({json.dumps(detail)});\n"
+        "await openTurn('s', 0);\n"
+        "const urlsBefore = __urls.length;\n"
+        "const callsBefore = __jsonCalls.length;\n"
+        "document.querySelector('#trace-reload').listeners.click[0]();\n"
+        "await new Promise(r => setTimeout(r, 0));\n"
+        "return { newCalls: __jsonCalls.slice(callsBefore),\n"
+        " newUrls: __urls.length - urlsBefore };\n"
+        "})().then((v) => console.log(JSON.stringify(v)))",
+    )
+    assert out["newCalls"] == ["/api/traces/s/0"]
+    assert out["newUrls"] == 0                       # push: false
+
+
+def test_render_list_groups_sessions_and_rows(node: str) -> None:
+    """renderList paints session cards in first-seen order; each turn row
+    carries #turn index, bot text (union, '+N'), title, time, model, tok,
+    cost, dur, the status chip and the data-session/data-turn hook."""
     rows = [
-        {"session_id": f"s{i // 100}", "turn_index": i, "started_at": "2026-09-08T10:00:00"}
-        for i in range(520)
+        {"session_id": "g", "turn_index": 1, "title": "T1",
+         "started_at": "2026-09-20T10:00:00", "status": "completed",
+         "session_kind": "group", "bot_id": "coder",
+         "session_bots": ["coder", "ops"],
+         "bot_breakdown": [{"bot_id": "coder"}, {"bot_id": "ops"}],
+         "model": "m",
+         "total_tokens": 10, "cost_usd": 0.01, "latency_ms": 40},
+        {"session_id": "g", "turn_index": 0, "title": "T0",
+         "started_at": "2026-09-20T09:00:00", "status": "failed",
+         "session_kind": "group", "bot_id": "coder",
+         "session_bots": ["coder", "ops"],
+         "bot_breakdown": [{"bot_id": "coder"}, {"bot_id": "ops"}],
+         "model": "m",
+         "total_tokens": 5, "cost_usd": None, "latency_ms": 20},
     ]
-    script = (
-        f"collectTracePages(({{ limit, offset }}) => "
-        f"Promise.resolve({{ traces: {json.dumps(rows)}.slice(offset, offset + limit), total: 520 }}), "
-        f"{{ limit: 200 }})"
-        ".then((r) => ({ ...r, error: r.error ?? null }))"
+    html = _eval_trace(
+        node,
+        f"tr.rows = {json.dumps(rows)}; tr.total = 2; tr.loading = false;\n"
+        "renderList();\n"
+        "console.log(JSON.stringify(document.querySelector('#trace-sessions').innerHTML))",
     )
-    result = _eval_async(node, script)
-    assert result["complete"] is True
-    assert result["error"] is None
-    assert len(result["rows"]) == 520
-    assert [r["turn_index"] for r in result["rows"]][:3] == [0, 1, 2]
+    assert html.count('class="paper-card tl-session"') == 1   # one session card
+    assert 'data-session="g"' in html and 'data-turn="1"' in html
+    assert "<b>Coder +1</b>" in html                          # union +N
+    assert "#1" in html and "#0" in html
+    assert "Thành công" in html and "Lỗi" in html             # status chips
+    assert "1 lượt lỗi" in html                               # failed chip
+    assert "$0.0100" in html and ">—<" in html                # cost + null
 
 
-def test_collect_trace_pages_dedupes_overlapping_windows(node: str) -> None:
-    """The 200-session file window can shift between pages; overlapping rows
-    dedupe on (session_id, turn_index) instead of double-counting."""
-    rows = [{"session_id": "s", "turn_index": i} for i in range(10)]
-    # Page 2 repeats rows 5..9 before the new ones.
-    pages = [rows[0:5], rows[5:10] + rows[5:10]]
-    script = (
-        f"(ps => collectTracePages(({{ offset }}) => "
-        f"Promise.resolve({{ traces: ps.shift(), total: 10 }}), {{ limit: 5 }}))"
-        f"({json.dumps(pages)})"
-        ".then((r) => ({ ...r, error: r.error ?? null }))"
-    )
-    result = _eval_async(node, script)
-    assert len(result["rows"]) == 10
-    assert result["complete"] is True
-
-
-def test_collect_trace_pages_reports_failure_midway(node: str) -> None:
-    script = (
-        "collectTracePages(({ offset }) => offset === 0 "
-        "? Promise.resolve({ traces: [{session_id: 's', turn_index: 0}], total: 500 }) "
-        ": Promise.reject(new Error('backend died')))"
-        ".then((r) => ({ complete: r.complete, rows: r.rows,"
-        " error: r.error && { message: r.error.message } }))"
-    )
-    result = _eval_async(node, script)
-    assert result["complete"] is False
-    assert len(result["rows"]) == 1
-    assert result["error"]["message"] == "backend died"
-
-
-def test_collect_trace_pages_reports_non_progress(node: str) -> None:
-    """A server that keeps re-serving the same page must stop with an error,
-    not loop forever or claim success."""
-    page = {"traces": [{"session_id": "s", "turn_index": 0}], "total": 500}
-    script = (
-        f"collectTracePages(() => Promise.resolve({json.dumps(page)}), {{ limit: 200 }})"
-        ".then((r) => ({ complete: r.complete, rows: r.rows,"
-        " error: r.error && { message: r.error.message } }))"
-    )
-    result = _eval_async(node, script)
-    assert result["complete"] is False
-    assert len(result["rows"]) == 1
-    assert result["error"] is not None
-
-
-def test_collect_trace_pages_reports_short_read(node: str) -> None:
-    """API stops returning rows before reaching its own reported total."""
-    script = (
-        "collectTracePages(() => Promise.resolve({ traces: [], total: 500 }))"
-        ".then((r) => ({ complete: r.complete, rows: r.rows,"
-        " error: r.error && { message: r.error.message } }))"
-    )
-    result = _eval_async(node, script)
-    assert result["complete"] is False
-    assert result["rows"] == []
-    assert "0/500" in result["error"]["message"]
-
-
-def test_collect_trace_pages_reports_incomplete_when_dedup_hides_rows(node: str) -> None:
-    """offset advances by RAW page rows while dedupe collapses overlaps: rows
-    [0,1] then [1,2] with total 4 never read row 3, and the offset >= total
-    shortcut must NOT report that window complete."""
-    pages = [
-        {"traces": [{"session_id": "s", "turn_index": 0},
-                    {"session_id": "s", "turn_index": 1}], "total": 4},
-        {"traces": [{"session_id": "s", "turn_index": 1},
-                    {"session_id": "s", "turn_index": 2}], "total": 4},
-    ]
-    script = (
-        f"(ps => collectTracePages(({{ offset }}) => "
-        f"Promise.resolve(ps[offset / 2] ?? {{ traces: [], total: 4 }}), {{ limit: 2 }}))"
-        f"({json.dumps(pages)})"
-        ".then((r) => ({ complete: r.complete, rows: r.rows.map((x) => x.turn_index),"
-        " error: r.error && { message: r.error.message } }))"
-    )
-    result = _eval_async(node, script)
-    assert result["complete"] is False
-    assert result["rows"] == [0, 1, 2]
-    assert "3/4" in result["error"]["message"]
-
-
-def test_collect_trace_pages_counts_skipped_rows_toward_total(node: str) -> None:
-    """Rows without a session_id still count toward the server total, so a
-    window whose only anomaly is such a row stays complete (skipped rows are
-    added to the deduped rows before the completeness check)."""
-    script = (
-        "collectTracePages(() => Promise.resolve({ traces: ["
-        "{session_id: 's', turn_index: 0}, {turn_index: 9},"
-        "{session_id: 's', turn_index: 1}], total: 2 }))"
-        ".then((r) => ({ complete: r.complete, rows: r.rows.length }))"
-    )
-    result = _eval_async(node, script)
-    assert result["complete"] is True
-    assert result["rows"] == 2
-
-
-def test_empty_or_missing_messages(node: str) -> None:
-    assert _eval(node, "executionStepsFromDetail(undefined)") == []
-    assert _eval(node, "executionStepsFromDetail({})") == []
-
-
-def test_timestamp_renders_in_configured_zone(node: str) -> None:
-    script = (
-        "(() => { const fmt = traceTimeFormatter('Asia/Ho_Chi_Minh');"
-        " const utc = traceTimeFormatter('UTC');"
-        " const paris = traceTimeFormatter('Europe/Paris');"
-        " return ["
-        "formatTraceTimestamp('2026-01-15T00:30:05Z', fmt),"
-        "formatTraceTimestamp('2026-01-15T00:30:05Z', utc),"
-        # CEST (DST, UTC+2) vs CET (UTC+1)
-        "formatTraceTimestamp('2026-07-15T00:30:05Z', paris),"
-        "formatTraceTimestamp('2026-01-15T00:30:05Z', paris)]; })()"
-    )
-    saigon, utc, paris_summer, paris_winter = _eval(node, script)
-    assert saigon["ok"] is True
-    assert saigon["text"] == "07:30:05"
-    assert utc["text"] == "00:30:05"
-    assert paris_summer["text"] == "02:30:05"
-    assert paris_winter["text"] == "01:30:05"
-    assert "15 thg" in saigon["title"] or "15/01" in saigon["title"]
-
-
-def test_invalid_or_missing_zone_never_fakes_zoned_time(node: str) -> None:
-    script = (
-        "(() => { const bad = traceTimeFormatter('Not/AZone');"
-        " const none = traceTimeFormatter('');"
-        " return [bad, none,"
-        "formatTraceTimestamp('2026-01-15T00:30:05Z', bad),"
-        "formatTraceTimestamp('2026-01-15T00:30:05Z', none),"
-        "formatTraceTimestamp('', none),"
-        "formatTraceTimestamp('not-a-date', traceTimeFormatter('UTC'))]; })()"
-    )
-    bad, none, fallback, no_zone, empty, garbage = _eval(node, script)
-    assert bad is None and none is None
-    assert fallback["ok"] is False
-    assert fallback["text"] == "00:30:05"
-    assert fallback["title"] == "2026-01-15T00:30:05Z"
-    assert no_zone["ok"] is False
-    assert empty["text"] == "—"
-    assert garbage["ok"] is False
-    assert garbage["text"] == "not-a-date"
-
-
-# --- Execution-journal pager (TASK-018): pure math runs in Node via the
-# --- marker block; DOM paging is browser-test responsibility (TASK-019).
-
-
-def _trace_pager_block():
-    text = PAGER_JS.read_text(encoding="utf-8")
-    block = text.split("// >>> journal-pager", 1)[1]
-    block = block[block.index("\n") + 1:]  # skip the rest of the marker line
-    return block.split("// <<< journal-pager", 1)[0]
-
-
-def test_trace_pager_math_and_clamp(node):
-    source = _trace_pager_block() + (
-        "\nconsole.log(JSON.stringify(["
-        "journalPageCount(13), journalPageCount(12), journalPageCount(0),"
-        "journalClampPage(0, 2), journalClampPage(3, 2), journalClampPage(2, 2)]));\n"
-    )
-    result = subprocess.run([node, "--input-type=module", "-e", source], check=True, capture_output=True, text=True)
-    assert json.loads(result.stdout) == [2, 1, 1, 1, 2, 2]
-
-
-def test_step_paging_keeps_absolute_keys_and_open_steps():
-    """Paging state lives on the per-turn Map entry (state.turns keyed
-    `${sessionId}:${turn_index}`), so the page and every open disclosure
-    survive re-renders of any other turn; the slice maps with the ABSOLUTE
-    step index, so numbering continues across pages."""
-    script = _trace_script()
-    assert "(step, offset) => stepEntry(step, start + offset, turnState)" in script
-    assert ".slice(start, start + JOURNAL_PAGE_SIZE)" in script
-    # Per-turn state map: each turn owns open/detail/pending/error/stepsPage,
-    # keyed by the absolute `${sessionId}:${turn_index}` — paging one turn
-    # never touches another turn's entry.
-    assert "turns: new Map()," in script
-    assert "function turnStateFor(key)" in script
-    assert "const key = `${group.sessionId}:${summary.turn_index}`;" in script
-    assert 'turnState = {' in script
-    assert 'open: false,' in script
-    assert 'stepsPage: 1,' in script
-    assert 'stepOpen: new Set(),' in script
-    # Page state clamps before render, only on the turn's own entry.
-    assert "turnState.stepsPage = journalClampPage(turnState.stepsPage, pages)" in script
-    # Paging mutates only the per-turn page counter, never the open flag.
-    assert "turnState.stepsPage = journalClampPage(turnState.stepsPage + delta, pages)" in script
-    # Open disclosures survive re-renders: state drives fold.open, and the
-    # toggle handler writes back to the per-turn state.
-    assert "fold.open = turnState.open;" in script
-    assert "turnState.open = fold.open;" in script
-    assert "if (turnState.open) fill();" in script
-    # Pager reuses shared button styles.
-    assert 'setAttribute("aria-label", "Trang trước")' in script
-    assert 'setAttribute("aria-label", "Trang sau")' in script
-
-
-def test_deeplink_turn_reveals_and_pager_stays_single():
-    """TASK-027 regression pins: the deep-linked turn scrolls into view with
-    its disclosure open (honoring prefers-reduced-motion), every render of the
-    matching session re-asserts open + reveal from the per-turn state, and the
-    steps pager lives on the turn state so re-renders can never accumulate
-    .journal-pager nodes inside one disclosure."""
-    script = _trace_script()
-    # Reveal honors prefers-reduced-motion (same pattern as app.js).
-    assert 'matchMedia("(prefers-reduced-motion: reduce)")' in script
-    assert 'behavior: reducedMotion ? "auto" : "smooth"' in script
-    assert "entry.scrollIntoView(revealScrollOptions());" in script
-    # The resolved deep link is recorded and re-applied on every render.
-    assert "deepLink: null," in script
-    assert "state.deepLink = { sessionId: group.sessionId, turnIndex: wanted };" in script
-    assert "state.deepLink.sessionId === group.sessionId" in script
-    assert "state.deepLink.turnIndex" in script
-    assert "if (fold) fold.open = true;" in script
-    # Reliability (Chrome finding): the reveal may run while #trace is still
-    # hidden, where scrollIntoView is a no-op. state.deepLink survives until
-    # the entry is rect-verified inside the viewport, retries come from
-    # renders and a MutationObserver on the #trace [hidden] attribute, and a
-    # bounded rAF monitor re-asserts the scroll while pending.
-    assert "function settleDeepLinkReveal()" in script
-    assert "settleDeepLinkReveal();" in script
-    assert "state.deepLink = null; // confirmed: later renders stop re-asserting" in script
-    assert 'attributeFilter: ["hidden"]' in script
-    assert "if (!view.hidden) settleDeepLinkReveal();" in script
-    assert "revealMonitor = requestAnimationFrame(tick);" in script
-    assert "rect.height > 0 && rect.bottom > 0 && rect.top < window.innerHeight" in script
-    # One pager per turn, stored on the turn state and reattached on render.
-    assert "if (!turnState.pager)" in script
-    assert "renderStepsInto(turnState, turnState.pagerBody)" in script
-    assert "body.append(turnState.pager.nav);" in script
-
-
-# --- TASK-030: session grouping order + cost coverage (groupTraceTurns),
-# --- and the boot lifecycle (loading status cleared on plain success).
-
-
-def test_group_turns_orders_sessions_desc_and_turns_asc(node: str) -> None:
-    """Session journal order: newest session first (ties by session id desc);
-    inside a session, turns in real execution order (turn_index ascending)
-    no matter which order the API returned the rows in."""
-    rows = [
-        {"session_id": "old", "turn_index": 0, "started_at": "2026-09-01T10:00:00"},
-        {"session_id": "z-late", "turn_index": 0, "started_at": "2026-09-08T10:00:00"},
-        {"session_id": "a-late", "turn_index": 0, "started_at": "2026-09-08T10:00:00"},
-        {"session_id": "a-late", "turn_index": 2, "started_at": "2026-09-08T09:58:00"},
-        {"session_id": "a-late", "turn_index": 1, "started_at": "2026-09-08T09:59:00"},
-    ]
-    groups = _eval(node, f"groupTraceTurns({json.dumps(rows)})")
-    assert [g["sessionId"] for g in groups] == ["z-late", "a-late", "old"]
-    a = groups[1]
-    assert [t["turn_index"] for t in a["turns"]] == [0, 1, 2]
-    # The group timestamp follows the newest turn of the session.
-    assert a["startedAt"] == "2026-09-08T10:00:00"
-
-
-def test_group_turns_cost_coverage_known_missing_and_zero(node: str) -> None:
-    """costUsd sums priced turns only; pricedTurns lets the session list label
-    a partial sum. All turns unpriced stays null (never $0) and a genuine
-    zero stays 0."""
-    rows = [
-        {"session_id": "mix", "turn_index": 2, "started_at": "2026-09-08T10:02:00",
-         "cost_usd": 0.00002},
-        {"session_id": "mix", "turn_index": 0, "started_at": "2026-09-08T10:00:00",
-         "cost_usd": None},
-        {"session_id": "mix", "turn_index": 1, "started_at": "2026-09-08T10:01:00",
-         "cost_usd": 0.00001},
-        {"session_id": "unpriced", "turn_index": 0, "started_at": "2026-09-07T09:00:00",
-         "cost_usd": None},
-        {"session_id": "free", "turn_index": 0, "started_at": "2026-09-06T09:00:00",
-         "cost_usd": 0},
-        {"session_id": "free", "turn_index": 1, "started_at": "2026-09-06T09:01:00",
-         "cost_usd": 0},
-    ]
-    groups = _eval(node, f"groupTraceTurns({json.dumps(rows)})")
-    assert [g["sessionId"] for g in groups] == ["mix", "unpriced", "free"]
-    mix = groups[0]
-    assert [t["turn_index"] for t in mix["turns"]] == [0, 1, 2]
-    assert mix["costUsd"] == pytest.approx(0.00003)
-    assert mix["pricedTurns"] == 2
-    assert groups[1]["costUsd"] is None
-    assert groups[1]["pricedTurns"] == 0
-    assert groups[2]["costUsd"] == 0
-    assert groups[2]["pricedTurns"] == 2
-
-
-# --- Out-of-order loads (generation guard), snapshot-refresh detail
-# --- invalidation, unfiltered period option and older deep links.
-
-
-@pytest.fixture(scope="module")
-def generation_dom(node: str) -> dict:
-    return _run_boot(node, "generation")
-
-
-@pytest.fixture(scope="module")
-def orphan_dom(node: str) -> dict:
-    return _run_boot(node, "detail-orphan")
-
-
-def test_reload_wins_over_late_boot_snapshot(generation_dom: dict) -> None:
-    """The user changes the period while boot is still fetching its list: the
-    reload (newer generation) renders its snapshot and the late boot response
-    must be discarded instead of overwriting it."""
-    dom = generation_dom
-    assert "Reload-new" in dom["afterReloadText"]
-    assert "Boot-only" not in dom["afterReloadText"]
-    assert dom["afterReloadStatus"] == ""
-    # The stale boot snapshot arrives afterwards and changes nothing.
-    assert "Reload-new" in dom["afterLateBootText"]
-    assert "Boot-only" not in dom["afterLateBootText"]
-    assert dom["afterLateBootStatus"] == ""
-    assert dom["afterLateBootNote"] == ""
-
-
-def test_snapshot_refresh_discards_stale_detail_and_keeps_open_state(
-    orphan_dom: dict,
-) -> None:
-    """An accepted fresh list snapshot invalidates cached turn details and
-    orphans in-flight detail results, while disclosure/page state survives: a
-    re-opened turn is still open and refetches for real."""
-    dom = orphan_dom
-    assert dom["orphanOpened"] == {"detailCalls": 1, "foldOpen": True}
-    # The period reload fetched a fresh list (default range still selected).
-    assert len(dom["orphanListUrls"]) == 2
-    assert all("from=" in url for url in dom["orphanListUrls"])
-    # The stale pre-refresh detail arrives and is discarded: no content, no
-    # status/URL side effects; the body keeps its loading note.
-    assert dom["orphanAfterArrival"]["detailCalls"] == 1
-    assert "Đang tải" in dom["orphanAfterArrival"]["bodyText"]
-    assert dom["orphanAfterArrival"]["statusText"] == ""
-    assert dom["orphanAfterArrival"]["urlCount"] == 1
-    assert dom["orphanReopen"]["foldOpen"] is True
-    assert dom["orphanReopen"]["detailCalls"] == 2
-    assert dom["orphanReopen"]["stepFolds"] == 4
-    # The "all" period option reads the unfiltered API window (no from/to).
-    assert len(dom["allPeriodListUrls"]) == 3
-    assert "from=" not in dom["allPeriodListUrls"][-1]
-    assert "to=" not in dom["allPeriodListUrls"][-1]
-
-
-def test_explicit_deeplink_resolves_the_unfiltered_window(node: str) -> None:
-    """An explicit ?session= deep link forces the period to the unfiltered API
-    window (200 newest session files) so a session older than the default
-    30-day range still resolves: no from/to on the list requests, the turn
-    opens with its steps."""
-    dom = _run_boot(node, "deeplink-old")
-    assert dom["periodValue"] == "all"
-    assert dom["listUrls"]
-    assert all("from=" not in url and "to=" not in url for url in dom["listUrls"])
-    assert dom["foldOpen"] is True
-    # The steps scenario detail (31 steps) renders its first page of folds.
-    assert dom["stepFolds"] == 12
-
-
-def test_turn_diagnostics_line_renders_in_disclosure(steps_dom: dict) -> None:
-    """Diagnostics dropped by the redesign, restored compactly at the top of
-    the existing turn disclosure: recorded input/cache/output tokens and the
-    assistant round count."""
-    dom = steps_dom
-    assert dom["turnDiag"] == "Vào: 120 · Cache: 40 · Ra: 30 · 2 vòng"
-
-
-def test_step_meta_includes_recorded_timestamp(steps_dom: dict) -> None:
-    """Every recorded step keeps its wall-clock time (UTC here) next to the
-    duration on the existing meta line; the scenario ends on steps page 3."""
-    dom = steps_dom
-    assert len(dom["stepMeta"]) == 6
-    assert all("10:00:0" in meta for meta in dom["stepMeta"])
-
-
-def test_session_cost_label_marks_recorded_known_totals(node: str) -> None:
-    """A non-null cost can be partial WITHIN a turn (the backend sums only the
-    per-message cost_usd that was recorded), so a fully priced session sum is
-    labelled recorded-known — never presented as a guaranteed fully priced
-    total; partial and unpriced labels are unchanged."""
-    boot = _run_boot(node, "success")
-    assert "đã ghi nhận" in boot["sessionsText"]
-    assert "một phần" in boot["sessionsText"]
-    assert "chưa định giá" in boot["sessionsText"]
-
-
-# Boot lifecycle: trace.js runs void boot() at import. With a minimal fake DOM
-# (same pattern as test_webui_live_rounds.py) and a routed fetch mock, the
-# real boot path executes end to end, so regressions are caught as behavior,
-# not substring pins. SCENARIO selects how far the flow is driven:
-# success / fetch-error / deeplink-missing stop after boot; "steps" opens a
-# session, opens the turn disclosure and drives the step pager.
-BOOT_HARNESS = r"""
-const SCENARIO = process.env.SCENARIO || "success";
-const tick = (ms = 30) => new Promise((resolve) => setTimeout(resolve, ms));
-
-class Element {
-  constructor(tag) {
-    this.tag = tag || "div";
-    this.children = [];
-    this.parentNode = null;
-    this.attributes = {};
-    this.text = "";
-    this.hidden = false;
-    this.dataset = {};
-    this.classes = new Set();
-    this.listeners = new Map();
-    this.classList = {
-      add: (...names) => { for (const n of names) this.classes.add(n); },
-      remove: (...names) => { for (const n of names) this.classes.delete(n); },
-      contains: (name) => this.classes.has(name),
-    };
-  }
-  set className(v) { this.classes = new Set(String(v).split(/\s+/).filter(Boolean)); }
-  get className() { return [...this.classes].join(" "); }
-  get isConnected() { return Boolean(this.root || this.parentNode?.isConnected); }
-  append(...nodes) {
-    for (const node of nodes) {
-      if (node.parentNode) {
-        node.parentNode.children = node.parentNode.children.filter((n) => n !== node);
-      }
-      node.parentNode = this;
-      this.children.push(node);
+def test_detail_head_renders_turn_meta_and_error(node: str) -> None:
+    """The detail head: session mono, time range, bot seals + names, model,
+    request/round/tool counts, the vào/cache/ra token split, cost,
+    duration, and the recorded error block."""
+    detail = {
+        "session_id": "sess", "turn_index": 3, "title": "Đào sâu",
+        "status": "failed", "model": "glm",
+        "started_at": "2026-09-20T10:00:00", "ended_at": "2026-09-20T10:02:00",
+        "bot_id": "coder",
+        "bot_breakdown": [{"bot_id": "coder", "requests": 2,
+                           "total_tokens": 30},
+                          {"bot_id": "ops", "requests": 1,
+                           "total_tokens": 10}],
+        "requests": 3, "rounds": 2, "tool_calls": 4,
+        "prompt_tokens": 30, "cached_tokens": 5, "completion_tokens": 10,
+        "total_tokens": 40, "cost_usd": 0.02, "latency_ms": 120000,
+        "trace_id": "tr-1", "work_id": "w-9",
+        "error": {"code": "Boom", "message": "kaput"},
+        "messages": [],
     }
-  }
-  replaceChildren(...nodes) {
-    for (const node of this.children) node.parentNode = null;
-    this.children = [];
-    this.append(...nodes);
-  }
-  set textContent(value) { this.replaceChildren(); this.text = String(value); }
-  get textContent() { return this.text + this.children.map((n) => n.textContent).join(""); }
-  setAttribute(key, value) { this.attributes[key] = String(value); }
-  querySelectorAll(selector) {
-    // Matches tags ("pre"), classes (".foo"), tag+class ("details.fold"),
-    // [data-turn-index="N"] and descendant chains thereof — enough for the
-    // real selectors trace.js uses (openTurn, deepLinkEntry, step folds).
-    const matchesOne = (node, sel) => {
-      const attr = sel.match(/^\[data-turn-index="(.+)"\]$/);
-      if (attr) return String(node.dataset.turnIndex) === attr[1];
-      const [tag, ...classes] = sel.split(".");
-      if (tag && node.tag !== tag) return false;
-      return classes.every((c) => node.classes.has(c));
-    };
-    const parts = selector.split(/\s+/).filter(Boolean);
-    const matchesChain = (node, chain) => {
-      if (!matchesOne(node, chain[chain.length - 1])) return false;
-      let ancestor = node.parentNode;
-      for (let i = chain.length - 2; i >= 0; i -= 1) {
-        while (ancestor && !matchesOne(ancestor, chain[i])) ancestor = ancestor.parentNode;
-        if (!ancestor) return false;
-        ancestor = ancestor.parentNode;
-      }
-      return true;
-    };
-    const walk = (node) => node.children.flatMap((child) => [
-      ...(matchesChain(child, parts) ? [child] : []), ...walk(child),
-    ]);
-    return walk(this);
-  }
-  querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
-  addEventListener(type, fn) {
-    if (!this.listeners.has(type)) this.listeners.set(type, []);
-    this.listeners.get(type).push(fn);
-  }
-  emit(type) { for (const fn of this.listeners.get(type) || []) fn({ type }); }
-  // TASK-033: pagers are attached OUTSIDE the lists via list.after(nav);
-  // re-appending an already-attached node must MOVE it, never duplicate.
-  after(...nodes) {
-    const parent = this.parentNode;
-    if (!parent) return;
-    const at = parent.children.indexOf(this);
-    for (const node of nodes) {
-      if (node.parentNode) {
-        node.parentNode.children = node.parentNode.children.filter((n) => n !== node);
-      }
-      node.parentNode = parent;
-      parent.children.splice(at + 1, 0, node);
-    }
-  }
-  // Deep-link reveal support (settleDeepLinkReveal → watchReveal).
-  scrollIntoView() {}
-  getBoundingClientRect() { return { width: 100, height: 40, top: 10, bottom: 50 }; }
-}
-
-const els = {};
-// Siblings under one rendered root so list.after(pager) has a real parent,
-// matching dashboard.html where each pager lands next to its <ul>.
-const shell = new Element("body");
-shell.root = true;
-for (const id of [
-  "trace-status", "trace-note", "trace-picker", "trace-sessions",
-  "trace-session", "trace-session-title", "trace-turns", "trace-back",
-  "copy-id", "copy-label", "trace", "trace-period",
-]) { els[id] = new Element(); els[id].root = true; shell.append(els[id]); }
-globalThis.document = {
-  createElement: (tag) => new Element(tag),
-  querySelector: (sel) => els[String(sel).replace(/^#/, "")] ?? null,
-};
-globalThis.matchMedia = () => ({ matches: false });
-globalThis.window = { innerHeight: 800 };
-globalThis.requestAnimationFrame = (fn) => setTimeout(fn, 16);
-globalThis.cancelAnimationFrame = (id) => clearTimeout(id);
-
-// URL writes are recorded AND the query string is mirrored like a real
-// browser: syncUrl/clearTraceUrl read location.search, so a path-bearing
-// replaceState replaces it while a bare "#hash" leaves it alone (TASK: URL
-// follows explicit navigation).
-const historyCalls = [];
-let currentSearch = SCENARIO === "deeplink-missing" ? "?session=ghost"
-  : SCENARIO === "deeplink-page" ? "?session=s10&turn=24"
-  : SCENARIO === "deeplink-old" ? "?session=s1&turn=0"
-  : SCENARIO === "deeplink-bad-turn" ? "?session=s1&turn=99" : "";
-globalThis.history = {
-  replaceState: (...args) => {
-    historyCalls.push(args.map((a) => String(a)));
-    const url = String(args[2]);
-    const query = url.match(/\?([^#]*)/);
-    if (query) currentSearch = `?${query[1]}`;
-    else if (url.startsWith("/")) currentSearch = "";
-  },
-};
-globalThis.location = {
-  get search() { return currentSearch; },
-  set search(value) { currentSearch = String(value); },
-  pathname: "/dashboard.html",
-};
-
-const traces = [
-  { session_id: "s1", title: "Phiên một", turn_index: 1,
-    started_at: "2026-09-08T10:01:00", latency_ms: 40, total_tokens: 30,
-    cost_usd: 0.00002 },
-  { session_id: "s1", title: "Phiên một", turn_index: 0,
-    started_at: "2026-09-08T10:00:00", latency_ms: 30, total_tokens: 20,
-    cost_usd: null },
-  // Fully priced session: every turn recorded a cost, so the label is the
-  // recorded-known sum (never presented as a guaranteed fully priced total).
-  { session_id: "s2", title: "Phiên hai", turn_index: 0,
-    started_at: "2026-09-07T09:01:00", latency_ms: 20, total_tokens: 10,
-    cost_usd: 0.00001 },
-  { session_id: "s2", title: "Phiên hai", turn_index: 1,
-    started_at: "2026-09-07T09:02:00", latency_ms: 20, total_tokens: 10,
-    cost_usd: 0 },
-];
-
-// TASK-033 dataset: 25 sessions → 12/12/1 session pages; 24 of them carry 25
-// turns → 12/12/1 turn pages, the oldest (s0) only 5 → a one-page turn list.
-// started_at grows with the index, so the journal order is s24 … s0.
-const manyRows = [];
-for (let i = 0; i < 25; i++) {
-  const turnCount = i === 0 ? 5 : 25;
-  for (let j = 0; j < turnCount; j++) {
-    manyRows.push({
-      session_id: `s${i}`, title: `Phiên ${i}`, turn_index: j,
-      started_at: `2026-09-08T10:${String(i).padStart(2, "0")}:${String(j).padStart(2, "0")}`,
-      latency_ms: 10, total_tokens: 5, cost_usd: null,
-    });
-  }
-}
-// Detail of any turn in the paging scenarios: 4 steps (input, thinking, tool,
-// output) → a single steps page with the tool fold at absolute index 2.
-const detailMessages = [
-  { role: "user", content: "xin chào", ts: "2026-09-08T10:00:00" },
-  { role: "assistant", content: "suy nghĩ", ts: "2026-09-08T10:00:01",
-    tool_calls: [{ id: "c0", name: "read", arguments: { n: 1 } }] },
-  { role: "tool", tool_call_id: "c0", content: "ok", meta: { latency_ms: 3 } },
-  { role: "assistant", content: "xong", ts: "2026-09-08T10:00:02" },
-];
-// Deferred gate for the race scenarios: the s1 detail fetch only resolves
-// when the scenario releases it, so the arrival lands AFTER the navigation.
-let releaseDetail;
-const detailGate = new Promise((resolve) => { releaseDetail = resolve; });
-
-// Generation-guard scenario: the boot list fetch is held back while the user
-// already changes the period — the reload (newer generation) must win and the
-// late boot snapshot must be discarded.
-const GENERATION = SCENARIO === "generation";
-let releaseBoot;
-const bootGate = new Promise((resolve) => { releaseBoot = resolve; });
-const genBootRows = [{ session_id: "boot-only", title: "Boot-only", turn_index: 0,
-  started_at: "2026-09-01T10:00:00", latency_ms: 1, total_tokens: 1, cost_usd: null }];
-const genReloadRows = [{ session_id: "reload-new", title: "Reload-new", turn_index: 0,
-  started_at: "2026-09-09T10:00:00", latency_ms: 1, total_tokens: 1, cost_usd: null }];
-let genListCalls = 0;
-
-// Detail-invalidation scenario: the first s1 detail fetch is held on a gate
-// while a fresh list snapshot is accepted; the stale result must be discarded
-// and the re-opened turn must refetch.
-const ORPHAN = SCENARIO === "detail-orphan";
-let releaseOrphanDetail;
-const orphanGate = new Promise((resolve) => { releaseOrphanDetail = resolve; });
-const detailCalls = { count: 0 };
-const listUrls = [];
-// Recorded per-turn diagnostics (restored in the disclosure): token split and
-// round count, present on every detail payload served below.
-const diagFields = { prompt_tokens: 120, cached_tokens: 40, completion_tokens: 30, rounds: 2 };
-
-// TASK-033 review scenarios: late-back / switch-cost / rerender-inflight —
-// open s1, open the turn disclosure, hold the detail in flight.
-const RACE = SCENARIO === "late-back"
-  || SCENARIO === "switch-cost" || SCENARIO === "rerender-inflight";
-
-const PAGING = SCENARIO === "paging" || SCENARIO === "deeplink-page";
-
-// 14 tool rounds + final reply = 31 steps (input, 14×[thinking+tool], output)
-// → 3 pages at 12/page. The first five tools cover the payload variants:
-// structured args with HTML/null/false/0, parse_error with no result,
-// empty string output, numeric 0, boolean false.
-const specials = [
-  { args: { path: "a.md", flag: false, count: 0,
-    nested: { x: null, html: "<script>alert(1)</script>" } }, out: "out <b>text</b>" },
-  { args: "{bad json", parseError: "invalid json", out: undefined },
-  { args: { cmd: "ls" }, out: "" },
-  { args: { cmd: "wc" }, out: 0 },
-  { args: { cmd: "cat" }, out: false },
-];
-const messages = [{ role: "user", content: "Xin chào bot", ts: "2026-09-08T10:00:00" }];
-for (let i = 0; i < 14; i++) {
-  const sp = specials[i] || { args: { n: i }, out: `ok ${i}` };
-  const call = { id: `c${i}`, name: "read", arguments: sp.args };
-  if (sp.parseError) call.parse_error = sp.parseError;
-  messages.push({ role: "assistant", content: `suy nghĩ ${i}`,
-    ts: "2026-09-08T10:00:01", tool_calls: [call] });
-  if (sp.out !== undefined) {
-    messages.push({ role: "tool", tool_call_id: `c${i}`, content: sp.out });
-  }
-}
-messages.push({ role: "assistant", content: "Kết quả: <script>x</script> & —",
-  ts: "2026-09-08T10:00:02" });
-
-globalThis.fetch = async (url) => {
-  const u = String(url);
-  if (u.startsWith("/api/config")) {
-    return { ok: true, json: async () => ({ values: { timeline: { timezone: "UTC" } } }) };
-  }
-  if (/^\/api\/traces\?/.test(u)) {
-    listUrls.push(u);
-    if (GENERATION) {
-      genListCalls += 1;
-      if (genListCalls === 1) await bootGate; // hold the boot snapshot back
-      const rows = genListCalls === 1 ? genBootRows : genReloadRows;
-      return { ok: true, json: async () => ({ traces: rows, total: rows.length }) };
-    }
-    // Other scenarios keep their own list handling below.
-  }
-  if (ORPHAN && u.startsWith("/api/traces/s1/")) {
-    detailCalls.count += 1;
-    const call = detailCalls.count;
-    return {
-      ok: true,
-      json: async () => {
-        if (call === 1) await orphanGate; // hold the pre-refresh detail back
-        return { messages: detailMessages, total_tokens: 7, ...diagFields };
-      },
-    };
-  }
-  if ((SCENARIO === "steps" || SCENARIO === "visible-turn" || SCENARIO === "deeplink-old")
-    && u.startsWith("/api/traces/s1/")) {
-    return { ok: true, json: async () => ({ messages, total_tokens: 99, ...diagFields }) };
-  }
-  if (RACE && u.startsWith("/api/traces/s1/")) {
-    return {
-      ok: true,
-      json: async () => {
-        await detailGate;
-        return { messages, total_tokens: 99, ...diagFields };
-      },
-    };
-  }
-  if (PAGING && u.startsWith("/api/traces/")) {
-    return { ok: true, json: async () => ({ messages: detailMessages, total_tokens: 7, ...diagFields }) };
-  }
-  if (PAGING && /\/api\/traces\?/.test(u)) {
-    const page = new URLSearchParams(u.split("?")[1]);
-    const limit = Number(page.get("limit") || 200);
-    const offset = Number(page.get("offset") || 0);
-    return {
-      ok: true,
-      json: async () => ({ traces: manyRows.slice(offset, offset + limit), total: manyRows.length }),
-    };
-  }
-  if (SCENARIO === "fetch-error") throw new Error("backend down");
-  return { ok: true, json: async () => ({ traces, total: traces.length }) };
-};
-
-await import("./thyca/webui/pages/dashboard/trace.js");
-await tick();
-
-const result = {
-  statusText: els["trace-status"].text,
-  statusClass: els["trace-status"].className,
-  noteText: els["trace-note"].text,
-  noteHidden: els["trace-note"].hidden,
-  sessionsText: els["trace-sessions"].textContent,
-};
-
-// TASK-033 helpers: pagers are nav siblings of the two lists; identify them
-// by their meaningful aria-labels and read prev/label/next in DOM order.
-const navByAria = (label) => shell.querySelectorAll(".journal-pager")
-  .find((n) => n.attributes["aria-label"] === label) ?? null;
-const pagerInfo = (nav) => nav ? {
-  hidden: nav.hidden,
-  label: nav.children[1].textContent,
-  prevDisabled: Boolean(nav.children[0].disabled),
-  nextDisabled: Boolean(nav.children[2].disabled),
-} : null;
-const listPagerCount = (label) => shell.querySelectorAll(".journal-pager")
-  .filter((n) => n.attributes["aria-label"] === label).length;
-result.sessionPager = pagerInfo(navByAria("Phân trang danh sách phiên"));
-result.pagerCount = shell.querySelectorAll(".journal-pager").length;
-result.lastUrl = historyCalls.length ? historyCalls[historyCalls.length - 1].join(" ") : null;
-
-if (SCENARIO === "steps") {
-  const q = (sel) => els["trace-turns"].querySelector(sel);
-  const qa = (sel) => els["trace-turns"].querySelectorAll(sel);
-  const sections = (fold) => fold.querySelectorAll(".trace-step-io").map((sec) => ({
-    label: sec.querySelector(".trace-io-label").textContent,
-    text: sec.querySelector(".trace-code").text,
-  }));
-
-  els["trace-sessions"].querySelector(".trace-session-open").emit("click");
-  await tick();
-  const turnFold = q(".trace-turn-fold");
-  turnFold.open = true;
-  turnFold.emit("toggle");
-  await tick();
-
-  const page1 = qa(".trace-step-data");
-  result.page1Count = page1.length;
-  result.page1FirstNum = q(".trace-step-num").textContent;
-  result.step0 = sections(page1[0]);
-  result.step2 = sections(page1[2]);
-  result.step4 = sections(page1[4]);
-  result.step6 = sections(page1[6]);
-  result.step8 = sections(page1[8]);
-  result.step10 = sections(page1[10]);
-
-  // Open step 2 (absolute index) and page away and back.
-  page1[2].open = true;
-  page1[2].emit("toggle");
-  const pager = qa(".journal-pager-step");
-  pager[1].emit("click");
-  await tick();
-  const page2 = qa(".trace-step-data");
-  result.page2FirstNum = q(".trace-step-num").textContent;
-  result.page2AllClosed = page2.every((f) => !f.open);
-  pager[0].emit("click");
-  await tick();
-  const page1Again = qa(".trace-step-data");
-  result.page1AgainFirstNum = q(".trace-step-num").textContent;
-  result.step2StillOpen = page1Again[2].open;
-
-  // Last page: final assistant step payload + the turn IO block.
-  pager[1].emit("click");
-  await tick();
-  pager[1].emit("click");
-  await tick();
-  const page3 = qa(".trace-step-data");
-  result.page3Count = page3.length;
-  result.finalStep = sections(page3[page3.length - 1]);
-  result.turnIo = [...q(".trace-io").children]
-    .filter((n) => n.tag === "pre")
-    .map((pre) => pre.text);
-  // Restored diagnostics: compact per-turn token split + round count, and the
-  // recorded wall-clock time on every step meta line.
-  result.turnDiag = q(".trace-turn-diag")?.text ?? null;
-  result.stepMeta = qa(".trace-step .journal-meta").map((m) => m.textContent);
-
-  // Full turn re-render (session re-open) must not collapse step 2 either.
-  els["trace-sessions"].querySelector(".trace-session-open").emit("click");
-  await tick();
-  pager[0].emit("click");
-  await tick();
-  pager[0].emit("click");
-  await tick();
-  result.rerenderStep2Open = qa(".trace-step-data")[2].open;
-}
-
-// TASK-033: outer session list + inner turn list, 12/page, state preserved.
-if (SCENARIO === "paging") {
-  const q = (sel) => els["trace-turns"].querySelector(sel);
-  const qa = (sel) => els["trace-turns"].querySelectorAll(sel);
-  const sessionButtons = () => els["trace-sessions"].querySelectorAll(".trace-session-open");
-  const sp = navByAria("Phân trang danh sách phiên");
-
-  // Session list: 12 / 12 / 1, first/last buttons disabled at the ends.
-  result.sessionPage1Count = sessionButtons().length;
-  result.sessionPage1First = sessionButtons()[0].textContent;
-  result.sessionPagerPage1 = pagerInfo(sp);
-  sp.children[2].emit("click");
-  await tick();
-  result.sessionPage2Count = sessionButtons().length;
-  sp.children[2].emit("click");
-  await tick();
-  result.sessionPage3Count = sessionButtons().length;
-  result.sessionPage3First = sessionButtons()[0].textContent;
-  result.sessionPagerPage3 = pagerInfo(sp);
-
-  // Oldest session (s0) has 5 turns → one page, turn pager hidden.
-  sessionButtons()[0].emit("click");
-  await tick();
-  result.pagerCountAfterSelect = shell.querySelectorAll(".journal-pager").length;
-  result.turnPagerSmall = pagerInfo(navByAria("Phân trang danh sách lượt"));
-  result.turnsSmallCount = qa(".trace-turn-fold").length;
-
-  // Back: the session list keeps its page (3 of 3).
-  els["trace-back"].emit("click");
-  await tick();
-  result.backSessionPageCount = sessionButtons().length;
-  result.backSessionPager = pagerInfo(sp);
-
-  // Re-enter: the same one-page turn list.
-  sessionButtons()[0].emit("click");
-  await tick();
-  result.reenterSmallTurns = qa(".trace-turn-fold").length;
-
-  // Switch to s24 (25 turns): per-session turn pages are independent.
-  els["trace-back"].emit("click");
-  await tick();
-  sp.children[0].emit("click");
-  await tick();
-  sp.children[0].emit("click");
-  await tick();
-  sessionButtons()[0].emit("click"); // s24, session page 1
-  await tick();
-  result.turns25Page1 = pagerInfo(navByAria("Phân trang danh sách lượt"));
-  result.turns25Page1Count = qa(".trace-turn-fold").length;
-  navByAria("Phân trang danh sách lượt").children[2].emit("click");
-  await tick();
-  navByAria("Phân trang danh sách lượt").children[2].emit("click");
-  await tick();
-  result.turns25Page3 = pagerInfo(navByAria("Phân trang danh sách lượt"));
-  result.turns25Page3Count = qa(".trace-turn-fold").length;
-  result.lastTurnTitle = q(".trace-turn-title").textContent;
-  result.lastTurnIndex = q(".trace-turn").dataset.turnIndex;
-
-  // Open the turn + a step fold, page away and back on TURNS: both survive.
-  const fold = q(".trace-turn-fold");
-  fold.open = true;
-  fold.emit("toggle");
-  await tick();
-  result.stepsInLastTurn = qa(".trace-step-data").length;
-  qa(".trace-step-data")[2].open = true;
-  qa(".trace-step-data")[2].emit("toggle");
-  navByAria("Phân trang danh sách lượt").children[0].emit("click");
-  await tick();
-  result.awayStepFolds = qa(".trace-step-data").length;
-  navByAria("Phân trang danh sách lượt").children[2].emit("click");
-  await tick();
-  result.backStepOpen = qa(".trace-step-data")[2].open;
-
-  // Back to sessions and re-enter: turn page + open states preserved, still
-  // exactly one pager node per list (never duplicated by re-renders).
-  els["trace-back"].emit("click");
-  await tick();
-  sessionButtons()[0].emit("click");
-  await tick();
-  result.reenterTurnPager = pagerInfo(navByAria("Phân trang danh sách lượt"));
-  result.reenterFoldOpen = q(".trace-turn-fold").open;
-  result.reenterStepOpen = qa(".trace-step-data")[2].open;
-  // Exactly ONE pager node per list even after every re-render (an open turn
-  // adds its own steps pager, but never a second session/turn pager).
-  result.sessionPagerSingleton = listPagerCount("Phân trang danh sách phiên");
-  result.turnPagerSingleton = listPagerCount("Phân trang danh sách lượt");
-  result.totalPagerNodes = shell.querySelectorAll(".journal-pager").length;
-
-  // Out-of-range clamp: next on the last page keeps the last page.
-  navByAria("Phân trang danh sách lượt").children[2].emit("click");
-  await tick();
-  result.clampAfterOvershoot = pagerInfo(navByAria("Phân trang danh sách lượt"));
-}
-
-// TASK-033: legacy deep link to a turn on turn page 3 selects the correct
-// session/turn pages BEFORE reveal, and back lands on the session's page.
-if (SCENARIO === "deeplink-page") {
-  const q = (sel) => els["trace-turns"].querySelector(sel);
-  const qa = (sel) => els["trace-turns"].querySelectorAll(sel);
-  // ?session=s10&turn=24: turn_index 24 is absolute position 24 → page 3.
-  result.deepLinkTurnCount = qa(".trace-turn-fold").length;
-  result.deepLinkTurnIndex = q(".trace-turn").dataset.turnIndex;
-  result.deepLinkFoldOpen = q(".trace-turn-fold").open;
-  result.deepLinkTurnTitle = q(".trace-turn-title").textContent;
-  result.deepLinkTurnPager = pagerInfo(navByAria("Phân trang danh sách lượt"));
-  // The disclosure really loads: emit the toggle the browser fires natively.
-  q(".trace-turn-fold").emit("toggle");
-  await tick();
-  result.deepLinkSteps = qa(".trace-step-data").length;
-  // Back to sessions: lands on the page holding s10 (2 of 3), not page 1.
-  els["trace-back"].emit("click");
-  await tick();
-  const backButtons = els["trace-sessions"].querySelectorAll(".trace-session-open");
-  result.deepLinkBackCount = backButtons.length;
-  result.deepLinkBackFirst = backButtons[0].textContent;
-  result.deepLinkBackSessionPager = pagerInfo(navByAria("Phân trang danh sách phiên"));
-}
-
-// TASK-033 review: a late detail arrival must not write the turn's status or
-// URL over a context the user has moved to (hidden-but-connected DOM), while
-// the content still lands in the current connected body — no stuck loader.
-if (RACE) {
-  const urlSnapshot = () => historyCalls.map((args) => args.join(" "));
-  els["trace-sessions"].querySelector(".trace-session-open").emit("click");
-  await tick();
-  // Explicit navigation syncs the session into the URL immediately (no turn).
-  result.selectUrlCount = historyCalls.length;
-  result.selectUrl = urlSnapshot().join(" | ");
-  const fold = els["trace-turns"].querySelector(".trace-turn-fold");
-  const foldBody = fold.querySelectorAll(".trace-turn-body")[0];
-  fold.open = true;
-  fold.emit("toggle"); // detail fetch starts, held on the gate
-  await tick();
-  result.preArrivalUrlCount = historyCalls.length;
-
-  if (SCENARIO === "late-back") {
-    els["trace-back"].emit("click"); // back on the session picker
-    await tick();
-    result.backUrlCount = historyCalls.length;
-    result.backUrl = urlSnapshot()[urlSnapshot().length - 1];
-  } else if (SCENARIO === "switch-cost") {
-    els["trace"].hidden = true; // dashboard.js switched to the Cost view
-    await tick();
-  } else {
-    // Same-turn re-render (session re-opened) while the fetch is in flight.
-    els["trace-sessions"].querySelector(".trace-session-open").emit("click");
-    await tick();
-    result.rerenderUrlCount = historyCalls.length;
-  }
-
-  result.arrivalStatusText = els["trace-status"].text;
-  result.arrivalUrlCount = historyCalls.length;
-  releaseDetail(); // the slow detail finally arrives
-  await tick();
-  result.afterUrlCount = historyCalls.length;
-  result.afterUrlSnapshot = urlSnapshot();
-  releaseDetail(); // the slow detail finally arrives
-  await tick();
-
-  if (SCENARIO === "rerender-inflight") {
-    // The user is looking at the visible turn: content lands AND the
-    // URL/status update as usual.
-    result.inflightStepFolds = els["trace-turns"].querySelectorAll(".trace-step-data").length;
-    result.inflightStatusText = els["trace-status"].text;
-    result.inflightUrl = urlSnapshot()[urlSnapshot().length - 1] ?? null;
-  } else {
-    // Content is rendered into the still-connected (hidden) body…
-    result.hiddenBodyStepFolds = foldBody.querySelectorAll(".trace-step-data").length;
-    // …but no global side effect leaked over the other context.
-    result.afterStatusText = els["trace-status"].text;
-    // Re-enter the trace context: content shows from cache, no stuck loader.
-    els["trace"].hidden = false;
-    els["trace-sessions"].querySelector(".trace-session-open").emit("click");
-    await tick();
-    result.reenterUrlCount = historyCalls.length;
-    result.reenterUrl = urlSnapshot()[urlSnapshot().length - 1];
-    result.reenterStepFolds = els["trace-turns"].querySelectorAll(".trace-step-data").length;
-    result.reenterBodyText = els["trace-turns"].querySelector(".trace-turn-body").textContent;
-  }
-}
-
-// The normal visible-turn flow must keep updating URL and status.
-if (SCENARIO === "visible-turn") {
-  els["trace-sessions"].querySelector(".trace-session-open").emit("click");
-  await tick();
-  const fold = els["trace-turns"].querySelector(".trace-turn-fold");
-  fold.open = true;
-  fold.emit("toggle");
-  await tick();
-  result.visibleStepFolds = els["trace-turns"].querySelectorAll(".trace-step-data").length;
-  result.visibleStatusText = els["trace-status"].text;
-  result.visibleUrlSnapshot = historyCalls.map((args) => args.join(" "));
-}
-
-// Out-of-order loads: a reload (period change) that completes while boot is
-// still in flight must win, and the late boot snapshot must be discarded.
-if (GENERATION) {
-  els["trace-period"].emit("change"); // reloadTrace with the newer generation
-  await tick();
-  result.afterReloadText = els["trace-sessions"].textContent;
-  result.afterReloadStatus = els["trace-status"].text;
-  releaseBoot(); // the stale boot snapshot finally arrives
-  await tick();
-  result.afterLateBootText = els["trace-sessions"].textContent;
-  result.afterLateBootStatus = els["trace-status"].text;
-  result.afterLateBootNote = els["trace-note"].text;
-}
-
-// Snapshot refresh while a detail is in flight: the stale result must be
-// discarded, the open disclosure kept, and a re-open must refetch.
-if (ORPHAN) {
-  els["trace-sessions"].querySelector(".trace-session-open").emit("click");
-  await tick();
-  const fold = els["trace-turns"].querySelector(".trace-turn-fold");
-  fold.open = true;
-  fold.emit("toggle"); // detail fetch #1 starts, held on the gate
-  await tick();
-  result.orphanOpened = { detailCalls: detailCalls.count, foldOpen: fold.open };
-  els["trace-period"].emit("change"); // accepted snapshot refresh
-  await tick();
-  result.orphanListUrls = listUrls.slice();
-  releaseOrphanDetail(); // the stale detail finally arrives
-  await tick();
-  result.orphanAfterArrival = {
-    detailCalls: detailCalls.count,
-    bodyText: els["trace-turns"].textContent,
-    statusText: els["trace-status"].text,
-    urlCount: historyCalls.length,
-  };
-  // Re-open: the disclosure state survived the refresh and the turn refetches.
-  els["trace-sessions"].querySelector(".trace-session-open").emit("click");
-  await tick();
-  result.orphanReopen = {
-    foldOpen: els["trace-turns"].querySelector(".trace-turn-fold").open,
-    detailCalls: detailCalls.count,
-    stepFolds: els["trace-turns"].querySelectorAll(".trace-step-data").length,
-  };
-  // The "all" period option reads the unfiltered API window (no from/to).
-  els["trace-period"].value = "all";
-  els["trace-period"].emit("change");
-  await tick();
-  result.allPeriodListUrls = listUrls.slice();
-}
-
-// An explicit ?session= deep link must resolve against the UNFILTERED window,
-// even when the session is older than the default rolling range.
-if (SCENARIO === "deeplink-old") {
-  result.listUrls = listUrls;
-  result.periodValue = els["trace-period"].value;
-  result.foldOpen = els["trace-turns"].querySelector(".trace-turn-fold").open;
-  els["trace-turns"].querySelector(".trace-turn-fold").emit("toggle");
-  await tick();
-  result.stepFolds = els["trace-turns"].querySelectorAll(".trace-step-data").length;
-}
-
-console.log(JSON.stringify(result));
-"""
-
-
-def _run_boot(node: str, scenario: str) -> dict:
-    result = subprocess.run(
-        [node, "--input-type=module", "-e", BOOT_HARNESS],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=30,
-        # TZ=UTC keeps naive recorded timestamps deterministic: the fake
-        # formatter zone is UTC, so "10:00:01" formats back as "10:00:01".
-        env={**os.environ, "SCENARIO": scenario, "TZ": "UTC"},
+    html = _eval_trace(
+        node,
+        f"console.log(JSON.stringify(detailHeadHtml({json.dumps(detail)})))",
     )
-    return json.loads(result.stdout)
+    assert "Lượt #3" in html and "Lỗi" in html
+    assert ">Đào sâu</h2>" in html
+    assert "sess" in html
+    assert "Coder" in html and "ops" in html        # seal chips + id fallback
+    assert "2 req" in html and "30 tok" in html     # breakdown bits
+    assert "glm" in html
+    assert "3 request · 2 vòng · 4 tool" in html
+    assert "vào 30 · cache 5 · ra 10 · tổng 40" in html
+    assert "$0.0200" in html
+    assert "2 ph 0 giây" in html                    # fmtDur minutes
+    assert "tr-1" in html and "w-9" in html
+    assert "Boom" in html and "kaput" in html
 
 
-def test_boot_clears_loading_status_after_successful_load(node: str) -> None:
-    """Plain success (groups loaded, no deep link): the “Đang đọc trace
-    backend…” status must be gone — previously it lingered forever."""
-    boot = _run_boot(node, "success")
-    assert boot["statusText"] == ""
-    assert boot["statusClass"] == "screen-status"
-    # Notes are a separate channel and stay untouched by the clear.
-    assert boot["noteHidden"] is True
-    assert boot["noteText"] == ""
-    # Session list rendered: partial cost labelled as partial, never a bare sum.
-    assert "$0.00002" in boot["sessionsText"]
-    assert "một phần" in boot["sessionsText"]
-    assert "chưa định giá" in boot["sessionsText"]
+def test_turn_bot_ids_prefers_bot_id_then_breakdown(node: str) -> None:
+    """turnBotIds: bot_id first, then breakdown order, deduped — empty
+    turns yield none."""
+    out = _eval_trace(
+        node,
+        "console.log(JSON.stringify(["
+        " turnBotIds({ bot_id: 'a', bot_breakdown:"
+        "  [{ bot_id: 'a' }, { bot_id: 'b' }] }),"
+        " turnBotIds({ bot_breakdown: [{ bot_id: 'b' }] }),"
+        " turnBotIds({})]))",
+    )
+    assert out[0] == ["a", "b"]
+    assert out[1] == ["b"]
+    assert out[2] == []
 
 
-def test_boot_reports_backend_error_instead_of_loading(node: str) -> None:
-    boot = _run_boot(node, "fetch-error")
-    assert boot["statusText"] == "Không kết nối được với backend Thyca."
-    assert "is-error" in boot["statusClass"]
+def test_status_labels_and_formatters(node: str) -> None:
+    """The page's own label set (Thành công/Lỗi/Hết ngữ cảnh/Chạm giới
+    hạn) plus the shared vi-VN formatters and safeDecode edge cases."""
+    out = _eval_trace(
+        node,
+        "console.log(JSON.stringify({"
+        " chips: [statusChip('completed'), statusChip('failed'),"
+        "  statusChip('context_limit'), statusChip('loop_limit'),"
+        "  statusChip('weird')],"
+        " t: [fmtTime('2026-09-20T10:30:00'), fmtTime('nope'), fmtTime()],"
+        " dec: [safeDecode('a%20b'), safeDecode('%ZZ'), safeDecode('x')],"
+        " j: [safeJson({ a: 1 }), safeJson('raw')] }))",
+    )
+    done, fail, ctx, loop, odd = out["chips"]
+    assert "Thành công" in done and "s-ok" in done
+    assert "Lỗi" in fail and "s-error" in fail
+    assert "Hết ngữ cảnh" in ctx and "s-warn" in ctx
+    assert "Chạm giới hạn" in loop and "s-warn" in loop
+    assert "weird" in odd and 'class="tl-chip "' in odd
+    assert out["t"][0].strip() != "" and out["t"][1] == "" and out["t"][2] == ""
+    assert out["dec"] == ["a b", "%ZZ", "x"]        # bad escapes pass through
+    assert '"a": 1' in out["j"][0] and out["j"][1] == '"raw"'
 
 
-def test_boot_keeps_deeplink_error_status(node: str) -> None:
-    """The success clear must come after the deep-link check: an unresolvable
-    ?session= keeps its explicit error message."""
-    boot = _run_boot(node, "deeplink-missing")
-    assert "Không tìm thấy phiên ghost" in boot["statusText"]
-    assert "is-error" in boot["statusClass"]
+def test_fill_model_options_collects_from_loaded_rows(node: str) -> None:
+    """Model options come from models actually seen in loaded rows,
+    sorted; an active filter that left the window stays as an extra."""
+    out = _eval_trace(
+        node,
+        "tr.models = new Set(['glm', 'abc']); tr.filters.model = 'zzz';\n"
+        "fillModelOptions();\n"
+        "const sel = document.querySelector('#f-model');\n"
+        "console.log(JSON.stringify({ vals: sel.options.map(o => o.value),"
+        " cur: sel.value }))",
+    )
+    assert out["vals"] == ["", "abc", "glm", "zzz"]
+    assert out["cur"] == "zzz"
 
 
-def test_failed_turn_deeplink_keeps_its_url(node: str) -> None:
-    """A turn that does not resolve is reported AND its original deep-link URL
-    is restored after the session navigation rewrote it: the failed link stays
-    inspectable on refresh instead of being silently replaced."""
-    boot = _run_boot(node, "deeplink-bad-turn")
-    assert "Lượt 99 không có trong dữ liệu đã tải" in boot["statusText"]
-    assert "is-error" in boot["statusClass"]
-    assert boot["lastUrl"].endswith("?session=s1&turn=99#trace")
-
-
-# --- TASK-032: per-step payload disclosure. The fake-DOM flow opens a real
-# --- session → turn → step pager, so the payload rendering and its open-state
-# --- persistence are proven as DOM behavior over the whole turn.
-
-
-@pytest.fixture(scope="module")
-def steps_dom(node: str) -> dict:
-    return _run_boot(node, "steps")
-
-
-def test_step_payload_renders_structured_and_verbatim(steps_dom: dict) -> None:
-    """Tool Input (arguments) is pretty-printed JSON — nested null/false/0 and
-    HTML survive as data. Strings (tool output, user content) render verbatim,
-    including HTML-as-text."""
-    dom = steps_dom
-    assert dom["page1Count"] == 12
-    assert dom["page1FirstNum"] == "01"
-    # Step 0 = user input: content verbatim.
-    assert dom["step0"] == [{"label": "Input", "text": "Xin chào bot"}]
-    # Step 2 = tool c1: structured arguments, string output.
-    assert dom["step2"][0]["label"] == "Input"
-    assert '"path": "a.md"' in dom["step2"][0]["text"]
-    assert '"flag": false' in dom["step2"][0]["text"]
-    assert '"count": 0' in dom["step2"][0]["text"]
-    assert '"x": null' in dom["step2"][0]["text"]
-    assert "<script>alert(1)</script>" in dom["step2"][0]["text"]
-    assert dom["step2"][1] == {"label": "Output", "text": "out <b>text</b>"}
-
-
-def test_step_output_distinguishes_missing_empty_zero_false(steps_dom: dict) -> None:
-    """Missing (no result message) is an explicit placeholder, never faked as
-    empty/zero; empty string, 0 and false are real values and stay distinct."""
-    dom = steps_dom
-    parse_error_sections = dom["step4"]
-    assert parse_error_sections[0]["label"] == "Input"
-    assert "bad json" in parse_error_sections[0]["text"]
-    # No result message recorded → explicit placeholder, not "".
-    assert parse_error_sections[1] == {"label": "Output", "text": "Chưa ghi nhận output"}
-    # parse_error is kept as a labelled diagnostic next to the status chip.
-    assert {"label": "Lỗi cú pháp", "text": "invalid json"} in parse_error_sections
-    # Empty string, 0 and false are real recorded values, kept verbatim —
-    # each tool fold still leads with its Input (arguments) section.
-    assert len(dom["step6"]) == 2
-    assert dom["step6"][0]["label"] == "Input"
-    assert dom["step6"][1] == {"label": "Output", "text": ""}
-    assert dom["step8"][1] == {"label": "Output", "text": "0"}
-    assert dom["step10"][1] == {"label": "Output", "text": "false"}
-
-
-def test_final_step_and_turn_io_blocks_survive(steps_dom: dict) -> None:
-    """The final assistant step keeps its Output payload and the turn still
-    ends with the labelled Input/Output block (first user text, final reply)."""
-    dom = steps_dom
-    # 30 steps: input + 14 * (thinking + tool) + final reply → 12/12/6.
-    assert dom["page3Count"] == 6
-    assert dom["finalStep"] == [{"label": "Output", "text": "Kết quả: <script>x</script> & —"}]
-    assert dom["turnIo"][0] == "Xin chào bot"
-    assert dom["turnIo"][1] == "Kết quả: <script>x</script> & —"
-
-
-def test_step_open_state_persists_paging_and_rerender(steps_dom: dict) -> None:
-    """Open state is keyed by the ABSOLUTE step index on the turn state, so it
-    survives steps paging (page 1 → 2 → 1) and a full turn re-render."""
-    dom = steps_dom
-    assert dom["page2FirstNum"] == "13"
-    assert dom["page2AllClosed"] is True
-    assert dom["page1AgainFirstNum"] == "01"
-    assert dom["step2StillOpen"] is True
-    assert dom["rerenderStep2Open"] is True
-
-
-# --- TASK-033: the OUTER session list and the INNER turn list both page at
-# --- 12 entries on the loaded snapshot. Pagers sit OUTSIDE each list as nav
-# --- siblings with meaningful aria-labels; pages are kept per session / for
-# --- the session list across back and session switches.
-
-
-@pytest.fixture(scope="module")
-def paging_dom(node: str) -> dict:
-    return _run_boot(node, "paging")
-
-
-@pytest.fixture(scope="module")
-def deeplink_dom(node: str) -> dict:
-    return _run_boot(node, "deeplink-page")
-
-
-def test_one_page_pagers_hidden_with_meaningful_labels(node: str) -> None:
-    """A single session never shows a pager, but the nav still carries its
-    meaningful landmark label (class contract .journal-pager)."""
-    boot = _run_boot(node, "success")
-    assert boot["pagerCount"] == 1  # session pager only; no turn list yet
-    pager = boot["sessionPager"]
-    assert pager == {
-        "hidden": True,
-        "label": "1 / 1",
-        "prevDisabled": True,
-        "nextDisabled": True,
-    }
-
-
-def test_session_list_pages_12_12_1_with_end_buttons_disabled(paging_dom: dict) -> None:
-    dom = paging_dom
-    assert dom["sessionPage1Count"] == 12
-    assert dom["sessionPage1First"] == "Phiên 24"  # newest first
-    assert dom["sessionPagerPage1"] == {
-        "hidden": False, "label": "1 / 3",
-        "prevDisabled": True, "nextDisabled": False,
-    }
-    assert dom["sessionPage2Count"] == 12
-    assert dom["sessionPage3Count"] == 1
-    assert dom["sessionPage3First"] == "Phiên 0"  # absolute index 24
-    assert dom["sessionPagerPage3"]["nextDisabled"] is True
-    assert dom["sessionPagerPage3"]["prevDisabled"] is False
-    assert dom["sessionPagerPage3"]["label"] == "3 / 3"
-
-
-def test_turn_list_pages_and_one_page_turn_list_hides_pager(paging_dom: dict) -> None:
-    dom = paging_dom
-    # s0: 5 turns → one page, pager hidden; still exactly one nav per list.
-    assert dom["pagerCountAfterSelect"] == 2
-    assert dom["turnPagerSmall"] == {
-        "hidden": True, "label": "1 / 1",
-        "prevDisabled": True, "nextDisabled": True,
-    }
-    assert dom["turnsSmallCount"] == 5
-    # s24: 25 turns → 12 / 12 / 1 with absolute indices on the last page.
-    assert dom["turns25Page1"] == {
-        "hidden": False, "label": "1 / 3",
-        "prevDisabled": True, "nextDisabled": False,
-    }
-    assert dom["turns25Page1Count"] == 12
-    assert dom["turns25Page3Count"] == 1
-    assert dom["lastTurnTitle"] == "Lượt 25"
-    assert dom["lastTurnIndex"] == "24"
-    assert dom["turns25Page3"]["label"] == "3 / 3"
-    assert dom["turns25Page3"]["nextDisabled"] is True
-
-
-def test_session_page_survives_back_and_reenter(paging_dom: dict) -> None:
-    dom = paging_dom
-    assert dom["backSessionPageCount"] == 1
-    assert dom["backSessionPager"]["label"] == "3 / 3"
-    assert dom["reenterSmallTurns"] == 5
-
-
-def test_turn_page_and_open_state_persist_across_paging_and_sessions(
-    paging_dom: dict,
-) -> None:
-    """Turn pages are kept PER SESSION; open turn/step disclosures survive
-    turn paging (away AND back), a session switch and a full re-render."""
-    dom = paging_dom
-    assert dom["stepsInLastTurn"] == 4
-    # Turn page 2 shows no step folds (no disclosure open there).
-    assert dom["awayStepFolds"] == 0
-    # Back on turn page 3: the step fold keyed by ABSOLUTE index is still open.
-    assert dom["backStepOpen"] is True
-    # Back to the session list and in again: same turn page, same open state.
-    assert dom["reenterTurnPager"]["label"] == "3 / 3"
-    assert dom["reenterFoldOpen"] is True
-    assert dom["reenterStepOpen"] is True
-
-
-def test_no_duplicate_pagers_and_overshoot_clamps_to_last_page(
-    paging_dom: dict,
-) -> None:
-    dom = paging_dom
-    # Sessions + turns paging, selection, back and re-renders: always exactly
-    # one pager node per list (an open turn adds its steps pager on top).
-    assert dom["sessionPagerSingleton"] == 1
-    assert dom["turnPagerSingleton"] == 1
-    assert dom["totalPagerNodes"] == 3
-    # Clicking next past the end clamps to the last page.
-    assert dom["clampAfterOvershoot"]["label"] == "3 / 3"
-    assert dom["clampAfterOvershoot"]["nextDisabled"] is True
-
-
-def test_deeplink_turn_on_page3_selects_pages_before_reveal(deeplink_dom: dict) -> None:
-    """?session=s10&turn=24 resolves on the loaded snapshot, renders turn
-    page 3 directly (one entry, absolute position 24), opens its disclosure
-    and loads the steps."""
-    dom = deeplink_dom
-    assert dom["deepLinkTurnCount"] == 1
-    assert dom["deepLinkTurnIndex"] == "24"
-    assert dom["deepLinkTurnTitle"] == "Lượt 25"
-    assert dom["deepLinkFoldOpen"] is True
-    assert dom["deepLinkTurnPager"] == {
-        "hidden": False, "label": "3 / 3",
-        "prevDisabled": False, "nextDisabled": True,
-    }
-    assert dom["deepLinkSteps"] == 4
-    # Back to the session list lands on the page holding s10 (2 of 3).
-    assert dom["deepLinkBackCount"] == 12
-    assert dom["deepLinkBackFirst"] == "Phiên 12"
-    assert dom["deepLinkBackSessionPager"]["label"] == "2 / 3"
-
-
-# --- TASK-033 review: a late detail arrival must not write the turn's
-# --- status/URL over a context the user has moved to. isConnected is not
-# --- enough — hidden-but-connected DOM (Cost view, session picker) stays
-# --- connected — so the side effects are gated on real visibility, while the
-# --- content still renders into the current connected body (no stuck loader).
-
-
-@pytest.fixture(scope="module")
-def late_back_dom(node: str) -> dict:
-    return _run_boot(node, "late-back")
-
-
-@pytest.fixture(scope="module")
-def switch_cost_dom(node: str) -> dict:
-    return _run_boot(node, "switch-cost")
-
-
-@pytest.fixture(scope="module")
-def rerender_inflight_dom(node: str) -> dict:
-    return _run_boot(node, "rerender-inflight")
-
-
-@pytest.fixture(scope="module")
-def visible_turn_dom(node: str) -> dict:
-    return _run_boot(node, "visible-turn")
-
-
-def test_late_detail_arrival_at_picker_keeps_status_and_url(
-    late_back_dom: dict,
-) -> None:
-    """User opens a turn, goes back to the picker, THEN the detail arrives:
-    no turn status in the picker, no URL rewrite — but the content is cached
-    into the connected body and shows immediately on re-enter. Explicit
-    navigation itself DOES sync the URL: the pick writes ?session= (no turn),
-    Back clears the deep-link params."""
-    dom = late_back_dom
-    assert dom["selectUrlCount"] == 1
-    assert "session=s1" in dom["selectUrl"]
-    assert "turn=" not in dom["selectUrl"]
-    assert dom["preArrivalUrlCount"] == 1
-    # Back to the picker drops the deep-link params entirely.
-    assert dom["backUrlCount"] == 2
-    assert "session=" not in dom["backUrl"]
-    assert "turn=" not in dom["backUrl"]
-    # The late arrival leaks nothing: no status, no URL write.
-    assert dom["arrivalStatusText"] == ""
-    assert dom["arrivalUrlCount"] == 2
-    assert dom["afterUrlCount"] == 2
-    assert dom["hiddenBodyStepFolds"] == 12
-    assert dom["afterStatusText"] == ""
-    # Re-enter: content from cache; navigation re-syncs session then turn.
-    assert dom["reenterUrlCount"] == 4
-    assert "session=s1&turn=0" in dom["reenterUrl"]
-    assert dom["reenterStepFolds"] == 12
-    assert "Đang tải" not in dom["reenterBodyText"]
-    assert "01" in dom["reenterBodyText"]
-
-
-def test_late_detail_arrival_on_cost_switch_keeps_status_and_url(
-    switch_cost_dom: dict,
-) -> None:
-    """Same gate for the view switch: #trace hidden (Cost visible) is still
-    connected, so the arrival must not rewrite ?session=&turn=#trace over the
-    Cost URL nor write a turn status while Cost is on screen. (In the real
-    dashboard, dashboard.js itself strips the params when leaving Trace.)"""
-    dom = switch_cost_dom
-    assert dom["selectUrlCount"] == 1
-    assert dom["preArrivalUrlCount"] == 1
-    assert dom["arrivalUrlCount"] == 1
-    assert dom["afterUrlCount"] == 1
-    assert dom["arrivalStatusText"] == ""
-    assert dom["hiddenBodyStepFolds"] == 12
-    assert dom["afterStatusText"] == ""
-    # Re-entering re-syncs session and (cached) turn into the URL: the cached
-    # reopen follows the same URL contract as a fresh load.
-    assert dom["reenterUrlCount"] == 3
-    assert "session=s1&turn=0" in dom["reenterUrl"]
-    assert dom["reenterStepFolds"] == 12
-    assert "Đang tải" not in dom["reenterBodyText"]
-
-
-def test_same_turn_rerender_inflight_still_receives_content(
-    rerender_inflight_dom: dict,
-) -> None:
-    """A same-turn re-render while the detail is in flight: the arrival
-    refreshes the CURRENT body (no stuck loader) and, the turn being on
-    screen, the URL/status update as usual."""
-    dom = rerender_inflight_dom
-    assert dom["inflightStepFolds"] == 12
-    assert "token trong lượt này" in dom["inflightStatusText"]
-    # Writes: the pick, the re-render pick (session URL), the re-render's own
-    # sync of the still-open turn, then the arrival (session + turn).
-    assert dom["rerenderUrlCount"] == 3
-    assert dom["afterUrlCount"] == 4
-    assert "session=s1&turn=0" in dom["inflightUrl"]
-    assert dom["inflightUrl"].endswith("#trace")
-
-
-def test_visible_turn_still_updates_url_and_status(visible_turn_dom: dict) -> None:
-    """The visibility gate must not mute the normal flow: an opened turn that
-    stays on screen still gets its status and its ?session=&turn=#trace URL,
-    after the pick's own ?session= write."""
-    dom = visible_turn_dom
-    assert dom["visibleStepFolds"] == 12
-    assert "token trong lượt này" in dom["visibleStatusText"]
-    urls = dom["visibleUrlSnapshot"]
-    assert len(urls) == 2
-    assert "session=s1" in urls[0]
-    assert "turn=" not in urls[0]
-    assert "session=s1&turn=0" in urls[1]
-    assert urls[1].endswith("#trace")
+def test_filter_change_handlers_are_wired(node: str) -> None:
+    """f-from/f-to/f-model/f-status all trigger a refilter on change; the
+    form's submit is preventDefault'd into the same path."""
+    # Structural pin: the handler list + debounced search input live in
+    # wirePage — a wrong selector or missing binding shows up here.
+    src = TRACE_JS.read_text(encoding="utf-8")
+    assert "['f-from', 'f-to', 'f-model', 'f-status']" in src
+    assert "addEventListener('change', onFilter)" in src
+    assert "addEventListener('input'" in src
+    assert "setTimeout(onFilter, 350)" in src      # 350 ms debounce on q
+    assert "addEventListener('submit'" in src
+    assert "preventDefault()" in src

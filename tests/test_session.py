@@ -1033,8 +1033,6 @@ def _old_chat_message(message: Message, root) -> dict:
         payload["tool_call_id"] = message.tool_call_id
     if message.meta is not None:
         payload["meta"] = dict(message.meta)
-    if message.reasoning:
-        payload["reasoning"] = message.reasoning
     return payload
 
 
@@ -1049,7 +1047,7 @@ def _old_trace_call(call: ToolCall, root) -> dict:
 
 
 def _old_trace_message(message: Message, root) -> dict:
-    return {
+    payload = {
         "role": message.role,
         "content": message.content,
         "ts": message.ts,
@@ -1057,6 +1055,11 @@ def _old_trace_message(message: Message, root) -> dict:
         "tool_call_id": message.tool_call_id,
         "meta": message.meta,
     }
+    if message.reasoning:
+        payload["reasoning"] = message.reasoning
+    if message.reasoning_details:
+        payload["reasoning_details"] = message.reasoning_details
+    return payload
 
 
 def _wire_matrix() -> list[Message]:
@@ -1068,7 +1071,10 @@ def _wire_matrix() -> list[Message]:
         ], meta={"kind": "llm", "round": 1}),
         Message(role="assistant", content="done", ts=_TS, meta={"kind": "llm"}),
         Message(role="tool", content="out", ts=_TS, tool_call_id="c1", meta={"is_error": False}),
-        Message(role="assistant", content="r", ts=_TS, reasoning="thinking...", meta=None),
+        Message(
+            role="assistant", content="r", ts=_TS, reasoning="thinking...",
+            reasoning_details=[{"type": "text", "text": "detail"}], meta=None,
+        ),
         Message(role="assistant", content=None, ts=_TS, meta={"kind": "naming"}),
     ]
 
@@ -1729,3 +1735,15 @@ def test_compact_overhead_only_returns_none_without_junk_marker() -> None:
         compactor.compact(messages, 1000, pending_user_tokens=1000) is None
     )
     assert compactor.compact([], 1000, pending_user_tokens=1000) is None
+
+
+def test_ensure_dm_finds_marked_creates_marked(tmp_path: Path) -> None:
+    from thyca.sessions import SessionManager
+
+    manager = SessionManager(tmp_path / "sessions")
+    first = manager.ensure_dm("coder")
+    assert first.dm_bot == "coder"
+    assert first.bots == ["coder"]
+    second = manager.ensure_dm("coder")
+    assert second.id == first.id
+    assert SessionManager(tmp_path / "sessions").ensure_dm("other").id != first.id

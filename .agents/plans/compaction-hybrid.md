@@ -1,7 +1,7 @@
 ---
 status: in-progress
 created: 2026-10-13
-last_updated: 2026-10-13
+last_updated: 2026-10-19
 ---
 
 # Hybrid compaction (Claude-style): manual + auto + microcompaction
@@ -199,3 +199,26 @@ lost after the backend landed the rewrite.
   text only, input caps, and the rule-based fallback.
 - Stored-data compatibility: old markers must keep loading; any marker
   format change needs store/assemble/trace tests in the same change.
+
+## Bot chủ động checkpoint (chốt 2026-10-19, slice 1 đã triển khai)
+
+- Quyết định: bot chủ động checkpoint ở ranh giới task; hệ thống cấp tín
+  hiệu ngân sách context mỗi lượt (`<context_budget>`: used%, remaining≈,
+  state roomy/prepare ≥80%/mandatory ≥90%/backstop 95%, checkpoint
+  recorded/none) tính từ cùng estimator/calibration của compactor+guard.
+- Checkpoint dùng hạ tầng memory sẵn có: entry `kind="checkpoint"` bắt
+  buộc gắn task; bot tra `<memory_tasks>`/memory_search trước (khi có
+  quyền đọc), tái dùng task id + `cont`, chỉ ghi delta bền vững và
+  reference. Hệ thống chỉ tính checkpoint từ `memory_remember` thành
+  công đúng kind + task link sau compaction marker gần nhất; checkpoint
+  hết tươi khi context leo lên band cao hơn band lúc ghi
+  (`thyca/agent/context_budget.py`). Guidance tôn trọng memory
+  read/write tools thực tế của lượt; estimate đã gồm token của chính
+  tín hiệu. Backstop compact/summarizer giữ nguyên khi bot không
+  checkpoint.
+- Chưa làm: rehydrate Phase 2 (Q1 caps/PathGuard), Phase 3 (đo residual
+  trước; tiktoken cần duyệt dependency riêng), Phase 4 event/CLI/cache.
+  Hướng "mỗi bot một session" là định hướng kiến trúc riêng; slice này
+  chạy trên session hiện tại của từng lượt.
+- Kiểm chứng: test_context_budget + prompt manager + agent loop +
+  chat/cli/serve/session liên quan xanh (2026-10-19).

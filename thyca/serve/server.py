@@ -9,6 +9,7 @@ from __future__ import annotations
 import ipaddress
 import signal
 import sys
+import threading
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -81,6 +82,39 @@ def make_server(
     )
 
 
+#: Scheduler cadence: cron has minute precision and the idle sweep
+#: threshold is 15 minutes, so one tick per minute is the sane interval.
+SCHEDULER_INTERVAL_S = 60.0
+
+
+def scheduler_tick_once(chat: ChatApp) -> dict:
+    """One production scheduler pass (idle sweep + dedupe + due bots)."""
+    from thyca.bots.scheduler import tick
+
+    return tick(chat)
+
+
+def start_scheduler(
+    chat: ChatApp, interval_s: float = SCHEDULER_INTERVAL_S
+) -> tuple[threading.Thread, threading.Event]:
+    """Start the periodic scheduler thread; returns (thread, stop_event).
+
+    Each tick is best-effort: one failing pass is logged to stderr and
+    the thread keeps its cadence instead of taking serve down."""
+    stop = threading.Event()
+
+    def _loop() -> None:
+        while not stop.wait(interval_s):
+            try:
+                scheduler_tick_once(chat)
+            except Exception as exc:  # never kill serve over a tick
+                print(f"scheduler tick failed: {type(exc).__name__}", file=sys.stderr)
+
+    thread = threading.Thread(target=_loop, name="thyca-scheduler", daemon=True)
+    thread.start()
+    return thread, stop
+
+
 def run(
     *,
     host: str,
@@ -102,11 +136,16 @@ def run(
     bound_host, bound_port = httpd.server_address[:2]
     print(f"http://{bound_host}:{bound_port}/", file=stdout, flush=True)
     signal.signal(signal.SIGTERM, _raise_interrupt)
+    scheduler_stop: threading.Event | None = None
+    if chat is not None:
+        _thread, scheduler_stop = start_scheduler(chat)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         print(file=stdout)
     finally:
+        if scheduler_stop is not None:
+            scheduler_stop.set()
         if chat is not None:
             chat.shutdown()
         httpd.server_close()

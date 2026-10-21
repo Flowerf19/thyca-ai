@@ -60,16 +60,20 @@ class Execution:
         "id",
         "kind",
         "listeners",
+        "owner",
         "proc",
         "started",
         "status",
         "tool",
     )
 
-    def __init__(self, id: str, tool: str, kind: str) -> None:
+    def __init__(self, id: str, tool: str, kind: str, owner: str | None = None) -> None:
         self.id = id
         self.tool = tool
         self.kind = kind
+        # In-flight bot that started this execution (None = user/Thyca
+        # turn). Gateway read/kill enforce it for bot callers.
+        self.owner = owner
         self.status: Status = "running"
         self.error = False
         self.started = time.time()

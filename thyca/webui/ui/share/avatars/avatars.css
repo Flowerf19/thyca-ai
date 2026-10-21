@@ -1,0 +1,185 @@
+/* Shared seal avatars: wax body, face, work states, idle layer, music. */
+.group-stack .seal-avatar{width:42px!important;height:45px!important;margin-right:-15px}
+.expression-tile .seal-avatar{width:92px;height:92px}
+.info-lockup .seal-avatar{width:85px;height:85px}
+@media(min-width:1600px){
+.seal-avatar{width:70px;height:70px}
+}
+@media(max-width:1150px){
+.seal-avatar{width:57px;height:60px}
+}
+/* The original seal is the character. Body and face move together. */
+.seal-avatar{display:inline-block;width:65px;height:65px;flex-shrink:0;position:relative;vertical-align:middle;isolation:isolate;transition:filter .3s,opacity .3s}
+.seal-motion{display:block;position:relative;width:100%;height:100%;transform-origin:50% 58%}
+.seal-avatar .base{display:block;width:100%;height:100%;overflow:visible;filter:drop-shadow(0 3px 2px #30261730)}
+.seal-avatar .wax-body{fill:var(--bot-color);stroke:var(--bot-dark);stroke-opacity:.35;stroke-width:.7}
+.seal-avatar .wax-ring-hi{fill:none;stroke:var(--bot-stamp);stroke-width:1.3;opacity:.45;transform:translateY(-.7px)}
+.seal-avatar .wax-ring{fill:none;stroke:var(--bot-dark);stroke-width:1.4;opacity:.55}
+.seal-avatar .wax-notch{fill:none;stroke:var(--bot-stamp);stroke-width:1.15;opacity:.25;transform-origin:32px 32px;transform:rotate(var(--ring-start,0deg));stroke-linecap:round}
+.seal-avatar .wax-sheen,.seal-avatar .wax-crack,.seal-avatar .glyph{display:none}
+.seal-avatar .seal-face{position:absolute;inset:0;pointer-events:none;z-index:2}
+.seal-avatar .seal-face>svg{display:block;width:100%;height:100%;overflow:visible}
+.seal-features{transform-origin:32px 34px;transition:transform .28s ease}
+.seal-eye-open{transition:opacity .12s}
+.seal-blink{transform-origin:32px 33px}
+.seal-avatar.blink .seal-blink{animation:seal-blink .19s ease-in-out}
+.seal-pupils{transform:translate(var(--gaze-x,0px),var(--gaze-y,0px));transition:transform .3s ease}
+.seal-eye-closed,.seal-brow,.seal-mouth,.seal-thought-marks,.seal-joy-marks,.seal-eye-error,.seal-wait-dot,.seal-question,.seal-alert,.seal-tangle,.seal-music{opacity:0;transition:opacity .15s}
+.seal-lid{fill:var(--bot-color);opacity:0}
+.seal-avatar[data-state=idle] .seal-motion{animation:seal-breathe var(--breathe,6s) ease-in-out var(--phase,-1s) infinite}
+.seal-avatar[data-state=waiting] .seal-features{transform:translate(.7px,1.3px)}
+.seal-avatar[data-state=waiting] .seal-pupils{transform:translate(.1px,3.6px)}
+.seal-avatar[data-state=waiting] .wax-notch{opacity:.7;stroke-dasharray:20 9 3 71}
+.seal-avatar[data-state=waiting] .seal-wait-dot{animation:seal-wait 2.8s ease-in-out infinite;opacity:.65}
+.seal-avatar[data-state=thinking] .seal-features{transform:translate(.6px,-1.1px) rotate(-5deg)}
+.seal-avatar[data-state=thinking] .seal-pupils{transform:translate(.5px,-2.3px)}
+.seal-avatar[data-state=thinking] .seal-thought-marks{opacity:.7}
+.seal-avatar[data-state=thinking] .wax-notch{opacity:.75;stroke-dasharray:18 9 3 21;animation:seal-orbit 9.6s steps(12,end) var(--ring-delay,0s) infinite}
+.seal-avatar[data-state=writing] .wax-notch{opacity:.8;stroke-dasharray:22 8 3 18;animation:seal-orbit 6.4s linear var(--ring-delay,0s) infinite}
+.seal-avatar[data-state=writing] .seal-features{transform:translateY(-1px)}
+.seal-avatar[data-state=writing] .seal-pupils{transform:translate(var(--writing-gaze,0px),1.2px)}
+.seal-avatar[data-state=working] .wax-notch{opacity:.9;stroke-dasharray:28 9 4 10;animation:seal-orbit 1.5s linear var(--ring-delay,0s) infinite}
+.seal-avatar[data-state=working] .seal-motion{animation:seal-work .72s ease-in-out var(--phase,-.2s) infinite}
+.seal-avatar[data-state=working] .seal-lid{opacity:.98}
+.seal-avatar[data-state=working] .seal-features{transform:translate(.5px,.6px) rotate(2deg)}
+.seal-avatar[data-state=working] .seal-pupils{transform:translate(-.8px,1.2px)}
+.seal-avatar[data-state=done] .seal-motion{animation:seal-done .64s ease-out both}
+.seal-avatar[data-state=done] .wax-ring-hi{opacity:.9;stroke-width:1.8}
+.seal-avatar[data-state=done] .seal-eye-open,.seal-avatar[data-state=offline] .seal-eye-open,.seal-avatar[data-state=error] .seal-eye-open{opacity:0}
+.seal-avatar[data-state=done] .seal-eye-happy,.seal-avatar[data-state=done] .seal-mouth-smile,.seal-avatar[data-state=done] .seal-joy-marks{opacity:1}
+.seal-avatar[data-state=done] .seal-features{transform:translateY(-1px)}
+.seal-avatar[data-state=error] .seal-motion{animation:seal-shake .42s ease-out both}
+.seal-avatar[data-state=error] .wax-ring,.seal-avatar[data-state=error] .wax-ring-hi{stroke:#c7584e;stroke-width:2;opacity:1}
+.seal-avatar[data-state=error] .wax-notch{opacity:0}
+.seal-avatar[data-state=error] .seal-eye-error,.seal-avatar[data-state=error] .seal-tangle,.seal-avatar[data-state=error] .seal-mouth-worried{opacity:1}
+.seal-avatar[data-state=error] .seal-features{transform:rotate(-3deg)}
+.seal-avatar[data-state=offline]{filter:grayscale(1);opacity:.45;transition:none}
+.seal-avatar[data-state=offline] *{animation:none!important;transition:none!important}
+.seal-avatar[data-state=offline] .seal-eye-rest{opacity:1}
+.seal-avatar[data-state=offline] .seal-features{transform:translateY(2px)}
+.seal-avatar[data-state=offline] .wax-notch{opacity:.15}
+.seal-avatar[data-state=confused] .seal-motion{transform:rotate(-10deg)}
+.seal-avatar[data-state=confused] .seal-features{transform:translate(-.5px,.5px)}
+.seal-avatar[data-state=confused] .seal-pupils{transform:translate(1.2px,-.7px)}
+.seal-avatar[data-state=confused] .seal-brow,.seal-avatar[data-state=confused] .seal-question{opacity:1}
+.seal-avatar[data-state=group] .wax-notch,.seal-avatar[data-group-active=true] .wax-notch{opacity:.75;stroke-dasharray:20 8 4 19;animation:seal-group-orbit 4.2s linear var(--group-phase,0s) infinite}
+.seal-avatar[data-group-active=true][data-speaking=false]{filter:saturate(.8);opacity:.67}
+.seal-avatar[data-group-active=true][data-speaking=true]{filter:brightness(1.1) drop-shadow(0 0 4px var(--bot-border));opacity:1}
+.seal-avatar[data-group-active=true][data-speaking=true] .wax-ring-hi{stroke:var(--bot-eye);opacity:.9;stroke-width:1.8}
+.seal-avatar[data-group-active=true][data-speaking=false] .seal-pupils{transform:translate(var(--team-gaze,1px),0px)}
+/* A mention is a brief overlay, so it never cancels the underlying job. */
+.seal-avatar[data-expression=mention] .seal-motion{animation:seal-noticed .5s ease-out both}
+.seal-avatar[data-expression=mention] .seal-features{transform:translateY(-.5px) scale(1.11)}
+.seal-avatar[data-expression=mention] .seal-eye-open{opacity:1}
+.seal-avatar[data-expression=mention] .seal-eye-closed,.seal-avatar[data-expression=mention] .seal-lid,.seal-avatar[data-expression=mention] .seal-mouth,.seal-avatar[data-expression=mention] .seal-brow,.seal-avatar[data-expression=mention] .seal-thought-marks,.seal-avatar[data-expression=mention] .seal-question{opacity:0}
+.seal-avatar[data-expression=mention] .seal-pupils{transform:translate(-1.2px,0) scale(.94);transform-origin:32px 33px}
+.seal-avatar[data-expression=mention] .seal-alert{opacity:1}
+.motion-paused .seal-avatar *{transition:none!important}
+@keyframes seal-breathe{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-.7px) scale(1.012,1.017)}}
+@keyframes seal-orbit{from{transform:rotate(var(--ring-start,0deg))}to{transform:rotate(var(--ring-end,360deg))}}
+@keyframes seal-group-orbit{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+@keyframes seal-work{0%,100%{transform:translateY(.5px) rotate(-.8deg)}50%{transform:translateY(-1.2px) rotate(.8deg)}}
+@keyframes seal-done{0%{transform:translateY(0) scale(1)}22%{transform:translateY(1px) scale(1.03,.96)}52%{transform:translateY(-4.3px) scale(.98,1.04)}78%{transform:translateY(.5px) scale(1.02,.98)}100%{transform:translateY(0) scale(1)}}
+@keyframes seal-noticed{0%,100%{transform:translateY(0)}30%{transform:translateY(-2.6px) rotate(3deg)}65%{transform:translateY(.4px) rotate(-1deg)}}
+@keyframes seal-shake{0%,100%{transform:rotate(0)}25%{transform:rotate(-3deg)}50%{transform:rotate(3deg)}75%{transform:rotate(-1deg)}}
+@keyframes seal-blink{0%,100%{transform:scaleY(1)}45%,60%{transform:scaleY(.08)}}
+@keyframes seal-wait{0%,100%{opacity:.25}50%{opacity:.85}}
+.stage-portrait .seal-avatar{width:154px;height:154px;z-index:1}
+#expressions-dialog .expression-tile .seal-avatar{width:76px;height:76px}
+.expression-preview *{animation:none!important;transition:none!important}
+.expression-preview[data-state=waiting] .seal-wait-dot{opacity:.7}
+.expression-preview[data-state=thinking] .wax-notch,.expression-preview[data-state=working] .wax-notch{transform:rotate(-22deg)}
+.group-preview-member .seal-avatar{width:76px;height:76px}
+@media(max-width:600px){
+.stage-portrait .seal-avatar{width:106px;height:106px}
+#expression-extras .expression-tile .seal-avatar{width:65px;height:65px}
+.group-preview-member .seal-avatar{width:66px;height:66px}
+}
+.stream-interruption{font:italic 14px/1.6 var(--serif);color:var(--muted);padding-top:10px;border-top:1px dashed var(--line)}
+/* Idle gestures are a decorative layer; the work state remains idle. */
+.seal-idle-lids{fill:var(--bot-color);opacity:0}
+.seal-idle-note,.seal-idle-z,.seal-idle-star,.seal-idle-cloud,.seal-idle-wink,.seal-mouth-hum{opacity:0}
+.seal-avatar[data-state=idle][data-idle=look] .seal-pupils{animation:idle-look 5.8s ease-in-out both}
+.seal-avatar[data-state=idle][data-idle=look] .seal-features{animation:idle-look-head 5.8s ease-in-out both}
+.seal-avatar[data-state=idle][data-idle=peek] .seal-motion{animation:idle-peek 4.6s ease-in-out both}
+.seal-avatar[data-state=idle][data-idle=peek] .seal-pupils{transform:translate(1.7px,1.8px)}
+.seal-avatar[data-state=idle][data-idle=peek] .seal-mouth-smile{opacity:.8}
+.seal-avatar[data-state=idle][data-idle=hum] .seal-eye-open,.seal-avatar[data-state=idle][data-idle=stretch] .seal-eye-open{opacity:0}
+.seal-avatar[data-state=idle][data-idle=hum] .seal-eye-happy,.seal-avatar[data-state=idle][data-idle=stretch] .seal-eye-happy{opacity:1}
+.seal-avatar[data-state=idle][data-idle=hum] .seal-motion{animation:idle-sway 2.6s ease-in-out 2}
+.seal-avatar[data-state=idle][data-idle=hum] .seal-mouth-hum{opacity:1}
+.seal-avatar[data-state=idle][data-idle=hum] .seal-idle-note{opacity:.8;animation:idle-note 5.2s ease-in-out both}
+.seal-avatar[data-state=idle][data-idle=dream] .seal-pupils{transform:translate(-1.7px,-2.1px)}
+.seal-avatar[data-state=idle][data-idle=dream] .seal-features{transform:translateY(-.4px) rotate(-3deg)}
+.seal-avatar[data-state=idle][data-idle=dream] .seal-idle-cloud{opacity:.75;animation:idle-cloud 6s ease-in-out both}
+.seal-avatar[data-state=idle][data-idle=stretch] .seal-motion{animation:idle-stretch 4.8s ease-in-out both}
+.seal-avatar[data-state=idle][data-idle=stretch] .seal-mouth-smile{opacity:1}
+.seal-avatar[data-state=idle][data-idle=sleepy] .seal-idle-lids{opacity:1}
+.seal-avatar[data-state=idle][data-idle=sleepy] .seal-pupils{transform:translate(-1px,2.1px)}
+.seal-avatar[data-state=idle][data-idle=sleepy] .seal-motion{animation:idle-doze 6.4s ease-in-out both}
+.seal-avatar[data-state=idle][data-idle=sleepy] .seal-idle-z{opacity:.8;animation:idle-note 6.4s ease-in-out both}
+.seal-avatar[data-state=idle][data-idle=wink] .eye-left{animation:idle-wink-open 3.6s ease-in-out both}
+.seal-avatar[data-state=idle][data-idle=wink] .seal-idle-wink{animation:idle-wink-closed 3.6s ease-in-out both}
+.seal-avatar[data-state=idle][data-idle=wink] .seal-mouth-smile{opacity:1}
+.seal-avatar[data-state=idle][data-idle=wink] .seal-features{transform:rotate(-3deg)}
+.seal-avatar[data-state=idle][data-idle=spark] .seal-idle-star{opacity:1;transform-origin:55px 12px;animation:idle-spark 4.2s ease-in-out both}
+.seal-avatar[data-state=idle][data-idle=spark] .seal-features{transform:translateY(-.5px) scale(1.035)}
+.seal-avatar[data-state=idle][data-idle=spark] .seal-pupils{transform:translate(.9px,-1.6px)}
+.seal-avatar[data-state=idle][data-idle=spark] .seal-mouth-smile{opacity:.85}
+#idle-expression-grid .expression-tile .seal-avatar{width:72px;height:72px}
+.expression-preview[data-idle=look] .seal-pupils{transform:translate(-2.8px,.4px)}
+.expression-preview[data-idle=peek] .seal-motion{transform:rotate(7deg)}
+.expression-preview[data-idle=stretch] .seal-motion{transform:scale(.98,1.06)}
+.expression-preview[data-idle=wink] .eye-left{opacity:0}
+.expression-preview[data-idle=wink] .seal-idle-wink{opacity:1}
+@keyframes idle-look{0%,100%{transform:translate(0,0)}14%,31%{transform:translate(-3px,.5px)}48%,66%{transform:translate(1.7px,-.5px)}80%,90%{transform:translate(.5px,2px)}}
+@keyframes idle-look-head{0%,100%{transform:rotate(0)}14%,31%{transform:rotate(-2deg)}48%,66%{transform:rotate(2deg)}80%,90%{transform:translateY(.6px)}}
+@keyframes idle-peek{0%,100%{transform:translateX(0) rotate(0)}25%,68%{transform:translate(1.2px,-.6px) rotate(7deg)}82%{transform:translateX(.4px) rotate(2deg)}}
+@keyframes idle-sway{0%,100%{transform:rotate(-2deg)}50%{transform:rotate(2deg) translateY(-.6px)}}
+@keyframes idle-note{0%,12%{opacity:0;transform:translate(-2px,6px)}28%,72%{opacity:.85}94%,100%{opacity:0;transform:translate(2px,-5px)}}
+@keyframes idle-cloud{0%,100%{opacity:0;transform:translateY(2px)}25%,75%{opacity:.7;transform:translateY(-1px)}}
+@keyframes idle-stretch{0%,100%{transform:scale(1) translateY(0)}22%{transform:scale(1.025,.98)}42%,66%{transform:scale(.98,1.065) translateY(-1.6px)}83%{transform:scale(1.01,.995)}}
+@keyframes idle-doze{0%,100%{transform:rotate(0) translateY(0)}30%,65%{transform:rotate(5deg) translateY(1px)}80%{transform:rotate(1deg) translateY(-.7px)}}
+@keyframes idle-wink-open{0%,15%,76%,100%{opacity:1}25%,65%{opacity:0}}
+@keyframes idle-wink-closed{0%,15%,76%,100%{opacity:0}25%,65%{opacity:1}}
+@keyframes idle-spark{0%,100%{opacity:0;transform:scale(.6)}20%,65%{opacity:.9;transform:scale(1)}40%{opacity:.55;transform:scale(.85)}}
+@media(prefers-reduced-motion:reduce){
+.seal-avatar[data-idle=wink] .eye-left{opacity:0}
+.seal-avatar[data-idle=wink] .seal-idle-wink{opacity:1}
+.seal-avatar[data-idle=look] .seal-pupils{transform:translate(-2px,.4px)}
+}
+/* Completion: a single expressive beat, then the state adapter returns to idle. */
+.seal-done-star,.seal-done-cheeks{opacity:0}
+.seal-avatar[data-state=idle] .seal-pupils{transition:transform .65s cubic-bezier(.25,.7,.3,1)}
+.seal-avatar[data-state=done] .seal-motion{animation:seal-done-soft .9s cubic-bezier(.24,.65,.3,1) both}
+.seal-avatar[data-state=done] .seal-eye-open{animation:seal-done-open 1.6s ease-out both}
+.seal-avatar[data-state=done] .seal-eye-happy{stroke-width:3.1;animation:seal-done-smile 1.6s ease-out both}
+.seal-avatar[data-state=done] .seal-mouth-smile{animation:seal-done-smile 1.6s ease-out both}
+.seal-avatar[data-state=done] .seal-done-cheeks{opacity:.45}
+.seal-avatar[data-state=done] .seal-done-star{transform-origin:55px 12px;animation:seal-done-spark .95s ease-out .24s both}
+.seal-avatar[data-state=done] .wax-ring-hi{animation:seal-done-rim 1.2s ease-out both}
+.seal-avatar[data-state=done] .seal-joy-marks{opacity:0}
+.expression-preview[data-state=done] .seal-done-star{opacity:.8}
+@keyframes seal-done-soft{0%,100%{transform:translateY(0) scale(1)}18%{transform:translateY(1.2px) scale(1.035,.95)}45%{transform:translateY(-3.7px) scale(.985,1.045)}70%{transform:translateY(.4px) scale(1.02,.98)}85%{transform:translateY(-.4px) scale(1)}}
+@keyframes seal-done-open{0%,10%{opacity:1}22%,100%{opacity:0}}
+@keyframes seal-done-smile{0%,12%{opacity:0}26%,100%{opacity:1}}
+@keyframes seal-done-spark{0%{opacity:0;transform:scale(.35) rotate(-12deg)}28%{opacity:.9;transform:scale(1) rotate(0)}66%{opacity:.7;transform:scale(.94) translateY(-1px)}100%{opacity:0;transform:scale(.65) translateY(-3px)}}
+@keyframes seal-done-rim{0%,100%{opacity:.5;stroke-width:1.4}35%{opacity:.95;stroke-width:1.9}}
+@media(prefers-reduced-motion:reduce){
+.seal-avatar[data-state=done] .seal-done-star{opacity:.75}
+}
+.group-member .seal-avatar{margin:0!important}
+/* Writing feels like composing music. Notes follow text deltas; no talking mouth. */
+.seal-music{opacity:0;transition:opacity .15s}
+.seal-music-staff{fill:none;stroke:var(--bot-mid);stroke-width:.6;opacity:.65}
+.seal-score-note{transition:transform .12s ease-out,opacity .12s ease-out;transform-origin:55px 16px}
+.score-note-a{transform:translateY(var(--note-a-y,0px));opacity:var(--note-a-alpha,.55)}
+.score-note-b{transform:translateY(var(--note-b-y,0px));opacity:var(--note-b-alpha,.5)}
+.seal-avatar[data-state=writing] .seal-music{opacity:.8}
+.seal-avatar[data-state=writing][data-streaming=true] .seal-music{opacity:1}
+.seal-avatar[data-state=writing] .seal-mouth{opacity:0}
+.expression-preview[data-state=writing] .seal-music{opacity:1}
+.motion-paused .seal-score-note{transform:none!important;transition:none!important;opacity:.7!important}
+@media(prefers-reduced-motion:reduce){
+.seal-score-note{transform:none!important;opacity:.7!important}
+}

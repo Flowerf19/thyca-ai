@@ -2,6 +2,16 @@
 
 Thay đổi của Thyca, viết ngắn gọn cho người dùng.
 
+## 0.87.0.dev0 — Development
+
+- WebUI mới hoàn toàn: 7 màn (Trò chuyện, Nhật ký, Hồ sơ, Provider, Sử dụng, Trace, Cài đặt) chia sẻ cùng khung — sidebar danh sách bot, nav góc phải sinh từ một registry chung nên không lệch giữa các màn.
+- Sidebar bot giờ là bộ lọc chính: bấm bot scope Nhật ký, Hồ sơ, Sử dụng và Trace theo bot đó (URL `?bot=<id>` share được); bấm lại hoặc nút Bỏ lọc để về cả đội. Mục Hội thoại chung chỉ còn ở màn Trò chuyện.
+- Nhật ký: lọc theo loại (Ghi nhớ/Thói quen/Task) và mức dùng (Dùng nhiều/Không dùng bao giờ) ngoài tìm kiếm; phân trang 60 lá thay vì render cả nghìn lá một lần.
+- Hồ sơ thành quan hệ "Bạn và <bot>": thyca = 3 file chung USER/SOUL/IDENTITY sửa trực tiếp; mỗi bot khác là persona TWIN.md riêng kèm chip khả năng (chỉ đọc, bot tự cập nhật qua chat).
+- Sử dụng: token tách đúng `in · cache · out` (in = prompt − cache, không còn tính gộp), số ≥1 triệu viết gọn `m`; card "Ai đang chạy nhiều" chỉ hiện ở view cả đội; header báo đúng bot đang scope.
+- Trace lọc được theo bot (`/api/traces?bot_id=`): turn ghi theo bot thực sự chạy, session metadata chỉ fallback cho turn cũ chưa ghi — nên scope không bắt nhầm lượt của bot chỉ tham gia group.
+- Đây là bản dev, chưa phải beta hay stable; không tự bỏ hậu tố dev khi nâng phiên bản.
+
 ## 0.86.5.dev0 — Development
 
 - Gọn lại code provider (nội bộ, không đổi tính năng): mỗi chuẩn API một module, dùng chung helper, bớt file trùng lặp.

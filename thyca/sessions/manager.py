@@ -112,12 +112,39 @@ class SessionManager:
                     continue
             return sessions
 
+    def ensure_dm(self, bot_id: str) -> Session:
+        """Find-or-create one bot's fixed DM (phase 2B shared helper).
+
+        Only a session already carrying the ``dm`` marker is adopted;
+        otherwise a fresh session is created and marked (bots + dm).
+        No locking: single-threaded callers use it directly, while
+        ChatApp.bot_dm wraps it in ``_dm_lock`` for the concurrent
+        one-DM guarantee."""
+        for path in self.store.list_paths():
+            try:
+                session = self.store.load(path.stem)
+            except SessionError:
+                continue
+            if session.dm_bot == bot_id:
+                with self._lock:
+                    self._session = session
+                return session
+        session = self.create()
+        self.store.append_bots(session.path, [bot_id])
+        self.store.append_dm(session.path, bot_id)
+        session.bots = [bot_id]
+        session.dm_bot = bot_id
+        return session
+
     def discard_empty(self, keep: set[str] | None = None) -> list[str]:
         """Drop blank sessions except the ones named in ``keep``.
 
         ``keep`` is every session with an in-flight turn: a turn writes its
         first message a moment after it starts, so an empty file may still
-        belong to a running turn.
+        belong to a running turn. Sessions marked as a bot's fixed DM
+        (``dm_bot``) are kept the same way: a DM is created lazily and
+        stays blank until its first turn, but it is the bot's one main
+        window — pruning it would silently mint a second DM later.
         """
         with self._lock:
             removed: list[str] = []
@@ -127,6 +154,8 @@ class SessionManager:
                 except SessionError:
                     continue
                 if keep and session.id in keep:
+                    continue
+                if session.dm_bot:
                     continue
                 if not is_blank(session):
                     continue
@@ -353,6 +382,21 @@ class SessionManager:
             return rename_session(
                 self.store, session_id, title, current=self._session
             )
+
+    def set_dm(self, session_id: str, bot_id: str) -> None:
+        """Refresh the in-memory DM marker when it is current (CBE-5)."""
+        with self._lock:
+            if self._session is not None and self._session.id == session_id:
+                self._session.dm_bot = bot_id
+
+    def set_bots(self, session_id: str, bots: list[str]) -> None:
+        """Refresh the in-memory participant list when it is current.
+
+        Disk is owned by ``SessionStore.append_bots``; this only keeps a
+        loaded current session from serving a stale roster."""
+        with self._lock:
+            if self._session is not None and self._session.id == session_id:
+                self._session.bots = list(bots)
 
     def delete(self, session_id: str, *, keep: set[str] | None = None) -> None:
         """Remove a session file outright.

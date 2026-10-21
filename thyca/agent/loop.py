@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from dataclasses import replace
 
 from thyca.core.protocol import Message, estimate_tokens as _chars_to_tokens
 from thyca.llm.pricing import cost_for
@@ -25,6 +26,7 @@ def _delta_callback(
     event_sink: EventSink | None,
     round_no: int,
     cls: type[ThinkingDelta] | type[ContentDelta],
+    bot_id: str | None = None,
 ) -> Callable[[str], None] | None:
     """One live-delta callback: reasoning and content differ only in class."""
     if event_sink is None:
@@ -34,7 +36,7 @@ def _delta_callback(
         if not delta:
             return
         try:
-            event_sink(cls(round=round_no, delta=delta))  # type: ignore[arg-type]
+            event_sink(cls(round=round_no, delta=delta, bot_id=bot_id))  # type: ignore[arg-type]
         except Exception:
             pass
 
@@ -90,12 +92,61 @@ class AgentLoop:
             return 0
         return _chars_to_tokens(json.dumps(self._tools, ensure_ascii=False))
 
+    def _tool_names(self) -> set[str] | None:
+        # None means the caller supplied no schema list (unit wiring);
+        # production paths always pass the turn's filtered schemas.
+        if self._tools is None:
+            return None
+        names: set[str] = set()
+        for tool in self._tools:
+            name: object = None
+            if isinstance(tool, dict):
+                function = tool.get("function")
+                if isinstance(function, dict):
+                    name = function.get("name")
+                if not isinstance(name, str):
+                    name = tool.get("name")
+            else:
+                name = getattr(tool, "name", None)
+            if isinstance(name, str) and name:
+                names.add(name)
+        return names
+
+    def _with_context_budget(
+        self, hot: object, *, pending_tokens: int, calibration: float
+    ) -> object:
+        # The signal is computed on the post-compaction transcript so the
+        # bot sees the budget it actually starts this turn with. The
+        # baseline snapshot (signal cleared) sizes the hot prompt, so the
+        # estimate matches the compactor/guard inputs. (WS-3: math and
+        # format live in WorkspaceContextBuilder; same inputs, same timing.)
+        tool_names = self._tool_names()
+        can_read = tool_names is None or bool(
+            tool_names & {"memory_search", "memory_recent", "memory_get", "memory_tasks"}
+        )
+        can_write = tool_names is None or "memory_remember" in tool_names
+        from thyca.bots.workspace_context import WorkspaceContextBuilder
+
+        return WorkspaceContextBuilder.with_context_budget(
+            hot,
+            messages=list(self._sessions.current.messages),
+            context_tokens=self._context_tokens,
+            pending_tokens=pending_tokens,
+            calibration=calibration,
+            tools_tokens=self._tools_tokens(),
+            can_read=can_read,
+            can_write=can_write,
+        )
+
     async def run(
         self,
         user_msg: str,
         hot: object = None,
         event_sink: EventSink | None = None,
         persist_user: bool = True,
+        bot_ctx: dict | None = None,
+        persisted_user_msg: str | None = None,
+        on_hot_ready: Callable[[object], None] | None = None,
     ) -> str:
         if self._loop_max < 1:
             raise ValueError("loop_max must be positive")
@@ -136,17 +187,37 @@ class AgentLoop:
                 pending_user_tokens=pending_tokens,
                 calibration=calibration,
             )
+        hot = self._with_context_budget(
+            hot, pending_tokens=pending_tokens, calibration=calibration
+        )
+        if on_hot_ready is not None:
+            try:
+                on_hot_ready(hot)
+            except Exception:
+                pass
         stage = Stage(
             messages=list(self._sessions.current.messages),
             hot=hot,
             tools=self._tools,
         )
+        if bot_ctx:
+            # Team attribution (BE-6): the runtime names the bot + trace so
+            # Observe stamps every appended row and Trace can group by bot.
+            for key in ("bot_id", "trace_id", "parent_span_id", "span_id",
+                        "channel", "window_id", "work_id"):
+                value = bot_ctx.get(key)
+                if isinstance(value, str) and value:
+                    setattr(stage, key, value)
         if persist_user:
             self._assemble.assemble(stage, user_msg)
-            self._observe.user(stage)
+            persisted = None
+            if persisted_user_msg is not None:
+                persisted = replace(
+                    stage.messages[-1], content=persisted_user_msg)
+            self._observe.user(stage, persisted_message=persisted)
         else:
             self._assemble.assemble(stage, user_msg, append_user=False)
-        emit_event(event_sink, TurnEvent(type="turn.accepted"))
+        emit_event(event_sink, TurnEvent(type="turn.accepted", bot_id=stage.bot_id))
         # Index boundary for the shrink guard: entries below are pre-run
         # history (round numbers restart every turn, so round-protection
         # must not apply to them); entries at/above are this run's own.
@@ -175,6 +246,7 @@ class AgentLoop:
                             round=stage.round,
                             tool_count=shrunk,
                             hidden_bytes=hidden,
+                            bot_id=stage.bot_id,
                         ),
                     )
                 if estimate > int(self._context_tokens * BACKSTOP_RATIO):
@@ -184,10 +256,13 @@ class AgentLoop:
                 stage.llm_estimate_tokens = estimate_wire_tokens(
                     stage.messages, self._tools_tokens()
                 )
-            emit_event(event_sink, TurnEvent(type="llm.started", round=stage.round))
+            emit_event(
+                event_sink,
+                TurnEvent(type="llm.started", round=stage.round, bot_id=stage.bot_id),
+            )
             round_no = stage.round
-            on_reasoning = _delta_callback(event_sink, round_no, ThinkingDelta)
-            on_content = _delta_callback(event_sink, round_no, ContentDelta)
+            on_reasoning = _delta_callback(event_sink, round_no, ThinkingDelta, stage.bot_id)
+            on_content = _delta_callback(event_sink, round_no, ContentDelta, stage.bot_id)
             await self._think.think(
                 stage, on_reasoning=on_reasoning, on_content=on_content
             )
@@ -199,6 +274,7 @@ class AgentLoop:
                     type="llm.finished",
                     round=stage.round,
                     tool_count=len(stage.reply.tool_calls),
+                    bot_id=stage.bot_id,
                 ),
             )
             if not stage.reply.tool_calls:

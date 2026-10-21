@@ -363,6 +363,136 @@ def test_stats_filter_detail_and_corrupt_skip(tmp_path: Path) -> None:
         chat.shutdown()
 
 
+def test_trace_detail_expands_only_same_window_canonical_span(tmp_path: Path) -> None:
+    from thyca.bots.card import BotCard
+    from thyca.bots.timeline import WorkspaceTimeline
+
+    chat = _chat(tmp_path)
+    try:
+        chat._bots.create(
+            BotCard(
+                bot_id="coder", name="coder", role="Coder",
+                description="Writes code.", persona="",
+            )
+        )
+        dm = chat.create(bots=["coder"])
+        group = chat.create(bots=["thyca", "coder"])
+        dm_room = chat._sessions.store.load(dm["id"])
+        group_room = chat._sessions.store.load(group["id"])
+        dm_window = chat._webui.window_for(dm_room)
+        group_window = chat._webui.window_for(group_room)
+        dm_span = "span_shared_fixture"
+        call = ToolCall(
+            id="group-call", name="read", arguments={"path": "group.txt"}
+        )
+        dm_rows = [
+            Message(
+                role="assistant", content=None,
+                tool_calls=[ToolCall(
+                    id="dm-call", name="read", arguments={"path": "private.txt"}
+                )],
+                reasoning="DM1 sentinel reasoning",
+                meta={"kind": "llm", "bot_id": "coder", "span_id": dm_span},
+            ),
+            Message(
+                role="tool", content="DM1 sentinel tool result",
+                tool_call_id="dm-call",
+                meta={"bot_id": "coder", "span_id": dm_span},
+            ),
+        ]
+        group_rows = [
+            Message(
+                role="assistant", content=None, tool_calls=[call],
+                reasoning="group reasoning",
+                meta={"kind": "llm", "bot_id": "coder", "span_id": dm_span},
+            ),
+            Message(
+                role="tool", content="group tool result",
+                tool_call_id="group-call",
+                meta={"bot_id": "coder", "span_id": dm_span},
+            ),
+        ]
+        timeline = WorkspaceTimeline(tmp_path, "coder")
+        for index, row in enumerate(dm_rows):
+            timeline.append_message(dm_window, row, event_id=f"dm-{index}")
+        for index, row in enumerate(group_rows):
+            timeline.append_message(group_window, row, event_id=f"group-{index}")
+        timeline.replace_view(group_window, group_rows, event_id="group-reset")
+
+        chat._runtime.workspaces.store.bind_window("coder", dm_window)
+        chat._runtime.workspaces.store.bind_window("coder", group_window)
+        room_manager = SessionManager(tmp_path / "sessions")
+        for room, text in ((dm_room, "private"), (group_room, "public")):
+            room_manager.load(room.id)
+            room_manager.append(Message(role="user", content=text))
+            room_manager.append(
+                Message(
+                    role="assistant",
+                    content=f"{text} reply",
+                    meta={
+                        "kind": "message", "bot_id": "coder",
+                        "span_id": dm_span, "requests": 1, "rounds": 1,
+                    },
+                )
+            )
+
+        trace_api._trace_sessions.clear()
+        payload = trace_api.trace_detail_payload(chat, group["id"], 0)
+        rendered = json.dumps(payload, ensure_ascii=False)
+        assert "DM1 sentinel reasoning" not in rendered
+        assert "DM1 sentinel tool result" not in rendered
+        assert "group reasoning" in rendered
+        assert "group tool result" in rendered
+        assistant = next(
+            message for message in payload["messages"]
+            if message["role"] == "assistant" and message.get("tool_calls")
+        )
+        assert assistant["tool_calls"] == [{
+            "id": "group-call", "name": "read",
+            "arguments": {"path": "group.txt"},
+        }]
+        assert sum(message["role"] == "tool" for message in payload["messages"]) == 1
+    finally:
+        chat.shutdown()
+
+
+def test_trace_detail_missing_canonical_artifact_is_explicit_and_read_only(
+    tmp_path: Path,
+) -> None:
+    from thyca.bots.timeline import TraceExecutionError
+
+    chat = _chat(tmp_path)
+    try:
+        created = chat.create()
+        room = chat._sessions.store.load(created["id"])
+        window = chat._webui.window_for(room)
+        chat._runtime.workspaces.store.bind_window("thyca", window)
+        manager = SessionManager(tmp_path / "sessions")
+        manager.load(created["id"])
+        manager.append(Message(role="user", content="question"))
+        manager.append(
+            Message(
+                role="assistant", content="answer",
+                meta={
+                    "kind": "message", "bot_id": "thyca",
+                    "span_id": "missing-span", "requests": 1,
+                },
+            )
+        )
+        timeline_path = tmp_path / "bots" / "thyca" / "workspace" / "timeline.jsonl"
+        assert not timeline_path.exists()
+        trace_api._trace_sessions.clear()
+        try:
+            trace_api.trace_detail_payload(chat, created["id"], 0)
+        except TraceExecutionError as exc:
+            assert "timeline is missing" in str(exc)
+        else:
+            raise AssertionError("expected missing canonical execution error")
+        assert not timeline_path.exists()
+    finally:
+        chat.shutdown()
+
+
 def test_trace_detail_marks_skill_loads_and_keeps_arguments(tmp_path: Path) -> None:
     """Skill classification happens server-side; arguments stay on the payload."""
     chat = _chat(tmp_path)

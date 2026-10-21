@@ -1,6 +1,6 @@
 """Lifecycle: chunked NDJSON decode. No jsdom.
 
-Drives webui/shared/js/api.js (postNdjson) with stubbed fetch.
+Drives readNdjson (webui/ui/chat/js/chat.js) over a stubbed stream body.
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-API = ROOT / "thyca" / "webui" / "shared" / "js" / "api.js"
+CHAT_JS = ROOT / "thyca" / "webui" / "ui" / "chat" / "js" / "chat.js"
 
 
 @pytest.fixture(scope="module")
@@ -24,19 +24,17 @@ def node() -> str:
 
 
 _PREAMBLE = f"""
-import {{ postNdjson }} from '{API.as_posix()}';
+import {{ loadScripts }} from './tests/webui_dom.mjs';
+const {{ readNdjson }} = loadScripts(['{CHAT_JS.as_posix()}'], 'return {{ readNdjson }};');
 async function decode(raw, splitAt = -1) {{
   const bytes = new TextEncoder().encode(raw);
   const parts = splitAt >= 0 ? [bytes.slice(0, splitAt), bytes.slice(splitAt)] : [bytes];
   let i = 0;
-  globalThis.fetch = async () => ({{
-    ok: true,
-    body: {{ getReader: () => ({{
-      read: async () => (i < parts.length ? {{ done: false, value: parts[i++] }} : {{ done: true, value: undefined }}),
-    }}) }},
-  }});
+  const body = {{ getReader: () => ({{
+    read: async () => (i < parts.length ? {{ done: false, value: parts[i++] }} : {{ done: true, value: undefined }}),
+  }}) }};
   const events = [];
-  await postNdjson('/api/x', {{}}, (e) => events.push(e));
+  await readNdjson(body, (e) => events.push(e));
   return events;
 }}
 """
@@ -78,16 +76,17 @@ def test_chunked_stream_status(node: str) -> None:
 
 
 def test_failed_stream_status(node: str) -> None:
+    """turn.failed arrives as a normal event; handleStreamEvent maps it to
+    the cancelTurn + setState('error') path (asserted in test_turn_status)."""
     raw = '{"type":"turn.accepted"}\n{"type":"turn.failed","code":"llm_error","message":"x"}\n'
     payload = json.dumps(raw)
     result = _run(
         node,
-        "(async () => { try {"
-        + f" await decode({payload});"
-        + " return 'no-throw'; } catch (error) {"
-        + " return { message: error.message }; } })()",
+        "(async () => {"
+        + f" const events = await decode({payload});"
+        + " return events.map((e) => e.type); })()",
     )
-    assert result["message"] == "x"
+    assert result == ["turn.accepted", "turn.failed"]
 
 
 def test_skill_events_pass_through(node: str) -> None:

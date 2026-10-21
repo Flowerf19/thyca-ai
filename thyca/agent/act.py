@@ -66,7 +66,7 @@ class Act:
         # measure each tool individually so Stage.tool_latencies keeps real parallelism
         async def timed(call: ToolCall) -> tuple[ToolResult, int]:
             start = time.perf_counter()
-            result = await self._one(call, stage.round, event_sink)
+            result = await self._one(call, stage.round, event_sink, bot_id=stage.bot_id)
             elapsed_ms = int((time.perf_counter() - start) * 1000)
             return result, elapsed_ms
 
@@ -81,7 +81,11 @@ class Act:
         return stage.results
 
     async def _one(
-        self, call: ToolCall, round_no: int, event_sink: EventSink | None = None
+        self,
+        call: ToolCall,
+        round_no: int,
+        event_sink: EventSink | None = None,
+        bot_id: str | None = None,
     ) -> ToolResult:
         # A read inside the skills dir emits skill.* instead of tool.* — one
         # action is one beat pair, never tool.* and skill.* together.
@@ -92,7 +96,10 @@ class Act:
         if event_sink is not None:
             emit_event(
                 event_sink,
-                TurnEvent(type=f"{kind}.started", round=round_no, call_id=call.id, name=name),
+                TurnEvent(
+                    type=f"{kind}.started", round=round_no, call_id=call.id,
+                    name=name, bot_id=bot_id,
+                ),
             )
         if call.parse_error is not None:
             result = _build_result(call, None)
@@ -112,6 +119,7 @@ class Act:
                     call_id=call.id,
                     name=name,
                     ok=not result.is_error,
+                    bot_id=bot_id,
                 ),
             )
         return result

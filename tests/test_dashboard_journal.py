@@ -1,19 +1,20 @@
-"""Tests for the Dashboard four-view contract (GOAL-010 TASK-028/029,
-TASK-039).
+"""Tests for the rebuilt Dashboard — thyca/webui/ui/dashboard/.
 
-The "Hôm nay" overview view is gone: the sidebar is Sử dụng token / Request /
-Chi phí / Trace, the default view is Sử dụng token, the legacy #hom-nay hash
-(and any unknown hash) falls back to Sử dụng token, and ?session=/?turn=
-deep links open Trace. dashboard-today.js keeps only the /api/traces paging
-helper consumed by the Cost journal (fetchAllTraces: dedupe on
-(session_id, turn_index), explicit incomplete error). The boot behavior runs
-against a minimal fake DOM in Node; static checks pin the navigation menu and
-the flat-surface/mobile switching contract. Mirrors the eval style of
-test_webui_format.py.
+The old four-view dashboard (overview.js entity selector, hash routing
+#su-dung/#request/#chi-phi/#hom-nay -> #trace, fetchAllTraces dedupe
+paging in dashboard-today.js) was not ported. The new page is one screen —
+"Sử dụng & chi phí": range picker + stat cards + by_day/by_bot/by_model/
+by_hour charts + the paged "Lượt gần nhất" table, all from
+GET /api/traces/stats and GET /api/traces, inside the shared emitShell/
+bootShell contract. Turn rows deep-link to ../trace/index.html#<sid>/<turn>.
+The page is a classic script ('use strict', shared globals), so the harness
+evals it in Node with a stubbed global surface, mirroring the old
+import-based eval style.
 """
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -21,11 +22,61 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-WEBUI = ROOT / "thyca" / "webui"
-SCRIPT = WEBUI / "shared" / "js" / "dashboard-today.js"
-DASH_JS = WEBUI / "pages" / "dashboard" / "dashboard.js"
-DASH_HTML = WEBUI / "dashboard.html"
-NAV_JS = WEBUI / "shared" / "js" / "navigation.js"
+WEBUI = ROOT / "thyca" / "webui" / "ui"
+DASH_JS = WEBUI / "dashboard" / "js" / "dashboard.js"
+DASH_HTML = WEBUI / "dashboard" / "index.html"
+SHELL_JS = WEBUI / "share" / "shell.js"
+
+# Same stub surface as test_cost_journal.py / test_request_chart.py plus
+# toast capture: real util.js semantics for $/$$/escapeHTML/icon, a per-id
+# element registry, and the data-layer globals dashboard.js expects.
+STUBS = r"""
+class El {
+  constructor(tag = 'div') {
+    this.tag = tag; this.value = ''; this.textContent = ''; this._html = '';
+    this.hidden = false; this.disabled = false; this.dataset = {}; this.attrs = {};
+    this.listeners = {}; this.children = []; this.options = []; this.className = '';
+    this.style = {};
+  }
+  set innerHTML(v) { this._html = String(v); }
+  get innerHTML() { return this._html; }
+  setAttribute(k, v) { this.attrs[k] = String(v); }
+  addEventListener(t, f) { (this.listeners[t] ||= []).push(f); }
+  replaceChildren(...n) { this.children = n; this.options = n; }
+  insertAdjacentHTML(_p, h) { this._html = (this._html || '') + h; }
+  set onclick(f) { this.listeners.click = [f]; }
+  set onchange(f) { this.listeners.change = [f]; }
+}
+const __els = {};
+const __el = (id) => __els[id] ||= new El();
+const __workspace = new El();
+globalThis.document = {
+  querySelector: (s) => s === '.workspace' ? __workspace
+    : s.startsWith('#') ? __el(s.slice(1)) : null,
+  querySelectorAll: () => [],
+  createElement: (t) => new El(t),
+};
+globalThis.location = { hash: '', search: '', pathname: '/dashboard/index.html', href: '' };
+globalThis.window = {};
+globalThis.$ = (s, r = document) => r.querySelector(s);
+globalThis.$$ = (s, r = document) => [...r.querySelectorAll(s)];
+globalThis.icon = (n) => `<svg data-i="${n}"></svg>`;
+globalThis.escapeHTML = (str) => String(str).replace(/[&<>"']/g, (ch) =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+globalThis.__roster = {};
+globalThis.getBot = (id) => globalThis.__roster[id] || null;
+globalThis.avatar = (b) => `<ava:${b.id}/>`;
+const __toasts = [];
+globalThis.toast = (m) => __toasts.push(String(m));
+globalThis.bootShell = async () => {
+  globalThis.__roster.coder = { id: 'coder', name: 'Coder', color: '#123', state: 'idle' };
+};
+const __jsonCalls = [];
+const __pending = [];
+let __jsonResponder = async (url) => { throw new Error('unexpected ' + url); };
+globalThis.getJson = (url) => { __jsonCalls.push(String(url)); return __jsonResponder(String(url)); };
+const __deferred = () => { let res; const p = new Promise(r => { res = r; }); p.__res = res; return p; };
+"""
 
 
 @pytest.fixture(scope="module")
@@ -36,13 +87,21 @@ def node() -> str:
     return binary
 
 
-def _eval(node: str, expression: str) -> object:
-    source = (
-        f"import {{ fetchAllTraces }} from '{SCRIPT.as_posix()}';\n"
-        f"console.log(JSON.stringify(await ({expression})));\n"
+def _eval_dash(node: str, body: str, setup: str = "") -> object:
+    """Eval dashboard.js (classic script) with stubs, then run `body` inside
+    the same scope so module-level functions/state are reachable. `setup`
+    runs before the source — use it to install a getJson responder the
+    boot-time fetches should see."""
+    src = DASH_JS.read_text(encoding="utf-8")
+    program = (
+        STUBS
+        + setup + "\n"
+        + "\nconst __src = " + json.dumps(src) + ";\n"
+        + "const __body = " + json.dumps(body) + ";\n"
+        + "eval(__src + '\\n;' + __body);\n"
     )
     result = subprocess.run(
-        [node, "--input-type=module", "-e", source],
+        [node, "--input-type=module", "-e", program],
         check=True,
         capture_output=True,
         text=True,
@@ -51,389 +110,400 @@ def _eval(node: str, expression: str) -> object:
     return json.loads(result.stdout)
 
 
-def _error_name(node: str, expression: str) -> str:
-    source = (
-        f"import {{ fetchAllTraces }} from '{SCRIPT.as_posix()}';\n"
-        f"try {{\n  await ({expression});\n  console.log('no-error');\n}}"
-        f" catch (error) {{ console.log(error.constructor.name); }}\n"
-    )
-    result = subprocess.run(
-        [node, "--input-type=module", "-e", source],
-        check=True,
-        capture_output=True,
-        text=True,
-        cwd=ROOT,
-    )
-    return result.stdout.strip()
-
-
-def _boot_dashboard(node: str, *, hash: str = "", search: str = "", actions: str = "[]") -> dict:
-    """Import dashboard.js against a minimal fake DOM and report the resulting
-    view state. `actions` is a JSON array of {type: "click", view} /
-    {type: "hashchange", hash} replayed after boot. The cache-busting query
-    gives every boot a fresh module instance."""
-    script = """
-    const blocks = Object.fromEntries(
-      ["request", "usage", "cost", "trace"].map((view) => {{
-        const el = {{
-          hidden: false,
-          scrollTop: 0,
-          dataset: {{}},
-          attrs: {{}},
-          classes: new Set(),
-          listeners: {{}},
-          classList: {{
-            toggle(cls, on) {{ if (on) el.classes.add(cls); else el.classes.delete(cls); }},
-          }},
-          setAttribute(name, value) {{ el.attrs[name] = value; }},
-          addEventListener(type, fn) {{ el.listeners[type] = fn; }},
-        };
-        return [view, el];
-      }}),
-    );
-    const surface = {{ scrollTop: 0 }};
-    const buttons = ["request", "usage", "trace", "cost"].map((view) => {{
-      const el = {{
-        dataset: {{ view }},
-        attrs: {{}},
-        classes: new Set(),
-        listeners: {{}},
-        classList: {{
-          toggle(cls, on) {{ if (on) el.classes.add(cls); else el.classes.delete(cls); }},
-        }},
-        setAttribute(name, value) {{ el.attrs[name] = value; }},
-        addEventListener(type, fn) {{ el.listeners[type] = fn; }},
-      };
-      return el;
-    }});
-    const bySelector = {{
-      "#request": blocks.request,
-      "#su-dung": blocks.usage,
-      "#chi-phi": blocks.cost,
-      "#trace": blocks.trace,
-      ".dashboard-surface": surface,
-    }};
-    globalThis.document = {{
-      querySelector: (sel) => bySelector[sel] || null,
-      querySelectorAll: (sel) => (sel === "[data-view]" ? buttons : []),
-    }};
-    const location = {{ hash: __HASH__, search: __SEARCH__, pathname: "/dashboard.html" }};
-    globalThis.location = location;
-    const urlCalls = [];
-    globalThis.history = {{
-      replaceState: (_a, _b, url) => {{
-        const u = String(url);
-        urlCalls.push(u);
-        // Mirror the browser: a path-bearing URL replaces the query; a bare
-        // "#hash" leaves it alone.
-        const query = u.match(/\\?([^#]*)/);
-        if (query) location.search = `?${{query[1]}}`;
-        else if (u.startsWith("/")) location.search = "";
-        location.hash = u.startsWith("#") ? u : (u.includes("#") ? `#${{u.split("#")[1]}}` : "");
-      }},
-    }};
-    const windowListeners = {{}};
-    globalThis.window = {{ addEventListener: (type, fn) => {{ windowListeners[type] = fn; }} }};
-    globalThis.requestAnimationFrame = (fn) => fn();
-    await import("__DASH_URI__?boot=1");
-    for (const action of __ACTIONS__) {{
-      if (action.type === "click") {{
-        buttons.find((b) => b.dataset.view === action.view).listeners.click();
-      }} else if (action.type === "hashchange") {{
-        location.hash = action.hash;
-        windowListeners.hashchange();
-      }}
-    }}
-    const visible = Object.entries(blocks).filter(([, b]) => !b.hidden).map(([k]) => k);
-    const active = buttons.filter((b) => b.classes.has("is-active")).map((b) => b.dataset.view);
-    const pressed = Object.fromEntries(buttons.map((b) => [b.dataset.view, b.attrs["aria-pressed"]]));
-    process.stdout.write(JSON.stringify({{ visible, active, pressed, hash: location.hash,
-      search: location.search, urls: urlCalls }}));
-    """
-    script = (
-        # Un-double the braces that were written for an f-string, then inject
-        # the dynamic values (afterwards, so JSON braces stay untouched).
-        script.replace("{{", "{").replace("}}", "}")
-        .replace("__HASH__", json.dumps(hash))
-        .replace("__SEARCH__", json.dumps(search))
-        .replace("__ACTIONS__", actions)
-        .replace("__DASH_URI__", DASH_JS.as_uri())
-    )
-    result = subprocess.run(
-        [node, "--input-type=module", "-e", script],
-        check=True,
-        capture_output=True,
-        text=True,
-        cwd=ROOT,
-    )
-    return json.loads(result.stdout)
-
-
-def test_navigation_menu_drops_the_standalone_trace_route() -> None:
-    """TASK-028: Trace lives inside the Dashboard, so Mục lục has no Trace
-    entry; the dashboard destination is labeled Dashboard."""
-    routes = [
-        line.strip().rstrip(",")
-        for line in NAV_JS.read_text(encoding="utf-8").splitlines()
-        if line.strip().startswith('["')
-    ]
-    assert all(not route.startswith('["trace.html"') for route in routes)
-    assert any(route.startswith('["dashboard.html", "Dashboard"') for route in routes)
-    # The remaining destinations are unchanged apart from the Trace entry.
-    assert routes == [
-        '["index.html", "Trò chuyện", "M4 5h16v11H9l-5 4V5Z"]',
-        '["memories.html", "Nhật ký", "M12 6C9 4 6 4 3 5v14c3-1 6-1 9 1 3-2 6-2 9-1V5c-3-1-6-1-9 1Zm0 0v14"]',
-        '["profile.html", "Hồ sơ", "M12 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm-7 18a7 7 0 0 1 14 0"]',
-        '["dashboard.html", "Dashboard", "M4 20V10h4v9M10 20V5h4v14M16 19v-7h4v7"]',
-        '["settings.html", "Cài đặt", "M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1 1-3Zm3 5a4 4 0 1 0 0 8 4 4 0 0 0 0-8"]',
-    ]
-
-
-def test_dashboard_sidebar_has_exactly_four_views() -> None:
-    """TASK-029/036/039: the first Dashboard subview is gone; the sidebar is
-    exactly Sử dụng token / Request / Chi phí / Trace (no decorative numeric
-    prefixes), with Sử dụng token active initially, and no today block/markup
-    survives."""
+def test_page_is_a_single_screen_shell_document() -> None:
+    """index.html keeps the shared script order — emitShell() must run
+    before sidebar.js/studio.js bind — and the page is one screen with no
+    leftover view switcher."""
     html = DASH_HTML.read_text(encoding="utf-8")
-    assert 'data-view="today"' not in html
-    assert 'id="hom-nay"' not in html
-    assert 'id="today-metrics"' not in html
-    assert 'id="today-recent"' not in html
-    assert 'id="today-status"' not in html
-    assert '<span class="session-name">Sử dụng token</span>' in html
-    assert '<span class="session-name">Request</span>' in html
-    assert '<span class="session-name">Chi phí</span>' in html
-    assert '<span class="session-name">Trace</span>' in html
-    # TASK-036: decorative numeric prefixes are gone; step numbers and the
-    # x/y pager live elsewhere and are untouched.
-    assert "01 / " not in html
-    assert "02 / " not in html
     order = [
-        html.index('data-view="usage"'),
-        html.index('data-view="request"'),
-        html.index('data-view="cost"'),
-        html.index('data-view="trace"'),
+        '<script src="../share/util.js">',
+        '<script src="../share/data.js">',
+        '<script src="../share/shell.js">',
+        "<script>emitShell('dashboard');</script>",
+        '<script src="../share/avatars/avatars.js">',
+        '<script src="../share/sidebar.js">',
+        '<script src="../share/avatars/studio.js">',
+        '<script src="../share/shell-app.js">',
+        '<script src="js/dashboard.js">',
     ]
-    assert order == sorted(order)
-    # Sử dụng token starts active so the static markup matches the JS default.
-    assert 'class="session-item is-active" type="button" data-view="usage"' in html
-    assert 'class="session-item is-active" type="button" data-view="today"' not in html
-    # TASK-039: the cost range line is gone from the markup.
-    assert 'id="cost-range"' not in html
+    pos = [html.index(s) for s in order]
+    assert pos == sorted(pos), "shared shell scripts must load in order"
+    assert '<script type="module"' not in html
+    for gone in ("overview-nav", "data-view=", "cost-view", "#su-dung",
+                 "session-pager", "journal-pager"):
+        assert gone not in html, gone
 
 
-def test_dashboard_boot_defaults_to_usage(node: str) -> None:
-    state = _boot_dashboard(node)
-    assert state["visible"] == ["usage"]
-    assert state["active"] == ["usage"]
-    assert state["pressed"] == {"request": "false", "usage": "true", "trace": "false", "cost": "false"}
+def test_page_markup_covers_every_region() -> None:
+    """PAGE_HTML (eval'd into .workspace) carries the full contract: range
+    picker + presets, five stat cards, day/hour charts, bot/model rows and
+    the paged trace table with its deep-link convention."""
+    src = DASH_JS.read_text(encoding="utf-8")
+    for needle in (
+        'id="stat-grid"', 'id="range-note"', 'id="range-from"',
+        'id="range-to"', 'id="range-apply"',
+        'data-preset="1"', 'data-preset="7"', 'data-preset="30"',
+        'data-day-metric="requests"', 'data-day-metric="cost_usd"',
+        'id="chart-day"', 'id="chart-day-note"', 'id="rows-bot"',
+        'id="rows-model"', 'id="chart-hour"',
+        'id="filter-model"', 'id="filter-status"', 'id="trace-refresh"',
+        'id="trace-status"', 'id="trace-wrap"', 'id="trace-rows"',
+        'id="trace-empty"', 'id="trace-empty-hint"',
+        'id="trace-count"', 'id="trace-more"',
+        '/api/traces/stats?', '/api/traces?',
+        '../trace/index.html#',
+    ):
+        assert needle in src, needle
+    # Default range preset is "7 ngày" — only that chip starts pressed.
+    assert re.search(
+        r'data-preset="7"[^>]*aria-pressed="true"', src)
+    assert not re.search(
+        r'data-preset="(?:1|30)"[^>]*aria-pressed="true"', src)
+    # Classic script — no ESM syntax.
+    assert not re.search(r"^\s*(import|export)\s", src, re.M)
+    # Errors surface in the page's own scoped red, not chat's global class.
+    assert "'s-error'" in src
 
 
-def test_dashboard_boot_sends_legacy_and_unknown_hashes_to_request(node: str) -> None:
-    """#hom-nay and any unknown hash fall back to Sử dụng token, and the URL
-    is rewritten to its hash."""
-    for hash in ("#hom-nay", "#khong-hop-le"):
-        state = _boot_dashboard(node, hash=hash)
-        assert state["visible"] == ["usage"]
-        assert state["hash"] == "#su-dung"
+def test_shell_navigation_lists_dashboard_and_trace() -> None:
+    """The shared SHELL_PAGES nav keeps Sử dụng and Trace as sibling pages
+    (no standalone journal routes) and marks the current page."""
+    src = SHELL_JS.read_text(encoding="utf-8")
+    assert "['dashboard', 'Sử dụng', '../dashboard/index.html']" in src
+    assert "['trace', 'Trace', '../trace/index.html']" in src
+    assert 'is-current' in src and 'aria-current="page"' in src
 
 
-def test_dashboard_boot_opens_the_matching_hash(node: str) -> None:
-    for view, hash in (("usage", "#su-dung"), ("cost", "#chi-phi"), ("trace", "#trace")):
-        state = _boot_dashboard(node, hash=hash)
-        assert state["visible"] == [view], hash
-        assert state["hash"] == hash
-
-
-def test_dashboard_boot_opens_trace_for_deep_links(node: str) -> None:
-    """A ?session=/?turn= deep link always opens Trace — with or without the
-    #trace hash — and never the default Sử dụng token view. The deep-link
-    params stay on the URL."""
-    for search in ("?session=s1&turn=2", "?session=s1", "?turn=0"):
-        state = _boot_dashboard(node, search=search)
-        assert state["visible"] == ["trace"], search
-        assert state["search"] == search, search
-    state = _boot_dashboard(node, hash="#trace", search="?session=s1&turn=2")
-    assert state["visible"] == ["trace"]
-    assert state["hash"] == "#trace"  # already correct: no rewrite
-    assert state["search"] == "?session=s1&turn=2"
-
-
-def test_dashboard_drops_trace_params_when_leaving_trace(node: str) -> None:
-    """Switching from a deep-linked Trace to another view strips ?session= and
-    ?turn= in the same replaceState that lands the new hash, so the URL always
-    matches the screen and Back returns to the caller page (replaceState, not
-    pushState)."""
-    state = _boot_dashboard(
+def test_boot_fetches_stats_and_first_page_for_last_7_days(node: str) -> None:
+    """boot() defaults to the last 7 days, fetches stats + the first
+    15-row page, fills the range inputs and runs bootShell() for the roster."""
+    stats = {"totals": {"requests": 1}, "by_bot": [
+        {"bot_id": "coder", "requests": 1, "total_tokens": 5,
+         "cost_usd": 0.0, "last_started_at": "2026-09-20T09:00:00Z"}]}
+    out = _eval_dash(
         node,
-        search="?session=s1&turn=2",
-        actions='[{"type": "click", "view": "cost"}]',
+        "(async () => {\n"
+        "await new Promise(r => setTimeout(r, 0));\n"
+        "return {"
+        " calls: __jsonCalls.slice(0, 2),"
+        " from: document.querySelector('#range-from').value,"
+        " to: document.querySelector('#range-to').value,"
+        " note: document.querySelector('#range-note').textContent,"
+        " botHtml: document.querySelector('#rows-bot').innerHTML };\n"
+        "})().then((v) => console.log(JSON.stringify(v)))",
+        setup="__jsonResponder = async (url) => url.includes('stats')"
+        f" ? {json.dumps(stats)} : {{ traces: [], total: 0 }};\n",
     )
-    assert state["visible"] == ["cost"]
-    assert state["hash"] == "#chi-phi"
-    assert state["search"] == ""
-    assert state["urls"][-1] == "/dashboard.html#chi-phi"
+    stats_url, traces_url = out["calls"]
+    assert stats_url.startswith("/api/traces/stats?")
+    assert "from=" in stats_url and "to=" in stats_url
+    assert "model=" not in stats_url and "status=" not in stats_url
+    assert traces_url.startswith("/api/traces?")
+    assert "limit=15" in traces_url and "offset=0" in traces_url
+    # Last-7-days local range landed in the inputs and the note.
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", out["from"])
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", out["to"])
+    assert out["from"] <= out["to"]
+    assert out["note"].startswith("Kỳ ")
+    # After bootShell() the roster patched the already-rendered bot row:
+    # seal + display name, not the id-chip fallback.
+    assert "<ava:coder/>" in out["botHtml"] and ">Coder</span>" in out["botHtml"]
+    assert "Chưa gắn bot" not in out["botHtml"]
 
 
-def test_dashboard_keeps_other_query_params_when_leaving_trace(node: str) -> None:
-    """Only the Trace deep-link params are dropped; anything else on the query
-    survives the view switch."""
-    state = _boot_dashboard(
+def test_apply_range_rejects_inverted_dates_without_fetching(node: str) -> None:
+    """Từ > Đến is a toast, not a request — the range (and both fetches)
+    stay untouched."""
+    out = _eval_dash(
         node,
-        search="?session=s1&keep=1",
-        actions='[{"type": "click", "view": "usage"}]',
+        "(async () => {\n"
+        "await new Promise(r => setTimeout(r, 0));\n"
+        "const before = __jsonCalls.length;\n"
+        "document.querySelector('#range-from').value = '2026-09-22';\n"
+        "document.querySelector('#range-to').value = '2026-09-20';\n"
+        "applyRange();\n"
+        "return { before, after: __jsonCalls.length,"
+        " toasts: __toasts, from: rangeFrom, to: rangeTo };\n"
+        "})().then((v) => console.log(JSON.stringify(v)))",
     )
-    assert state["visible"] == ["usage"]
-    assert state["search"] == "?keep=1"
-    assert state["urls"][-1] == "/dashboard.html?keep=1#su-dung"
+    assert out["after"] == out["before"]
+    assert out["toasts"] == ["Ngày bắt đầu phải trước hoặc bằng ngày kết thúc."]
 
 
-def test_trace_period_has_the_unfiltered_window_option() -> None:
-    """The Trace period filter offers the unfiltered API window (200 newest
-    session files) so history older than the rolling ranges stays reachable;
-    the other views' filters are unchanged."""
-    html = DASH_HTML.read_text(encoding="utf-8")
-    assert '<option value="all">Toàn bộ cửa sổ (200 phiên mới nhất)</option>' in html
-    assert html.count('value="all"') == 1
-
-
-def test_dashboard_navigation_clicks_and_hashchange(node: str) -> None:
-    """Clicking a sidebar entry and a later hashchange both switch the visible
-    view (the deep-link boot state is not sticky)."""
-    state = _boot_dashboard(node, actions='[{"type": "click", "view": "cost"}]')
-    assert state["visible"] == ["cost"]
-    assert state["active"] == ["cost"]
-    state = _boot_dashboard(
+def test_apply_range_refetches_both_surfaces(node: str) -> None:
+    """A valid Áp dụng sends the new range to BOTH endpoints and restarts
+    the table at offset 0 with the 15-row first page."""
+    out = _eval_dash(
         node,
-        actions='[{"type": "click", "view": "cost"}, {"type": "hashchange", "hash": "#trace"}]',
+        "(async () => {\n"
+        "await new Promise(r => setTimeout(r, 0));\n"
+        "const before = __jsonCalls.length;\n"
+        "document.querySelector('#range-from').value = '2026-09-01';\n"
+        "document.querySelector('#range-to').value = '2026-09-30';\n"
+        "applyRange();\n"
+        "await new Promise(r => setTimeout(r, 0));\n"
+        "return { urls: __jsonCalls.slice(before) };\n"
+        "})().then((v) => console.log(JSON.stringify(v)))",
     )
-    assert state["visible"] == ["trace"]
-    assert state["active"] == ["trace"]
-    assert state["hash"] == "#trace"
+    assert len(out["urls"]) == 2
+    stats_url, traces_url = out["urls"]
+    assert stats_url == "/api/traces/stats?from=2026-09-01&to=2026-09-30"
+    assert traces_url.startswith("/api/traces?from=2026-09-01&to=2026-09-30")
+    assert "limit=15" in traces_url and "offset=0" in traces_url
 
 
-def test_dashboard_hash_switcher_covers_exactly_the_four_views() -> None:
-    dash = DASH_JS.read_text(encoding="utf-8")
-    assert '"#hom-nay"' not in dash
-    assert '"today"' not in dash
-    for hash in ("#request", "#su-dung", "#chi-phi", "#trace"):
-        assert f'"{hash}"' in dash
-    assert 'const DEFAULT_VIEW = "usage";' in dash
-    assert 'node.hidden = key !== next' in dash
-    assert "stack ? false" not in dash
-    # Deep-link detection covers both deep-link params.
-    assert 'params.has("session") || params.has("turn")' in dash
-
-
-def test_dashboard_switches_views_on_every_viewport() -> None:
-    """Mobile pick pattern (same as Hồ sơ/Cài đặt): the destination list
-    shows first, choosing reveals one view, ‹ Dashboard returns. No pill
-    override survives in dashboard.css — kit's pick rules own the layout."""
-    dash_css = (WEBUI / "pages" / "dashboard" / "dashboard.css").read_text(encoding="utf-8")
-    dash_js = (WEBUI / "pages" / "dashboard" / "dashboard.js").read_text(encoding="utf-8")
-    pick_html = DASH_HTML.read_text(encoding="utf-8")
-    assert "pick-shell is-picking" in pick_html
-    assert pick_html.count('class="screen-back"') == 4
-    assert "syncPick" in dash_js
-    assert 'classList.toggle("is-picking"' in dash_js
-    assert ".dashboard-shell .sessions" not in dash_css
-    # By-model charts sit inset from their section headers on both sides.
-    assert "padding-inline: 1rem" in dash_css
-
-
-def test_mobile_filter_search_resets_row_basis() -> None:
-    """The filter-row search basis (20rem) is a width on desktop but becomes
-    a 320px height once the row stacks vertically — mobile must reset it so
-    the box renders at its slim --search-h like the memories search."""
-    kit = (WEBUI / "shared" / "css" / "kit.css").read_text(encoding="utf-8")
-    mobile = kit[kit.index("@media (max-width: 56rem)"):]
-    assert ".screen-shell .screen-filter-row .thyca-search" in mobile
-    assert "flex: none" in mobile
-
-
-def test_dashboard_sections_are_flat_and_errors_use_scoped_red() -> None:
-    dash_css = (WEBUI / "pages" / "dashboard" / "dashboard.css").read_text(encoding="utf-8")
-    screens_css = (WEBUI / "shared" / "css" / "kit.css").read_text(encoding="utf-8")
-    # Decorative card background/radius/shadow go; no global root token change.
-    assert ".dashboard-section .screen-card" in dash_css
-    assert "background: transparent" in dash_css
-    assert "--journal-error-ink:" in screens_css
-    assert "color: var(--journal-error-ink)" in screens_css
-    assert screens_css.count("--journal-error-ink:") == 1
-
-
-def test_today_only_helpers_are_gone_but_paging_stays_for_cost() -> None:
-    """dashboard-today.js keeps only the /api/traces paging helper; the Cost
-    journal still imports it (tests/test_cost_journal.py pins the behavior)."""
-    helper = SCRIPT.read_text(encoding="utf-8")
-    for gone in ("todaySummary", "dayKeyInZone", "periodRange", "rowsInPeriod", "formatRunStamp", "recentTraces"):
-        assert gone not in helper
-    assert "export async function fetchAllTraces" in helper
-    cost = "\n".join(
-        (WEBUI / "pages" / "dashboard" / name).read_text(encoding="utf-8")
-        for name in ("cost.js", "cost-view.js", "cost-rows.js")
-    )
-    assert 'import { fetchAllTraces } from "../../shared/js/dashboard-today.js";' in cost
-
-
-def test_fetch_all_traces_pages_until_total_and_dedupes(node: str) -> None:
-    """Overlapping pages are expected (rows can shift between requests); the
-    (session_id, turn_index) pair dedupes them without a cap on rows."""
-    result = _eval(
+def test_trace_request_carries_filters_stats_does_not(node: str) -> None:
+    """The model/status quick filters are table-only by design: they ride
+    /api/traces but never /api/traces/stats."""
+    out = _eval_dash(
         node,
-        "(async () => {"
-        "const calls = [];"
-        "const pages = ["
-        "  { traces: [{ session_id: 's1', turn_index: 0 }, { session_id: 's1', turn_index: 1 }], total: 6 },"
-        "  { traces: [{ session_id: 's1', turn_index: 1 }, { session_id: 's2', turn_index: 0 }], total: 6 },"
-        "  { traces: [{ session_id: 's2', turn_index: 0 }, { session_id: 's3', turn_index: 5 }], total: 4 }"
-        "];"
-        "const rows = await fetchAllTraces(async (offset) => { calls.push(offset); return pages[offset / 2] ?? { traces: [], total: 0 }; });"
-        "return { rows, calls };"
-        "})()",
+        "(async () => {\n"
+        "await new Promise(r => setTimeout(r, 0));\n"
+        "document.querySelector('#filter-model').value = 'glm-5';\n"
+        "document.querySelector('#filter-status').value = 'failed';\n"
+        "const before = __jsonCalls.length;\n"
+        "loadStats(); loadTraces(true);\n"
+        "await new Promise(r => setTimeout(r, 0));\n"
+        "return { urls: __jsonCalls.slice(before) };\n"
+        "})().then((v) => console.log(JSON.stringify(v)))",
     )
-    assert [(row["session_id"], row["turn_index"]) for row in result["rows"]] == [
-        ("s1", 0), ("s1", 1), ("s2", 0), ("s3", 5),
-    ]
-    assert result["calls"] == [0, 2, 4]
+    stats_url, traces_url = out["urls"]
+    assert stats_url.startswith("/api/traces/stats?")
+    assert "model=" not in stats_url and "status=" not in stats_url
+    assert "model=glm-5" in traces_url and "status=failed" in traces_url
 
 
-def test_fetch_all_traces_reports_incomplete_when_the_server_stops_early(node: str) -> None:
-    """The backend caps each answer at 200 session files: `total` can claim
-    more than any page will ever return. That is an explicit incomplete state,
-    not a shorter day presented as the whole day."""
-    name = _error_name(
+def test_trace_seq_drops_a_stale_page(node: str) -> None:
+    """A newer request wins: an in-flight 'Tải thêm' page resolves AFTER a
+    reset and must not append — the rows are exactly the reset page."""
+    out = _eval_dash(
         node,
-        "(async () => await fetchAllTraces(async (offset) => {"
-        "  if (offset === 0) return { traces: [{ session_id: 's1', turn_index: 0 }], total: 999 };"
-        "  return { traces: [], total: 999 };"
-        "}))()",
+        """(async () => {
+          __jsonResponder = (url) => {
+            const p = __deferred(); __pending.push({ url, p }); return p; };
+          const p2 = loadTraces(false);          // in-flight "more" page
+          const p3 = loadTraces(true);           // newer reset wins
+          const reset = __pending.pop();
+          reset.p.__res({ traces: [{ session_id: 's', turn_index: 0,
+            title: 'A' }], total: 9 });
+          await p3;
+          const stale = __pending.pop();
+          stale.p.__res({ traces: [{ session_id: 's2', turn_index: 0,
+            title: 'B' }], total: 9 });
+          await p2;
+          return { titles: traceState.rows.map((r) => r.title),
+                   total: traceState.total };
+        })().then((v) => console.log(JSON.stringify(v)))""",
     )
-    assert name == "TracesIncompleteError"
+    assert out["titles"] == ["A"]
+    assert out["total"] == 9
 
 
-def test_fetch_all_traces_reports_incomplete_on_a_repeat_page(node: str) -> None:
-    """A server that keeps answering with the same nonempty page must not end
-    as a deduped partial day: zero new rows while `total` claims more is an
-    explicit incomplete error."""
-    name = _error_name(
+def test_trace_row_escapes_and_deep_links(node: str) -> None:
+    """Every untrusted field in a turn row is escaped; the row links to the
+    trace page's #<session>/<turn> convention with the session id
+    URL-encoded."""
+    row = {
+        "session_id": "s <x>", "title": '<img src=x onerror=alert(1)>',
+        "turn_index": 0, "model": '<b>m</b>', "status": "<i>odd</i>",
+        "started_at": "2026-09-20T10:00:00", "bot_id": 'a"><script>',
+        "requests": 1, "tool_calls": 0, "total_tokens": 5,
+        "cost_usd": 0.001, "latency_ms": 40,
+    }
+    html = _eval_dash(
         node,
-        "(async () => await fetchAllTraces(async () => ({"
-        "  traces: [{ session_id: 's1', turn_index: 0 }, { session_id: 's1', turn_index: 1 }],"
-        "  total: 999"
-        "})))()",
+        f"console.log(JSON.stringify(traceRow({json.dumps(row)})))",
     )
-    assert name == "TracesIncompleteError"
+    assert '<img src=x' not in html and '<b>m</b>' not in html
+    assert '&lt;img src=x onerror=alert(1)&gt;' in html
+    assert '&lt;b&gt;m&lt;/b&gt;' in html
+    assert 'data-href="../trace/index.html#s%20%3Cx%3E/0"' in html
+    assert "a&quot;&gt;&lt;script&gt;" in html  # escaped in title attr
 
 
-def test_fetch_all_traces_rejects_a_served_page_without_a_total(node: str) -> None:
-    """The API always answers { traces, total }: rows without a readable
-    positive total are malformed, not an empty remainder to end the loop."""
-    for bad_total in ("undefined", "null", "'0'", "-5"):
-        name = _error_name(
-            node,
-            "(async () => await fetchAllTraces(async () => ("
-            f"{{ traces: [{{ session_id: 's1', turn_index: 0 }}], total: {bad_total} }}"
-            ")))()",
-        )
-        assert name == "TracesIncompleteError", bad_total
+def test_status_chip_maps_the_four_statuses(node: str) -> None:
+    """TurnSummary.status -> label + scoped chip class; anything else
+    renders its raw text with no status color."""
+    out = _eval_dash(
+        node,
+        "console.log(JSON.stringify([statusChip('completed'),"
+        " statusChip('failed'), statusChip('context_limit'),"
+        " statusChip('loop_limit'), statusChip('weird')]))",
+    )
+    done, fail, ctx, loop, odd = out
+    assert "Hoàn tất" in done and "s-ok" in done
+    assert "Thất bại" in fail and "s-error" in fail
+    assert "Hết ngữ cảnh" in ctx and "s-warn" in ctx
+    assert "Quá vòng lặp" in loop and "s-warn" in loop
+    assert "weird" in odd and 'class="st-chip "' in odd
+
+
+def test_trace_bot_cell_unions_ids_and_falls_back(node: str) -> None:
+    """The Bot cell unions bot_id/session_dm/session_bots (deduped): a
+    roster bot gets name + mini avatar + '+N'; a missing bot renders plain
+    id text; none renders '—'."""
+    out = _eval_dash(
+        node,
+        "globalThis.__roster = { coder: { id: 'coder', name: 'Coder',"
+        " color: '#123', state: 'idle' } };\n"
+        "console.log(JSON.stringify(["
+        " traceBotCell({ bot_id: 'coder', session_bots: ['coder', 'ops'] }),"
+        " traceBotCell({ bot_id: 'ghost' }),"
+        " traceBotCell({})]))",
+    )
+    rostered, missing, empty = out
+    assert "<ava:coder/>" in rostered and "Coder +1" in rostered
+    assert 'title="coder, ops"' in rostered
+    assert "ghost" in missing and "bot-id" in missing
+    assert "<ava:" not in missing
+    assert "—" in empty
+
+
+def test_render_trace_table_states(node: str) -> None:
+    """Three states stay distinct: rows -> table + footer; error -> the
+    scoped error line, table hidden, no empty note; empty -> the note with
+    a hint that changes when a filter is on."""
+    seen = _eval_dash(
+        node,
+        """(() => {
+          const seen = {};
+          const snap = (k) => { seen[k] = {
+            wrap: !document.querySelector('#trace-wrap').hidden,
+            empty: !document.querySelector('#trace-empty').hidden,
+            err: !document.querySelector('#trace-status').hidden,
+            errText: document.querySelector('#trace-status').textContent,
+            hint: document.querySelector('#trace-empty-hint').textContent }; };
+          traceState.rows = [{ session_id: 's', turn_index: 0 }];
+          traceState.error = ''; traceState.loading = false;
+          renderTraceTable(); snap('rows');
+          traceState.rows = []; traceState.error = 'boom';
+          renderTraceTable(); snap('err');
+          traceState.error = ''; renderTraceTable(); snap('empty');
+          document.querySelector('#filter-model').value = 'glm';
+          renderTraceTable(); snap('filtered');
+          console.log(JSON.stringify(seen));
+        })()""",
+    )
+    assert seen["rows"]["wrap"] is True
+    assert seen["rows"]["empty"] is False and seen["rows"]["err"] is False
+    assert seen["err"]["err"] is True
+    assert "Không tải được danh sách lượt" in seen["err"]["errText"]
+    assert seen["err"]["wrap"] is False and seen["err"]["empty"] is False
+    assert seen["empty"]["empty"] is True and seen["empty"]["wrap"] is False
+    assert "Đổi khoảng ngày" in seen["empty"]["hint"]
+    assert "Bộ lọc model/trạng thái đang bật" in seen["filtered"]["hint"]
+
+
+def test_open_trace_row_navigates(node: str) -> None:
+    """Clicking/Enter on a row navigates to its data-href deep link."""
+    out = _eval_dash(
+        node,
+        "openTraceRow({ target: { closest: (s) =>"
+        " s === 'tr[data-href]'"
+        "   ? { dataset: { href: '../trace/index.html#s/0' } } : null } });\n"
+        "console.log(JSON.stringify(location.href))",
+    )
+    assert out == "../trace/index.html#s/0"
+
+
+def test_fill_filters_keep_selection_and_add_extra_statuses(node: str) -> None:
+    """Refills keep the user's selection when still present; the status
+    select always offers the four known statuses plus any extra the stats
+    payload reports."""
+    out = _eval_dash(
+        node,
+        "const sel = document.querySelector('#filter-model');\n"
+        "sel.value = 'm2';\n"
+        "fillModelFilter(['m1', 'm2']);\n"
+        "const mVals = sel.options.map(o => o.value);\n"
+        "const mCur = sel.value;\n"
+        "const ssel = document.querySelector('#filter-status');\n"
+        "fillStatusFilter([{ status: 'paused' }, { status: 'failed' }]);\n"
+        "const sVals = ssel.options.map(o => o.value);\n"
+        "fillStatusFilter([]);\n"
+        "console.log(JSON.stringify({ mVals, mCur, sVals,"
+        " sValsAfter: ssel.options.map(o => o.value) }))",
+    )
+    assert out["mVals"] == ["", "m1", "m2"]
+    assert out["mCur"] == "m2"
+    assert out["sVals"] == [
+        "", "completed", "failed", "context_limit", "loop_limit", "paused"]
+    # A second fill without extras drops them again, statuses stay.
+    assert out["sValsAfter"] == [
+        "", "completed", "failed", "context_limit", "loop_limit"]
+
+
+def test_formatters_vi_vn_and_edges(node: str) -> None:
+    """vi-VN grouping/decimals everywhere; bad input renders '—' never a
+    crash; relative time buckets degrade to an absolute date past 31 days."""
+    out = _eval_dash(
+        node,
+        "const now = Date.now();\n"
+        "console.log(JSON.stringify({"
+        " ints: [fmtInt(1200000), fmtInt(null), fmtInt('x')],"
+        " durs: [fmtDur(999), fmtDur(1000), fmtDur(1500), fmtDur(90000),"
+        "  fmtDur(-1), fmtDur('x')],"
+        " dt: [fmtDateTime('nope'), fmtDay('2026-09-08'), fmtDay('')],"
+        " rel: [relTime(new Date(now - 20e3).toISOString()),"
+        "  relTime(new Date(now - 5 * 60e3).toISOString()),"
+        "  relTime(new Date(now - 3 * 3600e3).toISOString()),"
+        "  relTime(new Date(now - 2 * 86400e3).toISOString()),"
+        "  relTime(new Date(now - 40 * 86400e3).toISOString()),"
+        "  relTime('nope')] }))",
+    )
+    assert out["ints"] == ["1.200.000", "—", "—"]
+    # A negative number is still a finite number — printed as-is.
+    assert out["durs"] == ["999 ms", "1 giây", "1,5 giây",
+                           "1 ph 30 giây", "-1 ms", "—"]
+    assert out["dt"][0] == "—"
+    assert out["dt"][1] == "08/09" and out["dt"][2] == "—"
+    assert out["rel"][0] == "vừa xong"
+    assert out["rel"][1] == "5 phút trước"
+    assert out["rel"][2] == "3 giờ trước"
+    assert out["rel"][3] == "2 ngày trước"
+    assert "thg" in out["rel"][4]      # absolute date past 31 days
+    assert out["rel"][5] == "—"
+
+
+def test_render_stats_paints_every_region(node: str) -> None:
+    """One stats payload fans out to all six regions: stat cards, day
+    chart, bot rows, model rows, the 24-column hour chart and both filter
+    selects — the overview has no dead panels."""
+    stats = {
+        "totals": {"requests": 2, "tool_calls": 1, "prompt_tokens": 10,
+                   "cached_tokens": 2, "completion_tokens": 4,
+                   "total_tokens": 14, "cost_usd": 0.5,
+                   "latency_ms_p50": 500, "latency_ms_p90": 900},
+        "by_model": [{"model": "m", "requests": 2, "total_tokens": 14,
+                      "cost_usd": 0.5, "latency_ms_p50": 500,
+                      "last_started_at": "2026-09-20T09:00:00Z"}],
+        "by_bot": [{"bot_id": "coder", "requests": 2, "tool_calls": 1,
+                    "total_tokens": 14, "cost_usd": 0.5,
+                    "last_started_at": "2026-09-20T09:00:00Z"}],
+        "by_day": [{"day": "2026-09-20", "requests": 2, "cost_usd": 0.5}],
+        "by_hour": [{"hour": "09", "requests": 2, "cost_usd": 0.5}],
+        "by_status": [{"status": "completed", "requests": 2}],
+        "models": ["m"],
+    }
+    out = _eval_dash(
+        node,
+        f"statsData = {json.dumps(stats)};\n"
+        "renderStats(statsData);\n"
+        "console.log(JSON.stringify({"
+        " grid: document.querySelector('#stat-grid').innerHTML.length,"
+        " day: document.querySelector('#chart-day').innerHTML,"
+        " hour: document.querySelector('#chart-hour').innerHTML,"
+        " bot: document.querySelector('#rows-bot').innerHTML,"
+        " model: document.querySelector('#rows-model').innerHTML,"
+        " mOpts: document.querySelector('#filter-model').options.length,"
+        " sOpts: document.querySelector('#filter-status').options.length }))",
+    )
+    assert out["grid"] > 0
+    assert 'class="day-chart"' in out["day"]
+    assert 'class="hour-chart"' in out["hour"]
+    assert out["hour"].count('class="hc-col"') == 24      # always 24 UTC cols
+    assert "09:00–09:59" in out["hour"]
+    assert "Coder" in out["bot"] or "coder" in out["bot"]
+    assert '>m</span>' in out["model"] or '"m"' in out["model"]
+    assert out["mOpts"] == 2                             # all-models + m
+    assert out["sOpts"] == 5                             # all + 4 statuses

@@ -603,6 +603,12 @@ def test_two_sessions_run_turns_in_parallel(tmp_path: Path) -> None:
     # One connect per turn is what the factory does; the injected one is
     # shared, so make each chat call independent instead of stateful.
     app = _chat(tmp_path, Gated())
+    from thyca.bots.card import BotCard
+
+    app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
+                             description="Codes.", persona="You code."))
+    # Phase 2B: create() with no bots is Thyca's DM singleton, so the
+    # parallel session below is a group (parallelism is model-agnostic).
     slow_id = app.create()["id"]
     errors: list[BaseException] = []
     slow: dict = {}
@@ -619,11 +625,11 @@ def test_two_sessions_run_turns_in_parallel(tmp_path: Path) -> None:
     try:
         # The second session is idle: its turn must complete while the first
         # one is still parked in the provider call.
-        other_id = app.create()["id"]
+        other_id = app.create(bots=["thyca", "coder"])["id"]
         started_at = time.monotonic()
-        quick = app.turn(other_id, "fast")
+        quick = app.turn(other_id, "@coder fast")
         elapsed = time.monotonic() - started_at
-        assert quick["reply"] == "reply:fast"
+        assert quick["reply"] == "reply:@coder fast"
         assert elapsed < 2, f"second session waited on the first turn: {elapsed:.2f}s"
     finally:
         release.set()
@@ -637,7 +643,8 @@ def test_two_sessions_run_turns_in_parallel(tmp_path: Path) -> None:
     slow_messages = [(item.role, item.content) for item in store.load(slow_id).messages]
     fast_messages = [(item.role, item.content) for item in store.load(other_id).messages]
     assert slow_messages[:2] == [("user", "slow"), ("assistant", "reply:slow")]
-    assert fast_messages[:2] == [("user", "fast"), ("assistant", "reply:fast")]
+    assert fast_messages[:2] == [
+        ("user", "@coder fast"), ("assistant", "reply:@coder fast")]
     assert not any("fast" in (content or "") for _role, content in slow_messages)
     assert not any("slow" in (content or "") for _role, content in fast_messages)
     app.shutdown()
@@ -701,6 +708,10 @@ def test_create_keeps_blank_session_with_running_turn(
 
     monkeypatch.setattr(ActiveMemory, "refresh", gated_refresh)
     app = _chat(tmp_path, FakeLLM(ChatReply(content="late")))
+    from thyca.bots.card import BotCard
+
+    app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
+                             description="Codes.", persona="You code."))
     running_id = app.create()["id"]
     assert app.get_payload(running_id)["messages"] == []
     errors: list[BaseException] = []
@@ -715,7 +726,9 @@ def test_create_keeps_blank_session_with_running_turn(
     worker.start()
     assert claimed.wait(2)
     try:
-        fresh = app.create()
+        # Phase 2B: the no-bots create is the DM singleton (== running_id
+        # here), so the "fresh" session is a group.
+        fresh = app.create(bots=["thyca", "coder"])
         assert fresh["id"] != running_id
         assert (tmp_path / "sessions" / f"{running_id}.jsonl").exists()
     finally:
@@ -983,7 +996,11 @@ def test_x24_naming_meta_matches_sidecar_shape() -> None:
 
 # Moved from tests/test_b2_contracts.py (B2 batch).
 from thyca.app.chat_app import InvalidTurnOption, InvalidTurnText
-from thyca.app.turn_options import _clean_turn_text, overlay_turn_cfg
+from thyca.app.turn_options import (
+    SYSTEM_TEXT_MAX,
+    _clean_turn_text,
+    overlay_turn_cfg,
+)
 from thyca.config import Config, ModelCfg
 
 def test_f5_turn_effort_override_is_model_aware() -> None:
@@ -1011,6 +1028,18 @@ def test_f10_clean_turn_text_reasons() -> None:
         _clean_turn_text("x" * 4001, retry=False)
     assert _clean_turn_text("  hi  ", retry=False) == "hi"
     assert _clean_turn_text(123, retry=True) == ""
+
+
+def test_system_turn_text_uses_larger_cap() -> None:
+    # System prompts (curation, profile aggregation) carry injected data
+    # beyond the user-message cap; the system cap still bounds them.
+    with pytest.raises(InvalidTurnText, match="^too long$"):
+        _clean_turn_text("x" * (SYSTEM_TEXT_MAX + 1), retry=False,
+                         text_max=SYSTEM_TEXT_MAX)
+    assert _clean_turn_text("x" * 5000, retry=False,
+                            text_max=SYSTEM_TEXT_MAX) == "x" * 5000
+    with pytest.raises(InvalidTurnText, match="^too long$"):
+        _clean_turn_text("x" * 5000, retry=False)
 
 
 class _TavilySession:

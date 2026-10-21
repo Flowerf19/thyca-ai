@@ -16,13 +16,20 @@ from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlparse
 
 from thyca.app.turn_options import TEXT_MAX
+from thyca.bots.card import NAME_MAX, _NAME_RE
+from thyca.bots.registry import BotRegistry, RegistryError
+from thyca.bots.timeline import TraceExecutionError
 from thyca.serve import config_api
 from thyca.serve.errors import _with_json
 from thyca.serve.memory import memory_endpoint
 from thyca.serve.sessions_api import (
+    bot_dm,
+    bot_operations,
+    bots_list,
+    session_bots,
     session_compact,
     session_create,
     session_delete,
@@ -33,6 +40,7 @@ from thyca.serve.sessions_api import (
     session_turn_cancel,
     session_turn_follow,
     session_turn_stream,
+    session_private_followup,
 )
 from thyca.serve.static import content_type, safe_file
 from thyca.serve.trace_api import (
@@ -48,17 +56,43 @@ if TYPE_CHECKING:
     from thyca.app.chat_app import ChatApp
 
 _SESSION_RE = re.compile(rf"^/api/sessions/({SESSION_ID_PATTERN})$")
+_SESSION_BOTS_RE = re.compile(rf"^/api/sessions/({SESSION_ID_PATTERN})/bots$")
 _TURN_RE = re.compile(rf"^/api/sessions/({SESSION_ID_PATTERN})/turn$")
 _COMPACT_RE = re.compile(rf"^/api/sessions/({SESSION_ID_PATTERN})/compact$")
 _TURN_STREAM_RE = re.compile(rf"^/api/sessions/({SESSION_ID_PATTERN})/turn/stream$")
 _TURN_CANCEL_RE = re.compile(rf"^/api/sessions/({SESSION_ID_PATTERN})/turn/cancel$")
+_PF_RE = re.compile(rf"^/api/sessions/({SESSION_ID_PATTERN})/private-followup$")
 _TRACE_RE = re.compile(r"^/api/traces$")
 _TRACE_STATS_RE = re.compile(r"^/api/traces/stats$")
 _TRACE_DETAIL_RE = re.compile(rf"^/api/traces/({SESSION_ID_PATTERN})/(\d+)$")
+_BOT_DM_RE = re.compile(r"^/api/bots/([a-z0-9]+(?:-[a-z0-9]+)*)/dm$")
+_BOT_OPERATIONS_RE = re.compile(
+    rf"^/api/bots/([a-z0-9]+(?:-[a-z0-9]+)*)/rooms/({SESSION_ID_PATTERN})/operations$"
+)
 # Worst-case turn body: TEXT_MAX chars \u-escaped (12 bytes per non-BMP char)
 # plus the JSON envelope (model/effort/retry). Must stay above that so a
 # valid 4000-emoji turn is never rejected as "invalid body".
 _BODY_CAP = TEXT_MAX * 12 + 4096
+
+
+def _memory_bot_scope(facade: MemoryFacade, query: str) -> tuple[int, str | None]:
+    """Validate the optional memory scope before any scoped data is read."""
+    try:
+        params = parse_qsl(query, keep_blank_values=True, strict_parsing=True)
+    except ValueError:
+        return 400, None
+    if not params:
+        return 200, None
+    if len(params) != 1 or params[0][0] != "bot_id":
+        return 400, None
+    bot_id = params[0][1]
+    if (not bot_id or len(bot_id) > NAME_MAX or not _NAME_RE.fullmatch(bot_id)):
+        return 400, None
+    try:
+        BotRegistry(facade.thyca_dir).require(bot_id)
+    except RegistryError:
+        return 404, None
+    return 200, bot_id
 
 
 def make_handler(
@@ -72,7 +106,11 @@ def make_handler(
             parsed = urlparse(self.path)
             path = parsed.path
             if path == "/api/memory/stats":
-                self._stats()
+                status, bot_id = _memory_bot_scope(facade, parsed.query)
+                if status != 200:
+                    self._json(status, {"error": "invalid memory scope" if status == 400 else "unknown bot"})
+                    return
+                self._stats(bot_id)
                 return
             if path == "/api/config/status":
                 config_api.config_status(self, config_file)
@@ -82,6 +120,17 @@ def make_handler(
                 return
             if path == "/api/sessions":
                 session_list(self, chat)
+                return
+            if path == "/api/bots":
+                bots_list(self, chat)
+                return
+            match = _BOT_OPERATIONS_RE.fullmatch(path)
+            if match:
+                bot_operations(self, chat, match.group(1), match.group(2), parsed.query)
+                return
+            match = _BOT_DM_RE.fullmatch(path)
+            if match:
+                bot_dm(self, chat, match.group(1))
                 return
             if _TRACE_STATS_RE.fullmatch(path):
                 self._trace_stats(parsed.query)
@@ -135,6 +184,10 @@ def make_handler(
             if path == "/api/sessions":
                 session_create(self, chat)
                 return
+            match = _SESSION_BOTS_RE.fullmatch(path)
+            if match:
+                session_bots(self, chat, match.group(1))
+                return
             match = _TURN_RE.fullmatch(path)
             if match:
                 session_turn(self, chat, match.group(1))
@@ -151,6 +204,10 @@ def make_handler(
             if match:
                 session_compact(self, chat, match.group(1))
                 return
+            match = _PF_RE.fullmatch(path)
+            if match:
+                session_private_followup(self, chat, match.group(1))
+                return
             if path.startswith("/api/sessions"):
                 self._json(404, {"error": "session not found"})
                 return
@@ -160,16 +217,24 @@ def make_handler(
             self._send(405, b"method not allowed", "text/plain; charset=utf-8")
 
         def do_DELETE(self) -> None:
+            path = urlparse(self.path).path
+            if path.startswith("/api/bots/"):
+                self._json(404, {"error": "bot not found"})
+                return
             app = self._chat()
             if app is None:
                 return
-            session_delete(self, app, urlparse(self.path).path)
+            session_delete(self, app, path)
 
         def do_PATCH(self) -> None:
+            path = urlparse(self.path).path
+            if path.startswith("/api/bots/"):
+                self._json(404, {"error": "bot not found"})
+                return
             app = self._chat()
             if app is None:
                 return
-            session_rename(self, app, urlparse(self.path).path)
+            session_rename(self, app, path)
 
         def log_message(self, format: str, *args: object) -> None:
             return
@@ -181,11 +246,15 @@ def make_handler(
 
             _with_json(self, run)
 
-        def _stats(self) -> None:
+        def _stats(self, bot_id: str | None = None) -> None:
             try:
-                payload = asdict(facade.stats())
+                stats = facade.stats() if bot_id is None else facade.stats(bot_id=bot_id)
+                payload = asdict(stats)
                 body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             except Exception:
+                # Surface the real cause in the log: a swallowed 503 here
+                # (e.g. an archive DB lock) is invisible anywhere else.
+                traceback.print_exc(file=sys.stderr)
                 body = json.dumps({"error": "memory stats unavailable"}).encode("utf-8")
                 self._send(503, body, "application/json; charset=utf-8")
                 return
@@ -223,6 +292,8 @@ def make_handler(
                 self._json(404, {"error": "session not found"})
             except SessionCorrupt:
                 self._json(503, {"error": "session unreadable"})
+            except TraceExecutionError as exc:
+                self._json(503, {"error": str(exc)})
             except ValueError:
                 self._json(404, {"error": "trace not found"})
             except Exception:

@@ -1,113 +1,56 @@
 # Thyca
 
-Trợ lý cá nhân đa công việc, đang ở giai đoạn **trước beta (pre-beta)**. Thyca học dần từ những gì bạn chia sẻ và cách bạn làm việc để điều chỉnh cách hỗ trợ phù hợp nhất với bạn — từ trò chuyện, viết code, đọc và xử lý tài liệu đến những việc khác trong công việc hằng ngày.
+Trợ lý cá nhân đa công việc, giai đoạn **trước beta (pre-beta)**. Thyca học dần từ những gì bạn chia sẻ và cách bạn làm việc — trò chuyện, viết code, đọc tài liệu, tra web, chạy lệnh trên máy bạn — và **ghi nhớ** để lần sau không phải nhắc lại.
 
-**Phiên bản hiện tại: 0.86.5.dev0 (development, chưa phải beta).**
+**Phiên bản hiện tại: 0.87.0.dev0**
 
-## Nó làm được gì?
+Thyca là một **đội bot**: Thyca là bot quản lý, bạn tạo thêm bot cho từng vai trò. Mỗi bot có persona và bộ nhớ riêng, cùng đọc `SOUL.md` + `USER.md` chung về bạn.
 
-Mở WebUI, trò chuyện như sổ tay. Thyca dùng được một số việc hằng ngày: tra thông tin trên web, chạy lệnh trên máy bạn, đọc/ghi file, và quan trọng nhất là **ghi nhớ** — những gì bạn kể về cuộc sống, dự án, cách bạn muốn nó xưng hô — để lần sau không phải nhắc lại.
+## Màn hình
 
-Màn **Trò chuyện** là nơi chat chính: suy nghĩ thật của model hiện trực tiếp lúc đang trả lời, chọn model và mức suy nghĩ ngay trên ô soạn tin, dừng hoặc thử lại lượt gần nhất. Đổi phiên giữa lúc Thyca đang trả lời không làm mất card hay đồng hồ suy nghĩ.
+7 màn, chuyển bằng thanh nav góc phải; bấm bot trên sidebar để lọc màn theo bot đó:
 
-![Màn trò chuyện](docs/images/webui-chat.png)
+![Nhật ký](docs/images/webui-memories.png)
 
-Màn **Nhật ký** là toàn bộ ký ức của Thyca, xem theo ngày, theo mức dùng, kèm tìm kiếm từ khóa.
+| Màn | Làm gì |
+|---|---|
+| **Trò chuyện** | Chat chính. Xem suy nghĩ model đang chạy, đổi model/mức suy nghĩ trên ô soạn tin, dừng/thử lại lượt. Màn duy nhất có mục Hội thoại chung (nhiều bot). |
+| **Nhật ký** | Bộ nhớ các bot ghi. Thẻ tổng quan, lọc loại (Ghi nhớ/Thói quen/Task) + mức dùng, tìm kiếm, phân trang. |
+| **Hồ sơ** | *Bạn và thyca* = 3 file chung sửa trực tiếp (`USER.md`/`SOUL.md`/`IDENTITY.md`). *Bạn và \<bot\>* = persona riêng của bot, chỉ đọc. |
+| **Provider** | Card model/provider — base URL, API key, test kết nối. |
+| **Sử dụng** | Lượt, token, chi phí theo ngày đọc từ trace; scope theo bot. |
+| **Trace** | Chi tiết từng lượt: reasoning + tool input/output. |
+| **Cài đặt** | Sửa config, schema tự sinh. |
 
-![Màn nhật ký](docs/images/webui-memories.png)
+![Hồ sơ](docs/images/webui-profile.png)
+![Sử dụng](docs/images/webui-dashboard.png)
+![Trace](docs/images/webui-trace.png)
 
-Màn **Hồ sơ** cho bạn sửa trực tiếp USER.md / SOUL.md / IDENTITY.md — tính cách và thông tin về bạn, hiện đúng markdown.
+## Bộ nhớ
 
-![Màn hồ sơ](docs/images/webui-profile.png)
+Markdown dưới `~/.thyca` là nguồn sự thật, SQLite chỉ là index:
 
-Màn **Trace** ghi lại từng lượt tool call với input/output đầy đủ, màn **Dashboard** vẽ token, request và chi phí theo ngày, theo model (4 tab: Sử dụng token, Request, Chi phí, Trace).
-
-![Màn Trace](docs/images/webui-trace.png)
-
-![Màn Chi phí — Dashboard](docs/images/webui-dashboard.png)
-
-## Cách bộ nhớ hoạt động
-
-Markdown dưới `~/.thyca` là nguồn sự thật, SQLite chỉ là index tìm kiếm:
-
-- Những gì đáng nhớ được ghi vào `memory/YYYY-MM-DD.md` — file của **hôm nay** được inject thẳng vào ngữ cảnh mỗi lượt chat, nên bạn không cần "hỏi lại" thông tin mới ghi.
-- Qua ngày mới, file được đưa vào index (`memory_search`, FTS5 + trigram) — từ đó tìm được bằng từ khóa.
-- `IDENTITY.md` (danh tính/vai trò), `SOUL.md` (cách hành xử), `USER.md` (thông tin về bạn) được đọc lại mỗi lượt chat — sửa bằng màn Hồ sơ có hiệu lực ngay lượt sau, kể cả trong phiên đang dùng.
-
-`USER.md` mới có các mục trống và hướng dẫn AI duy trì dữ kiện bạn đã chia sẻ/xác nhận, không tự suy đoán. Ba template chỉ được chép khi file hồ sơ chưa tồn tại; nâng cấp không ghi đè hồ sơ hiện có.
+- Note đáng nhớ ghi vào `memory/YYYY-MM-DD.md` — file hôm nay inject thẳng vào ngữ cảnh mỗi lượt.
+- Qua ngày mới đưa vào index (`memory_search`, FTS5 + trigram) — tìm bằng từ khóa.
+- `SOUL.md` + `USER.md` dùng chung mọi bot; `IDENTITY.md` chỉ của Thyca; mỗi bot có `TWIN.md` + `USER.md` riêng (`bots/<id>/`) cho thói quen bot tự suy luận.
 
 ## Cài đặt
 
-Cần Linux, Python 3.14+, `uv`, và API key của một provider OpenAI-compatible:
+Cần Linux, Python 3.14+, `uv`, API key OpenAI-compatible:
 
 ```bash
 curl -LsSf https://raw.githubusercontent.com/Flowerf19/thyca-ai/main/install.sh | sh
-thyca --version
-thyca --serve        # mở http://127.0.0.1:8765
+thyca --serve        # http://127.0.0.1:19502
 ```
 
-Lần đầu mở WebUI khi chưa có API key, panel **Cài đặt** tự mở: điền Base URL + API key, bấm **Tải danh sách model**, chọn model, **Lưu**. Config ghi vào `~/.thyca/config.json` (mode 0600).
+Lần đầu chưa có key, màn Cài đặt tự mở: điền Base URL + API key → **Tải danh sách model** → chọn → **Lưu** (ghi `~/.thyca/config.json`).
 
-Đã có `uv`, muốn cài thẳng từ repo:
+Nâng cấp: `uv tool upgrade thyca-ai` hoặc chạy lại `install.sh`.
 
-```bash
-uv tool install --python 3.14 git+https://github.com/Flowerf19/thyca-ai.git
-```
+**CLI**: `thyca -p "câu hỏi"`, REPL chat liên tục, `--continue` nối phiên, `--model` đổi model.
 
-Nâng cấp: `uv tool upgrade thyca-ai`, hoặc chạy lại `install.sh`.
+**Từ mã nguồn**: `uv sync` → `uv run thyca --serve --daemon` → `uv run pytest -q`.
 
-### CLI
+## Tài liệu & góp ý
 
-Ngoài WebUI, chat được qua CLI: `thyca -p "câu hỏi"` cho một lượt, REPL cho chat liên tục, `--continue` nối phiên trước, `--model` đổi model. CLI dùng chung MCP server trong config với WebUI.
-
-### Chạy từ mã nguồn
-
-```bash
-uv sync
-uv run thyca --serve --daemon
-uv run pytest -q
-```
-
-## Cấu hình
-
-Config mặc định dùng một provider OpenAI-compatible:
-
-```json
-{
-  "provider": {
-    "baseUrl": "https://api.openai.com/v1",
-    "apiKeyEnv": "THYCA_TOKEN",
-    "model": "gpt-4o-mini",
-    "reasoningEffort": "high"
-  },
-  "mcpServers": {},
-  "timeline": { "timezone": "Asia/Ho_Chi_Minh" },
-  "limits": { "loopMax": 200, "hotTailKB": 4, "contextTokens": 32000 },
-  "pricing": {
-    "gpt-4o-mini": { "input": 0.15, "cache": 0.075, "output": 0.60 }
-  }
-}
-```
-
-- `pricing` optional (USD / 1M tokens); thiếu thì dùng bảng builtin. Đây là dữ liệu cho màn Tổng quan và Trace.
-- `reasoningEffort` (`low`/`high`/`max`) chỉnh được trong Cài đặt hoặc ngay trên ô soạn tin mỗi lượt; chọn theo mức model hỗ trợ, mặc định `high`. Khai báo thinking map riêng cho từng model qua `models["<model>"].reasoningEfforts` (mảng các mức) — UI tự render theo map đó.
-- Có thể lưu nhiều card model (`models`) trong Cài đặt và đổi giữa các card ngay trên composer.
-- Panel Cài đặt sinh schema tự động từ dataclass `Config` — thêm field mới là panel tự hiện.
-
-## Kiến trúc (tóm tắt cho người tò mò)
-
-Package `thyca/` chia module: `agent/` chạy loop 4 pha (assemble → think → act → observe), `tools/` giữ gateway thực thi + registry (bash nền đọc bằng `tool_read`/dừng bằng `tool_kill`, read/write/edit, `memory_*`, MCP stdio), `memory/` tách Active (inject) và Archived (index), `llm/` là client OpenAI-compat (chat + responses), `skills/` là index Agent Skills, `core/` giữ wire types (`Message`/`ToolCall`), `app/` là chat orchestration + CLI, `serve/` + `webui/` là giao diện HTTP loopback. WebUI tổ chức page-first: `.html` flat, JS/CSS theo `pages/<trang>/`, đồ dùng chung ở `shared/`.
-
-Skills theo chuẩn [Agent Skills](https://agentskills.io): `~/.thyca/skills/<name>/SKILL.md` — tạo bằng `write`, không cần tool mới.
-
-## Thảo luận dự án
-
-Thyca đang ở giai đoạn trước beta (pre-beta). Mọi góp ý về cách Thyca học từ user, hỗ trợ model, bộ nhớ, workflow hoặc các công việc mới đều được hoan nghênh tại [GitHub Discussions](https://github.com/Flowerf19/thyca-ai/discussions).
-
-## Tài liệu
-
-Nhìn xa hơn: `.agents/README.md` (hướng dẫn cho agent contributor), `.agents/plans/` (kế hoạch đang chạy và đã xong), `.agents/decisions/` (quyết định kiến trúc kèm ngày). Kế hoạch live thinking và composer controls ghi rõ wire/API, stop, retry và giới hạn hiện tại.
-
-## Đang ở giai đoạn nào?
-
-WebUI và CLI đang ở giai đoạn trước beta (pre-beta), bộ nhớ L2 chạy ổn định, có usage/cost tracking. Chưa làm: Telegram/Discord, subagent, plan mode, confirmation gate, vector/semantic search (đã cân nhắc và bỏ — lexical đủ cho hiện tại).
+`.agents/README.md` cho agent contributor, `.agents/plans/` kế hoạch, `.agents/decisions/` quyết định kiến trúc. Góp ý tại [GitHub Discussions](https://github.com/Flowerf19/thyca-ai/discussions).

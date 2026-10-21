@@ -1,6 +1,7 @@
 """SQLite I/O for the archived leaf index (split from archived.py)."""
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 import threading
@@ -45,6 +46,18 @@ class Hit:
     has_more: bool = False
     line_start: int = 1
     line_end: int = 1
+    # Team owners (BE-4): None = legacy team entry.
+    bots: tuple[str, ...] | None = None
+    # Task + habits (phase 1A): None = legacy entry without the key.
+    task: str | None = None
+    cont: str | None = None
+    kind: str | None = None
+    status: str | None = None
+    habit: str | None = None
+    # Phase 1E: user explicitly stated the habit.
+    habit_explicit: bool = False
+    # WS-3: origin window (window provenance) — additive, end of fields.
+    chat_session: str | None = None
 
 
 @dataclass
@@ -95,8 +108,9 @@ class ArchiveStore:
                     """INSERT INTO chunks(
                         chunk_id, path, source_kind, timeline_day, session_id, session_title,
                         heading_raw, leaf_ord, line_start, line_end, text_raw, text_norm,
-                        content_hash, expires_at, forgotten_at, project, chat_session
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        content_hash, expires_at, forgotten_at, project, chat_session, bots,
+                        task, cont, kind, status, habit, habit_explicit
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         chunk.chunk_id,
                         chunk.path,
@@ -115,6 +129,13 @@ class ArchiveStore:
                         chunk.forgotten_at,
                         chunk.project,
                         chunk.chat_session,
+                        encode_bots(chunk.bots),
+                        chunk.task,
+                        chunk.cont,
+                        chunk.kind,
+                        chunk.status,
+                        chunk.habit,
+                        1 if chunk.habit_explicit else 0,
                     ),
                 )
             self._db.commit()
@@ -159,6 +180,10 @@ class ArchiveStore:
         *,
         project: str | None = None,
         chat_session: str | None = None,
+        reader: str | None = None,
+        task: str | None = None,
+        kind: str | None = None,
+        status: str | None = None,
     ) -> list[Hit]:
         match = _safe_match(query)
         if match is None:
@@ -181,6 +206,18 @@ class ArchiveStore:
         if chat_session is not None:
             sql += " AND c.chat_session = ?"
             params.append(chat_session)
+        if task is not None:
+            sql += " AND c.task = ?"
+            params.append(task)
+        if kind is not None:
+            sql += " AND c.kind = ?"
+            params.append(kind)
+        if status is not None:
+            sql += " AND c.status = ?"
+            params.append(status)
+        clause, clause_params = _reader_clause("c.bots", reader)
+        sql += clause
+        params.extend(clause_params)
         sql += " ORDER BY bm25 ASC, c.chunk_id ASC LIMIT ?"
         params.append(max(0, min(limit, CANDIDATE_CAP)))
         rows = self._db.execute(sql, params).fetchall()
@@ -196,6 +233,10 @@ class ArchiveStore:
         *,
         project: str | None = None,
         chat_session: str | None = None,
+        reader: str | None = None,
+        task: str | None = None,
+        kind: str | None = None,
+        status: str | None = None,
     ) -> list[Hit]:
         tokens = [t for t in _NON_ALNUM.split(query_norm) if len(t) >= 3]
         sql = f"""SELECT * FROM chunks
@@ -210,6 +251,18 @@ class ArchiveStore:
         if chat_session is not None:
             sql += " AND chat_session = ?"
             params.append(chat_session)
+        if task is not None:
+            sql += " AND task = ?"
+            params.append(task)
+        if kind is not None:
+            sql += " AND kind = ?"
+            params.append(kind)
+        if status is not None:
+            sql += " AND status = ?"
+            params.append(status)
+        clause, clause_params = _reader_clause("bots", reader)
+        sql += clause
+        params.extend(clause_params)
         scored: list[tuple[float, sqlite3.Row]] = []
         for row in self._db.execute(sql, params):
             text = row["text_norm"]
@@ -262,17 +315,87 @@ class ArchiveStore:
         )
 
     @guarded
-    def recent_rows(self, limit: int, now: str) -> list[sqlite3.Row]:
+    def has_task(self, task: str) -> bool:
+        """True when any chunk already carries this task id (phase 1A)."""
+        row = self._db.execute(
+            "SELECT 1 FROM chunks WHERE task = ? LIMIT 1",
+            (task,),
+        ).fetchone()
+        return row is not None
+
+    @guarded
+    def task_session_rows(self, now: str, *, reader: str | None = None) -> list[sqlite3.Row]:
+        """One row per (task, session) for visible task entries (phase 1A).
+
+        Leaves of one session share a heading, so per-session aggregates
+        are exact: title/status/bots are uniform within a session."""
+        clause, clause_params = _reader_clause("bots", reader)
+        return list(
+            self._db.execute(
+                f"""SELECT task, session_id,
+                           MIN(timeline_day) AS first_day,
+                           MAX(timeline_day) AS last_day,
+                           MIN(line_start) AS first_line,
+                           MAX(line_start) AS last_line,
+                           MAX(session_title) AS title,
+                           MAX(status) AS status,
+                           MAX(bots) AS bots,
+                           MAX(chat_session) AS chat
+                    FROM chunks
+                    WHERE task IS NOT NULL AND {VISIBLE_SQL}{clause}
+                    GROUP BY task, session_id""",
+                (now, *clause_params),
+            )
+        )
+
+    @guarded
+    def habit_rows(self, now: str, *, reader: str | None = None) -> list[sqlite3.Row]:
+        """One row per habit session for the sweep (phase 1E).
+
+        Leaves of one session share a heading, so per-session aggregates
+        are exact."""
+        clause, clause_params = _reader_clause("bots", reader)
+        return list(
+            self._db.execute(
+                f"""SELECT session_id,
+                           MIN(timeline_day) AS day,
+                           MAX(habit) AS habit,
+                           MAX(habit_explicit) AS explicit,
+                           MAX(bots) AS bots
+                    FROM chunks
+                    WHERE kind = 'habit' AND {VISIBLE_SQL}{clause}
+                    GROUP BY session_id""",
+                (now, *clause_params),
+            )
+        )
+
+    @guarded
+    def session_bots(self, session_id: str) -> tuple[str, ...] | None:
+        """Owner list of one memory session; None = legacy (team) entry.
+
+        Unknown sessions also read as None — callers check existence first
+        (get_session_any) when the distinction matters."""
+        row = self._db.execute(
+            "SELECT bots FROM chunks WHERE session_id = ? LIMIT 1",
+            (session_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return decode_bots(row["bots"])
+
+    @guarded
+    def recent_rows(self, limit: int, now: str, *, reader: str | None = None) -> list[sqlite3.Row]:
         # Daily recency only: canonical profile leaves live in stats, not in
         # the "recently updated notes" feed.
+        clause, clause_params = _reader_clause("c.bots", reader)
         return list(
             self._db.execute(
                 f"""SELECT c.* FROM chunks c
                    JOIN source_files s ON s.path = c.path
-                   WHERE {VISIBLE_SQL} AND c.source_kind = 'daily'
+                   WHERE {VISIBLE_SQL} AND c.source_kind = 'daily'{clause}
                    ORDER BY s.mtime_ns DESC, c.leaf_ord ASC
                    LIMIT ?""",
-                (now, max(0, limit)),
+                (now, *clause_params, max(0, limit)),
             )
         )
 
@@ -302,7 +425,7 @@ class ArchiveStore:
     def visible_chunk_maps(self, now: str) -> list[dict[str, object]]:
         rows = self._db.execute(
             f"""SELECT chunk_id, session_id, heading_raw, text_raw, source_kind,
-                      timeline_day, expires_at
+                      timeline_day, expires_at, bots, kind, task, status, habit
                FROM chunks
                WHERE {VISIBLE_SQL}""",
             (now,),
@@ -318,6 +441,52 @@ class ArchiveStore:
             (session_id, now_ts),
         ).fetchone()
         return int(row["n"]) if row else 0
+
+
+_READER_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
+
+def encode_bots(bots: tuple[str, ...] | list[str] | None) -> str | None:
+    """Owner list → JSON column value; None stays NULL (legacy team)."""
+    if bots is None:
+        return None
+    cleaned = [item for item in bots if isinstance(item, str) and item]
+    return json.dumps(cleaned, ensure_ascii=False) if cleaned else None
+
+
+def decode_bots(raw: object) -> tuple[str, ...] | None:
+    """JSON column value → owner tuple; NULL/invalid reads as None (team)."""
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        return None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(data, list):
+        return None
+    cleaned = tuple(item for item in data if isinstance(item, str) and item)
+    return cleaned or None
+
+
+def _reader_clause(column: str, reader: str | None) -> tuple[str, list[object]]:
+    """SQL visibility filter for one reader bot (BE-4).
+
+    No reader (user/CLI) and Thyca see everything (empty clause). A child
+    bot sees legacy rows (NULL = team), team rows, and its own rows —
+    other bots' private rows stay hidden. Bot ids are charset-safe, so the
+    JSON-substring LIKE cannot escape its quotes; an invalid reader
+    matches nothing instead of everything."""
+    if reader is None or reader == "thyca":
+        return "", []
+    if not isinstance(reader, str) or not _READER_RE.fullmatch(reader):
+        return " AND 1 = 0", []
+    return (
+        f" AND ({column} IS NULL OR {column} LIKE '%\"team\"%'"
+        f" OR {column} LIKE '%\"{reader}\"%')",
+        [],
+    )
 
 
 def _safe_match(query: str) -> str | None:
@@ -346,6 +515,19 @@ def hit_from_row(
     bm25: float | None = None,
     snippet: str | None = None,
 ) -> Hit:
+    bots = None
+    extra: dict[str, str | None] = {}
+    try:
+        keys = row.keys()
+    except Exception:
+        keys = ()
+    if "bots" in keys:
+        bots = decode_bots(row["bots"])
+    for name in ("task", "cont", "kind", "status", "habit"):
+        value = row[name] if name in keys else None
+        extra[name] = value if isinstance(value, str) and value else None
+    explicit = row["habit_explicit"] if "habit_explicit" in keys else 0
+    extra["habit_explicit"] = bool(explicit)
     return Hit(
         path=row["path"],
         source_kind=row["source_kind"],
@@ -360,6 +542,18 @@ def hit_from_row(
         leaf_ord=int(row["leaf_ord"]),
         line_start=int(row["line_start"]),
         line_end=int(row["line_end"]),
+        bots=bots,
+        task=extra["task"],
+        cont=extra["cont"],
+        kind=extra["kind"],
+        status=extra["status"],
+        habit=extra["habit"],
+        habit_explicit=bool(extra["habit_explicit"]),
+        chat_session=(
+            row["chat_session"]
+            if "chat_session" in keys and isinstance(row["chat_session"], str)
+            else None
+        ),
     )
 
 

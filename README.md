@@ -54,3 +54,7 @@ Nâng cấp: `uv tool upgrade thyca-ai` hoặc chạy lại `install.sh`.
 ## Tài liệu & góp ý
 
 `.agents/README.md` cho agent contributor, `.agents/plans/` kế hoạch, `.agents/decisions/` quyết định kiến trúc. Góp ý tại [GitHub Discussions](https://github.com/Flowerf19/thyca-ai/discussions).
+
+## License
+
+Released under the [MIT License](LICENSE). Copyright (c) 2026 Nguyễn Hoà (Flowerf19).

@@ -14,7 +14,7 @@
    chat page — which ships static markup instead of emitShell — renders the
    same nav. */
 function thycaHeader(current) {
-  return `<header class="site-header"><div class="header-left"><span class="wordmark">thyca</span><span class="header-rule"></span></div><div class="header-right"><nav class="page-links" aria-label="Điều hướng">${pageLinksMarkup(current)}</nav></div></header>`;
+  return `<header class="site-header"><div class="header-left"><button class="icon-button menu-button" type="button" aria-label="Mở mục lục" aria-controls="chat-sidebar" aria-expanded="false"><svg class="icon"><use href="#i-menu"/></svg></button><span class="wordmark">thyca</span><span class="header-rule"></span></div><div class="header-right"><nav class="page-links" aria-label="Điều hướng">${pageLinksMarkup(current)}</nav></div></header>`;
 }
 
 /* Sidebar for non-chat pages: team roster only. The "Hội thoại chung"

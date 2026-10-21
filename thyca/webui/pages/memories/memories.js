@@ -15,12 +15,19 @@ const el = {
   viewSections: [...document.querySelectorAll(".memory-view")],
   search: document.querySelector("#memory-search"),
   status: document.querySelector("#memory-status"),
-  globalNav: document.querySelector("#memory-global-nav"),
-  botNav: document.querySelector("#memory-bot-list"),
+  botNav: document.querySelector("#team-bot-list"),
+  strip: document.querySelector("#team-strip"),
+  back: document.querySelector("#memory-back"),
 };
 const compact = typeof matchMedia === "function"
   ? matchMedia("(max-width: 56rem)")
   : { matches: false, addEventListener: () => {} };
+// Mobile pick pattern (same as chat): the scope list shows first, picking a
+// scope reveals the entries, ‹ Nhật ký returns to the list.
+const shell = document.querySelector(".chat-shell");
+function exitPicking() {
+  if (compact.matches) shell?.classList.remove("is-picking");
+}
 
 function placeControls() {
   const cluster = el.search?.closest(".memory-search-cluster");
@@ -30,8 +37,8 @@ function placeControls() {
   if (compact.matches) {
     if (bar && cluster.parentNode !== bar) bar.append(cluster);
   } else if (sessions && (cluster.parentNode !== sessions
-    || cluster.nextElementSibling !== el.globalNav)) {
-    sessions.insertBefore(cluster, el.globalNav);
+    || cluster.nextElementSibling !== el.botNav)) {
+    sessions.insertBefore(cluster, el.botNav);
   }
 }
 
@@ -96,11 +103,43 @@ function botRow(bot) {
   return row;
 }
 
+// "Tổng quan" lives as the first row of the scope list, in the same
+// session-item anatomy as the bot rows (chat shell reuses it as-is).
+let globalRow = null;
+let globalButton = null;
+function scopeGlobalRow() {
+  if (globalRow) return globalRow;
+  const row = document.createElement("div");
+  row.className = "session-row team-envelope-header";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "session-item team-bot-item memory-global-choice";
+  button.dataset.memoryScope = "";
+  button.style.setProperty("--team-tint", "var(--color-accent)");
+  button.setAttribute("aria-label", "Xem nhật ký tổng quan của cả đội");
+  const avatar = document.createElement("span");
+  avatar.className = "team-avatar";
+  avatar.style.setProperty("--team-tint", "var(--color-accent)");
+  avatar.setAttribute("aria-hidden", "true");
+  avatar.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6C9 4 6 4 3 5v14c3-1 6-1 9 1 3-2 6-2 9-1V5c-3-1-6-1-9 1Zm0 0v14"/></svg>';
+  const name = document.createElement("span");
+  name.className = "session-name";
+  name.textContent = "Tổng quan";
+  const role = document.createElement("time");
+  role.textContent = "mọi bot";
+  button.append(avatar, name, role);
+  row.append(button);
+  button.addEventListener("click", () => selectScope(null));
+  globalButton = button;
+  globalRow = row;
+  return row;
+}
+
 function renderScopes() {
   if (!el.botNav) return;
   ensureBotAvatarDefs();
   const active = state.scopeId || "";
-  const global = el.globalNav?.querySelector("[data-memory-scope='']");
+  const global = globalButton;
   if (global) {
     global.classList.toggle("is-active", !active && !state.scopeInvalid);
     global.setAttribute("aria-pressed", String(!active && !state.scopeInvalid));
@@ -154,7 +193,24 @@ function renderScopes() {
     card._envelope.button.disabled = state.pending;
     return card;
   });
-  el.botNav.replaceChildren(...desired);
+  el.botNav.replaceChildren(scopeGlobalRow(), ...desired);
+}
+
+function renderStrip() {
+  if (!el.strip) return;
+  el.strip.replaceChildren();
+  const bot = state.bots.find((item) => item.id === state.scopeId);
+  const chip = document.createElement("span");
+  chip.className = "team-strip-name";
+  if (bot) {
+    chip.style.setProperty("--team-tint", `var(--color-${botLookFor(bot).tint})`);
+    chip.textContent = bot.name || bot.id;
+  } else {
+    chip.style.setProperty("--team-tint", "var(--color-muted)");
+    chip.textContent = "Tổng quan";
+  }
+  el.strip.append(chip);
+  el.strip.hidden = false;
 }
 
 function scopeUrl(path, botId = state.scopeId) {
@@ -197,6 +253,7 @@ function selectScope(botId = null, botName = "") {
   document.dispatchEvent(new CustomEvent("memory-scope-changed", {
     detail: { botId: nextId },
   }));
+  exitPicking();
   void loadStats();
   return true;
 }
@@ -429,6 +486,7 @@ function render() {
   }
   if (state.pending) setBusy(true);
   renderScopes();
+  renderStrip();
 }
 
 async function loadStats({ quiet = false } = {}) {
@@ -534,7 +592,7 @@ async function mutateMemory(path, body, success) {
 function bind() {
   placeControls();
   el.search?.addEventListener("input", render);
-  el.globalNav?.querySelector("[data-memory-scope='']")?.addEventListener("click", () => selectScope(null));
+  el.back?.addEventListener("click", () => shell?.classList.add("is-picking"));
   document.addEventListener("thyca:memory-scope", (event) => {
     const detail = event.detail || {};
     detail.accepted = selectScope(detail.botId ?? null, detail.botName || "");
@@ -562,7 +620,9 @@ async function initialize() {
     selectScope(bot.id, bot.name);
     return;
   }
-  if (!compact.matches) void loadRoster();
+  // The scope list is the mobile pick screen now, so the roster loads on
+  // every breakpoint (not only desktop as when the list was desktop-only).
+  void loadRoster();
   void loadStats();
 }
 

@@ -12,6 +12,10 @@
 .sidebar .memory-search-cluster {
   margin: 1rem 0.65rem 0 0;
 }
+/* Nhật ký heading keeps the team-nav anatomy (title left, no actions). */
+#memory-nav .sessions-heading h2 {
+  margin-inline-end: auto;
+}
 .memory-chart-card {
   min-height: 19rem;
 }
@@ -119,21 +123,6 @@
 /* Desktop keeps the sidebar search and an unboxed global-scope choice.
    Mobile moves only the search field into the page toolbar. */
 .memory-search-bar { display: none; }
-#memory-global-nav.memory-scope-list { display: grid; gap: 0; margin-block: 0; overflow: visible; }
-#memory-global-nav .memory-global-choice {
-  width: 100%;
-  min-height: 2.75rem;
-  padding: 0.5rem 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  color: var(--color-muted);
-  text-align: start;
-}
-#memory-global-nav .memory-global-choice[aria-current="page"] {
-  color: var(--color-accent-deep);
-  font-weight: 500;
-}
 .memory-roster-error {
   display: grid;
   gap: 0.4rem;
@@ -154,24 +143,9 @@
 .pending-view h2 { margin: 0; font-family: var(--font-reading); font-size: 1.2rem; font-weight: 500; }
 
 @media (max-width: 56rem) {
-  /* Sit "Nhật ký" on the header row, after the hamburger — the static
-     sidebar was dropping it onto its own line. */
-  .memories-shell .sidebar {
-    position: absolute;
-    inset: 0 0 auto;
-    height: 2.75rem;
-    margin: 0;
-    pointer-events: none;
-  }
-  .memories-shell .sessions {
-    height: 2.75rem;
-    padding: 0 1rem 0 3.5rem;
-    pointer-events: none;
-  }
-  .memories-shell .sessions-heading h2 { font-size: 1.15rem; }
-  .memories-shell .session-list { display: none; }
-  #memory-global-nav,
-  #memory-bot-list { display: none; }
+  /* Mobile: the search field moves into the page toolbar (the sidebar
+     search is only desktop furniture; chat-shell + pick-shell handle the
+     rest of the mobile layout, same as the chat page). */
   .memory-search-bar {
     display: block;
     margin: 0 0 0.75rem;

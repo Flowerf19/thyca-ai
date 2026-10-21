@@ -187,14 +187,8 @@ const sections = ['overview', 'day', 'used-more', 'searched-more', 'used-less'].
   list.append(section);
   return section;
 });
-const globalNav = mount(new Element('nav'));
-globalNav.id = 'memory-global-nav';
-const globalButton = new Element('button');
-globalButton.className = 'session-item';
-globalButton.dataset.memoryScope = '';
-globalNav.append(globalButton);
 const botNav = mount(new Element('nav'));
-botNav.id = 'memory-bot-list';
+botNav.id = 'team-bot-list';
 const bar = mount(new Element('div'));
 bar.className = 'memory-search-bar';
 const cluster = new Element('div');
@@ -252,7 +246,7 @@ const settle = async () => {
 const hooks = {
   leaves: [],
   getJson: async url => {
-    if (url === '/api/bots') return { bots: [{ id: 'coder', name: 'Coder' }] };
+    if (url === '/api/bots') return { bots: [{ id: 'coder', name: 'Coder' }, { id: 'researcher', name: 'Researcher' }] };
     if (url.startsWith('/api/memory/stats?bot_id=')) {
       const botId = new URL(url, location.href).searchParams.get('bot_id');
       return { bot_id: botId, total: 0, leaves: [] };

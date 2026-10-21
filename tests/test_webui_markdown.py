@@ -174,6 +174,10 @@ const deps = {
   localStorage: { getItem: () => null, setItem() {} },
   bots: ROSTER,
   groups: [],
+  /* Sidebar globals page scripts may drive (memories re-renders the roster
+     and marks the scoped card on selectBot). */
+  selectedBot: '',
+  renderTeam() {},
   getBot: id => ROSTER.find(b => b.id === id) || null,
   states: { idle: ['idle', 'Rảnh'] },
   avatar: () => '',
@@ -562,25 +566,38 @@ def test_memories_groups_leaves_by_day_and_filters() -> None:
 # ---------------------------------------------------------------------------
 
 def test_shared_sidebar_renders_team_and_groups() -> None:
-    """The shared sidebar lists the roster as bot cards plus group sessions —
-    the old 12-per-page session pager is gone with the per-page split. Card
-    actions delegate to selectBot/loadSession, which the shared defaults
+    """The shared sidebar lists the roster as bot cards on every page; the
+    "Hội thoại chung" group section now only ships in chat's static markup,
+    so sidebar.js guards its #group-list lookups. Card actions still
+    delegate to the page's selectBot/loadSession, whose shared defaults
     route back into the chat page."""
     sidebar = (UI / "share" / "sidebar.js").read_text(encoding="utf-8")
     shell = (UI / "share" / "shell.js").read_text(encoding="utf-8")
     shell_app = (UI / "share" / "shell-app.js").read_text(encoding="utf-8")
 
-    # Roster cards + group rows render into the shell's sidebar markup.
+    chat = (UI / "chat" / "index.html").read_text(encoding="utf-8")
+
+    # Roster cards render into the shell's sidebar markup.
     assert 'id="team-bot-list"' in shell
-    assert 'id="group-list"' in shell
     assert "bots.map(card)" in sidebar
+    assert "bot-card" in sidebar
+
+    # Group rows still render — but only where a #group-list exists. The
+    # shared shell no longer emits one; chat's static sidebar does, and
+    # sidebar.js guards every lookup so non-chat pages skip the section.
+    assert 'id="group-list"' not in shell
     assert "groups.map(g=>" in sidebar or "groups.map(g =>" in sidebar
-    assert "bot-card" in sidebar and "group-row" in sidebar
+    assert "group-row" in sidebar
+    assert "if(!gl)return" in sidebar
+    assert 'id="group-list"' in chat
+    assert 'id="team-shared-create"' in chat
+    assert "Hội thoại chung" in chat
+    assert "if(teamSharedCreate)" in sidebar
 
     # Click delegation: bot select / group open go through the page's
     # selectBot/loadSession; defaults navigate into the chat page.
     assert "$('#team-bot-list').addEventListener('click'" in sidebar
-    assert "$('#group-list').addEventListener('click'" in sidebar
+    assert "$('#group-list')?.addEventListener('click'" in sidebar
     assert "selectBot(b.id)" in sidebar
     assert "loadSession(g.id" in sidebar
     assert "'../chat/index.html?bot='" in shell_app

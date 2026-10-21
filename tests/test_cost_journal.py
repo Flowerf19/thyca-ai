@@ -5,7 +5,7 @@ cost-bots.js and the shared journal pager) was not ported: pricing
 estimates, per-model share denominators, the per-session cost journal and
 the average-per-turn card are gone. The new Dashboard keeps cost on a
 recorded basis: the "Chi phí" stat card, the "Token" card's
-vào/cache/ra split, the by_day cost metric and the "Lượt gần nhất" table —
+in/cache/out split, the by_day cost metric and the "Lượt gần nhất" table —
 all fed by GET /api/traces/stats + GET /api/traces. These tests pin that
 replacement contract. The page is a classic script ('use strict', shared
 globals), so the harness evals it in Node with a stubbed global surface,
@@ -149,7 +149,7 @@ def test_share_denominator_and_vi_format(node: str) -> None:
 
 def test_hero_cards_carry_the_cost_and_token_split(node: str) -> None:
     """The stat grid keeps: Lượt = model requests, Gọi tool, Token with the
-    vào/cache/ra split (cache lives inside prompt — shown, not re-added),
+    in/cache/out split (cache lives inside prompt — shown, not re-added),
     Chi phí with the per-request average, Độ trễ p50 with the p90 hint."""
     totals = {
         "requests": 5, "tool_calls": 7, "prompt_tokens": 150,
@@ -165,9 +165,10 @@ def test_hero_cards_carry_the_cost_and_token_split(node: str) -> None:
     assert "request tới model" in html
     assert ">Gọi tool</p>" in html and ">7</p>" in html
     assert ">Token</p>" in html
-    # Cache is a subset of prompt: both shown, and the card total is the
-    # server total (165 = 150 + 15), never 150 + 30 + 15.
-    assert "vào 150 · cache 30 · ra 15" in html
+    # Cache is a subset of prompt: "in" is the uncached input (150 − 30), so
+    # the parts sum to the server total (120 + 30 + 15 = 165), never
+    # 150 + 30 + 15.
+    assert "in 120 · cache 30 · out 15" in html
     assert ">165</p>" in html
     assert ">Chi phí</p>" in html and "$0.0300" in html
     assert "TB $0.006000 / request" in html  # 0.03 / 5 requests
@@ -192,8 +193,8 @@ def test_cost_card_without_any_priced_turn(node: str) -> None:
 
 def test_multi_model_turn_tokens_split_not_double_counted(node: str) -> None:
     """A turn whose prompt side is all cache: the hint still shows
-    input/cache/output once each — cache is inside prompt, never stacked
-    on top."""
+    in/cache/out once each — "in" drops to the uncached remainder (0 here),
+    cache is inside prompt, never stacked on top."""
     html = _eval_dash(
         node,
         "renderStats({ totals: { requests: 1, prompt_tokens: 200,"
@@ -201,7 +202,7 @@ def test_multi_model_turn_tokens_split_not_double_counted(node: str) -> None:
         " cost_usd: null, latency_ms_p50: null, latency_ms_p90: null } });\n"
         "console.log(JSON.stringify(document.querySelector('#stat-grid').innerHTML));",
     )
-    assert "vào 200 · cache 200 · ra 5" in html
+    assert "in 0 · cache 200 · out 5" in html
     assert ">205</p>" in html  # prompt + completion, cache not re-added
 
 

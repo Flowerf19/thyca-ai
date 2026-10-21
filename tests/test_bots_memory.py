@@ -1,4 +1,4 @@
-"""BE-4: bots field end-to-end, ownership, candidates, hot hiding."""
+"""BE-4: bots field end-to-end, ownership, hot hiding."""
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 from thyca.memory.archive_store import ArchiveError
-from thyca.memory.candidates import CandidateQueue
 from thyca.memory.facade import MemoryFacade
 from thyca.memory.heading import parse_heading
 from thyca.memory.identity import bind_bot_id, reset_bot_id
@@ -137,39 +136,6 @@ def test_search_hides_other_private(tmp_path: Path) -> None:
     token = _as(None)
     try:
         assert len(facade.search("zqxw", now=at).hits) == 2
-    finally:
-        reset_bot_id(token)
-
-
-def test_candidate_propose_approve_flow(tmp_path: Path) -> None:
-    facade = _facade(tmp_path)
-    token = _as("coder")
-    try:
-        sid = facade.remember("gift", "coffee eggs", now=T0)
-    finally:
-        reset_bot_id(token)
-    queue = CandidateQueue(tmp_path)
-    cand = queue.propose("coder", sid)
-    assert cand.status == "pending"
-    assert [c.id for c in queue.list_pending()] == [cand.id]
-    # Approve promotes with a stable id and Thyca attribution.
-    decided = queue.decide(cand.id, True, "user")
-    facade.promote_to_team(sid, now=T1)
-    assert decided.status == "approved"
-    assert _file_bots(tmp_path, "2026-08-01")[sid.split("#")[1]] == ("team",)
-    # Reject leaves no residue.
-    cand2 = queue.propose("coder", sid)
-    queue.decide(cand2.id, False, "user")
-    assert queue.list_pending() == []
-
-
-def test_child_cannot_promote(tmp_path: Path) -> None:
-    facade = _facade(tmp_path)
-    sid = facade.remember("x", "y", now=T0)
-    token = _as("coder")
-    try:
-        with pytest.raises(ArchiveError):
-            facade.promote_to_team(sid, now=T1)
     finally:
         reset_bot_id(token)
 

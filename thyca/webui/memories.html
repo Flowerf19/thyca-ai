@@ -30,6 +30,7 @@
         <section class="sessions" id="memory-nav">
           <div class="sessions-heading">
             <h2>Nhật ký</h2>
+            <button class="memory-overview-link" id="memory-overview-link" type="button" data-memory-scope="" aria-current="page" aria-pressed="true">Tổng quan</button>
           </div>
           <div class="memory-search-cluster">
             <div class="thyca-search" role="search">
@@ -96,14 +97,6 @@
                 </details>
               </section>
             </div>
-            <section class="pending-view" id="pending-view" aria-label="Chờ cho cả đội nhớ" hidden>
-              <h2>Chờ cho cả đội nhớ</h2>
-              <p class="screen-note memories-rule">Những điều các bot muốn cả đội cùng nhớ — duyệt mới ghi chung.</p>
-              <div class="screen-filters pending-filters" id="pending-filters" role="group" aria-label="Lọc theo bot"></div>
-              <div id="pending-list" class="memory-list" aria-live="polite"></div>
-              <p id="pending-empty" class="memory-empty" hidden>Không có đề xuất nào đang chờ.</p>
-              <p class="screen-note memory-status" id="pending-status" role="status" aria-live="polite"></p>
-            </section>
           </section>
         </section>
       </section>
@@ -111,6 +104,5 @@
 
     <script src="./shared/js/navigation.js" defer></script>
     <script type="module" src="./pages/memories/memories.js"></script>
-    <script type="module" src="./pages/memories/team-pending.js"></script>
   </body>
 </html>

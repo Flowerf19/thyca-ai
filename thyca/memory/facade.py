@@ -24,7 +24,6 @@ from thyca.memory.heading import (
     format_body,
     format_ts,
     is_visible,
-    iter_session_blocks,
     new_entry_id,
     new_task_id,
     parse_heading,
@@ -38,22 +37,7 @@ from thyca.memory.identity import current_bot_id
 from thyca.memory.search import _absolute_proj, lexical_search
 from thyca.memory.search import recent as _recent_search
 from thyca.memory.stats import CanonicalFile, MemoryStatsResult, build_stats
-from thyca.memory.writer import MemoryWriter, _read_lines
-
-
-def _preview_text(block: list[str]) -> str:
-    """Body text of one session block: bullets unindented, capped at 1000."""
-    body: list[str] = []
-    for line in block[1:]:
-        line = line.rstrip("\r\n")
-        if line.startswith("- ") or line.startswith("  "):
-            body.append(line[2:])
-        else:
-            body.append(line)
-    text = "\n".join(body).strip()
-    if len(text) > 1000:
-        text = text[:999].rstrip() + "…"
-    return text
+from thyca.memory.writer import MemoryWriter
 
 
 class MemoryFacade:
@@ -383,25 +367,6 @@ class MemoryFacade:
             self._refresh_index(now)
             return exp
 
-    def promote_to_team(self, session_id: str, now: datetime | None = None) -> None:
-        """Flip an entry's owners to ``["team"]`` with a stable id.
-
-        The one promotion primitive the candidate queue's approve path
-        uses (bot → candidate → Thyca/user approves → team). Only the
-        user (no bot bound) or Thyca may invoke it; child bots are refused
-        with a typed error."""
-        from dataclasses import replace as _replace
-
-        from thyca.memory.identity import current_bot_id as _bot
-
-        reader = _bot()
-        if reader is not None and reader != "thyca":
-            raise ArchiveError(f"bot '{reader}' cannot promote to team memory")
-        with self.writer.mutation_lock():
-            path, entry = self.writer.locate(session_id)
-            self.writer.map_heading(path, entry, lambda meta: _replace(meta, bots=("team",)))
-            self._refresh_index(now)
-
     def get(
         self,
         *,
@@ -583,61 +548,7 @@ class MemoryFacade:
             self.archive.store.usage.keep_gets(live)
             self.archive.store.usage.keep_searches(live)
 
-    def candidate_preview(self, session_id: str) -> dict:
-        """Title + readable body for one candidate (see ``candidate_previews``)."""
-        return self.candidate_previews([session_id]).get(
-            session_id, {"title": "", "text": ""}
-        )
-
-    def candidate_previews(self, session_ids: list[str]) -> dict[str, dict]:
-        """Titles + readable bodies for many candidate sessions (batch).
-
-        One scan per day file instead of one full-file parse per session:
-        the per-session path was O(sessions x file size), so a growing
-        pending queue made every list request re-parse the same files.
-        Semantics match the single-session path: read-only (no use/TTL
-        effects), visibility-checked, and missing/invisible sessions get
-        an empty preview.
-        """
-        by_day: dict[str, list[tuple[str, str]]] = {}
-        out: dict[str, dict] = {}
-        for sid in session_ids:
-            if not isinstance(sid, str) or "#" not in sid:
-                out[sid] = {"title": "", "text": ""}
-                continue
-            prefix, entry = sid.split("#", 1)
-            if len(prefix) == 10 and prefix[4] == "-" and prefix[7] == "-":
-                by_day.setdefault(prefix, []).append((sid, entry))
-            else:
-                out[sid] = {"title": "", "text": ""}
-        for day, pairs in by_day.items():
-            path = self.thyca_dir / "memory" / f"{day}.md"
-            try:
-                lines = _read_lines(path)
-            except (ArchiveError, OSError):
-                for sid, _entry in pairs:
-                    out[sid] = {"title": "", "text": ""}
-                continue
-            targets = {entry for _sid, entry in pairs}
-            found: dict[str, tuple[HeadingMeta, list[str]]] = {}
-            for meta, resolved, start, end in iter_session_blocks(lines, str(path)):
-                # First match wins, like read_session's scan.
-                if resolved in targets and resolved not in found:
-                    found[resolved] = (meta, lines[start:end])
-            for sid, entry in pairs:
-                hit = found.get(entry)
-                if hit is None or not is_visible(hit[0].expires_at):
-                    out[sid] = {"title": "", "text": ""}
-                    continue
-                meta, block = hit
-                out[sid] = {"title": meta.title, "text": _preview_text(block)}
-        return out
-
     # -- Team ownership (BE-4) -------------------------------------------
-    def entry_bots(self, session_id: str) -> tuple[str, ...] | None:
-        """Public owner list of one entry (None = legacy/team entry)."""
-        return self._lookup_bots(session_id, None)
-
     def forget_bot_entries(self, bot_id: str, now: datetime | None = None) -> int:
         """Drop one bot's private entries on bot deletion (BE-5).
 

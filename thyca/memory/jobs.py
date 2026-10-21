@@ -13,7 +13,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from thyca.core.protocol import Message
-from thyca.memory.candidates import CandidateQueue
 from thyca.memory.identity import bind_bot_id, reset_bot_id
 
 #: Backend idle trigger (master §4): a session quiet this long gets its
@@ -28,7 +27,6 @@ class ExtractedMemory:
     content: str = ""
     importance: int = 3
     bots: tuple[str, ...] | None = None
-    team_proposal: bool = False
     # Phase 1C task/habit linkage (all optional; sanitized on parse).
     task: str | None = None
     # Title of a genuinely new multi-step goal (NOT an id); the apply
@@ -102,7 +100,7 @@ async def extract_from_transcript(connect, model: str, transcript: str,
         "You extract durable memories from a chat transcript for a personal "
         "assistant's notebook. Reply with a JSON array only, no prose. Each item: "
         '{"topic": "...", "summary": "...", "content": "...", "importance": 1-5, '
-        '"bots": ["<bot-id>"] or null, "team_proposal": true|false, '
+        '"bots": ["<bot-id>"] or null, '
         '"task": "<task_id from OPEN MEMORY TASKS>" or null, '
         '"new_task": "<new goal title>" or null, '
         '"cont": "<latest_session_id of the continued task>" or null, '
@@ -111,8 +109,7 @@ async def extract_from_transcript(connect, model: str, transcript: str,
         '"habit": "<short label>" or null, '
         '"habit_explicit": true|false}. '
         "bots names the single bot this memory belongs to (its private notebook); "
-        "null means general/user-level. team_proposal=true only when the whole "
-        "team should remember it. "
+        "null means general/user-level. "
         "Link a memory to a task only when it is one step of an ongoing effort; "
         "when it matches an open task below you MUST reuse that id, never open "
         "a duplicate. new_task only when a genuinely new multi-step goal starts. "
@@ -167,7 +164,6 @@ def parse_extraction(text: str) -> list[ExtractedMemory]:
         content = item.get("content", "")
         importance = item.get("importance", 3)
         bots = item.get("bots")
-        team = item.get("team_proposal", False)
         task = item.get("task")
         new_task = item.get("new_task")
         cont = item.get("cont")
@@ -205,7 +201,6 @@ def parse_extraction(text: str) -> list[ExtractedMemory]:
                 content=content if isinstance(content, str) else "",
                 importance=importance if importance in (1, 2, 3, 4, 5) else 3,
                 bots=tuple(bots) if isinstance(bots, list) and bots else None,
-                team_proposal=team is True,
                 task=task,
                 new_task=new_task,
                 cont=cont,
@@ -222,26 +217,22 @@ def apply_extracted(facade, items: list[ExtractedMemory], *, default_bot: str = 
                     open_tasks=(), chat: str | None = None) -> dict:
     """Write extracted memories as the sidecar (Thyca privileges).
 
-    Per-bot entries land in that bot's notebook; team-worthy ones are
-    written private first and then proposed through the candidate queue —
-    the job never writes ``\"team\"`` directly, mirroring the bot rule.
+    Per-bot entries land in that bot's notebook; shared knowledge is the
+    profile aggregation turn's job, so nothing is proposed or queued here.
     Task linkage: an explicit ``task`` is honored only when present in
     ``open_tasks`` (the catalog passed in); anything else is treated as
     a hallucinated id and dropped with its status/cont. ``new_task``
     titles group case-insensitively within one apply: one minted id per
     group, later entries chaining ``cont`` onto the previously written
-    entry of the same task. Returns ``{"written": [...sids],
-    "proposed": [...candidate ids]}``.
+    entry of the same task. Returns ``{"written": [...sids]}``.
     """
     catalog = [entry for entry in (open_tasks or ()) if isinstance(entry, dict)]
     known = {str(entry["task_id"]): entry for entry in catalog if entry.get("task_id")}
     minted: dict[str, str] = {}
     last_written: dict[str, str] = {}
     written: list[str] = []
-    proposed: list[str] = []
     token = bind_bot_id("thyca")
     try:
-        queue = CandidateQueue(facade.thyca_dir)
         for item in items:
             owners: list[str] | None = list(item.bots) if item.bots else [default_bot]
             task = item.task
@@ -273,11 +264,9 @@ def apply_extracted(facade, items: list[ExtractedMemory], *, default_bot: str = 
             written.append(sid)
             if task is not None:
                 last_written[task] = sid
-            if item.team_proposal:
-                proposed.append(queue.propose(owners[0], sid).id)
     finally:
         reset_bot_id(token)
-    return {"written": written, "proposed": proposed}
+    return {"written": written}
 
 
 def _utc_ts(moment: datetime | None = None) -> str:

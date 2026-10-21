@@ -374,25 +374,10 @@ class ChatApp:
                 open_tasks=open_tasks,
             )
             if extracted:
-                applied = mem_jobs.apply_extracted(
+                mem_jobs.apply_extracted(
                     facade, extracted, default_bot=bot_id,
                     open_tasks=open_tasks, chat=room_id,
                 )
-                if applied["written"]:
-                    # Dedupe now triggers here, per bot: freshly written
-                    # entries are reviewed for team duplicates. Best-effort
-                    # like every hook on this path — a dedupe failure never
-                    # breaks the flush (or the compaction after it).
-                    try:
-                        from thyca.memory import dedupe as mem_dedupe
-
-                        await mem_dedupe.propose_duplicates(
-                            facade, applied["written"],
-                            lambda a, b: mem_dedupe.llm_review_pair(
-                                connect, turn_cfg.provider.model, a, b),
-                        )
-                    except Exception:
-                        pass
             # Phase 1E habit sweep (best-effort, never breaks the flush):
             # newly-qualified habit labels append to this bot's own USER.md.
             try:

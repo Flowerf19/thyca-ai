@@ -587,12 +587,12 @@ def _memory_arg(args: dict) -> BotMemoryPolicy:
     if value is None:
         return BotMemoryPolicy()
     if not isinstance(value, dict):
-        raise ValueError("memory must be an object {read, write, propose_team}")
+        raise ValueError("memory must be an object {read, write}")
     fields = {}
-    for key in ("read", "write", "propose_team"):
+    for key in ("read", "write"):
         field_value = value.get(key, True)
         if not isinstance(field_value, bool):
-            raise ValueError("memory must be an object {read, write, propose_team}")
+            raise ValueError("memory must be an object {read, write}")
         fields[key] = field_value
     return BotMemoryPolicy(**fields)
 
@@ -669,11 +669,10 @@ def _create_spec(deps: AdminDeps) -> ToolSpec:
             "role, description; optional model ('default' keeps Settings), "
             "thinking, tint (theme token), avatar (star|hollow|single-flag|"
             "double-flag|dotted|fermata|plain), bash (ask|allow|deny), skills, tools, "
-            "hidden_tools, memory {read,write,propose_team}, schedule, persona. "
+            "hidden_tools, memory {read,write}, schedule, persona. "
             "Every created bot also receives the baseline tools (bot_send, "
             "message_user, ask_user, report_error, memory_remember, "
-            "memory_search, memory_get, "
-            "memory_propose_team) "
+            "memory_search, memory_get) "
             "unioned with `tools`; hidden_tools still blocks them."
         ),
         parameters={

@@ -5,7 +5,6 @@ from contextvars import ContextVar
 from dataclasses import asdict
 
 from thyca.memory.facade import MemoryFacade
-from thyca.memory.identity import current_bot_id
 from thyca.tools.registry import ToolRegistry, ToolSpec
 
 _chat_session_id: ContextVar[str | None] = ContextVar("thyca_memory_chat", default=None)
@@ -52,7 +51,6 @@ def register_memory_tools(
     registry.register(_reinforce_spec(facade))
     registry.register(_update_spec(facade))
     registry.register(_tasks_spec(facade))
-    registry.register(_propose_team_spec(facade))
 
 
 def _remember_spec(facade: MemoryFacade) -> ToolSpec:
@@ -360,51 +358,6 @@ def _tasks_spec(facade: MemoryFacade) -> ToolSpec:
         },
         handler=handler,
         parallel_safe=True,
-    )
-
-
-def _propose_team_spec(facade: MemoryFacade) -> ToolSpec:
-    async def handler(args: dict) -> str:
-        from thyca.memory.candidates import CandidateQueue
-
-        bot_id = current_bot_id()
-        if bot_id is None or bot_id == "thyca":
-            return "nothing to propose: Thyca and the user write team memory directly"
-        # Ownership: a bot may only propose entries it owns. Legacy
-        # entries (None = team) and other bots' entries are refused here
-        # (and team entries need no proposal); the queue trusts callers.
-        from thyca.memory.archived import ArchiveError
-
-        owners = facade.entry_bots(args["session_id"])
-        if owners is None or "team" in owners or bot_id not in owners:
-            raise ArchiveError(
-                f"bot '{bot_id}' can only propose team memory for its own entries"
-            )
-        queue = CandidateQueue(facade.thyca_dir)
-        candidate = queue.propose(bot_id, args["session_id"])
-        return json.dumps(
-            {"candidate_id": candidate.id, "status": candidate.status},
-            ensure_ascii=False,
-        )
-
-    return ToolSpec(
-        name="memory_propose_team",
-        description=(
-            "Propose one of your memory entries (by session_id) for the shared "
-            "team memory. Creates a candidate Thyca or the user approves; "
-            "it never writes team memory directly."
-        ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "session_id": {"type": "string"},
-            },
-            "required": ["session_id"],
-            "additionalProperties": False,
-        },
-        handler=handler,
-        parallel_safe=False,
-        resource_key=_daily_key,
     )
 
 

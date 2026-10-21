@@ -32,7 +32,6 @@ ENVELOPE_CSS = ROOT / "thyca" / "webui" / "shared" / "css" / "bot-envelope.css"
 KIT_CSS = ROOT / "thyca" / "webui" / "shared" / "css" / "kit.css"
 TOKENS_CSS = ROOT / "thyca" / "webui" / "shared" / "css" / "tokens.css"
 AVATAR = ROOT / "thyca" / "webui" / "shared" / "js" / "bot-avatar.js"
-PENDING = ROOT / "thyca" / "webui" / "pages" / "memories" / "team-pending.js"
 AVATAR_CSS = ROOT / "thyca" / "webui" / "shared" / "css" / "bot-avatar.css"
 CHAT_BOT = ROOT / "thyca" / "webui" / "shared" / "js" / "chat-bot.js"
 TRANSCRIPT = ROOT / "thyca" / "webui" / "pages" / "chat" / "transcript.js"
@@ -51,7 +50,7 @@ def node() -> str:
 def _run(node: str, body: str, via: str = "team") -> object:
     module = {"team": TEAM, "mention": MENTION, "cost": COST_DATA,
               "trace": TRACE_DATA, "unread": UNREAD, "avatar": AVATAR,
-              "chatbot": CHAT_BOT, "pending": PENDING,
+              "chatbot": CHAT_BOT,
               "memory": MEMORY_DATA}[via]
     source = (
         f"import * as api from '{module.as_posix()}';\n"
@@ -332,59 +331,6 @@ def test_hidden_attribute_beats_flex_display() -> None:
     assert re.search(r"\.team-strip\[hidden\]\s*\{[^}]*display:\s*none", css)
 
 
-def test_pending_avatar_slot_and_roster_patch(node: str) -> None:
-    """FE pending avatars: card slot + seal with roster name; unknown bot
-    keeps an empty slot and its fallback text; chips carry seals."""
-    value = _run(
-        node,
-        "globalThis.document = {"
-        " createElement: (tag) => {"
-        "  const el = { tag, children: [], className: '',"
-        "   textContent: '', innerHTML: '', dataset: {},"
-        "   setAttribute() {},"
-        "   append(...n) { el.children.push(...n.flat()); },"
-        "   classList: { toggle() {} },"
-        "   addEventListener() {},"
-        "   querySelector(sel) {"
-        "    const cls = sel.startsWith('.') ? sel.slice(1) : null;"
-        "    const walk = (node) => {"
-        "     for (const c of node.children || []) {"
-        "      if (typeof c === 'string') continue;"
-        "      if (cls && String(c.className || '').split(' ').includes(cls)) return c;"
-        "      const hit = walk(c);"
-        "      if (hit) return hit;"
-        "     }"
-        "     return null;"
-        "    };"
-        "    return walk(el);"
-        "   },"
-        "  };"
-        "  return el;"
-        " },"
-        " createTextNode: (text) => ({ textContent: text }),"
-        "};"
-        " const card = api.candidateCard({id: 'c1', botId: 'coder',"
-        " title: 'T', text: 'x'},"
-        " new Map([['coder', {id: 'coder', name: 'Coder'}]]));"
-        " const slot = card.querySelector('.pending-avatar');"
-        " const ghost = api.candidateCard({id: 'c2', title: 'T', text: 'x'});"
-        " const chip = api.filterChip('coder', true, null);"
-        " const all = api.filterChip('', true, null);"
-        " const textOf = (node) => [(node.textContent || ''),"
-        "  ...node.children.map((c) =>"
-        "  typeof c === 'string' ? c : textOf(c))].join(' ');"
-        " return [slot.innerHTML.includes('mk-wax'),"
-        "  textOf(card).includes('Coder'),"
-        "  ghost.querySelector('.pending-avatar').innerHTML === '',"
-        "  textOf(ghost).includes('không rõ bot'),"
-        "  chip.querySelector('.pending-avatar').innerHTML.includes('mk-wax'),"
-        "  all.querySelector('.pending-avatar'),"
-        "  textOf(all).trim()];",
-        via="pending",
-    )
-    assert value == [True, True, True, True, True, None, "Tất cả bot"]
-
-
 def test_memory_scope_echo_requires_exact_scoped_owner_and_null_global(node: str) -> None:
     value = _run(
         node,
@@ -397,36 +343,6 @@ def test_memory_scope_echo_requires_exact_scoped_owner_and_null_global(node: str
         via="memory",
     )
     assert value == [True, True, False, True, False, False]
-    source = PENDING.read_text(encoding="utf-8")
-    assert source.index("if (!memoryScopeMatches(payload, requestedScope))") < source.index("items = pendingCandidates(payload)")
-
-
-def test_pending_candidates_only_pending(node: str) -> None:
-    payload = {"candidates": [
-        {"id": 1, "bot_id": "a", "text": "t", "status": "pending"},
-        {"id": 2, "status": "approved"},
-        {"id": 3, "status": "pending"},
-    ]}
-    value = _run(node, f"return api.pendingCandidates({json.dumps(payload)}).map(c => c.id);")
-    assert value == ["1", "3"]
-
-
-def test_pending_candidate_requests_are_owner_scoped_and_race_guarded(node: str) -> None:
-    value = _run(
-        node,
-        "return [api.candidateRequestUrl(null),"
-        " api.candidateRequestUrl('coder')];",
-        via="pending",
-    )
-    assert value == [
-        "/api/memory/candidates",
-        "/api/memory/candidates?bot_id=coder",
-    ]
-    source = PENDING.read_text(encoding="utf-8")
-    assert "if (busy) event.preventDefault()" in source
-    assert "loadController?.abort()" in source
-    assert "requestedScope !== scopeId" in source
-    assert "items = [];" in source
 
 
 def test_main_session_resolves_remembered_then_newest(node: str) -> None:
@@ -550,7 +466,7 @@ def test_team_dom_modules_have_no_literal_colors() -> None:
     ] + [
         ROOT / "thyca" / "webui" / "pages" / "dashboard" / name
         for name in ("cost-bots.js", "trace-delegation.js")
-    ] + [ROOT / "thyca" / "webui" / "pages" / "memories" / "team-pending.js"]
+    ]
     literal = re.compile(r"#[0-9a-fA-F]{3,8}\b|oklch\(|rgba?\(")
     offenders = {str(path): literal.findall(path.read_text(encoding="utf-8")) for path in paths}
     assert all(not hits for hits in offenders.values()), offenders
@@ -1745,12 +1661,15 @@ def test_chat_page_hides_version_line_other_pages_keep_it() -> None:
     shell). The element is removed from index.html rather than hidden
     by CSS; other pages keep their .header-line in .site-header, and
     navigation.js already guards #header-datetime / #header-edition
-    with existence checks, so its absence cannot error."""
+    with existence checks, so its absence cannot error. The Nhật ký
+    page joined the chat shell (team-strip header) and drops it too."""
     html = INDEX_HTML.read_text(encoding="utf-8")
     assert "header-line" not in html
     assert 'id="header-datetime"' not in html
     assert 'id="header-edition"' not in html
-    for other in ("memories.html", "dashboard.html", "settings.html",
+    memories = (INDEX_HTML.parent / "memories.html").read_text(encoding="utf-8")
+    assert "header-line" not in memories
+    for other in ("dashboard.html", "settings.html",
                   "provider.html", "profile.html"):
         page = (INDEX_HTML.parent / other).read_text(encoding="utf-8")
         assert 'class="header-line"' in page, other

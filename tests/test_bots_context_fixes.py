@@ -125,7 +125,7 @@ def test_legacy_card_gets_baseline_but_policies_still_win() -> None:
     # hidden_tools and memory/bash policies still win over the baseline.
     masked = BotCard(bot_id="coder", name="coder", role="C", description="D",
                      persona="P", tools=("read",), hidden_tools=("bot_fetch",),
-                     memory=BotMemoryPolicy(read=True, write=False, propose_team=True),
+                     memory=BotMemoryPolicy(read=True, write=False),
                      bash="deny")
     kept = {s["function"]["name"] for s in filtered_tool_schemas(
         schemas("bot_fetch", "task_open", "memory_remember", "memory_search",

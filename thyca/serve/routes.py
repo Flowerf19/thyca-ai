@@ -24,7 +24,7 @@ from thyca.bots.registry import BotRegistry, RegistryError
 from thyca.bots.timeline import TraceExecutionError
 from thyca.serve import config_api
 from thyca.serve.errors import _with_json
-from thyca.serve.memory import candidate_decide, candidates_list, memory_endpoint
+from thyca.serve.memory import memory_endpoint
 from thyca.serve.sessions_api import (
     bot_dm,
     bot_operations,
@@ -69,7 +69,6 @@ _BOT_DM_RE = re.compile(r"^/api/bots/([a-z0-9]+(?:-[a-z0-9]+)*)/dm$")
 _BOT_OPERATIONS_RE = re.compile(
     rf"^/api/bots/([a-z0-9]+(?:-[a-z0-9]+)*)/rooms/({SESSION_ID_PATTERN})/operations$"
 )
-_CANDIDATE_RE = re.compile(r"^/api/memory/candidates/([A-Za-z0-9_-]+)/(approve|reject)$")
 # Worst-case turn body: TEXT_MAX chars \u-escaped (12 bytes per non-BMP char)
 # plus the JSON envelope (model/effort/retry). Must stay above that so a
 # valid 4000-emoji turn is never rejected as "invalid body".
@@ -112,17 +111,6 @@ def make_handler(
                     self._json(status, {"error": "invalid memory scope" if status == 400 else "unknown bot"})
                     return
                 self._stats(bot_id)
-                return
-            if path == "/api/memory/candidates":
-                status, bot_id = _memory_bot_scope(facade, parsed.query)
-                if status != 200:
-                    self._json(status, {"error": "invalid memory scope" if status == 400 else "unknown bot"})
-                    return
-                if bot_id is None:
-                    status, body = candidates_list(facade)
-                else:
-                    status, body = candidates_list(facade, bot_id=bot_id)
-                self._json(status, body)
                 return
             if path == "/api/config/status":
                 config_api.config_status(self, config_file)
@@ -192,21 +180,6 @@ def make_handler(
                 return
             if path == "/api/memory/canonical":
                 self._memory_post("canonical")
-                return
-            match = _CANDIDATE_RE.fullmatch(path)
-            if match:
-                def run(payload: dict, _match=match) -> None:
-                    decided_by = payload.get("decided_by")
-                    if decided_by is not None and not isinstance(decided_by, str):
-                        self._json(400, {"error": "invalid decided_by"})
-                        return
-                    status, body = candidate_decide(
-                        facade, _match.group(1), _match.group(2) == "approve",
-                        decided_by or "user",
-                    )
-                    self._json(status, body)
-
-                _with_json(self, run)
                 return
             if path == "/api/sessions":
                 session_create(self, chat)

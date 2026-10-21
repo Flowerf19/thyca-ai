@@ -24,10 +24,8 @@ from thyca.bots.runtime import BotRuntime
 from thyca.config import default_config, load, save
 from thyca.core.protocol import ToolCall, ToolResult
 from thyca.llm.llm_base import ChatReply
-from thyca.memory.candidates import CandidateQueue
 from thyca.memory.facade import MemoryFacade
 from thyca.memory.identity import bind_bot_id, reset_bot_id
-from thyca.serve.memory import candidate_decide
 from thyca.tools.builtin import register_file_tools
 from thyca.tools.gateway import ToolGateway
 from thyca.tools.gateway.policy import PolicyDenied
@@ -189,44 +187,7 @@ def test_gateway_executions_are_owner_scoped_for_bots() -> None:
     asyncio.run(scenario())
 
 
-# --- IMPORTANT: memory_propose_team ownership ---------------------------
-
-def test_memory_propose_team_only_for_own_entries(tmp_path: Path) -> None:
-    from thyca.memory.archived import ArchiveError
-    from thyca.tools.memory_tools import register_memory_tools
-
-    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
-    token = _as("coder")
-    try:
-        own = facade.remember("mine", "coder fact")
-    finally:
-        reset_bot_id(token)
-    token = _as("researcher")
-    try:
-        other = facade.remember("theirs", "researcher fact")
-    finally:
-        reset_bot_id(token)
-    team = facade.remember("shared", "team fact", bots=["team"])
-
-    registry = ToolRegistry()
-    register_memory_tools(registry, facade)
-    spec = registry.get("memory_propose_team")
-    assert spec is not None
-    token = _as("coder")
-    try:
-        with pytest.raises(ArchiveError):
-            asyncio.run(spec.handler({"session_id": other}))
-        with pytest.raises(ArchiveError):
-            asyncio.run(spec.handler({"session_id": team}))
-        out = json.loads(asyncio.run(spec.handler({"session_id": own})))
-    finally:
-        reset_bot_id(token)
-    assert out["status"] == "pending"
-    pending = CandidateQueue(tmp_path).list_pending()
-    assert [cand.session_id for cand in pending] == [own]
-
-
-# --- MINOR: tool_message, candidate ordering, paused, bus drain ---------
+# --- MINOR: tool_message, paused, bus drain ------------------------------
 
 def test_tool_message_error_keeps_bot_id() -> None:
     msg = tool_message(
@@ -234,23 +195,6 @@ def test_tool_message_error_keeps_bot_id() -> None:
         bot_id="coder",
     )
     assert msg.meta == {"bot_id": "coder", "is_error": True}
-
-
-def test_candidate_decide_first_and_reopens_on_promote_failure(tmp_path: Path) -> None:
-    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
-    queue = CandidateQueue(tmp_path)
-    bad = queue.propose("coder", "2026-08-01#deadbeef")
-    status, _body = candidate_decide(facade, bad.id, True, "user")
-    assert status == 404
-    # Promotion failed → the candidate is pending again, not "approved".
-    assert [cand.id for cand in queue.list_pending()] == [bad.id]
-
-    sid = facade.remember("gift", "egg coffee")
-    good = queue.propose("coder", sid)
-    status, body = candidate_decide(facade, good.id, True, "thyca")
-    assert status == 200 and body["status"] == "approved"
-    decided = [cand for cand in queue.list_all() if cand.id == good.id][0]
-    assert decided.decided_by == "thyca"
 
 
 def test_bus_drain_log_is_per_room() -> None:
@@ -394,7 +338,7 @@ def test_memory_read_false_hot_prompt_has_no_memory(tmp_path: Path) -> None:
         app._bots.create(BotCard(
             bot_id="coder", name="coder", role="Coder", description="Codes.",
             persona="PERSONA-CODER",
-            memory=BotMemoryPolicy(read=False, write=True, propose_team=True),
+            memory=BotMemoryPolicy(read=False, write=True),
         ))
         created = app.create(bots=["coder"])
         app.turn(created["id"], "hi")

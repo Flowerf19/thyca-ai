@@ -121,6 +121,6 @@ def build_card(
         model=BotModel(id=model),
         tools=with_baseline_tools(tools),
         bash=bash,
-        memory=BotMemoryPolicy(read=True, write=True, propose_team=True),
+        memory=BotMemoryPolicy(read=True, write=True),
         persona=persona,
     )

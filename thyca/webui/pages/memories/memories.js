@@ -16,6 +16,7 @@ const el = {
   search: document.querySelector("#memory-search"),
   status: document.querySelector("#memory-status"),
   botNav: document.querySelector("#team-bot-list"),
+  overviewLink: document.querySelector("#memory-overview-link"),
   strip: document.querySelector("#team-strip"),
   back: document.querySelector("#memory-back"),
 };
@@ -103,49 +104,18 @@ function botRow(bot) {
   return row;
 }
 
-// "Tổng quan" lives as the first row of the scope list, in the same
-// session-item anatomy as the bot rows (chat shell reuses it as-is).
-let globalRow = null;
-let globalButton = null;
-function scopeGlobalRow() {
-  if (globalRow) return globalRow;
-  const row = document.createElement("div");
-  row.className = "session-row team-envelope-header";
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "session-item team-bot-item memory-global-choice";
-  button.dataset.memoryScope = "";
-  button.style.setProperty("--team-tint", "var(--color-accent)");
-  button.setAttribute("aria-label", "Xem nhật ký tổng quan của cả đội");
-  const avatar = document.createElement("span");
-  avatar.className = "team-avatar";
-  avatar.style.setProperty("--team-tint", "var(--color-accent)");
-  avatar.setAttribute("aria-hidden", "true");
-  avatar.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6C9 4 6 4 3 5v14c3-1 6-1 9 1 3-2 6-2 9-1V5c-3-1-6-1-9 1Zm0 0v14"/></svg>';
-  const name = document.createElement("span");
-  name.className = "session-name";
-  name.textContent = "Tổng quan";
-  const role = document.createElement("time");
-  role.textContent = "mọi bot";
-  button.append(avatar, name, role);
-  row.append(button);
-  button.addEventListener("click", () => selectScope(null));
-  globalButton = button;
-  globalRow = row;
-  return row;
-}
-
+// "Tổng quan" (all bots) is a plain link in the sidebar heading, not a bot
+// row: the bot list is strictly bot envelopes, so nothing fakes a seal.
 function renderScopes() {
   if (!el.botNav) return;
   ensureBotAvatarDefs();
   const active = state.scopeId || "";
-  const global = globalButton;
-  if (global) {
-    global.classList.toggle("is-active", !active && !state.scopeInvalid);
-    global.setAttribute("aria-pressed", String(!active && !state.scopeInvalid));
-    if (!active && !state.scopeInvalid) global.setAttribute("aria-current", "page");
-    else global.removeAttribute("aria-current");
-    global.disabled = state.pending;
+  if (el.overviewLink) {
+    el.overviewLink.classList.toggle("is-active", !active && !state.scopeInvalid);
+    el.overviewLink.setAttribute("aria-pressed", String(!active && !state.scopeInvalid));
+    if (!active && !state.scopeInvalid) el.overviewLink.setAttribute("aria-current", "page");
+    else el.overviewLink.removeAttribute("aria-current");
+    el.overviewLink.disabled = state.pending;
   }
   const old = new Map([...el.botNav.children].map((card) => [card.dataset.botId, card]));
   const desired = state.bots.map((bot) => {
@@ -193,7 +163,7 @@ function renderScopes() {
     card._envelope.button.disabled = state.pending;
     return card;
   });
-  el.botNav.replaceChildren(scopeGlobalRow(), ...desired);
+  el.botNav.replaceChildren(...desired);
 }
 
 function renderStrip() {
@@ -593,6 +563,7 @@ function bind() {
   placeControls();
   el.search?.addEventListener("input", render);
   el.back?.addEventListener("click", () => shell?.classList.add("is-picking"));
+  el.overviewLink?.addEventListener("click", () => selectScope(null));
   document.addEventListener("thyca:memory-scope", (event) => {
     const detail = event.detail || {};
     detail.accepted = selectScope(detail.botId ?? null, detail.botName || "");

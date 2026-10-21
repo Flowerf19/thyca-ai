@@ -2,77 +2,7 @@
 from __future__ import annotations
 
 from thyca.memory.archived import ArchiveError
-from thyca.memory.candidates import CandidateError, CandidateQueue
 from thyca.memory.facade import MemoryFacade
-
-
-def candidates_list(
-    facade: MemoryFacade, *, bot_id: str | None = None,
-) -> tuple[int, dict]:
-    """``GET /api/memory/candidates`` — pending proposals, optionally owner-scoped."""
-    try:
-        queue = CandidateQueue(facade.thyca_dir)
-        candidates = queue.list_pending()
-        if bot_id is not None:
-            candidates = [candidate for candidate in candidates if candidate.bot_id == bot_id]
-        # Batch previews: one scan per day file instead of one full-file
-        # parse per candidate (the per-session path re-parsed the same
-        # files for every pending row, making the list O(n x file size)).
-        previews = facade.candidate_previews(
-            [candidate.session_id for candidate in candidates]
-        )
-        items = [
-            {
-                "id": cand.id,
-                "bot_id": cand.bot_id,
-                "session_id": cand.session_id,
-                "status": cand.status,
-                "created_at": cand.created_at,
-                "decided_by": cand.decided_by,
-                "decided_at": cand.decided_at,
-                **previews.get(cand.session_id, {"title": "", "text": ""}),
-            }
-            for cand in candidates
-        ]
-    except CandidateError:
-        return 503, {"error": "candidates unavailable"}
-    except Exception:
-        return 503, {"error": "candidates unavailable"}
-    return 200, {"bot_id": bot_id, "candidates": items}
-
-
-def candidate_decide(facade: MemoryFacade, candidate_id: str, approved: bool, decided_by: str) -> tuple[int, dict]:
-    """``POST /api/memory/candidates/<id>/approve|reject`` (user path).
-
-    Approve promotes the entry to team memory with a stable id; reject
-    leaves no residue. Both record ``decided_by`` for the audit trail."""
-    try:
-        queue = CandidateQueue(facade.thyca_dir)
-        pending = {cand.id: cand for cand in queue.list_pending()}
-        candidate = pending.get(candidate_id)
-        if candidate is None:
-            return 404, {"error": "candidate not found"}
-        # One ordering for every caller: record the decision first
-        # (with the caller-supplied decided_by; the HTTP user route
-        # defaults it to "user"), then promote on approve. A failed
-        # promotion reopens the candidate so queue state never claims
-        # a promotion that did not happen.
-        queue.decide(candidate_id, approved, decided_by)
-        if approved:
-            try:
-                facade.promote_to_team(candidate.session_id)
-            except ArchiveError:
-                queue.reopen(candidate_id)
-                return 404, {"error": "entry not found"}
-            except Exception:
-                queue.reopen(candidate_id)
-                return 503, {"error": "promote failed"}
-    except CandidateError as exc:
-        return 404, {"error": str(exc)}
-    except Exception:
-        return 503, {"error": "decision failed"}
-    return 200, {"ok": True, "id": candidate_id,
-                  "status": "approved" if approved else "rejected"}
 
 
 def memory_endpoint(facade: MemoryFacade, kind: str, payload: dict) -> tuple[int, dict]:

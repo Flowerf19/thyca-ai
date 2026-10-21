@@ -1102,27 +1102,17 @@ def test_idle_remember_nudge_in_webui() -> None:
     assert "idleFromNudge" in app
     assert not app.rstrip().endswith("armIdle();")
 
-def test_context_nudge_in_webui() -> None:
+def test_context_usage_moved_to_bot_card() -> None:
+    """TURN-CURATE: the composer meter/nudge is gone — the agent manages its
+    own context; the ~% badge lives on the bot card (team-strip)."""
     html = (WEBUI / "index.html").read_text(encoding="utf-8")
-    app = "\n".join(
-        (WEBUI / "pages" / "chat" / name).read_text(encoding="utf-8")
-        for name in ("sessions-sidebar.js", "turn-follow.js", "composer.js", "app.js")
-    )
-    assert 'id="context-nudge"' in html
-    assert 'id="context-meter"' in html
-    assert 'id="context-focus"' in html
-    assert "Giữ ý chính gì?" in html
-    assert "Gọn phiên" in html
-    assert "instructions" in app
-    assert "đã hiệu chuẩn" in app
-    assert "CONTEXT_COMPACT_TIMEOUT_MS = 330_000" in app
-    assert "Đang gọn phiên bằng bản tóm tắt" in app
-    assert "mất kết nối khi chờ, backend vẫn làm xong" in app
-    assert "CONTEXT_SUGGEST_RATIO = 0.8" in app
-    assert "CONTEXT_URGENT_RATIO = 0.9" in app
-    assert "/compact" in app
-    assert "syncContext" in app
-    assert "contextDismissed" in app
+    assert 'id="context-nudge"' not in html
+    assert 'id="context-meter"' not in html
+    assert 'id="context-focus"' not in html
+    assert "Gọn phiên" not in html
+    strip = (WEBUI / "pages" / "chat" / "team-strip.js").read_text(encoding="utf-8")
+    assert "team-strip-context" in strip
+    assert "agent tự quản lý" in strip
 
 def test_retry_hook_emits_llm_retry_events(tmp_path: Path) -> None:
     """ChatApp wires OpenAIChat-style retry hooks to non-error TurnEvents."""

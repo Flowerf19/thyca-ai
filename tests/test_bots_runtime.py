@@ -94,15 +94,15 @@ def test_thyca_keeps_admin_tools() -> None:
 def test_memory_and_bash_filters() -> None:
     from thyca.bots.card import BotMemoryPolicy
 
-    card = _card(memory=BotMemoryPolicy(read=False, write=False, propose_team=False),
+    card = _card(memory=BotMemoryPolicy(read=False, write=False),
                  bash="deny",
-                 tools=("memory_search", "memory_remember", "memory_propose_team",
+                 tools=("memory_search", "memory_remember",
                         "bash", "read"))
     # Legacy card without the newer baseline peer tools in `tools`:
     # bot_fetch/task_open are always kept, while the memory and bash
     # masking above still removes its own families.
     out = filtered_tool_schemas(
-        _schemas("memory_search", "memory_remember", "memory_propose_team",
+        _schemas("memory_search", "memory_remember",
                  "bash", "bot_fetch", "task_open", "read", "memory_tasks"),
         card,
     )
@@ -156,7 +156,7 @@ def test_memory_tasks_in_baseline_read_gated_hidden_wins() -> None:
     out = filtered_tool_schemas(_schemas("memory_tasks", "read"), card)
     assert [s["function"]["name"] for s in out] == ["memory_tasks", "read"]
     # memory.read=false hides it even when listed by hand.
-    nor = _card(memory=BotMemoryPolicy(read=False, write=True, propose_team=True),
+    nor = _card(memory=BotMemoryPolicy(read=False, write=True),
                 tools=("memory_tasks", "read"))
     assert [s["function"]["name"]
             for s in filtered_tool_schemas(_schemas("memory_tasks", "read"), nor)] == ["read"]

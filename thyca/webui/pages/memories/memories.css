@@ -16,6 +16,24 @@
 #memory-nav .sessions-heading h2 {
   margin-inline-end: auto;
 }
+/* The all-bots "Tổng quan" switch lives in the sidebar heading as a plain
+   pill (not a bot row — the bot list stays strictly bot envelopes). */
+.memory-overview-link {
+  min-height: 0;
+  padding: 0.2rem 0.6rem;
+  border: var(--rule) solid transparent;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-muted);
+  font: inherit;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+.memory-overview-link.is-active {
+  color: var(--color-accent-deep);
+  border-color: color-mix(in srgb, var(--color-accent) 42%, transparent);
+  background: var(--color-bg-selected);
+}
 .memory-chart-card {
   min-height: 19rem;
 }
@@ -139,8 +157,6 @@
   padding: 0.25rem 0.4rem;
 }
 .memory-section-empty { margin: 0.5rem 0 0.9rem; }
-.pending-view { margin-block-start: 1.4rem; padding-block-start: 1rem; border-block-start: var(--rule) solid var(--color-divider); }
-.pending-view h2 { margin: 0; font-family: var(--font-reading); font-size: 1.2rem; font-weight: 500; }
 
 @media (max-width: 56rem) {
   /* Mobile: the search field moves into the page toolbar (the sidebar
@@ -348,59 +364,4 @@
   .memory-copy p {
     font-size: 0.92rem;
   }
-}
-
-/* Team v1: "Chờ cho cả đội nhớ" — candidate queue tab, visible only while
-   pending items exist (the module toggles [hidden]). Token-only. */
-.pending-view {
-  display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
-}
-
-.pending-view[hidden] {
-  display: none;
-}
-
-.pending-filters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.45rem;
-}
-
-.pending-chip.is-active {
-  font-weight: 600;
-}
-
-.pending-actions {
-  grid-column: 2;
-  grid-row: 3;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.45rem;
-  margin-block-start: 0.6rem;
-}
-
-.pending-source {
-  color: var(--color-muted);
-  font-family: var(--font-reading);
-}
-
-/* Pending avatars: layout only — seals come from the shared avatar CSS. */
-.pending-source {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-}
-.pending-avatar {
-  --bot-avatar-size: 1.9rem;
-}
-.pending-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-.pending-chip .bot-avatar-slot {
-  --bot-avatar-size: 1.4rem;
 }

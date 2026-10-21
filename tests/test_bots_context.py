@@ -570,8 +570,7 @@ def test_memory_read_false_has_no_bot_user_section(tmp_path: Path) -> None:
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="",
-                                 memory=BotMemoryPolicy(read=False, write=True,
-                                                        propose_team=True)))
+                                 memory=BotMemoryPolicy(read=False, write=True)))
         _write_bot_user(app, "coder", "# User — bot tự ghi\n- hidden habit\n")
         room = app.create(bots=["coder"])["id"]
         app.turn(room, "hi")
@@ -967,83 +966,5 @@ def test_failed_bot_turn_keeps_user_row_with_error_marker(tmp_path: Path) -> Non
         blocks = _delta_prompts(llm, since)
         assert len(blocks) == 1
         assert "@coder go" in _room_history_section(blocks[-1])
-    finally:
-        app.shutdown()
-
-
-def test_flush_dedupe_proposes_team_candidate(tmp_path: Path) -> None:
-    import asyncio
-    import json as _json
-    from datetime import datetime, timezone
-
-    from thyca.memory.candidates import CandidateQueue
-
-    class DupLLM:
-        async def chat(self, messages, tools=None):
-            return type("R", (), {"content": _json.dumps([{
-                "topic": "mom coffee", "summary": "Mom likes egg coffee",
-            }])})()
-
-    llm = DupLLM()
-    app = _chat(tmp_path, llm)
-    try:
-        app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
-                                 description="Writes code.", persona=""))
-        app._bots.create(BotCard(bot_id="designer", name="designer",
-                                 role="Designer", description="Draws.", persona=""))
-        from thyca.memory.identity import bind_bot_id, reset_bot_id
-
-        token = bind_bot_id("designer")
-        try:
-            app.job_facade().remember(
-                "mom coffee", "Mom likes egg coffee",
-                now=datetime(2026, 9, 1, 12, tzinfo=timezone.utc),
-                importance=5,
-            )
-        finally:
-            reset_bot_id(token)
-        app.job_facade()._refresh_index(datetime(2026, 9, 5, 12, tzinfo=timezone.utc))
-        asyncio.run(app._flush_bot_memory(
-            "coder",
-            [Message(role="user", content="mom likes egg coffee",
-                     ts="2026-10-16T10:00:00Z")],
-            app._current_cfg(),
-        ))
-        pending = CandidateQueue(tmp_path).list_pending()
-        assert len(pending) == 1
-        assert pending[0].bot_id == "designer"
-    finally:
-        app.shutdown()
-
-
-def test_flush_without_written_skips_dedupe(tmp_path: Path, monkeypatch) -> None:
-    import asyncio
-
-    from thyca.memory import dedupe as mem_dedupe
-
-    calls = []
-
-    async def spy(facade, session_ids, reviewer, queue=None):
-        calls.append(list(session_ids))
-        return {"proposed": [], "review_calls": 0}
-
-    monkeypatch.setattr(mem_dedupe, "propose_duplicates", spy)
-    llm = _CaptureLLM()  # replies "ok reply": not JSON, extractor yields [].
-
-    class QuietLLM:
-        async def chat(self, messages, tools=None):
-            return type("R", (), {"content": "[]"})()
-
-    app = _chat(tmp_path, QuietLLM())
-    try:
-        app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
-                                 description="Writes code.", persona=""))
-        asyncio.run(app._flush_bot_memory(
-            "coder",
-            [Message(role="user", content="nothing durable here",
-                     ts="2026-10-16T10:00:00Z")],
-            app._current_cfg(),
-        ))
-        assert calls == []
     finally:
         app.shutdown()

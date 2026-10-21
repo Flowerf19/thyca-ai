@@ -55,7 +55,6 @@ MEMORY_READ_TOOLS = frozenset({"memory_search", "memory_recent", "memory_get", "
 MEMORY_WRITE_TOOLS = frozenset(
     {"memory_remember", "memory_update", "memory_forget", "memory_reinforce"}
 )
-MEMORY_PROPOSE_TOOL = "memory_propose_team"
 
 #: Peer tools available to child bots (sender identity comes from the
 #: in-flight turn context, never from arguments). Exempt from the ``bot_*``
@@ -96,7 +95,7 @@ def filtered_tool_schemas(
 
     Rules (master §2): ``hidden_tools`` wins over ``tools``; child bots
     never see ``bot_*`` admin tools (``bot_send``, the peer-send tool, is
-    the one exception); ``memory{read,write,propose_team}`` and
+    the one exception); ``memory{read,write}`` and
     ``bash: deny`` drop their tool families.
 
     Fail-closed for non-system bots: ``tools`` *is* the allowlist, so an
@@ -128,8 +127,6 @@ def filtered_tool_schemas(
         keep -= MEMORY_READ_TOOLS
     if not card.memory.write:
         keep -= MEMORY_WRITE_TOOLS
-    if not card.memory.propose_team:
-        keep.discard(MEMORY_PROPOSE_TOOL)
     if card.bash == "deny":
         keep.discard("bash")
     if not card.system:

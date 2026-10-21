@@ -402,29 +402,6 @@ export function summarizeUnread(seen, summary, messages) {
   return { unread: stale, count: 0, fresh: false };
 }
 
-/* Memory candidates (GET /api/memory/candidates contract): pending items for
-   the "Chờ cho cả đội nhớ" tab. Unknown shape → [] (tab stays hidden). */
-export function normalizeCandidates(payload) {
-  const list = Array.isArray(payload) ? payload : payload?.candidates;
-  if (!Array.isArray(list)) return [];
-  return list
-    .filter((item) => item && typeof item === "object" && item.id != null)
-    .map((item) => ({
-      id: String(item.id),
-      botId: typeof item.bot_id === "string" ? item.bot_id : "",
-      sessionId: typeof item.session_id === "string" ? item.session_id : "",
-      title: typeof item.title === "string" ? item.title : "",
-      createdAt: typeof item.created_at === "string" ? item.created_at : "",
-      text: typeof item.text === "string" ? item.text : (typeof item.summary === "string" ? item.summary : ""),
-      status: typeof item.status === "string" ? item.status : "pending",
-      decidedBy: typeof item.decided_by === "string" ? item.decided_by : "",
-    }));
-}
-
-export function pendingCandidates(candidates) {
-  return normalizeCandidates(candidates).filter((item) => item.status === "pending");
-}
-
 /* Ownership-guarded sequencing for multi-await navigations (rapid-switch
    race fix). Runs each async stage in order, re-checking `guard()` before
    the first stage and after every await; returns false on the first failed

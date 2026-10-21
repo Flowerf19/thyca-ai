@@ -19,31 +19,25 @@ def test_should_idle_sweep() -> None:
 
 def test_parse_extraction_drops_invalid_items() -> None:
     items = jobs.parse_extraction(
-        '[{"topic": "t", "summary": "s", "importance": 9, "bots": ["coder"], '
-        '"team_proposal": true}, {"topic": "", "summary": "x"}, "nope"]'
+        '[{"topic": "t", "summary": "s", "importance": 9, "bots": ["coder"]}, '
+        '{"topic": "", "summary": "x"}, "nope"]'
     )
     assert len(items) == 1
     assert items[0].importance == 3
     assert items[0].bots == ("coder",)
-    assert items[0].team_proposal is True
     assert jobs.parse_extraction("not json") == []
     assert jobs.parse_extraction('{"topic": "t"}') == []
 
 
-def test_apply_extracted_writes_private_and_proposes(tmp_path: Path) -> None:
-    import json
-
+def test_apply_extracted_writes_private(tmp_path: Path) -> None:
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     out = jobs.apply_extracted(
         facade,
         [jobs.ExtractedMemory(topic="gift", summary="egg coffee",
-                              bots=("coder",), team_proposal=True)],
+                              bots=("coder",))],
     )
     assert len(out["written"]) == 1
-    assert len(out["proposed"]) == 1
-    stored = json.loads((tmp_path / "memory_candidates.json").read_text(encoding="utf-8"))
-    assert stored[0]["bot_id"] == "coder"
-    assert stored[0]["status"] == "pending"
+    assert "proposed" not in out
     # Written private, never team-direct (read the heading: today is unindexed).
     sid = out["written"][0]
     day = sid.split("#")[0]

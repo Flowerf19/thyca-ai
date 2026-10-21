@@ -96,44 +96,6 @@ def test_contract_session_bots_add_remove(tmp_path: Path) -> None:
         app.shutdown()
 
 
-def test_contract_memory_candidates(tmp_path: Path) -> None:
-    from thyca.memory.candidates import CandidateQueue
-
-    app = _chat(tmp_path)
-    httpd = _serve(app, tmp_path)
-    try:
-        empty = _get(httpd, "/api/memory/candidates")
-        assert empty == {"bot_id": None, "candidates": []}
-        facade = app.job_facade()
-        sid = facade.remember("gift", "egg coffee")
-        cand = CandidateQueue(tmp_path).propose("coder", sid)
-        listed = _get(httpd, "/api/memory/candidates")
-        assert listed["bot_id"] is None
-        assert len(listed["candidates"]) == 1
-        assert listed["candidates"][0]["bot_id"] == "coder"
-        # Review UI gets the actual entry preview, not an opaque id.
-        assert listed["candidates"][0]["title"] == "gift"
-        assert "egg coffee" in listed["candidates"][0]["text"]
-        decided = _post(httpd, f"/api/memory/candidates/{cand.id}/approve",
-                        {"decided_by": "user"})
-        assert decided["status"] == "approved"
-        # Promoted with a stable id (today's file is unindexed: read the heading).
-        # The day comes from the returned session id itself — the facade
-        # files by *its* timezone's day, which need not equal the UTC date.
-        from thyca.memory.heading import parse_heading
-
-        day = sid.split("#")[0]
-        owners = None
-        for line in (tmp_path / "memory" / f"{day}.md").read_text(encoding="utf-8").splitlines():
-            meta = parse_heading(line)
-            if meta is not None and meta.entry_id == sid.split("#")[1]:
-                owners = meta.bots
-        assert owners == ("team",)
-    finally:
-        httpd.shutdown()
-        app.shutdown()
-
-
 def test_contract_message_meta_keys(tmp_path: Path) -> None:
     from thyca.core.protocol import Message
 

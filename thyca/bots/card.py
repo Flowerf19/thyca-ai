@@ -80,7 +80,6 @@ BASELINE_BOT_TOOLS: tuple[str, ...] = (
     "memory_remember",
     "memory_search",
     "memory_get",
-    "memory_propose_team",
     "memory_tasks",
     "compact",
 )
@@ -105,7 +104,6 @@ class BotModel:
 class BotMemoryPolicy:
     read: bool = True
     write: bool = True
-    propose_team: bool = True
 
 
 @dataclass(frozen=True)
@@ -216,7 +214,7 @@ def parse_bot_card(text: str, bot_id: str) -> BotCardDoc:
 
     memory = _parse_memory(data.get("memory"))
     if memory is None and "memory" in data and data.get("memory") is not None:
-        return BotCardDoc(None, ok=False, error="invalid memory (need {read,write,propose_team})")
+        return BotCardDoc(None, ok=False, error="invalid memory (need {read,write})")
 
     schedule = data.get("schedule")
     if schedule is not None and (not isinstance(schedule, str) or not schedule.strip()):
@@ -280,7 +278,6 @@ def render_bot_card(card: BotCard) -> str:
     payload["memory"] = {
         "read": card.memory.read,
         "write": card.memory.write,
-        "propose_team": card.memory.propose_team,
     }
     payload["schedule"] = card.schedule
     if card.system:
@@ -372,7 +369,7 @@ def _parse_memory(raw: object) -> BotMemoryPolicy | None:
     if not isinstance(raw, dict):
         return None
     values = {}
-    for key in ("read", "write", "propose_team"):
+    for key in ("read", "write"):
         value = raw.get(key, True)
         if not isinstance(value, bool):
             return None

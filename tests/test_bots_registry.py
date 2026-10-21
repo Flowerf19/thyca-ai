@@ -24,7 +24,6 @@ bash: ask
 memory:
   read: true
   write: true
-  propose_team: true
 schedule: null
 ---
 
@@ -39,7 +38,7 @@ def test_parse_valid_card() -> None:
     assert doc.card.name == "coder"
     assert doc.card.role == "Coder"
     assert doc.card.bash == "ask"
-    assert doc.card.memory.propose_team is True
+    assert doc.card.memory.write is True
     assert doc.card.persona.strip().startswith("# Coder persona")
 
 

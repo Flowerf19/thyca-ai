@@ -31,7 +31,7 @@ workspace.insertAdjacentHTML('beforeend', `
  <section class="paper-card" id="limits-card" aria-labelledby="limits-title">
   <div class="eyebrow">Giới hạn &amp; thời gian chạy</div>
   <h2 class="card-title" id="limits-title">Nhịp làm việc của đội</h2>
-  <p class="card-copy">Các mức trần áp cho mọi bot: vòng agent, nhớ nóng và ngữ cảnh gửi lên model. Provider, model và API key chỉnh ở trang riêng.</p>
+  <p class="card-copy">Các mức trần áp cho mọi bot: vòng agent, nhớ nóng và ngữ cảnh gửi lên model. Provider, model mặc định và API key chỉnh ở trang riêng; model riêng của từng bot chỉnh ở trang Hồ sơ, mục của bot đó.</p>
   <form id="config-form" novalidate>
    <div id="config-fields"><p class="empty-note">Đang tải cấu hình…</p></div>
    <div class="form-footer">

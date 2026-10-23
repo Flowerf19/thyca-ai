@@ -40,9 +40,11 @@ SHELL_APP_JS = SHARE / "shell-app.js"
 CHAT_JS = CHAT_DIR / "js" / "chat.js"
 APP_JS = CHAT_DIR / "js" / "app.js"
 SETTINGS_JS = UI / "settings" / "js" / "settings.js"
+PROVIDER_JS = UI / "provider" / "js" / "provider.js"
 MEMORIES_JS = UI / "memories" / "js" / "memories.js"
 DASHBOARD_JS = UI / "dashboard" / "js" / "dashboard.js"
 TRACE_JS = UI / "trace" / "js" / "trace.js"
+PROFILE_JS = UI / "profile" / "js" / "profile.js"
 
 BASE_CSS = SHARE / "base.css"
 SIDEBAR_CSS = SHARE / "sidebar.css"
@@ -445,9 +447,11 @@ _BUNDLES = {
     "chat": (UTIL_JS, DATA_JS, CHAT_DATA_JS, AVATARS_JS, IDLE_JS, SIDEBAR_JS, STUDIO_JS, SHELL_APP_JS, CHAT_JS),
     "app": (UTIL_JS, DATA_JS, CHAT_DATA_JS, AVATARS_JS, IDLE_JS, SIDEBAR_JS, STUDIO_JS, SHELL_APP_JS, CHAT_JS, APP_JS),
     "settings": (UTIL_JS, DATA_JS, SHELL_JS, AVATARS_JS, IDLE_JS, SIDEBAR_JS, STUDIO_JS, SHELL_APP_JS, SETTINGS_JS),
+    "provider": (UTIL_JS, DATA_JS, SHELL_JS, AVATARS_JS, IDLE_JS, SIDEBAR_JS, STUDIO_JS, SHELL_APP_JS, PROVIDER_JS),
     "memories": (UTIL_JS, DATA_JS, SHELL_JS, AVATARS_JS, IDLE_JS, SIDEBAR_JS, STUDIO_JS, SHELL_APP_JS, MEMORIES_JS),
     "dashboard": (UTIL_JS, DATA_JS, SHELL_JS, AVATARS_JS, IDLE_JS, SIDEBAR_JS, STUDIO_JS, SHELL_APP_JS, DASHBOARD_JS),
     "trace": (UTIL_JS, DATA_JS, SHELL_JS, AVATARS_JS, IDLE_JS, SIDEBAR_JS, STUDIO_JS, SHELL_APP_JS, TRACE_JS),
+    "profile": (UTIL_JS, DATA_JS, SHELL_JS, AVATARS_JS, IDLE_JS, SIDEBAR_JS, STUDIO_JS, SHELL_APP_JS, PROFILE_JS),
 }
 
 
@@ -1693,20 +1697,27 @@ def test_load_session_renders_and_drops_stale_answers(node: str) -> None:
 
 def test_select_bot_resolves_dm_get_only(node: str) -> None:
     """selectBot opens the fixed DM via GET /api/bots/<id>/dm — never a POST —
-    then paints title, eyebrow and transcript; failures toast."""
+    refreshes the composer inheritance label via GET settings, then paints
+    title, eyebrow and transcript; failures toast."""
     out = _run(node, _CHAT_SEED + """
         currentSession = ''; selectedBot = 'thyca';
         const calls = installFetch((url, opts) => {
             if (url === '/api/bots/thyca/dm') return { id: 'dm9', title: 'Thyca DM', messages: [{ role: 'assistant', content: 'xin chào', ts: 1 }] };
+            if (url === '/api/bots/thyca/settings')
+                return { bot_id: 'thyca', model: { id: 'default', thinking: null },
+                         effective: { model: 'm1', provider: 'default', thinking: 'low' } };
+            if (url === '/api/config') return { values: { defaultModel: 'm1', models: {} }, schema: { sections: [] } };
             if (url === '/api/sessions') return { sessions: [] };
             return {};
         });
+        await loadConfig();
         await selectBot('thyca');
         const ok = {
             session: currentSession, sel: selectedBot,
             title: $('#chat-title').textContent, eyebrow: $('#session-eyebrow').textContent,
             transcript: $('#message-list').innerHTML.includes('xin chào'),
-            methods: calls.map(c => (c[1] && c[1].method) || 'GET'),
+            urls: calls.map(c => c[0]),
+            inherit: $('#composer-model').options[0].textContent,
         };
         globalThis.fetch = async () => { throw new Error('mất kết nối'); };
         await selectBot('coder');
@@ -1716,7 +1727,8 @@ def test_select_bot_resolves_dm_get_only(node: str) -> None:
     assert ok["session"] == "dm9" and ok["sel"] == "thyca"
     assert ok["title"] == "Thyca DM" and ok["eyebrow"] == "Sổ trò chuyện · Thyca"
     assert ok["transcript"] is True
-    assert ok["methods"] == ["GET"]                       # find-or-create lives server-side
+    assert ok["urls"] == ["/api/config", "/api/bots/thyca/dm", "/api/bots/thyca/settings"]   # options + DM find-or-create + inherit label, GETs only
+    assert "m1" in ok["inherit"]
     assert "Không mở được phiên với Coder" in out["error"]
 
 

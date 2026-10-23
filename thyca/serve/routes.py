@@ -23,6 +23,7 @@ from thyca.bots.card import NAME_MAX, _NAME_RE
 from thyca.bots.registry import BotRegistry, RegistryError
 from thyca.bots.timeline import TraceExecutionError
 from thyca.serve import config_api
+from thyca.serve.bot_settings_api import bot_settings_get, bot_settings_post
 from thyca.serve.errors import _with_json
 from thyca.serve.memory import memory_endpoint
 from thyca.serve.sessions_api import (
@@ -66,6 +67,7 @@ _TRACE_RE = re.compile(r"^/api/traces$")
 _TRACE_STATS_RE = re.compile(r"^/api/traces/stats$")
 _TRACE_DETAIL_RE = re.compile(rf"^/api/traces/({SESSION_ID_PATTERN})/(\d+)$")
 _BOT_DM_RE = re.compile(r"^/api/bots/([a-z0-9]+(?:-[a-z0-9]+)*)/dm$")
+_BOT_SETTINGS_RE = re.compile(r"^/api/bots/([a-z0-9]+(?:-[a-z0-9]+)*)/settings$")
 _BOT_OPERATIONS_RE = re.compile(
     rf"^/api/bots/([a-z0-9]+(?:-[a-z0-9]+)*)/rooms/({SESSION_ID_PATTERN})/operations$"
 )
@@ -132,6 +134,10 @@ def make_handler(
             if match:
                 bot_dm(self, chat, match.group(1))
                 return
+            match = _BOT_SETTINGS_RE.fullmatch(path)
+            if match:
+                bot_settings_get(self, chat, match.group(1))
+                return
             if _TRACE_STATS_RE.fullmatch(path):
                 self._trace_stats(parsed.query)
                 return
@@ -187,6 +193,10 @@ def make_handler(
             match = _SESSION_BOTS_RE.fullmatch(path)
             if match:
                 session_bots(self, chat, match.group(1))
+                return
+            match = _BOT_SETTINGS_RE.fullmatch(path)
+            if match:
+                bot_settings_post(self, chat, match.group(1))
                 return
             match = _TURN_RE.fullmatch(path)
             if match:

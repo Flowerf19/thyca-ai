@@ -119,7 +119,37 @@ Tra bộ mức trong tài liệu/API reference chính thức của model — kh�
 Model không hỗ trợ `reasoning_effort` (ví dụ gpt-4o) thì Thyca tự thử lại một lần
 không kèm tham số này khi provider trả 400 nêu đúng tham số đó, không cần xóa tay.
 
-## 7. Các mục khác (đụng tới thì đọc)
+## 7. Per-bot models (Profile page, one bot at a time)
+
+Each bot has a `bots/<id>/settings.json` file — `{"model": {"id", "thinking"}}`:
+
+- `id`: the model this bot uses, or `"default"` to follow the shared
+  `defaultModel`. It must be a model declared in `models` (or exactly
+  `defaultModel`).
+- `thinking`: this bot's reasoning effort, or `null` to follow the model /
+  provider default. It must belong to the effective model's own set
+  (the model's `reasoningEfforts`, else the shared `low/high/max`).
+
+Profile page → with no `?bot`, you see the shared canonical files
+(USER.md / SOUL.md / IDENTITY.md — the common profile). Click a bot in the
+sidebar (the page stays put, it never jumps to Chat): the tab shows only
+that bot — its identity summary and read-only TWIN.md persona, followed
+by a separate model/thinking card. Change model/effort, press Save; the provider
+line is read-only and derived from the chosen model. The “Hồ sơ chung”
+button returns to the shared files. There is no all-bot picker inside the
+content; selection lives in the sidebar (`?bot`). `?bot=ghost` stays on an
+honest unknown-bot view instead of showing another bot.
+`TWIN.md` keeps identity/persona/policy
+and carries no `model` key in canonical writes (old bots read both
+forms, new writes split them; reads never migrate old files).
+
+Per-turn precedence: model/effort you pick in the composer (that turn
+only) → the bot's saved settings → the shared default. Picking values
+in the composer never rewrites the saved file. A bot reached via
+`@mention` or delegated by another bot uses its own saved settings
+(unless the delegating turn overrides effort explicitly).
+
+## 8. Các mục khác (đụng tới thì đọc)
 
 - **Giới hạn chung** (`limits`): `loopMax` 1–200 (số vòng agent mỗi lượt),
   `hotTailKB` 1–64 (nhớ nóng đưa vào prompt), `contextTokens` 1000–2000000
@@ -134,7 +164,7 @@ không kèm tham số này khi provider trả 400 nêu đúng tham số đó, kh
   (`{command, args, env}`), tên chỉ gồm chữ/số/`_`/`-`. Lỗi MCP hiện ở log
   khởi động, không chặn chat.
 
-## 8. Lỗi thường gặp và xem log ở đâu
+## 9. Lỗi thường gặp và xem log ở đâu
 
 Phân biệt 2 nút: **Kiểm tra** chỉ thử key + lấy danh sách model;
 **Test API** gọi thử một câu thật — Test OK mới chắc chắn dùng được.
@@ -153,7 +183,7 @@ Xem chi tiết lỗi ở 3 nơi (message ở cả 3 là một, không chứa key
 3. File `~/.thyca/serve.log`: mỗi lượt lỗi một dòng `turn failed ...`,
    mỗi lần test một dòng `provider test ...`.
 
-## 9. Quy tắc an toàn (nhớ kỹ)
+## 10. Quy tắc an toàn (nhớ kỹ)
 
 1. Không in/dán API key ra chat, log, commit, hay file khác ngoài `auth.json`.
 2. Giữ mode 0600 cho `config.json` và `auth.json`, 0700 cho `~/.thyca`.

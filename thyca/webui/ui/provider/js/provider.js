@@ -579,6 +579,7 @@ async function boot() {
   resetModelForm();
   try {
     await bootShell();                                          // API: GET /api/bots + GET /api/sessions -> shared sidebar
+    labelProfileLinks();
   } catch (err) {
     setStatus('Không kết nối được máy chủ Thyca: ' + err.message, 'error');
   }
@@ -590,3 +591,27 @@ async function boot() {
 }
 
 boot();
+
+/* Sidebar on this page navigates to the bot's own Profile dossier
+   (?bot=<id>) — per-bot model settings live there, not here. Unknown ids
+   are preserved so Profile can show its honest unknown-bot view. */
+function selectBot(id) {
+  if (!id || !getBot(id)) return;
+  location.href = '../profile/index.html?bot=' + encodeURIComponent(id);
+}
+function loadSession(id, title, botId) { if (botId) selectBot(botId); }
+
+function labelProfileLinks() {
+  for (const button of $$('#team-bot-list [data-action="select"]')) {
+    const bot = getBot(button.dataset.botId);
+    if (bot) button.setAttribute('aria-label', `Hồ sơ của ${bot.name}`);
+  }
+}
+new MutationObserver(labelProfileLinks)
+  .observe($('#team-bot-list'), { childList: true, subtree: true });
+
+/* ?bot=<id> is owned by Profile: hand it over instead of staying scoped. */
+(function () {
+  const wanted = new URLSearchParams(location.search).get('bot');
+  if (wanted) location.replace('../profile/index.html?bot=' + encodeURIComponent(wanted));
+})();

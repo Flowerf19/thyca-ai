@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
-from thyca.config import REASONING_EFFORTS, Config
+from thyca.config import REASONING_EFFORTS, Config, ProviderCfg
 
 if TYPE_CHECKING:
     from thyca.bots.card import BotCard
@@ -69,6 +69,32 @@ def resolve_bot_cfg(
         else card_model if card_model != "default" else cfg.defaultModel
     )
     return replace(cfg, defaultModel=selected)
+
+
+def resolve_bot_provider(
+    cfg: Config, card: BotCard, *, effort_override: str | None = None
+) -> ProviderCfg:
+    """Resolved connection for one bot turn; the model is already fixed in ``cfg``.
+
+    Use with :func:`resolve_bot_cfg` (model first, then this): the model
+    comes from the operation override, the bot's saved settings, or the
+    global default; the effort comes from the explicit operation override,
+    the bot's saved thinking, or the model/provider default. Membership is
+    validated against the effective model's own set (or the global set),
+    raising :class:`InvalidTurnOption` like an explicit bad effort.
+
+    Never mutates stored or global models/prices — only the returned
+    connection carries the resolved effort."""
+    thinking = card.model.thinking if card.model is not None else None
+    effort = effort_override if effort_override is not None else thinking
+    if effort is not None:
+        overlay_turn_cfg(cfg, None, effort)
+    provider = cfg.effective_provider()
+    if effort is not None:
+        registered = cfg.models.get(cfg.defaultModel)
+        own_set = registered.reasoningEfforts if registered is not None else ()
+        provider = replace(provider, reasoningEffort=effort, reasoningEfforts=own_set)
+    return provider
 
 
 def overlay_turn_cfg(cfg: Config, model: str | None, effort: str | None) -> Config:

@@ -60,6 +60,7 @@ from thyca.app.turn_options import (
     _clean_turn_text,
     overlay_turn_cfg,
     resolve_bot_cfg,
+    resolve_bot_provider,
 )
 from thyca.app.webui_channel import WebUIChannelAdapter
 from thyca.app.workspace_turns import WorkspaceTurnService
@@ -305,6 +306,18 @@ class ChatApp:
                 ]
         return cards
 
+    def bot_settings(self, bot_id: str) -> dict:
+        """One bot's model settings + resolved effective connection."""
+        from thyca.app.bot_settings import get_bot_settings
+
+        return get_bot_settings(self._bots, self._current_cfg(), bot_id)
+
+    def update_bot_settings(self, bot_id: str, payload: dict) -> dict:
+        """Full-replacement update of one bot's model settings."""
+        from thyca.app.bot_settings import update_bot_settings as _update
+
+        return _update(self._bots, self._current_cfg(), bot_id, payload)
+
     def bot_dm(self, bot_id: str) -> dict:
         """The bot's fixed DM session (CBE-5): find-or-create, marked.
 
@@ -371,7 +384,11 @@ class ChatApp:
         matters before compacting itself via the ``compact`` tool)."""
         from thyca.memory import jobs as mem_jobs
 
-        provider = turn_cfg.effective_provider()
+        # Bot-specific extraction requires the bot's valid card: a missing
+        # or invalid card (or settings) must surface through the caller's
+        # best-effort handler, never silently fall back to global config.
+        card = self._bots.require(bot_id)
+        provider = resolve_bot_provider(turn_cfg, card)
         connect = self._injected_connect or ConnectFactory.create(
             provider.api, provider
         )
@@ -837,7 +854,10 @@ class ChatApp:
         *,
         bot_id: str,
     ) -> dict:
-        provider = turn_cfg.effective_provider()
+        # Compaction runs as this bot: require its valid card (model +
+        # thinking) instead of silently falling back to global config.
+        card = self._bots.require(bot_id)
+        provider = resolve_bot_provider(turn_cfg, card)
         connect = self._injected_connect or ConnectFactory.create(
             provider.api, provider
         )
@@ -1079,7 +1099,6 @@ class ChatApp:
         turn_cfg = resolve_bot_cfg(
             operation_cfg, card, model_override=model_override
         )
-        turn_cfg = overlay_turn_cfg(turn_cfg, None, effort)
         sessions = SessionManager(
             limits=turn_cfg.effective_limits(),
             timezone_name=turn_cfg.timeline.timezone,
@@ -1088,13 +1107,7 @@ class ChatApp:
         sessions.load(session_id)
         if retry and not sessions.truncate_to_last_user():
             raise InvalidTurnOption("no user")
-        provider = turn_cfg.effective_provider()
-        if effort is not None:
-            selected = turn_cfg.models.get(turn_cfg.defaultModel)
-            own_set = selected.reasoningEfforts if selected is not None else ()
-            provider = replace(
-                provider, reasoningEffort=effort, reasoningEfforts=own_set
-            )
+        provider = resolve_bot_provider(turn_cfg, card, effort_override=effort)
         connect = self._injected_connect or ConnectFactory.create(
             provider.api, provider
         )
@@ -1731,9 +1744,8 @@ class ChatApp:
         if model is not None:
             base = overlay_turn_cfg(base, model, None)
         cfg = resolve_bot_cfg(base, card, model_override=model)
-        cfg = overlay_turn_cfg(cfg, None, effort)
-        provider = cfg.effective_provider()
-        effective_effort = effort if effort is not None else provider.reasoningEffort
+        provider = resolve_bot_provider(cfg, card, effort_override=effort)
+        effective_effort = provider.reasoningEffort
         canonical = self._workspace_session(room, bot_id, cfg)
         messages = list(canonical.messages) if canonical is not None else []
         history = []

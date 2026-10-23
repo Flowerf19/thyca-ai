@@ -31,16 +31,28 @@ function renderTranscript(detail) {
   return nodes.join('');
 }
 
-function updateComposer() { const b = getBot(selectedBot) || bots[0]; if (!b) return; document.documentElement.style.setProperty('--active-ink', b.palette.ink); $('#composer-label-text').textContent = 'Gửi ' + b.name + ','; $('#message').placeholder = 'Viết vài dòng cho ' + b.name + '…'; }
+function updateComposer() {
+  const b = getBot(selectedBot) || bots[0];
+  if (!b) return;
+  document.documentElement.style.setProperty('--active-ink', b.palette.ink);
+  $('#composer-label-text').textContent = 'Gửi ' + b.name + ',';
+  $('#message').placeholder = 'Viết vài dòng cho ' + b.name + '…';
+  // Reset per-turn overrides only on an actual bot/room change — plain
+  // appearance repaints (color, roster sync) keep explicitly chosen values.
+  const key = selectedBot + '|' + currentSession;
+  if (key !== composerScopeKey) { composerScopeKey = key; resetComposerOverrides(); }
+}
 function saveHistory() { if (currentSession && !runs.has(currentSession)) histories.set(currentSession, $('#message-list').innerHTML); }
 
 async function loadSession(id, title, botId) {
   stopLab(); setGroupActivity(null); saveHistory();
   currentSession = id; if (botId) selectedBot = botId;
+  const nav = nextChatNav();
+  updateComposer();
   $('#chat-title').textContent = title || '…';
   try {
     const detail = await getJson(`/api/sessions/${encodeURIComponent(id)}`);
-    if (currentSession !== id) return;               // user switched meanwhile
+    if (nav !== chatNavCurrent() || currentSession !== id) return;   // user switched meanwhile
     $('#chat-title').textContent = detail.title || title || 'Chưa đặt tên';
     const group = detail.kind === 'group';
     $('#session-eyebrow').textContent = group ? 'Hội thoại chung' : 'Sổ trò chuyện · ' + ((getBot(detail.dm || selectedBot) || {}).name || 'Thyca');
@@ -48,24 +60,34 @@ async function loadSession(id, title, botId) {
     $('#message-list').innerHTML = renderTranscript(detail);
     if (detail.running) followRunningTurn(id);        // API: GET /api/sessions/<id>/turn/stream replay
   } catch (err) {
+    if (nav !== chatNavCurrent() || currentSession !== id) return;
     $('#message-list').innerHTML = `<article class="conversation-empty"><h2>Không tải được cuộc trò chuyện</h2><p>${escapeHTML(err.message)}</p></article>`;
   }
-  updateComposer(); bots.forEach(updateCard); closeMobile(); busy(runs.has(id)); toBottom(true);
+  updateComposer(); await refreshComposerInherit(selectedBot, nav);
+  if (nav !== chatNavCurrent()) return;
+  bots.forEach(updateCard); closeMobile(); busy(runs.has(id)); toBottom(true);
 }
 
 async function selectBot(id) {
   const b = getBot(id); if (!b) return;
   openBot(id, true);
   if (selectedBot === id && currentSession) return;
+  const nav = nextChatNav();
   try {                                          // API: GET /api/bots/<id>/dm — fixed DM, find-or-create
     const detail = await getJson(`/api/bots/${encodeURIComponent(id)}/dm`);
+    if (nav !== chatNavCurrent()) return;        // user switched meanwhile
     saveHistory(); currentSession = detail.id; selectedBot = id;
+    updateComposer(); await refreshComposerInherit(id, nav);
+    if (nav !== chatNavCurrent()) return;
     $('#chat-title').textContent = detail.title || b.name;
     $('#session-eyebrow').textContent = 'Sổ trò chuyện · ' + b.name;
     $('#message-list').innerHTML = renderTranscript(detail);
     if (detail.running) followRunningTurn(detail.id);   // API: GET turn/stream replay — rejoin in-flight turn after reload
-    updateComposer(); bots.forEach(updateCard); busy(runs.has(detail.id)); toBottom(true);
-  } catch (err) { toast('Không mở được phiên với ' + b.name + ': ' + err.message); }
+    bots.forEach(updateCard); busy(runs.has(detail.id)); toBottom(true);
+  } catch (err) {
+    if (nav !== chatNavCurrent()) return;
+    toast('Không mở được phiên với ' + b.name + ': ' + err.message);
+  }
 }
 
 function isNearBottom() { const e = $('#conversation-scroll'); return e.scrollHeight - e.scrollTop - e.clientHeight < 100; }

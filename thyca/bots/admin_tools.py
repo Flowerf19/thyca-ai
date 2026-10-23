@@ -842,7 +842,10 @@ def _edit_card_spec(deps: AdminDeps) -> ToolSpec:
         try:
             card = deps.bots.require(bot_id)
             updated = apply_card_edit(card, patch)
-            deps.bots.update_card(bot_id, updated)
+            deps.bots.update_card(
+                bot_id, updated,
+                model_changed=("model" in patch or "thinking" in patch),
+            )
         except Exception as exc:
             return f"bot_edit_card failed: {exc}"
         return json.dumps({"ok": True, "bot_id": bot_id}, ensure_ascii=False)

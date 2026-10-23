@@ -622,7 +622,9 @@ class BotRuntime:
             )
             raise
 
-        provider = turn_cfg.effective_provider()
+        from thyca.app.turn_options import resolve_bot_provider
+
+        provider = resolve_bot_provider(turn_cfg, card, effort_override=effort)
         model = turn_cfg.provider.model
         # Local import: thyca.app.toolchain pulls thyca.app.__init__
         # (ChatApp), which imports this module — top-level would cycle.

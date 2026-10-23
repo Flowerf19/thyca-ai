@@ -8,6 +8,11 @@
      markdown by ../share/markdown.js — no sample data.
      API: GET  /api/memory/stats      → stats.files [{name, content}] (global scope)
           POST /api/memory/canonical  {name, content} → {ok:true} | 400 invalid | 503 write failed
+          GET  /api/config             → {schema, values} (model catalog for the bot form)
+          GET  /api/bots/<id>/settings -> {bot_id, model, effective}
+          POST /api/bots/<id>/settings <- {model:{id, thinking}} full replacement
+     ?bot=<id> scopes one bot's dossier + model form; no ?bot= shows the
+     shared canonical files. A sidebar bot card selects that bot's tab.
      Deep link: #<file name> selects a file; switching rewrites the hash with
      history.replaceState. Editing always writes the whole file back — no
      per-section endpoint exists.

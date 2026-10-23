@@ -1,10 +1,16 @@
+// Retained provider controller; declarations stay private to this closure.
+ThycaRouter.register('provider', { title: 'Provider', stylesheet: '/ui/provider/providercss/provider.css', mount(ctx) {
+  const root = ctx.root;
+  const $ = (selector, base = root) => selector === '.workspace' ? root : base.querySelector(selector);
+  const $$ = (selector, base = root) => [...base.querySelectorAll(selector)];
+  let selectedBot = '';
 // Provider & model screen — wired to the real backend, no mock data.
 // The shared shell (header/sidebar/dialogs) is emitted by emitShell() in
 // index.html before avatars/sidebar/studio bind; this script fills
 // .workspace, then calls bootShell() for the live roster.
 // API: GET /api/config, POST /api/config,
 //      POST /api/onboarding/verify, POST /api/providers/test.
-'use strict';
+
 
 /* avatars.js setState() reaches `runs`/`cancelTurn` on error/offline state
    changes (e.g. the studio's error preview). This screen owns no turn
@@ -30,7 +36,7 @@ const state = {
 };
 
 const workspace = $('.workspace');
-$('.notebook-shell').setAttribute('aria-label', 'Thyca — provider & model');
+document.querySelector('.notebook-shell').setAttribute('aria-label', 'Thyca — provider & model');
 workspace.setAttribute('aria-label', 'Nội dung provider');
 
 /* .page-nav sits outside .page-scroll so the title strip stays fixed while
@@ -573,12 +579,25 @@ function bind() {
   $('#cfg-default-model').onchange = e => { state.values.defaultModel = e.target.value; saveConfig(`Model mặc định: "${e.target.value}".`); };
 }
 
+function selectBot(id) {
+  if (id && getBot(id)) ctx.navigate('profile', { search: '?bot=' + encodeURIComponent(id) });
+}
+function loadSession(id, title, botId) { if (botId) selectBot(botId); }
+function labelProfileLinks() {
+  if (!ctx.isActive()) return;
+  for (const button of [...ctx.sidebar.querySelectorAll('[data-action="select"]')]) {
+    const bot = getBot(button.dataset.botId);
+    if (bot) button.setAttribute('aria-label', `Hồ sơ của ${bot.name}`);
+  }
+}
+new MutationObserver(labelProfileLinks).observe(ctx.sidebar, { childList: true, subtree: true });
+
 async function boot() {
   bind();
   resetProviderForm();
   resetModelForm();
   try {
-    await bootShell();                                          // API: GET /api/bots + GET /api/sessions -> shared sidebar
+    await ctx.shellReady;                                          // API: GET /api/bots + GET /api/sessions -> shared sidebar
     labelProfileLinks();
   } catch (err) {
     setStatus('Không kết nối được máy chủ Thyca: ' + err.message, 'error');
@@ -589,29 +608,6 @@ async function boot() {
     setStatus('Không tải được cấu hình: ' + err.message, 'error');
   }
 }
-
-boot();
-
-/* Sidebar on this page navigates to the bot's own Profile dossier
-   (?bot=<id>) — per-bot model settings live there, not here. Unknown ids
-   are preserved so Profile can show its honest unknown-bot view. */
-function selectBot(id) {
-  if (!id || !getBot(id)) return;
-  location.href = '../profile/index.html?bot=' + encodeURIComponent(id);
-}
-function loadSession(id, title, botId) { if (botId) selectBot(botId); }
-
-function labelProfileLinks() {
-  for (const button of $$('#team-bot-list [data-action="select"]')) {
-    const bot = getBot(button.dataset.botId);
-    if (bot) button.setAttribute('aria-label', `Hồ sơ của ${bot.name}`);
-  }
-}
-new MutationObserver(labelProfileLinks)
-  .observe($('#team-bot-list'), { childList: true, subtree: true });
-
-/* ?bot=<id> is owned by Profile: hand it over instead of staying scoped. */
-(function () {
-  const wanted = new URLSearchParams(location.search).get('bot');
-  if (wanted) location.replace('../profile/index.html?bot=' + encodeURIComponent(wanted));
-})();
+  const ready = boot();
+  return { ready, selectBot, loadSession, sidebarLabel(_id, name) { return `Hồ sơ của ${name}`; } };
+} });

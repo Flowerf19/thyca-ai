@@ -45,6 +45,7 @@ function updateComposer() {
 function saveHistory() { if (currentSession && !runs.has(currentSession)) histories.set(currentSession, $('#message-list').innerHTML); }
 
 async function loadSession(id, title, botId) {
+  if (window.ThycaRouter?.currentPage() === 'chat') ThycaRouter.updateCurrent({ search: '?s=' + encodeURIComponent(id), hash: '' });
   stopLab(); setGroupActivity(null); saveHistory();
   currentSession = id; if (botId) selectedBot = botId;
   const nav = nextChatNav();
@@ -70,6 +71,7 @@ async function loadSession(id, title, botId) {
 
 async function selectBot(id) {
   const b = getBot(id); if (!b) return;
+  if (window.ThycaRouter?.currentPage() === 'chat') ThycaRouter.updateCurrent({ search: '?bot=' + encodeURIComponent(id), hash: '' });
   openBot(id, true);
   if (selectedBot === id && currentSession) return;
   const nav = nextChatNav();

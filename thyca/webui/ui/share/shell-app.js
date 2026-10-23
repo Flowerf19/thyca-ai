@@ -2,14 +2,19 @@
 // motion toggle, blink/idle timers, roster sync. Load AFTER sidebar.js and
 // studio.js (which bind DOM at load), BEFORE the page's own script.
 //
-// Pages that own live turns (chat) override selectBot/loadSession with real
-// implementations; the defaults below route every sidebar action back to the
-// chat page, which reads ?bot=<id> / ?s=<session> from the URL.
+// The shared sidebar dispatches to the active page controller. The defaults
+// below are only compatibility fallbacks for harnesses without the router.
 'use strict';
 
-/* Default sidebar navigation — open the target inside the chat page. */
-function selectBot(id) { location.href = '../chat/index.html?bot=' + encodeURIComponent(id); }
-function loadSession(id) { location.href = '../chat/index.html?s=' + encodeURIComponent(id); }
+/* The persistent sidebar dispatches to the active screen controller. */
+function selectBot(id) {
+  if (window.ThycaRouter) return ThycaRouter.dispatch('selectBot', id);
+  return false;
+}
+function loadSession(id, title, botId) {
+  if (window.ThycaRouter) return ThycaRouter.dispatch('loadSession', id, title, botId);
+  return false;
+}
 
 function openMobile() { $('#chat-sidebar').inert = false; $('#chat-sidebar').classList.add('mobile-open'); $('#mobile-overlay').hidden = false; $('.menu-button')?.setAttribute('aria-expanded', 'true'); const c = $('#team-shared-create'); if (c) c.focus(); }
 function closeMobile() { const wasOpen = $('#chat-sidebar').classList.contains('mobile-open'); $('#chat-sidebar').classList.remove('mobile-open'); $('#chat-sidebar').inert = matchMedia('(max-width:850px)').matches; $('#mobile-overlay').hidden = true; $('.menu-button')?.setAttribute('aria-expanded', 'false'); if (wasOpen) $('.menu-button')?.focus(); }

@@ -351,7 +351,20 @@ globalThis.window = globalThis;
 globalThis.innerWidth = 1280;
 globalThis.innerHeight = 800;
 globalThis.location = { href: 'http://localhost/ui/chat/index.html', search: '', hash: '' };
-globalThis.history = { replaceState() {}, pushState() {} };
+globalThis.history = { state: null, replaceState(state) { this.state = state; }, pushState(state) { this.state = state; } };
+globalThis.ctx = {
+  get root() { return document.querySelector('.workspace'); },
+  get sidebar() { return document.querySelector('#chat-sidebar'); },
+  get shellReady() { return typeof bootShell === 'function' ? bootShell() : Promise.resolve(); },
+  route: { page: '', search: '', hash: '' },
+  navigate(page, parts = {}) { this.lastNavigation = { page, ...parts }; },
+  updateRoute(parts = {}) { if ('search' in parts) this.route.search = parts.search; if ('hash' in parts) this.route.hash = parts.hash; history.replaceState({ thycaSpa: { ...this.route } }, '', '/'); },
+  highlightBot(id) { selectedBot = id || ''; },
+  renderTeam() { if (typeof renderTeam === 'function') renderTeam(); },
+  isActive() { return true; },
+  onRoute() {},
+};
+globalThis.ThycaRouter = { register(_id, spec) { globalThis.__spaTestController = spec.mount(ctx); }, currentPage() { return 'chat'; }, highlightedBot() { return selectedBot; }, sidebarLabel(_id, name, status) { return `Trò chuyện với ${name} · ${status}`; }, updateCurrent(parts) { ctx.updateRoute(parts); }, dispatch(...args) { (globalThis.__spaDispatches ||= []).push(args); } };
 try {
   Object.defineProperty(globalThis, 'navigator', {
     value: { clipboard: { writeText: async (t) => { globalThis.__copied = t; } } },
@@ -455,11 +468,56 @@ _BUNDLES = {
 }
 
 
+def _unit_factory_source(path: Path, source: str) -> str:
+    """Expose a retained factory's unchanged body to legacy helper-level tests.
+
+    Browser integration tests execute the actual registration/factory. This
+    narrow extractor preserves existing unit coverage of page helpers; fail
+    loudly if the production wrapper shape changes unexpectedly.
+    """
+    if path.parent.name != 'js' or path.parent.parent.name not in {'dashboard', 'memories', 'profile', 'provider', 'settings', 'trace'}:
+        return source
+    page = path.parent.parent.name
+    marker = f"ThycaRouter.register('{page}', {{"
+    if source.count(marker) != 1 or source.count('mount(ctx) {') != 1 or not source.rstrip().endswith('} });'):
+        raise AssertionError(f'unrecognized retained factory wrapper: {path}')
+    start = source.index('mount(ctx) {') + len('mount(ctx) {')
+    end = source.rfind('\n} });')
+    body = source[start:end]
+    tail = re.search(r"\n\s*const ready = boot\(\);\n\s*return \{ ready,[\s\S]*?\};\s*$", body)
+    if not tail:
+        raise AssertionError(f'unrecognized retained factory mount tail: {path}')
+    controller_tail = tail.group(0).replace('return { ready,', 'const controller = { ready,', 1)
+    if controller_tail == tail.group(0):
+        raise AssertionError(f'unrecognized retained factory controller tail: {path}')
+    functions = set(re.findall(r"^(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(", body, re.M))
+    variables = set(re.findall(r"^(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?:=|,)", body, re.M))
+    mutable = set(re.findall(r"^let\s+([A-Za-z_$][\w$]*)\b", body, re.M))
+    for kind, declaration in re.findall(r"^(const|let|var)\s+([^;\n]+);", body, re.M):
+        names = re.findall(r"(?:^|,)\s*([A-Za-z_$][\w$]*)\s*=", declaration)
+        variables.update(names)
+        if kind == 'let': mutable.update(names)
+    excluded = {'ctx', 'root', '$', '$$', 'selectedBot'}
+    functions.difference_update(excluded); variables.difference_update(excluded)
+    function_exports = ', '.join(f'{name}: {name}' for name in sorted(functions - {'boot'}))
+    variable_exports = '\n'.join(
+        f"Object.defineProperty(globalThis, {name!r}, {{ configurable: true, get: () => {name}"
+        + (f", set: value => {name} = value" if name in mutable else '')
+        + " });" for name in sorted(variables)
+    )
+    boot_export = "globalThis.boot = (...args) => { ctx.route.search = location.search || ''; ctx.route.hash = location.hash || ''; return boot(...args); };"
+    return '(function(){\n' + body[:tail.start()] + controller_tail + f'\nglobalThis.__controller = controller;\nglobalThis.__spaUnit = Object.assign(globalThis.__spaUnit || {{}}, {{{function_exports}}});\nObject.assign(globalThis, globalThis.__spaUnit);\n{variable_exports}\n{boot_export}\n}})();\n'
+
+
+
 def _run(node: str, body: str, via: str = "side", emit: str | None = None, timeout: int = 30):
     """Evaluate <body> inside an async main() after the bundle files load."""
     parts = [_PRELUDE]
+    if emit:
+        parts.append(f"ctx.route.page = {json.dumps(emit)};")
     for f in _BUNDLES[via]:
-        parts.append(f"// ===== {f.relative_to(UI)}\n" + f.read_text())
+        source = _unit_factory_source(f, f.read_text())
+        parts.append(f"// ===== {f.relative_to(UI)}\n" + source)
         if emit and f == SHELL_JS:
             parts.append(f"emitShell({json.dumps(emit)});")
     parts.append(_DEFAULTS)
@@ -874,7 +932,7 @@ def test_card_markup_anatomy(node: str) -> None:
     assert "--bot-color:" in html
     assert 'class="bot-select team-bot-item"' in html
     assert 'data-action="select"' in html
-    assert 'aria-label="Trò chuyện với Coder"' in html
+    assert 'aria-label="Trò chuyện với Coder · Đang suy nghĩ"' in html
     assert 'class="seal-avatar' in html
     assert 'class="bot-name session-name"' in html and ">Coder<" in html
     assert 'class="bot-role"' in html and ">Dev<" in html
@@ -1077,10 +1135,11 @@ def test_team_list_click_delegates_card_actions(node: str) -> None:
         const fire = (btn) => list._handlers.click.forEach(h => h({ target: btn, preventDefault() {} }));
         b.open = false;
         fire(sel); fire(col); fire(fav); fire(inf); fire(cap);
-        return { calls, open: b.open, fav: b.favorite, favAria: fav.getAttribute('aria-pressed'), toast: $('#toast').textContent };
+        return { calls, dispatches: globalThis.__spaDispatches || [], open: b.open, fav: b.favorite, favAria: fav.getAttribute('aria-pressed'), toast: $('#toast').textContent };
     """)
-    # 'info' delegates with capabilities omitted -> undefined -> null over JSON
-    assert out["calls"] == [["select", "a"], ["info", "a", None], ["info", "a", True]]
+    # Sidebar selection is routed to the active page controller; info stays shared.
+    assert out["dispatches"] == [["selectBot", "a"]]
+    assert out["calls"] == [["info", "a", None], ["info", "a", True]]
     assert out["open"] is True                            # collapse toggled open
     assert out["fav"] is True and out["favAria"] == "true"
     assert "Alpha" in out["toast"]
@@ -1096,9 +1155,9 @@ def test_group_list_click_loads_session(node: str) -> None:
         globalThis.loadSession = (id, title, bot) => calls.push([id, title, bot]);
         const row = document.createElement('button'); row.className = 'group-row'; row.dataset.group = 'g9';
         $('#group-list')._handlers.click.forEach(h => h({ target: row, preventDefault() {} }));
-        return { calls };
+        return { calls, dispatches: globalThis.__spaDispatches || [] };
     """)
-    assert out["calls"] == [["g9", "Nhóm 9", "coder"]]
+    assert out["dispatches"] == [["loadSession", "g9", "Nhóm 9", "coder"]]
 
 
 def test_shared_picker_opens_prefilled_group_dialog(node: str) -> None:
@@ -1263,8 +1322,8 @@ def test_drawer_context_drops_stale_slot_and_survives_errors(node: str) -> None:
 
 
 def test_drawer_session_button_routes_to_session(node: str) -> None:
-    """Clicking an info-session row loads that session for its bot, closes the
-    drawer and opens the bot's pocket."""
+    """Clicking an info-session row dispatches to the active controller,
+    closes the shared drawer and opens the bot's pocket."""
     out = _run(node, """
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'A' }, { id: 'b' }]));
@@ -1274,9 +1333,10 @@ def test_drawer_session_button_routes_to_session(node: str) -> None:
         const btn = document.createElement('button');
         btn.dataset.session = 's1'; btn.dataset.bot = 'a';
         $('#bot-drawer-body')._handlers.click.forEach(h => h({ target: btn, preventDefault() {} }));
-        return { calls, closed: $('#bot-drawer').open === false, open: bots[0].open, otherOpen: bots[1].open };
+        return { calls, dispatches: globalThis.__spaDispatches || [], closed: $('#bot-drawer').open === false, open: bots[0].open, otherOpen: bots[1].open };
     """)
-    assert out["calls"] == [["s1", "Phiên 1", "a"]]
+    assert out["dispatches"] == [["loadSession", "s1", "Phiên 1", "a"]]
+    assert out["calls"] == []
     assert out["closed"] is True and out["open"] is True and out["otherOpen"] is False
 
 
@@ -1351,10 +1411,11 @@ def test_default_navigation_routes_to_chat(node: str) -> None:
         selectBot('coder');
         const a = location.href;
         loadSession('s42');
-        return { a, b: location.href };
+        return { a, b: location.href, dispatches: __spaDispatches };
     """, via="shell")
-    assert out["a"] == "../chat/index.html?bot=coder"
-    assert out["b"] == "../chat/index.html?s=s42"
+    assert out["a"] == "http://localhost/ui/chat/index.html"
+    assert out["b"] == "http://localhost/ui/chat/index.html"
+    assert [call[:2] for call in out["dispatches"]] == [["selectBot", "coder"], ["loadSession", "s42"]]
 
 
 def test_handle_event_maps_lifecycle_and_respects_guards(node: str) -> None:
@@ -2193,6 +2254,7 @@ def test_trace_page_labels_and_deep_links(node: str) -> None:
     out = _run(node, """
         location.href = 'http://localhost/ui/trace/index.html#s9/3';
         location.hash = '#s9/3';
+        ctx.route.hash = location.hash;
         return {
             status: [statusChip('completed'), statusChip('failed'), statusChip('weird')],
             labels: [SIDE_KIND_LABEL.naming, BUS_KIND_LABEL.delegate, STOP_LABEL.context_limit],

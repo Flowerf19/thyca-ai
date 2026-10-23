@@ -20,6 +20,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from test_team_frontend import _unit_factory_source
 
 ROOT = Path(__file__).resolve().parents[1]
 WEBUI = ROOT / "thyca" / "webui" / "ui"
@@ -50,6 +51,8 @@ class El {
 const __els = {};
 const __el = (id) => __els[id] ||= new El();
 const __workspace = new El();
+__workspace.querySelector = (s) => s.startsWith('#') ? __el(s.slice(1)) : new El();
+__workspace.querySelectorAll = () => [];
 globalThis.document = {
   querySelector: (s) => s === '.workspace' ? __workspace
     : s.startsWith('#') ? __el(s.slice(1)) : null,
@@ -71,6 +74,8 @@ globalThis.toast = (m) => __toasts.push(String(m));
 globalThis.bootShell = async () => {
   globalThis.__roster.coder = { id: 'coder', name: 'Coder', color: '#123', state: 'idle' };
 };
+let __releaseShell;
+const __shellReady = new Promise(resolve => { __releaseShell = async () => { await bootShell(); resolve(); }; });
 const __jsonCalls = [];
 const __pending = [];
 let __jsonResponder = async (url) => { throw new Error('unexpected ' + url); };
@@ -88,15 +93,14 @@ def node() -> str:
 
 
 def _eval_dash(node: str, body: str, setup: str = "") -> object:
-    """Eval dashboard.js (classic script) with stubs, then run `body` inside
-    the same scope so module-level functions/state are reachable. `setup`
-    runs before the source — use it to install a getJson responder the
-    boot-time fetches should see."""
-    src = DASH_JS.read_text(encoding="utf-8")
+    """Eval the dashboard factory body with stubs and optional pre-boot setup."""
+    src = _unit_factory_source(DASH_JS, DASH_JS.read_text(encoding="utf-8"))
     program = (
         STUBS
         + setup + "\n"
-        + "\nconst __src = " + json.dumps(src) + ";\n"
+        + "\nconst ctx = { root: __workspace, route: { page: 'dashboard', search: location.search, hash: location.hash }, $: globalThis.$, $$: globalThis.$$, shellReady: __shellReady, navigate(page, parts = {}) { this.route = { page, search: '', hash: '', ...parts }; }, updateRoute(parts) { Object.assign(this.route, parts); }, highlightBot() {}, renderTeam() {}, isActive: () => true, onRoute: () => () => {} };\n"
+        + "globalThis.ThycaRouter = { register(_page, spec) { globalThis.__controller = spec.mount(ctx); } };\n"
+        + "const __src = " + json.dumps(src) + ";\n"
         + "const __body = " + json.dumps(body) + ";\n"
         + "eval(__src + '\\n;' + __body);\n"
     )
@@ -185,6 +189,7 @@ def test_boot_fetches_stats_and_first_page_for_last_7_days(node: str) -> None:
     out = _eval_dash(
         node,
         "(async () => {\n"
+        "await __releaseShell();\n"
         "await new Promise(r => setTimeout(r, 0));\n"
         "return {"
         " calls: __jsonCalls.slice(0, 2),"
@@ -403,9 +408,9 @@ def test_open_trace_row_navigates(node: str) -> None:
         "openTraceRow({ target: { closest: (s) =>"
         " s === 'tr[data-href]'"
         "   ? { dataset: { href: '../trace/index.html#s/0' } } : null } });\n"
-        "console.log(JSON.stringify(location.href))",
+        "console.log(JSON.stringify(ctx.route))",
     )
-    assert out == "../trace/index.html#s/0"
+    assert out == {"page": "trace", "search": "", "hash": "#s/0"}
 
 
 def test_fill_filters_keep_selection_and_add_extra_statuses(node: str) -> None:

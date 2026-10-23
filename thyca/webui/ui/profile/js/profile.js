@@ -1,3 +1,9 @@
+// Retained profile controller; declarations are isolated in this mount closure.
+ThycaRouter.register('profile', { title: 'Hồ sơ', stylesheet: '/ui/profile/profilecss/profile.css', mount(ctx) {
+  const root = ctx.root;
+  const $ = (selector, base = root) => selector === '.workspace' ? root : base.querySelector(selector);
+  const $$ = (selector, base = root) => [...base.querySelectorAll(selector)];
+  let selectedBot = '';
 // Profile screen: shared canonical docs plus one bot's own dossier.
 // No ?bot= shows the shared USER.md / SOUL.md / IDENTITY.md cards
 // (title "Hồ sơ chung", nothing selected). ?bot=<id> shows ONLY that bot:
@@ -10,7 +16,7 @@
 //      GET /api/bots/<id>/settings -> {bot_id, model, effective},
 //      POST /api/bots/<id>/settings <- {model:{id, thinking}} full replace,
 //      GET /api/bots via bootShell roster.
-'use strict';
+
 
 /* Friendly labels + order — the same mapping the old UI kept in
    shared/js/memory-data.js; unknown files keep their real name. */
@@ -31,7 +37,11 @@ function selectCanonical(files) {
 
 /* Page markup fills the .workspace that emitShell() already placed (with the
    shared ornaments) — see the script order in index.html. */
-$('.workspace').insertAdjacentHTML('beforeend', `
+root.insertAdjacentHTML('beforeend', `<dialog class="screen-dialog" id="edit-dialog" aria-labelledby="edit-dialog-title">
+<div class="dialog-heading"><div><h2 id="edit-dialog-title">Sửa file hồ sơ</h2><p>Ghi đè toàn bộ nội dung <b id="edit-name-label">file</b> — Thyca đọc lại file ngay sau khi lưu.</p></div><button class="icon-button dialog-close" aria-label="Đóng">${icon('close')}</button></div>
+<form class="dialog-body" id="edit-form"><input type="hidden" id="edit-name"><label class="field"><span>Nội dung file (markdown)</span><textarea id="edit-content" spellcheck="false"></textarea></label><p class="page-status" id="edit-status" role="status" hidden></p><div class="dialog-actions"><button class="quiet-button" type="button" id="edit-cancel">Hủy</button><button class="primary-action" type="submit" id="edit-save">Lưu file</button></div></form>
+</dialog>`);
+root.insertAdjacentHTML('beforeend', `
 <header class="page-nav">
   <div class="page-title">
     <div class="eyebrow">Hồ sơ</div>
@@ -89,7 +99,7 @@ const contentHtml = text => window.formatMarkdown
   : escapeHTML(String(text || '')).split(/\n{2,}/).map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
 
 function decodeHash() {
-  try { return decodeURIComponent(location.hash.replace(/^#/, '')); } catch { return ''; }
+  try { return decodeURIComponent(ctx.route.hash.replace(/^#/, '')); } catch { return ''; }
 }
 
 /* No-bot scope (?bot= absent) shows the shared canonical files. Every bot —
@@ -191,11 +201,13 @@ function showShared(anchor = '') {
   state.tab = '';
   el.title.textContent = 'Hồ sơ chung';
   selectedBot = '';
+  ctx.highlightBot('');
   el.shared.hidden = true;
-  renderTeam();
+  ctx.renderTeam();
   fixSidebarLabels();
   renderContent();
-  if (location.search) history.replaceState(null, '', location.pathname + location.hash);
+  ctx.updateRoute({ search: '', hash: anchor ? '#' + encodeURIComponent(anchor.replace(/^file-/, '')) : '' });
+  routeKey = ctx.route.search + ctx.route.hash;
   if (anchor) requestAnimationFrame(() => document.getElementById(anchor)?.scrollIntoView({ block: 'start' }));
 }
 
@@ -207,8 +219,9 @@ function showTab(id, anchor = '') {
   state.tab = id;
   el.title.textContent = 'Bạn và ' + b.name;
   selectedBot = id;
+  ctx.highlightBot(id);
   el.shared.hidden = false;
-  renderTeam();
+  ctx.renderTeam();
   fixSidebarLabels();
   // Drop the previous bot's settings BEFORE painting so a stale payload
   // can never appear under the new bot's heading.
@@ -218,7 +231,8 @@ function showTab(id, anchor = '') {
   botCfg.loading = true;
   renderContent();
   loadBotSettings();
-  history.replaceState(null, '', location.pathname + '?bot=' + encodeURIComponent(id));
+  ctx.updateRoute({ search: '?bot=' + encodeURIComponent(id), hash: '' });
+  routeKey = ctx.route.search + ctx.route.hash;
   closeMobile();
   if (anchor) requestAnimationFrame(() => document.getElementById(anchor)?.scrollIntoView({ block: 'start' }));
 }
@@ -250,7 +264,7 @@ if (!el.root.dataset.botSubmitBound) {
       const live = getBot(id);
       if (live) {
         live.model = data.model;
-        renderTeam();
+        ctx.renderTeam();
         fixSidebarLabels();
         renderBotTab(live, { preserveDraft: false });
       } else {
@@ -286,13 +300,14 @@ if (!el.root.dataset.botSubmitBound) {
 /* Sidebar a11y: select buttons scope the editor here, so relabel them
    page-locally after every shared roster render (no global change). */
 function fixSidebarLabels() {
-  for (const btn of $$('#team-bot-list [data-action="select"]')) {
+  if (!ctx.isActive()) return;
+  for (const btn of [...ctx.sidebar.querySelectorAll('[data-action="select"]')]) {
     const b = getBot(btn.dataset.botId);
     if (b) btn.setAttribute('aria-label', `Hồ sơ của ${b.name}`);
   }
 }
 new MutationObserver(() => fixSidebarLabels())
-  .observe($('#team-bot-list'), { childList: true, subtree: true });
+  .observe(ctx.sidebar, { childList: true, subtree: true });
 
 /* Sidebar routing stays on this page: a bot card opens its own dossier tab
    (?bot=<id>); the shared files live on the no-bot tab. Thyca has its own
@@ -587,6 +602,7 @@ el.root.addEventListener('click', e => {
   const btn = e.target.closest('[data-edit]');
   if (btn) openEdit(btn.dataset.edit, btn);
 });
+el.dialog.querySelector('.dialog-close').onclick = () => el.dialog.close();
 el.cancel.addEventListener('click', () => el.dialog.close());
 el.dialog.addEventListener('close', () => state.opener?.focus());
 el.form.addEventListener('submit', async e => {
@@ -598,15 +614,19 @@ el.form.addEventListener('submit', async e => {
   if (!content.trim() && !confirm(`Xoá trắng nội dung “${name}”?`)) return;
   setBusy(true);
   setStatus(el.dialogStatus, 'Đang lưu…');
+  let focusAfterSave = null;
   try {
     await postJson('/api/memory/canonical', { name, content });   // API: POST /api/memory/canonical {name, content}
     el.dialog.close();
     await loadFiles();
+    const nextOpener = [...el.root.querySelectorAll('[data-edit]')].find(button => button.dataset.edit === name);
+    if (nextOpener) { state.opener = nextOpener; focusAfterSave = nextOpener; }
     setStatus(el.status, `Đã lưu ${name}.`, 's-ok');
   } catch (err) {
     setStatus(el.dialogStatus, 'Không lưu được file: ' + err.message, 's-error');
   } finally {
     setBusy(false);
+    focusAfterSave?.focus();
   }
 });
 
@@ -616,26 +636,31 @@ el.form.addEventListener('submit', async e => {
 function applyRoute() {
   const hash = decodeHash();
   if (state.tab && getBot(state.tab)) { showTab(state.tab); return; }
-  if (state.tab) { selectedBot = ''; renderTeam(); fixSidebarLabels(); el.shared.hidden = false; el.title.textContent = 'Không tìm thấy bot'; renderContent(); return; }
+  if (state.tab) { selectedBot = ''; ctx.highlightBot(''); ctx.renderTeam(); fixSidebarLabels(); el.shared.hidden = false; el.title.textContent = 'Không tìm thấy bot'; renderContent(); return; }
   if (state.files.some(f => f.name === hash)) { showShared('file-' + hash); return; }
   showShared();
 }
-window.addEventListener('hashchange', () => {
-  const wanted = decodeHash();
-  if (state.files.some(f => f.name === wanted)) showShared('file-' + wanted);
-});
+let routeKey = '';
 
 async function boot() {
   // Parse ?bot= first; the scope is applied after roster + files + catalog
   // arrive, and a user click before boot finishes (bootTouched) always wins.
-  state.tab = new URLSearchParams(location.search).get('bot') || '';
+  state.tab = new URLSearchParams(ctx.route.search).get('bot') || '';
   await loadFiles();                                 // API: GET /api/memory/stats
-  try { await bootShell(); }                         // API: GET /api/bots + GET /api/sessions
+  try { await ctx.shellReady; }                         // API: GET /api/bots + GET /api/sessions
   catch (err) { toast('Không tải được đội bot: ' + (err.message || '')); }
   rosterReady = true;
   try { await refreshBotConfig(); }                   // API: GET /api/config (scoped model catalog)
   catch (err) { setStatus(el.status, 'Không tải được cấu hình: ' + err.message, 'error'); }
+  routeKey = ctx.route.search + ctx.route.hash;
   applyRoute();
 }
-
-boot();
+  const ready = boot();
+  return { ready, selectBot, loadSession, sidebarLabel(_id, name) { return `Hồ sơ của ${name}`; }, onRoute(route) {
+    const key = route.search + route.hash;
+    if (key === routeKey) return;
+    routeKey = key;
+    state.tab = new URLSearchParams(route.search).get('bot') || '';
+    applyRoute();
+  } };
+} });

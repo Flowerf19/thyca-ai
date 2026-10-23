@@ -34,8 +34,8 @@ import fs from 'node:fs';
 const src = fs.readFileSync(process.env.PROFILE_JS, 'utf8');
 const match = src.match(/function decodeHash\\(\\) \\{[\\s\\S]*?\\n\\}/);
 if (!match) throw new Error('decodeHash() not found in profile.js');
-const decodeHash = new Function('location', match[0] + '; return decodeHash();');
-console.log(JSON.stringify(decodeHash({ hash: JSON.parse(process.env.HASH) })));
+const decodeHash = new Function('ctx', match[0] + '; return decodeHash();');
+console.log(JSON.stringify(decodeHash({ route: { hash: JSON.parse(process.env.HASH) } })));
 """
     result = subprocess.run(
         [node, "--input-type=module", "-e", source],

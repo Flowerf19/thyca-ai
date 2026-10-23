@@ -5,7 +5,7 @@
 ## Current runtime
 
 - Version: `0.86.5.dev0` (verified in `pyproject.toml` and `thyca/__init__.py`).
-- Entry points: CLI in `thyca/app/cli.py`; loopback WebUI in `thyca/serve/`.
+- Entry points: CLI in `thyca/app/cli.py`; loopback WebUI in `thyca/serve/`. WebUI is a root-only native SPA: `thyca/webui/ui/chat/index.html` serves `/` and the seven known legacy page aliases. Page factories/workspaces are retained under `thyca/webui/ui/<page>/`, router and shared shell code under `thyca/webui/ui/share/`; page/filter/fragment state lives in browser history while the visible URL stays `/`. In-app navigation must preserve cached page routes/drafts, dispatch sidebar actions to the active page, and enable only the active page stylesheet plus shared markdown styles (the app-shell CSS is disabled on Chat). No iframe or second app entry.
 - Root and child turns share `BotRuntime` through `ChatApp` and `WorkspaceTurnService`. The CLI adapts into `ChatApp.turn`; there is no separate root turn executor or `thyca/app/run_turn.py`.
 - `WorkspaceStore` is authoritative for bot/window bindings and cursors. Each bot's `WorkspaceTimeline` is the sole canonical execution store. Public room sessions are aggregate read models, not execution transcripts. There is no `room_sessions.json` migration path, shadow timeline, promotion/demotion, cutover, or rollback API.
 - Chat history keeps the user message and aggregate assistant reply. Live thinking deltas are streamed while a turn runs. Trace detail resolves trusted bot/span references to original canonical `message` events in the exact room window; it excludes `view_reset` copies, so execution detail survives compaction without duplicates.

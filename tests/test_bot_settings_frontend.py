@@ -106,7 +106,7 @@ def test_profile_sidebar_select_scopes_coder(node) -> None:
         await tick(200);
         const root = document.querySelector('#profile-root').innerHTML;
         return {
-            replaced, tab: state.tab, selected: state.tab, shared: selectedBot,
+            replaced, route: ctx.route, tab: state.tab, selected: state.tab, shared: selectedBot,
             title: $('#profile-title').textContent,
             hasBotForm: root.includes('bot-settings-form'),
             hasPicker: root.includes('bot-settings-list'),
@@ -115,8 +115,9 @@ def test_profile_sidebar_select_scopes_coder(node) -> None:
             fields: document.querySelector('#bot-settings-fields').innerHTML,
         };
     """ % (_SETTINGS, _profile_fetch(_ROSTER, _CONFIG)), via="profile", emit="profile")
-    assert out["replaced"] == ["/ui/profile/index.html?bot=coder"]
+    assert out["replaced"] and out["replaced"][-1] == "/"
     assert out["selected"] == "coder" and out["tab"] == "coder" and out["shared"] == "coder"
+    assert out["route"] == {"page": "profile", "search": "?bot=coder", "hash": ""}
     assert out["title"] == "Bạn và Coder"
     assert out["hasBotForm"] is True and out["hasPicker"] is False
     assert out["hasSharedDoc"] is False
@@ -143,13 +144,14 @@ def test_profile_bot_forms_are_isolated(node) -> None:
         const root = document.querySelector('#profile-root').innerHTML;
         return {
             selected: state.tab,
-            replaced: replaced,
+            replaced: replaced, route: ctx.route,
             title: $('#profile-title').textContent,
             fields: document.querySelector('#bot-settings-fields').innerHTML,
             hasSharedDoc: root.includes('file-USER'),
         };
     """ % (_SETTINGS, _profile_fetch(_ROSTER, _CONFIG)), via="profile", emit="profile")
-    assert out["selected"] == "thyca" and out["replaced"][-1] == "/ui/profile/index.html?bot=thyca"
+    assert out["selected"] == "thyca" and out["replaced"][-1] == "/"
+    assert out["route"]["search"] == "?bot=thyca"
     assert out["title"] == "Bạn và Thyca"
     assert '<option value="default" selected>' in out["fields"]
     assert '<option value="m1" selected>' not in out["fields"]
@@ -169,7 +171,7 @@ def test_profile_deep_links_and_ghost(node) -> None:
             await boot(); await tick(20);
             const root = document.querySelector('#profile-root').innerHTML;
             return { selected: state.tab, shared: selectedBot,
-                     search: globalThis.location.search,
+                     search: ctx.route.search,
                      title: $('#profile-title').textContent,
                      root };
         };
@@ -199,11 +201,11 @@ def test_profile_shared_button_restores_catalog(node) -> None:
         globalThis.history.replaceState = (...a) => { replaced.push(a[2]); return _orig(...a); };
         await tick(); await boot(); await tick(20);
         const scoped = { botVisible: !!document.querySelector('#bot-model-card'),
-                         search: globalThis.location.search };
+                         search: ctx.route.search };
         $('#profile-shared').onclick();
         await tick();
         const root = document.querySelector('#profile-root').innerHTML;
-        return { scoped, replaced,
+        return { scoped, replaced, route: ctx.route,
                  selected: state.tab, shared: selectedBot,
                  title: $('#profile-title').textContent,
                  docs: root.includes('file-USER'),
@@ -211,8 +213,9 @@ def test_profile_shared_button_restores_catalog(node) -> None:
                  posted: window.__posted || [] };
     """ % (_SETTINGS, _profile_fetch(_ROSTER, _CONFIG)), via="profile", emit="profile")
     assert out["scoped"]["botVisible"] is True
-    assert out["replaced"][-1] == "/ui/profile/index.html"
+    assert out["replaced"][-1] == "/"
     assert out["selected"] == "" and out["shared"] == ""
+    assert out["route"]["search"] == ""
     assert out["title"] == "Hồ sơ chung"
     assert out["docs"] is True and out["noBotForm"] is True
     assert out["posted"] == []
@@ -621,6 +624,7 @@ def test_profile_sidebar_select_labels_scope(node) -> None:
         globalThis.location.pathname = '/ui/profile/index.html';
         await tick(); await boot(); await tick(20);
         const host = document.querySelector('#team-bot-list');
+        ctx.sidebar.appendChild(host);
         host.replaceChildren();
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'Alpha' }]));
@@ -655,8 +659,8 @@ def test_profile_provider_no_bot_scope(node) -> None:
         const noBotForm = !document.querySelector('.workspace').innerHTML.includes('bot-settings-form');
         const sharedVisible = !document.querySelector('#providers-card').hidden
             && !document.querySelector('#save-config').hidden;
-        return { navigated, noBotForm, sharedVisible };
+        return { navigated: ctx.lastNavigation, noBotForm, sharedVisible };
     """ % _profile_fetch(_ROSTER, _CONFIG), via="provider", emit="provider")
-    assert out["navigated"] == "../profile/index.html?bot=coder"
+    assert out["navigated"] == {"page": "profile", "search": "?bot=coder"}
     assert out["noBotForm"] is True
     assert out["sharedVisible"] is True

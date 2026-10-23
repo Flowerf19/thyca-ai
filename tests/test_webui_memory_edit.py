@@ -27,6 +27,7 @@ MEM_JS = ROOT / "thyca" / "webui" / "ui" / "memories" / "js" / "memories.js"
 # the scenarios read back. Listeners are captured so tests can fire them.
 _HARNESS = r"""
 import fs from 'node:fs';
+const elementRegistry = new Map();
 function makeEl(tag = 'div') {
   return {
     tag, attrs: {}, dataset: {}, listeners: {}, children: [],
@@ -42,7 +43,7 @@ function makeEl(tag = 'div') {
     showModal() { this.open = true; },
     close() { this.open = false; },
     focus() {},
-    querySelector(s) { if (!this._qs.has(s)) this._qs.set(s, makeEl()); return this._qs.get(s); },
+    querySelector(s) { if (!elementRegistry.has(s)) elementRegistry.set(s, makeEl()); return elementRegistry.get(s); },
     querySelectorAll() { return []; },
     closest() { return null; },
     get options() { return this.children; },
@@ -120,11 +121,31 @@ const LEAF = {
 # script's own boot, so hooks must already answer by then.
 _EVAL = r"""
 const source = fs.readFileSync(process.env.MEM_JS, 'utf8');
-const page = new Function(...Object.keys(deps), source + `
+const marker = 'mount(ctx) {';
+const start = source.indexOf(marker) + marker.length;
+const end = source.lastIndexOf('\n} });');
+const body = source.slice(start, end);
+const tail = /\n\s*const ready = boot\(\);\n\s*return \{ ready,[\s\S]*?\};\s*$/.exec(body);
+if (!tail) throw new Error('unrecognized retained memories factory tail');
+const ctx = {
+  root: document.querySelector('.workspace'),
+  route: { page: 'memories', search: deps.location.search, hash: '' },
+  shellReady: Promise.resolve(),
+  updateRoute(parts = {}) { if ('search' in parts) this.route.search = parts.search; if ('hash' in parts) this.route.hash = parts.hash; deps.history.replaceState({ thycaSpa: this.route }, '', '/'); },
+  highlighted: '',
+  highlightBot(id) { this.highlighted = id || ''; deps.selectedBot = this.highlighted; },
+  renderTeam: deps.renderTeam,
+  isActive: () => true,
+  onRoute() { return () => {}; },
+};
+const depNames = Object.keys(deps).filter(key => !['$', '$$', 'selectedBot'].includes(key));
+const depValues = depNames.map(key => deps[key]);
+const page = new Function(...depNames, 'ctx', body.slice(0, tail.index) + `
+  boot();
   return { memState, loadStats, mutate, openEdit, selectBot, loadSession,
            renderAll, renderLeaves, renderScopeCard, filteredLeaves,
-           splitHeading, get selectedBot() { return selectedBot; } };
-`)(...Object.values(deps));
+           splitHeading };
+`)(...depValues, ctx);
 """
 
 _SCENARIOS = {
@@ -167,7 +188,8 @@ await settle();
 console.log(JSON.stringify({
   gets: calls.gets,
   urls: calls.urls,
-  selectedBot: page.selectedBot,
+  route: ctx.route,
+  selectedBot: ctx.highlighted,
   mismatch,
   status: document.querySelector('#memory-status').textContent,
   cardHidden: document.querySelector('#memory-scope-card').hidden,
@@ -193,6 +215,7 @@ await settle();
 console.log(JSON.stringify({
   gets: calls.gets,
   urls: calls.urls,
+  route: ctx.route,
   stale,
   finalTotal: page.memState.stats.total,
   scope: page.memState.scope,
@@ -264,8 +287,8 @@ hooks.getJson = async url => {
 page.selectBot('coder');
 await settle();
 const scoped = {
-  scope: page.memState.scope, selected: page.selectedBot,
-  url: calls.urls[calls.urls.length - 1],
+  scope: page.memState.scope, selected: ctx.highlighted,
+  url: ctx.route.search,
   cardHidden: document.querySelector('#memory-scope-card').hidden,
   card: document.querySelector('#memory-scope-card').innerHTML,
 };
@@ -280,8 +303,8 @@ const toggled = {
 page.loadSession('s9', 'Phiên mới', 'researcher');
 await settle();
 const fromSession = {
-  scope: page.memState.scope, selected: page.selectedBot,
-  url: calls.urls[calls.urls.length - 1],
+  scope: page.memState.scope, selected: ctx.highlighted,
+  url: ctx.route.search,
   card: document.querySelector('#memory-scope-card').innerHTML,
 };
 // The scope card's "Bỏ lọc" button clears the filter in place.
@@ -291,7 +314,7 @@ await settle();
 console.log(JSON.stringify({
   scoped, toggled, fromSession,
   cleared: {
-    scope: page.memState.scope, url: calls.urls[calls.urls.length - 1],
+    scope: page.memState.scope, url: ctx.route.search,
     cardHidden: document.querySelector('#memory-scope-card').hidden,
   },
   gets: calls.gets, teamRenders: calls.teamRenders,
@@ -308,7 +331,8 @@ hooks.getJson = async url => (url.includes('bot_id=researcher')
 await settle();
 console.log(JSON.stringify({
   scope: page.memState.scope,
-  selected: page.selectedBot,
+  selected: ctx.highlighted,
+  route: ctx.route,
   gets: calls.gets,
   cardHidden: document.querySelector('#memory-scope-card').hidden,
   card: document.querySelector('#memory-scope-card').innerHTML,
@@ -325,6 +349,7 @@ await settle();
 console.log(JSON.stringify({
   scope: page.memState.scope,
   urls: calls.urls,
+  route: ctx.route,
   cardHidden: document.querySelector('#memory-scope-card').hidden,
 }));
 """),
@@ -449,7 +474,8 @@ def test_scope_echo_mismatch_rejected(scope: dict) -> None:
     applied scope and a mismatched answer is treated as stale: status shows
     the mismatch, no leaves render."""
     assert "/api/memory/stats?bot_id=coder" in scope["gets"]
-    assert any(u.endswith("?bot=coder") for u in scope["urls"])
+    assert scope["route"]["search"] == "?bot=coder"
+    assert scope["urls"] == ["/"]
     assert "không khớp" in scope["mismatch"]["status"]
     assert "s-error" in scope["mismatch"]["statusCls"]
     assert scope["mismatch"]["statsNull"] is True
@@ -479,7 +505,8 @@ def test_scope_switch_drops_stale_answers(scope_race: dict) -> None:
     assert scope_race["stale"]["total"] == 0   # boot stats still in place
     assert scope_race["finalTotal"] == 2
     assert scope_race["scope"] == "researcher"
-    assert scope_race["urls"][-1].endswith("?bot=researcher")
+    assert scope_race["route"]["search"] == "?bot=researcher"
+    assert scope_race["urls"] == ["/", "/"]
 
 
 def test_leaf_actions_post_the_right_endpoints(actions: dict) -> None:
@@ -565,7 +592,8 @@ def test_stale_bot_deep_link_clears_after_boot(deeplink_stale: dict) -> None:
     bootShell() answers — the URL loses the param, no scope card renders."""
     assert deeplink_stale["scope"] == ""
     assert deeplink_stale["cardHidden"] is True
-    assert deeplink_stale["urls"] == ["/memories/index.html"]
+    assert deeplink_stale["urls"] == ["/"]
+    assert deeplink_stale["route"]["search"] == ""
 
 
 def test_kind_use_filters_page_through_60_leaves(filters: dict) -> None:

@@ -1,3 +1,10 @@
+// Retained trace controller; declarations stay private to this closure.
+ThycaRouter.register('trace', { title: 'Trace', stylesheet: '/ui/trace/tracecss/trace.css', mount(ctx) {
+  let routeKey = '';
+  const root = ctx.root;
+  const $ = (selector, base = root) => selector === '.workspace' ? root : base.querySelector(selector);
+  const $$ = (selector, base = root) => [...base.querySelectorAll(selector)];
+  let selectedBot = '';
 // Trace page — session picker + per-turn detail, real backend only.
 // Shell: emitShell('trace') ran in index.html before this file loaded;
 // bootShell() below fills the shared sidebar (roster + sessions).
@@ -10,7 +17,7 @@
 //   index.html#<session_id>/<turn_index>
 //   index.html?s=<session_id>&t=<turn_index>
 // In-page navigation rewrites the URL via history.replaceState (no entries pushed).
-'use strict';
+
 
 const TRACE_PAGE_SIZE = 50;
 
@@ -508,7 +515,7 @@ async function openTurn(sid, turn, { push = true } = {}) {
   showMode('detail');
   setDetailStatus('');
   $('#trace-detail-body').innerHTML = '<p class="status-line">Đang đọc lượt…</p>';
-  if (push) history.replaceState(null, '', location.pathname + pageQuery() + '#' + encodeURIComponent(sid) + '/' + turn);
+  if (push) { ctx.updateRoute({ search: pageQuery(), hash: '#' + encodeURIComponent(sid) + '/' + turn }); routeKey = ctx.route.search + ctx.route.hash; }
   try {
     const detail = await getJson(`/api/traces/${encodeURIComponent(sid)}/${turn}`);
     if (seq !== tr.detailRequest) return;
@@ -542,10 +549,11 @@ function updateScopeChip() {
 }
 function selectBot(id) {
   tr.botScope = !id || tr.botScope === id ? '' : id;
-  selectedBot = tr.botScope;
-  renderTeam();
+  ctx.highlightBot(tr.botScope);
+  ctx.renderTeam();
   updateScopeChip();
-  history.replaceState(null, '', location.pathname + pageQuery() + location.hash);
+  ctx.updateRoute({ search: pageQuery(), hash: ctx.route.hash });
+  routeKey = ctx.route.search + ctx.route.hash;
   loadTraces(true);                                    // API: GET /api/traces?…&bot_id=<id>
 }
 function loadSession(id, title, botId) { selectBot(botId || ''); }
@@ -555,7 +563,7 @@ function backToList({ push = true } = {}) {
   tr.detail = null;
   tr.detailKey = '';
   tr.detailError = '';
-  if (push) history.replaceState(null, '', location.pathname + pageQuery());
+  if (push) { ctx.updateRoute({ search: pageQuery(), hash: '' }); routeKey = ctx.route.search + ctx.route.hash; }
   showMode('list');
   setDetailStatus('');
   $('#trace-scroll').scrollTop = tr.listScroll || 0;
@@ -563,7 +571,7 @@ function backToList({ push = true } = {}) {
 
 /* Hash form: #<session_id>/<turn_index>. Query form: ?s=<id>&t=<index>. */
 function routeFromUrl() {
-  const hash = location.hash.slice(1);
+  const hash = ctx.route.hash.slice(1);
   if (hash) {
     const sep = hash.indexOf('/');
     if (sep > 0) {
@@ -573,7 +581,7 @@ function routeFromUrl() {
     }
     return null;
   }
-  const p = new URLSearchParams(location.search);
+  const p = new URLSearchParams(ctx.route.search);
   const s = p.get('s'), t = p.get('t');
   if (s && t !== null && /^\d+$/.test(t)) return { sid: s, turn: parseInt(t, 10) };
   return null;
@@ -632,35 +640,34 @@ function wirePage() {
     if (btn) openTurn(btn.dataset.session, Number(btn.dataset.turn));
   });
   $('#trace-back').addEventListener('click', () => backToList());
-  addEventListener('hashchange', () => {
-    const route = routeFromUrl();
-    if (route) openTurn(route.sid, route.turn, { push: false });
-    else backToList({ push: true });
-  });
+  // Route changes are applied by the retained controller's onRoute hook.
 }
 
 /* ---------- boot ---------- */
 
-function boot() {
+async function boot() {
   $('.workspace').insertAdjacentHTML('beforeend', PAGE_HTML);
   wirePage();
-  /* ?bot=<id> deep link scopes the first fetch already; if the roster says
-     the id is stale the scope clears (and refetches) once bootShell lands. */
-  const wanted = new URLSearchParams(location.search).get('bot');
+  const wanted = new URLSearchParams(ctx.route.search).get('bot');
   if (wanted) tr.botScope = wanted;
-  const route = routeFromUrl();
-  loadTraces(true);                                   // API: GET /api/traces?…
-  if (route) openTurn(route.sid, route.turn);         // API: GET /api/traces/<s>/<t>
-  bootShell()                                         // API: GET /api/bots + /api/sessions
-    .then(() => {
-      if (tr.botScope && !getBot(tr.botScope)) { tr.botScope = ''; selectBot(''); }
-      else if (tr.botScope) { selectedBot = tr.botScope; renderTeam(); }
-      updateScopeChip();
-      /* Rows rendered before the roster arrived drew id-text fallbacks —
-         repaint once bots are in so seals/names resolve. */
-      renderList();
-      if (tr.detail) renderDetail();
-    })
-    .catch(err => toast('Không tải được đội bot: ' + (err.message || '')));
+  try { await ctx.shellReady; } catch (err) { toast('Không tải được đội bot: ' + (err.message || '')); }
+  if (tr.botScope && !getBot(tr.botScope)) { tr.botScope = ''; ctx.updateRoute({ search: '' }); }
+  ctx.highlightBot(tr.botScope);
+  routeKey = ctx.route.search + ctx.route.hash;
+  updateScopeChip();
+  loadTraces(true);
+  const selectedRoute = routeFromUrl();
+  if (selectedRoute) openTurn(selectedRoute.sid, selectedRoute.turn, { push: false });
 }
-boot();
+  const ready = boot();
+  return { ready, selectBot, loadSession, onRoute(route) {
+    const key = route.search + route.hash;
+    if (key === routeKey) return;
+    routeKey = key;
+    const params = new URLSearchParams(route.search);
+    tr.botScope = params.get('bot') || '';
+    ctx.highlightBot(tr.botScope); ctx.renderTeam(); updateScopeChip(); loadTraces(true);
+    const turn = routeFromUrl();
+    if (turn) openTurn(turn.sid, turn.turn, { push: false }); else backToList({ push: false });
+  } };
+} });

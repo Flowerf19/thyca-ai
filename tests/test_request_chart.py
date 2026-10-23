@@ -18,6 +18,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from test_team_frontend import _unit_factory_source
 
 ROOT = Path(__file__).resolve().parents[1]
 DASH_JS = ROOT / "thyca" / "webui" / "ui" / "dashboard" / "js" / "dashboard.js"
@@ -55,6 +56,8 @@ class El {
 const __els = {};
 const __el = (id) => __els[id] ||= new El();
 const __workspace = new El();
+__workspace.querySelector = (s) => s.startsWith('#') ? __el(s.slice(1)) : new El();
+__workspace.querySelectorAll = () => [];
 globalThis.document = {
   querySelector: (s) => s === '.workspace' ? __workspace
     : s.startsWith('#') ? __el(s.slice(1)) : null,
@@ -74,6 +77,8 @@ globalThis.getBot = (id) => globalThis.__roster[id] || null;
 globalThis.avatar = (b) => `<ava:${b.id}/>`;
 globalThis.toast = () => {};
 globalThis.bootShell = async () => {};
+let __releaseShell;
+const __shellReady = new Promise(resolve => { __releaseShell = async () => { await bootShell(); resolve(); }; });
 const __jsonCalls = [];
 let __jsonResponder = async (url) => { throw new Error('unexpected ' + url); };
 globalThis.getJson = (url) => { __jsonCalls.push(String(url)); return __jsonResponder(String(url)); };
@@ -83,10 +88,12 @@ globalThis.getJson = (url) => { __jsonCalls.push(String(url)); return __jsonResp
 def _eval_dash(node: str, body: str) -> object:
     """Eval dashboard.js (classic script) with stubs, then run `body` inside
     the same scope so module-level functions/state are reachable."""
-    src = DASH_JS.read_text(encoding="utf-8")
+    src = _unit_factory_source(DASH_JS, DASH_JS.read_text(encoding="utf-8"))
     program = (
         STUBS
-        + "\nconst __src = " + json.dumps(src) + ";\n"
+        + "\nconst ctx = { root: __workspace, route: { page: 'dashboard', search: location.search, hash: location.hash }, $: globalThis.$, $$: globalThis.$$, shellReady: __shellReady, navigate(page, parts) { globalThis.__routes ||= []; globalThis.__routes.push({ page, ...parts }); }, updateRoute(parts) { Object.assign(this.route, parts); globalThis.__routes ||= []; globalThis.__routes.push({ ...this.route }); }, highlightBot() {}, renderTeam() {}, isActive: () => true, onRoute: () => () => {} };\n"
+        + "globalThis.ThycaRouter = { register(_page, spec) { globalThis.__controller = spec.mount(ctx); } };\n"
+        + "const __src = " + json.dumps(src) + ";\n"
         + "const __body = " + json.dumps(body) + ";\n"
         + "eval(__src + '\\n;' + __body);\n"
     )

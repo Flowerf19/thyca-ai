@@ -112,8 +112,8 @@ def test_scope_navigation_flows_through_sidebar_and_url() -> None:
     # "Bỏ lọc" button clears the filter.
     assert "function selectBot(id)" in js
     assert "'?bot=' + encodeURIComponent" in js
-    assert "history.replaceState" in js
-    assert "new URLSearchParams(location.search)" in js
+    assert "ctx.updateRoute({ search: q })" in js
+    assert "new URLSearchParams(ctx.route.search)" in js
     assert "/api/memory/stats?bot_id=${encodeURIComponent(scope)}" in js
     assert 'id="memory-scope-card"' in js
     assert "mem-scope-clear" in js

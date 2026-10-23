@@ -22,11 +22,23 @@ def content_type(path: Path) -> str:
     return mime or "application/octet-stream"
 
 
+_SPA_ENTRY = "ui/chat/index.html"
+_SPA_PATHS = {
+    "/", "/index.html",
+    *(f"/ui/{page}{suffix}" for page in ("chat", "memories", "profile", "provider", "dashboard", "trace", "settings")
+      for suffix in ("", "/", "/index.html")),
+}
+
+
 def safe_file(webui: Path, url_path: str) -> Path | None:
-    rel = unquote(url_path).lstrip("/")
-    if "\x00" in rel:
-        # Null bytes make resolve()/stat raise ValueError; treat as missing.
+    decoded_path = unquote(url_path)
+    if "\x00" in decoded_path or ".." in Path(decoded_path).parts:
+        # Reject NUL and traversal explicitly, including percent-encoded forms.
         return None
+    if decoded_path in _SPA_PATHS:
+        rel = _SPA_ENTRY
+    else:
+        rel = unquote(url_path).lstrip("/")
     if not rel or rel.endswith("/"):
         rel = (rel + "index.html") if rel else "index.html"
     target = (webui / rel).resolve()

@@ -1,3 +1,9 @@
+// Retained memories controller; declarations are isolated in this mount closure.
+ThycaRouter.register('memories', { title: 'Nhật ký', stylesheet: '/ui/memories/memoriescss/memories.css', mount(ctx) {
+  let routeKey = '';
+  const root = ctx.root;
+  const $ = (selector, base = root) => selector === '.workspace' ? root : base.querySelector(selector);
+  const $$ = (selector, base = root) => [...base.querySelectorAll(selector)];
 // Nhật ký (Memories) page — real memory stats + leaf actions, no sample data.
 // Shared shell: emitShell('memories') already ran before this file loaded
 // (see index.html); bootShell() fills the sidebar roster.
@@ -5,7 +11,7 @@
 //      POST /api/memory/reinforce {session_id}          — renew a leaf's TTL
 //      POST /api/memory/update {session_id, topic, summary} — edit a leaf
 //      POST /api/memory/forget {session_id}             — drop a leaf
-'use strict';
+
 
 /* Same rules as thyca/memory/stats.py so per-leaf badges match the
    server-computed expiring/suggest_removal lists after a local update. */
@@ -427,10 +433,11 @@ function wirePage() {
    filter; a group row scopes to its first member. */
 function selectBot(id) {
   memState.scope = !id || memState.scope === id ? '' : id;
-  selectedBot = memState.scope;
-  renderTeam();                                        // highlight the scoped bot
+  ctx.highlightBot(memState.scope);
+  ctx.renderTeam();
   const q = memState.scope ? '?bot=' + encodeURIComponent(memState.scope) : '';
-  history.replaceState(null, '', location.pathname + q);
+  ctx.updateRoute({ search: q });
+  routeKey = q;
   loadStats();
 }
 function loadSession(id, title, botId) { selectBot(botId || ''); }
@@ -438,23 +445,34 @@ function loadSession(id, title, botId) { selectBot(botId || ''); }
 function buildPage() {
   const workspace = $('.workspace');
   workspace.insertAdjacentHTML('beforeend', PAGE_HTML);
-  document.body.insertAdjacentHTML('beforeend', DIALOG_HTML);
+  root.insertAdjacentHTML('beforeend', DIALOG_HTML);
   wirePage();
 }
 
 async function boot() {
   buildPage();
   /* Deep link ?bot=<id> — stale ids clear once the roster answers below. */
-  const wanted = new URLSearchParams(location.search).get('bot');
+  const wanted = new URLSearchParams(ctx.route.search).get('bot');
   if (wanted) memState.scope = wanted;
   loadStats();                                     // API: GET /api/memory/stats[?bot_id=<id>]
-  try { await bootShell(); }                       // API: GET /api/bots + GET /api/sessions
+  try { await ctx.shellReady; }                       // API: GET /api/bots + GET /api/sessions
   catch (err) { toast('Không tải được đội bot: ' + (err.message || '')); }
   /* A stale ?bot=<id> deep link clears once the real roster answers. */
-  if (memState.scope && !getBot(memState.scope)) { memState.scope = ''; history.replaceState(null, '', location.pathname); }
-  selectedBot = memState.scope;
-  renderTeam();
+  if (memState.scope && !getBot(memState.scope)) { memState.scope = ''; ctx.updateRoute({ search: '' }); }
+  ctx.highlightBot(memState.scope);
+  routeKey = ctx.route.search + ctx.route.hash;
+  ctx.renderTeam();
   renderScopeCard();
 }
-
-boot();
+  const ready = boot();
+  return { ready, selectBot, loadSession, onRoute(route) {
+    const key = route.search + route.hash;
+    if (key === routeKey) return;
+    routeKey = key;
+    const next = new URLSearchParams(route.search).get('bot') || '';
+    if (next !== memState.scope) {
+      memState.scope = next && getBot(next) ? next : '';
+      ctx.highlightBot(memState.scope); ctx.renderTeam(); loadStats();
+    }
+  } };
+} });

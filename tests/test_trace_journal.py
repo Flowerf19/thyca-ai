@@ -20,6 +20,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from test_team_frontend import _unit_factory_source
 
 ROOT = Path(__file__).resolve().parents[1]
 WEBUI = ROOT / "thyca" / "webui" / "ui"
@@ -48,6 +49,8 @@ class El {
 const __els = {};
 const __el = (id) => __els[id] ||= new El();
 const __workspace = new El();
+__workspace.querySelector = (s) => s.startsWith('#') ? __el(s.slice(1)) : new El();
+__workspace.querySelectorAll = () => [];
 globalThis.document = {
   querySelector: (s) => s === '.workspace' ? __workspace
     : s.startsWith('#') ? __el(s.slice(1)) : null,
@@ -66,7 +69,7 @@ globalThis.$$ = (s, r = document) => [...r.querySelectorAll(s)];
 globalThis.icon = (n) => `<svg data-i="${n}"></svg>`;
 globalThis.escapeHTML = (str) => String(str).replace(/[&<>"']/g, (ch) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
-globalThis.__roster = {};
+globalThis.__roster = { coder: { id: 'coder', name: 'Coder', color: '#123', state: 'idle' } };
 globalThis.getBot = (id) => globalThis.__roster[id] || null;
 globalThis.avatar = (b) => `<ava:${b.id}/>`;
 globalThis.paletteStyle = (b) => `--c:${b.color || '#000'}`;
@@ -75,6 +78,8 @@ globalThis.toast = (m) => __toasts.push(String(m));
 globalThis.bootShell = async () => {
   globalThis.__roster.coder = { id: 'coder', name: 'Coder', color: '#123', state: 'idle' };
 };
+let __releaseShell;
+const __shellReady = new Promise(resolve => { __releaseShell = async () => { await bootShell(); resolve(); }; });
 const __jsonCalls = [];
 const __pending = [];
 let __jsonResponder = async (url) => { throw new Error('unexpected ' + url); };
@@ -92,15 +97,14 @@ def node() -> str:
 
 
 def _eval_trace(node: str, body: str, setup: str = "") -> object:
-    """Eval trace.js (classic script) with stubs, then run `body` inside
-    the same scope so module-level functions/state are reachable. `setup`
-    runs before the source — use it to plant location.hash or a getJson
-    responder the boot-time fetches should see."""
-    src = TRACE_JS.read_text(encoding="utf-8")
+    """Eval the trace factory body with stubs and optional pre-boot setup."""
+    src = _unit_factory_source(TRACE_JS, TRACE_JS.read_text(encoding="utf-8"))
     program = (
         STUBS
         + setup + "\n"
-        + "\nconst __src = " + json.dumps(src) + ";\n"
+        + "\nconst ctx = { root: __workspace, route: { page: 'trace', search: location.search, hash: location.hash }, $: globalThis.$, $$: globalThis.$$, shellReady: __shellReady, navigate(page, parts = {}) { this.route = { page, search: '', hash: '', ...parts }; }, updateRoute(parts) { Object.assign(this.route, parts); __urls.push({ ...this.route }); }, highlightBot() {}, renderTeam() {}, isActive: () => true, onRoute: () => () => {} };\n"
+        + "globalThis.ThycaRouter = { register(_page, spec) { globalThis.__controller = spec.mount(ctx); } };\n"
+        + "const __src = " + json.dumps(src) + ";\n"
         + "const __body = " + json.dumps(body) + ";\n"
         + "eval(__src + '\\n;' + __body);\n"
     )
@@ -168,7 +172,7 @@ def test_route_from_url_parses_both_forms(node: str) -> None:
         node,
         """(() => {
           const probe = (hash, search) => {
-            location.hash = hash; location.search = search;
+            location.hash = hash; location.search = search; ctx.route.hash = hash; ctx.route.search = search;
             return routeFromUrl(); };
           console.log(JSON.stringify([
             probe('#abc/3', ''), probe('#s%20x/0', ''), probe('#abc', ''),
@@ -200,10 +204,11 @@ def test_boot_loads_list_and_follows_hash_route(node: str) -> None:
     out = _eval_trace(
         node,
         "(async () => {\n"
+        "await __releaseShell();\n"
         "await new Promise(r => setTimeout(r, 0));\n"
         "return { calls: __jsonCalls, mode: tr.mode, key: tr.detailKey,\n"
         " body: document.querySelector('#trace-detail-body').innerHTML,\n"
-        " urls: __urls };\n"
+        " route: ctx.route, urls: __urls };\n"
         "})().then((v) => console.log(JSON.stringify(v)))",
         setup="location.hash = '#s%20x/0';\n"
         "__jsonResponder = async (url) => url.includes('traces/s')"
@@ -216,7 +221,7 @@ def test_boot_loads_list_and_follows_hash_route(node: str) -> None:
     assert detail_call == "/api/traces/s%20x/0"
     assert out["mode"] == "detail" and out["key"] == "s x/0"
     assert "Routed" in out["body"]
-    assert any("#s%20x/0" in u for u in out["urls"])
+    assert out["route"] == {"page": "trace", "search": "", "hash": "#s%20x/0"}
 
 
 def test_boot_without_route_stays_on_the_picker(node: str) -> None:
@@ -225,6 +230,7 @@ def test_boot_without_route_stays_on_the_picker(node: str) -> None:
     out = _eval_trace(
         node,
         "(async () => {\n"
+        "await __releaseShell();\n"
         "await new Promise(r => setTimeout(r, 0));\n"
         "return { calls: __jsonCalls, mode: tr.mode, urls: __urls,\n"
         " body: document.querySelector('#trace-detail-body').innerHTML };\n"
@@ -384,7 +390,7 @@ def test_open_turn_fetches_detail_and_rewrites_the_url(node: str) -> None:
     )
     assert out["calls"] == ["/api/traces/s%20x/2"]
     assert out["mode"] == "detail" and out["key"] == "s x/2"
-    assert out["urls"] == ["/trace/index.html#s%20x/2"]
+    assert out["urls"] == [{"page": "trace", "search": "", "hash": "#s%20x/2"}]
     assert "Deep" in out["body"] and "kaput" in out["body"]
     assert "Boom" in out["body"]
 
@@ -404,7 +410,7 @@ def test_open_turn_error_shows_note_but_keeps_the_url(node: str) -> None:
     )
     assert out["err"] == "gone"
     assert out["key"] == "s/0"
-    assert out["urls"] == ["/trace/index.html#s/0"]
+    assert out["urls"] == [{"page": "trace", "search": "", "hash": "#s/0"}]
     assert "Không đọc được lượt s/0" in out["status"]
     assert "Không mở được trace này" in out["body"]
 
@@ -455,7 +461,7 @@ def test_back_to_list_restores_mode_scroll_and_url(node: str) -> None:
     assert out["mode"] == "list"
     assert out["detail"] is None and out["key"] == ""
     assert out["bumped"] is True
-    assert out["urls"][-1] == "/trace/index.html"   # hash stripped
+    assert out["urls"][-1] == {"page": "trace", "search": "", "hash": ""}   # SPA route hash cleared
     assert out["scroll"] == 42                       # list scroll restored
 
 
@@ -473,13 +479,11 @@ def test_turn_click_delegation_and_hashchange(node: str) -> None:
         "  ? { dataset: { session: 's', turn: '1' } } : null } });\n"
         "await new Promise(r => setTimeout(r, 0));\n"
         "const afterClick = { key: tr.detailKey, mode: tr.mode };\n"
-        "location.hash = '#z/3';\n"
-        "const onHash = __winListeners.hashchange[0];\n"
-        "onHash();\n"
-        "await new Promise(r => setTimeout(r, 0));\n"
+        "location.hash = '#z/3'; ctx.route.hash = '#z/3';\n"
+        "await __controller.onRoute({ page: 'trace', search: '', hash: '#z/3' });\n"
         "const afterHash = { key: tr.detailKey };\n"
-        "location.hash = '';\n"
-        "onHash();\n"
+        "location.hash = ''; ctx.route.hash = '';\n"
+        "await __controller.onRoute({ page: 'trace', search: '', hash: '' });\n"
         "return { afterClick, afterHash, mode: tr.mode };\n"
         "})().then((v) => console.log(JSON.stringify(v)))",
     )

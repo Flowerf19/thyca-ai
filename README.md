@@ -8,7 +8,7 @@ Thyca là một **đội bot**: Thyca là bot quản lý, bạn tạo thêm bot 
 
 ## Màn hình
 
-7 màn, chuyển bằng thanh nav góc phải; bấm bot trên sidebar để lọc màn theo bot đó:
+7 màn trong một SPA tại `http://127.0.0.1:19502/`, chuyển bằng thanh nav góc phải; bấm bot trên sidebar để lọc màn theo bot đó. Mọi màn dùng chung URL gốc, không tải lại ứng dụng khi chuyển trang; các liên kết trang cũ vẫn mở đúng màn và giữ bộ lọc/định danh liên quan:
 
 ![Nhật ký](docs/images/webui-memories.png)
 
@@ -41,7 +41,7 @@ Cần Linux, Python 3.14+, `uv`, API key OpenAI-compatible:
 
 ```bash
 curl -LsSf https://raw.githubusercontent.com/Flowerf19/thyca-ai/main/install.sh | sh
-thyca --serve        # http://127.0.0.1:19502
+thyca --serve        # SPA: http://127.0.0.1:19502/
 ```
 
 Lần đầu chưa có key, màn Cài đặt tự mở: điền Base URL + API key → **Tải danh sách model** → chọn → **Lưu** (ghi `~/.thyca/config.json`).

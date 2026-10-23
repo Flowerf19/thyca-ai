@@ -1,0 +1,9 @@
+/* Retained SPA workspaces: never allow an inactive page into focus/layout. */
+#thyca-page-host{display:contents}
+#thyca-page-host>.workspace[hidden],#chat-workspace[hidden]{display:none!important}
+#thyca-page-host>.workspace[aria-hidden=true],#chat-workspace[aria-hidden=true]{pointer-events:none}
+.app-workspace{grid-column:3;min-width:0;min-height:0}
+#chat-workspace{grid-column:3}
+@media(max-width:850px){.app-workspace,#chat-workspace{grid-column:1}}
+body[data-active-page]:not([data-active-page=chat]) .chat-only{display:none!important}
+.spa-error{margin:24px;padding:16px;border:1px solid #b66;border-radius:10px;color:#833;background:#fff6ef}

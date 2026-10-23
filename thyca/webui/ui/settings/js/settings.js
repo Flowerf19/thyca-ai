@@ -1,3 +1,9 @@
+// Retained settings controller; declarations stay private to this closure.
+ThycaRouter.register('settings', { title: 'Cài đặt', stylesheet: '/ui/settings/settingscss/settings.css', mount(ctx) {
+  const root = ctx.root;
+  const $ = (selector, base = root) => selector === '.workspace' ? root : base.querySelector(selector);
+  const $$ = (selector, base = root) => [...base.querySelectorAll(selector)];
+  let selectedBot = '';
 // Settings page: schema-driven config form (limits + timeline), read-only
 // bot roster, localStorage-only UI preferences, backend status card.
 // The shared shell (header/sidebar/dialogs) is emitted by emitShell() in
@@ -7,7 +13,7 @@
 // API: GET /api/config -> {schema, values, meta}; POST /api/config <- edited
 //      values; GET /api/config/status -> {ready, version}; GET /api/bots +
 //      GET /api/sessions run inside bootShell() (share/shell.js).
-'use strict';
+
 
 /* avatars.js setState() reaches `runs`/`cancelTurn` on error/offline state
    changes (e.g. the studio's error preview). Settings owns no turn stream —
@@ -16,7 +22,7 @@ const runs = new Map();
 function cancelTurn() { return false; }
 
 const workspace = $('.workspace');
-$('.notebook-shell').setAttribute('aria-label', 'Thyca — sổ điều chỉnh');
+document.querySelector('.notebook-shell').setAttribute('aria-label', 'Thyca — sổ điều chỉnh');
 workspace.setAttribute('aria-label', 'Nội dung cài đặt');
 
 workspace.insertAdjacentHTML('beforeend', `
@@ -177,7 +183,7 @@ function renderRoster() {
    (syncRoster rewrites #team-bot-list / data-state attributes). */
 let rosterTimer = null;
 new MutationObserver(() => { clearTimeout(rosterTimer); rosterTimer = setTimeout(renderRoster, 120); })
-  .observe($('#team-bot-list'), { childList: true, subtree: true, attributes: true, attributeFilter: ['data-state'] });
+  .observe(ctx.sidebar, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-state'] });
 
 /* ---------- Giao diện (máy này) — localStorage-only, không gọi API ---------- */
 
@@ -233,6 +239,9 @@ $('#status-refresh').onclick = loadStatus;
 
 /* ---------- Boot ---------- */
 
+function selectBot(id) { if (id && getBot(id)) ctx.navigate('chat', { search: '?bot=' + encodeURIComponent(id) }); }
+function loadSession(id) { if (id) ctx.navigate('chat', { search: '?s=' + encodeURIComponent(id) }); }
+
 async function boot() {
   hydratePrefs(prefs);
   applyPrefs(prefs, { save: false });
@@ -240,12 +249,13 @@ async function boot() {
   loadStatus();                                                 // API: GET /api/config/status
   const cfgDone = loadConfig();                                 // API: GET /api/config — card reports its own failure
   try {
-    await bootShell();                                          // API: GET /api/bots + GET /api/sessions -> shared sidebar
+    await ctx.shellReady;                                          // API: GET /api/bots + GET /api/sessions -> shared sidebar
   } catch (err) {
     showPageStatus('Không kết nối được máy chủ Thyca: ' + err.message, 's-error');
   }
   renderRoster();
   await cfgDone;
 }
-
-boot();
+  const ready = boot();
+  return { ready, selectBot, loadSession };
+} });

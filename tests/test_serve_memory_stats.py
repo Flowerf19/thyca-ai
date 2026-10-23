@@ -78,13 +78,14 @@ def test_stats_json_and_static(tmp_path: Path) -> None:
         assert payload["leaves"][0]["search_count"] == 0
         with urlopen(_url(httpd, "/ui/memories/"), timeout=2) as response:
             html = response.read().decode("utf-8")
-        # The rebuilt page is a shell: emitShell() injects header/sidebar at
-        # runtime, so the served HTML only carries stylesheet + script tags.
-        assert "emitShell('memories')" in html
-        assert 'src="js/memories.js"' in html
+        # Legacy memories entry aliases resolve to the canonical root app document.
+        assert 'id="thyca-page-host"' in html
+        assert 'src="../memories/js/memories.js"' in html
+        assert 'src="js/memories.js"' not in html
+        assert 'src="../share/router.js"' in html
         assert "../share/shell.js" in html
         assert "../share/sidebar.css" in html
-        assert "../share/app-shell.css" in html
+        assert "../share/app-shell.css" not in html
         assert 'class="session-item" type="button" data-view=' not in html
         with urlopen(_url(httpd, "/ui/share/shell.js"), timeout=2) as response:
             shell_js = response.read()
@@ -338,10 +339,9 @@ def test_profile_screen_renders_markdown() -> None:
     the shared tab renders the canonical files as markdown cards, other bots
     a read-only TWIN.md card.
 
-    In the rebuilt UI the page is a shell — emitShell('profile') injects the
-    shared header/sidebar and profile.js fills .workspace — so the tab/doc
-    markup, markdown pipeline and edit dialog are asserted on the files that
-    now own them (script for page markup, share/util.js for navigation)."""
+    The root app serves the Chat document and mounts Profile into its retained
+    workspace. The factory owns the tab/doc markup, markdown pipeline, and
+    page-local edit dialog; util.js owns shared route links."""
     html = (WEBUI / "ui" / "profile" / "index.html").read_text(encoding="utf-8")
     script = (WEBUI / "ui" / "profile" / "js" / "profile.js").read_text(encoding="utf-8")
     css = (WEBUI / "ui" / "profile" / "profilecss" / "profile.css").read_text(encoding="utf-8")
@@ -353,23 +353,28 @@ def test_profile_screen_renders_markdown() -> None:
     # Navigation is the shared SHELL_PAGES table, one row per screen — it
     # lives in util.js so chat's static markup renders the same nav.
     assert "['profile', 'Hồ sơ', '../profile/index.html']" in util
+    # The legacy source template is retained, but server entry aliases use Chat's canonical document.
     assert "emitShell('profile')" in html
     assert 'src="js/profile.js"' in html
-    assert "../share/shell.js" in html
+    app = (WEBUI / "ui" / "chat" / "index.html").read_text(encoding="utf-8")
+    assert 'src="../profile/js/profile.js"' in app
+    assert "../share/shell.js" in app
     # The script fills the shell's .workspace: sidebar bot cards act as the
     # tabs ("Bạn và <bot>"), the shared (thyca) tab carrying the editable
     # canonical docs.
     assert 'id="profile-root"' in script
     assert "'Bạn và '" in script
-    assert "sharedBotId" in script
+    assert "sharedBotId" not in script
+    assert "let selectedBot = '';" in script
+    assert "state.tab" in script
     # The edit dialog is still one dialog with a real editor textarea — its
     # larger footprint is page CSS, not a shared dialog size.
-    assert 'id="edit-dialog"' in html
+    assert 'id="edit-dialog"' in script
     assert "#edit-dialog" in css
     assert "min-height:46vh" in css
     # Body text is markdown, rendered by the shared chat renderer (a module,
     # so profile.js falls back to escaped paragraphs before it evaluates).
-    assert "../share/markdown.js" in html
+    assert "../share/markdown.js" in app
     assert "window.formatMarkdown" in script
     assert "contentHtml(file.content)" in script
     assert "selectCanonical" in script
@@ -388,13 +393,12 @@ def test_profile_screen_renders_markdown() -> None:
     load_body = script[script.index("async function loadFiles") : script.index("function setBusy")]
     assert "selectCanonical(stats.files)" in load_body
     assert "renderContent();" in load_body
-    assert "setStatus(el.status);" in load_body
-    # A stray escape in the hash must not throw out of the hashchange handler;
-    # the guard is a local try/catch helper in profile.js now.
+    assert "setStatus(el.status, '');" in load_body
+    # A stray escape in the route hash must not throw; the decoder is guarded.
     assert "function decodeHash()" in script
     assert "try { return decodeURIComponent" in script
-    assert "addEventListener('hashchange'" in script
-    assert "'file-' + wanted" in script
+    assert "onRoute(route)" in script
+    assert "showShared('file-' + hash)" in script
 
     # Blanking a profile is a real action, so it asks first rather than being
     # blocked by native `required` validation.

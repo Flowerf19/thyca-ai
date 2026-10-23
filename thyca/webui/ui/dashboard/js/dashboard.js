@@ -1,3 +1,10 @@
+// Retained dashboard controller; declarations are isolated in this mount closure.
+ThycaRouter.register('dashboard', { title: 'Sử dụng', stylesheet: '/ui/dashboard/dashboardcss/dashboard.css', mount(ctx) {
+  let routeKey = '';
+  const root = ctx.root;
+  const $ = (selector, base = root) => selector === '.workspace' ? root : base.querySelector(selector);
+  const $$ = (selector, base = root) => [...base.querySelectorAll(selector)];
+  let selectedBot = '';
 // Dashboard "Sử dụng & chi phí" — trace stats + recent turns, real backend only.
 //
 // API: GET /api/traces/stats?from&to                      -> totals + by_model/by_bot/by_day/by_hour/by_status + models
@@ -9,7 +16,7 @@
 // recent-turns list are re-fetched with ?bot_id=<id> (server filters by
 // the turn's bot, its DM owner, or a session participant). Clicking the
 // scoped bot again, or "Bỏ lọc", returns to the team view.
-'use strict';
+
 
 const FIRST_PAGE = 15;       // "Lượt gần nhất" initial fetch — roughly one screen
 const MORE_PAGE = 50;        // "Tải thêm" page size
@@ -240,10 +247,11 @@ function updateScopeChip() {
 }
 function selectBot(id) {
   botScope = !id || botScope === id ? '' : id;
-  selectedBot = botScope;
-  renderTeam();
+  ctx.highlightBot(botScope);
+  ctx.renderTeam();
   updateScopeChip();
-  history.replaceState(null, '', location.pathname + (botScope ? '?bot=' + encodeURIComponent(botScope) : ''));
+  ctx.updateRoute({ search: botScope ? '?bot=' + encodeURIComponent(botScope) : '' });
+  routeKey = ctx.route.search + ctx.route.hash;
   loadStats();            // API: GET /api/traces/stats?from&to&bot_id
   loadTraces(true);       // API: GET /api/traces?from&to&bot_id&limit&offset
 }
@@ -468,7 +476,10 @@ function renderTraceFoot() {
 }
 function openTraceRow(e) {
   const tr = e.target.closest('tr[data-href]');
-  if (tr) location.href = tr.dataset.href;
+  if (tr) {
+    const match = tr.dataset.href.match(/#([^/]+)\/(\d+)$/);
+    if (match) ctx.navigate('trace', { hash: '#' + match[1] + '/' + match[2] });
+  }
 }
 
 /* ---------- boot ---------- */
@@ -499,16 +510,24 @@ function buildPage() {
 
 async function boot() {
   buildPage();
+  try { await ctx.shellReady; } catch (err) { toast('Không tải được đội bot: ' + (err.message || '')); }
+  const wanted = new URLSearchParams(ctx.route.search).get('bot');
+  if (wanted && getBot(wanted)) { botScope = wanted; ctx.highlightBot(wanted); updateScopeChip(); }
+  routeKey = ctx.route.search + ctx.route.hash;
   loadStats();            // API: GET /api/traces/stats?from&to
   loadTraces(true);       // API: GET /api/traces?from&to&limit&offset&model&status
-  /* Stats already render with placeholder avatars; bootShell() fills the
-     roster (and palettes), after which bot-dependent regions re-render. */
-  try { await bootShell(); }                  // API: GET /api/bots + GET /api/sessions
-  catch (err) { toast('Không tải được đội bot: ' + (err.message || '')); }
-  const wanted = new URLSearchParams(location.search).get('bot');   // ?bot=<id> deep link
-  if (wanted && getBot(wanted)) selectBot(wanted);
   if (statsData) renderBotRows();
   if (traceState.rows.length) renderTraceTable();
 }
-
-boot();
+  const ready = boot();
+  return { ready, selectBot, loadSession, onRoute(route) {
+    const key = route.search + route.hash;
+    if (key === routeKey) return;
+    routeKey = key;
+    const wanted = new URLSearchParams(route.search).get('bot') || '';
+    if (wanted !== botScope) {
+      botScope = wanted && getBot(wanted) ? wanted : '';
+      ctx.highlightBot(botScope); ctx.renderTeam(); updateScopeChip(); loadStats(); loadTraces(true);
+    }
+  } };
+} });

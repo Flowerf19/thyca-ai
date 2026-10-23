@@ -17,10 +17,12 @@
 - Linux là target. Đừng viết API chỉ chạy trên Windows.
 - Secret chỉ qua env hoặc file ngoài Git (`~/.thyca/auth.json`, mode 0600).
 - Layout backend: `thyca/{agent,llm,config,memory,sessions,tools,skills,serve,app,core}/` — cấm file lẻ top-level (trừ `__init__.py`/`__main__.py`) và cấm shim. `core/` là leaf (stdlib-only, không import `thyca.*` khác). `serve/` không import runtime `app/` (chỉ `TYPE_CHECKING` + lazy).
-- Layout webui: `webui/*.html` flat (URL contract) + `webui/pages/<page>/` (JS+CSS theo trang) + `webui/shared/{css,js}/` (tokens/kit/states/markdown, api/http/streams, pager); `vendor/` + `images/` giữ root. Cấm CSS global mới không scope; app shell sống ở `shared/css/kit.css`.
+- WebUI root-only native SPA: `thyca/webui/ui/chat/index.html` is the shared application entry at `/`; the seven known legacy page paths resolve to it and the router keeps page/filter/fragment state in browser history while the visible URL stays at `/`. Keep independent page factories/workspaces in `thyca/webui/ui/<page>/` and shared shell/router code in `thyca/webui/ui/share/`; do not introduce an iframe or a second application entry. Keep CSS page-scoped; shared global rules belong only in existing shared styles, and do not add unscoped global CSS.
 - Pytest baseline 2026-09-22: **719 passed / 0 fail**. Fail `test_debug_prints_prompt_flags` cũ (`tools=7` vs `tools=13`) không tái hiện — nếu đỏ lại thì là regression, không tự sửa số.
 
 ## Accepted WebUI decisions (2026-10-14)
+
+- Root-only SPA (2026-10-23): all seven screens share one native application document at `/`, retain inactive workspaces (especially Chat streams and drafts), and route legacy page URLs into the matching workspace with supported query/hash state. No iframe or page reload for in-app navigation.
 
 - Preserve the notebook layout, existing fonts, and shared paper artwork. All shared shell and dialog backgrounds use `thyca/webui/images/thyca-bg-paper.png` with a 65% cream overlay.
 - Shared background tokens: frame `#E8DAC3`, surface `#FBF4E5`, selected row `#F4E9D7`. Use shared tokens rather than page-specific neutral backgrounds.

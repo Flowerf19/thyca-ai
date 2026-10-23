@@ -13,6 +13,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from test_team_frontend import _unit_factory_source
 
 ROOT = Path(__file__).resolve().parents[1]
 WEBUI = ROOT / "thyca" / "webui"
@@ -192,6 +193,8 @@ const deps = {
   confirm: () => true,
   bootShell: async () => {},
 };
+const ctx = { root: document, route: { page: 'dashboard', search: deps.location.search, hash: deps.location.hash }, shellReady: deps.bootShell(), $: (s) => s === '.workspace' ? document : deps.$(s, document), $$: (s) => deps.$$(s, document), navigate(page, parts = {}) { this.route = { page, search: '', hash: '', ...parts }; }, updateRoute(parts) { Object.assign(this.route, parts); calls.urls.push({ ...this.route }); }, highlightBot() {}, renderTeam() {}, isActive: () => true, onRoute: () => () => {} };
+deps.ctx = ctx;
 const settle = async () => { for (let i = 0; i < 6; i++) await new Promise(r => setImmediate(r)); };
 const fire = (el, type, event = {}) => {
   event.preventDefault ??= () => {};
@@ -208,12 +211,16 @@ def _node() -> str:
 
 
 def _run_page(page_js: Path, ret: str, scenario: str, setup: str = "") -> dict:
+    source = page_js.read_text(encoding="utf-8")
+    if page_js in (DASH_JS, TRACE_JS, MEM_JS):
+        source = _unit_factory_source(page_js, source)
     script = (
         _HARNESS
         + setup
-        + f"\nconst source = fs.readFileSync({json.dumps(str(page_js))}, 'utf8');\n"
+        + f"\nctx.route.page = {json.dumps(page_js.parent.parent.name)};\nconst source = {json.dumps(source)};\n"
         + f"const page = new Function(...Object.keys(deps), source + {json.dumps(ret)})"
           "(...Object.values(deps));\n"
+        + "if (globalThis.__controller?.ready) await globalThis.__controller.ready;\n"
         + scenario
         + "\n"
     )
@@ -451,7 +458,7 @@ def test_trace_groups_sessions_and_opens_turn_detail() -> None:
 
     # Deep link rewritten, detail endpoint hit.
     assert "/api/traces/s-1/1" in out["gets"]
-    assert any(u.endswith("#s-1/1") for u in out["urls"])
+    assert out["urls"] == [{"page": "trace", "search": "", "hash": "#s-1/1"}]
 
 
 def test_trace_page_structure() -> None:
@@ -466,13 +473,13 @@ def test_trace_page_structure() -> None:
     assert 'href="tracecss/trace.css"' in html
     assert '<script type="module" src="../share/markdown.js">' in html
 
-    # Deep links: #<session_id>/<turn_index> and ?s=<id>&t=<turn>, always via
-    # history.replaceState (in-page navigation never pushes entries).
-    assert "location.hash.slice(1)" in js
-    assert "new URLSearchParams(location.search)" in js
+    # Deep links: #<session_id>/<turn_index> and ?s=<id>&t=<turn> are owned
+    # by the memory router; page code updates its route through the context.
+    assert "ctx.route.hash.slice(1)" in js
+    assert "new URLSearchParams(ctx.route.search)" in js
     assert "p.get('s')" in js and "p.get('t')" in js
-    assert "history.replaceState" in js
-    assert "addEventListener('hashchange'" in js
+    assert "ctx.updateRoute({ search: pageQuery(), hash: '#'" in js
+    assert "onRoute(route)" in js
 
     # Assistant replies reuse the chat markdown pipeline.
     assert "window.formatMarkdown(text)" in js
@@ -600,5 +607,5 @@ def test_shared_sidebar_renders_team_and_groups() -> None:
     assert "$('#group-list')?.addEventListener('click'" in sidebar
     assert "selectBot(b.id)" in sidebar
     assert "loadSession(g.id" in sidebar
-    assert "'../chat/index.html?bot='" in shell_app
-    assert "'../chat/index.html?s='" in shell_app
+    assert "ThycaRouter.dispatch('selectBot', id)" in shell_app
+    assert "ThycaRouter.dispatch('loadSession', id, title, botId)" in shell_app

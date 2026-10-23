@@ -18,6 +18,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from test_team_frontend import _unit_factory_source
 
 ROOT = Path(__file__).resolve().parents[1]
 TRACE_JS = ROOT / "thyca" / "webui" / "ui" / "trace" / "js" / "trace.js"
@@ -46,6 +47,8 @@ class El {
 const __els = {};
 const __el = (id) => __els[id] ||= new El();
 const __workspace = new El();
+__workspace.querySelector = (s) => s.startsWith('#') ? __el(s.slice(1)) : new El();
+__workspace.querySelectorAll = () => [];
 globalThis.document = {
   querySelector: (s) => s === '.workspace' ? __workspace
     : s.startsWith('#') ? __el(s.slice(1)) : null,
@@ -86,10 +89,12 @@ def node() -> str:
 def _eval_trace(node: str, body: str) -> object:
     """Eval trace.js (classic script) with stubs, then run `body` inside
     the same scope so module-level functions/state are reachable."""
-    src = TRACE_JS.read_text(encoding="utf-8")
+    src = _unit_factory_source(TRACE_JS, TRACE_JS.read_text(encoding="utf-8"))
     program = (
         STUBS
-        + "\nconst __src = " + json.dumps(src) + ";\n"
+        + "\nconst ctx = { root: __workspace, route: { page: 'trace', search: location.search, hash: location.hash }, $: globalThis.$, $$: globalThis.$$, shellReady: Promise.resolve(), navigate(page, parts) { globalThis.__routes ||= []; globalThis.__routes.push({ page, ...parts }); }, updateRoute(parts) { Object.assign(this.route, parts); globalThis.__routes ||= []; globalThis.__routes.push({ ...this.route }); }, highlightBot() {}, renderTeam() {}, isActive: () => true, onRoute: () => () => {} };\n"
+        + "globalThis.ThycaRouter = { register(_page, spec) { globalThis.__controller = spec.mount(ctx); } };\n"
+        + "const __src = " + json.dumps(src) + ";\n"
         + "const __body = " + json.dumps(body) + ";\n"
         + "eval(__src + '\\n;' + __body);\n"
     )

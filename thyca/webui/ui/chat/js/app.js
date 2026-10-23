@@ -6,8 +6,8 @@
 /* @mention regex is built from the live roster — no hardcoded ids. */
 const mentionPattern = () => new RegExp('@(' + bots.map(b => b.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')\\b', 'i');
 
-async function boot() {
-  try { await loadRoster(); }          // API: GET /api/bots
+async function boot(ctx) {
+  try { await ctx.shellReady; }        // one shared roster/session load for the app
   catch (err) {
     $('#message-list').innerHTML = `<article class="conversation-empty"><h2>Không kết nối được máy chủ</h2><p>${escapeHTML(err.message)}</p></article>`;
     return;
@@ -16,17 +16,15 @@ async function boot() {
   bots.forEach(updateCard);
   $('.bot-count').textContent = bots.length + ' người bạn';
   rebuildExpressionBots();
-  try { await refreshSessions(); renderGroups(); } catch {}   // API: GET /api/sessions
-  loadConfig();                                              // API: GET /api/config
-
-  // Deep links from other pages: ?bot=<id> opens that DM, ?s=<id> a session.
-  const params = new URLSearchParams(location.search);
+  renderGroups();
+  loadConfig();
+  const params = new URLSearchParams(ctx.route.search);
   const linkSession = params.get('s');
   const linkBot = params.get('bot');
   const first = getBot(linkBot) || bots[0];
   if (first) { selectedBot = first.id; updateComposer(); }
-  if (linkSession && groups.some(g => g.id === linkSession)) { await loadSession(linkSession); }
-  else if (first) { await selectBot(first.id); }
+  if (linkSession && groups.some(g => g.id === linkSession)) await loadSession(linkSession);
+  else if (first) await selectBot(first.id);
   else $('#message-list').innerHTML = '<article class="conversation-empty"><h2>Chưa có bot nào</h2><p>Đăng ký một bot để bắt đầu trò chuyện.</p></article>';
 }
 
@@ -70,4 +68,29 @@ $('#conversation-scroll').addEventListener('scroll', () => $('#to-bottom').hidde
 /* Public adapter for tests/demos: shared shell surface + chat turn control. */
 window.ThycaPrototype = Object.assign(window.ThycaShell || {}, { sendTurn, stop: stopRun });
 
-boot();
+ThycaRouter.register('chat', { title: 'Sổ trò chuyện', stylesheet: '/ui/chat/chatcss/chat.css', mount(ctx) {
+  let applied = ctx.route.search + ctx.route.hash;
+  const ready = boot(ctx);
+  return {
+    ready,
+    selectBot,
+    loadSession,
+    onLeave() { nextChatNav(); },
+    onEnter(route) {
+      if (!currentSession && bots.length) {
+        const bot = new URLSearchParams(route.search).get('bot');
+        selectBot(getBot(bot) ? bot : bots[0].id);
+      }
+    },
+    onRoute(route) {
+      const next = route.search + route.hash;
+      const params = new URLSearchParams(route.search);
+      const session = params.get('s'), bot = params.get('bot');
+      if (next !== applied) {
+        applied = next;
+        if (session && groups.some(g => g.id === session)) loadSession(session);
+        else if (bot && getBot(bot)) selectBot(bot);
+      }
+    },
+  };
+}});

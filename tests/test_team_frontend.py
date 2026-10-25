@@ -380,8 +380,10 @@ globalThis.localStorage = {
   clear() { this._m = {}; },
 };
 globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({}), body: null });
-globalThis.addEventListener = () => {};
-globalThis.removeEventListener = () => {};
+const _globalListeners = new Map();
+globalThis.addEventListener = (type, listener) => { const listeners = _globalListeners.get(type) || []; listeners.push(listener); _globalListeners.set(type, listeners); };
+globalThis.removeEventListener = (type, listener) => { _globalListeners.set(type, (_globalListeners.get(type) || []).filter(item => item !== listener)); };
+globalThis.dispatchEvent = event => { for (const listener of (_globalListeners.get(event.type) || []).slice()) listener.call(globalThis, event); return true; };
 globalThis.confirm = () => true;
 globalThis.MutationObserver = class { constructor(cb) { this.cb = cb; } observe() {} disconnect() {} };
 const __setInterval = setInterval;
@@ -462,8 +464,7 @@ _BUNDLES = {
     "settings": (UTIL_JS, DATA_JS, SHELL_JS, AVATARS_JS, IDLE_JS, SIDEBAR_JS, STUDIO_JS, SHELL_APP_JS, SETTINGS_JS),
     "provider": (UTIL_JS, DATA_JS, SHELL_JS, AVATARS_JS, IDLE_JS, SIDEBAR_JS, STUDIO_JS, SHELL_APP_JS, PROVIDER_JS),
     "memories": (UTIL_JS, DATA_JS, SHELL_JS, AVATARS_JS, IDLE_JS, SIDEBAR_JS, STUDIO_JS, SHELL_APP_JS, MEMORIES_JS),
-    "dashboard": (UTIL_JS, DATA_JS, SHELL_JS, AVATARS_JS, IDLE_JS, SIDEBAR_JS, STUDIO_JS, SHELL_APP_JS, DASHBOARD_JS),
-    "trace": (UTIL_JS, DATA_JS, SHELL_JS, AVATARS_JS, IDLE_JS, SIDEBAR_JS, STUDIO_JS, SHELL_APP_JS, TRACE_JS),
+    "dashboard": (UTIL_JS, DATA_JS, SHELL_JS, AVATARS_JS, IDLE_JS, SIDEBAR_JS, STUDIO_JS, SHELL_APP_JS, TRACE_JS, DASHBOARD_JS),
     "profile": (UTIL_JS, DATA_JS, SHELL_JS, AVATARS_JS, IDLE_JS, SIDEBAR_JS, STUDIO_JS, SHELL_APP_JS, PROFILE_JS),
 }
 
@@ -478,6 +479,8 @@ def _unit_factory_source(path: Path, source: str) -> str:
     if path.parent.name != 'js' or path.parent.parent.name not in {'dashboard', 'memories', 'profile', 'provider', 'settings', 'trace'}:
         return source
     page = path.parent.parent.name
+    if page == 'trace':
+        return source
     marker = f"ThycaRouter.register('{page}', {{"
     if source.count(marker) != 1 or source.count('mount(ctx) {') != 1 or not source.rstrip().endswith('} });'):
         raise AssertionError(f'unrecognized retained factory wrapper: {path}')
@@ -508,6 +511,18 @@ def _unit_factory_source(path: Path, source: str) -> str:
     boot_export = "globalThis.boot = (...args) => { ctx.route.search = location.search || ''; ctx.route.hash = location.hash || ''; return boot(...args); };"
     return '(function(){\n' + body[:tail.start()] + controller_tail + f'\nglobalThis.__controller = controller;\nglobalThis.__spaUnit = Object.assign(globalThis.__spaUnit || {{}}, {{{function_exports}}});\nObject.assign(globalThis, globalThis.__spaUnit);\n{variable_exports}\n{boot_export}\n}})();\n'
 
+
+def _unit_renderer_source(path: Path, source: str) -> str:
+    """Expose private helpers from the load-once Trace renderer in test evals only."""
+    if path.parent.name != 'js' or path.parent.parent.name != 'trace':
+        return source
+    start_marker = '(function () {'
+    end_marker = '})();'
+    if source.count(start_marker) != 1 or source.count('window.ThycaTraceDetail = Object.freeze({') != 1 or not source.rstrip().endswith(end_marker):
+        raise AssertionError(f'unrecognized trace renderer wrapper: {path}')
+    start = source.index(start_marker) + len(start_marker)
+    end = source.rfind(end_marker)
+    return source[start:end]
 
 
 def _run(node: str, body: str, via: str = "side", emit: str | None = None, timeout: int = 30):
@@ -1382,7 +1397,7 @@ def test_shell_markup_header_sidebar_and_dialogs(node: str) -> None:
     for did in ("mobile-overlay", "expressions-dialog", "bot-drawer", "group-dialog",
                 "group-form", "group-options", "toast", "announcer", "bot-drawer-body"):
         assert f'id="{did}"' in dlg
-    assert out["pages"] == ["chat", "memories", "profile", "provider", "dashboard", "trace", "settings"]
+    assert out["pages"] == ["chat", "memories", "profile", "provider", "dashboard", "settings"]
 
 
 def test_emit_shell_and_boot_shell_fill_shared_dom(node: str) -> None:
@@ -2150,6 +2165,61 @@ def test_settings_form_posts_merged_values(node: str) -> None:
     assert out["posted"] == [{"limits": {"maxLoops": 7}, "provider": {"model": "m1", "apiKey": "keep"}}]
 
 
+def test_settings_save_merges_limit_patch_onto_fresh_provider_config(node: str) -> None:
+    out = _run(node, """
+        const server = { values: { providers: { alpha: { baseUrl: 'https://a.invalid', apiKey: '' } },
+                                  models: { old: { provider: 'alpha' } }, defaultProvider: 'alpha', defaultModel: 'old',
+                                  limits: { loopMax: 80, hotTailKB: 4 }, timeline: { retentionDays: 30 },
+                                  pricing: { old: { input: 1 } } },
+                       schema: { sections: [ { key: 'limits', label: 'L', fields: [
+                         { key: 'limits.loopMax', label: 'Vòng', type: 'number', min: 1, max: 200 },
+                       ] } ] } };
+        const posted = []; let gets = 0;
+        installFetch((url, opts) => {
+            if (url === '/api/bots') return { bots: [] };
+            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/config/status') return { ready: true };
+            if (url === '/api/config' && opts.method === 'POST') { posted.push(JSON.parse(opts.body)); return {}; }
+            if (url === '/api/config') { gets++; return server; }
+            return {};
+        });
+        await tick(); await boot();
+        server.values.providers.fresh = { baseUrl: 'https://fresh.invalid', apiKey: '' };
+        server.values.models.freshModel = { provider: 'fresh', input: 0.1, cache: 0.01, output: 0.2 };
+        server.values.defaultModel = 'freshModel';
+        server.values.pricing.freshModel = { input: 0.1, cache: 0.01, output: 0.2 };
+        const input = document.createElement('input'); input.type = 'number'; input.dataset.section = 'limits'; input.dataset.name = 'loopMax'; input.dataset.label = 'Vòng';
+        Object.defineProperty(input, 'valueAsNumber', { get: () => 91 }); $('#config-form').appendChild(input);
+        await $('#config-form').onsubmit({ preventDefault() {} });
+        return { gets, posted, buttonDisabled: $('#save-config').disabled };
+    """, via="settings", emit="settings")
+    assert out["gets"] == 2 and len(out["posted"]) == 1
+    posted = out["posted"][0]
+    assert posted["limits"] == {"loopMax": 91, "hotTailKB": 4}
+    assert posted["providers"]["fresh"]["baseUrl"] == "https://fresh.invalid"
+    assert posted["models"]["freshModel"]["provider"] == "fresh" and posted["defaultModel"] == "freshModel"
+    assert posted["pricing"]["freshModel"] == {"input": 0.1, "cache": 0.01, "output": 0.2}
+    assert posted["timeline"] == {"retentionDays": 30}
+
+
+def test_settings_fresh_read_failure_never_posts_stale_config(node: str) -> None:
+    out = _run(node, """
+        let gets = 0; const posts = [];
+        installFetch((url, opts) => {
+            if (url === '/api/bots') return { bots: [] };
+            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/config/status') return { ready: true };
+            if (url === '/api/config' && opts.method === 'POST') { posts.push(JSON.parse(opts.body)); return {}; }
+            if (url === '/api/config') { gets++; return gets === 1 ? { values: { limits: { loopMax: 80 } }, schema: { sections: [] } } : new Error('fresh read failed'); }
+            return {};
+        });
+        await tick(); await boot();
+        await $('#config-form').onsubmit({ preventDefault() {} });
+        return { gets, posts, saving: savingConfig, disabled: $('#save-config').disabled };
+    """, via="settings", emit="settings")
+    assert out == {"gets": 2, "posts": [], "saving": False, "disabled": False}
+
+
 def test_memory_scope_echo_guard_and_request_token(node: str) -> None:
     """loadStats drops mismatched scope echoes as an error and ignores stale
     answers once a newer request started."""
@@ -2211,14 +2281,14 @@ def test_memory_leaf_rendering_and_day_groups(node: str) -> None:
 
 
 def test_dashboard_cost_rows_and_bot_fallbacks(node: str) -> None:
-    """fmtCost tiers + honest '—'; by_bot rows sort by requests, paint the
+    """fmtCost tiers + honest '—'; by_bot rows sort by tokens, paint the
     share bar in the bot color (neutral #a08f68 when unknown) and label
     unknown ids truthfully."""
     out = _run(node, """
         bots.length = 0;
         bots.push(...roster([{ id: 'coder', name: 'Coder', tint: 'botanical' }]));
         statsData = {
-            totals: { requests: 10 },
+            totals: { requests: 11, total_tokens: 810 },
             by_bot: [
                 { bot_id: 'coder', requests: 7, tool_calls: 2, total_tokens: 700, cost_usd: 0.5, last_started_at: new Date().toISOString() },
                 { bot_id: 'unknown', requests: 3, tool_calls: 0, total_tokens: 100, cost_usd: null },
@@ -2230,42 +2300,47 @@ def test_dashboard_cost_rows_and_bot_fallbacks(node: str) -> None:
         return {
             rows: rowsHtml,
             order: [rowsHtml.indexOf('Coder'), rowsHtml.indexOf('Chưa gắn bot'), rowsHtml.indexOf('ghost')],
+            unknownRow: rowsHtml.slice(rowsHtml.lastIndexOf('<li>', rowsHtml.indexOf('Chưa gắn bot')), rowsHtml.indexOf('</li>', rowsHtml.indexOf('Chưa gắn bot'))),
             fmt: [fmtCost(null), fmtCost(0.00042), fmtCost(0.5), fmtCost(3.14159), fmtInt('x'), fmtDur(1500)],
-            share: [share(7, 10), share(1, 300)],
+            share: [share(7, 10), share(1, 300), share(700, 810), share(100, 810), share(10, 810)],
             names: [botDisplayName('unknown'), botDisplayName('ghost'), botDisplayName('coder')],
             emptyCell: avatarCell('').includes('id-chip'),
         };
     """, via="dashboard", emit="dashboard")
     rows = out["rows"]
-    assert 0 <= out["order"][0] < out["order"][1]                # request sort (Coder 7 > unknown 3 > ghost 1)
+    assert 0 <= out["order"][0] < out["order"][1]                # token sort (Coder 700 > unknown 100 > ghost 10)
     assert 'class="row-avatar"' in rows and 'id-chip' in rows      # real seal + fallback chip
     assert "background:#6f7f57" in rows                            # live bot color
     assert "background:#a08f68" in rows                            # neutral fallback bar
-    assert "70%" in rows and "$0.5000" in rows
+    assert "86%" in rows and "12%" in rows and "1,2%" in rows
+    assert "$0.5000" in rows
+    assert 'class="bot-row bot-row-scope" data-action="select-bot" data-bot-id="coder"' in rows
+    assert '<div class="bot-row">' in out["unknownRow"] and "<button" not in out["unknownRow"]
     assert out["fmt"] == ["—", "$0.000420", "$0.5000", "$3.14", "—", "1,5 giây"]
     assert out["share"][0] == "70%" and out["share"][1].startswith("0")
+    assert out["share"][2:] == ["86%", "12%", "1,2%"]
     assert out["names"] == ["Chưa gắn bot", "ghost", "Coder"]
     assert out["emptyCell"] is True
 
 
-def test_trace_page_labels_and_deep_links(node: str) -> None:
-    """Trace renders status chips, Vietnamese kind labels and the
-    #<session>/<turn> deep link shape used across the app."""
+def test_usage_turn_renderer_preserves_trace_labels_and_turn_intent(node: str) -> None:
+    """The shared detail renderer keeps Trace labels while grouped turns
+    carry session/turn identity for same-workspace navigation."""
     out = _run(node, """
-        location.href = 'http://localhost/ui/trace/index.html#s9/3';
-        location.hash = '#s9/3';
-        ctx.route.hash = location.hash;
+        const detail = window.ThycaTraceDetail.render({
+          session_id: 's9', turn_index: 3, status: 'completed', messages: [
+            { role: 'assistant', content: '', meta: { bus_event: true, kind: 'delegate' } },
+            { role: 'assistant', content: '', meta: { status: 'context_limit', kind: 'guard' } },
+          ],
+        });
         return {
-            status: [statusChip('completed'), statusChip('failed'), statusChip('weird')],
-            labels: [SIDE_KIND_LABEL.naming, BUS_KIND_LABEL.delegate, STOP_LABEL.context_limit],
-            route: routeFromUrl(),
-            row: turnRowHtml({ session_id: 's9', turn_index: 2, title: 'T', status: 'completed', started_at: new Date().toISOString(), bots: ['x'] }),
+          detail,
+          route: parseDetailRoute({ hash: '#s9/3' }),
+          row: turnRowHtml({ session_id: 's9', turn_index: 2, title: 'T', status: 'completed', started_at: new Date().toISOString() }),
         };
-    """, via="trace", emit="trace")
-    assert 'tl-chip s-ok' in out["status"][0] and "Thành công" in out["status"][0]
-    assert 'tl-chip s-error' in out["status"][1] and "Lỗi" in out["status"][1]
-    assert "weird" in out["status"][2]
-    assert out["labels"] == ["Đổi tên phiên", "Giao việc", "Dừng — hết ngữ cảnh"]
+    """, via="dashboard", emit="dashboard")
+    assert "Thành công" in out["detail"] and 'tl-chip s-ok' in out["detail"]
+    assert "Giao việc" in out["detail"] and "Dừng — hết ngữ cảnh" in out["detail"]
     assert out["route"] == {"sid": "s9", "turn": 3}
     assert 'data-session="s9"' in out["row"] and 'data-turn="2"' in out["row"]
     assert 'class="tl-turn"' in out["row"] and ">#2<" in out["row"]

@@ -6,6 +6,8 @@
 <!-- Provider & model page on the shared app shell: emitShell() inserts the
      header, live bot sidebar and dialogs BEFORE avatars/sidebar/studio bind
      their DOM, then js/provider.js fills .workspace and calls bootShell().
+     The connection URL/key remain a draft through model discovery; one explicit
+     config save records the connection, selected model, and optional prices.
      API: GET  /api/config              -> {schema, values, meta}.
             values.providers  : id -> {baseUrl, apiKeyEnv, apiKey:"", reasoningEffort, api}
             values.models     : id -> {baseUrl, provider, input, cache, output,

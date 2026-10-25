@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from thyca.core.protocol import Message
 from thyca.sessions import Session
@@ -18,7 +18,7 @@ class TurnSummary:
     ended_at: str
     model: str | None
     status: str  # completed | failed | loop_limit | context_limit
-    rounds: int
+    rounds: int | None
     requests: int
     prompt_tokens: int | None
     cached_tokens: int | None
@@ -366,6 +366,59 @@ def turns_from_session(session: Session) -> list[TurnSummary]:
     return out
 
 
+def scope_turn_to_bot(turn: TurnSummary, bot_id: str) -> TurnSummary | None:
+    """Project recorded metrics, without relabelling shared execution context.
+
+    Participation alone never attributes usage. Legacy unattributed work stays
+    in the overview; an explicit single-bot summary without a breakdown remains
+    usable. The source summary/messages are never mutated and detail continues
+    to resolve the original (session_id, turn_index).
+    """
+    entries = [entry for entry in turn.bot_breakdown if isinstance(entry, dict)]
+    if not entries:
+        return turn if turn.bot_id == bot_id else None
+    own = [entry for entry in entries if entry.get("bot_id") == bot_id]
+    if not own:
+        return None
+
+    def subtotal(key: str, *, empty: int | None = None):
+        values = [entry[key] for entry in own
+                  if isinstance(entry.get(key), (int, float))
+                  and not isinstance(entry[key], bool)]
+        return sum(values) if values else empty
+
+    messages = [message for message in turn.messages
+                if message.role == "assistant"
+                and (message.meta or {}).get("bot_id") == bot_id]
+    # The last model for this bot, not another participant's last model. As
+    # with the existing turn/model contract, this is a turn-level model label.
+    model = _sum_tokens(messages)[6] if messages else turn.model
+    return replace(
+        turn,
+        bot_id=bot_id,
+        requests=subtotal("requests", empty=0),
+        tool_calls=subtotal("tool_calls", empty=0),
+        prompt_tokens=subtotal("prompt_tokens"),
+        cached_tokens=subtotal("cached_tokens"),
+        completion_tokens=subtotal("completion_tokens"),
+        total_tokens=subtotal("total_tokens"),
+        cost_usd=subtotal("cost_usd"),
+        latency_ms=subtotal("latency_ms"),
+        rounds=sum(_row_rounds(message) for message in messages) if messages else None,
+        model=model,
+        bot_breakdown=[dict(entry) for entry in own],
+    )
+
+
+def _record_counts(group: list[TurnSummary]) -> dict:
+    """Coverage of the scanned window, not all-time or full price coverage."""
+    return {
+        "sessions": len({turn.session_id for turn in group}),
+        "turns": len(group),
+        "priced_turns": sum(turn.cost_usd is not None for turn in group),
+    }
+
+
 def _percentile(sorted_vals: list[int], p: float) -> int | None:
     if not sorted_vals:
         return None
@@ -398,6 +451,7 @@ def _sum_tool_calls(group: list) -> int:
 def aggregate(turns: list[TurnSummary]) -> dict:
     total_requests, total_cost = _sum_group(turns)
     totals = {
+        **_record_counts(turns),
         "requests": total_requests,
         "tool_calls": _sum_tool_calls(turns),
         "prompt_tokens": sum(t.prompt_tokens or 0 for t in turns),
@@ -421,6 +475,7 @@ def aggregate(turns: list[TurnSummary]) -> dict:
         lat = sorted([x.latency_ms for x in group if isinstance(x.latency_ms, int)])
         requests, cost = _sum_group(group)
         entry = {
+            **_record_counts(group),
             "model": model,
             "requests": requests,
             "prompt_tokens": sum(x.prompt_tokens or 0 for x in group),
@@ -448,7 +503,14 @@ def aggregate(turns: list[TurnSummary]) -> dict:
     by_day = []
     for day, group in sorted(by_day_map.items()):
         requests, cost = _sum_group(group)
-        by_day.append({"day": day, "requests": requests, "cost_usd": cost})
+        by_day.append({
+            **_record_counts(group),
+            "day": day, "requests": requests, "cost_usd": cost,
+            "prompt_tokens": sum(turn.prompt_tokens or 0 for turn in group),
+            "cached_tokens": sum(turn.cached_tokens or 0 for turn in group),
+            "completion_tokens": sum(turn.completion_tokens or 0 for turn in group),
+            "total_tokens": sum(turn.total_tokens or 0 for turn in group),
+        })
     models = sorted(by.keys())
     by_status_map: dict[str, list[TurnSummary]] = defaultdict(list)
     for t in turns:
@@ -482,7 +544,12 @@ def aggregate(turns: list[TurnSummary]) -> dict:
                 "requests": 0, "tool_calls": 0, "prompt_tokens": 0, "cached_tokens": 0,
                 "completion_tokens": 0, "total_tokens": 0,
                 "costs": [], "latencies": [], "last_started_at": "",
+                "session_ids": set(), "turn_ids": set(), "priced_turn_ids": set(),
             })
+            acc["session_ids"].add(t.session_id)
+            acc["turn_ids"].add((t.session_id, t.turn_index))
+            if isinstance(entry.get("cost_usd"), (int, float)):
+                acc["priced_turn_ids"].add((t.session_id, t.turn_index))
             req = entry.get("requests")
             acc["requests"] += req if isinstance(req, int) else 0
             acc["tool_calls"] += _sum_tool_calls([entry])
@@ -498,6 +565,9 @@ def aggregate(turns: list[TurnSummary]) -> dict:
     by_bot = []
     for bot_id, acc in sorted(by_bot_acc.items()):
         by_bot.append({
+            "sessions": len(acc["session_ids"]),
+            "turns": len(acc["turn_ids"]),
+            "priced_turns": len(acc["priced_turn_ids"]),
             "bot_id": bot_id,
             "requests": acc["requests"],
             "tool_calls": acc["tool_calls"],

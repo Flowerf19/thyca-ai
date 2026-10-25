@@ -23,6 +23,7 @@ let composerEffModel = '';
 let composerEffProvider = '';
 let composerEffThinking = '';
 let composerInheritSeq = 0;      // guards stale settings fetches
+let composerConfigSeq = 0;       // guards stale config catalog reads
 let composerNavSeq = 0;          // view generation shared by selectBot/loadSession
 let composerScopeKey = '';       // last bot+session the composer reset for
 
@@ -94,8 +95,8 @@ function resetComposerOverrides() {
 
 function paintComposerInherit() {
   const select = $('#composer-model'), effort = $('#thinking-effort');
-  if (select?.options?.[0] && select.value === '') select.options[0].textContent = composerModelInheritLabel();
-  if (effort?.options?.[0] && effort.value === '') effort.options[0].textContent = composerEffortInheritLabel();
+  if (select?.options?.[0]) select.options[0].textContent = composerModelInheritLabel();
+  if (effort?.options?.[0]) effort.options[0].textContent = composerEffortInheritLabel();
 }
 
 /* Show the selected bot's configured connection on the inheritance entries
@@ -124,15 +125,22 @@ async function refreshComposerInherit(botId, nav) {
 }
 
 async function loadConfig() {
+  const seq = ++composerConfigSeq;
   try {
     const { values, schema } = await getJson('/api/config');   // API: GET /api/config
+    if (seq !== composerConfigSeq) return false;
     composerModels = values?.models && typeof values.models === 'object' ? values.models : {};
     composerDefaultModel = typeof values?.defaultModel === 'string' ? values.defaultModel : '';
     const field = (schema?.sections || []).flatMap(s => s.fields || []).find(f => f.key === 'provider.reasoningEffort');
     composerEffortChoices = Array.isArray(field?.choices) ? field.choices : [];
-    // A late config keeps previously resolved inherit state (settings may
-    // have answered first); rebuilds read the stored details either way.
+    // Rebuilding options never resets the composer, stream, or message draft.
     rebuildComposerOptions();
     bindComposerModel();
-  } catch {}
+    return true;
+  } catch { return false; }
 }
+
+window.addEventListener('thyca:config-saved', () => {
+  const botId = selectedBot, nav = chatNavCurrent();
+  void loadConfig().then(ok => ok && botId ? refreshComposerInherit(botId, nav) : null);
+});

@@ -1,58 +1,47 @@
-# Trace — nguyên mẫu redesign (tĩnh)
+# Thyca Trace — nguyên mẫu tĩnh
 
-Static, directly-openable prototype for the Thyca Trace screens.
-No build, no server, no fetch: open `index.html` straight from disk (`file://`).
+Mở `index.html` trực tiếp (`file://`) hoặc xem qua static server. Không có build,
+API, fetch, hay truy cập dữ liệu người dùng. Giữ nguyên thư mục để các tệp tương
+đối và `./tokens.css` hoạt động.
 
-## Mở thế nào (how to open)
+## Điều hướng
 
-Mở tệp `index.html` trong thư mục này bằng trình duyệt (double-click là đủ).
-`prototype.css` dùng font/token thật từ `../shared/css/tokens.css` nên giữ nguyên
-vị trí thư mục khi mở — chỉ cần Google Fonts có mạng, còn lại chạy offline.
+- Sidebar giống các trang Thyca: mục **Tổng quan**, sau đó **Đội** với năm bot
+  (avatar hổ phách, tên và vai trò). Không có mục điều hướng riêng cho chat nhóm.
+- Trong từng phạm vi, ba liên kết nội dung là **Sử dụng token**, **Chi phí**,
+  **Trace**. Chọn bot sẽ giữ nội dung đang xem. Ở màn hình nhỏ, roster nằm trong
+  `<details>` “Chọn bot” để không đẩy nội dung xuống dưới.
+- `#overview?view=usage|cost|trace` xem toàn đội; `#bot/<botId>?view=usage|cost|trace`
+  xem bot trong cả chat riêng lẫn chat nhóm.
+- Bấm một lượt trong Trace để tới `#overview/turn/<sessionId>/<turnIndex>` hoặc
+  `#bot/<botId>/turn/<sessionId>/<turnIndex>`. Trong chi tiết lượt, “Xem cả phiên”
+  mở `#overview/session/<sessionId>` hoặc `#bot/<botId>/session/<sessionId>`.
+  Chi tiết lượt ghi rõ số liệu đóng góp của bot (nếu đang lọc bot), còn steps và
+  Input/Output được gắn nhãn ngữ cảnh toàn bộ lượt/phiên — nội dung không được
+  giả định là của riêng bot đang chọn.
+- Legacy `#usage`, `#cost`, `#sessions`, `#bots`, `#session/<id>` vẫn được ánh xạ
+  sang các màn hình tương ứng trong nguyên mẫu.
 
-## Các màn hình (views, hash routing)
+## Quy tắc số liệu và phạm vi
 
-| Hash | Màn hình |
-|---|---|
-| `#usage` | Sử dụng token: cột ngày xếp chồng Vào/Cache/Ra, 3 thẻ Input–Cache–Output, tổng + Token theo mô hình + Token theo bot |
-| `#cost` | Chi phí: thẻ “Tổng chi phí $X (đã ghi nhận)” + cột ngày, ghi chú độ phủ giá (lượt chưa có giá, không tính $0), Chi phí theo mô hình/bot |
-| `#sessions` | Trace theo phiên: dải tóm tắt, chip lọc theo bot (lọc thật phía client), thẻ từng phiên → bấm vào xem chi tiết |
-| `#bots` | Trace theo bot: thẻ mỗi bot (xếp theo token giảm dần), thanh tỉ lệ Vào/Cache/Ra, danh sách phiên tham gia |
-| `#session/<id>` | Chi tiết phiên: avatar nhóm/đơn, dải thành viên, thẻ từng lượt + `<details>` “Xem các bước & dữ liệu” (bước đánh số, Input/Output) |
+- Tổng quan đếm phiên duy nhất: một phiên nhóm = một phiên. `phiên tham gia` là
+  số phiên có bot đó, và tổng participation của các bot không được cộng thành
+  tổng số phiên.
+- Khi chọn bot, chỉ cộng phần `botBreakdown` của bot đó; các contribution trong
+  chat riêng và chat nhóm đều có mặt. Phiên có bot trong danh sách thành viên
+  nhưng không có lượt đóng góp vẫn được tính là `phiên tham gia`, không tạo lượt
+  hay token giả.
+- Cache là tập con của Input. “Vào” trong chart là Input trừ Cache.
+- Chi phí đã ghi nhận giữ phần giá biết được; `null` vẫn là chưa biết, không phải
+  $0. Lượt chỉ được tính vào giá trung bình khi thành công và có đủ giá.
+- `scope.js` tạo các projection không làm thay đổi mock data. `scope.test.js`
+  kiểm tra số liệu tổng, attribution theo bot, phí null/zero/partial và trường
+  hợp bot có tham gia nhưng không có contribution.
 
-## Avatar — nguồn
+## Avatar
 
-- Viên đá hổ phách đơn (`.mk-peb`): CSS chép **nguyên văn** từ
-  `/home/flowerf/Downloads/thyca-bot-group-avatar.html` (“Mẫu 4”, dòng ~185–215;
-  `.mk` cơ sở dòng ~89–92; keyframes `spin`/`glyph-glow` từ khối Mẫu 1).
-  Khối `<svg><defs>` (6 glyph `#g-*` + gradient) trong `index.html` cũng chép
-  nguyên văn theo byte (đã diff kiểm tra).
-- Avatar nhóm: hình học “Chồng dấu” (`.gm`/`.gm-slot`/`.gm-coin` nguyên văn,
-  vị trí stack 2/3/over + đồng xu `+N`), bên trong là các viên đá hổ phách;
-  viên trên cùng = bot lead (nhiều token nhất ở lượt cuối).
-- Màu/glyph 5 bot y hệt bảng `BOTS` của tệp tham khảo:
-  thyca `#a65a42` quill · thyca-coder `#3e5a5c` code · designer `#2f5d46` brush ·
-  writer `#b8863c` nib · research `#6b4a33` lens.
-- Lưu ý: trong tệp tham khảo không có hàm JS/HTML nào sinh markup `.mk-peb`
-  (JS chỉ sinh dấu sáp `.mk-wax`); cấu trúc pebble trong `prototype.js`
-  (`peb-shadow` + `peb-float` > `peb-body` > `peb-core` + `glyph`) dựng theo đúng
-  các selector của khối CSS `.mk-peb` chép về.
-- Không sao chép ảnh nền base64 của tệp tham khảo; không dùng avatar `.bot-svg` của repo.
-
-## Quy tắc đếm phiên (session-counting rule)
-
-- `totalSessions = sessions.length` — mỗi phiên nhóm chỉ tính **một lần**.
-- “Phiên tham gia” của mỗi bot = số phiên có bot đó; cộng các bot lại có thể
-  vượt tổng số phiên — không bao giờ cộng dồn vào tổng.
-- Token/cost/requests/lượt của mỗi bot chỉ tính từ các phần `botBreakdown`
-  của bot đó; mẫu số tỉ trọng token = tổng token (= tổng mọi breakdown).
-- Mọi con số hiển thị đều do `prototype.js` tính từ `data.js`
-  (`computeStats()` chạy một lần); `data.js` tự suy tổng lượt từ breakdown
-  nên tổng không thể lệch. Quy tắc giá: lượt chỉ “có giá” khi **mọi** phần
-  breakdown đều có `costUsd` số; ngược lại lượt là `null` (chưa ghi nhận,
-  không bao giờ $0).
-
-## Dữ liệu mẫu (`data.js`)
-
-8 phiên (3 DM: thyca/coder/writer; 5 nhóm 2–3–3–4–5 bot) trên 10 ngày qua,
-26 lượt: 1 lượt lỗi (`s-release` Lượt 2, kèm thông báo), 1 lượt chưa có giá
-(`s-dm-coder` Lượt 2). Mỗi lượt 3–6 bước (input/thinking/tool/output).
+CSS `.mk`/`.mk-peb` (Mẫu 4 · Viên đá hổ phách), `.gm`/`.gm-slot`/`.gm-coin`
+(hình học “Chồng dấu”), glyph defs và màu/glyph bot giữ nguyên từ
+`/home/flowerf/Downloads/thyca-bot-group-avatar.html`. Không dùng avatar mới của
+SPA, không sao chép nền base64. Dấu hổ phách và cấu trúc markup không đổi trong
+bản đơn giản hóa này.

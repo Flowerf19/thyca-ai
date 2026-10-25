@@ -1,4 +1,4 @@
-"""Trace page contract — thyca/webui/ui/trace/js/trace.js + index.html.
+"""Usage/Trace merge contract — dashboard controller + Trace renderer.
 
 The old trace surface (12/12/1 session/turn pagers in dashboard-today.js,
 collect_trace_pages dedupe paging, scroll-reveal deep links, separate
@@ -20,10 +20,11 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from test_team_frontend import _unit_factory_source
+from test_team_frontend import _unit_factory_source, _unit_renderer_source
 
 ROOT = Path(__file__).resolve().parents[1]
 WEBUI = ROOT / "thyca" / "webui" / "ui"
+DASH_JS = WEBUI / "dashboard" / "js" / "dashboard.js"
 TRACE_JS = WEBUI / "trace" / "js" / "trace.js"
 TRACE_HTML = WEBUI / "trace" / "index.html"
 
@@ -37,10 +38,13 @@ class El {
     this.listeners = {}; this.children = []; this.options = []; this.className = '';
     this.scrollTop = 0; this.style = {};
   }
+  hasAttribute(name) { return Object.prototype.hasOwnProperty.call(this.attrs, name); }
+  focus() {}
   set innerHTML(v) { this._html = String(v); }
   get innerHTML() { return this._html; }
   setAttribute(k, v) { this.attrs[k] = String(v); }
   addEventListener(t, f) { (this.listeners[t] ||= []).push(f); }
+  querySelectorAll() { return []; }
   replaceChildren(...n) { this.children = n; this.options = n; }
   insertAdjacentHTML(_p, h) { this._html = (this._html || '') + h; }
   set onclick(f) { this.listeners.click = [f]; }
@@ -97,14 +101,16 @@ def node() -> str:
 
 
 def _eval_trace(node: str, body: str, setup: str = "") -> object:
-    """Eval the trace factory body with stubs and optional pre-boot setup."""
-    src = _unit_factory_source(TRACE_JS, TRACE_JS.read_text(encoding="utf-8"))
+    """Run the renderer and dashboard controller in their test wrappers."""
+    dash = _unit_factory_source(DASH_JS, DASH_JS.read_text(encoding="utf-8"))
+    renderer = _unit_renderer_source(TRACE_JS, TRACE_JS.read_text(encoding="utf-8"))
     program = (
-        STUBS
-        + setup + "\n"
-        + "\nconst ctx = { root: __workspace, route: { page: 'trace', search: location.search, hash: location.hash }, $: globalThis.$, $$: globalThis.$$, shellReady: __shellReady, navigate(page, parts = {}) { this.route = { page, search: '', hash: '', ...parts }; }, updateRoute(parts) { Object.assign(this.route, parts); __urls.push({ ...this.route }); }, highlightBot() {}, renderTeam() {}, isActive: () => true, onRoute: () => () => {} };\n"
+        STUBS + setup + "\n"
+        + "const ctx = { root: __workspace, route: { page: 'dashboard', search: location.search, hash: location.hash }, $: globalThis.$, $$: globalThis.$$, shellReady: __shellReady, navigate(page, parts = {}) { this.route = { page, search: this.route.search, hash: this.route.hash, ...parts }; __routes.push({ ...this.route }); return globalThis.__controller?.onRoute(this.route); }, updateRoute(parts) { Object.assign(this.route, parts); __urls.push({ ...this.route }); }, returnTo(parts) { __returnCalls.push(parts); Object.assign(this.route, parts); __urls.push({ ...this.route }); return globalThis.__controller?.onRoute(this.route); }, highlightBot() {}, renderTeam() {}, isActive: () => true, onRoute: () => () => {} };\n"
+        + "const __routes = []; const __returnCalls = [];\n"
+        + renderer + "\n"
         + "globalThis.ThycaRouter = { register(_page, spec) { globalThis.__controller = spec.mount(ctx); } };\n"
-        + "const __src = " + json.dumps(src) + ";\n"
+        + "const __src = " + json.dumps(dash) + ";\n"
         + "const __body = " + json.dumps(body) + ";\n"
         + "eval(__src + '\\n;' + __body);\n"
     )
@@ -119,127 +125,85 @@ def _eval_trace(node: str, body: str, setup: str = "") -> object:
 
 
 def test_page_is_a_single_screen_shell_document() -> None:
-    """index.html keeps the shared script order (markdown.js is the only
-    module), emitShell('trace') before the bind-time scripts, one screen."""
-    html = TRACE_HTML.read_text(encoding="utf-8")
+    """The root SPA loads the Trace renderer before Dashboard, where both
+    the overview and turn detail now live."""
+    html = (WEBUI / "chat" / "index.html").read_text(encoding="utf-8")
     order = [
         '<script src="../share/util.js">',
-        '<script type="module" src="../share/markdown.js"></script>',
         '<script src="../share/data.js">',
-        '<script src="../share/shell.js">',
-        "<script>emitShell('trace');</script>",
-        '<script src="../share/avatars/avatars.js">',
-        '<script src="../share/sidebar.js">',
-        '<script src="../share/avatars/studio.js">',
-        '<script src="../share/shell-app.js">',
-        '<script src="js/trace.js">',
+        '<script src="js/app.js">',
+        '<script src="../trace/js/trace.js">',
+        '<script src="../dashboard/js/dashboard.js">',
     ]
     pos = [html.index(s) for s in order]
-    assert pos == sorted(pos), "shared shell scripts must load in order"
-    for gone in ("session-pager", "journal-pager", "pager-button",
-                 "turn-list", "session-list-view"):
-        assert gone not in html, gone
+    assert pos == sorted(pos)
+    renderer = TRACE_JS.read_text(encoding="utf-8")
+    assert 'window.ThycaTraceDetail = Object.freeze({' in renderer
+    assert "ThycaRouter.register" not in renderer and "getJson(" not in renderer
+    for gone in ("session-pager", "journal-pager", "pager-button", "turn-list", "session-list-view"):
+        assert gone not in renderer
 
 
-def test_page_markup_covers_list_and_detail() -> None:
-    """PAGE_HTML carries the filter bar, session list + 'Tải thêm' footer,
-    the hidden detail section with its back button and both status lines —
-    plus the API + deep-link pins in comments."""
-    src = TRACE_JS.read_text(encoding="utf-8")
+def test_usage_markup_and_trace_renderer_contract() -> None:
+    dashboard = DASH_JS.read_text(encoding="utf-8")
+    renderer = TRACE_JS.read_text(encoding="utf-8")
     for needle in (
-        'id="trace-reload"', 'id="trace-scroll"', 'id="trace-list-view"',
-        'id="trace-status"', 'id="trace-filters"',
-        'id="f-from"', 'id="f-to"', 'id="f-model"', 'id="f-status"',
-        'id="f-q"', 'id="trace-sessions"', 'id="trace-count"',
-        'id="trace-more"', 'id="trace-detail-view"', 'id="trace-back"',
-        'id="trace-detail-status"', 'id="trace-detail-body"',
-        'value="completed"', 'value="failed"',
-        'value="context_limit"', 'value="loop_limit"',
-        '/api/traces?', '/api/traces/',
-        '#<session_id>/<turn_index>', '?s=<session_id>&t=<turn_index>',
+        'id="stat-grid"', 'data-preset="1"', 'data-preset="7"',
+        'data-preset="30"', 'data-preset="all"', 'id="analysis-details"',
+        'id="filter-q"', 'id="filter-model"', 'id="filter-status"',
+        'id="trace-sessions"', 'id="trace-more"', 'id="turn-detail-view"',
+        'id="detail-back"', 'id="detail-status"', 'id="detail-body"',
+        '/api/traces/stats?', '/api/traces?', '/api/traces/${encodeURIComponent(sid)}',
     ):
-        assert needle in src, needle
-    assert 'hidden>' in src                       # detail view starts hidden
-    assert not re.search(r"^\s*(import|export)\s", src, re.M)  # classic script
-    # Page size is the 50-row "Tải thêm" contract, not the old 12/12/1.
-    assert "TRACE_PAGE_SIZE = 50" in src
+        assert needle in dashboard, needle
+    assert "FIRST_PAGE = 15" in dashboard and "MORE_PAGE = 50" in dashboard
+    assert "window.ThycaTraceDetail.render(detailData)" in dashboard
+    assert "window.ThycaTraceDetail = Object.freeze({" in renderer
+    assert "ThycaRouter.register" not in renderer and "getJson(" not in renderer
+    assert not re.search(r"^\s*(import|export)\s", renderer, re.M)
 
 
-def test_route_from_url_parses_both_forms(node: str) -> None:
-    """#<sid>/<turn> (encoded sid allowed) and ?s=<sid>&t=<turn> both
-    resolve; malformed halves return null — never a bogus fetch."""
+def test_route_from_url_rejects_unsafe_hash_parts(node: str) -> None:
     out = _eval_trace(
         node,
-        """(() => {
-          const probe = (hash, search) => {
-            location.hash = hash; location.search = search; ctx.route.hash = hash; ctx.route.search = search;
-            return routeFromUrl(); };
-          console.log(JSON.stringify([
-            probe('#abc/3', ''), probe('#s%20x/0', ''), probe('#abc', ''),
-            probe('#/3', ''), probe('#abc/x', ''), probe('#a/b/c', ''),
-            probe('', '?s=abc&t=4'), probe('', '?s=abc'),
-            probe('', '?s=abc&t=x'), probe('', '?t=4'), probe('', ''),
-            probe('#h/1', '?s=abc&t=4'),
-          ]));
-        })()""",
+        "console.log(JSON.stringify(['#abc/3','#abc/0','#abc','#/3','#abc/x','#a/b/c','#s%20x/0','#abc/123456789'].map(hash => parseDetailRoute({page:'dashboard',search:'',hash}))))",
     )
-    assert out[0] == {"sid": "abc", "turn": 3}
-    assert out[1] == {"sid": "s x", "turn": 0}     # sid decoded, turn kept
-    assert out[2] is None and out[3] is None        # no slash / empty sid
-    assert out[4] is None                           # turn must be digits
-    assert out[5] is None                           # 'b/c' is not a turn
-    assert out[6] == {"sid": "abc", "turn": 4}
-    assert out[7] is None and out[8] is None and out[9] is None
-    assert out[10] is None
-    assert out[11] == {"sid": "h", "turn": 1}       # hash wins over query
+    assert out[:2] == [{"sid": "abc", "turn": 3}, {"sid": "abc", "turn": 0}]
+    assert all(value is None for value in out[2:])
 
 
-def test_boot_loads_list_and_follows_hash_route(node: str) -> None:
-    """boot() queries the list AND opens the routed turn: one
-    /api/traces?limit=50&offset=0 plus /api/traces/<sid>/<turn>, mode
-    switches to detail, the URL hash stays canonical."""
-    detail = {"session_id": "s x", "turn_index": 0, "title": "Routed",
-              "status": "completed", "messages": [],
-              "model": "m", "started_at": "2026-09-20T10:00:00"}
+def test_boot_loads_direct_detail_without_loading_overview(node: str) -> None:
+    detail = {"session_id": "s-x", "turn_index": 0, "title": "Routed",
+              "status": "completed", "messages": [], "model": "m",
+              "started_at": "2026-09-20T10:00:00"}
     out = _eval_trace(
         node,
-        "(async () => {\n"
-        "await __releaseShell();\n"
-        "await new Promise(r => setTimeout(r, 0));\n"
-        "return { calls: __jsonCalls, mode: tr.mode, key: tr.detailKey,\n"
-        " body: document.querySelector('#trace-detail-body').innerHTML,\n"
-        " route: ctx.route, urls: __urls };\n"
-        "})().then((v) => console.log(JSON.stringify(v)))",
-        setup="location.hash = '#s%20x/0';\n"
-        "__jsonResponder = async (url) => url.includes('traces/s')"
-        f" ? {json.dumps(detail)} : {{ traces: [], total: 0 }};\n",
+        "(async () => { await __releaseShell(); await new Promise(r => setTimeout(r, 0));\n"
+        "return { calls: __jsonCalls, mode: viewMode, key: detailKey,\n"
+        " body: document.querySelector('#detail-body').innerHTML, route: ctx.route };\n"
+        "})().then(v => console.log(JSON.stringify(v)))",
+        setup="location.hash = '#s-x/0';\n"
+        "__jsonResponder = async () => (" + json.dumps(detail) + ");\n",
     )
-    list_call = next(u for u in out["calls"] if "?" in u)
-    detail_call = next(u for u in out["calls"] if "traces/s" in u)
-    assert list_call.startswith("/api/traces?")
-    assert "limit=50" in list_call and "offset=0" in list_call
-    assert detail_call == "/api/traces/s%20x/0"
-    assert out["mode"] == "detail" and out["key"] == "s x/0"
+    assert out["calls"] == ["/api/traces/s-x/0"]
+    assert out["mode"] == "detail" and out["key"] == "s-x/0"
     assert "Routed" in out["body"]
-    assert out["route"] == {"page": "trace", "search": "", "hash": "#s%20x/0"}
+    assert out["route"] == {"page": "dashboard", "search": "", "hash": "#s-x/0"}
 
 
-def test_boot_without_route_stays_on_the_picker(node: str) -> None:
-    """No hash/query -> only the list fetch, mode stays 'list', no detail
-    request and no URL rewrite."""
+def test_boot_without_route_loads_overview_only(node: str) -> None:
     out = _eval_trace(
         node,
-        "(async () => {\n"
-        "await __releaseShell();\n"
-        "await new Promise(r => setTimeout(r, 0));\n"
-        "return { calls: __jsonCalls, mode: tr.mode, urls: __urls,\n"
-        " body: document.querySelector('#trace-detail-body').innerHTML };\n"
-        "})().then((v) => console.log(JSON.stringify(v)))",
-        setup="__jsonResponder = async () => ({ traces: [], total: 0 });\n",
+        "(async () => { await __releaseShell(); await new Promise(r => setTimeout(r, 0));\n"
+        "return { calls: __jsonCalls, mode: viewMode, urls: __urls };\n"
+        "})().then(v => console.log(JSON.stringify(v)))",
+        setup="__jsonResponder = async (url) => url.includes('/stats') ? {totals:{}} : {traces:[],total:0};\n",
     )
-    assert len(out["calls"]) == 1
-    assert out["calls"][0].startswith("/api/traces?")
-    assert out["mode"] == "list" and out["urls"] == []
+    assert len(out["calls"]) == 2
+    assert out["calls"][0].startswith("/api/traces/stats?")
+    assert out["calls"][1].startswith("/api/traces?")
+    assert "limit=15" in out["calls"][1] and "offset=0" in out["calls"][1]
+    assert out["mode"] == "overview" and out["urls"] == []
 
 
 def test_load_traces_pages_50_and_accumulates(node: str) -> None:
@@ -261,25 +225,25 @@ def test_load_traces_pages_50_and_accumulates(node: str) -> None:
             return { traces: mk(off, Math.min(lim, 70 - off)), total: 70 };
           };
           await loadTraces(true);
-          const first = { rows: tr.rows.length,
+          const first = { rows: traceState.rows.length,
             more: document.querySelector('#trace-more').hidden,
             count: document.querySelector('#trace-count').textContent };
           await loadTraces(false);
           return { first,
-            second: { rows: tr.rows.length,
+            second: { rows: traceState.rows.length,
               more: document.querySelector('#trace-more').hidden,
               count: document.querySelector('#trace-count').textContent },
             urls: __jsonCalls.slice(-2) };
         })().then((v) => console.log(JSON.stringify(v)))""",
     )
-    assert out["first"]["rows"] == 50
-    assert out["first"]["more"] is False  # 50 < 70 — still more
-    assert out["first"]["count"] == "Hiển thị 50 trong 70 lượt"
-    assert out["second"]["rows"] == 70
-    assert out["second"]["more"] is True  # rows == total
-    assert out["second"]["count"] == "Hiển thị 70 trong 70 lượt"
-    assert "limit=50&offset=0" in out["urls"][0]
-    assert "limit=50&offset=50" in out["urls"][1]
+    assert out["first"]["rows"] == 15
+    assert out["first"]["more"] is False
+    assert out["first"]["count"] == "Hiển thị 15 trong 70 lượt"
+    assert out["second"]["rows"] == 65
+    assert out["second"]["more"] is False
+    assert out["second"]["count"] == "Hiển thị 65 trong 70 lượt"
+    assert "limit=15&offset=0" in out["urls"][0]
+    assert "limit=50&offset=15" in out["urls"][1]
 
 
 def test_load_traces_error_keeps_rows_and_shows_status(node: str) -> None:
@@ -290,20 +254,21 @@ def test_load_traces_error_keeps_rows_and_shows_status(node: str) -> None:
         """(async () => {
           __jsonResponder = async (url) => {
             const q = new URLSearchParams(url.split('?')[1]);
-            if (Number(q.get('offset')) >= 50) throw new Error('backend died');
-            return { traces: Array.from({ length: 50 }, (_, i) =>
+            if (Number(q.get('offset')) >= 65) throw new Error('backend died');
+            return { traces: Array.from({ length: Number(q.get('limit')) }, (_, i) =>
               ({ session_id: 's', turn_index: i })), total: 80 };
           };
           await loadTraces(true);
           await loadTraces(false);
-          return { error: tr.error, rows: tr.rows.length,
-            status: document.querySelector('#trace-status').textContent,
+          await loadTraces(false);
+          return { error: traceState.error, rows: traceState.rows.length,
+            status: document.querySelector('#trace-status-text').textContent,
             statusHidden: document.querySelector('#trace-status').hidden,
             more: document.querySelector('#trace-more').hidden };
         })().then((v) => console.log(JSON.stringify(v)))""",
     )
     assert out["error"] == "backend died"
-    assert out["rows"] == 50                       # partial page kept
+    assert out["rows"] == 65                       # partial pages kept
     assert "Không tải được danh sách lượt" in out["status"]
     assert out["statusHidden"] is False
     assert out["more"] is True                     # error hides the button
@@ -315,14 +280,15 @@ def test_filters_ride_the_query_and_q_trims(node: str) -> None:
     out = _eval_trace(
         node,
         """(async () => {
-          const ids = ['f-from', 'f-to', 'f-model', 'f-status', 'f-q'];
-          const v = { 'f-from': '2026-09-01', 'f-to': '2026-09-30',
-            'f-model': 'glm-5', 'f-status': 'failed', 'f-q': '  tìm  ' };
+          const ids = ['range-from', 'range-to', 'filter-model', 'filter-status', 'filter-q'];
+          const v = { 'range-from': '2026-09-01', 'range-to': '2026-09-30',
+            'filter-model': 'glm-5', 'filter-status': 'failed', 'filter-q': '  tìm  ' };
           ids.forEach(id => { document.querySelector('#' + id).value = v[id]; });
-          syncFilters();
+          rangeFrom = v['range-from']; rangeTo = v['range-to'];
+          syncListFilters();
           const before = __jsonCalls.length;
           await loadTraces(true);
-          return { url: __jsonCalls[before], filters: { ...tr.filters } };
+          return { url: __jsonCalls[before], filters: { ...listFilters } };
         })().then((v) => console.log(JSON.stringify(v)))""",
     )
     q = out["url"]
@@ -337,9 +303,10 @@ def test_reload_list_rejects_an_inverted_range(node: str) -> None:
     out = _eval_trace(
         node,
         """(async () => {
-          tr.filters.from = '2026-09-22'; tr.filters.to = '2026-09-20';
+          document.querySelector('#range-from').value = '2026-09-22';
+          document.querySelector('#range-to').value = '2026-09-20';
           const before = __jsonCalls.length;
-          reloadList();
+          applyRange();
           return { calls: __jsonCalls.length - before, toasts: __toasts };
         })().then((v) => console.log(JSON.stringify(v)))""",
     )
@@ -356,6 +323,7 @@ def test_stale_list_response_is_dropped(node: str) -> None:
           __jsonResponder = (url) => {
             const p = __deferred(); __pending.push({ url, p }); return p; };
           const pOld = loadTraces(false);
+          listFilters.q = 'new';
           const pNew = loadTraces(true);
           __pending[1].p.__res({ traces: [{ session_id: 's', turn_index: 0,
             title: 'new' }], total: 1 });
@@ -363,54 +331,49 @@ def test_stale_list_response_is_dropped(node: str) -> None:
           __pending[0].p.__res({ traces: [{ session_id: 'x', turn_index: 0,
             title: 'old' }], total: 9 });
           await pOld;
-          return { rows: tr.rows.map((r) => r.title), total: tr.total };
+          return { rows: traceState.rows.map((r) => r.title), total: traceState.total };
         })().then((v) => console.log(JSON.stringify(v)))""",
     )
     assert out["rows"] == ["new"]
     assert out["total"] == 1
 
 
-def test_open_turn_fetches_detail_and_rewrites_the_url(node: str) -> None:
-    """openTurn(sid, turn): detail endpoint is encodeURIComponent'd, mode
-    flips to detail, and history.replaceState writes #<sid>/<turn> — no
-    push, no reload."""
-    detail = {"session_id": "s x", "turn_index": 2, "title": "Deep",
-              "status": "failed", "messages": [],
-              "model": "m", "started_at": "2026-09-20T10:00:00",
-              "error": {"code": "Boom", "message": "kaput"}}
+def test_open_turn_routes_within_dashboard_and_fetches_only_detail(node: str) -> None:
+    detail = {"session_id": "s-x", "turn_index": 2, "title": "Deep",
+              "status": "failed", "messages": [], "model": "m",
+              "started_at": "2026-09-20T10:00:00", "error": {"code": "Boom", "message": "kaput"}}
     out = _eval_trace(
         node,
-        f"(async () => {{\n"
+        f"(async () => {{ await __releaseShell(); await new Promise(r => setTimeout(r, 0));\n"
         f"__jsonResponder = async () => ({json.dumps(detail)});\n"
-        "await openTurn('s x', 2);\n"
-        "return { calls: __jsonCalls.slice(-1), mode: tr.mode,\n"
-        " key: tr.detailKey, urls: __urls,\n"
-        " body: document.querySelector('#trace-detail-body').innerHTML };\n"
-        "})().then((v) => console.log(JSON.stringify(v)))",
+        "const before = __jsonCalls.length;\n"
+        "await ctx.navigate('dashboard', { search: pageQuery(), hash: '#s-x/2' });\n"
+        "await new Promise(r => setTimeout(r, 0));\n"
+        "return { calls: __jsonCalls.slice(before), mode: viewMode, key: detailKey,\n"
+        " route: ctx.route, routes: __routes, body: document.querySelector('#detail-body').innerHTML };\n"
+        "})().then(v => console.log(JSON.stringify(v)))",
     )
-    assert out["calls"] == ["/api/traces/s%20x/2"]
-    assert out["mode"] == "detail" and out["key"] == "s x/2"
-    assert out["urls"] == [{"page": "trace", "search": "", "hash": "#s%20x/2"}]
-    assert "Deep" in out["body"] and "kaput" in out["body"]
-    assert "Boom" in out["body"]
+    assert out["calls"] == ["/api/traces/s-x/2"]
+    assert out["mode"] == "detail" and out["key"] == "s-x/2"
+    assert out["route"]["page"] == "dashboard" and out["route"]["hash"] == "#s-x/2"
+    assert out["routes"][-1]["page"] == "dashboard"
+    assert "Deep" in out["body"] and "kaput" in out["body"] and "Boom" in out["body"]
 
 
-def test_open_turn_error_shows_note_but_keeps_the_url(node: str) -> None:
-    """A failed detail fetch leaves the deep link in the URL (reload can
-    retry), shows the scoped error + the empty note, keeps detailKey."""
+def test_detail_404_keeps_route_and_shows_independent_error(node: str) -> None:
     out = _eval_trace(
         node,
-        "(async () => {\n"
+        "(async () => { await __releaseShell(); await new Promise(r => setTimeout(r, 0));\n"
         "__jsonResponder = async () => { throw new Error('gone'); };\n"
-        "await openTurn('s', 0);\n"
-        "return { err: tr.detailError, key: tr.detailKey, urls: __urls,\n"
-        " status: document.querySelector('#trace-detail-status').textContent,\n"
-        " body: document.querySelector('#trace-detail-body').innerHTML };\n"
-        "})().then((v) => console.log(JSON.stringify(v)))",
+        "await ctx.navigate('dashboard', { search: pageQuery(), hash: '#s/0' });\n"
+        "await new Promise(r => setTimeout(r, 0));\n"
+        "return { err: detailError, key: detailKey, route: ctx.route,\n"
+        " status: document.querySelector('#detail-status-text').textContent,\n"
+        " body: document.querySelector('#detail-body').innerHTML };\n"
+        "})().then(v => console.log(JSON.stringify(v)))",
     )
-    assert out["err"] == "gone"
-    assert out["key"] == "s/0"
-    assert out["urls"] == [{"page": "trace", "search": "", "hash": "#s/0"}]
+    assert out["err"] == "gone" and out["key"] == "s/0"
+    assert out["route"]["page"] == "dashboard" and out["route"]["hash"] == "#s/0"
     assert "Không đọc được lượt s/0" in out["status"]
     assert "Không mở được trace này" in out["body"]
 
@@ -423,73 +386,70 @@ def test_detail_seq_drops_a_stale_turn(node: str) -> None:
         """(async () => {
           __jsonResponder = (url) => {
             const p = __deferred(); __pending.push({ url, p }); return p; };
-          const pa = openTurn('a', 0);
-          const pb = openTurn('b', 1);
+          const pa = loadDetail('a', 0);
+          const pb = loadDetail('b', 1);
           __pending[1].p.__res({ session_id: 'b', turn_index: 1,
             title: 'B', status: 'completed', messages: [] });
           await pb;
           __pending[0].p.__res({ session_id: 'a', turn_index: 0,
             title: 'A', status: 'completed', messages: [] });
           await pa;
-          return { key: tr.detailKey,
-            title: tr.detail && tr.detail.title };
+          return { key: detailKey, title: detailData && detailData.title };
         })().then((v) => console.log(JSON.stringify(v)))""",
     )
     assert out["key"] == "b/1"
     assert out["title"] == "B"
 
 
-def test_back_to_list_restores_mode_scroll_and_url(node: str) -> None:
-    """Back returns to the picker: mode 'list', detail cleared, the saved
-    scroll restored, the URL back to the bare page — and any in-flight
-    detail fetch is orphaned via detailRequest."""
+def test_explicit_back_returns_to_overview_and_restores_scroll(node: str) -> None:
     out = _eval_trace(
         node,
         """(async () => {
-          __jsonResponder = async () => ({ session_id: 's', turn_index: 0,
-            title: 'T', status: 'completed', messages: [] });
-          document.querySelector('#trace-scroll').scrollTop = 42;
-          await openTurn('s', 0);
-          const reqs = tr.detailRequest;
-          document.querySelector('#trace-scroll').scrollTop = 0;
-          backToList();
-          return { mode: tr.mode, detail: tr.detail, key: tr.detailKey,
-            bumped: tr.detailRequest > reqs, urls: __urls,
-            scroll: document.querySelector('#trace-scroll').scrollTop };
-        })().then((v) => console.log(JSON.stringify(v)))""",
+          await __releaseShell(); await new Promise(r => setTimeout(r, 0));
+          __jsonResponder = async () => ({ session_id: 's', turn_index: 0, title: 'T', status: 'completed', messages: [] });
+          document.querySelector('#usage-scroll').scrollTop = 42;
+          await ctx.navigate('dashboard', { search: pageQuery(), hash: '#s/0' });
+          await new Promise(r => setTimeout(r, 0));
+          const reqs = detailSeq;
+          document.querySelector('#usage-scroll').scrollTop = 0;
+          returnFromDetail();
+          await new Promise(r => setTimeout(r, 0));
+          return { mode: viewMode, detail: detailData, key: detailKey,
+            bumped: detailSeq > reqs, returnCalls: __returnCalls, route: ctx.route,
+            scroll: document.querySelector('#usage-scroll').scrollTop };
+        })().then(v => console.log(JSON.stringify(v)))""",
     )
-    assert out["mode"] == "list"
-    assert out["detail"] is None and out["key"] == ""
-    assert out["bumped"] is True
-    assert out["urls"][-1] == {"page": "trace", "search": "", "hash": ""}   # SPA route hash cleared
-    assert out["scroll"] == 42                       # list scroll restored
+    assert out["mode"] == "overview" and out["detail"] is None and out["key"] == ""
+    assert out["bumped"] is True and out["returnCalls"]
+    assert out["route"]["page"] == "dashboard" and out["route"]["hash"] == ""
+    assert out["scroll"] == 42
 
 
 def test_turn_click_delegation_and_hashchange(node: str) -> None:
-    """wirePage: a click on a .tl-turn inside #trace-sessions opens that
-    turn; hashchange reopens the routed turn or drops back to the list."""
+    """A grouped turn click and route changes keep detail in Dashboard;
+    clearing the hash returns to the Usage overview."""
     detail = {"session_id": "s", "turn_index": 1, "title": "X",
               "status": "completed", "messages": []}
     out = _eval_trace(
         node,
-        f"(async () => {{\n"
+        f"(async () => {{ await __releaseShell(); await new Promise(r => setTimeout(r, 0));\n"
         f"__jsonResponder = async () => ({json.dumps(detail)});\n"
         "const click = document.querySelector('#trace-sessions').listeners.click[0];\n"
-        "click({ target: { closest: (s) => s === '.tl-turn'\n"
+        "click({ target: { closest: (s) => s === 'button[data-session][data-turn]'\n"
         "  ? { dataset: { session: 's', turn: '1' } } : null } });\n"
         "await new Promise(r => setTimeout(r, 0));\n"
-        "const afterClick = { key: tr.detailKey, mode: tr.mode };\n"
-        "location.hash = '#z/3'; ctx.route.hash = '#z/3';\n"
-        "await __controller.onRoute({ page: 'trace', search: '', hash: '#z/3' });\n"
-        "const afterHash = { key: tr.detailKey };\n"
-        "location.hash = ''; ctx.route.hash = '';\n"
-        "await __controller.onRoute({ page: 'trace', search: '', hash: '' });\n"
-        "return { afterClick, afterHash, mode: tr.mode };\n"
+        "const afterClick = { key: detailKey, mode: viewMode };\n"
+        "ctx.route.hash = '#z/3';\n"
+        "await __controller.onRoute({ page: 'dashboard', search: ctx.route.search, hash: '#z/3' });\n"
+        "const afterHash = { key: detailKey };\n"
+        "ctx.route.hash = '';\n"
+        "await __controller.onRoute({ page: 'dashboard', search: ctx.route.search, hash: '' });\n"
+        "return { afterClick, afterHash, mode: viewMode };\n"
         "})().then((v) => console.log(JSON.stringify(v)))",
     )
     assert out["afterClick"] == {"key": "s/1", "mode": "detail"}
     assert out["afterHash"]["key"] == "z/3"
-    assert out["mode"] == "list"
+    assert out["mode"] == "overview"
 
 
 def test_reload_button_re_reads_the_open_turn(node: str) -> None:
@@ -499,12 +459,13 @@ def test_reload_button_re_reads_the_open_turn(node: str) -> None:
               "status": "completed", "messages": []}
     out = _eval_trace(
         node,
-        f"(async () => {{\n"
+        f"(async () => {{ await __releaseShell(); await new Promise(r => setTimeout(r, 0));\n"
         f"__jsonResponder = async () => ({json.dumps(detail)});\n"
-        "await openTurn('s', 0);\n"
+        "await ctx.navigate('dashboard', { search: pageQuery(), hash: '#s/0' });\n"
+        "await new Promise(r => setTimeout(r, 0));\n"
         "const urlsBefore = __urls.length;\n"
         "const callsBefore = __jsonCalls.length;\n"
-        "document.querySelector('#trace-reload').listeners.click[0]();\n"
+        "document.querySelector('#detail-refresh').listeners.click[0]();\n"
         "await new Promise(r => setTimeout(r, 0));\n"
         "return { newCalls: __jsonCalls.slice(callsBefore),\n"
         " newUrls: __urls.length - urlsBefore };\n"
@@ -514,39 +475,36 @@ def test_reload_button_re_reads_the_open_turn(node: str) -> None:
     assert out["newUrls"] == 0                       # push: false
 
 
-def test_render_list_groups_sessions_and_rows(node: str) -> None:
-    """renderList paints session cards in first-seen order; each turn row
-    carries #turn index, bot text (union, '+N'), title, time, model, tok,
-    cost, dur, the status chip and the data-session/data-turn hook."""
+def test_trace_list_is_flat_and_turn_rows_keep_context(node: str) -> None:
+    """The Trace view has one flat row per API turn; it does not infer bot
+    ownership from session membership or aggregate failures by session."""
     rows = [
         {"session_id": "g", "turn_index": 1, "title": "T1",
          "started_at": "2026-09-20T10:00:00", "status": "completed",
          "session_kind": "group", "bot_id": "coder",
-         "session_bots": ["coder", "ops"],
+         "session_bots": ["session-owner"],
          "bot_breakdown": [{"bot_id": "coder"}, {"bot_id": "ops"}],
-         "model": "m",
+         "model": "m", "requests": 2, "tool_calls": 1,
          "total_tokens": 10, "cost_usd": 0.01, "latency_ms": 40},
         {"session_id": "g", "turn_index": 0, "title": "T0",
          "started_at": "2026-09-20T09:00:00", "status": "failed",
-         "session_kind": "group", "bot_id": "coder",
-         "session_bots": ["coder", "ops"],
-         "bot_breakdown": [{"bot_id": "coder"}, {"bot_id": "ops"}],
-         "model": "m",
-         "total_tokens": 5, "cost_usd": None, "latency_ms": 20},
+         "session_kind": "dm", "session_dm": "dm-owner",
+         "model": "m", "total_tokens": 5, "cost_usd": None, "latency_ms": 20},
     ]
     html = _eval_trace(
         node,
-        f"tr.rows = {json.dumps(rows)}; tr.total = 2; tr.loading = false;\n"
-        "renderList();\n"
+        f"traceState.rows = {json.dumps(rows)}; traceState.total = 2; traceState.loading = false;\n"
+        "renderTraceTable();\n"
         "console.log(JSON.stringify(document.querySelector('#trace-sessions').innerHTML))",
     )
-    assert html.count('class="paper-card tl-session"') == 1   # one session card
+    assert html.count('<li><button') == 2
     assert 'data-session="g"' in html and 'data-turn="1"' in html
-    assert "<b>Coder +1</b>" in html                          # union +N
-    assert "#1" in html and "#0" in html
-    assert "Thành công" in html and "Lỗi" in html             # status chips
-    assert "1 lượt lỗi" in html                               # failed chip
-    assert "$0.0100" in html and ">—<" in html                # cost + null
+    assert "<b>Coder +1</b>" in html
+    assert "Chat nhóm" in html and "Chat riêng" in html
+    assert "Hoàn tất" in html and "Thất bại" in html
+    assert "session-owner" not in html and "dm-owner" not in html
+    assert 'class="paper-card tl-session"' not in html and "1 lượt lỗi" not in html
+    assert "$0.0100" in html and ">—<" in html
 
 
 def test_detail_head_renders_turn_meta_and_error(node: str) -> None:
@@ -587,20 +545,18 @@ def test_detail_head_renders_turn_meta_and_error(node: str) -> None:
     assert "Boom" in html and "kaput" in html
 
 
-def test_turn_bot_ids_prefers_bot_id_then_breakdown(node: str) -> None:
-    """turnBotIds: bot_id first, then breakdown order, deduped — empty
-    turns yield none."""
+def test_full_detail_bot_context_keeps_primary_and_breakdown(node: str) -> None:
+    """The unchanged full-turn detail header retains its primary bot and
+    additional breakdown entries; overview attribution is tested separately."""
     out = _eval_trace(
         node,
         "console.log(JSON.stringify(["
-        " turnBotIds({ bot_id: 'a', bot_breakdown:"
-        "  [{ bot_id: 'a' }, { bot_id: 'b' }] }),"
-        " turnBotIds({ bot_breakdown: [{ bot_id: 'b' }] }),"
-        " turnBotIds({})]))",
+        " turnBotIds({ bot_id: 'primary', session_bots: ['member'],"
+        "  bot_breakdown: [{ bot_id: 'a' }, { bot_id: 'b' }] }),"
+        " turnBotIds({ bot_id: 'direct', session_dm: 'dm-owner' }),"
+        " turnBotIds({ session_dm: 'dm-owner', session_bots: ['member'] })]))",
     )
-    assert out[0] == ["a", "b"]
-    assert out[1] == ["b"]
-    assert out[2] == []
+    assert out == [["primary", "a", "b"], ["direct"], []]
 
 
 def test_status_labels_and_formatters(node: str) -> None:
@@ -632,13 +588,12 @@ def test_fill_model_options_collects_from_loaded_rows(node: str) -> None:
     sorted; an active filter that left the window stays as an extra."""
     out = _eval_trace(
         node,
-        "tr.models = new Set(['glm', 'abc']); tr.filters.model = 'zzz';\n"
-        "fillModelOptions();\n"
-        "const sel = document.querySelector('#f-model');\n"
+        "listFilters.model = 'zzz'; fillModelFilter(['glm', 'abc']);\n"
+        "const sel = document.querySelector('#filter-model');\n"
         "console.log(JSON.stringify({ vals: sel.options.map(o => o.value),"
         " cur: sel.value }))",
     )
-    assert out["vals"] == ["", "abc", "glm", "zzz"]
+    assert out["vals"] == ["", "glm", "abc", "zzz"]
     assert out["cur"] == "zzz"
 
 
@@ -647,10 +602,10 @@ def test_filter_change_handlers_are_wired(node: str) -> None:
     form's submit is preventDefault'd into the same path."""
     # Structural pin: the handler list + debounced search input live in
     # wirePage — a wrong selector or missing binding shows up here.
-    src = TRACE_JS.read_text(encoding="utf-8")
-    assert "['f-from', 'f-to', 'f-model', 'f-status']" in src
-    assert "addEventListener('change', onFilter)" in src
-    assert "addEventListener('input'" in src
-    assert "setTimeout(onFilter, 350)" in src      # 350 ms debounce on q
-    assert "addEventListener('submit'" in src
-    assert "preventDefault()" in src
+    src = DASH_JS.read_text(encoding="utf-8")
+    assert "$('#filter-model').onchange = $('#filter-status').onchange = applyListFilters" in src
+    assert "$('#filter-q').addEventListener('input'" in src
+    assert "qTimer = setTimeout(() =>" in src
+    assert "ensureOverviewData(false)" in src
+    assert "function syncListFilters()" in src
+    assert "writeCurrentRoute('')" in src

@@ -4,608 +4,636 @@ ThycaRouter.register('provider', { title: 'Provider', stylesheet: '/ui/provider/
   const $ = (selector, base = root) => selector === '.workspace' ? root : base.querySelector(selector);
   const $$ = (selector, base = root) => [...base.querySelectorAll(selector)];
   let selectedBot = '';
-// Provider & model screen — wired to the real backend, no mock data.
-// The shared shell (header/sidebar/dialogs) is emitted by emitShell() in
-// index.html before avatars/sidebar/studio bind; this script fills
-// .workspace, then calls bootShell() for the live roster.
-// API: GET /api/config, POST /api/config,
-//      POST /api/onboarding/verify, POST /api/providers/test.
-
-
-/* avatars.js setState() reaches `runs`/`cancelTurn` on error/offline state
-   changes (e.g. the studio's error preview). This screen owns no turn
-   stream — an empty map keeps that path inert. selectBot/loadSession and
-   all other shell chrome come from share/shell-app.js. */
-const runs = new Map();
-function cancelTurn() { return false; }
+// Provider & model editor — discovery uses the unsaved connection draft.
+// API: GET /api/config, POST /api/config, POST /api/onboarding/verify,
+//      POST /api/providers/test.
 
 const PROVIDER_ID_RE = /^[A-Za-z0-9_-]+$/;
-const API_LABELS = { openai_chat: 'Chat completions', openai_responses: 'Responses' };
 const FALLBACK_LIMITS = { loopMax: [1, 200], hotTailKB: [1, 64], contextTokens: [1000, 2000000] };
-
+const CHOOSE_MODEL = '__choose__';
 const state = {
-  schema: null,
-  values: null,        // whole `values` payload — mutated draft, posted as-is
-  meta: {},
-  saving: false,
-  editingProvider: '', // provider id loaded into the form ('' = add mode)
-  editingModel: '',    // model id loaded into the form ('' = add mode)
-  testing: {},         // providerId -> {pending|ok, text}
-  verifying: false,
-  verifyProvider: '',  // providerId the last quick-verify ran against
+  schema: null, values: null, meta: {}, loading: true, saving: false, reloading: false,
+  editingProvider: '', providerBaseline: null, modelBaseline: null, editorBaseline: null, loadedModelId: '', cleanStatus: 'Đã tải cấu hình',
+  testing: Object.create(null), configRevision: 0, connectionRevision: 0,
+  connectionFingerprint: null, verifying: false, verifyGeneration: 0,
+  activeVerify: null, discovery: null, discoveryStatus: '', manualModel: false,
+  selectedModel: '', selectedModelFromDiscovery: false, defaultProviderTouched: false, modelProviderTouched: false,
 };
 
 const workspace = $('.workspace');
-document.querySelector('.notebook-shell').setAttribute('aria-label', 'Thyca — provider & model');
-workspace.setAttribute('aria-label', 'Nội dung provider');
-
-/* .page-nav sits outside .page-scroll so the title strip stays fixed while
-   the cards scroll beneath it (same layout as the settings page). */
+document.querySelector('.notebook-shell').setAttribute('aria-label', 'Thyca — kết nối AI');
+workspace.setAttribute('aria-label', 'Nội dung kết nối AI');
 workspace.insertAdjacentHTML('beforeend', `
 <header class="page-nav">
-  <div class="page-title">
-    <div class="eyebrow">Kết nối</div>
-    <h1>Provider &amp; model</h1>
-    <p class="page-sub">Mỗi provider key riêng, mỗi model gọi đúng provider của nó.</p>
-  </div>
-  <div class="page-actions">
-    <button class="quiet-button" id="reload-config" type="button">${icon('retry')} Tải lại</button>
-    <button class="primary-action" id="save-config" type="button">${icon('check')} Lưu cấu hình</button>
-  </div>
+  <div class="page-title"><h1 id="provider-title">Kết nối AI</h1></div>
+  <div class="page-actions"><span class="save-status" id="save-status" role="status" aria-live="polite">Đang tải cấu hình…</span><button class="primary-action" id="save-use" type="submit" form="connection-form">Lưu và dùng</button><button class="quiet-button" id="reload-config" type="button">${icon('retry')} Tải lại</button></div>
 </header>
 <div class="page-scroll"><div class="page-inner">
-<div class="page-status" id="page-status" role="status" aria-live="polite" hidden></div>
-<div class="section-stack">
-  <section class="paper-card" aria-labelledby="providers-title">
-    <div class="eyebrow">Providers</div>
-    <h2 class="card-title" id="providers-title">Mỗi provider một chìa khóa riêng</h2>
-    <p class="card-copy">Provider giữ endpoint, loại API và key. "Kiểm tra" gọi thẳng provider bằng model nó sở hữu — xác nhận key và endpoint còn sống trước khi model chạy thật.</p>
-    <ul class="entry-list" id="provider-list" aria-label="Danh sách provider"></ul>
-    <form class="panel form-grid" id="provider-form" novalidate>
-      <h3 class="panel-title" id="provider-form-title">Thêm provider</h3>
-      <label class="field"><span>Tên (id)</span><input id="pv-id" maxlength="64" autocomplete="off" spellcheck="false" placeholder="vd: openai" required></label>
-      <label class="field"><span>Base URL</span><input id="pv-base-url" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://api.openai.com/v1" required></label>
-      <label class="field"><span>Kiểu API</span><select id="pv-api"><option value="openai_chat">Chat completions</option><option value="openai_responses">Responses</option></select></label>
-      <label class="field"><span>Mức suy luận mặc định</span><select id="pv-effort"></select></label>
-      <label class="field field-wide"><span>API key <em id="pv-key-note">chỉ gửi về máy chủ Thyca trên máy bạn</em></span>
-        <input id="pv-key" type="password" autocomplete="new-password" maxlength="200" placeholder="sk-…">
-      </label>
-      <div class="form-actions">
-        <button class="primary-action" type="submit" id="pv-submit">${icon('plus')} Thêm provider</button>
-        <button class="quiet-button" type="button" id="pv-cancel" hidden>Hủy sửa</button>
-        <span class="field-hint">Key không bao giờ hiển thị — để trống để giữ key đã lưu.</span>
+  <p class="page-status" id="page-status" role="status" aria-live="polite" hidden></p>
+  <section class="paper-card connection-editor" id="connection-editor" aria-labelledby="provider-title">
+    <fieldset id="editor-controls">
+      <div class="editor-topline">
+        <label class="field"><span>Kết nối</span><select id="connection-picker" aria-label="Chọn kết nối đã lưu"></select></label>
+        <button class="quiet-button" id="new-connection" type="button">${icon('plus')} Thêm kết nối</button>
       </div>
-    </form>
+      <form class="editor-form" id="connection-form" aria-label="Cấu hình kết nối và model" novalidate>
+        <div class="connection-fields">
+          <label class="field"><span>Tên kết nối</span><input id="pv-id" maxlength="64" autocomplete="off" spellcheck="false" placeholder="Không dấu, không khoảng trắng" required><small class="name-hint-space" aria-hidden="true"></small></label>
+          <label class="field"><span>URL API</span><input id="pv-base-url" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://api.example.com/v1" required></label>
+          <label class="field field-wide"><span>API key <em id="pv-key-note"></em></span><input id="pv-key" type="password" autocomplete="new-password" maxlength="200" placeholder="Nhập API key" title="Key được lưu trên máy này và gửi tới URL API khi kết nối."></label>
+          <div class="load-row field-wide"><button class="quiet-button" id="v-submit" type="button" title="Chỉ tải danh sách, không gọi model hay lưu cấu hình.">${icon('list')} Tải model</button></div>
+        </div>
+        <p class="discovery-status" id="discovery-status" role="status" aria-live="polite" hidden></p>
+        <div class="model-editor">
+          <label class="field model-picker-field"><span>Model để dùng</span><select id="m-picker" aria-label="Chọn model"><option value="__choose__">Chọn model…</option><option value="" data-manual="true">Nhập model ID thủ công</option></select></label>
+          <label class="field manual-model-field" id="manual-model-field" hidden><span>Model ID</span><input id="m-id" maxlength="200" autocomplete="off" spellcheck="false" placeholder="Nhập model ID"><small id="model-id-note">Không cần tải danh sách nếu bạn đã biết ID.</small></label>
+          <p class="ownership-warning field-wide" id="ownership-warning" role="status" hidden></p>
+          <p class="legacy-url-warning field-wide" id="legacy-url-warning" role="status" hidden></p>
+          <div class="price-heading field-wide" title="Giá chỉ dùng để ước tính chi phí; API không trả giá này. Điền đủ ba mức hoặc để trống cả ba."><strong>Giá (tùy chọn)</strong><span>USD / 1 triệu token</span></div>
+          <div class="price-fields field-wide">
+            <label class="field"><span>Input</span><input id="m-in" type="number" min="0" step="any" inputmode="decimal" placeholder="Không bắt buộc"></label>
+            <label class="field"><span>Cache</span><input id="m-cache" type="number" min="0" step="any" inputmode="decimal" placeholder="Không bắt buộc"></label>
+            <label class="field"><span>Output</span><input id="m-out" type="number" min="0" step="any" inputmode="decimal" placeholder="Không bắt buộc"></label>
+          </div>
+          <p class="field-hint field-wide">Nhập đủ 3 giá hoặc để trống.</p>
+        </div>
+        <details class="advanced editor-advanced" id="editor-advanced"><summary>Nâng cao</summary>
+          <div class="advanced-grid">
+            <label class="field"><span>Kiểu API</span><select id="pv-api"><option value="openai_chat">Chat completions</option><option value="openai_responses">Responses</option></select></label>
+            <label class="field"><span>Suy luận mặc định</span><select id="pv-effort"></select></label>
+            <label class="field"><span>Kết nối của model</span><select id="m-provider"></select><small>Chuyển model sang kết nối khác chỉ sau xác nhận.</small></label>
+            <label class="field"><span>Suy luận của model</span><select id="m-effort"></select></label>
+            <label class="field"><span>Ngữ cảnh (token)</span><input id="m-context" type="number" min="1000" max="2000000" step="1" inputmode="numeric" placeholder="Kế thừa"></label>
+            <label class="field"><span>Số vòng tối đa</span><input id="m-loop" type="number" min="1" max="200" step="1" inputmode="numeric" placeholder="Kế thừa"></label>
+            <label class="field"><span>Nhớ nóng (KB)</span><input id="m-hot" type="number" min="1" max="64" step="1" inputmode="numeric" placeholder="Kế thừa"></label>
+            <label class="field"><span>Kết nối mặc định dự phòng</span><select id="cfg-default-provider"></select></label>
+          </div>
+          <div class="advanced-actions">
+            <button class="quiet-button" type="button" id="test-provider" disabled>Thử gọi model (có thể tính phí)</button>
+            <button class="quiet-button" type="button" id="delete-provider" hidden>Xóa kết nối</button>
+            <button class="quiet-button is-danger" type="button" id="delete-model" hidden>Xóa model đã lưu</button>
+            <button class="quiet-button" type="button" id="save-catalog">Chỉ lưu cấu hình</button>
+          </div>
+          <p class="test-result" id="test-result" role="status" hidden></p>
+        </details>
+        <p class="form-status" id="editor-status" role="status" aria-live="polite" hidden></p>
+        <div class="current-default" id="current-default" aria-live="polite"></div>
+        <div class="editor-footer"><button class="quiet-button" type="button" id="cancel-editor">Hủy thay đổi</button></div>
+      </form>
+    </fieldset>
   </section>
-  <section class="paper-card" aria-labelledby="models-title">
-    <div class="eyebrow">Models</div>
-    <h2 class="card-title" id="models-title">Mỗi model gọi đúng provider của nó</h2>
-    <p class="card-copy">Model trỏ tới một provider (hoặc kế thừa provider mặc định), kèm giá và giới hạn riêng. Ô để trống sẽ kế thừa cấu hình chung.</p>
-    <div class="defaults-row">
-      <label class="field"><span>Provider mặc định</span><select id="cfg-default-provider"></select></label>
-      <label class="field"><span>Model mặc định</span><select id="cfg-default-model"></select></label>
-    </div>
-    <ul class="entry-list" id="model-list" aria-label="Danh sách model"></ul>
-    <form class="panel form-grid" id="model-form" novalidate>
-      <h3 class="panel-title" id="model-form-title">Thêm / sửa model</h3>
-      <label class="field"><span>Model ID</span><input id="m-id" maxlength="200" autocomplete="off" spellcheck="false" placeholder="vd: gpt-5" required></label>
-      <label class="field"><span>Provider</span><select id="m-provider"></select></label>
-      <label class="field"><span>Mức suy luận</span><select id="m-effort"></select></label>
-      <label class="field"><span>Ngữ cảnh (tokens)</span><input id="m-context" type="number" min="1000" max="2000000" step="1" inputmode="numeric" placeholder="kế thừa"></label>
-      <label class="field"><span>Số vòng tối đa</span><input id="m-loop" type="number" min="1" max="200" step="1" inputmode="numeric" placeholder="kế thừa"></label>
-      <label class="field"><span>Nhớ nóng (KB)</span><input id="m-hot" type="number" min="1" max="64" step="1" inputmode="numeric" placeholder="kế thừa"></label>
-      <label class="field"><span>Giá input ($/1M)</span><input id="m-in" type="number" min="0" step="any" inputmode="decimal" placeholder="0"></label>
-      <label class="field"><span>Giá cache ($/1M)</span><input id="m-cache" type="number" min="0" step="any" inputmode="decimal" placeholder="0"></label>
-      <label class="field"><span>Giá output ($/1M)</span><input id="m-out" type="number" min="0" step="any" inputmode="decimal" placeholder="0"></label>
-      <div class="form-actions">
-        <button class="primary-action" type="submit" id="m-submit">${icon('plus')} Thêm model</button>
-        <button class="quiet-button" type="button" id="m-cancel" hidden>Hủy sửa</button>
-        <span class="field-hint">Giá: điền đủ cả 3 ô hoặc để trống cả 3 (dùng giá backend).</span>
-      </div>
-    </form>
-  </section>
-  <section class="paper-card" aria-labelledby="verify-title">
-    <div class="eyebrow">Kết nối nhanh</div>
-    <h2 class="card-title" id="verify-title">Kiểm tra trước khi lưu</h2>
-    <p class="card-copy">Gọi thử <code>/models</code> của một endpoint để xác nhận key, hoặc chọn provider đã lưu để dùng lại key của nó.</p>
-    <form class="panel form-grid" id="verify-form" novalidate>
-      <label class="field field-wide"><span>Base URL</span><input id="v-base-url" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://api.openai.com/v1" required></label>
-      <label class="field"><span>Dùng key của provider</span><select id="v-provider"></select></label>
-      <label class="field"><span>API key</span><input id="v-key" type="password" autocomplete="off" maxlength="200" placeholder="để trống = key đã lưu"></label>
-      <div class="form-actions">
-        <button class="primary-action" type="submit" id="v-submit">${icon('check')} Kiểm tra &amp; tải model</button>
-        <span class="field-hint">Key để trống: backend tự lấy key đã lưu của provider đã chọn (hoặc provider mặc định).</span>
-      </div>
-    </form>
-    <div class="verify-result" id="verify-result" hidden>
-      <p class="status-line" id="verify-status" role="status"></p>
-      <div class="chip-list verify-models" id="verify-models"></div>
-      <p class="field-hint" id="verify-hint" hidden>Bấm một model để điền sẵn vào form phía trên.</p>
-    </div>
-  </section>
-</div>
 </div></div>`);
 
-/* ---------- status + field errors ------------------------------------- */
-let statusTimer = null;
 function setStatus(text, kind = '') {
-  const el = $('#page-status'); if (!el) return;
-  clearTimeout(statusTimer); statusTimer = null;
-  el.hidden = !text; el.textContent = text || '';
+  const el = $('#page-status'); el.hidden = !text; el.textContent = text || '';
   el.className = 'page-status' + (kind ? ' s-' + kind : '');
-  if (text && kind !== 'error') statusTimer = setTimeout(() => { el.hidden = true; }, 8000);
+}
+function setSaveStatus(text, kind = '') {
+  const el = $('#save-status'), className = 'save-status' + (kind ? ' s-' + kind : '');
+  if (el.textContent === text && el.className === className) return;
+  el.textContent = text; el.className = className;
+}
+function setFormStatus(text, kind = '') {
+  const el = $('#editor-status'); el.hidden = !text; el.textContent = text || '';
+  el.className = 'form-status' + (kind ? ' s-' + kind : '');
+}
+function setDiscoveryStatus(text = '', kind = '') {
+  state.discoveryStatus = text; const el = $('#discovery-status');
+  el.hidden = !text; el.textContent = text || ''; el.className = 'discovery-status' + (kind ? ' s-' + kind : '');
 }
 class FieldError extends Error { constructor(message, fieldId) { super(message); this.fieldId = fieldId; } }
-function clearFieldErrors(root) { $$('[aria-invalid]', root).forEach(n => n.removeAttribute('aria-invalid')); }
-function fail(err, fallback) {
-  if (err && err.fieldId) { const n = $(err.fieldId); if (n) { n.setAttribute('aria-invalid', 'true'); n.focus(); } }
-  setStatus((err && err.message) || fallback, 'error');
+class CancelOperation extends Error {}
+function clearFieldErrors() { $$('[aria-invalid]').forEach(node => node.removeAttribute('aria-invalid')); }
+function fail(err, fallback = 'Không thể lưu.') {
+  if (err?.fieldId) {
+    const field = $(err.fieldId); let details = field?.closest('details');
+    while (details) { details.open = true; details = details.parentElement?.closest('details') || null; }
+    field?.setAttribute('aria-invalid', 'true'); field?.focus();
+  }
+  setFormStatus(err?.message || fallback, 'error');
 }
-
-/* ---------- values helpers -------------------------------------------- */
-function providerIds() { return Object.keys(state.values?.providers || {}); }
-function providerOf(modelId) {
-  const registered = state.values?.models?.[modelId];
-  return registered?.provider && state.values.providers?.[registered.provider] ? registered.provider : state.values?.defaultProvider || '';
-}
-function modelsOf(pid) { return Object.keys(state.values?.models || {}).filter(id => providerOf(id) === pid).sort(); }
-function schemaField(key) {
-  return (state.schema?.sections || []).flatMap(s => s.fields || []).find(f => f.key === key) || null;
-}
+function providerIds(values = state.values) { return Object.keys(values?.providers || {}); }
+function providerHasStoredKey(id, meta = state.meta) { return Object.hasOwn(meta?.providers || {}, id) && !!meta.providers[id]; }
+function schemaField(key) { return (state.schema?.sections || []).flatMap(section => section.fields || []).find(field => field.key === key) || null; }
 function effortChoices() { return schemaField('provider.reasoningEffort')?.choices || ['low', 'high', 'max']; }
 function effortDefault() { return schemaField('provider.reasoningEffort')?.default || 'high'; }
-function limitRange(key) { const f = schemaField('limits.' + key); return f ? [f.min, f.max] : FALLBACK_LIMITS[key]; }
-const fmtMoney = n => '$' + (Number.isFinite(n) ? String(n) : '0');
-const fmtInt = n => Number.isFinite(n) ? n.toLocaleString('vi-VN') : '';
+function modelEffortOptions(id) {
+  const models = state.values?.models || {}, model = Object.hasOwn(models, id) ? models[id] : null;
+  return model?.reasoningEfforts?.length ? model.reasoningEfforts : effortChoices();
+}
+function limitRange(key) { const field = schemaField('limits.' + key); return field ? [field.min, field.max] : FALLBACK_LIMITS[key]; }
+const fmtMoney = value => '$' + (Number.isFinite(value) ? String(value) : '0');
+function cloneValues(values) { return JSON.parse(JSON.stringify(values || {})); }
+function maskedProjection(values) {
+  const safe = cloneValues(values);
+  for (const provider of Object.values(safe.providers || {})) if (provider && typeof provider === 'object') provider.apiKey = '';
+  return safe;
+}
+function modelProviderId(values, id) {
+  const models = values?.models || {};
+  const model = Object.hasOwn(models, id) ? models[id] : null;
+  return model?.provider && Object.hasOwn(values?.providers || {}, model.provider) ? model.provider : values?.defaultProvider || '';
+}
+function modelsOf(pid, values = state.values) { return Object.keys(values?.models || {}).filter(id => modelProviderId(values, id) === pid).sort(); }
+function selectedModelId() {
+  if (state.manualModel) return $('#m-id').value.trim();
+  const option = $('#m-picker').value;
+  return option.startsWith('model:') ? option.slice(6) : '';
+}
+function modelIsSaved(id = selectedModelId(), values = state.values) { return !!id && Object.hasOwn(values?.models || {}, id); }
+function providerSnapshot() { return ['pv-id', 'pv-base-url', 'pv-api', 'pv-effort', 'pv-key'].map(id => $( '#' + id).value); }
+function modelSnapshot({ includeAutoProvider = false } = {}) {
+  const snapshot = [$('#m-picker').value, state.manualModel, $('#m-id').value, $('#m-provider').value, $('#m-effort').value, $('#m-context').value, $('#m-loop').value, $('#m-hot').value, $('#m-in').value, $('#m-cache').value, $('#m-out').value];
+  if (!includeAutoProvider && !state.modelProviderTouched && state.modelBaseline) snapshot[3] = state.modelBaseline[3];
+  return snapshot;
+}
+function providerIsDirty() { return !!state.providerBaseline && JSON.stringify(providerSnapshot()) !== JSON.stringify(state.providerBaseline); }
+function modelIsDirty() { return !!state.modelBaseline && JSON.stringify(modelSnapshot()) !== JSON.stringify(state.modelBaseline); }
+function editorSnapshot() { return [providerSnapshot(), modelSnapshot(), $('#cfg-default-provider').value]; }
+function editorIsDirty() { return !!state.editorBaseline && JSON.stringify(editorSnapshot()) !== JSON.stringify(state.editorBaseline); }
+function syncDirtyStatus() {
+  if (!state.values || state.loading || state.saving || state.reloading) return;
+  const dirty = editorIsDirty();
+  setSaveStatus(dirty ? 'Chưa lưu thay đổi' : state.cleanStatus, dirty ? 'warn' : '');
+}
+function providerFingerprint(values, meta) { return JSON.stringify({ providers: values?.providers || {}, defaultProvider: values?.defaultProvider || '', storedKeys: meta?.providers || {} }); }
+function advanceConfigRevision() { state.configRevision++; for (const [id, result] of Object.entries(state.testing)) if (!result.pending) delete state.testing[id]; }
+function safeMeta(values, oldMeta, keyPresence = {}) {
+  const providers = Object.create(null);
+  for (const id of Object.keys(values.providers || {})) providers[id] = !!keyPresence[id] || providerHasStoredKey(id, oldMeta) || !!values.providers[id]?.apiKey;
+  return { ...oldMeta, providers, hasApiKey: Object.hasOwn(providers, values.defaultProvider) && !!providers[values.defaultProvider] };
+}
+function applyConfig(payload) {
+  const values = payload.values || {}; values.providers ||= {}; values.models ||= {};
+  const meta = payload.meta || {}; const fingerprint = providerFingerprint(values, meta);
+  if (state.connectionFingerprint !== null && state.connectionFingerprint !== fingerprint) {
+    state.connectionRevision++; invalidateDiscovery('Kết nối đã thay đổi. Tải lại danh sách model.');
+  }
+  state.connectionFingerprint = fingerprint; state.schema = payload.schema || {}; state.values = values; state.meta = meta;
+  state.loading = false; advanceConfigRevision(); renderAll(); refreshBusyState();
+}
+async function refreshConfig() { const payload = await getJson('/api/config'); applyConfig(payload); return payload; }
 
-/* ---------- parse + validate ------------------------------------------ */
-function parseBaseUrl(raw, fieldId) {
-  const value = String(raw || '').trim().replace(/\/+$/, '');
-  let url;
-  try { url = new URL(value); } catch { throw new FieldError('Base URL phải là URL hợp lệ.', fieldId); }
-  if (!['http:', 'https:'].includes(url.protocol)) throw new FieldError('Base URL phải bắt đầu bằng http:// hoặc https://.', fieldId);
-  return value;
-}
-function intOrNull(input, label, range) {
-  const raw = input.value.trim();
-  if (!raw) return null;                                   // blank = inherit
-  const n = Number(raw), [min, max] = range;
-  if (!Number.isInteger(n) || n < min || n > max) throw new FieldError(`${label} phải là số nguyên ${min}–${max}.`, '#' + input.id);
-  return n;
-}
-/* Prices mirror the old rule: all three set, or all three blank (backend
-   pricing). A partial set is a form error, never a silent 0. */
-function parsePrices() {
-  const fields = [$('#m-in'), $('#m-cache'), $('#m-out')];
-  const raws = fields.map(f => f.value.trim());
-  if (raws.every(r => r === '')) return null;
-  const emptyIndex = raws.findIndex(r => r === '');
-  if (emptyIndex >= 0) throw new FieldError('Điền đủ cả ba giá Input, Cache và Output; hoặc để trống cả ba.', '#' + fields[emptyIndex].id);
-  const nums = raws.map(Number);
-  const badIndex = nums.findIndex(n => !Number.isFinite(n) || n < 0);
-  if (badIndex >= 0) throw new FieldError('Giá phải là số lớn hơn hoặc bằng 0.', '#' + fields[badIndex].id);
-  const [input, cache, output] = nums;
-  return { input, cache, output };
-}
-
-/* ---------- renders ---------------------------------------------------- */
 function fillOptions(select, options, current) {
-  select.replaceChildren(...options.map(([value, text]) => Object.assign(document.createElement('option'), { value, textContent: text })));
+  if (!select) return;
+  select.replaceChildren(...options.map(([value, text, attrs = {}]) => {
+    const option = Object.assign(document.createElement('option'), { value, textContent: text });
+    for (const [key, value] of Object.entries(attrs)) option.setAttribute(key, value);
+    return option;
+  }));
   if (options.some(([value]) => value === current)) select.value = current;
 }
-
-function renderProviders() {
-  const list = $('#provider-list'); if (!list || !state.values) return;
+function renderConnectionPicker() {
+  const select = $('#connection-picker'); if (!select) return;
+  const providers = state.values?.providers || {};
+  const options = [['__new__', 'Thêm kết nối mới'], ...providerIds().sort().map(id => [`provider:${id}`, `${id} — ${providers[id]?.baseUrl || ''}`])];
+  const selected = state.editingProvider ? `provider:${state.editingProvider}` : '__new__'; fillOptions(select, options, selected);
+}
+function renderProviderSelects({ modelEffortValue = null } = {}) {
   const ids = providerIds().sort();
-  if (!ids.length) {
-    list.innerHTML = '<li class="empty-note"><strong>Chưa có provider nào.</strong>Thêm provider đầu tiên bằng form phía dưới.</li>';
-    return;
+  const draftId = $('#pv-id')?.value.trim();
+  const modelIds = [...new Set([...ids, ...(draftId && !ids.includes(draftId) ? [draftId] : [])])].sort();
+  fillOptions($('#m-provider'), modelIds.map(id => [id, id]), $('#m-provider').value || state.editingProvider || draftId);
+  const defaultSelect = $('#cfg-default-provider');
+  const oldDefault = defaultSelect.value;
+  fillOptions(defaultSelect, ids.map(id => [id, id]), state.defaultProviderTouched ? oldDefault : state.values.defaultProvider);
+  const apiSelect = $('#pv-api');
+  const providers = state.values?.providers || {};
+  const entry = state.editingProvider && Object.hasOwn(providers, state.editingProvider) ? providers[state.editingProvider] : null;
+  if (entry) {
+    if (!apiSelect.dataset.edited) apiSelect.value = entry.api === 'openai_responses' ? 'openai_responses' : 'openai_chat';
+  } else if (!apiSelect.dataset.edited) apiSelect.value = 'openai_chat';
+  const providerEffort = $('#pv-effort').value || entry?.reasoningEffort || effortDefault();
+  const providerEffortChoices = effortChoices().map(choice => [choice, choice]);
+  if (!providerEffortChoices.some(([value]) => value === providerEffort)) providerEffortChoices.push([providerEffort, `${providerEffort} · đã lưu`]);
+  fillOptions($('#pv-effort'), providerEffortChoices, providerEffort);
+  const id = selectedModelId();
+  const effort = $('#m-effort');
+  const modelEffort = modelEffortValue ?? effort.value ?? '';
+  const modelEffortChoices = [['', 'Kế thừa'], ...modelEffortOptions(id).map(choice => [choice, choice])];
+  if (modelEffort && !modelEffortChoices.some(([value]) => value === modelEffort)) modelEffortChoices.push([modelEffort, `${modelEffort} · đã lưu`]);
+  fillOptions(effort, modelEffortChoices, modelEffort);
+}
+function renderModelPicker() {
+  const select = $('#m-picker'); if (!select || !state.values) return;
+  const current = state.manualModel ? '' : (select.value || CHOOSE_MODEL);
+  const pid = ($('#pv-id').value || state.editingProvider).trim();
+  const options = [[CHOOSE_MODEL, 'Chọn model…']];
+  const byId = new Map();
+  for (const id of modelsOf(pid)) byId.set(id, { label: id, disabled: false });
+  for (const id of state.discovery?.models || []) {
+    const owner = modelIsSaved(id) ? modelProviderId(state.values, id) : '';
+    if (owner && owner !== pid) byId.set(id, { label: `${id} — đã thuộc ${owner}`, disabled: true });
+    else byId.set(id, { label: id, disabled: false });
   }
-  list.innerHTML = ids.map(id => {
-    const p = state.values.providers[id] || {};
-    const hasKey = !!state.meta.providers?.[id];
-    const isDefault = id === state.values.defaultProvider;
-    const test = state.testing[id];
-    return `<li class="entry-row" data-default="${isDefault}">
-      <div class="entry-main">
-        <div class="entry-heading">
-          <span class="entry-name">${escapeHTML(id)}</span>
-          ${isDefault ? `<span class="chip" data-active="true">${icon('star')}Mặc định</span>` : ''}
-          <span class="chip key-chip ${hasKey ? 'has-key' : 'no-key'}">${hasKey ? 'Đã có key' : 'Chưa có key'}</span>
-        </div>
-        <div class="entry-meta">
-          <span class="entry-url">${escapeHTML(p.baseUrl || '—')}</span>
-          <span>${escapeHTML(API_LABELS[p.api] || p.api || '—')}</span>
-          <span>suy luận ${escapeHTML(p.reasoningEffort || '—')}</span>
-          <span>${modelsOf(id).length} model</span>
-        </div>
-        <span class="test-result ${test ? (test.pending ? '' : test.ok ? 's-ok' : 's-error') : ''}" role="status">${test ? (test.pending ? 'Đang kiểm tra…' : escapeHTML(test.text)) : ''}</span>
-      </div>
-      <div class="row-actions">
-        <button class="quiet-button" data-action="test" data-id="${escapeHTML(id)}" ${test?.pending ? 'disabled' : ''}>${icon('check')}Kiểm tra</button>
-        <button class="quiet-button" data-action="edit" data-id="${escapeHTML(id)}">Sửa</button>
-        <button class="quiet-button is-danger" data-action="delete" data-id="${escapeHTML(id)}">Xóa</button>
-      </div>
-    </li>`;
-  }).join('');
+  for (const [id, data] of [...byId.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    options.push([`model:${id}`, data.label, data.disabled ? { disabled: 'disabled', 'data-owner': modelProviderId(state.values, id), 'data-model': id } : { 'data-model': id }]);
+  }
+  if (state.selectedModel && !byId.has(state.selectedModel) && !state.manualModel && state.selectedModelFromDiscovery) {
+    options.push([`model:${state.selectedModel}`, `${state.selectedModel} — danh sách cũ, tải lại`, { disabled: 'disabled', 'data-stale': 'true', 'data-model': state.selectedModel }]);
+  }
+  options.push(['', 'Nhập model ID thủ công', { 'data-manual': 'true' }]);
+  const encodedCurrent = state.manualModel ? '' : (current.startsWith('model:') ? current : (state.selectedModel ? `model:${state.selectedModel}` : current));
+  fillOptions(select, options, options.some(([value]) => value === encodedCurrent) ? encodedCurrent : CHOOSE_MODEL);
+}
+function renderCurrentDefault() {
+  const id = state.values?.defaultModel || '';
+  const provider = id ? modelProviderId(state.values, id) : state.values?.defaultProvider || '';
+  $('#current-default').textContent = id ? `Hiện tại: ${id} · ${provider || 'kết nối mặc định'}` : 'Hiện tại: Chưa chọn model mặc định.';
+}
+function renderEditorActions() {
+  const pid = state.editingProvider;
+  $('#delete-provider').hidden = !pid;
+  $('#delete-model').hidden = !modelIsSaved();
+  $('#test-provider').disabled = !pid || state.saving || state.reloading || !!state.testing[pid]?.pending;
+  $('#test-result').hidden = !pid || !state.testing[pid];
+  if (pid && state.testing[pid]) {
+    const result = state.testing[pid]; $('#test-result').textContent = result.pending ? 'Đang thử gọi model…' : result.text;
+    $('#test-result').className = 'test-result' + (result.kind ? ' s-' + result.kind : '');
+  }
+  $('#pv-id').readOnly = !!pid;
+  $('#pv-key-note').textContent = pid && providerHasStoredKey(pid) ? 'Đã lưu key' : '';
+  $('#pv-key').placeholder = pid && providerHasStoredKey(pid) ? 'Để trống để giữ key' : 'Nhập API key';
+}
+function renderAll() {
+  renderConnectionPicker(); renderProviderSelects(); renderModelPicker(); renderCurrentDefault(); renderEditorActions();
+}
+function refreshBusyState() {
+  $('#editor-controls').disabled = state.loading || !state.values || state.saving || state.reloading;
+  $('#reload-config').disabled = state.loading || state.saving || state.reloading;
+  $('#v-submit').disabled = state.verifying || state.loading || !state.values || state.saving || state.reloading;
+  $('#save-use').disabled = state.loading || !state.values || state.saving || state.reloading;
+  $('#save-catalog').disabled = state.loading || !state.values || state.saving || state.reloading;
 }
 
-function renderModels() {
-  const list = $('#model-list'); if (!list || !state.values) return;
-  const ids = Object.keys(state.values.models || {}).sort();
-  if (!ids.length) {
-    list.innerHTML = '<li class="empty-note"><strong>Chưa có model nào.</strong>Thêm model bằng form phía dưới, hoặc kiểm tra nhanh để tải danh sách model của provider.</li>';
-    return;
-  }
-  list.innerHTML = ids.map(id => {
-    const m = state.values.models[id] || {};
-    const isDefault = id === state.values.defaultModel;
-    const priced = [m.input, m.cache, m.output].some(n => Number.isFinite(n) && n > 0);
-    const price = priced ? `in ${fmtMoney(m.input)} · cache ${fmtMoney(m.cache)} · out ${fmtMoney(m.output)}/1M` : 'giá backend';
-    const limits = [
-      Number.isInteger(m.contextTokens) ? `${fmtInt(m.contextTokens)} tok` : '',
-      Number.isInteger(m.loopMax) ? `${m.loopMax} vòng` : '',
-      Number.isInteger(m.hotTailKB) ? `nhớ nóng ${m.hotTailKB}KB` : '',
-    ].filter(Boolean).join(' · ');
-    const effort = m.reasoningEffort ? `suy luận ${m.reasoningEffort}` : 'suy luận kế thừa';
-    const efforts = (m.reasoningEfforts || []).length ? `map: ${m.reasoningEfforts.join(', ')}` : '';
-    const baseUrl = m.baseUrl ? `endpoint riêng: ${m.baseUrl}` : '';
-    return `<li class="entry-row" data-default="${isDefault}">
-      <div class="entry-main">
-        <div class="entry-heading">
-          <span class="entry-name">${escapeHTML(id)}</span>
-          ${isDefault ? `<span class="chip" data-active="true">${icon('star')}Mặc định</span>` : ''}
-        </div>
-        <div class="entry-meta">
-          <span>provider: ${escapeHTML(providerOf(id) || '—')}</span>
-          <span>${escapeHTML(price)}</span>
-          ${limits ? `<span>${escapeHTML(limits)}</span>` : ''}
-          <span>${escapeHTML(effort)}</span>
-          ${efforts ? `<span>${escapeHTML(efforts)}</span>` : ''}
-          ${baseUrl ? `<span class="entry-url">${escapeHTML(baseUrl)}</span>` : ''}
-        </div>
-      </div>
-      <div class="row-actions">
-        <button class="quiet-button" data-action="edit" data-id="${escapeHTML(id)}">Sửa</button>
-        <button class="quiet-button is-danger" data-action="delete" data-id="${escapeHTML(id)}">Xóa</button>
-      </div>
-    </li>`;
-  }).join('');
+function parseBaseUrl(raw) {
+  const value = String(raw || '').trim().replace(/\/+$/, ''); let url;
+  try { url = new URL(value); } catch { throw new FieldError('URL API phải hợp lệ.', '#pv-base-url'); }
+  if (!['http:', 'https:'].includes(url.protocol)) throw new FieldError('URL API phải bắt đầu bằng http:// hoặc https://.', '#pv-base-url');
+  return value;
 }
-
-/* Selects that mirror the draft: defaults get the saved value, free selects
-   keep whatever the user already picked. */
-function renderSelects() {
-  const ids = providerIds().sort();
-  const defP = $('#cfg-default-provider');
-  if (defP) { fillOptions(defP, ids.map(id => [id, id])); defP.value = state.values?.defaultProvider || ''; }
-  const mids = Object.keys(state.values?.models || {}).sort();
-  const defM = $('#cfg-default-model');
-  if (defM) {
-    const all = [...new Set([state.values?.defaultModel, ...mids].filter(Boolean))];
-    fillOptions(defM, all.map(id => [id, mids.includes(id) ? id : id + ' (chưa đăng ký)']));
-    defM.value = state.values?.defaultModel || '';
-  }
-  const mp = $('#m-provider');
-  if (mp) fillOptions(mp, [['', `Kế thừa (${state.values?.defaultProvider || 'mặc định'})`], ...ids.map(id => [id, id])], mp.value);
-  const vp = $('#v-provider');
-  if (vp) fillOptions(vp, [['', '— nhập key tay —'], ...ids.map(id => [id, id])], vp.value);
-  const pe = $('#pv-effort');
-  if (pe) fillOptions(pe, effortChoices().map(c => [c, c]), pe.value || effortDefault());
+function parseIntOrNull(input, label, range) {
+  const raw = String(input.value ?? '').trim(); if (!raw) return null;
+  const value = Number(raw); const [min, max] = range;
+  if (!Number.isInteger(value) || value < min || value > max) throw new FieldError(`${label} phải là số nguyên ${min}–${max}.`, '#' + input.id);
+  return value;
 }
-
-function renderAll() { renderProviders(); renderModels(); renderSelects(); }
-
-/* ---------- API: GET /api/config --------------------------------------- */
-async function refreshConfig() {
-  const payload = await getJson('/api/config');                 // API: GET /api/config
-  state.schema = payload.schema || {};
-  state.values = payload.values || {};
-  state.values.providers = state.values.providers || {};
-  state.values.models = state.values.models || {};
-  state.meta = payload.meta || {};
+function parsePrices() {
+  const fields = [$('#m-in'), $('#m-cache'), $('#m-out')]; const raws = fields.map(field => String(field.value ?? '').trim());
+  if (raws.every(value => value === '')) return null;
+  const empty = raws.findIndex(value => value === '');
+  if (empty >= 0) throw new FieldError('Điền đủ cả ba giá Input, Cache và Output; hoặc để trống cả ba.', '#' + fields[empty].id);
+  const values = raws.map(Number); const bad = values.findIndex(value => !Number.isFinite(value) || value < 0);
+  if (bad >= 0) throw new FieldError('Giá phải là số lớn hơn hoặc bằng 0.', '#' + fields[bad].id);
+  return { input: values[0], cache: values[1], output: values[2] };
+}
+function modelFieldsSnapshot() { return modelSnapshot({ includeAutoProvider: true }); }
+function setModelFields(id, { manual = false } = {}) {
+  state.selectedModel = id; state.manualModel = manual; state.selectedModelFromDiscovery = !!(!manual && state.discovery?.models.includes(id));
+  $('#m-picker').value = manual ? '' : (id ? `model:${id}` : CHOOSE_MODEL);
+  $('#manual-model-field').hidden = !manual; $('#m-id').value = manual ? id : '';
+  const models = state.values?.models || {};
+  const model = !manual && id && Object.hasOwn(models, id) ? models[id] : null;
+  state.loadedModelId = model ? id : '';
+  $('#m-in').value = model && (Number(model.input) > 0 || Number(model.cache) > 0 || Number(model.output) > 0) ? model.input : '';
+  $('#m-cache').value = model && (Number(model.input) > 0 || Number(model.cache) > 0 || Number(model.output) > 0) ? model.cache : '';
+  $('#m-out').value = model && (Number(model.input) > 0 || Number(model.cache) > 0 || Number(model.output) > 0) ? model.output : '';
+  if (model && ![model.input, model.cache, model.output].some(value => Number.isFinite(value) && value > 0)) {
+    const pricing = state.values.pricing || {};
+    const legacy = Object.hasOwn(pricing, id) ? pricing[id] : null;
+    if (legacy) { $('#m-in').value = legacy.input ?? ''; $('#m-cache').value = legacy.cache ?? ''; $('#m-out').value = legacy.output ?? ''; }
+  }
+  const pid = ($('#pv-id').value || state.editingProvider).trim();
+  $('#m-provider').value = model ? (model.provider || modelProviderId(state.values, id)) : pid;
+  state.modelProviderTouched = false;
+  $('#m-context').value = Number.isInteger(model?.contextTokens) ? model.contextTokens : '';
+  $('#m-loop').value = Number.isInteger(model?.loopMax) ? model.loopMax : '';
+  $('#m-hot').value = Number.isInteger(model?.hotTailKB) ? model.hotTailKB : '';
+  const legacyUrl = model?.baseUrl || '';
+  $('#legacy-url-warning').hidden = !legacyUrl;
+  $('#legacy-url-warning').textContent = legacyUrl ? `Model này đang giữ URL riêng ${legacyUrl}; khi lưu sẽ không bị thay đổi.` : '';
+  $('#ownership-warning').hidden = true; $('#ownership-warning').textContent = '';
+  renderModelPicker(); renderProviderSelects({ modelEffortValue: model?.reasoningEffort || '' });
+  state.modelBaseline = modelFieldsSnapshot();
+  renderEditorActions();
+}
+function chooseModel(id, { manual = false, confirmDiscard = true } = {}) {
+  if (!manual && id && state.discovery?.models.includes(id) && (!state.discovery || state.discovery.connectionRevision !== state.connectionRevision)) {
+    setDiscoveryStatus('Danh sách model đã cũ. Tải lại trước khi chọn.', 'error'); return false;
+  }
+  if (!manual && id && modelIsSaved(id) && modelProviderId(state.values, id) !== ($('#pv-id').value || state.editingProvider)) {
+    setDiscoveryStatus(`Model đã thuộc kết nối “${modelProviderId(state.values, id)}”. Chọn kết nối đó để sửa.`, 'error'); return false;
+  }
+  if (!manual && id === state.selectedModel && !state.manualModel) return true;
+  if (confirmDiscard && modelIsDirty() && !window.confirm('Đổi model sẽ bỏ các thay đổi model chưa lưu. Tiếp tục?')) {
+    renderModelPicker(); $('#m-picker').value = state.manualModel ? '' : (state.selectedModel ? `model:${state.selectedModel}` : CHOOSE_MODEL); return false;
+  }
+  state.selectedModel = id || ''; state.manualModel = manual;
+  setModelFields(id || '', { manual });
+  return true;
+}
+function fillConnection(id, { initial = false } = {}) {
+  state.editingProvider = id || '';
+  const providers = state.values?.providers || {};
+  const provider = id && Object.hasOwn(providers, id) ? providers[id] : null;
+  $('#pv-id').value = id || ''; $('#pv-base-url').value = provider?.baseUrl || ''; $('#pv-key').value = '';
+  $('#pv-api').value = provider?.api === 'openai_responses' ? 'openai_responses' : 'openai_chat';
+  $('#pv-api').dataset.edited = '';
+  $('#pv-effort').value = provider?.reasoningEffort || effortDefault();
+  $('#editor-advanced').open = false;
+  state.discovery = null; state.selectedModel = ''; state.manualModel = false; state.selectedModelFromDiscovery = false;
+  const ids = modelsOf(id);
+  const preferred = initial && state.values?.defaultModel && ids.includes(state.values.defaultModel)
+    ? state.values.defaultModel : (ids.includes(state.values?.defaultModel) ? state.values.defaultModel : '');
+  setModelFields(preferred);
+  state.providerBaseline = providerSnapshot(); state.modelBaseline = modelFieldsSnapshot();
+  renderAll(); state.editorBaseline = editorSnapshot(); syncDirtyStatus(); setFormStatus('');
+  setDiscoveryStatus('');
+}
+function openNewConnection() {
+  if (editorIsDirty() && !window.confirm('Mở kết nối mới sẽ bỏ các thay đổi chưa lưu. Tiếp tục?')) return false;
+  state.defaultProviderTouched = false; $('#cfg-default-provider').value = state.values?.defaultProvider || '';
+  fillConnection(''); $('#connection-picker').value = '__new__'; $('#pv-id').focus(); return true;
+}
+function openExistingConnection(id) {
+  if (!Object.hasOwn(state.values?.providers || {}, id)) return false;
+  if (id === state.editingProvider) return true;
+  if (editorIsDirty() && !window.confirm('Mở kết nối khác sẽ bỏ các thay đổi chưa lưu. Tiếp tục?')) {
+    $('#connection-picker').value = state.editingProvider ? `provider:${state.editingProvider}` : '__new__'; return false;
+  }
+  state.defaultProviderTouched = false; fillConnection(id); $('#connection-picker').value = `provider:${id}`; return true;
+}
+function cancelEditor() {
+  if (state.editingProvider && Object.hasOwn(state.values?.providers || {}, state.editingProvider)) fillConnection(state.editingProvider);
+  else fillConnection('');
   renderAll();
 }
-
-/* ---------- API: POST /api/config -------------------------------------- */
-async function saveConfig(note) {
-  if (state.saving) return false;
-  state.saving = true;
-  const btn = $('#save-config'); if (btn) btn.disabled = true;
-  setStatus('Đang lưu cấu hình…');
+function invalidateDiscovery(message = 'URL/key đã đổi. Tải lại model.') {
+  state.verifyGeneration++; state.discovery = null;
+  if (state.activeVerify) { state.activeVerify = null; state.verifying = false; }
+  renderModelPicker(); setDiscoveryStatus(message); refreshBusyState();
+}
+function sourceDraft() { return { url: $('#pv-base-url').value, key: $('#pv-key').value.trim(), providerId: state.editingProvider }; }
+async function verifyQuick() {
+  if (state.verifying || state.loading || state.saving || state.reloading || !state.values) return false;
+  clearFieldErrors(); setFormStatus('');
+  const source = sourceDraft();
+  let baseUrl; try { baseUrl = parseBaseUrl(source.url); } catch (error) { fail(error); return false; }
+  const existingId = source.providerId && Object.hasOwn(state.values.providers || {}, source.providerId) ? source.providerId : '';
+  if (!source.key && !existingId) {
+    setDiscoveryStatus('Nhập API key để tải model, hoặc nhập model ID.'); return false;
+  }
+  const payload = { baseUrl };
+  if (source.key) payload.apiKey = source.key;
+  else payload.providerId = existingId;
+  const snapshot = { generation: ++state.verifyGeneration, baseUrl, key: source.key, providerId: existingId, connectionRevision: state.connectionRevision };
+  state.activeVerify = snapshot; state.verifying = true; refreshBusyState(); setDiscoveryStatus('Đang tải model…');
   try {
-    const res = await postJson('/api/config', state.values);    // API: POST /api/config — whole values; empty apiKey keeps the stored key
-    await refreshConfig();                                      // fresh masked keys + meta.providers
-    const readyNote = res.ready ? 'Sẵn sàng để dùng.' : 'Chưa sẵn sàng — kiểm tra key của provider mặc định.';
-    setStatus(`${note || 'Đã lưu cấu hình.'} ${readyNote}`, res.ready ? 'ok' : 'error');
-    toast(note || 'Đã lưu cấu hình.');
-    announce(note || 'Đã lưu cấu hình.');
+    const response = await postJson('/api/onboarding/verify', payload);
+    if (state.activeVerify !== snapshot || snapshot.generation !== state.verifyGeneration || snapshot.connectionRevision !== state.connectionRevision || JSON.stringify(sourceDraft()) !== JSON.stringify(source)) return false;
+    const models = Array.isArray(response.models) ? response.models.filter(id => typeof id === 'string' && id.length) : [];
+    state.discovery = { models, sourceUrl: baseUrl, providerId: snapshot.providerId, connectionRevision: snapshot.connectionRevision, generation: snapshot.generation };
+    renderModelPicker();
+    setDiscoveryStatus(models.length ? `Đã tải ${models.length} model.` : 'Không có model. Có thể nhập thủ công.', models.length ? 'ok' : '');
     return true;
-  } catch (err) {
-    setStatus('Không lưu được cấu hình: ' + err.message, 'error');
+  } catch (error) {
+    if (state.activeVerify !== snapshot || snapshot.generation !== state.verifyGeneration) return false;
+    setDiscoveryStatus(`Không tải được model: ${error.message}`, 'error'); return false;
+  } finally {
+    if (state.activeVerify === snapshot) { state.activeVerify = null; state.verifying = false; refreshBusyState(); }
+  }
+}
+function selectedProviderId() { return ($('#m-provider').value || $('#pv-id').value || state.editingProvider).trim(); }
+function draftForSave(useSelected) {
+  const id = $('#pv-id').value.trim();
+  if (!id) throw new FieldError('Nhập tên kết nối.', '#pv-id');
+  if (!PROVIDER_ID_RE.test(id)) throw new FieldError('Tên kết nối chỉ gồm chữ, số, _ và -.', '#pv-id');
+  const baseUrl = parseBaseUrl($('#pv-base-url').value);
+  const effort = $('#pv-effort').value || effortDefault();
+  const modelId = selectedModelId();
+  if (!modelId) throw new FieldError('Chọn model hoặc nhập Model ID thủ công.', '#m-picker');
+  if (state.selectedModelFromDiscovery && (!state.discovery || state.discovery.connectionRevision !== state.connectionRevision || state.discovery.sourceUrl !== baseUrl || state.discovery.providerId !== (state.editingProvider || ''))) {
+    throw new FieldError('URL hoặc kết nối đã đổi. Tải lại danh sách hoặc nhập model thủ công.', '#m-picker');
+  }
+  const prices = parsePrices();
+  const contextTokens = parseIntOrNull($('#m-context'), 'Ngữ cảnh', limitRange('contextTokens'));
+  const loopMax = parseIntOrNull($('#m-loop'), 'Số vòng tối đa', limitRange('loopMax'));
+  const hotTailKB = parseIntOrNull($('#m-hot'), 'Nhớ nóng', limitRange('hotTailKB'));
+  const provider = selectedProviderId();
+  if (!provider) throw new FieldError('Chọn kết nối cho model.', '#m-provider');
+  return { id, baseUrl, api: $('#pv-api').value === 'openai_responses' ? 'openai_responses' : 'openai_chat', effort, apiKey: $('#pv-key').value.trim(), modelId, provider, prices, contextTokens, loopMax, hotTailKB, modelEffort: $('#m-effort').value, useSelected };
+}
+function mergeEditorDraft(fresh, draft) {
+  const values = cloneValues(fresh.values); values.providers ||= {}; values.models ||= {};
+  const editing = state.editingProvider;
+  if (editing && !Object.hasOwn(values.providers, editing)) throw new FieldError('Kết nối này đã bị xóa. Tải lại rồi chọn kết nối khác.', '#connection-picker');
+  if (!editing && Object.hasOwn(values.providers, draft.id)) throw new FieldError(`Kết nối “${draft.id}” đã có. Chọn kết nối đó để sửa.`, '#pv-id');
+  if (editing && draft.id !== editing) throw new FieldError('Không thể đổi tên kết nối trong cùng một thao tác.', '#pv-id');
+  const prevProvider = Object.hasOwn(values.providers, draft.id) ? values.providers[draft.id] : {};
+  values.providers = { ...values.providers, [draft.id]: { apiKeyEnv: 'THYCA_TOKEN', ...prevProvider, baseUrl: draft.baseUrl, api: draft.api, reasoningEffort: draft.effort, apiKey: draft.apiKey } };
+  const previousModel = Object.hasOwn(values.models, draft.modelId) ? values.models[draft.modelId] : null;
+  if (state.manualModel && previousModel && state.loadedModelId !== draft.modelId) {
+    throw new FieldError('Model này đã được lưu. Chọn model trong danh sách để giữ các cài đặt hiện có.', '#m-picker');
+  }
+  const previousOwner = previousModel ? modelProviderId(values, draft.modelId) : '';
+  if (previousModel && previousOwner !== draft.provider) {
+    if (!state.modelProviderTouched) throw new FieldError(`Model này đã thuộc kết nối “${previousOwner}”. Chọn kết nối sở hữu model trước khi chuyển.`, '#m-picker');
+    if (!window.confirm(`Chuyển model “${draft.modelId}” từ “${previousOwner}” sang “${draft.provider}”?`)) throw new CancelOperation();
+  }
+  if (!previousModel && draft.provider !== draft.id) {
+    if (!state.modelProviderTouched) throw new FieldError('Model mới phải dùng kết nối đang chỉnh.', '#m-provider');
+    if (!window.confirm(`Gắn model “${draft.modelId}” vào kết nối “${draft.provider}”?`)) throw new CancelOperation();
+  }
+  const entry = { ...(previousModel || {}), provider: draft.provider };
+  if (draft.prices) {
+    Object.assign(entry, draft.prices);
+    values.pricing = { ...(values.pricing || {}), [draft.modelId]: { ...draft.prices } };
+  } else {
+    delete entry.input; delete entry.cache; delete entry.output;
+    if (values.pricing) delete values.pricing[draft.modelId];
+  }
+  for (const [key, value] of [['contextTokens', draft.contextTokens], ['loopMax', draft.loopMax], ['hotTailKB', draft.hotTailKB], ['reasoningEffort', draft.modelEffort]]) {
+    if (value === null || value === '') delete entry[key]; else entry[key] = value;
+  }
+  values.models = { ...values.models, [draft.modelId]: entry };
+  if (draft.useSelected) values.defaultModel = draft.modelId;
+  if (state.defaultProviderTouched) values.defaultProvider = $('#cfg-default-provider').value;
+  return values;
+}
+function configSavedEvent() { window.dispatchEvent(new Event('thyca:config-saved')); }
+async function commitValues(buildValues, { note = '', onPosted = null } = {}) {
+  if (state.loading || state.saving || state.reloading || !state.values) return false;
+  state.saving = true; setSaveStatus('Đang lưu…'); setFormStatus(''); refreshBusyState();
+  try {
+    const fresh = await getJson('/api/config');
+    const next = buildValues(fresh);
+    if (!Object.hasOwn(next.providers || {}, next.defaultProvider)) throw new FieldError('Kết nối mặc định không còn tồn tại.', '#cfg-default-provider');
+    const response = await postJson('/api/config', next);
+    advanceConfigRevision();
+    const keyPresence = Object.create(null);
+    for (const [id, entry] of Object.entries(next.providers || {})) keyPresence[id] = !!entry.apiKey || providerHasStoredKey(id, fresh.meta);
+    state.values = maskedProjection(next); state.meta = safeMeta(state.values, fresh.meta || state.meta, keyPresence);
+    state.schema = fresh.schema || state.schema; state.connectionFingerprint = providerFingerprint(state.values, state.meta);
+    for (const entry of Object.values(next.providers || {})) if (entry && typeof entry === 'object') entry.apiKey = '';
+    $('#pv-key').value = '';
+    onPosted?.(); configSavedEvent(); renderAll();
+    state.providerBaseline = providerSnapshot(); state.modelBaseline = modelFieldsSnapshot(); state.editorBaseline = editorSnapshot();
+    state.cleanStatus = 'Đã lưu';
+    setSaveStatus('Đã lưu', response.ready === false ? 'warn' : 'ok');
+    try {
+      await refreshConfig();
+      setSaveStatus('Đã lưu', response.ready === false ? 'warn' : 'ok');
+      setFormStatus(response.ready === false ? 'Đã lưu cấu hình. Chưa thể xác nhận model chạy được; kiểm tra API key/kết nối.' : note, response.ready === false ? 'warn' : 'ok');
+    } catch (error) {
+      setSaveStatus('Đã lưu', 'warn');
+      setFormStatus(`Đã lưu thành công nhưng chưa tải lại được cấu hình: ${error.message}${response.ready === false ? '. Cấu hình chưa sẵn sàng cho lượt chat.' : ''}`, 'warn');
+    }
+    return true;
+  } catch (error) {
+    if (error instanceof CancelOperation) return false;
+    if (error instanceof FieldError) fail(error);
+    else {
+      setSaveStatus('Chưa lưu', 'error');
+      setFormStatus(`Chưa lưu được: ${error.message}`, 'error');
+    }
     return false;
   } finally {
-    state.saving = false;
-    if (btn) btn.disabled = false;
+    state.saving = false; refreshBusyState(); renderAll(); syncDirtyStatus();
   }
 }
-
-/* ---------- API: POST /api/providers/test ------------------------------ */
+async function submitEditor(event, useSelected = true) {
+  event?.preventDefault?.();
+  if (state.saving || state.loading || state.reloading) return false;
+  clearFieldErrors(); setFormStatus('');
+  let draft; try { draft = draftForSave(useSelected); } catch (error) { fail(error); return false; }
+  return commitValues(fresh => mergeEditorDraft(fresh, draft), {
+    note: useSelected ? `Đang dùng ${draft.modelId}.` : `Đã lưu kết nối và model “${draft.modelId}”.`,
+    onPosted: () => {
+      state.editingProvider = draft.id; state.defaultProviderTouched = false; state.modelProviderTouched = false;
+      state.discovery = null;
+      setModelFields(draft.modelId);
+    },
+  });
+}
+function updateTestResult(pid, token, result) {
+  if (state.testing[pid]?.token !== token) return false;
+  state.testing[pid] = result;
+  if (state.editingProvider === pid) renderEditorActions();
+  return true;
+}
 async function testProvider(pid) {
-  if (!state.values || state.testing[pid]?.pending) return;
-  const payload = { providerId: pid };
-  const owned = modelsOf(pid);
-  if (owned[0]) payload.model = owned[0];          // else the backend falls back to defaultModel
-  state.testing[pid] = { pending: true };
-  renderProviders();
+  if (!pid || !Object.hasOwn(state.values?.providers || {}, pid) || state.saving || state.reloading || state.testing[pid]?.pending) return false;
+  const request = { revision: state.configRevision, token: {} }; state.testing[pid] = { pending: true, token: request.token }; renderEditorActions();
   try {
-    const res = await postJson('/api/providers/test', payload);   // API: POST /api/providers/test
-    state.testing[pid] = { ok: true, text: `OK · ${res.model} · ${res.latencyMs}ms` };
-    setStatus(`Provider "${pid}" hoạt động — ${res.model} · ${res.latencyMs}ms.`, 'ok');
-  } catch (err) {
-    state.testing[pid] = { ok: false, text: err.message };
-    setStatus(`Kiểm tra "${pid}" thất bại: ${err.message}`, 'error');
+    const response = await postJson('/api/providers/test', { providerId: pid, ...(modelsOf(pid)[0] ? { model: modelsOf(pid)[0] } : {}) });
+    if (state.testing[pid]?.token !== request.token) return false;
+    updateTestResult(pid, request.token, request.revision === state.configRevision
+      ? { kind: 'ok', text: `Gọi model thành công · ${response.model} · ${response.latencyMs}ms` }
+      : { kind: 'muted', text: 'Kết nối đã đổi; bỏ qua kết quả thử cũ.' });
+  } catch (error) {
+    if (state.testing[pid]?.token !== request.token) return false;
+    updateTestResult(pid, request.token, request.revision === state.configRevision
+      ? { kind: 'error', text: `Thử gọi model thất bại: ${error.message}. Tải danh sách không xác nhận gọi model.` }
+      : { kind: 'muted', text: 'Kết nối đã đổi; bỏ qua kết quả thử cũ.' });
   }
-  renderProviders();
+  return true;
 }
-
-/* ---------- API: POST /api/onboarding/verify --------------------------- */
-async function verifyQuick(e) {
-  e.preventDefault();
-  if (state.verifying) return;
-  clearFieldErrors($('#verify-form'));
-  let baseUrl;
-  try { baseUrl = parseBaseUrl($('#v-base-url').value, '#v-base-url'); }
-  catch (err) { fail(err, 'Base URL chưa đúng.'); return; }
-  const pid = $('#v-provider').value;
-  const apiKey = $('#v-key').value.trim();
-  const payload = { baseUrl };                                     // API: POST /api/onboarding/verify
-  if (pid) payload.providerId = pid;                               // blank key + providerId -> stored key
-  if (apiKey) payload.apiKey = apiKey;
-  state.verifying = true; state.verifyProvider = pid;
-  const btn = $('#v-submit'); btn.disabled = true;
-  const box = $('#verify-result'); box.hidden = false;
-  const status = $('#verify-status');
-  status.className = 'status-line'; status.textContent = 'Đang kiểm tra…';
-  $('#verify-models').innerHTML = ''; $('#verify-hint').hidden = true;
+async function deleteProvider() {
+  const id = state.editingProvider;
+  if (!id || !window.confirm(`Xóa kết nối “${id}”?`)) return false;
+  return commitValues(fresh => {
+    const values = cloneValues(fresh.values); const ids = Object.keys(values.providers || {});
+    if (!Object.hasOwn(values.providers || {}, id)) throw new FieldError('Kết nối đã bị xóa.', '#connection-picker');
+    if (ids.length <= 1) throw new FieldError('Không thể xóa kết nối cuối cùng.', '#connection-picker');
+    const owned = modelsOf(id, values);
+    if (owned.length) throw new FieldError(`Kết nối còn model: ${owned.join(', ')}. Chuyển hoặc xóa model trước.`, '#connection-picker');
+    delete values.providers[id];
+    if (values.defaultProvider === id) values.defaultProvider = Object.keys(values.providers).sort()[0];
+    return values;
+  }, { note: `Đã xóa kết nối “${id}”.`, onPosted: () => { state.editingProvider = ''; fillConnection(''); } });
+}
+async function deleteModel() {
+  const id = selectedModelId();
+  if (!id || !modelIsSaved(id) || !window.confirm(`Xóa model “${id}”?`)) return false;
+  if (id === state.values.defaultModel) { setFormStatus('Đang là model mặc định. Chọn model khác trước.', 'error'); return false; }
+  return commitValues(fresh => {
+    const values = cloneValues(fresh.values);
+    if (!Object.hasOwn(values.models || {}, id)) throw new FieldError('Model đã bị xóa.', '#m-picker');
+    if (id === values.defaultModel) throw new FieldError('Đang là model mặc định. Chọn model khác trước.', '#m-picker');
+    delete values.models[id]; if (values.pricing) delete values.pricing[id]; return values;
+  }, { note: `Đã xóa model “${id}”.`, onPosted: () => { setModelFields('', {}); } });
+}
+async function reloadConfig() {
+  if (state.loading || state.saving || state.reloading) return false;
+  if (editorIsDirty() && !window.confirm('Tải lại sẽ bỏ các thay đổi chưa lưu. Tiếp tục?')) return false;
+  state.reloading = true; setSaveStatus('Đang tải…'); refreshBusyState();
   try {
-    const res = await postJson('/api/onboarding/verify', payload);
-    const found = Array.isArray(res.models) ? res.models : [];
-    status.className = 'status-line s-ok';
-    status.textContent = found.length ? `Kết nối thành công · tìm thấy ${found.length} model.` : 'Kết nối thành công · provider không trả danh sách model.';
-    $('#verify-models').innerHTML = found.map(id => `<button type="button" class="chip" data-model="${escapeHTML(id)}">${escapeHTML(id)}</button>`).join('');
-    $('#verify-hint').hidden = !found.length;
-    announce('Kết nối thành công.');
-  } catch (err) {
-    status.className = 'status-line s-error';
-    status.textContent = 'Kiểm tra thất bại: ' + err.message;
-    announce('Kiểm tra thất bại.');
-  } finally {
-    state.verifying = false; btn.disabled = false;
-  }
+    await refreshConfig();
+    if (!Object.hasOwn(state.values.providers || {}, state.editingProvider)) fillConnection(state.values.defaultProvider || Object.keys(state.values.providers)[0] || '');
+    else fillConnection(state.editingProvider);
+    state.cleanStatus = 'Đã tải cấu hình'; setSaveStatus(state.cleanStatus, 'ok'); setFormStatus('Đã tải lại cấu hình.', 'ok'); return true;
+  } catch (error) {
+    setSaveStatus('Chưa tải được', 'error'); setFormStatus(`Không tải lại được cấu hình: ${error.message}`, 'error'); return false;
+  } finally { state.reloading = false; refreshBusyState(); }
 }
-
-/* ---------- provider form ---------------------------------------------- */
-function fillProviderForm(id) {
-  const p = state.values?.providers?.[id]; if (!p) return;
-  state.editingProvider = id;
-  $('#provider-form-title').textContent = `Sửa provider "${id}"`;
-  $('#pv-id').value = id; $('#pv-id').disabled = true;            // id is the map key: renaming means delete + add
-  $('#pv-base-url').value = p.baseUrl || '';
-  $('#pv-api').value = p.api === 'openai_responses' ? 'openai_responses' : 'openai_chat';
-  fillOptions($('#pv-effort'), effortChoices().map(c => [c, c]), p.reasoningEffort || effortDefault());
-  const key = $('#pv-key'); key.value = '';
-  key.placeholder = state.meta.providers?.[id] ? '••• đã lưu' : 'sk-…';
-  $('#pv-key-note').textContent = state.meta.providers?.[id] ? 'để trống để giữ key đã lưu' : 'key chỉ gửi về máy chủ Thyca trên máy bạn';
-  $('#pv-submit').innerHTML = icon('check') + ' Lưu provider';
-  $('#pv-cancel').hidden = false;
-  clearFieldErrors($('#provider-form'));
-  $('#provider-form').scrollIntoView({ block: 'nearest', behavior: motionPaused ? 'auto' : 'smooth' });
-  $('#pv-base-url').focus();
-}
-function resetProviderForm() {
-  state.editingProvider = '';
-  $('#provider-form').reset();
-  $('#pv-id').disabled = false;
-  $('#provider-form-title').textContent = 'Thêm provider';
-  $('#pv-submit').innerHTML = icon('plus') + ' Thêm provider';
-  $('#pv-cancel').hidden = true;
-  $('#pv-key').placeholder = 'sk-…';
-  $('#pv-key-note').textContent = 'key chỉ gửi về máy chủ Thyca trên máy bạn';
-  fillOptions($('#pv-effort'), effortChoices().map(c => [c, c]), effortDefault());
-  clearFieldErrors($('#provider-form'));
-}
-async function submitProvider(e) {
-  e.preventDefault();
-  if (state.saving || !state.values) return;
-  clearFieldErrors($('#provider-form'));
-  try {
-    const editing = state.editingProvider;
-    const id = editing || $('#pv-id').value.trim();
-    if (!id) throw new FieldError('Tên provider không được để trống.', '#pv-id');
-    if (!PROVIDER_ID_RE.test(id)) throw new FieldError('Tên provider chỉ gồm chữ, số, _ và -.', '#pv-id');
-    if (!editing && state.values.providers[id]) throw new FieldError(`Provider "${id}" đã tồn tại — bấm Sửa ở danh sách để chỉnh.`, '#pv-id');
-    const baseUrl = parseBaseUrl($('#pv-base-url').value, '#pv-base-url');
-    const api = $('#pv-api').value === 'openai_responses' ? 'openai_responses' : 'openai_chat';
-    const effort = $('#pv-effort').value;
-    if (!effort) throw new FieldError('Chọn mức suy luận mặc định.', '#pv-effort');
-    const apiKey = $('#pv-key').value.trim();
-    const prev = state.values.providers[id] || {};
-    const entry = { apiKeyEnv: 'THYCA_TOKEN', ...prev, baseUrl, api, reasoningEffort: effort, apiKey };
-    // apiKey '' merges back the stored key server-side (merge_saved_keys).
-    state.values.providers = { ...state.values.providers, [id]: entry };
-    if (await saveConfig(editing ? `Đã lưu provider "${id}".` : `Đã thêm provider "${id}".`)) resetProviderForm();
-  } catch (err) {
-    fail(err, 'Không lưu được provider.');
-  }
-}
-function deleteProvider(id) {
-  if (!state.values?.providers?.[id]) return;
-  const ids = providerIds();
-  if (ids.length <= 1) { setStatus('Không xóa được provider cuối cùng.', 'error'); return; }
-  const owned = modelsOf(id);
-  if (owned.length) { setStatus(`"${id}" còn ${owned.length} model (${owned.join(', ')}) — chuyển model sang provider khác trước.`, 'error'); return; }
-  if (!window.confirm(`Xóa provider "${id}"?`)) return;
-  const values = state.values;
-  delete values.providers[id];
-  if (values.defaultProvider === id) values.defaultProvider = Object.keys(values.providers).sort()[0];
-  if (state.editingProvider === id) resetProviderForm();
-  delete state.testing[id];
-  renderAll();
-  saveConfig(`Đã xóa provider "${id}".`);
-}
-
-/* ---------- model form -------------------------------------------------- */
-function modelEffortOptions(modelId) {
-  // A model with its own reasoningEfforts map may only pin a level from it.
-  const own = state.values?.models?.[modelId]?.reasoningEfforts;
-  return own && own.length ? own : effortChoices();
-}
-function fillModelForm(id) {
-  const m = state.values?.models?.[id]; if (!m) return;
-  state.editingModel = id;
-  $('#model-form-title').textContent = `Sửa model "${id}"`;
-  $('#m-id').value = id; $('#m-id').disabled = true;
-  $('#m-provider').value = m.provider || '';
-  fillOptions($('#m-effort'), [['', 'Kế thừa'], ...modelEffortOptions(id).map(c => [c, c])], m.reasoningEffort || '');
-  $('#m-context').value = Number.isInteger(m.contextTokens) ? m.contextTokens : '';
-  $('#m-loop').value = Number.isInteger(m.loopMax) ? m.loopMax : '';
-  $('#m-hot').value = Number.isInteger(m.hotTailKB) ? m.hotTailKB : '';
-  const priced = [m.input, m.cache, m.output].some(n => Number.isFinite(n) && n > 0);
-  $('#m-in').value = priced ? m.input : '';
-  $('#m-cache').value = priced ? m.cache : '';
-  $('#m-out').value = priced ? m.output : '';
-  $('#m-submit').innerHTML = icon('check') + ' Lưu model';
-  $('#m-cancel').hidden = false;
-  clearFieldErrors($('#model-form'));
-  $('#model-form').scrollIntoView({ block: 'nearest', behavior: motionPaused ? 'auto' : 'smooth' });
-  $('#m-provider').focus();
-}
-function resetModelForm() {
-  state.editingModel = '';
-  $('#model-form').reset();
-  $('#m-id').disabled = false;
-  $('#model-form-title').textContent = 'Thêm / sửa model';
-  $('#m-submit').innerHTML = icon('plus') + ' Thêm model';
-  $('#m-cancel').hidden = true;
-  fillOptions($('#m-effort'), [['', 'Kế thừa'], ...effortChoices().map(c => [c, c])], '');
-  clearFieldErrors($('#model-form'));
-}
-function prefillModel(modelId) {
-  resetModelForm();
-  $('#m-id').value = modelId;
-  if (state.verifyProvider && state.values?.providers?.[state.verifyProvider]) $('#m-provider').value = state.verifyProvider;
-  $('#model-form').scrollIntoView({ block: 'nearest', behavior: motionPaused ? 'auto' : 'smooth' });
-  $('#m-context').focus();
-  setStatus(`Đã điền "${modelId}" vào form model — kiểm tra các ô rồi bấm Thêm model.`, 'ok');
-}
-async function submitModel(e) {
-  e.preventDefault();
-  if (state.saving || !state.values) return;
-  clearFieldErrors($('#model-form'));
-  try {
-    const editing = state.editingModel;
-    const id = editing || $('#m-id').value.trim();
-    if (!id) throw new FieldError('Nhập Model ID trước.', '#m-id');
-    const provider = $('#m-provider').value;
-    const effort = $('#m-effort').value;
-    const contextTokens = intOrNull($('#m-context'), 'Cửa sổ ngữ cảnh', limitRange('contextTokens'));
-    const loopMax = intOrNull($('#m-loop'), 'Số vòng', limitRange('loopMax'));
-    const hotTailKB = intOrNull($('#m-hot'), 'Nhớ nóng', limitRange('hotTailKB'));
-    const prices = parsePrices();
-    const prev = (state.values.models || {})[id] || {};
-    const entry = { ...prev };                                   // keeps baseUrl, reasoningEfforts and any stored extras
-    if (provider) entry.provider = provider; else delete entry.provider;
-    if (contextTokens != null) entry.contextTokens = contextTokens; else delete entry.contextTokens;
-    if (loopMax != null) entry.loopMax = loopMax; else delete entry.loopMax;
-    if (hotTailKB != null) entry.hotTailKB = hotTailKB; else delete entry.hotTailKB;
-    if (effort) entry.reasoningEffort = effort; else delete entry.reasoningEffort;
-    const values = state.values;
-    if (prices) {
-      entry.input = prices.input; entry.cache = prices.cache; entry.output = prices.output;
-      values.pricing = { ...(values.pricing || {}), [id]: { ...prices } };
-    } else {
-      delete entry.input; delete entry.cache; delete entry.output;
-      if (values.pricing) delete values.pricing[id];
-    }
-    values.models = { ...(values.models || {}), [id]: entry };
-    if (await saveConfig(editing ? `Đã lưu model "${id}".` : `Đã thêm model "${id}".`)) resetModelForm();
-  } catch (err) {
-    fail(err, 'Không lưu được model.');
-  }
-}
-function deleteModel(id) {
-  if (!state.values?.models?.[id]) return;
-  if (id === state.values.defaultModel) { setStatus(`"${id}" đang là model mặc định — đặt model khác làm mặc định trước.`, 'error'); return; }
-  if (!window.confirm(`Xóa model "${id}"?`)) return;
-  delete state.values.models[id];
-  if (state.values.pricing) delete state.values.pricing[id];
-  if (state.editingModel === id) resetModelForm();
-  renderAll();
-  saveConfig(`Đã xóa model "${id}".`);
-}
-
-/* ---------- page bindings + boot ---------------------------------------- */
 function bind() {
-  $('#save-config').onclick = () => saveConfig();
-  $('#reload-config').onclick = async () => {
-    try { await refreshConfig(); setStatus('Đã tải lại cấu hình.', 'ok'); }
-    catch (err) { setStatus('Không tải được cấu hình: ' + err.message, 'error'); }
+  $('#connection-form').onsubmit = event => submitEditor(event, true);
+  $('#save-catalog').onclick = () => submitEditor(null, false);
+  $('#new-connection').onclick = openNewConnection;
+  $('#connection-picker').onchange = event => {
+    const value = event.target.value;
+    const opened = value === '__new__' ? openNewConnection()
+      : value.startsWith('provider:') ? openExistingConnection(value.slice('provider:'.length)) : false;
+    if (!opened) renderConnectionPicker();
   };
-  $('#provider-form').onsubmit = submitProvider;
-  $('#pv-cancel').onclick = resetProviderForm;
-  $('#model-form').onsubmit = submitModel;
-  $('#m-cancel').onclick = resetModelForm;
-  $('#verify-form').onsubmit = verifyQuick;
-  $('#v-provider').onchange = e => { const p = state.values?.providers?.[e.target.value]; if (p?.baseUrl) $('#v-base-url').value = p.baseUrl; };
-  $('#provider-list').addEventListener('click', e => {
-    const btn = e.target.closest('button[data-action]'); if (!btn) return;
-    const id = btn.dataset.id;
-    if (btn.dataset.action === 'test') testProvider(id);
-    else if (btn.dataset.action === 'edit') fillProviderForm(id);
-    else if (btn.dataset.action === 'delete') deleteProvider(id);
+  $('#cancel-editor').onclick = cancelEditor;
+  $('#reload-config').onclick = reloadConfig;
+  $('#v-submit').onclick = verifyQuick;
+  $('#m-picker').onchange = event => {
+    const value = event.target.value;
+    event.target.value = state.manualModel ? '' : (state.selectedModel ? `model:${state.selectedModel}` : CHOOSE_MODEL);
+    chooseModel(value.startsWith('model:') ? value.slice(6) : '', { manual: value === '' });
+  };
+  $('#m-id').addEventListener('input', () => { state.selectedModel = $('#m-id').value.trim(); syncDirtyStatus(); });
+  for (const selector of ['#pv-id', '#pv-base-url', '#pv-key']) $(selector).addEventListener('input', () => {
+    if (selector !== '#pv-id') invalidateDiscovery();
+    else if (!state.editingProvider) {
+      if (!state.modelProviderTouched) $('#m-provider').value = $('#pv-id').value.trim();
+      renderModelPicker(); renderProviderSelects();
+    }
+    syncDirtyStatus();
   });
-  $('#model-list').addEventListener('click', e => {
-    const btn = e.target.closest('button[data-action]'); if (!btn) return;
-    const id = btn.dataset.id;
-    if (btn.dataset.action === 'edit') fillModelForm(id);
-    else if (btn.dataset.action === 'delete') deleteModel(id);
-  });
-  $('#verify-models').addEventListener('click', e => {
-    const chip = e.target.closest('[data-model]'); if (chip) prefillModel(chip.dataset.model);
-  });
-  // API: POST /api/config — both defaults ride the same whole-values payload.
-  $('#cfg-default-provider').onchange = e => { state.values.defaultProvider = e.target.value; saveConfig(`Provider mặc định: "${e.target.value}".`); };
-  $('#cfg-default-model').onchange = e => { state.values.defaultModel = e.target.value; saveConfig(`Model mặc định: "${e.target.value}".`); };
+  $('#connection-form').addEventListener('input', syncDirtyStatus);
+  $('#connection-form').addEventListener('change', syncDirtyStatus);
+  $('#pv-api').addEventListener('change', () => { $('#pv-api').dataset.edited = 'true'; });
+  $('#pv-effort').addEventListener('change', () => {});
+  $('#m-provider').addEventListener('change', () => { state.modelProviderTouched = true; syncDirtyStatus(); });
+  $('#cfg-default-provider').addEventListener('change', () => { state.defaultProviderTouched = true; syncDirtyStatus(); });
+  $('#test-provider').onclick = () => testProvider(state.editingProvider);
+  $('#delete-provider').onclick = deleteProvider;
+  $('#delete-model').onclick = deleteModel;
 }
-
-function selectBot(id) {
-  if (id && getBot(id)) ctx.navigate('profile', { search: '?bot=' + encodeURIComponent(id) });
-}
+function selectBot(id) { if (id && getBot(id)) ctx.navigate('profile', { search: '?bot=' + encodeURIComponent(id) }); }
 function loadSession(id, title, botId) { if (botId) selectBot(botId); }
 function labelProfileLinks() {
   if (!ctx.isActive()) return;
   for (const button of [...ctx.sidebar.querySelectorAll('[data-action="select"]')]) {
-    const bot = getBot(button.dataset.botId);
-    if (bot) button.setAttribute('aria-label', `Hồ sơ của ${bot.name}`);
+    const bot = getBot(button.dataset.botId); if (bot) button.setAttribute('aria-label', `Hồ sơ của ${bot.name}`);
   }
 }
 new MutationObserver(labelProfileLinks).observe(ctx.sidebar, { childList: true, subtree: true });
-
 async function boot() {
-  bind();
-  resetProviderForm();
-  resetModelForm();
+  bind(); refreshBusyState();
+  window.addEventListener('thyca:setup-retry', () => {
+    if (ctx.isActive() && !state.values && !state.loading && !state.reloading) void reloadConfig();
+  });
+  try { await ctx.shellReady; labelProfileLinks(); } catch (error) { setStatus(`Không kết nối được máy Thyca: ${error.message || ''}`, 'error'); }
   try {
-    await ctx.shellReady;                                          // API: GET /api/bots + GET /api/sessions -> shared sidebar
-    labelProfileLinks();
-  } catch (err) {
-    setStatus('Không kết nối được máy chủ Thyca: ' + err.message, 'error');
-  }
-  try {
-    await refreshConfig();                                      // API: GET /api/config -> provider/model cards
-  } catch (err) {
-    setStatus('Không tải được cấu hình: ' + err.message, 'error');
+    await refreshConfig();
+    const first = state.values.defaultProvider || Object.keys(state.values.providers)[0] || '';
+    fillConnection(first, { initial: true }); renderAll(); state.cleanStatus = 'Đã tải cấu hình'; setSaveStatus(state.cleanStatus);
+  } catch (error) {
+    state.loading = false; refreshBusyState(); setSaveStatus('Chưa tải được', 'error'); setStatus(`Không tải được cấu hình: ${error.message}`, 'error');
   }
 }
   const ready = boot();

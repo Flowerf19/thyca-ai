@@ -16,8 +16,12 @@ function loadSession(id, title, botId) {
   return false;
 }
 
-function openMobile() { $('#chat-sidebar').inert = false; $('#chat-sidebar').classList.add('mobile-open'); $('#mobile-overlay').hidden = false; $('.menu-button')?.setAttribute('aria-expanded', 'true'); const c = $('#team-shared-create'); if (c) c.focus(); }
-function closeMobile() { const wasOpen = $('#chat-sidebar').classList.contains('mobile-open'); $('#chat-sidebar').classList.remove('mobile-open'); $('#chat-sidebar').inert = matchMedia('(max-width:850px)').matches; $('#mobile-overlay').hidden = true; $('.menu-button')?.setAttribute('aria-expanded', 'false'); if (wasOpen) $('.menu-button')?.focus(); }
+function setupLocked() {
+  const router = window.ThycaRouter;
+  return typeof router?.setupState === 'function' && router.setupState() !== 'ready';
+}
+function openMobile() { if (setupLocked()) return; $('#chat-sidebar').inert = false; $('#chat-sidebar').classList.add('mobile-open'); $('#mobile-overlay').hidden = false; $('.menu-button')?.setAttribute('aria-expanded', 'true'); const c = $('#team-shared-create'); if (c) c.focus(); }
+function closeMobile() { const wasOpen = $('#chat-sidebar').classList.contains('mobile-open'); $('#chat-sidebar').classList.remove('mobile-open'); $('#chat-sidebar').inert = setupLocked() || matchMedia('(max-width:850px)').matches; $('#mobile-overlay').hidden = true; $('.menu-button')?.setAttribute('aria-expanded', 'false'); if (wasOpen) $('.menu-button')?.focus(); }
 
 function rebuildExpressionBots() {
   const sel = $('#expression-bot');

@@ -90,6 +90,7 @@ function showPageStatus(text, cls = '') {
 /* ---------- Config form (API-backed) ---------- */
 
 let configValues = null;
+let savingConfig = false;
 // schema.sections also carries 'provider' — that form lives on the provider
 // page; this card only renders the scalar limits/timeline sections.
 const CONFIG_SECTIONS = ['limits', 'timeline'];
@@ -138,29 +139,36 @@ async function loadConfig() {
 
 $('#config-form').onsubmit = async e => {
   e.preventDefault();
-  if (!configValues) return;
-  const next = structuredClone(configValues);
+  if (!configValues || savingConfig) return;
+  const patch = {};
   for (const el of $$('#config-form [data-section]')) {
     const sec = el.dataset.section, name = el.dataset.name;
     if (!sec || !name) continue;
-    if (!next[sec] || typeof next[sec] !== 'object') next[sec] = {};
-    if (el.type === 'checkbox') next[sec][name] = el.checked;
+    if (!patch[sec]) patch[sec] = {};
+    if (el.type === 'checkbox') patch[sec][name] = el.checked;
     else if (el.type === 'number') {
       const num = el.valueAsNumber;
       if (Number.isNaN(num)) { toast(`“${el.dataset.label}” cần một con số.`); return; }
-      next[sec][name] = num;
-    } else next[sec][name] = el.value;
+      patch[sec][name] = num;
+    } else patch[sec][name] = el.value;
   }
+  savingConfig = true;
   const btn = $('#save-config'); btn.disabled = true;
   try {
-    await postJson('/api/config', next);                          // API: POST /api/config — edited values merged back; provider/model/apiKey keys pass through untouched
+    const latest = await getJson('/api/config');
+    const next = structuredClone(latest.values || {});
+    for (const [section, values] of Object.entries(patch)) next[section] = { ...(next[section] || {}), ...values };
+    await postJson('/api/config', next);                          // API: POST /api/config — merge only this form's current limits/timeline patch
     configValues = next;
+    window.dispatchEvent(new Event('thyca:config-saved'));
     toast('Đã lưu cài đặt.');
     loadStatus();
   } catch (err) {
-    toast('Không lưu được: ' + err.message);                      // 422 body -> {error}
+    toast('Không lưu được: ' + err.message);                      // no stale whole-values POST if the fresh read fails
+  } finally {
+    savingConfig = false;
+    btn.disabled = false;
   }
-  btn.disabled = false;
 };
 
 /* ---------- Đội bot (read-only roster) ---------- */

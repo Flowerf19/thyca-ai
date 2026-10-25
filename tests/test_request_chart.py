@@ -141,8 +141,8 @@ def test_model_rows_sorted_by_tokens_desc(node: str) -> None:
     assert "p50 1,2 giây" in rows
     assert "$0.0200" in rows
     assert "$0.0100" in rows
-    # Null cost renders the em dash, never an invented $0.
-    assert '<span class="model-cost">—</span>' in rows
+    # Null cost is preserved in the model metadata rather than rendered as $0.
+    assert "200 token · — · p50 —" in rows
 
 
 def test_empty_zero_and_missing_models_are_honest(node: str) -> None:
@@ -224,6 +224,59 @@ def test_period_change_never_keeps_a_stale_response(node: str) -> None:
     ]
 
 
+def test_changed_scope_failure_keeps_stats_unknown_and_retryable(node: str) -> None:
+    outcome = _eval_dash(
+        node,
+        r"""(async () => {
+          const previous = {
+            totals: { requests: 7, tool_calls: 2, prompt_tokens: 70, cached_tokens: 10,
+              completion_tokens: 20, total_tokens: 90, cost_usd: 0.25,
+              latency_ms_p50: 40, latency_ms_p90: 60 },
+            by_day: [{ day: '2026-09-20', requests: 7, cost_usd: 0.25 }],
+            by_hour: [{ hour: '09', requests: 7, cost_usd: 0.25 }],
+            by_bot: [{ bot_id: 'coder', requests: 7, tool_calls: 2, total_tokens: 90,
+              cost_usd: 0.25, last_started_at: '2026-09-20T09:00:00Z' }],
+            by_model: [{ model: 'old-model', requests: 7, total_tokens: 90,
+              cost_usd: 0.25, latency_ms_p50: 40 }],
+            models: ['old-model'], by_status: [{ status: 'completed' }],
+          };
+          rangeFrom = '2026-09-20'; rangeTo = '2026-09-20';
+          statsKey = statsRequestKey(); statsData = previous; statsLoaded = true;
+          renderStats(previous);
+          listFilters.model = 'old-model'; listFilters.status = 'completed';
+          rangeFrom = '2026-10-20'; rangeTo = '2026-10-20';
+          __jsonResponder = async () => { throw new Error('scope unavailable'); };
+          await loadStats();
+          dayMetric = 'tokens'; renderDayChart();
+          const grid = document.querySelector('#stat-grid').innerHTML;
+          return {
+            values: [...grid.matchAll(/class="stat-value">([^<]+)<\/p>/g)].map(match => match[1]),
+            grid,
+            status: document.querySelector('#stats-status-text').textContent,
+            statusHidden: document.querySelector('#page-status').hidden,
+            retryHidden: document.querySelector('#stats-retry').hidden,
+            day: document.querySelector('#chart-day').innerHTML,
+            dayNote: document.querySelector('#chart-day-note').textContent,
+            hour: document.querySelector('#chart-hour').innerHTML,
+            bots: document.querySelector('#rows-bot').innerHTML,
+            models: document.querySelector('#rows-model').innerHTML,
+            modelValue: document.querySelector('#filter-model').value,
+            modelOptions: document.querySelector('#filter-model').options.map(option => option.value),
+            statusValue: document.querySelector('#filter-status').value,
+            statsData: statsData,
+          };
+        })().then(value => console.log(JSON.stringify(value)))""",
+    )
+    assert outcome["values"] == ["—"] * 7
+    assert "chưa có lượt nào ghi nhận giá" not in outcome["grid"].lower()
+    assert outcome["statusHidden"] is False and "scope unavailable" in outcome["status"]
+    assert outcome["retryHidden"] is False
+    assert all(outcome[key] == "" for key in ("day", "dayNote", "hour", "bots", "models"))
+    assert outcome["modelValue"] == "old-model" and "old-model" in outcome["modelOptions"]
+    assert outcome["statusValue"] == "completed"
+    assert outcome["statsData"] is None
+
+
 def test_stats_and_trace_responses_have_independent_guards(node: str) -> None:
     """loadStats and loadTraces keep separate sequences: a stale LIST answer
     is dropped without disturbing a just-rendered stats card."""
@@ -234,9 +287,9 @@ def test_stats_and_trace_responses_have_independent_guards(node: str) -> None:
           __jsonResponder = (url) => new Promise((resolve) => {
             pending.push({ url, resolve });
           });
-          loadStats();
-          loadTraces(true);
-          loadTraces(true);   // the user re-filters: a newer list request wins
+          loadStats(true);
+          loadTraces(true, true);
+          loadTraces(true, true);   // the user re-filters: a newer list request wins
           pending[0].resolve({ totals: { requests: 9 }, by_model: [] });
           pending[2].resolve({ traces: [{ session_id: 's2', turn_index: 0 }],
                                total: 1 });
@@ -247,7 +300,7 @@ def test_stats_and_trace_responses_have_independent_guards(node: str) -> None:
           await new Promise((r) => setTimeout(r, 5));
           return { rows: traceState.rows.map((t) => t.session_id),
             total: traceState.total, stats: statsData.totals.requests,
-            html: document.querySelector('#trace-rows').innerHTML };
+            html: document.querySelector('#trace-sessions').innerHTML };
         })().then((v) => console.log(JSON.stringify(v)))""",
     )
     assert outcome["rows"] == ["s2"]
@@ -261,7 +314,7 @@ def _bot_rows_eval(node: str, by_bot: list, roster: dict) -> str:
         node,
         f"globalThis.__roster = {json.dumps(roster)};\n"
         f"statsData = {{ by_bot: {json.dumps(by_bot)},"
-        "  totals: { requests: 10 } };\n"
+        "  totals: { requests: 10, total_tokens: 100 } };\n"
         "renderBotRows();\n"
         "console.log(JSON.stringify(document.querySelector('#rows-bot').innerHTML));",
     )
@@ -293,9 +346,9 @@ def test_request_bots_avatar_sort_and_unknown(node: str) -> None:
     # Unattributed: no seal, dashed '?' chip carrying the raw bucket id.
     assert '<span class="row-avatar id-chip" title="unknown">?</span>' in rows
     assert "Chưa gắn bot" in rows
-    # Shares are against the 10-request period total.
+    # Shares are against the authoritative 100-token period total.
     assert "70%" in rows and "20%" in rows and "10%" in rows
-    assert 'aria-label="70% tổng request"' in rows
+    assert 'aria-label="70% tổng token"' in rows
 
 
 def test_request_unknown_id_in_roster_renders_as_real_bot(node: str) -> None:
@@ -328,5 +381,5 @@ def test_bot_row_meta_and_share_bar(node: str) -> None:
     assert "8 request · 2 tool · 80 token · $0.0040" in rows
     # Biggest bot takes the full bar; the smaller keeps a visible minimum.
     assert 'style="width:100%' in rows or "width:100;" in rows or "width:100%" in rows
-    assert "80% tổng request" in rows
-    assert "20% tổng request" in rows
+    assert "80% tổng token" in rows
+    assert "20% tổng token" in rows

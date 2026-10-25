@@ -27,7 +27,6 @@ const SHELL_PAGES = [
   ['profile', 'Hồ sơ', '../profile/index.html'],
   ['provider', 'Provider', '../provider/index.html'],
   ['dashboard', 'Sử dụng', '../dashboard/index.html'],
-  ['trace', 'Trace', '../trace/index.html'],
   ['settings', 'Cài đặt', '../settings/index.html'],
 ];
 const pageLinksMarkup = current => SHELL_PAGES.map(([id, label, href]) =>

@@ -85,6 +85,7 @@ let botSchemaChoices = [];
 let loadedCfg = null;      // {bot, model, thinking} | null — last server-confirmed baseline
 let scopeSeq = 0;          // bumped on every scope change; refreshes abort on mismatch
 let rosterReady = false;   // true once bootShell has answered
+let catalogDirty = false, catalogGeneration = 0, refreshAllPromise = null, drainingCatalog = false;
 
 function setStatus(node, text, kind = '') {
   node.hidden = !text;
@@ -293,6 +294,7 @@ if (!el.root.dataset.botSubmitBound) {
           updateBotSave();
         }
       }
+      if (catalogDirty && !botCfg.savingFor && ctx.isActive()) void drainDirtyCatalog();
     }
   });
 }
@@ -535,7 +537,7 @@ async function refreshBotConfig() {
 /* Reload button: config + current scope, preserving any unsaved bot draft.
    The draft is captured BEFORE anything re-renders, then restored only if
    its model/effort are still valid options. */
-async function refreshAll() {
+async function performRefreshAll() {
   const draft = botFormDraft();
   const myScope = scopeSeq, myTab = state.tab;
   setStatus(el.status, 'Đang tải lại…');
@@ -546,10 +548,10 @@ async function refreshAll() {
     cfgOk = false;
     setStatus(el.status, 'Không tải được cấu hình: ' + err.message, 's-error');
   }
-  if (myScope !== scopeSeq || state.tab !== myTab) return;   // scope moved: catalog kept, no stale attach
+  if (myScope !== scopeSeq || state.tab !== myTab) return false;   // scope moved: catalog kept, no stale attach
   if (getBot(state.tab)) {
     await loadBotSettings(draft);
-    if (myScope !== scopeSeq || state.tab !== myTab) return;
+    if (myScope !== scopeSeq || state.tab !== myTab) return false;
     if (!cfgOk) setStatus(el.status, 'Không tải được cấu hình — giữ danh mục cũ.', 'error');
     else if (!botCfg.error) setStatus(el.status, '');
   } else if (!state.tab) {
@@ -557,6 +559,28 @@ async function refreshAll() {
   } else {
     renderContent();   // unknown bot: honest error stays, no fallback
     setStatus(el.status, '');
+  }
+  return cfgOk;
+}
+function refreshAll() {
+  if (refreshAllPromise) return refreshAllPromise;
+  const running = performRefreshAll();
+  refreshAllPromise = running;
+  return running.finally(() => { if (refreshAllPromise === running) refreshAllPromise = null; });
+}
+async function drainDirtyCatalog() {
+  if (!catalogDirty || botCfg.savingFor || !ctx.isActive() || drainingCatalog) return;
+  drainingCatalog = true;
+  try {
+    while (catalogDirty && !botCfg.savingFor && ctx.isActive()) {
+      const generation = catalogGeneration;
+      catalogDirty = false;
+      const ok = await refreshAll();
+      if (!ok) { catalogDirty = true; break; }
+      if (generation !== catalogGeneration) catalogDirty = true;
+    }
+  } finally {
+    drainingCatalog = false;
   }
 }
 
@@ -596,6 +620,7 @@ function openEdit(name, opener) {
 
 /* ---------- events ---------- */
 
+window.addEventListener('thyca:config-saved', () => { catalogDirty = true; catalogGeneration++; });
 el.reload.addEventListener('click', () => refreshAll());
 el.shared.onclick = () => showShared();
 el.root.addEventListener('click', e => {
@@ -656,7 +681,9 @@ async function boot() {
   applyRoute();
 }
   const ready = boot();
-  return { ready, selectBot, loadSession, sidebarLabel(_id, name) { return `Hồ sơ của ${name}`; }, onRoute(route) {
+  return { ready, selectBot, loadSession, sidebarLabel(_id, name) { return `Hồ sơ của ${name}`; }, onEnter() {
+    void drainDirtyCatalog();
+  }, onRoute(route) {
     const key = route.search + route.hash;
     if (key === routeKey) return;
     routeKey = key;

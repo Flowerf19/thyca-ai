@@ -6,7 +6,7 @@ paging in dashboard-today.js) was not ported. The new page is one screen —
 "Sử dụng & chi phí": range picker + stat cards + by_day/by_bot/by_model/
 by_hour charts + the paged "Lượt gần nhất" table, all from
 GET /api/traces/stats and GET /api/traces, inside the shared emitShell/
-bootShell contract. Turn rows deep-link to ../trace/index.html#<sid>/<turn>.
+bootShell contract. Trace detail renders in the same Dashboard workspace through the route hash.
 The page is a classic script ('use strict', shared globals), so the harness
 evals it in Node with a stubbed global surface, mirroring the old
 import-based eval style.
@@ -116,8 +116,8 @@ def _eval_dash(node: str, body: str, setup: str = "") -> object:
 
 def test_page_is_a_single_screen_shell_document() -> None:
     """index.html keeps the shared script order — emitShell() must run
-    before sidebar.js/studio.js bind — and the page is one screen with no
-    leftover view switcher."""
+    before sidebar.js/studio.js bind — and the page keeps three views in
+    one shared dashboard workspace."""
     html = DASH_HTML.read_text(encoding="utf-8")
     order = [
         '<script src="../share/util.js">',
@@ -133,9 +133,13 @@ def test_page_is_a_single_screen_shell_document() -> None:
     pos = [html.index(s) for s in order]
     assert pos == sorted(pos), "shared shell scripts must load in order"
     assert '<script type="module"' not in html
-    for gone in ("overview-nav", "data-view=", "cost-view", "#su-dung",
+    for gone in ("overview-nav", "cost-view", "#su-dung",
                  "session-pager", "journal-pager"):
         assert gone not in html, gone
+    src = DASH_JS.read_text(encoding="utf-8")
+    for view in ("usage", "cost", "trace"):
+        assert f'data-usage-view="{view}"' in src
+        assert f'id="usage-panel-{view}"' in src
 
 
 def test_page_markup_covers_every_region() -> None:
@@ -147,15 +151,17 @@ def test_page_markup_covers_every_region() -> None:
         'id="stat-grid"', 'id="range-note"', 'id="range-from"',
         'id="range-to"', 'id="range-apply"',
         'data-preset="1"', 'data-preset="7"', 'data-preset="30"',
-        'data-day-metric="requests"', 'data-day-metric="cost_usd"',
-        'id="chart-day"', 'id="chart-day-note"', 'id="rows-bot"',
+        'data-day-metric="tokens"', 'data-day-metric="requests"',
+        'id="chart-day"', 'id="chart-day-note"', 'id="chart-cost"',
+        'button.id = \'usage-overview-scope\'', 'Lượt chưa gắn bot chỉ có trong Tổng quan.',
+        'id="rows-bot"',
         'id="rows-model"', 'id="chart-hour"',
-        'id="filter-model"', 'id="filter-status"', 'id="trace-refresh"',
-        'id="trace-status"', 'id="trace-wrap"', 'id="trace-rows"',
+        'id="filter-q"', 'id="filter-model"', 'id="filter-status"', 'id="trace-refresh"',
+        'id="trace-status"', 'id="trace-wrap"', 'id="trace-sessions"',
         'id="trace-empty"', 'id="trace-empty-hint"',
-        'id="trace-count"', 'id="trace-more"',
+        'id="trace-count"', 'id="trace-more"', 'id="turn-detail-view"',
+        'id="detail-back"', 'id="detail-body"',
         '/api/traces/stats?', '/api/traces?',
-        '../trace/index.html#',
     ):
         assert needle in src, needle
     # Default range preset is "7 ngày" — only that chip starts pressed.
@@ -169,14 +175,10 @@ def test_page_markup_covers_every_region() -> None:
     assert "'s-error'" in src
 
 
-def test_shell_navigation_lists_dashboard_and_trace() -> None:
-    """The shared SHELL_PAGES nav keeps Sử dụng and Trace as sibling pages
-    (no standalone journal routes) and marks the current page. The table
-    lives in util.js so every page — emitShell pages and chat's static
-    markup alike — renders the same nav."""
+def test_shell_navigation_lists_dashboard_without_trace_workspace() -> None:
     src = UTIL_JS.read_text(encoding="utf-8")
     assert "['dashboard', 'Sử dụng', '../dashboard/index.html']" in src
-    assert "['trace', 'Trace', '../trace/index.html']" in src
+    assert "['trace', 'Trace', '../trace/index.html']" not in src
     assert 'is-current' in src and 'aria-current="page"' in src
 
 
@@ -268,6 +270,7 @@ def test_trace_request_carries_filters_stats_does_not(node: str) -> None:
         "await new Promise(r => setTimeout(r, 0));\n"
         "document.querySelector('#filter-model').value = 'glm-5';\n"
         "document.querySelector('#filter-status').value = 'failed';\n"
+        "syncListFilters();\n"
         "const before = __jsonCalls.length;\n"
         "loadStats(); loadTraces(true);\n"
         "await new Promise(r => setTimeout(r, 0));\n"
@@ -280,6 +283,66 @@ def test_trace_request_carries_filters_stats_does_not(node: str) -> None:
     assert "model=glm-5" in traces_url and "status=failed" in traces_url
 
 
+def test_empty_success_is_cached_on_reentry(node: str) -> None:
+    out = _eval_dash(
+        node,
+        "(async () => {\n"
+        "await __releaseShell(); await __controller.ready;\n"
+        "await new Promise(r => setTimeout(r, 0));\n"
+        "const before = __jsonCalls.length;\n"
+        "loadStats(); loadTraces(true); await new Promise(r => setTimeout(r, 0));\n"
+        "return { before, after: __jsonCalls.length, statsLoaded, listLoaded, statsKey, listKey, rows: traceState.rows.length, total: traceState.total };\n"
+        "})().then(v => console.log(JSON.stringify(v)))",
+        setup="__jsonResponder = async url => url.startsWith('/api/traces/stats') ? { totals: {}, models: [], by_status: [] } : { traces: [], total: 0 };",
+    )
+    assert out["before"] == out["after"] == 2
+    assert out["statsLoaded"] and out["listLoaded"]
+    assert out["statsKey"] is not None and out["listKey"] is not None
+    assert out["rows"] == out["total"] == 0
+
+
+def test_initial_trace_failure_retry_uses_the_real_control(node: str) -> None:
+    out = _eval_dash(
+        node,
+        "(async () => {\n"
+        "await __releaseShell(); await __controller.ready; await new Promise(r => setTimeout(r, 0));\n"
+        "const failed = { error: traceState.error, request: traceState.failedRequest, visible: !document.querySelector('#trace-retry').hidden };\n"
+        "document.querySelector('#trace-retry').listeners.click[0](); await new Promise(r => setTimeout(r, 0));\n"
+        "return { failed, calls: __jsonCalls.filter(url => url.startsWith('/api/traces?')), rows: traceState.rows.length, total: traceState.total, error: traceState.error, retryHidden: document.querySelector('#trace-retry').hidden };\n"
+        "})().then(v => console.log(JSON.stringify(v)))",
+        setup="let attempts = 0; __jsonResponder = async url => { if (url.startsWith('/api/traces/stats')) return { totals: {}, models: [], by_status: [] }; if (++attempts === 1) throw Error('injected initial failure'); return { traces: [], total: 0 }; };",
+    )
+    assert "injected initial failure" in out["failed"]["error"]
+    assert out["failed"]["request"] == {"reset": True, "offset": 0}
+    assert out["failed"]["visible"] is True
+    assert len(out["calls"]) == 2
+    assert "offset=0" in out["calls"][1] and "limit=15" in out["calls"][1]
+    assert out["rows"] == out["total"] == 0 and out["error"] == ""
+    assert out["retryHidden"] is True
+
+
+def test_failed_more_retries_from_the_failed_offset(node: str) -> None:
+    out = _eval_dash(
+        node,
+        "(async () => {\n"
+        "await __releaseShell(); await __controller.ready; await new Promise(r => setTimeout(r, 0));\n"
+        "await loadTraces(false, true); await loadTraces(false, true);\n"
+        "const failed = { rows: traceState.rows.length, error: traceState.error, request: traceState.failedRequest, retryVisible: !document.querySelector('#trace-retry').hidden };\n"
+        "document.querySelector('#trace-retry').listeners.click[0](); await new Promise(r => setTimeout(r, 0));\n"
+        "return { failed, calls: __jsonCalls.filter(url => url.startsWith('/api/traces?')), rows: traceState.rows.length, total: traceState.total, error: traceState.error, moreHidden: document.querySelector('#trace-more').hidden };\n"
+        "})().then(v => console.log(JSON.stringify(v)))",
+        setup="let pages = 0; const rows = (start, count) => Array.from({length:count}, (_, i) => ({session_id:'session-' + (start+i), turn_index:0, title:'Turn ' + (start+i)})); __jsonResponder = async url => { if (url.startsWith('/api/traces/stats')) return { totals: {}, models: [], by_status: [] }; const p = new URL(url, 'http://local'); const offset = Number(p.searchParams.get('offset')); pages++; if (offset === 65 && pages === 3) throw Error('injected append failure'); return { traces: offset === 0 ? rows(0,15) : offset === 15 ? rows(15,50) : rows(65,50), total: 120 }; };",
+    )
+    assert out["failed"] == {"rows": 65, "error": "injected append failure", "request": {"reset": False, "offset": 65}, "retryVisible": True}
+    assert len(out["calls"]) == 4
+    assert "offset=0" in out["calls"][0] and "limit=15" in out["calls"][0]
+    assert "offset=15" in out["calls"][1] and "limit=50" in out["calls"][1]
+    assert "offset=65" in out["calls"][2] and "limit=50" in out["calls"][2]
+    assert "offset=65" in out["calls"][3] and "limit=50" in out["calls"][3]
+    assert out["rows"] == 115 and out["total"] == 120 and out["error"] == ""
+    assert out["moreHidden"] is False
+
+
 def test_trace_seq_drops_a_stale_page(node: str) -> None:
     """A newer request wins: an in-flight 'Tải thêm' page resolves AFTER a
     reset and must not append — the rows are exactly the reset page."""
@@ -288,8 +351,9 @@ def test_trace_seq_drops_a_stale_page(node: str) -> None:
         """(async () => {
           __jsonResponder = (url) => {
             const p = __deferred(); __pending.push({ url, p }); return p; };
-          const p2 = loadTraces(false);          // in-flight "more" page
-          const p3 = loadTraces(true);           // newer reset wins
+          const p2 = loadTraces(false);          // in-flight page
+          listFilters.q = 'new';
+          const p3 = loadTraces(true);           // new filter reset wins
           const reset = __pending.pop();
           reset.p.__res({ traces: [{ session_id: 's', turn_index: 0,
             title: 'A' }], total: 9 });
@@ -307,9 +371,8 @@ def test_trace_seq_drops_a_stale_page(node: str) -> None:
 
 
 def test_trace_row_escapes_and_deep_links(node: str) -> None:
-    """Every untrusted field in a turn row is escaped; the row links to the
-    trace page's #<session>/<turn> convention with the session id
-    URL-encoded."""
+    """Every untrusted field in a grouped turn row is escaped; session and
+    turn identity remain separate data attributes for router navigation."""
     row = {
         "session_id": "s <x>", "title": '<img src=x onerror=alert(1)>',
         "turn_index": 0, "model": '<b>m</b>', "status": "<i>odd</i>",
@@ -319,12 +382,12 @@ def test_trace_row_escapes_and_deep_links(node: str) -> None:
     }
     html = _eval_dash(
         node,
-        f"console.log(JSON.stringify(traceRow({json.dumps(row)})))",
+        f"console.log(JSON.stringify(turnRowHtml({json.dumps(row)})))",
     )
     assert '<img src=x' not in html and '<b>m</b>' not in html
     assert '&lt;img src=x onerror=alert(1)&gt;' in html
     assert '&lt;b&gt;m&lt;/b&gt;' in html
-    assert 'data-href="../trace/index.html#s%20%3Cx%3E/0"' in html
+    assert 'data-session="s &lt;x&gt;"' in html and 'data-turn="0"' in html
     assert "a&quot;&gt;&lt;script&gt;" in html  # escaped in title attr
 
 
@@ -345,25 +408,15 @@ def test_status_chip_maps_the_four_statuses(node: str) -> None:
     assert "weird" in odd and 'class="st-chip "' in odd
 
 
-def test_trace_bot_cell_unions_ids_and_falls_back(node: str) -> None:
-    """The Bot cell unions bot_id/session_dm/session_bots (deduped): a
-    roster bot gets name + mini avatar + '+N'; a missing bot renders plain
-    id text; none renders '—'."""
+def test_turn_bot_ids_uses_only_explicit_turn_attribution(node: str) -> None:
     out = _eval_dash(
         node,
-        "globalThis.__roster = { coder: { id: 'coder', name: 'Coder',"
-        " color: '#123', state: 'idle' } };\n"
         "console.log(JSON.stringify(["
-        " traceBotCell({ bot_id: 'coder', session_bots: ['coder', 'ops'] }),"
-        " traceBotCell({ bot_id: 'ghost' }),"
-        " traceBotCell({})]))",
+        " turnBotIds({ session_bots: ['session-member'], session_dm: 'dm-owner' }),"
+        " turnBotIds({ bot_id: 'direct', session_bots: ['session-member'] }),"
+        " turnBotIds({ bot_id: 'fallback', bot_breakdown: [{ bot_id: 'attributed' }] })]))",
     )
-    rostered, missing, empty = out
-    assert "<ava:coder/>" in rostered and "Coder +1" in rostered
-    assert 'title="coder, ops"' in rostered
-    assert "ghost" in missing and "bot-id" in missing
-    assert "<ava:" not in missing
-    assert "—" in empty
+    assert out == [[], ["direct"], ["attributed"]]
 
 
 def test_render_trace_table_states(node: str) -> None:
@@ -378,7 +431,7 @@ def test_render_trace_table_states(node: str) -> None:
             wrap: !document.querySelector('#trace-wrap').hidden,
             empty: !document.querySelector('#trace-empty').hidden,
             err: !document.querySelector('#trace-status').hidden,
-            errText: document.querySelector('#trace-status').textContent,
+            errText: document.querySelector('#trace-status-text').textContent,
             hint: document.querySelector('#trace-empty-hint').textContent }; };
           traceState.rows = [{ session_id: 's', turn_index: 0 }];
           traceState.error = ''; traceState.loading = false;
@@ -387,6 +440,7 @@ def test_render_trace_table_states(node: str) -> None:
           renderTraceTable(); snap('err');
           traceState.error = ''; renderTraceTable(); snap('empty');
           document.querySelector('#filter-model').value = 'glm';
+          listFilters.model = 'glm';
           renderTraceTable(); snap('filtered');
           console.log(JSON.stringify(seen));
         })()""",
@@ -398,19 +452,18 @@ def test_render_trace_table_states(node: str) -> None:
     assert seen["err"]["wrap"] is False and seen["err"]["empty"] is False
     assert seen["empty"]["empty"] is True and seen["empty"]["wrap"] is False
     assert "Đổi khoảng ngày" in seen["empty"]["hint"]
-    assert "Bộ lọc model/trạng thái đang bật" in seen["filtered"]["hint"]
+    assert "Bộ lọc lượt đang bật" in seen["filtered"]["hint"]
 
 
-def test_open_trace_row_navigates(node: str) -> None:
-    """Clicking/Enter on a row navigates to its data-href deep link."""
+def test_open_trace_row_navigates_to_dashboard_detail(node: str) -> None:
     out = _eval_dash(
         node,
         "openTraceRow({ target: { closest: (s) =>"
-        " s === 'tr[data-href]'"
-        "   ? { dataset: { href: '../trace/index.html#s/0' } } : null } });\n"
+        " s === 'button[data-session][data-turn]'"
+        "   ? { dataset: { session: 's', turn: '0' } } : null } });\n"
         "console.log(JSON.stringify(ctx.route))",
     )
-    assert out == {"page": "trace", "search": "", "hash": "#s/0"}
+    assert out["page"] == "dashboard" and out["hash"] == "#s/0"
 
 
 def test_fill_filters_keep_selection_and_add_extra_statuses(node: str) -> None:
@@ -420,7 +473,7 @@ def test_fill_filters_keep_selection_and_add_extra_statuses(node: str) -> None:
     out = _eval_dash(
         node,
         "const sel = document.querySelector('#filter-model');\n"
-        "sel.value = 'm2';\n"
+        "listFilters.model = 'm2'; sel.value = 'm2';\n"
         "fillModelFilter(['m1', 'm2']);\n"
         "const mVals = sel.options.map(o => o.value);\n"
         "const mCur = sel.value;\n"

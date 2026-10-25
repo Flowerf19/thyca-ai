@@ -160,3 +160,67 @@ def test_chat_late_config_preserves_settings_state(node) -> None:
     """ % _CONFIG, via="chat")
     assert "m1" in out["label"]
     assert out["effort"] == ["", "low", "custom"]
+
+
+def test_config_saved_refreshes_chat_catalog_and_inheritance_without_losing_drafts(node) -> None:
+    out = _run(node, """
+        bots.length = 0;
+        bots.push(...roster([{ id: 'coder', name: 'Coder' }])); renderTeam();
+        currentSession = 's1'; selectedBot = 'coder';
+        let config = { values: { defaultModel: 'm1', defaultProvider: 'alpha', providers: { alpha: {} },
+                                models: { m1: { reasoningEfforts: ['low'] }, m2: {} } },
+                       schema: { sections: [{ key: 'provider', fields: [{ key: 'provider.reasoningEffort', choices: ['low', 'high'] }] }] } };
+        let configGets = 0, settingsGets = 0;
+        installFetch(url => {
+            if (url === '/api/bots') return { bots: [{ id: 'coder', name: 'Coder' }] };
+            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/config') { configGets++; return config; }
+            if (url === '/api/bots/coder/settings') {
+                settingsGets++;
+                return { bot_id: 'coder', model: { id: 'default', thinking: null },
+                         effective: { model: config.values.defaultModel, provider: config.values.defaultProvider, thinking: 'high' } };
+            }
+            return {};
+        });
+        await tick(10); currentSession = 's1'; selectedBot = 'coder';
+        await loadConfig(); await refreshComposerInherit('coder');
+        const select = document.querySelector('#composer-model'); select.value = 'm2';
+        document.querySelector('#thinking-effort').value = 'high';
+        document.querySelector('#message').value = 'unsent composer draft';
+        config = { values: { defaultModel: 'm3', defaultProvider: 'beta', providers: { alpha: {}, beta: {} },
+                             models: { m1: { reasoningEfforts: ['low'] }, m2: {}, m3: { reasoningEfforts: ['high'] } } },
+                   schema: { sections: [{ key: 'provider', fields: [{ key: 'provider.reasoningEffort', choices: ['low', 'high'] }] }] } };
+        selectedBot = 'coder'; currentSession = 's1';
+        window.dispatchEvent(new Event('thyca:config-saved'));
+        await tick(20);
+        return { model: select.value, message: document.querySelector('#message').value,
+                 label: select.options[0].textContent, options: $$('#composer-model option').map(option => option.value),
+                 configGets, settingsGets };
+    """, via="chat")
+    assert out["model"] == "m2" and out["message"] == "unsent composer draft"
+    assert out["settingsGets"] == 2, out
+    assert "m3" in out["label"] and "beta" in out["label"] and "m3" in out["options"], out
+    assert out["configGets"] == 2 and out["settingsGets"] == 2
+
+
+def test_chat_config_request_generation_drops_older_catalog_after_saved_event(node) -> None:
+    out = _run(node, """
+        bots.length = 0; bots.push(...roster([{ id: 'coder', name: 'Coder' }])); renderTeam();
+        selectedBot = 'coder'; currentSession = 's1';
+        let releaseOld, gets = 0;
+        const fresh = { values: { defaultModel: 'new-default', defaultProvider: 'fresh', providers: { fresh: {} }, models: { fresh: {} } }, schema: { sections: [] } };
+        installFetch(url => {
+            if (url === '/api/config') {
+                gets++;
+                return gets === 1 ? new Promise(resolve => { releaseOld = () => resolve({ values: { defaultModel: 'stale', models: { stale: {} } }, schema: { sections: [] } }); }) : fresh;
+            }
+            if (url === '/api/bots/coder/settings') return { bot_id: 'coder', model: { id: 'default' }, effective: { model: 'new-default', provider: 'fresh', thinking: 'high' } };
+            return {};
+        });
+        const old = loadConfig(); await tick();
+        window.dispatchEvent(new Event('thyca:config-saved')); await tick(10);
+        releaseOld(); await old; await tick(10);
+        return { gets, options: $$('#composer-model option').map(option => option.value), label: $('#composer-model').options[0].textContent };
+    """, via="chat")
+    assert out["gets"] == 2 and "new-default" in out["options"] and "stale" not in out["options"]
+    assert "new-default" in out["label"] and "fresh" in out["label"]

@@ -240,7 +240,8 @@ const STATS = {
   totals: { requests: 12, tool_calls: 3, prompt_tokens: 1000, cached_tokens: 100,
             completion_tokens: 200, total_tokens: 1200, cost_usd: 1.2345,
             latency_ms_p50: 800, latency_ms_p90: 2100 },
-  by_day: [{ day: '2026-09-14', requests: 4, cost_usd: 0.5 }],
+  by_day: [{ day: '2026-09-14', requests: 4, cost_usd: 0.5 },
+           { day: '2026-09-15', requests: 0, cost_usd: null }],
   by_hour: [{ hour: '09', requests: 2, cost_usd: 0.1 }],
   by_bot: [
     { bot_id: 'coder', requests: 9, tool_calls: 2, total_tokens: 900,
@@ -276,23 +277,28 @@ _DASH_RET = """; return {
   get statsData() { return statsData; },
   get dayMetric() { return dayMetric; },
   setDayMetric(v) { dayMetric = v; },
-  renderStats, renderModelRows, renderDayChart, renderBotRows, renderTraceTable,
-  fmtCost, fmtInt, fmtDur, traceState, loadTraces, traceHref, dayColumns,
+  renderStats, renderModelRows, renderDayChart, renderCostChart, renderBotRows, renderTraceTable,
+  setRange(from, to) { rangeFrom = from; rangeTo = to; },
+  fmtCost, fmtInt, fmtDur, traceState, loadTraces, dayColumns,
 };"""
 
 _DASH_SCENARIO = r"""
 await settle();
 const rowsModel = document.querySelector('#rows-model').innerHTML;
-// The metric toggle re-renders the same day chart on the other measure.
-page.setDayMetric('cost_usd');
+// Keep boot's default seven-day requests intact; set the local chart range to
+// the fixture dates without changing controls or triggering another request.
+page.setRange('2026-09-14', '2026-09-15');
+page.setDayMetric('requests');
 page.renderDayChart();
+page.renderCostChart();
 console.log(JSON.stringify({
   statGrid: document.querySelector('#stat-grid').innerHTML,
   rowsBot: document.querySelector('#rows-bot').innerHTML,
   rowsModel,
   chartDay: document.querySelector('#chart-day').innerHTML,
+  chartCost: document.querySelector('#chart-cost').innerHTML,
   chartHour: document.querySelector('#chart-hour').innerHTML,
-  traceRows: document.querySelector('#trace-rows').innerHTML,
+  traceRows: document.querySelector('#trace-sessions').innerHTML,
   filterModel: document.querySelector('#filter-model').children.map(o => o.textContent),
   gets: calls.gets,
 }));
@@ -300,9 +306,9 @@ console.log(JSON.stringify({
 
 
 def test_dashboard_renders_stats_models_and_paged_rows() -> None:
-    """Sử dụng page: hero stats, ranked model/bot rows and the recent-turns
-    table all render from /api/traces/stats + /api/traces. A model without a
-    configured price shows '—' (never an invented $0); rows rank by tokens."""
+    """Usage renders hero stats, ranked model/bot rows and flat turn rows;
+    daily model calls and recorded costs use separate charts. A model without
+    a configured price shows '—' (never an invented $0); rows rank by tokens."""
     out = _run_page(DASH_JS, _DASH_RET, _DASH_SCENARIO, _DASH_SETUP)
 
     assert "stat-value" in out["statGrid"]
@@ -319,24 +325,29 @@ def test_dashboard_renders_stats_models_and_paged_rows() -> None:
     assert "ghost" in out["rowsBot"]
     assert "id-chip" in out["rowsBot"]
 
-    assert "dc-bar" in out["chartDay"] and "Chi phí" in out["chartDay"]
+    assert 'aria-label="Lượt gọi model theo ngày"' in out["chartDay"] and "dc-bar" in out["chartDay"]
+    assert "dc-bar" in out["chartCost"] and "Chi phí" in out["chartCost"]
+    assert "$0.5000" in out["chartCost"] and "is-unavailable" in out["chartCost"]
     assert "hc-col" in out["chartHour"]
     assert "Tất cả model" in out["filterModel"]
     assert "big-model" in out["filterModel"]
 
-    # The turns table deep-links each row into the trace page.
-    assert 'data-href="../trace/index.html#s-1/2"' in out["traceRows"]
+    # Usage owns flat turn rows; detail is fetched only after selection.
+    assert 'class="tl-turn"' in out["traceRows"]
+    assert 'data-session="s-1" data-turn="2"' in out["traceRows"]
+    assert 'class="tl-session"' not in out["traceRows"]
 
     # Paged loading: stats + first trace page requested on boot.
     stats_url = next(u for u in out["gets"] if u.startswith("/api/traces/stats"))
     assert "from=" in stats_url and "to=" in stats_url
     traces_url = next(u for u in out["gets"] if u.startswith("/api/traces?"))
     assert "limit=15" in traces_url and "offset=0" in traces_url
+    assert not any(u.startswith("/api/traces/s-") for u in out["gets"])
 
 
 def test_dashboard_page_structure() -> None:
-    """The rebuilt Sử dụng page is one scroll of paper cards: range presets,
-    a requests/cost day chart, ranked rows, filters — no legacy journal kit."""
+    """The rebuilt Sử dụng page has route-persisted views, range presets,
+    separate daily token/request and cost charts, ranked rows and filters."""
     js = DASH_JS.read_text(encoding="utf-8")
     css = DASH_CSS.read_text(encoding="utf-8")
     html = (UI / "dashboard" / "index.html").read_text(encoding="utf-8")
@@ -349,10 +360,12 @@ def test_dashboard_page_structure() -> None:
                    'data-preset="1"', 'data-preset="7"', 'data-preset="30"'):
         assert marker in js, marker
 
-    # The day chart carries the requests|cost metric toggle.
-    assert "let dayMetric = 'requests'" in js
+    # Usage toggles token/request measures; Cost has its own chart and view.
+    assert "let dayMetric = 'tokens'" in js
     assert 'data-day-metric="requests"' in js
-    assert 'data-day-metric="cost_usd"' in js
+    assert 'data-day-metric="tokens"' in js
+    assert 'id="chart-cost"' in js
+    assert all(js.count(f'data-usage-view="{view}"') == 1 for view in ("usage", "cost", "trace"))
     assert "dc-col" in js and "dc-bar" in js
     assert ".day-chart" in css and ".dc-bar" in css
 
@@ -362,11 +375,12 @@ def test_dashboard_page_structure() -> None:
     assert re_block(css, ".bot-row", "display:grid", "align-items:center")
     assert ".share-bar" in css and ".model-cost" in css
 
-    # Recent turns: model/status filters + paged "Tải thêm" via offset.
+    # Flat turn list keeps model/status filters and bounded paging.
     assert 'id="filter-model"' in js and 'id="filter-status"' in js
-    assert "q.set('offset', traceState.rows.length)" in js
+    assert "q.set('offset', offset)" in js
+    assert "const offset = reset ? 0 : (offsetOverride ?? traceState.rows.length)" in js
     assert "q.set('limit', reset ? FIRST_PAGE : MORE_PAGE)" in js
-    assert "$('#trace-more').onclick = () => loadTraces(false)" in js
+    assert "#trace-more').onclick" in js and "loadTraces(false)" in js
 
 
 def re_block(css: str, selector: str, *needles: str) -> bool:
@@ -413,52 +427,25 @@ hooks.getJson = async url => {
 deps.window.formatMarkdown = s => '<md>' + s + '</md>';
 """
 
-_TRACE_RET = """; return {
-  tr, loadTraces, openTurn, backToList, routeFromUrl,
-  timelineHtml, turnRowHtml, sessionGroups, detailHeadHtml,
-};"""
+_TRACE_RET = "; return { render: detail => window.ThycaTraceDetail.render(detail) };"
 
 _TRACE_SCENARIO = r"""
-await settle();
-const listHtml = document.querySelector('#trace-sessions').innerHTML;
-await page.openTurn('s-1', 1);
-await settle();
-console.log(JSON.stringify({
-  listHtml,
-  detailHtml: document.querySelector('#trace-detail-body').innerHTML,
-  gets: calls.gets,
-  urls: calls.urls,
-  mode: page.tr.mode,
-}));
+console.log(JSON.stringify({ detailHtml: page.render(TURN) }));
 """
 
 
-def test_trace_groups_sessions_and_opens_turn_detail() -> None:
-    """Trace page: the picker groups loaded turns per session (newest order
-    from the API); opening one fetches /api/traces/<sid>/<turn>, switches to
-    detail mode, deep-links #<sid>/<turn> and renders numbered tool steps."""
+def test_trace_detail_renderer_renders_turn_content() -> None:
+    """The retained detail renderer preserves markdown and numbered tool
+    steps without owning a route, list, or API request."""
     out = _run_page(TRACE_JS, _TRACE_RET, _TRACE_SCENARIO, _TRACE_SETUP)
-
-    # Session card: one per session, turn rows carry data-session/data-turn.
-    assert out["listHtml"].count('class="paper-card tl-session"') == 1
-    assert "Phiên A" in out["listHtml"]
-    assert 'data-session="s-1" data-turn="1"' in out["listHtml"]
-
-    # Turn detail: head card + markdown body + the numbered tool step with
-    # its Input/Output code blocks.
     detail = out["detailHtml"]
     assert "tl-detail-head" in detail
-    assert "Coder" in detail                       # roster name resolved
+    assert "Coder" in detail
     assert "tl-body markdown-body" in detail
-    assert "<md>**Chào** bạn</md>" in detail       # sanitized markdown path
+    assert "<md>**Chào** bạn</md>" in detail
     assert "tl-step-num" in detail and ">01</span>" in detail
     assert ">Input</p>" in detail and ">Output</p>" in detail
     assert "file.txt" in detail
-    assert out["mode"] == "detail"
-
-    # Deep link rewritten, detail endpoint hit.
-    assert "/api/traces/s-1/1" in out["gets"]
-    assert out["urls"] == [{"page": "trace", "search": "", "hash": "#s-1/1"}]
 
 
 def test_trace_page_structure() -> None:
@@ -473,18 +460,15 @@ def test_trace_page_structure() -> None:
     assert 'href="tracecss/trace.css"' in html
     assert '<script type="module" src="../share/markdown.js">' in html
 
-    # Deep links: #<session_id>/<turn_index> and ?s=<id>&t=<turn> are owned
-    # by the memory router; page code updates its route through the context.
-    assert "ctx.route.hash.slice(1)" in js
-    assert "new URLSearchParams(ctx.route.search)" in js
-    assert "p.get('s')" in js and "p.get('t')" in js
-    assert "ctx.updateRoute({ search: pageQuery(), hash: '#'" in js
-    assert "onRoute(route)" in js
-
-    # Assistant replies reuse the chat markdown pipeline.
+    # Standalone Trace entry assets remain for compatibility; this source is
+    # only the load-once renderer used by the Dashboard controller.
+    assert "window.ThycaTraceDetail" in js and "render(detail)" in js
+    assert "ThycaRouter.register" not in js and "getJson(" not in js
     assert "window.formatMarkdown(text)" in js
     assert "contentHtml(m.content)" in js
     assert "tl-body markdown-body" in js
+    dashboard_css = DASH_CSS.read_text(encoding="utf-8")
+    assert ".dashboard-shell .tl-detail-head" in dashboard_css
 
     # Bubbles and bylines mirror chat's message furniture.
     for sel, needles in (

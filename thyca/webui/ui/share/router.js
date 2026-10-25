@@ -6,22 +6,72 @@
   const host = document.querySelector('#thyca-page-host');
   const shellReady = bootShell();
   let current = null, route = null, generation = 0, styleRetrySeq = 0;
-  const validPage = id => ['chat', 'memories', 'profile', 'provider', 'dashboard', 'trace', 'settings'].includes(id);
+  let setupState = 'checking', setupGeneration = 0, startupRoute = null, startupReturn = null;
+  const chatWorkspace = document.querySelector('#chat-workspace');
+  if (chatWorkspace) { chatWorkspace.hidden = true; chatWorkspace.inert = true; chatWorkspace.setAttribute('aria-hidden', 'true'); }
+  const PAGE_IDS = ['chat', 'memories', 'profile', 'provider', 'dashboard', 'settings'];
+  const validPage = id => PAGE_IDS.includes(id);
 
+  function parseTurnHash(hash) {
+    const raw = String(hash || '').replace(/^#/, '');
+    const slash = raw.indexOf('/');
+    if (slash <= 0 || raw.indexOf('/', slash + 1) !== -1) return null;
+    let sid;
+    try { sid = decodeURIComponent(raw.slice(0, slash)); } catch { return null; }
+    const turnText = raw.slice(slash + 1);
+    if (!/^[A-Za-z0-9_-]{1,120}$/.test(sid) || !/^\d{1,8}$/.test(turnText)) return null;
+    const turn = Number(turnText);
+    return Number.isSafeInteger(turn) ? { sid, turn } : null;
+  }
+  const turnHash = ({ sid, turn }) => '#' + encodeURIComponent(sid) + '/' + turn;
+  function validCalendarDate(value) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+    const date = new Date(value + 'T00:00:00Z');
+    return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+  }
+  function dashboardRoute(search = '', hash = '', allIfUnbounded = false) {
+    const input = new URLSearchParams(String(search).replace(/^\?/, ''));
+    const output = new URLSearchParams();
+    for (const key of ['bot', 'from', 'to', 'q', 'model', 'status']) {
+      const value = input.get(key);
+      if (!value || value.length > 200) continue;
+      if ((key === 'from' || key === 'to') && !validCalendarDate(value)) continue;
+      output.set(key, value);
+    }
+    let range = input.get('range');
+    let from = output.get('from'), to = output.get('to');
+    const invalidOrder = !!(from && to && from > to);
+    if (invalidOrder) { output.delete('from'); output.delete('to'); from = to = null; }
+    if (from || to) range = '';
+    else if (range !== 'all') range = allIfUnbounded && !invalidOrder ? 'all' : '';
+    if (invalidOrder) range = '';
+    if (range === 'all') output.set('range', 'all');
+    let detail = null;
+    if (String(hash || '').replace(/^#/, '')) detail = parseTurnHash(hash);
+    else {
+      const sid = input.get('s'), turn = input.get('t');
+      if (sid && turn && /^[A-Za-z0-9_-]{1,120}$/.test(sid) && /^\d{1,8}$/.test(turn)) detail = { sid, turn: Number(turn) };
+    }
+    let view = input.get('view');
+    if (!['usage', 'cost', 'trace'].includes(view)) view = '';
+    if (allIfUnbounded || detail) view = 'trace';
+    if (view) output.set('view', view);
+    return { page: 'dashboard', search: output.size ? '?' + output.toString() : '', hash: detail ? turnHash(detail) : '' };
+  }
   function routeParts(page, search = '', hash = '') {
-    const allowed = { chat: ['bot', 's'], memories: ['bot'], profile: ['bot'], provider: [], dashboard: ['bot'], trace: ['bot', 's', 't'], settings: [] }[page] || [];
+    if (page === 'trace') return dashboardRoute(search, hash, true);
+    if (page === 'dashboard') return dashboardRoute(search, hash);
+    const allowed = { chat: ['bot', 's'], memories: ['bot'], profile: ['bot'], provider: [], settings: [] }[page] || [];
     const input = new URLSearchParams(String(search).replace(/^\?/, ''));
     const output = new URLSearchParams();
     for (const key of allowed) { const value = input.get(key); if (value && value.length <= 200) output.set(key, value); }
     const rawHash = String(hash).replace(/^#/, '');
-    let safeHash = '';
-    if (page === 'profile' && /^[A-Za-z0-9_.-]{1,80}$/.test(rawHash)) safeHash = '#' + rawHash;
-    if (page === 'trace' && /^[A-Za-z0-9_-]{1,120}\/\d{1,8}$/.test(rawHash)) safeHash = '#' + rawHash;
+    const safeHash = page === 'profile' && /^[A-Za-z0-9_.-]{1,80}$/.test(rawHash) ? '#' + rawHash : '';
     return { page, search: output.size ? '?' + output.toString() : '', hash: safeHash };
   }
   function normalize(value) {
-    return value && validPage(value.page) && typeof value.search === 'string' && typeof value.hash === 'string'
-      ? routeParts(value.page, value.search, value.hash) : null;
+    return value && typeof value.page === 'string' && typeof value.search === 'string' && typeof value.hash === 'string'
+      && (validPage(value.page) || value.page === 'trace') ? routeParts(value.page, value.search, value.hash) : null;
   }
   function legacyRoute(path, search, hash) {
     const map = { '/ui/chat': 'chat', '/ui/memories': 'memories', '/ui/profile': 'profile', '/ui/provider': 'provider', '/ui/dashboard': 'dashboard', '/ui/trace': 'trace', '/ui/settings': 'settings' };
@@ -31,11 +81,131 @@
     let page = map[key] || 'chat';
     const params = new URLSearchParams(search);
     if (page === 'provider' && params.has('bot')) page = 'profile';
-    if (page === 'dashboard' && (params.has('s') || params.has('t') || hash)) page = 'trace';
-    if (page === 'chat' && hash) page = 'trace';
+    if (page === 'trace') return dashboardRoute(search, hash, true);
+    if (page === 'dashboard' && (params.has('s') || params.has('t'))) return dashboardRoute(search, hash);
+    if (page === 'chat' && hash && parseTurnHash(hash)) return dashboardRoute(search, hash, true);
     return routeParts(page, search, hash);
   }
+  function validReturn(value, detailRoute) {
+    if (!value || value.page !== 'dashboard' || value.hash !== '' || detailRoute?.page !== 'dashboard' || !parseTurnHash(detailRoute.hash)) return null;
+    const candidate = dashboardRoute(value.search, '');
+    if (candidate.search !== value.search || candidate.search !== detailRoute.search) return null;
+    return { page: 'dashboard', search: candidate.search, hash: '' };
+  }
+  function historyState(next, returnTo) {
+    const state = { thycaSpa: next };
+    const marker = validReturn(returnTo, next);
+    if (marker) state.thycaReturn = marker;
+    return state;
+  }
   function currentRoute() { return route ? { ...route } : { page: 'chat', search: '', hash: '' }; }
+  function setNavigationLock() {
+    const locked = setupState !== 'ready';
+    document.documentElement.dataset.setupState = setupState;
+    const sidebar = document.querySelector('#chat-sidebar'), menu = document.querySelector('.menu-button');
+    if (locked && sidebar?.classList.contains('mobile-open') && typeof closeMobile === 'function') closeMobile();
+    if (sidebar) sidebar.inert = locked || (matchMedia('(max-width:850px)').matches && !sidebar.classList.contains('mobile-open'));
+    if (menu) menu.disabled = locked;
+    for (const link of document.querySelectorAll('[data-page-link]')) {
+      if (locked && link.dataset.pageLink !== 'provider') {
+        if (!link.hasAttribute('data-setup-original-tabindex')) link.dataset.setupOriginalTabindex = link.getAttribute('tabindex') ?? '';
+        link.setAttribute('aria-disabled', 'true'); link.tabIndex = -1; link.classList.add('setup-disabled');
+      } else {
+        link.removeAttribute('aria-disabled'); link.classList.remove('setup-disabled');
+        if (link.hasAttribute('data-setup-original-tabindex')) {
+          const original = link.dataset.setupOriginalTabindex;
+          if (original) link.setAttribute('tabindex', original); else link.removeAttribute('tabindex');
+          delete link.dataset.setupOriginalTabindex;
+        }
+      }
+    }
+    const splitter = document.querySelector('.splitter');
+    if (splitter) { splitter.inert = locked; splitter.setAttribute('aria-disabled', String(locked)); }
+  }
+  setNavigationLock();
+  function renderSetupNotice() {
+    const view = pages.get('provider')?.view;
+    if (!view && setupState === 'checking') {
+      let notice = host.querySelector('[data-setup-notice]');
+      if (!notice) {
+        notice = document.createElement('aside'); notice.dataset.setupNotice = 'true';
+        notice.setAttribute('role', 'status'); notice.setAttribute('aria-live', 'polite'); host.prepend(notice);
+      }
+      notice.className = 'setup-notice setup-notice-checking'; notice.textContent = 'Kiểm tra cấu hình model…';
+      return;
+    }
+    host.querySelectorAll(':scope > [data-setup-notice]').forEach(notice => notice.remove());
+    if (!view) return;
+    let notice = view.querySelector('[data-setup-notice]');
+    if (setupState === 'ready') { notice?.remove(); return; }
+    if (!notice) {
+      notice = document.createElement('aside'); notice.dataset.setupNotice = 'true';
+      notice.setAttribute('role', 'status'); notice.setAttribute('aria-live', 'polite');
+      view.prepend(notice);
+    }
+    notice.className = `setup-notice setup-notice-${setupState}`;
+    notice.replaceChildren();
+    if (setupState === 'checking') {
+      notice.textContent = 'Kiểm tra cấu hình model…';
+      return;
+    }
+    const heading = document.createElement('strong');
+    const copy = document.createElement('span');
+    if (setupState === 'required') {
+      heading.textContent = 'Thiết lập model để bắt đầu';
+      notice.append(heading);
+      return;
+    }
+    heading.textContent = 'Không kiểm tra được cấu hình';
+    copy.textContent = 'Hãy thử lại. Nếu cấu hình chưa hợp lệ, bạn có thể sửa ở trang này.';
+    const retry = document.createElement('button');
+    retry.type = 'button'; retry.className = 'quiet-button'; retry.textContent = 'Thử lại';
+    retry.addEventListener('click', () => {
+      window.dispatchEvent(new Event('thyca:setup-retry'));
+      void startSetupCheck();
+    });
+    notice.append(heading, copy, retry);
+  }
+  function updateSetupState(next) {
+    setupState = next; setNavigationLock(); renderSetupNotice();
+  }
+  function setupProviderRoute() {
+    const next = routeParts('provider');
+    if (current?.page === 'provider') {
+      if (route?.page !== 'provider' || route.search || route.hash) { route = next; current.ctx.route = next; }
+      history.replaceState({ thycaSpa: next }, '', '/');
+      renderSetupNotice();
+      return Promise.resolve();
+    }
+    return navigate('provider', next, { replace: true, force: true });
+  }
+  async function startSetupCheck() {
+    const ticket = ++setupGeneration;
+    updateSetupState('checking');
+    let statusRequest;
+    try { statusRequest = getJson('/api/config/status'); }
+    catch (error) { statusRequest = Promise.reject(error); }
+    let status, failure = null;
+    try {
+      status = await statusRequest;
+      if (!status || typeof status.ready !== 'boolean') throw new Error('invalid readiness response');
+    } catch (error) { failure = error; }
+    if (!failure && status.ready === false) {
+      try {
+        const config = await getJson('/api/config');
+        if (!config || !config.values || typeof config.values !== 'object' || Array.isArray(config.values)) throw new Error('invalid config response');
+      } catch (error) { failure = error; }
+    }
+    if (ticket !== setupGeneration) return;
+    if (failure || !status.ready) {
+      await setupProviderRoute();
+      if (ticket !== setupGeneration) return;
+      updateSetupState(failure ? 'error' : 'required');
+      return;
+    }
+    updateSetupState('ready');
+    await navigate(startupRoute.page, startupRoute, { replace: true, returnTo: startupReturn });
+  }
   function notifyRoute(entry) {
     if (entry?.ctx) for (const fn of [...entry.ctx.listeners]) fn(currentRoute());
   }
@@ -104,7 +274,7 @@
       route: { page, search: '', hash: '' },
       sidebar: document.querySelector('#chat-sidebar'),
       shellReady,
-      navigate(pageId, parts = {}) { return navigate(pageId, parts); },
+      navigate(pageId, parts = {}, options = {}) { return navigate(pageId, parts, options); },
       updateRoute(parts = {}) {
         const next = routeParts(page,
           Object.hasOwn(parts, 'search') ? parts.search : ctx.route.search,
@@ -113,8 +283,16 @@
         ctx.route = next;
         if (current?.page === page) {
           route = next;
-          history.replaceState({ thycaSpa: route }, '', '/');
+          history.replaceState(historyState(route, history.state?.thycaReturn), '', '/');
         }
+      },
+      returnTo(parts = {}) {
+        const fallback = routeParts(page,
+          Object.hasOwn(parts, 'search') ? parts.search : ctx.route.search,
+          Object.hasOwn(parts, 'hash') ? parts.hash : '');
+        const origin = validReturn(history.state?.thycaReturn, route);
+        if (page === 'dashboard' && origin && origin.search === fallback.search) return history.back();
+        return navigate(fallback.page, fallback, { replace: true });
       },
       highlightBot(id) { const entry = pages.get(page); if (entry) entry.highlighted = id && getBot(id) ? id : ''; if (current?.page === page) renderTeam(); },
       renderTeam() { if (current?.page === page) renderTeam(); },
@@ -146,8 +324,18 @@
       if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close();
     });
   }
-  async function navigate(page, parts = {}, { replace = false, force = false } = {}) {
+  async function navigate(requestedPage, parts = {}, options = {}) {
+    const { replace = false, force = false } = options;
+    let page = requestedPage;
+    if (page === 'trace') {
+      const savedDashboard = pages.get('dashboard')?.ctx?.route;
+      const search = Object.hasOwn(parts, 'search') ? parts.search : (savedDashboard?.search || '');
+      const hash = Object.hasOwn(parts, 'hash') ? parts.hash : (savedDashboard?.hash || '');
+      parts = dashboardRoute(search, hash, true);
+      page = 'dashboard';
+    }
     if (!validPage(page)) return;
+    if (setupState !== 'ready' && page !== 'provider') return setupProviderRoute();
     const entry = pages.get(page);
     if (!entry) { showError(host, new Error(`Màn hình ${page} chưa đăng ký`), () => {}); return; }
     const old = route || { page: 'chat', search: '', hash: '' };
@@ -160,8 +348,14 @@
     const sameRoute = route?.page === next.page && route.search === next.search && route.hash === next.hash;
     if (!force && previous === entry && sameRoute) return;
     const pageChanged = !previous || previous.page !== page;
+    let returnMarker;
+    if (Object.hasOwn(options, 'returnTo')) returnMarker = validReturn(options.returnTo, next);
+    else if (!replace && old.page === 'dashboard' && !parseTurnHash(old.hash) && parseTurnHash(next.hash) && old.search === next.search)
+      returnMarker = { page: 'dashboard', search: old.search, hash: '' };
+    else if (replace) returnMarker = validReturn(history.state?.thycaReturn, next);
+    else returnMarker = null;
     route = next;
-    if (!sameRoute || replace) history[replace ? 'replaceState' : 'pushState']({ thycaSpa: next }, '', '/');
+    if (!sameRoute || replace || Object.hasOwn(options, 'returnTo')) history[replace ? 'replaceState' : 'pushState'](historyState(next, returnMarker), '', '/');
     if (pageChanged) {
       for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
       if (typeof closeMobile === 'function') closeMobile();
@@ -198,6 +392,7 @@
       return;
     }
     if (ticket !== generation || current !== entry) return;
+    renderSetupNotice();
     if (!entry.controller) {
       try { entry.controller = entry.mount(entry.ctx) || {}; }
       catch (err) {
@@ -218,7 +413,10 @@
     for (const link of document.querySelectorAll('[data-page-link]')) {
       const active = link.dataset.pageLink === page;
       link.classList.toggle('is-current', active);
-      if (active) link.setAttribute('aria-current', 'page'); else link.removeAttribute('aria-current');
+      if (active) {
+        link.setAttribute('aria-current', 'page');
+        link.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      } else link.removeAttribute('aria-current');
     }
     document.title = `Thyca — ${entry.title}`;
     if (pageChanged) {
@@ -229,9 +427,12 @@
   }
   function navigateFromState(state) {
     const next = normalize(state?.thycaSpa) || legacyRoute(location.pathname, location.search, location.hash);
-    history.replaceState({ thycaSpa: next }, '', '/'); navigate(next.page, next, { replace: true });
+    const returnMarker = validReturn(state?.thycaReturn, next);
+    history.replaceState(historyState(next, returnMarker), '', '/');
+    navigate(next.page, next, { replace: true, returnTo: returnMarker });
   }
   function dispatch(action, id, ...args) {
+    if (setupState !== 'ready') return false;
     if (action === 'selectBot') return current?.controller?.selectBot?.(id);
     if (action === 'loadSession') return current?.controller?.loadSession?.(id, ...args);
   }
@@ -245,8 +446,12 @@
     highlightedBot: () => current?.page === 'chat' ? selectedBot : (current?.highlighted ?? ''),
     sidebarLabel(id, name, status) { return current?.controller?.sidebarLabel?.(id, name, status) || `Trò chuyện với ${name} · ${status}`; },
     get shellReady() { return shellReady; },
+    setupState() { return setupState; },
   };
   addEventListener('popstate', e => navigateFromState(e.state));
+  window.addEventListener('thyca:config-saved', () => {
+    if (setupState !== 'ready') void startSetupCheck();
+  });
   document.addEventListener('click', e => {
     const link = e.target.closest('a[href]');
     if (!link || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || link.target) return;
@@ -257,6 +462,8 @@
     navigate(next.page, dest.search || dest.hash ? next : {});
   });
   const initial = normalize(history.state?.thycaSpa) || legacyRoute(location.pathname, location.search, location.hash);
-  route = initial; history.replaceState({ thycaSpa: initial }, '', '/');
-  document.addEventListener('DOMContentLoaded', () => navigate(initial.page, initial, { replace: true }), { once: true });
+  startupRoute = { ...initial };
+  startupReturn = validReturn(history.state?.thycaReturn, startupRoute);
+  route = initial; history.replaceState(historyState(route, startupReturn), '', '/');
+  document.addEventListener('DOMContentLoaded', () => { void startSetupCheck(); }, { once: true });
 })();

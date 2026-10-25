@@ -1,4 +1,4 @@
-"""Trace detail mapping — thyca/webui/ui/trace/js/trace.js.
+"""Trace detail rendering — thyca/webui/ui/trace/js/trace.js.
 
 The old trace-data.js helpers (toolsFromDetail, toolBatchesFromDetail,
 activityStepsFromDetail, groupToolCalls, tokenCost, selectedModelConfig)
@@ -18,7 +18,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from test_team_frontend import _unit_factory_source
+from test_dashboard_journal import _eval_dash
+from test_team_frontend import _unit_renderer_source
 
 ROOT = Path(__file__).resolve().parents[1]
 TRACE_JS = ROOT / "thyca" / "webui" / "ui" / "trace" / "js" / "trace.js"
@@ -87,17 +88,10 @@ def node() -> str:
 
 
 def _eval_trace(node: str, body: str) -> object:
-    """Eval trace.js (classic script) with stubs, then run `body` inside
-    the same scope so module-level functions/state are reachable."""
-    src = _unit_factory_source(TRACE_JS, TRACE_JS.read_text(encoding="utf-8"))
-    program = (
-        STUBS
-        + "\nconst ctx = { root: __workspace, route: { page: 'trace', search: location.search, hash: location.hash }, $: globalThis.$, $$: globalThis.$$, shellReady: Promise.resolve(), navigate(page, parts) { globalThis.__routes ||= []; globalThis.__routes.push({ page, ...parts }); }, updateRoute(parts) { Object.assign(this.route, parts); globalThis.__routes ||= []; globalThis.__routes.push({ ...this.route }); }, highlightBot() {}, renderTeam() {}, isActive: () => true, onRoute: () => () => {} };\n"
-        + "globalThis.ThycaRouter = { register(_page, spec) { globalThis.__controller = spec.mount(ctx); } };\n"
-        + "const __src = " + json.dumps(src) + ";\n"
-        + "const __body = " + json.dumps(body) + ";\n"
-        + "eval(__src + '\\n;' + __body);\n"
-    )
+    """Unwrap the renderer only in this harness so private helpers stay
+    directly testable without adding production global exports."""
+    src = _unit_renderer_source(TRACE_JS, TRACE_JS.read_text(encoding="utf-8"))
+    program = STUBS + "\n(function () {\n" + src + "\n" + body + "\n})();\n"
     result = subprocess.run(
         [node, "--input-type=module", "-e", program],
         check=True,
@@ -324,10 +318,9 @@ def test_orphan_tool_result_gets_its_own_step(node: str) -> None:
     assert "late out" in html
 
 
-def test_session_groups_first_seen_order_and_card(node: str) -> None:
-    """Session grouping keeps the API's newest-first order (first-seen
-    session_id, turns in payload order); the card takes the newest turn's
-    title, turn count, kind label and the failed-turn chip."""
+def test_flat_trace_rows_keep_order_and_chat_kind(node: str) -> None:
+    """The list preserves API row order without session cards or group
+    failure summaries, while retaining the private/group context label."""
     rows = [
         {"session_id": "g1", "turn_index": 2, "title": "Nhóm",
          "started_at": "2026-09-08T10:02:00", "status": "failed",
@@ -339,49 +332,28 @@ def test_session_groups_first_seen_order_and_card(node: str) -> None:
          "started_at": "2026-09-07T09:00:00", "status": "completed",
          "session_kind": "dm", "session_dm": "a"},
     ]
-    out = _eval_trace(
+    html = _eval_dash(
         node,
-        f"tr.rows = {json.dumps(rows)};\n"
-        "const gs = sessionGroups();\n"
-        "console.log(JSON.stringify({"
-        " ids: gs.map((g) => g.sid),"
-        " turnOrder: gs[0].turns.map((t) => t.turn_index),"
-        " card: sessionCardHtml(gs[0]) }))",
+        f"traceState.rows = {json.dumps(rows)}; traceState.total = 3;\n"
+        "renderTraceTable(); console.log(JSON.stringify(document.querySelector('#trace-sessions').innerHTML))",
     )
-    assert out["ids"] == ["g1", "d1"]
-    # Payload order is kept (newest first) — the API already sorted.
-    assert out["turnOrder"] == [2, 0]
-    card = out["card"]
-    assert "<h2" in card and "Nhóm" in card
-    assert "2 lượt" in card
-    assert "Hội thoại chung" in card
-    assert "1 lượt lỗi" in card  # failed-turn chip from the group's turns
+    assert html.count('<li><button') == 3
+    assert html.index('data-turn="2"') < html.index('data-turn="0"') < html.index('data-session="d1"')
+    assert 'Chat nhóm' in html and 'Chat riêng' in html
+    assert 'class="tl-session"' not in html and 'lượt lỗi' not in html
 
 
-def test_session_card_kind_dm_and_seals(node: str) -> None:
-    """DM sessions read 'Trò chuyện riêng'; seals come from the union of
-    session_bots/breakdown/bot_id/session_dm, capped at 3 + '+N'."""
-    rows = [
-        {"session_id": "d1", "turn_index": 0, "title": "DM",
-         "started_at": "2026-09-07T09:00:00", "status": "completed",
-         "session_kind": "dm", "session_dm": "coder"},
-        {"session_id": "g", "turn_index": 0, "title": "G",
-         "started_at": "2026-09-08T09:00:00", "status": "completed",
-         "session_kind": "group",
-         "session_bots": ["a", "b", "c", "d"]},
-    ]
-    out = _eval_trace(
+def test_trace_row_attribution_ignores_dm_and_session_members(node: str) -> None:
+    """Only explicit breakdown or direct turn bot_id identifies a bot;
+    DM owner and session participant lists do not attribute a turn."""
+    out = _eval_dash(
         node,
-        f"tr.rows = {json.dumps(rows)};\n"
-        "const gs = sessionGroups();\n"
-        "console.log(JSON.stringify({"
-        " dm: sessionCardHtml(gs[0]), grp: sessionCardHtml(gs[1]),"
-        " ids: groupBotIds(gs[1]) }))",
+        "console.log(JSON.stringify(["
+        " turnBotIds({ session_kind: 'dm', session_dm: 'owner', session_bots: ['member'] }),"
+        " turnBotIds({ bot_id: 'direct', session_bots: ['member'] }),"
+        " turnBotIds({ bot_id: 'primary', bot_breakdown: [{ bot_id: 'own' }] })]))",
     )
-    assert "Trò chuyện riêng" in out["dm"]
-    assert out["ids"] == ["a", "b", "c", "d"]
-    assert "+1" in out["grp"]               # 4 ids → 3 seals + '+1'
-    assert 'class="tl-botid"' in out["dm"]  # no roster → id chip fallback
+    assert out == [[], ['direct'], ['own']]
 
 
 def test_first_user_and_final_assistant_render_in_order(node: str) -> None:

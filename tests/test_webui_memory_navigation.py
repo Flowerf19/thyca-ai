@@ -21,7 +21,7 @@ UI = ROOT / "thyca" / "webui" / "ui"
 UTIL_JS = UI / "share" / "util.js"
 SHELL_JS = UI / "share" / "shell.js"
 MEM_JS = UI / "memories" / "js" / "memories.js"
-SHELL_PAGES = ("memories", "profile", "provider", "dashboard", "trace", "settings")
+SHELL_PAGES = ("memories", "profile", "provider", "dashboard", "settings")
 
 
 def _header(current: str = "memories") -> dict:
@@ -55,7 +55,7 @@ def test_header_links_every_page_and_marks_current() -> None:
         r'<a href="([^"]+)" data-page-link="([^"]+)"([^>]*)>([^<]+)</a>', header)
     # One relative route per page, in the shell's own order.
     assert [page for _href, page, _rest, _label in links] == [
-        "chat", "memories", "profile", "provider", "dashboard", "trace", "settings"]
+        "chat", "memories", "profile", "provider", "dashboard", "settings"]
     for href, page, _rest, _label in links:
         assert href == f"../{page}/index.html"
         assert (UI / page / "index.html").is_file(), href
@@ -66,8 +66,7 @@ def test_header_links_every_page_and_marks_current() -> None:
     assert all("is-current" not in rest for page, rest in marks.items()
                if page != "memories")
     assert [label for *_x, label in links] == [
-        "Trò chuyện", "Nhật ký", "Hồ sơ", "Provider", "Sử dụng", "Trace",
-        "Cài đặt"]
+        "Trò chuyện", "Nhật ký", "Hồ sơ", "Provider", "Sử dụng", "Cài đặt"]
 
 
 def test_every_shell_page_emits_its_own_id() -> None:

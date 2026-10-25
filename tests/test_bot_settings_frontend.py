@@ -657,10 +657,93 @@ def test_profile_provider_no_bot_scope(node) -> None:
         selectBot('coder');
         await tick();
         const noBotForm = !document.querySelector('.workspace').innerHTML.includes('bot-settings-form');
-        const sharedVisible = !document.querySelector('#providers-card').hidden
-            && !document.querySelector('#save-config').hidden;
+        const sharedVisible = !document.querySelector('#connection-editor').hidden
+            && !document.querySelector('#save-status').hidden;
         return { navigated: ctx.lastNavigation, noBotForm, sharedVisible };
     """ % _profile_fetch(_ROSTER, _CONFIG), via="provider", emit="provider")
     assert out["navigated"] == {"page": "profile", "search": "?bot=coder"}
     assert out["noBotForm"] is True
     assert out["sharedVisible"] is True
+
+
+def test_profile_config_refresh_drains_after_pending_bot_settings_save(node) -> None:
+    out = _run(node, """
+        const cards = [{ id: 'coder', name: 'Coder', role: 'Coder', persona: 'persona', model: { id: 'm1', thinking: 'low' } }];
+        let catalog = { values: { defaultProvider: 'alpha', defaultModel: 'm1', providers: { alpha: {} }, models: { m1: { provider: 'alpha' }, m2: { provider: 'alpha' } } },
+                        schema: { sections: [{ key: 'provider', fields: [{ key: 'provider.reasoningEffort', choices: ['low', 'high'] }] }] } };
+        let settings = { bot_id: 'coder', model: { id: 'm1', thinking: 'low' }, effective: { model: 'm1', provider: 'alpha', thinking: 'low' } };
+        let configGets = 0, settingsGets = 0, releaseSave;
+        installFetch((url, opts = {}) => {
+            if (url === '/api/bots') return { bots: cards };
+            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/memory/stats') return { files: [] };
+            if (url === '/api/config') { configGets++; return catalog; }
+            if (url === '/api/bots/coder/settings' && opts.method !== 'POST') { settingsGets++; return settings; }
+            if (url === '/api/bots/coder/settings' && opts.method === 'POST') {
+                const model = JSON.parse(opts.body).model;
+                return new Promise(resolve => { releaseSave = () => { settings = { bot_id: 'coder', model, effective: { model: model.id, provider: 'alpha', thinking: model.thinking } }; resolve(settings); }; });
+            }
+            return {};
+        });
+        location.search = '?bot=coder'; await tick(); await boot(); await tick(20);
+        document.querySelector('#bot-model').value = 'm2'; document.querySelector('#bot-model').dispatch('change', { target: document.querySelector('#bot-model') });
+        document.querySelector('#bot-thinking').value = 'high';
+        const baselineGets = configGets;
+        el.root.dispatch('submit', { target: document.querySelector('#bot-settings-form'), preventDefault() {} }); await tick(5);
+        const saving = !!botCfg.savingFor;
+        catalog = { values: { defaultProvider: 'alpha', defaultModel: 'm3', providers: { alpha: {} }, models: { m1: { provider: 'alpha' }, m2: { provider: 'alpha' }, m3: { provider: 'alpha' } } },
+                    schema: { sections: [{ key: 'provider', fields: [{ key: 'provider.reasoningEffort', choices: ['low', 'high'] }] }] } };
+        window.dispatchEvent(new Event('thyca:config-saved'));
+        const whileSavingGets = configGets;
+        await __controller.onEnter(ctx.route);
+        const afterEnterGets = configGets;
+        releaseSave();
+        for (let n = 0; n < 80 && configGets === baselineGets; n++) await tick(2);
+        await tick(20);
+        return { saving, baselineGets, whileSavingGets, afterEnterGets, configGets, settingsGets,
+                 model: document.querySelector('#bot-model').value, thinking: document.querySelector('#bot-thinking').value,
+                 hasM3: document.querySelector('#bot-settings-fields').innerHTML.includes('value="m3"'),
+                 dirty: catalogDirty, savingFor: !!botCfg.savingFor };
+    """, via="profile", emit="profile")
+    assert out["saving"] is True and out["whileSavingGets"] == out["baselineGets"]
+    assert out["afterEnterGets"] == out["baselineGets"]
+    assert out["configGets"] == out["baselineGets"] + 1 and out["settingsGets"] >= 2
+    assert out["model"] == "m2" and out["thinking"] == "high" and out["hasM3"]
+    assert out["dirty"] is False and out["savingFor"] is False
+
+
+def test_profile_refreshes_dirty_catalog_on_enter_and_preserves_valid_draft(node) -> None:
+    out = _run(node, """
+        const cards = [{ id: 'coder', name: 'Coder', role: 'Coder', persona: 'persona', model: { id: 'm1', thinking: 'low' } }];
+        let catalog = { values: { defaultProvider: 'alpha', defaultModel: 'm1', providers: { alpha: {} },
+                                 models: { m1: { provider: 'alpha', reasoningEfforts: ['low'] }, m2: { provider: 'alpha' } } },
+                        schema: { sections: [{ key: 'provider', fields: [{ key: 'provider.reasoningEffort', choices: ['low', 'high'] }] }] } };
+        let configGets = 0;
+        const settings = { bot_id: 'coder', model: { id: 'm1', thinking: 'low' },
+                           effective: { model: 'm1', provider: 'alpha', thinking: 'low' } };
+        installFetch(url => {
+            if (url === '/api/bots') return { bots: cards };
+            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/memory/stats') return { files: [] };
+            if (url === '/api/config') { configGets++; return catalog; }
+            if (url === '/api/bots/coder/settings') return settings;
+            return {};
+        });
+        location.search = '?bot=coder'; await tick(); await boot(); await tick(10);
+        const baselineGets = configGets;
+        document.querySelector('#bot-model').value = 'm2'; document.querySelector('#bot-model').dispatch('change', { target: document.querySelector('#bot-model') });
+        document.querySelector('#bot-thinking').value = 'high';
+        catalog = { values: { defaultProvider: 'alpha', defaultModel: 'm3', providers: { alpha: {} },
+                             models: { m1: { provider: 'alpha' }, m2: { provider: 'alpha' }, m3: { provider: 'alpha' } } },
+                    schema: { sections: [{ key: 'provider', fields: [{ key: 'provider.reasoningEffort', choices: ['low', 'high'] }] }] } };
+        window.dispatchEvent(new Event('thyca:config-saved'));
+        const inactive = { gets: configGets, hasM3: document.querySelector('#bot-settings-fields').innerHTML.includes('value="m3"') };
+        await __controller.onEnter(ctx.route); await tick(10);
+        return { baselineGets, inactive, gets: configGets, model: document.querySelector('#bot-model').value,
+                 thinking: document.querySelector('#bot-thinking').value,
+                 hasM3: document.querySelector('#bot-settings-fields').innerHTML.includes('value="m3"'),
+                 scope: state.tab, status: $('#profile-status').textContent };
+    """, via="profile", emit="profile")
+    assert out["inactive"] == {"gets": out["baselineGets"], "hasM3": False}
+    assert out["gets"] == out["baselineGets"] + 1 and out["model"] == "m2" and out["thinking"] == "high"
+    assert out["hasM3"] and out["scope"] == "coder" and out["status"] == ""

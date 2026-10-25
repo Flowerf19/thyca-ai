@@ -57,18 +57,21 @@
     <div class="proto-shell">
       <div class="proto-layout">
         <aside class="proto-side" aria-label="Điều hướng nguyên mẫu">
-          <h2>Trace · mẫu</h2>
-          <nav class="proto-nav" aria-label="Mục trace">
-            <a href="#usage" data-route="usage">Sử dụng token</a>
-            <a href="#cost" data-route="cost">Chi phí</a>
-            <a href="#sessions" data-route="sessions">Trace theo phiên</a>
-            <a href="#bots" data-route="bots">Trace theo bot</a>
-          </nav>
+          <header class="proto-brand"><h2>Sử dụng</h2><small>Bản mẫu tĩnh</small></header>
+          <a class="proto-overview-link" href="#overview?view=usage" data-scope="overview">Tổng quan</a>
+          <details class="scope-picker" open>
+            <summary id="scope-current" aria-label="Chọn phạm vi">Đội</summary>
+            <section class="scope-team" aria-label="Đội">
+              <h3>Đội <span id="scope-bot-count" class="num"></span></h3>
+              <nav class="proto-nav" id="scope-nav" aria-label="Chọn bot"></nav>
+            </section>
+          </details>
         </aside>
         <main class="proto-view" id="proto-view" aria-live="polite" aria-label="Nội dung trace"></main>
       </div>
     </div>
     <script src="./data.js"></script>
+    <script src="./scope.js"></script>
     <script src="./prototype.js"></script>
   </body>
 </html>

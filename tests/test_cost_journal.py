@@ -4,8 +4,8 @@ The old Chi phí view (cost-data.js / cost-view.js / cost-rows.js /
 cost-bots.js and the shared journal pager) was not ported: pricing
 estimates, per-model share denominators, the per-session cost journal and
 the average-per-turn card are gone. The new Dashboard keeps cost on a
-recorded basis: the "Chi phí" stat card, the "Token" card's
-in/cache/out split, the by_day cost metric and the "Lượt gần nhất" table —
+recorded basis: a dedicated Chi phí view with daily cost and bot/model
+breakdowns, plus shared token/scope cards and the flat Trace turn list —
 all fed by GET /api/traces/stats + GET /api/traces. These tests pin that
 replacement contract. The page is a classic script ('use strict', shared
 globals), so the harness evals it in Node with a stubbed global surface,
@@ -107,7 +107,7 @@ def _eval_dash(node: str, body: str) -> object:
 
 def test_no_per_session_journal_remains() -> None:
     """Static pins: the per-session cost journal was dropped with the old
-    dashboard (Trace keeps its own session list); nothing in the new page
+    dashboard grouped session list; nothing in the new page
     re-introduces it."""
     html = DASH_HTML.read_text(encoding="utf-8")
     src = DASH_JS.read_text(encoding="utf-8")
@@ -142,21 +142,20 @@ def test_share_denominator_and_vi_format(node: str) -> None:
     result = _eval_dash(
         node,
         "console.log(JSON.stringify([share(0.75, 1), share(0.25, 1),"
-        " share(0.056, 1), share(1, 0), share(null, 10),"
+        " share(0.056, 1), share(0, 0), share(null, 10),"
         " share(0.9999, 1)]))",
     )
     big, small, frac, empty_den, null_num, almost = result
     assert big == "75%" and small == "25%"
     assert frac == "5,6%"          # vi-VN decimal comma, one decimal
-    assert empty_den == "0%"       # no fake share on a zero total
-    assert null_num == "0%"
+    assert empty_den == "0%"       # known zero total stays distinct
+    assert null_num == "—"          # unknown is not a zero share
     assert almost == "100%"        # rounded, not "99,99%" noise
 
 
 def test_hero_cards_carry_the_cost_and_token_split(node: str) -> None:
-    """The stat grid keeps: Lượt = model requests, Gọi tool, Token with the
-    in/cache/out split (cache lives inside prompt — shown, not re-added),
-    Chi phí with the per-request average, Độ trễ p50 with the p90 hint."""
+    """The shared stat grid keeps calls, token totals, recorded cost,
+    latency, and additive session/turn counts with the Input/Cache/Output split."""
     totals = {
         "requests": 5, "tool_calls": 7, "prompt_tokens": 150,
         "cached_tokens": 30, "completion_tokens": 15, "total_tokens": 165,
@@ -167,17 +166,17 @@ def test_hero_cards_carry_the_cost_and_token_split(node: str) -> None:
         f"renderStats({{ totals: {json.dumps(totals)} }});\n"
         "console.log(JSON.stringify(document.querySelector('#stat-grid').innerHTML));",
     )
-    assert ">Lượt</p>" in html and ">5</p>" in html
+    assert ">Gọi model</p>" in html and ">5</p>" in html
     assert "request tới model" in html
     assert ">Gọi tool</p>" in html and ">7</p>" in html
     assert ">Token</p>" in html
     # Cache is a subset of prompt: "in" is the uncached input (150 − 30), so
     # the parts sum to the server total (120 + 30 + 15 = 165), never
     # 150 + 30 + 15.
-    assert "in 120 · cache 30 · out 15" in html
+    assert "Input 120 · Cache 30 · Output 15" in html
     assert ">165</p>" in html
-    assert ">Chi phí</p>" in html and "$0.0300" in html
-    assert "TB $0.006000 / request" in html  # 0.03 / 5 requests
+    assert ">Chi phí đã ghi nhận</p>" in html and "$0.0300" in html
+    assert "TB $0.006000 / request · phần đã ghi nhận" in html  # 0.03 / 5 requests
     assert ">Độ trễ p50</p>" in html
     assert "1,2 giây" in html and "p90 3,4 giây" in html
 
@@ -208,7 +207,7 @@ def test_multi_model_turn_tokens_split_not_double_counted(node: str) -> None:
         " cost_usd: null, latency_ms_p50: null, latency_ms_p90: null } });\n"
         "console.log(JSON.stringify(document.querySelector('#stat-grid').innerHTML));",
     )
-    assert "in 0 · cache 200 · out 5" in html
+    assert "Input 0 · Cache 200 · Output 5" in html
     assert ">205</p>" in html  # prompt + completion, cache not re-added
 
 
@@ -229,7 +228,7 @@ def test_daily_costs_zero_fill_missing_days(node: str) -> None:
     )
     assert days == [
         {"day": "2026-09-20", "requests": 4, "cost_usd": 0.5},
-        {"day": "2026-09-21", "requests": 0, "cost_usd": None},
+        {"day": "2026-09-21", "requests": 0, "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "cost_usd": None},
         {"day": "2026-09-22", "requests": 1, "cost_usd": None},
     ]
 
@@ -259,44 +258,30 @@ def test_day_columns_fall_back_to_sparse_buckets_on_wide_ranges(node: str) -> No
     assert unset == by_day
 
 
-def test_day_chart_metric_switch(node: str) -> None:
-    """The by_day card's Lượt/Chi phí toggle swaps the column metric:
-    cost_usd mode bars scale on cost (null cost = zero height), requests
-    mode on request counts."""
-    stats = {
-        "by_day": [
-            {"day": "2026-09-20", "requests": 1, "cost_usd": 0.9},
-            {"day": "2026-09-21", "requests": 9, "cost_usd": 0.1},
-            {"day": "2026-09-22", "requests": 0, "cost_usd": None},
-        ]
-    }
+def test_daily_usage_and_cost_charts_keep_distinct_metrics(node: str) -> None:
+    """Usage switches between token composition and model calls; recorded
+    cost is a separate chart where null remains unavailable and zero is real."""
+    stats = {"by_day": [
+        {"day": "2026-09-20", "requests": 1, "prompt_tokens": 10, "cached_tokens": 2, "completion_tokens": 3, "cost_usd": 0.9},
+        {"day": "2026-09-21", "requests": 9, "prompt_tokens": 9, "cached_tokens": 2, "completion_tokens": 1, "cost_usd": 0.1},
+        {"day": "2026-09-22", "requests": 0, "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "cost_usd": 0},
+        {"day": "2026-09-23", "requests": 0, "prompt_tokens": 0, "cached_tokens": 0, "completion_tokens": 0, "cost_usd": None},
+    ]}
     out = _eval_dash(
         node,
-        f"statsData = {json.dumps(stats)};\n"
-        "rangeFrom = ''; rangeTo = '';   // sparse buckets as-is\n"
-        "dayMetric = 'requests'; renderDayChart();\n"
-        "const req = document.querySelector('#chart-day').innerHTML;\n"
-        "dayMetric = 'cost_usd'; renderDayChart();\n"
-        "const cost = document.querySelector('#chart-day').innerHTML;\n"
-        "console.log(JSON.stringify({ req, cost }))",
+        f"statsData = {json.dumps(stats)}; rangeFrom = ''; rangeTo = '';\n"
+        "dayMetric = 'requests'; renderDayChart(); const req = document.querySelector('#chart-day').innerHTML;\n"
+        "dayMetric = 'tokens'; renderDayChart(); const tokens = document.querySelector('#chart-day').innerHTML;\n"
+        "renderCostChart(); const cost = document.querySelector('#chart-cost').innerHTML;\n"
+        "console.log(JSON.stringify({ req, tokens, cost }))",
     )
-    req_heights = [
-        float(h) for h in
-        [p.split('height:')[1].split('%')[0] for p in out["req"].split('dc-bar')[1:]]
-    ]
-    cost_heights = [
-        float(h) for h in
-        [p.split('height:')[1].split('%')[0] for p in out["cost"].split('dc-bar')[1:]]
-    ]
-    # Requests: 1/9, 9/9, 0 — middle day is the tallest.
-    assert req_heights[0] == pytest.approx(1 / 9 * 100)
-    assert req_heights[1] == 100.0
-    # Cost: 0.9/0.9, 0.1/0.9 — the first day wins.
-    assert cost_heights[0] == 100.0
-    assert cost_heights[1] == pytest.approx(1 / 9 * 100)
-    assert "Chi phí theo ngày" in out["cost"] or 'aria-label="Chi phí' in out["cost"]
-    # Zero days keep a visible zero-height track, not a missing bar.
-    assert "is-zero" in out["req"]
+    req_heights = [float(p.split('height:')[1].split('%')[0]) for p in out["req"].split('dc-bar-requests')[1:]]
+    assert req_heights[:2] == pytest.approx([1 / 9 * 100, 100])
+    assert 'dc-seg-input' in out['tokens'] and 'dc-seg-cache' in out['tokens'] and 'dc-seg-output' in out['tokens']
+    cost_heights = [float(p.split('height:')[1].split('%')[0]) for p in out["cost"].split('dc-bar-cost')[1:]]
+    assert cost_heights[:2] == pytest.approx([100, 1 / 9 * 100])
+    assert 'dc-bar-cost is-zero' in out['cost'] and 'dc-unavailable' in out['cost']
+    assert 'aria-label="Chi phí đã ghi nhận theo ngày"' in out['cost']
 
 
 def test_paging_multiple_pages_and_midway_failure(node: str) -> None:
@@ -325,7 +310,7 @@ def test_paging_multiple_pages_and_midway_failure(node: str) -> None:
           await loadTraces(false);
           const afterError = { error: traceState.error,
             rows: traceState.rows.length,
-            status: document.querySelector('#trace-status').textContent,
+            status: document.querySelector('#trace-status-text').textContent,
             statusHidden: document.querySelector('#trace-status').hidden };
           return { ok, afterError };
         })().then((v) => console.log(JSON.stringify(v)))""",
@@ -344,8 +329,7 @@ def test_paging_multiple_pages_and_midway_failure(node: str) -> None:
 
 def test_load_more_hidden_at_total_and_rows_render(node: str) -> None:
     """"Hiển thị X trong Y lượt" tracks the loaded window; the button hides
-    once rows reach total (and during loads), and each row links its turn
-    to the trace page deep link."""
+    once rows reach total and grouped session cards expose actionable turns."""
     out = _eval_dash(
         node,
         """(async () => {
@@ -365,7 +349,7 @@ def test_load_more_hidden_at_total_and_rows_render(node: str) -> None:
           const first = {
             count: document.querySelector('#trace-count').textContent,
             more: document.querySelector('#trace-more').hidden,
-            html: document.querySelector('#trace-rows').innerHTML };
+            html: document.querySelector('#trace-sessions').innerHTML };
           await loadTraces(false);
           return { first,
             second: { count: document.querySelector('#trace-count').textContent,
@@ -374,16 +358,15 @@ def test_load_more_hidden_at_total_and_rows_render(node: str) -> None:
     )
     assert out["first"]["count"] == "Hiển thị 15 trong 20 lượt"
     assert out["first"]["more"] is False
-    # Deep-link convention: ../trace/index.html#<session>/<turn>, encoded.
-    assert 'data-href="../trace/index.html#s%20x/0"' in out["first"]["html"]
+    assert 'data-session="s x"' in out["first"]["html"]
+    assert 'data-turn="0"' in out["first"]["html"]
     assert out["second"]["count"] == "Hiển thị 20 trong 20 lượt"
     assert out["second"]["more"] is True
 
 
 def test_cost_bot_rows_have_avatar_slots(node: str) -> None:
-    """Every by_bot row keeps an aligned avatar slot: a seal for roster
-    bots, the dashed '?' chip for unattributed ('unknown') rows — and the
-    roster patch names the row."""
+    """Overview by_bot rows keep an aligned avatar slot: a seal for roster
+    bots, the dashed '?' chip for unattributed ('unknown') rows."""
     by_bot = [
         {"bot_id": "coder", "requests": 3, "tool_calls": 1,
          "total_tokens": 30, "cost_usd": 0.01,
@@ -396,7 +379,7 @@ def test_cost_bot_rows_have_avatar_slots(node: str) -> None:
         node,
         "globalThis.__roster = { coder: { id: 'coder', name: 'Coder',"
         " color: '#123', state: 'idle' } };\n"
-        f"statsData = {{ by_bot: {json.dumps(by_bot)}, totals: {{ requests: 4 }} }};\n"
+        f"statsData = {{ by_bot: {json.dumps(by_bot)}, totals: {{ requests: 4, total_tokens: 40 }} }};\n"
         "renderBotRows();\n"
         "console.log(JSON.stringify(document.querySelector('#rows-bot').innerHTML));",
     )

@@ -1912,8 +1912,8 @@ def test_session_rename_delete_http_apis_remain_wired() -> None:
 def test_chat_rows_use_the_shared_sidebar_markup() -> None:
     """Conversation rows come from the shared sidebar markup every page gets:
     `.group-row` buttons in the "Hội thoại chung" list and `.info-session`
-    rows inside the bot drawer — the old .session-item grid is gone. Trace
-    renders its own session cards (.tl-session) with .tl-turn row buttons."""
+    rows inside the bot drawer — the old .session-item grid is gone. Dashboard
+    owns flat `.tl-turn` rows; Trace only renders turn details."""
     sidebar = (WEBUI / "ui" / "share" / "sidebar.js").read_text(encoding="utf-8")
     sidebar_css = (WEBUI / "ui" / "share" / "sidebar.css").read_text(encoding="utf-8")
     shell = (WEBUI / "ui" / "share" / "shell.js").read_text(encoding="utf-8")
@@ -1940,10 +1940,16 @@ def test_chat_rows_use_the_shared_sidebar_markup() -> None:
     assert 'id="group-list"' in html
     assert "Hội thoại chung" in html
     assert "if(!gl)return" in sidebar
-    # Trace's session list: one paper card per session, .tl-turn row buttons.
-    assert 'class="paper-card tl-session"' in trace
-    assert 'class="tl-turn"' in trace
-    assert ".tl-session" in trace_css
+    # Trace is a detail-only renderer; Dashboard owns a flat turn list.
+    dashboard = (WEBUI / "ui" / "dashboard" / "js" / "dashboard.js").read_text(encoding="utf-8")
+    dashboard_css = (WEBUI / "ui" / "dashboard" / "dashboardcss" / "dashboard.css").read_text(encoding="utf-8")
+    assert 'class="tl-flat-turns" id="trace-sessions"' in dashboard
+    assert 'class="paper-card tl-session"' not in dashboard
+    assert 'class="tl-turn"' in dashboard
+    assert 'window.ThycaTraceDetail = Object.freeze' in trace
+    assert "ThycaRouter.register" not in trace
+    assert ".dashboard-shell .tl-turn" in dashboard_css
+    assert ".tl-session" in trace_css  # legacy standalone asset is preserved, not active
     # The retired per-row grid must not creep back in.
     assert "session-body" not in sidebar + trace
     assert ".session-item" not in sidebar_css

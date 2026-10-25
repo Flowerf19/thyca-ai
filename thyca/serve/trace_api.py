@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import parse_qs
 
 from thyca.core.protocol import ToolCall
-from thyca.serve.trace import TurnSummary, aggregate, turns_from_session
+from thyca.serve.trace import TurnSummary, aggregate, scope_turn_to_bot, turns_from_session
 from thyca.sessions.wire import message_dict, tool_call_dict
 
 if TYPE_CHECKING:
@@ -102,13 +102,12 @@ def _apply_trace_filters(turns: list[TurnSummary], qs: dict) -> list[TurnSummary
     to = (qs.get("to", [""])[0] or "").strip()
     filtered = turns
     if bot:
-        # bot_id is the real attribution (which bot ran the turn). Session
-        # DM/participation only fills in for old turns recorded before
-        # per-turn attribution existed.
+        # Project before model/status/search/date filtering: delegated child
+        # work belongs to its bot even when the turn's first bot differs.
+        # Session membership is context, never proof of metric attribution.
         filtered = [
-            t for t in filtered
-            if (t.bot_id or t.session_dm) == bot
-            or (t.bot_id is None and bot in t.session_bots)
+            scoped for turn in filtered
+            if (scoped := scope_turn_to_bot(turn, bot)) is not None
         ]
     if model and model != "all":
         filtered = [t for t in filtered if (t.model or "unknown") == model]

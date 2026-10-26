@@ -18,6 +18,7 @@
 .message-user p{margin:0;font:17px/1.55 var(--serif)}
 .message-user footer{display:flex;justify-content:flex-end;gap:7px;align-items:center;font-size:9px;color:#a2937a;margin-top:8px}
 .message-user footer svg{width:13px;height:13px}
+.message-user .message-source{margin-right:auto}
 .message-assistant{position:relative}
 .message-byline{display:flex;align-items:center;gap:11px;font:600 19px var(--serif);color:var(--bot-ink,var(--forest));margin-bottom:13px}
 .message-byline:after{content:'';height:1px;flex:1;background:#dfd6c370}

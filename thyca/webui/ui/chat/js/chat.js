@@ -1,7 +1,45 @@
 // Chat screen: messages, composer, session switching, real NDJSON turn stream.
 'use strict';
 const fmtTime = ts => { const d = ts ? new Date(ts) : new Date(); return Number.isFinite(d.getTime()) ? d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : ''; };
-function userMessage(text, time) { return `<article class="message-user"><p>${escapeHTML(text).replace(/\n/g, '<br>')}</p><footer><time>${time}</time>${icon('check')}</footer></article>`; }
+function userMessage(text, time) {
+  const framed = discordConversationHtml(text);
+  const body = framed ? framed.html : `<p>${escapeHTML(text).replace(/\n/g, '<br>')}</p>`;
+  const source = framed ? `<span class="message-source">${framed.label}</span>` : '';
+  return `<article class="message-user">${body}<footer>${source}<time>${time}</time>${icon('check')}</footer></article>`;
+}
+/* Discord bridge posts (thyca-discord-mcp build_conversation_prompt) wrap
+   a compact conversation JSON between UNTRUSTED_CONVERSATION markers after
+   trusted/policy/task scaffolding meant for the LLM, not the reader.
+   Display layer only: parse the framed JSON into one readable line per
+   message (sender name from participants, <@uid> mentions resolved),
+   never the scaffolding, never raw JSON, never unescaped HTML. */
+function discordConversationHtml(text) {
+  const m = String(text || '').match(/UNTRUSTED_CONVERSATION job_ref=(\S+) START\n([\s\S]*?)\nUNTRUSTED_CONVERSATION job_ref=\1 END/);
+  if (!m) return null;
+  const inner = m[2].trim();
+  let frame = null;
+  try { frame = JSON.parse(inner); } catch { frame = null; }
+  const messages = frame && typeof frame === 'object' && Array.isArray(frame.messages) ? frame.messages : null;
+  if (!messages) {
+    // Unparseable frame: show the inner text escaped, without markers.
+    return { label: 'Từ Discord', html: `<p>${escapeHTML(inner).replace(/\n/g, '<br>')}</p>` };
+  }
+  const names = {};
+  for (const p of Array.isArray(frame.participants) ? frame.participants : []) {
+    if (p && p.uid) names[String(p.uid)] = String(p.display_name || p.uid);
+  }
+  const shortUid = uid => { const s = String(uid); return s.length > 12 ? s.slice(0, 6) + '…' + s.slice(-4) : s; };
+  const nameOf = uid => names[String(uid)] || shortUid(uid);
+  const textOf = raw => escapeHTML(String(raw ?? '')).replace(/&lt;@([^&<>]+)&gt;/g,
+    (hit, uid) => '@' + escapeHTML(nameOf(String(uid).trim()))).replace(/\n/g, '<br>');
+  const lines = [];
+  for (const item of messages) {
+    if (!item || typeof item !== 'object') continue;
+    lines.push(`<strong>${escapeHTML(nameOf(item.sender_uid))}</strong> ${textOf(item.text)}`);
+  }
+  if (!lines.length) return { label: 'Từ Discord', html: `<p>${escapeHTML(inner).replace(/\n/g, '<br>')}</p>` };
+  return { label: 'Từ Discord', html: `<p>${lines.join('<br>')}</p>` };
+}
 function assistantMessage(botId, content, time, toolNames = []) {
   const b = getBot(botId) || { id: botId, name: botId || 'Thyca', palette: derivePalette('#a65a42') };
   const tools = toolNames.length ? `<span class="usage-pill">${icon('leaf')}Đã dùng: ${toolNames.map(escapeHTML).join(', ')}</span>` : '';

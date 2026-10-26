@@ -148,6 +148,43 @@ def bot_dm(handler, app: ChatApp | None, bot_id: str) -> None:
         _sessions_error(handler, exc)
 
 
+def bot_exchanges(handler, app: ChatApp | None, bot_id: str) -> None:
+    """``GET /api/bots/<bot_id>/exchanges`` — bots this bot exchanged
+    messages with (read-only, newest pair first).
+
+    Items: ``{partner, count, last_ts}``. Unknown bots read as 404,
+    matching the room-bots route style."""
+    if _missing_chat(handler, app):
+        return
+    try:
+        handler._json(200, {"exchanges": app.dm_exchange_partners(bot_id)})
+    except RegistryError as exc:
+        handler._json(404, {"error": str(exc)})
+    except Exception as exc:
+        _sessions_error(handler, exc)
+
+
+def bot_exchange_thread(
+    handler, app: ChatApp | None, bot_id: str, partner_id: str
+) -> None:
+    """``GET /api/bots/<bot_id>/exchanges/<partner>`` — every recorded
+    message between the two bots, oldest first (read-only).
+
+    Items carry ``sender/kind/content/ts/trace_id/span_id``. The partner
+    need not be registered (deleted bots still read by id); an unknown
+    base bot reads as 404."""
+    if _missing_chat(handler, app):
+        return
+    try:
+        handler._json(
+            200, {"messages": app.dm_exchange_thread(bot_id, partner_id)}
+        )
+    except RegistryError as exc:
+        handler._json(404, {"error": str(exc)})
+    except Exception as exc:
+        _sessions_error(handler, exc)
+
+
 def bot_operations(
     handler, app: ChatApp | None, bot_id: str, session_id: str, query: str,
 ) -> None:

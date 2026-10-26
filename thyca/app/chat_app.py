@@ -940,6 +940,40 @@ class ChatApp:
         session = self._sessions.store.load(session_id)
         return list(session.bots) if session.bots else ["thyca"]
 
+    def _exchange_rooms(self) -> list[list]:
+        """Shareable room transcripts for exchange pairing.
+
+        Only ordinary (non-DM) rooms: bus rows are never written into
+        DMs by design, and other bots' DMs are private. Callers pass
+        the per-room message lists to :mod:`thyca.bots.exchanges`."""
+        rooms: list[list] = []
+        for session in self._sessions.list_sessions():
+            if session.dm_bot is not None:
+                continue
+            rooms.append(list(session.messages or []))
+        return rooms
+
+    def dm_exchange_partners(self, bot_id: str) -> list[dict]:
+        """Bots this bot exchanged messages with, newest pair first.
+
+        Each item: ``{partner, count, last_ts}``. Unknown bots raise
+        :class:`RegistryError` (404 at the serve layer, like ``bot_dm``)."""
+        from thyca.bots.exchanges import partners_for
+
+        self._bots.require(bot_id)
+        return partners_for(bot_id, self._exchange_rooms())
+
+    def dm_exchange_thread(self, bot_id: str, partner_id: str) -> list[dict]:
+        """Every recorded message between two bots, oldest first.
+
+        Items carry ``sender/kind/content/ts/trace_id/span_id``. The
+        partner need not be a registered bot (deleted bots still read
+        by id); an unknown base bot raises :class:`RegistryError`."""
+        from thyca.bots.exchanges import pair_thread
+
+        self._bots.require(bot_id)
+        return pair_thread(bot_id, partner_id, self._exchange_rooms())
+
     def set_room_bots(self, session_id: str, bot_id: str, action: str) -> list[str]:
         """Add/remove one bot from a room. Returns the new participant list.
 
@@ -1637,6 +1671,10 @@ class ChatApp:
             # (phase 2A) skips them absolutely; kind stays for FE/trace.
             meta: dict = {
                 "bot_id": envelope.sender,
+                # Explicit pair side for new rows: older rows resolve the
+                # recipient best-effort through the result row's
+                # parent_span_id (see thyca/bots/exchanges.py).
+                "recipient": envelope.recipient,
                 **self._bot_display_meta(envelope.sender),
                 "kind": envelope.kind,
                 "bus_event": True,

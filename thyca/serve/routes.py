@@ -28,6 +28,8 @@ from thyca.serve.errors import _with_json
 from thyca.serve.memory import memory_endpoint
 from thyca.serve.sessions_api import (
     bot_dm,
+    bot_exchange_thread,
+    bot_exchanges,
     bot_operations,
     bots_list,
     session_bots,
@@ -67,6 +69,10 @@ _TRACE_RE = re.compile(r"^/api/traces$")
 _TRACE_STATS_RE = re.compile(r"^/api/traces/stats$")
 _TRACE_DETAIL_RE = re.compile(rf"^/api/traces/({SESSION_ID_PATTERN})/(\d+)$")
 _BOT_DM_RE = re.compile(r"^/api/bots/([a-z0-9]+(?:-[a-z0-9]+)*)/dm$")
+_BOT_EXCHANGES_RE = re.compile(r"^/api/bots/([a-z0-9]+(?:-[a-z0-9]+)*)/exchanges$")
+_BOT_EXCHANGE_THREAD_RE = re.compile(
+    r"^/api/bots/([a-z0-9]+(?:-[a-z0-9]+)*)/exchanges/([a-z0-9]+(?:-[a-z0-9]+)*)$"
+)
 _BOT_SETTINGS_RE = re.compile(r"^/api/bots/([a-z0-9]+(?:-[a-z0-9]+)*)/settings$")
 _BOT_OPERATIONS_RE = re.compile(
     rf"^/api/bots/([a-z0-9]+(?:-[a-z0-9]+)*)/rooms/({SESSION_ID_PATTERN})/operations$"
@@ -133,6 +139,14 @@ def make_handler(
             match = _BOT_DM_RE.fullmatch(path)
             if match:
                 bot_dm(self, chat, match.group(1))
+                return
+            match = _BOT_EXCHANGE_THREAD_RE.fullmatch(path)
+            if match:
+                bot_exchange_thread(self, chat, match.group(1), match.group(2))
+                return
+            match = _BOT_EXCHANGES_RE.fullmatch(path)
+            if match:
+                bot_exchanges(self, chat, match.group(1))
                 return
             match = _BOT_SETTINGS_RE.fullmatch(path)
             if match:

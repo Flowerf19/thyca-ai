@@ -81,30 +81,150 @@ function cardArticle(m, detail, time, userAfter) {
   const lead = content && content !== String(card.title || '').trim() ? contentHtml(m.content) : '';
   return assistantMessage(botId, lead + body, time, names);
 }
+/* Bot<->bot exchange rows in the room transcript: bus rows (bus_event)
+   pair via explicit meta.recipient or the in-room result row whose
+   parent_span_id is the bus span; result rows pair via the in-room bus
+   row. Mirrors thyca/bots/exchanges.py (best effort, display only). */
+function exchangePairOf(m, messages) {
+  const meta = m && m.meta || {};
+  if (m.role === 'assistant' && meta.bus_event === true) {
+    const sender = String(meta.bot_id || '');
+    let partner = String(meta.recipient || '');
+    if (!partner && typeof meta.span_id === 'string' && meta.span_id) {
+      const res = messages.find(n => n && n.role === 'assistant' && n.meta
+        && n.meta.kind === 'result' && n.meta.parent_span_id === meta.span_id);
+      partner = String((res && res.meta.bot_id) || '');
+    }
+    return sender && partner && sender !== partner ? [sender, partner] : null;
+  }
+  if (m.role === 'assistant' && meta.kind === 'result') {
+    const bot = String(meta.bot_id || '');
+    const parent = String(meta.parent_span_id || '');
+    const bus = parent && messages.find(n => n && n.role === 'assistant' && n.meta
+      && n.meta.bus_event === true && n.meta.span_id === parent);
+    const sender = String((bus && bus.meta.bot_id) || '');
+    return sender && bot && sender !== bot ? [sender, bot] : null;
+  }
+  return null;
+}
+function peerRunKey(pair) { return [...pair].sort().join('\u0000'); }
+function peerDisplayName(id) { const b = getBot(id); return (b && b.name) || id; }
+function peerBubble(m, time) {
+  const names = (m.tool_calls || []).map(c => c.skill || c.name).filter(Boolean);
+  return assistantMessage(String(m.meta?.bot_id || ''), contentHtml(m.content), time, names);
+}
+function peerDetails(run) {
+  const [a, b] = run.pair;
+  return `<details class="peer-exchange"><summary><span class="peer-exchange-lead">${escapeHTML(peerDisplayName(a))} và ${escapeHTML(peerDisplayName(b))} đã trao đổi ${run.rows.length} tin</span></summary><div class="peer-exchange-rows">${run.rows.join('')}</div></details>`;
+}
 function renderTranscript(detail) {
   const nodes = [];
   const messages = detail.messages || [];
+  // Consecutive bot<->bot exchange rows with the same pair collapse
+  // into one expandable entry; anything else flushes the open run.
+  let peerRun = null;
+  const flushPeerRun = () => {
+    if (!peerRun) return;
+    nodes.push(peerRun.rows.length > 1 ? peerDetails(peerRun) : peerRun.rows[0]);
+    peerRun = null;
+  };
   for (let i = 0; i < messages.length; i++) {
     const m = messages[i];
     if (!m || m.role === 'system' || m.role === 'tool') continue;
     const kind = m.meta?.kind;
     if (kind === 'naming' || kind === 'compaction') continue;
     const time = fmtTime(m.ts);
-    if (m.role === 'user') { nodes.push(userMessage(m.content || '', time)); continue; }
-    if (m.role !== 'assistant') continue;
+    if (m.role === 'user') { flushPeerRun(); nodes.push(userMessage(m.content || '', time)); continue; }
+    if (m.role !== 'assistant') { flushPeerRun(); continue; }
     const card = m.meta?.card;
     if (m.meta?.kind === 'card' && card && typeof card === 'object'
         && (card.type === 'question' || card.type === 'error')) {
       // A later user message is the answer itself; consent cards rely on
       // the decided set instead (the backend never echoes a user row).
+      flushPeerRun();
       const userAfter = messages.slice(i + 1).some(next => next && next.role === 'user');
       nodes.push(cardArticle(m, detail, time, userAfter));
       continue;
     }
+    const pair = exchangePairOf(m, messages);
+    if (pair) {
+      const key = peerRunKey(pair);
+      if (!peerRun || peerRun.key !== key) { flushPeerRun(); peerRun = { key, pair, rows: [] }; }
+      peerRun.rows.push(peerBubble(m, time));
+      continue;
+    }
+    flushPeerRun();
     const names = (m.tool_calls || []).map(c => c.skill || c.name).filter(Boolean);
     nodes.push(assistantMessage(String(m.meta?.bot_id || detail.dm || ''), contentHtml(m.content), time, names));
   }
+  flushPeerRun();
   return nodes.join('');
+}
+
+/* DM exchange groups: in a bot's DM, one entry per bot it exchanged
+   messages with (read from the origin rooms via the exchanges API).
+   Entries append at the end of the transcript; tapping one opens the
+   A-B thread modal. */
+function botFace(id) {
+  const b = getBot(id);
+  if (b) { try { return avatar(b); } catch { /* fall through to initial */ } }
+  const name = (b && b.name) || String(id || '?');
+  return `<span class="seal-avatar seal-fallback" aria-hidden="true">${escapeHTML(name.slice(0, 1).toUpperCase())}</span>`;
+}
+async function renderExchangeGroups(detail) {
+  document.querySelectorAll('#message-list [data-exchange-partner]').forEach(n => n.remove());
+  const owner = detail && detail.dm;
+  const sid = currentSession;
+  if (!owner) return;
+  let partners = [];
+  try {
+    const data = await getJson(`/api/bots/${encodeURIComponent(owner)}/exchanges`);
+    partners = (data && data.exchanges) || [];
+  } catch { return; }
+  if (currentSession !== sid || !partners.length) return;
+  const list = $('#message-list');
+  if (!list) return;
+  for (const p of partners) {
+    if (!p || !p.partner) continue;
+    const name = peerDisplayName(p.partner);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'exchange-group';
+    btn.dataset.exchangePartner = p.partner;
+    btn.setAttribute('aria-label', `${p.count} messages with ${name}`);
+    btn.innerHTML = `${botFace(p.partner)}<span><strong>${escapeHTML(String(p.count))} messages</strong> with ${escapeHTML(name)}</span>`;
+    btn.addEventListener('click', () => openExchangeModal(owner, p.partner));
+    list.append(btn);
+  }
+}
+async function openExchangeModal(ownerId, partnerId) {
+  const owner = getBot(ownerId) || { id: ownerId, name: ownerId };
+  const partner = getBot(partnerId) || { id: partnerId, name: partnerId };
+  $('#exchange-modal-title').innerHTML =
+    `${botFace(owner.id)}<span>${escapeHTML(owner.name)}</span><span class="exchange-vs" aria-hidden="true">\u21c4</span>${botFace(partner.id)}<span>${escapeHTML(partner.name)}</span>`;
+  const body = $('#exchange-modal-body');
+  const dialog = $('#exchange-modal');
+  if (!body || !dialog) return;
+  body.innerHTML = '<p class="exchange-loading">Đang tải hội thoại…</p>';
+  dialog.showModal();
+  let thread = [];
+  try {
+    const data = await getJson(`/api/bots/${encodeURIComponent(ownerId)}/exchanges/${encodeURIComponent(partnerId)}`);
+    thread = (data && data.messages) || [];
+  } catch (err) {
+    body.innerHTML = `<p class="exchange-error">${escapeHTML(err.message || 'Không tải được.')}</p>`;
+    return;
+  }
+  if (!thread.length) {
+    body.innerHTML = '<p class="exchange-empty">Chưa có tin nhắn nào được ghi.</p>';
+    return;
+  }
+  body.innerHTML = thread.map(row => {
+    const author = row.author || row.sender;
+    const b = getBot(author) || { id: author, name: author };
+    const side = author === ownerId ? 'owner' : 'partner';
+    return `<div class="exchange-row is-${side}"><header><span>${escapeHTML(b.name || author)}</span><time>${fmtTime(row.ts)}</time></header><div class="exchange-bubble markdown-body">${contentHtml(row.content || '')}</div></div>`;
+  }).join('');
 }
 
 /* Card answers. Question/error chips send the visible label as a normal
@@ -175,6 +295,7 @@ async function loadSession(id, title, botId) {
     $('#session-eyebrow').textContent = group ? 'Hội thoại chung' : 'Sổ trò chuyện · ' + ((getBot(detail.dm || selectedBot) || {}).name || 'Thyca');
     if (detail.dm && getBot(detail.dm)) selectedBot = detail.dm;
     $('#message-list').innerHTML = renderTranscript(detail);
+    void renderExchangeGroups(detail);
     if (detail.running) followRunningTurn(id);        // API: GET /api/sessions/<id>/turn/stream replay
   } catch (err) {
     if (nav !== chatNavCurrent() || currentSession !== id) return;
@@ -200,6 +321,7 @@ async function selectBot(id) {
     $('#chat-title').textContent = detail.title || b.name;
     $('#session-eyebrow').textContent = 'Sổ trò chuyện · ' + b.name;
     $('#message-list').innerHTML = renderTranscript(detail);
+    void renderExchangeGroups(detail);
     if (detail.running) followRunningTurn(detail.id);   // API: GET turn/stream replay — rejoin in-flight turn after reload
     bots.forEach(updateCard); busy(runs.has(detail.id)); toBottom(true);
   } catch (err) {
@@ -380,6 +502,7 @@ async function finishTurn(token, detail) {
     try {
       const fresh = detail && detail.messages ? detail : await getJson(`/api/sessions/${encodeURIComponent(token.sessionId)}`);
       $('#message-list').innerHTML = renderTranscript(fresh);
+      void renderExchangeGroups(fresh);
       if (fresh.title) $('#chat-title').textContent = fresh.title;
     } catch { /* keep the streamed node as-is */ }
   }

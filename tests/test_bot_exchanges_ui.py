@@ -1,0 +1,143 @@
+"""Bot<->bot exchange UI: room collapse + DM group entries + thread modal.
+
+Render layer only (node harness): the exchanges/thread endpoints are
+covered by tests/test_bot_exchanges.py. Click dispatch cannot run here
+(the harness stubs addEventListener); the entry buttons carry the
+partner hook the app click path reads, and the modal is exercised by
+calling openExchangeModal directly.
+"""
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+
+_TUI_TAIL = """return {
+  renderTranscript, renderExchangeGroups, openExchangeModal,
+  normalizeBot, getBot, bots, groups,
+  setSession: v => { currentSession = v; },
+};"""
+
+_SCRIPT = r"""
+import { installDom, loadScripts, CHAT_CHAIN } from './tests/webui_dom.mjs';
+const doc = installDom();
+const ui = loadScripts(CHAT_CHAIN, TAIL);
+const result = {};
+
+ui.bots.push(ui.normalizeBot({ id: 'thyca', name: 'Thyca', role: 'bạn', agent_status: { state: 'idle' } }, 0));
+ui.bots.push(ui.normalizeBot({ id: 'helper', name: 'Helper', role: 'giúp việc', agent_status: { state: 'idle' } }, 0));
+
+// Room: consecutive same-pair rows collapse; a lone exchange row stays plain.
+const bus1 = { role: 'assistant', content: 'làm giúp mình',
+  meta: { bot_id: 'thyca', kind: 'message', bus_event: true, trace_id: 't1', span_id: 'sp1', recipient: 'helper' } };
+const res1 = { role: 'assistant', content: 'xong',
+  meta: { bot_id: 'helper', kind: 'result', trace_id: 't1', parent_span_id: 'sp1', span_id: 'sp2' } };
+const bus2 = { role: 'assistant', content: 'old way',
+  meta: { bot_id: 'helper', kind: 'message', bus_event: true, trace_id: 't2', span_id: 'sp3' } };
+const res2 = { role: 'assistant', content: 'ok',
+  meta: { bot_id: 'thyca', kind: 'result', trace_id: 't2', parent_span_id: 'sp3', span_id: 'sp4' } };
+const lone = { role: 'assistant', content: 'chờ đã',
+  meta: { bot_id: 'thyca', kind: 'message', bus_event: true, trace_id: 't3', span_id: 'sp5', recipient: 'ghost' } };
+doc.querySelector('#message-list').innerHTML = ui.renderTranscript({ messages: [
+  { role: 'user', content: 'bắt đầu' }, bus1, res1, bus2, res2,
+  { role: 'assistant', content: 'việc thường', meta: { bot_id: 'thyca' } },
+  lone,
+] });
+const folds = [...doc.querySelectorAll('#message-list .peer-exchange')];
+result.room = {
+  folds: folds.length,
+  lead: folds[0]?.querySelector('.peer-exchange-lead')?.textContent ?? null,
+  rows: folds[0] ? [...folds[0].querySelectorAll('.message-assistant')].length : 0,
+  bubbles: doc.querySelectorAll('#message-list .message-assistant').length,
+};
+
+// DM: group entries render per partner with the hook the modal opener reads.
+globalThis.fetch = async (url, opts = {}) => {
+  if (String(url).endsWith('/api/bots/thyca/exchanges')) {
+    return { ok: true, json: async () => ({ exchanges: [
+      { partner: 'helper', count: 4, last_ts: '2026-10-26T10:03:00Z' },
+    ] }) };
+  }
+  throw new Error('unexpected fetch ' + url);
+};
+ui.setSession('dm-thyca');
+doc.querySelector('#message-list').innerHTML = ui.renderTranscript({
+  dm: 'thyca', messages: [{ role: 'user', content: 'chào' }] });
+await ui.renderExchangeGroups({ dm: 'thyca' });
+const groups = [...doc.querySelectorAll('#message-list [data-exchange-partner]')];
+result.dm = {
+  groups: groups.map(g => [g.getAttribute('data-exchange-partner'), g.getAttribute('aria-label')]),
+};
+
+// Modal: header A ⇄ B, bubbles per author side, closes cleanly.
+globalThis.fetch = async (url, opts = {}) => {
+  if (String(url).includes('/exchanges/')) {
+    return { ok: true, json: async () => ({ messages: [
+      { sender: 'thyca', partner: 'helper', author: 'thyca', kind: 'message', content: 'làm giúp', ts: '2026-10-26T10:00:00Z', trace_id: 't1', span_id: 'sp1' },
+      { sender: 'thyca', partner: 'helper', author: 'helper', kind: 'result', content: 'xong', ts: '2026-10-26T10:01:00Z', trace_id: 't1', span_id: 'sp2' },
+    ] }) };
+  }
+  throw new Error('unexpected fetch ' + url);
+};
+await ui.openExchangeModal('thyca', 'helper');
+const dialog = doc.querySelector('#exchange-modal');
+result.modal = {
+  open: !!dialog?.open,
+  title: dialog?.querySelector('#exchange-modal-title')?.textContent ?? null,
+  rows: [...(dialog?.querySelectorAll('.exchange-row') ?? [])].map(
+    r => [r.className, r.querySelector('header span')?.textContent ?? null,
+          r.querySelector('.exchange-bubble')?.textContent ?? null]),
+};
+dialog?.close();
+result.modalClosed = !dialog?.open;
+console.log(JSON.stringify(result));
+"""
+
+
+@pytest.fixture(scope="module")
+def node() -> str:
+    binary = shutil.which("node")
+    if binary is None:
+        pytest.skip("node not installed")
+    return binary
+
+
+@pytest.fixture(scope="module")
+def exchange_ui(node: str) -> dict:
+    script = _SCRIPT.replace("TAIL", json.dumps(_TUI_TAIL))
+    result = subprocess.run(
+        [node, "--input-type=module", "-e", script],
+        check=True, capture_output=True, text=True, cwd=ROOT,
+    )
+    return json.loads(result.stdout)
+
+
+def test_room_groups_consecutive_same_pair_rows(exchange_ui: dict) -> None:
+    room = exchange_ui["room"]
+    assert room["folds"] == 1
+    assert room["lead"] == "Thyca và Helper đã trao đổi 4 tin"
+    assert room["rows"] == 4
+    # 4 folded rows + 1 plain assistant row + 1 lone exchange row.
+    assert room["bubbles"] == 6
+
+
+def test_dm_renders_group_entry_with_partner_hook(exchange_ui: dict) -> None:
+    assert exchange_ui["dm"]["groups"] == [
+        ["helper", "4 messages with Helper"],
+    ]
+
+
+def test_modal_shows_both_sides_and_closes(exchange_ui: dict) -> None:
+    modal = exchange_ui["modal"]
+    assert modal["open"] is True
+    assert "Thyca" in modal["title"] and "Helper" in modal["title"]
+    assert [r[1] for r in modal["rows"]] == ["Thyca", "Helper"]
+    assert [r[2] for r in modal["rows"]] == ["làm giúp", "xong"]
+    assert any("is-owner" in r[0] for r in modal["rows"])
+    assert any("is-partner" in r[0] for r in modal["rows"])
+    assert exchange_ui["modalClosed"] is True

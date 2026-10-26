@@ -55,6 +55,12 @@ $('#message-list').addEventListener('click', async e => {
   const retry = e.target.closest('[data-retry]'); const copy = e.target.closest('[data-copy]');
   if (retry && !runs.has(currentSession)) sendTurn('', retry.dataset.retry, { retry: true });   // API: retry:true re-runs the last user message
   if (copy) { const text = $('.live-copy', copy.closest('article')).innerText; try { await navigator.clipboard.writeText(text); toast('Đã sao chép phản hồi.'); } catch { toast('Trình duyệt chưa cho phép sao chép.'); } }
+  // Card answers: label chips ride the composer send path; consent chips
+  // POST the option id to this DM's private-followup endpoint.
+  const labelChip = e.target.closest('[data-card-label]');
+  if (labelChip && !labelChip.disabled) answerCardLabel(labelChip.dataset.cardLabel, labelChip);
+  const consentChip = e.target.closest('[data-pf-choice]');
+  if (consentChip && !consentChip.disabled) void decidePrivateFollowup(consentChip.dataset.pendingId, consentChip.dataset.revision, consentChip.dataset.pfChoice, consentChip);
 });
 $('#session-info').onclick = () => {
   const g = groups.find(g => g.id === currentSession);

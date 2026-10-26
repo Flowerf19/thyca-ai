@@ -43,6 +43,9 @@
 @keyframes feedIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
 @keyframes feedOut{0%{opacity:1;max-height:28px}55%{opacity:0}100%{opacity:0;max-height:0;transform:translateY(-6px)}}
 .progress-list li:not(:last-child):before{position:absolute;content:'';width:1px;height:16px;top:18px;left:7px;background:var(--bot-rule)}
+/* The row above a thinking line draws nothing: li-think hides its own
+   step-mark, so that connector would dangle into empty space. */
+.progress-list li:has(+ .li-think):before{display:none}
 .progress-list li.li-think{min-height:28px;margin-bottom:0;font:18px/28px var(--serif);color:var(--bot-muted)}
 .progress-list li.li-think:before{display:none}
 .progress-list li.li-think .step-mark{display:none}
@@ -50,7 +53,11 @@
 .step-mark svg{width:11px;height:11px;stroke-width:2}
 .progress-list li.complete{color:var(--bot-muted)}
 .progress-list li.complete .step-mark{background:var(--bot-ink);border-color:var(--bot-ink);color:var(--bot-stamp)}
-.progress-list li.current{color:var(--ink)}
+.progress-list li.current{color:var(--bot-ink)}
+/* Thinking rows run in the same bot-brown while current (user decision:
+   current = bot palette, done = muted); explicit so a later generic
+   tweak cannot silently drop them back. */
+.progress-list li.li-think.current{color:var(--bot-ink)}
 .progress-list li.current .step-mark{background:var(--bot-mid);border:4px solid var(--bot-paper);box-shadow:0 0 0 1px var(--bot-border)}
 .progress-list li.pending{opacity:.7}
 .thought-extra{font:15px/26px var(--serif);padding-top:11px;margin:10px 0 0;border-top:1px dashed var(--bot-rule)}

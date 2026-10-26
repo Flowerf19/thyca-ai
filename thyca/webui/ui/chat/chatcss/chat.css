@@ -69,6 +69,21 @@
 .mention-popup{position:absolute;bottom:100%;left:20px;min-width:220px;background:#fffaf0;box-shadow:var(--shadow);border:1px solid var(--line);border-radius:9px;padding:5px}
 .mention-option{display:block;width:100%;text-align:left;padding:9px 12px;font-size:13px;border-radius:5px}
 .mention-option:hover,.mention-option:focus{background:#e9e5d6}
+/* Structured user cards (ask_user/report_error/consent): title + optional
+   subtitle/progress + clickable choice chips. Chips are real buttons so
+   they focus and disable like any control. */
+.user-card{margin-top:10px;border:1px solid #e0d3bc;border-radius:12px;background:#fffbf1;padding:12px 14px}
+.user-card h3{margin:0 0 4px;font:600 16px var(--serif);color:#554732}
+.user-card .card-sub{margin:0 0 4px;font-size:13px;color:#7d6f57}
+.user-card .card-progress{list-style:none;margin:6px 0 4px;padding:0;display:flex;flex-direction:column;gap:4px}
+.user-card .card-progress-row{display:flex;align-items:center;gap:8px;font-size:13px;color:#5c5142}
+.user-card .card-progress-mark{width:16px;text-align:center;color:#8a7a5c}
+.user-card .card-progress-row.is-done{color:#3f5a37}
+.user-card .card-progress-row.is-stuck{color:#9c4f3f;font-weight:600}
+.user-card .card-choices{display:flex;flex-wrap:wrap;gap:8px;margin-top:9px}
+.user-card .card-choice{border:1px solid #c9b891;border-radius:999px;background:#fffdf7;padding:8px 15px;font:600 13px var(--sans);color:#5c5142;cursor:pointer}
+.user-card .card-choice:hover:not(:disabled),.user-card .card-choice:focus-visible:not(:disabled){border-color:#5c8a52;background:#eaf3e2;color:#33582f}
+.user-card .card-choice:disabled{opacity:.55;cursor:default}
 @media(min-width:1600px){
 .conversation-content{padding-top:38px}
 .chat-title-head{padding:28px 44px}

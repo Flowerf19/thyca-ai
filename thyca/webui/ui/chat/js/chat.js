@@ -14,21 +14,137 @@ const contentHtml = text => window.formatMarkdown
   ? window.formatMarkdown(text)
   : escapeHTML(String(text || '')).split(/\n{2,}/).map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
 
-/* GET /api/sessions/<id>.messages -> transcript. Assistant turns attribute
-   via meta.bot_id; tool names collapse into a per-message pill. */
+/* Structured cards (ask_user/report_error/consent) ride on assistant rows:
+   meta = {kind:'card', card:{type:'question'|'error', ...}}. Room cards
+   carry content:"" (or the error summary); the DM consent card carries
+   the title as content plus card.private_followup. Unknown card types
+   fall through to the plain assistant row. */
+function cardLabelOf(option) {
+  const label = typeof option === 'string' ? option : String(option?.label || option?.id || '');
+  return label.trim();
+}
+function cardChoices(card, answered, botId, choiceHook) {
+  const options = Array.isArray(card.options) ? card.options
+    : Array.isArray(card.choices) ? card.choices : [];
+  const chips = [];
+  for (const option of options) {
+    const label = cardLabelOf(option);
+    if (!label) continue;
+    chips.push(`<button type="button" class="card-choice"${answered ? ' disabled' : ''} data-card-bot="${escapeHTML(botId)}" ${choiceHook(option, label)}>${escapeHTML(label)}</button>`);
+  }
+  if (!chips.length) return '';
+  return `<div class="card-choices">${chips.join('')}</div>`;
+}
+function renderQuestionCard(card, answered, botId) {
+  const title = String(card.title || 'Chọn một cách');
+  const sub = typeof card.subtitle === 'string' && card.subtitle.trim()
+    ? `<p class="card-sub">${escapeHTML(card.subtitle.trim())}</p>` : '';
+  const hook = (option, label) => card.private_followup?.pending_id
+    ? `data-pf-choice="${escapeHTML(String(option?.id || label))}" data-pending-id="${escapeHTML(String(card.private_followup.pending_id))}" data-revision="${escapeHTML(String(card.private_followup.revision ?? ''))}"`
+    : `data-card-label="${escapeHTML(label)}"`;
+  return `<section class="user-card card-question" aria-label="${escapeHTML(title)}"><h3>${escapeHTML(title)}</h3>${sub}${cardChoices(card, answered, botId, hook)}</section>`;
+}
+function renderErrorCard(card, answered, botId) {
+  const steps = [];
+  for (const step of Array.isArray(card.progress) ? card.progress : []) {
+    const label = typeof step === 'string' ? step.trim() : String(step?.label || '').trim();
+    if (!label) continue;
+    const state = typeof step === 'object' ? String(step.state || '') : '';
+    const mark = state === 'done' ? '\u2713' : state === 'stuck' ? '!' : '\u25cb';
+    steps.push(`<li class="card-progress-row is-${escapeHTML(state || 'todo')}"><span class="card-progress-mark" aria-hidden="true">${mark}</span>${escapeHTML(label)}</li>`);
+  }
+  const hint = typeof card.hint === 'string' && card.hint.trim()
+    ? `<p class="card-sub">${escapeHTML(card.hint.trim())}</p>` : '';
+  const hook = (option, label) => `data-card-label="${escapeHTML(label)}"`;
+  return `<section class="user-card card-error" aria-label="Bot gặp lỗi"><h3>Làm dở tới đâu</h3><ul class="card-progress">${steps.join('')}</ul><h3>Làm tiếp thế nào?</h3>${hint}${cardChoices(card, answered, botId, hook)}</section>`;
+}
+/* Consent decisions the backend never echoes as a user row: once a
+   choice POST succeeds, its card stays disabled via this set, keyed by
+   pending_id:revision — independent of later re-renders. No backend
+   change: the set lives in the client that owns the chips. */
+const decidedConsents = new Set();
+function consentKeyOf(card) {
+  const pf = card && typeof card === 'object' ? card.private_followup : null;
+  if (!pf || typeof pf !== 'object' || !pf.pending_id) return '';
+  return `${pf.pending_id}:${String(pf.revision ?? '')}`;
+}
+function cardArticle(m, detail, time, userAfter) {
+  const card = m.meta.card;
+  const botId = String(m.meta?.bot_id || detail.dm || '');
+  const names = (m.tool_calls || []).map(c => c.skill || c.name).filter(Boolean);
+  // Consent decisions are never echoed as a user row by the backend, so
+  // a decided card stays disabled via the decided set as well.
+  const answered = userAfter || (consentKeyOf(card) && decidedConsents.has(consentKeyOf(card)));
+  const body = card.type === 'error' ? renderErrorCard(card, answered, botId) : renderQuestionCard(card, answered, botId);
+  const content = typeof m.content === 'string' ? m.content.trim() : '';
+  // The DM consent card repeats its title as content — render it once.
+  const lead = content && content !== String(card.title || '').trim() ? contentHtml(m.content) : '';
+  return assistantMessage(botId, lead + body, time, names);
+}
 function renderTranscript(detail) {
   const nodes = [];
-  for (const m of detail.messages || []) {
+  const messages = detail.messages || [];
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
     if (!m || m.role === 'system' || m.role === 'tool') continue;
     const kind = m.meta?.kind;
     if (kind === 'naming' || kind === 'compaction') continue;
     const time = fmtTime(m.ts);
     if (m.role === 'user') { nodes.push(userMessage(m.content || '', time)); continue; }
     if (m.role !== 'assistant') continue;
+    const card = m.meta?.card;
+    if (m.meta?.kind === 'card' && card && typeof card === 'object'
+        && (card.type === 'question' || card.type === 'error')) {
+      // A later user message is the answer itself; consent cards rely on
+      // the decided set instead (the backend never echoes a user row).
+      const userAfter = messages.slice(i + 1).some(next => next && next.role === 'user');
+      nodes.push(cardArticle(m, detail, time, userAfter));
+      continue;
+    }
     const names = (m.tool_calls || []).map(c => c.skill || c.name).filter(Boolean);
     nodes.push(assistantMessage(String(m.meta?.bot_id || detail.dm || ''), contentHtml(m.content), time, names));
   }
   return nodes.join('');
+}
+
+/* Card answers. Question/error chips send the visible label as a normal
+   turn through the composer's send path (same busy guard, no bypass).
+   Consent chips POST the option id to this DM's private-followup
+   endpoint, then re-render from fresh detail. */
+function answerCardLabel(label, button) {
+  label = String(label || '').trim();
+  if (!label || !currentSession || runs.has(currentSession)) return false;
+  if (button) button.disabled = true;
+  const botId = String(button?.dataset?.cardBot || '') || selectedBot;
+  // sendTurn resolves false when nothing was actually sent (bot offline
+  // or missing): reopen the chip instead of stranding it disabled.
+  void Promise.resolve(sendTurn(label, botId)).then(
+    ok => { if (!ok && button) button.disabled = false; },
+    () => { if (button) button.disabled = false; });
+  return true;
+}
+async function decidePrivateFollowup(pendingId, revision, choice, button) {
+  const rev = Number(revision);
+  const sessionId = currentSession;
+  if (!pendingId || !Number.isInteger(rev) || !choice
+      || !sessionId || runs.has(sessionId)) return false;
+  const key = `${pendingId}:${String(rev)}`;
+  const group = button ? [...button.closest('.card-choices')?.querySelectorAll('.card-choice') || []] : [];
+  group.forEach(b => { b.disabled = true; });
+  try {
+    await postJson(`/api/sessions/${encodeURIComponent(sessionId)}/private-followup`,
+      { pending_id: pendingId, revision: rev, choice });
+  } catch (err) {
+    group.forEach(b => { b.disabled = false; });
+    toast('Không gửi được lựa chọn: ' + (err.message || err));
+    return false;
+  }
+  decidedConsents.add(key);
+  try {
+    const fresh = await getJson(`/api/sessions/${encodeURIComponent(sessionId)}`);
+    if (currentSession === sessionId && fresh && Array.isArray(fresh.messages)) $('#message-list').innerHTML = renderTranscript(fresh);
+  } catch { /* keep the answered-disabled chips as-is */ }
+  return true;
 }
 
 function updateComposer() {

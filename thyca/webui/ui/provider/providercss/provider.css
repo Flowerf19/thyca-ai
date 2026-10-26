@@ -28,6 +28,9 @@
 .provider-shell .field-wide{grid-column:1/-1}
 .provider-shell .field em{display:block;margin-top:3px;color:#82745c;font-size:10px;font-style:normal;font-weight:400}
 .provider-shell .field em:empty{display:none}
+/* The stored-key note shares the label line so the key input stays level
+   with the API-kind select next to it (block would push the input down). */
+.provider-shell #pv-key-note{display:inline;margin:0 0 0 6px}
 .provider-shell .load-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .provider-shell .load-row .quiet-button{display:inline-flex;align-items:center;gap:7px}
 .provider-shell .field-hint{margin:0;color:#8d8069;font-size:10.5px;line-height:1.5;overflow-wrap:anywhere}

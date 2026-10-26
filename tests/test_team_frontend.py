@@ -2522,3 +2522,22 @@ def test_settings_page_uses_shared_avatar_engine() -> None:
     assert "getJson" not in prefs_block and "postJson" not in prefs_block
     # no dynamic avatar import / inline avatar copy — shared engine only
     assert "import(" not in js
+
+
+def test_current_rows_use_bot_palette_and_no_dangling_connector() -> None:
+    """Follow-up to the think-row fix: user decision is bot-brown
+    (var(--bot-ink)) for EVERY running row, not just think — the old
+    generic `.current{color:var(--ink)}` made running tool rows look
+    unstyled too. The think override now pins the same bot-ink
+    explicitly (renamed from test_think_row_keeps_muted_color_while_current
+    because muted-while-current is no longer the behavior). The
+    connector rule hides the previous row's stub above a mark-less
+    think line. The node harness has no cascade engine, so this pins
+    rule structure/order instead of computed color."""
+    css = (WEBUI / "ui" / "share" / "sidebar.css").read_text(encoding="utf-8")
+    base = css.index(".progress-list li.current{color:var(--bot-ink)}")
+    think = css.index(".progress-list li.li-think.current{color:var(--bot-ink)}")
+    assert think > base
+    assert ".progress-list li:has(+ .li-think):before{display:none}" in css
+    # Same-specificity sibling: the :has rule only wins by coming later.
+    assert css.index(":has(+ .li-think)") > css.index("li:not(:last-child):before")

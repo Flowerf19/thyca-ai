@@ -16,7 +16,8 @@ from urllib.request import Request, urlopen
 from thyca.agent.events import TurnEvent
 from thyca.serve.bridge import SENTINEL
 from thyca.app.chat_app import ChatApp, session_title
-from thyca.config import ModelCfg, default_config, load, save
+from thyca.config import ModelCfg, ProviderEntry, load, save
+from seeded_config import seeded_config
 from thyca.llm.llm_base import ChatReply, LLMError
 from thyca.core.protocol import Message, ToolCall
 from thyca.serve import ServeError, default_webui, make_server
@@ -60,7 +61,7 @@ def _url(httpd, path: str) -> str:
 
 
 def _chat(tmp_path: Path, connect=None) -> ChatApp:
-    save(default_config(), tmp_path / "config.json")
+    save(seeded_config(provider_id="default"), tmp_path / "config.json")
     return ChatApp(tmp_path, load(tmp_path / "config.json"), connect=connect)
 
 
@@ -960,7 +961,7 @@ def test_session_payload_includes_context(tmp_path: Path) -> None:
 
 
 def _chat_small_context(tmp_path: Path) -> ChatApp:
-    cfg = default_config()
+    cfg = seeded_config()
     cfg = replace(cfg, limits=replace(cfg.limits, contextTokens=1000))
     save(cfg, tmp_path / "config.json")
     return ChatApp(tmp_path, load(tmp_path / "config.json"), connect=FakeLLM(ChatReply(content="x")))
@@ -1985,7 +1986,7 @@ def test_stream_model_and_effort_reach_provider(tmp_path: Path, monkeypatch) -> 
         return Spy()
 
     monkeypatch.setattr("thyca.app.chat_app.ConnectFactory.create", create)
-    cfg = default_config()
+    cfg = seeded_config()
     cfg = replace(
         cfg,
         models={"card-model": ModelCfg()},
@@ -2310,17 +2311,14 @@ def test_turn_model_override_routes_to_its_provider(tmp_path: Path) -> None:
     try:
         base_a = f"http://127.0.0.1:{stub_a.server_address[1]}"
         base_b = f"http://127.0.0.1:{stub_b.server_address[1]}"
-        cfg = default_config()
+        cfg = seeded_config()
         cfg = replace(
             cfg,
             providers={
-                "default": replace(
-                    cfg.providers["default"], baseUrl=base_a, apiKey="sk-a"
-                ),
-                "second": replace(
-                    cfg.providers["default"], baseUrl=base_b, apiKey="sk-b"
-                ),
+                "default": ProviderEntry(baseUrl=base_a, apiKey="sk-a"),
+                "second": ProviderEntry(baseUrl=base_b, apiKey="sk-b"),
             },
+            defaultProvider="default",
             defaultModel="model-a",
             models={"model-a": ModelCfg(), "model-b": ModelCfg(provider="second")},
         )

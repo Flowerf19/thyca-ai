@@ -9,7 +9,8 @@ from urllib.request import Request, urlopen
 
 from thyca.serve.bridge import public_turn_error
 from thyca.app.chat_app import ChatApp, InvalidTurnOption, InvalidTurnText, TurnCancelled
-from thyca.config import ConfigError, default_config, load, save
+from thyca.config import ConfigError, load, save
+from seeded_config import seeded_config
 from thyca.llm.llm_base import LLMError
 from thyca.serve import default_webui, make_server
 from thyca.sessions import SessionCorrupt, SessionError, SessionNotFound
@@ -25,7 +26,7 @@ LLM_TEXT = "provider HTTP 401: denied [redacted]"
 
 
 def _chat(tmp_path: Path, connect=None) -> ChatApp:
-    save(default_config(), tmp_path / "config.json")
+    save(seeded_config(), tmp_path / "config.json")
     return ChatApp(tmp_path, load(tmp_path / "config.json"), connect=connect)
 
 

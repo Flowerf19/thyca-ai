@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from .defaults import DEFAULT_PROVIDER_ID, DEFAULT_PROVIDER_MODEL
+from .errors import ConfigError
 from .limits import LimitsCfg
 from .mcp import McpServerCfg
 from .models import ModelCfg, _model_to_dict
@@ -15,7 +15,10 @@ from .timeline import TimelineCfg
 
 def _default_providers() -> dict[str, ProviderEntry]:
     # Module-level (not a lambda) so Config stays picklable.
-    return {DEFAULT_PROVIDER_ID: ProviderEntry()}
+    # Fresh configs ship with NO provider: the user adds one in the UI.
+    # (Legacy ProviderEntry/Config() objects keep their own OpenAI-flavored
+    # dataclass defaults for hand-built use; the wire form stays empty.)
+    return {}
 
 
 def resolve_model_base_url(entry_base_url: str, registered: ModelCfg | None) -> str:
@@ -31,8 +34,8 @@ def resolve_model_base_url(entry_base_url: str, registered: ModelCfg | None) -> 
 @dataclass(frozen=True)
 class Config:
     providers: dict[str, ProviderEntry] = field(default_factory=_default_providers)
-    defaultProvider: str = DEFAULT_PROVIDER_ID
-    defaultModel: str = DEFAULT_PROVIDER_MODEL
+    defaultProvider: str = ""
+    defaultModel: str = ""
     mcpServers: dict[str, McpServerCfg] = field(default_factory=dict)
     timeline: TimelineCfg = field(default_factory=TimelineCfg)
     limits: LimitsCfg = field(default_factory=LimitsCfg)
@@ -83,10 +86,15 @@ class Config:
         """Resolved connection for one model: its provider's URL/key plus model overrides."""
         entry = self.providers.get(self.provider_id_for(model_id))
         if entry is None:
-            # load() guarantees defaultProvider exists (parsing rejects an
-            # unknown id and empty providers), but hand-built Configs have no
-            # such guard: fall back to any entry, then built-in defaults.
-            entry = next(iter(self.providers.values()), ProviderEntry())
+            if not self.providers:
+                # Empty config (no provider yet): fail clearly so the setup
+                # gate reports "not ready" instead of calling OpenAI.
+                raise ConfigError(
+                    f"chưa cấu hình provider cho model {model_id!r}"
+                )
+            # Hand-built Configs have no parsing guard: fall back to any
+            # entry, never to built-in defaults.
+            entry = next(iter(self.providers.values()))
         return resolve(entry, model_id, self.models.get(model_id))
 
     def effective_provider(self) -> ProviderCfg:

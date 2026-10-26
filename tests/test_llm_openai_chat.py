@@ -341,6 +341,57 @@ async def test_reasoning_effort_sent_by_default() -> None:
 
 
 @pytest.mark.asyncio
+async def test_chat_sends_default_max_tokens() -> None:
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]},
+        )
+
+    connect = OpenAIChat(_provider(), client=_client(handler))
+    await connect.chat([Message(role="user", content="x")])
+    assert seen["body"]["max_tokens"] == 16384
+
+
+@pytest.mark.asyncio
+async def test_chat_model_max_tokens_wins_and_survives_drop_retry() -> None:
+    from thyca.config import ModelCfg
+    from thyca.config.providers import resolve
+
+    provider = resolve(
+        ProviderEntry(baseUrl="https://api.example.com/v1", apiKey="sk-secret-key"),
+        "demo-model",
+        ModelCfg(maxTokens=4096),
+    )
+    assert provider.maxTokens == 4096
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        bodies.append(body)
+        if "reasoning_effort" in body:
+            return httpx.Response(
+                400,
+                json={"error": {"message": "reasoning_effort does not support 'high' with this model"}},
+            )
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]},
+        )
+
+    connect = OpenAIChat(provider, client=_client(handler))
+    reply = await connect.chat([Message(role="user", content="x")])
+    assert reply.content == "ok"
+    assert len(bodies) == 2
+    assert bodies[0]["max_tokens"] == 4096
+    assert bodies[1]["max_tokens"] == 4096
+    assert "reasoning_effort" not in bodies[1]
+
+
+@pytest.mark.asyncio
 async def test_reasoning_effort_dropped_on_400_and_retried() -> None:
     bodies: list[dict] = []
 
@@ -397,6 +448,31 @@ async def test_reasoning_effort_low_sent() -> None:
     )
     await connect.chat([Message(role="user", content="x")])
     assert seen["body"]["reasoning_effort"] == "low"
+
+
+@pytest.mark.asyncio
+async def test_reasoning_effort_xhigh_sent_verbatim() -> None:
+    """New levels ride the wire untouched (no mapping/clamp to the old three)."""
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]},
+        )
+
+    connect = OpenAIChat(
+        ProviderCfg(
+            baseUrl="https://api.example.com/v1",
+            model="demo-model",
+            apiKey="sk-secret-key",
+            reasoningEffort="xhigh",
+        ),
+        client=_client(handler),
+    )
+    await connect.chat([Message(role="user", content="x")])
+    assert seen["body"]["reasoning_effort"] == "xhigh"
 
 
 def _sse(*chunks: dict, done: bool = True) -> httpx.Response:

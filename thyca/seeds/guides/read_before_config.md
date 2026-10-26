@@ -110,8 +110,8 @@ provider đó. Chú ý: mức effort `low` có thể không trả summary thinki
 dùng `high` trở lên để thấy chữ.
 
 ## 6. Mức suy luận (thinking) của từng model
-Mỗi model có bộ mức suy luận riêng (model này `low/high/max`, model khác có
-thêm `minimal/medium`). Khai báo trong `reasoningEfforts` của model; mức đang
+Mỗi model có bộ mức suy luận riêng (model này `low/medium/high/xhigh/max`, model khác có
+thêm `minimal`). Khai báo trong `reasoningEfforts` của model; mức đang
 dùng (`reasoningEffort`) phải nằm trong bộ đó, khung chat sẽ tự hiện đúng các
 mức khi bạn chọn model.
 
@@ -128,7 +128,7 @@ Each bot has a `bots/<id>/settings.json` file — `{"model": {"id", "thinking"}}
   `defaultModel`).
 - `thinking`: this bot's reasoning effort, or `null` to follow the model /
   provider default. It must belong to the effective model's own set
-  (the model's `reasoningEfforts`, else the shared `low/high/max`).
+  (the model's `reasoningEfforts`, else the shared `low/medium/high/xhigh/max`).
 
 Profile page → with no `?bot`, you see the shared canonical files
 (USER.md / SOUL.md / IDENTITY.md — the common profile). Click a bot in the

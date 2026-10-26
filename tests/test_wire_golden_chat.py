@@ -33,7 +33,8 @@ TRANSCRIPT = [
 
 # Recorded 2026-09-29 by running _build_payload once; frozen since.
 EXPECTED_CHAT = (
-    b'{"messages":[{"content":"You are a test assistant.","role":"system"},'
+    b'{"max_tokens":16384,'
+    b'"messages":[{"content":"You are a test assistant.","role":"system"},'
     b'{"content":"What is 2+2?","role":"user"},'
     b'{"content":"Let me compute that.","role":"assistant","tool_calls":'
     b'[{"function":{"arguments":"{\\"expr\\": \\"2+2\\"}","name":"calc"},'
@@ -56,6 +57,8 @@ def _build_payload(provider: ProviderCfg, messages: list[Message]) -> dict:
     }
     if provider.reasoningEffort:
         payload["reasoning_effort"] = provider.reasoningEffort
+    if provider.maxTokens:
+        payload["max_tokens"] = provider.maxTokens
     return payload
 
 

@@ -13,6 +13,7 @@ from test_serve_chat import FakeLLM, ScriptedLLM, _chat
 from thyca.agent.events import TurnEvent
 from thyca.app.chat_app import ChatApp
 from thyca.config import McpServerCfg, default_config, load, save
+from seeded_config import seeded_config
 from thyca.llm.llm_base import ChatReply, LLMError
 from thyca.memory.active import ActiveMemory
 from thyca.memory.heading import parse_heading
@@ -969,10 +970,10 @@ def test_x24_naming_meta_matches_sidecar_shape() -> None:
 
     from thyca.agent.meta import assistant_meta, naming_meta
     from thyca.agent.stage import Stage
-    from thyca.config import default_config
+    from seeded_config import seeded_config
     from thyca.llm.llm_base import ChatReply
 
-    cfg = default_config()
+    cfg = seeded_config()
     reply = ChatReply(
         content="x",
         model="gpt-4o-mini",
@@ -1013,7 +1014,7 @@ def test_f5_turn_effort_override_is_model_aware() -> None:
     with pytest.raises(InvalidTurnOption, match="allows minimal/medium"):
         overlay_turn_cfg(cfg, "m", "ultra")
     plain = default_config()
-    with pytest.raises(InvalidTurnOption, match="use low/high/max"):
+    with pytest.raises(InvalidTurnOption, match="use low/medium/high/xhigh/max"):
         overlay_turn_cfg(plain, None, "ultra")
     assert overlay_turn_cfg(plain, None, "low").defaultModel == plain.defaultModel
 
@@ -1074,7 +1075,7 @@ def _tavily_factory(started: list):
 
 
 def _chat_with_mcp(tmp_path: Path, connect, factory) -> ChatApp:
-    save(default_config(), tmp_path / "config.json")
+    save(seeded_config(), tmp_path / "config.json")
     return ChatApp(
         tmp_path, load(tmp_path / "config.json"), connect=connect, mcp_factory=factory
     )
@@ -1113,7 +1114,7 @@ def test_turn_hot_reloads_added_mcp_server(tmp_path: Path) -> None:
 def test_turn_unloads_removed_mcp_server(tmp_path: Path) -> None:
     started: list = []
     llm = FakeLLM(ChatReply(content="pong"))
-    save(default_config(), tmp_path / "config.json")
+    save(seeded_config(), tmp_path / "config.json")
     _save_mcp(tmp_path, {"tavily": McpServerCfg(command="tavily")})
     app = ChatApp(
         tmp_path,

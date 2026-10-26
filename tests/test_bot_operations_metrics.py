@@ -5,7 +5,8 @@ import pytest
 
 from thyca.app.chat_app import ChatApp
 from thyca.bots.card import BotCard, BotModel
-from thyca.config import ModelCfg, default_config, save
+from thyca.config import ModelCfg, save
+from seeded_config import seeded_config
 from thyca.core.protocol import Message
 from thyca.sessions.compaction import estimate_tokens
 
@@ -17,7 +18,7 @@ class NoCalls:
 
 @pytest.fixture
 def app(tmp_path):
-    cfg = replace(default_config(), defaultModel="unknown-unpriced", models={
+    cfg = replace(seeded_config(), defaultModel="unknown-unpriced", models={
         "card-model": ModelCfg(contextTokens=4096, input=1, cache=0.5, output=2),
         "override-model": ModelCfg(contextTokens=8192, input=3, cache=1, output=4),
     })

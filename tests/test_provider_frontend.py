@@ -90,6 +90,88 @@ def _mock_fetch(config: dict, *, models: list[str] | None = None, fail_config_po
     """
 
 
+def _empty_config() -> dict:
+    config = _config({})
+    config["values"]["providers"] = {}
+    config["values"]["models"] = {}
+    config["values"]["defaultProvider"] = ""
+    config["values"]["defaultModel"] = ""
+    config["values"]["pricing"] = {}
+    config["meta"] = {"providers": {}, "hasApiKey": False}
+    return config
+
+
+def test_first_connection_from_empty_config_becomes_default(node: str) -> None:
+    out = _run(node, f"""
+        {_mock_fetch(_empty_config(), models=['first/model'])}
+        await __controller.ready; await tick(10);
+        const pickerBefore = [...document.querySelectorAll('#connection-picker option')].map(option => option.value);
+        openNewConnection();
+        $('#pv-id').value='first'; $('#pv-base-url').value='https://first.invalid/v1'; $('#pv-key').value='mock-first';
+        await verifyQuick(); chooseModel('first/model');
+        const checks = [...document.querySelectorAll('#m-efforts input')].map(input => [input.value, input.checked]);
+        const saved = await submitEditor(null);
+        return {{pickerBefore, saved, posts: configPosts.length,
+                posted: configPosts[0], events: configSavedEvents, checks,
+                defaultLine: $('#current-default').textContent, keyAfter: $('#pv-key').value,
+                editing: state.editingProvider, status: $('#save-status').textContent}};
+    """, via="provider")
+    assert out["pickerBefore"] == ["__new__"]
+    assert out["saved"] and out["posts"] == 1
+    assert out["posted"]["providers"]["first"]["baseUrl"] == "https://first.invalid/v1"
+    assert out["posted"]["providers"]["first"]["apiKey"] == "mock-first"
+    assert out["posted"]["defaultProvider"] == "first"
+    assert out["posted"]["defaultModel"] == "first/model"
+    assert out["posted"]["models"]["first/model"] == {"provider": "first", "contextTokens": 272000,
+                                                            "reasoningEfforts": ["low", "high", "max"]}
+    assert out["posted"]["providers"]["first"]["reasoningEffort"] == "high"
+    assert out["checks"] == [["low", True], ["high", True], ["max", True]]
+    assert out["events"] == [{"type": "thyca:config-saved", "detail": None}]
+    assert out["editing"] == "first" and out["keyAfter"] == ""
+    assert out["defaultLine"] == "Hiện tại: first/model · first"
+    assert out["status"] == "Đã lưu"
+
+
+def test_model_max_tokens_save_prefill_and_clear(node: str) -> None:
+    filled = _run(node, f"""
+        {_mock_fetch(_config(), models=['max/model'])}
+        await __controller.ready; await tick(10);
+        openNewConnection(); $('#pv-id').value='capped'; $('#pv-base-url').value='https://capped.invalid/v1'; $('#pv-key').value='mock-capped';
+        await verifyQuick(); chooseModel('max/model');
+        const emptyShows = $('#m-max').value;
+        const markup = $('.workspace').innerHTML;
+        const steps = markup.includes('id="m-context" type="number" min="1000" max="2000000" step="16000"') &&
+                        markup.includes('id="m-max" type="number" min="1" max="2000000" step="16000"');
+        $('#m-max').value='8000';
+        const saved = await submitEditor(null);
+        return {{emptyShows, steps, saved, posted: configPosts[0]?.models['max/model']}};
+    """, via="provider")
+    assert filled["emptyShows"] == ""
+    assert filled["steps"] is True
+    assert filled["saved"]
+    assert filled["posted"] == {"provider": "capped", "contextTokens": 272000, "maxTokens": 8000,
+                                  "reasoningEfforts": ["low", "high", "max"]}
+    cleared = _run(node, f"""
+        {_mock_fetch(_config({"max/model": {"provider": "alpha", "input": 0.1, "cache": 0.01, "output": 0.2,
+                                               "maxTokens": 8000}}))}
+        await __controller.ready; await tick(10);
+        openExistingConnection('alpha'); chooseModel('max/model');
+        const prefilled = $('#m-max').value;
+        $('#m-max').value='0';
+        const bad = await submitEditor(null);
+        const badStatus = $('#editor-status').textContent;
+        $('#m-max').value='';
+        const saved = await submitEditor(null);
+        return {{prefilled, bad, badStatus, saved, posted: configPosts[0]?.models['max/model']}};
+    """, via="provider")
+    assert cleared["prefilled"] == 8000
+    assert cleared["bad"] is False
+    assert "Output tối đa" in cleared["badStatus"]
+    assert cleared["saved"]
+    assert "maxTokens" not in cleared["posted"]
+    assert cleared["posted"]["contextTokens"] == 272000
+
+
 def test_provider_page_has_one_editor_and_no_persist_before_explicit_save(node: str) -> None:
     out = _run(node, f"""
         {_mock_fetch(_config(), models=['new/model'])}
@@ -100,7 +182,9 @@ def test_provider_page_has_one_editor_and_no_persist_before_explicit_save(node: 
           loadButton: markup.includes(' Tải model</button>'), loadTitle: markup.includes('title="Chỉ tải danh sách, không gọi model hay lưu cấu hình."'),
           loadHintAbsent: !markup.includes('Tải chỉ kiểm tra danh sách'), discoveryHidden: $('#discovery-status').hidden, discoveryText: $('#discovery-status').textContent,
           keyTitle: markup.includes('title="Key được lưu trên máy này và gửi tới URL API khi kết nối."'), storedKeyNote: $('#pv-key-note').textContent, priceHint: markup.includes('Nhập đủ 3 giá hoặc để trống.'),
-          priceTitle: markup.includes('title="Giá chỉ dùng để ước tính chi phí; API không trả giá này.'), advanced: markup.includes('<summary>Nâng cao</summary>'), currentDefault: $('#current-default').textContent}};
+          priceTitle: markup.includes('title="Giá chỉ dùng để ước tính chi phí; API không trả giá này.'), noAdvancedToggle: !markup.includes('<summary'), currentDefault: $('#current-default').textContent,
+          apiInConnectionFields: (() => {{ const seg = markup.slice(markup.indexOf('class="connection-fields"'), markup.indexOf('load-row')); return seg.includes('id="pv-key"') && seg.includes('id="pv-api"'); }})(),
+          noRemovedIds: ['id="reload-config"', 'id="save-catalog"', 'id="test-provider"', 'id="m-loop"', 'id="m-hot"', 'id="cfg-default-provider"', 'id="m-provider"', 'id="pv-effort"', 'id="m-id"'].every(id => !markup.includes(id))}};
         openNewConnection();
         copy.newKeyNote = $('#pv-key-note').textContent; copy.newDiscoveryHidden = $('#discovery-status').hidden;
         $('#pv-id').value = 'fresh'; $('#pv-base-url').value = 'https://fresh.invalid/v1'; $('#pv-key').value = 'mock-fresh-key';
@@ -110,25 +194,26 @@ def test_provider_page_has_one_editor_and_no_persist_before_explicit_save(node: 
                 oneEditor: (markup.match(/class="paper-card/g) || []).length === 1,
                 nativePicker: markup.includes('<select id="m-picker"'), primary: markup.includes('Lưu và dùng'),
                 beforeSavePosts: configPosts.length, verifyPosts, testPosts, copy, listingStatus,
-                model: selectedModelId(), advancedClosed: !$('#editor-advanced').open}};
+                model: selectedModelId()}};
     """, via="provider")
     assert out["copy"] == {
         "titleMarkup": True, "noEyebrow": True, "noSubtitle": True, "namePlaceholder": True, "noVisibleNameHint": True, "nameHintSpacer": True,
         "loadButton": True, "loadTitle": True, "loadHintAbsent": True,
         "discoveryHidden": True, "discoveryText": "", "keyTitle": True,
-        "storedKeyNote": "Đã lưu key", "priceHint": True, "priceTitle": True, "advanced": True,
+        "storedKeyNote": "Đã lưu key", "priceHint": True, "priceTitle": True, "noAdvancedToggle": True,
+        "apiInConnectionFields": True, "noRemovedIds": True,
         "currentDefault": "Hiện tại: global-only · alpha", "newKeyNote": "", "newDiscoveryHidden": True,
     }, out["copy"]
     assert out == {
         "hasSingleForm": True, "oneEditor": True, "nativePicker": True, "primary": True,
         "beforeSavePosts": 0, "verifyPosts": [{"baseUrl": "https://fresh.invalid/v1", "apiKey": "mock-fresh-key"}],
         "listingStatus": "Đã tải 1 model.",
-        "testPosts": [], "model": "new/model", "advancedClosed": True,
+        "testPosts": [], "model": "new/model",
         "copy": {"titleMarkup": True, "noEyebrow": True, "noSubtitle": True, "namePlaceholder": True, "noVisibleNameHint": True, "nameHintSpacer": True,
                  "loadButton": True, "loadTitle": True, "loadHintAbsent": True,
                  "discoveryHidden": True, "discoveryText": "", "keyTitle": True,
                  "storedKeyNote": "Đã lưu key", "priceHint": True,
-                 "priceTitle": True, "advanced": True, "currentDefault": "Hiện tại: global-only · alpha", "newKeyNote": "", "newDiscoveryHidden": True},
+                 "priceTitle": True, "noAdvancedToggle": True, "apiInConnectionFields": True, "noRemovedIds": True, "currentDefault": "Hiện tại: global-only · alpha", "newKeyNote": "", "newDiscoveryHidden": True},
     }
 
 
@@ -138,7 +223,7 @@ def test_invalid_provider_name_stays_inline_and_does_not_start_network_work(node
         await __controller.ready; await tick(10); openNewConnection();
         $('#pv-id').value = 'bad name'; $('#pv-id').dispatch('input');
         const callsBefore = calls.length;
-        const saved = await submitEditor(null, true);
+        const saved = await submitEditor(null);
         return {{saved, value: $('#pv-id').value, invalid: $('#pv-id').getAttribute('aria-invalid'),
                 status: $('#editor-status').textContent, networkCalls: calls.length - callsBefore,
                 configPosts: configPosts.length, verifyPosts: verifyPosts.length, testPosts: testPosts.length}};
@@ -160,19 +245,19 @@ def test_new_connection_one_atomic_save_loads_fresh_config_and_keeps_default_pro
         await verifyQuick(); chooseModel('fresh/model');
         $('#m-in').value = '0.5'; $('#m-cache').value = '0.05'; $('#m-out').value = '1.25';
         const notYetSaved = configPosts.length === 0 && JSON.stringify(state.values) === before;
-        const saved = await submitEditor(null, true);
+        const saved = await submitEditor(null);
         return {{saved, notYetSaved, posts: configPosts, events: configSavedEvents, gets: configGets,
                 after: state.values, meta: state.meta, keyInput: $('#pv-key').value,
                 defaultLine: $('#current-default').textContent, calls: calls.map(call => call.url), testPosts,
-                canonicalEditor: {{selected: selectedModelId(), picker: $('#m-picker').value, manual: state.manualModel,
-                                  manualHidden: $('#manual-model-field').hidden, loaded: state.loadedModelId,
-                                  provider: $('#m-provider').value, dirty: editorIsDirty(), saveStatus: $('#save-status').textContent}}}};
+                canonicalEditor: {{selected: selectedModelId(), picker: $('#m-picker').value,
+                                  dirty: editorIsDirty(), saveStatus: $('#save-status').textContent}}}};
     """, via="provider")
     assert out["saved"] and out["notYetSaved"] and len(out["posts"]) == 1
     posted = out["posts"][0]
     assert posted["providers"]["fresh"]["baseUrl"] == "https://fresh.invalid/v1"
     assert posted["providers"]["fresh"]["apiKey"] == "mock-fresh-key"
-    assert posted["models"]["fresh/model"] == {"provider": "fresh", "input": 0.5, "cache": 0.05, "output": 1.25}
+    assert posted["models"]["fresh/model"] == {"provider": "fresh", "input": 0.5, "cache": 0.05, "output": 1.25, "contextTokens": 272000,
+                                                  "reasoningEfforts": ["low", "high", "max"]}
     assert posted["defaultProvider"] == "alpha" and posted["defaultModel"] == "fresh/model"
     assert posted["models"]["owned-beta"] == {"provider": "beta", "input": 0.2, "cache": 0.02, "output": 0.4}
     assert posted["limits"]["loopMax"] == 91 and posted["timeline"]["retentionDays"] == 21
@@ -183,46 +268,47 @@ def test_new_connection_one_atomic_save_loads_fresh_config_and_keeps_default_pro
     assert out["meta"]["providers"]["fresh"] is True and "mock-fresh-key" not in json.dumps(out["after"])
     assert "Hiện tại: fresh/model · fresh" == out["defaultLine"]
     assert out["calls"].count("/api/providers/test") == 0 and out["testPosts"] == []
-    assert out["canonicalEditor"] == {"selected": "fresh/model", "picker": "model:fresh/model", "manual": False,
-                                      "manualHidden": True, "loaded": "fresh/model", "provider": "fresh",
+    assert out["canonicalEditor"] == {"selected": "fresh/model", "picker": "model:fresh/model",
                                       "dirty": False, "saveStatus": "Đã lưu"}
 
 
-def test_failed_manual_model_save_keeps_picker_text_and_price_draft(node: str) -> None:
+def test_failed_discovery_model_save_keeps_picker_text_and_price_draft(node: str) -> None:
+    # No manual model-ID entry anymore: the draft is a discovered model.
     out = _run(node, f"""
         {_mock_fetch(_config(), fail_config_post=True)}
         await __controller.ready; await tick(10); openNewConnection();
         $('#pv-id').value = 'manual-provider'; $('#pv-id').dispatch('input');
         $('#pv-base-url').value = 'https://manual.invalid/v1'; $('#pv-base-url').dispatch('input');
-        $('#m-picker').value = ''; chooseModel('', {{manual: true}});
-        $('#m-id').value = 'manual/model'; $('#m-id').dispatch('input');
+        $('#pv-key').value = 'mock-key';
+        await verifyQuick(); chooseModel('vendor/model-a');
         $('#m-in').value = '0.4'; $('#m-cache').value = '0.04'; $('#m-out').value = '0.8';
-        const saved = await submitEditor(null, true);
-        return {{saved, picker: $('#m-picker').value, manualOption: [...$('#m-picker').options].find(option => option.dataset.manual === 'true')?.value,
-                manualVisible: !$('#manual-model-field').hidden, manualId: $('#m-id').value, selected: selectedModelId(),
+        const saved = await submitEditor(null);
+        return {{saved, picker: $('#m-picker').value, selected: selectedModelId(),
                 prices: [$('#m-in').value, $('#m-cache').value, $('#m-out').value], posts: configPosts.length}};
     """, via="provider")
-    assert out == {"saved": False, "picker": "", "manualOption": "", "manualVisible": True,
-                  "manualId": "manual/model", "selected": "manual/model", "prices": ["0.4", "0.04", "0.8"], "posts": 1}
+    assert out == {"saved": False, "picker": "model:vendor/model-a",
+                  "selected": "vendor/model-a", "prices": ["0.4", "0.04", "0.8"], "posts": 1}
 
 
-def test_new_blank_key_does_not_borrow_default_key_for_listing_but_manual_model_works(node: str) -> None:
+def test_new_blank_key_does_not_borrow_default_key_for_listing(node: str) -> None:
     out = _run(node, f"""
-        {_mock_fetch(_config(), empty_models=True)}
+        {_mock_fetch(_config(), models=['manual/model'])}
         await __controller.ready; await tick(10);
         openNewConnection(); $('#pv-id').value = 'new-id'; $('#pv-base-url').value = 'https://random.invalid/v1';
         const noRequest = await verifyQuick();
         const countAfterBlank = verifyPosts.length;
-        $('#m-picker').value = ''; chooseModel('', {{manual: true}}); $('#m-id').value = 'manual/model';
-        const saved = await submitEditor(null, false);
+        $('#pv-key').value = 'mock-key'; await verifyQuick(); chooseModel('manual/model');
+        const saved = await submitEditor(null);
         return {{noRequest, countAfterBlank, status: $('#discovery-status').textContent, verifyPosts,
                 saved, posts: configPosts, defaultModel: state.values.defaultModel, defaultProvider: state.values.defaultProvider}};
     """, via="provider")
     assert out["noRequest"] is False and out["countAfterBlank"] == 0
-    assert out["status"] == "Nhập API key để tải model, hoặc nhập model ID." and out["verifyPosts"] == []
+    assert out["status"] == "Đã tải 1 model." and out["verifyPosts"] == [{"baseUrl": "https://random.invalid/v1", "apiKey": "mock-key"}]
     assert out["saved"] and len(out["posts"]) == 1
     assert out["posts"][0]["models"]["manual/model"]["provider"] == "new-id"
-    assert out["posts"][0]["defaultModel"] == "global-only" and out["defaultProvider"] == "alpha"
+    assert out["posts"][0]["defaultModel"] == "manual/model" and out["defaultProvider"] == "alpha"
+    assert out["posts"][0]["models"]["manual/model"]["provider"] == "new-id"
+    assert out["posts"][0]["defaultModel"] == "manual/model" and out["defaultProvider"] == "alpha"
 
 
 def test_existing_keyless_draft_uses_own_provider_and_typed_key_takes_precedence(node: str) -> None:
@@ -240,27 +326,31 @@ def test_existing_keyless_draft_uses_own_provider_and_typed_key_takes_precedence
     ]
 
 
-def test_listing_failure_and_empty_response_keep_manual_entry_available(node: str) -> None:
+def test_listing_failure_and_empty_response_keep_saved_models_available(node: str) -> None:
+    # No manual model-ID entry anymore: after a failed listing the user
+    # picks from the saved models of the open connection instead.
     out = _run(node, f"""
         {_mock_fetch(_config(), fail_verify=True)}
         await __controller.ready; await tick(10);
-        openNewConnection(); $('#pv-id').value = 'manual'; $('#pv-base-url').value = 'https://manual.invalid/v1'; $('#pv-key').value = 'mock-key';
+        openExistingConnection('alpha');
         const listing = await verifyQuick();
-        $('#m-picker').value = ''; chooseModel('', {{manual: true}}); $('#m-id').value = 'known/manual';
-        const saved = await submitEditor(null, false);
+        chooseModel('owned-alpha');
+        const saved = await submitEditor(null);
         return {{listing, status: $('#discovery-status').textContent, saved, posts: configPosts.length,
                 id: configPosts[0]?.defaultModel, tests: testPosts.length}};
     """, via="provider")
     assert out["listing"] is False and out["status"] == "Không tải được model: listing unavailable"
-    assert out["saved"] and out["posts"] == 1 and out["id"] == "global-only" and out["tests"] == 0
+    assert out["saved"] and out["posts"] == 1 and out["id"] == "owned-alpha" and out["tests"] == 0
     empty = _run(node, f"""
         {_mock_fetch(_config(), empty_models=True)}
-        await __controller.ready; await tick(10); openNewConnection();
-        $('#pv-id').value = 'empty'; $('#pv-base-url').value = 'https://empty.invalid/v1'; $('#pv-key').value = 'mock-empty';
+        await __controller.ready; await tick(10); openExistingConnection('alpha');
         const listed = await verifyQuick();
-        return {{listed, status: $('#discovery-status').textContent, manualAvailable: !![...$('#m-picker').options].find(option => option.dataset.manual === 'true')}};
+        return {{listed, status: $('#discovery-status').textContent,
+                savedOptions: [...$('#m-picker').options].map(option => option.value),
+                noManualOption: ![...$('#m-picker').options].some(option => option.dataset.manual)}};
     """, via="provider")
-    assert empty == {"listed": True, "status": "Không có model. Có thể nhập thủ công.", "manualAvailable": True}
+    assert empty["listed"] is True and empty["status"] == "Không có model nào trên kết nối này."
+    assert "model:owned-alpha" in empty["savedOptions"] and empty["noManualOption"] is True
 
 
 def test_late_listing_is_ignored_after_url_key_or_identity_changes(node: str) -> None:
@@ -298,37 +388,114 @@ def test_name_changes_do_not_invalidate_an_inflight_model_listing(node: str) -> 
     assert out["name"] == "named-after-discovery" and out["posts"] == {"baseUrl": "https://provider.invalid/v1", "apiKey": "mock-only"}
 
 
-def test_provider_effort_draft_survives_model_picker_render(node: str) -> None:
+def test_connection_effort_kept_when_editing_without_ui(node: str) -> None:
+    # The form no longer edits the connection default: saving an existing
+    # connection keeps its stored effort (here a non-default "max").
+    config = _config()
+    config["values"]["providers"]["alpha"]["reasoningEffort"] = "max"
     out = _run(node, f"""
-        {_mock_fetch(_config())}
+        {_mock_fetch(config)}
         await __controller.ready; await tick(10); openExistingConnection('alpha');
-        $('#pv-effort').value = 'max'; $('#pv-effort').dispatch('change');
         chooseModel('owned-alpha');
-        const before = $('#pv-effort').value;
-        const saved = await submitEditor(null, true);
-        return {{before, saved, posted: configPosts[0]?.providers.alpha.reasoningEffort}};
+        const saved = await submitEditor(null);
+        return {{saved, posted: configPosts[0]?.providers.alpha.reasoningEffort}};
     """, via="provider")
-    assert out == {"before": "max", "saved": True, "posted": "max"}
+    assert out == {"saved": True, "posted": "max"}
 
 
-def test_saved_custom_effort_values_survive_render_and_primary_save(node: str) -> None:
+def test_saved_custom_effort_level_surfaces_as_extra_tick(node: str) -> None:
+    # No per-model default select anymore: a previously saved model-level
+    # default only survives as an extra checkbox. Unticked it drops out of
+    # the saved set on the next save (form state is the full record).
     config = _config({"custom/model": {"provider": "alpha", "input": 0.2, "cache": 0.02, "output": 0.4,
                                          "reasoningEfforts": ["low"], "reasoningEffort": "custom-model-effort"}})
     config["values"]["providers"]["alpha"]["reasoningEffort"] = "custom-provider-effort"
     out = _run(node, f"""
         {_mock_fetch(config)}
         await __controller.ready; await tick(10); openExistingConnection('alpha'); chooseModel('custom/model');
-        const before = {{providerEffort: $('#pv-effort').value, modelEffort: $('#m-effort').value,
-                        modelOptions: [...$('#m-effort').options].map(option => option.value)}};
-        const saved = await submitEditor(null, true);
+        const before = {{checks: [...document.querySelectorAll('#m-efforts input')].map(input => [input.value, input.checked])}};
+        const saved = await submitEditor(null);
         return {{before, saved, postedProviderEffort: configPosts[0]?.providers.alpha.reasoningEffort,
-                postedModelEffort: configPosts[0]?.models['custom/model'].reasoningEffort}};
+                posted: configPosts[0]?.models['custom/model']}};
     """, via="provider")
-    assert out["before"]["providerEffort"] == "custom-provider-effort"
-    assert out["before"]["modelEffort"] == "custom-model-effort"
-    assert "custom-model-effort" in out["before"]["modelOptions"]
+    assert out["before"]["checks"] == [["low", True], ["high", False], ["max", False], ["custom-model-effort", False]]
     assert out["saved"] and out["postedProviderEffort"] == "custom-provider-effort"
-    assert out["postedModelEffort"] == "custom-model-effort"
+    assert out["posted"] == {"provider": "alpha", "input": 0.2, "cache": 0.02, "output": 0.4,
+                              "reasoningEfforts": ["low"], "contextTokens": 272000}
+    ticked = _run(node, f"""
+        {_mock_fetch(config)}
+        await __controller.ready; await tick(10); openExistingConnection('alpha'); chooseModel('custom/model');
+        const customBox = [...document.querySelectorAll('#m-efforts input')].find(input => input.value === 'custom-model-effort');
+        customBox.checked = true; $('#m-efforts').dispatch('change');
+        const saved = await submitEditor(null);
+        return {{saved, postedEfforts: configPosts[0]?.models['custom/model'].reasoningEfforts,
+                hasPostedEffort: 'reasoningEffort' in (configPosts[0]?.models['custom/model'] || {{}})}};
+    """, via="provider")
+    assert ticked["saved"]
+    assert ticked["postedEfforts"] == ["low", "custom-model-effort"]
+    assert ticked["hasPostedEffort"] is False
+
+
+def test_model_effort_multi_select_and_untick_all(node: str) -> None:
+    cfg5 = _config()
+    cfg5["schema"]["sections"][0]["fields"][0]["choices"] = ["low", "medium", "high", "xhigh", "max"]
+    out = _run(node, f"""
+        {_mock_fetch(cfg5, models=['eff/model'])}
+        await __controller.ready; await tick(10);
+        openNewConnection(); $('#pv-id').value='eff'; $('#pv-base-url').value='https://eff.invalid/v1'; $('#pv-key').value='mock-key';
+        await verifyQuick(); chooseModel('eff/model');
+        const cleanAfterChoose = modelIsDirty();
+        const checks = [...document.querySelectorAll('#m-efforts input')].map(input => [input.value, input.checked]);
+        const chipMarks = [...document.querySelectorAll('#m-efforts .effort-chip')].map(chip => [chip.dataset.level, chip.dataset.active, chip.querySelector('.effort-tick').textContent]);
+        const cleanAfterLoad = editorIsDirty();
+        const maxBox = [...document.querySelectorAll('#m-efforts input')].find(input => input.value === 'max');
+        maxBox.checked = false; $('#m-efforts').dispatch('change');
+        const chipAfter = [...document.querySelectorAll('#m-efforts .effort-chip')].find(chip => chip.dataset.level === 'max');
+        const dirtyAfterUntick = modelIsDirty();
+        const saved = await submitEditor(null);
+        return {{checks, chipMarks, cleanAfterChoose,
+                chipAfter: [chipAfter.dataset.active, chipAfter.querySelector('.effort-tick').textContent],
+                dirtyAfterUntick, saved,
+                posted: configPosts[0]?.models['eff/model'], defaultModel: configPosts[0]?.defaultModel}};
+    """, via="provider")
+    assert out["checks"] == [["low", True], ["medium", True], ["high", True], ["xhigh", True], ["max", True]]
+    assert out["chipMarks"] == [["low", "true", "\u2713"], ["medium", "true", "\u2713"], ["high", "true", "\u2713"], ["xhigh", "true", "\u2713"], ["max", "true", "\u2713"]]
+    assert out["cleanAfterChoose"] is False
+    assert out["chipAfter"] == ["false", ""]
+    assert out["dirtyAfterUntick"] is True and out["saved"]
+    assert out["posted"] == {"provider": "eff", "reasoningEfforts": ["low", "medium", "high", "xhigh"],
+                              "contextTokens": 272000}
+    assert "reasoningEffort" not in out["posted"]
+    assert out["defaultModel"] == "eff/model"
+    unticked = _run(node, f"""
+        {_mock_fetch(_config(), models=['eff/model'])}
+        await __controller.ready; await tick(10);
+        openNewConnection(); $('#pv-id').value='eff'; $('#pv-base-url').value='https://eff.invalid/v1'; $('#pv-key').value='mock-key';
+        await verifyQuick(); chooseModel('eff/model');
+        for (const box of document.querySelectorAll('#m-efforts input')) {{ box.checked = false; }}
+        $('#m-efforts').dispatch('change');
+        const chipsOff = [...document.querySelectorAll('#m-efforts .effort-chip')].every(chip => chip.dataset.active === 'false');
+        const saved = await submitEditor(null);
+        return {{chipsOff, saved, posted: configPosts[0]?.models['eff/model']}};
+    """, via="provider")
+    assert unticked["chipsOff"] is True and unticked["saved"]
+    assert "reasoningEfforts" not in unticked["posted"] and "reasoningEffort" not in unticked["posted"]
+    saved_set = _run(node, f"""
+        {_mock_fetch(_config({"eff2/model": {"provider": "alpha", "input": 0.1, "cache": 0.01, "output": 0.2,
+                                                "reasoningEfforts": ["low", "minimal"]}}))}
+        await __controller.ready; await tick(10);
+        openExistingConnection('alpha'); chooseModel('eff2/model');
+        const before = [...document.querySelectorAll('#m-efforts input')].map(input => [input.value, input.checked]);
+        const maxBox = [...document.querySelectorAll('#m-efforts input')].find(input => input.value === 'max');
+        maxBox.checked = true; $('#m-efforts').dispatch('change');
+        const saved = await submitEditor(null);
+        return {{before, saved, posted: configPosts[0]?.models['eff2/model']}};
+    """, via="provider")
+    assert saved_set["before"] == [["low", True], ["high", False], ["max", False], ["minimal", True]]
+    assert saved_set["saved"]
+    assert saved_set["posted"] == {"provider": "alpha", "input": 0.1, "cache": 0.01, "output": 0.2,
+                                    "reasoningEfforts": ["low", "max", "minimal"], "contextTokens": 272000}
+    assert "reasoningEffort" not in saved_set["posted"]
 
 
 def test_dirty_status_tracks_editor_and_confirmed_reload_resets_its_baseline(node: str) -> None:
@@ -388,59 +555,72 @@ def test_model_collision_requires_owner_connection_and_preserves_metadata(node: 
         const collision = chooseModel('shared/model');
         const disabledOwner = modelProviderId(state.values, 'shared/model');
         openExistingConnection('beta'); await verifyQuick(); chooseModel('shared/model');
-        const before = {{provider: $('#m-provider').value, prices: [$('#m-in').value, $('#m-cache').value, $('#m-out').value], warning: $('#legacy-url-warning').textContent}};
+        const before = {{prices: [$('#m-in').value, $('#m-cache').value, $('#m-out').value], warning: $('#legacy-url-warning').textContent}};
         return {{collision, disabledOwner, before, selected: selectedModelId(), context: $('#m-context').value}};
     """, via="provider")
     assert out["collision"] is False and out["disabledOwner"] == "beta"
-    assert out["before"] == {"provider": "beta", "prices": [0.2, 0.02, 0.8], "warning": "Model này đang giữ URL riêng https://legacy.invalid/v1; khi lưu sẽ không bị thay đổi."}
+    assert out["before"] == {"prices": [0.2, 0.02, 0.8], "warning": "Model này đang giữ URL riêng https://legacy.invalid/v1; khi lưu sẽ không bị thay đổi."}
     assert out["selected"] == "shared/model" and out["context"] == 32000
 
 
-def test_primary_save_does_not_silently_transfer_a_model_owned_by_another_provider(node: str) -> None:
+def test_primary_save_requires_a_model_choice(node: str) -> None:
+    # No manual model-ID entry anymore: saving without picking a model
+    # from the picker fails inline instead of posting.
     out = _run(node, f"""
         {_mock_fetch(_config())}
         await __controller.ready; await tick(10);
-        openExistingConnection('alpha'); $('#m-picker').value = ''; chooseModel('', {{manual: true}}); $('#m-id').value = 'owned-beta';
-        const result = await submitEditor(null, true);
+        openExistingConnection('alpha');
+        const result = await submitEditor(null);
         return {{result, posts: configPosts.length, status: $('#editor-status').textContent}};
     """, via="provider")
     assert out["result"] is False and out["posts"] == 0
-    assert "Model này đã được lưu. Chọn model trong danh sách" in out["status"]
+    assert "Chọn model" in out["status"]
 
 
-def test_advanced_transfer_is_explicit_and_preserves_unknown_model_metadata(node: str) -> None:
+def test_cross_connection_save_is_blocked_not_transferred(node: str) -> None:
+    # The model→provider picker is gone: a model always saves into the
+    # connection being edited. A stale/race state that points elsewhere is
+    # rejected, never silently transferred.
     existing = {"owned-beta": {"provider": "beta", "baseUrl": "https://legacy.invalid/v1", "input": 0.2,
-                                 "cache": 0.02, "output": 0.4, "reasoningEfforts": ["low", "high"], "contextTokens": 64000}}
+                                 "cache": 0.02, "output": 0.4, "reasoningEfforts": ["low", "high"], "contextTokens": 64000,
+                                 "loopMax": 50, "hotTailKB": 8}}
     out = _run(node, f"""
         {_mock_fetch(_config(existing))}
         await __controller.ready; await tick(10);
         openExistingConnection('beta'); chooseModel('owned-beta');
-        $('#m-provider').value = 'alpha'; $('#m-provider').dispatch('change');
-        globalThis.confirm = () => true;
-        const saved = await submitEditor(null, true);
+        const saved = await submitEditor(null);
+        const raced = (() => {{
+            serverConfig.values.models['owned-beta'].provider = 'alpha';
+            return submitEditor(null);
+        }})();
+        const racedResult = await raced;
         return {{saved, posted: configPosts[0]?.models['owned-beta'], defaultModel: configPosts[0]?.defaultModel,
-                defaultProvider: configPosts[0]?.defaultProvider}};
+                defaultProvider: configPosts[0]?.defaultProvider, posts: configPosts.length,
+                racedResult, status: $('#editor-status').textContent}};
     """, via="provider")
     assert out["saved"]
-    assert out["posted"] == {"provider": "alpha", "baseUrl": "https://legacy.invalid/v1", "input": 0.2, "cache": 0.02,
-                              "output": 0.4, "reasoningEfforts": ["low", "high"], "contextTokens": 64000}
+    assert out["posted"] == {"provider": "beta", "baseUrl": "https://legacy.invalid/v1", "input": 0.2, "cache": 0.02,
+                              "output": 0.4, "reasoningEfforts": ["low", "high"], "contextTokens": 64000,
+                              "loopMax": 50, "hotTailKB": 8}
     assert out["defaultModel"] == "owned-beta" and out["defaultProvider"] == "alpha"
+    assert out["racedResult"] is False and out["posts"] == 1
+    assert "đã thuộc kết nối" in out["status"] and "alpha" in out["status"]
 
 
 def test_duplicate_provider_from_fresh_snapshot_and_prepost_read_failure_do_not_post(node: str) -> None:
     out = _run(node, f"""
-        {_mock_fetch(_config())}
+        {_mock_fetch(_config(), models=['manual/model'])}
         await __controller.ready; await tick(10);
-        openNewConnection(); $('#pv-id').value = 'raced'; $('#pv-base-url').value = 'https://raced.invalid/v1'; $('#pv-key').value = 'mock-raced'; chooseModel('manual/model', {{manual: true}}); $('#m-id').value = 'manual/model';
+        openNewConnection(); $('#pv-id').value = 'raced'; $('#pv-base-url').value = 'https://raced.invalid/v1'; $('#pv-key').value = 'mock-raced'; await verifyQuick(); chooseModel('manual/model');
         serverConfig.values.providers.raced = {{baseUrl:'https://external.invalid/v1',apiKey:'',reasoningEffort:'high'}};
-        const duplicate = await submitEditor(null, true);
+        const duplicate = await submitEditor(null);
         const duplicatePosts = configPosts.length;
         const duplicateStatus = $('#editor-status').textContent;
         delete serverConfig.values.providers.raced;
         const oldFetch = globalThis.fetch;
         let failedFresh = false;
         installFetch((url, opts) => {{ if (url === '/api/config' && opts.method !== 'POST' && !failedFresh) {{ failedFresh=true; return new Error('fresh read unavailable'); }} return oldFetch(url,opts); }});
-        const readFailure = await submitEditor(null, true);
+        const readFailure = await submitEditor(null);
         return {{duplicate, duplicatePosts, duplicateStatus,
                 readFailure, totalPosts: configPosts.length, key: $('#pv-key').value}};
     """, via="provider")
@@ -451,20 +631,20 @@ def test_duplicate_provider_from_fresh_snapshot_and_prepost_read_failure_do_not_
 
 def test_post_failure_preserves_draft_and_post_success_refresh_failure_is_committed(node: str) -> None:
     failure = _run(node, f"""
-        {_mock_fetch(_config(), fail_config_post=True)}
+        {_mock_fetch(_config(), fail_config_post=True, models=['model/fail'])}
         await __controller.ready; await tick(10);
-        openNewConnection(); $('#pv-id').value = 'fail'; $('#pv-base-url').value = 'https://fail.invalid/v1'; $('#pv-key').value = 'mock-fail'; chooseModel('model/fail', {{manual: true}}); $('#m-id').value='model/fail';
-        const before = JSON.stringify(state.values); const result = await submitEditor(null, true);
+        openNewConnection(); $('#pv-id').value = 'fail'; $('#pv-base-url').value = 'https://fail.invalid/v1'; $('#pv-key').value = 'mock-fail'; await verifyQuick(); chooseModel('model/fail');
+        const before = JSON.stringify(state.values); const result = await submitEditor(null);
         return {{result, key: $('#pv-key').value, same: JSON.stringify(state.values) === before,
                 posts: configPosts.length, events: configSavedEvents.length, message: $('#editor-status').textContent}};
     """, via="provider")
     assert failure["result"] is False and failure["key"] == "mock-fail" and failure["same"]
     assert failure["posts"] == 1 and failure["events"] == 0 and "HTTP 500" in failure["message"]
     committed = _run(node, f"""
-        {_mock_fetch(_config(), fail_config_refresh=True, post_ready=False)}
+        {_mock_fetch(_config(), fail_config_refresh=True, post_ready=False, models=['model/saved'])}
         await __controller.ready; await tick(10);
-        openNewConnection(); $('#pv-id').value = 'saved'; $('#pv-base-url').value = 'https://saved.invalid/v1'; $('#pv-key').value = 'mock-secret'; chooseModel('model/saved', {{manual: true}}); $('#m-id').value='model/saved';
-        const result = await submitEditor(null, true);
+        openNewConnection(); $('#pv-id').value = 'saved'; $('#pv-base-url').value = 'https://saved.invalid/v1'; $('#pv-key').value = 'mock-secret'; await verifyQuick(); chooseModel('model/saved');
+        const result = await submitEditor(null);
         return {{result, posts: configPosts.length, events: configSavedEvents, input: $('#pv-key').value,
                 canonical: JSON.stringify(state.values), status: $('#editor-status').textContent, save: $('#save-status').textContent}};
     """, via="provider")
@@ -474,23 +654,24 @@ def test_post_failure_preserves_draft_and_post_success_refresh_failure_is_commit
     assert "Cấu hình chưa sẵn sàng" in committed["status"] and committed["save"] == "Đã lưu"
 
 
-def test_proto_names_are_safe_and_config_only_save_does_not_change_default_model(node: str) -> None:
+def test_proto_names_are_safe_and_every_save_selects_its_model(node: str) -> None:
+    # "Chỉ lưu cấu hình" is gone: every form save is "Lưu và dùng".
     out = _run(node, f"""
-        {_mock_fetch(_config())}
+        {_mock_fetch(_config(), models=['__proto__', 'constructor'])}
         await __controller.ready; await tick(10);
         openNewConnection(); $('#pv-id').value = '__proto__'; $('#pv-base-url').value = 'https://proto.invalid/v1'; $('#pv-key').value = 'mock-proto';
-        chooseModel('__proto__', {{manual: true}}); $('#m-id').value = '__proto__';
-        const saved = await submitEditor(null, false);
+        await verifyQuick(); chooseModel('__proto__');
+        const saved = await submitEditor(null);
         openNewConnection(); $('#pv-id').value = 'constructor'; $('#pv-base-url').value = 'https://constructor.invalid/v1'; $('#pv-key').value = 'mock-constructor';
-        chooseModel('constructor', {{manual: true}}); $('#m-id').value = 'constructor';
-        const constructorSaved = await submitEditor(null, false);
+        await verifyQuick(); chooseModel('constructor');
+        const constructorSaved = await submitEditor(null);
         return {{saved, constructorSaved, hasProvider: Object.hasOwn(configPosts[0].providers, '__proto__'),
                 hasModel: Object.hasOwn(configPosts[0].models, '__proto__'), defaultModel: configPosts[0].defaultModel,
                 defaultProvider: configPosts[0].defaultProvider, ownMeta: Object.hasOwn(state.meta.providers,'__proto__'),
                 stored: state.meta.providers['__proto__'], constructorProvider: Object.hasOwn(configPosts[1].providers,'constructor'),
                 constructorModel: Object.hasOwn(configPosts[1].models,'constructor'), events: configSavedEvents.length}};
     """, via="provider")
-    assert out == {"saved": True, "constructorSaved": True, "hasProvider": True, "hasModel": True, "defaultModel": "global-only",
+    assert out == {"saved": True, "constructorSaved": True, "hasProvider": True, "hasModel": True, "defaultModel": "__proto__",
                   "defaultProvider": "alpha", "ownMeta": True, "stored": True, "constructorProvider": True,
                   "constructorModel": True, "events": 2}
 
@@ -503,7 +684,7 @@ def test_model_prices_validate_all_or_none_and_unknown_config_survives_save(node
         await __controller.ready; await tick(10);
         chooseModel('existing/model'); $('#m-in').value='0.3'; $('#m-cache').value='0.03'; $('#m-out').value='0.6';
         const before = JSON.stringify(state.values);
-        const result = await submitEditor(null, false);
+        const result = await submitEditor(null);
         return {{result, posted: configPosts[0], before, warning: $('#legacy-url-warning').textContent}};
     """, via="provider")
     assert out["result"]
@@ -514,64 +695,40 @@ def test_model_prices_validate_all_or_none_and_unknown_config_survives_save(node
     assert posted["models"]["existing/model"]["input"] == 0.3 and posted["pricing"]["unowned/model"] == config["values"]["pricing"]["unowned/model"]
     assert "URL riêng" in out["warning"]
     invalid = _run(node, f"""
-        {_mock_fetch(_config())}
+        {_mock_fetch(_config(), models=['partial/model'])}
         await __controller.ready; await tick(10);
-        openNewConnection(); $('#pv-id').value='partial'; $('#pv-base-url').value='https://p.invalid/v1'; chooseModel('partial/model', {{manual:true}}); $('#m-id').value='partial/model';
-        $('#m-in').value='1'; const result=await submitEditor(null,true);
+        openNewConnection(); $('#pv-id').value='partial'; $('#pv-base-url').value='https://p.invalid/v1'; $('#pv-key').value='mock-partial';
+        await verifyQuick(); chooseModel('partial/model');
+        $('#m-in').value='1'; const result=await submitEditor(null);
         return {{result, posts:configPosts.length, invalid:$('#m-cache').getAttribute('aria-invalid'), status:$('#editor-status').textContent}};
     """, via="provider")
     assert invalid["result"] is False and invalid["posts"] == 0 and invalid["invalid"] == "true"
     assert "Điền đủ cả ba" in invalid["status"]
 
 
-def test_async_config_commits_ignore_stale_probe_and_provider_delete_guard(node: str) -> None:
+def test_async_config_commits_and_provider_delete_guard(node: str) -> None:
+    # The try-call button is gone; only the delete guard is exercised here.
     out = _run(node, f"""
-        let release;
         {_mock_fetch(_config())}
-        const originalFetch=globalThis.fetch;
-        installFetch((url,opts)=>url==='/api/providers/test'?(()=>{{testPosts.push(JSON.parse(opts.body));return new Promise(resolve=>{{release=()=>resolve({{model:'old/model',latencyMs:1}})}})}})():originalFetch(url,opts));
         await __controller.ready; await tick(10);
-        const probe=testProvider('alpha'); await tick();
         await commitValues(fresh=>{{const values=JSON.parse(JSON.stringify(fresh.values)); values.defaultModel='owned-beta'; return values;}},{{note:'saved'}});
-        release(); await probe;
         const guarded=await deleteProvider();
-        return {{testPosts, result:state.testing.alpha, guarded, providers:Object.keys(state.values.providers)}};
+        return {{guarded, providers:Object.keys(state.values.providers)}};
     """, via="provider")
-    assert out["testPosts"] == [{"providerId": "alpha", "model": "owned-alpha"}]
-    assert "bỏ qua kết quả thử cũ" in out["result"]["text"]
-    assert out["guarded"] is False and out["providers"] == ["alpha", "beta"]
-
-
-def test_provider_test_result_stays_with_its_connection_while_switching(node: str) -> None:
-    out = _run(node, f"""
-        let release;
-        {_mock_fetch(_config())}
-        const originalFetch = globalThis.fetch;
-        installFetch((url, opts) => url === '/api/providers/test' ? new Promise(resolve => {{ release = () => resolve({{model:'owned-alpha',latencyMs:4}}); }}) : originalFetch(url, opts));
-        await __controller.ready; await tick(10);
-        const pending = testProvider('alpha'); await tick(); openExistingConnection('beta');
-        release(); await pending;
-        const beta = {{editing: state.editingProvider, resultHidden: $('#test-result').hidden, alpha: state.testing.alpha?.text}};
-        openExistingConnection('alpha');
-        return {{beta, alphaVisible: !$('#test-result').hidden, alphaText: $('#test-result').textContent,
-                betaResult: state.testing.beta || null}};
-    """, via="provider")
-    assert out["beta"] == {"editing": "beta", "resultHidden": True,
-                           "alpha": "Gọi model thành công · owned-alpha · 4ms"}
-    assert out["alphaVisible"] is True and "owned-alpha" in out["alphaText"] and out["betaResult"] is None
+    assert out == {"guarded": False, "providers": ["alpha", "beta"]}
 
 
 def test_cancel_reload_and_busy_save_preserve_single_editor_draft(node: str) -> None:
     out = _run(node, f"""
         let release;
-        {_mock_fetch(_config())}
+        {_mock_fetch(_config(), models=['draft/model'])}
         const originalFetch=globalThis.fetch;
         installFetch((url,opts)=>url==='/api/config'&&opts.method==='POST'?new Promise(resolve=>{{configPosts.push(JSON.parse(opts.body)); release=()=>{{serverConfig.values=JSON.parse(opts.body); resolve({{ready:true}});}};}}):originalFetch(url,opts));
         await __controller.ready; await tick(10);
         openNewConnection(); $('#pv-id').value='draft'; $('#pv-base-url').value='https://draft.invalid/v1'; $('#pv-key').value='mock-draft';
         globalThis.confirm=()=>false; const reload=await reloadConfig(); const retained=$('#pv-key').value;
-        chooseModel('draft/model',{{manual:true}}); $('#m-id').value='draft/model';
-        const first=submitEditor(null,true); await tick(); const duplicate=await submitEditor(null,true);
+        await verifyQuick(); chooseModel('draft/model');
+        const first=submitEditor(null); await tick(); const duplicate=await submitEditor(null);
         const busyReload=await reloadConfig(); release(); await first;
         return {{reload,retained,duplicate,busyReload,posts:configPosts.length,keyAfter:$('#pv-key').value,saving:state.saving}};
     """, via="provider")
@@ -579,7 +736,8 @@ def test_cancel_reload_and_busy_save_preserve_single_editor_draft(node: str) -> 
                   "posts": 1, "keyAfter": "", "saving": False}
 
 
-def test_manual_id_key_never_enters_location_history_or_storage(node: str) -> None:
+def test_typed_key_never_enters_location_history_or_storage(node: str) -> None:
+    # Manual model-ID entry is gone; the key-typing flow is unchanged.
     out = _run(node, f"""
         {_mock_fetch(_config(), models=['new/model'])}
         await __controller.ready; await tick(10);
@@ -618,7 +776,7 @@ document.querySelector('#new-connection').click();for(const [id,value] of [['#pv
 document.querySelector('#v-submit').click();await wait(()=>document.querySelector('#m-picker option[data-model]'));
 const picker=document.querySelector('#m-picker');const option=[...picker.options].find(item=>item.dataset.model===__MODEL_ID__);if(!option)throw Error('native option not found');picker.value=option.value;picker.dispatchEvent(new Event('change',{bubbles:true}));
 for(const [id,value] of [['#m-in','0.5'],['#m-cache','0.05'],['#m-out','1.25']])document.querySelector(id).value=value;
-const s=await fetch('/api/test/state').then(r=>r.json());const page=document.querySelector('.provider-shell'),scroll=page.querySelector('.page-scroll'),nav=page.querySelector('.page-nav');finish({stage:'loaded-selected-before-save',route:ThycaRouter.currentRoute(),root:location.pathname,selection:picker.value,model:document.querySelector('#m-picker').selectedOptions[0]?.dataset.model,prices:['#m-in','#m-cache','#m-out'].map(id=>document.querySelector(id).value),advancedClosed:!document.querySelector('#editor-advanced').open,configPosts:s.configPosts,testPosts:s.testPosts,verifyPosts:s.verifyPosts,cardCount:page.querySelectorAll('.paper-card').length,overflow:[document.documentElement,document.body,page,scroll,page.querySelector('.page-inner')].some(el=>el.scrollWidth>el.clientWidth+1),headerGap:nav.getBoundingClientRect().bottom<=scroll.getBoundingClientRect().top+1,primaryVisible:(()=>{const r=document.querySelector('#save-use').getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight})()});
+const s=await fetch('/api/test/state').then(r=>r.json());const page=document.querySelector('.provider-shell'),scroll=page.querySelector('.page-scroll'),nav=page.querySelector('.page-nav');finish({stage:'loaded-selected-before-save',route:ThycaRouter.currentRoute(),root:location.pathname,selection:picker.value,model:document.querySelector('#m-picker').selectedOptions[0]?.dataset.model,prices:['#m-in','#m-cache','#m-out'].map(id=>document.querySelector(id).value),configPosts:s.configPosts,testPosts:s.testPosts,verifyPosts:s.verifyPosts,cardCount:page.querySelectorAll('.paper-card').length,overflow:[document.documentElement,document.body,page,scroll,page.querySelector('.page-inner')].some(el=>el.scrollWidth>el.clientWidth+1),headerGap:nav.getBoundingClientRect().bottom<=scroll.getBoundingClientRect().top+1,footerSave:!!document.querySelector('.editor-footer #save-use'),primaryVisible:(()=>{const el=document.querySelector('#save-use');el.scrollIntoView({block:'nearest'});const r=el.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight})()});
 }catch(e){finish({error:String(e),stack:e.stack})}})();
 """
     save_script = r"""
@@ -629,7 +787,7 @@ document.querySelector('#v-submit').click();await wait(()=>[...document.querySel
 for(const [id,value] of [['#m-in','0.5'],['#m-cache','0.05'],['#m-out','1.25']])document.querySelector(id).value=value;
 const before=await fetch('/api/test/state').then(r=>r.json());document.querySelector('#save-use').click();
 const until=Date.now()+15000;let after;while(Date.now()<until){after=await fetch('/api/test/state').then(r=>r.json());if(after.configPosts.length)break;await new Promise(r=>setTimeout(r,25));}
-if(!after?.configPosts.length)throw Error('no explicit save observed '+JSON.stringify({status:document.querySelector('#editor-status').textContent,provider:document.querySelector('#m-provider').value,picker:picker.value,selected:document.querySelector('#m-picker').selectedOptions[0]?.dataset.model,disabled:document.querySelector('#save-use').disabled,form:document.querySelector('#connection-form').checkValidity()}));await wait(()=>document.querySelector('#current-default').textContent.includes(__MODEL_ID__));finish({route:ThycaRouter.currentRoute(),before,after,posted:after.configPosts[0],defaultLine:document.querySelector('#current-default').textContent,key:document.querySelector('#pv-key').value,saveStatus:document.querySelector('#save-status').textContent,tests:after.testPosts,primaryVisible:(()=>{const r=document.querySelector('#save-use').getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight})()});
+if(!after?.configPosts.length)throw Error('no explicit save observed '+JSON.stringify({status:document.querySelector('#editor-status').textContent,picker:picker.value,selected:document.querySelector('#m-picker').selectedOptions[0]?.dataset.model,disabled:document.querySelector('#save-use').disabled,form:document.querySelector('#connection-form').checkValidity()}));await wait(()=>document.querySelector('#current-default').textContent.includes(__MODEL_ID__));finish({route:ThycaRouter.currentRoute(),before,after,posted:after.configPosts[0],defaultLine:document.querySelector('#current-default').textContent,key:document.querySelector('#pv-key').value,saveStatus:document.querySelector('#save-status').textContent,tests:after.testPosts,footerSave:!!document.querySelector('.editor-footer #save-use'),primaryVisible:(()=>{const el=document.querySelector('#save-use');el.scrollIntoView({block:'nearest'});const r=el.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight})()});
 }catch(e){finish({error:String(e),stack:e.stack})}})();
 """
     long_model = "vendor/" + "long-model-name-" * 5 + "x"
@@ -692,10 +850,10 @@ if(!after?.configPosts.length)throw Error('no explicit save observed '+JSON.stri
         selected = _cdp_browser_result(browser, base + "?stage=selected", 1280, Path("/tmp/thyca-provider-single-editor-selected.png"), tmp_path / "provider-selected")
         assert "error" not in selected, selected
         assert selected["stage"] == "loaded-selected-before-save" and selected["model"] == long_model
-        assert selected["prices"] == ["0.5", "0.05", "1.25"] and selected["advancedClosed"]
+        assert selected["prices"] == ["0.5", "0.05", "1.25"]
         assert selected["cardCount"] == 1 and selected["configPosts"] == selected["testPosts"] == []
         assert selected["verifyPosts"] == [{"baseUrl": "http://127.0.0.1:1/v1", "apiKey": "mock-browser-key"}]
-        assert not selected["overflow"] and selected["headerGap"] and selected["primaryVisible"]
+        assert not selected["overflow"] and selected["headerGap"] and selected["primaryVisible"] and selected["footerSave"]
         results["selected"] = selected
         for width, name, mobile in ((1280, "desktop", False), (320, "320", True), (375, "375", True)):
             saved = _cdp_browser_result(browser, base + "?stage=save", width, Path(f"/tmp/thyca-provider-single-editor-{name}.png"), tmp_path / f"provider-save-{name}", mobile=mobile)
@@ -704,9 +862,10 @@ if(!after?.configPosts.length)throw Error('no explicit save observed '+JSON.stri
             assert len(saved["after"]["configPosts"]) == 1 and saved["after"]["testPosts"] == []
             posted = saved["posted"]
             assert posted["providers"]["browser-preview"]["apiKey"] == "mock-browser-key"
-            assert posted["models"][long_model] == {"provider": "browser-preview", "input": 0.5, "cache": 0.05, "output": 1.25}
+            assert posted["models"][long_model] == {"provider": "browser-preview", "input": 0.5, "cache": 0.05, "output": 1.25, "contextTokens": 272000,
+                                                        "reasoningEfforts": ["low", "high", "max"]}
             assert posted["defaultModel"] == long_model and posted["defaultProvider"] == "alpha"
-            assert saved["key"] == "" and long_model in saved["defaultLine"] and saved["primaryVisible"]
+            assert saved["key"] == "" and long_model in saved["defaultLine"] and saved["primaryVisible"] and saved["footerSave"]
             results[name] = saved
         artifacts = [Path(f"/tmp/thyca-provider-single-editor-{name}.png") for name in ("initial", "selected", "desktop", "320", "375")]
         for image in artifacts:

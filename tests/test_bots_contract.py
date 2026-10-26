@@ -12,14 +12,15 @@ from urllib.request import Request, urlopen
 import pytest
 
 from thyca.app.chat_app import ChatApp
-from thyca.config import default_config, load, save
+from thyca.config import load, save
+from seeded_config import seeded_config
 from thyca.serve import default_webui, make_server
 
 WEBUI = default_webui()
 
 
 def _chat(tmp_path: Path) -> ChatApp:
-    save(default_config(), tmp_path / "config.json")
+    save(seeded_config(), tmp_path / "config.json")
     return ChatApp(tmp_path, load(tmp_path / "config.json"))
 
 

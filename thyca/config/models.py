@@ -32,6 +32,7 @@ class ModelCfg:
     loopMax: int | None = None
     hotTailKB: int | None = None
     contextTokens: int | None = None
+    maxTokens: int | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.provider, str):
@@ -66,7 +67,7 @@ class ModelCfg:
                 f"{'/'.join(REASONING_EFFORTS)} (or declare models[].reasoningEfforts), "
                 f"got {self.reasoningEffort!r}"
             )
-        for field_name in ("loopMax", "hotTailKB", "contextTokens"):
+        for field_name in ("loopMax", "hotTailKB", "contextTokens", "maxTokens"):
             value = getattr(self, field_name)
             if value is None:
                 continue
@@ -96,4 +97,6 @@ def _model_to_dict(cfg: ModelCfg) -> dict[str, Any]:
         data["hotTailKB"] = cfg.hotTailKB
     if cfg.contextTokens is not None:
         data["contextTokens"] = cfg.contextTokens
+    if cfg.maxTokens is not None:
+        data["maxTokens"] = cfg.maxTokens
     return data

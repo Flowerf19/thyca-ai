@@ -9,12 +9,13 @@ from zoneinfo import ZoneInfo
 from thyca.app.chat_app import ChatApp
 from thyca.bots.card import BotCard
 from thyca.bots.scheduler import tick
-from thyca.config import default_config, load, save
+from thyca.config import load, save
+from seeded_config import seeded_config
 from thyca.llm.llm_base import ChatReply
 
 
 def _chat(tmp_path: Path, connect=None) -> ChatApp:
-    save(default_config(), tmp_path / "config.json")
+    save(seeded_config(), tmp_path / "config.json")
     return ChatApp(tmp_path, load(tmp_path / "config.json"), connect=connect)
 
 

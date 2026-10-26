@@ -15,7 +15,8 @@ import pytest
 from thyca.app.chat_app import ChatApp
 from thyca.bots.card import BotCard
 from thyca.bots.registry import RegistryError
-from thyca.config import default_config, load, save
+from thyca.config import load, save
+from seeded_config import seeded_config
 from thyca.llm.llm_base import ChatReply
 from thyca.memory.facade import MemoryFacade
 from thyca.serve import default_webui, make_server
@@ -28,7 +29,7 @@ class IdleLLM:
 
 
 def _app(root: Path) -> ChatApp:
-    save(default_config(), root / "config.json")
+    save(seeded_config(), root / "config.json")
     app = ChatApp(root, load(root / "config.json"), connect=IdleLLM())
     app._bots.create(BotCard(
         bot_id="coder", name="coder", role="Coder", description="Writes code.",

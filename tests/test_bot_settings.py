@@ -23,6 +23,7 @@ from thyca.bots.settings import (
     write_settings,
 )
 from thyca.config import ModelCfg, ProviderEntry, default_config, load, save
+from seeded_config import seeded_config
 from thyca.llm.llm_base import ChatReply
 from thyca.memory.facade import MemoryFacade
 from thyca.serve import default_webui, make_server
@@ -281,6 +282,7 @@ def _runtime_config() -> object:
             "default": ProviderEntry(baseUrl="https://global.invalid/v1", apiKey="k"),
             "card-provider": ProviderEntry(baseUrl="https://card.invalid/v1", apiKey="k"),
         },
+        defaultProvider="default",
         defaultModel="global-model",
         models={
             "global-model": ModelCfg(),
@@ -468,7 +470,7 @@ class _IdleLLM:
 
 
 def _chat_app(root: Path) -> ChatApp:
-    save(default_config(), root / "config.json")
+    save(seeded_config(provider_id="default"), root / "config.json")
     app = ChatApp(root, load(root / "config.json"), connect=_IdleLLM())
     app._bots.create(BotCard(
         bot_id="coder", name="coder", role="Coder",
@@ -603,6 +605,11 @@ def test_http_validation_errors_are_safe(tmp_path: Path) -> None:
 def test_http_custom_effort_set_and_corrupt_is_503(tmp_path: Path) -> None:
     cfg = replace(
         default_config(),
+        providers={
+            "default": ProviderEntry(baseUrl="https://global.invalid/v1", apiKey="k"),
+        },
+        defaultProvider="default",
+        defaultModel="global-model",
         models={
             "custom-model": ModelCfg(
                 provider="default", reasoningEfforts=("low", "custom")

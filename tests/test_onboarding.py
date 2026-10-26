@@ -112,7 +112,11 @@ def test_validate_provider_bad_url() -> None:
 
 
 def test_provider_ready_true_with_json_key(tmp_path) -> None:
-    cfg = Config(providers={"default": ProviderEntry(apiKey="sk-1")})
+    cfg = Config(
+        providers={"default": ProviderEntry(apiKey="sk-1")},
+        defaultProvider="default",
+        defaultModel="m",
+    )
     assert provider_ready(cfg) is True
 
 
@@ -123,7 +127,11 @@ def test_provider_ready_false_without_key(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def test_apply_provider_sets_values_and_preserves_rest(tmp_path) -> None:
-    cfg = Config()
+    cfg = Config(
+        providers={"default": ProviderEntry()},
+        defaultProvider="default",
+        defaultModel="old-model",
+    )
     updated = apply_provider(cfg, "https://openrouter.ai/api/v1", "sk-new", "x/m")
     assert updated.provider.baseUrl == "https://openrouter.ai/api/v1"
     assert updated.provider.apiKey == "sk-new"

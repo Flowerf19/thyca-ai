@@ -10,7 +10,8 @@ from urllib.request import Request, urlopen
 
 from thyca.serve import trace_api
 from thyca.app.chat_app import ChatApp
-from thyca.config import default_config, load, save
+from thyca.config import load, save
+from seeded_config import seeded_config
 from thyca.llm.llm_base import ChatReply
 from thyca.core.protocol import Message, ToolCall
 from thyca.serve import default_webui, make_server
@@ -29,7 +30,7 @@ class FakeLLM:
 
 
 def _chat(tmp_path: Path) -> ChatApp:
-    save(default_config(), tmp_path / "config.json")
+    save(seeded_config(), tmp_path / "config.json")
     return ChatApp(tmp_path, load(tmp_path / "config.json"), connect=FakeLLM())
 
 
@@ -549,7 +550,7 @@ class _NoopLLM:
 
 
 def _trace_chat(tmp_path: Path) -> ChatApp:
-    save(default_config(), tmp_path / "config.json")
+    save(seeded_config(), tmp_path / "config.json")
     return ChatApp(tmp_path, load(tmp_path / "config.json"), connect=_NoopLLM())
 
 
@@ -622,11 +623,11 @@ def test_x26_sum_group_rollup() -> None:
 
 
 def _start_config_server(tmp_path: Path):
-    from thyca.config import default_config, save
+    from thyca.config import save
     from thyca.memory.facade import MemoryFacade
     from thyca.serve import default_webui, make_server
 
-    save(default_config(), tmp_path / "config.json")
+    save(seeded_config(), tmp_path / "config.json")
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     httpd = make_server(
         host="127.0.0.1",

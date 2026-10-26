@@ -32,7 +32,13 @@ def test_default_config_valid(tmp_path: Path) -> None:
     cfg = load(p)
     # load creates default when missing
     assert p.exists()
-    assert cfg.provider.model == "gpt-4o-mini"
+    # a fresh config is truly empty: no provider, no OpenAI seed
+    assert cfg.providers == {}
+    assert cfg.defaultProvider == ""
+    assert cfg.defaultModel == ""
+    raw_text = p.read_text(encoding="utf-8")
+    assert "openai" not in raw_text
+    assert "gpt-4o-mini" not in raw_text
     # timezone follows the host system (fallback Asia/Ho_Chi_Minh)
     ZoneInfo(cfg.timeline.timezone)
     # round-trip
@@ -40,10 +46,49 @@ def test_default_config_valid(tmp_path: Path) -> None:
     assert cfg2.to_dict() == cfg.to_dict()
 
 
+def test_non_empty_providers_with_empty_defaults_roundtrip(tmp_path: Path) -> None:
+    """save→load never breaks when defaults stay empty (partial setups)."""
+    from thyca.config import _parse_dict
+
+    cfg = Config(providers={"a": ProviderEntry(baseUrl="https://a.example/v1")})
+    assert cfg.defaultProvider == "" and cfg.defaultModel == ""
+    raw = cfg.to_dict()
+    assert raw["providers"]["a"]["baseUrl"] == "https://a.example/v1"
+    assert raw["defaultProvider"] == "" and raw["defaultModel"] == ""
+    assert _parse_dict(raw) == cfg
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps(raw), encoding="utf-8")
+    assert load(p) == cfg
+    # ...but naming a provider that does not exist is still rejected.
+    bad = dict(raw, defaultProvider="ghost")
+    with pytest.raises(ConfigError, match="defaultProvider 'ghost' is not in providers"):
+        _parse_dict(bad)
+
+
+def test_empty_dict_loads_as_empty_config(tmp_path: Path) -> None:
+    for raw in ({}, {"providers": {}}):
+        p = tmp_path / f"{len(list(tmp_path.iterdir()))}.json"
+        p.write_text(json.dumps(raw), encoding="utf-8")
+        cfg = load(p)
+        assert cfg.providers == {}
+        assert cfg.defaultProvider == ""
+        assert cfg.defaultModel == ""
+    # A named default with no providers key at all is rejected too — the
+    # legacy-absent branch must not swallow it.
+    p = tmp_path / "ghost.json"
+    p.write_text(json.dumps({"defaultProvider": "ghost"}), encoding="utf-8")
+    with pytest.raises(ConfigError, match="defaultProvider 'ghost' is not in providers"):
+        load(p)
+
+
 def test_api_key_json_wins_over_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     p = tmp_path / "config.json"
     raw = default_config().to_dict()
-    raw["providers"]["default"]["apiKey"] = "json-secret"
+    raw["providers"] = {
+        "default": {"baseUrl": "https://api.openai.com/v1", "apiKey": "json-secret"}
+    }
+    raw["defaultProvider"] = "default"
+    raw["defaultModel"] = "gpt-4o-mini"
     p.write_text(json.dumps(raw), encoding="utf-8")
     monkeypatch.setenv("THYCA_TOKEN", "env-secret")
     cfg = load(p)
@@ -53,6 +98,11 @@ def test_api_key_json_wins_over_env(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 
 def test_api_key_resolve(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     p = tmp_path / "config.json"
+    raw = default_config().to_dict()
+    raw["providers"] = {"default": {}}
+    raw["defaultProvider"] = "default"
+    raw["defaultModel"] = "gpt-4o-mini"
+    p.write_text(json.dumps(raw), encoding="utf-8")
     cfg = load(p)
     monkeypatch.delenv("THYCA_TOKEN", raising=False)
     with pytest.raises(ConfigError, match="THYCA_TOKEN not set"):
@@ -64,7 +114,9 @@ def test_api_key_resolve(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
 def test_api_key_env_custom(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     p = tmp_path / "config.json"
     raw = default_config().to_dict()
-    raw["providers"]["default"]["apiKeyEnv"] = "MY_KEY"
+    raw["providers"] = {"default": {"apiKeyEnv": "MY_KEY"}}
+    raw["defaultProvider"] = "default"
+    raw["defaultModel"] = "gpt-4o-mini"
     p.write_text(json.dumps(raw), encoding="utf-8")
     cfg = load(p)
     assert cfg.provider.apiKeyEnv == "MY_KEY"
@@ -203,7 +255,11 @@ def test_limits_validation() -> None:
 
 def test_save_roundtrip(tmp_path: Path) -> None:
     p = tmp_path / "config.json"
-    cfg = Config(defaultModel="gpt-4o")
+    cfg = Config(
+        providers={"default": ProviderEntry(baseUrl="https://a.example/v1")},
+        defaultProvider="default",
+        defaultModel="gpt-4o",
+    )
     save(cfg, p)
     assert p.exists()
     cfg2 = load(p)
@@ -261,8 +317,9 @@ def test_effective_provider_applies_model_endpoint_and_reasoning() -> None:
 def test_model_limits_override_global(tmp_path: Path) -> None:
     p = tmp_path / "config.json"
     raw = default_config().to_dict()
+    raw["providers"] = {"default": {"reasoningEffort": "low"}}
+    raw["defaultProvider"] = "default"
     raw["defaultModel"] = "special"
-    raw["providers"]["default"]["reasoningEffort"] = "low"
     raw["limits"] = {"loopMax": 10, "hotTailKB": 4, "contextTokens": 8000}
     raw["models"] = {
         "special": {
@@ -376,7 +433,9 @@ def test_cli_help_and_default_creation(tmp_path: Path, monkeypatch: pytest.Monke
     assert not p.exists()
     cfg = load(p)
     assert p.exists()
-    assert cfg.provider.apiKeyEnv == "THYCA_TOKEN"
+    assert cfg.providers == {}
+    assert cfg.defaultProvider == ""
+    assert cfg.defaultModel == ""
 
 
 def test_config_guide_written_on_ensure_default(
@@ -470,6 +529,7 @@ def test_model_resolves_through_its_own_provider() -> None:
             "default": ProviderEntry(baseUrl="https://a.example/v1", apiKey="key-a"),
             "second": ProviderEntry(baseUrl="https://b.example/v1", apiKey="key-b"),
         },
+        defaultProvider="default",
         defaultModel="model-a",
         models={
             "model-a": ModelCfg(),
@@ -496,7 +556,6 @@ def test_model_resolves_through_its_own_provider() -> None:
 
 def test_providers_reject_bad_shape(tmp_path: Path) -> None:
     cases = [
-        ({"providers": {}}, "providers must not be empty"),
         ({"providers": {"bad id": {}}}, "must match"),
         (
             {"providers": {"default": {}}, "defaultProvider": "ghost"},
@@ -512,6 +571,8 @@ def test_providers_reject_bad_shape(tmp_path: Path) -> None:
     ]
     for patch, message in cases:
         raw = default_config().to_dict()
+        raw["defaultProvider"] = "default"
+        raw["defaultModel"] = "m"
         raw.update(patch)
         p = tmp_path / f"{len(list(tmp_path.iterdir()))}.json"
         p.write_text(json.dumps(raw), encoding="utf-8")
@@ -522,9 +583,22 @@ def test_providers_reject_bad_shape(tmp_path: Path) -> None:
 def test_provider_id_for_dangling_ref_falls_back_to_default() -> None:
     # Unreachable via load (rejected), but hand-built configs must not
     # label a provider the request would never go to.
-    cfg = Config(models={"m": ModelCfg(provider="ghost")})
+    cfg = Config(
+        providers={"default": ProviderEntry(baseUrl="https://d.example/v1")},
+        defaultProvider="default",
+        models={"m": ModelCfg(provider="ghost")},
+    )
     assert cfg.provider_id_for("m") == "default"
-    assert cfg.effective_provider_for("m").baseUrl == cfg.providers["default"].baseUrl
+    assert cfg.effective_provider_for("m").baseUrl == "https://d.example/v1"
+
+
+def test_empty_config_resolution_fails_clearly() -> None:
+    cfg = Config()
+    assert cfg.provider_id_for("m") == ""
+    with pytest.raises(ConfigError, match="chưa cấu hình provider"):
+        cfg.effective_provider_for("m")
+    with pytest.raises(ConfigError, match="chưa cấu hình provider"):
+        cfg.provider
 
 
 def test_save_splits_keys_to_auth_json(tmp_path: Path) -> None:
@@ -534,6 +608,7 @@ def test_save_splits_keys_to_auth_json(tmp_path: Path) -> None:
             "default": ProviderEntry(baseUrl="https://a.example/v1", apiKey="sk-a"),
             "second": ProviderEntry(baseUrl="https://b.example/v1", apiKey="sk-b"),
         },
+        defaultProvider="default",
         defaultModel="m",
     )
     save(cfg, p)
@@ -613,11 +688,19 @@ def test_keyless_save_keeps_live_auth_keys(tmp_path: Path) -> None:
                     baseUrl="https://a.example/v1", apiKey="sk-live"
                 )
             },
+            defaultProvider="default",
             defaultModel="m",
         ),
         p,
     )
-    save(Config(), p)
+    save(
+        Config(
+            providers={"default": ProviderEntry(baseUrl="https://a.example/v1")},
+            defaultProvider="default",
+            defaultModel="m",
+        ),
+        p,
+    )
     auth_raw = json.loads((tmp_path / "auth.json").read_text(encoding="utf-8"))
     assert auth_raw["providers"]["default"]["apiKey"] == "sk-live"
     assert load(p).providers["default"].apiKey == "sk-live"
@@ -636,8 +719,11 @@ def test_missing_auth_json_means_no_keys(
 ) -> None:
     monkeypatch.delenv("THYCA_TOKEN", raising=False)
     p = tmp_path / "config.json"
-    save(default_config(), p)
-    (tmp_path / "auth.json").unlink()
+    raw = default_config().to_dict()
+    raw["providers"] = {"default": {}}
+    raw["defaultProvider"] = "default"
+    raw["defaultModel"] = "gpt-4o-mini"
+    p.write_text(json.dumps(raw), encoding="utf-8")
     with pytest.raises(ConfigError, match="THYCA_TOKEN not set"):
         load(p).providers["default"].api_key()
 
@@ -649,6 +735,8 @@ def test_provider_api_field_roundtrip(tmp_path: Path) -> None:
         "default": {"baseUrl": "https://a.example/v1", "api": "openai_responses"},
         "second": {"baseUrl": "https://b.example/v1"},
     }
+    raw["defaultProvider"] = "default"
+    raw["defaultModel"] = "m"
     p.write_text(json.dumps(raw), encoding="utf-8")
     cfg = load(p)
     assert cfg.providers["default"].api == "openai_responses"
@@ -662,7 +750,11 @@ def test_provider_api_field_roundtrip(tmp_path: Path) -> None:
 def test_provider_api_rejects_unknown_kind(tmp_path: Path) -> None:
     p = tmp_path / "config.json"
     raw = default_config().to_dict()
-    raw["providers"]["default"]["api"] = "graphql"
+    raw["providers"] = {
+        "default": {"baseUrl": "https://a.example/v1", "api": "graphql"}
+    }
+    raw["defaultProvider"] = "default"
+    raw["defaultModel"] = "gpt-4o-mini"
     p.write_text(json.dumps(raw), encoding="utf-8")
     with pytest.raises(ConfigError, match=r"api must be one of openai_chat/openai_responses"):
         load(p)
@@ -819,7 +911,7 @@ def test_x26_model_base_url_rule() -> None:
     assert (
         resolve_model_base_url("http://p", ModelCfg(baseUrl="http://m")) == "http://m"
     )
-    cfg = default_config()
+    cfg = Config(providers={"default": ProviderEntry()})
     assert cfg.effective_provider_for("gpt-4o-mini").baseUrl.startswith("http")
 
 
@@ -888,39 +980,125 @@ def test_f5_provider_effort_must_be_global_and_name_the_fix() -> None:
     """Fails pre-fix: junk effort flowed into the llm payloads."""
     with pytest.raises(
         ConfigError,
-        match=r"must be one of low/high/max \(or declare models\[\]\.reasoningEfforts\)",
+        match=r"must be one of low/medium/high/xhigh/max \(or declare models\[\]\.reasoningEfforts\)",
     ):
         ProviderEntry(reasoningEffort="ultra")
-    with pytest.raises(ConfigError, match="must be one of low/high/max"):
+    with pytest.raises(ConfigError, match="must be one of low/medium/high/xhigh/max"):
         ProviderCfg(reasoningEffort="ultra")
 
 
 def test_f5_stored_junk_effort_fails_load(tmp_path: Path) -> None:
     """Fails pre-fix: load accepted the junk effort."""
     raw = default_config().to_dict()
-    raw["providers"]["default"]["reasoningEffort"] = "ultra"
+    raw["providers"] = {"default": {"reasoningEffort": "ultra"}}
+    raw["defaultProvider"] = "default"
+    raw["defaultModel"] = "gpt-4o-mini"
     target = tmp_path / "config.json"
     target.write_text(json.dumps(raw), encoding="utf-8")
-    with pytest.raises(ConfigError, match="must be one of low/high/max"):
+    with pytest.raises(ConfigError, match="must be one of low/medium/high/xhigh/max"):
         load(target)
+
+
+@pytest.mark.parametrize("level", ["low", "medium", "high", "xhigh", "max"])
+def test_reasoning_effort_accepts_all_five_levels(level: str) -> None:
+    """Every documented thinking level validates (no off/none level exists)."""
+    assert ProviderEntry(reasoningEffort=level).reasoningEffort == level
+    assert ProviderCfg(reasoningEffort=level).reasoningEffort == level
+    assert (
+        ModelCfg(input=0, cache=0, output=0, reasoningEffort=level).reasoningEffort
+        == level
+    )
+
+
+def test_model_without_own_effort_inherits_provider_effort() -> None:
+    """No ticked set + no model default → the provider default governs."""
+    cfg = Config(
+        providers={"p": ProviderEntry(reasoningEffort="xhigh")},
+        defaultProvider="p",
+        defaultModel="m",
+        models={"m": ModelCfg(reasoningEfforts=("low", "medium"))},
+    )
+    resolved = cfg.effective_provider_for("m")
+    assert resolved.reasoningEffort == "xhigh"
+    assert resolved.reasoningEfforts == ()
+
+
+def test_model_max_tokens_default_resolve_and_own_wins() -> None:
+    """Unset → default cap; a model's own maxTokens wins on resolve."""
+    from thyca.config.defaults import DEFAULT_MODEL_MAX_TOKENS
+
+    assert DEFAULT_MODEL_MAX_TOKENS == 16384
+    cfg = Config(
+        providers={"p": ProviderEntry()},
+        defaultProvider="p",
+        defaultModel="m",
+        models={"m": ModelCfg(), "n": ModelCfg(maxTokens=4096)},
+    )
+    assert cfg.effective_provider_for("m").maxTokens == 16384
+    assert cfg.effective_provider_for("n").maxTokens == 4096
+    # Sparse wire form: an unset key stays absent from the saved dict.
+    assert "maxTokens" not in cfg.to_dict()["models"]["m"]
+    assert cfg.to_dict()["models"]["n"]["maxTokens"] == 4096
+    with pytest.raises(ConfigError, match="maxTokens"):
+        ProviderCfg(maxTokens=0)
+
+
+def test_model_max_tokens_rejects_out_of_range(tmp_path: Path) -> None:
+    p = tmp_path / "config.json"
+    raw = default_config().to_dict()
+    raw["models"] = {"m": {"input": 0, "cache": 0, "output": 0, "maxTokens": 0}}
+    p.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(ConfigError, match="maxTokens"):
+        load(p)
+    raw["models"] = {"m": {"input": 0, "cache": 0, "output": 0, "maxTokens": 2000001}}
+    p.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(ConfigError, match="maxTokens"):
+        load(p)
+
+
+def test_model_max_tokens_roundtrip(tmp_path: Path) -> None:
+    p = tmp_path / "config.json"
+    raw = default_config().to_dict()
+    raw["models"] = {"m": {"input": 0, "cache": 0, "output": 0, "maxTokens": 8000}}
+    p.write_text(json.dumps(raw), encoding="utf-8")
+    cfg = load(p)
+    assert cfg.models["m"].maxTokens == 8000
+    assert load(p).to_dict()["models"]["m"]["maxTokens"] == 8000
 
 
 def test_f5_global_check_skipped_only_for_declared_own_set() -> None:
     """Pins new behavior: own-set models keep resolving custom levels."""
     cfg = Config(
+        providers={"p": ProviderEntry()},
         models={
             "m": ModelCfg(
                 reasoningEffort="medium",
                 reasoningEfforts=("minimal", "medium"),
             )
-        }
+        },
     )
     resolved = cfg.effective_provider_for("m")
     assert resolved.reasoningEffort == "medium"
     assert resolved.reasoningEfforts == ("minimal", "medium")
-    # No own set anywhere: the global check still bites.
-    with pytest.raises(ConfigError, match="must be one of low/high/max"):
-        ProviderCfg(reasoningEffort="medium")
+    # An own-set level outside the global five still resolves (custom
+    # levels live on models; the global check is skipped for their set).
+    minimal = Config(
+        providers={"p": ProviderEntry()},
+        defaultModel="mini",
+        models={
+            "mini": ModelCfg(
+                reasoningEffort="minimal",
+                reasoningEfforts=("minimal", "medium"),
+            )
+        },
+    ).effective_provider_for("mini")
+    assert minimal.reasoningEffort == "minimal"
+    assert minimal.reasoningEfforts == ("minimal", "medium")
+    # medium is now a global level: no own set needed.
+    assert ProviderCfg(reasoningEffort="medium").reasoningEffort == "medium"
+    # No own set anywhere: the global check still bites (junk stays junk).
+    with pytest.raises(ConfigError, match="must be one of low/medium/high/xhigh/max"):
+        ProviderCfg(reasoningEffort="ultra")
 
 
 def test_f6_unknown_keys_warn_listing_keys_but_load(tmp_path: Path) -> None:
@@ -928,7 +1106,9 @@ def test_f6_unknown_keys_warn_listing_keys_but_load(tmp_path: Path) -> None:
     raw = default_config().to_dict()
     raw["futureTop"] = {"whatever": True}
     raw["limits"]["loopMaxX"] = 5
-    raw["providers"]["default"]["basUrl"] = "https://typo.example/v1"
+    raw["providers"] = {"default": {"basUrl": "https://typo.example/v1"}}
+    raw["defaultProvider"] = "default"
+    raw["defaultModel"] = "gpt-4o-mini"
     target = tmp_path / "config.json"
     target.write_text(json.dumps(raw), encoding="utf-8")
     with pytest.warns(UserWarning, match="ignoring unknown config keys") as caught:

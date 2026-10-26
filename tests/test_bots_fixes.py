@@ -21,7 +21,8 @@ from thyca.bots.context import BotTurnContext, bind_bot_turn_context, reset_bot_
 from thyca.bots.policy import BotPolicy, bind_allowed_tools, reset_allowed_tools
 from thyca.bots.registry import BotRegistry
 from thyca.bots.runtime import BotRuntime
-from thyca.config import default_config, load, save
+from thyca.config import load, save
+from seeded_config import seeded_config
 from thyca.core.protocol import ToolCall, ToolResult
 from thyca.llm.llm_base import ChatReply
 from thyca.memory.facade import MemoryFacade
@@ -211,7 +212,7 @@ def test_bus_drain_log_is_per_room() -> None:
 # --- ChatApp-level: delivery, cost, memory.read, paused, skills ---------
 
 def _chat(tmp_path: Path, connect=None) -> ChatApp:
-    save(default_config(), tmp_path / "config.json")
+    save(seeded_config(), tmp_path / "config.json")
     return ChatApp(tmp_path, load(tmp_path / "config.json"), connect=connect)
 
 

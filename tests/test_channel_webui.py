@@ -20,7 +20,8 @@ from thyca.app.loop_turns import TurnCancelled
 from thyca.app.webui_channel import WebUIChannelAdapter
 from thyca.bots.card import BotCard
 from thyca.bots.workspace_store import WorkspaceStore
-from thyca.config import default_config, load, save
+from thyca.config import load, save
+from seeded_config import seeded_config
 from thyca.core.protocol import Message, ToolCall, parse_ts
 from thyca.llm.llm_base import ChatReply, LLMError
 from thyca.serve.turn_state import TurnHub
@@ -29,7 +30,7 @@ from thyca.sessions.store import SessionStore
 
 
 def _chat(tmp_path: Path, connect=None) -> ChatApp:
-    save(default_config(), tmp_path / "config.json")
+    save(seeded_config(), tmp_path / "config.json")
     return ChatApp(tmp_path, load(tmp_path / "config.json"), connect=connect)
 
 

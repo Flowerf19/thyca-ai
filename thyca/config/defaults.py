@@ -4,7 +4,7 @@ from __future__ import annotations
 DEFAULT_PROVIDER_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_PROVIDER_API_KEY_ENV = "THYCA_TOKEN"
 DEFAULT_PROVIDER_MODEL = "gpt-4o-mini"
-REASONING_EFFORTS = ("low", "high", "max")
+REASONING_EFFORTS = ("low", "medium", "high", "xhigh", "max")
 DEFAULT_PROVIDER_REASONING_EFFORT = "high"
 DEFAULT_TIMELINE_TIMEZONE = "Asia/Ho_Chi_Minh"
 DEFAULT_LIMITS_LOOP_MAX = 200
@@ -12,6 +12,8 @@ DEFAULT_LIMITS_SOFT_TIMEOUT_S = 60
 DEFAULT_LIMITS_HOT_TAIL_KB = 4
 DEFAULT_LIMITS_CONTEXT_TOKENS = 272_000
 DEFAULT_LIMITS_CONTEXT_TOKENS_MAX = 2_000_000
+# Default output cap for a model without its own maxTokens (Pi parity).
+DEFAULT_MODEL_MAX_TOKENS = 16_384
 # One range table for the int limits: LimitsCfg bounds, per-model bounds,
 # and the settings-panel min/max all read from here so they cannot drift.
 LIMIT_RANGES: dict[str, tuple[int, int]] = {
@@ -19,6 +21,8 @@ LIMIT_RANGES: dict[str, tuple[int, int]] = {
     "hotTailKB": (1, 64),
     "contextTokens": (1000, DEFAULT_LIMITS_CONTEXT_TOKENS_MAX),
     "softTimeoutS": (1, 300),
+    # Per-model output cap: same ceiling as context for one consistent rule.
+    "maxTokens": (1, DEFAULT_LIMITS_CONTEXT_TOKENS_MAX),
 }
 DEFAULT_PROVIDER_ID = "default"
 PROVIDER_APIS = ("openai_chat", "openai_responses")

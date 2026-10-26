@@ -25,7 +25,8 @@ from thyca.bots.timeline import (
     WorkspaceTimeline,
 )
 from thyca.bots.workspace_store import WorkspaceStore
-from thyca.config import default_config, load, save
+from thyca.config import load, save
+from seeded_config import seeded_config
 from thyca.core.channel import WindowRef
 from thyca.core.protocol import Message
 from thyca.llm.llm_base import ChatReply
@@ -33,7 +34,7 @@ from thyca.sessions import SessionManager
 
 
 def _chat(tmp_path: Path, connect, context_tokens: int | None = None) -> ChatApp:
-    cfg = default_config()
+    cfg = seeded_config()
     if context_tokens is not None:
         cfg = replace(cfg, limits=replace(cfg.limits, contextTokens=context_tokens))
     save(cfg, tmp_path / "config.json")

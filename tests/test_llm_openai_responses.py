@@ -154,6 +154,28 @@ async def test_stream_full_turn() -> None:
 
 
 @pytest.mark.asyncio
+async def test_responses_reasoning_effort_medium_sent_verbatim() -> None:
+    """New levels ride the wire untouched (no mapping/clamp to the old three)."""
+    seen: list = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return _sse(_completed())
+
+    connect = OpenAIResponses(
+        ProviderCfg(
+            baseUrl="https://api.example.com/v1",
+            model="demo-model",
+            apiKey="sk-secret-key",
+            reasoningEffort="medium",
+        ),
+        client=_client(handler),
+    )
+    await connect.chat([Message(role="user", content="x")])
+    assert seen[0]["reasoning"] == {"effort": "medium", "summary": "auto"}
+
+
+@pytest.mark.asyncio
 async def test_stream_unknown_events_and_missing_completed() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return _sse(
@@ -240,6 +262,52 @@ async def test_nonstream_parses_output_and_error() -> None:
     connect = OpenAIResponses(_provider(), client=_client(err_handler))
     with pytest.raises(LLMError, match="bad input"):
         await connect.chat([Message(role="user", content="x")])
+
+
+@pytest.mark.asyncio
+async def test_responses_sends_default_max_output_tokens() -> None:
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(
+            200, json={"model": "m", "status": "completed",
+                       "output": [{"type": "message", "content": [{"type": "output_text", "text": "ok"}]}]}
+        )
+
+    connect = OpenAIResponses(_provider(), client=_client(handler))
+    reply = await connect.chat([Message(role="user", content="x")])
+    assert reply.content == "ok"
+    assert bodies[0]["max_output_tokens"] == 16384
+
+
+@pytest.mark.asyncio
+async def test_responses_model_max_output_tokens_wins_and_survives_drop_retry() -> None:
+    from thyca.config import ModelCfg, ProviderEntry
+    from thyca.config.providers import resolve
+
+    provider = resolve(
+        ProviderEntry(baseUrl="https://api.example.com/v1", apiKey="sk-secret-key"),
+        "demo-model",
+        ModelCfg(maxTokens=4096),
+    )
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content.decode("utf-8")))
+        if len(bodies) == 1:
+            return httpx.Response(400, json={"error": {"message": "reasoning not supported"}})
+        return httpx.Response(
+            200, json={"model": "m", "status": "completed",
+                       "output": [{"type": "message", "content": [{"type": "output_text", "text": "ok"}]}]}
+        )
+
+    connect = OpenAIResponses(provider, client=_client(handler))
+    reply = await connect.chat([Message(role="user", content="x")])
+    assert reply.content == "ok"
+    assert bodies[0]["max_output_tokens"] == 4096
+    assert bodies[1]["max_output_tokens"] == 4096
+    assert "reasoning" not in bodies[1]
 
 
 @pytest.mark.asyncio

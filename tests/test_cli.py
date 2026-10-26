@@ -9,6 +9,7 @@ import pytest
 
 from thyca.app.cli import Cli
 from thyca.config import ModelCfg, McpServerCfg, default_config, load, save
+from seeded_config import seeded_config
 from thyca.llm.llm_base import ChatReply, LLMError
 from thyca.core.protocol import Message, ToolCall
 from thyca.tools.mcp import StartupDiagnostic
@@ -32,6 +33,10 @@ class FakeLLM:
 def _cli(tmp_path: Path, connect, stdin: str = "") -> tuple[Cli, StringIO, StringIO]:
     out = StringIO()
     err = StringIO()
+    # Runnable fixture config; tests with their own config overwrite it.
+    # Only seed when the test has not written one already.
+    if not (tmp_path / "config.json").exists():
+        save(seeded_config(), tmp_path / "config.json")
     cli = Cli(
         thyca_dir=tmp_path,
         connect=connect,
@@ -154,7 +159,7 @@ def test_cli_registers_and_closes_configured_mcp_tools(tmp_path: Path, monkeypat
     manager = FakeManager()
     monkeypatch.setattr("thyca.app.chat_app.MCPManager", lambda: manager)
     cfg = replace(
-        default_config(),
+        seeded_config(),
         mcpServers={"echo": McpServerCfg(command="ignored")},
     )
     save(cfg, tmp_path / "config.json")
@@ -211,7 +216,7 @@ def test_cli_mcp_diagnostic_includes_server_name(tmp_path: Path, monkeypatch) ->
 
 
 def test_model_override_does_not_persist(tmp_path: Path) -> None:
-    cfg = replace(default_config(), models={"override-model": ModelCfg()})
+    cfg = replace(seeded_config(), models={"override-model": ModelCfg()})
     save(cfg, tmp_path / "config.json")
     before = load(tmp_path / "config.json").provider.model
     cli, _out, _err = _cli(tmp_path, FakeLLM(ChatReply(content="ok")))
@@ -220,7 +225,7 @@ def test_model_override_does_not_persist(tmp_path: Path) -> None:
 
 
 def test_unknown_model_override_is_rejected_cleanly(tmp_path: Path) -> None:
-    save(default_config(), tmp_path / "config.json")
+    save(seeded_config(), tmp_path / "config.json")
     cli, _out, err = _cli(tmp_path, FakeLLM(ChatReply(content="unused")))
     assert cli.main(["--model", "unknown-model", "-p", "hi"]) == 1
     assert "invalid model" in err.getvalue()
@@ -286,6 +291,7 @@ def test_cli_factory_receives_registered_provider(tmp_path: Path, monkeypatch) -
             "default": ProviderEntry(baseUrl="https://a.invalid/v1"),
             "second": ProviderEntry(baseUrl="https://b.invalid/v1"),
         },
+        defaultProvider="default",
         defaultModel="model-a",
         models={"model-a": ModelCfg(), "model-b": ModelCfg(provider="second")},
     )
@@ -357,6 +363,7 @@ def test_print_model_override_routes_to_its_provider_http_auth(
                 baseUrl="https://b.invalid/v1", apiKey="sk-b"
             ),
         },
+        defaultProvider="default",
         defaultModel="model-a",
         models={"model-a": ModelCfg(), "model-b": ModelCfg(provider="second")},
     )

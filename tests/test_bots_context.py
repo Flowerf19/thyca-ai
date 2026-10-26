@@ -8,7 +8,8 @@ from pathlib import Path
 from thyca.agent.loop import AgentLoop
 from thyca.app.chat_app import ChatApp
 from thyca.bots.card import BotCard
-from thyca.config import default_config, load, save
+from thyca.config import load, save
+from seeded_config import seeded_config
 from thyca.core.protocol import Message, ToolCall
 from thyca.llm.llm_base import ChatReply
 from thyca.memory.active import ActiveSnapshot
@@ -17,7 +18,7 @@ from thyca.sessions.compaction import SessionCompactor
 
 
 def _chat(tmp_path: Path, connect, context_tokens: int | None = None) -> ChatApp:
-    cfg = default_config()
+    cfg = seeded_config()
     if context_tokens is not None:
         cfg = replace(cfg, limits=replace(cfg.limits, contextTokens=context_tokens))
     save(cfg, tmp_path / "config.json")

@@ -531,7 +531,7 @@ async function refreshBotConfig() {
     defaultProvider: typeof values.defaultProvider === 'string' ? values.defaultProvider : '',
     providers: (values.providers && typeof values.providers === 'object') ? values.providers : {},
   };
-  botSchemaChoices = Array.isArray(field?.choices) ? field.choices : ['low', 'high', 'max'];
+  botSchemaChoices = Array.isArray(field?.choices) ? field.choices : ['low', 'medium', 'high', 'xhigh', 'max'];
 }
 
 /* Reload button: config + current scope, preserving any unsaved bot draft.

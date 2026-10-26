@@ -380,6 +380,10 @@ class OpenAIResponses(BaseConnect):
                 payload["tools"] = converted
         if self._provider.reasoningEffort:
             payload["reasoning"] = {"effort": self._provider.reasoningEffort, "summary": "auto"}
+        # Same output-cap contract as the chat path (survives drop-retry:
+        # only the reasoning key is ever stripped).
+        if self._provider.maxTokens:
+            payload["max_output_tokens"] = self._provider.maxTokens
 
         key = self._provider.api_key()
         headers = {"Authorization": f"Bearer {key}"}

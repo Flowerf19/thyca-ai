@@ -45,6 +45,7 @@ _MODEL_KEYS = (
     "loopMax",
     "hotTailKB",
     "contextTokens",
+    "maxTokens",
 )
 _MCP_SERVER_KEYS = ("command", "args", "env")
 _PRICING_KEYS = ("input", "cache", "cached_input", "output")
@@ -182,6 +183,9 @@ def _parse_models(raw: Any) -> dict[str, ModelCfg]:
             contextTokens=_optional_int(
                 value.get("contextTokens"), f"models[{name!r}].contextTokens"
             ),
+            maxTokens=_optional_int(
+                value.get("maxTokens"), f"models[{name!r}].maxTokens"
+            ),
         )
     return result
 
@@ -231,19 +235,56 @@ def _parse_provider_block(raw: dict[str, Any]) -> tuple[dict[str, ProviderEntry]
     When both are present the new shape wins and the legacy block is ignored.
     """
     if raw.get("providers") is not None:
-        providers = _parse_providers(raw.get("providers"))
-        default_provider = raw.get("defaultProvider", DEFAULT_PROVIDER_ID)
-        _text(default_provider, "defaultProvider")
-        if default_provider not in providers:
+        providers_raw = raw.get("providers")
+        if not isinstance(providers_raw, dict):
+            raise ConfigError(
+                f"providers must be an object, got {type(providers_raw).__name__}"
+            )
+        if not providers_raw:
+            # Empty providers (fresh config, none added yet): defaults must
+            # stay empty too. A non-empty defaultProvider here names a
+            # provider that does not exist, so it is rejected like the
+            # non-empty path below.
+            default_provider = raw.get("defaultProvider", "")
+            _text(default_provider, "defaultProvider", non_empty=False)
+            if default_provider != "":
+                raise ConfigError(
+                    f"defaultProvider {default_provider!r} is not in providers"
+                )
+            default_model = raw.get("defaultModel", "")
+            _text(default_model, "defaultModel", non_empty=False)
+            return {}, default_provider, default_model
+        providers = _parse_providers(providers_raw)
+        # Defaults may stay empty (fresh config, or a payload that only
+        # manages providers): membership is checked only when one is named.
+        # Missing keys stay "", so save→load round-trips instead of
+        # re-seeding legacy OpenAI defaults.
+        default_provider = raw.get("defaultProvider", "")
+        _text(default_provider, "defaultProvider", non_empty=False)
+        if default_provider != "" and default_provider not in providers:
             raise ConfigError(
                 f"defaultProvider {default_provider!r} is not in providers"
             )
-        default_model = raw.get("defaultModel", DEFAULT_PROVIDER_MODEL)
-        _text(default_model, "defaultModel")
+        default_model = raw.get("defaultModel", "")
+        _text(default_model, "defaultModel", non_empty=False)
         return providers, default_provider, default_model
+    legacy_raw = raw.get("provider")
+    if legacy_raw is None:
+        # Neither the new ``providers`` shape nor a legacy ``provider``
+        # block: a truly empty config (no OpenAI seed). Like the empty
+        # providers branch above, a named defaultProvider here names a
+        # provider that does not exist, so it is rejected instead of
+        # silently swallowed.
+        default_provider = raw.get("defaultProvider", "")
+        _text(default_provider, "defaultProvider", non_empty=False)
+        if default_provider != "":
+            raise ConfigError(
+                f"defaultProvider {default_provider!r} is not in providers"
+            )
+        return {}, "", ""
     legacy = ProviderCfg(
         **_fields(
-            raw.get("provider", {}),
+            legacy_raw,
             "provider",
             _LEGACY_PROVIDER_KEYS,
         )

@@ -5,9 +5,10 @@ Current module paths (2026-09-29, branch refactor/provider-rebuild):
                    thyca.llm.openai_responses._to_responses_tools
   endpoint ...... thyca.llm.openai_responses._responses_url
   config ........ thyca.config.providers.ProviderCfg
-responses_parse.py was folded into openai_responses.py (TASK-006). The ONLY
-allowed bytes change versus the GOAL-001 recording is the added
-"store":false field; everything else must stay identical.
+responses_parse.py was folded into openai_responses.py (TASK-006). Allowed
+bytes changes versus the GOAL-001 recording: the added "store":false
+field plus the per-model output cap ("max_output_tokens"); everything
+else must stay identical.
 """
 from __future__ import annotations
 
@@ -41,7 +42,7 @@ EXPECTED_RESPONSES = (
     b'{"arguments":"{\\"expr\\": \\"2+2\\"}","call_id":"call_1","name":"calc",'
     b'"type":"function_call"},'
     b'{"call_id":"call_1","output":"4","type":"function_call_output"}],'
-    b'"model":"golden-model","reasoning":{"effort":"high","summary":"auto"},'
+    b'"max_output_tokens":16384,"model":"golden-model","reasoning":{"effort":"high","summary":"auto"},'
     b'"store":false,"stream":true}'
 )
 
@@ -58,6 +59,8 @@ def _build_payload(provider: ProviderCfg, messages: list[Message]) -> dict:
     }
     if provider.reasoningEffort:
         payload["reasoning"] = {"effort": provider.reasoningEffort, "summary": "auto"}
+    if provider.maxTokens:
+        payload["max_output_tokens"] = provider.maxTokens
     return payload
 
 

@@ -18,7 +18,8 @@ from thyca.bots.context import BotTurnContext, bind_bot_turn_context, reset_bot_
 from thyca.bots.registry import BotRegistry, RegistryError
 from thyca.bots.runtime import BotRuntime, filtered_tool_schemas
 from thyca.bots.tasks import derive_open_tasks
-from thyca.config import default_config, load, save
+from thyca.config import load, save
+from seeded_config import seeded_config
 from thyca.core.protocol import Message, ToolCall
 from thyca.llm.llm_base import ChatReply
 from thyca.memory.identity import bind_bot_id, reset_bot_id
@@ -30,7 +31,7 @@ from thyca.tools.registry import ToolRegistry
 def _chat(tmp_path: Path, connect, **kw) -> ChatApp:
     from dataclasses import replace
 
-    cfg = default_config()
+    cfg = seeded_config()
     if "context_tokens" in kw:
         cfg = replace(cfg, limits=replace(cfg.limits, contextTokens=kw["context_tokens"]))
     save(cfg, tmp_path / "config.json")

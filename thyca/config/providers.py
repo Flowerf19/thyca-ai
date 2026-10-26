@@ -5,17 +5,19 @@ from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from .defaults import (
+    DEFAULT_MODEL_MAX_TOKENS,
     DEFAULT_PROVIDER_API,
     DEFAULT_PROVIDER_API_KEY_ENV,
     DEFAULT_PROVIDER_BASE_URL,
     DEFAULT_PROVIDER_MODEL,
     DEFAULT_PROVIDER_REASONING_EFFORT,
+    LIMIT_RANGES,
     PROVIDER_APIS,
     REASONING_EFFORTS,
 )
 from .errors import ConfigError
 from .secrets import _resolve_api_key
-from .validation import _text
+from .validation import _integer, _text
 
 if TYPE_CHECKING:
     from .models import ModelCfg
@@ -126,6 +128,8 @@ class ProviderCfg(_ApiKeyMixin):
     api: str = DEFAULT_PROVIDER_API
     model: str = DEFAULT_PROVIDER_MODEL
     reasoningEfforts: tuple[str, ...] = ()
+    # Resolved output cap: the model's own maxTokens wins, else the default.
+    maxTokens: int = DEFAULT_MODEL_MAX_TOKENS
 
     def __post_init__(self) -> None:
         _check_shared(
@@ -133,6 +137,12 @@ class ProviderCfg(_ApiKeyMixin):
         )
         _text(self.model, "provider.model")
         _check_effort_set(self.reasoningEfforts, self.reasoningEffort)
+        _integer(self.maxTokens, "provider.maxTokens")
+        lower, upper = LIMIT_RANGES["maxTokens"]
+        if not lower <= self.maxTokens <= upper:
+            raise ConfigError(
+                f"provider.maxTokens must be {lower}..{upper}, got {self.maxTokens}"
+            )
 
 
 def _base_url_for(entry_base_url: str, model_cfg: ModelCfg | None) -> str:
@@ -148,13 +158,19 @@ def resolve(
     """Pure resolution: a stored entry + model overrides → frozen connection.
 
     A model's own reasoningEffort wins; its own set governs only that
-    override (an inherited entry effort stays on the global check).
+    override (an inherited entry effort stays on the global check). A
+    model's own maxTokens wins; otherwise the resolved connection carries
+    the default output cap.
     """
     effort = entry.reasoningEffort
     own_set: tuple[str, ...] = ()
-    if model_cfg is not None and model_cfg.reasoningEffort:
-        effort = model_cfg.reasoningEffort
-        own_set = model_cfg.reasoningEfforts
+    max_tokens = DEFAULT_MODEL_MAX_TOKENS
+    if model_cfg is not None:
+        if model_cfg.reasoningEffort:
+            effort = model_cfg.reasoningEffort
+            own_set = model_cfg.reasoningEfforts
+        if model_cfg.maxTokens is not None:
+            max_tokens = model_cfg.maxTokens
     return ProviderCfg(
         baseUrl=_base_url_for(entry.baseUrl, model_cfg),
         apiKeyEnv=entry.apiKeyEnv,
@@ -163,4 +179,5 @@ def resolve(
         api=entry.api,
         model=model_id,
         reasoningEfforts=own_set,
+        maxTokens=max_tokens,
     )

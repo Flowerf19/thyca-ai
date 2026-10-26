@@ -64,7 +64,7 @@ def test_schema_covers_all_scalar_sections() -> None:
     # Pricing renders per-model in the UI, not as a schema section.
     assert keys == ["provider", "limits", "timeline"]
     provider = {f["key"]: f for f in schema["sections"][0]["fields"]}
-    assert provider["provider.reasoningEffort"]["choices"] == ["low", "high", "max"]
+    assert provider["provider.reasoningEffort"]["choices"] == ["low", "medium", "high", "xhigh", "max"]
     assert provider["provider.reasoningEffort"]["default"] == "high"
     assert provider["provider.apiKey"]["secret"] is True
     assert "secret" not in provider["provider.apiKeyEnv"]
@@ -108,9 +108,11 @@ def test_config_get_masks_api_key(tmp_path: Path) -> None:
     try:
         status, body = _call(httpd, "/api/config")
         assert status == 200
-        assert body["values"]["providers"]["default"]["apiKey"] == ""
-        assert body["values"]["defaultModel"] == "gpt-4o-mini"
-        assert body["meta"] == {"hasApiKey": False, "providers": {"default": False}}
+        # fresh config is truly empty: no provider, no OpenAI seed
+        assert body["values"]["providers"] == {}
+        assert body["values"]["defaultModel"] == ""
+        assert body["values"]["defaultProvider"] == ""
+        assert body["meta"] == {"hasApiKey": False, "providers": {}}
         assert body["schema"]["sections"][0]["key"] == "provider"
     finally:
         _stop(httpd, thread)
@@ -121,7 +123,15 @@ def test_config_post_saves_and_keeps_key(tmp_path: Path) -> None:
     try:
         _, got = _call(httpd, "/api/config")
         values = got["values"]
-        values["providers"]["default"]["apiKey"] = "sk-live-123"
+        values["providers"] = {
+            "default": {
+                "baseUrl": "https://a.example/v1",
+                "apiKeyEnv": "THYCA_TOKEN",
+                "apiKey": "sk-live-123",
+                "reasoningEffort": "high",
+            }
+        }
+        values["defaultProvider"] = "default"
         values["defaultModel"] = "gpt-5.6-luna"
         status, body = _call(httpd, "/api/config", method="POST", data=values)
         assert status == 200 and body == {"ok": True, "ready": True}
@@ -137,7 +147,16 @@ def test_config_post_empty_key_keeps_old(tmp_path: Path) -> None:
     try:
         _, got = _call(httpd, "/api/config")
         values = got["values"]
-        values["providers"]["default"]["apiKey"] = "sk-first"
+        values["providers"] = {
+            "default": {
+                "baseUrl": "https://a.example/v1",
+                "apiKeyEnv": "THYCA_TOKEN",
+                "apiKey": "sk-first",
+                "reasoningEffort": "high",
+            }
+        }
+        values["defaultProvider"] = "default"
+        values["defaultModel"] = "m-1"
         _, _ = _call(httpd, "/api/config", method="POST", data=values)
         _, got2 = _call(httpd, "/api/config")
         values2 = got2["values"]
@@ -158,7 +177,16 @@ def test_config_post_omitted_key_keeps_old(tmp_path: Path) -> None:
     try:
         _, got = _call(httpd, "/api/config")
         values = got["values"]
-        values["providers"]["default"]["apiKey"] = "sk-first"
+        values["providers"] = {
+            "default": {
+                "baseUrl": "https://a.example/v1",
+                "apiKeyEnv": "THYCA_TOKEN",
+                "apiKey": "sk-first",
+                "reasoningEffort": "high",
+            }
+        }
+        values["defaultProvider"] = "default"
+        values["defaultModel"] = "m-1"
         _, _ = _call(httpd, "/api/config", method="POST", data=values)
         _, got2 = _call(httpd, "/api/config")
         values2 = got2["values"]
@@ -407,6 +435,8 @@ def test_config_post_two_providers_keys_stay_isolated(tmp_path: Path) -> None:
         values["models"] = {
             "model-b": {"provider": "second", "input": 0, "cache": 0, "output": 0},
         }
+        values["defaultProvider"] = "default"
+        values["defaultModel"] = "model-b"
         status, body = _call(httpd, "/api/config", method="POST", data=values)
         assert status == 200 and body["ok"] is True
         saved = load(tmp_path / "config.json")
@@ -476,6 +506,13 @@ def test_verify_uses_named_provider_saved_key(tmp_path: Path) -> None:
             "apiKey": "sk-second",
             "reasoningEffort": "high",
         }
+        values["providers"]["default"] = {
+            "baseUrl": "https://a.example/v1",
+            "apiKeyEnv": "THYCA_TOKEN",
+            "reasoningEffort": "high",
+        }
+        values["defaultProvider"] = "default"
+        values["defaultModel"] = "m-9"
         assert _call(httpd, "/api/config", method="POST", data=values)[0] == 200
         base = f"http://127.0.0.1:{models.server_address[1]}"
         status, body = _call(
@@ -511,8 +548,15 @@ def test_providers_test_ok_and_failure(tmp_path: Path, capsys) -> None:
         base = f"http://127.0.0.1:{stub.server_address[1]}"
         _, got = _call(httpd, "/api/config")
         values = got["values"]
-        values["providers"]["default"]["baseUrl"] = base
-        values["providers"]["default"]["apiKey"] = "sk-live"
+        values["providers"] = {
+            "default": {
+                "baseUrl": base,
+                "apiKeyEnv": "THYCA_TOKEN",
+                "apiKey": "sk-live",
+                "reasoningEffort": "high",
+            }
+        }
+        values["defaultProvider"] = "default"
         values["defaultModel"] = "m-test"
         assert _call(httpd, "/api/config", method="POST", data=values)[0] == 200
         status, body = _call(
@@ -560,6 +604,19 @@ def test_providers_test_without_key_422(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.delenv("THYCA_TOKEN", raising=False)
     httpd, thread = _start(tmp_path)
     try:
+        # fresh configs ship with no provider: register a keyless one first
+        _, got = _call(httpd, "/api/config")
+        values = got["values"]
+        values["providers"] = {
+            "default": {
+                "baseUrl": "https://a.example/v1",
+                "apiKeyEnv": "THYCA_TOKEN",
+                "reasoningEffort": "high",
+            }
+        }
+        values["defaultProvider"] = "default"
+        values["defaultModel"] = "m"
+        assert _call(httpd, "/api/config", method="POST", data=values)[0] == 200
         status, body = _call(
             httpd, "/api/providers/test", method="POST", data={"providerId": "default"}
         )
@@ -584,8 +641,16 @@ def test_providers_test_honors_model_baseurl_override(tmp_path: Path) -> None:
         _, got = _call(httpd, "/api/config")
         values = got["values"]
         # Provider points nowhere; the model's own endpoint must win.
-        values["providers"]["default"]["baseUrl"] = "http://127.0.0.1:1"
-        values["providers"]["default"]["apiKey"] = "sk-live"
+        values["providers"] = {
+            "default": {
+                "baseUrl": "http://127.0.0.1:1",
+                "apiKeyEnv": "THYCA_TOKEN",
+                "apiKey": "sk-live",
+                "reasoningEffort": "high",
+            }
+        }
+        values["defaultProvider"] = "default"
+        values["defaultModel"] = "m-odd"
         values["models"] = {
             "m-odd": {"baseUrl": base, "input": 0, "cache": 0, "output": 0},
         }
@@ -624,9 +689,16 @@ def test_providers_test_dispatches_responses_api(tmp_path: Path) -> None:
         base = f"http://127.0.0.1:{stub.server_address[1]}"
         _, got = _call(httpd, "/api/config")
         values = got["values"]
-        values["providers"]["default"]["baseUrl"] = base
-        values["providers"]["default"]["apiKey"] = "sk-live"
-        values["providers"]["default"]["api"] = "openai_responses"
+        values["providers"] = {
+            "default": {
+                "baseUrl": base,
+                "apiKeyEnv": "THYCA_TOKEN",
+                "apiKey": "sk-live",
+                "api": "openai_responses",
+                "reasoningEffort": "high",
+            }
+        }
+        values["defaultProvider"] = "default"
         values["defaultModel"] = "m-resp"
         assert _call(httpd, "/api/config", method="POST", data=values)[0] == 200
         status, body = _call(
@@ -645,14 +717,13 @@ def test_providers_test_dispatches_responses_api(tmp_path: Path) -> None:
 def test_merge_saved_key_keeps_omitted_and_null() -> None:
     from dataclasses import replace
 
-    from thyca.config import merge_saved_keys
+    from thyca.config import ProviderEntry, merge_saved_keys
 
-    cfg = default_config()
     cfg = replace(
-        cfg,
-        providers={
-            "default": replace(cfg.providers["default"], apiKey="sk-live"),
-        },
+        default_config(),
+        providers={"default": ProviderEntry(baseUrl="https://a.example/v1", apiKey="sk-live")},
+        defaultProvider="default",
+        defaultModel="m",
     )
     merged = merge_saved_keys(
         {"providers": {"default": {"apiKey": "sk-new"}}}, cfg
@@ -671,7 +742,16 @@ def test_config_post_explicit_null_key_keeps_old(tmp_path: Path) -> None:
     try:
         _, got = _call(httpd, "/api/config")
         values = got["values"]
-        values["providers"]["default"]["apiKey"] = "sk-first"
+        values["providers"] = {
+            "default": {
+                "baseUrl": "https://a.example/v1",
+                "apiKeyEnv": "THYCA_TOKEN",
+                "apiKey": "sk-first",
+                "reasoningEffort": "high",
+            }
+        }
+        values["defaultProvider"] = "default"
+        values["defaultModel"] = "m-1"
         _, _ = _call(httpd, "/api/config", method="POST", data=values)
         _, got2 = _call(httpd, "/api/config")
         values2 = got2["values"]
@@ -715,9 +795,13 @@ def test_x4_merge_saved_keys_single_home() -> None:
     from thyca.config import default_config, merge_saved_keys
 
     assert config_api.merge_saved_keys is merge_saved_keys
+    from thyca.config import ProviderEntry
+
     cfg = replace(
         default_config(),
-        providers={"default": replace(default_config().providers["default"], apiKey="sk")},
+        providers={"default": ProviderEntry(baseUrl="https://a.example/v1", apiKey="sk")},
+        defaultProvider="default",
+        defaultModel="m",
     )
     assert merge_saved_keys({"providers": {"default": {}}}, cfg)["providers"][
         "default"
@@ -762,6 +846,14 @@ def _post(httpd, path: str, data: dict) -> tuple[int, dict]:
 def test_m7_providers_test_explicit_empty_model_is_400(tmp_path: Path) -> None:
     httpd, thread = _start_config_server(tmp_path)
     try:
+        # fresh configs ship with no provider: the empty-model check needs
+        # an existing provider to reach the model validation.
+        _, got = _call(httpd, "/api/config")
+        values = got["values"]
+        values["providers"] = {"default": {"baseUrl": "https://a.example/v1"}}
+        values["defaultProvider"] = "default"
+        values["defaultModel"] = "m"
+        assert _call(httpd, "/api/config", method="POST", data=values)[0] == 200
         status, body = _post(
             httpd, "/api/providers/test", {"providerId": "default", "model": ""}
         )

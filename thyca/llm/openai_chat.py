@@ -44,6 +44,11 @@ class OpenAIChat(BaseConnect):
         # non-reasoning models; _request drops it once and retries in that case.
         if self._provider.reasoningEffort:
             payload["reasoning_effort"] = self._provider.reasoningEffort
+        # Output cap: the resolved default (or the model's own maxTokens)
+        # always rides along; the drop-retry above only strips
+        # reasoning_effort, so this field survives the retry it causes.
+        if self._provider.maxTokens:
+            payload["max_tokens"] = self._provider.maxTokens
 
         key = self._provider.api_key()
         headers = {"Authorization": f"Bearer {key}"}

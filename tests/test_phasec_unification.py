@@ -10,6 +10,7 @@ from thyca.app.chat_app import ChatApp
 from thyca.bots.card import BotCard, BotModel
 from thyca.bots.context import current_bot_turn_context
 from thyca.config import ModelCfg, ProviderEntry, default_config, load, save
+from seeded_config import seeded_config
 from thyca.core.protocol import Message, ToolCall
 from thyca.llm.llm_base import ChatReply, LLMError
 from thyca.sessions import SessionManager
@@ -51,7 +52,7 @@ class RecordingLLM:
 def _app(
     root: Path, llm: RecordingLLM, *, context_tokens: int | None = None
 ) -> ChatApp:
-    cfg = default_config()
+    cfg = seeded_config()
     if context_tokens is not None:
         cfg = replace(cfg, limits=replace(cfg.limits, contextTokens=context_tokens))
     save(cfg, root / "config.json")
@@ -105,6 +106,7 @@ def test_bot_and_operation_model_precedence_reaches_chat_and_compaction(
                 baseUrl="https://override.invalid/v1", apiKey="override-key"
             ),
         },
+        defaultProvider="default",
         defaultModel="global-model",
         models={
             "global-model": ModelCfg(contextTokens=8192, hotTailKB=2),
@@ -466,9 +468,10 @@ def test_root_and_child_retry_truncate_both_transcripts_and_keep_mail(tmp_path: 
 
 def test_effort_and_model_override_reach_factory_before_connect(tmp_path: Path, monkeypatch) -> None:
     from thyca.llm.llm_factory import ConnectFactory
+    from seeded_config import seeded_config
 
     cfg = replace(
-        default_config(),
+        seeded_config(),
         models={"custom-model": ModelCfg(reasoningEfforts=("low", "custom"))},
     )
     save(cfg, tmp_path / "config.json")

@@ -13,6 +13,7 @@ Thay đổi của Thyca, viết ngắn gọn cho người dùng.
 - Trao đổi 2 bot phát sinh trong DM giờ cũng hiện trong DM của cả 2 bot dưới dạng 1 mục gộp "N messages with <Bot>" — bấm vào xem toàn bộ hội thoại A↔B như trao đổi trong room; trao đổi cũ trong DM từ trước bản này không có dữ liệu ghi lại nên vẫn ẩn.
 - Gọn gói cài: bỏ prototype/legacy khỏi bản cài (7 trang prototype + standalone dư, ảnh/screenshot không dùng, code chết nội bộ) — giao diện và hành vi phục vụ không đổi, mọi workspace vẫn mở qua một cửa Chat duy nhất.
 - Con dấu sáp 2.5D: viền sáng + lòng dấu sâu hơn, hover nghiêng theo chuột (mặt bám theo, lòng dấu trễ, vệt sáng ngược chiều; tự tắt khi giảm chuyển động/tạm dừng/xem thử), DOM gọn còn 1 path + lớp <use> (bỏ glyph/nút ẩn), nốt nhạc khi viết có nhịp 200ms (khối text dồn trong nhịp chỉ cộng năng lượng, nghỉ ~2 nhịp lặng thì tắt).
+- Thẻ bot sidebar gọn theo trạng thái: trạng thái nằm cố định dưới tên (mọi thẻ, không ẩn khi chưa chọn), nút còn đúng sao + thu/mở, pocket trả lời đúng câu hỏi theo trạng thái (idle chỉ còn hàng footer, chờ/khó hiểu có nút Trả lời), vạch chọn trái theo màu bot, nền thẻ nhạt hơn.
 - Dọn code nội bộ (không đổi hành vi): gom prompt profile vào `memory/profile.py`, gom đếm token/formatter dùng chung, chia `admin_tools` thành package theo nhóm tool, tách `chat_app` thành các service package (A2A delivery, posting, background jobs, read-model, session-admin) — tool, schema, thứ tự đăng ký và mọi API giữ nguyên.
 - Đây là bản dev, chưa phải beta hay stable; không tự bỏ hậu tố dev khi nâng phiên bản.
 

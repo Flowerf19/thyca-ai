@@ -1028,6 +1028,14 @@ def test_card_markup_anatomy(node: str) -> None:
     assert 'class="bot-name session-name"' in html and ">Coder<" in html
     assert 'class="bot-role"' in html and ">Dev<" in html
     assert 'class="header-status"' in html and "Đang suy nghĩ" in html
+    role_idx = html.index('class="bot-role"')
+    status_idx = html.index('class="header-status"')
+    actions_idx = html.index('class="card-actions"')
+    assert role_idx < status_idx < actions_idx   # status is the 3rd heading row, not in actions
+    actions = html[actions_idx:html.index("</div>", actions_idx)]
+    assert sorted(re.findall(r'data-action="(\w+)"', actions)) == ["collapse", "favorite"]
+    assert 'class="reply-action"' in html and 'data-action="reply" hidden' in html
+    assert 'class="preview-text"></span>' in html   # summary-only compact line, no status repeat
     assert 'data-action="favorite"' in html and 'aria-pressed="true"' in html
     assert 'class="icon-button collapse-button"' in html
     assert 'aria-controls="pocket-coder"' in html and 'aria-expanded="false"' in html
@@ -1098,13 +1106,67 @@ def test_update_card_patches_state_preview_and_pocket(node: str) -> None:
     assert w["label"] == "Đang làm việc"
     assert w["aria"] == "Trò chuyện với Alpha · Đang làm việc"
     assert w["summary"] == "đang gọi bash"
-    assert w["preview"] == "Đang làm việc · đang gọi bash"
+    assert w["preview"] == "đang gọi bash"              # compact line: summary only, no status repeat
     assert w["elapsed"] == "12 giây"
     assert w["expanded"] == "true" and w["inert"] is False
     i = out["idle"]
     assert i["whisper"] == "“Khoảng lặng êm.”" and i["whisperCls"] is True
     assert i["preview"] == "“Khoảng lặng êm.”" and i["idleFlag"] == "true"
     assert i["title"] == "Lúc rảnh"
+
+
+def test_pocket_state_matrix_reply_action_and_open_invariance(node: str) -> None:
+    """The pocket answers per data-state: waiting/confused expose the reply
+    action, every other state hides it; idle keeps the footer-only treatment
+    via CSS; and no state transition opens or closes a card."""
+    out = _run(node, """
+        bots.length = 0;
+        bots.push(...roster([{ id: 'a', name: 'Alpha' }]));
+        const b = bots[0];
+        renderTeam();
+        const el = $('#bot-a');
+        b.open = true; updateCard(b);
+        const seen = {};
+        for (const st of ['idle', 'waiting', 'thinking', 'writing', 'working', 'done', 'error', 'offline', 'confused']) {
+            b.state = st; b.summary = 'muc tieu X'; b.idle.comment = '';
+            updateCard(b);
+            seen[st] = {
+                open: b.open,
+                inert: $('.pocket', el).inert,
+                replyHidden: $('.reply-action', el).hidden,
+                summary: $('.thinking-summary', el).textContent,
+                label: $('.header-status-label', el).textContent,
+                cardState: el.dataset.state,
+            };
+        }
+        // reply click selects the bot and focuses the composer
+        const msg = document.querySelector('#message');
+        let focused = false;
+        msg.focus = () => { focused = true; };
+        const cardEl = document.createElement('article');
+        cardEl.className = 'bot-card'; cardEl.dataset.botId = 'a';
+        const select = document.createElement('button');
+        select.dataset.action = 'select';
+        const reply = document.createElement('button');
+        reply.dataset.action = 'reply';
+        cardEl.appendChild(select); cardEl.appendChild(reply);
+        document.body.appendChild(cardEl);
+        globalThis.__spaDispatches = [];
+        b.state = 'waiting'; updateCard(b);
+        const handlers = $('#team-bot-list')._handlers.click;
+        handlers.forEach((h) => h({ target: select }));
+        const focusedAfterSelect = focused;
+        handlers.forEach((h) => h({ target: reply }));
+        return { seen, dispatches: globalThis.__spaDispatches, focusedAfterSelect, focused };
+    """)
+    for st, s in out["seen"].items():
+        assert s["open"] is True and s["inert"] is False, st   # state never flips expansion
+        assert s["cardState"] == st
+        assert s["summary"] == "muc tieu X", st               # activity/result line always painted
+        assert s["label"] != "", st                            # header status row always filled
+        assert s["replyHidden"] == (st not in ("waiting", "confused")), st
+    assert out["dispatches"] == [["selectBot", "a"], ["selectBot", "a"]]  # reply = same dispatch as select
+    assert out["focusedAfterSelect"] is False and out["focused"] is True
 
 
 def test_feed_window_keyed_reconcile_and_tools_aggregation(node: str) -> None:
@@ -2457,6 +2519,15 @@ def test_sidebar_css_card_pocket_and_group_contract() -> None:
         assert sel in css, sel
     assert "grid-template-rows:0fr" in css and ".bot-card[data-open=true] .pocket{grid-template-rows:1fr}" in css
     assert "transition:grid-template-rows" in css
+    assert ".bot-card[data-selected=true]::before" in css   # selection accent bar (primary signal)
+    assert "color-mix" in css                                # lighter card bg + stronger role/footer text
+    assert ".bot-card[data-state=idle] .thinking-heading{display:none}" in css  # idle: footer only
+    assert ".bot-card[data-state=idle] .thinking-scroll{display:none}" in css
+    assert ".reply-action{" in css                           # reply action lives in the pocket
+    assert ".thinking-paper{margin:0 7px 7px;border:0;" in css  # inner box border removed
+    assert "height:30px" in css                              # stable compact line
+    assert ".bot-card[data-selected=false] .header-status-label" not in css  # status never hidden
+    assert ".header-status-label{display:none}" not in css
     assert "var(--bot-border)" in css and "var(--bot-paper)" in css
     assert "text-overflow:ellipsis" in css                 # name/preview ellipsis
     assert ".li-enter" in css and ".li-exit" in css        # keyed feed animation

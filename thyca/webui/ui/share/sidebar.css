@@ -6,22 +6,25 @@
 .new-session{margin-left:auto;border:1px solid #c9b794;border-radius:9px;width:33px;height:33px;display:grid;place-items:center;color:#7a694b}
 .side-scroll{overflow:auto;overscroll-behavior:contain;padding:0 13px 18px;scrollbar-width:thin;scrollbar-color:#c6baa4 transparent;flex:1;min-height:0}
 .session-list{display:flex;flex-direction:column;gap:11px}
-.bot-card{border:1px solid var(--bot-border);border-radius:11px;background:linear-gradient(120deg,var(--bot-paper),var(--bot-pale));box-shadow:0 2px 3px #51432b08;overflow:hidden;transition:border-color .2s,box-shadow .2s}
+.bot-card{position:relative;border:1px solid var(--bot-border);border-radius:11px;background:linear-gradient(120deg,color-mix(in srgb,var(--bot-paper) 55%,#faf3e6),color-mix(in srgb,var(--bot-pale) 55%,#faf3e6));box-shadow:0 2px 3px #51432b08;overflow:hidden;transition:border-color .2s,box-shadow .2s}
 .bot-card[data-selected=true]{border-color:var(--bot-mid);box-shadow:0 3px 7px #51432b0e}
+.bot-card[data-selected=true]::before{content:'';position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--bot-mid);border-top-left-radius:10px;border-bottom-left-radius:10px}
 .bot-card:not([data-selected=true]):not([data-state=error]):hover{border-color:var(--bot-mid);box-shadow:0 3px 7px #51432b14}
 .bot-header{display:flex;align-items:center;gap:0;min-height:82px;padding:8px 8px 8px 7px}
 .bot-select{display:flex;align-items:center;gap:8px;min-width:0;flex:1;padding:0;text-align:left}
 .bot-heading{min-width:0;flex:1}
-.bot-name{display:block;font:600 23px var(--serif);color:var(--bot-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:-.5px}
-.bot-role{margin-top:4px;display:block;font:12px var(--sans);color:var(--bot-muted)}
-.card-actions{display:flex;gap:0;align-items:center}
+.bot-name{display:block;font:600 22px/1.15 var(--serif);color:var(--bot-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:-.5px}
+.bot-role{margin-top:2px;display:block;font:11px/1.4 var(--sans);color:color-mix(in srgb,var(--bot-muted) 55%,var(--bot-ink));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.header-status{display:flex;align-items:center;gap:5px;color:var(--bot-muted);font-size:10px;margin-top:3px;line-height:1.4;min-width:0}
+.header-status-label{max-width:76px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card-actions{display:flex;gap:0;align-items:center;flex-shrink:0}
 .card-actions .icon-button{width:26px}
 .favorite{color:var(--bot-ink)}
 .favorite[aria-pressed=true] svg{fill:var(--bot-ink);fill-opacity:.12}
 .card-actions .collapse-button{color:var(--bot-muted)}
 .collapse-button svg{transition:transform .22s}
 .bot-card[data-open=true] .collapse-button svg{transform:rotate(180deg)}
-.compact-preview{padding:0 14px 12px;display:flex;align-items:center;gap:8px;color:var(--bot-muted);font-size:11px;min-width:0}
+.compact-preview{padding:0 14px;height:30px;flex-shrink:0;display:flex;align-items:center;gap:8px;color:var(--bot-muted);font-size:11px;min-width:0}
 .compact-preview .preview-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bot-card[data-open=true] .compact-preview{display:none}
 .status-dot{width:7px;height:7px;border-radius:50%;background:var(--bot-mid);display:inline-block;flex-shrink:0}
@@ -30,7 +33,7 @@
 .pocket{display:grid;grid-template-rows:0fr;transition:grid-template-rows .26s ease}
 .bot-card[data-open=true] .pocket{grid-template-rows:1fr}
 .pocket-inner{min-height:0;overflow:hidden}
-.thinking-paper{margin:0 7px 7px;border:1px solid var(--bot-rule);border-radius:7px;background:linear-gradient(130deg,#fffcf3,var(--bot-sheet));overflow:hidden;opacity:0;transform:translateY(-4px);transition:opacity .2s ease,transform .26s ease}
+.thinking-paper{margin:0 7px 7px;border:0;border-radius:7px;background:linear-gradient(130deg,#fffcf3,var(--bot-sheet));overflow:hidden;opacity:0;transform:translateY(-4px);transition:opacity .2s ease,transform .26s ease}
 .bot-card[data-open=true] .thinking-paper{opacity:1;transform:none}
 .thinking-heading{display:flex;gap:10px;align-items:center;padding:15px 15px 12px;color:var(--bot-ink);font-size:13px;font-weight:600}
 .thinking-heading .elapsed{margin-left:auto;font-size:11px;font-weight:400;color:var(--bot-muted);font-variant-numeric:tabular-nums}
@@ -63,8 +66,12 @@
 .progress-list li.current .step-mark{background:var(--bot-mid);border:4px solid var(--bot-paper);box-shadow:0 0 0 1px var(--bot-border)}
 .progress-list li.pending{opacity:.7}
 .thought-extra{font:15px/26px var(--serif);padding-top:11px;margin:10px 0 0;border-top:1px dashed var(--bot-rule)}
+.bot-card[data-state=idle] .thinking-heading{display:none}
+.bot-card[data-state=idle] .thinking-scroll{display:none}
+.reply-action{display:flex;align-items:center;justify-content:center;gap:6px;margin:2px 16px 12px;padding:8px;border:1px solid var(--bot-border);border-radius:8px;background:var(--bot-paper);color:var(--bot-ink);font-size:12px}
+.reply-action svg{width:14px;height:14px}
 .paper-footer{display:flex;justify-content:space-between;gap:8px;border-top:1px solid var(--bot-rule);margin:0 13px;padding:10px 0}
-.paper-footer button{font-size:11px;color:var(--bot-muted);display:flex;align-items:center;gap:6px;padding:2px 0}
+.paper-footer button{font-size:11px;color:color-mix(in srgb,var(--bot-muted) 55%,var(--bot-ink));display:flex;align-items:center;gap:6px;padding:2px 0}
 .paper-footer svg{width:14px;height:14px}
 .section-label{display:flex;align-items:center;gap:12px;font-size:10px;color:#99876b;letter-spacing:1.8px;margin:24px 5px 12px}
 .section-label:after{content:'';height:1px;background:var(--line);flex:1}
@@ -105,7 +112,8 @@
 .bot-header{min-height:90px}
 }
 @media(max-width:1150px){
-.bot-name{font-size:21px}
+.bot-name{font-size:20px}
+.header-status-label{max-width:52px}
 .card-actions .icon-button{width:24px}
 .card-actions .icon{width:16px}
 }
@@ -116,9 +124,8 @@
 @media(max-width:520px){
 .capabilities{grid-template-columns:1fr}
 }
-.header-status{display:flex;align-items:center;gap:5px;color:var(--bot-muted);font-size:10px;margin-right:7px;line-height:14px}
-.header-status-label{max-width:68px}
-.bot-card[data-selected=false] .header-status-label{display:none}
+/* NOTE: the status label is never hidden — selected or not, wide or narrow.
+   Narrow screens only shorten it (see the 1150px rule above); position never moves. */
 .card-actions .favorite{width:22px}
 .bot-card[data-state=waiting] .status-dot{animation:seal-wait 2.8s ease-in-out infinite}
 .bot-card[data-state=offline] .status-dot{background:#aaa69d;animation:none}
@@ -127,13 +134,7 @@
 .bot-card[data-state=confused] .status-dot{background:#a98a45}
 @keyframes pulse{0%,100%{opacity:.55}50%{opacity:1}}
 @keyframes dot{0%,80%,100%{opacity:.35;transform:translateY(0)}40%{opacity:1;transform:translateY(-1.6px)}}
-@media(max-width:1150px){
-.header-status-label{display:none}
-.header-status{margin-right:4px}
-}
 @media(max-width:850px){
-.bot-card[data-selected=true] .header-status-label{display:block;max-width:61px}
-}
 .group-row[data-coordinating=true]{border-color:#9ba38a}
 .group-row[data-coordinating=true] .group-meta{color:var(--forest)}
 .thinking-summary.idle-comment{font-style:italic;color:var(--bot-ink);min-height:56px}

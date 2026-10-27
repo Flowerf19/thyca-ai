@@ -36,11 +36,18 @@ const stateDetails={
  confused:'Nghiêng đầu, một bên mày nhướn lên cùng dấu hỏi nhỏ. Chờ bạn làm rõ.',
  group:'Các vành dấu dùng chung một nhịp. Người đang nói sáng lên; các bot còn lại lắng nghe.'
 };
-const stateTimers=new Map(),mentionTimers=new Map(),musicTimers=new Map();
+const stateTimers=new Map(),mentionTimers=new Map(),musicBoxes=new Map();
 const orbitDurations={thinking:9600,writing:6400,working:1500,group:4200};
 
-// Exact SVG bodies and glyphs extracted from the original uploaded prototype.
-const WAX_MARKUP = {"thyca": "<svg class=\"base\" viewBox=\"0 0 64 64\"><clippath id=\"wx1\"><path d=\"M57.20 32.00C57.14 36.04 56.55 40.33 54.91 44.02C53.26 47.72 50.64 52.13 47.31 54.18C43.99 56.24 38.96 56.20 34.95 56.34C30.95 56.47 27.39 55.84 23.28 54.98C19.18 54.12 12.89 54.04 10.33 51.20C7.78 48.35 8.32 42.11 7.96 37.93C7.59 33.75 7.43 30.03 8.13 26.12C8.83 22.20 9.79 17.66 12.18 14.44C14.56 11.21 18.55 8.65 22.43 6.77C26.32 4.90 31.55 2.41 35.50 3.20C39.45 3.99 42.83 8.77 46.12 11.54C49.41 14.31 53.40 16.39 55.25 19.80C57.09 23.21 57.25 27.96 57.20 32.00Z\" /></clippath><path class=\"wax-body\" d=\"M57.20 32.00C57.14 36.04 56.55 40.33 54.91 44.02C53.26 47.72 50.64 52.13 47.31 54.18C43.99 56.24 38.96 56.20 34.95 56.34C30.95 56.47 27.39 55.84 23.28 54.98C19.18 54.12 12.89 54.04 10.33 51.20C7.78 48.35 8.32 42.11 7.96 37.93C7.59 33.75 7.43 30.03 8.13 26.12C8.83 22.20 9.79 17.66 12.18 14.44C14.56 11.21 18.55 8.65 22.43 6.77C26.32 4.90 31.55 2.41 35.50 3.20C39.45 3.99 42.83 8.77 46.12 11.54C49.41 14.31 53.40 16.39 55.25 19.80C57.09 23.21 57.25 27.96 57.20 32.00Z\" /><path d=\"M57.20 32.00C57.14 36.04 56.55 40.33 54.91 44.02C53.26 47.72 50.64 52.13 47.31 54.18C43.99 56.24 38.96 56.20 34.95 56.34C30.95 56.47 27.39 55.84 23.28 54.98C19.18 54.12 12.89 54.04 10.33 51.20C7.78 48.35 8.32 42.11 7.96 37.93C7.59 33.75 7.43 30.03 8.13 26.12C8.83 22.20 9.79 17.66 12.18 14.44C14.56 11.21 18.55 8.65 22.43 6.77C26.32 4.90 31.55 2.41 35.50 3.20C39.45 3.99 42.83 8.77 46.12 11.54C49.41 14.31 53.40 16.39 55.25 19.80C57.09 23.21 57.25 27.96 57.20 32.00Z\" fill=\"url(#waxShade)\" /><path d=\"M57.20 32.00C57.14 36.04 56.55 40.33 54.91 44.02C53.26 47.72 50.64 52.13 47.31 54.18C43.99 56.24 38.96 56.20 34.95 56.34C30.95 56.47 27.39 55.84 23.28 54.98C19.18 54.12 12.89 54.04 10.33 51.20C7.78 48.35 8.32 42.11 7.96 37.93C7.59 33.75 7.43 30.03 8.13 26.12C8.83 22.20 9.79 17.66 12.18 14.44C14.56 11.21 18.55 8.65 22.43 6.77C26.32 4.90 31.55 2.41 35.50 3.20C39.45 3.99 42.83 8.77 46.12 11.54C49.41 14.31 53.40 16.39 55.25 19.80C57.09 23.21 57.25 27.96 57.20 32.00Z\" fill=\"url(#waxHl)\" /><g clip-path=\"url(#wx1)\"><rect class=\"wax-sheen\" x=\"0\" y=\"0\" width=\"64\" height=\"64\" fill=\"url(#waxSheen)\" /></g><circle class=\"wax-ring-hi\" cx=\"32\" cy=\"32\" r=\"19.5\" /><circle class=\"wax-ring\" cx=\"32\" cy=\"32\" r=\"19.5\" /><circle class=\"wax-notch\" cx=\"32\" cy=\"32\" r=\"16.4\" /><path class=\"wax-crack\" d=\"M40 7.5l-2.6 6.4 3 3.2-3.4 5.6\" /></svg><span class=\"glyph\"><svg viewBox=\"0 0 24 24\"><use href=\"#g-lens\" /></svg></span>", "coder": "<svg class=\"base\" viewBox=\"0 0 64 64\"><clippath id=\"wx2\"><path d=\"M59.85 32.00C60.19 36.33 59.84 41.80 57.77 45.52C55.70 49.25 51.18 52.10 47.43 54.36C43.69 56.61 39.50 58.45 35.29 59.06C31.07 59.67 25.77 59.80 22.13 58.03C18.48 56.26 16.37 51.67 13.42 48.46C10.47 45.25 6.00 42.68 4.45 38.79C2.90 34.90 2.76 29.12 4.12 25.13C5.49 21.13 9.61 18.02 12.61 14.82C15.61 11.63 18.30 7.87 22.11 5.93C25.93 4.00 31.27 2.60 35.49 3.22C39.71 3.84 44.06 6.92 47.43 9.64C50.81 12.36 53.66 15.82 55.73 19.54C57.80 23.27 59.51 27.67 59.85 32.00Z\" /></clippath><path class=\"wax-body\" d=\"M59.85 32.00C60.19 36.33 59.84 41.80 57.77 45.52C55.70 49.25 51.18 52.10 47.43 54.36C43.69 56.61 39.50 58.45 35.29 59.06C31.07 59.67 25.77 59.80 22.13 58.03C18.48 56.26 16.37 51.67 13.42 48.46C10.47 45.25 6.00 42.68 4.45 38.79C2.90 34.90 2.76 29.12 4.12 25.13C5.49 21.13 9.61 18.02 12.61 14.82C15.61 11.63 18.30 7.87 22.11 5.93C25.93 4.00 31.27 2.60 35.49 3.22C39.71 3.84 44.06 6.92 47.43 9.64C50.81 12.36 53.66 15.82 55.73 19.54C57.80 23.27 59.51 27.67 59.85 32.00Z\" /><path d=\"M59.85 32.00C60.19 36.33 59.84 41.80 57.77 45.52C55.70 49.25 51.18 52.10 47.43 54.36C43.69 56.61 39.50 58.45 35.29 59.06C31.07 59.67 25.77 59.80 22.13 58.03C18.48 56.26 16.37 51.67 13.42 48.46C10.47 45.25 6.00 42.68 4.45 38.79C2.90 34.90 2.76 29.12 4.12 25.13C5.49 21.13 9.61 18.02 12.61 14.82C15.61 11.63 18.30 7.87 22.11 5.93C25.93 4.00 31.27 2.60 35.49 3.22C39.71 3.84 44.06 6.92 47.43 9.64C50.81 12.36 53.66 15.82 55.73 19.54C57.80 23.27 59.51 27.67 59.85 32.00Z\" fill=\"url(#waxShade)\" /><path d=\"M59.85 32.00C60.19 36.33 59.84 41.80 57.77 45.52C55.70 49.25 51.18 52.10 47.43 54.36C43.69 56.61 39.50 58.45 35.29 59.06C31.07 59.67 25.77 59.80 22.13 58.03C18.48 56.26 16.37 51.67 13.42 48.46C10.47 45.25 6.00 42.68 4.45 38.79C2.90 34.90 2.76 29.12 4.12 25.13C5.49 21.13 9.61 18.02 12.61 14.82C15.61 11.63 18.30 7.87 22.11 5.93C25.93 4.00 31.27 2.60 35.49 3.22C39.71 3.84 44.06 6.92 47.43 9.64C50.81 12.36 53.66 15.82 55.73 19.54C57.80 23.27 59.51 27.67 59.85 32.00Z\" fill=\"url(#waxHl)\" /><g clip-path=\"url(#wx2)\"><rect class=\"wax-sheen\" x=\"0\" y=\"0\" width=\"64\" height=\"64\" fill=\"url(#waxSheen)\" /></g><circle class=\"wax-ring-hi\" cx=\"32\" cy=\"32\" r=\"19.5\" /><circle class=\"wax-ring\" cx=\"32\" cy=\"32\" r=\"19.5\" /><circle class=\"wax-notch\" cx=\"32\" cy=\"32\" r=\"16.4\" /><path class=\"wax-crack\" d=\"M40 7.5l-2.6 6.4 3 3.2-3.4 5.6\" /></svg><span class=\"glyph\"><svg class=\"fill\" viewBox=\"0 0 640 427\"><use href=\"#g-quill\" /></svg></span>", "researcher": "<svg class=\"base\" viewBox=\"0 0 64 64\"><clippath id=\"wx4\"><path d=\"M59.97 32.00C60.60 36.11 59.55 41.71 57.39 45.33C55.23 48.95 50.72 51.82 46.99 53.72C43.26 55.61 39.25 55.70 35.00 56.70C30.75 57.69 25.53 60.66 21.51 59.67C17.48 58.68 13.48 54.28 10.84 50.75C8.19 47.22 6.26 42.64 5.65 38.50C5.04 34.35 6.31 30.09 7.17 25.88C8.03 21.67 8.25 16.34 10.82 13.24C13.40 10.13 18.50 8.92 22.62 7.26C26.73 5.59 31.21 3.05 35.49 3.24C39.78 3.42 45.30 5.46 48.32 8.36C51.34 11.26 51.67 16.72 53.61 20.66C55.56 24.60 59.34 27.89 59.97 32.00Z\" /></clippath><path class=\"wax-body\" d=\"M59.97 32.00C60.60 36.11 59.55 41.71 57.39 45.33C55.23 48.95 50.72 51.82 46.99 53.72C43.26 55.61 39.25 55.70 35.00 56.70C30.75 57.69 25.53 60.66 21.51 59.67C17.48 58.68 13.48 54.28 10.84 50.75C8.19 47.22 6.26 42.64 5.65 38.50C5.04 34.35 6.31 30.09 7.17 25.88C8.03 21.67 8.25 16.34 10.82 13.24C13.40 10.13 18.50 8.92 22.62 7.26C26.73 5.59 31.21 3.05 35.49 3.24C39.78 3.42 45.30 5.46 48.32 8.36C51.34 11.26 51.67 16.72 53.61 20.66C55.56 24.60 59.34 27.89 59.97 32.00Z\" /><path d=\"M59.97 32.00C60.60 36.11 59.55 41.71 57.39 45.33C55.23 48.95 50.72 51.82 46.99 53.72C43.26 55.61 39.25 55.70 35.00 56.70C30.75 57.69 25.53 60.66 21.51 59.67C17.48 58.68 13.48 54.28 10.84 50.75C8.19 47.22 6.26 42.64 5.65 38.50C5.04 34.35 6.31 30.09 7.17 25.88C8.03 21.67 8.25 16.34 10.82 13.24C13.40 10.13 18.50 8.92 22.62 7.26C26.73 5.59 31.21 3.05 35.49 3.24C39.78 3.42 45.30 5.46 48.32 8.36C51.34 11.26 51.67 16.72 53.61 20.66C55.56 24.60 59.34 27.89 59.97 32.00Z\" fill=\"url(#waxShade)\" /><path d=\"M59.97 32.00C60.60 36.11 59.55 41.71 57.39 45.33C55.23 48.95 50.72 51.82 46.99 53.72C43.26 55.61 39.25 55.70 35.00 56.70C30.75 57.69 25.53 60.66 21.51 59.67C17.48 58.68 13.48 54.28 10.84 50.75C8.19 47.22 6.26 42.64 5.65 38.50C5.04 34.35 6.31 30.09 7.17 25.88C8.03 21.67 8.25 16.34 10.82 13.24C13.40 10.13 18.50 8.92 22.62 7.26C26.73 5.59 31.21 3.05 35.49 3.24C39.78 3.42 45.30 5.46 48.32 8.36C51.34 11.26 51.67 16.72 53.61 20.66C55.56 24.60 59.34 27.89 59.97 32.00Z\" fill=\"url(#waxHl)\" /><g clip-path=\"url(#wx4)\"><rect class=\"wax-sheen\" x=\"0\" y=\"0\" width=\"64\" height=\"64\" fill=\"url(#waxSheen)\" /></g><circle class=\"wax-ring-hi\" cx=\"32\" cy=\"32\" r=\"19.5\" /><circle class=\"wax-ring\" cx=\"32\" cy=\"32\" r=\"19.5\" /><circle class=\"wax-notch\" cx=\"32\" cy=\"32\" r=\"16.4\" /><path class=\"wax-crack\" d=\"M40 7.5l-2.6 6.4 3 3.2-3.4 5.6\" /></svg><span class=\"glyph\"><svg viewBox=\"0 0 24 24\"><use href=\"#g-code\" /></svg></span>"};
+// Wax bodies are data, not markup: one path per bot id. avatar() emits a
+// single namespaced <path> plus <use> layers, so the d below appears once
+// per avatar and every layer id stays unique per instance.
+const WAX_PATHS = {"thyca": "M57.20 32.00C57.14 36.04 56.55 40.33 54.91 44.02C53.26 47.72 50.64 52.13 47.31 54.18C43.99 56.24 38.96 56.20 34.95 56.34C30.95 56.47 27.39 55.84 23.28 54.98C19.18 54.12 12.89 54.04 10.33 51.20C7.78 48.35 8.32 42.11 7.96 37.93C7.59 33.75 7.43 30.03 8.13 26.12C8.83 22.20 9.79 17.66 12.18 14.44C14.56 11.21 18.55 8.65 22.43 6.77C26.32 4.90 31.55 2.41 35.50 3.20C39.45 3.99 42.83 8.77 46.12 11.54C49.41 14.31 53.40 16.39 55.25 19.80C57.09 23.21 57.25 27.96 57.20 32.00Z", "coder": "M59.85 32.00C60.19 36.33 59.84 41.80 57.77 45.52C55.70 49.25 51.18 52.10 47.43 54.36C43.69 56.61 39.50 58.45 35.29 59.06C31.07 59.67 25.77 59.80 22.13 58.03C18.48 56.26 16.37 51.67 13.42 48.46C10.47 45.25 6.00 42.68 4.45 38.79C2.90 34.90 2.76 29.12 4.12 25.13C5.49 21.13 9.61 18.02 12.61 14.82C15.61 11.63 18.30 7.87 22.11 5.93C25.93 4.00 31.27 2.60 35.49 3.22C39.71 3.84 44.06 6.92 47.43 9.64C50.81 12.36 53.66 15.82 55.73 19.54C57.80 23.27 59.51 27.67 59.85 32.00Z", "researcher": "M59.97 32.00C60.60 36.11 59.55 41.71 57.39 45.33C55.23 48.95 50.72 51.82 46.99 53.72C43.26 55.61 39.25 55.70 35.00 56.70C30.75 57.69 25.53 60.66 21.51 59.67C17.48 58.68 13.48 54.28 10.84 50.75C8.19 47.22 6.26 42.64 5.65 38.50C5.04 34.35 6.31 30.09 7.17 25.88C8.03 21.67 8.25 16.34 10.82 13.24C13.40 10.13 18.50 8.92 22.62 7.26C26.73 5.59 31.21 3.05 35.49 3.24C39.78 3.42 45.30 5.46 48.32 8.36C51.34 11.26 51.67 16.72 53.61 20.66C55.56 24.60 59.34 27.89 59.97 32.00Z"};
+function waxMarkup(b,uid){
+ const keys=Object.keys(WAX_PATHS);
+ const d=WAX_PATHS[b.id]||WAX_PATHS[keys[Math.abs([...b.id].reduce((n,c)=>n+c.charCodeAt(0),0))%keys.length]];
+ return `<svg class="base" viewBox="0 0 64 64"><defs><path id="${uid}-body" d="${d}"/></defs><use href="#${uid}-body" class="wax-body"/><use href="#${uid}-body" fill="url(#waxShade)"/><use href="#${uid}-body" fill="url(#waxHl)"/><circle class="wax-ring-hi" cx="32" cy="32" r="19.5"/><circle class="wax-ring" cx="32" cy="32" r="19.5"/><circle class="wax-notch" cx="32" cy="32" r="16.4"/></svg>`;
+}
 
 const waxState = state => stateAliases[state]||state;
 function expressionFor(b){return b.mentioned?'mention':b.state;}
@@ -55,8 +62,7 @@ function sealFace(uid){return `<span class="seal-face"><svg viewBox="0 0 64 64">
 
 function avatar(b,state=b.state,extra=''){
  const uid='wax'+(++avatarCounter),preview=extra.includes('expression-preview');
- const waxKeys=Object.keys(WAX_MARKUP);
- const markup=(WAX_MARKUP[b.id]||WAX_MARKUP[waxKeys[Math.abs([...b.id].reduce((n,c)=>n+c.charCodeAt(0),0))%waxKeys.length]]).replace(/\bid="(wx\d+)"/g,(_,id)=>`id="${uid}-${id}"`).replace(/url\(#(wx\d+)\)/g,(_,id)=>`url(#${uid}-${id})`);
+ const markup=waxMarkup(b,uid);
  const expression=preview?state:expressionFor(b);
  return `<span class="seal-avatar mk mk-wax ${extra}" data-bot-avatar="${b.id}" data-state="${waxState(state)}" data-expression="${expression}" ${!preview&&b.state==='idle'&&b.idle.active?`data-idle="${b.idle.active}"`:[]} data-selected="${b.id===selectedBot}" style="${paletteStyle(b)};${orbitStyle(b)};--phase:${b.phase}s;--breathe:${5.7+avatarCounter%4*.6}s" aria-hidden="true"><span class="seal-motion">${markup}${sealFace(uid)}</span></span>`;
 }
@@ -93,16 +99,65 @@ function mentionBot(id){
  announce(b.name+': Bạn gọi mình?');return true;
 }
 function clearMusic(id){
- clearTimeout(musicTimers.get(id));
+ const box=musicBoxes.get(id);if(box){clearInterval(box.timer);musicBoxes.delete(id);}
  $$('.seal-avatar[data-bot-avatar="'+id+'"]:not(.expression-preview)').forEach(a=>{delete a.dataset.streaming;['--note-a-y','--note-b-y','--note-a-alpha','--note-b-alpha'].forEach(p=>a.style.removeProperty(p));a.style.removeProperty('--writing-gaze');});
 }
-// Called by the same text-delta callback that reveals characters, never by an ambient animation.
-function notifyText(id,chunk){
- const b=getBot(id);if(!b||b.state!=='writing'||!String(chunk||'').trim())return false;
- clearTimeout(musicTimers.get(id));const seed=[...String(chunk)].reduce((n,c)=>n+c.charCodeAt(0),0);
+// Music-note damper: the first chunk beats immediately; chunks arriving
+// inside a 200ms beat only add energy, and the loop spends ~2 quiet beats
+// before resting — the same streaming attrs and the same clearMusic rest.
+const MUSIC_BEAT_MS=200,MUSIC_DECAY=8,MUSIC_QUIET_BEATS=2;
+function paintMusicBeat(id,seed){
  $$('.seal-avatar[data-bot-avatar="'+id+'"]:not(.expression-preview)').forEach(a=>{
   a.dataset.streaming='true';a.style.setProperty('--writing-gaze',((seed%9)/4-1)+'px');
   a.style.setProperty('--note-a-y',(-.4-(seed%6)*.38).toFixed(2)+'px');a.style.setProperty('--note-b-y',(-.2-((seed*3)%7)*.3).toFixed(2)+'px');a.style.setProperty('--note-a-alpha',(.6+(seed%4)*.1).toFixed(2));a.style.setProperty('--note-b-alpha',(.6+((seed+2)%4)*.1).toFixed(2));
  });
- musicTimers.set(id,setTimeout(()=>clearMusic(id),150));return true;
+}
+function musicBeat(id){
+ const box=musicBoxes.get(id);if(!box)return;
+ if(box.energy>0){box.energy=Math.max(0,box.energy-MUSIC_DECAY);paintMusicBeat(id,box.seed);box.quiet=0;}
+ else if(++box.quiet>=MUSIC_QUIET_BEATS)clearMusic(id);
+}
+// Called by the same text-delta callback that reveals characters, never by an ambient animation.
+function notifyText(id,chunk){
+ const b=getBot(id);if(!b||b.state!=='writing'||!String(chunk||'').trim())return false;
+ const text=String(chunk),seed=[...text].reduce((n,c)=>n+c.charCodeAt(0),0);
+ let box=musicBoxes.get(id);
+ if(!box){box={energy:0,seed:0,quiet:0,timer:0};musicBoxes.set(id,box);}
+ box.energy+=text.length;box.seed+=seed;box.quiet=0;
+ if(!box.timer){paintMusicBeat(id,box.seed);box.timer=setInterval(()=>musicBeat(id),MUSIC_BEAT_MS);}
+ return true;
+}
+// 2.5D hover parallax: its own var layer, so data-state/data-idle never move.
+// Face follows the pointer, the well lags, the highlight drifts opposite.
+function applyParallax(seal,nx,ny){
+ const cx=Math.max(-1,Math.min(1,nx||0)),cy=Math.max(-1,Math.min(1,ny||0));
+ seal.style.setProperty('--par-x',(cx*4).toFixed(2)+'px');seal.style.setProperty('--par-y',(cy*4).toFixed(2)+'px');
+ seal.style.setProperty('--well-x',(cx*1.75).toFixed(2)+'px');seal.style.setProperty('--well-y',(cy*1.75).toFixed(2)+'px');
+ seal.style.setProperty('--hi-x',(cx*-1.5).toFixed(2)+'px');seal.style.setProperty('--hi-y',(cy*-1.5).toFixed(2)+'px');
+ seal.dataset.par='1';
+}
+function resetParallax(seal){
+ ['--par-x','--par-y','--well-x','--well-y','--hi-x','--hi-y'].forEach(p=>seal.style.removeProperty(p));
+ delete seal.dataset.par;
+}
+function sealFromPoint(host,x,y){
+ const seal=host.querySelector('.seal-avatar:not(.expression-preview)');
+ if(!seal||seal.closest('.motion-paused'))return null;
+ const r=seal.getBoundingClientRect();
+ if(!r.width&&!r.height)return null;
+ return {seal,nx:(x-(r.left+r.width/2))/(r.width/2||1),ny:(y-(r.top+r.height/2))/(r.height/2||1)};
+}
+const reduceMotion=typeof window!=='undefined'&&typeof window.matchMedia==='function'&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+if(typeof document!=='undefined'&&document.addEventListener&&!reduceMotion){
+ document.addEventListener('pointermove',ev=>{
+  const host=ev.target&&ev.target.closest?ev.target.closest('.bot-card, .stage-portrait'):null;
+  document.querySelectorAll('.seal-avatar[data-par]').forEach(s=>{if(!host||!host.contains(s))resetParallax(s);});
+  if(!host)return;
+  const hit=sealFromPoint(host,ev.clientX,ev.clientY);
+  if(hit)applyParallax(hit.seal,hit.nx,hit.ny);
+ });
+ document.addEventListener('pointerout',ev=>{
+  const host=ev.target&&ev.target.closest?ev.target.closest('.bot-card, .stage-portrait'):null;
+  if(host&&!(ev.relatedTarget&&host.contains(ev.relatedTarget)))host.querySelectorAll('.seal-avatar[data-par]').forEach(resetParallax);
+ });
 }

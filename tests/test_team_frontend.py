@@ -749,14 +749,14 @@ def test_sync_roster_keeps_live_state_when_bot_has_run(node: str) -> None:
 
 def test_avatar_markup_contract(node: str) -> None:
     """avatar(b) emits the seal span with bot palette vars, state/expression
-    attrs and per-instance-rewritten wax clip ids."""
+    attrs, one namespaced body path, <use> layers and no hidden nodes."""
     out = _run(node, """
         bots.length = 0;
         bots.push(...roster([{ id: 'coder', name: 'Coder' }]));
         const b = bots[0];
         selectedBot = 'coder';
         const html = avatar(b);
-        return { html, uid: ++avatarCounter };
+        return { html };
     """)
     html = out["html"]
     assert 'class="seal-avatar mk mk-wax' in html
@@ -766,8 +766,14 @@ def test_avatar_markup_contract(node: str) -> None:
     assert 'data-selected="true"' in html
     assert "--bot-color:" in html and "--bot-ink:" in html
     assert 'class="seal-motion"' in html and 'class="seal-face"' in html
-    assert re.search(r'id="wax\d+-wx\d+"', html)        # clip ids namespaced per instance
-    assert re.search(r'url\(#wax\d+-wx\d+\)', html)     # url(#wx) refs rewritten to match
+    body = re.search(r'<path id="(wax\d+-body)" d="([^"]+)"', html)
+    assert body, "exactly one namespaced body path"
+    assert html.count(body.group(2)) == 1          # the d appears once: data, not markup
+    assert len(re.findall(r'<use href="#' + body.group(1) + r'"', html)) >= 3  # body+shade+highlight
+    assert not re.search(r'wax\d+-wx["(]', html)  # orphan wax clip gone with the sheen rect (eye-clip stays)
+    uses = re.findall(r'href="#(wax\d+-body)"', html)
+    assert uses and all(u == body.group(1) for u in uses)  # every use resolves to the one defs path
+    assert 'class="glyph"' not in html and 'wax-sheen' not in html and 'wax-crack' not in html
     assert 'aria-hidden="true"' in html
 
 
@@ -777,19 +783,28 @@ def test_avatar_body_is_id_stable_and_expression_follows_mention(node: str) -> N
     out = _run(node, """
         bots.length = 0;
         bots.push(...roster([{ id: 'coder' }, { id: 'researcher' }]));
-        const bodyOf = (h) => (h.match(/<path class="wax-body" d="([^"]+)/) || [])[1];
-        const a1 = bodyOf(avatar(bots[0]));
-        const a2 = bodyOf(avatar(bots[0]));
+        const bodyOf = (h) => (h.match(/<path id="wax[0-9]+-body" d="([^"]+)"/) || [])[1];
+        const idOf = (h) => (h.match(/<path id="(wax[0-9]+-body)"/) || [])[1];
+        const useCount = (h) => { const m = h.match(/<path id="(wax[0-9]+-body)"/); return m ? h.split('href="#' + m[1] + '"').length - 1 : 0; };
+        const a1 = avatar(bots[0]);
+        const a2 = avatar(bots[0]);
+        const other = avatar(bots[1]);
         const listening = avatar(bots[0], 'listening');
         bots[0].mentioned = true;
         const mentioned = avatar(bots[0]);
         return {
-            stable: a1 === a2 && !!a1,
+            stable: bodyOf(a1) === bodyOf(a2) && !!bodyOf(a1),
+            distinct: bodyOf(a1) !== bodyOf(other),
+            unique: new Set([idOf(a1), idOf(a2), idOf(other)]).size === 3,
+            uses: useCount(a1),
             listening,
             mentioned,
         };
     """)
     assert out["stable"] is True
+    assert out["distinct"] is True                     # coder and researcher keep their own bodies
+    assert out["unique"] is True                      # every render gets its own namespaced ids
+    assert out["uses"] >= 3                             # one path, shared by <use> layers
     assert 'data-state="waiting"' in out["listening"]    # stateAliases listening->waiting
     assert 'data-expression="mention"' in out["mentioned"]
 
@@ -882,6 +897,82 @@ def test_mention_overlay_and_notify_text_drive_seal_attrs(node: str) -> None:
     assert out["ok"] is True
     assert out["streaming"] == "true"
     assert out["gaze"].endswith("px") and out["noteA"].endswith("px")
+
+
+def test_notify_text_damper_beats_and_rests(node: str) -> None:
+    """notifyText beats immediately on the first chunk; bursts inside a beat
+    only add energy, and the loop rests after ~2 quiet beats via clearMusic."""
+    out = _run(node, """
+        bots.length = 0;
+        bots.push(...roster([{ id: 'a', name: 'A' }]));
+        const seal = document.createElement('span');
+        seal.className = 'seal-avatar'; seal.dataset.botAvatar = 'a';
+        document.body.appendChild(seal);
+        setState('a', 'writing');
+        const vars = () => ({
+            streaming: seal.dataset.streaming,
+            gaze: seal.style.getPropertyValue('--writing-gaze'),
+            noteA: seal.style.getPropertyValue('--note-a-y'),
+        });
+        const first = notifyText('a', 'hello');
+        const beat1 = vars();
+        const second = notifyText('a', 'WORLD');
+        const beat2 = vars();
+        await tick(300);
+        const beat3 = vars();
+        await tick(1200);
+        const rest = vars();
+        return { first, second, beat1, beat2, beat3, rest };
+    """)
+    assert out["first"] is True and out["second"] is True
+    assert out["beat1"]["streaming"] == "true"              # first chunk beats immediately
+    assert out["beat1"]["gaze"].endswith("px")
+    assert out["beat2"] == out["beat1"]                    # same beat: energy only, no re-seed
+    assert out["beat3"]["streaming"] == "true"
+    assert out["beat3"]["gaze"] != out["beat1"]["gaze"]  # next beat re-seeds from accumulated input
+    assert out["rest"].get("streaming") is None            # ~2 quiet beats -> clearMusic rest
+    assert out["rest"]["gaze"] == "" and out["rest"]["noteA"] == ""
+
+
+def test_seal_parallax_vars_follow_pointer_and_reset(node: str) -> None:
+    """applyParallax shifts the face toward the pointer, the well less, the
+    highlight opposite; resetParallax clears; previews/paused/zero-rect skip."""
+    out = _run(node, """
+        bots.length = 0;
+        bots.push(...roster([{ id: 'a', name: 'A' }]));
+        const host = document.createElement('div');
+        host.className = 'bot-card';
+        const seal = document.createElement('span');
+        seal.className = 'seal-avatar'; seal.dataset.botAvatar = 'a';
+        host.appendChild(seal);
+        document.body.appendChild(host);
+        const vars = () => ['--par-x', '--par-y', '--well-x', '--well-y', '--hi-x', '--hi-y']
+            .map((p) => seal.style.getPropertyValue(p));
+        const zero = sealFromPoint(host, 60, 15);
+        seal.getBoundingClientRect = () => ({ left: 0, top: 0, width: 60, height: 60, right: 60, bottom: 60 });
+        const hit = sealFromPoint(host, 60, 15);
+        applyParallax(seal, hit.nx, hit.ny);
+        const moved = { par: seal.dataset.par, vars: vars() };
+        applyParallax(seal, 9, -9);
+        const clamped = vars();
+        resetParallax(seal);
+        const cleared = { par: seal.dataset.par, vars: vars() };
+        seal.className = 'seal-avatar expression-preview';
+        const previewSkipped = sealFromPoint(host, 60, 15);
+        seal.className = 'seal-avatar';
+        host.className = 'bot-card motion-paused';
+        const pausedSkipped = sealFromPoint(host, 60, 15);
+        return { zero, nx: hit.nx, ny: hit.ny, moved, clamped, cleared, previewSkipped, pausedSkipped };
+    """)
+    assert out["zero"] is None                     # 0x0 rect: no parallax
+    assert out["nx"] == 1 and out["ny"] == -0.5   # right-top of centre
+    assert out["moved"]["par"] == "1"
+    par_x, par_y, well_x, well_y, hi_x, hi_y = out["moved"]["vars"]
+    assert (par_x, par_y, well_x, hi_x) == ("4.00px", "-2.00px", "1.75px", "-1.50px")
+    assert float(well_y[:-2]) < 0 < float(hi_y[:-2])  # well follows, highlight opposes
+    assert out["clamped"] == ["4.00px", "-4.00px", "1.75px", "-1.75px", "-1.50px", "1.50px"]
+    assert out["cleared"].get("par") is None and out["cleared"]["vars"] == [""] * 6
+    assert out["previewSkipped"] is None and out["pausedSkipped"] is None
 
 
 def test_idle_layer_gestures_never_change_work_state(node: str) -> None:
@@ -2420,8 +2511,10 @@ def test_index_html_scripts_defs_and_static_markup() -> None:
     """ui/chat/index.html ships the svg defs once, the static shell markup and
     the classic script order the modules rely on."""
     html = INDEX_HTML.read_text()
-    for did in ("waxShade", "waxHl", "waxSheen", "g-quill", "g-team", "i-send", "i-stop", "i-copy"):
+    for did in ("waxShade", "waxHl", "i-send", "i-stop", "i-copy"):
         assert html.count(f'id="{did}"') == 1, did
+    assert 'id="waxSheen"' not in html      # slimmed layers use only waxHl/waxShade
+    assert 'id="g-' not in html             # glyph spans gone, so their symbols ship no more
     for sel in ('class="notebook-shell chat-shell"', 'class="site-header"',
                 'class="site-kicker"', 'id="team-nav-title"', 'id="team-bot-list"',
                 'id="group-list"', 'id="team-shared-create"', 'id="chat-sidebar"',

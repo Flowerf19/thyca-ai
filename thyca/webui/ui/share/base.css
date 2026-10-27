@@ -10,7 +10,7 @@ button{border:0;background:none}
 a{color:inherit}
 svg.icon{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
 button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--forest);outline-offset:4px}
-button:hover{filter:brightness(.97)}
+button:not(.bot-select):hover{filter:brightness(.97)}
 [hidden]{display:none!important}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
 .notebook-shell{height:calc(100dvh - 28px);margin:14px;border-radius:24px;background:radial-gradient(ellipse at 90% 10%,#fef9ee 0,transparent 45%),#f5eddd;border:1px solid #fffc;box-shadow:0 12px 48px #574b3120;display:grid;grid-template-rows:47px minmax(0,1fr);grid-template-columns:minmax(0,1fr);overflow:hidden;position:relative}

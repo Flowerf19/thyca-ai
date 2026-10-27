@@ -11,9 +11,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs
 
-from thyca.core.protocol import ToolCall
 from thyca.serve.trace import TurnSummary, aggregate, scope_turn_to_bot, turns_from_session
-from thyca.sessions.wire import message_dict, tool_call_dict
+from thyca.sessions.wire import message_dict
 
 if TYPE_CHECKING:
     from thyca.app.chat_app import ChatApp
@@ -178,13 +177,3 @@ def trace_detail_payload(chat: ChatApp, session_id: str, turn_index: int) -> dic
             ]
             return payload
     raise ValueError("trace not found")
-
-
-def trace_tool_call(call: ToolCall, skills_root: Path) -> dict:
-    """Trace payload for a recorded call: the wire shape plus arguments.
-
-    Thin delegate over the sessions-owned helper so history replay matches
-    the live stream; arguments stay on the payload so the Trace screen can
-    show input JSON. Kept as a named seam for trace callers.
-    """
-    return tool_call_dict(call, skills_root, include_args=True)

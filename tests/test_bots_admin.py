@@ -1,4 +1,4 @@
-"""BE-5: admin tools (Thyca-only), create flow, scheduler."""
+"""BE-5: admin tools (Thyca-only), scheduler."""
 from __future__ import annotations
 
 import asyncio
@@ -7,12 +7,6 @@ from pathlib import Path
 
 from thyca.bots.admin_tools import ADMIN_TOOL_NAMES, apply_card_edit, visible_for_bot
 from thyca.bots.card import BotCard
-from thyca.bots.create_flow import (
-    answer_flow,
-    build_card,
-    current_question,
-    start_flow,
-)
 from thyca.bots.scheduler import CronError, due, match_field
 from thyca.memory.identity import bind_bot_id, reset_bot_id
 from thyca.tools.registry import ToolRegistry
@@ -148,51 +142,6 @@ def test_bot_create_memory_policy_still_filters_baseline(tmp_path: Path) -> None
                        "memory_get")
     names = [s["function"]["name"] for s in filtered_tool_schemas(schemas, card)]
     assert names == ["bot_send"]
-
-
-def test_build_card_grants_baseline_tools() -> None:
-    from thyca.bots.card import BASELINE_BOT_TOOLS
-
-    state = start_flow()
-    for text in ("R", "J", "D", "ask", "ok"):
-        state, _ = answer_flow(state, text)
-    assert state.done is True
-    card = build_card(state, "flowbot")
-    assert set(BASELINE_BOT_TOOLS) <= set(card.tools)
-    extra = build_card(state, "flowbot", tools=("read",))
-    assert set(BASELINE_BOT_TOOLS) < set(extra.tools) and "read" in extra.tools
-
-
-def test_create_flow_happy_path() -> None:
-    state = start_flow()
-    assert "vai trò" in current_question(state)
-    state, _ = answer_flow(state, "Trợ lý lịch")
-    state, _ = answer_flow(state, "Nhắc sinh nhật")
-    state, _ = answer_flow(state, "Chỉ lịch")
-    state, prompt = answer_flow(state, "sometimes")
-    assert "ask / allow / deny" in prompt  # re-asks on bad choice
-    state, prompt = answer_flow(state, "ask")
-    assert "Tóm tắt" in prompt
-    state, _ = answer_flow(state, "ok")
-    assert state.done is True
-    card = build_card(state, "lich")
-    assert card.bot_id == "lich"
-    assert card.bash == "ask"
-    assert "Nhắc sinh nhật" in card.description
-
-
-def test_create_flow_edit_loop() -> None:
-    state = start_flow()
-    for text in ("R", "J", "D", "ask"):
-        state, _ = answer_flow(state, text)
-    state, prompt = answer_flow(state, "sửa role")
-    assert "vai trò" in prompt
-    state, _ = answer_flow(state, "R2")
-    state, _ = answer_flow(state, "J")
-    state, _ = answer_flow(state, "D")
-    state, _ = answer_flow(state, "deny")
-    state, _ = answer_flow(state, "ok")
-    assert build_card(state, "x").bash == "deny"
 
 
 def test_cron_matcher() -> None:

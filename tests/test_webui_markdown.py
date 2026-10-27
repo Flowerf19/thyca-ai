@@ -26,7 +26,6 @@ CHAT_CSS = UI / "chat" / "chatcss" / "chat.css"
 DASH_JS = UI / "dashboard" / "js" / "dashboard.js"
 DASH_CSS = UI / "dashboard" / "dashboardcss" / "dashboard.css"
 TRACE_JS = UI / "trace" / "js" / "trace.js"
-TRACE_CSS = UI / "trace" / "tracecss" / "trace.css"
 MEM_JS = UI / "memories" / "js" / "memories.js"
 
 
@@ -78,9 +77,8 @@ def test_chat_js_uses_formatter() -> None:
     chat = CHAT_JS.read_text(encoding="utf-8")
     assert "window.formatMarkdown(text)" in chat
     assert "contentHtml(m.content)" in chat
-    for page in ("chat", "memories", "profile", "trace"):
-        html = (UI / page / "index.html").read_text(encoding="utf-8")
-        assert '<script type="module" src="../share/markdown.js">' in html, page
+    entry = (UI / "chat" / "index.html").read_text(encoding="utf-8")
+    assert '<script type="module" src="../share/markdown.js">' in entry
     css = MARKDOWN_CSS.read_text(encoding="utf-8")
     assert ".md-table-wrap" in css
     assert MARKED_ESM.is_file()
@@ -350,10 +348,9 @@ def test_dashboard_page_structure() -> None:
     separate daily token/request and cost charts, ranked rows and filters."""
     js = DASH_JS.read_text(encoding="utf-8")
     css = DASH_CSS.read_text(encoding="utf-8")
-    html = (UI / "dashboard" / "index.html").read_text(encoding="utf-8")
+    entry = (UI / "chat" / "index.html").read_text(encoding="utf-8")
 
-    assert 'src="js/dashboard.js"' in html
-    assert 'href="dashboardcss/dashboard.css"' in html
+    assert 'src="../dashboard/js/dashboard.js"' in entry
 
     # Range controls: manual dates + Hôm nay/7 ngày/30 ngày presets.
     for marker in ('id="range-from"', 'id="range-to"', 'id="range-apply"',
@@ -449,19 +446,18 @@ def test_trace_detail_renderer_renders_turn_content() -> None:
 
 
 def test_trace_page_structure() -> None:
-    """Static contract: the page wires its sheet + script, both deep-link
-    forms parse, and its typography mirrors the chat bubbles it replays."""
+    """Static contract: the SPA entry mounts the detail renderer, both
+    deep-link forms parse, and its typography mirrors the chat bubbles
+    it replays."""
     js = TRACE_JS.read_text(encoding="utf-8")
-    css = TRACE_CSS.read_text(encoding="utf-8")
-    html = (UI / "trace" / "index.html").read_text(encoding="utf-8")
+    entry = (UI / "chat" / "index.html").read_text(encoding="utf-8")
     chat = CHAT_CSS.read_text(encoding="utf-8")
 
-    assert 'src="js/trace.js"' in html
-    assert 'href="tracecss/trace.css"' in html
-    assert '<script type="module" src="../share/markdown.js">' in html
+    assert 'src="../trace/js/trace.js"' in entry
+    assert '<script type="module" src="../share/markdown.js">' in entry
 
-    # Standalone Trace entry assets remain for compatibility; this source is
-    # only the load-once renderer used by the Dashboard controller.
+    # No standalone Trace document anymore; this source is only the
+    # load-once renderer used by the Dashboard controller.
     assert "window.ThycaTraceDetail" in js and "render(detail)" in js
     assert "ThycaRouter.register" not in js and "getJson(" not in js
     assert "window.formatMarkdown(text)" in js
@@ -472,17 +468,17 @@ def test_trace_page_structure() -> None:
 
     # Bubbles and bylines mirror chat's message furniture.
     for sel, needles in (
-        (".tl-user", ("border-radius:14px 14px 3px 14px", "background:#eee6d56b")),
+        (".dashboard-shell .tl-user", ("border-radius:14px 14px 3px 14px", "background:#eee6d56b")),
         (".message-user", ("border-radius:14px 14px 3px 14px", "background:#eee6d56b")),
-        (".tl-byline", ("var(--bot-ink,var(--forest))", "var(--serif)")),
+        (".dashboard-shell .tl-byline", ("var(--bot-ink,var(--forest))", "var(--serif)")),
         (".message-byline", ("var(--bot-ink,var(--forest))", "var(--serif)")),
-        (".tl-body", ("var(--serif)", "color:#433d30")),
+        (".dashboard-shell .tl-body", ("var(--serif)", "color:#433d30")),
         (".live-copy", ("var(--serif)", "color:#433d30")),
     ):
-        sheet = css if sel.startswith(".tl") else chat
+        sheet = dashboard_css if sel.startswith(".dashboard-shell") else chat
         assert re_block(sheet, sel, *needles), sel
     assert "ui-monospace" in re.search(
-        r"\.tl-code\s*\{([^}]*)\}", css).group(1)
+        r"\.dashboard-shell \.tl-code\s*\{([^}]*)\}", dashboard_css).group(1)
 
 
 # ---------------------------------------------------------------------------

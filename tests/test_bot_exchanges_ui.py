@@ -74,6 +74,21 @@ result.dm = {
   groups: groups.map(g => [g.getAttribute('data-exchange-partner'), g.getAttribute('aria-label')]),
 };
 
+// DM-origin rows stay hidden in the DM transcript: no inline collapse
+// and no plain bubbles — the grouped entry + modal own the DM view.
+doc.querySelector('#message-list').innerHTML = ui.renderTranscript({
+  dm: 'thyca', messages: [
+    { role: 'user', content: 'chào' }, bus1, res1,
+    { role: 'assistant', content: 'việc thường', meta: { bot_id: 'thyca' } },
+  ] });
+await ui.renderExchangeGroups({ dm: 'thyca' });
+result.dmHidden = {
+  folds: doc.querySelectorAll('#message-list .peer-exchange').length,
+  bubbles: doc.querySelectorAll('#message-list .message-assistant').length,
+  groups: [...doc.querySelectorAll('#message-list [data-exchange-partner]')]
+    .map(g => g.getAttribute('data-exchange-partner')),
+};
+
 // Modal: header A ⇄ B, bubbles per author side, closes cleanly.
 globalThis.fetch = async (url, opts = {}) => {
   if (String(url).includes('/exchanges/')) {
@@ -130,6 +145,15 @@ def test_dm_renders_group_entry_with_partner_hook(exchange_ui: dict) -> None:
     assert exchange_ui["dm"]["groups"] == [
         ["helper", "4 messages with Helper"],
     ]
+
+
+def test_dm_hides_exchange_rows_behind_group_entry(exchange_ui: dict) -> None:
+    hidden = exchange_ui["dmHidden"]
+    # No inline peer-exchange block and no plain exchange bubbles:
+    # only the owner's ordinary reply bubble plus the group entry.
+    assert hidden["folds"] == 0
+    assert hidden["bubbles"] == 1
+    assert hidden["groups"] == ["helper"]
 
 
 def test_modal_shows_both_sides_and_closes(exchange_ui: dict) -> None:

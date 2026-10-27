@@ -14,15 +14,6 @@ import threading
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
-AGENT_STATES = (
-    "offline",
-    "idle",
-    "thinking",
-    "running",
-    "waiting",
-    "done",
-    "error",
-)
 
 #: A completed turn stays visibly "done" only briefly; after this the
 #: bot is simply idle again. Waiting/error latches behave differently:

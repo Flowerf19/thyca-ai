@@ -6,7 +6,7 @@ ThycaRouter.register('memories', { title: 'Nhật ký', stylesheet: '/ui/memorie
   const $$ = (selector, base = root) => [...base.querySelectorAll(selector)];
 // Nhật ký (Memories) page — real memory stats + leaf actions, no sample data.
 // Shared shell: emitShell('memories') already ran before this file loaded
-// (see index.html); bootShell() fills the sidebar roster.
+// (SPA entry ui/chat/index.html); bootShell() fills the sidebar roster.
 // API: GET  /api/memory/stats[?bot_id=<id>] — stats row + leaf list
 //      POST /api/memory/reinforce {session_id}          — renew a leaf's TTL
 //      POST /api/memory/update {session_id, topic, summary} — edit a leaf

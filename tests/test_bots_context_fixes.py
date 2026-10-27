@@ -370,7 +370,7 @@ def test_bot_idle_sweep_holds_workspace_lease_through_compaction(
             flush_entered.set()
             await asyncio.to_thread(release_flush.wait)
 
-        app._flush_bot_memory = blocked_flush
+        app._background_jobs._flush_bot_memory = blocked_flush
 
         def sweep():
             try:
@@ -812,19 +812,45 @@ def _dm_flow(tmp_path: Path, *, greet: bool):
         raise
 
 
-def test_delegate_from_thyca_dm_records_no_other_bot_rows(tmp_path: Path) -> None:
+def test_delegate_from_thyca_dm_records_grouped_exchange_only(tmp_path: Path) -> None:
+    """DM-origin delegate records bus + result rows for the DM group entry.
+
+    User-approved DM display: the origin DM keeps the exchange pair so
+    it renders as one grouped entry with a thread modal. The recipient
+    still runs privately with none of the DM's history, and no plain
+    (non-exchange) coder rows land in the DM."""
     app, thyca_dm, detail = _dm_flow(tmp_path, greet=False)
     try:
         assert detail["reply"] == "thyca summary"
         rows = _rows(app, thyca_dm)
-        assert _bot_rows(rows, "coder") == [], (
-            "a fixed DM must never show another bot speaking in it")
-        kinds = {(r.get("meta") or {}).get("kind") for r in rows}
-        assert "delegate" not in kinds and "result" not in kinds
-        # The recipient really ran — privately, in its internal session.
+        coder_rows = _bot_rows(rows, "coder")
+        # Only the delivery result row speaks as coder now — the grouped
+        # exchange entry the DM renders; no plain coder finals.
+        assert len(coder_rows) == 1
+        meta = coder_rows[0].get("meta") or {}
+        assert meta.get("kind") == "result" and meta.get("parent_span_id")
+        assert coder_rows[0]["content"] == "coder plain answer"
+        # The bus side pairs it: sender thyca, explicit recipient coder.
+        bus_rows = [r for r in rows
+                    if (r.get("meta") or {}).get("bus_event") is True]
+        assert len(bus_rows) == 1
+        assert bus_rows[0]["meta"]["bot_id"] == "thyca"
+        assert bus_rows[0]["meta"]["recipient"] == "coder"
+        assert meta.get("parent_span_id") == bus_rows[0]["meta"].get("span_id")
+        # The exchange API surfaces the pair for both bots.
+        assert app.dm_exchange_partners("thyca") == [
+            {"partner": "coder", "count": 2, "last_ts": coder_rows[0]["ts"]},
+        ]
+        assert app.dm_exchange_partners("coder") == [
+            {"partner": "thyca", "count": 2, "last_ts": coder_rows[0]["ts"]},
+        ]
+        # The recipient really ran — privately, with none of the DM's
+        # private history in its internal session.
         internal, store = _internal_store(app, "coder", thyca_dm)
         msgs = store.load(internal.id).messages
         assert any("say hi to the user" in (m.content or "") for m in msgs)
+        assert all("nhờ coder nhắn riêng chào mình" not in (m.content or "")
+                   for m in msgs)
     finally:
         app.shutdown()
 
@@ -839,7 +865,11 @@ def test_message_user_lands_in_coders_own_dm_only(tmp_path: Path) -> None:
                      if _GREETING in (r.get("content") or "")]
         assert greetings, "message_user must post into the bot's own DM"
         thyca_rows = _rows(app, thyca_dm)
-        assert _bot_rows(thyca_rows, "coder") == []
+        # The DM-origin delivery result is recorded for the grouped
+        # entry, but the greeting itself never lands in thyca's DM.
+        coder_rows = _bot_rows(thyca_rows, "coder")
+        assert len(coder_rows) == 1
+        assert (coder_rows[0].get("meta") or {}).get("kind") == "result"
         assert all(_GREETING not in (r.get("content") or "") for r in thyca_rows)
     finally:
         app.shutdown()

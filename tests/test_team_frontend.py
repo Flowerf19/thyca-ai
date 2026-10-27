@@ -54,21 +54,6 @@ STUDIO_CSS = SHARE / "avatars" / "studio.css"
 CHAT_CSS = CHAT_DIR / "chatcss" / "chat.css"
 
 INDEX_HTML = CHAT_DIR / "index.html"
-SETTINGS_HTML = UI / "settings" / "index.html"
-MEMORIES_HTML = UI / "memories" / "index.html"
-DASHBOARD_HTML = UI / "dashboard" / "index.html"
-TRACE_HTML = UI / "trace" / "index.html"
-PROFILE_HTML = UI / "profile" / "index.html"
-PROVIDER_HTML = UI / "provider" / "index.html"
-
-PAGE_HTML_FILES = {
-    "settings": SETTINGS_HTML,
-    "memories": MEMORIES_HTML,
-    "dashboard": DASHBOARD_HTML,
-    "trace": TRACE_HTML,
-    "profile": PROFILE_HTML,
-    "provider": PROVIDER_HTML,
-}
 
 # ---------------------------------------------------------------------------
 # Fake-DOM prelude + Node harness
@@ -2431,22 +2416,6 @@ def test_avatars_css_states_and_bot_vars() -> None:
     assert ".expression-preview" in css
 
 
-def test_legacy_team_and_kit_markers_are_gone() -> None:
-    """The deleted kit/team anatomy must not reappear in the new sources."""
-    banned = ["team-strip", "team-message", "team-exchange", "team-dossier",
-              "team-bot-flap", "team-card-box", "team-nav-back", "session-item",
-              "kit.css", "botLookFor", "BOT_LOOK_TINTS", "tintVar",
-              "splitExchange", "delegation-tree", "unread", "session-rename",
-              "runGuardedStages", "teamArticleFor"]
-    sources = [p.read_text() for p in (
-        CHAT_CSS, SIDEBAR_CSS, BASE_CSS, APP_SHELL_CSS, AVATARS_CSS,
-        SIDEBAR_JS, CHAT_JS, APP_JS, DATA_JS, SHELL_JS, SHELL_APP_JS, INDEX_HTML,
-    )]
-    for marker in banned:
-        for src in sources:
-            assert marker not in src, marker
-
-
 def test_index_html_scripts_defs_and_static_markup() -> None:
     """ui/chat/index.html ships the svg defs once, the static shell markup and
     the classic script order the modules rely on."""
@@ -2484,30 +2453,6 @@ def test_index_html_scripts_defs_and_static_markup() -> None:
                 "../share/avatars/avatars.css", "../share/avatars/studio.css",
                 "../share/markdown.css", "chatcss/chat.css"):
         assert f'href="{css}"' in html
-
-
-def test_page_index_html_emit_shell_contract() -> None:
-    """Every non-chat page emits the shared shell before binding scripts, then
-    loads its own page module — the two-phase pattern shell.js documents."""
-    for page, path in PAGE_HTML_FILES.items():
-        html = path.read_text()
-        assert f"emitShell('{page}')" in html or f'emitShell("{page}")' in html, page
-        for src in ("../share/util.js", "../share/data.js", "../share/shell.js",
-                    "../share/avatars/avatars.js", "../share/avatars/idle.js",
-                    "../share/sidebar.js", "../share/avatars/studio.js",
-                    "../share/shell-app.js"):
-            assert f'src="{src}"' in html, (page, src)
-        assert f'src="js/{page}.js"' in html, page
-        # emitShell runs between shell.js and the DOM-binding scripts — the
-        # page header comment may also mention emitShell, so search after the
-        # shell.js script tag
-        call = f"emitShell('{page}')" if f"emitShell('{page}')" in html else f'emitShell("{page}")'
-        shell_pos = html.index('src="../share/shell.js"')
-        call_pos = html.index(call, shell_pos)
-        assert shell_pos < call_pos < html.index('src="../share/avatars/avatars.js"'), page
-        for css in ("../share/base.css", "../share/sidebar.css",
-                    "../share/avatars/avatars.css", "../share/app-shell.css"):
-            assert f'href="{css}"' in html, (page, css)
 
 
 def test_settings_page_uses_shared_avatar_engine() -> None:

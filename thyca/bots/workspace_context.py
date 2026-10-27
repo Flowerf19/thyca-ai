@@ -15,6 +15,29 @@ from thyca.core.channel import WindowRef
 from thyca.memory.active import ActiveSnapshot
 
 
+def overhead_tokens(hot=None, tool_schemas=None) -> tuple[int, int]:
+    """Shared hot/tool overhead composer (chars-to-tokens estimate).
+
+    One rule for every site that prices prepared turn inputs: the
+    rendered hot snapshot plus the JSON tool-schema list. Used by the
+    runtime compactor plan and the app meter so the two can never drift.
+    Either half may be None to measure only the other (the meter prices
+    schemas before the hot snapshot exists)."""
+    import json as _json
+
+    from thyca.core.protocol import estimate_tokens as _chars_to_tokens
+    from thyca.llm.prompt_manager import PromptManager
+
+    hot_tokens = (
+        _chars_to_tokens(PromptManager().build(hot)) if hot is not None else 0
+    )
+    tools_tokens = (
+        _chars_to_tokens(_json.dumps(tool_schemas or [], ensure_ascii=False))
+        if tool_schemas is not None else 0
+    )
+    return hot_tokens, tools_tokens
+
+
 def _layered_soul(shared_soul: str, persona: str) -> str:
     """Compose the ``<role>`` section: shared soul + this twin's overlay.
 

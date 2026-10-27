@@ -371,7 +371,7 @@ def test_operations_and_compact_honor_saved_settings(
         compact_models.append(kwargs["model"])
         return {"compacted": False, "summary": None}
 
-    monkeypatch.setattr("thyca.app.chat_app.compact_with_llm", compact_stub)
+    monkeypatch.setattr("thyca.app.session_admin.service.compact_with_llm", compact_stub)
     try:
         app._bots.create(BotCard(
             bot_id="coder", name="coder", role="Coder",
@@ -412,7 +412,7 @@ def test_a2a_recipient_uses_own_thinking(tmp_path: Path, monkeypatch) -> None:
 
     llm = _RecordingLLM()
     app, captured = _runtime_app(tmp_path, llm, monkeypatch)
-    app._flush_bot_memory = lambda *a, **k: asyncio.sleep(0, result=None)
+    app._background_jobs._flush_bot_memory = lambda *a, **k: asyncio.sleep(0, result=None)
     try:
         app._bots.create(BotCard(
             bot_id="sender", name="sender", role="S",

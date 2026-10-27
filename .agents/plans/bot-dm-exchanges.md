@@ -70,3 +70,29 @@ tiếp cũng được gộp thành một mục bung tại chỗ.
   trong cùng room (nối `parent_span_id` → bus `span_id`); bus row đơn lẻ
   không reply thì không suy được và bị loại khỏi endpoint. Dữ liệu latch
   cũ nên refresh: một turn bot_send mới sẽ ghi `recipient` tường minh.
+
+## Follow-up: trao đổi phát sinh trong DM (user 2026-10-27)
+
+- Yêu cầu: bot↔bot trao đổi phát sinh trong DM cũng phải hiện trong DM
+  dưới dạng 1 mục gộp theo cặp, bấm vào xem toàn bộ hội thoại A↔B như
+  trường hợp room gốc.
+- Nguyên nhân: `_exchange_rooms` bỏ qua DM, `_record_bus_events` không ghi
+  row nào trong DM, `_deliver_envelope_claimed` chỉ ghi result row khi
+  `dm_owner is None` hoặc recipient là chủ DM — nên endpoint trả về `[]`.
+- Thay đổi (giữ nguyên delivery privacy): bus row (kèm `recipient` tường
+  minh) + result row của recipient được ghi vào transcript của DM gốc;
+  `_exchange_rooms` đọc cả DM (lọc cặp `involves`/`pair` sẵn có giữ nguyên
+  nên không lộ cặp lạ); recipient vẫn không đọc lịch sử DM (guard
+  `room_context`/`_promote_participant` giữ nguyên), participant DM không
+  đổi; `renderTranscript` ẩn peer rows khi `detail.dm` (modal là detail
+  view của DM, room giữ collapse inline cũ); mô tả tool `bot_send` cập
+  nhật theo hành vi mới.
+- Không backfill/migration: trao đổi trong DM từ trước thay đổi này không
+  có row ghi lại nên vẫn ẩn (nhất quán với giới hạn dữ liệu cũ ở trên);
+  không dựng row từ trace, không viết lại dữ liệu đã lưu.
+- Checks: `tests/test_bot_exchanges.py` (cặp DM-origin cho cả 2 bot +
+  endpoint HTTP), `tests/test_bot_exchanges_ui.py` (DM ẩn peer rows,
+  giữ group entry + modal; room không đổi), 2 test DM trong
+  `tests/test_bots_context_fixes.py` cập nhật theo hợp đồng hiển thị mới
+  (giữ assertion privacy: không đọc lịch sử DM, participant không đổi,
+  `message_user` vẫn chỉ vào DM của bot đó).

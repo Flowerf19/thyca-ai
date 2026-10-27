@@ -23,7 +23,6 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 UI = ROOT / "thyca" / "webui" / "ui"
-DASHBOARD_JS = UI / "dashboard" / "js" / "dashboard.js"
 
 _TUI_TAIL = """return {
   fillDrawerContext, capabilitiesHtml, botContext, normalizeBot, getBot,
@@ -78,60 +77,6 @@ def meter(node: str) -> dict:
         cwd=ROOT, check=True, capture_output=True, text=True, timeout=10,
     )
     return json.loads(result.stdout)
-
-
-def _eval_dashboard(node: str, expression: str) -> object:
-    """Evaluate the page-local formatter block of dashboard.js verbatim —
-    the new UI has no shared format.js, so the test slices the real source
-    section between its markers and evals it rather than copying it."""
-    src = DASHBOARD_JS.read_text(encoding="utf-8")
-    start = src.index("const fmtInt")
-    end = src.index("const isoDay")
-    end = src.index("\n", end) + 1
-    block = src[start:end]
-    script = f"{block}\nconsole.log(JSON.stringify({{v: {expression}}}));"
-    result = subprocess.run(
-        [node, "-e", script],
-        check=True, capture_output=True, text=True, cwd=ROOT,
-    )
-    return json.loads(result.stdout)["v"]
-
-
-def test_composer_meter_is_dropped_in_new_ui() -> None:
-    blob = "\n".join(
-        path.read_text(encoding="utf-8")
-        for path in UI.rglob("*")
-        if path.is_file() and path.suffix in {".js", ".html"}
-    )
-    assert "sumLastTurnUsage" not in blob
-    assert "lastTurnTools" not in blob
-    assert "renderComposerMeter" not in blob
-    assert 'id="meter"' not in blob
-    assert 'id="tool-meter"' not in blob
-
-
-def test_fmt_int_uses_vi_locale(node: str) -> None:
-    assert _eval_dashboard(node, "fmtInt(70607522)") == "70.607.522"
-    assert _eval_dashboard(node, "fmtInt(5000)") == "5.000"
-    assert _eval_dashboard(node, "fmtInt(0)") == "0"
-    assert _eval_dashboard(node, "fmtInt('x')") == "—"
-
-
-def test_fmt_cost_tiered_usd_precision(node: str) -> None:
-    """New contract: 6 decimals under $0.01, 4 under $1, else 2."""
-    assert _eval_dashboard(node, "fmtCost(0.012345)") == "$0.0123"
-    assert _eval_dashboard(node, "fmtCost(0.001234)") == "$0.001234"
-    assert _eval_dashboard(node, "fmtCost(0)") == "$0.000000"
-    assert _eval_dashboard(node, "fmtCost(0.5)") == "$0.5000"
-    assert _eval_dashboard(node, "fmtCost(12.345)") == "$12.35"
-    assert _eval_dashboard(node, "fmtCost(null)") == "—"
-    assert _eval_dashboard(node, "fmtCost('x')") == "—"
-
-
-def test_share_percentage_rounding(node: str) -> None:
-    assert _eval_dashboard(node, "share(1, 4)") == "25%"
-    assert _eval_dashboard(node, "share(3, 40)") == "7,5%"
-    assert _eval_dashboard(node, "share(0, 0)") == "0%"
 
 
 def test_bot_context_fetches_dm_then_room_operations(meter: dict) -> None:

@@ -158,8 +158,11 @@ function peerDetails(run) {
 function renderTranscript(detail) {
   const nodes = [];
   const messages = detail.messages || [];
-  // Consecutive bot<->bot exchange rows with the same pair collapse
-  // into one expandable entry; anything else flushes the open run.
+  // Room: consecutive bot<->bot exchange rows with the same pair
+  // collapse into one expandable entry; anything else flushes the
+  // open run. DM: exchange rows stay hidden here — the grouped
+  // "N messages with <Bot>" entry + thread modal own the DM view.
+  const hidePeerRows = !!(detail && detail.dm);
   let peerRun = null;
   const flushPeerRun = () => {
     if (!peerRun) return;
@@ -186,6 +189,7 @@ function renderTranscript(detail) {
     }
     const pair = exchangePairOf(m, messages);
     if (pair) {
+      if (hidePeerRows) continue;
       const key = peerRunKey(pair);
       if (!peerRun || peerRun.key !== key) { flushPeerRun(); peerRun = { key, pair, rows: [] }; }
       peerRun.rows.push(peerBubble(m, time));

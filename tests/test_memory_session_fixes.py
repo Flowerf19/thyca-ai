@@ -10,7 +10,6 @@ from pathlib import Path
 import pytest
 
 from thyca.core.protocol import Message, ToolCall
-from thyca.llm.llm_base import ChatReply
 from thyca.memory.active import ActiveMemory, ActiveMemoryError, ActiveState
 from thyca.memory.archive_store import ArchiveError, ArchiveStore, Hit
 from thyca.memory.archived import ArchivedMemory
@@ -19,7 +18,6 @@ from thyca.memory.writer import MemoryWriter
 from thyca.serve.memory import memory_endpoint
 from thyca.sessions import SessionManager, SessionNotFound, SessionStore
 from thyca.sessions.errors import SessionCorrupt, SessionError
-from thyca.sessions.title import retitle_missing
 from thyca.sessions.wire import session_summary
 from thyca.tools.gateway import ToolGateway
 from thyca.memory.facade import MemoryFacade
@@ -318,50 +316,6 @@ def test_rewrite_unserializable_meta_wrapped(tmp_path: Path) -> None:
     assert type(caught.value) is not TypeError
     assert list(tmp_path.glob(".*.tmp.*")) == []
     assert path.read_text(encoding="utf-8") == ""
-
-
-# --- F33: retitle hijack ---
-
-
-async def test_retitle_preserves_current_and_skips_per_item(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    current = manager.create()
-    manager.append(_msg("user", "current user text here"))
-    manager.append(_msg("assistant", "current reply here"))
-    manager.set_title("Current Name")
-    u1 = manager.create()
-    manager.append(_msg("user", "alpha-one distinct text"))
-    manager.append(_msg("assistant", "reply one"))
-    u2 = manager.create()
-    manager.append(_msg("user", "beta-two distinct text"))
-    manager.append(_msg("assistant", "reply two"))
-    u3 = manager.create()
-    manager.append(_msg("user", "gamma-three distinct text"))
-    manager.append(_msg("assistant", "reply three"))
-    manager.load(current.id)
-
-    async def chat(messages, tools=None):
-        if "alpha-one" in messages[1].content:
-            raise RuntimeError("boom")
-        return ChatReply(content="Nhịp sáng")
-
-    real_load = manager.load
-
-    def flaky_load(session_id: str):
-        if session_id == u2.id:
-            raise SessionNotFound(session_id)
-        return real_load(session_id)
-
-    manager.load = flaky_load  # type: ignore[method-assign]
-    try:
-        named = await retitle_missing(chat, manager)
-    finally:
-        manager.load = real_load  # type: ignore[method-assign]
-    assert [item[0].id for item in named] == [u3.id]
-    assert manager.current.id == current.id
-    assert SessionManager(tmp_path).load(u3.id).title == "Nhịp sáng"
-    assert SessionManager(tmp_path).load(u1.id).title is None
-    assert SessionManager(tmp_path).load(u2.id).title is None
 
 
 # --- M4-safe-half: limit edges + non-str inputs ---

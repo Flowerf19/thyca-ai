@@ -1,7 +1,8 @@
 """Shared theme tokens: ui/share/base.css owns the single :root palette every
-rebuilt page inherits. Each ui/<page>/index.html links the same stack —
-fonts.css, base.css, sidebar.css, the avatar sheets, then (except chat, which
-keeps its own workspace chrome) app-shell.css plus its page sheet."""
+workspace inherits. The single SPA entry (ui/chat/index.html) links the
+shared stack — fonts.css, base.css, sidebar.css, the avatar sheets, plus
+markdown.css and its own sheet; the router loads app-shell.css and each
+page sheet on demand for non-chat workspaces."""
 from __future__ import annotations
 
 import re
@@ -15,11 +16,6 @@ APP_SHELL_CSS = UI / "share" / "app-shell.css"
 SIDEBAR_CSS = UI / "share" / "sidebar.css"
 MARKDOWN_CSS = UI / "share" / "markdown.css"
 SHELL_JS = UI / "share" / "shell.js"
-
-# Pages that render inside emitShell()'s shared chrome all link app-shell.css;
-# chat keeps its own static markup + chatcss/chat.css instead.
-SHELL_PAGES = ("dashboard", "memories", "profile", "provider", "settings", "trace")
-ALL_PAGES = ("chat",) + SHELL_PAGES
 
 SHARED_LINKS = (
     "../share/fonts.css",
@@ -51,19 +47,22 @@ def test_base_tokens_define_the_paper_palette() -> None:
         assert "oklch" not in sheet.read_text(encoding="utf-8"), sheet.name
 
 
-def test_every_page_links_the_shared_stylesheets() -> None:
-    for page in ALL_PAGES:
-        html = (UI / page / "index.html").read_text(encoding="utf-8")
-        for href in SHARED_LINKS:
-            assert f'href="{href}"' in html, f"{page}: {href}"
-        assert f'href="{page}css/{page}.css"' in html, page
-    for page in SHELL_PAGES:
-        html = (UI / page / "index.html").read_text(encoding="utf-8")
-        assert 'href="../share/app-shell.css"' in html, page
-    # Chat keeps its own workspace chrome — no app-shell, its own sheet.
+def test_spa_entry_links_the_shared_stylesheets() -> None:
+    """The single entry links the shared stack; the router loads app-shell
+    plus each page sheet on demand for non-chat workspaces."""
     chat = (UI / "chat" / "index.html").read_text(encoding="utf-8")
-    assert "../share/app-shell.css" not in chat
+    for href in SHARED_LINKS:
+        assert f'href="{href}"' in chat, href
     assert 'href="../share/markdown.css"' in chat
+    assert 'href="chatcss/chat.css"' in chat
+    # Chat keeps its own workspace chrome — no static app-shell link.
+    assert "../share/app-shell.css" not in chat
+    router = (UI / "share" / "router.js").read_text(encoding="utf-8")
+    assert "styleLink('/ui/share/app-shell.css', 'app-shell')" in router
+    assert "styleLink(entry.stylesheet, page)" in router
+    for page in ("dashboard", "memories", "profile", "provider", "settings"):
+        js = (UI / page / "js" / f"{page}.js").read_text(encoding="utf-8")
+        assert f"stylesheet: '/ui/{page}/" in js, page
 
 
 def test_shell_artwork_and_page_ornaments_retained() -> None:
@@ -115,12 +114,13 @@ def test_inline_fields_use_the_paper_surface() -> None:
 
 def test_trace_code_keeps_the_light_syntax_surface() -> None:
     """Trace payload code sits on a light inset surface; failed tool output
-    gets the warm error pairing instead of a theme swap."""
-    css = (UI / "trace" / "tracecss" / "trace.css").read_text(encoding="utf-8")
-    code = _block(css, ".tl-code")
+    gets the warm error pairing instead of a theme swap. The standalone
+    trace sheet is gone — Dashboard's scoped sheet owns the .tl-code rules."""
+    css = (UI / "dashboard" / "dashboardcss" / "dashboard.css").read_text(encoding="utf-8")
+    code = _block(css, ".dashboard-shell .tl-code")
     assert "background:#fff8ec" in code
     assert "ui-monospace" in code
-    err = _block(css, ".tl-code.tl-code-err")
+    err = _block(css, ".dashboard-shell .tl-code.tl-code-err")
     assert "background:#fdf0ea" in err
     assert "color:#944f3d" in err
     # Assistant replies keep the shared markdown surface.

@@ -19,8 +19,6 @@ button:hover{filter:brightness(.97)}
 .wordmark{font:italic 22px var(--serif);color:var(--forest);letter-spacing:-.7px}
 .header-rule{width:28px;height:1px;background:var(--line)}
 .site-kicker{font-size:10px;letter-spacing:1.9px;text-transform:uppercase}
-.prototype-badge{font-size:10px;letter-spacing:.3px;background:#eee5d2;border-radius:20px;padding:5px 9px}
-.prototype-badge:before{content:'';display:inline-block;background:#9a966d;width:5px;height:5px;border-radius:50%;margin-right:6px}
 /* Header page nav — shared chrome rendered from util.js on every page,
    so its styles live here next to .site-header, not in app-shell. */
 .page-links{display:flex;gap:2px}
@@ -79,7 +77,6 @@ button:hover{filter:brightness(.97)}
 @media(max-width:520px){
 .notebook-shell{margin:0;height:100dvh;border-radius:0;border:none;grid-template-rows:46px minmax(0,1fr)}
 .main-grid{padding:0 5px 5px}
-.prototype-badge{font-size:9px}
 .dialog-heading{padding:20px}
 .dialog-body{padding:20px}
 .screen-dialog{max-height:calc(100dvh - 24px)}

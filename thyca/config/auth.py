@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from .errors import ConfigError
 
@@ -90,14 +90,3 @@ def merge_saved_keys(payload: dict, config: Config) -> dict:
     payload = dict(payload)
     payload["providers"] = merged
     return payload
-
-
-def auth_to_dict(config: Config) -> dict[str, Any]:
-    """Wire form of ``auth.json``: only providers carrying key material."""
-    return {
-        "providers": {
-            pid: {"apiKey": entry.apiKey}
-            for pid, entry in config.providers.items()
-            if entry.apiKey
-        }
-    }

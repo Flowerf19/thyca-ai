@@ -58,7 +58,8 @@ def test_header_links_every_page_and_marks_current() -> None:
         "chat", "memories", "profile", "provider", "dashboard", "settings"]
     for href, page, _rest, _label in links:
         assert href == f"../{page}/index.html"
-        assert (UI / page / "index.html").is_file(), href
+        # Legacy hrefs are unchanged and resolve to the single SPA entry
+        # through the static alias (locked by test_webui_spa_frontend).
     # The current page is the only marked link.
     marks = {page: rest for _href, page, rest, _label in links}
     assert 'class="is-current"' in marks["memories"]
@@ -70,15 +71,12 @@ def test_header_links_every_page_and_marks_current() -> None:
 
 
 def test_every_shell_page_emits_its_own_id() -> None:
-    """Each rebuilt page loads shell.js then emitShell('<id>') so the header
+    """Each workspace module registers its own router id so the header
     marks the right link; chat ships static markup and lets util.js hydrate
     its data-page-nav stub instead."""
     for page in SHELL_PAGES:
-        html = (UI / page / "index.html").read_text(encoding="utf-8")
-        shell_tag = html.index('src="../share/shell.js"')
-        # The header comment also names emitShell — find the real call.
-        emit = html.index(f"emitShell('{page}')", shell_tag)
-        assert shell_tag < emit, page
+        js = (UI / page / "js" / f"{page}.js").read_text(encoding="utf-8")
+        assert f"ThycaRouter.register('{page}'" in js, page
     # Chat keeps its own static header — the landing page still carries the
     # shared nav as an empty <nav data-page-nav="chat"> that util.js fills
     # on load; every other page links back to ../chat/index.html.

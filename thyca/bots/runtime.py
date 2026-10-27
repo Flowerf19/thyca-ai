@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import json
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -35,6 +34,7 @@ from thyca.bots.policy import (
 )
 from thyca.bots.registry import BotRegistry, RegistryError
 from thyca.bots.status import AgentStatusTracker
+from thyca.bots.usage import is_countable_number, is_stop_status
 from thyca.bots.workspace import WorkspaceRegistry, WorkspaceTurnConflict
 from thyca.config import Config
 from thyca.core.channel import WindowRef
@@ -61,31 +61,7 @@ MEMORY_WRITE_TOOLS = frozenset(
 #: admin-prefix drop, but still subject to the fail-closed allowlist.
 #: ``bot_fetch`` (CBE-3) reads full envelope bodies by span_id;
 #: ``task_open`` (CBE-4) records an open-task event in the transcript.
-SEND_TOOL_NAME = "bot_send"
 PEER_TOOL_NAMES = frozenset({"bot_send", "bot_fetch", "task_open", "message_user", "ask_user", "report_error"})
-
-
-def _layered_soul(shared_soul: str, persona: str) -> str:
-    """Compose the ``<role>`` section: shared soul + this twin's overlay.
-
-    Every twin (Thyca included) rides the shared SOUL.md; the card's
-    persona body is appended as the bot's own working notes and wins
-    where it conflicts. Empty persona simply leaves the shared soul —
-    there is deliberately no fallback direction to invert.
-    """
-    own = (persona or "").strip()
-    shared = (shared_soul or "").strip()
-    if not own:
-        return shared_soul
-    overlay = (
-        "## Your own working notes\n\n"
-        "These come from your own TWIN.md. They refine the shared soul "
-        "above for you specifically and win where they conflict.\n\n"
-        f"{own}"
-    )
-    if not shared or shared == "# Soul":
-        return overlay
-    return f"{shared}\n\n{overlay}"
 
 
 def filtered_tool_schemas(
@@ -274,7 +250,7 @@ def _aggregate_turn_meta(messages: list) -> tuple[str | None, dict | None, float
         if getattr(message, "role", None) != "assistant":
             continue
         meta = getattr(message, "meta", None) or {}
-        if meta.get("status") in {"context_limit", "loop_limit"}:
+        if is_stop_status(meta):
             continue
         if isinstance(meta.get("model"), str) and meta["model"].strip():
             model = meta["model"].strip()
@@ -283,7 +259,7 @@ def _aggregate_turn_meta(messages: list) -> tuple[str | None, dict | None, float
             if usage is None:
                 usage = {}
             for key, value in raw_usage.items():
-                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                if is_countable_number(value):
                     usage[key] = usage.get(key, 0) + value
         if isinstance(meta.get("cost_usd"), (int, float)):
             cost = (cost or 0.0) + float(meta["cost_usd"])
@@ -301,8 +277,7 @@ def _aggregate_turn_rounds(messages: list) -> int:
         for message in messages
         if getattr(message, "role", None) == "assistant"
         and (getattr(message, "meta", None) or {}).get("kind") == "llm"
-        and (getattr(message, "meta", None) or {}).get("status")
-        not in {"context_limit", "loop_limit"}
+        and not is_stop_status((getattr(message, "meta", None) or {}))
     )
 
 
@@ -322,10 +297,6 @@ class BotRuntime:
     #: turn. Either may be sync or async; both are best-effort.
     memory_flush: Any = None
     memory_searcher: Any = None
-    #: Phase 1C hook installed by ChatApp: ``memory_task_index(bot_id)``
-    #: returns the open memory-task catalog lines for one bot's prompt.
-    #: Sync or async; best-effort like the CBE-4 hooks above.
-    memory_task_index: Any = None
     memory_task_catalog: Any = None
 
     def __init__(
@@ -680,7 +651,6 @@ class BotRuntime:
             # Phase 1C: open memory-task catalog (separate section from
             # runtime open tasks above; empty when the bot sees no tasks).
             catalog_rows: tuple = ()
-            index = ""
             if card.memory.read:
                 try:
                     if self.memory_task_catalog is not None:
@@ -688,15 +658,9 @@ class BotRuntime:
                         if inspect.isawaitable(rows):
                             rows = await rows
                         catalog_rows = tuple(rows or ())
-                    elif self.memory_task_index is not None:
-                        index = self.memory_task_index(card.bot_id)
-                        if inspect.isawaitable(index):
-                            index = await index
-                        index = str(index) if index else ""
                 except Exception:
                     # catalog is best-effort; the turn must go on
                     catalog_rows = ()
-                    index = ""
             reinject_key = (card.bot_id, room_id)
             # One-shot recall is consumed only on successful delivery:
             # it stays armed here and is discarded after loop.run
@@ -733,7 +697,7 @@ class BotRuntime:
                 card=card,
                 runtime_tasks=tuple(open_tasks[:20]),
                 memory_catalog=catalog_rows,
-                memory_task_text=index,
+                memory_task_text="",
                 recalled=bounded,
                 room_delta=room_text,
                 bot_user=bot_user_text,
@@ -773,16 +737,16 @@ class BotRuntime:
             if self.memory_flush is not None:
                 try:
                     from thyca.agent.shrink import estimate_wire_tokens
+                    from thyca.bots.workspace_context import overhead_tokens
                     from thyca.core.protocol import Message as _Msg
-                    from thyca.core.protocol import estimate_tokens as _tok
-                    from thyca.llm.prompt_manager import PromptManager
                     from thyca.sessions.summary import SUMMARY_MAX_CHARS
 
+                    _hot_tokens, _tools_tokens = overhead_tokens(hot, filtered)
                     plan = sessions.compactor.plan(
                         list(sessions.current.messages),
                         turn_cfg.effective_limits().contextTokens,
-                        hot_tokens=_tok(PromptManager().build(hot)),
-                        tools_tokens=_tok(json.dumps(filtered or [], ensure_ascii=False)),
+                        hot_tokens=_hot_tokens,
+                        tools_tokens=_tools_tokens,
                         pending_user_tokens=estimate_wire_tokens(
                             [_Msg(role="user", content=wire_text)]
                         ),

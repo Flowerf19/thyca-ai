@@ -8,7 +8,6 @@ Layout (SOLID split of the old single module):
 - :mod:`root` — the ``Config`` aggregate (wire form + resolution policy)
 - :mod:`parsing` — raw-dict parsing and legacy migration
 - :mod:`store` — file I/O (load / atomic save / defaults / guide)
-- :mod:`compat` — deprecated shims
 
 Import-compatible with the old ``thyca/config.py``: ``from thyca.config import
 Config, load, save, ...`` keeps working.
@@ -16,7 +15,6 @@ Config, load, save, ...`` keeps working.
 from __future__ import annotations
 
 from .auth import merge_saved_keys
-from .compat import CONFIG_FILENAME, THYCA_DIR_NAME, _lock_path, default_dict, thyca_dir
 from .defaults import (
     DEFAULT_LIMITS_CONTEXT_TOKENS,
     DEFAULT_LIMITS_CONTEXT_TOKENS_MAX,
@@ -57,7 +55,6 @@ from .store import (
 from .timeline import TimelineCfg
 
 __all__ = [
-    "CONFIG_FILENAME",
     "DEFAULT_LIMITS_CONTEXT_TOKENS",
     "DEFAULT_LIMITS_CONTEXT_TOKENS_MAX",
     "DEFAULT_LIMITS_HOT_TAIL_KB",
@@ -73,7 +70,6 @@ __all__ = [
     "GUIDE_NAME",
     "PROVIDER_APIS",
     "REASONING_EFFORTS",
-    "THYCA_DIR_NAME",
     "Config",
     "ConfigError",
     "FileLock",
@@ -86,18 +82,15 @@ __all__ = [
     "ProviderEntry",
     "config_schema",
     "TimelineCfg",
-    "_lock_path",
     "_model_to_dict",
     "_parse_dict",
     "config_path",
     "default_config",
-    "default_dict",
     "ensure_default",
     "ensure_thyca_dir",
     "load",
     "merge_saved_keys",
     "resolve_model_base_url",
     "save",
-    "thyca_dir",
     "write_config_guide",
 ]

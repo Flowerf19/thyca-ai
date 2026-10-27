@@ -883,9 +883,8 @@ def test_x25_single_range_table() -> None:
 
 
 def test_x25_lock_path_single_home() -> None:
-    from thyca.config import compat, store
+    from thyca.config import store
 
-    assert compat._lock_path is store._lock_path
     assert store._lock_path(Path("/x/config.json")) == Path("/x/config.json.lock")
 
 
@@ -930,14 +929,6 @@ def test_m1_mcp_server_command_is_required() -> None:
     with pytest.raises(TypeError):
         McpServerCfg()  # type: ignore[call-arg]
     assert McpServerCfg(command="x").command == "x"
-
-
-def test_m1_dict_section_and_labels_gone() -> None:
-    import thyca.config.schema as schema
-
-    assert not hasattr(schema, "_dict_section")
-    for key in ("model", "mcpServers", "pricing", "input", "cache", "output"):
-        assert key not in schema._LABELS
 
 
 def test_m1_symlink_config_path_gets_tightened_dir(

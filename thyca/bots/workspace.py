@@ -81,12 +81,6 @@ class BotWorkspace:
             cursor=cursor,
         )
 
-    def turn_lease(self):
-        """This bot's one-turn-at-a-time lease (async context manager)."""
-        if self._registry is None:
-            raise RuntimeError("workspace has no turn registry")
-        return self._registry.lease(self.bot_id)
-
 
 class WorkspaceRegistry:
     """All workspaces for one ``thyca_dir``; shared singleton per instance.

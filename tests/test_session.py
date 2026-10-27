@@ -1,7 +1,6 @@
 """Session service tests — TASK-303a-d verification."""
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import stat
@@ -34,7 +33,6 @@ from thyca.sessions import (
 from thyca.sessions.store import SESSION_ID_PATTERN
 from thyca.sessions.wire import (
     delete_error,
-    is_naming_message,
     message_dict,
     rename_error,
     session_http_error,
@@ -53,7 +51,6 @@ from thyca.sessions.title import (
     naming_instruction,
     naming_messages,
     propose_title,
-    retitle_missing,
     sanitize_title,
 )
 
@@ -560,36 +557,6 @@ def test_fallback_and_sanitize_title(tmp_path: Path) -> None:
     assert display_title(session) == "打招呼"
 
 
-def test_retitle_missing_skips_named_and_empty(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    blank = manager.create()
-    untitled = manager.create()
-    manager.append(msg("user", "alo"))
-    manager.append(msg("assistant", "hey"))
-    named = manager.create()
-    manager.append(msg("user", "xin chào"))
-    manager.set_title("Đã có tên")
-    echoed = manager.create()
-    manager.append(msg("user", "chào"))
-    manager.set_title("chào")
-    cjk = manager.create()
-    manager.append(msg("user", "chào buổi sáng"))
-    manager.set_title("打招呼")
-
-    class LLM:
-        async def chat(self, messages, tools=None):
-            return ChatReply(content="Nhịp sáng")
-
-    result = asyncio.run(retitle_missing(LLM().chat, SessionManager(tmp_path)))
-    ids = {item[0].id: item[2] for item in result}
-    assert ids == {untitled.id: "Nhịp sáng", echoed.id: "Nhịp sáng"}
-    assert SessionManager(tmp_path).load(untitled.id).title == "Nhịp sáng"
-    assert SessionManager(tmp_path).load(named.id).title == "Đã có tên"
-    assert SessionManager(tmp_path).load(echoed.id).title == "Nhịp sáng"
-    assert SessionManager(tmp_path).load(cjk.id).title == "打招呼"
-    assert SessionManager(tmp_path).load(blank.id).title is None
-
-
 def test_user_title_is_verbatim_and_survives_compaction(tmp_path: Path) -> None:
     """A title the user typed is the authority on its own notebook.
 
@@ -972,19 +939,6 @@ _TS = "2026-09-01T10:00:00Z"
 _SID = "2026-09-01T10-00-00_ab12"
 
 
-def _old_naming_excluded(meta: dict | None) -> bool:
-    return (meta or {}).get("kind") != "naming"
-
-
-def test_x1_naming_predicate_matches_old_inline_everywhere() -> None:
-    metas = [None, {}, {"kind": "naming"}, {"kind": "llm"}, {"kind": None}, {"other": 1}]
-    for role in ("user", "assistant", "tool", "system"):
-        for meta in metas:
-            assert is_naming_message(Message(role=role, content="x", ts=_TS, meta=meta)) == (
-                not _old_naming_excluded(meta)
-            ), (role, meta)
-
-
 def test_x1_assemble_and_trace_use_canonical_predicate(tmp_path: Path) -> None:
     naming = Message(role="assistant", content=None, ts=_TS, meta={"kind": "naming"})
     user = Message(role="user", content="hi", ts=_TS)
@@ -1087,9 +1041,6 @@ def test_x1_call_and_message_dicts_match_old_shapes(tmp_path: Path) -> None:
         for call in message.tool_calls or []:
             assert tool_call_dict(call, root) == _old_chat_call(call, root)
             assert tool_call_dict(call, root, include_args=True) == _old_trace_call(call, root)
-    # Trace seam delegates to the canonical helper.
-    call = ToolCall(id="c9", name="bash", arguments={"command": "ls"})
-    assert trace_api.trace_tool_call(call, root) == tool_call_dict(call, root, include_args=True)
 
 
 def test_x1_session_id_grammar_is_single_pattern(tmp_path: Path) -> None:
@@ -1208,12 +1159,6 @@ def test_x17_shared_estimator() -> None:
     assert session_estimate(signed) > session_estimate(
         Message(role="assistant", content="same")
     )
-
-
-def test_m8_store_read_is_gone() -> None:
-    from thyca.sessions.store import SessionStore
-
-    assert not hasattr(SessionStore, "read")
 
 
 def test_m8_failed_rewrite_leaves_no_tmp(tmp_path: Path) -> None:
@@ -1468,25 +1413,6 @@ def test_legacy_session_without_flag_loads_unattempted(tmp_path: Path) -> None:
     loaded = SessionStore(tmp_path).load("2026-01-01T00-00-00_abcd")
     assert (loaded.title, loaded.title_source) == ("Tên cũ", None)
     assert loaded.naming_attempted is False
-
-
-def test_retitle_missing_ignores_the_automatic_attempt_flag(tmp_path: Path) -> None:
-    """The one-shot gate must not block an explicit batch retitle."""
-    manager = SessionManager(tmp_path)
-    session = manager.create()
-    manager.append(msg("user", "alpha-one distinct text"))
-    manager.append(msg("assistant", "reply one"))
-    manager.mark_naming_attempted()
-
-    class LLM:
-        async def chat(self, messages, tools=None):
-            return ChatReply(content="Nhịp sáng")
-
-    named = asyncio.run(retitle_missing(LLM().chat, SessionManager(tmp_path)))
-    assert [item[0].id for item in named] == [session.id]
-    reloaded = SessionManager(tmp_path).load(session.id)
-    assert reloaded.title == "Nhịp sáng"
-    assert reloaded.naming_attempted is True
 
 
 def test_naming_instruction_is_packaged_and_not_in_chat_prompt() -> None:

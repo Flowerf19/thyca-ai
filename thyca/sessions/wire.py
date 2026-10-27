@@ -32,27 +32,17 @@ def session_title(session: Session) -> str:
     return display_title(session)
 
 
-def is_naming_message(message: Message) -> bool:
-    """True for transcript-only naming rows (``kind=naming`` meta, any role).
-
-    The one predicate the model feed (assemble), the trace rollup, and the
-    chat views share: naming rows are meta-only records that must never
-    reach the model or count as turn outcomes.
-    """
-    return (message.meta or {}).get("kind") == "naming"
-
-
 _SIDECAR_KINDS = frozenset({"naming", "compaction"})
 
 
 def is_sidecar_message(message: Message) -> bool:
     """True for meta-only sidecar rows (naming + compaction cost records).
 
-    Broader than :func:`is_naming_message`: every surface that must keep
-    a sidecar out of the model feed or out of turn outcomes uses this,
-    so a compaction summary call is recorded for Trace/cost exactly like
-    naming without ever being sent back to a provider (strict providers
-    reject its null content) or counted as a reply.
+    Every surface that must keep a sidecar out of the model feed or out
+    of turn outcomes uses this, so a compaction summary call is recorded
+    for Trace/cost exactly like naming without ever being sent back to
+    a provider (strict providers reject its null content) or counted as
+    a reply.
     """
     return (message.meta or {}).get("kind") in _SIDECAR_KINDS
 

@@ -34,6 +34,61 @@ LEGACY_HEADING = "## Habits"
 PROFILE_HEADING = "## Profile"
 
 
+def format_card_line(role: str, description: str, persona: str) -> str:
+    """One-line scope suffix for a bot inside the aggregation prompt."""
+    line = f" | role: {role} | desc: {description[:200]}"
+    trimmed = " ".join((persona or "").split())[:200]
+    if trimmed:
+        line += f" | persona: {trimmed}"
+    return line
+
+
+def aggregation_prompt(
+    blocks: dict[str, list[str]],
+    user_direct: list[dict],
+    current_profile: list[str],
+    card_line,
+) -> str:
+    """Scheduled-aggregation prompt: per-bot blocks, user-direct notes,
+    current shared block, merge rules. ``card_line`` maps bot id to the
+    scope suffix (owned by the caller, which holds the registry)."""
+    parts = [
+        "Nhiệm vụ định kỳ: tổng hợp hồ sơ (profile) của user vào USER.md chung.",
+        "",
+        "PROFILE TỪNG BOT ĐÃ TỰ GHI (dòng có qualifier như 'Discord: ...' "
+        "chỉ đúng ở kênh/bot đó):",
+    ]
+    for bot_id in sorted(blocks):
+        parts.append(f"### bot {bot_id}{card_line(bot_id)}")
+        parts.extend(f"- {line}" for line in blocks[bot_id])
+    parts.append("")
+    parts.append("USER NÓI TRỰC TIẾP (tin cậy cao nhất, kèm ngày):")
+    for obs in user_direct:
+        day = obs.get("timeline_day") or "?"
+        explicit = " explicit" if obs.get("habit_explicit") else ""
+        parts.append(f"- {obs.get('habit', '')}  (ngày {day}{explicit})")
+    parts.append("")
+    parts.append("PROFILE CHUNG HIỆN TẠI (auto block — thay thế toàn bộ khi cần):")
+    parts.extend(f"- {line}" for line in current_profile)
+    parts.append("")
+    parts.append(
+        "QUY TẮC TỔNG HỢP:\n"
+        "1. Gộp các dòng cùng nghĩa (biến thể câu); dòng chỉ đúng ở 1 "
+        "kênh/bot thì GIỮ qualifier ('Discord: ...'); dòng được ≥2 "
+        "bot/kênh độc lập xác nhận thì thành universal (bỏ qualifier).\n"
+        "2. User nói trực tiếp luôn thắng; cùng phạm vi mâu thuẫn thì ưu "
+        "tiên dòng mới hơn (ngày).\n"
+        "3. Chỉ giữ fact bền về user (sở thích, ưu tiên, tên gọi, phong "
+        "cách, mục tiêu...); bỏ chuyện vặt, tạm thời, bí mật, credential, "
+        "nội dung không phải về user.\n"
+        "4. Gọi profile_update với lines = danh sách ĐẦY ĐỦ bạn muốn giữ "
+        "trong auto block (KHÔNG phải diff). Nếu kết quả không khác gì "
+        "hiện tại thì KHÔNG gọi tool.\n"
+        "Trả lời ngắn gọn."
+    )
+    return "\n".join(parts)
+
+
 def parse_profile_lines(text: str) -> list[str]:
     """Auto profile lines from the ``## Profile`` block, the legacy
     ``## Habits`` auto block, or both. ``- label`` lines inside the

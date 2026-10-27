@@ -7,8 +7,8 @@ ThycaRouter.register('settings', { title: 'Cài đặt', stylesheet: '/ui/settin
 // Settings page: schema-driven config form (limits + timeline), read-only
 // bot roster, localStorage-only UI preferences, backend status card.
 // The shared shell (header/sidebar/dialogs) is emitted by emitShell() in
-// index.html before avatars/sidebar/studio bind; this script loads last and
-// calls bootShell() for the live roster.
+// the SPA entry before avatars/sidebar/studio bind; this script loads last
+// and calls bootShell() for the live roster.
 //
 // API: GET /api/config -> {schema, values, meta}; POST /api/config <- edited
 //      values; GET /api/config/status -> {ready, version}; GET /api/bots +

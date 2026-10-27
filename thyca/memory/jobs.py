@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime
 
 from thyca.core.protocol import Message
 from thyca.memory.identity import bind_bot_id, reset_bot_id
@@ -267,10 +266,3 @@ def apply_extracted(facade, items: list[ExtractedMemory], *, default_bot: str = 
     finally:
         reset_bot_id(token)
     return {"written": written}
-
-
-def _utc_ts(moment: datetime | None = None) -> str:
-    now = moment or datetime.now(UTC)
-    if now.tzinfo is None:
-        now = now.replace(tzinfo=UTC)
-    return now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")

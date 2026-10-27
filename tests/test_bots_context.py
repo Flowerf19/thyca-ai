@@ -313,7 +313,7 @@ def test_aggregate_team_profiles_runs_thyca_turn_and_strips_legacy(
         )
         calls = []
         monkeypatch.setattr(
-            app, "scheduled_turn",
+            app._background_jobs._deps, "scheduled_turn",
             lambda bot_id, text: (calls.append((bot_id, text)), {"id": "dm"})[1],
         )
         result = app.aggregate_team_profiles()
@@ -350,7 +350,7 @@ def test_aggregate_team_profiles_skips_within_window(
         )
         calls = []
         monkeypatch.setattr(
-            app, "scheduled_turn",
+            app._background_jobs._deps, "scheduled_turn",
             lambda bot_id, text: (calls.append((bot_id, text)), {"id": "dm"})[1],
         )
         assert app.aggregate_team_profiles()["ran"] is True

@@ -294,16 +294,9 @@ def test_stats_error_is_503(tmp_path: Path) -> None:
 
 def test_default_webui_has_index() -> None:
     assert WEBUI.name == "webui"
-    for name in (
-        "ui/chat/index.html",
-        "ui/memories/index.html",
-        "ui/profile/index.html",
-        "ui/trace/index.html",
-        "ui/provider/index.html",
-        "ui/dashboard/index.html",
-        "ui/settings/index.html",
-    ):
-        assert (WEBUI / name).is_file()
+    # Single SPA entry: legacy workspace URLs alias to it (see
+    # tests/test_webui_spa_frontend.py), so only the chat document ships.
+    assert (WEBUI / "ui/chat/index.html").is_file()
     for name in (
         "ui/chat/js/app.js",
         "ui/chat/js/chat.js",
@@ -342,20 +335,17 @@ def test_profile_screen_renders_markdown() -> None:
     The root app serves the Chat document and mounts Profile into its retained
     workspace. The factory owns the tab/doc markup, markdown pipeline, and
     page-local edit dialog; util.js owns shared route links."""
-    html = (WEBUI / "ui" / "profile" / "index.html").read_text(encoding="utf-8")
     script = (WEBUI / "ui" / "profile" / "js" / "profile.js").read_text(encoding="utf-8")
     css = (WEBUI / "ui" / "profile" / "profilecss" / "profile.css").read_text(encoding="utf-8")
     util = (WEBUI / "ui" / "share" / "util.js").read_text(encoding="utf-8")
     shell_css = (WEBUI / "ui" / "share" / "app-shell.css").read_text(encoding="utf-8")
     memories = (WEBUI / "ui" / "memories" / "js" / "memories.js").read_text(encoding="utf-8")
-    memories_html = (WEBUI / "ui" / "memories" / "index.html").read_text(encoding="utf-8")
 
     # Navigation is the shared SHELL_PAGES table, one row per screen — it
     # lives in util.js so chat's static markup renders the same nav.
     assert "['profile', 'Hồ sơ', '../profile/index.html']" in util
-    # The legacy source template is retained, but server entry aliases use Chat's canonical document.
-    assert "emitShell('profile')" in html
-    assert 'src="js/profile.js"' in html
+    # The SPA entry mounts the profile module; the legacy standalone
+    # document is gone (server aliases resolve it to the entry).
     app = (WEBUI / "ui" / "chat" / "index.html").read_text(encoding="utf-8")
     assert 'src="../profile/js/profile.js"' in app
     assert "../share/shell.js" in app
@@ -380,7 +370,6 @@ def test_profile_screen_renders_markdown() -> None:
     assert "selectCanonical" in script
     assert "postJson('/api/memory/canonical'" in script
     # Nhật ký no longer carries the profile view or its dialog.
-    assert 'data-view="profile"' not in memories_html
     assert "/api/memory/canonical" not in memories
 
     # Switching tabs re-renders the docs, deep-links ?bot=<id>, and a #<file>
@@ -401,9 +390,9 @@ def test_profile_screen_renders_markdown() -> None:
     assert "showShared('file-' + hash)" in script
 
     # Blanking a profile is a real action, so it asks first rather than being
-    # blocked by native `required` validation.
-    assert 'id="edit-content" spellcheck' in html
-    assert "required" not in html
+    # blocked by native `required` validation (the factory owns the dialog
+    # markup; the exact textarea carries no `required` attribute).
+    assert '<textarea id="edit-content" spellcheck="false">' in script
     assert 'confirm(`Xoá trắng nội dung “${name}”?`)' in script
 
     # Switching tabs moves focus to the sidebar bot card, whose own label
@@ -429,36 +418,24 @@ def test_profile_screen_renders_markdown() -> None:
 
 
 def test_index_html_parses() -> None:
-    """Each page is ui/<page>/index.html loading js/<page>.js; every page but
-    chat emits the shared shell (chat ships its own static markup)."""
-    expected = {
-        "chat": "js/app.js",
-        "memories": "js/memories.js",
-        "provider": "js/provider.js",
-        "dashboard": "js/dashboard.js",
-        "profile": "js/profile.js",
-        "trace": "js/trace.js",
-        "settings": "js/settings.js",
-    }
-    for page, script in expected.items():
-        raw = (WEBUI / "ui" / page / "index.html").read_text(encoding="utf-8")
-        HTMLParser().feed(raw)
+    """Single SPA entry: ui/chat/index.html parses and mounts every page
+    module; each module registers its workspace with the router (Trace
+    stays Dashboard's load-once detail renderer, not a route)."""
+    raw = (WEBUI / "ui" / "chat" / "index.html").read_text(encoding="utf-8")
+    HTMLParser().feed(raw)
+    for script in ("js/app.js", "js/chat.js", "js/data.js"):
         assert f'src="{script}"' in raw
-        assert "../share/util.js" in raw
-        assert "../share/data.js" in raw
-        assert "../share/sidebar.css" in raw
-        if page == "chat":
-            # Chat keeps its own static markup; the other pages call
-            # emitShell() synchronously before sidebar/studio bind.
-            assert "emitShell" not in raw
-            assert 'src="js/chat.js"' in raw
-            assert 'src="js/data.js"' in raw
-        else:
-            assert "../share/shell.js" in raw
-            assert f"emitShell('{page}')" in raw
-    # Trace is a real page again — its own picker/detail script, no redirect.
-    raw = (WEBUI / "ui" / "trace" / "index.html").read_text(encoding="utf-8")
-    assert "location.replace" not in raw
+    for asset in ("../share/util.js", "../share/data.js", "../share/sidebar.css"):
+        assert asset in raw
+    for page in ("dashboard", "memories", "profile", "provider", "settings"):
+        assert f'src="../{page}/js/{page}.js"' in raw, page
+    assert 'src="../trace/js/trace.js"' in raw
+    for page in ("dashboard", "memories", "profile", "provider", "settings"):
+        js = (WEBUI / "ui" / page / "js" / f"{page}.js").read_text(encoding="utf-8")
+        assert f"ThycaRouter.register('{page}'" in js, page
+    trace = (WEBUI / "ui" / "trace" / "js" / "trace.js").read_text(encoding="utf-8")
+    assert "window.ThycaTraceDetail" in trace
+    assert "ThycaRouter.register" not in trace
 
 
 def test_cli_serve_flag_conflicts(tmp_path: Path) -> None:

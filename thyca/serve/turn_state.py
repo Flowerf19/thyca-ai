@@ -191,30 +191,3 @@ class TurnState:
         """
         with self._lock:
             manager.delete(session_id, keep=set(self._turns) | self._compacts)
-
-    def compact_unclaimed(
-        self,
-        manager: SessionManager,
-        session_id: str,
-        *,
-        hot_tokens: int = 0,
-        tools_tokens: int = 0,
-        calibration: float = 1.0,
-    ) -> dict:
-        """Manually compact a session unless a turn holds it.
-
-        Same gate as delete: the keep-check and the rewrite share this lock
-        with :meth:`claim`, so a turn cannot start appending between the
-        check and the atomic replace (its append would land on the snapshot
-        being replaced and be lost). The rewrite runs under the lock —
-        brief disk I/O, like the unlink above — so claims for other
-        sessions wait only for one file rewrite.
-        """
-        with self._lock:
-            if session_id in self._turns or session_id in self._compacts:
-                raise SessionBusy(session_id)
-            return manager.compact_manual(
-                hot_tokens=hot_tokens,
-                tools_tokens=tools_tokens,
-                calibration=calibration,
-            )

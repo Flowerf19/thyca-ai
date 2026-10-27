@@ -156,8 +156,8 @@ def test_bot_and_operation_model_precedence_reaches_chat_and_compaction(
 
     monkeypatch.setattr(ConnectFactory, "create", create)
     monkeypatch.setattr("thyca.app.toolchain.build_agent_loop", build_agent_loop)
-    monkeypatch.setattr("thyca.app.chat_app.compact_with_llm", compact_stub)
-    app._flush_bot_memory = no_flush
+    monkeypatch.setattr("thyca.app.session_admin.service.compact_with_llm", compact_stub)
+    app._background_jobs._flush_bot_memory = no_flush
     try:
         app._bots.create(
             BotCard(
@@ -506,12 +506,12 @@ def test_multi_bot_compact_preserves_room_and_reports_absent_and_failed_contexts
         app.turn(group, "@thyca root history")
         _append_long_canonical_history(app, "thyca", group)
         room_before = list(app._sessions.store.load(group).messages)
-        original_flush = app._flush_bot_memory
+        original_flush = app._background_jobs._flush_bot_memory
 
         async def no_flush(*args, **kwargs):
             return None
 
-        app._flush_bot_memory = no_flush
+        app._background_jobs._flush_bot_memory = no_flush
         result = app.compact_session(group)
         assert result["compaction"]["compacted"] is True, result["compaction"]
         assert result["compaction"]["per_bot"]["thyca"]["compacted"] is True
@@ -538,7 +538,7 @@ def test_multi_bot_compact_preserves_room_and_reports_absent_and_failed_contexts
         _append_long_canonical_history(app, "thyca", group)
         _append_long_canonical_history(app, "coder", group)
         room_before = list(app._sessions.store.load(group).messages)
-        original_compact = app._compact_async
+        original_compact = app._sessions_admin._compact_async
 
         async def fail_thyca(sessions, room_id, turn_cfg, instructions, *, bot_id):
             if bot_id == "thyca":
@@ -547,13 +547,13 @@ def test_multi_bot_compact_preserves_room_and_reports_absent_and_failed_contexts
                 sessions, room_id, turn_cfg, instructions, bot_id=bot_id
             )
 
-        app._compact_async = fail_thyca
+        app._sessions_admin._compact_async = fail_thyca
         result = app.compact_session(group)
         assert result["compaction"]["compacted"] is True
         assert result["compaction"]["per_bot"]["thyca"]["error"] == "RuntimeError"
         assert result["compaction"]["per_bot"]["coder"]["compacted"] is True
         assert app._sessions.store.load(group).messages == room_before
-        app._flush_bot_memory = original_flush
+        app._background_jobs._flush_bot_memory = original_flush
     finally:
         app.shutdown()
 
@@ -617,7 +617,7 @@ def test_compaction_does_not_pollute_next_turn_usage_or_trace(tmp_path: Path) ->
         _append_long_canonical_history(app, "thyca", group)
         async def no_flush(*args, **kwargs):
             return None
-        app._flush_bot_memory = no_flush
+        app._background_jobs._flush_bot_memory = no_flush
         app.compact_session(group)
         result = app.turn(group, "after compact")
         row = next(

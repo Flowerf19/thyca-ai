@@ -10,17 +10,6 @@ A room busy with a turn is skipped, never queued behind it.
 from __future__ import annotations
 
 from datetime import datetime
-from zoneinfo import ZoneInfo
-
-CRON_FIELDS = (
-    ("minute", 0, 59),
-    ("hour", 0, 23),
-    ("day", 1, 31),
-    ("month", 1, 12),
-    # Standard cron day-of-week: Sunday=0 (or 7), Monday=1 .. Saturday=6.
-    ("weekday", 0, 7),
-)
-
 
 class CronError(ValueError):
     """Cron expression could not be parsed."""
@@ -180,11 +169,3 @@ def _solo_room(app, bot_id: str) -> str:
         if bots == [bot_id]:
             return session.id
     return app.create(bots=[bot_id])["id"]
-
-
-def zone_now(timezone_name: str) -> datetime:
-    try:
-        zone = ZoneInfo(timezone_name)
-    except Exception:
-        zone = ZoneInfo("UTC")
-    return datetime.now(zone)

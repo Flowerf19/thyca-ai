@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
 
+from thyca.bots.usage import is_stop_status
 from thyca.core.protocol import Message
 from thyca.sessions import Session
 from thyca.sessions.wire import is_sidecar_message, turn_slices
@@ -83,10 +84,7 @@ class TurnSummary:
 def _is_synthetic_stop(message: Message) -> bool:
     """True for a synthetic context/loop stop marker, not a provider call."""
     meta = message.meta or {}
-    return (
-        meta.get("status") in {"context_limit", "loop_limit"}
-        and meta.get("kind") != "message"
-    )
+    return is_stop_status(meta) and meta.get("kind") != "message"
 
 
 def _turn_status(slice_msgs: list[Message]) -> str:

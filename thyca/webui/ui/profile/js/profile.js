@@ -36,7 +36,7 @@ function selectCanonical(files) {
 }
 
 /* Page markup fills the .workspace that emitShell() already placed (with the
-   shared ornaments) — see the script order in index.html. */
+   shared ornaments) — loaded by the SPA entry (ui/chat/index.html). */
 root.insertAdjacentHTML('beforeend', `<dialog class="screen-dialog" id="edit-dialog" aria-labelledby="edit-dialog-title">
 <div class="dialog-heading"><div><h2 id="edit-dialog-title">Sửa file hồ sơ</h2><p>Ghi đè toàn bộ nội dung <b id="edit-name-label">file</b> — Thyca đọc lại file ngay sau khi lưu.</p></div><button class="icon-button dialog-close" aria-label="Đóng">${icon('close')}</button></div>
 <form class="dialog-body" id="edit-form"><input type="hidden" id="edit-name"><label class="field"><span>Nội dung file (markdown)</span><textarea id="edit-content" spellcheck="false"></textarea></label><p class="page-status" id="edit-status" role="status" hidden></p><div class="dialog-actions"><button class="quiet-button" type="button" id="edit-cancel">Hủy</button><button class="primary-action" type="submit" id="edit-save">Lưu file</button></div></form>

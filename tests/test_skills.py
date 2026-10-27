@@ -209,11 +209,8 @@ def test_m1_skills_sorted_once_by_name(tmp_path: Path) -> None:
 def test_default_thyca_dir_is_config_path_parent(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Bare SkillStore() shares the one home default with config + compat."""
-    from thyca.config.compat import thyca_dir as compat_thyca_dir
+    """Bare SkillStore() shares the one home default with config."""
     from thyca.config.store import config_path
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     assert SkillStore().thyca_dir == config_path().parent == tmp_path / ".thyca"
-    with pytest.warns(DeprecationWarning):
-        assert compat_thyca_dir() == tmp_path / ".thyca"

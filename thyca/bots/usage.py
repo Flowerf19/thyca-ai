@@ -11,7 +11,22 @@ import math
 from thyca.core.protocol import Message
 
 _TOKEN_FIELDS = ("prompt_tokens", "cached_tokens", "completion_tokens", "total_tokens")
-_STOP_STATUSES = frozenset({"context_limit", "loop_limit"})
+
+#: Stop-marker statuses: a stamped context/loop limit means the row made
+#: no provider call. Shared primitive (runtime turn aggregates and serve
+#: trace reuse it); each consumer keeps its own total semantics and any
+#: extra gates (e.g. trace additionally requires kind != "message").
+STOP_STATUSES = frozenset({"context_limit", "loop_limit"})
+
+
+def is_stop_status(meta) -> bool:
+    """True when a meta mapping carries a stop-marker status."""
+    return (meta or {}).get("status") in STOP_STATUSES
+
+
+def is_countable_number(value) -> bool:
+    """True for a real numeric meta value: int/float, never bool."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 def _calls(messages: list[Message]) -> list[Message]:
@@ -19,7 +34,7 @@ def _calls(messages: list[Message]) -> list[Message]:
         message for message in messages
         if message.role == "assistant"
         and (message.meta or {}).get("kind") == "llm"
-        and (message.meta or {}).get("status") not in _STOP_STATUSES
+        and not is_stop_status(message.meta or {})
     ]
 
 
@@ -41,7 +56,7 @@ def _summary(messages: list[Message]) -> dict:
     for message in calls:
         value = (message.meta or {}).get("cost_usd")
         if (
-            isinstance(value, (int, float)) and not isinstance(value, bool)
+            is_countable_number(value)
             and math.isfinite(value) and value >= 0
         ):
             known_costs.append(value)

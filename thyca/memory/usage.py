@@ -76,18 +76,6 @@ class LeafUsage:
     def keep_searches(self, chunk_ids: set[str]) -> None:
         self._keep("leaf_searches", chunk_ids)
 
-    @guarded
-    def drop_ids(self, chunk_ids: list[str]) -> None:
-        if not chunk_ids:
-            return
-        self._db.execute("BEGIN IMMEDIATE")
-        try:
-            self._delete_ids(chunk_ids)
-            self._db.commit()
-        except Exception:
-            self._db.rollback()
-            raise
-
     def _delete_ids(self, chunk_ids: list[str]) -> None:
         """Raw usage deletes for the caller's transaction (no BEGIN/COMMIT)."""
         rows = [(chunk_id,) for chunk_id in chunk_ids]

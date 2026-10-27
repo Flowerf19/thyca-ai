@@ -15,6 +15,7 @@ from thyca.bots.card import BotCard
 from thyca.config import load, save
 from seeded_config import seeded_config
 from thyca.llm.llm_base import ChatReply
+from thyca.memory.facade import format_task_catalog
 
 
 def _chat(tmp_path: Path, connect=None) -> ChatApp:
@@ -159,7 +160,7 @@ def test_root_and_group_prompt_privacy(tmp_path: Path) -> None:
 def test_meter_tokens_match_builder_filtered_hot(tmp_path: Path) -> None:
     """The context meter prices the same filtered snapshot the executor
     gets: channel brief counted, private DM content contributes zero."""
-    from thyca.app.chat_app import _chars_to_tokens
+    from thyca.core.protocol import estimate_tokens as _chars_to_tokens
     from thyca.llm.prompt_manager import PromptManager
 
     llm = _SpyLLM()
@@ -195,7 +196,8 @@ def test_meter_tokens_match_builder_filtered_hot(tmp_path: Path) -> None:
             filtered = PromptManager().build(
                 WorkspaceContextBuilder(tmp_path).build(
                     peeked, bot_id="thyca", window=window,
-                    memory_task_text=app._memory_task_index("thyca"),
+                    memory_task_text=format_task_catalog(
+                        app._memory_task_rows("thyca")),
                     bot_user=app._bots.bot_user_text("thyca")))
         unfiltered = PromptManager().build(app._memory.peek(
             app._state, _dt.now(app._zone), session_id=group["id"]))

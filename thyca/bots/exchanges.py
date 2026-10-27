@@ -117,6 +117,14 @@ def _other(row: dict[str, Any], bot_id: str) -> str:
     return row["partner"] if row["sender"] == bot_id else row["sender"]
 
 
+def collect_exchange_rooms(sessions: list[Any]) -> list[list[Any]]:
+    """Per-session message lists for pairing (rooms + DM-origin rows).
+
+    Pairing filters by the involved pair, so unrelated pairs never
+    surface; every session contributes its transcript."""
+    return [list(getattr(session, "messages", None) or []) for session in sessions]
+
+
 def partners_for(bot_id: str, rooms: list[list[Any]]) -> list[dict[str, Any]]:
     """Exchange partners of one bot: partner id, row count, latest ts.
 

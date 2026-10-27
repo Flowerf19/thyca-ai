@@ -25,7 +25,6 @@ from test_team_frontend import _unit_factory_source
 ROOT = Path(__file__).resolve().parents[1]
 WEBUI = ROOT / "thyca" / "webui" / "ui"
 DASH_JS = WEBUI / "dashboard" / "js" / "dashboard.js"
-DASH_HTML = WEBUI / "dashboard" / "index.html"
 UTIL_JS = WEBUI / "share" / "util.js"
 
 # Same stub surface as test_cost_journal.py / test_request_chart.py plus
@@ -115,28 +114,18 @@ def _eval_dash(node: str, body: str, setup: str = "") -> object:
 
 
 def test_page_is_a_single_screen_shell_document() -> None:
-    """index.html keeps the shared script order — emitShell() must run
-    before sidebar.js/studio.js bind — and the page keeps three views in
-    one shared dashboard workspace."""
-    html = DASH_HTML.read_text(encoding="utf-8")
-    order = [
-        '<script src="../share/util.js">',
-        '<script src="../share/data.js">',
-        '<script src="../share/shell.js">',
-        "<script>emitShell('dashboard');</script>",
-        '<script src="../share/avatars/avatars.js">',
-        '<script src="../share/sidebar.js">',
-        '<script src="../share/avatars/studio.js">',
-        '<script src="../share/shell-app.js">',
-        '<script src="js/dashboard.js">',
-    ]
-    pos = [html.index(s) for s in order]
-    assert pos == sorted(pos), "shared shell scripts must load in order"
-    assert '<script type="module"' not in html
+    """The SPA entry mounts the dashboard module, which keeps three views
+    in one shared workspace (the standalone document is gone; script order
+    for the shared shell is locked by the chat entry test)."""
+    entry = (WEBUI / "chat" / "index.html").read_text(encoding="utf-8")
+    assert 'src="../dashboard/js/dashboard.js"' in entry
     for gone in ("overview-nav", "cost-view", "#su-dung",
                  "session-pager", "journal-pager"):
-        assert gone not in html, gone
+        assert gone not in entry, gone
     src = DASH_JS.read_text(encoding="utf-8")
+    for gone in ("overview-nav", "cost-view", "#su-dung",
+                 "session-pager", "journal-pager"):
+        assert gone not in src, gone
     for view in ("usage", "cost", "trace"):
         assert f'data-usage-view="{view}"' in src
         assert f'id="usage-panel-{view}"' in src
@@ -500,7 +489,11 @@ def test_formatters_vi_vn_and_edges(node: str) -> None:
         node,
         "const now = Date.now();\n"
         "console.log(JSON.stringify({"
-        " ints: [fmtInt(1200000), fmtInt(null), fmtInt('x')],"
+        " ints: [fmtInt(1200000), fmtInt(70607522), fmtInt(0), fmtInt(null), fmtInt('x')],"
+        " cost: [fmtCost(0.012345), fmtCost(0.001234), fmtCost(0), fmtCost(0.5),"
+        "  fmtCost(12.345), fmtCost(2), fmtCost(0.000001), fmtCost(null),"
+        "  fmtCost(undefined), fmtCost('nope'), fmtCost(NaN)],"
+        " share: [share(1, 4), share(3, 40), share(0, 0)],"
         " durs: [fmtDur(999), fmtDur(1000), fmtDur(1500), fmtDur(90000),"
         "  fmtDur(-1), fmtDur('x')],"
         " dt: [fmtDateTime('nope'), fmtDay('2026-09-08'), fmtDay('')],"
@@ -511,7 +504,13 @@ def test_formatters_vi_vn_and_edges(node: str) -> None:
         "  relTime(new Date(now - 40 * 86400e3).toISOString()),"
         "  relTime('nope')] }))",
     )
-    assert out["ints"] == ["1.200.000", "—", "—"]
+    assert out["ints"] == ["1.200.000", "70.607.522", "0", "—", "—"]
+    # Tiered USD precision: 6 decimals under $0.01, 4 under $1, else 2.
+    # A real recorded zero is $0, never the missing-data dash.
+    assert out["cost"] == ["$0.0123", "$0.001234", "$0.000000", "$0.5000",
+                            "$12.35", "$2.00", "$0.000001",
+                            "—", "—", "—", "—"]
+    assert out["share"] == ["25%", "7,5%", "0%"]
     # A negative number is still a finite number — printed as-is.
     assert out["durs"] == ["999 ms", "1 giây", "1,5 giây",
                            "1 ph 30 giây", "-1 ms", "—"]

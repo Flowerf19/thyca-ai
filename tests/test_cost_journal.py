@@ -23,7 +23,6 @@ from test_team_frontend import _unit_factory_source
 
 ROOT = Path(__file__).resolve().parents[1]
 DASH_JS = ROOT / "thyca" / "webui" / "ui" / "dashboard" / "js" / "dashboard.js"
-DASH_HTML = ROOT / "thyca" / "webui" / "ui" / "dashboard" / "index.html"
 
 # Same stub surface as test_request_chart.py: real util.js semantics for
 # $/$$/escapeHTML/icon, a per-id element registry, and the data-layer
@@ -103,36 +102,6 @@ def _eval_dash(node: str, body: str) -> object:
         cwd=ROOT,
     )
     return json.loads(result.stdout)
-
-
-def test_no_per_session_journal_remains() -> None:
-    """Static pins: the per-session cost journal was dropped with the old
-    dashboard grouped session list; nothing in the new page
-    re-introduces it."""
-    html = DASH_HTML.read_text(encoding="utf-8")
-    src = DASH_JS.read_text(encoding="utf-8")
-    assert "Chi phí theo phiên" not in html
-    assert "cost-sessions" not in html
-    for gone in ("aggregateSessions", "renderSessions", "NO_SESSION_KEY",
-                 "modelTurnCoverage", "estimatedCostSplit", "priceRates"):
-        assert gone not in src, gone
-
-
-def test_null_vs_zero_cost_semantics(node: str) -> None:
-    """fmtCost: null/garbage/NaN render the em dash; a real recorded zero is
-    a true $0 price, never confused with missing data."""
-    result = _eval_dash(
-        node,
-        "console.log(JSON.stringify([fmtCost(null), fmtCost(undefined),"
-        " fmtCost('nope'), fmtCost(NaN), fmtCost(0), fmtCost(0.5),"
-        " fmtCost(2), fmtCost(0.000001)]))",
-    )
-    nothing, missing, garbage, nan, zero, half, two, tiny = result
-    assert nothing == "—" and missing == "—" and garbage == "—" and nan == "—"
-    assert zero == "$0.000000"
-    assert half == "$0.5000"   # 4 decimals under $1
-    assert two == "$2.00"      # 2 decimals at $1+
-    assert tiny == "$0.000001"  # 6 decimals under $0.01
 
 
 def test_share_denominator_and_vi_format(node: str) -> None:

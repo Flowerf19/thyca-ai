@@ -3,8 +3,8 @@
 The old pager styles lived in ``shared/css/kit.css`` + per-page files that no
 longer exist; the merged dashboard uses one plain ``.quiet-button`` pager
 and scopes Trace detail code surfaces under ``.dashboard-shell``. These
-assertions pin stylesheet ownership — the legacy Trace CSS asset remains
-available but is not the active detail stylesheet.
+assertions pin stylesheet ownership. Absence of the legacy pager/screen
+styles is pinned once in tests/test_dropped_markers.py.
 """
 from __future__ import annotations
 
@@ -17,20 +17,6 @@ UI = WEBUI / "ui"
 
 def _read(rel: str) -> str:
     return (UI / rel).read_text(encoding="utf-8")
-
-
-def _css_files() -> list[Path]:
-    return sorted(UI.rglob("*.css"))
-
-
-def test_no_legacy_pager_or_screen_button_styles() -> None:
-    """Legacy pagers and screen-button styles remain absent; the merged
-    server-driven pager belongs to the Dashboard workspace."""
-    for path in _css_files():
-        css = path.read_text(encoding="utf-8")
-        assert ".journal-pager" not in css, path.name
-        assert ".session-pager" not in css, path.name
-        assert ".screen-button" not in css, path.name
 
 
 def test_load_more_is_owned_by_dashboard() -> None:
@@ -63,7 +49,5 @@ def test_trace_code_uses_opaque_scoped_surface() -> None:
     err = err[: err.index("}")]
     assert "background:#fdf0ea" in err
     assert "color:#944f3d" in err
-    legacy = _read("trace/tracecss/trace.css")
-    assert ".tl-code{" in legacy  # preserved legacy asset; Dashboard rules are separately scoped
     for banned in ("url(", "linear-gradient", "radial-gradient"):
         assert banned not in block and banned not in err

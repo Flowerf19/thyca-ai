@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 import threading
 import time
 from dataclasses import dataclass, field, replace
@@ -827,56 +826,6 @@ def test_stream_sentinel_without_terminal_writes_fallback_failure(
         _stop(httpd, thread)
 
 
-def test_chat_js_shipped() -> None:
-    """The rebuilt chat UI ships its modules: page js + the shared sidebar,
-    data and shell layers it is wired against."""
-    app = (WEBUI / "ui" / "chat" / "js" / "app.js").read_text(encoding="utf-8")
-    chat = (WEBUI / "ui" / "chat" / "js" / "chat.js").read_text(encoding="utf-8")
-    data = (WEBUI / "ui" / "chat" / "js" / "data.js").read_text(encoding="utf-8")
-    shared = (WEBUI / "ui" / "share" / "data.js").read_text(encoding="utf-8")
-    sidebar = (WEBUI / "ui" / "share" / "sidebar.js").read_text(encoding="utf-8")
-    styles = (WEBUI / "ui" / "chat" / "chatcss" / "chat.css").read_text(encoding="utf-8")
-    sidebar_css = (WEBUI / "ui" / "share" / "sidebar.css").read_text(encoding="utf-8")
-    html = (WEBUI / "ui" / "chat" / "index.html").read_text(encoding="utf-8")
-
-    # Turns stream over NDJSON; send/stop/retry go through sendTurn/stopRun.
-    assert "/turn/stream" in chat
-    assert "readNdjson" in chat
-    assert "function sendTurn" in chat
-    assert "/turn/cancel" in chat
-    assert "retry: true" in app
-    assert "getJson('/api/config')" in data
-    assert "'/api/sessions'" in shared
-    assert "method:'POST'" in sidebar                    # group dialog create
-    assert "formatMarkdown" in chat
-    # Stream events drive the live card + the bot-card pocket feed; the old
-    # live-status/thinking card on the message list did not survive the
-    # rebuild (activity moved onto the bot card — see feedPush/feedTools).
-    assert "handleStreamEvent" in chat
-    assert "tool.started" in chat
-    assert "llm.thinking" in chat
-    assert "turn.completed" in chat
-    assert "feedPush" in chat
-    assert "feedTools" in chat
-    assert "ambientLineForEvent" not in chat
-    assert not (WEBUI / "ui" / "chat" / "js" / "chat-ambient.js").exists()
-    # The elapsed tick still reads in Vietnamese on the bot card.
-    assert " giây" in chat
-    assert "setInterval(" in chat
-    assert ".progress-list" in sidebar_css
-    assert ".live-status" in styles
-    assert ".streaming-caret" in styles
-    # Tools collapse into a per-message pill, not a "Tools used:" block.
-    assert "usage-pill" in chat
-    assert "Tools used:" not in chat
-    # The page actually loads the modules this test reads.
-    for tag in (
-        'src="js/data.js"', 'src="js/chat.js"', 'src="js/app.js"',
-        'src="../share/data.js"', 'src="../share/sidebar.js"',
-        'src="../share/shell-app.js"',
-    ):
-        assert tag in html
-
 
 def test_chat_nav_opens_new_session() -> None:
     """The + button only opens the group picker — a session is POSTed when the
@@ -911,7 +860,6 @@ def test_chat_nav_opens_new_session() -> None:
     assert "postJson('/api/config'" in provider
     assert "postJson('/api/onboarding/verify'" in provider
     assert "contextTokens" in provider
-    assert not (WEBUI / "staff").exists()
 
 
 def test_create_prunes_previous_blank(tmp_path: Path) -> None:
@@ -1129,23 +1077,6 @@ def test_chat_mobile_pick_pattern() -> None:
     assert "is-picking" not in html + chat + shell_app
 
 
-def test_context_usage_moved_to_bot_card() -> None:
-    """TURN-CURATE: the composer meter/nudge is gone — the agent manages its
-    own context; the ~% meter lives in the bot drawer's "Khả năng" view."""
-    html = (WEBUI / "ui" / "chat" / "index.html").read_text(encoding="utf-8")
-    assert 'id="context-nudge"' not in html
-    assert 'id="context-meter"' not in html
-    assert 'id="context-focus"' not in html
-    assert "Gọn phiên" not in html
-    sidebar = (WEBUI / "ui" / "share" / "sidebar.js").read_text(encoding="utf-8")
-    css = (WEBUI / "ui" / "share" / "sidebar.css").read_text(encoding="utf-8")
-    assert "NGỮ CẢNH" in sidebar
-    assert "ctx-meter" in sidebar
-    assert "data-drawer-context" in sidebar
-    assert "fillDrawerContext" in sidebar
-    assert "/operations" in sidebar
-    assert ".ctx-meter" in css
-    assert ".ctx-bar" in css
 
 def test_retry_hook_emits_llm_retry_events(tmp_path: Path) -> None:
     """ChatApp wires OpenAIChat-style retry hooks to non-error TurnEvents."""
@@ -1296,25 +1227,17 @@ def test_session_detail_tags_skill_loads(tmp_path: Path) -> None:
         _stop(httpd, thread)
 
 
-def test_empty_submit_nudges_without_sending() -> None:
-    """An empty submit returns before sendTurn — nothing hits the network.
-    (The old shake/"Chưa có nội dung để gửi." hint was dropped in the rebuild;
-    the composer-hint row is now static text under the composer.)"""
-    app = (WEBUI / "ui" / "chat" / "js" / "app.js").read_text(encoding="utf-8")
-    html = (WEBUI / "ui" / "chat" / "index.html").read_text(encoding="utf-8")
-    css = (WEBUI / "ui" / "chat" / "chatcss" / "chat.css").read_text(encoding="utf-8")
 
+def test_empty_submit_guard_returns_before_send() -> None:
+    """Pin the empty/busy submit guard: the composer onsubmit handler
+    returns before sendTurn — nothing hits the network when the text is
+    blank or a turn is already running. The behavior itself executes in
+    test_team_frontend.py::test_composer_submit_routes_mention_and_resets."""
+    app = (WEBUI / "ui" / "chat" / "js" / "app.js").read_text(encoding="utf-8")
     submit = app[app.index("$('#composer').onsubmit"):]
     guard = submit[: submit.index("sendTurn(")]
-
-    # The hint row under the composer is the accessible status text.
-    assert 'class="composer-hint"' in html
-    assert 'role="status"' in html
-    # Empty text — or a turn already running — returns before sendTurn.
-    assert "e.preventDefault()" in guard
     assert "if (!text || runs.has(currentSession)) return;" in guard
     assert "fetch(" not in guard
-    assert ".composer-hint" in css
 
 
 def test_busy_session_reports_running_and_refuses_a_second_turn(tmp_path: Path) -> None:
@@ -1557,97 +1480,6 @@ def test_follow_stream_survives_starter_disconnect(tmp_path: Path) -> None:
         _stop(httpd, thread)
 
 
-def test_webui_keeps_streaming_card_across_session_switch() -> None:
-    """Leaving a streaming session and coming back must not lose the turn.
-
-    loadSession replaces #message-list, which detaches the live card — the run
-    token in `runs` keeps the stream alive meanwhile (a detached node just
-    stops scrolling the visible list). Coming back re-renders the transcript
-    and re-attaches the in-flight stream onto a fresh running-response card
-    via followRunningTurn, so the turn keeps drawing instead of freezing.
-    """
-    chat = (WEBUI / "ui" / "chat" / "js" / "chat.js").read_text(encoding="utf-8")
-    data = (WEBUI / "ui" / "chat" / "js" / "data.js").read_text(encoding="utf-8")
-
-    send_turn = chat[chat.index("async function sendTurn"):]
-    load_session = chat[
-        chat.index("async function loadSession") : chat.index("async function selectBot")
-    ]
-    follow = chat[chat.index("function followRunningTurn"):]
-    content_branch = chat[
-        chat.index("case 'llm.content'") : chat.index("case 'session.naming.finished'")
-    ]
-
-    # One run token per in-flight session, keyed so a session switch finds it.
-    assert "const runs = new Map();" in data
-    assert "runs.set(token.sessionId, token);" in send_turn
-    assert "runs.delete(token.sessionId);" in chat
-    # A running session's half-drawn list is not snapshotted into histories.
-    assert "!runs.has(currentSession)" in chat
-    # Coming back: the transcript re-renders and the live stream re-attaches
-    # to a fresh card — never a bare status line with no further updates.
-    assert "if (detail.running) followRunningTurn(id);" in load_session
-    assert "$('#message-list').append(node);" in follow
-    assert "runs.set(sessionId, token);" in follow
-    assert "/turn/stream" in follow
-    # A detached card must not drag the visible conversation around; the
-    # settled re-render only repaints the list when the session is on screen.
-    assert "token.sessionId === currentSession" in content_branch
-    assert "currentSession === token.sessionId" in chat
-
-
-def test_webui_follows_a_turn_it_did_not_start() -> None:
-    """Reload mid-turn: attach GET /turn/stream so the card receives the same
-    events as the starter. There is no polling fallback — the stream replay
-    IS the follow mechanism."""
-    chat = (WEBUI / "ui" / "chat" / "js" / "chat.js").read_text(encoding="utf-8")
-    data = (WEBUI / "ui" / "chat" / "js" / "data.js").read_text(encoding="utf-8")
-    shared = (WEBUI / "ui" / "share" / "data.js").read_text(encoding="utf-8")
-    app = (WEBUI / "ui" / "chat" / "js" / "app.js").read_text(encoding="utf-8")
-
-    load_session = chat[
-        chat.index("async function loadSession") : chat.index("async function selectBot")
-    ]
-    select_bot = chat[
-        chat.index("async function selectBot") : chat.index("function isNearBottom")
-    ]
-    follow = chat[chat.index("function followRunningTurn"):]
-    busy_fn = chat[chat.index("function busy(") : chat.index("/* POST")]
-
-    # Both entry points (sidebar load, bot DM open) follow a running turn by
-    # replaying the same /turn/stream the starter reads.
-    assert "if (detail.running) followRunningTurn(id);" in load_session
-    assert "if (detail.running) followRunningTurn(detail.id);" in select_bot
-    assert "function followRunningTurn" in chat
-    assert (
-        "fetch(`/api/sessions/${encodeURIComponent(sessionId)}/turn/stream`)" in follow
-    )
-    assert "readNdjson" in chat
-    assert "$('#message-list').append(node);" in follow
-    # No turn status is invented for the reload case: the card reads like any
-    # in-flight turn, from copy that already exists.
-    for copy in (
-        "Đang trả lời lượt trước", "Phiên đang trả lời", "SESSION_BUSY_STATUS"
-    ):
-        assert copy not in chat
-    # A failed GET must not strand the composer behind a "running" state
-    # nobody follows any more — the catch settles the token via finishTurn.
-    assert (
-        ".catch(() => { if (runs.get(sessionId) === token) finishTurn(token); })"
-        in follow
-    )
-
-    # Blocking is per session: the composer refuses only while the session on
-    # screen has a run token, and busy() never disables sidebar controls —
-    # the sidebar and group dialog stay usable while a turn runs.
-    assert "const runs = new Map();" in data
-    assert "runs.has(currentSession)" in app           # submit guard
-    assert "busy(runs.has(currentSession))" in chat
-    assert ".disabled" not in busy_fn
-    # Errors carry their HTTP status so a busy/conflict answer stays readable
-    # (non-module scripts share globals — no import list to drift).
-    assert "status: res.status" in chat
-    assert "err.status = res.status" in shared
 
 
 def test_session_summary_counts_turns_the_way_trace_does(tmp_path: Path) -> None:
@@ -1784,41 +1616,6 @@ def test_delete_refuses_a_session_mid_turn(tmp_path: Path) -> None:
         app.shutdown()
 
 
-def test_chat_ui_has_no_direct_rename_delete_controls_or_dialogs() -> None:
-    """No chat sidebar entity exposes rename/delete UI or stale handlers."""
-    sidebar = (WEBUI / "ui" / "share" / "sidebar.js").read_text(encoding="utf-8")
-    app = (WEBUI / "ui" / "chat" / "js" / "app.js").read_text(encoding="utf-8")
-    chat = (WEBUI / "ui" / "chat" / "js" / "chat.js").read_text(encoding="utf-8")
-    data = (WEBUI / "ui" / "chat" / "js" / "data.js").read_text(encoding="utf-8")
-    html = (WEBUI / "ui" / "chat" / "index.html").read_text(encoding="utf-8")
-    css = (WEBUI / "ui" / "chat" / "chatcss" / "chat.css").read_text(encoding="utf-8")
-    sidebar_css = (WEBUI / "ui" / "share" / "sidebar.css").read_text(encoding="utf-8")
-    api = (WEBUI / "ui" / "share" / "data.js").read_text(encoding="utf-8")
-    admin = (Path(__file__).resolve().parents[1] / "thyca" / "bots" / "admin_tools.py").read_text(
-        encoding="utf-8")
-
-    visible = "\n".join((sidebar, app, chat, data, html))
-    assert not re.search(r"\brefreshBotDrawer\b", visible)
-    for removed in (
-        "openRename", "openDelete", "submitRename", "submitDelete",
-        "rename-dialog", "delete-dialog", "rename-form", "delete-form",
-        "rename-id", "delete-id", "renameStatus", "deleteStatus",
-        "state.saving", "deleteId", "patchJson", "deleteJson",
-        "refreshTeamBots", "onBotDeleted",
-        "onBotRosterChanged", "onSessionsChanged",
-    ):
-        assert removed not in visible
-    assert "team-bot-flap" not in css
-    assert ".session-action" not in sidebar_css
-    # No patchJson/deleteJson helpers any more: the shared getJson takes an
-    # options passthrough, which is what the group dialog's PATCH uses.
-    assert "async function getJson(url, options)" in api
-    assert "fetch(url, options)" in api
-    assert "method:'PATCH'" in sidebar
-    assert "name=\"bot_delete\"" in admin or 'name="bot_delete"' in admin
-    assert "bot_edit_card" in admin
-    assert 'id="bot-drawer"' in html
-
 
 def test_rename_midturn_survives_the_agent_naming_step(tmp_path: Path) -> None:
     """Naming must not append over a title the user typed during the turn.
@@ -1909,51 +1706,6 @@ def test_session_rename_delete_http_apis_remain_wired() -> None:
     assert "def session_rename(" in api
     assert "def session_delete(" in api
 
-
-def test_chat_rows_use_the_shared_sidebar_markup() -> None:
-    """Conversation rows come from the shared sidebar markup every page gets:
-    `.group-row` buttons in the "Hội thoại chung" list and `.info-session`
-    rows inside the bot drawer — the old .session-item grid is gone. Dashboard
-    owns flat `.tl-turn` rows; Trace only renders turn details."""
-    sidebar = (WEBUI / "ui" / "share" / "sidebar.js").read_text(encoding="utf-8")
-    sidebar_css = (WEBUI / "ui" / "share" / "sidebar.css").read_text(encoding="utf-8")
-    shell = (WEBUI / "ui" / "share" / "shell.js").read_text(encoding="utf-8")
-    html = (WEBUI / "ui" / "chat" / "index.html").read_text(encoding="utf-8")
-    trace = (WEBUI / "ui" / "trace" / "js" / "trace.js").read_text(encoding="utf-8")
-    trace_css = (WEBUI / "ui" / "trace" / "tracecss" / "trace.css").read_text(encoding="utf-8")
-
-    # Group rows: one button per shared session — title, roster, meta line —
-    # emitted by the same shared sidebar.js on every page.
-    assert 'class="group-row"' in sidebar
-    assert "group-title" in sidebar
-    assert "group-roster" in sidebar
-    assert "group-meta" in sidebar
-    assert ".group-row" in sidebar_css
-    # The bot drawer lists that bot's sessions as .info-session rows.
-    assert 'class="info-session"' in sidebar
-    assert ".info-session" in sidebar_css
-    # The skeleton those rows render into: #team-bot-list ships in the shared
-    # shell markup on every page, but "Hội thoại chung" only exists on chat —
-    # its #group-list lives in chat's static sidebar and renderGroups no-ops
-    # on pages without it.
-    assert 'id="team-bot-list"' in shell
-    assert 'id="group-list"' not in shell
-    assert 'id="group-list"' in html
-    assert "Hội thoại chung" in html
-    assert "if(!gl)return" in sidebar
-    # Trace is a detail-only renderer; Dashboard owns a flat turn list.
-    dashboard = (WEBUI / "ui" / "dashboard" / "js" / "dashboard.js").read_text(encoding="utf-8")
-    dashboard_css = (WEBUI / "ui" / "dashboard" / "dashboardcss" / "dashboard.css").read_text(encoding="utf-8")
-    assert 'class="tl-flat-turns" id="trace-sessions"' in dashboard
-    assert 'class="paper-card tl-session"' not in dashboard
-    assert 'class="tl-turn"' in dashboard
-    assert 'window.ThycaTraceDetail = Object.freeze' in trace
-    assert "ThycaRouter.register" not in trace
-    assert ".dashboard-shell .tl-turn" in dashboard_css
-    assert ".tl-session" in trace_css  # legacy standalone asset is preserved, not active
-    # The retired per-row grid must not creep back in.
-    assert "session-body" not in sidebar + trace
-    assert ".session-item" not in sidebar_css
 
 
 def _http_error(httpd, path: str, data: bytes, timeout: float = 5) -> tuple[int, dict]:

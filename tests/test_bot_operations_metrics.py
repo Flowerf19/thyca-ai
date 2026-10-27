@@ -70,7 +70,8 @@ def test_operations_use_only_original_window_events_and_recorded_cost(app):
     seed(app, private, [call("private", 900, tokens=99999)])
     basis = [Message(role="system", content="[compaction: short summary]")]
     store.rewrite(sid, store.path_for(sid), basis)
-    app._overhead_tokens = lambda *args, **kwargs: (100, 50)
+    # Stub the meter at its canonical home (the read-model service).
+    app._ops._overhead_tokens = lambda *args, **kwargs: (100, 50)
     result = app.bot_operations(room["id"], "coder")
     assert result["conversation"]["requests"] == 2
     assert result["conversation"]["cost_usd"] == 0.03
@@ -110,7 +111,7 @@ def test_operations_use_only_original_window_events_and_recorded_cost(app):
 def test_unpriced_cost_is_partial_not_zero_or_known_subtotal(app):
     room = app.create(["thyca", "coder"])
     seed(app, room, [call("one", 0.01), call("two", None)])
-    app._overhead_tokens = lambda *args, **kwargs: (0, 0)
+    app._ops._overhead_tokens = lambda *args, **kwargs: (0, 0)
     result = app.bot_operations(room["id"], "coder")
     assert result["conversation"]["cost_usd"] is None
     assert result["conversation"]["known_cost_usd"] == 0.01

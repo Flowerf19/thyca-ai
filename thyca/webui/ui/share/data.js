@@ -10,6 +10,26 @@ const reduced = matchMedia('(prefers-reduced-motion:reduce)');
 
 function getBot(id) { return bots.find(b => b.id === id); }
 
+/* Favorite (star) markers are a browser-only UI preference, persisted
+   in localStorage like the tint override ('thyca.tint.<id>'). The one
+   exception is the system bot: Thyca is always the main bot, so its
+   star is permanently on and cannot be removed. */
+const FAVORITE_KEY = 'thyca.favorites';
+function favoriteIds() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(FAVORITE_KEY) || '[]');
+    return new Set(Array.isArray(raw) ? raw.filter(x => typeof x === 'string') : []);
+  } catch { return new Set(); }
+}
+function botFavorite(cardId, system) {
+  return system === true || favoriteIds().has(cardId);
+}
+function setBotFavorite(id, favorite) {
+  const ids = favoriteIds();
+  if (favorite) ids.add(id); else ids.delete(id);
+  try { localStorage.setItem(FAVORITE_KEY, JSON.stringify([...ids])); } catch { /* marker still applies when storage is unavailable */ }
+}
+
 async function getJson(url, options) {
   const res = await fetch(url, options);
   if (!res.ok) {
@@ -81,7 +101,7 @@ function normalizeBot(card, index) {
     memory: card.memory || null,
     tools: (card.tools || []).map(t => typeof t === 'string' ? { name: t, description: '' } : { name: t.name || '', description: t.description || '' }),
     sessions: [],
-    favorite: false,
+    favorite: botFavorite(card.id, card.system),
     open: false,
     phase: -1.2 - index * 1.7,
     system: card.system === true,

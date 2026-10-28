@@ -21,6 +21,7 @@
 .card-actions .icon-button{width:26px}
 .favorite{color:var(--bot-ink)}
 .favorite[aria-pressed=true] svg{fill:var(--bot-ink);fill-opacity:.12}
+.favorite:disabled{cursor:default}
 .card-actions .collapse-button{color:var(--bot-muted)}
 .collapse-button svg{transition:transform .22s}
 .bot-card[data-open=true] .collapse-button svg{transform:rotate(180deg)}

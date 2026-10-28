@@ -619,7 +619,8 @@ def test_normalize_bot_maps_card_and_agent_status(node: str) -> None:
     assert b["bash"] == "ask" and b["schedule"] == "daily"
     assert b["system"] is True and b["persona"] == "p"
     assert b["memory"] == {"read": True, "write": False}
-    assert b["sessions"] == [] and b["favorite"] is False and b["open"] is False
+    # The fixture bot is the system bot: always starred (see favorite test).
+    assert b["sessions"] == [] and b["favorite"] is True and b["open"] is False
     assert b["palette"]["color"] == b["color"]
     assert out["pausedState"] == "offline"            # paused -> offline
     assert out["bareState"] == "idle"
@@ -1272,6 +1273,7 @@ def test_team_list_click_delegates_card_actions(node: str) -> None:
     """The #team-bot-list delegation maps data-action to select / collapse /
     favorite / info / capabilities."""
     out = _run(node, """
+        localStorage.clear();
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'Alpha' }]));
         const b = bots[0];
@@ -1288,7 +1290,8 @@ def test_team_list_click_delegates_card_actions(node: str) -> None:
         const fire = (btn) => list._handlers.click.forEach(h => h({ target: btn, preventDefault() {} }));
         b.open = false;
         fire(sel); fire(col); fire(fav); fire(inf); fire(cap);
-        return { calls, dispatches: globalThis.__spaDispatches || [], open: b.open, fav: b.favorite, favAria: fav.getAttribute('aria-pressed'), toast: $('#toast').textContent };
+        return { calls, dispatches: globalThis.__spaDispatches || [], open: b.open, fav: b.favorite, favAria: fav.getAttribute('aria-pressed'), toast: $('#toast').textContent,
+                 stored: JSON.parse(localStorage.getItem('thyca.favorites')) };
     """)
     # Sidebar selection is routed to the active page controller; info stays shared.
     assert out["dispatches"] == [["selectBot", "a"]]
@@ -1296,6 +1299,50 @@ def test_team_list_click_delegates_card_actions(node: str) -> None:
     assert out["open"] is True                            # collapse toggled open
     assert out["fav"] is True and out["favAria"] == "true"
     assert "Alpha" in out["toast"]
+    # The star is persisted so it survives reloads (prototype toggle lost it).
+    assert out["stored"] == ["a"]
+
+
+def test_system_bot_star_is_permanent(node: str) -> None:
+    """Thyca is the main bot: normalizeBot stars it by default, its card
+    renders the star disabled with the system label, and a favorite click
+    (or a stale stored preference) can never unstar it. Other bots keep
+    their stored star state across normalization."""
+    out = _run(node, """
+        localStorage.clear();
+        localStorage.setItem('thyca.favorites', JSON.stringify(['helper']));
+        bots.length = 0;
+        bots.push(...roster([
+            { id: 'thyca', name: 'Thyca', system: true },
+            { id: 'helper', name: 'Helper' },
+            { id: 'other', name: 'Other' },
+        ]));
+        const [main, helper, other] = bots;
+        const mainHtml = card(main), helperHtml = card(helper);
+        const list = $('#team-bot-list');
+        const cardEl = document.createElement('article');
+        cardEl.className = 'bot-card'; cardEl.dataset.botId = 'thyca';
+        const favBtn = document.createElement('button'); favBtn.dataset.action = 'favorite';
+        cardEl.appendChild(favBtn);
+        document.body.appendChild(cardEl);
+        list._handlers.click.forEach(h => h({ target: favBtn, preventDefault() {} }));
+        return {
+            mainFav: main.favorite, helperFav: helper.favorite, otherFav: other.favorite,
+            afterClick: main.favorite,
+            mainHasDisabled: mainHtml.includes('disabled title="Bot hệ thống'),
+            mainHasLabel: mainHtml.includes('Bot hệ thống Thyca'),
+            mainPressed: mainHtml.includes('aria-pressed="true"'),
+            helperDisabled: helperHtml.includes('disabled title='),
+        };
+    """)
+    assert out["mainFav"] is True
+    assert out["helperFav"] is True
+    assert out["otherFav"] is False
+    assert out["afterClick"] is True
+    assert out["mainHasDisabled"] is True
+    assert out["mainHasLabel"] is True
+    assert out["mainPressed"] is True
+    assert out["helperDisabled"] is False
 
 
 def test_group_list_click_loads_session(node: str) -> None:

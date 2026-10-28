@@ -1142,7 +1142,15 @@ def test_update_card_patches_state_preview_and_pocket(node: str) -> None:
             idleFlag: $('.compact-preview', el).dataset.idleComment,
             title: $('.thinking-title', el).textContent,
         };
-        return { working, idle };
+        b.state = 'thinking';
+        b.summary = stateSummaries.thinking;
+        updateCard(b);
+        const generic = {
+            text: $('.thinking-summary', el).textContent,
+            hidden: $('.thinking-summary', el).hidden,
+            title: $('.thinking-title', el).textContent,
+        };
+        return { working, idle, generic };
     """)
     w = out["working"]
     assert w["state"] == "working" and w["open"] == "true" and w["sel"] == "true"
@@ -1156,6 +1164,9 @@ def test_update_card_patches_state_preview_and_pocket(node: str) -> None:
     assert i["whisper"] == "“Khoảng lặng êm.”" and i["whisperCls"] is True
     assert i["preview"] == "“Khoảng lặng êm.”" and i["idleFlag"] == "true"
     assert i["title"] == "Lúc rảnh"
+    # A generic state summary adds nothing under the state heading, so the
+    # pocket hides it; real current actions above still show.
+    assert out["generic"] == {"text": "", "hidden": True, "title": "Đang suy nghĩ"}
 
 
 def test_pocket_state_matrix_reply_action_and_open_invariance(node: str) -> None:
@@ -1215,7 +1226,7 @@ def test_pocket_state_matrix_reply_action_and_open_invariance(node: str) -> None
 def test_feed_window_keyed_reconcile_and_tools_aggregation(node: str) -> None:
     """The pocket feed shows the last 3 live entries; older ones exit with a
     fade then drop; tool calls aggregate into one 'đã dùng' line and repeated
-    think rounds fold into 'ThinkingxN'."""
+    think rounds fold into one row rendered with a count badge."""
     out = _run(node, """
         bots.length = 0;
         bots.push(...roster([{ id: 'a' }]));
@@ -1223,10 +1234,10 @@ def test_feed_window_keyed_reconcile_and_tools_aggregation(node: str) -> None:
         const list = document.createElement('ol');
         list.className = 'progress-list';
         document.body.appendChild(list);
-        feedPush(b, { kind: 'think', text: 'Thinking', n: 1, cls: 'li-think' });
-        feedPush(b, { kind: 'tools', text: 'đã dùng bash', done: false });
+        feedPush(b, { kind: 'think', text: 'đang suy nghĩ', n: 1, cls: 'li-think' });
+        feedPush(b, { kind: 'tools', text: 'đang dùng bash', done: false });
         feedPush(b, { kind: 'write', text: 'đang viết phản hồi', done: false });
-        feedPush(b, { kind: 'think', text: 'Thinking', n: 1, cls: 'li-think' });
+        feedPush(b, { kind: 'think', text: 'đang suy nghĩ', n: 1, cls: 'li-think' });
         feedPush(b, { kind: 'note', text: 'extra', done: false });
         updateCard(b); syncFeedList(b, list);
         const items = $$('li', list).map(li => ({ text: li.innerHTML, cls: li.className, eid: li.dataset.eid }));
@@ -1235,6 +1246,10 @@ def test_feed_window_keyed_reconcile_and_tools_aggregation(node: str) -> None:
         b.toolRunning = 0;
         feedTools(b); syncFeedList(b, list);
         const toolsLine = feedLast(b);
+        const foldedThink = b.feed.find(f => f.kind === 'think' && !f.exiting);
+        foldedThink.n = 2;
+        syncFeedList(b, list);
+        const thinkHtml = $$('li', list).map(li => li.innerHTML).find(h => h.includes('feed-count')) || '';
         // identical re-render keeps node identity
         const before = $$('li', list);
         syncFeedList(b, list);
@@ -1244,17 +1259,19 @@ def test_feed_window_keyed_reconcile_and_tools_aggregation(node: str) -> None:
         feedExit(b, victim);
         const exitingStill = b.feed.includes(victim);
         await tick(500);
-        return { items, toolsLine, same, exitingStill, spliced: !b.feed.includes(victim) };
+        return { items, toolsLine, thinkHtml, same, exitingStill, spliced: !b.feed.includes(victim) };
     """, via="chat")
     # the pocket window keeps the last 3 alive entries; the evicted think row
     # renders a while longer with its li-exit fade before dropping out
     kinds = [i["text"] for i in out["items"]]
-    assert any("đã dùng bash" in t for t in kinds)
+    assert any("đang dùng bash" in t for t in kinds)
     assert any("đang viết phản hồi" in t for t in kinds)
     assert any("extra" in t for t in kinds)
-    assert any("Thinking" in t for t in kinds)
+    assert any("đang suy nghĩ" in t for t in kinds)
     assert any("li-exit" in i["cls"] for i in out["items"])
-    assert out["toolsLine"]["text"] == "đã dùng bashx2, edit" and out["toolsLine"]["done"] is True
+    assert out["toolsLine"]["text"] == "đã dùng bash · 2 lần, edit" and out["toolsLine"]["done"] is True
+    assert 'class="feed-count">×2<' in out["thinkHtml"]
+    assert 'class="step-mark"' in out["thinkHtml"]
     assert out["same"] is True
     assert out["exitingStill"] is True and out["spliced"] is True
 
@@ -1847,7 +1864,7 @@ def test_stream_events_drive_feed_and_stream_text(node: str) -> None:
     """, via="chat")
     assert out["phase"] == "writing" and out["state"] == "writing"
     think = [f for f in out["feed"] if f[0] == "think"]
-    assert think and think[0][1].startswith("Thinkingx")    # consecutive rounds fold
+    assert think and think[0][1] == "đang suy nghĩ" and think[0][2] == 2  # consecutive rounds fold
     assert any(f[0] == "tools" and "bash" in f[1] for f in out["feed"])
     assert any(f[0] == "write" for f in out["feed"])
     assert out["byline"] == "đang viết"
@@ -2738,20 +2755,17 @@ def test_settings_page_uses_shared_avatar_engine() -> None:
     assert "import(" not in js
 
 
-def test_current_rows_use_bot_palette_and_no_dangling_connector() -> None:
-    """Follow-up to the think-row fix: user decision is bot-brown
-    (var(--bot-ink)) for EVERY running row, not just think — the old
-    generic `.current{color:var(--ink)}` made running tool rows look
-    unstyled too. The think override now pins the same bot-ink
-    explicitly (renamed from test_think_row_keeps_muted_color_while_current
-    because muted-while-current is no longer the behavior). The
-    connector rule hides the previous row's stub above a mark-less
-    think line. The node harness has no cascade engine, so this pins
-    rule structure/order instead of computed color."""
+def test_current_rows_use_bot_palette_and_connected_timeline() -> None:
+    """Every running row uses bot-brown (var(--bot-ink)); thinking is an
+    ordinary timeline step again, with its marker and connector intact
+    instead of an 18px mark-less pseudo-heading. The node harness has
+    no cascade engine, so this pins rule structure instead of computed
+    styles."""
     css = (WEBUI / "ui" / "share" / "sidebar.css").read_text(encoding="utf-8")
     base = css.index(".progress-list li.current{color:var(--bot-ink)}")
     think = css.index(".progress-list li.li-think.current{color:var(--bot-ink)}")
     assert think > base
-    assert ".progress-list li:has(+ .li-think):before{display:none}" in css
-    # Same-specificity sibling: the :has rule only wins by coming later.
-    assert css.index(":has(+ .li-think)") > css.index("li:not(:last-child):before")
+    assert ".progress-list li.li-think{" not in css
+    assert ".progress-list li.li-think .step-mark{display:none}" not in css
+    assert "li:has(+ .li-think):before{display:none}" not in css
+    assert ".feed-count{" in css

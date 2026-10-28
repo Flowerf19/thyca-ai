@@ -101,7 +101,15 @@ class WorkspaceTimeline:
             raise TimelineError("torn timeline tail (no newline)")
         seq = 0
         seen: set[str] = set()
-        for line in raw.decode("utf-8").splitlines():
+        # Records are LF-terminated only. Do not use splitlines(): it
+        # also cuts at U+2028/U+2029/U+0085, which json.dumps leaves raw
+        # inside strings (valid JSON, e.g. pasted web content), so one
+        # record would be read as two malformed fragments. The trailing
+        # LF checked above leaves one empty tail fragment; drop it.
+        lines = raw.decode("utf-8").split("\n")
+        if lines and lines[-1] == "":
+            lines.pop()
+        for line in lines:
             try:
                 ev = json.loads(line)
             except Exception as exc:

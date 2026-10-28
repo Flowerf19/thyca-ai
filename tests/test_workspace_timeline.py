@@ -126,6 +126,23 @@ def test_journal_rejects_torn_tail(tmp_path: Path) -> None:
         WorkspaceTimeline(tmp_path, "coder")
 
 
+@pytest.mark.parametrize("separator", ["\u2028", "\u2029", "\x85"])
+def test_journal_survives_unicode_line_separators_in_content(
+    tmp_path: Path, separator: str
+) -> None:
+    # Web content can carry U+2028/U+2029/U+0085 inside a JSON string.
+    # json.dumps leaves them raw (valid JSON), so the reader must split
+    # records on LF only — str.splitlines() also cuts at these chars and
+    # bricks the journal with a phantom "malformed line".
+    timeline = _timeline(tmp_path)
+    window = _window("w", "dm", ("coder",))
+    text = f"Email:{separator}thyca@thyca.org"
+    timeline.append_message(window, _row(text), event_id="e1")
+
+    reader = WorkspaceTimeline(tmp_path, "coder", create=False)
+    assert [m.content for m in reader.messages_for_window(window)] == [text]
+
+
 def test_journal_rejects_seq_gap_and_unknown_kind(tmp_path: Path) -> None:
     _timeline(tmp_path)
     path = tmp_path / "bots" / "coder" / "workspace" / "timeline.jsonl"

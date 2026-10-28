@@ -2708,6 +2708,22 @@ def test_index_html_scripts_defs_and_static_markup() -> None:
         assert f'href="{css}"' in html
 
 
+def test_avatar_display_copy_uses_ink_drop() -> None:
+    """User-visible studio/settings copy names the ink drop: TASK-001 renamed
+    the chat dialog, TASK-003 syncs the shared shell dialog (every non-chat
+    page) and the settings strings to the same approved wording."""
+    html = INDEX_HTML.read_text()
+    shell = SHELL_JS.read_text()
+    settings = SETTINGS_JS.read_text()
+    assert "Một giọt mực, nhiều tâm trạng." in html
+    assert "Một giọt mực, nhiều tâm trạng." in shell
+    assert "Đôi mắt kể chuyện, đôi tay giữ nhịp." in shell
+    assert "giọt mực" in settings
+    for text in (html, shell, settings):
+        assert "con dấu" not in text and "vành dấu" not in text
+    assert "wax" not in shell.lower() and "wax" not in settings.lower()
+
+
 def test_settings_page_uses_shared_avatar_engine() -> None:
     """settings.js renders roster rows with the shared avatar() + states[]
     labels and keeps preferences localStorage-only (no API calls for them)."""

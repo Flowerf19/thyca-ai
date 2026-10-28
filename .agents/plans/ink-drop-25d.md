@@ -52,21 +52,34 @@ từng bot; không hardcode màu neon/tím như ảnh thử nghiệm.
   `uv run pytest -q` — **1789 passed**. Daemon đã restart bằng code
   mới và chụp màn hình thật: Thyca giọt cao nâu đỏ, march7th giọt lùn xanh
   lá, hai tay đọc được ở sidebar mà không lệch tông giấy.
+- Kiểm chứng TASK-002/003 (2026-10-28, `fusion-executor`): harness
+  `/tmp/seal-proto/task23.html` render 311 avatar (mọi ngữ cảnh 24–154px ×
+  9 trạng thái × 3 shape + 8 idle gestures × 3 shape + mention/group/
+  streaming + expression-preview + motion-paused), chụp bằng Chrome:
+  `task23-full.png`, `crop-s154/s65/s42/s30/s26/s24/s24b/s46/s34`,
+  `z24/z30/z34` (raster thật zoom 4–6x), `probe-thinking/writing/working`
+  (orbit đóng băng mỗi 45°), `probe-parallax` (cực ±4px),
+  `p2-stack/tlseals/paused/reduced`, và app thật `app-verify.png`
+  (sidebar 57–65px: march7th lùn, researcher mây, thyca cao). Kết luận:
+  không lỗi LOD — không sửa `avatars.css`/`avatars.js`; copy hiển thị
+  đồng bộ "giọt mực" ở `shell.js`+`settings.js`, test mới
+  `test_avatar_display_copy_uses_ink_drop` đỏ→xanh; suite 7 file —
+  **109 passed**; `git diff --check` sạch.
 
 ## Tasks
 
-- [ ] TASK-001 (lead làm mẫu): Tích hợp giọt mực 2.5D vào
+- [x] TASK-001 (lead làm mẫu): Tích hợp giọt mực 2.5D vào
       `avatars.js`/`avatars.css` (gradient theo palette, contact shadow,
       depth/shine planes, hạt vệ tinh thay vành trạng thái, hai tay mực có
       cử động theo trạng thái), cập nhật gradient dùng chung + copy trong
-      `index.html`/idle details và test hợp đồng. **Đã làm xong phần code
-      và kiểm chứng; chờ user duyệt mắt trước khi commit.**
-- [ ] TASK-002 (subagent `fusion-executor`, sau khi TASK-001 được duyệt):
+      `index.html`/idle details và test hợp đồng. **User đã duyệt mắt
+      ngày 2026-10-28; commit mẫu `1928f22`.**
+- [x] TASK-002 (subagent `fusion-executor` 2026-10-28, đã kiểm chứng — xem Evidence mới dưới đây):
       Rà soát mọi ngữ cảnh hiển thị 24–46px (trace/dashboard/settings/
       group/exchange) và Expression Studio; tinh chỉnh LOD cho tay/grain
       nếu bị rối ở cỡ nhỏ. Chỉ sửa trong phạm vi avatar CSS/markup đã
       duyệt, kèm brief + commit mẫu TASK-001.
-- [ ] TASK-003 (subagent): Rà soát reduced-motion, motion-paused, hover
+- [x] TASK-003 (subagent 2026-10-28, đã kiểm chứng — xem Evidence mới dưới đây): Rà soát reduced-motion, motion-paused, hover
       parallax trên thẻ bot và stage-portrait, trạng thái group/mention;
       dọn mọi tham chiếu wax còn sót trong copy hiển thị (không đổi tên
       class nội bộ `seal-*` nếu không cần).

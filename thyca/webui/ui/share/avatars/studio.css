@@ -12,7 +12,7 @@
 .palette-preview{width:100%;margin:0}
 }
 /* Shape picker: label + three live silhouette previews, wraps on narrow. */
-.shape-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px}
+.shape-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0 18px}
 .shape-label{font-size:12px;color:var(--muted)}
 .shape-picker{display:flex;gap:8px;flex-wrap:wrap}
 .shape-picker [data-shape]{border:1px solid var(--bot-rule);border-radius:10px;background:var(--bot-pale);padding:6px 10px 8px;display:flex;align-items:center;gap:8px;min-width:0}

@@ -1556,6 +1556,12 @@ def test_expression_dialog_shape_markup_consistent(node: str) -> None:
     assert shell.count('id="shape-picker"') == 1
     assert "màu, hình dạng" in html and "màu, hình dạng" in shell
     assert "màu và hình dạng" in settings
+    # TASK F: the shape row keeps a clear vertical gap above .studio-tabs
+    # (selected-button outline must not touch the tab row), following the
+    # dialog's existing 18px rhythm.
+    studio = STUDIO_CSS.read_text(encoding="utf-8")
+    row = "".join(studio.split(".shape-row{", 1)[1].split("}", 1)[0].split())
+    assert "margin-bottom:18px" in row or "margin:12px018px" in row
 
 
 def test_system_bot_star_is_permanent(node: str) -> None:

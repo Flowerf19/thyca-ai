@@ -760,33 +760,75 @@ def test_avatar_markup_contract(node: str) -> None:
         return { html };
     """)
     html = out["html"]
-    assert 'class="seal-avatar mk mk-wax' in html
+    assert 'class="seal-avatar mk mk-drop' in html
     assert 'data-bot-avatar="coder"' in html
+    assert 'data-drop-shape="cloud"' in html
     assert 'data-state="idle"' in html
     assert 'data-expression="idle"' in html
     assert 'data-selected="true"' in html
     assert "--bot-color:" in html and "--bot-ink:" in html
     assert 'class="seal-motion"' in html and 'class="seal-face"' in html
-    body = re.search(r'<path id="(wax\d+-body)" d="([^"]+)"', html)
+    body = re.search(r'<path id="(drop\d+-body)" d="([^"]+)"', html)
     assert body, "exactly one namespaced body path"
     assert html.count(body.group(2)) == 1          # the d appears once: data, not markup
-    assert len(re.findall(r'<use href="#' + body.group(1) + r'"', html)) >= 3  # body+shade+highlight
-    assert not re.search(r'wax\d+-wx["(]', html)  # orphan wax clip gone with the sheen rect (eye-clip stays)
-    uses = re.findall(r'href="#(wax\d+-body)"', html)
+    assert len(re.findall(r'<use href="#' + body.group(1) + r'"', html)) >= 4  # body+shade+edge+clip
+    uses = re.findall(r'href="#(drop\d+-body)"', html)
     assert uses and all(u == body.group(1) for u in uses)  # every use resolves to the one defs path
-    assert 'class="glyph"' not in html and 'wax-sheen' not in html and 'wax-crack' not in html
+    assert 'class="glyph"' not in html and 'wax-' not in html
     assert 'aria-hidden="true"' in html
 
 
+def test_avatar_ink_drop_material_face_and_hands(node: str) -> None:
+    """2.5D ink-drop layers + stamped pill eyes (seal-photoreal TASK-001,
+    superseded by the user-approved ink-drop direction): contact/depth/
+    shine planes and two droplet hands ride the one body path, while the
+    face keeps its state hooks (pupils group for gaze, brows, mouths)
+    with every generated id namespaced exactly once."""
+    out = _run(node, """
+        bots.length = 0;
+        bots.push(...roster([{ id: 'coder', name: 'Coder' }]));
+        const html = avatar(bots[0]);
+        const html2 = avatar(bots[0]);
+        return { html, html2 };
+    """)
+    html = out["html"]
+    for cls in ("drop-body", "drop-edge", "drop-contact", "drop-depth",
+                "drop-shine", "drop-orbit", "drop-grain-hi", "drop-hands",
+                "drop-hand-l", "drop-hand-r"):
+        assert f'class="{cls}' in html or f' {cls}' in html, cls
+    assert html.count('class="drop-hand') >= 2     # two droplet hands
+    body = re.search(r'<path id="(drop\d+-body)" d="([^"]+)"', html)
+    assert body and html.count(body.group(2)) == 1
+    assert len(re.findall(r'href="#' + body.group(1) + r'"', html)) >= 4
+    ids = re.findall(r'id="(drop\d+-[a-z-]+)"', html)
+    assert len(ids) == len(set(ids)), ids
+    ids2 = re.findall(r'id="(drop\d+-[a-z-]+)"', out["html2"])
+    assert not set(ids) & set(ids2)          # per-instance namespace
+    # Stamped face: dark pill sockets, glints riding the pupils group
+    # (gaze), ornamental brows split left/right, a resting mouth.
+    assert html.count('class="seal-sock') + html.count("seal-sock ") >= 2
+    assert 'class="seal-pupils"' in html and "seal-glint" in html
+    assert 'class="brow-left"' in html and 'class="brow-right"' in html
+    assert 'class="seal-mouth-rest"' in html
+    css = AVATARS_CSS.read_text()
+    for sel in (".drop-body{", ".drop-contact{", ".drop-depth{", ".drop-shine{",
+                ".drop-orbit{", ".drop-hand{", ".drop-hand-l", ".drop-hand-r",
+                ".seal-sock{", ".seal-glint{", ".seal-brow", ".seal-mouth-rest",
+                "[data-state=done] .drop-hand-l", "[data-state=working] .drop-hand"):
+        assert sel in css, sel
+    assert "wax-" not in css and "--bot-deep" not in css  # palette vars only
+
+
 def test_avatar_body_is_id_stable_and_expression_follows_mention(node: str) -> None:
-    """The wax body is picked deterministically from the immutable id; a
-    mentioned bot renders data-expression=mention without changing state."""
+    """The ink-drop body is picked deterministically from the immutable
+    id; a mentioned bot renders data-expression=mention without changing
+    state."""
     out = _run(node, """
         bots.length = 0;
         bots.push(...roster([{ id: 'coder' }, { id: 'researcher' }]));
-        const bodyOf = (h) => (h.match(/<path id="wax[0-9]+-body" d="([^"]+)"/) || [])[1];
-        const idOf = (h) => (h.match(/<path id="(wax[0-9]+-body)"/) || [])[1];
-        const useCount = (h) => { const m = h.match(/<path id="(wax[0-9]+-body)"/); return m ? h.split('href="#' + m[1] + '"').length - 1 : 0; };
+        const bodyOf = (h) => (h.match(/<path id="drop[0-9]+-body" d="([^"]+)"/) || [])[1];
+        const idOf = (h) => (h.match(/<path id="(drop[0-9]+-body)"/) || [])[1];
+        const useCount = (h) => { const m = h.match(/<path id="(drop[0-9]+-body)"/); return m ? h.split('href="#' + m[1] + '"').length - 1 : 0; };
         const a1 = avatar(bots[0]);
         const a2 = avatar(bots[0]);
         const other = avatar(bots[1]);
@@ -805,7 +847,7 @@ def test_avatar_body_is_id_stable_and_expression_follows_mention(node: str) -> N
     assert out["stable"] is True
     assert out["distinct"] is True                     # coder and researcher keep their own bodies
     assert out["unique"] is True                      # every render gets its own namespaced ids
-    assert out["uses"] >= 3                             # one path, shared by <use> layers
+    assert out["uses"] >= 4                             # one path, shared by <use> layers
     assert 'data-state="waiting"' in out["listening"]    # stateAliases listening->waiting
     assert 'data-expression="mention"' in out["mentioned"]
 
@@ -2611,7 +2653,7 @@ def test_avatars_css_states_and_bot_vars() -> None:
     """avatars.css resolves bot colors through --bot-* vars and implements the
     state selectors the JS writes (data-state/expression/group/idle/streaming)."""
     css = AVATARS_CSS.read_text()
-    assert ".wax-body{fill:var(--bot-color)" in css
+    assert ".drop-body{stroke:var(--bot-dark)" in css
     for sel in ("[data-state=idle]", "[data-state=waiting]", "[data-state=thinking]",
                 "[data-state=writing]", "[data-state=working]", "[data-state=done]",
                 "[data-state=error]", "[data-state=offline]", "[data-state=confused]",
@@ -2629,9 +2671,9 @@ def test_index_html_scripts_defs_and_static_markup() -> None:
     """ui/chat/index.html ships the svg defs once, the static shell markup and
     the classic script order the modules rely on."""
     html = INDEX_HTML.read_text()
-    for did in ("waxShade", "waxHl", "i-send", "i-stop", "i-copy"):
+    for did in ("dropShade", "dropHl", "i-send", "i-stop", "i-copy"):
         assert html.count(f'id="{did}"') == 1, did
-    assert 'id="waxSheen"' not in html      # slimmed layers use only waxHl/waxShade
+    assert 'id="wax' not in html            # shared overlays renamed with the drop
     assert 'id="g-' not in html             # glyph spans gone, so their symbols ship no more
     for sel in ('class="notebook-shell chat-shell"', 'class="site-header"',
                 'class="site-kicker"', 'id="team-nav-title"', 'id="team-bot-list"',

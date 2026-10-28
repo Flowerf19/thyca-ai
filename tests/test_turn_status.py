@@ -5,7 +5,8 @@ gone with the UI rebuild. The equivalents now live in the classic-script
 chain: handleStreamEvent maps NDJSON events to shared bot states via setState
 (sidebar card), interruption copy is passed inline to cancelTurn as a
 .stream-interruption note, and the tool-usage tally renders as a 'đã dùng …'
-feed entry on the bot card instead of a usage row on the message.
+feed entry on the bot card instead of a usage row on the message. Running
+calls say 'đang dùng'; only settled calls say 'đã dùng'.
 
 Runs the real script chain against the real chat page markup (tests/
 webui_dom.mjs); only fetch is stubbed.
@@ -162,21 +163,21 @@ def test_completion_settles_state_feed_and_card(status: dict) -> None:
 
 def test_tool_usage_folds_into_one_running_line(status: dict) -> None:
     assert status["usageRunning"] == [
-        {"kind": "tools", "text": "đã dùng bashx2, create-skill", "done": False}
+        {"kind": "tools", "text": "đang dùng bash · 2 lần, create-skill", "done": False}
     ]
 
 
 def test_tool_line_marks_done_when_calls_settle(status: dict) -> None:
     assert status["usageSettled"] == [
-        {"kind": "tools", "text": "đã dùng bashx2, create-skill", "done": True}
+        {"kind": "tools", "text": "đã dùng bash · 2 lần, create-skill", "done": True}
     ]
 
 
 def test_tools_after_thinking_start_a_fresh_line(status: dict) -> None:
     assert status["usageAfterThink"] == [
-        {"kind": "tools", "text": "đã dùng bashx2, create-skill", "done": True},
-        {"kind": "think", "text": "Thinking", "done": False},
-        {"kind": "tools", "text": "đã dùng read", "done": False},
+        {"kind": "tools", "text": "đã dùng bash · 2 lần, create-skill", "done": True},
+        {"kind": "think", "text": "đang suy nghĩ", "done": False},
+        {"kind": "tools", "text": "đang dùng read", "done": False},
     ]
 
 

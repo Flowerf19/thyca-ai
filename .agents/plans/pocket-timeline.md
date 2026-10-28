@@ -26,13 +26,35 @@ Status: approved by user on 2026-10-28. Lead sample implemented in
 
 - [x] POCKET-001 Lead sample: red tests, implementation, render check, user
   eye approval.
-- [ ] POCKET-002 Audit actual pocket rendering in narrow/mobile contexts,
-  reduced motion and available themes. Fix only issues proven by renders.
-- [ ] POCKET-003 Verify child-bot/nested A2A feed semantics and recovery
-  contexts; add a regression test only if a real gap is found.
-- [ ] POCKET-004 Lead review of real diff, full gate and push decision.
+- [x] POCKET-002 (audited 2026-10-28, no code change): rendered production
+  pocket (real card()/updateCard/syncFeedList + sidebar/avatars CSS) at
+  374/330/360px widths, type-scale large zoom, reduced-motion, all states
+  (thinking current + ×N pulse badge, done settled, intermediate
+  'đã viết một phần', concrete vs generic summary, long tool labels,
+  error/offline, idle whisper, waiting reply). Screenshots:
+  /tmp/seal-proto/pocket-full.png, pk-think-cur-w374/w330, pk-done-set-w374,
+  pk-concrete-long-w374/w360, pk-error-x-w374, pk-idle-whisper-w374,
+  pk-wait-reply-w374, pk-inter-part-w374, pk-offline.png, pk-typescale.png,
+  pk-reduced.png, pk-reduced-done.png. No rendered defect: heading +
+  elapsed correct, generic summaries hidden, connectors aligned, no
+  overflow, reduced-motion static-correct (feedPulse/li-enter none).
+  Idle-open empty pocket is by design (idle: footer only).
+- [x] POCKET-003 (verified 2026-10-28, no production change): terminal
+  turn.completed/cancelled/failed carry no bot_id (bridge.py), so only the
+  primary feed upgrades to 'đã gửi phản hồi'; child turn.accepted carries
+  stage bot_id and clears that child's own rows (loop.py:220). Added 2
+  regression tests (green, pin existing contract):
+  test_refollow_completion_upgrades_write_only_at_terminal
+  (test_webui_live_recovery.py) and
+  test_nested_child_never_claims_final_reply
+  (test_webui_live_rounds.py, incl. one added child llm.thinking event).
+- [ ] POCKET-004 Lead review and full gate completed 2026-10-28; first full
+  run found three stale wording expectations in `tests/test_turn_status.py`,
+  lead updated them to the approved đang/đã + repeat-count contract, then
+  `uv run pytest -q` passed 1792. Push remains a separate user decision.
 
 ## Verification
 
 - `uv run pytest -q tests/test_team_frontend.py tests/test_webui_theme.py tests/test_webui_format.py tests/test_webui_live_rounds.py tests/test_webui_live_recovery.py tests/test_webui_stream.py tests/test_bot_exchanges_ui.py`
+- `uv run pytest -q` → 1792 passed
 - `git diff --check`

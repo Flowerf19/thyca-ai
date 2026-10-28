@@ -180,7 +180,10 @@ doc.querySelector('#message-list').append(node2);
 const token2 = { botId: 'march7th', sessionId: 's3', start: Date.now(), node: node2, phase: 'waiting', timers: [], tools: [] };
 ui.runs.set('s3', token2);
 const fire2 = (ev) => ui.handleStreamEvent(token2, ev);
+const childBot = ui.bots.find(x => x.id === 'thyca');
+const childMarkRow = childBot.feed.at(-1);
 fire2({ type: 'llm.started', bot_id: 'thyca', round: 1 });
+fire2({ type: 'llm.thinking', bot_id: 'thyca', round: 1, delta: 'chị xem lại giúp Bảy' });
 fire2({ type: 'llm.content', bot_id: 'thyca', round: 1, delta: 'Để chị kiểm tra lại share tool cho Bảy ngay.' });
 fire2({ type: 'llm.finished', bot_id: 'thyca', round: 1 });
 result.nestedChildOnly = {
@@ -189,6 +192,7 @@ result.nestedChildOnly = {
   mdBuf: token2.mdBuf || '',
 };
 fire2({ type: 'llm.content', bot_id: 'march7th', round: 1, delta: 'Em kiểm tra liền nè.' });
+result.nestedChildFeed = childBot.feed.slice(childBot.feed.indexOf(childMarkRow) + 1).filter(f => !f.exiting).map(f => ({ kind: f.kind, text: f.text, done: !!f.done }));
 result.nestedAfterPrimary = {
   streamText: node2.querySelector('.stream-text')?.textContent ?? null,
   byline: node2.querySelector('.message-byline time')?.textContent ?? null,
@@ -298,6 +302,18 @@ def test_nested_child_deltas_stay_out_of_primary_live_bubble(rounds: dict) -> No
     primary = rounds["nestedAfterPrimary"]
     assert primary["streamText"] == "Em kiểm tra liền nè."
     assert primary["mdBuf"] == "Em kiểm tra liền nè."
+
+
+def test_nested_child_never_claims_final_reply(rounds: dict) -> None:
+    """POCKET-003: the child card settles its own rows as a completed
+    round ('đã suy nghĩ' / 'đã viết một phần') but never upgrades to
+    'đã gửi phản hồi' — only the primary's terminal turn.completed does
+    that (bridge terminal events carry no bot_id, so they always settle
+    the turn owner's feed)."""
+    assert rounds["nestedChildFeed"] == [
+        {"kind": "think", "text": "đã suy nghĩ", "done": True},
+        {"kind": "write", "text": "đã viết một phần", "done": True},
+    ]
 
 
 def test_transcript_renders_articles_and_tool_pills(rounds: dict) -> None:

@@ -18,6 +18,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 _TUI_TAIL = """return {
+  fmtTime,
   renderTranscript, renderExchangeGroups, openExchangeModal,
   normalizeBot, getBot, bots, groups,
   setSession: v => { currentSession = v; },
@@ -67,11 +68,42 @@ globalThis.fetch = async (url, opts = {}) => {
 };
 ui.setSession('dm-thyca');
 doc.querySelector('#message-list').innerHTML = ui.renderTranscript({
-  dm: 'thyca', messages: [{ role: 'user', content: 'chào' }] });
+  dm: 'thyca', messages: [
+    { role: 'user', content: 'trước', ts: '2026-10-26T09:00:00Z' },
+    { role: 'assistant', content: 'sau', ts: '2026-10-26T11:00:00Z', meta: { bot_id: 'thyca' } },
+  ] });
 await ui.renderExchangeGroups({ dm: 'thyca' });
 const groups = [...doc.querySelectorAll('#message-list [data-exchange-partner]')];
 result.dm = {
   groups: groups.map(g => [g.getAttribute('data-exchange-partner'), g.getAttribute('aria-label')]),
+  times: groups.map(g => [g.querySelector('time')?.textContent ?? null,
+                          g.querySelector('time')?.getAttribute('datetime') ?? null]),
+  expectedTime: ui.fmtTime('2026-10-26T10:03:00Z'),
+  // The entry slots in at the partner's last exchange time (10:03),
+  // between the 09:00 and 11:00 messages -- not forced to the end.
+  order: [...doc.querySelector('#message-list').children].map(
+    el => el.getAttribute('data-exchange-partner') || el.textContent.trim().slice(0, 12)),
+};
+
+// A partner whose latest exchange is newer than every message still
+// lands at the very end, like a normal newest message.
+globalThis.fetch = async (url, opts = {}) => {
+  if (String(url).endsWith('/api/bots/thyca/exchanges')) {
+    return { ok: true, json: async () => ({ exchanges: [
+      { partner: 'helper', count: 5, last_ts: '2026-10-26T12:00:00Z' },
+    ] }) };
+  }
+  throw new Error('unexpected fetch ' + url);
+};
+doc.querySelector('#message-list').innerHTML = ui.renderTranscript({
+  dm: 'thyca', messages: [
+    { role: 'user', content: 'trước', ts: '2026-10-26T09:00:00Z' },
+    { role: 'assistant', content: 'sau', ts: '2026-10-26T11:00:00Z', meta: { bot_id: 'thyca' } },
+  ] });
+await ui.renderExchangeGroups({ dm: 'thyca' });
+result.dmNewest = {
+  order: [...doc.querySelector('#message-list').children].map(
+    el => el.getAttribute('data-exchange-partner') || el.textContent.trim().slice(0, 12)),
 };
 
 // DM-origin rows stay hidden in the DM transcript: no inline collapse
@@ -145,6 +177,26 @@ def test_dm_renders_group_entry_with_partner_hook(exchange_ui: dict) -> None:
     assert exchange_ui["dm"]["groups"] == [
         ["helper", "4 messages with Helper"],
     ]
+
+
+def test_dm_group_entry_shows_last_exchange_time(exchange_ui: dict) -> None:
+    # last_ts 2026-10-26T10:03:00Z renders as HH:MM like message times,
+    # with the full timestamp kept in the datetime attribute.
+    assert exchange_ui["dm"]["times"] == [
+        [exchange_ui["dm"]["expectedTime"], "2026-10-26T10:03:00Z"]
+    ]
+
+
+def test_dm_group_entry_sits_at_its_last_exchange_time(exchange_ui: dict) -> None:
+    """The DM exchange entry behaves like a normal message: it sits at
+    the partner's last_ts in the transcript and only reaches the end
+    when the exchange is actually the newest activity."""
+    order = exchange_ui["dm"]["order"]
+    assert order[0].startswith("trước")
+    assert order[1] == "helper"
+    assert order[2].startswith("Thyca")  # the 11:00 assistant message
+    newest = exchange_ui["dmNewest"]["order"]
+    assert newest[-1] == "helper"
 
 
 def test_dm_hides_exchange_rows_behind_group_entry(exchange_ui: dict) -> None:

@@ -166,6 +166,34 @@ result.transcript = {
   copies: articles.map(a => a.querySelector('.live-copy')?.textContent ?? null),
   hasReasoning: doc.querySelector('#message-list').textContent.includes('User wants sequential'),
 };
+// --- nested A2A turn: the child bot's deltas (stamped bot_id='thyca')
+//     ride the same stream as the primary bot's turn, but must never
+//     land in the primary bot's live bubble -- otherwise Thyca's
+//     working text shows under march7th's byline until turn.completed.
+ui.bots.push(ui.normalizeBot({ id: 'march7th', name: 'march7th', role: 'Bảy', agent_status: { state: 'idle' } }, 1));
+ui.selectedBot = 'march7th';
+ui.currentSession = 's3';
+const node2 = doc.createElement('article');
+node2.innerHTML = `<header class="message-byline"><span>march7th</span><time>đang lắng nghe</time></header><div class="live-copy"></div>`;
+doc.querySelector('#message-list').append(node2);
+const token2 = { botId: 'march7th', sessionId: 's3', start: Date.now(), node: node2, phase: 'waiting', timers: [], tools: [] };
+ui.runs.set('s3', token2);
+const fire2 = (ev) => ui.handleStreamEvent(token2, ev);
+fire2({ type: 'llm.started', bot_id: 'thyca', round: 1 });
+fire2({ type: 'llm.content', bot_id: 'thyca', round: 1, delta: 'Để chị kiểm tra lại share tool cho Bảy ngay.' });
+fire2({ type: 'llm.finished', bot_id: 'thyca', round: 1 });
+result.nestedChildOnly = {
+  streamText: node2.querySelector('.stream-text')?.textContent ?? null,
+  byline: node2.querySelector('.message-byline time')?.textContent ?? null,
+  mdBuf: token2.mdBuf || '',
+};
+fire2({ type: 'llm.content', bot_id: 'march7th', round: 1, delta: 'Em kiểm tra liền nè.' });
+result.nestedAfterPrimary = {
+  streamText: node2.querySelector('.stream-text')?.textContent ?? null,
+  byline: node2.querySelector('.message-byline time')?.textContent ?? null,
+  mdBuf: token2.mdBuf || '',
+};
+
 console.log(JSON.stringify(result));
 """
 
@@ -251,6 +279,20 @@ def test_refollow_rebuilds_live_node_without_duplicating(rounds: dict) -> None:
     assert done["liveNodes"] == 0
     assert done["occurrences"] == 1  # only the stored transcript shows it
     assert done["tracked"] is False
+
+
+def test_nested_child_deltas_stay_out_of_primary_live_bubble(rounds: dict) -> None:
+    """Child-bot (A2A) deltas ride the primary turn's stream stamped with
+    the child's bot_id; only the primary bot's own text may render into
+    the live bubble -- the child's working text must not leak under the
+    primary bot's byline."""
+    child = rounds["nestedChildOnly"]
+    assert child["streamText"] is None
+    assert child["mdBuf"] == ""
+    assert child["byline"] == "đang lắng nghe"
+    primary = rounds["nestedAfterPrimary"]
+    assert primary["streamText"] == "Em kiểm tra liền nè."
+    assert primary["mdBuf"] == "Em kiểm tra liền nè."
 
 
 def test_transcript_renders_articles_and_tool_pills(rounds: dict) -> None:

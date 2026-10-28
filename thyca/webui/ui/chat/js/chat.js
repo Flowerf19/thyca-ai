@@ -163,6 +163,11 @@ function renderTranscript(detail) {
   // open run. DM: exchange rows stay hidden here — the grouped
   // "N messages with <Bot>" entry + thread modal own the DM view.
   const hidePeerRows = !!(detail && detail.dm);
+  // Stamp each rendered article with its message ts so DM exchange
+  // entries can slot in at their last-exchange time (see below).
+  const stamp = (html, ts) => ts
+    ? html.replace('<article ', `<article data-ts="${escapeHTML(String(ts))}" `)
+    : html;
   let peerRun = null;
   const flushPeerRun = () => {
     if (!peerRun) return;
@@ -175,7 +180,7 @@ function renderTranscript(detail) {
     const kind = m.meta?.kind;
     if (kind === 'naming' || kind === 'compaction') continue;
     const time = fmtTime(m.ts);
-    if (m.role === 'user') { flushPeerRun(); nodes.push(userMessage(m.content || '', time)); continue; }
+    if (m.role === 'user') { flushPeerRun(); nodes.push(stamp(userMessage(m.content || '', time), m.ts)); continue; }
     if (m.role !== 'assistant') { flushPeerRun(); continue; }
     const card = m.meta?.card;
     if (m.meta?.kind === 'card' && card && typeof card === 'object'
@@ -184,7 +189,7 @@ function renderTranscript(detail) {
       // the decided set instead (the backend never echoes a user row).
       flushPeerRun();
       const userAfter = messages.slice(i + 1).some(next => next && next.role === 'user');
-      nodes.push(cardArticle(m, detail, time, userAfter));
+      nodes.push(stamp(cardArticle(m, detail, time, userAfter), m.ts));
       continue;
     }
     const pair = exchangePairOf(m, messages);
@@ -197,7 +202,7 @@ function renderTranscript(detail) {
     }
     flushPeerRun();
     const names = (m.tool_calls || []).map(c => c.skill || c.name).filter(Boolean);
-    nodes.push(assistantMessage(String(m.meta?.bot_id || detail.dm || ''), contentHtml(m.content), time, names));
+    nodes.push(stamp(assistantMessage(String(m.meta?.bot_id || detail.dm || ''), contentHtml(m.content), time, names), m.ts));
   }
   flushPeerRun();
   return nodes.join('');
@@ -205,8 +210,10 @@ function renderTranscript(detail) {
 
 /* DM exchange groups: in a bot's DM, one entry per bot it exchanged
    messages with (read from the origin rooms via the exchanges API).
-   Entries append at the end of the transcript; tapping one opens the
-   A-B thread modal. */
+   Each entry behaves like a normal message: it slots into the
+   transcript at the partner's last exchange time and only reaches
+   the end when that exchange is the newest activity. Tapping one
+   opens the A-B thread modal. */
 function botFace(id) {
   const b = getBot(id);
   if (b) { try { return avatar(b); } catch { /* fall through to initial */ } }
@@ -234,9 +241,20 @@ async function renderExchangeGroups(detail) {
     btn.className = 'exchange-group';
     btn.dataset.exchangePartner = p.partner;
     btn.setAttribute('aria-label', `${p.count} messages with ${name}`);
-    btn.innerHTML = `${botFace(p.partner)}<span><strong>${escapeHTML(String(p.count))} messages</strong> with ${escapeHTML(name)}</span>`;
+    const when = p.last_ts
+      ? `<time class="exchange-group-time" datetime="${escapeHTML(String(p.last_ts))}">${escapeHTML(fmtTime(p.last_ts))}</time>`
+      : '';
+    btn.innerHTML = `${botFace(p.partner)}<span><strong>${escapeHTML(String(p.count))} messages</strong> with ${escapeHTML(name)}</span>${when}`;
     btn.addEventListener('click', () => openExchangeModal(owner, p.partner));
-    list.append(btn);
+    const lastTs = String(p.last_ts || '');
+    let before = null;
+    if (lastTs) {
+      for (const child of list.children) {
+        const ts = child.getAttribute && child.getAttribute('data-ts');
+        if (ts && ts > lastTs) { before = child; break; }
+      }
+    }
+    if (before) list.insertBefore(btn, before); else list.append(btn);
   }
 }
 async function openExchangeModal(ownerId, partnerId) {
@@ -466,9 +484,14 @@ function handleStreamEvent(token, ev) {
   const type = ev.type, botId = ev.bot_id || token.botId;
   const fb = getBot(botId);
   const liveCopy = $('.live-copy', token.node);
+  // One live bubble belongs to the turn's primary bot. Nested A2A turns
+  // ride the same stream stamped with the child bot's bot_id: their
+  // state/feed updates stay on that bot's card, but their text must
+  // never render into (or flip the phase of) the primary bubble.
+  const own = botId === token.botId;
   switch (type) {
     case 'turn.accepted': setState(botId, 'waiting'); if (fb) { (fb.feed || []).forEach(f => feedExit(fb, f)); fb.thinkBuf = ''; fb.toolCounts = new Map(); fb.toolRunning = 0; updateCard(fb); } break;
-    case 'llm.started': token.phase = 'thinking'; setState(botId, 'thinking'); $('.message-byline time', token.node).textContent = 'đang suy nghĩ'; if (fb) { feedDone(fb, f => f.kind === 'think' || f.kind === 'write'); fb.thinkBuf = ''; } break;
+    case 'llm.started': if (own) { token.phase = 'thinking'; $('.message-byline time', token.node).textContent = 'đang suy nghĩ'; } setState(botId, 'thinking'); if (fb) { feedDone(fb, f => f.kind === 'think' || f.kind === 'write'); fb.thinkBuf = ''; } break;
     case 'llm.thinking': {
       setState(botId, 'thinking');
       if (fb) {
@@ -481,9 +504,11 @@ function handleStreamEvent(token, ev) {
       break;
     }
     case 'tool.started': case 'skill.started': {
-      token.phase = 'working'; token.tools.push(ev.name || 'tool');
+      if (own) {
+        token.phase = 'working'; token.tools.push(ev.name || 'tool');
+        $('.message-byline time', token.node).textContent = 'đang làm việc';
+      }
       setState(botId, 'working', `Đang gọi ${ev.name || 'tool'}`);
-      $('.message-byline time', token.node).textContent = 'đang làm việc';
       if (fb) {
         fb.toolRunning = (fb.toolRunning || 0) + 1;
         const lastEntry = feedLast(fb);
@@ -502,12 +527,14 @@ function handleStreamEvent(token, ev) {
       break;
     case 'llm.finished':
       if (fb) { feedDone(fb, f => f.kind === 'think' || f.kind === 'write'); updateCard(fb); }
-      { const p = token.node && $('.stream-text', token.node);
+      if (own) { const p = token.node && $('.stream-text', token.node);
         if (p && token.mdBuf) { p.innerHTML = contentHtml(token.mdBuf); if (token.caret) p.append(token.caret); } }
       break;
     case 'llm.content': {
-      token.phase = 'writing'; setState(botId, 'writing'); notifyText(botId, ev.delta || '');
+      setState(botId, 'writing'); notifyText(botId, ev.delta || '');
       if (fb && !fb.feed.some(f => f.kind === 'write' && !f.done && !f.exiting)) feedPush(fb, { kind: 'write', text: 'đang viết phản hồi' });
+      if (!own) break;
+      token.phase = 'writing';
       token.mdBuf = (token.mdBuf || '') + (ev.delta || '');
       if (token.sessionId === currentSession) {          // node may be detached after a session switch
         $('.message-byline time', token.node).textContent = 'đang viết';

@@ -50,7 +50,7 @@ workspace.insertAdjacentHTML('beforeend', `
  <section class="paper-card" id="bots-card" aria-labelledby="bots-title">
   <div class="eyebrow">Đội bot</div>
   <h2 class="card-title" id="bots-title">Những người bạn trong đội</h2>
-  <p class="card-copy">Danh sách chỉ đọc — thêm hay chỉnh bot qua trò chuyện với Thyca, đổi màu giọt mực ở “Custom bot” bên thanh đội.</p>
+  <p class="card-copy">Danh sách chỉ đọc — thêm hay chỉnh bot qua trò chuyện với Thyca, đổi màu và hình dạng giọt mực ở “Custom bot” bên thanh đội.</p>
   <div class="bot-roster" id="bot-roster"><p class="empty-note">Đang tải đội bot…</p></div>
  </section>
 

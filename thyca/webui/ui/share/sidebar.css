@@ -65,11 +65,19 @@
 .thought-extra{font:15px/26px var(--serif);padding-top:11px;margin:10px 0 0;border-top:1px dashed var(--bot-rule)}
 .bot-card[data-state=idle] .thinking-heading{display:none}
 .bot-card[data-state=idle] .thinking-scroll{display:none}
+.bot-card[data-state=idle] .paper-footer{border-top:0}
 .reply-action{display:flex;align-items:center;justify-content:center;gap:6px;margin:2px 16px 12px;padding:8px;border:1px solid var(--bot-border);border-radius:8px;background:var(--bot-paper);color:var(--bot-ink);font-size:12px}
 .reply-action svg{width:14px;height:14px}
 .paper-footer{display:flex;justify-content:space-between;gap:8px;border-top:1px solid var(--bot-rule);margin:0 13px;padding:10px 0}
 .paper-footer button{font-size:11px;color:color-mix(in srgb,var(--bot-muted) 55%,var(--bot-ink));display:flex;align-items:center;gap:6px;padding:2px 0}
 .paper-footer svg{width:14px;height:14px}
+/* Contained keyboard focus: palette-tinted rings that stay inside the card
+   instead of the global offset square (which crossed card/star edges). */
+.bot-card .bot-select{border-radius:12px}
+.bot-card .bot-select:focus-visible{outline:2px solid var(--bot-ink);outline-offset:-2px}
+.bot-card .icon-button:focus-visible{outline:2px solid var(--bot-ink);outline-offset:2px;border-radius:8px}
+.bot-card .paper-footer button:focus-visible{outline:2px solid var(--bot-ink);outline-offset:2px;border-radius:6px}
+.bot-card .reply-action:focus-visible{outline:2px solid var(--bot-ink);outline-offset:2px}
 .section-label{display:flex;align-items:center;gap:12px;font-size:10px;color:#99876b;letter-spacing:1.8px;margin:24px 5px 12px}
 .section-label:after{content:'';height:1px;background:var(--line);flex:1}
 .group-row{display:flex;align-items:center;gap:11px;width:100%;border:1px solid #dccfb8;border-radius:10px;text-align:left;padding:12px 9px;background:#fffbf340}

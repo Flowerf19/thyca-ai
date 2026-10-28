@@ -1111,6 +1111,75 @@ def test_render_team_and_group_rows_markup(node: str) -> None:
     assert 'class="group-meta"' in group and "2 người bạn · 4 lượt" in group
 
 
+def test_pinned_bots_render_first_stable(node: str) -> None:
+    """TASK B: sidebar display order is pinned-first (system Thyca always
+    pinned), stable inside pinned and unpinned groups; the underlying
+    `bots` array order never changes."""
+    out = _run(node, """
+        localStorage.clear();
+        localStorage.setItem('thyca.favorites', JSON.stringify(['helper']));
+        bots.length = 0;
+        bots.push(...roster([
+            { id: 'a', name: 'A' },
+            { id: 'thyca', name: 'Thyca', system: true },
+            { id: 'helper', name: 'Helper' },
+            { id: 'b', name: 'B' },
+        ]));
+        renderTeam();
+        const team = $('#team-bot-list').innerHTML;
+        const idx = (id) => team.indexOf('id="bot-' + id + '"');
+        return { thyca: idx('thyca'), helper: idx('helper'), a: idx('a'), b: idx('b'),
+                 roster: bots.map(b => b.id) };
+    """)
+    assert 0 <= out["thyca"] < out["helper"] < out["a"] < out["b"]
+    assert out["roster"] == ["a", "thyca", "helper", "b"]
+
+
+def test_star_click_pins_card_to_top_in_place(node: str) -> None:
+    """TASK B: starring moves the existing card node into the pinned group
+    immediately (node identity preserved, no full rerender); unstarring
+    restores its stable slot; `bots` order is untouched."""
+    out = _run(node, """
+        localStorage.clear();
+        bots.length = 0;
+        bots.push(...roster([{ id: 'a', name: 'Alpha' }, { id: 'b', name: 'Beta' }]));
+        renderTeam();
+        const list = $('#team-bot-list');
+        list.replaceChildren();
+        const mkCard = (id) => {
+            const cardEl = document.createElement('article');
+            cardEl.className = 'bot-card'; cardEl.dataset.botId = id; cardEl.id = 'bot-' + id;
+            const btn = document.createElement('button'); btn.dataset.action = 'favorite';
+            cardEl.appendChild(btn); list.appendChild(cardEl);
+            return { cardEl, btn };
+        };
+        const a = mkCard('a'), b = mkCard('b');
+        const fire = (btn) => list._handlers.click.forEach(h => h({ target: btn, preventDefault() {} }));
+        const order = () => [...list.children].map(el => el.dataset.botId);
+        const toastText = () => $('#toast').textContent;
+        const initial = order();
+        fire(b.btn);
+        const afterPin = { order: order(), toast: toastText(), sameA: list.children[1] === a.cardEl,
+                           sameB: list.children[0] === b.cardEl, roster: bots.map(x => x.id) };
+        fire(b.btn);
+        const afterUnpin = { order: order(), toast: toastText(), roster: bots.map(x => x.id) };
+        fire(a.btn); fire(b.btn);
+        return { initial, afterPin, afterUnpin, bothPinned: { order: order(), sameA: list.children[0] === a.cardEl,
+                 sameB: list.children[1] === b.cardEl } };
+    """)
+    assert out["initial"] == ["a", "b"]
+    pin = out["afterPin"]
+    assert pin["order"] == ["b", "a"]            # b jumped above a
+    assert pin["sameA"] is True and pin["sameB"] is True  # same nodes moved
+    assert pin["toast"] == "Đã ghim Beta lên đầu."
+    assert pin["roster"] == ["a", "b"]           # data order untouched
+    assert out["afterUnpin"]["order"] == ["a", "b"]   # stable slot restored
+    assert out["afterUnpin"]["toast"] == "Đã bỏ ghim Beta."
+    assert out["afterUnpin"]["roster"] == ["a", "b"]
+    assert out["bothPinned"]["order"] == ["a", "b"]   # pinned group keeps roster order
+    assert out["bothPinned"]["sameA"] is True and out["bothPinned"]["sameB"] is True
+
+
 def test_update_card_patches_state_preview_and_pocket(node: str) -> None:
     """updateCard rewrites the card in place: state/selected attrs, header
     label, whisper comment override, elapsed, aria-expanded and pocket inert."""
@@ -1362,6 +1431,133 @@ def test_team_list_click_delegates_card_actions(node: str) -> None:
     assert out["stored"] == ["a"]
 
 
+def test_bot_shape_preference_normalizes_and_overrides(node: str) -> None:
+    """TASK C: localStorage `thyca.shape.<id>` carries a valid DROP_NAMES value
+    onto normalizeBot; invalid values fall back to null so dropShapeFor
+    keeps its deterministic silhouette."""
+    out = _run(node, """
+        localStorage.clear();
+        localStorage.setItem('thyca.shape.coder', 'squat');
+        localStorage.setItem('thyca.shape.bogus', 'blob');
+        bots.length = 0;
+        bots.push(...roster([{ id: 'thyca' }, { id: 'coder' }, { id: 'bogus' }]));
+        const [t, c, x] = bots;
+        return { thyca: t.shape, coder: c.shape, bogus: x.shape,
+                 tall: dropShapeFor(t).name, squat: dropShapeFor(c).name,
+                 bogusShape: dropShapeFor(x).name,
+                 coderD: avatar(c).includes('data-drop-shape="squat"') };
+    """)
+    assert out["thyca"] is None
+    assert out["coder"] == "squat"
+    assert out["bogus"] is None
+    assert out["tall"] == "tall" and out["squat"] == "squat"
+    assert out["bogusShape"] in ("tall", "squat", "cloud")
+    assert out["coderD"] is True
+
+
+def test_set_bot_shape_patches_avatars_in_place(node: str) -> None:
+    """TASK C: setBotShape validates, persists locally and patches every
+    existing avatar instance (data-drop-shape + body path d) without
+    touching classes/states; bad input is rejected with no side effects."""
+    out = _run(node, """
+        localStorage.clear();
+        bots.length = 0;
+        bots.push(...roster([{ id: 'coder', name: 'Coder' }]));
+        const b = bots[0];
+        document.body.innerHTML = '';
+        // Faithful minimal avatar skeleton: the patcher only touches
+        // [data-bot-avatar] roots, their data-drop-shape and the one
+        // namespaced body path per instance.
+        const mkAv = () => {
+            const root = document.createElement('span');
+            root.className = 'seal-avatar mk mk-drop';
+            root.dataset.botAvatar = 'coder'; root.dataset.dropShape = 'cloud';
+            root.dataset.state = 'idle';
+            const svg = document.createElement('svg'); svg.className = 'base';
+            const defs = document.createElement('defs');
+            const path = document.createElement('path');
+            path.setAttribute('id', 'drop9-body'); path.setAttribute('d', 'CLOUD');
+            defs.appendChild(path); svg.appendChild(defs); root.appendChild(svg);
+            document.body.appendChild(root); return root;
+        };
+        const av1 = mkAv(), av2 = mkAv();
+        const badShape = window.ThycaShell.setBotShape('coder', 'blob');
+        const badBot = window.ThycaShell.setBotShape('ghost', 'tall');
+        const badType = window.ThycaShell.setBotShape('coder', '');
+        const storedBefore = localStorage.getItem('thyca.shape.coder');
+        const dBefore = av1.querySelector('.base defs path').getAttribute('d');
+        const ok = window.ThycaShell.setBotShape('coder', 'tall');
+        const expected = dropShapeFor({ id: 'coder', shape: 'tall' }).d;
+        const after = [av1, av2].map(el => ({
+            shape: el.getAttribute('data-drop-shape'),
+            cls: el.className,
+            state: el.getAttribute('data-state'),
+            d: el.querySelector('.base defs path').getAttribute('d'),
+        }));
+        return { badShape, badBot, badType, storedBefore, ok,
+                 stored: localStorage.getItem('thyca.shape.coder'),
+                 botShape: b.shape, dBefore, expected, after };
+    """, via="shell")
+    assert out["badShape"] is False and out["badBot"] is False and out["badType"] is False
+    assert out["storedBefore"] is None
+    assert out["dBefore"] == "CLOUD"
+    assert out["ok"] is True
+    assert out["stored"] == "tall" and out["botShape"] == "tall"
+    assert len(out["after"]) == 2
+    for entry in out["after"]:
+        assert entry["shape"] == "tall"
+        assert "mk-drop" in entry["cls"] and entry["state"] == "idle"
+        assert entry["d"] == out["expected"]
+
+
+def test_expression_studio_shape_picker(node: str) -> None:
+    """TASK C: the Studio dialog-controls gain a shape picker with three
+    real avatar previews; clicking one persists the shape and flips only
+    its aria-pressed."""
+    out = _run(node, """
+        localStorage.clear();
+        bots.length = 0;
+        bots.push(...roster([{ id: 'coder', name: 'Coder' }]));
+        selectedBot = 'coder';
+        $('#expression-bot').innerHTML = '<option value="coder">Coder</option>';
+        $('#expression-bot').value = 'coder';
+        buildExpressions();
+        const html = $('#shape-picker').innerHTML;
+        const shapes = [...html.matchAll(/data-shape="(\w+)"/g)].map(m => m[1]);
+        const pressed = (h) => [...h.matchAll(/data-shape="(\w+)"[^>]*aria-pressed="(\w+)"/g)].map(m => [m[1], m[2]]);
+        const previews = [...html.matchAll(/data-drop-shape="(\w+)"/g)].map(m => m[1]);
+        const tallBtn = document.createElement('button'); tallBtn.dataset.shape = 'tall';
+        $('#shape-picker')._handlers.click.forEach(h => h({ target: tallBtn, preventDefault() {} }));
+        const htmlAfter = $('#shape-picker').innerHTML;
+        return { count: shapes.length, shapes, previews, before: pressed(html),
+                 after: pressed(htmlAfter), stored: localStorage.getItem('thyca.shape.coder'),
+                 botShape: getBot('coder').shape,
+                 labels: [html.includes('Giọt cao'), html.includes('Giọt tròn'), html.includes('Giọt mây')] };
+    """, via="shell")
+    assert out["count"] == 3
+    assert out["shapes"] == ["tall", "squat", "cloud"]
+    assert sorted(out["previews"]) == ["cloud", "squat", "tall"]  # one live preview each
+    assert out["before"] == [["tall", "false"], ["squat", "false"], ["cloud", "true"]]
+    assert out["stored"] == "tall" and out["botShape"] == "tall"
+    assert out["after"] == [["tall", "true"], ["squat", "false"], ["cloud", "false"]]
+    assert out["labels"] == [True, True, True]
+
+
+def test_expression_dialog_shape_markup_consistent(node: str) -> None:
+    """TASK C: Both dialog markups (chat index.html + shared shell.js)
+    ship the same shape picker hook/labels and color+shape copy."""
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    shell = SHELL_JS.read_text(encoding="utf-8")
+    settings = SETTINGS_JS.read_text(encoding="utf-8")
+    for text in (html, shell):
+        assert 'id="shape-picker"' in text
+        assert "Hình dạng" in text
+    assert html.count('id="shape-picker"') == 1
+    assert shell.count('id="shape-picker"') == 1
+    assert "màu, hình dạng" in html and "màu, hình dạng" in shell
+    assert "màu và hình dạng" in settings
+
+
 def test_system_bot_star_is_permanent(node: str) -> None:
     """Thyca is the main bot: normalizeBot stars it by default, its card
     renders the star disabled with the system label, and a favorite click
@@ -1392,6 +1588,9 @@ def test_system_bot_star_is_permanent(node: str) -> None:
             mainHasLabel: mainHtml.includes('Bot hệ thống Thyca'),
             mainPressed: mainHtml.includes('aria-pressed="true"'),
             helperDisabled: helperHtml.includes('disabled title='),
+            mainPinned: mainHtml.includes('luôn được ghim'),
+            helperUnpinLabel: helperHtml.includes('Bỏ ghim Helper'),
+            helperPinMissing: !helperHtml.includes('Ghim Helper lên đầu'),
         };
     """)
     assert out["mainFav"] is True
@@ -1402,6 +1601,9 @@ def test_system_bot_star_is_permanent(node: str) -> None:
     assert out["mainHasLabel"] is True
     assert out["mainPressed"] is True
     assert out["helperDisabled"] is False
+    assert out["mainPinned"] is True          # system wording is pinning, not starring
+    assert out["helperUnpinLabel"] is True    # stored-star helper offers to unpin
+    assert out["helperPinMissing"] is True
 
 
 def test_group_list_click_loads_session(node: str) -> None:
@@ -2629,6 +2831,10 @@ def test_sidebar_css_card_pocket_and_group_contract() -> None:
     assert "color-mix" in css                                # lighter card bg + stronger role/footer text
     assert ".bot-card[data-state=idle] .thinking-heading{display:none}" in css  # idle: footer only
     assert ".bot-card[data-state=idle] .thinking-scroll{display:none}" in css
+    assert ".bot-card[data-state=idle] .paper-footer{border-top:0}" in css  # idle: no stray separator line
+    assert ".bot-card .bot-select:focus-visible" in css  # contained palette ring, never the global square
+    assert ".bot-card .icon-button:focus-visible" in css
+    assert ".bot-card .paper-footer button:focus-visible" in css
     assert ".reply-action{" in css                           # reply action lives in the pocket
     assert ".thinking-paper{margin:0 7px 7px;border:0;" in css  # inner box border removed
     assert "height:30px" in css                              # stable compact line
@@ -2662,6 +2868,13 @@ def test_chat_css_transcript_composer_and_title_head() -> None:
     assert "#fffaf240" in head                              # translucent, not opaque
     assert ".chat-title-head:after" not in css and ".chat-title-head::after" not in css
     assert "color:var(--bot-ink,var(--forest))" in css      # byline tinted by palette
+    assert ".exchange-group{" in css
+    pill = css.split(".exchange-group{", 1)[1].split("}", 1)[0]
+    assert "dashed" in pill and "var(--bot-border,#c9b891)" in pill
+    assert "var(--bot-paper,#fffdf7)" in pill and "var(--bot-ink,#5c5142)" in pill
+    hover = css.split(".exchange-group:hover", 1)[1].split("}", 1)[0]
+    assert "var(--bot-mid,#5c8a52)" in hover and "var(--bot-pale,#eaf3e2)" in hover
+    assert "var(--bot-muted,#a2937a)" in css               # exchange time
     assert "@keyframes cursor" in css
     assert not re.search(r"--[a-zA-Z-]+\s*:\s*[^v]", css)   # no page-local token defs
 
@@ -2705,7 +2918,7 @@ def test_index_html_scripts_defs_and_static_markup() -> None:
                 'id="session-info"', 'id="run-demo"', 'id="toast"', 'id="announcer"',
                 'id="bot-drawer"', 'id="bot-drawer-body"', 'id="group-dialog"',
                 'id="group-form"', 'id="group-options"', 'id="expressions-dialog"',
-                'id="expression-bot"', 'id="bot-color"', 'id="expression-grid"',
+                'id="expression-bot"', 'id="bot-color"', 'id="shape-picker"', 'id="expression-grid"',
                 'id="expression-extras"', 'id="idle-expression-grid"',
                 'id="group-preview-members"', 'id="idle-auto-toggle"',
                 'id="idle-comments-toggle"', 'id="idle-random"', 'id="lab-portrait"',

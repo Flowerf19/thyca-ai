@@ -56,6 +56,9 @@ const DROP_SHAPES=[
 const DROP_NAMES=['tall','squat','cloud'];
 const DROP_BY_ID={thyca:0,march7th:1,coder:2,researcher:1};
 function dropShapeFor(b){
+ /* A stored browser-only override wins (setBotShape); otherwise the
+    deterministic per-id silhouette keeps its shape across reload. */
+ if(b&&DROP_NAMES.includes(b.shape))return{name:b.shape,d:DROP_SHAPES[DROP_NAMES.indexOf(b.shape)]};
  const i=DROP_BY_ID[b.id]??Math.abs([...b.id].reduce((n,c)=>n+c.charCodeAt(0),0))%DROP_SHAPES.length;
  return {name:DROP_NAMES[i],d:DROP_SHAPES[i]};
 }

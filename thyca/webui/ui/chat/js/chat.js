@@ -235,16 +235,23 @@ async function renderExchangeGroups(detail) {
   if (!list) return;
   for (const p of partners) {
     if (!p || !p.partner) continue;
+    if (p.partner === owner) continue;   // defensive: an owner is never its own partner
     const name = peerDisplayName(p.partner);
+    const partnerBot = getBot(p.partner);
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'exchange-group';
+    btn.dataset.exchangeOwner = owner;
     btn.dataset.exchangePartner = p.partner;
-    btn.setAttribute('aria-label', `${p.count} messages with ${name}`);
+    /* Paint the pill with the partner palette (neutral var fallbacks in
+       chat.css keep unknown/ghost partners readable). Inline custom
+       properties win over the fallback without touching classes. */
+    if (partnerBot) btn.setAttribute('style', paletteStyle(partnerBot));
+    btn.setAttribute('aria-label', `${p.count} tin nhắn với ${name}`);
     const when = p.last_ts
       ? `<time class="exchange-group-time" datetime="${escapeHTML(String(p.last_ts))}">${escapeHTML(fmtTime(p.last_ts))}</time>`
       : '';
-    btn.innerHTML = `${botFace(p.partner)}<span><strong>${escapeHTML(String(p.count))} messages</strong> with ${escapeHTML(name)}</span>${when}`;
+    btn.innerHTML = `${botFace(p.partner)}<span><strong>${escapeHTML(String(p.count))} tin nhắn</strong> với ${escapeHTML(name)}</span>${when}`;
     btn.addEventListener('click', () => openExchangeModal(owner, p.partner));
     const lastTs = String(p.last_ts || '');
     let before = null;

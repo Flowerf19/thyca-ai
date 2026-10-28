@@ -76,6 +76,9 @@ await ui.renderExchangeGroups({ dm: 'thyca' });
 const groups = [...doc.querySelectorAll('#message-list [data-exchange-partner]')];
 result.dm = {
   groups: groups.map(g => [g.getAttribute('data-exchange-partner'), g.getAttribute('aria-label')]),
+  owners: groups.map(g => g.getAttribute('data-exchange-owner')),
+  paint: groups.map(g => g.getAttribute('style') || ''),
+  helperInk: ui.getBot('helper').palette.ink,
   times: groups.map(g => [g.querySelector('time')?.textContent ?? null,
                           g.querySelector('time')?.getAttribute('datetime') ?? null]),
   expectedTime: ui.fmtTime('2026-10-26T10:03:00Z'),
@@ -104,6 +107,37 @@ await ui.renderExchangeGroups({ dm: 'thyca' });
 result.dmNewest = {
   order: [...doc.querySelector('#message-list').children].map(
     el => el.getAttribute('data-exchange-partner') || el.textContent.trim().slice(0, 12)),
+};
+
+// Perspective switch: the helper's DM shows exactly the reciprocal entry
+// (owner helper, partner thyca) with the partner palette; the self-partner
+// row is defensively skipped and no stale entry survives the switch.
+globalThis.fetch = async (url, opts = {}) => {
+  if (String(url).endsWith('/api/bots/helper/exchanges')) {
+    return { ok: true, json: async () => ({ exchanges: [
+      { partner: 'thyca', count: 3, last_ts: '2026-10-26T10:05:00Z' },
+      { partner: 'helper', count: 9, last_ts: '2026-10-26T10:06:00Z' },
+    ] }) };
+  }
+  if (String(url).endsWith('/api/bots/thyca/exchanges')) {
+    return { ok: true, json: async () => ({ exchanges: [
+      { partner: 'helper', count: 4, last_ts: '2026-10-26T10:03:00Z' },
+    ] }) };
+  }
+  throw new Error('unexpected fetch ' + url);
+};
+doc.querySelector('#message-list').innerHTML = ui.renderTranscript({
+  dm: 'helper', messages: [
+    { role: 'user', content: 'trước', ts: '2026-10-26T09:00:00Z' },
+  ] });
+ui.setSession('dm-helper');
+await ui.renderExchangeGroups({ dm: 'helper' });
+const swap = [...doc.querySelectorAll('#message-list [data-exchange-partner]')];
+result.dmSwap = {
+  entries: swap.map(g => [g.getAttribute('data-exchange-owner'), g.getAttribute('data-exchange-partner')]),
+  labels: swap.map(g => [g.getAttribute('aria-label'), g.querySelector('strong')?.textContent ?? null]),
+  paint: swap.map(g => g.getAttribute('style') || ''),
+  thycaInk: ui.getBot('thyca').palette.ink,
 };
 
 // DM-origin rows stay hidden in the DM transcript: no inline collapse
@@ -175,8 +209,21 @@ def test_room_groups_consecutive_same_pair_rows(exchange_ui: dict) -> None:
 
 def test_dm_renders_group_entry_with_partner_hook(exchange_ui: dict) -> None:
     assert exchange_ui["dm"]["groups"] == [
-        ["helper", "4 messages with Helper"],
+        ["helper", "4 tin nhắn với Helper"],
     ]
+    assert exchange_ui["dm"]["owners"] == ["thyca"]
+    assert len(exchange_ui["dm"]["paint"]) == 1
+    assert exchange_ui["dm"]["helperInk"] in exchange_ui["dm"]["paint"][0]
+
+
+def test_dm_exchange_perspective_switches_and_paints_partner(exchange_ui: dict) -> None:
+    """TASK D: switching DM owner renders exactly the reciprocal entry
+    (datasets owner/partner, localized label/aria, partner palette) —
+    the self-partner row is skipped and no stale entry survives."""
+    swap = exchange_ui["dmSwap"]
+    assert swap["entries"] == [["helper", "thyca"]]
+    assert swap["labels"] == [["3 tin nhắn với Thyca", "3 tin nhắn"]]
+    assert len(swap["paint"]) == 1 and swap["thycaInk"] in swap["paint"][0]
 
 
 def test_dm_group_entry_shows_last_exchange_time(exchange_ui: dict) -> None:

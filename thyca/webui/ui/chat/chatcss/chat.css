@@ -139,10 +139,10 @@
 .peer-exchange-lead{font-weight:600}
 .peer-exchange-rows{display:flex;flex-direction:column;gap:14px;margin-top:10px}
 .peer-exchange-rows .message-assistant{margin:0}
-.exchange-group{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border:1px dashed #c9b891;border-radius:12px;background:#fffdf7;padding:10px 14px;font-size:13px;color:#5c5142;cursor:pointer}
-.exchange-group:hover,.exchange-group:focus-visible{border-color:#5c8a52;background:#eaf3e2}
+.exchange-group{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border:1px dashed var(--bot-border,#c9b891);border-radius:12px;background:var(--bot-paper,#fffdf7);padding:10px 14px;font-size:13px;color:var(--bot-ink,#5c5142);cursor:pointer}
+.exchange-group:hover,.exchange-group:focus-visible{border-color:var(--bot-mid,#5c8a52);background:var(--bot-pale,#eaf3e2)}
 .exchange-group .seal-avatar{width:30px;height:30px;flex-shrink:0}
-.exchange-group time{margin-left:auto;flex-shrink:0;color:#a2937a;font-size:11px}
+.exchange-group time{margin-left:auto;flex-shrink:0;color:var(--bot-muted,#a2937a);font-size:11px}
 .exchange-group .seal-fallback{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:50%;background:#e7dcc4;font-weight:600}
 #exchange-modal-title{display:flex;align-items:center;gap:9px;font-size:17px}
 #exchange-modal-title .seal-avatar{width:30px;height:30px}

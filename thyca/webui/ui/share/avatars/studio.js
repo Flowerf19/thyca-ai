@@ -21,8 +21,16 @@ function chooseIdle(key=null){
  $('#lab-stop').hidden=false;openBot(b.id);announce(b.name+': '+idleCatalog[chosen].label);return chosen;
 }
 
+/* Shape picker: three live avatar previews, one per DROP_NAMES silhouette.
+   The override is browser-only (localStorage, like the tint); picking one
+   persists it and patches every avatar instance in place. */
+const SHAPE_LABELS={tall:'Giọt cao',squat:'Giọt tròn',cloud:'Giọt mây'};
+function buildShapePicker(b){
+ $('#shape-picker').innerHTML=DROP_NAMES.map(s=>`<button type="button" data-shape="${s}" style="${paletteStyle(b)}" aria-pressed="${b.shape===s||(!b.shape&&dropShapeFor(b).name===s)}" aria-label="Hình dạng ${SHAPE_LABELS[s]}" title="${SHAPE_LABELS[s]}"><span class="shape-preview">${avatar({...b,shape:s},b.state,'expression-preview')}</span><strong>${SHAPE_LABELS[s]}</strong></button>`).join('');
+}
 function buildExpressions(){
  const b=getBot($('#expression-bot').value);lab.botId=b.id;
+ buildShapePicker(b);
  $('#palette-preview').innerHTML=`<span class="swatch" style="background:${b.color}"></span><span class="swatch" style="background:${b.palette.eye}"></span><span class="swatch" style="background:${b.palette.paper}"></span><span>Sáp · mắt · giấy</span>`;
  paint($('#expression-stage'),b);paint($('#group-preview'),b);
  $('#lab-portrait').innerHTML=avatar(b,b.state,'lab-avatar');
@@ -89,6 +97,7 @@ function playLabSequence(){
 $('#open-customize').onclick=()=>{stopLab(false);$('#expression-bot').innerHTML=bots.map(b=>`<option value="${b.id}"${b.id===selectedBot?' selected':''}>${b.name}</option>`).join('');lab.lastChoice=expressionFor(getBot(selectedBot));$('#bot-color').value=getBot(selectedBot).color;buildExpressions();$('#expressions-dialog').showModal();};
 $('#expression-bot').onchange=()=>{stopLab();lab.lastChoice=expressionFor(getBot($('#expression-bot').value));$('#bot-color').value=getBot($('#expression-bot').value).color;buildExpressions();};
 $('#bot-color').oninput=e=>(window.ThycaShell||window.ThycaPrototype)?.setBotColor($('#expression-bot').value,e.target.value);
+$('#shape-picker').addEventListener('click',e=>{const btn=e.target.closest('[data-shape]');if(!btn)return;const id=$('#expression-bot').value;if((window.ThycaShell||window.ThycaPrototype)?.setBotShape(id,btn.dataset.shape))buildExpressions();});
 
 ['#expression-grid','#expression-extras'].forEach(selector=>$(selector).addEventListener('click',e=>{const button=e.target.closest('button[data-expression]');if(button)chooseExpression(button.dataset.expression);}));
 $('#lab-play').onclick=playLabSequence;$('#lab-replay').onclick=()=>lab.idleTab?chooseIdle(lab.lastIdle):chooseExpression(lab.lastChoice);$('#lab-stop').onclick=()=>stopLab();

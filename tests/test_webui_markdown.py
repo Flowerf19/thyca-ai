@@ -564,9 +564,10 @@ def test_shared_sidebar_renders_team_and_groups() -> None:
 
     chat = (UI / "chat" / "index.html").read_text(encoding="utf-8")
 
-    # Roster cards render into the shell's sidebar markup.
+    # Roster cards render into the shell's sidebar markup, pinned-first
+    # via teamDisplayOrder (TASK B: star = pin to top, bots array untouched).
     assert 'id="team-bot-list"' in shell
-    assert "bots.map(card)" in sidebar
+    assert "teamDisplayOrder().map(card)" in sidebar
     assert "bot-card" in sidebar
 
     # Group rows still render — but only where a #group-list exists. The

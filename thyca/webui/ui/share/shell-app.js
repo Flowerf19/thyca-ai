@@ -111,6 +111,22 @@ function initShellApp() {
       if ($('#expressions-dialog').open) buildExpressions();
       return true;
     },
+    /* Browser-only shape override, mirroring setBotColor. Patches every
+       existing avatar instance in place: the silhouette path `d` and the
+       data-drop-shape hook (face offsets follow via CSS). Classes,
+       states and animations are untouched. */
+    setBotShape(id, shape) {
+      if (!DROP_NAMES.includes(shape) || !getBot(id)) return false;
+      const b = getBot(id); b.shape = shape; localStorage.setItem('thyca.shape.' + id, shape);
+      const d = dropShapeFor(b).d;
+      $$('[data-bot-avatar="' + id + '"]').forEach(el => {
+        el.setAttribute('data-drop-shape', shape);
+        el.querySelectorAll('.base defs path').forEach(p => {
+          if (String(p.getAttribute('id') || '').endsWith('-body')) p.setAttribute('d', d);
+        });
+      });
+      return true;
+    },
     getState() { return bots.map(b => ({ id: b.id, state: b.state, expression: expressionFor(b), color: b.color, open: b.open, elapsed: b.elapsed, idle: { activity: b.idle.active, comment: b.idle.comment } })); },
     getGroupActivity() { return activeGroup ? { groupId: activeGroup.id, speaker: activeGroup.speaker, startedAt: activeGroup.start } : null; },
   };

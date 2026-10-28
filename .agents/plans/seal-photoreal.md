@@ -1,10 +1,15 @@
 ---
-status: in-progress-approved 2026-10-28 (user duyệt: hướng 3 + giữ nguyên biểu cảm; lead làm mẫu TASK-001 trước)
+status: abandoned
 created: 2026-10-28
 last_updated: 2026-10-28
 ---
 
 # Con dấu sáp photoreal (giữ nguyên biểu cảm nhân vật)
+
+> **Superseded 2026-10-28:** user đã chốt thay toàn bộ avatar bằng
+> giọt mực 2.5D. Hướng triển khai hiện hành nằm ở
+> `.agents/plans/ink-drop-25d.md`; file này chỉ giữ lịch sử prototype
+> và đánh giá các phương án sáp.
 
 ## Goal
 
@@ -67,6 +72,40 @@ mà lượn theo dòng chảy, họa tiết khắc có bóng đổ trong rãnh.
   sửa → test xanh → verify, commit riêng), sau đó mới giao các task
   còn lại cho subagent kèm brief chi tiết + commit mẫu + checklist
   nghiệm thu; lead review diff thật sau mỗi lần giao.
+- Bổ sung (user, 2026-10-28): **không neo vào thiết kế hiện tại**.
+  Nếu đánh giá trực quan cho thấy biểu cảm/hình mắt/cấu trúc hiện
+  tại không ổn, được phép thay đổi để nhìn tốt hơn — kể cả làm lại
+  cấu trúc mắt. Ảnh chụp màn hình do user gửi cho thấy lỗi hiện tại:
+  quầng sáng quanh mắt quá dày làm mắt trông như dán lên, hai vòng
+  tròn đồng tâm tạo cảm giác "bia ngắm" nổi trên mặt sáp phẳng.
+  Quyết định thiết kế phải dựa trên render so sánh ở kích thước
+  thật (154/65/52/30px) trên nhiều tint, không dựa trên việc code
+  cũ đang tổ chức thế nào. Giới hạn còn giữ: hợp đồng *chức năng*
+  với app (`data-state`/`data-idle`, trạng thái làm việc, tint tất
+  định theo bot) — đó là giao diện lập trình, không phải thẩm mỹ.
+- Bổ sung mật độ chi tiết (user, 2026-10-28): sáp thật có nhiều lớp
+  chi tiết chồng nhau, nên bản mẫu không dừng ở vài vòng/gờ cơ bản.
+  Lead đã render thêm mức **G — giàu chi tiết** và chọn làm cơ sở
+  tích hợp: khung oval nhiều tầng, dây thừng + hạt cườm có cặp
+  sáng/tối, hoa văn đỉnh/đế, lá hai bên, hạt kim cương bốn góc,
+  nhánh nguyệt quế dưới mặt, guilloche/tia khắc mờ sau mặt, các vệt
+  chảy theo múi sáp, vũng sáng/tối, hạt nhũ và vết xước ngắn. Các
+  chi tiết siêu nhỏ phải nằm trong một lớp riêng để ẩn ở avatar
+  30–34px; ở 52px trở lên chúng chỉ tạo texture, không tranh chấp
+  với mắt/miệng.
+- Prototype đối chứng **Giọt mực 2.5D** (user yêu cầu thử,
+  2026-10-28): đã render ngoài repo tại `/tmp/seal-proto/`
+  (`proto-drop.html`, `drop-25d.png`, `drop-parallax.png`). H1 là
+  giọt bóng tối giản; H2 thêm rãnh, grain và giọt vệ tinh; H3 dùng
+  mắt kem trơn đúng board. Lead đánh giá H3 làm mất gaze và trông
+  rỗng như lỗ sáng, còn H2 giữ nguyên `sealFace`, gaze/blink và
+  chín trạng thái hiện có. Không dùng 3D/WebGL: avatar xuất hiện
+  đồng thời ở nhiều instance, đổi tint động và phải chạy cùng
+  Expression Studio/reduced-motion. Bản 2.5D dùng bốn mặt phẳng
+  SVG độc lập — bóng tiếp xúc, thân, rãnh/rim (`--well-x/y`),
+  specular (`--hi-x/y`) và mặt (`--par-x/y`) — bám đúng cơ chế
+  parallax sẵn có. Việc thay hẳn con dấu sáp bằng giọt mực hay giữ
+  nó như một variant vẫn chờ user chốt; chưa tích hợp vào app.
 
 ## Phản hồi từ agent khác (2026-10-28) và đánh giá của lead
 
@@ -139,26 +178,28 @@ dùng một ảnh sáp trung tính (grayscale) làm lớp multiply lên trên n�
 `--bot-color`, thay vì ảnh màu hoàn chỉnh.
 
 Chi tiết lớp sáp mới (trong `waxMarkup`/`avatars.css`, gồm các điểm
-tiếp thu ở trên):
-1. Thân sáp: giữ `WAX_PATHS` (hình đổ sáp hiện tại đã hữu cơ), thêm
-   một path viền ngoài thứ hai hơi lệch để tạo mép chảy hai tầng
-   (ý tưởng "scalloped rim"; không đổi bộ path theo bot).
-2. Chất liệu: gradient đổ bóng theo hướng sáng trên–trái cố định
-   (giống ảnh chụp), một vệt specular hẹp cong theo thân sáp
-   (thay cho radial `waxHl` tròn đều hiện tại), bóng tiếp xúc
-   ngắn-đậm ở chân sáp để sáp "ngồi" lên giấy, và ánh nhũ suy từ
-   `--bot-highlight`/`--bot-stamp` của từng bot.
-3. Vành khắc 3 tầng: rãnh hào tối (mới) → gờ chỉ bắt sáng
-   (`.wax-ring-hi`) → lòng dấu trung gian; giữ nguyên vai trò emboss
-   và parallax (`--well-x/y`, `--hi-x/y`). Thêm vòng hạt cườm nổi
-   quanh lòng dấu (verify cỡ nhỏ). `.wax-notch` giữ nguyên (vành quỹ
-   đạo/trạng thái) — không biến beaded ring thành vòng xoay trạng
-   thái mới.
-4. Mắt phù điêu: thêm viền gờ sáng cạnh dưới cho đôi mắt hiện tại;
-   hình dạng, con ngươi, mí, chớp/liếc giữ nguyên 100%.
-5. Không đổi: cấu trúc `sealFace` còn lại, mọi selector trạng thái
-   trong `avatars.css`, JS trạng thái, kích thước ở từng vị trí hiển
-   thị, `seal-brow` hiện tại (đã có sẵn vai trò chân mày).
+tiếp thu ở trên), tổ chức theo ba tầng đọc được ở từng kích thước:
+1. **Tầng vĩ mô — mọi kích thước:** thân sáp giữ `WAX_PATHS`, thêm
+   lớp skirt lệch/xoay nhẹ để tạo mép chảy hai tầng; bóng tiếp xúc
+   ngắn-đậm ở chân sáp; hướng sáng trên–trái; specular cong nhưng
+   đứt đoạn theo múi sáp thay cho radial `waxHl` tròn đều.
+2. **Tầng khung dập — chính ở 52px trở lên:** lòng dấu oval lõm,
+   rãnh hào tối ở cạnh trên, gờ chỉ bắt sáng ở cạnh dưới, vòng dây
+   thừng và vòng hạt cườm có cặp hạt tối/sáng lệch nhau, hoa văn
+   cuộn ở đỉnh/đế, lá nhỏ hai bên và hạt kim cương ở bốn góc.
+   `.wax-notch` vẫn là vành quỹ đạo/trạng thái riêng — không biến
+   beaded ring thành vòng xoay trạng thái mới.
+3. **Tầng vi chi tiết — ẩn ở 30–34px:** vũng sáp sáng/tối, guilloche
+   và tia khắc mờ sau mặt, nhánh nguyệt quế dưới má, hạt nhũ sáng/
+   tối và vết xước ngắn. Gom trong `.wax-micro` để các ngữ cảnh nhỏ
+   đã biết (exchange 30px, check 34px) tắt cả lớp; group stack được
+   giảm opacity thay vì thêm markup theo kích thước.
+4. Mắt phù điêu theo prototype C/G: hốc mắt viên thuốc tối, rãnh
+   tối ở cạnh trên, gờ sáng nhỏ ở cạnh dưới và glint nằm trong
+   `.seal-pupils` để gaze/blink/idle vẫn dùng cơ chế hiện có. Mày
+   là hoa văn dập hai lớp (rãnh tối + gờ sáng, có chấm đầu cuộn) và
+   miệng nghỉ cũng là rãnh + gờ sáng; trạng thái vẫn điều khiển
+   bằng `data-state`/`data-idle` hiện tại.
 
 Ngoài phạm vi: không thêm họa tiết khắc riêng cho từng bot (hướng 2
 đã không chọn); không đổi palette/tint logic; không đổi layout
@@ -168,18 +209,21 @@ cảm (mắt Grok/bảng trạng thái mới) — nếu muốn, làm plan riêng
 
 ## Tasks
 
-- [ ] TASK-001 (lead làm mẫu; prereq cho mọi task sau): Lớp sáp mới
-      trong `waxMarkup`/`avatars.css` — mép chảy hai tầng, đổ bóng
-      theo hướng sáng, specular cong, bóng tiếp xúc chân sáp, vành
-      khắc 3 tầng (rãnh → gờ sáng → lòng dấu), vòng hạt cườm, viền
-      gờ sáng cho mắt (phù điêu). Giữ nguyên hợp đồng DOM/biến CSS
-      nêu trên và cấu trúc mặt. Viết test cấu trúc trước (markup chứa
-      lớp mới, vẫn đủ `.wax-ring`/`.wax-notch`/mặt/con ngươi), chạy
-      đỏ → xanh; tự verify bằng mắt ở 52px (sidebar), 30px (header)
-      và 154px (stage-portrait qua Expression Studio) — vòng hạt
-      cườm phải đọc được ở cỡ nhỏ, nếu không thì rút gọn/bỏ ở cỡ
-      nhỏ bằng CSS theo kích thước. Commit riêng làm chuẩn cho
-      subagent.
+- [ ] TASK-001 (lead làm mẫu; prereq cho mọi task sau): Đã dựng
+      prototype so sánh ngoài repo (A hiện tại / B tiến hoá / C–D mắt
+      dập / E giàu chi tiết / G thêm guilloche, dây thừng, nguyệt
+      quế và kim cương / F cổ-mờ), render ở 260/154/65/52/30px trên
+      nhiều tint. Lead chọn **G làm cơ sở** vì ở 260px có chiều sâu
+      dập rõ nhất mà ở 65/52px mặt vẫn là điểm đọc đầu tiên; F gần
+      như không khác E ở cỡ thật nên không chọn. Tích hợp G vào
+      `waxMarkup`/`sealFace`/`avatars.css` theo ba tầng chi tiết ở
+      trên và `.wax-micro` cho cỡ nhỏ. Giữ hợp đồng chức năng
+      (`data-state`/idle/tint); cấu trúc DOM của mặt được phép thay
+      nếu hướng được chọn cần, kèm cập nhật CSS/test tương ứng.
+      Viết test cấu trúc trước, chạy đỏ → xanh; verify bằng mắt ở
+      52px (sidebar), 30px (header) và 154px (stage-portrait qua
+      Expression Studio). Chưa commit/delegate cho tới khi user
+      duyệt mắt bản tích hợp.
 - [ ] TASK-002 (subagent, sau khi TASK-001 được duyệt mắt): Kiểm tra
       chéo mọi kích thước hiển thị (30/42–46/52/76–92/85/154px) và mọi
       trạng thái (`primaryStates` + `extraStates` + idle) qua

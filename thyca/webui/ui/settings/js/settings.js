@@ -50,7 +50,7 @@ workspace.insertAdjacentHTML('beforeend', `
  <section class="paper-card" id="bots-card" aria-labelledby="bots-title">
   <div class="eyebrow">Đội bot</div>
   <h2 class="card-title" id="bots-title">Những người bạn trong đội</h2>
-  <p class="card-copy">Danh sách chỉ đọc — thêm hay chỉnh bot qua trò chuyện với Thyca, đổi màu con dấu ở “Custom bot” bên thanh đội.</p>
+  <p class="card-copy">Danh sách chỉ đọc — thêm hay chỉnh bot qua trò chuyện với Thyca, đổi màu và hình dạng giọt mực ở “Custom bot” bên thanh đội.</p>
   <div class="bot-roster" id="bot-roster"><p class="empty-note">Đang tải đội bot…</p></div>
  </section>
 
@@ -62,7 +62,7 @@ workspace.insertAdjacentHTML('beforeend', `
    <label class="field" for="pref-type-scale"><span>Cỡ chữ</span>
     <select id="pref-type-scale"><option value="small">Nhỏ</option><option value="medium">Vừa</option><option value="large">Lớn</option></select>
    </label>
-   <label class="checkbox-row" for="pref-reduce-motion"><input type="checkbox" id="pref-reduce-motion"><span>Giảm chuyển động — dừng nhịp thở và cử chỉ rảnh của con dấu</span></label>
+   <label class="checkbox-row" for="pref-reduce-motion"><input type="checkbox" id="pref-reduce-motion"><span>Giảm chuyển động — dừng nhịp thở và cử chỉ rảnh của giọt mực</span></label>
    <label class="checkbox-row" for="pref-ornaments"><input type="checkbox" id="pref-ornaments"><span>Hiển thị họa tiết trang trí trên trang</span></label>
   </div>
   <div class="form-footer"><button type="button" class="quiet-button" id="pref-reset">Về mặc định</button></div>

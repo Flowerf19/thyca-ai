@@ -85,6 +85,11 @@ function normalizeBot(card, index) {
   const hex = localStorage.getItem('thyca.tint.' + card.id)
     || TINT_HEX[card.tint]
     || TINT_HEX[TINT_ORDER[index % TINT_ORDER.length]];
+  /* Browser-only shape override, mirroring the tint override above.
+     DROP_NAMES is owned by avatars.js; call-time reference is safe
+     because normalizeBot only runs after all scripts have loaded. */
+  const shapeRaw = localStorage.getItem('thyca.shape.' + card.id);
+  const shape = (typeof DROP_NAMES !== 'undefined' && DROP_NAMES.includes(shapeRaw)) ? shapeRaw : null;
   return {
     id: card.id,
     name: card.name || card.id,
@@ -92,6 +97,7 @@ function normalizeBot(card, index) {
     description: card.description || '',
     color: hex,
     tint: card.tint || 'accent',
+    shape,
     palette: derivePalette(hex),
     state: botStateFrom(card),
     elapsed: botElapsed(card),
@@ -153,7 +159,7 @@ async function syncRoster() {
     const cur = getBot(raw.id);
     if (!cur) { bots.push(normalizeBot(raw, i)); changed = true; return; }
     const next = normalizeBot(raw, i);
-    ['name', 'role', 'description', 'color', 'tint', 'palette', 'capabilities', 'persona', 'tools', 'memory', 'system', 'model', 'bash', 'schedule'].forEach(k => { cur[k] = next[k]; });
+    ['name', 'role', 'description', 'color', 'tint', 'shape', 'palette', 'capabilities', 'persona', 'tools', 'memory', 'system', 'model', 'bash', 'schedule'].forEach(k => { cur[k] = next[k]; });
     if (!botHasRun(cur.id)) { cur.state = next.state; cur.summary = next.summary; cur.elapsed = next.elapsed; }
   });
   for (let i = bots.length - 1; i >= 0; i--) if (!ids.has(bots[i].id)) { bots.splice(i, 1); changed = true; }

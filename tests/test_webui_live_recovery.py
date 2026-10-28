@@ -150,6 +150,7 @@ result.stopped = {
   liveNodes: liveNodes(),
   doneVisible: listText().includes('done A'),
   cardState: ui.bots[0].state,
+  feed: ui.bots[0].feed.filter(f => !f.exiting).map(f => ({ kind: f.kind, text: f.text, done: !!f.done })),
 };
 console.log(JSON.stringify(result));
 """
@@ -209,3 +210,12 @@ def test_terminal_event_releases_everything(recovery: dict) -> None:
     assert recovery["stopped"]["liveNodes"] == 0
     assert recovery["stopped"]["doneVisible"] is True
     assert recovery["stopped"]["cardState"] == "done"
+
+
+def test_refollow_completion_upgrades_write_only_at_terminal(recovery: dict) -> None:
+    """POCKET-003: a re-joined (replay) turn settles the pocket feed with
+    the same text contract as a live turn — the replayed tail is only
+    upgraded to 'sent' by the terminal turn.completed, never earlier."""
+    assert recovery["stopped"]["feed"] == [
+        {"kind": "write", "text": "đã gửi phản hồi", "done": True}
+    ]

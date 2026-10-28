@@ -235,16 +235,23 @@ async function renderExchangeGroups(detail) {
   if (!list) return;
   for (const p of partners) {
     if (!p || !p.partner) continue;
+    if (p.partner === owner) continue;   // defensive: an owner is never its own partner
     const name = peerDisplayName(p.partner);
+    const partnerBot = getBot(p.partner);
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'exchange-group';
+    btn.dataset.exchangeOwner = owner;
     btn.dataset.exchangePartner = p.partner;
-    btn.setAttribute('aria-label', `${p.count} messages with ${name}`);
+    /* Paint the pill with the partner palette (neutral var fallbacks in
+       chat.css keep unknown/ghost partners readable). Inline custom
+       properties win over the fallback without touching classes. */
+    if (partnerBot) btn.setAttribute('style', paletteStyle(partnerBot));
+    btn.setAttribute('aria-label', `${p.count} tin nhắn với ${name}`);
     const when = p.last_ts
       ? `<time class="exchange-group-time" datetime="${escapeHTML(String(p.last_ts))}">${escapeHTML(fmtTime(p.last_ts))}</time>`
       : '';
-    btn.innerHTML = `${botFace(p.partner)}<span><strong>${escapeHTML(String(p.count))} messages</strong> with ${escapeHTML(name)}</span>${when}`;
+    btn.innerHTML = `${botFace(p.partner)}<span><strong>${escapeHTML(String(p.count))} tin nhắn</strong> với ${escapeHTML(name)}</span>${when}`;
     btn.addEventListener('click', () => openExchangeModal(owner, p.partner));
     const lastTs = String(p.last_ts || '');
     let before = null;
@@ -465,17 +472,32 @@ function feedExit(b, f) {
 }
 /* Last entry that still counts for continuation — exiting ghosts are invisible. */
 function feedLast(b) { return (b.feed || []).filter(f => !f.exiting).at(-1); }
-function feedDone(b, match) { for (let i = b.feed.length - 1; i >= 0; i--) { const f = b.feed[i]; if (!f.done && match(f)) { f.done = true; if (f.kind === 'write') f.text = 'đã gửi phản hồi'; } } }
-function feedSettle(b) { (b.feed || []).forEach(f => { if (!f.done) { f.done = true; if (f.kind === 'write') f.text = 'đã gửi phản hồi'; } }); updateCard(b); }
+function settleFeedText(f, final = false) {
+  if (f.kind === 'think') f.text = 'đã suy nghĩ';
+  if (f.kind === 'write') f.text = final ? 'đã gửi phản hồi' : 'đã viết một phần';
+}
+function feedDone(b, match) { for (let i = b.feed.length - 1; i >= 0; i--) { const f = b.feed[i]; if (!f.done && match(f)) { f.done = true; settleFeedText(f); } } }
+function feedSettle(b, final = false) {
+  let lastWrite = null;
+  (b.feed || []).forEach(f => {
+    if (f.kind === 'write' && !f.exiting) lastWrite = f;
+    if (!f.done) { f.done = true; settleFeedText(f); }
+  });
+  if (final && lastWrite) settleFeedText(lastWrite, true);
+  updateCard(b);
+}
 /* Aggregated tools line per block: "đã dùng edit, bashx3, rememberx2" —
    only folds into the LAST entry; a tool after a new Thinking row starts
    a fresh line below it. */
+function feedToolText(counts, done) {
+  const names = [...counts.keys()].slice(-3);
+  return (done ? 'đã dùng ' : 'đang dùng ') + names.map(n => counts.get(n) > 1 ? `${n} · ${counts.get(n)} lần` : n).join(', ');
+}
 function feedTools(b) {
   const counts = b.toolCounts || new Map();
-  const names = [...counts.keys()].slice(-3);
-  const text = 'đã dùng ' + names.map(n => counts.get(n) > 1 ? n + 'x' + counts.get(n) : n).join(', ');
-  const last = feedLast(b);
   const done = (b.toolRunning || 0) === 0;
+  const text = feedToolText(counts, done);
+  const last = feedLast(b);
   if (last && last.kind === 'tools') { last.text = text; last.done = done; updateCard(b); }
   else feedPush(b, { kind: 'tools', text, done });
 }
@@ -496,10 +518,11 @@ function handleStreamEvent(token, ev) {
       setState(botId, 'thinking');
       if (fb) {
         const last = feedLast(fb);
-        // Consecutive think rounds (nothing pushed between) fold into "ThinkingxN".
+        // Consecutive think rounds (nothing pushed between) fold into one
+        // timeline row; syncFeedList renders n as a quiet count badge.
         if (last && last.kind === 'think') {
-          if (last.done) { last.n = (last.n || 1) + 1; last.done = false; last.text = 'Thinkingx' + last.n; updateCard(fb); }
-        } else feedPush(fb, { kind: 'think', text: 'Thinking', n: 1, cls: 'li-think' });
+          if (last.done) { last.n = (last.n || 1) + 1; last.done = false; last.text = 'đang suy nghĩ'; updateCard(fb); }
+        } else feedPush(fb, { kind: 'think', text: 'đang suy nghĩ', n: 1, cls: 'li-think' });
       }
       break;
     }
@@ -521,7 +544,7 @@ function handleStreamEvent(token, ev) {
     }
     case 'tool.finished': case 'skill.finished':
       setState(botId, 'thinking');
-      if (fb) { fb.toolRunning = Math.max(0, (fb.toolRunning || 0) - 1); const lastT = feedLast(fb); if (!fb.toolRunning && lastT && lastT.kind === 'tools') lastT.done = true; updateCard(fb); }
+      if (fb) { fb.toolRunning = Math.max(0, (fb.toolRunning || 0) - 1); const lastT = feedLast(fb); if (!fb.toolRunning && lastT && lastT.kind === 'tools') { lastT.done = true; lastT.text = feedToolText(fb.toolCounts || new Map(), true); } updateCard(fb); }
       // Admin tools may have added/removed/renamed a bot — re-sync the roster.
       if (/^bot_(create|pause|delete|restore|edit_card)$/.test(ev.name || '')) scheduleRosterSync();
       break;
@@ -553,7 +576,7 @@ function handleStreamEvent(token, ev) {
       break;
     }
     case 'session.naming.finished': if (ev.title && token.sessionId === currentSession) $('#chat-title').textContent = ev.title; break;
-    case 'turn.completed': token.phase = 'settled'; if (fb) feedSettle(fb); finishTurn(token, ev.detail); break;
+    case 'turn.completed': token.phase = 'settled'; if (fb) feedSettle(fb, true); finishTurn(token, ev.detail); break;
     case 'turn.cancelled': token.phase = 'settled'; if (fb) feedSettle(fb); cancelTurn(token, 'Đã dừng lượt trả lời.', 'đã dừng'); setState(botId, 'idle'); break;
     case 'turn.failed': token.phase = 'settled'; if (fb) feedSettle(fb); cancelTurn(token, ev.message || 'Lượt trả lời gặp lỗi.', 'gặp lỗi'); setState(botId, 'error'); break;
     case 'llm.retry': toast(`Đang thử lại (${ev.attempt}/${ev.max_attempts})…`); break;

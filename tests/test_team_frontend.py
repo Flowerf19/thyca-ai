@@ -760,33 +760,75 @@ def test_avatar_markup_contract(node: str) -> None:
         return { html };
     """)
     html = out["html"]
-    assert 'class="seal-avatar mk mk-wax' in html
+    assert 'class="seal-avatar mk mk-drop' in html
     assert 'data-bot-avatar="coder"' in html
+    assert 'data-drop-shape="cloud"' in html
     assert 'data-state="idle"' in html
     assert 'data-expression="idle"' in html
     assert 'data-selected="true"' in html
     assert "--bot-color:" in html and "--bot-ink:" in html
     assert 'class="seal-motion"' in html and 'class="seal-face"' in html
-    body = re.search(r'<path id="(wax\d+-body)" d="([^"]+)"', html)
+    body = re.search(r'<path id="(drop\d+-body)" d="([^"]+)"', html)
     assert body, "exactly one namespaced body path"
     assert html.count(body.group(2)) == 1          # the d appears once: data, not markup
-    assert len(re.findall(r'<use href="#' + body.group(1) + r'"', html)) >= 3  # body+shade+highlight
-    assert not re.search(r'wax\d+-wx["(]', html)  # orphan wax clip gone with the sheen rect (eye-clip stays)
-    uses = re.findall(r'href="#(wax\d+-body)"', html)
+    assert len(re.findall(r'<use href="#' + body.group(1) + r'"', html)) >= 4  # body+shade+edge+clip
+    uses = re.findall(r'href="#(drop\d+-body)"', html)
     assert uses and all(u == body.group(1) for u in uses)  # every use resolves to the one defs path
-    assert 'class="glyph"' not in html and 'wax-sheen' not in html and 'wax-crack' not in html
+    assert 'class="glyph"' not in html and 'wax-' not in html
     assert 'aria-hidden="true"' in html
 
 
+def test_avatar_ink_drop_material_face_and_hands(node: str) -> None:
+    """2.5D ink-drop layers + stamped pill eyes (seal-photoreal TASK-001,
+    superseded by the user-approved ink-drop direction): contact/depth/
+    shine planes and two droplet hands ride the one body path, while the
+    face keeps its state hooks (pupils group for gaze, brows, mouths)
+    with every generated id namespaced exactly once."""
+    out = _run(node, """
+        bots.length = 0;
+        bots.push(...roster([{ id: 'coder', name: 'Coder' }]));
+        const html = avatar(bots[0]);
+        const html2 = avatar(bots[0]);
+        return { html, html2 };
+    """)
+    html = out["html"]
+    for cls in ("drop-body", "drop-edge", "drop-contact", "drop-depth",
+                "drop-shine", "drop-orbit", "drop-grain-hi", "drop-hands",
+                "drop-hand-l", "drop-hand-r"):
+        assert f'class="{cls}' in html or f' {cls}' in html, cls
+    assert html.count('class="drop-hand') >= 2     # two droplet hands
+    body = re.search(r'<path id="(drop\d+-body)" d="([^"]+)"', html)
+    assert body and html.count(body.group(2)) == 1
+    assert len(re.findall(r'href="#' + body.group(1) + r'"', html)) >= 4
+    ids = re.findall(r'id="(drop\d+-[a-z-]+)"', html)
+    assert len(ids) == len(set(ids)), ids
+    ids2 = re.findall(r'id="(drop\d+-[a-z-]+)"', out["html2"])
+    assert not set(ids) & set(ids2)          # per-instance namespace
+    # Stamped face: dark pill sockets, glints riding the pupils group
+    # (gaze), ornamental brows split left/right, a resting mouth.
+    assert html.count('class="seal-sock') + html.count("seal-sock ") >= 2
+    assert 'class="seal-pupils"' in html and "seal-glint" in html
+    assert 'class="brow-left"' in html and 'class="brow-right"' in html
+    assert 'class="seal-mouth-rest"' in html
+    css = AVATARS_CSS.read_text()
+    for sel in (".drop-body{", ".drop-contact{", ".drop-depth{", ".drop-shine{",
+                ".drop-orbit{", ".drop-hand{", ".drop-hand-l", ".drop-hand-r",
+                ".seal-sock{", ".seal-glint{", ".seal-brow", ".seal-mouth-rest",
+                "[data-state=done] .drop-hand-l", "[data-state=working] .drop-hand"):
+        assert sel in css, sel
+    assert "wax-" not in css and "--bot-deep" not in css  # palette vars only
+
+
 def test_avatar_body_is_id_stable_and_expression_follows_mention(node: str) -> None:
-    """The wax body is picked deterministically from the immutable id; a
-    mentioned bot renders data-expression=mention without changing state."""
+    """The ink-drop body is picked deterministically from the immutable
+    id; a mentioned bot renders data-expression=mention without changing
+    state."""
     out = _run(node, """
         bots.length = 0;
         bots.push(...roster([{ id: 'coder' }, { id: 'researcher' }]));
-        const bodyOf = (h) => (h.match(/<path id="wax[0-9]+-body" d="([^"]+)"/) || [])[1];
-        const idOf = (h) => (h.match(/<path id="(wax[0-9]+-body)"/) || [])[1];
-        const useCount = (h) => { const m = h.match(/<path id="(wax[0-9]+-body)"/); return m ? h.split('href="#' + m[1] + '"').length - 1 : 0; };
+        const bodyOf = (h) => (h.match(/<path id="drop[0-9]+-body" d="([^"]+)"/) || [])[1];
+        const idOf = (h) => (h.match(/<path id="(drop[0-9]+-body)"/) || [])[1];
+        const useCount = (h) => { const m = h.match(/<path id="(drop[0-9]+-body)"/); return m ? h.split('href="#' + m[1] + '"').length - 1 : 0; };
         const a1 = avatar(bots[0]);
         const a2 = avatar(bots[0]);
         const other = avatar(bots[1]);
@@ -805,7 +847,7 @@ def test_avatar_body_is_id_stable_and_expression_follows_mention(node: str) -> N
     assert out["stable"] is True
     assert out["distinct"] is True                     # coder and researcher keep their own bodies
     assert out["unique"] is True                      # every render gets its own namespaced ids
-    assert out["uses"] >= 3                             # one path, shared by <use> layers
+    assert out["uses"] >= 4                             # one path, shared by <use> layers
     assert 'data-state="waiting"' in out["listening"]    # stateAliases listening->waiting
     assert 'data-expression="mention"' in out["mentioned"]
 
@@ -1069,6 +1111,75 @@ def test_render_team_and_group_rows_markup(node: str) -> None:
     assert 'class="group-meta"' in group and "2 người bạn · 4 lượt" in group
 
 
+def test_pinned_bots_render_first_stable(node: str) -> None:
+    """TASK B: sidebar display order is pinned-first (system Thyca always
+    pinned), stable inside pinned and unpinned groups; the underlying
+    `bots` array order never changes."""
+    out = _run(node, """
+        localStorage.clear();
+        localStorage.setItem('thyca.favorites', JSON.stringify(['helper']));
+        bots.length = 0;
+        bots.push(...roster([
+            { id: 'a', name: 'A' },
+            { id: 'thyca', name: 'Thyca', system: true },
+            { id: 'helper', name: 'Helper' },
+            { id: 'b', name: 'B' },
+        ]));
+        renderTeam();
+        const team = $('#team-bot-list').innerHTML;
+        const idx = (id) => team.indexOf('id="bot-' + id + '"');
+        return { thyca: idx('thyca'), helper: idx('helper'), a: idx('a'), b: idx('b'),
+                 roster: bots.map(b => b.id) };
+    """)
+    assert 0 <= out["thyca"] < out["helper"] < out["a"] < out["b"]
+    assert out["roster"] == ["a", "thyca", "helper", "b"]
+
+
+def test_star_click_pins_card_to_top_in_place(node: str) -> None:
+    """TASK B: starring moves the existing card node into the pinned group
+    immediately (node identity preserved, no full rerender); unstarring
+    restores its stable slot; `bots` order is untouched."""
+    out = _run(node, """
+        localStorage.clear();
+        bots.length = 0;
+        bots.push(...roster([{ id: 'a', name: 'Alpha' }, { id: 'b', name: 'Beta' }]));
+        renderTeam();
+        const list = $('#team-bot-list');
+        list.replaceChildren();
+        const mkCard = (id) => {
+            const cardEl = document.createElement('article');
+            cardEl.className = 'bot-card'; cardEl.dataset.botId = id; cardEl.id = 'bot-' + id;
+            const btn = document.createElement('button'); btn.dataset.action = 'favorite';
+            cardEl.appendChild(btn); list.appendChild(cardEl);
+            return { cardEl, btn };
+        };
+        const a = mkCard('a'), b = mkCard('b');
+        const fire = (btn) => list._handlers.click.forEach(h => h({ target: btn, preventDefault() {} }));
+        const order = () => [...list.children].map(el => el.dataset.botId);
+        const toastText = () => $('#toast').textContent;
+        const initial = order();
+        fire(b.btn);
+        const afterPin = { order: order(), toast: toastText(), sameA: list.children[1] === a.cardEl,
+                           sameB: list.children[0] === b.cardEl, roster: bots.map(x => x.id) };
+        fire(b.btn);
+        const afterUnpin = { order: order(), toast: toastText(), roster: bots.map(x => x.id) };
+        fire(a.btn); fire(b.btn);
+        return { initial, afterPin, afterUnpin, bothPinned: { order: order(), sameA: list.children[0] === a.cardEl,
+                 sameB: list.children[1] === b.cardEl } };
+    """)
+    assert out["initial"] == ["a", "b"]
+    pin = out["afterPin"]
+    assert pin["order"] == ["b", "a"]            # b jumped above a
+    assert pin["sameA"] is True and pin["sameB"] is True  # same nodes moved
+    assert pin["toast"] == "Đã ghim Beta lên đầu."
+    assert pin["roster"] == ["a", "b"]           # data order untouched
+    assert out["afterUnpin"]["order"] == ["a", "b"]   # stable slot restored
+    assert out["afterUnpin"]["toast"] == "Đã bỏ ghim Beta."
+    assert out["afterUnpin"]["roster"] == ["a", "b"]
+    assert out["bothPinned"]["order"] == ["a", "b"]   # pinned group keeps roster order
+    assert out["bothPinned"]["sameA"] is True and out["bothPinned"]["sameB"] is True
+
+
 def test_update_card_patches_state_preview_and_pocket(node: str) -> None:
     """updateCard rewrites the card in place: state/selected attrs, header
     label, whisper comment override, elapsed, aria-expanded and pocket inert."""
@@ -1100,7 +1211,15 @@ def test_update_card_patches_state_preview_and_pocket(node: str) -> None:
             idleFlag: $('.compact-preview', el).dataset.idleComment,
             title: $('.thinking-title', el).textContent,
         };
-        return { working, idle };
+        b.state = 'thinking';
+        b.summary = stateSummaries.thinking;
+        updateCard(b);
+        const generic = {
+            text: $('.thinking-summary', el).textContent,
+            hidden: $('.thinking-summary', el).hidden,
+            title: $('.thinking-title', el).textContent,
+        };
+        return { working, idle, generic };
     """)
     w = out["working"]
     assert w["state"] == "working" and w["open"] == "true" and w["sel"] == "true"
@@ -1114,6 +1233,9 @@ def test_update_card_patches_state_preview_and_pocket(node: str) -> None:
     assert i["whisper"] == "“Khoảng lặng êm.”" and i["whisperCls"] is True
     assert i["preview"] == "“Khoảng lặng êm.”" and i["idleFlag"] == "true"
     assert i["title"] == "Lúc rảnh"
+    # A generic state summary adds nothing under the state heading, so the
+    # pocket hides it; real current actions above still show.
+    assert out["generic"] == {"text": "", "hidden": True, "title": "Đang suy nghĩ"}
 
 
 def test_pocket_state_matrix_reply_action_and_open_invariance(node: str) -> None:
@@ -1173,7 +1295,7 @@ def test_pocket_state_matrix_reply_action_and_open_invariance(node: str) -> None
 def test_feed_window_keyed_reconcile_and_tools_aggregation(node: str) -> None:
     """The pocket feed shows the last 3 live entries; older ones exit with a
     fade then drop; tool calls aggregate into one 'đã dùng' line and repeated
-    think rounds fold into 'ThinkingxN'."""
+    think rounds fold into one row rendered with a count badge."""
     out = _run(node, """
         bots.length = 0;
         bots.push(...roster([{ id: 'a' }]));
@@ -1181,10 +1303,10 @@ def test_feed_window_keyed_reconcile_and_tools_aggregation(node: str) -> None:
         const list = document.createElement('ol');
         list.className = 'progress-list';
         document.body.appendChild(list);
-        feedPush(b, { kind: 'think', text: 'Thinking', n: 1, cls: 'li-think' });
-        feedPush(b, { kind: 'tools', text: 'đã dùng bash', done: false });
+        feedPush(b, { kind: 'think', text: 'đang suy nghĩ', n: 1, cls: 'li-think' });
+        feedPush(b, { kind: 'tools', text: 'đang dùng bash', done: false });
         feedPush(b, { kind: 'write', text: 'đang viết phản hồi', done: false });
-        feedPush(b, { kind: 'think', text: 'Thinking', n: 1, cls: 'li-think' });
+        feedPush(b, { kind: 'think', text: 'đang suy nghĩ', n: 1, cls: 'li-think' });
         feedPush(b, { kind: 'note', text: 'extra', done: false });
         updateCard(b); syncFeedList(b, list);
         const items = $$('li', list).map(li => ({ text: li.innerHTML, cls: li.className, eid: li.dataset.eid }));
@@ -1193,6 +1315,10 @@ def test_feed_window_keyed_reconcile_and_tools_aggregation(node: str) -> None:
         b.toolRunning = 0;
         feedTools(b); syncFeedList(b, list);
         const toolsLine = feedLast(b);
+        const foldedThink = b.feed.find(f => f.kind === 'think' && !f.exiting);
+        foldedThink.n = 2;
+        syncFeedList(b, list);
+        const thinkHtml = $$('li', list).map(li => li.innerHTML).find(h => h.includes('feed-count')) || '';
         // identical re-render keeps node identity
         const before = $$('li', list);
         syncFeedList(b, list);
@@ -1202,17 +1328,19 @@ def test_feed_window_keyed_reconcile_and_tools_aggregation(node: str) -> None:
         feedExit(b, victim);
         const exitingStill = b.feed.includes(victim);
         await tick(500);
-        return { items, toolsLine, same, exitingStill, spliced: !b.feed.includes(victim) };
+        return { items, toolsLine, thinkHtml, same, exitingStill, spliced: !b.feed.includes(victim) };
     """, via="chat")
     # the pocket window keeps the last 3 alive entries; the evicted think row
     # renders a while longer with its li-exit fade before dropping out
     kinds = [i["text"] for i in out["items"]]
-    assert any("đã dùng bash" in t for t in kinds)
+    assert any("đang dùng bash" in t for t in kinds)
     assert any("đang viết phản hồi" in t for t in kinds)
     assert any("extra" in t for t in kinds)
-    assert any("Thinking" in t for t in kinds)
+    assert any("đang suy nghĩ" in t for t in kinds)
     assert any("li-exit" in i["cls"] for i in out["items"])
-    assert out["toolsLine"]["text"] == "đã dùng bashx2, edit" and out["toolsLine"]["done"] is True
+    assert out["toolsLine"]["text"] == "đã dùng bash · 2 lần, edit" and out["toolsLine"]["done"] is True
+    assert 'class="feed-count">×2<' in out["thinkHtml"]
+    assert 'class="step-mark"' in out["thinkHtml"]
     assert out["same"] is True
     assert out["exitingStill"] is True and out["spliced"] is True
 
@@ -1303,6 +1431,139 @@ def test_team_list_click_delegates_card_actions(node: str) -> None:
     assert out["stored"] == ["a"]
 
 
+def test_bot_shape_preference_normalizes_and_overrides(node: str) -> None:
+    """TASK C: localStorage `thyca.shape.<id>` carries a valid DROP_NAMES value
+    onto normalizeBot; invalid values fall back to null so dropShapeFor
+    keeps its deterministic silhouette."""
+    out = _run(node, """
+        localStorage.clear();
+        localStorage.setItem('thyca.shape.coder', 'squat');
+        localStorage.setItem('thyca.shape.bogus', 'blob');
+        bots.length = 0;
+        bots.push(...roster([{ id: 'thyca' }, { id: 'coder' }, { id: 'bogus' }]));
+        const [t, c, x] = bots;
+        return { thyca: t.shape, coder: c.shape, bogus: x.shape,
+                 tall: dropShapeFor(t).name, squat: dropShapeFor(c).name,
+                 bogusShape: dropShapeFor(x).name,
+                 coderD: avatar(c).includes('data-drop-shape="squat"') };
+    """)
+    assert out["thyca"] is None
+    assert out["coder"] == "squat"
+    assert out["bogus"] is None
+    assert out["tall"] == "tall" and out["squat"] == "squat"
+    assert out["bogusShape"] in ("tall", "squat", "cloud")
+    assert out["coderD"] is True
+
+
+def test_set_bot_shape_patches_avatars_in_place(node: str) -> None:
+    """TASK C: setBotShape validates, persists locally and patches every
+    existing avatar instance (data-drop-shape + body path d) without
+    touching classes/states; bad input is rejected with no side effects."""
+    out = _run(node, """
+        localStorage.clear();
+        bots.length = 0;
+        bots.push(...roster([{ id: 'coder', name: 'Coder' }]));
+        const b = bots[0];
+        document.body.innerHTML = '';
+        // Faithful minimal avatar skeleton: the patcher only touches
+        // [data-bot-avatar] roots, their data-drop-shape and the one
+        // namespaced body path per instance.
+        const mkAv = () => {
+            const root = document.createElement('span');
+            root.className = 'seal-avatar mk mk-drop';
+            root.dataset.botAvatar = 'coder'; root.dataset.dropShape = 'cloud';
+            root.dataset.state = 'idle';
+            const svg = document.createElement('svg'); svg.className = 'base';
+            const defs = document.createElement('defs');
+            const path = document.createElement('path');
+            path.setAttribute('id', 'drop9-body'); path.setAttribute('d', 'CLOUD');
+            defs.appendChild(path); svg.appendChild(defs); root.appendChild(svg);
+            document.body.appendChild(root); return root;
+        };
+        const av1 = mkAv(), av2 = mkAv();
+        const badShape = window.ThycaShell.setBotShape('coder', 'blob');
+        const badBot = window.ThycaShell.setBotShape('ghost', 'tall');
+        const badType = window.ThycaShell.setBotShape('coder', '');
+        const storedBefore = localStorage.getItem('thyca.shape.coder');
+        const dBefore = av1.querySelector('.base defs path').getAttribute('d');
+        const ok = window.ThycaShell.setBotShape('coder', 'tall');
+        const expected = dropShapeFor({ id: 'coder', shape: 'tall' }).d;
+        const after = [av1, av2].map(el => ({
+            shape: el.getAttribute('data-drop-shape'),
+            cls: el.className,
+            state: el.getAttribute('data-state'),
+            d: el.querySelector('.base defs path').getAttribute('d'),
+        }));
+        return { badShape, badBot, badType, storedBefore, ok,
+                 stored: localStorage.getItem('thyca.shape.coder'),
+                 botShape: b.shape, dBefore, expected, after };
+    """, via="shell")
+    assert out["badShape"] is False and out["badBot"] is False and out["badType"] is False
+    assert out["storedBefore"] is None
+    assert out["dBefore"] == "CLOUD"
+    assert out["ok"] is True
+    assert out["stored"] == "tall" and out["botShape"] == "tall"
+    assert len(out["after"]) == 2
+    for entry in out["after"]:
+        assert entry["shape"] == "tall"
+        assert "mk-drop" in entry["cls"] and entry["state"] == "idle"
+        assert entry["d"] == out["expected"]
+
+
+def test_expression_studio_shape_picker(node: str) -> None:
+    """TASK C: the Studio dialog-controls gain a shape picker with three
+    real avatar previews; clicking one persists the shape and flips only
+    its aria-pressed."""
+    out = _run(node, """
+        localStorage.clear();
+        bots.length = 0;
+        bots.push(...roster([{ id: 'coder', name: 'Coder' }]));
+        selectedBot = 'coder';
+        $('#expression-bot').innerHTML = '<option value="coder">Coder</option>';
+        $('#expression-bot').value = 'coder';
+        buildExpressions();
+        const html = $('#shape-picker').innerHTML;
+        const shapes = [...html.matchAll(/data-shape="(\w+)"/g)].map(m => m[1]);
+        const pressed = (h) => [...h.matchAll(/data-shape="(\w+)"[^>]*aria-pressed="(\w+)"/g)].map(m => [m[1], m[2]]);
+        const previews = [...html.matchAll(/data-drop-shape="(\w+)"/g)].map(m => m[1]);
+        const tallBtn = document.createElement('button'); tallBtn.dataset.shape = 'tall';
+        $('#shape-picker')._handlers.click.forEach(h => h({ target: tallBtn, preventDefault() {} }));
+        const htmlAfter = $('#shape-picker').innerHTML;
+        return { count: shapes.length, shapes, previews, before: pressed(html),
+                 after: pressed(htmlAfter), stored: localStorage.getItem('thyca.shape.coder'),
+                 botShape: getBot('coder').shape,
+                 labels: [html.includes('Giọt cao'), html.includes('Giọt tròn'), html.includes('Giọt mây')] };
+    """, via="shell")
+    assert out["count"] == 3
+    assert out["shapes"] == ["tall", "squat", "cloud"]
+    assert sorted(out["previews"]) == ["cloud", "squat", "tall"]  # one live preview each
+    assert out["before"] == [["tall", "false"], ["squat", "false"], ["cloud", "true"]]
+    assert out["stored"] == "tall" and out["botShape"] == "tall"
+    assert out["after"] == [["tall", "true"], ["squat", "false"], ["cloud", "false"]]
+    assert out["labels"] == [True, True, True]
+
+
+def test_expression_dialog_shape_markup_consistent(node: str) -> None:
+    """TASK C: Both dialog markups (chat index.html + shared shell.js)
+    ship the same shape picker hook/labels and color+shape copy."""
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    shell = SHELL_JS.read_text(encoding="utf-8")
+    settings = SETTINGS_JS.read_text(encoding="utf-8")
+    for text in (html, shell):
+        assert 'id="shape-picker"' in text
+        assert "Hình dạng" in text
+    assert html.count('id="shape-picker"') == 1
+    assert shell.count('id="shape-picker"') == 1
+    assert "màu, hình dạng" in html and "màu, hình dạng" in shell
+    assert "màu và hình dạng" in settings
+    # TASK F: the shape row keeps a clear vertical gap above .studio-tabs
+    # (selected-button outline must not touch the tab row), following the
+    # dialog's existing 18px rhythm.
+    studio = STUDIO_CSS.read_text(encoding="utf-8")
+    row = "".join(studio.split(".shape-row{", 1)[1].split("}", 1)[0].split())
+    assert "margin-bottom:18px" in row or "margin:12px018px" in row
+
+
 def test_system_bot_star_is_permanent(node: str) -> None:
     """Thyca is the main bot: normalizeBot stars it by default, its card
     renders the star disabled with the system label, and a favorite click
@@ -1333,6 +1594,9 @@ def test_system_bot_star_is_permanent(node: str) -> None:
             mainHasLabel: mainHtml.includes('Bot hệ thống Thyca'),
             mainPressed: mainHtml.includes('aria-pressed="true"'),
             helperDisabled: helperHtml.includes('disabled title='),
+            mainPinned: mainHtml.includes('luôn được ghim'),
+            helperUnpinLabel: helperHtml.includes('Bỏ ghim Helper'),
+            helperPinMissing: !helperHtml.includes('Ghim Helper lên đầu'),
         };
     """)
     assert out["mainFav"] is True
@@ -1343,6 +1607,9 @@ def test_system_bot_star_is_permanent(node: str) -> None:
     assert out["mainHasLabel"] is True
     assert out["mainPressed"] is True
     assert out["helperDisabled"] is False
+    assert out["mainPinned"] is True          # system wording is pinning, not starring
+    assert out["helperUnpinLabel"] is True    # stored-star helper offers to unpin
+    assert out["helperPinMissing"] is True
 
 
 def test_group_list_click_loads_session(node: str) -> None:
@@ -1805,7 +2072,7 @@ def test_stream_events_drive_feed_and_stream_text(node: str) -> None:
     """, via="chat")
     assert out["phase"] == "writing" and out["state"] == "writing"
     think = [f for f in out["feed"] if f[0] == "think"]
-    assert think and think[0][1].startswith("Thinkingx")    # consecutive rounds fold
+    assert think and think[0][1] == "đang suy nghĩ" and think[0][2] == 2  # consecutive rounds fold
     assert any(f[0] == "tools" and "bash" in f[1] for f in out["feed"])
     assert any(f[0] == "write" for f in out["feed"])
     assert out["byline"] == "đang viết"
@@ -2570,6 +2837,10 @@ def test_sidebar_css_card_pocket_and_group_contract() -> None:
     assert "color-mix" in css                                # lighter card bg + stronger role/footer text
     assert ".bot-card[data-state=idle] .thinking-heading{display:none}" in css  # idle: footer only
     assert ".bot-card[data-state=idle] .thinking-scroll{display:none}" in css
+    assert ".bot-card[data-state=idle] .paper-footer{border-top:0}" in css  # idle: no stray separator line
+    assert ".bot-card .bot-select:focus-visible" in css  # contained palette ring, never the global square
+    assert ".bot-card .icon-button:focus-visible" in css
+    assert ".bot-card .paper-footer button:focus-visible" in css
     assert ".reply-action{" in css                           # reply action lives in the pocket
     assert ".thinking-paper{margin:0 7px 7px;border:0;" in css  # inner box border removed
     assert "height:30px" in css                              # stable compact line
@@ -2603,6 +2874,13 @@ def test_chat_css_transcript_composer_and_title_head() -> None:
     assert "#fffaf240" in head                              # translucent, not opaque
     assert ".chat-title-head:after" not in css and ".chat-title-head::after" not in css
     assert "color:var(--bot-ink,var(--forest))" in css      # byline tinted by palette
+    assert ".exchange-group{" in css
+    pill = css.split(".exchange-group{", 1)[1].split("}", 1)[0]
+    assert "dashed" in pill and "var(--bot-border,#c9b891)" in pill
+    assert "var(--bot-paper,#fffdf7)" in pill and "var(--bot-ink,#5c5142)" in pill
+    hover = css.split(".exchange-group:hover", 1)[1].split("}", 1)[0]
+    assert "var(--bot-mid,#5c8a52)" in hover and "var(--bot-pale,#eaf3e2)" in hover
+    assert "var(--bot-muted,#a2937a)" in css               # exchange time
     assert "@keyframes cursor" in css
     assert not re.search(r"--[a-zA-Z-]+\s*:\s*[^v]", css)   # no page-local token defs
 
@@ -2611,7 +2889,7 @@ def test_avatars_css_states_and_bot_vars() -> None:
     """avatars.css resolves bot colors through --bot-* vars and implements the
     state selectors the JS writes (data-state/expression/group/idle/streaming)."""
     css = AVATARS_CSS.read_text()
-    assert ".wax-body{fill:var(--bot-color)" in css
+    assert ".drop-body{stroke:var(--bot-dark)" in css
     for sel in ("[data-state=idle]", "[data-state=waiting]", "[data-state=thinking]",
                 "[data-state=writing]", "[data-state=working]", "[data-state=done]",
                 "[data-state=error]", "[data-state=offline]", "[data-state=confused]",
@@ -2629,9 +2907,9 @@ def test_index_html_scripts_defs_and_static_markup() -> None:
     """ui/chat/index.html ships the svg defs once, the static shell markup and
     the classic script order the modules rely on."""
     html = INDEX_HTML.read_text()
-    for did in ("waxShade", "waxHl", "i-send", "i-stop", "i-copy"):
+    for did in ("dropShade", "dropHl", "i-send", "i-stop", "i-copy"):
         assert html.count(f'id="{did}"') == 1, did
-    assert 'id="waxSheen"' not in html      # slimmed layers use only waxHl/waxShade
+    assert 'id="wax' not in html            # shared overlays renamed with the drop
     assert 'id="g-' not in html             # glyph spans gone, so their symbols ship no more
     for sel in ('class="notebook-shell chat-shell"', 'class="site-header"',
                 'class="site-kicker"', 'id="team-nav-title"', 'id="team-bot-list"',
@@ -2646,7 +2924,7 @@ def test_index_html_scripts_defs_and_static_markup() -> None:
                 'id="session-info"', 'id="run-demo"', 'id="toast"', 'id="announcer"',
                 'id="bot-drawer"', 'id="bot-drawer-body"', 'id="group-dialog"',
                 'id="group-form"', 'id="group-options"', 'id="expressions-dialog"',
-                'id="expression-bot"', 'id="bot-color"', 'id="expression-grid"',
+                'id="expression-bot"', 'id="bot-color"', 'id="shape-picker"', 'id="expression-grid"',
                 'id="expression-extras"', 'id="idle-expression-grid"',
                 'id="group-preview-members"', 'id="idle-auto-toggle"',
                 'id="idle-comments-toggle"', 'id="idle-random"', 'id="lab-portrait"',
@@ -2666,6 +2944,22 @@ def test_index_html_scripts_defs_and_static_markup() -> None:
         assert f'href="{css}"' in html
 
 
+def test_avatar_display_copy_uses_ink_drop() -> None:
+    """User-visible studio/settings copy names the ink drop: TASK-001 renamed
+    the chat dialog, TASK-003 syncs the shared shell dialog (every non-chat
+    page) and the settings strings to the same approved wording."""
+    html = INDEX_HTML.read_text()
+    shell = SHELL_JS.read_text()
+    settings = SETTINGS_JS.read_text()
+    assert "Một giọt mực, nhiều tâm trạng." in html
+    assert "Một giọt mực, nhiều tâm trạng." in shell
+    assert "Đôi mắt kể chuyện, đôi tay giữ nhịp." in shell
+    assert "giọt mực" in settings
+    for text in (html, shell, settings):
+        assert "con dấu" not in text and "vành dấu" not in text
+    assert "wax" not in shell.lower() and "wax" not in settings.lower()
+
+
 def test_settings_page_uses_shared_avatar_engine() -> None:
     """settings.js renders roster rows with the shared avatar() + states[]
     labels and keeps preferences localStorage-only (no API calls for them)."""
@@ -2680,20 +2974,17 @@ def test_settings_page_uses_shared_avatar_engine() -> None:
     assert "import(" not in js
 
 
-def test_current_rows_use_bot_palette_and_no_dangling_connector() -> None:
-    """Follow-up to the think-row fix: user decision is bot-brown
-    (var(--bot-ink)) for EVERY running row, not just think — the old
-    generic `.current{color:var(--ink)}` made running tool rows look
-    unstyled too. The think override now pins the same bot-ink
-    explicitly (renamed from test_think_row_keeps_muted_color_while_current
-    because muted-while-current is no longer the behavior). The
-    connector rule hides the previous row's stub above a mark-less
-    think line. The node harness has no cascade engine, so this pins
-    rule structure/order instead of computed color."""
+def test_current_rows_use_bot_palette_and_connected_timeline() -> None:
+    """Every running row uses bot-brown (var(--bot-ink)); thinking is an
+    ordinary timeline step again, with its marker and connector intact
+    instead of an 18px mark-less pseudo-heading. The node harness has
+    no cascade engine, so this pins rule structure instead of computed
+    styles."""
     css = (WEBUI / "ui" / "share" / "sidebar.css").read_text(encoding="utf-8")
     base = css.index(".progress-list li.current{color:var(--bot-ink)}")
     think = css.index(".progress-list li.li-think.current{color:var(--bot-ink)}")
     assert think > base
-    assert ".progress-list li:has(+ .li-think):before{display:none}" in css
-    # Same-specificity sibling: the :has rule only wins by coming later.
-    assert css.index(":has(+ .li-think)") > css.index("li:not(:last-child):before")
+    assert ".progress-list li.li-think{" not in css
+    assert ".progress-list li.li-think .step-mark{display:none}" not in css
+    assert "li:has(+ .li-think):before{display:none}" not in css
+    assert ".feed-count{" in css

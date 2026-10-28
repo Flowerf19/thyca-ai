@@ -41,7 +41,7 @@
 .thinking-heading .dots{color:var(--bot-ink)}
 .bot-card[data-state=thinking] .dots i,.bot-card[data-state=writing] .dots i{animation:dot 1.8s infinite}
 .thinking-scroll{padding:0 16px 12px;max-height:215px;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--bot-border) transparent}
-.thinking-summary{margin:0 0 16px;font:18px/28px var(--serif);color:var(--bot-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.thinking-summary{margin:0 0 10px;font:italic 13px/19px var(--serif);color:var(--bot-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .progress-list{padding:0;margin:0;list-style:none;display:grid}
 .progress-list li{display:flex;align-items:center;gap:10px;position:relative;font-size:12px;line-height:19px;color:var(--muted);min-height:28px}
 .progress-list li.li-enter{animation:feedIn .3s ease-out both}
@@ -49,13 +49,8 @@
 @keyframes feedIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
 @keyframes feedOut{0%{opacity:1;max-height:28px}55%{opacity:0}100%{opacity:0;max-height:0;transform:translateY(-6px)}}
 .progress-list li:not(:last-child):before{position:absolute;content:'';width:1px;height:16px;top:18px;left:7px;background:var(--bot-rule)}
-/* The row above a thinking line draws nothing: li-think hides its own
-   step-mark, so that connector would dangle into empty space. */
-.progress-list li:has(+ .li-think):before{display:none}
-.progress-list li.li-think{min-height:28px;margin-bottom:0;font:18px/28px var(--serif);color:var(--bot-muted)}
-.progress-list li.li-think:before{display:none}
-.progress-list li.li-think .step-mark{display:none}
-.step-mark{border:1px solid var(--bot-border);width:16px;height:16px;border-radius:50%;display:grid;place-items:center;flex-shrink:0;background:var(--bot-sheet)}
+.feed-count{margin-left:auto;flex-shrink:0;border:1px solid var(--bot-border);border-radius:999px;background:var(--bot-paper);color:var(--bot-muted);font-size:11px;line-height:17px;padding:0 5px;font-variant-numeric:tabular-nums}
+.step-mark{box-sizing:border-box;border:1px solid var(--bot-border);width:16px;height:16px;border-radius:50%;display:grid;place-items:center;flex-shrink:0;background:var(--bot-sheet)}
 .step-mark svg{width:11px;height:11px;stroke-width:2}
 .progress-list li.complete{color:var(--bot-muted)}
 .progress-list li.complete .step-mark{background:var(--bot-ink);border-color:var(--bot-ink);color:var(--bot-stamp)}
@@ -64,16 +59,25 @@
    current = bot palette, done = muted); explicit so a later generic
    tweak cannot silently drop them back. */
 .progress-list li.li-think.current{color:var(--bot-ink)}
-.progress-list li.current .step-mark{background:var(--bot-mid);border:4px solid var(--bot-paper);box-shadow:0 0 0 1px var(--bot-border)}
+.progress-list li.current .step-mark{background:var(--bot-mid);border:4px solid var(--bot-paper);box-shadow:0 0 0 1px var(--bot-border);animation:feedPulse 1.6s ease-in-out infinite}
+@keyframes feedPulse{0%,100%{box-shadow:0 0 0 1px var(--bot-border)}50%{box-shadow:0 0 0 3px color-mix(in srgb,var(--bot-border) 45%,transparent)}}
 .progress-list li.pending{opacity:.7}
 .thought-extra{font:15px/26px var(--serif);padding-top:11px;margin:10px 0 0;border-top:1px dashed var(--bot-rule)}
 .bot-card[data-state=idle] .thinking-heading{display:none}
 .bot-card[data-state=idle] .thinking-scroll{display:none}
+.bot-card[data-state=idle] .paper-footer{border-top:0}
 .reply-action{display:flex;align-items:center;justify-content:center;gap:6px;margin:2px 16px 12px;padding:8px;border:1px solid var(--bot-border);border-radius:8px;background:var(--bot-paper);color:var(--bot-ink);font-size:12px}
 .reply-action svg{width:14px;height:14px}
 .paper-footer{display:flex;justify-content:space-between;gap:8px;border-top:1px solid var(--bot-rule);margin:0 13px;padding:10px 0}
 .paper-footer button{font-size:11px;color:color-mix(in srgb,var(--bot-muted) 55%,var(--bot-ink));display:flex;align-items:center;gap:6px;padding:2px 0}
 .paper-footer svg{width:14px;height:14px}
+/* Contained keyboard focus: palette-tinted rings that stay inside the card
+   instead of the global offset square (which crossed card/star edges). */
+.bot-card .bot-select{border-radius:12px}
+.bot-card .bot-select:focus-visible{outline:2px solid var(--bot-ink);outline-offset:-2px}
+.bot-card .icon-button:focus-visible{outline:2px solid var(--bot-ink);outline-offset:2px;border-radius:8px}
+.bot-card .paper-footer button:focus-visible{outline:2px solid var(--bot-ink);outline-offset:2px;border-radius:6px}
+.bot-card .reply-action:focus-visible{outline:2px solid var(--bot-ink);outline-offset:2px}
 .section-label{display:flex;align-items:center;gap:12px;font-size:10px;color:#99876b;letter-spacing:1.8px;margin:24px 5px 12px}
 .section-label:after{content:'';height:1px;background:var(--line);flex:1}
 .group-row{display:flex;align-items:center;gap:11px;width:100%;border:1px solid #dccfb8;border-radius:10px;text-align:left;padding:12px 9px;background:#fffbf340}

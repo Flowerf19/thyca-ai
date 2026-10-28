@@ -5,7 +5,15 @@ let activeGroup=null;
 function activeSidebarBot(){const router=window.ThycaRouter;return router?.currentPage?.()?router.highlightedBot():selectedBot;}
 function sidebarActionLabel(b){const router=window.ThycaRouter;return router?.currentPage?.()?router.sidebarLabel(b.id,b.name,states[expressionFor(b)][1]):`Trò chuyện với ${b.name}`;}
 function previewLine(b){const whisper=b.state==='idle'&&b.idle.comment?'“'+b.idle.comment+'”':'';return whisper||String(b.summary||'').split('\n')[0];}
-function card(b){const activeId=activeSidebarBot();return `<article class="bot-card team-cluster team-envelope" id="bot-${b.id}" data-bot-id="${b.id}" data-state="${b.state}" data-open="${b.open}" data-selected="${b.id===activeId}" style="${paletteStyle(b)}"><header class="bot-header"><button class="bot-select team-bot-item" data-action="select" data-bot-id="${b.id}" aria-label="${sidebarActionLabel(b)}">${avatar(b)}<span class="bot-heading"><span class="bot-name session-name">${b.name}</span><span class="bot-role">${b.role}</span><span class="header-status"><span class="status-dot"></span><span class="header-status-label">${states[b.state][1]}</span></span></span></button><div class="card-actions"><button class="icon-button favorite" data-action="favorite" aria-label="${b.system?`Bot hệ thống ${b.name} — luôn được đánh dấu`:`Yêu thích ${b.name}`}" aria-pressed="${b.favorite}"${b.system?' disabled title="Bot hệ thống — không bỏ đánh dấu được"':''}>${icon('star')}</button><button class="icon-button collapse-button" data-action="collapse" aria-label="Thu hoặc mở ${b.name}" aria-controls="pocket-${b.id}" aria-expanded="${b.open}">${icon('chevron')}</button></div></header><div class="compact-preview"><span class="status-dot"></span><span class="preview-text">${previewLine(b)}</span></div><div class="pocket team-pocket-viewport" id="pocket-${b.id}" ${b.open?'':'inert'}><div class="pocket-inner"><section class="thinking-paper" aria-label="Thinking của ${b.name}"><div class="thinking-heading">${dots}<span class="thinking-title">Thinking</span><span class="elapsed">${b.elapsed} giây</span></div><div class="thinking-scroll" tabindex="0" aria-label="Tiến trình của ${b.name}"><p class="thinking-summary"></p><ol class="progress-list" hidden></ol><p class="thought-extra" hidden></p></div><button class="reply-action" data-action="reply"${['waiting','confused'].includes(b.state)?'':' hidden'}>${icon('arrow')}Trả lời</button><footer class="paper-footer"><button data-action="info">${icon('info')}Thông tin bot</button><button data-action="capabilities">${icon('list')}Khả năng</button></footer></section></div></div></article>`;}
+/* The pocket heading already names the state, so a generic stateSummaries
+   line would repeat it. Only surface a concrete current action in the pocket. */
+function pocketSummary(b){
+ const first=String(b.summary||'').split('\n')[0];
+ if(!first)return '';
+ const generic=new Set(Object.values(stateSummaries).map(s=>String(s).split('\n')[0]));
+ return generic.has(first)?'':first;
+}
+function card(b){const activeId=activeSidebarBot();return `<article class="bot-card team-cluster team-envelope" id="bot-${b.id}" data-bot-id="${b.id}" data-state="${b.state}" data-open="${b.open}" data-selected="${b.id===activeId}" style="${paletteStyle(b)}"><header class="bot-header"><button class="bot-select team-bot-item" data-action="select" data-bot-id="${b.id}" aria-label="${sidebarActionLabel(b)}">${avatar(b)}<span class="bot-heading"><span class="bot-name session-name">${b.name}</span><span class="bot-role">${b.role}</span><span class="header-status"><span class="status-dot"></span><span class="header-status-label">${states[b.state][1]}</span></span></span></button><div class="card-actions"><button class="icon-button favorite" data-action="favorite" aria-label="${b.system?`Bot hệ thống ${b.name} — luôn được ghim`:b.favorite?`Bỏ ghim ${b.name}`:`Ghim ${b.name} lên đầu`}" aria-pressed="${b.favorite}"${b.system?' disabled title="Bot hệ thống — không bỏ ghim được"':''}>${icon('star')}</button><button class="icon-button collapse-button" data-action="collapse" aria-label="Thu hoặc mở ${b.name}" aria-controls="pocket-${b.id}" aria-expanded="${b.open}">${icon('chevron')}</button></div></header><div class="compact-preview"><span class="status-dot"></span><span class="preview-text">${previewLine(b)}</span></div><div class="pocket team-pocket-viewport" id="pocket-${b.id}" ${b.open?'':'inert'}><div class="pocket-inner"><section class="thinking-paper" aria-label="Tiến trình của ${b.name}"><div class="thinking-heading">${dots}<span class="thinking-title">Đang suy nghĩ</span><span class="elapsed">${b.elapsed} giây</span></div><div class="thinking-scroll" tabindex="0" aria-label="Tiến trình của ${b.name}"><p class="thinking-summary" hidden></p><ol class="progress-list" hidden></ol><p class="thought-extra" hidden></p></div><button class="reply-action" data-action="reply"${['waiting','confused'].includes(b.state)?'':' hidden'}>${icon('arrow')}Trả lời</button><footer class="paper-footer"><button data-action="info">${icon('info')}Thông tin bot</button><button data-action="capabilities">${icon('list')}Khả năng</button></footer></section></div></div></article>`;}
 /* Keyed reconcile: exiting rows render first (fade-out), then the last 3
    live rows. Existing <li> nodes are updated in place so their animations
    don't restart on every stream event; new nodes get .li-enter once. */
@@ -21,26 +29,40 @@ function syncFeedList(b,list){
   const eid='f'+f.eid;let li=keyed.get(eid);
   if(!li){li=document.createElement('li');li.dataset.eid=eid;li._enter=true;
    li.addEventListener('animationend',()=>{li.classList.remove('li-enter');li._enter=false;},{once:true});}
-  const html=`<span class="step-mark">${f.done?icon('check'):''}</span><span>${escapeHTML(f.text)}</span>`;
+  const count=f.kind==='think'&&(f.n||1)>1?`<span class="feed-count">×${Number(f.n)||1}</span>`:'';
+  const html=`<span class="step-mark">${f.done?icon('check'):''}</span><span>${escapeHTML(f.text)}</span>${count}`;
   if(li._feedHtml!==html){li.innerHTML=html;li._feedHtml=html;}
   li.className=(f.exiting?'li-exit ':'')+(f.done?'complete':'current')+(f.cls?' '+f.cls:'')+(li._enter?' li-enter':'');
   if(li!==cursor)list.insertBefore(li,cursor);else cursor=cursor.nextElementSibling;
  });
 }
 
-function renderTeam(){ const el = $('#team-bot-list'); if (el) el.innerHTML = bots.map(card).join(''); }
+/* Sidebar display order: pinned (starred) bots first — system Thyca is
+   always starred — with stable roster order inside each group. The
+   underlying `bots` array is never reordered. */
+function teamDisplayOrder(){ return [...bots].sort((a,b)=>(b.favorite-a.favorite)); }
+function renderTeam(){ const el = $('#team-bot-list'); if (el) el.innerHTML = teamDisplayOrder().map(card).join(''); }
+/* Reorder existing card nodes after a pin toggle: appendChild moves the
+   node, so pocket/feed/animation identity survives (no full rerender). */
+function pinCardOrder(){
+ const list=$('#team-bot-list');if(!list)return false;
+ const have=new Map();
+ [...list.children].forEach(el=>{const id=el.dataset&&el.dataset.botId;if(id&&!have.has(id))have.set(id,el);});
+ teamDisplayOrder().forEach(b=>{const el=have.get(b.id);if(el)list.appendChild(el);});
+ return true;
+}
 function updateCard(b){
  const el=$('#bot-'+b.id);if(!el)return;
  el.dataset.state=b.state;el.dataset.open=b.open;el.dataset.selected=b.id===activeSidebarBot();
  $('.header-status-label',el).textContent=states[expressionFor(b)][1];
  $('.bot-select',el).setAttribute('aria-label',sidebarActionLabel(b));
  const whisper=b.state==='idle'?b.idle.comment:'';
- const summary=$('.thinking-summary',el);summary.textContent=whisper?'“'+whisper+'”':String(b.summary||'').split('\n')[0];summary.style.whiteSpace='nowrap';summary.classList.toggle('idle-comment',!!whisper);
+ const summary=$('.thinking-summary',el);const summaryText=whisper?'“'+whisper+'”':pocketSummary(b);summary.textContent=summaryText;summary.hidden=!summaryText;summary.style.whiteSpace='nowrap';summary.classList.toggle('idle-comment',!!whisper);
  $('.preview-text',el).textContent=previewLine(b);
  $('.reply-action',el).hidden=!['waiting','confused'].includes(b.state);
  $('.compact-preview',el).dataset.idleComment=String(!!whisper);$('.preview-text',el).title=whisper;
  $('.elapsed',el).textContent=b.elapsed?b.elapsed+' giây':'';
- $('.thinking-title',el).textContent=whisper?'Lúc rảnh':b.state==='thinking'?'Thinking':states[b.state][1];
+ $('.thinking-title',el).textContent=whisper?'Lúc rảnh':states[b.state][1];
  $('.collapse-button',el).setAttribute('aria-expanded',b.open);
  $('.pocket',el).inert=!b.open;
  syncFeedList(b,$('.progress-list',el));
@@ -111,7 +133,7 @@ async function fillDrawerContext(b){
  }catch{}
 }
 
-$('#team-bot-list').addEventListener('click',e=>{const btn=e.target.closest('button');if(!btn)return;const b=getBot(btn.closest('.bot-card').dataset.botId);switch(btn.dataset.action){case 'select':window.ThycaRouter?ThycaRouter.dispatch('selectBot',b.id):selectBot(b.id);break;case 'reply':window.ThycaRouter?ThycaRouter.dispatch('selectBot',b.id):selectBot(b.id);document.querySelector('#message')?.focus?.();break;case 'collapse':openBot(b.id,!b.open);break;case 'favorite':if(b.system)break;b.favorite=!b.favorite;setBotFavorite(b.id,b.favorite);btn.setAttribute('aria-pressed',b.favorite);toast(b.favorite?'Đã đánh dấu '+b.name+'.':'Đã bỏ đánh dấu '+b.name+'.');break;case 'info':openInfo(b.id);break;case 'capabilities':openInfo(b.id,true);break;}});
+$('#team-bot-list').addEventListener('click',e=>{const btn=e.target.closest('button');if(!btn)return;const b=getBot(btn.closest('.bot-card').dataset.botId);switch(btn.dataset.action){case 'select':window.ThycaRouter?ThycaRouter.dispatch('selectBot',b.id):selectBot(b.id);break;case 'reply':window.ThycaRouter?ThycaRouter.dispatch('selectBot',b.id):selectBot(b.id);document.querySelector('#message')?.focus?.();break;case 'collapse':openBot(b.id,!b.open);break;case 'favorite':if(b.system)break;b.favorite=!b.favorite;setBotFavorite(b.id,b.favorite);btn.setAttribute('aria-pressed',b.favorite);btn.setAttribute('aria-label',b.favorite?`Bỏ ghim ${b.name}`:`Ghim ${b.name} lên đầu`);toast(b.favorite?`Đã ghim ${b.name} lên đầu.`:`Đã bỏ ghim ${b.name}.`);pinCardOrder();break;case 'info':openInfo(b.id);break;case 'capabilities':openInfo(b.id,true);break;}});
 $('#group-list')?.addEventListener('click',e=>{const row=e.target.closest('[data-group]');if(!row)return;const g=groups.find(x=>x.id===row.dataset.group);window.ThycaRouter?ThycaRouter.dispatch('loadSession',g.id,g.title,g.bots[0]):loadSession(g.id,g.title,g.bots[0]);});
 
 $('#bot-drawer-body').addEventListener('click',e=>{const btn=e.target.closest('[data-session]');if(!btn)return;const b=getBot(btn.dataset.bot);const s=b.sessions.find(x=>x[0]===btn.dataset.session);window.ThycaRouter?ThycaRouter.dispatch('loadSession',s[0],s[1],b.id):loadSession(s[0],s[1],b.id);$('#bot-drawer').close();openBot(b.id);});

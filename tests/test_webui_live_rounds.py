@@ -1,16 +1,7 @@
 """Live turn across LLM rounds — webui/ui/chat/js/chat.js handleStreamEvent.
 
-The old live-view modules (chat-view.js live status panel, per-round thinking
-segments and usage rows on the message) are gone with the UI rebuild. Live
-activity now streams onto the bot card's pocket feed: consecutive thinking
-rounds fold in place into one Vietnamese timeline row with a count badge
-(only while the think line is still
-the feed's last entry), each tool block after a think/write row opens its
-own 'đã dùng …' line, and reply text accumulates in a single .stream-text
-node on the live message (markdown re-rendered at llm.finished boundaries).
-The stored transcript (renderTranscript) keeps one article per assistant
-message with a 'Đã dùng: …' usage pill — reasoning is not rendered there
-by design.
+The compact card shows only active tool/skill calls, while reply text
+accumulates in one live node and completion reconciles the transcript.
 """
 from __future__ import annotations
 
@@ -51,7 +42,7 @@ globalThis.fetch = async (url) => {
   return { ok: false, status: 404, json: async () => ({ error: 'no route ' + url }) };
 };
 
-const feed = () => b.feed.filter(f => !f.exiting).map(f => ({ kind: f.kind, text: f.text, done: !!f.done, n: f.n || 0 }));
+const feed = () => b.liveCalls.map(f => ({ kind: f.kind, name: f.name, call_id: f.call_id }));
 const node = doc.createElement('article');
 node.innerHTML = `<header class="message-byline"><span>Thyca</span><time>đang lắng nghe</time></header><div class="live-copy"></div>`;
 doc.querySelector('#message-list').append(node);
@@ -61,7 +52,7 @@ const fire = (ev) => ui.handleStreamEvent(token, ev);
 const streamText = () => node.querySelector('.stream-text')?.textContent ?? null;
 const streamNodes = () => node.querySelectorAll('.stream-text').length;
 
-// Round 1: think then reply — both feed lines stay open while the round runs.
+// Round 1: thinking and reply never create live calls.
 fire({ type: 'turn.accepted' });
 fire({ type: 'llm.started', round: 1 });
 fire({ type: 'llm.thinking', round: 1, delta: 'round one ' });
@@ -72,19 +63,19 @@ result.midWrite = { feed: feed(), streamText: streamText(), streamNodes: streamN
 fire({ type: 'llm.finished', round: 1 });
 result.afterRound1 = { feed: feed() };
 
-// Tool block after the reply: its own 'đã dùng' line.
+// A tool appears only while its call is active.
 fire({ type: 'tool.started', name: 'bash', call_id: 'b1' });
+result.bashActive = feed();
 fire({ type: 'tool.finished', name: 'bash', call_id: 'b1' });
 result.afterTools1 = { feed: feed() };
 
-// Round 2 thinks only — a fresh think line is pushed after the tools row.
+// Round 2 thinks only.
 fire({ type: 'llm.started', round: 2 });
 fire({ type: 'llm.thinking', round: 2, delta: 'round two' });
 fire({ type: 'llm.finished', round: 2 });
 result.afterRound2 = { feed: feed() };
 
-// Round 3 thinks again with nothing pushed between: the last think line
-// folds in place (count n=2), then content shares the one .stream-text.
+// Round 3 thinking stays out of calls; content shares the one .stream-text.
 fire({ type: 'llm.started', round: 3 });
 fire({ type: 'llm.thinking', round: 3, delta: 'round three' });
 result.round3Think = { feed: feed() };
@@ -92,6 +83,7 @@ fire({ type: 'llm.content', round: 3, delta: 'round three reply' });
 result.round3Write = { feed: feed(), streamText: streamText(), streamNodes: streamNodes() };
 fire({ type: 'llm.finished', round: 3 });
 fire({ type: 'tool.started', name: 'read', call_id: 'r3' });
+result.readActive = feed();
 fire({ type: 'tool.finished', name: 'read', call_id: 'r3' });
 result.finalFeed = { feed: feed() };
 
@@ -181,7 +173,7 @@ const token2 = { botId: 'march7th', sessionId: 's3', start: Date.now(), node: no
 ui.runs.set('s3', token2);
 const fire2 = (ev) => ui.handleStreamEvent(token2, ev);
 const childBot = ui.bots.find(x => x.id === 'thyca');
-const childMarkRow = childBot.feed.at(-1);
+
 fire2({ type: 'llm.started', bot_id: 'thyca', round: 1 });
 fire2({ type: 'llm.thinking', bot_id: 'thyca', round: 1, delta: 'chị xem lại giúp Bảy' });
 fire2({ type: 'llm.content', bot_id: 'thyca', round: 1, delta: 'Để chị kiểm tra lại share tool cho Bảy ngay.' });
@@ -192,7 +184,7 @@ result.nestedChildOnly = {
   mdBuf: token2.mdBuf || '',
 };
 fire2({ type: 'llm.content', bot_id: 'march7th', round: 1, delta: 'Em kiểm tra liền nè.' });
-result.nestedChildFeed = childBot.feed.slice(childBot.feed.indexOf(childMarkRow) + 1).filter(f => !f.exiting).map(f => ({ kind: f.kind, text: f.text, done: !!f.done }));
+result.nestedChildFeed = childBot.liveCalls;
 result.nestedAfterPrimary = {
   streamText: node2.querySelector('.stream-text')?.textContent ?? null,
   byline: node2.querySelector('.message-byline time')?.textContent ?? null,
@@ -217,64 +209,32 @@ def rounds() -> dict:
 
 
 def test_round_one_streams_think_and_reply(rounds: dict) -> None:
-    """While the round runs the think/write lines stay open; llm.finished
-    settles them as a completed round, not yet a sent final reply."""
-    assert rounds["midWrite"]["feed"] == [
-        {"kind": "think", "text": "đang suy nghĩ", "done": False, "n": 1},
-        {"kind": "write", "text": "đang viết phản hồi", "done": False, "n": 0},
-    ]
+    assert rounds["midWrite"]["feed"] == []
     assert rounds["midWrite"]["streamText"] == "Xin chào"
     assert rounds["midWrite"]["streamNodes"] == 1
-    assert rounds["afterRound1"]["feed"] == [
-        {"kind": "think", "text": "đã suy nghĩ", "done": True, "n": 1},
-        {"kind": "write", "text": "đã viết một phần", "done": True, "n": 0},
-    ]
+    assert rounds["afterRound1"]["feed"] == []
 
 
-def test_tool_block_after_reply_gets_its_own_line(rounds: dict) -> None:
-    assert rounds["afterTools1"]["feed"][-1] == {
-        "kind": "tools", "text": "đã dùng bash", "done": True, "n": 0,
-    }
-    assert len(rounds["afterTools1"]["feed"]) == 3
+def test_tool_calls_appear_only_while_running(rounds: dict) -> None:
+    assert rounds["bashActive"] == [{"kind": "tool", "name": "bash", "call_id": "b1"}]
+    assert rounds["afterTools1"]["feed"] == []
+    assert rounds["readActive"] == [{"kind": "tool", "name": "read", "call_id": "r3"}]
+    assert rounds["finalFeed"]["feed"] == []
 
 
-def test_consecutive_thinking_rounds_fold_in_place(rounds: dict) -> None:
-    """A think line after the tools row is fresh; the next thinking round
-    (nothing pushed between) folds it into one row carrying n=2."""
-    assert rounds["afterRound2"]["feed"][-1] == {
-        "kind": "think", "text": "đã suy nghĩ", "done": True, "n": 1,
-    }
-    assert rounds["round3Think"]["feed"][-1] == {
-        "kind": "think", "text": "đang suy nghĩ", "done": False, "n": 2,
-    }
+def test_thinking_rounds_do_not_create_calls(rounds: dict) -> None:
+    assert rounds["afterRound2"]["feed"] == []
+    assert rounds["round3Think"]["feed"] == []
 
 
 def test_round_two_shares_the_same_stream_text(rounds: dict) -> None:
     assert rounds["round3Write"]["streamText"] == "Xin chàoround three reply"
     assert rounds["round3Write"]["streamNodes"] == 1
-    assert rounds["round3Write"]["feed"][-1] == {
-        "kind": "write", "text": "đang viết phản hồi", "done": False, "n": 0,
-    }
+    assert rounds["round3Write"]["feed"] == []
 
 
-def test_each_tool_block_keeps_its_own_line(rounds: dict) -> None:
-    """The read call opens a fresh tools line below the new think/write rows
-    instead of folding into round 1's bash line. The pocket feed windows to
-    the last three entries — the older bash line has already exited."""
-    assert rounds["finalFeed"]["feed"] == [
-        {"kind": "think", "text": "đã suy nghĩ", "done": True, "n": 2},
-        {"kind": "write", "text": "đã viết một phần", "done": True, "n": 0},
-        {"kind": "tools", "text": "đã dùng read", "done": True, "n": 0},
-    ]
-
-
-def test_completion_settles_feed_and_swaps_in_transcript(rounds: dict) -> None:
-    feed = rounds["afterCompleted"]["feed"]
-    assert feed and all(entry["done"] for entry in feed)
-    # Only terminal completion upgrades the visible write row to "sent".
-    assert [entry["text"] for entry in feed if entry["kind"] == "write"] == [
-        "đã gửi phản hồi"
-    ]
+def test_completion_clears_calls_and_swaps_in_transcript(rounds: dict) -> None:
+    assert rounds["afterCompleted"]["feed"] == []
     assert rounds["afterCompleted"]["listHasDone"] is True
     assert rounds["afterCompleted"]["tracked"] is False
 
@@ -304,16 +264,8 @@ def test_nested_child_deltas_stay_out_of_primary_live_bubble(rounds: dict) -> No
     assert primary["mdBuf"] == "Em kiểm tra liền nè."
 
 
-def test_nested_child_never_claims_final_reply(rounds: dict) -> None:
-    """POCKET-003: the child card settles its own rows as a completed
-    round ('đã suy nghĩ' / 'đã viết một phần') but never upgrades to
-    'đã gửi phản hồi' — only the primary's terminal turn.completed does
-    that (bridge terminal events carry no bot_id, so they always settle
-    the turn owner's feed)."""
-    assert rounds["nestedChildFeed"] == [
-        {"kind": "think", "text": "đã suy nghĩ", "done": True},
-        {"kind": "write", "text": "đã viết một phần", "done": True},
-    ]
+def test_nested_child_text_does_not_create_tool_calls(rounds: dict) -> None:
+    assert rounds["nestedChildFeed"] == []
 
 
 def test_transcript_renders_articles_and_tool_pills(rounds: dict) -> None:

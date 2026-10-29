@@ -45,7 +45,10 @@ def provider_ready(cfg: Config) -> bool:
         cfg.provider.api_key()
     except ConfigError:
         return False
-    return True
+    # Chat also needs a selected global default to run turns. An
+    # unregistered legacy default still counts (nonempty text); only a
+    # missing default keeps setup locked (e.g. first save before set-default).
+    return cfg.defaultModel != ""
 
 
 def _map_network_error(exc: Exception, timeout: float, *, model: str | None = None) -> ProviderProbeError:

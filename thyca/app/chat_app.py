@@ -287,6 +287,7 @@ class ChatApp:
             resolve_responder=self._resolve_responder,
             pending_relevant=self._runtime._pending_relevant,
             turns=self._turns,
+            agent_status=self._agent_status,
             skills_root=self.skills_root,
         ))
 
@@ -382,10 +383,30 @@ class ChatApp:
         return get_bot_settings(self._bots, self._current_cfg(), bot_id)
 
     def update_bot_settings(self, bot_id: str, payload: dict) -> dict:
-        """Full-replacement update of one bot's model settings."""
-        from thyca.app.bot_settings import update_bot_settings as _update
+        """Full-replacement update of one bot's model settings.
 
-        return _update(self._bots, self._current_cfg(), bot_id, payload)
+        Holds the model coordination lock across the fresh config load,
+        membership validation, and settings write, so a concurrent model
+        deletion cannot slip in between (lock order: coordination →
+        per-bot). The config is loaded strictly here: unlike the
+        read-only ``_current_cfg()`` fallback, an unreadable config
+        fails the mutation closed instead of validating against a stale
+        snapshot. Contention fails closed as 503 via ``SettingsError``.
+        """
+        from thyca.app.bot_settings import update_bot_settings as _update
+        from thyca.bots.settings import SettingsError
+        from thyca.config import ConfigError, load
+        from thyca.config.coordination import CoordinationError, hold
+
+        try:
+            with hold(self._root):
+                try:
+                    cfg = load(self._config_file)
+                except ConfigError:
+                    raise SettingsError("bot settings unavailable") from None
+                return _update(self._bots, cfg, bot_id, payload)
+        except CoordinationError:
+            raise SettingsError("bot settings unavailable") from None
 
     def bot_dm(self, bot_id: str) -> dict:
         """The bot's fixed DM session (CBE-5): find-or-create, marked.
@@ -867,6 +888,10 @@ class ChatApp:
     ) -> list[Message]:
         """Read canonical execution rows for a trusted room/bot/span tuple."""
         return self._ops.trace_execution_messages(session_id, bot_id, span_id)
+
+    def bot_room_tasks(self, session_id: str, bot_id: str) -> dict:
+        """Live task list for exactly one room participant (read-only)."""
+        return self._ops.room_tasks(session_id, bot_id)
 
     def bot_operations(
         self, session_id: str, bot_id: str, *,

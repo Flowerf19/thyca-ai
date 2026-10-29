@@ -7,7 +7,7 @@
 - Khi đổi version, đồng bộ `pyproject.toml`, `thyca/__init__.py`, `uv.lock` và README.
 
 - Chỉ làm task thuộc plan `in-progress` (hoặc bug/fix UI user vừa chỉ). Không thêm dependency, abstraction, hay feature ngoài task đó.
-- Không còn plan in-progress (2026-09-22): `backend-solid-refactor.md` done (nhánh `refactor/backend-solid`), `webui-solid-refactor.md` done (nhánh `refactor/webui-solid`) — cả hai chờ quyết merge main. Plans cũ ở `plans/done/`.
+- Không còn plan in-progress (2026-09-22): `docs/archive/plans/backend-solid-refactor.md` done (nhánh `refactor/backend-solid`), `docs/archive/plans/webui-solid-refactor.md` done (nhánh `refactor/webui-solid`) — cả hai chờ quyết merge main. Plans cũ ở `plans/done/`.
 - L2 hybrid thuộc v1. Đọc `.agents/decisions/2026-08-15-l2-hybrid-v1.md` trước khi đổi memory contract.
 - Session là 4-class SOLID trong `thyca/sessions/`: `Session` / `SessionStore` / `SessionCompactor` / `SessionManager` (+ `wire.py` payload contract). Không `thyca/session.py` shim.
 - ActiveMemory chỉ `thyca/memory/active.py`: `SOUL`/`USER`/`IDENTITY` full inject; daily tail `hotTailKB`. Archive/L2 là `archived.py` + `chunk.py`. Facade/`memory_*` thuộc Tools. Không `MEMORY.md`. `write`/`edit` không được ghi dưới `~/.thyca`; `memory_remember` là writer duy nhất cho memory files.

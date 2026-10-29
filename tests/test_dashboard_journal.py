@@ -566,3 +566,36 @@ def test_render_stats_paints_every_region(node: str) -> None:
     assert '>m</span>' in out["model"] or '"m"' in out["model"]
     assert out["mOpts"] == 2                             # all-models + m
     assert out["sOpts"] == 5                             # all + 4 statuses
+
+
+def test_usage_input_total_excludes_cache_read(node: str) -> None:
+    """The Usage Input card shows prompt_tokens minus cached_tokens (the
+    same Input-excluding-cache rule the hero hint already uses), with copy
+    that no longer claims the cache is included."""
+    src = DASH_JS.read_text(encoding="utf-8")
+    assert "Không bao gồm Cache read." in src
+    assert "Đã bao gồm Cache read." not in src
+    assert "Tính riêng, không nằm trong Input." in src
+    assert "Nằm trong tổng Input." not in src
+    stats = {
+        "totals": {"requests": 2, "tool_calls": 1, "prompt_tokens": 1000,
+                   "cached_tokens": 100, "completion_tokens": 200,
+                   "total_tokens": 1200, "cost_usd": 0.5,
+                   "latency_ms_p50": 10, "latency_ms_p90": 20},
+        "by_model": [], "by_bot": [], "by_day": [], "by_hour": [],
+        "by_status": [], "models": [],
+    }
+    out = _eval_dash(
+        node,
+        f"statsData = {json.dumps(stats)};\n"
+        "renderStats(statsData);\n"
+        "console.log(JSON.stringify({"
+        " input: document.querySelector('#usage-input-total').textContent,"
+        " cache: document.querySelector('#usage-cache-total').textContent,"
+        " output: document.querySelector('#usage-output-total').textContent,"
+        " grid: document.querySelector('#stat-grid').innerHTML }))",
+    )
+    assert out["input"] == "900"
+    assert out["cache"] == "100"
+    assert out["output"] == "200"
+    assert "Input 900" in out["grid"]

@@ -280,3 +280,109 @@ def test_ask_user_turn_reports_waiting(tmp_path: Path) -> None:
         assert cards["thyca"]["agent_status"]["state"] == "done"
     finally:
         app.shutdown()
+
+
+def _call_event(type_: str, bot_id: str = "coder", **fields) -> TurnEvent:
+    return TurnEvent(type=type_, round=1, bot_id=bot_id, **fields)
+
+
+def test_tracker_same_call_id_twice_needs_two_finishes() -> None:
+    """Two concurrent calls sanitizing to one public id stay two calls:
+    each finish removes exactly one, and an unknown id removes nothing."""
+    tracker = AgentStatusTracker()
+    tracker.begin_turn("coder", "room-1", span_id="sp-1", at=_at(0))
+    tracker.observe_event("coder", "sp-1", _call_event("tool.started", call_id="c1", name="read"), at=_at(1))
+    tracker.observe_event("coder", "sp-1", _call_event("skill.started", call_id="c1", name="read"), at=_at(2))
+    snap = tracker.snapshot("coder", at=_at(2))
+    assert snap["current_action"] == {"kind": "skill", "name": "read", "call_id": "c1"}
+    tasks = tracker.room_tasks("coder", "room-1", at=_at(2))
+    assert tasks["state"] == "running"
+    assert tasks["calls"] == [
+        {"kind": "skill", "name": "read", "active": 1},
+        {"kind": "tool", "name": "read", "active": 1},
+    ]
+    # An unknown finish id must not drop a real call (no guessing).
+    tracker.observe_event("coder", "sp-1", _call_event("tool.finished", call_id="nope", name="read", ok=True), at=_at(3))
+    assert tracker.room_tasks("coder", "room-1", at=_at(3))["calls"] == tasks["calls"]
+    # First finish removes one of the two colliding calls.
+    tracker.observe_event("coder", "sp-1", _call_event("tool.finished", call_id="c1", name="read", ok=True), at=_at(4))
+    remaining = tracker.room_tasks("coder", "room-1", at=_at(4))["calls"]
+    assert remaining == [{"kind": "skill", "name": "read", "active": 1}]
+    assert tracker.snapshot("coder", at=_at(4))["current_action"] == {
+        "kind": "skill", "name": "read", "call_id": "c1",
+    }
+    # Second finish clears the room; out-of-order duplicate finishes are safe.
+    tracker.observe_event("coder", "sp-1", _call_event("skill.finished", call_id="c1", name="read", ok=True), at=_at(5))
+    tracker.observe_event("coder", "sp-1", _call_event("skill.finished", call_id="c1", name="read", ok=True), at=_at(6))
+    tasks = tracker.room_tasks("coder", "room-1", at=_at(6))
+    assert tasks["calls"] == [] and tasks["state"] == "running"
+    assert tracker.snapshot("coder", at=_at(6))["current_action"] is None
+
+
+def test_room_tasks_scopes_exact_bot_and_room() -> None:
+    """room_tasks lists only unfinished calls for the exact bot+room:
+    other rooms, other bots, finished turns and latched rooms stay out."""
+    tracker = AgentStatusTracker()
+    tracker.begin_turn("coder", "room-1", span_id="sp-1", at=_at(0))
+    tracker.begin_turn("coder", "room-2", span_id="sp-2", at=_at(0))
+    tracker.begin_turn("researcher", "room-1", span_id="sp-3", at=_at(0))
+    tracker.observe_event("coder", "sp-1", _call_event("tool.started", call_id="a", name="read"), at=_at(1))
+    tracker.observe_event("coder", "sp-2", _call_event("tool.started", call_id="b", name="write"), at=_at(1))
+    tracker.observe_event("researcher", "sp-3", _call_event("skill.started", bot_id="researcher", call_id="c", name="search"), at=_at(1))
+    tasks = tracker.room_tasks("coder", "room-1", at=_at(1))
+    assert tasks["bot_id"] == "coder" and tasks["room_id"] == "room-1"
+    assert tasks["calls"] == [{"kind": "tool", "name": "read", "active": 1}]
+    assert tracker.room_tasks("coder", "room-2", at=_at(1))["calls"] == [
+        {"kind": "tool", "name": "write", "active": 1}
+    ]
+    assert tracker.room_tasks("researcher", "room-1", at=_at(1))["calls"] == [
+        {"kind": "skill", "name": "search", "active": 1}
+    ]
+    # Finished turns contribute nothing; the latch reports waiting instead.
+    tracker.finish_turn("coder", "sp-1", "done", at=_at(2))
+    done = tracker.room_tasks("coder", "room-1", at=_at(2))
+    assert done["calls"] == [] and done["state"] == "done"
+    tracker.note_card_posted("coder", "room-1", "question", at=_at(3))
+    tracker.finish_turn("coder", "sp-2", "done", at=_at(3))
+    waiting = tracker.room_tasks("coder", "room-1", at=_at(4))
+    assert waiting["state"] == "waiting" and waiting["waiting_on"] == {"kind": "user"}
+    assert waiting["calls"] == []
+    # No window, no tasks: empty ids and unknown rooms read as idle.
+    assert tracker.room_tasks("coder", "", at=_at(4))["calls"] == []
+    assert tracker.room_tasks("coder", None, at=_at(4))["state"] == "idle"
+    assert tracker.room_tasks("ghost", "room-1", at=_at(4))["calls"] == []
+    assert tracker.room_tasks("coder", "room-9", at=_at(4)) == {
+        "bot_id": "coder", "room_id": "room-9", "state": "idle",
+        "phase": None, "since": None, "updated_at": None,
+        "calls": [], "waiting_on": None,
+    }
+
+
+def test_invocation_identity_collision_replay_and_legacy_ambiguity() -> None:
+    tracker = AgentStatusTracker()
+    tracker.begin_turn('coder', 'room-1', span_id='one', at=_at(0))
+    tracker.begin_turn('coder', 'room-1', span_id='nested', at=_at(0))
+    tracker.begin_turn('coder', 'room-2', span_id='other', at=_at(0))
+    a, b, c = 'a' * 32, 'b' * 32, 'c' * 32
+    def event(kind, raw, name, token=None):
+        fields = {'call_id': raw, 'name': name, 'invocation_id': token}
+        if kind.endswith('finished'):
+            fields['ok'] = True
+        return _call_event(kind, **fields)
+    start_a = event('tool.started', 'a/b', 'read', a)
+    start_b = event('tool.started', 'a_b', 'read', b)
+    for ev in (start_a, start_a, start_b):
+        tracker.observe_event('coder', 'one', ev, at=_at(1))
+    tracker.observe_event('coder', 'nested', event('tool.started', 'a_b', 'write', c), at=_at(1))
+    tracker.observe_event('coder', 'other', event('tool.started', 'a_b', 'other', a), at=_at(1))
+    assert sorted((x['name'], x['active']) for x in tracker.room_tasks('coder', 'room-1', at=_at(2))['calls']) == [('read', 2), ('write', 1)]
+    tracker.observe_event('coder', 'one', event('tool.finished', 'a_b', 'read', b), at=_at(2))
+    tracker.observe_event('coder', 'one', start_b, at=_at(2))  # replay after finish
+    assert sorted((x['name'], x['active']) for x in tracker.room_tasks('coder', 'room-1', at=_at(2))['calls']) == [('read', 1), ('write', 1)]
+    tracker.observe_event('coder', 'one', event('tool.finished', 'a/b', 'read', a), at=_at(3))
+    assert tracker.room_tasks('coder', 'room-2', at=_at(3))['calls'][0]['name'] == 'other'
+    assert tracker.room_tasks('coder', 'room-1', at=_at(3))['calls'][0]['name'] == 'write'
+    for _ in range(2):
+        tracker.observe_event('coder', 'one', event('tool.started', 'old', 'read'), at=_at(3))
+    tracker.observe_event('coder', 'one', event('tool.finished', 'old', 'read'), at=_at(4))
+    assert next(x for x in tracker.room_tasks('coder', 'room-1', at=_at(4))['calls'] if x['name'] == 'read')['active'] == 2

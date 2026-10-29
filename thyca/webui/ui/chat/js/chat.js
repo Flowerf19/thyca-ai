@@ -370,13 +370,16 @@ async function loadSession(id, title, botId) {
   }
   updateComposer(); await refreshComposerInherit(selectedBot, nav);
   if (nav !== chatNavCurrent()) return;
-  bots.forEach(updateCard); closeMobile(); busy(runs.has(id)); toBottom(true);
+  bots.forEach(updateCard);
+  if (typeof refreshOpenPocketsOnWindowChange === 'function') refreshOpenPocketsOnWindowChange();
+  closeMobile(); busy(runs.has(id)); toBottom(true);
 }
 
 async function selectBot(id) {
   const b = getBot(id); if (!b) return;
   if (window.ThycaRouter?.currentPage() === 'chat') ThycaRouter.updateCurrent({ search: '?bot=' + encodeURIComponent(id), hash: '' });
-  openBot(id, true);
+  // Selecting a bot navigates to its DM; the pocket stays closed until
+  // the user explicitly opens it (chevron/+N).
   if (selectedBot === id && currentSession) return;
   const nav = nextChatNav();
   try {                                          // API: GET /api/bots/<id>/dm — fixed DM, find-or-create
@@ -390,7 +393,9 @@ async function selectBot(id) {
     $('#message-list').innerHTML = renderTranscript(detail);
     void renderExchangeGroups(detail);
     if (detail.running) followRunningTurn(detail.id);   // API: GET turn/stream replay — rejoin in-flight turn after reload
-    bots.forEach(updateCard); busy(runs.has(detail.id)); toBottom(true);
+    bots.forEach(updateCard);
+    if (typeof refreshOpenPocketsOnWindowChange === 'function') refreshOpenPocketsOnWindowChange();
+    busy(runs.has(detail.id)); toBottom(true);
   } catch (err) {
     if (nav !== chatNavCurrent()) return;
     toast('Không mở được phiên với ' + b.name + ': ' + err.message);
@@ -417,9 +422,11 @@ async function sendTurn(text, botId = selectedBot, { retry = false } = {}) {
   node.innerHTML = `<header class="message-byline"><span>${escapeHTML(b.name)}</span><time>đang lắng nghe</time></header><div class="live-copy"><p class="live-message">${dots}<span>Mình đang đọc lời nhắn của bạn…</span></p></div>`;
   list.append(node);
   const token = { botId: b.id, sessionId: currentSession, start: Date.now(), node, text: text || '', phase: 'waiting', timers: [], tools: [] };
-  runs.set(token.sessionId, token); run = token; busy(true); openBot(b.id); toBottom(true);
+  runs.set(token.sessionId, token); run = token; busy(true); toBottom(true);
+  // Sending never opens the pocket: disclosure needs an explicit
+  // chevron/+N open. Clear this window's stale live calls instead.
+  clearLiveCalls(b, token.sessionId); updateCard(b);
   setState(b.id, 'waiting', 'Mình đang đọc yêu cầu\nvà ghi nhận những điều bạn cần.', 0);
-  bots.forEach(x => { (x.feed || []).forEach(f => feedExit(x, f)); x.thinkBuf = ''; x.toolCounts = new Map(); x.toolRunning = 0; updateCard(x); });
   token.interval = setInterval(() => { if (runs.get(token.sessionId) !== token) { clearInterval(token.interval); return; } b.elapsed = Math.floor((Date.now() - token.start) / 1000); const e = $('.elapsed', $('#bot-' + b.id)); if (e) e.textContent = b.elapsed + ' giây'; }, 1000);
 
   const body = { text, retry };
@@ -454,108 +461,76 @@ async function readNdjson(stream, onEvent) {
   const s = buf.trim(); if (s) { try { onEvent(JSON.parse(s)); } catch {} }
 }
 
-/* Pocket feed — real activity lines from the stream (thinking tail,
-   tool/skill calls, writing), replacing the old fixed 3-step list. */
-/* Window = last 3 lines. Entries pushed beyond it get `exiting` — they keep
-   rendering with a fade-out class for ~450ms, then drop out of the state. */
-function feedPush(b, entry) {
-  entry.eid = ++feedSeq;
-  b.feed.push(entry);
-  if (b.feed.length > 8) b.feed.splice(0, b.feed.length - 8);
-  b.feed.filter(f => !f.exiting).slice(0, -3).forEach(f => feedExit(b, f));
-  updateCard(b);
-}
-function feedExit(b, f) {
-  if (f.exiting) return;
-  f.exiting = true;
-  setTimeout(() => { const i = b.feed.indexOf(f); if (i > -1) { b.feed.splice(i, 1); updateCard(b); } }, 460);
-}
-/* Last entry that still counts for continuation — exiting ghosts are invisible. */
-function feedLast(b) { return (b.feed || []).filter(f => !f.exiting).at(-1); }
-function settleFeedText(f, final = false) {
-  if (f.kind === 'think') f.text = 'đã suy nghĩ';
-  if (f.kind === 'write') f.text = final ? 'đã gửi phản hồi' : 'đã viết một phần';
-}
-function feedDone(b, match) { for (let i = b.feed.length - 1; i >= 0; i--) { const f = b.feed[i]; if (!f.done && match(f)) { f.done = true; settleFeedText(f); } } }
-function feedSettle(b, final = false) {
-  let lastWrite = null;
-  (b.feed || []).forEach(f => {
-    if (f.kind === 'write' && !f.exiting) lastWrite = f;
-    if (!f.done) { f.done = true; settleFeedText(f); }
-  });
-  if (final && lastWrite) settleFeedText(lastWrite, true);
-  updateCard(b);
-}
-/* Aggregated tools line per block: "đã dùng edit, bashx3, rememberx2" —
-   only folds into the LAST entry; a tool after a new Thinking row starts
-   a fresh line below it. */
-function feedToolText(counts, done) {
-  const names = [...counts.keys()].slice(-3);
-  return (done ? 'đã dùng ' : 'đang dùng ') + names.map(n => counts.get(n) > 1 ? `${n} · ${counts.get(n)} lần` : n).join(', ');
-}
-function feedTools(b) {
-  const counts = b.toolCounts || new Map();
-  const done = (b.toolRunning || 0) === 0;
-  const text = feedToolText(counts, done);
-  const last = feedLast(b);
-  if (last && last.kind === 'tools') { last.text = text; last.done = done; updateCard(b); }
-  else feedPush(b, { kind: 'tools', text, done });
-}
-
+/* Live activity: tool/skill calls observed on this client's streams.
+   The compact card preview derives from liveCalls (grouped with \u00d7N,
+   up to two groups +N); the pocket itself renders fetched backend tasks
+   for the exact window. Thinking/writing tails are not tasks and stay
+   out of both surfaces — only real tool/skill events count. */
 function handleStreamEvent(token, ev) {
+  if (!token || token.superseded) return;   // replaced rejoin: ignore late replay/events
   const type = ev.type, botId = ev.bot_id || token.botId;
   const fb = getBot(botId);
   const liveCopy = $('.live-copy', token.node);
   // One live bubble belongs to the turn's primary bot. Nested A2A turns
   // ride the same stream stamped with the child bot's bot_id: their
-  // state/feed updates stay on that bot's card, but their text must
+  // state/live-call updates stay on that bot's card, but their text must
   // never render into (or flip the phase of) the primary bubble.
   const own = botId === token.botId;
   switch (type) {
-    case 'turn.accepted': setState(botId, 'waiting'); if (fb) { (fb.feed || []).forEach(f => feedExit(fb, f)); fb.thinkBuf = ''; fb.toolCounts = new Map(); fb.toolRunning = 0; updateCard(fb); } break;
-    case 'llm.started': if (own) { token.phase = 'thinking'; $('.message-byline time', token.node).textContent = 'đang suy nghĩ'; } setState(botId, 'thinking'); if (fb) { feedDone(fb, f => f.kind === 'think' || f.kind === 'write'); fb.thinkBuf = ''; } break;
-    case 'llm.thinking': {
-      setState(botId, 'thinking');
+    case 'turn.accepted':
+      setState(botId, 'waiting');
       if (fb) {
-        const last = feedLast(fb);
-        // Consecutive think rounds (nothing pushed between) fold into one
-        // timeline row; syncFeedList renders n as a quiet count badge.
-        if (last && last.kind === 'think') {
-          if (last.done) { last.n = (last.n || 1) + 1; last.done = false; last.text = 'đang suy nghĩ'; updateCard(fb); }
-        } else feedPush(fb, { kind: 'think', text: 'đang suy nghĩ', n: 1, cls: 'li-think' });
+        const accepted = token.acceptedBots || (token.acceptedBots = new Set());
+        if (!accepted.has(botId)) { clearLiveCalls(fb, token.sessionId); accepted.add(botId); }
+        updateCard(fb);
       }
       break;
-    }
+    case 'llm.started':
+      if (own) { token.phase = 'thinking'; $('.message-byline time', token.node).textContent = 'đang suy nghĩ'; }
+      setState(botId, 'thinking');
+      break;
+    case 'llm.thinking':
+      // Thinking deltas are not tasks: state only, no preview/pocket change.
+      setState(botId, 'thinking');
+      break;
     case 'tool.started': case 'skill.started': {
       if (own) {
         token.phase = 'working'; token.tools.push(ev.name || 'tool');
         $('.message-byline time', token.node).textContent = 'đang làm việc';
       }
+      // kind comes from the actual event semantics, never the name.
+      const kind = type === 'skill.started' ? 'skill' : 'tool';
       setState(botId, 'working', `Đang gọi ${ev.name || 'tool'}`);
       if (fb) {
-        fb.toolRunning = (fb.toolRunning || 0) + 1;
-        const lastEntry = feedLast(fb);
-        if (!(lastEntry && lastEntry.kind === 'tools')) fb.toolCounts = new Map();   // new block below the last line
-        fb.toolCounts = fb.toolCounts || new Map();
-        const n = ev.name || 'tool'; fb.toolCounts.set(n, (fb.toolCounts.get(n) || 0) + 1);
-        feedTools(fb);
+        liveCallStarted(fb, { kind, name: ev.name || 'tool', call_id: ev.call_id, invocation_id: ev.invocation_id, turn: token, session: token.sessionId });
+        updateCard(fb);
+        if (typeof refreshOpenPocket === 'function') refreshOpenPocket(fb);
       }
       break;
     }
-    case 'tool.finished': case 'skill.finished':
-      setState(botId, 'thinking');
-      if (fb) { fb.toolRunning = Math.max(0, (fb.toolRunning || 0) - 1); const lastT = feedLast(fb); if (!fb.toolRunning && lastT && lastT.kind === 'tools') { lastT.done = true; lastT.text = feedToolText(fb.toolCounts || new Map(), true); } updateCard(fb); }
+    case 'tool.finished': case 'skill.finished': {
+      // Collision-safe association scoped to this turn's window: the
+      // finish carries the same public id, kind semantics and name as
+      // its start; a finish with no match removes nothing.
+      const finKind = type === 'skill.finished' ? 'skill' : 'tool';
+      if (fb) {
+        liveCallFinished(fb, ev.call_id,
+          { kind: finKind, name: ev.name || undefined, invocation_id: ev.invocation_id, turn: token, session: token.sessionId });
+        const remaining = liveCallsForWindow(fb, token.sessionId);
+        setState(botId, remaining.length ? 'working' : 'thinking');
+        updateCard(fb);
+        if (typeof refreshOpenPocket === 'function') refreshOpenPocket(fb);
+      } else setState(botId, 'thinking');
       // Admin tools may have added/removed/renamed a bot — re-sync the roster.
       if (/^bot_(create|pause|delete|restore|edit_card)$/.test(ev.name || '')) scheduleRosterSync();
       break;
+    }
     case 'llm.finished':
-      if (fb) { feedDone(fb, f => f.kind === 'think' || f.kind === 'write'); updateCard(fb); }
       if (own) { const p = token.node && $('.stream-text', token.node);
         if (p && token.mdBuf) { p.innerHTML = contentHtml(token.mdBuf); if (token.caret) p.append(token.caret); } }
       break;
     case 'llm.content': {
       setState(botId, 'writing'); notifyText(botId, ev.delta || '');
-      if (fb && !fb.feed.some(f => f.kind === 'write' && !f.done && !f.exiting)) feedPush(fb, { kind: 'write', text: 'đang viết phản hồi' });
       if (!own) break;
       token.phase = 'writing';
       token.mdBuf = (token.mdBuf || '') + (ev.delta || '');
@@ -576,9 +551,9 @@ function handleStreamEvent(token, ev) {
       break;
     }
     case 'session.naming.finished': if (ev.title && token.sessionId === currentSession) $('#chat-title').textContent = ev.title; break;
-    case 'turn.completed': token.phase = 'settled'; if (fb) feedSettle(fb, true); finishTurn(token, ev.detail); break;
-    case 'turn.cancelled': token.phase = 'settled'; if (fb) feedSettle(fb); cancelTurn(token, 'Đã dừng lượt trả lời.', 'đã dừng'); setState(botId, 'idle'); break;
-    case 'turn.failed': token.phase = 'settled'; if (fb) feedSettle(fb); cancelTurn(token, ev.message || 'Lượt trả lời gặp lỗi.', 'gặp lỗi'); setState(botId, 'error'); break;
+    case 'turn.completed': token.phase = 'settled'; if (fb) { clearLiveCalls(fb, token.sessionId); updateCard(fb); if (typeof refreshOpenPocket === 'function') refreshOpenPocket(fb); } finishTurn(token, ev.detail); break;
+    case 'turn.cancelled': token.phase = 'settled'; if (fb) { clearLiveCalls(fb, token.sessionId); updateCard(fb); if (typeof refreshOpenPocket === 'function') refreshOpenPocket(fb); } cancelTurn(token, 'Đã dừng lượt trả lời.', 'đã dừng'); setState(botId, 'idle'); break;
+    case 'turn.failed': token.phase = 'settled'; if (fb) { clearLiveCalls(fb, token.sessionId); updateCard(fb); if (typeof refreshOpenPocket === 'function') refreshOpenPocket(fb); } cancelTurn(token, ev.message || 'Lượt trả lời gặp lỗi.', 'gặp lỗi'); setState(botId, 'error'); break;
     case 'llm.retry': toast(`Đang thử lại (${ev.attempt}/${ev.max_attempts})…`); break;
   }
   const group = groups.find(g => g.id === token.sessionId);
@@ -621,8 +596,24 @@ async function stopRun() {
 }
 
 /* Rejoin an in-flight turn (another tab or reload): GET turn/stream replays
-   the event journal, then tails live deltas. */
+   the event journal, then tails live deltas. Re-entry reuses the existing
+   subscription and restores text accumulated while its node was detached. */
 function followRunningTurn(sessionId) {
+  const prev = runs.get(sessionId);
+  if (prev && prev.phase !== 'settled') {
+    $('#message-list').append(prev.node);
+    if (prev.mdBuf) {
+      const copy = $('.live-copy', prev.node);
+      const text = document.createElement('div');
+      text.className = 'stream-text markdown-body';
+      text.textContent = prev.mdBuf;
+      prev.caret = document.createElement('span');
+      prev.caret.className = 'streaming-caret';
+      text.append(prev.caret); copy.replaceChildren(text);
+    }
+    run = prev; busy(true);
+    return;
+  }
   const node = document.createElement('article'); node.className = 'message-assistant running-response';
   const b = getBot(selectedBot) || bots[0]; if (b) paint(node, b);
   node.innerHTML = `<header class="message-byline"><span>${b ? escapeHTML(b.name) : 'Thyca'}</span><time>đang chạy</time></header><div class="live-copy"><p class="live-message">${dots}<span>Đang theo lượt trả lời hiện tại…</span></p></div>`;

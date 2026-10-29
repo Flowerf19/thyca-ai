@@ -24,7 +24,7 @@ Baseline is `main` at `f4249c05` (`0.87.0.dev0`). Concurrent Provider/onboarding
 - Existing APIs remain `GET /api/traces/stats`, `GET /api/traces`, and `GET /api/traces/<sid>/<turn>`. `thyca/serve/trace_api.py::_apply_trace_filters` supports bot/date/search/model/status for stats and list. This proposal does **not** promote search/model/status into global KPI filters.
 - Dashboard links to Trace through `traceHref`/`openTraceRow` in `dashboard.js`. `trace.js` handles `openTurn` and `routeFromUrl`, including `?s=&t=` and `#sid/turn`; hash takes precedence. `thyca/webui/ui/share/router.js` normalizes legacy routes/history and exposes page contexts. `navigate` pushes a same-page route; `updateRoute` replaces it. `routeParts` needs an explicit metadata allowlist for the merged filters/detail state.
 - `thyca/serve/static.py` already includes known Trace aliases and root bootstrap mapping. No server static/API changes are proposed. Keep its exact allowlist, single-decoding, unknown-path, traversal, NUL, and symlink protections.
-- Canonical root-SPA/workspace decisions are in `.agents/README.md`, `.agents/PROJECT_CONTEXT.md`, `.agents/AGENT_RULES.md`, `.agents/plans/webui-spa-root.md`, and the canonical-only section of `bot-workspace-channels.md`. Older `webui-v5-small` Trace redirect/folder/version descriptions are stale and must not be reintroduced.
+- Canonical root-SPA/workspace decisions are in `.agents/README.md`, `.agents/PROJECT_CONTEXT.md`, `.agents/AGENT_RULES.md`, `docs/archive/plans/webui-spa-root.md`, and the canonical-only section of `bot-workspace-channels.md`. Older `webui-v5-small` Trace redirect/folder/version descriptions are stale and must not be reintroduced.
 
 ## Accepted design
 

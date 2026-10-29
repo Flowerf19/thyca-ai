@@ -245,3 +245,17 @@ def test_x23_deltas_share_base() -> None:
     assert ContentDelta(round=1, delta="x") != ThinkingDelta(round=1, delta="x")
     with pytest.raises(ValueError):
         ContentDelta(round=0, delta="x")
+
+
+def test_invocation_id_is_optional_and_accepts_only_opaque_tokens() -> None:
+    import pytest
+
+    old = TurnEvent(type='tool.started', round=1, call_id='id', name='read')
+    assert 'invocation_id' not in old.to_dict()
+    token = 'a' * 32
+    event = TurnEvent(type='tool.started', round=1, call_id='id', name='read', invocation_id=token)
+    assert event.to_dict()['invocation_id'] == token
+    with pytest.raises(ValueError):
+        TurnEvent(type='tool.started', round=1, call_id='id', name='read', invocation_id='private content')
+    with pytest.raises(ValueError):
+        TurnEvent(type='llm.started', round=1, invocation_id=token)

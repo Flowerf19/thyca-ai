@@ -383,3 +383,81 @@ def test_bot_row_meta_and_share_bar(node: str) -> None:
     assert 'style="width:100%' in rows or "width:100;" in rows or "width:100%" in rows
     assert "80% tổng token" in rows
     assert "20% tổng token" in rows
+
+
+def test_model_rows_hide_unknown_but_keep_totals(node: str) -> None:
+    """The 'unknown' model bucket never renders in either by-model
+    listing, while totals/shares still count it and bot attribution is
+    untouched."""
+    by_model = [
+        {"model": "unknown", "requests": 3, "total_tokens": 30,
+         "cost_usd": 0.03, "latency_ms_p50": 50,
+         "last_started_at": "2026-09-21T09:00:00Z"},
+        {"model": "known-model", "requests": 7, "total_tokens": 70,
+         "cost_usd": 0.07, "latency_ms_p50": 60,
+         "last_started_at": "2026-09-20T09:00:00Z"},
+    ]
+    out = _eval_dash(
+        node,
+        f"statsData = {{ by_model: {json.dumps(by_model)},"
+        "  totals: { total_tokens: 100, cost_usd: 0.10 } };\n"
+        "renderModelRows();\n"
+        "renderCostRows();\n"
+        "console.log(JSON.stringify({"
+        " usage: document.querySelector('#rows-model').innerHTML,"
+        " cost: document.querySelector('#rows-model-cost').innerHTML,"
+        " kept: statsData.by_model.length }))",
+    )
+    for key in ("usage", "cost"):
+        assert "known-model" in out[key]
+        assert "unknown" not in out[key]
+    # Shares stay against the authoritative period totals (70/100, $0.07/$0.10).
+    assert "70%" in out["usage"]
+    assert "70%" in out["cost"]
+    # Underlying payload is preserved for totals/filters, not deleted.
+    assert out["kept"] == 2
+
+
+def test_only_unknown_model_says_no_identifiable_model(node: str) -> None:
+    """An unknown-only period hides the row and says no model is
+    identifiable (not that there are no turns); bot rows still keep their
+    own 'unknown' attribution."""
+    out = _eval_dash(
+        node,
+        "statsData = { by_model: [{ model: 'unknown', requests: 1,"
+        " total_tokens: 10, cost_usd: 0.01 }],"
+        " by_bot: [{ bot_id: 'unknown', requests: 1, total_tokens: 10,"
+        " cost_usd: 0.01, last_started_at: '2026-09-20T09:00:00Z' }],"
+        " totals: { total_tokens: 10, cost_usd: 0.01 } };\n"
+        "renderModelRows();\n"
+        "renderCostRows();\n"
+        "renderBotRows();\n"
+        "console.log(JSON.stringify({"
+        " usage: document.querySelector('#rows-model').innerHTML,"
+        " cost: document.querySelector('#rows-model-cost').innerHTML,"
+        " bots: document.querySelector('#rows-bot').innerHTML }))",
+    )
+    assert "Không có model xác định trong kỳ." in out["usage"]
+    assert "Không có model xác định trong kỳ." in out["cost"]
+    assert "Chưa có lượt nào trong kỳ." not in out["usage"]
+    assert "Chưa có dữ liệu chi phí theo model." not in out["cost"]
+    assert "Chưa gắn bot" in out["bots"]
+
+
+def test_genuinely_empty_model_lists_keep_no_data_notes(node: str) -> None:
+    """A period with no by_model entries keeps the existing no-data
+    messages in both by-model listings."""
+    out = _eval_dash(
+        node,
+        "statsData = { by_model: [],"
+        " totals: { total_tokens: 0, cost_usd: null } };\n"
+        "renderModelRows();\n"
+        "renderCostRows();\n"
+        "console.log(JSON.stringify({"
+        " usage: document.querySelector('#rows-model').innerHTML,"
+        " cost: document.querySelector('#rows-model-cost').innerHTML }))",
+    )
+    assert "Chưa có lượt nào trong kỳ." in out["usage"]
+    assert "Chưa có dữ liệu chi phí theo model." in out["cost"]
+    assert "Không có model xác định trong kỳ." not in out["usage"]
+    assert "Không có model xác định trong kỳ." not in out["cost"]

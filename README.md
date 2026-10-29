@@ -43,7 +43,7 @@ curl -LsSf https://raw.githubusercontent.com/Flowerf19/thyca-ai/main/install.sh 
 thyca --serve        # SPA: http://127.0.0.1:19502/
 ```
 
-Lần đầu, nếu model hiệu lực chưa có API key, Thyca đưa bạn tới Provider và khóa các thao tác ở màn khác cho tới khi máy chủ xác nhận sẵn sàng. Điền tên kết nối + Base URL + API key → **Tải model** (chỉ lấy danh sách, không gọi model) → chọn hoặc nhập model → **Lưu và dùng**. Cấu hình được ghi trên máy; key đã lưu không gửi lại giao diện. Key trong biến môi trường cũng được máy chủ tính khi xác định trạng thái sẵn sàng, kể cả model chưa có trong danh mục.
+Lần đầu, nếu model hiệu lực chưa có API key, Thyca đưa bạn tới Provider và khóa các thao tác ở màn khác cho tới khi máy chủ xác nhận sẵn sàng. Điền tên kết nối + Base URL + API key → **Tải model** (chỉ lấy danh sách, không gọi model) → chọn model → **Lưu**, rồi **Đặt mặc định** ở danh sách model đã lưu để dùng model đó. Cấu hình được ghi trên máy; key đã lưu không gửi lại giao diện. Key trong biến môi trường cũng được máy chủ tính khi xác định trạng thái sẵn sàng, kể cả model chưa có trong danh mục.
 
 Nâng cấp: `uv tool upgrade thyca-ai` hoặc chạy lại `install.sh`.
 

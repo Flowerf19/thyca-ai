@@ -105,7 +105,7 @@ function setState(id,state,summary,elapsed){
  clearTimeout(stateTimers.get(id));clearTimeout(mentionTimers.get(id));b.mentioned=false;
  const changed=b.state!==state;const angle=orbitAngle(b);b.revision++;b.state=state;
  if(changed){b.orbitAngle=state==='waiting'&&angle===0?135:angle;b.orbitAt=Date.now();}
- if(summary!==undefined)b.summary=String(summary);else b.summary=stateSummaries[state];
+ if(summary!==undefined)b.summary=String(summary);else b.summary='';
  if(elapsed!==undefined)b.elapsed=elapsed;
  if(state!=='writing')clearMusic(id);
  if(['offline','error'].includes(state)&&activeGroup?.speaker===id)activeGroup.speaker=null;

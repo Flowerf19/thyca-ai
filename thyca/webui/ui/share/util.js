@@ -27,7 +27,6 @@ const SHELL_PAGES = [
   ['profile', 'Hồ sơ', '../profile/index.html'],
   ['provider', 'Provider', '../provider/index.html'],
   ['dashboard', 'Sử dụng', '../dashboard/index.html'],
-  ['settings', 'Cài đặt', '../settings/index.html'],
 ];
 const pageLinksMarkup = current => SHELL_PAGES.map(([id, label, href]) =>
   `<a href="${href}" data-page-link="${id}"${id === current ? ' class="is-current" aria-current="page"' : ''}>${label}</a>`).join('');

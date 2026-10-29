@@ -31,7 +31,10 @@ function rebuildExpressionBots() {
 function toggleMotion(value) {
   motionPaused = value;
   document.body.classList.toggle('motion-paused', value);
+  // The footer motion button is gone (its job moved to the reduce-motion
+  // preference in the Settings dialog); guard for markup that still has it.
   const btn = $('#motion-toggle');
+  if (!btn) return;
   btn.setAttribute('aria-pressed', String(value));
   btn.setAttribute('aria-label', value ? 'Tiếp tục chuyển động' : 'Tạm dừng chuyển động');
   btn.title = value ? 'Tiếp tục chuyển động' : 'Tạm dừng chuyển động';
@@ -67,7 +70,9 @@ function initShellApp() {
   $('#chat-sidebar').inert = matchMedia('(max-width:850px)').matches;
 
   /* Motion toggle + ambient timers. */
-  $('#motion-toggle').onclick = () => toggleMotion(!motionPaused);
+  /* The footer motion button was removed in favor of the reduce-motion
+     preference; keep the wiring if markup still carries it. */
+  if ($('#motion-toggle')) $('#motion-toggle').onclick = () => toggleMotion(!motionPaused);
   if (reduced.matches) toggleMotion(true);
 
   const nextBlink = new WeakMap();

@@ -18,7 +18,7 @@ function chooseIdle(key=null){
  if(run){toast('Dừng lượt trả lời đang chạy trước khi thử cử chỉ rảnh.');return false;}
  stopLab(false);lab.botId=$('#expression-bot').value;lab.mode='idle-preview';lab.sample='';studioTab(true);
  const b=getBot(lab.botId);setState(b.id,'idle',undefined,0);const chosen=beginIdle(b.id,key,true);lab.lastIdle=chosen;
- $('#lab-stop').hidden=false;openBot(b.id);announce(b.name+': '+idleCatalog[chosen].label);return chosen;
+ $('#lab-stop').hidden=false;announce(b.name+': '+idleCatalog[chosen].label);return chosen;
 }
 
 /* Shape picker: three live avatar previews, one per DROP_NAMES silhouette.
@@ -77,7 +77,7 @@ function chooseExpression(state){
   lab.mode='group';lab.ownsGroup=true;setState(b.id,'group',undefined,0);setGroupActivity('group-1',b.id);$('#lab-stop').hidden=false;
   $('#lab-playback-note').textContent='Chọn một bot trong nhóm để đổi người nói.';
  }else setState(b.id,state,undefined,state==='thinking'?8:0);
- openBot(b.id);refreshLab(b);
+ refreshLab(b);
  if(['done','error','mention'].includes(state)&&!motionPaused&&!reduced.matches){$$('.seal-avatar[data-bot-avatar="'+b.id+'"]:not(.expression-preview) ').forEach(el=>{(el.getAnimations?.({subtree:true})||[]).forEach(a=>{if(a.animationName?.startsWith('seal-done')||['seal-shake','seal-noticed'].includes(a.animationName)){a.currentTime=0;a.play();}});});}
  announce(b.name+': '+states[state][0]);
 }
@@ -94,7 +94,9 @@ function playLabSequence(){
 /* "Custom bot" footer button — opens the seal studio: pick a bot, change
    its color (persisted via localStorage in setBotColor), or replay the
    demo expressions to preview each working state. */
-$('#open-customize').onclick=()=>{stopLab(false);$('#expression-bot').innerHTML=bots.map(b=>`<option value="${b.id}"${b.id===selectedBot?' selected':''}>${b.name}</option>`).join('');lab.lastChoice=expressionFor(getBot(selectedBot));$('#bot-color').value=getBot(selectedBot).color;buildExpressions();$('#expressions-dialog').showModal();};
+/* Bot customization now lives in the shared Settings dialog (#open-studio
+   button); the footer shortcut opens that dialog instead. */
+$('#open-studio').onclick=()=>{const pick=$('#settings-bot')?.value;const id=pick&&getBot(pick)?pick:selectedBot;stopLab(false);$('#expression-bot').innerHTML=bots.map(b=>`<option value="${b.id}"${b.id===id?' selected':''}>${b.name}</option>`).join('');lab.lastChoice=expressionFor(getBot(id));$('#bot-color').value=getBot(id).color;buildExpressions();$('#expressions-dialog').showModal();};
 $('#expression-bot').onchange=()=>{stopLab();lab.lastChoice=expressionFor(getBot($('#expression-bot').value));$('#bot-color').value=getBot($('#expression-bot').value).color;buildExpressions();};
 $('#bot-color').oninput=e=>(window.ThycaShell||window.ThycaPrototype)?.setBotColor($('#expression-bot').value,e.target.value);
 $('#shape-picker').addEventListener('click',e=>{const btn=e.target.closest('[data-shape]');if(!btn)return;const id=$('#expression-bot').value;if((window.ThycaShell||window.ThycaPrototype)?.setBotShape(id,btn.dataset.shape))buildExpressions();});

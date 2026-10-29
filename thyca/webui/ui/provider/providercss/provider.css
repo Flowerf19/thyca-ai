@@ -51,6 +51,20 @@
 .provider-shell .advanced-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:13px}
 .provider-shell .advanced-actions .is-danger{color:#9c4f3f;border-color:#d8ac98}
 .provider-shell .current-default{padding:8px 11px;border-radius:9px;background:#f4eddd;color:#65563d;font-size:12px;overflow-wrap:anywhere}
+.provider-shell .saved-models{margin-top:12px;padding-top:10px;border-top:1px solid #e0d3bc;min-width:0}
+.provider-shell .saved-models-head h2{margin:0;font-size:15px;color:#54442f}
+.provider-shell .saved-models-head .card-copy{margin:4px 0 8px;color:#8d8069;font-size:11px;overflow-wrap:anywhere}
+.provider-shell .saved-model-rows{list-style:none;margin:0;padding:0;display:grid;gap:7px}
+.provider-shell .saved-model-row{display:flex;align-items:center;gap:10px;padding:8px 11px;border:1px solid #e0d3bc;border-radius:10px;background:#fffbf1ad;min-width:0}
+.provider-shell .saved-model-name{font-weight:600;color:#4a4034;overflow-wrap:anywhere;min-width:0;flex:1 1 auto}
+.provider-shell .saved-model-meta{color:#8d8069;font-size:11px;overflow-wrap:anywhere}
+/* Status pill reuses the shared active-chip tokens (same family as the
+   Memories filter chips), not a one-off green. */
+.provider-shell .saved-model-default{font-size:11px;font-weight:600;color:#465c3e;background:#eef2e3;border:1px solid #8e9b78;border-radius:999px;padding:5px 11px;white-space:nowrap}
+/* Row actions reuse the exact shared quiet-button metrics (as the Memories
+   Gia hạn / Sửa / Quên actions do): no custom sizing, never wrapped text. */
+.provider-shell .saved-model-actions{display:flex;gap:6px;flex-wrap:wrap;margin-left:auto;flex-shrink:0}
+.provider-shell .saved-model-actions .quiet-button{white-space:nowrap}
 .provider-shell .editor-footer{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding-top:2px}
 .provider-shell .editor-footer .primary-action{min-height:40px;padding:7px 13px}
 .provider-shell .effort-checks{display:flex;gap:8px;flex-wrap:wrap;padding:4px 0 2px}
@@ -74,4 +88,6 @@
   .provider-shell .field-wide{grid-column:auto}
   .provider-shell .price-heading{align-items:flex-start;flex-direction:column;gap:2px}
   .provider-shell .editor-footer>*{flex:0 1 auto}
+  .provider-shell .saved-model-row{flex-wrap:wrap}
+  .provider-shell .saved-model-actions{margin-left:0}
 }

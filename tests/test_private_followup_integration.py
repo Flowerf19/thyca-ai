@@ -878,3 +878,52 @@ def test_pending_group_survives_other_bot_dm(tmp_path: Path) -> None:
             "coder", pid).status == "waiting_private"
     finally:
         app.shutdown()
+
+
+def test_group_task_title_provenance_requires_explicit_link(tmp_path: Path) -> None:
+    """A bot can explicitly repeat private text in a group tool argument.
+
+    This is not an automatic DM-to-group projection: the scripted model
+    deliberately supplies those values in a later group turn.
+    """
+    from thyca.bots.private_followups import PrivateFollowupStore
+    from thyca.bots.tasks import derive_open_tasks
+    from thyca.core.protocol import ToolCall
+
+    class Scripted:
+        emit_group_tasks = False
+        sent = False
+
+        async def chat(self, messages, tools=None):
+            if self.emit_group_tasks and not self.sent:
+                self.sent = True
+                return ChatReply(content=None, tool_calls=[
+                    ToolCall(id='linked', name='task_open', arguments={
+                        'title': 'private q?', 'memory_task_id': 'task-aabb1122'}),
+                    ToolCall(id='unlinked', name='task_open', arguments={
+                        'title': 'RAW-SECRET'}),
+                ])
+            return ChatReply(content='ok')
+
+    llm = Scripted()
+    app = _chat(tmp_path, llm)
+    try:
+        _coder(app)
+        dm = app.bot_dm('coder')
+        group, pid = _ask(app, tmp_path)
+        app.turn(dm['id'], 'RAW-SECRET')
+        pending = PrivateFollowupStore(tmp_path).get('coder', pid)
+        assert pending.question == 'private q?'
+        assert pending.status == 'received'
+        assert not any('RAW-SECRET' in m['content'] or 'private q?' in m['content']
+                       for m in app.get_payload(group['id'])['messages'])
+        llm.emit_group_tasks = True
+        app.turn(group['id'], '@coder continue')
+        internal = app._runtime.internal_session('coder', group['id'])
+        tasks = derive_open_tasks(list(internal.messages), [], bot_id='coder')
+        assert {t.task: t.memory_task_id for t in tasks} == {
+            'private q?': 'task-aabb1122', 'RAW-SECRET': None}
+        titles = {t['title'] for t in app.bot_room_tasks(group['id'], 'coder')['tasks']}
+        assert {'private q?', 'RAW-SECRET'} <= titles
+    finally:
+        app.shutdown()

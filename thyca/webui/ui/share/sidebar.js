@@ -4,46 +4,155 @@ let activeGroup=null;
 
 function activeSidebarBot(){const router=window.ThycaRouter;return router?.currentPage?.()?router.highlightedBot():selectedBot;}
 function sidebarActionLabel(b){const router=window.ThycaRouter;return router?.currentPage?.()?router.sidebarLabel(b.id,b.name,states[expressionFor(b)][1]):`Trò chuyện với ${b.name}`;}
-function previewLine(b){const whisper=b.state==='idle'&&b.idle.comment?'“'+b.idle.comment+'”':'';return whisper||String(b.summary||'').split('\n')[0];}
-/* The pocket heading already names the state, so a generic stateSummaries
-   line would repeat it. Only surface a concrete current action in the pocket. */
-function pocketSummary(b){
- const first=String(b.summary||'').split('\n')[0];
- if(!first)return '';
- const generic=new Set(Object.values(stateSummaries).map(s=>String(s).split('\n')[0]));
- return generic.has(first)?'':first;
+/* Compact activity line: live tool/skill calls for the exact window only.
+   Simulated idle comments never render here — the line stays empty
+   unless real activity is running. Avatar animations and the expression
+   preview are untouched (avatars.js / idle.js own those layers). */
+function previewLine(b){
+ const groups=livePreviewGroups(b,currentChatWindow());
+ if(!groups.total)return '';
+ // Skill rows keep their kind prefix from the actual event semantics, so a
+ // skill 'read' never masquerades as a tool 'read' in the compact line.
+ return groups.shown.map(g=>`${g.kind==='skill'?'skill ':''}${g.name}${g.active>1?` \u00d7${g.active}`:''}`).join(', ');
 }
-function card(b){const activeId=activeSidebarBot();return `<article class="bot-card team-cluster team-envelope" id="bot-${b.id}" data-bot-id="${b.id}" data-state="${b.state}" data-open="${b.open}" data-selected="${b.id===activeId}" style="${paletteStyle(b)}"><header class="bot-header"><button class="bot-select team-bot-item" data-action="select" data-bot-id="${b.id}" aria-label="${sidebarActionLabel(b)}">${avatar(b)}<span class="bot-heading"><span class="bot-name session-name">${b.name}</span><span class="bot-role">${b.role}</span><span class="header-status"><span class="status-dot"></span><span class="header-status-label">${states[b.state][1]}</span></span></span></button><div class="card-actions"><button class="icon-button favorite" data-action="favorite" aria-label="${b.system?`Bot hệ thống ${b.name} — luôn được ghim`:b.favorite?`Bỏ ghim ${b.name}`:`Ghim ${b.name} lên đầu`}" aria-pressed="${b.favorite}"${b.system?' disabled title="Bot hệ thống — không bỏ ghim được"':''}>${icon('star')}</button><button class="icon-button collapse-button" data-action="collapse" aria-label="Thu hoặc mở ${b.name}" aria-controls="pocket-${b.id}" aria-expanded="${b.open}">${icon('chevron')}</button></div></header><div class="compact-preview"><span class="status-dot"></span><span class="preview-text">${previewLine(b)}</span></div><div class="pocket team-pocket-viewport" id="pocket-${b.id}" ${b.open?'':'inert'}><div class="pocket-inner"><section class="thinking-paper" aria-label="Tiến trình của ${b.name}"><div class="thinking-heading">${dots}<span class="thinking-title">Đang suy nghĩ</span><span class="elapsed">${b.elapsed} giây</span></div><div class="thinking-scroll" tabindex="0" aria-label="Tiến trình của ${b.name}"><p class="thinking-summary" hidden></p><ol class="progress-list" hidden></ol><p class="thought-extra" hidden></p></div><button class="reply-action" data-action="reply"${['waiting','confused'].includes(b.state)?'':' hidden'}>${icon('arrow')}Trả lời</button><footer class="paper-footer"><button data-action="info">${icon('info')}Thông tin bot</button><button data-action="capabilities">${icon('list')}Khả năng</button></footer></section></div></div></article>`;}
-/* Keyed reconcile: exiting rows render first (fade-out), then the last 3
-   live rows. Existing <li> nodes are updated in place so their animations
-   don't restart on every stream event; new nodes get .li-enter once. */
-function syncFeedList(b,list){
- const feed=b.feed||[];
- const alive=feed.filter(f=>!f.exiting),vis=new Set(alive.slice(-3));
- const render=feed.filter(f=>f.exiting||vis.has(f));
- list.hidden=!render.length;
- const keyed=new Map($$('li',list).map(li=>[li.dataset.eid,li])),want=new Set(render.map(f=>'f'+f.eid));
- keyed.forEach((li,eid)=>{if(!want.has(eid))li.remove();});
+function previewExtraCount(b){
+ return livePreviewGroups(b,currentChatWindow()).extra;
+}
+/* Pocket status line for the task pocket. Only factual backend states:
+   loading / empty / unavailable / error / live count. Never a generic
+   'thinking' summary — the heading already names the factual state. */
+function taskStatusText(b){
+ const window=currentChatWindow();
+ if(!window||b.taskWindow!==window){
+  if(b.open)return 'Ch\u01b0a r\u00f5 c\u1eeda s\u1ed5. M\u1edf h\u1ed9p \u0111\u1ec3 xem vi\u1ec7c trong c\u1eeda s\u1ed5 chat hi\u1ec7n t\u1ea1i.';
+  return '';
+ }
+ const cache=b.taskCache;
+ if(!cache||cache.status==='loading')return '\u0110ang t\u1ea3i vi\u1ec7c\u2026';
+ if(cache.status==='unavailable')return 'Kh\u00f4ng xem \u0111\u01b0\u1ee3c vi\u1ec7c l\u00fac n\u00e0y.';
+ if(cache.status==='error')return 'Kh\u00f4ng t\u1ea3i \u0111\u01b0\u1ee3c danh s\u00e1ch vi\u1ec7c.';
+ const tasks=(cache.payload&&cache.payload.tasks)||[];
+ if(!tasks.length)return 'Kh\u00f4ng c\u00f3 vi\u1ec7c n\u00e0o \u0111ang ch\u1ea1y.';
+ return `${tasks.length} vi\u1ec7c \u0111ang ch\u1ea1y`;
+}
+/* Task rows for the exact window: one row per open runtime unit the
+   backend derived for this bot+window (task_open/delegate opens, pending
+   envelopes, minus completion records). Completed work and the
+   saved-memory catalog never appear — the cache is replaced per fetch.
+   Live tool/skill calls are NOT rows here; they feed only the collapsed
+   preview and the separate +N full list. */
+function taskRows(b){
+ const window=currentChatWindow();
+ if(!window||b.taskWindow!==window)return [];
+ const cache=b.taskCache;
+ if(!cache||cache.status!=='ok')return [];
+ const tasks=(cache.payload&&cache.payload.tasks)||[];
+ // Every unit renders (no silent truncation); identical units keep
+ // distinct occurrence-aware identities so reconcile preserves each.
+ const seen=new Map();
+ return tasks.filter(t=>t&&t.title).map(t=>{
+  const base=`${String(t.title)}\0${String(t.status||'open')}\0${(typeof t.waiting_on==='string'&&t.waiting_on)||''}`;
+  const nth=seen.get(base)||0;seen.set(base,nth+1);
+  return {
+   key:`${base}\0#${nth}`,
+   title:String(t.title),
+   status:String(t.status||'open'),
+   waitingOn:(typeof t.waiting_on==='string'&&t.waiting_on)||null,
+  };
+ });
+}
+function card(b){
+ const activeId=activeSidebarBot();
+ const groups=livePreviewGroups(b,typeof currentChatWindow==='function'?currentChatWindow():null);
+ const more=groups.extra>0?`<button class="live-more" data-action="live-more" data-bot-id="${b.id}" aria-label="Xem to\u00e0n b\u1ed9 ${groups.total} vi\u1ec7c \u0111ang ch\u1ea1y c\u1ee7a ${b.name}" title="Xem to\u00e0n b\u1ed9">+${groups.extra}</button>`:'';
+ return `<article class="bot-card team-cluster team-envelope" id="bot-${b.id}" data-bot-id="${b.id}" data-state="${b.state}" data-open="${b.open}" data-selected="${b.id===activeId}" style="${paletteStyle(b)}"><header class="bot-header"><button class="bot-select team-bot-item" data-action="select" data-bot-id="${b.id}" aria-label="${sidebarActionLabel(b)}">${avatar(b)}<span class="bot-heading"><span class="bot-name session-name">${b.name}</span><span class="bot-role">${b.role}</span><span class="header-status"><span class="status-dot"></span><span class="header-status-label">${states[b.state][1]}</span></span></span></button><div class="card-actions"><button class="icon-button favorite" data-action="favorite" aria-label="${b.system?`Bot h\u1ec7 th\u1ed1ng ${b.name} \u2014 lu\u00f4n \u0111\u01b0\u1ee3c ghim`:b.favorite?`B\u1ecf ghim ${b.name}`:`Ghim ${b.name} l\u00ean \u0111\u1ea7u`}" aria-pressed="${b.favorite}"${b.system?' disabled title="Bot h\u1ec7 th\u1ed1ng \u2014 kh\u00f4ng b\u1ecf ghim \u0111\u01b0\u1ee3c"':''}>${icon('star')}</button><button class="icon-button collapse-button" data-action="collapse" aria-label="Thu ho\u1eb7c m\u1edf ${b.name}" aria-controls="pocket-${b.id}" aria-expanded="${b.open}">${icon('chevron')}</button></div></header><div class="compact-preview"><span class="status-dot"></span><span class="preview-text">${escapeHTML(previewLine(b))}</span>${more}</div><div class="pocket team-pocket-viewport" id="pocket-${b.id}" ${b.open?'':'inert'}><div class="pocket-inner"><section class="thinking-paper" aria-label="Vi\u1ec7c \u0111ang ch\u1ea1y c\u1ee7a ${b.name}"><div class="thinking-heading">${dots}<span class="thinking-title">${states[b.state][1]}</span><span class="elapsed">${b.elapsed} gi\u00e2y</span></div><div class="thinking-scroll" tabindex="0" aria-label="Vi\u1ec7c \u0111ang ch\u1ea1y c\u1ee7a ${b.name}"><p class="thinking-summary"></p><ol class="progress-list"></ol></div><button class="reply-action" data-action="reply"${['waiting','confused'].includes(b.state)?'':' hidden'}>${icon('arrow')}Tr\u1ea3 l\u1eddi</button><footer class="paper-footer"><button data-action="info">${icon('info')}Th\u00f4ng tin bot</button><button data-action="capabilities">${icon('list')}Kh\u1ea3 n\u0103ng</button></footer></section></div></div></article>`;
+}
+/* Keyed reconcile for the task pocket: one row per live kind+name group.
+   Existing <li> nodes update in place; rows that disappear are removed.
+   No exiting ghosts, no invented thinking rows — only fetched tasks. */
+function syncTaskList(b,list){
+ const rows=taskRows(b);
+ list.hidden=!rows.length&&!taskStatusText(b);
+ const keyed=new Map($$('li',list).map(li=>[li.dataset.tkey,li]));
+ const want=new Set(rows.map(r=>r.key));
+ keyed.forEach((li,key)=>{if(!want.has(key))li.remove();});
  let cursor=list.firstElementChild;
- render.forEach(f=>{
-  const eid='f'+f.eid;let li=keyed.get(eid);
-  if(!li){li=document.createElement('li');li.dataset.eid=eid;li._enter=true;
+ rows.forEach(r=>{
+  const key=r.key;let li=keyed.get(key);
+  if(!li){li=document.createElement('li');li.dataset.tkey=key;li._enter=true;
    li.addEventListener('animationend',()=>{li.classList.remove('li-enter');li._enter=false;},{once:true});}
-  const count=f.kind==='think'&&(f.n||1)>1?`<span class="feed-count">×${Number(f.n)||1}</span>`:'';
-  const html=`<span class="step-mark">${f.done?icon('check'):''}</span><span>${escapeHTML(f.text)}</span>${count}`;
-  if(li._feedHtml!==html){li.innerHTML=html;li._feedHtml=html;}
-  li.className=(f.exiting?'li-exit ':'')+(f.done?'complete':'current')+(f.cls?' '+f.cls:'')+(li._enter?' li-enter':'');
+  const waiter=r.waitingOn?` \u00b7 ch\u1edd ${(getBot(r.waitingOn)||{name:r.waitingOn}).name}`:'';
+  const badge=`<span class="feed-count">${escapeHTML(r.status+waiter)}</span>`;
+  const html=`<span class="step-mark">${icon('list')}</span><span>${escapeHTML(r.title)}</span>${badge}`;
+  if(li._taskHtml!==html){li.innerHTML=html;li._taskHtml=html;}
+  li.className='current'+(li._enter?' li-enter':'');
   if(li!==cursor)list.insertBefore(li,cursor);else cursor=cursor.nextElementSibling;
  });
 }
-
+/* Full live list for the +N button — SEPARATE from the task pocket.
+   A lazily created dialog lists every live group for the exact window
+   with \u00d7N counts. Touch and keyboard accessible: the +N button
+   opens it, Escape or the close button dismisses, focus returns to +N. */
+let liveReturnFocus=null;
+function ensureLiveDialog(){
+ let dlg=$('#live-list-dialog');
+ if(dlg)return dlg;
+ dlg=document.createElement('dialog');
+ dlg.id='live-list-dialog';
+ dlg.className='screen-dialog';
+ dlg.setAttribute('aria-labelledby','live-list-title');
+ dlg.innerHTML=`<div class="dialog-heading"><div><h2 id="live-list-title">Vi\u1ec7c \u0111ang ch\u1ea1y</h2><p id="live-list-sub"></p></div><button class="icon-button dialog-close" aria-label="\u0110\u00f3ng">${icon('close')}</button></div><div class="dialog-body"><ol class="progress-list" id="live-list-rows"></ol></div>`;
+ document.body.appendChild(dlg);
+ $('.dialog-close',dlg).onclick=()=>dlg.close();
+ dlg.addEventListener('close',()=>{if(liveReturnFocus&&document.contains(liveReturnFocus))liveReturnFocus.focus();liveReturnFocus=null;});
+ dlg.addEventListener('click',e=>{if(e.target===dlg){const r=dlg.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)dlg.close();}});
+ return dlg;
+}
+function openLiveList(botId){
+ const b=getBot(botId);if(!b)return false;
+ const window=currentChatWindow();
+ const groups=livePreviewGroups(b,window);
+ const dlg=ensureLiveDialog();
+ liveReturnFocus=document.activeElement;
+ $('#live-list-sub',dlg).textContent=b?`${b.name} \u00b7 ${groups.total} nh\u00f3m vi\u1ec7c`:`${groups.total} nh\u00f3m`;
+ const rows=$('#live-list-rows',dlg);
+ rows.replaceChildren();
+ if(!window){rows.innerHTML=`<li class="current"><span>${escapeHTML('Ch\u01b0a r\u00f5 c\u1eeda s\u1ed5. M\u1edf h\u1ed9p \u0111\u1ec3 xem vi\u1ec7c trong c\u1eeda s\u1ed5 chat hi\u1ec7n t\u1ea1i.')}</span></li>`;}
+ else if(!groups.total){rows.innerHTML=`<li class="current"><span>${escapeHTML('Kh\u00f4ng c\u00f3 vi\u1ec7c n\u00e0o \u0111ang ch\u1ea1y.')}</span></li>`;}
+ else{
+  const full=new Map();
+  for(const f of liveCallsForWindow(b,window)){
+   const key=`${f.kind}\0${f.name}`;
+   const slot=full.get(key);
+   if(slot){slot.active+=1;}else full.set(key,{kind:f.kind,name:f.name,active:1});
+  }
+  rows.innerHTML=[...full.values()].map(g=>`<li class="current"><span class="step-mark">${icon(g.kind==='skill'?'list':'leaf')}</span><span>${escapeHTML(g.kind==='skill'?`skill ${g.name}`:g.name)}</span>${g.active>1?`<span class="feed-count">\u00d7${g.active}</span>`:''}</li>`).join('');
+ }
+ if(typeof dlg.showModal==='function')dlg.showModal();else dlg.open=true;
+ const closer=$('.dialog-close',dlg);if(closer)closer.focus();
+ return true;
+}
+/* Event-driven pocket refresh while open: stream events and window
+   switches call this — never a timer. No fetch happens here when the
+   pocket is closed, so roster/select/send stay disclosure-free. */
+function refreshOpenPocket(b){
+ if(!b||!b.open)return null;
+ return refreshBotTasks(b);
+}
+function refreshOpenPocketsOnWindowChange(){
+ const window=currentChatWindow();
+ bots.forEach(b=>{
+  if(!b.open)return;
+  if(b.taskWindow!==window)void refreshBotTasks(b,window);
+ });
+}
 /* Sidebar display order: pinned (starred) bots first — system Thyca is
    always starred — with stable roster order inside each group. The
    underlying `bots` array is never reordered. */
 function teamDisplayOrder(){ return [...bots].sort((a,b)=>(b.favorite-a.favorite)); }
 function renderTeam(){ const el = $('#team-bot-list'); if (el) el.innerHTML = teamDisplayOrder().map(card).join(''); }
 /* Reorder existing card nodes after a pin toggle: appendChild moves the
-   node, so pocket/feed/animation identity survives (no full rerender). */
+   node, so pocket/task/animation identity survives (no full rerender). */
 function pinCardOrder(){
  const list=$('#team-bot-list');if(!list)return false;
  const have=new Map();
@@ -56,16 +165,31 @@ function updateCard(b){
  el.dataset.state=b.state;el.dataset.open=b.open;el.dataset.selected=b.id===activeSidebarBot();
  $('.header-status-label',el).textContent=states[expressionFor(b)][1];
  $('.bot-select',el).setAttribute('aria-label',sidebarActionLabel(b));
- const whisper=b.state==='idle'?b.idle.comment:'';
- const summary=$('.thinking-summary',el);const summaryText=whisper?'“'+whisper+'”':pocketSummary(b);summary.textContent=summaryText;summary.hidden=!summaryText;summary.style.whiteSpace='nowrap';summary.classList.toggle('idle-comment',!!whisper);
- $('.preview-text',el).textContent=previewLine(b);
+ const status=$('.thinking-summary',el);
+ const statusText=taskStatusText(b);
+ status.textContent=statusText;status.hidden=!statusText;status.style.whiteSpace='nowrap';status.classList.remove('idle-comment');
+ const line=previewLine(b);
+ $('.preview-text',el).textContent=line;
+ let more=$('.live-more',el);
+ const extra=previewExtraCount(b);
+ if(extra>0){
+  if(!more){
+   more=document.createElement('button');
+   more.className='live-more';more.dataset.action='live-more';more.dataset.botId=b.id;
+   $('.compact-preview',el).appendChild(more);
+  }
+  more.hidden=false;
+  more.textContent='+'+extra;
+  more.setAttribute('aria-label',`Xem to\u00e0n b\u1ed9 ${previewExtraCount(b)+livePreviewGroups(b,currentChatWindow()).shown.length} vi\u1ec7c \u0111ang ch\u1ea1y c\u1ee7a ${b.name}`);
+  more.title='Xem to\u00e0n b\u1ed9';
+ }else if(more){more.hidden=true;more.remove();}
  $('.reply-action',el).hidden=!['waiting','confused'].includes(b.state);
- $('.compact-preview',el).dataset.idleComment=String(!!whisper);$('.preview-text',el).title=whisper;
- $('.elapsed',el).textContent=b.elapsed?b.elapsed+' giây':'';
- $('.thinking-title',el).textContent=whisper?'Lúc rảnh':states[b.state][1];
+ $('.compact-preview',el).dataset.idleComment='false';$('.preview-text',el).title=line;
+ $('.elapsed',el).textContent=b.elapsed?b.elapsed+' gi\u00e2y':'';
+ $('.thinking-title',el).textContent=states[b.state][1];
  $('.collapse-button',el).setAttribute('aria-expanded',b.open);
  $('.pocket',el).inert=!b.open;
- syncFeedList(b,$('.progress-list',el));
+ syncTaskList(b,$('.progress-list',el));
  $$('.seal-avatar[data-bot-avatar="'+b.id+'"]:not(.expression-preview)').forEach(a=>syncAvatar(a,b));
  syncGroupAvatars();refreshLab(b);
 }
@@ -97,9 +221,19 @@ function setGroupActivity(groupId,speakerId=null){
  g.bots.forEach(id=>{const b=getBot(id);if(b&&clearIdle(b))updateCard(b);});
  syncGroupAvatars();return true;
 }
+/* Chevron-only disclosure: opening a pocket fetches that bot's tasks
+   for the exact current window; closing invalidates any in-flight
+   fetch so it can never paint stale data. Roster load, bot select,
+   send and activity popovers never call this with open=true. */
 function openBot(id,open=true){
- bots.forEach(b=>{b.open=b.id===id?open:false;updateCard(b)});
- if(open)setTimeout(()=>$('#bot-'+id).scrollIntoView({block:'nearest',behavior:motionPaused?'auto':'smooth'}),280);
+ const target=getBot(id);if(!target)return;
+ if(open&&!target.open){
+  bots.forEach(b=>{b.open=b.id===id;updateCard(b);});
+  void refreshBotTasks(target);
+ }else{
+  bots.forEach(b=>{const will=b.id===id?open:false;if(b.open&&!will)noteTaskStale(b);b.open=will;updateCard(b);});
+ }
+ if(open)setTimeout(()=>{const el=$('#bot-'+id);if(el)el.scrollIntoView({block:'nearest',behavior:motionPaused?'auto':'smooth'});},280);
 }
 
 
@@ -133,10 +267,10 @@ async function fillDrawerContext(b){
  }catch{}
 }
 
-$('#team-bot-list').addEventListener('click',e=>{const btn=e.target.closest('button');if(!btn)return;const b=getBot(btn.closest('.bot-card').dataset.botId);switch(btn.dataset.action){case 'select':window.ThycaRouter?ThycaRouter.dispatch('selectBot',b.id):selectBot(b.id);break;case 'reply':window.ThycaRouter?ThycaRouter.dispatch('selectBot',b.id):selectBot(b.id);document.querySelector('#message')?.focus?.();break;case 'collapse':openBot(b.id,!b.open);break;case 'favorite':if(b.system)break;b.favorite=!b.favorite;setBotFavorite(b.id,b.favorite);btn.setAttribute('aria-pressed',b.favorite);btn.setAttribute('aria-label',b.favorite?`Bỏ ghim ${b.name}`:`Ghim ${b.name} lên đầu`);toast(b.favorite?`Đã ghim ${b.name} lên đầu.`:`Đã bỏ ghim ${b.name}.`);pinCardOrder();break;case 'info':openInfo(b.id);break;case 'capabilities':openInfo(b.id,true);break;}});
+$('#team-bot-list').addEventListener('click',e=>{const btn=e.target.closest('button');if(!btn)return;const b=getBot(btn.closest('.bot-card').dataset.botId);switch(btn.dataset.action){case 'select':window.ThycaRouter?ThycaRouter.dispatch('selectBot',b.id):selectBot(b.id);break;case 'reply':window.ThycaRouter?ThycaRouter.dispatch('selectBot',b.id):selectBot(b.id);document.querySelector('#message')?.focus?.();break;case 'collapse':openBot(b.id,!b.open);break;case 'live-more':openLiveList(b.id);break;case 'favorite':if(b.system)break;b.favorite=!b.favorite;setBotFavorite(b.id,b.favorite);btn.setAttribute('aria-pressed',b.favorite);btn.setAttribute('aria-label',b.favorite?`Bỏ ghim ${b.name}`:`Ghim ${b.name} lên đầu`);toast(b.favorite?`Đã ghim ${b.name} lên đầu.`:`Đã bỏ ghim ${b.name}.`);pinCardOrder();break;case 'info':openInfo(b.id);break;case 'capabilities':openInfo(b.id,true);break;}});
 $('#group-list')?.addEventListener('click',e=>{const row=e.target.closest('[data-group]');if(!row)return;const g=groups.find(x=>x.id===row.dataset.group);window.ThycaRouter?ThycaRouter.dispatch('loadSession',g.id,g.title,g.bots[0]):loadSession(g.id,g.title,g.bots[0]);});
 
-$('#bot-drawer-body').addEventListener('click',e=>{const btn=e.target.closest('[data-session]');if(!btn)return;const b=getBot(btn.dataset.bot);const s=b.sessions.find(x=>x[0]===btn.dataset.session);window.ThycaRouter?ThycaRouter.dispatch('loadSession',s[0],s[1],b.id):loadSession(s[0],s[1],b.id);$('#bot-drawer').close();openBot(b.id);});
+$('#bot-drawer-body').addEventListener('click',e=>{const btn=e.target.closest('[data-session]');if(!btn)return;const b=getBot(btn.dataset.bot);const s=b.sessions.find(x=>x[0]===btn.dataset.session);window.ThycaRouter?ThycaRouter.dispatch('loadSession',s[0],s[1],b.id):loadSession(s[0],s[1],b.id);$('#bot-drawer').close();});
 const teamSharedCreate=$('#team-shared-create');
 if(teamSharedCreate)teamSharedCreate.onclick=()=>{$('#group-options').innerHTML=bots.map(b=>`<label class="check-row"><input type="checkbox" name="bots" value="${b.id}" checked><span class="check-avatar" style="${paletteStyle(b)}">${avatar(b)}</span><span style="color:${b.palette.ink}">${b.name}</span><small style="color:#92846d">${b.role}</small></label>`).join('');$('#group-dialog').showModal();};
 $('#group-form').onsubmit=async e=>{e.preventDefault();const ids=$$('input[name=bots]:checked',e.currentTarget).map(x=>x.value);if(ids.length<2){toast('Chọn ít nhất hai bot cho hội thoại chung.');return;}const title=$('#group-title').value.trim();if(!title)return;

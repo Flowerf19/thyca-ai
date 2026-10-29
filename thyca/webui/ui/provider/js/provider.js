@@ -70,9 +70,13 @@ workspace.insertAdjacentHTML('beforeend', `
         </div>
         <p class="form-status" id="editor-status" role="status" aria-live="polite" hidden></p>
         <div class="current-default" id="current-default" aria-live="polite"></div>
-        <div class="editor-footer"><button class="primary-action" id="save-use" type="submit" form="connection-form">Lưu và dùng</button><button class="quiet-button" type="button" id="cancel-editor">Hủy thay đổi</button></div>
+        <div class="editor-footer"><button class="primary-action" id="save-use" type="submit" form="connection-form">Lưu</button><button class="quiet-button" type="button" id="cancel-editor">Hủy thay đổi</button></div>
       </form>
     </fieldset>
+    <section class="saved-models" id="saved-models" aria-label="Model đã lưu">
+      <div class="saved-models-head"><h2>Model đã lưu</h2><p class="card-copy" id="saved-models-note" aria-live="polite"></p></div>
+      <ul class="saved-model-rows" id="saved-model-rows"></ul>
+    </section>
   </section>
 </div></div>`);
 
@@ -268,8 +272,104 @@ function renderEditorActions() {
   $('#pv-key-note').textContent = pid && providerHasStoredKey(pid) ? 'Đã lưu key' : '';
   $('#pv-key').placeholder = pid && providerHasStoredKey(pid) ? 'Để trống để giữ key' : 'Nhập API key';
 }
+function savedModelMeta(id) {
+  const model = state.values?.models?.[id] || {};
+  const bits = [];
+  if (model.input || model.cache || model.output) bits.push(`$${model.input}/${model.cache}/${model.output}`);
+  if (Number.isInteger(model.contextTokens)) bits.push(`${model.contextTokens} ctx`);
+  if (Array.isArray(model.reasoningEfforts) && model.reasoningEfforts.length) bits.push(model.reasoningEfforts.join(', '));
+  return bits.join(' · ');
+}
+function renderSavedModels() {
+  const list = $('#saved-model-rows'); if (!list || !state.values) return;
+  const note = $('#saved-models-note');
+  const pid = state.editingProvider;
+  const ids = pid ? modelsOf(pid) : [];
+  const def = state.values.defaultModel || '';
+  const busy = state.loading || state.saving || state.reloading;
+  if (note) note.textContent = pid
+    ? (ids.length ? `${ids.length} model cho kết nối “${pid}”.` : `Chưa có model nào cho kết nối “${pid}”. Lưu form để thêm model đầu tiên.`)
+    : 'Chọn hoặc tạo kết nối để xem model đã lưu.';
+  list.replaceChildren(...ids.map(id => {
+    const item = document.createElement('li');
+    item.className = 'saved-model-row';
+    const name = document.createElement('span');
+    name.className = 'saved-model-name'; name.textContent = id;
+    name.title = id;
+    item.appendChild(name);
+    const meta = document.createElement('span');
+    meta.className = 'saved-model-meta'; meta.textContent = savedModelMeta(id);
+    item.appendChild(meta);
+    const actions = document.createElement('span');
+    actions.className = 'saved-model-actions';
+    if (id === def) {
+      const badge = document.createElement('span');
+      badge.className = 'saved-model-default'; badge.textContent = 'Mặc định';
+      actions.appendChild(badge);
+    } else {
+      const use = document.createElement('button');
+      use.type = 'button'; use.className = 'quiet-button';
+      use.dataset.action = 'default'; use.dataset.model = id;
+      use.textContent = 'Đặt mặc định'; use.disabled = busy;
+      // Direct binding (not delegation): the shared test harness does
+      // not bubble clicks, and one handler per row stays trivial.
+      use.onclick = () => { void setDefaultModel(id); };
+      actions.appendChild(use);
+    }
+    const edit = document.createElement('button');
+    edit.type = 'button'; edit.className = 'quiet-button';
+    edit.dataset.action = 'edit'; edit.dataset.model = id;
+    edit.textContent = 'Sửa'; edit.disabled = busy;
+    edit.onclick = () => chooseModel(id);
+    actions.appendChild(edit);
+    const del = document.createElement('button');
+    del.type = 'button'; del.className = 'quiet-button is-danger';
+    del.dataset.action = 'delete'; del.dataset.model = id;
+    del.textContent = 'Xóa'; del.disabled = busy || id === def;
+    if (id === def) del.title = 'Đang là model mặc định. Chọn model khác trước khi xóa.';
+    del.onclick = () => { void deleteSavedModel(id); };
+    actions.appendChild(del);
+    item.appendChild(actions);
+    return item;
+  }));
+}
+async function setDefaultModel(id) {
+  if (state.saving || state.loading || state.reloading || !state.values) return false;
+  if (!id || !modelIsSaved(id)) { setFormStatus('Model chưa được lưu.', 'error'); return false; }
+  if (id === state.values.defaultModel) return true;
+  if (editorIsDirty()) { setFormStatus('Lưu hoặc hủy thay đổi form trước khi đặt model mặc định.', 'error'); return false; }
+  clearFieldErrors();
+  // The recheck runs against the fresh snapshot commitValues just loaded:
+  // a model deleted since this page loaded fails here instead of silently
+  // becoming an unregistered default.
+  return commitValues(fresh => {
+    if (!Object.hasOwn(fresh.values?.models || {}, id)) throw new FieldError(`Model “${id}” không còn được lưu. Tải lại rồi chọn lại.`, '#m-picker');
+    const values = cloneValues(fresh.values);
+    values.defaultModel = id;
+    return values;
+  }, { note: `Đang dùng ${id}.` });
+}
+async function deleteSavedModel(id) {
+  if (!id || !modelIsSaved(id)) return false;
+  if (id === state.values?.defaultModel) { setFormStatus('Đang là model mặc định. Chọn model khác trước.', 'error'); return false; }
+  // A successful save resets draft baselines (and the deleted row resets
+  // its fields), so unsaved provider/model edits would be silently
+  // absorbed or marked saved. Like set-default, deletion waits for a
+  // clean form instead of discarding the draft.
+  if (editorIsDirty()) { setFormStatus('Lưu hoặc hủy thay đổi form trước khi xóa model.', 'error'); return false; }
+  if (!window.confirm(`Xóa model “${id}”?`)) return false;
+  return commitValues(fresh => {
+    const values = cloneValues(fresh.values);
+    if (!Object.hasOwn(values.models || {}, id)) throw new FieldError('Model đã bị xóa.', '#m-picker');
+    if (id === values.defaultModel) throw new FieldError('Đang là model mặc định. Chọn model khác trước.', '#m-picker');
+    // The server re-validates: a model still referenced by a bot, or an
+    // unreadable bot inventory, fails the POST with 409/503 — surfaced
+    // below as the inline form error.
+    delete values.models[id]; if (values.pricing) delete values.pricing[id]; return values;
+  }, { note: `Đã xóa model “${id}”.`, onPosted: () => { if (selectedModelId() === id) setModelFields(''); } });
+}
 function renderAll() {
-  renderConnectionPicker(); renderProviderSelects(); renderModelPicker(); renderCurrentDefault(); renderEditorActions();
+  renderConnectionPicker(); renderProviderSelects(); renderModelPicker(); renderCurrentDefault(); renderEditorActions(); renderSavedModels();
 }
 function refreshBusyState() {
   $('#editor-controls').disabled = state.loading || !state.values || state.saving || state.reloading;
@@ -461,8 +561,8 @@ function mergeEditorDraft(fresh, draft) {
   }
   delete entry.reasoningEffort;
   values.models = { ...values.models, [draft.modelId]: entry };
-  // Every form save also selects: the only save path is "Lưu và dùng".
-  values.defaultModel = draft.modelId;
+  // Saving never changes the default: promoting a saved model to the
+  // global default is a separate explicit set-default action on its row.
   // First connection from an empty config (or a stale default): fall back
   // to the connection being saved so the commitValues guard passes. A
   // still-valid default is left untouched.
@@ -477,7 +577,31 @@ async function commitValues(buildValues, { note = '', onPosted = null } = {}) {
     const fresh = await getJson('/api/config');
     const next = buildValues(fresh);
     if (!Object.hasOwn(next.providers || {}, next.defaultProvider)) throw new FieldError('Kết nối mặc định không còn tồn tại.', '#connection-picker');
-    const response = await postJson('/api/config', next);
+    // Conditional write when the server reports a revision: a config that
+    // changed since this fresh read fails with 409 instead of silently
+    // replacing newer data. The draft (inputs, baselines, key field) is
+    // left untouched below so nothing is lost; the user reviews and retries.
+    const body = fresh.revision ? { ...next, baseRevision: fresh.revision } : next;
+    let response;
+    try {
+      response = await postJson('/api/config', body);
+    } catch (error) {
+      if (error?.status === 409) {
+        setSaveStatus('Chưa lưu', 'error');
+        // Typed conflicts: a model still referenced by a bot names the
+        // affected bots so the user moves them first (nothing was saved,
+        // so no reload is needed); anything else is a stale revision, so
+        // reload and keep the draft for review and retry.
+        if (error?.data?.code === 'model_in_use') {
+          setFormStatus(error.message || 'Không thể xóa model đang được bot sử dụng.', 'error');
+        } else {
+          setFormStatus('Cấu hình đã thay đổi ở nơi khác. Bản nháp được giữ nguyên — kiểm tra lại rồi lưu lại.', 'error');
+          try { await refreshConfig(); } catch {}
+        }
+        return false;
+      }
+      throw error;
+    }
     const keyPresence = Object.create(null);
     for (const [id, entry] of Object.entries(next.providers || {})) keyPresence[id] = !!entry.apiKey || providerHasStoredKey(id, fresh.meta);
     state.values = maskedProjection(next); state.meta = safeMeta(state.values, fresh.meta || state.meta, keyPresence);
@@ -515,7 +639,7 @@ async function submitEditor(event) {
   clearFieldErrors(); setFormStatus('');
   let draft; try { draft = draftForSave(); } catch (error) { fail(error); return false; }
   return commitValues(fresh => mergeEditorDraft(fresh, draft), {
-    note: `Đang dùng ${draft.modelId}.`,
+    note: `Đã lưu ${draft.modelId}. Chọn “Đặt mặc định” ở danh sách bên dưới để dùng model này.`,
     onPosted: () => {
       state.editingProvider = draft.id;
       state.discovery = null;
@@ -538,15 +662,9 @@ async function deleteProvider() {
   }, { note: `Đã xóa kết nối “${id}”.`, onPosted: () => { state.editingProvider = ''; fillConnection(''); } });
 }
 async function deleteModel() {
-  const id = selectedModelId();
-  if (!id || !modelIsSaved(id) || !window.confirm(`Xóa model “${id}”?`)) return false;
-  if (id === state.values.defaultModel) { setFormStatus('Đang là model mặc định. Chọn model khác trước.', 'error'); return false; }
-  return commitValues(fresh => {
-    const values = cloneValues(fresh.values);
-    if (!Object.hasOwn(values.models || {}, id)) throw new FieldError('Model đã bị xóa.', '#m-picker');
-    if (id === values.defaultModel) throw new FieldError('Đang là model mặc định. Chọn model khác trước.', '#m-picker');
-    delete values.models[id]; if (values.pricing) delete values.pricing[id]; return values;
-  }, { note: `Đã xóa model “${id}”.`, onPosted: () => { setModelFields('', {}); } });
+  // The editor-level button deletes whatever the editor currently selects;
+  // saved-model rows call deleteSavedModel(id) directly.
+  return deleteSavedModel(selectedModelId());
 }
 async function reloadConfig() {
   if (state.loading || state.saving || state.reloading) return false;

@@ -1,5 +1,5 @@
 /* Shared bot sidebar: bot cards, pockets, group rows, footer. */
-.sidebar{min-height:0;display:flex;flex-direction:column;border:1px solid #decfb68c;border-radius:18px;background:linear-gradient(120deg,#fffbf1b3,#f8efddba);box-shadow:var(--shadow);position:relative;overflow:hidden}
+.sidebar{min-height:0;display:flex;flex-direction:column;border:1px solid #decfb68c;border-radius:18px;background:#fffbf1b3;box-shadow:var(--shadow);position:relative;overflow:hidden}
 .sessions-heading{display:flex;align-items:center;gap:10px;padding:22px 20px 17px}
 .sessions-heading h2{margin:0;font:600 27px var(--serif);color:#584a35}
 .bot-count{color:var(--muted);font:italic 14px var(--serif)}
@@ -28,6 +28,9 @@
 .compact-preview{padding:0 14px;height:30px;flex-shrink:0;display:flex;align-items:center;gap:8px;color:var(--bot-muted);font-size:11px;min-width:0}
 .compact-preview .preview-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bot-card[data-open=true] .compact-preview{display:none}
+.live-more{flex-shrink:0;border:1px solid var(--bot-border);border-radius:999px;background:var(--bot-paper);color:var(--bot-ink);font-size:11px;line-height:17px;padding:0 8px;cursor:pointer;font-variant-numeric:tabular-nums}
+.live-more:hover{border-color:var(--bot-mid)}
+.live-more:focus-visible{outline:2px solid var(--bot-ink);outline-offset:2px}
 .status-dot{width:7px;height:7px;border-radius:50%;background:var(--bot-mid);display:inline-block;flex-shrink:0}
 .bot-card[data-state=thinking] .status-dot,.bot-card[data-state=working] .status-dot,.bot-card[data-state=writing] .status-dot{animation:pulse 1.8s ease-in-out infinite}
 .bot-card[data-state=error] .status-dot{background:#b66b4d}
@@ -88,7 +91,6 @@
 .sidebar-footer{border-top:1px solid #e2d6bf;display:flex;align-items:center;justify-content:space-between;padding:12px 18px;background:#faf3e6b3;z-index:1;flex-shrink:0}
 .sidebar-footer button{font-size:11px;color:#7b715e;display:flex;align-items:center;gap:7px}
 .sidebar-footer svg{width:16px}
-.sidebar-footer .motion-button{padding:3px}
 .info-lockup{display:flex;align-items:center;gap:16px;margin-bottom:17px}
 .info-lockup h3{font:600 24px var(--serif);margin:0 0 5px;color:var(--bot-ink)}
 .info-lockup p{margin:0;color:var(--bot-muted);font-size:12px}
@@ -123,7 +125,12 @@
 .card-actions .icon{width:16px}
 }
 @media(max-width:850px){
-.sidebar{position:absolute;z-index:20;left:8px;top:47px;bottom:8px;width:min(360px,calc(100vw - 34px));background:#f8efde;transform:translateX(calc(-100% - 18px));transition:transform .25s;box-shadow:10px 0 30px #30231820}
+/* Overlay drawer: the same paper world as the shell (same image, overlay
+   and cover geometry family), readable over the workspace it covers. The
+   base stays opaque cream so chat text never ghosts through; cover sizing
+   is drawer-relative, so motifs continue the paper approximately rather
+   than pixel-aligned with the shell layer behind. */
+.sidebar{position:absolute;z-index:20;left:8px;top:47px;bottom:8px;width:min(360px,calc(100vw - 34px));background-color:#f8efde;background-image:linear-gradient(#fbf4e5a6,#fbf4e5a6),url(../../images/thyca-bg-paper.png);background-size:cover;background-position:center;transform:translateX(calc(-100% - 18px));transition:transform .25s;box-shadow:10px 0 30px #30231820}
 .sidebar.mobile-open{transform:translateX(0)}
 }
 @media(max-width:520px){

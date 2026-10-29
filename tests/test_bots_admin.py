@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime
 from pathlib import Path
+
+import pytest
 
 from thyca.bots.admin_tools import ADMIN_TOOL_NAMES, apply_card_edit, visible_for_bot
 from thyca.bots.card import BotCard
@@ -142,6 +145,182 @@ def test_bot_create_memory_policy_still_filters_baseline(tmp_path: Path) -> None
                        "memory_get")
     names = [s["function"]["name"] for s in filtered_tool_schemas(schemas, card)]
     assert names == ["bot_send"]
+
+
+def _tooled_registry(tmp_path: Path, models: dict):
+    import asyncio as _asyncio  # noqa: F401 (kept local like other helpers)
+
+    from thyca.bots.admin_tools import AdminDeps, register_admin_tools
+    from thyca.bots.bus import Bus
+    from thyca.bots.registry import BotRegistry
+    from thyca.bots.runtime import BotRuntime
+    from thyca.config import ModelCfg, ProviderEntry, default_config, save
+    from thyca.tools.registry import ToolRegistry
+
+    from dataclasses import replace
+
+    cfg = replace(
+        default_config(),
+        providers={"alpha": ProviderEntry(baseUrl="https://alpha.invalid/v1", apiKey="k")},
+        defaultProvider="alpha",
+        defaultModel="m1",
+        models={name: ModelCfg(**spec) for name, spec in models.items()},
+    )
+    save(cfg, tmp_path / "config.json")
+    registry = BotRegistry(tmp_path)
+    registry.ensure_thyca()
+    tool_registry = ToolRegistry()
+    register_admin_tools(tool_registry,
+                         AdminDeps(registry, BotRuntime(tmp_path, registry, Bus()),
+                                   lambda: None))
+    return tool_registry
+
+
+def _run_tool(tool_registry, name: str, args: dict) -> str:
+    import asyncio
+    import json as _json
+
+    spec = tool_registry.get(name)
+    out = asyncio.run(spec.handler(args))
+    try:
+        body = _json.loads(out)
+        assert body.get("ok") is True, out
+        return out
+    except (ValueError, AssertionError):
+        return out
+
+
+def test_bot_create_validates_model_against_live_config(tmp_path: Path) -> None:
+    tools = _tooled_registry(tmp_path, {"m1": {}})
+    ok = _run_tool(tools, "bot_create", {
+        "bot_id": "helper", "role": "Helper", "description": "Helps.", "model": "m1",
+    })
+    assert '"ok": true' in ok
+    failed = _run_tool(tools, "bot_create", {
+        "bot_id": "ghost", "role": "Ghost", "description": "Haunts.", "model": "nope",
+    })
+    assert failed == "bot_create failed: unknown model"
+    inherited = _run_tool(tools, "bot_create", {
+        "bot_id": "plain", "role": "Plain", "description": "Plain."
+    })
+    assert '"ok": true' in inherited
+
+
+def test_bot_edit_card_validates_model_changes_only(tmp_path: Path) -> None:
+    from thyca.bots.card import BotCard, BotModel
+    from thyca.bots.registry import BotRegistry
+
+    tools = _tooled_registry(tmp_path, {"m1": {}})
+    _run_tool(tools, "bot_create", {
+        "bot_id": "helper", "role": "Helper", "description": "Helps.", "model": "m1",
+    })
+    failed = _run_tool(tools, "bot_edit_card", {"bot_id": "helper", "model": "nope"})
+    assert failed == "bot_edit_card failed: unknown model"
+    moved = _run_tool(tools, "bot_edit_card", {"bot_id": "helper", "role": "Senior"})
+    assert '"ok": true' in moved
+    # Identity edits stay allowed on a legacy bot whose stored model is
+    # unknown: validation only gates actual model changes.
+    BotRegistry(tmp_path).create(BotCard(
+        bot_id="legacy", name="legacy", role="Old", description="Old.",
+        persona="p", model=BotModel(id="ghost"),
+    ))
+    renamed = _run_tool(tools, "bot_edit_card", {"bot_id": "legacy", "role": "New"})
+    assert '"ok": true' in renamed
+    # A thinking-only edit on a model-less legacy card validates against
+    # the same "default" fallback instead of crashing on a missing model.
+    from thyca.bots.card import BotCard as _BotCard
+    from thyca.bots.registry import BotRegistry as _Registry
+
+    _Registry(tmp_path).create(_BotCard(
+        bot_id="plain-legacy", name="plain-legacy", role="Old", description="Old.",
+        persona="p",
+    ))
+    thinking_only = _run_tool(
+        tools, "bot_edit_card", {"bot_id": "plain-legacy", "thinking": "low"})
+    assert '"ok": true' in thinking_only
+
+
+def test_bot_edit_card_model_change_serializes_with_settings_update(tmp_path: Path) -> None:
+    # A thinking-only admin edit must not clobber a concurrent model
+    # assignment: the card is read, patched, validated, and persisted
+    # inside one coordination hold. The hook pauses the handler between
+    # its read and its write; the settings update provably cannot land in
+    # between because it blocks on the same lock, so the final model is
+    # deterministically the settings update (on the old code the stale
+    # patched model would win instead).
+    import threading
+    import time
+
+    from thyca.app.chat_app import ChatApp
+    from thyca.bots.admin_tools import AdminDeps, register_admin_tools
+    from thyca.bots.admin_tools import lifecycle
+    from thyca.bots.bus import Bus
+    from thyca.bots.card import BotModel
+    from thyca.bots.registry import BotRegistry
+    from thyca.bots.runtime import BotRuntime
+    from thyca.config import load
+    from thyca.config.coordination import CoordinationError, hold
+
+    tools = _tooled_registry(tmp_path, {"m1": {}, "m2": {}})
+    BotRegistry(tmp_path).create(_card(model=BotModel(id="m1", thinking=None)))
+    app = ChatApp(tmp_path, load(tmp_path / "config.json"))
+    try:
+        entered, release = threading.Event(), threading.Event()
+        real_apply = lifecycle.apply_card_edit
+
+        def hooked(card, patch):
+            entered.set()
+            assert release.wait(timeout=10)
+            return real_apply(card, patch)
+
+        real_target = lifecycle.apply_card_edit
+        lifecycle.apply_card_edit = hooked
+        try:
+            spec = tools.get("bot_edit_card")
+            outcome: dict = {}
+
+            def run_edit() -> None:
+                try:
+                    outcome["edit"] = asyncio.run(
+                        spec.handler({"bot_id": "coder", "thinking": "low"}))
+                except Exception as exc:  # noqa: BLE001 — recorded for assert
+                    outcome["error"] = exc
+
+            editor = threading.Thread(target=run_edit)
+            editor.start()
+            try:
+                assert entered.wait(timeout=10)
+                # The handler holds coordination across read→patch→persist:
+                # anything else serializes behind it instead of interleaving.
+                with pytest.raises(CoordinationError):
+                    with hold(tmp_path, timeout=0.3):
+                        pass
+                outcome["settings"] = None
+
+                def run_settings() -> None:
+                    try:
+                        outcome["settings"] = app.update_bot_settings(
+                            "coder", {"model": {"id": "m2", "thinking": None}})
+                    except Exception as exc:  # noqa: BLE001 — recorded for assert
+                        outcome["settings_error"] = exc
+
+                setter = threading.Thread(target=run_settings)
+                setter.start()
+                time.sleep(0.3)
+            finally:
+                release.set()
+            editor.join(timeout=20)
+            setter.join(timeout=20)
+            assert not editor.is_alive() and not setter.is_alive()
+            assert "error" not in outcome, outcome.get("error")
+            assert "settings_error" not in outcome, outcome.get("settings_error")
+            assert json.loads(outcome["edit"])["ok"] is True
+            final = BotRegistry(tmp_path).require("coder")
+            assert final.model == BotModel(id="m2", thinking=None)
+        finally:
+            lifecycle.apply_card_edit = real_target
+    finally:
+        app.shutdown()
 
 
 def test_cron_matcher() -> None:

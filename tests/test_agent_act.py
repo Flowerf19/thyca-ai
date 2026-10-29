@@ -388,7 +388,7 @@ def test_skill_events_wire_never_carries_path(tmp_path: Path) -> None:
     skill_path = str(tmp_path / "skills" / "create-skill" / "SKILL.md")
     for event in events:
         payload = event.to_dict()
-        assert set(payload) <= {"type", "round", "call_id", "name", "ok"}
+        assert set(payload) <= {"type", "round", "call_id", "invocation_id", "name", "ok"}
         assert skill_path not in json.dumps(payload)
         assert "create-skill/SKILL.md" not in json.dumps(payload)
 
@@ -467,3 +467,44 @@ def test_f13_none_dispatcher_transcript_has_no_dangling_calls(tmp_path: Path) ->
     persisted = sessions.current.messages
     assert persisted[-2].role == "assistant" and len(persisted[-2].tool_calls or []) == 1
     assert (persisted[-1].role, persisted[-1].tool_call_id) == ("tool", "c1")
+
+
+def test_parallel_colliding_public_ids_have_distinct_ephemeral_invocations() -> None:
+    class Dispatcher:
+        async def submit(self, call):
+            if call.id == 'a/b':
+                await asyncio.sleep(0.01)
+            return ToolResult(tool_call_id=call.id, name=call.name, content='private result')
+
+    calls = [ToolCall(id='a/b', name='read', arguments={'secret': 'private argument'}),
+             ToolCall(id='a_b', name='read', arguments={'secret': 'private argument'})]
+    stage = Stage(reply=ChatReply(content=None, tool_calls=calls), round=1, bot_id='coder')
+    events = []
+    asyncio.run(Act(Dispatcher()).act(stage, event_sink=events.append))
+    assert [e.type for e in events] == ['tool.started', 'tool.started', 'tool.finished', 'tool.finished']
+    first, second, finish_second, finish_first = events
+    assert first.call_id == second.call_id == 'a_b'
+    assert first.invocation_id != second.invocation_id
+    assert finish_second.invocation_id == second.invocation_id
+    assert finish_first.invocation_id == first.invocation_id
+    assert all(len(e.invocation_id) == 32 for e in events)
+    assert 'private' not in json.dumps([e.to_dict() for e in events])
+
+
+def test_truncated_ids_preserve_out_of_order_invocation_identity() -> None:
+    class Dispatcher:
+        async def submit(self, call):
+            if call.name == 'read':
+                await asyncio.sleep(0.01)
+            return ToolResult(tool_call_id=call.id, name=call.name, content='ok')
+
+    calls = [ToolCall(id='x' * 64 + '1', name='read'),
+             ToolCall(id='x' * 64 + '2', name='write')]
+    stage = Stage(reply=ChatReply(content=None, tool_calls=calls), round=1)
+    events = []
+    asyncio.run(Act(Dispatcher()).act(stage, event_sink=events.append))
+    read, write, write_done, read_done = events
+    assert read.call_id == write.call_id == 'x' * 64
+    assert read.invocation_id != write.invocation_id
+    assert (write_done.name, write_done.invocation_id) == ('write', write.invocation_id)
+    assert (read_done.name, read_done.invocation_id) == ('read', read.invocation_id)

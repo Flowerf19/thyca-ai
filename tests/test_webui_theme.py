@@ -60,28 +60,82 @@ def test_spa_entry_links_the_shared_stylesheets() -> None:
     router = (UI / "share" / "router.js").read_text(encoding="utf-8")
     assert "styleLink('/ui/share/app-shell.css', 'app-shell')" in router
     assert "styleLink(entry.stylesheet, page)" in router
-    for page in ("dashboard", "memories", "profile", "provider", "settings"):
+    for page in ("dashboard", "memories", "profile", "provider"):
         js = (UI / page / "js" / f"{page}.js").read_text(encoding="utf-8")
         assert f"stylesheet: '/ui/{page}/" in js, page
+    assert 'src="../share/settings-dialog.js"' in chat   # shared dialog module loads on the single entry
 
 
-def test_shell_artwork_and_page_ornaments_retained() -> None:
-    """The paper world survives: the notebook shell keeps its gradient frame,
-    and every workspace carries the same ornament + staff line art."""
+def test_shared_paper_background_spans_the_shell() -> None:
+    """One seamless paper world: the restored thyca-bg-paper.png lives once on
+    .notebook-shell::before (65% cream overlay, cover, pointer-transparent)
+    so the artwork continues across header, sidebar and workspace. The panes
+    keep only flat translucent cream veils — no directional gradients — and
+    no per-pane SVG ornament/staff rules, markup or injections survive."""
+    for name in ("thyca-bg-paper.png", "thyca-bg-menu.png", "thyca-bg-outer.png"):
+        art = WEBUI / "images" / name
+        assert art.is_file(), name
+        assert art.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n", name
     base = BASE_CSS.read_text(encoding="utf-8")
     shell = _block(base, ".notebook-shell")
-    assert "radial-gradient" in shell
-    assert "border-radius:24px" in shell
+    assert "radial-gradient" not in shell and "linear-gradient" not in shell
+    assert "background:#f5eddd" in shell
+    layer = _block(base, ".notebook-shell::before")
+    assert "images/thyca-bg-paper.png" in layer
+    assert "#fbf4e5a6" in layer  # 65% cream overlay over the artwork
+    assert "background-size:cover" in layer and "pointer-events:none" in layer
+    assert "border-radius:inherit" in layer
+    assert ".site-header,.main-grid{position:relative}" in base
+    dialog = _block(base, ".screen-dialog")
+    assert "images/thyca-bg-paper.png" in dialog and "#fbf4e5a6" in dialog
+    sidebar = _block(SIDEBAR_CSS.read_text(encoding="utf-8"), ".sidebar")
+    assert "gradient" not in sidebar
+    assert "background:#fffbf1b3" in sidebar  # flat translucent veil
     app = APP_SHELL_CSS.read_text(encoding="utf-8")
-    assert "linear-gradient" in _block(app, ".workspace")
-    assert ".workspace>.ornament" in app
-    assert ".workspace>.staff" in app
-    # shell.js inserts the same two SVG ornaments chat draws inline.
-    js = SHELL_JS.read_text(encoding="utf-8")
-    assert 'class="ornament"' in js
-    assert 'class="staff"' in js
+    assert "gradient" not in _block(app, ".workspace")
+    assert "background:#fffcf3d9" in _block(app, ".workspace")
+    assert ".workspace>.ornament" not in app and ".workspace>.staff" not in app
+    chat_css = (UI / "chat" / "chatcss" / "chat.css").read_text(encoding="utf-8")
+    assert "gradient" not in chat_css.split(".chat-title-head{", 1)[0]
+    assert ".ornament{" not in chat_css and ".staff{" not in chat_css
+    # No per-pane injections: shell.js/router.js no longer reference the SVGs,
+    # and chat's static markup carries no ornament/staff nodes either.
+    shell_js = SHELL_JS.read_text(encoding="utf-8")
+    assert "WORKSPACE_ART" not in shell_js and 'class="ornament"' not in shell_js
+    router = (UI / "share" / "router.js").read_text(encoding="utf-8")
+    assert "WORKSPACE_ART" not in router
     chat = (UI / "chat" / "index.html").read_text(encoding="utf-8")
-    assert 'class="ornament"' in chat and 'class="staff"' in chat
+    assert 'class="ornament"' not in chat and 'class="staff"' not in chat
+
+
+def test_decoration_preference_drives_the_shared_artwork() -> None:
+    """The saved 'show decorations' preference still works: shell.js applies
+    it from 'thyca.ui.preferences' on every load, the shared Settings dialog
+    applies it live, and off shows flat cream (no paper image on the shell
+    layer, dialogs or drawer)."""
+    base = BASE_CSS.read_text(encoding="utf-8")
+    for target in (".notebook-shell::before", ".screen-dialog", ".sidebar"):
+        assert f'html[data-ornaments="off"] {target}' in base, target
+    assert "background-image:none" in base
+    shell_js = SHELL_JS.read_text(encoding="utf-8")
+    assert "thyca.ui.preferences" in shell_js
+    assert "document.documentElement" in shell_js and 'dataset.ornaments' in shell_js
+    assert "function applyPrefs" in shell_js
+    dialog_js = (UI / "share" / "settings-dialog.js").read_text(encoding="utf-8")
+    assert "applyPrefs(collect())" in dialog_js
+    # Shared hooks stay writable for compatibility.
+    assert "view.dataset.ornaments" in shell_js or "workspace.dataset.ornaments" in shell_js
+
+
+def test_narrow_drawer_stays_paper_backed_and_opaque() -> None:
+    """At <=850px the sidebar becomes an overlay drawer: paper-backed like
+    the shell (same image + 65% cream overlay) but over an opaque cream base
+    so workspace text never ghosts through the drawer."""
+    sidebar = SIDEBAR_CSS.read_text(encoding="utf-8")
+    drawer = sidebar.split("@media(max-width:850px){", 1)[1]
+    assert "images/thyca-bg-paper.png" in drawer
+    assert "#fbf4e5a6" in drawer and "background-size:cover" in drawer
+    assert "background-color:#f8efde" in drawer  # opaque base: no ghosted chat text
 
 
 def test_current_page_and_selected_bot_marks() -> None:

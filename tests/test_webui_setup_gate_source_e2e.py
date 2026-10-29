@@ -212,6 +212,10 @@ E2E_SCRIPT = r"""
     const picker=document.querySelector('#m-picker');picker.value='model:fixture-model';picker.dispatchEvent(new Event('change',{bubbles:true}));
     const name=document.querySelector('#pv-id');name.value='local';name.dispatchEvent(new Event('input',{bubbles:true}));
     document.querySelector('#save-use').click();
+    // Approved Provider UX: saving stores the model without promoting it —
+    // the first-run gate only clears after the explicit set-default action.
+    await wait(()=>{const btn=document.querySelector('[data-action="default"][data-model="fixture-model"]');return btn&&!btn.disabled;});
+    document.querySelector('[data-action="default"][data-model="fixture-model"]').click();
     await wait(()=>window.ThycaRouter.setupState()==='ready' && window.ThycaRouter.currentRoute().page==='chat' && !document.querySelector('#chat-workspace').hidden);
     await wait(()=>[...document.querySelector('#composer-model').options].some(option=>option.value==='fixture-model') && document.querySelector('#composer-model').options[0].textContent.includes('fixture-model · local'));
     const status=await fetch('/api/config/status').then(response=>response.json());
@@ -284,7 +288,7 @@ def test_source_cli_first_run_gate_and_environment_key_readiness(tmp_path: Path)
         assert browser["chatDmLookups"] == 1
         session_files = list((source_root / "sessions").glob("*.jsonl"))
         assert len(session_files) == 1
-        assert browser["postPaths"] == ["/api/onboarding/verify", "/api/config"] and browser["turnPostCount"] == 0
+        assert browser["postPaths"] == ["/api/onboarding/verify", "/api/config", "/api/config"] and browser["turnPostCount"] == 0
         assert browser["modelProvider"] == "local" and browser["providerKeyMasked"] and browser["providerKeyPresent"]
         assert browser["settingsHttpOk"] and browser["settingsBot"] == "thyca" and browser["settingsEffectiveProvider"] == "local"
         assert browser["browserErrors"] == []

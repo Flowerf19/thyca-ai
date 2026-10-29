@@ -126,6 +126,23 @@ def test_provider_ready_false_without_key(monkeypatch: pytest.MonkeyPatch) -> No
     assert provider_ready(cfg) is False
 
 
+def test_provider_ready_false_without_default_model() -> None:
+    # First save before set-default: a stored key alone must not unlock
+    # setup. An unregistered but nonempty legacy default still counts.
+    keyed = Config(
+        providers={"default": ProviderEntry(apiKey="sk-1")},
+        defaultProvider="default",
+        defaultModel="",
+    )
+    assert provider_ready(keyed) is False
+    legacy = Config(
+        providers={"default": ProviderEntry(apiKey="sk-1")},
+        defaultProvider="default",
+        defaultModel="legacy-model",
+    )
+    assert provider_ready(legacy) is True
+
+
 def test_apply_provider_sets_values_and_preserves_rest(tmp_path) -> None:
     cfg = Config(
         providers={"default": ProviderEntry()},

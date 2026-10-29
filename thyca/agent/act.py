@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+import uuid
 from pathlib import Path
 from typing import Protocol
 
@@ -93,11 +94,13 @@ class Act:
         kind = "skill" if skill_name is not None else "tool"
         name = call.name if skill_name is None else public_skill_name(skill_name)
         # Guard on sink: no-sink callers (round may be 0) must behave byte-for-byte as before.
+        invocation_id = uuid.uuid4().hex if event_sink is not None else None
         if event_sink is not None:
             emit_event(
                 event_sink,
                 TurnEvent(
                     type=f"{kind}.started", round=round_no, call_id=call.id,
+                    invocation_id=invocation_id,
                     name=name, bot_id=bot_id,
                 ),
             )
@@ -117,6 +120,7 @@ class Act:
                     type=f"{kind}.finished",
                     round=round_no,
                     call_id=call.id,
+                    invocation_id=invocation_id,
                     name=name,
                     ok=not result.is_error,
                     bot_id=bot_id,

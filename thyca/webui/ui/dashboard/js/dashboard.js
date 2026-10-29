@@ -178,8 +178,8 @@ const PAGE_HTML = `
         <div id="chart-day"></div><p class="card-note" id="chart-day-note"></p>
       </article>
       <section class="token-summary-grid" aria-label="Thành phần token">
-        <article class="panel token-summary"><h2 class="panel-title">Input</h2><strong id="usage-input-total">—</strong><p>Đã bao gồm Cache read.</p></article>
-        <article class="panel token-summary"><h2 class="panel-title">Cache read</h2><strong id="usage-cache-total">—</strong><p>Nằm trong tổng Input.</p></article>
+        <article class="panel token-summary"><h2 class="panel-title">Input</h2><strong id="usage-input-total">—</strong><p>Không bao gồm Cache read.</p></article>
+        <article class="panel token-summary"><h2 class="panel-title">Cache read</h2><strong id="usage-cache-total">—</strong><p>Tính riêng, không nằm trong Input.</p></article>
         <article class="panel token-summary"><h2 class="panel-title">Output</h2><strong id="usage-output-total">—</strong><p>Token hoàn tất từ model.</p></article>
       </section>
       <details class="paper-card analysis-panel" id="analysis-details">
@@ -575,7 +575,7 @@ function renderStats(s, { loading = false } = {}) {
     heroCard('Phiên', fmtInt(t.sessions), botScope ? 'phiên có đóng góp' : 'mỗi phiên một lần'),
     heroCard('Lượt', fmtInt(t.turns), botScope ? 'lượt có đóng góp' : 'lượt trong kỳ'),
   ].join('');
-  $('#usage-input-total').textContent = fmtInt(t.prompt_tokens);
+  $('#usage-input-total').textContent = fmtInt(inTok);
   $('#usage-cache-total').textContent = fmtInt(t.cached_tokens);
   $('#usage-output-total').textContent = fmtInt(t.completion_tokens);
   $('#cost-coverage').textContent = typeof t.priced_turns === 'number' && typeof t.turns === 'number'
@@ -671,14 +671,14 @@ function renderBotRows() {
   }).join('') : '<li><div class="empty-note"><strong>Chưa có dữ liệu bot trong kỳ.</strong></div></li>';
 }
 function renderModelRows() {
-  const rows = (statsData?.by_model || []).slice().sort((a, b) => (b.total_tokens || 0) - (a.total_tokens || 0));
+  const rows = (statsData?.by_model || []).filter(row => row.model !== 'unknown').slice().sort((a, b) => (b.total_tokens || 0) - (a.total_tokens || 0));
   const total = statsData?.totals?.total_tokens, max = Math.max(0, ...rows.map(row => typeof row.total_tokens === 'number' ? row.total_tokens : 0));
   $('#rows-model').innerHTML = !statsData ? '' : rows.length ? rows.map(row => `
     <li class="model-row"><span class="model-name" title="${escapeHTML(row.model || '—')}">${escapeHTML(row.model || '—')}</span>
       <span class="model-cost">${fmtInt(row.total_tokens)} token</span>
       <span class="model-meta">${escapeHTML(rowMeta(row))} · p50 ${fmtDur(row.latency_ms_p50)} · dùng cuối ${relTime(row.last_started_at)}</span>
       <span class="meter row-meter" role="img" aria-label="${escapeHTML(share(row.total_tokens, total))} tổng token"><i style="width:${meterWidth(row.total_tokens, max)}%"></i></span>
-    </li>`).join('') : '<li><div class="empty-note"><strong>Chưa có lượt nào trong kỳ.</strong></div></li>';
+    </li>`).join('') : ((statsData?.by_model || []).length ? '<li><div class="empty-note"><strong>Không có model xác định trong kỳ.</strong></div></li>' : '<li><div class="empty-note"><strong>Chưa có lượt nào trong kỳ.</strong></div></li>');
 }
 function costMeta(row) {
   return `${fmtInt(row.priced_turns)} lượt có ghi nhận giá · ${fmtInt(row.turns)} lượt · ${fmtInt(row.sessions)} phiên · ${fmtInt(row.requests)} request · ${fmtInt(row.total_tokens)} token`;
@@ -686,7 +686,7 @@ function costMeta(row) {
 function renderCostRows() {
   $('#card-bot-cost').hidden = !!botScope;
   const bots = (statsData?.by_bot || []).slice().sort((a, b) => (b.cost_usd ?? -1) - (a.cost_usd ?? -1));
-  const models = (statsData?.by_model || []).slice().sort((a, b) => (b.cost_usd ?? -1) - (a.cost_usd ?? -1));
+  const models = (statsData?.by_model || []).filter(row => row.model !== 'unknown').slice().sort((a, b) => (b.cost_usd ?? -1) - (a.cost_usd ?? -1));
   const total = statsData?.totals?.cost_usd;
   const botMax = Math.max(0, ...bots.map(row => typeof row.cost_usd === 'number' ? row.cost_usd : 0));
   const modelMax = Math.max(0, ...models.map(row => typeof row.cost_usd === 'number' ? row.cost_usd : 0));
@@ -700,7 +700,7 @@ function renderCostRows() {
       <span class="model-cost">${fmtCost(row.cost_usd)}</span>
       <span class="model-meta">${escapeHTML(costMeta(row))} · p50 ${fmtDur(row.latency_ms_p50)}</span>
       <span class="meter row-meter" role="img" aria-label="${escapeHTML(share(row.cost_usd, total))} chi phí đã ghi nhận"><i class="cost-meter-fill" style="width:${meterWidth(row.cost_usd, modelMax)}%"></i></span>
-    </li>`).join('') : '<li><div class="empty-note"><strong>Chưa có dữ liệu chi phí theo model.</strong></div></li>';
+    </li>`).join('') : ((statsData?.by_model || []).length ? '<li><div class="empty-note"><strong>Không có model xác định trong kỳ.</strong></div></li>' : '<li><div class="empty-note"><strong>Chưa có dữ liệu chi phí theo model.</strong></div></li>');
 }
 
 /* ---------- render: by_hour (always 24 columns, UTC hours) ---------- */

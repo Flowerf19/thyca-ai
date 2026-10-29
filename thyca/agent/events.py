@@ -10,7 +10,7 @@ _IDENTIFIER_MAX = 64
 _PUBLIC_NAME = "tool"
 _PUBLIC_CALL_ID = "call"
 
-_FIELDS = ("round", "tool_count", "call_id", "name", "ok", "updated", "attempt", "max_attempts", "hidden_bytes", "bot_id")
+_FIELDS = ("round", "tool_count", "call_id", "invocation_id", "name", "ok", "updated", "attempt", "max_attempts", "hidden_bytes", "bot_id")
 
 _BOT_ID_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
@@ -27,10 +27,10 @@ _ALLOWED_FIELDS: dict[str, frozenset[str]] = {
     "llm.started": frozenset({"round"}),
     "llm.finished": frozenset({"round", "tool_count"}),
     "llm.retry": frozenset({"attempt", "max_attempts"}),
-    "tool.started": frozenset({"round", "call_id", "name"}),
-    "tool.finished": frozenset({"round", "call_id", "name", "ok"}),
-    "skill.started": frozenset({"round", "call_id", "name"}),
-    "skill.finished": frozenset({"round", "call_id", "name", "ok"}),
+    "tool.started": frozenset({"round", "call_id", "invocation_id", "name"}),
+    "tool.finished": frozenset({"round", "call_id", "invocation_id", "name", "ok"}),
+    "skill.started": frozenset({"round", "call_id", "invocation_id", "name"}),
+    "skill.finished": frozenset({"round", "call_id", "invocation_id", "name", "ok"}),
     "session.naming.started": frozenset(),
     "session.naming.finished": frozenset({"updated"}),
     "context.shrunk": frozenset({"round", "tool_count", "hidden_bytes"}),
@@ -53,6 +53,7 @@ class TurnEvent:
     round: int | None = None
     tool_count: int | None = None
     call_id: str | None = None
+    invocation_id: str | None = None
     name: str | None = None
     ok: bool | None = None
     updated: bool | None = None
@@ -96,6 +97,9 @@ class TurnEvent:
             elif field_name == "max_attempts":
                 if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                     raise ValueError("max_attempts must be an integer >= 1")
+            elif field_name == "invocation_id":
+                if value is not None and (not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{32}", value) is None):
+                    raise ValueError("invocation_id must be a 32-character lowercase hex token")
             elif field_name == "name":
                 # Provider text is untrusted; never forward raw identifiers.
                 object.__setattr__(self, "name", _public_identifier(value, _PUBLIC_NAME))

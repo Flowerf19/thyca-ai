@@ -828,6 +828,34 @@ def test_pause_serializes_behind_held_lock(tmp_path: Path) -> None:
     thread.join(timeout=10)
 
 
+def test_update_bot_settings_fails_closed_on_unreadable_config(tmp_path: Path) -> None:
+    # The mutation path loads strictly: a config that became unreadable
+    # after startup must not validate against the stale construction-time
+    # snapshot (which would authorize assigning a model the live config
+    # no longer vouches for).
+    save(_runtime_config(), tmp_path / "config.json")
+    app = ChatApp(tmp_path, load(tmp_path / "config.json"))
+    try:
+        app._bots.create(BotCard(
+            bot_id="coder", name="coder", role="Coder",
+            description="Writes code.", persona="",
+            model=BotModel(id="card-model", thinking=None),
+        ))
+        app._bots.create(BotCard(
+            bot_id="designer", name="designer", role="Designer",
+            description="Designs.", persona="",
+        ))
+        (tmp_path / "config.json").write_text("{broken", encoding="utf-8")
+        with pytest.raises(SettingsError):
+            app.update_bot_settings(
+                "designer", {"model": {"id": "card-model", "thinking": None}})
+        payload = json.loads(
+            (tmp_path / "bots" / "designer" / "settings.json").read_text(encoding="utf-8"))
+        assert payload == {"model": {"id": "default", "thinking": None}}
+    finally:
+        app.shutdown()
+
+
 def test_stale_snapshot_identity_edit_retains_new_model(tmp_path: Path) -> None:
     reg = _legacy_bot(tmp_path)
     stale = reg.require("coder")

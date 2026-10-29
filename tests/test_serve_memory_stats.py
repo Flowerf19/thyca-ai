@@ -306,7 +306,7 @@ def test_default_webui_has_index() -> None:
         "ui/trace/js/trace.js",
         "ui/provider/js/provider.js",
         "ui/dashboard/js/dashboard.js",
-        "ui/settings/js/settings.js",
+        "ui/share/settings-dialog.js",
         "ui/share/data.js",
         "ui/share/shell.js",
         "ui/share/shell-app.js",
@@ -427,10 +427,11 @@ def test_index_html_parses() -> None:
         assert f'src="{script}"' in raw
     for asset in ("../share/util.js", "../share/data.js", "../share/sidebar.css"):
         assert asset in raw
-    for page in ("dashboard", "memories", "profile", "provider", "settings"):
+    for page in ("dashboard", "memories", "profile", "provider"):
         assert f'src="../{page}/js/{page}.js"' in raw, page
     assert 'src="../trace/js/trace.js"' in raw
-    for page in ("dashboard", "memories", "profile", "provider", "settings"):
+    assert 'src="../share/settings-dialog.js"' in raw   # shared dialog, not a page
+    for page in ("dashboard", "memories", "profile", "provider"):
         js = (WEBUI / "ui" / page / "js" / f"{page}.js").read_text(encoding="utf-8")
         assert f"ThycaRouter.register('{page}'" in js, page
     trace = (WEBUI / "ui" / "trace" / "js" / "trace.js").read_text(encoding="utf-8")

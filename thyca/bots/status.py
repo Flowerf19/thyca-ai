@@ -47,6 +47,7 @@ class _Action:
     name: str
     call_id: str
     since: datetime
+    invocation_id: str | None = None
 
 
 @dataclass
@@ -58,7 +59,12 @@ class _Turn:
     started_at: datetime
     updated_at: datetime
     phase: str = "turn"
-    actions: dict[str, _Action] = field(default_factory=dict)
+    # Live calls by public call id. A list (not one entry) so two
+    # concurrent calls that sanitize to the same public id stay two
+    # calls: each finish removes exactly one, keeping displayed ×N
+    # counts accurate under sanitized id collisions.
+    actions: dict[str, list[_Action]] = field(default_factory=dict)
+    seen_invocations: set[str] = field(default_factory=set)
     wait_kind: str | None = None  # "user" (ask_user) | "blocked" (report_error)
 
 
@@ -154,16 +160,38 @@ class AgentStatusTracker:
                 call_id = _clean_id(getattr(event, "call_id", None)) or f"{kind}:{now.isoformat()}"
                 name = getattr(event, "name", None)
                 turn.phase = kind
-                turn.actions[call_id] = _Action(
-                    kind=kind,
-                    name=name if isinstance(name, str) and name else kind,
-                    call_id=call_id,
-                    since=now,
+                invocation_id = _clean_id(getattr(event, "invocation_id", None))
+                if invocation_id and invocation_id in turn.seen_invocations:
+                    return
+                if invocation_id:
+                    turn.seen_invocations.add(invocation_id)
+                turn.actions.setdefault(call_id, []).append(
+                    _Action(
+                        kind=kind,
+                        name=name if isinstance(name, str) and name else kind,
+                        call_id=call_id,
+                        since=now,
+                        invocation_id=invocation_id,
+                    )
                 )
             elif event_type in ("tool.finished", "skill.finished"):
                 call_id = _clean_id(getattr(event, "call_id", None))
-                if call_id is not None:
-                    turn.actions.pop(call_id, None)
+                invocation_id = _clean_id(getattr(event, "invocation_id", None))
+                kind = "skill" if event_type.startswith("skill.") else "tool"
+                raw_name = getattr(event, "name", None)
+                name = raw_name if isinstance(raw_name, str) and raw_name else None
+                entries = turn.actions.get(call_id) if call_id else None
+                if entries:
+                    candidates = [i for i, action in enumerate(entries)
+                                  if action.kind == kind
+                                  and (name is None or action.name == name)
+                                  and (action.invocation_id == invocation_id)]
+                    # Legacy events have no invocation token. Only a unique
+                    # legacy match is safe; never guess among collisions.
+                    if len(candidates) == 1:
+                        entries.pop(candidates[0])
+                        if not entries:
+                            del turn.actions[call_id]
                 turn.phase = "turn"
             elif event_type == "llm.finished":
                 turn.phase = "turn"
@@ -354,7 +382,10 @@ class AgentStatusTracker:
                     phase=rep.phase,
                 )
                 if rep.actions:
-                    action = max(rep.actions.values(), key=lambda item: item.since)
+                    action = max(
+                        (item for entries in rep.actions.values() for item in entries),
+                        key=lambda item: item.since,
+                    )
                     base["current_action"] = {
                         "kind": action.kind,
                         "name": action.name,
@@ -392,6 +423,91 @@ class AgentStatusTracker:
             bot: self.snapshot(bot, paused=bool(paused.get(bot)))
             for bot in sorted(ids)
         }
+
+    def room_tasks(
+        self,
+        bot_id: object,
+        room_id: object,
+        *,
+        at: datetime | None = None,
+    ) -> dict:
+        """Live tool/skill calls for exactly one bot in exactly one room.
+
+        Only unfinished calls from active turns stamped with this room
+        are listed — no memory-catalog tasks, no completed work, no
+        private titles/statuses: each entry is a sanitized ``kind``/
+        ``name`` pair with its live ``active`` count, newest activity
+        first. A turn recorded without the room (empty room id) never
+        matches, so it cannot leak into an arbitrary window. Mirrors
+        :meth:`snapshot` state/waiting semantics scoped to the room."""
+        bot = _clean_bot_id(bot_id) or ""
+        room = room_id if isinstance(room_id, str) else ""
+        now = at or datetime.now(UTC)
+        base: dict = {
+            "bot_id": bot,
+            "room_id": room or None,
+            "state": "idle",
+            "phase": None,
+            "since": None,
+            "updated_at": None,
+            "calls": [],
+            "waiting_on": None,
+        }
+        if not bot or not room:
+            # No exact window, no tasks: an absent binding or room must
+            # never read as permission to display another room's work.
+            return base
+        with self._lock:
+            self._prune_expired(now)
+            active = [
+                turn
+                for turn in self._active.values()
+                if turn.bot_id == bot and turn.room_id == room
+            ]
+            active.sort(key=lambda turn: turn.updated_at, reverse=True)
+            grouped: dict[tuple[str, str], dict] = {}
+            for turn in active:
+                for entries in turn.actions.values():
+                    for action in entries:
+                        key = (action.kind, action.name)
+                        slot = grouped.get(key)
+                        if slot is None:
+                            grouped[key] = {
+                                "kind": action.kind,
+                                "name": action.name,
+                                "active": 1,
+                                "_since": action.since,
+                            }
+                        else:
+                            slot["active"] += 1
+                            if action.since > slot["_since"]:
+                                slot["_since"] = action.since
+            calls = [
+                {"kind": slot["kind"], "name": slot["name"], "active": slot["active"]}
+                for slot in sorted(grouped.values(), key=lambda item: item["_since"], reverse=True)
+            ]
+            base["calls"] = calls
+            if active:
+                thinking = [turn for turn in active if turn.phase == "llm"]
+                rep = thinking[0] if thinking else active[0]
+                base.update(
+                    state="thinking" if thinking else "running",
+                    phase=rep.phase,
+                    since=_format_ts(rep.started_at),
+                    updated_at=_format_ts(rep.updated_at),
+                )
+                return base
+            latch = self._latches.get((bot, room))
+            if latch is not None:
+                base.update(
+                    state=latch.state,
+                    phase="user" if latch.state == "waiting" else "turn",
+                    since=_format_ts(latch.since),
+                    updated_at=_format_ts(latch.updated_at),
+                )
+                if latch.state == "waiting" or latch.reason == "report_error":
+                    base["waiting_on"] = {"kind": "user"}
+            return base
 
     def _prune_expired(self, now: datetime) -> None:
         for key in [

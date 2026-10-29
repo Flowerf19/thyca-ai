@@ -1,7 +1,5 @@
 /* Chat screen only: workspace, transcript, composer, mention popup. */
-.workspace{border:1px solid #e0d3bc;border-radius:18px;background:radial-gradient(ellipse at 80% 15%,#fffdf7 0,transparent 55%),#fbf5e9;box-shadow:var(--shadow);min-width:0;min-height:0;position:relative;display:flex;flex-direction:column;overflow:hidden}
-.ornament{position:absolute;width:280px;height:520px;right:-30px;bottom:40px;color:#b99c60;opacity:.075;pointer-events:none}
-.staff{position:absolute;right:-60px;top:45px;width:420px;height:300px;opacity:.04;color:#9a8152;pointer-events:none}
+.workspace{border:1px solid #e0d3bc;border-radius:18px;background:#fbf5e9e6;box-shadow:var(--shadow);min-width:0;min-height:0;position:relative;display:flex;flex-direction:column;overflow:hidden}
 .chat-title-head{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:26px 36px 23px;border-bottom:1px solid #e7ddca;background:#fffaf240;z-index:1}
 .eyebrow{font-size:9px;letter-spacing:2px;color:#a18f71;text-transform:uppercase;margin-bottom:7px}
 .screen-title h1{font:500 28px var(--serif);margin:0;color:#554732;letter-spacing:-.4px}

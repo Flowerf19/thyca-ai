@@ -39,7 +39,7 @@ STUDIO_JS = SHARE / "avatars" / "studio.js"
 SHELL_APP_JS = SHARE / "shell-app.js"
 CHAT_JS = CHAT_DIR / "js" / "chat.js"
 APP_JS = CHAT_DIR / "js" / "app.js"
-SETTINGS_JS = UI / "settings" / "js" / "settings.js"
+SETTINGS_DIALOG_JS = UI / "share" / "settings-dialog.js"
 PROVIDER_JS = UI / "provider" / "js" / "provider.js"
 MEMORIES_JS = UI / "memories" / "js" / "memories.js"
 DASHBOARD_JS = UI / "dashboard" / "js" / "dashboard.js"
@@ -446,7 +446,7 @@ _BUNDLES = {
     "shell": (UTIL_JS, DATA_JS, SHELL_JS, AVATARS_JS, IDLE_JS, SIDEBAR_JS, STUDIO_JS, SHELL_APP_JS),
     "chat": (UTIL_JS, DATA_JS, CHAT_DATA_JS, AVATARS_JS, IDLE_JS, SIDEBAR_JS, STUDIO_JS, SHELL_APP_JS, CHAT_JS),
     "app": (UTIL_JS, DATA_JS, CHAT_DATA_JS, AVATARS_JS, IDLE_JS, SIDEBAR_JS, STUDIO_JS, SHELL_APP_JS, CHAT_JS, APP_JS),
-    "settings": (UTIL_JS, DATA_JS, SHELL_JS, AVATARS_JS, IDLE_JS, SIDEBAR_JS, STUDIO_JS, SHELL_APP_JS, SETTINGS_JS),
+    "dialog": (UTIL_JS, DATA_JS, SHELL_JS, AVATARS_JS, IDLE_JS, SIDEBAR_JS, STUDIO_JS, SHELL_APP_JS, SETTINGS_DIALOG_JS),
     "provider": (UTIL_JS, DATA_JS, SHELL_JS, AVATARS_JS, IDLE_JS, SIDEBAR_JS, STUDIO_JS, SHELL_APP_JS, PROVIDER_JS),
     "memories": (UTIL_JS, DATA_JS, SHELL_JS, AVATARS_JS, IDLE_JS, SIDEBAR_JS, STUDIO_JS, SHELL_APP_JS, MEMORIES_JS),
     "dashboard": (UTIL_JS, DATA_JS, SHELL_JS, AVATARS_JS, IDLE_JS, SIDEBAR_JS, STUDIO_JS, SHELL_APP_JS, TRACE_JS, DASHBOARD_JS),
@@ -629,8 +629,9 @@ def test_normalize_bot_maps_card_and_agent_status(node: str) -> None:
 
 
 def test_load_roster_tolerates_missing_backend(node: str) -> None:
-    """loadRoster normalizes {bots:[...]}, marks the first card open and picks
-    a default selectedBot; an empty/absent list leaves the roster empty."""
+    """loadRoster normalizes {bots:[...]} with every pocket closed (chevron-only
+    disclosure) and picks a default selectedBot; an empty/absent list leaves
+    the roster empty."""
     out = _run(node, """
         const calls = installFetch((url) => url === '/api/bots'
             ? { bots: [{ id: 'a', name: 'A' }, { id: 'b' }] } : {});
@@ -641,19 +642,23 @@ def test_load_roster_tolerates_missing_backend(node: str) -> None:
         await loadRoster();
         return { first, sel, afterEmpty: bots.length };
     """)
-    assert out["first"] == [["a", True], ["b", False]]     # first bot open only
+    assert out["first"] == [["a", False], ["b", False]]    # chevron-only: roster load never discloses tasks
     assert out["sel"] == "a"                                # default selection
     assert out["afterEmpty"] == 0                           # missing payload tolerated
 
 
 def test_get_json_errors_carry_status_and_body(node: str) -> None:
-    """Non-2xx responses reject with err.status and the body's error text."""
+    """Non-2xx responses reject with err.status, the body's error text,
+    and the full body on err.data so callers can branch on typed codes."""
     out = _run(node, """
         installFetch(() => ({ ok: false, status: 422, json: async () => ({ error: 'bad input' }) }));
-        const err = await getJson('/api/x').then(() => null).catch(e => ({ message: e.message, status: e.status }));
-        return { err };
+        const err = await getJson('/api/x').then(() => null).catch(e => ({ message: e.message, status: e.status, data: e.data }));
+        installFetch(() => ({ ok: false, status: 409, json: async () => ({ code: 'model_in_use', error: 'busy', referencedBy: { m: ['b'] } }) }));
+        const typed = await getJson('/api/y').then(() => null).catch(e => ({ code: e.data?.code, refs: e.data?.referencedBy }));
+        return { err, typed };
     """)
-    assert out["err"] == {"message": "bad input", "status": 422}
+    assert out["err"] == {"message": "bad input", "status": 422, "data": {"error": "bad input"}}
+    assert out["typed"] == {"code": "model_in_use", "refs": {"m": ["b"]}}
 
 
 def test_refresh_sessions_partitions_groups_and_rows(node: str) -> None:
@@ -870,8 +875,9 @@ def test_states_table_labels_cover_the_lifecycle(node: str) -> None:
 
 
 def test_set_state_drives_summary_orbit_and_done_timer(node: str) -> None:
-    """setState applies the state summary, resets the orbit clock on change,
-    and 'done' auto-returns to idle after the 1.6s beat."""
+    """setState applies only caller-supplied summaries (no fabricated state
+    text), resets the orbit clock on change, and 'done' auto-returns to
+    idle after the 1.6s beat."""
     out = _run(node, """
         bots.length = 0;
         bots.push(...roster([{ id: 'a' }]));
@@ -884,8 +890,9 @@ def test_set_state_drives_summary_orbit_and_done_timer(node: str) -> None:
         return { thinking, doneAt, after: b.state };
     """)
     assert out["thinking"]["state"] == "thinking"
-    assert "sắp xếp" in out["thinking"]["summary"]       # stateSummaries.thinking
+    assert out["thinking"]["summary"] == ""              # no fabricated thinking text
     assert out["doneAt"]["state"] == "done"
+    assert out["doneAt"]["summary"] == ""                # done without summary stays factual-empty
     assert out["after"] == "idle"                        # done beat -> idle
 
 
@@ -1078,12 +1085,14 @@ def test_card_markup_anatomy(node: str) -> None:
     actions = html[actions_idx:html.index("</div>", actions_idx)]
     assert sorted(re.findall(r'data-action="(\w+)"', actions)) == ["collapse", "favorite"]
     assert 'class="reply-action"' in html and 'data-action="reply" hidden' in html
-    assert 'class="preview-text"></span>' in html   # summary-only compact line, no status repeat
+    assert 'class="preview-text"></span>' in html   # live-only preview: empty with no tool/skill calls
+    assert 'data-action="live-more"' not in html    # +N full-list button only when >2 groups
     assert 'data-action="favorite"' in html and 'aria-pressed="true"' in html
     assert 'class="icon-button collapse-button"' in html
     assert 'aria-controls="pocket-coder"' in html and 'aria-expanded="false"' in html
     assert 'id="pocket-coder"' in html and " inert>" in html or " inert " in html
-    assert 'class="thinking-paper"' in html and 'class="progress-list" hidden' in html
+    assert 'class="thinking-paper"' in html and 'class="progress-list"' in html
+    assert 'class="thought-extra"' not in html      # no invented thinking tail in the task pocket
     assert 'data-action="info"' in html and 'data-action="capabilities"' in html
 
 
@@ -1182,13 +1191,19 @@ def test_star_click_pins_card_to_top_in_place(node: str) -> None:
 
 def test_update_card_patches_state_preview_and_pocket(node: str) -> None:
     """updateCard rewrites the card in place: state/selected attrs, header
-    label, whisper comment override, elapsed, aria-expanded and pocket inert."""
+    label, live-only preview (+N grouping), elapsed, aria-expanded and
+    pocket inert. Fabricated summaries and simulated idle chatter never
+    paint the activity line or the pocket."""
     out = _run(node, """
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'Alpha' }]));
         const b = bots[0];
         renderTeam();
-        b.state = 'working'; b.summary = 'đang gọi bash'; b.elapsed = 12; b.open = true;
+        currentSession = 's1';
+        liveCallStarted(b, { kind: 'tool', name: 'bash', call_id: 'c1', session: 's1' });
+        liveCallStarted(b, { kind: 'tool', name: 'bash', call_id: 'c2', session: 's1' });
+        b.state = 'working'; b.elapsed = 12; b.open = true;
+        b.taskWindow = 's1'; b.taskCache = { status: 'ok', payload: { tasks: [{ title: 'port parser', status: 'open', waiting_on: null }] } };
         selectedBot = 'a';
         updateCard(b);
         const el = $('#bot-a');
@@ -1198,50 +1213,62 @@ def test_update_card_patches_state_preview_and_pocket(node: str) -> None:
             aria: $('.bot-select', el).getAttribute('aria-label'),
             summary: $('.thinking-summary', el).textContent,
             preview: $('.preview-text', el).textContent,
+            more: $$('.live-more', el).filter(x => !x.hidden).map(x => x.textContent),
             elapsed: $('.elapsed', el).textContent,
             expanded: $('.collapse-button', el).getAttribute('aria-expanded'),
             inert: $('.pocket', el).inert,
             title: $('.thinking-title', el).textContent,
+            rows: $$('.progress-list li', el).length,
         };
+        // Simulated idle chatter stays out of both activity surfaces;
+        // the pocket keeps showing the fetched task status instead.
+        // (Turn end cleared the live calls first, as terminal stream
+        // events do in the product.)
+        clearLiveCalls(b, 's1');
         b.state = 'idle'; b.idle.comment = 'Khoảng lặng êm.'; updateCard(b);
         const idle = {
-            whisper: $('.thinking-summary', el).textContent,
+            summary: $('.thinking-summary', el).textContent,
             whisperCls: $('.thinking-summary', el).classList.contains('idle-comment'),
             preview: $('.preview-text', el).textContent,
             idleFlag: $('.compact-preview', el).dataset.idleComment,
             title: $('.thinking-title', el).textContent,
         };
-        b.state = 'thinking';
-        b.summary = stateSummaries.thinking;
+        // Thinking state with no live calls: preview stays empty, the
+        // pocket shows the fetched task status instead of invented text.
+        b.state = 'thinking'; b.summary = 'something fabricated';
         updateCard(b);
         const generic = {
             text: $('.thinking-summary', el).textContent,
-            hidden: $('.thinking-summary', el).hidden,
+            preview: $('.preview-text', el).textContent,
             title: $('.thinking-title', el).textContent,
         };
         return { working, idle, generic };
-    """)
+    """, via="chat")
     w = out["working"]
     assert w["state"] == "working" and w["open"] == "true" and w["sel"] == "true"
     assert w["label"] == "Đang làm việc"
     assert w["aria"] == "Trò chuyện với Alpha · Đang làm việc"
-    assert w["summary"] == "đang gọi bash"
-    assert w["preview"] == "đang gọi bash"              # compact line: summary only, no status repeat
+    assert w["preview"] == "bash \u00d72"               # live grouping only, factual
+    assert w["more"] == []                                 # one group -> no visible +N
+    assert w["summary"] == "1 vi\u1ec7c \u0111ang ch\u1ea1y"  # pocket: fetched task status
+    assert w["rows"] == 1
     assert w["elapsed"] == "12 giây"
     assert w["expanded"] == "true" and w["inert"] is False
     i = out["idle"]
-    assert i["whisper"] == "“Khoảng lặng êm.”" and i["whisperCls"] is True
-    assert i["preview"] == "“Khoảng lặng êm.”" and i["idleFlag"] == "true"
-    assert i["title"] == "Lúc rảnh"
-    # A generic state summary adds nothing under the state heading, so the
-    # pocket hides it; real current actions above still show.
-    assert out["generic"] == {"text": "", "hidden": True, "title": "Đang suy nghĩ"}
+    assert "Khoảng lặng" not in i["summary"] and i["whisperCls"] is False
+    assert i["preview"] == "" and i["idleFlag"] == "false"
+    assert i["title"] == "Sẵn sàng"
+    # A fabricated summary string on the bot never reaches either surface.
+    assert out["generic"]["preview"] == ""
+    assert "fabricated" not in out["generic"]["text"]
+    assert out["generic"]["title"] == "Đang suy nghĩ"
 
 
 def test_pocket_state_matrix_reply_action_and_open_invariance(node: str) -> None:
     """The pocket answers per data-state: waiting/confused expose the reply
     action, every other state hides it; idle keeps the footer-only treatment
-    via CSS; and no state transition opens or closes a card."""
+    via CSS; and no state transition opens or closes a card. The pocket
+    status line is the fetched task state — caller summaries never paint."""
     out = _run(node, """
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'Alpha' }]));
@@ -1250,6 +1277,8 @@ def test_pocket_state_matrix_reply_action_and_open_invariance(node: str) -> None
         const el = $('#bot-a');
         b.open = true; updateCard(b);
         const seen = {};
+        currentSession = 's1';
+        b.taskWindow = 's1'; b.taskCache = { status: 'ok', payload: { calls: [] } };
         for (const st of ['idle', 'waiting', 'thinking', 'writing', 'working', 'done', 'error', 'offline', 'confused']) {
             b.state = st; b.summary = 'muc tieu X'; b.idle.comment = '';
             updateCard(b);
@@ -1285,64 +1314,103 @@ def test_pocket_state_matrix_reply_action_and_open_invariance(node: str) -> None
     for st, s in out["seen"].items():
         assert s["open"] is True and s["inert"] is False, st   # state never flips expansion
         assert s["cardState"] == st
-        assert s["summary"] == "muc tieu X", st               # activity/result line always painted
+        assert "muc tieu X" not in s["summary"], st          # caller summaries never paint the pocket
         assert s["label"] != "", st                            # header status row always filled
         assert s["replyHidden"] == (st not in ("waiting", "confused")), st
     assert out["dispatches"] == [["selectBot", "a"], ["selectBot", "a"]]  # reply = same dispatch as select
     assert out["focusedAfterSelect"] is False and out["focused"] is True
 
 
-def test_feed_window_keyed_reconcile_and_tools_aggregation(node: str) -> None:
-    """The pocket feed shows the last 3 live entries; older ones exit with a
-    fade then drop; tool calls aggregate into one 'đã dùng' line and repeated
-    think rounds fold into one row rendered with a count badge."""
+def test_live_preview_groups_and_legacy_finish(node: str) -> None:
+    """The compact preview shows only live tool/skill calls for the exact
+    window: up to two kind+name groups with ×N, +extra for the rest. One
+    finish removes only a unique match; ambiguous or unknown legacy finishes
+    remove nothing, and tool vs skill stays distinct."""
     out = _run(node, """
         bots.length = 0;
-        bots.push(...roster([{ id: 'a' }]));
+        bots.push(...roster([{ id: 'a', name: 'Alpha' }]));
         const b = bots[0];
+        currentSession = 's1';
+        // Two concurrent same-name calls, one tool one skill, plus others.
+        liveCallStarted(b, { kind: 'tool', name: 'read', call_id: 'c1', session: 's1' });
+        liveCallStarted(b, { kind: 'skill', name: 'read', call_id: 'c1', session: 's1' });
+        liveCallStarted(b, { kind: 'tool', name: 'bash', call_id: 'c2', session: 's1' });
+        liveCallStarted(b, { kind: 'tool', name: 'edit', call_id: 'c3', session: 's1' });
+        liveCallStarted(b, { kind: 'tool', name: 'other', call_id: 'd1', session: 's-other' });
+        const groups = livePreviewGroups(b, 's1');
+        const preview = previewLine(b);
+        const extra = previewExtraCount(b);
+        // One finish removes one colliding call; out-of-order second clears it.
+        const ambiguous = liveCallFinished(b, 'c1');
+        const r1 = liveCallFinished(b, 'c1', {kind: 'tool', session: 's1'});
+        const afterOne = livePreviewGroups(b, 's1');
+        const rUnknown = liveCallFinished(b, 'nope');
+        liveCallFinished(b, 'c1', {kind: 'skill', session: 's1'});
+        const afterTwo = livePreviewGroups(b, 's1');
+        // Other-window calls never leak into this window's preview.
+        const leaked = livePreviewGroups(b, 's1').shown.some(g => g.name === 'other');
+        // Skill rows keep their kind prefix from actual event semantics.
+        liveCallStarted(b, { kind: 'skill', name: 'fetch', call_id: 's9', session: 's1' });
+        const skillPreview = previewLine(b);
+        return { groups, preview, extra, ambiguous, r1kind: r1 && r1.kind,
+                 afterOne: afterOne.shown.map(g => [g.kind, g.name, g.active]),
+                 afterOneTotal: afterOne.total,
+                 unknown: rUnknown, afterTwo: afterTwo.shown.map(g => [g.kind, g.name, g.active]),
+                 afterTwoTotal: afterTwo.total,
+                 leaked, windowCalls: liveCallsForWindow(b, 's1').length,
+                 skillPreview };
+    """, via="chat")
+    assert out["groups"]["total"] == 4                # tool read / skill read / bash / edit
+    assert len(out["groups"]["shown"]) == 2 and out["extra"] == 2  # up to two +N
+    assert "edit" in out["preview"] and "bash" in out["preview"]  # newest two name the preview
+    assert out["ambiguous"] is None
+    assert out["r1kind"] == "tool"
+    assert out["unknown"] is None                     # never guess on unknown ids
+    assert out["leaked"] is False
+    assert out["afterOneTotal"] == 3                    # one colliding call removed, one left
+    assert out["afterTwoTotal"] == 2                    # second finish clears the collision
+    kinds = {(k, n) for k, n, _ in out["afterTwo"]}
+    assert kinds == {("tool", "bash"), ("tool", "edit")}
+    assert out["windowCalls"] == 3                    # bash + edit + skill fetch in-window
+    assert "skill fetch" in out["skillPreview"]     # skill kind shown, never masked as tool
+
+
+def test_task_pocket_keyed_reconcile_and_stale_guard(node: str) -> None:
+    """The pocket task list renders one row per fetched kind+name group with
+    ×N (no ghosts, no invented rows); a superseded fetch never paints a
+    stale bot/window."""
+    out = _run(node, """
+        bots.length = 0;
+        bots.push(...roster([{ id: 'a', name: 'Alpha' }, { id: 'b', name: 'Beta' }]));
+        const b = bots[0];
+        renderTeam();
+        currentSession = 's1';
+        b.open = true; b.taskWindow = 's1';
+        b.taskCache = { status: 'ok', payload: { tasks: [
+            { title: 'port parser', status: 'open', waiting_on: null },
+            { title: 'review diff', status: 'queued', waiting_on: 'b' },
+        ] } };
         const list = document.createElement('ol');
         list.className = 'progress-list';
         document.body.appendChild(list);
-        feedPush(b, { kind: 'think', text: 'đang suy nghĩ', n: 1, cls: 'li-think' });
-        feedPush(b, { kind: 'tools', text: 'đang dùng bash', done: false });
-        feedPush(b, { kind: 'write', text: 'đang viết phản hồi', done: false });
-        feedPush(b, { kind: 'think', text: 'đang suy nghĩ', n: 1, cls: 'li-think' });
-        feedPush(b, { kind: 'note', text: 'extra', done: false });
-        updateCard(b); syncFeedList(b, list);
-        const items = $$('li', list).map(li => ({ text: li.innerHTML, cls: li.className, eid: li.dataset.eid }));
-        // tools aggregation into the last tools line
-        b.toolCounts = new Map([['bash', 2], ['edit', 1]]);
-        b.toolRunning = 0;
-        feedTools(b); syncFeedList(b, list);
-        const toolsLine = feedLast(b);
-        const foldedThink = b.feed.find(f => f.kind === 'think' && !f.exiting);
-        foldedThink.n = 2;
-        syncFeedList(b, list);
-        const thinkHtml = $$('li', list).map(li => li.innerHTML).find(h => h.includes('feed-count')) || '';
-        // identical re-render keeps node identity
+        syncTaskList(b, list);
+        const rows = $$('li', list).map(li => li.innerHTML);
         const before = $$('li', list);
-        syncFeedList(b, list);
+        syncTaskList(b, list);
         const same = before.every((li, i) => li === $$('li', list)[i]);
-        // exiting entries stay briefly then splice out
-        const victim = b.feed[0];
-        feedExit(b, victim);
-        const exitingStill = b.feed.includes(victim);
-        await tick(500);
-        return { items, toolsLine, thinkHtml, same, exitingStill, spliced: !b.feed.includes(victim) };
+        // Stale guard: an older fetch resolving after a window switch drops.
+        b.taskWindow = 's2'; b.taskGen++;
+        const gen = b.taskGen;
+        const stale = (gen !== b.taskGen || b.taskWindow !== 's1') ? null : 'painted';
+        updateCard(b);
+        const statusAfterSwitch = $('.thinking-summary', $('#bot-a')).textContent;
+        return { rows, same, stale, statusAfterSwitch };
     """, via="chat")
-    # the pocket window keeps the last 3 alive entries; the evicted think row
-    # renders a while longer with its li-exit fade before dropping out
-    kinds = [i["text"] for i in out["items"]]
-    assert any("đang dùng bash" in t for t in kinds)
-    assert any("đang viết phản hồi" in t for t in kinds)
-    assert any("extra" in t for t in kinds)
-    assert any("đang suy nghĩ" in t for t in kinds)
-    assert any("li-exit" in i["cls"] for i in out["items"])
-    assert out["toolsLine"]["text"] == "đã dùng bash · 2 lần, edit" and out["toolsLine"]["done"] is True
-    assert 'class="feed-count">×2<' in out["thinkHtml"]
-    assert 'class="step-mark"' in out["thinkHtml"]
+    assert any("port parser" in r and "open" in r for r in out["rows"])
+    assert any("review diff" in r and "queued" in r and "Beta" in r for r in out["rows"])
     assert out["same"] is True
-    assert out["exitingStill"] is True and out["spliced"] is True
+    assert out["stale"] is None                       # superseded fetch never paints
+    assert out["statusAfterSwitch"] != ""              # pocket names its state, never blank-guesses
 
 
 def test_open_bot_expansion_is_exclusive(node: str) -> None:
@@ -1362,6 +1430,313 @@ def test_open_bot_expansion_is_exclusive(node: str) -> None:
     assert out["first"] == [True, False]
     assert out["second"] == [False, True]
     assert out["third"] == [False, False]
+
+
+def test_pocket_disclosure_is_chevron_only(node: str) -> None:
+    """Roster load, bot select affordance and send never fetch tasks; only
+    the chevron open (openBot true) and an open pocket's stream events do."""
+    out = _run(node, """
+        const calls = installFetch((url) => url === '/api/bots'
+            ? { bots: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }] }
+            : url.endsWith('/tasks') ? { bot_id: 'a', calls: [] } : {});
+        await loadRoster();
+        const afterRoster = calls.filter(c => String(c[0]).endsWith('/tasks')).length;
+        currentSession = 's1'; selectedBot = 'a';
+        renderTeam(); bots.forEach(updateCard);
+        const afterPaint = calls.filter(c => String(c[0]).endsWith('/tasks')).length;
+        await refreshBotTasks(bots[0], null);   // no window: marks unavailable, no fetch
+        const afterNull = calls.filter(c => String(c[0]).endsWith('/tasks')).length;
+        openBot('a', true);                      // explicit chevron open fetches once
+        await tick();
+        const afterOpen = calls.filter(c => String(c[0]).endsWith('/tasks')).length;
+        const openedUrl = (calls.find(c => String(c[0]).endsWith('/tasks')) || [null])[0];
+        return { afterRoster, afterPaint, afterNull, afterOpen, openedUrl,
+                 window: bots[0].taskWindow };
+    """, via="chat")
+    assert out["afterRoster"] == 0                # roster load discloses nothing
+    assert out["afterPaint"] == 0                 # select affordance/paint discloses nothing
+    assert out["afterNull"] == 0                  # null window never invents a fetch
+    assert out["afterOpen"] == 1                  # chevron open fetches exactly the window
+    assert out["openedUrl"] == "/api/bots/a/rooms/s1/tasks"
+    assert out["window"] == "s1"
+
+
+def test_open_pocket_refreshes_on_window_switch_not_on_poll(node: str) -> None:
+    """An open pocket re-reads only when the exact window changes; switching
+    away marks the cache stale and the new window refetches exactly once."""
+    out = _run(node, """
+        const calls = installFetch((url) => url.endsWith('/tasks')
+            ? { bot_id: 'a', calls: [] } : {});
+        bots.length = 0;
+        bots.push(...roster([{ id: 'a', name: 'A' }]));
+        renderTeam();
+        currentSession = 's1';
+        openBot('a', true);
+        await tick();
+        const first = calls.length;
+        refreshOpenPocketsOnWindowChange();       // same window: no refetch
+        const same = calls.length;
+        currentSession = 's2';                    // window switch
+        refreshOpenPocketsOnWindowChange();
+        await tick();
+        const after = calls.length;
+        const lastUrl = calls.length ? calls[calls.length - 1][0] : null;
+        return { first, same, after, lastUrl, window: bots[0].taskWindow };
+    """, via="chat")
+    assert out["first"] == 1
+    assert out["same"] == 1                       # event-driven only: no poll on same window
+    assert out["after"] == 2 and out["lastUrl"] == "/api/bots/a/rooms/s2/tasks"
+    assert out["window"] == "s2"
+
+
+def test_late_task_response_never_paints_stale_window(node: str) -> None:
+    """A tasks fetch for the old window resolving after a switch drops:
+    the pocket keeps the new window's tasks, never the stale bot/window."""
+    out = _run(node, """
+        let releaseS1 = null;
+        const gateS1 = new Promise(res => { releaseS1 = res; });
+        const calls = installFetch((url) => {
+            if (url === '/api/bots/a/rooms/s1/tasks') return gateS1.then(() => ({
+                bot_id: 'a', tasks: [{ title: 'stale work', status: 'open', waiting_on: null }] }));
+            if (url.endsWith('/tasks')) return { bot_id: 'a', tasks: [] };
+            return {};
+        });
+        bots.length = 0;
+        bots.push(...roster([{ id: 'a', name: 'A' }]));
+        renderTeam();
+        currentSession = 's1';
+        openBot('a', true);                       // s1 fetch pends on the gate
+        await tick(5);
+        currentSession = 's2';                    // switch while s1 is in flight
+        refreshOpenPocketsOnWindowChange();
+        await tick(5);
+        releaseS1();                              // stale s1 response lands late
+        await tick(5);
+        const rows = $$('.progress-list li', $('#bot-a')).map(li => li.textContent);
+        return { window: bots[0].taskWindow,
+                 status: $('.thinking-summary', $('#bot-a')).textContent,
+                 staleLeaked: rows.some(t => t.includes('stale work')) };
+    """, via="chat")
+    assert out["window"] == "s2"
+    assert out["staleLeaked"] is False            # late s1 payload never paints s2
+    assert "stale work" not in out["status"]
+
+
+def test_finish_association_is_window_and_name_exact(node: str) -> None:
+    """Same public call id in two windows stays per-window, and a same-id
+    different-name finish removes only its own call — out of order, with
+    unknown names removing nothing."""
+    out = _run(node, """
+        bots.length = 0;
+        bots.push(...roster([{ id: 'a', name: 'Alpha' }]));
+        const b = bots[0];
+        liveCallStarted(b, { kind: 'tool', name: 'read', call_id: 'c1', session: 's1' });
+        liveCallStarted(b, { kind: 'tool', name: 'write', call_id: 'c1', session: 's1' });
+        liveCallStarted(b, { kind: 'tool', name: 'write', call_id: 'c1', session: 's2' });
+        // Out of order: the write finish in s1 removes only s1's write.
+        const r1 = liveCallFinished(b, 'c1', { kind: 'tool', name: 'write', session: 's1' });
+        const s1 = (b.liveCalls || []).filter(f => f.session === 's1').map(f => f.name);
+        const s2 = (b.liveCalls || []).filter(f => f.session === 's2').map(f => f.name);
+        // A named finish with no match removes nothing.
+        const rUnknown = liveCallFinished(b, 'c1', { kind: 'tool', name: 'nope', session: 's1' });
+        liveCallFinished(b, 'c1', { kind: 'tool', name: 'read', session: 's1' });
+        const s1After = (b.liveCalls || []).filter(f => f.session === 's1').length;
+        return { r1: r1 && r1.name, s1, s2, rUnknown, s1After,
+                 s2Intact: (b.liveCalls || []).filter(f => f.session === 's2').map(f => f.name) };
+    """, via="chat")
+    assert out["r1"] == "write"
+    assert out["s1"] == ["read"] and out["s2"] == ["write"]
+    assert out["rUnknown"] is None
+    assert out["s1After"] == 0 and out["s2Intact"] == ["write"]
+
+
+def test_follow_running_turn_reentry_keeps_single_subscription(node: str) -> None:
+    """Re-entry retains one stream and restores deltas received off-screen."""
+    out = _run(node, _CHAT_SEED + """
+        let release;
+        const gate = new Promise(res => { release = res; });
+        let hits = 0;
+        installFetch((url) => {
+            if (url === '/api/sessions/s1/turn/stream') {
+                hits++;
+                return gate.then(() => ({ ok: true, status: 200, body: streamOf([]) }));
+            }
+            return {};
+        });
+        currentSession = 's1';
+        followRunningTurn('s1');
+        const first = runs.get('s1');
+        handleStreamEvent(first, { type: 'tool.started', name: 'bash', call_id: 'c1' });
+        handleStreamEvent(first, { type: 'llm.content', delta: 'before' });
+        currentSession = 's2';
+        $('#message-list').innerHTML = '';
+        handleStreamEvent(first, { type: 'llm.content', delta: ' away' });
+        currentSession = 's1';
+        followRunningTurn('s1');
+        const same = runs.get('s1') === first;
+        const text = $('.stream-text', first.node).textContent;
+        handleStreamEvent(first, { type: 'llm.content', delta: ' after' });
+        const finalText = $('.stream-text', first.node).textContent;
+        const ids = getBot('coder').liveCalls.map(f => f.call_id);
+        const nodes = $('#message-list').children.length;
+        release(); await tick(20);
+        return { hits, same, text, finalText, ids, nodes, drained: runs.size === 0 };
+    """, via="chat")
+    assert out == {"hits": 1, "same": True, "text": "before away",
+                   "finalText": "before away after", "ids": ["c1"],
+                   "nodes": 1, "drained": True}
+
+
+def test_stream_burst_coalesces_task_refreshes(node: str) -> None:
+    """Parallel tool starts/finishes while the pocket is open coalesce into
+    one in-flight fetch plus a single bounded recheck — never one fetch
+    per event, never a poll loop."""
+    out = _run(node, _CHAT_SEED + """
+        let release = null;
+        let fetches = 0;
+        installFetch((url) => {
+            if (url.endsWith('/tasks')) {
+                fetches++;
+                if (fetches === 1) return new Promise(res => { release = res; });
+                return { bot_id: 'coder', calls: [], tasks: [] };
+            }
+            return {};
+        });
+        const b = getBot('coder');
+        currentSession = 's1';
+        renderTeam();
+        openBot('coder', true);                     // fetch #1 pends
+        await tick(5);
+        const token = { botId: 'coder', sessionId: 's1', node: document.createElement('article'),
+                        timers: [], tools: [], start: Date.now(), phase: 'waiting' };
+        for (let i = 0; i < 5; i++)                 // burst while #1 is in flight
+            handleStreamEvent(token, { type: 'tool.started', name: 't' + i, call_id: 'c' + i });
+        await tick(5);
+        const during = fetches;
+        release({ bot_id: 'coder', calls: [], tasks: [] });
+        await tick(20);
+        const total = fetches;
+        return { during, total, status: b.taskCache && b.taskCache.status,
+                 live: (b.liveCalls || []).length, flight: !!b._taskFlight };
+    """, via="chat")
+    assert out["during"] == 1                       # burst coalesced into the in-flight fetch
+    assert out["total"] == 2                        # exactly one bounded recheck
+    assert out["status"] == "ok" and out["live"] == 5 and out["flight"] is False
+
+
+def test_pocket_renders_all_tasks_with_distinct_identities(node: str) -> None:
+    """>20 tasks all render (no silent truncation) and identical units keep
+    distinct reconcile identities across updates."""
+    out = _run(node, """
+        bots.length = 0;
+        bots.push(...roster([{ id: 'a', name: 'Alpha' }]));
+        const b = bots[0];
+        renderTeam();
+        currentSession = 's1';
+        const tasks = [];
+        for (let i = 0; i < 22; i++) tasks.push({ title: 'work ' + i, status: 'open', waiting_on: null });
+        tasks.push({ title: 'same', status: 'open', waiting_on: null });
+        tasks.push({ title: 'same', status: 'open', waiting_on: null });
+        tasks.push({ title: 'same', status: 'open', waiting_on: null });
+        b.open = true; b.taskWindow = 's1';
+        b.taskCache = { status: 'ok', payload: { tasks } };
+        const list = document.createElement('ol');
+        list.className = 'progress-list';
+        document.body.appendChild(list);
+        syncTaskList(b, list);
+        const rows = $$('li', list);
+        const sames = rows.filter(li => li.innerHTML.includes('same'));
+        const keys = rows.map(li => li.dataset.tkey);
+        syncTaskList(b, list);                      // identical re-render keeps nodes
+        const stable = rows.every((li, i) => li === $$('li', list)[i]);
+        updateCard(b);
+        return { count: rows.length, sameCount: sames.length,
+                 distinct: new Set(keys).size === keys.length,
+                 stable, status: $('.thinking-summary', $('#bot-a')).textContent };
+    """, via="chat")
+    assert out["count"] == 25                      # all units, no slice
+    assert out["sameCount"] == 3 and out["distinct"] is True
+    assert out["stable"] is True
+    assert out["status"] == "25 việc đang chạy"
+
+
+def test_live_more_opens_separate_full_list(node: str) -> None:
+    """The +N button opens the full live list SEPARATE from the task pocket:
+    pocket stays closed, every group lists with ×N, Escape/focus restore."""
+    out = _run(node, """
+        bots.length = 0;
+        bots.push(...roster([{ id: 'a', name: 'Alpha' }]));
+        const b = bots[0];
+        renderTeam();
+        currentSession = 's1';
+        liveCallStarted(b, { kind: 'tool', name: 'bash', call_id: 'c1', session: 's1' });
+        liveCallStarted(b, { kind: 'tool', name: 'bash', call_id: 'c2', session: 's1' });
+        liveCallStarted(b, { kind: 'skill', name: 'read', call_id: 'c3', session: 's1' });
+        liveCallStarted(b, { kind: 'tool', name: 'edit', call_id: 'c4', session: 's1' });
+        updateCard(b);
+        const moreBtn = $$('.live-more', $('#bot-a')).find(x => !x.hidden);
+        const opened = openLiveList('a');
+        const dlg = $('#live-list-dialog');
+        const rowsHtml = $('#live-list-rows', dlg).innerHTML;
+        const rowsCount = (rowsHtml.match(/<li/g) || []).length;
+        dlg.close();
+        // Keyboard path: Escape closes the dialog in the browser; here the
+        // stub close() restores focus to the +N control.
+        openLiveList('a');
+        const sub = $('#live-list-sub', dlg).textContent;
+        $('#live-list-dialog').close();
+        return { opened, dialogOpen: dlg.open, rowsHtml, rowsCount, sub,
+                 pocketOpen: b.open, moreLabel: moreBtn && moreBtn.textContent };
+    """, via="chat")
+    assert out["opened"] is True
+    assert out["rowsCount"] == 3                     # bash ×2, skill read, edit
+    assert "bash" in out["rowsHtml"] and "\u00d72" in out["rowsHtml"]
+    assert "read" in out["rowsHtml"]
+    assert "Alpha" in out["sub"]
+    assert out["pocketOpen"] is False              # full list never opens the pocket
+    assert out["moreLabel"] == "+1"                # 3 groups: 2 shown + 1
+
+
+def test_preview_and_pocket_never_cross_windows(node: str) -> None:
+    """Live calls and task rows from another window never surface; with no
+    window (non-chat page) both surfaces stay empty without fetching."""
+    out = _run(node, """
+        bots.length = 0;
+        bots.push(...roster([{ id: 'a', name: 'Alpha' }]));
+        const b = bots[0];
+        renderTeam();
+        currentSession = 's1';
+        liveCallStarted(b, { kind: 'tool', name: 'secret', call_id: 'x1', session: 's-other' });
+        const previewHere = previewLine(b);
+        b.open = true; b.taskWindow = 's-other';
+        b.taskCache = { status: 'ok', payload: { tasks: [{ title: 'secret', status: 'open', waiting_on: null }] } };
+        updateCard(b);
+        const pocketHere = $('.thinking-summary', $('#bot-a')).textContent;
+        const rowsHere = $$('.progress-list li', $('#bot-a')).length;
+        // Non-chat page: no currentSession binding is invented.
+        currentSession = '';
+        const previewAway = previewLine(b);
+        const pocketAway = taskStatusText(b);
+        const callsThere = liveCallsForWindow(b, 's-other').length;
+        return { previewHere, pocketHere, rowsHere, previewAway, pocketAway, callsThere };
+    """, via="chat")
+    assert out["previewHere"] == ""               # other window's calls never preview here
+    assert "secret" not in out["pocketHere"]      # stale-window cache never renders
+    assert out["rowsHere"] == 0
+    assert out["previewAway"] == ""
+    assert "secret" not in out["pocketAway"]       # unavailable note, never leaked content
+    assert out["callsThere"] == 1                 # stored, just never shown cross-window
+
+
+def test_studio_previews_never_open_pockets() -> None:
+    """Expression-studio previews (idle/expression picks) drive avatar
+    states only — pocket disclosure stays chevron-exclusive, so the
+    activity surface cannot leak tasks."""
+    from pathlib import Path as _P
+
+    studio = (_P(__file__).resolve().parents[1] / "thyca" / "webui" / "ui"
+              / "share" / "avatars" / "studio.js").read_text()
+    assert "openBot(" not in studio
 
 
 def test_set_group_activity_syncs_member_seals_and_meta(node: str) -> None:
@@ -1548,14 +1923,13 @@ def test_expression_dialog_shape_markup_consistent(node: str) -> None:
     ship the same shape picker hook/labels and color+shape copy."""
     html = INDEX_HTML.read_text(encoding="utf-8")
     shell = SHELL_JS.read_text(encoding="utf-8")
-    settings = SETTINGS_JS.read_text(encoding="utf-8")
     for text in (html, shell):
         assert 'id="shape-picker"' in text
         assert "Hình dạng" in text
+        assert "màu và hình dạng" in text   # shared dialog bot section (static markup)
     assert html.count('id="shape-picker"') == 1
     assert shell.count('id="shape-picker"') == 1
     assert "màu, hình dạng" in html and "màu, hình dạng" in shell
-    assert "màu và hình dạng" in settings
     # TASK F: the shape row keeps a clear vertical gap above .studio-tabs
     # (selected-button outline must not touch the tab row), following the
     # dialog's existing 18px rhythm.
@@ -1789,8 +2163,8 @@ def test_drawer_context_drops_stale_slot_and_survives_errors(node: str) -> None:
 
 
 def test_drawer_session_button_routes_to_session(node: str) -> None:
-    """Clicking an info-session row dispatches to the active controller,
-    closes the shared drawer and opens the bot's pocket."""
+    """Clicking an info-session row dispatches to the active controller and
+    closes the shared drawer — it never opens the pocket (chevron-only)."""
     out = _run(node, """
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'A' }, { id: 'b' }]));
@@ -1804,7 +2178,7 @@ def test_drawer_session_button_routes_to_session(node: str) -> None:
     """)
     assert out["dispatches"] == [["loadSession", "s1", "Phiên 1", "a"]]
     assert out["calls"] == []
-    assert out["closed"] is True and out["open"] is True and out["otherOpen"] is False
+    assert out["closed"] is True and out["open"] is False and out["otherOpen"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -1824,7 +2198,7 @@ def test_shell_markup_header_sidebar_and_dialogs(node: str) -> None:
     assert 'class="site-header"' in header and 'class="wordmark"' in header
     assert 'class="page-links"' in header
     assert 'data-page-link="memories" class="is-current" aria-current="page"' in header
-    assert 'data-page-link="chat"' in header and 'data-page-link="settings"' in header
+    assert 'data-page-link="chat"' in header and 'data-page-link="settings"' not in header   # settings lives in the footer dialog now
     # The "Backend trực tiếp" prototype badge did not survive the rebuild;
     # the menu button came back as the mobile-only sidebar trigger.
     assert 'prototype-badge' not in header
@@ -1833,7 +2207,8 @@ def test_shell_markup_header_sidebar_and_dialogs(node: str) -> None:
     assert 'class="sessions-heading"' in side and '>Đội<' in side
     assert 'class="bot-count"' in side
     assert 'class="session-list" id="team-bot-list"' in side
-    assert 'id="open-customize"' in side and 'id="motion-toggle"' in side
+    assert 'id="open-settings"' in side and 'Cài đặt' in side
+    assert 'id="open-customize"' not in side and 'id="motion-toggle"' not in side   # footer holds only the Settings entry now
     assert 'class="splitter"' in side
     # Shared sidebars carry the roster only — group conversations only make
     # sense on the chat page, so the section + its list live in chat's own
@@ -1849,7 +2224,7 @@ def test_shell_markup_header_sidebar_and_dialogs(node: str) -> None:
     for did in ("mobile-overlay", "expressions-dialog", "bot-drawer", "group-dialog",
                 "group-form", "group-options", "toast", "announcer", "bot-drawer-body"):
         assert f'id="{did}"' in dlg
-    assert out["pages"] == ["chat", "memories", "profile", "provider", "dashboard", "settings"]
+    assert out["pages"] == ["chat", "memories", "profile", "provider", "dashboard"]
 
 
 def test_emit_shell_and_boot_shell_fill_shared_dom(node: str) -> None:
@@ -1917,8 +2292,10 @@ def test_handle_event_maps_lifecycle_and_respects_guards(node: str) -> None:
 
 
 def test_toggle_motion_and_shell_adapter(node: str) -> None:
-    """toggleMotion freezes animations via body.motion-paused and mirrors the
-    button; ThycaShell exposes the shared adapter surface incl. setBotColor."""
+    """toggleMotion freezes animations via body.motion-paused (the footer button
+    is gone — its job moved to the reduce-motion preference — so the mirror
+    step is a guarded no-op); ThycaShell exposes the shared adapter surface
+    incl. setBotColor."""
     out = _run(node, """
         bots.length = 0;
         bots.push(...roster([{ id: 'a', color: '#a65a42' }].map((c, i) => ({ ...c, tint: 'accent' })), 0));
@@ -1967,15 +2344,16 @@ _APP_SEED = "await tick();" + _CHAT_SEED
 def test_send_turn_streams_and_finishes(node: str) -> None:
     """sendTurn posts the turn, echoes the user message, drives the running
     node through the stream phases and re-renders the transcript on
-    turn.completed — the bot lands on done."""
+    turn.completed — the bot lands on done. Sending never opens the pocket;
+    live calls clear at the terminal event."""
     out = _run(node, _CHAT_SEED + """
         installFetch((url, opts) => {
             if (url === '/api/sessions/s1/turn/stream' && opts.method === 'POST') {
                 return { ok: true, status: 200, body: streamOf([
                     { type: 'turn.accepted' },
                     { type: 'llm.started' },
-                    { type: 'tool.started', name: 'bash' },
-                    { type: 'tool.finished', name: 'bash' },
+                    { type: 'tool.started', name: 'bash', call_id: 'c1' },
+                    { type: 'tool.finished', name: 'bash', call_id: 'c1' },
                     { type: 'llm.content', delta: 'Chào ' },
                     { type: 'llm.content', delta: 'bạn!' },
                     { type: 'llm.finished' },
@@ -1996,7 +2374,9 @@ def test_send_turn_streams_and_finishes(node: str) -> None:
         return {
             ok,
             state: bots[1].state,
-            feed: (bots[1].feed || []).map(f => [f.kind, f.text, !!f.done]),
+            live: (bots[1].liveCalls || []).map(f => [f.kind, f.name, f.call_id]),
+            preview: previewLine(bots[1]),
+            open: bots[1].open,
             runsEmpty: runs.size === 0,
             html: list.innerHTML,
             children: list.children.length,
@@ -2007,10 +2387,9 @@ def test_send_turn_streams_and_finishes(node: str) -> None:
     assert out["ok"] is True
     assert out["state"] == "done"
     assert out["runsEmpty"] is True
-    assert ["think", "Thinking", True] not in out["feed"] or True
-    feed = {f[0]: f for f in out["feed"]}
-    assert feed["tools"][1] == "đã dùng bash" and feed["tools"][2] is True
-    assert feed["write"][1] == "đã gửi phản hồi" and feed["write"][2] is True
+    assert out["live"] == []                       # terminal event clears this window's live calls
+    assert out["preview"] == ""                    # no invented thinking/writing tail
+    assert out["open"] is False                    # send never discloses the pocket
     assert 'class="message-user"' in out["html"] and "<p>hi</p>" in out["html"]
     assert 'class="message-assistant"' in out["html"] and "Coder" in out["html"]
     assert "Chào" in out["html"]                          # transcript re-rendered
@@ -2041,9 +2420,11 @@ def test_send_turn_guards_busy_offline_and_missing(node: str) -> None:
     }
 
 
-def test_stream_events_drive_feed_and_stream_text(node: str) -> None:
-    """handleStreamEvent maps llm.thinking/tool.* /llm.content onto the pocket
-    feed and the live stream-text node; naming events rename the title."""
+def test_stream_events_drive_live_calls_and_stream_text(node: str) -> None:
+    """handleStreamEvent maps tool/skill started/finished onto the live-call
+    identity (kind from event semantics, FIFO finish, skill distinct from
+    tool) and llm.content onto the live stream-text node; thinking deltas
+    change state only and never invent preview rows; naming renames."""
     out = _run(node, _CHAT_SEED + """
         const list = $('#message-list');
         const node = document.createElement('article');
@@ -2053,8 +2434,12 @@ def test_stream_events_drive_feed_and_stream_text(node: str) -> None:
         runs.set('s1', token);
         for (const ev of [
             { type: 'llm.started' }, { type: 'llm.thinking' }, { type: 'llm.finished' },
-            { type: 'llm.thinking' },                       // folds -> Thinkingx2 (last round was done)
-            { type: 'tool.started', name: 'bash' }, { type: 'tool.finished', name: 'bash' },
+            { type: 'llm.thinking' },                       // no preview row: thinking is not a task
+            { type: 'tool.started', name: 'bash', call_id: 'c1' },
+            { type: 'skill.started', name: 'bash', call_id: 'c1' },
+            { type: 'tool.started', name: 'bash', call_id: 'c2' },
+            { type: 'tool.finished', name: 'bash', call_id: 'c9' },  // unknown: removes nothing
+            { type: 'tool.finished', name: 'bash', call_id: 'c1' },  // FIFO: first colliding call
             { type: 'llm.content', delta: 'Chữ ' }, { type: 'llm.content', delta: 'đang chảy' },
             { type: 'session.naming.finished', title: 'Tên mới' },
         ]) handleStreamEvent(token, ev);
@@ -2062,7 +2447,9 @@ def test_stream_events_drive_feed_and_stream_text(node: str) -> None:
         return {
             phase: token.phase,
             state: b.state,
-            feed: (b.feed || []).map(f => [f.kind, f.text, f.n || 0]),
+            live: (b.liveCalls || []).map(f => [f.kind, f.name, f.call_id]),
+            preview: previewLine(b),
+            groups: livePreviewGroups(b, 's1'),
             byline: $('.message-byline time', node).textContent,
             stream: $('.stream-text', node).textContent,
             caret: node.querySelectorAll('.streaming-caret').length,
@@ -2071,18 +2458,19 @@ def test_stream_events_drive_feed_and_stream_text(node: str) -> None:
         };
     """, via="chat")
     assert out["phase"] == "writing" and out["state"] == "writing"
-    think = [f for f in out["feed"] if f[0] == "think"]
-    assert think and think[0][1] == "đang suy nghĩ" and think[0][2] == 2  # consecutive rounds fold
-    assert any(f[0] == "tools" and "bash" in f[1] for f in out["feed"])
-    assert any(f[0] == "write" for f in out["feed"])
+    # Two colliding bash calls (tool+skill on c1) minus one finish, plus c2:
+    # skill/bash stays distinct, counts stay exact under out-of-order finish.
+    remaining = {(k, n, c) for k, n, c in out["live"]}
+    assert remaining == {("skill", "bash", "c1"), ("tool", "bash", "c2")}
+    assert out["groups"]["total"] == 2               # tool bash ×1 + skill bash ×1
+    assert "bash" in out["preview"]
     assert out["byline"] == "đang viết"
     assert out["stream"] == "Chữ đang chảy"                  # raw deltas appended
     # the .stream-text stub is auto-vivified, so handleStreamEvent's !p branch
     # (which would create the caret) is skipped under this harness — assert the
     # text path only; caret markup lives in chat.css checks instead
     assert out["title"] == "Tên mới"
-    assert out["tokenTools"] == ["bash"]
-
+    assert out["tokenTools"] == ["bash", "bash", "bash"]
 
 def test_turn_terminal_events_cancel_and_fail(node: str) -> None:
     """turn.cancelled leaves an interruption note + 'đã dừng' byline and lands
@@ -2507,50 +2895,62 @@ def test_prototype_adapter_and_demo_button(node: str) -> None:
 # Page scripts — settings / memories / dashboard / trace
 # ---------------------------------------------------------------------------
 
-def test_settings_page_roster_prefs_and_status(node: str) -> None:
-    """settings.js renders the read-only roster with the shared seal engine and
-    state labels, keeps UI prefs localStorage-only, and reports backend status."""
+def test_settings_dialog_renders_bot_prefs_and_status(node: str) -> None:
+    """The shared Settings dialog shows the bot shortcut (shared seal),
+    machine-only prefs (defaults applied without writing) and on-demand
+    backend status — no page, no roster card."""
     out = _run(node, """
+        bots.length = 0;
+        bots.push(...roster([{ id: 'a', name: 'Alpha', role: 'R' }], 0));
         installFetch((url) => {
-            if (url === '/api/bots') return { bots: [{ id: 'a', name: 'Alpha', role: 'R', system: true }] };
-            if (url === '/api/sessions') return { sessions: [] };
             if (url === '/api/config/status') return { ready: true, version: '1.2.3' };
             return {};
         });
         await tick();
-        await boot();                                         // re-run with the test fetch
+        const opened = openSettingsDialog();
+        await tick();                                         // status fetch resolves
         return {
-            roster: $('#bot-roster').innerHTML,
+            opened,
+            open: $('#settings-dialog').open,
+            botOptions: $('#settings-bot').innerHTML,
+            seal: $('#settings-bot-seal').innerHTML,
+            studio: typeof $('#open-studio').onclick,
             ready: $('#status-ready').textContent,
             readyCls: $('#status-ready').className,
             version: $('#status-version').textContent,
             pref: {
-                typeScale: document.documentElement.dataset.typeScale,
-                ornaments: document.querySelector('.workspace').dataset.ornaments,
-                savedAtBoot: localStorage.getItem('thyca.ui.preferences'),
+                typeScale: $('#pref-type-scale').value,
+                reduceMotion: $('#pref-reduce-motion').checked,
+                ornaments: $('#pref-ornaments').checked,
+                hook: document.documentElement.dataset.ornaments,
+                savedAtOpen: localStorage.getItem('thyca.ui.preferences'),
             },
         };
-    """, via="settings", emit="settings")
-    roster = out["roster"]
-    assert 'class="bot-row' in roster and 'class="seal-avatar' in roster
-    assert "Alpha" in roster and "bot hệ thống" in roster
-    assert "../chat/index.html?bot=a" in roster             # open-chat deep link
+    """, via="dialog")
+    assert out["opened"] is True and out["open"] is True
+    assert "Alpha" in out["botOptions"] and 'class="seal-avatar' in out["seal"]
+    assert "Alpha" in out["seal"]
+    assert out["studio"] == "function"                   # studio shortcut retained
     assert out["ready"] == "Sẵn sàng" and out["readyCls"] == "status-line s-ok"
     assert out["version"] == "1.2.3"
     assert out["pref"]["typeScale"] == "medium"
-    assert out["pref"]["ornaments"] == "on"
-    # boot applies prefs without writing — only user edits persist
-    assert out["pref"]["savedAtBoot"] is None
+    assert out["pref"]["reduceMotion"] is False
+    assert out["pref"]["ornaments"] is True
+    assert out["pref"]["hook"] == "on"
+    # opening applies prefs without writing — only user edits persist
+    assert out["pref"]["savedAtOpen"] is None
 
 
 def test_settings_prefs_persist_on_change_only(node: str) -> None:
-    """Changing a pref control applies it (dataset + body.motion-paused) and
-    writes thyca.ui.preferences; #pref-reset returns defaults and persists."""
+    """Changing a dialog pref control applies it (dataset + body.motion-paused)
+    and writes thyca.ui.preferences; #pref-reset returns defaults and persists."""
     out = _run(node, """
         installFetch((url) => url === '/api/bots' ? { bots: [] }
             : url === '/api/sessions' ? { sessions: [] }
             : url === '/api/config/status' ? { ready: false } : {});
-        await tick(); await boot();
+        await tick();
+        openSettingsDialog();
+        await tick();
         const sel = $('#pref-type-scale');
         sel.value = 'large';
         sel.dispatch('change', { target: sel });
@@ -2566,13 +2966,34 @@ def test_settings_prefs_persist_on_change_only(node: str) -> None:
                  reset: { saved: JSON.parse(localStorage.getItem('thyca.ui.preferences')),
                           scale: document.documentElement.dataset.typeScale,
                           toast: $('#toast').textContent } };
-    """, via="settings", emit="settings")
+    """, via="dialog")
     assert out["after"]["scale"] == "large"
     assert out["after"]["saved"]["typeScale"] == "large"
     assert out["motion"] is True
     assert out["reset"]["scale"] == "medium"
     assert out["reset"]["saved"] == {"typeScale": "medium", "reduceMotion": False, "ornaments": True}
     assert "mặc định" in out["reset"]["toast"]
+
+
+def test_settings_dialog_studio_shortcut_keeps_bot_customization(node: str) -> None:
+    """The dialog's studio button opens the shared expression studio for
+    the dialog's selected bot (the retained Custom-bot customization path)."""
+    out = _run(node, """
+        bots.length = 0;
+        bots.push(...roster([{ id: 'a', name: 'Alpha' }, { id: 'b', name: 'Beta' }], 0));
+        installFetch((url) => url === '/api/bots' ? { bots: [] }
+            : url === '/api/sessions' ? { sessions: [] }
+            : url === '/api/config/status' ? { ready: true, version: 'x' } : {});
+        await tick();
+        openSettingsDialog();
+        await tick();
+        document.querySelector('#settings-bot').value = 'b';
+        document.querySelector('#open-studio').click();
+        return { expressionsOpen: document.querySelector('#expressions-dialog').open,
+                 studioBot: document.querySelector('#expression-bot').value };
+    """, via="dialog")
+    assert out["expressionsOpen"] is True
+    assert out["studioBot"] == "b"
 
 
 def test_settings_form_posts_merged_values(node: str) -> None:
@@ -2597,7 +3018,7 @@ def test_settings_form_posts_merged_values(node: str) -> None:
             };
             return {};
         });
-        await tick(); await boot();                              // re-run with the test fetch
+        await tick(); await loadSettingsConfig();
         const fields = $('#config-fields').innerHTML;
         const input = document.createElement('input');
         input.type = 'number'; input.dataset.section = 'limits'; input.dataset.name = 'maxLoops';
@@ -2605,9 +3026,9 @@ def test_settings_form_posts_merged_values(node: str) -> None:
         Object.defineProperty(input, 'valueAsNumber', { get: () => 7 });
         const form = $('#config-form');
         form.appendChild(input);
-        await form.onsubmit({ preventDefault() {} });
+        await submitSettingsConfig(form);
         return { fields, posted };
-    """, via="settings", emit="settings")
+    """, via="dialog")
     fields = out["fields"]
     assert 'data-section="limits"' in fields and 'data-name="maxLoops"' in fields
     assert "Vòng tối đa" in fields and 'min="1"' in fields and 'max="9"' in fields
@@ -2635,17 +3056,19 @@ def test_settings_save_merges_limit_patch_onto_fresh_provider_config(node: str) 
             if (url === '/api/config') { gets++; return server; }
             return {};
         });
-        await tick(); await boot();
+        await tick(); await loadSettingsConfig();
         server.values.providers.fresh = { baseUrl: 'https://fresh.invalid', apiKey: '' };
         server.values.models.freshModel = { provider: 'fresh', input: 0.1, cache: 0.01, output: 0.2 };
         server.values.defaultModel = 'freshModel';
         server.values.pricing.freshModel = { input: 0.1, cache: 0.01, output: 0.2 };
         const input = document.createElement('input'); input.type = 'number'; input.dataset.section = 'limits'; input.dataset.name = 'loopMax'; input.dataset.label = 'Vòng';
         Object.defineProperty(input, 'valueAsNumber', { get: () => 91 }); $('#config-form').appendChild(input);
-        await $('#config-form').onsubmit({ preventDefault() {} });
+        await submitSettingsConfig($('#config-form'));
         return { gets, posted, buttonDisabled: $('#save-config').disabled };
-    """, via="settings", emit="settings")
-    assert out["gets"] == 2 and len(out["posted"]) == 1
+    """, via="dialog")
+    # load + submit-time fresh read + post-save refresh (the refresh keeps
+    # the display and its baseline truthful after the write)
+    assert out["gets"] == 3 and len(out["posted"]) == 1
     posted = out["posted"][0]
     assert posted["limits"] == {"loopMax": 91, "hotTailKB": 4}
     assert posted["providers"]["fresh"]["baseUrl"] == "https://fresh.invalid"
@@ -2655,6 +3078,8 @@ def test_settings_save_merges_limit_patch_onto_fresh_provider_config(node: str) 
 
 
 def test_settings_fresh_read_failure_never_posts_stale_config(node: str) -> None:
+    """A dirty form whose submit-time fresh read fails never POSTs; the
+    failure surfaces in the dialog and the draft stays for retry."""
     out = _run(node, """
         let gets = 0; const posts = [];
         installFetch((url, opts) => {
@@ -2665,11 +3090,507 @@ def test_settings_fresh_read_failure_never_posts_stale_config(node: str) -> None
             if (url === '/api/config') { gets++; return gets === 1 ? { values: { limits: { loopMax: 80 } }, schema: { sections: [] } } : new Error('fresh read failed'); }
             return {};
         });
-        await tick(); await boot();
-        await $('#config-form').onsubmit({ preventDefault() {} });
-        return { gets, posts, saving: savingConfig, disabled: $('#save-config').disabled };
-    """, via="settings", emit="settings")
-    assert out == {"gets": 2, "posts": [], "saving": False, "disabled": False}
+        await tick(); await loadSettingsConfig();
+        const input = document.createElement('input'); input.type = 'number'; input.dataset.section = 'limits'; input.dataset.name = 'loopMax'; input.dataset.label = 'Vòng';
+        Object.defineProperty(input, 'valueAsNumber', { get: () => 91 }); $('#config-form').appendChild(input);
+        await submitSettingsConfig($('#config-form'));
+        return { gets, posts, saving: settingsSaving, disabled: $('#save-config').disabled,
+                 status: $('#settings-form-status').textContent, statusShown: !$('#settings-form-status').hidden,
+                 role: $('#settings-form-status').getAttribute('role'), kept: input.parentNode === $('#config-form') };
+    """, via="dialog")
+    assert out["gets"] == 2 and out["posts"] == []
+    assert out["saving"] is False and out["disabled"] is False
+    assert "Không lưu được" in out["status"] and out["statusShown"] is True and out["role"] == "status"
+    assert out["kept"] == 1   # draft survives the failed submit for retry
+
+
+def test_settings_save_sends_base_revision_when_server_reports_it(node: str) -> None:
+    out = _run(node, """
+        const server = { revision: 'r1',
+                       values: { providers: { alpha: { baseUrl: 'https://a.invalid', apiKey: '' } },
+                                  models: {}, defaultProvider: 'alpha', defaultModel: '',
+                                  limits: { loopMax: 80, hotTailKB: 4 } },
+                       schema: { sections: [ { key: 'limits', label: 'L', fields: [
+                         { key: 'limits.loopMax', label: 'Vòng', type: 'number', min: 1, max: 200 },
+                       ] } ] } };
+        const posted = [];
+        installFetch((url, opts) => {
+            if (url === '/api/bots') return { bots: [] };
+            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/config/status') return { ready: true };
+            if (url === '/api/config' && opts.method === 'POST') { posted.push(JSON.parse(opts.body)); return {}; }
+            if (url === '/api/config') return server;
+            return {};
+        });
+        await tick(); await loadSettingsConfig();
+        const input = document.createElement('input'); input.type = 'number'; input.dataset.section = 'limits'; input.dataset.name = 'loopMax'; input.dataset.label = 'Vòng';
+        Object.defineProperty(input, 'valueAsNumber', { get: () => 91 }); $('#config-form').appendChild(input);
+        await submitSettingsConfig($('#config-form'));
+        return { posted, toast: $('#toast').textContent };
+    """, via="dialog")
+    assert len(out["posted"]) == 1
+    assert out["posted"][0]["baseRevision"] == "r1"
+    assert out["posted"][0]["limits"]["loopMax"] == 91
+    assert "Đã lưu" in out["toast"]
+
+
+def test_settings_save_conflict_preserves_draft_for_retry(node: str) -> None:
+    out = _run(node, """
+        const server = { revision: 'r1',
+                       values: { providers: { alpha: { baseUrl: 'https://a.invalid', apiKey: '' } },
+                                  models: {}, defaultProvider: 'alpha', defaultModel: '',
+                                  limits: { loopMax: 80, hotTailKB: 4 } },
+                       schema: { sections: [ { key: 'limits', label: 'L', fields: [
+                         { key: 'limits.loopMax', label: 'Vòng', type: 'number', min: 1, max: 200 },
+                       ] } ] } };
+        const posted = [];
+        installFetch((url, opts) => {
+            if (url === '/api/bots') return { bots: [] };
+            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/config/status') return { ready: true };
+            if (url === '/api/config' && opts.method === 'POST') {
+                const conflict = new Error('cấu hình đã thay đổi ở nơi khác; tải lại rồi thử lại');
+                conflict.status = 409; conflict.data = { code: 'config_changed' };
+                throw conflict;
+            }
+            if (url === '/api/config') return server;
+            return {};
+        });
+        await tick(); await loadSettingsConfig();
+        const input = document.createElement('input'); input.type = 'number'; input.dataset.section = 'limits'; input.dataset.name = 'loopMax'; input.dataset.label = 'Vòng';
+        Object.defineProperty(input, 'valueAsNumber', { get: () => 91 }); $('#config-form').appendChild(input);
+        await submitSettingsConfig($('#config-form'));
+        return { posted, toast: $('#toast').textContent,
+                 kept: input.parentNode === $('#config-form'),
+                 base: settingsConfigValues.limits.loopMax };
+    """, via="dialog")
+    assert out["posted"] == []
+    assert "thay đổi ở nơi khác" in out["toast"]
+    assert out["kept"] == 1 and out["base"] == 80
+
+
+def test_settings_concurrent_edit_to_untouched_field_is_not_overwritten(node: str) -> None:
+    """Dirty fields merge onto the fresh read: another tab's change to an
+    untouched field survives our save (no silent overwrite, no conflict)."""
+    out = _run(node, """
+        const server = { revision: 'r0',
+                       values: { providers: {}, models: {}, defaultProvider: '', defaultModel: '',
+                                  limits: { loopMax: 80, hotTailKB: 4 } },
+                       schema: { sections: [ { key: 'limits', label: 'L', fields: [
+                         { key: 'limits.loopMax', label: 'Vòng', type: 'number', min: 1, max: 200 },
+                         { key: 'limits.hotTailKB', label: 'Nóng', type: 'number', min: 1, max: 64 },
+                       ] } ] } };
+        const posted = [];
+        installFetch((url, opts) => {
+            if (url === '/api/bots') return { bots: [] };
+            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/config/status') return { ready: true };
+            if (url === '/api/config' && opts.method === 'POST') {
+                const body = JSON.parse(opts.body);
+                if (body.baseRevision !== server.revision) {
+                    const conflict = new Error('changed elsewhere');
+                    conflict.status = 409; conflict.data = { code: 'config_changed' };
+                    throw conflict;
+                }
+                posted.push(body);
+                server.values = body; server.revision = 'r2';
+                return { ok: true, ready: true };
+            }
+            if (url === '/api/config') return server;
+            return {};
+        });
+        await tick(); await loadSettingsConfig();
+        // Another tab changes loopMax (untouched here) after our dialog loaded.
+        server.values = structuredClone(server.values);
+        server.values.limits.loopMax = 999; server.revision = 'r1';
+        const input = document.createElement('input'); input.type = 'number'; input.dataset.section = 'limits'; input.dataset.name = 'hotTailKB'; input.dataset.label = 'Nóng';
+        Object.defineProperty(input, 'valueAsNumber', { get: () => 5 }); $('#config-form').appendChild(input);
+        await submitSettingsConfig($('#config-form'));
+        return { posted, toast: $('#toast').textContent,
+                 status: $('#settings-form-status').textContent, statusOk: $('#settings-form-status').className };
+    """, via="dialog")
+    assert len(out["posted"]) == 1
+    body = out["posted"][0]
+    assert body["baseRevision"] == "r1"                 # fresh revision, not the stale load-time one
+    assert body["limits"] == {"loopMax": 999, "hotTailKB": 5}   # theirs kept, ours applied
+    assert "Đã lưu" in out["toast"] and "Đã lưu" in out["status"] and "is-ok" in out["statusOk"]
+
+
+def test_settings_conflict_surfaces_inside_dialog_and_retry_succeeds(node: str) -> None:
+    """A 409 names the conflict inside the modal (role=status, kept draft);
+    after reopening onto the newer server state the retry succeeds, and a
+    further submit with no new edits posts nothing."""
+    out = _run(node, """
+        let armed = true;
+        const server = { revision: 'r1', values: { limits: { loopMax: 80 } }, schema: { sections: [] } };
+        const attempts = [];
+        installFetch((url, opts) => {
+            if (url === '/api/bots') return { bots: [] };
+            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/config/status') return { ready: true };
+            if (url === '/api/config' && opts.method === 'POST') {
+                attempts.push(JSON.parse(opts.body));
+                if (armed) {
+                    const conflict = new Error('cấu hình đã thay đổi ở nơi khác; tải lại rồi thử lại');
+                    conflict.status = 409; conflict.data = { code: 'config_changed' };
+                    throw conflict;
+                }
+                const { baseRevision, ...applied } = attempts[attempts.length - 1];
+                server.values = applied;   // the real server persists the write; the refresh then sees it
+                return { ok: true, ready: true };
+            }
+            if (url === '/api/config') return server;
+            return {};
+        });
+        await tick(); await loadSettingsConfig();
+        const input = document.createElement('input'); input.type = 'number'; input.dataset.section = 'limits'; input.dataset.name = 'loopMax'; input.dataset.label = 'Vòng';
+        Object.defineProperty(input, 'valueAsNumber', { get: () => 91 }); $('#config-form').appendChild(input);
+        await submitSettingsConfig($('#config-form'));
+        const conflicted = { status: $('#settings-form-status').textContent,
+                             shown: !$('#settings-form-status').hidden,
+                             cls: $('#settings-form-status').className,
+                             role: $('#settings-form-status').getAttribute('role'),
+                             kept: input.parentNode === $('#config-form'),
+                             base: settingsConfigValues.limits.loopMax };
+        armed = false;
+        await submitSettingsConfig($('#config-form'));
+        const retried = { status: $('#settings-form-status').textContent, cls: $('#settings-form-status').className,
+                          base: settingsBaseline.limits.loopMax, attempts: attempts.length };
+        await submitSettingsConfig($('#config-form'));   // nothing new: no further POST
+        return { conflicted, retried, attempts: attempts.length };
+    """, via="dialog")
+    assert "thay đổi ở nơi khác" in out["conflicted"]["status"]
+    assert out["conflicted"]["shown"] is True and out["conflicted"]["role"] == "status"
+    assert "is-error" in out["conflicted"]["cls"]
+    assert out["conflicted"]["kept"] == 1 and out["conflicted"]["base"] == 80
+    assert out["retried"]["status"] == "Đã lưu cài đặt." and "is-ok" in out["retried"]["cls"]
+    assert out["retried"]["base"] == 91 and out["retried"]["attempts"] == 2
+    assert out["attempts"] == 2   # the no-change submit posted nothing
+
+
+def test_settings_same_field_concurrent_edit_surfaces_conflict(node: str) -> None:
+    """A same-field concurrent change surfaces an in-dialog conflict naming
+    the server value instead of overwriting it; resubmitting unchanged is
+    informed consent, and matching the server saves cleanly."""
+    out = _run(node, """
+        const server = { revision: 'r0', values: { limits: { loopMax: 10 } }, schema: { sections: [] } };
+        const posts = [];
+        installFetch((url, opts) => {
+            if (url === '/api/bots') return { bots: [] };
+            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/config/status') return { ready: true };
+            if (url === '/api/config' && opts.method === 'POST') {
+                const body = JSON.parse(opts.body);
+                if (body.baseRevision !== server.revision) {
+                    const conflict = new Error('changed elsewhere');
+                    conflict.status = 409; conflict.data = { code: 'config_changed' };
+                    throw conflict;
+                }
+                posts.push(body);
+                const { baseRevision, ...applied } = body;
+                server.values = applied;
+                return { ok: true, ready: true };
+            }
+            if (url === '/api/config') return server;
+            return {};
+        });
+        await tick(); await loadSettingsConfig();
+        const input = document.createElement('input'); input.type = 'number'; input.dataset.section = 'limits'; input.dataset.name = 'loopMax'; input.dataset.label = 'Vòng';
+        input.value = '20'; $('#config-form').appendChild(input);
+        server.values = { limits: { loopMax: 30 } }; server.revision = 'r1';   // another tab saves first
+        await submitSettingsConfig($('#config-form'));
+        const clashed = { posts: posts.length, status: $('#settings-form-status').textContent,
+                          shown: !$('#settings-form-status').hidden, cls: $('#settings-form-status').className,
+                          kept: input.value, base: settingsConfigValues.limits.loopMax };
+        await submitSettingsConfig($('#config-form'));                        // unchanged resubmit: consent
+        const forced = { posts: posts.length, first: posts[0] && posts[0].limits };
+        input.value = '30';                                                 // match the server: clean save
+        await submitSettingsConfig($('#config-form'));
+        return { clashed, forced, posts: posts.length, final: server.values.limits };
+    """, via="dialog")
+    assert out["clashed"]["posts"] == 0
+    assert "«Vòng»" in out["clashed"]["status"] and "30" in out["clashed"]["status"]
+    assert out["clashed"]["shown"] is True and "is-error" in out["clashed"]["cls"]
+    assert out["clashed"]["kept"] == "20" and out["clashed"]["base"] == 10
+    assert out["forced"]["posts"] == 1 and out["forced"]["first"] == {"loopMax": 20}
+    assert out["posts"] == 2 and out["final"] == {"loopMax": 30}
+
+
+def test_settings_conflict_consent_requires_same_draft(node: str) -> None:
+    """Consent is bound to the warned (server, draft) pair: editing the
+    draft after a warning must warn anew instead of silently overwriting."""
+    out = _run(node, """
+        const server = { revision: 'r0', values: { limits: { loopMax: 10 } }, schema: { sections: [] } };
+        const posts = [];
+        installFetch((url, opts) => {
+            if (url === '/api/bots') return { bots: [] };
+            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/config/status') return { ready: true };
+            if (url === '/api/config' && opts.method === 'POST') {
+                const body = JSON.parse(opts.body);
+                posts.push(body);
+                const { baseRevision, ...applied } = body;
+                server.values = applied;
+                return { ok: true, ready: true };
+            }
+            if (url === '/api/config') return server;
+            return {};
+        });
+        await tick(); await loadSettingsConfig();
+        const input = document.createElement('input'); input.type = 'number'; input.dataset.section = 'limits'; input.dataset.name = 'loopMax'; input.dataset.label = 'Vòng';
+        input.value = '20'; $('#config-form').appendChild(input);
+        server.values = { limits: { loopMax: 30 } }; server.revision = 'r1';
+        await submitSettingsConfig($('#config-form'));              // warns (draft 20 vs server 30)
+        input.value = '40';                                          // draft changes after the warning
+        await submitSettingsConfig($('#config-form'));              // must warn anew, not post
+        const rewarned = { posts: posts.length, status: $('#settings-form-status').textContent };
+        await submitSettingsConfig($('#config-form'));              // unchanged retry: consent
+        return { rewarned, posts: posts.length, final: server.values.limits };
+    """, via="dialog")
+    assert out["rewarned"]["posts"] == 0
+    assert "Xung đột" in out["rewarned"]["status"] and "40" in out["rewarned"]["status"]
+    assert out["posts"] == 1 and out["final"] == {"loopMax": 40}
+
+
+def test_settings_revert_to_original_base_still_saves_after_reopen(node: str) -> None:
+    """Reverting to the original base is a deliberate change against the
+    freshly rendered server value: it must be retained across close/reopen,
+    submitted (with a conflict warning), and posted on informed consent."""
+    out = _run(node, """
+        const server = { revision: 'r0', values: { limits: { loopMax: 10, hotTailKB: 10 } }, schema: { sections: [] } };
+        const posted = [];
+        installFetch((url, opts) => {
+            if (url === '/api/bots') return { bots: [] };
+            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/config/status') return { ready: true };
+            if (url === '/api/config' && opts.method === 'POST') { posted.push(JSON.parse(opts.body)); return { ok: true, ready: true }; }
+            if (url === '/api/config') return server;
+            return {};
+        });
+        await tick(); await loadSettingsConfig();
+        await openSettingsDialog(); await tick();
+        const input = document.createElement('input'); input.type = 'number'; input.dataset.section = 'limits'; input.dataset.name = 'loopMax'; input.dataset.label = 'Vòng';
+        input.value = '20'; $('#config-form').appendChild(input);
+        const hot = document.createElement('input'); hot.type = 'number'; hot.dataset.section = 'limits'; hot.dataset.name = 'hotTailKB'; hot.dataset.label = 'Nóng';
+        hot.value = '11'; $('#config-form').appendChild(hot);
+        document.querySelector('#settings-dialog').dispatch('close');
+        const closeDraft = JSON.parse(JSON.stringify(settingsDraft));
+        // Another tab saves loopMax=30 while the dialog is closed.
+        server.values = { limits: { loopMax: 30, hotTailKB: 10 } }; server.revision = 'r1';
+        await openSettingsDialog(); await tick();
+        // Emulate the browser render swap, then the internal re-apply step.
+        $('#config-form').removeChild(input); $('#config-form').removeChild(hot);
+        const freshLoop = document.createElement('input'); freshLoop.type = 'number'; freshLoop.dataset.section = 'limits'; freshLoop.dataset.name = 'loopMax'; freshLoop.dataset.label = 'Vòng';
+        freshLoop.value = '30'; $('#config-form').appendChild(freshLoop);
+        const freshHot = document.createElement('input'); freshHot.type = 'number'; freshHot.dataset.section = 'limits'; freshHot.dataset.name = 'hotTailKB'; freshHot.dataset.label = 'Nóng';
+        freshHot.value = '10'; $('#config-form').appendChild(freshHot);
+        applySettingsDraft(settingsDraft);
+        const restored = { loopMax: freshLoop.value, hotTailKB: freshHot.value };
+        // Revert loopMax back to its original base: still a deliberate change
+        // against the freshly rendered server value (30).
+        freshLoop.value = '10';
+        await submitSettingsConfig($('#config-form'));
+        const clashed = { posts: posted.length, status: $('#settings-form-status').textContent,
+                          kept: freshLoop.value, draft: JSON.parse(JSON.stringify(settingsDraft)) };
+        // Closing keeps the deliberate revert; reopening restores it.
+        document.querySelector('#settings-dialog').dispatch('close');
+        await openSettingsDialog(); await tick();
+        $('#config-form').removeChild(freshLoop); $('#config-form').removeChild(freshHot);
+        const loop2 = document.createElement('input'); loop2.type = 'number'; loop2.dataset.section = 'limits'; loop2.dataset.name = 'loopMax'; loop2.dataset.label = 'Vòng';
+        loop2.value = '30'; $('#config-form').appendChild(loop2);
+        const hot2 = document.createElement('input'); hot2.type = 'number'; hot2.dataset.section = 'limits'; hot2.dataset.name = 'hotTailKB'; hot2.dataset.label = 'Nóng';
+        hot2.value = '10'; $('#config-form').appendChild(hot2);
+        applySettingsDraft(settingsDraft);
+        const reopened = { loopMax: loop2.value, hotTailKB: hot2.value };
+        await submitSettingsConfig($('#config-form'));
+        return { closeDraft, restored, clashed, reopened, posted };
+    """, via="dialog")
+    assert out["closeDraft"] == {"limits": {"loopMax": {"value": "20", "base": 10}, "hotTailKB": {"value": "11", "base": 10}}}
+    assert out["restored"] == {"loopMax": "20", "hotTailKB": "11"}
+    assert out["clashed"]["posts"] == 0
+    assert "Xung đột" in out["clashed"]["status"] and "30" in out["clashed"]["status"]
+    assert out["clashed"]["kept"] == "10"
+    assert out["clashed"]["draft"] == {"limits": {"loopMax": {"value": "20", "base": 10}, "hotTailKB": {"value": "11", "base": 10}}}
+    assert out["reopened"] == {"loopMax": "10", "hotTailKB": "11"}
+    assert len(out["posted"]) == 1
+    assert out["posted"][0]["limits"] == {"loopMax": 10, "hotTailKB": 11}
+
+
+def test_settings_reopen_stores_only_dirty_fields_with_original_baselines(node: str) -> None:
+    """Closing without edits stores no draft, so a reopen cannot turn a
+    stale untouched value into an edit; the other tab's value survives."""
+    out = _run(node, """
+        const server = { revision: 'r0', values: { limits: { loopMax: 10, hotTailKB: 10 } }, schema: { sections: [] } };
+        const posted = [];
+        installFetch((url, opts) => {
+            if (url === '/api/bots') return { bots: [] };
+            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/config/status') return { ready: true };
+            if (url === '/api/config' && opts.method === 'POST') { posted.push(JSON.parse(opts.body)); return { ok: true, ready: true }; }
+            if (url === '/api/config') return server;
+            return {};
+        });
+        await tick(); await loadSettingsConfig();
+        const a = document.createElement('input'); a.type = 'number'; a.dataset.section = 'limits'; a.dataset.name = 'loopMax'; a.dataset.label = 'A'; a.value = '10';
+        const b = document.createElement('input'); b.type = 'number'; b.dataset.section = 'limits'; b.dataset.name = 'hotTailKB'; b.dataset.label = 'B'; b.value = '10';
+        $('#config-form').appendChild(a); $('#config-form').appendChild(b);
+        await openSettingsDialog(); await tick();
+        a.value = '11';
+        document.querySelector('#settings-dialog').dispatch('close');
+        const closeDraft = settingsDraft;
+        // The other tab moves hotTailKB while the dialog is closed.
+        server.values = { limits: { loopMax: 10, hotTailKB: 30 } }; server.revision = 'r1';
+        await openSettingsDialog(); await tick();
+        // Emulate the browser render swap (fresh paint replaces the controls),
+        // then the internal draft re-apply step.
+        $('#config-form').removeChild(a); $('#config-form').removeChild(b);
+        const a2 = document.createElement('input'); a2.type = 'number'; a2.dataset.section = 'limits'; a2.dataset.name = 'loopMax'; a2.dataset.label = 'A'; a2.value = '10';
+        const b2 = document.createElement('input'); b2.type = 'number'; b2.dataset.section = 'limits'; b2.dataset.name = 'hotTailKB'; b2.dataset.label = 'B'; b2.value = '30';
+        $('#config-form').appendChild(a2); $('#config-form').appendChild(b2);
+        applySettingsDraft(settingsDraft);
+        const restored = { a: a2.value, b: b2.value };
+        await submitSettingsConfig($('#config-form'));
+        return { closeDraft, restored, posted };
+    """, via="dialog")
+    assert out["closeDraft"] == {"limits": {"loopMax": {"value": "11", "base": 10}}}   # only dirty, original base
+    assert out["restored"] == {"a": "11", "b": "30"}   # draft restored, fresh value kept
+    assert len(out["posted"]) == 1
+    assert out["posted"][0]["limits"] == {"loopMax": 11, "hotTailKB": 30}   # stale 10 never written
+    assert out["posted"][0].get("baseRevision") == "r1"
+
+
+def test_settings_failed_reopen_keeps_draft_for_next_load(node: str) -> None:
+    """Failure destroys the rendered controls; closing then must not wipe
+    the retained draft, and the next successful reopen restores it onto the
+    newly rendered controls (verified on the fresh node, not a detached one)."""
+    out = _run(node, """
+        const server = { revision: 'r0', values: { limits: { loopMax: 80 } }, schema: { sections: [] } };
+        let failNext = false;
+        installFetch((url, opts) => {
+            if (url === '/api/bots') return { bots: [] };
+            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/config/status') return { ready: true };
+            if (url === '/api/config' && opts.method !== 'POST') {
+                if (failNext) throw new Error('server down');
+                return server;
+            }
+            return {};
+        });
+        await tick(); await loadSettingsConfig();
+        await openSettingsDialog(); await tick();   // binds the close listener
+        // Appended to #config-form: form-scoped discovery (the browser nests
+        // the rendered fields there; the fake DOM does not parse innerHTML).
+        const input = document.createElement('input'); input.type = 'number'; input.dataset.section = 'limits'; input.dataset.name = 'loopMax'; input.dataset.label = 'Vòng';
+        input.value = '91'; $('#config-form').appendChild(input);
+        document.querySelector('#settings-dialog').dispatch('close');
+        const afterClose = JSON.parse(JSON.stringify(settingsDraft));
+        failNext = true;
+        await openSettingsDialog();
+        // Emulate the browser failure render (destroys the rendered controls).
+        $('#config-form').removeChild(input);
+        const fieldsGone = document.querySelectorAll('#config-form [data-section]').length;
+        document.querySelector('#settings-dialog').dispatch('close');   // no controls left: must keep draft
+        const keptThroughClose = settingsDraft ? JSON.parse(JSON.stringify(settingsDraft)) : settingsDraft;
+        failNext = false;
+        await openSettingsDialog();
+        // Emulate the browser render swap, then the internal re-apply step.
+        const fresh = document.createElement('input'); fresh.type = 'number'; fresh.dataset.section = 'limits'; fresh.dataset.name = 'loopMax'; fresh.dataset.label = 'Vòng';
+        fresh.value = '80'; $('#config-form').appendChild(fresh);
+        applySettingsDraft(settingsDraft);
+        return { afterClose, fieldsGone, keptThroughClose, restored: fresh.value, base: settingsBaseline.limits.loopMax };
+    """, via="dialog")
+    assert out["afterClose"] == {"limits": {"loopMax": {"value": "91", "base": 80}}}
+    assert out["fieldsGone"] == 0
+    assert out["keptThroughClose"] == {"limits": {"loopMax": {"value": "91", "base": 80}}}
+    assert out["restored"] == "91" and out["base"] == 80
+
+
+def test_settings_inflight_typing_and_reopen_keep_draft(node: str) -> None:
+    """Edits typed while a config load is in flight win over the response,
+    and closing/reopening the dialog preserves the draft."""
+    out = _run(node, """
+        const server = { revision: 'r0', values: { limits: { loopMax: 80 } }, schema: { sections: [] } };
+        let release = null;
+        installFetch((url, opts) => {
+            if (url === '/api/bots') return { bots: [] };
+            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/config/status') return { ready: true };
+            if (url === '/api/config' && opts.method !== 'POST') return new Promise(res => { release = () => res(server); });
+            return {};
+        });
+        await tick();
+        const first = loadSettingsConfig();
+        const input = document.createElement('input'); input.type = 'number'; input.dataset.section = 'limits'; input.dataset.name = 'loopMax'; input.dataset.label = 'Vòng';
+        input.value = '80'; $('#config-form').appendChild(input);
+        input.value = '91';                    // typed while the first read is in flight
+        release(); await first;
+        const inflight = input.value;
+        document.querySelector('#settings-dialog').dispatch('close');
+        const drafted = settingsDraft && settingsDraft.limits && settingsDraft.limits.loopMax;
+        await openSettingsDialog();            // same server values; draft must win
+        return { inflight, drafted, reopened: input.value };
+    """, via="dialog")
+    assert out["inflight"] == "91"
+    assert out["drafted"] == {"value": "91"}
+    assert out["reopened"] == "91"
+
+
+def test_settings_empty_numeric_draft_survives_close_reopen_and_load(node: str) -> None:
+    """Clearing a numeric limit keeps the raw empty draft across
+    close/reopen and a pending load (instead of repainting the server
+    value); submit still validates and never writes the invalid value."""
+    out = _run(node, """
+        const server = { revision: 'r0', values: { limits: { loopMax: 10, hotTailKB: 10 } }, schema: { sections: [] } };
+        const posted = [];
+        let hold = false, releaseLoad = null;
+        installFetch((url, opts) => {
+            if (url === '/api/bots') return { bots: [] };
+            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/config/status') return { ready: true };
+            if (url === '/api/config' && opts.method === 'POST') { posted.push(JSON.parse(opts.body)); return { ok: true, ready: true }; }
+            if (url === '/api/config' && opts.method !== 'POST') {
+                if (hold) return new Promise(res => { releaseLoad = () => res(server); });
+                return server;
+            }
+            return {};
+        });
+        await tick(); await loadSettingsConfig();
+        await openSettingsDialog(); await tick();
+        // A cleared number input has no numeric value, like a real browser.
+        let num = NaN;
+        const input = document.createElement('input'); input.type = 'number'; input.dataset.section = 'limits'; input.dataset.name = 'loopMax'; input.dataset.label = 'Vòng';
+        Object.defineProperty(input, 'valueAsNumber', { get: () => num, configurable: true });
+        input.value = ''; $('#config-form').appendChild(input);
+        document.querySelector('#settings-dialog').dispatch('close');
+        const closeDraft = JSON.parse(JSON.stringify(settingsDraft));
+        // Another tab moves the value while the dialog is closed.
+        server.values = { limits: { loopMax: 30, hotTailKB: 10 } }; server.revision = 'r1';
+        await openSettingsDialog(); await tick();
+        // Emulate the browser render swap, then the internal re-apply step.
+        $('#config-form').removeChild(input);
+        const fresh = document.createElement('input'); fresh.type = 'number'; fresh.dataset.section = 'limits'; fresh.dataset.name = 'loopMax'; fresh.dataset.label = 'Vòng';
+        Object.defineProperty(fresh, 'valueAsNumber', { get: () => num, configurable: true });
+        fresh.value = '30'; $('#config-form').appendChild(fresh);
+        applySettingsDraft(settingsDraft);
+        const restored = fresh.value;
+        // A pending load finishing must keep the empty edit too.
+        hold = true;
+        const pending = loadSettingsConfig();
+        await tick();
+        releaseLoad(); await pending;
+        hold = false;
+        const afterLoad = { value: fresh.value,
+                            draft: settingsDraft && settingsDraft.limits ? settingsDraft.limits.loopMax : null };
+        // Submit validates the empty field and writes nothing.
+        await submitSettingsConfig($('#config-form'));
+        return { closeDraft, restored, afterLoad, posts: posted.length,
+                 status: $('#settings-form-status').textContent };
+    """, via="dialog")
+    assert out["closeDraft"] == {"limits": {"loopMax": {"value": "", "base": 10}}}
+    assert out["restored"] == ""
+    assert out["afterLoad"] == {"value": "", "draft": {"value": "", "base": 10}}
+    assert out["posts"] == 0
+    assert "cần một con số" in out["status"]
 
 
 def test_memory_scope_echo_guard_and_request_token(node: str) -> None:
@@ -2829,7 +3750,7 @@ def test_sidebar_css_card_pocket_and_group_contract() -> None:
                 ".group-member{", ".group-meta{", ".info-lockup{", ".info-session{",
                 ".capabilities{", ".tool-chip{", ".ctx-meter{", ".ctx-bar{",
                 ".header-status{", ".favorite{", ".collapse-button{", ".check-row{",
-                ".check-avatar{", ".status-dot{"):
+                ".check-avatar{", ".status-dot{", ".live-more{"):
         assert sel in css, sel
     assert "grid-template-rows:0fr" in css and ".bot-card[data-open=true] .pocket{grid-template-rows:1fr}" in css
     assert "transition:grid-template-rows" in css
@@ -2848,7 +3769,8 @@ def test_sidebar_css_card_pocket_and_group_contract() -> None:
     assert ".header-status-label{display:none}" not in css
     assert "var(--bot-border)" in css and "var(--bot-paper)" in css
     assert "text-overflow:ellipsis" in css                 # name/preview ellipsis
-    assert ".li-enter" in css and ".li-exit" in css        # keyed feed animation
+    assert ".li-enter" in css and ".li-exit" in css        # keyed row animation
+    assert ".live-more:focus-visible" in css              # +N full-list button is keyboard visible
     assert "repeat(var(--members,3)" in css                # roster grid columns
     assert "ctx-ok" in css and "ctx-warn" in css and "ctx-danger" in css
     assert "[data-coordinating=true]" in css
@@ -2865,8 +3787,7 @@ def test_chat_css_transcript_composer_and_title_head() -> None:
                 ".message-assistant{", ".message-byline{", ".live-copy{",
                 ".usage-pill{", ".streaming-caret{", ".to-bottom{", ".site-footer{",
                 ".composer{", ".composer textarea", ".composer-toolbar{",
-                ".composer-team-hint", ".file-chip{", ".mention-popup{", ".mention-option{",
-                ".ornament{", ".staff{"):
+                ".composer-team-hint", ".file-chip{", ".mention-popup{", ".mention-option{"):
         assert sel in css, sel
     head = css.split(".chat-title-head{", 1)[1].split("}", 1)[0]
     assert "z-index:1" in head and "border-bottom" in head
@@ -2914,7 +3835,7 @@ def test_index_html_scripts_defs_and_static_markup() -> None:
     for sel in ('class="notebook-shell chat-shell"', 'class="site-header"',
                 'class="site-kicker"', 'id="team-nav-title"', 'id="team-bot-list"',
                 'id="group-list"', 'id="team-shared-create"', 'id="chat-sidebar"',
-                'id="mobile-overlay"', 'id="motion-toggle"', 'id="open-customize"',
+                'id="mobile-overlay"', 'id="open-settings"',
                 'class="splitter"', 'id="chat-title"', 'id="session-eyebrow"',
                 'id="conversation-scroll"', 'id="message-list"', 'id="to-bottom"',
                 'id="composer"', 'id="message"', 'id="composer-label-text"',
@@ -2922,6 +3843,7 @@ def test_index_html_scripts_defs_and_static_markup() -> None:
                 'id="stop-button"', 'id="mention-popup"', 'id="attach-file"',
                 'id="file-input"', 'id="file-chip"', 'id="remove-file"',
                 'id="session-info"', 'id="run-demo"', 'id="toast"', 'id="announcer"',
+                'id="settings-dialog"', 'id="settings-body"',
                 'id="bot-drawer"', 'id="bot-drawer-body"', 'id="group-dialog"',
                 'id="group-form"', 'id="group-options"', 'id="expressions-dialog"',
                 'id="expression-bot"', 'id="bot-color"', 'id="shape-picker"', 'id="expression-grid"',
@@ -2934,7 +3856,8 @@ def test_index_html_scripts_defs_and_static_markup() -> None:
         'src="../share/util.js"', 'src="../share/markdown.js"', 'src="../share/data.js"',
         'src="js/data.js"', 'src="../share/avatars/avatars.js"', 'src="../share/avatars/idle.js"',
         'src="../share/sidebar.js"', 'src="../share/avatars/studio.js"',
-        'src="../share/shell-app.js"', 'src="js/chat.js"', 'src="js/app.js"',
+        'src="../share/shell-app.js"', 'src="../share/settings-dialog.js"',
+        'src="js/chat.js"', 'src="js/app.js"',
     ]
     positions = [html.index(src) for src in order]
     assert positions == sorted(positions), "script order changed"
@@ -2950,28 +3873,29 @@ def test_avatar_display_copy_uses_ink_drop() -> None:
     page) and the settings strings to the same approved wording."""
     html = INDEX_HTML.read_text()
     shell = SHELL_JS.read_text()
-    settings = SETTINGS_JS.read_text()
     assert "Một giọt mực, nhiều tâm trạng." in html
     assert "Một giọt mực, nhiều tâm trạng." in shell
     assert "Đôi mắt kể chuyện, đôi tay giữ nhịp." in shell
-    assert "giọt mực" in settings
-    for text in (html, shell, settings):
+    assert "giọt mực" in html and "giọt mực" in shell   # shared dialog bot copy
+    for text in (html, shell):
         assert "con dấu" not in text and "vành dấu" not in text
-    assert "wax" not in shell.lower() and "wax" not in settings.lower()
+    assert "wax" not in shell.lower()
 
 
-def test_settings_page_uses_shared_avatar_engine() -> None:
-    """settings.js renders roster rows with the shared avatar() + states[]
-    labels and keeps preferences localStorage-only (no API calls for them)."""
-    js = SETTINGS_JS.read_text()
+def test_settings_dialog_uses_shared_avatar_engine() -> None:
+    """The Settings dialog reuses the shared avatar() seal for its bot
+    shortcut and keeps preferences localStorage-only (no API calls)."""
+    js = SETTINGS_DIALOG_JS.read_text()
     assert "avatar(b)" in js
-    assert "states[b.state]" in js
-    assert "localStorage" in js and "thyca.ui.preferences" in js
+    assert "thyca.ui.preferences" not in js  # key lives in the shared shell module
     # prefs never hit the API
-    prefs_block = js.split("function applyPrefs", 1)[1].split("function hydratePrefs", 1)[0]
-    assert "getJson" not in prefs_block and "postJson" not in prefs_block
+    assert "getJson" not in js.split("function collectSettingsPrefs", 1)[1].split("/* ---------- Global limits", 1)[0]
     # no dynamic avatar import / inline avatar copy — shared engine only
     assert "import(" not in js
+    shell = SHELL_JS.read_text()
+    assert "thyca.ui.preferences" in shell
+    prefs_block = shell.split("function applyPrefs", 1)[1].split("function emitShell", 1)[0]
+    assert "getJson" not in prefs_block and "postJson" not in prefs_block
 
 
 def test_current_rows_use_bot_palette_and_connected_timeline() -> None:
@@ -2988,3 +3912,41 @@ def test_current_rows_use_bot_palette_and_connected_timeline() -> None:
     assert ".progress-list li.li-think .step-mark{display:none}" not in css
     assert "li:has(+ .li-think):before{display:none}" not in css
     assert ".feed-count{" in css
+
+
+def test_invocation_identity_replay_nested_and_windows(node: str) -> None:
+    out = _run(node, _CHAT_SEED + """
+        const a = getBot('coder'), child = getBot('thyca');
+        currentSession = 's1';
+        function token(sessionId) {
+            const node = document.createElement('article');
+            node.innerHTML = '<header class="message-byline"><time></time></header><div class="live-copy"></div>';
+            return {botId:'coder', sessionId, node, tools:[], phase:'waiting'};
+        }
+        const t1 = token('s1'), t2 = token('s2');
+        handleStreamEvent(t1, {type:'turn.accepted', bot_id:'coder'});
+        const fire = (t, type, name, invocation_id, bot_id='coder') =>
+            handleStreamEvent(t, {type, name, call_id:'a_b', invocation_id, bot_id});
+        fire(t1, 'tool.started', 'read', 'aaa');
+        fire(t1, 'tool.started', 'read', 'bbb');
+        fire(t1, 'tool.started', 'read', 'aaa'); // duplicate replay
+        handleStreamEvent(t1, {type:'turn.accepted', bot_id:'coder'}); // duplicate accepted
+        fire(t1, 'tool.started', 'write', 'ccc');
+        fire(t1, 'tool.started', 'nested', 'ddd', 'thyca');
+        fire(t2, 'tool.started', 'other', 'aaa');
+        fire(t1, 'tool.finished', 'read', 'bbb');
+        fire(t1, 'tool.started', 'read', 'bbb'); // replay after finish
+        const mid = a.liveCalls.map(x => [x.name, x.invocation_id, x.session]);
+        fire(t1, 'tool.finished', 'write', 'ccc');
+        fire(t1, 'tool.finished', 'read', 'aaa');
+        fire(t1, 'tool.finished', 'nested', 'ddd', 'thyca');
+        const end = a.liveCalls.map(x => [x.name, x.session]);
+        fire(t1, 'tool.started', 'old', undefined);
+        fire(t1, 'tool.started', 'old', undefined);
+        fire(t1, 'tool.finished', 'old', undefined);
+        return {mid, end, child: child.liveCalls.length,
+                old: a.liveCalls.filter(x => x.name === 'old').length};
+    """, via="chat")
+    assert out['mid'] == [['read', 'aaa', 's1'], ['write', 'ccc', 's1'], ['other', 'aaa', 's2']]
+    assert out['end'] == [['other', 's2']]
+    assert out['child'] == 0 and out['old'] == 2

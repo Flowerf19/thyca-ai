@@ -9,7 +9,10 @@
   let setupState = 'checking', setupGeneration = 0, startupRoute = null, startupReturn = null;
   const chatWorkspace = document.querySelector('#chat-workspace');
   if (chatWorkspace) { chatWorkspace.hidden = true; chatWorkspace.inert = true; chatWorkspace.setAttribute('aria-hidden', 'true'); }
-  const PAGE_IDS = ['chat', 'memories', 'profile', 'provider', 'dashboard', 'settings'];
+  const PAGE_IDS = ['chat', 'memories', 'profile', 'provider', 'dashboard'];
+  // Legacy /ui/settings* URLs land on chat with the shared Settings dialog
+  // open (see pendingSettingsDialog); the dedicated settings page is gone.
+  let pendingSettingsDialog = false;
   const validPage = id => PAGE_IDS.includes(id);
 
   function parseTurnHash(hash) {
@@ -61,7 +64,7 @@
   function routeParts(page, search = '', hash = '') {
     if (page === 'trace') return dashboardRoute(search, hash, true);
     if (page === 'dashboard') return dashboardRoute(search, hash);
-    const allowed = { chat: ['bot', 's'], memories: ['bot'], profile: ['bot'], provider: [], settings: [] }[page] || [];
+    const allowed = { chat: ['bot', 's'], memories: ['bot'], profile: ['bot'], provider: [] }[page] || [];
     const input = new URLSearchParams(String(search).replace(/^\?/, ''));
     const output = new URLSearchParams();
     for (const key of allowed) { const value = input.get(key); if (value && value.length <= 200) output.set(key, value); }
@@ -70,14 +73,24 @@
     return { page, search: output.size ? '?' + output.toString() : '', hash: safeHash };
   }
   function normalize(value) {
+    if (value && value.page === 'settings' && typeof value.search === 'string' && typeof value.hash === 'string') {
+      // Pre-migration history entries: the dedicated settings page is now
+      // the shared footer dialog over chat.
+      pendingSettingsDialog = true;
+      return { page: 'chat', search: '', hash: '' };
+    }
     return value && typeof value.page === 'string' && typeof value.search === 'string' && typeof value.hash === 'string'
       && (validPage(value.page) || value.page === 'trace') ? routeParts(value.page, value.search, value.hash) : null;
   }
   function legacyRoute(path, search, hash) {
-    const map = { '/ui/chat': 'chat', '/ui/memories': 'memories', '/ui/profile': 'profile', '/ui/provider': 'provider', '/ui/dashboard': 'dashboard', '/ui/trace': 'trace', '/ui/settings': 'settings' };
+    const map = { '/ui/chat': 'chat', '/ui/memories': 'memories', '/ui/profile': 'profile', '/ui/provider': 'provider', '/ui/dashboard': 'dashboard', '/ui/trace': 'trace', '/ui/settings': 'chat' };
     let decodedPath;
     try { decodedPath = decodeURIComponent(path); } catch { decodedPath = ''; }
     const key = decodedPath.replace(/\/index\.html$/, '').replace(/\/$/, '') || '/';
+    if (key === '/ui/settings') {
+      pendingSettingsDialog = true;   // honored on arrival when setup allows
+      return { page: 'chat', search: '', hash: '' };
+    }
     let page = map[key] || 'chat';
     const params = new URLSearchParams(search);
     if (page === 'provider' && params.has('bot')) page = 'profile';
@@ -173,7 +186,7 @@
     const next = routeParts('provider');
     if (current?.page === 'provider') {
       if (route?.page !== 'provider' || route.search || route.hash) { route = next; current.ctx.route = next; }
-      history.replaceState({ thycaSpa: next }, '', '/');
+      historyWrite('replaceState', { thycaSpa: next });
       renderSetupNotice();
       return Promise.resolve();
     }
@@ -283,7 +296,7 @@
         ctx.route = next;
         if (current?.page === page) {
           route = next;
-          history.replaceState(historyState(route, history.state?.thycaReturn), '', '/');
+          historyWrite('replaceState', historyState(route, history.state?.thycaReturn));
         }
       },
       returnTo(parts = {}) {
@@ -346,7 +359,7 @@
     const destinationRouteChanged = !entry.ctx || saved.search !== next.search || saved.hash !== next.hash;
     const previous = current;
     const sameRoute = route?.page === next.page && route.search === next.search && route.hash === next.hash;
-    if (!force && previous === entry && sameRoute) return;
+    if (!force && previous === entry && sameRoute) { drainPendingSettingsDialog(); return; }
     const pageChanged = !previous || previous.page !== page;
     let returnMarker;
     if (Object.hasOwn(options, 'returnTo')) returnMarker = validReturn(options.returnTo, next);
@@ -355,7 +368,7 @@
     else if (replace) returnMarker = validReturn(history.state?.thycaReturn, next);
     else returnMarker = null;
     route = next;
-    if (!sameRoute || replace || Object.hasOwn(options, 'returnTo')) history[replace ? 'replaceState' : 'pushState'](historyState(next, returnMarker), '', '/');
+    if (!sameRoute || replace || Object.hasOwn(options, 'returnTo')) historyWrite(replace ? 'replaceState' : 'pushState', historyState(next, returnMarker));
     if (pageChanged) {
       for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
       if (typeof closeMobile === 'function') closeMobile();
@@ -377,7 +390,6 @@
       if (page !== 'chat') {
         entry.view.className = 'workspace app-workspace'; entry.view.dataset.pageWorkspace = page;
         entry.view.setAttribute('aria-label', `Nội dung ${page}`); entry.view.tabIndex = -1; entry.view.hidden = true; entry.view.inert = true;
-        entry.view.innerHTML = WORKSPACE_ART;
         host.append(entry.view);
       }
       entry.ctx = contextFor(page, entry.view);
@@ -419,16 +431,42 @@
       } else link.removeAttribute('aria-current');
     }
     document.title = `Thyca — ${entry.title}`;
+    // Legacy settings URL / historical settings entry: chat is showing, so
+    // open the shared dialog once the setup gate allows it. The marker
+    // survives the gate redirect (it only clears when the dialog can open),
+    // so a legacy settings URL reached while setup is required still opens
+    // after onboarding completes.
+    drainPendingSettingsDialog();
     if (pageChanged) {
       const heading = entry.view.querySelector('h1, [data-page-heading]') || entry.view;
       if (!heading.hasAttribute('tabindex')) heading.tabIndex = -1;
       heading.focus({ preventScroll: true });
     }
   }
+  function drainPendingSettingsDialog() {
+    // Honored on every arrival, including the same-route early return, so a
+    // marked Settings history entry reopens the dialog however it is reached.
+    if (pendingSettingsDialog && setupState === 'ready') {
+      pendingSettingsDialog = false;
+      if (typeof openSettingsDialog === 'function') openSettingsDialog();
+    }
+  }
+  function historyWrite(method, state) {
+    // Same-entry rewrites preserve a Settings marker; pushed entries never
+    // inherit one, so only history that originated from Settings reopens it.
+    if (method === 'replaceState' && history.state?.thycaSettings && state.thycaSettings !== true) {
+      state = { ...state, thycaSettings: true };
+    }
+    history[method](state, '', '/');
+  }
   function navigateFromState(state) {
-    const next = normalize(state?.thycaSpa) || legacyRoute(location.pathname, location.search, location.hash);
+    const raw = state?.thycaSpa;
+    const marked = raw?.page === 'settings' || state?.thycaSettings === true;
+    const next = normalize(raw) || legacyRoute(location.pathname, location.search, location.hash);
+    if (marked) pendingSettingsDialog = true;   // normalize already sets it for page:'settings'
     const returnMarker = validReturn(state?.thycaReturn, next);
-    history.replaceState(historyState(next, returnMarker), '', '/');
+    const out = historyState(next, returnMarker);
+    historyWrite('replaceState', marked ? { ...out, thycaSettings: true } : out);
     navigate(next.page, next, { replace: true, returnTo: returnMarker });
   }
   function dispatch(action, id, ...args) {
@@ -456,7 +494,7 @@
     const link = e.target.closest('a[href]');
     if (!link || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || link.target) return;
     const dest = new URL(link.href, location.href);
-    if (dest.origin !== location.origin || !/^\/ui\/(chat|memories|profile|provider|dashboard|trace|settings)(?:\/index\.html|\/)?$/.test(dest.pathname)) return;
+    if (dest.origin !== location.origin || !/^\/ui\/(chat|memories|profile|provider|dashboard|trace)(?:\/index\.html|\/)?$/.test(dest.pathname)) return;
     e.preventDefault();
     const next = legacyRoute(dest.pathname, dest.search, dest.hash);
     navigate(next.page, dest.search || dest.hash ? next : {});
@@ -464,6 +502,14 @@
   const initial = normalize(history.state?.thycaSpa) || legacyRoute(location.pathname, location.search, location.hash);
   startupRoute = { ...initial };
   startupReturn = validReturn(history.state?.thycaReturn, startupRoute);
-  route = initial; history.replaceState(historyState(route, startupReturn), '', '/');
+  // A reloaded entry that originated from Settings restores it like a revisit.
+  if (history.state?.thycaSettings === true) pendingSettingsDialog = true;
+  route = initial;
+  // Startup normalization of a legacy /ui/settings URL or an old settings
+  // state sets the pending dialog above; write the marker too, so navigating
+  // away and back to this entry reopens Settings like later visits do.
+  historyWrite('replaceState', pendingSettingsDialog
+    ? { ...historyState(route, startupReturn), thycaSettings: true }
+    : historyState(route, startupReturn));
   document.addEventListener('DOMContentLoaded', () => { void startSetupCheck(); }, { once: true });
 })();

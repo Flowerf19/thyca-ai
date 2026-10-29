@@ -24,7 +24,7 @@ function thycaSidebarMarkup() {
   return `<aside class="sidebar" id="chat-sidebar" aria-label="Đội bot">
  <div class="sessions-heading"><h2 id="team-nav-title">Đội</h2><span class="bot-count">0 người bạn</span></div>
  <div class="side-scroll"><nav class="session-list" id="team-bot-list" aria-label="Bot trong đội"></nav></div>
- <footer class="sidebar-footer"><button id="open-customize"><svg class="icon"><use href="#i-face"/></svg>Custom bot</button><button class="motion-button" id="motion-toggle" aria-label="Tạm dừng chuyển động" aria-pressed="false" title="Tạm dừng chuyển động"><svg class="icon"><use href="#i-pause"/></svg></button></footer>
+ <footer class="sidebar-footer"><button id="open-settings" aria-label="Cài đặt"><svg class="icon"><use href="#i-face"/></svg>Cài đặt</button></footer>
 </aside>
 <div class="splitter" role="separator" tabindex="0" aria-label="Thay đổi chiều rộng thanh bot" aria-orientation="vertical" aria-valuemin="310" aria-valuemax="470" aria-valuenow="374" title="Kéo để thay đổi chiều rộng · dùng phím trái/phải"></div>`;
 }
@@ -46,19 +46,99 @@ function thycaDialogs() {
 <p class="dialog-note">Mỗi bot giữ màu, hình dạng và nhịp chớp mắt riêng. Biểu cảm theo trạng thái công việc; lúc rảnh có thêm cử chỉ và lời nhắn ngẫu nhiên, có thể tắt riêng.</p></div></dialog>
 <dialog class="screen-dialog" id="bot-drawer" aria-labelledby="bot-drawer-name"><div class="dialog-heading"><div><h2 id="bot-drawer-name">Thông tin bot</h2><p id="bot-drawer-subtitle">Một người bạn trong đội.</p></div><button class="icon-button dialog-close" aria-label="Đóng"><svg class="icon"><use href="#i-close"/></svg></button></div><div class="dialog-body" id="bot-drawer-body"></div></dialog>
 <dialog class="screen-dialog" id="group-dialog" aria-labelledby="group-dialog-title"><div class="dialog-heading"><div><h2 id="group-dialog-title">Một cuộc trò chuyện chung.</h2><p>Chọn những người bạn sẽ cùng tham gia.</p></div><button class="icon-button dialog-close" aria-label="Đóng"><svg class="icon"><use href="#i-close"/></svg></button></div><form class="dialog-body group-form" id="group-form"><label class="sr-only" for="group-title">Tên hội thoại</label><input type="text" id="group-title" maxlength="70" placeholder="Tên cuộc trò chuyện" required><div id="group-options"></div><div class="dialog-actions"><button class="primary-action" type="submit">Tạo hội thoại</button></div></form></dialog>
+<dialog class="screen-dialog" id="settings-dialog" aria-labelledby="settings-title"><div class="dialog-heading"><div><h2 id="settings-title">Cài đặt</h2><p>Bot của bạn, giao diện máy này, giới hạn chạy và trạng thái máy chủ — chung cho mọi trang.</p></div><button class="icon-button dialog-close" aria-label="Đóng"><svg class="icon"><use href="#i-close"/></svg></button></div><div class="dialog-body" id="settings-body">
+ <section class="paper-card" aria-labelledby="settings-bots-title">
+  <div class="eyebrow">Bot của bạn</div>
+  <h3 class="card-title" id="settings-bots-title">Người bạn đồng hành</h3>
+  <p class="card-copy">Đổi màu và hình dạng giọt mực ở xưởng biểu cảm — mọi lựa chọn giữ nguyên như trước.</p>
+  <div class="bot-pick"><span id="settings-bot-seal" class="bot-pick-seal"></span>
+   <label class="field" for="settings-bot"><span>Bot</span><select id="settings-bot"></select></label>
+   <input type="color" id="settings-bot-color" value="#315e4c" aria-label="Màu của bot" style="width:28px;height:28px;border:0;background:none;padding:0;cursor:pointer;align-self:end">
+  </div>
+  <div class="form-footer"><button type="button" class="quiet-button" id="open-studio">Xưởng biểu cảm</button></div>
+ </section>
+ <section class="paper-card" aria-labelledby="settings-ui-title">
+  <div class="eyebrow">Giao diện · máy này</div>
+  <h3 class="card-title" id="settings-ui-title">Trang trải cho vừa tay</h3>
+  <p class="card-copy">Chỉ lưu trong trình duyệt này (localStorage) — không gửi lên máy chủ.</p>
+  <div class="pref-rows">
+   <label class="field" for="pref-type-scale"><span>Cỡ chữ</span>
+    <select id="pref-type-scale"><option value="small">Nhỏ</option><option value="medium">Vừa</option><option value="large">Lớn</option></select>
+   </label>
+   <label class="checkbox-row" for="pref-reduce-motion"><input type="checkbox" id="pref-reduce-motion"><span>Giảm chuyển động — dừng nhịp thở và cử chỉ rảnh của giọt mực</span></label>
+   <label class="checkbox-row" for="pref-ornaments"><input type="checkbox" id="pref-ornaments"><span>Hiển thị họa tiết trang trí trên trang</span></label>
+  </div>
+  <div class="form-footer"><button type="button" class="quiet-button" id="pref-reset">Về mặc định</button></div>
+ </section>
+ <section class="paper-card" aria-labelledby="settings-limits-title">
+  <div class="eyebrow">Giới hạn &amp; thời gian chạy</div>
+  <h3 class="card-title" id="settings-limits-title">Nhịp làm việc của đội</h3>
+  <p class="card-copy">Các mức trần áp cho mọi bot: vòng agent, nhớ nóng và ngữ cảnh gửi lên model. Provider, model mặc định và API key chỉnh ở trang riêng; model riêng của từng bot chỉnh ở trang Hồ sơ, mục của bot đó.</p>
+  <form id="config-form" novalidate>
+   <div id="config-fields"><p class="empty-note">Đang tải cấu hình…</p></div>
+   <div class="form-footer">
+    <button class="primary-action" type="submit" id="save-config" disabled>Lưu cài đặt</button>
+    <span class="form-hint">Các phần không hiển thị (provider, model, MCP, API key) được giữ nguyên.</span>
+    <p class="form-status" id="settings-form-status" role="status" hidden></p>
+   </div>
+  </form>
+ </section>
+ <section class="paper-card" aria-labelledby="settings-status-title">
+  <div class="eyebrow">Trạng thái</div>
+  <h3 class="card-title" id="settings-status-title">Máy chủ Thyca</h3>
+  <ul class="meta-list">
+   <li><span>Backend</span><span class="status-line" id="status-ready">Đang kiểm tra…</span></li>
+   <li><span>Phiên bản</span><span id="status-version">…</span></li>
+  </ul>
+  <div class="form-footer"><button type="button" class="quiet-button" id="status-refresh">Kiểm tra lại</button></div>
+ </section></div></dialog>
 <div class="toast" role="status" id="toast" hidden></div><div class="sr-only" role="status" aria-live="polite" id="announcer"></div>`;
 }
 
-/* The workspace SVG ornaments chat draws inline — same strokes. */
-const WORKSPACE_ART = `<svg class="ornament" viewBox="0 0 280 520" fill="none" stroke="currentColor" stroke-width="1" aria-hidden="true"><path d="M228 510C200 410 87 346 117 225S210 105 237 11"/><path d="M211 465C138 458 124 414 123 393c43 7 67 35 88 72ZM181 419c54-33 63-73 55-102-38 31-49 66-55 102ZM140 357c-70-13-91-44-92-77 43 10 76 41 92 77ZM120 301c59-17 79-52 82-86-39 15-69 48-82 86ZM119 235c-42-25-48-58-42-88 28 20 41 49 42 88ZM151 169c44 2 72-18 88-48-37-1-68 17-88 48ZM184 119c-31-31-33-58-22-83 20 23 26 52 22 83ZM220 59c33-3 47-26 50-47-27 7-44 23-50 47Z"/></svg>
-<svg class="staff" viewBox="0 0 420 300" fill="none" stroke="currentColor" aria-hidden="true"><path d="M0 140Q180 180 420 60M0 152Q180 192 420 72M0 164Q180 204 420 84M0 176Q180 216 420 96M0 188Q180 228 420 108"/><path d="M220 142v-58l37-8v55" stroke-width="2"/><ellipse cx="214" cy="144" rx="8" ry="5" fill="currentColor"/><ellipse cx="251" cy="133" rx="8" ry="5" fill="currentColor"/></svg>`;
+/* The shared paper artwork now lives on .notebook-shell::before (base.css),
+   so workspaces no longer inject per-pane SVG ornaments. */
+
+/* Interface preferences shared by every page (moved here from the old
+   per-page settings module so they apply globally from startup and
+   reload). Persisted under 'thyca.ui.preferences' as
+   {typeScale,reduceMotion,ornaments}; same key, shape and defaults the
+   old settings page used, so saved values carry over. Missing/unreadable
+   storage fails closed to defaults (artwork visible, motion allowed).
+   Runs at script load — before shell-app.js defines toggleMotion — so it
+   touches the body class directly instead of calling it. */
+const PREFS_KEY = 'thyca.ui.preferences';
+const PREF_DEFAULTS = { typeScale: 'medium', reduceMotion: false, ornaments: true };
+
+function readPrefs() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PREFS_KEY) || 'null');
+    const next = saved && typeof saved === 'object' ? { ...PREF_DEFAULTS, ...saved } : { ...PREF_DEFAULTS };
+    if (!['small', 'medium', 'large'].includes(next.typeScale)) next.typeScale = 'medium';
+    return next;
+  } catch { return { ...PREF_DEFAULTS }; }
+}
+let prefs = readPrefs();
+
+function applyPrefs(next = prefs, { save = true } = {}) {
+  prefs = next;
+  try {
+    if (typeof document === 'undefined' || !document.documentElement) return;
+    document.documentElement.dataset.typeScale = next.typeScale;                    // zoom hook in base.css
+    document.documentElement.dataset.ornaments = next.ornaments ? 'on' : 'off';    // shared paper artwork hook in base.css
+    for (const view of document.querySelectorAll('.workspace')) view.dataset.ornaments = next.ornaments ? 'on' : 'off';
+    motionPaused = Boolean(next.reduceMotion) || (typeof reduced !== 'undefined' && reduced.matches);
+    document.body.classList.toggle('motion-paused', motionPaused);
+  } catch { /* markup still renders; hooks default on next load */ }
+  if (save) try { localStorage.setItem(PREFS_KEY, JSON.stringify(next)); } catch { /* controls still apply when storage is unavailable */ }
+}
+applyPrefs(prefs, { save: false });
 
 /* Synchronous DOM insert. Returns the .workspace element the page fills. */
-function emitShell(current, { title = 'Thyca', ornaments = true } = {}) {
+function emitShell(current, { title = 'Thyca' } = {}) {
   const main = document.createElement('main');
   main.className = `notebook-shell ${current}-shell`;
   main.setAttribute('aria-label', `${title} — ${current}`);
-  main.innerHTML = `${thycaHeader(current)}<div class="main-grid">${thycaSidebarMarkup()}<section class="workspace" aria-label="Nội dung ${current}">${ornaments ? WORKSPACE_ART : ''}</section></div>`;
+  main.innerHTML = `${thycaHeader(current)}<div class="main-grid">${thycaSidebarMarkup()}<section class="workspace" aria-label="Nội dung ${current}"></section></div>`;
   document.body.prepend(main);
   document.body.insertAdjacentHTML('beforeend', thycaDialogs());
   return $('.workspace', main);
@@ -66,6 +146,7 @@ function emitShell(current, { title = 'Thyca', ornaments = true } = {}) {
 
 /* Async boot: live roster + sessions into the shared sidebar. */
 async function bootShell() {
+  applyPrefs(readPrefs(), { save: false });  // re-apply the saved preferences for this page
   await loadRoster();                                        // API: GET /api/bots
   renderTeam();
   bots.forEach(updateCard);

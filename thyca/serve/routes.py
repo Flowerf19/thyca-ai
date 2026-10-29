@@ -31,6 +31,7 @@ from thyca.serve.sessions_api import (
     bot_exchange_thread,
     bot_exchanges,
     bot_operations,
+    bot_tasks,
     bots_list,
     session_bots,
     session_compact,
@@ -76,6 +77,9 @@ _BOT_EXCHANGE_THREAD_RE = re.compile(
 _BOT_SETTINGS_RE = re.compile(r"^/api/bots/([a-z0-9]+(?:-[a-z0-9]+)*)/settings$")
 _BOT_OPERATIONS_RE = re.compile(
     rf"^/api/bots/([a-z0-9]+(?:-[a-z0-9]+)*)/rooms/({SESSION_ID_PATTERN})/operations$"
+)
+_BOT_TASKS_RE = re.compile(
+    rf"^/api/bots/([a-z0-9]+(?:-[a-z0-9]+)*)/rooms/({SESSION_ID_PATTERN})/tasks$"
 )
 # Worst-case turn body: TEXT_MAX chars \u-escaped (12 bytes per non-BMP char)
 # plus the JSON envelope (model/effort/retry). Must stay above that so a
@@ -135,6 +139,10 @@ def make_handler(
             match = _BOT_OPERATIONS_RE.fullmatch(path)
             if match:
                 bot_operations(self, chat, match.group(1), match.group(2), parsed.query)
+                return
+            match = _BOT_TASKS_RE.fullmatch(path)
+            if match:
+                bot_tasks(self, chat, match.group(1), match.group(2), parsed.query)
                 return
             match = _BOT_DM_RE.fullmatch(path)
             if match:

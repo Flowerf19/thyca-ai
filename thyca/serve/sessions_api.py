@@ -233,6 +233,37 @@ def bot_operations(
         handler._json(200, payload)
 
 
+def bot_tasks(handler, app: ChatApp | None, bot_id: str, session_id: str, query: str) -> None:
+    """``GET /api/bots/<bot_id>/rooms/<session_id>/tasks`` — open runtime
+    tasks plus live calls for exactly one room participant (read-only).
+
+    Membership and failure mapping follow the operations route: unknown
+    bots or foreign rooms read as 404, missing sessions as 404, and
+    unreadable state as a sanitized 503 that never implies “no tasks”.
+    """
+    from thyca.sessions import SessionCorrupt, SessionError, SessionNotFound
+    from thyca.bots.timeline import TimelineError
+
+    if _missing_chat(handler, app):
+        return
+    if query:
+        handler._json(400, {"error": "invalid query"})
+        return
+    try:
+        payload = app.bot_room_tasks(session_id, bot_id)
+    except RegistryError:
+        handler._json(404, {"error": "bot or room not found"})
+    except SessionNotFound:
+        handler._json(404, {"error": "session not found"})
+    except (TimelineError, FileNotFoundError, SessionCorrupt, SessionError, OSError):
+        handler._json(503, {"error": "bot information unavailable"})
+    except Exception:
+        traceback.print_exc(file=sys.stderr)
+        handler._json(503, {"error": "bot information unavailable"})
+    else:
+        handler._json(200, payload)
+
+
 def session_turn(handler, app: ChatApp | None, session_id: str) -> None:
     from thyca.app.chat_app import InvalidTurnOption, InvalidTurnText, TurnCancelled
 

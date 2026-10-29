@@ -96,8 +96,26 @@ def _create_spec(deps: AdminDeps) -> ToolSpec:
             return "missing argument: description"
         if card.bash not in ("ask", "allow", "deny"):
             return "invalid bash (ask|allow|deny)"
+        # Persistent model assignment participates in the model coordination
+        # protocol: validate against the freshly loaded config inside the
+        # lock, then create (lock order: coordination → per-bot).
         try:
-            created = deps.bots.create(card)
+            from thyca.app.bot_settings import (
+                BotSettingsError,
+                check_model_against_config,
+            )
+            from thyca.config import ConfigError, default_config, load
+            from thyca.config.coordination import CoordinationError, hold
+
+            with hold(deps.bots.thyca_dir):
+                cfg_path = deps.bots.thyca_dir / "config.json"
+                live = load(cfg_path) if cfg_path.exists() else default_config()
+                check_model_against_config(live, card.model)
+                created = deps.bots.create(card)
+        except BotSettingsError as exc:
+            return f"bot_create failed: {exc}"
+        except (ConfigError, CoordinationError):
+            return "bot_create failed: configuration unavailable, retry later"
         except Exception as exc:
             return f"bot_create failed: {exc}"
         return json.dumps(
@@ -282,13 +300,47 @@ def _edit_card_spec(deps: AdminDeps) -> ToolSpec:
             return denied
         bot_id = args["bot_id"]
         patch = {k: v for k, v in args.items() if k != "bot_id" and v is not None}
+        # Whether the model changes is decided by the patch keys alone, so
+        # no card read is needed up front.
+        model_changed = ("model" in patch or "thinking" in patch)
         try:
-            card = deps.bots.require(bot_id)
-            updated = apply_card_edit(card, patch)
-            deps.bots.update_card(
-                bot_id, updated,
-                model_changed=("model" in patch or "thinking" in patch),
-            )
+            # A model change reads the card, applies the patch, validates
+            # against the fresh config, and persists — all inside the
+            # coordination lock. Reading outside it would let a concurrent
+            # model assignment slip in between, and the stale patched
+            # model would then overwrite the newer one. Identity-only edits
+            # skip validation so legacy bots stay editable.
+            if model_changed:
+                from thyca.app.bot_settings import (
+                    BotSettingsError,
+                    check_model_against_config,
+                )
+                from thyca.config import ConfigError, default_config, load
+                from thyca.config.coordination import CoordinationError, hold
+
+                try:
+                    with hold(deps.bots.thyca_dir):
+                        card = deps.bots.require(bot_id)
+                        updated = apply_card_edit(card, patch)
+                        cfg_path = deps.bots.thyca_dir / "config.json"
+                        live = load(cfg_path) if cfg_path.exists() else default_config()
+                        # A model-less legacy card has model None: same
+                        # "default" fallback the settings write itself uses.
+                        current = updated.model if updated.model is not None else BotModel(id="default")
+                        check_model_against_config(live, current)
+                        deps.bots.update_card(
+                            bot_id, updated, model_changed=True,
+                        )
+                except BotSettingsError as exc:
+                    return f"bot_edit_card failed: {exc}"
+                except (ConfigError, CoordinationError):
+                    return "bot_edit_card failed: configuration unavailable, retry later"
+            else:
+                card = deps.bots.require(bot_id)
+                updated = apply_card_edit(card, patch)
+                deps.bots.update_card(
+                    bot_id, updated, model_changed=False,
+                )
         except Exception as exc:
             return f"bot_edit_card failed: {exc}"
         return json.dumps({"ok": True, "bot_id": bot_id}, ensure_ascii=False)

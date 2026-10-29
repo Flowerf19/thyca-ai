@@ -58,6 +58,7 @@ class BotOperationsDeps:
     resolve_responder: Callable[..., str]
     pending_relevant: Callable[[str], list]
     turns: TurnState
+    agent_status: Any
     skills_root: Path
 
 
@@ -66,6 +67,70 @@ class BotOperationsService:
 
     def __init__(self, deps: BotOperationsDeps) -> None:
         self._deps = deps
+
+    def room_tasks(self, session_id: str, bot_id: str) -> dict:
+        """Open/waiting runtime tasks plus live calls for one participant.
+
+        ``tasks`` are the runtime units from
+        :func:`thyca.bots.tasks.derive_open_tasks` over the bot's CURRENT
+        projected view of this exact window (its canonical journal
+        projection, which survives room compaction and carries in-flight
+        rows): task_open/delegate opens, pending envelopes owed in this
+        window, minus completion records. Completed work and the
+        saved-memory task catalog never appear here. When the bot never
+        ran in this window there is genuinely nothing to project, so only
+        queued envelopes can owe it work; an unreadable journal for a
+        bound bot is unavailable, never empty. Room rows are the shared
+        aggregate read model (all senders/recipients) and are never
+        used, so another bot's work or private rows cannot leak in.
+        ``calls`` are the ephemeral in-memory tool/skill invocations for
+        the collapsed preview/+N list only — merely starting a tool never
+        creates a task row. Read-only: no bindings created, no migration.
+        Membership and room existence follow the operations route
+        conventions (RegistryError/SessionNotFound)."""
+        room = self._deps.sessions.store.load(session_id)
+        window = self._deps.window_for(room)
+        if bot_id not in window.participants:
+            raise RegistryError("bot is not a participant in this room")
+        self._deps.bots.require(bot_id)
+        payload = self._deps.agent_status.room_tasks(bot_id, session_id)
+        payload["tasks"] = self._room_task_units(window, room, bot_id)
+        return payload
+
+    def _room_task_units(self, window, room, bot_id: str) -> list[dict]:
+        """Narrow serialized open tasks for exactly one bot+window."""
+        from thyca.bots.tasks import derive_open_tasks
+        from thyca.bots.timeline import CanonicalSessionStore, WorkspaceTimeline
+
+        binding = self._deps.workspaces_store.get_binding(bot_id, room.id)
+        if binding is None or binding.internal_session_id is None:
+            # Genuinely uninitialized window: the bot never ran here, so
+            # its projected view is empty by construction — only queued
+            # envelopes (filtered to this exact session below) can owe
+            # it work. Never derive from room rows: they aggregate every
+            # sender/recipient and would misattribute other bots' tasks.
+            messages: list = []
+        else:
+            # Canonical projection for this bot+window: post-compaction
+            # basis plus replay, in journal order. Construction AND read
+            # failures propagate (503 unavailable) instead of asserting
+            # an empty list on a failed read.
+            timeline = WorkspaceTimeline(self._deps.root, bot_id, create=False)
+            store = CanonicalSessionStore(
+                self._deps.root / "bots" / bot_id / "sessions",
+                timeline=timeline, window=window,
+                session_id=binding.internal_session_id)
+            messages = list(store.load(binding.internal_session_id).messages)
+        pending = [
+            envelope for envelope in self._deps.pending_relevant(bot_id)
+            if getattr(envelope, "session_id", None) == room.id
+        ]
+        units = derive_open_tasks(messages, pending, bot_id=bot_id)
+        return [
+            {"title": unit.task, "status": unit.status,
+             "waiting_on": unit.waiting_on}
+            for unit in units
+        ]
 
     def trace_execution_messages(
         self, session_id: str, bot_id: str, span_id: str

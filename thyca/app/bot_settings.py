@@ -104,8 +104,13 @@ def _clean_payload(payload: object) -> BotModel:
     return BotModel(id=model_id, thinking=thinking)
 
 
-def _check_against_config(cfg: Config, model: BotModel) -> None:
-    """Membership of the model id and the effort against the live config."""
+def check_model_against_config(cfg: Config, model: BotModel) -> None:
+    """Membership of the model id and the effort against the live config.
+
+    Public alias for admin-tool assignment paths; the settings endpoint
+    keeps using the private name below. Raises :class:`BotSettingsError`
+    with safe constant messages only.
+    """
     if model.id != "default" and model.id != cfg.defaultModel and model.id not in cfg.models:
         raise BotSettingsError("unknown model")
     if model.thinking is None:
@@ -120,3 +125,7 @@ def _check_against_config(cfg: Config, model: BotModel) -> None:
     # (config contents stay server-side).
     if model.thinking not in allowed:
         raise BotSettingsError("invalid thinking")
+
+
+# Private name kept for the settings endpoint caller below.
+_check_against_config = check_model_against_config

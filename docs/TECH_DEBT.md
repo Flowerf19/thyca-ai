@@ -3,6 +3,17 @@
 Ghi nhận các nợ kỹ thuật đã biết, tác động, quyết định xử lý và trạng thái.
 Mỗi mục có đủ bốn phần: **mô tả**, **tác động**, **quyết định/hướng xử lý**, **trạng thái**.
 
+## 4. Store SQLite chưa được nối vào runtime (mới phát hiện)
+
+- **Mô tả:** `AgentStore`/`AdminStore` mới chỉ được test trên fake root; chưa caller
+  production nào truyền `actor` thật, chưa có lifecycle/bot-ID nào gọi
+  `bootstrap_initial_dm`.
+- **Tác động:** Bảo vệ ở lớp store chưa có hiệu lực với dữ liệu thật.
+- **Quyết định/hướng xử lý:** Khi nối runtime, mọi đường `ChatApp`/CLI/memory writer
+  phải lấy `AgentStore` (không bao giờ `AdminStore`), truyền đúng bot actor, và
+  chặn legacy writer như plan hai-cửa đã nêu.
+- **Trạng thái:** Mở.
+
 ## 1. Lưu trữ hội thoại bằng journal file phẳng + lớp guard bù
 
 - **Mô tả:** Mỗi hội thoại là một file `conversations/{dm,group}/<id>.jsonl`; dòng đầu
@@ -24,14 +35,19 @@ Mỗi mục có đủ bốn phần: **mô tả**, **tác động**, **quyết đ
   `known.json` + guard + lifecycle lock bằng **SQLite** (một file
   `<root>/conversations.db`, WAL, append-only cho agent). Không migration dữ liệu
   cũ (data hiện tại được xác nhận không có giá trị).
-- **Trạng thái:** Đã thay thế xong (nhánh `pi/continue-20261029`, chưa commit).
+- **Trạng thái:** Đã thay thế và gia cố xong (nhánh `pi/continue-20261029`).
   Store mới: `thyca/conversations/store.py` trên SQLite (`<root>/conversations.db`,
-  WAL, `busy_timeout` 5s, `foreign_keys=ON`, agent append-only, `seq` cấp trong
-  `BEGIN IMMEDIATE`). Đã xóa: `thyca/conversations/guards.py`,
-  `thyca/core/conversation_guard_tree.py`, `thyca/core/conversation_layout.py`,
-  `thyca/core/conversation_document.py`, `tests/test_conversation_guards.py`,
-  `tests/test_conversation_layout.py`; viết lại `tests/test_conversation_store.py`
-  (đa process/thread, đọc-trong-ghi, append-only, tách DM/group).
+  WAL, `busy_timeout` 5s, `foreign_keys=ON`, STRICT tables, `user_version` schema).
+  Tách `AgentStore` (chỉ `read`/`append` kèm `actor`, kiểm tra thành viên trong
+  transaction, người ngoài/thành viên cũ nhận lỗi chung `unavailable`) và
+  `AdminStore` (tạo DM/group, `set_metadata`, retention, compaction, `VACUUM`).
+  Trigger chặn UPDATE/DELETE trên `messages`; root 0700 + check owner, DB 0600 +
+  umask 077, từ chối symlink; giới hạn content/metadata, content `str` không
+  NUL/surrogate, metadata giới hạn độ sâu JSON; `read` phân trang
+  (`after_seq`, `limit`); mọi lỗi sqlite được bọc, không lộ exception thô.
+  Đã xóa journal/guard/layout/document và test cũ; `tests/test_conversation_store.py`
+  bao phủ quyền agent/admin, đọc/ghi chéo, thành viên cũ, init 16 process,
+  quyền file/symlink, dữ liệu hỏng, rollback giữa chừng, retention/compaction.
 
 ## 2. DB hội thoại phình theo thời gian (append-only) — còn lại sau khi chuyển SQLite
 
@@ -41,7 +57,11 @@ Mỗi mục có đủ bốn phần: **mô tả**, **tác động**, **quyết đ
 - **Quyết định/hướng xử lý:** Về sau cần retention job hệ thống (xóa theo chính sách
   tuổi/dung lượng, do system/admin chạy — không phải quyền agent), compaction
   (tóm tắt tin cũ thành bản ghi tóm tắt), và VACUUM định kỳ ngoài giờ cao điểm.
-- **Trạng thái:** Mở — chưa thiết kế trong đợt SQLite này.
+- **Trạng thái:** API đã có trong đợt gia cố SQLite này: `AdminStore.purge_before`
+  (xóa theo tuổi, trigger được gỡ/tái tạo trong cùng transaction ngắn),
+  `compact_through_seq` (hàm tóm tắt truyền vào chạy NGOÀI transaction — có test
+  chứng minh write khác vẫn qua trong lúc summarize), `vacuum()`. Còn mở: giá trị
+  chính sách retention cụ thể và lịch chạy định kỳ ngoài giờ cao điểm.
 
 ## 3. Transaction SQLite phải ngắn; cấm gọi LLM khi đang mở transaction
 
@@ -52,5 +72,7 @@ Mỗi mục có đủ bốn phần: **mô tả**, **tác động**, **quyết đ
 - **Quyết định/hướng xử lý:** Mọi transaction chỉ bao bọc đọc-ghi DB thuần túy;
   chuẩn bị payload (kể cả gọi LLM) xong mới mở transaction. Test song song phải
   bao phủ trường hợp này.
-- **Trạng thái:** Mở — là quy ước bắt buộc cho mọi writer sau này (kể cả khi nối
-  store vào runtime chính).
+- **Trạng thái:** Đã thực thi trong code + test: mọi public API (trừ `compact`,
+  summarizer chạy ngoài transaction có chủ đích) không nhận callback; storm ghi
+  song song hoàn tất trong ngưỡng; `seq` cấp trong `BEGIN IMMEDIATE` ngắn.
+  Còn mở: giữ quy ước này khi nối store vào runtime chính.

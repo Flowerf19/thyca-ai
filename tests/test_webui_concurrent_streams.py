@@ -2,11 +2,10 @@
 
 Two turns can stream at once (send in A, switch to B, send there): ``runs``
 is keyed by sessionId and sendTurn only refuses a second send on the *same*
-session. Returning to a session whose turn is still in flight re-joins via
-GET turn/stream replay (followRunningTurn) on a fresh live node — the stored
-transcript replaces it when the terminal event lands. The old UI's
-"reuse the card without a second reader" contract is deliberately replaced
-by replay re-follow; this file pins the new one.
+session. Returning to a session while its original POST reader is alive
+reattaches that same token and node, without opening another stream reader.
+The original reader continues through later deltas and the terminal event,
+which reconciles the live node with the stored transcript.
 """
 from __future__ import annotations
 
@@ -55,7 +54,9 @@ const readerA = {
   }),
 };
 const pushA = (line) => {
-  const chunk = { done: false, value: new TextEncoder().encode(line) };
+  const chunk = line === null
+    ? { done: true }
+    : { done: false, value: new TextEncoder().encode(line) };
   if (waiterA) { const w = waiterA; waiterA = null; w(chunk); } else queueA.push(chunk);
 };
 const ndjsonBody = (events) => {
@@ -63,8 +64,12 @@ const ndjsonBody = (events) => {
   let sent = false;
   return { getReader: () => ({ read: async () => (sent ? { done: true } : (sent = true, { done: false, value: bytes })) }) };
 };
+const priorA = [
+  { role: 'user', content: 'Câu hỏi trước', ts: '2026-10-01T10:00:00Z' },
+  { role: 'assistant', content: 'Phản hồi trước', meta: { bot_id: 'thyca' }, ts: '2026-10-01T10:00:01Z' },
+];
 const sessions = {
-  A: { id: 'A', title: 'Phiên A', running: false, messages: [] },
+  A: { id: 'A', title: 'Phiên A', running: false, messages: priorA },
   B: { id: 'B', title: 'Phiên B', running: false, messages: [] },
 };
 globalThis.fetch = async (url, opts = {}) => {
@@ -129,25 +134,55 @@ result.sentB = {
   listHasDoneB: listText().includes('done B'),
 };
 
-// 3. Back to A while still running: a replay reader re-joins the turn —
-//    no second POST, the runs token is replaced by the follow token.
-sessions.A = { ...sessions.A, running: true };
+// 3. Back to A while the original POST reader is still alive. The detail
+//    request says the turn is running, but followRunningTurn must reattach
+//    the original token/node rather than opening a replay GET.
+sessions.A = { ...sessions.A, running: true, messages: [...priorA,
+  { role: 'user', content: 'hi A', ts: '2026-10-29T10:00:00Z' },
+] };
 await ui.loadSession('A');
 await settle();
+const reattached = ui.runs.get('A');
+const nodeA = tokenA.node;
 result.backToA = {
   follows: follows.length,
   posts: posts.length,
-  replacedToken: ui.runs.get('A') !== tokenA,
+  postA: posts.filter(url => url.includes('/A/')).length,
+  sameToken: reattached === tokenA,
+  sameNode: doc.querySelector('#message-list .running-response') === nodeA,
+  liveNodes: doc.querySelectorAll('#message-list .running-response').length,
+  restoredText: nodeA.querySelector('.stream-text')?.textContent ?? null,
+  streamNodes: nodeA.querySelectorAll('.stream-text').length,
+  mdBuf: reattached?.mdBuf ?? null,
+  priorTextVisible: listText().includes('Phản hồi trước'),
 };
+
+// The original POST reader—not a follow reader—receives the next delta and
+// terminal event. Completion must reconcile to the final stored transcript.
+pushA(JSON.stringify({ type: 'llm.content', delta: 'A-two' }) + '\n');
+await settle();
+result.laterDelta = {
+  streamText: nodeA.querySelector('.stream-text')?.textContent ?? null,
+  mdBuf: tokenA.mdBuf,
+  follows: follows.length,
+};
+pushA(JSON.stringify({ type: 'turn.completed', detail: { id: 'A', running: false,
+  messages: [...priorA,
+    { role: 'user', content: 'hi A', ts: '2026-10-29T10:00:00Z' },
+    { role: 'assistant', content: 'done A', meta: { bot_id: 'thyca' }, ts: '2026-10-29T10:00:01Z' },
+  ] } }) + '\n');
+pushA(null);
+await pendingA;
 await settle();
 result.settledA = {
   tracked: [...ui.runs.keys()],
   listHasDoneA: listText().includes('done A'),
+  priorTextVisible: listText().includes('Phản hồi trước'),
+  transientGone: !listText().includes('A-one '),
   liveNodes: doc.querySelectorAll('#message-list .running-response').length,
+  follows: follows.length,
+  posts: posts.length,
 };
-// Close the orphaned POST reader so nothing dangles.
-if (waiterA) waiterA({ done: true });
-await pendingA.catch(() => {});
 console.log(JSON.stringify(result));
 """
 
@@ -176,15 +211,31 @@ def test_two_sessions_stream_at_once(concurrent: dict) -> None:
     assert concurrent["sentB"]["listHasDoneB"] is True
 
 
-def test_returning_to_running_session_refollows_via_replay(concurrent: dict) -> None:
-    """New contract: loadSession on a running session opens GET turn/stream
-    (replay) once — never a second POST — and the follow token takes over."""
-    assert concurrent["backToA"]["follows"] == 1
+def test_returning_reattaches_original_live_reader_once(concurrent: dict) -> None:
+    """A running detail must reattach the still-live POST token and node,
+    not replace them with a second POST or replay GET. Restored text is exact."""
+    assert concurrent["backToA"]["follows"] == 0
     assert concurrent["backToA"]["posts"] == 2
-    assert concurrent["backToA"]["replacedToken"] is True
+    assert concurrent["backToA"]["postA"] == 1
+    assert concurrent["backToA"]["sameToken"] is True
+    assert concurrent["backToA"]["sameNode"] is True
+    assert concurrent["backToA"]["liveNodes"] == 1
+    assert concurrent["backToA"]["restoredText"] == "A-one "
+    assert concurrent["backToA"]["streamNodes"] == 1
+    assert concurrent["backToA"]["mdBuf"] == "A-one "
+    assert concurrent["backToA"]["priorTextVisible"] is True
 
 
-def test_replayed_terminal_renders_stored_transcript(concurrent: dict) -> None:
+def test_original_reader_delivers_later_delta_and_terminal_transcript(concurrent: dict) -> None:
+    assert concurrent["laterDelta"] == {
+        "streamText": "A-one A-two",
+        "mdBuf": "A-one A-two",
+        "follows": 0,
+    }
     assert concurrent["settledA"]["tracked"] == []
     assert concurrent["settledA"]["listHasDoneA"] is True
+    assert concurrent["settledA"]["priorTextVisible"] is True
+    assert concurrent["settledA"]["transientGone"] is True
     assert concurrent["settledA"]["liveNodes"] == 0
+    assert concurrent["settledA"]["follows"] == 0
+    assert concurrent["settledA"]["posts"] == 2

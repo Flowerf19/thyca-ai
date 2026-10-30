@@ -6,17 +6,20 @@ Mỗi mục có đủ bốn phần: **mô tả**, **tác động**, **quyết đ
 ## 4. Store SQLite chưa được nối vào runtime (mới phát hiện)
 
 - **Mô tả:** `AgentStore`/`AdminStore` mới chỉ được test trên fake root; chưa caller
-  production nào truyền `actor` thật, chưa có lifecycle/bot-ID nào gọi
-  `bootstrap_initial_dm`.
-- **Tác động:** Bảo vệ ở lớp store chưa có hiệu lực với dữ liệu thật.
-- **Quyết định/hướng xử lý:** Khi nối runtime, mọi đường `ChatApp`/CLI/memory writer
-  phải lấy `AgentStore` (không bao giờ `AdminStore`), truyền đúng bot actor, và
-  chặn legacy writer như plan hai-cửa đã nêu.
-- **Trạng thái:** Mở.
+  production nào truyền `actor` đáng tin cậy, chưa có lifecycle/bot-ID nào gọi
+  `bootstrap_initial_dm`. Hai lớp dùng cùng `<root>/conversations.db`; việc tách
+  lớp không tự chứng minh cách ly DB vật lý hoặc xác thực `actor`. `ChatApp` hiện
+  vẫn dùng `SessionManager`.
+- **Tác động:** Bảo vệ ở lớp SQLite chưa có hiệu lực với luồng ứng dụng hiện tại.
+- **Quyết định/hướng xử lý:** Khi nối runtime, phải ràng buộc actor với nguồn đáng
+  tin, phân quyền agent/admin và chuyển hoặc chặn các legacy writer theo plan
+  hai-cửa. Không coi facade hoặc prompt là ranh giới xác thực.
+- **Trạng thái:** Mở; bị chặn bởi các lỗi ở mục 5 và kiểm thử tích hợp.
 
 ## 1. Lưu trữ hội thoại bằng journal file phẳng + lớp guard bù
 
-- **Mô tả:** Mỗi hội thoại là một file `conversations/{dm,group}/<id>.jsonl`; dòng đầu
+- **Mô tả:** Trong checkpoint file phẳng trước đây, mỗi hội thoại là một file
+  `conversations/{dm,group}/<id>.jsonl`; dòng đầu
   là header JSON (`version`/`kind`/`id`/`metadata`) vừa chứa dữ liệu vừa dùng để
   chứng minh danh tính hội thoại. Xung quanh file phẳng là một lớp bảo vệ riêng:
   bản ghi guard `clean`/`active`/`poison`, registry `known.json`, lifecycle lock
@@ -35,19 +38,11 @@ Mỗi mục có đủ bốn phần: **mô tả**, **tác động**, **quyết đ
   `known.json` + guard + lifecycle lock bằng **SQLite** (một file
   `<root>/conversations.db`, WAL, append-only cho agent). Không migration dữ liệu
   cũ (data hiện tại được xác nhận không có giá trị).
-- **Trạng thái:** Đã thay thế và gia cố xong (nhánh `pi/continue-20261029`).
-  Store mới: `thyca/conversations/store.py` trên SQLite (`<root>/conversations.db`,
-  WAL, `busy_timeout` 5s, `foreign_keys=ON`, STRICT tables, `user_version` schema).
-  Tách `AgentStore` (chỉ `read`/`append` kèm `actor`, kiểm tra thành viên trong
-  transaction, người ngoài/thành viên cũ nhận lỗi chung `unavailable`) và
-  `AdminStore` (tạo DM/group, `set_metadata`, retention, compaction, `VACUUM`).
-  Trigger chặn UPDATE/DELETE trên `messages`; root 0700 + check owner, DB 0600 +
-  umask 077, từ chối symlink; giới hạn content/metadata, content `str` không
-  NUL/surrogate, metadata giới hạn độ sâu JSON; `read` phân trang
-  (`after_seq`, `limit`); mọi lỗi sqlite được bọc, không lộ exception thô.
-  Đã xóa journal/guard/layout/document và test cũ; `tests/test_conversation_store.py`
-  bao phủ quyền agent/admin, đọc/ghi chéo, thành viên cũ, init 16 process,
-  quyền file/symlink, dữ liệu hỏng, rollback giữa chừng, retention/compaction.
+- **Trạng thái:** Đã thay checkpoint file phẳng bằng store SQLite thử nghiệm tại
+  `thyca/conversations/store.py`, nhưng **chưa gia cố xong và chưa nối runtime**.
+  Code có WAL, `AgentStore`/`AdminStore`, kiểm tra thành viên, trigger và phân
+  trang. Các test hiện có chưa chứng minh đầy đủ an toàn đường dẫn, khởi tạo lạnh,
+  tính bền vững hoặc xử lý lỗi; review và các ca giả ở mục 5 đã phát hiện lỗi.
 
 ## 2. DB hội thoại phình theo thời gian (append-only) — còn lại sau khi chuyển SQLite
 
@@ -57,11 +52,12 @@ Mỗi mục có đủ bốn phần: **mô tả**, **tác động**, **quyết đ
 - **Quyết định/hướng xử lý:** Về sau cần retention job hệ thống (xóa theo chính sách
   tuổi/dung lượng, do system/admin chạy — không phải quyền agent), compaction
   (tóm tắt tin cũ thành bản ghi tóm tắt), và VACUUM định kỳ ngoài giờ cao điểm.
-- **Trạng thái:** API đã có trong đợt gia cố SQLite này: `AdminStore.purge_before`
-  (xóa theo tuổi, trigger được gỡ/tái tạo trong cùng transaction ngắn),
-  `compact_through_seq` (hàm tóm tắt truyền vào chạy NGOÀI transaction — có test
-  chứng minh write khác vẫn qua trong lúc summarize), `vacuum()`. Còn mở: giá trị
-  chính sách retention cụ thể và lịch chạy định kỳ ngoài giờ cao điểm.
+- **Trạng thái:** Có các API thử nghiệm `AdminStore.purge_before`,
+  `compact_through_seq` và `vacuum()`, nhưng retention/compaction **chưa an toàn**:
+  có thể xóa tin ngoài snapshot hoặc xóa dữ liệu với cutoff không hợp lệ (mục 5).
+  Chưa có API dọn theo dung lượng; chính sách retention cụ thể và lịch chạy định kỳ
+  còn mở. Hàm tóm tắt được gọi ngoài transaction, nhưng điều đó không chứng minh
+  bước ghi kết quả an toàn khi có thay đổi đồng thời.
 
 ## 3. Transaction SQLite phải ngắn; cấm gọi LLM khi đang mở transaction
 
@@ -72,7 +68,65 @@ Mỗi mục có đủ bốn phần: **mô tả**, **tác động**, **quyết đ
 - **Quyết định/hướng xử lý:** Mọi transaction chỉ bao bọc đọc-ghi DB thuần túy;
   chuẩn bị payload (kể cả gọi LLM) xong mới mở transaction. Test song song phải
   bao phủ trường hợp này.
-- **Trạng thái:** Đã thực thi trong code + test: mọi public API (trừ `compact`,
-  summarizer chạy ngoài transaction có chủ đích) không nhận callback; storm ghi
-  song song hoàn tất trong ngưỡng; `seq` cấp trong `BEGIN IMMEDIATE` ngắn.
-  Còn mở: giữ quy ước này khi nối store vào runtime chính.
+- **Trạng thái:** Đã kiểm thử hàm tóm tắt chạy ngoài transaction và một đợt ghi
+  đồng thời hoàn tất; **chưa chứng minh mọi transaction đều ngắn**. Chẳng hạn,
+  `set_metadata` đọc và giải mã toàn bộ tin trong transaction, còn `purge_before`
+  có thể xóa nhiều dòng trong một transaction. Test storm đo tổng thời gian, không
+  đo trực tiếp thời gian giữ khóa. Cần kiểm tra theo tải và giữ quy ước này khi
+  nối runtime; chưa có ngưỡng thời gian nghiệp vụ nào được chốt.
+
+## 5. Security và an toàn dữ liệu SQLite chưa đạt
+
+- **Mô tả:** Review độc lập `eccd362a` đối với `b433ec2..162d3f4` yêu cầu sửa;
+  các ca sau đã được kiểm tra trên root giả, không phải dữ liệu production:
+  1. **Nghiêm trọng — compaction mất tin:** khi summarizer đang chạy, tin mới
+     được ghi vào vùng `through_seq` có thể bị xóa dù không nằm trong snapshot
+     đã tóm tắt; cũng tái hiện với retention xen giữa.
+  2. **Nghiêm trọng — mất DB bị coi là mới:** đọc một DB đã mất tự tạo DB rỗng;
+     sau đó `bootstrap_initial_dm` có thể tạo lại bot ID cũ mà không chứng minh
+     bot mới. Cần phân biệt khởi tạo được ủy quyền với state đã mất/hỏng.
+  3. **Nghiêm trọng — cách ly đường dẫn:** symlink ở thư mục cha và hardlink DB
+     sang root khác được chấp nhận. Việc kiểm tra rồi mở lại đường dẫn cũng có
+     rủi ro bị thay thế; race đó chưa được chứng minh bằng test.
+  4. **Cursor/seq:** sau khi retention xóa hết dòng, `seq` có thể dùng lại; đọc
+     `after_seq` cũ bỏ sót tin mới. Kết quả đọc cũng không trả seq/cursor để
+     người gọi tiếp tục tin cậy sau khoảng trống.
+  5. **Thứ tự summary:** summary của tin cũ hiện được thêm sau các tin mới hơn.
+     Cần chốt contract thứ tự hiển thị/context và kiểm thử, không tự đoán rule.
+  6. **Metadata tin:** metadata lồng sâu có thể được chấp nhận khi ghi nhưng bị
+     từ chối khi đọc, khiến hội thoại báo corrupt.
+  7. **Khởi tạo lạnh:** khi 16 process cùng tạo root chưa tồn tại, một số gặp
+     `FileExistsError`. Test 16 process hiện có tạo root/schema trước nên chưa
+     phủ đúng ca này.
+  8. **Lỗi transaction:** giữ khóa ghi quá `busy_timeout` có thể làm lộ
+     `sqlite3.OperationalError` thay vì `ConversationStoreError`; cần kiểm thử
+     thêm lỗi lúc commit và rollback.
+  9. **Retention cutoff:** `purge_before('z')` được chấp nhận và có thể xóa toàn
+     bộ tin thay vì từ chối đầu vào không phải timestamp hợp lệ.
+- **Tác động:** Có nguy cơ mất hoặc bỏ sót tin, vượt qua kỳ vọng cách ly root và
+  làm lộ lỗi nội bộ nếu store được tích hợp. Các phát hiện này thuộc prototype,
+  không chứng minh runtime session cũ đang dùng SQLite.
+- **Quyết định/hướng xử lý:** Sửa và kiểm thử lại từng ca, gồm race giữa append,
+  retention và compaction, khởi tạo/corruption/restart, quyền truy cập và alias;
+  sau đó review độc lập lại trước khi coi store sẵn sàng tích hợp hoặc merge.
+  Thiết kế bootstrap authority, cursor và thứ tự summary phải giữ các quyết định
+  identity/data-safety đã chấp nhận; lựa chọn còn thiếu cần được chốt riêng.
+- **Trạng thái:** Mở. Commit `162d3f4`; 118 test trọng tâm cũ pass nhưng 10 ca
+  thử bổ sung thất bại. Một số ca thử cùng một lỗi với thứ tự race khác nhau.
+
+## 6. Các kiểm thử còn đỏ ngoài SQLite
+
+- **Mô tả:** Chạy toàn bộ `tests/` tại `162d3f4` trong network namespace và `/tmp`
+  riêng: **1.915 passed, 3 failed, 8 errors**. Hai test
+  `tests/test_webui_concurrent_streams.py` về refollow/replay thất bại; tám test
+  `tests/test_turn_status.py` lỗi fixture Node vì truy cập `b.feed` không tồn tại.
+  Các lỗi này cũng tái hiện ở commit trước `b433ec2`. Test quyền file
+  `tests/test_private_followups.py::test_write_permission_failure_propagates` thất
+  bại khi namespace chạy UID root, nhưng pass khi chạy lại bằng user thường.
+- **Tác động:** Full suite chưa xanh; kết quả lỗi quyền trong namespace không đủ
+  bằng chứng kết luận có lỗi quyền ở runtime thường. Test Chrome chat trước đó
+  dùng luồng session cũ nên không chứng minh tích hợp SQLite.
+- **Quyết định/hướng xử lý:** Điều tra hai lỗi refollow/replay và fixture Node;
+  giữ test quyền dưới user thường hoặc môi trường cách ly tương đương không có
+  đặc quyền root. Chạy lại full suite sau khi sửa, không làm yếu assertion.
+- **Trạng thái:** Mở; không thuộc thay đổi code của commit SQLite `162d3f4`.

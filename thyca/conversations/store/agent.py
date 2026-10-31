@@ -75,7 +75,11 @@ class AgentStore:
             raise ValueError('expected message')
         validate_message(message)
         payload = _encode_canonical_message(message)
-        conn = open_existing_session(self._root)
+        # Multiprocess WAL readers mmap -shm while another process
+        # checkpoints/truncates it, which SIGBUSes the reader. Take the
+        # store-root exclusive lock for the whole append so concurrent
+        # processes never enter SQLite together.
+        conn = open_existing_session(self._root, lock_mode='exclusive')
         try:
             with _transaction_context(conn, 'BEGIN IMMEDIATE'):
                 _ensure_root_ready(conn, _root_instance_id_from_conn(conn))

@@ -15,7 +15,8 @@ from thyca.core.conversation import ConversationRef, bot_is_participant
 from .contracts import ConversationStoreError, _decode_metadata, _local_error, validate_metadata
 from .rootfs import (DB_FILE_NAME, LOCK_FILE_NAME, ROOT_MARKER_TEMP, _checked_regular_at,
                      _fsync_dir, _open_root, _open_store_lock, _read_dm_marker, _stat_at,
-                     _validate_root_artifacts, _validate_top_namespace, _verify_root_name)
+                     _validate_root_artifacts, _validate_stable_namespace,
+                     _validate_top_namespace, _verify_root_name)
 
 BUSY_TIMEOUT_MS = 5000
 
@@ -128,14 +129,8 @@ def _validate_db_file(root_fd: int) -> None:
     _checked_fd, _ = _checked_regular_at(root_fd, DB_FILE_NAME, mode=0o600)
     os.close(_checked_fd)
     _validate_top_namespace(root_fd)
-    wal = _stat_at(root_fd, DB_FILE_NAME + '-wal')
-    shm = _stat_at(root_fd, DB_FILE_NAME + '-shm')
-    if wal is not None:
-        fd, _ = _checked_regular_at(root_fd, DB_FILE_NAME + '-wal', mode=0o600)
-        os.close(fd)
-    if shm is not None:
-        fd, _ = _checked_regular_at(root_fd, DB_FILE_NAME + '-shm', mode=0o600)
-        os.close(fd)
+    # Sidecars are fully covered above with bounded transient retry;
+    # do not re-stat/reopen them here (second TOCTOU).
 
 class _LockedConnection:
     """SQLite connection retaining pinned root, marker, and store-lock FDs."""
@@ -189,7 +184,7 @@ def open_existing_session(root: Path, *, lock_mode: Literal['shared', 'exclusive
         _validate_db_file(root_fd)
         conn = _connect_raw(absolute)
         try:
-            _validate_top_namespace(root_fd)
+            _validate_stable_namespace(root_fd)
             _validate_db_instance(conn, root_instance_id)
         except BaseException:
             conn.close()

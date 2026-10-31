@@ -41,7 +41,7 @@ class AdminStore:
         # Validate all user-supplied data before filesystem access.
         ref = ConversationRef.new_group()
         validate_metadata(ref, metadata)
-        conn = open_existing_session(self._root, lock_mode='shared')
+        conn = open_existing_session(self._root, lock_mode='exclusive')
         try:
             with _transaction_context(conn, 'BEGIN IMMEDIATE'):
                 _ensure_root_ready(conn, _root_instance_id_from_conn(conn))
@@ -73,7 +73,7 @@ class AdminStore:
         metadata = {'title': title, 'title_source': title_source,
                     'naming_attempted': naming_attempted, 'participants': participants}
         validate_metadata(ref, metadata)
-        conn = open_existing_session(self._root)
+        conn = open_existing_session(self._root, lock_mode='exclusive')
         try:
             with _transaction_context(conn, 'BEGIN IMMEDIATE'):
                 _ensure_root_ready(conn, _root_instance_id_from_conn(conn))
@@ -98,7 +98,7 @@ class AdminStore:
 
     def purge_before(self, cutoff: str) -> int:
         parse_ts(cutoff)
-        conn = open_existing_session(self._root, lock_mode='shared')
+        conn = open_existing_session(self._root, lock_mode='exclusive')
         try:
             with _transaction_context(conn, 'BEGIN IMMEDIATE'):
                 _audit_in_transaction(conn, full=False)
@@ -162,7 +162,7 @@ class AdminStore:
 
         # Final phase permits only a pure concurrent append suffix. Purge or
         # another compaction changes generation and conflicts without retry.
-        conn = open_existing_session(self._root, lock_mode='shared')
+        conn = open_existing_session(self._root, lock_mode='exclusive')
         try:
             with _transaction_context(conn, 'BEGIN IMMEDIATE'):
                 _ensure_root_ready(conn, _root_instance_id_from_conn(conn))

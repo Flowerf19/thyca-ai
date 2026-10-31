@@ -249,6 +249,8 @@ def test_malformed_persisted_fields_error(tmp_path: Path) -> None:
 
 def test_write_permission_failure_propagates(tmp_path: Path) -> None:
     import os, stat
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        pytest.skip("permission bits do not block uid 0; run as non-root")
     store = PrivateFollowupStore(tmp_path)
     p = _mk(store)
     path = tmp_path / "bots" / "coder" / "workspace" / "private_followups.json"

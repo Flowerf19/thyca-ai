@@ -20,12 +20,14 @@ from .rootfs import (DM_MARKERS_NAME, DM_MARKER_MAX_BYTES, LOCK_FILE_NAME, ROOT_
                      _marker_filename,
                      _open_root, _open_store_lock, _parse_marker_bytes, _publish_marker,
                      _read_dm_marker, _read_marker_at, _reserved_root_entries, _stat_at,
-                     _validate_root_artifacts, _validate_top_namespace, _verify_root_name)
+                     _validate_root_artifacts, _validate_stable_namespace,
+                     _validate_top_namespace, _verify_root_name)
 
 def _audit_in_transaction(conn: _LockedConnection, *, full: bool) -> None:
     root_instance_id = _root_instance_id_from_conn(conn)
     _ensure_root_ready(conn, root_instance_id)
-    _validate_top_namespace(conn.root_fd)
+    # Inside a SQLite read transaction: do not open/close -shm here.
+    _validate_stable_namespace(conn.root_fd)
     # First pass streams every marker and validates it against the same SQLite
     # snapshot. It retains no per-bot set in memory.
     for entry in os.scandir(conn.marker_fd):

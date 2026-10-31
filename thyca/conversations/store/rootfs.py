@@ -6,10 +6,15 @@ import json
 import os
 import re
 import stat
+import time
 from pathlib import Path
 
 from thyca.core.conversation import ConversationRef
 from .contracts import ConversationStoreError, _ATTEMPT_RE, _local_error, _reject_duplicate_pairs, _validate_uuid
+
+class _TransientSidecarError(Exception):
+    """Transient -wal/-shm disappearance/replacement; safe to re-stat."""
+
 
 DB_FILE_NAME = "conversations.db"
 
@@ -212,19 +217,57 @@ def _validate_top_namespace(root_fd: int) -> None:
     for name in os.scandir(root_fd):
         if name.name.startswith('conversations.') and name.name not in allowed:
             raise ConversationStoreError()
-    wal = _stat_at(root_fd, DB_FILE_NAME + '-wal')
-    shm = _stat_at(root_fd, DB_FILE_NAME + '-shm')
-    if (wal is None) != (shm is None):
-        raise ConversationStoreError()
-    for name, info in ((DB_FILE_NAME + '-wal', wal), (DB_FILE_NAME + '-shm', shm)):
-        if info is not None:
-            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
-                    or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1):
-                raise ConversationStoreError()
-            probe, opened = _checked_regular_at(root_fd, name, mode=0o600)
-            os.close(probe)
-            if not _same_inode(info, opened):
-                raise ConversationStoreError()
+    # Transient checkpoint race: -wal/-shm can appear/disappear or be
+    # replaced while another store session checkpoints. Retry briefly
+    # under the approved LOCK_SH discipline instead of failing closed
+    # immediately. Persistent mismatches/modes still fail closed.
+    for _ in range(5):
+        wal = _stat_at(root_fd, DB_FILE_NAME + '-wal')
+        shm = _stat_at(root_fd, DB_FILE_NAME + '-shm')
+        if (wal is None) != (shm is None):
+            time.sleep(0.01)
+            continue
+        try:
+            for name, info in ((DB_FILE_NAME + '-wal', wal), (DB_FILE_NAME + '-shm', shm)):
+                if info is not None:
+                    if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                            or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1):
+                        # Persistent invariant failure: do not retry.
+                        raise ConversationStoreError()
+                    try:
+                        probe, opened = _checked_regular_at(root_fd, name, mode=0o600)
+                    except ConversationStoreError as exc:
+                        # Transient only when the sidecar vanished mid-check.
+                        if isinstance(exc.__cause__, FileNotFoundError):
+                            raise _TransientSidecarError() from exc
+                        raise
+                    os.close(probe)
+                    if not _same_inode(info, opened):
+                        # Replaced between stat and open: transient.
+                        raise _TransientSidecarError()
+        except _TransientSidecarError:
+            time.sleep(0.01)
+            continue
+        except ConversationStoreError:
+            raise
+        return
+    raise ConversationStoreError()
+
+
+def _validate_stable_namespace(root_fd: int) -> None:
+    """Post-connect namespace check without touching -wal/-shm.
+
+    Called after SQLite has obtained its own locks/mmap. Opening then
+    closing our own -shm FD here would release this process's POSIX locks
+    on that inode and let another process truncate mapped -shm.
+    """
+    allowed = {
+        DB_FILE_NAME, DB_FILE_NAME + '-wal', DB_FILE_NAME + '-shm', LOCK_FILE_NAME,
+        ROOT_MARKER_NAME, ROOT_MARKER_TEMP, DM_MARKERS_NAME,
+    }
+    for name in os.scandir(root_fd):
+        if name.name.startswith('conversations.') and name.name not in allowed:
+            raise ConversationStoreError()
 
 def _open_store_lock(root_fd: int, *, create: bool = False) -> tuple[int, bool]:
     created = False

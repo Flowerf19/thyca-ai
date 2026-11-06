@@ -77,8 +77,6 @@ def test_public_store_package_exports_expected_api() -> None:
         RuntimeReadIntent,
         RuntimeWriteIntent,
         SCHEMA_VERSION,
-        SyntheticReadIntent,
-        SyntheticWriteIntent,
         RetryReadiness,
         ensure_runtime_store,
         is_runtime_ready,
@@ -87,11 +85,6 @@ def test_public_store_package_exports_expected_api() -> None:
         runtime_reader_for,
         assemble_history,
         detail_for,
-        get_detail,
-        get_summary,
-        get_trace_detail,
-        get_trace_turns,
-        list_summaries,
         summary_for,
         trace_detail_for,
         trace_turns_for,
@@ -99,36 +92,13 @@ def test_public_store_package_exports_expected_api() -> None:
         append_server_message,
         append_turn_error,
         record_turn_error,
-        plan_turn_retry,
-        mark_fixture_naming_attempted,
-        store_fixture_title_if_missing,
-        refresh_fixture_title,
+        mark_naming_attempted,
+        store_title_if_missing,
         project_for_trace,
-        fixture_trace_turns_for,
-        fixture_trace_detail_for,
-        fixture_trace_turns,
-        fixture_trace_detail,
-        fixture_completed_turn_count,
-        fixture_window_for,
-        fixture_private_fallback,
-        fixture_origin_info,
-        fixture_post_room_message,
-        fixture_post_dm_message,
-        fixture_post_card,
-        fixture_record_bus_envelope,
-        fixture_collect_exchange_rooms,
-        fixture_read_bot_settings,
-        fixture_write_bot_settings,
-        fixture_memory_remember,
-        fixture_canonical_messages,
+        trace_turns_projected,
         create_group,
-        delete_conversation,
         prepare_retry,
         set_conversation_metadata,
-        enable_fixture_writes,
-        disable_fixture_writes,
-        is_fixture_write_enabled,
-        is_legacy_writer_blocked,
         validate_message,
         validate_metadata,
     )
@@ -139,8 +109,6 @@ def test_public_store_package_exports_expected_api() -> None:
         'ConversationStoreError': ConversationStoreError,
         'RootInitializationIntent': RootInitializationIntent,
         'DMBootstrapIntent': DMBootstrapIntent,
-        'SyntheticReadIntent': SyntheticReadIntent,
-        'SyntheticWriteIntent': SyntheticWriteIntent,
         'RuntimeReadIntent': RuntimeReadIntent,
         'RuntimeWriteIntent': RuntimeWriteIntent,
         'ensure_runtime_store': ensure_runtime_store,
@@ -156,11 +124,6 @@ def test_public_store_package_exports_expected_api() -> None:
         'ConversationPage': ConversationPage,
         'assemble_history': assemble_history,
         'detail_for': detail_for,
-        'get_detail': get_detail,
-        'get_summary': get_summary,
-        'get_trace_detail': get_trace_detail,
-        'get_trace_turns': get_trace_turns,
-        'list_summaries': list_summaries,
         'summary_for': summary_for,
         'trace_detail_for': trace_detail_for,
         'trace_turns_for': trace_turns_for,
@@ -168,36 +131,13 @@ def test_public_store_package_exports_expected_api() -> None:
         'append_server_message': append_server_message,
         'append_turn_error': append_turn_error,
         'record_turn_error': record_turn_error,
-        'plan_turn_retry': plan_turn_retry,
-        'mark_fixture_naming_attempted': mark_fixture_naming_attempted,
-        'store_fixture_title_if_missing': store_fixture_title_if_missing,
-        'refresh_fixture_title': refresh_fixture_title,
+        'mark_naming_attempted': mark_naming_attempted,
+        'store_title_if_missing': store_title_if_missing,
         'project_for_trace': project_for_trace,
-        'fixture_trace_turns_for': fixture_trace_turns_for,
-        'fixture_trace_detail_for': fixture_trace_detail_for,
-        'fixture_trace_turns': fixture_trace_turns,
-        'fixture_trace_detail': fixture_trace_detail,
-        'fixture_completed_turn_count': fixture_completed_turn_count,
-        'fixture_window_for': fixture_window_for,
-        'fixture_private_fallback': fixture_private_fallback,
-        'fixture_origin_info': fixture_origin_info,
-        'fixture_post_room_message': fixture_post_room_message,
-        'fixture_post_dm_message': fixture_post_dm_message,
-        'fixture_post_card': fixture_post_card,
-        'fixture_record_bus_envelope': fixture_record_bus_envelope,
-        'fixture_collect_exchange_rooms': fixture_collect_exchange_rooms,
-        'fixture_read_bot_settings': fixture_read_bot_settings,
-        'fixture_write_bot_settings': fixture_write_bot_settings,
-        'fixture_memory_remember': fixture_memory_remember,
-        'fixture_canonical_messages': fixture_canonical_messages,
+        'trace_turns_projected': trace_turns_projected,
         'create_group': create_group,
-        'delete_conversation': delete_conversation,
         'prepare_retry': prepare_retry,
         'set_conversation_metadata': set_conversation_metadata,
-        'enable_fixture_writes': enable_fixture_writes,
-        'disable_fixture_writes': disable_fixture_writes,
-        'is_fixture_write_enabled': is_fixture_write_enabled,
-        'is_legacy_writer_blocked': is_legacy_writer_blocked,
         'PageCursor': PageCursor,
         'validate_metadata': validate_metadata,
         'validate_message': validate_message,
@@ -1047,7 +987,7 @@ def test_admin_list_skips_corrupt_door_but_direct_read_fails(tmp_path: Path) -> 
 
 def test_runtime_paths_reject_timestamp_public_doors(tmp_path: Path) -> None:
     from thyca.conversations.store.runtime import ensure_runtime_store, resolve_ref
-    from thyca.sessions.store import SessionStore
+    from thyca.conversations.runtime.store import SessionStore
 
     ensure_runtime_store(tmp_path)
     store = SessionStore(tmp_path / 'sessions')
@@ -1058,8 +998,6 @@ def test_runtime_paths_reject_timestamp_public_doors(tmp_path: Path) -> None:
         store.create(legacy_id)
     with pytest.raises(Exception):
         store.load(legacy_id)
-    # Canonical per-bot timeline ids keep their own internal grammar.
-    from thyca.bots.timeline import CanonicalSessionStore  # noqa: F401
-    from thyca.sessions.store import _LEGACY_TS_RE
-
-    assert _LEGACY_TS_RE.fullmatch(legacy_id)
+    # Public binding paths reject canonical timestamp ids outright.
+    with pytest.raises(Exception):
+        store.path_for(legacy_id)

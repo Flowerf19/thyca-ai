@@ -8,7 +8,7 @@ tiết: `.agents/plans/tool-gateway-unified-execution.md`.
 
 ```mermaid
 flowchart TD
-    subgraph LOOP["Agent loop — thyca/agent (KHÔNG ĐỔI)"]
+    subgraph LOOP["Agent loop — thyca/agents (KHÔNG ĐỔI)"]
         A["Assemble"] --> T["Think"] --> AC["Act"] --> O["Observe"]
     end
 

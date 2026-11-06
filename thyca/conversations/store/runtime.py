@@ -1,14 +1,12 @@
-"""Runtime (non-fixture) conversation-store path for all roots.
+"""Runtime conversation-store path for all roots.
 
-Fixture-only gating lives in :mod:`fixture_switch` and keeps refusing
-the live root; its tests stay unchanged. This module is the separate
-explicit runtime path approved for the hard-cut branch: it works on any
-initialized root (including tmp fixture roots and, once the legacy
-guard passes, the live root) without touching ``fixture_switch``.
+This module is the explicit runtime path for the hard-cut branch: it
+works on any initialized root (including tmp test roots and, once the
+legacy guard passes, the live root).
 
 - ``RuntimeReadIntent``/``RuntimeWriteIntent`` are explicit caller
-  assertions that the call targets the runtime store path (not a
-  fixture). They are not authentication.
+  assertions that the call targets the runtime store path. They are
+  not authentication.
 - ``ensure_runtime_store`` is the trusted local initializer: only the
   local ``ChatApp`` process construction (server-side startup, never an
   HTTP/CLI request handler) may call it to initialize a genuinely fresh
@@ -39,7 +37,6 @@ from .contracts import (
     RootInitializationIntent,
 )
 
-_LEGACY_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_[0-9a-f]{4}\Z")
 _GROUP_RE = re.compile(r"group-[0-9a-f]{32}\Z")
 _BOT_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 

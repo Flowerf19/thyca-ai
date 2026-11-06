@@ -13,7 +13,7 @@ ThycaRouter.register('memories', { title: 'Nhật ký', stylesheet: '/ui/memorie
 //      POST /api/memory/forget {session_id}             — drop a leaf
 
 
-/* Same rules as thyca/memory/stats.py so per-leaf badges match the
+/* Same rules as thyca/memories/stats.py so per-leaf badges match the
    server-computed expiring/suggest_removal lists after a local update. */
 const EXPIRE_SOON_DAYS = 14;
 const SUGGEST_IDLE_DAYS = 7;

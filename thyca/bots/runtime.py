@@ -15,8 +15,8 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from thyca.agent.compacting import compact_with_llm
-from thyca.agent.events import EventSink, wire_retry_events
+from thyca.agents.compacting import compact_with_llm
+from thyca.agents.events import EventSink, wire_retry_events
 from thyca.bots.bus import MAX_REF_CHARS, MAX_REFS, Bus, Envelope, new_span_id
 from thyca.bots.card import BASELINE_BOT_TOOLS, BotCard, identity_text
 from thyca.bots.context import (
@@ -36,14 +36,14 @@ from thyca.bots.registry import BotRegistry, RegistryError
 from thyca.bots.status import AgentStatusTracker
 from thyca.bots.usage import is_countable_number, is_stop_status
 from thyca.bots.workspace import WorkspaceRegistry, WorkspaceTurnConflict
-from thyca.config import Config
+from thyca.configs import Config
 from thyca.core.channel import WindowRef
 from thyca.core.protocol import Message
-from thyca.llm.llm_base import LLMError
-from thyca.llm.llm_factory import ConnectFactory
-from thyca.memory.identity import bind_bot_id, reset_bot_id
-from thyca.sessions import SessionManager, calibration_factor
-from thyca.sessions.store import SessionStore
+from thyca.llms.llm_base import LLMError
+from thyca.llms.llm_factory import ConnectFactory
+from thyca.memories.identity import bind_bot_id, reset_bot_id
+from thyca.conversations.runtime import SessionManager, calibration_factor
+from thyca.conversations.runtime.store import SessionStore
 from thyca.tools.memory_tools import bind_chat_session, reset_chat_session
 
 #: Admin tools (BE-5, ``bot_*``) live only in Thyca's registry: child-bot
@@ -145,7 +145,7 @@ def _segment_checkpointed(messages, context_tokens: int) -> bool:
     any checkpoint means the agent already wrote what matters, so the
     system's mono extraction can stand down.
     """
-    from thyca.agent.context_budget import checkpoint_state
+    from thyca.agents.context_budget import checkpoint_state
 
     return checkpoint_state(
         messages,
@@ -429,7 +429,7 @@ class BotRuntime:
             operation_cfg, card, model_override=model_override
         )
         turn_cfg = overlay_turn_cfg(turn_cfg, None, effort)
-        from thyca.memory.visibility import (
+        from thyca.memories.visibility import (
             MemoryView,
             bound_memory_view,
             current_memory_view,
@@ -487,7 +487,7 @@ class BotRuntime:
         fallback"; corrupt/permission failures propagate rather than
         silently downgrade."""
         from thyca.core.channel import WindowRef
-        from thyca.sessions.errors import SessionNotFound
+        from thyca.conversations.runtime.errors import SessionNotFound
 
         try:
             session = SessionStore(self._dir / "sessions").load(room_id)
@@ -548,7 +548,7 @@ class BotRuntime:
                 _sink(event)
 
         try:
-            from thyca.memory.visibility import current_memory_view
+            from thyca.memories.visibility import current_memory_view
 
             _window = None
             _view = current_memory_view()
@@ -679,7 +679,7 @@ class BotRuntime:
             # prediction below, so every injected section — including the
             # channel brief — is priced by PromptManager.build(hot).
             from thyca.bots.workspace_context import build_workspace_hot
-            from thyca.memory.visibility import current_memory_view
+            from thyca.memories.visibility import current_memory_view
             from thyca.bots.private_followups import PrivateFollowupStore
 
             _view = current_memory_view()
@@ -736,10 +736,10 @@ class BotRuntime:
             will_compact = False
             if self.memory_flush is not None:
                 try:
-                    from thyca.agent.shrink import estimate_wire_tokens
+                    from thyca.agents.shrink import estimate_wire_tokens
                     from thyca.bots.workspace_context import overhead_tokens
                     from thyca.core.protocol import Message as _Msg
-                    from thyca.sessions.summary import SUMMARY_MAX_CHARS
+                    from thyca.conversations.runtime.summary import SUMMARY_MAX_CHARS
 
                     _hot_tokens, _tools_tokens = overhead_tokens(hot, filtered)
                     plan = sessions.compactor.plan(
@@ -856,7 +856,7 @@ class BotRuntime:
                             _bot_ctx["work_id"] = _wr
                 on_hot_ready = None
                 if diagnostic_sink is not None:
-                    from thyca.llm.prompt_manager import PromptManager
+                    from thyca.llms.prompt_manager import PromptManager
 
                     def on_hot_ready(final_hot) -> None:
                         diagnostic_sink({
@@ -1048,7 +1048,7 @@ class BotRuntime:
 
         A bot's turn starts by reading its mailbox; queued ``delegate`` /
         ``message`` envelopes arrive as context above the user's text."""
-        from thyca.memory.visibility import current_memory_view
+        from thyca.memories.visibility import current_memory_view
 
         view = current_memory_view()
         if view is None:
@@ -1100,7 +1100,7 @@ class BotRuntime:
 
     def _pending_relevant(self, bot_id: str) -> list[Envelope]:
         """Queued envelopes to or from ``bot_id`` (task-view input)."""
-        from thyca.memory.visibility import current_memory_view
+        from thyca.memories.visibility import current_memory_view
 
         view = current_memory_view()
 
@@ -1139,7 +1139,7 @@ class BotRuntime:
             pass
 
     def zone(self) -> ZoneInfo:
-        from thyca.config import DEFAULT_TIMELINE_TIMEZONE
+        from thyca.configs import DEFAULT_TIMELINE_TIMEZONE
 
         try:
             return ZoneInfo(DEFAULT_TIMELINE_TIMEZONE)

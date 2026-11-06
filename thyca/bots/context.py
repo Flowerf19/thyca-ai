@@ -15,10 +15,10 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from zoneinfo import ZoneInfo
 
-    from thyca.agent.act import Act
-    from thyca.agent.think import LLMPort
-    from thyca.memory.active import ActiveMemory, ActiveState
-    from thyca.sessions.store import SessionStore
+    from thyca.agents.act import Act
+    from thyca.agents.think import LLMPort
+    from thyca.memories.active import ActiveMemory, ActiveState
+    from thyca.conversations.runtime.store import SessionStore
 
 
 @dataclass

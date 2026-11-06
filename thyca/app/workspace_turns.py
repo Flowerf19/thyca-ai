@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from zoneinfo import ZoneInfo
 
-from thyca.agent.events import EventSink, TurnEvent
+from thyca.agents.events import EventSink, TurnEvent
 from thyca.app.loop_turns import TurnCancelled
 from thyca.app.turn_options import (
     SYSTEM_TEXT_MAX,
@@ -33,10 +33,10 @@ class WorkspaceTurnService:
 
     async def _leased(self, bot_id: str, window, factory, event=None,
                       skip_busy: bool = False):
-        from thyca.memory.visibility import MemoryView, bound_memory_view
+        from thyca.memories.visibility import MemoryView, bound_memory_view
 
         if skip_busy and self._workspaces.busy(bot_id):
-            from thyca.sessions import SessionBusy
+            from thyca.conversations.runtime import SessionBusy
             raise SessionBusy(f"{bot_id} turn lease held")
         async with self._workspaces.lease(bot_id):
             # Deletion may have removed this card while the turn waited for

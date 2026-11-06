@@ -1,10 +1,9 @@
-"""Read adapter: store -> legacy wire payloads.
+"""Read adapter: store -> wire payloads.
 
 Reads only. Every entry point that touches the filesystem requires an
-explicit :class:`SyntheticReadIntent` (disposable fixture roots) or
-:class:`RuntimeReadIntent` (runtime store path on any initialized root,
-see ``runtime.py``). Without an explicit intent the call fails before
-any I/O. All writes stay on their own paths.
+explicit :class:`RuntimeReadIntent` (runtime store path on any
+initialized root, see ``runtime.py``). Without an explicit intent the
+call fails before any I/O. All writes stay on their own paths.
 
 Byte-compat contract (R1):
 - ``summary`` mirrors ``sessions.wire.session_summary`` (same keys).
@@ -24,26 +23,23 @@ Byte-compat contract (R1):
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Callable
 
 from thyca.core.conversation import ConversationRef
 from thyca.core.protocol import Message, parse_ts
 from thyca.serve.trace import TurnSummary, turns_from_session
-from thyca.sessions import Session, calibration_factor, context_usage
-from thyca.sessions.wire import ask_remember, message_dict, session_title, turn_slices
+from thyca.conversations.runtime import Session, calibration_factor, context_usage
+from thyca.conversations.runtime.wire import ask_remember, message_dict, session_title, turn_slices
 
-from .admin import AdminStore
 from .agent import AgentStore
 from .contracts import (
     MAX_PAGE_LIMIT,
     Conversation,
-    ConversationListing,
     ConversationStoreError,
     PageCursor,
 )
+from .runtime import RuntimeReadIntent
 
 #: Bound on resync restarts while assembling one history. A concurrently
 #: compacted/purged conversation bumps generation per page; without a bound
@@ -52,30 +48,11 @@ from .contracts import (
 _MAX_ASSEMBLY_RESYNCS = 5
 
 
-@dataclass(frozen=True)
-class SyntheticReadIntent:
-    """Explicit caller assertion for a synthetic-fixture read.
-
-    This value is not authentication: it only forces the caller to state
-    that the read targets a disposable fixture root. Production wiring
-    needs separately approved trusted read authority (R2).
-    """
-
-    purpose: str
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.purpose, str) or not self.purpose.strip():
-            raise ValueError('purpose must be a non-empty string')
-
-
+# Require an explicit runtime read intent before any store I/O.
 def _require_intent(intent: object):
-    # Runtime path (all roots) uses RuntimeReadIntent; fixture-only tests
-    # keep using SyntheticReadIntent. Both are explicit, neither is auth.
-    from .runtime import RuntimeReadIntent as _RuntimeReadIntent
-
-    if isinstance(intent, (SyntheticReadIntent, _RuntimeReadIntent)):
+    if isinstance(intent, RuntimeReadIntent):
         return intent
-    raise ValueError('explicit synthetic or runtime read intent required')
+    raise ValueError('explicit runtime read intent required')
 
 
 def _check_page_limit(page_limit: object) -> int:
@@ -84,12 +61,13 @@ def _check_page_limit(page_limit: object) -> int:
     return min(page_limit, MAX_PAGE_LIMIT)
 
 
+# Assemble one full conversation history across paged store reads.
 def assemble_history(
     root: Path,
     ref: ConversationRef,
     actor: str,
     *,
-    intent: SyntheticReadIntent,
+    intent: RuntimeReadIntent,
     page_limit: int = 500,
 ) -> Conversation:
     """Assemble one full conversation across ``AgentStore.read`` pages.
@@ -145,21 +123,22 @@ def assemble_history(
     )
 
 
-def _synthetic_session(
+# Project a store conversation onto the wire Session shape.
+def _wire_session(
     conversation: Conversation,
     *,
     session_id: str | None = None,
 ) -> Session:
-    """Project a store conversation onto the legacy :class:`Session` shape.
+    """Project a store conversation onto the :class:`Session` shape.
 
-    ``path`` is a synthetic placeholder: ``turns_from_session`` and the
+    ``path`` is a placeholder: ``turns_from_session`` and the
     title/blank helpers never stat it. ``updated_at`` callers must not use
     this session's path; the adapter resolves timestamps explicitly.
     """
     ref = conversation.ref
     return Session(
         session_id or ref.id,
-        Path(f'synthetic://{ref.kind}/{ref.id}'),
+        Path(f'store://{ref.kind}/{ref.id}'),
         list(conversation.messages),
         title=conversation.title,
         title_source=conversation.title_source,
@@ -183,7 +162,7 @@ def _updated_at(messages: tuple[Message, ...] | list[Message], created_at: str |
 # Build the wire summary with kind taken from the conversation ref.
 def summary_for(conversation: Conversation, created_at: str) -> dict:
     """Wire-shaped summary for one assembled conversation (pure, no I/O)."""
-    session = _synthetic_session(conversation)
+    session = _wire_session(conversation)
     return {
         'id': session.id,
         'title': session_title(session),
@@ -212,7 +191,7 @@ def detail_for(
     ``context`` is the transcript-only lower bound, matching the wire
     fallback for I/O-free callers.
     """
-    session = _synthetic_session(conversation)
+    session = _wire_session(conversation)
     context = context_usage(
         list(conversation.messages),
         cfg.effective_limits().contextTokens,
@@ -237,11 +216,13 @@ def detail_for(
     return detail
 
 
+# Build trace turns over one assembled conversation.
 def trace_turns_for(conversation: Conversation) -> list[TurnSummary]:
     """Trace turns over one assembled conversation (pure, no I/O)."""
-    return turns_from_session(_synthetic_session(conversation))
+    return turns_from_session(_wire_session(conversation))
 
 
+# Build one wire-shaped trace detail over an assembled conversation.
 def trace_detail_for(
     conversation: Conversation,
     turn_index: int,
@@ -265,102 +246,3 @@ def trace_detail_for(
             ]
             return payload
     raise ValueError('trace not found')
-
-
-def get_summary(
-    root: Path,
-    ref: ConversationRef,
-    actor: str,
-    *,
-    intent: SyntheticReadIntent,
-    created_at: str | None = None,
-    page_limit: int = 500,
-) -> dict:
-    """Assemble history and return the wire-shaped summary."""
-    _require_intent(intent)
-    conversation = assemble_history(root, ref, actor, intent=intent, page_limit=page_limit)
-    if created_at is None:
-        if conversation.messages:
-            created_at = conversation.messages[-1].ts
-        else:
-            raise ValueError('created_at is required for an empty conversation')
-    return summary_for(conversation, created_at)
-
-
-def get_detail(
-    root: Path,
-    ref: ConversationRef,
-    actor: str,
-    cfg,
-    *,
-    intent: SyntheticReadIntent,
-    page_limit: int = 500,
-    skills_root: Path | None = None,
-) -> dict:
-    """Assemble history and return the wire-shaped detail."""
-    _require_intent(intent)
-    conversation = assemble_history(root, ref, actor, intent=intent, page_limit=page_limit)
-    return detail_for(conversation, cfg, skills_root=skills_root)
-
-
-def get_trace_turns(
-    root: Path,
-    ref: ConversationRef,
-    actor: str,
-    *,
-    intent: SyntheticReadIntent,
-    page_limit: int = 500,
-) -> list[TurnSummary]:
-    """Assemble history and return trace turns (newest logic lives in caller)."""
-    _require_intent(intent)
-    return trace_turns_for(
-        assemble_history(root, ref, actor, intent=intent, page_limit=page_limit)
-    )
-
-
-def get_trace_detail(
-    root: Path,
-    ref: ConversationRef,
-    actor: str,
-    turn_index: int,
-    *,
-    intent: SyntheticReadIntent,
-    page_limit: int = 500,
-    skills_root: Path | None = None,
-) -> dict:
-    """Assemble history and return one wire-shaped trace detail."""
-    _require_intent(intent)
-    conversation = assemble_history(root, ref, actor, intent=intent, page_limit=page_limit)
-    return trace_detail_for(conversation, turn_index, skills_root=skills_root)
-
-
-def list_summaries(
-    root: Path,
-    *,
-    intent: SyntheticReadIntent,
-    actor_for: Callable[[ConversationListing], str],
-    limit: int = 100,
-    offset: int = 0,
-    page_limit: int = 500,
-) -> tuple[list[dict], bool]:
-    """Paginated wire-shaped summaries, newest first (synthetic roots only).
-
-    ``actor_for`` maps each listing row to its membership-checked reader;
-    it runs outside any store transaction. Histories assemble per
-    conversation via :func:`assemble_history`, so a listing page costs one
-    list query plus one paged assembly per row.
-    """
-    _require_intent(intent)
-    if not callable(actor_for):
-        raise ValueError('actor_for must be callable')
-    page_limit = _check_page_limit(page_limit)
-    admin = AdminStore(Path(root))
-    listings, has_more = admin.list(limit=limit, offset=offset)
-    summaries: list[dict] = []
-    for listing in listings:
-        actor = actor_for(listing)
-        conversation = assemble_history(
-            root, listing.ref, actor, intent=intent, page_limit=page_limit
-        )
-        summaries.append(summary_for(conversation, listing.created_at))
-    return summaries, has_more

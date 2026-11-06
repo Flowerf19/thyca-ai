@@ -5,10 +5,10 @@ import pytest
 
 from thyca.app.chat_app import ChatApp
 from thyca.bots.card import BotCard, BotModel
-from thyca.config import ModelCfg, save
+from thyca.configs import ModelCfg, save
 from seeded_config import seeded_config
 from thyca.core.protocol import Message
-from thyca.sessions.compaction import estimate_tokens
+from thyca.conversations.runtime.compaction import estimate_tokens
 
 
 class NoCalls:

@@ -7,15 +7,15 @@ from datetime import datetime, timezone
 import pytest
 
 from thyca.core.protocol import ToolCall
-from thyca.memory.facade import MemoryFacade
-from thyca.memory.heading import (
+from thyca.memories.facade import MemoryFacade
+from thyca.memories.heading import (
     parse_heading,
     render_heading,
     HeadingMeta,
     new_task_id,
     validate_task_meta,
 )
-from thyca.memory.identity import bind_bot_id, reset_bot_id
+from thyca.memories.identity import bind_bot_id, reset_bot_id
 from thyca.tools.gateway import ToolGateway
 from thyca.tools.memory_tools import register_memory_tools
 from thyca.tools.registry import ToolRegistry
@@ -302,7 +302,7 @@ def _schema_without(*drop: str, with_graph: bool = True) -> str:
     old DB."""
     from pathlib import Path as _Path
 
-    script = (_Path(__file__).parent.parent / "thyca" / "memory" / "schema.sql").read_text(
+    script = (_Path(__file__).parent.parent / "thyca" / "memories" / "schema.sql").read_text(
         encoding="utf-8"
     )
     out: list[str] = []

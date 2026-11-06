@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
-from thyca.config import REASONING_EFFORTS, Config, ProviderCfg
+from thyca.configs import REASONING_EFFORTS, Config, ProviderCfg
 
 if TYPE_CHECKING:
     from thyca.bots.card import BotCard

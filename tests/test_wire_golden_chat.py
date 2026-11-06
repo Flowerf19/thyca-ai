@@ -1,9 +1,9 @@
 """Golden test: freeze CURRENT Chat Completions wire bytes (GOAL-001 TASK-001).
 
 Current module paths (2026-09-29, branch refactor/provider-rebuild):
-  payload items .. thyca.llm.openai_chat._to_openai_message
-  endpoint ...... thyca.llm.openai_chat._chat_url
-  config ........ thyca.config.providers.ProviderCfg
+  payload items .. thyca.llms.openai_chat._to_openai_message
+  endpoint ...... thyca.llms.openai_chat._chat_url
+  config ........ thyca.configs.providers.ProviderCfg
 Merged 2026-09-29 (TASK-005): chat parse/SSE now live in openai_chat.py;
 the EXPECTED_* bytes below stayed identical.
 """
@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import json
 
-from thyca.config.providers import ProviderCfg
+from thyca.configs.providers import ProviderCfg
 from thyca.core.protocol import Message, ToolCall
-from thyca.llm.openai_chat import _chat_url, _to_openai_message
+from thyca.llms.openai_chat import _chat_url, _to_openai_message
 
 BASE_URL = "https://api.example.com/v1"
 MODEL = "golden-model"

@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from thyca.config import (
+from thyca.configs import (
     Config,
     ConfigError,
     LimitsCfg,
@@ -48,7 +48,7 @@ def test_default_config_valid(tmp_path: Path) -> None:
 
 def test_non_empty_providers_with_empty_defaults_roundtrip(tmp_path: Path) -> None:
     """save→load never breaks when defaults stay empty (partial setups)."""
-    from thyca.config import _parse_dict
+    from thyca.configs import _parse_dict
 
     cfg = Config(providers={"a": ProviderEntry(baseUrl="https://a.example/v1")})
     assert cfg.defaultProvider == "" and cfg.defaultModel == ""
@@ -168,7 +168,7 @@ def test_save_fails_closed_when_lock_is_unavailable(
         def __init__(self, *_args: object, **_kwargs: object) -> None:
             raise RuntimeError("lock unavailable")
 
-    monkeypatch.setattr("thyca.config.store.FileLock", BrokenLock)
+    monkeypatch.setattr("thyca.configs.store.FileLock", BrokenLock)
     p = tmp_path / "config.json"
     with pytest.raises(ConfigError, match="cannot lock"):
         save(default_config(), p)
@@ -444,7 +444,7 @@ def test_config_guide_written_on_ensure_default(
     import os
 
     import thyca
-    import thyca.config as cfgmod
+    import thyca.configs as cfgmod
 
     monkeypatch.setenv("HOME", str(tmp_path))
     guide = cfgmod.write_config_guide()
@@ -465,7 +465,7 @@ def test_config_guide_written_on_ensure_default(
 def test_ensure_default_writes_guide(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import thyca.config as cfgmod
+    import thyca.configs as cfgmod
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.chdir(tmp_path)
@@ -811,7 +811,7 @@ def test_atomic_write_temp_created_0600(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """F4: the .tmp file is 0600 at creation, never world-readable."""
-    from thyca.config.store import _atomic_write_json
+    from thyca.configs.store import _atomic_write_json
 
     old_umask = os.umask(0)  # fully permissive: creation mode is fully visible
     try:
@@ -852,7 +852,7 @@ import pytest
 from pathlib import Path
 
 def test_x7_atomic_write_is_0600_and_self_cleaning(tmp_path: Path) -> None:
-    from thyca.config.store import atomic_write_text
+    from thyca.configs.store import atomic_write_text
 
     old_umask = os.umask(0)
     try:
@@ -870,9 +870,9 @@ def test_x7_atomic_write_is_0600_and_self_cleaning(tmp_path: Path) -> None:
 
 
 def test_x25_single_range_table() -> None:
-    from thyca.config import config_schema
-    from thyca.config.defaults import LIMIT_RANGES
-    from thyca.config.limits import LimitsCfg
+    from thyca.configs import config_schema
+    from thyca.configs.defaults import LIMIT_RANGES
+    from thyca.configs.limits import LimitsCfg
 
     assert LIMIT_RANGES["loopMax"] == (1, 200)
     schema = config_schema()
@@ -883,14 +883,14 @@ def test_x25_single_range_table() -> None:
 
 
 def test_x25_lock_path_single_home() -> None:
-    from thyca.config import store
+    from thyca.configs import store
 
     assert store._lock_path(Path("/x/config.json")) == Path("/x/config.json.lock")
 
 
 def test_x25_optional_int_strict() -> None:
-    from thyca.config import ConfigError
-    from thyca.config.validation import _optional_int
+    from thyca.configs import ConfigError
+    from thyca.configs.validation import _optional_int
 
     assert _optional_int(None, "n") is None
     assert _optional_int("", "n") is None
@@ -902,8 +902,8 @@ def test_x25_optional_int_strict() -> None:
 
 
 def test_x26_model_base_url_rule() -> None:
-    from thyca.config import default_config, resolve_model_base_url
-    from thyca.config.models import ModelCfg
+    from thyca.configs import default_config, resolve_model_base_url
+    from thyca.configs.models import ModelCfg
 
     assert resolve_model_base_url("http://p", None) == "http://p"
     assert resolve_model_base_url("http://p", ModelCfg()) == "http://p"
@@ -915,7 +915,7 @@ def test_x26_model_base_url_rule() -> None:
 
 
 def test_m1_falsy_model_fields_raise_not_coerce() -> None:
-    from thyca.config import ConfigError, _parse_dict
+    from thyca.configs import ConfigError, _parse_dict
 
     with pytest.raises(ConfigError, match="provider must be a string"):
         _parse_dict({"models": {"m": {"provider": 0}}})
@@ -924,7 +924,7 @@ def test_m1_falsy_model_fields_raise_not_coerce() -> None:
 
 
 def test_m1_mcp_server_command_is_required() -> None:
-    from thyca.config import McpServerCfg
+    from thyca.configs import McpServerCfg
 
     with pytest.raises(TypeError):
         McpServerCfg()  # type: ignore[call-arg]
@@ -937,7 +937,7 @@ def test_m1_symlink_config_path_gets_tightened_dir(
     import os
     import stat
 
-    from thyca.config import default_config, save
+    from thyca.configs import default_config, save
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     real = tmp_path / ".thyca" / "config.json"
@@ -951,7 +951,7 @@ def test_m1_symlink_config_path_gets_tightened_dir(
 
 # Moved from tests/test_b2_contracts.py (B2 batch).
 import warnings
-from thyca.config import (
+from thyca.configs import (
     Config,
     ConfigError,
     ModelCfg,
@@ -1016,7 +1016,7 @@ def test_model_without_own_effort_inherits_provider_effort() -> None:
 
 def test_model_max_tokens_default_resolve_and_own_wins() -> None:
     """Unset → default cap; a model's own maxTokens wins on resolve."""
-    from thyca.config.defaults import DEFAULT_MODEL_MAX_TOKENS
+    from thyca.configs.defaults import DEFAULT_MODEL_MAX_TOKENS
 
     assert DEFAULT_MODEL_MAX_TOKENS == 16384
     cfg = Config(

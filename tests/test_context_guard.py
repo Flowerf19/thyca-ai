@@ -4,23 +4,40 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from thyca.agent.act import Act
-from thyca.agent.assemble import Assemble
-from thyca.agent.events import TurnEvent
-from thyca.agent.loop import AgentLoop
-from thyca.agent.observe import Observe
-from thyca.agent.shrink import (
+from thyca.agents.act import Act
+from thyca.agents.assemble import Assemble
+from thyca.agents.events import TurnEvent
+from thyca.agents.loop import AgentLoop
+from thyca.agents.observe import Observe
+from thyca.agents.shrink import (
     FASTPATH_HEAD_CHARS,
     REFETCH_HEAD_CHARS,
     TRIGGER_RATIO,
     estimate_wire_tokens,
     shrink_stage_messages,
 )
-from thyca.agent.think import Think
+from thyca.agents.think import Think
 from thyca.core.protocol import Message, ToolCall, ToolResult
 from thyca.core.protocol import estimate_tokens as _chars_to_tokens
-from thyca.llm.llm_base import ChatReply
-from thyca.sessions import SessionManager
+from thyca.llms.llm_base import ChatReply
+from thyca.conversations.runtime import SessionManager
+
+# Build a canonical-timeline manager holding one execution session.
+def _canonical_manager(root: Path, limits=None) -> SessionManager:
+    from thyca.bots.timeline import CanonicalSessionStore, WorkspaceTimeline
+    from thyca.core.channel import WindowRef
+
+    timeline = WorkspaceTimeline(root, "thyca")
+    window = WindowRef(
+        window_id="thyca", channel_id="webui", kind="dm", participants=("thyca",))
+    session_id = "2026-01-01T00-00-00_ab12"
+    store = CanonicalSessionStore(
+        root / "bots" / "thyca" / "sessions",
+        timeline=timeline, window=window, session_id=session_id)
+    manager = SessionManager(store=store, limits=limits)
+    manager.load(session_id)
+    return manager
+
 
 
 def _tool(content: str, round_no: int | None = None, call_id: str = "c1") -> Message:
@@ -209,8 +226,8 @@ def _loop(
 
 
 def test_loop_shrink_history_then_continue_disk_intact(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    session = manager.create()
+    manager = _canonical_manager(tmp_path)
+    session = manager.current
     big = "h" * 8000
     manager.append(Message(role="user", content="old q"))
     manager.append(
@@ -240,15 +257,15 @@ def test_loop_shrink_history_then_continue_disk_intact(tmp_path: Path) -> None:
     # Wire saw the stub; disk keeps the full output.
     wire_tool = next(m for m in llm.requests[0] if m.role == "tool")
     assert "[shrunk:" in (wire_tool.content or "")
-    stored = SessionManager(tmp_path).load(session.id).messages
+    stored = _canonical_manager(tmp_path).load(session.id).messages
     disk_tool = next(m for m in stored if m.tool_call_id == "old-call")
     assert disk_tool.content == big
     assert "[shrunk:" not in (disk_tool.content or "")
 
 
 def test_loop_backstop_when_still_over_95(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    session = manager.create()
+    manager = _canonical_manager(tmp_path)
+    session = manager.current
     llm = _FakeLLM([ChatReply(content="never reached")])
     # User text alone exceeds 95% and is never shrinkable.
     context = 500
@@ -260,15 +277,14 @@ def test_loop_backstop_when_still_over_95(tmp_path: Path) -> None:
     )
     assert llm.requests == []
     assert [event.type for event in events] == ["turn.accepted"]
-    stored = SessionManager(tmp_path).load(session.id).messages
+    stored = _canonical_manager(tmp_path).load(session.id).messages
     assert stored[-1].role == "assistant"
     assert stored[-1].content == "context limit reached"
     assert (stored[-1].meta or {}).get("status") == "context_limit"
 
 
 def test_loop_guard_disabled_by_default(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    manager.create()
+    manager = _canonical_manager(tmp_path)
     llm = _FakeLLM([ChatReply(content="ok")])
     loop = AgentLoop(
         sessions=manager,
@@ -322,8 +338,8 @@ def test_history_before_run_start_ignores_round_protection() -> None:
 
 
 def test_loop_backstop_after_shrink_reports_both(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    session = manager.create()
+    manager = _canonical_manager(tmp_path)
+    session = manager.current
     manager.append(Message(role="user", content="old q"))
     manager.append(
         Message(
@@ -343,7 +359,7 @@ def test_loop_backstop_after_shrink_reports_both(tmp_path: Path) -> None:
     )
     assert llm.requests == []
     assert [event.type for event in events] == ["turn.accepted", "context.shrunk"]
-    stored = SessionManager(tmp_path).load(session.id).messages
+    stored = _canonical_manager(tmp_path).load(session.id).messages
     assert stored[-1].content == "context limit reached"
     assert (stored[-1].meta or {}).get("status") == "context_limit"
     # Minimal backstop meta: no stale usage/cost from a previous round.
@@ -353,8 +369,7 @@ def test_loop_backstop_after_shrink_reports_both(tmp_path: Path) -> None:
 def test_loop_live_exec_ids_reaches_think_under_pressure(tmp_path: Path) -> None:
     # Bug 1: loop passed Act.live_exec_ids without parens (bound method, not
     # a set), so any scanned in-run candidate crashed `in` with TypeError.
-    manager = SessionManager(tmp_path)
-    manager.create()
+    manager = _canonical_manager(tmp_path)
     big = "x" * 8000
     dispatcher = _FakeDispatcher(
         {
@@ -425,8 +440,7 @@ def test_loop_live_exec_ids_reaches_think_under_pressure(tmp_path: Path) -> None
 def test_pending_user_uses_wire_estimate(tmp_path: Path) -> None:
     # Bug 2: loop counted raw chars while the guard counts the wire payload
     # (~8-token undercount). Compactor and guard must agree within a few.
-    manager = SessionManager(tmp_path)
-    manager.create()
+    manager = _canonical_manager(tmp_path)
     seen: dict = {}
     real_compact = manager.compact_if_needed
 

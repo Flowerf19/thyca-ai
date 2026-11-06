@@ -14,8 +14,8 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from thyca.core.protocol import ToolCall
-from thyca.memory.archive_store import ArchiveError
-from thyca.memory.facade import MemoryFacade
+from thyca.memories.archive_store import ArchiveError
+from thyca.memories.facade import MemoryFacade
 from thyca.tools.gateway import ToolGateway
 from thyca.tools.memory_tools import register_memory_tools
 from thyca.tools.registry import ToolRegistry
@@ -121,7 +121,7 @@ def test_today_undecodable_file_keeps_typed_error(tmp_path: Path) -> None:
 def test_duplicate_legacy_titles_resolve_second_occurrence(
     tmp_path: Path,
 ) -> None:
-    from thyca.memory.heading import legacy_entry_id
+    from thyca.memories.heading import legacy_entry_id
 
     day_path = str(tmp_path / "memory" / f"{TODAY}.md")
     first = legacy_entry_id(day_path, "same title", 1)

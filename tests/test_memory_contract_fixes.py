@@ -11,7 +11,7 @@ import pytest
 
 from thyca.core.protocol import ToolCall
 from thyca.serve.memory import memory_endpoint
-from thyca.memory.facade import MemoryFacade
+from thyca.memories.facade import MemoryFacade
 from thyca.tools.memory_tools import register_memory_tools
 from thyca.tools.gateway import ToolGateway
 from thyca.tools.registry import ToolRegistry
@@ -376,8 +376,8 @@ async def test_get_path_selector_is_rejected(tmp_path) -> None:
 from pathlib import Path
 
 def test_x8_facade_types_canonical_decode_errors(tmp_path: Path) -> None:
-    from thyca.memory.archived import ArchiveError
-    from thyca.memory.facade import MemoryFacade
+    from thyca.memories.archived import ArchiveError
+    from thyca.memories.facade import MemoryFacade
 
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     (tmp_path / "SOUL.md").write_bytes(b"\xff\xfe binary")
@@ -388,7 +388,7 @@ def test_x8_facade_types_canonical_decode_errors(tmp_path: Path) -> None:
 def test_m5_blank_selector_falls_through_to_session(tmp_path: Path) -> None:
     from datetime import UTC, datetime, timedelta
 
-    from thyca.memory.facade import MemoryFacade
+    from thyca.memories.facade import MemoryFacade
 
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     recent = datetime.now(UTC) - timedelta(days=5)
@@ -403,7 +403,7 @@ def test_m5_blank_selector_falls_through_to_session(tmp_path: Path) -> None:
 def test_m5_recent_is_daily_only(tmp_path: Path) -> None:
     from datetime import UTC, datetime, timedelta
 
-    from thyca.memory.facade import MemoryFacade
+    from thyca.memories.facade import MemoryFacade
 
     (tmp_path / "SOUL.md").write_text(
         "## 08:00 — soul session <!-- thyca {\"id\":\"aaaaaaaa\",\"imp\":3} -->\n- soul leaf\n",

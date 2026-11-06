@@ -10,16 +10,16 @@ import pytest
 from mcp.types import CallToolResult, ListToolsResult, TextContent, Tool
 from test_serve_chat import FakeLLM, ScriptedLLM, _chat
 
-from thyca.agent.events import TurnEvent
+from thyca.agents.events import TurnEvent
 from thyca.app.chat_app import ChatApp
-from thyca.config import McpServerCfg, default_config, load, save
+from thyca.configs import McpServerCfg, default_config, load, save
 from seeded_config import seeded_config
-from thyca.llm.llm_base import ChatReply, LLMError
-from thyca.memory.active import ActiveMemory
-from thyca.memory.heading import parse_heading
+from thyca.llms.llm_base import ChatReply, LLMError
+from thyca.memories.active import ActiveMemory
+from thyca.memories.heading import parse_heading
 from thyca.core.protocol import Message, ToolCall
-from thyca.sessions import SessionBusy, SessionManager
-from thyca.sessions.title import fallback_title
+from thyca.conversations.runtime import SessionBusy, SessionManager
+from thyca.conversations.runtime.title import fallback_title
 from thyca.tools.mcp import MCPProcess
 
 
@@ -33,6 +33,23 @@ def _naming_pairs(events: list[TurnEvent]) -> list[tuple[str, bool | None]]:
         for event in events
         if event.type.startswith("session.naming")
     ]
+
+
+# Build a canonical-timeline manager holding one execution session.
+def _canonical_manager(root: Path) -> SessionManager:
+    from thyca.bots.timeline import CanonicalSessionStore, WorkspaceTimeline
+    from thyca.core.channel import WindowRef
+
+    timeline = WorkspaceTimeline(root, "thyca")
+    window = WindowRef(
+        window_id="thyca", channel_id="webui", kind="dm", participants=("thyca",))
+    session_id = "2026-01-01T00-00-00_ab12"
+    store = CanonicalSessionStore(
+        root / "bots" / "thyca" / "sessions",
+        timeline=timeline, window=window, session_id=session_id)
+    manager = SessionManager(store=store)
+    manager.load(session_id)
+    return manager
 
 
 def test_second_turn_emits_naming_pairs_and_persists_title(tmp_path: Path) -> None:
@@ -262,8 +279,7 @@ def test_naming_meta_persists_usage_cost_and_counts_as_request(tmp_path: Path) -
 def test_naming_meta_does_not_flip_failed_turn_status(tmp_path: Path) -> None:
     from thyca.serve.trace import turns_from_session
 
-    session = SessionManager(tmp_path / "sessions")
-    session.create()
+    session = _canonical_manager(tmp_path)
     session.append(Message(role="user", content="alo", ts="2026-08-26T09:12:00Z"))
     session.append(
         Message(
@@ -372,7 +388,7 @@ def test_naming_request_carries_both_turns_context(tmp_path: Path) -> None:
 def test_missing_naming_prompt_consumes_attempt_without_model_call(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import thyca.sessions.title as title_mod
+    import thyca.conversations.runtime.title as title_mod
 
     monkeypatch.setattr(title_mod, "_INSTRUCTION_CACHE", None)
     monkeypatch.setattr(title_mod, "_PROMPTS_DIR", tmp_path / "absent-prompts")
@@ -437,7 +453,7 @@ def test_naming_unexpected_provider_error_never_fails_turn(tmp_path: Path) -> No
 def test_naming_store_error_never_fails_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from thyca.sessions import SessionError
+    from thyca.conversations.runtime import SessionError
 
     def boom(self, title: str):
         raise SessionError("disk gone")
@@ -469,10 +485,10 @@ def test_naming_store_error_never_fails_turn(
 
 async def test_naming_cancelled_pairs_finished_and_keeps_flag(tmp_path: Path) -> None:
     from thyca.app.naming import _name_if_needed
-    from thyca.config import default_config
+    from thyca.configs import default_config
 
-    manager = SessionManager(tmp_path)
-    session = manager.create()
+    manager = _canonical_manager(tmp_path)
+    session = manager.current
     manager.append(Message(role="user", content="alo", ts="2026-01-01T00:00:00Z"))
     manager.append(Message(role="assistant", content="pong", ts="2026-01-01T00:00:01Z"))
     manager.append(Message(role="user", content="thêm", ts="2026-01-01T00:00:02Z"))
@@ -489,18 +505,17 @@ async def test_naming_cancelled_pairs_finished_and_keeps_flag(tmp_path: Path) ->
         ("session.naming.started", None),
         ("session.naming.finished", False),
     ]
-    assert SessionManager(tmp_path).load(session.id).naming_attempted is True
+    assert _canonical_manager(tmp_path).load(session.id).naming_attempted is True
 
 
 async def test_naming_mark_failure_skips_model_call(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from thyca.app.naming import _name_if_needed
-    from thyca.config import default_config
-    from thyca.sessions import SessionError
+    from thyca.configs import default_config
+    from thyca.conversations.runtime import SessionError
 
-    manager = SessionManager(tmp_path)
-    manager.create()
+    manager = _canonical_manager(tmp_path)
     manager.append(Message(role="user", content="alo", ts="2026-01-01T00:00:00Z"))
     manager.append(Message(role="assistant", content="pong", ts="2026-01-01T00:00:01Z"))
     manager.append(Message(role="user", content="thêm", ts="2026-01-01T00:00:02Z"))
@@ -762,8 +777,8 @@ def test_corrupt_config_file_falls_back_to_passed_cfg(tmp_path: Path) -> None:
     from test_serve_chat import FakeLLM
 
     from thyca.app.chat_app import ChatApp
-    from thyca.config import default_config
-    from thyca.llm.llm_base import ChatReply
+    from thyca.configs import default_config
+    from thyca.llms.llm_base import ChatReply
 
     (tmp_path / "config.json").write_text("{not valid json", encoding="utf-8")
     cfg = default_config()
@@ -851,11 +866,10 @@ def test_naming_usage_mutate_after_does_not_leak(tmp_path: Path) -> None:
     from types import SimpleNamespace
 
     from thyca.app.naming import _record_naming
-    from thyca.config import default_config
-    from thyca.sessions import SessionManager
+    from thyca.configs import default_config
+    from thyca.conversations.runtime import SessionManager
 
-    manager = SessionManager(tmp_path / "sessions")
-    manager.create()
+    manager = _canonical_manager(tmp_path)
     usage = {"prompt_tokens": 10, "completion_tokens": 5}
     _record_naming(
         SimpleNamespace(usage=usage, model="m-test"), 7, manager, default_config()
@@ -871,7 +885,7 @@ def test_turn_refreshes_live_gateway_soft_timeout(tmp_path: Path) -> None:
     """TASK-034: a saved softTimeoutS applies to the next turn, no restart."""
     from dataclasses import replace
 
-    from thyca.config import load, save
+    from thyca.configs import load, save
 
     app = _chat(tmp_path, FakeLLM(ChatReply(content="pong")))
     created = app.create()
@@ -908,7 +922,7 @@ def test_x20_single_registry_lifecycle() -> None:
 
     from thyca.app.loop_turns import _LoopTurns
     from thyca.serve.turn_state import TurnState
-    from thyca.sessions import SessionBusy, SessionError
+    from thyca.conversations.runtime import SessionBusy, SessionError
 
     loop = aio.new_event_loop()
     try:
@@ -938,19 +952,18 @@ def test_x20_single_registry_lifecycle() -> None:
 
 
 def test_x21_shared_loop_wiring(tmp_path: Path) -> None:
-    from thyca.agent.act import Act
-    from thyca.agent.assemble import Assemble
-    from thyca.agent.loop import AgentLoop
-    from thyca.agent.observe import Observe
-    from thyca.agent.think import Think
+    from thyca.agents.act import Act
+    from thyca.agents.assemble import Assemble
+    from thyca.agents.loop import AgentLoop
+    from thyca.agents.observe import Observe
+    from thyca.agents.think import Think
     from thyca.app.toolchain import build_agent_loop
-    from thyca.sessions import SessionManager
+    from thyca.conversations.runtime import SessionManager
 
-    sessions = SessionManager(tmp_path)
-    sessions.create()
+    sessions = _canonical_manager(tmp_path)
 
     async def fake_chat(messages, tools=None):
-        from thyca.llm.llm_base import ChatReply
+        from thyca.llms.llm_base import ChatReply
 
         return ChatReply(content="x")
 
@@ -972,10 +985,10 @@ def test_x21_shared_loop_wiring(tmp_path: Path) -> None:
 def test_x24_naming_meta_matches_sidecar_shape() -> None:
     from types import SimpleNamespace
 
-    from thyca.agent.meta import assistant_meta, naming_meta
-    from thyca.agent.stage import Stage
+    from thyca.agents.meta import assistant_meta, naming_meta
+    from thyca.agents.stage import Stage
     from seeded_config import seeded_config
-    from thyca.llm.llm_base import ChatReply
+    from thyca.llms.llm_base import ChatReply
 
     cfg = seeded_config()
     reply = ChatReply(
@@ -1006,7 +1019,7 @@ from thyca.app.turn_options import (
     _clean_turn_text,
     overlay_turn_cfg,
 )
-from thyca.config import Config, ModelCfg
+from thyca.configs import Config, ModelCfg
 
 def test_f5_turn_effort_override_is_model_aware() -> None:
     """Fails pre-fix: per-turn junk effort sailed through overlay."""

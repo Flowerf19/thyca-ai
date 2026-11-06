@@ -13,7 +13,7 @@ import unicodedata
 from pathlib import Path
 
 from thyca.bots.card import BotModel
-from thyca.config import atomic_write_text
+from thyca.configs import atomic_write_text
 from thyca.skills.store import _NAME_RE, NAME_MAX
 
 SETTINGS_FILENAME = "settings.json"

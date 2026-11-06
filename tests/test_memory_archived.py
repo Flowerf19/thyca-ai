@@ -7,11 +7,11 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from thyca.memory import ArchivedMemory, ArchiveError, Chunker
-from thyca.memory.archive_store import ArchiveStore
-from thyca.memory.chunk import Chunk
-from thyca.memory.facade import MemoryFacade
-from thyca.memory.usage import guarded, is_lock_error
+from thyca.memories import ArchivedMemory, ArchiveError, Chunker
+from thyca.memories.archive_store import ArchiveStore
+from thyca.memories.chunk import Chunk
+from thyca.memories.facade import MemoryFacade
+from thyca.memories.usage import guarded, is_lock_error
 
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
@@ -168,8 +168,8 @@ def test_normalize_maps_d_stroke_to_d() -> None:
 
 
 def test_in_order_span_uses_full_leaf_not_snippet() -> None:
-    from thyca.memory.archive_store import Hit
-    from thyca.memory.rank import _promote_in_order_span
+    from thyca.memories.archive_store import Hit
+    from thyca.memories.rank import _promote_in_order_span
 
     chunker = Chunker()
     filler = "lorem " * 80
@@ -414,7 +414,7 @@ def test_f21_non_lock_operational_error_propagates_raw() -> None:
 
 # Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
 def test_m5_split_parts_carry_own_spans_and_long_lines_split() -> None:
-    from thyca.memory.chunk import MAX_LEAF_CHARS, Chunker
+    from thyca.memories.chunk import MAX_LEAF_CHARS, Chunker
 
     chunker = Chunker()
     body = "Sentence one is here. Sentence two follows along. Sentence three ends it."

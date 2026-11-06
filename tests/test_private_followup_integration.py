@@ -13,9 +13,9 @@ import pytest
 
 from thyca.app.chat_app import ChatApp
 from thyca.bots.card import BotCard
-from thyca.config import load, save
+from thyca.configs import load, save
 from seeded_config import seeded_config
-from thyca.llm.llm_base import ChatReply
+from thyca.llms.llm_base import ChatReply
 
 
 def _today(days_ago: int = 0) -> datetime:
@@ -295,7 +295,7 @@ def test_drain_matching_restores_queue_on_predicate_error() -> None:
 
 def test_group_view_denies_raw_private_paths(tmp_path: Path) -> None:
     from thyca.core.channel import WindowRef
-    from thyca.memory.visibility import MemoryView, bound_memory_view
+    from thyca.memories.visibility import MemoryView, bound_memory_view
     from thyca.tools.path_guard import PathDenied, PathGuard
 
     (tmp_path / "memory").mkdir()
@@ -315,7 +315,7 @@ def test_group_view_denies_raw_private_paths(tmp_path: Path) -> None:
 
 
 def test_group_view_strips_auto_habits_block() -> None:
-    from thyca.memory.habits import strip_auto_habits
+    from thyca.memories.habits import strip_auto_habits
 
     text = "# User\nname\n<!-- habits:auto:start -->\n- secret label\n<!-- habits:auto:end -->\nmanual tail\n"
     out = strip_auto_habits(text)
@@ -367,7 +367,7 @@ def test_group_ambiguous_pending_cancel_conflicts(tmp_path: Path) -> None:
         store.create("helper", work_id="task-bbcc2233",
                      origin_window=group["id"], dm_window=helper_dm["id"],
                      question="other")
-        from thyca.sessions import SessionBusy
+        from thyca.conversations.runtime import SessionBusy
         with pytest.raises((SessionBusy, TurnInFlight)):
             app.cancel(group["id"])
         assert store.get("coder", pid).status == "waiting_private"
@@ -470,7 +470,7 @@ def test_legacy_singleton_task_owner_via_remember(tmp_path: Path) -> None:
     app = _chat(tmp_path, _LLM())
     try:
         _coder(app)
-        from thyca.memory.facade import MemoryFacade
+        from thyca.memories.facade import MemoryFacade
         MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh").remember(
             "t", "b", task="task-aabb1122", bots=["coder"],
             now=_today())
@@ -490,7 +490,7 @@ def test_team_ambiguous_owner_denied(tmp_path: Path) -> None:
     app = _chat(tmp_path, _LLM())
     try:
         _coder(app)
-        from thyca.memory.facade import MemoryFacade
+        from thyca.memories.facade import MemoryFacade
         MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh").remember(
             "t", "b", task="task-aabb1122", bots=["team", "coder"],
             now=_today())
@@ -683,7 +683,7 @@ def test_earliest_owner_wins(tmp_path: Path) -> None:
     app = _chat(tmp_path, _LLM())
     try:
         _coder(app)
-        from thyca.memory.facade import MemoryFacade
+        from thyca.memories.facade import MemoryFacade
         facade = MemoryFacade(
             tmp_path, timezone_name="Asia/Ho_Chi_Minh")
         facade.remember("t", "b", task="task-ccddee44",

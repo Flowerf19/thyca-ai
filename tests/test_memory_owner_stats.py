@@ -3,10 +3,10 @@ import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from thyca.memory.chunk import Chunk
-from thyca.memory.facade import MemoryFacade
-from thyca.memory.heading import format_ts
-from thyca.memory.stats import CanonicalFile, MemoryStats
+from thyca.memories.chunk import Chunk
+from thyca.memories.facade import MemoryFacade
+from thyca.memories.heading import format_ts
+from thyca.memories.stats import CanonicalFile, MemoryStats
 
 
 def archived(entry, owners, **metadata):

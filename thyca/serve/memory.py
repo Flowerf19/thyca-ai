@@ -1,14 +1,14 @@
 """Memory POST endpoints for the webui server (split from serve.py)."""
 from __future__ import annotations
 
-from thyca.memory.archived import ArchiveError
-from thyca.memory.facade import MemoryFacade
+from thyca.memories.archived import ArchiveError
+from thyca.memories.facade import MemoryFacade
 
 
 def memory_endpoint(facade: MemoryFacade, kind: str, payload: dict) -> tuple[int, dict]:
     """One ``POST /api/memory/*`` action → ``(status, body)``.
 
-    Shared body-parse/session-id handling lives in the handler; this carries
+    Shared body-parse/memory-id handling lives in the handler; this carries
     only the per-kind facade call and its error mapping.
     """
     if kind == "canonical":

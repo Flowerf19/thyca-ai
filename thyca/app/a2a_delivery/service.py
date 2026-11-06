@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, Callable
 from thyca.bots.bus import new_span_id
 from thyca.bots.workspace import WorkspaceTurnConflict
 from thyca.core.protocol import Message
-from thyca.sessions import Session, SessionManager
+from thyca.conversations.runtime import Session, SessionManager
 
 if TYPE_CHECKING:
     from thyca.app.webui_channel import WindowRef
@@ -86,7 +86,7 @@ class A2ADeliveryService:
         DM (scheduled/independent work reporting home)."""
         try:
             async with self._deps.runtime.workspaces.lease(envelope.recipient):
-                from thyca.memory.visibility import (
+                from thyca.memories.visibility import (
                     MemoryView,
                     bound_memory_view,
                 )

@@ -9,14 +9,14 @@
 - Chỉ làm task thuộc plan `in-progress` (hoặc bug/fix UI user vừa chỉ). Không thêm dependency, abstraction, hay feature ngoài task đó.
 - Không còn plan in-progress (2026-09-22): `docs/archive/plans/backend-solid-refactor.md` done (nhánh `refactor/backend-solid`), `docs/archive/plans/webui-solid-refactor.md` done (nhánh `refactor/webui-solid`) — cả hai chờ quyết merge main. Plans cũ ở `plans/done/`.
 - L2 hybrid thuộc v1. Đọc `.agents/decisions/2026-08-15-l2-hybrid-v1.md` trước khi đổi memory contract.
-- Session là 4-class SOLID trong `thyca/sessions/`: `Session` / `SessionStore` / `SessionCompactor` / `SessionManager` (+ `wire.py` payload contract). Không `thyca/session.py` shim.
-- ActiveMemory chỉ `thyca/memory/active.py`: `SOUL`/`USER`/`IDENTITY` full inject; daily tail `hotTailKB`. Archive/L2 là `archived.py` + `chunk.py`. Facade/`memory_*` thuộc Tools. Không `MEMORY.md`. `write`/`edit` không được ghi dưới `~/.thyca`; `memory_remember` là writer duy nhất cho memory files.
+- Session là 4-class SOLID trong `thyca/conversations/runtime/`: `Session` / `SessionStore` / `SessionCompactor` / `SessionManager` (+ `wire.py` payload contract). Không `thyca/session.py` shim.
+- ActiveMemory chỉ `thyca/memories/active.py`: `SOUL`/`USER`/`IDENTITY` full inject; daily tail `hotTailKB`. Archive/L2 là `archived.py` + `chunk.py`. Facade/`memory_*` thuộc Tools. Không `MEMORY.md`. `write`/`edit` không được ghi dưới `~/.thyca`; `memory_remember` là writer duy nhất cho memory files.
 - Serve chỉ loopback. API không trả secret, path nội bộ, hay stack.
 - Memory recalled từ another-brain là claim; tree hiện tại thắng.
 - Code và identifier tiếng Anh. Nói với user theo ngôn ngữ user.
 - Linux là target. Đừng viết API chỉ chạy trên Windows.
 - Secret chỉ qua env hoặc file ngoài Git (`~/.thyca/auth.json`, mode 0600).
-- Layout backend: `thyca/{agent,llm,config,memory,sessions,tools,skills,serve,app,core}/` — cấm file lẻ top-level (trừ `__init__.py`/`__main__.py`) và cấm shim. `core/` là leaf (stdlib-only, không import `thyca.*` khác). `serve/` không import runtime `app/` (chỉ `TYPE_CHECKING` + lazy).
+- Layout backend: `thyca/{agents,llms,configs,memories,conversations,tools,skills,serve,app,core}/` — cấm file lẻ top-level (trừ `__init__.py`/`__main__.py`) và cấm shim. `core/` là leaf (stdlib-only, không import `thyca.*` khác). `serve/` không import runtime `app/` (chỉ `TYPE_CHECKING` + lazy).
 - WebUI root-only native SPA: `thyca/webui/ui/chat/index.html` is the shared application entry at `/`; six known legacy workspace paths resolve to it, with the legacy Trace path normalized to Usage, and the router keeps page/filter/fragment state in browser history while the visible URL stays at `/`. Keep independent page factories/workspaces in `thyca/webui/ui/<page>/` and shared shell/router code in `thyca/webui/ui/share/`; do not introduce an iframe or a second application entry. Keep CSS page-scoped; shared global rules belong only in existing shared styles, and do not add unscoped global CSS.
 - Pytest baseline 2026-09-22: **719 passed / 0 fail**. Fail `test_debug_prints_prompt_flags` cũ (`tools=7` vs `tools=13`) không tái hiện — nếu đỏ lại thì là regression, không tự sửa số.
 

@@ -1,7 +1,7 @@
 """Shared admin-tool wiring: deps + caller gates."""
 from __future__ import annotations
 
-from thyca.memory.identity import current_bot_id
+from thyca.memories.identity import current_bot_id
 
 
 class AdminDeps:

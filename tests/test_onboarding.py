@@ -7,7 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from thyca.config import Config, ProviderEntry
+from thyca.configs import Config, ProviderEntry
 from thyca.app.onboarding import (
     ProviderProbeError,
     apply_provider,

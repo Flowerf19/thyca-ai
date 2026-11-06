@@ -5,8 +5,8 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from thyca.core.channel import WindowRef
-from thyca.memory.visibility import MemoryView, bound_memory_view, current_memory_view
-from thyca.sessions.store import SessionStore
+from thyca.memories.visibility import MemoryView, bound_memory_view, current_memory_view
+from thyca.conversations.runtime.store import SessionStore
 from thyca.bots.workspace_context import WorkspaceContextBuilder, _channel_brief
 from thyca.bots.work_items import WorkItem, prioritize_window, project_work_items
 from thyca.bots.tasks import OpenTask
@@ -24,11 +24,12 @@ def _today_str(days_ago: int = 0) -> str:
 
 TODAY = _today_str()
 YESTERDAY = _today_str(1)
-DM_ID = f"{TODAY}T09-00-00_c0de"
-DM_OTHER = f"{TODAY}T09-01-00_1ee2"
-GRP = f"{TODAY}T09-02-00_ab12"
-GRP_OTHER = f"{TODAY}T09-03-00_5e12"
-GRP_BIG = f"{TODAY}T09-04-00_7e34"
+DM_ID = "coder"
+DM_OTHER = "helper"
+GRP = "group-" + "a" * 32
+GRP_OTHER = "group-" + "b" * 32
+GRP_BIG = "group-" + "c" * 32
+UNKNOWN_ID = "group-" + "f" * 32
 
 
 
@@ -37,20 +38,26 @@ def _at(day: str) -> datetime:
     return datetime.fromisoformat(f"{day}T12:00:00+07:00")
 
 
+# Seed one runtime door: a DM is its bot id, a group is group-<hex32>.
 def _seed_session(
     tmp_path: Path, sid: str, *, bots=(), dm_bot=None
 ) -> None:
+    from thyca.conversations.store.runtime import ensure_runtime_store
+    from thyca.conversations.runtime import SessionManager
+
+    ensure_runtime_store(tmp_path)
     store = SessionStore(tmp_path / "sessions")
     store.ensure_dir()
+    if dm_bot:
+        SessionManager(tmp_path / "sessions").ensure_dm(dm_bot)
+        return
     path = store.create(sid)
     if bots:
         store.append_bots(path, list(bots))
-    if dm_bot:
-        store.append_dm(path, dm_bot)
 
 
 def _seed_memory(tmp_path: Path, sid: str, title: str, body: str) -> None:
-    from thyca.memory.facade import MemoryFacade
+    from thyca.memories.facade import MemoryFacade
 
     MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh").remember(
         title, body, now=_at(TODAY), chat=sid
@@ -90,7 +97,7 @@ def test_group_window_denies_other_group_and_unknown(tmp_path: Path) -> None:
     view = MemoryView(_group_window(GRP), "coder", tmp_path)
     # participants (thyca,coder) not subset of (thyca,helper) -> denied
     assert not view.can_read_origin(GRP_OTHER)
-    assert not view.can_read_origin(f"{TODAY}T09-99-00_dead")
+    assert not view.can_read_origin(UNKNOWN_ID)
 
 
 def test_group_window_broader_origin_allowed(tmp_path: Path) -> None:
@@ -109,7 +116,7 @@ def test_dm_view_rules(tmp_path: Path) -> None:
     assert view.can_read_origin(DM_ID)      # own DM
     assert not view.can_read_origin(DM_OTHER) # other bot's DM
     assert view.can_read_origin(GRP)           # participant
-    assert view.can_read_origin(f"{TODAY}T09-99-00_dead")         # legacy owner-scoped
+    assert view.can_read_origin(UNKNOWN_ID)         # unknown owner-scoped
     assert view.can_read_origin(None)
 
 
@@ -120,7 +127,7 @@ def test_team_owner_cannot_override_dm_boundary(tmp_path: Path) -> None:
 
 
 def test_snapshot_filters_private_dm_entries(tmp_path: Path) -> None:
-    from thyca.memory.active import ActiveMemory
+    from thyca.memories.active import ActiveMemory
 
     _seed_session(tmp_path, DM_ID, dm_bot="coder")
     _seed_session(tmp_path, GRP, bots=["thyca", "coder"])
@@ -139,7 +146,7 @@ def test_snapshot_filters_private_dm_entries(tmp_path: Path) -> None:
 
 
 def test_private_view_still_reads_own_dm(tmp_path: Path) -> None:
-    from thyca.memory.active import ActiveMemory
+    from thyca.memories.active import ActiveMemory
 
     _seed_session(tmp_path, DM_ID, dm_bot="coder")
     _seed_memory(tmp_path, DM_ID, "PRIVATE-TITLE", "PRIVATE-SUMMARY")
@@ -152,7 +159,7 @@ def test_private_view_still_reads_own_dm(tmp_path: Path) -> None:
 
 
 def test_no_view_is_unchanged(tmp_path: Path) -> None:
-    from thyca.memory.active import ActiveMemory
+    from thyca.memories.active import ActiveMemory
 
     _seed_memory(tmp_path, DM_ID, "PRIVATE-TITLE", "PRIVATE-SUMMARY")
     memory = ActiveMemory(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
@@ -163,8 +170,8 @@ def test_no_view_is_unchanged(tmp_path: Path) -> None:
 
 
 def test_facade_get_denies_private_in_group(tmp_path: Path) -> None:
-    from thyca.memory.facade import MemoryFacade
-    from thyca.memory.archived import ArchiveError
+    from thyca.memories.facade import MemoryFacade
+    from thyca.memories.archived import ArchiveError
 
     _seed_session(tmp_path, DM_ID, dm_bot="coder")
     _seed_session(tmp_path, GRP, bots=["thyca", "coder"])
@@ -196,7 +203,7 @@ def test_group_search_candidate_limit_still_returns_allowed(
         tmp_path: Path) -> None:
     """Private hits that outrank a public one are filtered BEFORE the
     final limit, so the allowed hit still surfaces."""
-    from thyca.memory.facade import MemoryFacade
+    from thyca.memories.facade import MemoryFacade
 
     _seed_session(tmp_path, DM_ID, dm_bot="coder")
     _seed_session(tmp_path, GRP, bots=["thyca", "coder"])
@@ -217,7 +224,7 @@ def test_group_search_candidate_limit_still_returns_allowed(
 
 
 def test_canonical_get_bypasses_daily_origin_check(tmp_path: Path) -> None:
-    from thyca.memory.facade import MemoryFacade
+    from thyca.memories.facade import MemoryFacade
 
     _seed_session(tmp_path, GRP, bots=["thyca", "coder"])
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
@@ -228,7 +235,7 @@ def test_canonical_get_bypasses_daily_origin_check(tmp_path: Path) -> None:
 
 
 def test_memory_tasks_hide_private_title_in_group(tmp_path: Path) -> None:
-    from thyca.memory.facade import MemoryFacade
+    from thyca.memories.facade import MemoryFacade
 
     _seed_session(tmp_path, DM_ID, dm_bot="coder")
     _seed_session(tmp_path, GRP, bots=["thyca", "coder"])
@@ -247,8 +254,8 @@ def test_memory_tasks_hide_private_title_in_group(tmp_path: Path) -> None:
 
 
 def test_channel_brief_text_and_section(tmp_path: Path) -> None:
-    from thyca.memory.active import ActiveSnapshot
-    from thyca.llm.prompt_manager import PromptManager
+    from thyca.memories.active import ActiveSnapshot
+    from thyca.llms.prompt_manager import PromptManager
 
     window = _group_window(GRP)
     hot = WorkspaceContextBuilder(tmp_path).build(
@@ -265,7 +272,7 @@ def test_channel_brief_text_and_section(tmp_path: Path) -> None:
 
 
 def test_builder_memory_read_gate(tmp_path: Path) -> None:
-    from thyca.memory.active import ActiveSnapshot
+    from thyca.memories.active import ActiveSnapshot
     from thyca.bots.card import BotCard
 
     from thyca.bots.card import BotMemoryPolicy
@@ -309,7 +316,7 @@ def test_workitem_projection_links_only_explicit(tmp_path: Path) -> None:
 def test_builder_dm_pending_includes_question(tmp_path: Path) -> None:
     from types import SimpleNamespace
 
-    from thyca.memory.active import ActiveSnapshot
+    from thyca.memories.active import ActiveSnapshot
 
     pending = SimpleNamespace(
         pending_id="pf-1234abcd1234",

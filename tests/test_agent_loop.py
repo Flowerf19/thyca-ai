@@ -5,15 +5,32 @@ import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from thyca.agent.act import Act
-from thyca.agent.assemble import Assemble
-from thyca.agent.events import TurnEvent
-from thyca.agent.loop import AgentLoop
-from thyca.agent.observe import Observe
-from thyca.agent.think import ChatReply, Think
-from thyca.config import PricingCfg
+from thyca.agents.act import Act
+from thyca.agents.assemble import Assemble
+from thyca.agents.events import TurnEvent
+from thyca.agents.loop import AgentLoop
+from thyca.agents.observe import Observe
+from thyca.agents.think import ChatReply, Think
+from thyca.configs import PricingCfg
 from thyca.core.protocol import Message, ToolCall, ToolResult
-from thyca.sessions import SessionManager
+from thyca.conversations.runtime import SessionManager
+
+# Build a canonical-timeline manager holding one execution session.
+def _canonical_manager(root: Path, limits=None) -> SessionManager:
+    from thyca.bots.timeline import CanonicalSessionStore, WorkspaceTimeline
+    from thyca.core.channel import WindowRef
+
+    timeline = WorkspaceTimeline(root, "thyca")
+    window = WindowRef(
+        window_id="thyca", channel_id="webui", kind="dm", participants=("thyca",))
+    session_id = "2026-01-01T00-00-00_ab12"
+    store = CanonicalSessionStore(
+        root / "bots" / "thyca" / "sessions",
+        timeline=timeline, window=window, session_id=session_id)
+    manager = SessionManager(store=store, limits=limits)
+    manager.load(session_id)
+    return manager
+
 
 
 @dataclass
@@ -55,7 +72,7 @@ def _wrap_compaction(manager: SessionManager, events: list[str]) -> None:
 
 
 def _load_messages(tmp_path: Path, session_id: str) -> list[Message]:
-    return SessionManager(tmp_path).load(session_id).messages
+    return _canonical_manager(tmp_path).load(session_id).messages
 
 
 def _loop(
@@ -76,8 +93,8 @@ def _loop(
 
 
 def test_text_only_event_order_and_persist_unchanged(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    session = manager.create()
+    manager = _canonical_manager(tmp_path)
+    session = manager.current
     llm = FakeLLM([ChatReply(content="hello back")])
     dispatcher = FakeDispatcher({})
     events: list[TurnEvent] = []
@@ -99,8 +116,8 @@ def test_text_only_event_order_and_persist_unchanged(tmp_path: Path) -> None:
 
 
 def test_tool_round_then_text_emits_round_and_tool_events(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    session = manager.create()
+    manager = _canonical_manager(tmp_path)
+    session = manager.current
     call = ToolCall(id="call-1", name="echo", arguments={"value": "x"})
     llm = FakeLLM(
         [
@@ -164,8 +181,7 @@ def test_loop_limit_marker_is_not_a_second_model_call(tmp_path: Path) -> None:
     dispatcher = FakeDispatcher({
         "call-1": ToolResult(tool_call_id="call-1", name="echo", content="result")
     })
-    manager = SessionManager(tmp_path)
-    manager.create()
+    manager = _canonical_manager(tmp_path)
     loop = AgentLoop(
         sessions=manager,
         assemble=Assemble(),
@@ -195,8 +211,8 @@ def test_loop_limit_marker_is_not_a_second_model_call(tmp_path: Path) -> None:
 
 
 def test_loop_max_emits_no_finished_for_skipped_round(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    session = manager.create()
+    manager = _canonical_manager(tmp_path)
+    session = manager.current
     call = ToolCall(id="call-1", name="echo")
     llm = FakeLLM([ChatReply(content=None, tool_calls=[call])])
     dispatcher = FakeDispatcher(
@@ -223,8 +239,8 @@ def test_loop_max_emits_no_finished_for_skipped_round(tmp_path: Path) -> None:
 
 
 def test_sink_raise_fails_open_turn_still_persists(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    session = manager.create()
+    manager = _canonical_manager(tmp_path)
+    session = manager.current
     llm = FakeLLM([ChatReply(content="hello back")])
     dispatcher = FakeDispatcher({})
 
@@ -243,8 +259,8 @@ def test_sink_raise_fails_open_turn_still_persists(tmp_path: Path) -> None:
 
 
 def test_text_only_compacts_before_chat_and_persists_user_and_assistant(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    session = manager.create()
+    manager = _canonical_manager(tmp_path)
+    session = manager.current
     events: list[str] = []
     _wrap_compaction(manager, events)
     llm = FakeLLM([ChatReply(content="hello back")], events=events)
@@ -260,8 +276,8 @@ def test_text_only_compacts_before_chat_and_persists_user_and_assistant(tmp_path
 
 
 def test_one_tool_round_then_text_persists_complete_round(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    session = manager.create()
+    manager = _canonical_manager(tmp_path)
+    session = manager.current
     call = ToolCall(id="call-1", name="echo", arguments={"value": "x"})
     llm = FakeLLM(
         [
@@ -287,8 +303,8 @@ def test_one_tool_round_then_text_persists_complete_round(tmp_path: Path) -> Non
 
 
 def test_two_tool_calls_persist_results_in_declaration_order(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    session = manager.create()
+    manager = _canonical_manager(tmp_path)
+    session = manager.current
     first = ToolCall(id="first", name="slow")
     second = ToolCall(id="second", name="fast")
     llm = FakeLLM(
@@ -316,8 +332,8 @@ def test_two_tool_calls_persist_results_in_declaration_order(tmp_path: Path) -> 
 
 
 def test_loop_max_persists_limit_message_without_second_chat(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    session = manager.create()
+    manager = _canonical_manager(tmp_path)
+    session = manager.current
     call = ToolCall(id="call-1", name="echo")
     llm = FakeLLM([ChatReply(content=None, tool_calls=[call])])
     dispatcher = FakeDispatcher(
@@ -335,8 +351,8 @@ def test_loop_max_persists_limit_message_without_second_chat(tmp_path: Path) -> 
 
 
 def test_parse_error_is_returned_as_tool_error_without_dispatch(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    session = manager.create()
+    manager = _canonical_manager(tmp_path)
+    session = manager.current
     call = ToolCall(id="bad-call", name="echo", parse_error="invalid arguments")
     llm = FakeLLM(
         [
@@ -356,8 +372,8 @@ def test_parse_error_is_returned_as_tool_error_without_dispatch(tmp_path: Path) 
 
 
 def test_persists_usage_cost_and_config_model_when_reply_omits_model(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    session = manager.create()
+    manager = _canonical_manager(tmp_path)
+    session = manager.current
     usage = {
         "prompt_tokens": 100,
         "cached_tokens": 20,
@@ -391,8 +407,8 @@ def test_persists_usage_cost_and_config_model_when_reply_omits_model(tmp_path: P
 
 
 def test_unknown_model_persists_usage_without_cost(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    session = manager.create()
+    manager = _canonical_manager(tmp_path)
+    session = manager.current
     usage = {"prompt_tokens": 8, "cached_tokens": 0, "completion_tokens": 2, "total_tokens": 10}
     llm = FakeLLM([ChatReply(content="ok", usage=usage)])
     loop = AgentLoop(
@@ -414,8 +430,8 @@ def test_unknown_model_persists_usage_without_cost(tmp_path: Path) -> None:
 
 
 def test_tool_round_persists_tool_latency(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    session = manager.create()
+    manager = _canonical_manager(tmp_path)
+    session = manager.current
     call = ToolCall(id="call-1", name="echo", arguments={"value": "x"})
     llm = FakeLLM(
         [
@@ -438,8 +454,8 @@ def test_tool_round_persists_tool_latency(tmp_path: Path) -> None:
 
 
 def test_reasoning_persists_without_thinking_events(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    session = manager.create()
+    manager = _canonical_manager(tmp_path)
+    session = manager.current
     llm = FakeLLM([ChatReply(content="hello back", reasoning="because")])
     events: list = []
 
@@ -454,7 +470,7 @@ def test_reasoning_persists_without_thinking_events(tmp_path: Path) -> None:
 
 
 def test_on_reasoning_emits_thinking_deltas(tmp_path: Path) -> None:
-    from thyca.agent.thinking import ThinkingDelta
+    from thyca.agents.thinking import ThinkingDelta
 
     @dataclass
     class StreamingLLM:
@@ -464,8 +480,8 @@ def test_on_reasoning_emits_thinking_deltas(tmp_path: Path) -> None:
                 on_reasoning("check")
             return ChatReply(content="ok", reasoning="First check")
 
-    manager = SessionManager(tmp_path)
-    session = manager.create()
+    manager = _canonical_manager(tmp_path)
+    session = manager.current
     events: list = []
     loop = AgentLoop(
         sessions=manager,
@@ -485,8 +501,8 @@ def test_on_reasoning_emits_thinking_deltas(tmp_path: Path) -> None:
 
 
 def test_persist_user_false_does_not_append_user(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    session = manager.create()
+    manager = _canonical_manager(tmp_path)
+    session = manager.current
     manager.append(Message(role="user", content="hello"))
     llm = FakeLLM([ChatReply(content="again")])
     events: list[TurnEvent] = []
@@ -515,10 +531,10 @@ def test_persist_user_false_does_not_append_user(tmp_path: Path) -> None:
 
 
 def test_over_cap_turn_sends_compacted_history(tmp_path: Path) -> None:
-    from thyca.config import LimitsCfg
+    from thyca.configs import LimitsCfg
 
-    manager = SessionManager(tmp_path, limits=LimitsCfg(contextTokens=1000))
-    session = manager.create()
+    manager = _canonical_manager(tmp_path, LimitsCfg(contextTokens=1000))
+    session = manager.current
     for i in range(10):
         manager.append(Message(role="user", content=f"old-{i}-" + "x" * 500))
         manager.append(Message(role="assistant", content=f"reply-{i}-" + "y" * 500))
@@ -536,9 +552,9 @@ def test_over_cap_turn_sends_compacted_history(tmp_path: Path) -> None:
 
 # Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
 def test_x23_single_delta_callback_routes_by_class() -> None:
-    from thyca.agent.loop import _delta_callback
-    from thyca.agent.reply import ContentDelta
-    from thyca.agent.thinking import ThinkingDelta
+    from thyca.agents.loop import _delta_callback
+    from thyca.agents.reply import ContentDelta
+    from thyca.agents.thinking import ThinkingDelta
 
     assert _delta_callback(None, 1, ContentDelta) is None
     seen: list = []
@@ -555,8 +571,8 @@ def test_x23_single_delta_callback_routes_by_class() -> None:
 
 
 def test_loop_records_raw_estimate_beside_usage(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    session = manager.create()
+    manager = _canonical_manager(tmp_path)
+    session = manager.current
     llm = FakeLLM(
         [ChatReply(content="ok", usage={"prompt_tokens": 12}, model="m")]
     )
@@ -576,17 +592,16 @@ def test_loop_records_raw_estimate_beside_usage(tmp_path: Path) -> None:
     estimate = assistant.meta["estimate_tokens"]
     assert isinstance(estimate, int) and estimate > 0
     # The recorded pair is usable for the next turn's calibration.
-    from thyca.sessions import calibration_factor
+    from thyca.conversations.runtime import calibration_factor
 
     factor = calibration_factor([assistant], model="m")
     assert factor == 12 / estimate
 
 
 def test_loop_injects_context_budget_signal(tmp_path: Path) -> None:
-    from thyca.memory.active import ActiveSnapshot
+    from thyca.memories.active import ActiveSnapshot
 
-    manager = SessionManager(tmp_path)
-    manager.create()
+    manager = _canonical_manager(tmp_path)
     manager.append(
         Message(
             role="assistant",
@@ -637,10 +652,9 @@ def test_loop_injects_context_budget_signal(tmp_path: Path) -> None:
 
 
 def test_loop_context_budget_warns_before_backstop(tmp_path: Path) -> None:
-    from thyca.memory.active import ActiveSnapshot
+    from thyca.memories.active import ActiveSnapshot
 
-    manager = SessionManager(tmp_path)
-    manager.create()
+    manager = _canonical_manager(tmp_path)
     manager.append(Message(role="user", content="x" * 6500))
     manager.append(Message(role="assistant", content="y" * 4500))
     llm = FakeLLM([ChatReply(content="ok")])
@@ -669,15 +683,15 @@ def test_loop_context_budget_warns_before_backstop(tmp_path: Path) -> None:
 def test_loop_checkpoint_tool_call_is_seen_next_turn(tmp_path: Path) -> None:
     import json
 
-    from thyca.memory.active import ActiveSnapshot
-    from thyca.memory.facade import MemoryFacade
+    from thyca.memories.active import ActiveSnapshot
+    from thyca.memories.facade import MemoryFacade
     from thyca.tools.gateway import ToolGateway
     from thyca.tools.memory_tools import register_memory_tools
     from thyca.tools.registry import ToolRegistry
     from thyca.tools.task_store import TaskStore
 
-    manager = SessionManager(tmp_path)
-    session = manager.create()
+    manager = _canonical_manager(tmp_path)
+    session = manager.current
     facade = MemoryFacade(tmp_path / "home", timezone_name="Asia/Ho_Chi_Minh")
     registry = ToolRegistry()
     register_memory_tools(registry, facade)
@@ -730,10 +744,9 @@ def test_loop_checkpoint_tool_call_is_seen_next_turn(tmp_path: Path) -> None:
 
 
 def test_loop_context_budget_marks_old_checkpoint_stale(tmp_path: Path) -> None:
-    from thyca.memory.active import ActiveSnapshot
+    from thyca.memories.active import ActiveSnapshot
 
-    manager = SessionManager(tmp_path)
-    manager.create()
+    manager = _canonical_manager(tmp_path)
     manager.append(
         Message(
             role="assistant",
@@ -784,10 +797,9 @@ def test_loop_context_budget_marks_old_checkpoint_stale(tmp_path: Path) -> None:
 
 
 def test_loop_context_budget_respects_unavailable_memory_tools(tmp_path: Path) -> None:
-    from thyca.memory.active import ActiveSnapshot
+    from thyca.memories.active import ActiveSnapshot
 
-    manager = SessionManager(tmp_path)
-    manager.create()
+    manager = _canonical_manager(tmp_path)
     llm = FakeLLM([ChatReply(content="ok")])
     loop = AgentLoop(
         sessions=manager,

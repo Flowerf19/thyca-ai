@@ -1,4 +1,4 @@
-"""Trace aggregation from session JSONL. No new DB — messages + meta are truth."""
+"""Trace aggregation over projected conversation turns. Messages + meta are truth."""
 from __future__ import annotations
 
 from collections import defaultdict
@@ -6,8 +6,8 @@ from dataclasses import dataclass, field, replace
 
 from thyca.bots.usage import is_stop_status
 from thyca.core.protocol import Message
-from thyca.sessions import Session
-from thyca.sessions.wire import is_sidecar_message, turn_slices
+from thyca.conversations.runtime import Session
+from thyca.conversations.runtime.wire import is_sidecar_message, turn_slices
 
 
 @dataclass

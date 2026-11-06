@@ -12,10 +12,10 @@ from zoneinfo import ZoneInfo
 
 from thyca.app.chat_app import ChatApp
 from thyca.bots.card import BotCard
-from thyca.config import load, save
+from thyca.configs import load, save
 from seeded_config import seeded_config
-from thyca.llm.llm_base import ChatReply
-from thyca.memory.facade import format_task_catalog
+from thyca.llms.llm_base import ChatReply
+from thyca.memories.facade import format_task_catalog
 
 
 def _chat(tmp_path: Path, connect=None) -> ChatApp:
@@ -38,7 +38,7 @@ class _SpyLLM:
 def _remember(tmp_path: Path, chat: str, title: str, body: str,
               bots=None, task: str | None = None, kind: str | None = None,
               status: str | None = None) -> None:
-    from thyca.memory.facade import MemoryFacade
+    from thyca.memories.facade import MemoryFacade
 
     # Seeds must land on the wall-clock day (same-day entries are served
     # live from today's file; a fixed seed date rots once the clock moves
@@ -161,7 +161,7 @@ def test_meter_tokens_match_builder_filtered_hot(tmp_path: Path) -> None:
     """The context meter prices the same filtered snapshot the executor
     gets: channel brief counted, private DM content contributes zero."""
     from thyca.core.protocol import estimate_tokens as _chars_to_tokens
-    from thyca.llm.prompt_manager import PromptManager
+    from thyca.llms.prompt_manager import PromptManager
 
     llm = _SpyLLM()
     app = _chat(tmp_path, connect=llm)
@@ -178,7 +178,7 @@ def test_meter_tokens_match_builder_filtered_hot(tmp_path: Path) -> None:
         assert hot_tokens > 0
         from datetime import datetime as _dt
 
-        from thyca.memory.visibility import (
+        from thyca.memories.visibility import (
             MemoryView,
             bound_memory_view,
         )

@@ -1,9 +1,8 @@
-"""NDJSON turn streaming for ``/api/sessions*`` (split from serve.py).
+"""NDJSON turn streaming for DM/group conversation turns (split from serve.py).
 
 The queue adapter for turn events, the worker thread that produces exactly
 one terminal item, and the stream pump. Turn-error mapping and body parsing
-live in ``errors`` (re-exported here so ``thyca.serve.bridge`` keeps its
-import surface); DM/group conversation endpoints live in
+live in ``errors``; DM/group conversation endpoints live in
 ``conversations_api``.
 
 Handlers are accessed only through their ``_json`` / ``_read_json`` /
@@ -21,10 +20,10 @@ import sys
 import threading
 from typing import TYPE_CHECKING
 
-from thyca.agent.events import TurnEvent
-from thyca.agent.reply import ContentDelta
-from thyca.agent.thinking import ThinkingDelta
-from thyca.serve.errors import parse_turn_body, public_turn_error
+from thyca.agents.events import TurnEvent
+from thyca.agents.reply import ContentDelta
+from thyca.agents.thinking import ThinkingDelta
+from thyca.serve.errors import public_turn_error
 from thyca.serve.turn_state import TurnHub
 
 if TYPE_CHECKING:
@@ -34,8 +33,6 @@ __all__ = [
     "SENTINEL",
     "bridge_sink",
     "bridge_worker",
-    "parse_turn_body",
-    "public_turn_error",
     "pump_stream",
     "stream_turn",
     "write_line",

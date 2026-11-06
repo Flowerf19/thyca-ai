@@ -10,14 +10,15 @@ from urllib.request import Request, urlopen
 
 from thyca.serve import trace_api
 from thyca.app.chat_app import ChatApp
-from thyca.config import load, save
+from thyca.configs import load, save
 from seeded_config import seeded_config
-from thyca.llm.llm_base import ChatReply
+from thyca.llms.llm_base import ChatReply
 from thyca.core.protocol import Message, ToolCall
 from thyca.serve import default_webui, make_server
-from thyca.sessions import SessionManager
-from thyca.sessions.store import SessionStore
-from thyca.memory.facade import MemoryFacade
+from thyca.conversations.runtime import SessionManager
+from thyca.conversations.runtime.store import SessionStore
+from thyca.core.conversation import ConversationRef
+from thyca.memories.facade import MemoryFacade
 
 WEBUI = default_webui()
 TS = "2026-08-26T09:12:03Z"
@@ -139,13 +140,12 @@ def test_concurrent_trace_list_and_detail_do_not_race_cache(tmp_path: Path) -> N
         chat.shutdown()
 
 
-def test_trace_scan_cache_reuses_unchanged_files(tmp_path: Path) -> None:
+def test_trace_scan_rereads_store_doors(tmp_path: Path) -> None:
     chat = _chat(tmp_path)
     try:
         manager = SessionManager(tmp_path / "sessions")
         session_id = _append_turn(manager, model="gpt-4o-mini", content="cached turn", cost=0.00001)
 
-        trace_api._trace_sessions.clear()
         scans = ["initial"]
         original_scan = SessionStore.scan
 
@@ -160,18 +160,10 @@ def test_trace_scan_cache_reuses_unchanged_files(tmp_path: Path) -> None:
                 first = _json(httpd, "/api/traces/stats")
                 assert first["totals"]["requests"] == 1
                 scans.clear()
-                # unchanged files: no re-parse, totals identical (legacy
-                # file cache). Runtime store has no mtime cache and always
-                # re-reads doors, so scans may contain the door.
+                # No file cache: store doors are re-read, totals identical.
                 second = _json(httpd, "/api/traces/stats")
                 assert second == first
-                from thyca.conversations.store.runtime import is_runtime_ready
-
-                if is_runtime_ready(tmp_path):
-                    assert scans == [f"{session_id}.jsonl"] or scans == []
-                else:
-                    assert scans == []
-                # appended line changes mtime_ns: only that file is re-parsed
+                assert scans == []
                 manager.load(session_id)
                 manager.append(
                     Message(
@@ -183,14 +175,7 @@ def test_trace_scan_cache_reuses_unchanged_files(tmp_path: Path) -> None:
                 scans.clear()
                 refreshed = _json(httpd, "/api/traces/stats")
                 assert refreshed["totals"]["requests"] == 1  # still one open turn
-                # Legacy file cache re-parses only the appended file;
-                # runtime store bypasses SessionStore.scan (assemble path).
-                from thyca.conversations.store.runtime import is_runtime_ready as _rr
-
-                if _rr(tmp_path):
-                    assert scans == []
-                else:
-                    assert scans == [f"{session_id}.jsonl"]
+                assert scans == []
             finally:
                 SessionStore.scan = original_scan  # type: ignore[method-assign]
         finally:
@@ -199,13 +184,12 @@ def test_trace_scan_cache_reuses_unchanged_files(tmp_path: Path) -> None:
         chat.shutdown()
 
 
-def test_trace_detail_after_list_does_not_reparse_unchanged_files(tmp_path: Path) -> None:
+def test_trace_detail_after_list_rereads_store_door(tmp_path: Path) -> None:
     chat = _chat(tmp_path)
     try:
         manager = SessionManager(tmp_path / "sessions")
         session_id = _append_turn(manager, model="gpt-4o-mini", content="detail turn", cost=0.00001)
 
-        trace_api._trace_sessions.clear()
         scans: list[str] = []
         original_scan = SessionStore.scan
 
@@ -223,45 +207,12 @@ def test_trace_detail_after_list_does_not_reparse_unchanged_files(tmp_path: Path
                 detail = _json(httpd, f"/api/traces/groups/{session_id}/0")
                 assert detail["group_id"] == session_id
                 assert detail["kind"] == "group"
-                # Legacy file cache hits skip re-parse; runtime store has
-                # no mtime cache and re-reads the door.
-                from thyca.conversations.store.runtime import is_runtime_ready
-
-                if is_runtime_ready(tmp_path):
-                    assert scans == [f"{session_id}.jsonl"] or scans == []
-                else:
-                    assert scans == []  # cache hit: detail skips re-parse
+                assert scans == []
             finally:
                 SessionStore.scan = original_scan  # type: ignore[method-assign]
         finally:
             _stop(httpd, thread)
     finally:
-        chat.shutdown()
-
-
-def test_trace_store_collect_ignores_legacy_file_cache(tmp_path: Path) -> None:
-    """Hard cut: the runtime scan reads store doors, not the file cache.
-
-    A stale entry in the legacy ``_trace_sessions`` dict (kept only for
-    non-runtime file roots) must not affect store-backed stats.
-    """
-    chat = _chat(tmp_path)
-    try:
-        manager = SessionManager(tmp_path / "sessions")
-        _append_turn(manager, model="gpt-4o-mini", content="evict turn", cost=0.00001)
-        ghost = tmp_path / "sessions" / "ghost.jsonl"
-
-        trace_api._trace_sessions.clear()
-        trace_api._trace_sessions[ghost] = (0, object())
-
-        httpd, thread = _start(tmp_path, chat)
-        try:
-            stats = _json(httpd, "/api/traces/stats")
-            assert stats["totals"]["requests"] == 1
-        finally:
-            _stop(httpd, thread)
-    finally:
-        trace_api._trace_sessions.clear()
         chat.shutdown()
 
 
@@ -323,7 +274,6 @@ def test_stats_filter_detail_and_corrupt_skip(tmp_path: Path) -> None:
             cost=None,
             started="2026-08-25T09:12:03Z",
         )
-        (tmp_path / "sessions" / "2026-01-01T00-00-00_ffff.jsonl").write_text("{bad\n", encoding="utf-8")
 
         httpd, thread = _start(tmp_path, chat)
         try:
@@ -446,8 +396,7 @@ def test_trace_detail_expands_only_same_window_canonical_span(tmp_path: Path) ->
                 )
             )
 
-        trace_api._trace_sessions.clear()
-        payload = trace_api.trace_detail_payload(chat, group["id"], 0)
+        payload = trace_api.trace_detail_payload_ref(chat, ConversationRef.group(group["id"]), 0)
         rendered = json.dumps(payload, ensure_ascii=False)
         assert "DM1 sentinel reasoning" not in rendered
         assert "DM1 sentinel tool result" not in rendered
@@ -491,9 +440,8 @@ def test_trace_detail_missing_canonical_artifact_is_explicit_and_read_only(
         )
         timeline_path = tmp_path / "bots" / "thyca" / "workspace" / "timeline.jsonl"
         assert not timeline_path.exists()
-        trace_api._trace_sessions.clear()
         try:
-            trace_api.trace_detail_payload(chat, created["id"], 0)
+            trace_api.trace_detail_payload_ref(chat, ConversationRef.dm(created["id"]), 0)
         except TraceExecutionError as exc:
             assert "timeline is missing" in str(exc)
         else:
@@ -520,52 +468,14 @@ def test_trace_detail_marks_skill_loads_and_keeps_arguments(tmp_path: Path) -> N
         # test_trace_detail_expands_only_same_window_canonical_span).
         # Appending them here is a no-op for store-backed rooms, so Trace
         # detail carries no tool_calls from the room itself.
-        from thyca.conversations.store.runtime import is_runtime_ready
-
-        if is_runtime_ready(tmp_path):
-            manager.append(
-                Message(role="assistant", content="done", ts=TS2, meta={"kind": "llm", "round": 1}),
-                actor="thyca",
-            )
-            trace_api._trace_sessions.clear()
-            payload = trace_api.trace_detail_payload(chat, session.id, 0)
-            # Trace detail always carries the tool shape (include_args);
-            # runtime rooms hold no tool rows, so every entry is empty.
-            assert all(m.get("tool_calls", []) == [] for m in payload["messages"])
-            return
         manager.append(
-            Message(
-                role="assistant",
-                content=None,
-                ts=TS,
-                tool_calls=[
-                    ToolCall(id="c1", name="read", arguments={"path": str(skill_file)}),
-                    ToolCall(id="c2", name="read", arguments={"path": str(tmp_path / "notes.md")}),
-                ],
-                meta={"kind": "llm", "round": 1},
-            )
+            Message(role="assistant", content="done", ts=TS2, meta={"kind": "llm", "round": 1}),
+            actor="thyca",
         )
-        manager.append(Message(role="tool", tool_call_id="c1", content="---", ts=TS2))
-        manager.append(Message(role="tool", tool_call_id="c2", content="notes", ts=TS2))
-        manager.append(
-            Message(role="assistant", content="done", ts=TS2, meta={"kind": "llm", "round": 2})
-        )
-
-        trace_api._trace_sessions.clear()
-        payload = trace_api.trace_detail_payload(chat, session.id, 0)
-
-        calls = next(m for m in payload["messages"] if m["tool_calls"])
-        assert calls["tool_calls"][0] == {
-            "id": "c1",
-            "name": "read",
-            "arguments": {"path": str(skill_file)},
-            "skill": "codereview",
-        }
-        assert calls["tool_calls"][1] == {
-            "id": "c2",
-            "name": "read",
-            "arguments": {"path": str(tmp_path / "notes.md")},
-        }
+        payload = trace_api.trace_detail_payload_ref(chat, ConversationRef.group(session.id), 0)
+        # Trace detail always carries the tool shape (include_args);
+        # store rooms hold no tool rows, so every entry is empty.
+        assert all(m.get("tool_calls", []) == [] for m in payload["messages"])
     finally:
         chat.close() if hasattr(chat, "close") else None
 
@@ -583,43 +493,19 @@ def _trace_chat(tmp_path: Path) -> ChatApp:
     return ChatApp(tmp_path, load(tmp_path / "config.json"), connect=_NoopLLM())
 
 
-def _write_turn_files(sessions_dir: Path, n_files: int, turns_per_file: int) -> int:
-    sessions_dir.mkdir(parents=True, exist_ok=True)
-    for i in range(n_files):
-        sid = (
-            f"2026-09-{(i % 28) + 1:02d}"
-            f"T10-{(i * 7) % 60:02d}-{(i * 13) % 60:02d}_{i:04x}"
-        )
-        lines = []
-        for t in range(turns_per_file):
-            lines.append(json.dumps({"role": "user", "content": f"q{t}", "ts": "2026-09-01T10:00:00Z"}))
-            lines.append(json.dumps({"role": "assistant", "content": f"a{t}", "ts": "2026-09-01T10:00:01Z"}))
-        (sessions_dir / f"{sid}.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return n_files * turns_per_file
-
-
 def test_f34_limit_all_capped_total_full_and_offset_pages_on(tmp_path: Path) -> None:
-    # Hard-cut: seed via the store when the runtime is active (ChatApp
-    # ensures the store on init, so files written beforehand would be
-    # ignored). Legacy file seeding is kept for non-runtime roots.
     chat = _trace_chat(tmp_path)
-    from thyca.conversations.store.runtime import is_runtime_ready
+    from thyca.conversations.runtime import SessionManager as _SM
 
-    if is_runtime_ready(tmp_path):
-        from thyca.sessions import SessionManager as _SM
-
-        mgr = _SM(tmp_path / "sessions")
-        for i in range(100):
-            sid = mgr.create().id
-            for t in range(25):
-                mgr.load(sid)
-                mgr.append(Message(role="user", content=f"q{t}"))
-                mgr.append(Message(role="assistant", content=f"a{t}"), actor="thyca")
-        total = 2500
-    else:
-        total = _write_turn_files(tmp_path / "sessions", 100, 25)
+    mgr = _SM(tmp_path / "sessions")
+    for i in range(100):
+        sid = mgr.create().id
+        for t in range(25):
+            mgr.load(sid)
+            mgr.append(Message(role="user", content=f"q{t}"))
+            mgr.append(Message(role="assistant", content=f"a{t}"), actor="thyca")
+    total = 2500
     assert total == 2500
-    trace_api._trace_sessions.clear()
 
     payload = trace_api.trace_list_payload(chat, "limit=all")
     assert payload["total"] == 2500
@@ -669,8 +555,8 @@ def test_x26_sum_group_rollup() -> None:
 
 
 def _start_config_server(tmp_path: Path):
-    from thyca.config import save
-    from thyca.memory.facade import MemoryFacade
+    from thyca.configs import save
+    from thyca.memories.facade import MemoryFacade
     from thyca.serve import default_webui, make_server
 
     save(seeded_config(), tmp_path / "config.json")
@@ -717,7 +603,7 @@ def test_m7_post_traces_is_404_like_get(tmp_path: Path) -> None:
 def test_m7_turn_status_meta_first_then_stripped() -> None:
     from thyca.core.protocol import Message
     from thyca.serve.trace import turns_from_session
-    from thyca.sessions import Session
+    from thyca.conversations.runtime import Session
 
     def session_with(last: Message) -> Session:
         return Session(

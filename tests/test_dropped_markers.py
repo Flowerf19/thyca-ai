@@ -116,8 +116,8 @@ def test_legacy_pager_styles_are_gone() -> None:
 
 
 def test_removed_python_apis_stay_gone() -> None:
-    import thyca.config.schema as schema
-    from thyca.sessions.store import SessionStore
+    import thyca.configs.schema as schema
+    from thyca.conversations.runtime.store import SessionStore
 
     assert not hasattr(schema, "_dict_section")
     for key in ("model", "mcpServers", "pricing", "input", "cache", "output"):

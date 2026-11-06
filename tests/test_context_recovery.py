@@ -11,17 +11,34 @@ from pathlib import Path
 
 import pytest
 
-from thyca.agent.act import Act
-from thyca.agent.assemble import Assemble
-from thyca.agent.loop import AgentLoop
-from thyca.agent.observe import Observe
-from thyca.agent.think import Think
-from thyca.config import LimitsCfg
+from thyca.agents.act import Act
+from thyca.agents.assemble import Assemble
+from thyca.agents.loop import AgentLoop
+from thyca.agents.observe import Observe
+from thyca.agents.think import Think
+from thyca.configs import LimitsCfg
 from thyca.core.context import BACKSTOP_RATIO
 from thyca.core.protocol import Message
-from thyca.llm.llm_base import ChatReply
-from thyca.sessions import SessionManager
-from thyca.sessions.compaction import SessionCompactor, estimate_tokens
+from thyca.llms.llm_base import ChatReply
+from thyca.conversations.runtime import SessionManager
+
+# Build a canonical-timeline manager holding one execution session.
+def _canonical_manager(root: Path, limits=None) -> SessionManager:
+    from thyca.bots.timeline import CanonicalSessionStore, WorkspaceTimeline
+    from thyca.core.channel import WindowRef
+
+    timeline = WorkspaceTimeline(root, "thyca")
+    window = WindowRef(
+        window_id="thyca", channel_id="webui", kind="dm", participants=("thyca",))
+    session_id = "2026-01-01T00-00-00_ab12"
+    store = CanonicalSessionStore(
+        root / "bots" / "thyca" / "sessions",
+        timeline=timeline, window=window, session_id=session_id)
+    manager = SessionManager(store=store, limits=limits)
+    manager.load(session_id)
+    return manager
+
+from thyca.conversations.runtime.compaction import SessionCompactor, estimate_tokens
 
 
 class _FakeLLM:
@@ -41,7 +58,7 @@ class _FakeDispatcher:
 
 def _manager(tmp_path: Path) -> SessionManager:
     limits = LimitsCfg(contextTokens=4000)
-    return SessionManager(tmp_path, limits=limits)
+    return _canonical_manager(tmp_path, limits)
 
 
 def _seed_pairs(manager: SessionManager) -> None:
@@ -90,7 +107,6 @@ def test_compactor_fires_at_backstop_not_at_cap() -> None:
 
 def test_recovery_turn_reaches_llm_after_compaction(tmp_path: Path) -> None:
     manager = _manager(tmp_path)
-    manager.create()
     _seed_pairs(manager)
     estimate = sum(estimate_tokens(m) for m in manager.current.messages)
     assert int(4000 * BACKSTOP_RATIO) < estimate <= 4000
@@ -102,7 +118,6 @@ def test_recovery_turn_reaches_llm_after_compaction(tmp_path: Path) -> None:
 
 def test_retry_user_survives_compaction(tmp_path: Path) -> None:
     manager = _manager(tmp_path)
-    manager.create()
     _seed_pairs(manager)
     manager.append(Message(role="user", content="hi"))
     assert manager.truncate_to_last_user() is True
@@ -116,7 +131,6 @@ def test_tool_group_never_splits(tmp_path: Path) -> None:
     from thyca.core.protocol import ToolCall
 
     manager = _manager(tmp_path)
-    manager.create()
     _seed_pairs(manager)
     manager.append(Message(role="user", content="run it"))
     manager.append(
@@ -154,12 +168,12 @@ def test_overhead_only_trip_mints_no_marker(tmp_path: Path) -> None:
         is None
     )
     manager = _manager(tmp_path)
-    manager.create()
     manager.append(messages[0])
     manager.append(messages[1])
-    before = manager.current.path.read_bytes()
+    journal = tmp_path / "bots" / "thyca" / "workspace" / "timeline.jsonl"
+    before = journal.read_bytes()
     assert manager.compact_if_needed(pending_user_tokens=5000) is False
-    assert manager.current.path.read_bytes() == before
+    assert journal.read_bytes() == before
 
 
 def test_overhead_only_trip_keeps_prior_marker_byte_identical(
@@ -188,23 +202,23 @@ def test_overhead_only_trip_keeps_prior_marker_byte_identical(
         is None
     )
     manager = _manager(tmp_path)
-    manager.create()
     manager.append(marker)
     manager.append(body[0])
     manager.append(body[1])
-    before = manager.current.path.read_bytes()
+    journal = tmp_path / "bots" / "thyca" / "workspace" / "timeline.jsonl"
+    before = journal.read_bytes()
     assert manager.compact_if_needed(pending_user_tokens=5000) is False
-    assert manager.current.path.read_bytes() == before
+    assert journal.read_bytes() == before
     assert manager.current.messages[0].content == marker.content
     assert manager.current.messages[0].meta == marker.meta
 
 
 def test_context_stop_is_not_success(tmp_path: Path) -> None:
     from thyca.serve.trace import turns_from_session
-    from thyca.sessions.title import completed_turn_count
+    from thyca.conversations.runtime.title import completed_turn_count
 
     manager = _manager(tmp_path)
-    session = manager.create()
+    session = manager.current
     manager.append(Message(role="user", content="old q"))
     manager.append(Message(role="assistant", content="old a"))
     manager.append(Message(role="user", content="too big"))
@@ -229,7 +243,7 @@ def test_context_stop_keeps_prior_real_call(tmp_path: Path) -> None:
     from thyca.serve.trace import turns_from_session
 
     manager = _manager(tmp_path)
-    session = manager.create()
+    session = manager.current
     manager.append(Message(role="user", content="q"))
     manager.append(
         Message(

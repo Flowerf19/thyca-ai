@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from thyca.memory.heading import (
+from thyca.memories.heading import (
     HeadingMeta,
     is_session_heading,
     parse_heading,
@@ -110,7 +110,7 @@ from zoneinfo import ZoneInfo
 from pathlib import Path
 
 def test_x8_read_text_file_policy(tmp_path: Path) -> None:
-    from thyca.memory.heading import read_text_file
+    from thyca.memories.heading import read_text_file
 
     assert read_text_file(tmp_path / "missing.md") is None
     link = tmp_path / "link.md"
@@ -126,9 +126,9 @@ def test_x8_read_text_file_policy(tmp_path: Path) -> None:
 
 
 def test_x9_day_shared_by_active_and_archived(tmp_path: Path) -> None:
-    from thyca.memory.active import ActiveMemory
-    from thyca.memory.archived import ArchivedMemory
-    from thyca.memory.heading import day
+    from thyca.memories.active import ActiveMemory
+    from thyca.memories.archived import ArchivedMemory
+    from thyca.memories.heading import day
 
     zone = ZoneInfo("Asia/Ho_Chi_Minh")
     assert day(datetime(2026, 1, 1, 23, 30), zone) == "2026-01-01"

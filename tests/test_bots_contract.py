@@ -12,7 +12,7 @@ from urllib.request import Request, urlopen
 import pytest
 
 from thyca.app.chat_app import ChatApp
-from thyca.config import load, save
+from thyca.configs import load, save
 from seeded_config import seeded_config
 from thyca.serve import default_webui, make_server
 
@@ -27,7 +27,7 @@ def _chat(tmp_path: Path) -> ChatApp:
 def _serve(app: ChatApp, tmp_path: Path):
     import threading
 
-    from thyca.memory.facade import MemoryFacade
+    from thyca.memories.facade import MemoryFacade
 
     httpd = make_server(host="127.0.0.1", port=0, webui=WEBUI,
                         facade=MemoryFacade(tmp_path), chat=app)

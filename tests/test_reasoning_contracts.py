@@ -11,10 +11,10 @@ import json
 import httpx
 import pytest
 
-from thyca.config import ProviderCfg
+from thyca.configs import ProviderCfg
 from thyca.core.protocol import Message
-from thyca.llm.openai_chat import OpenAIChat, _to_openai_message
-from thyca.llm.openai_responses import OpenAIResponses, _to_responses_input
+from thyca.llms.openai_chat import OpenAIChat, _to_openai_message
+from thyca.llms.openai_responses import OpenAIResponses, _to_responses_input
 
 
 def _provider() -> ProviderCfg:

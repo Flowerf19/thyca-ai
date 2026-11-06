@@ -6,12 +6,12 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from thyca.memory.archived import SCHEMA_VERSION, ArchiveError
-from thyca.memory.archive_store import ArchiveStore
-from thyca.memory.chunk import Chunk
-from thyca.memory.heading import VISIBLE_SQL, is_expired, is_visible, parse_heading
-from thyca.memory.facade import MemoryFacade
-from thyca.memory.stats import MemoryStats
+from thyca.memories.archived import SCHEMA_VERSION, ArchiveError
+from thyca.memories.archive_store import ArchiveStore
+from thyca.memories.chunk import Chunk
+from thyca.memories.heading import VISIBLE_SQL, is_expired, is_visible, parse_heading
+from thyca.memories.facade import MemoryFacade
+from thyca.memories.stats import MemoryStats
 
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
@@ -416,7 +416,7 @@ def test_x10_stats_today_path_uses_python_helper(tmp_path: Path) -> None:
 
 # Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
 def test_m5_memory_ids_excluded_from_stats() -> None:
-    from thyca.memory.stats import L2_SESSION_RE, MemoryStats
+    from thyca.memories.stats import L2_SESSION_RE, MemoryStats
 
     assert L2_SESSION_RE.fullmatch("memory#aaaaaaaa") is None
     result = MemoryStats.build(

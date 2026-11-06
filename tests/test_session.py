@@ -9,18 +9,18 @@ from pathlib import Path
 
 import pytest
 
-from thyca.agent.assemble import Assemble
-from thyca.agent.stage import Stage
+from thyca.agents.assemble import Assemble
+from thyca.agents.stage import Stage
 from thyca.app import naming as app_naming
 from thyca.app.chat_app import session_title as chat_session_title
-from thyca.config import LimitsCfg
-from thyca.llm.llm_base import ChatReply
+from thyca.configs import LimitsCfg
+from thyca.llms.llm_base import ChatReply
 from thyca.core.protocol import Message, ToolCall
 from thyca.serve import routes as serve_routes
 from thyca.serve import trace as serve_trace
 from thyca.serve import trace_api
 from thyca.serve.conversations_api import _conv_error
-from thyca.sessions import (
+from thyca.conversations.runtime import (
     Session,
     SessionBusy,
     SessionCorrupt,
@@ -30,8 +30,8 @@ from thyca.sessions import (
     SessionStore,
     estimate_tokens,
 )
-from thyca.sessions.store import SESSION_ID_PATTERN
-from thyca.sessions.wire import (
+from thyca.conversations.runtime.store import SESSION_ID_PATTERN
+from thyca.conversations.runtime.wire import (
     delete_error,
     message_dict,
     rename_error,
@@ -40,7 +40,7 @@ from thyca.sessions.wire import (
     tool_call_dict,
 )
 from thyca.skills.skill_event import skill_name_for_call
-from thyca.sessions.title import (
+from thyca.conversations.runtime.title import (
     NAMING_TURNS,
     USER_TITLE_MAX,
     accept_title,
@@ -59,46 +59,66 @@ def msg(role: str, content: str | None = "x", **kw: object) -> Message:
     return Message(role=role, content=content, ts="2026-01-01T00:00:00Z", **kw)
 
 
+# Build a runtime-store manager over a fresh initialized root.
+def _runtime_manager(root: Path, limits: LimitsCfg | None = None) -> SessionManager:
+    from thyca.conversations.store.runtime import ensure_runtime_store
+
+    sessions_dir = Path(root)
+    store_root = sessions_dir.parent if sessions_dir.name == "sessions" else sessions_dir
+    ensure_runtime_store(store_root)
+    return SessionManager(sessions_dir, limits)
+
+
+# Build a canonical-timeline manager holding one execution session.
+def _canonical_manager(root: Path, limits: LimitsCfg | None = None) -> SessionManager:
+    from thyca.bots.timeline import CanonicalSessionStore, WorkspaceTimeline
+    from thyca.core.channel import WindowRef
+
+    timeline = WorkspaceTimeline(root, "thyca")
+    window = WindowRef(
+        window_id="thyca", channel_id="webui", kind="dm", participants=("thyca",))
+    session_id = "2026-01-01T00-00-00_ab12"
+    store = CanonicalSessionStore(
+        root / "bots" / "thyca" / "sessions",
+        timeline=timeline, window=window, session_id=session_id)
+    manager = SessionManager(store=store, limits=limits)
+    manager.load(session_id)
+    return manager
+
+
 def test_roundtrip_three_turns_and_permissions(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    session = manager.create()
+    manager = _canonical_manager(tmp_path)
+    session = manager.current
     manager.append(msg("user", "hello", meta={"x": "y"}))
-    manager.append(msg("assistant", "answer"))
+    manager.append(msg("assistant", "answer"), actor="thyca")
     call = ToolCall("call-1", "echo", {"x": 1})
     manager.append(msg("user", "tool please"))
-    manager.append(msg("assistant", None, tool_calls=[call]))
+    manager.append(msg("assistant", None, tool_calls=[call]), actor="thyca")
     manager.append(msg("tool", "done", tool_call_id="call-1"))
-    manager.append(msg("assistant", "final"))
+    manager.append(msg("assistant", "final"), actor="thyca")
     assert len(session.messages) == 6
-    loaded = SessionManager(tmp_path).load(session.id)
+    loaded = _canonical_manager(tmp_path).load(session.id)
     assert len(loaded.messages) == 6
     assert loaded.messages[0].meta == {"x": "y"}
     assert loaded.messages[3].content is None
     assert loaded.messages[3].tool_calls is not None
-    assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
-    assert stat.S_IMODE(session.path.stat().st_mode) == 0o600
 
-
-def test_list_paths_empty_and_skips(tmp_path: Path) -> None:
-    store = SessionStore(tmp_path)
-    assert store.list_paths() == []
-    assert SessionManager(tmp_path).list_sessions() == []
-    manager = SessionManager(tmp_path)
-    old, new = manager.create(), manager.create()
-    os.utime(old.path, ns=(1, 1))
-    os.utime(new.path, ns=(2, 2))
-    (tmp_path / "notes.jsonl").write_text("nope", encoding="utf-8")
-    (tmp_path / "link.jsonl").symlink_to(new.path)
-    (tmp_path / "sub.jsonl").mkdir()
-    assert [path.stem for path in store.list_paths()] == [new.id, old.id]
 
 
 def test_list_sessions_skips_corrupt_does_not_set_current(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
+    import sqlite3
+
+    manager = _runtime_manager(tmp_path)
     good = manager.create()
     manager.append(msg("user", "ok"))
-    os.utime(good.path, ns=(2, 2))
-    (tmp_path / "2026-01-01T00-00-00_ffff.jsonl").write_text("{bad\n", encoding="utf-8")
+    bad = _runtime_manager(tmp_path).create(make_current=False)
+    conn = sqlite3.connect(str(tmp_path / "conversations.db"))
+    try:
+        conn.execute(
+            "UPDATE conversations SET metadata='{corrupt' WHERE id=?", (bad.id,))
+        conn.commit()
+    finally:
+        conn.close()
     other = SessionManager(tmp_path)
     listed = other.list_sessions()
     assert [item.id for item in listed] == [good.id]
@@ -111,107 +131,28 @@ def test_list_sessions_skips_corrupt_does_not_set_current(tmp_path: Path) -> Non
 
 
 def test_discard_empty_keeps_spoken_and_keep(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
+    manager = _runtime_manager(tmp_path)
     blank = manager.create()
     kept = manager.create()
     spoken = manager.create()
     manager.append(msg("user", "alo"))
-    removed = SessionManager(tmp_path).discard_empty(keep={kept.id})
+    removed = _runtime_manager(tmp_path).discard_empty(keep={kept.id})
     assert set(removed) == {blank.id}
-    assert not blank.path.exists()
-    assert kept.path.exists()
-    assert spoken.path.exists()
-    loaded = SessionManager(tmp_path).load(spoken.id)
+    with pytest.raises(SessionNotFound):
+        _runtime_manager(tmp_path).load(blank.id)
+    assert _runtime_manager(tmp_path).load(kept.id) is not None
+    loaded = _runtime_manager(tmp_path).load(spoken.id)
     assert not is_blank(loaded)
 
 
-def test_continue_mtime_and_skips(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    old, new = manager.create(), manager.create()
-    os.utime(old.path, ns=(1, 1))
-    os.utime(new.path, ns=(2, 2))
-    (tmp_path / "sub.jsonl").mkdir()
-    (tmp_path / "link.jsonl").symlink_to(new.path)
-    (tmp_path / "notes.txt").write_text("nope", encoding="utf-8")
-    assert manager.continue_last().id == new.id
-    with pytest.raises(SessionNotFound):
-        SessionManager(tmp_path / "missing").continue_last()
-    empty = tmp_path / "empty"
-    empty.mkdir()
-    with pytest.raises(SessionNotFound):
-        SessionManager(empty).continue_last()
 
 
-def test_continue_skips_newer_invalid_filename(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    valid = manager.create()
-    os.utime(valid.path, ns=(1, 1))
-    invalid = tmp_path / "notes.jsonl"
-    invalid.write_text("not a session\n", encoding="utf-8")
-    os.utime(invalid, ns=(2, 2))
-
-    assert manager.continue_last().id == valid.id
 
 
-def test_continue_skips_newer_corrupt_session(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    valid = manager.create()
-    manager.append(msg("user", "older valid"))
-    os.utime(valid.path, ns=(1, 1))
-
-    newer = SessionManager(tmp_path).create(make_current=False)
-    newer.path.write_text("{bad\n", encoding="utf-8")
-    os.utime(newer.path, ns=(2, 2))
-
-    assert manager.continue_last().id == valid.id
-    with pytest.raises(SessionCorrupt):
-        manager.load(newer.id)
-
-
-def test_invalid_utf8_is_corrupt_and_skipped_by_continue(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    valid = manager.create()
-    manager.append(msg("user", "older valid"))
-    os.utime(valid.path, ns=(1, 1))
-
-    corrupt = SessionManager(tmp_path).create(make_current=False)
-    corrupt.path.write_bytes(b'{"role":"user",\xff}\n')
-    os.utime(corrupt.path, ns=(2, 2))
-
-    assert manager.continue_last().id == valid.id
-    with pytest.raises(SessionCorrupt, match="invalid UTF-8"):
-        manager.load(corrupt.id)
-
-
-def test_invalid_json_reports_path_and_line(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    session = manager.create()
-    session.path.write_text(
-        '{"role":"user","ts":"2026-01-01T00:00:00Z"}\n{bad', encoding="utf-8"
-    )
-    with pytest.raises(SessionCorrupt, match=r":2"):
-        manager.load(session.id)
-
-
-def test_invalid_schema_and_orphan(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    session = manager.create()
-    session.path.write_text(
-        json.dumps({"role": "tool", "content": "x", "ts": "2026-01-01T00:00:00Z"}) + "\n",
-        encoding="utf-8",
-    )
-    with pytest.raises(SessionCorrupt, match=r":1"):
-        manager.load(session.id)
-    session.path.write_text(
-        json.dumps({"content": "x", "ts": "2026-01-01T00:00:00Z"}) + "\n",
-        encoding="utf-8",
-    )
-    with pytest.raises(SessionCorrupt, match=r":1"):
-        manager.load(session.id)
 
 
 def test_concurrent_append(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
+    manager = _runtime_manager(tmp_path)
     manager.create()
     errors: list[Exception] = []
 
@@ -231,14 +172,14 @@ def test_concurrent_append(tmp_path: Path) -> None:
 
 
 def test_estimate_deterministic_and_compaction_boundary(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path, LimitsCfg(contextTokens=1000))
-    session = manager.create()
+    manager = _canonical_manager(tmp_path, LimitsCfg(contextTokens=1000))
+    session = manager.current
     for i in range(8):
         manager.append(msg("user", "u" * 300 + str(i)))
-        manager.append(msg("assistant", "a" * 300))
+        manager.append(msg("assistant", "a" * 300), actor="thyca")
     assert estimate_tokens(msg("user", "same")) == estimate_tokens(msg("user", "same"))
     assert manager.compact_if_needed()
-    loaded = manager.load(session.id)
+    loaded = _canonical_manager(tmp_path).load(session.id)
     assert loaded.messages[0].role == "system"
     marker = loaded.messages[0].content or ""
     assert marker.startswith("[compaction: omitted ")
@@ -254,11 +195,11 @@ def test_estimate_deterministic_and_compaction_boundary(tmp_path: Path) -> None:
 
 
 def test_compact_overhead_triggers_when_transcript_alone_fits(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path, LimitsCfg(contextTokens=2000))
+    manager = _runtime_manager(tmp_path, LimitsCfg(contextTokens=2000))
     manager.create()
     for i in range(4):
         manager.append(msg("user", "u" * 300 + str(i)))
-        manager.append(msg("assistant", "a" * 300))
+        manager.append(msg("assistant", "a" * 300), actor="thyca")
     transcript = sum(estimate_tokens(m) for m in manager.current.messages)
     assert transcript <= 2000
     assert not manager.compact_if_needed()
@@ -266,7 +207,7 @@ def test_compact_overhead_triggers_when_transcript_alone_fits(tmp_path: Path) ->
 
 
 def test_compact_tail_budget_subtracts_overhead_and_marker() -> None:
-    from thyca.sessions.compaction import SessionCompactor, _marker_reserve_tokens
+    from thyca.conversations.runtime.compaction import SessionCompactor, _marker_reserve_tokens
 
     compactor = SessionCompactor()
     messages: list[Message] = []
@@ -300,10 +241,10 @@ def _user_assistant_turns(messages: list[Message]) -> list[list[Message]]:
 
 
 def test_single_oversize_turn_kept(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path, LimitsCfg(contextTokens=1000))
+    manager = _runtime_manager(tmp_path, LimitsCfg(contextTokens=1000))
     session = manager.create()
     manager.append(msg("user", "u" * 8000))
-    manager.append(msg("assistant", "a" * 8000))
+    manager.append(msg("assistant", "a" * 8000), actor="thyca")
     # Nothing can be omitted (the lone turn must survive), so no junk
     # 0/0 marker is minted and the file is left untouched.
     assert not manager.compact_if_needed()
@@ -314,7 +255,7 @@ def test_single_oversize_turn_kept(tmp_path: Path) -> None:
 
 
 def test_context_usage_includes_overhead() -> None:
-    from thyca.sessions import context_usage
+    from thyca.conversations.runtime import context_usage
 
     messages = [msg("user", "hello"), msg("assistant", "hi there")]
     bare = context_usage(messages, 1000)
@@ -346,7 +287,7 @@ def _pair(model: str, actual: int, estimated: int) -> Message:
 
 
 def test_calibration_factor_median_clamp_and_model_filter() -> None:
-    from thyca.sessions import calibration_factor
+    from thyca.conversations.runtime import calibration_factor
 
     assert calibration_factor([], model="m") == 1.0
     pairs =([
@@ -364,21 +305,21 @@ def test_calibration_factor_median_clamp_and_model_filter() -> None:
 
 
 def test_calibration_makes_auto_compact_fire_earlier(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path, LimitsCfg(contextTokens=1000))
+    manager = _runtime_manager(tmp_path, LimitsCfg(contextTokens=1000))
     manager.create()
     for i in range(3):
         manager.append(msg("user", "u" * 300 + str(i)))
-        manager.append(msg("assistant", "a" * 300))
+        manager.append(msg("assistant", "a" * 300), actor="thyca")
     assert not manager.compact_if_needed()
     assert manager.compact_if_needed(calibration=2.5)
 
 
 def test_manual_compact_forces_below_threshold(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path, LimitsCfg(contextTokens=1000))
+    manager = _runtime_manager(tmp_path, LimitsCfg(contextTokens=1000))
     session = manager.create()
     for i in range(4):
         manager.append(msg("user", "u" * 300 + str(i)))
-        manager.append(msg("assistant", "a" * 300))
+        manager.append(msg("assistant", "a" * 300), actor="thyca")
     # Under the 95% auto threshold, over the 60% tail budget: auto is a
     # no-op, manual must still compact with the same turn-safe tail.
     assert not manager.compact_if_needed()
@@ -393,10 +334,10 @@ def test_manual_compact_forces_below_threshold(tmp_path: Path) -> None:
 
 
 def test_manual_compact_noop_when_already_fits(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path, LimitsCfg(contextTokens=1000))
+    manager = _runtime_manager(tmp_path, LimitsCfg(contextTokens=1000))
     session = manager.create()
     manager.append(msg("user", "hi"))
-    manager.append(msg("assistant", "hello"))
+    manager.append(msg("assistant", "hello"), actor="thyca")
     result = manager.compact_manual()
     assert result == {"compacted": False, "messages_before": 2, "messages_after": 2}
     loaded = manager.load(session.id)
@@ -404,57 +345,27 @@ def test_manual_compact_noop_when_already_fits(tmp_path: Path) -> None:
 
 
 def test_manual_compact_keeps_incomplete_tail(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path, LimitsCfg(contextTokens=1000))
+    manager = _runtime_manager(tmp_path, LimitsCfg(contextTokens=1000))
     manager.create()
     for i in range(4):
         manager.append(msg("user", "u" * 300 + str(i)))
-        manager.append(msg("assistant", "a" * 300))
+        manager.append(msg("assistant", "a" * 300), actor="thyca")
     manager.append(msg("user", "pending-question"))
     result = manager.compact_manual()
     assert result["compacted"] is True
     assert manager.current.messages[-1].content == "pending-question"
 
 
-def test_traversal_and_replace_failure_preserve_old(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    manager = SessionManager(tmp_path, LimitsCfg(contextTokens=1000))
-    session = manager.create()
-    for i in range(4):
-        manager.append(msg("user", "x" * 500 + str(i)))
-        manager.append(msg("assistant", "y" * 500))
-    original = session.path.read_bytes()
-    monkeypatch.setattr(os, "replace", lambda *_args: (_ for _ in ()).throw(OSError("no replace")))
-    with pytest.raises(SessionError):
-        manager.compact_if_needed()
-    assert session.path.read_bytes() == original
-    with pytest.raises(SessionNotFound):
-        manager.load("../escape")
-    with pytest.raises(SessionNotFound):
-        SessionStore(tmp_path).create("../../etc/passwd")
-
-
-def test_compaction_parent_fsync(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    manager = SessionManager(tmp_path, LimitsCfg(contextTokens=1000))
-    manager.create()
-    for i in range(4):
-        manager.append(msg("user", "x" * 500 + str(i)))
-        manager.append(msg("assistant", "y" * 500))
-    real_fsync = os.fsync
-    calls: list[int] = []
-    monkeypatch.setattr(os, "fsync", lambda fd: (calls.append(fd), real_fsync(fd))[1])
-    assert manager.compact_if_needed()
-    assert len(calls) >= 2
 
 
 def test_compaction_keeps_complete_tool_round(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path, LimitsCfg(contextTokens=1000))
-    session = manager.create()
+    manager = _canonical_manager(tmp_path, LimitsCfg(contextTokens=1000))
+    session = manager.current
     for i in range(6):
         manager.append(msg("user", "u" * 200 + str(i)))
-        manager.append(msg("assistant", None, tool_calls=[ToolCall(f"c{i}", "echo", {"i": i})]))
+        manager.append(msg("assistant", None, tool_calls=[ToolCall(f"c{i}", "echo", {"i": i})]), actor="thyca")
         manager.append(msg("tool", "r" * 200, tool_call_id=f"c{i}"))
-        manager.append(msg("assistant", "a" * 200))
+        manager.append(msg("assistant", "a" * 200), actor="thyca")
     assert manager.compact_if_needed()
     tail = session.messages[1:]
     pending: set[str] = set()
@@ -468,14 +379,14 @@ def test_compaction_keeps_complete_tool_round(tmp_path: Path) -> None:
 
 
 def test_concurrent_append_and_compact(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path, LimitsCfg(contextTokens=1000))
+    manager = _runtime_manager(tmp_path, LimitsCfg(contextTokens=1000))
     manager.create()
     errors: list[Exception] = []
 
     def work(i: int) -> None:
         try:
             manager.append(msg("user", "x" * 200 + str(i)))
-            manager.append(msg("assistant", "y" * 200))
+            manager.append(msg("assistant", "y" * 200), actor="thyca")
             manager.compact_if_needed()
         except Exception as exc:
             errors.append(exc)
@@ -493,13 +404,13 @@ def test_concurrent_append_and_compact(tmp_path: Path) -> None:
 
 
 def test_meta_title_roundtrip_and_last_wins(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
+    manager = _runtime_manager(tmp_path)
     session = manager.create()
     manager.append(msg("user", "alo"))
-    manager.append(msg("assistant", "hey"))
+    manager.append(msg("assistant", "hey"), actor="thyca")
     assert manager.set_title("Cà phê với Hòa") == "Cà phê với Hòa"
     assert manager.set_title("  'Nhịp sáng'  ") == "Nhịp sáng"
-    loaded = SessionManager(tmp_path).load(session.id)
+    loaded = _runtime_manager(tmp_path).load(session.id)
     assert loaded.title == "Nhịp sáng"
     assert [(item.role, item.content) for item in loaded.messages] == [
         ("user", "alo"),
@@ -508,28 +419,14 @@ def test_meta_title_roundtrip_and_last_wins(tmp_path: Path) -> None:
     assert display_title(loaded) == "Nhịp sáng"
 
 
-def test_meta_without_role_is_not_corrupt_unknown_type_is(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    session = manager.create()
-    session.path.write_text(
-        json.dumps({"type": "meta"}) + "\n" + json.dumps(msg("user", "hi").to_canonical_dict()) + "\n",
-        encoding="utf-8",
-    )
-    loaded = manager.load(session.id)
-    assert loaded.title is None
-    assert [item.content for item in loaded.messages] == ["hi"]
-    session.path.write_text(json.dumps({"type": "note", "title": "x"}) + "\n", encoding="utf-8")
-    with pytest.raises(SessionCorrupt, match=r":1"):
-        manager.load(session.id)
-
 
 def test_compaction_preserves_title(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path, LimitsCfg(contextTokens=1000))
+    manager = _runtime_manager(tmp_path, LimitsCfg(contextTokens=1000))
     session = manager.create()
     manager.set_title("Cà phê với Hòa")
     for i in range(8):
         manager.append(msg("user", "u" * 300 + str(i)))
-        manager.append(msg("assistant", "a" * 300))
+        manager.append(msg("assistant", "a" * 300), actor="thyca")
     assert manager.compact_if_needed()
     loaded = manager.load(session.id)
     assert loaded.title == "Cà phê với Hòa"
@@ -563,10 +460,10 @@ def test_user_title_is_verbatim_and_survives_compaction(tmp_path: Path) -> None:
     The agent's naming policy refuses titles that echo the conversation;
     that is not this policy's business when the user wrote it.
     """
-    manager = SessionManager(tmp_path)
+    manager = _runtime_manager(tmp_path)
     session = manager.create()
     manager.append(msg("user", "Cà phê với Hòa"))
-    manager.append(msg("assistant", "ok"))
+    manager.append(msg("assistant", "ok"), actor="thyca")
     # Verbatim: the text the user typed is exactly what comes back, even if it
     # happens to repeat their first message.
     assert manager.set_title("Cà phê với Hòa", source="user") == "Cà phê với Hòa"
@@ -574,25 +471,25 @@ def test_user_title_is_verbatim_and_survives_compaction(tmp_path: Path) -> None:
     long = "Kế hoạch tuần này cho dự án Thyca cùng Hòa"
     assert manager.set_title(long, source="user") == long
     assert len(long) > 32
-    loaded = SessionManager(tmp_path).load(session.id)
+    loaded = _runtime_manager(tmp_path).load(session.id)
     assert loaded.title == long
     assert loaded.title_source == "user"
     assert display_title(loaded) == long
 
     # Compaction rewrites the file; the user's title and its provenance stay.
-    sized = SessionManager(tmp_path, LimitsCfg(contextTokens=1000))
+    sized = _runtime_manager(tmp_path, LimitsCfg(contextTokens=1000))
     sized.load(session.id)
     for i in range(8):
         sized.append(msg("user", "u" * 300 + str(i)))
-        sized.append(msg("assistant", "a" * 300))
+        sized.append(msg("assistant", "a" * 300), actor="thyca")
     assert sized.compact_if_needed()
-    after = SessionManager(tmp_path).load(session.id)
+    after = _runtime_manager(tmp_path).load(session.id)
     assert after.title == long
     assert after.title_source == "user"
 
 
 def test_user_title_caps_and_cleans_but_keeps_punctuation(tmp_path: Path) -> None:
-    from thyca.sessions.title import sanitize_user_title
+    from thyca.conversations.runtime.title import sanitize_user_title
 
     assert sanitize_user_title("  Nhịp   sáng  ") == "Nhịp sáng"
     assert sanitize_user_title("Nhịp sáng.") == "Nhịp sáng."
@@ -600,29 +497,29 @@ def test_user_title_caps_and_cleans_but_keeps_punctuation(tmp_path: Path) -> Non
     assert sanitize_user_title("   ") is None
     assert sanitize_user_title("x" * 200) == "x" * (USER_TITLE_MAX - 1) + "…"
 
-    manager = SessionManager(tmp_path)
+    manager = _runtime_manager(tmp_path)
     manager.create()
     assert manager.set_title("   ", source="user") is None
     assert manager.set_title("Sáng 15 thg 9", source="user") == "Sáng 15 thg 9"
 
 
 def test_agent_title_still_goes_through_the_naming_policy(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
+    manager = _runtime_manager(tmp_path)
     session = manager.create()
     manager.append(msg("user", "alo"))
-    manager.append(msg("assistant", "hey"))
+    manager.append(msg("assistant", "hey"), actor="thyca")
     # No source: the model's proposal keeps the vetting (32 chars, not a copy
     # of what was said). CJK is allowed — titles follow the conversation.
     assert manager.set_title("打招呼") == "打招呼"
-    loaded = SessionManager(tmp_path).load(session.id)
+    loaded = _runtime_manager(tmp_path).load(session.id)
     assert loaded.title_source is None
     assert display_title(loaded) == "打招呼"
     assert manager.set_title("alo") == "alo"
-    assert display_title(SessionManager(tmp_path).load(session.id)) == fallback_title(session.id)
+    assert display_title(_runtime_manager(tmp_path).load(session.id)) == fallback_title(session.id)
 
 
 def test_rename_targets_any_stored_session(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
+    manager = _runtime_manager(tmp_path)
     first = manager.create()
     manager.append(msg("user", "alo"))
     second = manager.create()
@@ -630,11 +527,11 @@ def test_rename_targets_any_stored_session(tmp_path: Path) -> None:
 
     # Any session, not only the one the manager currently holds.
     assert manager.rename(first.id, "  Chuyện   buổi sáng ") == "Chuyện buổi sáng"
-    loaded = SessionManager(tmp_path).load(first.id)
+    loaded = _runtime_manager(tmp_path).load(first.id)
     assert loaded.title == "Chuyện buổi sáng"
     assert loaded.title_source == "user"
     manager.rename(second.id, "Chuyện buổi chiều")
-    assert SessionManager(tmp_path).load(second.id).title == "Chuyện buổi chiều"
+    assert _runtime_manager(tmp_path).load(second.id).title == "Chuyện buổi chiều"
 
     with pytest.raises(SessionNotFound):
         manager.rename("2026-01-01T00-00-00_beef", "x")
@@ -643,19 +540,15 @@ def test_rename_targets_any_stored_session(tmp_path: Path) -> None:
 
 
 def test_delete_removes_the_file_and_refuses_mid_turn(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
+    manager = _runtime_manager(tmp_path)
     session = manager.create()
     manager.append(msg("user", "alo"))
-    path = session.path
-    assert path.exists()
 
     with pytest.raises(SessionBusy):
         manager.delete(session.id, keep={session.id})
-    assert path.exists()
     assert manager.load(session.id) is not None
 
     manager.delete(session.id)
-    assert not path.exists()
     with pytest.raises(SessionNotFound):
         manager.load(session.id)
     # Deleting again is a no-op, not an error: the row is already gone.
@@ -664,12 +557,12 @@ def test_delete_removes_the_file_and_refuses_mid_turn(tmp_path: Path) -> None:
 
 def test_naming_step_does_not_overwrite_the_user_title(tmp_path: Path) -> None:
     """A title typed while a turn runs wins over the agent's naming step."""
-    manager = SessionManager(tmp_path)
+    manager = _runtime_manager(tmp_path)
     session = manager.create()
     manager.append(msg("user", "alo"))
     # The turn's snapshot predates the rename: another manager writes the meta
     # line to the same file while this one holds its stale view.
-    other = SessionManager(tmp_path)
+    other = _runtime_manager(tmp_path)
     other.rename(session.id, "Tên tôi tự đặt")
     assert manager.current.title is None
     manager.refresh_title()
@@ -678,47 +571,6 @@ def test_naming_step_does_not_overwrite_the_user_title(tmp_path: Path) -> None:
     assert display_title(manager.current) == "Tên tôi tự đặt"
 
 
-def test_read_title_walks_the_tail_and_last_meta_wins(tmp_path: Path) -> None:
-    """The naming step reads only the title, so it must not parse the whole file."""
-    manager = SessionManager(tmp_path)
-    session = manager.create()
-    # More than one tail chunk (>8 KiB) so the backwards walk has to loop.
-    for i in range(300):
-        manager.append(msg("user", "u" * 200 + str(i)))
-        manager.append(msg("assistant", "a" * 200))
-    manager.set_title("Tên cũ")
-    for i in range(300):
-        manager.append(msg("user", "v" * 200 + str(i)))
-    manager.set_title("Tên mới", source="user")
-
-    store = SessionStore(tmp_path)
-    assert store.read_title(session.path) == ("Tên mới", "user")
-    # Equivalent to a full scan's answer, at a fraction of the work.
-    _messages, title, title_source, attempted = store.scan(session.path)
-    assert (title, title_source) == ("Tên mới", "user")
-    assert attempted is False
-    # No meta line at all → None (caller leaves the in-memory title alone).
-    bare = SessionManager(tmp_path)
-    empty = bare.create()
-    assert store.read_title(empty.path) is None
-
-
-def test_read_title_ignores_non_meta_lines_and_bad_json(tmp_path: Path) -> None:
-    store = SessionStore(tmp_path)
-    path = tmp_path / "2026-01-01T00-00-00_abcd.jsonl"
-    path.write_text(
-        json.dumps({"role": "user", "ts": "t", "content": "có title trong chữ"}) + "\n"
-        + json.dumps({"type": "meta", "title": "Đúng"}) + "\n",
-        encoding="utf-8",
-    )
-    assert store.read_title(path) == ("Đúng", None)
-
-    # A half-written line at the tail must not hide the meta line above it.
-    path.write_text(
-        json.dumps({"type": "meta", "title": "Vẫn đọc được"}) + "\n" + '{"role": "user", "co',
-        encoding="utf-8",
-    )
-    assert store.read_title(path) == ("Vẫn đọc được", None)
 
 
 def test_delete_gate_blocks_a_claim_inside_the_window(tmp_path: Path) -> None:
@@ -729,29 +581,29 @@ def test_delete_gate_blocks_a_claim_inside_the_window(tmp_path: Path) -> None:
     so its transcript was removed under it — and the next append re-created the
     file truncated, silently dropping the earlier history.
     """
-    from thyca.sessions import SessionBusy
+    from thyca.conversations.runtime import SessionBusy
     from thyca.serve.turn_state import TurnState
 
     turns = TurnState()
-    manager = SessionManager(tmp_path)
+    manager = _runtime_manager(tmp_path)
     session = manager.create()
     manager.append(msg("user", "câu hỏi"))
-    path = session.path
 
     # A turn claims first: the delete must refuse.
     turns.claim(session.id)
     with pytest.raises(SessionBusy):
         turns.delete_unclaimed(manager, session.id)
-    assert path.exists()
+    assert _runtime_manager(tmp_path).load(session.id) is not None
     turns.release(session.id)
 
     # No turn: the delete goes through.
     turns.delete_unclaimed(manager, session.id)
-    assert not path.exists()
+    with pytest.raises(SessionNotFound):
+        _runtime_manager(tmp_path).load(session.id)
 
 
 def test_turn_state_claim_is_exclusive_and_releasable(tmp_path: Path) -> None:
-    from thyca.sessions import SessionBusy
+    from thyca.conversations.runtime import SessionBusy
     from thyca.serve.turn_state import TurnState
 
     turns = TurnState()
@@ -802,15 +654,14 @@ def test_claim_cannot_slip_between_the_check_and_the_unlink(tmp_path: Path) -> N
     import threading
     import time
 
-    from thyca.sessions import SessionNotFound
+    from thyca.conversations.runtime import SessionNotFound
     from thyca.serve.turn_state import TurnState
 
     turns = TurnState()
-    manager = SessionManager(tmp_path)
+    manager = _runtime_manager(tmp_path)
     session = manager.create()
     manager.append(msg("user", "câu hỏi"))
-    path = session.path
-    assert path.exists()
+    assert _runtime_manager(tmp_path).load(session.id) is not None
 
     inside = threading.Event()
     release = threading.Event()
@@ -846,7 +697,7 @@ def test_claim_cannot_slip_between_the_check_and_the_unlink(tmp_path: Path) -> N
         # take the session — the claim is what used to slip through.
         time.sleep(0.2)
         assert not claimed.is_set(), "claim got through the delete window"
-        assert path.exists()
+        assert _runtime_manager(tmp_path).load(session.id) is not None
 
         release.set()
         deleter.join(timeout=5)
@@ -865,41 +716,41 @@ def test_claim_cannot_slip_between_the_check_and_the_unlink(tmp_path: Path) -> N
 
 
 def test_mark_turn_error_stamps_last_user_and_persists(tmp_path: Path) -> None:
-    mgr = SessionManager(tmp_path / "sessions")
-    session = mgr.create()
+    mgr = _canonical_manager(tmp_path)
+    session = mgr.current
     mgr.append(msg("user", "hi"))
     assert mgr.current.messages[0].meta is None
     assert mgr.mark_turn_error("llm_error", "provider HTTP 404: gone") is True
     marked = mgr.current.messages[0].meta
     assert marked == {"error": {"code": "llm_error", "message": "provider HTTP 404: gone"}}
-    reloaded = SessionManager(tmp_path / "sessions").load(session.id)
+    reloaded = _canonical_manager(tmp_path).load(session.id)
     assert reloaded.messages[0].meta == marked
 
 
 def test_mark_turn_error_no_user_returns_false(tmp_path: Path) -> None:
-    mgr = SessionManager(tmp_path / "sessions")
+    mgr = _runtime_manager(tmp_path / "sessions")
     mgr.create()
     assert mgr.mark_turn_error("llm_error", "x") is False
 
 
 def test_truncate_to_last_user_strips_error_marker(tmp_path: Path) -> None:
-    mgr = SessionManager(tmp_path / "sessions")
+    mgr = _runtime_manager(tmp_path / "sessions")
     session = mgr.create()
     mgr.append(msg("user", "hi", meta={"error": {"code": "llm_error", "message": "boom"}}))
-    mgr.append(msg("assistant", "partial"))
+    mgr.append(msg("assistant", "partial"), actor="thyca")
     assert mgr.truncate_to_last_user() is True
     assert mgr.current.messages[-1].meta is None
-    reloaded = SessionManager(tmp_path / "sessions").load(session.id)
+    reloaded = _runtime_manager(tmp_path / "sessions").load(session.id)
     assert reloaded.messages[-1].meta is None
 
 
 def test_truncate_tail_user_with_marker_rewrites(tmp_path: Path) -> None:
-    mgr = SessionManager(tmp_path / "sessions")
-    session = mgr.create()
+    mgr = _canonical_manager(tmp_path)
+    session = mgr.current
     mgr.append(msg("user", "hi", meta={"error": {"code": "llm_error", "message": "boom"}}))
     assert mgr.truncate_to_last_user() is True
     assert mgr.current.messages[-1].meta is None
-    reloaded = SessionManager(tmp_path / "sessions").load(session.id)
+    reloaded = _canonical_manager(tmp_path).load(session.id)
     assert reloaded.messages[-1].meta is None
 
 
@@ -1058,10 +909,11 @@ def test_x1_session_id_grammar_is_single_pattern(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         ConversationRef.dm(_SID)
     store = SessionStore(tmp_path / "sessions")
-    # Public door ids and internal canonical ids both bind to a path.
+    # Public door ids bind to a path; canonical timestamp ids do not.
     assert store.path_for("coder").name == "coder.jsonl"
     assert store.path_for(group_id).name == f"{group_id}.jsonl"
-    assert store.path_for(_SID).name == f"{_SID}.jsonl"
+    with pytest.raises(SessionNotFound):
+        store.path_for(_SID)
     # New routes address doors explicitly; no session route remains.
     assert not hasattr(serve_routes, "_SESSION_RE")
     assert serve_routes._BOT_DM_RE.fullmatch("/api/bots/coder/dm") is not None
@@ -1143,7 +995,7 @@ import pytest
 def test_x17_shared_estimator() -> None:
     from thyca.core.protocol import estimate_tokens as core_estimate
 
-    from thyca.sessions.compaction import estimate_tokens as session_estimate
+    from thyca.conversations.runtime.compaction import estimate_tokens as session_estimate
     from thyca.core.protocol import Message
 
     assert core_estimate("abcd") == 1
@@ -1171,50 +1023,17 @@ def test_x17_shared_estimator() -> None:
     )
 
 
-def test_m8_failed_rewrite_leaves_no_tmp(tmp_path: Path) -> None:
-    from thyca.core.protocol import Message
-    from thyca.sessions import SessionError, SessionManager
-
-    manager = SessionManager(tmp_path)
-    session = manager.create()
-    bad = Message(role="user", content="x")
-    object.__setattr__(bad, "meta", {"bad": object()})
-    with pytest.raises(SessionError, match="rewrite failed"):
-        manager.store.rewrite(session.id, session.path, [bad])
-    assert list(tmp_path.glob("*.tmp*")) == []
-    assert list(tmp_path.glob(".*.tmp*")) == []
-
-
-# Moved from tests/test_b2_contracts.py (B2 batch).
-def test_f37_blank_lines_skipped_on_load(tmp_path: Path) -> None:
-    """Fails pre-fix: one blank line bricked the session (SessionCorrupt)."""
-    manager = SessionManager(tmp_path)
-    session = manager.create()
-    lines = [
-        Message(role="user", content="hi").to_json_line(),
-        "",
-        "   ",
-        Message(role="assistant", content="yo").to_json_line(),
-        "",
-    ]
-    session.path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    loaded = manager.load(session.id)
-    assert [(item.role, item.content) for item in loaded.messages] == [
-        ("user", "hi"),
-        ("assistant", "yo"),
-    ]
 
 
 def test_last_user_index_shared_by_truncate_and_mark(tmp_path: Path) -> None:
     """truncate + mark agree on the last user message in a multi-turn run."""
-    from thyca.sessions.manager import _last_user_index
+    from thyca.conversations.runtime.manager import _last_user_index
 
-    mgr = SessionManager(tmp_path / "sessions")
-    mgr.create()
+    mgr = _canonical_manager(tmp_path)
     mgr.append(msg("user", "first"))
-    mgr.append(msg("assistant", "answer"))
+    mgr.append(msg("assistant", "answer"), actor="thyca")
     mgr.append(msg("user", "second"))
-    mgr.append(msg("assistant", "partial"))
+    mgr.append(msg("assistant", "partial"), actor="thyca")
     messages = mgr.current.messages
     assert _last_user_index(messages) == 2
     assert _last_user_index([]) is None
@@ -1226,28 +1045,10 @@ def test_last_user_index_shared_by_truncate_and_mark(tmp_path: Path) -> None:
     assert [m.content for m in mgr.current.messages] == ["first", "answer", "second"]
 
 
-def test_meta_payload_identical_for_append_and_rewrite(tmp_path: Path) -> None:
-    """append_meta and rewrite emit byte-identical meta lines for same input."""
-    from thyca.sessions.store import _meta_payload
-
-    assert _meta_payload("T", "user") == {"type": "meta", "title": "T", "source": "user"}
-    assert _meta_payload("T", None) == {"type": "meta", "title": "T"}
-    root = tmp_path / "sessions"
-    root.mkdir()
-    store = SessionStore(root)
-    target = root / "m.jsonl"
-    store.append_meta(target, "T", "user")
-    appended = target.read_text(encoding="utf-8").splitlines()[0]
-    mgr = SessionManager(root)
-    session = mgr.create()
-    store.rewrite(session.id, session.path, [], title="T", title_source="user")
-    rewritten = session.path.read_text(encoding="utf-8").splitlines()[0]
-    assert json.loads(appended) == json.loads(rewritten) == _meta_payload("T", "user")
-
 
 def test_wire_turns_match_trace_turn_slices(tmp_path: Path) -> None:
     """Wire turns, turn_slices, and Trace agree incl. system/orphan rows."""
-    from thyca.sessions.wire import session_summary, turn_slices
+    from thyca.conversations.runtime.wire import session_summary, turn_slices
 
     session = Session(
         id="s1",
@@ -1365,69 +1166,47 @@ def test_accept_title_rejects_echo_from_either_turn(tmp_path: Path) -> None:
 
 
 def test_naming_attempted_persists_and_survives_rewrites(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
+    manager = _runtime_manager(tmp_path)
     session = manager.create()
     assert session.naming_attempted is False
     manager.append(msg("user", "alo"))
-    manager.append(msg("assistant", "pong"))
-    manager.mark_naming_attempted()
-    assert SessionManager(tmp_path).load(session.id).naming_attempted is True
-    # Idempotent: no duplicate flag lines on a second call.
-    manager.mark_naming_attempted()
-    flag_lines = [
-        line
-        for line in session.path.read_text(encoding="utf-8").splitlines()
-        if "naming_attempted" in line
-    ]
-    assert len(flag_lines) == 1
+    manager.append(msg("assistant", "pong"), actor="thyca")
+    manager.mark_naming_attempted(actor="thyca")
+    assert _runtime_manager(tmp_path).load(session.id).naming_attempted is True
+    # Idempotent: a second call keeps the one stored flag.
+    manager.mark_naming_attempted(actor="thyca")
+    assert _runtime_manager(tmp_path).load(session.id).naming_attempted is True
     # Rewrites keep the flag alongside the title.
     manager.set_title("Tên hay")
     manager.append(msg("user", "thêm"))
     assert manager.truncate_to_last_user() is True
-    assert SessionManager(tmp_path).load(session.id).naming_attempted is True
+    assert _runtime_manager(tmp_path).load(session.id).naming_attempted is True
     assert manager.mark_turn_error("llm_error", "boom") is True
-    reloaded = SessionManager(tmp_path).load(session.id)
+    reloaded = _runtime_manager(tmp_path).load(session.id)
     assert reloaded.naming_attempted is True
     assert reloaded.title == "Tên hay"
 
 
 def test_naming_attempted_survives_compaction(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
+    manager = _runtime_manager(tmp_path)
     session = manager.create()
     manager.append(msg("user", "alo"))
-    manager.append(msg("assistant", "pong"))
-    manager.mark_naming_attempted()
-    sized = SessionManager(tmp_path, LimitsCfg(contextTokens=1000))
+    manager.append(msg("assistant", "pong"), actor="thyca")
+    manager.mark_naming_attempted(actor="thyca")
+    sized = _runtime_manager(tmp_path, LimitsCfg(contextTokens=1000))
     sized.load(session.id)
     for i in range(8):
         sized.append(msg("user", "u" * 300 + str(i)))
-        sized.append(msg("assistant", "a" * 300))
+        sized.append(msg("assistant", "a" * 300), actor="thyca")
     assert sized.compact_if_needed()
-    after = SessionManager(tmp_path).load(session.id)
+    after = _runtime_manager(tmp_path).load(session.id)
     assert after.naming_attempted is True
 
 
-def test_legacy_session_without_flag_loads_unattempted(tmp_path: Path) -> None:
-    path = tmp_path / "2026-01-01T00-00-00_abcd.jsonl"
-    user = msg("user", "alo")
-    assistant = msg("assistant", "pong")
-    path.write_text(
-        json.dumps({"type": "meta", "title": "Tên cũ"}, ensure_ascii=False)
-        + "\n"
-        + json.dumps(user.to_canonical_dict(), ensure_ascii=False)
-        + "\n"
-        + json.dumps(assistant.to_canonical_dict(), ensure_ascii=False)
-        + "\n",
-        encoding="utf-8",
-    )
-    loaded = SessionStore(tmp_path).load("2026-01-01T00-00-00_abcd")
-    assert (loaded.title, loaded.title_source) == ("Tên cũ", None)
-    assert loaded.naming_attempted is False
-
 
 def test_naming_instruction_is_packaged_and_not_in_chat_prompt() -> None:
-    from thyca.llm.prompt_manager import PromptManager
-    from thyca.memory.active import ActiveSnapshot
+    from thyca.llms.prompt_manager import PromptManager
+    from thyca.memories.active import ActiveSnapshot
 
     prompts_dir = Path(__file__).resolve().parents[1] / "thyca" / "seeds" / "prompts"
     assert naming_instruction() == (prompts_dir / "naming.md").read_text(
@@ -1446,7 +1225,7 @@ def test_naming_instruction_is_packaged_and_not_in_chat_prompt() -> None:
 
 
 async def test_missing_blank_unreadable_prompt_skips_model_call(tmp_path, monkeypatch) -> None:
-    import thyca.sessions.title as title_mod
+    import thyca.conversations.runtime.title as title_mod
 
     real_dir = title_mod._PROMPTS_DIR
     monkeypatch.setattr(title_mod, "_INSTRUCTION_CACHE", None)
@@ -1543,20 +1322,20 @@ def test_naming_context_uses_final_assistant_answer(tmp_path: Path) -> None:
 
 
 def test_set_title_if_missing_wins_and_loses_atomically(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
+    manager = _runtime_manager(tmp_path)
     session = manager.create()
     assert manager.set_title_if_missing("  ") is None
-    assert session.path.read_text(encoding="utf-8") == ""
-    assert manager.set_title_if_missing("Auto title") == "Auto title"
-    assert SessionManager(tmp_path).load(session.id).title == "Auto title"
+    assert _runtime_manager(tmp_path).load(session.id).title is None
+    assert manager.set_title_if_missing("Auto title", actor="thyca") == "Auto title"
+    assert _runtime_manager(tmp_path).load(session.id).title == "Auto title"
     # A rename from another manager (own store object, same file) lands
     # first: nothing is overwritten and the stale view syncs to it.
-    other = SessionManager(tmp_path)
+    other = _runtime_manager(tmp_path)
     other.rename(session.id, "Tên tôi tự đặt")
-    assert manager.set_title_if_missing("Late auto") is None
+    assert manager.set_title_if_missing("Late auto", actor="thyca") is None
     assert manager.current.title == "Tên tôi tự đặt"
     assert manager.current.title_source == "user"
-    assert SessionManager(tmp_path).load(session.id).title == "Tên tôi tự đặt"
+    assert _runtime_manager(tmp_path).load(session.id).title == "Tên tôi tự đặt"
 
 
 # --- T1: compaction excerpt is the tail, carried forward on re-compaction ---
@@ -1567,7 +1346,7 @@ def _marker_excerpt(marker: Message) -> str:
 
 
 def test_t1_excerpt_takes_tail_of_omitted_content() -> None:
-    from thyca.sessions import SessionCompactor
+    from thyca.conversations.runtime import SessionCompactor
 
     compactor = SessionCompactor()
     messages: list[Message] = []
@@ -1595,7 +1374,7 @@ def test_t1_excerpt_takes_tail_of_omitted_content() -> None:
 
 
 def test_t1_clip_excerpt_tail_and_surrogate_safety() -> None:
-    from thyca.sessions.compaction import SessionCompactor
+    from thyca.conversations.runtime.compaction import SessionCompactor
 
     clip = SessionCompactor._clip_excerpt
     assert clip("abcdef", 4) == "cdef"
@@ -1609,11 +1388,11 @@ def test_t1_clip_excerpt_tail_and_surrogate_safety() -> None:
 
 
 def test_t1_recompact_carries_prior_excerpt_and_counts(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path, LimitsCfg(contextTokens=1000))
-    session = manager.create()
+    manager = _canonical_manager(tmp_path, LimitsCfg(contextTokens=1000))
+    session = manager.current
     for i in range(8):
         manager.append(msg("user", f"gen1-TURN{i}-" + "u" * 300))
-        manager.append(msg("assistant", f"gen1-REPLY{i}-" + "a" * 300))
+        manager.append(msg("assistant", f"gen1-REPLY{i}-" + "a" * 300), actor="thyca")
     assert manager.compact_if_needed()
     marker1 = manager.current.messages[0]
     assert marker1.role == "system"
@@ -1623,7 +1402,7 @@ def test_t1_recompact_carries_prior_excerpt_and_counts(tmp_path: Path) -> None:
 
     for i in range(6):
         manager.append(msg("user", f"gen2-TURN{i}-" + "v" * 300))
-        manager.append(msg("assistant", f"gen2-REPLY{i}-" + "b" * 300))
+        manager.append(msg("assistant", f"gen2-REPLY{i}-" + "b" * 300), actor="thyca")
     before = len(manager.current.messages)
     assert manager.compact_if_needed()
     compacted = manager.current.messages
@@ -1644,24 +1423,24 @@ def test_t1_recompact_carries_prior_excerpt_and_counts(tmp_path: Path) -> None:
     assert meta2["omitted_turns"] >= meta1["omitted_turns"]
     assert meta2["omitted_chars"] > meta1["omitted_chars"]
     # Output round-trips through store.scan (load path).
-    reloaded = SessionManager(tmp_path).load(session.id)
+    reloaded = _canonical_manager(tmp_path).load(session.id)
     assert reloaded.messages[0].role == "system"
     assert reloaded.messages[0].meta == meta2
 
     # Markers stay bounded across repeated compactions.
     for i in range(6):
         manager.append(msg("user", f"gen3-TURN{i}-" + "w" * 300))
-        manager.append(msg("assistant", f"gen3-REPLY{i}-" + "c" * 300))
+        manager.append(msg("assistant", f"gen3-REPLY{i}-" + "c" * 300), actor="thyca")
     assert manager.compact_if_needed()
     excerpt3 = _marker_excerpt(manager.current.messages[0])
     assert len(excerpt3) <= 1000
     assert "gen3-" in excerpt3
-    reloaded = SessionManager(tmp_path).load(session.id)
+    reloaded = _canonical_manager(tmp_path).load(session.id)
     assert [m.role for m in reloaded.messages[:2]] != ["system", "system"]
 
 
 def test_compact_overhead_only_returns_none_without_junk_marker() -> None:
-    from thyca.sessions.compaction import SessionCompactor
+    from thyca.conversations.runtime.compaction import SessionCompactor
 
     compactor = SessionCompactor()
     messages = [msg("user", "u" * 100), msg("assistant", "a" * 100)]
@@ -1674,12 +1453,12 @@ def test_compact_overhead_only_returns_none_without_junk_marker() -> None:
 
 
 def test_ensure_dm_finds_marked_creates_marked(tmp_path: Path) -> None:
-    from thyca.sessions import SessionManager
+    from thyca.conversations.runtime import SessionManager
 
-    manager = SessionManager(tmp_path / "sessions")
+    manager = _runtime_manager(tmp_path / "sessions")
     first = manager.ensure_dm("coder")
     assert first.dm_bot == "coder"
     assert first.bots == ["coder"]
     second = manager.ensure_dm("coder")
     assert second.id == first.id
-    assert SessionManager(tmp_path / "sessions").ensure_dm("other").id != first.id
+    assert _runtime_manager(tmp_path / "sessions").ensure_dm("other").id != first.id

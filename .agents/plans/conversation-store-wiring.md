@@ -1,7 +1,7 @@
 ---
 status: in-progress
 created: 2026-10-31
-last_updated: 2026-11-01
+last_updated: 2026-11-06
 ---
 
 # Conversation-store wiring plan (prototype -> runtime)
@@ -258,12 +258,40 @@ as final behavior.
   and `group:` keys. Gates: focused 248 passed, frontend 165 passed,
   full isolated 2033 passed / 5 skipped, `git diff --check` clean.
 
+- 2026-11-06 Legacy public-session removal (Writers A+B+C): deleted the
+  JSONL dual path in `thyca/sessions/store.py` (fail-closed when the runtime
+  store is uninitialized), legacy `create`/`ensure_dm` branches and the
+  `Path.home()` default in `manager.py`, the file-mtime fallback in
+  `wire.py`, `fixture_switch.py`/`bot_workspace.py` and every
+  `Synthetic*`/`fixture_*` production export, and the file-mtime trace
+  cache in `serve/trace_api.py`. Canonical grammar ownership moved to
+  `thyca/bots/workspace_store.py` (`_INTERNAL_SESSION_ID_RE`);
+  `CanonicalSessionStore.path_for` validates it and
+  `WorkspaceTimeline.project` no longer routes through the public
+  `SessionStore.path_for`, which now accepts only `group-<hex32>`/bot-id.
+  Dead `_LEGACY_SESSION_ID` removed from `thyca/core/conversation.py`.
+  Remaining bare-manager tests ported to canonical-timeline or runtime
+  harnesses at equal strength; deleted-with-subject:
+  `test_list_paths_survives_racing_stat`,
+  `test_compact_of_deleted_session_reports_not_found`,
+  `test_rewrite_unserializable_meta_wrapped` (file subjects gone).
+  Full isolated gate: 1999 passed, 5 skipped (pre-existing Chrome/env
+  skips); `git diff --check` clean. Repo-wide search: no JSONL
+  public-session writing path, no `fixture_switch`/`Synthetic`
+  production exports, no public timestamp grammar. Live smoke on a
+  scratch root was not part of this slice, so this plan stays
+  `in-progress` (not marked done).
+
+- 2026-11-06 Sessions merged into conversations: `thyca/sessions/*`
+  moved to `thyca/conversations/runtime/` (class names unchanged) and
+  `thyca/app/session_admin` renamed to `thyca/app/conversation_admin`;
+  all imports updated, no shim. Full gate result in the merge handoff.
+
 ## Handoff
 
-- Status `in-progress`: Phase 0 done on fixture roots. R1/R2 still required
-  before Phase 1 implementation; W1/W2 before Phase 2. Resolve R1-R2 before Phase 1 and
-  W1-W2 before Phase 2, then set `in-progress` when the corresponding phase
-  is authorized.
+- Status `in-progress`: public-storage removal verified as logged above.
+  Remaining before `done`: the approved live smoke batch on a scratch
+  root (Phase 5 checks) and the separate two-doors acceptance checks.
 - Related: `.agents/plans/two-doors-hard-cut.md`,
   `.agents/plans/thyca-e2e-test-plan.md`,
   `.agents/plans/module-e2e-test-cases.md`, `docs/TECH_DEBT.md` items 1-6.

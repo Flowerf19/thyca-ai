@@ -17,10 +17,10 @@ from urllib.request import Request, urlopen
 import httpx
 
 from thyca import __version__
-from thyca.config import Config, ConfigError, ProviderCfg
+from thyca.configs import Config, ConfigError, ProviderCfg
 from thyca.core.protocol import Message
-from thyca.llm.llm_base import ChatReply, Connect, LLMError
-from thyca.llm.llm_factory import ConnectFactory
+from thyca.llms.llm_base import ChatReply, Connect, LLMError
+from thyca.llms.llm_factory import ConnectFactory
 
 _PROBE_TIMEOUT_S = 10.0
 _TEST_TIMEOUT_S = 20.0

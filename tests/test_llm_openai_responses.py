@@ -5,9 +5,9 @@ import json
 import httpx
 import pytest
 
-from thyca.config import ProviderCfg
-from thyca.llm.llm_base import LLMError, normalize_usage
-from thyca.llm.openai_responses import (
+from thyca.configs import ProviderCfg
+from thyca.llms.llm_base import LLMError, normalize_usage
+from thyca.llms.openai_responses import (
     OpenAIResponses,
     _responses_reasoning_detail,
     _responses_url,
@@ -283,8 +283,8 @@ async def test_responses_sends_default_max_output_tokens() -> None:
 
 @pytest.mark.asyncio
 async def test_responses_model_max_output_tokens_wins_and_survives_drop_retry() -> None:
-    from thyca.config import ModelCfg, ProviderEntry
-    from thyca.config.providers import resolve
+    from thyca.configs import ModelCfg, ProviderEntry
+    from thyca.configs.providers import resolve
 
     provider = resolve(
         ProviderEntry(baseUrl="https://api.example.com/v1", apiKey="sk-secret-key"),
@@ -408,7 +408,7 @@ def test_normalize_usage_responses_shape() -> None:
 
 
 @pytest.mark.asyncio
-async def test_reasoning_summary_feeds_persist_and_cost_pipeline() -> None:
+async def test_reasoning_summary_feeds_persist_and_cost_pipeline(tmp_path) -> None:
     """TASK-011/012: summaries land in ChatReply.reasoning (UI/persist) and
     usage normalizes into the trace/pricing shape."""
 
@@ -423,20 +423,26 @@ async def test_reasoning_summary_feeds_persist_and_cost_pipeline() -> None:
             ),
         )
 
-    from pathlib import Path
-
-    from thyca.agent.observe import Observe
-    from thyca.agent.stage import Stage
-    from thyca.config import PricingCfg
-    from thyca.llm.pricing import cost_for
-    from thyca.sessions import SessionManager
+    from thyca.agents.observe import Observe
+    from thyca.agents.stage import Stage
+    from thyca.bots.timeline import CanonicalSessionStore, WorkspaceTimeline
+    from thyca.configs import PricingCfg
+    from thyca.core.channel import WindowRef
+    from thyca.llms.pricing import cost_for
+    from thyca.conversations.runtime import SessionManager
 
     connect = OpenAIResponses(_provider(), client=_client(handler))
     reply = await connect.chat([Message(role="user", content="x")])
     assert reply.reasoning == "pondering"
 
-    manager = SessionManager(Path("/tmp") / "unused-observe")
-    manager.create()
+    _window = WindowRef(
+        window_id="thyca", channel_id="webui", kind="dm", participants=("thyca",))
+    _sid = "2026-01-01T00-00-00_ab12"
+    manager = SessionManager(store=CanonicalSessionStore(
+        tmp_path / "bots" / "thyca" / "sessions",
+        timeline=WorkspaceTimeline(tmp_path, "thyca"),
+        window=_window, session_id=_sid))
+    manager.load(_sid)
     stage = Stage(messages=[], reply=reply)
     Observe(manager).assistant(stage)
     stored = manager.current.messages[-1]

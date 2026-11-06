@@ -18,8 +18,8 @@ from zoneinfo import ZoneInfo
 from thyca.bots.private_followups import PrivateFollowupStore
 from thyca.bots.registry import RegistryError
 from thyca.core.protocol import Message
-from thyca.sessions import Session, calibration_factor, context_usage
-from thyca.sessions.wire import session_detail
+from thyca.conversations.runtime import Session, calibration_factor, context_usage
+from thyca.conversations.runtime.wire import session_detail
 from thyca.app.turn_options import (
     overlay_turn_cfg,
     resolve_bot_cfg,
@@ -29,10 +29,10 @@ from thyca.app.turn_options import (
 if TYPE_CHECKING:
     from thyca.app.webui_channel import WindowRef
     from thyca.bots.registry import BotRegistry
-    from thyca.config import Config
-    from thyca.memory.active import ActiveMemory, ActiveState
+    from thyca.configs import Config
+    from thyca.memories.active import ActiveMemory, ActiveState
     from thyca.serve.turn_state import TurnState
-    from thyca.sessions import SessionManager
+    from thyca.conversations.runtime import SessionManager
 
 
 @dataclass
@@ -188,8 +188,8 @@ class BotOperationsService:
         """
         from thyca.bots.timeline import WorkspaceTimeline
         from thyca.bots.usage import usage_for_window
-        from thyca.llm.pricing import pricing_for
-        from thyca.sessions.wire import turn_slices
+        from thyca.llms.pricing import pricing_for
+        from thyca.conversations.runtime.wire import turn_slices
 
         room = self._deps.sessions.store.load(session_id)
         window = self._deps.window_for(room)
@@ -272,7 +272,7 @@ class BotOperationsService:
         try:
             from thyca.bots.tasks import derive_open_tasks
             from thyca.bots.workspace_context import build_workspace_hot, overhead_tokens
-            from thyca.memory.visibility import MemoryView, bound_memory_view
+            from thyca.memories.visibility import MemoryView, bound_memory_view
             from thyca.bots.runtime import filtered_tool_schemas
 
             room = self._deps.sessions.store.load(session_id)

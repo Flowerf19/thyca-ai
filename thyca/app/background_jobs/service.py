@@ -18,14 +18,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 from thyca.app.turn_options import resolve_bot_cfg, resolve_bot_provider
-from thyca.llm.llm_factory import ConnectFactory
+from thyca.llms.llm_factory import ConnectFactory
 
 if TYPE_CHECKING:
     from thyca.app.webui_channel import WindowRef
     from thyca.bots.registry import BotRegistry
     from thyca.bots.runtime import BotRuntime
-    from thyca.config import Config
-    from thyca.sessions import SessionManager
+    from thyca.configs import Config
+    from thyca.conversations.runtime import SessionManager
 
 
 @dataclass
@@ -72,7 +72,7 @@ class BackgroundJobsService:
         TURN-CURATE: the runtime skips this hook entirely when the agent
         recorded a checkpoint in the segment (it already wrote what
         matters before compacting itself via the ``compact`` tool)."""
-        from thyca.memory import jobs as mem_jobs
+        from thyca.memories import jobs as mem_jobs
 
         # Bot-specific extraction requires the bot's valid card: a missing
         # or invalid card (or settings) must surface through the caller's
@@ -87,7 +87,7 @@ class BackgroundJobsService:
             transcript = mem_jobs.transcript_tail(list(messages))
             if not transcript.strip():
                 return
-            from thyca.memory.identity import bind_bot_id, reset_bot_id
+            from thyca.memories.identity import bind_bot_id, reset_bot_id
 
             facade = self.job_facade()
             token = bind_bot_id(bot_id)
@@ -107,7 +107,7 @@ class BackgroundJobsService:
             # Phase 1E habit sweep (best-effort, never breaks the flush):
             # newly-qualified habit labels append to this bot's own USER.md.
             try:
-                from thyca.memory import habits as mem_habits
+                from thyca.memories import habits as mem_habits
 
                 sweep_token = bind_bot_id(bot_id)
                 try:
@@ -126,7 +126,7 @@ class BackgroundJobsService:
 
     def _search_bot_memory(self, text: str, bot_id: str) -> list[str]:
         """Bounded memory hits for a bot, read as the bot itself (CBE-4)."""
-        from thyca.memory.identity import bind_bot_id, reset_bot_id
+        from thyca.memories.identity import bind_bot_id, reset_bot_id
 
         token = bind_bot_id(bot_id)
         try:
@@ -139,7 +139,7 @@ class BackgroundJobsService:
 
     def _memory_task_rows(self, bot_id: str) -> list:
         """Raw open-task catalog rows for one bot (WS-3 projection)."""
-        from thyca.memory.identity import bind_bot_id, reset_bot_id
+        from thyca.memories.identity import bind_bot_id, reset_bot_id
 
         token = bind_bot_id(bot_id)
         try:
@@ -153,7 +153,7 @@ class BackgroundJobsService:
 
         Lazily built and cached: the constructor reindexes, so sharing one
         instance beats rebuilding it per sweep. Locks are shared process-wide."""
-        from thyca.memory.facade import MemoryFacade
+        from thyca.memories.facade import MemoryFacade
 
         facade = self._job_facade
         if facade is None:
@@ -167,9 +167,9 @@ class BackgroundJobsService:
     def sweep_idle_sessions(self, idle_s: int = 900) -> dict:
         """Sweep idle canonical bot timelines once, under their workspace lease."""
         from thyca.core.protocol import utc_now_ts
-        from thyca.memory import jobs as mem_jobs
-        from thyca.sessions import SessionManager
-        from thyca.sessions.wire import updated_at
+        from thyca.memories import jobs as mem_jobs
+        from thyca.conversations.runtime import SessionManager
+        from thyca.conversations.runtime.wire import updated_at
 
         now_ts = utc_now_ts()
         running = set(self._deps.turns.snapshot())
@@ -261,7 +261,7 @@ class BackgroundJobsService:
 
     def _user_direct_profile_observations(self) -> list[dict]:
         """kind='habit' observations the user stated directly (no owner)."""
-        from thyca.memory.habits import habit_observations
+        from thyca.memories.habits import habit_observations
 
         try:
             records = habit_observations(self.job_facade(), None)
@@ -272,7 +272,7 @@ class BackgroundJobsService:
         ]
 
     def _profile_card_line(self, bot_id: str) -> str:
-        from thyca.memory.profile import format_card_line
+        from thyca.memories.profile import format_card_line
 
         try:
             card = self._deps.bots.require(bot_id)
@@ -291,7 +291,7 @@ class BackgroundJobsService:
         immediately when bot profile files changed. Best-effort: never
         raises.
         """
-        from thyca.memory import profile as mem_profile
+        from thyca.memories import profile as mem_profile
 
         try:
             paths = {}

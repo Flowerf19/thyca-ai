@@ -7,8 +7,8 @@ cannot drift.
 """
 from __future__ import annotations
 
-from thyca.llm.llm_base import LLMError
-from thyca.sessions import SessionBusy, SessionCorrupt, SessionError, SessionNotFound
+from thyca.llms.llm_base import LLMError
+from thyca.conversations.runtime import SessionBusy, SessionCorrupt, SessionError, SessionNotFound
 
 
 def _with_json(handler, fn, *, error: str = "invalid body"):
@@ -77,9 +77,9 @@ def public_turn_error(exc: Exception) -> tuple[int, str, str]:
     from thyca.conversations.store.contracts import ConversationStoreError
 
     if isinstance(exc, ConversationStoreError):
-        # Fixture turn pipeline failures stay on the same HTTP contract as
-        # the legacy session path: a missing door reads as 404, any other
-        # store failure as 503. Messages stay constant (no ref/id leak).
+        # Conversation store failures stay on the same HTTP contract:
+        # a missing door reads as 404, any other store failure as 503.
+        # Messages stay constant (no ref/id leak).
         if getattr(exc, "scope", "global") == "local":
             return 404, "session_not_found", "conversation not found"
         return 503, "session_unavailable", "conversation unavailable"

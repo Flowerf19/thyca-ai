@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from thyca.memory.habits import AUTO_END as LEGACY_END
-from thyca.memory.habits import AUTO_START as LEGACY_START
-from thyca.memory.profile import (
+from thyca.memories.habits import AUTO_END as LEGACY_END
+from thyca.memories.habits import AUTO_START as LEGACY_START
+from thyca.memories.profile import (
     PROFILE_AUTO_END,
     PROFILE_AUTO_START,
     PROFILE_COMMENT,
@@ -103,7 +103,7 @@ def test_strip_legacy_drops_section_with_only_auto_comment() -> None:
 
 
 def test_replace_block_keeps_newline_after_marker() -> None:
-    from thyca.memory.profile import _replace_block
+    from thyca.memories.profile import _replace_block
 
     text = (
         f"# User\n## Profile\n{PROFILE_COMMENT}\n"

@@ -1,4 +1,4 @@
-"""Phase 1 read adapter: paginated list, cursor assembly, wire payloads (synthetic roots only)."""
+"""Read adapter: paginated list, cursor assembly, wire payloads (runtime roots only)."""
 from __future__ import annotations
 
 import uuid
@@ -12,14 +12,9 @@ from thyca.conversations.store import (
     ConversationStoreError,
     DMBootstrapIntent,
     RootInitializationIntent,
-    SyntheticReadIntent,
+    RuntimeReadIntent,
     assemble_history,
     detail_for,
-    get_detail,
-    get_summary,
-    get_trace_detail,
-    get_trace_turns,
-    list_summaries,
     summary_for,
     trace_detail_for,
     trace_turns_for,
@@ -27,8 +22,8 @@ from thyca.conversations.store import (
 from thyca.conversations.store.read_adapter import _MAX_ASSEMBLY_RESYNCS
 from thyca.core.conversation import ConversationRef
 from thyca.core.protocol import Message
-from thyca.sessions import Session
-from thyca.sessions.wire import message_dict, session_detail, session_summary, session_title
+from thyca.conversations.runtime import Session
+from thyca.conversations.runtime.wire import message_dict, session_detail, session_summary, session_title
 
 
 def _root_id(root: Path) -> str:
@@ -45,8 +40,8 @@ def _dm(root: Path, bot: str) -> ConversationRef:
         bot, intent=DMBootstrapIntent(bot, attempt)).ref
 
 
-def _intent() -> SyntheticReadIntent:
-    return SyntheticReadIntent('fixture-read')
+def _intent() -> RuntimeReadIntent:
+    return RuntimeReadIntent('runtime-read')
 
 
 def _msg(role: str, text: str, day: int) -> Message:
@@ -58,10 +53,10 @@ def _seed_dm(root: Path, bot: str = 'coder') -> ConversationRef:
     return _dm(root, bot)
 
 
-def _legacy_session(ref: ConversationRef, messages: list[Message],
+def _wire_session(ref: ConversationRef, messages: list[Message],
                     title=None, source=None, attempted: bool = False) -> Session:
     return Session(
-        ref.id, Path(f'synthetic://{ref.kind}/{ref.id}'), list(messages),
+        ref.id, Path(f'store://{ref.kind}/{ref.id}'), list(messages),
         title=title, title_source=source, naming_attempted=attempted,
         bots=[ref.id] if ref.kind == 'dm' else ['coder', 'thyca'],
         dm_bot=ref.id if ref.kind == 'dm' else None,
@@ -110,7 +105,7 @@ def test_list_rejects_bad_pagination_before_touching_disk(tmp_path: Path) -> Non
     assert not root.exists()
 
 
-def test_list_skips_nothing_on_ready_fixture(tmp_path: Path) -> None:
+def test_list_skips_nothing_on_ready_root(tmp_path: Path) -> None:
     ref = _seed_dm(tmp_path)
     items, has_more = AdminStore(tmp_path).list()
     assert has_more is False
@@ -136,7 +131,7 @@ def test_assembly_across_pages_matches_single_read(tmp_path: Path) -> None:
 def test_assembly_requires_intent_and_valid_page_limit(tmp_path: Path) -> None:
     ref = _seed_dm(tmp_path)
     with pytest.raises(ValueError):
-        assemble_history(tmp_path, ref, 'coder', intent='synthetic')  # type: ignore[arg-type]
+        assemble_history(tmp_path, ref, 'coder', intent='runtime')  # type: ignore[arg-type]
     for bad in (0, True, '10'):
         with pytest.raises(ValueError):
             assemble_history(tmp_path, ref, 'coder', intent=_intent(),
@@ -171,12 +166,12 @@ def test_summary_matches_wire_shape_and_values(tmp_path: Path) -> None:
     created = next(row.created_at for row in listing if row.ref == ref)
 
     summary = summary_for(conversation, created)
-    legacy = session_summary(_legacy_session(ref, list(conversation.messages)))
+    legacy = session_summary(_wire_session(ref, list(conversation.messages)))
     assert set(summary) == set(legacy)
     assert summary == {**legacy, 'id': ref.id, 'window_id': ref.id}
 
     detail = detail_for(conversation, cfg)
-    legacy_detail = session_detail(_legacy_session(ref, list(conversation.messages)), cfg)
+    legacy_detail = session_detail(_wire_session(ref, list(conversation.messages)), cfg)
     assert set(detail) == set(legacy_detail)
     assert detail['messages'] == legacy_detail['messages']
     assert detail['context'] == legacy_detail['context']
@@ -190,7 +185,8 @@ def test_detail_never_carries_tool_calls_or_reasoning(tmp_path: Path) -> None:
     agents = AgentStore(tmp_path)
     agents.append(ref, 'coder', _msg('user', 'ping', 8))
     agents.append(ref, 'coder', _msg('assistant', 'pong', 8))
-    detail = get_detail(tmp_path, ref, 'coder', seeded_config(), intent=_intent())
+    detail = detail_for(
+        assemble_history(tmp_path, ref, 'coder', intent=_intent()), seeded_config())
     assert all('tool_calls' not in item for item in detail['messages'])
     assert all('reasoning' not in item for item in detail['messages'])
     assert all('tool_call_id' not in item for item in detail['messages'])
@@ -222,14 +218,14 @@ def test_title_read_semantics_match_wire(tmp_path: Path) -> None:
     listing, _ = admin.list()
     created = next(row.created_at for row in listing if row.ref == ref)
     assert summary_for(conversation, created)['title'] == 'Kế hoạch tuần này'
-    assert session_title(_legacy_session(ref, list(conversation.messages),
+    assert session_title(_wire_session(ref, list(conversation.messages),
                                          'Kế hoạch tuần này', 'user', True)) == 'Kế hoạch tuần này'
 
     admin.set_metadata(ref, title='hello world', title_source='agent',
                        naming_attempted=True, participants=['coder'])
     echo = assemble_history(tmp_path, ref, 'coder', intent=_intent())
     assert summary_for(echo, created)['title'] == session_title(
-        _legacy_session(ref, list(echo.messages), 'hello world', 'agent', True))
+        _wire_session(ref, list(echo.messages), 'hello world', 'agent', True))
 
 
 def test_prototype_rejects_content_none(tmp_path: Path) -> None:
@@ -249,11 +245,12 @@ def test_trace_lists_match_turns_from_session(tmp_path: Path) -> None:
     agents.append(ref, 'coder', _msg('user', 'q2', 12))
     conversation = assemble_history(tmp_path, ref, 'coder', intent=_intent())
     turns = trace_turns_for(conversation)
-    legacy = session_summary(_legacy_session(ref, list(conversation.messages)))
+    legacy = session_summary(_wire_session(ref, list(conversation.messages)))
     assert legacy['turns'] == len(turns) == 2
     payloads = [t.to_payload() for t in turns]
     assert all(set(p) == set(payloads[0]) for p in payloads)
-    via_io = get_trace_turns(tmp_path, ref, 'coder', intent=_intent(), page_limit=1)
+    via_io = trace_turns_for(assemble_history(
+        tmp_path, ref, 'coder', intent=_intent(), page_limit=1))
     assert [t.to_payload() for t in via_io] == payloads
 
 
@@ -276,7 +273,8 @@ def test_trace_detail_carries_tool_shape_while_detail_does_not(tmp_path: Path) -
     assert all('meta' in item for item in trace['messages'])
     with pytest.raises(ValueError):
         trace_detail_for(conversation, 7)
-    via_io = get_trace_detail(tmp_path, ref, 'coder', 0, intent=_intent())
+    via_io = trace_detail_for(
+        assemble_history(tmp_path, ref, 'coder', intent=_intent()), 0)
     assert via_io == trace_detail_for(conversation, 0)
 
     detail = detail_for(conversation, cfg)
@@ -285,47 +283,18 @@ def test_trace_detail_carries_tool_shape_while_detail_does_not(tmp_path: Path) -
     assert [m['content'] for m in detail['messages']] == [m['content'] for m in trace['messages']]
 
 
-# ---------- synthetic-only gate ----------
+# ---------- runtime-only gate ----------
 
-def test_adapter_refuses_non_synthetic_callers_before_io(tmp_path: Path) -> None:
+def test_adapter_refuses_non_runtime_callers_before_io(tmp_path: Path) -> None:
     root = tmp_path / 'missing'
     ref = ConversationRef.dm('coder')
     for call in (
         lambda: assemble_history(root, ref, 'coder', intent=None),  # type: ignore[arg-type]
-        lambda: get_summary(root, ref, 'coder', intent='fixture'),  # type: ignore[arg-type]
-        lambda: list_summaries(root, intent=None,  # type: ignore[arg-type]
-                               actor_for=lambda _row: 'coder'),
+        lambda: assemble_history(root, ref, 'coder', intent='runtime'),  # type: ignore[arg-type]
     ):
         with pytest.raises(ValueError):
             call()
     assert not root.exists()
-
-
-def test_list_summaries_pages_with_per_row_actors(tmp_path: Path) -> None:
-    _init(tmp_path)
-    admin = AdminStore(tmp_path)
-    alice = _dm(tmp_path, 'alice')
-    bob = _dm(tmp_path, 'bob')
-    AgentStore(tmp_path).append(alice, 'alice', _msg('user', 'hi alice', 14))
-
-    def actor_for(row) -> str:
-        assert isinstance(row, object)
-        return row.ref.id
-
-    first, has_more = list_summaries(
-        tmp_path, intent=_intent(), actor_for=actor_for, limit=1, offset=0)
-    assert has_more is True and len(first) == 1
-    second, has_more2 = list_summaries(
-        tmp_path, intent=_intent(), actor_for=actor_for, limit=1, offset=1)
-    assert has_more2 is False and len(second) == 1
-    ids = {first[0]['id'], second[0]['id']}
-    assert ids == {alice.id, bob.id}
-    by_id = {item['id']: item for item in first + second}
-    assert by_id['alice']['message_count'] == 1
-    assert by_id['bob']['message_count'] == 0
-    assert by_id['bob']['title'] == 'Phiên trống'
-    with pytest.raises(ValueError):
-        list_summaries(tmp_path, intent=_intent(), actor_for='x')  # type: ignore[arg-type]
 
 
 def test_writes_stay_on_legacy_path(tmp_path: Path) -> None:

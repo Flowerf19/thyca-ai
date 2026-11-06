@@ -5,13 +5,30 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from thyca.agent.act import Act
-from thyca.agent.events import TurnEvent
-from thyca.agent.observe import Observe
-from thyca.agent.stage import Stage
-from thyca.agent.think import ChatReply
+from thyca.agents.act import Act
+from thyca.agents.events import TurnEvent
+from thyca.agents.observe import Observe
+from thyca.agents.stage import Stage
+from thyca.agents.think import ChatReply
 from thyca.core.protocol import Message, ToolCall, ToolResult
-from thyca.sessions import SessionManager
+from thyca.conversations.runtime import SessionManager
+
+# Build a canonical-timeline manager holding one execution session.
+def _canonical_manager(root: Path, limits=None) -> SessionManager:
+    from thyca.bots.timeline import CanonicalSessionStore, WorkspaceTimeline
+    from thyca.core.channel import WindowRef
+
+    timeline = WorkspaceTimeline(root, "thyca")
+    window = WindowRef(
+        window_id="thyca", channel_id="webui", kind="dm", participants=("thyca",))
+    session_id = "2026-01-01T00-00-00_ab12"
+    store = CanonicalSessionStore(
+        root / "bots" / "thyca" / "sessions",
+        timeline=timeline, window=window, session_id=session_id)
+    manager = SessionManager(store=store, limits=limits)
+    manager.load(session_id)
+    return manager
+
 
 
 @dataclass
@@ -434,8 +451,8 @@ def test_f13_none_dispatcher_yields_per_call_error_and_keeps_partials() -> None:
 
 def test_f13_raising_dispatcher_keeps_consistent_transcript(tmp_path: Path) -> None:
     dispatcher = _FlakyDispatcher({"c2": RuntimeError("boom")})
-    sessions = SessionManager(tmp_path / "sessions")
-    sessions.create()
+    sessions = _canonical_manager(tmp_path)
+    sessions.load("2026-01-01T00-00-00_ab12")
     sessions.append(Message(role="user", content="go"))
     stage = Stage(
         messages=list(sessions.current.messages),
@@ -457,8 +474,8 @@ def test_f13_raising_dispatcher_keeps_consistent_transcript(tmp_path: Path) -> N
 
 def test_f13_none_dispatcher_transcript_has_no_dangling_calls(tmp_path: Path) -> None:
     dispatcher = _FlakyDispatcher({"c1": "none"})
-    sessions = SessionManager(tmp_path / "sessions")
-    sessions.create()
+    sessions = _canonical_manager(tmp_path)
+    sessions.load("2026-01-01T00-00-00_ab12")
     stage = Stage(reply=ChatReply(content=None, tool_calls=_calls("c1")), round=1)
 
     asyncio.run(Act(dispatcher).act(stage))

@@ -27,7 +27,7 @@ from thyca.core.channel import (
     WindowRef,
 )
 from thyca.core.protocol import Message, utc_now_ts
-from thyca.sessions import SessionManager
+from thyca.conversations.runtime import SessionManager
 
 
 def _runtime(tmp_path: Path) -> BotRuntime:

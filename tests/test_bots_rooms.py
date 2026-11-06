@@ -7,12 +7,12 @@ import pytest
 
 from thyca.app.chat_app import ChatApp
 from thyca.bots.registry import RegistryError
-from thyca.config import load, save
+from thyca.configs import load, save
 from seeded_config import seeded_config
 from thyca.core.protocol import Message
-from thyca.llm.llm_base import ChatReply
+from thyca.llms.llm_base import ChatReply
 from thyca.serve.trace import aggregate, turns_from_session
-from thyca.sessions import Session
+from thyca.conversations.runtime import Session
 
 
 def _chat(tmp_path: Path, connect=None) -> ChatApp:

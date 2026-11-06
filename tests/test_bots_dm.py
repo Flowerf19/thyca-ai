@@ -9,9 +9,9 @@ from zoneinfo import ZoneInfo
 from thyca.app.chat_app import ChatApp
 from thyca.bots.card import BotCard
 from thyca.bots.scheduler import tick
-from thyca.config import load, save
+from thyca.configs import load, save
 from seeded_config import seeded_config
-from thyca.llm.llm_base import ChatReply
+from thyca.llms.llm_base import ChatReply
 
 
 def _chat(tmp_path: Path, connect=None) -> ChatApp:
@@ -172,7 +172,7 @@ def test_first_bot_dm_prunes_previous_blank(tmp_path: Path) -> None:
         dm = app.bot_dm("coder")  # first lookup: create path prunes.
         assert dm["dm"] == "coder"
         # Store equivalent of the file check: the blank door is deleted.
-        from thyca.sessions import SessionNotFound
+        from thyca.conversations.runtime import SessionNotFound
 
         import pytest as _pytest
 

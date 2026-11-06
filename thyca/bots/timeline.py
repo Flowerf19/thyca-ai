@@ -27,11 +27,11 @@ from pathlib import Path
 
 from filelock import FileLock
 
-from thyca.bots.workspace_store import _check_bot_id
+from thyca.bots.workspace_store import _INTERNAL_SESSION_ID_RE, _check_bot_id
 from thyca.core.channel import WindowRef
 from thyca.core.protocol import Message, utc_now_ts
-from thyca.sessions import Session, SessionStore
-from thyca.sessions.errors import SessionError, SessionNotFound
+from thyca.conversations.runtime import Session, SessionStore
+from thyca.conversations.runtime.errors import SessionError, SessionNotFound
 
 EVENT_KINDS = frozenset({"message", "view_reset"})
 
@@ -48,6 +48,18 @@ class TraceExecutionError(RuntimeError):
     """Canonical execution detail is unavailable for a trace span."""
 
 
+# Resolve one canonical internal id to its binding path without touching disk.
+def _canonical_binding_path(sessions_dir: Path, session_id: str) -> Path:
+    if not isinstance(session_id, str) or not _INTERNAL_SESSION_ID_RE.fullmatch(session_id):
+        raise SessionNotFound(session_id, f"invalid canonical session id: {session_id!r}")
+    root = Path(sessions_dir).resolve()
+    candidate = (Path(sessions_dir) / f"{session_id}.jsonl").resolve()
+    if candidate.parent != root:
+        raise SessionNotFound(candidate, "session id traversal blocked")
+    return Path(sessions_dir) / f"{session_id}.jsonl"
+
+
+# Resolve the on-disk workspace directory for one bot.
 def _dir_for(root: Path, bot_id: str) -> Path:
     _check_bot_id(bot_id)
     path = root / "bots" / bot_id / "workspace"
@@ -332,8 +344,8 @@ class WorkspaceTimeline:
                     Message.from_dict(raw) if hasattr(Message, "from_dict")
                     else raw)
         sid = session_id or window.window_id
-        path = SessionStore(
-            self.root / "bots" / self.bot_id / "sessions").path_for(sid)
+        path = _canonical_binding_path(
+            self.root / "bots" / self.bot_id / "sessions", sid)
         return Session(
             sid, path, messages,
             title=title, title_source=title_source,
@@ -360,8 +372,13 @@ other session fails instead of falling back to a file-backed store.
         self._window = window
         self._session_id = session_id
 
+    # Resolve one canonical internal id to its binding path without touching disk.
+    def path_for(self, session_id: str) -> Path:
+        return _canonical_binding_path(self.sessions_dir, session_id)
+
     # ---------- projection helpers ----------
 
+    # Require the requested id to be this store's bound canonical session.
     def _require_session(self, session_id: str) -> None:
         if session_id != self._session_id:
             raise TimelineError(

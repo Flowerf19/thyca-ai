@@ -11,9 +11,9 @@ from pathlib import Path
 
 import pytest
 
-from thyca.agent.act import _build_result
-from thyca.agent.meta import tool_message
-from thyca.agent.shrink import estimate_wire_tokens, shrink_stage_messages
+from thyca.agents.act import _build_result
+from thyca.agents.meta import tool_message
+from thyca.agents.shrink import estimate_wire_tokens, shrink_stage_messages
 from thyca.core.protocol import Message, ToolCall, ToolResult
 from thyca.tools.builtin import register_file_tools
 from thyca.tools.gateway import ToolGateway

@@ -5,9 +5,9 @@ import asyncio
 import json
 from pathlib import Path
 
-from thyca.memory.facade import MemoryFacade
-from thyca.memory.identity import bind_bot_id, reset_bot_id
-from thyca.memory.profile import profile_block_lines
+from thyca.memories.facade import MemoryFacade
+from thyca.memories.identity import bind_bot_id, reset_bot_id
+from thyca.memories.profile import profile_block_lines
 from thyca.tools.profile_tools import profile_update_spec, register_profile_tools
 from thyca.tools.registry import ToolRegistry
 

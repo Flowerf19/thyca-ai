@@ -12,18 +12,18 @@ from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from thyca.agent.events import TurnEvent
+from thyca.agents.events import TurnEvent
 from thyca.serve.bridge import SENTINEL
 from thyca.app.chat_app import ChatApp, session_title
-from thyca.config import ModelCfg, ProviderEntry, load, save
+from thyca.configs import ModelCfg, ProviderEntry, load, save
 from seeded_config import seeded_config
-from thyca.llm.llm_base import ChatReply, LLMError
+from thyca.llms.llm_base import ChatReply, LLMError
 from thyca.core.protocol import Message, ToolCall
 from thyca.serve import ServeError, default_webui, make_server
-from thyca.sessions import Session, SessionBusy, SessionManager
-from thyca.sessions.title import fallback_title
+from thyca.conversations.runtime import Session, SessionBusy, SessionManager
+from thyca.conversations.runtime.title import fallback_title
 from thyca.tools.mcp import StartupDiagnostic
-from thyca.memory.facade import MemoryFacade
+from thyca.memories.facade import MemoryFacade
 
 WEBUI = default_webui()
 
@@ -258,7 +258,7 @@ def test_bot_room_tasks_live_calls_exact_window_and_read_only(tmp_path: Path) ->
     open runtime tasks for exactly that bot+room: no memory tasks, no
     completed work, no private content — and reads create no bindings
     or timeline files."""
-    from thyca.agent.events import TurnEvent
+    from thyca.agents.events import TurnEvent
     from thyca.bots.card import BotCard
 
     app = _chat(tmp_path)
@@ -377,7 +377,7 @@ def test_bot_room_tasks_corrupt_session_is_unavailable_not_empty(tmp_path: Path)
 
 
 def _seed_room(tmp_path: Path, session_id: str, messages: list) -> None:
-    from thyca.sessions import SessionManager
+    from thyca.conversations.runtime import SessionManager
 
     manager = SessionManager(tmp_path / "sessions")
     manager.load(session_id)
@@ -408,7 +408,7 @@ def test_bot_room_tasks_pocket_lists_runtime_units_not_tool_calls(tmp_path: Path
     completion records) for the exact window: starting a tool/skill
     creates no task row, and the serializer carries no memory-catalog
     links."""
-    from thyca.agent.events import TurnEvent
+    from thyca.agents.events import TurnEvent
     from thyca.bots.card import BotCard
     from thyca.core.protocol import Message, ToolCall
 
@@ -719,7 +719,7 @@ def test_bot_room_tasks_same_call_id_across_windows_and_names(tmp_path: Path) ->
     """Sanitized-id collisions associate correctly: same id in two windows
     stays per-window, and a same-id different-name finish removes only its
     own call, out of order."""
-    from thyca.agent.events import TurnEvent
+    from thyca.agents.events import TurnEvent
     from thyca.bots.card import BotCard
 
     app = _chat(tmp_path)

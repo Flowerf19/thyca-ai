@@ -192,7 +192,7 @@ def test_file_specs_share_guard_key(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_read_denies_sessions_for_child_bot(tmp_path: Path) -> None:
-    from thyca.memory.identity import bind_bot_id, reset_bot_id
+    from thyca.memories.identity import bind_bot_id, reset_bot_id
 
     target = tmp_path / "sessions" / "room.jsonl"
     target.parent.mkdir()

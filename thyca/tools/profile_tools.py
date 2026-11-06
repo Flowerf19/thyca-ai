@@ -3,15 +3,15 @@ shared-profile aggregation.
 
 The scheduled aggregation turn decides the full desired line set and
 calls this tool; the safe file mechanics live in
-:mod:`thyca.memory.profile`. Child bots are refused at the handler (and
+:mod:`thyca.memories.profile`. Child bots are refused at the handler (and
 the name is not baseline, so their cards do not carry it either).
 """
 from __future__ import annotations
 
 import json
 
-from thyca.memory.identity import current_bot_id
-from thyca.memory.profile import update_profile_block
+from thyca.memories.identity import current_bot_id
+from thyca.memories.profile import update_profile_block
 from thyca.tools.registry import ToolSpec
 
 PROFILE_UPDATE_TOOL = "profile_update"

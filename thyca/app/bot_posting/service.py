@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 from thyca.core.protocol import Message
-from thyca.sessions import SessionManager
+from thyca.conversations.runtime import SessionManager
 
 if TYPE_CHECKING:
     from thyca.bots.registry import BotRegistry

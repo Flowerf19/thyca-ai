@@ -17,7 +17,7 @@ import queue
 import threading
 
 from thyca.core.protocol import utc_now_ts
-from thyca.sessions import SessionBusy, SessionError, SessionManager
+from thyca.conversations.runtime import SessionBusy, SessionError, SessionManager
 
 
 class TurnHub:
@@ -179,15 +179,15 @@ class TurnState:
         if turn is not None:
             turn.hub.close()
 
+    # Delete one door unless a turn currently holds it.
     def delete_unclaimed(self, manager: SessionManager, session_id: str) -> None:
         """Delete a session unless a turn holds it.
 
-        The keep-check and the unlink share this lock with :meth:`claim`, so a
+        The keep-check and the delete share this lock with :meth:`claim`, so a
         turn either claims before the delete (and gets a 409) or after it (and
         loads a session that no longer exists). What cannot happen is the
-        unlink landing between the check and a claim: the turn would then keep
-        appending to the removed path, re-creating the file truncated on its
-        next write and silently dropping the earlier history.
+        delete landing between the check and a claim: the turn would then keep
+        appending to a removed door and silently drop the earlier history.
         """
         with self._lock:
             manager.delete(session_id, keep=set(self._turns) | self._compacts)

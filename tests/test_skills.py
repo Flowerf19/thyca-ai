@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from thyca.llm.prompt_manager import PromptManager
-from thyca.memory.active import ActiveMemory, ActiveSnapshot
+from thyca.llms.prompt_manager import PromptManager
+from thyca.memories.active import ActiveMemory, ActiveSnapshot
 from thyca.skills import _PACKAGED_SKILLS, SkillStore
 
 
@@ -210,7 +210,7 @@ def test_default_thyca_dir_is_config_path_parent(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Bare SkillStore() shares the one home default with config."""
-    from thyca.config.store import config_path
+    from thyca.configs.store import config_path
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     assert SkillStore().thyca_dir == config_path().parent == tmp_path / ".thyca"

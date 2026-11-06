@@ -8,8 +8,8 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from thyca.llm.prompt_manager import PromptManager
-from thyca.memory import ActiveMemory, tail_text
+from thyca.llms.prompt_manager import PromptManager
+from thyca.memories import ActiveMemory, tail_text
 
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
@@ -218,8 +218,8 @@ import pytest
 from pathlib import Path
 
 def test_x16_active_loads_prompts_via_template(tmp_path: Path) -> None:
-    from thyca.llm.prompt_manager import PromptManager
-    from thyca.memory.active import ActiveMemory, _packaged
+    from thyca.llms.prompt_manager import PromptManager
+    from thyca.memories.active import ActiveMemory, _packaged
 
     ActiveMemory(tmp_path).ensure_files()
     assert (tmp_path / "SOUL.md").read_text(encoding="utf-8") == PromptManager().template(
@@ -229,8 +229,8 @@ def test_x16_active_loads_prompts_via_template(tmp_path: Path) -> None:
 
 
 def test_x16_active_keeps_missing_file_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
-    from thyca.llm import prompt_manager as pm
-    from thyca.memory.active import _packaged
+    from thyca.llms import prompt_manager as pm
+    from thyca.memories.active import _packaged
 
     def boom(self, name: str) -> str:
         raise FileNotFoundError(name)
@@ -242,7 +242,7 @@ def test_x16_active_keeps_missing_file_fallback(monkeypatch: pytest.MonkeyPatch)
 def test_m5_refresh_recreates_deleted_today(tmp_path: Path) -> None:
     from datetime import datetime
 
-    from thyca.memory.active import ActiveMemory
+    from thyca.memories.active import ActiveMemory
 
     memory = ActiveMemory(tmp_path)
     now = datetime(2026, 8, 17, 12, 0)
@@ -280,7 +280,7 @@ def test_split_today_groups_by_session(tmp_path: Path) -> None:
 
 
 def test_split_today_own_headings_carry_pullable_ids(tmp_path: Path) -> None:
-    from thyca.memory.facade import MemoryFacade
+    from thyca.memories.facade import MemoryFacade
 
     memory = _seed_today(
         tmp_path,
@@ -298,7 +298,7 @@ def test_split_today_own_headings_carry_pullable_ids(tmp_path: Path) -> None:
 
 
 def test_split_today_index_ids_are_pullable(tmp_path: Path) -> None:
-    from thyca.memory.facade import MemoryFacade
+    from thyca.memories.facade import MemoryFacade
 
     memory = _seed_today(
         tmp_path,
@@ -337,7 +337,7 @@ def test_refresh_without_session_keeps_legacy_full_tail(tmp_path: Path) -> None:
 
 
 def test_split_today_index_caps_at_25_lines(tmp_path: Path) -> None:
-    from thyca.memory import ELSEWHERE_MAX_LINES
+    from thyca.memories import ELSEWHERE_MAX_LINES
 
     assert ELSEWHERE_MAX_LINES == 25
     blocks = "".join(
@@ -356,7 +356,7 @@ def test_split_today_index_caps_at_25_lines(tmp_path: Path) -> None:
 
 def test_split_duplicate_legacy_titles_resolve_to_own_bodies(tmp_path: Path) -> None:
     """Occurrence counting stays global across the here/index partition."""
-    from thyca.memory.facade import MemoryFacade
+    from thyca.memories.facade import MemoryFacade
 
     memory = _seed_today(
         tmp_path,
@@ -382,7 +382,7 @@ def test_split_duplicate_legacy_titles_resolve_to_own_bodies(tmp_path: Path) -> 
 
 
 def test_t7_tail_marker_reports_hidden_bytes_and_skips_when_whole() -> None:
-    from thyca.memory.heading import is_session_heading, parse_heading
+    from thyca.memories.heading import is_session_heading, parse_heading
 
     whole = "## 10:00 — a\n- short\n"
     assert tail_text(whole, 1024) == whole  # no cut, no marker
@@ -397,7 +397,7 @@ def test_t7_tail_marker_reports_hidden_bytes_and_skips_when_whole() -> None:
 
 
 def test_t7_elsewhere_marker_only_when_capped(tmp_path: Path) -> None:
-    from thyca.memory.heading import is_session_heading
+    from thyca.memories.heading import is_session_heading
 
     def seed(n: int) -> str:
         blocks = "".join(

@@ -18,7 +18,7 @@ from thyca.core.channel import (
     WindowRef,
 )
 from thyca.core.protocol import utc_now_ts
-from thyca.sessions import Session
+from thyca.conversations.runtime import Session
 
 WEBUI_CHANNEL = ChannelRef(channel_id="webui", kind="webui")
 

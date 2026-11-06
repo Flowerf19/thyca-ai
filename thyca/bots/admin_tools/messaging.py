@@ -6,7 +6,7 @@ import json
 from thyca.bots.bus import new_span_id
 from thyca.bots.context import current_bot_turn_context
 from thyca.core.channel import ChannelAction
-from thyca.memory.identity import current_bot_id
+from thyca.memories.identity import current_bot_id
 from thyca.tools.registry import ToolSpec
 
 from .deps import AdminDeps

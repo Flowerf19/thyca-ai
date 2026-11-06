@@ -60,8 +60,8 @@ from thyca.serve.trace_api import (
     trace_list_payload,
     trace_stats_payload,
 )
-from thyca.sessions import SessionCorrupt, SessionNotFound
-from thyca.memory.facade import MemoryFacade
+from thyca.conversations.runtime import SessionCorrupt, SessionNotFound
+from thyca.memories.facade import MemoryFacade
 
 if TYPE_CHECKING:
     from thyca.app.chat_app import ChatApp

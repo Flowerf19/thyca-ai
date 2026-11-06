@@ -8,13 +8,13 @@ from pathlib import Path
 import pytest
 
 from thyca.app.cli import Cli
-from thyca.config import ModelCfg, McpServerCfg, default_config, load, save
+from thyca.configs import ModelCfg, McpServerCfg, default_config, load, save
 from seeded_config import seeded_config
-from thyca.llm.llm_base import ChatReply, LLMError
+from thyca.llms.llm_base import ChatReply, LLMError
 from thyca.core.protocol import Message, ToolCall
 from thyca.tools.mcp import StartupDiagnostic
 from thyca.tools.registry import ToolSpec
-from thyca.sessions import SessionError, SessionManager
+from thyca.conversations.runtime import SessionError, SessionManager
 
 
 @dataclass
@@ -279,7 +279,7 @@ def test_print_llm_error_is_safe(tmp_path: Path) -> None:
 
 def test_cli_factory_receives_registered_provider(tmp_path: Path, monkeypatch) -> None:
     from thyca.app.chat_app import ConnectFactory
-    from thyca.config import ModelCfg, ProviderEntry
+    from thyca.configs import ModelCfg, ProviderEntry
 
     cfg = replace(
         default_config(),
@@ -315,7 +315,7 @@ def test_print_model_override_routes_to_its_provider_http_auth(
 ) -> None:
     import httpx
 
-    from thyca.config import ModelCfg, ProviderEntry
+    from thyca.configs import ModelCfg, ProviderEntry
 
     calls_a: list[dict] = []
     calls_b: list[dict] = []
@@ -348,7 +348,7 @@ def test_print_model_override_routes_to_its_provider_http_auth(
         kwargs["transport"] = httpx.MockTransport(handler)
         return original_client(*args, **kwargs)
 
-    monkeypatch.setattr("thyca.llm._http.httpx.AsyncClient", client_factory)
+    monkeypatch.setattr("thyca.llms._http.httpx.AsyncClient", client_factory)
     cfg = replace(
         default_config(),
         providers={

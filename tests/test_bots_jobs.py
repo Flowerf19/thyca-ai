@@ -5,8 +5,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from thyca.core.protocol import Message
-from thyca.memory import jobs
-from thyca.memory.facade import MemoryFacade
+from thyca.memories import jobs
+from thyca.memories.facade import MemoryFacade
 
 
 def test_should_idle_sweep() -> None:
@@ -43,7 +43,7 @@ def test_apply_extracted_writes_private(tmp_path: Path) -> None:
     day = sid.split("#")[0]
     owners = None
     for line in (tmp_path / "memory" / f"{day}.md").read_text(encoding="utf-8").splitlines():
-        from thyca.memory.heading import parse_heading as _parse
+        from thyca.memories.heading import parse_heading as _parse
 
         meta = _parse(line)
         if meta is not None and meta.entry_id == sid.split("#")[1]:
@@ -52,7 +52,7 @@ def test_apply_extracted_writes_private(tmp_path: Path) -> None:
 
 
 def test_apply_extracted_stamps_origin_chat(tmp_path: Path) -> None:
-    from thyca.memory.heading import parse_heading
+    from thyca.memories.heading import parse_heading
 
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     out = jobs.apply_extracted(
@@ -203,7 +203,7 @@ def test_apply_continues_open_task_with_latest_cont(tmp_path: Path) -> None:
                               task="task-aaaaaaaa")],
         open_tasks=catalog,
     )
-    from thyca.memory.heading import parse_heading as _parse
+    from thyca.memories.heading import parse_heading as _parse
 
     day = out["written"][0].split("#")[0]
     meta = _parse(open(tmp_path / "memory" / f"{day}.md",
@@ -222,7 +222,7 @@ def test_apply_groups_new_task_titles_and_chains_cont(tmp_path: Path) -> None:
          jobs.ExtractedMemory(topic="b", summary="two", new_task="fix sink")],
     )
     assert len(out["written"]) == 2
-    from thyca.memory.heading import parse_heading as _parse
+    from thyca.memories.heading import parse_heading as _parse
 
     day = out["written"][0].split("#")[0]
     metas = [_parse(line) for line in
@@ -243,7 +243,7 @@ def test_apply_drops_task_outside_catalog_but_keeps_habit(tmp_path: Path) -> Non
                               kind="habit", habit="uong tra")],
         open_tasks=_open_catalog(),
     )
-    from thyca.memory.heading import parse_heading as _parse
+    from thyca.memories.heading import parse_heading as _parse
 
     day = out["written"][0].split("#")[0]
     meta = _parse(open(tmp_path / "memory" / f"{day}.md",
@@ -267,7 +267,7 @@ def test_apply_done_status_and_habit_land_in_store(tmp_path: Path) -> None:
     )
     # Today is unindexed by design: assert the heading on disk plus the
     # live catalog (which merges today's file).
-    from thyca.memory.heading import parse_heading as _parse
+    from thyca.memories.heading import parse_heading as _parse
 
     day = out["written"][0].split("#")[0]
     meta = _parse(open(tmp_path / "memory" / f"{day}.md",

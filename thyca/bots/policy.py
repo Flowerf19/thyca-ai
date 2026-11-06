@@ -26,7 +26,7 @@ from pathlib import Path
 from thyca.bots.card import CARD_FILENAMES
 from thyca.bots.context import current_bot_turn_context
 from thyca.core.protocol import ToolCall
-from thyca.memory.identity import current_bot_id
+from thyca.memories.identity import current_bot_id
 from thyca.tools.gateway.policy import Policy, PolicyDenied
 
 _hidden_tools: ContextVar[frozenset[str] | None] = ContextVar(

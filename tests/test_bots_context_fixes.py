@@ -18,13 +18,13 @@ from thyca.bots.context import BotTurnContext, bind_bot_turn_context, reset_bot_
 from thyca.bots.registry import BotRegistry, RegistryError
 from thyca.bots.runtime import BotRuntime, filtered_tool_schemas
 from thyca.bots.tasks import derive_open_tasks
-from thyca.config import load, save
+from thyca.configs import load, save
 from seeded_config import seeded_config
 from thyca.core.protocol import Message, ToolCall
-from thyca.llm.llm_base import ChatReply
-from thyca.memory.identity import bind_bot_id, reset_bot_id
+from thyca.llms.llm_base import ChatReply
+from thyca.memories.identity import bind_bot_id, reset_bot_id
 from thyca.serve.trace import aggregate, turns_from_session
-from thyca.sessions import SessionManager
+from thyca.conversations.runtime import SessionManager
 from thyca.tools.registry import ToolRegistry
 
 
@@ -455,8 +455,8 @@ def test_flush_prediction_counts_mailbox_wire_and_summary_reserve(
 def test_mailbox_batch_is_frozen_across_flush_and_next_turn(
     tmp_path: Path, monkeypatch,
 ) -> None:
-    from thyca.agent.shrink import estimate_wire_tokens
-    from thyca.sessions.compaction import SessionCompactor
+    from thyca.agents.shrink import estimate_wire_tokens
+    from thyca.conversations.runtime.compaction import SessionCompactor
 
     llm = _LLM()
     app = _chat(tmp_path, llm, context_tokens=30000)
@@ -1026,7 +1026,7 @@ def test_post_bot_card_rejected_in_another_bots_dm(tmp_path: Path) -> None:
 
 
 def _old_dm(app, bot_id: str):
-    from thyca.sessions import SessionManager
+    from thyca.conversations.runtime import SessionManager
 
     from thyca.core.protocol import Message
 
@@ -1079,7 +1079,7 @@ def test_idle_sweep_ignores_public_room_transcripts(tmp_path: Path) -> None:
 
 def test_idle_sweep_does_not_extract_from_root_or_group_room(tmp_path: Path) -> None:
     from thyca.bots.card import BotCard
-    from thyca.sessions import SessionManager
+    from thyca.conversations.runtime import SessionManager
     from thyca.core.protocol import Message
 
     app = _chat(tmp_path, _LLM())

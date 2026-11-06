@@ -9,10 +9,10 @@ from __future__ import annotations
 import asyncio
 from time import perf_counter
 
-from thyca.agent.compacting import SummaryOutcome
-from thyca.agent.think import LLMPort
+from thyca.agents.compacting import SummaryOutcome
+from thyca.agents.think import LLMPort
 from thyca.core.protocol import Message
-from thyca.sessions.summary import propose_summary
+from thyca.conversations.runtime.summary import propose_summary
 
 
 class LlmSummarizer:

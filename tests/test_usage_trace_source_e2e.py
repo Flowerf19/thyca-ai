@@ -265,9 +265,9 @@ BROWSER_SCRIPT = r"""
 def _seed_source_fixture(root: Path) -> tuple[str, dict[str, bytes]]:
     from thyca.bots.card import BotCard
     from thyca.bots.timeline import WorkspaceTimeline
-    from thyca.config import Config, ModelCfg, ProviderEntry, save
+    from thyca.configs import Config, ModelCfg, ProviderEntry, save
     from thyca.core.protocol import Message, ToolCall
-    from thyca.sessions.manager import SessionManager
+    from thyca.conversations.runtime.manager import SessionManager
     from thyca.app.chat_app import ChatApp
 
     provider = ProviderEntry(baseUrl="http://127.0.0.1:1/v1", apiKey="synthetic-source-fixture-key")

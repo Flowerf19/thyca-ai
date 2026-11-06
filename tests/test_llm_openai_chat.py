@@ -5,9 +5,9 @@ import json
 import httpx
 import pytest
 
-from thyca.config import Config, ModelCfg, ProviderCfg, ProviderEntry
-from thyca.llm.llm_base import LLMError, normalize_usage
-from thyca.llm.openai_chat import OpenAIChat, _chat_url
+from thyca.configs import Config, ModelCfg, ProviderCfg, ProviderEntry
+from thyca.llms.llm_base import LLMError, normalize_usage
+from thyca.llms.openai_chat import OpenAIChat, _chat_url
 from thyca.core.protocol import Message, ToolCall
 
 
@@ -358,8 +358,8 @@ async def test_chat_sends_default_max_tokens() -> None:
 
 @pytest.mark.asyncio
 async def test_chat_model_max_tokens_wins_and_survives_drop_retry() -> None:
-    from thyca.config import ModelCfg
-    from thyca.config.providers import resolve
+    from thyca.configs import ModelCfg
+    from thyca.configs.providers import resolve
 
     provider = resolve(
         ProviderEntry(baseUrl="https://api.example.com/v1", apiKey="sk-secret-key"),
@@ -728,7 +728,7 @@ async def test_no_reasoning_details_is_none() -> None:
 
 
 def test_to_openai_message_roundtrips_reasoning_details() -> None:
-    from thyca.llm.openai_chat import _to_openai_message
+    from thyca.llms.openai_chat import _to_openai_message
 
     details = [{"type": "reasoning.text", "text": "t", "signature": "s"}]
     payload = _to_openai_message(
@@ -826,10 +826,10 @@ import asyncio
 import json
 
 def test_x5_redact_cap_single_home() -> None:
-    import thyca.llm._http as http
-    import thyca.llm.openai_chat as chat_parse
-    import thyca.llm.openai_responses as resp_parse
-    import thyca.llm.streaming as streaming
+    import thyca.llms._http as http
+    import thyca.llms.openai_chat as chat_parse
+    import thyca.llms.openai_responses as resp_parse
+    import thyca.llms.streaming as streaming
 
     # No onboarding leg: onboarding handles no raw keys anymore (TASK-013).
     assert chat_parse.redact is http.redact
@@ -845,8 +845,8 @@ def test_x5_redact_cap_single_home() -> None:
 def test_x15_sse_preamble_shared() -> None:
     import httpx
 
-    from thyca.llm._http import iter_sse_data
-    from thyca.llm.llm_base import LLMError
+    from thyca.llms._http import iter_sse_data
+    from thyca.llms.llm_base import LLMError
 
     async def collect(payload: bytes):
         response = httpx.Response(200, content=payload)
@@ -861,9 +861,9 @@ def test_x15_sse_preamble_shared() -> None:
 
 
 def test_x15_bytes_and_slots_shared() -> None:
-    from thyca.llm._http import parse_json_bytes
-    from thyca.llm.llm_base import LLMError
-    from thyca.llm.openai_chat import slots_to_calls, parse_chat_bytes
+    from thyca.llms._http import parse_json_bytes
+    from thyca.llms.llm_base import LLMError
+    from thyca.llms.openai_chat import slots_to_calls, parse_chat_bytes
 
     assert parse_json_bytes(b'{"a": 1}', "k") == {"a": 1}
     with pytest.raises(LLMError, match="must be an object"):
@@ -884,8 +884,8 @@ def test_x15_bytes_and_slots_shared() -> None:
 
 
 def test_x15_emit_callbacks_shared() -> None:
-    from thyca.llm._http import BaseConnect
-    from thyca.llm.llm_base import ChatReply
+    from thyca.llms._http import BaseConnect
+    from thyca.llms.llm_base import ChatReply
 
     seen: list[str] = []
     reply = ChatReply(content="c", reasoning="r")

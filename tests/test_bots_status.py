@@ -12,15 +12,15 @@ from pathlib import Path
 
 import pytest
 
-from thyca.agent.events import TurnEvent
-from thyca.agent.thinking import ThinkingDelta
+from thyca.agents.events import TurnEvent
+from thyca.agents.thinking import ThinkingDelta
 from thyca.app.chat_app import ChatApp
 from thyca.bots.card import BotCard
 from thyca.bots.status import AgentStatusTracker
-from thyca.config import load, save
+from thyca.configs import load, save
 from seeded_config import seeded_config
 from thyca.core.protocol import ToolCall
-from thyca.llm.llm_base import ChatReply
+from thyca.llms.llm_base import ChatReply
 
 T0 = datetime(2026, 10, 14, 3, 0, 0, tzinfo=UTC)
 

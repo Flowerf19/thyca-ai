@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from thyca.core.channel import WindowRef
-from thyca.memory.active import ActiveSnapshot
+from thyca.memories.active import ActiveSnapshot
 
 
 def overhead_tokens(hot=None, tool_schemas=None) -> tuple[int, int]:
@@ -26,7 +26,7 @@ def overhead_tokens(hot=None, tool_schemas=None) -> tuple[int, int]:
     import json as _json
 
     from thyca.core.protocol import estimate_tokens as _chars_to_tokens
-    from thyca.llm.prompt_manager import PromptManager
+    from thyca.llms.prompt_manager import PromptManager
 
     hot_tokens = (
         _chars_to_tokens(PromptManager().build(hot)) if hot is not None else 0
@@ -110,7 +110,7 @@ class WorkspaceContextBuilder:
         # Group projections hide only the exact AUTO-generated habits
         # block (derived private labels) — manual profile text stays.
         if window is not None and getattr(window, "kind", None) == "group":
-            from thyca.memory.habits import strip_auto_habits
+            from thyca.memories.habits import strip_auto_habits
 
             if hot.user and strip_auto_habits(hot.user) != hot.user:
                 hot = replace(hot, user=strip_auto_habits(hot.user))
@@ -145,7 +145,7 @@ class WorkspaceContextBuilder:
             hot = replace(hot, memory_tasks=memory_task_text)
         if runtime_tasks or (memory_catalog and memory_ok):
             from thyca.bots.work_items import prioritize_window, project_work_items
-            from thyca.memory.facade import format_task_catalog
+            from thyca.memories.facade import format_task_catalog
 
             items = prioritize_window(
                 project_work_items(
@@ -222,13 +222,13 @@ class WorkspaceContextBuilder:
     ) -> object:
         """The two-pass ``<context_budget>`` signal (moved verbatim from
         AgentLoop: same timing inputs, same 80/90/95 math and renderer)."""
-        from thyca.agent.context_budget import (
+        from thyca.agents.context_budget import (
             checkpoint_state,
             format_context_budget,
         )
         from thyca.core.protocol import estimate_tokens as _chars_to_tokens
-        from thyca.llm.prompt_manager import PromptManager
-        from thyca.sessions import context_usage
+        from thyca.llms.prompt_manager import PromptManager
+        from thyca.conversations.runtime import context_usage
 
         if not isinstance(hot, ActiveSnapshot) or context_tokens is None:
             return hot

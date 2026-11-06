@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from thyca.agent.stage import Stage
+from thyca.agents.stage import Stage
 from thyca.core.protocol import Message
 
 

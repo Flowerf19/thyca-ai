@@ -14,7 +14,11 @@ Mỗi mục có đủ bốn phần: **mô tả**, **tác động**, **quyết đ
 - **Quyết định/hướng xử lý:** Khi nối runtime, phải ràng buộc actor với nguồn đáng
   tin, phân quyền agent/admin và chuyển hoặc chặn các legacy writer theo plan
   hai-cửa. Không coi facade hoặc prompt là ranh giới xác thực.
-- **Trạng thái:** Mở; bị chặn bởi các lỗi ở mục 5 và kiểm thử tích hợp.
+- **Trạng thái:** Đã đóng (2026-11-06): store SQLite đã nối runtime qua
+  `ChatApp` (khởi tạo/audit khi dựng app, fail-closed nếu còn legacy),
+  actor lấy từ nguồn đáng tin cậy phía server, và toàn bộ đường ghi
+  JSONL công khai cùng fixture scaffolding đã bị xóa. Gate toàn cục
+  xanh (xem mục 6).
 
 ## 1. Lưu trữ hội thoại bằng journal file phẳng + lớp guard bù
 
@@ -38,11 +42,14 @@ Mỗi mục có đủ bốn phần: **mô tả**, **tác động**, **quyết đ
   `known.json` + guard + lifecycle lock bằng **SQLite** (một file
   `<root>/conversations.db`, WAL, append-only cho agent). Không migration dữ liệu
   cũ (data hiện tại được xác nhận không có giá trị).
-- **Trạng thái:** Đã thay checkpoint file phẳng bằng store SQLite thử nghiệm tại
-  `thyca/conversations/store.py`, nhưng **chưa gia cố xong và chưa nối runtime**.
-  Code có WAL, `AgentStore`/`AdminStore`, kiểm tra thành viên, trigger và phân
-  trang. Các test hiện có chưa chứng minh đầy đủ an toàn đường dẫn, khởi tạo lạnh,
-  tính bền vững hoặc xử lý lỗi; review và các ca giả ở mục 5 đã phát hiện lỗi.
+- **Trạng thái:** Đã đóng (2026-11-06): SQLite tại `conversations.db` là nơi lưu
+  hội thoại công khai duy nhất; `SessionStore`/`SessionManager` chỉ còn là
+  lớp điều phối trên store (fail-closed khi root chưa khởi tạo, không còn
+  nhánh đọc/ghi file JSONL công khai). `WorkspaceTimeline`
+  (`timeline.jsonl` theo bot) vẫn là execution history canonical riêng,
+  không phải storage công khai. Grammar timestamp chỉ còn thuộc canonical
+  (`thyca/bots/workspace_store.py`), grammar công khai chỉ còn
+  `group-<hex32>`/bot-id.
 
 ## 2. DB hội thoại phình theo thời gian (append-only) — còn lại sau khi chuyển SQLite
 
@@ -129,4 +136,12 @@ Mỗi mục có đủ bốn phần: **mô tả**, **tác động**, **quyết đ
 - **Quyết định/hướng xử lý:** Điều tra hai lỗi refollow/replay và fixture Node;
   giữ test quyền dưới user thường hoặc môi trường cách ly tương đương không có
   đặc quyền root. Chạy lại full suite sau khi sửa, không làm yếu assertion.
-- **Trạng thái:** Mở; không thuộc thay đổi code của commit SQLite `162d3f4`.
+- **Trạng thái:** Đã đóng cho lát cắt hard-cut (2026-11-06): full gate cô lập
+  `env -i HOME=/tmp/thyca-rm-home PATH=$PATH .venv/bin/python -m pytest -q
+  -p no:cacheprovider --basetemp=/tmp/pytest-rm-full3` đạt
+  **1999 passed, 5 skipped** (skip Chrome/môi trường có sẵn). Hai ca
+  concurrency/timestamp từng đỏ lẻ một lần khi chạy đầy tải
+  (`test_bidirectional_a2a_conflict_neither_hangs_nor_double_runs`,
+  `test_dm_origin_delivery_records_pair_without_leaking_history`) đều pass
+  khi chạy lại riêng và trong lần full-gate xanh; ghi nhận là flaky theo
+  thời gian, không phải lỗi storage.

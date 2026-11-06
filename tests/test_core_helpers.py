@@ -15,7 +15,7 @@ def test_x6_truncate_to_cap_kernel() -> None:
 
 def test_x6_streaming_reasoning_budget_uses_cap() -> None:
     from thyca.core.protocol import RESULT_CAP_BYTES
-    from thyca.llm.streaming import ReasoningOut
+    from thyca.llms.streaming import ReasoningOut
 
     out = ReasoningOut("secret", None)
     out.add("x" * (RESULT_CAP_BYTES + 100))

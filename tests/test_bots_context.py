@@ -5,16 +5,16 @@ import json
 from dataclasses import replace
 from pathlib import Path
 
-from thyca.agent.loop import AgentLoop
+from thyca.agents.loop import AgentLoop
 from thyca.app.chat_app import ChatApp
 from thyca.bots.card import BotCard
-from thyca.config import load, save
+from thyca.configs import load, save
 from seeded_config import seeded_config
 from thyca.core.protocol import Message, ToolCall
-from thyca.llm.llm_base import ChatReply
-from thyca.memory.active import ActiveSnapshot
-from thyca.sessions import SessionManager
-from thyca.sessions.compaction import SessionCompactor
+from thyca.llms.llm_base import ChatReply
+from thyca.memories.active import ActiveSnapshot
+from thyca.conversations.runtime import SessionManager
+from thyca.conversations.runtime.compaction import SessionCompactor
 
 
 def _chat(tmp_path: Path, connect, context_tokens: int | None = None) -> ChatApp:
@@ -288,9 +288,9 @@ def test_no_flush_when_agent_checkpointed_segment(tmp_path: Path) -> None:
 def test_aggregate_team_profiles_runs_thyca_turn_and_strips_legacy(
     tmp_path: Path, monkeypatch
 ) -> None:
-    from thyca.memory.habits import AUTO_END as LEGACY_END
-    from thyca.memory.habits import AUTO_START as LEGACY_START
-    from thyca.memory.profile import PROFILE_AUTO_END, PROFILE_AUTO_START
+    from thyca.memories.habits import AUTO_END as LEGACY_END
+    from thyca.memories.habits import AUTO_START as LEGACY_START
+    from thyca.memories.profile import PROFILE_AUTO_END, PROFILE_AUTO_START
 
     llm = _CaptureLLM()
     app = _chat(tmp_path, llm)
@@ -334,7 +334,7 @@ def test_aggregate_team_profiles_runs_thyca_turn_and_strips_legacy(
 def test_aggregate_team_profiles_skips_within_window(
     tmp_path: Path, monkeypatch
 ) -> None:
-    from thyca.memory.profile import PROFILE_AUTO_END, PROFILE_AUTO_START
+    from thyca.memories.profile import PROFILE_AUTO_END, PROFILE_AUTO_START
 
     llm = _CaptureLLM()
     app = _chat(tmp_path, llm)
@@ -438,7 +438,7 @@ def test_child_empty_persona_keeps_own_identity_and_shared_soul(tmp_path: Path) 
 
 def _seed_task(app: ChatApp, bot_id: str | None, topic: str, task_id: str,
                chat: str | None = None):
-    from thyca.memory.identity import bind_bot_id, reset_bot_id
+    from thyca.memories.identity import bind_bot_id, reset_bot_id
 
     facade = app.job_facade()
     token = bind_bot_id(bot_id) if bot_id else None
@@ -523,7 +523,7 @@ def test_thyca_prompt_sees_all_memory_tasks(tmp_path: Path) -> None:
 
 
 def test_prompt_sections_open_tasks_and_memory_tasks_stay_separate() -> None:
-    from thyca.llm.prompt_manager import PromptManager
+    from thyca.llms.prompt_manager import PromptManager
 
     hot = ActiveSnapshot(
         soul="# Soul\nVoice.", user="# User\n", today="notes",
@@ -691,7 +691,7 @@ def _seed_room_pair(app: ChatApp) -> str:
 
 
 def test_first_turn_sees_public_history_not_secrets(tmp_path: Path) -> None:
-    from thyca.sessions import SessionManager
+    from thyca.conversations.runtime import SessionManager
 
     llm = _CaptureLLM()
     app = _chat(tmp_path, llm)
@@ -745,7 +745,7 @@ def test_second_turn_gets_no_repeat_of_answered_message(tmp_path: Path) -> None:
 
 
 def test_next_turn_gets_only_fresh_message(tmp_path: Path) -> None:
-    from thyca.sessions import SessionManager
+    from thyca.conversations.runtime import SessionManager
 
     llm = _CaptureLLM()
     app = _chat(tmp_path, llm)
@@ -833,7 +833,7 @@ def test_failed_turn_keeps_current_message_unread(tmp_path: Path) -> None:
     import asyncio
 
     from thyca.bots.context import BotTurnScope
-    from thyca.llm.llm_base import ChatReply
+    from thyca.llms.llm_base import ChatReply
 
     class DownLLM:
         async def chat(self, messages, tools=None):
@@ -926,7 +926,7 @@ def test_registry_binding_cursor_roundtrip(tmp_path: Path) -> None:
 def test_failed_bot_turn_keeps_user_row_with_error_marker(tmp_path: Path) -> None:
     import pytest as _pytest
 
-    from thyca.llm.llm_base import ChatReply
+    from thyca.llms.llm_base import ChatReply
 
     class FlakyLLM:
         def __init__(self) -> None:
@@ -949,7 +949,7 @@ def test_failed_bot_turn_keeps_user_row_with_error_marker(tmp_path: Path) -> Non
         room = _seed_room_pair(app)
         with _pytest.raises(RuntimeError):
             app.turn(room, "@coder go")
-        from thyca.sessions import SessionManager
+        from thyca.conversations.runtime import SessionManager
 
         store = SessionManager(store=app._sessions.store)
         store.load(room)

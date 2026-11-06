@@ -10,7 +10,7 @@ import pytest
 from thyca.core.protocol import Message
 from thyca.serve import trace_api
 from thyca.serve.trace import aggregate, turns_from_session
-from thyca.sessions import Session
+from thyca.conversations.runtime import Session
 
 
 TS = "2026-10-24T10:00:00Z"
@@ -161,9 +161,11 @@ def test_scope_does_not_change_full_detail_or_shared_status(monkeypatch):
     monkeypatch.setattr(trace_api, "collect_turns", lambda _chat: [failed])
     own = trace_api.trace_list_payload(None, "bot_id=coder")["traces"][0]
     assert own["status"] == "failed"  # outcome remains full-turn context
-    monkeypatch.setattr(trace_api, "cached_turns_for", lambda _store, _sid: [failed])
+    monkeypatch.setattr(trace_api, "cached_turns_for_ref", lambda _store, _ref: [failed])
     chat = SimpleNamespace(trace_store=lambda: object(), skills_root=Path("/tmp"))
-    detail = trace_api.trace_detail_payload(chat, "group", 0)
+    from thyca.core.conversation import ConversationRef
+
+    detail = trace_api.trace_detail_payload_ref(chat, ConversationRef.group("group-" + "0" * 32), 0)
     assert detail["requests"] == 5  # full turn, not the scoped 3
     assert detail["total_tokens"] == 170  # full turn, not the scoped 60
     assert detail["messages"][1]["content"] == "reply from thyca"
@@ -173,7 +175,7 @@ def test_scope_does_not_change_full_detail_or_shared_status(monkeypatch):
 def test_source_http_scopes_shared_and_private_work_without_writes(tmp_path):
     """Exercise store doors -> scan -> HTTP stats/list -> full detail."""
     from test_serve_trace import _chat, _json, _start, _stop
-    from thyca.sessions import SessionManager
+    from thyca.conversations.runtime import SessionManager
 
     chat = _chat(tmp_path)
     manager = SessionManager(tmp_path / "sessions")

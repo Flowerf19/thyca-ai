@@ -4,8 +4,8 @@ from __future__ import annotations
 import asyncio
 
 from thyca.core.protocol import Message, ToolCall
-from thyca.llm.llm_base import ChatReply
-from thyca.sessions.summary import (
+from thyca.llms.llm_base import ChatReply
+from thyca.conversations.runtime.summary import (
     SUMMARY_INPUT_MAX_CHARS,
     SUMMARY_MAX_CHARS,
     accept_summary,
@@ -87,7 +87,7 @@ def test_propose_summary_uses_instruction_and_focus() -> None:
 def test_compaction_instruction_is_packaged_seed() -> None:
     from pathlib import Path
 
-    from thyca.sessions.summary import summary_instruction
+    from thyca.conversations.runtime.summary import summary_instruction
 
     prompts_dir = Path(__file__).resolve().parents[1] / "thyca" / "seeds" / "prompts"
     text = (prompts_dir / "compaction.md").read_text(encoding="utf-8").strip()

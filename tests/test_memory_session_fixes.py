@@ -10,17 +10,16 @@ from pathlib import Path
 import pytest
 
 from thyca.core.protocol import Message, ToolCall
-from thyca.memory.active import ActiveMemory, ActiveMemoryError, ActiveState
-from thyca.memory.archive_store import ArchiveError, ArchiveStore, Hit
-from thyca.memory.archived import ArchivedMemory
-from thyca.memory.chunk import Chunker
-from thyca.memory.writer import MemoryWriter
+from thyca.memories.active import ActiveMemory, ActiveMemoryError, ActiveState
+from thyca.memories.archive_store import ArchiveError, ArchiveStore, Hit
+from thyca.memories.archived import ArchivedMemory
+from thyca.memories.chunk import Chunker
+from thyca.memories.writer import MemoryWriter
 from thyca.serve.memory import memory_endpoint
-from thyca.sessions import SessionManager, SessionNotFound, SessionStore
-from thyca.sessions.errors import SessionCorrupt, SessionError
-from thyca.sessions.wire import session_summary
+from thyca.conversations.runtime import SessionManager, SessionNotFound
+from thyca.conversations.runtime.wire import session_summary
 from thyca.tools.gateway import ToolGateway
-from thyca.memory.facade import MemoryFacade
+from thyca.memories.facade import MemoryFacade
 from thyca.tools.memory_tools import register_memory_tools
 from thyca.tools.registry import ToolRegistry
 from thyca.tools.task_store import TaskStore
@@ -259,63 +258,21 @@ def test_purge_leaves_symlink_daily_alone(tmp_path: Path) -> None:
     assert target.read_text(encoding="utf-8") == before
 
 
-# --- F28: stat races ---
+# --- F28/F29/F32 deleted subjects: file-stat race in list_paths, compact of
+# a file-deleted session, and file rewrite tmp handling no longer exist on
+# the conversation store (list_paths reads AdminStore, rewrite is refused).
 
 
-def test_list_paths_survives_racing_stat(tmp_path: Path, monkeypatch) -> None:
-    manager = SessionManager(tmp_path)
-    session = manager.create()
-    real_stat = Path.stat
-    calls = 0
-
-    def flaky_stat(self):
-        nonlocal calls
-        calls += 1
-        if calls <= 1:
-            return real_stat(self)
-        raise FileNotFoundError("gone")
-
-    monkeypatch.setattr(Path, "stat", flaky_stat)
-    assert manager.store.list_paths() == [session.path]
-
-
+# Check that a deleted empty door reports not found from its stored stamp.
 def test_summary_of_deleted_empty_session_is_not_found(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
+    from thyca.conversations.store.runtime import ensure_runtime_store
+
+    ensure_runtime_store(tmp_path)
+    manager = SessionManager(tmp_path / "sessions")
     session = manager.create()
-    session.path.unlink()
+    manager.store.delete(session.id)
     with pytest.raises(SessionNotFound):
         session_summary(session)
-
-
-# --- F29: missing → corrupt ---
-
-
-def test_compact_of_deleted_session_reports_not_found(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    manager.create()
-    manager.append(_msg("user", "hello"))
-    manager.current.path.unlink()
-    with pytest.raises(SessionNotFound) as caught:
-        manager.compact_if_needed()
-    assert type(caught.value) is SessionNotFound
-    assert not isinstance(caught.value, SessionCorrupt)
-
-
-# --- F32: rewrite TypeError leak ---
-
-
-def test_rewrite_unserializable_meta_wrapped(tmp_path: Path) -> None:
-    store = SessionStore(tmp_path)
-    store.ensure_dir()
-    sid = "2026-01-01T00-00-00_ab12"
-    path = store.create(sid)
-    bad = _msg("user", "x")
-    object.__setattr__(bad, "meta", {"bad": object()})
-    with pytest.raises(SessionError) as caught:
-        store.rewrite(sid, path, [bad])
-    assert type(caught.value) is not TypeError
-    assert list(tmp_path.glob(".*.tmp.*")) == []
-    assert path.read_text(encoding="utf-8") == ""
 
 
 # --- M4-safe-half: limit edges + non-str inputs ---

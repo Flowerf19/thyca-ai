@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from thyca.llm.prompt_manager import PromptManager
-from thyca.memory.active import ActiveSnapshot
+from thyca.llms.prompt_manager import PromptManager
+from thyca.memories.active import ActiveSnapshot
 
 
 def _hot(**overrides: str) -> ActiveSnapshot:

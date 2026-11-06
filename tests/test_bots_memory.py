@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from thyca.memory.archive_store import ArchiveError
-from thyca.memory.facade import MemoryFacade
-from thyca.memory.heading import parse_heading
-from thyca.memory.identity import bind_bot_id, reset_bot_id
+from thyca.memories.archive_store import ArchiveError
+from thyca.memories.facade import MemoryFacade
+from thyca.memories.heading import parse_heading
+from thyca.memories.identity import bind_bot_id, reset_bot_id
 
 T0 = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
 T1 = T0 + timedelta(days=1)
@@ -150,7 +150,7 @@ def test_forget_removes_entry_and_reads_miss(tmp_path: Path) -> None:
 
 
 def test_hot_prompt_hides_other_private(tmp_path: Path) -> None:
-    from thyca.memory.active import ActiveMemory
+    from thyca.memories.active import ActiveMemory
     from thyca.tools.memory_tools import bind_chat_session, reset_chat_session
 
     chat_token = bind_chat_session("room1")

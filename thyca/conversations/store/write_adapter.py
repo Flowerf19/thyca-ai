@@ -1,6 +1,6 @@
-"""Phase 2 fixture-only write route: store writes without history rewrites.
+"""Runtime write route: store writes without history rewrites.
 
-Every entry point requires an explicit :class:`SyntheticWriteIntent` and an
+Every entry point requires an explicit :class:`RuntimeWriteIntent` and an
 explicit ``actor`` bot id. There is no ``current_bot_id`` fallback anywhere
 in this module: the caller chain must thread the trusted actor down to each
 call. Reads still go through cursor-paged ``AgentStore.read``; the write
@@ -18,12 +18,8 @@ route never mutates stored rows:
   (messages plus row in one transaction, trigger restored); DM markers are
   kept as tombstones so bot-id reuse stays blocked.
 
-Fixture gating: a store root must be explicitly enabled via
-:func:`enable_fixture_writes` before any write entry point touches the
-filesystem. The live ``~/.thyca`` root can never be enabled, so it stays on
-the legacy JSONL path. While a fixture root is enabled, legacy
-``SessionStore`` mutations under that root fail closed (see
-``fixture_switch``).
+Root gating: the root must hold an initialized runtime store before any
+write entry point touches the filesystem.
 """
 from __future__ import annotations
 
@@ -58,26 +54,15 @@ from .database import (
     _transaction_context,
     open_existing_session,
 )
-from .fixture_switch import (
-    disable_fixture_writes,
-    enable_fixture_writes,
-    is_fixture_write_enabled,
-    is_legacy_writer_blocked,
-)
+from .runtime import RuntimeWriteIntent
 
 __all__ = [
-    'SyntheticWriteIntent',
     'RetryReadiness',
-    'enable_fixture_writes',
-    'disable_fixture_writes',
-    'is_fixture_write_enabled',
-    'is_legacy_writer_blocked',
     'create_group',
     'append_message',
     'append_server_message',
     'append_server_row',
     'set_conversation_metadata',
-    'delete_conversation',
     'prepare_retry',
     'append_turn_error',
 ]
@@ -86,45 +71,25 @@ __all__ = [
 _MAX_RETRY_RESYNCS = 5
 
 
-@dataclass(frozen=True)
-class SyntheticWriteIntent:
-    """Explicit caller assertion for a fixture-root write.
-
-    This value is not authentication: it only forces the caller to state
-    that the write targets a disposable fixture root enabled via
-    :func:`enable_fixture_writes`. The live root can never be enabled, so
-    it stays on the legacy path.
-    """
-
-    purpose: str
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.purpose, str) or not self.purpose.strip():
-            raise ValueError('purpose must be a non-empty string')
-
-
+# Require an explicit runtime write intent before any store I/O.
 def _require_intent(intent: object):
-    from .runtime import RuntimeWriteIntent as _RuntimeWriteIntent
-
-    if isinstance(intent, (SyntheticWriteIntent, _RuntimeWriteIntent)):
+    if isinstance(intent, RuntimeWriteIntent):
         return intent
-    raise ValueError('explicit synthetic or runtime write intent required')
+    raise ValueError('explicit runtime write intent required')
 
 
+# Require an initialized runtime store root before any write.
 def _require_enabled_root(root: Path, intent=None) -> Path:
-    """Fixture gate for Synthetic intents, runtime-ready gate for Runtime."""
+    """Runtime-ready gate: the root must hold an initialized store."""
     if not isinstance(root, Path):
         raise ValueError('root must be a Path')
-    from .runtime import RuntimeWriteIntent as _RuntimeWriteIntent
     from .runtime import is_runtime_ready as _is_runtime_ready
 
-    if isinstance(intent, _RuntimeWriteIntent):
+    if isinstance(intent, RuntimeWriteIntent):
         if not _is_runtime_ready(root):
             raise ValueError('runtime store is not initialized for this root')
         return root
-    if not is_fixture_write_enabled(root):
-        raise ValueError('fixture write route is not enabled for this root')
-    return root
+    raise ValueError('explicit runtime write intent required')
 
 
 def _check_page_limit(page_limit: object) -> int:
@@ -133,15 +98,16 @@ def _check_page_limit(page_limit: object) -> int:
     return min(page_limit, MAX_PAGE_LIMIT)
 
 
+# Create one group door on a runtime store root.
 def create_group(
     root: Path,
     participants: list[str],
     *,
-    intent: SyntheticWriteIntent,
+    intent: RuntimeWriteIntent,
     actor: str,
     title: str | None = None,
 ) -> Conversation:
-    """Create a group on an enabled fixture root; *actor* must participate."""
+    """Create a group on a runtime root; *actor* must participate."""
     _require_intent(intent)
     _require_enabled_root(root, intent)
     _require_actor(actor)
@@ -150,13 +116,14 @@ def create_group(
     return AdminStore(root).create_group(list(participants), title=title)
 
 
+# Append one bot-authored row with an explicit acting bot.
 def append_message(
     root: Path,
     ref: ConversationRef,
     actor: str,
     message: Message,
     *,
-    intent: SyntheticWriteIntent,
+    intent: RuntimeWriteIntent,
 ) -> int:
     """Append one user/assistant message with an explicit actor; no fallback."""
     _require_intent(intent)
@@ -174,7 +141,7 @@ def append_server_message(
     ref: ConversationRef,
     message: Message,
     *,
-    intent: SyntheticWriteIntent,
+    intent: RuntimeWriteIntent,
 ) -> int:
     """Append one ``user`` row with no bot actor; no membership is faked.
 
@@ -227,7 +194,7 @@ def append_server_row(
     ref: ConversationRef,
     message: Message,
     *,
-    intent: SyntheticWriteIntent,
+    intent: RuntimeWriteIntent,
 ) -> int:
     """Append one A2A display row recorded by the trusted server flow.
 
@@ -276,11 +243,12 @@ def append_server_row(
         conn.close()
 
 
+# Replace one door's metadata in a single transaction.
 def set_conversation_metadata(
     root: Path,
     ref: ConversationRef,
     *,
-    intent: SyntheticWriteIntent,
+    intent: RuntimeWriteIntent,
     actor: str,
     title: str | None,
     title_source: str | None,
@@ -332,51 +300,6 @@ def set_conversation_metadata(
         conn.close()
 
 
-def delete_conversation(
-    root: Path,
-    ref: ConversationRef,
-    *,
-    intent: SyntheticWriteIntent,
-    actor: str,
-) -> None:
-    """Delete one whole conversation on an enabled fixture root.
-
-    Membership-checked (actor must currently participate; DMs: the owner).
-    Deletes the door's messages plus its row in one transaction and restores
-    the append-only trigger. DM markers are kept as tombstones, so reusing
-    the same bot id stays blocked after a DM delete.
-    """
-    _require_intent(intent)
-    _require_enabled_root(root, intent)
-    _require_ref(ref)
-    _require_actor(actor)
-    conn = open_existing_session(root, lock_mode='exclusive')
-    try:
-        with _transaction_context(conn, 'BEGIN IMMEDIATE'):
-            _ensure_root_ready(conn, _root_instance_id_from_conn(conn))
-            _ensure_door_ready(conn, ref, actor)
-            try:
-                conn.execute('DROP TRIGGER no_delete_messages')
-                conn.execute(
-                    'DELETE FROM messages WHERE kind=? AND id=?',
-                    (ref.kind, ref.id),
-                )
-                cur = conn.execute(
-                    'DELETE FROM conversations WHERE kind=? AND id=?',
-                    (ref.kind, ref.id),
-                )
-                if cur.rowcount != 1:
-                    raise _local_error(ref)
-                conn.execute(
-                    "CREATE TRIGGER no_delete_messages BEFORE DELETE ON messages BEGIN "
-                    "SELECT RAISE(ABORT, 'messages are append-only'); END"
-                )
-            except sqlite3.Error as exc:
-                raise _local_error(ref) from exc
-    finally:
-        conn.close()
-
-
 @dataclass(frozen=True)
 class RetryReadiness:
     """No-mutation retry decision: where the last user row sits today."""
@@ -388,11 +311,12 @@ class RetryReadiness:
     message_count: int
 
 
+# Inspect one door for retry readiness without mutating it.
 def prepare_retry(
     root: Path,
     ref: ConversationRef,
     *,
-    intent: SyntheticWriteIntent,
+    intent: RuntimeWriteIntent,
     actor: str,
     page_limit: int = 500,
 ) -> RetryReadiness:
@@ -482,11 +406,12 @@ def prepare_retry(
     )
 
 
+# Append one trailing turn-failure marker without mutating rows.
 def append_turn_error(
     root: Path,
     ref: ConversationRef,
     *,
-    intent: SyntheticWriteIntent,
+    intent: RuntimeWriteIntent,
     actor: str,
     code: str,
     message: str,

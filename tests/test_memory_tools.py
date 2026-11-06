@@ -5,7 +5,7 @@ import json
 import pytest
 
 from thyca.core.protocol import ToolCall
-from thyca.memory.facade import MemoryFacade
+from thyca.memories.facade import MemoryFacade
 from thyca.tools.memory_tools import register_memory_tools
 from thyca.tools.gateway import ToolGateway
 from thyca.tools.registry import ToolRegistry
@@ -85,7 +85,7 @@ async def test_memory_update_keeps_session_id(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_remember_injects_bound_chat_and_update_rejects_chat(tmp_path) -> None:
-    from thyca.memory.heading import parse_heading
+    from thyca.memories.heading import parse_heading
     from thyca.tools.memory_tools import bind_chat_session, reset_chat_session
 
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")

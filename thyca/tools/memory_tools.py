@@ -4,7 +4,7 @@ import json
 from contextvars import ContextVar
 from dataclasses import asdict
 
-from thyca.memory.facade import MemoryFacade
+from thyca.memories.facade import MemoryFacade
 from thyca.tools.registry import ToolRegistry, ToolSpec
 
 _chat_session_id: ContextVar[str | None] = ContextVar("thyca_memory_chat", default=None)

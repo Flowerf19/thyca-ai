@@ -18,11 +18,11 @@ import pytest
 from seeded_config import seeded_config
 from thyca.app.chat_app import ChatApp
 from thyca.bots.card import BotCard
-from thyca.config import load, save
+from thyca.configs import load, save
 from thyca.core.protocol import Message
-from thyca.memory.facade import MemoryFacade
+from thyca.memories.facade import MemoryFacade
 from thyca.serve import default_webui, make_server
-from thyca.sessions.manager import SessionManager
+from thyca.conversations.runtime.manager import SessionManager
 
 WEBUI = default_webui()
 

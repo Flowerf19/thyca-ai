@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from thyca.core.protocol import Message, ToolCall
-from thyca.sessions.ask_remember import ask_remember
+from thyca.conversations.runtime.ask_remember import ask_remember
 
 NOW = datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
 

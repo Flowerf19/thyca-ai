@@ -1,10 +1,10 @@
 """Golden test: freeze CURRENT Responses wire bytes (GOAL-001 TASK-001).
 
 Current module paths (2026-09-29, branch refactor/provider-rebuild):
-  payload items .. thyca.llm.openai_responses._to_responses_input
-                   thyca.llm.openai_responses._to_responses_tools
-  endpoint ...... thyca.llm.openai_responses._responses_url
-  config ........ thyca.config.providers.ProviderCfg
+  payload items .. thyca.llms.openai_responses._to_responses_input
+                   thyca.llms.openai_responses._to_responses_tools
+  endpoint ...... thyca.llms.openai_responses._responses_url
+  config ........ thyca.configs.providers.ProviderCfg
 responses_parse.py was folded into openai_responses.py (TASK-006). Allowed
 bytes changes versus the GOAL-001 recording: the added "store":false
 field plus the per-model output cap ("max_output_tokens"); everything
@@ -14,9 +14,9 @@ from __future__ import annotations
 
 import json
 
-from thyca.config.providers import ProviderCfg
+from thyca.configs.providers import ProviderCfg
 from thyca.core.protocol import Message, ToolCall
-from thyca.llm.openai_responses import _responses_url, _to_responses_input
+from thyca.llms.openai_responses import _responses_url, _to_responses_input
 
 BASE_URL = "https://api.example.com/v1"
 MODEL = "golden-model"

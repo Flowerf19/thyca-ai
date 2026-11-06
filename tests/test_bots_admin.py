@@ -11,7 +11,7 @@ import pytest
 from thyca.bots.admin_tools import ADMIN_TOOL_NAMES, apply_card_edit, visible_for_bot
 from thyca.bots.card import BotCard
 from thyca.bots.scheduler import CronError, due, match_field
-from thyca.memory.identity import bind_bot_id, reset_bot_id
+from thyca.memories.identity import bind_bot_id, reset_bot_id
 from thyca.tools.registry import ToolRegistry
 
 
@@ -154,7 +154,7 @@ def _tooled_registry(tmp_path: Path, models: dict):
     from thyca.bots.bus import Bus
     from thyca.bots.registry import BotRegistry
     from thyca.bots.runtime import BotRuntime
-    from thyca.config import ModelCfg, ProviderEntry, default_config, save
+    from thyca.configs import ModelCfg, ProviderEntry, default_config, save
     from thyca.tools.registry import ToolRegistry
 
     from dataclasses import replace
@@ -258,8 +258,8 @@ def test_bot_edit_card_model_change_serializes_with_settings_update(tmp_path: Pa
     from thyca.bots.card import BotModel
     from thyca.bots.registry import BotRegistry
     from thyca.bots.runtime import BotRuntime
-    from thyca.config import load
-    from thyca.config.coordination import CoordinationError, hold
+    from thyca.configs import load
+    from thyca.configs.coordination import CoordinationError, hold
 
     tools = _tooled_registry(tmp_path, {"m1": {}, "m2": {}})
     BotRegistry(tmp_path).create(_card(model=BotModel(id="m1", thinking=None)))

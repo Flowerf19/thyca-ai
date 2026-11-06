@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 
-from thyca.agent.stage import Stage
-from thyca.agent.think import ChatReply, Think
+from thyca.agents.stage import Stage
+from thyca.agents.think import ChatReply, Think
 from thyca.core.protocol import Message, ToolCall
 
 

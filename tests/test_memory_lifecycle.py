@@ -8,9 +8,9 @@ from threading import Event, Lock, Thread
 
 import pytest
 
-import thyca.memory.writer as writer_module
-from thyca.memory.heading import TTL_DAYS, parse_heading
-from thyca.memory.facade import MemoryFacade
+import thyca.memories.writer as writer_module
+from thyca.memories.heading import TTL_DAYS, parse_heading
+from thyca.memories.facade import MemoryFacade
 
 
 def test_facade_indexes_existing_sources_on_open(tmp_path: Path) -> None:
@@ -300,7 +300,7 @@ def test_reject_forget_soul(tmp_path: Path) -> None:
 
 
 def test_update_keeps_entry_id_and_reindexes(tmp_path: Path) -> None:
-    from thyca.memory.facade import MemoryFacade
+    from thyca.memories.facade import MemoryFacade
 
     facade = MemoryFacade(tmp_path)
     sid = facade.remember("Chủ đề cũ", "nội dung cũ", now=None)
@@ -322,8 +322,8 @@ def test_update_keeps_entry_id_and_reindexes(tmp_path: Path) -> None:
 def test_update_not_found(tmp_path: Path) -> None:
     import pytest
 
-    from thyca.memory.archived import ArchiveError
-    from thyca.memory.facade import MemoryFacade
+    from thyca.memories.archived import ArchiveError
+    from thyca.memories.facade import MemoryFacade
 
     facade = MemoryFacade(tmp_path)
     with pytest.raises(ArchiveError):
@@ -478,7 +478,7 @@ import stat
 import pytest
 
 def test_x7_memory_writes_flow_through_it(tmp_path: Path) -> None:
-    from thyca.memory.facade import MemoryFacade
+    from thyca.memories.facade import MemoryFacade
 
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     facade.write_canonical("SOUL.md", "# Soul\n")
@@ -488,8 +488,8 @@ def test_x7_memory_writes_flow_through_it(tmp_path: Path) -> None:
 
 
 def test_x7_write_canonical_reports_reindex_failure_itself(tmp_path: Path) -> None:
-    from thyca.memory.archived import ArchiveError
-    from thyca.memory.facade import MemoryFacade
+    from thyca.memories.archived import ArchiveError
+    from thyca.memories.facade import MemoryFacade
 
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
 
@@ -510,8 +510,8 @@ def test_x7_write_canonical_reports_reindex_failure_itself(tmp_path: Path) -> No
 
 
 def test_x14_facade_proj_is_normalized(tmp_path: Path) -> None:
-    from thyca.memory.facade import MemoryFacade
-    from thyca.memory.heading import parse_heading
+    from thyca.memories.facade import MemoryFacade
+    from thyca.memories.heading import parse_heading
 
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     proj = f"{tmp_path}/sub/../proj"

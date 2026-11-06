@@ -14,19 +14,25 @@ under the per-bot registry FileLock.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from filelock import FileLock
 
 from thyca.bots.card import NAME_MAX, _NAME_RE
-from thyca.config import atomic_write_text
+from thyca.configs import atomic_write_text
 from thyca.core.channel import WindowRef
 
 REGISTRY_FILENAME = "registry.json"
 REGISTRY_VERSION = 1
 
 
+# Canonical internal session-id grammar, owned here next to its minter.
+_INTERNAL_SESSION_ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_[0-9a-f]{4}$")
+
+
+# Mint one fresh canonical internal session id.
 def _new_internal_session_id() -> str:
     """Fresh canonical session id (same grammar as room sessions)."""
     import secrets
@@ -214,7 +220,7 @@ class WorkspaceStore:
         A task already owned by another bot's registry wins globally —
         this file never claims a task owned elsewhere."""
         _check_bot_id(bot_id)
-        from thyca.memory.heading import iter_session_blocks
+        from thyca.memories.heading import iter_session_blocks
 
         owner = self.task_owner(bot_id, work_id)
         if owner is not None:

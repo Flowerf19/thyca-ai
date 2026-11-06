@@ -16,7 +16,7 @@ from thyca.app.onboarding import (
     test_provider_api,
     validate_provider,
 )
-from thyca.config import (
+from thyca.configs import (
     ConfigError,
     atomic_write_text,
     config_path,
@@ -50,7 +50,7 @@ def _config_meta(cfg) -> dict:
 def _parse_config_payload(payload: dict, cfg):
     # Lazy: _parse_dict is M3-private; keep the import local (no top-level
     # edge toward config internals) until M3 offers a public API (TASK-015).
-    from thyca.config import _parse_dict
+    from thyca.configs import _parse_dict
 
     return _parse_dict(merge_saved_keys(payload, cfg))
 
@@ -78,7 +78,7 @@ def config_get(handler, config_file: Path | None) -> None:
     fails closed instead of sending values clients would then save back
     unconditionally.
     """
-    from thyca.config.coordination import CoordinationError, hold
+    from thyca.configs.coordination import CoordinationError, hold
 
     root = _config_root(config_file)
     try:
@@ -184,7 +184,7 @@ def _config_revision(config_file: Path | None, root: Path) -> str | None:
     import hashlib
     import hmac
 
-    from thyca.config.auth import auth_path_for
+    from thyca.configs.auth import auth_path_for
 
     key = _revision_key(root)
     if key is None:
@@ -350,7 +350,7 @@ def config_post(handler, config_file: Path | None) -> None:
     bot model assignment cannot slip in between the reference check and
     the save (lock order: coordination → config file → per-bot).
     """
-    from thyca.config.coordination import CoordinationError, hold
+    from thyca.configs.coordination import CoordinationError, hold
 
     def run(payload: dict) -> None:
         root = _config_root(config_file)

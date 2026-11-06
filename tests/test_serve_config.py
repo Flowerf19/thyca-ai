@@ -11,10 +11,10 @@ from urllib.request import Request, urlopen
 import pytest
 
 from thyca import __version__
-from thyca.config import default_config, load, save
-from thyca.config import config_schema
+from thyca.configs import default_config, load, save
+from thyca.configs import config_schema
 from thyca.serve import default_webui, make_server
-from thyca.memory.facade import MemoryFacade
+from thyca.memories.facade import MemoryFacade
 
 WEBUI = default_webui()
 
@@ -741,7 +741,7 @@ def test_providers_test_dispatches_responses_api(tmp_path: Path) -> None:
 def test_merge_saved_key_keeps_omitted_and_null() -> None:
     from dataclasses import replace
 
-    from thyca.config import ProviderEntry, merge_saved_keys
+    from thyca.configs import ProviderEntry, merge_saved_keys
 
     cfg = replace(
         default_config(),
@@ -816,10 +816,10 @@ def test_x4_merge_saved_keys_single_home() -> None:
     from dataclasses import replace
 
     import thyca.serve.config_api as config_api
-    from thyca.config import default_config, merge_saved_keys
+    from thyca.configs import default_config, merge_saved_keys
 
     assert config_api.merge_saved_keys is merge_saved_keys
-    from thyca.config import ProviderEntry
+    from thyca.configs import ProviderEntry
 
     cfg = replace(
         default_config(),
@@ -834,8 +834,8 @@ def test_x4_merge_saved_keys_single_home() -> None:
 
 
 def _start_config_server(tmp_path: Path):
-    from thyca.config import default_config, save
-    from thyca.memory.facade import MemoryFacade
+    from thyca.configs import default_config, save
+    from thyca.memories.facade import MemoryFacade
     from thyca.serve import default_webui, make_server
 
     save(default_config(), tmp_path / "config.json")
@@ -877,7 +877,7 @@ def _start_guarded(tmp_path: Path, *, models: dict, bots: dict | None = None,
 
     from thyca.bots.card import BotCard, BotModel
     from thyca.bots.registry import BotRegistry
-    from thyca.config import ModelCfg, ProviderEntry
+    from thyca.configs import ModelCfg, ProviderEntry
 
     cfg = replace(
         default_config(),
@@ -980,8 +980,8 @@ def _start_guarded_chat(tmp_path: Path, *, models: dict, bots: dict,
 
     from thyca.app.chat_app import ChatApp
     from thyca.bots.card import BotCard, BotModel
-    from thyca.config import ModelCfg, ProviderEntry
-    from thyca.llm.llm_base import ChatReply
+    from thyca.configs import ModelCfg, ProviderEntry
+    from thyca.llms.llm_base import ChatReply
 
     @dataclass
     class IdleLLM:
@@ -1069,7 +1069,7 @@ def test_config_post_concurrent_removal_and_assignment_keeps_invariant(tmp_path:
 def test_model_coordination_hold_serializes_threads(tmp_path: Path) -> None:
     import time
 
-    from thyca.config.coordination import hold
+    from thyca.configs.coordination import hold
 
     barrier = threading.Barrier(2)
     order: list = []
@@ -1096,7 +1096,7 @@ def test_model_coordination_hold_serializes_threads(tmp_path: Path) -> None:
 def test_model_coordination_hold_is_not_reentrant(tmp_path: Path) -> None:
     # FileLock cannot nest in one thread: the single-acquisition discipline
     # in coordination.py is load-bearing, not stylistic.
-    from thyca.config.coordination import CoordinationError, hold
+    from thyca.configs.coordination import CoordinationError, hold
 
     with hold(tmp_path):
         try:
@@ -1336,7 +1336,7 @@ def test_model_coordination_hold_blocks_across_processes(tmp_path: Path) -> None
             "import sys, time\n"
             "sys.path.insert(0, sys.argv[1])\n"
             "from pathlib import Path\n"
-            "from thyca.config.coordination import hold\n"
+            "from thyca.configs.coordination import hold\n"
             "with hold(Path(sys.argv[2])):\n"
             "    print('ready', flush=True)\n"
             "    time.sleep(1.5)\n"
@@ -1394,7 +1394,7 @@ def test_config_get_snapshot_cannot_be_split_by_post(tmp_path: Path, monkeypatch
     import time
 
     import thyca.serve.config_api as config_api
-    from thyca.config.coordination import CoordinationError, hold
+    from thyca.configs.coordination import CoordinationError, hold
 
     httpd, thread = _start_guarded(
         tmp_path, models={"m1": {}}, bots=None, default_model="m1",
@@ -1566,7 +1566,7 @@ def test_config_key_only_change_rotates_revision(tmp_path: Path) -> None:
 
 
 def test_config_concurrent_key_only_saves_conflict_safely(tmp_path: Path) -> None:
-    from thyca.config.auth import auth_path_for, load_auth_keys
+    from thyca.configs.auth import auth_path_for, load_auth_keys
 
     httpd, thread = _start_guarded(
         tmp_path, models={"m1": {}}, bots=None, default_model="m1",

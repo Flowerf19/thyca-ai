@@ -11,9 +11,9 @@ import pytest
 
 from thyca.app.chat_app import ChatApp
 from thyca.bots.card import BotCard
-from thyca.config import load, save
+from thyca.configs import load, save
 from seeded_config import seeded_config
-from thyca.llm.llm_base import ChatReply
+from thyca.llms.llm_base import ChatReply
 
 
 def _chat(tmp_path: Path, connect=None) -> ChatApp:
@@ -70,7 +70,7 @@ def test_scheduler_skip_busy_no_row(tmp_path: Path) -> None:
             target=lambda: app.turn(dm["id"], "busy"), daemon=True)
         t.start()
         assert started.wait(10)
-        from thyca.sessions import SessionBusy
+        from thyca.conversations.runtime import SessionBusy
         with pytest.raises(SessionBusy):
             app.scheduled_turn("coder", "tick while busy")
         mid = len(app.get_payload(dm["id"])["messages"])
@@ -114,7 +114,7 @@ def test_session_wire_metadata(tmp_path: Path) -> None:
     try:
         _coder(app)
         group = app.create(bots=["thyca", "coder"])
-        from thyca.sessions.wire import session_summary
+        from thyca.conversations.runtime.wire import session_summary
         row = session_summary(app._sessions.store.load(group["id"]))
         assert row["channel"] == "webui" and row["window_id"] == group["id"]
         detail = app.get_payload(group["id"])
@@ -268,7 +268,7 @@ def test_scheduler_skips_when_bot_busy_in_other_room(tmp_path: Path) -> None:
             daemon=True)
         t.start()
         assert started.wait(10)
-        from thyca.sessions import SessionBusy
+        from thyca.conversations.runtime import SessionBusy
         with pytest.raises(SessionBusy):
             app.scheduled_turn("coder", "tick")
         dm_after = app.get_payload(app.bot_dm("coder")["id"])["messages"]

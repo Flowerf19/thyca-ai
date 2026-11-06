@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from thyca.agent.assemble import Assemble
-from thyca.agent.stage import Stage
-from thyca.memory.active import ActiveSnapshot
+from thyca.agents.assemble import Assemble
+from thyca.agents.stage import Stage
+from thyca.memories.active import ActiveSnapshot
 from thyca.core.protocol import Message
 
 

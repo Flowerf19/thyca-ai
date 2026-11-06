@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from thyca.bots.private_followups import PrivateFollowupError, PrivateFollowupStore
-from thyca.sessions import SessionBusy, SessionNotFound
+from thyca.conversations.runtime import SessionBusy, SessionNotFound
 
 
 class ConsentError(Exception):
@@ -40,7 +40,7 @@ class ConsentBadRequest(ConsentError):
 
 
 def _delivery_lock(app, bot_id: str):
-    from thyca.config.store import FileLock
+    from thyca.configs.store import FileLock
 
     path = Path(app._root) / "bots" / bot_id / "workspace" / "private_delivery.lock"
     path.parent.mkdir(parents=True, exist_ok=True)

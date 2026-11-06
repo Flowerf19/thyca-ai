@@ -13,7 +13,7 @@ from mcp import ClientSession, StdioServerParameters, stdio_client
 from mcp.client.stdio import get_default_environment
 from mcp.types import CallToolResult, Tool
 
-from thyca.config import McpServerCfg
+from thyca.configs import McpServerCfg
 from thyca.core.protocol import ToolResult
 from thyca.tools.registry import ToolSpec
 

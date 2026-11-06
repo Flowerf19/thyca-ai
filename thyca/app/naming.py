@@ -4,14 +4,14 @@ from __future__ import annotations
 import asyncio
 from time import perf_counter
 
-from thyca.agent.events import EventSink, TurnEvent, emit_event
-from thyca.agent.meta import naming_meta
-from thyca.agent.think import LLMPort
-from thyca.config import Config
+from thyca.agents.events import EventSink, TurnEvent, emit_event
+from thyca.agents.meta import naming_meta
+from thyca.agents.think import LLMPort
+from thyca.configs import Config
 from thyca.core.protocol import Message, utc_now_ts
-from thyca.sessions import SessionManager
-from thyca.sessions.title import NAMING_TURNS, completed_turn_count, propose_title
-from thyca.sessions.wire import session_title  # noqa: F401 — canonical alias, re-exported
+from thyca.conversations.runtime import SessionManager
+from thyca.conversations.runtime.title import NAMING_TURNS, completed_turn_count, propose_title
+from thyca.conversations.runtime.wire import session_title  # noqa: F401 — canonical alias, re-exported
 
 
 async def _name_if_needed(

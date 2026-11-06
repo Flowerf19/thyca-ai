@@ -15,7 +15,7 @@ from thyca.bots.settings import SettingsError
 
 if TYPE_CHECKING:
     from thyca.bots.registry import BotRegistry
-    from thyca.config import Config
+    from thyca.configs import Config
 
 
 class BotSettingsError(ValueError):
@@ -118,7 +118,7 @@ def check_model_against_config(cfg: Config, model: BotModel) -> None:
     effective_id = cfg.defaultModel if model.id == "default" else model.id
     registered = cfg.models.get(effective_id)
     own_set = registered.reasoningEfforts if registered is not None else ()
-    from thyca.config import REASONING_EFFORTS
+    from thyca.configs import REASONING_EFFORTS
 
     allowed = own_set or REASONING_EFFORTS
     # Safe constant only: never echo the raw value or the configured set

@@ -20,7 +20,7 @@ from thyca.bots.registry import RegistryError
 from thyca.core.conversation import ConversationRef
 from thyca.serve.bridge import _log_turn_failure, pump_stream, stream_turn
 from thyca.serve.errors import _with_json, parse_turn_body, public_turn_error
-from thyca.sessions.wire import session_http_error
+from thyca.conversations.runtime.wire import session_http_error
 
 if TYPE_CHECKING:
     from thyca.app.chat_app import ChatApp
@@ -124,7 +124,7 @@ def bot_operations(
     """Read one bot's operational view in one exact room."""
     from thyca.app.turn_options import InvalidTurnOption, validate_turn_options
     from thyca.bots.timeline import TimelineError
-    from thyca.sessions import SessionCorrupt, SessionError, SessionNotFound
+    from thyca.conversations.runtime import SessionCorrupt, SessionError, SessionNotFound
 
     if _missing_chat(handler, app):
         return
@@ -170,7 +170,7 @@ def bot_operations(
 def bot_tasks(handler, app: "ChatApp | None", bot_id: str, session_id: str, query: str) -> None:
     """Open runtime tasks plus live calls for one room participant."""
     from thyca.bots.timeline import TimelineError
-    from thyca.sessions import SessionCorrupt, SessionError, SessionNotFound
+    from thyca.conversations.runtime import SessionCorrupt, SessionError, SessionNotFound
 
     if _missing_chat(handler, app):
         return
@@ -422,7 +422,7 @@ def group_delete(handler, app: "ChatApp | None", group_id: str) -> None:
     try:
         app.delete_session(ref.id)
     except Exception as exc:
-        from thyca.sessions.wire import delete_error
+        from thyca.conversations.runtime.wire import delete_error
 
         mapped = delete_error(exc)
         if mapped is None:
@@ -615,7 +615,7 @@ def _conv_turn_follow(handler, app: "ChatApp | None", ref: ConversationRef) -> N
 # Compact the addressed conversation for each of its participants.
 def _conv_compact(handler, app: "ChatApp | None", ref: ConversationRef) -> None:
     from thyca.app.chat_app import InvalidTurnOption
-    from thyca.sessions.summary import INSTRUCTIONS_MAX_CHARS
+    from thyca.conversations.runtime.summary import INSTRUCTIONS_MAX_CHARS
 
     if _missing_chat(handler, app):
         return

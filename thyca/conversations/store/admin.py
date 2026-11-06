@@ -20,7 +20,7 @@ class _GroupIdCollision(Exception):
     """Internal signal for retrying only an explicit group-ID collision."""
 
 class AdminStore:
-    """Synthetic-root admin operations; never wire to runtime without review."""
+    """Runtime admin operations over one initialized store root."""
 
     def __init__(self, root: Path) -> None:
         self._root = Path(root)

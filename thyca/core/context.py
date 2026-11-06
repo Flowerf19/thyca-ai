@@ -1,7 +1,7 @@
 """Shared turn-context policy thresholds (stdlib-only leaf).
 
-The pre-turn compactor (:mod:`thyca.sessions.compaction`) and the mid-turn
-guard (:mod:`thyca.agent.shrink` / :mod:`thyca.agent.loop`) must agree on
+The pre-turn compactor (:mod:`thyca.conversations.runtime.compaction`) and the mid-turn
+guard (:mod:`thyca.agents.shrink` / :mod:`thyca.agents.loop`) must agree on
 when a turn no longer fits: compaction fires at the same ratio the guard
 backstops at, so a turn that would die at the backstop compacts first.
 Neither side may import the other (sessions <- agent would cycle), so the

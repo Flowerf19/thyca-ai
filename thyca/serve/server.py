@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from thyca.serve.routes import make_handler
-from thyca.memory.facade import MemoryFacade
+from thyca.memories.facade import MemoryFacade
 
 if TYPE_CHECKING:
     from thyca.app.chat_app import ChatApp

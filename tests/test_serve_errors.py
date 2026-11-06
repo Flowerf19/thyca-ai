@@ -7,14 +7,14 @@ from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from thyca.serve.bridge import public_turn_error
+from thyca.serve.errors import public_turn_error
 from thyca.app.chat_app import ChatApp, InvalidTurnOption, InvalidTurnText, TurnCancelled
-from thyca.config import ConfigError, load, save
+from thyca.configs import ConfigError, load, save
 from seeded_config import seeded_config
-from thyca.llm.llm_base import LLMError
+from thyca.llms.llm_base import LLMError
 from thyca.serve import default_webui, make_server
-from thyca.sessions import SessionCorrupt, SessionError, SessionNotFound
-from thyca.memory.facade import MemoryFacade
+from thyca.conversations.runtime import SessionCorrupt, SessionError, SessionNotFound
+from thyca.memories.facade import MemoryFacade
 
 WEBUI = default_webui()
 

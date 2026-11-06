@@ -1,8 +1,7 @@
-"""Phase 2 fixture-only write route: delete/retry/error/metadata/resync/blocking.
+"""Runtime write route: delete/retry/error/metadata/resync/fail-closed.
 
-Disposable fixture roots only. No live data, no commit. Each test enables
-the fixture write route for its own ``tmp_path`` and disables it afterwards
-so the live root never leaves the legacy path.
+Runtime roots only. No live data, no commit. Each test initializes the
+runtime store for its own ``tmp_path``.
 """
 from __future__ import annotations
 
@@ -19,21 +18,17 @@ from thyca.conversations.store import (
     ConversationStoreError,
     DMBootstrapIntent,
     RootInitializationIntent,
-    SyntheticWriteIntent,
+    RuntimeWriteIntent,
     append_message,
     append_turn_error,
     create_group,
-    delete_conversation,
-    disable_fixture_writes,
-    enable_fixture_writes,
-    is_fixture_write_enabled,
     prepare_retry,
     set_conversation_metadata,
 )
-from thyca.conversations.store import fixture_switch, write_adapter
+from thyca.conversations.store import write_adapter
 from thyca.core.conversation import ConversationRef
 from thyca.core.protocol import Message
-from thyca.sessions.store import SessionStore
+from thyca.conversations.runtime.store import SessionStore
 
 
 def _root_id(root: Path) -> str:
@@ -50,27 +45,18 @@ def _dm(root: Path, bot: str) -> ConversationRef:
         bot, intent=DMBootstrapIntent(bot, attempt)).ref
 
 
-def _intent() -> SyntheticWriteIntent:
-    return SyntheticWriteIntent('phase2-fixture-write')
+def _intent() -> RuntimeWriteIntent:
+    return RuntimeWriteIntent('runtime-write')
 
 
 def _msg(role: str, text: str) -> Message:
     return Message(role=role, content=text)
 
 
-def _enable(root: Path) -> None:
-    enable_fixture_writes(root)
-    assert is_fixture_write_enabled(root)
-
-
 @pytest.fixture
 def switched(tmp_path: Path):
     _init(tmp_path)
-    _enable(tmp_path)
-    try:
-        yield tmp_path
-    finally:
-        disable_fixture_writes(tmp_path)
+    yield tmp_path
 
 
 def _snapshot(root: Path, ref: ConversationRef):
@@ -92,7 +78,7 @@ def _snapshot(root: Path, ref: ConversationRef):
 
 # ---------- intent + enabled-root gate ----------
 
-def test_write_requires_intent_and_enabled_root_before_io(tmp_path: Path) -> None:
+def test_write_requires_intent_and_initialized_root_before_io(tmp_path: Path) -> None:
     _init(tmp_path)
     ref = _dm(tmp_path, 'coder')
     missing = tmp_path / 'missing-root'
@@ -101,22 +87,17 @@ def test_write_requires_intent_and_enabled_root_before_io(tmp_path: Path) -> Non
         append_message(tmp_path, ref, 'coder', _msg('user', 'hi'), intent=None)  # type: ignore[arg-type]
     with pytest.raises(ValueError):
         prepare_retry(tmp_path, ref, intent='x', actor='coder')  # type: ignore[arg-type]
-    # Not enabled: fails before I/O even with a valid intent.
-    with pytest.raises(ValueError, match='not enabled'):
-        append_message(tmp_path, ref, 'coder', _msg('user', 'hi'), intent=_intent())
-    with pytest.raises(ValueError, match='not enabled'):
-        delete_conversation(tmp_path, ref, intent=_intent(), actor='coder')
+    # Uninitialized root: fails before I/O even with a valid intent.
+    with pytest.raises(ValueError, match='not initialized'):
+        append_message(missing, ref, 'coder', _msg('user', 'hi'), intent=_intent())
     assert not missing.exists()
-    # Live root can never be enabled.
-    with pytest.raises(ValueError, match='live root'):
-        enable_fixture_writes(Path.home() / '.thyca')
-    assert not is_fixture_write_enabled(Path.home() / '.thyca')
 
 
 # Check that a wrong bot is rejected while the second member writes as itself.
 def test_group_actor_is_acting_bot_not_first_participant(switched: Path) -> None:
     from thyca.conversations.store.contracts import ConversationStoreError
-    from thyca.conversations.store.read_adapter import SyntheticReadIntent, assemble_history
+    from thyca.conversations.store.read_adapter import assemble_history
+    from thyca.conversations.store.runtime import RuntimeReadIntent
 
     group = create_group(
         switched, ['alice', 'bob'], intent=_intent(), actor='alice')
@@ -133,7 +114,7 @@ def test_group_actor_is_acting_bot_not_first_participant(switched: Path) -> None
         intent=_intent())
     conv = assemble_history(
         switched, group.ref, 'bob',
-        intent=SyntheticReadIntent('actor-regression'))
+        intent=RuntimeReadIntent('actor-regression'))
     assert [m.content for m in conv.messages] == ['bob speaking']
     assert conv.messages[0].meta['bot_id'] == 'bob'
 
@@ -141,17 +122,17 @@ def test_group_actor_is_acting_bot_not_first_participant(switched: Path) -> None
 def test_explicit_actor_chain_has_no_fallback(switched: Path) -> None:
     # No current_bot_id import or call fallback anywhere in the write path.
     # (Docstrings may name the forbidden fallback; code must not use it.)
-    for module in (write_adapter, fixture_switch):
+    for module in (write_adapter,):
         source = inspect.getsource(module)
-        assert 'from thyca.memory.identity' not in source
+        assert 'from thyca.memories.identity' not in source
         assert 'import current_bot_id' not in source
         assert 'current_bot_id(' not in source
     import thyca.conversations.store.admin as admin_module
     admin_source = inspect.getsource(admin_module)
-    assert 'from thyca.memory.identity' not in admin_source
+    assert 'from thyca.memories.identity' not in admin_source
     assert 'current_bot_id(' not in admin_source
     # Every write entry point requires an explicit actor with no default.
-    for fn in (append_message, set_conversation_metadata, delete_conversation,
+    for fn in (append_message, set_conversation_metadata,
                prepare_retry, append_turn_error, create_group):
         params = inspect.signature(fn).parameters
         assert 'actor' in params
@@ -171,8 +152,6 @@ def test_explicit_actor_chain_has_no_fallback(switched: Path) -> None:
     with pytest.raises(ConversationStoreError):
         append_turn_error(switched, ref, intent=_intent(), actor='mallory',
                           code='e', message='boom')
-    with pytest.raises(ConversationStoreError):
-        delete_conversation(switched, ref, intent=_intent(), actor='mallory')
 
 
 # ---------- explicit delete ----------
@@ -184,7 +163,7 @@ def test_delete_conversation_removes_door_atomically(switched: Path) -> None:
     agents.append(group, 'alice', _msg('user', 'g1'))
     agents.append(group, 'bob', _msg('assistant', 'g2'))
 
-    delete_conversation(switched, group, intent=_intent(), actor='alice')
+    AdminStore(switched).delete(group)
     with pytest.raises(ConversationStoreError):
         agents.read(group, 'alice')
     items, _ = admin.list()
@@ -209,7 +188,7 @@ def test_delete_conversation_removes_door_atomically(switched: Path) -> None:
         conn.close()
     # Missing door: sanitized local error, no mutation elsewhere.
     with pytest.raises(ConversationStoreError):
-        delete_conversation(switched, group, intent=_intent(), actor='alice')
+        AdminStore(switched).delete(group)
 
 
 def test_delete_dm_keeps_marker_tombstone_against_reuse(switched: Path) -> None:
@@ -218,7 +197,7 @@ def test_delete_dm_keeps_marker_tombstone_against_reuse(switched: Path) -> None:
     marker = switched / 'dm-markers' / 'coder.json'
     assert marker.is_file()
 
-    delete_conversation(switched, ref, intent=_intent(), actor='coder')
+    AdminStore(switched).delete(ref)
     assert marker.is_file(), 'DM marker must survive as a reuse-blocking tombstone'
     with pytest.raises(ConversationStoreError):
         AgentStore(switched).read(ref, 'coder')
@@ -392,45 +371,30 @@ def test_metadata_update_is_atomic_all_or_nothing(switched: Path) -> None:
     assert AgentStore(switched).read(group, 'alice').messages[0].content == 'hello'
 
 
-# ---------- legacy blocking + live stays legacy ----------
+# ---------- fail closed on never-initialized roots ----------
 
-def test_legacy_writers_blocked_on_switched_root_live_stays_open(tmp_path: Path, tmp_path_factory: pytest.TempPathFactory) -> None:
-    _init(tmp_path)
-    _enable(tmp_path)
-    try:
-        legacy = SessionStore(tmp_path / 'sessions')
-        with pytest.raises(Exception, match='legacy writer blocked'):
-            legacy.ensure_dir()
-        with pytest.raises(Exception, match='legacy writer blocked'):
-            legacy.create('2020-01-01T00-00-00_ab12')
-        with pytest.raises(Exception, match='legacy writer blocked'):
-            legacy.delete('2020-01-01T00-00-00_ab12')
-        with pytest.raises(Exception, match='legacy writer blocked'):
-            legacy._append_json(tmp_path / 'sessions' / 'x.jsonl', {'type': 'meta'})
-        with pytest.raises(Exception, match='legacy writer blocked'):
-            legacy.rewrite('2020-01-01T00-00-00_ab12', tmp_path / 'x', [])
+def test_public_sessions_fail_closed_without_runtime_store(tmp_path: Path) -> None:
+    from thyca.conversations.runtime import SessionError
+    from thyca.conversations.runtime import SessionManager
 
-        # New-store writes still flow while legacy is blocked.
-        ref = _dm(tmp_path, 'coder')
-        seq = append_message(tmp_path, ref, 'coder', _msg('user', 'via store'), intent=_intent())
-        assert seq == 1
-
-        other = tmp_path_factory.mktemp('phase2-other-root')
-        other_sessions = other / 'sessions'
-        SessionStore(other_sessions).ensure_dir()
-        assert other_sessions.is_dir()
-    finally:
-        disable_fixture_writes(tmp_path)
-    # After switch-off, legacy works again on the same path.
-    SessionStore(tmp_path / 'sessions').ensure_dir()
-    assert (tmp_path / 'sessions').is_dir()
+    sessions_dir = tmp_path / 'sessions'
+    store = SessionStore(sessions_dir)
+    with pytest.raises(SessionError, match='runtime store not initialized'):
+        store.create('group-' + 'a' * 32)
+    with pytest.raises(SessionError, match='runtime store not initialized'):
+        store.load('coder')
+    with pytest.raises(SessionError, match='runtime store not initialized'):
+        store.list_paths()
+    with pytest.raises(SessionError, match='runtime store not initialized'):
+        SessionManager(sessions_dir).create()
+    with pytest.raises(SessionError, match='runtime store not initialized'):
+        SessionManager(sessions_dir).ensure_dm('coder')
+    # Nothing was created on the legacy file path.
+    assert not list(tmp_path.rglob('*.jsonl'))
 
 
-def test_write_adapter_refuses_non_enabled_root(tmp_path: Path) -> None:
-    _init(tmp_path)
-    ref = _dm(tmp_path, 'coder')
-    AgentStore(tmp_path).append(ref, 'coder', _msg('user', 'legacy still owns this'))
-    with pytest.raises(ValueError, match='not enabled'):
+def test_write_adapter_refuses_uninitialized_root(tmp_path: Path) -> None:
+    ref = ConversationRef.dm('coder')
+    with pytest.raises(ValueError, match='not initialized'):
         append_message(tmp_path, ref, 'coder', _msg('user', 'nope'), intent=_intent())
-    # Legacy path is open while the switch is off.
-    SessionStore(tmp_path / 'sessions').ensure_dir()
+    assert not (tmp_path / 'conversations.db').exists()

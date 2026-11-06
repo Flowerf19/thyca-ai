@@ -18,11 +18,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from thyca.bots.card import _NAME_RE, NAME_MAX
-from thyca.config import atomic_write_text
+from thyca.configs import atomic_write_text
 from thyca.core.channel import WORK_REF_RE
 from thyca.core.protocol import parse_ts
-from thyca.memory.heading import format_ts, utc_now
-from thyca.sessions.store import SESSION_ID_PATTERN
+from thyca.memories.heading import format_ts, utc_now
+from thyca.conversations.runtime.store import SESSION_ID_PATTERN
 
 NONTERMINAL = ("open", "waiting_private", "received")
 TERMINAL = ("resumed", "done", "cancelled", "expired")
@@ -243,7 +243,7 @@ class PrivateFollowupStore:
         path.chmod(0o600)
 
     def _txn(self, bot_id: str):
-        from thyca.config.store import FileLock
+        from thyca.configs.store import FileLock
 
         return FileLock(self._lock_path(bot_id))
 

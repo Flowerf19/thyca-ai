@@ -103,7 +103,7 @@ def tick(app, now: datetime | None = None, *, idle_s: int = 900) -> dict:
     Returns ``{"swept": {...}, "fired": [{bot_id, room, reply}...], "skipped": [...]}``.
     Never raises for one bot's failure; failures land in ``skipped``.
     """
-    from thyca.sessions import SessionBusy
+    from thyca.conversations.runtime import SessionBusy
 
     moment = now or datetime.now().astimezone()
     report: dict = {"swept": {}, "fired": [], "skipped": []}

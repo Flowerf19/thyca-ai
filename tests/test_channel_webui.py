@@ -20,13 +20,13 @@ from thyca.app.loop_turns import TurnCancelled
 from thyca.app.webui_channel import WebUIChannelAdapter
 from thyca.bots.card import BotCard
 from thyca.bots.workspace_store import WorkspaceStore
-from thyca.config import load, save
+from thyca.configs import load, save
 from seeded_config import seeded_config
 from thyca.core.protocol import Message, ToolCall, parse_ts
-from thyca.llm.llm_base import ChatReply, LLMError
+from thyca.llms.llm_base import ChatReply, LLMError
 from thyca.serve.turn_state import TurnHub
-from thyca.sessions import SessionManager
-from thyca.sessions.store import SessionStore
+from thyca.conversations.runtime import SessionManager
+from thyca.conversations.runtime.store import SessionStore
 
 
 def _chat(tmp_path: Path, connect=None) -> ChatApp:

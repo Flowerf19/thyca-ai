@@ -8,7 +8,7 @@ import pytest
 
 from tests.test_cli import FakeLLM
 from thyca.app.cli import Cli
-from thyca.llm.llm_base import ChatReply
+from thyca.llms.llm_base import ChatReply
 from thyca.serve import ServeError
 from thyca.serve.daemon import (
     claim_server_lock,

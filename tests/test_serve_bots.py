@@ -15,10 +15,10 @@ import pytest
 from thyca.app.chat_app import ChatApp
 from thyca.bots.card import BotCard
 from thyca.bots.registry import RegistryError
-from thyca.config import load, save
+from thyca.configs import load, save
 from seeded_config import seeded_config
-from thyca.llm.llm_base import ChatReply
-from thyca.memory.facade import MemoryFacade
+from thyca.llms.llm_base import ChatReply
+from thyca.memories.facade import MemoryFacade
 from thyca.serve import default_webui, make_server
 
 

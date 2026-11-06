@@ -25,12 +25,12 @@ from thyca.bots.timeline import (
     WorkspaceTimeline,
 )
 from thyca.bots.workspace_store import WorkspaceStore
-from thyca.config import load, save
+from thyca.configs import load, save
 from seeded_config import seeded_config
 from thyca.core.channel import WindowRef
 from thyca.core.protocol import Message
-from thyca.llm.llm_base import ChatReply
-from thyca.sessions import SessionManager
+from thyca.llms.llm_base import ChatReply
+from thyca.conversations.runtime import SessionManager
 
 
 def _chat(tmp_path: Path, connect, context_tokens: int | None = None) -> ChatApp:
@@ -70,6 +70,29 @@ def _store(tmp_path: Path, bot_id: str, window: WindowRef,
 
 
 SESSION_ID = "2026-10-20T09-00-00_cafe"
+
+
+# Check that canonical timestamp ids bind as paths while public doors reject them.
+def test_canonical_timestamp_id_binds_but_is_not_a_public_door(tmp_path: Path) -> None:
+    from thyca.conversations.store.runtime import ensure_runtime_store
+    from thyca.conversations.runtime.store import SessionStore
+
+    store = _store(tmp_path, "coder", WindowRef(
+        window_id="coder", channel_id="webui", kind="dm",
+        participants=("coder",)), SESSION_ID)
+    assert store.path_for(SESSION_ID).name == f"{SESSION_ID}.jsonl"
+    with pytest.raises(Exception):
+        store.path_for("coder")
+    with pytest.raises(Exception):
+        store.path_for("../2026-10-20T09-00-00_cafe")
+    ensure_runtime_store(tmp_path)
+    public = SessionStore(tmp_path / "sessions")
+    with pytest.raises(Exception):
+        public.path_for(SESSION_ID)
+    with pytest.raises(Exception):
+        public.create(SESSION_ID)
+    with pytest.raises(Exception):
+        public.load(SESSION_ID)
 
 
 def _row(text: str, **meta) -> Message:

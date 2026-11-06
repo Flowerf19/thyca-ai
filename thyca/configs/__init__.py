@@ -1,0 +1,96 @@
+"""Config package for the single Thyca config file (``~/.thyca/config.json``).
+
+Layout (SOLID split of the old single module):
+
+- :mod:`errors`, :mod:`defaults`, :mod:`validation`, :mod:`secrets` — shared kernel
+- :mod:`providers`, :mod:`mcp`, :mod:`pricing`, :mod:`models`, :mod:`timeline`,
+  :mod:`limits` — one entity per file
+- :mod:`root` — the ``Config`` aggregate (wire form + resolution policy)
+- :mod:`parsing` — raw-dict parsing and legacy migration
+- :mod:`store` — file I/O (load / atomic save / defaults / guide)
+
+Import-compatible with the old ``thyca/configs.py``: ``from thyca.configs import
+Config, load, save, ...`` keeps working.
+"""
+from __future__ import annotations
+
+from .auth import merge_saved_keys
+from .defaults import (
+    DEFAULT_LIMITS_CONTEXT_TOKENS,
+    DEFAULT_LIMITS_CONTEXT_TOKENS_MAX,
+    DEFAULT_LIMITS_HOT_TAIL_KB,
+    DEFAULT_LIMITS_LOOP_MAX,
+    DEFAULT_LIMITS_SOFT_TIMEOUT_S,
+    DEFAULT_PROVIDER_API,
+    DEFAULT_PROVIDER_API_KEY_ENV,
+    DEFAULT_PROVIDER_BASE_URL,
+    DEFAULT_PROVIDER_ID,
+    DEFAULT_PROVIDER_MODEL,
+    DEFAULT_PROVIDER_REASONING_EFFORT,
+    DEFAULT_TIMELINE_TIMEZONE,
+    PROVIDER_APIS,
+    REASONING_EFFORTS,
+)
+from .errors import ConfigError
+from .limits import LimitsCfg
+from .mcp import McpServerCfg
+from .models import ModelCfg, _model_to_dict
+from .parsing import _parse_dict
+from .pricing import PricingCfg
+from .providers import ProviderCfg, ProviderEntry
+from .root import Config, resolve_model_base_url
+from .schema import config_schema
+from .store import (
+    GUIDE_NAME,
+    FileLock,
+    atomic_write_text,
+    config_path,
+    default_config,
+    ensure_default,
+    ensure_thyca_dir,
+    load,
+    save,
+    write_config_guide,
+)
+from .timeline import TimelineCfg
+
+__all__ = [
+    "DEFAULT_LIMITS_CONTEXT_TOKENS",
+    "DEFAULT_LIMITS_CONTEXT_TOKENS_MAX",
+    "DEFAULT_LIMITS_HOT_TAIL_KB",
+    "DEFAULT_LIMITS_LOOP_MAX",
+    "DEFAULT_LIMITS_SOFT_TIMEOUT_S",
+    "DEFAULT_PROVIDER_API",
+    "DEFAULT_PROVIDER_API_KEY_ENV",
+    "DEFAULT_PROVIDER_BASE_URL",
+    "DEFAULT_PROVIDER_ID",
+    "DEFAULT_PROVIDER_MODEL",
+    "DEFAULT_PROVIDER_REASONING_EFFORT",
+    "DEFAULT_TIMELINE_TIMEZONE",
+    "GUIDE_NAME",
+    "PROVIDER_APIS",
+    "REASONING_EFFORTS",
+    "Config",
+    "ConfigError",
+    "FileLock",
+    "LimitsCfg",
+    "atomic_write_text",
+    "McpServerCfg",
+    "ModelCfg",
+    "PricingCfg",
+    "ProviderCfg",
+    "ProviderEntry",
+    "config_schema",
+    "TimelineCfg",
+    "_model_to_dict",
+    "_parse_dict",
+    "config_path",
+    "default_config",
+    "ensure_default",
+    "ensure_thyca_dir",
+    "load",
+    "merge_saved_keys",
+    "resolve_model_base_url",
+    "save",
+    "write_config_guide",
+]

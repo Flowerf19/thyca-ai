@@ -25,7 +25,7 @@ from thyca.tools.gateway.execution import (
     reset_execution,
     unknown_id,
 )
-from thyca.memory.identity import current_bot_id
+from thyca.memories.identity import current_bot_id
 from thyca.tools.gateway.policy import Policy, PolicyDenied
 from thyca.tools.registry import ToolSpec
 

@@ -103,7 +103,7 @@ def test_drawer_context_meter_bands_and_width(meter: dict) -> None:
 def test_session_detail_carries_meta_for_meter(tmp_path: Path) -> None:
     from test_serve_chat import FakeLLM, _chat
 
-    from thyca.llm.llm_base import ChatReply
+    from thyca.llms.llm_base import ChatReply
 
     llm = FakeLLM(
         ChatReply(

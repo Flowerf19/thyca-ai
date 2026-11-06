@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from thyca.config import Config, ProviderEntry, default_config
+from thyca.configs import Config, ProviderEntry, default_config
 
 
 def seeded_config(

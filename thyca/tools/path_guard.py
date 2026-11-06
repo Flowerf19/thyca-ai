@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from thyca.memory.identity import current_bot_id
+from thyca.memories.identity import current_bot_id
 
 
 def absolutize(value: str) -> Path:
@@ -61,7 +61,7 @@ class PathGuard:
         profile files bypass the visibility-filtered facade, so a group
         turn reads them only through memory_get/search — never from disk.
         No bound view, CLI and private windows keep the old behavior."""
-        from thyca.memory.visibility import current_memory_view
+        from thyca.memories.visibility import current_memory_view
 
         view = current_memory_view()
         if view is None or getattr(view.window, "kind", None) != "group":

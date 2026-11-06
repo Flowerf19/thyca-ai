@@ -8,14 +8,14 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
-from thyca.agent.think import LLMPort
+from thyca.agents.think import LLMPort
 from thyca.app.chat_ui import ChatUi
 from thyca.bots.registry import RegistryError
 from thyca.app.turn_options import InvalidTurnOption
-from thyca.config import ConfigError, load
-from thyca.llm.llm_base import LLMError
-from thyca.memory.facade import MemoryFacade
-from thyca.sessions import SessionError
+from thyca.configs import ConfigError, load
+from thyca.llms.llm_base import LLMError
+from thyca.memories.facade import MemoryFacade
+from thyca.conversations.runtime import SessionError
 
 
 # Build the CLI parser; conversation choice is --bot (DM) or --group.
@@ -157,8 +157,8 @@ class Cli:
                 await asyncio.to_thread(app.shutdown)
 
     def _seed(self) -> int:
-        from thyca.config import GUIDE_NAME, ConfigError, ensure_thyca_dir, write_config_guide
-        from thyca.memory.active import ActiveMemory, ActiveMemoryError
+        from thyca.configs import GUIDE_NAME, ConfigError, ensure_thyca_dir, write_config_guide
+        from thyca.memories.active import ActiveMemory, ActiveMemoryError
         from thyca.skills import SkillStore
 
         # Install-time seeding: HOME-based ~/.thyca by design (self._thyca_dir

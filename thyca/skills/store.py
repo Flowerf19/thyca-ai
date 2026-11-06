@@ -16,7 +16,7 @@ from pathlib import Path
 
 import yaml
 
-from thyca.config.store import config_path
+from thyca.configs.store import config_path
 from thyca.core.protocol import RESULT_CAP_BYTES
 
 NAME_MAX = 64

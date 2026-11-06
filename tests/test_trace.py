@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from thyca.core.protocol import Message, ToolCall
-from thyca.sessions import Session
+from thyca.conversations.runtime import Session
 from thyca.serve.trace import aggregate, turns_from_session
 
 TS = "2026-08-26T09:12:03Z"

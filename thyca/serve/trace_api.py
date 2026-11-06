@@ -1,27 +1,23 @@
 """Trace scan + payload assembly for ``/api/traces*``.
 
-Split from ``serve.py``: the parse cache, the newest-200 scan, filter
-handling, and the three endpoint payloads. HTTP routing stays in
-``serve.py``; nothing here touches the handler or sockets.
+Split from ``serve.py``: the newest-200 store scan, filter handling, and
+the three endpoint payloads. HTTP routing stays in ``serve.py``; nothing
+here touches the handler or sockets.
 """
 from __future__ import annotations
 
 import threading
-from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs
 
-from thyca.serve.trace import TurnSummary, aggregate, scope_turn_to_bot, turns_from_session
-from thyca.sessions.wire import message_dict
+from thyca.serve.trace import TurnSummary, aggregate, scope_turn_to_bot
+from thyca.conversations.runtime.wire import message_dict
 
 if TYPE_CHECKING:
     from thyca.app.chat_app import ChatApp
-    from thyca.sessions import Session
-    from thyca.sessions.store import SessionStore
+    from thyca.conversations.runtime.store import SessionStore
 
-# Parse cache for trace scans: path -> (mtime_ns, Session). JSONL stays the
-# source of truth — entries are re-parsed only when mtime_ns changes, and the
-# cache never holds more files than the newest-200 scan window.
+# Trace scans read at most this many newest store doors per pass.
 _TRACE_SCAN_CAP = 200
 # limit=all/0 still pages server-side: one response never carries more than
 # this many turns (200 files x all turns is unbounded otherwise). `total`
@@ -29,44 +25,6 @@ _TRACE_SCAN_CAP = 200
 # rejection: 2000 is far above any dashboard page.
 _TRACE_ALL_CAP = 2000
 _trace_scan_lock = threading.Lock()
-_trace_sessions: dict[Path, tuple[int, Session]] = {}
-
-
-def _is_runtime_store(store: SessionStore) -> bool:
-    """True when *store* lives under an initialized conversation store."""
-    try:
-        from thyca.sessions.store import _runtime_root_for
-
-        return _runtime_root_for(store.sessions_dir) is not None
-    except Exception:
-        return False
-
-
-def _cached_session(store: SessionStore, path: Path):
-    """Parsed Session for path, re-reading only when mtime_ns changed."""
-    # Runtime store doors have no files: bypass the mtime cache and load
-    # directly (store.load is runtime-aware). Legacy files keep the cache.
-    if _is_runtime_store(store):
-        try:
-            return store.load(path.stem)
-        except Exception:
-            return None
-    try:
-        mtime = path.stat().st_mtime_ns
-    except OSError:
-        _trace_sessions.pop(path, None)
-        return None
-    cached = _trace_sessions.get(path)
-    if cached is not None and cached[0] == mtime:
-        return cached[1]
-    try:
-        session = store.load(path.stem)
-    except Exception:
-        # corrupt or vanished: drop any stale entry, skip the file
-        _trace_sessions.pop(path, None)
-        return None
-    _trace_sessions[path] = (mtime, session)
-    return session
 
 
 # Load trace turns for one explicit conversation reference.
@@ -77,21 +35,15 @@ def cached_turns_for_ref(store: SessionStore, ref) -> list[TurnSummary]:
     guessed here. A missing door raises the store's local error, which
     the route maps to 404 (never a generic 503).
     """
-    if _is_runtime_store(store):
-        # Serve-layer trace reads share one lock: concurrent store opens
-        # race the root namespace sidecar checks, so list and detail
-        # must not open the store at the same moment in this process.
-        with _trace_scan_lock:
-            return _cached_turns_for_ref_runtime(store, ref)
+    # Serve-layer trace reads share one lock: concurrent store opens
+    # race the root namespace sidecar checks, so list and detail
+    # must not open the store at the same moment in this process.
     with _trace_scan_lock:
-        session = _cached_session(store, store.path_for(ref.id))
-    if session is None:
-        session = store.load(ref.id)
-    return turns_from_session(session)
+        return _turns_for_ref_runtime(store, ref)
 
 
 # Read one store door's trace turns (caller holds the trace scan lock).
-def _cached_turns_for_ref_runtime(store: SessionStore, ref) -> list[TurnSummary]:
+def _turns_for_ref_runtime(store: SessionStore, ref) -> list[TurnSummary]:
     """Projected trace turns for one runtime store door."""
     from thyca.conversations.store.read_adapter import assemble_history
     from thyca.conversations.store.runtime import (
@@ -99,9 +51,9 @@ def _cached_turns_for_ref_runtime(store: SessionStore, ref) -> list[TurnSummary]
         runtime_reader_for,
     )
     from thyca.conversations.store.turn_pipeline import (
-        fixture_trace_turns_for as _projected_turns_for,
+        trace_turns_projected as _projected_turns_for,
     )
-    from thyca.sessions.store import _runtime_root_for
+    from thyca.conversations.runtime.store import _runtime_root_for
 
     runtime_root = _runtime_root_for(store.sessions_dir)
     assert runtime_root is not None
@@ -137,73 +89,26 @@ def _cached_turns_for_ref_runtime(store: SessionStore, ref) -> list[TurnSummary]
     return _projected_turns_for(conv)
 
 
-# Load trace turns for one stored door id (internal callers only).
-def cached_turns_for(store: SessionStore, session_id: str) -> list[TurnSummary]:
-    """Turns for one session via the parse cache.
-
-    Cache miss (or file turned corrupt) re-loads through ``store.load`` so the
-    caller keeps the real ``SessionNotFound`` / ``SessionCorrupt`` semantics.
-    The cache touch stays under ``_trace_scan_lock``: ``collect_turns``
-    iterates/evicts the same dict, and ThreadingHTTPServer runs list +
-    detail on different threads (unlocked here used to raise ``RuntimeError:
-    dictionary changed size`` → 503 under concurrent dashboard loads).
-    """
-    # Runtime store: resolve the stored id, then reuse the ref path.
-    if _is_runtime_store(store):
-        from thyca.conversations.store.runtime import resolve_ref
-        from thyca.sessions.store import _runtime_root_for
-
-        runtime_root = _runtime_root_for(store.sessions_dir)
-        assert runtime_root is not None
-        return cached_turns_for_ref(store, resolve_ref(runtime_root, session_id))
-    with _trace_scan_lock:
-        session = _cached_session(store, store.path_for(session_id))
-    if session is None:
-        session = store.load(session_id)
-    return turns_from_session(session)
-
-
 # Collect the newest trace turns across every conversation door.
 def collect_turns(chat: ChatApp) -> list[TurnSummary]:
     out: list[TurnSummary] = []
     store = chat.trace_store()
-    # Runtime store: no mtime cache (synthetic paths have no files).
     # Failures are trailing system markers (append-only), excluded from
     # turn_slices, so project them back onto their user row in memory
-    # (project_for_trace) before slicing — exactly the fixture
-    # turn-pipeline path. Detail still expands canonical tool rows via
-    # trace_execution_messages (unchanged).
-    if _is_runtime_store(store):
-        # Same scan lock as detail reads (see cached_turns_for_ref).
-        with _trace_scan_lock:
-            return _collect_turns_runtime(chat, store, out)
-    # cap 200 newest files to keep single-user scan cheap
-    paths = store.list_paths()[:_TRACE_SCAN_CAP]
+    # (project_for_trace) before slicing. Detail still expands canonical
+    # tool rows via trace_execution_messages (unchanged).
+    # Same scan lock as detail reads (see cached_turns_for_ref).
     with _trace_scan_lock:
-        for path in paths:
-            session = _cached_session(store, path)
-            if session is None:
-                continue
-            try:
-                out.extend(turns_from_session(session))
-            except Exception:
-                continue
-        # evict files that fell out of the newest-200 window
-        current = set(paths)
-        for stale in [p for p in _trace_sessions if p not in current]:
-            del _trace_sessions[stale]
-    # sort newest first by started_at desc, then session_id desc for stability
-    out.sort(key=lambda t: (t.started_at, t.session_id, t.turn_index), reverse=True)
-    return out
+        return _collect_turns_runtime(chat, store, out)
 
 
 # Collect trace turns from the runtime store (caller holds no lock).
 def _collect_turns_runtime(chat: ChatApp, store: SessionStore, out: list) -> list[TurnSummary]:
     """Newest-first projected turns over every ready store door.
 
-    No JSONL fallback exists on this path: a locally corrupt door is
-    skipped, while a global store failure propagates so the route can
-    answer 503 instead of reading damage as an empty history.
+    A locally corrupt door is skipped, while a global store failure
+    propagates so the route can answer 503 instead of reading damage
+    as an empty history.
     """
     from thyca.conversations.store.admin import AdminStore
     from thyca.conversations.store.contracts import ConversationStoreError
@@ -213,15 +118,15 @@ def _collect_turns_runtime(chat: ChatApp, store: SessionStore, out: list) -> lis
         runtime_reader_for,
     )
     from thyca.conversations.store.turn_pipeline import (
-        fixture_trace_turns_for as _projected_turns_for,
+        trace_turns_projected as _projected_turns_for,
     )
-    from thyca.sessions.store import _runtime_root_for
+    from thyca.conversations.runtime.store import _runtime_root_for
 
     runtime_root = _runtime_root_for(store.sessions_dir)
     assert runtime_root is not None
     intent = RuntimeReadIntent("runtime-trace-list")
     admin = AdminStore(runtime_root)
-    # Newest-first listing, capped like the legacy 200-file scan.
+    # Newest-first listing, capped at the scan window above.
     offset = 0
     rows: list = []
     while len(rows) < _TRACE_SCAN_CAP:
@@ -326,39 +231,6 @@ def trace_detail_payload_ref(chat: ChatApp, ref, turn_index: int) -> dict:
                     messages.extend(
                         chat.trace_execution_messages(
                             ref.id, meta["bot_id"], meta["span_id"]
-                        )
-                    )
-                else:
-                    messages.append(message)
-            payload["messages"] = [
-                message_dict(m, chat.skills_root, include_args=True)
-                for m in messages
-            ]
-            return payload
-    raise ValueError("trace not found")
-
-
-# Build one trace detail for a stored door id (internal callers only).
-def trace_detail_payload(chat: ChatApp, session_id: str, turn_index: int) -> dict:
-    turns = cached_turns_for(chat.trace_store(), session_id)
-    for t in turns:
-        if t.turn_index == turn_index:
-            payload = t.to_payload()
-            messages = []
-            for message in t.messages:
-                meta = message.meta or {}
-                if (
-                    message.role == "assistant"
-                    and meta.get("kind") == "message"
-                    and meta.get("bus_event") is not True
-                    and isinstance(meta.get("bot_id"), str)
-                    and meta.get("bot_id")
-                    and isinstance(meta.get("span_id"), str)
-                    and meta.get("span_id")
-                ):
-                    messages.extend(
-                        chat.trace_execution_messages(
-                            session_id, meta["bot_id"], meta["span_id"]
                         )
                     )
                 else:

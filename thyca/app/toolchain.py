@@ -11,22 +11,22 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import TextIO
 
-from thyca.agent.act import Act
-from thyca.agent.assemble import Assemble
-from thyca.agent.loop import AgentLoop
-from thyca.agent.observe import Observe
-from thyca.agent.think import LLMPort, Think
+from thyca.agents.act import Act
+from thyca.agents.assemble import Assemble
+from thyca.agents.loop import AgentLoop
+from thyca.agents.observe import Observe
+from thyca.agents.think import LLMPort, Think
 from thyca.app.summarizing import LlmSummarizer
-from thyca.config import Config
-from thyca.llm.prompt_manager import PromptManager
-from thyca.sessions import SessionManager
+from thyca.configs import Config
+from thyca.llms.prompt_manager import PromptManager
+from thyca.conversations.runtime import SessionManager
 from thyca.tools.builtin import register_file_tools
 from thyca.tools.gateway.background import BackgroundProcs
 from thyca.tools.gateway import ToolGateway
 from thyca.tools.gateway.policy import Policy
 from thyca.tools.gateway.gateway import tool_kill_spec, tool_read_spec
 from thyca.tools.mcp import MCPManager, StartupDiagnostic
-from thyca.memory.facade import MemoryFacade
+from thyca.memories.facade import MemoryFacade
 from thyca.tools.memory_tools import register_memory_tools
 from thyca.tools.path_guard import PathGuard
 from thyca.tools.profile_tools import register_profile_tools

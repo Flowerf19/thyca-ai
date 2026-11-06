@@ -1,8 +1,7 @@
-"""Phase 3 turn pipeline on disposable fixture roots only.
+"""Runtime turn pipeline on initialized store roots only.
 
-No live server, no live data. Each test enables the fixture write route
-for its own ``tmp_path`` and disables it afterwards; the live root never
-leaves the legacy path. The legacy HTTP path is unchanged — the
+No live server, no live data. Each test initializes the runtime store
+for its own ``tmp_path``. The HTTP path is unchanged — the
 ``serve_chat`` error/busy/cancel/retry/follow subsets below pin the
 400/404/409/503 mapping, single terminal NDJSON, failed-turn markers, and
 Trace tool-row expansion it must keep.
@@ -16,44 +15,35 @@ from pathlib import Path
 
 import pytest
 
-from thyca.agent.events import TurnEvent
-from thyca.agent.reply import ContentDelta
+from thyca.agents.events import TurnEvent
+from thyca.agents.reply import ContentDelta
 from thyca.conversations.store import (
     AdminStore,
     AgentStore,
     ConversationStoreError,
     DMBootstrapIntent,
     RootInitializationIntent,
-    SyntheticReadIntent,
-    SyntheticWriteIntent,
+    RuntimeReadIntent,
+    RuntimeWriteIntent,
     append_turn_error,
     assemble_history,
     detail_for,
-    disable_fixture_writes,
-    enable_fixture_writes,
-    fixture_completed_turn_count,
-    fixture_trace_detail,
-    fixture_trace_detail_for,
-    fixture_trace_turns,
-    fixture_trace_turns_for,
-    is_fixture_write_enabled,
-    mark_fixture_naming_attempted,
-    plan_turn_retry,
+    mark_naming_attempted,
+    prepare_retry,
     project_for_trace,
     record_turn_error,
-    refresh_fixture_title,
-    store_fixture_title_if_missing,
+    store_title_if_missing,
     trace_detail_for,
     trace_turns_for,
+    trace_turns_projected,
 )
-from thyca.conversations.store import fixture_switch
 from thyca.core.conversation import ConversationRef
 from thyca.core.protocol import Message, ToolCall
 from thyca.serve.bridge import SENTINEL, bridge_worker, pump_stream
 from thyca.serve.errors import public_turn_error
 from thyca.serve.turn_state import TurnHub, TurnState
-from thyca.sessions import SessionBusy, SessionCorrupt, SessionError, SessionNotFound
-from thyca.sessions.store import SessionStore
+from thyca.conversations.runtime import SessionBusy, SessionCorrupt, SessionError, SessionNotFound
+from thyca.conversations.runtime.store import SessionStore
 
 
 def _root_id(root: Path) -> str:
@@ -70,12 +60,12 @@ def _dm(root: Path, bot: str) -> ConversationRef:
         bot, intent=DMBootstrapIntent(bot, attempt)).ref
 
 
-def _write_intent() -> SyntheticWriteIntent:
-    return SyntheticWriteIntent('phase3-fixture-turn')
+def _write_intent() -> RuntimeWriteIntent:
+    return RuntimeWriteIntent('runtime-turn')
 
 
-def _read_intent() -> SyntheticReadIntent:
-    return SyntheticReadIntent('phase3-fixture-trace')
+def _read_intent() -> RuntimeReadIntent:
+    return RuntimeReadIntent('runtime-trace')
 
 
 def _msg(role: str, text: str) -> Message:
@@ -85,19 +75,40 @@ def _msg(role: str, text: str) -> Message:
 @pytest.fixture
 def switched(tmp_path: Path):
     _init(tmp_path)
-    enable_fixture_writes(tmp_path)
-    assert is_fixture_write_enabled(tmp_path)
-    try:
-        yield tmp_path
-    finally:
-        disable_fixture_writes(tmp_path)
+    yield tmp_path
+
+
+# Count completed turns over stored messages with error projection.
+def _completed_count(conversation) -> int:
+    from thyca.conversations.runtime.title import completed_turn_count
+
+    return completed_turn_count(list(project_for_trace(conversation).messages))
+
+
+# Read the stored title pair for one door through the runtime store.
+def _stored_title(root: Path, ref, actor: str):
+    conv = assemble_history(root, ref, actor, intent=_read_intent())
+    return conv.title, conv.title_source
+
+
+# Build projected trace turns for one door through the runtime store.
+def _trace_turns(root: Path, ref, actor: str):
+    return trace_turns_projected(
+        assemble_history(root, ref, actor, intent=_read_intent()))
+
+
+# Build one projected trace detail for one door through the runtime store.
+def _trace_detail(root: Path, ref, actor: str, turn_index: int):
+    return trace_detail_for(
+        project_for_trace(assemble_history(root, ref, actor, intent=_read_intent())),
+        turn_index)
 
 
 # ---------- error mapping: 400/404/409/503 preserved + store covered ----------
 
 def test_public_turn_error_preserves_contract_and_maps_store() -> None:
     from thyca.app.chat_app import InvalidTurnOption, InvalidTurnText, TurnCancelled
-    from thyca.llm.llm_base import LLMError
+    from thyca.llms.llm_base import LLMError
 
     assert public_turn_error(InvalidTurnText('empty')) == (
         400, 'invalid_text', 'invalid text: empty')
@@ -132,7 +143,7 @@ def test_public_turn_error_preserves_contract_and_maps_store() -> None:
 
 # ---------- failed-turn markers + projected trace ----------
 
-def test_fixture_error_marker_appends_without_rewrite_and_trace_fails(switched: Path) -> None:
+def test_error_marker_appends_without_rewrite_and_trace_fails(switched: Path) -> None:
     ref = _dm(switched, 'coder')
     agents = AgentStore(switched)
     agents.append(ref, 'coder', _msg('user', 'run this'))
@@ -161,13 +172,11 @@ def test_fixture_error_marker_appends_without_rewrite_and_trace_fails(switched: 
     detail = detail_for(conversation, seeded_config())
     assert detail['messages'][-1]['role'] == 'system'
 
-    turns = fixture_trace_turns(
-        switched, ref, 'coder', intent=_read_intent())
+    turns = _trace_turns(switched, ref, 'coder')
     assert len(turns) == 1
     assert turns[0].status == 'failed'
     assert turns[0].error == {'code': 'llm_error', 'message': 'boom unavailable'}
-    payload = fixture_trace_detail(
-        switched, ref, 'coder', 0, intent=_read_intent())
+    payload = _trace_detail(switched, ref, 'coder', 0)
     assert payload['status'] == 'failed'
     assert payload['error'] == {'code': 'llm_error', 'message': 'boom unavailable'}
     # Trace detail carries the tool-call shape (always present with
@@ -175,7 +184,7 @@ def test_fixture_error_marker_appends_without_rewrite_and_trace_fails(switched: 
     assert all('tool_calls' in item for item in payload['messages'])
     assert all('tool_calls' not in item for item in detail['messages'])
     # A failed turn never satisfies the naming threshold.
-    assert fixture_completed_turn_count(list(conversation.messages)) == 0
+    assert _completed_count(conversation) == 0
 
 
 def test_project_for_trace_is_memory_only_and_drops_orphan_markers(switched: Path) -> None:
@@ -217,13 +226,13 @@ def test_second_failure_appends_second_marker(switched: Path) -> None:
         code='chat_unavailable', message='second')
     history = AgentStore(switched).read(ref, 'coder').messages
     assert [m.content for m in history] == ['q', 'first', 'second']
-    turns = fixture_trace_turns(switched, ref, 'coder', intent=_read_intent())
+    turns = _trace_turns(switched, ref, 'coder')
     assert len(turns) == 1 and turns[0].status == 'failed'
 
 
 # ---------- retry without truncation ----------
 
-def test_fixture_retry_reports_last_user_without_mutation(switched: Path) -> None:
+def test_retry_reports_last_user_without_mutation(switched: Path) -> None:
     ref = _dm(switched, 'coder')
     agents = AgentStore(switched)
     agents.append(ref, 'coder', _msg('user', 'q1'))
@@ -231,7 +240,7 @@ def test_fixture_retry_reports_last_user_without_mutation(switched: Path) -> Non
     agents.append(ref, 'coder', _msg('user', 'q2'))
     before = [m.content for m in agents.read(ref, 'coder').messages]
 
-    plan = plan_turn_retry(switched, ref, intent=_write_intent(), actor='coder')
+    plan = prepare_retry(switched, ref, intent=_write_intent(), actor='coder')
     assert plan.has_user is True
     assert plan.last_user_logical_seq == 3
     assert plan.message_count == 3
@@ -240,16 +249,16 @@ def test_fixture_retry_reports_last_user_without_mutation(switched: Path) -> Non
     record_turn_error(
         switched, ref, intent=_write_intent(), actor='coder',
         code='llm_error', message='boom')
-    rerun = plan_turn_retry(switched, ref, intent=_write_intent(), actor='coder')
+    rerun = prepare_retry(switched, ref, intent=_write_intent(), actor='coder')
     assert rerun.has_user is True
     assert rerun.message_count == 4
     # No truncation: the failed assistant row is still history.
     assert [m.content for m in agents.read(ref, 'coder').messages] == before + ['boom']
 
 
-def test_fixture_retry_without_user_reports_empty(switched: Path) -> None:
+def test_retry_without_user_reports_empty(switched: Path) -> None:
     ref = _dm(switched, 'coder')
-    plan = plan_turn_retry(switched, ref, intent=_write_intent(), actor='coder')
+    plan = prepare_retry(switched, ref, intent=_write_intent(), actor='coder')
     assert plan.has_user is False
     assert plan.last_user_logical_seq is None
     assert plan.message_count == 0
@@ -257,39 +266,39 @@ def test_fixture_retry_without_user_reports_empty(switched: Path) -> None:
 
 # ---------- naming/title one-shot semantics ----------
 
-def test_fixture_naming_attempted_once_and_title_if_missing(switched: Path) -> None:
+def test_naming_attempted_once_and_title_if_missing(switched: Path) -> None:
     ref = _dm(switched, 'coder')
     agents = AgentStore(switched)
     agents.append(ref, 'coder', _msg('user', 'first question here'))
     agents.append(ref, 'coder', _msg('assistant', 'first answer here'))
     agents.append(ref, 'coder', _msg('user', 'second question here'))
     agents.append(ref, 'coder', _msg('assistant', 'second answer here'))
-    assert fixture_completed_turn_count(
-        list(agents.read(ref, 'coder').messages)) == 2
+    assert _completed_count(
+        assemble_history(switched, ref, 'coder', intent=_read_intent())) == 2
 
-    first = mark_fixture_naming_attempted(
+    first = mark_naming_attempted(
         switched, ref, intent=_write_intent(), actor='coder')
     assert first.naming_attempted is True
-    second = mark_fixture_naming_attempted(
+    second = mark_naming_attempted(
         switched, ref, intent=_write_intent(), actor='coder')
     assert second.naming_attempted is True
 
-    stored = store_fixture_title_if_missing(
+    stored = store_title_if_missing(
         switched, ref, intent=_write_intent(), actor='coder',
         title='  Weekly plan  ')
     assert stored == 'Weekly plan'
-    assert refresh_fixture_title(switched, ref, actor='coder') == ('Weekly plan', None)
+    assert _stored_title(switched, ref, 'coder') == ('Weekly plan', None)
     # Second automatic title never overwrites the first.
-    assert store_fixture_title_if_missing(
+    assert store_title_if_missing(
         switched, ref, intent=_write_intent(), actor='coder',
         title='Another title') is None
-    assert refresh_fixture_title(switched, ref, actor='coder') == ('Weekly plan', None)
+    assert _stored_title(switched, ref, 'coder') == ('Weekly plan', None)
     # Blank titles store nothing.
-    assert store_fixture_title_if_missing(
+    assert store_title_if_missing(
         switched, ref, intent=_write_intent(), actor='coder', title='   ') is None
 
 
-def test_fixture_title_if_missing_loses_to_concurrent_rename(switched: Path) -> None:
+def test_title_if_missing_loses_to_concurrent_rename(switched: Path) -> None:
     from thyca.conversations.store import set_conversation_metadata
 
     ref = _dm(switched, 'coder')
@@ -298,37 +307,39 @@ def test_fixture_title_if_missing_loses_to_concurrent_rename(switched: Path) -> 
         switched, ref, intent=_write_intent(), actor='coder',
         title='User name', title_source='user',
         naming_attempted=True, participants=['coder'])
-    assert store_fixture_title_if_missing(
+    assert store_title_if_missing(
         switched, ref, intent=_write_intent(), actor='coder',
         title='Auto title') is None
-    assert refresh_fixture_title(switched, ref, actor='coder') == ('User name', 'user')
+    assert _stored_title(switched, ref, 'coder') == ('User name', 'user')
 
 
-def test_fixture_naming_helpers_require_intent_and_enabled_root(tmp_path: Path) -> None:
+def test_naming_helpers_require_intent_and_initialized_root(tmp_path: Path) -> None:
+    missing = tmp_path / 'missing'
+    ref = ConversationRef.dm('coder')
+    # Uninitialized root fails closed even with a valid runtime intent.
+    with pytest.raises(ValueError, match='not initialized'):
+        record_turn_error(
+            missing, ref, intent=_write_intent(), actor='coder',
+            code='e', message='m')
+    with pytest.raises(ValueError, match='not initialized'):
+        prepare_retry(missing, ref, intent=_write_intent(), actor='coder')
+    with pytest.raises(ValueError, match='not initialized'):
+        mark_naming_attempted(
+            missing, ref, intent=_write_intent(), actor='coder')
+    assert not missing.exists()
+    # A non-runtime intent fails on an initialized root too.
     _init(tmp_path)
     ref = _dm(tmp_path, 'coder')
     AgentStore(tmp_path).append(ref, 'coder', _msg('user', 'hi'))
     with pytest.raises(ValueError):
         record_turn_error(
-            tmp_path, ref, intent=_write_intent(), actor='coder',
-            code='e', message='m')
-    with pytest.raises(ValueError):
-        plan_turn_retry(tmp_path, ref, intent=_write_intent(), actor='coder')
-    with pytest.raises(ValueError):
-        mark_fixture_naming_attempted(
-            tmp_path, ref, intent=_write_intent(), actor='coder')
-    with pytest.raises(ValueError):
-        fixture_trace_turns(tmp_path, ref, 'coder', intent=_read_intent())
-    with pytest.raises(ValueError):
-        record_turn_error(
             tmp_path, ref, intent='x', actor='coder',  # type: ignore[arg-type]
             code='e', message='m')
-    assert not is_fixture_write_enabled(tmp_path)
 
 
 # ---------- trace slices + tool-row expansion ----------
 
-def test_fixture_trace_slices_mirror_turn_slices(switched: Path) -> None:
+def test_trace_slices_mirror_turn_slices(switched: Path) -> None:
     ref = _dm(switched, 'coder')
     agents = AgentStore(switched)
     agents.append(ref, 'coder', _msg('user', 'q1'))
@@ -336,23 +347,23 @@ def test_fixture_trace_slices_mirror_turn_slices(switched: Path) -> None:
     agents.append(ref, 'coder', _msg('user', 'q2'))
     agents.append(ref, 'coder', _msg('assistant', 'a2'))
     conversation = assemble_history(switched, ref, 'coder', intent=_read_intent())
-    turns = fixture_trace_turns_for(conversation)
+    turns = trace_turns_projected(conversation)
     legacy = trace_turns_for(conversation)
     assert [t.to_payload()['turn_index'] for t in turns] == [0, 1]
     assert [t.status for t in turns] == [t.status for t in legacy] == ['completed'] * 2
-    via_io = fixture_trace_turns(switched, ref, 'coder', intent=_read_intent())
+    via_io = _trace_turns(switched, ref, 'coder')
     assert [t.to_payload() for t in via_io] == [t.to_payload() for t in turns]
-    detail = fixture_trace_detail_for(conversation, 1)
+    detail = trace_detail_for(project_for_trace(conversation), 1)
     assert detail['turn_index'] == 1
     assert [m['content'] for m in detail['messages']] == ['q2', 'a2']
     with pytest.raises(ValueError):
-        fixture_trace_detail_for(conversation, 9)
+        trace_detail_for(project_for_trace(conversation), 9)
 
 
 def test_trace_tool_row_expansion_stays_in_trace_only(switched: Path) -> None:
     from seeded_config import seeded_config
 
-    # Stored fixture rows are plain (the store rejects tool_calls): chat
+    # Stored rows are plain (the store rejects tool_calls): chat
     # stays lean while trace always carries the call shape.
     ref = _dm(switched, 'coder')
     AgentStore(switched).append(ref, 'coder', _msg('user', 'ping'))
@@ -360,7 +371,7 @@ def test_trace_tool_row_expansion_stays_in_trace_only(switched: Path) -> None:
     stored = assemble_history(switched, ref, 'coder', intent=_read_intent())
     chat_stored = detail_for(stored, seeded_config())
     assert all('tool_calls' not in item for item in chat_stored['messages'])
-    trace_stored = fixture_trace_detail_for(stored, 0)
+    trace_stored = trace_detail_for(project_for_trace(stored), 0)
     assert all('tool_calls' in item for item in trace_stored['messages'])
     assert all('tool_call_id' in item for item in trace_stored['messages'])
     assert all('meta' in item for item in trace_stored['messages'])
@@ -395,9 +406,9 @@ def assemble_history_like(messages: list[Message]):
     )
 
 
-# ---------- TurnState busy/cancel/follow on fixture ids ----------
+# ---------- TurnState busy/cancel/follow on store ids ----------
 
-def test_turnstate_busy_cancel_follow_on_fixture_ids(switched: Path) -> None:
+def test_turnstate_busy_cancel_follow_on_store_ids(switched: Path) -> None:
     ref = _dm(switched, 'coder')
     group = AdminStore(switched).create_group(['coder', 'thyca']).ref
     turns = TurnState()
@@ -509,7 +520,7 @@ def test_pump_stream_single_terminal_and_failed_cancel_shapes() -> None:
     assert lines[-1] == {'type': 'turn.completed', 'detail': {'reply': 'done'}}
 
     # Failed: single turn.failed with the mapped code/message.
-    from thyca.llm.llm_base import LLMError
+    from thyca.llms.llm_base import LLMError
 
     handler = _FakeHandler()
     items = queue.Queue()
@@ -543,38 +554,12 @@ def test_pump_stream_single_terminal_and_failed_cancel_shapes() -> None:
                          'message': 'chat unavailable'}
 
 
-# ---------- live root unchanged; legacy blocked only on fixture ----------
-
-def test_live_root_never_switches_and_legacy_blocked_only_on_fixture(
-        switched: Path, tmp_path_factory: pytest.TempPathFactory) -> None:
-    with pytest.raises(ValueError, match='live root'):
-        enable_fixture_writes(Path.home() / '.thyca')
-    assert not is_fixture_write_enabled(Path.home() / '.thyca')
-
-    assert fixture_switch.is_legacy_writer_blocked(switched / 'sessions')
-    with pytest.raises(Exception, match='legacy writer blocked'):
-        SessionStore(switched / 'sessions').ensure_dir()
-
-    other = tmp_path_factory.mktemp('phase3-other-root')
-    SessionStore(other / 'sessions').ensure_dir()
-    assert (other / 'sessions').is_dir()
-    disable_fixture_writes(switched)
-    try:
-        SessionStore(switched / 'sessions').ensure_dir()
-        assert (switched / 'sessions').is_dir()
-    finally:
-        enable_fixture_writes(switched)
-
-
 def test_public_store_exports_turn_pipeline_api() -> None:
     import thyca.conversations.store as store
 
-    for name in ('record_turn_error', 'plan_turn_retry',
-                 'mark_fixture_naming_attempted',
-                 'store_fixture_title_if_missing', 'refresh_fixture_title',
-                 'project_for_trace', 'fixture_trace_turns_for',
-                 'fixture_trace_detail_for', 'fixture_trace_turns',
-                 'fixture_trace_detail', 'fixture_completed_turn_count'):
+    for name in ('record_turn_error', 'prepare_retry',
+                 'mark_naming_attempted', 'store_title_if_missing',
+                 'project_for_trace', 'trace_turns_projected'):
         assert callable(getattr(store, name)), name
     # append_turn_error stays exported (Phase 2); record_turn_error routes it.
     assert store.append_turn_error is append_turn_error

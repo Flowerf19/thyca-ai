@@ -35,8 +35,8 @@ from thyca.bots.settings import (
     strip_card_model_text,
     write_settings,
 )
-from thyca.config import atomic_write_text
-from thyca.config.store import config_path
+from thyca.configs import atomic_write_text
+from thyca.configs.store import config_path
 from thyca.skills.store import _NAME_RE, NAME_MAX, SkillStore
 
 SYSTEM_BOT_ID = "thyca"

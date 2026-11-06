@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from thyca.agent.meta import tool_message
+from thyca.agents.meta import tool_message
 from thyca.app.chat_app import ChatApp
 from thyca.bots.admin_tools import AdminDeps, register_admin_tools
 from thyca.bots.bus import Bus
@@ -21,12 +21,12 @@ from thyca.bots.context import BotTurnContext, bind_bot_turn_context, reset_bot_
 from thyca.bots.policy import BotPolicy, bind_allowed_tools, reset_allowed_tools
 from thyca.bots.registry import BotRegistry
 from thyca.bots.runtime import BotRuntime
-from thyca.config import load, save
+from thyca.configs import load, save
 from seeded_config import seeded_config
 from thyca.core.protocol import ToolCall, ToolResult
-from thyca.llm.llm_base import ChatReply
-from thyca.memory.facade import MemoryFacade
-from thyca.memory.identity import bind_bot_id, reset_bot_id
+from thyca.llms.llm_base import ChatReply
+from thyca.memories.facade import MemoryFacade
+from thyca.memories.identity import bind_bot_id, reset_bot_id
 from thyca.tools.builtin import register_file_tools
 from thyca.tools.gateway import ToolGateway
 from thyca.tools.gateway.policy import PolicyDenied

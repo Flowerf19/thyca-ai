@@ -12,23 +12,22 @@ from pathlib import Path
 from typing import TextIO
 from zoneinfo import ZoneInfo
 
-from thyca.agent.act import Act
-from thyca.agent.events import EventSink
-from thyca.agent.think import LLMPort
+from thyca.agents.act import Act
+from thyca.agents.events import EventSink
+from thyca.agents.think import LLMPort
 from thyca.bots.bus import Bus, new_span_id, new_trace_id
 from thyca.bots.policy import BotPolicy
 from thyca.bots.registry import BotRegistry
 from thyca.bots.runtime import BotRuntime
 from thyca.bots.status import AgentStatusTracker
-from thyca.config import Config, ConfigError, load
+from thyca.configs import Config, ConfigError, load
 from thyca.core.protocol import Message
-from thyca.llm.llm_base import LLMError
-from thyca.llm.llm_factory import ConnectFactory
-from thyca.memory.active import ActiveMemory, ActiveSnapshot
-from thyca.sessions.wire import session_summary
-from thyca.sessions import Session, SessionBusy, SessionManager
-from thyca.sessions.store import SessionStore
-from thyca.sessions.title import is_blank
+from thyca.llms.llm_base import LLMError
+from thyca.llms.llm_factory import ConnectFactory
+from thyca.memories.active import ActiveMemory, ActiveSnapshot
+from thyca.conversations.runtime import Session, SessionBusy, SessionManager
+from thyca.conversations.runtime.store import SessionStore
+from thyca.conversations.runtime.title import is_blank
 from thyca.tools.gateway.background import BackgroundProcs
 from thyca.tools.mcp import MCPManager, ProcessFactory
 from thyca.tools.task_store import TaskStore
@@ -263,7 +262,7 @@ class ChatApp:
             scheduled_turn=self.scheduled_turn,
             injected_connect=self._injected_connect,
         ))
-        from thyca.app.session_admin import SessionAdminDeps, SessionAdminService
+        from thyca.app.conversation_admin import SessionAdminDeps, SessionAdminService
 
         self._sessions_admin = SessionAdminService(SessionAdminDeps(
             root=self._root,
@@ -312,82 +311,66 @@ class ChatApp:
     def _submit(self, coro):
         return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
 
+    # List conversation summaries from the SQLite store only.
     def list_payload(self) -> dict:
-        # Runtime store: wire summaries come from the store (created_at for
-        # empty doors) instead of path mtimes, which do not exist for
-        # store-backed sessions. Legacy roots keep the file-mtime path.
-        try:
-            from thyca.conversations.store.runtime import is_runtime_ready
+        from thyca.conversations.store.admin import AdminStore
+        from thyca.conversations.store.read_adapter import (
+            assemble_history,
+            summary_for,
+        )
+        from thyca.conversations.store.contracts import ConversationStoreError
+        from thyca.conversations.store.runtime import (
+            RuntimeReadIntent,
+            runtime_reader_for,
+        )
 
-            _runtime = is_runtime_ready(self._root)
-        except Exception:
-            _runtime = False
-        if _runtime:
-            from thyca.conversations.store.admin import AdminStore
-            from thyca.conversations.store.read_adapter import (
-                assemble_history,
-                summary_for,
-            )
-            from thyca.conversations.store.contracts import ConversationStoreError
-            from thyca.conversations.store.runtime import (
-                RuntimeReadIntent,
-                runtime_reader_for,
-            )
-
-            intent = RuntimeReadIntent("runtime-list")
-            admin = AdminStore(self._root)
-            summaries: list[dict] = []
-            # Paginate newest-first exactly like AdminStore.list.
-            offset = 0
-            while True:
-                items, has_more = admin.list(limit=200, offset=offset)
-                if not items:
-                    break
-                for row in items:
-                    actor = runtime_reader_for(row.ref, tuple(row.participants))
-                    try:
-                        conv = assemble_history(
-                            self._root, row.ref, actor, intent=intent
-                        )
-                    except ConversationStoreError as exc:
-                        # Local damage blocks only its own door; global
-                        # damage surfaces instead of reading as empty.
-                        if getattr(exc, "scope", "global") == "local":
-                            continue
-                        raise
-                    # Prune rule mirrors the legacy list_payload filter:
-                    # blank sessions drop unless they are non-DM rooms with
-                    # an explicit participant list (the second create path).
-                    from thyca.sessions import Session as _Session
-
-                    probe = _Session(
-                        row.ref.id,
-                        self._sessions.store.path_for(row.ref.id),
-                        list(conv.messages),
-                        title=conv.title, title_source=conv.title_source,
-                        naming_attempted=conv.naming_attempted,
-                        bots=list(conv.participants),
-                        dm_bot=row.ref.id if row.ref.kind == "dm" else None,
+        intent = RuntimeReadIntent("runtime-list")
+        admin = AdminStore(self._root)
+        summaries: list[dict] = []
+        # Paginate newest-first exactly like AdminStore.list.
+        offset = 0
+        while True:
+            items, has_more = admin.list(limit=200, offset=offset)
+            if not items:
+                break
+            for row in items:
+                actor = runtime_reader_for(row.ref, tuple(row.participants))
+                try:
+                    conv = assemble_history(
+                        self._root, row.ref, actor, intent=intent
                     )
-                    # Blank doors drop, except explicit groups: groups
-                    # always carry two or more participants, while a raw
-                    # single-participant door is an unmarked solo room.
-                    _explicit_group = (
-                        row.ref.kind == "group" and len(conv.participants) >= 2
-                    )
-                    if not (not is_blank(probe) or _explicit_group):
+                except ConversationStoreError as exc:
+                    # Local damage blocks only its own door; global
+                    # damage surfaces instead of reading as empty.
+                    if getattr(exc, "scope", "global") == "local":
                         continue
-                    summaries.append(summary_for(conv, row.created_at))
-                if not has_more:
-                    break
-                offset += 200
-            return {"model": self._current_cfg().provider.model, "sessions": summaries}
-        sessions = [
-            session_summary(item)
-            for item in self._sessions.list_sessions()
-            if not is_blank(item) or (item.dm_bot is None and item.bots is not None)
-        ]
-        return {"model": self._current_cfg().provider.model, "sessions": sessions}
+                    raise
+                # Blank sessions drop unless they are non-DM rooms with
+                # an explicit participant list (the second create path).
+                from thyca.conversations.runtime import Session as _Session
+
+                probe = _Session(
+                    row.ref.id,
+                    self._sessions.store.path_for(row.ref.id),
+                    list(conv.messages),
+                    title=conv.title, title_source=conv.title_source,
+                    naming_attempted=conv.naming_attempted,
+                    bots=list(conv.participants),
+                    dm_bot=row.ref.id if row.ref.kind == "dm" else None,
+                )
+                # Blank doors drop, except explicit groups: groups
+                # always carry two or more participants, while a raw
+                # single-participant door is an unmarked solo room.
+                _explicit_group = (
+                    row.ref.kind == "group" and len(conv.participants) >= 2
+                )
+                if not (not is_blank(probe) or _explicit_group):
+                    continue
+                summaries.append(summary_for(conv, row.created_at))
+            if not has_more:
+                break
+            offset += 200
+        return {"model": self._current_cfg().provider.model, "sessions": summaries}
 
     def _sync_mcp(self, turn_cfg: Config) -> None:
         """Converge MCP servers to the current config file (hot-reload).
@@ -477,8 +460,8 @@ class ChatApp:
         """
         from thyca.app.bot_settings import update_bot_settings as _update
         from thyca.bots.settings import SettingsError
-        from thyca.config import ConfigError, load
-        from thyca.config.coordination import CoordinationError, hold
+        from thyca.configs import ConfigError, load
+        from thyca.configs.coordination import CoordinationError, hold
 
         try:
             with hold(self._root):

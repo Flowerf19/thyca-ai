@@ -4,16 +4,32 @@ from pathlib import Path
 
 import pytest
 
-from thyca.agent.observe import Observe
-from thyca.agent.stage import Stage
-from thyca.agent.think import ChatReply
+from thyca.agents.observe import Observe
+from thyca.agents.stage import Stage
+from thyca.agents.think import ChatReply
 from thyca.core.protocol import Message, ToolCall, ToolResult
-from thyca.sessions import SessionManager
+from thyca.conversations.runtime import SessionManager
+
+# Build a canonical-timeline manager holding one execution session.
+def _canonical_manager(root: Path, limits=None) -> SessionManager:
+    from thyca.bots.timeline import CanonicalSessionStore, WorkspaceTimeline
+    from thyca.core.channel import WindowRef
+
+    timeline = WorkspaceTimeline(root, "thyca")
+    window = WindowRef(
+        window_id="thyca", channel_id="webui", kind="dm", participants=("thyca",))
+    session_id = "2026-01-01T00-00-00_ab12"
+    store = CanonicalSessionStore(
+        root / "bots" / "thyca" / "sessions",
+        timeline=timeline, window=window, session_id=session_id)
+    manager = SessionManager(store=store, limits=limits)
+    manager.load(session_id)
+    return manager
+
 
 
 def test_observe_reorders_results_and_extends_stage(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    manager.create()
+    manager = _canonical_manager(tmp_path)
     first = ToolCall(id="first", name="one")
     second = ToolCall(id="second", name="two")
     stage = Stage(
@@ -50,8 +66,7 @@ def test_observe_reorders_results_and_extends_stage(tmp_path: Path) -> None:
 def test_observe_rejects_invalid_result_ids(
     tmp_path: Path, results: list[ToolResult]
 ) -> None:
-    manager = SessionManager(tmp_path)
-    manager.create()
+    manager = _canonical_manager(tmp_path)
     call = ToolCall(id="first", name="tool")
     stage = Stage(
         reply=ChatReply(content=None, tool_calls=[call]),
@@ -65,8 +80,7 @@ def test_observe_rejects_invalid_result_ids(
 
 
 def test_observe_marks_error_tool_results(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    manager.create()
+    manager = _canonical_manager(tmp_path)
     call = ToolCall(id="c1", name="memory_remember")
     stage = Stage(
         messages=[Message(role="user", content="go", ts="2026-01-01T00:00:00Z")],
@@ -88,8 +102,7 @@ def test_observe_marks_error_tool_results(tmp_path: Path) -> None:
 
 
 def test_loop_limit_persists_exact_text(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    manager.create()
+    manager = _canonical_manager(tmp_path)
     stage = Stage()
 
     assert Observe(manager).loop_limit(stage) == "loop limit reached"
@@ -98,8 +111,7 @@ def test_loop_limit_persists_exact_text(tmp_path: Path) -> None:
 
 
 def test_observe_records_tool_latency_and_round(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    manager.create()
+    manager = _canonical_manager(tmp_path)
     call = ToolCall(id="c1", name="echo")
     stage = Stage(
         messages=[Message(role="user", content="go", ts="2026-01-01T00:00:00Z")],
@@ -123,8 +135,7 @@ def test_observe_records_tool_latency_and_round(tmp_path: Path) -> None:
 
 
 def test_compact_delegates_to_session_manager(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    manager.create()
+    manager = _canonical_manager(tmp_path)
     called: list[bool] = []
 
     seen: dict = {}
@@ -147,8 +158,7 @@ def test_compact_delegates_to_session_manager(tmp_path: Path) -> None:
 
 
 def test_observe_persists_reasoning_details(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path)
-    manager.create()
+    manager = _canonical_manager(tmp_path)
     manager.append(Message(role="user", content="go", ts="2026-01-01T00:00:00Z"))
     details = [{"type": "reasoning.text", "text": "hmm", "signature": "sig"}]
     stage = Stage(
@@ -166,16 +176,15 @@ def test_observe_persists_reasoning_details(tmp_path: Path) -> None:
 from pathlib import Path
 
 def test_m2_observe_normalizes_tool_path_content(tmp_path: Path) -> None:
-    from thyca.agent.observe import Observe
-    from thyca.agent.stage import Stage
+    from thyca.agents.observe import Observe
+    from thyca.agents.stage import Stage
     from thyca.core.protocol import ToolCall
-    from thyca.llm.llm_base import ChatReply
-    from thyca.sessions import SessionManager
+    from thyca.llms.llm_base import ChatReply
+    from thyca.conversations.runtime import SessionManager
 
     from thyca.core.protocol import ToolResult
 
-    manager = SessionManager(tmp_path)
-    manager.create()
+    manager = _canonical_manager(tmp_path)
     call = ToolCall(id="c1", name="echo", arguments={})
     Observe(manager).observe(
         Stage(

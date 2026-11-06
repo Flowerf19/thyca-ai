@@ -22,10 +22,10 @@ from thyca.bots.settings import (
     strip_card_model_text,
     write_settings,
 )
-from thyca.config import ModelCfg, ProviderEntry, default_config, load, save
+from thyca.configs import ModelCfg, ProviderEntry, default_config, load, save
 from seeded_config import seeded_config
-from thyca.llm.llm_base import ChatReply
-from thyca.memory.facade import MemoryFacade
+from thyca.llms.llm_base import ChatReply
+from thyca.memories.facade import MemoryFacade
 from thyca.serve import default_webui, make_server
 
 
@@ -371,7 +371,7 @@ def test_operations_and_compact_honor_saved_settings(
         compact_models.append(kwargs["model"])
         return {"compacted": False, "summary": None}
 
-    monkeypatch.setattr("thyca.app.session_admin.service.compact_with_llm", compact_stub)
+    monkeypatch.setattr("thyca.app.conversation_admin.service.compact_with_llm", compact_stub)
     try:
         app._bots.create(BotCard(
             bot_id="coder", name="coder", role="Coder",
@@ -393,7 +393,7 @@ def test_operations_and_compact_honor_saved_settings(
         window = app._webui.window_for(room)
         internal = app._runtime.internal_session("coder", group)
         store = app._runtime._canonical_store("coder", window, internal.id)
-        from thyca.sessions import SessionManager
+        from thyca.conversations.runtime import SessionManager
 
         manager = SessionManager(store=store)
         manager.load(internal.id)

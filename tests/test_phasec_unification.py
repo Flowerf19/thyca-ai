@@ -9,11 +9,11 @@ import pytest
 from thyca.app.chat_app import ChatApp
 from thyca.bots.card import BotCard, BotModel
 from thyca.bots.context import current_bot_turn_context
-from thyca.config import ModelCfg, ProviderEntry, default_config, load, save
+from thyca.configs import ModelCfg, ProviderEntry, default_config, load, save
 from seeded_config import seeded_config
 from thyca.core.protocol import Message, ToolCall
-from thyca.llm.llm_base import ChatReply, LLMError
-from thyca.sessions import SessionManager
+from thyca.llms.llm_base import ChatReply, LLMError
+from thyca.conversations.runtime import SessionManager
 from thyca.serve.trace import turns_from_session
 
 
@@ -31,7 +31,7 @@ class RecordingLLM:
     async def chat(self, messages, tools=None) -> ChatReply:
         ctx = current_bot_turn_context()
         view = None
-        from thyca.memory.visibility import current_memory_view
+        from thyca.memories.visibility import current_memory_view
 
         current = current_memory_view()
         if current is not None:
@@ -91,7 +91,7 @@ def test_bot_and_operation_model_precedence_reaches_chat_and_compaction(
     tmp_path: Path, monkeypatch
 ) -> None:
     from thyca.app.chat_app import ConnectFactory
-    from thyca.config import PricingCfg
+    from thyca.configs import PricingCfg
 
     cfg = replace(
         default_config(),
@@ -156,7 +156,7 @@ def test_bot_and_operation_model_precedence_reaches_chat_and_compaction(
 
     monkeypatch.setattr(ConnectFactory, "create", create)
     monkeypatch.setattr("thyca.app.toolchain.build_agent_loop", build_agent_loop)
-    monkeypatch.setattr("thyca.app.session_admin.service.compact_with_llm", compact_stub)
+    monkeypatch.setattr("thyca.app.conversation_admin.service.compact_with_llm", compact_stub)
     app._background_jobs._flush_bot_memory = no_flush
     try:
         app._bots.create(
@@ -232,7 +232,7 @@ def test_workspace_hot_composer_shares_prepared_inputs_and_memory_gate(
 ) -> None:
     from thyca.bots.workspace_context import build_workspace_hot
     from thyca.core.channel import WindowRef
-    from thyca.memory.active import ActiveSnapshot
+    from thyca.memories.active import ActiveSnapshot
     from thyca.bots.card import BotMemoryPolicy
 
     window = WindowRef(
@@ -282,7 +282,7 @@ def test_root_and_child_use_private_canonical_runtime_and_admin_policy(tmp_path:
             ctx = current_bot_turn_context()
             bot_id = ctx.sender_id if ctx else "thyca"
             self.calls[bot_id] += 1
-            from thyca.memory.visibility import current_memory_view
+            from thyca.memories.visibility import current_memory_view
 
             view = current_memory_view()
             self.views.append((
@@ -491,7 +491,7 @@ def test_root_and_child_retry_truncate_both_transcripts_and_keep_mail(tmp_path: 
 
 
 def test_effort_and_model_override_reach_factory_before_connect(tmp_path: Path, monkeypatch) -> None:
-    from thyca.llm.llm_factory import ConnectFactory
+    from thyca.llms.llm_factory import ConnectFactory
     from seeded_config import seeded_config
 
     cfg = replace(

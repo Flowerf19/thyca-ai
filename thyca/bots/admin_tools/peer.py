@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 
 from thyca.bots.context import current_bot_turn_context
-from thyca.memory.identity import current_bot_id
+from thyca.memories.identity import current_bot_id
 from thyca.tools.registry import ToolSpec
 
 from .deps import AdminDeps, _deny_child

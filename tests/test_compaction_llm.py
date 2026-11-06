@@ -5,16 +5,33 @@ import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from thyca.agent.act import Act
-from thyca.agent.assemble import Assemble
-from thyca.agent.compacting import SummaryOutcome, compact_with_llm
-from thyca.agent.loop import AgentLoop
-from thyca.agent.observe import Observe
-from thyca.agent.think import Think
-from thyca.config import LimitsCfg
+from thyca.agents.act import Act
+from thyca.agents.assemble import Assemble
+from thyca.agents.compacting import SummaryOutcome, compact_with_llm
+from thyca.agents.loop import AgentLoop
+from thyca.agents.observe import Observe
+from thyca.agents.think import Think
+from thyca.configs import LimitsCfg
 from thyca.core.protocol import Message, ToolResult
-from thyca.llm.llm_base import ChatReply
-from thyca.sessions import SessionManager
+from thyca.llms.llm_base import ChatReply
+from thyca.conversations.runtime import SessionManager
+
+# Build a canonical-timeline manager holding one execution session.
+def _canonical_manager(root: Path, limits=None) -> SessionManager:
+    from thyca.bots.timeline import CanonicalSessionStore, WorkspaceTimeline
+    from thyca.core.channel import WindowRef
+
+    timeline = WorkspaceTimeline(root, "thyca")
+    window = WindowRef(
+        window_id="thyca", channel_id="webui", kind="dm", participants=("thyca",))
+    session_id = "2026-01-01T00-00-00_ab12"
+    store = CanonicalSessionStore(
+        root / "bots" / "thyca" / "sessions",
+        timeline=timeline, window=window, session_id=session_id)
+    manager = SessionManager(store=store, limits=limits)
+    manager.load(session_id)
+    return manager
+
 
 
 @dataclass
@@ -47,8 +64,7 @@ class NoTools:
 
 
 def _seeded(tmp_path: Path, turns: int = 4) -> SessionManager:
-    manager = SessionManager(tmp_path, LimitsCfg(contextTokens=1000))
-    manager.create()
+    manager = _canonical_manager(tmp_path, LimitsCfg(contextTokens=1000))
     for i in range(turns):
         manager.append(Message(role="user", content=f"old-{i}-" + "u" * 300))
         manager.append(Message(role="assistant", content="a" * 300))
@@ -103,7 +119,7 @@ def test_transcript_change_during_summary_falls_back_without_loss(
     session_id = manager.current.id
 
     def append_meanwhile() -> None:
-        other = SessionManager(tmp_path)
+        other = _canonical_manager(tmp_path)
         other.load(session_id)
         other.append(Message(role="user", content="meanwhile-question"))
 
@@ -117,8 +133,7 @@ def test_transcript_change_during_summary_falls_back_without_loss(
 
 
 def test_no_plan_is_honest_noop(tmp_path: Path) -> None:
-    manager = SessionManager(tmp_path, LimitsCfg(contextTokens=100_000))
-    manager.create()
+    manager = _canonical_manager(tmp_path, LimitsCfg(contextTokens=100_000))
     manager.append(Message(role="user", content="hi"))
     manager.append(Message(role="assistant", content="hello"))
     stub = StubSummarizer(_outcome())
@@ -155,6 +170,6 @@ def test_auto_compact_in_loop_uses_summarizer(tmp_path: Path) -> None:
     sent = "\n".join(m.content or "" for m in llm.requests[0])
     assert "AUTO SUMMARY" in sent
     assert "old-0-" not in sent
-    stored = SessionManager(tmp_path).load(session_id).messages
+    stored = _canonical_manager(tmp_path).load(session_id).messages
     assert stored[0].role == "system" and "AUTO SUMMARY" in (stored[0].content or "")
     assert any((m.meta or {}).get("kind") == "compaction" for m in stored)

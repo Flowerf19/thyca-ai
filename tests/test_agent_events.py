@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from thyca.agent.events import TurnEvent, emit_event
+from thyca.agents.events import TurnEvent, emit_event
 
 
 def test_valid_types_to_dict_exact_keys() -> None:
@@ -180,7 +180,7 @@ def test_llm_retry_rejects_bad_counts() -> None:
 
 
 def test_thinking_delta_to_dict_exact_keys() -> None:
-    from thyca.agent.thinking import ThinkingDelta
+    from thyca.agents.thinking import ThinkingDelta
 
     assert ThinkingDelta(round=1, delta="First I check").to_dict() == {
         "type": "llm.thinking",
@@ -199,8 +199,8 @@ def test_bot_id_stamp_rides_events_and_deltas() -> None:
     assert TurnEvent(type="llm.started", round=1, bot_id="../secret").bot_id is None
     assert TurnEvent(type="llm.started", round=1).bot_id is None
 
-    from thyca.agent.reply import ContentDelta
-    from thyca.agent.thinking import ThinkingDelta
+    from thyca.agents.reply import ContentDelta
+    from thyca.agents.thinking import ThinkingDelta
 
     assert ThinkingDelta(round=1, delta="x", bot_id="coder").to_dict() == {
         "type": "llm.thinking",
@@ -217,7 +217,7 @@ def test_bot_id_stamp_rides_events_and_deltas() -> None:
 
 
 def test_thinking_delta_rejects_empty() -> None:
-    from thyca.agent.thinking import ThinkingDelta
+    from thyca.agents.thinking import ThinkingDelta
 
     with pytest.raises(ValueError, match="delta"):
         ThinkingDelta(round=1, delta="")
@@ -230,9 +230,9 @@ def test_thinking_delta_rejects_empty() -> None:
 import pytest
 
 def test_x23_deltas_share_base() -> None:
-    from thyca.agent.delta import _Delta
-    from thyca.agent.reply import ContentDelta
-    from thyca.agent.thinking import ThinkingDelta
+    from thyca.agents.delta import _Delta
+    from thyca.agents.reply import ContentDelta
+    from thyca.agents.thinking import ThinkingDelta
 
     assert issubclass(ContentDelta, _Delta)
     assert issubclass(ThinkingDelta, _Delta)

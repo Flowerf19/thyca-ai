@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import pytest
 from mcp.types import CallToolResult, ImageContent, ListToolsResult, TextContent, Tool
 
-from thyca.config import McpServerCfg
+from thyca.configs import McpServerCfg
 from thyca.core.protocol import ToolCall
 from thyca.tools.mcp import (
     CALL_TIMEOUT,

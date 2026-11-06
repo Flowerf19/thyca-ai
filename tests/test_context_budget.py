@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from thyca.agent.context_budget import checkpoint_state, format_context_budget
+from thyca.agents.context_budget import checkpoint_state, format_context_budget
 from thyca.core.protocol import Message, ToolCall
 
 

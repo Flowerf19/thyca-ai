@@ -7,8 +7,8 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from thyca.memory.archive_store import ArchiveError
-from thyca.memory.facade import MemoryFacade
+from thyca.memories.archive_store import ArchiveError
+from thyca.memories.facade import MemoryFacade
 
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 

@@ -186,7 +186,7 @@ def test_loop_limit_marker_does_not_double_count_aggregate_or_trace(
         _aggregate_turn_meta,
         _aggregate_turn_rounds,
     )
-    from thyca.sessions import SessionManager
+    from thyca.conversations.runtime import SessionManager
     from thyca.serve.trace import turns_from_session
 
     call = ToolCall(id="c1", name="read", arguments={})
@@ -232,8 +232,17 @@ def test_loop_limit_marker_does_not_double_count_aggregate_or_trace(
         rounds=rounds,
         status="loop_limit",
     )
-    manager = SessionManager(tmp_path)
-    session = manager.create()
+    from thyca.bots.timeline import CanonicalSessionStore, WorkspaceTimeline
+    from thyca.core.channel import WindowRef
+
+    _window = WindowRef(
+        window_id="thyca", channel_id="webui", kind="dm", participants=("thyca",))
+    _sid = "2026-01-01T00-00-00_ab12"
+    manager = SessionManager(store=CanonicalSessionStore(
+        tmp_path / "bots" / "thyca" / "sessions",
+        timeline=WorkspaceTimeline(tmp_path, "thyca"),
+        window=_window, session_id=_sid))
+    manager.load(_sid)
     manager.append(Message(role="user", content="go"))
     manager.append(
         Message(

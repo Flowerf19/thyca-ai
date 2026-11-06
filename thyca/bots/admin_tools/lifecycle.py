@@ -104,8 +104,8 @@ def _create_spec(deps: AdminDeps) -> ToolSpec:
                 BotSettingsError,
                 check_model_against_config,
             )
-            from thyca.config import ConfigError, default_config, load
-            from thyca.config.coordination import CoordinationError, hold
+            from thyca.configs import ConfigError, default_config, load
+            from thyca.configs.coordination import CoordinationError, hold
 
             with hold(deps.bots.thyca_dir):
                 cfg_path = deps.bots.thyca_dir / "config.json"
@@ -315,8 +315,8 @@ def _edit_card_spec(deps: AdminDeps) -> ToolSpec:
                     BotSettingsError,
                     check_model_against_config,
                 )
-                from thyca.config import ConfigError, default_config, load
-                from thyca.config.coordination import CoordinationError, hold
+                from thyca.configs import ConfigError, default_config, load
+                from thyca.configs.coordination import CoordinationError, hold
 
                 try:
                     with hold(deps.bots.thyca_dir):

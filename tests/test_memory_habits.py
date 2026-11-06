@@ -5,10 +5,10 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from thyca.memory import habits
-from thyca.memory.facade import MemoryFacade
-from thyca.memory.heading import parse_heading, render_heading, HeadingMeta
-from thyca.memory.identity import bind_bot_id, reset_bot_id
+from thyca.memories import habits
+from thyca.memories.facade import MemoryFacade
+from thyca.memories.heading import parse_heading, render_heading, HeadingMeta
+from thyca.memories.identity import bind_bot_id, reset_bot_id
 
 UTC = timezone.utc
 TZ = "Asia/Ho_Chi_Minh"
@@ -86,7 +86,7 @@ def test_migration_v8_1a_gains_explicit_column(tmp_path: Path) -> None:
 def test_extractor_explicit_roundtrip(tmp_path: Path) -> None:
     import json as _json
 
-    from thyca.memory import jobs
+    from thyca.memories import jobs
 
     items = jobs.parse_extraction(_json.dumps([
         {"topic": "t", "summary": "s", "kind": "habit",
@@ -202,7 +202,7 @@ def test_sweep_reader_filter_and_expiry(tmp_path: Path) -> None:
 # -- phase 1F: team aggregation -------------------------------------------------
 
 def _write_bot_user(tmp_path: Path, bot_id: str, labels: list[str]) -> Path:
-    from thyca.memory.habits import AUTO_END, AUTO_START
+    from thyca.memories.habits import AUTO_END, AUTO_START
 
     path = tmp_path / "bots" / bot_id / "USER.md"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -297,7 +297,7 @@ def test_sweep_skips_handwritten_marker_label(tmp_path: Path) -> None:
 def test_extractor_drops_bad_habit_side_fields(tmp_path: Path) -> None:
     import json as _json
 
-    from thyca.memory import jobs
+    from thyca.memories import jobs
 
     items = jobs.parse_extraction(_json.dumps([
         {"topic": "t", "summary": "s", "kind": "habit",

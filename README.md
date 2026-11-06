@@ -2,7 +2,7 @@
 
 Trợ lý cá nhân đa công việc, giai đoạn **trước beta (pre-beta)**. Thyca học dần từ những gì bạn chia sẻ và cách bạn làm việc — trò chuyện, viết code, đọc tài liệu, tra web, chạy lệnh trên máy bạn — và **ghi nhớ** để lần sau không phải nhắc lại.
 
-**Phiên bản hiện tại: 0.87.0.dev0**
+**Phiên bản hiện tại: 0.87.0.dev1**
 
 Thyca là một **đội bot**: Thyca là bot quản lý, bạn tạo thêm bot cho từng vai trò. Mỗi bot có persona và bộ nhớ riêng, cùng đọc `SOUL.md` + `USER.md` chung về bạn.
 
@@ -25,9 +25,32 @@ Thyca là một **đội bot**: Thyca là bot quản lý, bạn tạo thêm bot 
 ![Sử dụng](docs/images/webui-dashboard.png)
 ![Chi tiết lượt trong màn Sử dụng (ảnh tham khảo cũ)](docs/images/webui-trace.png)
 
-## Bộ nhớ
+## Lưu trữ
 
-Markdown dưới `~/.thyca` là nguồn sự thật, SQLite chỉ là index:
+Mục này nói rõ mỗi loại dữ liệu nằm ở đâu. Đọc mục này trước khi sao lưu hoặc dọn dữ liệu.
+
+### Hội thoại công khai (DM và nhóm)
+
+- Nơi lưu duy nhất là SQLite tại `<root>/conversations.db`.
+- Mã nằm ở `thyca/conversations/store/`. Hai cửa ghi là `AdminStore` và `AgentStore`.
+- Schema hiện tại là v2. Cơ sở dữ liệu chạy ở chế độ WAL.
+- DM mở qua `/api/bots/<bot_id>/dm/...`. Nhóm mở qua `/api/groups/<group_id>/...`.
+- Danh sách hội thoại nằm ở `/api/conversations`.
+- Đường cũ `/api/sessions*` đã bị cắt hẳn. Mọi yêu cầu tới đường này nhận `404`.
+- Không còn lưu hội thoại công khai bằng file JSONL. Hệ thống không tự chuyển dữ liệu cũ.
+- Nếu thư mục gốc còn file cũ dưới `sessions/*.jsonl`, hệ thống từ chối khởi động. Bạn phải tự xử lý các file đó trước.
+
+### Lịch sử thực thi của từng bot
+
+- Mỗi bot có một `WorkspaceTimeline` riêng tại `thyca/bots/timeline.py`.
+- Đây là nơi lưu lịch sử thực thi canonical duy nhất của bot đó.
+- File trên đĩa là `bots/<bot>/workspace/timeline.jsonl`.
+- Lớp điều phối phiên nằm ở `thyca/conversations/runtime/`.
+- Bốn class `Session`, `SessionManager`, `SessionStore`, `SessionCompactor` giữ nguyên tên ở bước này.
+
+### Bộ nhớ dài hạn
+
+Markdown dưới `~/.thyca` là nguồn sự thật cho bộ nhớ. SQLite ở đây chỉ là mục lục tìm kiếm:
 
 - Note đáng nhớ ghi vào `memory/YYYY-MM-DD.md` — file hôm nay inject thẳng vào ngữ cảnh mỗi lượt.
 - Qua ngày mới đưa vào index (`memory_search`, FTS5 + trigram) — tìm bằng từ khóa.
@@ -49,9 +72,40 @@ Nâng cấp: `uv tool upgrade thyca-ai` hoặc chạy lại `install.sh`.
 
 **Chat**: khung soạn mặc định để trống (theo cấu hình bot: model trong Hồ sơ khi chọn bot, provider suy từ model, mức suy luận đã lưu hoặc của model/provider); chỉ giá trị bạn chọn mới ghi đè lượt đó — không đổi gì đã lưu. Gõ `@tên-bot` để bot khác trả lời vẫn áp cấu hình của bot đó.
 
-**CLI**: `thyca -p "câu hỏi"`, REPL chat liên tục, `--continue` nối phiên, `--model` đổi model.
+**CLI**: chọn đúng một hội thoại cho mỗi lần chạy.
+
+- `thyca -p "câu hỏi"` hỏi nhanh một lượt trong DM của bot mặc định (`thyca`).
+- `thyca --bot <bot_id> -p "câu hỏi"` hỏi trong DM của bot đó.
+- `thyca --group <group_id> -p "câu hỏi"` hỏi trong một nhóm. Mã nhóm có dạng `group-<hex32>`.
+- Không ghi `-p` thì Thyca mở REPL chat liên tục trong cùng hội thoại đã chọn.
+- `--model <id>` chỉ đổi model cho lần chạy đó.
+- `--bot` và `--group` không dùng chung nhau. Cờ cũ `--session` và `--continue` đã bị gỡ.
 
 **Từ mã nguồn**: `uv sync` → `uv run thyca --serve --daemon` → `uv run pytest -q`.
+
+## Kiểm tra
+
+Chạy các lệnh này từ thư mục mã nguồn trước khi kết luận bản build khỏe:
+
+```bash
+uv run pytest -q
+git diff --check
+```
+
+Kết quả gần nhất đã xác minh: **1999 passed, 5 skipped**. Năm ca bị bỏ qua cần Chrome hoặc môi trường ngoài.
+
+Cổng `ruff` đã được cấu hình trong `pyproject.toml`. Máy kiểm tra lần này chưa cài `ruff` trong `.venv` nên cổng này chưa được xác minh.
+
+Chưa chạy kiểm tra khói trên thư mục gốc thật (live scratch-root smoke). Chưa kiểm chứng chất lượng trả lời với nhà cung cấp thật.
+
+## Giới hạn đã biết
+
+- Đây vẫn là bản development (`0.87.0.dev1`). Đừng coi là bản beta hay bản ổn định.
+- Việc đổi tên bốn class `Session*` sang tên mới là bước riêng về sau.
+- Việc đổi tên trường `session_id` ở lá bộ nhớ thành `memory_id` là bước riêng về sau.
+- Chưa có bên phát hành vòng đời/đặt lại (lifecycle/reset issuer) ngoài luồng khởi động cục bộ của `ChatApp`.
+- Chưa chốt chính sách giữ/xóa dữ liệu cũ (retention policy).
+- Chưa có lệnh đặt lại trên dữ liệu thật. Việc đó cần bạn cho phép rõ ràng trước.
 
 ## Tài liệu & góp ý
 

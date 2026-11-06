@@ -17,8 +17,11 @@ Mỗi mục có đủ bốn phần: **mô tả**, **tác động**, **quyết đ
 - **Trạng thái:** Đã đóng (2026-11-06): store SQLite đã nối runtime qua
   `ChatApp` (khởi tạo/audit khi dựng app, fail-closed nếu còn legacy),
   actor lấy từ nguồn đáng tin cậy phía server, và toàn bộ đường ghi
-  JSONL công khai cùng fixture scaffolding đã bị xóa. Gate toàn cục
-  xanh (xem mục 6).
+  JSONL công khai cùng fixture scaffolding đã bị xóa. Bằng chứng:
+  `thyca/conversations/store/` (`AdminStore`/`AgentStore`, schema v2, WAL),
+  guard `require_no_legacy_sessions` trong
+  `thyca/conversations/store/runtime.py` được `ChatApp` gọi lúc dựng app.
+  Gate toàn cục xanh (xem mục 6).
 
 ## 1. Lưu trữ hội thoại bằng journal file phẳng + lớp guard bù
 
@@ -45,9 +48,13 @@ Mỗi mục có đủ bốn phần: **mô tả**, **tác động**, **quyết đ
 - **Trạng thái:** Đã đóng (2026-11-06): SQLite tại `conversations.db` là nơi lưu
   hội thoại công khai duy nhất; `SessionStore`/`SessionManager` chỉ còn là
   lớp điều phối trên store (fail-closed khi root chưa khởi tạo, không còn
-  nhánh đọc/ghi file JSONL công khai). `WorkspaceTimeline`
-  (`timeline.jsonl` theo bot) vẫn là execution history canonical riêng,
-  không phải storage công khai. Grammar timestamp chỉ còn thuộc canonical
+  nhánh đọc/ghi file JSONL công khai). Bằng chứng: route
+  `/api/bots/<bot_id>/dm/...`, `/api/groups/<group_id>/...` và
+  `/api/conversations` trong `thyca/serve/routes.py`; mọi
+  `/api/sessions*` nhận `404` cùng file đó. `WorkspaceTimeline`
+  (`bots/<bot>/workspace/timeline.jsonl`, mã ở `thyca/bots/timeline.py`)
+  vẫn là execution history canonical riêng, không phải storage công khai.
+  Grammar timestamp chỉ còn thuộc canonical
   (`thyca/bots/workspace_store.py`), grammar công khai chỉ còn
   `group-<hex32>`/bot-id.
 
@@ -118,8 +125,17 @@ Mỗi mục có đủ bốn phần: **mô tả**, **tác động**, **quyết đ
   sau đó review độc lập lại trước khi coi store sẵn sàng tích hợp hoặc merge.
   Thiết kế bootstrap authority, cursor và thứ tự summary phải giữ các quyết định
   identity/data-safety đã chấp nhận; lựa chọn còn thiếu cần được chốt riêng.
-- **Trạng thái:** Mở. Commit `162d3f4`; 118 test trọng tâm cũ pass nhưng 10 ca
-  thử bổ sung thất bại. Một số ca thử cùng một lỗi với thứ tự race khác nhau.
+- **Trạng thái:** Còn mở một phần (cập nhật 2026-11-06 cho `0.87.0.dev1`).
+  Lịch sử: commit `162d3f4`; 118 test trọng tâm cũ pass nhưng 10 ca thử bổ
+  sung thất bại. Một số ca thử cùng một lỗi với thứ tự race khác nhau.
+  Sau hard-cut, cổng đầy đủ đạt **1999 passed, 5 skipped** (xem mục 6).
+  Kết quả đó đóng các ca thuộc đường JSONL/guard cũ (mục 1) và nối store
+  (mục 4). Nó không tự đóng an toàn retention/compaction: race xóa tin
+  ngoài snapshot và cutoff không hợp lệ vẫn thuộc mục 2 và cần chính sách
+  riêng. Các ca con còn lại (mất DB, cách ly đường dẫn, cursor/seq, thứ tự
+  summary, metadata lồng sâu, khởi tạo lạnh, lộ lỗi transaction) chưa được
+  xác minh lại trong đợt tài liệu này. Giữ mục này mở cho tới khi từng ca
+  có test và review độc lập riêng.
 
 ## 6. Các kiểm thử còn đỏ ngoài SQLite
 
@@ -145,3 +161,42 @@ Mỗi mục có đủ bốn phần: **mô tả**, **tác động**, **quyết đ
   `test_dm_origin_delivery_records_pair_without_leaking_history`) đều pass
   khi chạy lại riêng và trong lần full-gate xanh; ghi nhận là flaky theo
   thời gian, không phải lỗi storage.
+  Ghi chú đợt `0.87.0.dev1`: cổng `ruff` đã cấu hình trong `pyproject.toml`
+  nhưng chưa cài trong `.venv` nên chưa xác minh. Chưa chạy kiểm tra khói
+  trên gốc thật (live scratch-root smoke). Chưa kiểm chứng chất lượng với
+  nhà cung cấp thật. `~/.thyca` không được truy cập trong các đợt này.
+
+## 7. Chưa có bên phát hành vòng đời/đặt lại ngoài ChatApp
+
+- **Mô tả:** Việc khởi tạo và chặn gốc cũ hiện chỉ chạy trong luồng khởi
+  động cục bộ của `ChatApp`. Chưa có issuer vòng đời/đặt lại (lifecycle/reset
+  issuer) độc lập ở ngoài luồng đó.
+- **Tác động:** Thao tác đặt lại hoặc phát hành vòng đời ở quy mô ngoài một
+  lần khởi động app chưa có chủ sở hữu rõ ràng.
+- **Quyết định/hướng xử lý:** Chốt chủ sở hữu và contract riêng trước khi mở
+  thao tác này ra ngoài `ChatApp`. Không tự đặt lại trên dữ liệu thật khi
+  chưa được phép rõ ràng.
+- **Trạng thái:** Mở. Bằng chứng hiện tại: guard
+  `require_no_legacy_sessions` trong `thyca/conversations/store/runtime.py`
+  do `ChatApp` gọi. Chưa có issuer ngoài luồng đó.
+
+## 8. Bốn class Session* chưa đổi tên
+
+- **Mô tả:** Bốn class `Session`, `SessionManager`, `SessionStore`,
+  `SessionCompactor` trong `thyca/conversations/runtime/` giữ nguyên tên ở
+  bước hard-cut này.
+- **Tác động:** Tên cũ dễ gây nhầm với khái niệm hội thoại công khai mới.
+- **Quyết định/hướng xử lý:** Đổi tên ở một bước riêng về sau. Bước đó phải
+  rà mọi call site và test liên quan.
+- **Trạng thái:** Mở. Đây là việc hoãn có chủ đích, không phải lỗi của bản
+  `0.87.0.dev1`.
+
+## 9. Lá bộ nhớ còn dùng tên session_id
+
+- **Mô tả:** Trường định danh ở lá bộ nhớ (memory leaf) vẫn mang tên
+  `session_id`. Tên đúng theo miền là `memory_id`.
+- **Tác động:** Tên trường lệch miền dễ gây nhầm khi đọc mã và dữ liệu.
+- **Quyết định/hướng xử lý:** Đổi tên ở một bước riêng về sau. Bước đó phải
+  xử lý cả đường đọc dữ liệu đã ghi.
+- **Trạng thái:** Mở. Đây là việc hoãn có chủ đích, tách khỏi đợt hard-cut
+  hội thoại.

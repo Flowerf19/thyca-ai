@@ -91,5 +91,5 @@ Schema v3 không còn cột `embedding`/`profile_id` — vector là kiến trúc
 | Thứ | Không nằm ở |
 |-----|-------------|
 | Vector | runtime — đã gỡ (580ae03); chỉ còn trong L2 plan frozen |
-| Hội thoại | `memory/*.md` — nằm `sessions/*.jsonl` |
+| Hội thoại | `memory/*.md` — nằm trong SQLite `conversations.db` (`thyca/conversations/store/`) |
 | Daily hôm nay | `chunks` / FTS |

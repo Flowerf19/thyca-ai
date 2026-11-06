@@ -2,6 +2,18 @@
 
 Thay đổi của Thyca, viết ngắn gọn cho người dùng.
 
+## 0.87.0.dev1 — Development
+
+- Cắt hẳn đường hội thoại cũ (thay đổi phá vỡ tương thích): mọi yêu cầu tới `/api/sessions*` giờ nhận `404`. DM dùng `/api/bots/<bot_id>/dm/...`. Nhóm dùng `/api/groups/<group_id>/...`. Danh sách hội thoại nằm ở `/api/conversations`.
+- Hội thoại công khai chỉ còn lưu trong SQLite. File là `<root>/conversations.db` (schema v2, chế độ WAL, có marker chống mở nhầm gốc). Hai cửa ghi là `AdminStore` và `AgentStore` trong `thyca/conversations/store/`.
+- Không tự chuyển dữ liệu cũ. Nếu gốc còn file cũ dưới `sessions/*.jsonl` thì hệ thống từ chối khởi động. Bạn phải tự xử lý các file đó trước.
+- Gỡ toàn bộ đường đọc/ghi JSONL công khai và mã fixture cũ. Lịch sử thực thi canonical của mỗi bot vẫn là `WorkspaceTimeline` riêng (`thyca/bots/timeline.py`).
+- Gộp mã phiên vào `thyca/conversations/runtime/`. Bốn class `Session`, `SessionManager`, `SessionStore`, `SessionCompactor` giữ nguyên tên ở bước này.
+- Đổi tên gói số nhiều cho đồng nhất: `agents`, `configs`, `llms`, `memories`. Đường import cũ không còn shim.
+- CLI chọn hội thoại bằng `--bot <bot_id>` (DM) hoặc `--group <group_id>` (nhóm). Cờ cũ `--session` và `--continue` đã bị gỡ.
+- Kiểm chứng: cổng đầy đủ đạt **1999 passed, 5 skipped** (bỏ qua vì Chrome/môi trường) và `git diff --check` sạch. Cổng `ruff` đã cấu hình nhưng chưa cài trong `.venv` nên chưa xác minh. Chưa chạy kiểm tra khói trên gốc thật. Chưa kiểm chứng chất lượng với nhà cung cấp thật.
+- Đây là bản dev, chưa phải beta hay stable; không tự bỏ hậu tố dev khi nâng phiên bản.
+
 ## 0.87.0.dev0 — Development
 
 - WebUI mới hoàn toàn: 7 màn (Trò chuyện, Nhật ký, Hồ sơ, Provider, Sử dụng, Trace, Cài đặt) chia sẻ cùng khung — sidebar danh sách bot, nav góc phải sinh từ một registry chung nên không lệch giữa các màn.

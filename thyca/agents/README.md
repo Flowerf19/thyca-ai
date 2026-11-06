@@ -95,7 +95,7 @@ classDiagram
 
 | Việc | Không nằm đây |
 |------|----------------|
-| Session JSONL I/O thô | `thyca/conversations/runtime/` |
+| Điều phối phiên và I/O hội thoại | `thyca/conversations/runtime/` + store SQLite `thyca/conversations/store/` |
 | Hot files | `thyca/memories/active.py` |
 | Tool handlers | `thyca/tools/` |
 | OpenAI HTTP | `thyca/llms/` |

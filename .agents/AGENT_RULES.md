@@ -2,7 +2,7 @@
 
 ## Release status — explicit user decision
 
-- Thyca hiện là **development**, phiên bản `0.86.1.dev0` (số `0.86.1` do user xác nhận, không tự sửa thành `0.8.6.1`).
+- Thyca hiện là **development**, phiên bản `0.87.0.dev1` (số `0.87.0` do user xác nhận, không tự sửa thành số khác).
 - Giữ hậu tố `.devN` theo chuẩn Python; không tự bỏ `dev`, chuyển sang beta/RC/stable, hoặc coi bản dev là release chính thức. Chỉ thay giai đoạn phát hành khi user yêu cầu rõ ràng.
 - Khi đổi version, đồng bộ `pyproject.toml`, `thyca/__init__.py`, `uv.lock` và README.
 

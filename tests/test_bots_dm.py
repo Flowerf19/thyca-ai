@@ -46,12 +46,13 @@ def test_bot_dm_is_lazy_singleton_and_marked(tmp_path: Path) -> None:
         app.turn(first["id"], "hello dm")
         listed = {s["id"]: s for s in app.list_payload()["sessions"]}
         assert listed[first["id"]]["dm"] == "coder"
-        # Marker survives a session rewrite (compaction path rebuilds meta).
+        # DM identity survives a metadata write (store is append-only,
+        # so titles replace the old JSONL rewrite as the survival proof).
         store = app._sessions.store
         session = store.load(first["id"])
-        store.rewrite(session.id, session.path, list(session.messages),
-                      title=session.title)
+        store.append_meta(session.path, "Renamed DM", "user")
         assert store.load(first["id"]).dm_bot == "coder"
+        assert store.load(first["id"]).title == "Renamed DM"
     finally:
         app.shutdown()
 
@@ -116,9 +117,9 @@ def test_scheduled_result_lands_in_dm_not_in_room(tmp_path: Path) -> None:
 
 
 def test_dm_route_shape(tmp_path: Path) -> None:
-    # Route-level: GET /api/bots/<id>/dm returns the session detail; the
-    # handler is exercised through sessions_api.bot_dm with a stub handler.
-    from thyca.serve.sessions_api import bot_dm as dm_endpoint
+    # Route-level: GET /api/bots/<id>/dm returns the DM detail; the
+    # handler is exercised through conversations_api.bot_dm with a stub.
+    from thyca.serve.conversations_api import bot_dm as dm_endpoint
 
     app = _chat(tmp_path, connect=_LLM())
     try:
@@ -136,7 +137,8 @@ def test_dm_route_shape(tmp_path: Path) -> None:
         handler = Handler()
         dm_endpoint(handler, app, "coder")  # type: ignore[arg-type]
         assert handler.status == 200
-        assert handler.payload["dm"] == "coder"
+        assert handler.payload["kind"] == "dm"
+        assert handler.payload["bot_id"] == "coder"
         assert handler.payload["bots"] == ["coder"]
         assert json.dumps(handler.payload)  # serializable, no internals
 
@@ -155,7 +157,8 @@ def test_bot_dm_lookup_does_not_prune_blank_group(tmp_path: Path) -> None:
         dm = app.bot_dm("coder")  # DM exists from here on.
         group = app.create(bots=["coder", "helper"])  # blank group
         assert app.bot_dm("coder")["id"] == dm["id"]
-        assert (tmp_path / "sessions" / f"{group['id']}.jsonl").exists()
+        # Store equivalent of the file check: the blank group still loads.
+        assert app._sessions.store.load(group["id"]).id == group["id"]
     finally:
         app.shutdown()
 
@@ -165,9 +168,15 @@ def test_first_bot_dm_prunes_previous_blank(tmp_path: Path) -> None:
     try:
         _make_bot(app)
         stray = app._sessions.create()
-        assert stray.path.is_file()
+        assert app._sessions.store.load(stray.id).id == stray.id
         dm = app.bot_dm("coder")  # first lookup: create path prunes.
         assert dm["dm"] == "coder"
-        assert not stray.path.exists()
+        # Store equivalent of the file check: the blank door is deleted.
+        from thyca.sessions import SessionNotFound
+
+        import pytest as _pytest
+
+        with _pytest.raises(SessionNotFound):
+            app._sessions.store.load(stray.id)
     finally:
         app.shutdown()

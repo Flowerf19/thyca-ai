@@ -81,7 +81,7 @@ def _ask(app, tmp_path, work_id="task-aabb1122"):
 
 
 def _decide_via_route(app, dm_id, body):
-    from thyca.serve.sessions_api import session_private_followup
+    from thyca.serve.conversations_api import dm_private_followup
 
     class _H:
         def __init__(self):
@@ -92,7 +92,7 @@ def _decide_via_route(app, dm_id, body):
             return body
 
     h = _H()
-    session_private_followup(h, app, dm_id)
+    dm_private_followup(h, app, dm_id)
     return h
 
 
@@ -152,7 +152,8 @@ def test_stale_revision_and_wrong_dm_endpoint_errors(tmp_path: Path) -> None:
         assert h.code == 409, (h.code, h.body)
         h = _decide_via_route(app, group["id"], {
             "pending_id": pid, "revision": 1, "choice": "approve"})
-        assert h.code == 400, (h.code, h.body)
+        # Hard cut: a group id cannot address the DM endpoint at all.
+        assert h.code == 404, (h.code, h.body)
         h = _decide_via_route(app, dm["id"], {
             "pending_id": "pf-nope", "revision": 1, "choice": "approve"})
         assert h.code == 404, (h.code, h.body)
@@ -218,7 +219,7 @@ def test_origin_membership_rejects_share(tmp_path: Path) -> None:
                  "redacted_text": "safe"}))
         finally:
             _unctx(token)
-        from thyca.serve.sessions_api import session_bots
+        from thyca.serve.conversations_api import group_bots
 
         class _HB:
             def __init__(self):
@@ -228,7 +229,7 @@ def test_origin_membership_rejects_share(tmp_path: Path) -> None:
             def _read_json(self):
                 return {"bot_id": "coder", "action": "remove"}
 
-        session_bots(_HB(), app, group["id"])
+        group_bots(_HB(), app, group["id"])
         h = _decide_via_route(app, dm["id"], {
             "pending_id": pid, "revision": 1, "choice": "approve"})
         assert h.code == 409, (h.code, h.body)
@@ -749,27 +750,27 @@ def test_task_open_memory_task_id_links_work_item(tmp_path: Path) -> None:
     try:
         _coder(app)
         group = app.create(bots=["thyca", "coder"])
+        # Tool rows live in the bot's canonical timeline, never the
+        # public store: seed and read them there (production path).
         room = app._sessions.store.load(group["id"])
-        from thyca.sessions.manager import SessionManager
-        mgr = SessionManager(
-            limits=app._current_cfg().effective_limits(),
-            timezone_name=app._current_cfg().timeline.timezone,
-            store=app._sessions.store,
-        )
-        mgr.load(group["id"])
-        mgr.append(Message(
+        window = app._webui.window_for(room)
+        app._runtime.workspaces.store.bind_window("coder", window)
+        from thyca.bots.timeline import WorkspaceTimeline
+
+        timeline = WorkspaceTimeline(tmp_path, "coder")
+        timeline.append_message(window, Message(
             role="assistant", content="",
             tool_calls=[ToolCall(
                 id="c1", name="task_open",
                 arguments={"title": "deploy",
                            "memory_task_id": "task-aabb1122"})],
-            meta={"bot_id": "coder"}))
-        mgr.append(Message(
+            meta={"bot_id": "coder"}), event_id="task-open-1")
+        timeline.append_message(window, Message(
             role="tool", tool_call_id="c1",
             content='{"ok": true, "task": "deploy", "key": "k1"}',
-            meta={"bot_id": "coder"}))
+            meta={"bot_id": "coder"}), event_id="task-open-2")
         opens = derive_open_tasks(
-            list(app._sessions.store.load(group["id"]).messages),
+            timeline.messages_for_window(window),
             [], bot_id="coder")
         assert any(t.memory_task_id == "task-aabb1122" for t in opens)
         items = project_work_items(opens, [

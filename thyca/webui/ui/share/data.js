@@ -1,7 +1,7 @@
 // Shared backend data layer for every Thyca page.
-// API: GET /api/bots, GET /api/sessions, GET /api/config,
-//      GET /api/bots/<id>/dm, GET /api/bots/<id>/rooms/<session>/operations,
-//      GET /api/bots/<id>/rooms/<session>/tasks (live tool/skill calls).
+// API: GET /api/bots, GET /api/conversations, GET /api/config,
+//      GET /api/bots/<id>/dm, GET /api/bots/<id>/dm/operations,
+//      GET /api/bots/<id>/dm/tasks, GET /api/bots/<id>/groups/<group_id>/tasks.
 'use strict';
 const bots = [];      // live roster from loadRoster()
 const groups = [];    // group sessions from refreshSessions()
@@ -10,6 +10,35 @@ let selectedBot = '', motionPaused = false, toastTimer = null, rosterSyncTimer =
 const reduced = matchMedia('(prefers-reduced-motion:reduce)');
 
 function getBot(id) { return bots.find(b => b.id === id); }
+
+// Build the typed window key for one bot's fixed DM.
+function dmKey(botId) { return 'dm:' + botId; }
+// Build the typed window key for one group.
+function groupKey(groupId) { return 'group:' + groupId; }
+// Split one typed window key back into its door parts.
+function convParts(key) {
+  const text = String(key || '');
+  if (text.startsWith('dm:') && text.length > 3) return { kind: 'dm', bot_id: text.slice(3) };
+  if (text.startsWith('group:') && text.length > 6) return { kind: 'group', group_id: text.slice(6) };
+  return null;
+}
+// Build the detail URL for one typed window key.
+function convDetailUrl(key) {
+  const parts = convParts(key);
+  if (!parts) return null;
+  return parts.kind === 'dm'
+    ? `/api/bots/${encodeURIComponent(parts.bot_id)}/dm`
+    : `/api/groups/${encodeURIComponent(parts.group_id)}`;
+}
+// Build one door URL under a typed window key (turn, stream, cancel, ...).
+function convDoorUrl(key, suffix) {
+  const parts = convParts(key);
+  if (!parts) return null;
+  const tail = suffix ? '/' + suffix : '';
+  return parts.kind === 'dm'
+    ? `/api/bots/${encodeURIComponent(parts.bot_id)}/dm${tail}`
+    : `/api/groups/${encodeURIComponent(parts.group_id)}${tail}`;
+}
 
 /* Favorite (star) markers are a browser-only UI preference, persisted
    in localStorage like the tint override ('thyca.tint.<id>'). The one
@@ -241,7 +270,12 @@ async function refreshBotTasks(b, window) {
   if (typeof updateCard === 'function') { try { updateCard(b); } catch {} }
   const runner = (async () => {
     try {
-      const payload = await getJson(`/api/bots/${encodeURIComponent(b.id)}/rooms/${encodeURIComponent(target)}/tasks`);
+      const parts = convParts(target);
+      const url = parts && parts.kind === 'dm'
+        ? `/api/bots/${encodeURIComponent(b.id)}/dm/tasks`
+        : parts ? `/api/bots/${encodeURIComponent(b.id)}/groups/${encodeURIComponent(parts.group_id)}/tasks` : null;
+      if (!url) throw new Error('unknown conversation');
+      const payload = await getJson(url);
       if (gen !== b.taskGen || b.taskWindow !== target) return null;  // superseded
       b.taskCache = { status: 'ok', payload };
     } catch (err) {
@@ -273,7 +307,7 @@ async function loadRoster() {
   if (!getBot(selectedBot) && bots[0]) selectedBot = bots[0].id;
 }
 
-/* Sessions -> compact rows per pocket + the shared group roster. Deleted
+/* Conversations -> compact rows per pocket + the shared group roster. Deleted
    bots are filtered out by getBot before any member row is built. */
 function sessionRow(session) {
   const when = session.updated_at ? new Date(session.updated_at) : null;
@@ -281,17 +315,20 @@ function sessionRow(session) {
     : when && when.toDateString() === new Date(Date.now() - 864e5).toDateString() ? 'Hôm qua'
     : when ? when.toLocaleDateString('vi-VN', { day: 'numeric', month: 'numeric' }) : '';
   const turns = session.turns ? ` · ${session.turns} lượt` : '';
-  return [session.id, session.title || 'Chưa đặt tên', day + turns];
+  const key = session.kind === 'dm' ? dmKey(session.bot_id) : groupKey(session.group_id);
+  return [key, session.title || 'Chưa đặt tên', day + turns];
 }
+// Refresh the conversation list into group rows and per-bot pocket rows.
 async function refreshSessions() {
-  const payload = await getJson('/api/sessions');              // API: GET /api/sessions
-  const list = payload.sessions || [];
+  const payload = await getJson('/api/conversations');         // API: GET /api/conversations
+  const list = payload.conversations || [];
   groups.splice(0, groups.length, ...list.filter(s => s.kind === 'group').map(s => {
     const live = (s.bots || []).filter(id => getBot(id));
-    return { id: s.id, title: s.title || 'Hội thoại chung', bots: live, subtitle: `${live.length} người bạn${s.turns ? ' · ' + s.turns + ' lượt' : ''}` };
+    return { id: s.group_id, title: s.title || 'Hội thoại chung', bots: live, subtitle: `${live.length} người bạn${s.turns ? ' · ' + s.turns + ' lượt' : ''}` };
   }));
   bots.forEach(b => {
-    b.sessions = list.filter(s => s.dm === b.id || (!s.dm && (s.bots || []).includes(b.id))).map(sessionRow);
+    b.sessions = list.filter(s => (s.kind === 'dm' && s.bot_id === b.id)
+      || (s.kind === 'group' && (s.bots || []).includes(b.id))).map(sessionRow);
   });
 }
 
@@ -312,7 +349,7 @@ async function syncRoster() {
   if (!changed) { bots.forEach(b => { if (typeof updateCard === 'function') updateCard(b); }); return; }
   if (typeof renderTeam === 'function') renderTeam();
   if (typeof rebuildExpressionBots === 'function') rebuildExpressionBots();
-  await refreshSessions();                                     // API: GET /api/sessions
+  await refreshSessions();                                     // API: GET /api/conversations
   if (typeof renderGroups === 'function') renderGroups();
   if (!getBot(selectedBot) && bots.length) selectedBot = bots[0].id;
 }
@@ -323,8 +360,7 @@ function scheduleRosterSync() {
 
 /* Context meter for one bot's DM (the fixed room it uses on this page). */
 async function botContext(botId) {
-  const dm = await getJson(`/api/bots/${botId}/dm`);            // API: GET /api/bots/<id>/dm
-  const room = dm.session_id || dm.id;
-  const ops = await getJson(`/api/bots/${botId}/rooms/${room}/operations?scope=turn`);
+  await getJson(`/api/bots/${encodeURIComponent(botId)}/dm`);  // API: GET /api/bots/<id>/dm
+  const ops = await getJson(`/api/bots/${encodeURIComponent(botId)}/dm/operations`);
   return ops && typeof ops === 'object' ? ops : null;
 }

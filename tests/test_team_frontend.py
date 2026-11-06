@@ -662,17 +662,15 @@ def test_get_json_errors_carry_status_and_body(node: str) -> None:
 
 
 def test_refresh_sessions_partitions_groups_and_rows(node: str) -> None:
-    """kind:'group' sessions feed the shared group list (members filtered to
-    live bots); a bot's row lists dm sessions plus every session — group ones
-    included — whose bot list mentions them."""
+    """kind:'group' conversations feed the shared group list (members filtered
+    to live bots); a bot's row lists its DM plus every group whose bot list
+    mentions them, keyed dm:<bot> / group:<group_id>."""
     out = _run(node, """
         bots.length = 0;
         bots.push(...roster([{ id: 'thyca' }, { id: 'coder' }]));
-        installFetch((url) => url === '/api/sessions' ? { sessions: [
-            { id: 'g1', kind: 'group', title: 'Nhóm', bots: ['thyca', 'coder', 'ghost'], turns: 5, updated_at: new Date().toISOString() },
-            { id: 'd1', dm: 'coder', title: 'DM coder', turns: 2, updated_at: new Date().toISOString() },
-            { id: 's1', title: 'Old solo', bots: ['thyca'], turns: 1 },
-            { id: 's2', title: 'Shared legacy', bots: ['thyca', 'coder'] },
+        installFetch((url) => url === '/api/conversations' ? { conversations: [
+            { group_id: 'group-11111111111111111111111111111111', kind: 'group', title: 'Nhóm', bots: ['thyca', 'coder', 'ghost'], turns: 5, updated_at: new Date().toISOString() },
+            { bot_id: 'coder', kind: 'dm', title: 'DM coder', turns: 2, updated_at: new Date().toISOString() },
         ] } : {});
         await refreshSessions();
         return {
@@ -681,31 +679,31 @@ def test_refresh_sessions_partitions_groups_and_rows(node: str) -> None:
             coder: bots[1].sessions.map(s => s[0]),
         };
     """)
-    assert out["groups"] == [["g1", "Nhóm", ["thyca", "coder"], "2 người bạn · 5 lượt"]]
-    assert set(out["thyca"]) == {"g1", "s1", "s2"}        # member of the group room
-    assert set(out["coder"]) == {"g1", "d1", "s2"}        # dm + group + shared
+    assert out["groups"] == [["group-11111111111111111111111111111111", "Nhóm", ["thyca", "coder"], "2 người bạn · 5 lượt"]]
+    assert set(out["thyca"]) == {"group:group-11111111111111111111111111111111"}              # member of the group
+    assert set(out["coder"]) == {"group:group-11111111111111111111111111111111", "dm:coder"}  # dm + group
 
 
 def test_session_row_day_labels_and_turn_count(node: str) -> None:
-    """sessionRow -> [id, title|'Chưa đặt tên', day + ' · N lượt']; days are
+    """sessionRow -> [typed key, title|'Chưa đặt tên', day + ' · N lượt']; days are
     Hôm nay / Hôm qua / d-m / ''."""
     out = _run(node, """
         const mk = (daysAgo, extra) => {
             const d = new Date(Date.now() - daysAgo * 864e5);
-            return sessionRow({ id: 's', updated_at: d.toISOString(), ...extra });
+            return sessionRow({ kind: 'group', group_id: 'group-11111111111111111111111111111111', updated_at: d.toISOString(), ...extra });
         };
         return {
             today: mk(0, { title: 'T', turns: 3 }),
             yesterday: mk(1, {}),
             old: mk(40, { title: 'Old' }),
-            missing: sessionRow({ id: 'x' }),
+            missing: sessionRow({ kind: 'dm', bot_id: 'x' }),
         };
     """)
-    assert out["today"] == ["s", "T", "Hôm nay · 3 lượt"]
-    assert out["yesterday"][0] == "s" and out["yesterday"][1] == "Chưa đặt tên"
+    assert out["today"] == ["group:group-11111111111111111111111111111111", "T", "Hôm nay · 3 lượt"]
+    assert out["yesterday"][0] == "group:group-11111111111111111111111111111111" and out["yesterday"][1] == "Chưa đặt tên"
     assert out["yesterday"][2].startswith("Hôm qua")
     assert out["old"][2] == "" or re.match(r"\d+/\d+", out["old"][2])
-    assert out["missing"] == ["x", "Chưa đặt tên", ""]
+    assert out["missing"] == ["dm:x", "Chưa đặt tên", ""]
 
 
 def test_sync_roster_patches_in_place_and_respects_running_bots(node: str) -> None:
@@ -718,7 +716,7 @@ def test_sync_roster_patches_in_place_and_respects_running_bots(node: str) -> No
         runs.set('s1', { botId: 'b', sessionId: 's1', node: null, timers: [], tools: [] });
         installFetch((url) => url === '/api/bots'
             ? { bots: [{ id: 'a', name: 'A2', role: 'R' }, { id: 'c', name: 'C' }] }
-            : url === '/api/sessions' ? { sessions: [] } : {});
+            : url === '/api/conversations' ? { conversations: [] } : {});
         await syncRoster();
         return {
             ids: bots.map(x => x.id),
@@ -742,7 +740,7 @@ def test_sync_roster_keeps_live_state_when_bot_has_run(node: str) -> None:
         runs.set('s1', { botId: 'a', sessionId: 's1', node: null, timers: [], tools: [] });
         installFetch((url) => url === '/api/bots'
             ? { bots: [{ id: 'a', agent_status: { state: 'idle', current_action: 'rest' } }] }
-            : url === '/api/sessions' ? { sessions: [] } : {});
+            : url === '/api/conversations' ? { conversations: [] } : {});
         await syncRoster();
         return { state: bots[0].state, summary: bots[0].summary, elapsed: bots[0].elapsed };
     """)
@@ -1441,7 +1439,7 @@ def test_pocket_disclosure_is_chevron_only(node: str) -> None:
             : url.endsWith('/tasks') ? { bot_id: 'a', calls: [] } : {});
         await loadRoster();
         const afterRoster = calls.filter(c => String(c[0]).endsWith('/tasks')).length;
-        currentSession = 's1'; selectedBot = 'a';
+        currentSession = 'dm:a'; selectedBot = 'a';
         renderTeam(); bots.forEach(updateCard);
         const afterPaint = calls.filter(c => String(c[0]).endsWith('/tasks')).length;
         await refreshBotTasks(bots[0], null);   // no window: marks unavailable, no fetch
@@ -1457,8 +1455,8 @@ def test_pocket_disclosure_is_chevron_only(node: str) -> None:
     assert out["afterPaint"] == 0                 # select affordance/paint discloses nothing
     assert out["afterNull"] == 0                  # null window never invents a fetch
     assert out["afterOpen"] == 1                  # chevron open fetches exactly the window
-    assert out["openedUrl"] == "/api/bots/a/rooms/s1/tasks"
-    assert out["window"] == "s1"
+    assert out["openedUrl"] == "/api/bots/a/dm/tasks"
+    assert out["window"] == "dm:a"
 
 
 def test_open_pocket_refreshes_on_window_switch_not_on_poll(node: str) -> None:
@@ -1470,13 +1468,13 @@ def test_open_pocket_refreshes_on_window_switch_not_on_poll(node: str) -> None:
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'A' }]));
         renderTeam();
-        currentSession = 's1';
+        currentSession = 'dm:a';
         openBot('a', true);
         await tick();
         const first = calls.length;
         refreshOpenPocketsOnWindowChange();       // same window: no refetch
         const same = calls.length;
-        currentSession = 's2';                    // window switch
+        currentSession = 'group:group-11111111111111111111111111111111';             // window switch
         refreshOpenPocketsOnWindowChange();
         await tick();
         const after = calls.length;
@@ -1485,8 +1483,8 @@ def test_open_pocket_refreshes_on_window_switch_not_on_poll(node: str) -> None:
     """, via="chat")
     assert out["first"] == 1
     assert out["same"] == 1                       # event-driven only: no poll on same window
-    assert out["after"] == 2 and out["lastUrl"] == "/api/bots/a/rooms/s2/tasks"
-    assert out["window"] == "s2"
+    assert out["after"] == 2 and out["lastUrl"] == "/api/bots/a/groups/group-11111111111111111111111111111111/tasks"
+    assert out["window"] == "group:group-11111111111111111111111111111111"
 
 
 def test_late_task_response_never_paints_stale_window(node: str) -> None:
@@ -1557,23 +1555,23 @@ def test_follow_running_turn_reentry_keeps_single_subscription(node: str) -> Non
         const gate = new Promise(res => { release = res; });
         let hits = 0;
         installFetch((url) => {
-            if (url === '/api/sessions/s1/turn/stream') {
+            if (url === '/api/bots/coder/dm/turn/stream') {
                 hits++;
                 return gate.then(() => ({ ok: true, status: 200, body: streamOf([]) }));
             }
             return {};
         });
-        currentSession = 's1';
-        followRunningTurn('s1');
-        const first = runs.get('s1');
+        currentSession = 'dm:coder';
+        followRunningTurn('dm:coder');
+        const first = runs.get('dm:coder');
         handleStreamEvent(first, { type: 'tool.started', name: 'bash', call_id: 'c1' });
         handleStreamEvent(first, { type: 'llm.content', delta: 'before' });
-        currentSession = 's2';
+        currentSession = 'dm:thyca';
         $('#message-list').innerHTML = '';
         handleStreamEvent(first, { type: 'llm.content', delta: ' away' });
-        currentSession = 's1';
-        followRunningTurn('s1');
-        const same = runs.get('s1') === first;
+        currentSession = 'dm:coder';
+        followRunningTurn('dm:coder');
+        const same = runs.get('dm:coder') === first;
         const text = $('.stream-text', first.node).textContent;
         handleStreamEvent(first, { type: 'llm.content', delta: ' after' });
         const finalText = $('.stream-text', first.node).textContent;
@@ -1603,11 +1601,11 @@ def test_stream_burst_coalesces_task_refreshes(node: str) -> None:
             return {};
         });
         const b = getBot('coder');
-        currentSession = 's1';
+        currentSession = 'dm:coder';
         renderTeam();
         openBot('coder', true);                     // fetch #1 pends
         await tick(5);
-        const token = { botId: 'coder', sessionId: 's1', node: document.createElement('article'),
+        const token = { botId: 'coder', sessionId: 'dm:coder', node: document.createElement('article'),
                         timers: [], tools: [], start: Date.now(), phase: 'waiting' };
         for (let i = 0; i < 5; i++)                 // burst while #1 is in flight
             handleStreamEvent(token, { type: 'tool.started', name: 't' + i, call_id: 'c' + i });
@@ -1991,14 +1989,14 @@ def test_group_list_click_loads_session(node: str) -> None:
     out = _run(node, """
         bots.length = 0;
         bots.push(...roster([{ id: 'thyca' }, { id: 'coder' }]));
-        groups.push({ id: 'g9', title: 'Nhóm 9', bots: ['coder', 'thyca'], subtitle: 'x' });
+        groups.push({ id: 'group-11111111111111111111111111111111', title: 'Nhóm 9', bots: ['coder', 'thyca'], subtitle: 'x' });
         const calls = [];
         globalThis.loadSession = (id, title, bot) => calls.push([id, title, bot]);
-        const row = document.createElement('button'); row.className = 'group-row'; row.dataset.group = 'g9';
+        const row = document.createElement('button'); row.className = 'group-row'; row.dataset.group = 'group-11111111111111111111111111111111';
         $('#group-list')._handlers.click.forEach(h => h({ target: row, preventDefault() {} }));
         return { calls, dispatches: globalThis.__spaDispatches || [] };
     """)
-    assert out["dispatches"] == [["loadSession", "g9", "Nhóm 9", "coder"]]
+    assert out["dispatches"] == [["loadSession", "group:group-11111111111111111111111111111111", "Nhóm 9", "coder"]]
 
 
 def test_shared_picker_opens_prefilled_group_dialog(node: str) -> None:
@@ -2019,17 +2017,16 @@ def test_shared_picker_opens_prefilled_group_dialog(node: str) -> None:
 
 
 def test_group_form_submit_creates_and_opens_group(node: str) -> None:
-    """The group form requires >=2 members + a title; it POSTs the roster, PATCHes
-    the title, refreshes sessions, opens the new room and confirms via toast."""
+    """The group form requires >=2 members + a title; it POSTs the group,
+    refreshes conversations, opens the new group and confirms via toast."""
     out = _run(node, """
         bots.length = 0;
         bots.push(...roster([{ id: 'a' }, { id: 'b' }]));
         const posted = [];
         globalThis.loadSession = async (id, title, bot) => posted.push(['load', id, title, bot]);
         installFetch((url, opts) => {
-            if (url === '/api/sessions' && opts.method === 'POST') return { id: 'g7', title: '' };
-            if (url === '/api/sessions/g7' && opts.method === 'PATCH') return {};
-            if (url === '/api/sessions') return { sessions: [{ id: 'g7', kind: 'group', title: 'Team', bots: ['a', 'b'] }] };
+            if (url === '/api/groups' && opts.method === 'POST') return { group_id: 'group-11111111111111111111111111111111', kind: 'group', title: 'Team' };
+            if (url === '/api/conversations') return { conversations: [{ group_id: 'group-11111111111111111111111111111111', kind: 'group', title: 'Team', bots: ['a', 'b'] }] };
             return {};
         });
         const form = $('#group-form');
@@ -2050,7 +2047,7 @@ def test_group_form_submit_creates_and_opens_group(node: str) -> None:
                  groupCount: groups.length };
     """)
     assert "ít nhất hai bot" in out["tooFew"]
-    assert out["posted"] == [["load", "g7", "Team", "a"]]
+    assert out["posted"] == [["load", "group:group-11111111111111111111111111111111", "Team", "a"]]
     assert out["closed"] is True and out["reset"] is True
     assert "Đã tạo hội thoại chung" in out["toast"]
     assert out["groupCount"] == 1
@@ -2123,8 +2120,8 @@ def test_drawer_context_meter_fills_and_bands(node: str) -> None:
         bots.push(...roster([{ id: 'a' }]));
         openInfo('a', true);                                   // builds the meter slot
         installFetch((url) =>
-            url === '/api/bots/a/dm' ? { id: 'dm1' }
-            : url === '/api/bots/a/rooms/dm1/operations' ? { context: { ratio: 0.83, estimated_tokens: 8300, context_tokens: 10000 } }
+            url === '/api/bots/a/dm' ? { kind: 'dm', bot_id: 'a' }
+            : url === '/api/bots/a/dm/operations' ? { context: { ratio: 0.83, estimated_tokens: 8300, context_tokens: 10000 } }
             : {});
         await fillDrawerContext(bots[0]);
         const slot = $('#bot-drawer-body [data-drawer-context]');
@@ -2146,8 +2143,8 @@ def test_drawer_context_drops_stale_slot_and_survives_errors(node: str) -> None:
         const slot = $('#bot-drawer-body [data-drawer-context]');
         slot.remove();                                          // detached before answers land
         installFetch((url) =>
-            url === '/api/bots/a/dm' ? { id: 'dm1' }
-            : url === '/api/bots/a/rooms/dm1/operations' ? { context: { ratio: 0.5 } } : {});
+            url === '/api/bots/a/dm' ? { kind: 'dm', bot_id: 'a' }
+            : url === '/api/bots/a/dm/operations' ? { context: { ratio: 0.5 } } : {});
         await fillDrawerContext(bots[0]);                       // must not throw
         const staleSafe = slot.querySelector('.ctx-bar').className === 'ctx-bar';
         // failure path: dm fetch rejects -> silent catch, meter stays empty
@@ -2233,7 +2230,7 @@ def test_emit_shell_and_boot_shell_fill_shared_dom(node: str) -> None:
     out = _run(node, """
         installFetch((url) => url === '/api/bots'
             ? { bots: [{ id: 'a', name: 'Alpha' }, { id: 'b', name: 'Beta' }] }
-            : url === '/api/sessions' ? { sessions: [] } : {});
+            : url === '/api/conversations' ? { conversations: [] } : {});
         const ws = emitShell('memories');
         const shell = { workspaceCls: ws.className, shellCls: $('.notebook-shell').className };
         await bootShell();
@@ -2333,7 +2330,7 @@ _CHAT_SEED = """
         bots.length = 0;
         bots.push(...roster([{ id: 'thyca', name: 'Thyca' }, { id: 'coder', name: 'Coder' }]));
         renderTeam();
-        currentSession = 's1'; selectedBot = 'coder';
+        currentSession = 'dm:coder'; selectedBot = 'coder';
 """
 
 # app.js/page scripts boot() at load and fetch with the default stub — seeding
@@ -2348,7 +2345,7 @@ def test_send_turn_streams_and_finishes(node: str) -> None:
     live calls clear at the terminal event."""
     out = _run(node, _CHAT_SEED + """
         installFetch((url, opts) => {
-            if (url === '/api/sessions/s1/turn/stream' && opts.method === 'POST') {
+            if (url === '/api/bots/coder/dm/turn/stream' && opts.method === 'POST') {
                 return { ok: true, status: 200, body: streamOf([
                     { type: 'turn.accepted' },
                     { type: 'llm.started' },
@@ -2366,7 +2363,7 @@ def test_send_turn_streams_and_finishes(node: str) -> None:
                     },
                 ]) };
             }
-            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/conversations') return { conversations: [] };
             return {};
         });
         const ok = await sendTurn('hi', 'coder');
@@ -2402,10 +2399,10 @@ def test_send_turn_guards_busy_offline_and_missing(node: str) -> None:
     bot is offline (toasting instead); an unknown bot id falls back to the
     first roster entry — sendTurn's contract is getBot(botId) || bots[0]."""
     out = _run(node, _CHAT_SEED + """
-        runs.set('s1', { botId: 'coder', sessionId: 's1', node: null, timers: [], tools: [] });
+        runs.set('dm:coder', { botId: 'coder', sessionId: 'dm:coder', node: null, timers: [], tools: [] });
         const busyGuard = await sendTurn('x', 'coder');
         runs.clear();
-        const noSession = await (async () => { currentSession = ''; const r = await sendTurn('x'); currentSession = 's1'; return r; })();
+        const noSession = await (async () => { currentSession = ''; const r = await sendTurn('x'); currentSession = 'dm:coder'; return r; })();
         const fallback = await sendTurn('x', 'ghost');       // routes to bots[0]
         runs.clear();
         bots[1].state = 'offline';
@@ -2430,8 +2427,8 @@ def test_stream_events_drive_live_calls_and_stream_text(node: str) -> None:
         const node = document.createElement('article');
         node.innerHTML = '<header class="message-byline"><span>Coder</span><time>x</time></header><div class="live-copy"><p class="live-message">…</p></div>';
         list.appendChild(node);
-        const token = { botId: 'coder', sessionId: 's1', node, timers: [], tools: [], start: Date.now(), phase: 'waiting' };
-        runs.set('s1', token);
+        const token = { botId: 'coder', sessionId: 'dm:coder', node, timers: [], tools: [], start: Date.now(), phase: 'waiting' };
+        runs.set('dm:coder', token);
         for (const ev of [
             { type: 'llm.started' }, { type: 'llm.thinking' }, { type: 'llm.finished' },
             { type: 'llm.thinking' },                       // no preview row: thinking is not a task
@@ -2449,7 +2446,7 @@ def test_stream_events_drive_live_calls_and_stream_text(node: str) -> None:
             state: b.state,
             live: (b.liveCalls || []).map(f => [f.kind, f.name, f.call_id]),
             preview: previewLine(b),
-            groups: livePreviewGroups(b, 's1'),
+            groups: livePreviewGroups(b, 'dm:coder'),
             byline: $('.message-byline time', node).textContent,
             stream: $('.stream-text', node).textContent,
             caret: node.querySelectorAll('.streaming-caret').length,
@@ -2480,17 +2477,17 @@ def test_turn_terminal_events_cancel_and_fail(node: str) -> None:
             const node = document.createElement('article');
             node.innerHTML = '<header class="message-byline"><time>x</time></header><div class="live-copy"><span class="streaming-caret"></span></div>';
             $('#message-list').appendChild(node);
-            return { botId: 'coder', sessionId: 's1', node, timers: [], tools: [], start: Date.now(), phase: 'writing' };
+            return { botId: 'coder', sessionId: 'dm:coder', node, timers: [], tools: [], start: Date.now(), phase: 'writing' };
         };
-        installFetch((url) => url === '/api/sessions' ? { sessions: [] } : {});
-        const t1 = mk(); runs.set('s1', t1);
+        installFetch((url) => url === '/api/conversations' ? { conversations: [] } : {});
+        const t1 = mk(); runs.set('dm:coder', t1);
         handleStreamEvent(t1, { type: 'turn.cancelled' });
         const cancelled = {
             state: bots[1].state, byline: $('.message-byline time', t1.node).textContent,
             note: $('.stream-interruption', t1.node).textContent,
             caret: t1.node.querySelectorAll('.streaming-caret').length, runs: runs.size,
         };
-        const t2 = mk(); runs.set('s1', t2);
+        const t2 = mk(); runs.set('dm:coder', t2);
         handleStreamEvent(t2, { type: 'turn.failed', message: 'model chết' });
         return { cancelled, failed: { state: bots[1].state, note: $('.stream-interruption', t2.node).textContent } };
     """, via="chat")
@@ -2508,9 +2505,9 @@ def test_send_turn_http_error_cancels_and_marks_error(node: str) -> None:
     and a 'gặp lỗi' interruption note."""
     out = _run(node, _CHAT_SEED + """
         installFetch((url, opts) =>
-            url === '/api/sessions/s1/turn/stream'
+            url === '/api/bots/coder/dm/turn/stream'
                 ? { ok: false, status: 503, json: async () => ({ error: 'bận' }) }
-                : url === '/api/sessions' ? { sessions: [] } : {});
+                : url === '/api/conversations' ? { conversations: [] } : {});
         await sendTurn('hi', 'coder');
         const node = $('#message-list').children.at(-1);
         return {
@@ -2531,17 +2528,17 @@ def test_stop_run_posts_cancel_and_falls_back_locally(node: str) -> None:
         const node = document.createElement('article');
         node.innerHTML = '<header class="message-byline"><time>x</time></header><div class="live-copy"></div>';
         $('#message-list').appendChild(node);
-        const token = { botId: 'coder', sessionId: 's1', node, timers: [], tools: [], start: Date.now(), phase: 'thinking' };
-        runs.set('s1', token);
+        const token = { botId: 'coder', sessionId: 'dm:coder', node, timers: [], tools: [], start: Date.now(), phase: 'thinking' };
+        runs.set('dm:coder', token);
         const calls = installFetch((url, opts) => {
             if (url.endsWith('/turn/cancel')) return {};
-            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/conversations') return { conversations: [] };
             return {};
         });
         const ok = await stopRun();
         const posted = calls.filter(c => c[0].endsWith('/turn/cancel')).length;
         // failure path -> local cancel
-        runs.set('s1', token);
+        runs.set('dm:coder', token);
         globalThis.fetch = async () => { throw new Error('mất mạng'); };
         await stopRun();
         return { ok, posted, byline: $('.message-byline time', node).textContent, state: bots[1].state };
@@ -2555,16 +2552,16 @@ def test_follow_running_turn_rejoins_inflight(node: str) -> None:
     finishes the turn when the journal ends."""
     out = _run(node, _CHAT_SEED + """
         installFetch((url) => {
-            if (url === '/api/sessions/s1/turn/stream') {
+            if (url === '/api/bots/coder/dm/turn/stream') {
                 return { ok: true, status: 200, body: streamOf([
                     { type: 'llm.content', delta: 'đang chạy giữa chừng' },
                     { type: 'turn.completed', detail: { title: 'X', messages: [{ role: 'assistant', content: 'done', ts: 2, meta: { bot_id: 'coder' } }] } },
                 ]) };
             }
-            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/conversations') return { conversations: [] };
             return {};
         });
-        followRunningTurn('s1');
+        followRunningTurn('dm:coder');
         await tick(30);
         return {
             state: bots[1].state,
@@ -2579,36 +2576,37 @@ def test_follow_running_turn_rejoins_inflight(node: str) -> None:
 
 
 def test_load_session_renders_and_drops_stale_answers(node: str) -> None:
-    """loadSession renders title/eyebrow + transcript; switching mid-flight
+    """loadConversation renders title/eyebrow + transcript; switching mid-flight
     makes the stale answer a no-op; running details rejoin the stream."""
     out = _run(node, _CHAT_SEED + """
         let resolveDetail;
+        const GID = 'group-11111111111111111111111111111111', GID2 = 'group-' + '2'.repeat(32);
         const calls = installFetch((url) => {
-            if (url === '/api/sessions/sA') return new Promise(r => { resolveDetail = () => r({ ok: true, status: 200, json: async () => ({ id: 'sA', title: 'A', dm: 'coder', messages: [{ role: 'assistant', content: 'cũ', ts: 1 }] }) }); });
-            if (url === '/api/sessions/s9') return { id: 's9', title: 'Nhóm', kind: 'group', messages: [], running: false };
-            if (url === '/api/sessions/s8') return { id: 's8', title: 'Chạy', messages: [], running: true };
-            if (url === '/api/sessions/s8/turn/stream') return { ok: true, status: 200, body: streamOf([{ type: 'turn.completed', detail: { title: 'Chạy', messages: [] } }]) };
-            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/bots/coder/dm') return new Promise(r => { resolveDetail = () => r({ ok: true, status: 200, json: async () => ({ kind: 'dm', bot_id: 'coder', title: 'A', messages: [{ role: 'assistant', content: 'cũ', ts: 1 }] }) }); });
+            if (url === '/api/groups/' + GID) return { group_id: GID, title: 'Nhóm', kind: 'group', messages: [], running: false };
+            if (url === '/api/groups/' + GID2) return { group_id: GID2, title: 'Chạy', kind: 'group', messages: [], running: true };
+            if (url === '/api/groups/' + GID2 + '/turn/stream') return { ok: true, status: 200, body: streamOf([{ type: 'turn.completed', detail: { title: 'Chạy', messages: [] } }]) };
+            if (url === '/api/conversations') return { conversations: [] };
             return {};
         });
         const followed = [];
         globalThis.followRunningTurn = (id) => followed.push(id);
         // stale guard
-        const p = loadSession('sA', 'A');
-        currentSession = 'sB';
+        const p = loadSession('dm:coder', 'A');
+        currentSession = 'dm:thyca';
         resolveDetail();
         await p;
         const staleKept = $('#message-list').innerHTML === '';
         // normal render: group eyebrow + transcript
-        await loadSession('s9', 'Nhóm');
+        await loadSession('group:' + GID, 'Nhóm');
         const group = { title: $('#chat-title').textContent, eyebrow: $('#session-eyebrow').textContent };
         // running -> follow
-        await loadSession('s8', 'Chạy');
-        return { staleKept, group, followed, requests: calls.filter(c => c[0].startsWith('/api/sessions/')).map(c => c[0]) };
+        await loadSession('group:' + GID2, 'Chạy');
+        return { staleKept, group, followed, requests: calls.filter(c => c[0].startsWith('/api/')).map(c => c[0]) };
     """, via="chat")
     assert out["staleKept"] is True
     assert out["group"] == {"title": "Nhóm", "eyebrow": "Hội thoại chung"}
-    assert out["followed"] == ["s8"]
+    assert out["followed"] == ["group:" + "group-" + "2" * 32]
 
 
 def test_select_bot_resolves_dm_get_only(node: str) -> None:
@@ -2618,12 +2616,12 @@ def test_select_bot_resolves_dm_get_only(node: str) -> None:
     out = _run(node, _CHAT_SEED + """
         currentSession = ''; selectedBot = 'thyca';
         const calls = installFetch((url, opts) => {
-            if (url === '/api/bots/thyca/dm') return { id: 'dm9', title: 'Thyca DM', messages: [{ role: 'assistant', content: 'xin chào', ts: 1 }] };
+            if (url === '/api/bots/thyca/dm') return { kind: 'dm', bot_id: 'thyca', title: 'Thyca DM', messages: [{ role: 'assistant', content: 'xin chào', ts: 1 }] };
             if (url === '/api/bots/thyca/settings')
                 return { bot_id: 'thyca', model: { id: 'default', thinking: null },
                          effective: { model: 'm1', provider: 'default', thinking: 'low' } };
             if (url === '/api/config') return { values: { defaultModel: 'm1', models: {} }, schema: { sections: [] } };
-            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/conversations') return { conversations: [] };
             return {};
         });
         await loadConfig();
@@ -2640,10 +2638,10 @@ def test_select_bot_resolves_dm_get_only(node: str) -> None:
         return { ok, error: $('#toast').textContent };
     """, via="chat")
     ok = out["ok"]
-    assert ok["session"] == "dm9" and ok["sel"] == "thyca"
+    assert ok["session"] == "dm:thyca" and ok["sel"] == "thyca"
     assert ok["title"] == "Thyca DM" and ok["eyebrow"] == "Sổ trò chuyện · Thyca"
     assert ok["transcript"] is True
-    assert ok["urls"] == ["/api/config", "/api/bots/thyca/dm", "/api/bots/thyca/settings"]   # options + DM find-or-create + inherit label, GETs only
+    assert ok["urls"] == ["/api/config", "/api/bots/thyca/dm", "/api/bots/thyca/settings", "/api/bots/thyca/exchanges"]   # options + DM + inherit label + exchange groups, GETs only
     assert "m1" in ok["inherit"]
     assert "Không mở được phiên với Coder" in out["error"]
 
@@ -2651,10 +2649,10 @@ def test_select_bot_resolves_dm_get_only(node: str) -> None:
 def test_render_transcript_skips_sidecars_and_attributes_bots(node: str) -> None:
     """renderTranscript keeps user + assistant rows, drops system/tool roles
     and naming/compaction meta, attributes assistants via meta.bot_id then
-    detail.dm, and folds tool calls into the usage pill."""
+    detail.bot_id, and folds tool calls into the usage pill."""
     out = _run(node, _CHAT_SEED + """
         const detail = {
-            dm: 'coder',
+            kind: 'dm', bot_id: 'coder',
             messages: [
                 { role: 'system', content: 'sys' },
                 { role: 'tool', content: 'tool out' },
@@ -2759,7 +2757,7 @@ def test_composer_submit_routes_mention_and_resets(node: str) -> None:
         const cleared = input.value === '', popupHidden = popup.hidden;
         input.value = '   ';
         submit();                                       // empty -> early return, value kept
-        runs.set('s1', { botId: 'coder', sessionId: 's1' });
+        runs.set('dm:coder', { botId: 'coder', sessionId: 'dm:coder' });
         input.value = 'lại nhé';
         submit();                                       // busy -> early return
         runs.clear();
@@ -2864,7 +2862,7 @@ def test_retry_and_copy_actions_on_message_list(node: str) -> None:
         $('#message-list').appendChild(article);
         const fire = (t) => $('#message-list')._handlers.click.forEach(h => h({ target: t }));
         fire(retry);
-        runs.set('s1', { botId: 'c', sessionId: 's1' });
+        runs.set('dm:coder', { botId: 'c', sessionId: 'dm:coder' });
         fire(retry);                                        // blocked while busy
         runs.clear();
         fire(copy);
@@ -2946,7 +2944,7 @@ def test_settings_prefs_persist_on_change_only(node: str) -> None:
     and writes thyca.ui.preferences; #pref-reset returns defaults and persists."""
     out = _run(node, """
         installFetch((url) => url === '/api/bots' ? { bots: [] }
-            : url === '/api/sessions' ? { sessions: [] }
+            : url === '/api/conversations' ? { conversations: [] }
             : url === '/api/config/status' ? { ready: false } : {});
         await tick();
         openSettingsDialog();
@@ -2982,7 +2980,7 @@ def test_settings_dialog_studio_shortcut_keeps_bot_customization(node: str) -> N
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'Alpha' }, { id: 'b', name: 'Beta' }], 0));
         installFetch((url) => url === '/api/bots' ? { bots: [] }
-            : url === '/api/sessions' ? { sessions: [] }
+            : url === '/api/conversations' ? { conversations: [] }
             : url === '/api/config/status' ? { ready: true, version: 'x' } : {});
         await tick();
         openSettingsDialog();
@@ -3003,7 +3001,7 @@ def test_settings_form_posts_merged_values(node: str) -> None:
         const posted = [];
         installFetch((url, opts) => {
             if (url === '/api/bots') return { bots: [] };
-            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/conversations') return { conversations: [] };
             if (url === '/api/config/status') return { ready: true, version: 'x' };
             if (url === '/api/config' && opts.method === 'POST') { posted.push(JSON.parse(opts.body)); return {}; }
             if (url === '/api/config') return {
@@ -3050,7 +3048,7 @@ def test_settings_save_merges_limit_patch_onto_fresh_provider_config(node: str) 
         const posted = []; let gets = 0;
         installFetch((url, opts) => {
             if (url === '/api/bots') return { bots: [] };
-            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/conversations') return { conversations: [] };
             if (url === '/api/config/status') return { ready: true };
             if (url === '/api/config' && opts.method === 'POST') { posted.push(JSON.parse(opts.body)); return {}; }
             if (url === '/api/config') { gets++; return server; }
@@ -3084,7 +3082,7 @@ def test_settings_fresh_read_failure_never_posts_stale_config(node: str) -> None
         let gets = 0; const posts = [];
         installFetch((url, opts) => {
             if (url === '/api/bots') return { bots: [] };
-            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/conversations') return { conversations: [] };
             if (url === '/api/config/status') return { ready: true };
             if (url === '/api/config' && opts.method === 'POST') { posts.push(JSON.parse(opts.body)); return {}; }
             if (url === '/api/config') { gets++; return gets === 1 ? { values: { limits: { loopMax: 80 } }, schema: { sections: [] } } : new Error('fresh read failed'); }
@@ -3116,7 +3114,7 @@ def test_settings_save_sends_base_revision_when_server_reports_it(node: str) -> 
         const posted = [];
         installFetch((url, opts) => {
             if (url === '/api/bots') return { bots: [] };
-            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/conversations') return { conversations: [] };
             if (url === '/api/config/status') return { ready: true };
             if (url === '/api/config' && opts.method === 'POST') { posted.push(JSON.parse(opts.body)); return {}; }
             if (url === '/api/config') return server;
@@ -3146,7 +3144,7 @@ def test_settings_save_conflict_preserves_draft_for_retry(node: str) -> None:
         const posted = [];
         installFetch((url, opts) => {
             if (url === '/api/bots') return { bots: [] };
-            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/conversations') return { conversations: [] };
             if (url === '/api/config/status') return { ready: true };
             if (url === '/api/config' && opts.method === 'POST') {
                 const conflict = new Error('cấu hình đã thay đổi ở nơi khác; tải lại rồi thử lại');
@@ -3183,7 +3181,7 @@ def test_settings_concurrent_edit_to_untouched_field_is_not_overwritten(node: st
         const posted = [];
         installFetch((url, opts) => {
             if (url === '/api/bots') return { bots: [] };
-            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/conversations') return { conversations: [] };
             if (url === '/api/config/status') return { ready: true };
             if (url === '/api/config' && opts.method === 'POST') {
                 const body = JSON.parse(opts.body);
@@ -3226,7 +3224,7 @@ def test_settings_conflict_surfaces_inside_dialog_and_retry_succeeds(node: str) 
         const attempts = [];
         installFetch((url, opts) => {
             if (url === '/api/bots') return { bots: [] };
-            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/conversations') return { conversations: [] };
             if (url === '/api/config/status') return { ready: true };
             if (url === '/api/config' && opts.method === 'POST') {
                 attempts.push(JSON.parse(opts.body));
@@ -3277,7 +3275,7 @@ def test_settings_same_field_concurrent_edit_surfaces_conflict(node: str) -> Non
         const posts = [];
         installFetch((url, opts) => {
             if (url === '/api/bots') return { bots: [] };
-            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/conversations') return { conversations: [] };
             if (url === '/api/config/status') return { ready: true };
             if (url === '/api/config' && opts.method === 'POST') {
                 const body = JSON.parse(opts.body);
@@ -3324,7 +3322,7 @@ def test_settings_conflict_consent_requires_same_draft(node: str) -> None:
         const posts = [];
         installFetch((url, opts) => {
             if (url === '/api/bots') return { bots: [] };
-            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/conversations') return { conversations: [] };
             if (url === '/api/config/status') return { ready: true };
             if (url === '/api/config' && opts.method === 'POST') {
                 const body = JSON.parse(opts.body);
@@ -3361,7 +3359,7 @@ def test_settings_revert_to_original_base_still_saves_after_reopen(node: str) ->
         const posted = [];
         installFetch((url, opts) => {
             if (url === '/api/bots') return { bots: [] };
-            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/conversations') return { conversations: [] };
             if (url === '/api/config/status') return { ready: true };
             if (url === '/api/config' && opts.method === 'POST') { posted.push(JSON.parse(opts.body)); return { ok: true, ready: true }; }
             if (url === '/api/config') return server;
@@ -3424,7 +3422,7 @@ def test_settings_reopen_stores_only_dirty_fields_with_original_baselines(node: 
         const posted = [];
         installFetch((url, opts) => {
             if (url === '/api/bots') return { bots: [] };
-            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/conversations') return { conversations: [] };
             if (url === '/api/config/status') return { ready: true };
             if (url === '/api/config' && opts.method === 'POST') { posted.push(JSON.parse(opts.body)); return { ok: true, ready: true }; }
             if (url === '/api/config') return server;
@@ -3468,7 +3466,7 @@ def test_settings_failed_reopen_keeps_draft_for_next_load(node: str) -> None:
         let failNext = false;
         installFetch((url, opts) => {
             if (url === '/api/bots') return { bots: [] };
-            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/conversations') return { conversations: [] };
             if (url === '/api/config/status') return { ready: true };
             if (url === '/api/config' && opts.method !== 'POST') {
                 if (failNext) throw new Error('server down');
@@ -3513,7 +3511,7 @@ def test_settings_inflight_typing_and_reopen_keep_draft(node: str) -> None:
         let release = null;
         installFetch((url, opts) => {
             if (url === '/api/bots') return { bots: [] };
-            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/conversations') return { conversations: [] };
             if (url === '/api/config/status') return { ready: true };
             if (url === '/api/config' && opts.method !== 'POST') return new Promise(res => { release = () => res(server); });
             return {};
@@ -3545,7 +3543,7 @@ def test_settings_empty_numeric_draft_survives_close_reopen_and_load(node: str) 
         let hold = false, releaseLoad = null;
         installFetch((url, opts) => {
             if (url === '/api/bots') return { bots: [] };
-            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/conversations') return { conversations: [] };
             if (url === '/api/config/status') return { ready: true };
             if (url === '/api/config' && opts.method === 'POST') { posted.push(JSON.parse(opts.body)); return { ok: true, ready: true }; }
             if (url === '/api/config' && opts.method !== 'POST') {
@@ -3599,7 +3597,7 @@ def test_memory_scope_echo_guard_and_request_token(node: str) -> None:
     out = _run(node, """
         installFetch((url) => {
             if (url === '/api/bots') return { bots: [] };
-            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/conversations') return { conversations: [] };
             if (url === '/api/memory/stats?bot_id=a') return { bot_id: 'b', total: 3, leaves: [] };   // wrong scope echo
             if (url === '/api/memory/stats') return { total: 2, leaves: [] };
             return {};
@@ -3701,21 +3699,21 @@ def test_usage_turn_renderer_preserves_trace_labels_and_turn_intent(node: str) -
     carry session/turn identity for same-workspace navigation."""
     out = _run(node, """
         const detail = window.ThycaTraceDetail.render({
-          session_id: 's9', turn_index: 3, status: 'completed', messages: [
+          kind: 'dm', bot_id: 'thyca', turn_index: 3, status: 'completed', messages: [
             { role: 'assistant', content: '', meta: { bus_event: true, kind: 'delegate' } },
             { role: 'assistant', content: '', meta: { status: 'context_limit', kind: 'guard' } },
           ],
         });
         return {
           detail,
-          route: parseDetailRoute({ hash: '#s9/3' }),
-          row: turnRowHtml({ session_id: 's9', turn_index: 2, title: 'T', status: 'completed', started_at: new Date().toISOString() }),
+          route: parseDetailRoute({ hash: '#dm/thyca/3' }),
+          row: turnRowHtml({ kind: 'dm', bot_id: 'thyca', turn_index: 2, title: 'T', status: 'completed', started_at: new Date().toISOString() }),
         };
     """, via="dashboard", emit="dashboard")
     assert "Thành công" in out["detail"] and 'tl-chip s-ok' in out["detail"]
     assert "Giao việc" in out["detail"] and "Dừng — hết ngữ cảnh" in out["detail"]
-    assert out["route"] == {"sid": "s9", "turn": 3}
-    assert 'data-session="s9"' in out["row"] and 'data-turn="2"' in out["row"]
+    assert out["route"] == {"kind": "dm", "bot_id": "thyca", "turn": 3}
+    assert 'data-conv="dm:thyca"' in out["row"] and 'data-turn="2"' in out["row"]
     assert 'class="tl-turn"' in out["row"] and ">#2<" in out["row"]
 
 

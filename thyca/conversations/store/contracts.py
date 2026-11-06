@@ -83,6 +83,21 @@ class Conversation:
     messages: tuple[Message, ...]
 
 @dataclass(frozen=True)
+class ConversationListing:
+    """Paginated list row: metadata plus the conversation's creation stamp.
+
+    ``messages`` are intentionally absent: callers assemble full history
+    through cursor-paged ``AgentStore.read`` so list stays cheap. ``created_at``
+    is the empty-conversation timestamp source (Phase 1 read adapter)."""
+
+    ref: ConversationRef
+    title: str | None
+    title_source: str | None
+    naming_attempted: bool
+    participants: tuple[str, ...]
+    created_at: str
+
+@dataclass(frozen=True)
 class PageCursor:
     ref: ConversationRef
     generation: int

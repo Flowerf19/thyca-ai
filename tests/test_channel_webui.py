@@ -141,7 +141,10 @@ def test_retry_keeps_single_user_row_and_new_reply(tmp_path: Path) -> None:
         replies = [row.get("content") for row in second["messages"]
                    if row.get("role") == "assistant"
                    and str(row.get("content") or "").startswith("reply-")]
-        assert replies == ["reply-2"]
+        # Append-only store: retry never rewrites history, so the first
+        # reply stays and the new reply is the latest one (single user).
+        assert replies == ["reply-1", "reply-2"]
+        assert second["reply"] == "reply-2"
     finally:
         app.shutdown()
 

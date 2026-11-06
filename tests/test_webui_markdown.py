@@ -177,6 +177,14 @@ const deps = {
      and marks the scoped card on selectBot). */
   selectedBot: '',
   renderTeam() {},
+  dmKey: botId => 'dm:' + botId,
+  groupKey: groupId => 'group:' + groupId,
+  convParts: key => {
+    const text = String(key || '');
+    if (text.startsWith('dm:')) return { kind: 'dm', bot_id: text.slice(3) };
+    if (text.startsWith('group:')) return { kind: 'group', group_id: text.slice(6) };
+    return null;
+  },
   getBot: id => ROSTER.find(b => b.id === id) || null,
   states: { idle: ['idle', 'Rảnh'] },
   avatar: () => '',
@@ -259,7 +267,7 @@ const STATS = {
   by_status: [{ status: 'completed', requests: 10 }],
 };
 const TRACES = { traces: [{
-    session_id: 's-1', turn_index: 2, title: 'Phiên A',
+    kind: 'dm', turn_index: 2, title: 'Phiên A',
     started_at: '2026-09-14T10:00:00Z', status: 'completed', bot_id: 'coder',
     model: 'mid-model', requests: 2, tool_calls: 1, total_tokens: 300,
     cost_usd: 0.05, latency_ms: 900,
@@ -332,7 +340,7 @@ def test_dashboard_renders_stats_models_and_paged_rows() -> None:
 
     # Usage owns flat turn rows; detail is fetched only after selection.
     assert 'class="tl-turn"' in out["traceRows"]
-    assert 'data-session="s-1" data-turn="2"' in out["traceRows"]
+    assert 'data-conv="dm:coder" data-turn="2"' in out["traceRows"]
     assert 'class="tl-session"' not in out["traceRows"]
 
     # Paged loading: stats + first trace page requested on boot.
@@ -340,7 +348,7 @@ def test_dashboard_renders_stats_models_and_paged_rows() -> None:
     assert "from=" in stats_url and "to=" in stats_url
     traces_url = next(u for u in out["gets"] if u.startswith("/api/traces?"))
     assert "limit=15" in traces_url and "offset=0" in traces_url
-    assert not any(u.startswith("/api/traces/s-") for u in out["gets"])
+    assert not any(u.startswith("/api/traces/dm/") for u in out["gets"])
 
 
 def test_dashboard_page_structure() -> None:
@@ -391,15 +399,15 @@ def re_block(css: str, selector: str, *needles: str) -> bool:
 
 _TRACE_SETUP = r"""
 const TRACES = { traces: [
-    { session_id: 's-1', turn_index: 0, title: 'Phiên A', session_kind: 'dm',
+    { kind: 'dm', turn_index: 0, title: 'Phiên A',
       started_at: '2026-09-14T10:00:00Z', status: 'completed', bot_id: 'coder',
       model: 'mid-model', total_tokens: 120, cost_usd: 0.02, latency_ms: 600 },
-    { session_id: 's-1', turn_index: 1, title: 'Phiên A', session_kind: 'dm',
+    { kind: 'dm', turn_index: 1, title: 'Phiên A',
       started_at: '2026-09-14T10:05:00Z', status: 'completed', bot_id: 'coder',
       model: 'mid-model', total_tokens: 140, cost_usd: 0.01, latency_ms: 900 },
   ], total: 2 };
 const TURN = {
-  session_id: 's-1', turn_index: 1, title: 'Phiên A', bot_id: 'coder',
+  kind: 'dm', turn_index: 1, title: 'Phiên A', bot_id: 'coder',
   model: 'mid-model', requests: 2, rounds: 1, tool_calls: 1,
   prompt_tokens: 100, cached_tokens: 10, completion_tokens: 40,
   total_tokens: 140, cost_usd: 0.01, latency_ms: 900,
@@ -587,6 +595,6 @@ def test_shared_sidebar_renders_team_and_groups() -> None:
     assert "$('#team-bot-list').addEventListener('click'" in sidebar
     assert "$('#group-list')?.addEventListener('click'" in sidebar
     assert "selectBot(b.id)" in sidebar
-    assert "loadSession(g.id" in sidebar
+    assert "loadSession(groupKey(g.id)" in sidebar
     assert "ThycaRouter.dispatch('selectBot', id)" in shell_app
     assert "ThycaRouter.dispatch('loadSession', id, title, botId)" in shell_app

@@ -152,5 +152,5 @@ async function bootShell() {
   bots.forEach(updateCard);
   $('.bot-count').textContent = bots.length + ' người bạn';
   rebuildExpressionBots();
-  try { await refreshSessions(); renderGroups(); } catch {}  // API: GET /api/sessions
+  try { await refreshSessions(); renderGroups(); } catch {}  // API: GET /api/conversations
 }

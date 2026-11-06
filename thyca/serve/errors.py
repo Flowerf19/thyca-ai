@@ -63,13 +63,26 @@ def public_turn_error(exc: Exception) -> tuple[int, str, str]:
         # caller logs the public line; the message stays constant.
         return 500, "internal_error", "chat unavailable"
     if isinstance(exc, SessionBusy):
-        return 409, "session_busy", "session busy"
+        return 409, "session_busy", "conversation busy"
     if isinstance(exc, SessionNotFound):
-        return 404, "session_not_found", "session not found"
+        return 404, "session_not_found", "conversation not found"
     if isinstance(exc, SessionCorrupt):
-        return 503, "session_unreadable", "session unreadable"
+        return 503, "session_unreadable", "conversation unreadable"
     if isinstance(exc, SessionError):
-        return 503, "session_unavailable", "session unavailable"
+        return 503, "session_unavailable", "conversation unavailable"
+    # Local import: keeps serve free of a hard store dependency at module
+    # load (store.read_adapter imports serve.trace, so a top-level import
+    # here would harden that edge). Mapping stays additive: existing
+    # 400/404/409/503 triples are untouched.
+    from thyca.conversations.store.contracts import ConversationStoreError
+
+    if isinstance(exc, ConversationStoreError):
+        # Fixture turn pipeline failures stay on the same HTTP contract as
+        # the legacy session path: a missing door reads as 404, any other
+        # store failure as 503. Messages stay constant (no ref/id leak).
+        if getattr(exc, "scope", "global") == "local":
+            return 404, "session_not_found", "conversation not found"
+        return 503, "session_unavailable", "conversation unavailable"
     if isinstance(exc, LLMError):
         return 503, "llm_error", str(exc)
     return 503, "chat_unavailable", "chat unavailable"

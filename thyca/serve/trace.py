@@ -49,10 +49,11 @@ class TurnSummary:
     window_id: str | None = None
     work_id: str | None = None
 
+    # Render this turn in the public trace shape (no legacy session id).
     def to_payload(self) -> dict:
         """Public JSON shape for /api/traces* — the single source of the field list."""
-        return {
-            "session_id": self.session_id,
+        payload = {
+            "kind": self.session_kind,
             "turn_index": self.turn_index,
             "title": self.title,
             "started_at": self.started_at,
@@ -72,13 +73,15 @@ class TurnSummary:
             "bot_id": self.bot_id,
             "trace_id": self.trace_id,
             "bot_breakdown": [dict(entry) for entry in self.bot_breakdown],
-            "session_kind": self.session_kind,
-            "session_dm": self.session_dm,
             "session_bots": list(self.session_bots),
             "channel": self.channel,
-            "window_id": self.window_id,
             "work_id": self.work_id,
         }
+        if self.session_kind == "dm":
+            payload["bot_id"] = self.session_dm or self.bot_id
+        else:
+            payload["group_id"] = self.session_id
+        return payload
 
 
 def _is_synthetic_stop(message: Message) -> bool:

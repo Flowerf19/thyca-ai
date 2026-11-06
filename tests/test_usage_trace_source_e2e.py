@@ -134,7 +134,7 @@ BROWSER_SCRIPT = r"""
     const view = document.querySelector('[data-page-workspace="dashboard"]');
     const detail = view.querySelector('#turn-detail-view');
     await wait(() => !detail.hidden && view.querySelector('#detail-body').textContent.includes('GROUP_CANONICAL_REPLY'), 'source-backed canonical detail');
-    const detailPath = path => /^\/api\/traces\/[^/]+\/\d+$/.test(path);
+    const detailPath = path => /^\/api\/traces\/(dm\/[^/]+|groups\/[^/]+)\/\d+$/.test(path);
     const detailPayload = window.__sourceResponses.find(entry => detailPath(entry.path))?.payload || null;
     const detailCalls = window.__sourceApiCalls.filter(entry => detailPath(new URL(entry.url, location.origin).pathname));
     if (!detailPayload || detailCalls.length !== 1 || detailCalls[0].method !== 'GET') throw new Error('fresh canonical detail must issue exactly one read-only detail GET: ' + JSON.stringify(detailCalls));
@@ -148,7 +148,7 @@ BROWSER_SCRIPT = r"""
       await new Promise(resolve => setTimeout(resolve, 100));
       if (window.__sourceErrors.length) throw new Error('browser console/runtime errors: ' + JSON.stringify(window.__sourceErrors));
       finish({ mode, detail: captureLayout(view, false), detailApiCalls: detailCalls,
-        detailPayload: { session_id: detailPayload.session_id, turn_index: detailPayload.turn_index,
+        detailPayload: { session_id: detailPayload.group_id, turn_index: detailPayload.turn_index,
           requests: detailPayload.requests, tool_calls: detailPayload.tool_calls, total_tokens: detailPayload.total_tokens,
           cost_usd: detailPayload.cost_usd }, apiCalls: window.__sourceApiCalls,
         errors: window.__sourceErrors, iframeCount: document.querySelectorAll('iframe').length });
@@ -162,8 +162,8 @@ BROWSER_SCRIPT = r"""
     const payloads = overviewResponses();
     if (!payloads.stats || !payloads.list) throw new Error('Usage API payloads missing after detail back');
     const turns = payloads.list.traces || [];
-    const groupId = detailPayload.session_id;
-    const groupTurn = turns.find(turn => turn.session_id === groupId && turn.turn_index === 0);
+    const groupId = detailPayload.group_id;
+    const groupTurn = turns.find(turn => turn.group_id === groupId && turn.turn_index === 0);
     if (!groupTurn) throw new Error('canonical group turn missing from all-time overview API response');
     const statValues = [...view.querySelectorAll('#stat-grid .stat-value')].map(el => el.textContent.trim());
     const total = payloads.stats.totals || {};
@@ -171,8 +171,8 @@ BROWSER_SCRIPT = r"""
     if (statValues[0] !== Number(total.requests || 0).toLocaleString('vi-VN') ||
         statValues[2] !== Number(total.total_tokens || 0).toLocaleString('vi-VN') ||
         statValues[3] !== costText(total.cost_usd)) throw new Error('overview stat cards disagree with the exact stats API response: ' + JSON.stringify({ statValues, total }));
-    const groupButton = [...view.querySelectorAll('#trace-sessions button[data-session]')]
-      .find(button => button.dataset.session === groupId && button.dataset.turn === '0');
+    const groupButton = [...view.querySelectorAll('#trace-sessions button[data-conv]')]
+      .find(button => button.dataset.conv === 'group:' + groupId && button.dataset.turn === '0');
     if (!groupButton || !groupButton.textContent.includes(groupTurn.title) ||
         !groupButton.textContent.includes(groupTurn.model) || !groupButton.textContent.includes(costText(groupTurn.cost_usd))) {
       throw new Error('canonical turn row disagrees with the exact list API response');
@@ -183,10 +183,10 @@ BROWSER_SCRIPT = r"""
     await wait(() => window.__sourceResponses.some(entry => entry.path === '/api/traces' && entry.search.includes('q=')), 'Usage search list request');
     const filtered = window.__sourceResponses.filter(entry => entry.path === '/api/traces' && entry.search.includes('q=')).at(-1);
     if (window.__sourceResponses.filter(entry => entry.path === '/api/traces/stats').length !== statsCount) throw new Error('table-only search changed statistical API reads');
-    if (!filtered?.payload?.traces?.some(turn => turn.session_id === groupId && turn.turn_index === 0)) throw new Error('search API results lost the canonical group turn');
+    if (!filtered?.payload?.traces?.some(turn => turn.group_id === groupId && turn.turn_index === 0)) throw new Error('search API results lost the canonical group turn');
     if (JSON.stringify(payloads.stats.totals) !== JSON.stringify(total)) throw new Error('Usage filter changed API statistical semantics');
-    const filteredButton = [...view.querySelectorAll('#trace-sessions button[data-session]')]
-      .find(button => button.dataset.session === groupId && button.dataset.turn === '0');
+    const filteredButton = [...view.querySelectorAll('#trace-sessions button[data-conv]')]
+      .find(button => button.dataset.conv === 'group:' + groupId && button.dataset.turn === '0');
     if (!filteredButton) throw new Error('filtered group turn row missing');
     const scroller = view.querySelector('#usage-scroll');
     scroller.scrollTop = Math.min(60, scroller.scrollHeight);
@@ -201,9 +201,9 @@ BROWSER_SCRIPT = r"""
     view.querySelector('[data-usage-view="trace"]').click();
     await wait(() => !view.querySelector('#usage-panel-trace').hidden, 'Trace content view');
     filteredButton.click();
-    await wait(() => !detail.hidden && ThycaRouter.currentRoute().hash === '#' + groupId + '/0' &&
+    await wait(() => !detail.hidden && ThycaRouter.currentRoute().hash === '#groups/' + groupId + '/0' &&
       view.querySelector('#detail-body').textContent.includes('GROUP_CANONICAL_REPLY'), 'filtered canonical detail reopened');
-    const reopened = window.__sourceApiCalls.filter(entry => entry.url.includes('/api/traces/' + groupId + '/0'));
+    const reopened = window.__sourceApiCalls.filter(entry => entry.url.includes('/api/traces/groups/' + groupId + '/0'));
     if (reopened.length !== 2) throw new Error('reopened detail did not fetch exactly once per opening');
     view.querySelector('#detail-back').click();
     await wait(() => detail.hidden && !view.querySelector('#usage-overview').hidden && ThycaRouter.currentRoute().hash === '' && document.activeElement === filteredButton,
@@ -231,7 +231,7 @@ BROWSER_SCRIPT = r"""
     const scopedCostHidden = view.querySelector('#card-bot-cost').hidden;
     view.querySelector('[data-usage-view="trace"]').click();
     await wait(() => !view.querySelector('#usage-panel-trace').hidden, 'scoped Trace content');
-    const scopedGroup = [...view.querySelectorAll('#trace-sessions button[data-session]')].find(button => button.dataset.session === groupId && button.dataset.turn === '0');
+    const scopedGroup = [...view.querySelectorAll('#trace-sessions button[data-conv]')].find(button => button.dataset.conv === 'group:' + groupId && button.dataset.turn === '0');
     if (!scopedGroup) throw new Error('scoped canonical shared turn missing');
     scopedGroup.click();
     await wait(() => !detail.hidden && view.querySelector('#detail-body .own-contribution') && view.querySelector('#detail-body').textContent.includes('GROUP_CANONICAL_REPLY'), 'bot contribution plus full canonical detail');
@@ -245,7 +245,7 @@ BROWSER_SCRIPT = r"""
     if (document.querySelectorAll('iframe').length) throw new Error('SPA introduced an iframe');
     await new Promise(resolve => setTimeout(resolve, 100));
     if (window.__sourceErrors.length) throw new Error('browser console/runtime errors: ' + JSON.stringify(window.__sourceErrors));
-    finish({ mode, canonicalId: groupId, detailPayload: { session_id: detailPayload.session_id, turn_index: detailPayload.turn_index,
+    finish({ mode, canonicalId: groupId, detailPayload: { session_id: detailPayload.group_id, turn_index: detailPayload.turn_index,
         requests: detailPayload.requests, tool_calls: detailPayload.tool_calls, total_tokens: detailPayload.total_tokens,
         cost_usd: detailPayload.cost_usd }, statsTotals: total, listTotal: payloads.list.total,
       groupTurn, statValues, searchUrl: filtered.search, searchTotal: filtered.payload.total,
@@ -316,7 +316,7 @@ def _seed_source_fixture(root: Path) -> tuple[str, dict[str, bytes]]:
         for room, title, text in ((dm, "DM source fixture", "DM session public question"),
                                   (group, "Group source fixture", "Group session public question")):
             manager.load(room["id"])
-            manager.set_title(title, source="fixture")
+            manager.set_title(title, source="user")
             manager.append(Message(role="user", content=text, ts="2026-09-20T09:59:00Z"))
             manager.append(Message(role="assistant", content="Fixture acknowledgement", ts="2026-09-20T09:59:01Z",
                                    meta={"kind": "message", "bot_id": "coder", "span_id": span,
@@ -347,7 +347,7 @@ def _source_cli(chrome: str, tmp_path: Path, mode: str, *, width: int = 1280, he
     token = str(int(time.time() * 1000))
     script = BROWSER_SCRIPT.replace("const mode = new URLSearchParams(location.search).get('sourceMode');", f"const mode = new URLSearchParams(location.search).get('sourceMode') || {json.dumps(mode)};")
     script = script.replace("__FIXTURE_GROUP_ID__", json.dumps(group_id))
-    url = f"http://127.0.0.1:{port}/ui/trace/index.html?sourceMode={mode}&fixture={token}#{quote(group_id, safe='-_.')}/0"
+    url = f"http://127.0.0.1:{port}/ui/trace/index.html?sourceMode={mode}&fixture={token}#groups/{quote(group_id, safe='-_.')}/0"
     try:
         _wait_server(process, port)
         screenshot = tmp_path / f"usage-trace-source-{mode}-{width}x{height}.png"

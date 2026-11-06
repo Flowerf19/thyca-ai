@@ -68,6 +68,14 @@ globalThis.icon = (n) => `<svg data-i="${n}"></svg>`;
 globalThis.escapeHTML = (str) => String(str).replace(/[&<>"']/g, (ch) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 globalThis.__roster = {};
+globalThis.dmKey = (botId) => 'dm:' + botId;
+globalThis.groupKey = (groupId) => 'group:' + groupId;
+globalThis.convParts = (key) => {
+  const text = String(key || '');
+  if (text.startsWith('dm:')) return { kind: 'dm', bot_id: text.slice(3) };
+  if (text.startsWith('group:')) return { kind: 'group', group_id: text.slice(6) };
+  return null;
+};
 globalThis.getBot = (id) => globalThis.__roster[id] || null;
 globalThis.avatar = (b) => `<ava:${b.id}/>`;
 globalThis.paletteStyle = (b) => `--c:${b.color || '#000'}`;
@@ -319,18 +327,17 @@ def test_orphan_tool_result_gets_its_own_step(node: str) -> None:
 
 
 def test_flat_trace_rows_keep_order_and_chat_kind(node: str) -> None:
-    """The list preserves API row order without session cards or group
+    """The list preserves API row order without conversation cards or group
     failure summaries, while retaining the private/group context label."""
     rows = [
-        {"session_id": "g1", "turn_index": 2, "title": "Nhóm",
+        {"kind": "group", "group_id": "group-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "turn_index": 2, "title": "Nhóm",
          "started_at": "2026-09-08T10:02:00", "status": "failed",
-         "session_kind": "group", "session_bots": ["a", "b"]},
-        {"session_id": "g1", "turn_index": 0, "title": "Nhóm",
+         "session_bots": ["a", "b"]},
+        {"kind": "group", "group_id": "group-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "turn_index": 0, "title": "Nhóm",
          "started_at": "2026-09-08T10:00:00", "status": "completed",
-         "session_kind": "group", "session_bots": ["a", "b"]},
-        {"session_id": "d1", "turn_index": 0, "title": "DM",
-         "started_at": "2026-09-07T09:00:00", "status": "completed",
-         "session_kind": "dm", "session_dm": "a"},
+         "session_bots": ["a", "b"]},
+        {"kind": "dm", "bot_id": "a", "turn_index": 0, "title": "DM",
+         "started_at": "2026-09-07T09:00:00", "status": "completed"},
     ]
     html = _eval_dash(
         node,
@@ -338,7 +345,7 @@ def test_flat_trace_rows_keep_order_and_chat_kind(node: str) -> None:
         "renderTraceTable(); console.log(JSON.stringify(document.querySelector('#trace-sessions').innerHTML))",
     )
     assert html.count('<li><button') == 3
-    assert html.index('data-turn="2"') < html.index('data-turn="0"') < html.index('data-session="d1"')
+    assert html.index('data-turn="2"') < html.index('data-turn="0"') < html.index('data-conv="dm:a"')
     assert 'Chat nhóm' in html and 'Chat riêng' in html
     assert 'class="tl-session"' not in html and 'lượt lỗi' not in html
 

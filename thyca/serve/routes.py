@@ -2,9 +2,9 @@
 
 Only dispatch (regex to endpoint) plus the handler's JSON/static plumbing
 lives here. Config/onboarding/provider endpoints live in ``config_api``,
-static file helpers in ``static``, session/turn endpoints in
-``sessions_api`` — all take the handler duck-typed, so this module never
-grows endpoint logic back.
+static file helpers in ``static``, DM/group conversation endpoints in
+``conversations_api`` — all take the handler duck-typed, so this module
+never grows endpoint logic back.
 """
 from __future__ import annotations
 
@@ -26,61 +26,73 @@ from thyca.serve import config_api
 from thyca.serve.bot_settings_api import bot_settings_get, bot_settings_post
 from thyca.serve.errors import _with_json
 from thyca.serve.memory import memory_endpoint
-from thyca.serve.sessions_api import (
+from thyca.core.conversation import ConversationRef
+from thyca.serve.conversations_api import (
     bot_dm,
     bot_exchange_thread,
     bot_exchanges,
-    bot_operations,
-    bot_tasks,
     bots_list,
-    session_bots,
-    session_compact,
-    session_create,
-    session_delete,
-    session_get,
-    session_list,
-    session_rename,
-    session_turn,
-    session_turn_cancel,
-    session_turn_follow,
-    session_turn_stream,
-    session_private_followup,
+    conversation_list,
+    dm_compact,
+    dm_operations,
+    dm_private_followup,
+    dm_tasks,
+    dm_turn,
+    dm_turn_cancel,
+    dm_turn_follow,
+    dm_turn_stream,
+    group_bots,
+    group_compact,
+    group_create,
+    group_delete,
+    group_detail,
+    group_operations,
+    group_rename,
+    group_tasks,
+    group_turn,
+    group_turn_cancel,
+    group_turn_follow,
+    group_turn_stream,
 )
 from thyca.serve.static import content_type, safe_file
 from thyca.serve.trace_api import (
-    trace_detail_payload,
+    trace_detail_payload_ref,
     trace_list_payload,
     trace_stats_payload,
 )
 from thyca.sessions import SessionCorrupt, SessionNotFound
-from thyca.sessions.store import SESSION_ID_PATTERN
 from thyca.memory.facade import MemoryFacade
 
 if TYPE_CHECKING:
     from thyca.app.chat_app import ChatApp
 
-_SESSION_RE = re.compile(rf"^/api/sessions/({SESSION_ID_PATTERN})$")
-_SESSION_BOTS_RE = re.compile(rf"^/api/sessions/({SESSION_ID_PATTERN})/bots$")
-_TURN_RE = re.compile(rf"^/api/sessions/({SESSION_ID_PATTERN})/turn$")
-_COMPACT_RE = re.compile(rf"^/api/sessions/({SESSION_ID_PATTERN})/compact$")
-_TURN_STREAM_RE = re.compile(rf"^/api/sessions/({SESSION_ID_PATTERN})/turn/stream$")
-_TURN_CANCEL_RE = re.compile(rf"^/api/sessions/({SESSION_ID_PATTERN})/turn/cancel$")
-_PF_RE = re.compile(rf"^/api/sessions/({SESSION_ID_PATTERN})/private-followup$")
+_BOT = r"([a-z0-9]+(?:-[a-z0-9]+)*)"
+_GROUP = r"(group-[0-9a-f]{32})"
 _TRACE_RE = re.compile(r"^/api/traces$")
 _TRACE_STATS_RE = re.compile(r"^/api/traces/stats$")
-_TRACE_DETAIL_RE = re.compile(rf"^/api/traces/({SESSION_ID_PATTERN})/(\d+)$")
-_BOT_DM_RE = re.compile(r"^/api/bots/([a-z0-9]+(?:-[a-z0-9]+)*)/dm$")
-_BOT_EXCHANGES_RE = re.compile(r"^/api/bots/([a-z0-9]+(?:-[a-z0-9]+)*)/exchanges$")
+_TRACE_DM_DETAIL_RE = re.compile(rf"^/api/traces/dm/{_BOT}/(\d+)$")
+_TRACE_GROUP_DETAIL_RE = re.compile(rf"^/api/traces/groups/{_GROUP}/(\d+)$")
+_BOT_DM_RE = re.compile(rf"^/api/bots/{_BOT}/dm$")
+_DM_OPERATIONS_RE = re.compile(rf"^/api/bots/{_BOT}/dm/operations$")
+_DM_TASKS_RE = re.compile(rf"^/api/bots/{_BOT}/dm/tasks$")
+_DM_TURN_RE = re.compile(rf"^/api/bots/{_BOT}/dm/turn$")
+_DM_TURN_STREAM_RE = re.compile(rf"^/api/bots/{_BOT}/dm/turn/stream$")
+_DM_TURN_CANCEL_RE = re.compile(rf"^/api/bots/{_BOT}/dm/turn/cancel$")
+_DM_COMPACT_RE = re.compile(rf"^/api/bots/{_BOT}/dm/compact$")
+_DM_PF_RE = re.compile(rf"^/api/bots/{_BOT}/dm/private-followup$")
+_GROUP_RE = re.compile(rf"^/api/groups/{_GROUP}$")
+_GROUP_BOTS_RE = re.compile(rf"^/api/groups/{_GROUP}/bots$")
+_GROUP_TURN_RE = re.compile(rf"^/api/groups/{_GROUP}/turn$")
+_GROUP_TURN_STREAM_RE = re.compile(rf"^/api/groups/{_GROUP}/turn/stream$")
+_GROUP_TURN_CANCEL_RE = re.compile(rf"^/api/groups/{_GROUP}/turn/cancel$")
+_GROUP_COMPACT_RE = re.compile(rf"^/api/groups/{_GROUP}/compact$")
+_GROUP_OPERATIONS_RE = re.compile(rf"^/api/bots/{_BOT}/groups/{_GROUP}/operations$")
+_GROUP_TASKS_RE = re.compile(rf"^/api/bots/{_BOT}/groups/{_GROUP}/tasks$")
+_BOT_EXCHANGES_RE = re.compile(rf"^/api/bots/{_BOT}/exchanges$")
 _BOT_EXCHANGE_THREAD_RE = re.compile(
-    r"^/api/bots/([a-z0-9]+(?:-[a-z0-9]+)*)/exchanges/([a-z0-9]+(?:-[a-z0-9]+)*)$"
+    rf"^/api/bots/{_BOT}/exchanges/{_BOT}$"
 )
-_BOT_SETTINGS_RE = re.compile(r"^/api/bots/([a-z0-9]+(?:-[a-z0-9]+)*)/settings$")
-_BOT_OPERATIONS_RE = re.compile(
-    rf"^/api/bots/([a-z0-9]+(?:-[a-z0-9]+)*)/rooms/({SESSION_ID_PATTERN})/operations$"
-)
-_BOT_TASKS_RE = re.compile(
-    rf"^/api/bots/([a-z0-9]+(?:-[a-z0-9]+)*)/rooms/({SESSION_ID_PATTERN})/tasks$"
-)
+_BOT_SETTINGS_RE = re.compile(rf"^/api/bots/{_BOT}/settings$")
 # Worst-case turn body: TEXT_MAX chars \u-escaped (12 bytes per non-BMP char)
 # plus the JSON envelope (model/effort/retry). Must stay above that so a
 # valid 4000-emoji turn is never rejected as "invalid body".
@@ -130,19 +142,27 @@ def make_handler(
             if path == "/api/config":
                 config_api.config_get(self, config_file)
                 return
-            if path == "/api/sessions":
-                session_list(self, chat)
+            if path == "/api/conversations":
+                conversation_list(self, chat, parsed.query)
                 return
             if path == "/api/bots":
                 bots_list(self, chat)
                 return
-            match = _BOT_OPERATIONS_RE.fullmatch(path)
+            match = _DM_OPERATIONS_RE.fullmatch(path)
             if match:
-                bot_operations(self, chat, match.group(1), match.group(2), parsed.query)
+                dm_operations(self, chat, match.group(1), parsed.query)
                 return
-            match = _BOT_TASKS_RE.fullmatch(path)
+            match = _DM_TASKS_RE.fullmatch(path)
             if match:
-                bot_tasks(self, chat, match.group(1), match.group(2), parsed.query)
+                dm_tasks(self, chat, match.group(1), parsed.query)
+                return
+            match = _GROUP_OPERATIONS_RE.fullmatch(path)
+            if match:
+                group_operations(self, chat, match.group(1), match.group(2), parsed.query)
+                return
+            match = _GROUP_TASKS_RE.fullmatch(path)
+            if match:
+                group_tasks(self, chat, match.group(1), match.group(2), parsed.query)
                 return
             match = _BOT_DM_RE.fullmatch(path)
             if match:
@@ -166,20 +186,28 @@ def make_handler(
             if _TRACE_RE.fullmatch(path):
                 self._trace_list(parsed.query)
                 return
-            match = _TRACE_DETAIL_RE.fullmatch(path)
+            match = _TRACE_DM_DETAIL_RE.fullmatch(path)
             if match:
-                self._trace_detail(match.group(1), match.group(2))
+                self._trace_detail(ConversationRef.dm(match.group(1)), match.group(2))
                 return
-            match = _SESSION_RE.fullmatch(path)
+            match = _TRACE_GROUP_DETAIL_RE.fullmatch(path)
             if match:
-                session_get(self, chat, match.group(1))
+                self._trace_detail(ConversationRef.group(match.group(1)), match.group(2))
                 return
-            match = _TURN_STREAM_RE.fullmatch(path)
+            match = _GROUP_RE.fullmatch(path)
             if match:
-                session_turn_follow(self, chat, match.group(1))
+                group_detail(self, chat, match.group(1))
+                return
+            match = _DM_TURN_STREAM_RE.fullmatch(path)
+            if match:
+                dm_turn_follow(self, chat, match.group(1))
+                return
+            match = _GROUP_TURN_STREAM_RE.fullmatch(path)
+            if match:
+                group_turn_follow(self, chat, match.group(1))
                 return
             if path.startswith("/api/sessions"):
-                self._json(404, {"error": "session not found"})
+                self._json(404, {"error": "conversation not found"})
                 return
             if path.startswith("/api/traces"):
                 self._json(404, {"error": "trace not found"})
@@ -209,64 +237,90 @@ def make_handler(
             if path == "/api/memory/canonical":
                 self._memory_post("canonical")
                 return
-            if path == "/api/sessions":
-                session_create(self, chat)
+            if path == "/api/groups":
+                group_create(self, chat)
                 return
-            match = _SESSION_BOTS_RE.fullmatch(path)
+            match = _GROUP_BOTS_RE.fullmatch(path)
             if match:
-                session_bots(self, chat, match.group(1))
+                group_bots(self, chat, match.group(1))
                 return
             match = _BOT_SETTINGS_RE.fullmatch(path)
             if match:
                 bot_settings_post(self, chat, match.group(1))
                 return
-            match = _TURN_RE.fullmatch(path)
+            match = _DM_TURN_RE.fullmatch(path)
             if match:
-                session_turn(self, chat, match.group(1))
+                dm_turn(self, chat, match.group(1))
                 return
-            match = _TURN_STREAM_RE.fullmatch(path)
+            match = _DM_TURN_STREAM_RE.fullmatch(path)
             if match:
-                session_turn_stream(self, chat, match.group(1))
+                dm_turn_stream(self, chat, match.group(1))
                 return
-            match = _TURN_CANCEL_RE.fullmatch(path)
+            match = _DM_TURN_CANCEL_RE.fullmatch(path)
             if match:
-                session_turn_cancel(self, chat, match.group(1))
+                dm_turn_cancel(self, chat, match.group(1))
                 return
-            match = _COMPACT_RE.fullmatch(path)
+            match = _DM_COMPACT_RE.fullmatch(path)
             if match:
-                session_compact(self, chat, match.group(1))
+                dm_compact(self, chat, match.group(1))
                 return
-            match = _PF_RE.fullmatch(path)
+            match = _DM_PF_RE.fullmatch(path)
             if match:
-                session_private_followup(self, chat, match.group(1))
+                dm_private_followup(self, chat, match.group(1))
+                return
+            match = _GROUP_TURN_RE.fullmatch(path)
+            if match:
+                group_turn(self, chat, match.group(1))
+                return
+            match = _GROUP_TURN_STREAM_RE.fullmatch(path)
+            if match:
+                group_turn_stream(self, chat, match.group(1))
+                return
+            match = _GROUP_TURN_CANCEL_RE.fullmatch(path)
+            if match:
+                group_turn_cancel(self, chat, match.group(1))
+                return
+            match = _GROUP_COMPACT_RE.fullmatch(path)
+            if match:
+                group_compact(self, chat, match.group(1))
                 return
             if path.startswith("/api/sessions"):
-                self._json(404, {"error": "session not found"})
+                self._json(404, {"error": "conversation not found"})
                 return
             if path.startswith("/api/traces"):
                 self._json(404, {"error": "trace not found"})
                 return
             self._send(405, b"method not allowed", "text/plain; charset=utf-8")
 
+        # Delete one explicit group; every legacy session path is gone.
         def do_DELETE(self) -> None:
             path = urlparse(self.path).path
+            if path.startswith("/api/sessions"):
+                self._json(404, {"error": "conversation not found"})
+                return
             if path.startswith("/api/bots/"):
                 self._json(404, {"error": "bot not found"})
                 return
-            app = self._chat()
-            if app is None:
+            match = _GROUP_RE.fullmatch(path)
+            if match:
+                group_delete(self, chat, match.group(1))
                 return
-            session_delete(self, app, path)
+            self._json(404, {"error": "conversation not found"})
 
+        # Rename one explicit group; every legacy session path is gone.
         def do_PATCH(self) -> None:
             path = urlparse(self.path).path
+            if path.startswith("/api/sessions"):
+                self._json(404, {"error": "conversation not found"})
+                return
             if path.startswith("/api/bots/"):
                 self._json(404, {"error": "bot not found"})
                 return
-            app = self._chat()
-            if app is None:
+            match = _GROUP_RE.fullmatch(path)
+            if match:
+                group_rename(self, chat, match.group(1))
                 return
-            session_rename(self, app, path)
+            self._json(404, {"error": "conversation not found"})
 
         def log_message(self, format: str, *args: object) -> None:
             return
@@ -312,20 +366,28 @@ def make_handler(
                 traceback.print_exc(file=sys.stderr)
                 self._json(503, {"error": "trace unavailable"})
 
-        def _trace_detail(self, session_id: str, turn_index: str) -> None:
+        # Read one trace turn for an explicit DM or group reference.
+        def _trace_detail(self, ref: ConversationRef, turn_index: str) -> None:
             app = self._chat()
             if app is None:
                 return
-            # _TRACE_DETAIL_RE only matches \d+: int() cannot fail here.
+            # The trace patterns only match \d+: int() cannot fail here.
             idx = int(turn_index)
+            from thyca.conversations.store.contracts import ConversationStoreError
+
             try:
-                self._json(200, trace_detail_payload(app, session_id, idx))
+                self._json(200, trace_detail_payload_ref(app, ref, idx))
             except SessionNotFound:
-                self._json(404, {"error": "session not found"})
+                self._json(404, {"error": "conversation not found"})
             except SessionCorrupt:
-                self._json(503, {"error": "session unreadable"})
-            except TraceExecutionError as exc:
-                self._json(503, {"error": str(exc)})
+                self._json(503, {"error": "conversation unreadable"})
+            except ConversationStoreError as exc:
+                if getattr(exc, "scope", "global") == "local":
+                    self._json(404, {"error": "conversation not found"})
+                else:
+                    self._json(503, {"error": "conversation unavailable"})
+            except TraceExecutionError:
+                self._json(503, {"error": "trace unavailable"})
             except ValueError:
                 self._json(404, {"error": "trace not found"})
             except Exception:

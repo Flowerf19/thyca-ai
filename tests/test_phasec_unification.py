@@ -438,8 +438,24 @@ def test_root_and_child_retry_truncate_both_transcripts_and_keep_mail(tmp_path: 
             assert app._runtime.room_cursor(bot_id, room) == old_cursor
             public_after_failure = app._sessions.store.load(room).messages
             assert [row.role for row in public_after_failure].count("user") == public_users_before_retry
+            # Append-only: the failure is a trailing system marker; the
+            # trace projection stamps it onto its user row.
+            _markers = [row for row in public_after_failure
+                        if row.role == "system"
+                        and isinstance((row.meta or {}).get("error"), dict)]
+            assert _markers and _markers[-1].meta["error"].get("code")
+            from thyca.conversations.store.turn_pipeline import project_for_trace
+            from thyca.conversations.store.contracts import _view
+            from thyca.conversations.store.runtime import resolve_ref
+
+            _proj = project_for_trace(_view(
+                resolve_ref(app._root, room),
+                {"title": None, "title_source": None, "naming_attempted": False,
+                 "participants": ["thyca", "coder"]},
+                tuple(public_after_failure),
+            ))
             public_last_user = next(
-                message for message in reversed(public_after_failure)
+                message for message in reversed(_proj.messages)
                 if message.role == "user"
             )
             assert (public_last_user.meta or {}).get("error", {}).get("code")
@@ -455,8 +471,16 @@ def test_root_and_child_retry_truncate_both_transcripts_and_keep_mail(tmp_path: 
             internal = _rows(app, bot_id, room)
             assert [row.role for row in public].count("user") == public_users_before_retry
             assert [row.role for row in internal].count("user") == 1
+            # Recovered: the projection no longer reports a failure.
+            _proj2 = project_for_trace(_view(
+                resolve_ref(app._root, room),
+                {"title": None, "title_source": None, "naming_attempted": False,
+                 "participants": ["thyca", "coder"]},
+                tuple(public),
+            ))
             public_last_user = next(
-                message for message in reversed(public) if message.role == "user"
+                message for message in reversed(_proj2.messages)
+                if message.role == "user"
             )
             assert not (public_last_user.meta or {}).get("error")
             assert not (internal[0].meta or {}).get("error")

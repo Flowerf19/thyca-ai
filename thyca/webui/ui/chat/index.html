@@ -5,10 +5,10 @@
 <meta name="theme-color" content="#f1e9d8"><title>Thyca — Sổ trò chuyện</title><link rel="icon" href="data:,">
 <!-- Chat UI wired to the real Thyca backend (js/data.js fetches live data;
      js/chat.js streams turns). Based on the approved prototype design.
-     API: GET /api/bots, GET /api/bots/<id>/dm, GET /api/sessions,
-          GET/PATCH /api/sessions/<id>, POST /api/sessions, GET /api/config,
-          POST /api/sessions/<id>/turn/stream, POST /api/sessions/<id>/turn/cancel,
-          GET /api/sessions/<id>/turn/stream (replay an in-flight turn).
+     API: GET /api/bots, GET /api/bots/<id>/dm, GET /api/conversations,
+          GET /api/groups/<group_id>, POST /api/groups, GET /api/config,
+          POST turn/stream and turn/cancel on /api/bots/<id>/dm or /api/groups/<group_id>,
+          GET turn/stream on the same doors (replay an in-flight turn).
      NDJSON mapping: turn.accepted -> waiting; llm.started/llm.thinking -> thinking;
        tool.started -> working; llm.content -> writing; turn.completed -> done;
        turn.failed -> error. See window.ThycaPrototype below for the adapter surface.

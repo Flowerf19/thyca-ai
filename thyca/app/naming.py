@@ -41,7 +41,7 @@ async def _name_if_needed(
     # claim lock and the flag file is the cross-reload record; two
     # processes sharing a sessions dir could still double-fire.
     try:
-        sessions.mark_naming_attempted()
+        sessions.mark_naming_attempted(actor=bot_id)
     except Exception:
         return False
     emit_event(
@@ -66,7 +66,7 @@ async def _name_if_needed(
         latency_ms = int((perf_counter() - started) * 1000)
         if cleaned is not None:
             try:
-                stored = sessions.set_title_if_missing(cleaned)
+                stored = sessions.set_title_if_missing(cleaned, actor=bot_id)
             except Exception:
                 stored = None
             if stored is not None:

@@ -62,7 +62,7 @@ def test_bot_scope_uses_child_parts_and_never_membership(monkeypatch):
     own = trace_api.trace_list_payload(None, "bot_id=coder")
     assert own["total"] == 2  # one shared turn, one private turn
     shared, private = own["traces"]
-    assert (shared["session_id"], shared["turn_index"]) == ("group", 0)
+    assert (shared["group_id"], shared["turn_index"]) == ("group", 0)
     assert shared["bot_id"] == "coder"
     assert shared["requests"] == 3
     assert shared["tool_calls"] == 3
@@ -171,7 +171,7 @@ def test_scope_does_not_change_full_detail_or_shared_status(monkeypatch):
 
 
 def test_source_http_scopes_shared_and_private_work_without_writes(tmp_path):
-    """Exercise real session files -> scan -> HTTP stats/list -> full detail."""
+    """Exercise store doors -> scan -> HTTP stats/list -> full detail."""
     from test_serve_trace import _chat, _json, _start, _stop
     from thyca.sessions import SessionManager
 
@@ -182,15 +182,31 @@ def test_source_http_scopes_shared_and_private_work_without_writes(tmp_path):
     try:
         for source_id in ("group", "private", "unattributed"):
             source_turns = [row for row in expected if row.session_id == source_id]
-            session = manager.create()
-            ids[source_id] = session.id
-            manager.store.append_bots(session.path, source_turns[0].session_bots)
             if source_id == "private":
-                manager.store.append_dm(session.path, "coder")
+                # The coder DM door (door id is the bot id itself).
+                session = manager.ensure_dm("coder")
+            else:
+                session = manager.create()
+                manager.store.append_bots(
+                    session.path, list(source_turns[0].session_bots))
+                manager.load(session.id)
+            ids[source_id] = session.id
             for turn in source_turns:
                 for message in turn.messages:
-                    manager.append(message)
-        baseline = {path: path.read_bytes() for path in manager.store.list_paths()}
+                    # Assistant rows are recorded by their bot (an
+                    # unattributed row is recorded by a member writer;
+                    # its meta still names no bot). User rows use the
+                    # server-side append (no bot actor is claimed).
+                    _bot = (message.meta or {}).get("bot_id") or "thyca"
+                    manager.append(
+                        message,
+                        actor=_bot if message.role == "assistant" else None,
+                    )
+        # Logical no-write proof: door contents before the HTTP reads.
+        baseline = {
+            door_id: [(m.role, m.content) for m in manager.store.load(door_id).messages]
+            for door_id in ids.values()
+        }
         httpd, thread = _start(tmp_path, chat)
         try:
             overview = _json(httpd, "/api/traces/stats")
@@ -204,14 +220,18 @@ def test_source_http_scopes_shared_and_private_work_without_writes(tmp_path):
             assert own["totals"]["requests"] == 4
             listing = _json(httpd, "/api/traces?bot_id=coder")
             assert listing["total"] == 2
-            shared = next(row for row in listing["traces"] if row["session_id"] == ids["group"])
+            shared = next(row for row in listing["traces"] if row.get("group_id") == ids["group"])
             assert shared["total_tokens"] == 60
             assert shared["requests"] == 3
-            detail = _json(httpd, f"/api/traces/{ids['group']}/0")
+            detail = _json(httpd, f"/api/traces/groups/{ids['group']}/0")
             assert detail["total_tokens"] == 170
             assert detail["requests"] == 5
             assert {entry["bot_id"] for entry in detail["bot_breakdown"]} == {"thyca", "coder"}
-            assert {path: path.read_bytes() for path in baseline} == baseline
+            after = {
+                door_id: [(m.role, m.content) for m in manager.store.load(door_id).messages]
+                for door_id in ids.values()
+            }
+            assert after == baseline
         finally:
             _stop(httpd, thread)
     finally:

@@ -1,7 +1,7 @@
 """Contract §6: frozen FE↔BE surface asserted in one place.
 
-Any change here is a contract break: stop and report instead of editing
-these assertions to fit new behavior.
+The DM/group hard cut replaced /api/sessions* with explicit doors; this
+file pins the new surface with the same strength as the old one.
 """
 from __future__ import annotations
 
@@ -53,30 +53,34 @@ def _post(httpd, path: str, payload: dict) -> dict:
 
 
 def test_contract_bots_endpoints(tmp_path: Path) -> None:
+    from thyca.bots.card import BotCard
+
     app = _chat(tmp_path)
     httpd = _serve(app, tmp_path)
     try:
         bots = _get(httpd, "/api/bots")
         assert isinstance(bots["bots"], list)
         assert bots["bots"][0]["id"] == "thyca"
-        # POST /api/sessions accepts bots?.
-        created = _post(httpd, "/api/sessions", {"bots": ["thyca"]})
-        assert created["bots"] == ["thyca"]
-        # Session detail payload gains bots:[] (checked before the next
-        # create: blank sessions are pruned by discard_empty on create).
-        detail = _get(httpd, f"/api/sessions/{created['id']}")
-        assert detail["bots"] == ["thyca"]
-        created2 = _post(httpd, "/api/sessions", {})
-        assert created2["bots"] == ["thyca"]
-        # Session list payloads gain bots:[] (blank rooms are unlisted).
-        listed = _get(httpd, "/api/sessions")
-        assert all("bots" in session for session in listed["sessions"])
+        # The fixed DM door: GET /api/bots/<bot>/dm, typed identity out.
+        dm = _get(httpd, "/api/bots/thyca/dm")
+        assert dm["kind"] == "dm" and dm["bot_id"] == "thyca"
+        assert dm["bots"] == ["thyca"]
+        assert "id" not in dm and "session_id" not in dm
+        # Conversation list payloads carry kind + typed identity + bots.
+        app._bots.create(BotCard(bot_id="coder", name="coder", role="C",
+                                 description="D", persona="P"))
+        _post(httpd, "/api/groups", {"bots": ["thyca", "coder"]})
+        listed = _get(httpd, "/api/conversations")
+        assert listed["conversations"]
+        for conv in listed["conversations"]:
+            assert "bots" in conv and conv["kind"] in ("dm", "group")
+            assert ("bot_id" in conv) != ("group_id" in conv)
     finally:
         httpd.shutdown()
         app.shutdown()
 
 
-def test_contract_session_bots_add_remove(tmp_path: Path) -> None:
+def test_contract_group_bots_add_remove(tmp_path: Path) -> None:
     from thyca.bots.card import BotCard
 
     app = _chat(tmp_path)
@@ -84,14 +88,15 @@ def test_contract_session_bots_add_remove(tmp_path: Path) -> None:
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="C",
                                  description="D", persona="P"))
-        created = _post(httpd, "/api/sessions", {"bots": ["thyca", "coder"]})
-        assert created["kind"] == "group"
-        out = _post(httpd, f"/api/sessions/{created['id']}/bots",
+        created = _post(httpd, "/api/groups", {"bots": ["thyca", "coder"]})
+        assert created["kind"] == "group" and created["group_id"].startswith("group-")
+        out = _post(httpd, f"/api/groups/{created['group_id']}/bots",
                     {"bot_id": "coder", "action": "remove"})
         assert out["bots"] == ["thyca"]
-        out = _post(httpd, f"/api/sessions/{created['id']}/bots",
+        out = _post(httpd, f"/api/groups/{created['group_id']}/bots",
                     {"bot_id": "coder", "action": "add"})
-        assert out == {"ok": True, "id": created["id"], "bots": ["thyca", "coder"]}
+        assert out == {"ok": True, "kind": "group", "group_id": created["group_id"],
+                       "bots": ["thyca", "coder"]}
     finally:
         httpd.shutdown()
         app.shutdown()

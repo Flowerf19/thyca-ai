@@ -108,7 +108,7 @@ function consentKeyOf(card) {
 }
 function cardArticle(m, detail, time, userAfter) {
   const card = m.meta.card;
-  const botId = String(m.meta?.bot_id || detail.dm || '');
+  const botId = String(m.meta?.bot_id || detail.bot_id || '');
   const names = (m.tool_calls || []).map(c => c.skill || c.name).filter(Boolean);
   // Consent decisions are never echoed as a user row by the backend, so
   // a decided card stays disabled via the decided set as well.
@@ -162,7 +162,7 @@ function renderTranscript(detail) {
   // collapse into one expandable entry; anything else flushes the
   // open run. DM: exchange rows stay hidden here — the grouped
   // "N messages with <Bot>" entry + thread modal own the DM view.
-  const hidePeerRows = !!(detail && detail.dm);
+  const hidePeerRows = !!(detail && detail.kind === 'dm');
   // Stamp each rendered article with its message ts so DM exchange
   // entries can slot in at their last-exchange time (see below).
   const stamp = (html, ts) => ts
@@ -202,7 +202,7 @@ function renderTranscript(detail) {
     }
     flushPeerRun();
     const names = (m.tool_calls || []).map(c => c.skill || c.name).filter(Boolean);
-    nodes.push(stamp(assistantMessage(String(m.meta?.bot_id || detail.dm || ''), contentHtml(m.content), time, names), m.ts));
+    nodes.push(stamp(assistantMessage(String(m.meta?.bot_id || detail.bot_id || ''), contentHtml(m.content), time, names), m.ts));
   }
   flushPeerRun();
   return nodes.join('');
@@ -222,7 +222,7 @@ function botFace(id) {
 }
 async function renderExchangeGroups(detail) {
   document.querySelectorAll('#message-list [data-exchange-partner]').forEach(n => n.remove());
-  const owner = detail && detail.dm;
+  const owner = detail && detail.kind === 'dm' ? detail.bot_id : null;
   const sid = currentSession;
   if (!owner) return;
   let partners = [];
@@ -310,16 +310,18 @@ function answerCardLabel(label, button) {
     () => { if (button) button.disabled = false; });
   return true;
 }
+// Decide one private follow-up in the current DM only.
 async function decidePrivateFollowup(pendingId, revision, choice, button) {
   const rev = Number(revision);
   const sessionId = currentSession;
+  const parts = convParts(sessionId);
   if (!pendingId || !Number.isInteger(rev) || !choice
-      || !sessionId || runs.has(sessionId)) return false;
+      || !sessionId || !parts || parts.kind !== 'dm' || runs.has(sessionId)) return false;
   const key = `${pendingId}:${String(rev)}`;
   const group = button ? [...button.closest('.card-choices')?.querySelectorAll('.card-choice') || []] : [];
   group.forEach(b => { b.disabled = true; });
   try {
-    await postJson(`/api/sessions/${encodeURIComponent(sessionId)}/private-followup`,
+    await postJson(`/api/bots/${encodeURIComponent(parts.bot_id)}/dm/private-followup`,
       { pending_id: pendingId, revision: rev, choice });
   } catch (err) {
     group.forEach(b => { b.disabled = false; });
@@ -328,7 +330,7 @@ async function decidePrivateFollowup(pendingId, revision, choice, button) {
   }
   decidedConsents.add(key);
   try {
-    const fresh = await getJson(`/api/sessions/${encodeURIComponent(sessionId)}`);
+    const fresh = await getJson(`/api/bots/${encodeURIComponent(parts.bot_id)}/dm`);
     if (currentSession === sessionId && fresh && Array.isArray(fresh.messages)) $('#message-list').innerHTML = renderTranscript(fresh);
   } catch { /* keep the answered-disabled chips as-is */ }
   return true;
@@ -347,23 +349,30 @@ function updateComposer() {
 }
 function saveHistory() { if (currentSession && !runs.has(currentSession)) histories.set(currentSession, $('#message-list').innerHTML); }
 
-async function loadSession(id, title, botId) {
-  if (window.ThycaRouter?.currentPage() === 'chat') ThycaRouter.updateCurrent({ search: '?s=' + encodeURIComponent(id), hash: '' });
+// Open one conversation by its typed key (dm:<bot> or group:<group_id>).
+async function loadConversation(id, title, botId) {
+  const parts = convParts(id);
+  if (!parts) return;
+  if (window.ThycaRouter?.currentPage() === 'chat') {
+    ThycaRouter.updateCurrent({ search: parts.kind === 'group'
+      ? '?g=' + encodeURIComponent(parts.group_id)
+      : '?bot=' + encodeURIComponent(parts.bot_id), hash: '' });
+  }
   stopLab(); setGroupActivity(null); saveHistory();
   currentSession = id; if (botId) selectedBot = botId;
   const nav = nextChatNav();
   updateComposer();
   $('#chat-title').textContent = title || '…';
   try {
-    const detail = await getJson(`/api/sessions/${encodeURIComponent(id)}`);
+    const detail = await getJson(convDetailUrl(id));
     if (nav !== chatNavCurrent() || currentSession !== id) return;   // user switched meanwhile
     $('#chat-title').textContent = detail.title || title || 'Chưa đặt tên';
     const group = detail.kind === 'group';
-    $('#session-eyebrow').textContent = group ? 'Hội thoại chung' : 'Sổ trò chuyện · ' + ((getBot(detail.dm || selectedBot) || {}).name || 'Thyca');
-    if (detail.dm && getBot(detail.dm)) selectedBot = detail.dm;
+    $('#session-eyebrow').textContent = group ? 'Hội thoại chung' : 'Sổ trò chuyện · ' + ((getBot(detail.bot_id || selectedBot) || {}).name || 'Thyca');
+    if (detail.bot_id && getBot(detail.bot_id)) selectedBot = detail.bot_id;
     $('#message-list').innerHTML = renderTranscript(detail);
     void renderExchangeGroups(detail);
-    if (detail.running) followRunningTurn(id);        // API: GET /api/sessions/<id>/turn/stream replay
+    if (detail.running) followRunningTurn(id);        // API: GET turn/stream replay on the typed door
   } catch (err) {
     if (nav !== chatNavCurrent() || currentSession !== id) return;
     $('#message-list').innerHTML = `<article class="conversation-empty"><h2>Không tải được cuộc trò chuyện</h2><p>${escapeHTML(err.message)}</p></article>`;
@@ -374,7 +383,10 @@ async function loadSession(id, title, botId) {
   if (typeof refreshOpenPocketsOnWindowChange === 'function') refreshOpenPocketsOnWindowChange();
   closeMobile(); busy(runs.has(id)); toBottom(true);
 }
+// Keep the old name as a thin alias for sidebar and router callers.
+function loadSession(id, title, botId) { return loadConversation(id, title, botId); }
 
+// Open one bot's fixed DM and show it as the current conversation.
 async function selectBot(id) {
   const b = getBot(id); if (!b) return;
   if (window.ThycaRouter?.currentPage() === 'chat') ThycaRouter.updateCurrent({ search: '?bot=' + encodeURIComponent(id), hash: '' });
@@ -385,17 +397,18 @@ async function selectBot(id) {
   try {                                          // API: GET /api/bots/<id>/dm — fixed DM, find-or-create
     const detail = await getJson(`/api/bots/${encodeURIComponent(id)}/dm`);
     if (nav !== chatNavCurrent()) return;        // user switched meanwhile
-    saveHistory(); currentSession = detail.id; selectedBot = id;
+    const key = dmKey(detail.bot_id || id);
+    saveHistory(); currentSession = key; selectedBot = id;
     updateComposer(); await refreshComposerInherit(id, nav);
     if (nav !== chatNavCurrent()) return;
     $('#chat-title').textContent = detail.title || b.name;
     $('#session-eyebrow').textContent = 'Sổ trò chuyện · ' + b.name;
     $('#message-list').innerHTML = renderTranscript(detail);
     void renderExchangeGroups(detail);
-    if (detail.running) followRunningTurn(detail.id);   // API: GET turn/stream replay — rejoin in-flight turn after reload
+    if (detail.running) followRunningTurn(key);   // API: GET turn/stream replay — rejoin in-flight turn after reload
     bots.forEach(updateCard);
     if (typeof refreshOpenPocketsOnWindowChange === 'function') refreshOpenPocketsOnWindowChange();
-    busy(runs.has(detail.id)); toBottom(true);
+    busy(runs.has(key)); toBottom(true);
   } catch (err) {
     if (nav !== chatNavCurrent()) return;
     toast('Không mở được phiên với ' + b.name + ': ' + err.message);
@@ -406,7 +419,7 @@ function isNearBottom() { const e = $('#conversation-scroll'); return e.scrollHe
 function toBottom(force = false) { const e = $('#conversation-scroll'); if (force || isNearBottom()) e.scrollTop = e.scrollHeight; }
 function busy(value) { $('#send-message').hidden = value; $('#stop-button').hidden = !value; $('#message-list').setAttribute('aria-busy', String(value)); }
 
-/* POST /api/sessions/<id>/turn/stream — NDJSON. Events drive the seal
+/* POST turn/stream on the typed DM/group door — NDJSON. Events drive the seal
    (handleEvent maps them to lifecycle states) and stream into the live
    message node. Exactly one terminal event: turn.completed / cancelled / failed. */
 async function sendTurn(text, botId = selectedBot, { retry = false } = {}) {
@@ -433,7 +446,7 @@ async function sendTurn(text, botId = selectedBot, { retry = false } = {}) {
   if ($('#composer-model')?.value) body.model = $('#composer-model').value;
   if ($('#thinking-effort')?.value) body.effort = $('#thinking-effort').value;
   try {
-    const res = await fetch(`/api/sessions/${encodeURIComponent(token.sessionId)}/turn/stream`, {
+    const res = await fetch(convDoorUrl(token.sessionId, 'turn/stream'), {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
     if (!res.ok) {
@@ -556,18 +569,18 @@ function handleStreamEvent(token, ev) {
     case 'turn.failed': token.phase = 'settled'; if (fb) { clearLiveCalls(fb, token.sessionId); updateCard(fb); if (typeof refreshOpenPocket === 'function') refreshOpenPocket(fb); } cancelTurn(token, ev.message || 'Lượt trả lời gặp lỗi.', 'gặp lỗi'); setState(botId, 'error'); break;
     case 'llm.retry': toast(`Đang thử lại (${ev.attempt}/${ev.max_attempts})…`); break;
   }
-  const group = groups.find(g => g.id === token.sessionId);
+  const group = groups.find(g => groupKey(g.id) === token.sessionId);
   if (group && ev.bot_id) setGroupActivity(group.id, ev.bot_id);
 }
 
-/* turn.completed carries the authoritative session detail — re-render the
+/* turn.completed carries the authoritative conversation detail — re-render the
    transcript from it so streamed deltas reconcile with stored messages. */
 async function finishTurn(token, detail) {
   clearInterval(token.interval); clearMusic(token.botId); setGroupActivity(null);
   runs.delete(token.sessionId); if (run === token) run = [...runs.values()].at(-1) || null; busy(runs.has(currentSession));
   if (currentSession === token.sessionId) {
     try {
-      const fresh = detail && detail.messages ? detail : await getJson(`/api/sessions/${encodeURIComponent(token.sessionId)}`);
+      const fresh = detail && detail.messages ? detail : await getJson(convDetailUrl(token.sessionId));
       $('#message-list').innerHTML = renderTranscript(fresh);
       void renderExchangeGroups(fresh);
       if (fresh.title) $('#chat-title').textContent = fresh.title;
@@ -588,9 +601,10 @@ function cancelTurn(token, message, byline) {
   refreshSessions().then(() => bots.forEach(updateCard)).catch(() => {});
 }
 
+// Cancel the current conversation's in-flight turn on its typed door.
 async function stopRun() {
   const token = runs.get(currentSession) || run; if (!token) return false;
-  try { await fetch(`/api/sessions/${encodeURIComponent(token.sessionId)}/turn/cancel`, { method: 'POST' }); }   // API: POST turn/cancel
+  try { await fetch(convDoorUrl(token.sessionId, 'turn/cancel'), { method: 'POST' }); }   // API: POST turn/cancel
   catch { token.phase = 'settled'; cancelTurn(token, 'Đã dừng lượt trả lời.', 'đã dừng'); setState(token.botId, 'idle'); }
   announce('Đã dừng.'); return true;
 }
@@ -621,7 +635,7 @@ function followRunningTurn(sessionId) {
   const token = { botId: b?.id || '', sessionId, start: Date.now(), node, phase: 'following', timers: [], tools: [] };
   runs.set(sessionId, token); run = token; busy(true);
   if (b) token.interval = setInterval(() => { if (runs.get(sessionId) !== token) { clearInterval(token.interval); return; } b.elapsed = Math.floor((Date.now() - token.start) / 1000); const e = $('.elapsed', $('#bot-' + b.id)); if (e) e.textContent = b.elapsed + ' giây'; }, 1000);
-  fetch(`/api/sessions/${encodeURIComponent(sessionId)}/turn/stream`)
+  fetch(convDoorUrl(sessionId, 'turn/stream'))
     .then(res => res.ok ? readNdjson(res.body, ev => handleStreamEvent(token, ev)) : Promise.reject(new Error('HTTP ' + res.status)))
     .then(() => { if (runs.get(sessionId) === token && token.phase !== 'settled') finishTurn(token); })
     .catch(() => { if (runs.get(sessionId) === token) finishTurn(token); });

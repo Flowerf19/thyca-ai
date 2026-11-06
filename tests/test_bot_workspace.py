@@ -168,14 +168,16 @@ def test_bind_dm_and_group_window_metadata(tmp_path: Path) -> None:
 def test_bind_window_mints_session_id_for_new_window(tmp_path: Path) -> None:
     import re
 
-    from thyca.sessions.store import SESSION_ID_PATTERN
-
+    # Canonical per-bot timeline ids are an internal concept with their
+    # own timestamp grammar; they are never public DM/group door ids.
     store = WorkspaceStore(tmp_path)
     binding = store.bind_window("coder", WindowRef(
         window_id="w1", channel_id="webui", kind="dm",
         participants=("coder",)))
     assert binding.internal_session_id
-    assert re.fullmatch(SESSION_ID_PATTERN, binding.internal_session_id)
+    assert re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_[0-9a-f]{4}",
+        binding.internal_session_id)
     assert binding.cursor is None
     loaded = store.get_binding("coder", "w1")
     assert loaded.internal_session_id == binding.internal_session_id

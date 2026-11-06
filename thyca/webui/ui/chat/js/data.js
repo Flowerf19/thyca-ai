@@ -1,11 +1,11 @@
 // Chat data layer — shared backend calls live in ../share/data.js.
-// API: GET /api/bots, GET /api/sessions, GET /api/config,
+// API: GET /api/bots, GET /api/conversations, GET /api/config,
 //      GET /api/config/status, GET /api/bots/<id>/settings,
-//      GET /api/bots/<id>/dm, GET /api/sessions/<id>,
-//      GET /api/bots/<id>/rooms/<session>/operations.
+//      GET /api/bots/<id>/dm, GET /api/groups/<group_id>,
+//      GET /api/bots/<id>/dm/operations.
 'use strict';
 const histories = new Map();
-const runs = new Map();          // sessionId -> in-flight turn token (backend allows one per session)
+const runs = new Map();          // typed key dm:<bot>/group:<id> -> in-flight turn token
 let currentSession = '', attachment = null;
 
 /* Composer overrides: an empty value means "inherit the responding bot's

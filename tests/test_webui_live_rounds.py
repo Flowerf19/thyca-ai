@@ -36,9 +36,9 @@ doc.querySelector('#team-bot-list').innerHTML = ui.bots.map(ui.card).join('');
 ui.updateCard(ui.bots[0]);
 const b = ui.bots[0];
 ui.selectedBot = 'thyca';
-ui.currentSession = 's1';
+ui.currentSession = 'dm:thyca';
 globalThis.fetch = async (url) => {
-  if (url === '/api/sessions') return { ok: true, json: async () => ({ sessions: [] }) };
+  if (url === '/api/conversations') return { ok: true, json: async () => ({ conversations: [] }) };
   return { ok: false, status: 404, json: async () => ({ error: 'no route ' + url }) };
 };
 
@@ -46,8 +46,8 @@ const feed = () => b.liveCalls.map(f => ({ kind: f.kind, name: f.name, call_id: 
 const node = doc.createElement('article');
 node.innerHTML = `<header class="message-byline"><span>Thyca</span><time>đang lắng nghe</time></header><div class="live-copy"></div>`;
 doc.querySelector('#message-list').append(node);
-const token = { botId: 'thyca', sessionId: 's1', start: Date.now(), node, phase: 'waiting', timers: [], tools: [] };
-ui.runs.set('s1', token);
+const token = { botId: 'thyca', sessionId: 'dm:thyca', start: Date.now(), node, phase: 'waiting', timers: [], tools: [] };
+ui.runs.set('dm:thyca', token);
 const fire = (ev) => ui.handleStreamEvent(token, ev);
 const streamText = () => node.querySelector('.stream-text')?.textContent ?? null;
 const streamNodes = () => node.querySelectorAll('.stream-text').length;
@@ -87,19 +87,20 @@ result.readActive = feed();
 fire({ type: 'tool.finished', name: 'read', call_id: 'r3' });
 result.finalFeed = { feed: feed() };
 
-fire({ type: 'turn.completed', detail: { id: 's1', running: false, messages: [
+fire({ type: 'turn.completed', detail: { kind: 'dm', bot_id: 'thyca', running: false, messages: [
   { role: 'assistant', content: 'done s1', meta: { bot_id: 'thyca' } },
 ] } });
 await settle();
 result.afterCompleted = {
   feed: feed(),
   listHasDone: doc.querySelector('#message-list').textContent.includes('done s1'),
-  tracked: ui.runs.has('s1'),
+  tracked: ui.runs.has('dm:thyca'),
 };
 
 // --- re-follow: the replay stream builds one fresh live node, deltas apply
 //     once, and the stored transcript swaps in at turn.completed ---
-ui.currentSession = 's2';
+const GID = 'group-' + 'b'.repeat(32);
+ui.currentSession = 'group:' + GID;
 const queue = [];
 let waiter = null;
 const reader = { read: () => new Promise(resolve => {
@@ -111,10 +112,10 @@ const push = (line) => {
 };
 globalThis.fetch = async (url) => {
   if (url.endsWith('/turn/stream')) return { ok: true, status: 200, body: { getReader: () => reader } };
-  if (url === '/api/sessions') return { ok: true, json: async () => ({ sessions: [] }) };
-  return { ok: true, json: async () => ({ id: 's2', running: false, messages: [] }) };
+  if (url === '/api/conversations') return { ok: true, json: async () => ({ conversations: [] }) };
+  return { ok: true, json: async () => ({ kind: 'group', group_id: GID, running: false, messages: [] }) };
 };
-ui.followRunningTurn('s2');
+ui.followRunningTurn('group:' + GID);
 await settle();
 push(JSON.stringify({ type: 'turn.accepted' }) + '\n');
 push(JSON.stringify({ type: 'llm.content', delta: 'replay-one' }) + '\n');
@@ -125,7 +126,7 @@ result.refollowMid = {
   streamNodes: followNode?.querySelectorAll('.stream-text').length ?? -1,
   streamText: followNode?.querySelector('.stream-text')?.textContent ?? null,
 };
-push(JSON.stringify({ type: 'turn.completed', detail: { id: 's2', running: false,
+push(JSON.stringify({ type: 'turn.completed', detail: { kind: 'group', group_id: GID, running: false,
   messages: [{ role: 'assistant', content: 'replay-one', meta: { bot_id: 'thyca' } }] } }) + '\n');
 push(null);
 await settle();
@@ -133,7 +134,7 @@ const listText = doc.querySelector('#message-list').textContent;
 result.refollowDone = {
   liveNodes: doc.querySelectorAll('#message-list .running-response').length,
   occurrences: listText.split('replay-one').length - 1,
-  tracked: ui.runs.has('s2'),
+  tracked: ui.runs.has('group:' + GID),
 };
 
 // --- stored transcript: one article per assistant message, usage pill per
@@ -165,12 +166,12 @@ result.transcript = {
 //     working text shows under march7th's byline until turn.completed.
 ui.bots.push(ui.normalizeBot({ id: 'march7th', name: 'march7th', role: 'Bảy', agent_status: { state: 'idle' } }, 1));
 ui.selectedBot = 'march7th';
-ui.currentSession = 's3';
+ui.currentSession = 'dm:march7th';
 const node2 = doc.createElement('article');
 node2.innerHTML = `<header class="message-byline"><span>march7th</span><time>đang lắng nghe</time></header><div class="live-copy"></div>`;
 doc.querySelector('#message-list').append(node2);
-const token2 = { botId: 'march7th', sessionId: 's3', start: Date.now(), node: node2, phase: 'waiting', timers: [], tools: [] };
-ui.runs.set('s3', token2);
+const token2 = { botId: 'march7th', sessionId: 'dm:march7th', start: Date.now(), node: node2, phase: 'waiting', timers: [], tools: [] };
+ui.runs.set('dm:march7th', token2);
 const fire2 = (ev) => ui.handleStreamEvent(token2, ev);
 const childBot = ui.bots.find(x => x.id === 'thyca');
 

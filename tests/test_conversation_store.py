@@ -61,6 +61,7 @@ def test_public_store_package_exports_expected_api() -> None:
         BootstrapResult,
         BUSY_TIMEOUT_MS,
         Conversation,
+        ConversationListing,
         ConversationPage,
         ConversationStoreError,
         DB_FILE_NAME,
@@ -73,7 +74,61 @@ def test_public_store_package_exports_expected_api() -> None:
         MAX_PAGE_LIMIT,
         PageCursor,
         RootInitializationIntent,
+        RuntimeReadIntent,
+        RuntimeWriteIntent,
         SCHEMA_VERSION,
+        SyntheticReadIntent,
+        SyntheticWriteIntent,
+        RetryReadiness,
+        ensure_runtime_store,
+        is_runtime_ready,
+        require_no_legacy_sessions,
+        resolve_ref,
+        runtime_reader_for,
+        assemble_history,
+        detail_for,
+        get_detail,
+        get_summary,
+        get_trace_detail,
+        get_trace_turns,
+        list_summaries,
+        summary_for,
+        trace_detail_for,
+        trace_turns_for,
+        append_message,
+        append_server_message,
+        append_turn_error,
+        record_turn_error,
+        plan_turn_retry,
+        mark_fixture_naming_attempted,
+        store_fixture_title_if_missing,
+        refresh_fixture_title,
+        project_for_trace,
+        fixture_trace_turns_for,
+        fixture_trace_detail_for,
+        fixture_trace_turns,
+        fixture_trace_detail,
+        fixture_completed_turn_count,
+        fixture_window_for,
+        fixture_private_fallback,
+        fixture_origin_info,
+        fixture_post_room_message,
+        fixture_post_dm_message,
+        fixture_post_card,
+        fixture_record_bus_envelope,
+        fixture_collect_exchange_rooms,
+        fixture_read_bot_settings,
+        fixture_write_bot_settings,
+        fixture_memory_remember,
+        fixture_canonical_messages,
+        create_group,
+        delete_conversation,
+        prepare_retry,
+        set_conversation_metadata,
+        enable_fixture_writes,
+        disable_fixture_writes,
+        is_fixture_write_enabled,
+        is_legacy_writer_blocked,
         validate_message,
         validate_metadata,
     )
@@ -84,10 +139,65 @@ def test_public_store_package_exports_expected_api() -> None:
         'ConversationStoreError': ConversationStoreError,
         'RootInitializationIntent': RootInitializationIntent,
         'DMBootstrapIntent': DMBootstrapIntent,
+        'SyntheticReadIntent': SyntheticReadIntent,
+        'SyntheticWriteIntent': SyntheticWriteIntent,
+        'RuntimeReadIntent': RuntimeReadIntent,
+        'RuntimeWriteIntent': RuntimeWriteIntent,
+        'ensure_runtime_store': ensure_runtime_store,
+        'is_runtime_ready': is_runtime_ready,
+        'require_no_legacy_sessions': require_no_legacy_sessions,
+        'resolve_ref': resolve_ref,
+        'runtime_reader_for': runtime_reader_for,
+        'RetryReadiness': RetryReadiness,
         'InitializationResult': InitializationResult,
         'BootstrapResult': BootstrapResult,
         'Conversation': Conversation,
+        'ConversationListing': ConversationListing,
         'ConversationPage': ConversationPage,
+        'assemble_history': assemble_history,
+        'detail_for': detail_for,
+        'get_detail': get_detail,
+        'get_summary': get_summary,
+        'get_trace_detail': get_trace_detail,
+        'get_trace_turns': get_trace_turns,
+        'list_summaries': list_summaries,
+        'summary_for': summary_for,
+        'trace_detail_for': trace_detail_for,
+        'trace_turns_for': trace_turns_for,
+        'append_message': append_message,
+        'append_server_message': append_server_message,
+        'append_turn_error': append_turn_error,
+        'record_turn_error': record_turn_error,
+        'plan_turn_retry': plan_turn_retry,
+        'mark_fixture_naming_attempted': mark_fixture_naming_attempted,
+        'store_fixture_title_if_missing': store_fixture_title_if_missing,
+        'refresh_fixture_title': refresh_fixture_title,
+        'project_for_trace': project_for_trace,
+        'fixture_trace_turns_for': fixture_trace_turns_for,
+        'fixture_trace_detail_for': fixture_trace_detail_for,
+        'fixture_trace_turns': fixture_trace_turns,
+        'fixture_trace_detail': fixture_trace_detail,
+        'fixture_completed_turn_count': fixture_completed_turn_count,
+        'fixture_window_for': fixture_window_for,
+        'fixture_private_fallback': fixture_private_fallback,
+        'fixture_origin_info': fixture_origin_info,
+        'fixture_post_room_message': fixture_post_room_message,
+        'fixture_post_dm_message': fixture_post_dm_message,
+        'fixture_post_card': fixture_post_card,
+        'fixture_record_bus_envelope': fixture_record_bus_envelope,
+        'fixture_collect_exchange_rooms': fixture_collect_exchange_rooms,
+        'fixture_read_bot_settings': fixture_read_bot_settings,
+        'fixture_write_bot_settings': fixture_write_bot_settings,
+        'fixture_memory_remember': fixture_memory_remember,
+        'fixture_canonical_messages': fixture_canonical_messages,
+        'create_group': create_group,
+        'delete_conversation': delete_conversation,
+        'prepare_retry': prepare_retry,
+        'set_conversation_metadata': set_conversation_metadata,
+        'enable_fixture_writes': enable_fixture_writes,
+        'disable_fixture_writes': disable_fixture_writes,
+        'is_fixture_write_enabled': is_fixture_write_enabled,
+        'is_legacy_writer_blocked': is_legacy_writer_blocked,
         'PageCursor': PageCursor,
         'validate_metadata': validate_metadata,
         'validate_message': validate_message,
@@ -834,3 +944,122 @@ def test_concurrent_group_appends_multiprocess_no_loss(tmp_path: Path) -> None:
     finally:
         conn.close()
     assert seqs == list(range(1, 101))
+
+
+def test_legacy_sessions_root_fails_closed(tmp_path: Path) -> None:
+    from thyca.conversations.store.runtime import require_no_legacy_sessions
+
+    require_no_legacy_sessions(tmp_path)
+    sessions_dir = tmp_path / 'sessions'
+    sessions_dir.mkdir()
+    require_no_legacy_sessions(tmp_path)
+    (sessions_dir / '2026-01-01.jsonl').write_text('{}\n', encoding='utf-8')
+    with pytest.raises(RuntimeError, match='refusing to start'):
+        require_no_legacy_sessions(tmp_path)
+
+
+@pytest.mark.parametrize('artifact', [
+    'conversations.db-wal', 'conversations.db-shm', 'conversations.lock',
+    'conversations.root.json', 'conversations.root.json.tmp',
+])
+def test_runtime_init_fails_closed_on_leftover_file_artifact(
+    tmp_path: Path, artifact: str,
+) -> None:
+    from thyca.conversations.store.runtime import ensure_runtime_store
+
+    (tmp_path / artifact).write_bytes(b'leftover')
+    with pytest.raises(ConversationStoreError):
+        ensure_runtime_store(tmp_path)
+    # Nothing was initialized over the leftover state.
+    assert not (tmp_path / 'conversations.db').exists()
+
+
+def test_runtime_init_fails_closed_on_leftover_marker_dir(tmp_path: Path) -> None:
+    from thyca.conversations.store.runtime import ensure_runtime_store
+
+    (tmp_path / 'dm-markers').mkdir()
+    with pytest.raises(ConversationStoreError):
+        ensure_runtime_store(tmp_path)
+    assert not (tmp_path / 'conversations.db').exists()
+
+
+def test_runtime_init_fresh_root_preserves_sentinels(tmp_path: Path) -> None:
+    from thyca.conversations.store.runtime import ensure_runtime_store
+
+    sentinel = tmp_path / 'keep.txt'
+    sentinel.write_text('keep me', encoding='utf-8')
+    first = ensure_runtime_store(tmp_path)
+    assert sentinel.read_text(encoding='utf-8') == 'keep me'
+    # Existing ready root audits and returns the same instance id.
+    assert ensure_runtime_store(tmp_path) == first
+
+
+def test_group_append_actor_must_be_the_acting_bot(tmp_path: Path) -> None:
+    from thyca.conversations.store import (
+        RuntimeWriteIntent,
+        append_message,
+        append_server_message,
+    )
+
+    _initialize(tmp_path)
+    ref = _admin(tmp_path).create_group(['thyca', 'coder']).ref
+    intent = RuntimeWriteIntent('actor-test')
+    # Second participant appends as itself, not as the first member.
+    append_message(
+        tmp_path, ref, 'coder',
+        Message(role='assistant', content='from coder', meta={'bot_id': 'coder'}),
+        intent=intent,
+    )
+    # A non-member bot cannot write into the group at all.
+    with pytest.raises(ConversationStoreError):
+        append_message(
+            tmp_path, ref, 'mallory',
+            Message(role='assistant', content='intrusion', meta={'bot_id': 'mallory'}),
+            intent=intent,
+        )
+    # User rows carry no bot actor: the server-side path appends them
+    # without claiming any bot's membership.
+    append_server_message(
+        tmp_path, ref, Message(role='user', content='hello'), intent=intent,
+    )
+    contents = [m.content for m in AgentStore(tmp_path).read(ref, 'coder').messages]
+    assert contents == ['from coder', 'hello']
+
+
+def test_admin_list_skips_corrupt_door_but_direct_read_fails(tmp_path: Path) -> None:
+    good = _setup_dm(tmp_path, 'coder')
+    _bootstrap(tmp_path, 'helper')
+    bad = ConversationRef.dm('helper')
+    AgentStore(tmp_path).append(good, 'coder', Message(role='user', content='ok'))
+    conn = sqlite3.connect(str(tmp_path / 'conversations.db'))
+    try:
+        conn.execute(
+            "UPDATE conversations SET metadata='{corrupt' WHERE kind='dm' AND id='helper'")
+        conn.commit()
+    finally:
+        conn.close()
+    listed, _more = _admin(tmp_path).list(limit=50)
+    assert [row.ref.id for row in listed] == ['coder']
+    with pytest.raises(ConversationStoreError):
+        AgentStore(tmp_path).read(bad, 'helper')
+    assert [m.content for m in AgentStore(tmp_path).read(good, 'coder').messages] == ['ok']
+
+
+def test_runtime_paths_reject_timestamp_public_doors(tmp_path: Path) -> None:
+    from thyca.conversations.store.runtime import ensure_runtime_store, resolve_ref
+    from thyca.sessions.store import SessionStore
+
+    ensure_runtime_store(tmp_path)
+    store = SessionStore(tmp_path / 'sessions')
+    legacy_id = '2026-01-01T00-00-00_ab12'
+    with pytest.raises(Exception):
+        resolve_ref(tmp_path, legacy_id)
+    with pytest.raises(Exception):
+        store.create(legacy_id)
+    with pytest.raises(Exception):
+        store.load(legacy_id)
+    # Canonical per-bot timeline ids keep their own internal grammar.
+    from thyca.bots.timeline import CanonicalSessionStore  # noqa: F401
+    from thyca.sessions.store import _LEGACY_TS_RE
+
+    assert _LEGACY_TS_RE.fullmatch(legacy_id)

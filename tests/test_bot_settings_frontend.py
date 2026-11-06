@@ -12,7 +12,7 @@ def _profile_fetch(roster, config, settings=None):
     return """
         installFetch((url, opts) => {
             if (url === '/api/bots') return { bots: %s };
-            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/conversations') return { conversations: [] };
             if (url === '/api/config/status') return { ready: true, version: 'x' };
             if (url === '/api/config') return %s;
             if (url === '/api/memory/stats') return { files: [
@@ -323,7 +323,7 @@ def test_profile_reload_config_keeps_scope_and_draft(node) -> None:
         let catalogV2 = false;
         installFetch((url, opts) => {
             if (url === '/api/bots') return { bots: %s };
-            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/conversations') return { conversations: [] };
             if (url === '/api/config/status') return { ready: true, version: 'x' };
             if (url === '/api/config') return catalogV2 ? %s : %s;
             if (url === '/api/memory/stats') return { files: [{ name: 'USER.md', content: 'u' }] };
@@ -379,7 +379,7 @@ def test_profile_stale_guards_and_save_twice(node) -> None:
                          json: () => new Promise(r => pending.push({ bot: m && m[1], resolve: d => r(d), payload: body })) };
             }
             if (url === '/api/bots') return { bots: %s };
-            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/conversations') return { conversations: [] };
             if (url === '/api/config/status') return { ready: true, version: 'x' };
             if (url === '/api/config') return %s;
             if (url === '/api/memory/stats') return { files: [{ name: 'USER.md', content: 'u' }] };
@@ -486,7 +486,7 @@ def test_profile_draft_survives_stale_completion(node) -> None:
                          json: () => new Promise(r => pending.push({ bot: m && m[1], resolve: d => r(d), payload: body })) };
             }
             if (url === '/api/bots') return { bots: %s };
-            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/conversations') return { conversations: [] };
             if (url === '/api/config/status') return { ready: true, version: 'x' };
             if (url === '/api/config') return %s;
             if (url === '/api/memory/stats') return { files: [{ name: 'USER.md', content: 'u' }] };
@@ -592,7 +592,7 @@ def test_profile_canonical_edit_still_works(node) -> None:
         const posted = [];
         installFetch((url, opts) => {
             if (url === '/api/bots') return { bots: %s };
-            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/conversations') return { conversations: [] };
             if (url === '/api/config') return %s;
             if (url === '/api/memory/stats') return { files: [{ name: 'USER.md', content: 'old' }] };
             if (url === '/api/memory/canonical' && opts.method === 'POST') {
@@ -675,7 +675,7 @@ def test_profile_config_refresh_drains_after_pending_bot_settings_save(node) -> 
         let configGets = 0, settingsGets = 0, releaseSave;
         installFetch((url, opts = {}) => {
             if (url === '/api/bots') return { bots: cards };
-            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/conversations') return { conversations: [] };
             if (url === '/api/memory/stats') return { files: [] };
             if (url === '/api/config') { configGets++; return catalog; }
             if (url === '/api/bots/coder/settings' && opts.method !== 'POST') { settingsGets++; return settings; }
@@ -723,7 +723,7 @@ def test_profile_refreshes_dirty_catalog_on_enter_and_preserves_valid_draft(node
                            effective: { model: 'm1', provider: 'alpha', thinking: 'low' } };
         installFetch(url => {
             if (url === '/api/bots') return { bots: cards };
-            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/conversations') return { conversations: [] };
             if (url === '/api/memory/stats') return { files: [] };
             if (url === '/api/config') { configGets++; return catalog; }
             if (url === '/api/bots/coder/settings') return settings;

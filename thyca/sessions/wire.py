@@ -47,9 +47,28 @@ def is_sidecar_message(message: Message) -> bool:
     return (message.meta or {}).get("kind") in _SIDECAR_KINDS
 
 
+# Resolve the listing stamp for one session without inventing a file.
 def updated_at(session: Session) -> str:
     if session.messages:
         return session.messages[-1].ts
+    # Store-backed doors have no transcript file: an empty door reports
+    # its stored creation stamp, exactly like the read adapter listing.
+    try:
+        from thyca.conversations.store.runtime import is_runtime_ready
+
+        root = session.path.parent.parent
+        if is_runtime_ready(root):
+            from thyca.conversations.store.admin import AdminStore
+
+            items, _more = AdminStore(root).list(limit=5000)
+            for row in items:
+                if row.ref.id == session.id:
+                    return row.created_at
+            raise SessionNotFound(session.path)
+    except SessionNotFound:
+        raise
+    except Exception:
+        pass
     try:
         stamp = datetime.fromtimestamp(session.path.stat().st_mtime, UTC)
     except FileNotFoundError as exc:

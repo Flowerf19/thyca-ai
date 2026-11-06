@@ -32,8 +32,25 @@ _trace_scan_lock = threading.Lock()
 _trace_sessions: dict[Path, tuple[int, Session]] = {}
 
 
+def _is_runtime_store(store: SessionStore) -> bool:
+    """True when *store* lives under an initialized conversation store."""
+    try:
+        from thyca.sessions.store import _runtime_root_for
+
+        return _runtime_root_for(store.sessions_dir) is not None
+    except Exception:
+        return False
+
+
 def _cached_session(store: SessionStore, path: Path):
     """Parsed Session for path, re-reading only when mtime_ns changed."""
+    # Runtime store doors have no files: bypass the mtime cache and load
+    # directly (store.load is runtime-aware). Legacy files keep the cache.
+    if _is_runtime_store(store):
+        try:
+            return store.load(path.stem)
+        except Exception:
+            return None
     try:
         mtime = path.stat().st_mtime_ns
     except OSError:
@@ -52,6 +69,75 @@ def _cached_session(store: SessionStore, path: Path):
     return session
 
 
+# Load trace turns for one explicit conversation reference.
+def cached_turns_for_ref(store: SessionStore, ref) -> list[TurnSummary]:
+    """Turns for one door addressed by its explicit ``ConversationRef``.
+
+    The HTTP layer builds the ref from path segments, so kind is never
+    guessed here. A missing door raises the store's local error, which
+    the route maps to 404 (never a generic 503).
+    """
+    if _is_runtime_store(store):
+        # Serve-layer trace reads share one lock: concurrent store opens
+        # race the root namespace sidecar checks, so list and detail
+        # must not open the store at the same moment in this process.
+        with _trace_scan_lock:
+            return _cached_turns_for_ref_runtime(store, ref)
+    with _trace_scan_lock:
+        session = _cached_session(store, store.path_for(ref.id))
+    if session is None:
+        session = store.load(ref.id)
+    return turns_from_session(session)
+
+
+# Read one store door's trace turns (caller holds the trace scan lock).
+def _cached_turns_for_ref_runtime(store: SessionStore, ref) -> list[TurnSummary]:
+    """Projected trace turns for one runtime store door."""
+    from thyca.conversations.store.read_adapter import assemble_history
+    from thyca.conversations.store.runtime import (
+        RuntimeReadIntent,
+        runtime_reader_for,
+    )
+    from thyca.conversations.store.turn_pipeline import (
+        fixture_trace_turns_for as _projected_turns_for,
+    )
+    from thyca.sessions.store import _runtime_root_for
+
+    runtime_root = _runtime_root_for(store.sessions_dir)
+    assert runtime_root is not None
+    from thyca.conversations.store.database import (
+        _ensure_root_ready,
+        _root_instance_id_from_conn,
+        _transaction_context,
+        open_existing_session,
+    )
+    from thyca.conversations.store.contracts import _decode_metadata
+
+    conn = open_existing_session(runtime_root, lock_mode="shared")
+    try:
+        with _transaction_context(conn, "BEGIN"):
+            _ensure_root_ready(conn, _root_instance_id_from_conn(conn))
+            row = conn.execute(
+                "SELECT metadata FROM conversations WHERE kind=? AND id=?",
+                (ref.kind, ref.id),
+            ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        from thyca.conversations.store.contracts import ConversationStoreError
+
+        raise ConversationStoreError("conversation unavailable", scope="local")
+    participants = _decode_metadata(row[0]).get("participants", [])
+    # Read-side member only; trace reads never authorize writes.
+    actor = runtime_reader_for(ref, tuple(participants))
+    conv = assemble_history(
+        runtime_root, ref, actor,
+        intent=RuntimeReadIntent("runtime-trace-detail"),
+    )
+    return _projected_turns_for(conv)
+
+
+# Load trace turns for one stored door id (internal callers only).
 def cached_turns_for(store: SessionStore, session_id: str) -> list[TurnSummary]:
     """Turns for one session via the parse cache.
 
@@ -62,6 +148,14 @@ def cached_turns_for(store: SessionStore, session_id: str) -> list[TurnSummary]:
     detail on different threads (unlocked here used to raise ``RuntimeError:
     dictionary changed size`` → 503 under concurrent dashboard loads).
     """
+    # Runtime store: resolve the stored id, then reuse the ref path.
+    if _is_runtime_store(store):
+        from thyca.conversations.store.runtime import resolve_ref
+        from thyca.sessions.store import _runtime_root_for
+
+        runtime_root = _runtime_root_for(store.sessions_dir)
+        assert runtime_root is not None
+        return cached_turns_for_ref(store, resolve_ref(runtime_root, session_id))
     with _trace_scan_lock:
         session = _cached_session(store, store.path_for(session_id))
     if session is None:
@@ -69,9 +163,20 @@ def cached_turns_for(store: SessionStore, session_id: str) -> list[TurnSummary]:
     return turns_from_session(session)
 
 
+# Collect the newest trace turns across every conversation door.
 def collect_turns(chat: ChatApp) -> list[TurnSummary]:
     out: list[TurnSummary] = []
     store = chat.trace_store()
+    # Runtime store: no mtime cache (synthetic paths have no files).
+    # Failures are trailing system markers (append-only), excluded from
+    # turn_slices, so project them back onto their user row in memory
+    # (project_for_trace) before slicing — exactly the fixture
+    # turn-pipeline path. Detail still expands canonical tool rows via
+    # trace_execution_messages (unchanged).
+    if _is_runtime_store(store):
+        # Same scan lock as detail reads (see cached_turns_for_ref).
+        with _trace_scan_lock:
+            return _collect_turns_runtime(chat, store, out)
     # cap 200 newest files to keep single-user scan cheap
     paths = store.list_paths()[:_TRACE_SCAN_CAP]
     with _trace_scan_lock:
@@ -88,6 +193,58 @@ def collect_turns(chat: ChatApp) -> list[TurnSummary]:
         for stale in [p for p in _trace_sessions if p not in current]:
             del _trace_sessions[stale]
     # sort newest first by started_at desc, then session_id desc for stability
+    out.sort(key=lambda t: (t.started_at, t.session_id, t.turn_index), reverse=True)
+    return out
+
+
+# Collect trace turns from the runtime store (caller holds no lock).
+def _collect_turns_runtime(chat: ChatApp, store: SessionStore, out: list) -> list[TurnSummary]:
+    """Newest-first projected turns over every ready store door.
+
+    No JSONL fallback exists on this path: a locally corrupt door is
+    skipped, while a global store failure propagates so the route can
+    answer 503 instead of reading damage as an empty history.
+    """
+    from thyca.conversations.store.admin import AdminStore
+    from thyca.conversations.store.contracts import ConversationStoreError
+    from thyca.conversations.store.read_adapter import assemble_history
+    from thyca.conversations.store.runtime import (
+        RuntimeReadIntent,
+        runtime_reader_for,
+    )
+    from thyca.conversations.store.turn_pipeline import (
+        fixture_trace_turns_for as _projected_turns_for,
+    )
+    from thyca.sessions.store import _runtime_root_for
+
+    runtime_root = _runtime_root_for(store.sessions_dir)
+    assert runtime_root is not None
+    intent = RuntimeReadIntent("runtime-trace-list")
+    admin = AdminStore(runtime_root)
+    # Newest-first listing, capped like the legacy 200-file scan.
+    offset = 0
+    rows: list = []
+    while len(rows) < _TRACE_SCAN_CAP:
+        items, has_more = admin.list(limit=200, offset=offset)
+        if not items:
+            break
+        rows.extend(items)
+        if not has_more:
+            break
+        offset += 200
+    rows = rows[:_TRACE_SCAN_CAP]
+    for row in rows:
+        try:
+            actor = runtime_reader_for(row.ref, tuple(row.participants))
+            conv = assemble_history(
+                runtime_root, row.ref, actor, intent=intent
+            )
+        except ConversationStoreError as exc:
+            # Local damage blocks only its own door (decision 15).
+            if getattr(exc, "scope", "global") == "local":
+                continue
+            raise
+        out.extend(_projected_turns_for(conv))
     out.sort(key=lambda t: (t.started_at, t.session_id, t.turn_index), reverse=True)
     return out
 
@@ -147,6 +304,41 @@ def trace_list_payload(chat: ChatApp, query: str) -> dict:
     return {"traces": [t.to_payload() for t in page], "total": total}
 
 
+# Build one trace detail for an explicit conversation reference.
+def trace_detail_payload_ref(chat: ChatApp, ref, turn_index: int) -> dict:
+    """Trace detail addressed by kind; canonical span rows still expand."""
+    turns = cached_turns_for_ref(chat.trace_store(), ref)
+    for t in turns:
+        if t.turn_index == turn_index:
+            payload = t.to_payload()
+            messages = []
+            for message in t.messages:
+                meta = message.meta or {}
+                if (
+                    message.role == "assistant"
+                    and meta.get("kind") == "message"
+                    and meta.get("bus_event") is not True
+                    and isinstance(meta.get("bot_id"), str)
+                    and meta.get("bot_id")
+                    and isinstance(meta.get("span_id"), str)
+                    and meta.get("span_id")
+                ):
+                    messages.extend(
+                        chat.trace_execution_messages(
+                            ref.id, meta["bot_id"], meta["span_id"]
+                        )
+                    )
+                else:
+                    messages.append(message)
+            payload["messages"] = [
+                message_dict(m, chat.skills_root, include_args=True)
+                for m in messages
+            ]
+            return payload
+    raise ValueError("trace not found")
+
+
+# Build one trace detail for a stored door id (internal callers only).
 def trace_detail_payload(chat: ChatApp, session_id: str, turn_index: int) -> dict:
     turns = cached_turns_for(chat.trace_store(), session_id)
     for t in turns:

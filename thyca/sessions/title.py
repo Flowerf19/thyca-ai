@@ -268,7 +268,8 @@ def refresh_title(store: SessionStore, session: Session | None) -> None:
         session.title_source = title_source
 
 
-def mark_naming_attempted(store: SessionStore, session: Session) -> None:
+# Persist the naming attempt for the acting bot.
+def mark_naming_attempted(store: SessionStore, session: Session, *, actor: str | None = None) -> None:
     """Persist the automatic naming step's one attempt (success or not).
 
     Only the automatic path calls this: explicit operations (sidebar
@@ -277,12 +278,13 @@ def mark_naming_attempted(store: SessionStore, session: Session) -> None:
     """
     if session.naming_attempted:
         return
-    store.append_naming_attempted(session.path)
+    store.append_naming_attempted(session.path, actor=actor)
     session.naming_attempted = True
 
 
+# Store the automatic title for the acting bot when none exists.
 def set_title_if_missing(
-    store: SessionStore, session: Session, title: str
+    store: SessionStore, session: Session, title: str, *, actor: str | None = None
 ) -> str | None:
     """Store the automatic title only when no title is on disk.
 
@@ -294,7 +296,7 @@ def set_title_if_missing(
     cleaned = sanitize_title(title)
     if cleaned is None:
         return None
-    if store.append_title_if_missing(session.path, cleaned, None):
+    if store.append_title_if_missing(session.path, cleaned, None, actor=actor):
         session.title = cleaned
         session.title_source = None
         return cleaned

@@ -3,8 +3,8 @@
 The queue adapter for turn events, the worker thread that produces exactly
 one terminal item, and the stream pump. Turn-error mapping and body parsing
 live in ``errors`` (re-exported here so ``thyca.serve.bridge`` keeps its
-import surface); session read/rename/delete endpoints live in
-``sessions_api``.
+import surface); DM/group conversation endpoints live in
+``conversations_api``.
 
 Handlers are accessed only through their ``_json`` / ``_read_json`` /
 ``_read_body`` / ``_stream_headers`` / ``wfile`` surface, so this module never
@@ -132,6 +132,7 @@ def _log_turn_failure(
     )
 
 
+# Pump queued turn items as NDJSON, applying any public detail shape.
 def pump_stream(
     handler,
     items: queue.Queue,
@@ -140,6 +141,7 @@ def pump_stream(
     app: ChatApp | None = None,
     session_id: str = "?",
     model: str | None = None,
+    detail_transform=None,
 ) -> None:
     """Write NDJSON from *items* until a sentinel, or HTTP JSON on pre-accept.
 
@@ -185,7 +187,11 @@ def pump_stream(
             _kind, value = item
             if _kind == "completed":
                 write_line(
-                    handler.wfile, {"type": "turn.completed", "detail": value}
+                    handler.wfile,
+                    {
+                        "type": "turn.completed",
+                        "detail": detail_transform(value) if detail_transform else value,
+                    },
                 )
             elif _kind == "cancelled":
                 write_line(handler.wfile, {"type": "turn.cancelled"})
@@ -213,6 +219,7 @@ def pump_stream(
         state["disconnected"] = True
 
 
+# Stream one turn as NDJSON with its public detail shape applied.
 def stream_turn(
     handler,
     app: ChatApp,
@@ -221,6 +228,7 @@ def stream_turn(
     model: str | None = None,
     effort: str | None = None,
     retry: bool = False,
+    detail_transform=None,
 ) -> None:
     """Pump one turn as NDJSON: headers, events, exactly one terminal item."""
     if not isinstance(text, str):
@@ -237,7 +245,10 @@ def stream_turn(
     )
     worker.start()
     try:
-        pump_stream(handler, items, state, app=app, session_id=session_id, model=model)
+        pump_stream(
+            handler, items, state, app=app, session_id=session_id, model=model,
+            detail_transform=detail_transform,
+        )
     finally:
         # The worker is a daemon and only this session's turn was ever at
         # stake, so persistence completes regardless of the client. A live

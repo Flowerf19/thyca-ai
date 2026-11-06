@@ -256,8 +256,8 @@ function capabilitiesHtml(b){
 async function fillDrawerContext(b){
  const slot=$('#bot-drawer-body [data-drawer-context]');if(!slot)return;
  try{
-  const dm=await getJson(`/api/bots/${encodeURIComponent(b.id)}/dm`);                                  // API: GET /api/bots/<id>/dm
-  const ops=await getJson(`/api/bots/${encodeURIComponent(b.id)}/rooms/${encodeURIComponent(dm.id)}/operations`); // API: bot operations
+  await getJson(`/api/bots/${encodeURIComponent(b.id)}/dm`);                                  // API: GET /api/bots/<id>/dm
+  const ops=await getJson(`/api/bots/${encodeURIComponent(b.id)}/dm/operations`); // API: GET /api/bots/<id>/dm/operations
   if(!document.contains(slot))return;
   const c=ops.context||{},ratio=c.ratio||0,pct=Math.min(100,Math.round(ratio*100));
   const band=ratio>=0.95?'danger':ratio>=0.8?'warn':'ok';
@@ -268,13 +268,12 @@ async function fillDrawerContext(b){
 }
 
 $('#team-bot-list').addEventListener('click',e=>{const btn=e.target.closest('button');if(!btn)return;const b=getBot(btn.closest('.bot-card').dataset.botId);switch(btn.dataset.action){case 'select':window.ThycaRouter?ThycaRouter.dispatch('selectBot',b.id):selectBot(b.id);break;case 'reply':window.ThycaRouter?ThycaRouter.dispatch('selectBot',b.id):selectBot(b.id);document.querySelector('#message')?.focus?.();break;case 'collapse':openBot(b.id,!b.open);break;case 'live-more':openLiveList(b.id);break;case 'favorite':if(b.system)break;b.favorite=!b.favorite;setBotFavorite(b.id,b.favorite);btn.setAttribute('aria-pressed',b.favorite);btn.setAttribute('aria-label',b.favorite?`Bỏ ghim ${b.name}`:`Ghim ${b.name} lên đầu`);toast(b.favorite?`Đã ghim ${b.name} lên đầu.`:`Đã bỏ ghim ${b.name}.`);pinCardOrder();break;case 'info':openInfo(b.id);break;case 'capabilities':openInfo(b.id,true);break;}});
-$('#group-list')?.addEventListener('click',e=>{const row=e.target.closest('[data-group]');if(!row)return;const g=groups.find(x=>x.id===row.dataset.group);window.ThycaRouter?ThycaRouter.dispatch('loadSession',g.id,g.title,g.bots[0]):loadSession(g.id,g.title,g.bots[0]);});
+$('#group-list')?.addEventListener('click',e=>{const row=e.target.closest('[data-group]');if(!row)return;const g=groups.find(x=>x.id===row.dataset.group);window.ThycaRouter?ThycaRouter.dispatch('loadSession',groupKey(g.id),g.title,g.bots[0]):loadSession(groupKey(g.id),g.title,g.bots[0]);});
 
 $('#bot-drawer-body').addEventListener('click',e=>{const btn=e.target.closest('[data-session]');if(!btn)return;const b=getBot(btn.dataset.bot);const s=b.sessions.find(x=>x[0]===btn.dataset.session);window.ThycaRouter?ThycaRouter.dispatch('loadSession',s[0],s[1],b.id):loadSession(s[0],s[1],b.id);$('#bot-drawer').close();});
 const teamSharedCreate=$('#team-shared-create');
 if(teamSharedCreate)teamSharedCreate.onclick=()=>{$('#group-options').innerHTML=bots.map(b=>`<label class="check-row"><input type="checkbox" name="bots" value="${b.id}" checked><span class="check-avatar" style="${paletteStyle(b)}">${avatar(b)}</span><span style="color:${b.palette.ink}">${b.name}</span><small style="color:#92846d">${b.role}</small></label>`).join('');$('#group-dialog').showModal();};
 $('#group-form').onsubmit=async e=>{e.preventDefault();const ids=$$('input[name=bots]:checked',e.currentTarget).map(x=>x.value);if(ids.length<2){toast('Chọn ít nhất hai bot cho hội thoại chung.');return;}const title=$('#group-title').value.trim();if(!title)return;
- try{const detail=await getJson('/api/sessions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bots:ids})});  // API: POST /api/sessions {bots}
-  if(title)await getJson(`/api/sessions/${encodeURIComponent(detail.id)}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({title})});  // API: PATCH title
-  $('#group-dialog').close();$('#group-form').reset();await refreshSessions();renderGroups();loadSession(detail.id,title||detail.title,ids[0]);toast('Đã tạo hội thoại chung.');}
+ try{const detail=await getJson('/api/groups',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bots:ids,title:title||undefined})});  // API: POST /api/groups {bots,title}
+  $('#group-dialog').close();$('#group-form').reset();await refreshSessions();renderGroups();loadSession(groupKey(detail.group_id),title||detail.title,ids[0]);toast('Đã tạo hội thoại chung.');}
  catch(err){toast('Không tạo được hội thoại: '+err.message);}};

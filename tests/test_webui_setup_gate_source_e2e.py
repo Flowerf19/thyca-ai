@@ -200,8 +200,8 @@ E2E_SCRIPT = r"""
       finish({passed:true,setup:window.ThycaRouter.setupState(),route:window.ThycaRouter.currentRoute(),notice:!!document.querySelector('[data-setup-notice]'),localStorageKeys:Object.keys(localStorage)}); return;
     }
     await wait(()=>window.ThycaRouter?.setupState()==='required' && window.ThycaRouter.currentPage()==='provider' && !document.querySelector('[data-page-workspace="provider"]').hidden);
-    const beforeSessions=await fetch('/api/sessions').then(response=>response.json());
-    const before={route:window.ThycaRouter.currentRoute(),setup:window.ThycaRouter.setupState(),chatHidden:document.querySelector('#chat-workspace').hidden,chatInert:document.querySelector('#chat-workspace').inert,sessions:beforeSessions.sessions.length,dmLookups:window.__sourceApiRequests.filter(request=>request.path==='/api/bots/thyca/dm').length,historyPage:history.state?.thycaSpa?.page};
+    const beforeSessions=await fetch('/api/conversations').then(response=>response.json());
+    const before={route:window.ThycaRouter.currentRoute(),setup:window.ThycaRouter.setupState(),chatHidden:document.querySelector('#chat-workspace').hidden,chatInert:document.querySelector('#chat-workspace').inert,sessions:beforeSessions.conversations.length,dmLookups:window.__sourceApiRequests.filter(request=>request.path==='/api/bots/thyca/dm').length,historyPage:history.state?.thycaSpa?.page};
     await window.ThycaRouter.navigate('chat');
     await wait(()=>window.ThycaRouter.currentPage()==='provider');
     document.querySelector('#new-connection').click();
@@ -222,7 +222,7 @@ E2E_SCRIPT = r"""
     const config=await fetch('/api/config').then(response=>response.json());
     const settingsResponse=await fetch('/api/bots/thyca/settings');
     const settings=await settingsResponse.json();
-    const sessions=await fetch('/api/sessions').then(response=>response.json());
+    const sessions=await fetch('/api/conversations').then(response=>response.json());
     const chatDmLookups=window.__sourceApiRequests.filter(request=>request.path==='/api/bots/thyca/dm'&&request.method==='GET').length;
     const dmDetail=await fetch('/api/bots/thyca/dm').then(response=>response.json());
     const provider=config.values.providers.local,model=config.values.models['fixture-model'];
@@ -233,7 +233,7 @@ E2E_SCRIPT = r"""
       providerBaseUrl:provider?.baseUrl,providerKeyMasked:provider?.apiKey==='',providerKeyPresent:config.meta?.providers?.local===true,
       settingsHttpOk:settingsResponse.ok,settingsBot:settings.bot_id,settingsEffectiveModel:settings.effective?.model,settingsEffectiveProvider:settings.effective?.provider,
       composerInheritLabel:document.querySelector('#composer-model').options[0].textContent,composerModelOption:modelOption?.value,
-      sessionsAfter:sessions.sessions.length,sessionDm:dmDetail.dm,dmKind:dmDetail.kind,dmSessionId:dmDetail.id,chatDmLookups,postPaths,turnPostCount:postPaths.filter(path=>path.includes('/turn')).length,localStorageKeys:Object.keys(localStorage)});
+      sessionsAfter:sessions.conversations.length,sessionDm:dmDetail.bot_id,dmKind:dmDetail.kind,dmSessionId:dmDetail.bot_id,chatDmLookups,postPaths,turnPostCount:postPaths.filter(path=>path.includes('/turn')).length,localStorageKeys:Object.keys(localStorage)});
   }catch(error){finish({error:String(error),stack:error.stack,route:window.ThycaRouter?.currentRoute(),setup:window.ThycaRouter?.setupState(),fields:{url:document.querySelector('#pv-base-url')?.value,connection:document.querySelector('#pv-id')?.value,keyPresent:!!document.querySelector('#pv-key')?.value,discovery:document.querySelector('#discovery-status')?.textContent,formStatus:document.querySelector('#editor-status')?.textContent,verifyDisabled:document.querySelector('#v-submit')?.disabled}});}})();
 })();
 """

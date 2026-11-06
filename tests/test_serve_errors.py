@@ -69,17 +69,17 @@ def test_maps_each_exception_to_exact_public_triple() -> None:
     assert public_turn_error(SessionNotFound(Path("/tmp/sessions"))) == (
         404,
         "session_not_found",
-        "session not found",
+        "conversation not found",
     )
     assert public_turn_error(SessionCorrupt(Path("/tmp/x.jsonl"), 3, "bad line")) == (
         503,
         "session_unreadable",
-        "session unreadable",
+        "conversation unreadable",
     )
     assert public_turn_error(SessionError("cannot secure /tmp/sessions")) == (
         503,
         "session_unavailable",
-        "session unavailable",
+        "conversation unavailable",
     )
     assert public_turn_error(LLMError(LLM_TEXT)) == (503, "llm_error", LLM_TEXT)
     assert public_turn_error(SECRET_CONFIG_ERROR) == (
@@ -128,7 +128,7 @@ def test_turn_config_error_returns_constant_json_message(tmp_path: Path) -> None
         try:
             urlopen(
                 Request(
-                    _url(httpd, f"/api/sessions/{created['id']}/turn"),
+                    _url(httpd, "/api/bots/thyca/dm/turn"),
                     data=b'{"text":"hi"}',
                     method="POST",
                     headers={"Content-Type": "application/json"},
@@ -153,7 +153,7 @@ def _url(httpd, path: str) -> str:
 
 
 def _json_create(httpd) -> dict:
-    with urlopen(Request(_url(httpd, "/api/sessions"), data=b"", method="POST"), timeout=5) as response:
+    with urlopen(Request(_url(httpd, "/api/bots/thyca/dm"), method="GET"), timeout=5) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
@@ -219,7 +219,7 @@ def test_x26_with_json_preamble() -> None:
 
 # Moved from tests/test_b2_contracts.py (B2 batch).
 import pytest
-from thyca.serve.sessions_api import session_turn
+from thyca.serve.conversations_api import dm_turn
 
 def test_f10_known_failures_400_with_reason_unexpected_500() -> None:
     """Fails pre-fix: every ValueError mapped to 400 'invalid text'."""
@@ -248,6 +248,9 @@ def test_f10_unexpected_turn_value_error_is_500_and_logged(capsys) -> None:
             self.sent.append((status, body))
 
     class BuggyApp:
+        def bot_dm(self, bot_id):
+            return {"id": bot_id}
+
         def default_model(self):
             return "m"
 
@@ -258,8 +261,42 @@ def test_f10_unexpected_turn_value_error_is_500_and_logged(capsys) -> None:
             raise ValueError("boom")
 
     handler = Handler()
-    session_turn(handler, BuggyApp(), "2026-09-25T00-00-00_ab12")
+    dm_turn(handler, BuggyApp(), "thyca")
     assert handler.sent == [(500, {"error": "chat unavailable"})]
     logged = capsys.readouterr().err
     assert "code=internal_error" in logged
     assert "boom" not in logged
+
+
+def test_conversation_handlers_never_leak_exception_text() -> None:
+    """Registry/consent failures map to constant public errors (M4)."""
+    from thyca.bots.registry import RegistryError
+    from thyca.serve.conversations_api import bot_dm, dm_private_followup
+
+    class Handler:
+        def __init__(self) -> None:
+            self.sent: list = []
+
+        def _json(self, status, body):
+            self.sent.append((status, body))
+
+        def _read_json(self):
+            return {}
+
+    class LeakyApp:
+        def bot_dm(self, bot_id):
+            raise RegistryError("/tmp/secret-root bot coder missing")
+
+    handler = Handler()
+    bot_dm(handler, LeakyApp(), "coder")  # type: ignore[arg-type]
+    assert handler.sent == [(404, {"error": "bot not found"})]
+    assert "/tmp" not in json.dumps(handler.sent)
+
+    class ConsentApp:
+        def bot_dm(self, bot_id):
+            return {"id": bot_id}
+
+    consent = Handler()
+    dm_private_followup(consent, ConsentApp(), "coder")  # type: ignore[arg-type]
+    assert consent.sent == [(400, {"error": "invalid body"})]
+    assert "/tmp" not in json.dumps(consent.sent)

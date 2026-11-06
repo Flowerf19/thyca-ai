@@ -179,6 +179,7 @@
     }
     return out.join('') || `<div class="empty-note"><strong>Lượt này không ghi message nào.</strong></div>`;
   }
+  // Render the detail header with the typed door label, never a session id.
   function detailHeadHtml(d) {
     const ids = turnBotIds(d);
     const byId = new Map((d.bot_breakdown || []).map(e => [e.bot_id, e]));
@@ -190,8 +191,9 @@
       const b = botFor(id);
       return `<span class="tl-bot"${b ? ` style="${paletteStyle(b)}"` : ''}>${botSeal(id)}<span>${escapeHTML(botName(id))}${bits.length ? ' · ' + bits.join(' · ') : ''}</span></span>`;
     }).join('') : '—';
+    const convLabel = d.kind === 'dm' ? 'dm:' + (d.bot_id || '') : (d.group_id || '');
     const rows = [
-      ['Phiên', `<span class="tl-mono">${escapeHTML(d.session_id)}</span>`],
+      ['Phiên', `<span class="tl-mono">${escapeHTML(convLabel)}</span>`],
       ['Thời gian', `${escapeHTML(fmtDateTime(d.started_at))} → ${escapeHTML(fmtTime(d.ended_at) || '—')}`],
       ['Bot', `<span class="tl-bots">${botsHtml}</span>`],
       ['Model', escapeHTML(d.model || '—')],
@@ -207,7 +209,7 @@
       : '';
     return `<article class="paper-card tl-detail-head">
       <div class="eyebrow">Lượt #${d.turn_index} ${statusChip(d.status)}</div>
-      <h2 class="tl-detail-title">${escapeHTML(d.title || d.session_id)}</h2>
+      <h2 class="tl-detail-title">${escapeHTML(d.title || convLabel)}</h2>
       <ul class="meta-list tl-detail-meta">${rows.map(([k, v]) => `<li><span>${k}</span><span>${v}</span></li>`).join('')}</ul>
       ${err}
     </article>`;

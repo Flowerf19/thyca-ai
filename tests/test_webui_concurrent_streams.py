@@ -68,19 +68,21 @@ const priorA = [
   { role: 'user', content: 'Câu hỏi trước', ts: '2026-10-01T10:00:00Z' },
   { role: 'assistant', content: 'Phản hồi trước', meta: { bot_id: 'thyca' }, ts: '2026-10-01T10:00:01Z' },
 ];
+const GID = 'group-cccccccccccccccccccccccccccccccc';
+const AKEY = 'dm:thyca', BKEY = 'group:' + GID;
 const sessions = {
-  A: { id: 'A', title: 'Phiên A', running: false, messages: priorA },
-  B: { id: 'B', title: 'Phiên B', running: false, messages: [] },
+  A: { kind: 'dm', bot_id: 'thyca', title: 'Phiên A', running: false, messages: priorA },
+  B: { kind: 'group', group_id: GID, title: 'Phiên B', running: false, messages: [] },
 };
 globalThis.fetch = async (url, opts = {}) => {
   const method = opts.method || 'GET';
   if (method === 'POST' && url.endsWith('/turn/stream')) {
     posts.push(url);
-    if (url.includes('/A/')) return { ok: true, status: 200, body: { getReader: () => readerA } };
+    if (url.includes('/bots/thyca/dm/')) return { ok: true, status: 200, body: { getReader: () => readerA } };
     return { ok: true, status: 200, body: ndjsonBody([
       { type: 'turn.accepted' },
       { type: 'llm.content', delta: 'B đang trả lời' },
-      { type: 'turn.completed', detail: { id: 'B', running: false,
+      { type: 'turn.completed', detail: { kind: 'group', group_id: GID, running: false,
         messages: [{ role: 'assistant', content: 'done B', meta: { bot_id: 'thyca' } }] } },
     ]) };
   }
@@ -89,16 +91,18 @@ globalThis.fetch = async (url, opts = {}) => {
     return { ok: true, status: 200, body: ndjsonBody([
       { type: 'turn.accepted' },
       { type: 'llm.content', delta: 'A vẫn đang viết' },
-      { type: 'turn.completed', detail: { id: 'A', running: false,
+      { type: 'turn.completed', detail: { kind: 'dm', bot_id: 'thyca', running: false,
         messages: [{ role: 'assistant', content: 'done A', meta: { bot_id: 'thyca' } }] } },
     ]) };
   }
-  if (method === 'GET' && url === '/api/sessions') {
-    return { ok: true, json: async () => ({ sessions: [] }) };
+  if (method === 'GET' && url === '/api/conversations') {
+    return { ok: true, json: async () => ({ conversations: [] }) };
   }
-  if (method === 'GET' && url.startsWith('/api/sessions/')) {
-    const id = decodeURIComponent(url.split('/').pop());
-    return { ok: true, json: async () => sessions[id] };
+  if (method === 'GET' && url === '/api/bots/thyca/dm') {
+    return { ok: true, json: async () => sessions.A };
+  }
+  if (method === 'GET' && url === '/api/groups/' + GID) {
+    return { ok: true, json: async () => sessions.B };
   }
   return { ok: false, status: 404, json: async () => ({ error: 'no route ' + url }) };
 };
@@ -106,7 +110,7 @@ globalThis.fetch = async (url, opts = {}) => {
 const listText = () => doc.querySelector('#message-list').textContent;
 
 // 1. Send in A; the POST stream stays open mid-turn.
-await ui.loadSession('A');
+await ui.loadSession(AKEY);
 await settle();
 const pendingA = ui.sendTurn('hi A');
 await settle();
@@ -116,14 +120,14 @@ await settle();
 result.sentA = {
   posts: posts.length,
   tracked: [...ui.runs.keys()],
-  phase: ui.runs.get('A')?.phase,
+  phase: ui.runs.get(AKEY)?.phase,
   streamText: doc.querySelector('#message-list .stream-text')?.textContent ?? null,
   stopShown: doc.querySelector('#stop-button').hidden === false,
 };
-const tokenA = ui.runs.get('A');
+const tokenA = ui.runs.get(AKEY);
 
 // 2. Switch to B and send there: both turns stay tracked under their own key.
-await ui.loadSession('B');
+await ui.loadSession(BKEY);
 await settle();
 await ui.sendTurn('hi B');
 await settle();
@@ -140,14 +144,14 @@ result.sentB = {
 sessions.A = { ...sessions.A, running: true, messages: [...priorA,
   { role: 'user', content: 'hi A', ts: '2026-10-29T10:00:00Z' },
 ] };
-await ui.loadSession('A');
+await ui.loadSession(AKEY);
 await settle();
-const reattached = ui.runs.get('A');
+const reattached = ui.runs.get(AKEY);
 const nodeA = tokenA.node;
 result.backToA = {
   follows: follows.length,
   posts: posts.length,
-  postA: posts.filter(url => url.includes('/A/')).length,
+  postA: posts.filter(url => url.includes('/bots/thyca/dm/')).length,
   sameToken: reattached === tokenA,
   sameNode: doc.querySelector('#message-list .running-response') === nodeA,
   liveNodes: doc.querySelectorAll('#message-list .running-response').length,
@@ -166,7 +170,7 @@ result.laterDelta = {
   mdBuf: tokenA.mdBuf,
   follows: follows.length,
 };
-pushA(JSON.stringify({ type: 'turn.completed', detail: { id: 'A', running: false,
+pushA(JSON.stringify({ type: 'turn.completed', detail: { kind: 'dm', bot_id: 'thyca', running: false,
   messages: [...priorA,
     { role: 'user', content: 'hi A', ts: '2026-10-29T10:00:00Z' },
     { role: 'assistant', content: 'done A', meta: { bot_id: 'thyca' }, ts: '2026-10-29T10:00:01Z' },
@@ -201,13 +205,13 @@ def concurrent() -> dict:
 
 
 def test_two_sessions_stream_at_once(concurrent: dict) -> None:
-    """runs keys by sessionId: the send in A stays tracked while B runs."""
-    assert concurrent["sentA"]["tracked"] == ["A"]
+    """runs keys by typed door key: the send in A stays tracked while B runs."""
+    assert concurrent["sentA"]["tracked"] == ["dm:thyca"]
     assert concurrent["sentA"]["phase"] == "writing"
     assert concurrent["sentA"]["streamText"] == "A-one "
     assert concurrent["sentA"]["stopShown"] is True
     assert concurrent["sentB"]["posts"] == 2
-    assert concurrent["sentB"]["tracked"] == ["A"]
+    assert concurrent["sentB"]["tracked"] == ["dm:thyca"]
     assert concurrent["sentB"]["listHasDoneB"] is True
 
 

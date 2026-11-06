@@ -10,6 +10,7 @@ from pathlib import Path
 
 from thyca.agent.think import LLMPort
 from thyca.app.chat_ui import ChatUi
+from thyca.bots.registry import RegistryError
 from thyca.app.turn_options import InvalidTurnOption
 from thyca.config import ConfigError, load
 from thyca.llm.llm_base import LLMError
@@ -17,13 +18,14 @@ from thyca.memory.facade import MemoryFacade
 from thyca.sessions import SessionError
 
 
+# Build the CLI parser; conversation choice is --bot (DM) or --group.
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="thyca", description="Thyca — personal terminal harness")
     parser.add_argument("--version", action="store_true", help="show version and exit")
     parser.add_argument("--seed", action="store_true", help="seed ~/.thyca defaults (copy-if-missing) and exit")
     parser.add_argument("-p", "--print", dest="print_mode", action="store_true", help="one-shot print mode")
-    parser.add_argument("--continue", dest="cont", action="store_true", help="continue last session")
-    parser.add_argument("--session", type=str, default=None, help="session id")
+    parser.add_argument("--bot", type=str, default=None, help="bot id for its DM (default thyca)")
+    parser.add_argument("--group", type=str, default=None, help="group id (group-<hex32>)")
     parser.add_argument("--model", type=str, default=None, help="override model for this request")
     parser.add_argument("--debug", action="store_true", help="print prompt/session diagnostics on stderr")
     parser.add_argument("--serve", action="store_true", help="serve webui + memory stats on 127.0.0.1")
@@ -60,11 +62,11 @@ class Cli:
             return 0
         if args.seed:
             return self._seed()
-        if args.cont and args.session:
-            ui.error("--continue and --session are mutually exclusive")
+        if args.bot and args.group:
+            ui.error("--bot and --group are mutually exclusive")
             return 2
-        if args.serve and (args.print_mode or args.cont or args.session or args.prompt):
-            ui.error("--serve cannot combine with -p/--continue/--session/prompt")
+        if args.serve and (args.print_mode or args.bot or args.group or args.prompt):
+            ui.error("--serve cannot combine with -p/--bot/--group/prompt")
             return 2
         if args.daemon and not args.serve:
             ui.error("--daemon requires --serve")
@@ -95,6 +97,7 @@ class Cli:
             print(file=self._stdout)
             return 0
 
+    # Run one CLI conversation: a bot DM (--bot, default thyca) or one group (--group).
     async def _run(self, args: argparse.Namespace) -> int:
         from thyca.app.chat_app import ChatApp
 
@@ -109,19 +112,23 @@ class Cli:
         app = None
         try:
             app = ChatApp(root, cfg, connect=self._connect, stderr=self._stderr)
-            if args.session:
-                app.get_payload(args.session)
-                session_id = args.session
+            if args.group:
+                app.get_payload(args.group)
+                session_id = args.group
+                label = f"group {args.group}"
             else:
-                session_id = app.bot_dm("thyca")["id"]
+                bot_id = args.bot or "thyca"
+                session_id = app.bot_dm(bot_id)["id"]
+                label = f"dm {bot_id}"
             model = args.model.strip() if args.model else None
             banner_cfg = replace(cfg, defaultModel=model) if model else cfg
             provider = banner_cfg.effective_provider()
 
+            # Print prompt diagnostics for the selected DM or group door.
             def diagnostics(report: dict) -> None:
                 system = report["system"]
                 ui.debug(
-                    f"session={report['session_id']} model={report['model']} "
+                    f"conversation={label} model={report['model']} "
                     f"provider={report['provider']} baseUrl={report['base_url']} "
                     f"identity={'</identity>' in system} soul={'</role>' in system} "
                     f"user={'</user>' in system} tools={len(report['tools'])} "
@@ -140,9 +147,9 @@ class Cli:
 
             if args.print_mode:
                 return await self._oneshot(" ".join(args.prompt), turn, ui)
-            ui.banner(session_id, provider.model)
+            ui.banner(label, provider.model)
             return await self._repl(turn, ui)
-        except (ConfigError, LLMError, SessionError, InvalidTurnOption) as exc:
+        except (ConfigError, LLMError, SessionError, InvalidTurnOption, RegistryError) as exc:
             ui.error(str(exc))
             return 1
         finally:

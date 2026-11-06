@@ -90,7 +90,7 @@ def _mock_fetch(config: dict, *, models: list[str] | None = None, fail_config_po
             if (url === '/api/onboarding/verify') {{ verifyPosts.push(body); return {"new Error('listing unavailable')" if fail_verify else "{models: []}" if empty_models else "{models: " + json.dumps(models or ['vendor/model-a', 'vendor/model-b']) + "}"}; }}
             if (url === '/api/providers/test') {{ testPosts.push(body); return new Error('HTTP 402'); }}
             if (url === '/api/bots') return {{bots: []}};
-            if (url === '/api/sessions') return {{sessions: []}};
+            if (url === '/api/conversations') return {{conversations: []}};
             if (url === '/api/config/status') return {{ready: true}};
             return {{}};
         }});
@@ -994,7 +994,7 @@ if(after.configPosts.length<2)throw Error('no explicit set-default observed '+JS
                 if path == "/api/config": payload = state["config"]
                 elif path == "/api/config/status": payload = {"ready": True}
                 elif path == "/api/bots": payload = {"bots": []}
-                elif path == "/api/sessions": payload = {"sessions": []}
+                elif path == "/api/conversations": payload = {"conversations": []}
                 else: payload = {}
                 self.json(payload); return
             target = safe_file(WEBUI, path)

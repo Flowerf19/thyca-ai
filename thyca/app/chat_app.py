@@ -85,6 +85,19 @@ class ChatApp:
     ) -> None:
         self._root = root
         self._stderr = stderr if stderr is not None else sys.stderr
+        # Migration guard (hard-cut branch): refuse to start when legacy
+        # ``sessions/*.jsonl`` files exist under the live root. Empty (or
+        # missing) passes; tmp/disposable roots are never refused here.
+        from thyca.conversations.store.runtime import (
+            ensure_runtime_store,
+            require_no_legacy_sessions,
+        )
+
+        require_no_legacy_sessions(Path(root))
+        # Trusted init: this local process construction (never a request
+        # handler) issues a fresh root; existing roots are audited first.
+        # Runtime store owns all room state on every root (live stopped).
+        ensure_runtime_store(Path(root))
         self._config_file = root / "config.json"
         # Seed before re-read: _current_cfg falls back to _cfg on ConfigError.
         self._cfg = cfg
@@ -300,6 +313,75 @@ class ChatApp:
         return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
 
     def list_payload(self) -> dict:
+        # Runtime store: wire summaries come from the store (created_at for
+        # empty doors) instead of path mtimes, which do not exist for
+        # store-backed sessions. Legacy roots keep the file-mtime path.
+        try:
+            from thyca.conversations.store.runtime import is_runtime_ready
+
+            _runtime = is_runtime_ready(self._root)
+        except Exception:
+            _runtime = False
+        if _runtime:
+            from thyca.conversations.store.admin import AdminStore
+            from thyca.conversations.store.read_adapter import (
+                assemble_history,
+                summary_for,
+            )
+            from thyca.conversations.store.contracts import ConversationStoreError
+            from thyca.conversations.store.runtime import (
+                RuntimeReadIntent,
+                runtime_reader_for,
+            )
+
+            intent = RuntimeReadIntent("runtime-list")
+            admin = AdminStore(self._root)
+            summaries: list[dict] = []
+            # Paginate newest-first exactly like AdminStore.list.
+            offset = 0
+            while True:
+                items, has_more = admin.list(limit=200, offset=offset)
+                if not items:
+                    break
+                for row in items:
+                    actor = runtime_reader_for(row.ref, tuple(row.participants))
+                    try:
+                        conv = assemble_history(
+                            self._root, row.ref, actor, intent=intent
+                        )
+                    except ConversationStoreError as exc:
+                        # Local damage blocks only its own door; global
+                        # damage surfaces instead of reading as empty.
+                        if getattr(exc, "scope", "global") == "local":
+                            continue
+                        raise
+                    # Prune rule mirrors the legacy list_payload filter:
+                    # blank sessions drop unless they are non-DM rooms with
+                    # an explicit participant list (the second create path).
+                    from thyca.sessions import Session as _Session
+
+                    probe = _Session(
+                        row.ref.id,
+                        self._sessions.store.path_for(row.ref.id),
+                        list(conv.messages),
+                        title=conv.title, title_source=conv.title_source,
+                        naming_attempted=conv.naming_attempted,
+                        bots=list(conv.participants),
+                        dm_bot=row.ref.id if row.ref.kind == "dm" else None,
+                    )
+                    # Blank doors drop, except explicit groups: groups
+                    # always carry two or more participants, while a raw
+                    # single-participant door is an unmarked solo room.
+                    _explicit_group = (
+                        row.ref.kind == "group" and len(conv.participants) >= 2
+                    )
+                    if not (not is_blank(probe) or _explicit_group):
+                        continue
+                    summaries.append(summary_for(conv, row.created_at))
+                if not has_more:
+                    break
+                offset += 200
+            return {"model": self._current_cfg().provider.model, "sessions": summaries}
         sessions = [
             session_summary(item)
             for item in self._sessions.list_sessions()
@@ -666,7 +748,7 @@ class ChatApp:
             store=self._sessions.store,
         )
         sessions.load(session_id)
-        if retry and not sessions.truncate_to_last_user():
+        if retry and not sessions.truncate_to_last_user(actor=bot_id):
             raise InvalidTurnOption("no user")
         provider = resolve_bot_provider(turn_cfg, card, effort_override=effort)
         connect = self._injected_connect or ConnectFactory.create(
@@ -739,10 +821,12 @@ class ChatApp:
                     store=self._sessions.store,
                 )
                 early_room.load(session_id)
+                # The responding bot records the user row for this turn.
                 early_room.append(
                     current_msg
                     if current_msg is not None
-                    else Message(role="user", content=text)
+                    else Message(role="user", content=text),
+                    actor=bot_id,
                 )
                 self._posting.consume_dm_pending(
                     bot_id, session_id, room=early_room)
@@ -770,14 +854,14 @@ class ChatApp:
             except LLMError as exc:
                 try:
                     sessions.load(session_id)
-                    sessions.mark_turn_error("llm_error", str(exc))
+                    sessions.mark_turn_error("llm_error", str(exc), actor=bot_id)
                 except Exception:
                     pass
                 raise
             except Exception:
                 try:
                     sessions.load(session_id)
-                    sessions.mark_turn_error("chat_unavailable", "chat unavailable")
+                    sessions.mark_turn_error("chat_unavailable", "chat unavailable", actor=bot_id)
                 except Exception:
                     pass
                 raise
@@ -788,6 +872,7 @@ class ChatApp:
             )
             room.load(session_id)
             self._record_bus_events(room, session_id)
+            # The reply is recorded as the bot that produced it.
             room.append(
                 Message(
                     role="assistant",
@@ -798,7 +883,8 @@ class ChatApp:
                     meta=result.room_meta(
                         kind="message", trace_id=trace_id, parent_span_id=None
                     ),
-                )
+                ),
+                actor=bot_id,
             )
             await _name_if_needed(connect, room, turn_cfg, event_sink, bot_id=bot_id)
             landed = self._detail(room.current, turn_cfg, running=False)

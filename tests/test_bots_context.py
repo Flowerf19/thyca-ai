@@ -956,8 +956,27 @@ def test_failed_bot_turn_keeps_user_row_with_error_marker(tmp_path: Path) -> Non
         user_rows = [m for m in store.current.messages
                      if m.role == "user" and (m.content or "") == "@coder go"]
         assert len(user_rows) == 1
-        error = (user_rows[0].meta or {}).get("error") or {}
-        assert error.get("code") == "chat_unavailable"
+        # Store equivalent of the legacy in-place stamp: the failure is a
+        # trailing system marker; trace projection reads it as failed.
+        markers = [m for m in store.current.messages
+                   if m.role == "system"
+                   and isinstance((m.meta or {}).get("error"), dict)]
+        assert len(markers) == 1
+        assert markers[0].meta["error"]["code"] == "chat_unavailable"
+        from thyca.conversations.store.turn_pipeline import project_for_trace
+        from thyca.conversations.store.contracts import _view
+        from thyca.conversations.store.runtime import resolve_ref
+
+        _ref = resolve_ref(app._root, room)
+        _projected = project_for_trace(_view(
+            _ref,
+            {"title": None, "title_source": None, "naming_attempted": False,
+             "participants": ["thyca", "coder"]},
+            tuple(store.current.messages),
+        ))
+        _pusers = [m for m in _projected.messages
+                   if m.role == "user" and (m.content or "") == "@coder go"]
+        assert (_pusers[0].meta or {})["error"]["code"] == "chat_unavailable"
         # The failed turn delivered nothing, so no cursor advanced: the
         # ephemeral delta was never marked read (no pre-write on failure).
         assert app._runtime.room_cursor("coder", room) is None

@@ -53,9 +53,9 @@ def test_empty_print_exits_2(tmp_path: Path) -> None:
     assert "requires a prompt" in err.getvalue()
 
 
-def test_continue_and_session_exclusive(tmp_path: Path) -> None:
+def test_bot_and_group_exclusive(tmp_path: Path) -> None:
     cli, _out, err = _cli(tmp_path, FakeLLM(ChatReply(content="x")))
-    assert cli.main(["--continue", "--session", "x"]) == 2
+    assert cli.main(["--bot", "thyca", "--group", "group-" + "0" * 32]) == 2
     assert "mutually exclusive" in err.getvalue()
 
 
@@ -73,10 +73,10 @@ def test_cli_reports_config_error_without_traceback(tmp_path: Path) -> None:
     assert "config" in err.getvalue().lower()
 
 
-def test_missing_session_exits_nonzero(tmp_path: Path) -> None:
+def test_missing_group_exits_nonzero(tmp_path: Path) -> None:
     cli, _out, err = _cli(tmp_path, FakeLLM(ChatReply(content="x")))
-    assert cli.main(["--session", "no-such", "-p", "hi"]) == 1
-    assert "session" in err.getvalue().lower()
+    assert cli.main(["--group", "group-" + "0" * 32, "-p", "hi"]) == 1
+    assert "not found" in err.getvalue().lower()
 
 
 def test_print_writes_reply_and_persists(tmp_path: Path) -> None:
@@ -95,31 +95,27 @@ def test_print_writes_reply_and_persists(tmp_path: Path) -> None:
     ]
 
 
-def test_continue_without_prior_session_creates_one(tmp_path: Path) -> None:
+def test_bot_flag_without_prior_conversation_creates_dm(tmp_path: Path) -> None:
     cli, out, err = _cli(tmp_path, FakeLLM(ChatReply(content="new")))
 
-    assert cli.main(["--continue", "-p", "first"]) == 0
+    assert cli.main(["--bot", "thyca", "-p", "first"]) == 0
     assert out.getvalue().strip() == "new"
     assert err.getvalue() == ""
 
 
-def test_continue_creation_failure_is_reported(tmp_path: Path, monkeypatch) -> None:
-    def fail_create(self, *, make_current: bool = True):
-        raise SessionError("cannot create fallback session")
-
-    monkeypatch.setattr(SessionManager, "create", fail_create)
+def test_unknown_bot_exits_nonzero(tmp_path: Path) -> None:
     cli, _out, err = _cli(tmp_path, FakeLLM(ChatReply(content="unused")))
 
-    assert cli.main(["--continue", "-p", "first"]) == 1
-    assert "cannot create fallback session" in err.getvalue()
+    assert cli.main(["--bot", "no-such", "-p", "first"]) == 1
+    assert "no-such" in err.getvalue()
 
 
-def test_continue_remembers_prior_turn(tmp_path: Path) -> None:
+def test_default_reopens_thyca_dm_and_remembers(tmp_path: Path) -> None:
     first = FakeLLM(ChatReply(content="one"))
     assert _cli(tmp_path, first)[0].main(["-p", "first"]) == 0
     second = FakeLLM(ChatReply(content="two"))
     cli, out, _err = _cli(tmp_path, second)
-    assert cli.main(["--continue", "-p", "again"]) == 0
+    assert cli.main(["-p", "again"]) == 0
     assert out.getvalue().strip() == "two"
     roles = [m.role for m in second.requests[0]]
     assert roles == ["system", "user", "assistant", "user"]
@@ -237,7 +233,7 @@ def test_repl_eof_exits_0(tmp_path: Path) -> None:
     cli, out, err = _cli(tmp_path, llm, stdin="hello\n")
     assert cli.main([]) == 0
     assert err.getvalue() == ""
-    assert "session " in out.getvalue()
+    assert "dm thyca" in out.getvalue()
     assert "you> " in out.getvalue()
     assert "hi" in out.getvalue()
     assert llm.requests[0][-1].content == "hello"
@@ -409,35 +405,60 @@ def test_print_tags_memory_with_cli_session(tmp_path: Path) -> None:
 def test_default_opens_thyca_dm(tmp_path: Path) -> None:
     cli, _out, _err = _cli(tmp_path, FakeLLM(ChatReply(content="hi")))
     assert cli.main(["-p", "hello"]) == 0
-    sessions = list((tmp_path / "sessions").glob("*.jsonl"))
-    assert len(sessions) == 1
     manager = SessionManager(tmp_path / "sessions")
-    session = manager.load(sessions[0].stem)
+    session = manager.continue_last()
     assert session.dm_bot == "thyca"
     assert session.bots == ["thyca"]
 
 
-def test_continue_opens_dm_despite_newer_group(tmp_path: Path) -> None:
+def test_default_opens_dm_despite_newer_group(tmp_path: Path) -> None:
+    from thyca.app.chat_app import ChatApp
+
     cli, _out, _err = _cli(tmp_path, FakeLLM(ChatReply(content="hi")))
     assert cli.main(["-p", "first"]) == 0
-    # A newer group session exists on disk (e.g. from serve).
-    manager = SessionManager(tmp_path / "sessions")
-    group = manager.create()
-    manager.store.append_bots(group.path, ["thyca", "coder"])
+    # A newer group exists (e.g. from serve); the default still opens the DM.
+    from thyca.bots.card import BotCard
+
+    app = ChatApp(tmp_path, load(tmp_path / "config.json"),
+                  connect=FakeLLM(ChatReply(content="x")))
+    try:
+        app._bots.create(BotCard(
+            bot_id="coder", name="Coder", role="Coder", description="Codes.",
+            persona="You code.",
+        ))
+        app.create(bots=["thyca", "coder"])
+    finally:
+        app.shutdown()
     cli2, _out2, _err2 = _cli(tmp_path, FakeLLM(ChatReply(content="again")))
-    assert cli2.main(["--continue", "-p", "second"]) == 0
-    current = SessionManager(tmp_path / "sessions").load(
-        SessionManager(tmp_path / "sessions").continue_last().id)
-    assert current.dm_bot == "thyca"
+    assert cli2.main(["-p", "second"]) == 0
+    app2 = ChatApp(tmp_path, load(tmp_path / "config.json"),
+                   connect=FakeLLM(ChatReply(content="x")))
+    try:
+        dm = app2.bot_dm("thyca")
+    finally:
+        app2.shutdown()
+    assert dm["kind"] == "dm" and dm["dm"] == "thyca"
+    assert [m["content"] for m in dm["messages"] if m["role"] == "user"] == ["first", "second"]
 
 
-def test_session_flag_loads_group_by_id(tmp_path: Path) -> None:
+def test_group_flag_loads_group_by_id(tmp_path: Path) -> None:
+    from thyca.app.chat_app import ChatApp
+
     cli, _out, _err = _cli(tmp_path, FakeLLM(ChatReply(content="hi")))
     assert cli.main(["-p", "first"]) == 0
-    manager = SessionManager(tmp_path / "sessions")
-    group = manager.create()
-    manager.store.append_bots(group.path, ["thyca", "coder"])
+    from thyca.bots.card import BotCard
+
+    app = ChatApp(tmp_path, load(tmp_path / "config.json"),
+                  connect=FakeLLM(ChatReply(content="x")))
+    try:
+        app._bots.create(BotCard(
+            bot_id="coder", name="Coder", role="Coder", description="Codes.",
+            persona="You code.",
+        ))
+        group_id = app.create(bots=["thyca", "coder"])["id"]
+    finally:
+        app.shutdown()
     cli2, _out2, _err2 = _cli(tmp_path, FakeLLM(ChatReply(content="in-group")))
-    assert cli2.main(["--session", group.id, "-p", "hello"]) == 0
-    reloaded = SessionManager(tmp_path / "sessions").load(group.id)
+    assert cli2.main(["--group", group_id, "-p", "hello"]) == 0
+    reloaded = SessionManager(tmp_path / "sessions").load(group_id)
     assert [m.content for m in reloaded.messages][-1] == "in-group"

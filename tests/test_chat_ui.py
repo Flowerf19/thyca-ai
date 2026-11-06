@@ -9,13 +9,13 @@ def test_banner_prompt_assistant_without_color() -> None:
     out = StringIO()
     err = StringIO()
     ui = ChatUi(out, err, color=False)
-    ui.banner("2026-08-20T10-00-00_abcd", "demo-model")
+    ui.banner("dm thyca", "demo-model")
     ui.prompt()
     ui.assistant("hello")
     ui.error("boom")
     ui.goodbye()
     text = out.getvalue()
-    assert "session 2026-08-20T10-00-00_abcd" in text
+    assert "dm thyca" in text
     assert "model demo-model" in text
     assert "you> " in text
     assert "thyca\nhello\n" in text

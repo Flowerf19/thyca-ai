@@ -284,7 +284,7 @@ def test_private_followup_full_consent_flow(tmp_path: Path) -> None:
 
         # Approve via the endpoint handler directly (same code the POST
         # route calls; the request plumbing is covered by serve tests).
-        from thyca.serve.sessions_api import session_private_followup
+        from thyca.serve.conversations_api import dm_private_followup
 
         class _H:
             def __init__(self):
@@ -296,7 +296,7 @@ def test_private_followup_full_consent_flow(tmp_path: Path) -> None:
                         "choice": "approve"}
 
         h = _H()
-        session_private_followup(h, app, dm["id"])
+        dm_private_followup(h, app, dm["id"])
         assert h.code == 200, h.body
         assert h.body["status"] == "resumed"
 

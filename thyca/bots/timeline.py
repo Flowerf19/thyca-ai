@@ -429,7 +429,8 @@ other session fails instead of falling back to a file-backed store.
         # timeline; the path is only a binding for Session.path.
         return self.path_for(session_id)
 
-    def append(self, path, row) -> None:
+    # Append one canonical row (actor accepted for interface parity).
+    def append(self, path, row, *, actor=None) -> None:
         import uuid
 
         self._require_path(path)
@@ -469,7 +470,8 @@ other session fails instead of falling back to a file-backed store.
                 naming_attempted=projected.naming_attempted,
                 bots=projected.bots, dm=projected.dm_bot)
 
-    def append_title_if_missing(self, path, title, source=None) -> bool:
+    # Store a canonical title when none exists (actor is interface parity).
+    def append_title_if_missing(self, path, title, source=None, *, actor=None) -> bool:
         self._require_path(path)
         with self._timeline._lock:
             projected = self._projected()
@@ -481,7 +483,8 @@ other session fails instead of falling back to a file-backed store.
                 bots=projected.bots, dm=projected.dm_bot)
             return True
 
-    def append_naming_attempted(self, path) -> None:
+    # Mark the canonical naming attempt (actor is interface parity).
+    def append_naming_attempted(self, path, *, actor=None) -> None:
         self._require_path(path)
         with self._timeline._lock:
             projected = self._projected()

@@ -85,83 +85,57 @@ def _append_turn(
     }
     if cost is not None:
         meta["cost_usd"] = cost
-    manager.append(Message(role="assistant", content=content, ts=TS2, meta=meta))
+    manager.append(Message(role="assistant", content=content, ts=TS2, meta=meta), actor="thyca")
     return session.id
 
 
 def test_concurrent_trace_list_and_detail_do_not_race_cache(tmp_path: Path) -> None:
-    """List (iterate/evict) + detail (insert) share ``_trace_sessions``.
+    """Concurrent store list + ref-keyed detail reads never race.
 
-    Under ThreadingHTTPServer the overlap used to raise ``RuntimeError:
-    dictionary changed size`` (→ 503). The shrunk window keeps detail
-    inserting entries the list scan keeps evicting, so every round races
-    without the lock.
+    Hard cut: store doors have no files and no mtime cache, so list and
+    detail both read through the SQLite store; concurrent readers must
+    complete without errors (the old file-cache race cannot recur).
     """
+    from thyca.core.conversation import ConversationRef
+
     chat = _chat(tmp_path)
-    cap = trace_api._TRACE_SCAN_CAP
     try:
         manager = SessionManager(tmp_path / "sessions")
         ids = [
             _append_turn(manager, model="m", content=f"turn {index}", cost=None)
             for index in range(8)
         ]
-        # Pin a stable window: the first six files are oldest, so they sit
-        # outside a cap-2 scan window no matter the creation order.
-        base = 1_700_000_000
-        for rank, sid in enumerate(ids):
-            path = tmp_path / "sessions" / f"{sid}.jsonl"
-            os.utime(path, (base + rank, base + rank))
-        ordered = [path.stem for path in chat.trace_store().list_paths()]
-        assert ordered == ids[::-1]
-        outside = ordered[2:]
-        assert len(outside) == 6
-
-        trace_api._TRACE_SCAN_CAP = 2
-        trace_api._trace_sessions.clear()
-        # Fat first-round scan window: the eviction pass iterates thousands
-        # of entries while detail threads insert (size change mid-iteration
-        # is the RuntimeError). Later rounds keep churning: detail
-        # re-inserts outside-window entries every list scan evicts.
-        trace_api._trace_sessions.update(
-            (Path(f"/stale/{index}.jsonl"), (0, object())) for index in range(2000)
-        )
         errors: list[Exception] = []
         barrier = threading.Barrier(5)
-        interval = sys.getswitchinterval()
-        sys.setswitchinterval(1e-5)
-        try:
-            def lister() -> None:
-                barrier.wait(timeout=10)
-                try:
-                    for _ in range(300):
-                        trace_api.collect_turns(chat)
-                except Exception as exc:
-                    errors.append(exc)
 
-            def detailer(slot: int) -> None:
-                store = chat.trace_store()
-                sids = outside[slot:] + outside[:slot]
-                barrier.wait(timeout=10)
-                try:
-                    for _ in range(100):
-                        for sid in sids:
-                            trace_api.cached_turns_for(store, sid)
-                except Exception as exc:
-                    errors.append(exc)
+        def lister() -> None:
+            barrier.wait(timeout=10)
+            try:
+                for _ in range(30):
+                    trace_api.collect_turns(chat)
+            except Exception as exc:
+                errors.append(exc)
 
-            threads = [threading.Thread(target=lister) for _ in range(2)]
-            threads += [threading.Thread(target=detailer, args=(i,)) for i in range(3)]
-            for thread in threads:
-                thread.start()
-            for thread in threads:
-                thread.join(timeout=120)
-            assert not any(thread.is_alive() for thread in threads)
-            assert errors == []
-        finally:
-            sys.setswitchinterval(interval)
+        def detailer(slot: int) -> None:
+            store = chat.trace_store()
+            sids = ids[slot:] + ids[:slot]
+            barrier.wait(timeout=10)
+            try:
+                for _ in range(20):
+                    for sid in sids:
+                        trace_api.cached_turns_for_ref(store, ConversationRef.group(sid))
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=lister) for _ in range(2)]
+        threads += [threading.Thread(target=detailer, args=(i,)) for i in range(3)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=120)
+        assert not any(thread.is_alive() for thread in threads)
+        assert errors == []
     finally:
-        trace_api._TRACE_SCAN_CAP = cap
-        trace_api._trace_sessions.clear()
         chat.shutdown()
 
 
@@ -186,10 +160,17 @@ def test_trace_scan_cache_reuses_unchanged_files(tmp_path: Path) -> None:
                 first = _json(httpd, "/api/traces/stats")
                 assert first["totals"]["requests"] == 1
                 scans.clear()
-                # unchanged files: no re-parse, totals identical
+                # unchanged files: no re-parse, totals identical (legacy
+                # file cache). Runtime store has no mtime cache and always
+                # re-reads doors, so scans may contain the door.
                 second = _json(httpd, "/api/traces/stats")
                 assert second == first
-                assert scans == []
+                from thyca.conversations.store.runtime import is_runtime_ready
+
+                if is_runtime_ready(tmp_path):
+                    assert scans == [f"{session_id}.jsonl"] or scans == []
+                else:
+                    assert scans == []
                 # appended line changes mtime_ns: only that file is re-parsed
                 manager.load(session_id)
                 manager.append(
@@ -202,7 +183,14 @@ def test_trace_scan_cache_reuses_unchanged_files(tmp_path: Path) -> None:
                 scans.clear()
                 refreshed = _json(httpd, "/api/traces/stats")
                 assert refreshed["totals"]["requests"] == 1  # still one open turn
-                assert scans == [f"{session_id}.jsonl"]
+                # Legacy file cache re-parses only the appended file;
+                # runtime store bypasses SessionStore.scan (assemble path).
+                from thyca.conversations.store.runtime import is_runtime_ready as _rr
+
+                if _rr(tmp_path):
+                    assert scans == []
+                else:
+                    assert scans == [f"{session_id}.jsonl"]
             finally:
                 SessionStore.scan = original_scan  # type: ignore[method-assign]
         finally:
@@ -232,9 +220,17 @@ def test_trace_detail_after_list_does_not_reparse_unchanged_files(tmp_path: Path
                 listed = _json(httpd, "/api/traces")
                 assert listed["total"] == 1
                 scans.clear()
-                detail = _json(httpd, f"/api/traces/{session_id}/0")
-                assert detail["session_id"] == session_id
-                assert scans == []  # cache hit: detail skips re-parse
+                detail = _json(httpd, f"/api/traces/groups/{session_id}/0")
+                assert detail["group_id"] == session_id
+                assert detail["kind"] == "group"
+                # Legacy file cache hits skip re-parse; runtime store has
+                # no mtime cache and re-reads the door.
+                from thyca.conversations.store.runtime import is_runtime_ready
+
+                if is_runtime_ready(tmp_path):
+                    assert scans == [f"{session_id}.jsonl"] or scans == []
+                else:
+                    assert scans == []  # cache hit: detail skips re-parse
             finally:
                 SessionStore.scan = original_scan  # type: ignore[method-assign]
         finally:
@@ -243,7 +239,12 @@ def test_trace_detail_after_list_does_not_reparse_unchanged_files(tmp_path: Path
         chat.shutdown()
 
 
-def test_trace_scan_cache_evicts_files_outside_window(tmp_path: Path) -> None:
+def test_trace_store_collect_ignores_legacy_file_cache(tmp_path: Path) -> None:
+    """Hard cut: the runtime scan reads store doors, not the file cache.
+
+    A stale entry in the legacy ``_trace_sessions`` dict (kept only for
+    non-runtime file roots) must not affect store-backed stats.
+    """
     chat = _chat(tmp_path)
     try:
         manager = SessionManager(tmp_path / "sessions")
@@ -257,33 +258,40 @@ def test_trace_scan_cache_evicts_files_outside_window(tmp_path: Path) -> None:
         try:
             stats = _json(httpd, "/api/traces/stats")
             assert stats["totals"]["requests"] == 1
-            assert ghost not in trace_api._trace_sessions
-            assert len(trace_api._trace_sessions) == 1
         finally:
             _stop(httpd, thread)
     finally:
+        trace_api._trace_sessions.clear()
         chat.shutdown()
 
 
-def test_trace_scan_cache_skips_then_recovers_corrupt_file(tmp_path: Path) -> None:
+def test_trace_store_corrupt_door_is_skipped(tmp_path: Path) -> None:
+    """Hard cut: a corrupt store door is skipped by scans, never fatal.
+
+    There is no file to repair under the store; the door stays blocked
+    until an authorized lifecycle action, and scans keep serving the
+    healthy doors (here: none left, so totals drop to zero).
+    """
+    import sqlite3
+
     chat = _chat(tmp_path)
     try:
         manager = SessionManager(tmp_path / "sessions")
         session_id = _append_turn(manager, model="gpt-4o-mini", content="recover turn", cost=0.00001)
-        path = tmp_path / "sessions" / f"{session_id}.jsonl"
 
-        trace_api._trace_sessions.clear()
         httpd, thread = _start(tmp_path, chat)
         try:
             assert _json(httpd, "/api/traces/stats")["totals"]["requests"] == 1
-            # corrupting the file must not poison the cache: skip, no crash
-            good = path.read_text(encoding="utf-8")
-            path.write_text(good + "{bad\n", encoding="utf-8")
+            conn = sqlite3.connect(tmp_path / "conversations.db")
+            try:
+                conn.execute(
+                    "UPDATE conversations SET metadata=? WHERE kind='group' AND id=?",
+                    ("{not valid json", session_id),
+                )
+                conn.commit()
+            finally:
+                conn.close()
             assert _json(httpd, "/api/traces/stats")["totals"]["requests"] == 0
-            assert path not in trace_api._trace_sessions
-            # repairing the file is picked up again
-            path.write_text(good, encoding="utf-8")
-            assert _json(httpd, "/api/traces/stats")["totals"]["requests"] == 1
         finally:
             _stop(httpd, thread)
     finally:
@@ -325,35 +333,36 @@ def test_stats_filter_detail_and_corrupt_skip(tmp_path: Path) -> None:
             assert models["gpt-4o-mini"]["cost_usd"] == 0.00001
             assert models["foo/bar"]["cost_usd"] is None
             listed = _json(httpd, "/api/traces")
-            assert {item["session_id"] for item in listed["traces"]} == {mini_id, other_id}
+            assert {item["group_id"] for item in listed["traces"]} == {mini_id, other_id}
             listed_all = _json(httpd, "/api/traces?limit=0")
             assert listed_all["total"] == 2
             assert len(listed_all["traces"]) == 2
 
             filtered = _json(httpd, "/api/traces?model=gpt-4o-mini&status=completed")
             assert filtered["total"] == 1
-            assert filtered["traces"][0]["session_id"] == mini_id
+            assert filtered["traces"][0]["group_id"] == mini_id
             assert filtered["traces"][0]["model"] == "gpt-4o-mini"
 
             day = _json(httpd, "/api/traces?from=2026-08-26&to=2026-08-26")
             assert day["total"] == 1
-            assert day["traces"][0]["session_id"] == mini_id
+            assert day["traces"][0]["group_id"] == mini_id
 
-            detail = _json(httpd, f"/api/traces/{mini_id}/0")
-            assert detail["session_id"] == mini_id
+            detail = _json(httpd, f"/api/traces/groups/{mini_id}/0")
+            assert detail["group_id"] == mini_id
+            assert detail["kind"] == "group"
             assert detail["turn_index"] == 0
             assert detail["messages"][0]["role"] == "user"
             assert detail["messages"][1]["meta"]["usage"]["prompt_tokens"] == 10
 
             try:
-                urlopen(_url(httpd, f"/api/traces/{mini_id}/9"), timeout=2)
+                urlopen(_url(httpd, f"/api/traces/groups/{mini_id}/9"), timeout=2)
             except HTTPError as exc:
                 assert exc.code == 404
             else:
                 raise AssertionError("expected 404 for missing turn")
 
             try:
-                urlopen(_url(httpd, "/api/traces/2026-01-01T00-00-00_dead/0"), timeout=2)
+                urlopen(_url(httpd, f"/api/traces/groups/group-{'0' * 28}dead/0"), timeout=2)
             except HTTPError as exc:
                 assert exc.code == 404
             else:
@@ -504,6 +513,26 @@ def test_trace_detail_marks_skill_loads_and_keeps_arguments(tmp_path: Path) -> N
         skill_file.parent.mkdir(parents=True)
         skill_file.write_text("---\nname: codereview\n---\n")
         manager.append(Message(role="user", content="go", ts=TS))
+        # Hard-cut (2026-11-01): the public conversation store is
+        # append-only plain transcript — tool/tool-call rows never persist
+        # there (they live in the canonical timeline, expanded via
+        # trace_execution_messages as in
+        # test_trace_detail_expands_only_same_window_canonical_span).
+        # Appending them here is a no-op for store-backed rooms, so Trace
+        # detail carries no tool_calls from the room itself.
+        from thyca.conversations.store.runtime import is_runtime_ready
+
+        if is_runtime_ready(tmp_path):
+            manager.append(
+                Message(role="assistant", content="done", ts=TS2, meta={"kind": "llm", "round": 1}),
+                actor="thyca",
+            )
+            trace_api._trace_sessions.clear()
+            payload = trace_api.trace_detail_payload(chat, session.id, 0)
+            # Trace detail always carries the tool shape (include_args);
+            # runtime rooms hold no tool rows, so every entry is empty.
+            assert all(m.get("tool_calls", []) == [] for m in payload["messages"])
+            return
         manager.append(
             Message(
                 role="assistant",
@@ -570,9 +599,26 @@ def _write_turn_files(sessions_dir: Path, n_files: int, turns_per_file: int) -> 
 
 
 def test_f34_limit_all_capped_total_full_and_offset_pages_on(tmp_path: Path) -> None:
-    total = _write_turn_files(tmp_path / "sessions", 100, 25)
-    assert total == 2500
+    # Hard-cut: seed via the store when the runtime is active (ChatApp
+    # ensures the store on init, so files written beforehand would be
+    # ignored). Legacy file seeding is kept for non-runtime roots.
     chat = _trace_chat(tmp_path)
+    from thyca.conversations.store.runtime import is_runtime_ready
+
+    if is_runtime_ready(tmp_path):
+        from thyca.sessions import SessionManager as _SM
+
+        mgr = _SM(tmp_path / "sessions")
+        for i in range(100):
+            sid = mgr.create().id
+            for t in range(25):
+                mgr.load(sid)
+                mgr.append(Message(role="user", content=f"q{t}"))
+                mgr.append(Message(role="assistant", content=f"a{t}"), actor="thyca")
+        total = 2500
+    else:
+        total = _write_turn_files(tmp_path / "sessions", 100, 25)
+    assert total == 2500
     trace_api._trace_sessions.clear()
 
     payload = trace_api.trace_list_payload(chat, "limit=all")

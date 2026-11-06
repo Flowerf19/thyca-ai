@@ -4,9 +4,10 @@ The old trace surface (12/12/1 session/turn pagers in dashboard-today.js,
 collect_trace_pages dedupe paging, scroll-reveal deep links, separate
 session CRUD) was not ported. The new page is list+detail inside the shared
 shell: GET /api/traces?from&to&limit&offset&q&model&status paged 50-at-a-time
-behind "Tải thêm", sessions grouped by session_id in first-seen order, turn
-detail at GET /api/traces/<sid>/<turn>, deep links #<sid>/<turn> and
-?s=<sid>&t=<turn>, and seq guards on both the list and detail requests.
+behind "Tải thêm", one flat row per turn, turn detail at
+GET /api/traces/dm/<bot>/<turn> or /api/traces/groups/<group_id>/<turn>,
+deep links #dm/<bot>/<turn> and #groups/<group_id>/<turn>, and seq guards
+on both the list and detail requests.
 These tests pin that contract. The page is a classic script ('use strict',
 shared globals), so the harness evals it in Node with a stubbed global
 surface, mirroring the old import-based eval style.
@@ -73,6 +74,14 @@ globalThis.$$ = (s, r = document) => [...r.querySelectorAll(s)];
 globalThis.icon = (n) => `<svg data-i="${n}"></svg>`;
 globalThis.escapeHTML = (str) => String(str).replace(/[&<>"']/g, (ch) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+globalThis.dmKey = (botId) => 'dm:' + botId;
+globalThis.groupKey = (groupId) => 'group:' + groupId;
+globalThis.convParts = (key) => {
+  const text = String(key || '');
+  if (text.startsWith('dm:')) return { kind: 'dm', bot_id: text.slice(3) };
+  if (text.startsWith('group:')) return { kind: 'group', group_id: text.slice(6) };
+  return null;
+};
 globalThis.__roster = { coder: { id: 'coder', name: 'Coder', color: '#123', state: 'idle' } };
 globalThis.getBot = (id) => globalThis.__roster[id] || null;
 globalThis.avatar = (b) => `<ava:${b.id}/>`;
@@ -153,7 +162,8 @@ def test_usage_markup_and_trace_renderer_contract() -> None:
         'id="filter-q"', 'id="filter-model"', 'id="filter-status"',
         'id="trace-sessions"', 'id="trace-more"', 'id="turn-detail-view"',
         'id="detail-back"', 'id="detail-status"', 'id="detail-body"',
-        '/api/traces/stats?', '/api/traces?', '/api/traces/${encodeURIComponent(sid)}',
+        '/api/traces/stats?', '/api/traces?', '/api/traces/dm/${encodeURIComponent(ref.bot_id)}/${turn}',
+        '/api/traces/groups/${encodeURIComponent(ref.group_id)}/${turn}',
     ):
         assert needle in dashboard, needle
     assert "FIRST_PAGE = 15" in dashboard and "MORE_PAGE = 50" in dashboard
@@ -166,14 +176,14 @@ def test_usage_markup_and_trace_renderer_contract() -> None:
 def test_route_from_url_rejects_unsafe_hash_parts(node: str) -> None:
     out = _eval_trace(
         node,
-        "console.log(JSON.stringify(['#abc/3','#abc/0','#abc','#/3','#abc/x','#a/b/c','#s%20x/0','#abc/123456789'].map(hash => parseDetailRoute({page:'dashboard',search:'',hash}))))",
+        "console.log(JSON.stringify(['#dm/abc/3','#dm/abc/0','#dm/abc','#/3','#dm/abc/x','#dm/a/b/c','#dm/s%20x/0','#dm/abc/123456789'].map(hash => parseDetailRoute({page:'dashboard',search:'',hash}))))",
     )
-    assert out[:2] == [{"sid": "abc", "turn": 3}, {"sid": "abc", "turn": 0}]
+    assert out[:2] == [{"kind": "dm", "bot_id": "abc", "turn": 3}, {"kind": "dm", "bot_id": "abc", "turn": 0}]
     assert all(value is None for value in out[2:])
 
 
 def test_boot_loads_direct_detail_without_loading_overview(node: str) -> None:
-    detail = {"session_id": "s-x", "turn_index": 0, "title": "Routed",
+    detail = {"kind": "dm", "bot_id": "thyca", "turn_index": 0, "title": "Routed",
               "status": "completed", "messages": [], "model": "m",
               "started_at": "2026-09-20T10:00:00"}
     out = _eval_trace(
@@ -182,13 +192,13 @@ def test_boot_loads_direct_detail_without_loading_overview(node: str) -> None:
         "return { calls: __jsonCalls, mode: viewMode, key: detailKey,\n"
         " body: document.querySelector('#detail-body').innerHTML, route: ctx.route };\n"
         "})().then(v => console.log(JSON.stringify(v)))",
-        setup="location.hash = '#s-x/0';\n"
+        setup="location.hash = '#dm/thyca/0';\n"
         "__jsonResponder = async () => (" + json.dumps(detail) + ");\n",
     )
-    assert out["calls"] == ["/api/traces/s-x/0"]
-    assert out["mode"] == "detail" and out["key"] == "s-x/0"
+    assert out["calls"] == ["/api/traces/dm/thyca/0"]
+    assert out["mode"] == "detail" and out["key"] == "dm:thyca/0"
     assert "Routed" in out["body"]
-    assert out["route"] == {"page": "dashboard", "search": "", "hash": "#s-x/0"}
+    assert out["route"] == {"page": "dashboard", "search": "", "hash": "#dm/thyca/0"}
 
 
 def test_boot_without_route_loads_overview_only(node: str) -> None:
@@ -210,7 +220,7 @@ def test_load_traces_pages_50_and_accumulates(node: str) -> None:
     """"Tải thêm" asks limit=50&offset=<rows so far>; rows concat, total
     tracks the server, and the footer hides the button at the total."""
     rows = lambda base, n: [
-        {"session_id": "s", "turn_index": base + i, "title": "T",
+        {"kind": "dm", "bot_id": "thyca", "turn_index": base + i, "title": "T",
          "started_at": "2026-09-20T10:00:00", "status": "completed"}
         for i in range(n)]
     out = _eval_trace(
@@ -220,7 +230,7 @@ def test_load_traces_pages_50_and_accumulates(node: str) -> None:
             const q = new URLSearchParams(url.split('?')[1]);
             const off = Number(q.get('offset')), lim = Number(q.get('limit'));
             const mk = (b, n) => Array.from({ length: n }, (_, i) =>
-              ({ session_id: 's', turn_index: b + i, title: 'T',
+              ({ kind: 'dm', bot_id: 'thyca', turn_index: b + i, title: 'T',
                  started_at: '2026-09-20T10:00:00', status: 'completed' }));
             return { traces: mk(off, Math.min(lim, 70 - off)), total: 70 };
           };
@@ -256,7 +266,7 @@ def test_load_traces_error_keeps_rows_and_shows_status(node: str) -> None:
             const q = new URLSearchParams(url.split('?')[1]);
             if (Number(q.get('offset')) >= 65) throw new Error('backend died');
             return { traces: Array.from({ length: Number(q.get('limit')) }, (_, i) =>
-              ({ session_id: 's', turn_index: i })), total: 80 };
+              ({ kind: 'dm', bot_id: 'thyca', turn_index: i })), total: 80 };
           };
           await loadTraces(true);
           await loadTraces(false);
@@ -325,10 +335,10 @@ def test_stale_list_response_is_dropped(node: str) -> None:
           const pOld = loadTraces(false);
           listFilters.q = 'new';
           const pNew = loadTraces(true);
-          __pending[1].p.__res({ traces: [{ session_id: 's', turn_index: 0,
+          __pending[1].p.__res({ traces: [{ kind: 'dm', bot_id: 'thyca', turn_index: 0,
             title: 'new' }], total: 1 });
           await pNew;
-          __pending[0].p.__res({ traces: [{ session_id: 'x', turn_index: 0,
+          __pending[0].p.__res({ traces: [{ kind: 'dm', bot_id: 'thyca', turn_index: 0,
             title: 'old' }], total: 9 });
           await pOld;
           return { rows: traceState.rows.map((r) => r.title), total: traceState.total };
@@ -339,7 +349,7 @@ def test_stale_list_response_is_dropped(node: str) -> None:
 
 
 def test_open_turn_routes_within_dashboard_and_fetches_only_detail(node: str) -> None:
-    detail = {"session_id": "s-x", "turn_index": 2, "title": "Deep",
+    detail = {"kind": "dm", "bot_id": "thyca", "turn_index": 2, "title": "Deep",
               "status": "failed", "messages": [], "model": "m",
               "started_at": "2026-09-20T10:00:00", "error": {"code": "Boom", "message": "kaput"}}
     out = _eval_trace(
@@ -347,15 +357,15 @@ def test_open_turn_routes_within_dashboard_and_fetches_only_detail(node: str) ->
         f"(async () => {{ await __releaseShell(); await new Promise(r => setTimeout(r, 0));\n"
         f"__jsonResponder = async () => ({json.dumps(detail)});\n"
         "const before = __jsonCalls.length;\n"
-        "await ctx.navigate('dashboard', { search: pageQuery(), hash: '#s-x/2' });\n"
+        "await ctx.navigate('dashboard', { search: pageQuery(), hash: '#dm/thyca/2' });\n"
         "await new Promise(r => setTimeout(r, 0));\n"
         "return { calls: __jsonCalls.slice(before), mode: viewMode, key: detailKey,\n"
         " route: ctx.route, routes: __routes, body: document.querySelector('#detail-body').innerHTML };\n"
         "})().then(v => console.log(JSON.stringify(v)))",
     )
-    assert out["calls"] == ["/api/traces/s-x/2"]
-    assert out["mode"] == "detail" and out["key"] == "s-x/2"
-    assert out["route"]["page"] == "dashboard" and out["route"]["hash"] == "#s-x/2"
+    assert out["calls"] == ["/api/traces/dm/thyca/2"]
+    assert out["mode"] == "detail" and out["key"] == "dm:thyca/2"
+    assert out["route"]["page"] == "dashboard" and out["route"]["hash"] == "#dm/thyca/2"
     assert out["routes"][-1]["page"] == "dashboard"
     assert "Deep" in out["body"] and "kaput" in out["body"] and "Boom" in out["body"]
 
@@ -365,16 +375,16 @@ def test_detail_404_keeps_route_and_shows_independent_error(node: str) -> None:
         node,
         "(async () => { await __releaseShell(); await new Promise(r => setTimeout(r, 0));\n"
         "__jsonResponder = async () => { throw new Error('gone'); };\n"
-        "await ctx.navigate('dashboard', { search: pageQuery(), hash: '#s/0' });\n"
+        "await ctx.navigate('dashboard', { search: pageQuery(), hash: '#dm/thyca/0' });\n"
         "await new Promise(r => setTimeout(r, 0));\n"
         "return { err: detailError, key: detailKey, route: ctx.route,\n"
         " status: document.querySelector('#detail-status-text').textContent,\n"
         " body: document.querySelector('#detail-body').innerHTML };\n"
         "})().then(v => console.log(JSON.stringify(v)))",
     )
-    assert out["err"] == "gone" and out["key"] == "s/0"
-    assert out["route"]["page"] == "dashboard" and out["route"]["hash"] == "#s/0"
-    assert "Không đọc được lượt s/0" in out["status"]
+    assert out["err"] == "gone" and out["key"] == "dm:thyca/0"
+    assert out["route"]["page"] == "dashboard" and out["route"]["hash"] == "#dm/thyca/0"
+    assert "Không đọc được lượt dm:thyca/0" in out["status"]
     assert "Không mở được trace này" in out["body"]
 
 
@@ -386,18 +396,18 @@ def test_detail_seq_drops_a_stale_turn(node: str) -> None:
         """(async () => {
           __jsonResponder = (url) => {
             const p = __deferred(); __pending.push({ url, p }); return p; };
-          const pa = loadDetail('a', 0);
-          const pb = loadDetail('b', 1);
-          __pending[1].p.__res({ session_id: 'b', turn_index: 1,
+          const pa = loadDetail({ kind: 'dm', bot_id: 'a' }, 0);
+          const pb = loadDetail({ kind: 'dm', bot_id: 'b' }, 1);
+          __pending[1].p.__res({ kind: 'dm', bot_id: 'b', turn_index: 1,
             title: 'B', status: 'completed', messages: [] });
           await pb;
-          __pending[0].p.__res({ session_id: 'a', turn_index: 0,
+          __pending[0].p.__res({ kind: 'dm', bot_id: 'a', turn_index: 0,
             title: 'A', status: 'completed', messages: [] });
           await pa;
           return { key: detailKey, title: detailData && detailData.title };
         })().then((v) => console.log(JSON.stringify(v)))""",
     )
-    assert out["key"] == "b/1"
+    assert out["key"] == "dm:b/1"
     assert out["title"] == "B"
 
 
@@ -406,9 +416,9 @@ def test_explicit_back_returns_to_overview_and_restores_scroll(node: str) -> Non
         node,
         """(async () => {
           await __releaseShell(); await new Promise(r => setTimeout(r, 0));
-          __jsonResponder = async () => ({ session_id: 's', turn_index: 0, title: 'T', status: 'completed', messages: [] });
+          __jsonResponder = async () => ({ kind: 'dm', bot_id: 'thyca', turn_index: 0, title: 'T', status: 'completed', messages: [] });
           document.querySelector('#usage-scroll').scrollTop = 42;
-          await ctx.navigate('dashboard', { search: pageQuery(), hash: '#s/0' });
+          await ctx.navigate('dashboard', { search: pageQuery(), hash: '#dm/thyca/0' });
           await new Promise(r => setTimeout(r, 0));
           const reqs = detailSeq;
           document.querySelector('#usage-scroll').scrollTop = 0;
@@ -428,40 +438,40 @@ def test_explicit_back_returns_to_overview_and_restores_scroll(node: str) -> Non
 def test_turn_click_delegation_and_hashchange(node: str) -> None:
     """A grouped turn click and route changes keep detail in Dashboard;
     clearing the hash returns to the Usage overview."""
-    detail = {"session_id": "s", "turn_index": 1, "title": "X",
+    detail = {"kind": "dm", "bot_id": "thyca", "turn_index": 1, "title": "X",
               "status": "completed", "messages": []}
     out = _eval_trace(
         node,
         f"(async () => {{ await __releaseShell(); await new Promise(r => setTimeout(r, 0));\n"
         f"__jsonResponder = async () => ({json.dumps(detail)});\n"
         "const click = document.querySelector('#trace-sessions').listeners.click[0];\n"
-        "click({ target: { closest: (s) => s === 'button[data-session][data-turn]'\n"
-        "  ? { dataset: { session: 's', turn: '1' } } : null } });\n"
+        "click({ target: { closest: (s) => s === 'button[data-conv][data-turn]'\n"
+        "  ? { dataset: { conv: 'dm:thyca', turn: '1' } } : null } });\n"
         "await new Promise(r => setTimeout(r, 0));\n"
         "const afterClick = { key: detailKey, mode: viewMode };\n"
         "ctx.route.hash = '#z/3';\n"
-        "await __controller.onRoute({ page: 'dashboard', search: ctx.route.search, hash: '#z/3' });\n"
+        "await __controller.onRoute({ page: 'dashboard', search: ctx.route.search, hash: '#dm/z/3' });\n"
         "const afterHash = { key: detailKey };\n"
         "ctx.route.hash = '';\n"
         "await __controller.onRoute({ page: 'dashboard', search: ctx.route.search, hash: '' });\n"
         "return { afterClick, afterHash, mode: viewMode };\n"
         "})().then((v) => console.log(JSON.stringify(v)))",
     )
-    assert out["afterClick"] == {"key": "s/1", "mode": "detail"}
-    assert out["afterHash"]["key"] == "z/3"
+    assert out["afterClick"] == {"key": "dm:thyca/1", "mode": "detail"}
+    assert out["afterHash"]["key"] == "dm:z/3"
     assert out["mode"] == "overview"
 
 
 def test_reload_button_re_reads_the_open_turn(node: str) -> None:
     """In detail mode the reload button re-fetches the SAME turn without
     touching the URL; on the picker it re-queries the list."""
-    detail = {"session_id": "s", "turn_index": 0, "title": "T",
+    detail = {"kind": "dm", "bot_id": "thyca", "turn_index": 0, "title": "T",
               "status": "completed", "messages": []}
     out = _eval_trace(
         node,
         f"(async () => {{ await __releaseShell(); await new Promise(r => setTimeout(r, 0));\n"
         f"__jsonResponder = async () => ({json.dumps(detail)});\n"
-        "await ctx.navigate('dashboard', { search: pageQuery(), hash: '#s/0' });\n"
+        "await ctx.navigate('dashboard', { search: pageQuery(), hash: '#dm/thyca/0' });\n"
         "await new Promise(r => setTimeout(r, 0));\n"
         "const urlsBefore = __urls.length;\n"
         "const callsBefore = __jsonCalls.length;\n"
@@ -471,24 +481,23 @@ def test_reload_button_re_reads_the_open_turn(node: str) -> None:
         " newUrls: __urls.length - urlsBefore };\n"
         "})().then((v) => console.log(JSON.stringify(v)))",
     )
-    assert out["newCalls"] == ["/api/traces/s/0"]
+    assert out["newCalls"] == ["/api/traces/dm/thyca/0"]
     assert out["newUrls"] == 0                       # push: false
 
 
 def test_trace_list_is_flat_and_turn_rows_keep_context(node: str) -> None:
     """The Trace view has one flat row per API turn; it does not infer bot
-    ownership from session membership or aggregate failures by session."""
+    ownership from group membership or aggregate failures by conversation."""
     rows = [
-        {"session_id": "g", "turn_index": 1, "title": "T1",
+        {"kind": "group", "group_id": "group-dddddddddddddddddddddddddddddddd", "turn_index": 1, "title": "T1",
          "started_at": "2026-09-20T10:00:00", "status": "completed",
-         "session_kind": "group", "bot_id": "coder",
+         "bot_id": "coder",
          "session_bots": ["session-owner"],
          "bot_breakdown": [{"bot_id": "coder"}, {"bot_id": "ops"}],
          "model": "m", "requests": 2, "tool_calls": 1,
          "total_tokens": 10, "cost_usd": 0.01, "latency_ms": 40},
-        {"session_id": "g", "turn_index": 0, "title": "T0",
+        {"kind": "dm", "bot_id": "thyca", "turn_index": 0, "title": "T0",
          "started_at": "2026-09-20T09:00:00", "status": "failed",
-         "session_kind": "dm", "session_dm": "dm-owner",
          "model": "m", "total_tokens": 5, "cost_usd": None, "latency_ms": 20},
     ]
     html = _eval_trace(
@@ -498,7 +507,7 @@ def test_trace_list_is_flat_and_turn_rows_keep_context(node: str) -> None:
         "console.log(JSON.stringify(document.querySelector('#trace-sessions').innerHTML))",
     )
     assert html.count('<li><button') == 2
-    assert 'data-session="g"' in html and 'data-turn="1"' in html
+    assert 'data-conv="group:group-dddddddddddddddddddddddddddddddd"' in html and 'data-turn="1"' in html
     assert "<b>Coder +1</b>" in html
     assert "Chat nhóm" in html and "Chat riêng" in html
     assert "Hoàn tất" in html and "Thất bại" in html
@@ -508,11 +517,11 @@ def test_trace_list_is_flat_and_turn_rows_keep_context(node: str) -> None:
 
 
 def test_detail_head_renders_turn_meta_and_error(node: str) -> None:
-    """The detail head: session mono, time range, bot seals + names, model,
+    """The detail head: typed door mono, time range, bot seals + names, model,
     request/round/tool counts, the vào/cache/ra token split, cost,
     duration, and the recorded error block."""
     detail = {
-        "session_id": "sess", "turn_index": 3, "title": "Đào sâu",
+        "kind": "dm", "bot_id": "coder", "turn_index": 3, "title": "Đào sâu",
         "status": "failed", "model": "glm",
         "started_at": "2026-09-20T10:00:00", "ended_at": "2026-09-20T10:02:00",
         "bot_id": "coder",
@@ -533,7 +542,7 @@ def test_detail_head_renders_turn_meta_and_error(node: str) -> None:
     )
     assert "Lượt #3" in html and "Lỗi" in html
     assert ">Đào sâu</h2>" in html
-    assert "sess" in html
+    assert "dm:coder" in html
     assert "Coder" in html and "ops" in html        # seal chips + id fallback
     assert "2 req" in html and "30 tok" in html     # breakdown bits
     assert "glm" in html

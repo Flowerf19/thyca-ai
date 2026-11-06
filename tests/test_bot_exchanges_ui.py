@@ -68,11 +68,11 @@ globalThis.fetch = async (url, opts = {}) => {
 };
 ui.setSession('dm-thyca');
 doc.querySelector('#message-list').innerHTML = ui.renderTranscript({
-  dm: 'thyca', messages: [
+  kind: 'dm', bot_id: 'thyca', messages: [
     { role: 'user', content: 'trước', ts: '2026-10-26T09:00:00Z' },
     { role: 'assistant', content: 'sau', ts: '2026-10-26T11:00:00Z', meta: { bot_id: 'thyca' } },
   ] });
-await ui.renderExchangeGroups({ dm: 'thyca' });
+await ui.renderExchangeGroups({ kind: 'dm', bot_id: 'thyca' });
 const groups = [...doc.querySelectorAll('#message-list [data-exchange-partner]')];
 result.dm = {
   groups: groups.map(g => [g.getAttribute('data-exchange-partner'), g.getAttribute('aria-label')]),
@@ -99,11 +99,11 @@ globalThis.fetch = async (url, opts = {}) => {
   throw new Error('unexpected fetch ' + url);
 };
 doc.querySelector('#message-list').innerHTML = ui.renderTranscript({
-  dm: 'thyca', messages: [
+  kind: 'dm', bot_id: 'thyca', messages: [
     { role: 'user', content: 'trước', ts: '2026-10-26T09:00:00Z' },
     { role: 'assistant', content: 'sau', ts: '2026-10-26T11:00:00Z', meta: { bot_id: 'thyca' } },
   ] });
-await ui.renderExchangeGroups({ dm: 'thyca' });
+await ui.renderExchangeGroups({ kind: 'dm', bot_id: 'thyca' });
 result.dmNewest = {
   order: [...doc.querySelector('#message-list').children].map(
     el => el.getAttribute('data-exchange-partner') || el.textContent.trim().slice(0, 12)),
@@ -127,11 +127,11 @@ globalThis.fetch = async (url, opts = {}) => {
   throw new Error('unexpected fetch ' + url);
 };
 doc.querySelector('#message-list').innerHTML = ui.renderTranscript({
-  dm: 'helper', messages: [
+  kind: 'dm', bot_id: 'helper', messages: [
     { role: 'user', content: 'trước', ts: '2026-10-26T09:00:00Z' },
   ] });
 ui.setSession('dm-helper');
-await ui.renderExchangeGroups({ dm: 'helper' });
+await ui.renderExchangeGroups({ kind: 'dm', bot_id: 'helper' });
 const swap = [...doc.querySelectorAll('#message-list [data-exchange-partner]')];
 result.dmSwap = {
   entries: swap.map(g => [g.getAttribute('data-exchange-owner'), g.getAttribute('data-exchange-partner')]),
@@ -143,11 +143,11 @@ result.dmSwap = {
 // DM-origin rows stay hidden in the DM transcript: no inline collapse
 // and no plain bubbles — the grouped entry + modal own the DM view.
 doc.querySelector('#message-list').innerHTML = ui.renderTranscript({
-  dm: 'thyca', messages: [
+  kind: 'dm', bot_id: 'thyca', messages: [
     { role: 'user', content: 'chào' }, bus1, res1,
     { role: 'assistant', content: 'việc thường', meta: { bot_id: 'thyca' } },
   ] });
-await ui.renderExchangeGroups({ dm: 'thyca' });
+await ui.renderExchangeGroups({ kind: 'dm', bot_id: 'thyca' });
 result.dmHidden = {
   folds: doc.querySelectorAll('#message-list .peer-exchange').length,
   bubbles: doc.querySelectorAll('#message-list .message-assistant').length,

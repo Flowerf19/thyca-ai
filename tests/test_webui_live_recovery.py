@@ -1,6 +1,6 @@
 """Live-turn recovery — webui/ui/chat/js/chat.js followRunningTurn.
 
-The old UI polled GET /api/sessions/<id> on a timer when the follow stream
+The old UI polled the session detail on a timer when the follow stream
 dropped and kept the live card alive across navigation. The rebuilt UI has
 no poll fallback: recovery is the replay stream itself. Entering a session
 whose detail says running:true appends one .running-response node and opens
@@ -56,12 +56,14 @@ const mkReader = () => {
   follows.push(ctl);
   return ctl;
 };
+const GID = 'group-' + 'a'.repeat(32);
+const AKEY = 'dm:thyca', BKEY = 'group:' + GID;
 const sessions = {
-  A: { id: 'A', title: 'Phiên A', running: true, messages: [
+  A: { kind: 'dm', bot_id: 'thyca', title: 'Phiên A', running: true, messages: [
     { role: 'user', content: 'hi' },
     { role: 'assistant', content: 'saved first round', meta: { bot_id: 'thyca' } },
   ] },
-  B: { id: 'B', title: 'Phiên B', running: false, messages: [
+  B: { kind: 'group', group_id: GID, title: 'Phiên B', running: false, messages: [
     { role: 'assistant', content: 'b transcript', meta: { bot_id: 'thyca' } },
   ] },
 };
@@ -71,12 +73,14 @@ globalThis.fetch = async (url, opts = {}) => {
     const ctl = mkReader();
     return { ok: true, status: 200, body: { getReader: () => ctl.reader } };
   }
-  if (method === 'GET' && url === '/api/sessions') {
-    return { ok: true, json: async () => ({ sessions: [] }) };
+  if (method === 'GET' && url === '/api/conversations') {
+    return { ok: true, json: async () => ({ conversations: [] }) };
   }
-  if (method === 'GET' && url.startsWith('/api/sessions/')) {
-    const id = decodeURIComponent(url.split('/').pop());
-    return { ok: true, json: async () => sessions[id] };
+  if (method === 'GET' && url === '/api/bots/thyca/dm') {
+    return { ok: true, json: async () => sessions.A };
+  }
+  if (method === 'GET' && url === '/api/groups/' + GID) {
+    return { ok: true, json: async () => sessions.B };
   }
   return { ok: false, status: 404, json: async () => ({ error: 'no route ' + url }) };
 };
@@ -86,11 +90,11 @@ const occurrences = (needle) => listText().split(needle).length - 1;
 
 // 1. Enter a running session: stored transcript renders first, then a single
 //    follow node attaches on top of it.
-await ui.loadSession('A');
+await ui.loadSession(AKEY);
 await settle();
 result.entered = {
   follows: follows.length,
-  tracked: ui.runs.has('A'),
+  tracked: ui.runs.has(AKEY),
   liveNodes: liveNodes(),
   savedVisible: listText().includes('saved first round'),
 };
@@ -101,7 +105,7 @@ follows[0].push(JSON.stringify({ type: 'llm.content', delta: 'mid-turn text' }) 
 await settle();
 result.streaming = {
   streamText: doc.querySelector('#message-list .running-response .stream-text')?.textContent ?? null,
-  phase: ui.runs.get('A')?.phase,
+  phase: ui.runs.get(AKEY)?.phase,
 };
 
 // 3. The replay stream drops mid-turn with no terminal event: finishTurn
@@ -115,7 +119,7 @@ follows[0].push(null);   // server closed the stream mid-turn
 await settle();
 result.dropped = {
   follows: follows.length,
-  tracked: ui.runs.has('A'),
+  tracked: ui.runs.has(AKEY),
   liveNodes: liveNodes(),
   occurrencesMid: occurrences('mid-turn text'),
   savedVisible: listText().includes('saved first round'),
@@ -124,14 +128,14 @@ result.dropped = {
 
 // 4. Leave for B (no follow — B is not running), then return to A while it
 //    is still running: a brand-new replay opens on a fresh token.
-await ui.loadSession('B');
+await ui.loadSession(BKEY);
 await settle();
 result.inB = { follows: follows.length, tracked: [...ui.runs.keys()], bVisible: listText().includes('b transcript') };
-await ui.loadSession('A');
+await ui.loadSession(AKEY);
 await settle();
 result.returned = {
   follows: follows.length,
-  tracked: ui.runs.has('A'),
+  tracked: ui.runs.has(AKEY),
   liveNodes: liveNodes(),
   savedSecondVisible: listText().includes('saved second round'),
 };
@@ -141,12 +145,12 @@ result.returned = {
 sessions.A = { ...sessions.A, running: false };
 follows[1].push(JSON.stringify({ type: 'turn.accepted' }) + '\n');
 follows[1].push(JSON.stringify({ type: 'llm.content', delta: 'tail' }) + '\n');
-follows[1].push(JSON.stringify({ type: 'turn.completed', detail: { id: 'A', running: false,
+follows[1].push(JSON.stringify({ type: 'turn.completed', detail: { kind: 'dm', bot_id: 'thyca', running: false,
   messages: [...sessions.A.messages, { role: 'assistant', content: 'done A', meta: { bot_id: 'thyca' } }] } }) + '\n');
 follows[1].push(null);
 await settle();
 result.stopped = {
-  tracked: ui.runs.has('A'),
+  tracked: ui.runs.has(AKEY),
   liveNodes: liveNodes(),
   doneVisible: listText().includes('done A'),
   cardState: ui.bots[0].state,

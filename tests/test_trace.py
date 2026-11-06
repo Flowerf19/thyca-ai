@@ -392,8 +392,9 @@ def test_turns_carry_session_channel_fields(tmp_path=None) -> None:
     assert legacy_turns[0].session_dm is None
     assert legacy_turns[0].session_bots == ["thyca"]
     payload = dm_turns[0].to_payload()
-    assert (payload["session_kind"], payload["session_dm"],
+    assert (payload["kind"], payload["bot_id"],
             payload["session_bots"]) == ("dm", "coder", ["coder"])
+    assert "session_id" not in payload
 
 
 def test_row_tool_calls_truthful_counting() -> None:

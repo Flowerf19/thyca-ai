@@ -63,6 +63,14 @@ globalThis.icon = (n) => `<svg data-i="${n}"></svg>`;
 globalThis.escapeHTML = (str) => String(str).replace(/[&<>"']/g, (ch) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 globalThis.__roster = {};
+globalThis.dmKey = (botId) => 'dm:' + botId;
+globalThis.groupKey = (groupId) => 'group:' + groupId;
+globalThis.convParts = (key) => {
+  const text = String(key || '');
+  if (text.startsWith('dm:')) return { kind: 'dm', bot_id: text.slice(3) };
+  if (text.startsWith('group:')) return { kind: 'group', group_id: text.slice(6) };
+  return null;
+};
 globalThis.getBot = (id) => globalThis.__roster[id] || null;
 globalThis.avatar = (b) => `<ava:${b.id}/>`;
 globalThis.toast = () => {};
@@ -260,7 +268,7 @@ def test_paging_multiple_pages_and_midway_failure(node: str) -> None:
     out = _eval_dash(
         node,
         """(async () => {
-          const row = (i) => ({ session_id: 's' + i, turn_index: 0 });
+          const row = (i) => ({ kind: 'dm', bot_id: 'thyca', turn_index: 0 });
           const pages = {
             0: Array.from({ length: 15 }, (_, i) => row(i)),
             15: Array.from({ length: 50 }, (_, i) => row(15 + i)),
@@ -298,11 +306,11 @@ def test_paging_multiple_pages_and_midway_failure(node: str) -> None:
 
 def test_load_more_hidden_at_total_and_rows_render(node: str) -> None:
     """"Hiển thị X trong Y lượt" tracks the loaded window; the button hides
-    once rows reach total and grouped session cards expose actionable turns."""
+    once rows reach total and turn rows expose actionable turns."""
     out = _eval_dash(
         node,
         """(async () => {
-          const row = (i) => ({ session_id: 's x', title: 'T', turn_index: i,
+          const row = (i) => ({ kind: 'dm', bot_id: 'thyca', title: 'T', turn_index: i,
             started_at: '2026-09-20T10:00:00', model: 'm', status: 'completed',
             requests: 1, tool_calls: 0, total_tokens: 5, cost_usd: 0.001,
             latency_ms: 40 });
@@ -327,7 +335,7 @@ def test_load_more_hidden_at_total_and_rows_render(node: str) -> None:
     )
     assert out["first"]["count"] == "Hiển thị 15 trong 20 lượt"
     assert out["first"]["more"] is False
-    assert 'data-session="s x"' in out["first"]["html"]
+    assert 'data-conv="dm:thyca"' in out["first"]["html"]
     assert 'data-turn="0"' in out["first"]["html"]
     assert out["second"]["count"] == "Hiển thị 20 trong 20 lượt"
     assert out["second"]["more"] is True

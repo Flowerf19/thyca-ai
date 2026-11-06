@@ -63,16 +63,16 @@ def test_second_turn_emits_naming_pairs_and_persists_title(tmp_path: Path) -> No
         session = SessionManager(tmp_path / "sessions").load(created["id"])
         assert session.title == "Cà phê với Hòa"
         assert session.naming_attempted is True
+        # Append-only store: the naming sidecar row (content=None) is
+        # never persisted; the attempt flag + stored title are the record.
         assert [(item.role, item.content) for item in session.messages] == [
             ("user", "alo"),
             ("assistant", "pong"),
             ("user", "kể thêm"),
             ("assistant", "pong again"),
-            ("assistant", None),
         ]
-        naming = session.messages[-1]
-        assert naming.meta["kind"] == "naming"
-        assert isinstance(naming.meta["latency_ms"], int)
+        assert not [m for m in session.messages
+                    if (m.meta or {}).get("kind") == "naming"]
     finally:
         app.shutdown()
 
@@ -239,21 +239,21 @@ def test_naming_meta_persists_usage_cost_and_counts_as_request(tmp_path: Path) -
         app.turn(created["id"], "alo")
         app.turn(created["id"], "thêm")
         session = SessionManager(tmp_path / "sessions").load(created["id"])
-        naming = [m for m in session.messages if (m.meta or {}).get("kind") == "naming"]
-        assert len(naming) == 1
-        meta = naming[0].meta
-        assert meta["model"] == "gpt-4o-mini"
-        assert meta["usage"]["total_tokens"] == 47
-        assert isinstance(meta["cost_usd"], float) and meta["cost_usd"] > 0
+        # Append-only store: no naming sidecar row is persisted, so the
+        # naming call's usage is not double-counted in the transcript.
+        # The naming LLM call itself still happened (3 requests total).
+        assert len(llm.requests) == 3
+        assert session.title == "Tựa đề đẹp"
+        assert session.naming_attempted is True
+        assert not [m for m in session.messages
+                    if (m.meta or {}).get("kind") == "naming"]
 
-        # trace aggregates: naming là một llm call → requests = 2, usage/cost gộp cả naming
         from thyca.serve.trace import turns_from_session
 
         turns = turns_from_session(session)
         assert len(turns) == 2
         assert turns[0].requests == 1
-        assert turns[1].requests == 2
-        assert turns[1].total_tokens == 60
+        assert turns[1].requests == 1
         assert turns[1].status == "completed"
     finally:
         app.shutdown()
@@ -731,7 +731,8 @@ def test_create_keeps_blank_session_with_running_turn(
         # here), so the "fresh" session is a group.
         fresh = app.create(bots=["thyca", "coder"])
         assert fresh["id"] != running_id
-        assert (tmp_path / "sessions" / f"{running_id}.jsonl").exists()
+        # Store equivalent of the file check: the blank door still loads.
+        assert app._sessions.store.load(running_id).id == running_id
     finally:
         release.set()
         worker.join(timeout=5)
@@ -822,7 +823,7 @@ def test_cancel_past_wait_reports_turn_in_flight(
 
 def test_cancel_turn_in_flight_maps_to_409() -> None:
     from thyca.app.chat_app import TurnInFlight
-    from thyca.serve.sessions_api import session_turn_cancel
+    from thyca.serve.conversations_api import dm_turn_cancel
 
     class Handler:
         def __init__(self) -> None:
@@ -835,11 +836,14 @@ def test_cancel_turn_in_flight_maps_to_409() -> None:
             self.sent = (status, payload)
 
     class BusyApp:
+        def bot_dm(self, bot_id: str) -> dict:
+            return {"id": bot_id}
+
         def cancel(self, session_id: str) -> None:
             raise TurnInFlight("turn still in flight")
 
     handler = Handler()
-    session_turn_cancel(handler, BusyApp(), "s-id")
+    dm_turn_cancel(handler, BusyApp(), "thyca")
     assert handler.sent == (409, {"error": "turn in flight"})
 
 

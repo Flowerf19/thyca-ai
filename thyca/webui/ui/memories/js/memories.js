@@ -455,7 +455,7 @@ async function boot() {
   const wanted = new URLSearchParams(ctx.route.search).get('bot');
   if (wanted) memState.scope = wanted;
   loadStats();                                     // API: GET /api/memory/stats[?bot_id=<id>]
-  try { await ctx.shellReady; }                       // API: GET /api/bots + GET /api/sessions
+  try { await ctx.shellReady; }                       // API: GET /api/bots + GET /api/conversations
   catch (err) { toast('Không tải được đội bot: ' + (err.message || '')); }
   /* A stale ?bot=<id> deep link clears once the real roster answers. */
   if (memState.scope && !getBot(memState.scope)) { memState.scope = ''; ctx.updateRoute({ search: '' }); }

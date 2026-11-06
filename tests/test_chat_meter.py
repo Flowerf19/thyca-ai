@@ -7,7 +7,7 @@ dropped in the UI rebuild. Their replacements:
     fmtCost, share) for the /api/traces usage screen,
   - share/sidebar.js fillDrawerContext renders the per-bot context meter
     (.ctx-meter/.ctx-bar, bands mirroring context_budget.py) fed by
-    share/data.js botContext()'s dm -> room-operations fetch pair.
+    share/data.js botContext()'s dm -> dm-operations fetch pair.
 This file pins the removal, evaluates the real formatters, exercises the
 real fillDrawerContext/botContext code paths, and keeps the backend
 usage-meta contract that feeds the dashboard.
@@ -38,11 +38,11 @@ const result = { calls: [], bands: {} };
 const b = ui.normalizeBot({ id: 'thyca', name: 'Thyca', role: 'bạn', agent_status: { state: 'idle' } }, 0);
 ui.bots.push(b);
 
-// botContext: dm -> rooms/<dm.session_id||dm.id>/operations?scope=turn
+// botContext: dm -> dm/operations
 let ops = { context: { ratio: 0.4, estimated_tokens: 120000, context_tokens: 200000 } };
 globalThis.fetch = async (url) => {
   result.calls.push(url);
-  if (url.endsWith('/dm')) return { ok: true, json: async () => ({ session_id: 'room-9', id: 'ignored' }) };
+  if (url.endsWith('/dm')) return { ok: true, json: async () => ({ kind: 'dm', bot_id: 'thyca' }) };
   if (url.includes('/operations')) return { ok: true, json: async () => ops };
   return { ok: false, status: 404, json: async () => ({ error: 'no route ' + url }) };
 };
@@ -79,10 +79,10 @@ def meter(node: str) -> dict:
     return json.loads(result.stdout)
 
 
-def test_bot_context_fetches_dm_then_room_operations(meter: dict) -> None:
+def test_bot_context_fetches_dm_then_dm_operations(meter: dict) -> None:
     assert meter["calls"][:2] == [
         "/api/bots/thyca/dm",
-        "/api/bots/thyca/rooms/room-9/operations?scope=turn",
+        "/api/bots/thyca/dm/operations",
     ]
     assert meter["botContext"]["context"]["ratio"] == 0.4
 

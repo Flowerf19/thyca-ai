@@ -66,6 +66,14 @@ globalThis.icon = (n) => `<svg data-i="${n}"></svg>`;
 globalThis.escapeHTML = (str) => String(str).replace(/[&<>"']/g, (ch) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 globalThis.__roster = {};
+globalThis.dmKey = (botId) => 'dm:' + botId;
+globalThis.groupKey = (groupId) => 'group:' + groupId;
+globalThis.convParts = (key) => {
+  const text = String(key || '');
+  if (text.startsWith('dm:')) return { kind: 'dm', bot_id: text.slice(3) };
+  if (text.startsWith('group:')) return { kind: 'group', group_id: text.slice(6) };
+  return null;
+};
 globalThis.getBot = (id) => globalThis.__roster[id] || null;
 globalThis.avatar = (b) => `<ava:${b.id}/>`;
 const __toasts = [];
@@ -320,7 +328,7 @@ def test_failed_more_retries_from_the_failed_offset(node: str) -> None:
         "document.querySelector('#trace-retry').listeners.click[0](); await new Promise(r => setTimeout(r, 0));\n"
         "return { failed, calls: __jsonCalls.filter(url => url.startsWith('/api/traces?')), rows: traceState.rows.length, total: traceState.total, error: traceState.error, moreHidden: document.querySelector('#trace-more').hidden };\n"
         "})().then(v => console.log(JSON.stringify(v)))",
-        setup="let pages = 0; const rows = (start, count) => Array.from({length:count}, (_, i) => ({session_id:'session-' + (start+i), turn_index:0, title:'Turn ' + (start+i)})); __jsonResponder = async url => { if (url.startsWith('/api/traces/stats')) return { totals: {}, models: [], by_status: [] }; const p = new URL(url, 'http://local'); const offset = Number(p.searchParams.get('offset')); pages++; if (offset === 65 && pages === 3) throw Error('injected append failure'); return { traces: offset === 0 ? rows(0,15) : offset === 15 ? rows(15,50) : rows(65,50), total: 120 }; };",
+        setup="let pages = 0; const rows = (start, count) => Array.from({length:count}, (_, i) => ({kind:'dm', bot_id:'thyca', turn_index:0, title:'Turn ' + (start+i)})); __jsonResponder = async url => { if (url.startsWith('/api/traces/stats')) return { totals: {}, models: [], by_status: [] }; const p = new URL(url, 'http://local'); const offset = Number(p.searchParams.get('offset')); pages++; if (offset === 65 && pages === 3) throw Error('injected append failure'); return { traces: offset === 0 ? rows(0,15) : offset === 15 ? rows(15,50) : rows(65,50), total: 120 }; };",
     )
     assert out["failed"] == {"rows": 65, "error": "injected append failure", "request": {"reset": False, "offset": 65}, "retryVisible": True}
     assert len(out["calls"]) == 4
@@ -344,11 +352,11 @@ def test_trace_seq_drops_a_stale_page(node: str) -> None:
           listFilters.q = 'new';
           const p3 = loadTraces(true);           // new filter reset wins
           const reset = __pending.pop();
-          reset.p.__res({ traces: [{ session_id: 's', turn_index: 0,
+          reset.p.__res({ traces: [{ kind: 'dm', bot_id: 'thyca', turn_index: 0,
             title: 'A' }], total: 9 });
           await p3;
           const stale = __pending.pop();
-          stale.p.__res({ traces: [{ session_id: 's2', turn_index: 0,
+          stale.p.__res({ traces: [{ kind: 'dm', bot_id: 'thyca', turn_index: 0,
             title: 'B' }], total: 9 });
           await p2;
           return { titles: traceState.rows.map((r) => r.title),
@@ -360,12 +368,12 @@ def test_trace_seq_drops_a_stale_page(node: str) -> None:
 
 
 def test_trace_row_escapes_and_deep_links(node: str) -> None:
-    """Every untrusted field in a grouped turn row is escaped; session and
+    """Every untrusted field in a turn row is escaped; conversation and
     turn identity remain separate data attributes for router navigation."""
     row = {
-        "session_id": "s <x>", "title": '<img src=x onerror=alert(1)>',
+        "kind": "dm", "bot_id": "s <x>", "title": '<img src=x onerror=alert(1)>',
         "turn_index": 0, "model": '<b>m</b>', "status": "<i>odd</i>",
-        "started_at": "2026-09-20T10:00:00", "bot_id": 'a"><script>',
+        "started_at": "2026-09-20T10:00:00",
         "requests": 1, "tool_calls": 0, "total_tokens": 5,
         "cost_usd": 0.001, "latency_ms": 40,
     }
@@ -376,8 +384,8 @@ def test_trace_row_escapes_and_deep_links(node: str) -> None:
     assert '<img src=x' not in html and '<b>m</b>' not in html
     assert '&lt;img src=x onerror=alert(1)&gt;' in html
     assert '&lt;b&gt;m&lt;/b&gt;' in html
-    assert 'data-session="s &lt;x&gt;"' in html and 'data-turn="0"' in html
-    assert "a&quot;&gt;&lt;script&gt;" in html  # escaped in title attr
+    assert 'data-conv="dm:s &lt;x&gt;"' in html and 'data-turn="0"' in html
+    assert "s &lt;x&gt;" in html  # bot id escaped in the row identity
 
 
 def test_status_chip_maps_the_four_statuses(node: str) -> None:
@@ -422,7 +430,7 @@ def test_render_trace_table_states(node: str) -> None:
             err: !document.querySelector('#trace-status').hidden,
             errText: document.querySelector('#trace-status-text').textContent,
             hint: document.querySelector('#trace-empty-hint').textContent }; };
-          traceState.rows = [{ session_id: 's', turn_index: 0 }];
+          traceState.rows = [{ kind: 'dm', bot_id: 'thyca', turn_index: 0 }];
           traceState.error = ''; traceState.loading = false;
           renderTraceTable(); snap('rows');
           traceState.rows = []; traceState.error = 'boom';
@@ -448,11 +456,11 @@ def test_open_trace_row_navigates_to_dashboard_detail(node: str) -> None:
     out = _eval_dash(
         node,
         "openTraceRow({ target: { closest: (s) =>"
-        " s === 'button[data-session][data-turn]'"
-        "   ? { dataset: { session: 's', turn: '0' } } : null } });\n"
+        " s === 'button[data-conv][data-turn]'"
+        "   ? { dataset: { conv: 'dm:thyca', turn: '0' } } : null } });\n"
         "console.log(JSON.stringify(ctx.route))",
     )
-    assert out["page"] == "dashboard" and out["hash"] == "#s/0"
+    assert out["page"] == "dashboard" and out["hash"] == "#dm/thyca/0"
 
 
 def test_fill_filters_keep_selection_and_add_extra_statuses(node: str) -> None:

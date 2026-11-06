@@ -15,18 +15,23 @@
   let pendingSettingsDialog = false;
   const validPage = id => PAGE_IDS.includes(id);
 
+  // Parse one explicit trace detail hash; kind is in the path, never guessed.
   function parseTurnHash(hash) {
     const raw = String(hash || '').replace(/^#/, '');
-    const slash = raw.indexOf('/');
-    if (slash <= 0 || raw.indexOf('/', slash + 1) !== -1) return null;
-    let sid;
-    try { sid = decodeURIComponent(raw.slice(0, slash)); } catch { return null; }
-    const turnText = raw.slice(slash + 1);
-    if (!/^[A-Za-z0-9_-]{1,120}$/.test(sid) || !/^\d{1,8}$/.test(turnText)) return null;
-    const turn = Number(turnText);
-    return Number.isSafeInteger(turn) ? { sid, turn } : null;
+    const parts = raw.split('/');
+    if (parts.length !== 3 || !/^\d{1,8}$/.test(parts[2])) return null;
+    const turn = Number(parts[2]);
+    if (!Number.isSafeInteger(turn)) return null;
+    let id;
+    try { id = decodeURIComponent(parts[1]); } catch { return null; }
+    if (parts[0] === 'dm' && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id)) return { kind: 'dm', bot_id: id, turn };
+    if (parts[0] === 'groups' && /^group-[0-9a-f]{32}$/.test(id)) return { kind: 'group', group_id: id, turn };
+    return null;
   }
-  const turnHash = ({ sid, turn }) => '#' + encodeURIComponent(sid) + '/' + turn;
+  // Build the trace detail hash for one explicit DM or group door.
+  const turnHash = (detail) => detail.kind === 'dm'
+    ? '#dm/' + encodeURIComponent(detail.bot_id) + '/' + detail.turn
+    : '#groups/' + encodeURIComponent(detail.group_id) + '/' + detail.turn;
   function validCalendarDate(value) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
     const date = new Date(value + 'T00:00:00Z');
@@ -51,10 +56,6 @@
     if (range === 'all') output.set('range', 'all');
     let detail = null;
     if (String(hash || '').replace(/^#/, '')) detail = parseTurnHash(hash);
-    else {
-      const sid = input.get('s'), turn = input.get('t');
-      if (sid && turn && /^[A-Za-z0-9_-]{1,120}$/.test(sid) && /^\d{1,8}$/.test(turn)) detail = { sid, turn: Number(turn) };
-    }
     let view = input.get('view');
     if (!['usage', 'cost', 'trace'].includes(view)) view = '';
     if (allIfUnbounded || detail) view = 'trace';
@@ -64,7 +65,7 @@
   function routeParts(page, search = '', hash = '') {
     if (page === 'trace') return dashboardRoute(search, hash, true);
     if (page === 'dashboard') return dashboardRoute(search, hash);
-    const allowed = { chat: ['bot', 's'], memories: ['bot'], profile: ['bot'], provider: [] }[page] || [];
+    const allowed = { chat: ['bot', 'g'], memories: ['bot'], profile: ['bot'], provider: [] }[page] || [];
     const input = new URLSearchParams(String(search).replace(/^\?/, ''));
     const output = new URLSearchParams();
     for (const key of allowed) { const value = input.get(key); if (value && value.length <= 200) output.set(key, value); }
@@ -95,7 +96,7 @@
     const params = new URLSearchParams(search);
     if (page === 'provider' && params.has('bot')) page = 'profile';
     if (page === 'trace') return dashboardRoute(search, hash, true);
-    if (page === 'dashboard' && (params.has('s') || params.has('t'))) return dashboardRoute(search, hash);
+    if (page === 'dashboard' && hash && parseTurnHash(hash)) return dashboardRoute(search, hash);
     if (page === 'chat' && hash && parseTurnHash(hash)) return dashboardRoute(search, hash, true);
     return routeParts(page, search, hash);
   }

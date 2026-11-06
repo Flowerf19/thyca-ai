@@ -672,7 +672,7 @@ async function boot() {
   // arrive, and a user click before boot finishes (bootTouched) always wins.
   state.tab = new URLSearchParams(ctx.route.search).get('bot') || '';
   await loadFiles();                                 // API: GET /api/memory/stats
-  try { await ctx.shellReady; }                         // API: GET /api/bots + GET /api/sessions
+  try { await ctx.shellReady; }                         // API: GET /api/bots + GET /api/conversations
   catch (err) { toast('Không tải được đội bot: ' + (err.message || '')); }
   rosterReady = true;
   try { await refreshBotConfig(); }                   // API: GET /api/config (scoped model catalog)

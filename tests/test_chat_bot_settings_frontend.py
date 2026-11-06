@@ -21,20 +21,20 @@ def test_chat_composer_inherits_by_default(node) -> None:
         bots.length = 0;
         bots.push(...roster([{ id: 'thyca', name: 'Thyca' }, { id: 'coder', name: 'Coder' }]));
         renderTeam();
-        currentSession = 's1'; selectedBot = 'coder';
+        currentSession = 'dm:coder'; selectedBot = 'coder';
         const bodies = [];
         installFetch((url, opts) => {
             if (url === '/api/config') return %s;
             if (url === '/api/bots/coder/settings')
                 return { bot_id: 'coder', model: { id: 'default', thinking: null },
                          effective: { model: 'm1', provider: 'card-provider', thinking: 'low' } };
-            if (url === '/api/sessions/s1/turn/stream' && opts.method === 'POST') {
+            if (url === '/api/bots/coder/dm/turn/stream' && opts.method === 'POST') {
                 bodies.push(JSON.parse(opts.body));
                 return { ok: true, status: 200, body: streamOf([
                     { type: 'turn.completed', detail: { title: 'T', messages: [] } },
                 ]) };
             }
-            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/conversations') return { conversations: [] };
             return {};
         });
         await loadConfig();
@@ -64,7 +64,7 @@ def test_chat_switching_bots_resets_and_effort_follows_model(node) -> None:
         bots.length = 0;
         bots.push(...roster([{ id: 'thyca', name: 'Thyca' }, { id: 'coder', name: 'Coder' }]));
         renderTeam();
-        currentSession = 's1'; selectedBot = 'thyca';
+        currentSession = 'dm:thyca'; selectedBot = 'thyca';
         installFetch((url) => {
             if (url === '/api/config') return %s;
             if (url === '/api/bots/coder/settings')
@@ -113,10 +113,10 @@ def test_chat_stale_settings_never_repaints_newer_bot(node) -> None:
             if (String(url).endsWith('/b/settings'))
                 return { bot_id: 'b', model: { id: 'default', thinking: null },
                          effective: { model: 'm-b', provider: 'p-b', thinking: 'low' } };
-            if (url === '/api/bots/a/dm') return { id: 'da', title: 'A', messages: [] };
-            if (url === '/api/bots/b/dm') return { id: 'db', title: 'B', messages: [] };
+            if (url === '/api/bots/a/dm') return { kind: 'dm', bot_id: 'a', title: 'A', messages: [] };
+            if (url === '/api/bots/b/dm') return { kind: 'dm', bot_id: 'b', title: 'B', messages: [] };
             if (url === '/api/config') return %s;
-            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/conversations') return { conversations: [] };
             return {};
         });
         await loadConfig();
@@ -130,7 +130,7 @@ def test_chat_stale_settings_never_repaints_newer_bot(node) -> None:
                  title: $('#chat-title').textContent,
                  label: document.querySelector('#composer-model').options[0].textContent };
     """ % _CONFIG, via="chat")
-    assert out["sel"] == "b" and out["session"] == "db"
+    assert out["sel"] == "b" and out["session"] == "dm:b"
     assert out["title"] == "B"
     assert "m-b" in out["label"] and "m-a" not in out["label"]
 
@@ -142,13 +142,13 @@ def test_chat_late_config_preserves_settings_state(node) -> None:
         bots.length = 0;
         bots.push(...roster([{ id: 'coder', name: 'Coder' }]));
         renderTeam();
-        currentSession = 's1'; selectedBot = 'coder';
+        currentSession = 'dm:coder'; selectedBot = 'coder';
         installFetch((url) => {
             if (url === '/api/config') return %s;
             if (url === '/api/bots/coder/settings')
                 return { bot_id: 'coder', model: { id: 'm1', thinking: null },
                          effective: { model: 'm1', provider: 'default', thinking: 'low' } };
-            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/conversations') return { conversations: [] };
             return {};
         });
         await refreshComposerInherit('coder');   // settings first, config missing
@@ -166,14 +166,14 @@ def test_config_saved_refreshes_chat_catalog_and_inheritance_without_losing_draf
     out = _run(node, """
         bots.length = 0;
         bots.push(...roster([{ id: 'coder', name: 'Coder' }])); renderTeam();
-        currentSession = 's1'; selectedBot = 'coder';
+        currentSession = 'dm:coder'; selectedBot = 'coder';
         let config = { values: { defaultModel: 'm1', defaultProvider: 'alpha', providers: { alpha: {} },
                                 models: { m1: { reasoningEfforts: ['low'] }, m2: {} } },
                        schema: { sections: [{ key: 'provider', fields: [{ key: 'provider.reasoningEffort', choices: ['low', 'high'] }] }] } };
         let configGets = 0, settingsGets = 0;
         installFetch(url => {
             if (url === '/api/bots') return { bots: [{ id: 'coder', name: 'Coder' }] };
-            if (url === '/api/sessions') return { sessions: [] };
+            if (url === '/api/conversations') return { conversations: [] };
             if (url === '/api/config') { configGets++; return config; }
             if (url === '/api/bots/coder/settings') {
                 settingsGets++;
@@ -182,7 +182,7 @@ def test_config_saved_refreshes_chat_catalog_and_inheritance_without_losing_draf
             }
             return {};
         });
-        await tick(10); currentSession = 's1'; selectedBot = 'coder';
+        await tick(10); currentSession = 'dm:coder'; selectedBot = 'coder';
         await loadConfig(); await refreshComposerInherit('coder');
         const select = document.querySelector('#composer-model'); select.value = 'm2';
         document.querySelector('#thinking-effort').value = 'high';
@@ -190,7 +190,7 @@ def test_config_saved_refreshes_chat_catalog_and_inheritance_without_losing_draf
         config = { values: { defaultModel: 'm3', defaultProvider: 'beta', providers: { alpha: {}, beta: {} },
                              models: { m1: { reasoningEfforts: ['low'] }, m2: {}, m3: { reasoningEfforts: ['high'] } } },
                    schema: { sections: [{ key: 'provider', fields: [{ key: 'provider.reasoningEffort', choices: ['low', 'high'] }] }] } };
-        selectedBot = 'coder'; currentSession = 's1';
+        selectedBot = 'coder'; currentSession = 'dm:coder';
         window.dispatchEvent(new Event('thyca:config-saved'));
         await tick(20);
         return { model: select.value, message: document.querySelector('#message').value,
@@ -206,7 +206,7 @@ def test_config_saved_refreshes_chat_catalog_and_inheritance_without_losing_draf
 def test_chat_config_request_generation_drops_older_catalog_after_saved_event(node) -> None:
     out = _run(node, """
         bots.length = 0; bots.push(...roster([{ id: 'coder', name: 'Coder' }])); renderTeam();
-        selectedBot = 'coder'; currentSession = 's1';
+        selectedBot = 'coder'; currentSession = 'dm:coder';
         let releaseOld, gets = 0;
         const fresh = { values: { defaultModel: 'new-default', defaultProvider: 'fresh', providers: { fresh: {} }, models: { fresh: {} } }, schema: { sections: [] } };
         installFetch(url => {

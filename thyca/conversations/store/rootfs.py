@@ -95,6 +95,7 @@ def _open_parent(root: Path) -> tuple[int, str, Path]:
 def _fsync_dir(fd: int) -> None:
     os.fsync(fd)
 
+# Open the store root directory without following links.
 def _open_root(root: Path, *, create: bool) -> tuple[int, int, str, Path]:
     parent_fd, name, absolute = _open_parent(root)
     created_here = False
@@ -127,7 +128,9 @@ def _open_root(root: Path, *, create: bool) -> tuple[int, int, str, Path]:
             if (not stat.S_ISDIR(path_info.st_mode) or not _same_inode(path_info, fd_info)
                     or fd_info.st_uid != os.geteuid()):
                 raise ConversationStoreError()
-            if created_here:
+            if created_here or create:
+                # Authorized initialization secures its own root directory;
+                # sentinel files inside keep their bytes and modes.
                 os.fchmod(root_fd, 0o700)
                 fd_info = os.fstat(root_fd)
             if stat.S_IMODE(fd_info.st_mode) != 0o700:

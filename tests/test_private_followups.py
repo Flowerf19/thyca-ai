@@ -12,8 +12,8 @@ from thyca.bots.private_followups import (
 
 def _mk(store: PrivateFollowupStore, bot: str = "coder", **kw):
     kw.setdefault("work_id", "task-aabb1122")
-    kw.setdefault("origin_window", "2026-10-19T09-00-00_ab12")
-    kw.setdefault("dm_window", "2026-10-19T09-01-00_cd34")
+    kw.setdefault("origin_window", "group-" + "a" * 32)
+    kw.setdefault("dm_window", "coder")
     kw.setdefault("question", "what is the token?")
     return store.create(bot, **kw)
 

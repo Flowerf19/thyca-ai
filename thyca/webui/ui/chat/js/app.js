@@ -6,6 +6,7 @@
 /* @mention regex is built from the live roster — no hardcoded ids. */
 const mentionPattern = () => new RegExp('@(' + bots.map(b => b.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')\\b', 'i');
 
+// Boot chat from the route: ?g= opens a group, ?bot= opens that bot's DM.
 async function boot(ctx) {
   try { await ctx.shellReady; }        // one shared roster/session load for the app
   catch (err) {
@@ -19,11 +20,11 @@ async function boot(ctx) {
   renderGroups();
   loadConfig();
   const params = new URLSearchParams(ctx.route.search);
-  const linkSession = params.get('s');
+  const linkGroup = params.get('g');
   const linkBot = params.get('bot');
   const first = getBot(linkBot) || bots[0];
   if (first) { selectedBot = first.id; updateComposer(); }
-  if (linkSession && groups.some(g => g.id === linkSession)) await loadSession(linkSession);
+  if (linkGroup && groups.some(g => g.id === linkGroup)) await loadConversation(groupKey(linkGroup));
   else if (first) await selectBot(first.id);
   else $('#message-list').innerHTML = '<article class="conversation-empty"><h2>Chưa có bot nào</h2><p>Đăng ký một bot để bắt đầu trò chuyện.</p></article>';
 }
@@ -63,7 +64,7 @@ $('#message-list').addEventListener('click', async e => {
   if (consentChip && !consentChip.disabled) void decidePrivateFollowup(consentChip.dataset.pendingId, consentChip.dataset.revision, consentChip.dataset.pfChoice, consentChip);
 });
 $('#session-info').onclick = () => {
-  const g = groups.find(g => g.id === currentSession);
+  const g = groups.find(g => groupKey(g.id) === currentSession);
   $('#bot-drawer-name').textContent = $('#chat-title').textContent;
   $('#bot-drawer-subtitle').textContent = g ? 'Hội thoại với ' + g.bots.map(id => (getBot(id) || {}).name || id).join(', ') : 'Phiên cùng ' + ((getBot(selectedBot) || {}).name || '…');
   $('#bot-drawer-body').innerHTML = '';
@@ -80,7 +81,7 @@ ThycaRouter.register('chat', { title: 'Sổ trò chuyện', stylesheet: '/ui/cha
   return {
     ready,
     selectBot,
-    loadSession,
+    loadSession: loadConversation,
     onLeave() { nextChatNav(); },
     onEnter(route) {
       if (!currentSession && bots.length) {
@@ -91,10 +92,10 @@ ThycaRouter.register('chat', { title: 'Sổ trò chuyện', stylesheet: '/ui/cha
     onRoute(route) {
       const next = route.search + route.hash;
       const params = new URLSearchParams(route.search);
-      const session = params.get('s'), bot = params.get('bot');
+      const group = params.get('g'), bot = params.get('bot');
       if (next !== applied) {
         applied = next;
-        if (session && groups.some(g => g.id === session)) loadSession(session);
+        if (group && groups.some(g => g.id === group)) loadConversation(groupKey(group));
         else if (bot && getBot(bot)) selectBot(bot);
       }
     },

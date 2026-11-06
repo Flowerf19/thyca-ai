@@ -35,6 +35,23 @@ def _last_user_index(messages: list[Message]) -> int | None:
     return None
 
 
+def _manager_runtime_root(manager) -> Path | None:
+    """Runtime store root for this manager, or None for legacy/canonical."""
+    try:
+        from thyca.bots.timeline import CanonicalSessionStore
+
+        if isinstance(getattr(manager, "store", None), CanonicalSessionStore):
+            return None
+    except Exception:
+        pass
+    try:
+        from thyca.sessions.store import _runtime_root_for
+
+        return _runtime_root_for(manager.sessions_dir)
+    except Exception:
+        return None
+
+
 class SessionManager:
     """Orchestrate store + compactor behind a single-process lock."""
 
@@ -77,6 +94,46 @@ class SessionManager:
 
     def create(self, *, make_current: bool = True) -> Session:
         with self._lock:
+            runtime_root = _manager_runtime_root(self)
+            if runtime_root is not None:
+                # Runtime: new group doors mint group-... ids via the store
+                # (transition: never mint legacy timestamps for new rooms).
+                from thyca.conversations.store.admin import AdminStore
+                from thyca.conversations.store.runtime import RuntimeWriteIntent
+                from thyca.conversations.store.write_adapter import create_group
+
+                self.store.ensure_dir()
+                session = None
+                for _ in range(10):
+                    try:
+                        conv = create_group(
+                            runtime_root, ["thyca"],
+                            intent=RuntimeWriteIntent("runtime-create"),
+                            actor="thyca",
+                        )
+                        break
+                    except Exception as exc:
+                        from thyca.conversations.store.contracts import (
+                            ConversationStoreError,
+                        )
+
+                        if isinstance(exc, ConversationStoreError):
+                            continue
+                        raise
+                else:
+                    raise SessionError("session filename collision")
+                from thyca.sessions.store import _runtime_session_path
+
+                path = _runtime_session_path(self.sessions_dir, conv.ref.id)
+                session = Session(
+                    conv.ref.id, path, [],
+                    title=conv.title, title_source=conv.title_source,
+                    naming_attempted=conv.naming_attempted,
+                    bots=list(conv.participants), dm_bot=None,
+                )
+                if make_current:
+                    self._session = session
+                return session
             self.store.ensure_dir()
             for _ in range(10):
                 session_id = self._new_id()
@@ -120,6 +177,46 @@ class SessionManager:
         No locking: single-threaded callers use it directly, while
         ChatApp.bot_dm wraps it in ``_dm_lock`` for the concurrent
         one-DM guarantee."""
+        runtime_root = _manager_runtime_root(self)
+        if runtime_root is not None:
+            # Runtime: DM doors bootstrap via AdminStore (tombstone-safe).
+            import uuid as _uuid
+
+            from thyca.conversations.store.admin import AdminStore
+            from thyca.conversations.store.contracts import (
+                ConversationStoreError,
+                DMBootstrapIntent,
+            )
+
+            # Fast path: existing DM in the store listing.
+            try:
+                items, _ = AdminStore(runtime_root).list(limit=5000)
+                for row in items:
+                    if row.ref.kind == "dm" and row.ref.id == bot_id:
+                        # load() takes its own lock; do not hold self._lock
+                        # across it (same pattern as the legacy path below).
+                        return self.load(row.ref.id)
+            except ConversationStoreError:
+                pass
+            attempt = _uuid.uuid4().hex
+            try:
+                result = AdminStore(runtime_root).bootstrap_initial_dm(
+                    bot_id, intent=DMBootstrapIntent(bot_id, attempt)
+                )
+            except ConversationStoreError:
+                # Lost a concurrent bootstrap race, or a tombstoned DM
+                # re-bootstrap attempt: re-list and adopt the winner when
+                # present so concurrent first lookups still mint exactly
+                # one DM id (the CBE-5 guarantee).
+                try:
+                    items, _ = AdminStore(runtime_root).list(limit=5000)
+                    for row in items:
+                        if row.ref.kind == "dm" and row.ref.id == bot_id:
+                            return self.load(row.ref.id)
+                except ConversationStoreError:
+                    pass
+                raise SessionError("cannot ensure DM") from None
+            return self.load(result.ref.id)
         for path in self.store.list_paths():
             try:
                 session = self.store.load(path.stem)
@@ -165,19 +262,47 @@ class SessionManager:
                 removed.append(session.id)
             return removed
 
-    def append(self, msg: Message) -> None:
+    # Append one row to the current session as the acting bot.
+    def append(self, msg: Message, *, actor: str | None = None) -> None:
         with self._lock:
             session = self._current_locked()
-            self.store.append(session.path, msg)
+            self.store.append(session.path, msg, actor=actor)
             session.messages.append(msg)
 
-    def truncate_to_last_user(self) -> bool:
+    # Check retry readiness for the acting bot without rewriting history.
+    def truncate_to_last_user(self, *, actor: str | None = None) -> bool:
         """Drop messages after the last user. No-op if the tail is already a user.
 
         A stale failure marker on the kept user message is stripped: a retry
         starts clean, and re-marks itself only if it fails again.
         Returns False when the transcript has no ``role=user`` message.
         """
+        # Runtime store is append-only: retry never rewrites history.
+        # Readiness (last-user position) comes from the no-mutation
+        # prepare_retry path; the trailing system error marker stays on
+        # disk and is filtered from the model feed by Assemble.
+        runtime_root = _manager_runtime_root(self)
+        if runtime_root is not None:
+            with self._lock:
+                session = self._current_locked()
+                from thyca.conversations.store.runtime import (
+                    RuntimeWriteIntent,
+                    resolve_ref,
+                )
+                from thyca.conversations.store.write_adapter import prepare_retry
+
+                ref = resolve_ref(runtime_root, session.id)
+                # Read-only readiness: the acting bot when known, else a
+                # stored member reader. No write is authorized here.
+                reader = actor or (ref.id if ref.kind == "dm" else None)
+                if reader is None:
+                    reader = (session.bots or ["thyca"])[0]
+                plan = prepare_retry(
+                    runtime_root, ref,
+                    intent=RuntimeWriteIntent("runtime-retry-readiness"),
+                    actor=reader,
+                )
+                return bool(plan.has_user)
         with self._lock:
             session = self._current_locked()
             messages = session.messages
@@ -208,7 +333,8 @@ class SessionManager:
             session.messages[:] = kept
             return True
 
-    def mark_turn_error(self, code: str, message: str) -> bool:
+    # Record one turn failure for the acting bot without rewriting rows.
+    def mark_turn_error(self, code: str, message: str, *, actor: str | None = None) -> bool:
         """Stamp the turn's user message with the failure and persist it.
 
         The marker is what Trace shows for a failed turn; the live chat keeps
@@ -216,6 +342,51 @@ class SessionManager:
         message to mark. Disk failures raise SessionError — callers that must
         not mask the original error guard this call.
         """
+        # Runtime store is append-only: failures append a trailing system
+        # marker (meta.error) instead of stamping the user row in place.
+        # Trace projects the marker back onto its turn's user message in
+        # memory, so failed turns still read as failed without rewriting
+        # stored bytes.
+        runtime_root = _manager_runtime_root(self)
+        if runtime_root is not None:
+            with self._lock:
+                session = self._current_locked()
+                from thyca.conversations.store.runtime import (
+                    RuntimeWriteIntent,
+                    resolve_ref,
+                )
+                from thyca.conversations.store.turn_pipeline import record_turn_error
+                from thyca.conversations.store.write_adapter import prepare_retry
+
+                ref = resolve_ref(runtime_root, session.id)
+                # The acting bot records its own failure; membership is
+                # checked inside the store transactions below.
+                acting = actor or (ref.id if ref.kind == "dm" else None)
+                if acting is None:
+                    acting = (session.bots or ["thyca"])[0]
+                plan = prepare_retry(
+                    runtime_root, ref,
+                    intent=RuntimeWriteIntent("runtime-error-readiness"),
+                    actor=acting,
+                )
+                if not plan.has_user:
+                    return False
+                record_turn_error(
+                    runtime_root, ref,
+                    intent=RuntimeWriteIntent("runtime-record-error"),
+                    actor=acting, code=code, message=message,
+                )
+                # Keep the in-memory view consistent with the store: the
+                # marker row is a system message carrying meta.error.
+                from thyca.core.protocol import Message as _Message
+
+                session.messages.append(
+                    _Message(
+                        role="system", content=message,
+                        meta={"error": {"code": code, "message": message}},
+                    )
+                )
+                return True
         with self._lock:
             session = self._current_locked()
             messages = session.messages
@@ -284,6 +455,96 @@ class SessionManager:
         pending_user_tokens: int,
         calibration: float = 1.0,
     ) -> dict:
+        # Runtime store compaction is append-only: the prefix is replaced
+        # by one system summary row via compact_through_seq (no rewrite).
+        # Summaries reuse the legacy "[compaction: ...; excerpt: ...]"
+        # shape so Assemble still hoists them as compaction markers.
+        runtime_root = _manager_runtime_root(self)
+        if runtime_root is not None:
+            session = self._current_locked()
+            # Rescan from the store so a concurrent append cannot be lost:
+            # scan() reassembles via cursor-paged reads with bounded resync.
+            on_disk, title, title_source, attempted = self.store.scan(session.path)
+            session.messages[:] = on_disk
+            session.naming_attempted = session.naming_attempted or attempted
+            if title:
+                session.title = title
+                session.title_source = title_source
+            before = len(on_disk)
+            plan = self.compactor.plan(
+                on_disk,
+                self.limits.contextTokens,
+                hot_tokens=hot_tokens,
+                tools_tokens=tools_tokens,
+                pending_user_tokens=pending_user_tokens,
+                force=force,
+                calibration=calibration,
+            )
+            if plan is None:
+                return {
+                    "compacted": False,
+                    "messages_before": before,
+                    "messages_after": before,
+                }
+            body = self.compactor.excerpt_body(plan)
+            summary_text = (
+                f"[compaction: omitted {plan.total_messages} messages/"
+                f"{plan.total_turns} turns; excerpt: {body}]"
+            )
+            from thyca.conversations.store.admin import AdminStore
+            from thyca.conversations.store.runtime import resolve_ref
+            from thyca.conversations.store.database import (
+                _ensure_root_ready,
+                _root_instance_id_from_conn,
+                _transaction_context,
+                open_existing_session,
+            )
+
+            ref = resolve_ref(runtime_root, session.id)
+            conn = open_existing_session(runtime_root, lock_mode="shared")
+            try:
+                with _transaction_context(conn, "BEGIN"):
+                    _ensure_root_ready(conn, _root_instance_id_from_conn(conn))
+                    rows = conn.execute(
+                        "SELECT logical_seq FROM messages WHERE kind=? AND id=? "
+                        "ORDER BY logical_seq",
+                        (ref.kind, ref.id),
+                    ).fetchall()
+            finally:
+                conn.close()
+            if len(rows) != len(on_disk):
+                raise SessionError("compaction read raced")
+            keep = len(plan.tail)
+            if keep >= len(rows):
+                return {
+                    "compacted": False,
+                    "messages_before": before,
+                    "messages_after": before,
+                }
+            through_seq = int(rows[len(rows) - keep - 1][0]) if keep else int(rows[-1][0])
+            try:
+                AdminStore(runtime_root).compact_through_seq(
+                    ref, through_seq, lambda _old, _text=summary_text: _text,
+                )
+            except Exception as exc:
+                from thyca.conversations.store.contracts import ConversationStoreError
+
+                if isinstance(exc, ConversationStoreError):
+                    raise SessionError("compaction failed") from exc
+                raise
+            after_messages, after_title, after_source, after_attempted = self.store.scan(
+                session.path
+            )
+            session.messages[:] = after_messages
+            if after_title:
+                session.title = after_title
+                session.title_source = after_source
+            session.naming_attempted = session.naming_attempted or after_attempted
+            return {
+                "compacted": True,
+                "messages_before": before,
+                "messages_after": len(after_messages),
+            }
         session = self._current_locked()
         on_disk, title, title_source, attempted = self.store.scan(session.path)
         session.messages[:] = on_disk
@@ -334,6 +595,63 @@ class SessionManager:
         from the rescan either way). False means: caller falls back to a
         fresh rule-based compact; current is left at the rescanned state.
         """
+        runtime_root = _manager_runtime_root(self)
+        if runtime_root is not None:
+            with self._lock:
+                session = self._current_locked()
+                on_disk, title, title_source, attempted = self.store.scan(session.path)
+                session.messages[:] = on_disk
+                session.naming_attempted = session.naming_attempted or attempted
+                if title:
+                    session.title = title
+                    session.title_source = title_source
+                if on_disk != list(expected):
+                    return False
+                if not compacted or compacted[0].role != "system":
+                    return False
+                summary_text = compacted[0].content or ""
+                tail_len = len(compacted) - 1
+                from thyca.conversations.store.admin import AdminStore
+                from thyca.conversations.store.runtime import resolve_ref
+                from thyca.conversations.store.database import (
+                    _ensure_root_ready,
+                    _root_instance_id_from_conn,
+                    _transaction_context,
+                    open_existing_session,
+                )
+
+                ref = resolve_ref(runtime_root, session.id)
+                conn = open_existing_session(runtime_root, lock_mode="shared")
+                try:
+                    with _transaction_context(conn, "BEGIN"):
+                        _ensure_root_ready(conn, _root_instance_id_from_conn(conn))
+                        rows = conn.execute(
+                            "SELECT logical_seq FROM messages WHERE kind=? AND id=? "
+                            "ORDER BY logical_seq",
+                            (ref.kind, ref.id),
+                        ).fetchall()
+                finally:
+                    conn.close()
+                if len(rows) != len(on_disk):
+                    return False
+                if tail_len >= len(rows):
+                    return False
+                through_seq = int(rows[len(rows) - tail_len - 1][0]) if tail_len else int(rows[-1][0])
+                try:
+                    AdminStore(runtime_root).compact_through_seq(
+                        ref, through_seq, lambda _old, _text=summary_text: _text,
+                    )
+                except Exception:
+                    return False
+                after, after_title, after_source, after_attempted = self.store.scan(
+                    session.path
+                )
+                session.messages[:] = after
+                if after_title:
+                    session.title = after_title
+                    session.title_source = after_source
+                session.naming_attempted = session.naming_attempted or after_attempted
+                return True
         with self._lock:
             session = self._current_locked()
             on_disk, title, title_source, attempted = self.store.scan(session.path)
@@ -360,16 +678,18 @@ class SessionManager:
         with self._lock:
             refresh_title(self.store, self._session)
 
-    def mark_naming_attempted(self) -> None:
+    # Persist the naming attempt for the acting bot.
+    def mark_naming_attempted(self, *, actor: str | None = None) -> None:
         """Persist the automatic naming step's one attempt (see title module)."""
         with self._lock:
-            mark_naming_attempted(self.store, self._current_locked())
+            mark_naming_attempted(self.store, self._current_locked(), actor=actor)
 
-    def set_title_if_missing(self, title: str) -> str | None:
+    # Store the automatic title for the acting bot when none exists.
+    def set_title_if_missing(self, title: str, *, actor: str | None = None) -> str | None:
         """Store the automatic title only when no title is on disk."""
         with self._lock:
             return set_title_if_missing(
-                self.store, self._current_locked(), title
+                self.store, self._current_locked(), title, actor=actor
             )
 
     def set_title(self, title: str, *, source: str | None = None) -> str | None:

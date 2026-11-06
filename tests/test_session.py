@@ -19,7 +19,7 @@ from thyca.core.protocol import Message, ToolCall
 from thyca.serve import routes as serve_routes
 from thyca.serve import trace as serve_trace
 from thyca.serve import trace_api
-from thyca.serve.sessions_api import SESSION_RE, _sessions_error
+from thyca.serve.conversations_api import _conv_error
 from thyca.sessions import (
     Session,
     SessionBusy,
@@ -1044,25 +1044,34 @@ def test_x1_call_and_message_dicts_match_old_shapes(tmp_path: Path) -> None:
 
 
 def test_x1_session_id_grammar_is_single_pattern(tmp_path: Path) -> None:
-    assert SESSION_ID_PATTERN == r"\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_[0-9a-f]{4}"
+    # Hard-cut grammar: public doors are dm(bot)/group ids only, and the
+    # legacy /api/sessions routes are gone. Canonical per-bot timeline
+    # ids keep the timestamp shape as a separate internal concept.
+    from thyca.core.conversation import ConversationRef
+
+    assert SESSION_ID_PATTERN == r"(?:group-[0-9a-f]{32}|[a-z0-9]+(?:-[a-z0-9]+)*)"
+    group_id = "group-" + "a" * 32
+    assert ConversationRef.dm("coder").id == "coder"
+    assert ConversationRef.group(group_id).id == group_id
+    with pytest.raises(ValueError):
+        ConversationRef.group(_SID)
+    with pytest.raises(ValueError):
+        ConversationRef.dm(_SID)
     store = SessionStore(tmp_path / "sessions")
+    # Public door ids and internal canonical ids both bind to a path.
+    assert store.path_for("coder").name == "coder.jsonl"
+    assert store.path_for(group_id).name == f"{group_id}.jsonl"
     assert store.path_for(_SID).name == f"{_SID}.jsonl"
-    patterns = [
-        serve_routes._SESSION_RE,
-        serve_routes._TURN_RE,
-        serve_routes._TURN_STREAM_RE,
-        serve_routes._TURN_CANCEL_RE,
-        serve_routes._TRACE_DETAIL_RE,
-        SESSION_RE,
-    ]
-    for pattern in patterns:
-        assert SESSION_ID_PATTERN in pattern.pattern
-    # The two identical session routes provably cannot drift apart.
-    assert serve_routes._SESSION_RE.pattern == SESSION_RE.pattern
-    assert serve_routes._SESSION_RE.fullmatch(f"/api/sessions/{_SID}").group(1) == _SID  # type: ignore[union-attr]
-    assert serve_routes._TURN_RE.fullmatch(f"/api/sessions/{_SID}/turn").group(1) == _SID  # type: ignore[union-attr]
-    detail = serve_routes._TRACE_DETAIL_RE.fullmatch(f"/api/traces/{_SID}/3")
-    assert detail is not None and (detail.group(1), detail.group(2)) == (_SID, "3")
+    # New routes address doors explicitly; no session route remains.
+    assert not hasattr(serve_routes, "_SESSION_RE")
+    assert serve_routes._BOT_DM_RE.fullmatch("/api/bots/coder/dm") is not None
+    assert serve_routes._GROUP_RE.fullmatch(f"/api/groups/{group_id}") is not None
+    assert serve_routes._DM_TURN_RE.fullmatch("/api/bots/coder/dm/turn") is not None
+    assert serve_routes._GROUP_TURN_RE.fullmatch(f"/api/groups/{group_id}/turn") is not None
+    detail = serve_routes._TRACE_GROUP_DETAIL_RE.fullmatch(f"/api/traces/groups/{group_id}/3")
+    assert detail is not None and detail.group(2) == "3"
+    dm_detail = serve_routes._TRACE_DM_DETAIL_RE.fullmatch("/api/traces/dm/coder/3")
+    assert dm_detail is not None and dm_detail.group(2) == "3"
     bad = [
         "2026-09-01T10-00-00_ab1g",  # non-hex
         "2026-09-01T10-00-00_ab123",  # too long
@@ -1077,8 +1086,7 @@ def test_x1_session_id_grammar_is_single_pattern(tmp_path: Path) -> None:
             pass
         else:
             raise AssertionError(f"path_for accepted {raw!r}")
-        assert serve_routes._SESSION_RE.fullmatch(f"/api/sessions/{raw}") is None
-        assert SESSION_RE.fullmatch(f"/api/sessions/{raw}") is None
+        assert serve_routes._BOT_DM_RE.fullmatch(f"/api/bots/{raw}/dm") is None
 
 
 def _error_matrix() -> list[tuple[Exception, tuple[int, str] | None]]:
@@ -1114,11 +1122,13 @@ class _Handler:
 def test_x1_sessions_error_delegates_with_chat_fallback() -> None:
     for exc, expected in _error_matrix():
         handler = _Handler()
-        _sessions_error(handler, exc)
+        _conv_error(handler, exc)
         if expected is None:
             assert handler.calls == [(503, {"error": "chat unavailable"})], exc
         else:
-            assert handler.calls == [(expected[0], {"error": expected[1]})], exc
+            # Public wording names conversations, never sessions or paths.
+            public = expected[1].replace("session", "conversation")
+            assert handler.calls == [(expected[0], {"error": public})], exc
 
 
 def test_x1_title_alias_is_single_canonical() -> None:

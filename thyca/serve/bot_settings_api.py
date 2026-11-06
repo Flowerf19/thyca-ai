@@ -1,4 +1,4 @@
-"""Per-bot model settings endpoints (split from sessions_api).
+"""Per-bot model settings endpoints (split from the serve layer).
 
 ``GET /api/bots/<id>/settings`` reads one bot's settings plus the resolved
 effective connection; ``POST`` full-replaces ``{"model": {...}}``. Broad
@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from thyca.bots.registry import RegistryError
 from thyca.bots.settings import SettingsError
 from thyca.serve.errors import _with_json
-from thyca.serve.sessions_api import _missing_chat
+from thyca.serve.conversations_api import _missing_chat
 
 if TYPE_CHECKING:
     from thyca.app.chat_app import ChatApp

@@ -73,6 +73,14 @@ globalThis.escapeHTML = (str) => String(str).replace(/[&<>"']/g, (ch) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 // Roster stub: tests register bots here; avatar() marks roster bots.
 globalThis.__roster = {};
+globalThis.dmKey = (botId) => 'dm:' + botId;
+globalThis.groupKey = (groupId) => 'group:' + groupId;
+globalThis.convParts = (key) => {
+  const text = String(key || '');
+  if (text.startsWith('dm:')) return { kind: 'dm', bot_id: text.slice(3) };
+  if (text.startsWith('group:')) return { kind: 'group', group_id: text.slice(6) };
+  return null;
+};
 globalThis.getBot = (id) => globalThis.__roster[id] || null;
 globalThis.avatar = (b) => `<ava:${b.id}/>`;
 globalThis.toast = () => {};
@@ -291,14 +299,14 @@ def test_stats_and_trace_responses_have_independent_guards(node: str) -> None:
           loadTraces(true, true);
           loadTraces(true, true);   // the user re-filters: a newer list request wins
           pending[0].resolve({ totals: { requests: 9 }, by_model: [] });
-          pending[2].resolve({ traces: [{ session_id: 's2', turn_index: 0 }],
+          pending[2].resolve({ traces: [{ kind: 'dm', bot_id: 's2', turn_index: 0 }],
                                total: 1 });
           await new Promise((r) => setTimeout(r, 5));
           // The stale first list page arrives late and must be dropped.
-          pending[1].resolve({ traces: [{ session_id: 'old', turn_index: 0 }],
+          pending[1].resolve({ traces: [{ kind: 'dm', bot_id: 'old', turn_index: 0 }],
                                total: 99 });
           await new Promise((r) => setTimeout(r, 5));
-          return { rows: traceState.rows.map((t) => t.session_id),
+          return { rows: traceState.rows.map((t) => t.bot_id),
             total: traceState.total, stats: statsData.totals.requests,
             html: document.querySelector('#trace-sessions').innerHTML };
         })().then((v) => console.log(JSON.stringify(v)))""",

@@ -121,6 +121,7 @@ function turnBotIds(turn) {
   else push(turn.bot_id);
   return ids;
 }
+// Render one trace turn row keyed by its typed conversation door.
 function turnRowHtml(turn) {
   const ids = botScope ? [botScope] : turnBotIds(turn);
   const id = ids[0] || '';
@@ -128,10 +129,11 @@ function turnRowHtml(turn) {
   const face = bot ? `<span class="mini-avatar">${avatar(bot, bot.state, 'expression-preview')}</span>`
     : `<span class="tl-botid">${escapeHTML(id || '—')}</span>`;
   const name = ids.length ? botDisplayName(id) + (ids.length > 1 ? ` +${ids.length - 1}` : '') : '—';
-  const kind = turn.session_kind === 'dm' ? 'Chat riêng' : turn.session_kind === 'group' ? 'Chat nhóm' : 'Phiên';
-  const title = turn.title || turn.session_id || '—';
+  const kind = turn.kind === 'dm' ? 'Chat riêng' : turn.kind === 'group' ? 'Chat nhóm' : 'Phiên';
+  const title = turn.title || turn.group_id || turn.bot_id || '—';
+  const conv = turn.kind === 'dm' ? dmKey(turn.bot_id) : groupKey(turn.group_id);
   const status = botScope && turn.status === 'failed' ? 'Lượt có lỗi' : null;
-  return `<li><button type="button" class="tl-turn" data-session="${escapeHTML(turn.session_id)}" data-turn="${turn.turn_index}"
+  return `<li><button type="button" class="tl-turn" data-conv="${escapeHTML(conv)}" data-turn="${turn.turn_index}"
       title="Mở lượt #${turn.turn_index} của “${escapeHTML(title)}”">
     <span class="tl-turn-idx">#${fmtInt(turn.turn_index)}</span>${face}<span class="tl-turn-main">
       <span class="tl-turn-line"><b>${escapeHTML(name)}</b><span class="tl-turn-title">${escapeHTML(title)}</span></span>
@@ -299,16 +301,18 @@ function listRequestKey() {
   if (listFilters.status) q.set('status', listFilters.status);
   return q.toString();
 }
+// Parse the explicit trace detail hash (#dm/<bot>/<n> or #groups/<id>/<n>).
 function parseDetailRoute(route) {
   const raw = String(route.hash || '').replace(/^#/, '');
-  const slash = raw.indexOf('/');
-  if (slash <= 0 || raw.indexOf('/', slash + 1) !== -1) return null;
-  let sid;
-  try { sid = decodeURIComponent(raw.slice(0, slash)); } catch { return null; }
-  const turnText = raw.slice(slash + 1);
-  if (!/^[A-Za-z0-9_-]{1,120}$/.test(sid) || !/^\d{1,8}$/.test(turnText)) return null;
-  const turn = Number(turnText);
-  return Number.isSafeInteger(turn) ? { sid, turn } : null;
+  const parts = raw.split('/');
+  if (parts.length !== 3 || !/^\d{1,8}$/.test(parts[2])) return null;
+  const turn = Number(parts[2]);
+  if (!Number.isSafeInteger(turn)) return null;
+  let id;
+  try { id = decodeURIComponent(parts[1]); } catch { return null; }
+  if (parts[0] === 'dm' && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id)) return { kind: 'dm', bot_id: id, turn };
+  if (parts[0] === 'groups' && /^group-[0-9a-f]{32}$/.test(id)) return { kind: 'group', group_id: id, turn };
+  return null;
 }
 function readRoute(route, initial = false) {
   const params = new URLSearchParams(route.search);
@@ -451,8 +455,8 @@ function setView(mode, restore = false) {
   if (mode === 'detail') scroller.scrollTop = 0;
   else if (restore) {
     scroller.scrollTop = overviewScroll;
-    const focus = overviewFocus && [...$('#trace-sessions').querySelectorAll('button[data-session][data-turn]')]
-      .find(button => button.dataset.session === overviewFocus.sid && button.dataset.turn === String(overviewFocus.turn));
+    const focus = overviewFocus && [...$('#trace-sessions').querySelectorAll('button[data-conv][data-turn]')]
+      .find(button => button.dataset.conv === overviewFocus.sid && button.dataset.turn === String(overviewFocus.turn));
     const target = focus || $('#usage-view-title');
     if (target && !target.hasAttribute('tabindex')) target.tabIndex = -1;
     target?.focus?.({ preventScroll: true });
@@ -484,14 +488,19 @@ function renderDetail() {
   body.innerHTML = detailLoading ? '<p class="status-line">Đang đọc lượt…</p>'
     : detailData ? (botScope ? `<p class="detail-context-note">Ngữ cảnh dưới đây là toàn bộ lượt và có thể chứa hoạt động của bot khác.</p>${botContributionHtml(detailData)}<div class="full-turn-context">${window.ThycaTraceDetail.render(detailData)}</div>` : window.ThycaTraceDetail.render(detailData)) : '';
 }
-async function loadDetail(sid, turn, force = false) {
+// Load one trace turn from its explicit DM or group door.
+async function loadDetail(ref, turn, force = false) {
+  const sid = ref.kind === 'dm' ? dmKey(ref.bot_id) : groupKey(ref.group_id);
   const key = sid + '/' + turn;
   if (!force && detailKey === key && (detailLoading || detailData || detailError)) return;
   detailKey = key; detailData = null; detailError = ''; detailLoading = true;
   const seq = ++detailSeq;
   renderDetail();
   try {
-    const data = await getJson(`/api/traces/${encodeURIComponent(sid)}/${turn}`);
+    const url = ref.kind === 'dm'
+      ? `/api/traces/dm/${encodeURIComponent(ref.bot_id)}/${turn}`
+      : `/api/traces/groups/${encodeURIComponent(ref.group_id)}/${turn}`;
+    const data = await getJson(url);
     if (seq !== detailSeq || key !== detailKey) return;
     detailData = data;
   } catch (err) {
@@ -520,11 +529,11 @@ function applyRoute(route, { force = false } = {}) {
   if (selected && !(wasDetail && priorBot !== botScope)) {
     if (!wasDetail) {
       overviewScroll = $('#usage-scroll').scrollTop;
-      const active = document.activeElement?.closest?.('button[data-session][data-turn]');
-      overviewFocus = active ? { sid: active.dataset.session, turn: active.dataset.turn } : overviewFocus;
+      const active = document.activeElement?.closest?.('button[data-conv][data-turn]');
+      overviewFocus = active ? { sid: active.dataset.conv, turn: active.dataset.turn } : overviewFocus;
     }
     setView('detail');
-    void loadDetail(selected.sid, selected.turn, force);
+    void loadDetail(selected, selected.turn, force);
     return;
   }
   if (wasDetail) {
@@ -770,13 +779,18 @@ function renderTraceFoot() {
   more.disabled = traceState.loading;
   more.textContent = traceState.loading ? 'Đang tải…' : 'Tải thêm';
 }
+// Open the clicked trace row through its explicit door hash.
 function openTraceRow(e) {
-  const button = e.target.closest('button[data-session][data-turn]');
+  const button = e.target.closest('button[data-conv][data-turn]');
   if (!button) return;
   clearTimeout(qTimer); qTimer = null;
   overviewScroll = $('#usage-scroll').scrollTop;
-  overviewFocus = { sid: button.dataset.session, turn: button.dataset.turn };
-  ctx.navigate('dashboard', { search: ctx.route.search, hash: '#' + encodeURIComponent(button.dataset.session) + '/' + button.dataset.turn });
+  overviewFocus = { sid: button.dataset.conv, turn: button.dataset.turn };
+  const parts = convParts(button.dataset.conv);
+  const hash = parts && parts.kind === 'dm'
+    ? '#dm/' + encodeURIComponent(parts.bot_id) + '/' + button.dataset.turn
+    : '#groups/' + encodeURIComponent(parts.group_id) + '/' + button.dataset.turn;
+  ctx.navigate('dashboard', { search: ctx.route.search, hash });
 }
 
 /* ---------- controls and lifecycle ---------- */
@@ -853,11 +867,11 @@ function buildPage() {
   $('#detail-back').onclick = returnFromDetail;
   $('#detail-retry').onclick = () => {
     const selected = parseDetailRoute(ctx.route);
-    if (selected) void loadDetail(selected.sid, selected.turn, true);
+    if (selected) void loadDetail(selected, selected.turn, true);
   };
   $('#detail-refresh').onclick = () => {
     const selected = parseDetailRoute(ctx.route);
-    if (selected) void loadDetail(selected.sid, selected.turn, true);
+    if (selected) void loadDetail(selected, selected.turn, true);
   };
 }
 async function boot() {
@@ -867,7 +881,7 @@ async function boot() {
   try { await ctx.shellReady; } catch (err) { toast('Không tải được đội bot: ' + (err.message || '')); }
   ctx.highlightBot(botScope); ctx.renderTeam(); updateScopeChip();
   const selected = parseDetailRoute(ctx.route);
-  if (selected) { setView('detail'); void loadDetail(selected.sid, selected.turn); }
+  if (selected) { setView('detail'); void loadDetail(selected, selected.turn); }
   else { setView('overview'); ensureOverviewData(false); }
 }
 const ready = boot();

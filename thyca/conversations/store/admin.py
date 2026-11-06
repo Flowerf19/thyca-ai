@@ -7,10 +7,11 @@ from pathlib import Path
 
 from thyca.core.protocol import Message, parse_ts, utc_now_ts
 from .agent import AgentStore
-from .contracts import (BootstrapResult, Conversation, ConversationRef, ConversationStoreError,
-                        DMBootstrapIntent, InitializationResult, RootInitializationIntent,
-                        _check_text, _decode_message, _encode_canonical_message, _encode_metadata,
-                        _local_error, _metadata, _require_ref, _view, validate_metadata)
+from .contracts import (BootstrapResult, Conversation, ConversationListing, ConversationRef,
+                        ConversationStoreError, DMBootstrapIntent, InitializationResult,
+                        RootInitializationIntent, _check_text, _decode_message,
+                        _encode_canonical_message, _encode_metadata, _local_error, _metadata,
+                        _require_ref, _view, validate_metadata)
 from .database import (_ensure_door_ready, _ensure_root_ready, _read_door_row,
                        _root_instance_id_from_conn, _transaction_context, open_existing_session)
 from .lifecycle import _audit_in_transaction, audit_root, bootstrap_dm, initialize_root
@@ -93,6 +94,100 @@ class AdminStore:
                 except sqlite3.Error as exc:
                     raise _local_error(ref) from exc
                 return _view(ref, metadata, messages)
+        finally:
+            conn.close()
+
+    def list(self, *, limit: int = 100, offset: int = 0) -> tuple[list[ConversationListing], bool]:
+        """Paginated newest-first listing over ready conversations (synthetic roots).
+
+        Ordering mirrors the legacy ``list_paths`` newest-first contract:
+        ``created_at`` descending, then ``(kind, id)`` ascending for ties.
+        Empty conversations are included. Each row carries metadata plus
+        ``created_at`` (the empty-conversation timestamp source); message
+        bodies are never loaded here — callers assemble history through
+        cursor-paged ``AgentStore.read``. Corrupt doors are skipped the way
+        legacy ``list_sessions`` skips unreadable files. Returns
+        ``(items, has_more)``; the caller advances with ``offset + limit``.
+        """
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise ValueError('limit must be a positive int')
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise ValueError('offset must be a non-negative int')
+        from .contracts import MAX_PAGE_LIMIT
+        limit = min(limit, MAX_PAGE_LIMIT)
+        conn = open_existing_session(self._root, lock_mode='shared')
+        try:
+            with _transaction_context(conn, 'BEGIN'):
+                _ensure_root_ready(conn, _root_instance_id_from_conn(conn))
+                try:
+                    rows = conn.execute(
+                        'SELECT kind,id,metadata,created_at FROM conversations '
+                        "WHERE lifecycle_state='ready' "
+                        'ORDER BY created_at DESC, kind ASC, id ASC LIMIT ? OFFSET ?',
+                        (limit + 1, offset),
+                    ).fetchall()
+                except sqlite3.Error as exc:
+                    raise ConversationStoreError() from exc
+        finally:
+            conn.close()
+        has_more = len(rows) > limit
+        items: list[ConversationListing] = []
+        for kind, identifier, raw_metadata, created_at in rows[:limit]:
+            try:
+                ref = ConversationRef(kind, identifier)
+            except ValueError:
+                continue
+            try:
+                from .contracts import _decode_metadata as _decode
+                metadata = _decode(raw_metadata)
+                validate_metadata(ref, metadata)
+            except (ConversationStoreError, ValueError):
+                continue
+            if not isinstance(created_at, str) or not created_at:
+                continue
+            items.append(ConversationListing(
+                ref, metadata['title'], metadata['title_source'],
+                metadata['naming_attempted'], tuple(metadata['participants']),
+                created_at,
+            ))
+        return items, has_more
+
+    def delete(self, ref: ConversationRef) -> None:
+        """Delete one ready conversation and all of its messages (synthetic roots).
+
+        One all-or-nothing transaction under the store-root exclusive lock:
+        validate the ready door, drop the append-only delete trigger, delete
+        the door's messages then its row, and restore the trigger before
+        commit. A missing or non-ready door raises a sanitized local error
+        with no mutation. DM markers are tombstones and are intentionally
+        kept: deleting a DM row does not clear its ``dm-markers/<bot>.json``
+        file, so a later bootstrap with the same bot id stays blocked
+        (``DM already known``) instead of silently minting a replacement DM.
+        """
+        _require_ref(ref)
+        conn = open_existing_session(self._root, lock_mode='exclusive')
+        try:
+            with _transaction_context(conn, 'BEGIN IMMEDIATE'):
+                _ensure_root_ready(conn, _root_instance_id_from_conn(conn))
+                _ensure_door_ready(conn, ref)
+                try:
+                    conn.execute('DROP TRIGGER no_delete_messages')
+                    conn.execute(
+                        'DELETE FROM messages WHERE kind=? AND id=?',
+                        (ref.kind, ref.id),
+                    )
+                    cur = conn.execute(
+                        'DELETE FROM conversations WHERE kind=? AND id=?',
+                        (ref.kind, ref.id),
+                    )
+                    if cur.rowcount != 1:
+                        raise _local_error(ref)
+                    conn.execute(
+                        "CREATE TRIGGER no_delete_messages BEFORE DELETE ON messages BEGIN "
+                        "SELECT RAISE(ABORT, 'messages are append-only'); END"
+                    )
+                except sqlite3.Error as exc:
+                    raise _local_error(ref) from exc
         finally:
             conn.close()
 

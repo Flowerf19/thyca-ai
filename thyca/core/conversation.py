@@ -1,6 +1,7 @@
 """Target user-facing conversation identity, independent of execution IDs.
 
-This contract is not yet wired to the legacy session runtime.
+Hard cut: a DM is its bot id and a group is ``group-<hex32>`` only.
+Legacy timestamp ids never validate as a conversation reference.
 """
 from __future__ import annotations
 
@@ -10,6 +11,8 @@ from dataclasses import dataclass
 from typing import Literal
 
 _BOT_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
+_LEGACY_SESSION_ID = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_[0-9a-f]{4}\Z")
+# Hard cut: groups carry only ``group-<hex32>``; timestamps never validate.
 _GROUP_ID = re.compile(r"group-[0-9a-f]{32}\Z")
 
 

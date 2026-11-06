@@ -130,12 +130,12 @@ ui.bots.push(ui.normalizeBot({ id: 'thyca', name: 'Thyca', role: 'bạn', agent_
 // Guards: nothing may send without a session, a label, or while a turn runs.
 ui.setSession('');
 result.noSession = ui.answerCardLabel('A', null);
-ui.setSession('s1');
+ui.setSession('dm:thyca');
 result.emptyLabel = ui.answerCardLabel('   ', null);
-ui.runs.set('s1', {});
+ui.runs.set('dm:thyca', {});
 result.busyRoom = ui.answerCardLabel('A', null);
 result.busyConsent = await ui.decidePrivateFollowup('pf-9', 2, 'approve', null);
-ui.runs.delete('s1');
+ui.runs.delete('dm:thyca');
 
 // Consent group: failed POST re-enables the whole chip group.
 const DM = { role: 'assistant', content: 'Cho phép gửi bản này về nhóm?',
@@ -150,7 +150,7 @@ globalThis.fetch = async (url, opts = {}) => {
   if ((opts.method || 'GET') === 'POST') return { ok: false, json: async () => ({ error: 'stale' }) };
   throw new Error('no GET expected on failure');
 };
-ui.setSession('dm1');
+ui.setSession('dm:thyca');
 result.failed = await ui.decidePrivateFollowup('pf-9', 2, 'approve', btns[0]);
 result.restored = btns.every(b => b.disabled === false);
 // Successful POST: option id goes out, card stays disabled via the
@@ -163,7 +163,7 @@ globalThis.fetch = async (url, opts = {}) => {
   if ((opts.method || 'GET') === 'POST') return { ok: true, json: async () => ({ ok: true }) };
   return { ok: true, json: async () => ({ messages: [DM] }) };
 };
-ui.setSession('dm1');
+ui.setSession('dm:thyca');
 result.decided = await ui.decidePrivateFollowup('pf-9', 2, 'approve', btns[0]);
 result.post = calls.find(c => c.method === 'POST') ?? null;
 result.rerendered = [...doc.querySelectorAll('#message-list .card-choice')].map(b => b.getAttribute('disabled'));
@@ -283,6 +283,6 @@ def test_consent_posts_id_and_rerenders_answered(card_actions: dict) -> None:
     assert card_actions["restored"] is True
     assert card_actions["decided"] is True
     post = card_actions["post"]
-    assert post["url"].endswith("/api/sessions/dm1/private-followup")
+    assert post["url"].endswith("/api/bots/thyca/dm/private-followup")
     assert post["body"] == {"pending_id": "pf-9", "revision": 2, "choice": "approve"}
     assert card_actions["rerendered"] == [""]

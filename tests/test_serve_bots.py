@@ -92,7 +92,8 @@ def test_bot_write_routes_are_removed_but_roster_and_dm_remain(
         assert app._bots.exists("coder")
         status, dm = _request(server, "/api/bots/coder/dm")
         assert status == 200
-        assert dm["dm"] == "coder"
+        assert dm["kind"] == "dm"
+        assert dm["bot_id"] == "coder"
         assert app._bots.exists("coder")
     finally:
         _stop(server, thread, app)

@@ -823,7 +823,7 @@ def test_root_spa_retains_all_workspaces_and_restores_history(tmp_path: Path, re
                 self.api_requests.append(path); self.api_urls.append(self.path)
                 if path == "/api/bots":
                     payload = {"bots": [{"id": "thyca", "name": "Thyca", "tint": "botanical", "role": "assistant"}, {"id": "coder", "name": "Coder", "tint": "botanical", "role": "coding"}]}
-                elif path == "/api/sessions": payload = {"sessions": []}
+                elif path == "/api/conversations": payload = {"conversations": []}
                 elif path == "/api/bots/thyca/dm":
                     type(self).initial_dm_hits += 1
                     if self.initial_dm_delay and self.initial_dm_hits == 1:
@@ -854,7 +854,7 @@ def test_root_spa_retains_all_workspaces_and_restores_history(tmp_path: Path, re
         def do_POST(self) -> None:
             path = urlsplit(self.path).path
             self.api_requests.append(path)
-            if path == "/api/sessions/dm-thyca/turn/stream":
+            if path == "/api/bots/thyca/dm/turn/stream":
                 type(self).turn_posts += 1
                 self.send_response(200); self.send_header("Content-Type", "application/x-ndjson"); self.send_header("Transfer-Encoding", "chunked"); self.end_headers()
                 def chunk(event: dict) -> None:
@@ -1136,7 +1136,7 @@ def test_first_run_setup_gate_in_real_spa(tmp_path: Path) -> None:
                     config["meta"] = {"providers": meta, "hasApiKey": meta.get(config["values"].get("defaultProvider", ""), False)}
                     self._json(config); return
                 if path == "/api/bots": self._json({"bots": [{"id": "thyca", "name": "Thyca", "tint": "botanical", "role": "assistant"}, {"id": "coder", "name": "Coder", "tint": "botanical", "role": "coding"}]}); return
-                if path == "/api/sessions": self._json({"sessions": []}); return
+                if path == "/api/conversations": self._json({"conversations": []}); return
                 if path == "/api/bots/thyca/dm": Handler.dm_hits += 1; self._json({"id": "dm-thyca", "dm": "thyca", "title": "Thyca", "messages": []}); return
                 if path == "/api/bots/coder/settings": self._json({"bot_id": "coder", "model": {"id": "default", "thinking": None}, "effective": {"model": "legacy/unregistered", "provider": "legacy", "thinking": None}}); return
                 if path == "/api/memory/stats": self._json({"files": [], "canonical": [], "total": 0}); return
@@ -1514,7 +1514,7 @@ def test_settings_dialog_modal_feedback_scale_and_merge(tmp_path: Path) -> None:
                 if path == "/api/config/status": self._json({"ready": True, "version": "9.9.9"}); return
                 if path == "/api/config": self._json({"values": Handler.values, "schema": Handler.schema, "revision": Handler.revision}); return
                 if path == "/api/bots": self._json({"bots": [{"id": "thyca", "name": "Thyca", "role": "assistant"}, {"id": "coder", "name": "Coder", "role": "coding"}]}); return
-                if path == "/api/sessions": self._json({"sessions": []}); return
+                if path == "/api/conversations": self._json({"conversations": []}); return
                 if path == "/api/bots/thyca/dm": self._json({"id": "dm-thyca", "dm": "thyca", "title": "Thyca", "messages": []}); return
                 self._json({}); return
             target = safe_file(WEBUI, path)

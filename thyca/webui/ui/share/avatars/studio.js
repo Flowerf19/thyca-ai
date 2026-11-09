@@ -36,10 +36,7 @@ const SHAPE_LABELS={
  designer:'Designer (Họa sĩ)',
  analyst:'Analyst (Cún phân tích)',
  operator:'Operator (Dụng cụ)',
- courier:'Courier (Đưa thư)',
- tall:'Chronicler (Biên niên)',
- squat:'Researcher (Học giả)',
- cloud:'March 7th (Đám mây)'
+ courier:'Courier (Đưa thư)'
 };
 function buildShapePicker(b){
  const curShape=dropShapeFor(b).name;
@@ -99,7 +96,7 @@ function chooseExpression(state){
   $('#lab-playback-note').textContent='Chọn một bot trong nhóm để đổi người nói.';
  }else setState(b.id,state,undefined,state==='thinking'?8:0);
  refreshLab(b);
- if(['done','error','mention'].includes(state)&&!motionPaused&&!reduced.matches){$$('.seal-avatar[data-bot-avatar="'+b.id+'"]:not(.expression-preview) ').forEach(el=>{(el.getAnimations?.({subtree:true})||[]).forEach(a=>{if(a.animationName?.startsWith('seal-done')||['peek-done','peek-error','peek-mention','seal-shake','seal-noticed'].includes(a.animationName)){a.currentTime=0;a.play();}});});}
+ if(['done','error','mention'].includes(state)&&!motionPaused&&!reduced.matches){$$('.seal-avatar[data-bot-avatar="'+b.id+'"]:not(.expression-preview) ').forEach(el=>{(el.getAnimations?.({subtree:true})||[]).forEach(a=>{if(['peek-done','peek-error','peek-mention'].includes(a.animationName)){a.currentTime=0;a.play();}});});}
  announce(b.name+': '+states[state][0]);
 }
 function playLabSequence(){

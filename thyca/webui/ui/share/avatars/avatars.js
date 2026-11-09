@@ -206,15 +206,10 @@ const ARCHETYPES=[
 ];
 
 const DROP_NAMES=['thyca','researcher','coder','march7th','chronicler','scribe','keeper','scout','designer','analyst','operator','courier'];
-const DROP_SHAPES=ARCHETYPES;
 const ARCHETYPE_BY_ID=Object.fromEntries(ARCHETYPES.map(a=>[a.id,a]));
-const LEGACY_SHAPES={tall:'chronicler',squat:'researcher',cloud:'march7th'};
 
 function dropShapeFor(b){
- if(b&&b.shape){
-  const s=LEGACY_SHAPES[b.shape]||b.shape;
-  if(ARCHETYPE_BY_ID[s])return {...ARCHETYPE_BY_ID[s],name:s};
- }
+ if(b&&b.shape&&ARCHETYPE_BY_ID[b.shape])return {...ARCHETYPE_BY_ID[b.shape],name:b.shape};
  if(b&&b.id&&ARCHETYPE_BY_ID[b.id])return {...ARCHETYPE_BY_ID[b.id],name:b.id};
  const str=String(b?.id||'thyca');
  const i=Math.abs([...str].reduce((n,c)=>n+c.charCodeAt(0),0))%ARCHETYPES.length;
@@ -231,7 +226,7 @@ function dropMarkup(b,uid){
  const eyesHtml=parts.eyes||'';
  const strokeTone=arch.eyeStyle==='dark'?'var(--bot-pupil)':'var(--bot-eye)';
 
- return `<svg class="base" viewBox="0 0 64 64"><defs><clipPath id="${uid}-clip"><circle cx="32" cy="32" r="28.2"/></clipPath><linearGradient id="${uid}-grad" x1="0.2" y1="0" x2="0.8" y2="1"><stop offset="0" style="stop-color:var(--bot-highlight)"/><stop offset="0.35" style="stop-color:var(--bot-color)"/><stop offset="1" style="stop-color:var(--bot-dark)"/></linearGradient></defs><circle class="well-bg drop-well" cx="32" cy="32" r="28.5"/><g class="char-clip" clip-path="url(#${uid}-clip)"><g class="char-rig"><g class="char-parallax">${bodyHtml}${headgearHtml}<g class="eyes-rig seal-face"><g class="seal-pupils"><g class="eyes-open seal-eye-open">${eyesHtml}</g><g class="eyes-happy seal-eye-happy seal-eye-closed" style="opacity:0" fill="none" stroke="${strokeTone}" stroke-width="2.6" stroke-linecap="round"><path d="M22.5 36.5Q26 30.5 29.5 36.5"/><path d="M33.5 35Q37 29 40.5 35"/></g><g class="eyes-error seal-eye-error" style="opacity:0" fill="none" stroke="${strokeTone}" stroke-width="2.4" stroke-linecap="round"><path d="m23 32 6 6m0-6-6 6"/><path d="m34 31 6 6m0-6-6 6"/></g><g class="eyes-rest seal-eye-rest" style="opacity:0" fill="none" stroke="${strokeTone}" stroke-width="2.2" stroke-linecap="round"><path d="M22.5 36Q26 38.5 29.5 36"/><path d="M33.5 34.5Q37 37 40.5 34.5"/></g></g></g></g><g class="prop-parallax">${propHtml}</g></g><path class="done-spark seal-done-star" style="opacity:0" d="m14 14 1.4 4L19.4 19.4l-4 1.4L14 24.8l-1.4-4L8.6 19.4l4-1.4Z" fill="#e09b2d"/></g><circle class="frame-ring drop-edge" cx="32" cy="32" r="28.5"/><circle class="frame-ring-hi" cx="32" cy="32" r="27.3"/><circle class="orbit-arc drop-orbit" cx="32" cy="32" r="28.5"/></svg>`;
+ return `<svg class="base" viewBox="0 0 64 64"><defs><clipPath id="${uid}-clip"><circle cx="32" cy="32" r="28.2"/></clipPath><linearGradient id="${uid}-grad" x1="0.2" y1="0" x2="0.8" y2="1"><stop offset="0" style="stop-color:var(--bot-highlight)"/><stop offset="0.35" style="stop-color:var(--bot-color)"/><stop offset="1" style="stop-color:var(--bot-dark)"/></linearGradient></defs><circle class="well-bg" cx="32" cy="32" r="28.5"/><g class="char-clip" clip-path="url(#${uid}-clip)"><g class="char-rig"><g class="char-parallax">${bodyHtml}${headgearHtml}<g class="eyes-rig"><g class="seal-pupils"><g class="eyes-open">${eyesHtml}</g><g class="eyes-happy" style="opacity:0" fill="none" stroke="${strokeTone}" stroke-width="2.6" stroke-linecap="round"><path d="M22.5 36.5Q26 30.5 29.5 36.5"/><path d="M33.5 35Q37 29 40.5 35"/></g><g class="eyes-error" style="opacity:0" fill="none" stroke="${strokeTone}" stroke-width="2.4" stroke-linecap="round"><path d="m23 32 6 6m0-6-6 6"/><path d="m34 31 6 6m0-6-6 6"/></g><g class="eyes-rest" style="opacity:0" fill="none" stroke="${strokeTone}" stroke-width="2.2" stroke-linecap="round"><path d="M22.5 36Q26 38.5 29.5 36"/><path d="M33.5 34.5Q37 37 40.5 34.5"/></g></g></g></g><g class="prop-parallax">${propHtml}</g></g><path class="done-spark" style="opacity:0" d="m14 14 1.4 4L19.4 19.4l-4 1.4L14 24.8l-1.4-4L8.6 19.4l4-1.4Z" fill="#e09b2d"/></g><circle class="frame-ring" cx="32" cy="32" r="28.5"/><circle class="frame-ring-hi" cx="32" cy="32" r="27.3"/><circle class="orbit-arc" cx="32" cy="32" r="28.5"/></svg>`;
 }
 
 const dropState=state=>stateAliases[state]||state;
@@ -247,7 +242,6 @@ function orbitStyle(b){
  const at=b?.orbitAt||Date.now();
  return `--ring-start:${angle}deg;--ring-end:${angle+360}deg;--ring-delay:${-(Date.now()-at)/1000}s`;
 }
-function sealFace(){return '';}
 
 function avatar(b,state=b.state,extra=''){
  const uid='drop'+(++avatarCounter),preview=extra.includes('expression-preview');
@@ -293,13 +287,12 @@ function mentionBot(id){
 }
 function clearMusic(id){
  const box=musicBoxes.get(id);if(box){clearInterval(box.timer);musicBoxes.delete(id);}
- $$('.seal-avatar[data-bot-avatar="'+id+'"]:not(.expression-preview)').forEach(a=>{delete a.dataset.streaming;['--note-a-y','--note-b-y','--note-a-alpha','--note-b-alpha'].forEach(p=>a.style.removeProperty(p));a.style.removeProperty('--writing-gaze');});
+ $$('.seal-avatar[data-bot-avatar="'+id+'"]:not(.expression-preview)').forEach(a=>{delete a.dataset.streaming;a.style.removeProperty('--writing-gaze');});
 }
 const MUSIC_BEAT_MS=200,MUSIC_DECAY=8,MUSIC_QUIET_BEATS=2;
 function paintMusicBeat(id,seed){
  $$('.seal-avatar[data-bot-avatar="'+id+'"]:not(.expression-preview)').forEach(a=>{
   a.dataset.streaming='true';a.style.setProperty('--writing-gaze',((seed%9)/4-1)+'px');
-  a.style.setProperty('--note-a-y',(-.4-(seed%6)*.38).toFixed(2)+'px');a.style.setProperty('--note-b-y',(-.2-((seed*3)%7)*.3).toFixed(2)+'px');a.style.setProperty('--note-a-alpha',(.6+(seed%4)*.1).toFixed(2));a.style.setProperty('--note-b-alpha',(.6+((seed+2)%4)*.1).toFixed(2));
  });
 }
 function musicBeat(id){

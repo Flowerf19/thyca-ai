@@ -120,11 +120,10 @@ function initShellApp() {
        existing avatar instance in place: updates data-drop-shape and re-renders
        the medallion character markup inside .base while preserving className and state. */
     setBotShape(id, shape) {
-      const resolvedShape = (typeof LEGACY_SHAPES !== 'undefined' && LEGACY_SHAPES[shape]) || shape;
-      if (typeof DROP_NAMES === 'undefined' || !DROP_NAMES.includes(resolvedShape) || !getBot(id)) return false;
-      const b = getBot(id); b.shape = resolvedShape; localStorage.setItem('thyca.shape.' + id, resolvedShape);
+      if (typeof DROP_NAMES === 'undefined' || !DROP_NAMES.includes(shape) || !getBot(id)) return false;
+      const b = getBot(id); b.shape = shape; localStorage.setItem('thyca.shape.' + id, shape);
       $$('[data-bot-avatar="' + id + '"]').forEach(el => {
-        el.setAttribute('data-drop-shape', resolvedShape);
+        el.setAttribute('data-drop-shape', shape);
         const uid = 'drop' + (++avatarCounter);
         el.innerHTML = `<span class="seal-motion">${dropMarkup(b, uid)}</span>`;
       });

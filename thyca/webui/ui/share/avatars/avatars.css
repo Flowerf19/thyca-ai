@@ -18,17 +18,14 @@
 .frame-ring{fill:none;stroke:var(--bot-color);stroke-width:2.5}
 .frame-ring-hi{fill:none;stroke:var(--bot-border);stroke-width:1.1;opacity:.75;transform:translate(var(--hi-x,0px),var(--hi-y,0px));transition:transform .15s ease-out}
 .orbit-arc{fill:none;stroke:var(--bot-dark);stroke-width:2.6;stroke-dasharray:16 170;stroke-linecap:round;opacity:0;transform-origin:32px 32px}
-.drop-orbit{fill:none;stroke:var(--bot-dark);stroke-width:2.6;stroke-dasharray:16 170;stroke-linecap:round;opacity:0;transform-origin:32px 32px}
 .drop-body{stroke:var(--bot-dark);stroke-opacity:.38;stroke-width:1.1;paint-order:stroke}
-.drop-edge{fill:none;stroke:var(--bot-color);stroke-width:2.5}
 
 /* 2. Character Rig & 2.5D Parallax */
 .char-rig{transform-origin:34px 58px;transition:transform .28s cubic-bezier(.22,.75,.28,1)}
 .char-parallax{transform:translate(var(--par-x,0px),var(--par-y,0px));transition:transform .15s ease-out}
 .prop-parallax{transform:translate(calc(var(--par-x,0px)*1.35),calc(var(--par-y,0px)*1.35));transition:transform .15s ease-out;transform-origin:32px 46px}
 .eyes-rig{transform:translate(var(--gaze-x,0px),var(--gaze-y,0px));transition:transform .2s cubic-bezier(.22,.75,.28,1);transform-origin:32px 34px}
-.seal-face{display:contents}
-.seal-avatar.blink .eyes-rig,.seal-avatar.is-blinking .eyes-rig{animation:m-blink .19s ease-in-out}
+.seal-avatar.blink .eyes-rig{animation:m-blink .19s ease-in-out}
 
 /* 3. States */
 /* Idle: gentle breathing */
@@ -37,23 +34,23 @@
 /* Thinking: tilt head, gaze up, orbit ticks */
 .seal-avatar[data-state=thinking] .char-rig{animation:peek-think 3s ease-in-out infinite}
 .seal-avatar[data-state=thinking] .eyes-rig{transform:translate(-1.5px,-2.5px)}
-.seal-avatar[data-state=thinking] .orbit-arc,.seal-avatar[data-state=thinking] .drop-orbit{opacity:1;animation:spin-ring 8s steps(12,end) var(--ring-delay,0s) infinite}
+.seal-avatar[data-state=thinking] .orbit-arc{opacity:1;animation:spin-ring 8s steps(12,end) var(--ring-delay,0s) infinite}
 
 /* Working: bounce + prop action + fast orbit */
 .seal-avatar[data-state=working] .char-rig{animation:peek-work .68s ease-in-out var(--phase,-.2s) infinite}
 .seal-avatar[data-state=working] .prop-anim{animation:prop-work .48s ease-in-out infinite alternate}
-.seal-avatar[data-state=working] .orbit-arc,.seal-avatar[data-state=working] .drop-orbit{opacity:1;animation:spin-ring 1.5s linear var(--ring-delay,0s) infinite}
+.seal-avatar[data-state=working] .orbit-arc{opacity:1;animation:spin-ring 1.5s linear var(--ring-delay,0s) infinite}
 
 /* Writing: scanning gaze + rhythmic prop + smooth orbit */
 .seal-avatar[data-state=writing] .eyes-rig{animation:eye-read 1.6s ease-in-out infinite}
 .seal-avatar[data-state=writing] .prop-anim{animation:prop-write .4s ease-in-out infinite alternate}
-.seal-avatar[data-state=writing] .orbit-arc,.seal-avatar[data-state=writing] .drop-orbit{opacity:.9;animation:spin-ring 4.5s linear var(--ring-delay,0s) infinite}
+.seal-avatar[data-state=writing] .orbit-arc{opacity:.9;animation:spin-ring 4.5s linear var(--ring-delay,0s) infinite}
 .seal-avatar[data-state=writing][data-streaming=true] .eyes-rig{transform:translate(var(--writing-gaze,0px),1.2px);animation:none}
 
 /* Waiting: calm downward gaze */
 .seal-avatar[data-state=waiting] .char-rig{transform:translateY(3.2px) scale(1.02,.97)}
 .seal-avatar[data-state=waiting] .eyes-rig{transform:translate(0,2.2px)}
-.seal-avatar[data-state=waiting] .orbit-arc,.seal-avatar[data-state=waiting] .drop-orbit{opacity:.75}
+.seal-avatar[data-state=waiting] .orbit-arc{opacity:.75}
 
 /* Done: cheerful pop-up, smiling eyes ^ ^, sparkle */
 .seal-avatar[data-state=done] .char-rig{animation:peek-done 1.5s cubic-bezier(.22,.75,.28,1) both}
@@ -65,15 +62,15 @@
 .seal-avatar[data-state=error] .char-rig{animation:peek-error 1.6s ease-in-out both}
 .seal-avatar[data-state=error] .eyes-open{opacity:0}
 .seal-avatar[data-state=error] .eyes-error{opacity:1!important}
-.seal-avatar[data-state=error] .frame-ring,.seal-avatar[data-state=error] .drop-edge{stroke:#c7584e;stroke-width:3}
-.seal-avatar[data-state=error] .orbit-arc,.seal-avatar[data-state=error] .drop-orbit{opacity:0}
+.seal-avatar[data-state=error] .frame-ring{stroke:#c7584e;stroke-width:3}
+.seal-avatar[data-state=error] .orbit-arc{opacity:0}
 
 /* Offline: grayscale, eyes closed, resting */
 .seal-avatar[data-state=offline]{filter:grayscale(1);opacity:.45;transition:none}
 .seal-avatar[data-state=offline] *{animation:none!important;transition:none!important}
 .seal-avatar[data-state=offline] .eyes-open{opacity:0}
 .seal-avatar[data-state=offline] .eyes-rest{opacity:1!important}
-.seal-avatar[data-state=offline] .orbit-arc,.seal-avatar[data-state=offline] .drop-orbit{opacity:.18}
+.seal-avatar[data-state=offline] .orbit-arc{opacity:.18}
 
 /* Confused */
 .seal-avatar[data-state=confused] .char-rig{transform:rotate(-10deg)}
@@ -83,7 +80,7 @@
 .seal-avatar[data-expression=mention] .char-rig{animation:peek-mention .5s ease-out both}
 
 /* Group coordination */
-.seal-avatar[data-state=group] .orbit-arc,.seal-avatar[data-state=group] .drop-orbit,.seal-avatar[data-group-active=true] .orbit-arc,.seal-avatar[data-group-active=true] .drop-orbit{opacity:.8;animation:spin-ring 4.2s linear var(--group-phase,0s) infinite}
+.seal-avatar[data-state=group] .orbit-arc,.seal-avatar[data-group-active=true] .orbit-arc{opacity:.8;animation:spin-ring 4.2s linear var(--group-phase,0s) infinite}
 .seal-avatar[data-group-active=true][data-speaking=false]{filter:saturate(.8);opacity:.67}
 .seal-avatar[data-group-active=true][data-speaking=true]{filter:brightness(1.1) drop-shadow(0 0 4px var(--bot-border));opacity:1}
 .seal-avatar[data-group-active=true][data-speaking=false] .seal-pupils{transform:translate(var(--team-gaze,1px),0px)}
@@ -124,15 +121,9 @@
 .expression-preview *{animation:none!important;transition:none!important}
 .stream-interruption{font:italic 14px/1.6 var(--serif);color:var(--muted);padding-top:10px;border-top:1px dashed var(--line)}
 
-/* Streaming music variables hook for test backward-compatibility */
-.seal-music{opacity:0;transform:translateY(var(--note-a-y,0px))}
-
 @media(prefers-reduced-motion:reduce){
 .seal-avatar *{animation:none!important}
 .seal-avatar .char-rig,.seal-avatar .eyes-rig,.seal-avatar .prop-anim{transform:none!important}
-}
-@media(prefers-reduced-motion:reduce){
-.seal-music{transform:none!important}
 }
 @media(max-width:600px){
 .stage-portrait .seal-avatar{width:106px;height:106px}

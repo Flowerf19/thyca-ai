@@ -33,7 +33,7 @@ function thycaSidebarMarkup() {
 function thycaDialogs() {
   return `<div class="mobile-overlay" id="mobile-overlay" hidden></div>
 <dialog class="screen-dialog" id="expressions-dialog" aria-labelledby="expressions-title">
-<div class="dialog-heading"><div><h2 id="expressions-title">Một giọt mực, nhiều tâm trạng.</h2><p>Đôi mắt kể chuyện, đôi tay giữ nhịp. Thử từng biểu cảm hoặc xem trọn một lượt làm việc.</p></div><button class="icon-button dialog-close" aria-label="Đóng"><svg class="icon"><use href="#i-close"/></svg></button></div>
+<div class="dialog-heading"><div><h2 id="expressions-title">Một huy chương, nhiều tâm trạng.</h2><p>Đôi mắt kể chuyện, đôi tay giữ nhịp. Thử từng biểu cảm hoặc xem trọn một lượt làm việc.</p></div><button class="icon-button dialog-close" aria-label="Đóng"><svg class="icon"><use href="#i-close"/></svg></button></div>
 <div class="dialog-body"><div class="dialog-controls"><label for="expression-bot">Người bạn</label><select id="expression-bot"></select><label for="bot-color">Màu bot</label><input type="color" id="bot-color" value="#315e4c" aria-label="Màu của bot" style="width:28px;height:28px;border:0;background:none;padding:0;cursor:pointer"><div class="palette-preview" id="palette-preview"></div></div>
 <div class="shape-row"><span class="shape-label" id="shape-label">Hình dạng</span><div class="shape-picker" id="shape-picker" role="group" aria-labelledby="shape-label"></div></div>
 <div class="studio-tabs" role="tablist" aria-label="Nhóm biểu cảm"><button type="button" class="studio-tab" id="work-tab" role="tab" aria-selected="true" aria-controls="lifecycle-panel">Khi làm việc <small>11</small></button><button type="button" class="studio-tab" id="idle-tab" role="tab" aria-selected="false" aria-controls="idle-panel" tabindex="-1">Lúc rảnh <small>8</small></button></div>
@@ -50,7 +50,7 @@ function thycaDialogs() {
  <section class="paper-card" aria-labelledby="settings-bots-title">
   <div class="eyebrow">Bot của bạn</div>
   <h3 class="card-title" id="settings-bots-title">Người bạn đồng hành</h3>
-  <p class="card-copy">Đổi màu và hình dạng giọt mực ở xưởng biểu cảm — mọi lựa chọn giữ nguyên như trước.</p>
+  <p class="card-copy">Đổi màu và hình dáng nhân vật ở xưởng biểu cảm — mọi lựa chọn giữ nguyên như trước.</p>
   <div class="bot-pick"><span id="settings-bot-seal" class="bot-pick-seal"></span>
    <label class="field" for="settings-bot"><span>Bot</span><select id="settings-bot"></select></label>
    <input type="color" id="settings-bot-color" value="#315e4c" aria-label="Màu của bot" style="width:28px;height:28px;border:0;background:none;padding:0;cursor:pointer;align-self:end">
@@ -65,7 +65,7 @@ function thycaDialogs() {
    <label class="field" for="pref-type-scale"><span>Cỡ chữ</span>
     <select id="pref-type-scale"><option value="small">Nhỏ</option><option value="medium">Vừa</option><option value="large">Lớn</option></select>
    </label>
-   <label class="checkbox-row" for="pref-reduce-motion"><input type="checkbox" id="pref-reduce-motion"><span>Giảm chuyển động — dừng nhịp thở và cử chỉ rảnh của giọt mực</span></label>
+   <label class="checkbox-row" for="pref-reduce-motion"><input type="checkbox" id="pref-reduce-motion"><span>Giảm chuyển động — dừng nhịp thở và cử chỉ rảnh của nhân vật</span></label>
    <label class="checkbox-row" for="pref-ornaments"><input type="checkbox" id="pref-ornaments"><span>Hiển thị họa tiết trang trí trên trang</span></label>
   </div>
   <div class="form-footer"><button type="button" class="quiet-button" id="pref-reset">Về mặc định</button></div>

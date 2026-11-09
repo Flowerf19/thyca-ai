@@ -770,13 +770,14 @@ def test_avatar_markup_contract(node: str) -> None:
     assert 'data-expression="idle"' in html
     assert 'data-selected="true"' in html
     assert "--bot-color:" in html and "--bot-ink:" in html
-    assert 'class="seal-motion"' in html and 'seal-face' in html
-    assert 'class="well-bg drop-well"' in html
+    assert 'class="seal-motion"' in html
+    assert 'class="well-bg"' in html and "drop-well" not in html
     assert 'class="char-rig"' in html and 'class="char-parallax"' in html
     assert 'class="drop-body"' in html
-    assert 'class="eyes-rig seal-face"' in html and 'class="seal-pupils"' in html
-    assert 'class="frame-ring drop-edge"' in html
-    assert 'class="orbit-arc drop-orbit"' in html
+    assert 'class="eyes-rig"' in html and 'class="seal-pupils"' in html
+    assert "seal-face" not in html
+    assert 'class="frame-ring"' in html and "drop-edge" not in html
+    assert 'class="orbit-arc"' in html and "drop-orbit" not in html
     assert 'aria-hidden="true"' in html
 
 
@@ -793,18 +794,22 @@ def test_avatar_ink_drop_material_face_and_hands(node: str) -> None:
         return { html, html2 };
     """)
     html = out["html"]
-    for cls in ("well-bg", "drop-well", "char-clip", "char-rig",
-                "char-parallax", "drop-body", "eyes-rig", "seal-face",
-                "seal-pupils", "prop-parallax", "done-spark", "frame-ring",
-                "drop-edge", "frame-ring-hi", "orbit-arc", "drop-orbit"):
+    for cls in ("well-bg", "char-clip", "char-rig", "char-parallax",
+                "drop-body", "eyes-rig", "seal-pupils", "eyes-open",
+                "eyes-happy", "eyes-error", "eyes-rest", "prop-parallax",
+                "done-spark", "frame-ring", "frame-ring-hi", "orbit-arc"):
         assert cls in html, cls
+    for dead in ("drop-well", "seal-face", "drop-edge", "drop-orbit",
+                 "seal-done-star", "seal-eye-open", "seal-eye-happy",
+                 "seal-eye-error", "seal-eye-rest"):
+        assert dead not in html, dead
     ids = re.findall(r'id="(drop\d+-[a-z-]+)"', html)
     assert len(ids) == len(set(ids)) and len(ids) >= 2, ids
     ids2 = re.findall(r'id="(drop\d+-[a-z-]+)"', out["html2"])
     assert not set(ids) & set(ids2)          # per-instance namespace
     assert 'class="seal-pupils"' in html
-    assert 'seal-eye-open' in html and 'seal-eye-happy' in html
-    assert 'seal-eye-error' in html and 'seal-eye-rest' in html
+    assert 'class="eyes-open"' in html and 'class="eyes-happy"' in html
+    assert 'class="eyes-error"' in html and 'class="eyes-rest"' in html
     css = AVATARS_CSS.read_text()
     for sel in (".drop-body{", ".well-bg{", ".frame-ring{", ".frame-ring-hi{",
                 ".orbit-arc{", ".char-rig{", ".char-parallax{", ".prop-parallax{",
@@ -902,8 +907,8 @@ def test_set_state_error_cancels_run_and_announces(node: str) -> None:
 
 
 def test_mention_overlay_and_notify_text_drive_seal_attrs(node: str) -> None:
-    """mentionBot flags the bot for 500ms; notifyText seeds the music notes on
-    every writing seal (only while the bot is writing)."""
+    """mentionBot flags the bot for 500ms; notifyText drives character reading
+    gaze on every writing seal (only while the bot is writing)."""
     out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'A' }]));
@@ -922,7 +927,6 @@ def test_mention_overlay_and_notify_text_drive_seal_attrs(node: str) -> None:
             during, after, early, ok,
             streaming: seal.dataset.streaming,
             gaze: seal.style.getPropertyValue('--writing-gaze'),
-            noteA: seal.style.getPropertyValue('--note-a-y'),
         };
     """)
     assert out["during"] == {"mentioned": True, "expr": "mention"}
@@ -930,7 +934,7 @@ def test_mention_overlay_and_notify_text_drive_seal_attrs(node: str) -> None:
     assert out["early"] is False                          # not writing -> ignored
     assert out["ok"] is True
     assert out["streaming"] == "true"
-    assert out["gaze"].endswith("px") and out["noteA"].endswith("px")
+    assert out["gaze"].endswith("px")
 
 
 def test_notify_text_damper_beats_and_rests(node: str) -> None:
@@ -946,7 +950,6 @@ def test_notify_text_damper_beats_and_rests(node: str) -> None:
         const vars = () => ({
             streaming: seal.dataset.streaming,
             gaze: seal.style.getPropertyValue('--writing-gaze'),
-            noteA: seal.style.getPropertyValue('--note-a-y'),
         });
         const first = notifyText('a', 'hello');
         const beat1 = vars();
@@ -965,7 +968,7 @@ def test_notify_text_damper_beats_and_rests(node: str) -> None:
     assert out["beat3"]["streaming"] == "true"
     assert out["beat3"]["gaze"] != out["beat1"]["gaze"]  # next beat re-seeds from accumulated input
     assert out["rest"].get("streaming") is None            # ~2 quiet beats -> clearMusic rest
-    assert out["rest"]["gaze"] == "" and out["rest"]["noteA"] == ""
+    assert out["rest"]["gaze"] == ""
 
 
 def test_seal_parallax_vars_follow_pointer_and_reset(node: str) -> None:
@@ -1792,27 +1795,31 @@ def test_team_list_click_delegates_card_actions(node: str) -> None:
 
 def test_bot_shape_preference_normalizes_and_overrides(node: str) -> None:
     """localStorage `thyca.shape.<id>` carries a valid DROP_NAMES value
-    or maps a LEGACY_SHAPES value onto normalizeBot; invalid values fall back to null
+    onto normalizeBot; invalid or legacy values fall back to null
     so dropShapeFor keeps its deterministic silhouette."""
     out = _run(node, """
         localStorage.clear();
-        localStorage.setItem('thyca.shape.coder', 'squat');
+        localStorage.setItem('thyca.shape.coder', 'researcher');
         localStorage.setItem('thyca.shape.thyca', 'operator');
+        localStorage.setItem('thyca.shape.legacy', 'squat');
         localStorage.setItem('thyca.shape.bogus', 'blob');
         bots.length = 0;
-        bots.push(...roster([{ id: 'thyca' }, { id: 'coder' }, { id: 'bogus' }]));
-        const [t, c, x] = bots;
-        return { thyca: t.shape, coder: c.shape, bogus: x.shape,
+        bots.push(...roster([{ id: 'thyca' }, { id: 'coder' }, { id: 'legacy' }, { id: 'bogus' }]));
+        const [t, c, l, x] = bots;
+        return { thyca: t.shape, coder: c.shape, legacy: l.shape, bogus: x.shape,
                  thycaShape: dropShapeFor(t).name,
                  coderShape: dropShapeFor(c).name,
+                 legacyShape: dropShapeFor(l).name,
                  bogusShape: dropShapeFor(x).name,
                  coderD: avatar(c).includes('data-drop-shape="researcher"') };
     """)
     assert out["thyca"] == "operator"
     assert out["coder"] == "researcher"
+    assert out["legacy"] is None
     assert out["bogus"] is None
     assert out["thycaShape"] == "operator"
     assert out["coderShape"] == "researcher"
+    assert out["legacyShape"] in ("thyca", "researcher", "coder", "march7th", "chronicler", "scribe", "keeper", "scout", "designer", "analyst", "operator", "courier")
     assert out["bogusShape"] in ("thyca", "researcher", "coder", "march7th", "chronicler", "scribe", "keeper", "scout", "designer", "analyst", "operator", "courier")
     assert out["coderD"] is True
 
@@ -1903,7 +1910,7 @@ def test_expression_dialog_shape_markup_consistent(node: str) -> None:
     for text in (html, shell):
         assert 'id="shape-picker"' in text
         assert "Hình dạng" in text
-        assert "màu và hình dạng" in text   # shared dialog bot section (static markup)
+        assert "màu và hình dáng" in text   # shared dialog bot section (static markup)
     assert html.count('id="shape-picker"') == 1
     assert shell.count('id="shape-picker"') == 1
     assert "màu, hình dạng" in html and "màu, hình dạng" in shell
@@ -3793,11 +3800,13 @@ def test_avatars_css_states_and_bot_vars() -> None:
                 "[data-state=error]", "[data-state=offline]", "[data-state=confused]",
                 "[data-expression=mention]", "[data-group-active=true]",
                 "[data-streaming=true]", "[data-idle=look]", "[data-idle=wink]",
-                "[data-idle=sleepy]", ".stream-interruption{", ".seal-music"):
+                "[data-idle=sleepy]", ".stream-interruption{"):
         assert sel in css, sel
-    assert "seal-avatar" in css and "seal-motion" in css and "seal-face" in css
-    assert css.count("prefers-reduced-motion") >= 2
-    assert "var(--team-gaze" in css and "var(--note-a-y" in css
+    assert "seal-avatar" in css and "seal-motion" in css
+    assert "seal-face" not in css
+    assert css.count("prefers-reduced-motion") == 1
+    assert "var(--team-gaze" in css
+    assert "var(--note-a-y" not in css
     assert ".expression-preview" in css
 
 
@@ -3805,8 +3814,9 @@ def test_index_html_scripts_defs_and_static_markup() -> None:
     """ui/chat/index.html ships the svg defs once, the static shell markup and
     the classic script order the modules rely on."""
     html = INDEX_HTML.read_text()
-    for did in ("dropShade", "dropHl", "i-send", "i-stop", "i-copy"):
+    for did in ("i-send", "i-stop", "i-copy"):
         assert html.count(f'id="{did}"') == 1, did
+    assert 'id="dropHl"' not in html and 'id="dropShade"' not in html
     assert 'id="wax' not in html            # shared overlays renamed with the drop
     assert 'id="g-' not in html             # glyph spans gone, so their symbols ship no more
     for sel in ('class="notebook-shell chat-shell"', 'class="site-header"',
@@ -3845,15 +3855,15 @@ def test_index_html_scripts_defs_and_static_markup() -> None:
 
 
 def test_avatar_display_copy_uses_ink_drop() -> None:
-    """User-visible studio/settings copy names the ink drop: TASK-001 renamed
-    the chat dialog, TASK-003 syncs the shared shell dialog (every non-chat
-    page) and the settings strings to the same approved wording."""
+    """User-visible studio/settings copy names the medallion and character:
+    the chat dialog, shared shell dialog and settings strings use approved wording."""
     html = INDEX_HTML.read_text()
     shell = SHELL_JS.read_text()
-    assert "Một giọt mực, nhiều tâm trạng." in html
-    assert "Một giọt mực, nhiều tâm trạng." in shell
+    assert "Một huy chương, nhiều tâm trạng." in html
+    assert "Một huy chương, nhiều tâm trạng." in shell
     assert "Đôi mắt kể chuyện, đôi tay giữ nhịp." in shell
-    assert "giọt mực" in html and "giọt mực" in shell   # shared dialog bot copy
+    assert "nhân vật" in html and "nhân vật" in shell
+    assert "giọt mực" not in html and "giọt mực" not in shell
     for text in (html, shell):
         assert "con dấu" not in text and "vành dấu" not in text
     assert "wax" not in shell.lower()

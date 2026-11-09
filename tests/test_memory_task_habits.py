@@ -29,10 +29,6 @@ def at(day: int, hour: int = 12) -> datetime:
     return datetime(2026, 9, day, hour, 0, tzinfo=UTC)
 
 
-def facade_at(tmp_path, day: int) -> MemoryFacade:
-    return MemoryFacade(tmp_path, timezone_name=TZ)
-
-
 # -- heading roundtrip ------------------------------------------------------
 
 def test_heading_roundtrip_with_all_five_fields() -> None:

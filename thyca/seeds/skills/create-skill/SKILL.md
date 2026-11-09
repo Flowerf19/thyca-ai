@@ -34,8 +34,14 @@ Rules (validated on every scan — a broken skill shows up as
 ## Steps
 
 1. Check `<skills>` — if an existing skill already covers the task, edit it instead.
-2. `write ~/.thyca/skills/<name>/SKILL.md` (folder name = skill name).
+2. Write your private copy at `~/.thyca/bots/<your-bot-id>/skills/<name>/SKILL.md` (folder name = skill name).
 3. Verify on the next turn that the index shows the new skill without an error tag.
+
+## Sharing (team skills)
+
+- Team skills live in `~/.thyca/skills-team/<name>/`. New and existing team files stay hidden from other bots until Thyca shares them with `bot_skill_manage` (list/share/unshare). Sharing is name-based and persists across restarts; edits preserve the share flag.
+- Child bots may read their own private skills and shared team skills, and edit their own private skills. They may not edit shared skills or open other bots' private skills. Thyca may edit shared skills, and the share flag stays on.
+- Limits (by design): sharing controls the skill index and recognized built-in file-tool paths. Bash and MCP remain unchanged and can bypass these permissions. Outside hardlink aliases can also bypass path-based checks.
 
 ## Description: weak vs strong
 

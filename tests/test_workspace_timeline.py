@@ -526,3 +526,161 @@ def test_flush_sees_intact_canonical_transcript(tmp_path: Path) -> None:
             "coder", room).internal_session_id == binding.id
     finally:
         app.shutdown()
+# --- Option B private-execution version protocol -------------------------
+
+def test_private_v2_message_validates_and_projects_current_span_only(
+    tmp_path: Path,
+) -> None:
+    # v2 carries exactly the existing span; default projections exclude it,
+    # private projections select only the current span and ignore resets.
+    timeline = _timeline(tmp_path)
+    group = _window("room1", "group", ("coder", "thyca"))
+    timeline.append_message(group, _row("group hi"), event_id="g1")
+    timeline.append_message(group, _row("priv one"), event_id="p1",
+                            priv={"span": "sp_A"})
+    timeline.append_message(group, _row("priv two"), event_id="p2",
+                            priv={"span": "sp_B"})
+    default = timeline.project(group, session_id=SESSION_ID)
+    assert [m.content for m in default.messages] == ["group hi"]
+    only_a = timeline.project(group, session_id=SESSION_ID, priv_span="sp_A")
+    assert [m.content for m in only_a.messages] == ["priv one"]
+    only_b = timeline.project(group, session_id=SESSION_ID, priv_span="sp_B")
+    assert [m.content for m in only_b.messages] == ["priv two"]
+    assert timeline.messages_for_window(group) == list(default.messages)
+    assert timeline.messages_for_window(group, include_private=True) != list(
+        default.messages)
+
+
+def test_private_v2_shape_rejected_and_old_reader_fails_closed(
+    tmp_path: Path,
+) -> None:
+    # Malformed v2 markers fail closed on write and on read; a v1-only
+    # reader (v != 1) rejects a v2 journal as unknown. Proves the old
+    # projector cannot silently ignore private records.
+    timeline = _timeline(tmp_path)
+    group = _window("room1", "group", ("coder", "thyca"))
+    with pytest.raises(TimelineError):
+        timeline.append_message(group, _row("x"), event_id="bad1",
+                                priv={"span": ""})
+    with pytest.raises(TimelineError):
+        timeline.append_message(group, _row("x"), event_id="bad2",
+                                priv={"span": "sp_A", "extra": 1})
+    with pytest.raises(TimelineError):
+        timeline.append_message(group, _row("x"), event_id="bad3",
+                                priv="sp_A")
+    timeline.append_message(group, _row("priv ok"), event_id="ok1",
+                            priv={"span": "sp_A"})
+    path = tmp_path / "bots" / "coder" / "workspace" / "timeline.jsonl"
+    raw = json.loads(path.read_text(encoding="utf-8").splitlines()[-1])
+    assert raw["v"] == 2 and raw["priv"] == {"span": "sp_A"}
+    assert raw["window"]["kind"] == "group"
+    # v1-only validation rejects the v2 record, exactly as old code did.
+    assert raw["v"] != 1
+    # A hand-rolled v1-only scan raises unknown version on the v2 line.
+    def _v1_only_scan(path: Path) -> None:
+        for line in path.read_text(encoding="utf-8").split("\n"):
+            if not line:
+                continue
+            ev = json.loads(line)
+            if ev.get("v") != 1:
+                raise TimelineError(f"unknown version {ev.get('v')}")
+    with pytest.raises(TimelineError):
+        _v1_only_scan(path)
+    # Malformed markers fail closed on read with their specific error.
+    # Every record below uses the valid next sequence so the marker check
+    # itself is what rejects the file.
+    def _append_raw(record: dict) -> None:
+        path.write_text(
+            path.read_text(encoding="utf-8") + json.dumps(record) + "\n",
+            encoding="utf-8")
+
+    def _restore_one_line() -> None:
+        path.write_text(
+            "\n".join(path.read_text(encoding="utf-8").split("\n")[:1]) + "\n",
+            encoding="utf-8")
+
+    _append_raw({"v": 1, "seq": 2, "event_id": "priv-in-v1",
+                 "kind": "message", "bot_id": "coder",
+                 "window": group.to_dict(),
+                 "payload": {"message": "x"}, "priv": {"span": "sp_A"},
+                 "ts": "t"})
+    with pytest.raises(TimelineError, match="v1 records must not carry priv"):
+        WorkspaceTimeline(tmp_path, "coder")
+    _restore_one_line()
+    _append_raw({"v": 2, "seq": 2, "event_id": "bad-v2-empty",
+                 "kind": "message", "bot_id": "coder",
+                 "window": group.to_dict(),
+                 "payload": {"message": "x"}, "priv": {"span": ""},
+                 "ts": "t"})
+    with pytest.raises(TimelineError, match="priv span must be a non-empty string"):
+        WorkspaceTimeline(tmp_path, "coder")
+    _restore_one_line()
+    _append_raw({"v": 2, "seq": 2, "event_id": "bad-v2-extra",
+                 "kind": "message", "bot_id": "coder",
+                 "window": group.to_dict(),
+                 "payload": {"message": "x"},
+                 "priv": {"span": "sp_A", "room": "room1"},
+                 "ts": "t"})
+    with pytest.raises(TimelineError, match="priv marker must carry only span"):
+        WorkspaceTimeline(tmp_path, "coder")
+    _restore_one_line()
+    # Unknown versions fail closed on read.
+    _append_raw({"v": 99, "seq": 2, "event_id": "z",
+                 "kind": "message", "bot_id": "coder",
+                 "window": group.to_dict(),
+                 "payload": {"message": "x"}, "ts": "t"})
+    with pytest.raises(TimelineError, match="unknown version 99"):
+        WorkspaceTimeline(tmp_path, "coder")
+    _restore_one_line()
+
+
+def test_private_reset_never_becomes_group_basis_and_spans_isolate(
+    tmp_path: Path,
+) -> None:
+    # Approved Option B: a private reset of the SAME span is that span's
+    # basis (suffix replays after it); it never moves the group basis,
+    # and other spans stay isolated.
+    timeline = _timeline(tmp_path)
+    group = _window("room1", "group", ("coder", "thyca"))
+    timeline.append_message(group, _row("g1"), event_id="g1")
+    timeline.replace_view(group, [_row("basis1")], event_id="r1")
+    timeline.append_message(group, _row("priv fail"), event_id="p1",
+                            priv={"span": "sp_X"})
+    timeline.replace_view(group, [_row("private reset")], event_id="pr1",
+                          priv={"span": "sp_X"})
+    timeline.append_message(group, _row("priv after reset"), event_id="p2",
+                            priv={"span": "sp_X"})
+    timeline.append_message(group, _row("g2"), event_id="g2")
+    default = timeline.project(group, session_id=SESSION_ID)
+    assert [m.content for m in default.messages] == ["basis1", "g2"]
+    assert [m.content for m in timeline.project(
+        group, session_id=SESSION_ID, priv_span="sp_X").messages] == [
+        "private reset", "priv after reset"]
+    assert timeline.project(
+        group, session_id=SESSION_ID, priv_span="sp_OTHER").messages == []
+
+
+def test_private_event_id_conflict_covers_scope_and_window(
+    tmp_path: Path,
+) -> None:
+    # Same id with a different span, window, or version conflicts;
+    # identical v2 replays stay idempotent.
+    from thyca.bots.timeline import TimelineConflict
+    timeline = _timeline(tmp_path)
+    group = _window("room1", "group", ("coder", "thyca"))
+    other = _window("room1", "group", ("coder",))
+    first = timeline.append_message(group, _row("same"), event_id="e1",
+                                    priv={"span": "sp_A"})
+    again = timeline.append_message(group, _row("same"), event_id="e1",
+                                    priv={"span": "sp_A"})
+    assert again["seq"] == first["seq"]
+    with pytest.raises(TimelineConflict):
+        timeline.append_message(group, _row("same"), event_id="e1",
+                                priv={"span": "sp_B"})
+    # Approved drift compatibility: participants alone never conflict;
+    # identity is (window_id, channel_id, kind) plus version/span/payload.
+    again_drift = timeline.append_message(other, _row("same"), event_id="e1",
+                                          priv={"span": "sp_A"})
+    assert again_drift["seq"] == first["seq"]
+    with pytest.raises(TimelineConflict):
+        timeline.append_message(group, _row("same"), event_id="e1")

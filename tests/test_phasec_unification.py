@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from dataclasses import replace
 from pathlib import Path
 
@@ -12,7 +11,7 @@ from thyca.bots.context import current_bot_turn_context
 from thyca.configs import ModelCfg, ProviderEntry, default_config, load, save
 from seeded_config import seeded_config
 from thyca.core.protocol import Message, ToolCall
-from thyca.llms.llm_base import ChatReply, LLMError
+from thyca.llms.llm_base import ChatReply
 from thyca.conversations.runtime import SessionManager
 from thyca.serve.trace import turns_from_session
 

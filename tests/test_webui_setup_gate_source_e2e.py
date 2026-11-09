@@ -16,7 +16,7 @@ from urllib.request import Request, urlopen
 
 import pytest
 
-from test_webui_spa_frontend import _cdp_frame, _cdp_recv, _read_exact
+from test_webui_spa_frontend import _cdp_frame, _cdp_recv
 from thyca.configs import Config, ProviderEntry, save
 
 ROOT = Path(__file__).resolve().parents[1]

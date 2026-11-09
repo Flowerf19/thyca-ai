@@ -2,7 +2,7 @@
 
 Cửa thực thi duy nhất cho mọi tool Thyca: một đường `submit`, một loại
 execution record, một backend cho việc nền, một lệnh shutdown. Thiết kế chi
-tiết: `.agents/plans/tool-gateway-unified-execution.md`.
+tiết: `.agents/plans/done/tool-gateway-unified-execution.md`.
 
 ## Kiến trúc
 

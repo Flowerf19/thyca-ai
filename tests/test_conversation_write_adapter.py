@@ -207,15 +207,6 @@ def test_delete_dm_keeps_marker_tombstone_against_reuse(switched: Path) -> None:
             'coder', intent=DMBootstrapIntent('coder', 'a' * 32))
 
 
-def test_admin_delete_directly_matches_adapter(switched: Path) -> None:
-    admin = AdminStore(switched)
-    group = admin.create_group(['coder']).ref
-    AgentStore(switched).append(group, 'coder', _msg('user', 'bye'))
-    admin.delete(group)
-    with pytest.raises(ConversationStoreError):
-        AgentStore(switched).read(group, 'coder')
-
-
 # ---------- retry without rewrite ----------
 
 def test_retry_preserves_history_and_reports_last_user(switched: Path) -> None:

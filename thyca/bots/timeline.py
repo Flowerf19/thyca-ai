@@ -5,6 +5,15 @@ all writes under one FileLock, complete newline-terminated records,
 fsync'd, 0700 dir / 0600 file. Event kinds: ``message`` (one canonical
 Message row) and ``view_reset`` (compaction/rewrite output — new basis).
 
+Record versions: ``v: 1`` is the ordinary shared record. ``v: 2`` is a
+private-execution record carrying ``priv: {"span": <turn span>}``; it
+reuses the real group window (no synthetic identity). Default
+projections and window/span readers exclude v2; a private projection
+selects only its own span, using its latest same-span reset as the
+basis and replaying same-span messages after it. Older v1-only
+readers reject v2 as unknown (fail closed). Existing v1 records stay
+readable without migration or rewriting.
+
 Semantics: ``event_id`` is unique and idempotent — replaying the same
 ``event_id`` with an identical kind/window/payload returns the existing
 event; a payload mismatch under the same id raises ``TimelineConflict``.
@@ -35,6 +44,11 @@ from thyca.conversations.runtime.errors import SessionError, SessionNotFound
 
 EVENT_KINDS = frozenset({"message", "view_reset"})
 
+# Private-execution record version (option B): v2 carries the existing
+# turn span so private rows stay addressable without another identity.
+EVENT_V1 = 1
+EVENT_V2 = 2
+
 
 class TimelineError(RuntimeError):
     """Malformed/corrupt timeline storage — never self-heals."""
@@ -46,6 +60,19 @@ class TimelineConflict(TimelineError):
 
 class TraceExecutionError(RuntimeError):
     """Canonical execution detail is unavailable for a trace span."""
+
+
+# Validate the private-execution marker: exactly the existing turn span.
+def _validate_priv(priv) -> dict:
+    """Checked v2 marker or raise; never silently accept a bad scope."""
+    if not isinstance(priv, dict):
+        raise TimelineError("v2 records must carry a priv marker")
+    if set(priv.keys()) != {"span"}:
+        raise TimelineError("priv marker must carry only span")
+    span = priv.get("span")
+    if not isinstance(span, str) or not span:
+        raise TimelineError("priv span must be a non-empty string")
+    return {"span": span}
 
 
 # Resolve one canonical internal id to its binding path without touching disk.
@@ -128,7 +155,7 @@ class WorkspaceTimeline:
                 raise TimelineError(f"malformed line: {exc}") from exc
             if not isinstance(ev, dict):
                 raise TimelineError("event must be a dict")
-            if ev.get("v") != 1:
+            if ev.get("v") not in (EVENT_V1, EVENT_V2):
                 raise TimelineError(f"unknown version {ev.get('v')}")
             if ev.get("kind") not in EVENT_KINDS:
                 raise TimelineError(f"unknown kind {ev.get('kind')}")
@@ -143,6 +170,12 @@ class WorkspaceTimeline:
                 raise TimelineError("window missing")
             if not isinstance(ev.get("payload"), dict):
                 raise TimelineError("payload must be a dict")
+            # v2 private records carry the existing turn span; anything
+            # else is malformed and fails closed like any torn record.
+            if ev.get("v") == EVENT_V2:
+                _validate_priv(ev.get("priv"))
+            elif "priv" in ev:
+                raise TimelineError("v1 records must not carry priv")
             if eid in seen:
                 raise TimelineError(f"duplicate event_id {eid}")
             seen.add(eid)
@@ -160,10 +193,20 @@ class WorkspaceTimeline:
             self._size = 0
         return seq
 
+    # Append one journal event with the next sequence number.
     def _append_locked(self, kind: str, window: WindowRef,
-                       payload: dict, event_id: str) -> dict:
+                       payload: dict, event_id: str,
+                       priv: dict | None = None) -> dict:
+        # Private execution writes v2 with the existing turn span; the
+        # journal keeps the real group window (no synthetic identity).
+        if priv is None:
+            version = EVENT_V1
+            marker: dict[str, object] = {}
+        else:
+            version = EVENT_V2
+            marker = {"priv": _validate_priv(priv)}
         ev = {
-            "v": 1,
+            "v": version,
             "seq": self._seq + 1,
             "event_id": event_id,
             "kind": kind,
@@ -171,6 +214,7 @@ class WorkspaceTimeline:
             "window": window.to_dict(),
             "payload": payload,
             "ts": utc_now_ts(),
+            **marker,
         }
         data = (json.dumps(ev, ensure_ascii=False) + "\n").encode("utf-8")
         fd = os.open(self.path, os.O_WRONLY | os.O_APPEND, 0o600)
@@ -197,15 +241,18 @@ class WorkspaceTimeline:
         # recover original message events across view_reset boundaries.
         return list(self._iter_events())
 
-    def messages_for_window(self, window: WindowRef) -> list[Message]:
+    def messages_for_window(self, window: WindowRef,
+                              *, include_private: bool = False) -> list[Message]:
         """Read original MESSAGE events for one exact window.
 
         Deliberately scans the journal rather than the current projection:
         view_reset copies are compaction bases, not execution events, and
-        must neither hide original rows nor duplicate them.
-        """
+        must neither hide original rows nor duplicate them. Private v2
+        execution is excluded unless explicitly requested."""
         messages: list[Message] = []
         for event in self._events():
+            if event.get("v") == EVENT_V2 and not include_private:
+                continue
             if (
                 event["kind"] != "message"
                 or any(
@@ -224,13 +271,15 @@ class WorkspaceTimeline:
         return messages
 
     def messages_for_span(
-        self, window: WindowRef, span_id: str
+        self, window: WindowRef, span_id: str,
+        *, include_private: bool = False,
     ) -> list[Message]:
         """Read original MESSAGE events for one exact window/span."""
         if not isinstance(span_id, str) or not span_id:
             return []
         return [
-            message for message in self.messages_for_window(window)
+            message for message in self.messages_for_window(
+                window, include_private=include_private)
             if (message.meta or {}).get("span_id") == span_id
         ]
 
@@ -242,20 +291,22 @@ class WorkspaceTimeline:
 
     # ---------- writers ----------
 
+    # Record one canonical message row for an exact window.
     def append_message(self, window: WindowRef, message,
-                       event_id: str) -> dict:
+                       event_id: str, priv: dict | None = None) -> dict:
         payload = {
             "message": (message.to_canonical_dict()
                         if hasattr(message, "to_canonical_dict")
                         else message),
         }
-        return self._record("message", window, payload, event_id)
+        return self._record("message", window, payload, event_id, priv=priv)
 
+    # Record a view_reset compaction or error basis for one window.
     def replace_view(self, window: WindowRef, messages, *,
                      event_id: str,
                      title: str | None = None, title_source: str | None = None,
                      naming_attempted: bool = False,
-                     bots=None, dm=None) -> dict:
+                     bots=None, dm=None, priv: dict | None = None) -> dict:
         payload = {
             "messages": [
                 m.to_canonical_dict() if hasattr(m, "to_canonical_dict")
@@ -267,12 +318,15 @@ class WorkspaceTimeline:
             "bots": list(bots) if bots else None,
             "dm": dm,
         }
-        return self._record("view_reset", window, payload, event_id)
+        return self._record("view_reset", window, payload, event_id,
+                            priv=priv)
 
+    # Validate and append one journal record with idempotency checks.
     def _record(self, kind: str, window: WindowRef, payload: dict,
-                event_id: str) -> dict:
+                event_id: str, priv: dict | None = None) -> dict:
         if not isinstance(event_id, str) or not event_id:
             raise TimelineError("event_id required")
+        clean_priv = None if priv is None else _validate_priv(priv)
         with self._lock:
             try:
                 if self.path.stat().st_size != self._size:
@@ -284,10 +338,26 @@ class WorkspaceTimeline:
                 pass
             existing = self._find(event_id)
             if existing is not None:
-                # Idempotency compares window_id, not the whole window
-                # dict — participants/kind can legitimately drift for
-                # the same window across a room's life.
-                if (
+                # v1 idempotency compares window_id only — participants
+                # can legitimately drift for the same window across a
+                # room's life. Any v2 involvement compares the exact
+                # execution scope: version, full window, payload, priv.
+                if existing.get("v") == EVENT_V2 or clean_priv is not None:
+                    # Execution scope: version, window identity triple,
+                    # kind, payload, private span. Participants alone
+                    # never conflict (approved drift compatibility).
+                    _old_win = existing.get("window") if isinstance(existing.get("window"), dict) else {}
+                    _new_win = window.to_dict()
+                    if (
+                        existing["kind"] == kind
+                        and existing.get("v") == (EVENT_V2 if clean_priv is not None else EVENT_V1)
+                        and (_old_win.get("window_id"), _old_win.get("channel_id"), _old_win.get("kind"))
+                        == (_new_win.get("window_id"), _new_win.get("channel_id"), _new_win.get("kind"))
+                        and existing.get("payload") == payload
+                        and existing.get("priv", None) == clean_priv
+                    ):
+                        return existing
+                elif (
                     existing["kind"] == kind
                     and existing["window"].get("window_id")
                     == window.window_id
@@ -296,25 +366,81 @@ class WorkspaceTimeline:
                     return existing
                 raise TimelineConflict(
                     f"event_id {event_id} replayed with different payload")
-            return self._append_locked(kind, window, payload, event_id)
+            return self._append_locked(kind, window, payload, event_id,
+                                       priv=clean_priv)
 
     # ---------- projector ----------
 
     def project(self, window: WindowRef, *,
-                session_id: str | None = None) -> Session:
+                session_id: str | None = None,
+                priv_span: str | None = None) -> Session:
         """Project the requested window's execution view.
 
-        Basis = last ``view_reset`` for that window; ``message`` events
-        after the basis replay on top. No basis yet → every ``message``
-        event for the window since the log start (a fresh window simply
-        has none). DM vs group windows never mix; the requested
-        ``WindowRef`` is the only scope consulted. The session path is a
-        binding only — canonical content lives in the journal.
+        Default (member) basis = last v1 ``view_reset`` for that window;
+        v1 ``message`` events after the basis replay on top. v2 private
+        execution never enters a default projection. A private projection
+        (``priv_span`` set) uses the latest same-span ``view_reset``
+        as its basis and replays only same-span v2 messages after it,
+        so one invocation can never read another's transcript. The requested ``WindowRef`` is the only
+        non-private scope consulted. The session path is a binding only
+        — canonical content lives in the journal.
         """
+        if priv_span is not None and (
+                not isinstance(priv_span, str) or not priv_span):
+            raise TimelineError("priv_span must be a non-empty string")
         events = self._events()
+        if priv_span is not None:
+            # Same-span reset is this invocation's basis; later same-span
+            # messages replay after it. Other spans, v1 records, and all
+            # group bases stay out.
+            basis_msgs: list[Message] = []
+            basis_idx = -1
+            for i, ev in enumerate(events):
+                if ev.get("v") != EVENT_V2:
+                    continue
+                if ev["window"].get("window_id") != window.window_id:
+                    continue
+                marker = ev.get("priv")
+                if not isinstance(marker, dict):
+                    continue
+                if marker.get("span") != priv_span:
+                    continue
+                if ev["kind"] != "view_reset":
+                    continue
+                payload = ev.get("payload")
+                if not isinstance(payload, dict):
+                    continue
+                basis_msgs = [
+                    Message.from_dict(m) if hasattr(Message, "from_dict")
+                    else m for m in payload.get("messages", [])
+                ]
+                basis_idx = i
+            selected: list[Message] = list(basis_msgs)
+            for ev in events[basis_idx + 1:]:
+                if ev.get("v") != EVENT_V2:
+                    continue
+                if ev["window"].get("window_id") != window.window_id:
+                    continue
+                marker = ev.get("priv")
+                if not isinstance(marker, dict):
+                    continue
+                if marker.get("span") != priv_span:
+                    continue
+                if ev["kind"] != "message":
+                    continue
+                raw = ev["payload"].get("message")
+                selected.append(
+                    Message.from_dict(raw) if hasattr(Message, "from_dict")
+                    else raw)
+            sid = session_id or window.window_id
+            path = _canonical_binding_path(
+                self.root / "bots" / self.bot_id / "sessions", sid)
+            return Session(sid, path, selected)
         basis = None
         basis_idx = -1
         for i, ev in enumerate(events):
+            if ev.get("v") == EVENT_V2:
+                continue
             if ev["window"].get("window_id") != window.window_id:
                 continue
             if ev["kind"] == "view_reset":
@@ -336,6 +462,8 @@ class WorkspaceTimeline:
             bots = payload.get("bots")
             dm = payload.get("dm")
         for ev in events[basis_idx + 1:]:
+            if ev.get("v") == EVENT_V2:
+                continue
             if ev["window"].get("window_id") != window.window_id:
                 continue
             if ev["kind"] == "message":
@@ -364,13 +492,25 @@ land as ``message``/``view_reset`` journal events only. An address to any
 other session fails instead of falling back to a file-backed store.
     """
 
+    # Bind one canonical session with an optional private span selector.
     def __init__(self, sessions_dir: Path, *,
                  timeline: WorkspaceTimeline, window: WindowRef,
-                 session_id: str) -> None:
+                 session_id: str, priv_span: str | None = None) -> None:
+        # A private execution binds the real group window for persistence
+        # and selects only its own span; the visible DM-like window lives
+        # only in the turn and is never journaled.
+        if priv_span is not None and (
+                not isinstance(priv_span, str) or not priv_span):
+            raise TimelineError("priv_span must be a non-empty string")
         super().__init__(sessions_dir)
         self._timeline = timeline
         self._window = window
         self._session_id = session_id
+        self._priv_span = priv_span
+
+    # Execution marker for this store: none shared, span only when private.
+    def _priv(self) -> dict | None:
+        return None if self._priv_span is None else {"span": self._priv_span}
 
     # Resolve one canonical internal id to its binding path without touching disk.
     def path_for(self, session_id: str) -> Path:
@@ -389,7 +529,8 @@ other session fails instead of falling back to a file-backed store.
 
     def _projected(self) -> Session:
         return self._timeline.project(
-            self._window, session_id=self._session_id)
+            self._window, session_id=self._session_id,
+            priv_span=self._priv_span)
 
     def _reset(self, messages, *, title, title_source,
                naming_attempted, bots, dm) -> None:
@@ -398,7 +539,8 @@ other session fails instead of falling back to a file-backed store.
         self._timeline.replace_view(
             self._window, messages, event_id=f"reset-{uuid.uuid4().hex}",
             title=title, title_source=title_source,
-            naming_attempted=naming_attempted, bots=bots, dm=dm)
+            naming_attempted=naming_attempted, bots=bots, dm=dm,
+            priv=self._priv())
 
     # ---------- reads ----------
 
@@ -453,7 +595,8 @@ other session fails instead of falling back to a file-backed store.
         self._require_path(path)
         self._timeline.append_message(
             self._window, row,
-            event_id=f"msg-{self._session_id}-{uuid.uuid4().hex}")
+            event_id=f"msg-{self._session_id}-{uuid.uuid4().hex}",
+            priv=self._priv())
 
     def rewrite(self, session_id, target, messages, title=None,
                 title_source=None, naming_attempted=False, bots=None,

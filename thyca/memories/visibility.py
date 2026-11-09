@@ -14,6 +14,10 @@ Rules:
   room): a DM origin is readable only by its owner bot; a group origin
   is readable when this bot participates; unresolved/legacy origins keep
   the existing owner-scoped behavior.
+
+Proactive tool reads may additionally pass ``allow_own_cross_window``
+to :meth:`MemoryView.can_read_entry`, which exempts an entry the
+in-flight bot itself owns from the origin-window check above.
 """
 from __future__ import annotations
 
@@ -33,6 +37,10 @@ class MemoryView:
     window: WindowRef | None
     bot_id: str
     thyca_dir: Path
+    # Turn-local denied origins (private delivery): group IDs this
+    # invocation must never read, even through same-window shortcuts,
+    # roster reloads, or missing-origin fallbacks. Empty by default.
+    denied_origins: frozenset[str] = frozenset()
 
     @property
     def is_group(self) -> bool:
@@ -54,6 +62,12 @@ class MemoryView:
         return session.dm_bot is not None, session.dm_bot, participants
 
     def can_read_origin(self, chat: str | None) -> bool:
+        # A pinned denial wins before every shortcut, reload, and
+        # missing-origin fallback. Origin-level checks carry no owner
+        # info, so the concrete own-entry exemption lives one layer up
+        # in can_read_entry.
+        if isinstance(chat, str) and chat and chat in self.denied_origins:
+            return False
         if self.is_group:
             if not isinstance(chat, str) or not chat:
                 return False
@@ -78,10 +92,29 @@ class MemoryView:
             return dm_bot == self.bot_id
         return self.bot_id in participants
 
-    def can_read_entry(self, chat: str | None, bots: tuple | None) -> bool:
+    def can_read_entry(
+        self, chat: str | None, bots: tuple | None,
+        allow_own_cross_window: bool = False,
+    ) -> bool:
+        # Entry-level read check: the owner rule first, then the origin
+        # window, with an opt-in exemption for the bot's own entries.
         from thyca.memories.active import visible_to
 
         if not visible_to(bots, self.bot_id):
+            return False
+        if (
+            allow_own_cross_window
+            and bots is not None
+            and self.bot_id in bots
+            and "team" not in bots
+        ):
+            if isinstance(chat, str) and chat:
+                # Resolve the origin anyway so a corrupt session still raises.
+                self._origin_info(chat)
+            return True
+        # Pinned private denial: team, mixed-team, and unowned entries
+        # stay hidden. Concrete own entries already returned above.
+        if isinstance(chat, str) and chat and chat in self.denied_origins:
             return False
         return self.can_read_origin(chat)
 

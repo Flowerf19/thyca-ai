@@ -124,12 +124,18 @@ def test_gateway_policy_denies_child_paths_bash_and_unlisted_tools(tmp_path: Pat
 
 
 def test_team_skill_seeds_ship_and_child_index_is_private_plus_team(tmp_path: Path) -> None:
+    # SIMPLE sharing: team seeds exist but stay hidden until Thyca shares them.
+    from thyca.skills.sharing import SharingService
+
     registry = BotRegistry(tmp_path)
     registry.ensure_thyca()
     assert (tmp_path / "skills-team" / "create-skill" / "SKILL.md").is_file()
     assert (tmp_path / "skills-team" / "create-mcp-tool" / "SKILL.md").is_file()
     registry.create(BotCard(bot_id="coder", name="coder", role="C",
                             description="D", persona="P"))
+    assert "create-skill" not in registry.skill_index_text("coder")
+    SharingService(tmp_path).share("create-skill")
+    SharingService(tmp_path).share("create-mcp-tool")
     index = registry.skill_index_text("coder")
     assert "create-skill" in index
     assert "create-mcp-tool" in index

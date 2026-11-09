@@ -84,6 +84,101 @@ async def test_memory_update_keeps_session_id(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_memory_search_returns_owner_dm_hit_in_group(tmp_path) -> None:
+    # Tool-path search carries the owner exemption: coder's DM-origin hit
+    # surfaces under a bound group view.
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    from thyca.core.channel import WindowRef
+    from thyca.memories.identity import bind_bot_id, reset_bot_id
+    from thyca.memories.visibility import MemoryView, bound_memory_view
+
+    from thyca.conversations.runtime.store import SessionStore
+    from thyca.conversations.store.runtime import ensure_runtime_store
+    from thyca.conversations.runtime import SessionManager
+
+    tz = ZoneInfo("Asia/Ho_Chi_Minh")
+    yesterday = (datetime.now(tz).date() - timedelta(days=1)).isoformat()
+    ensure_runtime_store(tmp_path)
+    SessionManager(tmp_path / "sessions").ensure_dm("coder")
+    store = SessionStore(tmp_path / "sessions")
+    store.ensure_dir()
+    group_id = "group-" + "d" * 32
+    store.append_bots(store.create(group_id), ["thyca", "coder"])
+
+    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    facade.remember(
+        "OWNERDM-GATEWAY-HIT", "OWNERDM-GATEWAY-BODY",
+        now=datetime.fromisoformat(f"{yesterday}T12:00:00+07:00"),
+        chat="coder", bots=["coder"])
+    facade._refresh_index()
+    registry = ToolRegistry()
+    register_memory_tools(registry, facade)
+    gateway = ToolGateway(registry, TaskStore())
+    window = WindowRef(
+        window_id=group_id, channel_id="webui", kind="group",
+        participants=("thyca", "coder"))
+    token = bind_bot_id("coder")
+    try:
+        with bound_memory_view(MemoryView(window, "coder", tmp_path)):
+            result = await gateway.submit(
+                ToolCall(id="s1", name="memory_search",
+                         arguments={"query": "OWNERDM-GATEWAY-HIT"}))
+    finally:
+        reset_bot_id(token)
+    assert not result.is_error
+    assert "OWNERDM-GATEWAY-HIT" in result.content
+
+
+@pytest.mark.asyncio
+async def test_memory_recent_returns_owner_dm_hit_in_group(tmp_path) -> None:
+    # Tool-path recent carries the owner exemption: coder's DM-origin hit
+    # surfaces under a bound group view.
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    from thyca.core.channel import WindowRef
+    from thyca.memories.identity import bind_bot_id, reset_bot_id
+    from thyca.memories.visibility import MemoryView, bound_memory_view
+
+    from thyca.conversations.runtime.store import SessionStore
+    from thyca.conversations.store.runtime import ensure_runtime_store
+    from thyca.conversations.runtime import SessionManager
+
+    tz = ZoneInfo("Asia/Ho_Chi_Minh")
+    yesterday = (datetime.now(tz).date() - timedelta(days=1)).isoformat()
+    ensure_runtime_store(tmp_path)
+    SessionManager(tmp_path / "sessions").ensure_dm("coder")
+    store = SessionStore(tmp_path / "sessions")
+    store.ensure_dir()
+    group_id = "group-" + "e" * 32
+    store.append_bots(store.create(group_id), ["thyca", "coder"])
+
+    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    facade.remember(
+        "OWNERDM-GATEWAY-RECENT", "OWNERDM-GATEWAY-RECENT-BODY",
+        now=datetime.fromisoformat(f"{yesterday}T12:00:00+07:00"),
+        chat="coder", bots=["coder"])
+    facade._refresh_index()
+    registry = ToolRegistry()
+    register_memory_tools(registry, facade)
+    gateway = ToolGateway(registry, TaskStore())
+    window = WindowRef(
+        window_id=group_id, channel_id="webui", kind="group",
+        participants=("thyca", "coder"))
+    token = bind_bot_id("coder")
+    try:
+        with bound_memory_view(MemoryView(window, "coder", tmp_path)):
+            result = await gateway.submit(
+                ToolCall(id="r1", name="memory_recent", arguments={}))
+    finally:
+        reset_bot_id(token)
+    assert not result.is_error
+    assert "OWNERDM-GATEWAY-RECENT" in result.content
+
+
+@pytest.mark.asyncio
 async def test_remember_injects_bound_chat_and_update_rejects_chat(tmp_path) -> None:
     from thyca.memories.heading import parse_heading
     from thyca.tools.memory_tools import bind_chat_session, reset_chat_session

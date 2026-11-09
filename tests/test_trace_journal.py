@@ -27,7 +27,6 @@ ROOT = Path(__file__).resolve().parents[1]
 WEBUI = ROOT / "thyca" / "webui" / "ui"
 DASH_JS = WEBUI / "dashboard" / "js" / "dashboard.js"
 TRACE_JS = WEBUI / "trace" / "js" / "trace.js"
-TRACE_HTML = WEBUI / "trace" / "index.html"
 
 # Same stub surface as test_trace_score.py plus: deferreds, toast capture,
 # window listener capture (hashchange), and a getJson responder boot can see.

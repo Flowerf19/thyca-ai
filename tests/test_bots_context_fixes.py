@@ -765,12 +765,14 @@ class _DmFlowLLM:
 
     def __init__(self, *, greet: bool) -> None:
         self.greet = greet
+        self.tool_texts: list[str] = []
 
     async def chat(self, messages, tools=None):
         text = "\n".join(str(m.content or "") for m in messages)
         tool_text = "\n".join(
             str(m.content or "") for m in messages if m.role == "tool"
         )
+        self.tool_texts.append(tool_text)
         usage = {"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6}
         if "PERSONA-CODER" in text:
             if tool_text:
@@ -907,19 +909,28 @@ def test_message_user_inside_own_dm_does_not_double_post(tmp_path: Path) -> None
         app.shutdown()
 
 
-def test_delegate_in_plain_room_promotes_recipient_to_participant(tmp_path: Path) -> None:
-    app = _chat(tmp_path, _DmFlowLLM(greet=False))
+def test_delegate_in_plain_room_keeps_recipient_outside_participants(tmp_path: Path) -> None:
+    llm = _DmFlowLLM(greet=False)
+    app = _chat(tmp_path, llm)
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="PERSONA-CODER"))
         room = app._sessions.create().id  # legacy plain room, no bots meta
         assert app.room_bots(room) == ["thyca"]
-        app.turn(room, "ask coder for help")
-        # A plain session becomes a team session on first delegation:
-        # membership now matches the bot rows in its transcript.
-        assert "coder" in app.room_bots(room)
-        assert _bot_rows(_rows(app, room), "coder"), (
-            "a plain (non-DM) room records the participant's work")
+        detail = app.turn(room, "ask coder for help")
+        # No stored distinguisher tells a solo plain room from a reduced
+        # typed group, so promotion ends for every non-DM room: coder runs,
+        # its reply returns to Thyca, but it never joins the room and the
+        # room keeps no bus/result rows for the pair.
+        assert detail["reply"] == "thyca summary"
+        assert any("coder plain answer" in t for t in llm.tool_texts), (
+            "recipient never ran")
+        assert "coder" not in app.room_bots(room)
+        assert _bot_rows(_rows(app, room), "coder") == []
+        assert [r for r in _rows(app, room)
+                if (r.get("meta") or {}).get("bus_event")] == []
+        assert [r for r in _rows(app, room)
+                if (r.get("meta") or {}).get("kind") == "result"] == []
     finally:
         app.shutdown()
 

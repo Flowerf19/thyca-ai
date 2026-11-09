@@ -212,6 +212,7 @@ def _open_checked_dir_at(parent_fd: int, name: str, *, mode: int = 0o700) -> tup
         os.close(fd)
         raise
 
+# Retry one validation pass when a -wal/-shm sidecar vanishes mid-check.
 def _validate_top_namespace(root_fd: int) -> None:
     allowed = {
         DB_FILE_NAME, DB_FILE_NAME + '-wal', DB_FILE_NAME + '-shm', LOCK_FILE_NAME,
@@ -233,6 +234,9 @@ def _validate_top_namespace(root_fd: int) -> None:
         try:
             for name, info in ((DB_FILE_NAME + '-wal', wal), (DB_FILE_NAME + '-shm', shm)):
                 if info is not None:
+                    if info.st_nlink == 0:
+                        # Unlinked between stat and now: transient, restat.
+                        raise _TransientSidecarError()
                     if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
                             or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1):
                         # Persistent invariant failure: do not retry.
@@ -242,6 +246,10 @@ def _validate_top_namespace(root_fd: int) -> None:
                     except ConversationStoreError as exc:
                         # Transient only when the sidecar vanished mid-check.
                         if isinstance(exc.__cause__, FileNotFoundError):
+                            raise _TransientSidecarError() from exc
+                        restat = _stat_at(root_fd, name)
+                        if (restat is None or restat.st_nlink == 0
+                                or not _same_inode(info, restat)):
                             raise _TransientSidecarError() from exc
                         raise
                     os.close(probe)

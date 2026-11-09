@@ -2,6 +2,14 @@
 
 Thay đổi của Thyca, viết ngắn gọn cho người dùng.
 
+## 0.87.0.dev2 — Development
+
+- Cứng bảo mật two-doors: chia sẻ skill chỉ Thyca (skill team ẩn theo mặc định), đọc/ghi/index skill qua checked descriptor, kiểm tra sender+recipient trong cùng transaction cho group request.
+- Dọn code chết và test chết: gỡ các symbol production không dùng và 10 test trùng lặp cùng 50 dòng import/helper mồ côi trong test.
+- Avatar huy chương (medallion): nhân vật tròn thay giọt mực cũ, sidebar xếp thẻ bot lưới 2 cột vuông.
+- Kiểm chứng: cổng đầy đủ đạt **2097 passed, 5 skipped** (bỏ qua vì Chrome/môi trường) tại commit `e46b18e`, review độc lập Approve.
+- Đây là bản dev, chưa phải beta hay stable; không tự bỏ hậu tố dev khi nâng phiên bản.
+
 ## 0.87.0.dev1 — Development
 
 - Cắt hẳn đường hội thoại cũ (thay đổi phá vỡ tương thích): mọi yêu cầu tới `/api/sessions*` giờ nhận `404`. DM dùng `/api/bots/<bot_id>/dm/...`. Nhóm dùng `/api/groups/<group_id>/...`. Danh sách hội thoại nằm ở `/api/conversations`.

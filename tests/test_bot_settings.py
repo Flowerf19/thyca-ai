@@ -20,7 +20,6 @@ from thyca.bots.settings import (
     SettingsError,
     read_settings,
     strip_card_model_text,
-    write_settings,
 )
 from thyca.configs import ModelCfg, ProviderEntry, default_config, load, save
 from seeded_config import seeded_config

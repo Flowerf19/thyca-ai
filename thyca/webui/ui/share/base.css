@@ -1,5 +1,5 @@
 /* Shared base: tokens, reset, shell chrome, header, dialogs, toast. */
-:root{--paper:#fbf5e8;--paper-deep:#f0e7d4;--ink:#3c372c;--muted:#877d69;--line:#d9ccb4;--forest:#315d4c;--rust:#aa5638;--sidebar-width:374px;--serif:'Thyca Serif',Georgia,'Times New Roman',serif;--sans:'Thyca Sans',Arial,sans-serif;--shadow:0 6px 22px #5140240c,0 1px 3px #5b483016}
+:root{--paper:#fbf5e8;--paper-deep:#f0e7d4;--ink:#3c372c;--muted:#877d69;--line:#d9ccb4;--forest:#315d4c;--rust:#aa5638;--sidebar-width:396px;--serif:'Thyca Serif',Georgia,'Times New Roman',serif;--sans:'Thyca Sans',Arial,sans-serif;--shadow:0 6px 22px #5140240c,0 1px 3px #5b483016}
 *{box-sizing:border-box}
 body{margin:0;background:#e9dfcb;color:var(--ink);font:14px var(--sans);height:100dvh;overflow:hidden}
 button,input,textarea,select{font:inherit}
@@ -69,7 +69,7 @@ html[data-ornaments="off"] .notebook-shell::before,html[data-ornaments="off"] .s
 .mobile-overlay{position:fixed;inset:0;z-index:10;background:#29261d50;backdrop-filter:blur(3px)}
 .motion-paused *,.motion-paused *:before,.motion-paused *:after{animation-play-state:paused!important}
 @media(min-width:1600px){
-:root{--sidebar-width:400px}
+:root{--sidebar-width:420px}
 }
 @media(max-width:1150px){
 :root{--sidebar-width:330px}

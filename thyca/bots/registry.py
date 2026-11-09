@@ -427,21 +427,55 @@ class BotRegistry:
         return "\n".join(lines)
 
     def skill_index_text(self, bot_id: str) -> str:
-        """Private skills + team skills for one bot; private wins on clash."""
+        """Authorized skill index: private plus shared team skills.
+
+        Thyca sees both global roots (bots/thyca/skills wins) plus every
+        team skill for maintenance. Children see own private plus shared
+        team skills only; unshared team stays hidden until Thyca shares it.
+        Private wins on clash, but an explicit shared path stays readable
+        through file tools. Team names filter before metadata loads, and
+        linked skill targets never index."""
+        from thyca.skills.sharing import SharingCorrupt, load_shared_names
+
         proto = SkillStore(self.thyca_dir)
-        private = self.bot_dir(bot_id) / "skills"
         seen: dict[str, str] = {}
         order: list[str] = []
-        for path, owned in ((private, True), (self.team_skills_root, False)):
-            if not path.is_dir():
-                continue
-            metas = [proto._meta(entry) for entry in path.iterdir() if entry.is_dir()]
-            metas.sort(key=lambda meta: meta.name)
+
+        def _link_disallowed(entry: Path) -> bool:
+            # Reject symlink components and unsafe skill files before any
+            # metadata read. Ordinary unrelated hardlinks are untouched
+            # because this runs only for recognized skill dirs.
+            try:
+                if entry.is_symlink():
+                    return True
+                md = entry / "SKILL.md"
+                try:
+                    st = md.lstat()
+                except FileNotFoundError:
+                    return False  # missing file -> invalid diagnostic, not link
+                except OSError:
+                    return True
+                import stat as _stat
+
+                if not _stat.S_ISREG(st.st_mode):
+                    return True
+                if st.st_nlink != 1:
+                    return True
+                # Symlinked SKILL.md reports via lstat above; double-check.
+                try:
+                    if md.is_symlink():
+                        return True
+                except OSError:
+                    return True
+                return False
+            except OSError:
+                return True
+
+        def _emit(metas: list) -> None:
             for meta in metas:
-                if meta.name in seen and not owned:
+                if meta.name in seen:
                     continue
-                if meta.name not in seen:
-                    order.append(meta.name)
+                order.append(meta.name)
                 if meta.ok:
                     description = meta.description
                     if len(description) > 256:
@@ -449,6 +483,103 @@ class BotRegistry:
                     seen[meta.name] = f"- {meta.name} — {description}"
                 else:
                     seen[meta.name] = f"- {meta.name} (SKILL.md invalid: {meta.error})"
+
+        def _metas_for(path: Path, names: set[str] | None) -> list:
+            # Team names filter before any content read: hidden team metadata
+            # is never opened. Remaining entries read through the checked
+            # descriptor (no pathname reopen), so a swapped link cannot
+            # inject another bot's description and parent symlinks fail.
+            if not path.is_dir() or path.is_symlink():
+                return []
+            entries: list[Path] = []
+            try:
+                for entry in path.iterdir():
+                    try:
+                        if not entry.is_dir() or entry.is_symlink():
+                            continue
+                    except OSError:
+                        continue
+                    if names is not None and entry.name not in names:
+                        continue
+                    if _link_disallowed(entry):
+                        continue
+                    entries.append(entry)
+            except OSError:
+                return []
+            from thyca.skills.sharing import read_skill_checked
+            from thyca.skills.store import SkillMeta
+
+            metas: list = []
+            for entry in entries:
+                md_path = entry / "SKILL.md"
+                try:
+                    md_path.lstat()
+                except FileNotFoundError:
+                    # Missing file diagnostic is constructed directly; the
+                    # pathname is never reopened, so a swapped-in link
+                    # cannot inject another bot's description here.
+                    metas.append(SkillMeta(
+                        entry.name, "", md_path, ok=False,
+                        error="missing SKILL.md"))
+                    continue
+                except OSError:
+                    continue
+                try:
+                    text = read_skill_checked(self.thyca_dir, md_path)
+                except UnicodeDecodeError as exc:
+                    # Safe decode failure keeps its diagnostic and the
+                    # private-name precedence below; unsafe links stay
+                    # excluded and never reach this branch.
+                    metas.append(SkillMeta(
+                        entry.name, "", md_path, ok=False,
+                        error=f"unreadable: {exc}"))
+                    continue
+                except ValueError as exc:
+                    msg = str(exc).lower()
+                    if any(k in msg for k in (
+                        "symlink", "hardlink", "hardlinked",
+                        "not a regular file", "not a regular",
+                        "escapes root", "invalid skill",
+                        "skill directory", "skill target",
+                        "cannot open",
+                    )):
+                        # Unsafe alias/link/swap: fail closed, never index.
+                        continue
+                    metas.append(SkillMeta(
+                        entry.name, "", md_path, ok=False,
+                        error=f"unreadable: {exc}"))
+                    continue
+                except OSError as exc:
+                    metas.append(SkillMeta(
+                        entry.name, "", md_path, ok=False,
+                        error=f"unreadable: {exc}"))
+                    continue
+                metas.append(proto.meta_from_text(entry, text))
+            metas.sort(key=lambda meta: meta.name)
+            return metas
+
+        if bot_id == "thyca":
+            # Thyca owns both global roots; private wins. Team: all skills
+            # for maintenance, private wins on clash.
+            global_root = self.thyca_dir / "skills"
+            thyca_private = self.bot_dir("thyca") / "skills"
+            for path in (thyca_private, global_root):
+                _emit(_metas_for(path, None))
+            # Team: every skill dir, links disallowed, invalid diagnostic.
+            _emit(_metas_for(self.team_skills_root, None))
+            return "\n".join(seen[name] for name in order)
+        # Child: own private plus shared team only.
+        private = self.bot_dir(bot_id) / "skills"
+        _emit(_metas_for(private, None))
+        try:
+            shared = load_shared_names(self.thyca_dir)
+        except SharingCorrupt as exc:
+            # Block shared usage but keep private; report the problem.
+            diag = f"- (sharing state invalid: {exc})"
+            base = "\n".join(seen[name] for name in order)
+            return f"{base}\n{diag}" if base else diag
+        # Filter team names before metadata loads.
+        _emit(_metas_for(self.team_skills_root, shared))
         return "\n".join(seen[name] for name in order)
 
     def public_list(self) -> list[dict]:

@@ -7,7 +7,8 @@ from thyca.memories.identity import current_bot_id
 class AdminDeps:
     """Everything admin handlers need (wired once by ChatApp)."""
 
-    def __init__(self, bots, runtime, facade_fn, dm_post=None, card_post=None, room_post=None, dm_resolve=None, channel_actions=None) -> None:
+    # Capture collaborators once; optional resolvers default to None.
+    def __init__(self, bots, runtime, facade_fn, dm_post=None, card_post=None, room_post=None, dm_resolve=None, channel_actions=None, room_bots=None, room_dm_owner=None) -> None:
         self.channel_actions = channel_actions
         self.bots = bots
         self.runtime = runtime
@@ -28,6 +29,12 @@ class AdminDeps:
         #: structured question/error card in the current room (ChatApp
         #: owns room membership/DM-privacy gates + transcript writes).
         self.card_post = card_post
+        #: ``(room_id) -> [bot_id]`` participant lookup for send-time
+        #: outsider classification (fail closed when unavailable).
+        self.room_bots = room_bots
+        #: ``(room_id) -> bot_id | None`` DM-owner lookup for send-time
+        #: classification (DM delivery keeps owner-pair behavior).
+        self.room_dm_owner = room_dm_owner
 
 
 def _caller() -> str | None:

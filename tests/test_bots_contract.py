@@ -9,8 +9,6 @@ import json
 from pathlib import Path
 from urllib.request import Request, urlopen
 
-import pytest
-
 from thyca.app.chat_app import ChatApp
 from thyca.configs import load, save
 from seeded_config import seeded_config

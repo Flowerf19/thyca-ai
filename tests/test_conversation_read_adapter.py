@@ -9,7 +9,6 @@ import pytest
 from thyca.conversations.store import (
     AdminStore,
     AgentStore,
-    ConversationStoreError,
     DMBootstrapIntent,
     RootInitializationIntent,
     RuntimeReadIntent,
@@ -23,7 +22,7 @@ from thyca.conversations.store.read_adapter import _MAX_ASSEMBLY_RESYNCS
 from thyca.core.conversation import ConversationRef
 from thyca.core.protocol import Message
 from thyca.conversations.runtime import Session
-from thyca.conversations.runtime.wire import message_dict, session_detail, session_summary, session_title
+from thyca.conversations.runtime.wire import session_detail, session_summary, session_title
 
 
 def _root_id(root: Path) -> str:

@@ -14,7 +14,7 @@ from thyca.llms.llm_base import ChatReply, LLMError
 from thyca.core.protocol import Message, ToolCall
 from thyca.tools.mcp import StartupDiagnostic
 from thyca.tools.registry import ToolSpec
-from thyca.conversations.runtime import SessionError, SessionManager
+from thyca.conversations.runtime import SessionManager
 
 
 @dataclass

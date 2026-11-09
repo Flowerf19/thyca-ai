@@ -124,15 +124,24 @@ def append_message(
     message: Message,
     *,
     intent: RuntimeWriteIntent,
+    require_participant: str | None = None,
 ) -> int:
-    """Append one user/assistant message with an explicit actor; no fallback."""
+    """Append one user/assistant message with an explicit actor; no fallback.
+
+    Group request rows pass the recipient as ``require_participant`` so the
+    sender authorization and the recipient eligibility share one transaction;
+    a membership change racing the insert fails closed. Result rows omit it
+    and stay recipient-authorized.
+    """
     _require_intent(intent)
     _require_enabled_root(root, intent)
     _require_ref(ref)
     _require_actor(actor)
+    if require_participant is not None:
+        _require_actor(require_participant)
     if not isinstance(message, Message):
         raise ValueError('expected message')
-    return AgentStore(root).append(ref, actor, message)
+    return AgentStore(root).append(ref, actor, message, require_participant=require_participant)
 
 
 # Append one user row authorized by the server-side caller, not a bot.

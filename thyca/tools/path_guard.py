@@ -38,8 +38,65 @@ class PathGuard:
         calls always serialize on one identity."""
         return str(self.resolve(args["path"]))
 
+    def _lexical_abs(self, path: str) -> Path:
+        # Lexical absolute path without following symlinks, for skill-root
+        # classification and symlink-component checks.
+        raw = absolutize(path)
+        if not raw.is_absolute():
+            raw = Path.cwd() / raw
+        return Path(os.path.normpath(str(raw)))
+
+    def _skill_refs_for(self, lexical: Path, resolved: Path):
+        # Lexical and resolved skill identities; a mismatch is an alias.
+        from thyca.skills.sharing import skill_refs_for
+
+        return skill_refs_for(self.thyca_dir, lexical, resolved)
+
+    def _deny_reserved_sharing(self, lexical: Path, target: Path) -> None:
+        # Reserved sharing files are never writable via native tools, on any
+        # path identity including aliases. Both spellings are checked so a
+        # symlink cannot dodge the reservation in either direction.
+        from thyca.skills.sharing import is_reserved_sharing_file
+
+        if is_reserved_sharing_file(self.thyca_dir, lexical) or is_reserved_sharing_file(self.thyca_dir, target):
+            raise PathDenied(f"write denied: {target}")
+
     def deny_write(self, path: str) -> Path:
         target = self.resolve(path)
+        try:
+            lexical = self._lexical_abs(path)
+        except ValueError:
+            lexical = target
+        # Reserved sharing state (plus lock and exact publication temp) is
+        # managed only through the Thyca tool, never via native file tools.
+        # Both lexical and resolved identities are checked so aliases cannot
+        # dodge the reservation.
+        self._deny_reserved_sharing(lexical, target)
+        # Recognized skill writes use the sharing gate plus link checks on
+        # both identities; a lexical/resolved mismatch is an alias into or
+        # out of the skill roots and fails closed. Ordinary team-control
+        # rules still apply to non-skill paths.
+        from thyca.skills.sharing import SharingService, skill_refs_match, validate_skill_write_path
+
+        ref_lex, ref_res = self._skill_refs_for(lexical, target)
+        if not skill_refs_match(ref_lex, ref_res):
+            raise PathDenied(f"write denied: {target}")
+        ref = ref_lex if ref_lex is not None else ref_res
+        if ref is not None:
+            svc = SharingService(self.thyca_dir)
+            if not svc.can_write_skill(current_bot_id(), ref):
+                raise PathDenied(f"write denied: {target}")
+            try:
+                validate_skill_write_path(self.thyca_dir, lexical)
+            except ValueError as exc:
+                raise PathDenied(f"write denied: {target}: {exc}") from exc
+            # The resolved destination must validate too; otherwise an
+            # outer alias could pass the lexical check and land inside.
+            try:
+                validate_skill_write_path(self.thyca_dir, target)
+            except ValueError as exc:
+                raise PathDenied(f"write denied: {target}: {exc}") from exc
+            return target
         if self._blocked(target):
             raise PathDenied(f"write denied: {target}")
         return target
@@ -47,6 +104,49 @@ class PathGuard:
     def deny_read(self, path: str) -> Path:
         """Resolve a read target, refusing bot-sensitive files to child bots."""
         target = self.resolve(path)
+        try:
+            lexical = self._lexical_abs(path)
+        except ValueError:
+            lexical = target
+        # Lexical and resolved skill identities must agree; any alias into
+        # or out of the skill roots fails closed before authorization.
+        from thyca.skills.sharing import SharingService, _has_symlink_component, skill_refs_match
+
+        ref_lex, ref_res = self._skill_refs_for(lexical, target)
+        if not skill_refs_match(ref_lex, ref_res):
+            raise PathDenied(f"read denied: {target}")
+        ref = ref_lex if ref_lex is not None else ref_res
+        if ref is not None:
+            svc = SharingService(self.thyca_dir)
+            if not svc.can_read_skill(current_bot_id(), ref):
+                raise PathDenied(f"read denied: {target}")
+            # Link safety before any content read: symlink components,
+            # symlinked files, hardlinked files, and special files fail.
+            # Both identities are checked so an outer alias cannot dodge the
+            # component scan and the resolved file cannot be a swapped link.
+            try:
+                if _has_symlink_component(lexical, self.thyca_dir):
+                    raise PathDenied(f"read denied: {target}")
+                if _has_symlink_component(target, self.thyca_dir):
+                    raise PathDenied(f"read denied: {target}")
+                for candidate in (lexical, target):
+                    try:
+                        st = os.lstat(candidate)
+                    except FileNotFoundError:
+                        continue
+                    import stat as _stat
+
+                    if not _stat.S_ISREG(st.st_mode):
+                        raise PathDenied(f"read denied: {target}")
+                    if st.st_nlink != 1:
+                        raise PathDenied(f"read denied: {target}")
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                raise PathDenied(f"read denied: {target}: {exc}") from exc
+            if self._group_sensitive(target):
+                raise PathDenied(f"read denied: {target}")
+            return target
         if self._bot_sensitive(target):
             raise PathDenied(f"read denied: {target}")
         if self._group_sensitive(target):
@@ -54,17 +154,25 @@ class PathGuard:
         return target
 
     def _group_sensitive(self, target: Path) -> bool:
-        """Raw private state paths denied only while a GROUP view is bound.
+        """Raw private state paths denied in group turns and pinned private turns.
 
         Root memory daily files, room transcripts, per-bot workspace
         private state (private_followups), raw sqlite indexes and user
         profile files bypass the visibility-filtered facade, so a group
         turn reads them only through memory_get/search — never from disk.
-        No bound view, CLI and private windows keep the old behavior."""
+        A private invocation with pinned denied origins keeps the same
+        raw-file denial; its filtered memory tools still allow the bot's
+        own entries. No bound view, CLI and DM windows keep the old behavior."""
         from thyca.memories.visibility import current_memory_view
 
         view = current_memory_view()
-        if view is None or getattr(view.window, "kind", None) != "group":
+        if view is None:
+            return False
+        is_group = getattr(view.window, "kind", None) == "group"
+        denied = getattr(view, "denied_origins", frozenset())
+        # Pinned private denial keeps the raw-file restriction when the
+        # window is absent; otherwise preserve DM and unbound behavior.
+        if not is_group and not denied:
             return False
         root = self.thyca_dir
         try:

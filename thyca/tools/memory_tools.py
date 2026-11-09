@@ -172,6 +172,8 @@ def _remember_spec(facade: MemoryFacade) -> ToolSpec:
 
 def _search_spec(facade: MemoryFacade) -> ToolSpec:
     async def handler(args: dict) -> str:
+        # Proactive tool read: the caller may reuse its own memories
+        # across origin windows (proactive-only owner exemption).
         result = facade.search(
             args["query"],
             limit=_limit(args),
@@ -181,6 +183,7 @@ def _search_spec(facade: MemoryFacade) -> ToolSpec:
             task=args.get("task"),
             kind=args.get("kind"),
             status=args.get("status"),
+            allow_own_cross_window=True,
         )
         return json.dumps(asdict(result), ensure_ascii=False)
 
@@ -227,7 +230,8 @@ def _search_spec(facade: MemoryFacade) -> ToolSpec:
 
 def _recent_spec(facade: MemoryFacade) -> ToolSpec:
     async def handler(args: dict) -> str:
-        hits = facade.recent(limit=_limit(args))
+        # Proactive tool read: same owner exemption as memory_search.
+        hits = facade.recent(limit=_limit(args), allow_own_cross_window=True)
         return json.dumps([asdict(hit) for hit in hits], ensure_ascii=False)
 
     return ToolSpec(
@@ -245,9 +249,11 @@ def _recent_spec(facade: MemoryFacade) -> ToolSpec:
 
 def _get_spec(facade: MemoryFacade) -> ToolSpec:
     async def handler(args: dict) -> str:
+        # Proactive tool read: same owner exemption as memory_search.
         return facade.get(
             chunk_id=args.get("chunk_id"),
             session_id=args.get("session_id"),
+            allow_own_cross_window=True,
         )
 
     return ToolSpec(
@@ -320,12 +326,14 @@ def _reinforce_spec(facade: MemoryFacade) -> ToolSpec:
 
 def _tasks_spec(facade: MemoryFacade) -> ToolSpec:
     async def handler(args: dict) -> str:
+        # Proactive tool read: same owner exemption as memory_search.
         raw_limit = args.get("limit")
         catalog = facade.tasks(
             status=args.get("status"),
             date_from=args.get("date_from"),
             date_to=args.get("date_to"),
             limit=20 if raw_limit is None else raw_limit,
+            allow_own_cross_window=True,
         )
         return json.dumps(catalog, ensure_ascii=False)
 

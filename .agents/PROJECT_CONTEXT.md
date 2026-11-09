@@ -4,7 +4,7 @@ Mục tiêu của file này là mô tả trạng thái thật tại HEAD. Mã ng
 
 ## Runtime hiện tại
 
-- Phiên bản: `0.87.0.dev1`. Kiểm tra ở `pyproject.toml`, `thyca/__init__.py`, `uv.lock` và `README.md`.
+- Phiên bản: `0.87.0.dev2`. Kiểm tra ở `pyproject.toml`, `thyca/__init__.py`, `uv.lock` và `README.md`.
 - Điểm vào CLI nằm ở `thyca/app/cli.py`. Máy chủ WebUI vòng lặp nội bộ (loopback) nằm ở `thyca/serve/`.
 - WebUI là một SPA gốc duy nhất. File vào là `thyca/webui/ui/chat/index.html` tại `/`.
 - Sáu đường workspace cũ vẫn mở đúng màn. Đường Trace cũ được chuẩn hóa vào màn Sử dụng (Usage).
@@ -12,6 +12,7 @@ Mục tiêu của file này là mô tả trạng thái thật tại HEAD. Mã ng
 - Trạng thái trang, bộ lọc và fragment nằm trong lịch sử trình duyệt. URL nhìn thấy vẫn là `/`.
 - Điều hướng trong app phải giữ route và bản nháp đã cache. Điều hướng chỉ bật stylesheet của trang đang mở cộng style markdown dùng chung.
 - Không dùng iframe. Không tạo điểm vào app thứ hai.
+- Avatar bot là huy chương nhân vật tròn (medallion): mã ở `thyca/webui/ui/share/avatars/avatars.js`, sidebar xếp thẻ bot lưới 2 cột (`thyca/webui/ui/share/sidebar.css`).
 - Lượt gốc và lượt con dùng chung `BotRuntime` qua `ChatApp` và `WorkspaceTurnService`.
 - CLI đi qua `ChatApp.turn`. Không còn bộ thực thi lượt gốc riêng. Không còn `thyca/app/run_turn.py`.
 - CLI chọn hội thoại bằng `--bot <bot_id>` (DM) hoặc `--group <group_id>` (nhóm). Hai cờ này loại trừ nhau.
@@ -80,7 +81,7 @@ Mục tiêu của file này là mô tả trạng thái thật tại HEAD. Mã ng
 - Không kiểm tra, không truy cập và không tạo lại `~/.thyca` hay nội dung trong đó.
 - Không thêm ví dụ API key vào tài liệu hướng dẫn dự án.
 - Giữ nguyên các thay đổi không liên quan trong working tree và artifact untracked của user.
-- Ba file kế hoạch untracked dưới `.agents/plans/` là của user. Không sửa và không xóa chúng.
+- Mọi kế hoạch đã xong và lưu dưới `.agents/plans/done/` (2026-11-09), gồm 3 file untracked của user. Không có plan in-progress. Không sửa và không xóa các file đã lưu.
 - Serve chỉ chạy loopback. Không để lộ secret, đường dẫn nội bộ hay stack trace qua API.
 - Markdown của bộ nhớ vẫn là nguồn sự thật của bộ nhớ. SQLite của bộ nhớ chỉ là mục lục suy ra (derived index).
 - Đọc `.agents/AGENT_RULES.md` và các quyết định/kế hoạch liên quan trước khi đổi contract bộ nhớ.
@@ -96,7 +97,8 @@ Mục tiêu của file này là mô tả trạng thái thật tại HEAD. Mã ng
 ## Kiểm chứng và review
 
 - Chạy cổng đầy đủ bằng `uv run pytest -q`. Chạy kiểm tra khoảng trắng bằng `git diff --check`.
-- Lần xác minh gần nhất: **1999 passed, 5 skipped** (bỏ qua vì Chrome/môi trường) và `git diff --check` sạch.
+- Lần xác minh gần nhất (commit `e46b18e`): **2097 passed, 5 skipped** (bỏ qua vì Chrome/môi trường) và `git diff --check` sạch.
+- Đợt `e46b18e` gồm two-doors hardening (chia sẻ skill chỉ Thyca, skill IO qua checked descriptor, kiểm tra sender+recipient cùng transaction cho group request) và dọn code/test chết. Tất cả đã commit.
+- Review độc lập đã Approve cho đợt hardening + dọn dẹp trên. Chất lượng nhà cung cấp thật và kiểm tra khói trên gốc thật (live smoke) chưa được thiết lập.
 - Một test tập trung hoặc provider giả không chứng minh trạng thái toàn suite, hành vi trình duyệt hay chất lượng nhà cung cấp thật.
-- Review độc lập đã xong cho các lát cắt hard-cut này. Chất lượng nhà cung cấp thật và kiểm tra khói trên gốc thật (live smoke) chưa được thiết lập.
 - Cổng `ruff` đã cấu hình trong `pyproject.toml` nhưng chưa cài trong `.venv`. Cổng này chưa được xác minh.

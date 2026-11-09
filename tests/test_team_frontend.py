@@ -665,7 +665,7 @@ def test_refresh_sessions_partitions_groups_and_rows(node: str) -> None:
     """kind:'group' conversations feed the shared group list (members filtered
     to live bots); a bot's row lists its DM plus every group whose bot list
     mentions them, keyed dm:<bot> / group:<group_id>."""
-    out = _run(node, """
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'thyca' }, { id: 'coder' }]));
         installFetch((url) => url === '/api/conversations' ? { conversations: [
@@ -709,7 +709,7 @@ def test_session_row_day_labels_and_turn_count(node: str) -> None:
 def test_sync_roster_patches_in_place_and_respects_running_bots(node: str) -> None:
     """syncRoster patches card fields in place, adds new bots, drops removed
     ones, and never overwrites state/summary/elapsed of a bot with a live run."""
-    out = _run(node, """
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }]));
         bots[1].state = 'working'; bots[1].summary = 'đang chạy'; bots[1].elapsed = 42;
@@ -733,7 +733,7 @@ def test_sync_roster_patches_in_place_and_respects_running_bots(node: str) -> No
 def test_sync_roster_keeps_live_state_when_bot_has_run(node: str) -> None:
     """botHasRun() shields state/summary/elapsed from roster patches while the
     client still owns the turn."""
-    out = _run(node, """
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'a' }]));
         bots[0].state = 'working'; bots[0].summary = 'đang build'; bots[0].elapsed = 30;
@@ -752,9 +752,9 @@ def test_sync_roster_keeps_live_state_when_bot_has_run(node: str) -> None:
 # ---------------------------------------------------------------------------
 
 def test_avatar_markup_contract(node: str) -> None:
-    """avatar(b) emits the seal span with bot palette vars, state/expression
-    attrs, one namespaced body path, <use> layers and no hidden nodes."""
-    out = _run(node, """
+    """avatar(b) emits the medallion avatar span with bot palette vars,
+    state/expression attrs, cream well backdrop, character rig, and rings."""
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'coder', name: 'Coder' }]));
         const b = bots[0];
@@ -765,29 +765,27 @@ def test_avatar_markup_contract(node: str) -> None:
     html = out["html"]
     assert 'class="seal-avatar mk mk-drop' in html
     assert 'data-bot-avatar="coder"' in html
-    assert 'data-drop-shape="cloud"' in html
+    assert 'data-drop-shape="coder"' in html
     assert 'data-state="idle"' in html
     assert 'data-expression="idle"' in html
     assert 'data-selected="true"' in html
     assert "--bot-color:" in html and "--bot-ink:" in html
-    assert 'class="seal-motion"' in html and 'class="seal-face"' in html
-    body = re.search(r'<path id="(drop\d+-body)" d="([^"]+)"', html)
-    assert body, "exactly one namespaced body path"
-    assert html.count(body.group(2)) == 1          # the d appears once: data, not markup
-    assert len(re.findall(r'<use href="#' + body.group(1) + r'"', html)) >= 4  # body+shade+edge+clip
-    uses = re.findall(r'href="#(drop\d+-body)"', html)
-    assert uses and all(u == body.group(1) for u in uses)  # every use resolves to the one defs path
-    assert 'class="glyph"' not in html and 'wax-' not in html
+    assert 'class="seal-motion"' in html and 'seal-face' in html
+    assert 'class="well-bg drop-well"' in html
+    assert 'class="char-rig"' in html and 'class="char-parallax"' in html
+    assert 'class="drop-body"' in html
+    assert 'class="eyes-rig seal-face"' in html and 'class="seal-pupils"' in html
+    assert 'class="frame-ring drop-edge"' in html
+    assert 'class="orbit-arc drop-orbit"' in html
     assert 'aria-hidden="true"' in html
 
 
 def test_avatar_ink_drop_material_face_and_hands(node: str) -> None:
-    """2.5D ink-drop layers + stamped pill eyes (seal-photoreal TASK-001,
-    superseded by the user-approved ink-drop direction): contact/depth/
-    shine planes and two droplet hands ride the one body path, while the
-    face keeps its state hooks (pupils group for gaze, brows, mouths)
-    with every generated id namespaced exactly once."""
-    out = _run(node, """
+    """Peeking Character Medallion layers: cream paper well backdrop,
+    clipped character rig with parallax layers (body, eyes, prop),
+    state orbit arc and outer medallion frame rings, with unique
+    namespaced ids per avatar instance."""
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'coder', name: 'Coder' }]));
         const html = avatar(bots[0]);
@@ -795,62 +793,50 @@ def test_avatar_ink_drop_material_face_and_hands(node: str) -> None:
         return { html, html2 };
     """)
     html = out["html"]
-    for cls in ("drop-body", "drop-edge", "drop-contact", "drop-depth",
-                "drop-shine", "drop-orbit", "drop-grain-hi", "drop-hands",
-                "drop-hand-l", "drop-hand-r"):
-        assert f'class="{cls}' in html or f' {cls}' in html, cls
-    assert html.count('class="drop-hand') >= 2     # two droplet hands
-    body = re.search(r'<path id="(drop\d+-body)" d="([^"]+)"', html)
-    assert body and html.count(body.group(2)) == 1
-    assert len(re.findall(r'href="#' + body.group(1) + r'"', html)) >= 4
+    for cls in ("well-bg", "drop-well", "char-clip", "char-rig",
+                "char-parallax", "drop-body", "eyes-rig", "seal-face",
+                "seal-pupils", "prop-parallax", "done-spark", "frame-ring",
+                "drop-edge", "frame-ring-hi", "orbit-arc", "drop-orbit"):
+        assert cls in html, cls
     ids = re.findall(r'id="(drop\d+-[a-z-]+)"', html)
-    assert len(ids) == len(set(ids)), ids
+    assert len(ids) == len(set(ids)) and len(ids) >= 2, ids
     ids2 = re.findall(r'id="(drop\d+-[a-z-]+)"', out["html2"])
     assert not set(ids) & set(ids2)          # per-instance namespace
-    # Stamped face: dark pill sockets, glints riding the pupils group
-    # (gaze), ornamental brows split left/right, a resting mouth.
-    assert html.count('class="seal-sock') + html.count("seal-sock ") >= 2
-    assert 'class="seal-pupils"' in html and "seal-glint" in html
-    assert 'class="brow-left"' in html and 'class="brow-right"' in html
-    assert 'class="seal-mouth-rest"' in html
+    assert 'class="seal-pupils"' in html
+    assert 'seal-eye-open' in html and 'seal-eye-happy' in html
+    assert 'seal-eye-error' in html and 'seal-eye-rest' in html
     css = AVATARS_CSS.read_text()
-    for sel in (".drop-body{", ".drop-contact{", ".drop-depth{", ".drop-shine{",
-                ".drop-orbit{", ".drop-hand{", ".drop-hand-l", ".drop-hand-r",
-                ".seal-sock{", ".seal-glint{", ".seal-brow", ".seal-mouth-rest",
-                "[data-state=done] .drop-hand-l", "[data-state=working] .drop-hand"):
+    for sel in (".drop-body{", ".well-bg{", ".frame-ring{", ".frame-ring-hi{",
+                ".orbit-arc{", ".char-rig{", ".char-parallax{", ".prop-parallax{",
+                ".eyes-rig{", "[data-state=done]", "[data-state=working]"):
         assert sel in css, sel
-    assert "wax-" not in css and "--bot-deep" not in css  # palette vars only
 
 
 def test_avatar_body_is_id_stable_and_expression_follows_mention(node: str) -> None:
-    """The ink-drop body is picked deterministically from the immutable
-    id; a mentioned bot renders data-expression=mention without changing
-    state."""
-    out = _run(node, """
+    """The character archetype is picked deterministically from the immutable
+    id; coder and researcher keep their own archetypes; a mentioned
+    bot renders data-expression=mention without changing state."""
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'coder' }, { id: 'researcher' }]));
-        const bodyOf = (h) => (h.match(/<path id="drop[0-9]+-body" d="([^"]+)"/) || [])[1];
-        const idOf = (h) => (h.match(/<path id="(drop[0-9]+-body)"/) || [])[1];
-        const useCount = (h) => { const m = h.match(/<path id="(drop[0-9]+-body)"/); return m ? h.split('href="#' + m[1] + '"').length - 1 : 0; };
         const a1 = avatar(bots[0]);
         const a2 = avatar(bots[0]);
         const other = avatar(bots[1]);
         const listening = avatar(bots[0], 'listening');
         bots[0].mentioned = true;
         const mentioned = avatar(bots[0]);
+        const clipOf = (h) => (h.match(/clip-path="url\(#(drop\d+-clip)\)"/) || [])[1];
         return {
-            stable: bodyOf(a1) === bodyOf(a2) && !!bodyOf(a1),
-            distinct: bodyOf(a1) !== bodyOf(other),
-            unique: new Set([idOf(a1), idOf(a2), idOf(other)]).size === 3,
-            uses: useCount(a1),
+            stable: a1.includes('data-drop-shape="coder"') && a2.includes('data-drop-shape="coder"'),
+            distinct: a1.includes('data-drop-shape="coder"') && other.includes('data-drop-shape="researcher"'),
+            unique: new Set([clipOf(a1), clipOf(a2), clipOf(other)]).size === 3,
             listening,
             mentioned,
         };
     """)
     assert out["stable"] is True
-    assert out["distinct"] is True                     # coder and researcher keep their own bodies
+    assert out["distinct"] is True                     # coder and researcher keep their own archetypes
     assert out["unique"] is True                      # every render gets its own namespaced ids
-    assert out["uses"] >= 4                             # one path, shared by <use> layers
     assert 'data-state="waiting"' in out["listening"]    # stateAliases listening->waiting
     assert 'data-expression="mention"' in out["mentioned"]
 
@@ -876,7 +862,7 @@ def test_set_state_drives_summary_orbit_and_done_timer(node: str) -> None:
     """setState applies only caller-supplied summaries (no fabricated state
     text), resets the orbit clock on change, and 'done' auto-returns to
     idle after the 1.6s beat."""
-    out = _run(node, """
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'a' }]));
         const b = bots[0];
@@ -897,7 +883,7 @@ def test_set_state_drives_summary_orbit_and_done_timer(node: str) -> None:
 def test_set_state_error_cancels_run_and_announces(node: str) -> None:
     """error/offline cancel the bot's in-flight turn token and announce the
     failure in Vietnamese."""
-    out = _run(node, """
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'Alpha' }]));
         const calls = [];
@@ -918,7 +904,7 @@ def test_set_state_error_cancels_run_and_announces(node: str) -> None:
 def test_mention_overlay_and_notify_text_drive_seal_attrs(node: str) -> None:
     """mentionBot flags the bot for 500ms; notifyText seeds the music notes on
     every writing seal (only while the bot is writing)."""
-    out = _run(node, """
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'A' }]));
         const b = bots[0];
@@ -950,7 +936,7 @@ def test_mention_overlay_and_notify_text_drive_seal_attrs(node: str) -> None:
 def test_notify_text_damper_beats_and_rests(node: str) -> None:
     """notifyText beats immediately on the first chunk; bursts inside a beat
     only add energy, and the loop rests after ~2 quiet beats via clearMusic."""
-    out = _run(node, """
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'A' }]));
         const seal = document.createElement('span');
@@ -985,7 +971,7 @@ def test_notify_text_damper_beats_and_rests(node: str) -> None:
 def test_seal_parallax_vars_follow_pointer_and_reset(node: str) -> None:
     """applyParallax shifts the face toward the pointer, the well less, the
     highlight opposite; resetParallax clears; previews/paused/zero-rect skip."""
-    out = _run(node, """
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'A' }]));
         const host = document.createElement('div');
@@ -1026,7 +1012,7 @@ def test_seal_parallax_vars_follow_pointer_and_reset(node: str) -> None:
 def test_idle_layer_gestures_never_change_work_state(node: str) -> None:
     """beginIdle marks idle.active + a card comment; eligibility excludes
     mentioned/grouped/busy bots; clearIdle resets without touching b.state."""
-    out = _run(node, """
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'a' }, { id: 'b' }]));
         const a = bots[0], b = bots[1];
@@ -1055,7 +1041,7 @@ def test_idle_layer_gestures_never_change_work_state(node: str) -> None:
 def test_card_markup_anatomy(node: str) -> None:
     """card(b) -> bot-card/team-cluster/team-envelope with select/favorite/
     collapse actions, status label, compact preview and the inert pocket."""
-    out = _run(node, """
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'coder', name: 'Coder', role: 'Dev',
                               agent_status: { state: 'thinking' } }]));
@@ -1097,7 +1083,7 @@ def test_card_markup_anatomy(node: str) -> None:
 def test_render_team_and_group_rows_markup(node: str) -> None:
     """renderTeam fills #team-bot-list in roster order; renderGroups emits a
     .group-row with member seals, names and the computed subtitle."""
-    out = _run(node, """
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'thyca', name: 'Thyca' }, { id: 'coder', name: 'Coder' }]));
         renderTeam();
@@ -1146,7 +1132,7 @@ def test_star_click_pins_card_to_top_in_place(node: str) -> None:
     """TASK B: starring moves the existing card node into the pinned group
     immediately (node identity preserved, no full rerender); unstarring
     restores its stable slot; `bots` order is untouched."""
-    out = _run(node, """
+    out = _run(node, r"""
         localStorage.clear();
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'Alpha' }, { id: 'b', name: 'Beta' }]));
@@ -1192,7 +1178,7 @@ def test_update_card_patches_state_preview_and_pocket(node: str) -> None:
     label, live-only preview (+N grouping), elapsed, aria-expanded and
     pocket inert. Fabricated summaries and simulated idle chatter never
     paint the activity line or the pocket."""
-    out = _run(node, """
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'Alpha' }]));
         const b = bots[0];
@@ -1267,7 +1253,7 @@ def test_pocket_state_matrix_reply_action_and_open_invariance(node: str) -> None
     action, every other state hides it; idle keeps the footer-only treatment
     via CSS; and no state transition opens or closes a card. The pocket
     status line is the fetched task state — caller summaries never paint."""
-    out = _run(node, """
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'Alpha' }]));
         const b = bots[0];
@@ -1324,7 +1310,7 @@ def test_live_preview_groups_and_legacy_finish(node: str) -> None:
     window: up to two kind+name groups with ×N, +extra for the rest. One
     finish removes only a unique match; ambiguous or unknown legacy finishes
     remove nothing, and tool vs skill stays distinct."""
-    out = _run(node, """
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'Alpha' }]));
         const b = bots[0];
@@ -1377,7 +1363,7 @@ def test_task_pocket_keyed_reconcile_and_stale_guard(node: str) -> None:
     """The pocket task list renders one row per fetched kind+name group with
     ×N (no ghosts, no invented rows); a superseded fetch never paints a
     stale bot/window."""
-    out = _run(node, """
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'Alpha' }, { id: 'b', name: 'Beta' }]));
         const b = bots[0];
@@ -1413,7 +1399,7 @@ def test_task_pocket_keyed_reconcile_and_stale_guard(node: str) -> None:
 
 def test_open_bot_expansion_is_exclusive(node: str) -> None:
     """openBot(id) opens exactly one pocket at a time."""
-    out = _run(node, """
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'a' }, { id: 'b' }]));
         renderTeam();
@@ -1524,7 +1510,7 @@ def test_finish_association_is_window_and_name_exact(node: str) -> None:
     """Same public call id in two windows stays per-window, and a same-id
     different-name finish removes only its own call — out of order, with
     unknown names removing nothing."""
-    out = _run(node, """
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'Alpha' }]));
         const b = bots[0];
@@ -1625,7 +1611,7 @@ def test_stream_burst_coalesces_task_refreshes(node: str) -> None:
 def test_pocket_renders_all_tasks_with_distinct_identities(node: str) -> None:
     """>20 tasks all render (no silent truncation) and identical units keep
     distinct reconcile identities across updates."""
-    out = _run(node, """
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'Alpha' }]));
         const b = bots[0];
@@ -1661,7 +1647,7 @@ def test_pocket_renders_all_tasks_with_distinct_identities(node: str) -> None:
 def test_live_more_opens_separate_full_list(node: str) -> None:
     """The +N button opens the full live list SEPARATE from the task pocket:
     pocket stays closed, every group lists with ×N, Escape/focus restore."""
-    out = _run(node, """
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'Alpha' }]));
         const b = bots[0];
@@ -1698,7 +1684,7 @@ def test_live_more_opens_separate_full_list(node: str) -> None:
 def test_preview_and_pocket_never_cross_windows(node: str) -> None:
     """Live calls and task rows from another window never surface; with no
     window (non-chat page) both surfaces stay empty without fetching."""
-    out = _run(node, """
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'Alpha' }]));
         const b = bots[0];
@@ -1740,7 +1726,7 @@ def test_studio_previews_never_open_pockets() -> None:
 def test_set_group_activity_syncs_member_seals_and_meta(node: str) -> None:
     """setGroupActivity(group, speaker) marks member seals group-active, the
     speaker 'speaking', and rewrites the row meta — invalid input is rejected."""
-    out = _run(node, """
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'thyca', name: 'Thyca' }, { id: 'coder', name: 'Coder' }]));
         groups.push({ id: 'g1', title: 'Nhóm', bots: ['thyca', 'coder'], subtitle: '2 người bạn' });
@@ -1773,7 +1759,7 @@ def test_set_group_activity_syncs_member_seals_and_meta(node: str) -> None:
 def test_team_list_click_delegates_card_actions(node: str) -> None:
     """The #team-bot-list delegation maps data-action to select / collapse /
     favorite / info / capabilities."""
-    out = _run(node, """
+    out = _run(node, r"""
         localStorage.clear();
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'Alpha' }]));
@@ -1805,89 +1791,83 @@ def test_team_list_click_delegates_card_actions(node: str) -> None:
 
 
 def test_bot_shape_preference_normalizes_and_overrides(node: str) -> None:
-    """TASK C: localStorage `thyca.shape.<id>` carries a valid DROP_NAMES value
-    onto normalizeBot; invalid values fall back to null so dropShapeFor
-    keeps its deterministic silhouette."""
+    """localStorage `thyca.shape.<id>` carries a valid DROP_NAMES value
+    or maps a LEGACY_SHAPES value onto normalizeBot; invalid values fall back to null
+    so dropShapeFor keeps its deterministic silhouette."""
     out = _run(node, """
         localStorage.clear();
         localStorage.setItem('thyca.shape.coder', 'squat');
+        localStorage.setItem('thyca.shape.thyca', 'operator');
         localStorage.setItem('thyca.shape.bogus', 'blob');
         bots.length = 0;
         bots.push(...roster([{ id: 'thyca' }, { id: 'coder' }, { id: 'bogus' }]));
         const [t, c, x] = bots;
         return { thyca: t.shape, coder: c.shape, bogus: x.shape,
-                 tall: dropShapeFor(t).name, squat: dropShapeFor(c).name,
+                 thycaShape: dropShapeFor(t).name,
+                 coderShape: dropShapeFor(c).name,
                  bogusShape: dropShapeFor(x).name,
-                 coderD: avatar(c).includes('data-drop-shape="squat"') };
+                 coderD: avatar(c).includes('data-drop-shape="researcher"') };
     """)
-    assert out["thyca"] is None
-    assert out["coder"] == "squat"
+    assert out["thyca"] == "operator"
+    assert out["coder"] == "researcher"
     assert out["bogus"] is None
-    assert out["tall"] == "tall" and out["squat"] == "squat"
-    assert out["bogusShape"] in ("tall", "squat", "cloud")
+    assert out["thycaShape"] == "operator"
+    assert out["coderShape"] == "researcher"
+    assert out["bogusShape"] in ("thyca", "researcher", "coder", "march7th", "chronicler", "scribe", "keeper", "scout", "designer", "analyst", "operator", "courier")
     assert out["coderD"] is True
 
 
 def test_set_bot_shape_patches_avatars_in_place(node: str) -> None:
-    """TASK C: setBotShape validates, persists locally and patches every
-    existing avatar instance (data-drop-shape + body path d) without
+    """setBotShape validates, persists locally and patches every
+    existing avatar instance (data-drop-shape + character rig markup) without
     touching classes/states; bad input is rejected with no side effects."""
-    out = _run(node, """
+    out = _run(node, r"""
         localStorage.clear();
         bots.length = 0;
         bots.push(...roster([{ id: 'coder', name: 'Coder' }]));
         const b = bots[0];
         document.body.innerHTML = '';
-        // Faithful minimal avatar skeleton: the patcher only touches
-        // [data-bot-avatar] roots, their data-drop-shape and the one
-        // namespaced body path per instance.
         const mkAv = () => {
             const root = document.createElement('span');
             root.className = 'seal-avatar mk mk-drop';
-            root.dataset.botAvatar = 'coder'; root.dataset.dropShape = 'cloud';
+            root.dataset.botAvatar = 'coder'; root.dataset.dropShape = 'march7th';
             root.dataset.state = 'idle';
-            const svg = document.createElement('svg'); svg.className = 'base';
-            const defs = document.createElement('defs');
-            const path = document.createElement('path');
-            path.setAttribute('id', 'drop9-body'); path.setAttribute('d', 'CLOUD');
-            defs.appendChild(path); svg.appendChild(defs); root.appendChild(svg);
+            const motion = document.createElement('span'); motion.className = 'seal-motion';
+            motion.innerHTML = '<svg class="base"><defs></defs></svg>';
+            root.appendChild(motion);
             document.body.appendChild(root); return root;
         };
         const av1 = mkAv(), av2 = mkAv();
         const badShape = window.ThycaShell.setBotShape('coder', 'blob');
-        const badBot = window.ThycaShell.setBotShape('ghost', 'tall');
+        const badBot = window.ThycaShell.setBotShape('ghost', 'operator');
         const badType = window.ThycaShell.setBotShape('coder', '');
         const storedBefore = localStorage.getItem('thyca.shape.coder');
-        const dBefore = av1.querySelector('.base defs path').getAttribute('d');
-        const ok = window.ThycaShell.setBotShape('coder', 'tall');
-        const expected = dropShapeFor({ id: 'coder', shape: 'tall' }).d;
+        const ok = window.ThycaShell.setBotShape('coder', 'operator');
         const after = [av1, av2].map(el => ({
             shape: el.getAttribute('data-drop-shape'),
             cls: el.className,
             state: el.getAttribute('data-state'),
-            d: el.querySelector('.base defs path').getAttribute('d'),
+            hasDropBody: el.innerHTML.includes('drop-body'),
         }));
         return { badShape, badBot, badType, storedBefore, ok,
                  stored: localStorage.getItem('thyca.shape.coder'),
-                 botShape: b.shape, dBefore, expected, after };
+                 botShape: b.shape, after };
     """, via="shell")
     assert out["badShape"] is False and out["badBot"] is False and out["badType"] is False
     assert out["storedBefore"] is None
-    assert out["dBefore"] == "CLOUD"
     assert out["ok"] is True
-    assert out["stored"] == "tall" and out["botShape"] == "tall"
+    assert out["stored"] == "operator" and out["botShape"] == "operator"
     assert len(out["after"]) == 2
     for entry in out["after"]:
-        assert entry["shape"] == "tall"
+        assert entry["shape"] == "operator"
         assert "mk-drop" in entry["cls"] and entry["state"] == "idle"
-        assert entry["d"] == out["expected"]
+        assert entry["hasDropBody"] is True
 
 
 def test_expression_studio_shape_picker(node: str) -> None:
-    """TASK C: the Studio dialog-controls gain a shape picker with three
-    real avatar previews; clicking one persists the shape and flips only
-    its aria-pressed."""
-    out = _run(node, """
+    """The Studio dialog-controls gain a shape picker with character archetype
+    previews; clicking one persists the shape and flips only its aria-pressed."""
+    out = _run(node, r"""
         localStorage.clear();
         bots.length = 0;
         bots.push(...roster([{ id: 'coder', name: 'Coder' }]));
@@ -1899,21 +1879,20 @@ def test_expression_studio_shape_picker(node: str) -> None:
         const shapes = [...html.matchAll(/data-shape="(\w+)"/g)].map(m => m[1]);
         const pressed = (h) => [...h.matchAll(/data-shape="(\w+)"[^>]*aria-pressed="(\w+)"/g)].map(m => [m[1], m[2]]);
         const previews = [...html.matchAll(/data-drop-shape="(\w+)"/g)].map(m => m[1]);
-        const tallBtn = document.createElement('button'); tallBtn.dataset.shape = 'tall';
-        $('#shape-picker')._handlers.click.forEach(h => h({ target: tallBtn, preventDefault() {} }));
+        const operatorBtn = document.createElement('button'); operatorBtn.dataset.shape = 'operator';
+        $('#shape-picker')._handlers.click.forEach(h => h({ target: operatorBtn, preventDefault() {} }));
         const htmlAfter = $('#shape-picker').innerHTML;
         return { count: shapes.length, shapes, previews, before: pressed(html),
                  after: pressed(htmlAfter), stored: localStorage.getItem('thyca.shape.coder'),
                  botShape: getBot('coder').shape,
-                 labels: [html.includes('Giọt cao'), html.includes('Giọt tròn'), html.includes('Giọt mây')] };
+                 hasOperator: html.includes('Operator'),
+                 hasThyca: html.includes('Thyca') };
     """, via="shell")
-    assert out["count"] == 3
-    assert out["shapes"] == ["tall", "squat", "cloud"]
-    assert sorted(out["previews"]) == ["cloud", "squat", "tall"]  # one live preview each
-    assert out["before"] == [["tall", "false"], ["squat", "false"], ["cloud", "true"]]
-    assert out["stored"] == "tall" and out["botShape"] == "tall"
-    assert out["after"] == [["tall", "true"], ["squat", "false"], ["cloud", "false"]]
-    assert out["labels"] == [True, True, True]
+    assert out["count"] == 12
+    assert "operator" in out["shapes"] and "thyca" in out["shapes"] and "coder" in out["shapes"]
+    assert len(set(out["previews"])) == 12
+    assert out["stored"] == "operator" and out["botShape"] == "operator"
+    assert out["hasOperator"] is True and out["hasThyca"] is True
 
 
 def test_expression_dialog_shape_markup_consistent(node: str) -> None:
@@ -1986,7 +1965,7 @@ def test_system_bot_star_is_permanent(node: str) -> None:
 
 def test_group_list_click_loads_session(node: str) -> None:
     """Clicking a group row opens the group session with its first member."""
-    out = _run(node, """
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'thyca' }, { id: 'coder' }]));
         groups.push({ id: 'group-11111111111111111111111111111111', title: 'Nhóm 9', bots: ['coder', 'thyca'], subtitle: 'x' });
@@ -2002,7 +1981,7 @@ def test_group_list_click_loads_session(node: str) -> None:
 def test_shared_picker_opens_prefilled_group_dialog(node: str) -> None:
     """#team-shared-create fills #group-options with a checked row per bot and
     shows the dialog."""
-    out = _run(node, """
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'A', role: 'R1' }, { id: 'b', name: 'B', role: 'R2' }]));
         $('#team-shared-create').onclick();
@@ -2019,7 +1998,7 @@ def test_shared_picker_opens_prefilled_group_dialog(node: str) -> None:
 def test_group_form_submit_creates_and_opens_group(node: str) -> None:
     """The group form requires >=2 members + a title; it POSTs the group,
     refreshes conversations, opens the new group and confirms via toast."""
-    out = _run(node, """
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'a' }, { id: 'b' }]));
         const posted = [];
@@ -2060,7 +2039,7 @@ def test_group_form_submit_creates_and_opens_group(node: str) -> None:
 def test_open_info_renders_identity_and_session_index(node: str) -> None:
     """openInfo fills the drawer with the info lockup plus the bot's session
     list; capabilities mode renders facts, tools and the context meter."""
-    out = _run(node, """
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'Alpha', role: 'Lead' }]));
         bots[0].sessions = [['s1', 'Phiên 1', 'Hôm nay · 2 lượt'], ['s2', 'Phiên 2', '']];
@@ -2090,7 +2069,7 @@ def test_open_info_renders_identity_and_session_index(node: str) -> None:
 def test_capabilities_facts_are_honest_when_empty(node: str) -> None:
     """Empty tool lists render 'Không có công cụ nào.'; missing facts are
     dropped; model/bash/memory/system render as Vietnamese labels."""
-    out = _run(node, """
+    out = _run(node, r"""
         bots.length = 0;
         const full = normalizeBot({
             id: 'a', role: 'Lead', system: true, bash: 'ask',
@@ -2115,7 +2094,7 @@ def test_capabilities_facts_are_honest_when_empty(node: str) -> None:
 def test_drawer_context_meter_fills_and_bands(node: str) -> None:
     """fillDrawerContext reads dm + operations and paints the ctx-bar band:
     ok < 80%, warn >= 80%, danger >= 95%, with a token title."""
-    out = _run(node, """
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'a' }]));
         openInfo('a', true);                                   // builds the meter slot
@@ -2136,7 +2115,7 @@ def test_drawer_context_meter_fills_and_bands(node: str) -> None:
 def test_drawer_context_drops_stale_slot_and_survives_errors(node: str) -> None:
     """The document.contains(slot) guard keeps a replaced drawer body from
     being painted; fetch failures leave the meter empty rather than lying."""
-    out = _run(node, """
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'a' }]));
         openInfo('a', true);
@@ -2162,7 +2141,7 @@ def test_drawer_context_drops_stale_slot_and_survives_errors(node: str) -> None:
 def test_drawer_session_button_routes_to_session(node: str) -> None:
     """Clicking an info-session row dispatches to the active controller and
     closes the shared drawer — it never opens the pocket (chevron-only)."""
-    out = _run(node, """
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'A' }, { id: 'b' }]));
         bots[0].sessions = [['s1', 'Phiên 1', 'x']];
@@ -2260,7 +2239,7 @@ def test_default_navigation_routes_to_chat(node: str) -> None:
 def test_handle_event_maps_lifecycle_and_respects_guards(node: str) -> None:
     """handleEvent maps backend event types to seal states; offline blocks all
     but connection.restored, error blocks resuming llm/tool events."""
-    out = _run(node, """
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'a' }]));
         const b = bots[0];
@@ -2293,7 +2272,7 @@ def test_toggle_motion_and_shell_adapter(node: str) -> None:
     is gone — its job moved to the reduce-motion preference — so the mirror
     step is a guarded no-op); ThycaShell exposes the shared adapter surface
     incl. setBotColor."""
-    out = _run(node, """
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'a', color: '#a65a42' }].map((c, i) => ({ ...c, tint: 'accent' })), 0));
         toggleMotion(true);
@@ -2897,7 +2876,7 @@ def test_settings_dialog_renders_bot_prefs_and_status(node: str) -> None:
     """The shared Settings dialog shows the bot shortcut (shared seal),
     machine-only prefs (defaults applied without writing) and on-demand
     backend status — no page, no roster card."""
-    out = _run(node, """
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'Alpha', role: 'R' }], 0));
         installFetch((url) => {
@@ -2976,7 +2955,7 @@ def test_settings_prefs_persist_on_change_only(node: str) -> None:
 def test_settings_dialog_studio_shortcut_keeps_bot_customization(node: str) -> None:
     """The dialog's studio button opens the shared expression studio for
     the dialog's selected bot (the retained Custom-bot customization path)."""
-    out = _run(node, """
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'Alpha' }, { id: 'b', name: 'Beta' }], 0));
         installFetch((url) => url === '/api/bots' ? { bots: [] }
@@ -3655,7 +3634,7 @@ def test_dashboard_cost_rows_and_bot_fallbacks(node: str) -> None:
     """fmtCost tiers + honest '—'; by_bot rows sort by tokens, paint the
     share bar in the bot color (neutral #a08f68 when unknown) and label
     unknown ids truthfully."""
-    out = _run(node, """
+    out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'coder', name: 'Coder', tint: 'botanical' }]));
         statsData = {

@@ -120,7 +120,8 @@ function normalizeBot(card, index) {
      DROP_NAMES is owned by avatars.js; call-time reference is safe
      because normalizeBot only runs after all scripts have loaded. */
   const shapeRaw = localStorage.getItem('thyca.shape.' + card.id);
-  const shape = (typeof DROP_NAMES !== 'undefined' && DROP_NAMES.includes(shapeRaw)) ? shapeRaw : null;
+  const shapeMapped = (typeof LEGACY_SHAPES !== 'undefined' && LEGACY_SHAPES[shapeRaw]) || shapeRaw;
+  const shape = (typeof DROP_NAMES !== 'undefined' && DROP_NAMES.includes(shapeMapped)) ? shapeMapped : null;
   return {
     id: card.id,
     name: card.name || card.id,

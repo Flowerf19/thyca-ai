@@ -37,7 +37,7 @@ def test_base_tokens_define_the_paper_palette() -> None:
     for token in (
         "--paper:#fbf5e8", "--paper-deep:#f0e7d4", "--ink:#3c372c",
         "--muted:#877d69", "--line:#d9ccb4", "--forest:#315d4c",
-        "--rust:#aa5638", "--sidebar-width:374px",
+        "--rust:#aa5638", "--sidebar-width:396px",
     ):
         assert token in root, token
     assert "'Thyca Serif'" in root and "--serif" in root

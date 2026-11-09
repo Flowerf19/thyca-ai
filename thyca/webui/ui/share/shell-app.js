@@ -117,18 +117,16 @@ function initShellApp() {
       return true;
     },
     /* Browser-only shape override, mirroring setBotColor. Patches every
-       existing avatar instance in place: the silhouette path `d` and the
-       data-drop-shape hook (face offsets follow via CSS). Classes,
-       states and animations are untouched. */
+       existing avatar instance in place: updates data-drop-shape and re-renders
+       the medallion character markup inside .base while preserving className and state. */
     setBotShape(id, shape) {
-      if (!DROP_NAMES.includes(shape) || !getBot(id)) return false;
-      const b = getBot(id); b.shape = shape; localStorage.setItem('thyca.shape.' + id, shape);
-      const d = dropShapeFor(b).d;
+      const resolvedShape = (typeof LEGACY_SHAPES !== 'undefined' && LEGACY_SHAPES[shape]) || shape;
+      if (typeof DROP_NAMES === 'undefined' || !DROP_NAMES.includes(resolvedShape) || !getBot(id)) return false;
+      const b = getBot(id); b.shape = resolvedShape; localStorage.setItem('thyca.shape.' + id, resolvedShape);
       $$('[data-bot-avatar="' + id + '"]').forEach(el => {
-        el.setAttribute('data-drop-shape', shape);
-        el.querySelectorAll('.base defs path').forEach(p => {
-          if (String(p.getAttribute('id') || '').endsWith('-body')) p.setAttribute('d', d);
-        });
+        el.setAttribute('data-drop-shape', resolvedShape);
+        const uid = 'drop' + (++avatarCounter);
+        el.innerHTML = `<span class="seal-motion">${dropMarkup(b, uid)}</span>`;
       });
       return true;
     },

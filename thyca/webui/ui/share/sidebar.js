@@ -63,9 +63,10 @@ function taskRows(b){
 }
 function card(b){
  const activeId=activeSidebarBot();
+ const fullRow=computeFullRowIds(teamDisplayOrder()).has(b.id);
  const groups=livePreviewGroups(b,typeof currentChatWindow==='function'?currentChatWindow():null);
  const more=groups.extra>0?`<button class="live-more" data-action="live-more" data-bot-id="${b.id}" aria-label="Xem to\u00e0n b\u1ed9 ${groups.total} vi\u1ec7c \u0111ang ch\u1ea1y c\u1ee7a ${b.name}" title="Xem to\u00e0n b\u1ed9">+${groups.extra}</button>`:'';
- return `<article class="bot-card team-cluster team-envelope" id="bot-${b.id}" data-bot-id="${b.id}" data-state="${b.state}" data-open="${b.open}" data-selected="${b.id===activeId}" style="${paletteStyle(b)}"><header class="bot-header"><button class="bot-select team-bot-item" data-action="select" data-bot-id="${b.id}" aria-label="${sidebarActionLabel(b)}">${avatar(b)}<span class="bot-heading"><span class="bot-name session-name">${b.name}</span><span class="bot-role">${b.role}</span><span class="header-status"><span class="status-dot"></span><span class="header-status-label">${states[b.state][1]}</span></span></span></button><div class="card-actions"><button class="icon-button favorite" data-action="favorite" aria-label="${b.system?`Bot h\u1ec7 th\u1ed1ng ${b.name} \u2014 lu\u00f4n \u0111\u01b0\u1ee3c ghim`:b.favorite?`B\u1ecf ghim ${b.name}`:`Ghim ${b.name} l\u00ean \u0111\u1ea7u`}" aria-pressed="${b.favorite}"${b.system?' disabled title="Bot h\u1ec7 th\u1ed1ng \u2014 kh\u00f4ng b\u1ecf ghim \u0111\u01b0\u1ee3c"':''}>${icon('star')}</button><button class="icon-button collapse-button" data-action="collapse" aria-label="Thu ho\u1eb7c m\u1edf ${b.name}" aria-controls="pocket-${b.id}" aria-expanded="${b.open}">${icon('chevron')}</button></div></header><div class="compact-preview"${groups.total?'':' hidden'}><span class="status-dot"></span><span class="preview-text">${escapeHTML(previewLine(b))}</span>${more}</div><div class="pocket team-pocket-viewport" id="pocket-${b.id}" ${b.open?'':'inert'}><div class="pocket-inner"><section class="thinking-paper" aria-label="Vi\u1ec7c \u0111ang ch\u1ea1y c\u1ee7a ${b.name}"><div class="thinking-heading">${dots}<span class="thinking-title">${states[b.state][1]}</span><span class="elapsed">${b.elapsed} gi\u00e2y</span></div><div class="thinking-scroll" tabindex="0" aria-label="Vi\u1ec7c \u0111ang ch\u1ea1y c\u1ee7a ${b.name}"><p class="thinking-summary"></p><ol class="progress-list"></ol></div><button class="reply-action" data-action="reply"${['waiting','confused'].includes(b.state)?'':' hidden'}>${icon('arrow')}Tr\u1ea3 l\u1eddi</button><footer class="paper-footer"><button data-action="info">${icon('info')}Th\u00f4ng tin bot</button><button data-action="capabilities">${icon('list')}Kh\u1ea3 n\u0103ng</button></footer></section></div></div></article>`;
+ return `<article class="bot-card team-cluster team-envelope" id="bot-${b.id}" data-bot-id="${b.id}" data-state="${b.state}" data-open="${b.open}"${fullRow?' data-full-row="true"':''} data-selected="${b.id===activeId}" style="${paletteStyle(b)}"><header class="bot-header"><button class="bot-select team-bot-item" data-action="select" data-bot-id="${b.id}" aria-label="${sidebarActionLabel(b)}">${avatar(b)}<span class="bot-heading"><span class="bot-name session-name">${b.name}</span><span class="bot-role">${b.role}</span><span class="header-status"><span class="status-dot"></span><span class="header-status-label">${states[b.state][1]}</span></span></span></button><div class="card-actions"><button class="icon-button favorite" data-action="favorite" aria-label="${b.system?`Bot h\u1ec7 th\u1ed1ng ${b.name} \u2014 lu\u00f4n \u0111\u01b0\u1ee3c ghim`:b.favorite?`B\u1ecf ghim ${b.name}`:`Ghim ${b.name} l\u00ean \u0111\u1ea7u`}" aria-pressed="${b.favorite}"${b.system?' disabled title="Bot h\u1ec7 th\u1ed1ng \u2014 kh\u00f4ng b\u1ecf ghim \u0111\u01b0\u1ee3c"':''}>${icon('star')}</button><button class="icon-button collapse-button" data-action="collapse" aria-label="Thu ho\u1eb7c m\u1edf ${b.name}" aria-controls="pocket-${b.id}" aria-expanded="${b.open}">${icon('chevron')}</button></div></header><div class="compact-preview"${groups.total?'':' hidden'}><span class="status-dot"></span><span class="preview-text">${escapeHTML(previewLine(b))}</span>${more}</div><div class="pocket team-pocket-viewport" id="pocket-${b.id}" ${b.open?'':'inert'}><div class="pocket-inner"><section class="thinking-paper" aria-label="Vi\u1ec7c \u0111ang ch\u1ea1y c\u1ee7a ${b.name}"><div class="thinking-heading">${dots}<span class="thinking-title">${states[b.state][1]}</span><span class="elapsed">${b.elapsed} gi\u00e2y</span></div><div class="thinking-scroll" tabindex="0" aria-label="Vi\u1ec7c \u0111ang ch\u1ea1y c\u1ee7a ${b.name}"><p class="thinking-summary"></p><ol class="progress-list"></ol></div><button class="reply-action" data-action="reply"${['waiting','confused'].includes(b.state)?'':' hidden'}>${icon('arrow')}Tr\u1ea3 l\u1eddi</button><footer class="paper-footer"><button data-action="info">${icon('info')}Th\u00f4ng tin bot</button><button data-action="capabilities">${icon('list')}Kh\u1ea3 n\u0103ng</button></footer></section></div></div></article>`;
 }
 /* Keyed reconcile for the task pocket: one row per live kind+name group.
    Existing <li> nodes update in place; rows that disappear are removed.
@@ -146,11 +147,34 @@ function refreshOpenPocketsOnWindowChange(){
   if(b.taskWindow!==window)void refreshBotTasks(b,window);
  });
 }
-/* Sidebar display order: pinned (starred) bots first — system Thyca is
-   always starred — with stable roster order inside each group. The
+/* Sidebar display order: system Thyca is always #1, other pinned (starred)
+   bots follow at #2+, with stable roster order inside each group. The
    underlying `bots` array is never reordered. */
-function teamDisplayOrder(){ return [...bots].sort((a,b)=>(b.favorite-a.favorite)); }
-function renderTeam(){ const el = $('#team-bot-list'); if (el) el.innerHTML = teamDisplayOrder().map(card).join(''); }
+const botPinRank=b=>(b&&(b.system||b.id==='thyca'))?2:(b&&b.favorite?1:0);
+function teamDisplayOrder(){ return [...bots].sort((a,b)=>(botPinRank(b)-botPinRank(a))); }
+function computeFullRowIds(order){
+ const full=new Set();let prev=null;
+ order.forEach(b=>{
+  if(b.open){if(prev){full.add(prev.id);prev=null;}}
+  else if(prev){prev=null;}
+  else{prev=b;}
+ });
+ if(prev)full.add(prev.id);
+ return full;
+}
+function syncCardGridSpans(){
+ const list=$('#team-bot-list');if(!list||!list.children.length)return;
+ let prev=null;
+ [...list.children].forEach(el=>{
+  if(!el.dataset||!el.dataset.botId)return;
+  delete el.dataset.fullRow;
+  if(el.dataset.open==='true'){if(prev){prev.dataset.fullRow='true';prev=null;}}
+  else if(prev){prev=null;}
+  else{prev=el;}
+ });
+ if(prev)prev.dataset.fullRow='true';
+}
+function renderTeam(){ const el = $('#team-bot-list'); if (el) { el.innerHTML = teamDisplayOrder().map(card).join(''); syncCardGridSpans(); } }
 /* Reorder existing card nodes after a pin toggle: appendChild moves the
    node, so pocket/task/animation identity survives (no full rerender). */
 function pinCardOrder(){
@@ -158,11 +182,13 @@ function pinCardOrder(){
  const have=new Map();
  [...list.children].forEach(el=>{const id=el.dataset&&el.dataset.botId;if(id&&!have.has(id))have.set(id,el);});
  teamDisplayOrder().forEach(b=>{const el=have.get(b.id);if(el)list.appendChild(el);});
+ syncCardGridSpans();
  return true;
 }
 function updateCard(b){
  const el=$('#bot-'+b.id);if(!el)return;
  el.dataset.state=b.state;el.dataset.open=b.open;el.dataset.selected=b.id===activeSidebarBot();
+ syncCardGridSpans();
  $('.header-status-label',el).textContent=states[expressionFor(b)][1];
  $('.bot-select',el).setAttribute('aria-label',sidebarActionLabel(b));
  const status=$('.thinking-summary',el);
@@ -196,12 +222,34 @@ function updateCard(b){
 }
 
 
+function groupBotRank(g,b){
+ if(!b)return -1;
+ if(activeGroup&&activeGroup.id===g?.id&&activeGroup.speaker===b.id)return 2;
+ if(!['idle','offline'].includes(b.state))return 1;
+ return 0;
+}
+function groupDisplayBots(g){
+ return (g?.bots||[]).map(id=>getBot(id)).filter(Boolean).sort((a,b)=>groupBotRank(g,b)-groupBotRank(g,a)).slice(0,3);
+}
+function groupMemberMarkup(b){
+ return `<span class="group-member" data-group-member="${b.id}" style="${paletteStyle(b)}">${avatar(b)}<span class="group-member-name">${b.name}</span></span>`;
+}
 function renderGroups(){
  const gl=$('#group-list');if(!gl)return;   // non-chat pages have no group section
- gl.innerHTML=groups.map(g=>`<button class="group-row" data-group="${g.id}" style="margin-bottom:9px"><span class="group-row-heading"><span class="group-title">${escapeHTML(g.title)}</span>${icon('arrow')}</span><span class="group-roster" style="--members:${g.bots.length}">${g.bots.map(id=>{const b=getBot(id);return b?`<span class="group-member" data-group-member="${id}" style="${paletteStyle(b)}">${avatar(b)}<span class="group-member-name">${b.name}</span></span>`:'';}).join('')}</span><span class="group-meta">${g.subtitle}</span></button>`).join('');
+ gl.innerHTML=groups.map(g=>{const shown=groupDisplayBots(g);return `<button class="group-row" data-group="${g.id}" style="margin-bottom:9px"><span class="group-row-heading"><span class="group-title">${escapeHTML(g.title)}</span>${icon('arrow')}</span><span class="group-roster" data-order="${shown.map(b=>b.id).join(',')}" style="--members:${Math.max(1,shown.length)}">${shown.map(groupMemberMarkup).join('')}</span><span class="group-meta">${g.subtitle}</span></button>`;}).join('');
  syncGroupAvatars();
 }
 function syncGroupAvatars(){
+ $$('.group-row').forEach(row=>{
+  const g=groups.find(x=>x.id===row.dataset.group),roster=g?$$('.group-roster',row)[0]:null;
+  if(!roster)return;
+  const shown=groupDisplayBots(g),wantKey=shown.map(b=>b.id).join(',');
+  if(roster.dataset.order!==wantKey){
+   roster.dataset.order=wantKey;
+   roster.style.setProperty('--members',String(Math.max(1,shown.length)));
+   roster.innerHTML=shown.map(groupMemberMarkup).join('');
+  }
+ });
  $$('.seal-avatar:not(.expression-preview)').forEach(a=>{
   const b=getBot(a.dataset.botAvatar);if(!b)return;
   const active=activeGroup&&activeGroup.ids.includes(b.id)&&!['offline','error','waiting'].includes(b.state);

@@ -51,7 +51,7 @@ const ARCHETYPES=[
   renderChar:()=>({
    body:`<rect class="drop-body" x="14" y="21" width="38" height="44" rx="11" transform="rotate(-14 33 43)" fill="url(#__GRAD__)"/>`,
    eyes:`<ellipse cx="26" cy="34.5" rx="2.7" ry="4.6" transform="rotate(-14 26 34.5)" fill="var(--bot-eye)"/><ellipse cx="36.5" cy="32" rx="2.7" ry="4.6" transform="rotate(-14 36.5 32)" fill="var(--bot-eye)"/>`,
-   prop:`<g class="prop-anim"><path d="M22 44L33 41.5L35 55L24 57.5Z" fill="#fff9ea" stroke="var(--bot-dark)" stroke-width=".8"/><path d="M33 41.5L44 39L46 52.5L35 55Z" fill="#f3e7ce" stroke="var(--bot-dark)" stroke-width=".8"/><path class="fine-detail" d="M25 47.5l6-1.2M25.5 50.5l6-1.2M36 45l6-1.2" stroke="#b5a385" stroke-width="1" stroke-linecap="round"/><ellipse cx="22.5" cy="49.5" rx="2.8" ry="2.1" fill="var(--bot-dark)"/><ellipse cx="44.8" cy="45.8" rx="2.8" ry="2.1" fill="var(--bot-dark)"/><path d="M34 51L43 40.5L45.2 42.5L36.2 53Z" fill="#e2a93b" stroke="#4a3514" stroke-width=".6"/><path d="M33 52.2L34 51L36.2 53Z" fill="#2c2216"/></g>`
+   prop:`<g class="prop-anim"><path d="M36.5 43.2L45.2 34.5L47.3 36.6L38.6 45.3Z" fill="#eab543" stroke="#4a3514" stroke-width=".75" stroke-linejoin="round"/><path d="M36.5 43.2L38.6 45.3L34.8 46.9Z" fill="#f7e3b5" stroke="#4a3514" stroke-width=".65" stroke-linejoin="round"/><path d="M35.6 45L36.6 46L34.8 46.9Z" fill="#2c2216"/><ellipse cx="43.8" cy="39.5" rx="3" ry="2.2" transform="rotate(-22 43.8 39.5)" fill="var(--bot-color)" stroke="var(--bot-dark)" stroke-width=".85"/><path d="M21.2 44.8L33 42.6L44.2 39.8L45 43.2L33.4 45.8L21.8 48Z" fill="#fffdf8" stroke="var(--bot-dark)" stroke-width=".75" stroke-linejoin="round"/><path d="M21.5 46.8L33.2 44.5L35.4 57.2L23.7 59.5Z" fill="#78422b" stroke="#381b0f" stroke-width=".85" stroke-linejoin="round"/><path d="M33.2 44.5L44.8 41.7L47 54.4L35.4 57.2Z" fill="#5e311e" stroke="#381b0f" stroke-width=".85" stroke-linejoin="round"/><path d="M33.2 44.5L35.4 57.2" stroke="#381b0f" stroke-width="1.2" stroke-linecap="round"/><rect class="fine-detail" x="37.2" y="45.8" width="4.8" height="3.2" rx=".7" transform="rotate(-14 39.6 47.4)" fill="#e5b94c"/><ellipse cx="22.2" cy="52.5" rx="3.1" ry="2.3" transform="rotate(-14 22.2 52.5)" fill="var(--bot-color)" stroke="var(--bot-dark)" stroke-width=".85"/></g>`
   })
  },
  {
@@ -63,9 +63,9 @@ const ARCHETYPES=[
   role:'Tra cứu & Tổng hợp',
   renderChar:()=>({
    body:`<circle class="drop-body" cx="28" cy="43" r="22.5" fill="url(#__GRAD__)"/>`,
-   headgear:`<g stroke="#9e6d1e" stroke-width="1.6" fill="#fffdf655" stroke-linecap="round"><rect x="15" y="18.5" width="11.5" height="7.5" rx="2.5" transform="rotate(-10 20.5 22)"/><rect x="30" y="16.2" width="11.5" height="7.5" rx="2.5" transform="rotate(-10 35.5 20)"/><path d="M26.5 21.5L30 20.8M15 22.5L9.5 29M41.5 19.5L44 25"/></g>`,
+   headgear:`<g stroke="#c48d2c" stroke-width="1.6" fill="#fffdf640" stroke-linecap="round"><rect x="15" y="18.5" width="11.5" height="7.5" rx="2.5" transform="rotate(-10 20.5 22)"/><rect x="30" y="16.2" width="11.5" height="7.5" rx="2.5" transform="rotate(-10 35.5 20)"/><path d="M26.5 21.5L30 20.8M15 22.5L9.5 29M41.5 19.5L44 25"/></g>`,
    eyes:`<ellipse cx="24" cy="36.5" rx="2.8" ry="4.5" fill="var(--bot-eye)"/><ellipse cx="34.5" cy="36" rx="2.8" ry="4.5" fill="var(--bot-eye)"/>`,
-   prop:`<g class="prop-anim"><path d="M29 45L48 41.5L45 60L26 62Z" fill="#fff9eb" stroke="#4a5639" stroke-width=".8"/><path class="fine-detail" d="M32 49l11-2M31.2 52.5l11-2M30.5 56l8-1.5" stroke="#968b74" stroke-width="1.2" stroke-linecap="round"/></g>`
+   prop:`<g class="prop-anim"><path d="M27.2 43.2L45.8 39.8L43.5 58L25 60Z" fill="#fffdf8" stroke="var(--bot-dark)" stroke-width=".75"/><path d="M28.8 45.2L47.8 41.8L45 60.5L26 62.5Z" fill="#d9c6a3" stroke="var(--bot-dark)" stroke-width=".85"/><rect class="fine-detail" x="34" y="46.5" width="8" height="3.2" rx=".8" transform="rotate(-10 38 48)" fill="#fffdf8" stroke="var(--bot-dark)" stroke-width=".5"/><ellipse cx="27.2" cy="53.5" rx="2.9" ry="2.1" transform="rotate(-10 27.2 53.5)" fill="var(--bot-color)" stroke="var(--bot-dark)" stroke-width=".85"/></g>`
   })
  },
  {
@@ -104,9 +104,9 @@ const ARCHETYPES=[
   role:'Điểm tin & Nhật ký',
   renderChar:()=>({
    body:`<path class="drop-body" d="M16 61L21 24C22.5 16 41.5 16 43 24L47 61Z" fill="url(#__GRAD__)"/>`,
-   headgear:`<path d="M20 20.5C19 14.5 28 11.5 36.5 13C44.5 14.5 48.5 19 45.5 23C41 21 26 20 20 20.5Z" fill="#9e6d18" stroke="#5e3f09" stroke-width=".8"/><ellipse cx="32.5" cy="21" rx="13" ry="2.8" transform="rotate(8 32.5 21)" fill="#b37e20"/>`,
+   headgear:`<path d="M20 20.5C19 14.5 28 11.5 36.5 13C44.5 14.5 48.5 19 45.5 23C41 21 26 20 20 20.5Z" fill="var(--bot-dark)" stroke="var(--bot-ink)" stroke-width=".8"/><ellipse cx="32.5" cy="21" rx="13" ry="2.8" transform="rotate(8 32.5 21)" fill="var(--bot-color)" stroke="var(--bot-dark)" stroke-width=".6"/>`,
    eyes:`<rect x="27" y="25.5" width="2.8" height="7.5" rx="1.4" transform="rotate(10 28.4 29)" fill="var(--bot-pupil)"/><rect x="34" y="26.8" width="2.8" height="7.5" rx="1.4" transform="rotate(10 35.4 30)" fill="var(--bot-pupil)"/>`,
-   prop:`<g class="prop-anim"><path d="M18 37L30 40.5L28.5 54L16.5 50.5Z" fill="#f7f0df" stroke="#5e4924" stroke-width=".7"/><path d="M30 40.5L42 38.5L40.5 52L28.5 54Z" fill="#ebe1ca" stroke="#5e4924" stroke-width=".7"/><rect class="fine-detail" x="31.8" y="41.5" width="7.2" height="4.8" fill="#8c7d62"/><path class="fine-detail" d="M20 41l7 2M19.5 44l7 2M19 47l7 2M31.5 49l7-1" stroke="#8c7d62" stroke-width="1.1" stroke-linecap="round"/><ellipse cx="17.5" cy="45.5" rx="2.3" ry="1.7" fill="#9e6d18"/><ellipse cx="41.2" cy="46.2" rx="2.3" ry="1.7" fill="#9e6d18"/></g>`
+   prop:`<g class="prop-anim"><path d="M18 37L30 40.5L28.5 54L16.5 50.5Z" fill="#f7f0df" stroke="var(--bot-dark)" stroke-width=".75"/><path d="M30 40.5L42 38.5L40.5 52L28.5 54Z" fill="#ebe1ca" stroke="var(--bot-dark)" stroke-width=".75"/><rect class="fine-detail" x="31.8" y="41.5" width="7.2" height="4.8" fill="#8c7d62"/><path class="fine-detail" d="M20 41l7 2M19.5 44l7 2M19 47l7 2M31.5 49l7-1" stroke="#8c7d62" stroke-width="1.1" stroke-linecap="round"/><ellipse cx="17.5" cy="45.5" rx="2.7" ry="2" fill="var(--bot-color)" stroke="var(--bot-dark)" stroke-width=".8"/><ellipse cx="41.2" cy="46.2" rx="2.7" ry="2" fill="var(--bot-color)" stroke="var(--bot-dark)" stroke-width=".8"/></g>`
   })
  },
  {
@@ -119,7 +119,7 @@ const ARCHETYPES=[
   renderChar:()=>({
    body:`<path class="drop-body" d="M27 11.5C30 6.5 35 6.5 38 11.5L58 55C60 59 56 63 50 63H15C9 63 5 59 7 55Z" fill="url(#__GRAD__)"/>`,
    eyes:`<rect x="25.5" y="25" width="3.8" height="9" rx="1.9" transform="rotate(-5 27.4 29.5)" fill="var(--bot-eye)"/><rect x="33.5" y="24.2" width="3.8" height="9" rx="1.9" transform="rotate(-5 35.4 28.7)" fill="var(--bot-eye)"/>`,
-   prop:`<g class="prop-anim"><rect x="26" y="39" width="14" height="17" rx="2" transform="rotate(12 33 47.5)" fill="#4a2640" stroke="#291222" stroke-width=".8"/><path d="M28 45L41 37.5L42.5 39.5L29.5 47Z" fill="#e5b94c"/><ellipse cx="25.5" cy="47.5" rx="2.6" ry="1.9" fill="#583d78"/><ellipse cx="40.5" cy="49.5" rx="2.6" ry="1.9" fill="#583d78"/></g>`
+   prop:`<g class="prop-anim"><path d="M34.5 41.2L43 33.4L44.9 35.4L36.4 43.2Z" fill="#e5b94c" stroke="#4a3514" stroke-width=".7" stroke-linejoin="round"/><path d="M34.5 41.2L36.4 43.2L32.6 44.8Z" fill="#f7e3b5" stroke="#4a3514" stroke-width=".6" stroke-linejoin="round"/><path d="M33.6 43L34.5 43.9L32.6 44.8Z" fill="#2c2216"/><ellipse cx="41.8" cy="38.2" rx="3" ry="2.2" transform="rotate(-18 41.8 38.2)" fill="var(--bot-color)" stroke="var(--bot-dark)" stroke-width=".85"/><rect x="25.8" y="38.2" width="14" height="16.5" rx="2" transform="rotate(10 32.8 46.5)" fill="#fffdf8" stroke="var(--bot-dark)" stroke-width=".7"/><rect x="24.8" y="40.5" width="14.5" height="16.8" rx="2.2" transform="rotate(10 32 48.9)" fill="#522947" stroke="#291222" stroke-width=".85"/><g fill="none" stroke="#e5b94c" stroke-width="1.2" stroke-linecap="round"><path d="M24.8 43l2.4.4M24.2 46.2l2.4.4M23.6 49.4l2.4.4"/></g><rect class="fine-detail" x="30.2" y="44.2" width="5.2" height="3" rx=".6" transform="rotate(10 32.8 45.7)" fill="#e5b94c"/><ellipse cx="23.8" cy="50.2" rx="3" ry="2.2" transform="rotate(10 23.8 50.2)" fill="var(--bot-color)" stroke="var(--bot-dark)" stroke-width=".85"/></g>`
   })
  },
  {
@@ -132,7 +132,7 @@ const ARCHETYPES=[
   renderChar:()=>({
    body:`<path class="drop-body" d="M40 13C44 23 55 34 54.5 46.5C54 57 44 63 33 62.5C22 62 16.5 54 18.5 43.5C20.5 33 34 22 40 13Z" fill="url(#__GRAD__)"/>`,
    eyes:`<ellipse cx="31.5" cy="42.5" rx="2.7" ry="4.7" transform="rotate(8 31.5 42.5)" fill="var(--bot-pupil)"/><ellipse cx="41.5" cy="43.8" rx="2.7" ry="4.7" transform="rotate(8 41.5 43.8)" fill="var(--bot-pupil)"/>`,
-   prop:`<g class="prop-anim"><path d="M13.5 23L18.5 49" stroke="#9e6332" stroke-width="2" stroke-linecap="round"/><path d="M14.5 48.5L21.5 47.5L24.5 60L12.5 60.5Z" fill="#eab646" stroke="#7d5318" stroke-width=".7"/><ellipse cx="16.5" cy="36.5" rx="2.7" ry="2.2" fill="var(--bot-color)"/><ellipse cx="17.8" cy="42.2" rx="2.5" ry="2.0" fill="var(--bot-color)"/></g>`
+   prop:`<g class="prop-anim"><path d="M13.5 23L18.5 49" stroke="#9e6332" stroke-width="2.2" stroke-linecap="round"/><path d="M14.5 48.5L21.5 47.5L24.5 60L12.5 60.5Z" fill="#eab646" stroke="#7d5318" stroke-width=".75"/><ellipse cx="16.5" cy="36.5" rx="2.8" ry="2.2" fill="var(--bot-color)" stroke="var(--bot-dark)" stroke-width=".8"/><ellipse cx="17.8" cy="42.2" rx="2.6" ry="2.0" fill="var(--bot-color)" stroke="var(--bot-dark)" stroke-width=".8"/></g>`
   })
  },
  {
@@ -144,9 +144,9 @@ const ARCHETYPES=[
   role:'Thám sát & Gỡ rối',
   renderChar:()=>({
    body:`<path class="drop-body" d="M17 31C21 24 33 21 41 25C49 29 56 38 53 49C50 59 38 63 26 62C14 61 9 52 11 42C12.5 36 14.5 34 17 31Z" fill="url(#__GRAD__)"/>`,
-   headgear:`<g transform="rotate(18 36 27)"><ellipse cx="29.5" cy="26" rx="5.6" ry="3.8" fill="#231f1d" stroke="#4f4641" stroke-width="1.2"/><ellipse cx="42.5" cy="26" rx="5.6" ry="3.8" fill="#231f1d" stroke="#4f4641" stroke-width="1.2"/><path d="M35 25.5h2M21 26.5l3-.5M48 26l3.5 1" stroke="#4f4641" stroke-width="1.5" stroke-linecap="round"/></g>`,
-   eyes:`<ellipse cx="27" cy="40" rx="3.1" ry="5.1" transform="rotate(16 27 40)" fill="var(--bot-eye)"/><ellipse cx="37.5" cy="43.5" rx="3.1" ry="5.1" transform="rotate(16 37.5 43.5)" fill="var(--bot-eye)"/>`,
-   prop:`<g class="prop-anim"><path d="M13 48h5a2 2 0 1 1 3 0h4v5a2 2 0 1 1 0 3v4H13v-4a2 2 0 1 0 0-3Z" transform="rotate(-15 19 54)" fill="#4a3f3b"/></g>`
+   headgear:`<g transform="rotate(18 35 28.5)"><path d="M20.5 28.5l3.2-.4M34.8 28h2.4M47.8 28.2l3.4.8" stroke="#d8b26e" stroke-width="1.6" stroke-linecap="round"/><ellipse cx="29.2" cy="28.5" rx="5.5" ry="3.6" fill="#231f1d" stroke="#d8b26e" stroke-width="1.35"/><ellipse cx="42.4" cy="28.5" rx="5.5" ry="3.6" fill="#231f1d" stroke="#d8b26e" stroke-width="1.35"/><path d="M26.8 27.2l2.2-1.1M40 27.2l2.2-1.1" stroke="#fff9ea99" stroke-width="1" stroke-linecap="round"/></g>`,
+   eyes:`<ellipse cx="27" cy="40.5" rx="3.1" ry="5.1" transform="rotate(16 27 40.5)" fill="var(--bot-eye)"/><ellipse cx="37.5" cy="44" rx="3.1" ry="5.1" transform="rotate(16 37.5 44)" fill="var(--bot-eye)"/>`,
+   prop:`<g class="prop-anim"><path d="M13 48h5a2 2 0 1 1 3 0h4v5a2 2 0 1 1 0 3v4H13v-4a2 2 0 1 0 0-3Z" transform="rotate(-15 19 54)" fill="#e3a84b" stroke="var(--bot-dark)" stroke-width=".85" stroke-linejoin="round"/><ellipse cx="14.5" cy="54" rx="2.6" ry="2" transform="rotate(-15 14.5 54)" fill="var(--bot-color)" stroke="var(--bot-dark)" stroke-width=".8"/></g>`
   })
  },
  {
@@ -159,7 +159,7 @@ const ARCHETYPES=[
   renderChar:()=>({
    body:`<rect class="drop-body" x="11" y="25" width="38" height="40" rx="11" transform="rotate(-16 30 45)" fill="url(#__GRAD__)"/>`,
    eyes:`<rect x="21" y="34" width="3.8" height="8.5" rx="1.9" transform="rotate(-16 23 38)" fill="var(--bot-eye)"/><rect x="30" y="31.5" width="3.8" height="8.5" rx="1.9" transform="rotate(-16 32 35.5)" fill="var(--bot-eye)"/>`,
-   prop:`<g class="prop-anim"><path d="M22 46.5L40.5 41.5L44.5 58L26 62.5Z" fill="#f7f0e2" stroke="#4d2635" stroke-width=".7"/><rect class="fine-detail" x="25" y="46" width="14" height="4" transform="rotate(-15 32 48)" fill="#8c7f6a"/><rect class="fine-detail" x="26.5" y="52" width="6.5" height="6" transform="rotate(-15 29.5 55)" fill="#8c7f6a"/><path d="M14 45L21 57" stroke="#423730" stroke-width="2.2" stroke-linecap="round"/><path d="M12.5 41.5C14.5 41 16 43 15 45.5C13 46 11.5 44 12.5 41.5Z" fill="#f0a8c0"/></g>`
+   prop:`<g class="prop-anim"><path d="M22 46.5L40.5 41.5L44.5 58L26 62.5Z" fill="#f7f0e2" stroke="var(--bot-dark)" stroke-width=".75"/><rect class="fine-detail" x="25" y="46" width="14" height="4" transform="rotate(-15 32 48)" fill="#8c7f6a"/><rect class="fine-detail" x="26.5" y="52" width="6.5" height="6" transform="rotate(-15 29.5 55)" fill="#8c7f6a"/><path d="M14.5 44.5L21.5 57.5" stroke="#423730" stroke-width="2.4" stroke-linecap="round"/><path d="M13.8 43.2L15.6 46.2" stroke="#d8d2c5" stroke-width="2.4" stroke-linecap="round"/><path d="M11.8 40C14.2 40.2 15.8 42.2 14.8 44.5C12.8 45 11.2 43 11.8 40Z" fill="#f0a8c0" stroke="#4d2635" stroke-width=".6"/><ellipse cx="18.2" cy="51.2" rx="2.7" ry="2" transform="rotate(-20 18.2 51.2)" fill="var(--bot-color)" stroke="var(--bot-dark)" stroke-width=".8"/><ellipse cx="42.5" cy="49.5" rx="2.7" ry="2" transform="rotate(-15 42.5 49.5)" fill="var(--bot-color)" stroke="var(--bot-dark)" stroke-width=".8"/></g>`
   })
  },
  {
@@ -170,10 +170,10 @@ const ARCHETYPES=[
   eyeStyle:'light',
   role:'Thống kê Usage & Chi phí',
   renderChar:()=>({
-   headgear:`<ellipse cx="14" cy="39" rx="4.5" ry="9.5" transform="rotate(28 14 39)" fill="#543822"/><ellipse cx="47" cy="34" rx="4.5" ry="9.5" transform="rotate(-32 47 34)" fill="#543822"/>`,
+   ears:`<ellipse cx="14.5" cy="38.5" rx="4.8" ry="9.5" transform="rotate(28 14.5 38.5)" fill="var(--bot-dark)" stroke="var(--bot-ink)" stroke-width=".75"/><ellipse cx="46.5" cy="34" rx="4.8" ry="9.5" transform="rotate(-32 46.5 34)" fill="var(--bot-dark)" stroke="var(--bot-ink)" stroke-width=".75"/>`,
    body:`<circle class="drop-body" cx="31" cy="44" r="19.5" fill="url(#__GRAD__)"/>`,
    eyes:`<ellipse cx="24.5" cy="41.5" rx="2.9" ry="4.7" transform="rotate(-12 24.5 41.5)" fill="var(--bot-eye)"/><ellipse cx="35.5" cy="39.5" rx="2.9" ry="4.7" transform="rotate(-12 35.5 39.5)" fill="var(--bot-eye)"/>`,
-   prop:`<g class="prop-anim"><path d="M27 48.5L43.5 46L45 59.5L28.5 62Z" fill="#f7eedb" stroke="#4a3321" stroke-width=".7"/><path d="M30.5 57.5L35 53.5L37.5 55L42 49.5M42 49.5L38.5 49.8M42 49.5L41.8 53" fill="none" stroke="#4f8248" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></g>`
+   prop:`<g class="prop-anim"><path d="M27 48.5L43.5 46L45 59.5L28.5 62Z" fill="#f7eedb" stroke="var(--bot-dark)" stroke-width=".75"/><path d="M30.5 57.5L35 53.5L37.5 55L42 49.5M42 49.5L38.5 49.8M42 49.5L41.8 53" fill="none" stroke="#4f8248" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><ellipse cx="27.5" cy="55" rx="2.6" ry="1.9" fill="var(--bot-color)" stroke="var(--bot-dark)" stroke-width=".8"/><ellipse cx="44.2" cy="52.5" rx="2.6" ry="1.9" fill="var(--bot-color)" stroke="var(--bot-dark)" stroke-width=".8"/></g>`
   })
  },
  {
@@ -186,7 +186,7 @@ const ARCHETYPES=[
   renderChar:()=>({
    body:`<path class="drop-body" d="M20 59C17 44 23 28 36 27C48 26 56 38 55 55L54 62H20Z" fill="url(#__GRAD__)"/>`,
    eyes:`<ellipse cx="31.5" cy="40.5" rx="2.6" ry="4.6" transform="rotate(-8 31.5 40.5)" fill="var(--bot-pupil)"/><ellipse cx="41.5" cy="39" rx="2.6" ry="4.6" transform="rotate(-8 41.5 39)" fill="var(--bot-pupil)"/>`,
-   prop:`<g class="prop-anim"><path d="M18.5 48.5C19 45.5 24.5 46.5 24.5 49.5" fill="none" stroke="#b84339" stroke-width="1.8" stroke-linecap="round"/><rect x="13" y="48.5" width="16.5" height="10.5" rx="2" transform="rotate(11 21 53.5)" fill="#c94a3f" stroke="#691f19" stroke-width=".7"/><line x1="13" y1="52.5" x2="29" y2="55.5" stroke="#852720" stroke-width="1.2"/></g>`
+   prop:`<g class="prop-anim"><path d="M18.5 48.5C19 45.5 24.5 46.5 24.5 49.5" fill="none" stroke="#b84339" stroke-width="1.8" stroke-linecap="round"/><rect x="13" y="48.5" width="16.5" height="10.5" rx="2" transform="rotate(11 21 53.5)" fill="#c94a3f" stroke="#691f19" stroke-width=".75"/><line x1="13" y1="52.5" x2="29" y2="55.5" stroke="#852720" stroke-width="1.2"/><ellipse cx="22.2" cy="47.2" rx="2.6" ry="1.9" fill="var(--bot-color)" stroke="var(--bot-dark)" stroke-width=".8"/></g>`
   })
  },
  {
@@ -198,9 +198,9 @@ const ARCHETYPES=[
   role:'Giao nhận A2A & Tin nhắn',
   renderChar:()=>({
    body:`<path class="drop-body" d="M18 61L24 25C26 17 44 18 45.5 26L48 61Z" fill="url(#__GRAD__)"/>`,
-   headgear:`<path d="M23 21.5C23 15.5 32 13 40.5 15C48 17 51 22 47.5 25.5C43 23 29 21 23 21.5Z" fill="#2d5770"/><ellipse cx="35" cy="22.5" rx="13" ry="2.8" transform="rotate(12 35 22.5)" fill="#3b6b87"/>`,
+   headgear:`<path d="M23 21.5C23 15.5 32 13 40.5 15C48 17 51 22 47.5 25.5C43 23 29 21 23 21.5Z" fill="var(--bot-dark)" stroke="var(--bot-ink)" stroke-width=".8"/><ellipse cx="35" cy="22.5" rx="13" ry="2.8" transform="rotate(12 35 22.5)" fill="var(--bot-color)" stroke="var(--bot-dark)" stroke-width=".6"/>`,
    eyes:`<rect x="30" y="27" width="2.7" height="7.2" rx="1.35" transform="rotate(11 31.3 30.6)" fill="var(--bot-pupil)"/><rect x="36.8" y="28.4" width="2.7" height="7.2" rx="1.35" transform="rotate(11 38.1 32)" fill="var(--bot-pupil)"/>`,
-   prop:`<g class="prop-anim"><path d="M20 39L32 42.5L30.5 55.5L18.5 52Z" fill="#f7f0df" stroke="#355263" stroke-width=".7"/><path d="M32 42.5L44 40.5L42.5 53.5L30.5 55.5Z" fill="#e6dcc6" stroke="#355263" stroke-width=".7"/><path class="fine-detail" d="M22 43l7 2M21.5 46l7 2M33.5 45l7-1M33 48l7-1" stroke="#7d8c94" stroke-width="1.1" stroke-linecap="round"/><ellipse cx="19.5" cy="47" rx="2.2" ry="1.6" fill="#3b6b87"/><ellipse cx="43.2" cy="48" rx="2.2" ry="1.6" fill="#3b6b87"/></g>`
+   prop:`<g class="prop-anim"><path d="M20 39L32 42.5L30.5 55.5L18.5 52Z" fill="#f7f0df" stroke="var(--bot-dark)" stroke-width=".75"/><path d="M32 42.5L44 40.5L42.5 53.5L30.5 55.5Z" fill="#e6dcc6" stroke="var(--bot-dark)" stroke-width=".75"/><path class="fine-detail" d="M22 43l7 2M21.5 46l7 2M33.5 45l7-1M33 48l7-1" stroke="#7d8c94" stroke-width="1.1" stroke-linecap="round"/><ellipse cx="19.5" cy="47" rx="2.6" ry="1.9" fill="var(--bot-color)" stroke="var(--bot-dark)" stroke-width=".8"/><ellipse cx="43.2" cy="48" rx="2.6" ry="1.9" fill="var(--bot-color)" stroke="var(--bot-dark)" stroke-width=".8"/></g>`
   })
  }
 ];
@@ -220,13 +220,14 @@ function dropShapeFor(b){
 function dropMarkup(b,uid){
  const arch=dropShapeFor(b);
  const parts=arch.renderChar();
+ const earsHtml=parts.ears||'';
  const bodyHtml=(parts.body||'').replace(/__GRAD__/g,`${uid}-grad`);
  const headgearHtml=parts.headgear||'';
  const propHtml=parts.prop||'';
  const eyesHtml=parts.eyes||'';
  const strokeTone=arch.eyeStyle==='dark'?'var(--bot-pupil)':'var(--bot-eye)';
 
- return `<svg class="base" viewBox="0 0 64 64"><defs><clipPath id="${uid}-clip"><circle cx="32" cy="32" r="28.2"/></clipPath><linearGradient id="${uid}-grad" x1="0.2" y1="0" x2="0.8" y2="1"><stop offset="0" style="stop-color:var(--bot-highlight)"/><stop offset="0.35" style="stop-color:var(--bot-color)"/><stop offset="1" style="stop-color:var(--bot-dark)"/></linearGradient></defs><circle class="well-bg" cx="32" cy="32" r="28.5"/><g class="char-clip" clip-path="url(#${uid}-clip)"><g class="char-rig"><g class="char-parallax">${bodyHtml}${headgearHtml}<g class="eyes-rig"><g class="seal-pupils"><g class="eyes-open">${eyesHtml}</g><g class="eyes-happy" style="opacity:0" fill="none" stroke="${strokeTone}" stroke-width="2.6" stroke-linecap="round"><path d="M22.5 36.5Q26 30.5 29.5 36.5"/><path d="M33.5 35Q37 29 40.5 35"/></g><g class="eyes-error" style="opacity:0" fill="none" stroke="${strokeTone}" stroke-width="2.4" stroke-linecap="round"><path d="m23 32 6 6m0-6-6 6"/><path d="m34 31 6 6m0-6-6 6"/></g><g class="eyes-rest" style="opacity:0" fill="none" stroke="${strokeTone}" stroke-width="2.2" stroke-linecap="round"><path d="M22.5 36Q26 38.5 29.5 36"/><path d="M33.5 34.5Q37 37 40.5 34.5"/></g></g></g></g><g class="prop-parallax">${propHtml}</g></g><path class="done-spark" style="opacity:0" d="m14 14 1.4 4L19.4 19.4l-4 1.4L14 24.8l-1.4-4L8.6 19.4l4-1.4Z" fill="#e09b2d"/></g><circle class="frame-ring" cx="32" cy="32" r="28.5"/><circle class="frame-ring-hi" cx="32" cy="32" r="27.3"/><circle class="orbit-arc" cx="32" cy="32" r="28.5"/></svg>`;
+ return `<svg class="base" viewBox="0 0 64 64"><defs><clipPath id="${uid}-clip"><circle cx="32" cy="32" r="28.2"/></clipPath><linearGradient id="${uid}-grad" x1="0.2" y1="0" x2="0.8" y2="1"><stop offset="0" style="stop-color:var(--bot-highlight)"/><stop offset="0.35" style="stop-color:var(--bot-color)"/><stop offset="1" style="stop-color:var(--bot-dark)"/></linearGradient></defs><circle class="well-bg" cx="32" cy="32" r="28.5"/><g class="char-clip" clip-path="url(#${uid}-clip)"><g class="char-rig"><g class="char-parallax">${earsHtml}${bodyHtml}${headgearHtml}<g class="eyes-rig"><g class="seal-pupils"><g class="eyes-open">${eyesHtml}</g><g class="eyes-happy" style="opacity:0" fill="none" stroke="${strokeTone}" stroke-width="2.6" stroke-linecap="round"><path d="M22.5 36.5Q26 30.5 29.5 36.5"/><path d="M33.5 35Q37 29 40.5 35"/></g><g class="eyes-error" style="opacity:0" fill="none" stroke="${strokeTone}" stroke-width="2.4" stroke-linecap="round"><path d="m23 32 6 6m0-6-6 6"/><path d="m34 31 6 6m0-6-6 6"/></g><g class="eyes-rest" style="opacity:0" fill="none" stroke="${strokeTone}" stroke-width="2.2" stroke-linecap="round"><path d="M22.5 36Q26 38.5 29.5 36"/><path d="M33.5 34.5Q37 37 40.5 34.5"/></g></g></g></g><g class="prop-parallax">${propHtml}</g></g><path class="done-spark" style="opacity:0" d="m14 14 1.4 4L19.4 19.4l-4 1.4L14 24.8l-1.4-4L8.6 19.4l4-1.4Z" fill="#e09b2d"/></g><circle class="frame-ring" cx="32" cy="32" r="28.5"/><circle class="frame-ring-hi" cx="32" cy="32" r="27.3"/><circle class="orbit-arc" cx="32" cy="32" r="28.5"/></svg>`;
 }
 
 const dropState=state=>stateAliases[state]||state;

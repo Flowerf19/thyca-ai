@@ -1,12 +1,11 @@
 /* Shared Peeking Character Medallion Avatars: Cream Paper Well, 2.5D Rig, States & Auto-LOD. */
-.group-stack .seal-avatar{width:42px!important;height:45px!important;margin-right:-15px}
 .expression-tile .seal-avatar{width:92px;height:92px}
 .info-lockup .seal-avatar{width:85px;height:85px}
 @media(min-width:1600px){
 .seal-avatar{width:70px;height:70px}
 }
 @media(max-width:1150px){
-.seal-avatar{width:57px;height:60px}
+.seal-avatar{width:58px;height:58px}
 }
 
 .seal-avatar{display:inline-block;width:65px;height:65px;flex-shrink:0;position:relative;vertical-align:middle;isolation:isolate;transition:filter .3s,opacity .3s;user-select:none}

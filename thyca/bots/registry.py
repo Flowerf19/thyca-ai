@@ -485,6 +485,10 @@ class BotRegistry:
                     seen[meta.name] = f"- {meta.name} (SKILL.md invalid: {meta.error})"
 
         def _metas_for(path: Path, names: set[str] | None) -> list:
+            # Team names filter before any content read: hidden team metadata
+            # is never opened. Remaining entries read through the checked
+            # descriptor (no pathname reopen), so a swapped link cannot
+            # inject another bot's description and parent symlinks fail.
             if not path.is_dir() or path.is_symlink():
                 return []
             entries: list[Path] = []
@@ -502,7 +506,55 @@ class BotRegistry:
                     entries.append(entry)
             except OSError:
                 return []
-            metas = [proto._meta(entry) for entry in entries]
+            from thyca.skills.sharing import read_skill_checked
+            from thyca.skills.store import SkillMeta
+
+            metas: list = []
+            for entry in entries:
+                md_path = entry / "SKILL.md"
+                try:
+                    md_path.lstat()
+                except FileNotFoundError:
+                    # Missing file diagnostic is constructed directly; the
+                    # pathname is never reopened, so a swapped-in link
+                    # cannot inject another bot's description here.
+                    metas.append(SkillMeta(
+                        entry.name, "", md_path, ok=False,
+                        error="missing SKILL.md"))
+                    continue
+                except OSError:
+                    continue
+                try:
+                    text = read_skill_checked(self.thyca_dir, md_path)
+                except UnicodeDecodeError as exc:
+                    # Safe decode failure keeps its diagnostic and the
+                    # private-name precedence below; unsafe links stay
+                    # excluded and never reach this branch.
+                    metas.append(SkillMeta(
+                        entry.name, "", md_path, ok=False,
+                        error=f"unreadable: {exc}"))
+                    continue
+                except ValueError as exc:
+                    msg = str(exc).lower()
+                    if any(k in msg for k in (
+                        "symlink", "hardlink", "hardlinked",
+                        "not a regular file", "not a regular",
+                        "escapes root", "invalid skill",
+                        "skill directory", "skill target",
+                        "cannot open",
+                    )):
+                        # Unsafe alias/link/swap: fail closed, never index.
+                        continue
+                    metas.append(SkillMeta(
+                        entry.name, "", md_path, ok=False,
+                        error=f"unreadable: {exc}"))
+                    continue
+                except OSError as exc:
+                    metas.append(SkillMeta(
+                        entry.name, "", md_path, ok=False,
+                        error=f"unreadable: {exc}"))
+                    continue
+                metas.append(proto.meta_from_text(entry, text))
             metas.sort(key=lambda meta: meta.name)
             return metas
 

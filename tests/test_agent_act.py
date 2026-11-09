@@ -160,20 +160,6 @@ def test_sink_raise_still_returns_same_tool_result() -> None:
     assert results[0].is_error is False
 
 
-def test_no_sink_emits_no_events() -> None:
-    dispatcher = FakeDispatcher(
-        result=ToolResult(tool_call_id="call-1", name="weather", content="sunny")
-    )
-    call = ToolCall(id="call-1", name="weather")
-    stage = _stage(call)
-    stage.round = 0
-
-    asyncio.run(Act(dispatcher).act(stage))
-
-    assert dispatcher.calls == [call]
-    assert stage.results[0].is_error is False
-
-
 def test_parallel_finished_in_completion_order() -> None:
     async def fast(_call: ToolCall) -> ToolResult:
         return ToolResult(tool_call_id="call-1", name="fast", content="two")

@@ -8,7 +8,7 @@ from thyca.core.channel import WindowRef
 from thyca.memories.visibility import MemoryView, bound_memory_view, current_memory_view
 from thyca.conversations.runtime.store import SessionStore
 from thyca.bots.workspace_context import WorkspaceContextBuilder, _channel_brief
-from thyca.bots.work_items import WorkItem, prioritize_window, project_work_items
+from thyca.bots.work_items import prioritize_window, project_work_items
 from thyca.bots.tasks import OpenTask
 
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")

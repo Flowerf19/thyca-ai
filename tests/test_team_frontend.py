@@ -48,7 +48,6 @@ PROFILE_JS = UI / "profile" / "js" / "profile.js"
 
 BASE_CSS = SHARE / "base.css"
 SIDEBAR_CSS = SHARE / "sidebar.css"
-APP_SHELL_CSS = SHARE / "app-shell.css"
 AVATARS_CSS = SHARE / "avatars" / "avatars.css"
 STUDIO_CSS = SHARE / "avatars" / "studio.css"
 CHAT_CSS = CHAT_DIR / "chatcss" / "chat.css"

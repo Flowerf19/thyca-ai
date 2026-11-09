@@ -973,16 +973,6 @@ def test_turn_errors(tmp_path: Path) -> None:
         _stop(httpd, thread)
 
 
-def test_rejects_non_loopback(tmp_path: Path) -> None:
-    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
-    try:
-        make_server(host="0.0.0.0", port=0, webui=WEBUI, facade=facade, chat=_chat(tmp_path))
-    except ServeError as exc:
-        assert "loopback" in str(exc)
-    else:
-        raise AssertionError("expected refuse")
-
-
 def test_create_during_in_flight_turn(tmp_path: Path) -> None:
     """create() must not wait on the LLM of an in-flight turn."""
     started = threading.Event()

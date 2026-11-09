@@ -68,9 +68,15 @@ class AgentStore:
         finally:
             conn.close()
 
-    def append(self, ref: ConversationRef, actor: str, message: Message) -> int:
+    def append(self, ref: ConversationRef, actor: str, message: Message, *, require_participant: str | None = None) -> int:
+        # Append one row with the acting bot plus an optional same-transaction
+        # recipient check: group request rows authorize the actual sender and
+        # require the recipient's current membership atomically, so a removal
+        # racing the insert fails closed. Result rows keep actor-only checks.
         _require_ref(ref)
         _require_actor(actor)
+        if require_participant is not None:
+            _require_actor(require_participant)
         if not isinstance(message, Message):
             raise ValueError('expected message')
         validate_message(message)
@@ -84,6 +90,10 @@ class AgentStore:
             with _transaction_context(conn, 'BEGIN IMMEDIATE'):
                 _ensure_root_ready(conn, _root_instance_id_from_conn(conn))
                 _metadata, _generation, high_event, high_logical = _ensure_door_ready(conn, ref, actor)
+                if require_participant is not None:
+                    # Same transaction: recipient eligibility is part of the
+                    # atomic insert, never a separate roster read.
+                    _ensure_door_ready(conn, ref, require_participant)
                 seq, logical = high_event + 1, high_logical + 1
                 try:
                     conn.execute(

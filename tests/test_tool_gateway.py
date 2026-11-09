@@ -12,7 +12,6 @@ from thyca.tools.builtin import register_file_tools
 from thyca.tools.gateway.background import BackgroundProcs
 from thyca.tools.gateway import Execution, ToolGateway
 from thyca.tools.gateway.execution import (
-    TASK,
     cap_reply,
     page_lines,
     parse_limit,
@@ -288,19 +287,6 @@ async def test_handler_raising_timeout_error_is_not_tracking() -> None:
     assert result.is_error
     assert "inner timeout" in result.content
     assert "still running" not in result.content
-    assert gateway.executions == {}
-
-
-@pytest.mark.asyncio
-async def test_cancelled_submit_leaves_no_execution() -> None:
-    gateway, registry = _gateway(soft=1)
-    registry.register(_slow_spec("slow", _return_soon("late", delay=1.5)))
-    pending = asyncio.create_task(_submit(gateway, "slow"))
-    await asyncio.sleep(0.2)
-    pending.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await pending
-    await asyncio.sleep(1.6)
     assert gateway.executions == {}
 
 

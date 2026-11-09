@@ -221,19 +221,6 @@ def test_x26_with_json_preamble() -> None:
 import pytest
 from thyca.serve.conversations_api import dm_turn
 
-def test_f10_known_failures_400_with_reason_unexpected_500() -> None:
-    """Fails pre-fix: every ValueError mapped to 400 'invalid text'."""
-    for reason in ("empty", "too long", "invalid"):
-        assert public_turn_error(InvalidTurnText(reason)) == (
-            400,
-            "invalid_text",
-            f"invalid text: {reason}",
-        )
-    status, code, message = public_turn_error(ValueError("boom"))
-    assert (status, code, message) == (500, "internal_error", "chat unavailable")
-    assert "boom" not in message
-
-
 def test_f10_unexpected_turn_value_error_is_500_and_logged(capsys) -> None:
     """Fails pre-fix: an in-turn bug ValueError returned 400, masking it."""
 

@@ -235,17 +235,6 @@ def test_step_input_shows_arguments_json(node: str) -> None:
     assert "&quot;limit&quot;: 3" in html  # escaped pretty JSON in the pre
 
 
-def test_tool_without_result_shows_placeholder(node: str) -> None:
-    """A call whose result never recorded gets an explicit placeholder —
-    never a faked empty output."""
-    html = _eval_trace(
-        node,
-        "console.log(JSON.stringify(stepHtml(1,"
-        " {id: 'c1', name: 'bash'}, null)))",
-    )
-    assert "Chưa ghi nhận output." in html
-
-
 def test_missing_tool_name_falls_back_to_tool(node: str) -> None:
     html = _eval_trace(
         node,

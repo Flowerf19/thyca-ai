@@ -46,37 +46,54 @@ class PathGuard:
             raw = Path.cwd() / raw
         return Path(os.path.normpath(str(raw)))
 
-    def _skill_ref_for(self, lexical: Path):
-        # Recognized skill paths only; None otherwise.
-        from thyca.skills.sharing import classify_skill_path
+    def _skill_refs_for(self, lexical: Path, resolved: Path):
+        # Lexical and resolved skill identities; a mismatch is an alias.
+        from thyca.skills.sharing import skill_refs_for
 
-        try:
-            return classify_skill_path(self.thyca_dir, lexical)
-        except (OSError, ValueError):
-            return None
+        return skill_refs_for(self.thyca_dir, lexical, resolved)
+
+    def _deny_reserved_sharing(self, lexical: Path, target: Path) -> None:
+        # Reserved sharing files are never writable via native tools, on any
+        # path identity including aliases. Both spellings are checked so a
+        # symlink cannot dodge the reservation in either direction.
+        from thyca.skills.sharing import is_reserved_sharing_file
+
+        if is_reserved_sharing_file(self.thyca_dir, lexical) or is_reserved_sharing_file(self.thyca_dir, target):
+            raise PathDenied(f"write denied: {target}")
 
     def deny_write(self, path: str) -> Path:
         target = self.resolve(path)
-        # Sharing state is managed only through the Thyca tool, never via
-        # native file tools.
-        root = self.thyca_dir
-        if target == root / "skill-sharing.json" or target == root / "skill-sharing.lock":
-            raise PathDenied(f"write denied: {target}")
-        # Recognized skill writes use the sharing gate plus link checks;
-        # ordinary team-control rules still apply to non-skill paths.
         try:
             lexical = self._lexical_abs(path)
-            ref = self._skill_ref_for(lexical)
         except ValueError:
-            ref = None
-        if ref is not None:
-            from thyca.skills.sharing import SharingService, validate_skill_write_path
+            lexical = target
+        # Reserved sharing state (plus lock and exact publication temp) is
+        # managed only through the Thyca tool, never via native file tools.
+        # Both lexical and resolved identities are checked so aliases cannot
+        # dodge the reservation.
+        self._deny_reserved_sharing(lexical, target)
+        # Recognized skill writes use the sharing gate plus link checks on
+        # both identities; a lexical/resolved mismatch is an alias into or
+        # out of the skill roots and fails closed. Ordinary team-control
+        # rules still apply to non-skill paths.
+        from thyca.skills.sharing import SharingService, skill_refs_match, validate_skill_write_path
 
+        ref_lex, ref_res = self._skill_refs_for(lexical, target)
+        if not skill_refs_match(ref_lex, ref_res):
+            raise PathDenied(f"write denied: {target}")
+        ref = ref_lex if ref_lex is not None else ref_res
+        if ref is not None:
             svc = SharingService(self.thyca_dir)
             if not svc.can_write_skill(current_bot_id(), ref):
                 raise PathDenied(f"write denied: {target}")
             try:
                 validate_skill_write_path(self.thyca_dir, lexical)
+            except ValueError as exc:
+                raise PathDenied(f"write denied: {target}: {exc}") from exc
+            # The resolved destination must validate too; otherwise an
+            # outer alias could pass the lexical check and land inside.
+            try:
+                validate_skill_write_path(self.thyca_dir, target)
             except ValueError as exc:
                 raise PathDenied(f"write denied: {target}: {exc}") from exc
             return target
@@ -87,38 +104,46 @@ class PathGuard:
     def deny_read(self, path: str) -> Path:
         """Resolve a read target, refusing bot-sensitive files to child bots."""
         target = self.resolve(path)
-        # Recognized skill reads use the sharing gate plus link checks.
         try:
             lexical = self._lexical_abs(path)
-            ref = self._skill_ref_for(lexical)
         except ValueError:
-            ref = None
-        if ref is not None:
-            from thyca.skills.sharing import SharingService, _has_symlink_component
+            lexical = target
+        # Lexical and resolved skill identities must agree; any alias into
+        # or out of the skill roots fails closed before authorization.
+        from thyca.skills.sharing import SharingService, _has_symlink_component, skill_refs_match
 
+        ref_lex, ref_res = self._skill_refs_for(lexical, target)
+        if not skill_refs_match(ref_lex, ref_res):
+            raise PathDenied(f"read denied: {target}")
+        ref = ref_lex if ref_lex is not None else ref_res
+        if ref is not None:
             svc = SharingService(self.thyca_dir)
             if not svc.can_read_skill(current_bot_id(), ref):
                 raise PathDenied(f"read denied: {target}")
             # Link safety before any content read: symlink components,
             # symlinked files, hardlinked files, and special files fail.
+            # Both identities are checked so an outer alias cannot dodge the
+            # component scan and the resolved file cannot be a swapped link.
             try:
                 if _has_symlink_component(lexical, self.thyca_dir):
                     raise PathDenied(f"read denied: {target}")
-                st = os.lstat(lexical)
-                import stat as _stat
+                if _has_symlink_component(target, self.thyca_dir):
+                    raise PathDenied(f"read denied: {target}")
+                for candidate in (lexical, target):
+                    try:
+                        st = os.lstat(candidate)
+                    except FileNotFoundError:
+                        continue
+                    import stat as _stat
 
-                if not _stat.S_ISREG(st.st_mode):
-                    raise PathDenied(f"read denied: {target}")
-                if st.st_nlink != 1:
-                    raise PathDenied(f"read denied: {target}")
+                    if not _stat.S_ISREG(st.st_mode):
+                        raise PathDenied(f"read denied: {target}")
+                    if st.st_nlink != 1:
+                        raise PathDenied(f"read denied: {target}")
             except FileNotFoundError:
-                # Missing skill file reads as absent (handler reports
-                # FileNotFoundError); links cannot exist without a target.
                 pass
             except OSError as exc:
                 raise PathDenied(f"read denied: {target}: {exc}") from exc
-            # Fall through to group-sensitive memory checks (skills are
-            # never memory paths, so this stays False, but keep the gate).
             if self._group_sensitive(target):
                 raise PathDenied(f"read denied: {target}")
             return target

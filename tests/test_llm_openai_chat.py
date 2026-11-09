@@ -11,18 +11,6 @@ from thyca.llms.openai_chat import OpenAIChat, _chat_url
 from thyca.core.protocol import Message, ToolCall
 
 
-def _provider() -> ProviderCfg:
-    return ProviderCfg(
-        baseUrl="https://api.example.com/v1",
-        model="demo-model",
-        apiKey="sk-secret-key",
-    )
-
-
-def _client(handler) -> httpx.AsyncClient:
-    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
-
-
 def test_chat_url_does_not_double_slash() -> None:
     assert _chat_url("https://api.example.com/v1/") == "https://api.example.com/v1/chat/completions"
     assert _chat_url("https://api.example.com/v1") == "https://api.example.com/v1/chat/completions"

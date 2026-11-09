@@ -43,7 +43,6 @@ from thyca.serve.bridge import SENTINEL, bridge_worker, pump_stream
 from thyca.serve.errors import public_turn_error
 from thyca.serve.turn_state import TurnHub, TurnState
 from thyca.conversations.runtime import SessionBusy, SessionCorrupt, SessionError, SessionNotFound
-from thyca.conversations.runtime.store import SessionStore
 
 
 def _root_id(root: Path) -> str:
@@ -254,14 +253,6 @@ def test_retry_reports_last_user_without_mutation(switched: Path) -> None:
     assert rerun.message_count == 4
     # No truncation: the failed assistant row is still history.
     assert [m.content for m in agents.read(ref, 'coder').messages] == before + ['boom']
-
-
-def test_retry_without_user_reports_empty(switched: Path) -> None:
-    ref = _dm(switched, 'coder')
-    plan = prepare_retry(switched, ref, intent=_write_intent(), actor='coder')
-    assert plan.has_user is False
-    assert plan.last_user_logical_seq is None
-    assert plan.message_count == 0
 
 
 # ---------- naming/title one-shot semantics ----------

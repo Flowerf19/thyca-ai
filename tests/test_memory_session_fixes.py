@@ -11,7 +11,7 @@ import pytest
 
 from thyca.core.protocol import Message, ToolCall
 from thyca.memories.active import ActiveMemory, ActiveMemoryError, ActiveState
-from thyca.memories.archive_store import ArchiveError, ArchiveStore, Hit
+from thyca.memories.archive_store import ArchiveError, Hit
 from thyca.memories.archived import ArchivedMemory
 from thyca.memories.chunk import Chunker
 from thyca.memories.writer import MemoryWriter
@@ -23,10 +23,6 @@ from thyca.memories.facade import MemoryFacade
 from thyca.tools.memory_tools import register_memory_tools
 from thyca.tools.registry import ToolRegistry
 from thyca.tools.task_store import TaskStore
-
-
-def _msg(role: str, content: str = "x") -> Message:
-    return Message(role=role, content=content, ts="2026-01-01T00:00:00Z")
 
 
 def _seed_duplicate_daily(root: Path, day: str = "2026-08-13") -> Path:

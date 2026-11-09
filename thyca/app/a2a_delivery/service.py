@@ -350,14 +350,17 @@ class A2ADeliveryService:
     # still needs both dispatch and roster membership (fail closed on
     # change or error) so a private request can never publish on roster
     # change.
-    # Write one group display row inside its membership transaction.
-    # The row keeps its sender stamp and pairing meta; the recipient's
-    # membership authorizes the insert atomically, so a removal racing
-    # the write fails closed instead of publishing.
+    # Write one group request row inside its membership transaction.
+    # The row keeps its sender stamp and pairing meta; the actual sender
+    # authorizes the insert and the recipient's membership is checked in
+    # the same transaction, so a removal racing the write fails closed.
+    # Result rows use _append_group_result with the recipient as actor and
+    # stay unchanged. The actor argument is kept for backward-compatible
+    # callers but the envelope sender authorizes request publication.
     def _append_group_display(self, room: SessionManager, room_id: str,
                               envelope, content: str, meta: dict,
-                              actor: str) -> bool:
-        """Append one group display row iff its recipient participates."""
+                              actor: str | None = None) -> bool:
+        """Append one group request row iff sender and recipient participate."""
         try:
             try:
                 from thyca.conversations.manager import _manager_runtime_root
@@ -375,9 +378,14 @@ class A2ADeliveryService:
             # Use the module-level Message binding so tests can pin
             # timestamps deterministically through one mock point.
             row = Message(role="assistant", content=content, meta=dict(meta))
+            sender = getattr(envelope, "sender", None) or actor
+            recipient = getattr(envelope, "recipient", None)
+            if not isinstance(sender, str) or not isinstance(recipient, str):
+                return False
             append_message(
-                runtime_root, ref, actor, row,
+                runtime_root, ref, sender, row,
                 intent=RuntimeWriteIntent("runtime-append"),
+                require_participant=recipient,
             )
         except Exception:
             return False
@@ -548,7 +556,10 @@ class A2ADeliveryService:
                     continue
                 if is_current and current_is_member is not True:
                     continue
-                if envelope.recipient not in (participants or []):
+                # Request rows need both the actual sender and the recipient
+                # in the current roster; the same-transaction insert below
+                # rechecks both atomically so removals race closed.
+                if envelope.recipient not in (participants or []) or envelope.sender not in (participants or []):
                     if is_current:
                         current_allowed = False
                     continue
@@ -584,13 +595,13 @@ class A2ADeliveryService:
                     )
                 )
             else:
-                # Group bus rows carry the same transactional recipient
-                # membership authorization as group results; a removal
-                # racing the insert fails closed and skips only that row.
+                # Group request rows authorize the actual sender and check
+                # the recipient in the same transaction; a removal racing
+                # the insert fails closed and skips only that row.
                 if not self._append_group_display(
                     room, session_id, envelope,
                     envelope.payload, meta,
-                    actor=envelope.recipient,
+                    actor=envelope.sender,
                 ):
                     if is_current:
                         current_allowed = False
@@ -615,10 +626,13 @@ class A2ADeliveryService:
                     return True
             elif current_is_member is True:
                 try:
-                    still_member = getattr(
+                    still_recipient = getattr(
                         current_envelope, "recipient", None) in (participants or [])
+                    still_sender = getattr(
+                        current_envelope, "sender", None) in (participants or [])
                 except Exception:
-                    still_member = False
-                if still_member:
+                    still_recipient = False
+                    still_sender = False
+                if still_recipient and still_sender:
                     return True
         return False

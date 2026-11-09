@@ -366,38 +366,6 @@ class BotRuntime:
             bot_id, window, binding.internal_session_id).load(
                 binding.internal_session_id)
 
-    # Run one turn; return only the reply text.
-    async def run_bot_turn(
-        self,
-        *,
-        scope: BotTurnScope,
-        card: BotCard,
-        room_id: str,
-        text: str,
-        turn_cfg: Config,
-        event_sink: EventSink | None = None,
-        trace_id: str | None = None,
-        parent_span_id: str | None = None,
-        span_id: str | None = None,
-        room_text: str = "",
-        room_cursor_after: tuple[int, str] | None = None,
-        retry: bool = False,
-        model_override: str | None = None,
-        effort: str | None = None,
-    ) -> str:
-        """Run one bot turn; return only the reply text."""
-        result = await self.run_bot_turn_detailed(
-            scope=scope, card=card, room_id=room_id, text=text,
-            turn_cfg=turn_cfg, event_sink=event_sink, trace_id=trace_id,
-            parent_span_id=parent_span_id, span_id=span_id,
-            room_text=room_text,
-            room_cursor_after=room_cursor_after,
-            retry=retry,
-            model_override=model_override,
-            effort=effort,
-        )
-        return result.reply
-
     # Lease-gated turn entry; private runs use an isolated memory view.
     # A private invocation (non-member group delivery) sees no group
     # window and no group history; its visible window is DM-like.
@@ -725,6 +693,8 @@ class BotRuntime:
                 context_tokens=turn_cfg.effective_limits().contextTokens,
             )
             limits = turn_cfg.effective_limits()
+            # The authorized registry index below replaces the hot skills
+            # section, so skip the obsolete global scan here.
             hot = scope.memory.refresh(
                 scope.state,
                 datetime.now(scope.zone),
@@ -732,6 +702,7 @@ class BotRuntime:
                 reader=None if card.system or card.bot_id == "thyca" else card.bot_id,
                 tail_kb=limits.hotTailKB,
                 timezone_name=turn_cfg.timeline.timezone,
+                skip_skills=True,
             )
             bot_user_text = (
                 self._registry.bot_user_text(card.bot_id)

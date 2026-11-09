@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
-import time
 from pathlib import Path
 
 import pytest
@@ -153,7 +152,6 @@ def test_private_resume_row_requests_zero(tmp_path: Path) -> None:
         group = app.create(bots=["thyca", "coder"])
         from thyca.bots.private_followups import PrivateFollowupStore
         from thyca.app.private_followups import PrivateFollowupService
-        from thyca.bots.context import BotTurnContext, bind_bot_turn_context, reset_bot_turn_context
 
         store = PrivateFollowupStore(tmp_path)
         dm = app.bot_dm("coder")

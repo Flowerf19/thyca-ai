@@ -67,7 +67,6 @@ def _is_system_bot() -> bool:
 
 def _protected_roots() -> list[Path]:
     ctx = current_bot_turn_context()
-    scope = getattr(ctx, "scope", None) if ctx is not None else None
     # BotRuntime binds the thyca root on the context via `thyca_dir` when
     # present; fall back to the home default the config layer also uses.
     root = getattr(ctx, "thyca_dir", None) if ctx is not None else None
@@ -115,24 +114,22 @@ class BotPolicy(Policy):
         if call.name in _FILE_TOOLS:
             path = call.arguments.get("path") if isinstance(call.arguments, dict) else None
             if isinstance(path, str) and path.strip():
-                # Recognized skill paths use the sharing gate: own-private
-                # reads/writes and shared reads pass here; PathGuard still
-                # enforces precise authorization plus link safeguards.
-                # Foreign-private, unshared team, Thyca-owned roots, and
-                # child shared writes stay denied.
+                # Recognized skill paths use the sharing gate on both lexical
+                # and resolved identities: own-private reads/writes and shared
+                # reads pass here; PathGuard still enforces precise
+                # authorization plus link safeguards. An alias mismatch fails
+                # closed here too. Foreign-private, unshared team,
+                # Thyca-owned roots, and child shared writes stay denied.
                 try:
-                    from thyca.skills.sharing import SharingService, classify_skill_path
+                    from thyca.skills.sharing import SharingService, skill_refs_for, skill_refs_match
                     from thyca.tools.path_guard import absolutize
                     import os as _os
                     from pathlib import Path as _Path
 
                     ctx = current_bot_turn_context()
-                    scope = getattr(ctx, "scope", None) if ctx is not None else None
                     root = getattr(ctx, "thyca_dir", None) if ctx is not None else None
                     if root is None:
                         root = _Path.home() / ".thyca"
-                    # Canonical root, like PathGuard: the skill gate
-                    # classifies against the resolved root on both sides.
                     try:
                         root = _Path(root).resolve()
                     except (OSError, RuntimeError, ValueError):
@@ -141,7 +138,16 @@ class BotPolicy(Policy):
                     if not raw.is_absolute():
                         raw = _Path.cwd() / raw
                     lexical = _Path(_os.path.normpath(str(raw)))
-                    ref = classify_skill_path(root, lexical)
+                    try:
+                        resolved = lexical.resolve()
+                    except (OSError, RuntimeError, ValueError):
+                        resolved = lexical
+                    ref_lex, ref_res = skill_refs_for(root, lexical, resolved)
+                    if not skill_refs_match(ref_lex, ref_res):
+                        raise PolicyDenied(f"bot may not access team-control file: {path}")
+                    ref = ref_lex if ref_lex is not None else ref_res
+                except PolicyDenied:
+                    raise
                 except (OSError, ValueError, TypeError):
                     ref = None
                 if ref is not None:

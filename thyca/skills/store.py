@@ -92,15 +92,28 @@ class SkillStore:
             target.chmod(0o600)
 
     def _meta(self, skill_dir: Path) -> SkillMeta:
+        # Standalone reader (default ActiveMemory path): BOM-tolerant file
+        # read, then shared validation. Registry uses meta_from_text with
+        # checked descriptor text instead of reopening the pathname.
         name = skill_dir.name
         path = skill_dir / "SKILL.md"
         if not path.is_file():
             return SkillMeta(name, "", path, ok=False, error="missing SKILL.md")
         try:
-            # utf-8-sig: a BOM-headed SKILL.md is valid, not broken frontmatter.
             text = path.read_text(encoding="utf-8-sig")
         except (OSError, UnicodeDecodeError) as exc:
             return SkillMeta(name, "", path, ok=False, error=f"unreadable: {exc}")
+        return self.meta_from_text(skill_dir, text)
+
+    def meta_from_text(self, skill_dir: Path, text: str) -> SkillMeta:
+        # Validate already-checked descriptor text without reopening the
+        # pathname. A leading BOM is tolerated here (like the utf-8-sig
+        # standalone reader) so BOM-headed SKILL.md stays valid; native
+        # read/edit bytes are unaffected. Diagnostic rules match _meta.
+        if text.startswith("\ufeff"):
+            text = text[1:]
+        name = skill_dir.name
+        path = skill_dir / "SKILL.md"
         data = _parse_frontmatter(text)
         if data is None:
             return SkillMeta(name, "", path, ok=False, error="invalid frontmatter")

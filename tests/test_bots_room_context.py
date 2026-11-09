@@ -1,9 +1,6 @@
 """Phase 2A: public room context (filter matrix + cursor delta + wiring)."""
 from __future__ import annotations
 
-import asyncio
-from pathlib import Path
-
 from thyca.bots.room_context import (
     fingerprint,
     public_room_messages,

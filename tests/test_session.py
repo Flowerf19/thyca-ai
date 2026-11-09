@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import json
-import os
-import stat
 import threading
 from pathlib import Path
 
@@ -18,7 +16,6 @@ from thyca.llms.llm_base import ChatReply
 from thyca.core.protocol import Message, ToolCall
 from thyca.serve import routes as serve_routes
 from thyca.serve import trace as serve_trace
-from thyca.serve import trace_api
 from thyca.serve.conversations_api import _conv_error
 from thyca.conversations.runtime import (
     Session,

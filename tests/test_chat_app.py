@@ -23,10 +23,6 @@ from thyca.conversations.runtime.title import fallback_title
 from thyca.tools.mcp import MCPProcess
 
 
-def _types(events: list[TurnEvent]) -> list[str]:
-    return [event.type for event in events]
-
-
 def _naming_pairs(events: list[TurnEvent]) -> list[tuple[str, bool | None]]:
     return [
         (event.type, event.updated)

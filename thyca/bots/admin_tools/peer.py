@@ -237,6 +237,36 @@ def _fetch_spec(deps: AdminDeps) -> ToolSpec:
     )
 
 
+def _explicit_group_target_ok(deps: AdminDeps, sender: str | None, room: str) -> str | None:
+    # Validate an explicit group destination before enqueue: exact stored
+    # destination, readiness, and trusted sender membership. Fail closed
+    # without guessing kind from the identifier or from a None DM lookup
+    # (the resolver returns None for unknown destinations too). DM
+    # destinations keep the existing private/nonpublication behavior and
+    # return None here; unknown or nonmember group destinations return a
+    # denial string. Ordinary sends without an explicit room keep their
+    # current private fallback and never reach this gate.
+    if not room:
+        return None
+    try:
+        members = deps.room_bots(room) if getattr(deps, "room_bots", None) is not None else None
+    except Exception:
+        return f"bot_delegate failed: unknown destination: {room}"
+    if members is None:
+        return f"bot_delegate failed: unknown destination: {room}"
+    try:
+        dm_owner = deps.room_dm_owner(room) if getattr(deps, "room_dm_owner", None) is not None else None
+    except Exception:
+        return f"bot_delegate failed: unknown destination: {room}"
+    if dm_owner is not None:
+        return None
+    if sender is None:
+        return "denied: bot_delegate requires a trusted sender identity"
+    if sender not in list(members):
+        return f"bot_delegate failed: sender is not a member of {room}"
+    return None
+
+
 def _delegate_spec(deps: AdminDeps) -> ToolSpec:
     async def handler(args: dict) -> str:
         denied = _deny_child()
@@ -254,7 +284,17 @@ def _delegate_spec(deps: AdminDeps) -> ToolSpec:
             return f"bot_delegate failed: {exc}"
         room = args.get("room") if isinstance(args.get("room"), str) else ""
         ctx = current_bot_turn_context()
-        sender = ctx.sender_id if ctx is not None else "thyca"
+        # Trusted sender identity only; never fabricate Thyca when missing.
+        if ctx is not None and getattr(ctx, "sender_id", None):
+            sender = ctx.sender_id
+        else:
+            sender = current_bot_id()
+        if room:
+            problem = _explicit_group_target_ok(deps, sender, room)
+            if problem is not None:
+                return problem
+        if sender is None:
+            return "denied: bot_delegate requires a trusted sender identity"
         try:
             return await _send_and_deliver(
                 deps, sender=sender, recipient=bot_id, kind="delegate",

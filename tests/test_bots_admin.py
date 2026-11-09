@@ -148,8 +148,6 @@ def test_bot_create_memory_policy_still_filters_baseline(tmp_path: Path) -> None
 
 
 def _tooled_registry(tmp_path: Path, models: dict):
-    import asyncio as _asyncio  # noqa: F401 (kept local like other helpers)
-
     from thyca.bots.admin_tools import AdminDeps, register_admin_tools
     from thyca.bots.bus import Bus
     from thyca.bots.registry import BotRegistry

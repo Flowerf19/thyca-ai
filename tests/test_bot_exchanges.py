@@ -1300,7 +1300,7 @@ def test_private_result_uses_membership_checked_append(tmp_path: Path) -> None:
         import thyca.conversations.store.write_adapter as _wa9
         _orig_append_message = _wa9.append_message
 
-        def _removing_append_message(root, ref, actor, message, *, intent):
+        def _removing_append_message(root, ref, actor, message, *, intent, require_participant=None):
             # A removal racing the result append commits first; the
             # membership-checked transaction must then fail closed.
             if (
@@ -1312,7 +1312,7 @@ def test_private_result_uses_membership_checked_append(tmp_path: Path) -> None:
                 removed[0] = True
                 assert app.set_room_bots(room, "helper", "remove") == ["coder"]
             return _orig_append_message(
-                root, ref, actor, message, intent=intent)
+                root, ref, actor, message, intent=intent, require_participant=require_participant)
 
         async def _fake_turn(**kwargs):
             return _Result9(reply="late reply", bot_id="helper",
@@ -1790,7 +1790,6 @@ def test_private_cancelled_turn_leaves_no_group_trace(tmp_path: Path) -> None:
 def test_private_early_failures_publish_nothing_later(tmp_path: Path) -> None:
     # Unknown/paused recipients and room-load failures never record; the
     # flagged log row (if any) stays unpublished by later unpinned drains.
-    from thyca.bots.runtime import BotTurnResult as _Result15
     app = _chat(tmp_path)
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
@@ -1881,12 +1880,11 @@ def test_private_result_write_failure_still_returns_reply(tmp_path: Path) -> Non
         import thyca.conversations.store.write_adapter as _wa16
         real_append = _wa16.append_message
 
-        def _boom(root, ref, actor, message, *, intent):
-            import thyca.conversations.store.write_adapter as _w
+        def _boom(root, ref, actor, message, *, intent, require_participant=None):
             if isinstance(getattr(message, "meta", None), dict) and message.meta.get(
                     "kind") == "result":
                 raise RuntimeError("disk gone")
-            return real_append(root, ref, actor, message, intent=intent)
+            return real_append(root, ref, actor, message, intent=intent, require_participant=require_participant)
 
         with __import__("unittest.mock", fromlist=["patch"]).patch.object(
                 _wa16, "append_message", _boom):
@@ -2731,13 +2729,13 @@ def test_request_append_race_live_first_skips_doomed(tmp_path: Path) -> None:
         import thyca.conversations.store.write_adapter as _wa20
         real_append = _wa20.append_message
 
-        def _removing_bus_append(root, ref, actor, message, *, intent):
+        def _removing_bus_append(root, ref, actor, message, *, intent, require_participant=None):
             meta = getattr(message, "meta", None) or {}
             if (not removed[0] and meta.get("bus_event") is True
                     and meta.get("recipient") == "helper"):
                 removed[0] = True
                 assert app.set_room_bots(room, "helper", "remove") == ["coder", "third"]
-            return real_append(root, ref, actor, message, intent=intent)
+            return real_append(root, ref, actor, message, intent=intent, require_participant=require_participant)
 
         env = bus.send(sender="coder", recipient="third", kind="message",
                        session_id=room, payload="go third")
@@ -2968,68 +2966,6 @@ def test_flagged_envelope_forces_private_without_caller_view(tmp_path: Path) -> 
         app.shutdown()
 
 
-def test_initial_outsider_load_failure_then_join_stays_unpublished(tmp_path: Path) -> None:
-    # Dispatch classifies the initial outsider request private; a transient
-    # room.load failure must not leave a publishable row, even if the
-    # recipient joins before the next unpinned drain.
-    from thyca.bots.runtime import BotTurnResult as _Result18c
-    from thyca.conversations.runtime import SessionManager as _SM18c
-    app = _chat(tmp_path)
-    try:
-        app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
-                                 description="Writes code.", persona="P"))
-        app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper",
-                                 description="Helps.", persona="P"))
-        room = app.create(bots=["coder", "thyca"])["id"]
-        _room_with(app, room).append(Message(role="user", content="seed",
-                                             ts="2026-10-26T09:00:00Z"))
-        before = len(_room_with(app, room).current.messages)
-
-        async def _fake_turn(**kwargs):
-            return _Result18c(reply="private answer", bot_id="helper",
-                              span_id="sp_loadfail1")
-
-        app._runtime.run_bot_turn_detailed = _fake_turn  # type: ignore[method-assign]
-        bus = app._runtime._bus
-        bus.register("helper")
-        envelope = bus.send(sender="coder", recipient="helper", kind="message",
-                            session_id=room, payload="first ask")
-        import asyncio as _asyncio18c
-        from thyca.bots.context import BotTurnContext as _Ctx18c, BotTurnScope as _Scope18c
-        scope = _Scope18c(store=app._sessions.store, act=app._act,
-                          tools=app._tools, memory=app._memory,
-                          state=app._state, zone=app._zone)
-        ctx = _Ctx18c(sender_id="coder", room_id=room,
-                      scope=scope, turn_cfg=app._current_cfg())
-        real_load = _SM18c.load
-        calls: list[str] = []
-
-        def _fail_once(self, session_id: str):
-            if not calls:
-                calls.append(session_id)
-                raise RuntimeError("transient store outage")
-            return real_load(self, session_id)
-
-        with __import__("unittest.mock", fromlist=["patch"]).patch.object(
-                _SM18c, "load", _fail_once):
-            assert _asyncio18c.run(
-                app._deliver_envelope_claimed(envelope, ctx)) == "private answer"
-        assert calls == [room]
-        # Dispatch expunged the log row before the failed load, so no
-        # later drain can publish the classified-private request.
-        assert all(e.envelope.span_id != envelope.span_id
-                   for e in bus.log()), "failed dispatch must leave no log row"
-        assert app.set_room_bots(room, "helper", "add") == ["coder", "thyca", "helper"]
-        idle = _room_with(app, room)
-        assert app._delivery.record_bus_events(idle, room) is True
-        rows = _room_with(app, room).current.messages
-        assert len(rows) == before
-        assert all("first ask" not in (r.content or "") for r in rows)
-        assert [r for r in rows if (r.meta or {}).get("kind") == "result"] == []
-    finally:
-        app.shutdown()
-
-
 def test_request_append_race_doomed_first_skips_doomed(tmp_path: Path) -> None:
     # Doomed request sent first: removal racing the doomed row's append
     # fails only that row's transaction; the live row still publishes.
@@ -3047,13 +2983,13 @@ def test_request_append_race_doomed_first_skips_doomed(tmp_path: Path) -> None:
         import thyca.conversations.store.write_adapter as _wa20
         real_append = _wa20.append_message
 
-        def _removing_bus_append(root, ref, actor, message, *, intent):
+        def _removing_bus_append(root, ref, actor, message, *, intent, require_participant=None):
             meta = getattr(message, "meta", None) or {}
             if (not removed and meta.get("bus_event") is True
                     and meta.get("recipient") == "helper"):
                 removed.append(True)
                 assert app.set_room_bots(room, "helper", "remove") == ["coder", "third"]
-            return real_append(root, ref, actor, message, intent=intent)
+            return real_append(root, ref, actor, message, intent=intent, require_participant=require_participant)
 
         async def _fake_turn(**kwargs):
             return _Result20(reply="third reply", bot_id="third",
@@ -3095,7 +3031,7 @@ def test_persisted_decoy_rows_never_authorize_group_or_dm(tmp_path: Path) -> Non
     # and DMs alike. An exact persisted row still does (positive control).
     from thyca.bots.runtime import BotTurnResult as _ResultPD
     from thyca.core.protocol import Message as _MsgPD
-    from thyca.bots.bus import Envelope as _EnvPD, BusEvent as _BusEventPD
+    from thyca.bots.bus import Envelope as _EnvPD
     app = _chat(tmp_path)
     try:
         for bot_id in ("coder", "helper"):

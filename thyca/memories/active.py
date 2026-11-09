@@ -147,6 +147,7 @@ class ActiveMemory:
         self, state: ActiveState, now: datetime, session_id: str | None = None,
         reader: str | None = None, *, tail_kb: int | None = None,
         timezone_name: str | None = None,
+        skip_skills: bool = False,
     ) -> ActiveSnapshot:
         today = self._day(now, timezone_name)
         if today != state.day:
@@ -162,13 +163,15 @@ class ActiveMemory:
             self._secure_dir(self.memory_dir)
             self._create_if_missing(state.today_path, f"# {today}\n")
         return self._snapshot(
-            state.today_path, state.day, session_id, reader, tail_kb
+            state.today_path, state.day, session_id, reader, tail_kb,
+            skip_skills=skip_skills,
         )
 
     def peek(
         self, state: ActiveState, now: datetime, session_id: str | None = None,
         reader: str | None = None, *, tail_kb: int | None = None,
         timezone_name: str | None = None,
+        skip_skills: bool = False,
     ) -> ActiveSnapshot:
         """Read-only snapshot for estimates (context meter, compact budget).
 
@@ -179,11 +182,12 @@ class ActiveMemory:
         """
         today = self._day(now, timezone_name)
         path = state.today_path if today == state.day else self._daily_path(today)
-        return self._snapshot(path, today, session_id, reader, tail_kb)
+        return self._snapshot(path, today, session_id, reader, tail_kb, skip_skills=skip_skills)
 
     def _snapshot(
         self, today_path: Path, day_str: str, session_id: str | None,
         reader: str | None = None, tail_kb: int | None = None,
+        skip_skills: bool = False,
     ) -> ActiveSnapshot:
         if session_id is None:
             today_text, elsewhere_text = self._tail(
@@ -223,9 +227,13 @@ class ActiveMemory:
             user=self._read(self.thyca_dir / "USER.md"),
             today=today_text,
             skills=(
-                self._skills.index_text()
-                if reader is None or reader == "thyca"
-                else ""
+                ""
+                if skip_skills
+                else (
+                    self._skills.index_text()
+                    if reader is None or reader == "thyca"
+                    else ""
+                )
             ),
             today_elsewhere=elsewhere_text,
         )

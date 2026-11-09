@@ -19,7 +19,6 @@ from thyca.conversations.store import (
     DMBootstrapIntent,
     RootInitializationIntent,
     RuntimeReadIntent,
-    RuntimeWriteIntent,
 )
 from thyca.core.conversation import ConversationRef
 from thyca.core.protocol import Message
@@ -42,10 +41,6 @@ def _dm(root: Path, bot: str) -> ConversationRef:
 
 def _read_intent() -> RuntimeReadIntent:
     return RuntimeReadIntent('runtime-bots')
-
-
-def _write_intent() -> RuntimeWriteIntent:
-    return RuntimeWriteIntent('runtime-bots')
 
 
 def _msg(role: str, text: str, meta: dict | None = None) -> Message:
@@ -202,7 +197,6 @@ def test_webui_channel_adapter_land_on_runtime_root(tmp_path: Path) -> None:
     """The real WebUI channel adapter gates over runtime store sessions."""
     from thyca.app.webui_channel import WebUIChannelAdapter
     from thyca.core.channel import ChannelAction
-    from thyca.core.protocol import Message as _Message
     from thyca.conversations.runtime import SessionManager
 
     adapter = WebUIChannelAdapter()

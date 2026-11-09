@@ -18,18 +18,6 @@ from thyca.llms.openai_responses import (
 from thyca.core.protocol import Message, ToolCall
 
 
-def _provider() -> ProviderCfg:
-    return ProviderCfg(
-        baseUrl="https://api.example.com/v1",
-        model="demo-model",
-        apiKey="sk-secret-key",
-    )
-
-
-def _client(handler) -> httpx.AsyncClient:
-    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
-
-
 def _sse(*chunks: dict) -> httpx.Response:
     parts = [f"data: {json.dumps(chunk)}" for chunk in chunks]
     parts.append("data: [DONE]")

@@ -294,6 +294,8 @@ class BotOperationsService:
             with bound_memory_view(
                 MemoryView(window=window, bot_id=bot_id, thyca_dir=self._deps.root)
             ):
+                # Meter already composes the authorized registry index below;
+                # skip the obsolete global scan.
                 hot = self._deps.memory.peek(
                     self._deps.state,
                     datetime.now(zone),
@@ -301,6 +303,7 @@ class BotOperationsService:
                     reader=None if card is None or card.system or bot_id == "thyca" else bot_id,
                     tail_kb=limits.hotTailKB,
                     timezone_name=turn_cfg.timeline.timezone,
+                    skip_skills=True,
                 )
                 bot_tasks = derive_open_tasks(
                     messages,

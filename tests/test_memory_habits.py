@@ -201,18 +201,6 @@ def test_sweep_reader_filter_and_expiry(tmp_path: Path) -> None:
 
 # -- phase 1F: team aggregation -------------------------------------------------
 
-def _write_bot_user(tmp_path: Path, bot_id: str, labels: list[str]) -> Path:
-    from thyca.memories.habits import AUTO_END, AUTO_START
-
-    path = tmp_path / "bots" / bot_id / "USER.md"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        "# User — bot tự ghi\n## Habits\n" + AUTO_START + "\n"
-        + "".join(f"- {label}\n" for label in labels) + AUTO_END + "\n",
-        encoding="utf-8",
-    )
-    return path
-
 
 def test_sweep_ignores_team_visible_entries(tmp_path: Path) -> None:
     facade = MemoryFacade(tmp_path, timezone_name=TZ)

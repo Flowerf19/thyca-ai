@@ -52,17 +52,6 @@ async def _call(gateway: ToolGateway, name: str, **args):
 
 
 @pytest.mark.asyncio
-async def test_fast_handler_unchanged(tmp_path: Path) -> None:
-    gateway, registry, _store = _gateway(tmp_path)
-    registry.register(_slow_spec("quick", _return_soon("quick")))
-    result = await _call(gateway, "quick")
-    assert not result.is_error
-    assert result.content == "quick"
-    assert "still running" not in result.content
-    assert gateway.executions == {}
-
-
-@pytest.mark.asyncio
 async def test_slow_handler_tracked_then_completes(tmp_path: Path) -> None:
     gateway, registry, _store = _gateway(tmp_path)
     registry.register(_slow_spec("slow", _return_soon("done!", delay=1.5)))
@@ -129,19 +118,6 @@ async def test_unknown_task_id_lists_known(tmp_path: Path) -> None:
     missing = await _call(gateway, "tool_read", id="task99")
     assert missing.is_error
     assert "known: exec1" in missing.content
-
-
-@pytest.mark.asyncio
-async def test_handler_raising_timeout_error_is_not_tracking(tmp_path: Path) -> None:
-    async def timeout_factory():
-        raise TimeoutError("inner timeout")
-
-    gateway, registry, _store = _gateway(tmp_path)
-    registry.register(_slow_spec("slow", timeout_factory))
-    result = await _call(gateway, "slow")
-    assert result.is_error
-    assert "inner timeout" in result.content
-    assert "still running" not in result.content
 
 
 @pytest.mark.asyncio

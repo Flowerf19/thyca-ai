@@ -1,8 +1,9 @@
 """Thyca-only team-skill sharing tool: list/share/unshare.
 
-Only Thyca (or the user: no bot bound) may manage sharing. Child bots are
-denied even when they forge a caller identity in arguments. Trusted Thyca
-A2A turns remain eligible because they still bind the Thyca bot id.
+Only runtime-bound Thyca may manage sharing. Missing identity and child
+bots are denied even when they forge a caller identity in arguments.
+Trusted Thyca A2A turns remain eligible because they still bind the
+Thyca bot id.
 """
 from __future__ import annotations
 
@@ -11,8 +12,9 @@ from thyca.tools.registry import ToolSpec
 
 
 def _deny_child() -> str | None:
+    # Only runtime-bound Thyca manages sharing; missing identity fails closed.
     caller = current_bot_id()
-    if caller is not None and caller != "thyca":
+    if caller != "thyca":
         return f"denied: skill sharing is Thyca-only (caller: {caller})"
     return None
 

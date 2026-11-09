@@ -79,7 +79,6 @@ def test_share_unshare_persists_across_restart_and_bot_views(tmp_path: Path) -> 
 def test_forged_child_and_missing_authority_denied(tmp_path: Path) -> None:
     import asyncio
 
-    from thyca.bots.registry import BotRegistry
     from thyca.memories.identity import bind_bot_id, reset_bot_id
     from thyca.skills.sharing import SharingService
     from thyca.tools.gateway import ToolGateway
@@ -113,11 +112,15 @@ def test_forged_child_and_missing_authority_denied(tmp_path: Path) -> None:
                                             "caller": "thyca", "bot_id": "thyca"}))
     assert forged.is_error
     assert SharingService(tmp_path).list_shared() == []
-    # User (None) is privileged like Thyca for admin tools; Thyca allowed.
-    missing = asyncio.run(_call_as(None, {"action": "share", "name": "weather"}))
-    assert missing is not None
+    # Missing identity is denied and changes no state; only Thyca is allowed.
+    for action in ("list", "share", "unshare"):
+        args = {"action": action} if action == "list" else {"action": action, "name": "weather"}
+        missing_denied = asyncio.run(_call_as(None, args))
+        assert "denied" in missing_denied.content.lower(), f"missing identity must be denied for {action}"
+    assert SharingService(tmp_path).list_shared() == []
     allowed = asyncio.run(_call_as("thyca", {"action": "share", "name": "weather"}))
     assert not allowed.is_error
+    assert SharingService(tmp_path).list_shared() == ["weather"]
 
 
 def test_own_private_readable_foreign_denied(tmp_path: Path) -> None:
@@ -151,7 +154,7 @@ def test_shared_write_denied_own_edit_allowed(tmp_path: Path) -> None:
     from thyca.memories.identity import bind_bot_id, reset_bot_id
     from thyca.skills.sharing import SharingService
     from thyca.tools.builtin import register_file_tools
-    from thyca.tools.path_guard import PathDenied, PathGuard
+    from thyca.tools.path_guard import PathGuard
     from thyca.tools.registry import ToolRegistry
     from thyca.tools.gateway import ToolGateway
     from thyca.tools.task_store import TaskStore

@@ -533,7 +533,6 @@ def test_private_v2_message_validates_and_projects_current_span_only(
 ) -> None:
     # v2 carries exactly the existing span; default projections exclude it,
     # private projections select only the current span and ignore resets.
-    from thyca.bots.timeline import EVENT_V1, EVENT_V2
     timeline = _timeline(tmp_path)
     group = _window("room1", "group", ("coder", "thyca"))
     timeline.append_message(group, _row("group hi"), event_id="g1")

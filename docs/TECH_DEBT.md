@@ -3,6 +3,8 @@
 Ghi nhận các nợ kỹ thuật đã biết, tác động, quyết định xử lý và trạng thái.
 Mỗi mục có đủ bốn phần: **mô tả**, **tác động**, **quyết định/hướng xử lý**, **trạng thái**.
 
+**Tổng quan (2026-11-09):** 11 mục, 3 đã đóng (1, 4, 6), 8 còn mở hoặc mở một phần (2, 3, 5, 7, 8, 9, 10, 11).
+
 ## 4. Store SQLite chưa được nối vào runtime (mới phát hiện)
 
 - **Mô tả:** `AgentStore`/`AdminStore` mới chỉ được test trên fake root; chưa caller
@@ -161,6 +163,9 @@ Mỗi mục có đủ bốn phần: **mô tả**, **tác động**, **quyết đ
   `test_dm_origin_delivery_records_pair_without_leaking_history`) đều pass
   khi chạy lại riêng và trong lần full-gate xanh; ghi nhận là flaky theo
   thời gian, không phải lỗi storage.
+  Cập nhật đợt `0.87.0.dev2` (commit `e46b18e`): full gate đạt
+  **2097 passed, 5 skipped**; `test_dm_origin_delivery_records_pair_without_leaking_history`
+  đỏ một lần khi chạy đầy tải, pass khi chạy riêng và trong lần full-gate xanh.
   Ghi chú đợt `0.87.0.dev1`: cổng `ruff` đã cấu hình trong `pyproject.toml`
   nhưng chưa cài trong `.venv` nên chưa xác minh. Chưa chạy kiểm tra khói
   trên gốc thật (live scratch-root smoke). Chưa kiểm chứng chất lượng với
@@ -188,8 +193,7 @@ Mỗi mục có đủ bốn phần: **mô tả**, **tác động**, **quyết đ
 - **Tác động:** Tên cũ dễ gây nhầm với khái niệm hội thoại công khai mới.
 - **Quyết định/hướng xử lý:** Đổi tên ở một bước riêng về sau. Bước đó phải
   rà mọi call site và test liên quan.
-- **Trạng thái:** Mở. Đây là việc hoãn có chủ đích, không phải lỗi của bản
-  `0.87.0.dev1`.
+- **Trạng thái:** Mở. Đây là việc hoãn có chủ đích, không phải lỗi.
 
 ## 9. Lá bộ nhớ còn dùng tên session_id
 
@@ -242,3 +246,13 @@ Mỗi mục có đủ bốn phần: **mô tả**, **tác động**, **quyết đ
 - **Trạng thái:** Mở (hoãn theo yêu cầu người dùng). Hai phát hiện trên là
   truy vết từ đường mã, chưa phải tái hiện đã thực thi; reviewer nêu rõ không
   thực thi được reproduction với công cụ sẵn có.
+
+## 11. Thiếu ảnh chụp các màn ngoài Trò chuyện
+
+- **Mô tả:** `docs/images` hiện chỉ giữ `webui-chat.png`. Các ảnh chụp màn
+  Nhật ký/Hồ sơ/Provider/Sử dụng/Cài đặt đã bị gỡ vì chúng còn hiện UI giọt
+  mực cũ, trong khi mã hiện tại đã dùng avatar huy chương (medallion).
+- **Tác động:** Tài liệu thiếu hình minh họa cho các màn ngoài Trò chuyện.
+- **Quyết định/hướng xử lý:** Chụp lại khi UI được kiểm chứng bằng mắt lần
+  tới. Tới lúc đó, mục ảnh chụp trong README chỉ giữ màn Trò chuyện.
+- **Trạng thái:** Mở.

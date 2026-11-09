@@ -2,7 +2,7 @@
 
 Trợ lý cá nhân đa công việc, giai đoạn **trước beta (pre-beta)**. Thyca học dần từ những gì bạn chia sẻ và cách bạn làm việc — trò chuyện, viết code, đọc tài liệu, tra web, chạy lệnh trên máy bạn — và **ghi nhớ** để lần sau không phải nhắc lại.
 
-**Phiên bản hiện tại: 0.87.0.dev1**
+**Phiên bản hiện tại: 0.87.0.dev2**
 
 Thyca là một **đội bot**: Thyca là bot quản lý, bạn tạo thêm bot cho từng vai trò. Mỗi bot có persona và bộ nhớ riêng, cùng đọc `SOUL.md` + `USER.md` chung về bạn.
 
@@ -10,7 +10,9 @@ Thyca là một **đội bot**: Thyca là bot quản lý, bạn tạo thêm bot 
 
 6 màn trong một SPA tại `http://127.0.0.1:19502/`, chuyển bằng thanh nav góc phải; bấm bot trên sidebar để lọc màn theo bot đó. Mọi màn dùng chung URL gốc, không tải lại ứng dụng khi chuyển trang; các liên kết trang cũ vẫn mở đúng màn và giữ bộ lọc/định danh liên quan:
 
-![Nhật ký](docs/images/webui-memories.png)
+![Trò chuyện](docs/images/webui-chat.png)
+
+*Màn Trò chuyện với avatar huy chương (medallion) hiện tại.*
 
 | Màn | Làm gì |
 |---|---|
@@ -20,10 +22,6 @@ Thyca là một **đội bot**: Thyca là bot quản lý, bạn tạo thêm bot 
 | **Provider** | Một trình chỉnh sửa kết nối + model dùng chung: URL/API key, tải danh sách, chọn hoặc nhập model, rồi lưu rõ ràng. Tải danh sách chỉ đọc `/models`, không thử gọi model hay lưu cấu hình. Không chỉnh theo từng bot ở đây. |
 | **Sử dụng** | Ba góc nhìn Sử dụng, Chi phí, Trace trong cùng dashboard; lọc bot và kỳ rồi mở chi tiết reasoning/tool đầy đủ. Lượt chưa gắn bot chỉ có trong Tổng quan. |
 | **Cài đặt** | Mặc định chung (giới hạn/nhịp làm việc của đội). |
-
-![Hồ sơ](docs/images/webui-profile.png)
-![Sử dụng](docs/images/webui-dashboard.png)
-![Chi tiết lượt trong màn Sử dụng (ảnh tham khảo cũ)](docs/images/webui-trace.png)
 
 ## Lưu trữ
 
@@ -92,7 +90,7 @@ uv run pytest -q
 git diff --check
 ```
 
-Kết quả gần nhất đã xác minh: **1999 passed, 5 skipped**. Năm ca bị bỏ qua cần Chrome hoặc môi trường ngoài.
+Kết quả gần nhất đã xác minh (commit `e46b18e`): **2097 passed, 5 skipped**. Năm ca bị bỏ qua cần Chrome hoặc môi trường ngoài.
 
 Cổng `ruff` đã được cấu hình trong `pyproject.toml`. Máy kiểm tra lần này chưa cài `ruff` trong `.venv` nên cổng này chưa được xác minh.
 
@@ -100,7 +98,7 @@ Chưa chạy kiểm tra khói trên thư mục gốc thật (live scratch-root s
 
 ## Giới hạn đã biết
 
-- Đây vẫn là bản development (`0.87.0.dev1`). Đừng coi là bản beta hay bản ổn định.
+- Đây vẫn là bản development (`0.87.0.dev2`). Đừng coi là bản beta hay bản ổn định.
 - Việc đổi tên bốn class `Session*` sang tên mới là bước riêng về sau.
 - Việc đổi tên trường `session_id` ở lá bộ nhớ thành `memory_id` là bước riêng về sau.
 - Chưa có bên phát hành vòng đời/đặt lại (lifecycle/reset issuer) ngoài luồng khởi động cục bộ của `ChatApp`.
@@ -109,7 +107,7 @@ Chưa chạy kiểm tra khói trên thư mục gốc thật (live scratch-root s
 
 ## Tài liệu & góp ý
 
-`.agents/README.md` cho agent contributor, `.agents/plans/` kế hoạch, `.agents/decisions/` quyết định kiến trúc. Góp ý tại [GitHub Discussions](https://github.com/Flowerf19/thyca-ai/discussions).
+`.agents/README.md` cho agent contributor, `.agents/plans/done/` kế hoạch, `.agents/decisions/` quyết định kiến trúc. Góp ý tại [GitHub Discussions](https://github.com/Flowerf19/thyca-ai/discussions).
 
 ## License
 

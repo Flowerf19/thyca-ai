@@ -1,6 +1,6 @@
 # L2 — markdown, SQLite (lexical; vector bị gỡ)
 
-Một nguồn chữ, một file mục lục, hai lối tìm chữ (FTS5 + trigram). Embedding runtime đã gỡ (580ae03) — semantic path không nằm trong code; kiến trúc hybrid giữ frozen trong `.agents/plans/l2-memory-retrieval.md`.
+Một nguồn chữ, một file mục lục, hai lối tìm chữ (FTS5 + trigram). Embedding runtime đã gỡ (580ae03) — semantic path không nằm trong code; kiến trúc hybrid giữ frozen trong `.agents/plans/done/l2-memory-retrieval.md`.
 
 Mẫu: [`memories/example_store/`](../../memories/example_store/).
 

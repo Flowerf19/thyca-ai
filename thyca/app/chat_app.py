@@ -172,9 +172,14 @@ class ChatApp:
             card_post=self._posting.post_bot_card,
             room_post=self._posting.post_bot_room_message,
             dm_resolve=lambda bid: self.bot_dm(bid)["id"],
+            room_bots=self.room_bots,
+            room_dm_owner=self._room_dm_owner,
         )
         _deps.dm_card_post = self._posting.post_bot_dm_card
         register_admin_tools(self._registry, _deps)
+        from thyca.bots.admin_tools.skill_share import register_skill_share_tools
+        from thyca.skills.sharing import SharingService
+        register_skill_share_tools(self._registry, SharingService(root))
         from thyca.bots.channel_tools import register_channel_tools
 
         register_channel_tools(self._registry, _deps)
@@ -244,7 +249,6 @@ class ChatApp:
             room_dm_owner=self._room_dm_owner,
             room_delta_for=self._room_delta_for,
             room_bots=self.room_bots,
-            set_room_bots=self.set_room_bots,
         ))
         self._runtime.deliverer = self._delivery.deliver_envelope
         from thyca.app.background_jobs import BackgroundJobsDeps, BackgroundJobsService

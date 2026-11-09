@@ -38,8 +38,48 @@ class PathGuard:
         calls always serialize on one identity."""
         return str(self.resolve(args["path"]))
 
+    def _lexical_abs(self, path: str) -> Path:
+        # Lexical absolute path without following symlinks, for skill-root
+        # classification and symlink-component checks.
+        raw = absolutize(path)
+        if not raw.is_absolute():
+            raw = Path.cwd() / raw
+        return Path(os.path.normpath(str(raw)))
+
+    def _skill_ref_for(self, lexical: Path):
+        # Recognized skill paths only; None otherwise.
+        from thyca.skills.sharing import classify_skill_path
+
+        try:
+            return classify_skill_path(self.thyca_dir, lexical)
+        except (OSError, ValueError):
+            return None
+
     def deny_write(self, path: str) -> Path:
         target = self.resolve(path)
+        # Sharing state is managed only through the Thyca tool, never via
+        # native file tools.
+        root = self.thyca_dir
+        if target == root / "skill-sharing.json" or target == root / "skill-sharing.lock":
+            raise PathDenied(f"write denied: {target}")
+        # Recognized skill writes use the sharing gate plus link checks;
+        # ordinary team-control rules still apply to non-skill paths.
+        try:
+            lexical = self._lexical_abs(path)
+            ref = self._skill_ref_for(lexical)
+        except ValueError:
+            ref = None
+        if ref is not None:
+            from thyca.skills.sharing import SharingService, validate_skill_write_path
+
+            svc = SharingService(self.thyca_dir)
+            if not svc.can_write_skill(current_bot_id(), ref):
+                raise PathDenied(f"write denied: {target}")
+            try:
+                validate_skill_write_path(self.thyca_dir, lexical)
+            except ValueError as exc:
+                raise PathDenied(f"write denied: {target}: {exc}") from exc
+            return target
         if self._blocked(target):
             raise PathDenied(f"write denied: {target}")
         return target
@@ -47,6 +87,41 @@ class PathGuard:
     def deny_read(self, path: str) -> Path:
         """Resolve a read target, refusing bot-sensitive files to child bots."""
         target = self.resolve(path)
+        # Recognized skill reads use the sharing gate plus link checks.
+        try:
+            lexical = self._lexical_abs(path)
+            ref = self._skill_ref_for(lexical)
+        except ValueError:
+            ref = None
+        if ref is not None:
+            from thyca.skills.sharing import SharingService, _has_symlink_component
+
+            svc = SharingService(self.thyca_dir)
+            if not svc.can_read_skill(current_bot_id(), ref):
+                raise PathDenied(f"read denied: {target}")
+            # Link safety before any content read: symlink components,
+            # symlinked files, hardlinked files, and special files fail.
+            try:
+                if _has_symlink_component(lexical, self.thyca_dir):
+                    raise PathDenied(f"read denied: {target}")
+                st = os.lstat(lexical)
+                import stat as _stat
+
+                if not _stat.S_ISREG(st.st_mode):
+                    raise PathDenied(f"read denied: {target}")
+                if st.st_nlink != 1:
+                    raise PathDenied(f"read denied: {target}")
+            except FileNotFoundError:
+                # Missing skill file reads as absent (handler reports
+                # FileNotFoundError); links cannot exist without a target.
+                pass
+            except OSError as exc:
+                raise PathDenied(f"read denied: {target}: {exc}") from exc
+            # Fall through to group-sensitive memory checks (skills are
+            # never memory paths, so this stays False, but keep the gate).
+            if self._group_sensitive(target):
+                raise PathDenied(f"read denied: {target}")
+            return target
         if self._bot_sensitive(target):
             raise PathDenied(f"read denied: {target}")
         if self._group_sensitive(target):
@@ -54,17 +129,25 @@ class PathGuard:
         return target
 
     def _group_sensitive(self, target: Path) -> bool:
-        """Raw private state paths denied only while a GROUP view is bound.
+        """Raw private state paths denied in group turns and pinned private turns.
 
         Root memory daily files, room transcripts, per-bot workspace
         private state (private_followups), raw sqlite indexes and user
         profile files bypass the visibility-filtered facade, so a group
         turn reads them only through memory_get/search — never from disk.
-        No bound view, CLI and private windows keep the old behavior."""
+        A private invocation with pinned denied origins keeps the same
+        raw-file denial; its filtered memory tools still allow the bot's
+        own entries. No bound view, CLI and DM windows keep the old behavior."""
         from thyca.memories.visibility import current_memory_view
 
         view = current_memory_view()
-        if view is None or getattr(view.window, "kind", None) != "group":
+        if view is None:
+            return False
+        is_group = getattr(view.window, "kind", None) == "group"
+        denied = getattr(view, "denied_origins", frozenset())
+        # Pinned private denial keeps the raw-file restriction when the
+        # window is absent; otherwise preserve DM and unbound behavior.
+        if not is_group and not denied:
             return False
         root = self.thyca_dir
         try:

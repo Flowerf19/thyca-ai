@@ -328,9 +328,13 @@ class BotRuntime:
         return self._workspaces
 
     def _canonical_store(
-        self, bot_id: str, window: WindowRef, session_id: str
+        self, bot_id: str, window: WindowRef, session_id: str,
+        priv_span: str | None = None,
     ) -> CanonicalSessionStore:
-        """Canonical journal store for one ``(bot, window)`` turn."""
+        """Canonical journal store for one ``(bot, window)`` turn.
+
+        A private execution keeps the real group window and selects only
+        its own span; the visible DM-like window is never journaled."""
         from thyca.bots.timeline import CanonicalSessionStore, WorkspaceTimeline
 
         return CanonicalSessionStore(
@@ -338,6 +342,7 @@ class BotRuntime:
             timeline=WorkspaceTimeline(self._dir, bot_id),
             window=window,
             session_id=session_id,
+            priv_span=priv_span,
         )
 
     def internal_session(self, bot_id: str, room_id: str) -> Session:
@@ -361,6 +366,7 @@ class BotRuntime:
             bot_id, window, binding.internal_session_id).load(
                 binding.internal_session_id)
 
+    # Run one turn; return only the reply text.
     async def run_bot_turn(
         self,
         *,
@@ -392,6 +398,9 @@ class BotRuntime:
         )
         return result.reply
 
+    # Lease-gated turn entry; private runs use an isolated memory view.
+    # A private invocation (non-member group delivery) sees no group
+    # window and no group history; its visible window is DM-like.
     async def run_bot_turn_detailed(
         self,
         *,
@@ -411,6 +420,7 @@ class BotRuntime:
         model_override: str | None = None,
         effort: str | None = None,
         diagnostic_sink=None,
+        private_invocation: bool = False,
     ) -> BotTurnResult:
         """Lease-gated entry: one active turn per bot (WS-2).
 
@@ -436,7 +446,22 @@ class BotRuntime:
         )
 
         current = current_memory_view()
-        if (
+        if private_invocation:
+            # Pin the originating group denial through nested turns;
+            # concrete own entries keep their explicit exemption downstream.
+            inherited: frozenset[str] = (
+                current.denied_origins
+                if current is not None
+                and isinstance(getattr(current, "denied_origins", None), frozenset)
+                else frozenset()
+            )
+            view = MemoryView(
+                window=None,
+                bot_id=card.bot_id,
+                thyca_dir=self._dir,
+                denied_origins=inherited | {room_id},
+            )
+        elif (
             current is not None
             and current.bot_id == card.bot_id
             and current.window is not None
@@ -462,6 +487,7 @@ class BotRuntime:
                     model_override=model_override,
                     effort=effort,
                     diagnostic_sink=diagnostic_sink,
+                    private_invocation=private_invocation,
                 )
         async with self._workspaces.lease(card.bot_id):
             # A queued turn must not recreate workspace state after deletion.
@@ -478,6 +504,7 @@ class BotRuntime:
                     model_override=model_override,
                     effort=effort,
                     diagnostic_sink=diagnostic_sink,
+                    private_invocation=private_invocation,
                 )
 
     def _window_for_room(self, room_id: str):
@@ -500,6 +527,10 @@ class BotRuntime:
             participants=tuple(session.bots) if session.bots else ("thyca",),
         )
 
+    # Run the loop in the bot's canonical session for one room.
+    # A private invocation journals the real group window with a
+    # versioned span selector and establishes that group binding only
+    # when missing; the DM-like visible window lives only in the turn.
     async def _run_bot_turn_detailed(
         self,
         *,
@@ -519,6 +550,7 @@ class BotRuntime:
         model_override: str | None = None,
         effort: str | None = None,
         diagnostic_sink=None,
+        private_invocation: bool = False,
     ) -> BotTurnResult:
         """Run one turn of ``card`` in its canonical session for ``room_id``.
 
@@ -540,7 +572,10 @@ class BotRuntime:
         self._status.begin_turn(
             card.bot_id, room_id, trace_id=trace_id, span_id=own_span
         )
-        raw_sink = event_sink
+        # Private execution keeps runtime-local status but never forwards
+        # live reply/reasoning deltas to the group event sink; the reply
+        # still returns to the asking bot as tool data.
+        raw_sink = None if private_invocation else event_sink
 
         def tracked_sink(event, _sink=raw_sink) -> None:
             self._status.observe_event(card.bot_id, own_span, event)
@@ -550,35 +585,99 @@ class BotRuntime:
         try:
             from thyca.memories.visibility import current_memory_view
 
-            _window = None
-            _view = current_memory_view()
-            if _view is not None:
-                _window = _view.window
-            if _window is None:
-                _window = self._window_for_room(room_id)
-            if _window is None:
-                # Synthetic room (A2A without a room): a private window
-                # scoped to this bot, matching the private-view fallback.
-                from thyca.core.channel import WindowRef
+            if private_invocation:
+                from thyca.core.channel import WindowRef as _PrivateWindow
 
-                _window = WindowRef(
+                # Private execution journals the real group window with a
+                # versioned span selector; the DM-like visible window lives
+                # only in this turn and is never persisted. The registry
+                # keeps real group metadata: establish it when missing,
+                # never overwrite an ambiguous binding.
+                _view0 = current_memory_view()
+                _store_window = None
+                if (
+                    _view0 is not None
+                    and _view0.window is not None
+                    and _view0.window.window_id == room_id
+                    and _view0.window.kind == "group"
+                ):
+                    _store_window = _view0.window
+                else:
+                    _store_window = self._window_for_room(room_id)
+                if (
+                    _store_window is None
+                    or _store_window.window_id != room_id
+                    or _store_window.kind != "group"
+                ):
+                    raise WorkspaceTurnConflict(
+                        f"private invocation without a group window: {room_id}"
+                    )
+                binding = self._workspaces.store.ensure_session(
+                    card.bot_id, room_id)
+                if binding.window is None:
+                    self._workspaces.store.bind_window(
+                        card.bot_id, _store_window)
+                elif (
+                    binding.window.window_id != _store_window.window_id
+                    or binding.window.kind != _store_window.kind
+                    or binding.window.channel_id != _store_window.channel_id
+                ):
+                    raise WorkspaceTurnConflict(
+                        f"ambiguous workspace binding for private turn: {room_id}"
+                    )
+                session_id = binding.internal_session_id
+                store = self._canonical_store(
+                    card.bot_id, _store_window, session_id,
+                    priv_span=own_span)
+                _visible_window = _PrivateWindow(
                     window_id=room_id, channel_id="webui", kind="dm",
                     participants=(card.bot_id,),
                 )
-            # Real window metadata binds inside internal_session;
-            # synthetic rooms keep binding.window unset (projection
-            # scoping uses the local _window either way). NB: the
-            # binding's window_id is the room id in both cases.
-            internal = self.internal_session(card.bot_id, room_id)
-            session_id = internal.id
-            store = self._canonical_store(
-                card.bot_id, _window, session_id)
+                _window = _visible_window
+            else:
+                _window = None
+                _view = current_memory_view()
+                if _view is not None:
+                    _window = _view.window
+                if _window is None:
+                    _window = self._window_for_room(room_id)
+                if _window is None:
+                    # Synthetic room (A2A without a room): a private window
+                    # scoped to this bot, matching the private-view fallback.
+                    from thyca.core.channel import WindowRef
+
+                    _window = WindowRef(
+                        window_id=room_id, channel_id="webui", kind="dm",
+                        participants=(card.bot_id,),
+                    )
+                # Real window metadata binds inside internal_session;
+                # synthetic rooms keep binding.window unset (projection
+                # scoping uses the local _window either way). NB: the
+                # binding's window_id is the room id in both cases.
+                internal = self.internal_session(card.bot_id, room_id)
+                session_id = internal.id
+                store = self._canonical_store(
+                    card.bot_id, _window, session_id)
+                _visible_window = _window
             sessions = SessionManager(
                 limits=turn_cfg.effective_limits(),
                 timezone_name=turn_cfg.timeline.timezone,
                 store=store,
             )
             sessions.load(session_id)
+            if private_invocation:
+                # Versioned private projection starts empty by
+                # construction (current span only); never patch history
+                # in memory. Isolation setup above must already hold.
+                # A private turn takes no injected group delta or cursor.
+                if room_text or room_cursor_after is not None:
+                    raise WorkspaceTurnConflict(
+                        "private invocation with group context"
+                    )
+                if len(sessions.current.messages) != 0:
+                    raise WorkspaceTurnConflict(
+                        "private projection is not isolated"
+                    )
             if retry:
                 from thyca.app.turn_options import InvalidTurnOption
 
@@ -641,17 +740,23 @@ class BotRuntime:
             )
             # CBE-4: open-task index (compact, counted in hot tokens via
             # PromptManager.build) + one-shot post-compaction recall.
+            # Private execution skips unrelated queued tasks entirely;
+            # the queue stays untouched for the owning turns.
             from thyca.bots.tasks import derive_open_tasks
 
-            open_tasks = derive_open_tasks(
-                list(sessions.current.messages),
-                self._pending_relevant(card.bot_id),
-                bot_id=card.bot_id,
+            open_tasks = (
+                ()
+                if private_invocation
+                else derive_open_tasks(
+                    list(sessions.current.messages),
+                    self._pending_relevant(card.bot_id),
+                    bot_id=card.bot_id,
+                )
             )
             # Phase 1C: open memory-task catalog (separate section from
             # runtime open tasks above; empty when the bot sees no tasks).
             catalog_rows: tuple = ()
-            if card.memory.read:
+            if card.memory.read and not private_invocation:
                 try:
                     if self.memory_task_catalog is not None:
                         rows = self.memory_task_catalog(card.bot_id)
@@ -665,7 +770,11 @@ class BotRuntime:
             # One-shot recall is consumed only on successful delivery:
             # it stays armed here and is discarded after loop.run
             # returns, so a failed turn re-offers it on the next turn.
-            recall_armed = reinject_key in self._reinject_pending
+            # Private execution never touches the group recall entry.
+            recall_armed = (
+                reinject_key in self._reinject_pending
+                and not private_invocation
+            )
             bounded: list[str] = []
             if recall_armed and self.memory_searcher is not None and card.memory.read:
                 try:
@@ -682,8 +791,15 @@ class BotRuntime:
             from thyca.memories.visibility import current_memory_view
             from thyca.bots.private_followups import PrivateFollowupStore
 
+            # Visible window feeds the prompt and attribution; the memory
+            # view stays private (None) for outsiders so group origins
+            # stay unreadable. Never derive the visible window from the
+            # private memory view.
             _view = current_memory_view()
-            _window = _view.window if _view is not None else None
+            if private_invocation:
+                _window = _visible_window
+            else:
+                _window = _view.window if _view is not None else None
             _pf_store = PrivateFollowupStore(self._dir)
             try:
                 _active_pf = _pf_store.active(card.bot_id)
@@ -708,7 +824,12 @@ class BotRuntime:
             # Freeze the visible mailbox batch once before compact planning.
             # The exact same wire text is used by the plan and AgentLoop;
             # envelopes arriving later remain queued for the next turn.
-            wire_text = text if retry else self._prepend_mailbox(card.bot_id, room_id, text)
+            # Private execution takes no mailbox batch at all: nothing is
+            # drained, so unrelated queued mail stays queued.
+            if private_invocation:
+                wire_text = text
+            else:
+                wire_text = text if retry else self._prepend_mailbox(card.bot_id, room_id, text)
             # The raw user row persists BEFORE the compact prediction so
             # the plan and the loop's own pre-run compact see the exact
             # same transcript (and the flush below can extract from the
@@ -895,9 +1016,10 @@ class BotRuntime:
                 # A compaction landed this turn (new marker, or the
                 # pre-turn plan said it would): queue the one-shot
                 # memory re-injection for this bot's next turn (CBE-4).
-                if will_compact or _compaction_markers(
+                # Private execution never arms the group entry.
+                if (will_compact or _compaction_markers(
                     sessions.current.messages
-                ) > markers_before:
+                ) > markers_before) and not private_invocation:
                     self._reinject_pending.add(reinject_key)
                 agg_model, agg_usage, agg_cost, agg_latency, agg_requests, agg_tool_calls = _aggregate_turn_meta(new_messages)
                 agg_rounds = _aggregate_turn_rounds(new_messages)
@@ -988,6 +1110,7 @@ class BotRuntime:
                 if close is not None:
                     await close()
 
+    # Send one A2A envelope; a private turn's sends carry the chain mark.
     def send(
         self,
         *,
@@ -999,6 +1122,7 @@ class BotRuntime:
         trace_id: str | None = None,
         parent_span_id: str | None = None,
         refs: tuple[str, ...] | list[str] = (),
+        private_chain: bool = False,
     ):
         """Send one A2A envelope (hop-limited by the bus)."""
         self._bus.register(recipient)
@@ -1011,6 +1135,7 @@ class BotRuntime:
             trace_id=trace_id,
             parent_span_id=parent_span_id,
             refs=refs,
+            private_chain=private_chain,
         )
 
     def fetch_artifact(self, span_id: str, caller: str | None = None) -> str | None:
@@ -1054,9 +1179,14 @@ class BotRuntime:
         if view is None:
             pending = self._bus.drain(bot_id)
         else:
+            # A private-chain envelope never enters any mailbox batch,
+            # however it arrived; it stays queued for no group turn.
             pending = self._bus.drain_matching(
                 bot_id,
-                lambda env: view.can_read_origin(env.session_id),
+                lambda env: (
+                    not getattr(env, "private_chain", False)
+                    and view.can_read_origin(env.session_id)
+                ),
             )
         return self._mailbox_text(pending, room_id, text)
 
@@ -1104,7 +1234,11 @@ class BotRuntime:
 
         view = current_memory_view()
 
+        # A private-chain envelope never enters public task views or
+        # normal-turn injection, however readable its origin would be.
         def readable(envelope) -> bool:
+            if getattr(envelope, "private_chain", False):
+                return False
             return view is None or view.can_read_origin(envelope.session_id)
 
         relevant = [

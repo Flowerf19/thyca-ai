@@ -73,7 +73,11 @@ def _protected_roots() -> list[Path]:
     root = getattr(ctx, "thyca_dir", None) if ctx is not None else None
     if root is None:
         root = Path.home() / ".thyca"
-    root = Path(root)
+    # Canonical root, like PathGuard: the context may carry an alias.
+    try:
+        root = Path(root).resolve()
+    except (OSError, RuntimeError, ValueError):
+        root = Path(root)
     return [root / "bots", root / "config.json", root / "skills-team"]
 
 
@@ -110,8 +114,51 @@ class BotPolicy(Policy):
             )
         if call.name in _FILE_TOOLS:
             path = call.arguments.get("path") if isinstance(call.arguments, dict) else None
-            if isinstance(path, str) and _targets_protected(path):
-                raise PolicyDenied(f"bot may not access team-control file: {path}")
+            if isinstance(path, str) and path.strip():
+                # Recognized skill paths use the sharing gate: own-private
+                # reads/writes and shared reads pass here; PathGuard still
+                # enforces precise authorization plus link safeguards.
+                # Foreign-private, unshared team, Thyca-owned roots, and
+                # child shared writes stay denied.
+                try:
+                    from thyca.skills.sharing import SharingService, classify_skill_path
+                    from thyca.tools.path_guard import absolutize
+                    import os as _os
+                    from pathlib import Path as _Path
+
+                    ctx = current_bot_turn_context()
+                    scope = getattr(ctx, "scope", None) if ctx is not None else None
+                    root = getattr(ctx, "thyca_dir", None) if ctx is not None else None
+                    if root is None:
+                        root = _Path.home() / ".thyca"
+                    # Canonical root, like PathGuard: the skill gate
+                    # classifies against the resolved root on both sides.
+                    try:
+                        root = _Path(root).resolve()
+                    except (OSError, RuntimeError, ValueError):
+                        root = _Path(root)
+                    raw = absolutize(path)
+                    if not raw.is_absolute():
+                        raw = _Path.cwd() / raw
+                    lexical = _Path(_os.path.normpath(str(raw)))
+                    ref = classify_skill_path(root, lexical)
+                except (OSError, ValueError, TypeError):
+                    ref = None
+                if ref is not None:
+                    try:
+                        svc = SharingService(root)
+                        bot = current_bot_id()
+                        ok = (
+                            svc.can_read_skill(bot, ref)
+                            if call.name == "read"
+                            else svc.can_write_skill(bot, ref)
+                        )
+                    except (OSError, ValueError):
+                        ok = False
+                    if not ok:
+                        raise PolicyDenied(f"bot may not access team-control file: {path}")
+                elif _targets_protected(path):
+                    raise PolicyDenied(f"bot may not access team-control file: {path}")
             # Relative or obfuscated paths are still caught by PathGuard
             # inside the handler, which resolves against the real root.
         if call.name == "bash":

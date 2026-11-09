@@ -125,6 +125,7 @@ class MemoryFacade:
                 return candidate
         raise ArchiveError("could not mint a unique task id")
 
+    # Group visible task entries into a task catalog for tool reads.
     def tasks(
         self,
         *,
@@ -133,6 +134,7 @@ class MemoryFacade:
         date_to: str | None = None,
         limit: int = 20,
         now: datetime | None = None,
+        allow_own_cross_window: bool = False,
     ) -> dict:
         """Group visible task entries into a task catalog (phase 1A).
 
@@ -167,7 +169,9 @@ class MemoryFacade:
         for row in rows:
             keys = row.keys()
             origin = row["chat"] if "chat" in keys else None
-            if not self._entry_readable(origin, row["bots"]):
+            if not self._entry_readable(
+                    origin, row["bots"],
+                    allow_own_cross_window=allow_own_cross_window):
                 continue
             members_by_session[str(row["session_id"])] = {
                 "task": str(row["task"]),
@@ -204,7 +208,8 @@ class MemoryFacade:
                     continue
                 if not self._entry_readable(
                         getattr(chunk, "chat_session", None),
-                        encode_bots(chunk.bots)):
+                        encode_bots(chunk.bots),
+                        allow_own_cross_window=allow_own_cross_window):
                     continue
                 by_session.setdefault(chunk.session_id, []).append(chunk)
             for session_id, leaves in by_session.items():
@@ -367,12 +372,14 @@ class MemoryFacade:
             self._refresh_index(now)
             return exp
 
+    # Read one entry by id; the tool layer opts into the owner exemption.
     def get(
         self,
         *,
         chunk_id: str | None = None,
         session_id: str | None = None,
         now: datetime | None = None,
+        allow_own_cross_window: bool = False,
     ) -> str:
         provided = [
             (name, value)
@@ -434,7 +441,10 @@ class MemoryFacade:
                     if meta is not None:
                         origin_chat = meta.chat
                     break
-            if not self._origin_allowed(origin_chat):
+            bots = self._lookup_bots(sid, now)
+            if not self._origin_allowed(
+                    origin_chat, bots,
+                    allow_own_cross_window=allow_own_cross_window):
                 raise ArchiveError("entry is not readable in this window")
         if chunk_ids and sid:
             self.archive.store.usage.record_gets(chunk_ids, sid, now_ts)
@@ -498,7 +508,10 @@ class MemoryFacade:
         task: str | None = None,
         kind: str | None = None,
         status: str | None = None,
+        allow_own_cross_window: bool = False,
     ) -> SearchResult:
+        # Keyword search over archived leaves; the tool layer opts into
+        # the owner exemption for proactive reads, other callers keep it.
         return lexical_search(
             self.archive,
             query,
@@ -511,13 +524,25 @@ class MemoryFacade:
             task=task,
             kind=kind,
             status=status,
+            allow_own_cross_window=allow_own_cross_window,
         )
 
-    def recent(self, limit: int = 5, now: datetime | None = None) -> list[Hit]:
-        return _recent_search(self.archive, limit, now, reader=current_bot_id())
+    def recent(
+        self, limit: int = 5, now: datetime | None = None,
+        allow_own_cross_window: bool = False,
+    ) -> list[Hit]:
+        # Most-recent archived hits; same opt-in owner exemption as search.
+        return _recent_search(
+            self.archive, limit, now, reader=current_bot_id(),
+            allow_own_cross_window=allow_own_cross_window,
+        )
 
     @staticmethod
-    def _entry_readable(chat: str | None, bots) -> bool:
+    def _entry_readable(
+        chat: str | None, bots,
+        allow_own_cross_window: bool = False,
+    ) -> bool:
+        # Task-catalog visibility for one entry under the bound view.
         from thyca.memories.visibility import current_memory_view
 
         view = current_memory_view()
@@ -530,14 +555,23 @@ class MemoryFacade:
                 bots = decode_bots(bots)
             except Exception:
                 bots = None
-        return view.can_read_entry(chat, bots)
+        return view.can_read_entry(
+            chat, bots, allow_own_cross_window=allow_own_cross_window)
 
     @staticmethod
-    def _origin_allowed(chat: str | None) -> bool:
+    def _origin_allowed(
+        chat: str | None, bots: tuple | None = None,
+        allow_own_cross_window: bool = False,
+    ) -> bool:
+        # Single-entry origin check for get; the tool layer opts into
+        # the owner exemption for proactive reads, others keep it off.
         from thyca.memories.visibility import current_memory_view
 
         view = current_memory_view()
-        return view is None or view.can_read_origin(chat)
+        if view is None:
+            return True
+        return view.can_read_entry(
+            chat, bots, allow_own_cross_window=allow_own_cross_window)
 
     def _refresh_index(self, now: datetime | None = None) -> None:
         with self.writer.mutation_lock():

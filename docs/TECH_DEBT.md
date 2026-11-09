@@ -200,3 +200,45 @@ Mỗi mục có đủ bốn phần: **mô tả**, **tác động**, **quyết đ
   xử lý cả đường đọc dữ liệu đã ghi.
 - **Trạng thái:** Mở. Đây là việc hoãn có chủ đích, tách khỏi đợt hard-cut
   hội thoại.
+
+## 10. Cách ly private chưa đủ: bash và prefix vô chủ (mở, slice 2 chưa sẵn sàng)
+
+- **Mô tả:** Hai rủi ro độc lập, đều truy vết từ mã hiện tại.
+  1. Private outsider vẫn có thể đọc bộ nhớ thô qua `bash` được phép hoặc
+     thực thi tùy ý tương đương. Private invocation dựng
+     `MemoryView(window=None, denied_origins=...)` tại
+     `thyca/bots/runtime.py:458-462` nhưng vẫn giữ tool thường của card tại
+     `:716` qua `filtered_tool_schemas`. `BotPolicy` tại
+     `thyca/bots/policy.py:68-77` và `:117-123` chỉ chặn đường team-control.
+     Handler shell tại `thyca/tools/builtin/bash.py` (`bash_spec`/handler)
+     không kiểm tra `MemoryView` hay `PathGuard`. Vì vậy recipient ngoài
+     với `tools=("bash",)` có thể chạy `cat <root>/memory/<day>.md` và đọc
+     cùng các entry team/foreign mà regression `read` mới chặn. Bản sửa read
+     guard hiện tại trong `thyca/tools/path_guard.py`
+     (`deny_read`/`_group_sensitive` tôn trọng pinned denials) KHÔNG đóng
+     đường `bash`.
+  2. Prompt private vẫn tự nhận text daily-memory vô chủ. Private view có
+     `window=None` nên `is_group` là false
+     (`thyca/memories/visibility.py`). `scope.memory.refresh` cho turn
+     private tại `thyca/bots/runtime.py:728-736` đi qua
+     `thyca/memories/active.py:207` với
+     `include_prefix=not (view is not None and view.is_group)`, nên private
+     nhận `True`. Prefix bỏ qua kiểm tra ownership/origin; logic
+     `split_today_by_session` trong `thyca/memories/active.py` đưa prefix
+     vô chủ vào phần here, và khi file không có heading thì lấy toàn bộ
+     file daily. Đây là input Markdown được hỗ trợ, theo
+     `tests/test_memory_active.py:438-457`, không phải giả thuyết file hỏng.
+     Private outsider vì vậy có thể nhận ghi chú tự do trước heading đầu
+     mà người gửi không chọn.
+- **Tác động:** Cách ly privacy của private invocation chưa đầy đủ; slice 2
+  chưa sẵn sàng và chưa được duyệt.
+- **Quyết định/hướng xử lý:** Người dùng yêu cầu KHÔNG sửa trong lát này;
+  ghi nhận làm nợ. Hành vi hiện tại không được coi là an toàn đã chấp nhận,
+  và chưa duyệt thiết kế cụ thể nào. Về sau cần boundary được review độc lập
+  và test fail-first cho từng đường (bash/thực thi tùy ý; prefix có marker
+  và file không heading), giữ hành vi DM/unbound bình thường và truy xuất
+  own-entry đã cho phép qua tool lọc. Không dùng heuristic từ khóa lệnh để dựng
+  boundary shell.
+- **Trạng thái:** Mở (hoãn theo yêu cầu người dùng). Hai phát hiện trên là
+  truy vết từ đường mã, chưa phải tái hiện đã thực thi; reviewer nêu rõ không
+  thực thi được reproduction với công cụ sẵn có.

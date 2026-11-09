@@ -295,6 +295,8 @@ class SessionStore:
     def read_dm(self, path: Path) -> str | None:
         """The DM owner bot id for one door, or None when not a DM."""
         runtime_root = _require_runtime_root(Path(path).parent)
+        from thyca.conversations.store.contracts import ConversationStoreError
+
         try:
             from thyca.conversations.store.runtime import resolve_ref
 
@@ -302,6 +304,11 @@ class SessionStore:
             return ref.id if ref.kind == "dm" else None
         except SessionError:
             raise
+        except ConversationStoreError as exc:
+            # A missing door is not found; a broken store is corrupt, never None.
+            if getattr(exc, "scope", "global") == "local":
+                raise SessionNotFound(path) from exc
+            raise SessionCorrupt(path, None, exc) from exc
         except Exception:
             return None
 
@@ -309,6 +316,8 @@ class SessionStore:
     def read_bots(self, path: Path) -> list[str] | None:
         """Stored participant list for one door, or None when unset."""
         runtime_root = _require_runtime_root(Path(path).parent)
+        from thyca.conversations.store.contracts import ConversationStoreError
+
         try:
             from thyca.conversations.store.runtime import resolve_ref
             from thyca.conversations.store.database import (
@@ -336,6 +345,11 @@ class SessionStore:
             return list(participants) if participants else None
         except SessionError:
             raise
+        except ConversationStoreError as exc:
+            # A missing door is not found; a broken store is corrupt, never None.
+            if getattr(exc, "scope", "global") == "local":
+                raise SessionNotFound(path) from exc
+            raise SessionCorrupt(path, None, exc) from exc
         except Exception:
             return None
 

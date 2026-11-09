@@ -56,8 +56,14 @@ def lexical_search(
     task: str | None = None,
     kind: str | None = None,
     status: str | None = None,
+    allow_own_cross_window: bool = False,
 ) -> SearchResult:
-    """FTS + trigram search with clamp/dedup warnings and usage recording."""
+    """FTS + trigram search with clamp/dedup warnings and usage recording.
+
+    ``allow_own_cross_window`` lets a proactive tool read surface the
+    in-flight bot's own entries across origin windows; automatic callers
+    leave it off so background prefetch keeps the old boundary.
+    """
     if timeline_day is not None and not (
         isinstance(timeline_day, str) and DATE_RE.fullmatch(timeline_day)
     ):
@@ -126,7 +132,9 @@ def lexical_search(
     if view is not None:
         deduped = [
             hit for hit in deduped
-            if view.can_read_entry(hit.chat_session, hit.bots)
+            if view.can_read_entry(
+                hit.chat_session, hit.bots,
+                allow_own_cross_window=allow_own_cross_window)
         ]
     hits = archive.with_counts(deduped[:limit], now)
     if hits:
@@ -142,8 +150,13 @@ def lexical_search(
 def recent(
     archive: ArchivedMemory, limit: int = 5, now: datetime | None = None,
     reader: str | None = None,
+    allow_own_cross_window: bool = False,
 ) -> list[Hit]:
-    """Most recently updated archived hits, clamped like the facade."""
+    """Most recently updated archived hits, clamped like the facade.
+
+    ``allow_own_cross_window`` opts proactive tool reads into the owner
+    exemption; automatic callers leave it off.
+    """
     limit = max(1, min(limit, 10))
     from thyca.memories.visibility import current_memory_view
 
@@ -152,6 +165,8 @@ def recent(
     if view is not None:
         pool = [
             hit for hit in pool
-            if view.can_read_entry(hit.chat_session, hit.bots)
+            if view.can_read_entry(
+                hit.chat_session, hit.bots,
+                allow_own_cross_window=allow_own_cross_window)
         ]
     return archive.with_counts(pool[:limit], now)

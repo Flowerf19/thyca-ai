@@ -222,7 +222,11 @@ class ActiveMemory:
             ),
             user=self._read(self.thyca_dir / "USER.md"),
             today=today_text,
-            skills=self._skills.index_text(),
+            skills=(
+                self._skills.index_text()
+                if reader is None or reader == "thyca"
+                else ""
+            ),
             today_elsewhere=elsewhere_text,
         )
 

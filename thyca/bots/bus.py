@@ -44,6 +44,9 @@ class BusError(RuntimeError):
 
 @dataclass(frozen=True)
 class Envelope:
+    # Privacy travels on the envelope before enqueue/lease: a send issued
+    # inside a private turn is marked at send time and every log/mailbox
+    # consumer must honor it. Transport-local only, never serialized.
     sender: str
     recipient: str
     kind: str
@@ -52,6 +55,7 @@ class Envelope:
     parent_span_id: str | None
     ts: str
     payload: str
+    private_chain: bool = False
     # This envelope's own span: room rows for it carry this id, and the
     # recipient turn's rows parent to it (FE delegation tree).
     span_id: str | None = None
@@ -129,6 +133,7 @@ class Bus:
         parent_span_id: str | None = None,
         span_id: str | None = None,
         refs: tuple[str, ...] | list[str] = (),
+        private_chain: bool = False,
     ) -> Envelope:
         if kind not in ENVELOPE_KINDS:
             raise BusError(f"unknown envelope kind: {kind!r}")
@@ -167,6 +172,7 @@ class Bus:
             span_id=own_span,
             refs=clean_refs,
             truncated=truncated,
+            private_chain=bool(private_chain),
         )
         with self._lock:
             if recipient not in self._boxes:
@@ -249,6 +255,35 @@ class Bus:
             pass
         for item in kept:
             box.put(item)
+        return removed
+
+    # Remove every queued and logged copy of one span (private-chain
+    # lease failure): a private request that could not run must never
+    # reach a later unpinned room drain.
+    def expunge_envelope(self, span_id: str | None) -> bool:
+        """Drop one envelope by span from mailbox and log; report removal."""
+        if not isinstance(span_id, str) or not span_id:
+            return False
+        removed = False
+        with self._lock:
+            for bot_id, box in list(self._boxes.items()):
+                kept: list[Envelope] = []
+                try:
+                    while True:
+                        item = box.get_nowait()
+                        if item.span_id == span_id:
+                            removed = True
+                            continue
+                        kept.append(item)
+                except queue.Empty:
+                    pass
+                for item in kept:
+                    box.put(item)
+            kept_log = [e for e in self._log
+                        if getattr(e.envelope, "span_id", None) != span_id]
+            if len(kept_log) != len(self._log):
+                removed = True
+            self._log = kept_log
         return removed
 
     def drain_log(self, session_id: str) -> list[BusEvent]:

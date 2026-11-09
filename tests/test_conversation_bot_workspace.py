@@ -355,7 +355,6 @@ def test_a2a_record_bus_events_on_runtime_root(tmp_path: Path) -> None:
         room_dm_owner=lambda _sid: None,
         room_delta_for=lambda *a: ('', None),
         room_bots=lambda _sid: ['coder', 'thyca'],
-        set_room_bots=lambda *a: [],
     ))
     room = SessionManager(tmp_path / 'sessions')
     room.load(group_session.id)

@@ -10,6 +10,8 @@ from thyca.tools.registry import ToolSpec
 from .deps import AdminDeps, _deny_child
 
 
+# A send issued inside a private turn carries the chain mark before
+# enqueue/lease so every later drain honors it, even under races.
 async def _send_and_deliver(
     deps: AdminDeps,
     *,
@@ -31,12 +33,63 @@ async def _send_and_deliver(
     for the recipient's next turn, reported honestly as ``queued``."""
     ctx = current_bot_turn_context()
     session_id = room or (ctx.room_id if ctx is not None else "")
+    try:
+        from thyca.memories.visibility import current_memory_view as _peer_view
+        _peer_view0 = _peer_view()
+    except Exception:
+        _peer_view0 = None
+    _chain = bool(
+        _peer_view0 is not None
+        and isinstance(getattr(_peer_view0, "denied_origins", None), frozenset)
+        and len(_peer_view0.denied_origins) > 0
+    )
+    # Classify an initial outsider request at send time, before enqueue:
+    # a group send to a non-participant is private even when the caller
+    # itself is not private. DM delivery keeps owner-pair behavior, and
+    # an unreadable roster fails closed to private.
+    # Fail closed before enqueue: when the room kind or the roster
+    # cannot be established, never treat the unknown as a DM or a member.
+    # The envelope is marked private instead of rejected so the asking
+    # turn still receives the recipient's reply.
+    if not _chain:
+        try:
+            _send_room = room or (ctx.room_id if ctx is not None else "")
+            if not _send_room:
+                pass
+            else:
+                _dm_known = False
+                _send_dm = None
+                if getattr(deps, "room_dm_owner", None) is not None:
+                    try:
+                        _send_dm = deps.room_dm_owner(_send_room)
+                        _dm_known = True
+                    except Exception:
+                        _dm_known = False
+                if _dm_known and _send_dm is not None:
+                    pass
+                elif not _dm_known:
+                    # Kind unprovable (missing or raising resolver): never
+                    # treat the unknown as a DM or classify by roster.
+                    _chain = True
+                elif getattr(deps, "room_bots", None) is not None:
+                    try:
+                        _send_members = deps.room_bots(_send_room)
+                    except Exception:
+                        _send_members = None
+                    _chain = _send_members is None or recipient not in _send_members
+                else:
+                    # Verified group but no roster resolver: membership
+                    # is unprovable, so fail closed to private.
+                    _chain = True
+        except Exception:
+            _chain = True
     envelope = deps.runtime.send(
         sender=sender,
         recipient=recipient,
         kind=kind,
         session_id=session_id,
         payload=payload,
+        private_chain=_chain,
         trace_id=trace_id or (ctx.trace_id if ctx is not None else None),
         parent_span_id=ctx.span_id if ctx is not None else None,
         refs=refs,
@@ -88,14 +141,16 @@ def _send_spec(deps: AdminDeps) -> ToolSpec:
         except Exception as exc:
             return f"bot_send failed: {exc}"
 
+    # Describe the send tool: member replies group in the room, outsiders run privately.
     return ToolSpec(
         name="bot_send",
         description=(
             "Send a message/task to another bot and get its reply. The "
             "recipient bot runs its own turn immediately; its reply is "
-            "returned to you (the exchange is also shown grouped in "
-            "that room/DM under both names — open it for the full "
-            "thread). "
+            "returned to you (a member recipient's exchange is also shown "
+            "grouped in that room/DM under both names — open it for the "
+            "full thread; a recipient outside the group runs privately "
+            "with no group history and records nothing in the group). "
             "Your identity as sender is taken from your turn, never from "
             "arguments. kind: delegate|message|help_request (default message). "
             "Large content should travel by reference: pass refs (file paths, "
@@ -209,12 +264,15 @@ def _delegate_spec(deps: AdminDeps) -> ToolSpec:
         except Exception as exc:
             return f"bot_delegate failed: {exc}"
 
+    # Describe delegation: member results group in the room, private chains stay private.
     return ToolSpec(
         name="bot_delegate",
         description=(
             "Give a task to a bot (Thyca only). The recipient bot runs its "
-            "own turn immediately and its reply is returned to you and "
-            "recorded in the room under its name; returns the trace_id too."
+            "own turn immediately and its reply is returned to you and, "
+            "for a group member, recorded in the room under its name; a "
+            "private-chain recipient runs privately with no group history "
+            "and records nothing in the group; returns the trace_id too."
         ),
         parameters={
             "type": "object",

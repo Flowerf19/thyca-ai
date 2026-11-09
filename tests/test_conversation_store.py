@@ -381,6 +381,115 @@ def test_hardlinked_database_alias_is_refused_without_exposing_messages(tmp_path
     )
 
 
+def test_sidecar_unlinked_mid_check_is_transient_not_corrupt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from thyca.conversations.runtime.store import SessionStore
+
+    ref = _setup_dm(tmp_path, 'coder')
+    AgentStore(tmp_path).append(ref, 'coder', Message(role='user', content='keep me'))
+    conn = sqlite3.connect(str(tmp_path / 'conversations.db'))
+    try:
+        conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+    finally:
+        conn.close()
+    # SQLite unlinks -wal/-shm on last close; empty placeholders force the
+    # guard to open -wal so the race seam below can fire. Reads never use
+    # these bytes: the checkpoint above moved all frames into the DB.
+    for sidecar in ('conversations.db-wal', 'conversations.db-shm'):
+        placeholder = tmp_path / sidecar
+        if not placeholder.exists():
+            placeholder.write_bytes(b'')
+            os.chmod(placeholder, 0o600)
+    assert stat.S_IMODE(os.stat(tmp_path / 'conversations.db-wal').st_mode) == 0o600
+    assert stat.S_IMODE(os.stat(tmp_path / 'conversations.db-shm').st_mode) == 0o600
+
+    real_open = os.open
+    fired: list[bool] = []
+
+    def _once_unlinking_open(path, flags, *args, **kwargs):
+        if not fired and path == 'conversations.db-wal' and kwargs.get('dir_fd') is not None:
+            fd = real_open(path, flags, *args, **kwargs)
+            fired.append(True)
+            os.unlink('conversations.db-wal', dir_fd=kwargs['dir_fd'])
+            try:
+                os.unlink('conversations.db-shm', dir_fd=kwargs['dir_fd'])
+            except OSError:
+                pass
+            return fd
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, 'open', _once_unlinking_open)
+    session = SessionStore(tmp_path / 'sessions').load('coder')
+    assert [m.content for m in session.messages] == ['keep me']
+    assert session.bots == ['coder']
+    assert session.dm_bot == 'coder'
+    assert fired == [True]
+    # Data survived: a fresh read with the real opener sees the message.
+    assert [m.content for m in AgentStore(tmp_path).read(ref, 'coder').messages] == ['keep me']
+
+
+def test_hardlinked_sidecar_is_refused(tmp_path: Path) -> None:
+    # Fail-closed invariant: a hardlinked -wal (nlink>1) is refused even
+    # though the alias name stays outside the namespace scan. Asserted at
+    # the AgentStore layer, where the guard enforces it; Session mapping
+    # of the same scope is covered by the read_bots/read_dm test below.
+    ref = _setup_dm(tmp_path, 'coder')
+    AgentStore(tmp_path).append(ref, 'coder', Message(role='user', content='private fake'))
+    # SQLite unlinks -wal/-shm on last close; empty placeholders force both
+    # sidecars present so the read below cannot fail on wal/shm
+    # presence-mismatch retry exhaustion and must reach the nlink>1 refusal.
+    for sidecar in ('conversations.db-wal', 'conversations.db-shm'):
+        placeholder = tmp_path / sidecar
+        if not placeholder.exists():
+            placeholder.write_bytes(b'')
+            os.chmod(placeholder, 0o600)
+    wal = tmp_path / 'conversations.db-wal'
+    os.link(wal, tmp_path / 'wal-alias')
+    assert os.stat(wal).st_nlink == 2
+    assert stat.S_IMODE(os.stat(tmp_path / 'conversations.db-shm').st_mode) == 0o600
+    with pytest.raises(ConversationStoreError):
+        AgentStore(tmp_path).read(ref, 'coder')
+
+
+def test_read_bots_and_dm_surface_store_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from thyca.conversations.runtime import SessionCorrupt, SessionNotFound
+    from thyca.conversations.runtime.store import SessionStore
+    from thyca.conversations.store import runtime as runtime_module
+    from thyca.conversations.store.contracts import _local_error
+
+    _setup_dm(tmp_path, 'coder')
+    store = SessionStore(tmp_path / 'sessions')
+    binding = tmp_path / 'sessions' / 'coder.jsonl'
+
+    def _raise_global(*args, **kwargs):
+        raise ConversationStoreError()
+
+    monkeypatch.setattr(runtime_module, 'resolve_ref', _raise_global)
+    with pytest.raises(SessionCorrupt):
+        store.read_bots(binding)
+    with pytest.raises(SessionCorrupt):
+        store.read_dm(binding)
+
+    ref = ConversationRef.dm('coder')
+
+    def _raise_local(*args, **kwargs):
+        raise _local_error(ref)
+
+    monkeypatch.setattr(runtime_module, 'resolve_ref', _raise_local)
+    with pytest.raises(SessionNotFound):
+        store.read_bots(binding)
+    with pytest.raises(SessionNotFound):
+        store.read_dm(binding)
+
+    monkeypatch.undo()
+    group = _admin(tmp_path).create_group(['coder'])
+    group_binding = tmp_path / 'sessions' / f'{group.ref.id}.jsonl'
+    assert store.read_dm(group_binding) is None
+
+
 # ---------- bad data ----------
 
 def test_oversized_and_bad_typed_content_rejected(tmp_path: Path) -> None:

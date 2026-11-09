@@ -3936,3 +3936,50 @@ def test_invocation_identity_replay_nested_and_windows(node: str) -> None:
     assert out['mid'] == [['read', 'aaa', 's1'], ['write', 'ccc', 's1'], ['other', 'aaa', 's2']]
     assert out['end'] == [['other', 's2']]
     assert out['child'] == 0 and out['old'] == 2
+
+
+def test_thyca_always_pinned_first_and_lone_bot_full_row(node: str) -> None:
+    """System Thyca stays at #1 even when an alphabetically earlier bot is
+    pinned; lone bot cards on a 2-col row receive data-full-row='true'."""
+    out = _run(node, """
+        localStorage.clear();
+        localStorage.setItem('thyca.favorites', JSON.stringify(['alpha']));
+        bots.length = 0;
+        bots.push(...roster([
+            { id: 'alpha', name: 'Alpha' },
+            { id: 'thyca', name: 'Thyca', system: true },
+            { id: 'beta', name: 'Beta' },
+        ]));
+        const order = teamDisplayOrder().map(b => b.id);
+        const full3 = [...computeFullRowIds(teamDisplayOrder())];
+        bots[0].open = true; // alpha (now at #2) opens, leaving thyca (#1) and beta (#3) alone on their rows
+        const fullWhenMidOpen = [...computeFullRowIds(teamDisplayOrder())];
+        return { order, full3, fullWhenMidOpen };
+    """)
+    assert out["order"] == ["thyca", "alpha", "beta"]
+    assert out["full3"] == ["beta"]
+    assert out["fullWhenMidOpen"] == ["thyca", "beta"]
+
+
+def test_group_roster_caps_at_three_and_prioritizes_active_bots(node: str) -> None:
+    """Group rows display at most 3 bots and prioritize speaking/active bots
+    ahead of idle bots."""
+    out = _run(node, """
+        bots.length = 0;
+        bots.push(...roster([
+            { id: 'thyca', name: 'Thyca' },
+            { id: 'a', name: 'Alpha' },
+            { id: 'b', name: 'Beta' },
+            { id: 'c', name: 'Gamma' },
+        ]));
+        getBot('c').state = 'writing';
+        const g = { id: 'g1', title: 'Nhóm 4', bots: ['thyca', 'a', 'b', 'c'], subtitle: '4 người bạn' };
+        groups.length = 0;
+        groups.push(g);
+        const activeFirst = groupDisplayBots(g).map(b => b.id);
+        setGroupActivity('g1', 'b');
+        const speakerFirst = groupDisplayBots(g).map(b => b.id);
+        return { activeFirst, speakerFirst };
+    """)
+    assert out["activeFirst"] == ["c", "thyca", "a"]
+    assert out["speakerFirst"] == ["b", "c", "thyca"]

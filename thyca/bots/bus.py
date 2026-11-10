@@ -50,7 +50,7 @@ class Envelope:
     sender: str
     recipient: str
     kind: str
-    session_id: str
+    conversation_id: str
     trace_id: str
     parent_span_id: str | None
     ts: str
@@ -72,7 +72,7 @@ class Envelope:
             "from": self.sender,
             "to": self.recipient,
             "kind": self.kind,
-            "session_id": self.session_id,
+            "conversation_id": self.conversation_id,
             "trace_id": self.trace_id,
             "parent_span_id": self.parent_span_id,
             "span_id": self.span_id,
@@ -127,7 +127,7 @@ class Bus:
         sender: str,
         recipient: str,
         kind: str,
-        session_id: str,
+        conversation_id: str,
         payload: str,
         trace_id: str | None = None,
         parent_span_id: str | None = None,
@@ -164,7 +164,7 @@ class Bus:
             sender=sender,
             recipient=recipient,
             kind=kind,
-            session_id=session_id,
+            conversation_id=conversation_id,
             trace_id=trace_id or new_trace_id(),
             parent_span_id=parent_span_id,
             ts=utc_now_ts(),
@@ -286,15 +286,15 @@ class Bus:
             self._log = kept_log
         return removed
 
-    def drain_log(self, session_id: str) -> list[BusEvent]:
+    def drain_log(self, conversation_id: str) -> list[BusEvent]:
         """Take (remove) every logged event for one room.
 
         Per-room draining replaces index-over-global-log bookkeeping:
         the bus log is trimmed for growth, so a saved index can silently
         point past live rows and drop or duplicate events."""
         with self._lock:
-            taken = [e for e in self._log if e.envelope.session_id == session_id]
-            self._log = [e for e in self._log if e.envelope.session_id != session_id]
+            taken = [e for e in self._log if e.envelope.conversation_id == conversation_id]
+            self._log = [e for e in self._log if e.envelope.conversation_id != conversation_id]
             return taken
 
     def pending_for(self, bot_id: str) -> list[Envelope]:

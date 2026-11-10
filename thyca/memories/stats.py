@@ -14,7 +14,7 @@ EXPIRE_SOON_DAYS = 14
 SUGGEST_IDLE_DAYS = 7
 # Dates + canonical sessions only: MEMORY.md rows are dropped on facade open
 # and never reindexed, so the legacy memory# alternative matched nothing.
-L2_SESSION_RE = re.compile(
+L2_MEMORY_RE = re.compile(
     r"^(?:\d{4}-\d{2}-\d{2}#[0-9a-f]{8}|canonical#[^#]+#[0-9a-f]{8})$"
 )
 
@@ -22,7 +22,7 @@ L2_SESSION_RE = re.compile(
 @dataclass(frozen=True)
 class LeafStat:
     chunk_id: str
-    session_id: str
+    memory_id: str
     heading: str
     snippet: str
     source_kind: str
@@ -157,8 +157,8 @@ def _from_archived(
     searches: dict[str, tuple[int, str]],
     today: str,
 ) -> LeafStat | None:
-    session_id = str(row["session_id"])
-    if L2_SESSION_RE.fullmatch(session_id) is None:
+    memory_id = str(row["memory_id"])
+    if L2_MEMORY_RE.fullmatch(memory_id) is None:
         return None
     chunk_id = str(row["chunk_id"])
     count, last = gets.get(chunk_id, (0, None))
@@ -168,7 +168,7 @@ def _from_archived(
     expires = row["expires_at"]
     return LeafStat(
         chunk_id=chunk_id,
-        session_id=session_id,
+        memory_id=memory_id,
         heading=str(row["heading_raw"] or ""),
         snippet=str(row["text_raw"])[:SNIPPET_LEN],
         source_kind=str(row["source_kind"]),
@@ -192,13 +192,13 @@ def _from_today(
     gets: dict[str, tuple[int, str]],
     searches: dict[str, tuple[int, str]],
 ) -> LeafStat | None:
-    if L2_SESSION_RE.fullmatch(chunk.session_id) is None:
+    if L2_MEMORY_RE.fullmatch(chunk.memory_id) is None:
         return None
     count, last = gets.get(chunk.chunk_id, (0, None))
     search_count, last_search = searches.get(chunk.chunk_id, (0, None))
     return LeafStat(
         chunk_id=chunk.chunk_id,
-        session_id=chunk.session_id,
+        memory_id=chunk.memory_id,
         heading=chunk.heading_raw,
         snippet=chunk.text_raw[:SNIPPET_LEN],
         source_kind=chunk.source_kind,

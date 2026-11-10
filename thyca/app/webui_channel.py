@@ -1,6 +1,6 @@
-"""WebUI channel adapter (WS-2): session rows -> channel contract.
+"""WebUI channel adapter (WS-2): conversation rows -> channel contract.
 
-Derives real window metadata from the session's own ``dm_bot``/``bots``
+Derives real window metadata from the conversation's own ``dm_bot``/``bots``
 markers — nothing is guessed from ids, and the actor is always the
 native user (``ActorRef("user", "user")``), assigned here by the trusted
 adapter, never from model-supplied values.
@@ -18,7 +18,7 @@ from thyca.core.channel import (
     WindowRef,
 )
 from thyca.core.protocol import utc_now_ts
-from thyca.conversations.runtime import Session
+from thyca.conversations.runtime import ConversationRuntime
 
 WEBUI_CHANNEL = ChannelRef(channel_id="webui", kind="webui")
 
@@ -30,24 +30,24 @@ WEBUI_CAPABILITIES = ChannelCapabilities(
 
 
 class WebUIChannelAdapter:
-    """Maps room sessions to ``webui`` windows and inbound events."""
+    """Maps room conversations to ``webui`` windows and inbound events."""
 
     channel = WEBUI_CHANNEL
     capabilities = WEBUI_CAPABILITIES
 
-    def window_for(self, session: Session) -> WindowRef:
+    def window_for(self, conversation: ConversationRuntime) -> WindowRef:
         participants = (
-            tuple(session.bots) if session.bots else ("thyca",)
+            tuple(conversation.bots) if conversation.bots else ("thyca",)
         )
-        if session.dm_bot is not None:
+        if conversation.dm_bot is not None:
             return WindowRef(
-                window_id=session.id,
+                window_id=conversation.conversation_id,
                 channel_id=self.channel.channel_id,
                 kind="dm",
                 participants=participants,
             )
         return WindowRef(
-            window_id=session.id,
+            window_id=conversation.conversation_id,
             channel_id=self.channel.channel_id,
             kind="group",
             participants=participants,
@@ -55,13 +55,13 @@ class WebUIChannelAdapter:
 
     def event_for(
         self,
-        session: Session,
+        conversation: ConversationRuntime,
         text: str,
         *,
         event_id: str | None = None,
         idempotency_key: str | None = None,
     ) -> ChannelEvent:
-        window = self.window_for(session)
+        window = self.window_for(conversation)
         return ChannelEvent(
             event_id=event_id or f"ev-{uuid.uuid4().hex}",
             channel_id=window.channel_id,
@@ -92,36 +92,36 @@ class WebUIOutboundAdapter:
         dm_card_post,
         room_post,
         card_post,
-        session_for,
+        conversation_for,
     ) -> None:
         self._dm_post = dm_post
         self._dm_card_post = dm_card_post
         self._room_post = room_post
         self._card_post = card_post
-        self._session_for = session_for
+        self._conversation_for = conversation_for
 
     def land(self, action: ChannelAction, *, ctx) -> dict:
         sender = ctx.sender_id
-        session = self._session_for(action.target_window)
-        if session is None:
+        conversation = self._conversation_for(action.target_window)
+        if conversation is None:
             return {"ok": False, "error": f"unknown room: {action.target_window}"}
-        if session.dm_bot is not None and session.dm_bot != sender:
+        if conversation.dm_bot is not None and conversation.dm_bot != sender:
             return {"ok": False, "error": "room is another bot's DM"}
-        if session.dm_bot is None and sender not in (session.bots or ["thyca"]):
+        if conversation.dm_bot is None and sender not in (conversation.bots or ["thyca"]):
             return {"ok": False, "error": "sender is not a participant"}
         if (
-            session.dm_bot is None
+            conversation.dm_bot is None
             and action.target_window != ctx.room_id
         ):
             return {"ok": False, "error": "cross-window public action denied"}
         if action.kind == "ask_private":
-            if session.dm_bot != sender:
+            if conversation.dm_bot != sender:
                 return {"ok": False, "error": "ask_private target is not own DM"}
             return self._dm_post(
                 sender, action.text, ctx.room_id,
                 meta=action.metadata,
             )
-        if action.kind in ("post", "reply") and session.dm_bot == sender:
+        if action.kind in ("post", "reply") and conversation.dm_bot == sender:
             return self._dm_post(
                 sender, action.text, ctx.room_id, meta=action.metadata)
         if action.kind == "ask_choice":

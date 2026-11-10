@@ -38,21 +38,21 @@ def test_bot_dm_is_lazy_singleton_and_marked(tmp_path: Path) -> None:
         _make_bot(app)
         first = app.bot_dm("coder")
         second = app.bot_dm("coder")
-        assert first["id"] == second["id"]
+        assert first["conversation_id"] == second["conversation_id"]
         assert first["dm"] == "coder"
         assert first["bots"] == ["coder"]
         # The list payload carries the marker too, so FE can pin it
-        # (blank sessions are pruned from lists, so give the DM a turn).
-        app.turn(first["id"], "hello dm")
-        listed = {s["id"]: s for s in app.list_payload()["sessions"]}
-        assert listed[first["id"]]["dm"] == "coder"
+        # (blank conversations are pruned from lists, so give the DM a turn).
+        app.turn(first["conversation_id"], "hello dm")
+        listed = {s["conversation_id"]: s for s in app.list_payload()["conversations"]}
+        assert listed[first["conversation_id"]]["dm"] == "coder"
         # DM identity survives a metadata write (store is append-only,
-        # so titles replace the old JSONL rewrite as the survival proof).
-        store = app._sessions.store
-        session = store.load(first["id"])
-        store.append_meta(session.path, "Renamed DM", "user")
-        assert store.load(first["id"]).dm_bot == "coder"
-        assert store.load(first["id"]).title == "Renamed DM"
+        # so a participant rewrite is the survival proof).
+        store = app._conversations.store
+        conversation = store.load(first["conversation_id"])
+        store.append_bots(conversation.path, ["coder"])
+        assert store.load(first["conversation_id"]).dm_bot == "coder"
+        assert store.load(first["conversation_id"]).bots == ["coder"]
     finally:
         app.shutdown()
 
@@ -76,11 +76,11 @@ def test_bot_dm_ignores_unmarked_solo_room(tmp_path: Path) -> None:
         _make_bot(app)
         # Raw unmarked solo room (pre-CBE-5 style): phase 2B treats it as
         # an ordinary group, never adopts it as the DM.
-        raw = app._sessions.create()
-        app._sessions.store.append_bots(raw.path, ["coder"])
-        assert app._sessions.store.load(raw.id).dm_bot is None
+        raw = app._conversations.create()
+        app._conversations.store.append_bots(raw.path, ["coder"])
+        assert app._conversations.store.load(raw.conversation_id).dm_bot is None
         dm = app.bot_dm("coder")
-        assert dm["id"] != raw.id
+        assert dm["conversation_id"] != raw.conversation_id
         assert dm["dm"] == "coder"
         assert dm["kind"] == "dm"
     finally:
@@ -92,9 +92,9 @@ def test_scheduled_result_lands_in_dm_not_in_room(tmp_path: Path) -> None:
     try:
         _make_bot(app, schedule="* * * * *")
         # A shared room the bot also works in.
-        room = app.create(bots=["thyca", "coder"])["id"]
+        room = app.create(bots=["thyca", "coder"])["conversation_id"]
         app.turn(room, "hi coder in room")
-        dm_id = app.bot_dm("coder")["id"]
+        dm_id = app.bot_dm("coder")["conversation_id"]
         assert dm_id != room
 
         report = tick(app, now=datetime(2026, 8, 1, 10, 0,
@@ -156,9 +156,9 @@ def test_bot_dm_lookup_does_not_prune_blank_group(tmp_path: Path) -> None:
         _make_bot(app, bot_id="helper")
         dm = app.bot_dm("coder")  # DM exists from here on.
         group = app.create(bots=["coder", "helper"])  # blank group
-        assert app.bot_dm("coder")["id"] == dm["id"]
+        assert app.bot_dm("coder")["conversation_id"] == dm["conversation_id"]
         # Store equivalent of the file check: the blank group still loads.
-        assert app._sessions.store.load(group["id"]).id == group["id"]
+        assert app._conversations.store.load(group["conversation_id"]).conversation_id == group["conversation_id"]
     finally:
         app.shutdown()
 
@@ -167,16 +167,16 @@ def test_first_bot_dm_prunes_previous_blank(tmp_path: Path) -> None:
     app = _chat(tmp_path, connect=_LLM())
     try:
         _make_bot(app)
-        stray = app._sessions.create()
-        assert app._sessions.store.load(stray.id).id == stray.id
+        stray = app._conversations.create()
+        assert app._conversations.store.load(stray.conversation_id).conversation_id == stray.conversation_id
         dm = app.bot_dm("coder")  # first lookup: create path prunes.
         assert dm["dm"] == "coder"
         # Store equivalent of the file check: the blank door is deleted.
-        from thyca.conversations.runtime import SessionNotFound
+        from thyca.conversations.runtime import ConversationNotFound
 
         import pytest as _pytest
 
-        with _pytest.raises(SessionNotFound):
-            app._sessions.store.load(stray.id)
+        with _pytest.raises(ConversationNotFound):
+            app._conversations.store.load(stray.conversation_id)
     finally:
         app.shutdown()

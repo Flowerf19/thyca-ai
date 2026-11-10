@@ -20,25 +20,25 @@ from thyca.configs import LimitsCfg
 from thyca.core.context import BACKSTOP_RATIO
 from thyca.core.protocol import Message
 from thyca.llms.llm_base import ChatReply
-from thyca.conversations.runtime import SessionManager
+from thyca.conversations.runtime import ConversationManager
 
-# Build a canonical-timeline manager holding one execution session.
-def _canonical_manager(root: Path, limits=None) -> SessionManager:
-    from thyca.bots.timeline import CanonicalSessionStore, WorkspaceTimeline
+# Build a canonical-timeline manager holding one execution conversation.
+def _canonical_manager(root: Path, limits=None) -> ConversationManager:
+    from thyca.bots.timeline import CanonicalConversationStore, WorkspaceTimeline
     from thyca.core.channel import WindowRef
 
     timeline = WorkspaceTimeline(root, "thyca")
     window = WindowRef(
         window_id="thyca", channel_id="webui", kind="dm", participants=("thyca",))
-    session_id = "2026-01-01T00-00-00_ab12"
-    store = CanonicalSessionStore(
+    conversation_id = "2026-01-01T00-00-00_ab12"
+    store = CanonicalConversationStore(
         root / "bots" / "thyca" / "sessions",
-        timeline=timeline, window=window, session_id=session_id)
-    manager = SessionManager(store=store, limits=limits)
-    manager.load(session_id)
+        timeline=timeline, window=window, conversation_id=conversation_id)
+    manager = ConversationManager(store=store, limits=limits)
+    manager.load(conversation_id)
     return manager
 
-from thyca.conversations.runtime.compaction import SessionCompactor, estimate_tokens
+from thyca.conversations.runtime.compaction import ConversationCompactor, estimate_tokens
 
 
 class _FakeLLM:
@@ -56,12 +56,12 @@ class _FakeDispatcher:
         raise AssertionError("no tool calls expected")
 
 
-def _manager(tmp_path: Path) -> SessionManager:
+def _manager(tmp_path: Path) -> ConversationManager:
     limits = LimitsCfg(contextTokens=4000)
     return _canonical_manager(tmp_path, limits)
 
 
-def _seed_pairs(manager: SessionManager) -> None:
+def _seed_pairs(manager: ConversationManager) -> None:
     for round_no in (1, 2, 3):
         manager.append(Message(role="user", content=f"q{round_no} " + "u" * 2497))
         manager.append(
@@ -69,9 +69,9 @@ def _seed_pairs(manager: SessionManager) -> None:
         )
 
 
-def _loop(manager: SessionManager, llm: _FakeLLM) -> AgentLoop:
+def _loop(manager: ConversationManager, llm: _FakeLLM) -> AgentLoop:
     return AgentLoop(
-        sessions=manager,
+        conversations=manager,
         assemble=Assemble(),
         think=Think(llm),
         act=Act(_FakeDispatcher()),
@@ -86,7 +86,7 @@ def test_shared_backstop_ratio_is_95_percent() -> None:
 
 
 def test_compactor_fires_at_backstop_not_at_cap() -> None:
-    compactor = SessionCompactor()
+    compactor = ConversationCompactor()
     messages = [
         Message(role="user", content="q " + "u" * 2490),
         Message(role="assistant", content="a " + "a" * 2490),
@@ -156,7 +156,7 @@ def test_tool_group_never_splits(tmp_path: Path) -> None:
 
 
 def test_overhead_only_trip_mints_no_marker(tmp_path: Path) -> None:
-    compactor = SessionCompactor()
+    compactor = ConversationCompactor()
     messages = [
         Message(role="user", content="hello"),
         Message(role="assistant", content="hi there"),
@@ -179,7 +179,7 @@ def test_overhead_only_trip_mints_no_marker(tmp_path: Path) -> None:
 def test_overhead_only_trip_keeps_prior_marker_byte_identical(
     tmp_path: Path,
 ) -> None:
-    compactor = SessionCompactor()
+    compactor = ConversationCompactor()
     excerpt = "E" * 1000
     marker = Message(
         role="system",
@@ -214,11 +214,10 @@ def test_overhead_only_trip_keeps_prior_marker_byte_identical(
 
 
 def test_context_stop_is_not_success(tmp_path: Path) -> None:
-    from thyca.serve.trace import turns_from_session
-    from thyca.conversations.runtime.title import completed_turn_count
+    from thyca.serve.trace import turns_from_conversation
 
     manager = _manager(tmp_path)
-    session = manager.current
+    conversation = manager.current
     manager.append(Message(role="user", content="old q"))
     manager.append(Message(role="assistant", content="old a"))
     manager.append(Message(role="user", content="too big"))
@@ -229,21 +228,19 @@ def test_context_stop_is_not_success(tmp_path: Path) -> None:
             meta={"kind": "llm", "status": "context_limit", "round": 2},
         )
     )
-    turns = turns_from_session(session)
+    turns = turns_from_conversation(conversation)
     assert len(turns) == 2
     assert turns[0].status == "completed"
     assert turns[1].status == "context_limit"
     assert turns[1].requests == 0
     assert turns[1].rounds == 0
-    # The naming threshold must not count the stopped turn.
-    assert completed_turn_count(session.messages) == 1
 
 
 def test_context_stop_keeps_prior_real_call(tmp_path: Path) -> None:
-    from thyca.serve.trace import turns_from_session
+    from thyca.serve.trace import turns_from_conversation
 
     manager = _manager(tmp_path)
-    session = manager.current
+    conversation = manager.current
     manager.append(Message(role="user", content="q"))
     manager.append(
         Message(
@@ -271,7 +268,7 @@ def test_context_stop_keeps_prior_real_call(tmp_path: Path) -> None:
             meta={"kind": "llm", "status": "context_limit", "round": 2},
         )
     )
-    (turn,) = turns_from_session(session)
+    (turn,) = turns_from_conversation(conversation)
     assert turn.status == "context_limit"
     assert turn.requests == 1
     assert turn.rounds == 1

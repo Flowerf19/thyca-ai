@@ -26,7 +26,7 @@ UI = ROOT / "thyca" / "webui" / "ui"
 _TUI_TAIL = """return {
   renderTranscript, normalizeBot, getBot, bots, groups,
   answerCardLabel, decidePrivateFollowup, runs,
-  setSession: v => { currentSession = v; },
+  setConversation: v => { currentConversation = v; },
 };"""
 
 _RENDER_SCRIPT = r"""
@@ -127,10 +127,10 @@ const ui = loadScripts(CHAT_CHAIN, TAIL);
 const result = {};
 ui.bots.push(ui.normalizeBot({ id: 'thyca', name: 'Thyca', role: 'bạn', agent_status: { state: 'idle' } }, 0));
 
-// Guards: nothing may send without a session, a label, or while a turn runs.
-ui.setSession('');
+// Guards: nothing may send without a conversation, a label, or while a turn runs.
+ui.setConversation('');
 result.noSession = ui.answerCardLabel('A', null);
-ui.setSession('dm:thyca');
+ui.setConversation('dm:thyca');
 result.emptyLabel = ui.answerCardLabel('   ', null);
 ui.runs.set('dm:thyca', {});
 result.busyRoom = ui.answerCardLabel('A', null);
@@ -150,7 +150,7 @@ globalThis.fetch = async (url, opts = {}) => {
   if ((opts.method || 'GET') === 'POST') return { ok: false, json: async () => ({ error: 'stale' }) };
   throw new Error('no GET expected on failure');
 };
-ui.setSession('dm:thyca');
+ui.setConversation('dm:thyca');
 result.failed = await ui.decidePrivateFollowup('pf-9', 2, 'approve', btns[0]);
 result.restored = btns.every(b => b.disabled === false);
 // Successful POST: option id goes out, card stays disabled via the
@@ -163,7 +163,7 @@ globalThis.fetch = async (url, opts = {}) => {
   if ((opts.method || 'GET') === 'POST') return { ok: true, json: async () => ({ ok: true }) };
   return { ok: true, json: async () => ({ messages: [DM] }) };
 };
-ui.setSession('dm:thyca');
+ui.setConversation('dm:thyca');
 result.decided = await ui.decidePrivateFollowup('pf-9', 2, 'approve', btns[0]);
 result.post = calls.find(c => c.method === 'POST') ?? null;
 result.rerendered = [...doc.querySelectorAll('#message-list .card-choice')].map(b => b.getAttribute('disabled'));
@@ -266,7 +266,7 @@ def test_unknown_card_type_falls_back_to_plain_row(card_render: dict) -> None:
 
 
 def test_label_answers_are_guarded(card_actions: dict) -> None:
-    """No session / no label / busy room → nothing sends, no network."""
+    """No conversation / no label / busy room → nothing sends, no network."""
     assert card_actions["noSession"] is False
     assert card_actions["emptyLabel"] is False
     assert card_actions["busyRoom"] is False

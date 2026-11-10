@@ -15,8 +15,8 @@ from thyca.memories.heading import (
     day,
     is_session_heading,
     iter_session_blocks,
+    memory_id,
     read_text_file,
-    session_id,
     strip_comment,
     strip_heading_comments,
 )
@@ -144,7 +144,7 @@ class ActiveMemory:
         return ActiveState(day=day, today_path=self._daily_path(day))
 
     def refresh(
-        self, state: ActiveState, now: datetime, session_id: str | None = None,
+        self, state: ActiveState, now: datetime, conversation_id: str | None = None,
         reader: str | None = None, *, tail_kb: int | None = None,
         timezone_name: str | None = None,
         skip_skills: bool = False,
@@ -163,12 +163,12 @@ class ActiveMemory:
             self._secure_dir(self.memory_dir)
             self._create_if_missing(state.today_path, f"# {today}\n")
         return self._snapshot(
-            state.today_path, state.day, session_id, reader, tail_kb,
+            state.today_path, state.day, conversation_id, reader, tail_kb,
             skip_skills=skip_skills,
         )
 
     def peek(
-        self, state: ActiveState, now: datetime, session_id: str | None = None,
+        self, state: ActiveState, now: datetime, conversation_id: str | None = None,
         reader: str | None = None, *, tail_kb: int | None = None,
         timezone_name: str | None = None,
         skip_skills: bool = False,
@@ -182,14 +182,14 @@ class ActiveMemory:
         """
         today = self._day(now, timezone_name)
         path = state.today_path if today == state.day else self._daily_path(today)
-        return self._snapshot(path, today, session_id, reader, tail_kb, skip_skills=skip_skills)
+        return self._snapshot(path, today, conversation_id, reader, tail_kb, skip_skills=skip_skills)
 
     def _snapshot(
-        self, today_path: Path, day_str: str, session_id: str | None,
+        self, today_path: Path, day_str: str, conversation_id: str | None,
         reader: str | None = None, tail_kb: int | None = None,
         skip_skills: bool = False,
     ) -> ActiveSnapshot:
-        if session_id is None:
+        if conversation_id is None:
             today_text, elsewhere_text = self._tail(
                 self._read(today_path), tail_kb=tail_kb
             ), ""
@@ -203,7 +203,7 @@ class ActiveMemory:
                 self._read_raw(today_path),
                 day_str,
                 str(today_path),
-                session_id,
+                conversation_id,
                 reader=reader,
                 origin_ok=(
                     view.can_read_origin if view is not None else None
@@ -353,7 +353,7 @@ def split_today_by_session(
             here.append(_here_block(lines, start, end, day_str, entry_id))
         else:
             elsewhere.append(
-                f"- {meta.time} — {meta.title} [{session_id(day_str, entry_id)}]"
+                f"- {meta.time} — {meta.title} [{memory_id(day_str, entry_id)}]"
             )
     prefix = (
         ("".join(lines) if first_start is None else "".join(lines[:first_start]))
@@ -375,7 +375,7 @@ def _here_block(
     """One same-session block with ``[day#id]`` on its heading."""
     head = strip_comment(lines[start])
     ending = lines[start][len(lines[start].rstrip("\r\n")):]
-    first = f"{head} [{session_id(day_str, entry_id)}]{ending}"
+    first = f"{head} [{memory_id(day_str, entry_id)}]{ending}"
     return first + "".join(lines[start + 1 : end])
 
 

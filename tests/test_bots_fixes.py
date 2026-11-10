@@ -207,8 +207,8 @@ def test_tool_message_error_keeps_bot_id() -> None:
 def test_bus_drain_log_is_per_room() -> None:
     bus = Bus()
     bus.register("a")
-    bus.send(sender="x", recipient="a", kind="message", session_id="room1", payload="1")
-    bus.send(sender="x", recipient="a", kind="message", session_id="room2", payload="2")
+    bus.send(sender="x", recipient="a", kind="message", conversation_id="room1", payload="1")
+    bus.send(sender="x", recipient="a", kind="message", conversation_id="room2", payload="2")
     taken = bus.drain_log("room1")
     assert [event.envelope.payload for event in taken] == ["1"]
     assert [event.envelope.payload for event in bus.drain_log("room2")] == ["2"]
@@ -269,10 +269,10 @@ def test_a2a_delivery_multihop_records_attributed_room_rows(tmp_path: Path) -> N
             persona="PERSONA-HELPER",
         ))
         created = app.create(bots=["thyca", "coder", "helper"])
-        detail = app.turn(created["id"], "please coordinate")
+        detail = app.turn(created["conversation_id"], "please coordinate")
         assert detail["reply"] == "thyca final"
 
-        rows = app.get_payload(created["id"])["messages"]
+        rows = app.get_payload(created["conversation_id"])["messages"]
         by_bot_kind = {}
         for row in rows:
             meta = row.get("meta") or {}
@@ -348,7 +348,7 @@ def test_memory_read_false_hot_prompt_has_no_memory(tmp_path: Path) -> None:
             memory=BotMemoryPolicy(read=False, write=True),
         ))
         created = app.create(bots=["coder"])
-        app.turn(created["id"], "hi")
+        app.turn(created["conversation_id"], "hi")
         assert llm.prompts
         assert all("SECRET-TOPIC-XYZ" not in prompt for prompt in llm.prompts)
         assert all("secret body" not in prompt for prompt in llm.prompts)
@@ -380,7 +380,7 @@ def test_child_prompt_skill_index_excludes_thyca_private(tmp_path: Path) -> None
             persona="PERSONA-CODER",
         ))
         created = app.create(bots=["coder"])
-        app.turn(created["id"], "hi")
+        app.turn(created["conversation_id"], "hi")
         prompt = llm.prompts[0]
         assert "create-skill" in prompt  # team seed is there
         assert "thyca-only-skill" not in prompt  # Thyca private never leaks
@@ -396,7 +396,7 @@ def test_paused_bot_removable_and_responder_skips_paused(tmp_path: Path) -> None
         created = app.create(bots=["thyca", "coder"])
         app._bots.set_paused("coder", True)
         # Removable while paused; a paused mention is skipped for Thyca.
-        assert app.set_room_bots(created["id"], "coder", "remove") == ["thyca"]
+        assert app.set_room_bots(created["conversation_id"], "coder", "remove") == ["thyca"]
         resolve = ChatApp._resolve_responder
         assert resolve(["thyca", "coder"], "hi @coder", paused={"coder"}) == "thyca"
         assert resolve(["coder"], "hi", paused={"coder"}) == "coder"  # caller errors
@@ -418,7 +418,7 @@ def test_serve_scheduler_timer_ticks(tmp_path: Path) -> None:
             self.ticks = 0
             self._bots = _Bots()
 
-        def sweep_idle_sessions(self, idle_s: int = 900) -> dict:
+        def sweep_idle_conversations(self, idle_s: int = 900) -> dict:
             self.ticks += 1
             return {}
 

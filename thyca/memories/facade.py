@@ -7,7 +7,7 @@ from pathlib import Path
 from thyca.configs import atomic_write_text
 from thyca.memories.active import ActiveMemory
 from thyca.memories.archived import (
-    GET_SESSION_CAP,
+    GET_MEMORY_CAP,
     NO_FALLBACK_PREFIXES,
     ArchivedMemory,
     ArchiveError,
@@ -24,12 +24,12 @@ from thyca.memories.heading import (
     format_body,
     format_ts,
     is_visible,
+    memory_id,
     new_entry_id,
     new_task_id,
     parse_heading,
     read_text_file,
     render_heading,
-    session_id,
     utc_now,
     validate_task_meta,
 )
@@ -90,7 +90,7 @@ class MemoryFacade:
             entry = new_entry_id()
             day = self.archive.day(now)
             path = self.thyca_dir / "memory" / f"{day}.md"
-            sid = session_id(day, entry)
+            sid = memory_id(day, entry)
             hour = moment.astimezone(self.archive.zone()).strftime("%H:%M")
             meta = HeadingMeta(
                 time=hour,
@@ -164,7 +164,7 @@ class MemoryFacade:
             warnings.append(f"limit clamped from {requested_limit} to {limit}")
         now_ts = format_ts(utc_now(now))
         reader = current_bot_id()
-        rows = self.archive.store.task_session_rows(now_ts, reader=reader)
+        rows = self.archive.store.task_memory_rows(now_ts, reader=reader)
         members_by_session: dict[str, dict] = {}
         for row in rows:
             keys = row.keys()
@@ -173,9 +173,9 @@ class MemoryFacade:
                     origin, row["bots"],
                     allow_own_cross_window=allow_own_cross_window):
                 continue
-            members_by_session[str(row["session_id"])] = {
+            members_by_session[str(row["memory_id"])] = {
                 "task": str(row["task"]),
-                "session_id": str(row["session_id"]),
+                "memory_id": str(row["memory_id"]),
                 "first_day": str(row["first_day"]),
                 "last_day": str(row["last_day"]),
                 "first_line": int(row["first_line"]),
@@ -204,15 +204,15 @@ class MemoryFacade:
             )
             by_session: dict[str, list] = {}
             for chunk in today_chunks:
-                if chunk.task is None or chunk.session_id in members_by_session:
+                if chunk.task is None or chunk.memory_id in members_by_session:
                     continue
                 if not self._entry_readable(
                         getattr(chunk, "chat_session", None),
                         encode_bots(chunk.bots),
                         allow_own_cross_window=allow_own_cross_window):
                     continue
-                by_session.setdefault(chunk.session_id, []).append(chunk)
-            for session_id, leaves in by_session.items():
+                by_session.setdefault(chunk.memory_id, []).append(chunk)
+            for memory_id, leaves in by_session.items():
                 first = leaves[0]
                 if not is_visible(first.expires_at, now):
                     continue
@@ -220,14 +220,14 @@ class MemoryFacade:
                 if reader is not None and reader != "thyca":
                     if owners is not None and "team" not in owners and reader not in owners:
                         continue
-                members_by_session[session_id] = {
+                members_by_session[memory_id] = {
                     "task": str(first.task),
-                    "session_id": session_id,
+                    "memory_id": memory_id,
                     "first_day": today,
                     "last_day": today,
                     "first_line": min(leaf.line_start for leaf in leaves),
                     "last_line": max(leaf.line_start for leaf in leaves),
-                    "title": first.session_title,
+                    "title": first.memory_title,
                     "status": first.status,
                     # Same JSON-string shape as the store rows so the
                     # shared grouping below decodes both uniformly.
@@ -247,7 +247,7 @@ class MemoryFacade:
                 key=lambda r: (str(r["last_day"]), int(r["last_line"])),
             )
             latest_status = "open"
-            latest_session_id = str(latest["session_id"])
+            latest_memory_id = str(latest["memory_id"])
             for member in sorted(
                 members,
                 key=lambda r: (str(r["last_day"]), int(r["last_line"])),
@@ -277,7 +277,7 @@ class MemoryFacade:
                     "task_id": task_id,
                     "title": str(ordered[0]["title"]),
                     "status": latest_status,
-                    "latest_session_id": latest_session_id,
+                    "latest_memory_id": latest_memory_id,
                     "entry_count": len(members),
                     "first_day": first_day,
                     "last_day": last_day,
@@ -287,17 +287,17 @@ class MemoryFacade:
         catalog.sort(key=lambda item: item["last_day"], reverse=True)
         return {"tasks": catalog[:limit], "warnings": warnings}
 
-    def forget(self, session_id: str, now: datetime | None = None) -> None:
-        self._check_mutate(session_id, "forget", now)
+    def forget(self, memory_id: str, now: datetime | None = None) -> None:
+        self._check_mutate(memory_id, "forget", now)
         # The writer owns per-file locking and locates under mutation_lock:
         # no facade-side pre-locate (TOCTOU + double locate).
         with self.writer.mutation_lock():
-            self.writer.forget(session_id, now)
+            self.writer.forget(memory_id, now)
             self._refresh_index(now)
 
     def update(
         self,
-        session_id: str,
+        memory_id: str,
         *,
         topic: str | None = None,
         summary: str | None = None,
@@ -347,10 +347,10 @@ class MemoryFacade:
                 body_lines = format_body(summary)
             else:
                 body_lines = format_body(summary, content)
-        self._check_mutate(session_id, "update", now)
+        self._check_mutate(memory_id, "update", now)
         with self.writer.mutation_lock():
-            self.writer.update_session(
-                session_id, topic=topic, body_lines=body_lines,
+            self.writer.update_memory(
+                memory_id, topic=topic, body_lines=body_lines,
                 proj=normalized_proj, keep_details=keep_details,
                 task=task, cont=cont, kind=kind, status=status,
                 habit=habit.strip() if habit is not None else None,
@@ -360,15 +360,15 @@ class MemoryFacade:
 
     def reinforce(
         self,
-        session_id: str,
+        memory_id: str,
         importance: int | None = None,
         now: datetime | None = None,
     ) -> str:
         if importance is not None and importance not in TTL_DAYS:
             raise ValueError(f"importance must be 1..5, got {importance}")
-        self._check_mutate(session_id, "reinforce", now)
+        self._check_mutate(memory_id, "reinforce", now)
         with self.writer.mutation_lock():
-            exp = self.writer.reinforce(session_id, importance, now)
+            exp = self.writer.reinforce(memory_id, importance, now)
             self._refresh_index(now)
             return exp
 
@@ -377,7 +377,7 @@ class MemoryFacade:
         self,
         *,
         chunk_id: str | None = None,
-        session_id: str | None = None,
+        memory_id: str | None = None,
         now: datetime | None = None,
         allow_own_cross_window: bool = False,
     ) -> str:
@@ -385,25 +385,25 @@ class MemoryFacade:
             (name, value)
             for name, value in (
                 ("chunk_id", chunk_id),
-                ("session_id", session_id),
+                ("memory_id", memory_id),
             )
             if value is not None
         ]
         if len(provided) != 1:
-            raise ArchiveError("exactly one of chunk_id, session_id is required")
+            raise ArchiveError("exactly one of chunk_id, memory_id is required")
         name, value = provided[0]
         if not isinstance(value, str) or not value.strip():
             raise ArchiveError(f"{name} must be a non-empty string")
         now_ts = format_ts(utc_now(now))
         try:
-            text = self.archive.get(chunk_id=chunk_id, session_id=session_id, now=now)
+            text = self.archive.get(chunk_id=chunk_id, memory_id=memory_id, now=now)
             if chunk_id is not None:
-                sid = self.archive.lookup_session_id(chunk_id, now)
+                sid = self.archive.lookup_memory_id(chunk_id, now)
                 chunk_ids = [chunk_id]
             else:
-                sid = session_id or ""
-                rows = self.archive.store.get_session(sid, now_ts)
-                chunk_ids = [str(row["chunk_id"]) for row in rows[:GET_SESSION_CAP]]
+                sid = memory_id or ""
+                rows = self.archive.store.get_memory(sid, now_ts)
+                chunk_ids = [str(row["chunk_id"]) for row in rows[:GET_MEMORY_CAP]]
         except ArchiveError as original:
             if str(original).startswith(NO_FALLBACK_PREFIXES):
                 raise
@@ -412,17 +412,17 @@ class MemoryFacade:
                     self.archive, self.writer, chunk_id, now, original
                 )
                 chunk_ids = [chunk_id]
-            elif session_id is None:
+            elif memory_id is None:
                 raise
             else:
-                text = self.writer.read_session(session_id, now=now)
-                sid = session_id
-                chunk_ids = self._session_leaf_ids(session_id, text)[:GET_SESSION_CAP]
+                text = self.writer.read_memory(memory_id, now=now)
+                sid = memory_id
+                chunk_ids = self._memory_leaf_ids(memory_id, text)[:GET_MEMORY_CAP]
         if not sid.startswith("canonical#"):
             self._check_read(sid, now)
             origin_chat = None
             try:
-                origin_rows = self.archive.store.get_session(sid, now_ts)
+                origin_rows = self.archive.store.get_memory(sid, now_ts)
             except ArchiveError:
                 origin_rows = []
             if origin_rows:
@@ -471,7 +471,7 @@ class MemoryFacade:
             try:
                 if chunk_id is not None:
                     return self.archive.get(chunk_id=chunk_id, now=now)
-                return self.archive.get(session_id=sid, now=now)
+                return self.archive.get(memory_id=sid, now=now)
             except ArchiveError as reread_miss:
                 if str(reread_miss).startswith(NO_FALLBACK_PREFIXES):
                     raise
@@ -480,7 +480,7 @@ class MemoryFacade:
                         self.archive, self.writer, chunk_id, now, reread_miss
                     )
                     return leaf
-                return self.writer.read_session(sid, now=now)
+                return self.writer.read_memory(sid, now=now)
         # A bot reading outside its own entries (team/legacy) must not
         # extend their TTL: return the already-fetched text as-is.
         return text
@@ -595,27 +595,27 @@ class MemoryFacade:
             return removed
 
     def _lookup_bots(
-        self, session_id: str, now: datetime | None
+        self, memory_id: str, now: datetime | None
     ) -> tuple[str, ...] | None:
         """Owner list of one entry; None = legacy/team entry.
 
         Indexed rows first; today's not-yet-indexed file falls back to the
         raw heading. Unknown sessions read as None (callers that need the
         distinction check existence separately)."""
-        bots = self.archive.store.session_bots(session_id)
+        bots = self.archive.store.memory_bots(memory_id)
         if bots is not None:
             return bots
-        if self.archive.store.get_session_any(session_id):
+        if self.archive.store.get_memory_any(memory_id):
             return None
         try:
-            text = self.writer.read_session(session_id, now=now)
+            text = self.writer.read_memory(memory_id, now=now)
         except ArchiveError:
             return None
         first = text.splitlines()[0] if text.splitlines() else ""
         meta = parse_heading(first)
         return meta.bots if meta is not None else None
 
-    def _may_mutate(self, session_id: str, now: datetime | None = None) -> bool:
+    def _may_mutate(self, memory_id: str, now: datetime | None = None) -> bool:
         """True when the in-flight caller may edit/delete/renew an entry.
 
         The user (no bot bound) and Thyca may touch everything. A child
@@ -623,20 +623,20 @@ class MemoryFacade:
         reader = current_bot_id()
         if reader is None or reader == "thyca":
             return True
-        bots = self._lookup_bots(session_id, now)
+        bots = self._lookup_bots(memory_id, now)
         if bots is None:
             return False
         return reader in bots and "team" not in bots
 
-    def _check_mutate(self, session_id: str, op: str, now: datetime | None = None) -> None:
-        if self._may_mutate(session_id, now):
+    def _check_mutate(self, memory_id: str, op: str, now: datetime | None = None) -> None:
+        if self._may_mutate(memory_id, now):
             return
         reader = current_bot_id()
-        bots = self._lookup_bots(session_id, now)
+        bots = self._lookup_bots(memory_id, now)
         kind = "team" if (bots is None or "team" in (bots or ())) else "another bot's"
-        raise ArchiveError(f"bot '{reader}' cannot {op} {kind} memory: {session_id}")
+        raise ArchiveError(f"bot '{reader}' cannot {op} {kind} memory: {memory_id}")
 
-    def _check_read(self, session_id: str, now: datetime | None = None) -> None:
+    def _check_read(self, memory_id: str, now: datetime | None = None) -> None:
         """Raise unless the in-flight caller may read an entry.
 
         Read is wider than mutate: a child bot reads its own entries plus
@@ -644,10 +644,10 @@ class MemoryFacade:
         reader = current_bot_id()
         if reader is None or reader == "thyca":
             return
-        bots = self._lookup_bots(session_id, now)
+        bots = self._lookup_bots(memory_id, now)
         if bots is None or reader in bots or "team" in bots:
             return
-        raise ArchiveError(f"bot '{reader}' cannot read another bot's memory: {session_id}")
+        raise ArchiveError(f"bot '{reader}' cannot read another bot's memory: {memory_id}")
 
     CANONICAL_NAMES = ("SOUL.md", "USER.md", "IDENTITY.md")
 
@@ -700,13 +700,13 @@ class MemoryFacade:
             path, text, source_kind="daily", timeline_day=day
         )
 
-    def _session_leaf_ids(self, session_id: str, text: str) -> list[str]:
-        path, _ = self.writer.locate(session_id)
-        day = session_id.split("#", 1)[0]
+    def _memory_leaf_ids(self, memory_id: str, text: str) -> list[str]:
+        path, _ = self.writer.locate(memory_id)
+        day = memory_id.split("#", 1)[0]
         chunks = self.archive.chunker.chunk_markdown(
             path, text, source_kind="daily", timeline_day=day
         )
-        return [chunk.chunk_id for chunk in chunks if chunk.session_id == session_id]
+        return [chunk.chunk_id for chunk in chunks if chunk.memory_id == memory_id]
 
 
 def _resolve_owners(

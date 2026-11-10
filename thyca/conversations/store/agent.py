@@ -10,7 +10,7 @@ from .contracts import (DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, ConversationPage, Co
                         PageCursor, _decode_message, _encode_canonical_message, _local_error,
                         _require_actor, _require_ref, _validate_cursor, _view, validate_message)
 from .database import (_ensure_door_ready, _ensure_root_ready, _root_instance_id_from_conn,
-                       _transaction_context, open_existing_session)
+                       _transaction_context, open_existing_conversation)
 
 class AgentStore:
     """Agent-facing facade: membership-checked reads and append only."""
@@ -28,7 +28,7 @@ class AgentStore:
         if cursor is not None:
             _validate_cursor(cursor, ref)
         limit = min(limit, MAX_PAGE_LIMIT)
-        conn = open_existing_session(self._root)
+        conn = open_existing_conversation(self._root)
         try:
             with _transaction_context(conn, 'BEGIN'):
                 _ensure_root_ready(conn, _root_instance_id_from_conn(conn))
@@ -85,7 +85,7 @@ class AgentStore:
         # checkpoints/truncates it, which SIGBUSes the reader. Take the
         # store-root exclusive lock for the whole append so concurrent
         # processes never enter SQLite together.
-        conn = open_existing_session(self._root, lock_mode='exclusive')
+        conn = open_existing_conversation(self._root, lock_mode='exclusive')
         try:
             with _transaction_context(conn, 'BEGIN IMMEDIATE'):
                 _ensure_root_ready(conn, _root_instance_id_from_conn(conn))

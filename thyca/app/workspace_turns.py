@@ -4,7 +4,7 @@ Owns what ``ChatApp.turn`` used to do inline: text/config validation,
 responder resolution, the window claim, sink wiring, job submit, and the
 terminal-event publish/release. The executor coroutine runs inside the
 responding bot's workspace lease — one active turn per bot across all
-windows — while window claims keep their existing per-session
+windows — while window claims keep their existing per-conversation
 semantics (follow/cancel/409 unchanged).
 """
 from __future__ import annotations
@@ -36,18 +36,18 @@ class WorkspaceTurnService:
         from thyca.memories.visibility import MemoryView, bound_memory_view
 
         if skip_busy and self._workspaces.busy(bot_id):
-            from thyca.conversations.runtime import SessionBusy
-            raise SessionBusy(f"{bot_id} turn lease held")
+            from thyca.conversations.runtime import ConversationBusy
+            raise ConversationBusy(f"{bot_id} turn lease held")
         async with self._workspaces.lease(bot_id):
             # Deletion may have removed this card while the turn waited for
             # its lease. Validate before binding, which creates workspace state.
             self._app._bots.require(bot_id)
-            # Re-derive the window AFTER the queue wait: the session may
+            # Re-derive the window AFTER the queue wait: the conversation may
             # have changed while this turn was queued, so the view and the
             # registry binding must reflect the fresh state.
             if window is not None:
                 window = self._app._webui.window_for(
-                    self._app._sessions.store.load(window.window_id)
+                    self._app._conversations.store.load(window.window_id)
                 )
                 self._workspaces.store.bind_window(bot_id, window)
             from thyca.app.turn_event import (
@@ -79,7 +79,7 @@ class WorkspaceTurnService:
         diagnostic_sink=None,
     ) -> dict:
         app = self._app
-        session_id = event.window_id
+        conversation_id = event.window_id
         # System actors (scheduler, curation) inject data into the prompt,
         # so they use the system cap instead of the user-message cap.
         system = getattr(event.actor, "kind", None) == "system"
@@ -91,15 +91,22 @@ class WorkspaceTurnService:
         base_cfg = app._current_cfg()
         # Resolve the responder before model-dependent settings and provider
         # synchronization are applied.
-        bots = app.room_bots(session_id)
+        bots = app.room_bots(conversation_id)
+        live_ids = {
+            doc.card.bot_id
+            for doc in app._bots.list()
+            if doc.ok and doc.card is not None
+        }
         paused = {
             doc.card.bot_id
             for doc in app._bots.list()
             if doc.ok and doc.card is not None and doc.card.paused
         }
+        # A deleted bot is unavailable like a paused one.
+        unavailable = paused | {bot_id for bot_id in bots if bot_id not in live_ids}
         routing_text = cleaned
         if retry:
-            room = app._sessions.store.load(session_id)
+            room = app._conversations.store.load(conversation_id)
             routing_text = next(
                 (
                     message.content or ""
@@ -108,7 +115,12 @@ class WorkspaceTurnService:
                 ),
                 "",
             )
-        responder = app._resolve_responder(bots, routing_text, paused=paused)
+        responder = app._resolve_responder(bots, routing_text, paused=unavailable)
+        # No live participant can answer this room.
+        if responder in unavailable:
+            from thyca.conversations.runtime.errors import NoLiveResponder
+
+            raise NoLiveResponder(conversation_id)
         card = app._bots.require(responder)
         requested_cfg = (
             overlay_turn_cfg(base_cfg, model, None)
@@ -129,13 +141,13 @@ class WorkspaceTurnService:
         app._zone = ZoneInfo(base_cfg.timeline.timezone)
         app._sync_mcp(resolved_cfg)
         with app._claim_lock:
-            hub = app._turns.claim(session_id)
-            job = app._loop_turns.begin(session_id)
+            hub = app._turns.claim(conversation_id)
+            job = app._loop_turns.begin(conversation_id)
         if not retry:
             # A fresh user message answers any waiting/error card in
             # this room; a retry replays the same message and must not.
             # Only after the claim: a refused (busy) turn posted nothing.
-            app._agent_status.note_user_message(session_id)
+            app._agent_status.note_user_message(conversation_id)
         try:
 
             def sink(turn_event: TurnEvent) -> None:
@@ -144,7 +156,7 @@ class WorkspaceTurnService:
                     event_sink(turn_event)
 
             executor = lambda: app._run_bot_turn(
-                session_id,
+                conversation_id,
                 cleaned,
                 sink,
                 turn_cfg=requested_cfg,
@@ -169,8 +181,8 @@ class WorkspaceTurnService:
             return detail
         finally:
             with app._claim_lock:
-                app._loop_turns.end(session_id, job)
-                app._turns.release(session_id)
+                app._loop_turns.end(conversation_id, job)
+                app._turns.release(conversation_id)
 
     def run_system(
         self,
@@ -185,12 +197,12 @@ class WorkspaceTurnService:
         from thyca.core.protocol import utc_now_ts
 
         dm = self._app.bot_dm(bot_id)
-        session = self._app._sessions.store.load(dm["id"])
-        window = self._app._webui.window_for(session)
+        conversation = self._app._conversations.store.load(dm["conversation_id"])
+        window = self._app._webui.window_for(conversation)
         event = ChannelEvent(
             event_id=event_id or uuid.uuid4().hex,
             channel_id="webui",
-            window_id=dm["id"],
+            window_id=dm["conversation_id"],
             actor=ActorRef(kind="system", id="scheduler"),
             text=text,
             visibility="system",

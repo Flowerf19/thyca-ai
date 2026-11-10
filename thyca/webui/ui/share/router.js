@@ -473,7 +473,7 @@
   function dispatch(action, id, ...args) {
     if (setupState !== 'ready') return false;
     if (action === 'selectBot') return current?.controller?.selectBot?.(id);
-    if (action === 'loadSession') return current?.controller?.loadSession?.(id, ...args);
+    if (action === 'loadConversation') return current?.controller?.loadConversation?.(id, ...args);
   }
   window.ThycaRouter = {
     register(pageId, spec) {

@@ -44,19 +44,19 @@ def test_t6a_expired_errors_name_the_cause(tmp_path: Path) -> None:
     )
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     sid, cid = "2026-08-13#eeeeeeee", "2026-08-13#eeeeeeee#1"
-    with pytest.raises(ArchiveError, match=r"^session expired: "):
-        facade.archive.get(session_id=sid)
+    with pytest.raises(ArchiveError, match=r"^memory expired: "):
+        facade.archive.get(memory_id=sid)
     with pytest.raises(ArchiveError, match=r"^chunk expired: "):
         facade.archive.get(chunk_id=cid)
     # Facade must not mask the cause behind the writer fallback.
-    with pytest.raises(ArchiveError, match=r"^session expired: "):
-        facade.get(session_id=sid)
+    with pytest.raises(ArchiveError, match=r"^memory expired: "):
+        facade.get(memory_id=sid)
     with pytest.raises(ArchiveError, match=r"^chunk expired: "):
         facade.get(chunk_id=cid)
     # Live rows and never-existed ids keep their behavior.
-    assert "still alive" in facade.get(session_id="2026-08-13#ffffffff")
-    with pytest.raises(ArchiveError, match=r"^session not found: "):
-        facade.archive.get(session_id="2026-08-13#zzzzzzzz")
+    assert "still alive" in facade.get(memory_id="2026-08-13#ffffffff")
+    with pytest.raises(ArchiveError, match=r"^memory not found: "):
+        facade.archive.get(memory_id="2026-08-13#zzzzzzzz")
     with pytest.raises(ArchiveError, match=r"^chunk not found: "):
         facade.archive.get(chunk_id="2026-08-13#zzzzzzzz#1")
 
@@ -74,17 +74,17 @@ def test_t6a_forgotten_errors_name_the_cause(tmp_path: Path) -> None:
         ("2026-08-14T00:00:00Z", cid),
     )
     facade.archive.store._db.commit()
-    with pytest.raises(ArchiveError, match=r"^session forgotten: "):
-        facade.archive.get(session_id=sid)
+    with pytest.raises(ArchiveError, match=r"^memory forgotten: "):
+        facade.archive.get(memory_id=sid)
     with pytest.raises(ArchiveError, match=r"^chunk forgotten: "):
         facade.archive.get(chunk_id=cid)
-    with pytest.raises(ArchiveError, match=r"^session forgotten: "):
-        facade.get(session_id=sid)
+    with pytest.raises(ArchiveError, match=r"^memory forgotten: "):
+        facade.get(memory_id=sid)
     with pytest.raises(ArchiveError, match=r"^chunk forgotten: "):
         facade.get(chunk_id=cid)
 
 
-def test_t6a_lookup_session_id_is_precise(tmp_path: Path) -> None:
+def test_t6a_lookup_memory_id_is_precise(tmp_path: Path) -> None:
     _seed(
         tmp_path,
         _heading("eeeeeeee", "gone", "2020-01-01T00:00:00Z")
@@ -92,9 +92,9 @@ def test_t6a_lookup_session_id_is_precise(tmp_path: Path) -> None:
     )
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     with pytest.raises(ArchiveError, match=r"^chunk expired: "):
-        facade.archive.lookup_session_id("2026-08-13#eeeeeeee#1")
+        facade.archive.lookup_memory_id("2026-08-13#eeeeeeee#1")
     with pytest.raises(ArchiveError, match=r"^chunk not found: "):
-        facade.archive.lookup_session_id("2026-08-13#zzzzzzzz#1")
+        facade.archive.lookup_memory_id("2026-08-13#zzzzzzzz#1")
 
 
 # --- T6b: search warnings ---
@@ -178,8 +178,8 @@ def test_t8_today_chunk_falls_back_to_writer(tmp_path: Path) -> None:
     assert "uniquetokenzz" in leaf
     assert "## " not in leaf  # leaf text, not the whole session
     assert cid in facade.archive.store.usage.get_map()
-    # Session fallback still works alongside.
-    assert "uniquetokenzz" in facade.get(session_id=sid)
+    # ConversationRuntime fallback still works alongside.
+    assert "uniquetokenzz" in facade.get(memory_id=sid)
 
 
 def test_t8_chunk_miss_stays_not_found(tmp_path: Path) -> None:

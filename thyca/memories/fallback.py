@@ -18,7 +18,7 @@ def read_unindexed_chunk(
 ) -> tuple[str, str]:
     """Leaf text + session id for a chunk missing from the index.
 
-    T8: chunk_id is "{session_id}#{ord}" (chunk.py), so a daily miss
+    T8: chunk_id is "{memory_id}#{ord}" (chunk.py), so a daily miss
     resolves through the writer like a session miss — today's file is
     not indexed. Canonical chunks are always indexed, so a miss there
     (or an unparseable id) re-raises the index miss unchanged.

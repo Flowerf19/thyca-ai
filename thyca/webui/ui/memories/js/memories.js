@@ -8,9 +8,9 @@ ThycaRouter.register('memories', { title: 'Nhật ký', stylesheet: '/ui/memorie
 // Shared shell: emitShell('memories') already ran before this file loaded
 // (SPA entry ui/chat/index.html); bootShell() fills the sidebar roster.
 // API: GET  /api/memory/stats[?bot_id=<id>] — stats row + leaf list
-//      POST /api/memory/reinforce {session_id}          — renew a leaf's TTL
-//      POST /api/memory/update {session_id, topic, summary} — edit a leaf
-//      POST /api/memory/forget {session_id}             — drop a leaf
+//      POST /api/memory/reinforce {memory_id}          — renew a leaf's TTL
+//      POST /api/memory/update {memory_id, topic, summary} — edit a leaf
+//      POST /api/memory/forget {memory_id}             — drop a leaf
 
 
 /* Same rules as thyca/memories/stats.py so per-leaf badges match the
@@ -181,7 +181,7 @@ function metaHtml(leaf) {
   parts.push(`<span>tìm thấy ${leaf.search_count || 0}</span>`);
   if (leaf.expires_at) parts.push(`<span class="mem-expiring">hết hạn ${escapeHTML(fmtTs(leaf.expires_at))}</span>`);
   parts.push(`<span>${ownerLabel(leaf.bots)}</span>`);
-  parts.push(`<span class="mem-sid">${escapeHTML(leaf.session_id || '')}</span>`);
+  parts.push(`<span class="mem-sid">${escapeHTML(leaf.memory_id || '')}</span>`);
   return parts.join('');
 }
 
@@ -228,7 +228,7 @@ function filteredLeaves() {
   if (!needle) return leaves;
   return leaves.filter(leaf => {
     const { title } = splitHeading(leaf);
-    return `${title} ${leaf.snippet || ''} ${leaf.session_id || ''} ${leaf.heading || ''}`
+    return `${title} ${leaf.snippet || ''} ${leaf.memory_id || ''} ${leaf.heading || ''}`
       .toLocaleLowerCase('vi').includes(needle);
   });
 }
@@ -387,19 +387,19 @@ function wirePage() {
     const article = btn.closest('[data-chunk]');
     const leaf = article && memState.byChunk.get(article.dataset.chunk);
     if (!leaf) return;
-    const sid = leaf.session_id;
+    const sid = leaf.memory_id;
     if (btn.dataset.act === 'edit') { openEdit(leaf); return; }
     if (btn.dataset.act === 'forget') {
       const { title } = splitHeading(leaf);
       if (!confirm(`Quên “${title || 'trang này'}” khỏi bộ nhớ?`)) return;
       btn.disabled = true;
-      await mutate('/api/memory/forget', { session_id: sid }, 'Đã quên trang.');   // API: POST /api/memory/forget
+      await mutate('/api/memory/forget', { memory_id: sid }, 'Đã quên trang.');   // API: POST /api/memory/forget
       btn.disabled = false;
       return;
     }
     if (btn.dataset.act === 'reinforce') {
       btn.disabled = true;
-      const res = await postJson('/api/memory/reinforce', { session_id: sid }).catch(err => { toast('Không gia hạn được: ' + (err.message || '')); return null; });  // API: POST /api/memory/reinforce
+      const res = await postJson('/api/memory/reinforce', { memory_id: sid }).catch(err => { toast('Không gia hạn được: ' + (err.message || '')); return null; });  // API: POST /api/memory/reinforce
       btn.disabled = false;
       if (res && res.ok) {
         if (res.expires_at) { leaf.expires_at = res.expires_at; refreshLeafDom(leaf); }
@@ -422,13 +422,13 @@ function wirePage() {
        into stray leaf lines, so collapse them like cleanText does. */
     const summary = $('#mem-edit-summary').value.replace(/\s+/g, ' ').trim();
     if (!topic || !summary) return;
-    const res = await mutate('/api/memory/update', { session_id: leaf.session_id, topic, summary }, '');  // API: POST /api/memory/update
+    const res = await mutate('/api/memory/update', { memory_id: leaf.memory_id, topic, summary }, '');  // API: POST /api/memory/update
     if (res && res.ok) { dlg.close(); toast('Đã cập nhật trang.'); }
   };
 }
 
 /* Sidebar routing stays on this page: clicking a bot card or one of its
-   drawer sessions scopes the journal to that bot (instead of the shared
+   drawer conversations scopes the journal to that bot (instead of the shared
    default, which opens chat). Clicking the scoped bot again clears the
    filter; a group row scopes to its first member. */
 function selectBot(id) {
@@ -440,7 +440,7 @@ function selectBot(id) {
   routeKey = q;
   loadStats();
 }
-function loadSession(id, title, botId) { selectBot(botId || ''); }
+function loadConversation(id, botId) { selectBot(botId || ''); }
 
 function buildPage() {
   const workspace = $('.workspace');
@@ -465,7 +465,7 @@ async function boot() {
   renderScopeCard();
 }
   const ready = boot();
-  return { ready, selectBot, loadSession, onRoute(route) {
+  return { ready, selectBot, loadConversation, onRoute(route) {
     const key = route.search + route.hash;
     if (key === routeKey) return;
     routeKey = key;

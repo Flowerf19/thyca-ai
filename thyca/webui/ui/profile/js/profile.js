@@ -317,7 +317,7 @@ new MutationObserver(() => fixSidebarLabels())
 function selectBot(id) {
   if (getBot(id)) showTab(id);
 }
-function loadSession(id, title, botId) { if (botId) selectBot(botId); }
+function loadConversation(id, botId) { if (botId) selectBot(botId); }
 
 /* ---------- Per-bot model settings (scoped form, same page) ---------- */
 
@@ -681,7 +681,7 @@ async function boot() {
   applyRoute();
 }
   const ready = boot();
-  return { ready, selectBot, loadSession, sidebarLabel(_id, name) { return `Hồ sơ của ${name}`; }, onEnter() {
+  return { ready, selectBot, loadConversation, sidebarLabel(_id, name) { return `Hồ sơ của ${name}`; }, onEnter() {
     void drainDirtyCatalog();
   }, onRoute(route) {
     const key = route.search + route.hash;

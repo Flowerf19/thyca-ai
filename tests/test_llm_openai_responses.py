@@ -413,11 +413,11 @@ async def test_reasoning_summary_feeds_persist_and_cost_pipeline(tmp_path) -> No
 
     from thyca.agents.observe import Observe
     from thyca.agents.stage import Stage
-    from thyca.bots.timeline import CanonicalSessionStore, WorkspaceTimeline
+    from thyca.bots.timeline import CanonicalConversationStore, WorkspaceTimeline
     from thyca.configs import PricingCfg
     from thyca.core.channel import WindowRef
     from thyca.llms.pricing import cost_for
-    from thyca.conversations.runtime import SessionManager
+    from thyca.conversations.runtime import ConversationManager
 
     connect = OpenAIResponses(_provider(), client=_client(handler))
     reply = await connect.chat([Message(role="user", content="x")])
@@ -426,10 +426,10 @@ async def test_reasoning_summary_feeds_persist_and_cost_pipeline(tmp_path) -> No
     _window = WindowRef(
         window_id="thyca", channel_id="webui", kind="dm", participants=("thyca",))
     _sid = "2026-01-01T00-00-00_ab12"
-    manager = SessionManager(store=CanonicalSessionStore(
+    manager = ConversationManager(store=CanonicalConversationStore(
         tmp_path / "bots" / "thyca" / "sessions",
         timeline=WorkspaceTimeline(tmp_path, "thyca"),
-        window=_window, session_id=_sid))
+        window=_window, conversation_id=_sid))
     manager.load(_sid)
     stage = Stage(messages=[], reply=reply)
     Observe(manager).assistant(stage)

@@ -24,8 +24,9 @@ def node() -> str:
 
 
 _PREAMBLE = f"""
-import {{ loadScripts }} from './tests/webui_dom.mjs';
-const {{ readNdjson }} = loadScripts(['{CHAT_JS.as_posix()}'], 'return {{ readNdjson }};');
+import {{ installDom, loadScripts, CHAT_CHAIN }} from './tests/webui_dom.mjs';
+installDom();
+const {{ readNdjson }} = loadScripts(CHAT_CHAIN, 'return {{ readNdjson }};');
 async function decode(raw, splitAt = -1) {{
   const bytes = new TextEncoder().encode(raw);
   const parts = splitAt >= 0 ? [bytes.slice(0, splitAt), bytes.slice(splitAt)] : [bytes];

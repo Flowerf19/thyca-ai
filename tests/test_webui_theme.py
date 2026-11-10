@@ -37,7 +37,7 @@ def test_base_tokens_define_the_paper_palette() -> None:
     for token in (
         "--paper:#fbf5e8", "--paper-deep:#f0e7d4", "--ink:#3c372c",
         "--muted:#877d69", "--line:#d9ccb4", "--forest:#315d4c",
-        "--rust:#aa5638", "--sidebar-width:396px",
+        "--rust:#aa5638", "--sidebar-width:250px",
     ):
         assert token in root, token
     assert "'Thyca Serif'" in root and "--serif" in root
@@ -130,12 +130,24 @@ def test_decoration_preference_drives_the_shared_artwork() -> None:
 def test_narrow_drawer_stays_paper_backed_and_opaque() -> None:
     """At <=850px the sidebar becomes an overlay drawer: paper-backed like
     the shell (same image + 65% cream overlay) but over an opaque cream base
-    so workspace text never ghosts through the drawer."""
+    so workspace text never ghosts through the drawer.
+
+    The drawer is as wide as the desktop sidebar and stays hidden until
+    the menu opens it."""
     sidebar = SIDEBAR_CSS.read_text(encoding="utf-8")
     drawer = sidebar.split("@media(max-width:850px){", 1)[1]
     assert "images/thyca-bg-paper.png" in drawer
     assert "#fbf4e5a6" in drawer and "background-size:cover" in drawer
     assert "background-color:#f8efde" in drawer  # opaque base: no ghosted chat text
+    base = BASE_CSS.read_text(encoding="utf-8")
+    # Drawer width matches the desktop column (250px token, 250px drawer).
+    assert "--sidebar-width:250px" in _block(base, ":root")
+    assert "grid-template-columns:var(--sidebar-width)" in base
+    assert "width:250px" in drawer
+    assert "min(360px" not in drawer
+    # Hidden by default: slid off-screen; .mobile-open slides it in.
+    assert "transform:translateX(calc(-100% - 18px))" in drawer
+    assert ".sidebar.mobile-open" in sidebar
 
 
 def test_current_page_and_selected_bot_marks() -> None:

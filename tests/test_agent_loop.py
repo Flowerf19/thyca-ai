@@ -13,22 +13,22 @@ from thyca.agents.observe import Observe
 from thyca.agents.think import ChatReply, Think
 from thyca.configs import PricingCfg
 from thyca.core.protocol import Message, ToolCall, ToolResult
-from thyca.conversations.runtime import SessionManager
+from thyca.conversations.runtime import ConversationManager
 
-# Build a canonical-timeline manager holding one execution session.
-def _canonical_manager(root: Path, limits=None) -> SessionManager:
-    from thyca.bots.timeline import CanonicalSessionStore, WorkspaceTimeline
+# Build a canonical-timeline manager holding one execution conversation.
+def _canonical_manager(root: Path, limits=None) -> ConversationManager:
+    from thyca.bots.timeline import CanonicalConversationStore, WorkspaceTimeline
     from thyca.core.channel import WindowRef
 
     timeline = WorkspaceTimeline(root, "thyca")
     window = WindowRef(
         window_id="thyca", channel_id="webui", kind="dm", participants=("thyca",))
-    session_id = "2026-01-01T00-00-00_ab12"
-    store = CanonicalSessionStore(
+    conversation_id = "2026-01-01T00-00-00_ab12"
+    store = CanonicalConversationStore(
         root / "bots" / "thyca" / "sessions",
-        timeline=timeline, window=window, session_id=session_id)
-    manager = SessionManager(store=store, limits=limits)
-    manager.load(session_id)
+        timeline=timeline, window=window, conversation_id=conversation_id)
+    manager = ConversationManager(store=store, limits=limits)
+    manager.load(conversation_id)
     return manager
 
 
@@ -61,7 +61,7 @@ class FakeDispatcher:
         return self.results[call.id]
 
 
-def _wrap_compaction(manager: SessionManager, events: list[str]) -> None:
+def _wrap_compaction(manager: ConversationManager, events: list[str]) -> None:
     original = manager.compact_if_needed
 
     def compact(**kwargs) -> bool:
@@ -71,19 +71,19 @@ def _wrap_compaction(manager: SessionManager, events: list[str]) -> None:
     manager.compact_if_needed = compact  # type: ignore[method-assign]
 
 
-def _load_messages(tmp_path: Path, session_id: str) -> list[Message]:
-    return _canonical_manager(tmp_path).load(session_id).messages
+def _load_messages(tmp_path: Path, conversation_id: str) -> list[Message]:
+    return _canonical_manager(tmp_path).load(conversation_id).messages
 
 
 def _loop(
-    manager: SessionManager,
+    manager: ConversationManager,
     llm: FakeLLM,
     dispatcher: FakeDispatcher,
     *,
     loop_max: int = 3,
 ) -> AgentLoop:
     return AgentLoop(
-        sessions=manager,
+        conversations=manager,
         assemble=Assemble(),
         think=Think(llm),
         act=Act(dispatcher),
@@ -94,7 +94,7 @@ def _loop(
 
 def test_text_only_event_order_and_persist_unchanged(tmp_path: Path) -> None:
     manager = _canonical_manager(tmp_path)
-    session = manager.current
+    conversation = manager.current
     llm = FakeLLM([ChatReply(content="hello back")])
     dispatcher = FakeDispatcher({})
     events: list[TurnEvent] = []
@@ -108,7 +108,7 @@ def test_text_only_event_order_and_persist_unchanged(tmp_path: Path) -> None:
         ("llm.started", 1, None),
         ("llm.finished", 1, 0),
     ]
-    messages = _load_messages(tmp_path, session.id)
+    messages = _load_messages(tmp_path, conversation.conversation_id)
     assert [(message.role, message.content) for message in messages] == [
         ("user", "hello"),
         ("assistant", "hello back"),
@@ -117,7 +117,7 @@ def test_text_only_event_order_and_persist_unchanged(tmp_path: Path) -> None:
 
 def test_tool_round_then_text_emits_round_and_tool_events(tmp_path: Path) -> None:
     manager = _canonical_manager(tmp_path)
-    session = manager.current
+    conversation = manager.current
     call = ToolCall(id="call-1", name="echo", arguments={"value": "x"})
     llm = FakeLLM(
         [
@@ -157,7 +157,7 @@ def test_tool_round_then_text_emits_round_and_tool_events(tmp_path: Path) -> Non
         "echo",
         True,
     )
-    messages = _load_messages(tmp_path, session.id)
+    messages = _load_messages(tmp_path, conversation.conversation_id)
     assert [message.role for message in messages] == ["user", "assistant", "tool", "assistant"]
     assert messages[-1].content == "finished"
 
@@ -183,7 +183,7 @@ def test_loop_limit_marker_is_not_a_second_model_call(tmp_path: Path) -> None:
     })
     manager = _canonical_manager(tmp_path)
     loop = AgentLoop(
-        sessions=manager,
+        conversations=manager,
         assemble=Assemble(),
         think=Think(llm),
         act=Act(dispatcher),
@@ -212,7 +212,7 @@ def test_loop_limit_marker_is_not_a_second_model_call(tmp_path: Path) -> None:
 
 def test_loop_max_emits_no_finished_for_skipped_round(tmp_path: Path) -> None:
     manager = _canonical_manager(tmp_path)
-    session = manager.current
+    conversation = manager.current
     call = ToolCall(id="call-1", name="echo")
     llm = FakeLLM([ChatReply(content=None, tool_calls=[call])])
     dispatcher = FakeDispatcher(
@@ -233,14 +233,14 @@ def test_loop_max_emits_no_finished_for_skipped_round(tmp_path: Path) -> None:
         ("tool.started", 1, None),
         ("tool.finished", 1, None),
     ]
-    messages = _load_messages(tmp_path, session.id)
+    messages = _load_messages(tmp_path, conversation.conversation_id)
     assert [message.role for message in messages] == ["user", "assistant", "tool", "assistant"]
     assert messages[-1].content == "loop limit reached"
 
 
 def test_sink_raise_fails_open_turn_still_persists(tmp_path: Path) -> None:
     manager = _canonical_manager(tmp_path)
-    session = manager.current
+    conversation = manager.current
     llm = FakeLLM([ChatReply(content="hello back")])
     dispatcher = FakeDispatcher({})
 
@@ -251,7 +251,7 @@ def test_sink_raise_fails_open_turn_still_persists(tmp_path: Path) -> None:
         asyncio.run(_loop(manager, llm, dispatcher).run("hello", event_sink=boom))
         == "hello back"
     )
-    messages = _load_messages(tmp_path, session.id)
+    messages = _load_messages(tmp_path, conversation.conversation_id)
     assert [(message.role, message.content) for message in messages] == [
         ("user", "hello"),
         ("assistant", "hello back"),
@@ -260,7 +260,7 @@ def test_sink_raise_fails_open_turn_still_persists(tmp_path: Path) -> None:
 
 def test_text_only_compacts_before_chat_and_persists_user_and_assistant(tmp_path: Path) -> None:
     manager = _canonical_manager(tmp_path)
-    session = manager.current
+    conversation = manager.current
     events: list[str] = []
     _wrap_compaction(manager, events)
     llm = FakeLLM([ChatReply(content="hello back")], events=events)
@@ -268,7 +268,7 @@ def test_text_only_compacts_before_chat_and_persists_user_and_assistant(tmp_path
 
     assert asyncio.run(_loop(manager, llm, dispatcher).run("hello")) == "hello back"
     assert events == ["compact", "chat"]
-    messages = _load_messages(tmp_path, session.id)
+    messages = _load_messages(tmp_path, conversation.conversation_id)
     assert [(message.role, message.content) for message in messages] == [
         ("user", "hello"),
         ("assistant", "hello back"),
@@ -277,7 +277,7 @@ def test_text_only_compacts_before_chat_and_persists_user_and_assistant(tmp_path
 
 def test_one_tool_round_then_text_persists_complete_round(tmp_path: Path) -> None:
     manager = _canonical_manager(tmp_path)
-    session = manager.current
+    conversation = manager.current
     call = ToolCall(id="call-1", name="echo", arguments={"value": "x"})
     llm = FakeLLM(
         [
@@ -291,7 +291,7 @@ def test_one_tool_round_then_text_persists_complete_round(tmp_path: Path) -> Non
 
     assert asyncio.run(_loop(manager, llm, dispatcher).run("use echo")) == "finished"
 
-    messages = _load_messages(tmp_path, session.id)
+    messages = _load_messages(tmp_path, conversation.conversation_id)
     assert [message.role for message in messages] == ["user", "assistant", "tool", "assistant"]
     # Tool-path assistant rows normalize None to "" like terminal rows.
     assert messages[1].content == ""
@@ -304,7 +304,7 @@ def test_one_tool_round_then_text_persists_complete_round(tmp_path: Path) -> Non
 
 def test_two_tool_calls_persist_results_in_declaration_order(tmp_path: Path) -> None:
     manager = _canonical_manager(tmp_path)
-    session = manager.current
+    conversation = manager.current
     first = ToolCall(id="first", name="slow")
     second = ToolCall(id="second", name="fast")
     llm = FakeLLM(
@@ -323,7 +323,7 @@ def test_two_tool_calls_persist_results_in_declaration_order(tmp_path: Path) -> 
 
     assert asyncio.run(_loop(manager, llm, dispatcher).run("run both")) == "done"
 
-    messages = _load_messages(tmp_path, session.id)
+    messages = _load_messages(tmp_path, conversation.conversation_id)
     assert [message.tool_call_id for message in messages if message.role == "tool"] == [
         "first",
         "second",
@@ -333,7 +333,7 @@ def test_two_tool_calls_persist_results_in_declaration_order(tmp_path: Path) -> 
 
 def test_loop_max_persists_limit_message_without_second_chat(tmp_path: Path) -> None:
     manager = _canonical_manager(tmp_path)
-    session = manager.current
+    conversation = manager.current
     call = ToolCall(id="call-1", name="echo")
     llm = FakeLLM([ChatReply(content=None, tool_calls=[call])])
     dispatcher = FakeDispatcher(
@@ -345,14 +345,14 @@ def test_loop_max_persists_limit_message_without_second_chat(tmp_path: Path) -> 
     )
 
     assert len(llm.requests) == 1
-    messages = _load_messages(tmp_path, session.id)
+    messages = _load_messages(tmp_path, conversation.conversation_id)
     assert [message.role for message in messages] == ["user", "assistant", "tool", "assistant"]
     assert messages[-1].content == "loop limit reached"
 
 
 def test_parse_error_is_returned_as_tool_error_without_dispatch(tmp_path: Path) -> None:
     manager = _canonical_manager(tmp_path)
-    session = manager.current
+    conversation = manager.current
     call = ToolCall(id="bad-call", name="echo", parse_error="invalid arguments")
     llm = FakeLLM(
         [
@@ -365,7 +365,7 @@ def test_parse_error_is_returned_as_tool_error_without_dispatch(tmp_path: Path) 
     assert asyncio.run(_loop(manager, llm, dispatcher).run("bad tool call")) == "recovered"
 
     assert dispatcher.calls == []
-    messages = _load_messages(tmp_path, session.id)
+    messages = _load_messages(tmp_path, conversation.conversation_id)
     assert messages[2].role == "tool"
     assert messages[2].tool_call_id == "bad-call"
     assert messages[2].content == "invalid arguments"
@@ -373,7 +373,7 @@ def test_parse_error_is_returned_as_tool_error_without_dispatch(tmp_path: Path) 
 
 def test_persists_usage_cost_and_config_model_when_reply_omits_model(tmp_path: Path) -> None:
     manager = _canonical_manager(tmp_path)
-    session = manager.current
+    conversation = manager.current
     usage = {
         "prompt_tokens": 100,
         "cached_tokens": 20,
@@ -383,7 +383,7 @@ def test_persists_usage_cost_and_config_model_when_reply_omits_model(tmp_path: P
     llm = FakeLLM([ChatReply(content="hello back", usage=usage, finish_reason="stop")])
     dispatcher = FakeDispatcher({})
     loop = AgentLoop(
-        sessions=manager,
+        conversations=manager,
         assemble=Assemble(),
         think=Think(llm),
         act=Act(dispatcher),
@@ -395,7 +395,7 @@ def test_persists_usage_cost_and_config_model_when_reply_omits_model(tmp_path: P
 
     assert asyncio.run(loop.run("hello")) == "hello back"
 
-    messages = _load_messages(tmp_path, session.id)
+    messages = _load_messages(tmp_path, conversation.conversation_id)
     meta = messages[-1].meta
     assert meta is not None
     assert meta["model"] == "gpt-4o-mini"
@@ -408,11 +408,11 @@ def test_persists_usage_cost_and_config_model_when_reply_omits_model(tmp_path: P
 
 def test_unknown_model_persists_usage_without_cost(tmp_path: Path) -> None:
     manager = _canonical_manager(tmp_path)
-    session = manager.current
+    conversation = manager.current
     usage = {"prompt_tokens": 8, "cached_tokens": 0, "completion_tokens": 2, "total_tokens": 10}
     llm = FakeLLM([ChatReply(content="ok", usage=usage)])
     loop = AgentLoop(
-        sessions=manager,
+        conversations=manager,
         assemble=Assemble(),
         think=Think(llm),
         act=Act(FakeDispatcher({})),
@@ -423,7 +423,7 @@ def test_unknown_model_persists_usage_without_cost(tmp_path: Path) -> None:
 
     assert asyncio.run(loop.run("hello")) == "ok"
 
-    meta = _load_messages(tmp_path, session.id)[-1].meta
+    meta = _load_messages(tmp_path, conversation.conversation_id)[-1].meta
     assert meta["model"] == "foo/bar"
     assert meta["usage"] == usage
     assert "cost_usd" not in meta
@@ -431,7 +431,7 @@ def test_unknown_model_persists_usage_without_cost(tmp_path: Path) -> None:
 
 def test_tool_round_persists_tool_latency(tmp_path: Path) -> None:
     manager = _canonical_manager(tmp_path)
-    session = manager.current
+    conversation = manager.current
     call = ToolCall(id="call-1", name="echo", arguments={"value": "x"})
     llm = FakeLLM(
         [
@@ -445,7 +445,7 @@ def test_tool_round_persists_tool_latency(tmp_path: Path) -> None:
 
     assert asyncio.run(_loop(manager, llm, dispatcher).run("use echo")) == "finished"
 
-    messages = _load_messages(tmp_path, session.id)
+    messages = _load_messages(tmp_path, conversation.conversation_id)
     tool = messages[2]
     assert tool.role == "tool"
     assert tool.meta is not None
@@ -455,7 +455,7 @@ def test_tool_round_persists_tool_latency(tmp_path: Path) -> None:
 
 def test_reasoning_persists_without_thinking_events(tmp_path: Path) -> None:
     manager = _canonical_manager(tmp_path)
-    session = manager.current
+    conversation = manager.current
     llm = FakeLLM([ChatReply(content="hello back", reasoning="because")])
     events: list = []
 
@@ -464,7 +464,7 @@ def test_reasoning_persists_without_thinking_events(tmp_path: Path) -> None:
         == "hello back"
     )
     assert [event.type for event in events] == ["turn.accepted", "llm.started", "llm.finished"]
-    messages = _load_messages(tmp_path, session.id)
+    messages = _load_messages(tmp_path, conversation.conversation_id)
     assert messages[-1].content == "hello back"
     assert messages[-1].reasoning == "because"
 
@@ -481,10 +481,10 @@ def test_on_reasoning_emits_thinking_deltas(tmp_path: Path) -> None:
             return ChatReply(content="ok", reasoning="First check")
 
     manager = _canonical_manager(tmp_path)
-    session = manager.current
+    conversation = manager.current
     events: list = []
     loop = AgentLoop(
-        sessions=manager,
+        conversations=manager,
         assemble=Assemble(),
         think=Think(StreamingLLM()),
         act=Act(FakeDispatcher({})),
@@ -497,12 +497,12 @@ def test_on_reasoning_emits_thinking_deltas(tmp_path: Path) -> None:
         {"type": "llm.thinking", "round": 1, "delta": "First "},
         {"type": "llm.thinking", "round": 1, "delta": "check"},
     ]
-    assert _load_messages(tmp_path, session.id)[-1].reasoning == "First check"
+    assert _load_messages(tmp_path, conversation.conversation_id)[-1].reasoning == "First check"
 
 
 def test_persist_user_false_does_not_append_user(tmp_path: Path) -> None:
     manager = _canonical_manager(tmp_path)
-    session = manager.current
+    conversation = manager.current
     manager.append(Message(role="user", content="hello"))
     llm = FakeLLM([ChatReply(content="again")])
     events: list[TurnEvent] = []
@@ -520,7 +520,7 @@ def test_persist_user_false_does_not_append_user(tmp_path: Path) -> None:
         "llm.started",
         "llm.finished",
     ]
-    messages = _load_messages(tmp_path, session.id)
+    messages = _load_messages(tmp_path, conversation.conversation_id)
     assert [(message.role, message.content) for message in messages] == [
         ("user", "hello"),
         ("assistant", "again"),
@@ -534,7 +534,7 @@ def test_over_cap_turn_sends_compacted_history(tmp_path: Path) -> None:
     from thyca.configs import LimitsCfg
 
     manager = _canonical_manager(tmp_path, LimitsCfg(contextTokens=1000))
-    session = manager.current
+    conversation = manager.current
     for i in range(10):
         manager.append(Message(role="user", content=f"old-{i}-" + "x" * 500))
         manager.append(Message(role="assistant", content=f"reply-{i}-" + "y" * 500))
@@ -546,7 +546,7 @@ def test_over_cap_turn_sends_compacted_history(tmp_path: Path) -> None:
     assert request[-1] == Message(role="user", content="new question")
     assert all("old-0-" not in (message.content or "") for message in request)
     assert len(request) < 21
-    stored = _load_messages(tmp_path, session.id)
+    stored = _load_messages(tmp_path, conversation.conversation_id)
     assert stored[0].role == "system" and "compaction" in (stored[0].content or "")
 
 
@@ -572,12 +572,12 @@ def test_x23_single_delta_callback_routes_by_class() -> None:
 
 def test_loop_records_raw_estimate_beside_usage(tmp_path: Path) -> None:
     manager = _canonical_manager(tmp_path)
-    session = manager.current
+    conversation = manager.current
     llm = FakeLLM(
         [ChatReply(content="ok", usage={"prompt_tokens": 12}, model="m")]
     )
     loop = AgentLoop(
-        sessions=manager,
+        conversations=manager,
         assemble=Assemble(),
         think=Think(llm),
         act=Act(FakeDispatcher({})),
@@ -587,7 +587,7 @@ def test_loop_records_raw_estimate_beside_usage(tmp_path: Path) -> None:
         context_tokens=100_000,
     )
     assert asyncio.run(loop.run("hello")) == "ok"
-    assistant = _load_messages(tmp_path, session.id)[-1]
+    assistant = _load_messages(tmp_path, conversation.conversation_id)[-1]
     assert assistant.meta["usage"]["prompt_tokens"] == 12
     estimate = assistant.meta["estimate_tokens"]
     assert isinstance(estimate, int) and estimate > 0
@@ -623,13 +623,13 @@ def test_loop_injects_context_budget_signal(tmp_path: Path) -> None:
     manager.append(
         Message(
             role="tool",
-            content='{"session_id": "2026-10-19#abc", "task_id": "task-1234abcd"}',
+            content='{"conversation_id": "2026-10-19#abc", "task_id": "task-1234abcd"}',
             tool_call_id="call-1",
         )
     )
     llm = FakeLLM([ChatReply(content="ok")])
     loop = AgentLoop(
-        sessions=manager,
+        conversations=manager,
         assemble=Assemble(),
         think=Think(llm),
         act=Act(FakeDispatcher({})),
@@ -659,7 +659,7 @@ def test_loop_context_budget_warns_before_backstop(tmp_path: Path) -> None:
     manager.append(Message(role="assistant", content="y" * 4500))
     llm = FakeLLM([ChatReply(content="ok")])
     loop = AgentLoop(
-        sessions=manager,
+        conversations=manager,
         assemble=Assemble(),
         think=Think(llm),
         act=Act(FakeDispatcher({})),
@@ -691,7 +691,7 @@ def test_loop_checkpoint_tool_call_is_seen_next_turn(tmp_path: Path) -> None:
     from thyca.tools.task_store import TaskStore
 
     manager = _canonical_manager(tmp_path)
-    session = manager.current
+    conversation = manager.current
     facade = MemoryFacade(tmp_path / "home", timezone_name="Asia/Ho_Chi_Minh")
     registry = ToolRegistry()
     register_memory_tools(registry, facade)
@@ -717,7 +717,7 @@ def test_loop_checkpoint_tool_call_is_seen_next_turn(tmp_path: Path) -> None:
         ChatReply(content="continued"),
     ])
     loop = AgentLoop(
-        sessions=manager,
+        conversations=manager,
         assemble=Assemble(),
         think=Think(llm),
         act=Act(gateway),
@@ -733,11 +733,11 @@ def test_loop_checkpoint_tool_call_is_seen_next_turn(tmp_path: Path) -> None:
     )
     hot = ActiveSnapshot(soul="s", user="u", today="t")
     assert asyncio.run(loop.run("start", hot=hot)) == "saved"
-    stored = _load_messages(tmp_path, session.id)
+    stored = _load_messages(tmp_path, conversation.conversation_id)
     tool_result = next(m for m in stored if m.role == "tool")
     checkpoint = json.loads(tool_result.content or "{}")
     assert checkpoint["task_id"].startswith("task-")
-    assert "Done A; next B" in facade.get(session_id=checkpoint["session_id"])
+    assert "Done A; next B" in facade.get(memory_id=checkpoint["memory_id"])
     assert asyncio.run(loop.run("continue", hot=hot)) == "continued"
     next_system = llm.requests[2][0].content or ""
     assert "checkpoint=recorded" in next_system
@@ -769,7 +769,7 @@ def test_loop_context_budget_marks_old_checkpoint_stale(tmp_path: Path) -> None:
     manager.append(
         Message(
             role="tool",
-            content='{"session_id": "2026-10-19#abc", "task_id": "task-1234abcd"}',
+            content='{"conversation_id": "2026-10-19#abc", "task_id": "task-1234abcd"}',
             tool_call_id="cp-1",
         )
     )
@@ -777,7 +777,7 @@ def test_loop_context_budget_marks_old_checkpoint_stale(tmp_path: Path) -> None:
     manager.append(Message(role="assistant", content="y" * 4500))
     llm = FakeLLM([ChatReply(content="ok")])
     loop = AgentLoop(
-        sessions=manager,
+        conversations=manager,
         assemble=Assemble(),
         think=Think(llm),
         act=Act(FakeDispatcher({})),
@@ -802,7 +802,7 @@ def test_loop_context_budget_respects_unavailable_memory_tools(tmp_path: Path) -
     manager = _canonical_manager(tmp_path)
     llm = FakeLLM([ChatReply(content="ok")])
     loop = AgentLoop(
-        sessions=manager,
+        conversations=manager,
         assemble=Assemble(),
         think=Think(llm),
         act=Act(FakeDispatcher({})),

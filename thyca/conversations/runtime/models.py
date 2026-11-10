@@ -6,22 +6,22 @@ from pathlib import Path
 from thyca.core.protocol import Message
 
 
+# Whether one conversation still waits for its first user message.
+def is_blank(conversation: "ConversationRuntime") -> bool:
+    return not any(
+        item.role == "user" and item.content and item.content.strip()
+        for item in conversation.messages
+    )
+
+
 @dataclass
-class Session:
-    id: str
+class ConversationRuntime:
+    conversation_id: str
     path: Path
     messages: list[Message]
-    title: str | None = None
-    # Who wrote ``title``: "user" (typed in the sidebar) or None/"agent".
-    # A user title is displayed verbatim; the agent's naming policy only
-    # filters what the model proposes.
-    title_source: str | None = None
-    # The automatic naming step ran its one attempt (success or failure).
-    # Old sessions without the meta key load as False and stay eligible.
-    naming_attempted: bool = False
     # Team room participants (BE-3): bot ids in this room. None means the
-    # legacy default ("thyca" alone); populated by SessionStore.load.
+    # legacy default ("thyca" alone); populated by ConversationStore.load.
     bots: list[str] | None = None
-    # Bot main window (CBE-5): the bot id whose fixed DM this session is,
-    # or None for ordinary rooms. Populated by SessionStore.load.
+    # Bot main window (CBE-5): the bot id whose fixed DM this conversation is,
+    # or None for ordinary rooms. Populated by ConversationStore.load.
     dm_bot: str | None = None

@@ -1,4 +1,4 @@
-"""Loopback chat facade for room sessions and workspace turns."""
+"""Loopback chat facade for room conversations and workspace turns."""
 from __future__ import annotations
 
 import asyncio
@@ -25,16 +25,15 @@ from thyca.core.protocol import Message
 from thyca.llms.llm_base import LLMError
 from thyca.llms.llm_factory import ConnectFactory
 from thyca.memories.active import ActiveMemory, ActiveSnapshot
-from thyca.conversations.runtime import Session, SessionBusy, SessionManager
-from thyca.conversations.runtime.store import SessionStore
-from thyca.conversations.runtime.title import is_blank
+from thyca.conversations.runtime import ConversationRuntime, ConversationBusy, ConversationManager
+from thyca.conversations.runtime.models import is_blank
+from thyca.conversations.runtime.store import ConversationStore
 from thyca.tools.gateway.background import BackgroundProcs
 from thyca.tools.mcp import MCPManager, ProcessFactory
 from thyca.tools.task_store import TaskStore
 from thyca.serve.turn_state import TurnHub, TurnState
 
 from thyca.app.loop_turns import _CANCEL_WAIT_S, _LoopTurns, TurnCancelled
-from thyca.app.naming import _name_if_needed, session_title
 from thyca.bots.context import BotTurnScope
 from thyca.app.toolchain import (
     build_tool_gateway,
@@ -58,15 +57,14 @@ __all__ = [
     "ChatApp",
     "InvalidTurnOption",
     "InvalidTurnText",
-    "SessionIdle",
+    "ConversationIdle",
     "TurnCancelled",
     "TurnInFlight",
-    "session_title",
 ]
 
 
-class SessionIdle(Exception):
-    """Cancel arrived while this session had no turn in flight."""
+class ConversationIdle(Exception):
+    """Cancel arrived while this conversation had no turn in flight."""
 
 
 class TurnInFlight(Exception):
@@ -89,10 +87,10 @@ class ChatApp:
         # missing) passes; tmp/disposable roots are never refused here.
         from thyca.conversations.store.runtime import (
             ensure_runtime_store,
-            require_no_legacy_sessions,
+            require_no_legacy_conversations,
         )
 
-        require_no_legacy_sessions(Path(root))
+        require_no_legacy_conversations(Path(root))
         # Trusted init: this local process construction (never a request
         # handler) issues a fresh root; existing roots are audited first.
         # Runtime store owns all room state on every root (live stopped).
@@ -104,7 +102,7 @@ class ChatApp:
             self._cfg = self._current_cfg()
         self._injected_connect = connect
         self._connect = connect
-        self._sessions = SessionManager(
+        self._conversations = ConversationManager(
             root / "sessions",
             limits=self._cfg.effective_limits(),
             timezone_name=cfg.timeline.timezone,
@@ -160,7 +158,7 @@ class ChatApp:
 
         self._posting = BotPostingService(BotPostingDeps(
             root=self._root,
-            sessions=self._sessions,
+            conversations=self._conversations,
             bots=self._bots,
             current_cfg=self._current_cfg,
             bot_dm=self.bot_dm,
@@ -171,9 +169,11 @@ class ChatApp:
             dm_post=self._posting.post_bot_dm_message,
             card_post=self._posting.post_bot_card,
             room_post=self._posting.post_bot_room_message,
-            dm_resolve=lambda bid: self.bot_dm(bid)["id"],
+            dm_resolve=lambda bid: self.bot_dm(bid)["conversation_id"],
             room_bots=self.room_bots,
             room_dm_owner=self._room_dm_owner,
+            prune_groups_for_bot=lambda bid: self._conversations_admin.prune_bot_from_groups(bid),
+            delete_group=lambda gid: self._conversations_admin.delete_group(gid),
         )
         _deps.dm_card_post = self._posting.post_bot_dm_card
         register_admin_tools(self._registry, _deps)
@@ -191,7 +191,7 @@ class ChatApp:
             dm_card_post=self._posting.post_bot_dm_card,
             room_post=self._posting.post_bot_room_message,
             card_post=self._posting.post_bot_card,
-            session_for=lambda sid: self._sessions.store.load(sid),
+            conversation_for=lambda sid: self._conversations.store.load(sid),
         ))
         self._channel_actions = ChannelActionService(self._channel_registry)
         _deps.channel_actions = self._channel_actions
@@ -203,8 +203,8 @@ class ChatApp:
         self._thread = threading.Thread(
             target=self._run_loop, name="thyca-mcp-loop", daemon=True
         )
-        # session_id -> started_at for every turn in flight. Turns are keyed by
-        # session, not serialized globally: a slow turn in one session must not
+        # conversation_id -> started_at for every turn in flight. Turns are keyed by
+        # conversation, not serialized globally: a slow turn in one conversation must not
         # block another (nor its own UI, which reads this map). The claim lock
         # coordinates each app-level turn/compaction start with its loop job.
         self._turns = TurnState()
@@ -239,7 +239,7 @@ class ChatApp:
 
         self._delivery = A2ADeliveryService(A2ADeliveryDeps(
             root=self._root,
-            sessions_store=self._sessions.store,
+            conversations_store=self._conversations.store,
             window_for=self._webui.window_for,
             bots=self._bots,
             bus=self._bus,
@@ -255,7 +255,7 @@ class ChatApp:
 
         self._background_jobs = BackgroundJobsService(BackgroundJobsDeps(
             root=self._root,
-            sessions=self._sessions,
+            conversations=self._conversations,
             bots=self._bots,
             runtime=self._runtime,
             turns=self._turns,
@@ -266,11 +266,11 @@ class ChatApp:
             scheduled_turn=self.scheduled_turn,
             injected_connect=self._injected_connect,
         ))
-        from thyca.app.conversation_admin import SessionAdminDeps, SessionAdminService
+        from thyca.app.conversation_admin import ConversationAdminDeps, ConversationAdminService
 
-        self._sessions_admin = SessionAdminService(SessionAdminDeps(
+        self._conversations_admin = ConversationAdminService(ConversationAdminDeps(
             root=self._root,
-            sessions=self._sessions,
+            conversations=self._conversations,
             bots=self._bots,
             runtime=self._runtime,
             turns=self._turns,
@@ -290,7 +290,7 @@ class ChatApp:
         ))
         self._ops = BotOperationsService(BotOperationsDeps(
             root=self._root,
-            sessions=self._sessions,
+            conversations=self._conversations,
             window_for=self._webui.window_for,
             bots=self._bots,
             memory=self._memory,
@@ -349,16 +349,12 @@ class ChatApp:
                     if getattr(exc, "scope", "global") == "local":
                         continue
                     raise
-                # Blank sessions drop unless they are non-DM rooms with
+                # Blank conversations drop unless they are non-DM rooms with
                 # an explicit participant list (the second create path).
-                from thyca.conversations.runtime import Session as _Session
-
-                probe = _Session(
+                probe = ConversationRuntime(
                     row.ref.id,
-                    self._sessions.store.path_for(row.ref.id),
+                    self._conversations.store.path_for(row.ref.id),
                     list(conv.messages),
-                    title=conv.title, title_source=conv.title_source,
-                    naming_attempted=conv.naming_attempted,
                     bots=list(conv.participants),
                     dm_bot=row.ref.id if row.ref.kind == "dm" else None,
                 )
@@ -374,7 +370,7 @@ class ChatApp:
             if not has_more:
                 break
             offset += 200
-        return {"model": self._current_cfg().provider.model, "sessions": summaries}
+        return {"model": self._current_cfg().provider.model, "conversations": summaries}
 
     def _sync_mcp(self, turn_cfg: Config) -> None:
         """Converge MCP servers to the current config file (hot-reload).
@@ -478,12 +474,12 @@ class ChatApp:
             raise SettingsError("bot settings unavailable") from None
 
     def bot_dm(self, bot_id: str) -> dict:
-        """The bot's fixed DM session (CBE-5): find-or-create, marked.
+        """The bot's fixed DM conversation (CBE-5): find-or-create, marked.
 
         Exactly one DM per bot; unknown bots raise RegistryError.
-        Implementation lives in the session-admin service.
+        Implementation lives in the conversation-admin service.
         """
-        return self._sessions_admin.bot_dm(bot_id)
+        return self._conversations_admin.bot_dm(bot_id)
 
     async def _flush_bot_memory(self, bot_id: str, messages, turn_cfg,
                                 room_id: str | None = None) -> None:
@@ -508,9 +504,9 @@ class ChatApp:
         """Memory facade for the sidecar job (extract/candidates/promote)."""
         return self._background_jobs.job_facade()
 
-    def sweep_idle_sessions(self, idle_s: int = 900) -> dict:
+    def sweep_idle_conversations(self, idle_s: int = 900) -> dict:
         """Sweep idle canonical bot timelines once, under their workspace lease."""
-        return self._background_jobs.sweep_idle_sessions(idle_s=idle_s)
+        return self._background_jobs.sweep_idle_conversations(idle_s=idle_s)
 
     def aggregate_team_profiles(self) -> dict:
         """Scheduled Thyca turn: review per-bot profile blocks → shared USER.md.
@@ -520,43 +516,39 @@ class ChatApp:
         """
         return self._background_jobs.aggregate_team_profiles()
 
-    def get_payload(self, session_id: str) -> dict:
-        return self._sessions_admin.get_payload(session_id)
+    def get_payload(self, conversation_id: str) -> dict:
+        return self._conversations_admin.get_payload(conversation_id)
 
-    def rename_session(self, session_id: str, title: str) -> str:
-        """Set a title the user typed. Returns the stored (cleaned) title."""
-        return self._sessions_admin.rename_session(session_id, title)
-
-    def delete_session(self, session_id: str) -> None:
+    def delete_conversation(self, conversation_id: str) -> None:
         """Drop the notebook. Memory leaves written from it are left alone."""
-        return self._sessions_admin.delete_session(session_id)
+        return self._conversations_admin.delete_conversation(conversation_id)
 
-    def compact_session(
+    def compact_conversation(
         self,
-        session_id: str,
+        conversation_id: str,
         model: str | None = None,
         instructions: str | None = None,
     ) -> dict:
         """Compact each participating bot's existing canonical context.
 
         The room remains a read model. Implementation lives in the
-        session-admin service.
+        conversation-admin service.
         """
-        return self._sessions_admin.compact_session(
-            session_id, model=model, instructions=instructions
+        return self._conversations_admin.compact_conversation(
+            conversation_id, model=model, instructions=instructions
         )
 
     async def _compact_async(
         self,
-        sessions: SessionManager,
+        conversations: ConversationManager,
         room_id: str,
         turn_cfg: Config,
         instructions: str | None,
         *,
         bot_id: str,
     ) -> dict:
-        return await self._sessions_admin._compact_async(
-            sessions, room_id, turn_cfg, instructions, bot_id=bot_id
+        return await self._conversations_admin._compact_async(
+            conversations, room_id, turn_cfg, instructions, bot_id=bot_id
         )
 
     def default_model(self) -> str:
@@ -568,28 +560,28 @@ class ChatApp:
         cfg = self._current_cfg()
         return cfg.provider_id_for(model or cfg.defaultModel)
 
-    def running_sessions(self) -> dict[str, str]:
-        """Snapshot of session_id -> started_at for turns in flight."""
+    def running_conversations(self) -> dict[str, str]:
+        """Snapshot of conversation_id -> started_at for turns in flight."""
         return self._turns.snapshot()
 
-    def follow_hub(self, session_id: str) -> TurnHub | None:
-        """Hub for an in-flight turn, or None if this session is idle.
+    def follow_hub(self, conversation_id: str) -> TurnHub | None:
+        """Hub for an in-flight turn, or None if this conversation is idle.
 
-        Raises the usual session errors when the notebook does not exist or
+        Raises the usual conversation errors when the notebook does not exist or
         cannot be read, so a follower GET can 404/503 instead of "idle".
         """
-        hub = self._turns.hub(session_id)
+        hub = self._turns.hub(conversation_id)
         if hub is not None:
             return hub
-        self._sessions.store.load(session_id)
+        self._conversations.store.load(conversation_id)
         return None
 
     def create(self, bots: list[str] | None = None) -> dict:
-        return self._sessions_admin.create(bots)
+        return self._conversations_admin.create(bots)
 
-    def room_bots(self, session_id: str) -> list[str]:
+    def room_bots(self, conversation_id: str) -> list[str]:
         """Participant list of a room; legacy rooms read as Thyca alone."""
-        return self._sessions_admin.room_bots(session_id)
+        return self._conversations_admin.room_bots(conversation_id)
 
     def _exchange_rooms(self) -> list[list]:
         """Shareable room transcripts for exchange pairing.
@@ -599,7 +591,7 @@ class ChatApp:
         pairs never surface."""
         from thyca.bots.exchanges import collect_exchange_rooms
 
-        return collect_exchange_rooms(self._sessions.list_sessions())
+        return collect_exchange_rooms(self._conversations.list_conversations())
 
     def dm_exchange_partners(self, bot_id: str) -> list[dict]:
         """Bots this bot exchanged messages with, newest pair first.
@@ -622,13 +614,13 @@ class ChatApp:
         self._bots.require(bot_id)
         return pair_thread(bot_id, partner_id, self._exchange_rooms())
 
-    def set_room_bots(self, session_id: str, bot_id: str, action: str) -> list[str]:
+    def set_room_bots(self, conversation_id: str, bot_id: str, action: str) -> list[str]:
         """Add/remove one bot from a room. Returns the new participant list."""
-        return self._sessions_admin.set_room_bots(session_id, bot_id, action)
+        return self._conversations_admin.set_room_bots(conversation_id, bot_id, action)
 
     def turn(
         self,
-        session_id: str,
+        conversation_id: str,
         text: str = "",
         event_sink: EventSink | None = None,
         model: str | None = None,
@@ -637,9 +629,9 @@ class ChatApp:
         diagnostic_sink: Callable[[dict], None] | None = None,
     ) -> dict:
         _clean_turn_text(text, retry=retry)
-        session = self._sessions.store.load(session_id)
-        window = self._webui.window_for(session)
-        event = self._webui.event_for(session, text)
+        conversation = self._conversations.store.load(conversation_id)
+        window = self._webui.window_for(conversation)
+        event = self._webui.event_for(conversation, text)
         return self._turn_service.run(
             event,
             window=window,
@@ -654,22 +646,22 @@ class ChatApp:
         """Scheduler entry: system-actor turn in the bot's fixed DM."""
         return self._turn_service.run_system(bot_id, text)
 
-    def cancel(self, session_id: str) -> None:
+    def cancel(self, conversation_id: str) -> None:
         from thyca.app.private_followups import PrivateFollowupService
 
         with self._claim_lock:
-            running = self._turns.hub(session_id) is not None
+            running = self._turns.hub(conversation_id) is not None
             if running:
-                self._loop_turns.request_cancel(session_id)
+                self._loop_turns.request_cancel(conversation_id)
         if not running:
-            if PrivateFollowupService(self).cancel_window(session_id):
+            if PrivateFollowupService(self).cancel_window(conversation_id):
                 return
-            self._sessions.store.load(session_id)
-            raise SessionIdle()
+            self._conversations.store.load(conversation_id)
+            raise ConversationIdle()
         deadline = time.monotonic() + _CANCEL_WAIT_S
         while time.monotonic() < deadline:
-            if self._turns.hub(session_id) is None:
-                PrivateFollowupService(self).cancel_window(session_id)
+            if self._turns.hub(conversation_id) is None:
+                PrivateFollowupService(self).cancel_window(conversation_id)
                 return
             time.sleep(0.05)
         raise TurnInFlight("turn still in flight")
@@ -707,7 +699,7 @@ class ChatApp:
 
     async def _run_bot_turn(
         self,
-        session_id: str,
+        conversation_id: str,
         text: str,
         event_sink: EventSink | None = None,
         *,
@@ -720,7 +712,7 @@ class ChatApp:
     ) -> dict:
         """Run one bot turn and record it into the room transcript.
 
-        The bot thinks in its private (bot × room) session; the room only
+        The bot thinks in its private (bot × room) conversation; the room only
         ever gains rows written here by the app layer (user row + the
         bot's reply + fresh bus events), each stamped with
         ``bot_id/kind/trace_id`` (contract §6/BE-6)."""
@@ -729,13 +721,13 @@ class ChatApp:
         turn_cfg = resolve_bot_cfg(
             operation_cfg, card, model_override=model_override
         )
-        sessions = SessionManager(
+        conversations = ConversationManager(
             limits=turn_cfg.effective_limits(),
             timezone_name=turn_cfg.timeline.timezone,
-            store=self._sessions.store,
+            store=self._conversations.store,
         )
-        sessions.load(session_id)
-        if retry and not sessions.truncate_to_last_user(actor=bot_id):
+        conversations.load(conversation_id)
+        if retry and not conversations.truncate_to_last_user(actor=bot_id):
             raise InvalidTurnOption("no user")
         provider = resolve_bot_provider(turn_cfg, card, effort_override=effort)
         connect = self._injected_connect or ConnectFactory.create(
@@ -748,7 +740,7 @@ class ChatApp:
         # all of this — strictly private).
         room_context, room_cursor, room_after = "", None, None
         current_msg = None
-        is_dm = self._room_dm_owner(session_id) is not None
+        is_dm = self._room_dm_owner(conversation_id) is not None
         if not retry:
             from thyca.app.turn_event import current_channel_event
             from thyca.core.channel import WORK_REF_RE
@@ -773,9 +765,9 @@ class ChatApp:
                 from thyca.bots.room_context import fingerprint as _fp
                 from thyca.bots.room_context import public_room_messages as _prm
 
-                prior = list(sessions.current.messages)
+                prior = list(conversations.current.messages)
                 room_context, room_cursor = self._room_delta_for(
-                    bot_id, session_id, prior)
+                    bot_id, conversation_id, prior)
                 if current_msg is not None and text.strip():
                     room_after = (
                         len(_prm(prior, bot_id)) + 1,
@@ -788,7 +780,7 @@ class ChatApp:
                 room_context, room_cursor, room_after = "", None, None
         try:
             scope = BotTurnScope(
-                store=self._sessions.store,
+                store=self._conversations.store,
                 act=self._act,
                 tools=self._tools,
                 memory=self._memory,
@@ -802,12 +794,12 @@ class ChatApp:
                 # The user row lands before the turn runs so A2A rows
                 # delivered mid-turn order after it in the transcript.
                 # Same object fingerprinted for the post-turn cursor.
-                early_room = SessionManager(
+                early_room = ConversationManager(
                     limits=turn_cfg.effective_limits(),
                     timezone_name=turn_cfg.timeline.timezone,
-                    store=self._sessions.store,
+                    store=self._conversations.store,
                 )
-                early_room.load(session_id)
+                early_room.load(conversation_id)
                 # The responding bot records the user row for this turn.
                 early_room.append(
                     current_msg
@@ -816,12 +808,12 @@ class ChatApp:
                     actor=bot_id,
                 )
                 self._posting.consume_dm_pending(
-                    bot_id, session_id, room=early_room)
+                    bot_id, conversation_id, room=early_room)
             try:
                 result = await self._runtime.run_bot_turn_detailed(
                     scope=scope,
                     card=card,
-                    room_id=session_id,
+                    room_id=conversation_id,
                     text=text,
                     turn_cfg=operation_cfg,
                     event_sink=event_sink,
@@ -840,25 +832,25 @@ class ChatApp:
                 raise
             except LLMError as exc:
                 try:
-                    sessions.load(session_id)
-                    sessions.mark_turn_error("llm_error", str(exc), actor=bot_id)
+                    conversations.load(conversation_id)
+                    conversations.mark_turn_error("llm_error", str(exc), actor=bot_id)
                 except Exception:
                     pass
                 raise
             except Exception:
                 try:
-                    sessions.load(session_id)
-                    sessions.mark_turn_error("chat_unavailable", "chat unavailable", actor=bot_id)
+                    conversations.load(conversation_id)
+                    conversations.mark_turn_error("chat_unavailable", "chat unavailable", actor=bot_id)
                 except Exception:
                     pass
                 raise
-            room = SessionManager(
+            room = ConversationManager(
                 limits=turn_cfg.effective_limits(),
                 timezone_name=turn_cfg.timeline.timezone,
-                store=self._sessions.store,
+                store=self._conversations.store,
             )
-            room.load(session_id)
-            self._record_bus_events(room, session_id)
+            room.load(conversation_id)
+            self._record_bus_events(room, conversation_id)
             # The reply is recorded as the bot that produced it.
             room.append(
                 Message(
@@ -873,7 +865,6 @@ class ChatApp:
                 ),
                 actor=bot_id,
             )
-            await _name_if_needed(connect, room, turn_cfg, event_sink, bot_id=bot_id)
             landed = self._detail(room.current, turn_cfg, running=False)
             return {**landed, "reply": reply}
         finally:
@@ -882,11 +873,11 @@ class ChatApp:
                 if close is not None:
                     await close()
 
-    def _room_dm_owner(self, session_id: str) -> str | None:
-        """Bot id if *session_id* is that bot's fixed DM, else None."""
-        for session in self._sessions.list_sessions():
-            if session.id == session_id:
-                return session.dm_bot
+    def _room_dm_owner(self, conversation_id: str) -> str | None:
+        """Bot id if *conversation_id* is that bot's fixed DM, else None."""
+        for conversation in self._conversations.list_conversations():
+            if conversation.conversation_id == conversation_id:
+                return conversation.dm_bot
         return None
 
     def post_bot_dm_message(self, bot_id: str, text: str,
@@ -928,13 +919,13 @@ class ChatApp:
     async def _deliver_envelope_claimed(self, envelope, ctx) -> str:
         return await self._delivery.deliver_envelope_claimed(envelope, ctx)
 
-    def _record_bus_events(self, room: SessionManager, session_id: str) -> None:
+    def _record_bus_events(self, room: ConversationManager, conversation_id: str) -> None:
         """Append fresh A2A bus envelopes for *this room* to its transcript.
 
         Implementation lives in the delivery service; the turn path calls
         through here.
         """
-        return self._delivery.record_bus_events(room, session_id)
+        return self._delivery.record_bus_events(room, conversation_id)
 
     def shutdown(self) -> None:
 
@@ -952,22 +943,22 @@ class ChatApp:
                 self._loop.call_soon_threadsafe(self._loop.stop)
             self._thread.join(timeout=5)
 
-    def trace_store(self) -> SessionStore:
-        """Session store for read-only scan surfaces (e.g. /api/traces)."""
-        return self._sessions.store
+    def trace_store(self) -> ConversationStore:
+        """ConversationRuntime store for read-only scan surfaces (e.g. /api/traces)."""
+        return self._conversations.store
 
     def trace_execution_messages(
-        self, session_id: str, bot_id: str, span_id: str
+        self, conversation_id: str, bot_id: str, span_id: str
     ) -> list[Message]:
         """Read canonical execution rows for a trusted room/bot/span tuple."""
-        return self._ops.trace_execution_messages(session_id, bot_id, span_id)
+        return self._ops.trace_execution_messages(conversation_id, bot_id, span_id)
 
-    def bot_room_tasks(self, session_id: str, bot_id: str) -> dict:
+    def bot_room_tasks(self, conversation_id: str, bot_id: str) -> dict:
         """Live task list for exactly one room participant (read-only)."""
-        return self._ops.room_tasks(session_id, bot_id)
+        return self._ops.room_tasks(conversation_id, bot_id)
 
     def bot_operations(
-        self, session_id: str, bot_id: str, *,
+        self, conversation_id: str, bot_id: str, *,
         model: str | None = None, effort: str | None = None,
     ) -> dict:
         """Read operational data for exactly one room participant.
@@ -977,15 +968,15 @@ class ChatApp:
         costs come from original canonical events, including retries.
         """
         return self._ops.bot_operations(
-            session_id, bot_id, model=model, effort=effort
+            conversation_id, bot_id, model=model, effort=effort
         )
 
-    def _workspace_session(self, room: Session, bot_id: str, cfg: Config) -> Session | None:
+    def _workspace_conversation(self, room: ConversationRuntime, bot_id: str, cfg: Config) -> ConversationRuntime | None:
         """Read an existing canonical context without creating its binding."""
-        return self._ops._workspace_session(room, bot_id, cfg)
+        return self._ops._workspace_conversation(room, bot_id, cfg)
 
     def _overhead_tokens(
-        self, session_id: str, *, turn_cfg: Config, bot_id: str,
+        self, conversation_id: str, *, turn_cfg: Config, bot_id: str,
         strict: bool = False,
     ) -> tuple[int, int]:
         """Estimate shared hot/tool overhead, excluding query-only inputs.
@@ -995,14 +986,14 @@ class ChatApp:
         fabricated. Runtime and meter use the same prepared-input composer.
         """
         return self._ops._overhead_tokens(
-            session_id, turn_cfg=turn_cfg, bot_id=bot_id, strict=strict
+            conversation_id, turn_cfg=turn_cfg, bot_id=bot_id, strict=strict
         )
 
-    def _context_usage(self, session: Session, cfg: Config) -> dict:
-        return self._ops._context_usage(session, cfg)
+    def _context_usage(self, conversation: ConversationRuntime, cfg: Config) -> dict:
+        return self._ops._context_usage(conversation, cfg)
 
     def _detail(
-        self, session: Session, cfg: Config, *, running: bool | None = None
+        self, conversation: ConversationRuntime, cfg: Config, *, running: bool | None = None
     ) -> dict:
-        """Session payload with this app's in-flight answer filled in."""
-        return self._ops._detail(session, cfg, running=running)
+        """ConversationRuntime payload with this app's in-flight answer filled in."""
+        return self._ops._detail(conversation, cfg, running=running)

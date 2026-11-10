@@ -14,14 +14,13 @@ from urllib.request import Request, urlopen
 
 from thyca.agents.events import TurnEvent
 from thyca.serve.bridge import SENTINEL
-from thyca.app.chat_app import ChatApp, session_title
+from thyca.app.chat_app import ChatApp
 from thyca.configs import ModelCfg, ProviderEntry, load, save
 from seeded_config import seeded_config
 from thyca.llms.llm_base import ChatReply, LLMError
 from thyca.core.protocol import Message, ToolCall
 from thyca.serve import ServeError, default_webui, make_server
-from thyca.conversations.runtime import Session, SessionBusy, SessionManager
-from thyca.conversations.runtime.title import fallback_title
+from thyca.conversations.runtime import ConversationRuntime, ConversationBusy, ConversationManager
 from thyca.tools.mcp import StartupDiagnostic
 from thyca.memories.facade import MemoryFacade
 
@@ -137,14 +136,14 @@ def test_bot_operations_endpoint_scope_options_and_read_only(tmp_path: Path) -> 
             })
             status, payload = _json_result(
                 httpd,
-                f"/api/bots/coder/groups/{group['id']}/operations?{options}",
+                f"/api/bots/coder/groups/{group["conversation_id"]}/operations?{options}",
             )
             assert status == 200
             assert set(payload) == {
-                "bot_id", "session_id", "model", "context", "last_turn",
+                "bot_id", "conversation_id", "model", "context", "last_turn",
                 "conversation", "rates", "trace",
             }
-            assert payload["bot_id"] == "coder" and payload["session_id"] == group["id"]
+            assert payload["bot_id"] == "coder" and payload["conversation_id"] == group["conversation_id"]
             assert payload["model"]["scope"] == "next_turn_configuration"
             assert payload["model"]["id"] == app._current_cfg().defaultModel
             assert payload["model"]["reasoning_effort"] == app._current_cfg().provider.reasoningEffort
@@ -164,7 +163,7 @@ def test_bot_operations_endpoint_scope_options_and_read_only(tmp_path: Path) -> 
                         yield from keys(child)
             assert forbidden.isdisjoint(keys(payload))
             assert not timeline.exists()
-            assert app._runtime.workspaces.store.get_binding("coder", group["id"]) is None
+            assert app._runtime.workspaces.store.get_binding("coder", group["conversation_id"]) is None
 
             for query in (
                 "?unknown=value", "?model=one&model=two", "?effort=",
@@ -173,21 +172,21 @@ def test_bot_operations_endpoint_scope_options_and_read_only(tmp_path: Path) -> 
             ):
                 status, body = _json_result(
                     httpd,
-                    f"/api/bots/coder/groups/{group['id']}/operations{query}",
+                    f"/api/bots/coder/groups/{group["conversation_id"]}/operations{query}",
                 )
                 assert status == 400, body
-            for bot_id, session_id in (
-                ("ghost", group["id"]), ("coder", f"group-{'0' * 32}"),
+            for bot_id, conversation_id in (
+                ("ghost", group["conversation_id"]), ("coder", f"group-{'0' * 32}"),
             ):
                 status, body = _json_result(
                     httpd,
-                    f"/api/bots/{bot_id}/groups/{session_id}/operations",
+                    f"/api/bots/{bot_id}/groups/{conversation_id}/operations",
                 )
                 assert status == 404
                 if bot_id == "coder":
-                    assert body == {"error": "session not found"}
+                    assert body == {"error": "conversation not found"}
             assert not timeline.exists()
-            assert app._runtime.workspaces.store.get_binding("coder", group["id"]) is None
+            assert app._runtime.workspaces.store.get_binding("coder", group["conversation_id"]) is None
         finally:
             _stop(httpd, thread)
     finally:
@@ -212,7 +211,7 @@ def test_bot_operations_measurement_failure_is_sanitized_503(tmp_path: Path) -> 
         httpd, thread = _start(tmp_path, app)
         try:
             status, body = _json_result(
-                httpd, f"/api/bots/coder/groups/{room['id']}/operations",
+                httpd, f"/api/bots/coder/groups/{room["conversation_id"]}/operations",
             )
             assert status == 503
             assert body == {"error": "bot information unavailable"}
@@ -234,14 +233,14 @@ def test_bot_operations_missing_timeline_is_503_without_repair(tmp_path: Path) -
             persona="You code.",
         ))
         group = app.create(bots=["thyca", "coder"])
-        app._runtime.internal_session("coder", group["id"])
+        app._runtime.internal_conversation("coder", group["conversation_id"])
         timeline = tmp_path / "bots" / "coder" / "workspace" / "timeline.jsonl"
         assert timeline.is_file()
         timeline.unlink()
         httpd, thread = _start(tmp_path, app)
         try:
             status, body = _json_result(
-                httpd, f"/api/bots/coder/groups/{group['id']}/operations",
+                httpd, f"/api/bots/coder/groups/{group["conversation_id"]}/operations",
             )
             assert status == 503
             assert body == {"error": "bot information unavailable"}
@@ -273,28 +272,28 @@ def test_bot_room_tasks_live_calls_exact_window_and_read_only(tmp_path: Path) ->
         group = app.create(bots=["thyca", "coder"])
         httpd, thread = _start(tmp_path, app)
         try:
-            idle = _json(httpd, f"/api/bots/coder/groups/{group['id']}/tasks")
+            idle = _json(httpd, f"/api/bots/coder/groups/{group["conversation_id"]}/tasks")
             assert idle == {
-                "bot_id": "coder", "room_id": group["id"], "state": "idle",
+                "bot_id": "coder", "room_id": group["conversation_id"], "state": "idle",
                 "phase": None, "since": None, "updated_at": None,
                 "calls": [], "tasks": [], "waiting_on": None,
             }
             # Simulate an in-flight turn: two concurrent same-name calls
             # (one tool, one skill) plus a call in another room.
             tracker = app._agent_status
-            tracker.begin_turn("coder", group["id"], span_id="sp-1")
+            tracker.begin_turn("coder", group["conversation_id"], span_id="sp-1")
             tracker.observe_event("coder", "sp-1", TurnEvent(
                 type="tool.started", round=1, call_id="c1", name="read",
                 bot_id="coder"))
             tracker.observe_event("coder", "sp-1", TurnEvent(
                 type="skill.started", round=1, call_id="c1", name="read",
                 bot_id="coder"))
-            tracker.begin_turn("coder", dm["id"], span_id="sp-2")
+            tracker.begin_turn("coder", dm["conversation_id"], span_id="sp-2")
             tracker.observe_event("coder", "sp-2", TurnEvent(
                 type="tool.started", round=1, call_id="d1", name="other",
                 bot_id="coder"))
-            live = _json(httpd, f"/api/bots/coder/groups/{group['id']}/tasks")
-            assert live["state"] == "running" and live["room_id"] == group["id"]
+            live = _json(httpd, f"/api/bots/coder/groups/{group["conversation_id"]}/tasks")
+            assert live["state"] == "running" and live["room_id"] == group["conversation_id"]
             assert live["calls"] == [
                 {"kind": "skill", "name": "read", "active": 1},
                 {"kind": "tool", "name": "read", "active": 1},
@@ -302,34 +301,34 @@ def test_bot_room_tasks_live_calls_exact_window_and_read_only(tmp_path: Path) ->
             assert live["waiting_on"] is None
             # The dm-room "other" call does not leak into this room's
             # exact payload; the DM owner sees none of coder's calls.
-            assert _json(httpd, f"/api/bots/thyca/groups/{group['id']}/tasks")["calls"] == []
+            assert _json(httpd, f"/api/bots/thyca/groups/{group["conversation_id"]}/tasks")["calls"] == []
             assert _json(httpd, "/api/bots/thyca/dm/tasks")["calls"] == []
             # A DM addressed as a group never resolves: 404, not a leak.
             status, body = _json_result(
                 httpd, f"/api/bots/coder/groups/group-{'0' * 32}/tasks")
-            assert status == 404 and body == {"error": "session not found"}
+            assert status == 404 and body == {"error": "conversation not found"}
             # One finish removes one colliding call; the second clears it.
             tracker.observe_event("coder", "sp-1", TurnEvent(
                 type="tool.finished", round=1, call_id="c1", name="read",
                 ok=True, bot_id="coder"))
-            assert _json(httpd, f"/api/bots/coder/groups/{group['id']}/tasks")["calls"] == [
+            assert _json(httpd, f"/api/bots/coder/groups/{group["conversation_id"]}/tasks")["calls"] == [
                 {"kind": "skill", "name": "read", "active": 1}
             ]
             # Read-only: no workspace binding or timeline file was created.
-            assert app._runtime.workspaces.store.get_binding("coder", group["id"]) is None
+            assert app._runtime.workspaces.store.get_binding("coder", group["conversation_id"]) is None
             assert not (tmp_path / "bots" / "coder" / "workspace" / "timeline.jsonl").exists()
             # Membership and shape errors follow the operations conventions.
-            status, body = _json_result(httpd, f"/api/bots/ghost/groups/{group['id']}/tasks")
+            status, body = _json_result(httpd, f"/api/bots/ghost/groups/{group["conversation_id"]}/tasks")
             assert status == 404, body
             # A well-formed but missing group id reaches the handler.
             missing = f"group-{'0' * 32}"
             status, body = _json_result(httpd, f"/api/bots/coder/groups/{missing}/tasks")
-            assert status == 404 and body == {"error": "session not found"}
+            assert status == 404 and body == {"error": "conversation not found"}
             status, body = _json_result(
                 httpd, f"/api/bots/coder/groups/group-{'0' * 32}/tasks")
-            assert status == 404 and body == {"error": "session not found"}
+            assert status == 404 and body == {"error": "conversation not found"}
             status, body = _json_result(
-                httpd, f"/api/bots/coder/groups/{group['id']}/tasks?scope=x")
+                httpd, f"/api/bots/coder/groups/{group["conversation_id"]}/tasks?scope=x")
             assert status == 400 and body == {"error": "invalid query"}
         finally:
             _stop(httpd, thread)
@@ -337,7 +336,7 @@ def test_bot_room_tasks_live_calls_exact_window_and_read_only(tmp_path: Path) ->
         app.shutdown()
 
 
-def test_bot_room_tasks_corrupt_session_is_unavailable_not_empty(tmp_path: Path) -> None:
+def test_bot_room_tasks_corrupt_conversation_is_unavailable_not_empty(tmp_path: Path) -> None:
     """A corrupt store door reads as 503 (unavailable), never as an empty
     task list: unreadable state must not imply 'no tasks'."""
     import sqlite3
@@ -360,12 +359,12 @@ def test_bot_room_tasks_corrupt_session_is_unavailable_not_empty(tmp_path: Path)
             try:
                 conn.execute(
                     "UPDATE conversations SET metadata=? WHERE kind='group' AND id=?",
-                    ("{not valid json", group["id"]),
+                    ("{not valid json", group["conversation_id"]),
                 )
                 conn.commit()
             finally:
                 conn.close()
-            status, body = _json_result(httpd, f"/api/bots/coder/groups/{group['id']}/tasks")
+            status, body = _json_result(httpd, f"/api/bots/coder/groups/{group["conversation_id"]}/tasks")
             assert status == 503 and body == {"error": "bot information unavailable"}
             # The untouched room still reads normally (idle, exact window).
             idle = _json(httpd, "/api/bots/thyca/dm/tasks")
@@ -376,11 +375,11 @@ def test_bot_room_tasks_corrupt_session_is_unavailable_not_empty(tmp_path: Path)
         app.shutdown()
 
 
-def _seed_room(tmp_path: Path, session_id: str, messages: list) -> None:
-    from thyca.conversations.runtime import SessionManager
+def _seed_room(tmp_path: Path, conversation_id: str, messages: list) -> None:
+    from thyca.conversations.runtime import ConversationManager
 
-    manager = SessionManager(tmp_path / "sessions")
-    manager.load(session_id)
+    manager = ConversationManager(tmp_path / "sessions")
+    manager.load(conversation_id)
     for message in messages:
         manager.append(message)
 
@@ -390,7 +389,7 @@ def _bind_journal(app, bot_id: str, room_id: str, *, prefix: str = "ev"):
     canonical journal APIs the runtime turn loop writes through."""
     from thyca.bots.timeline import WorkspaceTimeline
 
-    room = app._sessions.store.load(room_id)
+    room = app._conversations.store.load(room_id)
     window = app._webui.window_for(room)
     app._runtime.workspaces.store.bind_window(bot_id, window)
     timeline = WorkspaceTimeline(app._root, bot_id)
@@ -420,7 +419,7 @@ def test_bot_room_tasks_pocket_lists_runtime_units_not_tool_calls(tmp_path: Path
         ))
         dm = app.create()
         group = app.create(bots=["thyca", "coder"])
-        _, _, journal = _bind_journal(app, "coder", group["id"])
+        _, _, journal = _bind_journal(app, "coder", group["conversation_id"])
         for message in [
             # task_open survives its ack (keyed by the returned span).
             Message(role="assistant", content="",
@@ -452,11 +451,11 @@ def test_bot_room_tasks_pocket_lists_runtime_units_not_tool_calls(tmp_path: Path
         try:
             # Merely starting a tool creates a call, never a task row.
             tracker = app._agent_status
-            tracker.begin_turn("coder", group["id"], span_id="sp-1")
+            tracker.begin_turn("coder", group["conversation_id"], span_id="sp-1")
             tracker.observe_event("coder", "sp-1", TurnEvent(
                 type="tool.started", round=1, call_id="c1", name="read",
                 bot_id="coder"))
-            payload = _json(httpd, f"/api/bots/coder/groups/{group['id']}/tasks")
+            payload = _json(httpd, f"/api/bots/coder/groups/{group["conversation_id"]}/tasks")
             assert payload["calls"] == [{"kind": "tool", "name": "read", "active": 1}]
             assert payload["tasks"] == [
                 {"title": "port parser", "status": "open", "waiting_on": None},
@@ -471,10 +470,10 @@ def test_bot_room_tasks_pocket_lists_runtime_units_not_tool_calls(tmp_path: Path
             # for a bot that never ran here.
             journal_path = tmp_path / "bots" / "coder" / "workspace" / "timeline.jsonl"
             digest = journal_path.read_bytes()
-            again = _json(httpd, f"/api/bots/coder/groups/{group['id']}/tasks")
+            again = _json(httpd, f"/api/bots/coder/groups/{group["conversation_id"]}/tasks")
             assert again["tasks"] == payload["tasks"]
             assert journal_path.read_bytes() == digest
-            assert app._runtime.workspaces.store.get_binding("thyca", dm["id"]) is None
+            assert app._runtime.workspaces.store.get_binding("thyca", dm["conversation_id"]) is None
         finally:
             _stop(httpd, thread)
     finally:
@@ -495,7 +494,7 @@ def test_bot_room_tasks_completion_records_close_tasks(tmp_path: Path) -> None:
         ))
         dm = app.create()
         group = app.create(bots=["thyca", "coder"])
-        _, _, journal = _bind_journal(app, "coder", group["id"])
+        _, _, journal = _bind_journal(app, "coder", group["conversation_id"])
         for message in [
             Message(role="assistant", content="",
                     tool_calls=[ToolCall(id="t1", name="task_open",
@@ -510,7 +509,7 @@ def test_bot_room_tasks_completion_records_close_tasks(tmp_path: Path) -> None:
             journal(message)
         httpd, thread = _start(tmp_path, app)
         try:
-            before = _json(httpd, f"/api/bots/coder/groups/{group['id']}/tasks")
+            before = _json(httpd, f"/api/bots/coder/groups/{group["conversation_id"]}/tasks")
             assert [task["title"] for task in before["tasks"]] == ["port parser", "review diff"]
             for message in [
                 # Linked result event closes the task_open unit.
@@ -522,7 +521,7 @@ def test_bot_room_tasks_completion_records_close_tasks(tmp_path: Path) -> None:
                         tool_call_id="d1"),
             ]:
                 journal(message)
-            after = _json(httpd, f"/api/bots/coder/groups/{group['id']}/tasks")
+            after = _json(httpd, f"/api/bots/coder/groups/{group["conversation_id"]}/tasks")
             assert after["tasks"] == []
         finally:
             _stop(httpd, thread)
@@ -546,7 +545,7 @@ def test_bot_room_tasks_pending_envelopes_are_window_exact(tmp_path: Path) -> No
         first = app.create(bots=["thyca", "coder"])
         # Keep the first group non-blank so the second create does not
         # prune it (discard_empty).
-        _seed_room(tmp_path, first["id"], [Message(role="user", content="hello")])
+        _seed_room(tmp_path, first["conversation_id"], [Message(role="user", content="hello")])
         second = app.create(bots=["thyca", "coder"])
         bus = app._runtime._bus
         for bot_id in ("thyca", "coder"):
@@ -555,16 +554,16 @@ def test_bot_room_tasks_pending_envelopes_are_window_exact(tmp_path: Path) -> No
             except Exception:
                 pass
         bus.send(sender="thyca", recipient="coder", kind="message",
-                 session_id=first["id"], payload="triage inbox")
+                 conversation_id=first["conversation_id"], payload="triage inbox")
         bus.send(sender="thyca", recipient="coder", kind="message",
-                 session_id=second["id"], payload="other window work")
+                 conversation_id=second["conversation_id"], payload="other window work")
         httpd, thread = _start(tmp_path, app)
         try:
-            here = _json(httpd, f"/api/bots/coder/groups/{first['id']}/tasks")
+            here = _json(httpd, f"/api/bots/coder/groups/{first["conversation_id"]}/tasks")
             assert here["tasks"] == [
                 {"title": "triage inbox", "status": "message", "waiting_on": None}
             ]
-            there = _json(httpd, f"/api/bots/coder/groups/{second['id']}/tasks")
+            there = _json(httpd, f"/api/bots/coder/groups/{second["conversation_id"]}/tasks")
             assert there["tasks"] == [
                 {"title": "other window work", "status": "message", "waiting_on": None}
             ]
@@ -591,9 +590,9 @@ def test_bot_room_tasks_never_shows_other_bots_or_private_rows(tmp_path: Path) -
         dm = app.create()
         group = app.create(bots=["thyca", "coder", "helper"])
         # Coder's own projection is empty.
-        _bind_journal(app, "coder", group["id"], prefix="coder")
+        _bind_journal(app, "coder", group["conversation_id"], prefix="coder")
         # Helper's real work lives only in helper's journal.
-        _, _, helper_journal = _bind_journal(app, "helper", group["id"], prefix="helper")
+        _, _, helper_journal = _bind_journal(app, "helper", group["conversation_id"], prefix="helper")
         helper_journal(Message(
             role="assistant", content="",
             tool_calls=[ToolCall(id="h1", name="task_open",
@@ -603,11 +602,11 @@ def test_bot_room_tasks_never_shows_other_bots_or_private_rows(tmp_path: Path) -
             tool_call_id="h1"))
         # Shared room rows: an A2A bus delegate row and a private-follow-up
         # card row carrying question/answer/title text.
-        _seed_room(tmp_path, group["id"], [
+        _seed_room(tmp_path, group["conversation_id"], [
             Message(role="assistant", content="",
                     meta={"kind": "delegate", "bus_event": True, "bot_id": "helper",
                           "recipient": "coder", "span_id": "sp-bus",
-                          "parent_span_id": "sp-x", "room": group["id"]}),
+                          "parent_span_id": "sp-x", "room": group["conversation_id"]}),
             Message(role="assistant", content="",
                     meta={"kind": "card", "bot_id": "coder", "span_id": "sp-card",
                           "card": {"type": "question", "title": "Xác nhận riêng tư",
@@ -618,14 +617,14 @@ def test_bot_room_tasks_never_shows_other_bots_or_private_rows(tmp_path: Path) -
         ])
         httpd, thread = _start(tmp_path, app)
         try:
-            coder_tasks = _json(httpd, f"/api/bots/coder/groups/{group['id']}/tasks")
+            coder_tasks = _json(httpd, f"/api/bots/coder/groups/{group["conversation_id"]}/tasks")
             assert coder_tasks["tasks"] == []
             raw = json.dumps(coder_tasks)
             for secret in ("helper secret work", "Xác nhận riêng tư",
                            "Mật khẩu của bạn là gì?", "đáp án bí mật", "pf-1"):
                 assert secret not in raw
             # Positive control: helper's own pocket shows helper's work.
-            helper_tasks = _json(httpd, f"/api/bots/helper/groups/{group['id']}/tasks")
+            helper_tasks = _json(httpd, f"/api/bots/helper/groups/{group["conversation_id"]}/tasks")
             assert helper_tasks["tasks"] == [
                 {"title": "helper secret work", "status": "open", "waiting_on": None}
             ]
@@ -650,7 +649,7 @@ def test_bot_room_tasks_uses_projected_view_across_compaction(tmp_path: Path) ->
         ))
         dm = app.create()
         group = app.create(bots=["thyca", "coder"])
-        window, timeline, journal = _bind_journal(app, "coder", group["id"])
+        window, timeline, journal = _bind_journal(app, "coder", group["conversation_id"])
         journal(Message(role="assistant", content="",
                         tool_calls=[ToolCall(id="t-old", name="task_open",
                                              arguments={"title": "old compacted work"})]))
@@ -665,7 +664,7 @@ def test_bot_room_tasks_uses_projected_view_across_compaction(tmp_path: Path) ->
         timeline.replace_view(window, [tail], event_id="compact-1")
         httpd, thread = _start(tmp_path, app)
         try:
-            payload = _json(httpd, f"/api/bots/coder/groups/{group['id']}/tasks")
+            payload = _json(httpd, f"/api/bots/coder/groups/{group["conversation_id"]}/tasks")
             # The ack for t-new never arrived, yet the unit is open by its
             # call id; the compacted-away unit does not resurrect.
             assert payload["tasks"] == [
@@ -691,7 +690,7 @@ def test_bot_room_tasks_unreadable_journal_is_unavailable(tmp_path: Path) -> Non
         ))
         dm = app.create()
         group = app.create(bots=["thyca", "coder"])
-        _, _, journal = _bind_journal(app, "coder", group["id"])
+        _, _, journal = _bind_journal(app, "coder", group["conversation_id"])
         journal(Message(role="assistant", content="",
                         tool_calls=[ToolCall(id="t1", name="task_open",
                                              arguments={"title": "real work"})]))
@@ -699,15 +698,15 @@ def test_bot_room_tasks_unreadable_journal_is_unavailable(tmp_path: Path) -> Non
         assert path.is_file()
         httpd, thread = _start(tmp_path, app)
         try:
-            assert _json(httpd, f"/api/bots/coder/groups/{group['id']}/tasks")["tasks"] == [
+            assert _json(httpd, f"/api/bots/coder/groups/{group["conversation_id"]}/tasks")["tasks"] == [
                 {"title": "real work", "status": "open", "waiting_on": None}
             ]
             with path.open("a", encoding="utf-8") as fh:
                 fh.write("{torn json\n")
-            status, body = _json_result(httpd, f"/api/bots/coder/groups/{group['id']}/tasks")
+            status, body = _json_result(httpd, f"/api/bots/coder/groups/{group["conversation_id"]}/tasks")
             assert status == 503 and body == {"error": "bot information unavailable"}
             path.unlink()
-            status, body = _json_result(httpd, f"/api/bots/coder/groups/{group['id']}/tasks")
+            status, body = _json_result(httpd, f"/api/bots/coder/groups/{group["conversation_id"]}/tasks")
             assert status == 503 and body == {"error": "bot information unavailable"}
         finally:
             _stop(httpd, thread)
@@ -730,13 +729,13 @@ def test_bot_room_tasks_same_call_id_across_windows_and_names(tmp_path: Path) ->
         ))
         dm = app.create()
         first = app.create(bots=["thyca", "coder"])
-        _seed_room(tmp_path, first["id"], [Message(role="user", content="hello")])
+        _seed_room(tmp_path, first["conversation_id"], [Message(role="user", content="hello")])
         second = app.create(bots=["thyca", "coder"])
         tracker = app._agent_status
-        tracker.begin_turn("coder", first["id"], span_id="sp-a")
+        tracker.begin_turn("coder", first["conversation_id"], span_id="sp-a")
         tracker.observe_event("coder", "sp-a", TurnEvent(
             type="tool.started", round=1, call_id="c1", name="read", bot_id="coder"))
-        tracker.begin_turn("coder", second["id"], span_id="sp-b")
+        tracker.begin_turn("coder", second["conversation_id"], span_id="sp-b")
         tracker.observe_event("coder", "sp-b", TurnEvent(
             type="tool.started", round=1, call_id="c1", name="write", bot_id="coder"))
         # Same-id different-name collision in the first window.
@@ -744,29 +743,29 @@ def test_bot_room_tasks_same_call_id_across_windows_and_names(tmp_path: Path) ->
             type="tool.started", round=1, call_id="c1", name="write", bot_id="coder"))
         httpd, thread = _start(tmp_path, app)
         try:
-            assert _json(httpd, f"/api/bots/coder/groups/{first['id']}/tasks")["calls"] == [
+            assert _json(httpd, f"/api/bots/coder/groups/{first["conversation_id"]}/tasks")["calls"] == [
                 {"kind": "tool", "name": "write", "active": 1},
                 {"kind": "tool", "name": "read", "active": 1},
             ]
-            assert _json(httpd, f"/api/bots/coder/groups/{second['id']}/tasks")["calls"] == [
+            assert _json(httpd, f"/api/bots/coder/groups/{second["conversation_id"]}/tasks")["calls"] == [
                 {"kind": "tool", "name": "write", "active": 1},
             ]
             # Out of order: the write finish removes only the write call.
             tracker.observe_event("coder", "sp-a", TurnEvent(
                 type="tool.finished", round=1, call_id="c1", name="write",
                 ok=True, bot_id="coder"))
-            assert _json(httpd, f"/api/bots/coder/groups/{first['id']}/tasks")["calls"] == [
+            assert _json(httpd, f"/api/bots/coder/groups/{first["conversation_id"]}/tasks")["calls"] == [
                 {"kind": "tool", "name": "read", "active": 1},
             ]
             # A named finish with no match removes nothing.
             tracker.observe_event("coder", "sp-a", TurnEvent(
                 type="tool.finished", round=1, call_id="c1", name="nope",
                 ok=True, bot_id="coder"))
-            assert _json(httpd, f"/api/bots/coder/groups/{first['id']}/tasks")["calls"] == [
+            assert _json(httpd, f"/api/bots/coder/groups/{first["conversation_id"]}/tasks")["calls"] == [
                 {"kind": "tool", "name": "read", "active": 1},
             ]
             # The other window is untouched throughout.
-            assert _json(httpd, f"/api/bots/coder/groups/{second['id']}/tasks")["calls"] == [
+            assert _json(httpd, f"/api/bots/coder/groups/{second["conversation_id"]}/tasks")["calls"] == [
                 {"kind": "tool", "name": "write", "active": 1},
             ]
         finally:
@@ -775,8 +774,8 @@ def test_bot_room_tasks_same_call_id_across_windows_and_names(tmp_path: Path) ->
         app.shutdown()
 
 
-def test_bot_room_tasks_real_turn_wires_exact_session(tmp_path: Path) -> None:
-    """A real in-flight turn is visible under its own session id only."""
+def test_bot_room_tasks_real_turn_wires_exact_conversation(tmp_path: Path) -> None:
+    """A real in-flight turn is visible under its own conversation id only."""
     from thyca.bots.card import BotCard
 
     started = threading.Event()
@@ -793,7 +792,7 @@ def test_bot_room_tasks_real_turn_wires_exact_session(tmp_path: Path) -> None:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Codes.", persona="You code."))
         # coder's own DM: the turn responder is coder itself.
-        first = app.bot_dm("coder")["id"]
+        first = app.bot_dm("coder")["conversation_id"]
         errors: list[BaseException] = []
 
         def run_turn() -> None:
@@ -824,7 +823,7 @@ def test_list_empty_without_and_with_chat(tmp_path: Path) -> None:
     httpd, thread = _start(tmp_path)
     try:
         try:
-            urlopen(_url(httpd, "/api/sessions"), timeout=2)
+            urlopen(_url(httpd, "/api/conversations"), timeout=2)
         except HTTPError as exc:
             assert exc.code == 404
         else:
@@ -846,30 +845,30 @@ def test_create_list_get_and_turn(tmp_path: Path) -> None:
     httpd, thread = _start(tmp_path, _chat(tmp_path, llm))
     try:
         created = _json(httpd, "/api/bots/thyca/dm")
-        assert created["title"] == "Phiên trống"
+        assert "title" not in created
+        assert created["kind"] == "dm" and created["bot_id"] == "thyca"
         assert created["messages"] == []
         listed = _json(httpd, "/api/conversations")
         assert listed["conversations"] == []
         body = json.dumps({"text": "ping"}).encode("utf-8")
         turned = _json(httpd, "/api/bots/thyca/dm/turn", method="POST", data=body)
         assert turned["reply"] == "pong"
-        assert turned["title"] == fallback_title(created["bot_id"])
-        assert turned["title"] != "ping"
+        assert "title" not in turned
         roles = [(item["role"], item["content"]) for item in turned["messages"]]
         assert roles == [("user", "ping"), ("assistant", "pong")]
         loaded = _json(httpd, "/api/bots/thyca/dm")
         assert loaded["messages"] == turned["messages"]
-        assert loaded["title"] == fallback_title(created["bot_id"])
+        assert "title" not in loaded
         spoken = _json(httpd, "/api/conversations")
         assert [item["bot_id"] for item in spoken["conversations"]] == [created["bot_id"]]
-        session = SessionManager(tmp_path / "sessions").load(created["bot_id"])
-        assert session.title is None
-        assert [(item.role, item.content) for item in session.messages] == [
+        assert all("title" not in item for item in spoken["conversations"])
+        conversation = ConversationManager(tmp_path / "sessions").load(created["bot_id"])
+        assert [(item.role, item.content) for item in conversation.messages] == [
             ("user", "ping"),
             ("assistant", "pong"),
         ]
         assert llm.requests[0][-1].content == "ping"
-        # One completed turn is below the naming threshold: no second call.
+        # One turn makes one model call.
         assert len(llm.requests) == 1
     finally:
         _stop(httpd, thread)
@@ -900,7 +899,7 @@ def test_turn_errors(tmp_path: Path) -> None:
         try:
             urlopen(
                 Request(
-                    _url(httpd, "/api/sessions/2026-01-01T00-00-00_ffff/turn"),
+                    _url(httpd, "/api/conversations/2026-01-01T00-00-00_ffff/turn"),
                     data=b'{"text":"hi"}',
                     method="POST",
                     headers={"Content-Type": "application/json"},
@@ -938,32 +937,32 @@ def test_turn_errors(tmp_path: Path) -> None:
         else:
             raise AssertionError("expected 405")
         try:
-            urlopen(_url(httpd, "/api/sessions/../pyproject.toml"), timeout=2)
+            urlopen(_url(httpd, "/api/conversations/../pyproject.toml"), timeout=2)
         except HTTPError as exc:
             assert exc.code == 404
         else:
             raise AssertionError("expected 404")
         # Store-door corruption reads as a constant 503, never as empty
-        # (same pattern as test_bot_room_tasks_corrupt_session_is_unavailable_not_empty).
-        broken = SessionManager(tmp_path / "sessions").create()
+        # (same pattern as test_bot_room_tasks_corrupt_conversation_is_unavailable_not_empty).
+        broken = ConversationManager(tmp_path / "sessions").create()
         import sqlite3 as _sqlite3
 
         _conn = _sqlite3.connect(tmp_path / "conversations.db")
         try:
             _conn.execute(
                 "UPDATE conversations SET metadata=? WHERE kind='group' AND id=?",
-                ("{not valid json", broken.id),
+                ("{not valid json", broken.conversation_id),
             )
             _conn.commit()
         finally:
             _conn.close()
         try:
-            urlopen(_url(httpd, f"/api/groups/{broken.id}"), timeout=2)
+            urlopen(_url(httpd, f"/api/groups/{broken.conversation_id}"), timeout=2)
         except HTTPError as exc:
             assert exc.code == 503
             _body = exc.read().decode("utf-8")
             assert json.loads(_body) == {"error": "conversation unreadable"}
-            assert broken.id not in _body and "conversations.db" not in _body
+            assert broken.conversation_id not in _body and "conversations.db" not in _body
         else:
             raise AssertionError("expected 503")
         # The healthy DM door still reads normally (local scope only).
@@ -989,7 +988,7 @@ def test_create_during_in_flight_turn(tmp_path: Path) -> None:
 
     app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                              description="Codes.", persona="You code."))
-    first = app.create()["id"]
+    first = app.create()["conversation_id"]
     errors: list[BaseException] = []
     result: dict = {}
     created: dict = {}
@@ -1016,16 +1015,16 @@ def test_create_during_in_flight_turn(tmp_path: Path) -> None:
     # Phase 2B: the no-bots create is the same DM, so the concurrent
     # create opens a group instead — still blank and non-blocking.
     group = app.create(bots=["thyca", "coder"])
-    assert group["id"] != first
+    assert group["conversation_id"] != first
     created.update(group)
     assert created["messages"] == []
-    # Turn session must still receive the reply after create ran mid-flight.
+    # Turn conversation must still receive the reply after create ran mid-flight.
     release.set()
     worker.join(timeout=5)
     assert not errors
     assert result["reply"] == "late"
-    assert result["id"] == first
-    stored = SessionManager(tmp_path / "sessions").load(first)
+    assert result["conversation_id"] == first
+    stored = ConversationManager(tmp_path / "sessions").load(first)
     assert [(item.role, item.content) for item in stored.messages] == [
         ("user", "hi"),
         ("assistant", "late"),
@@ -1036,71 +1035,50 @@ def test_create_during_in_flight_turn(tmp_path: Path) -> None:
 def test_chat_app_shutdown_idempotent(tmp_path: Path) -> None:
     app = _chat(tmp_path, FakeLLM(ChatReply(content="x")))
     created = app.create()
-    payload = app.turn(created["id"], "hi")
+    payload = app.turn(created["conversation_id"], "hi")
     assert payload["reply"] == "x"
     app.shutdown()
     app.shutdown()
 
 
-def test_session_title_display_not_utterance(tmp_path: Path) -> None:
+def test_wire_carries_identity_not_title(tmp_path: Path) -> None:
+    from seeded_config import seeded_config
+
+    from thyca.conversations.runtime.wire import conversation_detail, conversation_summary
+
     path = tmp_path / "2026-08-24T10-56-24_abcd.jsonl"
     path.write_text("", encoding="utf-8")
-    empty = Session("2026-08-24T10-56-24_abcd", path, [])
-    assert session_title(empty) == "Phiên trống"
-    spoken = Session(
+    empty = ConversationRuntime("2026-08-24T10-56-24_abcd", path, [])
+    spoken = ConversationRuntime(
         "2026-08-24T10-56-24_abcd",
         path,
         [Message(role="user", content="alo", ts="2026-08-24T03:56:24Z")],
     )
-    assert session_title(spoken) == "Sáng 24 thg 8"
-    named = Session(
-        "2026-08-24T10-56-24_abcd",
-        path,
-        [Message(role="user", content="alo", ts="2026-08-24T03:56:24Z")],
-        title="Cà phê với Hòa",
-    )
-    assert session_title(named) == "Cà phê với Hòa"
+    assert "title" not in conversation_summary(spoken)
+    detail = conversation_detail(empty, seeded_config())
+    assert "title" not in detail
+    assert detail["messages"] == []
 
 
-def test_notebook_title_names_on_second_turn_and_persists(tmp_path: Path) -> None:
+def test_turns_carry_no_title(tmp_path: Path) -> None:
     llm = ScriptedLLM(
         [
             ChatReply(content="pong"),
             ChatReply(content="again"),
-            ChatReply(content='"Cà phê với Hòa."'),
         ]
     )
     app = _chat(tmp_path, llm)
     created = app.create()
-    first = app.turn(created["id"], "alo")
-    assert first["title"] == fallback_title(created["id"])
+    first = app.turn(created["conversation_id"], "alo")
+    assert "title" not in first
     assert first["reply"] == "pong"
-    second = app.turn(created["id"], "thêm")
-    assert second["title"] == "Cà phê với Hòa"
+    second = app.turn(created["conversation_id"], "thêm")
+    assert "title" not in second
     assert second["reply"] == "again"
-    assert len(llm.requests) == 3
+    # Only the two turn calls.
+    assert len(llm.requests) == 2
     listed = app.list_payload()
-    assert listed["sessions"][0]["title"] == "Cà phê với Hòa"
-    app.shutdown()
-
-
-def test_title_failure_keeps_turn_and_fallback(tmp_path: Path) -> None:
-    class TitleBoom(FakeLLM):
-        async def chat(self, messages, tools=None):
-            if tools is None:
-                self.requests.append(list(messages))
-                self.tools.append(tools)
-                raise LLMError("title failed")
-            return await super().chat(messages, tools)
-
-    llm = TitleBoom(ChatReply(content="pong"))
-    app = _chat(tmp_path, llm)
-    created = app.create()
-    app.turn(created["id"], "alo")
-    turned = app.turn(created["id"], "thêm")
-    assert turned["reply"] == "pong"
-    assert turned["title"] == fallback_title(created["id"])
-    assert turned["title"] != "alo"
+    assert "title" not in listed["conversations"][0]
     app.shutdown()
 
 
@@ -1157,7 +1135,7 @@ def test_stream_slow_turn_first_line_arrives_before_release(tmp_path: Path) -> N
         assert detail["bot_id"] == created["bot_id"]
         assert detail["reply"] == "late"
         assert detail["model"]
-        assert detail["title"]
+        assert "title" not in detail
         assert [(item["role"], item["content"]) for item in detail["messages"]] == [
             ("user", "hello stream"),
             ("assistant", "late"),
@@ -1191,7 +1169,7 @@ def test_stream_disconnect_does_not_cancel_turn(tmp_path: Path) -> None:
         stored = None
         deadline = time.time() + 5
         while time.time() < deadline:
-            stored = SessionManager(tmp_path / "sessions").load(created["bot_id"])
+            stored = ConversationManager(tmp_path / "sessions").load(created["bot_id"])
             if any(item.role == "assistant" and item.content == "kept" for item in stored.messages):
                 break
             time.sleep(0.05)
@@ -1278,7 +1256,7 @@ def test_stream_post_accept_llm_error_ends_with_single_failed(tmp_path: Path) ->
                 "message": "provider HTTP 401: denied [redacted]",
             }
         ]
-        stored = SessionManager(tmp_path / "sessions").load(created["bot_id"])
+        stored = ConversationManager(tmp_path / "sessions").load(created["bot_id"])
         # Hard-cut: failed turn leaves user + trailing system error marker
         # (append-only); the NDJSON single-failed-terminal contract above
         # is unchanged.
@@ -1382,7 +1360,7 @@ def test_stream_sentinel_without_terminal_writes_fallback_failure(
     try:
         created = _json(httpd, "/api/bots/thyca/dm")
 
-        def sentinel_only_worker(app, session_id, text, items, state, **_kwargs):
+        def sentinel_only_worker(app, conversation_id, text, items, state, **_kwargs):
             items.put(TurnEvent(type="turn.accepted"))
             items.put(SENTINEL)
 
@@ -1405,9 +1383,9 @@ def test_stream_sentinel_without_terminal_writes_fallback_failure(
 
 
 
-def test_chat_nav_opens_new_session() -> None:
-    """The + button only opens the group picker — a session is POSTed when the
-    dialog submits, and DM sessions are find-or-create through the bot."""
+def test_chat_nav_opens_new_conversation() -> None:
+    """The + button only opens the group picker — a conversation is POSTed when the
+    dialog submits, and DM conversations are find-or-create through the bot."""
     sidebar = (WEBUI / "ui" / "share" / "sidebar.js").read_text(encoding="utf-8")
     chat = (WEBUI / "ui" / "chat" / "js" / "chat.js").read_text(encoding="utf-8")
     html = (WEBUI / "ui" / "chat" / "index.html").read_text(encoding="utf-8")
@@ -1425,11 +1403,11 @@ def test_chat_nav_opens_new_session() -> None:
     open_body = open_body[: open_body.index("\n")]
     assert "$('#group-dialog').showModal()" in open_body
     assert "getJson" not in open_body
-    # Submitting the form is what creates the session, then opens it.
+    # Submitting the form is what creates the conversation, then opens it.
     form_body = sidebar[sidebar.index("$('#group-form').onsubmit"):]
     assert "'/api/groups'" in form_body
     assert "method:'POST'" in form_body
-    assert "loadSession(groupKey(detail.group_id)" in form_body
+    assert "loadConversation(groupKey(detail.group_id)" in form_body
     # Picking a bot goes through the find-or-create DM, not a blank create.
     assert "/api/bots/${encodeURIComponent(id)}/dm" in chat
 
@@ -1447,39 +1425,39 @@ def test_create_prunes_previous_blank(tmp_path: Path) -> None:
     app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                              description="Codes.", persona="You code."))
     first = app.create()
-    assert app.list_payload()["sessions"] == []
+    assert app.list_payload()["conversations"] == []
     # Phase 2B: repeated creates return the same DM singleton; a fresh
     # group still prunes the previous blank group.
-    assert app.create()["id"] == first["id"]
+    assert app.create()["conversation_id"] == first["conversation_id"]
     g1 = app.create(bots=["thyca", "coder"])
     g2 = app.create(bots=["thyca", "coder"])
-    assert g1["id"] != g2["id"]
+    assert g1["conversation_id"] != g2["conversation_id"]
     # Hard cut: existence is the store door, never a JSONL file.
     from thyca.conversations.store.admin import AdminStore
 
     door_ids = {row.ref.id for row in AdminStore(tmp_path).list(limit=500)[0]}
-    assert g1["id"] not in door_ids
-    assert g2["id"] in door_ids
-    assert first["id"] in door_ids
+    assert g1["conversation_id"] not in door_ids
+    assert g2["conversation_id"] in door_ids
+    assert first["conversation_id"] in door_ids
     app.shutdown()
 
 
-def test_session_payload_includes_ask_remember(tmp_path: Path) -> None:
+def test_conversation_payload_includes_ask_remember(tmp_path: Path) -> None:
     app = _chat(tmp_path, FakeLLM(ChatReply(content="x")))
     created = app.create()
     assert created["ask_remember"] is False
-    turned = app.turn(created["id"], "hi")
+    turned = app.turn(created["conversation_id"], "hi")
     assert turned["ask_remember"] is False
-    loaded = app.get_payload(created["id"])
+    loaded = app.get_payload(created["conversation_id"])
     assert loaded["ask_remember"] is False
     app.shutdown()
 
 
-def test_session_payload_includes_context(tmp_path: Path) -> None:
+def test_conversation_payload_includes_context(tmp_path: Path) -> None:
     app = _chat(tmp_path, FakeLLM(ChatReply(content="x")))
     try:
         created = app.create()
-        for payload in (created, app.turn(created["id"], "hi"), app.get_payload(created["id"])):
+        for payload in (created, app.turn(created["conversation_id"], "hi"), app.get_payload(created["conversation_id"])):
             ctx = payload["context"]
             assert ctx["estimated_tokens"] == ctx["transcript_tokens"] + ctx["overhead_tokens"]
             assert ctx["context_tokens"] > 0
@@ -1497,21 +1475,21 @@ def _chat_small_context(tmp_path: Path) -> ChatApp:
     return ChatApp(tmp_path, load(tmp_path / "config.json"), connect=FakeLLM(ChatReply(content="x")))
 
 
-def _seed_long_session(tmp_path: Path, session_id: str) -> None:
-    manager = SessionManager(tmp_path / "sessions")
-    manager.load(session_id)
+def _seed_long_conversation(tmp_path: Path, conversation_id: str) -> None:
+    manager = ConversationManager(tmp_path / "sessions")
+    manager.load(conversation_id)
     for i in range(4):
         manager.append(Message(role="user", content="u" * 300 + str(i)))
         manager.append(Message(role="assistant", content="a" * 300))
 
 
-def test_compact_session_skips_absent_canonical_context(tmp_path: Path) -> None:
+def test_compact_conversation_skips_absent_canonical_context(tmp_path: Path) -> None:
     app = _chat_small_context(tmp_path)
     try:
         created = app.create()
-        _seed_long_session(tmp_path, created["id"])
-        before = app.get_payload(created["id"])
-        result = app.compact_session(created["id"], instructions="keep the goal")
+        _seed_long_conversation(tmp_path, created["conversation_id"])
+        before = app.get_payload(created["conversation_id"])
+        result = app.compact_conversation(created["conversation_id"], instructions="keep the goal")
         assert result["compaction"]["compacted"] is False
         assert result["compaction"]["per_bot"]["thyca"] == {
             "compacted": False,
@@ -1519,38 +1497,38 @@ def test_compact_session_skips_absent_canonical_context(tmp_path: Path) -> None:
         }
         assert result["messages"] == before["messages"]
         assert app._runtime.workspaces.store.get_binding(
-            "thyca", created["id"]
+            "thyca", created["conversation_id"]
         ) is None
     finally:
         app.shutdown()
 
 
-def test_compact_session_refuses_mid_turn(tmp_path: Path) -> None:
+def test_compact_conversation_refuses_mid_turn(tmp_path: Path) -> None:
     app = _chat(tmp_path, FakeLLM(ChatReply(content="x")))
     try:
         created = app.create()
-        app._turns.claim(created["id"])
+        app._turns.claim(created["conversation_id"])
         try:
-            app.compact_session(created["id"])
-        except SessionBusy:
+            app.compact_conversation(created["conversation_id"])
+        except ConversationBusy:
             pass
         else:
-            raise AssertionError("expected SessionBusy")
+            raise AssertionError("expected ConversationBusy")
         finally:
-            app._turns.release(created["id"])
+            app._turns.release(created["conversation_id"])
     finally:
         app.shutdown()
 
 
-def _seed_canonical_long_session(app: ChatApp, session_id: str) -> int:
-    room = app._sessions.store.load(session_id)
+def _seed_canonical_long_conversation(app: ChatApp, conversation_id: str) -> int:
+    room = app._conversations.store.load(conversation_id)
     window = app._webui.window_for(room)
     binding = app._runtime.workspaces.store.bind_window("thyca", window)
     store = app._runtime._canonical_store(
-        "thyca", window, binding.internal_session_id
+        "thyca", window, binding.internal_conversation_id
     )
-    manager = SessionManager(store=store)
-    manager.load(binding.internal_session_id)
+    manager = ConversationManager(store=store)
+    manager.load(binding.internal_conversation_id)
     for i in range(4):
         manager.append(Message(role="user", content="canonical user " + "u" * 300 + str(i)))
         manager.append(Message(role="assistant", content="canonical reply " + "a" * 300))
@@ -1562,9 +1540,9 @@ def test_compact_over_http(tmp_path: Path) -> None:
     httpd, thread = _start(tmp_path, app)
     try:
         created = _json(httpd, "/api/bots/thyca/dm")
-        _seed_long_session(tmp_path, created["bot_id"])
+        _seed_long_conversation(tmp_path, created["bot_id"])
         public_before = app.get_payload(created["bot_id"])["messages"]
-        canonical_before = _seed_canonical_long_session(app, created["bot_id"])
+        canonical_before = _seed_canonical_long_conversation(app, created["bot_id"])
         compacted = _json(
             httpd, "/api/bots/thyca/dm/compact", method="POST", data=b"{}"
         )
@@ -1572,15 +1550,15 @@ def test_compact_over_http(tmp_path: Path) -> None:
         assert compacted["messages"] == public_before
         binding = app._runtime.workspaces.store.get_binding("thyca", created["bot_id"])
         canonical = app._runtime._canonical_store(
-            "thyca", app._webui.window_for(app._sessions.store.load(created["bot_id"])),
-            binding.internal_session_id,
-        ).load(binding.internal_session_id)
+            "thyca", app._webui.window_for(app._conversations.store.load(created["bot_id"])),
+            binding.internal_conversation_id,
+        ).load(binding.internal_conversation_id)
         assert canonical_before > len(canonical.messages)
         assert "context" in compacted
         try:
             urlopen(
                 Request(
-                    _url(httpd, "/api/sessions/2026-01-01T00-00-00_ffff/compact"),
+                    _url(httpd, "/api/conversations/2026-01-01T00-00-00_ffff/compact"),
                     data=b"{}", method="POST", headers={"Content-Type": "application/json"},
                 ), timeout=2,
             )
@@ -1619,9 +1597,9 @@ def test_compact_over_http(tmp_path: Path) -> None:
 
 
 def test_chat_mobile_pick_pattern() -> None:
-    """On mobile the bot/session list is an off-canvas overlay, not a separate
+    """On mobile the bot/conversation list is an off-canvas overlay, not a separate
     pick screen: `.mobile-open` slides it in over the content, the backdrop
-    or Esc closes it, and loading a session closes it too — the same shared
+    or Esc closes it, and loading a conversation closes it too — the same shared
     wiring every page gets from share/shell-app.js. The header's
     .menu-button is the mobile-only trigger (hidden on desktop)."""
     html = (WEBUI / "ui" / "chat" / "index.html").read_text(encoding="utf-8")
@@ -1651,10 +1629,10 @@ def test_chat_mobile_pick_pattern() -> None:
     assert "$('.menu-button')" in shell_app
     assert "$('.menu-button')?.setAttribute" in shell_app
     assert "matchMedia('(max-width:850px)')" in shell_app
-    # Opening a session (group row tap, deep link, drawer row) reveals the
+    # Opening a conversation (group row tap, deep link, drawer row) reveals the
     # conversation by closing the overlay.
-    load_session = chat[chat.index("async function loadConversation") : chat.index("async function selectBot")]
-    assert "closeMobile()" in load_session
+    load_conversation = chat[chat.index("async function loadConversation") : chat.index("async function selectBot")]
+    assert "closeMobile()" in load_conversation
     assert "pick-shell" not in html + chat + shell_app
     assert "is-picking" not in html + chat + shell_app
 
@@ -1681,7 +1659,7 @@ def test_retry_hook_emits_llm_retry_events(tmp_path: Path) -> None:
     app = _chat(tmp_path, Recovering())
     created = app.create()
     events: list[TurnEvent] = []
-    payload = app.turn(created["id"], "ping", event_sink=events.append)
+    payload = app.turn(created["conversation_id"], "ping", event_sink=events.append)
     assert payload["reply"] == "ok"
     retries = [e for e in events if e.type == "llm.retry"]
     assert retries == [TurnEvent(type="llm.retry", attempt=1, max_attempts=3, bot_id="thyca")]
@@ -1699,14 +1677,14 @@ def test_aborted_static_and_body_keep_server_quiet(tmp_path: Path, capsys) -> No
         #    dâng BrokenPipe lên handle_error (không qua _send).
         sock = socket.create_connection(("127.0.0.1", port), timeout=5)
         try:
-            sock.sendall(b"GET /api/sessions HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+            sock.sendall(b"GET /api/conversations HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
         finally:
             sock.close()
         # 2. POST khai Content-Length lớn rồi đóng giữa body.
         sock = socket.create_connection(("127.0.0.1", port), timeout=5)
         try:
             sock.sendall(
-                b"POST /api/sessions HTTP/1.1\r\nHost: x\r\n"
+                b"POST /api/conversations HTTP/1.1\r\nHost: x\r\n"
                 b"Content-Length: 5000\r\nContent-Type: application/json\r\n"
                 b"Connection: close\r\n\r\n{\"a\":"
             )
@@ -1729,7 +1707,7 @@ def test_aborted_static_and_body_keep_server_quiet(tmp_path: Path, capsys) -> No
         _stop(httpd, thread)
 
 
-def test_session_detail_tags_skill_loads(tmp_path: Path) -> None:
+def test_conversation_detail_tags_skill_loads(tmp_path: Path) -> None:
     skills_root = tmp_path / "skills"
     skill_md = skills_root / "create-skill"
     skill_md.mkdir(parents=True)
@@ -1818,11 +1796,11 @@ def test_empty_submit_guard_returns_before_send() -> None:
     app = (WEBUI / "ui" / "chat" / "js" / "app.js").read_text(encoding="utf-8")
     submit = app[app.index("$('#composer').onsubmit"):]
     guard = submit[: submit.index("sendTurn(")]
-    assert "if (!text || runs.has(currentSession)) return;" in guard
+    assert "if (!text || runs.has(currentConversation)) return;" in guard
     assert "fetch(" not in guard
 
 
-def test_busy_session_reports_running_and_refuses_a_second_turn(tmp_path: Path) -> None:
+def test_busy_conversation_reports_running_and_refuses_a_second_turn(tmp_path: Path) -> None:
     """A turn in flight is visible to the UI and refuses a second one."""
     release = threading.Event()
 
@@ -1834,7 +1812,7 @@ def test_busy_session_reports_running_and_refuses_a_second_turn(tmp_path: Path) 
     httpd, thread = _start(tmp_path, _chat(tmp_path, Slow()))
     try:
         created = _json(httpd, "/api/bots/thyca/dm")
-        session_id = created["bot_id"]
+        conversation_id = created["bot_id"]
         assert _json(httpd, "/api/bots/thyca/dm")["running"] is False
         response = _stream(
             httpd,
@@ -1886,7 +1864,7 @@ def test_follow_stream_replays_and_tails_a_running_turn(tmp_path: Path) -> None:
     httpd, thread = _start(tmp_path, _chat(tmp_path, Slow()))
     try:
         created = _json(httpd, "/api/bots/thyca/dm")
-        session_id = created["bot_id"]
+        conversation_id = created["bot_id"]
         starter = _stream(
             httpd,
             "/api/bots/thyca/dm/turn/stream",
@@ -2037,7 +2015,7 @@ def test_follow_stream_survives_starter_disconnect(tmp_path: Path) -> None:
     httpd, thread = _start(tmp_path, _chat(tmp_path, Slow()))
     try:
         created = _json(httpd, "/api/bots/thyca/dm")
-        session_id = created["bot_id"]
+        conversation_id = created["bot_id"]
         starter = _stream(
             httpd,
             "/api/bots/thyca/dm/turn/stream",
@@ -2064,7 +2042,7 @@ def test_follow_stream_survives_starter_disconnect(tmp_path: Path) -> None:
 
 
 
-def test_session_summary_counts_turns_the_way_trace_does(tmp_path: Path) -> None:
+def test_conversation_summary_counts_turns_the_way_trace_does(tmp_path: Path) -> None:
     """One turn per user message — not the raw message count.
 
     Tool rounds inflate message_count (every assistant round and tool result
@@ -2074,16 +2052,16 @@ def test_session_summary_counts_turns_the_way_trace_does(tmp_path: Path) -> None
     app = _chat(tmp_path, llm)
     try:
         created = app.create()
-        app.turn(created["id"], "ping")
-        app.turn(created["id"], "pong?")
-        listed = app.list_payload()["sessions"]
+        app.turn(created["conversation_id"], "ping")
+        app.turn(created["conversation_id"], "pong?")
+        listed = app.list_payload()["conversations"]
         assert [item["turns"] for item in listed] == [2]
         assert listed[0]["message_count"] == 4
     finally:
         app.shutdown()
 
 
-def test_rename_and_delete_over_http(tmp_path: Path) -> None:
+def test_delete_over_http_and_no_patch_route(tmp_path: Path) -> None:
     from thyca.bots.card import BotCard
 
     llm = FakeLLM(ChatReply(content="pong"))
@@ -2096,36 +2074,32 @@ def test_rename_and_delete_over_http(tmp_path: Path) -> None:
             httpd, "/api/groups", method="POST",
             data=b'{"bots":["thyca","coder"]}',
         )
+        assert "title" not in created
         sid = created["group_id"]
         body = json.dumps({"text": "ping"}).encode("utf-8")
         _json(httpd, f"/api/groups/{sid}/turn", method="POST", data=body)
 
-        patch = json.dumps({"title": "  Kế hoạch   tuần này "}).encode("utf-8")
-        renamed = _json(httpd, f"/api/groups/{sid}", method="PATCH", data=patch)
-        assert renamed == {
-            "ok": True, "kind": "group", "group_id": sid,
-            "title": "Kế hoạch tuần này",
-        }
         detail = _json(httpd, f"/api/groups/{sid}")
-        assert detail["title"] == "Kế hoạch tuần này"
+        assert "title" not in detail
         listed = _json(httpd, "/api/conversations")
-        assert listed["conversations"][0]["title"] == "Kế hoạch tuần này"
+        assert "title" not in listed["conversations"][0]
 
-        # The stored title carries its user source, so the naming policy
-        # knows not to vet it (read back through the runtime-aware load).
-        stored = SessionManager(tmp_path / "sessions").load(sid)
-        assert stored.title == "Kế hoạch tuần này"
-        assert stored.title_source == "user"
+        # The stored conversation carries participants only (read back
+        # through the runtime-aware load).
+        stored = ConversationManager(tmp_path / "sessions").load(sid)
+        assert stored.bots == ["thyca", "coder"]
+        assert [(item.role, item.content) for item in stored.messages] == [
+            ("user", "ping"),
+            ("assistant", "pong"),
+        ]
 
-        # Empty title is refused, and so is a body that is not a title.
-        for bad in ({"title": "   "}, {"title": 7}, {}):
-            data = json.dumps(bad).encode("utf-8")
-            try:
-                _json(httpd, f"/api/groups/{sid}", method="PATCH", data=data)
-            except HTTPError as exc:
-                assert exc.code == 400
-            else:
-                raise AssertionError("expected 400")
+        # There is no rename route any longer: PATCH is unsupported.
+        try:
+            _json(httpd, f"/api/groups/{sid}", method="PATCH", data=b'{"x": 1}')
+        except HTTPError as exc:
+            assert exc.code == 501
+        else:
+            raise AssertionError("expected 501 for PATCH")
 
         deleted = _json(httpd, f"/api/groups/{sid}", method="DELETE")
         assert deleted == {"ok": True, "kind": "group", "group_id": sid}
@@ -2144,36 +2118,36 @@ def test_rename_and_delete_over_http(tmp_path: Path) -> None:
 
         # Dropping a group is idempotent: a missing door is already the
         # wanted end state. A malformed id is still refused, and every
-        # legacy session path stays 404.
+        # legacy conversation path stays 404.
         assert _json(httpd, f"/api/groups/{sid}", method="DELETE")["ok"] is True
         try:
             _json(
                 httpd,
                 f"/api/groups/{sid}",
                 method="PATCH",
-                data=json.dumps({"title": "x"}).encode("utf-8"),
+                data=b'{"x": 1}',
             )
         except HTTPError as exc:
-            assert exc.code == 404
+            assert exc.code == 501
         else:
-            raise AssertionError("expected 404 for PATCH on a missing group")
-        for method in ("PATCH", "DELETE"):
-            data = json.dumps({"title": "x"}).encode("utf-8") if method == "PATCH" else None
+            raise AssertionError("expected 501 for PATCH on a missing group")
+        for method, expected in (("PATCH", 501), ("DELETE", 404)):
             try:
-                _json(httpd, "/api/sessions/not-an-id", method=method, data=data)
+                _json(httpd, "/api/conversations/not-an-id", method=method)
             except HTTPError as exc:
-                assert exc.code == 404
-                assert json.loads(exc.read().decode("utf-8")) == {
-                    "error": "conversation not found"
-                }
+                assert exc.code == expected
+                if expected == 404:
+                    assert json.loads(exc.read().decode("utf-8")) == {
+                        "error": "conversation not found"
+                    }
             else:
-                raise AssertionError("expected 404 for a legacy session path")
+                raise AssertionError("expected 501/404 for a legacy conversation path")
     finally:
         _stop(httpd, thread)
         app.shutdown()
 
 
-def test_delete_refuses_a_session_mid_turn(tmp_path: Path) -> None:
+def test_delete_refuses_a_conversation_mid_turn(tmp_path: Path) -> None:
     """A running turn is still appending: deleting under it is a 409."""
     started = threading.Event()
     release = threading.Event()
@@ -2192,7 +2166,7 @@ def test_delete_refuses_a_session_mid_turn(tmp_path: Path) -> None:
     httpd, thread = _start(tmp_path, app)
     try:
         created = app.create(bots=["thyca", "coder"])
-        sid = created["id"]
+        sid = created["conversation_id"]
 
         worker = threading.Thread(target=lambda: app.turn(sid, "ping"), daemon=True)
         worker.start()
@@ -2202,14 +2176,14 @@ def test_delete_refuses_a_session_mid_turn(tmp_path: Path) -> None:
         except HTTPError as exc:
             assert exc.code == 409
         else:
-            raise AssertionError("expected 409 for a running session")
-        # Hard-cut: store-backed sessions have no JSONL file; existence is
+            raise AssertionError("expected 409 for a running conversation")
+        # Hard-cut: store-backed conversations have no JSONL file; existence is
         # the store door, not the filesystem.
-        assert SessionManager(tmp_path / "sessions").load(sid).id == sid
+        assert ConversationManager(tmp_path / "sessions").load(sid).conversation_id == sid
         release.set()
         worker.join(timeout=5)
         assert not worker.is_alive()
-        assert SessionManager(tmp_path / "sessions").load(sid).id == sid
+        assert ConversationManager(tmp_path / "sessions").load(sid).conversation_id == sid
         # Once the turn has landed the same call goes through.
         assert _json(httpd, f"/api/groups/{sid}", method="DELETE")["ok"] is True
     finally:
@@ -2219,12 +2193,12 @@ def test_delete_refuses_a_session_mid_turn(tmp_path: Path) -> None:
 
 
 
-def test_rename_midturn_survives_the_agent_naming_step(tmp_path: Path) -> None:
-    """Naming must not append over a title the user typed during the turn.
+def test_membership_edit_midturn_persists(tmp_path: Path) -> None:
+    """A participant edit during a turn survives; no naming call runs.
 
-    The turn holds its own Session snapshot from load time; the sidebar writes
-    a meta line to the same file. Without a re-read the agent's naming step
-    would append its own line and the stored title would be the model's.
+    The turn holds its own ConversationRuntime snapshot from load time; the sidebar
+    edits membership while the turn runs. The edit persists, and the turn
+    makes exactly one model call.
     """
     started = threading.Event()
     release = threading.Event()
@@ -2236,29 +2210,27 @@ def test_rename_midturn_survives_the_agent_naming_step(tmp_path: Path) -> None:
             if calls["n"] == 1:
                 started.set()
                 await asyncio.to_thread(release.wait)
-                return ChatReply(content="pong")
-            # The naming step proposes a title the policy would normally accept:
-            # it differs from both the user's words and the reply.
-            return ChatReply(content="Nhịp sáng")
+            return ChatReply(content="pong")
 
     app = _chat(tmp_path, Slow())
     try:
         created = app.create()
-        sid = created["id"]
+        sid = created["conversation_id"]
         worker = threading.Thread(target=lambda: app.turn(sid, "ping"), daemon=True)
         worker.start()
         assert started.wait(timeout=5)
 
-        # The user names it from the sidebar while the turn is still running.
-        assert app.rename_session(sid, "Tên tôi tự đặt") == "Tên tôi tự đặt"
+        # The sidebar re-affirms membership while the turn is still running.
+        store = ConversationManager(tmp_path / "sessions").store
+        store.append_bots(store.path_for(sid), ["thyca"])
         release.set()
         worker.join(timeout=5)
         assert not worker.is_alive()
 
-        stored = SessionManager(tmp_path / "sessions").load(sid)
-        assert stored.title == "Tên tôi tự đặt"
-        assert stored.title_source == "user"
-        assert app.get_payload(sid)["title"] == "Tên tôi tự đặt"
+        assert calls["n"] == 1
+        stored = ConversationManager(tmp_path / "sessions").load(sid)
+        assert stored.bots == ["thyca"]
+        assert "title" not in app.get_payload(sid)
     finally:
         release.set()
         app.shutdown()
@@ -2267,7 +2239,7 @@ def test_rename_midturn_survives_the_agent_naming_step(tmp_path: Path) -> None:
 def test_delete_racing_a_claim_does_not_lose_the_transcript(tmp_path: Path) -> None:
     """The delete gate and the claim share one lock.
 
-    Before: ``delete_session`` snapshotted the in-flight map and then unlinked,
+    Before: ``delete_conversation`` snapshotted the in-flight map and then unlinked,
     so a turn claiming in that window was not protected — the file went away
     under it and its next append re-created it truncated, dropping history.
     """
@@ -2275,7 +2247,7 @@ def test_delete_racing_a_claim_does_not_lose_the_transcript(tmp_path: Path) -> N
     app = _chat(tmp_path, llm)
     try:
         created = app.create()
-        sid = created["id"]
+        sid = created["conversation_id"]
         app.turn(sid, "câu hỏi đầu")
         # Hard cut: existence is the store door, never a JSONL file.
         from thyca.conversations.store.admin import AdminStore
@@ -2288,30 +2260,30 @@ def test_delete_racing_a_claim_does_not_lose_the_transcript(tmp_path: Path) -> N
         # Hold a claim exactly as a live turn does, then ask the delete to run.
         app._turns.claim(sid)
         try:
-            app.delete_session(sid)
-        except SessionBusy:
+            app.delete_conversation(sid)
+        except ConversationBusy:
             pass
         else:
-            raise AssertionError("delete must refuse a claimed session")
+            raise AssertionError("delete must refuse a claimed conversation")
         assert door_exists()
         app._turns.release(sid)
 
         # Free again: the same call drops the notebook.
-        app.delete_session(sid)
+        app.delete_conversation(sid)
         assert not door_exists()
     finally:
         app.shutdown()
 
 
-def test_session_rename_delete_http_apis_remain_wired() -> None:
-    """Removing chat UI controls does not remove the group HTTP APIs."""
+def test_group_delete_http_api_remains_wired_without_rename() -> None:
+    """Removing chat UI controls does not remove the group delete API."""
     root = Path(__file__).resolve().parents[1]
     routes = (root / "thyca" / "serve" / "routes.py").read_text(encoding="utf-8")
     api = (root / "thyca" / "serve" / "conversations_api.py").read_text(encoding="utf-8")
-    assert "group_rename(self, chat, match.group(1))" in routes
     assert "group_delete(self, chat, match.group(1))" in routes
-    assert "def group_rename(" in api
     assert "def group_delete(" in api
+    assert "def do_PATCH" not in routes
+    assert "def group_rename(" not in api
     assert "session_rename" not in routes
     assert "session_delete" not in routes
 
@@ -2386,7 +2358,7 @@ def test_stream_model_and_effort_reach_provider(tmp_path: Path, monkeypatch) -> 
         assert inherited[-1]["type"] == "turn.completed"
         assert captured[-1].model == "card-model"
         assert captured[-1].reasoningEffort == "low"
-        stored = SessionManager(tmp_path / "sessions").load(created["bot_id"])
+        stored = ConversationManager(tmp_path / "sessions").load(created["bot_id"])
         assistants = [
             item
             for item in stored.messages
@@ -2442,7 +2414,7 @@ def test_cancel_in_flight_turn(tmp_path: Path) -> None:
     httpd, thread = _start(tmp_path, _chat(tmp_path, Blocked()))
     try:
         created = _json(httpd, "/api/bots/thyca/dm")
-        session_id = created["bot_id"]
+        conversation_id = created["bot_id"]
         response = _stream(
             httpd,
             "/api/bots/thyca/dm/turn/stream",
@@ -2475,7 +2447,7 @@ def test_cancel_in_flight_turn(tmp_path: Path) -> None:
         assert "turn.failed" not in types
         detail = _json(httpd, "/api/bots/thyca/dm")
         assert detail["running"] is False
-        stored = SessionManager(tmp_path / "sessions").load(session_id)
+        stored = ConversationManager(tmp_path / "sessions").load(conversation_id)
         assert [(item.role, item.content) for item in stored.messages] == [
             ("user", "hold")
         ]
@@ -2503,14 +2475,14 @@ def test_retry_last_user_turn(tmp_path: Path) -> None:
     httpd, thread = _start(tmp_path, app)
     try:
         created = _json(httpd, "/api/bots/thyca/dm")
-        session_id = created["bot_id"]
+        conversation_id = created["bot_id"]
         path = "/api/bots/thyca/dm/turn/stream"
         first = _stream_lines(_stream(httpd, path, data=b'{"text":"hello"}'))
         assert first[-1]["type"] == "turn.completed"
         retried = _stream_lines(_stream(httpd, path, data=b'{"retry":true}'))
         assert retried[0] == {"type": "turn.accepted", "bot_id": "thyca"}
         assert retried[-1]["type"] == "turn.completed"
-        stored = SessionManager(tmp_path / "sessions").load(session_id)
+        stored = ConversationManager(tmp_path / "sessions").load(conversation_id)
         users = [item for item in stored.messages if item.role == "user"]
         assistants = [
             item
@@ -2588,7 +2560,7 @@ def test_cancel_then_retry_keeps_one_user(tmp_path: Path) -> None:
     httpd, thread = _start(tmp_path, _chat(tmp_path, llm))
     try:
         created = _json(httpd, "/api/bots/thyca/dm")
-        session_id = created["bot_id"]
+        conversation_id = created["bot_id"]
         path = "/api/bots/thyca/dm/turn/stream"
         response = _stream(httpd, path, data=b'{"text":"hold"}')
         assert json.loads(response.readline().decode("utf-8")) == {"type": "turn.accepted", "bot_id": "thyca"}
@@ -2600,7 +2572,7 @@ def test_cancel_then_retry_keeps_one_user(tmp_path: Path) -> None:
         llm._blocked = False
         retried = _stream_lines(_stream(httpd, path, data=b'{"retry":true}'))
         assert retried[-1]["type"] == "turn.completed"
-        stored = SessionManager(tmp_path / "sessions").load(session_id)
+        stored = ConversationManager(tmp_path / "sessions").load(conversation_id)
         users = [item for item in stored.messages if item.role == "user"]
         assistants = [
             item
@@ -2739,7 +2711,7 @@ def test_failed_turn_logs_one_stderr_line(tmp_path: Path, capsys) -> None:
         app.shutdown()
     err = capsys.readouterr().err
     assert (
-        f"turn failed session={created['bot_id']} model=gpt-4o-mini "
+        f"turn failed conversation={created['bot_id']} model=gpt-4o-mini "
         "provider=default code=llm_error msg=provider HTTP 404: model gone" in err
     )
 
@@ -2767,7 +2739,7 @@ def test_stream_invalid_model_logs_preaccept_failure(tmp_path: Path, capsys) -> 
         app.shutdown()
     err = capsys.readouterr().err
     assert (
-        f"turn failed session={created['bot_id']} model=ghost-model "
+        f"turn failed conversation={created['bot_id']} model=ghost-model "
         "provider=default code=invalid_model msg=invalid model" in err
     )
 
@@ -2787,7 +2759,7 @@ def test_failed_turn_marks_transcript_and_trace(tmp_path: Path) -> None:
         path = "/api/bots/thyca/dm/turn/stream"
         lines = _stream_lines(_stream(httpd, path, data=b'{"text":"hi"}'))
         assert lines[-1]["type"] == "turn.failed"
-        stored = SessionManager(tmp_path / "sessions").load(created["bot_id"])
+        stored = ConversationManager(tmp_path / "sessions").load(created["bot_id"])
         # Hard-cut branch (2026-11-01): failures append a trailing system
         # marker (append-only) instead of stamping the user row in place.
         # Trace projects the marker back onto its turn, so failed turns
@@ -2838,7 +2810,7 @@ def test_retry_after_failure_strips_marker_on_success(tmp_path: Path) -> None:
         assert failed[-1]["type"] == "turn.failed"
         retried = _stream_lines(_stream(httpd, path, data=b'{"retry":true}'))
         assert retried[-1]["type"] == "turn.completed"
-        stored = SessionManager(tmp_path / "sessions").load(created["bot_id"])
+        stored = ConversationManager(tmp_path / "sessions").load(created["bot_id"])
         users = [item for item in stored.messages if item.role == "user"]
         assert (users[-1].meta or {}).get("error") is None
         assistants = [
@@ -2866,7 +2838,7 @@ def test_cancelled_turn_leaves_no_error_marker(tmp_path: Path) -> None:
     httpd, thread = _start(tmp_path, app)
     try:
         created = _json(httpd, "/api/bots/thyca/dm")
-        session_id = created["bot_id"]
+        conversation_id = created["bot_id"]
         response = _stream(
             httpd, "/api/bots/thyca/dm/turn/stream", data=b'{"text":"hold"}'
         )
@@ -2877,7 +2849,7 @@ def test_cancelled_turn_leaves_no_error_marker(tmp_path: Path) -> None:
         )
         assert cancelled == {"ok": True}
         assert _stream_lines(response)[-1]["type"] == "turn.cancelled"
-        stored = SessionManager(tmp_path / "sessions").load(session_id)
+        stored = ConversationManager(tmp_path / "sessions").load(conversation_id)
         assert [(item.role, item.content) for item in stored.messages] == [("user", "hold")]
         assert (stored.messages[0].meta or {}).get("error") is None
     finally:
@@ -2904,7 +2876,7 @@ def test_unexpected_turn_error_marks_chat_unavailable(tmp_path: Path) -> None:
             "code": "chat_unavailable",
             "message": "chat unavailable",
         }
-        stored = SessionManager(tmp_path / "sessions").load(created["bot_id"])
+        stored = ConversationManager(tmp_path / "sessions").load(created["bot_id"])
         # Hard-cut: trailing system marker, not a user stamp (see above).
         users = [item for item in stored.messages if item.role == "user"]
         assert (users[-1].meta or {}).get("error") is None
@@ -2938,3 +2910,71 @@ def test_4000_emoji_turn_accepted_end_to_end(tmp_path: Path) -> None:
     finally:
         _stop(httpd, thread)
         app.shutdown()
+
+
+def test_orphan_group_over_http(tmp_path: Path) -> None:
+    from thyca.bots.card import BotCard
+
+    llm = FakeLLM(ChatReply(content="pong"))
+    app = _chat(tmp_path, llm)
+    app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder", description="Codes.", persona="You code."))
+    app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper", description="Helps.", persona="You help."))
+    httpd, thread = _start(tmp_path, app)
+    try:
+        created = _json(httpd, "/api/groups", method="POST", data=b'{"bots":["coder","helper"]}')
+        sid = created["group_id"]
+        _json(httpd, f"/api/groups/{sid}/turn", method="POST", data=b'{"text":"ping"}')
+        # Simulate an old orphan left in the database.
+        app._bots.delete("coder")
+        detail = _json(httpd, f"/api/groups/{sid}")
+        assert detail["kind"] == "group" and detail["bots"] == ["coder", "helper"]
+        assert "title" not in detail
+        turned = _json(httpd, f"/api/groups/{sid}/turn", method="POST", data=b'{"text":"hello"}')
+        assert turned["reply"] == "pong"
+        removed = _json(httpd, f"/api/groups/{sid}/bots", method="POST", data=json.dumps({"bot_id": "coder", "action": "remove"}).encode("utf-8"))
+        assert removed["bots"] == ["helper"]
+        deleted = _json(httpd, f"/api/groups/{sid}", method="DELETE")
+        assert deleted["ok"] is True
+    finally:
+        _stop(httpd, thread)
+        app.shutdown()
+
+
+def test_all_dead_group_turn_is_clear_over_http(tmp_path: Path) -> None:
+    from thyca.bots.card import BotCard
+
+    llm = FakeLLM(ChatReply(content="pong"))
+    app = _chat(tmp_path, llm)
+    app._bots.create(BotCard(bot_id="solo1", name="solo1", role="R", description="D.", persona="p"))
+    app._bots.create(BotCard(bot_id="solo2", name="solo2", role="R", description="D.", persona="p"))
+    httpd, thread = _start(tmp_path, app)
+    try:
+        created = _json(httpd, "/api/groups", method="POST", data=b'{"bots":["solo1","solo2"]}')
+        sid = created["group_id"]
+        _json(httpd, f"/api/groups/{sid}/turn", method="POST", data=b'{"text":"ping"}')
+        app._bots.delete("solo1")
+        app._bots.delete("solo2")
+        detail = _json(httpd, f"/api/groups/{sid}")
+        assert detail["kind"] == "group"
+        try:
+            _json(httpd, f"/api/groups/{sid}/turn", method="POST", data=b'{"text":"hello"}')
+        except HTTPError as exc:
+            assert exc.code == 409
+            assert json.loads(exc.read().decode("utf-8")) == {"error": "conversation has no live participant"}
+        else:
+            raise AssertionError("expected 409 for all-dead turn")
+        assert _json(httpd, f"/api/groups/{sid}", method="DELETE")["ok"] is True
+    finally:
+        _stop(httpd, thread)
+        app.shutdown()
+
+
+def test_chat_delete_group_button_wired() -> None:
+    """Static wiring: header button, toggle, and DELETE flow exist."""
+    root = Path(__file__).resolve().parents[1]
+    html = (root / "thyca" / "webui" / "ui" / "chat" / "index.html").read_text()
+    js = (root / "thyca" / "webui" / "ui" / "chat" / "js" / "chat.js").read_text()
+    assert 'id="delete-group"' in html and 'class="quiet-button" id="delete-group"' in html
+    for token in ("updateGroupDeleteButton", "deleteCurrentGroup", "convDetailUrl",
+                  "refreshConversations", "renderGroups", 'method: \'DELETE\''):
+        assert token in js, token

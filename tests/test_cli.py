@@ -14,7 +14,7 @@ from thyca.llms.llm_base import ChatReply, LLMError
 from thyca.core.protocol import Message, ToolCall
 from thyca.tools.mcp import StartupDiagnostic
 from thyca.tools.registry import ToolSpec
-from thyca.conversations.runtime import SessionManager
+from thyca.conversations.runtime import ConversationManager
 
 
 @dataclass
@@ -87,9 +87,9 @@ def test_print_writes_reply_and_persists(tmp_path: Path) -> None:
     assert out.getvalue().strip() == "pong"
     assert llm.requests[0][0].role == "system"
     assert llm.requests[0][-1].content == "ping"
-    manager = SessionManager(tmp_path / "sessions")
-    session = manager.continue_last()
-    assert [(m.role, m.content) for m in session.messages] == [
+    manager = ConversationManager(tmp_path / "sessions")
+    conversation = manager.continue_last()
+    assert [(m.role, m.content) for m in conversation.messages] == [
         ("user", "ping"),
         ("assistant", "pong"),
     ]
@@ -375,7 +375,7 @@ def test_print_model_override_routes_to_its_provider_http_auth(
     }]
 
 
-def test_print_tags_memory_with_cli_session(tmp_path: Path) -> None:
+def test_print_tags_memory_with_cli_conversation(tmp_path: Path) -> None:
     remember = ChatReply(
         content=None,
         tool_calls=[
@@ -397,18 +397,18 @@ def test_print_tags_memory_with_cli_session(tmp_path: Path) -> None:
 
     cli, _out, _err = _cli(tmp_path, SeqLLM())
     assert cli.main(["-p", "hi"]) == 0
-    session = SessionManager(tmp_path / "sessions").continue_last()
+    conversation = ConversationManager(tmp_path / "sessions").continue_last()
     (day_file,) = list((tmp_path / "memory").glob("*.md"))
-    assert f'"chat":"{session.id}"' in day_file.read_text(encoding="utf-8")
+    assert f'"chat":"{conversation.conversation_id}"' in day_file.read_text(encoding="utf-8")
 
 
 def test_default_opens_thyca_dm(tmp_path: Path) -> None:
     cli, _out, _err = _cli(tmp_path, FakeLLM(ChatReply(content="hi")))
     assert cli.main(["-p", "hello"]) == 0
-    manager = SessionManager(tmp_path / "sessions")
-    session = manager.continue_last()
-    assert session.dm_bot == "thyca"
-    assert session.bots == ["thyca"]
+    manager = ConversationManager(tmp_path / "sessions")
+    conversation = manager.continue_last()
+    assert conversation.dm_bot == "thyca"
+    assert conversation.bots == ["thyca"]
 
 
 def test_default_opens_dm_despite_newer_group(tmp_path: Path) -> None:
@@ -455,10 +455,10 @@ def test_group_flag_loads_group_by_id(tmp_path: Path) -> None:
             bot_id="coder", name="Coder", role="Coder", description="Codes.",
             persona="You code.",
         ))
-        group_id = app.create(bots=["thyca", "coder"])["id"]
+        group_id = app.create(bots=["thyca", "coder"])["conversation_id"]
     finally:
         app.shutdown()
     cli2, _out2, _err2 = _cli(tmp_path, FakeLLM(ChatReply(content="in-group")))
     assert cli2.main(["--group", group_id, "-p", "hello"]) == 0
-    reloaded = SessionManager(tmp_path / "sessions").load(group_id)
+    reloaded = ConversationManager(tmp_path / "sessions").load(group_id)
     assert [m.content for m in reloaded.messages][-1] == "in-group"

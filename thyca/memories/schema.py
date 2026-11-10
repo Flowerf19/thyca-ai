@@ -9,7 +9,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = "8"
+SCHEMA_VERSION = "9"
 # Bump when Chunker.normalize changes so stale text_norm rows rebuild.
 NORM_VERSION = "2"
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
@@ -41,9 +41,23 @@ def init_schema(db: sqlite3.Connection) -> None:
 
 
 def migrate(db: sqlite3.Connection, from_version: str) -> None:
+    if from_version == "8":
+        # Non-destructive v8 → v9: rename the leaf id columns
+        # (session_id → memory_id, session_title → memory_title).
+        # RENAME COLUMN keeps every row and usage counter; files are
+        # marked stale so the next reindex rebuilds from markdown.
+        ensure_memory_columns(db)
+        db.execute(
+            "UPDATE meta SET value = ? WHERE key = 'schema_version'",
+            (SCHEMA_VERSION,),
+        )
+        db.commit()
+        return
     if from_version == "7":
-        # Non-destructive v7 → v8: task/habit columns.
+        # Non-destructive v7 → v9: task/habit columns (v8), then the
+        # leaf id rename (v9) so every path lands on the new names.
         add_task_columns(db)
+        ensure_memory_columns(db)
         db.execute(
             "UPDATE meta SET value = ? WHERE key = 'schema_version'",
             (SCHEMA_VERSION,),
@@ -51,10 +65,12 @@ def migrate(db: sqlite3.Connection, from_version: str) -> None:
         db.commit()
         return
     if from_version == "6":
-        # Non-destructive v6 → v8: team owners column + related-edges
-        # table (v7) plus task/habit columns (v8).
+        # Non-destructive v6 → v9: team owners column + related-edges
+        # table (v7), task/habit columns (v8), then the leaf id rename
+        # (v9).
         add_team_columns(db)
         add_task_columns(db)
+        ensure_memory_columns(db)
         db.execute(
             "UPDATE meta SET value = ? WHERE key = 'schema_version'",
             (SCHEMA_VERSION,),
@@ -68,11 +84,12 @@ def migrate(db: sqlite3.Connection, from_version: str) -> None:
         add_linking_columns(db)
         add_team_columns(db)
         add_task_columns(db)
+        ensure_memory_columns(db)
         if from_version in {"3", "4"}:
             db.execute(
                 """CREATE TABLE IF NOT EXISTS leaf_searches(
                     chunk_id        TEXT PRIMARY KEY,
-                    session_id      TEXT NOT NULL,
+                    memory_id      TEXT NOT NULL,
                     search_count    INTEGER NOT NULL CHECK(search_count >= 1),
                     last_search_at  TEXT NOT NULL
                 )"""
@@ -154,6 +171,27 @@ def add_task_columns(db: sqlite3.Connection) -> None:
     db.execute("CREATE INDEX IF NOT EXISTS chunks_task ON chunks(task)")
     # Existing rows contain no heading metadata. Keep the derived rows
     # until the normal reindex pass, but ensure unchanged files are read.
+    db.execute("UPDATE source_files SET mtime_ns = -1")
+
+
+def ensure_memory_columns(db: sqlite3.Connection) -> None:
+    """Idempotent v9 leaf id rename (session_id → memory_id).
+
+    RENAME COLUMN keeps chunk and usage-counter rows in place; indexed
+    files are marked stale so the next reindex rebuilds them from
+    markdown with the new column names."""
+
+    def _columns(table: str) -> set[str]:
+        return {str(row["name"]) for row in db.execute(f"PRAGMA table_info({table})")}
+
+    for table in ("chunks", "leaf_gets", "leaf_searches"):
+        columns = _columns(table)
+        if "session_id" in columns and "memory_id" not in columns:
+            db.execute(
+                f"ALTER TABLE {table} RENAME COLUMN session_id TO memory_id")
+    columns = _columns("chunks")
+    if "session_title" in columns and "memory_title" not in columns:
+        db.execute("ALTER TABLE chunks RENAME COLUMN session_title TO memory_title")
     db.execute("UPDATE source_files SET mtime_ns = -1")
 
 

@@ -86,7 +86,7 @@ def test_task_open_survives_its_ack_and_closes_on_result_event() -> None:
 
 def test_pending_envelopes_open_and_waiting() -> None:
     incoming = Envelope(
-        sender="thyca", recipient="coder", kind="delegate", session_id="room1",
+        sender="thyca", recipient="coder", kind="delegate", conversation_id="room1",
         trace_id="tr_1", parent_span_id=None, ts="2026-08-01T10:00:00Z",
         payload="build the thing", span_id="sp_in",
     )
@@ -96,7 +96,7 @@ def test_pending_envelopes_open_and_waiting() -> None:
     assert tasks[0].waiting_on is None
 
     outgoing = Envelope(
-        sender="coder", recipient="helper", kind="message", session_id="room1",
+        sender="coder", recipient="helper", kind="message", conversation_id="room1",
         trace_id="tr_2", parent_span_id=None, ts="2026-08-01T10:00:00Z",
         payload="please check", span_id="sp_out",
     )

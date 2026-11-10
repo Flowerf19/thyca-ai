@@ -63,7 +63,7 @@ def test_stats_json_and_static(tmp_path: Path) -> None:
     httpd, thread, facade = _start(tmp_path)
     try:
         sid = facade.remember("cafe", "likes ca phe den enough")
-        facade.get(session_id=sid)
+        facade.get(memory_id=sid)
         with urlopen(_url(httpd, "/api/memory/stats"), timeout=2) as response:
             assert response.headers.get_content_type() == "application/json"
             assert "no-store" in (response.headers.get("Cache-Control") or "")
@@ -177,7 +177,7 @@ def test_forget_endpoint(tmp_path: Path) -> None:
         now = datetime(2026, 8, 10, 10, 0, tzinfo=TZ)
         sid = facade.remember("cafe", "likes ca phe den enough", now=now)
         assert facade.stats(now=now).total == 1
-        payload = json.dumps({"session_id": sid}).encode("utf-8")
+        payload = json.dumps({"memory_id": sid}).encode("utf-8")
         request = Request(
             _url(httpd, "/api/memory/forget"),
             data=payload,
@@ -192,7 +192,7 @@ def test_forget_endpoint(tmp_path: Path) -> None:
             urlopen(
                 Request(
                     _url(httpd, "/api/memory/forget"),
-                    data=b'{"session_id":"memory#ffffffff"}',
+                    data=b'{"memory_id":"memory#ffffffff"}',
                     method="POST",
                     headers={"Content-Type": "application/json"},
                 ),
@@ -211,7 +211,7 @@ def test_update_and_reinforce_endpoints(tmp_path: Path) -> None:
     try:
         now = _fresh_now()
         sid = facade.remember("cafe", "likes ca phe den enough", now=now)
-        update = json.dumps({"session_id": sid, "topic": "tra"}).encode("utf-8")
+        update = json.dumps({"memory_id": sid, "topic": "tra"}).encode("utf-8")
         request = Request(
             _url(httpd, "/api/memory/update"),
             data=update,
@@ -221,10 +221,10 @@ def test_update_and_reinforce_endpoints(tmp_path: Path) -> None:
         with urlopen(request, timeout=2) as response:
             body = json.loads(response.read().decode("utf-8"))
         assert body == {"ok": True}
-        text = facade.get(session_id=sid, now=now)
+        text = facade.get(memory_id=sid, now=now)
         assert "tra" in text
         assert "likes ca phe den enough" in text
-        reinforce = json.dumps({"session_id": sid}).encode("utf-8")
+        reinforce = json.dumps({"memory_id": sid}).encode("utf-8")
         request = Request(
             _url(httpd, "/api/memory/reinforce"),
             data=reinforce,

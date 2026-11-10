@@ -7,16 +7,16 @@ from dataclasses import asdict
 from thyca.memories.facade import MemoryFacade
 from thyca.tools.registry import ToolRegistry, ToolSpec
 
-_chat_session_id: ContextVar[str | None] = ContextVar("thyca_memory_chat", default=None)
+_chat_conversation_id: ContextVar[str | None] = ContextVar("thyca_memory_chat", default=None)
 
 
-def bind_chat_session(session_id: str | None):
-    """Pin the in-flight chat session id for memory_remember to inject."""
-    return _chat_session_id.set(session_id)
+def bind_chat_conversation(conversation_id: str | None):
+    """Pin the in-flight chat conversation id for memory_remember to inject."""
+    return _chat_conversation_id.set(conversation_id)
 
 
-def reset_chat_session(token) -> None:
-    _chat_session_id.reset(token)
+def reset_chat_conversation(token) -> None:
+    _chat_conversation_id.reset(token)
 
 
 def _limit(args: dict) -> int:
@@ -66,7 +66,7 @@ def _remember_spec(facade: MemoryFacade) -> ToolSpec:
             args["summary"],
             content=args.get("content") or "",
             proj=args.get("proj"),
-            chat=_chat_session_id.get(),
+            chat=_chat_conversation_id.get(),
             task=task,
             cont=args.get("cont"),
             kind=args.get("kind"),
@@ -74,7 +74,7 @@ def _remember_spec(facade: MemoryFacade) -> ToolSpec:
             habit=args.get("habit"),
             habit_explicit=args.get("habit_explicit") is True,
         )
-        return json.dumps({"session_id": sid, "task_id": task}, ensure_ascii=False)
+        return json.dumps({"memory_id": sid, "task_id": task}, ensure_ascii=False)
 
     return ToolSpec(
         name="memory_remember",
@@ -125,7 +125,7 @@ def _remember_spec(facade: MemoryFacade) -> ToolSpec:
                 "cont": {
                     "type": "string",
                     "description": (
-                        "Previous memory session id in the same task. "
+                        "Previous memory id in the same task. "
                         "Requires task."
                     ),
                 },
@@ -252,18 +252,18 @@ def _get_spec(facade: MemoryFacade) -> ToolSpec:
         # Proactive tool read: same owner exemption as memory_search.
         return facade.get(
             chunk_id=args.get("chunk_id"),
-            session_id=args.get("session_id"),
+            memory_id=args.get("memory_id"),
             allow_own_cross_window=True,
         )
 
     return ToolSpec(
         name="memory_get",
-        description="Read a memory leaf by exactly one of chunk_id, session_id.",
+        description="Read a memory leaf by exactly one of chunk_id, memory_id.",
         parameters={
             "type": "object",
             "properties": {
                 "chunk_id": {"type": "string"},
-                "session_id": {"type": "string"},
+                "memory_id": {"type": "string"},
             },
             "additionalProperties": False,
         },
@@ -274,21 +274,21 @@ def _get_spec(facade: MemoryFacade) -> ToolSpec:
 
 def _forget_spec(facade: MemoryFacade) -> ToolSpec:
     async def handler(args: dict) -> str:
-        facade.forget(args["session_id"])
+        facade.forget(args["memory_id"])
         return "forgotten"
 
     return ToolSpec(
         name="memory_forget",
         description=(
-            "Delete one L2 memory leaf (heading+bullet) from its daily file by session_id. "
+            "Delete one L2 memory leaf (heading+bullet) from its daily file by memory_id. "
             "Irreversible — confirm with the user before calling."
         ),
         parameters={
             "type": "object",
             "properties": {
-                "session_id": {"type": "string"},
+                "memory_id": {"type": "string"},
             },
-            "required": ["session_id"],
+            "required": ["memory_id"],
             "additionalProperties": False,
         },
         handler=handler,
@@ -301,21 +301,21 @@ def _reinforce_spec(facade: MemoryFacade) -> ToolSpec:
     async def handler(args: dict) -> str:
         importance = args.get("importance")
         expires = facade.reinforce(
-            args["session_id"],
+            args["memory_id"],
             importance=int(importance) if importance is not None else None,
         )
-        return json.dumps({"session_id": args["session_id"], "expires_at": expires}, ensure_ascii=False)
+        return json.dumps({"memory_id": args["memory_id"], "expires_at": expires}, ensure_ascii=False)
 
     return ToolSpec(
         name="memory_reinforce",
-        description="Extend a memory leaf's expiry (optionally raise importance) by session_id.",
+        description="Extend a memory leaf's expiry (optionally raise importance) by memory_id.",
         parameters={
             "type": "object",
             "properties": {
-                "session_id": {"type": "string"},
+                "memory_id": {"type": "string"},
                 "importance": {"type": "integer"},
             },
-            "required": ["session_id"],
+            "required": ["memory_id"],
             "additionalProperties": False,
         },
         handler=handler,
@@ -376,7 +376,7 @@ def _update_spec(facade: MemoryFacade) -> ToolSpec:
         topic = args.get("topic")
         summary = args.get("summary")
         facade.update(
-            args["session_id"],
+            args["memory_id"],
             topic=topic.strip() if topic is not None else None,
             summary=summary.strip() if summary is not None else None,
             content=args.get("content"),
@@ -393,14 +393,14 @@ def _update_spec(facade: MemoryFacade) -> ToolSpec:
     return ToolSpec(
         name="memory_update",
         description=(
-            "Edit one L2 memory leaf's title and/or body by session_id. "
+            "Edit one L2 memory leaf's title and/or body by memory_id. "
             "The leaf's id stays stable; the search index is rebuilt after the edit. "
             "content requires summary; blank titles/summaries are rejected."
         ),
         parameters={
             "type": "object",
             "properties": {
-                "session_id": {"type": "string"},
+                "memory_id": {"type": "string"},
                 "topic": {"type": "string"},
                 "summary": {"type": "string"},
                 "content": {"type": "string"},
@@ -418,7 +418,7 @@ def _update_spec(facade: MemoryFacade) -> ToolSpec:
                 "cont": {
                     "type": "string",
                     "description": (
-                        "Previous memory session id in the same task. "
+                        "Previous memory id in the same task. "
                         "Omit to keep the current value."
                     ),
                 },
@@ -449,7 +449,7 @@ def _update_spec(facade: MemoryFacade) -> ToolSpec:
                     ),
                 },
             },
-            "required": ["session_id"],
+            "required": ["memory_id"],
             "additionalProperties": False,
         },
         handler=handler,

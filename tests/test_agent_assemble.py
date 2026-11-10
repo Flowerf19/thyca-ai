@@ -52,7 +52,7 @@ def test_assemble_rejects_non_string_user_message() -> None:
         Assemble().assemble(Stage(), 123)  # type: ignore[arg-type]
 
 
-def test_assemble_drops_naming_meta_message() -> None:
+def test_assemble_keeps_naming_meta_as_regular_row() -> None:
     naming = Message(
         role="assistant",
         content=None,
@@ -63,7 +63,9 @@ def test_assemble_drops_naming_meta_message() -> None:
 
     Assemble().assemble(stage, "hello")
 
-    assert [(m.role, m.content) for m in stage.messages] == [("user", "hello")]
+    assert [(m.role, m.content) for m in stage.messages] == [
+        ("assistant", None), ("user", "hello"),
+    ]
 
 
 def test_assemble_keeps_compaction_marker_after_hot_prompt() -> None:

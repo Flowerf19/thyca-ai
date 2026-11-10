@@ -81,10 +81,22 @@ def test_bot_write_routes_are_removed_but_roster_and_dm_remain(
     before = card_path.read_bytes()
     server, thread = _start(tmp_path, app)
     try:
-        for method, payload in (("PATCH", {"name": "Changed"}), ("DELETE", None)):
-            status, body = _request(server, "/api/bots/coder", method, payload)
-            assert status == 404
-            assert body == {"error": "bot not found"}
+        # There is no PATCH handler at all any longer (bot settings are
+        # POST); the method itself is unsupported (501 HTML, not JSON).
+        patch = Request(
+            f"http://127.0.0.1:{server.server_address[1]}/api/bots/coder",
+            data=json.dumps({"name": "Changed"}).encode("utf-8"),
+            method="PATCH",
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            urlopen(patch, timeout=5)
+            raise AssertionError("expected 501 for PATCH")
+        except HTTPError as error:
+            assert error.code == 501
+        status, body = _request(server, "/api/bots/coder", "DELETE", None)
+        assert status == 404
+        assert body == {"error": "bot not found"}
         status, roster = _request(server, "/api/bots")
         assert status == 200
         assert {bot["id"] for bot in roster["bots"]} >= {"thyca", "coder"}

@@ -1,4 +1,4 @@
-"""Agent-callable session tools (``compact``).
+"""Agent-callable conversation tools (``compact``).
 
 Turn-scoped: the handler reads the in-flight turn's ``BotTurnContext``
 (the runtime binds a compact callback per turn) instead of holding app
@@ -31,7 +31,7 @@ def compact_spec() -> ToolSpec:
     return ToolSpec(
         name=COMPACT_TOOL,
         description=(
-            "Compact the current session now: summarize what happened and "
+            "Compact the current conversation now: summarize what happened and "
             "keep the tail, freeing context for later turns. Call this only "
             "AFTER you have written the durable facts/checkpoints to memory "
             "(memory_remember with kind='checkpoint' where a task is "
@@ -48,7 +48,7 @@ def compact_spec() -> ToolSpec:
     )
 
 
-def register_session_tools(registry) -> None:
-    """Register session tools on a shared registry (idempotent)."""
+def register_conversation_tools(registry) -> None:
+    """Register conversation tools on a shared registry (idempotent)."""
     if registry.get(COMPACT_TOOL) is None:
         registry.register(compact_spec())

@@ -52,8 +52,8 @@ def habit_observations(facade, bot_id: str | None = None, now=None) -> list[dict
     for row in facade.archive.store.habit_rows(now_ts, reader=reader):
         if not row["day"]:
             continue  # sweep counts distinct daily days; dateless rows skip.
-        by_session[str(row["session_id"])] = {
-            "session_id": str(row["session_id"]),
+        by_session[str(row["memory_id"])] = {
+            "memory_id": str(row["memory_id"]),
             "timeline_day": str(row["day"]),
             "habit": str(row["habit"] or ""),
             "habit_explicit": bool(row["explicit"]),
@@ -73,10 +73,10 @@ def habit_observations(facade, bot_id: str | None = None, now=None) -> list[dict
         )
         seen_leaves: dict[str, list] = {}
         for chunk in chunks:
-            if chunk.kind != "habit" or chunk.session_id in by_session:
+            if chunk.kind != "habit" or chunk.memory_id in by_session:
                 continue
-            seen_leaves.setdefault(chunk.session_id, []).append(chunk)
-        for session_id, leaves in seen_leaves.items():
+            seen_leaves.setdefault(chunk.memory_id, []).append(chunk)
+        for memory_id, leaves in seen_leaves.items():
             first = leaves[0]
             if not is_visible(first.expires_at, now):
                 continue
@@ -87,8 +87,8 @@ def habit_observations(facade, bot_id: str | None = None, now=None) -> list[dict
             if not first.habit:
                 continue
             # Explicit-owner filtering happens once below for both paths.
-            by_session[session_id] = {
-                "session_id": session_id,
+            by_session[memory_id] = {
+                "memory_id": memory_id,
                 "timeline_day": today,
                 "habit": first.habit,
                 "habit_explicit": bool(first.habit_explicit),

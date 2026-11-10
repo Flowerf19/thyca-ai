@@ -130,7 +130,10 @@ function turnRowHtml(turn) {
     : `<span class="tl-botid">${escapeHTML(id || '—')}</span>`;
   const name = ids.length ? botDisplayName(id) + (ids.length > 1 ? ` +${ids.length - 1}` : '') : '—';
   const kind = turn.kind === 'dm' ? 'Chat riêng' : turn.kind === 'group' ? 'Chat nhóm' : 'Phiên';
-  const title = turn.title || turn.group_id || turn.bot_id || '—';
+  // No conversation titles any longer: a group turn's title is its group id
+  // itself, so it reads as the shared group label instead of a raw id.
+  const rawTitle = turn.title || turn.group_id || turn.bot_id || '—';
+  const title = turn.kind === 'group' && rawTitle === turn.group_id ? 'Hội thoại chung' : rawTitle;
   const conv = turn.kind === 'dm' ? dmKey(turn.bot_id) : groupKey(turn.group_id);
   const status = botScope && turn.status === 'failed' ? 'Lượt có lỗi' : null;
   return `<li><button type="button" class="tl-turn" data-conv="${escapeHTML(conv)}" data-turn="${turn.turn_index}"
@@ -215,7 +218,7 @@ const PAGE_HTML = `
           </div>
         </div>
         <p class="page-status s-error" id="trace-status" hidden><span id="trace-status-text"></span><button class="quiet-button" id="trace-retry" type="button">Thử lại danh sách</button></p>
-        <div id="trace-wrap"><ul class="tl-flat-turns" id="trace-sessions" aria-live="polite"></ul></div>
+        <div id="trace-wrap"><ul class="tl-flat-turns" id="trace-conversations" aria-live="polite"></ul></div>
         <div class="empty-note" id="trace-empty" hidden><strong>Không có lượt nào khớp.</strong><span id="trace-empty-hint">Đổi khoảng ngày hoặc nới bộ lọc để xem thêm.</span></div>
         <div class="table-foot"><span id="trace-count"></span><button class="quiet-button" id="trace-more" type="button" hidden>Tải thêm</button></div>
       </article>
@@ -382,7 +385,7 @@ function selectBot(id) {
   writeCurrentRoute('');
   applyRoute(ctx.route, { forceScope: true });
 }
-function loadSession(id, title, botId) { selectBot(botId || ''); }
+function loadConversation(id, botId) { selectBot(botId || ''); }
 async function loadStats(force = false) {
   const key = statsRequestKey();
   if (!force && key === statsKey && (statsLoaded || statsLoading || statsError)) return;
@@ -455,7 +458,7 @@ function setView(mode, restore = false) {
   if (mode === 'detail') scroller.scrollTop = 0;
   else if (restore) {
     scroller.scrollTop = overviewScroll;
-    const focus = overviewFocus && [...$('#trace-sessions').querySelectorAll('button[data-conv][data-turn]')]
+    const focus = overviewFocus && [...$('#trace-conversations').querySelectorAll('button[data-conv][data-turn]')]
       .find(button => button.dataset.conv === overviewFocus.sid && button.dataset.turn === String(overviewFocus.turn));
     const target = focus || $('#usage-view-title');
     if (target && !target.hasAttribute('tabindex')) target.tabIndex = -1;
@@ -581,7 +584,7 @@ function renderStats(s, { loading = false } = {}) {
       t.cost_usd == null ? 'chưa có lượt nào ghi nhận giá'
         : (typeof t.requests === 'number' && t.requests ? 'TB ' + fmtCost(t.cost_usd / t.requests) + ' / request · phần đã ghi nhận' : '')),
     heroCard('Độ trễ p50', fmtDur(t.latency_ms_p50), 'p90 ' + fmtDur(t.latency_ms_p90)),
-    heroCard('Phiên', fmtInt(t.sessions), botScope ? 'phiên có đóng góp' : 'mỗi phiên một lần'),
+    heroCard('Phiên', fmtInt(t.conversations), botScope ? 'phiên có đóng góp' : 'mỗi phiên một lần'),
     heroCard('Lượt', fmtInt(t.turns), botScope ? 'lượt có đóng góp' : 'lượt trong kỳ'),
   ].join('');
   $('#usage-input-total').textContent = fmtInt(inTok);
@@ -664,7 +667,7 @@ function meterWidth(value, max) {
     ? Math.max(0, Math.min(100, value / max * 100)) : 0;
 }
 function rowMeta(row) {
-  return `${fmtInt(row.sessions)} phiên · ${fmtInt(row.turns)} lượt · ${fmtInt(row.requests)} request · ${fmtInt(row.tool_calls)} tool · ${fmtInt(row.total_tokens)} token · ${fmtCost(row.cost_usd)}`;
+  return `${fmtInt(row.conversations)} phiên · ${fmtInt(row.turns)} lượt · ${fmtInt(row.requests)} request · ${fmtInt(row.tool_calls)} tool · ${fmtInt(row.total_tokens)} token · ${fmtCost(row.cost_usd)}`;
 }
 function renderBotRows() {
   $('#card-bot').hidden = !!botScope;
@@ -690,7 +693,7 @@ function renderModelRows() {
     </li>`).join('') : ((statsData?.by_model || []).length ? '<li><div class="empty-note"><strong>Không có model xác định trong kỳ.</strong></div></li>' : '<li><div class="empty-note"><strong>Chưa có lượt nào trong kỳ.</strong></div></li>');
 }
 function costMeta(row) {
-  return `${fmtInt(row.priced_turns)} lượt có ghi nhận giá · ${fmtInt(row.turns)} lượt · ${fmtInt(row.sessions)} phiên · ${fmtInt(row.requests)} request · ${fmtInt(row.total_tokens)} token`;
+  return `${fmtInt(row.priced_turns)} lượt có ghi nhận giá · ${fmtInt(row.turns)} lượt · ${fmtInt(row.conversations)} phiên · ${fmtInt(row.requests)} request · ${fmtInt(row.total_tokens)} token`;
 }
 function renderCostRows() {
   $('#card-bot-cost').hidden = !!botScope;
@@ -768,7 +771,7 @@ function renderTraceTable() {
     ? 'Bộ lọc lượt đang bật — thử nới lọc hoặc đổi kỳ.'
     : 'Đổi khoảng ngày để xem thêm.';
   $('#trace-empty').hidden = !!rows.length || !!traceState.error || traceState.loading;
-  $('#trace-sessions').innerHTML = rows.map(turnRowHtml).join('');
+  $('#trace-conversations').innerHTML = rows.map(turnRowHtml).join('');
   renderTraceFoot();
 }
 function renderTraceFoot() {
@@ -862,8 +865,8 @@ function buildPage() {
     const button = event.target.closest('button[data-action="select-bot"][data-bot-id]');
     if (button && root.contains(button)) selectBot(button.dataset.botId);
   });
-  $('#trace-sessions').addEventListener('click', openTraceRow);
-  $('#trace-sessions').addEventListener('keydown', event => { if (event.key === 'Enter') openTraceRow(event); });
+  $('#trace-conversations').addEventListener('click', openTraceRow);
+  $('#trace-conversations').addEventListener('keydown', event => { if (event.key === 'Enter') openTraceRow(event); });
   $('#detail-back').onclick = returnFromDetail;
   $('#detail-retry').onclick = () => {
     const selected = parseDetailRoute(ctx.route);
@@ -885,7 +888,7 @@ async function boot() {
   else { setView('overview'); ensureOverviewData(false); }
 }
 const ready = boot();
-return { ready, selectBot, loadSession,
+return { ready, selectBot, loadConversation,
   sidebarLabel(id, name, status) { return `Xem sử dụng của ${name}`; },
   onEnter() {
     const overviewButton = ctx.sidebar?.querySelector('#usage-overview-scope');

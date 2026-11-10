@@ -2,8 +2,9 @@
 
 Thay đổi của Thyca, viết ngắn gọn cho người dùng.
 
-## 0.87.0.dev2 — Development
+## 0.88.0.dev0 — Development
 
+- Bỏ hẳn đặt tên hội thoại tự động: không còn gọi LLM đặt tên sau 2 lượt nhắn, không còn sự kiện `session.naming` hay hàng `kind='naming'` mới. Tiêu đề chỉ từ người dùng tự đặt hoặc hiển thị dự phòng theo ngày/giờ. Đã gỡ `naming_meta`, seed `naming.md` và field metadata `naming_attempted`; door cũ còn key này vẫn đọc được bình thường (key bị bỏ qua lúc đọc).
 - Cứng bảo mật two-doors: chia sẻ skill chỉ Thyca (skill team ẩn theo mặc định), đọc/ghi/index skill qua checked descriptor, kiểm tra sender+recipient trong cùng transaction cho group request.
 - Dọn code chết và test chết: gỡ các symbol production không dùng và 10 test trùng lặp cùng 50 dòng import/helper mồ côi trong test.
 - Avatar huy chương (medallion): nhân vật tròn thay giọt mực cũ, sidebar xếp thẻ bot lưới 2 cột vuông.

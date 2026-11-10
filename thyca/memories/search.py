@@ -141,7 +141,7 @@ def lexical_search(
         now_ts = format_ts(utc_now(now))
         by_session: dict[str, list[str]] = {}
         for hit in hits:
-            by_session.setdefault(hit.session_id, []).append(hit.chunk_id)
+            by_session.setdefault(hit.memory_id, []).append(hit.chunk_id)
         for sid, chunk_ids in by_session.items():
             archive.store.usage.record_searches(chunk_ids, sid, now_ts)
     return SearchResult(hits=hits, warnings=warnings)

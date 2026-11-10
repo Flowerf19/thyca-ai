@@ -1,6 +1,6 @@
 """Contract §6: frozen FE↔BE surface asserted in one place.
 
-The DM/group hard cut replaced /api/sessions* with explicit doors; this
+The DM/group hard cut replaced /api/conversations* with explicit doors; this
 file pins the new surface with the same strength as the old one.
 """
 from __future__ import annotations
@@ -63,7 +63,7 @@ def test_contract_bots_endpoints(tmp_path: Path) -> None:
         dm = _get(httpd, "/api/bots/thyca/dm")
         assert dm["kind"] == "dm" and dm["bot_id"] == "thyca"
         assert dm["bots"] == ["thyca"]
-        assert "id" not in dm and "session_id" not in dm
+        assert "id" not in dm and "conversation_id" not in dm
         # Conversation list payloads carry kind + typed identity + bots.
         app._bots.create(BotCard(bot_id="coder", name="coder", role="C",
                                  description="D", persona="P"))

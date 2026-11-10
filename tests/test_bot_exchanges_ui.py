@@ -1,4 +1,4 @@
-"""Bot<->bot exchange UI: room collapse + DM group entries + thread modal.
+"""Bot<->bot exchange UI: groups hide A2A rows + DM group entries + thread modal.
 
 Render layer only (node harness): the exchanges/thread endpoints are
 covered by tests/test_bot_exchanges.py. Click dispatch cannot run here
@@ -21,7 +21,7 @@ _TUI_TAIL = """return {
   fmtTime,
   renderTranscript, renderExchangeGroups, openExchangeModal,
   normalizeBot, getBot, bots, groups,
-  setSession: v => { currentSession = v; },
+  setConversation: v => { currentConversation = v; },
 };"""
 
 _SCRIPT = r"""
@@ -33,7 +33,8 @@ const result = {};
 ui.bots.push(ui.normalizeBot({ id: 'thyca', name: 'Thyca', role: 'bạn', agent_status: { state: 'idle' } }, 0));
 ui.bots.push(ui.normalizeBot({ id: 'helper', name: 'Helper', role: 'giúp việc', agent_status: { state: 'idle' } }, 0));
 
-// Room: consecutive same-pair rows collapse; a lone exchange row stays plain.
+// Room (group): A2A bus/result rows never render inline — no exchange
+// entry and no plain exchange bubble; only the ordinary reply shows.
 const bus1 = { role: 'assistant', content: 'làm giúp mình',
   meta: { bot_id: 'thyca', kind: 'message', bus_event: true, trace_id: 't1', span_id: 'sp1', recipient: 'helper' } };
 const res1 = { role: 'assistant', content: 'xong',
@@ -52,8 +53,6 @@ doc.querySelector('#message-list').innerHTML = ui.renderTranscript({ messages: [
 const folds = [...doc.querySelectorAll('#message-list .peer-exchange')];
 result.room = {
   folds: folds.length,
-  lead: folds[0]?.querySelector('.peer-exchange-lead')?.textContent ?? null,
-  rows: folds[0] ? [...folds[0].querySelectorAll('.message-assistant')].length : 0,
   bubbles: doc.querySelectorAll('#message-list .message-assistant').length,
 };
 
@@ -66,7 +65,7 @@ globalThis.fetch = async (url, opts = {}) => {
   }
   throw new Error('unexpected fetch ' + url);
 };
-ui.setSession('dm-thyca');
+ui.setConversation('dm-thyca');
 doc.querySelector('#message-list').innerHTML = ui.renderTranscript({
   kind: 'dm', bot_id: 'thyca', messages: [
     { role: 'user', content: 'trước', ts: '2026-10-26T09:00:00Z' },
@@ -130,7 +129,7 @@ doc.querySelector('#message-list').innerHTML = ui.renderTranscript({
   kind: 'dm', bot_id: 'helper', messages: [
     { role: 'user', content: 'trước', ts: '2026-10-26T09:00:00Z' },
   ] });
-ui.setSession('dm-helper');
+ui.setConversation('dm-helper');
 await ui.renderExchangeGroups({ kind: 'dm', bot_id: 'helper' });
 const swap = [...doc.querySelectorAll('#message-list [data-exchange-partner]')];
 result.dmSwap = {
@@ -198,13 +197,12 @@ def exchange_ui(node: str) -> dict:
     return json.loads(result.stdout)
 
 
-def test_room_groups_consecutive_same_pair_rows(exchange_ui: dict) -> None:
+def test_room_hides_a2a_exchange_rows(exchange_ui: dict) -> None:
     room = exchange_ui["room"]
-    assert room["folds"] == 1
-    assert room["lead"] == "Thyca và Helper đã trao đổi 4 tin"
-    assert room["rows"] == 4
-    # 4 folded rows + 1 plain assistant row + 1 lone exchange row.
-    assert room["bubbles"] == 6
+    # No inline exchange entry and no plain exchange bubbles: only the
+    # owner's ordinary reply bubble renders.
+    assert room["folds"] == 0
+    assert room["bubbles"] == 1
 
 
 def test_dm_renders_group_entry_with_partner_hook(exchange_ui: dict) -> None:

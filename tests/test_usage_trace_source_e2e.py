@@ -1,4 +1,4 @@
-"""Read-only source-backed Usage/Trace verification with canonical sessions."""
+"""Read-only source-backed Usage/Trace verification with canonical conversations."""
 from __future__ import annotations
 
 import json
@@ -114,7 +114,7 @@ BROWSER_SCRIPT = r"""
       },
       detailVisible: show(view, '#turn-detail-view'),
       statValues: [...view.querySelectorAll('#stat-grid .stat-value')].map(el => el.textContent.trim()),
-      visibleTurnText: view.querySelector('#trace-sessions').textContent,
+      visibleTurnText: view.querySelector('#trace-conversations').textContent,
       view: new URLSearchParams(ThycaRouter.currentRoute().search).get('view') || 'usage',
       detailText: view.querySelector('#detail-body').textContent,
       route: ThycaRouter.currentRoute(),
@@ -140,13 +140,13 @@ BROWSER_SCRIPT = r"""
     for (const text of ['GROUP_CANONICAL_REPLY', 'GROUP_TOOL_RESULT', 'GROUP_REASONING']) {
       if (detailText.split(text).length !== 2) throw new Error('canonical detail omitted or duplicated ' + text);
     }
-    if (detailText.includes('DM_PRIVATE_SENTINEL')) throw new Error('detail crossed canonical session/window boundaries');
+    if (detailText.includes('DM_PRIVATE_SENTINEL')) throw new Error('detail crossed canonical conversation/window boundaries');
     if (window.__sourceApiCalls.some(entry => entry.method !== 'GET')) throw new Error('read-only Usage E2E made a non-GET API call');
     if (mode === 'source-detail') {
       await new Promise(resolve => setTimeout(resolve, 100));
       if (window.__sourceErrors.length) throw new Error('browser console/runtime errors: ' + JSON.stringify(window.__sourceErrors));
       finish({ mode, detail: captureLayout(view, false), detailApiCalls: detailCalls,
-        detailPayload: { session_id: detailPayload.group_id, turn_index: detailPayload.turn_index,
+        detailPayload: { conversation_id: detailPayload.group_id, turn_index: detailPayload.turn_index,
           requests: detailPayload.requests, tool_calls: detailPayload.tool_calls, total_tokens: detailPayload.total_tokens,
           cost_usd: detailPayload.cost_usd }, apiCalls: window.__sourceApiCalls,
         errors: window.__sourceErrors, iframeCount: document.querySelectorAll('iframe').length });
@@ -169,9 +169,12 @@ BROWSER_SCRIPT = r"""
     if (statValues[0] !== Number(total.requests || 0).toLocaleString('vi-VN') ||
         statValues[2] !== Number(total.total_tokens || 0).toLocaleString('vi-VN') ||
         statValues[3] !== costText(total.cost_usd)) throw new Error('overview stat cards disagree with the exact stats API response: ' + JSON.stringify({ statValues, total }));
-    const groupButton = [...view.querySelectorAll('#trace-sessions button[data-conv]')]
+    const groupButton = [...view.querySelectorAll('#trace-conversations button[data-conv]')]
       .find(button => button.dataset.conv === 'group:' + groupId && button.dataset.turn === '0');
-    if (!groupButton || !groupButton.textContent.includes(groupTurn.title) ||
+    // A group turn's API title is its group id, so the row reads as the
+    // shared group label instead of the raw id.
+    const expectedTitle = groupTurn.title === groupId ? 'Hội thoại chung' : groupTurn.title;
+    if (!groupButton || !groupButton.textContent.includes(expectedTitle) ||
         !groupButton.textContent.includes(groupTurn.model) || !groupButton.textContent.includes(costText(groupTurn.cost_usd))) {
       throw new Error('canonical turn row disagrees with the exact list API response');
     }
@@ -183,7 +186,7 @@ BROWSER_SCRIPT = r"""
     if (window.__sourceResponses.filter(entry => entry.path === '/api/traces/stats').length !== statsCount) throw new Error('table-only search changed statistical API reads');
     if (!filtered?.payload?.traces?.some(turn => turn.group_id === groupId && turn.turn_index === 0)) throw new Error('search API results lost the canonical group turn');
     if (JSON.stringify(payloads.stats.totals) !== JSON.stringify(total)) throw new Error('Usage filter changed API statistical semantics');
-    const filteredButton = [...view.querySelectorAll('#trace-sessions button[data-conv]')]
+    const filteredButton = [...view.querySelectorAll('#trace-conversations button[data-conv]')]
       .find(button => button.dataset.conv === 'group:' + groupId && button.dataset.turn === '0');
     if (!filteredButton) throw new Error('filtered group turn row missing');
     const scroller = view.querySelector('#usage-scroll');
@@ -229,7 +232,7 @@ BROWSER_SCRIPT = r"""
     const scopedCostHidden = view.querySelector('#card-bot-cost').hidden;
     view.querySelector('[data-usage-view="trace"]').click();
     await wait(() => !view.querySelector('#usage-panel-trace').hidden, 'scoped Trace content');
-    const scopedGroup = [...view.querySelectorAll('#trace-sessions button[data-conv]')].find(button => button.dataset.conv === 'group:' + groupId && button.dataset.turn === '0');
+    const scopedGroup = [...view.querySelectorAll('#trace-conversations button[data-conv]')].find(button => button.dataset.conv === 'group:' + groupId && button.dataset.turn === '0');
     if (!scopedGroup) throw new Error('scoped canonical shared turn missing');
     scopedGroup.click();
     await wait(() => !detail.hidden && view.querySelector('#detail-body .own-contribution') && view.querySelector('#detail-body').textContent.includes('GROUP_CANONICAL_REPLY'), 'bot contribution plus full canonical detail');
@@ -243,12 +246,12 @@ BROWSER_SCRIPT = r"""
     if (document.querySelectorAll('iframe').length) throw new Error('SPA introduced an iframe');
     await new Promise(resolve => setTimeout(resolve, 100));
     if (window.__sourceErrors.length) throw new Error('browser console/runtime errors: ' + JSON.stringify(window.__sourceErrors));
-    finish({ mode, canonicalId: groupId, detailPayload: { session_id: detailPayload.group_id, turn_index: detailPayload.turn_index,
+    finish({ mode, canonicalId: groupId, detailPayload: { conversation_id: detailPayload.group_id, turn_index: detailPayload.turn_index,
         requests: detailPayload.requests, tool_calls: detailPayload.tool_calls, total_tokens: detailPayload.total_tokens,
         cost_usd: detailPayload.cost_usd }, statsTotals: total, listTotal: payloads.list.total,
       groupTurn, statValues, searchUrl: filtered.search, searchTotal: filtered.payload.total,
       overviewApiCounts: { stats: statsCount, lists: window.__sourceResponses.filter(entry => entry.path === '/api/traces').length,
-        detail: reopened.length }, scopedBot: 'coder', scopedSessions: scopedStats.totals.sessions,
+        detail: reopened.length }, scopedBot: 'coder', scopedSessions: scopedStats.totals.conversations,
       scopedTraceDetail: true, scopedCostHidden,
       mobileMenuClosed: innerWidth > 850 || !document.querySelector('#chat-sidebar').classList.contains('mobile-open'),
       overview: overviewScreenshot, returnedOverview: captureLayout(view, true),
@@ -265,7 +268,7 @@ def _seed_source_fixture(root: Path) -> tuple[str, dict[str, bytes]]:
     from thyca.bots.timeline import WorkspaceTimeline
     from thyca.configs import Config, ModelCfg, ProviderEntry, save
     from thyca.core.protocol import Message, ToolCall
-    from thyca.conversations.runtime.manager import SessionManager
+    from thyca.conversations.runtime.manager import ConversationManager
     from thyca.app.chat_app import ChatApp
 
     provider = ProviderEntry(baseUrl="http://127.0.0.1:1/v1", apiKey="synthetic-source-fixture-key")
@@ -277,8 +280,8 @@ def _seed_source_fixture(root: Path) -> tuple[str, dict[str, bytes]]:
         app._bots.create(BotCard(bot_id="coder", name="Coder", role="Coder", description="Fixture bot.", persona=""))
         dm = app.create(bots=["coder"])
         group = app.create(bots=["thyca", "coder"])
-        dm_window = app._webui.window_for(app._sessions.store.load(dm["id"]))
-        group_window = app._webui.window_for(app._sessions.store.load(group["id"]))
+        dm_window = app._webui.window_for(app._conversations.store.load(dm["conversation_id"]))
+        group_window = app._webui.window_for(app._conversations.store.load(group["conversation_id"]))
         timeline = WorkspaceTimeline(root, "coder")
         span = "source_usage_trace_fixture_span"
 
@@ -310,11 +313,10 @@ def _seed_source_fixture(root: Path) -> tuple[str, dict[str, bytes]]:
         app._runtime.workspaces.store.bind_window("coder", dm_window)
         app._runtime.workspaces.store.bind_window("coder", group_window)
 
-        manager = SessionManager(root / "sessions")
-        for room, title, text in ((dm, "DM source fixture", "DM session public question"),
-                                  (group, "Group source fixture", "Group session public question")):
-            manager.load(room["id"])
-            manager.set_title(title, source="user")
+        manager = ConversationManager(root / "sessions")
+        for room, text in ((dm, "DM conversation public question"),
+                           (group, "Group conversation public question")):
+            manager.load(room["conversation_id"])
             manager.append(Message(role="user", content=text, ts="2026-09-20T09:59:00Z"))
             manager.append(Message(role="assistant", content="Fixture acknowledgement", ts="2026-09-20T09:59:01Z",
                                    meta={"kind": "message", "bot_id": "coder", "span_id": span,
@@ -325,7 +327,7 @@ def _seed_source_fixture(root: Path) -> tuple[str, dict[str, bytes]]:
         files = [root / "config.json", root / "auth.json", *sorted((root / "sessions").glob("*.jsonl")),
                  *sorted((root / "bots").glob("**/timeline.jsonl"))]
         baseline = {str(path.relative_to(root)): path.read_bytes() for path in files if path.exists()}
-        group_id = group["id"]
+        group_id = group["conversation_id"]
     finally:
         app.shutdown()
     return group_id, baseline
@@ -353,7 +355,7 @@ def _source_cli(chrome: str, tmp_path: Path, mode: str, *, width: int = 1280, he
         after = {name: (root / name).read_bytes() for name in baseline}
         stable_screenshot = Path(f"/tmp/thyca-usage-bots-source-{mode}-{width}.png")
         shutil.copyfile(screenshot, stable_screenshot)
-        result.update({"sourceBacked": True, "fixtureSessionId": group_id, "screenshot": str(stable_screenshot),
+        result.update({"sourceBacked": True, "fixtureConversationId": group_id, "screenshot": str(stable_screenshot),
                        "serverLog": str(Path(f"/tmp/thyca-usage-bots-source-{mode}-{width}.log")), "readOnlyFilesUnchanged": after == baseline,
                        "readOnlyFileCount": len(baseline)})
         if not result.get("readOnlyFilesUnchanged"):
@@ -428,7 +430,7 @@ def test_source_usage_overview_and_detail_responsive_screenshots(tmp_path: Path)
         assert layout["overviewVisible"] is (mode == "source-overview"), layout
         assert layout["headerControlsHidden"] is (mode == "source-detail"), layout
         artifacts.append({"mode": mode, "viewport": width, "screenshot": result["screenshot"],
-                          "layout": layout, "fixtureSessionId": result["fixtureSessionId"],
+                          "layout": layout, "fixtureConversationId": result["fixtureConversationId"],
                           "runtimeStop": result["runtimeStop"]})
     evidence = Path("/tmp/thyca-usage-bots-source-responsive.json")
     evidence.write_text(json.dumps(artifacts, ensure_ascii=False, indent=2), encoding="utf-8")

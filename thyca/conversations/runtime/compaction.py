@@ -165,7 +165,7 @@ class CompactionPlan:
         return "\n".join(self.prior_parts)
 
 
-class SessionCompactor:
+class ConversationCompactor:
     """Turn-safe tail policy. No I/O."""
 
     def plan(

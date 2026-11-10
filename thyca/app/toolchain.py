@@ -19,7 +19,7 @@ from thyca.agents.think import LLMPort, Think
 from thyca.app.summarizing import LlmSummarizer
 from thyca.configs import Config
 from thyca.llms.prompt_manager import PromptManager
-from thyca.conversations.runtime import SessionManager
+from thyca.conversations.runtime import ConversationManager
 from thyca.tools.builtin import register_file_tools
 from thyca.tools.gateway.background import BackgroundProcs
 from thyca.tools.gateway import ToolGateway
@@ -31,7 +31,7 @@ from thyca.tools.memory_tools import register_memory_tools
 from thyca.tools.path_guard import PathGuard
 from thyca.tools.profile_tools import register_profile_tools
 from thyca.tools.registry import ToolRegistry
-from thyca.tools.session_tools import register_session_tools
+from thyca.tools.conversation_tools import register_conversation_tools
 from thyca.tools.task_store import TaskStore
 
 
@@ -44,7 +44,7 @@ def build_tool_registry(
     facade = MemoryFacade(root, timezone_name=cfg.timeline.timezone)
     register_memory_tools(registry, facade)
     register_profile_tools(registry, facade)
-    register_session_tools(registry)
+    register_conversation_tools(registry)
     return registry
 
 
@@ -66,7 +66,7 @@ def build_tool_gateway(
 
 def build_agent_loop(
     *,
-    sessions: SessionManager,
+    conversations: ConversationManager,
     connect: LLMPort,
     act: Act,
     tools: list | None,
@@ -82,11 +82,11 @@ def build_agent_loop(
     the per-turn pieces differ, so those stay parameters."""
     prompts = PromptManager()
     return AgentLoop(
-        sessions=sessions,
+        conversations=conversations,
         assemble=Assemble(prompts),
         think=Think(connect),
         act=act,
-        observe=Observe(sessions),
+        observe=Observe(conversations),
         loop_max=loop_max,
         tools=tools,
         model=model,

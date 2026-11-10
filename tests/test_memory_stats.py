@@ -45,7 +45,7 @@ def test_inventory_excludes_persona_and_counts_unused(tmp_path: Path) -> None:
     assert stats.total == 3
     assert stats.used == 0
     assert stats.unused == 3
-    assert {item.session_id for item in stats.leaves} == {
+    assert {item.memory_id for item in stats.leaves} == {
         "2026-08-13#aaaaaaaa",
         "2026-08-13#bbbbbbbb",
         "2026-08-13#cccccccc",
@@ -76,7 +76,7 @@ def test_get_increments_search_does_not_increment_get(tmp_path: Path) -> None:
     assert stats.searched == 1
 
 
-def test_get_session_increments_each_returned_leaf(tmp_path: Path) -> None:
+def test_get_memory_increments_each_returned_leaf(tmp_path: Path) -> None:
     (tmp_path / "memory").mkdir()
     (tmp_path / "memory" / "2026-08-13.md").write_text(
         "# 2026-08-13\n"
@@ -88,7 +88,7 @@ def test_get_session_increments_each_returned_leaf(tmp_path: Path) -> None:
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     now = at("2026-08-17")
     facade.archive.reindex(now)
-    facade.get(session_id="2026-08-13#dddddddd", now=now)
+    facade.get(memory_id="2026-08-13#dddddddd", now=now)
     stats = facade.stats(now=now)
     counts = {item.chunk_id: item.get_count for item in stats.leaves}
     assert counts == {"2026-08-13#dddddddd#1": 1, "2026-08-13#dddddddd#2": 1}
@@ -127,13 +127,13 @@ def test_forget_drops_leaf_gets(tmp_path: Path) -> None:
     now = at("2026-08-17")
     facade.archive.reindex(now)
     sid = "2026-08-13#aaaaaaaa"
-    facade.get(session_id=sid, now=now)
+    facade.get(memory_id=sid, now=now)
     assert facade.stats(now=now).used == 1
     facade.forget(sid, now=now)
     stats = facade.stats(now=now)
     assert stats.total == 2
     assert stats.used == 0
-    assert sid not in {item.session_id for item in stats.leaves}
+    assert sid not in {item.memory_id for item in stats.leaves}
     assert all(not key.startswith(sid) for key in facade.archive.store.usage.get_map())
 
 
@@ -141,10 +141,10 @@ def test_reindex_keeps_get_counts(tmp_path: Path) -> None:
     t0 = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     sid = facade.remember("cafe", "likes ca phe den enough", now=t0)
-    facade.get(session_id=sid, now=t0)
+    facade.get(memory_id=sid, now=t0)
     facade.remember("tea", "likes tra da enough text", now=t0 + timedelta(hours=1))
     stats = facade.stats(now=t0 + timedelta(hours=1))
-    cafe = next(item for item in stats.leaves if item.session_id == sid)
+    cafe = next(item for item in stats.leaves if item.memory_id == sid)
     assert cafe.get_count == 1
 
 
@@ -152,7 +152,7 @@ def test_get_still_slides_ttl(tmp_path: Path) -> None:
     t0 = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     sid = facade.remember("cafe", "likes ca phe den enough", now=t0)
-    facade.get(session_id=sid, now=t0 + timedelta(days=5))
+    facade.get(memory_id=sid, now=t0 + timedelta(days=5))
     meta = next(
         parsed
         for line in (tmp_path / "memory" / "2026-08-01.md").read_text(encoding="utf-8").splitlines()
@@ -169,7 +169,7 @@ def test_stats_sees_remember_from_other_facade(tmp_path: Path) -> None:
     writer.remember("cafe", "likes ca phe den enough", now=at("2026-08-17"))
     stats = reader.stats(now=at("2026-08-17"))
     assert stats.total == 1
-    assert stats.leaves[0].session_id.startswith("2026-08-17#")
+    assert stats.leaves[0].memory_id.startswith("2026-08-17#")
 
 
 def test_v3_migrates_additive(tmp_path: Path) -> None:
@@ -244,7 +244,7 @@ def test_forget_drops_leaf_searches(tmp_path: Path) -> None:
     assert facade.archive.store.usage.search_map()
     facade.forget(sid, now=now)
     assert all(not key.startswith(sid) for key in facade.archive.store.usage.search_map())
-    assert sid not in {item.session_id for item in facade.stats(now=now).leaves}
+    assert sid not in {item.memory_id for item in facade.stats(now=now).leaves}
 
 
 def test_v4_migrates_additive(tmp_path: Path) -> None:
@@ -341,8 +341,8 @@ def _chunk(cid: str, path: str, sid: str) -> Chunk:
         path=path,
         source_kind="daily",
         timeline_day="2026-09-01",
-        session_id=sid,
-        session_title="t",
+        memory_id=sid,
+        memory_title="t",
         heading_raw="## 08:00",
         leaf_ord=1,
         line_start=1,
@@ -392,12 +392,12 @@ def test_x10_all_read_paths_share_visibility(tmp_path: Path) -> None:
         assert store.get_chunk("exp", now) is None
         assert store.get_chunk("edge", now) is None
         assert store.get_chunk("gone", now) is None
-        assert [r["chunk_id"] for r in store.get_session("2026-09-01#aaaaaaaa", now)] == ["vis", "fut"]
-        assert store.get_session("2026-09-01#bbbbbbbb", now) == []
+        assert [r["chunk_id"] for r in store.get_memory("2026-09-01#aaaaaaaa", now)] == ["vis", "fut"]
+        assert store.get_memory("2026-09-01#bbbbbbbb", now) == []
         assert {r["chunk_id"] for r in store.recent_rows(10, now)} == {"vis", "fut"}
         assert {m["chunk_id"] for m in store.visible_chunk_maps(now)} == {"vis", "fut"}
-        assert store.session_leaf_count("2026-09-01#aaaaaaaa", now) == 2
-        assert store.session_leaf_count("2026-09-01#bbbbbbbb", now) == 0
+        assert store.memory_leaf_count("2026-09-01#aaaaaaaa", now) == 2
+        assert store.memory_leaf_count("2026-09-01#bbbbbbbb", now) == 0
     finally:
         store.close()
 
@@ -416,14 +416,14 @@ def test_x10_stats_today_path_uses_python_helper(tmp_path: Path) -> None:
 
 # Moved from test_b4_unification.py / test_b4_p2.py (B4 batch).
 def test_m5_memory_ids_excluded_from_stats() -> None:
-    from thyca.memories.stats import L2_SESSION_RE, MemoryStats
+    from thyca.memories.stats import L2_MEMORY_RE, MemoryStats
 
-    assert L2_SESSION_RE.fullmatch("memory#aaaaaaaa") is None
+    assert L2_MEMORY_RE.fullmatch("memory#aaaaaaaa") is None
     result = MemoryStats.build(
         archived=[
             {
                 "chunk_id": "memory#aaaaaaaa#1",
-                "session_id": "memory#aaaaaaaa",
+                "memory_id": "memory#aaaaaaaa",
                 "heading_raw": "## h",
                 "text_raw": "x",
                 "source_kind": "daily",

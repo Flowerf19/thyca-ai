@@ -1,4 +1,4 @@
-"""Compaction summarizer prompt policy (sessions/summary.py)."""
+"""Compaction summarizer prompt policy (conversations/runtime/summary.py)."""
 from __future__ import annotations
 
 import asyncio

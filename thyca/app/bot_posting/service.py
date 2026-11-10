@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 from thyca.core.protocol import Message
-from thyca.conversations.runtime import SessionManager
+from thyca.conversations.runtime import ConversationManager
 
 if TYPE_CHECKING:
     from thyca.bots.registry import BotRegistry
@@ -24,7 +24,7 @@ class BotPostingDeps:
     """Concrete collaborators for :class:`BotPostingService`."""
 
     root: Path
-    sessions: Any
+    conversations: Any
     bots: BotRegistry
     current_cfg: Callable[[], Any]
     bot_dm: Callable[[str], dict]
@@ -46,7 +46,7 @@ class BotPostingService:
             return {}
         return {"bot_name": card.name, "bot_tint": card.tint}
 
-    def consume_dm_pending(self, bot_id: str, session_id: str,
+    def consume_dm_pending(self, bot_id: str, conversation_id: str,
                            room) -> None:
         """A DM answer to a waiting private follow-up -> received.
 
@@ -62,21 +62,21 @@ class BotPostingService:
             return
         if getattr(ev.actor, "kind", None) != "user":
             return
-        session = self._deps.sessions.store.load(session_id)
-        if session.dm_bot != bot_id:
+        conversation = self._deps.conversations.store.load(conversation_id)
+        if conversation.dm_bot != bot_id:
             return
         store = PrivateFollowupStore(self._deps.root)
         pending = store.active(bot_id)
         if pending is None or pending.status != "waiting_private":
             return
-        if pending.dm_window != session_id:
+        if pending.dm_window != conversation_id:
             return
-        row_index = len(self._deps.sessions.store.load(session_id).messages) - 1
+        row_index = len(self._deps.conversations.store.load(conversation_id).messages) - 1
         store.receive(
             bot_id,
             pending.pending_id,
             answer_event_id=ev.event_id,
-            answer_ref=f"{session_id}:{row_index}",
+            answer_ref=f"{conversation_id}:{row_index}",
             idempotency_key=ev.event_id,
         )
 
@@ -90,22 +90,22 @@ class BotPostingService:
         turn happens to run in. Refused when the current turn already
         runs in that DM, where a normal reply is the private answer."""
         dm = self._deps.bot_dm(bot_id)
-        if current_room_id and current_room_id == dm["id"]:
+        if current_room_id and current_room_id == dm["conversation_id"]:
             return {"ok": False, "error": (
                 "you are already in your private DM with the user; "
                 "just reply normally")}
         cfg = self._deps.current_cfg()
-        room = SessionManager(
+        room = ConversationManager(
             limits=cfg.effective_limits(),
             timezone_name=cfg.timeline.timezone,
-            store=self._deps.sessions.store,
+            store=self._deps.conversations.store,
         )
-        room.load(dm["id"])
+        room.load(dm["conversation_id"])
         if meta and meta.get("kind") == "private_question":
             for m in reversed(list(room.current.messages)):
                 m_meta = m.meta or {}
                 if m_meta.get("pfq_marker") == meta.get("pfq_marker"):
-                    return {"ok": True, "session_id": dm["id"],
+                    return {"ok": True, "conversation_id": dm["conversation_id"],
                             "deduped": True}
         row_meta = {"bot_id": bot_id, "kind": "message",
                     **self.display_meta(bot_id)}
@@ -116,18 +116,18 @@ class BotPostingService:
             content=text,
             meta=row_meta,
         ))
-        return {"ok": True, "session_id": dm["id"]}
+        return {"ok": True, "conversation_id": dm["conversation_id"]}
 
     def post_bot_dm_card(self, bot_id: str, card: dict) -> dict:
         """Post a structured card into the bot's OWN DM window."""
         dm = self._deps.bot_dm(bot_id)
         cfg = self._deps.current_cfg()
-        room = SessionManager(
+        room = ConversationManager(
             limits=cfg.effective_limits(),
             timezone_name=cfg.timeline.timezone,
-            store=self._deps.sessions.store,
+            store=self._deps.conversations.store,
         )
-        room.load(dm["id"])
+        room.load(dm["conversation_id"])
         pf = card.get("private_followup") if isinstance(card, dict) else None
         if isinstance(pf, dict) and pf.get("pending_id"):
             for m in reversed(list(room.current.messages)):
@@ -137,7 +137,7 @@ class BotPostingService:
                     m_pf.get("pending_id") == pf.get("pending_id")
                     and m_pf.get("revision") == pf.get("revision")
                 ):
-                    return {"ok": True, "session_id": dm["id"],
+                    return {"ok": True, "conversation_id": dm["conversation_id"],
                             "deduped": True}
         room.append(Message(
             role="assistant",
@@ -145,7 +145,7 @@ class BotPostingService:
             meta={"bot_id": bot_id, "kind": "card", "card": dict(card),
                   **self.display_meta(bot_id)},
         ))
-        return {"ok": True, "session_id": dm["id"]}
+        return {"ok": True, "conversation_id": dm["conversation_id"]}
 
     def post_bot_room_message(self, bot_id: str, text: str,
                               room_id: str, meta: dict | None = None) -> dict:
@@ -157,22 +157,22 @@ class BotPostingService:
         existing row is returned instead of a duplicate."""
         if not room_id:
             return {"ok": False, "error": "no room"}
-        session = next(
-            (s for s in self._deps.sessions.list_sessions() if s.id == room_id),
+        conversation = next(
+            (s for s in self._deps.conversations.list_conversations() if s.conversation_id == room_id),
             None,
         )
-        if session is None:
+        if conversation is None:
             return {"ok": False, "error": f"unknown room: {room_id}"}
-        if session.dm_bot is not None and session.dm_bot != bot_id:
+        if conversation.dm_bot is not None and conversation.dm_bot != bot_id:
             return {"ok": False, "error": "room is another bot's DM"}
-        participants = list(session.bots) if session.bots else ["thyca"]
+        participants = list(conversation.bots) if conversation.bots else ["thyca"]
         if bot_id not in participants:
             return {"ok": False, "error": f"not a participant: {bot_id}"}
         cfg = self._deps.current_cfg()
-        room = SessionManager(
+        room = ConversationManager(
             limits=cfg.effective_limits(),
             timezone_name=cfg.timeline.timezone,
-            store=self._deps.sessions.store,
+            store=self._deps.conversations.store,
         )
         room.load(room_id)
         marker = (meta or {}).get("pending_id")
@@ -185,7 +185,7 @@ class BotPostingService:
                     and m_meta.get("proposal_revision") == (meta or {}).get("proposal_revision")
                     and m_meta.get("bot_id") == bot_id
                 ):
-                    return {"ok": True, "session_id": room_id,
+                    return {"ok": True, "conversation_id": room_id,
                             "deduped": True}
         row_meta = {"bot_id": bot_id, "kind": "status",
                     **self.display_meta(bot_id)}
@@ -196,7 +196,7 @@ class BotPostingService:
             content=text,
             meta=row_meta,
         ))
-        return {"ok": True, "session_id": room_id}
+        return {"ok": True, "conversation_id": room_id}
 
     def post_bot_card(self, bot_id: str, card: dict,
                       current_room_id: str = "", content: str = "") -> dict:
@@ -209,27 +209,27 @@ class BotPostingService:
         non-DM room only accepts cards from its participants."""
         if not current_room_id:
             return {"ok": False, "error": "no current room for a card"}
-        session = next(
-            (s for s in self._deps.sessions.list_sessions() if s.id == current_room_id),
+        conversation = next(
+            (s for s in self._deps.conversations.list_conversations() if s.conversation_id == current_room_id),
             None,
         )
-        if session is None:
+        if conversation is None:
             return {"ok": False, "error": f"unknown room: {current_room_id}"}
-        if session.dm_bot is not None and session.dm_bot != bot_id:
+        if conversation.dm_bot is not None and conversation.dm_bot != bot_id:
             return {"ok": False, "error": (
                 "current room is another bot's private DM; return the "
                 "question/problem to that bot or use message_user in "
                 "your own DM")}
-        participants = list(session.bots) if session.bots else ["thyca"]
+        participants = list(conversation.bots) if conversation.bots else ["thyca"]
         if bot_id not in participants:
             return {"ok": False, "error": f"bot is not a participant of this room: {bot_id}"}
         meta: dict = {"bot_id": bot_id, "kind": "card", "card": dict(card)}
         meta.update(self.display_meta(bot_id))
         cfg = self._deps.current_cfg()
-        room = SessionManager(
+        room = ConversationManager(
             limits=cfg.effective_limits(),
             timezone_name=cfg.timeline.timezone,
-            store=self._deps.sessions.store,
+            store=self._deps.conversations.store,
         )
         room.load(current_room_id)
         from thyca.app.turn_event import current_channel_event
@@ -245,4 +245,4 @@ class BotPostingService:
         room.append(Message(role="assistant", content=content, meta=meta))
         card_type = card.get("type") if isinstance(card, dict) else None
         self._deps.agent_status.note_card_posted(bot_id, current_room_id, card_type)
-        return {"ok": True, "session_id": current_room_id}
+        return {"ok": True, "conversation_id": current_room_id}

@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from thyca.core.channel import WindowRef
-from thyca.conversations.runtime.store import SessionStore
+from thyca.conversations.runtime.store import ConversationStore
 
 
 @dataclass(frozen=True)
@@ -52,14 +52,14 @@ class MemoryView:
         Only a genuinely missing session resolves to None; corrupt or
         unreadable files raise — downgrading them to "private" would hide
         a data problem."""
-        from thyca.conversations.runtime.errors import SessionNotFound
+        from thyca.conversations.runtime.errors import ConversationNotFound
 
         try:
-            session = SessionStore(self.thyca_dir / "sessions").load(chat)
-        except (SessionNotFound, FileNotFoundError):
+            conversation = ConversationStore(self.thyca_dir / "sessions").load(chat)
+        except (ConversationNotFound, FileNotFoundError):
             return None
-        participants = tuple(session.bots) if session.bots else ("thyca",)
-        return session.dm_bot is not None, session.dm_bot, participants
+        participants = tuple(conversation.bots) if conversation.bots else ("thyca",)
+        return conversation.dm_bot is not None, conversation.dm_bot, participants
 
     def can_read_origin(self, chat: str | None) -> bool:
         # A pinned denial wins before every shortcut, reload, and

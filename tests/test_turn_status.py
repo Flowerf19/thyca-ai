@@ -21,11 +21,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 _TUI_TAIL = """return {
   handleStreamEvent, sendTurn, cancelTurn, finishTurn, renderTranscript,
-  setState, updateCard, card, normalizeBot, getBot, refreshSessions,
-  loadSession, followRunningTurn, readNdjson, busy, runs, bots, groups,
+  setState, updateCard, card, normalizeBot, getBot, refreshConversations,
+  loadConversation, followRunningTurn, readNdjson, busy, runs, bots, groups,
   previewLine, previewExtraCount, livePreviewGroups, openLiveList,
-  get currentSession() { return currentSession; },
-  set currentSession(v) { currentSession = v; },
+  get currentConversation() { return currentConversation; },
+  set currentConversation(v) { currentConversation = v; },
   get selectedBot() { return selectedBot; },
   set selectedBot(v) { selectedBot = v; },
 };"""
@@ -42,18 +42,18 @@ doc.querySelector('#team-bot-list').innerHTML = ui.bots.map(ui.card).join('');
 ui.updateCard(ui.bots[0]);
 const b = ui.bots[0];
 ui.selectedBot = 'thyca';
-ui.currentSession = 's1';
+ui.currentConversation = 's1';
 globalThis.fetch = async () => { throw new Error('unstubbed fetch'); };
 
 const cardLabel = () => doc.querySelector('#bot-thyca .header-status-label').textContent;
 const callSnapshot = () => b.liveCalls.map(f => ({
   kind: f.kind, name: f.name, call_id: f.call_id, invocation_id: f.invocation_id,
 }));
-const mkToken = (sessionId) => {
+const mkToken = (conversationId) => {
   const node = doc.createElement('article');
   node.innerHTML = `<header class="message-byline"><span>Thyca</span><time>đang lắng nghe</time></header><div class="live-copy"></div>`;
-  const token = { botId: 'thyca', sessionId, start: Date.now(), node, phase: 'waiting', timers: [], tools: [] };
-  ui.runs.set(sessionId, token);
+  const token = { botId: 'thyca', conversationId, start: Date.now(), node, phase: 'waiting', timers: [], tools: [] };
+  ui.runs.set(conversationId, token);
   return token;
 };
 
@@ -77,7 +77,7 @@ result.completed = {
 };
 
 // --- real tool/skill events drive grouped compact previews, not feed rows ---
-ui.currentSession = 's2';
+ui.currentConversation = 's2';
 const t2 = mkToken('s2');
 const liveEvents = [
   { type: 'turn.accepted' },
@@ -163,7 +163,7 @@ result.failedDefault = {
 
 // --- send failure surfaces on the live node + error state ---
 b.state = 'idle';
-ui.currentSession = 's6';
+ui.currentConversation = 's6';
 globalThis.fetch = async () => { throw new Error('mất kết nối'); };
 await ui.sendTurn('xin chào');
 await settle();

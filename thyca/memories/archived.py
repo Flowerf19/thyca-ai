@@ -13,7 +13,7 @@ from thyca.configs import DEFAULT_TIMELINE_TIMEZONE
 from thyca.memories.archive_store import (
     CANDIDATE_CAP,  # noqa: F401 — re-exported
     DATE_RE,
-    GET_SESSION_CAP,
+    GET_MEMORY_CAP,
     SCHEMA_VERSION,  # noqa: F401 — re-exported
     ArchiveError,
     ArchiveStore,
@@ -50,12 +50,12 @@ class ArchivedMemory:
     def day(self, now: datetime | None = None) -> str:
         return day(now, self.zone())
 
-    def lookup_session_id(self, chunk_id: str, now: datetime | None = None) -> str:
+    def lookup_memory_id(self, chunk_id: str, now: datetime | None = None) -> str:
         now_ts = format_ts(now)
         row = self.store.get_chunk(chunk_id, now_ts)
         if row is None:
             raise self._chunk_miss_error(chunk_id, now_ts)
-        return str(row["session_id"])
+        return str(row["memory_id"])
 
     def reindex(self, now: datetime | None = None) -> None:
         today = self.day(now)
@@ -130,10 +130,10 @@ class ArchivedMemory:
         now_ts = format_ts(now)
         counted: list[Hit] = []
         for hit in hits:
-            count = self.store.session_leaf_count(hit.session_id, now_ts)
+            count = self.store.memory_leaf_count(hit.memory_id, now_ts)
             counted.append(
                 _replace(
-                    hit, session_leaf_count=count, has_more=count > 1,
+                    hit, memory_leaf_count=count, has_more=count > 1,
                 )
             )
         return counted
@@ -142,26 +142,26 @@ class ArchivedMemory:
         self,
         *,
         chunk_id: str | None = None,
-        session_id: str | None = None,
+        memory_id: str | None = None,
         now: datetime | None = None,
     ) -> str:
-        selectors = [item for item in (chunk_id, session_id) if item]
+        selectors = [item for item in (chunk_id, memory_id) if item]
         if len(selectors) != 1:
-            raise ArchiveError("exactly one of chunk_id, session_id is required")
+            raise ArchiveError("exactly one of chunk_id, memory_id is required")
         now = format_ts(now)
         if chunk_id:
             row = self.store.get_chunk(chunk_id, now)
             if row is None:
                 raise self._chunk_miss_error(chunk_id, now)
             return row["text_raw"]
-        rows = self.store.get_session(session_id or "", now)
+        rows = self.store.get_memory(memory_id or "", now)
         if not rows:
-            raise self._session_miss_error(session_id or "", now)
+            raise self._memory_miss_error(memory_id or "", now)
         heading = rows[0]["heading_raw"]
-        body = [row["text_raw"] for row in rows[:GET_SESSION_CAP]]
+        body = [row["text_raw"] for row in rows[:GET_MEMORY_CAP]]
         text = "\n".join([heading, *body] if heading else body)
-        if len(rows) > GET_SESSION_CAP:
-            text += f"\n<!-- more:{len(rows) - GET_SESSION_CAP} -->"
+        if len(rows) > GET_MEMORY_CAP:
+            text += f"\n<!-- more:{len(rows) - GET_MEMORY_CAP} -->"
         return text
 
     def _reindex_file(self, path: Path, kind: str, day: str | None, today: str) -> None:
@@ -199,16 +199,16 @@ class ArchivedMemory:
             return ArchiveError(f"chunk not found: {chunk_id}")
         return ArchiveError(f"chunk {reason}: {chunk_id}")
 
-    def _session_miss_error(self, session_id: str, now: str) -> ArchiveError:
-        rows = self.store.get_session_any(session_id)
+    def _memory_miss_error(self, memory_id: str, now: str) -> ArchiveError:
+        rows = self.store.get_memory_any(memory_id)
         if not rows:
-            return ArchiveError(f"session not found: {session_id}")
+            return ArchiveError(f"memory not found: {memory_id}")
         reasons = {_invisible_reason(row, now) for row in rows} - {None}
         if "forgotten" in reasons:
-            return ArchiveError(f"session forgotten: {session_id}")
+            return ArchiveError(f"memory forgotten: {memory_id}")
         if "expired" in reasons:
-            return ArchiveError(f"session expired: {session_id}")
-        return ArchiveError(f"session not found: {session_id}")
+            return ArchiveError(f"memory expired: {memory_id}")
+        return ArchiveError(f"memory not found: {memory_id}")
 
 
 #: Miss prefixes that must not fall back to the writer (T6a): the row is
@@ -217,8 +217,8 @@ class ArchivedMemory:
 NO_FALLBACK_PREFIXES = (
     "chunk expired:",
     "chunk forgotten:",
-    "session expired:",
-    "session forgotten:",
+    "memory expired:",
+    "memory forgotten:",
 )
 
 
@@ -235,8 +235,8 @@ def dedup_siblings(hits: list[Hit]) -> list[Hit]:
     seen: set[str] = set()
     out: list[Hit] = []
     for hit in hits:
-        if hit.session_id in seen:
+        if hit.memory_id in seen:
             continue
-        seen.add(hit.session_id)
+        seen.add(hit.memory_id)
         out.append(hit)
     return out

@@ -1,6 +1,6 @@
-"""Provider-backed compaction summarizer (naming-style sidecar call).
+"""Provider-backed compaction summarizer (sidecar call without tools).
 
-One standalone chat call on the session's own model, no tools. Any
+One standalone chat call on the conversation's own model, no tools. Any
 failure returns None so the caller falls back to the excerpt; only
 cancellation propagates.
 """

@@ -179,7 +179,7 @@
     }
     return out.join('') || `<div class="empty-note"><strong>Lượt này không ghi message nào.</strong></div>`;
   }
-  // Render the detail header with the typed door label, never a session id.
+  // Render the detail header with the typed door label, never a conversation id.
   function detailHeadHtml(d) {
     const ids = turnBotIds(d);
     const byId = new Map((d.bot_breakdown || []).map(e => [e.bot_id, e]));

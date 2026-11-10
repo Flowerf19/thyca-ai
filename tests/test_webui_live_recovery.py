@@ -1,12 +1,12 @@
 """Live-turn recovery — webui/ui/chat/js/chat.js followRunningTurn.
 
-The old UI polled the session detail on a timer when the follow stream
+The old UI polled the conversation detail on a timer when the follow stream
 dropped and kept the live card alive across navigation. The rebuilt UI has
-no poll fallback: recovery is the replay stream itself. Entering a session
+no poll fallback: recovery is the replay stream itself. Entering a conversation
 whose detail says running:true appends one .running-response node and opens
 GET turn/stream; if that stream ends without a terminal event, finishTurn
-re-fetches the session and swaps in the stored transcript (unsaved deltas
-are discarded); re-entering a still-running session later opens a fresh
+re-fetches the conversation and swaps in the stored transcript (unsaved deltas
+are discarded); re-entering a still-running conversation later opens a fresh
 replay on a new token — nothing is reused.
 """
 from __future__ import annotations
@@ -21,11 +21,11 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 _TUI_TAIL = """return {
-  handleStreamEvent, sendTurn, loadSession, followRunningTurn, finishTurn,
+  handleStreamEvent, sendTurn, loadConversation, followRunningTurn, finishTurn,
   cancelTurn, renderTranscript, updateCard, card, normalizeBot, getBot,
-  refreshSessions, readNdjson, busy, runs, bots, groups,
-  get currentSession() { return currentSession; },
-  set currentSession(v) { currentSession = v; },
+  refreshConversations, readNdjson, busy, runs, bots, groups,
+  get currentConversation() { return currentConversation; },
+  set currentConversation(v) { currentConversation = v; },
   get selectedBot() { return selectedBot; },
   set selectedBot(v) { selectedBot = v; },
 };"""
@@ -58,7 +58,7 @@ const mkReader = () => {
 };
 const GID = 'group-' + 'a'.repeat(32);
 const AKEY = 'dm:thyca', BKEY = 'group:' + GID;
-const sessions = {
+const conversations = {
   A: { kind: 'dm', bot_id: 'thyca', title: 'Phiên A', running: true, messages: [
     { role: 'user', content: 'hi' },
     { role: 'assistant', content: 'saved first round', meta: { bot_id: 'thyca' } },
@@ -77,10 +77,10 @@ globalThis.fetch = async (url, opts = {}) => {
     return { ok: true, json: async () => ({ conversations: [] }) };
   }
   if (method === 'GET' && url === '/api/bots/thyca/dm') {
-    return { ok: true, json: async () => sessions.A };
+    return { ok: true, json: async () => conversations.A };
   }
   if (method === 'GET' && url === '/api/groups/' + GID) {
-    return { ok: true, json: async () => sessions.B };
+    return { ok: true, json: async () => conversations.B };
   }
   return { ok: false, status: 404, json: async () => ({ error: 'no route ' + url }) };
 };
@@ -88,9 +88,9 @@ const listText = () => doc.querySelector('#message-list').textContent;
 const liveNodes = () => doc.querySelectorAll('#message-list .running-response').length;
 const occurrences = (needle) => listText().split(needle).length - 1;
 
-// 1. Enter a running session: stored transcript renders first, then a single
+// 1. Enter a running conversation: stored transcript renders first, then a single
 //    follow node attaches on top of it.
-await ui.loadSession(AKEY);
+await ui.loadConversation(AKEY);
 await settle();
 result.entered = {
   follows: follows.length,
@@ -109,10 +109,10 @@ result.streaming = {
 };
 
 // 3. The replay stream drops mid-turn with no terminal event: finishTurn
-//    re-fetches the session and restores the stored transcript — the
+//    re-fetches the conversation and restores the stored transcript — the
 //    unsaved streamed text is gone, and nothing re-polls or re-follows.
-sessions.A = { ...sessions.A, messages: [
-  ...sessions.A.messages,
+conversations.A = { ...conversations.A, messages: [
+  ...conversations.A.messages,
   { role: 'assistant', content: 'saved second round', meta: { bot_id: 'thyca' } },
 ] };
 follows[0].push(null);   // server closed the stream mid-turn
@@ -128,10 +128,10 @@ result.dropped = {
 
 // 4. Leave for B (no follow — B is not running), then return to A while it
 //    is still running: a brand-new replay opens on a fresh token.
-await ui.loadSession(BKEY);
+await ui.loadConversation(BKEY);
 await settle();
 result.inB = { follows: follows.length, tracked: [...ui.runs.keys()], bVisible: listText().includes('b transcript') };
-await ui.loadSession(AKEY);
+await ui.loadConversation(AKEY);
 await settle();
 result.returned = {
   follows: follows.length,
@@ -142,11 +142,11 @@ result.returned = {
 
 // 5. The re-joined turn completes on the second replay: stored transcript
 //    renders and every live structure is released.
-sessions.A = { ...sessions.A, running: false };
+conversations.A = { ...conversations.A, running: false };
 follows[1].push(JSON.stringify({ type: 'turn.accepted' }) + '\n');
 follows[1].push(JSON.stringify({ type: 'llm.content', delta: 'tail' }) + '\n');
 follows[1].push(JSON.stringify({ type: 'turn.completed', detail: { kind: 'dm', bot_id: 'thyca', running: false,
-  messages: [...sessions.A.messages, { role: 'assistant', content: 'done A', meta: { bot_id: 'thyca' } }] } }) + '\n');
+  messages: [...conversations.A.messages, { role: 'assistant', content: 'done A', meta: { bot_id: 'thyca' } }] } }) + '\n');
 follows[1].push(null);
 await settle();
 result.stopped = {
@@ -173,7 +173,7 @@ def recovery() -> dict:
     return json.loads(result.stdout)
 
 
-def test_running_session_renders_transcript_then_one_follow_node(recovery: dict) -> None:
+def test_running_conversation_renders_transcript_then_one_follow_node(recovery: dict) -> None:
     assert recovery["entered"]["follows"] == 1
     assert recovery["entered"]["tracked"] is True
     assert recovery["entered"]["liveNodes"] == 1
@@ -197,9 +197,9 @@ def test_dropped_stream_recovers_to_stored_transcript(recovery: dict) -> None:
     assert recovery["dropped"]["savedSecondVisible"] is True
 
 
-def test_reentering_running_session_opens_fresh_replay(recovery: dict) -> None:
+def test_reentering_running_conversation_opens_fresh_replay(recovery: dict) -> None:
     """The old 'reuse the same live card' contract is gone — every entry into
-    a running session starts a new replay with a new live node."""
+    a running conversation starts a new replay with a new live node."""
     assert recovery["inB"]["follows"] == 1
     assert recovery["inB"]["tracked"] == []
     assert recovery["inB"]["bVisible"] is True

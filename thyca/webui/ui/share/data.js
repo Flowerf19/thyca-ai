@@ -4,7 +4,7 @@
 //      GET /api/bots/<id>/dm/tasks, GET /api/bots/<id>/groups/<group_id>/tasks.
 'use strict';
 const bots = [];      // live roster from loadRoster()
-const groups = [];    // group sessions from refreshSessions()
+const groups = [];    // group conversations from refreshConversations()
 let liveSeq = 0, avatarCounter = 0, run = null;
 let selectedBot = '', motionPaused = false, toastTimer = null, rosterSyncTimer = null;
 const reduced = matchMedia('(prefers-reduced-motion:reduce)');
@@ -137,7 +137,7 @@ function normalizeBot(card, index) {
     persona: String(card.persona || ''),
     memory: card.memory || null,
     tools: (card.tools || []).map(t => typeof t === 'string' ? { name: t, description: '' } : { name: t.name || '', description: t.description || '' }),
-    sessions: [],
+    conversations: [],
     favorite: botFavorite(card.id, card.system),
     open: false,
     phase: -1.2 - index * 1.7,
@@ -147,9 +147,9 @@ function normalizeBot(card, index) {
     schedule: card.schedule || null,
     mentioned: false, revision: 0, orbitAngle: 0, orbitAt: Date.now(),
     /* Live tool/skill calls observed on this client's streams:
-       {key, call_id, kind, name, session, seq}. The compact preview
+       {key, call_id, kind, name, conversation, seq}. The compact preview
        derives from them; removal happens only on the corresponding
-       finish (first match) or when the session's turn ends. */
+       finish (first match) or when the conversation's turn ends. */
     liveCalls: [],
     /* Pocket task disclosure: fetched only after an explicit chevron/+N
        open, guarded by taskGen so a late response can never paint a
@@ -163,25 +163,25 @@ function normalizeBot(card, index) {
 
 /* Exact current chat window — the only room a pocket or preview may
    read. Null on non-chat pages (sidebar.js is shared) or when no
-   session is selected, so callers can never invent a window and leak
-   another room's private work. currentSession lives in the chat bundle;
+   conversation is selected, so callers can never invent a window and leak
+   another room's private work. currentConversation lives in the chat bundle;
    the typeof guard keeps this shared file safe where it is absent. */
 function currentChatWindow() {
   try {
-    if (typeof currentSession === 'undefined' || !currentSession) return null;
+    if (typeof currentConversation === 'undefined' || !currentConversation) return null;
     const router = typeof window !== 'undefined' ? window.ThycaRouter : null;
     if (router && typeof router.currentPage === 'function' && router.currentPage() !== 'chat') return null;
-    return currentSession;
+    return currentConversation;
   } catch { return null; }
 }
 
 /* Invocation tokens are opaque and scoped to the stream's turn, bot and
    window. Legacy events can finish only a unique legacy candidate. */
 function liveCallStarted(b, opts) {
-  const { kind, name, call_id, session, turn, invocation_id } = opts || {};
+  const { kind, name, call_id, conversation, turn, invocation_id } = opts || {};
   if (invocation_id && turn) {
     const seen = turn.seenInvocations || (turn.seenInvocations = new Set());
-    const scope = `${b.id}\0${session}\0${invocation_id}`;
+    const scope = `${b.id}\0${conversation}\0${invocation_id}`;
     if (seen.has(scope)) return null;
     seen.add(scope);
   }
@@ -192,19 +192,19 @@ function liveCallStarted(b, opts) {
     turn: turn || null,
     kind: String(kind || 'tool') === 'skill' ? 'skill' : 'tool',
     name: String(name || 'tool'),
-    session: session || null,
+    conversation: conversation || null,
     seq: liveSeq,
   };
   b.liveCalls.push(entry);
   return entry;
 }
 function liveCallFinished(b, call_id, opts) {
-  const { kind, name, session, turn, invocation_id } = opts || {};
+  const { kind, name, conversation, turn, invocation_id } = opts || {};
   const id = String(call_id ?? '');
   if (!id) return null;
   const list = b.liveCalls || [];
   const candidates = list.filter(f =>
-    (session == null || f.session === session)
+    (conversation == null || f.conversation === conversation)
     && (turn == null || f.turn === turn)
     && f.call_id === id
     && f.invocation_id === (invocation_id || null)
@@ -213,19 +213,19 @@ function liveCallFinished(b, call_id, opts) {
   if (candidates.length !== 1) return null;
   return list.splice(list.indexOf(candidates[0]), 1)[0];
 }
-function clearLiveCalls(b, session) {
+function clearLiveCalls(b, conversation) {
   if (!b || !b.liveCalls) return;
-  if (session == null) b.liveCalls.splice(0, b.liveCalls.length);
+  if (conversation == null) b.liveCalls.splice(0, b.liveCalls.length);
   else {
     for (let i = b.liveCalls.length - 1; i >= 0; i--) {
-      if (b.liveCalls[i].session === session) b.liveCalls.splice(i, 1);
+      if (b.liveCalls[i].conversation === conversation) b.liveCalls.splice(i, 1);
     }
   }
 }
 /* Live calls for exactly the current window, newest last. */
 function liveCallsForWindow(b, window) {
   if (!window) return [];
-  return (b.liveCalls || []).filter(f => f.session === window);
+  return (b.liveCalls || []).filter(f => f.conversation === window);
 }
 /* Compact preview model: concurrent calls group by actual kind+name
    (tool 'read' and skill 'read' stay distinct), newest group first.
@@ -308,27 +308,30 @@ async function loadRoster() {
 }
 
 /* Conversations -> compact rows per pocket + the shared group roster. Deleted
-   bots are filtered out by getBot before any member row is built. */
-function sessionRow(session) {
-  const when = session.updated_at ? new Date(session.updated_at) : null;
+   bots are filtered out by getBot before any member row is built. Each row
+   names its door from identity: a DM shows its bot name, a group shows the
+   shared conversation label. Empty doors keep the same identity label. */
+function conversationRow(conversation) {
+  const when = conversation.updated_at ? new Date(conversation.updated_at) : null;
   const day = when && when.toDateString() === new Date().toDateString() ? 'Hôm nay'
     : when && when.toDateString() === new Date(Date.now() - 864e5).toDateString() ? 'Hôm qua'
     : when ? when.toLocaleDateString('vi-VN', { day: 'numeric', month: 'numeric' }) : '';
-  const turns = session.turns ? ` · ${session.turns} lượt` : '';
-  const key = session.kind === 'dm' ? dmKey(session.bot_id) : groupKey(session.group_id);
-  return [key, session.title || 'Chưa đặt tên', day + turns];
+  const turns = conversation.turns ? ` · ${conversation.turns} lượt` : '';
+  const key = conversation.kind === 'dm' ? dmKey(conversation.bot_id) : groupKey(conversation.group_id);
+  const label = conversation.kind === 'dm' ? ((getBot(conversation.bot_id) || {}).name || conversation.bot_id || 'Thyca') : 'Hội thoại chung';
+  return [key, label, day + turns];
 }
 // Refresh the conversation list into group rows and per-bot pocket rows.
-async function refreshSessions() {
+async function refreshConversations() {
   const payload = await getJson('/api/conversations');         // API: GET /api/conversations
   const list = payload.conversations || [];
   groups.splice(0, groups.length, ...list.filter(s => s.kind === 'group').map(s => {
     const live = (s.bots || []).filter(id => getBot(id));
-    return { id: s.group_id, title: s.title || 'Hội thoại chung', bots: live, subtitle: `${live.length} người bạn${s.turns ? ' · ' + s.turns + ' lượt' : ''}` };
+    return { id: s.group_id, title: 'Hội thoại chung', bots: live, subtitle: `${live.length} người bạn${s.turns ? ' · ' + s.turns + ' lượt' : ''}` };
   }));
   bots.forEach(b => {
-    b.sessions = list.filter(s => (s.kind === 'dm' && s.bot_id === b.id)
-      || (s.kind === 'group' && (s.bots || []).includes(b.id))).map(sessionRow);
+    b.conversations = list.filter(s => (s.kind === 'dm' && s.bot_id === b.id)
+      || (s.kind === 'group' && (s.bots || []).includes(b.id))).map(conversationRow);
   });
 }
 
@@ -349,7 +352,7 @@ async function syncRoster() {
   if (!changed) { bots.forEach(b => { if (typeof updateCard === 'function') updateCard(b); }); return; }
   if (typeof renderTeam === 'function') renderTeam();
   if (typeof rebuildExpressionBots === 'function') rebuildExpressionBots();
-  await refreshSessions();                                     // API: GET /api/conversations
+  await refreshConversations();                                     // API: GET /api/conversations
   if (typeof renderGroups === 'function') renderGroups();
   if (!getBot(selectedBot) && bots.length) selectedBot = bots[0].id;
 }

@@ -18,8 +18,7 @@ from thyca.llms.llm_base import ChatReply, LLMError
 from thyca.memories.active import ActiveMemory
 from thyca.memories.heading import parse_heading
 from thyca.core.protocol import Message, ToolCall
-from thyca.conversations.runtime import SessionBusy, SessionManager
-from thyca.conversations.runtime.title import fallback_title
+from thyca.conversations.runtime import ConversationBusy, ConversationManager
 from thyca.tools.mcp import MCPProcess
 
 
@@ -27,257 +26,71 @@ def _naming_pairs(events: list[TurnEvent]) -> list[tuple[str, bool | None]]:
     return [
         (event.type, event.updated)
         for event in events
-        if event.type.startswith("session.naming")
+        if event.type.startswith("conversation.naming")
     ]
 
 
-# Build a canonical-timeline manager holding one execution session.
-def _canonical_manager(root: Path) -> SessionManager:
-    from thyca.bots.timeline import CanonicalSessionStore, WorkspaceTimeline
+# Build a canonical-timeline manager holding one execution conversation.
+def _canonical_manager(root: Path) -> ConversationManager:
+    from thyca.bots.timeline import CanonicalConversationStore, WorkspaceTimeline
     from thyca.core.channel import WindowRef
 
     timeline = WorkspaceTimeline(root, "thyca")
     window = WindowRef(
         window_id="thyca", channel_id="webui", kind="dm", participants=("thyca",))
-    session_id = "2026-01-01T00-00-00_ab12"
-    store = CanonicalSessionStore(
+    conversation_id = "2026-01-01T00-00-00_ab12"
+    store = CanonicalConversationStore(
         root / "bots" / "thyca" / "sessions",
-        timeline=timeline, window=window, session_id=session_id)
-    manager = SessionManager(store=store)
-    manager.load(session_id)
+        timeline=timeline, window=window, conversation_id=conversation_id)
+    manager = ConversationManager(store=store)
+    manager.load(conversation_id)
     return manager
 
 
-def test_second_turn_emits_naming_pairs_and_persists_title(tmp_path: Path) -> None:
+def test_turns_carry_no_title(tmp_path: Path) -> None:
     llm = ScriptedLLM(
         [
             ChatReply(content="pong"),
             ChatReply(content="pong again"),
-            ChatReply(content='"Cà phê với Hòa."'),
         ]
     )
     app = _chat(tmp_path, llm)
     created = app.create()
     first_events: list[TurnEvent] = []
     try:
-        first = app.turn(created["id"], "alo", event_sink=first_events.append)
+        first = app.turn(created["conversation_id"], "alo", event_sink=first_events.append)
         assert first["reply"] == "pong"
-        assert first["title"] == fallback_title(created["id"])
+        assert "title" not in first
         assert _naming_pairs(first_events) == []
-        assert len(llm.requests) == 1
         events: list[TurnEvent] = []
-        turned = app.turn(created["id"], "kể thêm", event_sink=events.append)
+        turned = app.turn(created["conversation_id"], "kể thêm", event_sink=events.append)
         assert turned["reply"] == "pong again"
-        assert turned["title"] == "Cà phê với Hòa"
-        assert events[-2].type == "session.naming.started"
-        assert events[-1].type == "session.naming.finished"
-        assert _naming_pairs(events) == [("session.naming.started", None), ("session.naming.finished", True)]
-        assert len(llm.requests) == 3
-        session = SessionManager(tmp_path / "sessions").load(created["id"])
-        assert session.title == "Cà phê với Hòa"
-        assert session.naming_attempted is True
-        # Append-only store: the naming sidecar row (content=None) is
-        # never persisted; the attempt flag + stored title are the record.
-        assert [(item.role, item.content) for item in session.messages] == [
+        # No title on either payload and no naming events ever fire.
+        assert "title" not in turned
+        assert _naming_pairs(events) == []
+        # Only the two turn calls — no sidecar LLM call.
+        assert len(llm.requests) == 2
+        conversation = ConversationManager(tmp_path / "sessions").load(created["conversation_id"])
+        assert [(item.role, item.content) for item in conversation.messages] == [
             ("user", "alo"),
             ("assistant", "pong"),
             ("user", "kể thêm"),
             ("assistant", "pong again"),
         ]
-        assert not [m for m in session.messages
+        assert not [m for m in conversation.messages
                     if (m.meta or {}).get("kind") == "naming"]
     finally:
         app.shutdown()
 
 
-def test_titled_session_emits_no_naming_events(tmp_path: Path) -> None:
-    llm = ScriptedLLM(
-        [
-            ChatReply(content="pong"),
-            ChatReply(content="again"),
-            ChatReply(content='"Cà phê với Hòa."'),
-            ChatReply(content="third"),
-        ]
-    )
-    app = _chat(tmp_path, llm)
-    created = app.create()
-    try:
-        first = app.turn(created["id"], "alo")
-        assert first["title"] == fallback_title(created["id"])
-        second = app.turn(created["id"], "thêm")
-        assert second["title"] == "Cà phê với Hòa"
-        events: list[TurnEvent] = []
-        third = app.turn(created["id"], "nữa", event_sink=events.append)
-        assert third["reply"] == "third"
-        assert third["title"] == "Cà phê với Hòa"
-        assert _naming_pairs(events) == []
-        assert len(llm.requests) == 4
-    finally:
-        app.shutdown()
 
 
-def test_naming_llm_error_keeps_turn_and_reports_updated_false(tmp_path: Path) -> None:
-    class TitleBoom(FakeLLM):
-        async def chat(self, messages, tools=None):
-            # The naming call is the standalone one without tools; every
-            # turn call carries the tool schema.
-            if tools is None:
-                self.requests.append(list(messages))
-                self.tools.append(tools)
-                raise LLMError("title failed")
-            return await super().chat(messages, tools)
+def test_sidecar_meta_does_not_flip_failed_turn_status(tmp_path: Path) -> None:
+    from thyca.serve.trace import turns_from_conversation
 
-    llm = TitleBoom(ChatReply(content="pong"))
-    app = _chat(tmp_path, llm)
-    created = app.create()
-    events: list[TurnEvent] = []
-    try:
-        first = app.turn(created["id"], "alo")
-        assert first["title"] == fallback_title(created["id"])
-        turned = app.turn(created["id"], "thêm", event_sink=events.append)
-        assert turned["reply"] == "pong"
-        assert turned["title"] == fallback_title(created["id"])
-        assert _naming_pairs(events) == [("session.naming.started", None), ("session.naming.finished", False)]
-        session = SessionManager(tmp_path / "sessions").load(created["id"])
-        assert session.title is None
-        assert session.naming_attempted is True
-        assert [(item.role, item.content) for item in session.messages] == [
-            ("user", "alo"),
-            ("assistant", "pong"),
-            ("user", "thêm"),
-            ("assistant", "pong"),
-        ]
-        # The failed attempt is still the one attempt: no retry next turn.
-        retry_events: list[TurnEvent] = []
-        third = app.turn(created["id"], "nữa", event_sink=retry_events.append)
-        assert third["title"] == fallback_title(created["id"])
-        assert _naming_pairs(retry_events) == []
-        assert len(llm.requests) == 4
-    finally:
-        app.shutdown()
-
-
-def test_naming_rejected_echo_reports_updated_false_turn_succeeds(tmp_path: Path) -> None:
-    llm = ScriptedLLM(
-        [
-            ChatReply(content="pong"),
-            ChatReply(content="pong again"),
-            ChatReply(content="alo"),
-            ChatReply(content="third reply"),
-        ]
-    )
-    app = _chat(tmp_path, llm)
-    created = app.create()
-    events: list[TurnEvent] = []
-    try:
-        app.turn(created["id"], "alo")
-        turned = app.turn(created["id"], "thêm", event_sink=events.append)
-        assert turned["reply"] == "pong again"
-        assert turned["title"] == fallback_title(created["id"])
-        assert _naming_pairs(events) == [("session.naming.started", None), ("session.naming.finished", False)]
-        session = SessionManager(tmp_path / "sessions").load(created["id"])
-        assert session.title is None
-        assert session.naming_attempted is True
-        # Rejected proposal consumes the attempt: the next turn adds one
-        # request only, with no naming pair.
-        retry_events: list[TurnEvent] = []
-        app.turn(created["id"], "nữa", event_sink=retry_events.append)
-        assert _naming_pairs(retry_events) == []
-        assert len(llm.requests) == 4
-    finally:
-        app.shutdown()
-
-
-def test_naming_empty_title_reports_updated_false_turn_succeeds(tmp_path: Path) -> None:
-    llm = ScriptedLLM(
-        [
-            ChatReply(content="pong"),
-            ChatReply(content="pong again"),
-            ChatReply(content="  "),
-        ]
-    )
-    app = _chat(tmp_path, llm)
-    created = app.create()
-    events: list[TurnEvent] = []
-    try:
-        app.turn(created["id"], "alo")
-        turned = app.turn(created["id"], "thêm", event_sink=events.append)
-        assert turned["reply"] == "pong again"
-        assert _naming_pairs(events) == [("session.naming.started", None), ("session.naming.finished", False)]
-        session = SessionManager(tmp_path / "sessions").load(created["id"])
-        assert session.title is None
-        assert session.naming_attempted is True
-    finally:
-        app.shutdown()
-
-
-def test_naming_meta_persists_usage_cost_and_counts_as_request(tmp_path: Path) -> None:
-    llm = ScriptedLLM(
-        [
-            ChatReply(
-                content="pong",
-                model="gpt-4o-mini",
-                usage={
-                    "prompt_tokens": 5,
-                    "cached_tokens": 0,
-                    "completion_tokens": 2,
-                    "total_tokens": 7,
-                },
-            ),
-            ChatReply(
-                content="pong again",
-                model="gpt-4o-mini",
-                usage={
-                    "prompt_tokens": 10,
-                    "cached_tokens": 2,
-                    "completion_tokens": 3,
-                    "total_tokens": 13,
-                },
-            ),
-            ChatReply(
-                content='"Tựa đề đẹp."',
-                model="gpt-4o-mini",
-                usage={
-                    "prompt_tokens": 40,
-                    "cached_tokens": 0,
-                    "completion_tokens": 7,
-                    "total_tokens": 47,
-                },
-            ),
-        ]
-    )
-    app = _chat(tmp_path, llm)
-    created = app.create()
-    try:
-        app.turn(created["id"], "alo")
-        app.turn(created["id"], "thêm")
-        session = SessionManager(tmp_path / "sessions").load(created["id"])
-        # Append-only store: no naming sidecar row is persisted, so the
-        # naming call's usage is not double-counted in the transcript.
-        # The naming LLM call itself still happened (3 requests total).
-        assert len(llm.requests) == 3
-        assert session.title == "Tựa đề đẹp"
-        assert session.naming_attempted is True
-        assert not [m for m in session.messages
-                    if (m.meta or {}).get("kind") == "naming"]
-
-        from thyca.serve.trace import turns_from_session
-
-        turns = turns_from_session(session)
-        assert len(turns) == 2
-        assert turns[0].requests == 1
-        assert turns[1].requests == 1
-        assert turns[1].status == "completed"
-    finally:
-        app.shutdown()
-
-
-def test_naming_meta_does_not_flip_failed_turn_status(tmp_path: Path) -> None:
-    from thyca.serve.trace import turns_from_session
-
-    session = _canonical_manager(tmp_path)
-    session.append(Message(role="user", content="alo", ts="2026-08-26T09:12:00Z"))
-    session.append(
+    conversation = _canonical_manager(tmp_path)
+    conversation.append(Message(role="user", content="alo", ts="2026-08-26T09:12:00Z"))
+    conversation.append(
         Message(
             role="assistant",
             content="loop limit reached",
@@ -285,56 +98,22 @@ def test_naming_meta_does_not_flip_failed_turn_status(tmp_path: Path) -> None:
             meta={"kind": "llm", "round": 1, "finish_reason": "stop"},
         )
     )
-    session.append(
+    conversation.append(
         Message(
             role="assistant",
             content=None,
             ts="2026-08-26T09:12:06Z",
-            meta={"kind": "naming", "latency_ms": 300},
+            meta={"kind": "compaction", "latency_ms": 300},
         )
     )
-    turns = turns_from_session(session.current)
+    turns = turns_from_conversation(conversation.current)
     assert len(turns) == 1
     assert turns[0].status == "loop_limit"
 
 
-def test_failed_turn_does_not_advance_naming_threshold(tmp_path: Path) -> None:
-    class Flaky:
-        def __init__(self) -> None:
-            self.requests: list = []
-            self.calls = 0
-
-        async def chat(self, messages, tools=None):
-            self.requests.append(list(messages))
-            self.calls += 1
-            if self.calls == 2:
-                raise LLMError("provider HTTP 500: boom")
-            if tools is None:
-                return ChatReply(content="Tên sau lỗi")
-            return ChatReply(content=f"reply-{self.calls}")
-
-    llm = Flaky()
-    app = _chat(tmp_path, llm)
-    created = app.create()
-    try:
-        app.turn(created["id"], "một")
-        with pytest.raises(LLMError):
-            app.turn(created["id"], "hai")
-        events: list[TurnEvent] = []
-        third = app.turn(created["id"], "ba", event_sink=events.append)
-        # Only the first and third turns completed: naming fires here.
-        assert third["title"] == "Tên sau lỗi"
-        assert _naming_pairs(events) == [
-            ("session.naming.started", None),
-            ("session.naming.finished", True),
-        ]
-        session = SessionManager(tmp_path / "sessions").load(created["id"])
-        assert session.naming_attempted is True
-    finally:
-        app.shutdown()
 
 
-def test_manual_rename_between_turns_wins_over_naming(tmp_path: Path) -> None:
+def test_second_turn_needs_no_rename(tmp_path: Path) -> None:
     llm = ScriptedLLM(
         [
             ChatReply(content="pong"),
@@ -344,200 +123,20 @@ def test_manual_rename_between_turns_wins_over_naming(tmp_path: Path) -> None:
     app = _chat(tmp_path, llm)
     created = app.create()
     try:
-        app.turn(created["id"], "alo")
-        assert app.rename_session(created["id"], "Tên tôi tự đặt") == "Tên tôi tự đặt"
+        app.turn(created["conversation_id"], "alo")
         events: list[TurnEvent] = []
-        second = app.turn(created["id"], "thêm", event_sink=events.append)
-        assert second["title"] == "Tên tôi tự đặt"
+        second = app.turn(created["conversation_id"], "thêm", event_sink=events.append)
+        assert second["reply"] == "pong again"
+        assert "title" not in second
         assert _naming_pairs(events) == []
         assert len(llm.requests) == 2
     finally:
         app.shutdown()
 
 
-def test_naming_request_carries_both_turns_context(tmp_path: Path) -> None:
-    llm = ScriptedLLM(
-        [
-            ChatReply(content="quý mèo trả lời"),
-            ChatReply(content="quý chó trả lời"),
-            ChatReply(content="Chuyện thú cưng"),
-        ]
-    )
-    app = _chat(tmp_path, llm)
-    created = app.create()
-    try:
-        app.turn(created["id"], "chuyện con mèo")
-        second = app.turn(created["id"], "chuyện con chó")
-        assert second["title"] == "Chuyện thú cưng"
-        assert len(llm.requests) == 3
-        naming_call = llm.requests[2]
-        assert naming_call[0].role == "system"
-        context = naming_call[1].content or ""
-        assert "chuyện con mèo" in context
-        assert "quý mèo trả lời" in context
-        assert "chuyện con chó" in context
-        assert "quý chó trả lời" in context
-    finally:
-        app.shutdown()
 
 
-def test_missing_naming_prompt_consumes_attempt_without_model_call(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import thyca.conversations.runtime.title as title_mod
-
-    monkeypatch.setattr(title_mod, "_INSTRUCTION_CACHE", None)
-    monkeypatch.setattr(title_mod, "_PROMPTS_DIR", tmp_path / "absent-prompts")
-    llm = ScriptedLLM(
-        [
-            ChatReply(content="pong"),
-            ChatReply(content="pong again"),
-            ChatReply(content="third"),
-        ]
-    )
-    app = _chat(tmp_path, llm)
-    created = app.create()
-    try:
-        app.turn(created["id"], "alo")
-        events: list[TurnEvent] = []
-        turned = app.turn(created["id"], "thêm", event_sink=events.append)
-        assert turned["title"] == fallback_title(created["id"])
-        assert _naming_pairs(events) == [
-            ("session.naming.started", None),
-            ("session.naming.finished", False),
-        ]
-        # Exactly the two turn calls: the sidecar never rang the model.
-        assert len(llm.requests) == 2
-        assert SessionManager(tmp_path / "sessions").load(created["id"]).naming_attempted is True
-        third_events: list[TurnEvent] = []
-        app.turn(created["id"], "nữa", event_sink=third_events.append)
-        assert _naming_pairs(third_events) == []
-        assert len(llm.requests) == 3
-    finally:
-        app.shutdown()
-
-
-def test_naming_unexpected_provider_error_never_fails_turn(tmp_path: Path) -> None:
-    class ProviderBoom(FakeLLM):
-        async def chat(self, messages, tools=None):
-            if tools is None:
-                self.requests.append(list(messages))
-                self.tools.append(tools)
-                raise RuntimeError("provider exploded")
-            return await super().chat(messages, tools)
-
-    app = _chat(tmp_path, ProviderBoom(ChatReply(content="pong")))
-    created = app.create()
-    events: list[TurnEvent] = []
-    try:
-        app.turn(created["id"], "alo")
-        turned = app.turn(created["id"], "thêm", event_sink=events.append)
-        assert turned["reply"] == "pong"
-        assert turned["title"] == fallback_title(created["id"])
-        assert _naming_pairs(events) == [
-            ("session.naming.started", None),
-            ("session.naming.finished", False),
-        ]
-        session = SessionManager(tmp_path / "sessions").load(created["id"])
-        assert session.title is None
-        assert session.naming_attempted is True
-        assert all((item.meta or {}).get("kind") != "naming" for item in session.messages)
-    finally:
-        app.shutdown()
-
-
-def test_naming_store_error_never_fails_turn(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from thyca.conversations.runtime import SessionError
-
-    def boom(self, title: str):
-        raise SessionError("disk gone")
-
-    monkeypatch.setattr(SessionManager, "set_title_if_missing", boom)
-    llm = ScriptedLLM(
-        [
-            ChatReply(content="pong"),
-            ChatReply(content="pong again"),
-            ChatReply(content="Tên hay"),
-        ]
-    )
-    app = _chat(tmp_path, llm)
-    created = app.create()
-    events: list[TurnEvent] = []
-    try:
-        app.turn(created["id"], "alo")
-        turned = app.turn(created["id"], "thêm", event_sink=events.append)
-        assert turned["reply"] == "pong again"
-        assert turned["title"] == fallback_title(created["id"])
-        assert _naming_pairs(events) == [
-            ("session.naming.started", None),
-            ("session.naming.finished", False),
-        ]
-        assert SessionManager(tmp_path / "sessions").load(created["id"]).naming_attempted is True
-    finally:
-        app.shutdown()
-
-
-async def test_naming_cancelled_pairs_finished_and_keeps_flag(tmp_path: Path) -> None:
-    from thyca.app.naming import _name_if_needed
-    from thyca.configs import default_config
-
-    manager = _canonical_manager(tmp_path)
-    session = manager.current
-    manager.append(Message(role="user", content="alo", ts="2026-01-01T00:00:00Z"))
-    manager.append(Message(role="assistant", content="pong", ts="2026-01-01T00:00:01Z"))
-    manager.append(Message(role="user", content="thêm", ts="2026-01-01T00:00:02Z"))
-    manager.append(Message(role="assistant", content="pong", ts="2026-01-01T00:00:03Z"))
-
-    class Cancelled:
-        async def chat(self, messages, tools=None):
-            raise asyncio.CancelledError()
-
-    events: list[TurnEvent] = []
-    with pytest.raises(asyncio.CancelledError):
-        await _name_if_needed(Cancelled(), manager, default_config(), events.append)
-    assert _naming_pairs(events) == [
-        ("session.naming.started", None),
-        ("session.naming.finished", False),
-    ]
-    assert _canonical_manager(tmp_path).load(session.id).naming_attempted is True
-
-
-async def test_naming_mark_failure_skips_model_call(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from thyca.app.naming import _name_if_needed
-    from thyca.configs import default_config
-    from thyca.conversations.runtime import SessionError
-
-    manager = _canonical_manager(tmp_path)
-    manager.append(Message(role="user", content="alo", ts="2026-01-01T00:00:00Z"))
-    manager.append(Message(role="assistant", content="pong", ts="2026-01-01T00:00:01Z"))
-    manager.append(Message(role="user", content="thêm", ts="2026-01-01T00:00:02Z"))
-    manager.append(Message(role="assistant", content="pong", ts="2026-01-01T00:00:03Z"))
-
-    def boom(self):
-        raise SessionError("disk gone")
-
-    monkeypatch.setattr(SessionManager, "mark_naming_attempted", boom)
-
-    class Spy:
-        def __init__(self) -> None:
-            self.calls = 0
-
-        async def chat(self, messages, tools=None):
-            self.calls += 1
-            return ChatReply(content="Tên hay")
-
-    spy = Spy()
-    events: list[TurnEvent] = []
-    assert await _name_if_needed(spy, manager, default_config(), events.append) is False
-    assert events == []
-    assert spy.calls == 0
-
-
-def test_memory_remember_injects_turn_session_id(tmp_path: Path) -> None:
+def test_memory_remember_injects_turn_conversation_id(tmp_path: Path) -> None:
     class RememberLLM:
         def __init__(self) -> None:
             self.calls = 0
@@ -560,14 +159,14 @@ def test_memory_remember_injects_turn_session_id(tmp_path: Path) -> None:
     app = _chat(tmp_path, RememberLLM())
     created = app.create()
     try:
-        app.turn(created["id"], "remember this")
+        app.turn(created["conversation_id"], "remember this")
         daily = next((tmp_path / "memory").glob("*.md"))
         meta = next(
             parsed
             for line in daily.read_text(encoding="utf-8").splitlines()
             if (parsed := parse_heading(line))
         )
-        assert meta.chat == created["id"]
+        assert meta.chat == created["conversation_id"]
     finally:
         app.shutdown()
 
@@ -577,9 +176,9 @@ def test_turn_without_sink_still_works(tmp_path: Path) -> None:
     app = _chat(tmp_path, llm)
     created = app.create()
     try:
-        turned = app.turn(created["id"], "alo")
+        turned = app.turn(created["conversation_id"], "alo")
         assert turned["reply"] == "pong"
-        assert turned["title"] == fallback_title(created["id"])
+        assert "title" not in turned
     finally:
         app.shutdown()
 
@@ -592,15 +191,15 @@ def test_sink_not_stored_on_app(tmp_path: Path) -> None:
         pass
 
     try:
-        app.turn(created["id"], "alo", event_sink=sink)
+        app.turn(created["conversation_id"], "alo", event_sink=sink)
         values = list(app.__dict__.values())
         assert all(value is not sink for value in values)
     finally:
         app.shutdown()
 
 
-def test_two_sessions_run_turns_in_parallel(tmp_path: Path) -> None:
-    """A turn in flight owns only its own session — it blocks no other one."""
+def test_two_conversations_run_turns_in_parallel(tmp_path: Path) -> None:
+    """A turn in flight owns only its own conversation — it blocks no other one."""
     first_started = threading.Event()
     release = threading.Event()
 
@@ -620,8 +219,8 @@ def test_two_sessions_run_turns_in_parallel(tmp_path: Path) -> None:
     app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                              description="Codes.", persona="You code."))
     # Phase 2B: create() with no bots is Thyca's DM singleton, so the
-    # parallel session below is a group (parallelism is model-agnostic).
-    slow_id = app.create()["id"]
+    # parallel conversation below is a group (parallelism is model-agnostic).
+    slow_id = app.create()["conversation_id"]
     errors: list[BaseException] = []
     slow: dict = {}
 
@@ -635,23 +234,23 @@ def test_two_sessions_run_turns_in_parallel(tmp_path: Path) -> None:
     worker.start()
     assert first_started.wait(2)
     try:
-        # The second session is idle: its turn must complete while the first
+        # The second conversation is idle: its turn must complete while the first
         # one is still parked in the provider call.
-        other_id = app.create(bots=["thyca", "coder"])["id"]
+        other_id = app.create(bots=["thyca", "coder"])["conversation_id"]
         started_at = time.monotonic()
         quick = app.turn(other_id, "@coder fast")
         elapsed = time.monotonic() - started_at
         assert quick["reply"] == "reply:@coder fast"
-        assert elapsed < 2, f"second session waited on the first turn: {elapsed:.2f}s"
+        assert elapsed < 2, f"second conversation waited on the first turn: {elapsed:.2f}s"
     finally:
         release.set()
         worker.join(timeout=5)
     assert not errors
     assert slow["reply"] == "reply:slow"
-    assert sorted(app.running_sessions()) == []
-    # Each turn wrote only its own transcript: sharing one session holder would
-    # have appended the slow reply into whichever session the fast turn loaded.
-    store = SessionManager(tmp_path / "sessions")
+    assert sorted(app.running_conversations()) == []
+    # Each turn wrote only its own transcript: sharing one conversation holder would
+    # have appended the slow reply into whichever conversation the fast turn loaded.
+    store = ConversationManager(tmp_path / "sessions")
     slow_messages = [(item.role, item.content) for item in store.load(slow_id).messages]
     fast_messages = [(item.role, item.content) for item in store.load(other_id).messages]
     assert slow_messages[:2] == [("user", "slow"), ("assistant", "reply:slow")]
@@ -662,7 +261,7 @@ def test_two_sessions_run_turns_in_parallel(tmp_path: Path) -> None:
     app.shutdown()
 
 
-def test_second_turn_on_same_session_is_busy(tmp_path: Path) -> None:
+def test_second_turn_on_same_conversation_is_busy(tmp_path: Path) -> None:
     started = threading.Event()
     release = threading.Event()
 
@@ -673,12 +272,12 @@ def test_second_turn_on_same_session_is_busy(tmp_path: Path) -> None:
             return ChatReply(content="late")
 
     app = _chat(tmp_path, Slow())
-    session_id = app.create()["id"]
+    conversation_id = app.create()["conversation_id"]
     errors: list[BaseException] = []
 
     def run_turn() -> None:
         try:
-            app.turn(session_id, "first")
+            app.turn(conversation_id, "first")
         except BaseException as exc:  # surfaced by the assert below
             errors.append(exc)
 
@@ -686,27 +285,27 @@ def test_second_turn_on_same_session_is_busy(tmp_path: Path) -> None:
     worker.start()
     assert started.wait(2)
     try:
-        assert app.running_sessions()[session_id]
-        detail = app.get_payload(session_id)
+        assert app.running_conversations()[conversation_id]
+        detail = app.get_payload(conversation_id)
         assert detail["running"] is True
         assert detail["started_at"]
-        with pytest.raises(SessionBusy):
-            app.turn(session_id, "second")
+        with pytest.raises(ConversationBusy):
+            app.turn(conversation_id, "second")
     finally:
         release.set()
         worker.join(timeout=5)
     assert not errors
-    assert app.running_sessions() == {}
-    assert app.get_payload(session_id)["running"] is False
+    assert app.running_conversations() == {}
+    assert app.get_payload(conversation_id)["running"] is False
     app.shutdown()
 
 
-def test_create_keeps_blank_session_with_running_turn(
+def test_create_keeps_blank_conversation_with_running_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """create() prunes blank sessions except the one whose turn is in flight.
+    """create() prunes blank conversations except the one whose turn is in flight.
 
-    A turn claims its session before writing anything, so an empty transcript
+    A turn claims its conversation before writing anything, so an empty transcript
     on disk still belongs to a running turn.
     """
     claimed = threading.Event()
@@ -724,7 +323,7 @@ def test_create_keeps_blank_session_with_running_turn(
 
     app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                              description="Codes.", persona="You code."))
-    running_id = app.create()["id"]
+    running_id = app.create()["conversation_id"]
     assert app.get_payload(running_id)["messages"] == []
     errors: list[BaseException] = []
 
@@ -739,16 +338,16 @@ def test_create_keeps_blank_session_with_running_turn(
     assert claimed.wait(2)
     try:
         # Phase 2B: the no-bots create is the DM singleton (== running_id
-        # here), so the "fresh" session is a group.
+        # here), so the "fresh" conversation is a group.
         fresh = app.create(bots=["thyca", "coder"])
-        assert fresh["id"] != running_id
+        assert fresh["conversation_id"] != running_id
         # Store equivalent of the file check: the blank door still loads.
-        assert app._sessions.store.load(running_id).id == running_id
+        assert app._conversations.store.load(running_id).conversation_id == running_id
     finally:
         release.set()
         worker.join(timeout=5)
     assert not errors
-    stored = SessionManager(tmp_path / "sessions").load(running_id)
+    stored = ConversationManager(tmp_path / "sessions").load(running_id)
     assert [(item.role, item.content) for item in stored.messages] == [
         ("user", "hi"),
         ("assistant", "late"),
@@ -761,7 +360,7 @@ def test_turn_response_does_not_claim_to_be_running(tmp_path: Path) -> None:
     app = _chat(tmp_path, FakeLLM(ChatReply(content="pong")))
     created = app.create()
     try:
-        turned = app.turn(created["id"], "alo")
+        turned = app.turn(created["conversation_id"], "alo")
         assert turned["running"] is False
         assert "started_at" not in turned
     finally:
@@ -806,18 +405,18 @@ def test_cancel_past_wait_reports_turn_in_flight(
 
         def run() -> None:
             try:
-                app.turn(created["id"], "go")
+                app.turn(created["conversation_id"], "go")
             except BaseException as exc:
                 errors.append(exc)
 
         worker = threading.Thread(target=run, daemon=True)
         worker.start()
         deadline = time.monotonic() + 5
-        while created["id"] not in app.running_sessions():
+        while created["conversation_id"] not in app.running_conversations():
             assert time.monotonic() < deadline, "turn never started"
             time.sleep(0.01)
         with pytest.raises(TurnInFlight):
-            app.cancel(created["id"])
+            app.cancel(created["conversation_id"])
         # The cancel was still requested: the worker ends cancelled (or
         # finishes once released) — either way the hub is released.
         release.set()
@@ -826,7 +425,7 @@ def test_cancel_past_wait_reports_turn_in_flight(
         from thyca.app.chat_app import TurnCancelled
 
         assert all(isinstance(exc, TurnCancelled) for exc in errors)
-        assert created["id"] not in app.running_sessions()
+        assert created["conversation_id"] not in app.running_conversations()
     finally:
         release.set()
         app.shutdown()
@@ -850,7 +449,7 @@ def test_cancel_turn_in_flight_maps_to_409() -> None:
         def bot_dm(self, bot_id: str) -> dict:
             return {"id": bot_id}
 
-        def cancel(self, session_id: str) -> None:
+        def cancel(self, conversation_id: str) -> None:
             raise TurnInFlight("turn still in flight")
 
     handler = Handler()
@@ -858,23 +457,18 @@ def test_cancel_turn_in_flight_maps_to_409() -> None:
     assert handler.sent == (409, {"error": "turn in flight"})
 
 
-def test_naming_usage_mutate_after_does_not_leak(tmp_path: Path) -> None:
+def test_compaction_usage_mutate_after_does_not_leak(tmp_path: Path) -> None:
     from types import SimpleNamespace
 
-    from thyca.app.naming import _record_naming
-    from thyca.configs import default_config
-    from thyca.conversations.runtime import SessionManager
+    from thyca.agents.meta import compaction_meta
 
-    manager = _canonical_manager(tmp_path)
     usage = {"prompt_tokens": 10, "completion_tokens": 5}
-    _record_naming(
-        SimpleNamespace(usage=usage, model="m-test"), 7, manager, default_config()
+    meta = compaction_meta(
+        SimpleNamespace(usage=usage, model="m-test"), 7, "m-test", None
     )
     usage["prompt_tokens"] = 999
     usage["injected"] = True
-    stored = manager.current.messages[-1]
-    assert stored.meta is not None
-    assert stored.meta["usage"] == {"prompt_tokens": 10, "completion_tokens": 5}
+    assert meta["usage"] == {"prompt_tokens": 10, "completion_tokens": 5}
 
 
 def test_turn_refreshes_live_gateway_soft_timeout(tmp_path: Path) -> None:
@@ -889,7 +483,7 @@ def test_turn_refreshes_live_gateway_soft_timeout(tmp_path: Path) -> None:
         assert app._gateway._soft_timeout_s == 60  # default at construction
         cfg = load(tmp_path / "config.json")
         save(replace(cfg, limits=replace(cfg.limits, softTimeoutS=5)), tmp_path / "config.json")
-        app.turn(created["id"], "alo")
+        app.turn(created["conversation_id"], "alo")
         assert app._gateway._soft_timeout_s == 5
     finally:
         app.shutdown()
@@ -918,7 +512,7 @@ def test_x20_single_registry_lifecycle() -> None:
 
     from thyca.app.loop_turns import _LoopTurns
     from thyca.serve.turn_state import TurnState
-    from thyca.conversations.runtime import SessionBusy, SessionError
+    from thyca.conversations.runtime import ConversationBusy, ConversationError
 
     loop = aio.new_event_loop()
     try:
@@ -929,7 +523,7 @@ def test_x20_single_registry_lifecycle() -> None:
         assert turns.job("s") is None
         job = view.begin("s")
         assert turns.job("s") is job
-        with pytest.raises(SessionBusy):
+        with pytest.raises(ConversationBusy):
             turns.claim("s")
         assert view.request_cancel("missing") is False
         assert view.request_cancel("s") is True
@@ -941,7 +535,7 @@ def test_x20_single_registry_lifecycle() -> None:
         assert turns.job("s") is None
         turns.release("s")
         assert turns.hub("s") is None
-        with pytest.raises(SessionError):
+        with pytest.raises(ConversationError):
             view.begin("never-claimed")
     finally:
         loop.close()
@@ -954,9 +548,9 @@ def test_x21_shared_loop_wiring(tmp_path: Path) -> None:
     from thyca.agents.observe import Observe
     from thyca.agents.think import Think
     from thyca.app.toolchain import build_agent_loop
-    from thyca.conversations.runtime import SessionManager
+    from thyca.conversations.runtime import ConversationManager
 
-    sessions = _canonical_manager(tmp_path)
+    conversations = _canonical_manager(tmp_path)
 
     async def fake_chat(messages, tools=None):
         from thyca.llms.llm_base import ChatReply
@@ -964,7 +558,7 @@ def test_x21_shared_loop_wiring(tmp_path: Path) -> None:
         return ChatReply(content="x")
 
     loop = build_agent_loop(
-        sessions=sessions,
+        conversations=conversations,
         connect=fake_chat,  # type: ignore[arg-type]
         act=Act(dispatcher=None),  # type: ignore[arg-type]
         tools=[],
@@ -978,34 +572,6 @@ def test_x21_shared_loop_wiring(tmp_path: Path) -> None:
     assert isinstance(loop._observe, Observe)
 
 
-def test_x24_naming_meta_matches_sidecar_shape() -> None:
-    from types import SimpleNamespace
-
-    from thyca.agents.meta import assistant_meta, naming_meta
-    from thyca.agents.stage import Stage
-    from seeded_config import seeded_config
-    from thyca.llms.llm_base import ChatReply
-
-    cfg = seeded_config()
-    reply = ChatReply(
-        content="x",
-        model="gpt-4o-mini",
-        usage={"prompt_tokens": 100, "completion_tokens": 10},
-    )
-    meta = naming_meta(reply, 5, cfg)
-    assert list(meta) == ["kind", "latency_ms", "model", "usage", "cost_usd"]
-    assert meta["kind"] == "naming"
-    assert meta["usage"] == {"prompt_tokens": 100, "completion_tokens": 10}
-    assert meta["usage"] is not reply.usage
-    assert meta["cost_usd"] == pytest.approx(0.000021)
-    assert naming_meta(SimpleNamespace(model=None, usage=None), -3, cfg) == {
-        "kind": "naming",
-        "latency_ms": 0,
-        "model": "gpt-4o-mini",
-    }
-    stage = Stage()
-    stage.reply = reply
-    assert isinstance(assistant_meta(stage), dict)
 
 
 # Moved from tests/test_b2_contracts.py (B2 batch).
@@ -1114,10 +680,10 @@ def test_turn_hot_reloads_added_mcp_server(tmp_path: Path) -> None:
     app = _chat_with_mcp(tmp_path, llm, _tavily_factory(started))
     try:
         created = app.create()
-        app.turn(created["id"], "hi")
+        app.turn(created["conversation_id"], "hi")
         assert not _saw_tool(llm, "tavily__search")
         _save_mcp(tmp_path, {"tavily": McpServerCfg(command="tavily")})
-        app.turn(created["id"], "search now")
+        app.turn(created["conversation_id"], "search now")
         assert _saw_tool(llm, "tavily__search")
         assert started == [("tavily", {})]
     finally:
@@ -1137,11 +703,11 @@ def test_turn_unloads_removed_mcp_server(tmp_path: Path) -> None:
     )
     try:
         created = app.create()
-        app.turn(created["id"], "hi")
+        app.turn(created["conversation_id"], "hi")
         assert _saw_tool(llm, "tavily__search")
         seen_before = len(llm.tools)
         _save_mcp(tmp_path, {})
-        app.turn(created["id"], "again")
+        app.turn(created["conversation_id"], "again")
         for tools in llm.tools[seen_before:]:
             if tools:
                 assert all(t["function"]["name"] != "tavily__search" for t in tools)
@@ -1156,10 +722,10 @@ def test_turn_respawns_mcp_server_on_env_change(tmp_path: Path) -> None:
     try:
         created = app.create()
         _save_mcp(tmp_path, {"t": McpServerCfg(command="t", env={"K": "1"})})
-        app.turn(created["id"], "hi")
+        app.turn(created["conversation_id"], "hi")
         assert _saw_tool(llm, "t__search")
         _save_mcp(tmp_path, {"t": McpServerCfg(command="t", env={"K": "2"})})
-        app.turn(created["id"], "again")
+        app.turn(created["conversation_id"], "again")
         assert started == [("t", {"K": "1"}), ("t", {"K": "2"})]
         assert _saw_tool(llm, "t__search")
     finally:
@@ -1181,19 +747,19 @@ def test_turn_completes_when_mcp_spawn_fails(tmp_path: Path) -> None:
     try:
         created = app.create()
         _save_mcp(tmp_path, {"bad": McpServerCfg(command="bad")})
-        turned = app.turn(created["id"], "hi")
+        turned = app.turn(created["conversation_id"], "hi")
         assert turned["reply"] == "pong"
         assert not _saw_tool(llm, "bad__search")
     finally:
         app.shutdown()
 
 
-def test_turn_injects_session_scoped_today(tmp_path: Path) -> None:
+def test_turn_injects_conversation_scoped_today(tmp_path: Path) -> None:
     llm = FakeLLM(ChatReply(content="pong"))
     app = _chat(tmp_path, llm)
     try:
         created = app.create()
-        sid = created["id"]
+        sid = created["conversation_id"]
         (day_file,) = list((tmp_path / "memory").glob("*.md"))
         day = day_file.stem
         day_file.write_text(
@@ -1213,5 +779,77 @@ def test_turn_injects_session_scoped_today(tmp_path: Path) -> None:
         assert "foreign-note" in system  # title survives in the index
         assert f"{day}#bbbb2222" in system  # pullable id
         assert "<today_elsewhere>" in system
+    finally:
+        app.shutdown()
+
+
+def test_group_with_deleted_bot_stays_readable(tmp_path: Path) -> None:
+    from thyca.bots.card import BotCard
+    from thyca.bots.registry import RegistryError
+
+    llm = FakeLLM(ChatReply(content="pong"))
+    app = _chat(tmp_path, llm)
+    try:
+        app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder", description="Codes.", persona="You code."))
+        app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper", description="Helps.", persona="You help."))
+        group = app.create(bots=["coder", "helper"])
+        gid = group["conversation_id"]
+        app.turn(gid, "ping")
+        # Simulate an old orphan left in the database.
+        app._bots.delete("coder")
+        payload = app.get_payload(gid)
+        assert payload["kind"] == "group" and payload["bots"] == ["coder", "helper"]
+        assert "title" not in payload
+        result = app.turn(gid, "hello")
+        assert result["reply"] == "pong"
+        # Removing the deleted bot works; unknown ids still fail.
+        assert app.set_room_bots(gid, "coder", "remove") == ["helper"]
+        try:
+            app.set_room_bots(gid, "ghost", "remove")
+        except RegistryError as exc:
+            assert "not in room" in str(exc)
+        else:
+            raise AssertionError("expected RegistryError for unknown remove")
+        try:
+            app.set_room_bots(gid, "ghost", "add")
+        except RegistryError:
+            pass
+        else:
+            raise AssertionError("expected RegistryError for unknown add")
+        # Compact skips the deleted member instead of failing.
+        app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder", description="Codes.", persona="You code."))
+        g2 = app.create(bots=["coder", "helper"])
+        app.turn(g2["conversation_id"], "ping")
+        app._bots.delete("coder")
+        compacted = app.compact_conversation(g2["conversation_id"])
+        assert compacted["compaction"]["per_bot"]["coder"]["skipped"] == "bot_unavailable"
+    finally:
+        app.shutdown()
+
+
+def test_group_with_all_bots_deleted_turn_is_clear(tmp_path: Path) -> None:
+    from thyca.bots.card import BotCard
+    from thyca.conversations.runtime import NoLiveResponder
+
+    llm = FakeLLM(ChatReply(content="pong"))
+    app = _chat(tmp_path, llm)
+    try:
+        app._bots.create(BotCard(bot_id="solo1", name="solo1", role="R", description="D.", persona="p"))
+        app._bots.create(BotCard(bot_id="solo2", name="solo2", role="R", description="D.", persona="p"))
+        group = app.create(bots=["solo1", "solo2"])
+        gid = group["conversation_id"]
+        app.turn(gid, "ping")
+        app._bots.delete("solo1")
+        app._bots.delete("solo2")
+        payload = app.get_payload(gid)
+        assert payload["kind"] == "group" and payload["bots"] == ["solo1", "solo2"]
+        try:
+            app.turn(gid, "hello")
+        except NoLiveResponder:
+            pass
+        else:
+            raise AssertionError("expected NoLiveResponder for all-dead group")
+        assert "title" not in payload
+        app.delete_conversation(gid)
     finally:
         app.shutdown()

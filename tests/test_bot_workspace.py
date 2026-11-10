@@ -27,7 +27,7 @@ from thyca.core.channel import (
     WindowRef,
 )
 from thyca.core.protocol import Message, utc_now_ts
-from thyca.conversations.runtime import SessionManager
+from thyca.conversations.runtime import ConversationManager
 
 
 def _runtime(tmp_path: Path) -> BotRuntime:
@@ -90,19 +90,19 @@ def test_registry_single_current_shape_and_strictness(tmp_path: Path) -> None:
     from thyca.core.channel import WindowRef as _WR
 
     store = WorkspaceStore(tmp_path)
-    # One current shape only: a legacy room_sessions.json file is ignored.
-    legacy = tmp_path / "bots" / "coder" / "room_sessions.json"
+    # One current shape only: a legacy room_conversations.json file is ignored.
+    legacy = tmp_path / "bots" / "coder" / "room_conversations.json"
     legacy.parent.mkdir(parents=True)
     legacy.write_text(json.dumps({
         "room-old": "sess-1",
-        "room-new": {"session": "sess-2", "room_cursor": 4,
+        "room-new": {"conversation": "sess-2", "room_cursor": 4,
                      "room_fingerprint": "fp4"},
     }), encoding="utf-8")
     assert store.load("coder") == {}
     binding = store.bind_window("coder", _WR(
         window_id="w1", channel_id="webui", kind="dm",
         participants=("coder",)), cursor=(4, "fp4"))
-    assert binding.internal_session_id
+    assert binding.internal_conversation_id
     assert binding.cursor == (4, "fp4")
     # Malformed registry entries raise instead of being tolerated.
     path = tmp_path / "bots" / "coder" / "workspace" / "registry.json"
@@ -115,32 +115,32 @@ def test_registry_single_current_shape_and_strictness(tmp_path: Path) -> None:
 
 def test_restart_loads_exact_internal_ids_and_cursors(tmp_path: Path) -> None:
     runtime = _runtime(tmp_path)
-    internal = runtime.internal_session("coder", "room1")
+    internal = runtime.internal_conversation("coder", "room1")
     runtime.set_room_cursor("coder", "room1", (7, "fp7"))
     store = WorkspaceStore(tmp_path)
     binding = store.get_binding("coder", "room1")
     assert binding is not None
-    assert binding.internal_session_id == internal.id
+    assert binding.internal_conversation_id == internal.conversation_id
     assert binding.cursor == (7, "fp7")
     registry = WorkspaceRegistry(tmp_path)
     again = registry.workspace("coder").get_window("room1")
     assert again is not None
-    assert again.internal_session_id == internal.id
+    assert again.internal_conversation_id == internal.conversation_id
     assert again.cursor == (7, "fp7")
 
 
 def test_transcript_rows_never_seed_the_cursor(tmp_path: Path) -> None:
     from thyca.bots.timeline import WorkspaceTimeline
-    from thyca.bots.timeline import CanonicalSessionStore
+    from thyca.bots.timeline import CanonicalConversationStore
     from thyca.core.channel import WindowRef as _WR
 
     runtime = _runtime(tmp_path)
-    internal = runtime.internal_session("coder", "room1")
+    internal = runtime.internal_conversation("coder", "room1")
     window = _WR(window_id="room1", channel_id="webui", kind="dm",
                   participants=("coder",))
-    store = runtime._canonical_store("coder", window, internal.id)
-    manager = SessionManager(store=store)
-    manager.load(internal.id)
+    store = runtime._canonical_store("coder", window, internal.conversation_id)
+    manager = ConversationManager(store=store)
+    manager.load(internal.conversation_id)
     # Even a legacy-shaped synthetic row in the transcript must not
     # seed the cursor: the registry binding is the only source.
     manager.append(Message(role="user", content="delta",
@@ -157,15 +157,15 @@ def test_bind_dm_and_group_window_metadata(tmp_path: Path) -> None:
                    participants=("user", "coder"))
     group = WindowRef(window_id="w-grp", channel_id="webui", kind="group",
                       participants=("thyca", "coder"))
-    workspace.bind_window(dm, internal_session_id="sess-dm")
+    workspace.bind_window(dm, internal_conversation_id="sess-dm")
     workspace.bind_window(group, cursor=(2, "fpg"))
     assert workspace.get_window("w-dm").window == dm
-    assert workspace.get_window("w-dm").internal_session_id == "sess-dm"
+    assert workspace.get_window("w-dm").internal_conversation_id == "sess-dm"
     assert workspace.get_window("w-grp").window == group
     assert workspace.get_window("w-grp").cursor == (2, "fpg")
 
 
-def test_bind_window_mints_session_id_for_new_window(tmp_path: Path) -> None:
+def test_bind_window_mints_conversation_id_for_new_window(tmp_path: Path) -> None:
     import re
 
     # Canonical per-bot timeline ids are an internal concept with their
@@ -174,23 +174,23 @@ def test_bind_window_mints_session_id_for_new_window(tmp_path: Path) -> None:
     binding = store.bind_window("coder", WindowRef(
         window_id="w1", channel_id="webui", kind="dm",
         participants=("coder",)))
-    assert binding.internal_session_id
+    assert binding.internal_conversation_id
     assert re.fullmatch(
         r"\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_[0-9a-f]{4}",
-        binding.internal_session_id)
+        binding.internal_conversation_id)
     assert binding.cursor is None
     loaded = store.get_binding("coder", "w1")
-    assert loaded.internal_session_id == binding.internal_session_id
+    assert loaded.internal_conversation_id == binding.internal_conversation_id
     assert loaded.cursor is None
     assert loaded.window.kind == "dm"
-    # An explicit session id is preserved, never reminted.
+    # An explicit conversation id is preserved, never reminted.
     second = store.bind_window(
         "coder", WindowRef(
             window_id="w1", channel_id="webui", kind="dm",
             participants=("coder",)),
-        internal_session_id="sess-explicit",
+        internal_conversation_id="sess-explicit",
         cursor=(5, "fp5"))
-    assert second.internal_session_id == "sess-explicit"
+    assert second.internal_conversation_id == "sess-explicit"
     assert second.cursor == (5, "fp5")
 
 
@@ -273,19 +273,19 @@ def test_path_traversal_bot_id_rejected(tmp_path: Path) -> None:
 def test_runtime_binding_roundtrip_in_registry_no_legacy_files(
         tmp_path: Path) -> None:
     runtime = _runtime(tmp_path)
-    internal = runtime.internal_session("coder", "room1")
+    internal = runtime.internal_conversation("coder", "room1")
     runtime.set_room_cursor("coder", "room1", (3, "fp3"))
     raw = json.loads(
         (tmp_path / "bots" / "coder" / "workspace" / "registry.json")
         .read_text(encoding="utf-8"))
     entry = raw["windows"]["room1"]
-    assert entry["session"] == internal.id
+    assert entry["conversation"] == internal.conversation_id
     assert entry["room_cursor"] == 3
     assert entry["room_fingerprint"] == "fp3"
     # No legacy mirror or backup is ever written.
-    assert not (tmp_path / "bots" / "coder" / "room_sessions.json").exists()
+    assert not (tmp_path / "bots" / "coder" / "room_conversations.json").exists()
     assert not (tmp_path / "bots" / "coder"
-                / "room_sessions.json.bak").exists()
+                / "room_conversations.json.bak").exists()
 
 
 def test_workspace_registry_shares_one_workspace_per_bot(
@@ -301,10 +301,10 @@ def test_no_legacy_files_created_by_store(tmp_path: Path) -> None:
     store.bind_window("coder", WindowRef(
         window_id="room1", channel_id="webui", kind="dm",
         participants=("coder",)))
-    store.ensure_session("coder", "room-synthetic")
-    assert not (tmp_path / "bots" / "coder" / "room_sessions.json").exists()
+    store.ensure_conversation("coder", "room-synthetic")
+    assert not (tmp_path / "bots" / "coder" / "room_conversations.json").exists()
     assert not (tmp_path / "bots" / "coder"
-                / "room_sessions.json.bak").exists()
+                / "room_conversations.json.bak").exists()
     assert store.get_binding("coder", "room-synthetic").window is None
 
 

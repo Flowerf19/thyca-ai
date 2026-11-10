@@ -14,7 +14,7 @@ from .contracts import (BootstrapResult, ConversationRef, ConversationStoreError
 from .database import (_LockedConnection, _commit_final, _connect_raw, _create_pending_database,
                        _ensure_root_ready, _raw_connection_for_resolution, _read_door_row,
                        _root_instance_id_from_conn, _transaction_context, _validate_db_file,
-                       _validate_door_row, open_existing_session)
+                       _validate_door_row, open_existing_conversation)
 from .rootfs import (DM_MARKERS_NAME, DM_MARKER_MAX_BYTES, LOCK_FILE_NAME, ROOT_MARKER_MAX_BYTES,
                      ROOT_MARKER_NAME, ROOT_MARKER_TEMP, _create_marker_directory, _fsync_dir,
                      _marker_filename,
@@ -265,7 +265,7 @@ def bootstrap_dm(root: Path, bot_id: str, *, intent: DMBootstrapIntent) -> Boots
     ref = ConversationRef.dm(bot_id)
     if not isinstance(intent, DMBootstrapIntent) or intent.bot_id != bot_id:
         raise ValueError('explicit matching DM bootstrap intent required')
-    conn = open_existing_session(root, lock_mode='exclusive')
+    conn = open_existing_conversation(root, lock_mode='exclusive')
     try:
         root_id = _root_instance_id_from_conn(conn)
         with _transaction_context(conn, 'BEGIN'):
@@ -311,7 +311,7 @@ def bootstrap_dm(root: Path, bot_id: str, *, intent: DMBootstrapIntent) -> Boots
 
 def audit_root(root: Path) -> None:
     """Full streaming integrity and marker/DB audit on an existing store."""
-    conn = open_existing_session(root, lock_mode='shared')
+    conn = open_existing_conversation(root, lock_mode='shared')
     try:
         with _transaction_context(conn, 'BEGIN'):
             _audit_in_transaction(conn, full=True)

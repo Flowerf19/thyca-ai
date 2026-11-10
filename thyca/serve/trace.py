@@ -6,13 +6,13 @@ from dataclasses import dataclass, field, replace
 
 from thyca.bots.usage import is_stop_status
 from thyca.core.protocol import Message
-from thyca.conversations.runtime import Session
+from thyca.conversations.runtime import ConversationRuntime
 from thyca.conversations.runtime.wire import is_sidecar_message, turn_slices
 
 
 @dataclass
 class TurnSummary:
-    session_id: str
+    conversation_id: str
     turn_index: int
     title: str
     started_at: str  # ISO of first message
@@ -37,11 +37,11 @@ class TurnSummary:
     # their meta bot_id). Empty for manually built summaries; aggregate()
     # and the FE fall back to the single bot_id/turn totals then.
     bot_breakdown: list[dict] = field(default_factory=list)
-    # Owning session's channel shape (phase: trace-per-agent filter).
-    # Copied from the Session so the FE can filter/group without a join.
-    session_kind: str = "group"
-    session_dm: str | None = None
-    session_bots: list[str] = field(default_factory=list)
+    # Owning conversation's channel shape (phase: trace-per-agent filter).
+    # Copied from the ConversationRuntime so the FE can filter/group without a join.
+    conversation_kind: str = "group"
+    conversation_dm: str | None = None
+    conversation_bots: list[str] = field(default_factory=list)
     # Real tool calls behind this turn (sum of _row_tool_calls). Last so
     # older kwarg constructors keep working.
     tool_calls: int = 0
@@ -49,11 +49,11 @@ class TurnSummary:
     window_id: str | None = None
     work_id: str | None = None
 
-    # Render this turn in the public trace shape (no legacy session id).
+    # Render this turn in the public trace shape (no legacy conversation id).
     def to_payload(self) -> dict:
         """Public JSON shape for /api/traces* — the single source of the field list."""
         payload = {
-            "kind": self.session_kind,
+            "kind": self.conversation_kind,
             "turn_index": self.turn_index,
             "title": self.title,
             "started_at": self.started_at,
@@ -73,14 +73,14 @@ class TurnSummary:
             "bot_id": self.bot_id,
             "trace_id": self.trace_id,
             "bot_breakdown": [dict(entry) for entry in self.bot_breakdown],
-            "session_bots": list(self.session_bots),
+            "conversation_bots": list(self.conversation_bots),
             "channel": self.channel,
             "work_id": self.work_id,
         }
-        if self.session_kind == "dm":
-            payload["bot_id"] = self.session_dm or self.bot_id
+        if self.conversation_kind == "dm":
+            payload["bot_id"] = self.conversation_dm or self.bot_id
         else:
-            payload["group_id"] = self.session_id
+            payload["group_id"] = self.conversation_id
         return payload
 
 
@@ -96,9 +96,9 @@ def _turn_status(slice_msgs: list[Message]) -> str:
     if any(isinstance((m.meta or {}).get("error"), dict) for m in slice_msgs):
         return "failed"
     # The context guard's synthetic stop is not a success: it made no
-    # provider call, so it must not count as a completed turn (naming
-    # threshold) or a request (trace totals). Already persisted rows
-    # carry the same meta, so they are handled too.
+    # provider call, so it must not count as a completed turn or a
+    # request (trace totals). Already persisted rows carry the same
+    # meta, so they are handled too.
     if any((m.meta or {}).get("status") == "context_limit" for m in slice_msgs):
         return "context_limit"
     # sidecar meta-messages are not turn outcomes — skip them, keep old semantics
@@ -292,12 +292,12 @@ def _bot_breakdown(turn_msgs: list[Message]) -> list[dict]:
     return entries
 
 
-def turns_from_session(session: Session) -> list[TurnSummary]:
+def turns_from_conversation(conversation: ConversationRuntime) -> list[TurnSummary]:
     # Grouping shared with the wire turns count (turn_slices): system
     # compaction markers excluded, one slice per user message.
-    bots = list(session.bots) if session.bots else ["thyca"]
-    kind = "dm" if session.dm_bot else "group"
-    slices = turn_slices(session.messages)
+    bots = list(conversation.bots) if conversation.bots else ["thyca"]
+    kind = "dm" if conversation.dm_bot else "group"
+    slices = turn_slices(conversation.messages)
     out: list[TurnSummary] = []
     for idx, sl in enumerate(slices):
         prompt, cached, completion, total, cost, latency, model = _sum_tokens(sl)
@@ -335,9 +335,9 @@ def turns_from_session(session: Session) -> list[TurnSummary]:
         )
         out.append(
             TurnSummary(
-                session_id=session.id,
+                conversation_id=conversation.conversation_id,
                 turn_index=idx,
-                title=session.title or session.id,
+                title=conversation.conversation_id,
                 started_at=started,
                 ended_at=ended,
                 model=model,
@@ -356,11 +356,11 @@ def turns_from_session(session: Session) -> list[TurnSummary]:
                 bot_id=bot_id,
                 trace_id=trace_id,
                 bot_breakdown=_bot_breakdown(sl),
-                session_kind=kind,
-                session_dm=session.dm_bot,
-                session_bots=bots,
+                conversation_kind=kind,
+                conversation_dm=conversation.dm_bot,
+                conversation_bots=bots,
                 channel="webui",
-                window_id=session.id,
+                window_id=conversation.conversation_id,
                 work_id=work_id,
             )
         )
@@ -373,7 +373,7 @@ def scope_turn_to_bot(turn: TurnSummary, bot_id: str) -> TurnSummary | None:
     Participation alone never attributes usage. Legacy unattributed work stays
     in the overview; an explicit single-bot summary without a breakdown remains
     usable. The source summary/messages are never mutated and detail continues
-    to resolve the original (session_id, turn_index).
+    to resolve the original (conversation_id, turn_index).
     """
     entries = [entry for entry in turn.bot_breakdown if isinstance(entry, dict)]
     if not entries:
@@ -414,7 +414,7 @@ def scope_turn_to_bot(turn: TurnSummary, bot_id: str) -> TurnSummary | None:
 def _record_counts(group: list[TurnSummary]) -> dict:
     """Coverage of the scanned window, not all-time or full price coverage."""
     return {
-        "sessions": len({turn.session_id for turn in group}),
+        "conversations": len({turn.conversation_id for turn in group}),
         "turns": len(group),
         "priced_turns": sum(turn.cost_usd is not None for turn in group),
     }
@@ -486,7 +486,7 @@ def aggregate(turns: list[TurnSummary]) -> dict:
             "cost_usd": cost,
             "latency_ms_p50": _percentile(lat, 0.5),
             # Newest turn per model, so the UI can sort by "gần nhất" without
-            # rescanning sessions.
+            # rescanning conversations.
             "last_started_at": max((x.started_at for x in group if x.started_at), default=""),
         }
         by_model.append(entry)
@@ -545,12 +545,12 @@ def aggregate(turns: list[TurnSummary]) -> dict:
                 "requests": 0, "tool_calls": 0, "prompt_tokens": 0, "cached_tokens": 0,
                 "completion_tokens": 0, "total_tokens": 0,
                 "costs": [], "latencies": [], "last_started_at": "",
-                "session_ids": set(), "turn_ids": set(), "priced_turn_ids": set(),
+                "conversation_ids": set(), "turn_ids": set(), "priced_turn_ids": set(),
             })
-            acc["session_ids"].add(t.session_id)
-            acc["turn_ids"].add((t.session_id, t.turn_index))
+            acc["conversation_ids"].add(t.conversation_id)
+            acc["turn_ids"].add((t.conversation_id, t.turn_index))
             if isinstance(entry.get("cost_usd"), (int, float)):
-                acc["priced_turn_ids"].add((t.session_id, t.turn_index))
+                acc["priced_turn_ids"].add((t.conversation_id, t.turn_index))
             req = entry.get("requests")
             acc["requests"] += req if isinstance(req, int) else 0
             acc["tool_calls"] += _sum_tool_calls([entry])
@@ -566,7 +566,7 @@ def aggregate(turns: list[TurnSummary]) -> dict:
     by_bot = []
     for bot_id, acc in sorted(by_bot_acc.items()):
         by_bot.append({
-            "sessions": len(acc["session_ids"]),
+            "conversations": len(acc["conversation_ids"]),
             "turns": len(acc["turn_ids"]),
             "priced_turns": len(acc["priced_turn_ids"]),
             "bot_id": bot_id,

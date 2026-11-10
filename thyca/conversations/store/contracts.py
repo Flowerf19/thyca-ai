@@ -38,6 +38,14 @@ class ConversationStoreError(RuntimeError):
         self.scope = scope
         self.ref = ref
 
+
+@dataclass(frozen=True)
+class PruneResult:
+    """Outcome of pruning one bot from every group: survivors and dissolves."""
+
+    pruned: tuple[str, ...]
+    dissolved: tuple[str, ...]
+
 @dataclass(frozen=True)
 class RootInitializationIntent:
     """Caller assertion for a fresh-root init; this value is not authentication."""
@@ -76,9 +84,6 @@ class BootstrapResult:
 @dataclass(frozen=True)
 class Conversation:
     ref: ConversationRef
-    title: str | None
-    title_source: str | None
-    naming_attempted: bool
     participants: tuple[str, ...]
     messages: tuple[Message, ...]
 
@@ -91,9 +96,6 @@ class ConversationListing:
     is the empty-conversation timestamp source (Phase 1 read adapter)."""
 
     ref: ConversationRef
-    title: str | None
-    title_source: str | None
-    naming_attempted: bool
     participants: tuple[str, ...]
     created_at: str
 
@@ -122,28 +124,12 @@ class ConversationPage:
         return self.conversation.messages
 
     @property
-    def title(self) -> str | None:
-        return self.conversation.title
-
-    @property
-    def title_source(self) -> str | None:
-        return self.conversation.title_source
-
-    @property
-    def naming_attempted(self) -> bool:
-        return self.conversation.naming_attempted
-
-    @property
     def participants(self) -> tuple[str, ...]:
         return self.conversation.participants
 
 def validate_metadata(ref: ConversationRef, data: dict) -> None:
-    if not isinstance(data, dict) or set(data) != {'title', 'title_source', 'naming_attempted', 'participants'}:
+    if not isinstance(data, dict) or set(data) != {'participants'}:
         raise ValueError('invalid metadata')
-    if data['title'] is not None:
-        _check_text(data['title'], 'title')
-    if data['title_source'] not in (None, 'user', 'agent') or not isinstance(data['naming_attempted'], bool):
-        raise ValueError('invalid title metadata')
     participants = data['participants']
     if not isinstance(participants, list) or not participants:
         raise ValueError('invalid participants')
@@ -184,13 +170,11 @@ def _check_depth(value: object, limit: int = MAX_JSON_DEPTH) -> None:
         elif isinstance(node, list):
             stack.extend((child, depth + 1) for child in node)
 
-def _metadata(participants, title=None):
-    return {'title': title, 'title_source': 'user' if title is not None else None,
-            'naming_attempted': False, 'participants': participants}
+def _metadata(participants):
+    return {'participants': participants}
 
 def _view(ref, metadata, messages):
-    return Conversation(ref, metadata['title'], metadata['title_source'],
-                        metadata['naming_attempted'], tuple(metadata['participants']), tuple(messages))
+    return Conversation(ref, tuple(metadata['participants']), tuple(messages))
 
 def _encode_metadata(metadata: dict) -> str:
     return json.dumps(metadata, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(',', ':'))

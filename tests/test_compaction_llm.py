@@ -14,22 +14,22 @@ from thyca.agents.think import Think
 from thyca.configs import LimitsCfg
 from thyca.core.protocol import Message, ToolResult
 from thyca.llms.llm_base import ChatReply
-from thyca.conversations.runtime import SessionManager
+from thyca.conversations.runtime import ConversationManager
 
-# Build a canonical-timeline manager holding one execution session.
-def _canonical_manager(root: Path, limits=None) -> SessionManager:
-    from thyca.bots.timeline import CanonicalSessionStore, WorkspaceTimeline
+# Build a canonical-timeline manager holding one execution conversation.
+def _canonical_manager(root: Path, limits=None) -> ConversationManager:
+    from thyca.bots.timeline import CanonicalConversationStore, WorkspaceTimeline
     from thyca.core.channel import WindowRef
 
     timeline = WorkspaceTimeline(root, "thyca")
     window = WindowRef(
         window_id="thyca", channel_id="webui", kind="dm", participants=("thyca",))
-    session_id = "2026-01-01T00-00-00_ab12"
-    store = CanonicalSessionStore(
+    conversation_id = "2026-01-01T00-00-00_ab12"
+    store = CanonicalConversationStore(
         root / "bots" / "thyca" / "sessions",
-        timeline=timeline, window=window, session_id=session_id)
-    manager = SessionManager(store=store, limits=limits)
-    manager.load(session_id)
+        timeline=timeline, window=window, conversation_id=conversation_id)
+    manager = ConversationManager(store=store, limits=limits)
+    manager.load(conversation_id)
     return manager
 
 
@@ -63,7 +63,7 @@ class NoTools:
         raise AssertionError("no tools expected")
 
 
-def _seeded(tmp_path: Path, turns: int = 4) -> SessionManager:
+def _seeded(tmp_path: Path, turns: int = 4) -> ConversationManager:
     manager = _canonical_manager(tmp_path, LimitsCfg(contextTokens=1000))
     for i in range(turns):
         manager.append(Message(role="user", content=f"old-{i}-" + "u" * 300))
@@ -116,11 +116,11 @@ def test_transcript_change_during_summary_falls_back_without_loss(
     tmp_path: Path,
 ) -> None:
     manager = _seeded(tmp_path)
-    session_id = manager.current.id
+    conversation_id = manager.current.conversation_id
 
     def append_meanwhile() -> None:
         other = _canonical_manager(tmp_path)
-        other.load(session_id)
+        other.load(conversation_id)
         other.append(Message(role="user", content="meanwhile-question"))
 
     stub = StubSummarizer(_outcome(), during=append_meanwhile)
@@ -151,11 +151,11 @@ def test_no_plan_is_honest_noop(tmp_path: Path) -> None:
 
 def test_auto_compact_in_loop_uses_summarizer(tmp_path: Path) -> None:
     manager = _seeded(tmp_path, turns=8)
-    session_id = manager.current.id
+    conversation_id = manager.current.conversation_id
     stub = StubSummarizer(_outcome("AUTO SUMMARY"))
     llm = FakeLLM([ChatReply(content="next answer", usage={"prompt_tokens": 5}, model="m")])
     loop = AgentLoop(
-        sessions=manager,
+        conversations=manager,
         assemble=Assemble(),
         think=Think(llm),
         act=Act(NoTools()),
@@ -170,6 +170,6 @@ def test_auto_compact_in_loop_uses_summarizer(tmp_path: Path) -> None:
     sent = "\n".join(m.content or "" for m in llm.requests[0])
     assert "AUTO SUMMARY" in sent
     assert "old-0-" not in sent
-    stored = _canonical_manager(tmp_path).load(session_id).messages
+    stored = _canonical_manager(tmp_path).load(conversation_id).messages
     assert stored[0].role == "system" and "AUTO SUMMARY" in (stored[0].content or "")
     assert any((m.meta or {}).get("kind") == "compaction" for m in stored)

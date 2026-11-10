@@ -58,7 +58,7 @@ def test_bots_round_trip_heading_to_sqlite(tmp_path: Path) -> None:
     assert bots[sid.split("#")[1]] == ("coder",)
     # A reindexed facade (new process view) carries the owner in SQLite.
     facade2 = _facade(tmp_path)
-    assert facade2.archive.store.session_bots(sid) == ("coder",)
+    assert facade2.archive.store.memory_bots(sid) == ("coder",)
     # Legacy user entries carry no bots field.
     sid2 = facade.remember("pub", "user note", now=T0, importance=5)
     entry2 = sid2.split("#")[1]
@@ -80,9 +80,9 @@ def test_child_cannot_touch_team_or_other_private(tmp_path: Path) -> None:
         with pytest.raises(ArchiveError):
             facade.update(other_sid, summary="hijack", now=T1)
         with pytest.raises(ArchiveError):
-            facade.get(session_id=other_sid, now=T1)
+            facade.get(memory_id=other_sid, now=T1)
         # Team + legacy stay readable.
-        assert "team fact" in facade.get(session_id=team_sid, now=T1)
+        assert "team fact" in facade.get(memory_id=team_sid, now=T1)
     finally:
         reset_bot_id(token)
 
@@ -93,13 +93,13 @@ def test_owner_can_edit_own_and_thyca_can_all(tmp_path: Path) -> None:
     try:
         sid = facade.remember("mine", "v1", now=T0)
         facade.update(sid, summary="v2", now=T1)
-        assert "v2" in facade.get(session_id=sid, now=T1)
+        assert "v2" in facade.get(memory_id=sid, now=T1)
     finally:
         reset_bot_id(token)
     token = _as("thyca")
     try:
         facade.update(sid, summary="v3 by thyca", now=T1)
-        assert "v3 by thyca" in facade.get(session_id=sid, now=T1)
+        assert "v3 by thyca" in facade.get(memory_id=sid, now=T1)
     finally:
         reset_bot_id(token)
 
@@ -124,7 +124,7 @@ def test_search_hides_other_private(tmp_path: Path) -> None:
     token = _as("researcher")
     try:
         hits = facade.search("zqxw", now=at).hits
-        assert {hit.session_id for hit in hits} == {"2026-08-01#e5f6a7b8"}
+        assert {hit.memory_id for hit in hits} == {"2026-08-01#e5f6a7b8"}
     finally:
         reset_bot_id(token)
     token = _as("coder")
@@ -145,25 +145,25 @@ def test_forget_removes_entry_and_reads_miss(tmp_path: Path) -> None:
     a = facade.remember("alpha", "first aa", now=T0)
     b = facade.remember("beta", "second bb", now=T0)
     facade.forget(a, now=T1)
-    assert facade.archive.store.get_session_any(a) == []
-    assert facade.archive.store.get_session_any(b) != []
+    assert facade.archive.store.get_memory_any(a) == []
+    assert facade.archive.store.get_memory_any(b) != []
 
 
 def test_hot_prompt_hides_other_private(tmp_path: Path) -> None:
     from thyca.memories.active import ActiveMemory
-    from thyca.tools.memory_tools import bind_chat_session, reset_chat_session
+    from thyca.tools.memory_tools import bind_chat_conversation, reset_chat_conversation
 
-    chat_token = bind_chat_session("room1")
+    chat_token = bind_chat_conversation("room1")
     try:
         _facade(tmp_path).remember("priv", "coder hidden gem", now=T0,
                                    bots=["coder"], chat="room1")
     finally:
-        reset_chat_session(chat_token)
+        reset_chat_conversation(chat_token)
     memory = ActiveMemory(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     state = memory.open_session(datetime(2026, 8, 1, tzinfo=UTC))
     moment = datetime(2026, 8, 1, 13, 0, tzinfo=UTC)
-    snap = memory.refresh(state, moment, session_id="room1", reader="researcher")
+    snap = memory.refresh(state, moment, conversation_id="room1", reader="researcher")
     assert "hidden gem" not in snap.today
     assert "hidden gem" not in snap.today_elsewhere
-    snap2 = memory.refresh(state, moment, session_id="room1", reader=None)
+    snap2 = memory.refresh(state, moment, conversation_id="room1", reader=None)
     assert "hidden gem" in snap2.today or "hidden gem" in snap2.today_elsewhere

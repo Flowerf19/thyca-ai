@@ -48,7 +48,7 @@ def test_chunk_daily_and_legacy(tmp_path: Path) -> None:
         "- second leaf that is long enough\n"
     )
     chunks = chunker.chunk_markdown(text, daily, source_kind="daily", timeline_day="2026-08-13")
-    assert [c.session_id for c in chunks] == ["2026-08-13#aaaaaaaa"] * len(chunks)
+    assert [c.memory_id for c in chunks] == ["2026-08-13#aaaaaaaa"] * len(chunks)
     assert chunks[0].chunk_id.endswith("#1")
     assert any("second leaf" in c.text_raw for c in chunks)
     legacy = chunker.chunk_markdown(
@@ -57,7 +57,7 @@ def test_chunk_daily_and_legacy(tmp_path: Path) -> None:
         source_kind="canonical",
         timeline_day=None,
     )
-    assert all(c.session_id == "canonical#soul" for c in legacy)
+    assert all(c.memory_id == "canonical#soul" for c in legacy)
     assert len(legacy) == 2
 
 
@@ -88,18 +88,18 @@ def test_trigram_typo_and_get(tmp_path: Path) -> None:
     archived.reindex(at("2026-08-17"))
     hits = facade.search("thit quya")
     assert hits.hits
-    session = archived.get(session_id=hits.hits[0].session_id)
+    session = archived.get(memory_id=hits.hits[0].memory_id)
     assert "thịt quay" in session or "bún bò" in session or "Luna" in session
-    whole = archived.get(session_id=hits.hits[0].session_id)
+    whole = archived.get(memory_id=hits.hits[0].memory_id)
     assert "cà phê" in whole or "thịt quay" in whole or "Luna" in whole
-    for kwargs in ({}, {"chunk_id": "x", "session_id": "y"}):
+    for kwargs in ({}, {"chunk_id": "x", "memory_id": "y"}):
         try:
             archived.get(**kwargs)
             raise AssertionError(f"should reject {kwargs}")
         except ArchiveError as exc:
-            assert "exactly one of chunk_id, session_id" in str(exc)
+            assert "exactly one of chunk_id, memory_id" in str(exc)
     try:
-        archived.get(session_id="2026-08-13#zzzzzzzz")
+        archived.get(memory_id="2026-08-13#zzzzzzzz")
         raise AssertionError("should reject")
     except ArchiveError:
         pass
@@ -117,7 +117,7 @@ def test_duplicate_minute_and_fence(tmp_path: Path) -> None:
     chunks = chunker.chunk_markdown(
         tmp_path / "d.md", text, source_kind="daily", timeline_day="2026-08-13"
     )
-    ids = {c.session_id for c in chunks}
+    ids = {c.memory_id for c in chunks}
     assert ids == {"2026-08-13#aaaaaaaa", "2026-08-13#bbbbbbbb"}
     assert any(c.text_raw.startswith("```") for c in chunks)
 
@@ -148,7 +148,7 @@ def test_leftover_memory_md_dropped_on_open(tmp_path: Path) -> None:
         str(path), "canonical", None, stat.st_mtime_ns, stat.st_size, chunks
     )
     cid = chunks[0].chunk_id
-    archived.store.usage.record_gets([cid], chunks[0].session_id, "2026-08-17T03:00:00Z")
+    archived.store.usage.record_gets([cid], chunks[0].memory_id, "2026-08-17T03:00:00Z")
     before_expiry = at("2026-08-17")
     assert archived.fts_hits("leftover-memory-md-token", None, before_expiry, 5)
     assert archived.fts_hits("leftover-memory-md-token", None, at("2026-09-13"), 5) == []
@@ -157,7 +157,7 @@ def test_leftover_memory_md_dropped_on_open(tmp_path: Path) -> None:
     assert planted.search("leftover-memory-md-token", now=before_expiry).hits == []
     assert cid not in planted.archive.store.usage.get_map()
     assert all(
-        not item.session_id.startswith("memory#")
+        not item.memory_id.startswith("memory#")
         for item in planted.stats(now=before_expiry).leaves
     )
 
@@ -178,7 +178,7 @@ def test_in_order_span_uses_full_leaf_not_snippet() -> None:
         source_kind="daily",
         chunk_id="deep",
         timeline_day="2026-08-13",
-        session_id="2026-08-13#aaaaaaaa",
+        memory_id="2026-08-13#aaaaaaaa",
         heading="ghi chu lat vat",
         snippet="session id chat project",
         score=1.0,
@@ -189,7 +189,7 @@ def test_in_order_span_uses_full_leaf_not_snippet() -> None:
         source_kind="daily",
         chunk_id="bait",
         timeline_day="2026-08-13",
-        session_id="2026-08-13#bbbbbbbb",
+        memory_id="2026-08-13#bbbbbbbb",
         heading="session id chat project",
         snippet="id session id chat id project id",
         score=2.0,
@@ -229,8 +229,8 @@ def test_search_promotes_in_order_leaf_and_skips_soul_perfume(tmp_path: Path) ->
         "liên kết memories project id chat session id", now=at("2026-08-17")
     )
     assert found.hits
-    assert found.hits[0].session_id.endswith("aaaaaaaa")
-    assert all(not hit.session_id.startswith("canonical#") for hit in found.hits)
+    assert found.hits[0].memory_id.endswith("aaaaaaaa")
+    assert all(not hit.memory_id.startswith("canonical#") for hit in found.hits)
 
 
 def test_norm_version_rebuilds_stale_d_stroke(tmp_path: Path) -> None:
@@ -280,8 +280,8 @@ def _chunk(cid: str, path: str, sid: str) -> Chunk:
         path=path,
         source_kind="daily",
         timeline_day="2026-09-01",
-        session_id=sid,
-        session_title="t",
+        memory_id=sid,
+        memory_title="t",
         heading_raw="## 08:00",
         leaf_ord=1,
         line_start=1,
@@ -452,4 +452,4 @@ def test_identity_md_is_indexed_like_other_canonicals(tmp_path: Path) -> None:
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh", archive=archived)
     archived.reindex(at("2026-08-17"))
     found = facade.search("uniqueword-identity-xyz", now=at("2026-08-17"))
-    assert [hit.session_id for hit in found.hits] == ["canonical#identity"]
+    assert [hit.memory_id for hit in found.hits] == ["canonical#identity"]

@@ -8,7 +8,7 @@ from thyca.core.protocol import Message, estimate_tokens as _chars_to_tokens
 from thyca.llms.pricing import cost_for
 from thyca.llms.prompt_manager import PromptManager
 from thyca.memories.active import ActiveSnapshot
-from thyca.conversations.runtime import SessionManager, calibration_factor
+from thyca.conversations.runtime import ConversationManager, calibration_factor
 
 from .act import Act
 from .assemble import Assemble
@@ -55,7 +55,7 @@ def _resolve_cost(stage: Stage, model: str | None, pricing: dict | None) -> None
 class AgentLoop:
     def __init__(
         self,
-        sessions: SessionManager,
+        conversations: ConversationManager,
         assemble: Assemble,
         think: Think,
         act: Act,
@@ -69,7 +69,7 @@ class AgentLoop:
         summarizer: Summarizer | None = None,
     ) -> None:
         # context_tokens None disables the mid-turn guard (unit tests, no limits).
-        self._sessions = sessions
+        self._conversations = conversations
         self._assemble = assemble
         self._think = think
         self._act = act
@@ -129,7 +129,7 @@ class AgentLoop:
 
         return WorkspaceContextBuilder.with_context_budget(
             hot,
-            messages=list(self._sessions.current.messages),
+            messages=list(self._conversations.current.messages),
             context_tokens=self._context_tokens,
             pending_tokens=pending_tokens,
             calibration=calibration,
@@ -156,7 +156,7 @@ class AgentLoop:
         # so pre-turn compact, shrink and backstop agree; pairs landed by
         # this turn only affect the next one.
         calibration = calibration_factor(
-            list(self._sessions.current.messages), model=self._model
+            list(self._conversations.current.messages), model=self._model
         )
         # Compact first: the stage must snapshot post-compaction history so
         # the turn tripping the cap sends the compacted tail to the LLM.
@@ -179,7 +179,7 @@ class AgentLoop:
             # rule-based compact above on any summarizer failure.
             await compact_with_llm(
                 self._summarizer,
-                self._sessions,
+                self._conversations,
                 model=self._model,
                 pricing=self._pricing,
                 hot_tokens=self._hot_tokens(hot),
@@ -196,7 +196,7 @@ class AgentLoop:
             except Exception:
                 pass
         stage = Stage(
-            messages=list(self._sessions.current.messages),
+            messages=list(self._conversations.current.messages),
             hot=hot,
             tools=self._tools,
         )

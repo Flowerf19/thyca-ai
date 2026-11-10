@@ -1,18 +1,13 @@
-"""Pure message/meta builders for :class:`Observe` + the naming sidecar.
+"""Pure message/meta builders for :class:`Observe` + the compaction sidecar.
 
-No I/O, no session writes. Both builders share the model/usage/cost field
+No I/O, no conversation writes. Both builders share the model/usage/cost field
 rules below; each keeps its own key set and insertion order."""
 from __future__ import annotations
-
-from typing import TYPE_CHECKING
 
 from thyca.core.protocol import Message, ToolResult
 from thyca.llms.pricing import cost_for
 
 from .stage import Stage
-
-if TYPE_CHECKING:
-    from thyca.configs import Config
 
 
 def reasoning(stage: Stage) -> str | None:
@@ -88,25 +83,10 @@ def assistant_meta(stage: Stage, *, kind: str = "llm") -> dict:
     return meta
 
 
-def naming_meta(reply: object, latency_ms: int, cfg: Config) -> dict:
-    """Meta for the naming sidecar record: same model/usage/cost rules."""
-    usage = _usage_copy(reply)
-    model = _clean_model(getattr(reply, "model", None) or cfg.provider.model or "")
-    meta: dict = {"kind": "naming", "latency_ms": max(0, latency_ms)}
-    if model is not None:
-        meta["model"] = model
-    if usage is not None:
-        meta["usage"] = usage
-    price = _priced_cost(model, usage, cfg.effective_pricing() or None)
-    if price is not None:
-        meta["cost_usd"] = price
-    return meta
-
-
 def compaction_meta(
     reply: object, latency_ms: int, model: str | None, pricing: dict | None
 ) -> dict:
-    """Meta for the compaction sidecar record: naming's cost rules.
+    """Meta for the compaction sidecar record: same model/usage/cost rules.
 
     Takes model/pricing directly (the agent loop carries those, not a
     full Config) so auto and manual paths build the same record.

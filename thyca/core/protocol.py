@@ -1,6 +1,6 @@
 """Canonical wire types: Message, ToolCall (and ToolResult alias).
 
-Session depends on this module (TASK-309a). No external dependencies.
+ConversationRuntime depends on this module (TASK-309a). No external dependencies.
 """
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ def truncate_to_cap(raw: bytes, cap: int) -> tuple[bytes, bool]:
 
 
 def estimate_tokens(text: str) -> int:
-    """Shared char/4 token heuristic for session compaction + memory chunking."""
+    """Shared char/4 token heuristic for conversation compaction + memory chunking."""
     return (len(text) + 3) // 4
 
 # ts format YYYY-MM-DDTHH:mm:ssZ strict UTC
@@ -117,8 +117,8 @@ class ToolCall:
         )
 
 
-# ToolResult is not a separate wire type in session JSONL, but useful alias.
-# Session stores tool results as Message(role="tool", tool_call_id=..., content=...).
+# ToolResult is not a separate wire type in conversation JSONL, but useful alias.
+# ConversationRuntime stores tool results as Message(role="tool", tool_call_id=..., content=...).
 @dataclass(frozen=True)
 class ToolResult:
     tool_call_id: str

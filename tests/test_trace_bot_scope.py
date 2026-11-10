@@ -9,8 +9,8 @@ import pytest
 
 from thyca.core.protocol import Message
 from thyca.serve import trace_api
-from thyca.serve.trace import aggregate, turns_from_session
-from thyca.conversations.runtime import Session
+from thyca.serve.trace import aggregate, turns_from_conversation
+from thyca.conversations.runtime import ConversationRuntime
 
 
 TS = "2026-10-24T10:00:00Z"
@@ -30,13 +30,13 @@ def _reply(bot: str | None, prompt: int, cached: int, completion: int,
     return Message(role="assistant", content=f"reply from {bot}", ts=TS, meta=meta)
 
 
-def _session(sid: str, messages: list[Message], *, dm: str | None = None) -> Session:
-    return Session(sid, Path("/tmp") / f"{sid}.jsonl", messages,
-                   title=sid, bots=["thyca", "coder", "idle"] if dm is None else [dm], dm_bot=dm)
+def _conversation(sid: str, messages: list[Message], *, dm: str | None = None) -> ConversationRuntime:
+    return ConversationRuntime(sid, Path("/tmp") / f"{sid}.jsonl", messages,
+                   bots=["thyca", "coder", "idle"] if dm is None else [dm], dm_bot=dm)
 
 
 def _turns():
-    group = turns_from_session(_session("group", [
+    group = turns_from_conversation(_conversation("group", [
         Message(role="user", content="group question", ts=TS),
         _reply("thyca", 100, 20, 10, 0.02, model="root-model", requests=2, tools=1, latency=100),
         _reply("coder", 30, 5, 6, 0.0, requests=2, tools=3, latency=30),
@@ -44,11 +44,11 @@ def _turns():
         Message(role="user", content="root only", ts=TS),
         _reply("thyca", 40, 4, 5, 0.01, model="root-model", latency=50),
     ]))
-    dm = turns_from_session(_session("private", [
+    dm = turns_from_conversation(_conversation("private", [
         Message(role="user", content="private", ts=TS),
         _reply("coder", 8, 1, 2, None),
     ], dm="coder"))
-    unknown = turns_from_session(_session("unattributed", [
+    unknown = turns_from_conversation(_conversation("unattributed", [
         Message(role="user", content="unknown", ts=TS),
         _reply(None, 2, 0, 1, 0.004),
     ]))
@@ -88,7 +88,7 @@ def test_stats_and_list_share_exact_scoping_and_paging(monkeypatch):
     own = trace_api.trace_stats_payload(None, "bot_id=coder")
     total = own["totals"]
     assert total["turns"] == 2
-    assert total["sessions"] == 2
+    assert total["conversations"] == 2
     assert total["requests"] == 4
     assert total["tool_calls"] == 3
     assert total["total_tokens"] == 70
@@ -99,7 +99,7 @@ def test_stats_and_list_share_exact_scoping_and_paging(monkeypatch):
     assert total["priced_turns"] == 1  # recorded-known, not full pricing coverage
     assert {entry["bot_id"] for entry in own["by_bot"]} == {"coder"}
     assert own["by_bot"][0]["turns"] == 2
-    assert own["by_bot"][0]["sessions"] == 2
+    assert own["by_bot"][0]["conversations"] == 2
     model = own["by_model"][0]
     assert model["model"] == "coder-model"
     assert model["total_tokens"] == 70
@@ -118,31 +118,31 @@ def test_stats_and_list_share_exact_scoping_and_paging(monkeypatch):
     assert trace_api.trace_list_payload(None, "bot_id=coder&status=failed")["total"] == 0
 
 
-def test_overview_session_counts_do_not_sum_bot_participations():
+def test_overview_conversation_counts_do_not_sum_bot_participations():
     data = aggregate(_turns())
-    assert data["totals"]["sessions"] == 3
+    assert data["totals"]["conversations"] == 3
     assert data["totals"]["turns"] == 4
-    assert sum(row["sessions"] for row in data["by_bot"]) == 4
+    assert sum(row["conversations"] for row in data["by_bot"]) == 4
     assert sum(row["turns"] for row in data["by_bot"]) == 5
     assert sum(row["requests"] for row in data["by_bot"]) == data["totals"]["requests"]
     assert sum(row["total_tokens"] for row in data["by_bot"]) == data["totals"]["total_tokens"]
     assert sum(row["cost_usd"] or 0 for row in data["by_bot"]) == pytest.approx(data["totals"]["cost_usd"])
 
 
-def test_duplicate_breakdown_parts_count_turn_and_session_once():
+def test_duplicate_breakdown_parts_count_turn_and_conversation_once():
     turn = _turns()[0]
     coder = next(part for part in turn.bot_breakdown if part["bot_id"] == "coder")
     split = replace(turn, bot_breakdown=[dict(coder), dict(coder)])
     data = aggregate([split])
     own = data["by_bot"][0]
     assert own["turns"] == 1
-    assert own["sessions"] == 1
+    assert own["conversations"] == 1
     assert own["priced_turns"] == 1
     assert own["requests"] == coder["requests"] * 2
 
 
 def test_legacy_unattributed_dm_is_not_guessed_from_owner(monkeypatch):
-    turn = turns_from_session(_session("old-private", [
+    turn = turns_from_conversation(_conversation("old-private", [
         Message(role="user", content="old", ts=TS),
         _reply(None, 2, 0, 1, None),
     ], dm="coder"))[0]
@@ -175,24 +175,24 @@ def test_scope_does_not_change_full_detail_or_shared_status(monkeypatch):
 def test_source_http_scopes_shared_and_private_work_without_writes(tmp_path):
     """Exercise store doors -> scan -> HTTP stats/list -> full detail."""
     from test_serve_trace import _chat, _json, _start, _stop
-    from thyca.conversations.runtime import SessionManager
+    from thyca.conversations.runtime import ConversationManager
 
     chat = _chat(tmp_path)
-    manager = SessionManager(tmp_path / "sessions")
+    manager = ConversationManager(tmp_path / "sessions")
     expected = _turns()
     ids = {}
     try:
         for source_id in ("group", "private", "unattributed"):
-            source_turns = [row for row in expected if row.session_id == source_id]
+            source_turns = [row for row in expected if row.conversation_id == source_id]
             if source_id == "private":
                 # The coder DM door (door id is the bot id itself).
-                session = manager.ensure_dm("coder")
+                conversation = manager.ensure_dm("coder")
             else:
-                session = manager.create()
+                conversation = manager.create()
                 manager.store.append_bots(
-                    session.path, list(source_turns[0].session_bots))
-                manager.load(session.id)
-            ids[source_id] = session.id
+                    conversation.path, list(source_turns[0].conversation_bots))
+                manager.load(conversation.conversation_id)
+            ids[source_id] = conversation.conversation_id
             for turn in source_turns:
                 for message in turn.messages:
                     # Assistant rows are recorded by their bot (an
@@ -212,11 +212,11 @@ def test_source_http_scopes_shared_and_private_work_without_writes(tmp_path):
         httpd, thread = _start(tmp_path, chat)
         try:
             overview = _json(httpd, "/api/traces/stats")
-            assert overview["totals"]["sessions"] == 3
+            assert overview["totals"]["conversations"] == 3
             assert overview["totals"]["turns"] == 4
             assert overview["totals"]["total_tokens"] == 228
             own = _json(httpd, "/api/traces/stats?bot_id=coder")
-            assert own["totals"]["sessions"] == 2
+            assert own["totals"]["conversations"] == 2
             assert own["totals"]["turns"] == 2
             assert own["totals"]["total_tokens"] == 70
             assert own["totals"]["requests"] == 4
@@ -243,7 +243,7 @@ def test_source_http_scopes_shared_and_private_work_without_writes(tmp_path):
 def test_empty_scoped_stats_keep_cost_unknown(monkeypatch):
     monkeypatch.setattr(trace_api, "collect_turns", lambda _chat: [])
     data = trace_api.trace_stats_payload(None, "bot_id=coder")
-    assert data["totals"]["sessions"] == data["totals"]["turns"] == 0
+    assert data["totals"]["conversations"] == data["totals"]["turns"] == 0
     assert data["totals"]["priced_turns"] == 0
     assert data["totals"]["cost_usd"] is None
     assert data["by_day"] == data["by_bot"] == data["by_model"] == []

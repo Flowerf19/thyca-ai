@@ -1,6 +1,6 @@
 """Compaction summary prompt policy: build summarizer input, accept output.
 
-Mirrors ``title.py``: the packaged ``compaction.md`` is the only
+The packaged ``compaction.md`` is the only
 instruction source (missing/blank means skip the model call and let the
 caller fall back to the rule-based excerpt). Summarizer input is
 user/assistant text plus tool names only — raw tool bodies are bulky,

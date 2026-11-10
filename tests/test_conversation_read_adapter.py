@@ -21,8 +21,8 @@ from thyca.conversations.store import (
 from thyca.conversations.store.read_adapter import _MAX_ASSEMBLY_RESYNCS
 from thyca.core.conversation import ConversationRef
 from thyca.core.protocol import Message
-from thyca.conversations.runtime import Session
-from thyca.conversations.runtime.wire import session_detail, session_summary, session_title
+from thyca.conversations.runtime import ConversationRuntime
+from thyca.conversations.runtime.wire import conversation_detail, conversation_summary
 
 
 def _root_id(root: Path) -> str:
@@ -52,11 +52,9 @@ def _seed_dm(root: Path, bot: str = 'coder') -> ConversationRef:
     return _dm(root, bot)
 
 
-def _wire_session(ref: ConversationRef, messages: list[Message],
-                    title=None, source=None, attempted: bool = False) -> Session:
-    return Session(
+def _wire_conversation(ref: ConversationRef, messages: list[Message]) -> ConversationRuntime:
+    return ConversationRuntime(
         ref.id, Path(f'store://{ref.kind}/{ref.id}'), list(messages),
-        title=title, title_source=source, naming_attempted=attempted,
         bots=[ref.id] if ref.kind == 'dm' else ['coder', 'thyca'],
         dm_bot=ref.id if ref.kind == 'dm' else None,
     )
@@ -92,7 +90,7 @@ def test_list_is_paginated_newest_first_and_includes_empty(tmp_path: Path) -> No
     # Empty conversations are listed with their creation stamp and metadata.
     empty = next(row for row in items2 + items if row.ref == second)
     assert empty.participants == ('bob',)
-    assert empty.created_at and empty.title is None
+    assert empty.created_at
 
 
 def test_list_rejects_bad_pagination_before_touching_disk(tmp_path: Path) -> None:
@@ -124,7 +122,7 @@ def test_assembly_across_pages_matches_single_read(tmp_path: Path) -> None:
         assembled = assemble_history(
             tmp_path, ref, 'coder', intent=_intent(), page_limit=page_limit)
         assert [m.content for m in assembled.messages] == [m.content for m in one_shot]
-        assert assembled.title is None and assembled.participants == ('coder',)
+        assert assembled.participants == ('coder',)
 
 
 def test_assembly_requires_intent_and_valid_page_limit(tmp_path: Path) -> None:
@@ -165,12 +163,12 @@ def test_summary_matches_wire_shape_and_values(tmp_path: Path) -> None:
     created = next(row.created_at for row in listing if row.ref == ref)
 
     summary = summary_for(conversation, created)
-    legacy = session_summary(_wire_session(ref, list(conversation.messages)))
+    legacy = conversation_summary(_wire_conversation(ref, list(conversation.messages)))
     assert set(summary) == set(legacy)
-    assert summary == {**legacy, 'id': ref.id, 'window_id': ref.id}
+    assert summary == {**legacy, 'conversation_id': ref.id, 'window_id': ref.id}
 
     detail = detail_for(conversation, cfg)
-    legacy_detail = session_detail(_wire_session(ref, list(conversation.messages)), cfg)
+    legacy_detail = conversation_detail(_wire_conversation(ref, list(conversation.messages)), cfg)
     assert set(detail) == set(legacy_detail)
     assert detail['messages'] == legacy_detail['messages']
     assert detail['context'] == legacy_detail['context']
@@ -191,7 +189,7 @@ def test_detail_never_carries_tool_calls_or_reasoning(tmp_path: Path) -> None:
     assert all('tool_call_id' not in item for item in detail['messages'])
 
 
-def test_empty_conversation_uses_created_at_and_blank_title(tmp_path: Path) -> None:
+def test_empty_conversation_uses_created_at_and_has_no_title(tmp_path: Path) -> None:
     ref = _seed_dm(tmp_path)
     listing, _ = AdminStore(tmp_path).list()
     created = next(row.created_at for row in listing if row.ref == ref)
@@ -200,31 +198,21 @@ def test_empty_conversation_uses_created_at_and_blank_title(tmp_path: Path) -> N
     summary = summary_for(conversation, created)
     assert summary['updated_at'] == created
     assert summary['message_count'] == 0 and summary['turns'] == 0
-    assert summary['title'] == 'Phiên trống'
+    # Identity carries the display: kind/dm stay present on an empty door.
+    assert 'title' not in summary
+    assert summary['kind'] == 'dm' and summary['dm'] == 'coder'
     with pytest.raises(ValueError):
         summary_for(conversation, 'not-a-ts')
 
 
-def test_title_read_semantics_match_wire(tmp_path: Path) -> None:
+def test_set_metadata_updates_participants_only(tmp_path: Path) -> None:
+    _init(tmp_path)
     admin = AdminStore(tmp_path)
-    ref = _seed_dm(tmp_path)
-    agents = AgentStore(tmp_path)
-    agents.append(ref, 'coder', _msg('user', 'hello world', 9))
-    # User titles are verbatim; agent echo titles are rejected by display rules.
-    admin.set_metadata(ref, title='Kế hoạch tuần này', title_source='user',
-                       naming_attempted=True, participants=['coder'])
-    conversation = assemble_history(tmp_path, ref, 'coder', intent=_intent())
-    listing, _ = admin.list()
-    created = next(row.created_at for row in listing if row.ref == ref)
-    assert summary_for(conversation, created)['title'] == 'Kế hoạch tuần này'
-    assert session_title(_wire_session(ref, list(conversation.messages),
-                                         'Kế hoạch tuần này', 'user', True)) == 'Kế hoạch tuần này'
-
-    admin.set_metadata(ref, title='hello world', title_source='agent',
-                       naming_attempted=True, participants=['coder'])
-    echo = assemble_history(tmp_path, ref, 'coder', intent=_intent())
-    assert summary_for(echo, created)['title'] == session_title(
-        _wire_session(ref, list(echo.messages), 'hello world', 'agent', True))
+    group = admin.create_group(['coder', 'thyca']).ref
+    conversation = admin.set_metadata(group, participants=['coder'])
+    assert conversation.participants == ('coder',)
+    listed, _ = admin.list()
+    assert next(row.participants for row in listed if row.ref == group) == ('coder',)
 
 
 def test_prototype_rejects_content_none(tmp_path: Path) -> None:
@@ -236,7 +224,7 @@ def test_prototype_rejects_content_none(tmp_path: Path) -> None:
 
 # ---------- trace payloads: tool_calls only in Trace ----------
 
-def test_trace_lists_match_turns_from_session(tmp_path: Path) -> None:
+def test_trace_lists_match_turns_from_conversation(tmp_path: Path) -> None:
     ref = _seed_dm(tmp_path)
     agents = AgentStore(tmp_path)
     agents.append(ref, 'coder', _msg('user', 'q1', 10))
@@ -244,7 +232,7 @@ def test_trace_lists_match_turns_from_session(tmp_path: Path) -> None:
     agents.append(ref, 'coder', _msg('user', 'q2', 12))
     conversation = assemble_history(tmp_path, ref, 'coder', intent=_intent())
     turns = trace_turns_for(conversation)
-    legacy = session_summary(_wire_session(ref, list(conversation.messages)))
+    legacy = conversation_summary(_wire_conversation(ref, list(conversation.messages)))
     assert legacy['turns'] == len(turns) == 2
     payloads = [t.to_payload() for t in turns]
     assert all(set(p) == set(payloads[0]) for p in payloads)
@@ -266,7 +254,7 @@ def test_trace_detail_carries_tool_shape_while_detail_does_not(tmp_path: Path) -
     trace = trace_detail_for(conversation, 0)
     assert trace['kind'] == 'dm'
     assert trace['bot_id'] == ref.id
-    assert 'session_id' not in trace
+    assert 'conversation_id' not in trace
     assert all('tool_calls' in item for item in trace['messages'])
     assert all('tool_call_id' in item for item in trace['messages'])
     assert all('meta' in item for item in trace['messages'])

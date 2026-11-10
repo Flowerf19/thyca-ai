@@ -11,7 +11,7 @@ Mỗi mục có đủ bốn phần: **mô tả**, **tác động**, **quyết đ
   production nào truyền `actor` đáng tin cậy, chưa có lifecycle/bot-ID nào gọi
   `bootstrap_initial_dm`. Hai lớp dùng cùng `<root>/conversations.db`; việc tách
   lớp không tự chứng minh cách ly DB vật lý hoặc xác thực `actor`. `ChatApp` hiện
-  vẫn dùng `SessionManager`.
+  dùng `ConversationManager`.
 - **Tác động:** Bảo vệ ở lớp SQLite chưa có hiệu lực với luồng ứng dụng hiện tại.
 - **Quyết định/hướng xử lý:** Khi nối runtime, phải ràng buộc actor với nguồn đáng
   tin, phân quyền agent/admin và chuyển hoặc chặn các legacy writer theo plan
@@ -21,7 +21,7 @@ Mỗi mục có đủ bốn phần: **mô tả**, **tác động**, **quyết đ
   actor lấy từ nguồn đáng tin cậy phía server, và toàn bộ đường ghi
   JSONL công khai cùng fixture scaffolding đã bị xóa. Bằng chứng:
   `thyca/conversations/store/` (`AdminStore`/`AgentStore`, schema v2, WAL),
-  guard `require_no_legacy_sessions` trong
+  guard `require_no_legacy_conversations` trong
   `thyca/conversations/store/runtime.py` được `ChatApp` gọi lúc dựng app.
   Gate toàn cục xanh (xem mục 6).
 
@@ -48,7 +48,7 @@ Mỗi mục có đủ bốn phần: **mô tả**, **tác động**, **quyết đ
   `<root>/conversations.db`, WAL, append-only cho agent). Không migration dữ liệu
   cũ (data hiện tại được xác nhận không có giá trị).
 - **Trạng thái:** Đã đóng (2026-11-06): SQLite tại `conversations.db` là nơi lưu
-  hội thoại công khai duy nhất; `SessionStore`/`SessionManager` chỉ còn là
+  hội thoại công khai duy nhất; `ConversationStore`/`ConversationManager` chỉ còn là
   lớp điều phối trên store (fail-closed khi root chưa khởi tạo, không còn
   nhánh đọc/ghi file JSONL công khai). Bằng chứng: route
   `/api/bots/<bot_id>/dm/...`, `/api/groups/<group_id>/...` và
@@ -182,18 +182,23 @@ Mỗi mục có đủ bốn phần: **mô tả**, **tác động**, **quyết đ
   thao tác này ra ngoài `ChatApp`. Không tự đặt lại trên dữ liệu thật khi
   chưa được phép rõ ràng.
 - **Trạng thái:** Mở. Bằng chứng hiện tại: guard
-  `require_no_legacy_sessions` trong `thyca/conversations/store/runtime.py`
+  `require_no_legacy_conversations` trong `thyca/conversations/store/runtime.py`
   do `ChatApp` gọi. Chưa có issuer ngoài luồng đó.
 
-## 8. Bốn class Session* chưa đổi tên
+## 8. Bốn class Session* đã đổi tên
 
-- **Mô tả:** Bốn class `Session`, `SessionManager`, `SessionStore`,
-  `SessionCompactor` trong `thyca/conversations/runtime/` giữ nguyên tên ở
-  bước hard-cut này.
-- **Tác động:** Tên cũ dễ gây nhầm với khái niệm hội thoại công khai mới.
-- **Quyết định/hướng xử lý:** Đổi tên ở một bước riêng về sau. Bước đó phải
-  rà mọi call site và test liên quan.
-- **Trạng thái:** Mở. Đây là việc hoãn có chủ đích, không phải lỗi.
+- **Mô tả:** Bốn class runtime đã đổi sang `ConversationRuntime`,
+  `ConversationManager`, `ConversationStore`, `ConversationCompactor`
+  (full cutover, không còn alias cũ). Runtime view đặt tên
+  `ConversationRuntime` để không đụng store `Conversation` trong
+  `thyca/conversations/store/contracts.py`. Field `session_id` đã thành
+  `conversation_id` ở code hội thoại, wire nội bộ `id` thành
+  `conversation_id`; tên error đổi sang `ConversationError`/
+  `ConversationNotFound`/`ConversationBusy`/`ConversationCorrupt`.
+  `internal_session_id` (canonical workspace) đổi sang
+  `internal_conversation_id` (registry cũ dùng key `session` là mất dữ liệu).
+- **Trạng thái:** Đã đóng (2026-11-10): đổi tên cụm hoàn tất theo phạm vi
+  đã duyệt. Lá bộ nhớ đã đổi theo ở mục 9.
 
 ## 9. Lá bộ nhớ còn dùng tên session_id
 
@@ -202,8 +207,12 @@ Mỗi mục có đủ bốn phần: **mô tả**, **tác động**, **quyết đ
 - **Tác động:** Tên trường lệch miền dễ gây nhầm khi đọc mã và dữ liệu.
 - **Quyết định/hướng xử lý:** Đổi tên ở một bước riêng về sau. Bước đó phải
   xử lý cả đường đọc dữ liệu đã ghi.
-- **Trạng thái:** Mở. Đây là việc hoãn có chủ đích, tách khỏi đợt hard-cut
-  hội thoại.
+- **Trạng thái:** Đã đóng (2026-11-10): lá bộ nhớ đã đổi sang `memory_id`
+  (cũng là `latest_memory_id` ở catalog task). SQLite lên schema v9;
+  migration v8→v9 dùng `RENAME COLUMN` nên hàng chunk và bộ đếm
+  get/search được giữ. Markdown không đổi (đã chỉ lưu `id` 8-hex). Tham
+  số provenance hội thoại ở hot snapshot đổi sang `conversation_id` để
+  giữ hai miền riêng.
 
 ## 10. Cách ly private chưa đủ: bash và prefix vô chủ (mở, slice 2 chưa sẵn sàng)
 

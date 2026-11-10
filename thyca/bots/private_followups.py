@@ -22,13 +22,13 @@ from thyca.configs import atomic_write_text
 from thyca.core.channel import WORK_REF_RE
 from thyca.core.protocol import parse_ts
 from thyca.memories.heading import format_ts, utc_now
-from thyca.conversations.runtime.store import SESSION_ID_PATTERN
+from thyca.conversations.runtime.store import CONVERSATION_ID_PATTERN
 
 NONTERMINAL = ("open", "waiting_private", "received")
 TERMINAL = ("resumed", "done", "cancelled", "expired")
 STATES = NONTERMINAL + TERMINAL
 OUTCOMES = ("ready", "resume", "done", "cancel")
-SESSION_ID_RE = re.compile(SESSION_ID_PATTERN)
+CONVERSATION_ID_RE = re.compile(CONVERSATION_ID_PATTERN)
 PENDING_ID_RE = re.compile(r"pf-[0-9a-f]{12}")
 
 
@@ -56,9 +56,9 @@ def _check_text(value, name: str) -> str:
     return value
 
 
-def _check_session(value, name: str) -> str:
+def _check_conversation(value, name: str) -> str:
     value = _check_text(value, name)
-    if SESSION_ID_RE.fullmatch(value) is None:
+    if CONVERSATION_ID_RE.fullmatch(value) is None:
         raise PrivateFollowupError(f"invalid {name}")
     return value
 
@@ -130,9 +130,9 @@ class Pending:
             pending_id=_check_text(data.get("pending_id"), "pending_id"),
             bot_id=_check_text(data.get("bot_id"), "bot_id"),
             work_id=_check_text(data.get("work_id"), "work_id"),
-            origin_window=_check_session(
+            origin_window=_check_conversation(
                 data.get("origin_window"), "origin_window"),
-            dm_window=_check_session(data.get("dm_window"), "dm_window"),
+            dm_window=_check_conversation(data.get("dm_window"), "dm_window"),
             status=status,
             created_at=_check_text(data.get("created_at"), "created_at"),
             updated_at=_check_text(data.get("updated_at"), "updated_at"),
@@ -279,8 +279,8 @@ class PrivateFollowupStore:
         _check_bot(bot_id)
         if not isinstance(work_id, str) or not WORK_REF_RE.fullmatch(work_id):
             raise PrivateFollowupError(f"invalid work_id: {work_id!r}")
-        _check_session(origin_window, "origin_window")
-        _check_session(dm_window, "dm_window")
+        _check_conversation(origin_window, "origin_window")
+        _check_conversation(dm_window, "dm_window")
         _check_text(question, "question")
         if idempotency_key is not None:
             _check_text(idempotency_key, "idempotency_key")

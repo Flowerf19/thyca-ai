@@ -9,11 +9,12 @@ from thyca.core.protocol import Message, parse_ts, utc_now_ts
 from .agent import AgentStore
 from .contracts import (BootstrapResult, Conversation, ConversationListing, ConversationRef,
                         ConversationStoreError, DMBootstrapIntent, InitializationResult,
-                        RootInitializationIntent, _check_text, _decode_message,
+                        PruneResult, RootInitializationIntent, _check_text,
+                        _decode_message, _decode_metadata,
                         _encode_canonical_message, _encode_metadata, _local_error, _metadata,
                         _require_ref, _view, validate_metadata)
 from .database import (_ensure_door_ready, _ensure_root_ready, _read_door_row,
-                       _root_instance_id_from_conn, _transaction_context, open_existing_session)
+                       _root_instance_id_from_conn, _transaction_context, open_existing_conversation)
 from .lifecycle import _audit_in_transaction, audit_root, bootstrap_dm, initialize_root
 
 class _GroupIdCollision(Exception):
@@ -37,12 +38,12 @@ class AdminStore:
     def bootstrap_initial_dm(self, bot_id: str, *, intent: DMBootstrapIntent) -> BootstrapResult:
         return bootstrap_dm(self._root, bot_id, intent=intent)
 
-    def create_group(self, participants: list[str], *, title: str | None = None) -> Conversation:
-        metadata = _metadata(participants, title)
+    def create_group(self, participants: list[str]) -> Conversation:
+        metadata = _metadata(participants)
         # Validate all user-supplied data before filesystem access.
         ref = ConversationRef.new_group()
         validate_metadata(ref, metadata)
-        conn = open_existing_session(self._root, lock_mode='exclusive')
+        conn = open_existing_conversation(self._root, lock_mode='exclusive')
         try:
             with _transaction_context(conn, 'BEGIN IMMEDIATE'):
                 _ensure_root_ready(conn, _root_instance_id_from_conn(conn))
@@ -67,14 +68,12 @@ class AdminStore:
         finally:
             conn.close()
 
-    def set_metadata(self, ref: ConversationRef, *, title: str | None,
-                     title_source: str | None, naming_attempted: bool,
+    def set_metadata(self, ref: ConversationRef, *,
                      participants: list[str]) -> Conversation:
         _require_ref(ref)
-        metadata = {'title': title, 'title_source': title_source,
-                    'naming_attempted': naming_attempted, 'participants': participants}
+        metadata = {'participants': participants}
         validate_metadata(ref, metadata)
-        conn = open_existing_session(self._root, lock_mode='exclusive')
+        conn = open_existing_conversation(self._root, lock_mode='exclusive')
         try:
             with _transaction_context(conn, 'BEGIN IMMEDIATE'):
                 _ensure_root_ready(conn, _root_instance_id_from_conn(conn))
@@ -106,7 +105,7 @@ class AdminStore:
         ``created_at`` (the empty-conversation timestamp source); message
         bodies are never loaded here — callers assemble history through
         cursor-paged ``AgentStore.read``. Corrupt doors are skipped the way
-        legacy ``list_sessions`` skips unreadable files. Returns
+        legacy ``list_conversations`` skips unreadable files. Returns
         ``(items, has_more)``; the caller advances with ``offset + limit``.
         """
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
@@ -115,7 +114,7 @@ class AdminStore:
             raise ValueError('offset must be a non-negative int')
         from .contracts import MAX_PAGE_LIMIT
         limit = min(limit, MAX_PAGE_LIMIT)
-        conn = open_existing_session(self._root, lock_mode='shared')
+        conn = open_existing_conversation(self._root, lock_mode='shared')
         try:
             with _transaction_context(conn, 'BEGIN'):
                 _ensure_root_ready(conn, _root_instance_id_from_conn(conn))
@@ -146,8 +145,7 @@ class AdminStore:
             if not isinstance(created_at, str) or not created_at:
                 continue
             items.append(ConversationListing(
-                ref, metadata['title'], metadata['title_source'],
-                metadata['naming_attempted'], tuple(metadata['participants']),
+                ref, tuple(metadata['participants']),
                 created_at,
             ))
         return items, has_more
@@ -165,7 +163,7 @@ class AdminStore:
         (``DM already known``) instead of silently minting a replacement DM.
         """
         _require_ref(ref)
-        conn = open_existing_session(self._root, lock_mode='exclusive')
+        conn = open_existing_conversation(self._root, lock_mode='exclusive')
         try:
             with _transaction_context(conn, 'BEGIN IMMEDIATE'):
                 _ensure_root_ready(conn, _root_instance_id_from_conn(conn))
@@ -191,9 +189,92 @@ class AdminStore:
         finally:
             conn.close()
 
+    # Drop one bot from every group roster in one transaction.
+    def prune_bot_from_groups(self, bot_id: str) -> PruneResult:
+        # One all-or-nothing prune: every group door is decoded strictly, a
+        # group left empty dissolves in the same transaction, and DM doors
+        # are never touched. Generation is left unchanged.
+        ConversationRef.dm(bot_id)
+        conn = open_existing_conversation(self._root, lock_mode='exclusive')
+        try:
+            with _transaction_context(conn, 'BEGIN IMMEDIATE'):
+                _ensure_root_ready(conn, _root_instance_id_from_conn(conn))
+                try:
+                    rows = conn.execute(
+                        "SELECT id,metadata FROM conversations "
+                        "WHERE kind='group' AND lifecycle_state='ready' "
+                        "ORDER BY id ASC",
+                    ).fetchall()
+                except sqlite3.Error as exc:
+                    raise ConversationStoreError() from exc
+                pending: list[tuple[str, dict]] = []
+                dissolved: list[str] = []
+                for identifier, raw_metadata in rows:
+                    try:
+                        ref = ConversationRef('group', identifier)
+                    except ValueError as exc:
+                        raise ConversationStoreError() from exc
+                    try:
+                        metadata = _decode_metadata(raw_metadata)
+                        validate_metadata(ref, metadata)
+                    except (ConversationStoreError, ValueError) as exc:
+                        raise ConversationStoreError() from exc
+                    participants = list(metadata['participants'])
+                    if bot_id not in participants:
+                        continue
+                    updated = {**metadata, 'participants': [p for p in participants if p != bot_id]}
+                    if not updated['participants']:
+                        dissolved.append(identifier)
+                    else:
+                        pending.append((identifier, updated))
+                pruned: list[str] = []
+                for identifier, updated in pending:
+                    ref = ConversationRef('group', identifier)
+                    validate_metadata(ref, updated)
+                    try:
+                        cur = conn.execute(
+                            'UPDATE conversations SET metadata=? WHERE kind=? AND id=?',
+                            (_encode_metadata(updated), 'group', identifier),
+                        )
+                        if cur.rowcount != 1:
+                            raise _local_error(ref)
+                    except sqlite3.Error as exc:
+                        raise _local_error(ref) from exc
+                    pruned.append(identifier)
+                if dissolved:
+                    # Delete each dissolved door and its messages in this
+                    # transaction, like AdminStore.delete: drop the
+                    # append-only trigger, remove messages before the door
+                    # (foreign key), then restore the trigger.
+                    try:
+                        conn.execute('DROP TRIGGER no_delete_messages')
+                        for identifier in dissolved:
+                            ref = ConversationRef('group', identifier)
+                            conn.execute(
+                                'DELETE FROM messages WHERE kind=? AND id=?',
+                                ('group', identifier),
+                            )
+                            cur = conn.execute(
+                                'DELETE FROM conversations WHERE kind=? AND id=?',
+                                ('group', identifier),
+                            )
+                            if cur.rowcount != 1:
+                                raise _local_error(ref)
+                        conn.execute(
+                            "CREATE TRIGGER no_delete_messages BEFORE DELETE ON messages BEGIN "
+                            "SELECT RAISE(ABORT, 'messages are append-only'); END"
+                        )
+                    except ConversationStoreError:
+                        raise
+                    except (sqlite3.Error, ValueError) as exc:
+                        raise ConversationStoreError() from exc
+                return PruneResult(tuple(pruned), tuple(dissolved))
+        finally:
+            conn.close()
+
     def purge_before(self, cutoff: str) -> int:
         parse_ts(cutoff)
-        conn = open_existing_session(self._root, lock_mode='exclusive')
+        conn = open_existing_conversation(self._root, lock_mode='exclusive')
         try:
             with _transaction_context(conn, 'BEGIN IMMEDIATE'):
                 _audit_in_transaction(conn, full=False)
@@ -228,7 +309,7 @@ class AdminStore:
         if not callable(summarize):
             raise ValueError('summarize must be callable')
         # Snapshot phase: lock and read transaction close before decoding or callback.
-        conn = open_existing_session(self._root, lock_mode='shared')
+        conn = open_existing_conversation(self._root, lock_mode='shared')
         try:
             with _transaction_context(conn, 'BEGIN'):
                 _ensure_root_ready(conn, _root_instance_id_from_conn(conn))
@@ -257,7 +338,7 @@ class AdminStore:
 
         # Final phase permits only a pure concurrent append suffix. Purge or
         # another compaction changes generation and conflicts without retry.
-        conn = open_existing_session(self._root, lock_mode='exclusive')
+        conn = open_existing_conversation(self._root, lock_mode='exclusive')
         try:
             with _transaction_context(conn, 'BEGIN IMMEDIATE'):
                 _ensure_root_ready(conn, _root_instance_id_from_conn(conn))
@@ -303,7 +384,7 @@ class AdminStore:
             conn.close()
 
     def vacuum(self) -> None:
-        conn = open_existing_session(self._root, lock_mode='exclusive')
+        conn = open_existing_conversation(self._root, lock_mode='exclusive')
         try:
             with _transaction_context(conn, 'BEGIN'):
                 _audit_in_transaction(conn, full=True)

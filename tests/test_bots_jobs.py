@@ -108,7 +108,7 @@ def test_extract_failure_is_empty_not_loud() -> None:
 def test_transcript_tail_skips_sidecars() -> None:
     messages = [
         Message(role="assistant", content="x", ts="2026-08-01T10:00:00Z",
-                meta={"kind": "naming"}),
+                meta={"kind": "compaction"}),
         Message(role="user", content="remember this", ts="2026-08-01T10:01:00Z"),
     ]
     tail = jobs.transcript_tail(messages)
@@ -116,11 +116,22 @@ def test_transcript_tail_skips_sidecars() -> None:
     assert tail.count("[assistant") == 0
 
 
+def test_transcript_tail_treats_naming_as_ordinary_text() -> None:
+    messages = [
+        Message(role="assistant", content="x", ts="2026-08-01T10:00:00Z",
+                meta={"kind": "naming"}),
+        Message(role="user", content="remember this", ts="2026-08-01T10:01:00Z"),
+    ]
+    tail = jobs.transcript_tail(messages)
+    assert "remember this" in tail
+    assert tail.count("[assistant") == 1
+
+
 # --- Phase 1C: task/habit linkage -------------------------------------------
 
 def _open_catalog():
     return [{"task_id": "task-aaaaaaaa", "title": "Fix sink",
-             "latest_session_id": "2026-09-01#deadbeef", "last_day": "2026-09-01"}]
+             "latest_memory_id": "2026-09-01#deadbeef", "last_day": "2026-09-01"}]
 
 
 def test_parse_extraction_keeps_all_six_side_fields() -> None:
@@ -196,7 +207,7 @@ def test_apply_continues_open_task_with_latest_cont(tmp_path: Path) -> None:
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     first = facade.remember("step one", "alpha", now=datetime(2026, 9, 1, 12, tzinfo=UTC))
     catalog = [{"task_id": "task-aaaaaaaa", "title": "Goal",
-                "latest_session_id": first, "last_day": "2026-09-01"}]
+                "latest_memory_id": first, "last_day": "2026-09-01"}]
     out = jobs.apply_extracted(
         facade,
         [jobs.ExtractedMemory(topic="step two", summary="beta",
@@ -257,7 +268,7 @@ def test_apply_done_status_and_habit_land_in_store(tmp_path: Path) -> None:
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     first = facade.remember("step one", "alpha", now=datetime(2026, 9, 1, 12, tzinfo=UTC))
     catalog = [{"task_id": "task-aaaaaaaa", "title": "Goal",
-                "latest_session_id": first, "last_day": "2026-09-01"}]
+                "latest_memory_id": first, "last_day": "2026-09-01"}]
     out = jobs.apply_extracted(
         facade,
         [jobs.ExtractedMemory(topic="step two", summary="beta",

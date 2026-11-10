@@ -71,13 +71,13 @@ class BotWorkspace:
         self,
         window: WindowRef,
         *,
-        internal_session_id: str | None = None,
+        internal_conversation_id: str | None = None,
         cursor: tuple[int, str] | None = None,
     ) -> WindowBinding:
         return self._store.bind_window(
             self.bot_id,
             window,
-            internal_session_id=internal_session_id,
+            internal_conversation_id=internal_conversation_id,
             cursor=cursor,
         )
 

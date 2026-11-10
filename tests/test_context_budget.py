@@ -73,7 +73,7 @@ def _write_pair(
         ),
         Message(
             role="tool",
-            content='{"session_id": "2026-10-19#abc", "task_id": "task-1234abcd"}',
+            content='{"conversation_id": "2026-10-19#abc", "task_id": "task-1234abcd"}',
             tool_call_id="call-1",
             meta={"is_error": True} if is_error else None,
         ),

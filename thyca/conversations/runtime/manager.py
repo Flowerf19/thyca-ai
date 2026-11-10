@@ -7,18 +7,10 @@ from pathlib import Path
 from thyca.configs import DEFAULT_TIMELINE_TIMEZONE, LimitsCfg
 from thyca.core.protocol import Message
 
-from .compaction import SessionCompactor
-from .errors import SessionBusy, SessionError
-from .models import Session
-from .store import SessionStore
-from .title import (
-    is_blank,
-    mark_naming_attempted,
-    refresh_title,
-    rename_session,
-    set_title,
-    set_title_if_missing,
-)
+from .compaction import ConversationCompactor
+from .errors import ConversationBusy, ConversationError
+from .models import ConversationRuntime, is_blank
+from .store import ConversationStore
 
 
 def _last_user_index(messages: list[Message]) -> int | None:
@@ -35,16 +27,16 @@ def _last_user_index(messages: list[Message]) -> int | None:
 def _manager_runtime_root(manager) -> Path | None:
     """Runtime store root for this manager, or None for legacy/canonical."""
     try:
-        from thyca.bots.timeline import CanonicalSessionStore
+        from thyca.bots.timeline import CanonicalConversationStore
 
-        if isinstance(getattr(manager, "store", None), CanonicalSessionStore):
+        if isinstance(getattr(manager, "store", None), CanonicalConversationStore):
             return None
     except Exception:
         pass
     try:
         from thyca.conversations.runtime.store import _runtime_root_for
 
-        return _runtime_root_for(manager.sessions_dir)
+        return _runtime_root_for(manager.conversations_dir)
     except Exception:
         return None
 
@@ -52,48 +44,48 @@ def _manager_runtime_root(manager) -> Path | None:
 # Report whether this manager wraps the canonical timeline store.
 def _is_canonical_store(manager) -> bool:
     try:
-        from thyca.bots.timeline import CanonicalSessionStore
+        from thyca.bots.timeline import CanonicalConversationStore
 
-        return isinstance(getattr(manager, "store", None), CanonicalSessionStore)
+        return isinstance(getattr(manager, "store", None), CanonicalConversationStore)
     except Exception:
         return False
 
 
-class SessionManager:
+class ConversationManager:
     """Orchestrate store + compactor behind a single-process lock."""
 
-    # Build a manager over an explicit sessions directory or store.
+    # Build a manager over an explicit conversations directory or store.
     def __init__(
         self,
-        sessions_dir: Path | None = None,
+        conversations_dir: Path | None = None,
         limits: LimitsCfg | None = None,
         timezone_name: str | None = None,
-        store: SessionStore | None = None,
-        compactor: SessionCompactor | None = None,
+        store: ConversationStore | None = None,
+        compactor: ConversationCompactor | None = None,
     ) -> None:
         self.limits = limits or LimitsCfg()
         self.timezone_name = timezone_name or DEFAULT_TIMELINE_TIMEZONE
-        if store is None and sessions_dir is None:
-            raise SessionError("sessions_dir or store is required")
-        self.store = store or SessionStore(Path(sessions_dir))
-        self.sessions_dir = self.store.sessions_dir
-        self.compactor = compactor or SessionCompactor()
+        if store is None and conversations_dir is None:
+            raise ConversationError("conversations_dir or store is required")
+        self.store = store or ConversationStore(Path(conversations_dir))
+        self.conversations_dir = self.store.conversations_dir
+        self.compactor = compactor or ConversationCompactor()
         self._lock = threading.Lock()
-        self._session: Session | None = None
+        self._conversation: ConversationRuntime | None = None
 
-    def _current_locked(self) -> Session:
-        """Return the current session. The caller must hold ``self._lock``."""
-        if self._session is None:
-            raise SessionError("no current session — call create/load/continue_last first")
-        return self._session
+    def _current_locked(self) -> ConversationRuntime:
+        """Return the current conversation. The caller must hold ``self._lock``."""
+        if self._conversation is None:
+            raise ConversationError("no current conversation — call create/load/continue_last first")
+        return self._conversation
 
     @property
-    def current(self) -> Session:
+    def current(self) -> ConversationRuntime:
         with self._lock:
             return self._current_locked()
 
     # Create one new group door in the runtime conversation store.
-    def create(self, *, make_current: bool = True) -> Session:
+    def create(self, *, make_current: bool = True) -> ConversationRuntime:
         with self._lock:
             runtime_root = _manager_runtime_root(self)
             if runtime_root is not None:
@@ -104,7 +96,7 @@ class SessionManager:
                 from thyca.conversations.store.write_adapter import create_group
 
                 self.store.ensure_dir()
-                session = None
+                conversation = None
                 for _ in range(10):
                     try:
                         conv = create_group(
@@ -122,49 +114,47 @@ class SessionManager:
                             continue
                         raise
                 else:
-                    raise SessionError("session filename collision")
-                from thyca.conversations.runtime.store import _runtime_session_path
+                    raise ConversationError("conversation filename collision")
+                from thyca.conversations.runtime.store import _runtime_conversation_path
 
-                path = _runtime_session_path(self.sessions_dir, conv.ref.id)
-                session = Session(
+                path = _runtime_conversation_path(self.conversations_dir, conv.ref.id)
+                conversation = ConversationRuntime(
                     conv.ref.id, path, [],
-                    title=conv.title, title_source=conv.title_source,
-                    naming_attempted=conv.naming_attempted,
                     bots=list(conv.participants), dm_bot=None,
                 )
                 if make_current:
-                    self._session = session
-                return session
-            raise SessionError("runtime store not initialized for this root")
+                    self._conversation = conversation
+                return conversation
+            raise ConversationError("runtime store not initialized for this root")
 
-    def load(self, session_id: str) -> Session:
+    def load(self, conversation_id: str) -> ConversationRuntime:
         with self._lock:
-            session = self.store.load(session_id)
-            self._session = session
-            return session
+            conversation = self.store.load(conversation_id)
+            self._conversation = conversation
+            return conversation
 
-    def continue_last(self) -> Session:
+    def continue_last(self) -> ConversationRuntime:
         with self._lock:
-            session = self.store.latest()
-            self._session = session
-            return session
+            conversation = self.store.latest()
+            self._conversation = conversation
+            return conversation
 
-    def list_sessions(self) -> list[Session]:
+    def list_conversations(self) -> list[ConversationRuntime]:
         with self._lock:
-            sessions: list[Session] = []
+            conversations: list[ConversationRuntime] = []
             for path in self.store.list_paths():
                 try:
-                    sessions.append(self.store.load(path.stem))
-                except SessionError:
+                    conversations.append(self.store.load(path.stem))
+                except ConversationError:
                     continue
-            return sessions
+            return conversations
 
     # Find or create one bot's fixed DM in the runtime store.
-    def ensure_dm(self, bot_id: str) -> Session:
+    def ensure_dm(self, bot_id: str) -> ConversationRuntime:
         """Find-or-create one bot's fixed DM (phase 2B shared helper).
 
-        Only a session already carrying the ``dm`` marker is adopted;
-        otherwise a fresh session is created and marked (bots + dm).
+        Only a conversation already carrying the ``dm`` marker is adopted;
+        otherwise a fresh conversation is created and marked (bots + dm).
         No locking: single-threaded callers use it directly, while
         ChatApp.bot_dm wraps it in ``_dm_lock`` for the concurrent
         one-DM guarantee."""
@@ -206,16 +196,16 @@ class SessionManager:
                             return self.load(row.ref.id)
                 except ConversationStoreError:
                     pass
-                raise SessionError("cannot ensure DM") from None
+                raise ConversationError("cannot ensure DM") from None
             return self.load(result.ref.id)
-        raise SessionError("runtime store not initialized for this root")
+        raise ConversationError("runtime store not initialized for this root")
 
     def discard_empty(self, keep: set[str] | None = None) -> list[str]:
-        """Drop blank sessions except the ones named in ``keep``.
+        """Drop blank conversations except the ones named in ``keep``.
 
-        ``keep`` is every session with an in-flight turn: a turn writes its
+        ``keep`` is every conversation with an in-flight turn: a turn writes its
         first message a moment after it starts, so an empty file may still
-        belong to a running turn. Sessions marked as a bot's fixed DM
+        belong to a running turn. Conversations marked as a bot's fixed DM
         (``dm_bot``) are kept the same way: a DM is created lazily and
         stays blank until its first turn, but it is the bot's one main
         window — pruning it would silently mint a second DM later.
@@ -224,27 +214,27 @@ class SessionManager:
             removed: list[str] = []
             for path in self.store.list_paths():
                 try:
-                    session = self.store.load(path.stem)
-                except SessionError:
+                    conversation = self.store.load(path.stem)
+                except ConversationError:
                     continue
-                if keep and session.id in keep:
+                if keep and conversation.conversation_id in keep:
                     continue
-                if session.dm_bot:
+                if conversation.dm_bot:
                     continue
-                if not is_blank(session):
+                if not is_blank(conversation):
                     continue
-                self.store.delete(session.id)
-                if self._session is not None and self._session.id == session.id:
-                    self._session = None
-                removed.append(session.id)
+                self.store.delete(conversation.conversation_id)
+                if self._conversation is not None and self._conversation.conversation_id == conversation.conversation_id:
+                    self._conversation = None
+                removed.append(conversation.conversation_id)
             return removed
 
-    # Append one row to the current session as the acting bot.
+    # Append one row to the current conversation as the acting bot.
     def append(self, msg: Message, *, actor: str | None = None) -> None:
         with self._lock:
-            session = self._current_locked()
-            self.store.append(session.path, msg, actor=actor)
-            session.messages.append(msg)
+            conversation = self._current_locked()
+            self.store.append(conversation.path, msg, actor=actor)
+            conversation.messages.append(msg)
 
     # Check retry readiness for the acting bot without rewriting history.
     def truncate_to_last_user(self, *, actor: str | None = None) -> bool:
@@ -261,19 +251,19 @@ class SessionManager:
         runtime_root = _manager_runtime_root(self)
         if runtime_root is not None:
             with self._lock:
-                session = self._current_locked()
+                conversation = self._current_locked()
                 from thyca.conversations.store.runtime import (
                     RuntimeWriteIntent,
                     resolve_ref,
                 )
                 from thyca.conversations.store.write_adapter import prepare_retry
 
-                ref = resolve_ref(runtime_root, session.id)
+                ref = resolve_ref(runtime_root, conversation.conversation_id)
                 # Read-only readiness: the acting bot when known, else a
                 # stored member reader. No write is authorized here.
                 reader = actor or (ref.id if ref.kind == "dm" else None)
                 if reader is None:
-                    reader = (session.bots or ["thyca"])[0]
+                    reader = (conversation.bots or ["thyca"])[0]
                 plan = prepare_retry(
                     runtime_root, ref,
                     intent=RuntimeWriteIntent("runtime-retry-readiness"),
@@ -281,10 +271,10 @@ class SessionManager:
                 )
                 return bool(plan.has_user)
         if not _is_canonical_store(self):
-            raise SessionError("runtime store not initialized for this root")
+            raise ConversationError("runtime store not initialized for this root")
         with self._lock:
-            session = self._current_locked()
-            messages = session.messages
+            conversation = self._current_locked()
+            messages = conversation.messages
             last = _last_user_index(messages)
             if last is None:
                 return False
@@ -302,14 +292,11 @@ class SessionManager:
                 return True
             kept = messages[: last + 1]
             self.store.rewrite(
-                session.id,
-                session.path,
+                conversation.conversation_id,
+                conversation.path,
                 kept,
-                title=session.title,
-                title_source=session.title_source,
-                naming_attempted=session.naming_attempted,
             )
-            session.messages[:] = kept
+            conversation.messages[:] = kept
             return True
 
     # Record one turn failure for the acting bot without rewriting rows.
@@ -318,7 +305,7 @@ class SessionManager:
 
         The marker is what Trace shows for a failed turn; the live chat keeps
         using the stream terminal. Returns False when there is no user
-        message to mark. Disk failures raise SessionError — callers that must
+        message to mark. Disk failures raise ConversationError — callers that must
         not mask the original error guard this call.
         """
         # Runtime store is append-only: failures append a trailing system
@@ -329,7 +316,7 @@ class SessionManager:
         runtime_root = _manager_runtime_root(self)
         if runtime_root is not None:
             with self._lock:
-                session = self._current_locked()
+                conversation = self._current_locked()
                 from thyca.conversations.store.runtime import (
                     RuntimeWriteIntent,
                     resolve_ref,
@@ -337,12 +324,12 @@ class SessionManager:
                 from thyca.conversations.store.turn_pipeline import record_turn_error
                 from thyca.conversations.store.write_adapter import prepare_retry
 
-                ref = resolve_ref(runtime_root, session.id)
+                ref = resolve_ref(runtime_root, conversation.conversation_id)
                 # The acting bot records its own failure; membership is
                 # checked inside the store transactions below.
                 acting = actor or (ref.id if ref.kind == "dm" else None)
                 if acting is None:
-                    acting = (session.bots or ["thyca"])[0]
+                    acting = (conversation.bots or ["thyca"])[0]
                 plan = prepare_retry(
                     runtime_root, ref,
                     intent=RuntimeWriteIntent("runtime-error-readiness"),
@@ -359,7 +346,7 @@ class SessionManager:
                 # marker row is a system message carrying meta.error.
                 from thyca.core.protocol import Message as _Message
 
-                session.messages.append(
+                conversation.messages.append(
                     _Message(
                         role="system", content=message,
                         meta={"error": {"code": code, "message": message}},
@@ -367,10 +354,10 @@ class SessionManager:
                 )
                 return True
         if not _is_canonical_store(self):
-            raise SessionError("runtime store not initialized for this root")
+            raise ConversationError("runtime store not initialized for this root")
         with self._lock:
-            session = self._current_locked()
-            messages = session.messages
+            conversation = self._current_locked()
+            messages = conversation.messages
             last = _last_user_index(messages)
             if last is None:
                 return False
@@ -378,12 +365,9 @@ class SessionManager:
             marked["error"] = {"code": code, "message": message}
             messages[last] = replace(messages[last], meta=marked)
             self.store.rewrite(
-                session.id,
-                session.path,
+                conversation.conversation_id,
+                conversation.path,
                 messages,
-                title=session.title,
-                title_source=session.title_source,
-                naming_attempted=session.naming_attempted,
             )
             return True
 
@@ -442,15 +426,11 @@ class SessionManager:
         # shape so Assemble still hoists them as compaction markers.
         runtime_root = _manager_runtime_root(self)
         if runtime_root is not None:
-            session = self._current_locked()
+            conversation = self._current_locked()
             # Rescan from the store so a concurrent append cannot be lost:
             # scan() reassembles via cursor-paged reads with bounded resync.
-            on_disk, title, title_source, attempted = self.store.scan(session.path)
-            session.messages[:] = on_disk
-            session.naming_attempted = session.naming_attempted or attempted
-            if title:
-                session.title = title
-                session.title_source = title_source
+            on_disk = self.store.scan(conversation.path)
+            conversation.messages[:] = on_disk
             before = len(on_disk)
             plan = self.compactor.plan(
                 on_disk,
@@ -478,11 +458,11 @@ class SessionManager:
                 _ensure_root_ready,
                 _root_instance_id_from_conn,
                 _transaction_context,
-                open_existing_session,
+                open_existing_conversation,
             )
 
-            ref = resolve_ref(runtime_root, session.id)
-            conn = open_existing_session(runtime_root, lock_mode="shared")
+            ref = resolve_ref(runtime_root, conversation.conversation_id)
+            conn = open_existing_conversation(runtime_root, lock_mode="shared")
             try:
                 with _transaction_context(conn, "BEGIN"):
                     _ensure_root_ready(conn, _root_instance_id_from_conn(conn))
@@ -494,7 +474,7 @@ class SessionManager:
             finally:
                 conn.close()
             if len(rows) != len(on_disk):
-                raise SessionError("compaction read raced")
+                raise ConversationError("compaction read raced")
             keep = len(plan.tail)
             if keep >= len(rows):
                 return {
@@ -511,30 +491,22 @@ class SessionManager:
                 from thyca.conversations.store.contracts import ConversationStoreError
 
                 if isinstance(exc, ConversationStoreError):
-                    raise SessionError("compaction failed") from exc
+                    raise ConversationError("compaction failed") from exc
                 raise
-            after_messages, after_title, after_source, after_attempted = self.store.scan(
-                session.path
+            after_messages = self.store.scan(
+                conversation.path
             )
-            session.messages[:] = after_messages
-            if after_title:
-                session.title = after_title
-                session.title_source = after_source
-            session.naming_attempted = session.naming_attempted or after_attempted
+            conversation.messages[:] = after_messages
             return {
                 "compacted": True,
                 "messages_before": before,
                 "messages_after": len(after_messages),
             }
         if not _is_canonical_store(self):
-            raise SessionError("runtime store not initialized for this root")
-        session = self._current_locked()
-        on_disk, title, title_source, attempted = self.store.scan(session.path)
-        session.messages[:] = on_disk
-        session.naming_attempted = session.naming_attempted or attempted
-        if title:
-            session.title = title
-            session.title_source = title_source
+            raise ConversationError("runtime store not initialized for this root")
+        conversation = self._current_locked()
+        on_disk = self.store.scan(conversation.path)
+        conversation.messages[:] = on_disk
         before = len(on_disk)
         compacted = self.compactor.compact(
             on_disk,
@@ -552,14 +524,11 @@ class SessionManager:
                 "messages_after": before,
             }
         self.store.rewrite(
-            session.id,
-            session.path,
+            conversation.conversation_id,
+            conversation.path,
             compacted,
-            title=session.title,
-            title_source=session.title_source,
-            naming_attempted=session.naming_attempted,
         )
-        session.messages[:] = compacted
+        conversation.messages[:] = compacted
         return {
             "compacted": True,
             "messages_before": before,
@@ -574,20 +543,15 @@ class SessionManager:
         The LLM summary path plans from a snapshot, then spends seconds
         summarizing off-lock. Rewriting blindly would lose anything
         appended meanwhile, so the on-disk transcript must still equal
-        ``expected`` (title meta lines are not messages and are picked up
-        from the rescan either way). False means: caller falls back to a
+        ``expected``. False means: caller falls back to a
         fresh rule-based compact; current is left at the rescanned state.
         """
         runtime_root = _manager_runtime_root(self)
         if runtime_root is not None:
             with self._lock:
-                session = self._current_locked()
-                on_disk, title, title_source, attempted = self.store.scan(session.path)
-                session.messages[:] = on_disk
-                session.naming_attempted = session.naming_attempted or attempted
-                if title:
-                    session.title = title
-                    session.title_source = title_source
+                conversation = self._current_locked()
+                on_disk = self.store.scan(conversation.path)
+                conversation.messages[:] = on_disk
                 if on_disk != list(expected):
                     return False
                 if not compacted or compacted[0].role != "system":
@@ -600,11 +564,11 @@ class SessionManager:
                     _ensure_root_ready,
                     _root_instance_id_from_conn,
                     _transaction_context,
-                    open_existing_session,
+                    open_existing_conversation,
                 )
 
-                ref = resolve_ref(runtime_root, session.id)
-                conn = open_existing_session(runtime_root, lock_mode="shared")
+                ref = resolve_ref(runtime_root, conversation.conversation_id)
+                conn = open_existing_conversation(runtime_root, lock_mode="shared")
                 try:
                     with _transaction_context(conn, "BEGIN"):
                         _ensure_root_ready(conn, _root_instance_id_from_conn(conn))
@@ -626,89 +590,48 @@ class SessionManager:
                     )
                 except Exception:
                     return False
-                after, after_title, after_source, after_attempted = self.store.scan(
-                    session.path
+                after = self.store.scan(
+                    conversation.path
                 )
-                session.messages[:] = after
-                if after_title:
-                    session.title = after_title
-                    session.title_source = after_source
-                session.naming_attempted = session.naming_attempted or after_attempted
+                conversation.messages[:] = after
                 return True
         if not _is_canonical_store(self):
-            raise SessionError("runtime store not initialized for this root")
+            raise ConversationError("runtime store not initialized for this root")
         with self._lock:
-            session = self._current_locked()
-            on_disk, title, title_source, attempted = self.store.scan(session.path)
-            session.messages[:] = on_disk
-            session.naming_attempted = session.naming_attempted or attempted
-            if title:
-                session.title = title
-                session.title_source = title_source
+            conversation = self._current_locked()
+            on_disk = self.store.scan(conversation.path)
+            conversation.messages[:] = on_disk
             if on_disk != list(expected):
                 return False
             self.store.rewrite(
-                session.id,
-                session.path,
+                conversation.conversation_id,
+                conversation.path,
                 compacted,
-                title=session.title,
-                title_source=session.title_source,
-                naming_attempted=session.naming_attempted,
             )
-            session.messages[:] = list(compacted)
+            conversation.messages[:] = list(compacted)
             return True
 
-    def refresh_title(self) -> None:
-        """Re-read the title a stored meta line carries (see title module)."""
-        with self._lock:
-            refresh_title(self.store, self._session)
-
-    # Persist the naming attempt for the acting bot.
-    def mark_naming_attempted(self, *, actor: str | None = None) -> None:
-        """Persist the automatic naming step's one attempt (see title module)."""
-        with self._lock:
-            mark_naming_attempted(self.store, self._current_locked(), actor=actor)
-
-    # Store the automatic title for the acting bot when none exists.
-    def set_title_if_missing(self, title: str, *, actor: str | None = None) -> str | None:
-        """Store the automatic title only when no title is on disk."""
-        with self._lock:
-            return set_title_if_missing(
-                self.store, self._current_locked(), title, actor=actor
-            )
-
-    def set_title(self, title: str, *, source: str | None = None) -> str | None:
-        with self._lock:
-            return set_title(self.store, self._current_locked(), title, source=source)
-
-    def rename(self, session_id: str, title: str) -> str:
-        """Set the title of any stored session, not only the current one."""
-        with self._lock:
-            return rename_session(
-                self.store, session_id, title, current=self._session
-            )
-
-    def set_bots(self, session_id: str, bots: list[str]) -> None:
+    def set_bots(self, conversation_id: str, bots: list[str]) -> None:
         """Refresh the in-memory participant list when it is current.
 
-        Disk is owned by ``SessionStore.append_bots``; this only keeps a
-        loaded current session from serving a stale roster."""
+        Disk is owned by ``ConversationStore.append_bots``; this only keeps a
+        loaded current conversation from serving a stale roster."""
         with self._lock:
-            if self._session is not None and self._session.id == session_id:
-                self._session.bots = list(bots)
+            if self._conversation is not None and self._conversation.conversation_id == conversation_id:
+                self._conversation.bots = list(bots)
 
-    def delete(self, session_id: str, *, keep: set[str] | None = None) -> None:
-        """Remove a session file outright.
+    def delete(self, conversation_id: str, *, keep: set[str] | None = None) -> None:
+        """Remove a conversation file outright.
 
-        ``keep`` names sessions with a turn in flight. The caller must pass a
+        ``keep`` names conversations with a turn in flight. The caller must pass a
         snapshot that cannot go stale between the check and the unlink — i.e.
         hold the same lock a turn claims under — or a claim landing in that
         window leaves the writer appending to a deleted path, which re-creates
         the file truncated on its next write.
         """
         with self._lock:
-            if keep and session_id in keep:
-                raise SessionBusy(session_id)
-            self.store.delete(session_id)
-            if self._session is not None and self._session.id == session_id:
-                self._session = None
+            if keep and conversation_id in keep:
+                raise ConversationBusy(conversation_id)
+            self.store.delete(conversation_id)
+            if self._conversation is not None and self._conversation.conversation_id == conversation_id:
+                self._conversation = None

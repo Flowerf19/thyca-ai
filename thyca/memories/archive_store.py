@@ -20,7 +20,7 @@ from thyca.memories.usage import LeafUsage, guarded
 
 TRIGRAM_FLOOR = 60
 CANDIDATE_CAP = 50
-GET_SESSION_CAP = 10
+GET_MEMORY_CAP = 10
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _NON_ALNUM = re.compile(r"[^\w]+", re.UNICODE)
 
@@ -35,14 +35,14 @@ class Hit:
     source_kind: str
     chunk_id: str
     timeline_day: str | None
-    session_id: str
+    memory_id: str
     heading: str
     snippet: str
     score: float
     match_type: str
     bm25: float | None = None
     leaf_ord: int = 1
-    session_leaf_count: int = 1
+    memory_leaf_count: int = 1
     has_more: bool = False
     line_start: int = 1
     line_end: int = 1
@@ -106,7 +106,7 @@ class ArchiveStore:
             for chunk in chunks:
                 self._db.execute(
                     """INSERT INTO chunks(
-                        chunk_id, path, source_kind, timeline_day, session_id, session_title,
+                        chunk_id, path, source_kind, timeline_day, memory_id, memory_title,
                         heading_raw, leaf_ord, line_start, line_end, text_raw, text_norm,
                         content_hash, expires_at, forgotten_at, project, chat_session, bots,
                         task, cont, kind, status, habit, habit_explicit
@@ -116,8 +116,8 @@ class ArchiveStore:
                         chunk.path,
                         chunk.source_kind,
                         chunk.timeline_day,
-                        chunk.session_id,
-                        chunk.session_title,
+                        chunk.memory_id,
+                        chunk.memory_title,
                         chunk.heading_raw,
                         chunk.leaf_ord,
                         chunk.line_start,
@@ -286,13 +286,13 @@ class ArchiveStore:
         ).fetchone()
 
     @guarded
-    def get_session(self, session_id: str, now: str) -> list[sqlite3.Row]:
+    def get_memory(self, memory_id: str, now: str) -> list[sqlite3.Row]:
         return list(
             self._db.execute(
-                f"""SELECT * FROM chunks WHERE session_id = ?
+                f"""SELECT * FROM chunks WHERE memory_id = ?
                    AND {VISIBLE_SQL}
                    ORDER BY leaf_ord ASC""",
-                (session_id, now),
+                (memory_id, now),
             )
         )
 
@@ -304,13 +304,13 @@ class ArchiveStore:
         ).fetchone()
 
     @guarded
-    def get_session_any(self, session_id: str) -> list[sqlite3.Row]:
+    def get_memory_any(self, memory_id: str) -> list[sqlite3.Row]:
         """Raw session rows ignoring visibility (T6a miss classification)."""
         return list(
             self._db.execute(
-                """SELECT * FROM chunks WHERE session_id = ?
+                """SELECT * FROM chunks WHERE memory_id = ?
                    ORDER BY leaf_ord ASC""",
-                (session_id,),
+                (memory_id,),
             )
         )
 
@@ -324,7 +324,7 @@ class ArchiveStore:
         return row is not None
 
     @guarded
-    def task_session_rows(self, now: str, *, reader: str | None = None) -> list[sqlite3.Row]:
+    def task_memory_rows(self, now: str, *, reader: str | None = None) -> list[sqlite3.Row]:
         """One row per (task, session) for visible task entries (phase 1A).
 
         Leaves of one session share a heading, so per-session aggregates
@@ -332,18 +332,18 @@ class ArchiveStore:
         clause, clause_params = _reader_clause("bots", reader)
         return list(
             self._db.execute(
-                f"""SELECT task, session_id,
+                f"""SELECT task, memory_id,
                            MIN(timeline_day) AS first_day,
                            MAX(timeline_day) AS last_day,
                            MIN(line_start) AS first_line,
                            MAX(line_start) AS last_line,
-                           MAX(session_title) AS title,
+                           MAX(memory_title) AS title,
                            MAX(status) AS status,
                            MAX(bots) AS bots,
                            MAX(chat_session) AS chat
                     FROM chunks
                     WHERE task IS NOT NULL AND {VISIBLE_SQL}{clause}
-                    GROUP BY task, session_id""",
+                    GROUP BY task, memory_id""",
                 (now, *clause_params),
             )
         )
@@ -357,27 +357,27 @@ class ArchiveStore:
         clause, clause_params = _reader_clause("bots", reader)
         return list(
             self._db.execute(
-                f"""SELECT session_id,
+                f"""SELECT memory_id,
                            MIN(timeline_day) AS day,
                            MAX(habit) AS habit,
                            MAX(habit_explicit) AS explicit,
                            MAX(bots) AS bots
                     FROM chunks
                     WHERE kind = 'habit' AND {VISIBLE_SQL}{clause}
-                    GROUP BY session_id""",
+                    GROUP BY memory_id""",
                 (now, *clause_params),
             )
         )
 
     @guarded
-    def session_bots(self, session_id: str) -> tuple[str, ...] | None:
+    def memory_bots(self, memory_id: str) -> tuple[str, ...] | None:
         """Owner list of one memory session; None = legacy (team) entry.
 
         Unknown sessions also read as None — callers check existence first
-        (get_session_any) when the distinction matters."""
+        (get_memory_any) when the distinction matters."""
         row = self._db.execute(
-            "SELECT bots FROM chunks WHERE session_id = ? LIMIT 1",
-            (session_id,),
+            "SELECT bots FROM chunks WHERE memory_id = ? LIMIT 1",
+            (memory_id,),
         ).fetchone()
         if row is None:
             return None
@@ -424,7 +424,7 @@ class ArchiveStore:
     @guarded
     def visible_chunk_maps(self, now: str) -> list[dict[str, object]]:
         rows = self._db.execute(
-            f"""SELECT chunk_id, session_id, heading_raw, text_raw, source_kind,
+            f"""SELECT chunk_id, memory_id, heading_raw, text_raw, source_kind,
                       timeline_day, expires_at, bots, kind, task, status, habit
                FROM chunks
                WHERE {VISIBLE_SQL}""",
@@ -433,12 +433,12 @@ class ArchiveStore:
         return [dict(row) for row in rows]
 
     @guarded
-    def session_leaf_count(self, session_id: str, now: str | None = None) -> int:
+    def memory_leaf_count(self, memory_id: str, now: str | None = None) -> int:
         now_ts = now if now is not None else format_ts(None)
         row = self._db.execute(
-            f"""SELECT COUNT(*) AS n FROM chunks WHERE session_id = ?
+            f"""SELECT COUNT(*) AS n FROM chunks WHERE memory_id = ?
                AND {VISIBLE_SQL}""",
-            (session_id, now_ts),
+            (memory_id, now_ts),
         ).fetchone()
         return int(row["n"]) if row else 0
 
@@ -533,7 +533,7 @@ def hit_from_row(
         source_kind=row["source_kind"],
         chunk_id=row["chunk_id"],
         timeline_day=row["timeline_day"],
-        session_id=row["session_id"],
+        memory_id=row["memory_id"],
         heading=row["heading_raw"],
         snippet=snippet if snippet is not None else row["text_raw"][:250],
         score=float(score if score is not None else (-bm25 if bm25 is not None else 0.0)),

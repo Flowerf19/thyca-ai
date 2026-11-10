@@ -40,7 +40,7 @@ def test_scheduled_turn_lands_in_dm_with_system_meta(tmp_path: Path) -> None:
         detail = app.scheduled_turn("coder", "[scheduled * * * * *] tick")
         assert detail["reply"] == "ok"
         dm = app.bot_dm("coder")
-        msgs = app.get_payload(dm["id"])["messages"]
+        msgs = app.get_payload(dm["conversation_id"])["messages"]
         user = next(m for m in msgs if m["role"] == "user")
         assert (user.get("meta") or {}).get("actor_kind") == "system"
         assert (user.get("meta") or {}).get("channel_id") == "webui"
@@ -64,15 +64,15 @@ def test_scheduler_skip_busy_no_row(tmp_path: Path) -> None:
     try:
         _coder(app)
         dm = app.bot_dm("coder")
-        before = len(app.get_payload(dm["id"])["messages"])
+        before = len(app.get_payload(dm["conversation_id"])["messages"])
         t = threading.Thread(
-            target=lambda: app.turn(dm["id"], "busy"), daemon=True)
+            target=lambda: app.turn(dm["conversation_id"], "busy"), daemon=True)
         t.start()
         assert started.wait(10)
-        from thyca.conversations.runtime import SessionBusy
-        with pytest.raises(SessionBusy):
+        from thyca.conversations.runtime import ConversationBusy
+        with pytest.raises(ConversationBusy):
             app.scheduled_turn("coder", "tick while busy")
-        mid = len(app.get_payload(dm["id"])["messages"])
+        mid = len(app.get_payload(dm["conversation_id"])["messages"])
         assert mid == before + 1
         release.set()
         t.join(30)
@@ -87,13 +87,13 @@ def test_scheduler_tick_uses_scheduled_turn(tmp_path: Path) -> None:
     seen: list[tuple[str, str]] = []
 
     class Fake:
-        def sweep_idle_sessions(self, idle_s=900):
+        def sweep_idle_conversations(self, idle_s=900):
             return {}
         _bots = None
 
         def scheduled_turn(self, bot_id, text):
             seen.append((bot_id, text))
-            return {"id": "room-1", "reply": "r"}
+            return {"conversation_id": "room-1", "reply": "r"}
 
     fake = Fake()
 
@@ -108,33 +108,33 @@ def test_scheduler_tick_uses_scheduled_turn(tmp_path: Path) -> None:
     assert report["fired"][0]["room"] == "room-1"
 
 
-def test_session_wire_metadata(tmp_path: Path) -> None:
+def test_conversation_wire_metadata(tmp_path: Path) -> None:
     app = _chat(tmp_path, _LLM())
     try:
         _coder(app)
         group = app.create(bots=["thyca", "coder"])
-        from thyca.conversations.runtime.wire import session_summary
-        row = session_summary(app._sessions.store.load(group["id"]))
-        assert row["channel"] == "webui" and row["window_id"] == group["id"]
-        detail = app.get_payload(group["id"])
-        assert detail["channel"] == "webui" and detail["window_id"] == group["id"]
+        from thyca.conversations.runtime.wire import conversation_summary
+        row = conversation_summary(app._conversations.store.load(group["conversation_id"]))
+        assert row["channel"] == "webui" and row["window_id"] == group["conversation_id"]
+        detail = app.get_payload(group["conversation_id"])
+        assert detail["channel"] == "webui" and detail["window_id"] == group["conversation_id"]
     finally:
         app.shutdown()
 
 
 def test_turn_summary_channel_window(tmp_path: Path) -> None:
-    from thyca.serve.trace import turns_from_session
+    from thyca.serve.trace import turns_from_conversation
 
     app = _chat(tmp_path, _LLM())
     try:
         _coder(app)
         group = app.create(bots=["thyca", "coder"])
-        app.turn(group["id"], "hi")
-        session = app._sessions.store.load(group["id"])
-        turns = turns_from_session(session)
+        app.turn(group["conversation_id"], "hi")
+        conversation = app._conversations.store.load(group["conversation_id"])
+        turns = turns_from_conversation(conversation)
         assert turns
         assert turns[0].channel == "webui"
-        assert turns[0].window_id == group["id"]
+        assert turns[0].window_id == group["conversation_id"]
         payload = turns[0].to_payload()
         assert payload["channel"] == "webui"
         assert "work_id" in payload
@@ -156,16 +156,16 @@ def test_private_resume_row_requests_zero(tmp_path: Path) -> None:
         store = PrivateFollowupStore(tmp_path)
         dm = app.bot_dm("coder")
         p = store.create("coder", work_id="task-aabb1122",
-                         origin_window=group["id"], dm_window=dm["id"],
+                         origin_window=group["conversation_id"], dm_window=dm["conversation_id"],
                          question="q")
         store.mark_waiting("coder", p.pending_id)
         store.receive("coder", p.pending_id, answer_event_id="e1")
         store.decide("coder", p.pending_id, action="resume",
                      redacted="SAFE")
         h = PrivateFollowupService(app).decide(
-            dm["id"], p.pending_id, 1, "approve")
+            dm["conversation_id"], p.pending_id, 1, "approve")
         assert h["ok"]
-        rows = [m for m in app.get_payload(group["id"])["messages"]
+        rows = [m for m in app.get_payload(group["conversation_id"])["messages"]
                 if (m.get("meta") or {}).get("kind") == "private_resume"]
         assert rows and (rows[0]["meta"] or {}).get("requests") == 0
     finally:
@@ -209,8 +209,8 @@ def test_bots_list_reconstructs_waiting(tmp_path: Path) -> None:
         dm = app.bot_dm("coder")
         store = PrivateFollowupStore(tmp_path)
         p = store.create("coder", work_id="task-aabb1122",
-                         origin_window=app.create(bots=["thyca","coder"])["id"],
-                         dm_window=dm["id"],
+                         origin_window=app.create(bots=["thyca","coder"])["conversation_id"],
+                         dm_window=dm["conversation_id"],
                          question="q")
         store.mark_waiting("coder", p.pending_id)
         bots = app.bots_list()
@@ -233,11 +233,11 @@ def test_solo_room_fallback_unchanged() -> None:
     calls = []
 
     class Legacy:
-        _sessions = type("S", (), {"list_sessions": lambda s: []})()
+        _conversations = type("S", (), {"list_conversations": lambda s: []})()
 
         def create(self, bots=None):
             calls.append(bots)
-            return {"id": "new-1"}
+            return {"conversation_id": "new-1"}
 
         def turn(self, room, text):
             return {"reply": "ok"}
@@ -260,16 +260,16 @@ def test_scheduler_skips_when_bot_busy_in_other_room(tmp_path: Path) -> None:
         _coder(app)
         app.bot_dm("coder")
         group = app.create(bots=["thyca", "coder"])
-        dm_before = app.get_payload(app.bot_dm("coder")["id"])["messages"]
+        dm_before = app.get_payload(app.bot_dm("coder")["conversation_id"])["messages"]
         t = threading.Thread(
-            target=lambda: app.turn(group["id"], "@coder hold"),
+            target=lambda: app.turn(group["conversation_id"], "@coder hold"),
             daemon=True)
         t.start()
         assert started.wait(10)
-        from thyca.conversations.runtime import SessionBusy
-        with pytest.raises(SessionBusy):
+        from thyca.conversations.runtime import ConversationBusy
+        with pytest.raises(ConversationBusy):
             app.scheduled_turn("coder", "tick")
-        dm_after = app.get_payload(app.bot_dm("coder")["id"])["messages"]
+        dm_after = app.get_payload(app.bot_dm("coder")["conversation_id"])["messages"]
         assert len(dm_after) == len(dm_before)
         release.set()
         t.join(30)
@@ -289,14 +289,14 @@ def test_scheduled_turn_leaves_pending_untouched(tmp_path: Path) -> None:
         group = app.create(bots=["thyca", "coder"])
         store = PrivateFollowupStore(tmp_path)
         p = store.create("coder", work_id="task-aabb1122",
-                         origin_window=group["id"], dm_window=dm["id"],
+                         origin_window=group["conversation_id"], dm_window=dm["conversation_id"],
                          question="secret?")
         store.mark_waiting("coder", p.pending_id)
         app.scheduled_turn("coder", "tick")
         p2 = PrivateFollowupStore(tmp_path).get("coder", p.pending_id)
         assert p2.status == "waiting_private"
         assert p2.answer_ref is None
-        rows = app.get_payload(dm["id"])["messages"]
+        rows = app.get_payload(dm["conversation_id"])["messages"]
         assert any((m.get("meta") or {}).get("actor_kind") == "system"
                    for m in rows)
     finally:
@@ -312,7 +312,7 @@ def test_waiting_status_reconstructed_after_restart(tmp_path: Path) -> None:
     group = app.create(bots=["thyca", "coder"])
     store = PrivateFollowupStore(tmp_path)
     p = store.create("coder", work_id="task-aabb1122",
-                     origin_window=group["id"], dm_window=dm["id"],
+                     origin_window=group["conversation_id"], dm_window=dm["conversation_id"],
                      question="q")
     store.mark_waiting("coder", p.pending_id)
     app.shutdown()
@@ -354,11 +354,11 @@ def test_trusted_work_ref_on_user_and_assistant_rows(
         if sender == "coder":
             _coder(app)
         dm = app.bot_dm(sender)
-        session = app._sessions.store.load(dm["id"])
-        window = app._webui.window_for(session)
+        conversation = app._conversations.store.load(dm["conversation_id"])
+        window = app._webui.window_for(conversation)
         event = ChannelEvent(
             event_id="ev-trace1", channel_id="webui",
-            window_id=dm["id"],
+            window_id=dm["conversation_id"],
             actor=ActorRef(kind="user", id="user"),
             text="do it",
             work_ref="task-aabb1122",
@@ -366,16 +366,16 @@ def test_trusted_work_ref_on_user_and_assistant_rows(
         )
         detail = app._turn_service.run(event, window=window)
         assert detail["reply"] == "ok"
-        msgs = app.get_payload(dm["id"])["messages"]
+        msgs = app.get_payload(dm["conversation_id"])["messages"]
         user = next(m for m in msgs if m["role"] == "user")
         meta = user.get("meta") or {}
         assert meta.get("work_id") == "task-aabb1122"
         assert meta.get("channel_id") == "webui"
-        assert meta.get("window_id") == dm["id"]
+        assert meta.get("window_id") == dm["conversation_id"]
         asst = next(m for m in msgs if m["role"] == "assistant")
         ameta = asst.get("meta") or {}
         assert ameta.get("channel") == "webui"
-        assert ameta.get("window_id") == dm["id"]
+        assert ameta.get("window_id") == dm["conversation_id"]
         assert ameta.get("work_id") == "task-aabb1122"
     finally:
         app.shutdown()
@@ -395,7 +395,7 @@ def test_scheduled_turn_never_consumes_user_pending(
             bots=["thyca"] + (["coder"] if sender == "coder" else []))
         store = PrivateFollowupStore(tmp_path)
         p = store.create(sender, work_id="task-aabb1122",
-                         origin_window=group["id"], dm_window=dm["id"],
+                         origin_window=group["conversation_id"], dm_window=dm["conversation_id"],
                          question="secret?")
         store.mark_waiting(sender, p.pending_id)
         app.scheduled_turn(sender, "tick")

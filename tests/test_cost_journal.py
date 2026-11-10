@@ -2,7 +2,7 @@
 
 The old Chi phí view (cost-data.js / cost-view.js / cost-rows.js /
 cost-bots.js and the shared journal pager) was not ported: pricing
-estimates, per-model share denominators, the per-session cost journal and
+estimates, per-model share denominators, the per-conversation cost journal and
 the average-per-turn card are gone. The new Dashboard keeps cost on a
 recorded basis: a dedicated Chi phí view with daily cost and bot/model
 breakdowns, plus shared token/scope cards and the flat Trace turn list —
@@ -132,7 +132,7 @@ def test_share_denominator_and_vi_format(node: str) -> None:
 
 def test_hero_cards_carry_the_cost_and_token_split(node: str) -> None:
     """The shared stat grid keeps calls, token totals, recorded cost,
-    latency, and additive session/turn counts with the Input/Cache/Output split."""
+    latency, and additive conversation/turn counts with the Input/Cache/Output split."""
     totals = {
         "requests": 5, "tool_calls": 7, "prompt_tokens": 150,
         "cached_tokens": 30, "completion_tokens": 15, "total_tokens": 165,
@@ -326,7 +326,7 @@ def test_load_more_hidden_at_total_and_rows_render(node: str) -> None:
           const first = {
             count: document.querySelector('#trace-count').textContent,
             more: document.querySelector('#trace-more').hidden,
-            html: document.querySelector('#trace-sessions').innerHTML };
+            html: document.querySelector('#trace-conversations').innerHTML };
           await loadTraces(false);
           return { first,
             second: { count: document.querySelector('#trace-count').textContent,

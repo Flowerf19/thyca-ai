@@ -55,7 +55,7 @@ def test_dropped_live_copy_modules_are_gone() -> None:
 
 def test_retired_team_and_kit_anatomy_is_gone() -> None:
     banned = ["team-strip", "team-message", "team-exchange", "team-dossier",
-              "team-bot-flap", "team-card-box", "team-nav-back", "session-item",
+              "team-bot-flap", "team-card-box", "team-nav-back", "conversation-item",
               "kit.css", "botLookFor", "BOT_LOOK_TINTS", "tintVar",
               "splitExchange", "delegation-tree", "runGuardedStages", "teamArticleFor",
               "openRename", "openDelete", "submitRename", "submitDelete",
@@ -65,7 +65,7 @@ def test_retired_team_and_kit_anatomy_is_gone() -> None:
               "refreshTeamBots", "onBotDeleted",
               "onBotRosterChanged", "onSessionsChanged",
               "Tools used:", "screen-shell", "pick-shell", "is-picking",
-              "session-rename", "unread"]
+              "conversation-rename", "unread"]
     import re
 
     visible = "\n".join(_sources().values())
@@ -73,7 +73,7 @@ def test_retired_team_and_kit_anatomy_is_gone() -> None:
     for marker in banned:
         assert marker not in visible, marker
     assert "team-bot-flap" not in _sources()["chat.css"]
-    assert ".session-action" not in _sources()["sidebar.css"]
+    assert ".conversation-action" not in _sources()["sidebar.css"]
 
 
 def test_superseded_tool_and_journal_shapes_are_gone() -> None:
@@ -97,27 +97,27 @@ def test_superseded_tool_and_journal_shapes_are_gone() -> None:
     for copy in ("Đang trả lời lượt trước", "Phiên đang trả lời",
                  "SESSION_BUSY_STATUS"):
         assert copy not in src["chat.js"], copy
-    # The per-session cost journal left with the old grouped session list.
-    for gone in ("Chi phí theo phiên", "cost-sessions", "aggregateSessions",
+    # The per-conversation cost journal left with the old grouped conversation list.
+    for gone in ("Chi phí theo phiên", "cost-conversations", "aggregateSessions",
                  "renderSessions", "NO_SESSION_KEY", "modelTurnCoverage",
                  "estimatedCostSplit", "priceRates"):
         assert gone not in src["dashboard.js"], gone
-    assert not re.search(r"session-body", src["chat.js"] + src["share/data.js"])
+    assert not re.search(r"conversation-body", src["chat.js"] + src["share/data.js"])
 
 
 def test_legacy_pager_styles_are_gone() -> None:
     for path in sorted(UI.rglob("*.css")):
         css = path.read_text(encoding="utf-8")
         assert ".journal-pager" not in css, path.name
-        assert ".session-pager" not in css, path.name
+        assert ".conversation-pager" not in css, path.name
         assert ".screen-button" not in css, path.name
 
 
 def test_removed_python_apis_stay_gone() -> None:
     import thyca.configs.schema as schema
-    from thyca.conversations.runtime.store import SessionStore
+    from thyca.conversations.runtime.store import ConversationStore
 
     assert not hasattr(schema, "_dict_section")
     for key in ("model", "mcpServers", "pricing", "input", "cache", "output"):
         assert key not in schema._LABELS
-    assert not hasattr(SessionStore, "read")
+    assert not hasattr(ConversationStore, "read")

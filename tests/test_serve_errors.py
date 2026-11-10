@@ -13,7 +13,7 @@ from thyca.configs import ConfigError, load, save
 from seeded_config import seeded_config
 from thyca.llms.llm_base import LLMError
 from thyca.serve import default_webui, make_server
-from thyca.conversations.runtime import SessionCorrupt, SessionError, SessionNotFound
+from thyca.conversations.runtime import ConversationCorrupt, ConversationError, ConversationNotFound
 from thyca.memories.facade import MemoryFacade
 
 WEBUI = default_webui()
@@ -66,19 +66,19 @@ def test_maps_each_exception_to_exact_public_triple() -> None:
         "internal_error",
         "chat unavailable",
     )
-    assert public_turn_error(SessionNotFound(Path("/tmp/sessions"))) == (
+    assert public_turn_error(ConversationNotFound(Path("/tmp/conversations"))) == (
         404,
-        "session_not_found",
+        "conversation_not_found",
         "conversation not found",
     )
-    assert public_turn_error(SessionCorrupt(Path("/tmp/x.jsonl"), 3, "bad line")) == (
+    assert public_turn_error(ConversationCorrupt(Path("/tmp/x.jsonl"), 3, "bad line")) == (
         503,
         "session_unreadable",
         "conversation unreadable",
     )
-    assert public_turn_error(SessionError("cannot secure /tmp/sessions")) == (
+    assert public_turn_error(ConversationError("cannot secure /tmp/conversations")) == (
         503,
-        "session_unavailable",
+        "conversation_unavailable",
         "conversation unavailable",
     )
     assert public_turn_error(LLMError(LLM_TEXT)) == (503, "llm_error", LLM_TEXT)

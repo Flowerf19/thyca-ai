@@ -1,7 +1,7 @@
 """A bot's open tasks as a pure view over event logs (CBE-4, layer 4).
 
 No new mutable store: a task exists only as events that already live in
-the bot's internal session transcript (tool calls/results, attributed
+the bot's internal conversation transcript (tool calls/results, attributed
 meta rows) plus the envelopes still queued on the bus. This module scans
 both and derives what is still open, so the prompt index, Thyca, and any
 watchdog all read the same source.
@@ -267,7 +267,7 @@ def derive_open_tasks(
                 open_tasks[key] = OpenTask(
                     task=_clip(envelope.payload or envelope.kind),
                     status=envelope.kind,
-                    room=envelope.session_id,
+                    room=envelope.conversation_id,
                     waiting_on=envelope.recipient,
                     key=key,
                 )
@@ -279,7 +279,7 @@ def derive_open_tasks(
             open_tasks[key] = OpenTask(
                 task=_clip(envelope.payload or envelope.kind),
                 status=envelope.kind,
-                room=envelope.session_id,
+                room=envelope.conversation_id,
                 key=key,
             )
 

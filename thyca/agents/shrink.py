@@ -3,7 +3,7 @@
 Pure policy, no I/O. The loop calls :func:`shrink_stage_messages` before
 each think() when ``context_tokens`` is set. Disk keeps full content: we
 return new ``Message`` copies, never mutating inputs, so the caller replacing
-``stage.messages`` entries leaves ``session.messages`` untouched.
+``stage.messages`` entries leaves ``conversation.messages`` untouched.
 
 Execution pointers come from gateway-attached metadata (``meta["exec_id"]``,
 set from the gateway's own tracking) or the original ``tool_read`` call

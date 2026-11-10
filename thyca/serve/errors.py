@@ -8,7 +8,7 @@ cannot drift.
 from __future__ import annotations
 
 from thyca.llms.llm_base import LLMError
-from thyca.conversations.runtime import SessionBusy, SessionCorrupt, SessionError, SessionNotFound
+from thyca.conversations.runtime import NoLiveResponder, ConversationBusy, ConversationCorrupt, ConversationError, ConversationNotFound
 
 
 def _with_json(handler, fn, *, error: str = "invalid body"):
@@ -62,14 +62,16 @@ def public_turn_error(exc: Exception) -> tuple[int, str, str]:
         # Unexpected ValueError is a bug, never a client error: 500. The
         # caller logs the public line; the message stays constant.
         return 500, "internal_error", "chat unavailable"
-    if isinstance(exc, SessionBusy):
+    if isinstance(exc, NoLiveResponder):
+        return 409, "no_live_participant", "conversation has no live participant"
+    if isinstance(exc, ConversationBusy):
         return 409, "session_busy", "conversation busy"
-    if isinstance(exc, SessionNotFound):
-        return 404, "session_not_found", "conversation not found"
-    if isinstance(exc, SessionCorrupt):
+    if isinstance(exc, ConversationNotFound):
+        return 404, "conversation_not_found", "conversation not found"
+    if isinstance(exc, ConversationCorrupt):
         return 503, "session_unreadable", "conversation unreadable"
-    if isinstance(exc, SessionError):
-        return 503, "session_unavailable", "conversation unavailable"
+    if isinstance(exc, ConversationError):
+        return 503, "conversation_unavailable", "conversation unavailable"
     # Local import: keeps serve free of a hard store dependency at module
     # load (store.read_adapter imports serve.trace, so a top-level import
     # here would harden that edge). Mapping stays additive: existing
@@ -81,8 +83,8 @@ def public_turn_error(exc: Exception) -> tuple[int, str, str]:
         # a missing door reads as 404, any other store failure as 503.
         # Messages stay constant (no ref/id leak).
         if getattr(exc, "scope", "global") == "local":
-            return 404, "session_not_found", "conversation not found"
-        return 503, "session_unavailable", "conversation unavailable"
+            return 404, "conversation_not_found", "conversation not found"
+        return 503, "conversation_unavailable", "conversation unavailable"
     if isinstance(exc, LLMError):
         return 503, "llm_error", str(exc)
     return 503, "chat_unavailable", "chat unavailable"

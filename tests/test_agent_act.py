@@ -11,22 +11,22 @@ from thyca.agents.observe import Observe
 from thyca.agents.stage import Stage
 from thyca.agents.think import ChatReply
 from thyca.core.protocol import Message, ToolCall, ToolResult
-from thyca.conversations.runtime import SessionManager
+from thyca.conversations.runtime import ConversationManager
 
-# Build a canonical-timeline manager holding one execution session.
-def _canonical_manager(root: Path, limits=None) -> SessionManager:
-    from thyca.bots.timeline import CanonicalSessionStore, WorkspaceTimeline
+# Build a canonical-timeline manager holding one execution conversation.
+def _canonical_manager(root: Path, limits=None) -> ConversationManager:
+    from thyca.bots.timeline import CanonicalConversationStore, WorkspaceTimeline
     from thyca.core.channel import WindowRef
 
     timeline = WorkspaceTimeline(root, "thyca")
     window = WindowRef(
         window_id="thyca", channel_id="webui", kind="dm", participants=("thyca",))
-    session_id = "2026-01-01T00-00-00_ab12"
-    store = CanonicalSessionStore(
+    conversation_id = "2026-01-01T00-00-00_ab12"
+    store = CanonicalConversationStore(
         root / "bots" / "thyca" / "sessions",
-        timeline=timeline, window=window, session_id=session_id)
-    manager = SessionManager(store=store, limits=limits)
-    manager.load(session_id)
+        timeline=timeline, window=window, conversation_id=conversation_id)
+    manager = ConversationManager(store=store, limits=limits)
+    manager.load(conversation_id)
     return manager
 
 
@@ -437,19 +437,19 @@ def test_f13_none_dispatcher_yields_per_call_error_and_keeps_partials() -> None:
 
 def test_f13_raising_dispatcher_keeps_consistent_transcript(tmp_path: Path) -> None:
     dispatcher = _FlakyDispatcher({"c2": RuntimeError("boom")})
-    sessions = _canonical_manager(tmp_path)
-    sessions.load("2026-01-01T00-00-00_ab12")
-    sessions.append(Message(role="user", content="go"))
+    conversations = _canonical_manager(tmp_path)
+    conversations.load("2026-01-01T00-00-00_ab12")
+    conversations.append(Message(role="user", content="go"))
     stage = Stage(
-        messages=list(sessions.current.messages),
+        messages=list(conversations.current.messages),
         reply=ChatReply(content=None, tool_calls=_calls("c1", "c2")),
         round=1,
     )
 
     asyncio.run(Act(dispatcher).act(stage))
-    Observe(sessions).observe(stage)
+    Observe(conversations).observe(stage)
 
-    persisted = sessions.current.messages
+    persisted = conversations.current.messages
     assistant = persisted[-3]
     assert assistant.role == "assistant" and assistant.tool_calls is not None
     assert [c.id for c in assistant.tool_calls] == ["c1", "c2"]
@@ -460,14 +460,14 @@ def test_f13_raising_dispatcher_keeps_consistent_transcript(tmp_path: Path) -> N
 
 def test_f13_none_dispatcher_transcript_has_no_dangling_calls(tmp_path: Path) -> None:
     dispatcher = _FlakyDispatcher({"c1": "none"})
-    sessions = _canonical_manager(tmp_path)
-    sessions.load("2026-01-01T00-00-00_ab12")
+    conversations = _canonical_manager(tmp_path)
+    conversations.load("2026-01-01T00-00-00_ab12")
     stage = Stage(reply=ChatReply(content=None, tool_calls=_calls("c1")), round=1)
 
     asyncio.run(Act(dispatcher).act(stage))
-    Observe(sessions).observe(stage)  # must not raise: every call has a result
+    Observe(conversations).observe(stage)  # must not raise: every call has a result
 
-    persisted = sessions.current.messages
+    persisted = conversations.current.messages
     assert persisted[-2].role == "assistant" and len(persisted[-2].tool_calls or []) == 1
     assert (persisted[-1].role, persisted[-1].tool_call_id) == ("tool", "c1")
 

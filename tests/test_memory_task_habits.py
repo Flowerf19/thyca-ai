@@ -112,8 +112,8 @@ def test_remember_search_filter_task_kind_status(tmp_path) -> None:
     facade.remember("other", "unrelated uniquetoken", now=at(1))
     now = at(5)
     facade._refresh_index(now)
-    assert {h.session_id for h in facade.search("uniquetoken", now=now, task=tid).hits} \
-        == {h.session_id for h in facade.search("uniquetoken", now=now).hits
+    assert {h.memory_id for h in facade.search("uniquetoken", now=now, task=tid).hits} \
+        == {h.memory_id for h in facade.search("uniquetoken", now=now).hits
             if h.task == tid}
     assert len(facade.search("uniquetoken", now=now, task=tid).hits) == 2
     assert len(facade.search("uniquetoken", now=now, kind="habit").hits) == 1
@@ -137,7 +137,7 @@ def test_rebuild_from_markdown_keeps_task_cont(tmp_path) -> None:
     rebuilt._refresh_index(at(5))
     hits = rebuilt.search("uniquetoken", now=at(5), task=tid).hits
     assert len(hits) == 2
-    second = next(h for h in hits if h.session_id == second_sid)
+    second = next(h for h in hits if h.memory_id == second_sid)
     assert second.cont == first
 
 
@@ -153,10 +153,10 @@ def test_checkpoint_roundtrip_search_catalog_and_rebuild(tmp_path) -> None:
     hits = facade.search("checkpointtoken", now=at(5), kind="checkpoint").hits
     assert len(hits) == 1
     hit = hits[0]
-    assert (hit.session_id, hit.task, hit.cont, hit.kind, hit.status) == (
+    assert (hit.memory_id, hit.task, hit.cont, hit.kind, hit.status) == (
         checkpoint, tid, first, "checkpoint", "open")
     entry = facade.tasks(now=at(5))["tasks"][0]
-    assert entry["latest_session_id"] == checkpoint
+    assert entry["latest_memory_id"] == checkpoint
     assert entry["entry_count"] == 2
     (tmp_path / "memory.sqlite").unlink()
     rebuilt = MemoryFacade(tmp_path, timezone_name=TZ)
@@ -198,17 +198,17 @@ def test_tasks_groups_days_and_latest_status_wins(tmp_path) -> None:
     assert by_id[other]["status"] == "done"
 
 
-def test_tasks_latest_session_id_tracks_newest_entry(tmp_path) -> None:
+def test_tasks_latest_memory_id_tracks_newest_entry(tmp_path) -> None:
     facade = MemoryFacade(tmp_path, timezone_name=TZ)
     tid = facade.new_task_id()
     first = facade.remember("start", "kickoff", now=at(1), task=tid)
     second = facade.remember("middle", "progress", now=at(3), task=tid)
     facade._refresh_index(at(5))
     entry = facade.tasks(now=at(5))["tasks"][0]
-    assert entry["latest_session_id"] == second
+    assert entry["latest_memory_id"] == second
     # Same-day entry (unindexed) still reports its own session id.
     third = facade.remember("today", "doing", now=at(5), task=tid)
-    assert facade.tasks(now=at(5))["tasks"][0]["latest_session_id"] == third
+    assert facade.tasks(now=at(5))["tasks"][0]["latest_memory_id"] == third
     assert first != second != third
 
 
@@ -295,7 +295,9 @@ CREATE INDEX related_edges_b ON related_edges(b_session);
 def _schema_without(*drop: str, with_graph: bool = True) -> str:
     """Current schema.sql minus columns (and optionally the graph table)
     an old release never had — keeps triggers/FTS in sync like a real
-    old DB."""
+    old DB. Leaf id columns read back as their pre-v9 names
+    (``session_id`` / ``session_title``) so fixtures rebuild the
+    genuine old schema the migration has to rename."""
     from pathlib import Path as _Path
 
     script = (_Path(__file__).parent.parent / "thyca" / "memories" / "schema.sql").read_text(
@@ -321,7 +323,10 @@ def _schema_without(*drop: str, with_graph: bool = True) -> str:
         # Phase 1B removed the graph table from schema.sql; a realistic
         # v7 database still has it.
         out.append(V7_GRAPH_DDL)
-    return "".join(out)
+    joined = "".join(out)
+    joined = joined.replace("memory_id", "session_id")
+    joined = joined.replace("memory_title", "session_title")
+    return joined
 
 
 def _make_v7_db(tmp_path) -> None:
@@ -364,7 +369,7 @@ def test_migration_v7_to_v8_keeps_data_and_loads_new_fields(tmp_path) -> None:
     db = sqlite3.connect(tmp_path / "memory.sqlite")
     try:
         assert db.execute(
-            "SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == "8"
+            "SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == "9"
         cols = {row[1] for row in db.execute("PRAGMA table_info(chunks)")}
         assert {"task", "cont", "kind", "status", "habit"} <= cols
         row = db.execute(
@@ -428,7 +433,7 @@ def test_migration_v7_with_edges_drops_graph_table(tmp_path) -> None:
     db = sqlite3.connect(tmp_path / "memory.sqlite")
     try:
         assert db.execute(
-            "SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == "8"
+            "SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == "9"
         tables = {row[0] for row in db.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
         assert "related_edges" not in tables
@@ -450,7 +455,7 @@ def test_migration_v6_to_v8_gains_bots_and_task_columns(tmp_path) -> None:
     db = sqlite3.connect(tmp_path / "memory.sqlite")
     try:
         assert db.execute(
-            "SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == "8"
+            "SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == "9"
         cols = {row[1] for row in db.execute("PRAGMA table_info(chunks)")}
         assert {"bots", "task", "cont", "kind", "status", "habit"} <= cols
         # Phase 1B: landing on v8 ends without the graph table (it never
@@ -471,6 +476,64 @@ def test_migration_v6_to_v8_gains_bots_and_task_columns(tmp_path) -> None:
         db.close()
     facade._refresh_index(at(5))
     assert len(facade.search("old body", now=at(5)).hits) == 1
+
+
+def test_migration_v8_to_v9_renames_id_and_keeps_usage(tmp_path) -> None:
+    """Genuine pre-v9 database: leaf id columns still named session_*.
+
+    RENAME COLUMN must carry chunk + usage rows over, so get/search
+    counters written before the upgrade still count afterwards."""
+    (tmp_path / "memory").mkdir(parents=True)
+    (tmp_path / "memory" / "2026-09-01.md").write_text(
+        "# 2026-09-01\n"
+        "## 08:00 — old topic <!-- thyca {\"id\":\"deadbeef\",\"imp\":3} -->\n"
+        "- old body text\n",
+        encoding="utf-8",
+    )
+    db_path = tmp_path / "memory.sqlite"
+    db = sqlite3.connect(db_path)
+    db.executescript(_schema_without())
+    db.execute("INSERT INTO meta VALUES ('schema_version', '8')")
+    db.execute(
+        "INSERT INTO source_files VALUES (?, 'daily', '2026-09-01', 1, 10)",
+        (str(tmp_path / "memory" / "2026-09-01.md"),),
+    )
+    db.execute(
+        """INSERT INTO chunks(chunk_id, path, source_kind, timeline_day, session_id,
+           session_title, heading_raw, leaf_ord, line_start, line_end,
+           text_raw, text_norm, content_hash, expires_at)
+           VALUES ('2026-09-01#deadbeef#1', ?, 'daily', '2026-09-01',
+           '2026-09-01#deadbeef', 'old topic', '## 08:00 — old topic',
+           1, 2, 2, 'old body text', 'old body text', 'hash', NULL)""",
+        (str(tmp_path / "memory" / "2026-09-01.md"),),
+    )
+    db.execute(
+        "INSERT INTO leaf_gets VALUES (?, ?, 7, '2026-09-02T00:00:00Z')",
+        ("2026-09-01#deadbeef#1", "2026-09-01#deadbeef"),
+    )
+    db.execute(
+        "INSERT INTO leaf_searches VALUES (?, ?, 3, '2026-09-03T00:00:00Z')",
+        ("2026-09-01#deadbeef#1", "2026-09-01#deadbeef"),
+    )
+    db.commit()
+    db.close()
+    facade = MemoryFacade(tmp_path, timezone_name=TZ)
+    facade._refresh_index(at(5))
+    db = sqlite3.connect(db_path)
+    try:
+        assert db.execute(
+            "SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == "9"
+        cols = {row[1] for row in db.execute("PRAGMA table_info(chunks)")}
+        assert "memory_id" in cols and "memory_title" in cols
+        assert "session_id" not in cols and "session_title" not in cols
+        row = db.execute("SELECT get_count, memory_id FROM leaf_gets").fetchone()
+        assert row == (7, "2026-09-01#deadbeef")
+        search_row = db.execute(
+            "SELECT search_count, memory_id FROM leaf_searches").fetchone()
+        assert search_row == (3, "2026-09-01#deadbeef")
+    finally:
+        db.close()
+    assert facade.get(memory_id="2026-09-01#deadbeef", now=at(5)) is not None
 
 
 # -- same-day catalog (Finding 2) -------------------------------------------------
@@ -569,10 +632,10 @@ async def test_tool_remember_new_task_and_continue(tmp_path) -> None:
     created = await call("memory_remember", {
         "topic": "goal", "summary": "start work", "new_task": True})
     assert created["task_id"].startswith("task-")
-    assert created["session_id"][10] == "#"
+    assert created["memory_id"][10] == "#"
     second = await call("memory_remember", {
         "topic": "goal", "summary": "more work",
-        "task": created["task_id"], "cont": created["session_id"]})
+        "task": created["task_id"], "cont": created["memory_id"]})
     assert second["task_id"] == created["task_id"]
     # Catalog listing over closed days (entries seeded via the facade
     # with explicit dates; the tool itself stamps real now).
@@ -618,17 +681,17 @@ async def test_tool_checkpoint_contract(tmp_path) -> None:
     created = json.loads(created_result.content)
     second_result = await submit("memory_remember", {
         "topic": "goal", "summary": "state two; next three",
-        "task": created["task_id"], "cont": created["session_id"],
+        "task": created["task_id"], "cont": created["memory_id"],
         "kind": "checkpoint"})
     assert not second_result.is_error, second_result.content
     second = json.loads(second_result.content)
-    got = await submit("memory_get", {"session_id": second["session_id"]})
+    got = await submit("memory_get", {"memory_id": second["memory_id"]})
     assert not got.is_error
     assert "state two; next three" in got.content
     catalog = json.loads((await submit("memory_tasks", {})).content)
     entry = next(t for t in catalog["tasks"] if t["task_id"] == created["task_id"])
     assert entry["entry_count"] == 2
-    assert entry["latest_session_id"] == second["session_id"]
+    assert entry["latest_memory_id"] == second["memory_id"]
     no_task = await submit("memory_remember", {
         "topic": "orphan", "summary": "state", "kind": "checkpoint"})
     assert no_task.is_error

@@ -218,21 +218,37 @@ def _delete_spec(deps: AdminDeps) -> ToolSpec:
         if denied:
             return denied
         bot_id = args["bot_id"]
+        # Prune first: a failed prune deletes nothing.
+        pruned: list[str] = []
+        dissolved: list[str] = []
+        if getattr(deps, "prune_groups_for_bot", None) is not None:
+            try:
+                prune_result = deps.prune_groups_for_bot(bot_id)
+            except Exception as exc:
+                return f"bot_delete failed: {exc}"
+            pruned = list(prune_result.pruned)
+            dissolved = list(prune_result.dissolved)
         try:
             removed = deps.facade_fn().forget_bot_entries(bot_id)
             deps.bots.delete(bot_id)
         except Exception as exc:
+            if pruned or dissolved:
+                return f"bot_delete failed: {exc} (bot already left {len(pruned) + len(dissolved)} groups)"
             return f"bot_delete failed: {exc}"
         return json.dumps(
-            {"ok": True, "bot_id": bot_id, "private_memories_removed": removed},
+            {"ok": True, "bot_id": bot_id, "private_memories_removed": removed,
+             "groups_pruned": len(pruned), "groups_dissolved": len(dissolved)},
             ensure_ascii=False,
         )
 
     return ToolSpec(
         name="bot_delete",
         description=(
-            "Delete a bot (Thyca only): its card, private skills/sessions, and "
-            "private memories go; team-promoted memories stay with the team."
+            "Delete a bot (Thyca only): its card, private skills/conversations, and "
+            "private memories go; team-promoted memories stay with the team. "
+            "The bot also leaves every group; a group left with no "
+            "member dissolves (is deleted), while a group with other "
+            "members keeps them."
         ),
         parameters={
             "type": "object",
@@ -398,7 +414,7 @@ def _stop_spec(deps: AdminDeps) -> ToolSpec:
         description=(
             "Stop a bot's queued work (Thyca only): drops its pending A2A "
             "mailbox. (Turns run synchronously in v1; in-flight room turns "
-            "are cancelled via the session cancel endpoint.)"
+            "are cancelled via the conversation cancel endpoint.)"
         ),
         parameters={
             "type": "object",

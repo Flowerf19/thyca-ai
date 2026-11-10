@@ -11,8 +11,8 @@ from pathlib import Path
 from thyca.core.protocol import estimate_tokens
 from thyca.memories.heading import (
     iter_session_blocks,
+    memory_id,
     parse_heading,
-    session_id,
     strip_comment,
 )
 
@@ -29,8 +29,8 @@ class Chunk:
     path: str
     source_kind: str
     timeline_day: str | None
-    session_id: str
-    session_title: str
+    memory_id: str
+    memory_title: str
     heading_raw: str
     leaf_ord: int
     line_start: int
@@ -75,7 +75,7 @@ class Chunker:
                 # stage only emits non-blank parts, so no guard is needed.
                 raw = leaf["text"]
                 norm = self.normalize(raw)
-                chunk_id = f"{session['session_id']}#{ord_}"
+                chunk_id = f"{session['memory_id']}#{ord_}"
                 payload = f"{session['heading']}\n{raw}".encode()
                 chunks.append(
                     Chunk(
@@ -83,8 +83,8 @@ class Chunker:
                         path=path_s,
                         source_kind=source_kind,
                         timeline_day=timeline_day,
-                        session_id=session["session_id"],
-                        session_title=session["title"],
+                        memory_id=session["memory_id"],
+                        memory_title=session["title"],
                         heading_raw=session["heading"],
                         leaf_ord=ord_,
                         line_start=leaf["start"],
@@ -127,7 +127,7 @@ def _sessions(
             {
                 "heading": "",
                 "title": "",
-                "session_id": sid,
+                "memory_id": sid,
                 "body": text,
                 "body_start": 1,
             }
@@ -142,7 +142,7 @@ def _sessions(
             {
                 "heading": strip_comment(lines[line_no]),
                 "title": meta.title,
-                "session_id": session_id(prefix, entry),
+                "memory_id": memory_id(prefix, entry),
                 "body": body,
                 "body_start": line_no + 2,
                 "expires_at": meta.expires_at,

@@ -401,7 +401,7 @@ _DEFAULTS = r"""
 globalThis.runs ??= new Map();
 globalThis.histories ??= new Map();
 globalThis.lab ??= { timers: [], mode: null, botId: null, lastChoice: 'idle', sample: '', ownsGroup: false };
-globalThis.currentSession ??= '';
+globalThis.currentConversation ??= '';
 globalThis.selectedBot ??= '';
 globalThis.attachment ??= null;
 globalThis.typedMention ??= '';
@@ -420,7 +420,7 @@ globalThis.followRunningTurn ??= () => {};
 globalThis.sendTurn ??= async () => false;
 globalThis.stopRun ??= async () => false;
 globalThis.selectBot ??= async () => {};
-globalThis.loadSession ??= async () => {};
+globalThis.loadConversation ??= async () => {};
 globalThis.mentionBot ??= () => false;
 globalThis.updateCard ??= () => {};
 globalThis.renderTeam ??= () => {};
@@ -619,7 +619,7 @@ def test_normalize_bot_maps_card_and_agent_status(node: str) -> None:
     assert b["system"] is True and b["persona"] == "p"
     assert b["memory"] == {"read": True, "write": False}
     # The fixture bot is the system bot: always starred (see favorite test).
-    assert b["sessions"] == [] and b["favorite"] is True and b["open"] is False
+    assert b["conversations"] == [] and b["favorite"] is True and b["open"] is False
     assert b["palette"]["color"] == b["color"]
     assert out["pausedState"] == "offline"            # paused -> offline
     assert out["bareState"] == "idle"
@@ -660,7 +660,7 @@ def test_get_json_errors_carry_status_and_body(node: str) -> None:
     assert out["typed"] == {"code": "model_in_use", "refs": {"m": ["b"]}}
 
 
-def test_refresh_sessions_partitions_groups_and_rows(node: str) -> None:
+def test_refresh_conversations_partitions_groups_and_rows(node: str) -> None:
     """kind:'group' conversations feed the shared group list (members filtered
     to live bots); a bot's row lists its DM plus every group whose bot list
     mentions them, keyed dm:<bot> / group:<group_id>."""
@@ -668,41 +668,44 @@ def test_refresh_sessions_partitions_groups_and_rows(node: str) -> None:
         bots.length = 0;
         bots.push(...roster([{ id: 'thyca' }, { id: 'coder' }]));
         installFetch((url) => url === '/api/conversations' ? { conversations: [
-            { group_id: 'group-11111111111111111111111111111111', kind: 'group', title: 'Nhóm', bots: ['thyca', 'coder', 'ghost'], turns: 5, updated_at: new Date().toISOString() },
-            { bot_id: 'coder', kind: 'dm', title: 'DM coder', turns: 2, updated_at: new Date().toISOString() },
+            { group_id: 'group-11111111111111111111111111111111', kind: 'group', bots: ['thyca', 'coder', 'ghost'], turns: 5, updated_at: new Date().toISOString() },
+            { bot_id: 'coder', kind: 'dm', turns: 2, updated_at: new Date().toISOString() },
         ] } : {});
-        await refreshSessions();
+        await refreshConversations();
         return {
             groups: groups.map(g => [g.id, g.title, g.bots, g.subtitle]),
-            thyca: bots[0].sessions.map(s => s[0]),
-            coder: bots[1].sessions.map(s => s[0]),
+            thyca: bots[0].conversations.map(s => s[0]),
+            coder: bots[1].conversations.map(s => s[0]),
+            coderLabels: bots[1].conversations.map(s => s[1]),
         };
     """)
-    assert out["groups"] == [["group-11111111111111111111111111111111", "Nhóm", ["thyca", "coder"], "2 người bạn · 5 lượt"]]
+    assert out["groups"] == [["group-11111111111111111111111111111111", "Hội thoại chung", ["thyca", "coder"], "2 người bạn · 5 lượt"]]
+    assert set(out["coderLabels"]) == {"Hội thoại chung", "coder"}
     assert set(out["thyca"]) == {"group:group-11111111111111111111111111111111"}              # member of the group
     assert set(out["coder"]) == {"group:group-11111111111111111111111111111111", "dm:coder"}  # dm + group
 
 
-def test_session_row_day_labels_and_turn_count(node: str) -> None:
-    """sessionRow -> [typed key, title|'Chưa đặt tên', day + ' · N lượt']; days are
-    Hôm nay / Hôm qua / d-m / ''."""
+def test_conversation_row_day_labels_and_turn_count(node: str) -> None:
+    """conversationRow -> [typed key, identity label, day + ' · N lượt']; days are
+    Hôm nay / Hôm qua / d-m / ''. A group shows 'Hội thoại chung', a DM its
+    bot name (falling back to the bot id), even when empty."""
     out = _run(node, """
         const mk = (daysAgo, extra) => {
             const d = new Date(Date.now() - daysAgo * 864e5);
-            return sessionRow({ kind: 'group', group_id: 'group-11111111111111111111111111111111', updated_at: d.toISOString(), ...extra });
+            return conversationRow({ kind: 'group', group_id: 'group-11111111111111111111111111111111', updated_at: d.toISOString(), ...extra });
         };
         return {
-            today: mk(0, { title: 'T', turns: 3 }),
+            today: mk(0, { turns: 3 }),
             yesterday: mk(1, {}),
-            old: mk(40, { title: 'Old' }),
-            missing: sessionRow({ kind: 'dm', bot_id: 'x' }),
+            old: mk(40, {}),
+            missing: conversationRow({ kind: 'dm', bot_id: 'x' }),
         };
     """)
-    assert out["today"] == ["group:group-11111111111111111111111111111111", "T", "Hôm nay · 3 lượt"]
-    assert out["yesterday"][0] == "group:group-11111111111111111111111111111111" and out["yesterday"][1] == "Chưa đặt tên"
+    assert out["today"] == ["group:group-11111111111111111111111111111111", "Hội thoại chung", "Hôm nay · 3 lượt"]
+    assert out["yesterday"][0] == "group:group-11111111111111111111111111111111" and out["yesterday"][1] == "Hội thoại chung"
     assert out["yesterday"][2].startswith("Hôm qua")
     assert out["old"][2] == "" or re.match(r"\d+/\d+", out["old"][2])
-    assert out["missing"] == ["dm:x", "Chưa đặt tên", ""]
+    assert out["missing"] == ["dm:x", "x", ""]
 
 
 def test_sync_roster_patches_in_place_and_respects_running_bots(node: str) -> None:
@@ -712,7 +715,7 @@ def test_sync_roster_patches_in_place_and_respects_running_bots(node: str) -> No
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }]));
         bots[1].state = 'working'; bots[1].summary = 'đang chạy'; bots[1].elapsed = 42;
-        runs.set('s1', { botId: 'b', sessionId: 's1', node: null, timers: [], tools: [] });
+        runs.set('s1', { botId: 'b', conversationId: 's1', node: null, timers: [], tools: [] });
         installFetch((url) => url === '/api/bots'
             ? { bots: [{ id: 'a', name: 'A2', role: 'R' }, { id: 'c', name: 'C' }] }
             : url === '/api/conversations' ? { conversations: [] } : {});
@@ -736,7 +739,7 @@ def test_sync_roster_keeps_live_state_when_bot_has_run(node: str) -> None:
         bots.length = 0;
         bots.push(...roster([{ id: 'a' }]));
         bots[0].state = 'working'; bots[0].summary = 'đang build'; bots[0].elapsed = 30;
-        runs.set('s1', { botId: 'a', sessionId: 's1', node: null, timers: [], tools: [] });
+        runs.set('s1', { botId: 'a', conversationId: 's1', node: null, timers: [], tools: [] });
         installFetch((url) => url === '/api/bots'
             ? { bots: [{ id: 'a', agent_status: { state: 'idle', current_action: 'rest' } }] }
             : url === '/api/conversations' ? { conversations: [] } : {});
@@ -891,8 +894,8 @@ def test_set_state_error_cancels_run_and_announces(node: str) -> None:
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'Alpha' }]));
         const calls = [];
-        globalThis.cancelTurn = (t, m, b) => calls.push([t.sessionId, m, b]);
-        runs.set('s9', { botId: 'a', sessionId: 's9', node: null, timers: [], tools: [] });
+        globalThis.cancelTurn = (t, m, b) => calls.push([t.conversationId, m, b]);
+        runs.set('s9', { botId: 'a', conversationId: 's9', node: null, timers: [], tools: [] });
         setState('a', 'error');
         return {
             state: bots[0].state,
@@ -1061,7 +1064,7 @@ def test_card_markup_anatomy(node: str) -> None:
     assert 'data-action="select"' in html
     assert 'aria-label="Trò chuyện với Coder · Đang suy nghĩ"' in html
     assert 'class="seal-avatar' in html
-    assert 'class="bot-name session-name"' in html and ">Coder<" in html
+    assert 'class="bot-name conversation-name"' in html and ">Coder<" in html
     assert 'class="bot-role"' in html and ">Dev<" in html
     assert 'class="header-status"' in html and "Đang suy nghĩ" in html
     role_idx = html.index('class="bot-role"')
@@ -1185,9 +1188,9 @@ def test_update_card_patches_state_preview_and_pocket(node: str) -> None:
         bots.push(...roster([{ id: 'a', name: 'Alpha' }]));
         const b = bots[0];
         renderTeam();
-        currentSession = 's1';
-        liveCallStarted(b, { kind: 'tool', name: 'bash', call_id: 'c1', session: 's1' });
-        liveCallStarted(b, { kind: 'tool', name: 'bash', call_id: 'c2', session: 's1' });
+        currentConversation = 's1';
+        liveCallStarted(b, { kind: 'tool', name: 'bash', call_id: 'c1', conversation: 's1' });
+        liveCallStarted(b, { kind: 'tool', name: 'bash', call_id: 'c2', conversation: 's1' });
         b.state = 'working'; b.elapsed = 12; b.open = true;
         b.taskWindow = 's1'; b.taskCache = { status: 'ok', payload: { tasks: [{ title: 'port parser', status: 'open', waiting_on: null }] } };
         selectedBot = 'a';
@@ -1263,7 +1266,7 @@ def test_pocket_state_matrix_reply_action_and_open_invariance(node: str) -> None
         const el = $('#bot-a');
         b.open = true; updateCard(b);
         const seen = {};
-        currentSession = 's1';
+        currentConversation = 's1';
         b.taskWindow = 's1'; b.taskCache = { status: 'ok', payload: { calls: [] } };
         for (const st of ['idle', 'waiting', 'thinking', 'writing', 'working', 'done', 'error', 'offline', 'confused']) {
             b.state = st; b.summary = 'muc tieu X'; b.idle.comment = '';
@@ -1316,27 +1319,27 @@ def test_live_preview_groups_and_legacy_finish(node: str) -> None:
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'Alpha' }]));
         const b = bots[0];
-        currentSession = 's1';
+        currentConversation = 's1';
         // Two concurrent same-name calls, one tool one skill, plus others.
-        liveCallStarted(b, { kind: 'tool', name: 'read', call_id: 'c1', session: 's1' });
-        liveCallStarted(b, { kind: 'skill', name: 'read', call_id: 'c1', session: 's1' });
-        liveCallStarted(b, { kind: 'tool', name: 'bash', call_id: 'c2', session: 's1' });
-        liveCallStarted(b, { kind: 'tool', name: 'edit', call_id: 'c3', session: 's1' });
-        liveCallStarted(b, { kind: 'tool', name: 'other', call_id: 'd1', session: 's-other' });
+        liveCallStarted(b, { kind: 'tool', name: 'read', call_id: 'c1', conversation: 's1' });
+        liveCallStarted(b, { kind: 'skill', name: 'read', call_id: 'c1', conversation: 's1' });
+        liveCallStarted(b, { kind: 'tool', name: 'bash', call_id: 'c2', conversation: 's1' });
+        liveCallStarted(b, { kind: 'tool', name: 'edit', call_id: 'c3', conversation: 's1' });
+        liveCallStarted(b, { kind: 'tool', name: 'other', call_id: 'd1', conversation: 's-other' });
         const groups = livePreviewGroups(b, 's1');
         const preview = previewLine(b);
         const extra = previewExtraCount(b);
         // One finish removes one colliding call; out-of-order second clears it.
         const ambiguous = liveCallFinished(b, 'c1');
-        const r1 = liveCallFinished(b, 'c1', {kind: 'tool', session: 's1'});
+        const r1 = liveCallFinished(b, 'c1', {kind: 'tool', conversation: 's1'});
         const afterOne = livePreviewGroups(b, 's1');
         const rUnknown = liveCallFinished(b, 'nope');
-        liveCallFinished(b, 'c1', {kind: 'skill', session: 's1'});
+        liveCallFinished(b, 'c1', {kind: 'skill', conversation: 's1'});
         const afterTwo = livePreviewGroups(b, 's1');
         // Other-window calls never leak into this window's preview.
         const leaked = livePreviewGroups(b, 's1').shown.some(g => g.name === 'other');
         // Skill rows keep their kind prefix from actual event semantics.
-        liveCallStarted(b, { kind: 'skill', name: 'fetch', call_id: 's9', session: 's1' });
+        liveCallStarted(b, { kind: 'skill', name: 'fetch', call_id: 's9', conversation: 's1' });
         const skillPreview = previewLine(b);
         return { groups, preview, extra, ambiguous, r1kind: r1 && r1.kind,
                  afterOne: afterOne.shown.map(g => [g.kind, g.name, g.active]),
@@ -1370,7 +1373,7 @@ def test_task_pocket_keyed_reconcile_and_stale_guard(node: str) -> None:
         bots.push(...roster([{ id: 'a', name: 'Alpha' }, { id: 'b', name: 'Beta' }]));
         const b = bots[0];
         renderTeam();
-        currentSession = 's1';
+        currentConversation = 's1';
         b.open = true; b.taskWindow = 's1';
         b.taskCache = { status: 'ok', payload: { tasks: [
             { title: 'port parser', status: 'open', waiting_on: null },
@@ -1427,7 +1430,7 @@ def test_pocket_disclosure_is_chevron_only(node: str) -> None:
             : url.endsWith('/tasks') ? { bot_id: 'a', calls: [] } : {});
         await loadRoster();
         const afterRoster = calls.filter(c => String(c[0]).endsWith('/tasks')).length;
-        currentSession = 'dm:a'; selectedBot = 'a';
+        currentConversation = 'dm:a'; selectedBot = 'a';
         renderTeam(); bots.forEach(updateCard);
         const afterPaint = calls.filter(c => String(c[0]).endsWith('/tasks')).length;
         await refreshBotTasks(bots[0], null);   // no window: marks unavailable, no fetch
@@ -1456,13 +1459,13 @@ def test_open_pocket_refreshes_on_window_switch_not_on_poll(node: str) -> None:
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'A' }]));
         renderTeam();
-        currentSession = 'dm:a';
+        currentConversation = 'dm:a';
         openBot('a', true);
         await tick();
         const first = calls.length;
         refreshOpenPocketsOnWindowChange();       // same window: no refetch
         const same = calls.length;
-        currentSession = 'group:group-11111111111111111111111111111111';             // window switch
+        currentConversation = 'group:group-11111111111111111111111111111111';             // window switch
         refreshOpenPocketsOnWindowChange();
         await tick();
         const after = calls.length;
@@ -1490,10 +1493,10 @@ def test_late_task_response_never_paints_stale_window(node: str) -> None:
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'A' }]));
         renderTeam();
-        currentSession = 's1';
+        currentConversation = 's1';
         openBot('a', true);                       // s1 fetch pends on the gate
         await tick(5);
-        currentSession = 's2';                    // switch while s1 is in flight
+        currentConversation = 's2';                    // switch while s1 is in flight
         refreshOpenPocketsOnWindowChange();
         await tick(5);
         releaseS1();                              // stale s1 response lands late
@@ -1516,19 +1519,19 @@ def test_finish_association_is_window_and_name_exact(node: str) -> None:
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'Alpha' }]));
         const b = bots[0];
-        liveCallStarted(b, { kind: 'tool', name: 'read', call_id: 'c1', session: 's1' });
-        liveCallStarted(b, { kind: 'tool', name: 'write', call_id: 'c1', session: 's1' });
-        liveCallStarted(b, { kind: 'tool', name: 'write', call_id: 'c1', session: 's2' });
+        liveCallStarted(b, { kind: 'tool', name: 'read', call_id: 'c1', conversation: 's1' });
+        liveCallStarted(b, { kind: 'tool', name: 'write', call_id: 'c1', conversation: 's1' });
+        liveCallStarted(b, { kind: 'tool', name: 'write', call_id: 'c1', conversation: 's2' });
         // Out of order: the write finish in s1 removes only s1's write.
-        const r1 = liveCallFinished(b, 'c1', { kind: 'tool', name: 'write', session: 's1' });
-        const s1 = (b.liveCalls || []).filter(f => f.session === 's1').map(f => f.name);
-        const s2 = (b.liveCalls || []).filter(f => f.session === 's2').map(f => f.name);
+        const r1 = liveCallFinished(b, 'c1', { kind: 'tool', name: 'write', conversation: 's1' });
+        const s1 = (b.liveCalls || []).filter(f => f.conversation === 's1').map(f => f.name);
+        const s2 = (b.liveCalls || []).filter(f => f.conversation === 's2').map(f => f.name);
         // A named finish with no match removes nothing.
-        const rUnknown = liveCallFinished(b, 'c1', { kind: 'tool', name: 'nope', session: 's1' });
-        liveCallFinished(b, 'c1', { kind: 'tool', name: 'read', session: 's1' });
-        const s1After = (b.liveCalls || []).filter(f => f.session === 's1').length;
+        const rUnknown = liveCallFinished(b, 'c1', { kind: 'tool', name: 'nope', conversation: 's1' });
+        liveCallFinished(b, 'c1', { kind: 'tool', name: 'read', conversation: 's1' });
+        const s1After = (b.liveCalls || []).filter(f => f.conversation === 's1').length;
         return { r1: r1 && r1.name, s1, s2, rUnknown, s1After,
-                 s2Intact: (b.liveCalls || []).filter(f => f.session === 's2').map(f => f.name) };
+                 s2Intact: (b.liveCalls || []).filter(f => f.conversation === 's2').map(f => f.name) };
     """, via="chat")
     assert out["r1"] == "write"
     assert out["s1"] == ["read"] and out["s2"] == ["write"]
@@ -1549,15 +1552,15 @@ def test_follow_running_turn_reentry_keeps_single_subscription(node: str) -> Non
             }
             return {};
         });
-        currentSession = 'dm:coder';
+        currentConversation = 'dm:coder';
         followRunningTurn('dm:coder');
         const first = runs.get('dm:coder');
         handleStreamEvent(first, { type: 'tool.started', name: 'bash', call_id: 'c1' });
         handleStreamEvent(first, { type: 'llm.content', delta: 'before' });
-        currentSession = 'dm:thyca';
+        currentConversation = 'dm:thyca';
         $('#message-list').innerHTML = '';
         handleStreamEvent(first, { type: 'llm.content', delta: ' away' });
-        currentSession = 'dm:coder';
+        currentConversation = 'dm:coder';
         followRunningTurn('dm:coder');
         const same = runs.get('dm:coder') === first;
         const text = $('.stream-text', first.node).textContent;
@@ -1589,11 +1592,11 @@ def test_stream_burst_coalesces_task_refreshes(node: str) -> None:
             return {};
         });
         const b = getBot('coder');
-        currentSession = 'dm:coder';
+        currentConversation = 'dm:coder';
         renderTeam();
         openBot('coder', true);                     // fetch #1 pends
         await tick(5);
-        const token = { botId: 'coder', sessionId: 'dm:coder', node: document.createElement('article'),
+        const token = { botId: 'coder', conversationId: 'dm:coder', node: document.createElement('article'),
                         timers: [], tools: [], start: Date.now(), phase: 'waiting' };
         for (let i = 0; i < 5; i++)                 // burst while #1 is in flight
             handleStreamEvent(token, { type: 'tool.started', name: 't' + i, call_id: 'c' + i });
@@ -1618,7 +1621,7 @@ def test_pocket_renders_all_tasks_with_distinct_identities(node: str) -> None:
         bots.push(...roster([{ id: 'a', name: 'Alpha' }]));
         const b = bots[0];
         renderTeam();
-        currentSession = 's1';
+        currentConversation = 's1';
         const tasks = [];
         for (let i = 0; i < 22; i++) tasks.push({ title: 'work ' + i, status: 'open', waiting_on: null });
         tasks.push({ title: 'same', status: 'open', waiting_on: null });
@@ -1654,11 +1657,11 @@ def test_live_more_opens_separate_full_list(node: str) -> None:
         bots.push(...roster([{ id: 'a', name: 'Alpha' }]));
         const b = bots[0];
         renderTeam();
-        currentSession = 's1';
-        liveCallStarted(b, { kind: 'tool', name: 'bash', call_id: 'c1', session: 's1' });
-        liveCallStarted(b, { kind: 'tool', name: 'bash', call_id: 'c2', session: 's1' });
-        liveCallStarted(b, { kind: 'skill', name: 'read', call_id: 'c3', session: 's1' });
-        liveCallStarted(b, { kind: 'tool', name: 'edit', call_id: 'c4', session: 's1' });
+        currentConversation = 's1';
+        liveCallStarted(b, { kind: 'tool', name: 'bash', call_id: 'c1', conversation: 's1' });
+        liveCallStarted(b, { kind: 'tool', name: 'bash', call_id: 'c2', conversation: 's1' });
+        liveCallStarted(b, { kind: 'skill', name: 'read', call_id: 'c3', conversation: 's1' });
+        liveCallStarted(b, { kind: 'tool', name: 'edit', call_id: 'c4', conversation: 's1' });
         updateCard(b);
         const moreBtn = $$('.live-more', $('#bot-a')).find(x => !x.hidden);
         const opened = openLiveList('a');
@@ -1691,16 +1694,16 @@ def test_preview_and_pocket_never_cross_windows(node: str) -> None:
         bots.push(...roster([{ id: 'a', name: 'Alpha' }]));
         const b = bots[0];
         renderTeam();
-        currentSession = 's1';
-        liveCallStarted(b, { kind: 'tool', name: 'secret', call_id: 'x1', session: 's-other' });
+        currentConversation = 's1';
+        liveCallStarted(b, { kind: 'tool', name: 'secret', call_id: 'x1', conversation: 's-other' });
         const previewHere = previewLine(b);
         b.open = true; b.taskWindow = 's-other';
         b.taskCache = { status: 'ok', payload: { tasks: [{ title: 'secret', status: 'open', waiting_on: null }] } };
         updateCard(b);
         const pocketHere = $('.thinking-summary', $('#bot-a')).textContent;
         const rowsHere = $$('.progress-list li', $('#bot-a')).length;
-        // Non-chat page: no currentSession binding is invented.
-        currentSession = '';
+        // Non-chat page: no currentConversation binding is invented.
+        currentConversation = '';
         const previewAway = previewLine(b);
         const pocketAway = taskStatusText(b);
         const callsThere = liveCallsForWindow(b, 's-other').length;
@@ -1969,19 +1972,19 @@ def test_system_bot_star_is_permanent(node: str) -> None:
     assert out["helperPinMissing"] is True
 
 
-def test_group_list_click_loads_session(node: str) -> None:
-    """Clicking a group row opens the group session with its first member."""
+def test_group_list_click_loads_conversation(node: str) -> None:
+    """Clicking a group row opens the group conversation with its first member."""
     out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'thyca' }, { id: 'coder' }]));
-        groups.push({ id: 'group-11111111111111111111111111111111', title: 'Nhóm 9', bots: ['coder', 'thyca'], subtitle: 'x' });
+        groups.push({ id: 'group-11111111111111111111111111111111', title: 'Hội thoại chung', bots: ['coder', 'thyca'], subtitle: 'x' });
         const calls = [];
-        globalThis.loadSession = (id, title, bot) => calls.push([id, title, bot]);
+        globalThis.loadConversation = (id, bot) => calls.push([id, bot]);
         const row = document.createElement('button'); row.className = 'group-row'; row.dataset.group = 'group-11111111111111111111111111111111';
         $('#group-list')._handlers.click.forEach(h => h({ target: row, preventDefault() {} }));
         return { calls, dispatches: globalThis.__spaDispatches || [] };
     """)
-    assert out["dispatches"] == [["loadSession", "group:group-11111111111111111111111111111111", "Nhóm 9", "coder"]]
+    assert out["dispatches"] == [["loadConversation", "group:group-11111111111111111111111111111111", "coder"]]
 
 
 def test_shared_picker_opens_prefilled_group_dialog(node: str) -> None:
@@ -2002,21 +2005,20 @@ def test_shared_picker_opens_prefilled_group_dialog(node: str) -> None:
 
 
 def test_group_form_submit_creates_and_opens_group(node: str) -> None:
-    """The group form requires >=2 members + a title; it POSTs the group,
+    """The group form requires >=2 members; it POSTs the group,
     refreshes conversations, opens the new group and confirms via toast."""
     out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'a' }, { id: 'b' }]));
         const posted = [];
-        globalThis.loadSession = async (id, title, bot) => posted.push(['load', id, title, bot]);
+        globalThis.loadConversation = async (id, bot) => posted.push(['load', id, bot]);
         installFetch((url, opts) => {
-            if (url === '/api/groups' && opts.method === 'POST') return { group_id: 'group-11111111111111111111111111111111', kind: 'group', title: 'Team' };
-            if (url === '/api/conversations') return { conversations: [{ group_id: 'group-11111111111111111111111111111111', kind: 'group', title: 'Team', bots: ['a', 'b'] }] };
+            if (url === '/api/groups' && opts.method === 'POST') return { group_id: 'group-11111111111111111111111111111111', kind: 'group' };
+            if (url === '/api/conversations') return { conversations: [{ group_id: 'group-11111111111111111111111111111111', kind: 'group', bots: ['a', 'b'] }] };
             return {};
         });
         const form = $('#group-form');
         // under two members -> toast, no POST
-        $('#group-title').value = 'Team';
         const one = [Object.assign(document.createElement('input'), { name: 'bots', value: 'a', checked: true, type: 'checkbox' })];
         await form.onsubmit({ preventDefault() {}, currentTarget: { querySelectorAll: () => one } });
         const tooFew = $('#toast').textContent;
@@ -2032,7 +2034,7 @@ def test_group_form_submit_creates_and_opens_group(node: str) -> None:
                  groupCount: groups.length };
     """)
     assert "ít nhất hai bot" in out["tooFew"]
-    assert out["posted"] == [["load", "group:group-11111111111111111111111111111111", "Team", "a"]]
+    assert out["posted"] == [["load", "group:group-11111111111111111111111111111111", "a"]]
     assert out["closed"] is True and out["reset"] is True
     assert "Đã tạo hội thoại chung" in out["toast"]
     assert out["groupCount"] == 1
@@ -2042,13 +2044,13 @@ def test_group_form_submit_creates_and_opens_group(node: str) -> None:
 # Bot drawer — ui/share/sidebar.js (openInfo/capabilitiesHtml/fillDrawerContext)
 # ---------------------------------------------------------------------------
 
-def test_open_info_renders_identity_and_session_index(node: str) -> None:
-    """openInfo fills the drawer with the info lockup plus the bot's session
+def test_open_info_renders_identity_and_conversation_index(node: str) -> None:
+    """openInfo fills the drawer with the info lockup plus the bot's conversation
     list; capabilities mode renders facts, tools and the context meter."""
     out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'Alpha', role: 'Lead' }]));
-        bots[0].sessions = [['s1', 'Phiên 1', 'Hôm nay · 2 lượt'], ['s2', 'Phiên 2', '']];
+        bots[0].conversations = [['s1', 'Phiên 1', 'Hôm nay · 2 lượt'], ['s2', 'Phiên 2', '']];
         openInfo('a');
         const info = {
             name: $('#bot-drawer-name').textContent,
@@ -2064,7 +2066,7 @@ def test_open_info_renders_identity_and_session_index(node: str) -> None:
     assert info["sub"] == "Lead"
     assert info["open"] is True
     assert 'class="info-lockup"' in info["body"] and "NHỮNG CUỘC TRÒ CHUYỆN" in info["body"]
-    assert 'class="info-session"' in info["body"] and 'data-session="s1"' in info["body"]
+    assert 'class="info-session"' in info["body"] and 'data-conversation="s1"' in info["body"]
     assert 'data-bot="a"' in info["body"] and "Phiên 1" in info["body"]
     caps = out["caps"]
     assert out["name2"] == "Các khả năng của Alpha"
@@ -2144,21 +2146,21 @@ def test_drawer_context_drops_stale_slot_and_survives_errors(node: str) -> None:
     assert out["afterError"] == "ctx-bar"                    # untouched on failure
 
 
-def test_drawer_session_button_routes_to_session(node: str) -> None:
+def test_drawer_conversation_button_routes_to_conversation(node: str) -> None:
     """Clicking an info-session row dispatches to the active controller and
     closes the shared drawer — it never opens the pocket (chevron-only)."""
     out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'A' }, { id: 'b' }]));
-        bots[0].sessions = [['s1', 'Phiên 1', 'x']];
+        bots[0].conversations = [['s1', 'Phiên 1', 'x']];
         const calls = [];
-        globalThis.loadSession = (id, title, bot) => calls.push([id, title, bot]);
+        globalThis.loadConversation = (id, bot) => calls.push([id, bot]);
         const btn = document.createElement('button');
-        btn.dataset.session = 's1'; btn.dataset.bot = 'a';
+        btn.dataset.conversation = 's1'; btn.dataset.bot = 'a';
         $('#bot-drawer-body')._handlers.click.forEach(h => h({ target: btn, preventDefault() {} }));
         return { calls, dispatches: globalThis.__spaDispatches || [], closed: $('#bot-drawer').open === false, open: bots[0].open, otherOpen: bots[1].open };
     """)
-    assert out["dispatches"] == [["loadSession", "s1", "Phiên 1", "a"]]
+    assert out["dispatches"] == [["loadConversation", "s1", "a"]]
     assert out["calls"] == []
     assert out["closed"] is True and out["open"] is False and out["otherOpen"] is False
 
@@ -2230,16 +2232,16 @@ def test_emit_shell_and_boot_shell_fill_shared_dom(node: str) -> None:
 
 def test_default_navigation_routes_to_chat(node: str) -> None:
     """Pages without a chat override route sidebar picks through
-    ?bot=<id> / ?s=<session> deep links."""
+    ?bot=<id> / ?s=<conversation> deep links."""
     out = _run(node, """
         selectBot('coder');
         const a = location.href;
-        loadSession('s42');
+        loadConversation('s42');
         return { a, b: location.href, dispatches: __spaDispatches };
     """, via="shell")
     assert out["a"] == "http://localhost/ui/chat/index.html"
     assert out["b"] == "http://localhost/ui/chat/index.html"
-    assert [call[:2] for call in out["dispatches"]] == [["selectBot", "coder"], ["loadSession", "s42"]]
+    assert [call[:2] for call in out["dispatches"]] == [["selectBot", "coder"], ["loadConversation", "s42"]]
 
 
 def test_handle_event_maps_lifecycle_and_respects_guards(node: str) -> None:
@@ -2315,7 +2317,7 @@ _CHAT_SEED = """
         bots.length = 0;
         bots.push(...roster([{ id: 'thyca', name: 'Thyca' }, { id: 'coder', name: 'Coder' }]));
         renderTeam();
-        currentSession = 'dm:coder'; selectedBot = 'coder';
+        currentConversation = 'dm:coder'; selectedBot = 'coder';
 """
 
 # app.js/page scripts boot() at load and fetch with the default stub — seeding
@@ -2380,14 +2382,14 @@ def test_send_turn_streams_and_finishes(node: str) -> None:
 
 
 def test_send_turn_guards_busy_offline_and_missing(node: str) -> None:
-    """sendTurn refuses when a run is in-flight, the session is empty, or the
+    """sendTurn refuses when a run is in-flight, the conversation is empty, or the
     bot is offline (toasting instead); an unknown bot id falls back to the
     first roster entry — sendTurn's contract is getBot(botId) || bots[0]."""
     out = _run(node, _CHAT_SEED + """
-        runs.set('dm:coder', { botId: 'coder', sessionId: 'dm:coder', node: null, timers: [], tools: [] });
+        runs.set('dm:coder', { botId: 'coder', conversationId: 'dm:coder', node: null, timers: [], tools: [] });
         const busyGuard = await sendTurn('x', 'coder');
         runs.clear();
-        const noSession = await (async () => { currentSession = ''; const r = await sendTurn('x'); currentSession = 'dm:coder'; return r; })();
+        const noSession = await (async () => { currentConversation = ''; const r = await sendTurn('x'); currentConversation = 'dm:coder'; return r; })();
         const fallback = await sendTurn('x', 'ghost');       // routes to bots[0]
         runs.clear();
         bots[1].state = 'offline';
@@ -2402,17 +2404,76 @@ def test_send_turn_guards_busy_offline_and_missing(node: str) -> None:
     }
 
 
+def test_group_delete_button_shows_for_group_only(node: str) -> None:
+    """The chat header delete button is visible only for a group.
+
+    loadConversation toggles it from the loaded detail kind; selectBot
+    (a DM) always hides it."""
+    out = _run(node, _CHAT_SEED + """
+        const btn = $('#delete-group');
+        const seen = [];
+        updateGroupDeleteButton(true);
+        seen.push(btn.hidden);
+        updateGroupDeleteButton(false);
+        seen.push(btn.hidden);
+        installFetch((url, opts) => {
+            const u = String(url);
+            if (u === '/api/groups/group-aaa') return { kind: 'group', title: 'G', messages: [], bots: ['thyca', 'coder'] };
+            if (u === '/api/bots/coder/dm') return { kind: 'dm', bot_id: 'coder', title: 'Coder', messages: [] };
+            if (u.startsWith('/api/bots/') && u.endsWith('/settings')) return { effective: { model: 'm', provider: 'p' } };
+            if (u === '/api/config') return { values: { models: {}, defaultModel: '' }, schema: { sections: [] } };
+            if (u === '/api/conversations') return { conversations: [] };
+            if (u === '/api/bots') return { bots: [] };
+            return {};
+        });
+        await loadConversation('group:group-aaa', 'G', 'thyca');
+        const groupHidden = btn.hidden;
+        await selectBot('coder');
+        const dmHidden = btn.hidden;
+        return { seen, groupHidden, dmHidden };
+    """, via="chat")
+    assert out["seen"] == [False, True]
+    assert out["groupHidden"] is False
+    assert out["dmHidden"] is True
+
+
+def test_group_delete_calls_delete_and_refreshes(node: str) -> None:
+    """Clicking delete confirms, DELETEs the group door, refreshes the
+    list, and lands on Thyca DM."""
+    out = _run(node, _CHAT_SEED + """
+        currentConversation = 'group:group-aaa';
+        window.confirm = () => true;
+        const calls = installFetch((url, opts) => {
+            const u = String(url);
+            const m = (opts && opts.method) || 'GET';
+            if (u === '/api/groups/group-aaa' && m === 'DELETE') return { ok: true };
+            if (u === '/api/conversations') return { conversations: [] };
+            if (u === '/api/bots/thyca/dm') return { kind: 'dm', bot_id: 'thyca', title: 'Thyca', messages: [] };
+            if (u.startsWith('/api/bots/') && u.endsWith('/settings')) return { effective: { model: 'm', provider: 'p' } };
+            if (u === '/api/config') return { values: { models: {}, defaultModel: '' }, schema: { sections: [] } };
+            return {};
+        });
+        await deleteCurrentGroup();
+        const deletes = calls.filter(c => c[0] === '/api/groups/group-aaa' && ((c[1] && c[1].method) || 'GET') === 'DELETE');
+        const lists = calls.filter(c => c[0] === '/api/conversations');
+        return { deletes: deletes.length, lists: lists.length, currentConversation };
+    """, via="chat")
+    assert out["deletes"] == 1
+    assert out["lists"] == 1
+    assert out["currentConversation"] == "dm:thyca"
+
+
 def test_stream_events_drive_live_calls_and_stream_text(node: str) -> None:
     """handleStreamEvent maps tool/skill started/finished onto the live-call
     identity (kind from event semantics, FIFO finish, skill distinct from
     tool) and llm.content onto the live stream-text node; thinking deltas
-    change state only and never invent preview rows; naming renames."""
+    change state only and never invent preview rows."""
     out = _run(node, _CHAT_SEED + """
         const list = $('#message-list');
         const node = document.createElement('article');
         node.innerHTML = '<header class="message-byline"><span>Coder</span><time>x</time></header><div class="live-copy"><p class="live-message">…</p></div>';
         list.appendChild(node);
-        const token = { botId: 'coder', sessionId: 'dm:coder', node, timers: [], tools: [], start: Date.now(), phase: 'waiting' };
+        const token = { botId: 'coder', conversationId: 'dm:coder', node, timers: [], tools: [], start: Date.now(), phase: 'waiting' };
         runs.set('dm:coder', token);
         for (const ev of [
             { type: 'llm.started' }, { type: 'llm.thinking' }, { type: 'llm.finished' },
@@ -2423,7 +2484,6 @@ def test_stream_events_drive_live_calls_and_stream_text(node: str) -> None:
             { type: 'tool.finished', name: 'bash', call_id: 'c9' },  // unknown: removes nothing
             { type: 'tool.finished', name: 'bash', call_id: 'c1' },  // FIFO: first colliding call
             { type: 'llm.content', delta: 'Chữ ' }, { type: 'llm.content', delta: 'đang chảy' },
-            { type: 'session.naming.finished', title: 'Tên mới' },
         ]) handleStreamEvent(token, ev);
         const b = bots[1];
         return {
@@ -2435,7 +2495,6 @@ def test_stream_events_drive_live_calls_and_stream_text(node: str) -> None:
             byline: $('.message-byline time', node).textContent,
             stream: $('.stream-text', node).textContent,
             caret: node.querySelectorAll('.streaming-caret').length,
-            title: $('#chat-title').textContent,
             tokenTools: token.tools,
         };
     """, via="chat")
@@ -2451,7 +2510,6 @@ def test_stream_events_drive_live_calls_and_stream_text(node: str) -> None:
     # the .stream-text stub is auto-vivified, so handleStreamEvent's !p branch
     # (which would create the caret) is skipped under this harness — assert the
     # text path only; caret markup lives in chat.css checks instead
-    assert out["title"] == "Tên mới"
     assert out["tokenTools"] == ["bash", "bash", "bash"]
 
 def test_turn_terminal_events_cancel_and_fail(node: str) -> None:
@@ -2462,7 +2520,7 @@ def test_turn_terminal_events_cancel_and_fail(node: str) -> None:
             const node = document.createElement('article');
             node.innerHTML = '<header class="message-byline"><time>x</time></header><div class="live-copy"><span class="streaming-caret"></span></div>';
             $('#message-list').appendChild(node);
-            return { botId: 'coder', sessionId: 'dm:coder', node, timers: [], tools: [], start: Date.now(), phase: 'writing' };
+            return { botId: 'coder', conversationId: 'dm:coder', node, timers: [], tools: [], start: Date.now(), phase: 'writing' };
         };
         installFetch((url) => url === '/api/conversations' ? { conversations: [] } : {});
         const t1 = mk(); runs.set('dm:coder', t1);
@@ -2513,7 +2571,7 @@ def test_stop_run_posts_cancel_and_falls_back_locally(node: str) -> None:
         const node = document.createElement('article');
         node.innerHTML = '<header class="message-byline"><time>x</time></header><div class="live-copy"></div>';
         $('#message-list').appendChild(node);
-        const token = { botId: 'coder', sessionId: 'dm:coder', node, timers: [], tools: [], start: Date.now(), phase: 'thinking' };
+        const token = { botId: 'coder', conversationId: 'dm:coder', node, timers: [], tools: [], start: Date.now(), phase: 'thinking' };
         runs.set('dm:coder', token);
         const calls = installFetch((url, opts) => {
             if (url.endsWith('/turn/cancel')) return {};
@@ -2560,80 +2618,72 @@ def test_follow_running_turn_rejoins_inflight(node: str) -> None:
     assert out["runsEmpty"] is True
 
 
-def test_load_session_renders_and_drops_stale_answers(node: str) -> None:
-    """loadConversation renders title/eyebrow + transcript; switching mid-flight
+def test_load_conversation_renders_and_drops_stale_answers(node: str) -> None:
+    """loadConversation renders header identity + transcript; switching mid-flight
     makes the stale answer a no-op; running details rejoin the stream."""
     out = _run(node, _CHAT_SEED + """
         let resolveDetail;
         const GID = 'group-11111111111111111111111111111111', GID2 = 'group-' + '2'.repeat(32);
         const calls = installFetch((url) => {
-            if (url === '/api/bots/coder/dm') return new Promise(r => { resolveDetail = () => r({ ok: true, status: 200, json: async () => ({ kind: 'dm', bot_id: 'coder', title: 'A', messages: [{ role: 'assistant', content: 'cũ', ts: 1 }] }) }); });
-            if (url === '/api/groups/' + GID) return { group_id: GID, title: 'Nhóm', kind: 'group', messages: [], running: false };
-            if (url === '/api/groups/' + GID2) return { group_id: GID2, title: 'Chạy', kind: 'group', messages: [], running: true };
-            if (url === '/api/groups/' + GID2 + '/turn/stream') return { ok: true, status: 200, body: streamOf([{ type: 'turn.completed', detail: { title: 'Chạy', messages: [] } }]) };
+            if (url === '/api/bots/coder/dm') return new Promise(r => { resolveDetail = () => r({ ok: true, status: 200, json: async () => ({ kind: 'dm', bot_id: 'coder', messages: [{ role: 'assistant', content: 'cũ', ts: 1 }] }) }); });
+            if (url === '/api/groups/' + GID) return { group_id: GID, kind: 'group', messages: [], running: false };
+            if (url === '/api/groups/' + GID2) return { group_id: GID2, kind: 'group', messages: [], running: true };
+            if (url === '/api/groups/' + GID2 + '/turn/stream') return { ok: true, status: 200, body: streamOf([{ type: 'turn.completed', detail: { messages: [] } }]) };
             if (url === '/api/conversations') return { conversations: [] };
             return {};
         });
         const followed = [];
         globalThis.followRunningTurn = (id) => followed.push(id);
         // stale guard
-        const p = loadSession('dm:coder', 'A');
-        currentSession = 'dm:thyca';
+        const p = loadConversation('dm:coder');
+        currentConversation = 'dm:thyca';
         resolveDetail();
         await p;
         const staleKept = $('#message-list').innerHTML === '';
         // normal render: group eyebrow + transcript
-        await loadSession('group:' + GID, 'Nhóm');
-        const group = { title: $('#chat-title').textContent, eyebrow: $('#session-eyebrow').textContent };
+        await loadConversation('group:' + GID);
+        const group = { title: $('#chat-title').textContent, eyebrow: $('#conversation-eyebrow').textContent };
         // running -> follow
-        await loadSession('group:' + GID2, 'Chạy');
+        await loadConversation('group:' + GID2);
         return { staleKept, group, followed, requests: calls.filter(c => c[0].startsWith('/api/')).map(c => c[0]) };
     """, via="chat")
     assert out["staleKept"] is True
-    assert out["group"] == {"title": "Nhóm", "eyebrow": "Hội thoại chung"}
+    assert out["group"] == {"title": "Hội thoại chung", "eyebrow": "Hội thoại chung"}
     assert out["followed"] == ["group:" + "group-" + "2" * 32]
 
 
 def test_select_bot_resolves_dm_get_only(node: str) -> None:
     """selectBot opens the fixed DM via GET /api/bots/<id>/dm — never a POST —
-    refreshes the composer inheritance label via GET settings, then paints
-    title, eyebrow and transcript; failures toast."""
+    then paints header identity, eyebrow and transcript; failures toast."""
     out = _run(node, _CHAT_SEED + """
-        currentSession = ''; selectedBot = 'thyca';
+        currentConversation = ''; selectedBot = 'thyca';
         const calls = installFetch((url, opts) => {
-            if (url === '/api/bots/thyca/dm') return { kind: 'dm', bot_id: 'thyca', title: 'Thyca DM', messages: [{ role: 'assistant', content: 'xin chào', ts: 1 }] };
-            if (url === '/api/bots/thyca/settings')
-                return { bot_id: 'thyca', model: { id: 'default', thinking: null },
-                         effective: { model: 'm1', provider: 'default', thinking: 'low' } };
-            if (url === '/api/config') return { values: { defaultModel: 'm1', models: {} }, schema: { sections: [] } };
+            if (url === '/api/bots/thyca/dm') return { kind: 'dm', bot_id: 'thyca', messages: [{ role: 'assistant', content: 'xin chào', ts: 1 }] };
             if (url === '/api/conversations') return { conversations: [] };
             return {};
         });
-        await loadConfig();
         await selectBot('thyca');
         const ok = {
-            session: currentSession, sel: selectedBot,
-            title: $('#chat-title').textContent, eyebrow: $('#session-eyebrow').textContent,
+            conversation: currentConversation, sel: selectedBot,
+            title: $('#chat-title').textContent, eyebrow: $('#conversation-eyebrow').textContent,
             transcript: $('#message-list').innerHTML.includes('xin chào'),
             urls: calls.map(c => c[0]),
-            inherit: $('#composer-model').options[0].textContent,
         };
         globalThis.fetch = async () => { throw new Error('mất kết nối'); };
         await selectBot('coder');
         return { ok, error: $('#toast').textContent };
     """, via="chat")
     ok = out["ok"]
-    assert ok["session"] == "dm:thyca" and ok["sel"] == "thyca"
-    assert ok["title"] == "Thyca DM" and ok["eyebrow"] == "Sổ trò chuyện · Thyca"
+    assert ok["conversation"] == "dm:thyca" and ok["sel"] == "thyca"
+    assert ok["title"] == "Thyca" and ok["eyebrow"] == "Sổ trò chuyện · Thyca"
     assert ok["transcript"] is True
-    assert ok["urls"] == ["/api/config", "/api/bots/thyca/dm", "/api/bots/thyca/settings", "/api/bots/thyca/exchanges"]   # options + DM + inherit label + exchange groups, GETs only
-    assert "m1" in ok["inherit"]
+    assert ok["urls"] == ["/api/bots/thyca/dm", "/api/bots/thyca/exchanges"]   # DM + exchange groups, GETs only
     assert "Không mở được phiên với Coder" in out["error"]
 
 
 def test_render_transcript_skips_sidecars_and_attributes_bots(node: str) -> None:
     """renderTranscript keeps user + assistant rows, drops system/tool roles
-    and naming/compaction meta, attributes assistants via meta.bot_id then
+    and compaction meta, attributes assistants via meta.bot_id then
     detail.bot_id, and folds tool calls into the usage pill."""
     out = _run(node, _CHAT_SEED + """
         const detail = {
@@ -2643,8 +2693,7 @@ def test_render_transcript_skips_sidecars_and_attributes_bots(node: str) -> None
                 { role: 'tool', content: 'tool out' },
                 { role: 'user', content: 'làm ơn' },
                 { role: 'assistant', content: 'a1', meta: { bot_id: 'thyca' } },
-                { role: 'assistant', content: 'a2', meta: { kind: 'naming' } },
-                { role: 'assistant', content: 'a3', meta: { kind: 'compaction' } },
+                { role: 'assistant', content: 'a2', meta: { kind: 'compaction' } },
                 { role: 'assistant', content: 'a4', tool_calls: [{ name: 'bash' }, { skill: 'edit' }] },
                 { role: 'assistant', content: 'a5', meta: { bot_id: 'ghost' } },
             ],
@@ -2656,7 +2705,7 @@ def test_render_transcript_skips_sidecars_and_attributes_bots(node: str) -> None
     """, via="chat")
     html = out["html"]
     assert out["userCount"] == 1 and "làm ơn" in html
-    assert out["assistantCount"] == 3                     # a1, a4, a5 — a2/a3 dropped
+    assert out["assistantCount"] == 3                     # a1, a4, a5 — a2 dropped
     assert "sys" not in html and "tool out" not in html
     assert "Thyca" in html                                # meta.bot_id attribution
     assert "Đã dùng: bash, edit" in html                  # tool pill
@@ -2742,7 +2791,7 @@ def test_composer_submit_routes_mention_and_resets(node: str) -> None:
         const cleared = input.value === '', popupHidden = popup.hidden;
         input.value = '   ';
         submit();                                       // empty -> early return, value kept
-        runs.set('dm:coder', { botId: 'coder', sessionId: 'dm:coder' });
+        runs.set('dm:coder', { botId: 'coder', conversationId: 'dm:coder' });
         input.value = 'lại nhé';
         submit();                                       // busy -> early return
         runs.clear();
@@ -2847,7 +2896,7 @@ def test_retry_and_copy_actions_on_message_list(node: str) -> None:
         $('#message-list').appendChild(article);
         const fire = (t) => $('#message-list')._handlers.click.forEach(h => h({ target: t }));
         fire(retry);
-        runs.set('dm:coder', { botId: 'c', sessionId: 'dm:coder' });
+        runs.set('dm:coder', { botId: 'c', conversationId: 'dm:coder' });
         fire(retry);                                        // blocked while busy
         runs.clear();
         fire(copy);
@@ -3614,8 +3663,8 @@ def test_memory_leaf_rendering_and_day_groups(node: str) -> None:
     groups with chips, meta and per-leaf actions."""
     out = _run(node, """
         memState.stats = { total: 2, leaves: [
-            { chunk_id: 'c1', heading: '## 08:30 — Ghi chú A', snippet: 'nội dung', timeline_day: isoDay(new Date()), get_count: 2, search_count: 1, session_id: 's1', bots: ['team'] },
-            { chunk_id: 'c2', heading: 'Trang không giờ', snippet: 'x', timeline_day: '2001-01-01', session_id: 's2', bots: ['ghost-id'] },
+            { chunk_id: 'c1', heading: '## 08:30 — Ghi chú A', snippet: 'nội dung', timeline_day: isoDay(new Date()), get_count: 2, search_count: 1, conversation_id: 's1', bots: ['team'] },
+            { chunk_id: 'c2', heading: 'Trang không giờ', snippet: 'x', timeline_day: '2001-01-01', conversation_id: 's2', bots: ['ghost-id'] },
         ], expiring: [{ chunk_id: 'c1' }], suggest_removal: [] };
         renderAll();
         return { html: $('#memory-leaves').innerHTML, count: $('#memory-count').textContent,
@@ -3681,7 +3730,7 @@ def test_dashboard_cost_rows_and_bot_fallbacks(node: str) -> None:
 
 def test_usage_turn_renderer_preserves_trace_labels_and_turn_intent(node: str) -> None:
     """The shared detail renderer keeps Trace labels while grouped turns
-    carry session/turn identity for same-workspace navigation."""
+    carry conversation/turn identity for same-workspace navigation."""
     out = _run(node, """
         const detail = window.ThycaTraceDetail.render({
           kind: 'dm', bot_id: 'thyca', turn_index: 3, status: 'completed', messages: [
@@ -3786,7 +3835,22 @@ def test_chat_css_transcript_composer_and_title_head() -> None:
     assert "var(--bot-mid,#5c8a52)" in hover and "var(--bot-pale,#eaf3e2)" in hover
     assert "var(--bot-muted,#a2937a)" in css               # exchange time
     assert "@keyframes cursor" in css
+    user_pill = css.split(".message-user p{", 1)[1].split("}", 1)[0]
+    assert "overflow-wrap:anywhere" in user_pill            # long unbroken tokens wrap
+    assert "overflow-wrap:anywhere" in (css.split(".message-user{", 1)[1].split("}", 1)[0])  # bubble itself wraps
     assert not re.search(r"--[a-zA-Z-]+\s*:\s*[^v]", css)   # no page-local token defs
+    # Low-window flex hardening and height tiers: canvas keeps its share and
+    # the chrome shrinks instead of collapsing the transcript to 0.
+    scroll_rule = css.split(".conversation-scroll{", 1)[1].split("}", 1)[0]
+    assert "min-height:0" in scroll_rule
+    assert "flex:none" in css.split(".site-footer{", 1)[1].split("}", 1)[0]
+    assert "flex:none" in head
+    assert "@media(max-height:620px)" in css and "@media(max-height:430px)" in css
+    compact = css.split("@media(max-height:430px)", 1)[1].split("@keyframes", 1)[0]
+    assert ".eyebrow{display:none}" in compact and ".composer-hint{display:none}" in compact
+    label_rule = compact.split(".letter-label{", 1)[1].split("}", 1)[0]
+    assert "display:none" not in label_rule           # accessible name stays
+    assert ".composer textarea{" in compact and ".send-button" in compact
 
 
 def test_avatars_css_states_and_bot_vars() -> None:
@@ -3818,17 +3882,18 @@ def test_index_html_scripts_defs_and_static_markup() -> None:
     assert 'id="dropHl"' not in html and 'id="dropShade"' not in html
     assert 'id="wax' not in html            # shared overlays renamed with the drop
     assert 'id="g-' not in html             # glyph spans gone, so their symbols ship no more
+    assert 'id="composer-model"' not in html and 'id="thinking-effort"' not in html
     for sel in ('class="notebook-shell chat-shell"', 'class="site-header"',
                 'class="site-kicker"', 'id="team-nav-title"', 'id="team-bot-list"',
                 'id="group-list"', 'id="team-shared-create"', 'id="chat-sidebar"',
                 'id="mobile-overlay"', 'id="open-settings"',
-                'class="splitter"', 'id="chat-title"', 'id="session-eyebrow"',
+                'class="splitter"', 'id="chat-title"', 'id="conversation-eyebrow"',
                 'id="conversation-scroll"', 'id="message-list"', 'id="to-bottom"',
                 'id="composer"', 'id="message"', 'id="composer-label-text"',
-                'id="composer-model"', 'id="thinking-effort"', 'id="send-message"',
+                'id="send-message"',
                 'id="stop-button"', 'id="mention-popup"', 'id="attach-file"',
                 'id="file-input"', 'id="file-chip"', 'id="remove-file"',
-                'id="session-info"', 'id="run-demo"', 'id="toast"', 'id="announcer"',
+                'id="conversation-info"', 'id="run-demo"', 'id="delete-group"', 'id="toast"', 'id="announcer"',
                 'id="settings-dialog"', 'id="settings-body"',
                 'id="bot-drawer"', 'id="bot-drawer-body"', 'id="group-dialog"',
                 'id="group-form"', 'id="group-options"', 'id="expressions-dialog"',
@@ -3903,11 +3968,11 @@ def test_current_rows_use_bot_palette_and_connected_timeline() -> None:
 def test_invocation_identity_replay_nested_and_windows(node: str) -> None:
     out = _run(node, _CHAT_SEED + """
         const a = getBot('coder'), child = getBot('thyca');
-        currentSession = 's1';
-        function token(sessionId) {
+        currentConversation = 's1';
+        function token(conversationId) {
             const node = document.createElement('article');
             node.innerHTML = '<header class="message-byline"><time></time></header><div class="live-copy"></div>';
-            return {botId:'coder', sessionId, node, tools:[], phase:'waiting'};
+            return {botId:'coder', conversationId, node, tools:[], phase:'waiting'};
         }
         const t1 = token('s1'), t2 = token('s2');
         handleStreamEvent(t1, {type:'turn.accepted', bot_id:'coder'});
@@ -3922,11 +3987,11 @@ def test_invocation_identity_replay_nested_and_windows(node: str) -> None:
         fire(t2, 'tool.started', 'other', 'aaa');
         fire(t1, 'tool.finished', 'read', 'bbb');
         fire(t1, 'tool.started', 'read', 'bbb'); // replay after finish
-        const mid = a.liveCalls.map(x => [x.name, x.invocation_id, x.session]);
+        const mid = a.liveCalls.map(x => [x.name, x.invocation_id, x.conversation]);
         fire(t1, 'tool.finished', 'write', 'ccc');
         fire(t1, 'tool.finished', 'read', 'aaa');
         fire(t1, 'tool.finished', 'nested', 'ddd', 'thyca');
-        const end = a.liveCalls.map(x => [x.name, x.session]);
+        const end = a.liveCalls.map(x => [x.name, x.conversation]);
         fire(t1, 'tool.started', 'old', undefined);
         fire(t1, 'tool.started', 'old', undefined);
         fire(t1, 'tool.finished', 'old', undefined);

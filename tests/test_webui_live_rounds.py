@@ -16,10 +16,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 _TUI_TAIL = """return {
   handleStreamEvent, sendTurn, followRunningTurn, finishTurn, cancelTurn,
-  renderTranscript, updateCard, card, normalizeBot, getBot, refreshSessions,
+  renderTranscript, updateCard, card, normalizeBot, getBot, refreshConversations,
   readNdjson, busy, runs, bots, groups,
-  get currentSession() { return currentSession; },
-  set currentSession(v) { currentSession = v; },
+  get currentConversation() { return currentConversation; },
+  set currentConversation(v) { currentConversation = v; },
   get selectedBot() { return selectedBot; },
   set selectedBot(v) { selectedBot = v; },
 };"""
@@ -36,7 +36,7 @@ doc.querySelector('#team-bot-list').innerHTML = ui.bots.map(ui.card).join('');
 ui.updateCard(ui.bots[0]);
 const b = ui.bots[0];
 ui.selectedBot = 'thyca';
-ui.currentSession = 'dm:thyca';
+ui.currentConversation = 'dm:thyca';
 globalThis.fetch = async (url) => {
   if (url === '/api/conversations') return { ok: true, json: async () => ({ conversations: [] }) };
   return { ok: false, status: 404, json: async () => ({ error: 'no route ' + url }) };
@@ -46,7 +46,7 @@ const feed = () => b.liveCalls.map(f => ({ kind: f.kind, name: f.name, call_id: 
 const node = doc.createElement('article');
 node.innerHTML = `<header class="message-byline"><span>Thyca</span><time>đang lắng nghe</time></header><div class="live-copy"></div>`;
 doc.querySelector('#message-list').append(node);
-const token = { botId: 'thyca', sessionId: 'dm:thyca', start: Date.now(), node, phase: 'waiting', timers: [], tools: [] };
+const token = { botId: 'thyca', conversationId: 'dm:thyca', start: Date.now(), node, phase: 'waiting', timers: [], tools: [] };
 ui.runs.set('dm:thyca', token);
 const fire = (ev) => ui.handleStreamEvent(token, ev);
 const streamText = () => node.querySelector('.stream-text')?.textContent ?? null;
@@ -100,7 +100,7 @@ result.afterCompleted = {
 // --- re-follow: the replay stream builds one fresh live node, deltas apply
 //     once, and the stored transcript swaps in at turn.completed ---
 const GID = 'group-' + 'b'.repeat(32);
-ui.currentSession = 'group:' + GID;
+ui.currentConversation = 'group:' + GID;
 const queue = [];
 let waiter = null;
 const reader = { read: () => new Promise(resolve => {
@@ -148,7 +148,7 @@ const detail = { messages: [
   { role: 'assistant', content: 'Search xong rồi. Vài tin hôm nay:', meta: { bot_id: 'thyca' } },
   { role: 'assistant', tool_calls: [{ name: 'bash' }] },
   { role: 'assistant', content: 'Nhiệt độ: 45°C — vẫn mát.', meta: { bot_id: 'thyca' } },
-  { role: 'assistant', content: 'internal', meta: { kind: 'naming', bot_id: 'thyca' } },
+  { role: 'assistant', content: 'internal', meta: { kind: 'compaction', bot_id: 'thyca' } },
   { role: 'tool', content: 'tool out' },
 ] };
 doc.querySelector('#message-list').innerHTML = ui.renderTranscript(detail);
@@ -166,11 +166,11 @@ result.transcript = {
 //     working text shows under march7th's byline until turn.completed.
 ui.bots.push(ui.normalizeBot({ id: 'march7th', name: 'march7th', role: 'Bảy', agent_status: { state: 'idle' } }, 1));
 ui.selectedBot = 'march7th';
-ui.currentSession = 'dm:march7th';
+ui.currentConversation = 'dm:march7th';
 const node2 = doc.createElement('article');
 node2.innerHTML = `<header class="message-byline"><span>march7th</span><time>đang lắng nghe</time></header><div class="live-copy"></div>`;
 doc.querySelector('#message-list').append(node2);
-const token2 = { botId: 'march7th', sessionId: 'dm:march7th', start: Date.now(), node: node2, phase: 'waiting', timers: [], tools: [] };
+const token2 = { botId: 'march7th', conversationId: 'dm:march7th', start: Date.now(), node: node2, phase: 'waiting', timers: [], tools: [] };
 ui.runs.set('dm:march7th', token2);
 const fire2 = (ev) => ui.handleStreamEvent(token2, ev);
 const childBot = ui.bots.find(x => x.id === 'thyca');

@@ -20,22 +20,22 @@ from thyca.agents.think import Think
 from thyca.core.protocol import Message, ToolCall, ToolResult
 from thyca.core.protocol import estimate_tokens as _chars_to_tokens
 from thyca.llms.llm_base import ChatReply
-from thyca.conversations.runtime import SessionManager
+from thyca.conversations.runtime import ConversationManager
 
-# Build a canonical-timeline manager holding one execution session.
-def _canonical_manager(root: Path, limits=None) -> SessionManager:
-    from thyca.bots.timeline import CanonicalSessionStore, WorkspaceTimeline
+# Build a canonical-timeline manager holding one execution conversation.
+def _canonical_manager(root: Path, limits=None) -> ConversationManager:
+    from thyca.bots.timeline import CanonicalConversationStore, WorkspaceTimeline
     from thyca.core.channel import WindowRef
 
     timeline = WorkspaceTimeline(root, "thyca")
     window = WindowRef(
         window_id="thyca", channel_id="webui", kind="dm", participants=("thyca",))
-    session_id = "2026-01-01T00-00-00_ab12"
-    store = CanonicalSessionStore(
+    conversation_id = "2026-01-01T00-00-00_ab12"
+    store = CanonicalConversationStore(
         root / "bots" / "thyca" / "sessions",
-        timeline=timeline, window=window, session_id=session_id)
-    manager = SessionManager(store=store, limits=limits)
-    manager.load(session_id)
+        timeline=timeline, window=window, conversation_id=conversation_id)
+    manager = ConversationManager(store=store, limits=limits)
+    manager.load(conversation_id)
     return manager
 
 
@@ -212,10 +212,10 @@ class _FakeDispatcher:
 
 
 def _loop(
-    manager: SessionManager, llm: _FakeLLM, dispatcher: _FakeDispatcher, context_tokens: int
+    manager: ConversationManager, llm: _FakeLLM, dispatcher: _FakeDispatcher, context_tokens: int
 ) -> AgentLoop:
     return AgentLoop(
-        sessions=manager,
+        conversations=manager,
         assemble=Assemble(),
         think=Think(llm),
         act=Act(dispatcher),
@@ -227,7 +227,7 @@ def _loop(
 
 def test_loop_shrink_history_then_continue_disk_intact(tmp_path: Path) -> None:
     manager = _canonical_manager(tmp_path)
-    session = manager.current
+    conversation = manager.current
     big = "h" * 8000
     manager.append(Message(role="user", content="old q"))
     manager.append(
@@ -257,7 +257,7 @@ def test_loop_shrink_history_then_continue_disk_intact(tmp_path: Path) -> None:
     # Wire saw the stub; disk keeps the full output.
     wire_tool = next(m for m in llm.requests[0] if m.role == "tool")
     assert "[shrunk:" in (wire_tool.content or "")
-    stored = _canonical_manager(tmp_path).load(session.id).messages
+    stored = _canonical_manager(tmp_path).load(conversation.conversation_id).messages
     disk_tool = next(m for m in stored if m.tool_call_id == "old-call")
     assert disk_tool.content == big
     assert "[shrunk:" not in (disk_tool.content or "")
@@ -265,7 +265,7 @@ def test_loop_shrink_history_then_continue_disk_intact(tmp_path: Path) -> None:
 
 def test_loop_backstop_when_still_over_95(tmp_path: Path) -> None:
     manager = _canonical_manager(tmp_path)
-    session = manager.current
+    conversation = manager.current
     llm = _FakeLLM([ChatReply(content="never reached")])
     # User text alone exceeds 95% and is never shrinkable.
     context = 500
@@ -277,7 +277,7 @@ def test_loop_backstop_when_still_over_95(tmp_path: Path) -> None:
     )
     assert llm.requests == []
     assert [event.type for event in events] == ["turn.accepted"]
-    stored = _canonical_manager(tmp_path).load(session.id).messages
+    stored = _canonical_manager(tmp_path).load(conversation.conversation_id).messages
     assert stored[-1].role == "assistant"
     assert stored[-1].content == "context limit reached"
     assert (stored[-1].meta or {}).get("status") == "context_limit"
@@ -287,7 +287,7 @@ def test_loop_guard_disabled_by_default(tmp_path: Path) -> None:
     manager = _canonical_manager(tmp_path)
     llm = _FakeLLM([ChatReply(content="ok")])
     loop = AgentLoop(
-        sessions=manager,
+        conversations=manager,
         assemble=Assemble(),
         think=Think(llm),
         act=Act(_FakeDispatcher({})),
@@ -339,7 +339,7 @@ def test_history_before_run_start_ignores_round_protection() -> None:
 
 def test_loop_backstop_after_shrink_reports_both(tmp_path: Path) -> None:
     manager = _canonical_manager(tmp_path)
-    session = manager.current
+    conversation = manager.current
     manager.append(Message(role="user", content="old q"))
     manager.append(
         Message(
@@ -359,7 +359,7 @@ def test_loop_backstop_after_shrink_reports_both(tmp_path: Path) -> None:
     )
     assert llm.requests == []
     assert [event.type for event in events] == ["turn.accepted", "context.shrunk"]
-    stored = _canonical_manager(tmp_path).load(session.id).messages
+    stored = _canonical_manager(tmp_path).load(conversation.conversation_id).messages
     assert stored[-1].content == "context limit reached"
     assert (stored[-1].meta or {}).get("status") == "context_limit"
     # Minimal backstop meta: no stale usage/cost from a previous round.

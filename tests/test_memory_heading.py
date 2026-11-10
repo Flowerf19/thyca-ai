@@ -6,10 +6,10 @@ import pytest
 from thyca.memories.heading import (
     HeadingMeta,
     is_session_heading,
+    memory_id,
     parse_heading,
     render_heading,
     resolve_entry_id,
-    session_id,
     strip_comment,
     strip_heading_comments,
 )
@@ -75,7 +75,7 @@ def test_strip_comment_and_hyphen() -> None:
     assert strip_comment(line) == "## 08:00 — topic"
     text = line + "\n- leaf\n"
     assert strip_heading_comments(text) == "## 08:00 — topic\n- leaf\n"
-    assert session_id("2026-08-13", "a1b2c3d4") == "2026-08-13#a1b2c3d4"
+    assert memory_id("2026-08-13", "a1b2c3d4") == "2026-08-13#a1b2c3d4"
 
 
 def test_proj_chat_roundtrip_and_old_heading_stays_empty() -> None:

@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from thyca.bots.private_followups import PrivateFollowupError, PrivateFollowupStore
-from thyca.conversations.runtime import SessionBusy, SessionNotFound
+from thyca.conversations.runtime import ConversationBusy, ConversationNotFound
 
 
 class ConsentError(Exception):
@@ -48,21 +48,21 @@ def _delivery_lock(app, bot_id: str):
 
 
 class PrivateFollowupService:
-    """decide(session_id, pending_id, revision, choice) for the route."""
+    """decide(conversation_id, pending_id, revision, choice) for the route."""
 
     def __init__(self, app) -> None:
         self._app = app
 
     def decide(
         self,
-        session_id: str,
+        conversation_id: str,
         pending_id: str,
         revision: int,
         choice: str,
     ) -> dict:
         """Sync facade: submits to the app loop, blocks for the result."""
-        if not isinstance(session_id, str) or not session_id.strip():
-            raise ConsentBadRequest("missing session")
+        if not isinstance(conversation_id, str) or not conversation_id.strip():
+            raise ConsentBadRequest("missing conversation")
         if not isinstance(pending_id, str) or not pending_id.strip():
             raise ConsentBadRequest("missing pending_id")
         if not isinstance(revision, int) or isinstance(revision, bool):
@@ -73,7 +73,7 @@ class PrivateFollowupService:
             raise ConsentBadRequest("invalid revision")
         try:
             return self._app._submit(self._decide(
-                session_id, pending_id.strip(), revision, choice))
+                conversation_id, pending_id.strip(), revision, choice))
         except ConsentError:
             raise
         except (PrivateFollowupError, OSError):
@@ -81,26 +81,26 @@ class PrivateFollowupService:
 
     async def _decide(
         self,
-        session_id: str,
+        conversation_id: str,
         pending_id: str,
         revision: int,
         choice: str,
     ) -> dict:
         app = self._app
         try:
-            dm_session = app._sessions.store.load(session_id)
-        except SessionNotFound:
-            raise ConsentNotFound("session not found")
-        dm_bot = dm_session.dm_bot
+            dm_conversation = app._conversations.store.load(conversation_id)
+        except ConversationNotFound:
+            raise ConsentNotFound("conversation not found")
+        dm_bot = dm_conversation.dm_bot
         if dm_bot is None:
             raise ConsentBadRequest("not a bot DM")
         store = PrivateFollowupStore(app._root)
         async with app._runtime.workspaces.lease(dm_bot):
             with _delivery_lock(app, dm_bot):
-                if app._sessions.store.load(session_id).dm_bot != dm_bot:
+                if app._conversations.store.load(conversation_id).dm_bot != dm_bot:
                     raise ConsentConflict("DM changed")
                 pending = store.get(dm_bot, pending_id)
-                if pending is None or pending.dm_window != session_id:
+                if pending is None or pending.dm_window != conversation_id:
                     raise ConsentNotFound("unknown pending")
                 if revision != pending.proposal_revision:
                     raise ConsentConflict("stale proposal revision")
@@ -121,23 +121,23 @@ class PrivateFollowupService:
                     raise ConsentConflict("pending cannot be changed") from None
                 return {"ok": True, "status": "cancelled"}
 
-    def cancel_window(self, session_id: str) -> bool:
-        return self._app._submit(self._cancel_window(session_id))
+    def cancel_window(self, conversation_id: str) -> bool:
+        return self._app._submit(self._cancel_window(conversation_id))
 
-    async def _cancel_window(self, session_id: str) -> bool:
+    async def _cancel_window(self, conversation_id: str) -> bool:
         app = self._app
-        session = app._sessions.store.load(session_id)
+        conversation = app._conversations.store.load(conversation_id)
         store = PrivateFollowupStore(app._root)
-        owners = [session.dm_bot] if session.dm_bot else (session.bots or ["thyca"])
+        owners = [conversation.dm_bot] if conversation.dm_bot else (conversation.bots or ["thyca"])
         candidates = []
         for bot_id in owners:
             pending = store.active(bot_id)
-            if pending is not None and session_id in (
+            if pending is not None and conversation_id in (
                 pending.dm_window, pending.origin_window
             ):
                 candidates.append((bot_id, pending.pending_id))
         if len(candidates) > 1:
-            raise SessionBusy("multiple pending private follow-ups")
+            raise ConversationBusy("multiple pending private follow-ups")
         if not candidates:
             return False
         bot_id, pending_id = candidates[0]
@@ -165,7 +165,7 @@ class PrivateFollowupService:
                 return {"ok": True, "status": "resumed"}
             raise ConsentConflict("already resumed")
         try:
-            origin = app._sessions.store.load(pending.origin_window)
+            origin = app._conversations.store.load(pending.origin_window)
         except Exception:
             raise ConsentConflict("origin room is gone")
         try:

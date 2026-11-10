@@ -128,11 +128,11 @@ def test_page_is_a_single_screen_shell_document() -> None:
     entry = (WEBUI / "chat" / "index.html").read_text(encoding="utf-8")
     assert 'src="../dashboard/js/dashboard.js"' in entry
     for gone in ("overview-nav", "cost-view", "#su-dung",
-                 "session-pager", "journal-pager"):
+                 "conversation-pager", "journal-pager"):
         assert gone not in entry, gone
     src = DASH_JS.read_text(encoding="utf-8")
     for gone in ("overview-nav", "cost-view", "#su-dung",
-                 "session-pager", "journal-pager"):
+                 "conversation-pager", "journal-pager"):
         assert gone not in src, gone
     for view in ("usage", "cost", "trace"):
         assert f'data-usage-view="{view}"' in src
@@ -154,7 +154,7 @@ def test_page_markup_covers_every_region() -> None:
         'id="rows-bot"',
         'id="rows-model"', 'id="chart-hour"',
         'id="filter-q"', 'id="filter-model"', 'id="filter-status"', 'id="trace-refresh"',
-        'id="trace-status"', 'id="trace-wrap"', 'id="trace-sessions"',
+        'id="trace-status"', 'id="trace-wrap"', 'id="trace-conversations"',
         'id="trace-empty"', 'id="trace-empty-hint"',
         'id="trace-count"', 'id="trace-more"', 'id="turn-detail-view"',
         'id="detail-back"', 'id="detail-body"',
@@ -409,8 +409,8 @@ def test_turn_bot_ids_uses_only_explicit_turn_attribution(node: str) -> None:
     out = _eval_dash(
         node,
         "console.log(JSON.stringify(["
-        " turnBotIds({ session_bots: ['session-member'], session_dm: 'dm-owner' }),"
-        " turnBotIds({ bot_id: 'direct', session_bots: ['session-member'] }),"
+        " turnBotIds({ conversation_bots: ['conversation-member'], conversation_dm: 'dm-owner' }),"
+        " turnBotIds({ bot_id: 'direct', conversation_bots: ['conversation-member'] }),"
         " turnBotIds({ bot_id: 'fallback', bot_breakdown: [{ bot_id: 'attributed' }] })]))",
     )
     assert out == [[], ["direct"], ["attributed"]]

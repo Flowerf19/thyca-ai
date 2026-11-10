@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Callable
 from thyca.bots.bus import new_span_id
 from thyca.bots.workspace import WorkspaceTurnConflict
 from thyca.core.protocol import Message
-from thyca.conversations.runtime import Session, SessionManager
+from thyca.conversations.runtime import ConversationRuntime, ConversationManager
 
 if TYPE_CHECKING:
     from thyca.app.webui_channel import WindowRef
@@ -34,8 +34,8 @@ class A2ADeliveryDeps:
     """
 
     root: Path
-    sessions_store: Any
-    window_for: Callable[[Session], WindowRef]
+    conversations_store: Any
+    window_for: Callable[[ConversationRuntime], WindowRef]
     bots: BotRegistry
     bus: Bus
     runtime: BotRuntime
@@ -57,7 +57,7 @@ class A2ADeliveryService:
 
         Installed as ``BotRuntime.deliverer``. The triggering envelope is
         taken off the recipient's mailbox (its payload *is* the turn
-        text), the recipient runs in its private (bot x room) session,
+        text), the recipient runs in its private (bot x room) conversation,
         and its reply lands in the room transcript under its own name
         with aggregated cost meta and a span parented to the envelope.
         The reply text is returned for the sender's tool result, so
@@ -89,13 +89,13 @@ class A2ADeliveryService:
         # ordinary caller view (deferred delivery): union its room here
         # so nested sends stay private too.
         try:
-            _flag_room = envelope.session_id or ctx.room_id
+            _flag_room = envelope.conversation_id or ctx.room_id
             _flag_dm = self._deps.room_dm_owner(_flag_room) if _flag_room else None
         except Exception:
             _flag_room, _flag_dm = None, None
         if getattr(envelope, "private_chain", False) and _flag_room and _flag_dm is None:
             inherited = inherited | frozenset({_flag_room})
-        _rid0 = envelope.session_id or ctx.room_id
+        _rid0 = envelope.conversation_id or ctx.room_id
         try:
             _dm0 = self._deps.room_dm_owner(_rid0) if _rid0 else None
         except Exception:
@@ -109,11 +109,11 @@ class A2ADeliveryService:
                 )
 
                 window = None
-                rid = envelope.session_id or ctx.room_id
+                rid = envelope.conversation_id or ctx.room_id
                 if rid:
                     try:
                         window = self._deps.window_for(
-                            self._deps.sessions_store.load(rid)
+                            self._deps.conversations_store.load(rid)
                         )
                     except Exception:
                         window = None
@@ -182,7 +182,7 @@ class A2ADeliveryService:
     # history, no group bind, no group bus/result rows. A read failure
     # means non-member (fail closed). Members and DMs keep old behavior.
     async def deliver_envelope_claimed(self, envelope, ctx) -> str:
-        room_id = envelope.session_id or ctx.room_id
+        room_id = envelope.conversation_id or ctx.room_id
         try:
             card = self._deps.bots.require(envelope.recipient)
         except Exception as exc:
@@ -191,7 +191,7 @@ class A2ADeliveryService:
             return f"delivery failed: bot is paused: {envelope.recipient}"
         self._deps.bus.take(envelope)
         span_id = new_span_id()
-        room: SessionManager | None = None
+        room: ConversationManager | None = None
         dm_owner = self._deps.room_dm_owner(room_id) if room_id else None
         try:
             from thyca.memories.visibility import current_memory_view as _cmv2
@@ -237,10 +237,10 @@ class A2ADeliveryService:
         record_ok = True
         if room_id:
             try:
-                room = SessionManager(
+                room = ConversationManager(
                     limits=ctx.turn_cfg.effective_limits(),
                     timezone_name=ctx.turn_cfg.timeline.timezone,
-                    store=self._deps.sessions_store,
+                    store=self._deps.conversations_store,
                 )
                 room.load(room_id)
                 record_ok = self.record_bus_events(
@@ -276,7 +276,7 @@ class A2ADeliveryService:
             if room_id and not is_private:
                 try:
                     window = self._deps.window_for(
-                        self._deps.sessions_store.load(room_id)
+                        self._deps.conversations_store.load(room_id)
                     )
                 except Exception:
                     window = None
@@ -357,7 +357,7 @@ class A2ADeliveryService:
     # Result rows use _append_group_result with the recipient as actor and
     # stay unchanged. The actor argument is kept for backward-compatible
     # callers but the envelope sender authorizes request publication.
-    def _append_group_display(self, room: SessionManager, room_id: str,
+    def _append_group_display(self, room: ConversationManager, room_id: str,
                               envelope, content: str, meta: dict,
                               actor: str | None = None) -> bool:
         """Append one group request row iff sender and recipient participate."""
@@ -472,7 +472,7 @@ class A2ADeliveryService:
         return True
 
     # Whether the current envelope's exact request row is persisted.
-    def _bus_row_present(self, room: SessionManager, envelope) -> bool:
+    def _bus_row_present(self, room: ConversationManager, envelope) -> bool:
         # The current request row is identified by its exact fields; an
         # unrelated drained envelope must never authorize this result.
         # A private-chain envelope is never eligible, row or no row.
@@ -485,8 +485,8 @@ class A2ADeliveryService:
 
     def record_bus_events(
         self,
-        room: SessionManager,
-        session_id: str,
+        room: ConversationManager,
+        conversation_id: str,
         *,
         current_envelope=None,
         current_is_member: bool | None = None,
@@ -515,12 +515,12 @@ class A2ADeliveryService:
         members through delivery."""
         pinned = current_envelope is not None
         pinned_span = getattr(current_envelope, "span_id", None) if pinned else None
-        events = self._deps.bus.drain_log(session_id)
-        dm_owner = self._deps.room_dm_owner(session_id)
+        events = self._deps.bus.drain_log(conversation_id)
+        dm_owner = self._deps.room_dm_owner(conversation_id)
         participants: list[str] | None = None
         if dm_owner is None:
             try:
-                participants = list(self._deps.room_bots(session_id))
+                participants = list(self._deps.room_bots(conversation_id))
             except Exception:
                 return False
         current_allowed: bool | None = None
@@ -599,7 +599,7 @@ class A2ADeliveryService:
                 # the recipient in the same transaction; a removal racing
                 # the insert fails closed and skips only that row.
                 if not self._append_group_display(
-                    room, session_id, envelope,
+                    room, conversation_id, envelope,
                     envelope.payload, meta,
                     actor=envelope.sender,
                 ):

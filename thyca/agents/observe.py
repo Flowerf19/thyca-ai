@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 from thyca.core.protocol import Message, ToolCall, ToolResult
-from thyca.conversations.runtime import SessionManager
+from thyca.conversations.runtime import ConversationManager
 
 from .meta import assistant_meta, reasoning, reasoning_details, tool_message
 from .stage import Stage
 
 
 class Observe:
-    def __init__(self, sessions: SessionManager) -> None:
-        self._sessions = sessions
+    def __init__(self, conversations: ConversationManager) -> None:
+        self._conversations = conversations
 
     def compact(
         self,
@@ -19,7 +19,7 @@ class Observe:
         pending_user_tokens: int = 0,
         calibration: float = 1.0,
     ) -> bool:
-        return self._sessions.compact_if_needed(
+        return self._conversations.compact_if_needed(
             hot_tokens=hot_tokens,
             tools_tokens=tools_tokens,
             pending_user_tokens=pending_user_tokens,
@@ -33,12 +33,12 @@ class Observe:
         the provider-facing user message while retaining the raw user
         text in the canonical transcript.
         """
-        self._sessions.append(persisted_message or stage.messages[-1])
+        self._conversations.append(persisted_message or stage.messages[-1])
 
     def assistant(self, stage: Stage) -> str:
         content = "" if stage.reply is None else (stage.reply.content or "")
         meta = assistant_meta(stage, kind="llm")
-        self._sessions.append(
+        self._conversations.append(
             Message(
                 role="assistant",
                 content=content,
@@ -77,7 +77,7 @@ class Observe:
         ]
         added = [assistant, *tool_messages]
         for message in added:
-            self._sessions.append(message)
+            self._conversations.append(message)
         stage.messages.extend(added)
         stage.results = ordered
 
@@ -87,7 +87,7 @@ class Observe:
         if meta is not None:
             meta["status"] = "loop_limit"
         msg = Message(role="assistant", content=text, meta=meta)
-        self._sessions.append(msg)
+        self._conversations.append(msg)
         stage.messages.append(msg)
         return text
 
@@ -106,7 +106,7 @@ class Observe:
         if isinstance(model, str) and model.strip():
             meta["model"] = model.strip()
         msg = Message(role="assistant", content=text, meta=meta)
-        self._sessions.append(msg)
+        self._conversations.append(msg)
         stage.messages.append(msg)
         return text
 

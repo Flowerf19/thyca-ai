@@ -16,8 +16,8 @@ from thyca.memories.archived import ArchivedMemory
 from thyca.memories.chunk import Chunker
 from thyca.memories.writer import MemoryWriter
 from thyca.serve.memory import memory_endpoint
-from thyca.conversations.runtime import SessionManager, SessionNotFound
-from thyca.conversations.runtime.wire import session_summary
+from thyca.conversations.runtime import ConversationManager, ConversationNotFound
+from thyca.conversations.runtime.wire import conversation_summary
 from thyca.tools.gateway import ToolGateway
 from thyca.memories.facade import MemoryFacade
 from thyca.tools.memory_tools import register_memory_tools
@@ -78,12 +78,12 @@ def test_mistyped_update_rejected_not_dropped(tmp_path: Path) -> None:
         with pytest.raises(ValueError):
             facade.update(sid, **kwargs)
     status, body = memory_endpoint(
-        facade, "update", {"session_id": sid, "topic": 123, "summary": "x"}
+        facade, "update", {"memory_id": sid, "topic": 123, "summary": "x"}
     )
     assert status == 400
     assert "error" in body
     status, _body = memory_endpoint(
-        facade, "update", {"session_id": sid, "summary": "x", "content": 123}
+        facade, "update", {"memory_id": sid, "summary": "x", "content": 123}
     )
     assert status == 400
     assert next((tmp_path / "memory").glob("*.md")).read_text(encoding="utf-8") == before
@@ -101,9 +101,9 @@ def test_remember_multiline_chunks_like_update(tmp_path: Path) -> None:
     assert "  alpha detail" in text and "  beta detail" in text
     assert "\nbeta detail\n" not in text
 
-    def body(session_id: str) -> list[str]:
+    def body(memory_id: str) -> list[str]:
         lines = text.splitlines()
-        entry = session_id.split("#", 1)[1]
+        entry = memory_id.split("#", 1)[1]
         start = next(i for i, line in enumerate(lines) if entry in line)
         end = start + 1
         while end < len(lines) and not lines[end].startswith("## "):
@@ -128,7 +128,7 @@ def test_remember_rejects_blanks_like_update(tmp_path: Path) -> None:
     )
     sid = facade.remember("t", "s")
     with pytest.raises(ArchiveError):
-        facade.writer.update_session(sid, topic="   ", body_lines=None)
+        facade.writer.update_memory(sid, topic="   ", body_lines=None)
 
 
 # --- F17: invisible-leaf counts ---
@@ -146,16 +146,16 @@ def test_expired_leaf_count_matches_get(tmp_path: Path) -> None:
     archived.reindex()
     sid = "2026-08-10#eeeeeeee"
     now = datetime(2026, 9, 25)
-    assert archived.store.session_leaf_count(sid, "2026-09-25T00:00:00Z") == 0
+    assert archived.store.memory_leaf_count(sid, "2026-09-25T00:00:00Z") == 0
     with pytest.raises(ArchiveError):
-        archived.get(session_id=sid, now=now)
+        archived.get(memory_id=sid, now=now)
     hit = Hit(
         path="p", source_kind="daily", chunk_id=f"{sid}#1",
-        timeline_day="2026-08-10", session_id=sid,
+        timeline_day="2026-08-10", memory_id=sid,
         heading="h", snippet="s", score=1.0, match_type="fts",
     )
     (counted,) = archived.with_counts([hit], now)
-    assert counted.session_leaf_count == 0
+    assert counted.memory_leaf_count == 0
     assert counted.has_more is False
 
 
@@ -215,11 +215,11 @@ def test_reinforce_bad_importance_typed_both_layers(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         facade.reinforce(sid, 99)
     status, body = memory_endpoint(
-        facade, "reinforce", {"session_id": sid, "importance": "abc"}
+        facade, "reinforce", {"memory_id": sid, "importance": "abc"}
     )
     assert (status, body) == (400, {"error": "invalid importance"})
     status, body = memory_endpoint(
-        facade, "reinforce", {"session_id": sid, "importance": 99}
+        facade, "reinforce", {"memory_id": sid, "importance": 99}
     )
     assert status == 400
     assert "invalid literal" not in body["error"]
@@ -264,11 +264,11 @@ def test_summary_of_deleted_empty_session_is_not_found(tmp_path: Path) -> None:
     from thyca.conversations.store.runtime import ensure_runtime_store
 
     ensure_runtime_store(tmp_path)
-    manager = SessionManager(tmp_path / "sessions")
-    session = manager.create()
-    manager.store.delete(session.id)
-    with pytest.raises(SessionNotFound):
-        session_summary(session)
+    manager = ConversationManager(tmp_path / "sessions")
+    conversation = manager.create()
+    manager.store.delete(conversation.conversation_id)
+    with pytest.raises(ConversationNotFound):
+        conversation_summary(conversation)
 
 
 # --- M4-safe-half: limit edges + non-str inputs ---

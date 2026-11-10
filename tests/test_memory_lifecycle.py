@@ -52,7 +52,7 @@ def test_remember_default_month_and_get_resets_ttl(tmp_path: Path) -> None:
     assert meta.importance == 3
     assert meta.expires_at == "2026-08-31T12:00:00Z"
     t1 = t0 + timedelta(days=5)
-    facade.get(session_id=sid, now=t1)
+    facade.get(memory_id=sid, now=t1)
     text = daily.read_text(encoding="utf-8")
     meta = next(m for line in text.splitlines() if (m := parse_heading(line)))
     assert meta.expires_at == "2026-09-05T12:00:00Z"
@@ -61,7 +61,7 @@ def test_remember_default_month_and_get_resets_ttl(tmp_path: Path) -> None:
 def test_two_facades_serialize_append_with_update(tmp_path: Path, monkeypatch) -> None:
     now = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
     first = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
-    session_id = first.remember("first", "first-token", now=now)
+    memory_id = first.remember("first", "first-token", now=now)
     second = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     daily = tmp_path / "memory" / "2026-08-01.md"
 
@@ -87,8 +87,8 @@ def test_two_facades_serialize_append_with_update(tmp_path: Path, monkeypatch) -
 
     monkeypatch.setattr(writer_module, "_atomic_write", blocked_atomic_write)
     updater = Thread(
-        target=lambda: first.writer.update_session(
-            session_id, body_lines=["- updated-token"]
+        target=lambda: first.writer.update_memory(
+            memory_id, body_lines=["- updated-token"]
         )
     )
     updater.start()
@@ -304,10 +304,10 @@ def test_update_keeps_entry_id_and_reindexes(tmp_path: Path) -> None:
 
     facade = MemoryFacade(tmp_path)
     sid = facade.remember("Chủ đề cũ", "nội dung cũ", now=None)
-    before = facade.get(session_id=sid)
+    before = facade.get(memory_id=sid)
     facade.update(sid, topic="Chủ đề mới", summary="nội dung mới", content="dòng chi tiết")
-    after = facade.get(session_id=sid)
-    # id nhúng trong heading giữ nguyên — session_id không đổi
+    after = facade.get(memory_id=sid)
+    # id nhúng trong heading giữ nguyên — memory_id không đổi
     assert 'Chủ đề cũ' not in after
     assert "Chủ đề mới" in after
     assert "nội dung mới" in after
@@ -334,7 +334,7 @@ def test_update_topic_only_keeps_body(tmp_path: Path) -> None:
     facade = MemoryFacade(tmp_path)
     sid = facade.remember("Chủ đề cũ", "nội dung giữ", content="dòng chi tiết")
     facade.update(sid, topic="Chủ đề mới")
-    after = facade.get(session_id=sid)
+    after = facade.get(memory_id=sid)
     assert "Chủ đề cũ" not in after
     assert "Chủ đề mới" in after
     assert "nội dung giữ" in after
@@ -345,11 +345,11 @@ def test_update_summary_only_keeps_details(tmp_path: Path) -> None:
     facade = MemoryFacade(tmp_path)
     sid = facade.remember("topic", "old summary", content="kept detail")
     facade.update(sid, summary="new summary")
-    after = facade.get(session_id=sid)
+    after = facade.get(memory_id=sid)
     assert "new summary" in after
     assert "kept detail" in after
     facade.update(sid, summary="cleared", content="")
-    assert "kept detail" not in facade.get(session_id=sid)
+    assert "kept detail" not in facade.get(memory_id=sid)
 
 
 def test_proj_survives_update_and_reinforce_and_filters_search(tmp_path: Path) -> None:
@@ -363,10 +363,10 @@ def test_proj_survives_update_and_reinforce_and_filters_search(tmp_path: Path) -
     other = facade.remember("other", "zzzyuniquebbb", now=t0, proj="/tmp/other")
     facade.archive.reindex(later)
     linked = facade.search("zzzxuniqueaaa", now=later, proj=proj)
-    assert [hit.session_id for hit in linked.hits] == [sid]
+    assert [hit.memory_id for hit in linked.hits] == [sid]
     assert facade.search("zzzyuniquebbb", now=later, proj=proj).hits == []
     unfiltered = facade.search("zzzyuniquebbb", now=later)
-    assert [hit.session_id for hit in unfiltered.hits] == [other]
+    assert [hit.memory_id for hit in unfiltered.hits] == [other]
 
     facade.update(sid, topic="link mới", now=later)
     facade.reinforce(sid, now=later)
@@ -388,9 +388,9 @@ def test_canonical_heading_session_roundtrips(tmp_path: Path) -> None:
     found = facade.search("zephyrquuxnote")
     assert len(found.hits) == 1
     hit = found.hits[0]
-    assert hit.session_id.startswith("canonical#soul#")
+    assert hit.memory_id.startswith("canonical#soul#")
     assert "zephyrquuxnote" in facade.get(chunk_id=hit.chunk_id)
-    assert "zephyrquuxnote" in facade.get(session_id=hit.session_id)
+    assert "zephyrquuxnote" in facade.get(memory_id=hit.memory_id)
     assert hit.chunk_id in {leaf.chunk_id for leaf in facade.stats().leaves}
 
 
@@ -409,10 +409,10 @@ def test_f23_mutations_locate_once_under_mutation_lock(tmp_path: Path) -> None:
     real_locate = writer.locate
     calls: list[str] = []
 
-    def spy(session_id: str):
-        calls.append(session_id)
+    def spy(memory_id: str):
+        calls.append(memory_id)
         assert writer.mutation_lock()._is_owned(), "locate must run under mutation_lock"
-        return real_locate(session_id)
+        return real_locate(memory_id)
 
     writer.locate = spy  # type: ignore[method-assign]
     try:

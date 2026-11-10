@@ -19,7 +19,7 @@ import pytest
 from thyca.app.chat_app import ChatApp
 from thyca.bots.card import BotCard
 from thyca.bots.timeline import (
-    CanonicalSessionStore,
+    CanonicalConversationStore,
     TimelineConflict,
     TimelineError,
     WorkspaceTimeline,
@@ -30,7 +30,7 @@ from seeded_config import seeded_config
 from thyca.core.channel import WindowRef
 from thyca.core.protocol import Message
 from thyca.llms.llm_base import ChatReply
-from thyca.conversations.runtime import SessionManager
+from thyca.conversations.runtime import ConversationManager
 
 
 def _chat(tmp_path: Path, connect, context_tokens: int | None = None) -> ChatApp:
@@ -62,11 +62,11 @@ def _timeline(tmp_path: Path, bot_id: str = "coder") -> WorkspaceTimeline:
 
 
 def _store(tmp_path: Path, bot_id: str, window: WindowRef,
-           session_id: str) -> CanonicalSessionStore:
-    return CanonicalSessionStore(
+           conversation_id: str) -> CanonicalConversationStore:
+    return CanonicalConversationStore(
         tmp_path / "bots" / bot_id / "sessions",
         timeline=_timeline(tmp_path, bot_id),
-        window=window, session_id=session_id)
+        window=window, conversation_id=conversation_id)
 
 
 SESSION_ID = "2026-10-20T09-00-00_cafe"
@@ -75,7 +75,7 @@ SESSION_ID = "2026-10-20T09-00-00_cafe"
 # Check that canonical timestamp ids bind as paths while public doors reject them.
 def test_canonical_timestamp_id_binds_but_is_not_a_public_door(tmp_path: Path) -> None:
     from thyca.conversations.store.runtime import ensure_runtime_store
-    from thyca.conversations.runtime.store import SessionStore
+    from thyca.conversations.runtime.store import ConversationStore
 
     store = _store(tmp_path, "coder", WindowRef(
         window_id="coder", channel_id="webui", kind="dm",
@@ -86,7 +86,7 @@ def test_canonical_timestamp_id_binds_but_is_not_a_public_door(tmp_path: Path) -
     with pytest.raises(Exception):
         store.path_for("../2026-10-20T09-00-00_cafe")
     ensure_runtime_store(tmp_path)
-    public = SessionStore(tmp_path / "sessions")
+    public = ConversationStore(tmp_path / "sessions")
     with pytest.raises(Exception):
         public.path_for(SESSION_ID)
     with pytest.raises(Exception):
@@ -294,7 +294,7 @@ def test_append_same_row_after_shorter_view_reset(
 ) -> None:
     window = _window("w", "dm", ("coder",))
     store = _store(tmp_path, "coder", window, SESSION_ID)
-    manager = SessionManager(store=store)
+    manager = ConversationManager(store=store)
     manager.load(SESSION_ID)
     same_a = _row("A")
     initial_rows = [same_a if text == "A" else _row(text) for text in initial]
@@ -302,7 +302,6 @@ def test_append_same_row_after_shorter_view_reset(
         manager.append(row)
     manager.store.rewrite(
         SESSION_ID, store.path_for(SESSION_ID), [_row(text) for text in basis],
-        title=None, title_source=None, naming_attempted=False,
     )
 
     manager.append(same_a)
@@ -326,9 +325,9 @@ def test_append_same_row_after_shorter_view_reset(
 def test_fresh_window_accumulates_without_basis(tmp_path: Path) -> None:
     window = _window("w", "dm", ("coder",))
     store = _store(tmp_path, "coder", window, SESSION_ID)
-    manager = SessionManager(store=store)
-    session = manager.load(SESSION_ID)
-    assert session.messages == []
+    manager = ConversationManager(store=store)
+    conversation = manager.load(SESSION_ID)
+    assert conversation.messages == []
     manager.append(_row("one"))
     manager.append(_row("two"))
     assert [m.content for m in store.load(SESSION_ID).messages] == ["one", "two"]
@@ -339,10 +338,10 @@ def test_dm_group_projections_never_mix(tmp_path: Path) -> None:
     group = _window("grp1", "group", ("thyca", "coder"))
     dm_store = _store(tmp_path, "coder", dm, "2026-10-20T09-00-00_d00d")
     grp_store = _store(tmp_path, "coder", group, "2026-10-20T09-00-01_abcd")
-    dm_manager = SessionManager(store=dm_store)
+    dm_manager = ConversationManager(store=dm_store)
     dm_manager.load("2026-10-20T09-00-00_d00d")
     dm_manager.append(_row("PRIVATE-DM-LINE"))
-    grp_manager = SessionManager(store=grp_store)
+    grp_manager = ConversationManager(store=grp_store)
     grp_manager.load("2026-10-20T09-00-01_abcd")
     grp_manager.append(_row("PUBLIC-GROUP-LINE"))
     assert [m.content for m in dm_store.load("2026-10-20T09-00-00_d00d").messages] == [
@@ -354,19 +353,16 @@ def test_dm_group_projections_never_mix(tmp_path: Path) -> None:
 def test_view_reset_is_compaction_basis_with_meta(tmp_path: Path) -> None:
     window = _window("w", "group", ("thyca", "coder"))
     store = _store(tmp_path, "coder", window, SESSION_ID)
-    manager = SessionManager(store=store)
+    manager = ConversationManager(store=store)
     manager.load(SESSION_ID)
     for text in ("m1", "m2", "m3"):
         manager.append(_row(text))
     manager.store.rewrite(
         SESSION_ID, store.path_for(SESSION_ID),
         [_row("m3-summary")],
-        title="T", title_source="model", naming_attempted=True,
         bots=["thyca", "coder"], dm=None)
     projected = store.load(SESSION_ID)
     assert [m.content for m in projected.messages] == ["m3-summary"]
-    assert projected.title == "T"
-    assert projected.naming_attempted is True
     assert projected.bots == ["thyca", "coder"]
     # Writes after the reset replay on top of the new basis.
     manager.load(SESSION_ID)
@@ -390,16 +386,16 @@ def test_metadata_reset_serializes_with_concurrent_message_append(
     errors: list[BaseException] = []
 
     def blocked_projection():
-        session = projected()
+        conversation = projected()
         snapshot_taken.set()
         assert continue_reset.wait(5)
-        return session
+        return conversation
 
     store._projected = blocked_projection
 
-    def update_title():
+    def update_participants():
         try:
-            store.append_meta(store.path_for(SESSION_ID), "Title")
+            store.append_bots(store.path_for(SESSION_ID), ["coder"])
         except BaseException as exc:
             errors.append(exc)
 
@@ -412,7 +408,7 @@ def test_metadata_reset_serializes_with_concurrent_message_append(
         finally:
             append_done.set()
 
-    metadata_thread = threading.Thread(target=update_title)
+    metadata_thread = threading.Thread(target=update_participants)
     metadata_thread.start()
     assert snapshot_taken.wait(5)
     append_thread = threading.Thread(target=append_concurrently)
@@ -429,17 +425,18 @@ def test_metadata_reset_serializes_with_concurrent_message_append(
         "first", "concurrent"]
 
 
-def test_title_meta_ops_journal_view_reset(tmp_path: Path) -> None:
+def test_participant_ops_journal_view_reset(tmp_path: Path) -> None:
     window = _window("w", "dm", ("coder",))
     store = _store(tmp_path, "coder", window, SESSION_ID)
-    manager = SessionManager(store=store)
+    manager = ConversationManager(store=store)
     manager.load(SESSION_ID)
     manager.append(_row("hello"))
-    assert store.append_title_if_missing(store.path_for(SESSION_ID), "Hi", "model")
-    assert not store.append_title_if_missing(
-        store.path_for(SESSION_ID), "Other", "model")
+    store.append_bots(store.path_for(SESSION_ID), ["coder"])
+    # A second participant rewrite overwrites through the same journaled reset.
+    store.append_dm(store.path_for(SESSION_ID), "coder")
     projected = store.load(SESSION_ID)
-    assert projected.title == "Hi"
+    assert projected.bots == ["coder"]
+    assert projected.dm_bot == "coder"
     assert [m.content for m in projected.messages] == ["hello"]
 
 
@@ -451,7 +448,7 @@ def test_cursor_full_once_then_delta(tmp_path: Path) -> None:
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Codes.", persona=""))
-        room = app.create(bots=["thyca", "coder"])["id"]
+        room = app.create(bots=["thyca", "coder"])["conversation_id"]
         # Seed public room history with a root turn before coder's first
         # turn; coder should receive the complete unread history once.
         app.turn(room, "root seed history")
@@ -472,12 +469,12 @@ def test_cursor_full_once_then_delta(tmp_path: Path) -> None:
         # Nothing new for the bot: no second delta on the wire, and no
         # synthetic rows were persisted anywhere.
         assert deltas(seen) == []
-        internal = app._runtime.internal_session("coder", room)
+        internal = app._runtime.internal_conversation("coder", room)
         store = app._runtime._canonical_store(
             "coder", app._runtime._window_for_room(room),
-            internal.id)
+            internal.conversation_id)
         assert all((m.meta or {}).get("kind") != "room_context"
-                   for m in store.load(internal.id).messages)
+                   for m in store.load(internal.conversation_id).messages)
     finally:
         app.shutdown()
 
@@ -490,13 +487,13 @@ def test_flush_sees_intact_canonical_transcript(tmp_path: Path) -> None:
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Codes.", persona="PERSONA-CODER"))
-        room = app.create(bots=["coder"])["id"]
-        binding = app._runtime.internal_session("coder", room)
+        room = app.create(bots=["coder"])["conversation_id"]
+        binding = app._runtime.internal_conversation("coder", room)
         window = app._runtime._window_for_room(room)
         store = app._runtime._canonical_store(
-            "coder", window, binding.id)
-        manager = SessionManager(store=store)
-        manager.load(binding.id)
+            "coder", window, binding.conversation_id)
+        manager = ConversationManager(store=store)
+        manager.load(binding.conversation_id)
         for index in range(10):
             manager.append(Message(
                 role="user", content=f"FLUSH-ME-{index} " + "u" * 500,
@@ -519,11 +516,11 @@ def test_flush_sees_intact_canonical_transcript(tmp_path: Path) -> None:
         assert seen == [False], "flush runs once, before compaction"
         assert any(
             (m.content or "").startswith("[compaction: ")
-            for m in store.load(binding.id).messages
+            for m in store.load(binding.conversation_id).messages
         ), "canonical transcript compacted after the flush"
-        # Purge is journal-scoped: the room session is untouched.
+        # Purge is journal-scoped: the room conversation is untouched.
         assert WorkspaceStore(tmp_path).get_binding(
-            "coder", room).internal_session_id == binding.id
+            "coder", room).internal_conversation_id == binding.conversation_id
     finally:
         app.shutdown()
 # --- Option B private-execution version protocol -------------------------
@@ -540,11 +537,11 @@ def test_private_v2_message_validates_and_projects_current_span_only(
                             priv={"span": "sp_A"})
     timeline.append_message(group, _row("priv two"), event_id="p2",
                             priv={"span": "sp_B"})
-    default = timeline.project(group, session_id=SESSION_ID)
+    default = timeline.project(group, conversation_id=SESSION_ID)
     assert [m.content for m in default.messages] == ["group hi"]
-    only_a = timeline.project(group, session_id=SESSION_ID, priv_span="sp_A")
+    only_a = timeline.project(group, conversation_id=SESSION_ID, priv_span="sp_A")
     assert [m.content for m in only_a.messages] == ["priv one"]
-    only_b = timeline.project(group, session_id=SESSION_ID, priv_span="sp_B")
+    only_b = timeline.project(group, conversation_id=SESSION_ID, priv_span="sp_B")
     assert [m.content for m in only_b.messages] == ["priv two"]
     assert timeline.messages_for_window(group) == list(default.messages)
     assert timeline.messages_for_window(group, include_private=True) != list(
@@ -651,13 +648,13 @@ def test_private_reset_never_becomes_group_basis_and_spans_isolate(
     timeline.append_message(group, _row("priv after reset"), event_id="p2",
                             priv={"span": "sp_X"})
     timeline.append_message(group, _row("g2"), event_id="g2")
-    default = timeline.project(group, session_id=SESSION_ID)
+    default = timeline.project(group, conversation_id=SESSION_ID)
     assert [m.content for m in default.messages] == ["basis1", "g2"]
     assert [m.content for m in timeline.project(
-        group, session_id=SESSION_ID, priv_span="sp_X").messages] == [
+        group, conversation_id=SESSION_ID, priv_span="sp_X").messages] == [
         "private reset", "priv after reset"]
     assert timeline.project(
-        group, session_id=SESSION_ID, priv_span="sp_OTHER").messages == []
+        group, conversation_id=SESSION_ID, priv_span="sp_OTHER").messages == []
 
 
 def test_private_event_id_conflict_covers_scope_and_window(

@@ -22,7 +22,7 @@ from thyca.configs import load, save
 from thyca.core.protocol import Message
 from thyca.memories.facade import MemoryFacade
 from thyca.serve import default_webui, make_server
-from thyca.conversations.runtime.manager import SessionManager
+from thyca.conversations.runtime.manager import ConversationManager
 
 WEBUI = default_webui()
 
@@ -32,8 +32,8 @@ def _chat(tmp_path: Path) -> ChatApp:
     return ChatApp(tmp_path, load(tmp_path / "config.json"))
 
 
-def _room_with(app: ChatApp, room_id: str) -> SessionManager:
-    room = SessionManager(store=app._sessions.store)
+def _room_with(app: ChatApp, room_id: str) -> ConversationManager:
+    room = ConversationManager(store=app._conversations.store)
     room.load(room_id)
     return room
 
@@ -43,7 +43,7 @@ def _seed_pair(app: ChatApp) -> str:
                              description="Writes code.", persona="P"))
     app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper",
                              description="Helps.", persona="P"))
-    room = app.create(bots=["coder", "helper"])["id"]
+    room = app.create(bots=["coder", "helper"])["conversation_id"]
     mgr = _room_with(app, room)
     # New-style explicit-recipient bus row + its result reply.
     mgr.append(Message(role="assistant", content="làm giúp",
@@ -112,13 +112,13 @@ def test_explicit_recipient_pairs_without_reply(tmp_path: Path) -> None:
                                  description="Writes code.", persona="P"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper",
                                  description="Helps.", persona="P"))
-        room = app.create(bots=["coder", "helper"])["id"]
+        room = app.create(bots=["coder", "helper"])["conversation_id"]
         # A freshly posted envelope row (no result row yet) still pairs
         # through the explicit recipient meta written by _record_bus_events.
         bus = app._runtime._bus
         bus.register("helper")
         envelope = bus.send(sender="coder", recipient="helper", kind="message",
-                            session_id=room, payload="ping")
+                            conversation_id=room, payload="ping")
         mgr = _room_with(app, room)
         app._record_bus_events(mgr, room)
         partners = app.dm_exchange_partners("coder")
@@ -137,7 +137,7 @@ def _seed_dm_pair(app: ChatApp) -> str:
                              description="Writes code.", persona="P"))
     app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper",
                              description="Helps.", persona="P"))
-    dm_id = app.bot_dm("coder")["id"]
+    dm_id = app.bot_dm("coder")["conversation_id"]
     mgr = _room_with(app, dm_id)
     mgr.append(Message(role="assistant", content="nhờ trong dm",
                        meta={"bot_id": "coder", "kind": "message",
@@ -197,7 +197,7 @@ def test_dm_origin_delivery_records_pair_without_leaking_history(
                                  description="Writes code.", persona="P"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper",
                                  description="Helps.", persona="P"))
-        dm_id = app.bot_dm("coder")["id"]
+        dm_id = app.bot_dm("coder")["conversation_id"]
         mgr = _room_with(app, dm_id)
         mgr.append(Message(role="user", content="bí mật riêng tư",
                            ts="2026-10-26T09:59:00Z"))
@@ -212,9 +212,9 @@ def test_dm_origin_delivery_records_pair_without_leaking_history(
         bus = app._runtime._bus
         bus.register("helper")
         envelope = bus.send(sender="coder", recipient="helper",
-                            kind="message", session_id=dm_id,
+                            kind="message", conversation_id=dm_id,
                             payload="nhờ giúp trong dm")
-        scope = BotTurnScope(store=app._sessions.store, act=app._act,
+        scope = BotTurnScope(store=app._conversations.store, act=app._act,
                              tools=app._tools, memory=app._memory,
                              state=app._state, zone=app._zone)
         ctx = BotTurnContext(sender_id="coder", room_id=dm_id,
@@ -252,7 +252,7 @@ def test_send_targeted_into_third_bot_dm_records_nothing(tmp_path: Path) -> None
         for bot_id in ("coder", "helper", "third"):
             app._bots.create(BotCard(bot_id=bot_id, name=bot_id, role="R",
                                      description="D", persona="P"))
-        third_dm = app.bot_dm("third")["id"]
+        third_dm = app.bot_dm("third")["conversation_id"]
         mgr = _room_with(app, third_dm)
         mgr.append(Message(role="user", content="riêng tư của third",
                            ts="2026-10-26T09:59:00Z"))
@@ -265,9 +265,9 @@ def test_send_targeted_into_third_bot_dm_records_nothing(tmp_path: Path) -> None
         bus = app._runtime._bus
         bus.register("helper")
         envelope = bus.send(sender="coder", recipient="helper",
-                            kind="delegate", session_id=third_dm,
+                            kind="delegate", conversation_id=third_dm,
                             payload="việc cho helper")
-        scope = BotTurnScope(store=app._sessions.store, act=app._act,
+        scope = BotTurnScope(store=app._conversations.store, act=app._act,
                              tools=app._tools, memory=app._memory,
                              state=app._state, zone=app._zone)
         ctx = BotTurnContext(sender_id="coder", room_id=third_dm,
@@ -354,7 +354,7 @@ def _private_group(app: ChatApp) -> str:
                              description="Writes code.", persona="P"))
     app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper",
                              description="Helps.", persona="P"))
-    room = app.create(bots=["coder", "thyca"])["id"]
+    room = app.create(bots=["coder", "thyca"])["conversation_id"]
     assert app.room_bots(room) == ["coder", "thyca"]
     return room
 
@@ -365,7 +365,7 @@ def _deliver(app: ChatApp, envelope, sender: str, room: str):
 
     from thyca.bots.context import BotTurnContext, BotTurnScope
 
-    scope = BotTurnScope(store=app._sessions.store, act=app._act,
+    scope = BotTurnScope(store=app._conversations.store, act=app._act,
                          tools=app._tools, memory=app._memory,
                          state=app._state, zone=app._zone)
     ctx = BotTurnContext(sender_id=sender, room_id=room,
@@ -399,7 +399,7 @@ def test_private_delivery_to_non_member_records_nothing(tmp_path: Path) -> None:
         bus = app._runtime._bus
         bus.register("helper")
         envelope = bus.send(sender="coder", recipient="helper", kind="message",
-                            session_id=room, payload="chosen task")
+                            conversation_id=room, payload="chosen task")
         assert _deliver(app, envelope, "coder", room) == "private answer"
         assert captured.get("room_text", "missing") == ""
         assert captured.get("room_cursor_after") is None
@@ -427,7 +427,7 @@ def test_member_delivery_records_grouped_exchange(tmp_path: Path) -> None:
                                  description="Writes code.", persona="P"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper",
                                  description="Helps.", persona="P"))
-        room = app.create(bots=["coder", "helper"])["id"]
+        room = app.create(bots=["coder", "helper"])["conversation_id"]
         assert app.room_bots(room) == ["coder", "helper"]
         mgr = _room_with(app, room)
         mgr.append(Message(role="user", content="GROUP-ONLY-MARKER please coordinate",
@@ -443,7 +443,7 @@ def test_member_delivery_records_grouped_exchange(tmp_path: Path) -> None:
         bus = app._runtime._bus
         bus.register("helper")
         envelope = bus.send(sender="coder", recipient="helper", kind="message",
-                            session_id=room, payload="nhờ giúp")
+                            conversation_id=room, payload="nhờ giúp")
         assert _deliver(app, envelope, "coder", room) == "giúp xong"
         assert "GROUP-ONLY-MARKER" in captured.get("room_text", "")
         assert captured.get("room_cursor_after") is not None
@@ -475,7 +475,7 @@ def test_exchange_pair_last_ts_uses_row_maximum_across_seconds(tmp_path: Path) -
                                  description="Writes code.", persona="P"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper",
                                  description="Helps.", persona="P"))
-        room = app.create(bots=["coder", "helper"])["id"]
+        room = app.create(bots=["coder", "helper"])["conversation_id"]
         mgr = _room_with(app, room)
         mgr.append(Message(role="assistant", content="ping",
                            meta={"bot_id": "coder", "kind": "message",
@@ -510,7 +510,7 @@ def test_member_delivery_across_second_boundary_reports_row_max(tmp_path: Path) 
                                  description="Writes code.", persona="P"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper",
                                  description="Helps.", persona="P"))
-        room = app.create(bots=["coder", "helper"])["id"]
+        room = app.create(bots=["coder", "helper"])["conversation_id"]
         _room_with(app, room).append(Message(role="user", content="go",
                                               ts="2026-10-26T09:00:00Z"))
 
@@ -523,7 +523,7 @@ def test_member_delivery_across_second_boundary_reports_row_max(tmp_path: Path) 
         bus.register("helper")
         with _patch("thyca.bots.bus.utc_now_ts", return_value="2026-10-26T10:00:00Z"):
             envelope = bus.send(sender="coder", recipient="helper", kind="message",
-                                session_id=room, payload="cross me")
+                                conversation_id=room, payload="cross me")
         assert envelope.ts == "2026-10-26T10:00:00Z"
         # Row timestamps are controlled by patching the service module's
         # Message binding (the dataclass default factory is bound at class
@@ -570,7 +570,7 @@ def test_private_delivery_failure_records_nothing(tmp_path: Path) -> None:
         bus = app._runtime._bus
         bus.register("helper")
         envelope = bus.send(sender="coder", recipient="helper", kind="message",
-                            session_id=room, payload="chosen task")
+                            conversation_id=room, payload="chosen task")
         reply = _deliver(app, envelope, "coder", room)
         assert reply.startswith("delivery failed")
         assert captured.get("private_invocation") is True
@@ -636,7 +636,7 @@ def test_private_real_runtime_hides_group_and_team_markers(tmp_path: Path) -> No
                                  description="Writes code.", persona="P"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper",
                                  description="Helps.", persona="PERSONA-HELPER"))
-        room = app.create(bots=["coder", "thyca"])["id"]
+        room = app.create(bots=["coder", "thyca"])["conversation_id"]
         assert app.room_bots(room) == ["coder", "thyca"]
         mgr = _room_with(app, room)
         mgr.append(Message(role="user", content=f"{GROUP_MARKER} please coordinate",
@@ -666,10 +666,10 @@ def test_private_real_runtime_hides_group_and_team_markers(tmp_path: Path) -> No
         bus = app._runtime._bus
         bus.register("helper")
         envelope = bus.send(sender="coder", recipient="helper", kind="message",
-                            session_id=room, payload=CHOSEN)
+                            conversation_id=room, payload=CHOSEN)
         import asyncio as _asyncio
         from thyca.bots.context import BotTurnContext as _Ctx, BotTurnScope as _Scope
-        _scope = _Scope(store=app._sessions.store, act=app._act,
+        _scope = _Scope(store=app._conversations.store, act=app._act,
                         tools=app._tools, memory=app._memory,
                         state=app._state, zone=app._zone)
         _ctx = _Ctx(sender_id="coder", room_id=room,
@@ -722,7 +722,7 @@ def test_private_dispatch_pins_current_envelope_on_roster_change(tmp_path: Path)
         before = len(_room_with(app, room).current.messages)
         calls: list[int] = []
 
-        def _changing_roster(session_id: str) -> list[str]:
+        def _changing_roster(conversation_id: str) -> list[str]:
             calls.append(1)
             if len(calls) == 1:
                 return ["coder", "thyca"]
@@ -738,7 +738,7 @@ def test_private_dispatch_pins_current_envelope_on_roster_change(tmp_path: Path)
         bus = app._runtime._bus
         bus.register("helper")
         envelope = bus.send(sender="coder", recipient="helper", kind="message",
-                            session_id=room, payload="chosen task")
+                            conversation_id=room, payload="chosen task")
         assert _deliver(app, envelope, "coder", room) == "private answer"
         assert calls == [1, 1, 1], "dispatch, record, and fresh result check"
         rows = _room_with(app, room).current.messages
@@ -763,7 +763,7 @@ def test_private_dispatch_read_failure_records_nothing(tmp_path: Path) -> None:
         before = len(_room_with(app, room).current.messages)
         captured: dict = {}
 
-        def _failing_roster(session_id: str) -> list[str]:
+        def _failing_roster(conversation_id: str) -> list[str]:
             raise RuntimeError("roster unavailable")
 
         app._delivery._deps.room_bots = _failing_roster  # type: ignore[method-assign]
@@ -777,7 +777,7 @@ def test_private_dispatch_read_failure_records_nothing(tmp_path: Path) -> None:
         bus = app._runtime._bus
         bus.register("helper")
         envelope = bus.send(sender="coder", recipient="helper", kind="message",
-                            session_id=room, payload="chosen task")
+                            conversation_id=room, payload="chosen task")
         assert _deliver(app, envelope, "coder", room) == "private answer"
         assert captured.get("private_invocation") is True
         assert captured.get("room_text", "missing") == ""
@@ -799,14 +799,14 @@ def test_member_record_read_failure_skips_rows_fail_closed(tmp_path: Path) -> No
                                  description="Writes code.", persona="P"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper",
                                  description="Helps.", persona="P"))
-        room = app.create(bots=["coder", "helper"])["id"]
+        room = app.create(bots=["coder", "helper"])["conversation_id"]
         mgr = _room_with(app, room)
         mgr.append(Message(role="user", content="GROUP-ONLY-MARKER please coordinate",
                            ts="2026-10-26T09:00:00Z"))
         before = len(_room_with(app, room).current.messages)
         calls: list[int] = []
 
-        def _flaky_roster(session_id: str) -> list[str]:
+        def _flaky_roster(conversation_id: str) -> list[str]:
             calls.append(1)
             if len(calls) == 1:
                 return ["coder", "helper"]
@@ -821,7 +821,7 @@ def test_member_record_read_failure_skips_rows_fail_closed(tmp_path: Path) -> No
         bus = app._runtime._bus
         bus.register("helper")
         envelope = bus.send(sender="coder", recipient="helper", kind="message",
-                            session_id=room, payload="hi")
+                            conversation_id=room, payload="hi")
         assert _deliver(app, envelope, "coder", room) == "ok"
         rows = _room_with(app, room).current.messages
         assert len(rows) == before
@@ -872,7 +872,7 @@ def test_private_former_member_gets_no_prior_group_history(tmp_path: Path) -> No
                                  description="Writes code.", persona="P"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper",
                                  description="Helps.", persona="PERSONA-HELPER"))
-        room = app.create(bots=["coder", "helper"])["id"]
+        room = app.create(bots=["coder", "helper"])["conversation_id"]
         mgr = _room_with(app, room)
         mgr.append(Message(role="user", content=f"{GROUP_MARKER} please coordinate",
                            ts="2026-10-26T09:00:00Z"))
@@ -880,7 +880,7 @@ def test_private_former_member_gets_no_prior_group_history(tmp_path: Path) -> No
         from thyca.bots.context import BotTurnContext as _Ctx2, BotTurnScope as _Scope2
 
         def _ctx(sender: str):
-            scope = _Scope2(store=app._sessions.store, act=app._act,
+            scope = _Scope2(store=app._conversations.store, act=app._act,
                             tools=app._tools, memory=app._memory,
                             state=app._state, zone=app._zone)
             return _Ctx2(sender_id=sender, room_id=room,
@@ -889,7 +889,7 @@ def test_private_former_member_gets_no_prior_group_history(tmp_path: Path) -> No
         bus = app._runtime._bus
         bus.register("helper")
         member_env = bus.send(sender="coder", recipient="helper", kind="message",
-                              session_id=room, payload=MEMBER_TASK)
+                              conversation_id=room, payload=MEMBER_TASK)
         assert _asyncio2.run(app._deliver_envelope(member_env, _ctx("coder"))) == MEMBER_REPLY
         assert any(MEMBER_TASK in p for p in llm.prompts)
         # Helper leaves the group; its timeline keeps the member rows.
@@ -897,7 +897,7 @@ def test_private_former_member_gets_no_prior_group_history(tmp_path: Path) -> No
         llm.prompts.clear()
         before = len(_room_with(app, room).current.messages)
         private_env = bus.send(sender="coder", recipient="helper", kind="message",
-                               session_id=room, payload=PRIVATE_TASK)
+                               conversation_id=room, payload=PRIVATE_TASK)
         assert _asyncio2.run(app._deliver_envelope(private_env, _ctx("coder"))) == "private answer"
         assert any(PRIVATE_TASK in p for p in llm.prompts)
         assert all(GROUP_MARKER not in p for p in llm.prompts)
@@ -956,7 +956,7 @@ def test_private_nested_bot_send_to_member_stays_private(tmp_path: Path) -> None
                                  description="Writes code.", persona="P"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper",
                                  description="Helps.", persona="PERSONA-HELPER"))
-        room = app.create(bots=["coder", "thyca"])["id"]
+        room = app.create(bots=["coder", "thyca"])["conversation_id"]
         mgr = _room_with(app, room)
         mgr.append(Message(role="user", content=f"{GROUP_MARKER} coordinate",
                            ts="2026-10-26T09:00:00Z"))
@@ -964,12 +964,12 @@ def test_private_nested_bot_send_to_member_stays_private(tmp_path: Path) -> None
         bus = app._runtime._bus
         bus.register("coder")
         control_env = bus.send(sender="thyca", recipient="coder", kind="message",
-                               session_id=room, payload="control task")
+                               conversation_id=room, payload="control task")
         import asyncio as _asyncio3
         from thyca.bots.context import BotTurnContext as _Ctx3, BotTurnScope as _Scope3
 
         def _ctx3(sender: str):
-            scope = _Scope3(store=app._sessions.store, act=app._act,
+            scope = _Scope3(store=app._conversations.store, act=app._act,
                             tools=app._tools, memory=app._memory,
                             state=app._state, zone=app._zone)
             return _Ctx3(sender_id=sender, room_id=room,
@@ -981,7 +981,7 @@ def test_private_nested_bot_send_to_member_stays_private(tmp_path: Path) -> None
         llm.prompts.clear()
         bus.register("helper")
         outer_env = bus.send(sender="coder", recipient="helper", kind="message",
-                             session_id=room, payload=OUTER_TASK)
+                             conversation_id=room, payload=OUTER_TASK)
         before = len(_room_with(app, room).current.messages)
         assert _asyncio3.run(app._deliver_envelope(outer_env, _ctx3("coder"))) \
             == "outer reply"
@@ -1024,12 +1024,12 @@ def test_private_stream_stays_runtime_local(tmp_path: Path) -> None:
                                  description="Writes code.", persona="P"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper",
                                  description="Helps.", persona="P"))
-        room = app.create(bots=["coder", "helper"])["id"]
+        room = app.create(bots=["coder", "helper"])["conversation_id"]
         import asyncio as _asyncio4
         from thyca.bots.context import BotTurnContext as _Ctx4, BotTurnScope as _Scope4
 
         def _ctx4(sender: str, rid: str):
-            scope = _Scope4(store=app._sessions.store, act=app._act,
+            scope = _Scope4(store=app._conversations.store, act=app._act,
                             tools=app._tools, memory=app._memory,
                             state=app._state, zone=app._zone)
             return _Ctx4(sender_id=sender, room_id=rid,
@@ -1039,7 +1039,7 @@ def test_private_stream_stays_runtime_local(tmp_path: Path) -> None:
         bus.register("helper")
         member_events: list = []
         member_env = bus.send(sender="coder", recipient="helper", kind="message",
-                              session_id=room, payload="member task")
+                              conversation_id=room, payload="member task")
         _ctxm = _ctx4("coder", room)
         _ctxm.event_sink = member_events.append
         assert _asyncio4.run(app._deliver_envelope(member_env, _ctxm))
@@ -1050,10 +1050,10 @@ def test_private_stream_stays_runtime_local(tmp_path: Path) -> None:
             "member control must forward streamed content"
         # Create the second room only after the first holds rows: blank
         # group rooms are pruned on the next create.
-        other = app.create(bots=["coder", "thyca"])["id"]
+        other = app.create(bots=["coder", "thyca"])["conversation_id"]
         private_events: list = []
         private_env = bus.send(sender="coder", recipient="helper", kind="message",
-                               session_id=other, payload="private task")
+                               conversation_id=other, payload="private task")
         _ctxp = _ctx4("coder", other)
         _ctxp.event_sink = private_events.append
         assert _asyncio4.run(app._deliver_envelope(private_env, _ctxp))
@@ -1093,11 +1093,11 @@ def test_private_leaves_cursor_and_recall_untouched(tmp_path: Path) -> None:
                                  description="Writes code.", persona="P"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper",
                                  description="Helps.", persona="P"))
-        room = app.create(bots=["coder", "helper"])["id"]
+        room = app.create(bots=["coder", "helper"])["conversation_id"]
         mgr = _room_with(app, room)
         mgr.append(Message(role="user", content=f"{GROUP_MARKER} cursor check",
                            ts="2026-10-26T09:00:00Z"))
-        other = app.create(bots=["coder", "thyca"])["id"]
+        other = app.create(bots=["coder", "thyca"])["conversation_id"]
         # Seed the other room so creating it does not prune the first.
         _room_with(app, other).append(Message(role="user", content="seed",
                                               ts="2026-10-26T09:00:00Z"))
@@ -1106,10 +1106,10 @@ def test_private_leaves_cursor_and_recall_untouched(tmp_path: Path) -> None:
         bus = app._runtime._bus
         bus.register("helper")
         envelope = bus.send(sender="coder", recipient="helper", kind="message",
-                            session_id=other, payload=PRIVATE_TASK)
+                            conversation_id=other, payload=PRIVATE_TASK)
         import asyncio as _asyncio5
         from thyca.bots.context import BotTurnContext as _Ctx5, BotTurnScope as _Scope5
-        scope = _Scope5(store=app._sessions.store, act=app._act,
+        scope = _Scope5(store=app._conversations.store, act=app._act,
                         tools=app._tools, memory=app._memory,
                         state=app._state, zone=app._zone)
         ctx = _Ctx5(sender_id="coder", room_id=other,
@@ -1156,7 +1156,7 @@ def test_private_result_withheld_after_removal_during_model(tmp_path: Path) -> N
                                  description="Writes code.", persona="P"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper",
                                  description="Helps.", persona="P"))
-        room = app.create(bots=["coder", "helper"])["id"]
+        room = app.create(bots=["coder", "helper"])["conversation_id"]
         mgr = _room_with(app, room)
         mgr.append(Message(role="user", content="GROUP-ONLY-MARKER removal race",
                            ts="2026-10-26T09:00:00Z"))
@@ -1171,7 +1171,7 @@ def test_private_result_withheld_after_removal_during_model(tmp_path: Path) -> N
         bus = app._runtime._bus
         bus.register("helper")
         envelope = bus.send(sender="coder", recipient="helper", kind="message",
-                            session_id=room, payload="member task")
+                            conversation_id=room, payload="member task")
         assert _deliver(app, envelope, "coder", room) == "late reply"
         rows = _room_with(app, room).current.messages
         bus_rows = [r for r in rows
@@ -1195,7 +1195,7 @@ def test_unrelated_drained_envelope_does_not_authorize_current(tmp_path: Path) -
         other_bus = app._runtime._bus
         other_bus.register("thyca")
         other_bus.send(sender="coder", recipient="thyca", kind="message",
-                       session_id=room, payload="eligible unrelated")
+                       conversation_id=room, payload="eligible unrelated")
 
         async def _fake_turn(**kwargs):
             return _Result7(reply="private answer", bot_id="helper",
@@ -1205,7 +1205,7 @@ def test_unrelated_drained_envelope_does_not_authorize_current(tmp_path: Path) -
         bus = app._runtime._bus
         bus.register("helper")
         current = bus.send(sender="coder", recipient="helper", kind="message",
-                           session_id=room, payload="private task")
+                           conversation_id=room, payload="private task")
         assert _deliver(app, current, "coder", room) == "private answer"
         rows = _room_with(app, room).current.messages
         assert any((r.meta or {}).get("bus_event") is True
@@ -1268,7 +1268,7 @@ def test_private_nested_lease_rejection_stays_unpublished_real_root_turn(
                                  description="Writes code.", persona="P"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper",
                                  description="Helps.", persona="PERSONA-HELPER"))
-        room = app.create(bots=["coder", "thyca"])["id"]
+        room = app.create(bots=["coder", "thyca"])["conversation_id"]
         detail = app.turn(room, "outer start " + TO_HELPER)
         assert detail["reply"] == "coder final"
         assert any("helper reply" in pr for pr in llm.prompts), \
@@ -1292,7 +1292,7 @@ def test_private_result_uses_membership_checked_append(tmp_path: Path) -> None:
                                  description="Writes code.", persona="P"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper",
                                  description="Helps.", persona="P"))
-        room = app.create(bots=["coder", "helper"])["id"]
+        room = app.create(bots=["coder", "helper"])["conversation_id"]
         mgr = _room_with(app, room)
         mgr.append(Message(role="user", content="GROUP-ONLY-MARKER append race",
                            ts="2026-10-26T09:00:00Z"))
@@ -1322,10 +1322,10 @@ def test_private_result_uses_membership_checked_append(tmp_path: Path) -> None:
         bus = app._runtime._bus
         bus.register("helper")
         envelope = bus.send(sender="coder", recipient="helper", kind="message",
-                            session_id=room, payload="member task")
+                            conversation_id=room, payload="member task")
         import asyncio as _asyncio9
         from thyca.bots.context import BotTurnContext as _Ctx9, BotTurnScope as _Scope9
-        scope = _Scope9(store=app._sessions.store, act=app._act,
+        scope = _Scope9(store=app._conversations.store, act=app._act,
                         tools=app._tools, memory=app._memory,
                         state=app._state, zone=app._zone)
         ctx = _Ctx9(sender_id="coder", room_id=room,
@@ -1375,17 +1375,17 @@ def test_private_skips_relevant_flagged_mail_and_tasks(tmp_path: Path) -> None:
                                  description="Writes code.", persona="P"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper",
                                  description="Helps.", persona="P"))
-        room = app.create(bots=["coder", "thyca"])["id"]
+        room = app.create(bots=["coder", "thyca"])["conversation_id"]
         _room_with(app, room).append(Message(role="user", content=GROUP_MARKER,
                                              ts="2026-10-26T09:00:00Z"))
         bus = app._runtime._bus
         bus.register("helper")
         bus.register("coder")
         flagged_coder = bus.send(sender="helper", recipient="coder", kind="message",
-                                 session_id=room, payload=FLAGGED_FOR_CODER,
+                                 conversation_id=room, payload=FLAGGED_FOR_CODER,
                                  private_chain=True)
         flagged_helper = bus.send(sender="thyca", recipient="helper", kind="message",
-                                  session_id=room, payload=FLAGGED_FOR_HELPER,
+                                  conversation_id=room, payload=FLAGGED_FOR_HELPER,
                                   private_chain=True)
         # The task API must not surface flagged payloads as titles.
         coder_tasks = app.bot_room_tasks(room, "coder")["tasks"]
@@ -1395,7 +1395,7 @@ def test_private_skips_relevant_flagged_mail_and_tasks(tmp_path: Path) -> None:
                    for row in coder_tasks)
         import asyncio as _asyncio10
         from thyca.bots.context import BotTurnContext as _Ctx10, BotTurnScope as _Scope10
-        scope = _Scope10(store=app._sessions.store, act=app._act,
+        scope = _Scope10(store=app._conversations.store, act=app._act,
                          tools=app._tools, memory=app._memory,
                          state=app._state, zone=app._zone)
         # Mechanism pin: a private turn must not even drain the mailbox.
@@ -1410,7 +1410,7 @@ def test_private_skips_relevant_flagged_mail_and_tasks(tmp_path: Path) -> None:
         ctx = _Ctx10(sender_id="coder", room_id=room,
                      scope=scope, turn_cfg=app._current_cfg())
         envelope = bus.send(sender="coder", recipient="helper", kind="message",
-                            session_id=room, payload=PRIVATE_TASK,
+                            conversation_id=room, payload=PRIVATE_TASK,
                             private_chain=True)
         with __import__("unittest.mock", fromlist=["patch"]).patch.object(
                 _rt10.BotRuntime, "_prepend_mailbox", _counting_prepend):
@@ -1429,8 +1429,8 @@ def test_private_skips_relevant_flagged_mail_and_tasks(tmp_path: Path) -> None:
         # A subsequent normal member turn still excludes the flagged mail.
         llm.prompts.clear()
         member_env = bus.send(sender="thyca", recipient="coder", kind="message",
-                              session_id=room, payload="member follow-up")
-        _scope_m = _Scope10(store=app._sessions.store, act=app._act,
+                              conversation_id=room, payload="member follow-up")
+        _scope_m = _Scope10(store=app._conversations.store, act=app._act,
                             tools=app._tools, memory=app._memory,
                             state=app._state, zone=app._zone)
         _ctx_m = _Ctx10(sender_id="thyca", room_id=room,
@@ -1484,7 +1484,7 @@ def test_private_rejoin_failure_compaction_and_second_private(tmp_path: Path) ->
                                  description="Writes code.", persona="P"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper",
                                  description="Helps.", persona="P"))
-        room = app.create(bots=["coder", "helper"])["id"]
+        room = app.create(bots=["coder", "helper"])["conversation_id"]
         mgr = _room_with(app, room)
         mgr.append(Message(role="user", content=f"{GROUP_MARKER} coordinate",
                            ts="2026-10-26T09:00:00Z"))
@@ -1492,7 +1492,7 @@ def test_private_rejoin_failure_compaction_and_second_private(tmp_path: Path) ->
         from thyca.bots.context import BotTurnContext as _Ctx11, BotTurnScope as _Scope11
 
         def _ctx11(sender: str):
-            scope = _Scope11(store=app._sessions.store, act=app._act,
+            scope = _Scope11(store=app._conversations.store, act=app._act,
                              tools=app._tools, memory=app._memory,
                              state=app._state, zone=app._zone)
             return _Ctx11(sender_id=sender, room_id=room,
@@ -1501,35 +1501,35 @@ def test_private_rejoin_failure_compaction_and_second_private(tmp_path: Path) ->
         bus = app._runtime._bus
         bus.register("helper")
         member_env = bus.send(sender="coder", recipient="helper", kind="message",
-                              session_id=room, payload=MEMBER_TASK)
+                              conversation_id=room, payload=MEMBER_TASK)
         assert _asyncio11.run(app._deliver_envelope(member_env, _ctx11("coder"))) == "reply ok"
         assert app.set_room_bots(room, "helper", "remove") == ["coder"]
         llm.prompts.clear()
         first = bus.send(sender="coder", recipient="helper", kind="message",
-                         session_id=room, payload=PRIVATE_ONE)
+                         conversation_id=room, payload=PRIVATE_ONE)
         assert _asyncio11.run(app._deliver_envelope(first, _ctx11("coder"))) == "reply ok"
         assert any(PRIVATE_ONE in pr for pr in llm.prompts)
         assert all(GROUP_MARKER not in pr for pr in llm.prompts)
         assert all(MEMBER_TASK not in pr for pr in llm.prompts)
         llm.fail_next = True
         doomed = bus.send(sender="coder", recipient="helper", kind="message",
-                          session_id=room, payload="doomed private")
+                          conversation_id=room, payload="doomed private")
         assert _asyncio11.run(app._deliver_envelope(doomed, _ctx11("coder"))).startswith(
             "delivery failed")
         # Group projection is unchanged by the private failure reset.
         from thyca.bots.timeline import WorkspaceTimeline as _TL11
-        group_window = app._webui.window_for(app._sessions.store.load(room))
+        group_window = app._webui.window_for(app._conversations.store.load(room))
         helper_binding = app._runtime.workspaces.store.get_binding("helper", room)
-        assert helper_binding is not None and helper_binding.internal_session_id
+        assert helper_binding is not None and helper_binding.internal_conversation_id
         helper_tl = _TL11(tmp_path, "helper", create=False)
         assert all("doomed private" not in m.content
                    for m in helper_tl.project(
                        group_window,
-                       session_id=helper_binding.internal_session_id).messages)
+                       conversation_id=helper_binding.internal_conversation_id).messages)
         # Second private invocation replays nothing from the first.
         llm.prompts.clear()
         second = bus.send(sender="coder", recipient="helper", kind="message",
-                          session_id=room, payload=PRIVATE_TWO)
+                          conversation_id=room, payload=PRIVATE_TWO)
         assert _asyncio11.run(app._deliver_envelope(second, _ctx11("coder"))) == "reply ok"
         assert all(PRIVATE_ONE not in pr for pr in llm.prompts)
         assert all("reply ok" not in pr or PRIVATE_TWO in pr for pr in llm.prompts)
@@ -1541,7 +1541,7 @@ def test_private_rejoin_failure_compaction_and_second_private(tmp_path: Path) ->
                                              ts="2026-10-26T10:00:00Z"))
         llm.prompts.clear()
         back = bus.send(sender="coder", recipient="helper", kind="message",
-                        session_id=room, payload="welcome back")
+                        conversation_id=room, payload="welcome back")
         assert _asyncio11.run(app._deliver_envelope(back, _ctx11("coder"))) == "reply ok"
         assert any("GROUP-NEWS after rejoin" in pr for pr in llm.prompts)
         assert all(PRIVATE_ONE not in pr for pr in llm.prompts)
@@ -1553,17 +1553,17 @@ def test_private_rejoin_failure_compaction_and_second_private(tmp_path: Path) ->
         from thyca.bots.timeline import WorkspaceTimeline as _TLR
         from thyca.core.protocol import Message as _MsgR
         _seed_tl = _TLR(tmp_path, "helper", create=False)
-        _seed_window = app._webui.window_for(app._sessions.store.load(room))
+        _seed_window = app._webui.window_for(app._conversations.store.load(room))
         for _i in range(400):
             _seed_tl.append_message(
                 _seed_window,
                 _MsgR(role="user", content=f"filler {_i} " + "x" * 2000),
                 event_id=f"seed-fill-{_i:04d}")
-        compacted = app.compact_session(room)
+        compacted = app.compact_conversation(room)
         helper_report = compacted["compaction"]["per_bot"]["helper"]
         assert helper_report.get("compacted") is True, helper_report
         default_after = helper_tl.project(
-            group_window, session_id=helper_binding.internal_session_id)
+            group_window, conversation_id=helper_binding.internal_conversation_id)
         assert all(PRIVATE_ONE not in (m.content or "") for m in default_after.messages)
         assert all(PRIVATE_TWO not in (m.content or "") for m in default_after.messages)
         assert all("doomed private" not in (m.content or "") for m in default_after.messages)
@@ -1626,7 +1626,7 @@ def test_private_changed_roster_memory_stays_denied_real_model(tmp_path: Path) -
                                  description="Writes code.", persona="P"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper",
                                  description="Helps.", persona="P"))
-        room = app.create(bots=["coder", "thyca"])["id"]
+        room = app.create(bots=["coder", "thyca"])["conversation_id"]
         holder["room"] = room
         mgr = _room_with(app, room)
         mgr.append(Message(role="user", content=f"{GROUP_MARKER} coordinate",
@@ -1644,10 +1644,10 @@ def test_private_changed_roster_memory_stays_denied_real_model(tmp_path: Path) -
         bus = app._runtime._bus
         bus.register("helper")
         envelope = bus.send(sender="coder", recipient="helper", kind="message",
-                            session_id=room, payload=CHOSEN)
+                            conversation_id=room, payload=CHOSEN)
         import asyncio as _asyncio12
         from thyca.bots.context import BotTurnContext as _Ctx12, BotTurnScope as _Scope12
-        scope = _Scope12(store=app._sessions.store, act=app._act,
+        scope = _Scope12(store=app._conversations.store, act=app._act,
                          tools=app._tools, memory=app._memory,
                          state=app._state, zone=app._zone)
         ctx = _Ctx12(sender_id="coder", room_id=room,
@@ -1665,7 +1665,7 @@ def test_private_changed_roster_memory_stays_denied_real_model(tmp_path: Path) -
         # that only the pinned private invocation was denied.
         llm.prompts.clear()
         member_env = bus.send(sender="coder", recipient="helper", kind="message",
-                              session_id=room, payload="member follow-up")
+                              conversation_id=room, payload="member follow-up")
         assert _asyncio12.run(app._deliver_envelope(member_env, ctx)) == "private answer"
         assert any(TEAM_MARKER in pr for pr in llm.prompts), \
             "member turn must read the team seed the private turn could not"
@@ -1682,16 +1682,16 @@ def test_predrained_request_still_authorizes_member_result(tmp_path: Path) -> No
                                  description="Writes code.", persona="P"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper",
                                  description="Helps.", persona="P"))
-        room = app.create(bots=["coder", "helper"])["id"]
+        room = app.create(bots=["coder", "helper"])["conversation_id"]
         mgr = _room_with(app, room)
         mgr.append(Message(role="user", content="GROUP-ONLY-MARKER predrain",
                            ts="2026-10-26T09:00:00Z"))
         bus = app._runtime._bus
         bus.register("helper")
         first = bus.send(sender="coder", recipient="helper", kind="message",
-                         session_id=room, payload="first task")
+                         conversation_id=room, payload="first task")
         second = bus.send(sender="coder", recipient="helper", kind="message",
-                          session_id=room, payload="second task")
+                          conversation_id=room, payload="second task")
         first_room = _room_with(app, room)
         assert app._delivery.record_bus_events(first_room, room) is True
         assert any((m.meta or {}).get("span_id") == first.span_id
@@ -1705,7 +1705,7 @@ def test_predrained_request_still_authorizes_member_result(tmp_path: Path) -> No
         app._runtime.run_bot_turn_detailed = _fake_turn  # type: ignore[method-assign]
         import asyncio as _asyncio13
         from thyca.bots.context import BotTurnContext as _Ctx13, BotTurnScope as _Scope13
-        scope = _Scope13(store=app._sessions.store, act=app._act,
+        scope = _Scope13(store=app._conversations.store, act=app._act,
                          tools=app._tools, memory=app._memory,
                          state=app._state, zone=app._zone)
         ctx = _Ctx13(sender_id="coder", room_id=room,
@@ -1716,11 +1716,11 @@ def test_predrained_request_still_authorizes_member_result(tmp_path: Path) -> No
                    and (r.meta or {}).get("kind") == "result" for r in rows)
         # DM twin: an unpinned drain publishes the DM pair, and a later
         # pinned delivery with an empty drain still recognizes it.
-        dm = app.bot_dm("coder")["id"]
+        dm = app.bot_dm("coder")["conversation_id"]
         _room_with(app, dm).append(Message(role="user", content="dm seed",
                                             ts="2026-10-26T09:00:00Z"))
         dm_second = bus.send(sender="coder", recipient="helper", kind="message",
-                             session_id=dm, payload="dm second")
+                             conversation_id=dm, payload="dm second")
         assert app._delivery.record_bus_events(_room_with(app, dm), dm) is True
         dm_ctx = _Ctx13(sender_id="coder", room_id=dm, scope=scope,
                         turn_cfg=app._current_cfg())
@@ -1753,13 +1753,13 @@ def test_private_cancelled_turn_leaves_no_group_trace(tmp_path: Path) -> None:
                                  description="Writes code.", persona="P"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper",
                                  description="Helps.", persona="P"))
-        room = app.create(bots=["coder", "thyca"])["id"]
+        room = app.create(bots=["coder", "thyca"])["conversation_id"]
         mgr = _room_with(app, room)
         mgr.append(Message(role="user", content="GROUP-ONLY-MARKER cancel",
                            ts="2026-10-26T09:00:00Z"))
         before = len(_room_with(app, room).current.messages)
         from thyca.bots.context import BotTurnContext as _Ctx14, BotTurnScope as _Scope14
-        scope = _Scope14(store=app._sessions.store, act=app._act,
+        scope = _Scope14(store=app._conversations.store, act=app._act,
                          tools=app._tools, memory=app._memory,
                          state=app._state, zone=app._zone)
         ctx = _Ctx14(sender_id="coder", room_id=room,
@@ -1767,7 +1767,7 @@ def test_private_cancelled_turn_leaves_no_group_trace(tmp_path: Path) -> None:
         bus = app._runtime._bus
         bus.register("helper")
         envelope = bus.send(sender="coder", recipient="helper", kind="message",
-                            session_id=room, payload="cancelled task")
+                            conversation_id=room, payload="cancelled task")
         with __import__("pytest").raises(_asyncio14.CancelledError):
             _asyncio14.run(app._deliver_envelope(envelope, ctx))
         rows = _room_with(app, room).current.messages
@@ -1777,11 +1777,11 @@ def test_private_cancelled_turn_leaves_no_group_trace(tmp_path: Path) -> None:
         assert app.room_bots(room) == ["coder", "thyca"]
         from thyca.bots.timeline import WorkspaceTimeline as _TL14
         helper_tl = _TL14(tmp_path, "helper", create=False)
-        group_window = app._webui.window_for(app._sessions.store.load(room))
+        group_window = app._webui.window_for(app._conversations.store.load(room))
         binding = app._runtime.workspaces.store.get_binding("helper", room)
-        assert binding is not None and binding.internal_session_id
+        assert binding is not None and binding.internal_conversation_id
         default = helper_tl.project(group_window,
-                                    session_id=binding.internal_session_id)
+                                    conversation_id=binding.internal_conversation_id)
         assert all("cancelled task" not in (m.content or "") for m in default.messages)
     finally:
         app.shutdown()
@@ -1796,17 +1796,17 @@ def test_private_early_failures_publish_nothing_later(tmp_path: Path) -> None:
                                  description="Writes code.", persona="P"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper",
                                  description="Helps.", persona="P"))
-        room = app.create(bots=["coder", "helper"])["id"]
+        room = app.create(bots=["coder", "helper"])["conversation_id"]
         _room_with(app, room).append(Message(role="user", content="seed",
                                              ts="2026-10-26T09:00:00Z"))
-        other = app.create(bots=["coder", "thyca"])["id"]
+        other = app.create(bots=["coder", "thyca"])["conversation_id"]
         bus = app._runtime._bus
         bus.register("helper")
         import asyncio as _asyncio15
         from thyca.bots.context import BotTurnContext as _Ctx15, BotTurnScope as _Scope15
 
         def _ctx15(sender: str, rid: str):
-            scope = _Scope15(store=app._sessions.store, act=app._act,
+            scope = _Scope15(store=app._conversations.store, act=app._act,
                              tools=app._tools, memory=app._memory,
                              state=app._state, zone=app._zone)
             return _Ctx15(sender_id=sender, room_id=rid,
@@ -1814,7 +1814,7 @@ def test_private_early_failures_publish_nothing_later(tmp_path: Path) -> None:
 
         bus.register("ghost")
         ghost = bus.send(sender="coder", recipient="ghost", kind="message",
-                         session_id=room, payload="ghost task")
+                         conversation_id=room, payload="ghost task")
         assert _asyncio15.run(
             app._deliver_envelope_claimed(ghost, _ctx15("coder", room))).startswith(
             "delivery failed")
@@ -1823,7 +1823,7 @@ def test_private_early_failures_publish_nothing_later(tmp_path: Path) -> None:
         app._bots.set_paused("sleepy", True)
         bus.register("sleepy")
         nap = bus.send(sender="coder", recipient="sleepy", kind="message",
-                       session_id=room, payload="nap task")
+                       conversation_id=room, payload="nap task")
         assert "paused" in _asyncio15.run(
             app._deliver_envelope_claimed(nap, _ctx15("coder", room)))
         rows = _room_with(app, room).current.messages
@@ -1833,7 +1833,7 @@ def test_private_early_failures_publish_nothing_later(tmp_path: Path) -> None:
         # drains (e.g. a room/root turn's final recorder).
         bus.register("coder")
         flagged = bus.send(sender="helper", recipient="coder", kind="message",
-                           session_id=room, payload="flagged private",
+                           conversation_id=room, payload="flagged private",
                            private_chain=True)
         assert bus.pending("coder") == 1
         idle = _room_with(app, room)
@@ -1855,7 +1855,7 @@ def test_private_result_write_failure_still_returns_reply(tmp_path: Path) -> Non
                                  description="Writes code.", persona="P"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper",
                                  description="Helps.", persona="P"))
-        room = app.create(bots=["coder", "helper"])["id"]
+        room = app.create(bots=["coder", "helper"])["conversation_id"]
         mgr = _room_with(app, room)
         mgr.append(Message(role="user", content="GROUP-ONLY-MARKER write fail",
                            ts="2026-10-26T09:00:00Z"))
@@ -1869,10 +1869,10 @@ def test_private_result_write_failure_still_returns_reply(tmp_path: Path) -> Non
         bus = app._runtime._bus
         bus.register("helper")
         envelope = bus.send(sender="coder", recipient="helper", kind="message",
-                            session_id=room, payload="stored task")
+                            conversation_id=room, payload="stored task")
         import asyncio as _asyncio16
         from thyca.bots.context import BotTurnContext as _Ctx16, BotTurnScope as _Scope16
-        scope = _Scope16(store=app._sessions.store, act=app._act,
+        scope = _Scope16(store=app._conversations.store, act=app._act,
                          tools=app._tools, memory=app._memory,
                          state=app._state, zone=app._zone)
         ctx = _Ctx16(sender_id="coder", room_id=room,
@@ -1909,11 +1909,11 @@ def test_exact_request_match_rejects_mismatched_group_and_dm_rows(tmp_path: Path
         for bot_id in ("coder", "helper"):
             app._bots.create(BotCard(bot_id=bot_id, name=bot_id, role="R",
                                      description="D", persona="P"))
-        room = app.create(bots=["coder", "helper"])["id"]
+        room = app.create(bots=["coder", "helper"])["conversation_id"]
         # Seed before opening the DM: blank group rooms are pruned on create.
         _room_with(app, room).append(_Msg18(role="user", content="seed",
                                             ts="2026-10-26T09:00:00Z"))
-        dm = app.bot_dm("coder")["id"]
+        dm = app.bot_dm("coder")["conversation_id"]
         mgr = _room_with(app, room)
         mgr.append(_Msg18(role="user", content="GROUP-ONLY-MARKER exact match",
                           ts="2026-10-26T09:00:00Z"))
@@ -1927,7 +1927,7 @@ def test_exact_request_match_rejects_mismatched_group_and_dm_rows(tmp_path: Path
         from thyca.bots.context import BotTurnContext as _Ctx18, BotTurnScope as _Scope18
 
         def _ctx18(sender: str, rid: str):
-            scope = _Scope18(store=app._sessions.store, act=app._act,
+            scope = _Scope18(store=app._conversations.store, act=app._act,
                              tools=app._tools, memory=app._memory,
                              state=app._state, zone=app._zone)
             return _Ctx18(sender_id=sender, room_id=rid,
@@ -1936,7 +1936,7 @@ def test_exact_request_match_rejects_mismatched_group_and_dm_rows(tmp_path: Path
         bus = app._runtime._bus
         bus.register("helper")
         current = bus.send(sender="coder", recipient="helper", kind="message",
-                           session_id=room, payload="exact task",
+                           conversation_id=room, payload="exact task",
                            refs=["/tmp/real.md"])
         # Drop the true log row; the decoy is the only same-span row left.
         dropped = bus.drain_log(room)
@@ -1952,7 +1952,7 @@ def test_exact_request_match_rejects_mismatched_group_and_dm_rows(tmp_path: Path
         from thyca.bots.bus import Envelope as _Env18
         for i, change in enumerate(forgeries):
             base = dict(sender=current.sender, recipient=current.recipient,
-                        kind=current.kind, session_id=current.session_id,
+                        kind=current.kind, conversation_id=current.conversation_id,
                         payload=current.payload, trace_id=current.trace_id,
                         parent_span_id=current.parent_span_id,
                         ts=current.ts, span_id=current.span_id,
@@ -1975,11 +1975,11 @@ def test_exact_request_match_rejects_mismatched_group_and_dm_rows(tmp_path: Path
         dm_mgr.append(_Msg18(role="user", content="dm seed",
                              ts="2026-10-26T09:00:00Z"))
         dm_env = bus.send(sender="coder", recipient="helper", kind="message",
-                          session_id=dm, payload="dm task")
+                          conversation_id=dm, payload="dm task")
         bus.drain_log(dm)
         forged_dm = _Env18(
             sender="coder", recipient="helper", kind="message",
-            session_id=dm, payload="forged dm task",
+            conversation_id=dm, payload="forged dm task",
             trace_id=dm_env.trace_id, parent_span_id=dm_env.parent_span_id,
             ts=dm_env.ts, span_id=dm_env.span_id, refs=(), truncated=False,
             private_chain=False)
@@ -1997,14 +1997,14 @@ def test_initial_outsider_room_load_failure_stays_unpublished(tmp_path: Path) ->
     # room.load failure must not leave a publishable row behind, even if
     # the recipient joins before the next unpinned drain.
     from thyca.bots.runtime import BotTurnResult as _Result18b
-    from thyca.conversations.runtime import SessionManager as _SM18b
+    from thyca.conversations.runtime import ConversationManager as _SM18b
     app = _chat(tmp_path)
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="P"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper",
                                  description="Helps.", persona="P"))
-        room = app.create(bots=["coder", "thyca"])["id"]
+        room = app.create(bots=["coder", "thyca"])["conversation_id"]
         _room_with(app, room).append(Message(role="user", content="seed",
                                              ts="2026-10-26T09:00:00Z"))
         before = len(_room_with(app, room).current.messages)
@@ -2017,12 +2017,12 @@ def test_initial_outsider_room_load_failure_stays_unpublished(tmp_path: Path) ->
         bus = app._runtime._bus
         bus.register("helper")
         envelope = bus.send(sender="coder", recipient="helper", kind="message",
-                            session_id=room, payload="first ask")
+                            conversation_id=room, payload="first ask")
         import asyncio as _asyncio18b
         from thyca.bots.context import BotTurnContext as _Ctx18b, BotTurnScope as _Scope18b
 
         def _ctx18b(sender: str):
-            scope = _Scope18b(store=app._sessions.store, act=app._act,
+            scope = _Scope18b(store=app._conversations.store, act=app._act,
                               tools=app._tools, memory=app._memory,
                               state=app._state, zone=app._zone)
             return _Ctx18b(sender_id=sender, room_id=room,
@@ -2031,11 +2031,11 @@ def test_initial_outsider_room_load_failure_stays_unpublished(tmp_path: Path) ->
         real_load = _SM18b.load
         calls: list[str] = []
 
-        def _fail_once(self, session_id: str):
+        def _fail_once(self, conversation_id: str):
             if not calls:
-                calls.append(session_id)
+                calls.append(conversation_id)
                 raise RuntimeError("transient store outage")
-            return real_load(self, session_id)
+            return real_load(self, conversation_id)
 
         with __import__("unittest.mock", fromlist=["patch"]).patch.object(
                 _SM18b, "load", _fail_once):
@@ -2140,7 +2140,7 @@ def test_concurrent_lease_wait_then_cancel_publishes_nothing(tmp_path: Path) -> 
                                  description="Writes code.", persona="P"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper",
                                  description="Helps.", persona="P"))
-        room = app.create(bots=["coder", "thyca"])["id"]
+        room = app.create(bots=["coder", "thyca"])["conversation_id"]
         _room_with(app, room).append(Message(role="user", content="seed",
                                              ts="2026-10-26T09:00:00Z"))
         before = len(_room_with(app, room).current.messages)
@@ -2149,7 +2149,7 @@ def test_concurrent_lease_wait_then_cancel_publishes_nothing(tmp_path: Path) -> 
         bus.register("coder")
         scope = None
         from thyca.bots.context import BotTurnContext as _Ctx19, BotTurnScope as _Scope19
-        scope = _Scope19(store=app._sessions.store, act=app._act,
+        scope = _Scope19(store=app._conversations.store, act=app._act,
                          tools=app._tools, memory=app._memory,
                          state=app._state, zone=app._zone)
         holder_started = _threading19.Event()
@@ -2216,7 +2216,7 @@ def test_concurrent_lease_wait_then_cancel_publishes_nothing(tmp_path: Path) -> 
         # A concurrent member send publishes normally in the same drain.
         bus.register("coder")
         member_env = bus.send(sender="thyca", recipient="coder", kind="message",
-                              session_id=room, payload="member concurrent")
+                              conversation_id=room, payload="member concurrent")
         idle_m = _room_with(app, room)
         assert app._delivery.record_bus_events(idle_m, room) is True
         assert any(r.content == "member concurrent"
@@ -2233,7 +2233,7 @@ def test_concurrent_lease_wait_then_cancel_publishes_nothing(tmp_path: Path) -> 
             return await app._deliver_envelope(member_turn_env, member_ctx)
 
         member_turn_env = bus.send(sender="thyca", recipient="coder",
-                                   kind="message", session_id=room,
+                                   kind="message", conversation_id=room,
                                    payload="member turn concurrent")
         member_ctx = _Ctx19(sender_id="thyca", room_id=room, scope=scope,
                             turn_cfg=app._current_cfg())
@@ -2348,7 +2348,7 @@ def test_concurrent_early_failure_cleans_up_waiters(tmp_path: Path) -> None:
                                  description="Writes code.", persona="P"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper",
                                  description="Helps.", persona="P"))
-        room = app.create(bots=["coder", "thyca"])["id"]
+        room = app.create(bots=["coder", "thyca"])["conversation_id"]
         _room_with(app, room).append(Message(role="user", content="seed",
                                              ts="2026-10-26T09:00:00Z"))
         before = len(_room_with(app, room).current.messages)
@@ -2357,7 +2357,7 @@ def test_concurrent_early_failure_cleans_up_waiters(tmp_path: Path) -> None:
         bus.register("coder")
         scope = None
         from thyca.bots.context import BotTurnContext as _Ctx20, BotTurnScope as _Scope20
-        scope = _Scope20(store=app._sessions.store, act=app._act,
+        scope = _Scope20(store=app._conversations.store, act=app._act,
                          tools=app._tools, memory=app._memory,
                          state=app._state, zone=app._zone)
         holder_started = _threading20.Event()
@@ -2417,7 +2417,7 @@ def test_concurrent_early_failure_cleans_up_waiters(tmp_path: Path) -> None:
         assert app._runtime.workspaces.busy("helper")
         assert app._runtime.workspaces.busy("coder")
         member_turn_env = bus.send(sender="thyca", recipient="coder",
-                                   kind="message", session_id=room,
+                                   kind="message", conversation_id=room,
                                    payload="member turn concurrent")
         member_ctx = _Ctx20(sender_id="thyca", room_id=room, scope=scope,
                             turn_cfg=app._current_cfg())
@@ -2712,7 +2712,7 @@ def test_request_append_race_live_first_skips_doomed(tmp_path: Path) -> None:
         for bot_id in ("coder", "helper", "third"):
             app._bots.create(BotCard(bot_id=bot_id, name=bot_id, role="R",
                                      description="D", persona="P"))
-        room = app.create(bots=["coder", "helper", "third"])["id"]
+        room = app.create(bots=["coder", "helper", "third"])["conversation_id"]
         _room_with(app, room).append(Message(role="user", content="seed",
                                              ts="2026-10-26T09:00:00Z"))
         before = len(_room_with(app, room).current.messages)
@@ -2738,12 +2738,12 @@ def test_request_append_race_live_first_skips_doomed(tmp_path: Path) -> None:
             return real_append(root, ref, actor, message, intent=intent, require_participant=require_participant)
 
         env = bus.send(sender="coder", recipient="third", kind="message",
-                       session_id=room, payload="go third")
+                       conversation_id=room, payload="go third")
         extra = bus.send(sender="coder", recipient="helper", kind="message",
-                         session_id=room, payload="go helper")
+                         conversation_id=room, payload="go helper")
         import asyncio as _asyncio20
         from thyca.bots.context import BotTurnContext as _Ctx20, BotTurnScope as _Scope20
-        scope = _Scope20(store=app._sessions.store, act=app._act,
+        scope = _Scope20(store=app._conversations.store, act=app._act,
                          tools=app._tools, memory=app._memory,
                          state=app._state, zone=app._zone)
         ctx = _Ctx20(sender_id="coder", room_id=room,
@@ -2783,19 +2783,19 @@ def test_send_time_marking_before_enqueue(tmp_path: Path) -> None:
                                  description="Writes code.", persona="P"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper",
                                  description="Helps.", persona="P"))
-        room = app.create(bots=["coder", "thyca"])["id"]
+        room = app.create(bots=["coder", "thyca"])["conversation_id"]
         _seed_room_for_marking = _room_with(app, room)
         from thyca.core.protocol import Message as _MsgMark
         _seed_room_for_marking.append(_MsgMark(role="user", content="seed",
                                                ts="2026-10-26T09:00:00Z"))
-        dm = app.bot_dm("coder")["id"]
+        dm = app.bot_dm("coder")["conversation_id"]
         tools = _TRM()
         _regM(tools, _DepsM(app._bots, app._runtime, app.job_facade,
                             room_bots=app.room_bots,
                             room_dm_owner=app._room_dm_owner))
         scope = None
         from thyca.bots.context import BotTurnScope as _ScopeM
-        scope = _ScopeM(store=app._sessions.store, act=app._act,
+        scope = _ScopeM(store=app._conversations.store, act=app._act,
                         tools=app._tools, memory=app._memory,
                         state=app._state, zone=app._zone)
         # Hold delivery so the test inspects the envelope as enqueued;
@@ -2920,7 +2920,7 @@ def test_flagged_envelope_forces_private_without_caller_view(tmp_path: Path) -> 
         for bot_id in ("coder", "helper"):
             app._bots.create(BotCard(bot_id=bot_id, name=bot_id, role="R",
                                      description="D", persona="P"))
-        room = app.create(bots=["coder", "helper", "thyca"])["id"]
+        room = app.create(bots=["coder", "helper", "thyca"])["conversation_id"]
         mgr = _room_with(app, room)
         mgr.append(Message(role="user", content="GROUP-ONLY-MARKER deferred",
                            ts="2026-10-26T09:00:00Z"))
@@ -2938,7 +2938,7 @@ def test_flagged_envelope_forces_private_without_caller_view(tmp_path: Path) -> 
         from thyca.bots.bus import Envelope as _Env18b
         envelope = _Env18b(
             sender="coder", recipient="helper", kind="message",
-            session_id=room, payload="deferred task",
+            conversation_id=room, payload="deferred task",
             trace_id="tr_deferred1", parent_span_id=None,
             ts="2026-10-26T09:00:00Z", span_id="sp_deferred1",
             refs=(), truncated=False, private_chain=True)
@@ -2948,7 +2948,7 @@ def test_flagged_envelope_forces_private_without_caller_view(tmp_path: Path) -> 
         bus._log.append(_BusEvent18b(envelope=envelope, hops=0))
         import asyncio as _asyncio18b
         from thyca.bots.context import BotTurnContext as _Ctx18b, BotTurnScope as _Scope18b
-        scope = _Scope18b(store=app._sessions.store, act=app._act,
+        scope = _Scope18b(store=app._conversations.store, act=app._act,
                           tools=app._tools, memory=app._memory,
                           state=app._state, zone=app._zone)
         ctx = _Ctx18b(sender_id="coder", room_id=room,
@@ -2975,7 +2975,7 @@ def test_request_append_race_doomed_first_skips_doomed(tmp_path: Path) -> None:
         for bot_id in ("coder", "helper", "third"):
             app._bots.create(BotCard(bot_id=bot_id, name=bot_id, role="R",
                                      description="D", persona="P"))
-        room = app.create(bots=["coder", "helper", "third"])["id"]
+        room = app.create(bots=["coder", "helper", "third"])["conversation_id"]
         _room_with(app, room).append(Message(role="user", content="seed",
                                              ts="2026-10-26T09:00:00Z"))
         before = len(_room_with(app, room).current.messages)
@@ -3000,12 +3000,12 @@ def test_request_append_race_doomed_first_skips_doomed(tmp_path: Path) -> None:
         bus.register("helper")
         bus.register("third")
         doomed = bus.send(sender="coder", recipient="helper", kind="message",
-                          session_id=room, payload="doomed request")
+                          conversation_id=room, payload="doomed request")
         live = bus.send(sender="coder", recipient="third", kind="message",
-                        session_id=room, payload="live request")
+                        conversation_id=room, payload="live request")
         import asyncio as _asyncio20
         from thyca.bots.context import BotTurnContext as _Ctx20, BotTurnScope as _Scope20
-        scope = _Scope20(store=app._sessions.store, act=app._act,
+        scope = _Scope20(store=app._conversations.store, act=app._act,
                          tools=app._tools, memory=app._memory,
                          state=app._state, zone=app._zone)
         ctx = _Ctx20(sender_id="coder", room_id=room,
@@ -3037,10 +3037,10 @@ def test_persisted_decoy_rows_never_authorize_group_or_dm(tmp_path: Path) -> Non
         for bot_id in ("coder", "helper"):
             app._bots.create(BotCard(bot_id=bot_id, name=bot_id, role="R",
                                      description="D", persona="P"))
-        room = app.create(bots=["coder", "helper"])["id"]
+        room = app.create(bots=["coder", "helper"])["conversation_id"]
         _room_with(app, room).append(_MsgPD(role="user", content="seed",
                                             ts="2026-10-26T09:00:00Z"))
-        dm = app.bot_dm("coder")["id"]
+        dm = app.bot_dm("coder")["conversation_id"]
         _room_with(app, dm).append(_MsgPD(role="user", content="seed",
                                           ts="2026-10-26T09:00:00Z"))
 
@@ -3054,7 +3054,7 @@ def test_persisted_decoy_rows_never_authorize_group_or_dm(tmp_path: Path) -> Non
         from thyca.bots.context import BotTurnContext as _CtxPD, BotTurnScope as _ScopePD
 
         def _ctxPD(sender: str, rid: str):
-            scope = _ScopePD(store=app._sessions.store, act=app._act,
+            scope = _ScopePD(store=app._conversations.store, act=app._act,
                              tools=app._tools, memory=app._memory,
                              state=app._state, zone=app._zone)
             return _CtxPD(sender_id=sender, room_id=rid,
@@ -3075,7 +3075,7 @@ def test_persisted_decoy_rows_never_authorize_group_or_dm(tmp_path: Path) -> Non
 
         def _current(rid: str, span: str, **kw):
             base = dict(sender="coder", recipient="helper", kind="message",
-                        session_id=rid, payload="task body",
+                        conversation_id=rid, payload="task body",
                         trace_id="tr_pd1", parent_span_id=None,
                         ts="2026-10-26T09:00:00Z", span_id=span,
                         refs=(), truncated=False, private_chain=False)
@@ -3153,7 +3153,7 @@ def test_persisted_decoy_rows_never_authorize_group_or_dm(tmp_path: Path) -> Non
         from thyca.bots.bus import Envelope as _EnvFlag
         flagged_dm = _EnvFlag(
             sender="coder", recipient="helper", kind="message",
-            session_id=dm, payload="task body",
+            conversation_id=dm, payload="task body",
             trace_id="tr_pd1", parent_span_id=None,
             ts="2026-10-26T09:00:00Z", span_id="sp_dm_flag",
             refs=(), truncated=False, private_chain=True)
@@ -3186,10 +3186,10 @@ def test_persisted_wrong_typed_rows_never_match(tmp_path: Path) -> None:
         for bot_id in ("coder", "helper"):
             app._bots.create(BotCard(bot_id=bot_id, name=bot_id, role="R",
                                      description="D", persona="P"))
-        room = app.create(bots=["coder", "helper"])["id"]
+        room = app.create(bots=["coder", "helper"])["conversation_id"]
         _room_with(app, room).append(_MsgWT(role="user", content="seed",
                                             ts="2026-10-26T09:00:00Z"))
-        dm = app.bot_dm("coder")["id"]
+        dm = app.bot_dm("coder")["conversation_id"]
         _room_with(app, dm).append(_MsgWT(role="user", content="seed",
                                           ts="2026-10-26T09:00:00Z"))
 
@@ -3202,7 +3202,7 @@ def test_persisted_wrong_typed_rows_never_match(tmp_path: Path) -> None:
         from thyca.bots.context import BotTurnContext as _CtxWT, BotTurnScope as _ScopeWT
 
         def _ctxWT(sender: str, rid: str):
-            scope = _ScopeWT(store=app._sessions.store, act=app._act,
+            scope = _ScopeWT(store=app._conversations.store, act=app._act,
                              tools=app._tools, memory=app._memory,
                              state=app._state, zone=app._zone)
             return _CtxWT(sender_id=sender, room_id=rid,
@@ -3215,7 +3215,7 @@ def test_persisted_wrong_typed_rows_never_match(tmp_path: Path) -> None:
 
         def _env(rid: str, span: str, **kw):
             base = dict(sender="coder", recipient="helper", kind="message",
-                        session_id=rid, payload="task body",
+                        conversation_id=rid, payload="task body",
                         trace_id="tr_wt1", parent_span_id=None,
                         ts="2026-10-26T09:00:00Z", span_id=span,
                         refs=("r1",), truncated=True, private_chain=False)
@@ -3343,7 +3343,7 @@ def test_private_raw_memory_read_denied_but_own_search_allowed(tmp_path: Path) -
                                  description="Writes code.", persona="P"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper",
                                  description="Helps.", persona="P", tools=("read",)))
-        room = app.create(bots=["coder", "thyca"])["id"]
+        room = app.create(bots=["coder", "thyca"])["conversation_id"]
         assert app.room_bots(room) == ["coder", "thyca"]
         facade = _FacadePriv(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
         facade.remember(f"team marker {team_marker}", f"{team_marker} shared body",
@@ -3360,8 +3360,8 @@ def test_private_raw_memory_read_denied_but_own_search_allowed(tmp_path: Path) -
         bus.register("helper")
         bus.register("coder")
         envelope = bus.send(sender="coder", recipient="helper", kind="message",
-                            session_id=room, payload="chosen task")
-        scope = _ScopePriv(store=app._sessions.store, act=app._act,
+                            conversation_id=room, payload="chosen task")
+        scope = _ScopePriv(store=app._conversations.store, act=app._act,
                            tools=app._tools, memory=app._memory,
                            state=app._state, zone=app._zone)
         ctx = _CtxPriv(sender_id="coder", room_id=room,

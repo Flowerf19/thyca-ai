@@ -30,8 +30,9 @@ def node() -> str:
 
 
 _PREAMBLE = f"""
-import {{ loadScripts }} from './tests/webui_dom.mjs';
-const {{ readNdjson }} = loadScripts(['{CHAT_JS.as_posix()}'], 'return {{ readNdjson }};');
+import {{ installDom, loadScripts, CHAT_CHAIN }} from './tests/webui_dom.mjs';
+installDom();
+const {{ readNdjson }} = loadScripts(CHAT_CHAIN, 'return {{ readNdjson }};');
 const enc = (s) => new TextEncoder().encode(s);
 const mkStream = (chunks) => {{
   let i = 0;

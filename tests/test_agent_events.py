@@ -33,13 +33,6 @@ def test_valid_types_to_dict_exact_keys() -> None:
         "name": "bash",
         "ok": True,
     }
-    assert TurnEvent(type="session.naming.started").to_dict() == {
-        "type": "session.naming.started"
-    }
-    assert TurnEvent(type="session.naming.finished", updated=True).to_dict() == {
-        "type": "session.naming.finished",
-        "updated": True,
-    }
 
 
 def test_false_flags_appear_in_to_dict() -> None:
@@ -47,8 +40,6 @@ def test_false_flags_appear_in_to_dict() -> None:
         type="tool.finished", round=1, call_id="call-1", name="bash", ok=False
     )
     assert finished.to_dict()["ok"] is False
-    naming = TurnEvent(type="session.naming.finished", updated=False)
-    assert naming.to_dict()["updated"] is False
 
 
 def test_extra_field_rejected() -> None:
@@ -63,6 +54,10 @@ def test_unknown_type_rejected() -> None:
         TurnEvent(type="turn.failed")
     with pytest.raises(ValueError, match="unknown event type"):
         TurnEvent(type="llm.thinking")
+    with pytest.raises(ValueError, match="unknown event type"):
+        TurnEvent(type="conversation.naming.started")
+    with pytest.raises(ValueError, match="unknown event type"):
+        TurnEvent(type="conversation.naming.finished")
 
 
 def test_bool_as_int_rejected() -> None:

@@ -2,8 +2,8 @@
 
 The queries behind the operations/trace surfaces — execution-row reads,
 per-participant operations payloads, canonical projections, hot/tool
-overhead estimates, context composition, and the session detail payload.
-Pure orchestration over injected collaborators; owns no turns, sessions,
+overhead estimates, context composition, and the conversation detail payload.
+Pure orchestration over injected collaborators; owns no turns, conversations,
 or bus writes. ChatApp keeps thin delegating wrappers with identical
 signatures so serve/ and internal callers are untouched.
 """
@@ -18,8 +18,8 @@ from zoneinfo import ZoneInfo
 from thyca.bots.private_followups import PrivateFollowupStore
 from thyca.bots.registry import RegistryError
 from thyca.core.protocol import Message
-from thyca.conversations.runtime import Session, calibration_factor, context_usage
-from thyca.conversations.runtime.wire import session_detail
+from thyca.conversations.runtime import ConversationRuntime, calibration_factor, context_usage
+from thyca.conversations.runtime.wire import conversation_detail
 from thyca.app.turn_options import (
     overlay_turn_cfg,
     resolve_bot_cfg,
@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from thyca.configs import Config
     from thyca.memories.active import ActiveMemory, ActiveState
     from thyca.serve.turn_state import TurnState
-    from thyca.conversations.runtime import SessionManager
+    from thyca.conversations.runtime import ConversationManager
 
 
 @dataclass
@@ -45,8 +45,8 @@ class BotOperationsDeps:
     """
 
     root: Path
-    sessions: SessionManager
-    window_for: Callable[[Session], WindowRef]
+    conversations: ConversationManager
+    window_for: Callable[[ConversationRuntime], WindowRef]
     bots: BotRegistry
     memory: ActiveMemory
     state: ActiveState
@@ -68,7 +68,7 @@ class BotOperationsService:
     def __init__(self, deps: BotOperationsDeps) -> None:
         self._deps = deps
 
-    def room_tasks(self, session_id: str, bot_id: str) -> dict:
+    def room_tasks(self, conversation_id: str, bot_id: str) -> dict:
         """Open/waiting runtime tasks plus live calls for one participant.
 
         ``tasks`` are the runtime units from
@@ -87,26 +87,26 @@ class BotOperationsService:
         the collapsed preview/+N list only — merely starting a tool never
         creates a task row. Read-only: no bindings created, no migration.
         Membership and room existence follow the operations route
-        conventions (RegistryError/SessionNotFound)."""
-        room = self._deps.sessions.store.load(session_id)
+        conventions (RegistryError/ConversationNotFound)."""
+        room = self._deps.conversations.store.load(conversation_id)
         window = self._deps.window_for(room)
         if bot_id not in window.participants:
             raise RegistryError("bot is not a participant in this room")
         self._deps.bots.require(bot_id)
-        payload = self._deps.agent_status.room_tasks(bot_id, session_id)
+        payload = self._deps.agent_status.room_tasks(bot_id, conversation_id)
         payload["tasks"] = self._room_task_units(window, room, bot_id)
         return payload
 
     def _room_task_units(self, window, room, bot_id: str) -> list[dict]:
         """Narrow serialized open tasks for exactly one bot+window."""
         from thyca.bots.tasks import derive_open_tasks
-        from thyca.bots.timeline import CanonicalSessionStore, WorkspaceTimeline
+        from thyca.bots.timeline import CanonicalConversationStore, WorkspaceTimeline
 
-        binding = self._deps.workspaces_store.get_binding(bot_id, room.id)
-        if binding is None or binding.internal_session_id is None:
+        binding = self._deps.workspaces_store.get_binding(bot_id, room.conversation_id)
+        if binding is None or binding.internal_conversation_id is None:
             # Genuinely uninitialized window: the bot never ran here, so
             # its projected view is empty by construction — only queued
-            # envelopes (filtered to this exact session below) can owe
+            # envelopes (filtered to this exact conversation below) can owe
             # it work. Never derive from room rows: they aggregate every
             # sender/recipient and would misattribute other bots' tasks.
             messages: list = []
@@ -116,14 +116,14 @@ class BotOperationsService:
             # failures propagate (503 unavailable) instead of asserting
             # an empty list on a failed read.
             timeline = WorkspaceTimeline(self._deps.root, bot_id, create=False)
-            store = CanonicalSessionStore(
+            store = CanonicalConversationStore(
                 self._deps.root / "bots" / bot_id / "sessions",
                 timeline=timeline, window=window,
-                session_id=binding.internal_session_id)
-            messages = list(store.load(binding.internal_session_id).messages)
+                conversation_id=binding.internal_conversation_id)
+            messages = list(store.load(binding.internal_conversation_id).messages)
         pending = [
             envelope for envelope in self._deps.pending_relevant(bot_id)
-            if getattr(envelope, "session_id", None) == room.id
+            if getattr(envelope, "conversation_id", None) == room.conversation_id
         ]
         units = derive_open_tasks(messages, pending, bot_id=bot_id)
         return [
@@ -133,19 +133,19 @@ class BotOperationsService:
         ]
 
     def trace_execution_messages(
-        self, session_id: str, bot_id: str, span_id: str
+        self, conversation_id: str, bot_id: str, span_id: str
     ) -> list[Message]:
         """Read canonical execution rows for a trusted room/bot/span tuple."""
         from thyca.bots.timeline import TraceExecutionError, WorkspaceTimeline
 
-        room = self._deps.sessions.store.load(session_id)
+        room = self._deps.conversations.store.load(conversation_id)
         window = self._deps.window_for(room)
         if bot_id not in window.participants:
             raise TraceExecutionError(
                 "execution bot is not a participant in the referenced room"
             )
-        binding = self._deps.workspaces_store.get_binding(bot_id, session_id)
-        if binding is None or binding.internal_session_id is None:
+        binding = self._deps.workspaces_store.get_binding(bot_id, conversation_id)
+        if binding is None or binding.internal_conversation_id is None:
             raise TraceExecutionError(
                 "canonical execution binding is missing for this room and bot"
             )
@@ -177,7 +177,7 @@ class BotOperationsService:
         return messages
 
     def bot_operations(
-        self, session_id: str, bot_id: str, *,
+        self, conversation_id: str, bot_id: str, *,
         model: str | None = None, effort: str | None = None,
     ) -> dict:
         """Read operational data for exactly one room participant.
@@ -191,7 +191,7 @@ class BotOperationsService:
         from thyca.llms.pricing import pricing_for
         from thyca.conversations.runtime.wire import turn_slices
 
-        room = self._deps.sessions.store.load(session_id)
+        room = self._deps.conversations.store.load(conversation_id)
         window = self._deps.window_for(room)
         if bot_id not in window.participants:
             raise RegistryError("bot is not a participant in this room")
@@ -202,7 +202,7 @@ class BotOperationsService:
         cfg = resolve_bot_cfg(base, card, model_override=model)
         provider = resolve_bot_provider(cfg, card, effort_override=effort)
         effective_effort = provider.reasoningEffort
-        canonical = self._workspace_session(room, bot_id, cfg)
+        canonical = self._workspace_conversation(room, bot_id, cfg)
         messages = list(canonical.messages) if canonical is not None else []
         history = []
         if canonical is not None:
@@ -218,10 +218,10 @@ class BotOperationsService:
                     and (message.meta or {}).get("span_id") == latest["span_id"]
                     for message in rows
                 ):
-                    trace = {"session_id": session_id, "turn_index": index}
+                    trace = {"conversation_id": conversation_id, "turn_index": index}
                     break
         hot_tokens, tools_tokens = self._overhead_tokens(
-            session_id, turn_cfg=cfg, bot_id=bot_id, strict=True,
+            conversation_id, turn_cfg=cfg, bot_id=bot_id, strict=True,
         )
         context = context_usage(
             messages, cfg.effective_limits().contextTokens,
@@ -231,7 +231,7 @@ class BotOperationsService:
         rates = pricing_for(cfg.defaultModel, cfg.effective_pricing() or None)
         return {
             "bot_id": bot_id,
-            "session_id": session_id,
+            "conversation_id": conversation_id,
             "model": {
                 "id": cfg.defaultModel,
                 "provider": cfg.provider_id_for(cfg.defaultModel),
@@ -247,19 +247,19 @@ class BotOperationsService:
             "trace": trace,
         }
 
-    def _workspace_session(self, room: Session, bot_id: str, cfg: Config) -> Session | None:
+    def _workspace_conversation(self, room: ConversationRuntime, bot_id: str, cfg: Config) -> ConversationRuntime | None:
         """Read an existing canonical context without creating its binding."""
-        binding = self._deps.workspaces_store.get_binding(bot_id, room.id)
-        if binding is None or binding.internal_session_id is None:
+        binding = self._deps.workspaces_store.get_binding(bot_id, room.conversation_id)
+        if binding is None or binding.internal_conversation_id is None:
             return None
         window = binding.window or self._deps.window_for(room)
         from thyca.bots.timeline import WorkspaceTimeline
 
         timeline = WorkspaceTimeline(self._deps.root, bot_id, create=False)
-        return timeline.project(window, session_id=binding.internal_session_id)
+        return timeline.project(window, conversation_id=binding.internal_conversation_id)
 
     def _overhead_tokens(
-        self, session_id: str, *, turn_cfg: Config, bot_id: str,
+        self, conversation_id: str, *, turn_cfg: Config, bot_id: str,
         strict: bool = False,
     ) -> tuple[int, int]:
         """Estimate shared hot/tool overhead, excluding query-only inputs.
@@ -275,18 +275,18 @@ class BotOperationsService:
             from thyca.memories.visibility import MemoryView, bound_memory_view
             from thyca.bots.runtime import filtered_tool_schemas
 
-            room = self._deps.sessions.store.load(session_id)
+            room = self._deps.conversations.store.load(conversation_id)
             window = self._deps.window_for(room)
             doc = self._deps.bots.get(bot_id)
             card = doc.card if doc.ok else None
             filtered = filtered_tool_schemas(self._deps.tools_fn(), card) if card else self._deps.tools_fn()
             _, tools_tokens = overhead_tokens(tool_schemas=filtered)
-            canonical = self._workspace_session(room, bot_id, turn_cfg)
+            canonical = self._workspace_conversation(room, bot_id, turn_cfg)
             messages = list(canonical.messages) if canonical is not None else []
             room_delta = ""
             if room.dm_bot is None:
                 room_delta, _ = self._deps.room_delta_for(
-                    bot_id, session_id, list(room.messages)
+                    bot_id, conversation_id, list(room.messages)
                 )
             limits = turn_cfg.effective_limits()
             zone = ZoneInfo(turn_cfg.timeline.timezone)
@@ -299,7 +299,7 @@ class BotOperationsService:
                 hot = self._deps.memory.peek(
                     self._deps.state,
                     datetime.now(zone),
-                    session_id=session_id,
+                    conversation_id=conversation_id,
                     reader=None if card is None or card.system or bot_id == "thyca" else bot_id,
                     tail_kb=limits.hotTailKB,
                     timezone_name=turn_cfg.timeline.timezone,
@@ -336,17 +336,44 @@ class BotOperationsService:
             hot_tokens = 0
         return hot_tokens, tools_tokens
 
-    def _context_usage(self, session: Session, cfg: Config) -> dict:
-        responder = session.dm_bot or self._deps.resolve_responder(
-            list(session.bots or ["thyca"]), ""
-        )
+    def _context_usage(self, conversation: ConversationRuntime, cfg: Config) -> dict:
+        # A deleted bot is unavailable like a paused one.
+        roster = list(conversation.bots or ["thyca"])
+        if conversation.dm_bot is not None and conversation.dm_bot not in roster:
+            roster = [conversation.dm_bot, *roster]
+        unavailable: set[str] = set()
+        for bot_id in roster:
+            doc = self._deps.bots.get(bot_id)
+            if not doc.ok or doc.card is None or doc.card.paused:
+                unavailable.add(bot_id)
+        if conversation.dm_bot is not None:
+            if conversation.dm_bot in unavailable:
+                return context_usage(
+                    list(conversation.messages),
+                    cfg.effective_limits().contextTokens,
+                    calibration=calibration_factor(
+                        list(conversation.messages), model=cfg.provider.model
+                    ),
+                )
+            responder = conversation.dm_bot
+        else:
+            candidate = self._deps.resolve_responder(roster, "", paused=unavailable)
+            if candidate in unavailable:
+                return context_usage(
+                    list(conversation.messages),
+                    cfg.effective_limits().contextTokens,
+                    calibration=calibration_factor(
+                        list(conversation.messages), model=cfg.provider.model
+                    ),
+                )
+            responder = candidate
         card = self._deps.bots.require(responder)
         context_cfg = resolve_bot_cfg(cfg, card)
-        canonical = self._workspace_session(session, responder, context_cfg)
+        canonical = self._workspace_conversation(conversation, responder, context_cfg)
         messages = list(canonical.messages) if canonical is not None else []
         model = context_cfg.defaultModel
         hot_tokens, tools_tokens = self._overhead_tokens(
-            session.id, turn_cfg=context_cfg, bot_id=responder
+            conversation.conversation_id, turn_cfg=context_cfg, bot_id=responder
         )
         return context_usage(
             messages,
@@ -357,15 +384,15 @@ class BotOperationsService:
         )
 
     def _detail(
-        self, session: Session, cfg: Config, *, running: bool | None = None
+        self, conversation: ConversationRuntime, cfg: Config, *, running: bool | None = None
     ) -> dict:
-        """Session payload with this app's in-flight answer filled in."""
-        started_at = None if running is not None else self._deps.turns.started_at(session.id)
-        return session_detail(
-            session,
+        """ConversationRuntime payload with this app's in-flight answer filled in."""
+        started_at = None if running is not None else self._deps.turns.started_at(conversation.conversation_id)
+        return conversation_detail(
+            conversation,
             cfg,
             skills_root=self._deps.skills_root,
             running=running,
             started_at=started_at,
-            context=self._context_usage(session, cfg),
+            context=self._context_usage(conversation, cfg),
         )

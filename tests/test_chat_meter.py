@@ -100,7 +100,7 @@ def test_drawer_context_meter_bands_and_width(meter: dict) -> None:
     assert meter["bands"]["1.2"]["width"] == "100%"
 
 
-def test_session_detail_carries_meta_for_meter(tmp_path: Path) -> None:
+def test_conversation_detail_carries_meta_for_meter(tmp_path: Path) -> None:
     from test_serve_chat import FakeLLM, _chat
 
     from thyca.llms.llm_base import ChatReply
@@ -114,10 +114,10 @@ def test_session_detail_carries_meta_for_meter(tmp_path: Path) -> None:
     app = _chat(tmp_path, llm)
     try:
         created = app.create()
-        turned = app.turn(created["id"], "ping")
+        turned = app.turn(created["conversation_id"], "ping")
         assistants = [m for m in turned["messages"] if m["role"] == "assistant"]
         assert assistants and assistants[0]["meta"]["usage"]["prompt_tokens"] == 100
-        loaded = app.get_payload(created["id"])
+        loaded = app.get_payload(created["conversation_id"])
         assert loaded["messages"] == turned["messages"]
         assert loaded["messages"][1]["meta"]["usage"]["cached_tokens"] == 20
     finally:

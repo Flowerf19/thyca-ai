@@ -103,12 +103,12 @@ def tick(app, now: datetime | None = None, *, idle_s: int = 900) -> dict:
     Returns ``{"swept": {...}, "fired": [{bot_id, room, reply}...], "skipped": [...]}``.
     Never raises for one bot's failure; failures land in ``skipped``.
     """
-    from thyca.conversations.runtime import SessionBusy
+    from thyca.conversations.runtime import ConversationBusy
 
     moment = now or datetime.now().astimezone()
     report: dict = {"swept": {}, "fired": [], "skipped": []}
     try:
-        report["swept"] = app.sweep_idle_sessions(idle_s=idle_s)
+        report["swept"] = app.sweep_idle_conversations(idle_s=idle_s)
     except Exception as exc:
         report["swept"] = {"error": type(exc).__name__}
     try:
@@ -136,7 +136,7 @@ def tick(app, now: datetime | None = None, *, idle_s: int = 900) -> dict:
                     f"[scheduled {card.schedule}] Đến giờ làm việc định kỳ. "
                     "Thực hiện nhiệm vụ thường lệ của bạn rồi báo cáo ngắn gọn.",
                 )
-                room_id = detail["id"]
+                room_id = detail["conversation_id"]
             else:
                 room_id = _solo_room(app, card.bot_id)
                 detail = app.turn(
@@ -146,7 +146,7 @@ def tick(app, now: datetime | None = None, *, idle_s: int = 900) -> dict:
                 )
             report["fired"].append({"bot_id": card.bot_id, "room": room_id,
                                     "reply": str(detail.get("reply", ""))[:500]})
-        except SessionBusy:
+        except ConversationBusy:
             report["skipped"].append(f"{card.bot_id}: room busy")
         except Exception as exc:
             report["skipped"].append(f"{card.bot_id}: {type(exc).__name__}")
@@ -156,16 +156,16 @@ def tick(app, now: datetime | None = None, *, idle_s: int = 900) -> dict:
 def _solo_room(app, bot_id: str) -> str:
     """The bot's fixed DM (CBE-5): scheduled/independent results land there.
 
-    Prefers the app's deterministic ``bot_dm`` lookup (marked session,
+    Prefers the app's deterministic ``bot_dm`` lookup (marked conversation,
     created lazily once). The participant-scan fallback keeps duck-typed
     test doubles working; app turns and delivered rows are appended by
     the app into whichever room the turn runs in, so a room's own work
     still reports into that room, never into the DM."""
     bot_dm = getattr(app, "bot_dm", None)
     if callable(bot_dm):
-        return bot_dm(bot_id)["id"]
-    for session in app._sessions.list_sessions():
-        bots = session.bots if session.bots else ["thyca"]
+        return bot_dm(bot_id)["conversation_id"]
+    for conversation in app._conversations.list_conversations():
+        bots = conversation.bots if conversation.bots else ["thyca"]
         if bots == [bot_id]:
-            return session.id
-    return app.create(bots=[bot_id])["id"]
+            return conversation.conversation_id
+    return app.create(bots=[bot_id])["conversation_id"]

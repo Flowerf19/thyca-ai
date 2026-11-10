@@ -15,7 +15,7 @@ from thyca.conversations.runtime.wire import message_dict
 
 if TYPE_CHECKING:
     from thyca.app.chat_app import ChatApp
-    from thyca.conversations.runtime.store import SessionStore
+    from thyca.conversations.runtime.store import ConversationStore
 
 # Trace scans read at most this many newest store doors per pass.
 _TRACE_SCAN_CAP = 200
@@ -28,7 +28,7 @@ _trace_scan_lock = threading.Lock()
 
 
 # Load trace turns for one explicit conversation reference.
-def cached_turns_for_ref(store: SessionStore, ref) -> list[TurnSummary]:
+def cached_turns_for_ref(store: ConversationStore, ref) -> list[TurnSummary]:
     """Turns for one door addressed by its explicit ``ConversationRef``.
 
     The HTTP layer builds the ref from path segments, so kind is never
@@ -43,7 +43,7 @@ def cached_turns_for_ref(store: SessionStore, ref) -> list[TurnSummary]:
 
 
 # Read one store door's trace turns (caller holds the trace scan lock).
-def _turns_for_ref_runtime(store: SessionStore, ref) -> list[TurnSummary]:
+def _turns_for_ref_runtime(store: ConversationStore, ref) -> list[TurnSummary]:
     """Projected trace turns for one runtime store door."""
     from thyca.conversations.store.read_adapter import assemble_history
     from thyca.conversations.store.runtime import (
@@ -55,17 +55,17 @@ def _turns_for_ref_runtime(store: SessionStore, ref) -> list[TurnSummary]:
     )
     from thyca.conversations.runtime.store import _runtime_root_for
 
-    runtime_root = _runtime_root_for(store.sessions_dir)
+    runtime_root = _runtime_root_for(store.conversations_dir)
     assert runtime_root is not None
     from thyca.conversations.store.database import (
         _ensure_root_ready,
         _root_instance_id_from_conn,
         _transaction_context,
-        open_existing_session,
+        open_existing_conversation,
     )
     from thyca.conversations.store.contracts import _decode_metadata
 
-    conn = open_existing_session(runtime_root, lock_mode="shared")
+    conn = open_existing_conversation(runtime_root, lock_mode="shared")
     try:
         with _transaction_context(conn, "BEGIN"):
             _ensure_root_ready(conn, _root_instance_id_from_conn(conn))
@@ -103,7 +103,7 @@ def collect_turns(chat: ChatApp) -> list[TurnSummary]:
 
 
 # Collect trace turns from the runtime store (caller holds no lock).
-def _collect_turns_runtime(chat: ChatApp, store: SessionStore, out: list) -> list[TurnSummary]:
+def _collect_turns_runtime(chat: ChatApp, store: ConversationStore, out: list) -> list[TurnSummary]:
     """Newest-first projected turns over every ready store door.
 
     A locally corrupt door is skipped, while a global store failure
@@ -122,7 +122,7 @@ def _collect_turns_runtime(chat: ChatApp, store: SessionStore, out: list) -> lis
     )
     from thyca.conversations.runtime.store import _runtime_root_for
 
-    runtime_root = _runtime_root_for(store.sessions_dir)
+    runtime_root = _runtime_root_for(store.conversations_dir)
     assert runtime_root is not None
     intent = RuntimeReadIntent("runtime-trace-list")
     admin = AdminStore(runtime_root)
@@ -150,7 +150,7 @@ def _collect_turns_runtime(chat: ChatApp, store: SessionStore, out: list) -> lis
                 continue
             raise
         out.extend(_projected_turns_for(conv))
-    out.sort(key=lambda t: (t.started_at, t.session_id, t.turn_index), reverse=True)
+    out.sort(key=lambda t: (t.started_at, t.conversation_id, t.turn_index), reverse=True)
     return out
 
 
@@ -165,7 +165,7 @@ def _apply_trace_filters(turns: list[TurnSummary], qs: dict) -> list[TurnSummary
     if bot:
         # Project before model/status/search/date filtering: delegated child
         # work belongs to its bot even when the turn's first bot differs.
-        # Session membership is context, never proof of metric attribution.
+        # ConversationRuntime membership is context, never proof of metric attribution.
         filtered = [
             scoped for turn in filtered
             if (scoped := scope_turn_to_bot(turn, bot)) is not None
@@ -175,7 +175,7 @@ def _apply_trace_filters(turns: list[TurnSummary], qs: dict) -> list[TurnSummary
     if status and status != "all":
         filtered = [t for t in filtered if t.status == status]
     if q:
-        filtered = [t for t in filtered if q in t.title.lower() or q in t.session_id.lower()]
+        filtered = [t for t in filtered if q in t.title.lower() or q in t.conversation_id.lower()]
     if frm:
         filtered = [t for t in filtered if t.started_at.split("T")[0] >= frm]
     if to:

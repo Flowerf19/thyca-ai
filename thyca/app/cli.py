@@ -1,4 +1,4 @@
-"""CLI — REPL, one-shot -p, session flags. TASK-317."""
+"""CLI — REPL, one-shot -p, conversation flags. TASK-317."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from thyca.app.turn_options import InvalidTurnOption
 from thyca.configs import ConfigError, load
 from thyca.llms.llm_base import LLMError
 from thyca.memories.facade import MemoryFacade
-from thyca.conversations.runtime import SessionError
+from thyca.conversations.runtime import ConversationError
 
 
 # Build the CLI parser; conversation choice is --bot (DM) or --group.
@@ -27,7 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--bot", type=str, default=None, help="bot id for its DM (default thyca)")
     parser.add_argument("--group", type=str, default=None, help="group id (group-<hex32>)")
     parser.add_argument("--model", type=str, default=None, help="override model for this request")
-    parser.add_argument("--debug", action="store_true", help="print prompt/session diagnostics on stderr")
+    parser.add_argument("--debug", action="store_true", help="print prompt/conversation diagnostics on stderr")
     parser.add_argument("--serve", action="store_true", help="serve webui + memory stats on 127.0.0.1")
     parser.add_argument("--daemon", action="store_true", help="detach --serve from the terminal")
     parser.add_argument("--stop", action="store_true", help="stop a background --serve")
@@ -114,11 +114,11 @@ class Cli:
             app = ChatApp(root, cfg, connect=self._connect, stderr=self._stderr)
             if args.group:
                 app.get_payload(args.group)
-                session_id = args.group
+                conversation_id = args.group
                 label = f"group {args.group}"
             else:
                 bot_id = args.bot or "thyca"
-                session_id = app.bot_dm(bot_id)["id"]
+                conversation_id = app.bot_dm(bot_id)["conversation_id"]
                 label = f"dm {bot_id}"
             model = args.model.strip() if args.model else None
             banner_cfg = replace(cfg, defaultModel=model) if model else cfg
@@ -138,7 +138,7 @@ class Cli:
             async def turn(text: str) -> str:
                 detail = await asyncio.to_thread(
                     app.turn,
-                    session_id,
+                    conversation_id,
                     text,
                     model=model,
                     diagnostic_sink=diagnostics if args.debug else None,
@@ -149,7 +149,7 @@ class Cli:
                 return await self._oneshot(" ".join(args.prompt), turn, ui)
             ui.banner(label, provider.model)
             return await self._repl(turn, ui)
-        except (ConfigError, LLMError, SessionError, InvalidTurnOption, RegistryError) as exc:
+        except (ConfigError, LLMError, ConversationError, InvalidTurnOption, RegistryError) as exc:
             ui.error(str(exc))
             return 1
         finally:
@@ -251,7 +251,7 @@ class Cli:
         try:
             print(await turn(prompt), file=self._stdout)
             return 0
-        except (LLMError, ConfigError, SessionError, InvalidTurnOption) as exc:
+        except (LLMError, ConfigError, ConversationError, InvalidTurnOption) as exc:
             ui.error(str(exc))
             return 1
 
@@ -267,7 +267,7 @@ class Cli:
                 continue
             try:
                 ui.assistant(await turn(text))
-            except (LLMError, ConfigError, SessionError, InvalidTurnOption) as exc:
+            except (LLMError, ConfigError, ConversationError, InvalidTurnOption) as exc:
                 ui.error(str(exc))
 
 

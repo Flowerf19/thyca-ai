@@ -31,8 +31,6 @@ _ALLOWED_FIELDS: dict[str, frozenset[str]] = {
     "tool.finished": frozenset({"round", "call_id", "invocation_id", "name", "ok"}),
     "skill.started": frozenset({"round", "call_id", "invocation_id", "name"}),
     "skill.finished": frozenset({"round", "call_id", "invocation_id", "name", "ok"}),
-    "session.naming.started": frozenset(),
-    "session.naming.finished": frozenset({"updated"}),
     "context.shrunk": frozenset({"round", "tool_count", "hidden_bytes"}),
 }
 

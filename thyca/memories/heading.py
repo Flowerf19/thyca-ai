@@ -1,4 +1,4 @@
-"""Session heading grammar for the whole memory stack.
+"""Memory heading grammar for the whole memory stack.
 
 A session line is ``## HH:mm — title`` plus an optional machine comment.
 ``parse_heading`` returns None only when the line is not a session heading.
@@ -130,7 +130,7 @@ def validate_task_meta(
         if task is None:
             raise ValueError("cont requires task")
         if not isinstance(cont, str) or not cont or "#" not in cont:
-            raise ValueError(f"cont must be a memory session id, got {cont!r}")
+            raise ValueError(f"cont must be a memory id, got {cont!r}")
     if kind == "habit" and (not isinstance(habit, str) or not habit.strip()):
         raise ValueError("kind='habit' requires a non-empty habit label")
     if kind == "checkpoint" and task is None:
@@ -246,7 +246,7 @@ def strip_heading_comments(text: str) -> str:
     return result
 
 
-def session_id(prefix: str, entry_id: str) -> str:
+def memory_id(prefix: str, entry_id: str) -> str:
     return f"{prefix}#{entry_id}"
 
 

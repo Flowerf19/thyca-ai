@@ -36,7 +36,7 @@ async def test_write_read_allow_persona_and_outside(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_write_denies_l2_session_config_sqlite(tmp_path: Path) -> None:
+async def test_write_denies_l2_conversation_config_sqlite(tmp_path: Path) -> None:
     gateway = _gateway(tmp_path)
     (tmp_path / "memory").mkdir()
     (tmp_path / "sessions").mkdir()
@@ -191,7 +191,7 @@ def test_file_specs_share_guard_key(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_read_denies_sessions_for_child_bot(tmp_path: Path) -> None:
+async def test_read_denies_conversations_for_child_bot(tmp_path: Path) -> None:
     from thyca.memories.identity import bind_bot_id, reset_bot_id
 
     target = tmp_path / "sessions" / "room.jsonl"
@@ -204,7 +204,7 @@ async def test_read_denies_sessions_for_child_bot(tmp_path: Path) -> None:
         assert not (await _call(_gateway(tmp_path), "read", path=str(target))).is_error
     finally:
         reset_bot_id(token)
-    # A child bot is denied the whole sessions tree (phase 2A).
+    # A child bot is denied the whole conversations tree (phase 2A).
     token = bind_bot_id("coder")
     try:
         denied = await _call(_gateway(tmp_path), "read", path=str(target))

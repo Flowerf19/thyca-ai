@@ -2,7 +2,7 @@
 
 Every bot turn is an instance of the existing ``build_agent_loop`` wiring
 (master §1: no new loop engine), with model/tools/snapshot taken from the
-bot's Agent Card. Each bot keeps one internal session per room (plan B);
+bot's Agent Card. Each bot keeps one internal conversation per room (plan B);
 continuity lives in the bot's memory/skills, not in a lifelong transcript.
 """
 from __future__ import annotations
@@ -42,9 +42,9 @@ from thyca.core.protocol import Message
 from thyca.llms.llm_base import LLMError
 from thyca.llms.llm_factory import ConnectFactory
 from thyca.memories.identity import bind_bot_id, reset_bot_id
-from thyca.conversations.runtime import SessionManager, calibration_factor
-from thyca.conversations.runtime.store import SessionStore
-from thyca.tools.memory_tools import bind_chat_session, reset_chat_session
+from thyca.conversations.runtime import ConversationManager, calibration_factor
+from thyca.conversations.runtime.store import ConversationStore
+from thyca.tools.memory_tools import bind_chat_conversation, reset_chat_conversation
 
 #: Admin tools (BE-5, ``bot_*``) live only in Thyca's registry: child-bot
 #: tool snapshots drop every name with this prefix. The prefix (not an
@@ -120,8 +120,8 @@ def filtered_tool_schemas(
     ]
 
 
-def _force_compact(connect, sessions, model: str, turn_cfg) -> dict:
-    """Agent-invoked compaction of the current session (TURN-CURATE).
+def _force_compact(connect, conversations, model: str, turn_cfg) -> dict:
+    """Agent-invoked compaction of the current conversation (TURN-CURATE).
 
     ``LlmSummarizer`` lives under ``thyca.app`` which imports this module,
     so it is imported lazily at call time (mid-turn, all modules loaded).
@@ -130,7 +130,7 @@ def _force_compact(connect, sessions, model: str, turn_cfg) -> dict:
 
     return compact_with_llm(
         LlmSummarizer(connect),
-        sessions,
+        conversations,
         model=model,
         pricing=turn_cfg.effective_pricing() or None,
         force=True,
@@ -282,7 +282,7 @@ def _aggregate_turn_rounds(messages: list) -> int:
 
 
 class BotRuntime:
-    """Per-bot loop factory + internal (bot × room) sessions + bus send."""
+    """Per-bot loop factory + internal (bot × room) conversations + bus send."""
 
     #: Async delivery hook installed by ChatApp:
     #: ``await deliverer(envelope, ctx) -> reply text``. When set, send
@@ -328,32 +328,32 @@ class BotRuntime:
         return self._workspaces
 
     def _canonical_store(
-        self, bot_id: str, window: WindowRef, session_id: str,
+        self, bot_id: str, window: WindowRef, conversation_id: str,
         priv_span: str | None = None,
-    ) -> CanonicalSessionStore:
+    ) -> CanonicalConversationStore:
         """Canonical journal store for one ``(bot, window)`` turn.
 
         A private execution keeps the real group window and selects only
         its own span; the visible DM-like window is never journaled."""
-        from thyca.bots.timeline import CanonicalSessionStore, WorkspaceTimeline
+        from thyca.bots.timeline import CanonicalConversationStore, WorkspaceTimeline
 
-        return CanonicalSessionStore(
+        return CanonicalConversationStore(
             self._dir / "bots" / bot_id / "sessions",
             timeline=WorkspaceTimeline(self._dir, bot_id),
             window=window,
-            session_id=session_id,
+            conversation_id=conversation_id,
             priv_span=priv_span,
         )
 
-    def internal_session(self, bot_id: str, room_id: str) -> Session:
-        """The bot's canonical session for one room (created on first use).
+    def internal_conversation(self, bot_id: str, room_id: str) -> ConversationRuntime:
+        """The bot's canonical conversation for one room (created on first use).
 
-        The registry carries the stable session id addressing the bot's
+        The registry carries the stable conversation id addressing the bot's
         timeline stream; the transcript itself lives in the journal (no
-        session file is created). Real window metadata binds when the room
+        conversation file is created). Real window metadata binds when the room
         resolves to one. Synthetic rooms receive a private bot view.
         """
-        binding = self._workspaces.store.ensure_session(bot_id, room_id)
+        binding = self._workspaces.store.ensure_conversation(bot_id, room_id)
         window = self._window_for_room(room_id)
         if window is None:
             window = WindowRef(
@@ -363,8 +363,8 @@ class BotRuntime:
         if binding.window != window:
             binding = self._workspaces.store.bind_window(bot_id, window)
         return self._canonical_store(
-            bot_id, window, binding.internal_session_id).load(
-                binding.internal_session_id)
+            bot_id, window, binding.internal_conversation_id).load(
+                binding.internal_conversation_id)
 
     # Lease-gated turn entry; private runs use an isolated memory view.
     # A private invocation (non-member group delivery) sees no group
@@ -476,26 +476,26 @@ class BotRuntime:
                 )
 
     def _window_for_room(self, room_id: str):
-        """WindowRef for a real room session; None for synthetic rooms.
+        """WindowRef for a real room conversation; None for synthetic rooms.
 
-        Only a genuinely missing session means "synthetic room -> private
+        Only a genuinely missing conversation means "synthetic room -> private
         fallback"; corrupt/permission failures propagate rather than
         silently downgrade."""
         from thyca.core.channel import WindowRef
-        from thyca.conversations.runtime.errors import SessionNotFound
+        from thyca.conversations.runtime.errors import ConversationNotFound
 
         try:
-            session = SessionStore(self._dir / "sessions").load(room_id)
-        except (SessionNotFound, FileNotFoundError):
+            conversation = ConversationStore(self._dir / "sessions").load(room_id)
+        except (ConversationNotFound, FileNotFoundError):
             return None
         return WindowRef(
-            window_id=session.id,
+            window_id=conversation.conversation_id,
             channel_id="webui",
-            kind="dm" if session.dm_bot is not None else "group",
-            participants=tuple(session.bots) if session.bots else ("thyca",),
+            kind="dm" if conversation.dm_bot is not None else "group",
+            participants=tuple(conversation.bots) if conversation.bots else ("thyca",),
         )
 
-    # Run the loop in the bot's canonical session for one room.
+    # Run the loop in the bot's canonical conversation for one room.
     # A private invocation journals the real group window with a
     # versioned span selector and establishes that group binding only
     # when missing; the DM-like visible window lives only in the turn.
@@ -520,10 +520,10 @@ class BotRuntime:
         diagnostic_sink=None,
         private_invocation: bool = False,
     ) -> BotTurnResult:
-        """Run one turn of ``card`` in its canonical session for ``room_id``.
+        """Run one turn of ``card`` in its canonical conversation for ``room_id``.
 
         ``scope`` is the app's :class:`BotTurnScope` (act/memory/state/zone +
-        connect); the session store, tool snapshot, hot prompt, model, and
+        connect); the conversation store, tool snapshot, hot prompt, model, and
         attribution context are the bot's own. Returns the reply plus the
         internal turn's aggregated assistant meta for room attribution.
 
@@ -580,7 +580,7 @@ class BotRuntime:
                     raise WorkspaceTurnConflict(
                         f"private invocation without a group window: {room_id}"
                     )
-                binding = self._workspaces.store.ensure_session(
+                binding = self._workspaces.store.ensure_conversation(
                     card.bot_id, room_id)
                 if binding.window is None:
                     self._workspaces.store.bind_window(
@@ -593,9 +593,9 @@ class BotRuntime:
                     raise WorkspaceTurnConflict(
                         f"ambiguous workspace binding for private turn: {room_id}"
                     )
-                session_id = binding.internal_session_id
+                conversation_id = binding.internal_conversation_id
                 store = self._canonical_store(
-                    card.bot_id, _store_window, session_id,
+                    card.bot_id, _store_window, conversation_id,
                     priv_span=own_span)
                 _visible_window = _PrivateWindow(
                     window_id=room_id, channel_id="webui", kind="dm",
@@ -618,21 +618,21 @@ class BotRuntime:
                         window_id=room_id, channel_id="webui", kind="dm",
                         participants=(card.bot_id,),
                     )
-                # Real window metadata binds inside internal_session;
+                # Real window metadata binds inside internal_conversation;
                 # synthetic rooms keep binding.window unset (projection
                 # scoping uses the local _window either way). NB: the
                 # binding's window_id is the room id in both cases.
-                internal = self.internal_session(card.bot_id, room_id)
-                session_id = internal.id
+                internal = self.internal_conversation(card.bot_id, room_id)
+                conversation_id = internal.conversation_id
                 store = self._canonical_store(
-                    card.bot_id, _window, session_id)
+                    card.bot_id, _window, conversation_id)
                 _visible_window = _window
-            sessions = SessionManager(
+            conversations = ConversationManager(
                 limits=turn_cfg.effective_limits(),
                 timezone_name=turn_cfg.timeline.timezone,
                 store=store,
             )
-            sessions.load(session_id)
+            conversations.load(conversation_id)
             if private_invocation:
                 # Versioned private projection starts empty by
                 # construction (current span only); never patch history
@@ -642,14 +642,14 @@ class BotRuntime:
                     raise WorkspaceTurnConflict(
                         "private invocation with group context"
                     )
-                if len(sessions.current.messages) != 0:
+                if len(conversations.current.messages) != 0:
                     raise WorkspaceTurnConflict(
                         "private projection is not isolated"
                     )
             if retry:
                 from thyca.app.turn_options import InvalidTurnOption
 
-                if not sessions.truncate_to_last_user():
+                if not conversations.truncate_to_last_user():
                     raise InvalidTurnOption("no user")
         except asyncio.CancelledError:
             self._status.finish_turn(card.bot_id, own_span, "cancelled")
@@ -683,7 +683,7 @@ class BotRuntime:
         try:
             filtered = filtered_tool_schemas(scope.tools, card)
             loop = build_agent_loop(
-                sessions=sessions,
+                conversations=conversations,
                 connect=connect,
                 act=scope.act,
                 tools=filtered,
@@ -698,7 +698,7 @@ class BotRuntime:
             hot = scope.memory.refresh(
                 scope.state,
                 datetime.now(scope.zone),
-                session_id=room_id,
+                conversation_id=room_id,
                 reader=None if card.system or card.bot_id == "thyca" else card.bot_id,
                 tail_kb=limits.hotTailKB,
                 timezone_name=turn_cfg.timeline.timezone,
@@ -719,7 +719,7 @@ class BotRuntime:
                 ()
                 if private_invocation
                 else derive_open_tasks(
-                    list(sessions.current.messages),
+                    list(conversations.current.messages),
                     self._pending_relevant(card.bot_id),
                     bot_id=card.bot_id,
                 )
@@ -824,7 +824,7 @@ class BotRuntime:
             # tool, so a card's ``memory.write=false`` does not gate it;
             # that policy still gates the bot's own ``memory_*`` tools
             # in ``filtered_tool_schemas``/``BotPolicy``.
-            markers_before = _compaction_markers(sessions.current.messages)
+            markers_before = _compaction_markers(conversations.current.messages)
             will_compact = False
             if self.memory_flush is not None:
                 try:
@@ -834,8 +834,8 @@ class BotRuntime:
                     from thyca.conversations.runtime.summary import SUMMARY_MAX_CHARS
 
                     _hot_tokens, _tools_tokens = overhead_tokens(hot, filtered)
-                    plan = sessions.compactor.plan(
-                        list(sessions.current.messages),
+                    plan = conversations.compactor.plan(
+                        list(conversations.current.messages),
                         turn_cfg.effective_limits().contextTokens,
                         hot_tokens=_hot_tokens,
                         tools_tokens=_tools_tokens,
@@ -843,7 +843,7 @@ class BotRuntime:
                             [_Msg(role="user", content=wire_text)]
                         ),
                         calibration=calibration_factor(
-                            list(sessions.current.messages), model=model
+                            list(conversations.current.messages), model=model
                         ),
                         body_chars=SUMMARY_MAX_CHARS,
                     )
@@ -858,7 +858,7 @@ class BotRuntime:
                     # mono path stays as the safety net for segments where
                     # the agent did not write anything.
                     if not _segment_checkpointed(
-                        list(sessions.current.messages),
+                        list(conversations.current.messages),
                         turn_cfg.effective_limits().contextTokens,
                     ):
                         try:
@@ -874,7 +874,7 @@ class BotRuntime:
                             except (TypeError, ValueError):
                                 pass
                             flushed = self.memory_flush(
-                                card.bot_id, list(sessions.current.messages),
+                                card.bot_id, list(conversations.current.messages),
                                 turn_cfg, **flush_kwargs
                             )
                             if inspect.isawaitable(flushed):
@@ -888,7 +888,7 @@ class BotRuntime:
                     for schema in (filtered or [])
                 )
             bot_token = bind_bot_id(card.bot_id)
-            chat_token = bind_chat_session(room_id)
+            chat_token = bind_chat_conversation(room_id)
             hidden_token = bind_hidden_tools(frozenset(card.hidden_tools))
             allowed_token = bind_allowed_tools(allowed)
             ctx_token = bind_bot_turn_context(
@@ -909,11 +909,11 @@ class BotRuntime:
                         _active_pf.pending_id if _active_pf is not None else None
                     ),
                     # TURN-CURATE: the agent calls the ``compact`` tool; the
-                    # callback force-compacts THIS turn's session through the
+                    # callback force-compacts THIS turn's conversation through the
                     # same summarizer the pre-turn compact uses. The agent is
                     # expected to have written durable facts to memory first.
                     compact=lambda: _force_compact(
-                        connect, sessions, model, turn_cfg
+                        connect, conversations, model, turn_cfg
                     ),
                 )
             )
@@ -952,7 +952,7 @@ class BotRuntime:
 
                     def on_hot_ready(final_hot) -> None:
                         diagnostic_sink({
-                            "session_id": room_id,
+                            "conversation_id": room_id,
                             "model": model,
                             "provider": turn_cfg.provider_id_for(model),
                             "base_url": turn_cfg.effective_provider_for(model).baseUrl,
@@ -971,7 +971,7 @@ class BotRuntime:
                 )
                 new_messages = [
                     message
-                    for message in sessions.current.messages
+                    for message in conversations.current.messages
                     if (getattr(message, "meta", None) or {}).get("span_id") == own_span
                 ]
                 # The turn's own user message is now read: advance past it.
@@ -989,7 +989,7 @@ class BotRuntime:
                 # memory re-injection for this bot's next turn (CBE-4).
                 # Private execution never arms the group entry.
                 if (will_compact or _compaction_markers(
-                    sessions.current.messages
+                    conversations.current.messages
                 ) > markers_before) and not private_invocation:
                     self._reinject_pending.add(reinject_key)
                 agg_model, agg_usage, agg_cost, agg_latency, agg_requests, agg_tool_calls = _aggregate_turn_meta(new_messages)
@@ -1046,7 +1046,7 @@ class BotRuntime:
                     # public room row separately. This is journaled like
                     # every other canonical write.
                     # Best-effort: never masks the in-flight failure.
-                    sessions.mark_turn_error(
+                    conversations.mark_turn_error(
                         *(
                             ("llm_error", str(exc))
                             if isinstance(exc, LLMError)
@@ -1063,7 +1063,7 @@ class BotRuntime:
                 reset_bot_turn_context(ctx_token)
                 reset_allowed_tools(allowed_token)
                 reset_hidden_tools(hidden_token)
-                reset_chat_session(chat_token)
+                reset_chat_conversation(chat_token)
                 reset_bot_id(bot_token)
         except asyncio.CancelledError:
             # The loop-level finish already ran; this is a no-op then,
@@ -1088,7 +1088,7 @@ class BotRuntime:
         sender: str,
         recipient: str,
         kind: str,
-        session_id: str,
+        conversation_id: str,
         payload: str,
         trace_id: str | None = None,
         parent_span_id: str | None = None,
@@ -1101,7 +1101,7 @@ class BotRuntime:
             sender=sender,
             recipient=recipient,
             kind=kind,
-            session_id=session_id,
+            conversation_id=conversation_id,
             payload=payload,
             trace_id=trace_id,
             parent_span_id=parent_span_id,
@@ -1156,7 +1156,7 @@ class BotRuntime:
                 bot_id,
                 lambda env: (
                     not getattr(env, "private_chain", False)
-                    and view.can_read_origin(env.session_id)
+                    and view.can_read_origin(env.conversation_id)
                 ),
             )
         return self._mailbox_text(pending, room_id, text)
@@ -1175,10 +1175,10 @@ class BotRuntime:
             return text
         lines = [f"[A2A mailbox: {len(pending)} queued message(s)]"]
         for envelope in pending:
-            if envelope.session_id != room_id:
+            if envelope.conversation_id != room_id:
                 lines.append(
                     f"- ({envelope.kind} from {envelope.sender}, "
-                    f"another room {envelope.session_id}, trace {envelope.trace_id}):"
+                    f"another room {envelope.conversation_id}, trace {envelope.trace_id}):"
                 )
             else:
                 lines.append(
@@ -1210,7 +1210,7 @@ class BotRuntime:
         def readable(envelope) -> bool:
             if getattr(envelope, "private_chain", False):
                 return False
-            return view is None or view.can_read_origin(envelope.session_id)
+            return view is None or view.can_read_origin(envelope.conversation_id)
 
         relevant = [
             e for e in self._bus.pending_for(bot_id) if readable(e)]

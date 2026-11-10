@@ -12,7 +12,7 @@ from thyca.memories.stats import CanonicalFile, MemoryStats
 def archived(entry, owners, **metadata):
     sid = f"2026-08-16#{entry}"
     return {
-        "chunk_id": sid + "#1", "session_id": sid,
+        "chunk_id": sid + "#1", "memory_id": sid,
         "heading_raw": "## 10:00 — title", "text_raw": "memory body",
         "source_kind": "daily", "timeline_day": "2026-08-16",
         "expires_at": None, "bots": json.dumps(owners) if owners is not None else None,
@@ -24,8 +24,8 @@ def today(entry, owners):
     sid = f"2026-08-17#{entry}"
     return Chunk(
         chunk_id=sid + "#1", path="/isolated/memory/2026-08-17.md",
-        source_kind="daily", timeline_day="2026-08-17", session_id=sid,
-        session_title="today", heading_raw="## 10:00 — today", leaf_ord=1,
+        source_kind="daily", timeline_day="2026-08-17", memory_id=sid,
+        memory_title="today", heading_raw="## 10:00 — today", leaf_ord=1,
         line_start=1, line_end=2, text_raw="today memory", text_norm="today memory",
         content_hash="hash", bots=tuple(owners) if owners is not None else None,
     )

@@ -3,20 +3,20 @@ from __future__ import annotations
 from pathlib import Path
 
 from thyca.core.protocol import Message, ToolCall
-from thyca.conversations.runtime import Session
-from thyca.serve.trace import aggregate, turns_from_session
+from thyca.conversations.runtime import ConversationRuntime
+from thyca.serve.trace import aggregate, turns_from_conversation
 
 TS = "2026-08-26T09:12:03Z"
 TS2 = "2026-08-26T09:12:04Z"
 
 
-def _session(session_id: str, messages: list[Message], title: str | None = None) -> Session:
-    return Session(session_id, Path(f"{session_id}.jsonl"), messages, title)
+def _conversation(conversation_id: str, messages: list[Message]) -> ConversationRuntime:
+    return ConversationRuntime(conversation_id, Path(f"{conversation_id}.jsonl"), messages)
 
 
-def test_turns_from_session_groups_user_to_final_assistant() -> None:
+def test_turns_from_conversation_groups_user_to_final_assistant() -> None:
     call = ToolCall(id="c1", name="echo")
-    session = _session(
+    conversation = _conversation(
         "2026-08-26T09-12-03_abcd",
         [
             Message(role="user", content="hi", ts=TS),
@@ -59,13 +59,12 @@ def test_turns_from_session_groups_user_to_final_assistant() -> None:
                 },
             ),
         ],
-        title="Linux là target",
     )
-    turns = turns_from_session(session)
+    turns = turns_from_conversation(conversation)
     assert len(turns) == 1
     turn = turns[0]
     assert turn.turn_index == 0
-    assert turn.title == "Linux là target"
+    assert turn.title == "2026-08-26T09-12-03_abcd"
     assert turn.model == "gpt-4o-mini"
     assert turn.status == "completed"
     assert turn.rounds == 2
@@ -77,15 +76,15 @@ def test_turns_from_session_groups_user_to_final_assistant() -> None:
     assert turn.latency_ms == 150
 
 
-def test_legacy_session_without_usage_keeps_tokens_none() -> None:
-    session = _session(
+def test_legacy_conversation_without_usage_keeps_tokens_none() -> None:
+    conversation = _conversation(
         "2026-08-26T09-12-03_abce",
         [
             Message(role="user", content="hi", ts=TS),
             Message(role="assistant", content="hey", ts=TS2),
         ],
     )
-    turn = turns_from_session(session)[0]
+    turn = turns_from_conversation(conversation)[0]
     assert turn.prompt_tokens is None
     assert turn.cached_tokens is None
     assert turn.completion_tokens is None
@@ -95,7 +94,7 @@ def test_legacy_session_without_usage_keeps_tokens_none() -> None:
 
 
 def test_loop_limit_and_incomplete_tool_round_status() -> None:
-    limited = _session(
+    limited = _conversation(
         "2026-08-26T09-12-03_abcf",
         [
             Message(role="user", content="go", ts=TS),
@@ -107,9 +106,9 @@ def test_loop_limit_and_incomplete_tool_round_status() -> None:
             ),
         ],
     )
-    assert turns_from_session(limited)[0].status == "loop_limit"
+    assert turns_from_conversation(limited)[0].status == "loop_limit"
 
-    incomplete = _session(
+    incomplete = _conversation(
         "2026-08-26T09-12-03_abcg",
         [
             Message(role="user", content="go", ts=TS),
@@ -122,18 +121,18 @@ def test_loop_limit_and_incomplete_tool_round_status() -> None:
             Message(role="tool", content="x", tool_call_id="c1", ts=TS2),
         ],
     )
-    assert turns_from_session(incomplete)[0].status == "failed"
+    assert turns_from_conversation(incomplete)[0].status == "failed"
 
-    lone_user = _session(
+    lone_user = _conversation(
         "2026-08-26T09-12-03_abch",
         [Message(role="user", content="go", ts=TS)],
     )
-    assert turns_from_session(lone_user)[0].status == "failed"
+    assert turns_from_conversation(lone_user)[0].status == "failed"
 
 
 def test_aggregate_by_model_and_unknown_cost() -> None:
-    mini = turns_from_session(
-        _session(
+    mini = turns_from_conversation(
+        _conversation(
             "2026-08-26T09-12-03_aaa1",
             [
                 Message(role="user", content="a", ts=TS),
@@ -151,8 +150,8 @@ def test_aggregate_by_model_and_unknown_cost() -> None:
             ],
         )
     )
-    other = turns_from_session(
-        _session(
+    other = turns_from_conversation(
+        _conversation(
             "2026-08-26T09-12-03_aaa2",
             [
                 Message(role="user", content="b", ts="2026-08-25T09:12:03Z"),
@@ -204,7 +203,7 @@ def _assistant(bot_id, prompt, completion, cost, latency, ts=TS2):
 
 
 def test_multi_bot_slice_breakdown_attributes_each_bot() -> None:
-    session = _session(
+    conversation = _conversation(
         "2026-08-26T09-12-03_mbot",
         [
             Message(role="user", content="go", ts=TS),
@@ -214,7 +213,7 @@ def test_multi_bot_slice_breakdown_attributes_each_bot() -> None:
             _assistant("buddy", 20, 2, 0.005, 20),
         ],
     )
-    (turn,) = turns_from_session(session)
+    (turn,) = turns_from_conversation(conversation)
     # Legacy single-bot fields unchanged: first bot + whole-slice totals.
     assert turn.bot_id == "thyca"
     assert turn.requests == 4
@@ -250,7 +249,7 @@ def test_multi_bot_slice_breakdown_attributes_each_bot() -> None:
 
 
 def test_single_bot_breakdown_matches_turn_and_legacy_unknown() -> None:
-    session = _session(
+    conversation = _conversation(
         "2026-08-26T09-12-03_sbot",
         [
             Message(role="user", content="go", ts=TS),
@@ -258,7 +257,7 @@ def test_single_bot_breakdown_matches_turn_and_legacy_unknown() -> None:
             _assistant("coder", 5, 1, 0.0005, 20),
         ],
     )
-    (turn,) = turns_from_session(session)
+    (turn,) = turns_from_conversation(conversation)
     assert len(turn.bot_breakdown) == 1
     entry = turn.bot_breakdown[0]
     assert entry["bot_id"] == "coder"
@@ -270,7 +269,7 @@ def test_single_bot_breakdown_matches_turn_and_legacy_unknown() -> None:
     assert by_bot["coder"]["requests"] == 2
     assert by_bot["coder"]["cost_usd"] == turn.cost_usd
     # No bot_id anywhere: breakdown carries None, aggregate keeps "unknown".
-    legacy = turns_from_session(_session(
+    legacy = turns_from_conversation(_conversation(
         "2026-08-26T09-12-03_leg1",
         [Message(role="user", content="go", ts=TS),
          _assistant(None, 3, 1, None, 10)],
@@ -282,7 +281,7 @@ def test_single_bot_breakdown_matches_turn_and_legacy_unknown() -> None:
 
 
 def test_error_marker_forces_failed_and_payload() -> None:
-    marked = _session(
+    marked = _conversation(
         "2026-08-26T09-12-03_abcm",
         [
             Message(
@@ -293,14 +292,14 @@ def test_error_marker_forces_failed_and_payload() -> None:
             ),
         ],
     )
-    (turn,) = turns_from_session(marked)
+    (turn,) = turns_from_conversation(marked)
     assert turn.status == "failed"
     assert turn.to_payload()["error"] == {"code": "llm_error", "message": "provider HTTP 404: gone"}
 
 
 def test_error_marker_wins_over_trailing_assistant() -> None:
     # A turn that died mid-loop after persisting round 1 must not read completed.
-    mid = _session(
+    mid = _conversation(
         "2026-08-26T09-12-03_abcn",
         [
             Message(
@@ -312,25 +311,25 @@ def test_error_marker_wins_over_trailing_assistant() -> None:
             Message(role="assistant", content="partial", ts=TS2, meta={"kind": "llm"}),
         ],
     )
-    assert turns_from_session(mid)[0].status == "failed"
+    assert turns_from_conversation(mid)[0].status == "failed"
 
 
 def test_completed_turn_has_no_error() -> None:
-    ok = _session(
+    ok = _conversation(
         "2026-08-26T09-12-03_abco",
         [
             Message(role="user", content="go", ts=TS),
             Message(role="assistant", content="done", ts=TS2, meta={"kind": "llm"}),
         ],
     )
-    (turn,) = turns_from_session(ok)
+    (turn,) = turns_from_conversation(ok)
     assert turn.status == "completed"
     assert turn.to_payload()["error"] is None
 
 
 def test_row_requests_truthful_counting() -> None:
     """Bus rows cost 0; aggregated rows report their own count; cards cost 0."""
-    session = _session(
+    conversation = _conversation(
         "2026-08-26T09-12-03_mixd",
         [
             Message(role="user", content="go", ts=TS),
@@ -358,7 +357,7 @@ def test_row_requests_truthful_counting() -> None:
                           "card": {"type": "question"}}),
         ],
     )
-    (turn,) = turns_from_session(session)
+    (turn,) = turns_from_conversation(conversation)
     assert turn.requests == 1 + 4
     by_bot = {e["bot_id"]: e for e in turn.bot_breakdown}
     assert by_bot["thyca"]["requests"] == 1
@@ -370,31 +369,31 @@ def test_row_requests_truthful_counting() -> None:
     assert bots["coder"]["requests"] == 4
 
 
-def test_turns_carry_session_channel_fields(tmp_path=None) -> None:
+def test_turns_carry_conversation_channel_fields(tmp_path=None) -> None:
     from pathlib import Path as _Path
 
     def _s(sid, bots, dm, messages):
-        return Session(sid, _Path(f"{sid}.jsonl"), messages, None, bots=bots, dm_bot=dm)
+        return ConversationRuntime(sid, _Path(f"{sid}.jsonl"), messages, bots=bots, dm_bot=dm)
 
     user = Message(role="user", content="go", ts=TS)
     final = Message(role="assistant", content="done", ts=TS2, meta={"kind": "llm"})
-    dm_turns = turns_from_session(_s("dm1", ["coder"], "coder", [user, final]))
-    assert dm_turns[0].session_kind == "dm"
-    assert dm_turns[0].session_dm == "coder"
-    assert dm_turns[0].session_bots == ["coder"]
-    group_turns = turns_from_session(
+    dm_turns = turns_from_conversation(_s("dm1", ["coder"], "coder", [user, final]))
+    assert dm_turns[0].conversation_kind == "dm"
+    assert dm_turns[0].conversation_dm == "coder"
+    assert dm_turns[0].conversation_bots == ["coder"]
+    group_turns = turns_from_conversation(
         _s("g1", ["thyca", "coder"], None, [user, final]))
-    assert group_turns[0].session_kind == "group"
-    assert group_turns[0].session_dm is None
-    assert group_turns[0].session_bots == ["thyca", "coder"]
-    legacy_turns = turns_from_session(_s("old", None, None, [user, final]))
-    assert legacy_turns[0].session_kind == "group"
-    assert legacy_turns[0].session_dm is None
-    assert legacy_turns[0].session_bots == ["thyca"]
+    assert group_turns[0].conversation_kind == "group"
+    assert group_turns[0].conversation_dm is None
+    assert group_turns[0].conversation_bots == ["thyca", "coder"]
+    legacy_turns = turns_from_conversation(_s("old", None, None, [user, final]))
+    assert legacy_turns[0].conversation_kind == "group"
+    assert legacy_turns[0].conversation_dm is None
+    assert legacy_turns[0].conversation_bots == ["thyca"]
     payload = dm_turns[0].to_payload()
     assert (payload["kind"], payload["bot_id"],
-            payload["session_bots"]) == ("dm", "coder", ["coder"])
-    assert "session_id" not in payload
+            payload["conversation_bots"]) == ("dm", "coder", ["coder"])
+    assert "conversation_id" not in payload
 
 
 def test_row_tool_calls_truthful_counting() -> None:
@@ -405,7 +404,7 @@ def test_row_tool_calls_truthful_counting() -> None:
     def call(cid):
         return ToolCall(id=cid, name="read", arguments={})
 
-    session = _session(
+    conversation = _conversation(
         "2026-08-26T09-12-03_mixt",
         [
             Message(role="user", content="go", ts=TS),
@@ -434,7 +433,7 @@ def test_row_tool_calls_truthful_counting() -> None:
                     meta={"kind": "llm", "status": "context_limit"}),
         ],
     )
-    (turn,) = turns_from_session(session)
+    (turn,) = turns_from_conversation(conversation)
     assert turn.tool_calls == 2 + 5
     by_bot = {e["bot_id"]: e for e in turn.bot_breakdown}
     assert by_bot["thyca"]["tool_calls"] == 2

@@ -24,9 +24,9 @@ def memory_endpoint(facade: MemoryFacade, kind: str, payload: dict) -> tuple[int
             return 503, {"error": "write failed"}
         return 200, {"ok": True}
 
-    sid = payload.get("session_id")
+    sid = payload.get("memory_id")
     if not isinstance(sid, str) or not sid.strip():
-        return 400, {"error": "invalid session_id"}
+        return 400, {"error": "invalid memory_id"}
     sid = sid.strip()
     try:
         if kind == "forget":
@@ -51,6 +51,6 @@ def memory_endpoint(facade: MemoryFacade, kind: str, payload: dict) -> tuple[int
     except ValueError as exc:
         return 400, {"error": str(exc)}
     except ArchiveError:
-        return 404, {"error": "session not found"}
+        return 404, {"error": "memory not found"}
     except Exception:
         return 503, {"error": f"{kind} failed"}

@@ -51,7 +51,7 @@ def test_remember_search_carries_explicit(tmp_path: Path) -> None:
     plain_sid = facade.remember("tea2", "uong tra chieu", now=at(1),
                     kind="habit", habit="uong tra")
     facade._refresh_index(at(5))
-    hits = {h.session_id: h for h in facade.search("uong tra", now=at(5)).hits}
+    hits = {h.memory_id: h for h in facade.search("uong tra", now=at(5)).hits}
     assert hits[explicit_sid].habit_explicit is True
     assert hits[plain_sid].habit_explicit is False
 
@@ -77,8 +77,10 @@ def test_migration_v8_1a_gains_explicit_column(tmp_path: Path) -> None:
     try:
         cols = {row[1] for row in db.execute("PRAGMA table_info(chunks)")}
         assert "habit_explicit" in cols
+        # Landing on v9 also renames the pre-v9 leaf id columns.
+        assert "memory_id" in cols and "session_id" not in cols
         assert db.execute(
-            "SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == "8"
+            "SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == "9"
     finally:
         db.close()
 

@@ -1,19 +1,19 @@
 /* Chat screen only: workspace, transcript, composer, mention popup. */
 .workspace{border:1px solid #e0d3bc;border-radius:18px;background:#fbf5e9e6;box-shadow:var(--shadow);min-width:0;min-height:0;position:relative;display:flex;flex-direction:column;overflow:hidden}
-.chat-title-head{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:26px 36px 23px;border-bottom:1px solid #e7ddca;background:#fffaf240;z-index:1}
+.chat-title-head{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:26px 36px 23px;border-bottom:1px solid #e7ddca;background:#fffaf240;z-index:1;flex:none}
 .eyebrow{font-size:9px;letter-spacing:2px;color:#a18f71;text-transform:uppercase;margin-bottom:7px}
 .screen-title h1{font:500 28px var(--serif);margin:0;color:#554732;letter-spacing:-.4px}
 .head-actions{display:flex;gap:10px;align-items:center}
 .quiet-button{border:1px solid #d7c9ae;border-radius:8px;padding:9px 12px;display:inline-flex;align-items:center;gap:7px;color:#7f7057;font-size:11px;background:#fffbf050}
 .quiet-button .icon{width:14px;height:14px}
 .chat-canvas{flex:1;min-height:0;display:flex;flex-direction:column;position:relative}
-.conversation-scroll{flex:1;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#ccbea3 transparent;position:relative;z-index:1}
+.conversation-scroll{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#ccbea3 transparent;position:relative;z-index:1}
 .conversation-content{max-width:1100px;margin:auto;padding:27px 42px 35px}
 .day-divider{display:flex;justify-content:center;align-items:center;gap:14px;color:#a28f6d;font:italic 12px var(--serif);margin-bottom:28px}
 .day-divider:before,.day-divider:after{content:'';height:1px;width:40px;background:#e1d5bf}
 .message-list{display:flex;flex-direction:column;gap:27px}
-.message-user{max-width:85%;align-self:flex-end;margin:0;padding:15px 19px 10px;border-radius:14px 14px 3px 14px;background:#eee6d56b;border:1px solid #e2d7c2}
-.message-user p{margin:0;font:17px/1.55 var(--serif)}
+.message-user{max-width:85%;align-self:flex-end;margin:0;padding:15px 19px 10px;border-radius:14px 14px 3px 14px;background:#eee6d56b;border:1px solid #e2d7c2;overflow-wrap:anywhere}
+.message-user p{margin:0;font:17px/1.55 var(--serif);overflow-wrap:anywhere}
 .message-user footer{display:flex;justify-content:flex-end;gap:7px;align-items:center;font-size:9px;color:#a2937a;margin-top:8px}
 .message-user footer svg{width:13px;height:13px}
 .message-user .message-source{margin-right:auto}
@@ -43,7 +43,7 @@
 .show-thought .icon{width:13px;height:13px}
 .streaming-caret{display:inline-block;width:2px;height:1em;margin-left:2px;background:var(--forest);vertical-align:-2px;animation:cursor 1s steps(2) infinite}
 .to-bottom{position:absolute;right:20px;bottom:15px;z-index:5;border:1px solid #c9baa0;background:#fffbf1;border-radius:50%;width:34px;height:34px;display:grid;place-items:center;box-shadow:var(--shadow)}
-.site-footer{padding:10px 24px 18px;position:relative;z-index:2}
+.site-footer{padding:10px 24px 18px;position:relative;z-index:2;flex:none}
 .site-footer>*{max-width:1100px;margin-left:auto;margin-right:auto}
 .composer{border:1px solid #d7c7ab;border-radius:13px;background:#fffaf0;box-shadow:0 5px 14px #6b513113;position:relative;padding:17px 19px 11px}
 .letter-label{font:italic 16px var(--serif);color:var(--active-ink,var(--forest));display:block;padding:0 0 8px}
@@ -56,12 +56,10 @@
 .composer-team-hint{font-size:10px;color:#aa9b81;white-space:nowrap}
 .composer-team-hint kbd{font:11px var(--sans);padding:2px;border:1px solid #d5c8af;border-radius:4px}
 .composer-send{display:flex;align-items:center;gap:12px}
-.effort-control{display:flex;gap:5px;align-items:center;font-size:10px;color:#9a8a70}
-.effort-select{max-width:105px;border:0;background:transparent;color:#7c6c51;font-size:10px;padding:4px 0;outline-offset:1px!important}
 .send-button,.stop-button{border-radius:8px;padding:10px 16px;background:var(--active-ink,var(--forest));color:#fff7df;font:15px var(--serif);min-width:65px;display:flex;align-items:center;justify-content:center;gap:7px}
 .send-button svg,.stop-button svg{width:13px;height:13px}
 .stop-button{background:#866752}
-.composer-hint{display:flex;justify-content:space-between;gap:10px;padding:8px 3px 0;color:#a8987c;font-size:9px}
+.composer-hint{display:flex;justify-content:space-between;gap:10px;padding:0 3px 8px;color:#a8987c;font-size:9px}
 .file-chip{font-size:11px;display:flex;align-items:center;gap:8px;background:#eee7d7;width:fit-content;max-width:100%;padding:5px 9px;border-radius:6px;margin-bottom:10px}
 .file-chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .file-chip button{padding:0}
@@ -93,7 +91,6 @@
 .chat-title-head{padding:24px}
 .site-footer{padding:10px 16px 15px}
 .composer-team-hint{display:none}
-.model-control{display:none}
 .live-copy{font-size:17px}
 .head-actions .quiet-button{padding:8px}
 }
@@ -122,21 +119,33 @@
 .composer-send{gap:8px}
 .composer-tools{gap:4px}
 .attach-button span{display:none}
-.effort-control{gap:2px}
-.effort-select{max-width:70px}
 .send-button,.stop-button{padding:9px 12px;min-width:57px}
 .send-button svg{display:none}
 .composer-hint{font-size:8px}
 }
+@media(max-height:620px){
+.chat-title-head{padding:14px 28px 12px}
+.site-footer{padding:6px 20px 10px}
+.composer{padding:10px 15px 8px}
+.composer textarea{max-height:80px}
+}
+@media(max-height:430px){
+.eyebrow{display:none}
+.composer-hint{display:none}
+.chat-title-head{padding:8px 24px 8px}
+.screen-title h1{font-size:20px}
+.letter-label{font-size:13px;padding:0 0 3px}
+.site-footer{padding:6px 16px 8px}
+.composer{padding:8px 12px 6px}
+.composer textarea{min-height:26px;max-height:56px;padding:0 0 4px;font-size:14px;line-height:1.4}
+.composer-toolbar{padding-top:6px}
+.send-button,.stop-button{padding:6px 12px;font-size:13px}
+.quiet-button{padding:6px 10px}
+}
 @keyframes cursor{50%{opacity:0}}
-/* Bot<->bot exchange grouping: collapsed runs in the room transcript, per-
-   partner entries in a bot DM, and the A-B thread modal. Fresh class names
-   on purpose (legacy collapse markers stay banned by test). */
-.peer-exchange{border:1px solid #e0d3bc;border-radius:12px;background:#fffbf1;padding:10px 14px}
-.peer-exchange>summary{cursor:pointer;font-size:13px;color:#6c5e46}
-.peer-exchange-lead{font-weight:600}
-.peer-exchange-rows{display:flex;flex-direction:column;gap:14px;margin-top:10px}
-.peer-exchange-rows .message-assistant{margin:0}
+/* Bot<->bot exchange grouping: per-partner entries in a bot DM and the
+   A-B thread modal. Fresh class names on purpose (legacy collapse
+   markers stay banned by test). */
 .exchange-group{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border:1px dashed var(--bot-border,#c9b891);border-radius:12px;background:var(--bot-paper,#fffdf7);padding:10px 14px;font-size:13px;color:var(--bot-ink,#5c5142);cursor:pointer}
 .exchange-group:hover,.exchange-group:focus-visible{border-color:var(--bot-mid,#5c8a52);background:var(--bot-pale,#eaf3e2)}
 .exchange-group .seal-avatar{width:30px;height:30px;flex-shrink:0}

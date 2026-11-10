@@ -21,7 +21,7 @@ class WorkItem:
     memory_task_id: str | None = None
     runtime_refs: tuple[str, ...] = ()
     title: str | None = None
-    latest_session_id: str | None = None
+    latest_memory_id: str | None = None
     owner_bot: str | None = None
     coordinator: str | None = None
     origin_window: str | None = None
@@ -48,7 +48,7 @@ def project_work_items(
     A runtime row merges only via an explicit ``memory_task_id`` link to
     a catalog ``task_id``; otherwise it stays a runtime-only WorkItem.
     ``memory_rows`` are facade ``tasks()`` entries (``task_id``, ``title``,
-    ``status``, ``latest_session_id``)."""
+    ``status``, ``latest_memory_id``)."""
     items: list[WorkItem] = []
     for row in memory_rows:
         task_id = row.get("task_id") if isinstance(row, dict) else None
@@ -59,7 +59,7 @@ def project_work_items(
             memory_task_id=task_id,
             owner_bot=owner_bot,
             title=row.get("title"),
-            latest_session_id=row.get("latest_session_id"),
+            latest_memory_id=row.get("latest_memory_id"),
             status=str(row.get("status") or "open"),
             memory_row=row,
         ))

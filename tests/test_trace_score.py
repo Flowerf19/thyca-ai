@@ -4,7 +4,7 @@ The old trace-data.js helpers (toolsFromDetail, toolBatchesFromDetail,
 activityStepsFromDetail, groupToolCalls, tokenCost, selectedModelConfig)
 were not ported: the new Trace page renders the execution journal straight
 from ``detail.messages`` — one numbered ``.tl-step`` per tool call matched
-to its result by tool_call_id, orphan results as their own step, session
+to its result by tool_call_id, orphan results as their own step, conversation
 cards via sessionGroups/sessionCardHtml, and no client-side pricing. These
 tests cover that replacement contract. The page is a classic script
 ('use strict', shared globals), so the harness evals it in Node with a
@@ -321,32 +321,32 @@ def test_flat_trace_rows_keep_order_and_chat_kind(node: str) -> None:
     rows = [
         {"kind": "group", "group_id": "group-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "turn_index": 2, "title": "Nhóm",
          "started_at": "2026-09-08T10:02:00", "status": "failed",
-         "session_bots": ["a", "b"]},
+         "conversation_bots": ["a", "b"]},
         {"kind": "group", "group_id": "group-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "turn_index": 0, "title": "Nhóm",
          "started_at": "2026-09-08T10:00:00", "status": "completed",
-         "session_bots": ["a", "b"]},
+         "conversation_bots": ["a", "b"]},
         {"kind": "dm", "bot_id": "a", "turn_index": 0, "title": "DM",
          "started_at": "2026-09-07T09:00:00", "status": "completed"},
     ]
     html = _eval_dash(
         node,
         f"traceState.rows = {json.dumps(rows)}; traceState.total = 3;\n"
-        "renderTraceTable(); console.log(JSON.stringify(document.querySelector('#trace-sessions').innerHTML))",
+        "renderTraceTable(); console.log(JSON.stringify(document.querySelector('#trace-conversations').innerHTML))",
     )
     assert html.count('<li><button') == 3
     assert html.index('data-turn="2"') < html.index('data-turn="0"') < html.index('data-conv="dm:a"')
     assert 'Chat nhóm' in html and 'Chat riêng' in html
-    assert 'class="tl-session"' not in html and 'lượt lỗi' not in html
+    assert 'class="tl-conversation"' not in html and 'lượt lỗi' not in html
 
 
-def test_trace_row_attribution_ignores_dm_and_session_members(node: str) -> None:
+def test_trace_row_attribution_ignores_dm_and_conversation_members(node: str) -> None:
     """Only explicit breakdown or direct turn bot_id identifies a bot;
-    DM owner and session participant lists do not attribute a turn."""
+    DM owner and conversation participant lists do not attribute a turn."""
     out = _eval_dash(
         node,
         "console.log(JSON.stringify(["
-        " turnBotIds({ session_kind: 'dm', session_dm: 'owner', session_bots: ['member'] }),"
-        " turnBotIds({ bot_id: 'direct', session_bots: ['member'] }),"
+        " turnBotIds({ conversation_kind: 'dm', conversation_dm: 'owner', conversation_bots: ['member'] }),"
+        " turnBotIds({ bot_id: 'direct', conversation_bots: ['member'] }),"
         " turnBotIds({ bot_id: 'primary', bot_breakdown: [{ bot_id: 'own' }] })]))",
     )
     assert out == [[], ['direct'], ['own']]

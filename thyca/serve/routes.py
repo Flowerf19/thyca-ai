@@ -47,7 +47,6 @@ from thyca.serve.conversations_api import (
     group_delete,
     group_detail,
     group_operations,
-    group_rename,
     group_tasks,
     group_turn,
     group_turn_cancel,
@@ -60,7 +59,7 @@ from thyca.serve.trace_api import (
     trace_list_payload,
     trace_stats_payload,
 )
-from thyca.conversations.runtime import SessionCorrupt, SessionNotFound
+from thyca.conversations.runtime import ConversationCorrupt, ConversationNotFound
 from thyca.memories.facade import MemoryFacade
 
 if TYPE_CHECKING:
@@ -206,7 +205,7 @@ def make_handler(
             if match:
                 group_turn_follow(self, chat, match.group(1))
                 return
-            if path.startswith("/api/sessions"):
+            if path.startswith("/api/conversations"):
                 self._json(404, {"error": "conversation not found"})
                 return
             if path.startswith("/api/traces"):
@@ -284,7 +283,7 @@ def make_handler(
             if match:
                 group_compact(self, chat, match.group(1))
                 return
-            if path.startswith("/api/sessions"):
+            if path.startswith("/api/conversations"):
                 self._json(404, {"error": "conversation not found"})
                 return
             if path.startswith("/api/traces"):
@@ -292,10 +291,10 @@ def make_handler(
                 return
             self._send(405, b"method not allowed", "text/plain; charset=utf-8")
 
-        # Delete one explicit group; every legacy session path is gone.
+        # Delete one explicit group; every legacy conversation path is gone.
         def do_DELETE(self) -> None:
             path = urlparse(self.path).path
-            if path.startswith("/api/sessions"):
+            if path.startswith("/api/conversations"):
                 self._json(404, {"error": "conversation not found"})
                 return
             if path.startswith("/api/bots/"):
@@ -304,21 +303,6 @@ def make_handler(
             match = _GROUP_RE.fullmatch(path)
             if match:
                 group_delete(self, chat, match.group(1))
-                return
-            self._json(404, {"error": "conversation not found"})
-
-        # Rename one explicit group; every legacy session path is gone.
-        def do_PATCH(self) -> None:
-            path = urlparse(self.path).path
-            if path.startswith("/api/sessions"):
-                self._json(404, {"error": "conversation not found"})
-                return
-            if path.startswith("/api/bots/"):
-                self._json(404, {"error": "bot not found"})
-                return
-            match = _GROUP_RE.fullmatch(path)
-            if match:
-                group_rename(self, chat, match.group(1))
                 return
             self._json(404, {"error": "conversation not found"})
 
@@ -377,9 +361,9 @@ def make_handler(
 
             try:
                 self._json(200, trace_detail_payload_ref(app, ref, idx))
-            except SessionNotFound:
+            except ConversationNotFound:
                 self._json(404, {"error": "conversation not found"})
-            except SessionCorrupt:
+            except ConversationCorrupt:
                 self._json(503, {"error": "conversation unreadable"})
             except ConversationStoreError as exc:
                 if getattr(exc, "scope", "global") == "local":

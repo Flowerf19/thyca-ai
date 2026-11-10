@@ -57,7 +57,7 @@ def transcript_tail(messages: list[Message], max_chars: int = 12000) -> str:
     for message in messages:
         if message.role not in ("user", "assistant"):
             continue
-        if (message.meta or {}).get("kind") in ("naming", "compaction"):
+        if (message.meta or {}).get("kind") == "compaction":
             continue
         text = message.content or ""
         if text.strip():
@@ -77,7 +77,7 @@ def _open_tasks_block(open_tasks) -> str:
             continue
         lines.append(
             f"- {task_id} — {entry.get('title', '')} "
-            f"(latest entry {entry.get('latest_session_id', '?')}, "
+            f"(latest entry {entry.get('latest_memory_id', '?')}, "
             f"last active {entry.get('last_day', '?')})"
         )
     if not lines:
@@ -102,7 +102,7 @@ async def extract_from_transcript(connect, model: str, transcript: str,
         '"bots": ["<bot-id>"] or null, '
         '"task": "<task_id from OPEN MEMORY TASKS>" or null, '
         '"new_task": "<new goal title>" or null, '
-        '"cont": "<latest_session_id of the continued task>" or null, '
+        '"cont": "<latest_memory_id of the continued task>" or null, '
         '"kind": "habit" or null, '
         '"status": "open"|"done"|null, '
         '"habit": "<short label>" or null, '
@@ -252,7 +252,7 @@ def apply_extracted(facade, items: list[ExtractedMemory], *, default_bot: str = 
                 if cont is None:
                     cont = last_written.get(task)
                     if cont is None and task in known:
-                        cont = known[task].get("latest_session_id")
+                        cont = known[task].get("latest_memory_id")
             sid = facade.remember(
                 item.topic, item.summary, content=item.content,
                 importance=item.importance, bots=owners, chat=chat,

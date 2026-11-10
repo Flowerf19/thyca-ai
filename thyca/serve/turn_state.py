@@ -1,7 +1,7 @@
-"""Turn claims: which sessions have a turn in flight, and the delete gate.
+"""Turn claims: which conversations have a turn in flight, and the delete gate.
 
-One turn per session at a time; other sessions stay free. The claim is not just
-bookkeeping — a session being deleted must not lose the transcript of a turn
+One turn per conversation at a time; other conversations stay free. The claim is not just
+bookkeeping — a conversation being deleted must not lose the transcript of a turn
 that is still appending to it. ``delete_unclaimed`` therefore does the
 keep-check *and* the unlink under the claim lock, so no turn can claim in
 between and end up writing into a removed path.
@@ -17,7 +17,7 @@ import queue
 import threading
 
 from thyca.core.protocol import utc_now_ts
-from thyca.conversations.runtime import SessionBusy, SessionError, SessionManager
+from thyca.conversations.runtime import ConversationBusy, ConversationError, ConversationManager
 
 
 class TurnHub:
@@ -95,7 +95,7 @@ class _Turn:
 
 
 class TurnState:
-    """The one turn registry: ``session_id -> turn`` for turns in flight.
+    """The one turn registry: ``conversation_id -> turn`` for turns in flight.
 
     The claim (hub + started_at) and the loop job share one record behind
     one lock; :class:`_LoopTurns` is a view over it for the asyncio side.
@@ -107,9 +107,9 @@ class TurnState:
         # used from inside itself.
         self._lock = threading.Lock()
         self._turns: dict[str, _Turn] = {}
-        # Sessions with a manual LLM compaction in flight. Unlike the
+        # Conversations with a manual LLM compaction in flight. Unlike the
         # sync rule path (rewrite under this lock), summarization spends
-        # seconds off-lock, so the session needs its own busy marker that
+        # seconds off-lock, so the conversation needs its own busy marker that
         # claim/delete honor for the whole operation.
         self._compacts: set[str] = set()
 
@@ -118,76 +118,81 @@ class TurnState:
         with self._lock:
             return {sid: turn.started_at for sid, turn in self._turns.items()}
 
-    def started_at(self, session_id: str) -> str | None:
+    def started_at(self, conversation_id: str) -> str | None:
         with self._lock:
-            turn = self._turns.get(session_id)
+            turn = self._turns.get(conversation_id)
             return turn.started_at if turn is not None else None
 
-    def hub(self, session_id: str) -> TurnHub | None:
+    # True when a turn or manual compaction holds one conversation.
+    def is_busy(self, conversation_id: str) -> bool:
         with self._lock:
-            turn = self._turns.get(session_id)
+            return conversation_id in self._turns or conversation_id in self._compacts
+
+    def hub(self, conversation_id: str) -> TurnHub | None:
+        with self._lock:
+            turn = self._turns.get(conversation_id)
             return turn.hub if turn is not None else None
 
-    def job(self, session_id: str) -> _TurnJob | None:
+    def job(self, conversation_id: str) -> _TurnJob | None:
         """The loop job attached by :class:`_LoopTurns`, if any."""
         with self._lock:
-            turn = self._turns.get(session_id)
+            turn = self._turns.get(conversation_id)
             return turn.job if turn is not None else None
 
-    def claim(self, session_id: str) -> TurnHub:
-        """Take the session for a turn, or raise :class:`SessionBusy`.
+    def claim(self, conversation_id: str) -> TurnHub:
+        """Take the conversation for a turn, or raise :class:`ConversationBusy`.
 
-        Claiming is what makes a second turn on a busy session an explicit 409
+        Claiming is what makes a second turn on a busy conversation an explicit 409
         instead of a silent queue behind the first one's LLM call.
         """
         with self._lock:
-            if session_id in self._turns or session_id in self._compacts:
-                raise SessionBusy(session_id)
+            if conversation_id in self._turns or conversation_id in self._compacts:
+                raise ConversationBusy(conversation_id)
             hub = TurnHub()
-            self._turns[session_id] = _Turn(utc_now_ts(), hub)
+            self._turns[conversation_id] = _Turn(utc_now_ts(), hub)
             return hub
 
-    def begin_compact(self, session_id: str) -> None:
-        """Take a session for manual compaction, or raise SessionBusy."""
+    def begin_compact(self, conversation_id: str) -> None:
+        """Take a conversation for manual compaction, or raise ConversationBusy."""
         with self._lock:
-            if session_id in self._turns or session_id in self._compacts:
-                raise SessionBusy(session_id)
-            self._compacts.add(session_id)
+            if conversation_id in self._turns or conversation_id in self._compacts:
+                raise ConversationBusy(conversation_id)
+            self._compacts.add(conversation_id)
 
-    def end_compact(self, session_id: str) -> None:
+    def end_compact(self, conversation_id: str) -> None:
         with self._lock:
-            self._compacts.discard(session_id)
+            self._compacts.discard(conversation_id)
 
-    def attach(self, session_id: str, job: _TurnJob) -> None:
+    def attach(self, conversation_id: str, job: _TurnJob) -> None:
         """Pin the loop job to a claimed turn (the _LoopTurns.begin half)."""
         with self._lock:
-            turn = self._turns.get(session_id)
+            turn = self._turns.get(conversation_id)
             if turn is None:
-                raise SessionError(f"no turn claimed for session: {session_id}")
+                raise ConversationError(f"no turn claimed for conversation: {conversation_id}")
             turn.job = job
 
-    def detach(self, session_id: str, job: _TurnJob) -> None:
+    def detach(self, conversation_id: str, job: _TurnJob) -> None:
         """Unpin the loop job, but only when it is still this one."""
         with self._lock:
-            turn = self._turns.get(session_id)
+            turn = self._turns.get(conversation_id)
             if turn is not None and turn.job is job:
                 turn.job = None
 
-    def release(self, session_id: str) -> None:
+    def release(self, conversation_id: str) -> None:
         with self._lock:
-            turn = self._turns.pop(session_id, None)
+            turn = self._turns.pop(conversation_id, None)
         if turn is not None:
             turn.hub.close()
 
     # Delete one door unless a turn currently holds it.
-    def delete_unclaimed(self, manager: SessionManager, session_id: str) -> None:
-        """Delete a session unless a turn holds it.
+    def delete_unclaimed(self, manager: ConversationManager, conversation_id: str) -> None:
+        """Delete a conversation unless a turn holds it.
 
         The keep-check and the delete share this lock with :meth:`claim`, so a
         turn either claims before the delete (and gets a 409) or after it (and
-        loads a session that no longer exists). What cannot happen is the
+        loads a conversation that no longer exists). What cannot happen is the
         delete landing between the check and a claim: the turn would then keep
         appending to a removed door and silently drop the earlier history.
         """
         with self._lock:
-            manager.delete(session_id, keep=set(self._turns) | self._compacts)
+            manager.delete(conversation_id, keep=set(self._turns) | self._compacts)

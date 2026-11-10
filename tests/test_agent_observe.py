@@ -8,22 +8,22 @@ from thyca.agents.observe import Observe
 from thyca.agents.stage import Stage
 from thyca.agents.think import ChatReply
 from thyca.core.protocol import Message, ToolCall, ToolResult
-from thyca.conversations.runtime import SessionManager
+from thyca.conversations.runtime import ConversationManager
 
-# Build a canonical-timeline manager holding one execution session.
-def _canonical_manager(root: Path, limits=None) -> SessionManager:
-    from thyca.bots.timeline import CanonicalSessionStore, WorkspaceTimeline
+# Build a canonical-timeline manager holding one execution conversation.
+def _canonical_manager(root: Path, limits=None) -> ConversationManager:
+    from thyca.bots.timeline import CanonicalConversationStore, WorkspaceTimeline
     from thyca.core.channel import WindowRef
 
     timeline = WorkspaceTimeline(root, "thyca")
     window = WindowRef(
         window_id="thyca", channel_id="webui", kind="dm", participants=("thyca",))
-    session_id = "2026-01-01T00-00-00_ab12"
-    store = CanonicalSessionStore(
+    conversation_id = "2026-01-01T00-00-00_ab12"
+    store = CanonicalConversationStore(
         root / "bots" / "thyca" / "sessions",
-        timeline=timeline, window=window, session_id=session_id)
-    manager = SessionManager(store=store, limits=limits)
-    manager.load(session_id)
+        timeline=timeline, window=window, conversation_id=conversation_id)
+    manager = ConversationManager(store=store, limits=limits)
+    manager.load(conversation_id)
     return manager
 
 
@@ -40,7 +40,7 @@ def test_observe_reorders_results_and_extends_stage(tmp_path: Path) -> None:
             ToolResult(tool_call_id="first", name="one", content="1"),
         ],
     )
-    # persist user first so session isn't only the tool round
+    # persist user first so conversation isn't only the tool round
     manager.append(stage.messages[0])
 
     Observe(manager).observe(stage)
@@ -134,7 +134,7 @@ def test_observe_records_tool_latency_and_round(tmp_path: Path) -> None:
     assert tool.meta["round"] == 2
 
 
-def test_compact_delegates_to_session_manager(tmp_path: Path) -> None:
+def test_compact_delegates_to_conversation_manager(tmp_path: Path) -> None:
     manager = _canonical_manager(tmp_path)
     called: list[bool] = []
 
@@ -180,7 +180,7 @@ def test_m2_observe_normalizes_tool_path_content(tmp_path: Path) -> None:
     from thyca.agents.stage import Stage
     from thyca.core.protocol import ToolCall
     from thyca.llms.llm_base import ChatReply
-    from thyca.conversations.runtime import SessionManager
+    from thyca.conversations.runtime import ConversationManager
 
     from thyca.core.protocol import ToolResult
 

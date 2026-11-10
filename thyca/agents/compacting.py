@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from thyca.core.protocol import Message, utc_now_ts
-from thyca.conversations.runtime import SessionManager
+from thyca.conversations.runtime import ConversationManager
 from thyca.conversations.runtime.summary import SUMMARY_MAX_CHARS
 
 from .meta import compaction_meta
@@ -37,7 +37,7 @@ class Summarizer(Protocol):
 
 async def compact_with_llm(
     summarizer: Summarizer | None,
-    sessions: SessionManager,
+    conversations: ConversationManager,
     *,
     model: str | None,
     pricing: dict | None,
@@ -48,17 +48,17 @@ async def compact_with_llm(
     instructions: str | None = None,
     calibration: float = 1.0,
 ) -> dict:
-    """Compact ``sessions.current``, preferring an LLM summary body.
+    """Compact ``conversations.current``, preferring an LLM summary body.
 
     Returns the manual-compact result shape plus ``summary``:
     ``"llm"`` when the model body landed, ``"excerpt"`` when the
     rule-based fallback compacted, ``None`` when nothing compacted.
     """
-    snapshot = list(sessions.current.messages)
+    snapshot = list(conversations.current.messages)
     before = len(snapshot)
-    plan = sessions.compactor.plan(
+    plan = conversations.compactor.plan(
         snapshot,
-        sessions.limits.contextTokens,
+        conversations.limits.contextTokens,
         hot_tokens=hot_tokens,
         tools_tokens=tools_tokens,
         pending_user_tokens=pending_user_tokens,
@@ -84,10 +84,10 @@ async def compact_with_llm(
         except Exception:
             outcome = None
     if outcome is not None:
-        compacted = sessions.compactor.render(plan, outcome.text)
-        if sessions.apply_compaction(compacted, expected=snapshot):
+        compacted = conversations.compactor.render(plan, outcome.text)
+        if conversations.apply_compaction(compacted, expected=snapshot):
             try:
-                sessions.append(
+                conversations.append(
                     Message(
                         role="assistant",
                         content=None,
@@ -102,19 +102,19 @@ async def compact_with_llm(
             return {
                 "compacted": True,
                 "messages_before": before,
-                "messages_after": len(sessions.current.messages),
+                "messages_after": len(conversations.current.messages),
                 "summary": "llm",
             }
     # Fallback: excerpt body on fresh disk state (also covers the
     # changed-under-summary case, where the plan is stale by definition).
     if force:
-        result = sessions.compact_manual(
+        result = conversations.compact_manual(
             hot_tokens=hot_tokens,
             tools_tokens=tools_tokens,
             calibration=calibration,
         )
     else:
-        did = sessions.compact_if_needed(
+        did = conversations.compact_if_needed(
             hot_tokens=hot_tokens,
             tools_tokens=tools_tokens,
             pending_user_tokens=pending_user_tokens,
@@ -123,6 +123,6 @@ async def compact_with_llm(
         result = {
             "compacted": did,
             "messages_before": before,
-            "messages_after": len(sessions.current.messages),
+            "messages_after": len(conversations.current.messages),
         }
     return {**result, "summary": "excerpt" if result["compacted"] else None}

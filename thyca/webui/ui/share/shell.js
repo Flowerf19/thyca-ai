@@ -3,7 +3,7 @@
 // at load time:
 //   emitShell()  — synchronous DOM insert; call BEFORE avatars/sidebar/studio
 //                  scripts. Page content goes into the returned .workspace.
-//   bootShell()  — async roster/session fetch; call from the page's JS once
+//   bootShell()  — async roster/conversation fetch; call from the page's JS once
 //                  every shared script has loaded.
 // Script order for each page:
 //   util.js -> data.js -> shell.js -> emitShell() -> avatars.js -> idle.js
@@ -45,7 +45,7 @@ function thycaDialogs() {
 </div><section id="idle-panel" role="tabpanel" aria-labelledby="idle-tab" hidden><h3 class="idle-panel-heading">Rảnh một chút, vui một chút.</h3><p class="idle-panel-copy">Mắt thỉnh thoảng nhìn quanh. Một cử chỉ nhỏ, một câu nói vu vơ — rồi lại yên lặng. Mỗi người bạn có một nhịp riêng.</p><div class="idle-controls"><label><input type="checkbox" id="idle-auto-toggle" checked>Ngẫu nhiên khi rảnh</label><label><input type="checkbox" id="idle-comments-toggle" checked>Thỉnh thoảng nói nhỏ</label><button type="button" class="idle-random-button" id="idle-random"><svg class="icon"><use href="#i-retry"/></svg>Ngẫu nhiên ngay</button></div><div id="idle-expression-grid"></div><p class="idle-preview-hint">Lời nhắn xuất hiện trên thẻ bot. Khi bạn gọi hoặc giao việc, bot trở lại tập trung ngay.</p></section>
 <p class="dialog-note">Mỗi bot giữ màu, hình dạng và nhịp chớp mắt riêng. Biểu cảm theo trạng thái công việc; lúc rảnh có thêm cử chỉ và lời nhắn ngẫu nhiên, có thể tắt riêng.</p></div></dialog>
 <dialog class="screen-dialog" id="bot-drawer" aria-labelledby="bot-drawer-name"><div class="dialog-heading"><div><h2 id="bot-drawer-name">Thông tin bot</h2><p id="bot-drawer-subtitle">Một người bạn trong đội.</p></div><button class="icon-button dialog-close" aria-label="Đóng"><svg class="icon"><use href="#i-close"/></svg></button></div><div class="dialog-body" id="bot-drawer-body"></div></dialog>
-<dialog class="screen-dialog" id="group-dialog" aria-labelledby="group-dialog-title"><div class="dialog-heading"><div><h2 id="group-dialog-title">Một cuộc trò chuyện chung.</h2><p>Chọn những người bạn sẽ cùng tham gia.</p></div><button class="icon-button dialog-close" aria-label="Đóng"><svg class="icon"><use href="#i-close"/></svg></button></div><form class="dialog-body group-form" id="group-form"><label class="sr-only" for="group-title">Tên hội thoại</label><input type="text" id="group-title" maxlength="70" placeholder="Tên cuộc trò chuyện" required><div id="group-options"></div><div class="dialog-actions"><button class="primary-action" type="submit">Tạo hội thoại</button></div></form></dialog>
+<dialog class="screen-dialog" id="group-dialog" aria-labelledby="group-dialog-title"><div class="dialog-heading"><div><h2 id="group-dialog-title">Một cuộc trò chuyện chung.</h2><p>Chọn những người bạn sẽ cùng tham gia.</p></div><button class="icon-button dialog-close" aria-label="Đóng"><svg class="icon"><use href="#i-close"/></svg></button></div><form class="dialog-body group-form" id="group-form"><div id="group-options"></div><div class="dialog-actions"><button class="primary-action" type="submit">Tạo hội thoại</button></div></form></dialog>
 <dialog class="screen-dialog" id="settings-dialog" aria-labelledby="settings-title"><div class="dialog-heading"><div><h2 id="settings-title">Cài đặt</h2><p>Bot của bạn, giao diện máy này, giới hạn chạy và trạng thái máy chủ — chung cho mọi trang.</p></div><button class="icon-button dialog-close" aria-label="Đóng"><svg class="icon"><use href="#i-close"/></svg></button></div><div class="dialog-body" id="settings-body">
  <section class="paper-card" aria-labelledby="settings-bots-title">
   <div class="eyebrow">Bot của bạn</div>
@@ -144,7 +144,7 @@ function emitShell(current, { title = 'Thyca' } = {}) {
   return $('.workspace', main);
 }
 
-/* Async boot: live roster + sessions into the shared sidebar. */
+/* Async boot: live roster + conversations into the shared sidebar. */
 async function bootShell() {
   applyPrefs(readPrefs(), { save: false });  // re-apply the saved preferences for this page
   await loadRoster();                                        // API: GET /api/bots
@@ -152,5 +152,5 @@ async function bootShell() {
   bots.forEach(updateCard);
   $('.bot-count').textContent = bots.length + ' người bạn';
   rebuildExpressionBots();
-  try { await refreshSessions(); renderGroups(); } catch {}  // API: GET /api/conversations
+  try { await refreshConversations(); renderGroups(); } catch {}  // API: GET /api/conversations
 }

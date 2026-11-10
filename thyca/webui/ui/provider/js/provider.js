@@ -710,7 +710,7 @@ function bind() {
   $('#delete-model').onclick = deleteModel;
 }
 function selectBot(id) { if (id && getBot(id)) ctx.navigate('profile', { search: '?bot=' + encodeURIComponent(id) }); }
-function loadSession(id, title, botId) { if (botId) selectBot(botId); }
+function loadConversation(id, botId) { if (botId) selectBot(botId); }
 function labelProfileLinks() {
   if (!ctx.isActive()) return;
   for (const button of [...ctx.sidebar.querySelectorAll('[data-action="select"]')]) {
@@ -733,5 +733,5 @@ async function boot() {
   }
 }
   const ready = boot();
-  return { ready, selectBot, loadSession, sidebarLabel(_id, name) { return `Hồ sơ của ${name}`; } };
+  return { ready, selectBot, loadConversation, sidebarLabel(_id, name) { return `Hồ sơ của ${name}`; } };
 } });

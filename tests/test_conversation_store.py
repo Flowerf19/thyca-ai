@@ -67,6 +67,7 @@ def test_public_store_package_exports_expected_api() -> None:
         DB_FILE_NAME,
         DEFAULT_PAGE_LIMIT,
         DMBootstrapIntent,
+        PruneResult,
         InitializationResult,
         MAX_CONTENT_LEN,
         MAX_JSON_DEPTH,
@@ -80,7 +81,7 @@ def test_public_store_package_exports_expected_api() -> None:
         RetryReadiness,
         ensure_runtime_store,
         is_runtime_ready,
-        require_no_legacy_sessions,
+        require_no_legacy_conversations,
         resolve_ref,
         runtime_reader_for,
         assemble_history,
@@ -92,8 +93,6 @@ def test_public_store_package_exports_expected_api() -> None:
         append_server_message,
         append_turn_error,
         record_turn_error,
-        mark_naming_attempted,
-        store_title_if_missing,
         project_for_trace,
         trace_turns_projected,
         create_group,
@@ -107,13 +106,14 @@ def test_public_store_package_exports_expected_api() -> None:
         'AgentStore': AgentStore,
         'AdminStore': AdminStore,
         'ConversationStoreError': ConversationStoreError,
+        'PruneResult': PruneResult,
         'RootInitializationIntent': RootInitializationIntent,
         'DMBootstrapIntent': DMBootstrapIntent,
         'RuntimeReadIntent': RuntimeReadIntent,
         'RuntimeWriteIntent': RuntimeWriteIntent,
         'ensure_runtime_store': ensure_runtime_store,
         'is_runtime_ready': is_runtime_ready,
-        'require_no_legacy_sessions': require_no_legacy_sessions,
+        'require_no_legacy_conversations': require_no_legacy_conversations,
         'resolve_ref': resolve_ref,
         'runtime_reader_for': runtime_reader_for,
         'RetryReadiness': RetryReadiness,
@@ -131,8 +131,6 @@ def test_public_store_package_exports_expected_api() -> None:
         'append_server_message': append_server_message,
         'append_turn_error': append_turn_error,
         'record_turn_error': record_turn_error,
-        'mark_naming_attempted': mark_naming_attempted,
-        'store_title_if_missing': store_title_if_missing,
         'project_for_trace': project_for_trace,
         'trace_turns_projected': trace_turns_projected,
         'create_group': create_group,
@@ -260,8 +258,7 @@ def test_group_membership_and_former_member_blocked(tmp_path: Path) -> None:
     with pytest.raises(ConversationStoreError, match='unavailable'):
         agents.read(group.ref, 'mallory')
     # Removing bob revokes both read and write.
-    admin.set_metadata(group.ref, title=None, title_source=None,
-                       naming_attempted=False, participants=['alice'])
+    admin.set_metadata(group.ref, participants=['alice'])
     with pytest.raises(ConversationStoreError, match='unavailable'):
         agents.append(group.ref, 'bob', Message(role='user', content='late'))
     with pytest.raises(ConversationStoreError, match='unavailable'):
@@ -384,7 +381,7 @@ def test_hardlinked_database_alias_is_refused_without_exposing_messages(tmp_path
 def test_sidecar_unlinked_mid_check_is_transient_not_corrupt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from thyca.conversations.runtime.store import SessionStore
+    from thyca.conversations.runtime.store import ConversationStore
 
     ref = _setup_dm(tmp_path, 'coder')
     AgentStore(tmp_path).append(ref, 'coder', Message(role='user', content='keep me'))
@@ -420,10 +417,10 @@ def test_sidecar_unlinked_mid_check_is_transient_not_corrupt(
         return real_open(path, flags, *args, **kwargs)
 
     monkeypatch.setattr(os, 'open', _once_unlinking_open)
-    session = SessionStore(tmp_path / 'sessions').load('coder')
-    assert [m.content for m in session.messages] == ['keep me']
-    assert session.bots == ['coder']
-    assert session.dm_bot == 'coder'
+    conversation = ConversationStore(tmp_path / 'sessions').load('coder')
+    assert [m.content for m in conversation.messages] == ['keep me']
+    assert conversation.bots == ['coder']
+    assert conversation.dm_bot == 'coder'
     assert fired == [True]
     # Data survived: a fresh read with the real opener sees the message.
     assert [m.content for m in AgentStore(tmp_path).read(ref, 'coder').messages] == ['keep me']
@@ -432,7 +429,7 @@ def test_sidecar_unlinked_mid_check_is_transient_not_corrupt(
 def test_hardlinked_sidecar_is_refused(tmp_path: Path) -> None:
     # Fail-closed invariant: a hardlinked -wal (nlink>1) is refused even
     # though the alias name stays outside the namespace scan. Asserted at
-    # the AgentStore layer, where the guard enforces it; Session mapping
+    # the AgentStore layer, where the guard enforces it; ConversationRuntime mapping
     # of the same scope is covered by the read_bots/read_dm test below.
     ref = _setup_dm(tmp_path, 'coder')
     AgentStore(tmp_path).append(ref, 'coder', Message(role='user', content='private fake'))
@@ -455,22 +452,22 @@ def test_hardlinked_sidecar_is_refused(tmp_path: Path) -> None:
 def test_read_bots_and_dm_surface_store_errors(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from thyca.conversations.runtime import SessionCorrupt, SessionNotFound
-    from thyca.conversations.runtime.store import SessionStore
+    from thyca.conversations.runtime import ConversationCorrupt, ConversationNotFound
+    from thyca.conversations.runtime.store import ConversationStore
     from thyca.conversations.store import runtime as runtime_module
     from thyca.conversations.store.contracts import _local_error
 
     _setup_dm(tmp_path, 'coder')
-    store = SessionStore(tmp_path / 'sessions')
+    store = ConversationStore(tmp_path / 'sessions')
     binding = tmp_path / 'sessions' / 'coder.jsonl'
 
     def _raise_global(*args, **kwargs):
         raise ConversationStoreError()
 
     monkeypatch.setattr(runtime_module, 'resolve_ref', _raise_global)
-    with pytest.raises(SessionCorrupt):
+    with pytest.raises(ConversationCorrupt):
         store.read_bots(binding)
-    with pytest.raises(SessionCorrupt):
+    with pytest.raises(ConversationCorrupt):
         store.read_dm(binding)
 
     ref = ConversationRef.dm('coder')
@@ -479,9 +476,9 @@ def test_read_bots_and_dm_surface_store_errors(
         raise _local_error(ref)
 
     monkeypatch.setattr(runtime_module, 'resolve_ref', _raise_local)
-    with pytest.raises(SessionNotFound):
+    with pytest.raises(ConversationNotFound):
         store.read_bots(binding)
-    with pytest.raises(SessionNotFound):
+    with pytest.raises(ConversationNotFound):
         store.read_dm(binding)
 
     monkeypatch.undo()
@@ -510,18 +507,23 @@ def test_oversized_and_bad_typed_content_rejected(tmp_path: Path) -> None:
 
 def test_bad_metadata_shapes_and_sizes_rejected(tmp_path: Path) -> None:
     admin = _admin(tmp_path)
-    with pytest.raises(ValueError):
-        admin.create_group(['coder'], title='x' * 100_000)
     ref = _setup_dm(tmp_path)
     with pytest.raises(ValueError):
-        admin.set_metadata(ref, title='T', title_source='user',
-                           naming_attempted='yes', participants=['coder'])  # type: ignore[arg-type]
+        admin.set_metadata(ref, participants=[])
     with pytest.raises(ValueError):
-        admin.set_metadata(ConversationRef.dm('coder'), title='T', title_source='user',
-                           naming_attempted=False, participants=['mallory'])
+        admin.set_metadata(ref, participants=['coder', 'coder'])
+    with pytest.raises(ValueError):
+        admin.set_metadata(ConversationRef.dm('coder'),
+                           participants=['mallory'])
     with pytest.raises(ConversationStoreError):
-        admin.set_metadata(ConversationRef.dm('ghost'), title='T', title_source=None,
-                           naming_attempted=False, participants=['ghost'])
+        admin.set_metadata(ConversationRef.dm('ghost'),
+                           participants=['ghost'])
+    # A door carrying the removed title keys is invalid metadata now.
+    from thyca.conversations.store.contracts import validate_metadata
+
+    with pytest.raises(ValueError):
+        validate_metadata(ref, {'title': None, 'title_source': None,
+                                'participants': ['coder']})
 
 
 @pytest.mark.parametrize('meta_factory', [_deep_meta, _deep_tuple_meta], ids=['dict', 'tuple'])
@@ -533,13 +535,13 @@ def test_deep_message_metadata_is_rejected_without_creating_root(
     root = tmp_path / 'missing-root'
     message = Message(role='user', content='safe text', meta=meta_factory())
     open_calls = []
-    real_open_db = agent_module.open_existing_session
+    real_open_db = agent_module.open_existing_conversation
 
     def track_open_db(*args, **kwargs):
         open_calls.append((args, kwargs))
         return real_open_db(*args, **kwargs)
 
-    monkeypatch.setattr(agent_module, 'open_existing_session', track_open_db)
+    monkeypatch.setattr(agent_module, 'open_existing_conversation', track_open_db)
     error = None
     try:
         AgentStore(root).append(ConversationRef.dm('coder'), 'coder', message)
@@ -551,7 +553,7 @@ def test_deep_message_metadata_is_rejected_without_creating_root(
     )
 
 
-def test_open_session_factory_seams_intercept_valid_operations(
+def test_open_conversation_factory_seams_intercept_valid_operations(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from thyca.conversations.store import admin as admin_module
@@ -560,8 +562,8 @@ def test_open_session_factory_seams_intercept_valid_operations(
     ref = _setup_dm(tmp_path)
     agent_calls = []
     admin_calls = []
-    real_agent_open = agent_module.open_existing_session
-    real_admin_open = admin_module.open_existing_session
+    real_agent_open = agent_module.open_existing_conversation
+    real_admin_open = admin_module.open_existing_conversation
 
     def track_agent_open(*args, **kwargs):
         agent_calls.append((args, kwargs))
@@ -571,8 +573,8 @@ def test_open_session_factory_seams_intercept_valid_operations(
         admin_calls.append((args, kwargs))
         return real_admin_open(*args, **kwargs)
 
-    monkeypatch.setattr(agent_module, 'open_existing_session', track_agent_open)
-    monkeypatch.setattr(admin_module, 'open_existing_session', track_admin_open)
+    monkeypatch.setattr(agent_module, 'open_existing_conversation', track_agent_open)
+    monkeypatch.setattr(admin_module, 'open_existing_conversation', track_admin_open)
     AgentStore(tmp_path).append(ref, 'coder', Message(role='user', content='seam check'))
     group = _admin(tmp_path).create_group(['coder'])
 
@@ -616,6 +618,32 @@ def test_corrupt_rows_raise_wrapped_errors(tmp_path: Path) -> None:
         conn.execute('DROP TRIGGER no_update_messages')
         conn.execute("UPDATE conversations SET metadata='not json' WHERE id='coder'")
         conn.execute("UPDATE messages SET data='[1,2' WHERE id='coder'")
+        conn.commit()
+    finally:
+        conn.close()
+    with pytest.raises(ConversationStoreError):
+        AgentStore(tmp_path).read(ref, 'coder')
+
+
+def test_legacy_metadata_is_rejected_on_read(tmp_path: Path) -> None:
+    """Doors written while automatic naming existed carry removed keys.
+
+    Title and naming keys have no compatibility layer any longer: such a
+    door fails validation on read instead of loading.
+    """
+    ref = _setup_dm(tmp_path)
+    AgentStore(tmp_path).append(ref, 'coder', Message(role='user', content='hi'))
+    legacy = json.dumps(
+        {"title": None, "title_source": None, "naming_attempted": True,
+         "participants": ["coder"]},
+        sort_keys=True,
+    )
+    conn = sqlite3.connect(str(tmp_path / 'conversations.db'))
+    try:
+        conn.execute(
+            'UPDATE conversations SET metadata=? WHERE kind=? AND id=?',
+            (legacy, 'dm', 'coder'),
+        )
         conn.commit()
     finally:
         conn.close()
@@ -674,13 +702,13 @@ def test_invalid_purge_cutoff_is_rejected_before_creating_root(
 
     root = tmp_path / 'missing-root'
     open_calls = []
-    real_open_db = admin_module.open_existing_session
+    real_open_db = admin_module.open_existing_conversation
 
     def track_open_db(*args, **kwargs):
         open_calls.append((args, kwargs))
         return real_open_db(*args, **kwargs)
 
-    monkeypatch.setattr(admin_module, 'open_existing_session', track_open_db)
+    monkeypatch.setattr(admin_module, 'open_existing_conversation', track_open_db)
     error = None
     try:
         AdminStore(root).purge_before(cutoff)
@@ -878,8 +906,7 @@ def test_pre_commit_transaction_failures_are_sanitized_without_commit(
         elif operation == 'append':
             agents.append(ref, 'coder', Message(role='user', content='not committed'))
         elif operation == 'set_metadata':
-            admin.set_metadata(ref, title='changed', title_source='user',
-                               naming_attempted=True, participants=['coder'])
+            admin.set_metadata(ref, participants=['coder'])
         elif operation == 'purge':
             admin.purge_before('9999-12-31T23:59:59Z')
         elif operation == 'compact':
@@ -995,16 +1022,16 @@ def test_concurrent_group_appends_multiprocess_no_loss(tmp_path: Path) -> None:
     assert seqs == list(range(1, 101))
 
 
-def test_legacy_sessions_root_fails_closed(tmp_path: Path) -> None:
-    from thyca.conversations.store.runtime import require_no_legacy_sessions
+def test_legacy_conversations_root_fails_closed(tmp_path: Path) -> None:
+    from thyca.conversations.store.runtime import require_no_legacy_conversations
 
-    require_no_legacy_sessions(tmp_path)
-    sessions_dir = tmp_path / 'sessions'
-    sessions_dir.mkdir()
-    require_no_legacy_sessions(tmp_path)
-    (sessions_dir / '2026-01-01.jsonl').write_text('{}\n', encoding='utf-8')
+    require_no_legacy_conversations(tmp_path)
+    conversations_dir = tmp_path / 'sessions'
+    conversations_dir.mkdir()
+    require_no_legacy_conversations(tmp_path)
+    (conversations_dir / '2026-01-01.jsonl').write_text('{}\n', encoding='utf-8')
     with pytest.raises(RuntimeError, match='refusing to start'):
-        require_no_legacy_sessions(tmp_path)
+        require_no_legacy_conversations(tmp_path)
 
 
 @pytest.mark.parametrize('artifact', [
@@ -1096,10 +1123,10 @@ def test_admin_list_skips_corrupt_door_but_direct_read_fails(tmp_path: Path) -> 
 
 def test_runtime_paths_reject_timestamp_public_doors(tmp_path: Path) -> None:
     from thyca.conversations.store.runtime import ensure_runtime_store, resolve_ref
-    from thyca.conversations.runtime.store import SessionStore
+    from thyca.conversations.runtime.store import ConversationStore
 
     ensure_runtime_store(tmp_path)
-    store = SessionStore(tmp_path / 'sessions')
+    store = ConversationStore(tmp_path / 'sessions')
     legacy_id = '2026-01-01T00-00-00_ab12'
     with pytest.raises(Exception):
         resolve_ref(tmp_path, legacy_id)
@@ -1110,3 +1137,68 @@ def test_runtime_paths_reject_timestamp_public_doors(tmp_path: Path) -> None:
     # Public binding paths reject canonical timestamp ids outright.
     with pytest.raises(Exception):
         store.path_for(legacy_id)
+
+
+def test_prune_bot_from_groups_is_atomic_and_leaves_dm(tmp_path: Path) -> None:
+    _initialize(tmp_path)
+    admin = _admin(tmp_path)
+    _bootstrap(tmp_path, 'coder')
+    first = admin.create_group(['coder', 'helper'])
+    second = admin.create_group(['coder', 'helper', 'third'])
+    result = admin.prune_bot_from_groups('coder')
+    assert sorted(result.pruned) == sorted([first.ref.id, second.ref.id])
+    assert result.dissolved == ()
+    listed, _more = admin.list(limit=50)
+    by_id = {row.ref.id: tuple(row.participants) for row in listed}
+    # Groups keep the other members; the DM door is untouched.
+    assert by_id[first.ref.id] == ('helper',)
+    assert by_id[second.ref.id] == ('helper', 'third')
+    assert by_id['coder'] == ('coder',)
+    # A bot in no group is a no-op.
+    spare = admin.prune_bot_from_groups('ghost')
+    assert spare.pruned == () and spare.dissolved == ()
+
+
+def test_prune_dissolves_group_left_empty(tmp_path: Path) -> None:
+    _initialize(tmp_path)
+    admin = _admin(tmp_path)
+    _bootstrap(tmp_path, 'coder')
+    solo = admin.create_group(['coder', 'helper'])
+    pair = admin.create_group(['coder', 'helper', 'third'])
+    # Shrink solo to one member so the next prune would empty it.
+    admin.set_metadata(
+        solo.ref, participants=['helper'],
+    )
+    agents = AgentStore(tmp_path)
+    agents.append(solo.ref, 'helper', Message(role='user', content='solo says hi'))
+    agents.append(pair.ref, 'helper', Message(role='user', content='pair says hi'))
+    result = admin.prune_bot_from_groups('helper')
+    assert result.dissolved == (solo.ref.id,)
+    assert result.pruned == (pair.ref.id,)
+    listed, _more = admin.list(limit=50)
+    by_id = {row.ref.id: tuple(row.participants) for row in listed}
+    # The empty group is gone; the survivor keeps its roster and messages,
+    # and the DM door is untouched.
+    assert solo.ref.id not in by_id
+    assert by_id[pair.ref.id] == ('coder', 'third')
+    assert by_id['coder'] == ('coder',)
+    assert [m.content for m in agents.read(pair.ref, 'coder').messages] == ['pair says hi']
+    with pytest.raises(ConversationStoreError):
+        agents.read(solo.ref, 'coder')
+    conn = sqlite3.connect(str(tmp_path / 'conversations.db'))
+    try:
+        # No door and no orphan messages remain for the dissolved group.
+        assert conn.execute(
+            'SELECT COUNT(*) FROM conversations WHERE kind=? AND id=?',
+            ('group', solo.ref.id),
+        ).fetchone()[0] == 0
+        assert conn.execute(
+            'SELECT COUNT(*) FROM messages WHERE kind=? AND id=?',
+            ('group', solo.ref.id),
+        ).fetchone()[0] == 0
+        # The append-only trigger is back in place after the dissolve.
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute("DELETE FROM messages WHERE kind=? AND id=?", ('group', pair.ref.id))
+        conn.rollback()
+    finally:
+        conn.close()

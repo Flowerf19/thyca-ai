@@ -222,7 +222,7 @@ def _validate_top_namespace(root_fd: int) -> None:
         if name.name.startswith('conversations.') and name.name not in allowed:
             raise ConversationStoreError()
     # Transient checkpoint race: -wal/-shm can appear/disappear or be
-    # replaced while another store session checkpoints. Retry briefly
+    # replaced while another store conversation checkpoints. Retry briefly
     # under the approved LOCK_SH discipline instead of failing closed
     # immediately. Persistent mismatches/modes still fail closed.
     for _ in range(5):

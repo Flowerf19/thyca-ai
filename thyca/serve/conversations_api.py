@@ -20,7 +20,7 @@ from thyca.bots.registry import RegistryError
 from thyca.core.conversation import ConversationRef
 from thyca.serve.bridge import _log_turn_failure, pump_stream, stream_turn
 from thyca.serve.errors import _with_json, parse_turn_body, public_turn_error
-from thyca.conversations.runtime.wire import session_http_error
+from thyca.conversations.runtime.wire import conversation_http_error
 
 if TYPE_CHECKING:
     from thyca.app.chat_app import ChatApp
@@ -45,7 +45,6 @@ __all__ = [
     "group_delete",
     "group_detail",
     "group_operations",
-    "group_rename",
     "group_tasks",
     "group_turn",
     "group_turn_cancel",
@@ -56,9 +55,9 @@ __all__ = [
 
 # Send one public conversation error (kind is stated, never guessed).
 def _conv_error(handler, exc: Exception) -> None:
-    mapped = session_http_error(exc)
+    mapped = conversation_http_error(exc)
     if mapped is not None:
-        handler._json(mapped[0], {"error": mapped[1].replace("session", "conversation")})
+        handler._json(mapped[0], {"error": mapped[1]})
         return
     from thyca.conversations.store.contracts import ConversationStoreError
 
@@ -119,12 +118,12 @@ def bot_exchange_thread(
 
 # Read one bot's operational view in one exact conversation.
 def bot_operations(
-    handler, app: "ChatApp | None", bot_id: str, session_id: str, query: str,
+    handler, app: "ChatApp | None", bot_id: str, conversation_id: str, query: str,
 ) -> None:
     """Read one bot's operational view in one exact room."""
     from thyca.app.turn_options import InvalidTurnOption, validate_turn_options
     from thyca.bots.timeline import TimelineError
-    from thyca.conversations.runtime import SessionCorrupt, SessionError, SessionNotFound
+    from thyca.conversations.runtime import ConversationCorrupt, ConversationError, ConversationNotFound
 
     if _missing_chat(handler, app):
         return
@@ -149,15 +148,15 @@ def bot_operations(
         return
     try:
         payload = app.bot_operations(
-            session_id, bot_id, model=model, effort=effort,
+            conversation_id, bot_id, model=model, effort=effort,
         )
     except InvalidTurnOption:
         handler._json(400, {"error": "invalid model or effort"})
     except RegistryError:
         handler._json(404, {"error": "bot or room not found"})
-    except SessionNotFound:
-        handler._json(404, {"error": "session not found"})
-    except (TimelineError, FileNotFoundError, SessionCorrupt, SessionError, OSError):
+    except ConversationNotFound:
+        handler._json(404, {"error": "conversation not found"})
+    except (TimelineError, FileNotFoundError, ConversationCorrupt, ConversationError, OSError):
         handler._json(503, {"error": "bot information unavailable"})
     except Exception:
         traceback.print_exc(file=sys.stderr)
@@ -167,10 +166,10 @@ def bot_operations(
 
 
 # Read one bot's live tasks in one exact conversation.
-def bot_tasks(handler, app: "ChatApp | None", bot_id: str, session_id: str, query: str) -> None:
+def bot_tasks(handler, app: "ChatApp | None", bot_id: str, conversation_id: str, query: str) -> None:
     """Open runtime tasks plus live calls for one room participant."""
     from thyca.bots.timeline import TimelineError
-    from thyca.conversations.runtime import SessionCorrupt, SessionError, SessionNotFound
+    from thyca.conversations.runtime import ConversationCorrupt, ConversationError, ConversationNotFound
 
     if _missing_chat(handler, app):
         return
@@ -178,12 +177,12 @@ def bot_tasks(handler, app: "ChatApp | None", bot_id: str, session_id: str, quer
         handler._json(400, {"error": "invalid query"})
         return
     try:
-        payload = app.bot_room_tasks(session_id, bot_id)
+        payload = app.bot_room_tasks(conversation_id, bot_id)
     except RegistryError:
         handler._json(404, {"error": "bot or room not found"})
-    except SessionNotFound:
-        handler._json(404, {"error": "session not found"})
-    except (TimelineError, FileNotFoundError, SessionCorrupt, SessionError, OSError):
+    except ConversationNotFound:
+        handler._json(404, {"error": "conversation not found"})
+    except (TimelineError, FileNotFoundError, ConversationCorrupt, ConversationError, OSError):
         handler._json(503, {"error": "bot information unavailable"})
     except Exception:
         traceback.print_exc(file=sys.stderr)
@@ -194,7 +193,7 @@ def bot_tasks(handler, app: "ChatApp | None", bot_id: str, session_id: str, quer
 
 # Reject bodies that try to name a conversation by legacy id fields.
 def _reject_legacy_id_fields(handler, payload: dict) -> bool:
-    if "session_id" in payload or "id" in payload:
+    if "conversation_id" in payload or "id" in payload:
         handler._json(400, {"error": "invalid body"})
         return True
     return False
@@ -213,7 +212,6 @@ def to_summary(payload: dict) -> dict:
     kind = _payload_kind(payload)
     out = {
         "kind": kind,
-        "title": payload.get("title"),
         "updated_at": payload.get("updated_at"),
         "message_count": payload.get("message_count"),
         "turns": payload.get("turns"),
@@ -221,9 +219,9 @@ def to_summary(payload: dict) -> dict:
         "channel": payload.get("channel", "webui"),
     }
     if kind == "dm":
-        out["bot_id"] = payload.get("dm") or payload.get("id")
+        out["bot_id"] = payload.get("dm") or payload.get("conversation_id")
     else:
-        out["group_id"] = payload.get("id")
+        out["group_id"] = payload.get("conversation_id")
     return out
 
 
@@ -231,13 +229,13 @@ def to_summary(payload: dict) -> dict:
 def to_detail(payload: dict) -> dict:
     kind = _payload_kind(payload)
     out = dict(payload)
-    for key in ("id", "dm", "window_id", "session_id"):
+    for key in ("dm", "window_id", "conversation_id"):
         out.pop(key, None)
     out["kind"] = kind
     if kind == "dm":
-        out["bot_id"] = payload.get("dm") or payload.get("id")
+        out["bot_id"] = payload.get("dm") or payload.get("conversation_id")
     else:
-        out["group_id"] = payload.get("id")
+        out["group_id"] = payload.get("conversation_id")
     return out
 
 
@@ -283,7 +281,7 @@ def conversation_list(handler, app: "ChatApp | None", query: str = "") -> None:
     except Exception as exc:
         _conv_error(handler, exc)
         return
-    items = [to_summary(item) for item in payload.get("sessions", [])]
+    items = [to_summary(item) for item in payload.get("conversations", [])]
     if kind is not None:
         items = [item for item in items if item["kind"] == kind]
     handler._json(200, {"model": payload.get("model"), "conversations": items})
@@ -328,10 +326,6 @@ def group_create(handler, app: "ChatApp | None") -> None:
     if _reject_legacy_id_fields(handler, payload):
         return
     bots = payload.get("bots")
-    title = payload.get("title")
-    if title is not None and not isinstance(title, str):
-        handler._json(400, {"error": "invalid title"})
-        return
     if (
         not isinstance(bots, list)
         or len(bots) < 2
@@ -342,10 +336,6 @@ def group_create(handler, app: "ChatApp | None") -> None:
         return
     try:
         detail = app.create(bots=list(bots))
-        ref = _group_ref(detail["id"])
-        if title is not None and title.strip():
-            app.rename_session(ref.id, title)
-            detail = app.get_payload(ref.id)
     except ValueError:
         handler._json(400, {"error": "invalid bots"})
     except RegistryError:
@@ -370,38 +360,6 @@ def group_detail(handler, app: "ChatApp | None", group_id: str) -> None:
         handler._json(200, to_detail(detail))
 
 
-# Rename one group from its explicit group id.
-def group_rename(handler, app: "ChatApp | None", group_id: str) -> None:
-    if _missing_chat(handler, app):
-        return
-    try:
-        ref = _group_ref(group_id)
-    except ValueError:
-        handler._json(404, {"error": "conversation not found"})
-        return
-    if _require_kind(handler, app, ref) is None:
-        return
-
-    # Store the user-typed title for this group only.
-    def run(payload: dict) -> None:
-        if _reject_legacy_id_fields(handler, payload):
-            return
-        title = payload.get("title")
-        if not isinstance(title, str):
-            handler._json(400, {"error": "invalid title"})
-            return
-        try:
-            stored = app.rename_session(ref.id, title)
-        except ValueError:
-            handler._json(400, {"error": "invalid title"})
-        except Exception as exc:
-            _conv_error(handler, exc)
-        else:
-            handler._json(200, {"ok": True, "kind": "group", "group_id": ref.id, "title": stored})
-
-    _with_json(handler, run)
-
-
 # Delete one group from its explicit group id.
 def group_delete(handler, app: "ChatApp | None", group_id: str) -> None:
     if _missing_chat(handler, app):
@@ -420,7 +378,7 @@ def group_delete(handler, app: "ChatApp | None", group_id: str) -> None:
     except Exception:
         pass
     try:
-        app.delete_session(ref.id)
+        app.delete_conversation(ref.id)
     except Exception as exc:
         from thyca.conversations.runtime.wire import delete_error
 
@@ -428,7 +386,7 @@ def group_delete(handler, app: "ChatApp | None", group_id: str) -> None:
         if mapped is None:
             _conv_error(handler, exc)
             return
-        handler._json(mapped[0], {"error": mapped[1].replace("session", "conversation")})
+        handler._json(mapped[0], {"error": mapped[1]})
     else:
         handler._json(200, {"ok": True, "kind": "group", "group_id": ref.id})
 
@@ -491,8 +449,8 @@ def _conv_turn(handler, app: "ChatApp | None", ref: ConversationRef) -> None:
 
     if _missing_chat(handler, app):
         return
-    session_id = _turn_target(handler, app, ref)
-    if session_id is None:
+    conversation_id = _turn_target(handler, app, ref)
+    if conversation_id is None:
         return
 
     # Parse and run the turn for the already-validated door.
@@ -509,17 +467,17 @@ def _conv_turn(handler, app: "ChatApp | None", ref: ConversationRef) -> None:
             handler._json(_status, {"error": message})
             return
         except ValueError as exc:
-            _log_turn_failure(app, session_id, None, exc)
+            _log_turn_failure(app, conversation_id, None, exc)
             handler._json(500, {"error": "chat unavailable"})
             return
         try:
-            result = app.turn(session_id, text, model=model, effort=effort, retry=retry)
+            result = app.turn(conversation_id, text, model=model, effort=effort, retry=retry)
         except TurnCancelled:
             handler._json(200, {"cancelled": True})
         except Exception as exc:
             status, _code, message = public_turn_error(exc)
-            _log_turn_failure(app, session_id, model, exc)
-            handler._json(status, {"error": message.replace("session", "conversation")})
+            _log_turn_failure(app, conversation_id, model, exc)
+            handler._json(status, {"error": message})
         else:
             handler._json(200, to_detail(result))
 
@@ -532,8 +490,8 @@ def _conv_turn_stream(handler, app: "ChatApp | None", ref: ConversationRef) -> N
 
     if _missing_chat(handler, app):
         return
-    session_id = _turn_target(handler, app, ref)
-    if session_id is None:
+    conversation_id = _turn_target(handler, app, ref)
+    if conversation_id is None:
         return
 
     # Parse the body, then pump the turn for the validated door.
@@ -550,11 +508,11 @@ def _conv_turn_stream(handler, app: "ChatApp | None", ref: ConversationRef) -> N
             handler._json(_status, {"error": message})
             return
         except ValueError as exc:
-            _log_turn_failure(app, session_id, None, exc)
+            _log_turn_failure(app, conversation_id, None, exc)
             handler._json(500, {"error": "chat unavailable"})
             return
         stream_turn(
-            handler, app, session_id, text, model=model, effort=effort, retry=retry,
+            handler, app, conversation_id, text, model=model, effort=effort, retry=retry,
             detail_transform=to_detail,
         )
 
@@ -563,12 +521,12 @@ def _conv_turn_stream(handler, app: "ChatApp | None", ref: ConversationRef) -> N
 
 # Cancel the in-flight turn of the addressed conversation.
 def _conv_turn_cancel(handler, app: "ChatApp | None", ref: ConversationRef) -> None:
-    from thyca.app.chat_app import SessionIdle, TurnInFlight
+    from thyca.app.chat_app import ConversationIdle, TurnInFlight
 
     if _missing_chat(handler, app):
         return
-    session_id = _turn_target(handler, app, ref)
-    if session_id is None:
+    conversation_id = _turn_target(handler, app, ref)
+    if conversation_id is None:
         return
     try:
         handler._read_body()
@@ -576,8 +534,8 @@ def _conv_turn_cancel(handler, app: "ChatApp | None", ref: ConversationRef) -> N
         handler._json(400, {"error": "invalid body"})
         return
     try:
-        app.cancel(session_id)
-    except SessionIdle:
+        app.cancel(conversation_id)
+    except ConversationIdle:
         handler._json(409, {"error": "conversation idle"})
     except TurnInFlight:
         handler._json(409, {"error": "turn in flight"})
@@ -591,11 +549,11 @@ def _conv_turn_cancel(handler, app: "ChatApp | None", ref: ConversationRef) -> N
 def _conv_turn_follow(handler, app: "ChatApp | None", ref: ConversationRef) -> None:
     if _missing_chat(handler, app):
         return
-    session_id = _turn_target(handler, app, ref)
-    if session_id is None:
+    conversation_id = _turn_target(handler, app, ref)
+    if conversation_id is None:
         return
     try:
-        hub = app.follow_hub(session_id)
+        hub = app.follow_hub(conversation_id)
     except Exception as exc:
         _conv_error(handler, exc)
         return
@@ -605,7 +563,7 @@ def _conv_turn_follow(handler, app: "ChatApp | None", ref: ConversationRef) -> N
     items = hub.subscribe()
     try:
         pump_stream(
-            handler, items, {"disconnected": False}, app=app, session_id=session_id,
+            handler, items, {"disconnected": False}, app=app, conversation_id=conversation_id,
             model="?", detail_transform=to_detail,
         )
     finally:
@@ -619,8 +577,8 @@ def _conv_compact(handler, app: "ChatApp | None", ref: ConversationRef) -> None:
 
     if _missing_chat(handler, app):
         return
-    session_id = _turn_target(handler, app, ref)
-    if session_id is None:
+    conversation_id = _turn_target(handler, app, ref)
+    if conversation_id is None:
         return
 
     # Validate the compact body, then compact the validated door.
@@ -640,7 +598,7 @@ def _conv_compact(handler, app: "ChatApp | None", ref: ConversationRef) -> None:
         if isinstance(instructions, str) and not instructions.strip():
             instructions = None
         try:
-            result = app.compact_session(session_id, model=model, instructions=instructions)
+            result = app.compact_conversation(conversation_id, model=model, instructions=instructions)
         except InvalidTurnOption as exc:
             handler._json(400, {"error": str(exc)})
         except Exception as exc:

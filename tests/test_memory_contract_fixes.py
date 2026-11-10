@@ -37,13 +37,13 @@ async def test_update_content_without_summary_is_rejected(tmp_path) -> None:
             )
         )
     ).content
-    sid = json.loads(sid)["session_id"]
+    sid = json.loads(sid)["memory_id"]
     before = _daily_text(tmp_path)
     refused = await gateway.submit(
         ToolCall(
             id="u1",
             name="memory_update",
-            arguments={"session_id": sid, "content": "new-details"},
+            arguments={"memory_id": sid, "content": "new-details"},
         )
     )
     assert refused.is_error
@@ -66,13 +66,13 @@ async def test_update_content_with_title_but_no_summary_is_rejected(tmp_path) ->
             )
         )
     ).content
-    sid = json.loads(sid)["session_id"]
+    sid = json.loads(sid)["memory_id"]
     before = _daily_text(tmp_path)
     refused = await gateway.submit(
         ToolCall(
             id="u1",
             name="memory_update",
-            arguments={"session_id": sid, "topic": "tra da", "content": "new-details"},
+            arguments={"memory_id": sid, "topic": "tra da", "content": "new-details"},
         )
     )
     assert refused.is_error
@@ -94,13 +94,13 @@ async def test_update_with_no_fields_and_blank_fields_rejected(tmp_path) -> None
             )
         )
     ).content
-    sid = json.loads(sid)["session_id"]
+    sid = json.loads(sid)["memory_id"]
     before = _daily_text(tmp_path)
     for arguments in (
-        {"session_id": sid},
-        {"session_id": sid, "topic": "   "},
-        {"session_id": sid, "summary": "  "},
-        {"session_id": sid, "content": ""},
+        {"memory_id": sid},
+        {"memory_id": sid, "topic": "   "},
+        {"memory_id": sid, "summary": "  "},
+        {"memory_id": sid, "content": ""},
     ):
         refused = await gateway.submit(
             ToolCall(id="u", name="memory_update", arguments=arguments)
@@ -124,15 +124,15 @@ async def test_update_positive_cases_still_work(tmp_path) -> None:
             )
         )
     ).content
-    sid = json.loads(sid)["session_id"]
+    sid = json.loads(sid)["memory_id"]
     # Title-only keeps the body.
     ok = await gateway.submit(
-        ToolCall(id="u1", name="memory_update", arguments={"session_id": sid, "topic": "tra da"})
+        ToolCall(id="u1", name="memory_update", arguments={"memory_id": sid, "topic": "tra da"})
     )
     assert not ok.is_error
     body = (
         await gateway.submit(
-            ToolCall(id="g1", name="memory_get", arguments={"session_id": sid})
+            ToolCall(id="g1", name="memory_get", arguments={"memory_id": sid})
         )
     ).content
     assert "tra da" in body and "orig-summary" in body and "orig-details" in body
@@ -141,13 +141,13 @@ async def test_update_positive_cases_still_work(tmp_path) -> None:
         ToolCall(
             id="u2",
             name="memory_update",
-            arguments={"session_id": sid, "summary": "new-summary", "content": ""},
+            arguments={"memory_id": sid, "summary": "new-summary", "content": ""},
         )
     )
     assert not ok.is_error
     body = (
         await gateway.submit(
-            ToolCall(id="g2", name="memory_get", arguments={"session_id": sid})
+            ToolCall(id="g2", name="memory_get", arguments={"memory_id": sid})
         )
     ).content
     assert "new-summary" in body and "orig-details" not in body
@@ -156,7 +156,7 @@ async def test_update_positive_cases_still_work(tmp_path) -> None:
         ToolCall(
             id="u3",
             name="memory_update",
-            arguments={"session_id": sid, "proj": "/home/flowerf/Projects/thyca-ai"},
+            arguments={"memory_id": sid, "proj": "/home/flowerf/Projects/thyca-ai"},
         )
     )
     assert not ok.is_error
@@ -176,7 +176,7 @@ def test_facade_update_validation_leaves_data_intact(tmp_path) -> None:
         with pytest.raises(ValueError):
             facade.update(sid, **kwargs)
         assert _daily_text(tmp_path) == before
-    got = facade.get(session_id=sid)
+    got = facade.get(memory_id=sid)
     assert "orig-summary" in got and "orig-details" in got
 
 
@@ -186,11 +186,11 @@ def test_update_endpoint_maps_invalid_to_400(tmp_path) -> None:
     before = _daily_text(tmp_path)
     # Newly rejected shapes must be 400 (not 503) with no path/stack leak.
     for payload in (
-        {"session_id": sid, "topic": "tra", "content": "x"},
-        {"session_id": sid, "summary": "   "},
-        {"session_id": sid, "topic": "  "},
-        {"session_id": sid, "content": "x"},
-        {"session_id": sid},
+        {"memory_id": sid, "topic": "tra", "content": "x"},
+        {"memory_id": sid, "summary": "   "},
+        {"memory_id": sid, "topic": "  "},
+        {"memory_id": sid, "content": "x"},
+        {"memory_id": sid},
     ):
         status, body = memory_endpoint(facade, "update", payload)
         assert status == 400, payload
@@ -198,7 +198,7 @@ def test_update_endpoint_maps_invalid_to_400(tmp_path) -> None:
         assert str(tmp_path) not in body["error"]
     assert _daily_text(tmp_path) == before
     # Valid updates still succeed.
-    status, body = memory_endpoint(facade, "update", {"session_id": sid, "topic": "tra"})
+    status, body = memory_endpoint(facade, "update", {"memory_id": sid, "topic": "tra"})
     assert (status, body) == (200, {"ok": True})
 
 
@@ -226,7 +226,7 @@ async def test_get_rejects_zero_and_multiple_selectors(tmp_path) -> None:
     gateway = ToolGateway(registry, TaskStore())
     combos = [
         {},
-        {"chunk_id": cid, "session_id": sid},
+        {"chunk_id": cid, "memory_id": sid},
     ]
     for arguments in combos:
         result = await gateway.submit(ToolCall(id="g", name="memory_get", arguments=arguments))
@@ -246,9 +246,9 @@ async def test_get_rejects_blank_and_wrong_type_selectors(tmp_path) -> None:
     before = (tmp_path / "memory" / "2026-08-13.md").read_text(encoding="utf-8")
     for arguments in (
         {"chunk_id": ""},
-        {"session_id": "   "},
+        {"memory_id": "   "},
         {"chunk_id": 123},
-        {"session_id": sid, "chunk_id": ""},
+        {"memory_id": sid, "chunk_id": ""},
     ):
         result = await gateway.submit(ToolCall(id="g", name="memory_get", arguments=arguments))
         assert result.is_error, arguments
@@ -256,7 +256,7 @@ async def test_get_rejects_blank_and_wrong_type_selectors(tmp_path) -> None:
     assert (tmp_path / "memory" / "2026-08-13.md").read_text(encoding="utf-8") == before
     # The untouched session is still fully readable afterwards.
     got = await gateway.submit(
-        ToolCall(id="g", name="memory_get", arguments={"session_id": sid})
+        ToolCall(id="g", name="memory_get", arguments={"memory_id": sid})
     )
     assert not got.is_error
     assert "first cafe leaf" in got.content and "second cafe leaf" in got.content
@@ -270,12 +270,12 @@ def test_get_valid_selectors_still_work(tmp_path) -> None:
     leaf = facade.get(chunk_id=cid)
     assert "first cafe leaf" in leaf
     assert "second cafe leaf" not in leaf
-    # Session read returns the whole session.
-    session = facade.get(session_id=sid)
+    # ConversationRuntime read returns the whole session.
+    session = facade.get(memory_id=sid)
     assert "first cafe leaf" in session and "second cafe leaf" in session
     # Today's unindexed session still falls back to the daily file.
     today_sid = facade.remember("lunch", "eat pho today maybe")
-    assert "eat pho today maybe" in facade.get(session_id=today_sid)
+    assert "eat pho today maybe" in facade.get(memory_id=today_sid)
 
 
 # --- GOAL-003: canonical search→get without TTL mutation ---
@@ -308,8 +308,8 @@ async def test_canonical_search_then_get_reads_without_profile_mutation(tmp_path
         )
         assert not found.is_error
         hits = json.loads(found.content)["hits"]
-        hit = next(h for h in hits if h["session_id"] == session_prefix)
-        for selector in ({"chunk_id": hit["chunk_id"]}, {"session_id": hit["session_id"]}):
+        hit = next(h for h in hits if h["memory_id"] == session_prefix)
+        for selector in ({"chunk_id": hit["chunk_id"]}, {"memory_id": hit["memory_id"]}):
             got = await gateway.submit(
                 ToolCall(id="g", name="memory_get", arguments=selector)
             )
@@ -337,7 +337,7 @@ async def test_canonical_chunk_is_leaf_session_is_whole(tmp_path) -> None:
         ToolCall(id="s", name="memory_search", arguments={"query": "leafsep-alpha"})
     )
     hit = next(
-        h for h in json.loads(found.content)["hits"] if h["session_id"] == "canonical#soul"
+        h for h in json.loads(found.content)["hits"] if h["memory_id"] == "canonical#soul"
     )
     leaf = await gateway.submit(
         ToolCall(id="g1", name="memory_get", arguments={"chunk_id": "canonical#soul#1"})
@@ -346,7 +346,7 @@ async def test_canonical_chunk_is_leaf_session_is_whole(tmp_path) -> None:
     assert "first paragraph" in leaf.content
     assert "second paragraph" not in leaf.content
     whole = await gateway.submit(
-        ToolCall(id="g2", name="memory_get", arguments={"session_id": "canonical#soul"})
+        ToolCall(id="g2", name="memory_get", arguments={"memory_id": "canonical#soul"})
     )
     assert not whole.is_error
     assert "first paragraph" in whole.content and "second paragraph" in whole.content
@@ -396,7 +396,7 @@ def test_m5_blank_selector_falls_through_to_session(tmp_path: Path) -> None:
         "t", "blank selector summary", importance=5, now=recent
     )
     facade.archive.reindex()  # real today: the file is now archivable past
-    text = facade.archive.get(chunk_id="", session_id=sid)
+    text = facade.archive.get(chunk_id="", memory_id=sid)
     assert "blank selector summary" in text
 
 

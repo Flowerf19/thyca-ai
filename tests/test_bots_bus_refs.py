@@ -23,7 +23,7 @@ def test_large_payload_excerpted_and_fully_fetchable_via_store() -> None:
     body = "x" * 5000
     envelope = bus.send(
         sender="thyca", recipient="coder", kind="delegate",
-        session_id="room1", payload=body, refs=["/tmp/spec.md", "2026-08-01#abc"],
+        conversation_id="room1", payload=body, refs=["/tmp/spec.md", "2026-08-01#abc"],
     )
     # Prompt-facing envelope carries only the excerpt + refs.
     assert len(envelope.payload) == EXCERPT_CHARS
@@ -41,7 +41,7 @@ def test_short_payload_not_truncated_and_no_artifact() -> None:
     bus = Bus()
     bus.register("coder")
     envelope = bus.send(sender="a", recipient="coder", kind="message",
-                        session_id="r", payload="short")
+                        conversation_id="r", payload="short")
     assert envelope.payload == "short"
     assert envelope.truncated is False
     assert bus.artifacts.get(envelope.span_id) is None
@@ -54,11 +54,11 @@ def test_hop_limit_still_holds_for_large_payloads() -> None:
     trace = None
     for _ in range(2):
         envelope = bus.send(sender="a", recipient="b", kind="message",
-                            session_id="r", payload="y" * 3000, trace_id=trace)
+                            conversation_id="r", payload="y" * 3000, trace_id=trace)
         trace = envelope.trace_id
     with pytest.raises(BusError):
         bus.send(sender="b", recipient="a", kind="message",
-                 session_id="r", payload="y" * 3000, trace_id=trace)
+                 conversation_id="r", payload="y" * 3000, trace_id=trace)
     assert bus.hops_of(trace) == 2
 
 
@@ -84,7 +84,7 @@ def test_bot_fetch_tool_returns_full_body(tmp_path: Path) -> None:
     register_admin_tools(tools, AdminDeps(registry, runtime, lambda: None))
     envelope = runtime.send(
         sender="thyca", recipient="coder", kind="delegate",
-        session_id="room1", payload="z" * 4000, refs=["memory#x"],
+        conversation_id="room1", payload="z" * 4000, refs=["memory#x"],
     )
     spec = tools.get("bot_fetch")
     assert spec is not None

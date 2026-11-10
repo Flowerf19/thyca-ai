@@ -12,8 +12,8 @@ from thyca.configs import ModelCfg, ProviderEntry, default_config, load, save
 from seeded_config import seeded_config
 from thyca.core.protocol import Message, ToolCall
 from thyca.llms.llm_base import ChatReply
-from thyca.conversations.runtime import SessionManager
-from thyca.serve.trace import turns_from_session
+from thyca.conversations.runtime import ConversationManager
+from thyca.serve.trace import turns_from_conversation
 
 
 class RecordingLLM:
@@ -71,16 +71,16 @@ def _coder(app: ChatApp) -> None:
 
 
 def _rows(app: ChatApp, bot_id: str, room_id: str) -> list[Message]:
-    return app._runtime.internal_session(bot_id, room_id).messages
+    return app._runtime.internal_conversation(bot_id, room_id).messages
 
 
 def _append_long_canonical_history(app: ChatApp, bot_id: str, room_id: str) -> None:
-    room = app._sessions.store.load(room_id)
+    room = app._conversations.store.load(room_id)
     window = app._webui.window_for(room)
-    internal = app._runtime.internal_session(bot_id, room_id)
-    store = app._runtime._canonical_store(bot_id, window, internal.id)
-    manager = SessionManager(store=store)
-    manager.load(internal.id)
+    internal = app._runtime.internal_conversation(bot_id, room_id)
+    store = app._runtime._canonical_store(bot_id, window, internal.conversation_id)
+    manager = ConversationManager(store=store)
+    manager.load(internal.conversation_id)
     for index in range(4):
         manager.append(Message(role="user", content=f"old user {index} " + "u" * 1200))
         manager.append(Message(role="assistant", content=f"old assistant {index} " + "a" * 1200))
@@ -136,16 +136,16 @@ def test_bot_and_operation_model_precedence_reaches_chat_and_compaction(
         captured_builds.append({
             "model": kwargs["model"],
             "context_tokens": kwargs["context_tokens"],
-            "tail_kb": kwargs["sessions"].limits.hotTailKB,
+            "tail_kb": kwargs["conversations"].limits.hotTailKB,
             "pricing": kwargs["pricing"],
         })
         return original_build(**kwargs)
 
-    async def compact_stub(summarizer, sessions, **kwargs):
+    async def compact_stub(summarizer, conversations, **kwargs):
         captured_compactions.append({
             "model": kwargs["model"],
-            "context_tokens": sessions.limits.contextTokens,
-            "tail_kb": sessions.limits.hotTailKB,
+            "context_tokens": conversations.limits.contextTokens,
+            "tail_kb": conversations.limits.hotTailKB,
             "pricing": kwargs["pricing"],
         })
         return {"compacted": False, "summary": None}
@@ -168,7 +168,7 @@ def test_bot_and_operation_model_precedence_reaches_chat_and_compaction(
                 model=BotModel(id="card-model"),
             )
         )
-        group = app.create(bots=["thyca", "coder"])["id"]
+        group = app.create(bots=["thyca", "coder"])["conversation_id"]
         app.turn(group, "@coder card model")
         app.turn(group, "@thyca global default")
         app.turn(group, "@coder explicit model", model="override-model")
@@ -197,7 +197,7 @@ def test_bot_and_operation_model_precedence_reaches_chat_and_compaction(
 
         captured_providers.clear()
         captured_compactions.clear()
-        app.compact_session(group)
+        app.compact_conversation(group)
         assert [provider.model for _api, provider in captured_providers] == [
             "global-model", "card-model"
         ]
@@ -211,7 +211,7 @@ def test_bot_and_operation_model_precedence_reaches_chat_and_compaction(
 
         captured_providers.clear()
         captured_compactions.clear()
-        app.compact_session(group, model="override-model")
+        app.compact_conversation(group, model="override-model")
         assert [provider.model for _api, provider in captured_providers] == [
             "override-model", "override-model"
         ]
@@ -320,8 +320,8 @@ def test_root_and_child_use_private_canonical_runtime_and_admin_policy(tmp_path:
     app = _app(tmp_path, llm)
     try:
         _coder(app)
-        root_dm = app.bot_dm("thyca")["id"]
-        child_dm = app.bot_dm("coder")["id"]
+        root_dm = app.bot_dm("thyca")["conversation_id"]
+        child_dm = app.bot_dm("coder")["conversation_id"]
         root_result = app.turn(root_dm, "create a bot")
         child_result = app.turn(child_dm, "try the admin tool")
 
@@ -349,7 +349,7 @@ def test_root_and_child_use_private_canonical_runtime_and_admin_policy(tmp_path:
         }
         assert child_meta["requests"] == child_meta["rounds"] == 2
         assert child_meta["tool_call_count"] == 1
-        root_trace = turns_from_session(app._sessions.store.load(root_dm))[-1]
+        root_trace = turns_from_conversation(app._conversations.store.load(root_dm))[-1]
         assert root_trace.rounds == 2
         assert root_trace.requests == 2
         assert root_trace.tool_calls == 1
@@ -413,14 +413,14 @@ def test_root_and_child_retry_truncate_both_transcripts_and_keep_mail(tmp_path: 
     app = _app(tmp_path, llm)
     try:
         _coder(app)
-        room = app.create(bots=["thyca", "coder"])["id"]
+        room = app.create(bots=["thyca", "coder"])["conversation_id"]
         for bot_id in ("thyca", "coder"):
             events = []
             app.turn(room, f"@{bot_id} first", event_sink=events.append)
             old_cursor = app._runtime.room_cursor(bot_id, room)
             public_users_before_retry = sum(
                 message.role == "user"
-                for message in app._sessions.store.load(room).messages
+                for message in app._conversations.store.load(room).messages
             )
             assert any(event.type == "llm.retry" and event.bot_id == bot_id for event in events)
             sender = "coder" if bot_id == "thyca" else "thyca"
@@ -428,14 +428,14 @@ def test_root_and_child_retry_truncate_both_transcripts_and_keep_mail(tmp_path: 
                 sender=sender,
                 recipient=bot_id,
                 kind="message",
-                session_id=room,
+                conversation_id=room,
                 payload=f"queued for {bot_id}",
             )
             with pytest.raises(RuntimeError, match="retry failure"):
                 app.turn(room, retry=True)
             assert app._runtime._bus.pending(bot_id) == 1
             assert app._runtime.room_cursor(bot_id, room) == old_cursor
-            public_after_failure = app._sessions.store.load(room).messages
+            public_after_failure = app._conversations.store.load(room).messages
             assert [row.role for row in public_after_failure].count("user") == public_users_before_retry
             # Append-only: the failure is a trailing system marker; the
             # trace projection stamps it onto its user row.
@@ -449,7 +449,7 @@ def test_root_and_child_retry_truncate_both_transcripts_and_keep_mail(tmp_path: 
 
             _proj = project_for_trace(_view(
                 resolve_ref(app._root, room),
-                {"title": None, "title_source": None, "naming_attempted": False,
+                {"title": None, "title_source": None,
                  "participants": ["thyca", "coder"]},
                 tuple(public_after_failure),
             ))
@@ -466,14 +466,14 @@ def test_root_and_child_retry_truncate_both_transcripts_and_keep_mail(tmp_path: 
             result = app.turn(room, retry=True)
             assert result["reply"] == "replayed"
             assert app._runtime._bus.pending(bot_id) == 1
-            public = app._sessions.store.load(room).messages
+            public = app._conversations.store.load(room).messages
             internal = _rows(app, bot_id, room)
             assert [row.role for row in public].count("user") == public_users_before_retry
             assert [row.role for row in internal].count("user") == 1
             # Recovered: the projection no longer reports a failure.
             _proj2 = project_for_trace(_view(
                 resolve_ref(app._root, room),
-                {"title": None, "title_source": None, "naming_attempted": False,
+                {"title": None, "title_source": None,
                  "participants": ["thyca", "coder"]},
                 tuple(public),
             ))
@@ -508,7 +508,7 @@ def test_effort_and_model_override_reach_factory_before_connect(tmp_path: Path, 
     monkeypatch.setattr(ConnectFactory, "create", create)
     app = ChatApp(tmp_path, load(tmp_path / "config.json"))
     try:
-        room = app.bot_dm("thyca")["id"]
+        room = app.bot_dm("thyca")["conversation_id"]
         result = app.turn(room, "use custom", model="custom-model", effort="custom")
         assert result["reply"] == "done"
         assert captured[0][1].model == "custom-model"
@@ -525,17 +525,17 @@ def test_multi_bot_compact_preserves_room_and_reports_absent_and_failed_contexts
     app = _app(tmp_path, llm, context_tokens=4096)
     try:
         _coder(app)
-        group = app.create(bots=["thyca", "coder"])["id"]
+        group = app.create(bots=["thyca", "coder"])["conversation_id"]
         app.turn(group, "@thyca root history")
         _append_long_canonical_history(app, "thyca", group)
-        room_before = list(app._sessions.store.load(group).messages)
+        room_before = list(app._conversations.store.load(group).messages)
         original_flush = app._background_jobs._flush_bot_memory
 
         async def no_flush(*args, **kwargs):
             return None
 
         app._background_jobs._flush_bot_memory = no_flush
-        result = app.compact_session(group)
+        result = app.compact_conversation(group)
         assert result["compaction"]["compacted"] is True, result["compaction"]
         assert result["compaction"]["per_bot"]["thyca"]["compacted"] is True
         assert result["compaction"]["per_bot"]["coder"] == {
@@ -543,39 +543,39 @@ def test_multi_bot_compact_preserves_room_and_reports_absent_and_failed_contexts
             "skipped": "no_existing_context",
         }
         assert app._runtime.workspaces.store.get_binding("coder", group) is None
-        assert app._sessions.store.load(group).messages == room_before
+        assert app._conversations.store.load(group).messages == room_before
 
         app.turn(group, "@coder child history")
         _append_long_canonical_history(app, "coder", group)
         _append_long_canonical_history(app, "thyca", group)
-        room_before = list(app._sessions.store.load(group).messages)
+        room_before = list(app._conversations.store.load(group).messages)
         root_before = list(_rows(app, "thyca", group))
         child_before = list(_rows(app, "coder", group))
-        result = app.compact_session(group)
+        result = app.compact_conversation(group)
         assert result["compaction"]["per_bot"]["thyca"]["compacted"] is True
         assert result["compaction"]["per_bot"]["coder"]["compacted"] is True
         assert _rows(app, "thyca", group) != root_before
         assert _rows(app, "coder", group) != child_before
-        assert app._sessions.store.load(group).messages == room_before
+        assert app._conversations.store.load(group).messages == room_before
 
         _append_long_canonical_history(app, "thyca", group)
         _append_long_canonical_history(app, "coder", group)
-        room_before = list(app._sessions.store.load(group).messages)
-        original_compact = app._sessions_admin._compact_async
+        room_before = list(app._conversations.store.load(group).messages)
+        original_compact = app._conversations_admin._compact_async
 
-        async def fail_thyca(sessions, room_id, turn_cfg, instructions, *, bot_id):
+        async def fail_thyca(conversations, room_id, turn_cfg, instructions, *, bot_id):
             if bot_id == "thyca":
                 raise RuntimeError("compaction failed")
             return await original_compact(
-                sessions, room_id, turn_cfg, instructions, bot_id=bot_id
+                conversations, room_id, turn_cfg, instructions, bot_id=bot_id
             )
 
-        app._sessions_admin._compact_async = fail_thyca
-        result = app.compact_session(group)
+        app._conversations_admin._compact_async = fail_thyca
+        result = app.compact_conversation(group)
         assert result["compaction"]["compacted"] is True
         assert result["compaction"]["per_bot"]["thyca"]["error"] == "RuntimeError"
         assert result["compaction"]["per_bot"]["coder"]["compacted"] is True
-        assert app._sessions.store.load(group).messages == room_before
+        assert app._conversations.store.load(group).messages == room_before
         app._background_jobs._flush_bot_memory = original_flush
     finally:
         app.shutdown()
@@ -585,11 +585,11 @@ def test_context_limit_status_survives_aggregate_room_row(tmp_path: Path, monkey
     from thyca.core.protocol import Message
 
     class ContextLimitLoop:
-        def __init__(self, sessions) -> None:
-            self.sessions = sessions
+        def __init__(self, conversations) -> None:
+            self.conversations = conversations
 
         async def run(self, text, *, bot_ctx, persist_user=True, persisted_user_msg=None, **kwargs):
-            self.sessions.append(
+            self.conversations.append(
                 Message(
                     role="assistant",
                     content="context limit reached",
@@ -604,18 +604,18 @@ def test_context_limit_status_survives_aggregate_room_row(tmp_path: Path, monkey
             )
             return "context limit reached"
 
-    def build_agent_loop(*, sessions, **kwargs):
-        return ContextLimitLoop(sessions)
+    def build_agent_loop(*, conversations, **kwargs):
+        return ContextLimitLoop(conversations)
 
     monkeypatch.setattr("thyca.app.toolchain.build_agent_loop", build_agent_loop)
     app = _app(tmp_path, RecordingLLM())
     try:
-        room = app.bot_dm("thyca")["id"]
+        room = app.bot_dm("thyca")["conversation_id"]
         result = app.turn(room, "large request")
         aggregate = result["messages"][-1]
         assert aggregate["meta"]["status"] == "context_limit"
         assert aggregate["meta"]["rounds"] == 0
-        trace = turns_from_session(app._sessions.store.load(room))[-1]
+        trace = turns_from_conversation(app._conversations.store.load(room))[-1]
         assert trace.status == "context_limit"
         assert trace.rounds == 0
         assert trace.requests == 0
@@ -631,17 +631,18 @@ def test_compaction_does_not_pollute_next_turn_usage_or_trace(tmp_path: Path) ->
             usage={"prompt_tokens": 11, "completion_tokens": 2},
         )
     )
-    # 8500 (was 8192): the baseline tool set (incl. the compact tool)
-    # counts as prompt overhead in the backstop estimate.
-    app = _app(tmp_path, llm, context_tokens=8500)
+    # 9000 (was 8500): the baseline tool set (incl. the compact and
+    # group_delete tools) counts as prompt overhead in the backstop
+    # estimate.
+    app = _app(tmp_path, llm, context_tokens=9000)
     try:
-        group = app.create(bots=["thyca"])["id"]
+        group = app.create(bots=["thyca"])["conversation_id"]
         app.turn(group, "first")
         _append_long_canonical_history(app, "thyca", group)
         async def no_flush(*args, **kwargs):
             return None
         app._background_jobs._flush_bot_memory = no_flush
-        app.compact_session(group)
+        app.compact_conversation(group)
         result = app.turn(group, "after compact")
         row = next(
             row for row in reversed(result["messages"])
@@ -650,7 +651,7 @@ def test_compaction_does_not_pollute_next_turn_usage_or_trace(tmp_path: Path) ->
         assert row["meta"]["usage"] == {"prompt_tokens": 11, "completion_tokens": 2}
         assert row["meta"]["requests"] == 1
         assert row["meta"]["rounds"] == 1
-        trace = turns_from_session(app._sessions.store.load(group))
+        trace = turns_from_conversation(app._conversations.store.load(group))
         assert trace[-1].rounds == 1
         assert trace[-1].requests == 1
         assert trace[-1].prompt_tokens == 11

@@ -11,8 +11,8 @@ function selectBot(id) {
   if (window.ThycaRouter) return ThycaRouter.dispatch('selectBot', id);
   return false;
 }
-function loadSession(id, title, botId) {
-  if (window.ThycaRouter) return ThycaRouter.dispatch('loadSession', id, title, botId);
+function loadConversation(id, botId) {
+  if (window.ThycaRouter) return ThycaRouter.dispatch('loadConversation', id, botId);
   return false;
 }
 

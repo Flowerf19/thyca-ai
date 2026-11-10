@@ -308,7 +308,7 @@ def test_stats_and_trace_responses_have_independent_guards(node: str) -> None:
           await new Promise((r) => setTimeout(r, 5));
           return { rows: traceState.rows.map((t) => t.bot_id),
             total: traceState.total, stats: statsData.totals.requests,
-            html: document.querySelector('#trace-sessions').innerHTML };
+            html: document.querySelector('#trace-conversations').innerHTML };
         })().then((v) => console.log(JSON.stringify(v)))""",
     )
     assert outcome["rows"] == ["s2"]

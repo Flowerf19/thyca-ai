@@ -1,4 +1,4 @@
-"""Agent-callable session tools (compact): context-gated handler."""
+"""Agent-callable conversation tools (compact): context-gated handler."""
 from __future__ import annotations
 
 import asyncio
@@ -9,7 +9,7 @@ from thyca.bots.context import (
     reset_bot_turn_context,
 )
 from thyca.tools.registry import ToolRegistry
-from thyca.tools.session_tools import compact_spec, register_session_tools
+from thyca.tools.conversation_tools import compact_spec, register_conversation_tools
 
 
 def test_compact_unavailable_outside_bot_turn() -> None:
@@ -54,9 +54,9 @@ def test_compact_noop_and_failure_are_honest() -> None:
         reset_bot_turn_context(token2)
 
 
-def test_register_session_tools_is_idempotent() -> None:
+def test_register_conversation_tools_is_idempotent() -> None:
     registry = ToolRegistry()
-    register_session_tools(registry)
-    register_session_tools(registry)
+    register_conversation_tools(registry)
+    register_conversation_tools(registry)
     assert registry.get("compact") is not None
     assert len(registry.to_openai_schema()) == 1

@@ -13,8 +13,8 @@ from seeded_config import seeded_config
 from thyca.core.protocol import Message, ToolCall
 from thyca.llms.llm_base import ChatReply
 from thyca.memories.active import ActiveSnapshot
-from thyca.conversations.runtime import SessionManager
-from thyca.conversations.runtime.compaction import SessionCompactor
+from thyca.conversations.runtime import ConversationManager
+from thyca.conversations.runtime.compaction import ConversationCompactor
 
 
 def _chat(tmp_path: Path, connect, context_tokens: int | None = None) -> ChatApp:
@@ -37,19 +37,19 @@ class _CaptureLLM:
 
 
 def _internal_store(app: ChatApp, bot_id: str, room_id: str):
-    """Canonical journal store + session id for a bot's room binding."""
-    internal = app._runtime.internal_session(bot_id, room_id)
+    """Canonical journal store + conversation id for a bot's room binding."""
+    internal = app._runtime.internal_conversation(bot_id, room_id)
     window = app._runtime._window_for_room(room_id)
     assert window is not None, f"no window for room {room_id}"
     store = app._runtime._canonical_store(
-        bot_id, window, internal.id)
-    return store, internal.id
+        bot_id, window, internal.conversation_id)
+    return store, internal.conversation_id
 
 
 def _seed_history(app: ChatApp, bot_id: str, room_id: str, *, marker: str) -> None:
-    store, session_id = _internal_store(app, bot_id, room_id)
-    manager = SessionManager(store=store)
-    manager.load(session_id)
+    store, conversation_id = _internal_store(app, bot_id, room_id)
+    manager = ConversationManager(store=store)
+    manager.load(conversation_id)
     for index in range(10):
         manager.append(Message(
             role="user", content=f"{marker}-{index} " + "u" * 500,
@@ -60,8 +60,8 @@ def _seed_history(app: ChatApp, bot_id: str, room_id: str, *, marker: str) -> No
 
 
 def _internal_messages(app: ChatApp, bot_id: str, room_id: str):
-    store, session_id = _internal_store(app, bot_id, room_id)
-    return store.load(session_id).messages
+    store, conversation_id = _internal_store(app, bot_id, room_id)
+    return store.load(conversation_id).messages
 
 
 # --- CBE-1: per-instance budget ------------------------------------------
@@ -80,10 +80,10 @@ def test_bot_instance_compacts_with_own_budget_and_overhead(tmp_path: Path) -> N
                                  description="Writes code.", persona="PERSONA-CODER"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper",
                                  description="Helps.", persona="PERSONA-HELPER"))
-        other = app.create(bots=["helper"])["id"]
+        other = app.create(bots=["helper"])["conversation_id"]
         _seed_history(app, "helper", other, marker="HELPER-HISTORY")
-        # Created last: creating a session prunes other blank sessions.
-        room = app.create(bots=["coder"])["id"]
+        # Created last: creating a conversation prunes other blank conversations.
+        room = app.create(bots=["coder"])["conversation_id"]
         _seed_history(app, "coder", room, marker="EARLY-SECRET")
 
         detail = app.turn(room, "continue please")
@@ -93,13 +93,13 @@ def test_bot_instance_compacts_with_own_budget_and_overhead(tmp_path: Path) -> N
         assert any(
             m.role == "system" and (m.content or "").startswith("[compaction: ")
             for m in coder_msgs
-        ), "bot session must compact under its own context budget"
+        ), "bot conversation must compact under its own context budget"
         # The compacted main prompt no longer carries the earliest seeded
         # turns (the summarizer side-call legitimately sees them once).
         main_prompts = [p for p in llm.prompts if "PERSONA-CODER" in p]
         assert main_prompts
         assert all("EARLY-SECRET-0" not in prompt for prompt in main_prompts)
-        # The other bot's session is untouched by coder's compaction.
+        # The other bot's conversation is untouched by coder's compaction.
         helper_msgs = _internal_messages(app, "helper", other)
         assert not any(
             m.role == "system" and (m.content or "").startswith("[compaction: ")
@@ -118,14 +118,14 @@ def test_compactor_counts_hot_and_tools_overhead() -> None:
         Message(role="user", content="u" * 600, ts="2026-08-01T10:02:00Z"),
         Message(role="assistant", content="a" * 600, ts="2026-08-01T10:03:00Z"),
     ]
-    compactor = SessionCompactor()
+    compactor = ConversationCompactor()
     assert compactor.plan(messages, 1000) is None
     assert compactor.plan(messages, 1000, hot_tokens=150, tools_tokens=150) is not None
 
 
 def test_agent_loop_hot_and_tools_token_counters() -> None:
     loop = AgentLoop(
-        sessions=None, assemble=None, think=None, act=None, observe=None,  # type: ignore[arg-type]
+        conversations=None, assemble=None, think=None, act=None, observe=None,  # type: ignore[arg-type]
         loop_max=1, tools=[{"type": "function", "function": {"name": "read"}}],
         context_tokens=1000,
     )
@@ -183,10 +183,10 @@ def test_bot_prompt_carries_task_index_counted_in_hot(tmp_path: Path) -> None:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="PERSONA-CODER",
                                  tools=("task_open",)))
-        room = app.create(bots=["coder"])["id"]
-        store, session_id = _internal_store(app, "coder", room)
-        manager = SessionManager(store=store)
-        manager.load(session_id)
+        room = app.create(bots=["coder"])["conversation_id"]
+        store, conversation_id = _internal_store(app, "coder", room)
+        manager = ConversationManager(store=store)
+        manager.load(conversation_id)
         manager.append(Message(
             role="assistant", content="", ts="2026-08-01T10:00:00Z",
             tool_calls=[ToolCall(id="t1", name="task_open",
@@ -210,7 +210,7 @@ def test_flush_runs_before_compaction_and_recall_fires_once(tmp_path: Path) -> N
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="PERSONA-CODER"))
-        room = app.create(bots=["coder"])["id"]
+        room = app.create(bots=["coder"])["conversation_id"]
         _seed_history(app, "coder", room, marker="FLUSH-ME")
 
         flush_calls: list[tuple[str, bool]] = []
@@ -253,13 +253,13 @@ def test_no_flush_when_agent_checkpointed_segment(tmp_path: Path) -> None:
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="PERSONA-CODER"))
-        room = app.create(bots=["coder"])["id"]
+        room = app.create(bots=["coder"])["conversation_id"]
         _seed_history(app, "coder", room, marker="CKPT")
         # Agent đã chủ động ghi checkpoint (kind='checkpoint' + task link)
         # trong segment này — hệ thống phải đứng yên, không chạy mono.
-        store, session_id = _internal_store(app, "coder", room)
-        manager = SessionManager(store=store)
-        manager.load(session_id)
+        store, conversation_id = _internal_store(app, "coder", room)
+        manager = ConversationManager(store=store)
+        manager.load(conversation_id)
         manager.append(Message(
             role="assistant", content="",
             tool_calls=[ToolCall(
@@ -270,7 +270,7 @@ def test_no_flush_when_agent_checkpointed_segment(tmp_path: Path) -> None:
             ts="2026-08-01T10:20:00Z",
         ))
         manager.append(Message(
-            role="tool", content='{"session_id": "2026-08-01#abc"}',
+            role="tool", content='{"conversation_id": "2026-08-01#abc"}',
             tool_call_id="call-ckpt", ts="2026-08-01T10:20:30Z",
         ))
         calls: list[str] = []
@@ -375,7 +375,7 @@ def test_no_flush_when_no_compaction_due(tmp_path: Path) -> None:
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="PERSONA-CODER"))
-        room = app.create(bots=["coder"])["id"]
+        room = app.create(bots=["coder"])["conversation_id"]
         calls: list[str] = []
         app._runtime.memory_flush = lambda bot_id, messages, cfg: calls.append(bot_id)
         app.turn(room, "hi")
@@ -400,7 +400,7 @@ def test_child_prompt_own_identity_shared_soul_persona_overlay(tmp_path: Path) -
         _marker_home(tmp_path, app)
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="PERSONA-CODER"))
-        room = app.create(bots=["coder"])["id"]
+        room = app.create(bots=["coder"])["conversation_id"]
         app.turn(room, "who are you?")
         prompts = [p for p in llm.prompts if "PERSONA-CODER" in p]
         assert prompts, "child main prompt must carry its persona overlay"
@@ -422,7 +422,7 @@ def test_child_empty_persona_keeps_own_identity_and_shared_soul(tmp_path: Path) 
         _marker_home(tmp_path, app)
         app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper",
                                  description="Helps out.", persona=""))
-        room = app.create(bots=["helper"])["id"]
+        room = app.create(bots=["helper"])["conversation_id"]
         app.turn(room, "who are you?")
         prompts = [p for p in llm.prompts if "Name: helper" in p]
         assert prompts, "empty persona must still yield the twin's own identity"
@@ -489,7 +489,7 @@ def test_child_prompt_memory_tasks_filtered_per_bot(tmp_path: Path) -> None:
                                  role="Designer", description="Draws.", persona=""))
         coder_task = "task-c0de0002"
         designer_task = "task-dec0ded2"
-        room = app.create(bots=["coder"])["id"]
+        room = app.create(bots=["coder"])["conversation_id"]
         _seed_task(app, "coder", "build it", coder_task, chat=room)
         _seed_task(app, "designer", "draw it", designer_task, chat=room)
         app.turn(room, "status?")
@@ -512,7 +512,7 @@ def test_thyca_prompt_sees_all_memory_tasks(tmp_path: Path) -> None:
         designer_task = "task-dec0ded3"
         _seed_task(app, "coder", "build all", coder_task)
         _seed_task(app, "designer", "draw all", designer_task)
-        room = app.create()["id"]
+        room = app.create()["conversation_id"]
         app.turn(room, "status?")
         prompts = [p for p in llm.prompts if "<memory_tasks>" in p]
         assert prompts, "Thyca prompt must carry the memory-task catalog"
@@ -553,7 +553,7 @@ def test_child_prompt_carries_own_bot_user_only(tmp_path: Path) -> None:
                                  role="Designer", description="Draws.", persona=""))
         _write_bot_user(app, "coder", "# User — bot tự ghi\n- coder habit line\n")
         _write_bot_user(app, "designer", "# User — bot tự ghi\n- designer habit line\n")
-        room = app.create(bots=["coder"])["id"]
+        room = app.create(bots=["coder"])["conversation_id"]
         app.turn(room, "hi")
         prompts = [p for p in llm.prompts if "<bot_user>" in p]
         assert prompts, "child prompt must carry its own bot USER.md"
@@ -573,7 +573,7 @@ def test_memory_read_false_has_no_bot_user_section(tmp_path: Path) -> None:
                                  description="Writes code.", persona="",
                                  memory=BotMemoryPolicy(read=False, write=True)))
         _write_bot_user(app, "coder", "# User — bot tự ghi\n- hidden habit\n")
-        room = app.create(bots=["coder"])["id"]
+        room = app.create(bots=["coder"])["conversation_id"]
         app.turn(room, "hi")
         assert not any("<bot_user>" in p for p in llm.prompts)
     finally:
@@ -585,7 +585,7 @@ def test_thyca_prompt_carries_thyca_bot_user(tmp_path: Path) -> None:
     app = _chat(tmp_path, llm)
     try:
         _write_bot_user(app, "thyca", "# User — bot tự ghi\n- thyca habit line\n")
-        room = app.create()["id"]
+        room = app.create()["conversation_id"]
         app.turn(room, "hi")
         prompts = [p for p in llm.prompts if "<bot_user>" in p]
         assert prompts
@@ -631,7 +631,7 @@ def test_shared_user_habit_reaches_prompt_through_user_section(tmp_path: Path) -
             "- uong tra buoi sang\n<!-- habits:auto:end -->\n",
             encoding="utf-8",
         )
-        room = app.create()["id"]
+        room = app.create()["conversation_id"]
         app.turn(room, "hi")
         users = [p for p in llm.prompts if "<user>" in p]
         assert users, "shared USER.md must keep flowing into <user>"
@@ -685,13 +685,13 @@ def _seed_room_pair(app: ChatApp) -> str:
                              description="Writes code.", persona=""))
     # Group from the start (phase 2B): solo rooms are DMs, which admit
     # no second participant. Designer answers first as participant[0].
-    room = app.create(bots=["designer", "coder"])["id"]
+    room = app.create(bots=["designer", "coder"])["conversation_id"]
     app.turn(room, "user asks about deploy")
     return room
 
 
 def test_first_turn_sees_public_history_not_secrets(tmp_path: Path) -> None:
-    from thyca.conversations.runtime import SessionManager
+    from thyca.conversations.runtime import ConversationManager
 
     llm = _CaptureLLM()
     app = _chat(tmp_path, llm)
@@ -699,8 +699,8 @@ def test_first_turn_sees_public_history_not_secrets(tmp_path: Path) -> None:
         room = _seed_room_pair(app)
         # Private envelope + raw tool output must never enter room context.
         app._runtime.send(sender="designer", recipient="coder", kind="message",
-                          session_id=room, payload="SECRET-ENVELOPE")
-        store = SessionManager(store=app._sessions.store)
+                          conversation_id=room, payload="SECRET-ENVELOPE")
+        store = ConversationManager(store=app._conversations.store)
         store.load(room)
         store.append(Message(
             role="assistant", content="thinking step",
@@ -745,14 +745,14 @@ def test_second_turn_gets_no_repeat_of_answered_message(tmp_path: Path) -> None:
 
 
 def test_next_turn_gets_only_fresh_message(tmp_path: Path) -> None:
-    from thyca.conversations.runtime import SessionManager
+    from thyca.conversations.runtime import ConversationManager
 
     llm = _CaptureLLM()
     app = _chat(tmp_path, llm)
     try:
         room = _seed_room_pair(app)
         app.turn(room, "@coder go")
-        store = SessionManager(store=app._sessions.store)
+        store = ConversationManager(store=app._conversations.store)
         store.load(room)
         store.append(Message(role="assistant", content="DESIGNER-NEWS",
                              meta={"bot_id": "designer", "kind": "message",
@@ -778,7 +778,7 @@ def test_dm_turn_produces_no_room_context(tmp_path: Path) -> None:
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona=""))
-        dm = app.bot_dm("coder")["id"]
+        dm = app.bot_dm("coder")["conversation_id"]
         since = len(llm.prompts)
         app.turn(dm, "private hello")
         assert _room_context_blocks(app, "coder", dm) == []
@@ -800,9 +800,9 @@ def test_deliver_excludes_current_envelope_from_delta(tmp_path: Path) -> None:
         room = _seed_room_pair(app)
         envelope = app._runtime.send(
             sender="designer", recipient="coder", kind="delegate",
-            session_id=room, payload="SECRET-DELEGATE-PAYLOAD")
+            conversation_id=room, payload="SECRET-DELEGATE-PAYLOAD")
         scope = BotTurnScope(
-            store=app._sessions.store, act=app._act, tools=app._tools,
+            store=app._conversations.store, act=app._act, tools=app._tools,
             memory=app._memory, state=app._state, zone=app._zone,
             injected_connect=llm,
         )
@@ -845,7 +845,7 @@ def test_failed_turn_keeps_current_message_unread(tmp_path: Path) -> None:
         room = _seed_room_pair(app)
         card = app._bots.require("coder")
         scope = BotTurnScope(
-            store=app._sessions.store, act=app._act, tools=app._tools,
+            store=app._conversations.store, act=app._act, tools=app._tools,
             memory=app._memory, state=app._state, zone=app._zone,
             injected_connect=DownLLM(),
         )
@@ -867,7 +867,7 @@ def test_failed_turn_keeps_current_message_unread(tmp_path: Path) -> None:
                    for m in rows if m.role == "user")
         # A later success with the same after-cursor does advance it.
         scope2 = BotTurnScope(
-            store=app._sessions.store, act=app._act, tools=app._tools,
+            store=app._conversations.store, act=app._act, tools=app._tools,
             memory=app._memory, state=app._state, zone=app._zone,
             injected_connect=llm,
         )
@@ -890,25 +890,25 @@ def test_registry_binding_cursor_roundtrip(tmp_path: Path) -> None:
 
     registry = BotRegistry(tmp_path)
     runtime = BotRuntime(tmp_path, registry, Bus())
-    # First binding mints a stable canonical session id (no cursor yet).
-    internal = runtime.internal_session("coder", "room1")
+    # First binding mints a stable canonical conversation id (no cursor yet).
+    internal = runtime.internal_conversation("coder", "room1")
     binding = runtime.workspaces.store.get_binding("coder", "room1")
-    assert binding is not None and binding.internal_session_id == internal.id
+    assert binding is not None and binding.internal_conversation_id == internal.conversation_id
     assert runtime.room_cursor("coder", "room1") is None
-    again = runtime.internal_session("coder", "room1")
-    assert again.id == internal.id
+    again = runtime.internal_conversation("coder", "room1")
+    assert again.conversation_id == internal.conversation_id
     # Roundtrip: cursor persists in the one current registry shape.
     runtime.set_room_cursor("coder", "room1", (3, "fpabc"))
     assert runtime.room_cursor("coder", "room1") == (3, "fpabc")
     raw = json.loads((tmp_path / "bots" / "coder" / "workspace"
                        / "registry.json").read_text(encoding="utf-8"))
     entry = raw["windows"]["room1"]
-    assert entry["session"] == internal.id
+    assert entry["conversation"] == internal.conversation_id
     assert (entry["room_cursor"], entry["room_fingerprint"]) == (3, "fpabc")
-    # No room_sessions.json mirror is ever written.
-    assert not (tmp_path / "bots" / "coder" / "room_sessions.json").exists()
+    # No room_conversations.json mirror is ever written.
+    assert not (tmp_path / "bots" / "coder" / "room_conversations.json").exists()
     assert not (tmp_path / "bots" / "coder"
-                / "room_sessions.json.bak").exists()
+                / "room_conversations.json.bak").exists()
     # No binding: nothing is created or written for a cursor.
     assert runtime.room_cursor("coder", "noroom") is None
     assert runtime._workspaces.store.get_binding("coder", "noroom") is None
@@ -949,9 +949,9 @@ def test_failed_bot_turn_keeps_user_row_with_error_marker(tmp_path: Path) -> Non
         room = _seed_room_pair(app)
         with _pytest.raises(RuntimeError):
             app.turn(room, "@coder go")
-        from thyca.conversations.runtime import SessionManager
+        from thyca.conversations.runtime import ConversationManager
 
-        store = SessionManager(store=app._sessions.store)
+        store = ConversationManager(store=app._conversations.store)
         store.load(room)
         user_rows = [m for m in store.current.messages
                      if m.role == "user" and (m.content or "") == "@coder go"]
@@ -970,7 +970,7 @@ def test_failed_bot_turn_keeps_user_row_with_error_marker(tmp_path: Path) -> Non
         _ref = resolve_ref(app._root, room)
         _projected = project_for_trace(_view(
             _ref,
-            {"title": None, "title_source": None, "naming_attempted": False,
+            {"title": None, "title_source": None,
              "participants": ["thyca", "coder"]},
             tuple(store.current.messages),
         ))

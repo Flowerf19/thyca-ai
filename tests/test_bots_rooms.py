@@ -11,8 +11,8 @@ from thyca.configs import load, save
 from seeded_config import seeded_config
 from thyca.core.protocol import Message
 from thyca.llms.llm_base import ChatReply
-from thyca.serve.trace import aggregate, turns_from_session
-from thyca.conversations.runtime import Session
+from thyca.serve.trace import aggregate, turns_from_conversation
+from thyca.conversations.runtime import ConversationRuntime
 
 
 def _chat(tmp_path: Path, connect=None) -> ChatApp:
@@ -34,8 +34,8 @@ def test_create_accepts_bots_and_payload_carries_them(tmp_path: Path) -> None:
         detail = app.create(bots=["thyca", "coder"])
         assert detail["bots"] == ["thyca", "coder"]
         assert detail["kind"] == "group"
-        assert app.get_payload(detail["id"])["bots"] == ["thyca", "coder"]
-        # No bots: Thyca's DM (phase 2B), not a plain session.
+        assert app.get_payload(detail["conversation_id"])["bots"] == ["thyca", "coder"]
+        # No bots: Thyca's DM (phase 2B), not a plain conversation.
         plain = app.create()
         assert plain["bots"] == ["thyca"]
         assert plain["dm"] == "thyca"
@@ -52,18 +52,18 @@ def test_list_payload_keeps_blank_explicit_group_only(tmp_path: Path) -> None:
         group = app.create(bots=["thyca", "coder"])
         assert group["messages"] == []
 
-        listed = app.list_payload()["sessions"]
-        assert [row["id"] for row in listed] == [group["id"]]
+        listed = app.list_payload()["conversations"]
+        assert [row["conversation_id"] for row in listed] == [group["conversation_id"]]
         assert listed[0]["turns"] == 0
         assert listed[0]["kind"] == "group"
         assert listed[0]["bots"] == ["thyca", "coder"]
 
-        plain = app._sessions.create()
+        plain = app._conversations.create()
         assert blank_dm["dm"] == "thyca" and blank_dm["messages"] == []
-        refreshed = {row["id"]: row for row in app.list_payload()["sessions"]}
-        assert refreshed[group["id"]]["kind"] == "group"
-        assert plain.id not in refreshed
-        assert blank_dm["id"] not in refreshed
+        refreshed = {row["conversation_id"]: row for row in app.list_payload()["conversations"]}
+        assert refreshed[group["conversation_id"]]["kind"] == "group"
+        assert plain.conversation_id not in refreshed
+        assert blank_dm["conversation_id"] not in refreshed
     finally:
         app.shutdown()
 
@@ -74,14 +74,14 @@ def test_create_single_bot_resolves_to_that_dm(tmp_path: Path) -> None:
         _coder(app)
         first = app.create(bots=["coder"])
         second = app.create(bots=["coder"])
-        assert first["id"] == second["id"]
+        assert first["conversation_id"] == second["conversation_id"]
         assert first["dm"] == "coder"
         assert first["kind"] == "dm"
         # Duplicate ids in one call dedupe to the same DM.
-        assert app.create(bots=["coder", "coder"])["id"] == first["id"]
+        assert app.create(bots=["coder", "coder"])["conversation_id"] == first["conversation_id"]
         # Two-bot calls always mint fresh groups.
-        g1 = app.create(bots=["thyca", "coder"])["id"]
-        g2 = app.create(bots=["thyca", "coder"])["id"]
+        g1 = app.create(bots=["thyca", "coder"])["conversation_id"]
+        g2 = app.create(bots=["thyca", "coder"])["conversation_id"]
         assert g1 != g2
     finally:
         app.shutdown()
@@ -107,16 +107,16 @@ def test_add_remove_bot_round_trip(tmp_path: Path) -> None:
         # Add/remove runs on a group (create() with no bots is Thyca's DM).
         created = app.create(bots=["thyca", "coder"])
         assert created["kind"] == "group"
-        assert app.set_room_bots(created["id"], "coder", "remove") == ["thyca"]
-        assert app.room_bots(created["id"]) == ["thyca"]
-        assert app.set_room_bots(created["id"], "coder", "add") == ["thyca", "coder"]
-        assert app.set_room_bots(created["id"], "coder", "remove") == ["thyca"]
+        assert app.set_room_bots(created["conversation_id"], "coder", "remove") == ["thyca"]
+        assert app.room_bots(created["conversation_id"]) == ["thyca"]
+        assert app.set_room_bots(created["conversation_id"], "coder", "add") == ["thyca", "coder"]
+        assert app.set_room_bots(created["conversation_id"], "coder", "remove") == ["thyca"]
         with pytest.raises(RegistryError):
-            app.set_room_bots(created["id"], "thyca", "remove")
+            app.set_room_bots(created["conversation_id"], "thyca", "remove")
         with pytest.raises(RegistryError):
-            app.set_room_bots(created["id"], "ghost", "add")
+            app.set_room_bots(created["conversation_id"], "ghost", "add")
         with pytest.raises(ValueError):
-            app.set_room_bots(created["id"], "coder", "kick")
+            app.set_room_bots(created["conversation_id"], "coder", "kick")
     finally:
         app.shutdown()
 
@@ -139,7 +139,7 @@ def test_bot_turn_records_attributed_room_rows(tmp_path: Path, monkeypatch) -> N
     try:
         _coder(app)
         created = app.create(bots=["coder"])
-        detail = app.turn(created["id"], "do the thing")
+        detail = app.turn(created["conversation_id"], "do the thing")
         assert detail["reply"] == "bot reply"
         messages = detail["messages"]
         bot_rows = [m for m in messages
@@ -165,16 +165,16 @@ def test_thyca_room_uses_default_path(tmp_path: Path) -> None:
     llm = FakeLLM()
     app = _chat(tmp_path, connect=llm)
     try:
-        detail = app.turn(app.create()["id"], "hi")
+        detail = app.turn(app.create()["conversation_id"], "hi")
         assert detail["reply"] == "thyca reply"
         assert llm.calls == 1
     finally:
         app.shutdown()
 
 
-def _session_with_bot_rows() -> Session:
-    return Session(
-        id="s1", path=Path("/tmp/x.jsonl"),
+def _conversation_with_bot_rows() -> ConversationRuntime:
+    return ConversationRuntime(
+        conversation_id="s1", path=Path("/tmp/x.jsonl"),
         messages=[
             Message(role="user", content="hi", ts="2026-08-01T10:00:00Z"),
             Message(role="assistant", content="a", ts="2026-08-01T10:00:01Z",
@@ -189,7 +189,7 @@ def _session_with_bot_rows() -> Session:
 
 
 def test_trace_groups_by_bot() -> None:
-    turns = turns_from_session(_session_with_bot_rows())
+    turns = turns_from_conversation(_conversation_with_bot_rows())
     assert turns[0].bot_id == "coder"
     assert turns[0].trace_id == "tr_1"
     assert turns[0].to_payload()["bot_id"] == "coder"
@@ -205,13 +205,13 @@ def test_wire_kind_dm_group_legacy(tmp_path: Path) -> None:
     try:
         _coder(app)
         dm = app.bot_dm("coder")
-        assert app.get_payload(dm["id"])["kind"] == "dm"
+        assert app.get_payload(dm["conversation_id"])["kind"] == "dm"
         group = app.create(bots=["thyca", "coder"])
-        assert app.get_payload(group["id"])["kind"] == "group"
-        # Legacy session without any meta line reads as group.
-        raw = app._sessions.create()
-        assert app.get_payload(raw.id)["kind"] == "group"
-        assert app.get_payload(raw.id)["bots"] == ["thyca"]
+        assert app.get_payload(group["conversation_id"])["kind"] == "group"
+        # Legacy conversation without any meta line reads as group.
+        raw = app._conversations.create()
+        assert app.get_payload(raw.conversation_id)["kind"] == "group"
+        assert app.get_payload(raw.conversation_id)["bots"] == ["thyca"]
     finally:
         app.shutdown()
 

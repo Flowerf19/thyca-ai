@@ -76,7 +76,7 @@ Hai bullet → hai hàng `chunks`. Heading là session; comment JSON là tem má
 
 | Cột | Việc |
 |-----|------|
-| `chunk_id` / `session_id` | `ngày#entry#leaf` / `ngày#entry` |
+| `chunk_id` / `memory_id` | `ngày#entry#leaf` / `ngày#entry` |
 | `text_raw` | chữ có dấu — FTS + snippet |
 | `text_norm` | bỏ dấu, thường — typo |
 | `content_hash` | sha256 structural — diff reindex |

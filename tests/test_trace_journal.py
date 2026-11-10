@@ -1,8 +1,8 @@
 """Usage/Trace merge contract — dashboard controller + Trace renderer.
 
-The old trace surface (12/12/1 session/turn pagers in dashboard-today.js,
+The old trace surface (12/12/1 conversation/turn pagers in dashboard-today.js,
 collect_trace_pages dedupe paging, scroll-reveal deep links, separate
-session CRUD) was not ported. The new page is list+detail inside the shared
+conversation CRUD) was not ported. The new page is list+detail inside the shared
 shell: GET /api/traces?from&to&limit&offset&q&model&status paged 50-at-a-time
 behind "Tải thêm", one flat row per turn, turn detail at
 GET /api/traces/dm/<bot>/<turn> or /api/traces/groups/<group_id>/<turn>,
@@ -148,7 +148,7 @@ def test_page_is_a_single_screen_shell_document() -> None:
     renderer = TRACE_JS.read_text(encoding="utf-8")
     assert 'window.ThycaTraceDetail = Object.freeze({' in renderer
     assert "ThycaRouter.register" not in renderer and "getJson(" not in renderer
-    for gone in ("session-pager", "journal-pager", "pager-button", "turn-list", "session-list-view"):
+    for gone in ("conversation-pager", "journal-pager", "pager-button", "turn-list", "conversation-list-view"):
         assert gone not in renderer
 
 
@@ -159,7 +159,7 @@ def test_usage_markup_and_trace_renderer_contract() -> None:
         'id="stat-grid"', 'data-preset="1"', 'data-preset="7"',
         'data-preset="30"', 'data-preset="all"', 'id="analysis-details"',
         'id="filter-q"', 'id="filter-model"', 'id="filter-status"',
-        'id="trace-sessions"', 'id="trace-more"', 'id="turn-detail-view"',
+        'id="trace-conversations"', 'id="trace-more"', 'id="turn-detail-view"',
         'id="detail-back"', 'id="detail-status"', 'id="detail-body"',
         '/api/traces/stats?', '/api/traces?', '/api/traces/dm/${encodeURIComponent(ref.bot_id)}/${turn}',
         '/api/traces/groups/${encodeURIComponent(ref.group_id)}/${turn}',
@@ -443,7 +443,7 @@ def test_turn_click_delegation_and_hashchange(node: str) -> None:
         node,
         f"(async () => {{ await __releaseShell(); await new Promise(r => setTimeout(r, 0));\n"
         f"__jsonResponder = async () => ({json.dumps(detail)});\n"
-        "const click = document.querySelector('#trace-sessions').listeners.click[0];\n"
+        "const click = document.querySelector('#trace-conversations').listeners.click[0];\n"
         "click({ target: { closest: (s) => s === 'button[data-conv][data-turn]'\n"
         "  ? { dataset: { conv: 'dm:thyca', turn: '1' } } : null } });\n"
         "await new Promise(r => setTimeout(r, 0));\n"
@@ -491,7 +491,7 @@ def test_trace_list_is_flat_and_turn_rows_keep_context(node: str) -> None:
         {"kind": "group", "group_id": "group-dddddddddddddddddddddddddddddddd", "turn_index": 1, "title": "T1",
          "started_at": "2026-09-20T10:00:00", "status": "completed",
          "bot_id": "coder",
-         "session_bots": ["session-owner"],
+         "conversation_bots": ["conversation-owner"],
          "bot_breakdown": [{"bot_id": "coder"}, {"bot_id": "ops"}],
          "model": "m", "requests": 2, "tool_calls": 1,
          "total_tokens": 10, "cost_usd": 0.01, "latency_ms": 40},
@@ -503,15 +503,15 @@ def test_trace_list_is_flat_and_turn_rows_keep_context(node: str) -> None:
         node,
         f"traceState.rows = {json.dumps(rows)}; traceState.total = 2; traceState.loading = false;\n"
         "renderTraceTable();\n"
-        "console.log(JSON.stringify(document.querySelector('#trace-sessions').innerHTML))",
+        "console.log(JSON.stringify(document.querySelector('#trace-conversations').innerHTML))",
     )
     assert html.count('<li><button') == 2
     assert 'data-conv="group:group-dddddddddddddddddddddddddddddddd"' in html and 'data-turn="1"' in html
     assert "<b>Coder +1</b>" in html
     assert "Chat nhóm" in html and "Chat riêng" in html
     assert "Hoàn tất" in html and "Thất bại" in html
-    assert "session-owner" not in html and "dm-owner" not in html
-    assert 'class="paper-card tl-session"' not in html and "1 lượt lỗi" not in html
+    assert "conversation-owner" not in html and "dm-owner" not in html
+    assert 'class="paper-card tl-conversation"' not in html and "1 lượt lỗi" not in html
     assert "$0.0100" in html and ">—<" in html
 
 
@@ -559,10 +559,10 @@ def test_full_detail_bot_context_keeps_primary_and_breakdown(node: str) -> None:
     out = _eval_trace(
         node,
         "console.log(JSON.stringify(["
-        " turnBotIds({ bot_id: 'primary', session_bots: ['member'],"
+        " turnBotIds({ bot_id: 'primary', conversation_bots: ['member'],"
         "  bot_breakdown: [{ bot_id: 'a' }, { bot_id: 'b' }] }),"
-        " turnBotIds({ bot_id: 'direct', session_dm: 'dm-owner' }),"
-        " turnBotIds({ session_dm: 'dm-owner', session_bots: ['member'] })]))",
+        " turnBotIds({ bot_id: 'direct', conversation_dm: 'dm-owner' }),"
+        " turnBotIds({ conversation_dm: 'dm-owner', conversation_bots: ['member'] })]))",
     )
     assert out == [["primary", "a", "b"], ["direct"], []]
 

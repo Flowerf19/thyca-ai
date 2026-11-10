@@ -1,4 +1,4 @@
-"""Read-only: whether a session should be nudged to remember."""
+"""Read-only: whether a conversation should be nudged to remember."""
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta

@@ -1,11 +1,11 @@
-"""Wire contract for one chat session: payload shape + public error mapping.
+"""Wire contract for one chat conversation: payload shape + public error mapping.
 
 Shared by the layers on both sides of it: :class:`~thyca.app.chat_app.ChatApp`
 builds payloads with it, and the HTTP handlers map failures with it. Keeping
 it here (rather than in either) is what stops ``serve.py`` from growing a
 second copy of the field list and keeps the app layer free of HTTP statuses.
 
-No sockets, no I/O policy — the session rules live in
+No sockets, no I/O policy — the conversation rules live in
 ``thyca/conversations/runtime``.
 """
 from __future__ import annotations
@@ -17,57 +17,52 @@ from thyca.configs import Config
 from thyca.core.protocol import Message, ToolCall
 from thyca.skills.skill_event import skill_name_for_call
 from . import (
-    Session,
-    SessionBusy,
-    SessionCorrupt,
-    SessionError,
-    SessionNotFound,
+    ConversationRuntime,
+    ConversationBusy,
+    ConversationCorrupt,
+    ConversationError,
+    ConversationNotFound,
 )
 from .ask_remember import ask_remember
 from .compaction import calibration_factor, context_usage
-from .title import display_title
 
 
-def session_title(session: Session) -> str:
-    return display_title(session)
-
-
-_SIDECAR_KINDS = frozenset({"naming", "compaction"})
+_SIDECAR_KINDS = frozenset({"compaction"})
 
 
 def is_sidecar_message(message: Message) -> bool:
-    """True for meta-only sidecar rows (naming + compaction cost records).
+    """True for meta-only sidecar rows (compaction cost records).
 
     Every surface that must keep a sidecar out of the model feed or out
     of turn outcomes uses this, so a compaction summary call is recorded
-    for Trace/cost exactly like naming without ever being sent back to
+    for Trace/cost without ever being sent back to
     a provider (strict providers reject its null content) or counted as
     a reply.
     """
     return (message.meta or {}).get("kind") in _SIDECAR_KINDS
 
 
-# Resolve the listing stamp for one session without inventing a file.
-def updated_at(session: Session) -> str:
-    if session.messages:
-        return session.messages[-1].ts
+# Resolve the listing stamp for one conversation without inventing a file.
+def updated_at(conversation: ConversationRuntime) -> str:
+    if conversation.messages:
+        return conversation.messages[-1].ts
     # Store-backed doors have no transcript file: an empty door reports
     # its stored creation stamp, exactly like the read adapter listing.
     # An unknown door is not found; no file stamp is ever consulted.
     try:
         from thyca.conversations.store.runtime import is_runtime_ready
 
-        root = session.path.parent.parent
+        root = conversation.path.parent.parent
         if is_runtime_ready(root):
             from thyca.conversations.store.admin import AdminStore
 
             items, _more = AdminStore(root).list(limit=5000)
             for row in items:
-                if row.ref.id == session.id:
+                if row.ref.id == conversation.conversation_id:
                     return row.created_at
     except Exception:
         pass
-    raise SessionNotFound(session.path)
+    raise ConversationNotFound(conversation.path)
 
 
 def turn_slices(messages: list[Message]) -> list[list[Message]]:
@@ -93,29 +88,28 @@ def turn_slices(messages: list[Message]) -> list[list[Message]]:
     return slices
 
 
-def session_summary(session: Session) -> dict:
+def conversation_summary(conversation: ConversationRuntime) -> dict:
     return {
-        "id": session.id,
-        "title": session_title(session),
-        "updated_at": updated_at(session),
-        "message_count": len(session.messages),
+        "conversation_id": conversation.conversation_id,
+        "updated_at": updated_at(conversation),
+        "message_count": len(conversation.messages),
         # Turns the way Trace counts them: one per user message. Raw
         # message_count would read as inflated by tool traffic.
-        "turns": len(turn_slices(session.messages)),
-        # Team room participants (BE-3, contract §6): legacy sessions
+        "turns": len(turn_slices(conversation.messages)),
+        # Team room participants (BE-3, contract §6): legacy conversations
         # without a bots meta line read as Thyca alone.
-        "bots": list(session.bots) if session.bots else ["thyca"],
+        "bots": list(conversation.bots) if conversation.bots else ["thyca"],
         # Bot main window (CBE-5): bot id whose fixed DM this is, else null.
-        "dm": session.dm_bot,
+        "dm": conversation.dm_bot,
         # User-facing channel model (phase 2B): exactly dm or group.
-        "kind": "dm" if session.dm_bot else "group",
+        "kind": "dm" if conversation.dm_bot else "group",
         "channel": "webui",
-        "window_id": session.id,
+        "window_id": conversation.conversation_id,
     }
 
 
-def session_detail(
-    session: Session,
+def conversation_detail(
+    conversation: ConversationRuntime,
     cfg: Config,
     *,
     skills_root: Path | None = None,
@@ -123,10 +117,10 @@ def session_detail(
     started_at: str | None = None,
     context: dict | None = None,
 ) -> dict:
-    """Wire payload for one session.
+    """Wire payload for one conversation.
 
     ``running`` is passed in when the caller already knows the answer (the turn
-    itself); otherwise the caller supplies ``started_at`` for the session it is
+    itself); otherwise the caller supplies ``started_at`` for the conversation it is
     asking about, or leaves both unset for "not running".
 
     ``context`` is the caller's overhead-aware usage snapshot (hot prompt +
@@ -135,21 +129,20 @@ def session_detail(
     """
     if context is None:
         context = context_usage(
-            session.messages,
+            conversation.messages,
             cfg.effective_limits().contextTokens,
-            calibration=calibration_factor(session.messages, model=cfg.provider.model),
+            calibration=calibration_factor(conversation.messages, model=cfg.provider.model),
         )
     detail = {
-        "id": session.id,
-        "title": session_title(session),
+        "conversation_id": conversation.conversation_id,
         "model": cfg.provider.model,
-        "bots": list(session.bots) if session.bots else ["thyca"],
-        "dm": session.dm_bot,
-        "kind": "dm" if session.dm_bot else "group",
+        "bots": list(conversation.bots) if conversation.bots else ["thyca"],
+        "dm": conversation.dm_bot,
+        "kind": "dm" if conversation.dm_bot else "group",
         "channel": "webui",
-        "window_id": session.id,
-        "messages": [message_dict(item, skills_root) for item in session.messages],
-        "ask_remember": ask_remember(session.messages, datetime.now(UTC)),
+        "window_id": conversation.conversation_id,
+        "messages": [message_dict(item, skills_root) for item in conversation.messages],
+        "ask_remember": ask_remember(conversation.messages, datetime.now(UTC)),
         "context": context,
     }
     # A turn in flight is invisible on disk until it finishes writing, so
@@ -214,30 +207,23 @@ def tool_call_dict(
     return entry
 
 
-def session_http_error(exc: Exception) -> tuple[int, str] | None:
-    """Public ``(status, message)`` for a session failure, or None if unknown.
+def conversation_http_error(exc: Exception) -> tuple[int, str] | None:
+    """Public ``(status, message)`` for a conversation failure, or None if unknown.
 
-    The one session→HTTP table: rename, delete, and the read paths all map
-    through here (rename adds its own invalid-title branch first).
+    The one conversation→HTTP table: delete and the read paths all map
+    through here.
     """
-    if isinstance(exc, SessionNotFound):
-        return 404, "session not found"
-    if isinstance(exc, SessionBusy):
-        return 409, "session busy"
-    if isinstance(exc, SessionCorrupt):
-        return 503, "session unreadable"
-    if isinstance(exc, SessionError):
-        return 503, "session unavailable"
+    if isinstance(exc, ConversationNotFound):
+        return 404, "conversation not found"
+    if isinstance(exc, ConversationBusy):
+        return 409, "conversation busy"
+    if isinstance(exc, ConversationCorrupt):
+        return 503, "conversation unreadable"
+    if isinstance(exc, ConversationError):
+        return 503, "conversation unavailable"
     return None
-
-
-def rename_error(exc: Exception) -> tuple[int, str] | None:
-    """Public ``(status, message)`` for a failed rename, or None if unknown."""
-    if isinstance(exc, ValueError):
-        return 400, "invalid title"
-    return session_http_error(exc)
 
 
 def delete_error(exc: Exception) -> tuple[int, str] | None:
     """Public ``(status, message)`` for a failed delete, or None if unknown."""
-    return session_http_error(exc)
+    return conversation_http_error(exc)

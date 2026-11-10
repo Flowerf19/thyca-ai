@@ -25,7 +25,7 @@ def _card(**overrides) -> BotCard:
 def test_admin_names_shape() -> None:
     assert set(ADMIN_TOOL_NAMES) == {
         "bot_create", "bot_pause", "bot_delete", "bot_restore",
-        "bot_edit_card", "bot_delegate", "bot_stop",
+        "bot_edit_card", "bot_delegate", "bot_stop", "group_delete",
     }
 
 
@@ -48,7 +48,7 @@ def test_admin_handlers_deny_child_bot(tmp_path: Path) -> None:
     try:
         for name in ADMIN_TOOL_NAMES:
             spec = tool_registry.get(name)
-            args = {"bot_id": "x", "task": "t", "session_id": "s"}
+            args = {"bot_id": "x", "task": "t", "conversation_id": "s"}
             out = asyncio.run(spec.handler({k: v for k, v in args.items()}))
             assert out.startswith("denied:"), name
     finally:
@@ -426,3 +426,111 @@ def test_bot_create_avatar_suggestion_and_explicit(tmp_path: Path) -> None:
         {"bot_id": "twin-d", "role": "R", "description": "D.", "avatar": "star"}))
     assert "reserved for Thyca" in out
     assert not registry.exists("twin-d")
+
+
+def test_group_delete_hidden_from_child_and_denies_child() -> None:
+    schemas = [
+        {"type": "function", "function": {"name": "group_delete"}},
+        {"type": "function", "function": {"name": "read"}},
+    ]
+    assert visible_for_bot(schemas, "coder") == [schemas[1]]
+    assert visible_for_bot(schemas, "thyca") == schemas
+
+
+def test_group_delete_tool_via_chatapp(tmp_path: Path) -> None:
+    import json as _json
+
+    from test_serve_chat import FakeLLM, _chat
+    from thyca.bots.card import BotCard
+    from thyca.llms.llm_base import ChatReply
+    from thyca.conversations.store.admin import AdminStore
+    from thyca.memories.identity import bind_bot_id, reset_bot_id
+
+    app = _chat(tmp_path, FakeLLM(ChatReply(content="pong")))
+    try:
+        app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder", description="Codes.", persona="You code."))
+        app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper", description="Helps.", persona="You help."))
+        group = app.create(bots=["coder", "helper"])
+        app.turn(group["conversation_id"], "hi")
+        spec = app._registry.get("group_delete")
+        assert spec is not None
+        # DM ids are refused by stored kind.
+        dm = app.bot_dm("coder")
+        refused = asyncio.run(spec.handler({"group_id": dm["conversation_id"]}))
+        assert "failed" in refused and "not a group" in refused, refused
+        # A child caller is denied.
+        token = bind_bot_id("coder")
+        try:
+            denied = asyncio.run(spec.handler({"group_id": group["conversation_id"]}))
+            assert denied.startswith("denied:")
+        finally:
+            reset_bot_id(token)
+        # A busy group is refused and survives.
+        app._turns.claim(group["conversation_id"])
+        try:
+            busy = asyncio.run(spec.handler({"group_id": group["conversation_id"]}))
+            assert "failed" in busy and "busy" in busy
+            assert group["conversation_id"] in {row.ref.id for row in AdminStore(tmp_path).list(limit=5000)[0]}
+        finally:
+            app._turns.release(group["conversation_id"])
+        # Success removes the door.
+        ok = _json.loads(asyncio.run(spec.handler({"group_id": group["conversation_id"]})))
+        assert ok["ok"] is True and ok["group_id"] == group["conversation_id"]
+        assert group["conversation_id"] not in {row.ref.id for row in AdminStore(tmp_path).list(limit=5000)[0]}
+    finally:
+        app.shutdown()
+
+
+def test_bot_delete_prunes_and_dissolves_empty_group(tmp_path: Path) -> None:
+    import json as _json
+
+    from test_serve_chat import FakeLLM, _chat
+
+    from thyca.bots.card import BotCard
+    from thyca.conversations.store.admin import AdminStore
+    from thyca.llms.llm_base import ChatReply
+
+    app = _chat(tmp_path, FakeLLM(ChatReply(content="pong")))
+    try:
+        app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder", description="Codes.", persona="You code."))
+        app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper", description="Helps.", persona="You help."))
+        group = app.create(bots=["coder", "helper"])
+        app.turn(group["conversation_id"], "hi")
+        prune_spec = app._registry.get("bot_delete")
+        assert prune_spec is not None
+        # A busy group blocks the delete and keeps bot and roster.
+        app._turns.claim(group["conversation_id"])
+        try:
+            busy = asyncio.run(prune_spec.handler({"bot_id": "coder"}))
+            assert "failed" in busy and "busy" in busy, busy
+            assert app._bots.exists("coder")
+            assert app.room_bots(group["conversation_id"]) == ["coder", "helper"]
+        finally:
+            app._turns.release(group["conversation_id"])
+        # Success prunes the roster and reports both counts.
+        ok = _json.loads(asyncio.run(prune_spec.handler({"bot_id": "coder"})))
+        assert ok["ok"] is True and ok["groups_pruned"] == 1 and ok["groups_dissolved"] == 0
+        assert not app._bots.exists("coder")
+        assert app.room_bots(group["conversation_id"]) == ["helper"]
+        # A busy group is not dissolved mid-turn either.
+        app._turns.claim(group["conversation_id"])
+        try:
+            busy_dissolve = asyncio.run(prune_spec.handler({"bot_id": "helper"}))
+            assert "failed" in busy_dissolve and "busy" in busy_dissolve, busy_dissolve
+            assert app._bots.exists("helper")
+            assert app.room_bots(group["conversation_id"]) == ["helper"]
+        finally:
+            app._turns.release(group["conversation_id"])
+        # Deleting the last member dissolves the group.
+        gone = _json.loads(asyncio.run(prune_spec.handler({"bot_id": "helper"})))
+        assert gone["ok"] is True and gone["groups_pruned"] == 0 and gone["groups_dissolved"] == 1, gone
+        assert not app._bots.exists("helper")
+        assert group["conversation_id"] not in {row.ref.id for row in AdminStore(tmp_path).list(limit=5000)[0]}
+        try:
+            app.get_payload(group["conversation_id"])
+        except Exception:
+            pass
+        else:
+            raise AssertionError("expected dissolved group to be unreadable")
+    finally:
+        app.shutdown()

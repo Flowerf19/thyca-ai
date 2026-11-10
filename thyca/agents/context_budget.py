@@ -43,7 +43,7 @@ _FALLBACK_GUIDANCE = {
         "with kind='checkpoint' and task/new_task to record only the durable "
         "delta (goal, decisions, open work, next step, references). Do not "
         "dump the transcript, secrets, or DM content. After recording, call "
-        "compact to summarize the session and free context."
+        "compact to summarize the conversation and free context."
     ),
     "roomy": (
         "You may proactively checkpoint at a task boundary: call "

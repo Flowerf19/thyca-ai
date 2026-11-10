@@ -27,8 +27,9 @@ def test_stream_consumes_reasoning_without_animation_frames(
     if not node:
         pytest.skip("node not installed")
     script = f"""
-import {{ loadScripts }} from './tests/webui_dom.mjs';
-const {{ readNdjson }} = loadScripts(['{CHAT_JS.as_posix()}'], 'return {{ readNdjson }};');
+import {{ installDom, loadScripts, CHAT_CHAIN }} from './tests/webui_dom.mjs';
+installDom();
+const {{ readNdjson }} = loadScripts(CHAT_CHAIN, 'return {{ readNdjson }};');
 // Hidden/background pages can suspend animation callbacks indefinitely.
 globalThis.requestAnimationFrame = () => 1;
 const events = [

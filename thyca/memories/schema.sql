@@ -21,8 +21,8 @@ CREATE TABLE IF NOT EXISTS chunks(
   path           TEXT NOT NULL REFERENCES source_files(path) ON DELETE CASCADE,
   source_kind    TEXT NOT NULL CHECK(source_kind IN ('daily','canonical')),
   timeline_day   TEXT,
-  session_id     TEXT NOT NULL,
-  session_title  TEXT NOT NULL,
+  memory_id     TEXT NOT NULL,
+  memory_title  TEXT NOT NULL,
   heading_raw    TEXT NOT NULL,
   leaf_ord       INTEGER NOT NULL,
   line_start     INTEGER NOT NULL,
@@ -41,22 +41,22 @@ CREATE TABLE IF NOT EXISTS chunks(
   status         TEXT,
   habit          TEXT,
   habit_explicit INTEGER NOT NULL DEFAULT 0,
-  UNIQUE(path, session_id, leaf_ord)
+  UNIQUE(path, memory_id, leaf_ord)
 );
 
-CREATE INDEX IF NOT EXISTS chunks_day ON chunks(timeline_day, session_id, leaf_ord);
+CREATE INDEX IF NOT EXISTS chunks_day ON chunks(timeline_day, memory_id, leaf_ord);
 CREATE INDEX IF NOT EXISTS chunks_path ON chunks(path);
 
 CREATE TABLE IF NOT EXISTS leaf_gets(
   chunk_id     TEXT PRIMARY KEY,
-  session_id   TEXT NOT NULL,
+  memory_id   TEXT NOT NULL,
   get_count    INTEGER NOT NULL CHECK(get_count >= 1),
   last_get_at  TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS leaf_searches(
   chunk_id        TEXT PRIMARY KEY,
-  session_id      TEXT NOT NULL,
+  memory_id      TEXT NOT NULL,
   search_count    INTEGER NOT NULL CHECK(search_count >= 1),
   last_search_at  TEXT NOT NULL
 );

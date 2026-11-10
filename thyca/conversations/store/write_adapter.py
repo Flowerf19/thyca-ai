@@ -52,7 +52,7 @@ from .database import (
     _ensure_root_ready,
     _root_instance_id_from_conn,
     _transaction_context,
-    open_existing_session,
+    open_existing_conversation,
 )
 from .runtime import RuntimeWriteIntent
 
@@ -105,7 +105,6 @@ def create_group(
     *,
     intent: RuntimeWriteIntent,
     actor: str,
-    title: str | None = None,
 ) -> Conversation:
     """Create a group on a runtime root; *actor* must participate."""
     _require_intent(intent)
@@ -113,7 +112,7 @@ def create_group(
     _require_actor(actor)
     if not isinstance(participants, list) or actor not in participants:
         raise ValueError('actor must be one of the participants')
-    return AdminStore(root).create_group(list(participants), title=title)
+    return AdminStore(root).create_group(list(participants))
 
 
 # Append one bot-authored row with an explicit acting bot.
@@ -169,7 +168,7 @@ def append_server_message(
 
     validate_message(message)
     payload = _encode_canonical_message(message)
-    conn = open_existing_session(root, lock_mode='exclusive')
+    conn = open_existing_conversation(root, lock_mode='exclusive')
     try:
         with _transaction_context(conn, 'BEGIN IMMEDIATE'):
             _ensure_root_ready(conn, _root_instance_id_from_conn(conn))
@@ -225,7 +224,7 @@ def append_server_row(
 
     validate_message(message)
     payload = _encode_canonical_message(message)
-    conn = open_existing_session(root, lock_mode='exclusive')
+    conn = open_existing_conversation(root, lock_mode='exclusive')
     try:
         with _transaction_context(conn, 'BEGIN IMMEDIATE'):
             _ensure_root_ready(conn, _root_instance_id_from_conn(conn))
@@ -259,12 +258,9 @@ def set_conversation_metadata(
     *,
     intent: RuntimeWriteIntent,
     actor: str,
-    title: str | None,
-    title_source: str | None,
-    naming_attempted: bool,
     participants: list[str],
 ) -> Conversation:
-    """Atomically replace title/source/attempted/participants in one transaction.
+    """Atomically replace participants in one transaction.
 
     The actor membership check, the row update, and the full-view re-read all
     run under the same ``BEGIN IMMEDIATE``: either the whole metadata record
@@ -277,13 +273,10 @@ def set_conversation_metadata(
     _require_ref(ref)
     _require_actor(actor)
     metadata = {
-        'title': title,
-        'title_source': title_source,
-        'naming_attempted': naming_attempted,
         'participants': list(participants),
     }
     validate_metadata(ref, metadata)
-    conn = open_existing_session(root, lock_mode='exclusive')
+    conn = open_existing_conversation(root, lock_mode='exclusive')
     try:
         with _transaction_context(conn, 'BEGIN IMMEDIATE'):
             _ensure_root_ready(conn, _root_instance_id_from_conn(conn))
@@ -366,7 +359,7 @@ def prepare_retry(
     # generation; a mismatch against the paged generation means a
     # purge/compaction landed between the two reads, so restart bounded.
     for _attempt in range(_MAX_RETRY_RESYNCS + 1):
-        conn = open_existing_session(root, lock_mode='shared')
+        conn = open_existing_conversation(root, lock_mode='shared')
         try:
             with _transaction_context(conn, 'BEGIN'):
                 _ensure_root_ready(conn, _root_instance_id_from_conn(conn))
@@ -447,7 +440,7 @@ def append_turn_error(
         meta={'error': {'code': code, 'message': message}},
     )
     payload = _encode_canonical_message(marker)
-    conn = open_existing_session(root, lock_mode='exclusive')
+    conn = open_existing_conversation(root, lock_mode='exclusive')
     try:
         with _transaction_context(conn, 'BEGIN IMMEDIATE'):
             _ensure_root_ready(conn, _root_instance_id_from_conn(conn))

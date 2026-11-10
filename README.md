@@ -2,7 +2,7 @@
 
 Trợ lý cá nhân đa công việc, giai đoạn **trước beta (pre-beta)**. Thyca học dần từ những gì bạn chia sẻ và cách bạn làm việc — trò chuyện, viết code, đọc tài liệu, tra web, chạy lệnh trên máy bạn — và **ghi nhớ** để lần sau không phải nhắc lại.
 
-**Phiên bản hiện tại: 0.87.0.dev2**
+**Phiên bản hiện tại: 0.88.0.dev0**
 
 Thyca là một **đội bot**: Thyca là bot quản lý, bạn tạo thêm bot cho từng vai trò. Mỗi bot có persona và bộ nhớ riêng, cùng đọc `SOUL.md` + `USER.md` chung về bạn.
 
@@ -43,8 +43,8 @@ Mục này nói rõ mỗi loại dữ liệu nằm ở đâu. Đọc mục này 
 - Mỗi bot có một `WorkspaceTimeline` riêng tại `thyca/bots/timeline.py`.
 - Đây là nơi lưu lịch sử thực thi canonical duy nhất của bot đó.
 - File trên đĩa là `bots/<bot>/workspace/timeline.jsonl`.
-- Lớp điều phối phiên nằm ở `thyca/conversations/runtime/`.
-- Bốn class `Session`, `SessionManager`, `SessionStore`, `SessionCompactor` giữ nguyên tên ở bước này.
+- Lớp điều phối hội thoại nằm ở `thyca/conversations/runtime/`.
+- Bốn class `ConversationRuntime`, `ConversationManager`, `ConversationStore`, `ConversationCompactor` ở đó (đổi tên full cutover, không còn alias cũ; runtime view đặt tên `ConversationRuntime` để không đụng store `Conversation`).
 
 ### Bộ nhớ dài hạn
 
@@ -98,9 +98,8 @@ Chưa chạy kiểm tra khói trên thư mục gốc thật (live scratch-root s
 
 ## Giới hạn đã biết
 
-- Đây vẫn là bản development (`0.87.0.dev2`). Đừng coi là bản beta hay bản ổn định.
-- Việc đổi tên bốn class `Session*` sang tên mới là bước riêng về sau.
-- Việc đổi tên trường `session_id` ở lá bộ nhớ thành `memory_id` là bước riêng về sau.
+- Đây vẫn là bản development (`0.88.0.dev0`). Đừng coi là bản beta hay bản ổn định.
+- Bốn class runtime đã đổi sang `Conversation*` và `session_id` đã thành `conversation_id` ở code hội thoại (không còn alias); trường định danh ở lá bộ nhớ cũng đã đổi từ `session_id` sang `memory_id` (SQLite schema v9, migration v8→v9 giữ hàng chunk và bộ đếm get/search; Markdown không đổi).
 - Chưa có bên phát hành vòng đời/đặt lại (lifecycle/reset issuer) ngoài luồng khởi động cục bộ của `ChatApp`.
 - Chưa chốt chính sách giữ/xóa dữ liệu cũ (retention policy).
 - Chưa có lệnh đặt lại trên dữ liệu thật. Việc đó cần bạn cho phép rõ ràng trước.

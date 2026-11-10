@@ -2,7 +2,7 @@
 
 A group room reads like a group chat: every member sees the PUBLIC
 messages and who said them; nobody sees another bot's behind-the-screen
-work (thinking, tool calls/results, internal sessions, DMs, private A2A).
+work (thinking, tool calls/results, internal conversations, DMs, private A2A).
 A newcomer reads the full public history once (labeled); later turns get
 only what they have not seen yet (per-bot cursor).
 """

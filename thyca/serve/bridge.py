@@ -59,7 +59,7 @@ def bridge_sink(queue_: queue.Queue, state: dict):
 
 def bridge_worker(
     app: ChatApp,
-    session_id: str,
+    conversation_id: str,
     text: str,
     queue_: queue.Queue,
     state: dict,
@@ -81,7 +81,7 @@ def bridge_worker(
     try:
         try:
             detail = app.turn(
-                session_id,
+                conversation_id,
                 text,
                 event_sink=sink,
                 model=model,
@@ -108,7 +108,7 @@ def _stream_end(item: object) -> bool:
 
 
 def _log_turn_failure(
-    app: ChatApp | None, session_id: str, model: str | None, exc: Exception
+    app: ChatApp | None, conversation_id: str, model: str | None, exc: Exception
 ) -> None:
     """One stderr line per failed turn (lands in serve.log under --daemon).
 
@@ -122,7 +122,7 @@ def _log_turn_failure(
         resolved, provider_id = model or "?", "?"
     _status, code, message = public_turn_error(exc)
     print(
-        f"turn failed session={session_id} model={resolved} "
+        f"turn failed conversation={conversation_id} model={resolved} "
         f"provider={provider_id} code={code} msg={message}",
         file=sys.stderr,
         flush=True,
@@ -136,7 +136,7 @@ def pump_stream(
     state: dict,
     *,
     app: ChatApp | None = None,
-    session_id: str = "?",
+    conversation_id: str = "?",
     model: str | None = None,
     detail_transform=None,
 ) -> None:
@@ -153,11 +153,11 @@ def pump_stream(
                 handler._stream_headers()
                 write_line(handler.wfile, first.to_dict())
             else:
-                _log_turn_failure(app, session_id, model, RuntimeError("no turn.accepted"))
+                _log_turn_failure(app, conversation_id, model, RuntimeError("no turn.accepted"))
                 handler._json(503, {"error": "chat unavailable"})
                 return
         elif _stream_end(first):
-            _log_turn_failure(app, session_id, model, RuntimeError("empty turn queue"))
+            _log_turn_failure(app, conversation_id, model, RuntimeError("empty turn queue"))
             handler._json(503, {"error": "chat unavailable"})
             return
         else:
@@ -168,7 +168,7 @@ def pump_stream(
                 write_line(handler.wfile, {"type": "turn.cancelled"})
                 return
             status, _code, message = public_turn_error(exc)
-            _log_turn_failure(app, session_id, model, exc)
+            _log_turn_failure(app, conversation_id, model, exc)
             handler._json(status, {"error": message})
             return
         terminal = False
@@ -194,7 +194,7 @@ def pump_stream(
                 write_line(handler.wfile, {"type": "turn.cancelled"})
             else:
                 _code, _message = public_turn_error(value)[1:]
-                _log_turn_failure(app, session_id, model, value)
+                _log_turn_failure(app, conversation_id, model, value)
                 write_line(
                     handler.wfile, {"type": "turn.failed", "code": _code, "message": _message}
                 )
@@ -202,7 +202,7 @@ def pump_stream(
         if not terminal and not state["disconnected"]:
             # Sentinel with no terminal item: write the constant public
             # failure so the client never sees a stream without a terminal.
-            _log_turn_failure(app, session_id, model, RuntimeError("missing terminal"))
+            _log_turn_failure(app, conversation_id, model, RuntimeError("missing terminal"))
             write_line(
                 handler.wfile,
                 {
@@ -220,7 +220,7 @@ def pump_stream(
 def stream_turn(
     handler,
     app: ChatApp,
-    session_id: str,
+    conversation_id: str,
     text: str,
     model: str | None = None,
     effort: str | None = None,
@@ -235,7 +235,7 @@ def stream_turn(
     state = {"disconnected": False}
     worker = threading.Thread(
         target=bridge_worker,
-        args=(app, session_id, text, items, state),
+        args=(app, conversation_id, text, items, state),
         kwargs={"model": model, "effort": effort, "retry": retry},
         daemon=True,
         name="thyca-turn-stream",
@@ -243,11 +243,11 @@ def stream_turn(
     worker.start()
     try:
         pump_stream(
-            handler, items, state, app=app, session_id=session_id, model=model,
+            handler, items, state, app=app, conversation_id=conversation_id, model=model,
             detail_transform=detail_transform,
         )
     finally:
-        # The worker is a daemon and only this session's turn was ever at
+        # The worker is a daemon and only this conversation's turn was ever at
         # stake, so persistence completes regardless of the client. A live
         # stream waits for the terminal item; an abandoned one only
         # parks this handler thread briefly.

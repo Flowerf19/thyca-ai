@@ -52,7 +52,7 @@ def _ctx(app, tmp_path, bot: str, room_id: str, span: str = "s1"):
     from thyca.bots.context import BotTurnContext, bind_bot_turn_context
 
     window = app._webui.window_for(
-        app._sessions.store.load(room_id))
+        app._conversations.store.load(room_id))
     ctx = BotTurnContext(
         sender_id=bot, room_id=room_id, span_id=span,
         trace_id="t1", thyca_dir=tmp_path, window=window)
@@ -69,7 +69,7 @@ def _ask(app, tmp_path, work_id="task-aabb1122"):
         "coder", work_id, "coder")
     app.bot_dm("coder")
     group = app.create(bots=["thyca", "coder"])
-    token = _ctx(app, tmp_path, "coder", group["id"])
+    token = _ctx(app, tmp_path, "coder", group["conversation_id"])
     try:
         out = asyncio.run(app._registry.get("ask_private").handler(
             {"work_id": work_id, "question": "private q?"}))
@@ -115,18 +115,18 @@ def test_ready_leaves_zero_group_conclusion(tmp_path: Path) -> None:
         dm = app.bot_dm("coder")
         group, pid = _ask(app, tmp_path)
         _received(app, tmp_path, group, pid)
-        token = _ctx(app, tmp_path, "coder", dm["id"], "s2")
+        token = _ctx(app, tmp_path, "coder", dm["conversation_id"], "s2")
         try:
             out = asyncio.run(app._registry.get("private_followup").handler(
                 {"pending_id": pid, "action": "ready"}))
         finally:
             _unctx(token)
         assert json.loads(out)["ok"], out
-        before = len(app.get_payload(group["id"])["messages"])
-        h = _decide_via_route(app, dm["id"], {
+        before = len(app.get_payload(group["conversation_id"])["messages"])
+        h = _decide_via_route(app, dm["conversation_id"], {
             "pending_id": pid, "revision": 0, "choice": "keep_private"})
         assert h.code == 200, h.body
-        after = app.get_payload(group["id"])["messages"]
+        after = app.get_payload(group["conversation_id"])["messages"]
         assert len(after) == before
         assert all("token" not in m["content"] for m in after)
     finally:
@@ -140,24 +140,24 @@ def test_stale_revision_and_wrong_dm_endpoint_errors(tmp_path: Path) -> None:
         dm = app.bot_dm("coder")
         group, pid = _ask(app, tmp_path)
         _received(app, tmp_path, group, pid)
-        token = _ctx(app, tmp_path, "coder", dm["id"], "s2")
+        token = _ctx(app, tmp_path, "coder", dm["conversation_id"], "s2")
         try:
             asyncio.run(app._registry.get("private_followup").handler(
                 {"pending_id": pid, "action": "resume",
                  "redacted_text": "safe"}))
         finally:
             _unctx(token)
-        h = _decide_via_route(app, dm["id"], {
+        h = _decide_via_route(app, dm["conversation_id"], {
             "pending_id": pid, "revision": 99, "choice": "approve"})
         assert h.code == 409, (h.code, h.body)
-        h = _decide_via_route(app, group["id"], {
+        h = _decide_via_route(app, group["conversation_id"], {
             "pending_id": pid, "revision": 1, "choice": "approve"})
         # Hard cut: a group id cannot address the DM endpoint at all.
         assert h.code == 404, (h.code, h.body)
-        h = _decide_via_route(app, dm["id"], {
+        h = _decide_via_route(app, dm["conversation_id"], {
             "pending_id": "pf-nope", "revision": 1, "choice": "approve"})
         assert h.code == 404, (h.code, h.body)
-        h = _decide_via_route(app, dm["id"], {
+        h = _decide_via_route(app, dm["conversation_id"], {
             "pending_id": pid, "revision": "one", "choice": "approve"})
         assert h.code == 400, (h.code, h.body)
     finally:
@@ -175,7 +175,7 @@ def test_terminal_late_dm_is_ordinary_turn(tmp_path: Path) -> None:
         from thyca.bots.private_followups import PrivateFollowupStore
         PrivateFollowupStore(tmp_path).decide(
             "coder", pid, action="done")
-        detail = app.turn(dm["id"], "late answer")
+        detail = app.turn(dm["conversation_id"], "late answer")
         assert detail["reply"] == "ok"
         assert PrivateFollowupStore(tmp_path).get(
             "coder", pid).status == "done"
@@ -192,12 +192,12 @@ def test_retry_dm_does_not_reconsume(tmp_path: Path) -> None:
         _coder(app)
         dm = app.bot_dm("coder")
         group, pid = _ask(app, tmp_path)
-        app.turn(dm["id"], "the answer")
+        app.turn(dm["conversation_id"], "the answer")
         from thyca.bots.private_followups import PrivateFollowupStore
         p = PrivateFollowupStore(tmp_path).get("coder", pid)
         assert p.status == "received"
         first_ref = p.answer_event_id
-        detail = app.turn(dm["id"], "the answer", retry=True)
+        detail = app.turn(dm["conversation_id"], "the answer", retry=True)
         assert detail["reply"] == "ok"
         p2 = PrivateFollowupStore(tmp_path).get("coder", pid)
         assert p2.answer_event_id == first_ref
@@ -212,7 +212,7 @@ def test_origin_membership_rejects_share(tmp_path: Path) -> None:
         dm = app.bot_dm("coder")
         group, pid = _ask(app, tmp_path)
         _received(app, tmp_path, group, pid)
-        token = _ctx(app, tmp_path, "coder", dm["id"], "s2")
+        token = _ctx(app, tmp_path, "coder", dm["conversation_id"], "s2")
         try:
             asyncio.run(app._registry.get("private_followup").handler(
                 {"pending_id": pid, "action": "resume",
@@ -229,8 +229,8 @@ def test_origin_membership_rejects_share(tmp_path: Path) -> None:
             def _read_json(self):
                 return {"bot_id": "coder", "action": "remove"}
 
-        group_bots(_HB(), app, group["id"])
-        h = _decide_via_route(app, dm["id"], {
+        group_bots(_HB(), app, group["conversation_id"])
+        h = _decide_via_route(app, dm["conversation_id"], {
             "pending_id": pid, "revision": 1, "choice": "approve"})
         assert h.code == 409, (h.code, h.body)
     finally:
@@ -245,7 +245,7 @@ def test_app_cancel_cancels_own_pending(tmp_path: Path) -> None:
         _coder(app)
         dm = app.bot_dm("coder")
         group, pid = _ask(app, tmp_path)
-        app.cancel(dm["id"])
+        app.cancel(dm["conversation_id"])
         assert PrivateFollowupStore(tmp_path).get(
             "coder", pid).status == "cancelled"
     finally:
@@ -259,7 +259,7 @@ def test_ask_private_denied_from_dm(tmp_path: Path) -> None:
         dm = app.bot_dm("coder")
         app._runtime.workspaces.store.record_task_owner(
             "coder", "task-aabb1122", "coder")
-        token = _ctx(app, tmp_path, "coder", dm["id"])
+        token = _ctx(app, tmp_path, "coder", dm["conversation_id"])
         try:
             out = asyncio.run(app._registry.get("ask_private").handler(
                 {"work_id": "task-aabb1122", "question": "q"}))
@@ -277,7 +277,7 @@ def test_drain_matching_restores_queue_on_predicate_error() -> None:
     bus.register("b")
     for i in range(3):
         bus.send(sender="a", recipient="b", kind="message",
-                 session_id=f"s{i}", payload="p")
+                 conversation_id=f"s{i}", payload="p")
     calls = {"n": 0}
 
     def boom(item):
@@ -290,7 +290,7 @@ def test_drain_matching_restores_queue_on_predicate_error() -> None:
         bus.drain_matching("b", boom)
     back = bus.drain("b")
     assert len(back) == 3
-    assert [e.session_id for e in back] == ["s0", "s1", "s2"]
+    assert [e.conversation_id for e in back] == ["s0", "s1", "s2"]
 
 
 def test_group_view_denies_raw_private_paths(tmp_path: Path) -> None:
@@ -339,9 +339,9 @@ def test_app_cancel_idle_dm_cancels_own_pending(tmp_path: Path) -> None:
         group, pid = _ask(app, tmp_path)
         other = PrivateFollowupStore(tmp_path).create(
             "helper", work_id="task-bbcc2233",
-            origin_window=group["id"],
-            dm_window=helper_dm["id"], question="other")
-        app.cancel(dm["id"])
+            origin_window=group["conversation_id"],
+            dm_window=helper_dm["conversation_id"], question="other")
+        app.cancel(dm["conversation_id"])
         assert PrivateFollowupStore(tmp_path).get(
             "coder", pid).status == "cancelled"
         assert PrivateFollowupStore(tmp_path).get(
@@ -363,13 +363,13 @@ def test_group_ambiguous_pending_cancel_conflicts(tmp_path: Path) -> None:
         helper_dm = app.bot_dm("helper")
         group, pid = _ask(app, tmp_path)
         store = PrivateFollowupStore(tmp_path)
-        app.set_room_bots(group["id"], "helper", "add")
+        app.set_room_bots(group["conversation_id"], "helper", "add")
         store.create("helper", work_id="task-bbcc2233",
-                     origin_window=group["id"], dm_window=helper_dm["id"],
+                     origin_window=group["conversation_id"], dm_window=helper_dm["conversation_id"],
                      question="other")
-        from thyca.conversations.runtime import SessionBusy
-        with pytest.raises((SessionBusy, TurnInFlight)):
-            app.cancel(group["id"])
+        from thyca.conversations.runtime import ConversationBusy
+        with pytest.raises((ConversationBusy, TurnInFlight)):
+            app.cancel(group["conversation_id"])
         assert store.get("coder", pid).status == "waiting_private"
         assert store.get("helper", store.active("helper").pending_id
                        ).status == "open"
@@ -386,7 +386,7 @@ def test_crash_after_post_recovers_single_row(tmp_path: Path) -> None:
         dm = app.bot_dm("coder")
         group, pid = _ask(app, tmp_path)
         _received(app, tmp_path, group, pid)
-        token = _ctx(app, tmp_path, "coder", dm["id"], "s2")
+        token = _ctx(app, tmp_path, "coder", dm["conversation_id"], "s2")
         try:
             asyncio.run(app._registry.get("private_followup").handler(
                 {"pending_id": pid, "action": "resume",
@@ -405,19 +405,19 @@ def test_crash_after_post_recovers_single_row(tmp_path: Path) -> None:
         import unittest.mock as mock
         with mock.patch.object(
                 PrivateFollowupStore, "finalize_resumed", _boom):
-            h = _decide_via_route(app, dm["id"], {
+            h = _decide_via_route(app, dm["conversation_id"], {
                 "pending_id": pid, "revision": 1, "choice": "approve"})
-        rows = [m for m in app.get_payload(group["id"])["messages"]
+        rows = [m for m in app.get_payload(group["conversation_id"])["messages"]
                 if (m.get("meta") or {}).get("kind") == "private_resume"]
         assert len(rows) == 1
         assert (rows[0]["meta"] or {}).get("pending_id") == pid
         app.shutdown()
         app2 = _chat(tmp_path, _LLM())
         try:
-            h = _decide_via_route(app2, dm["id"], {
+            h = _decide_via_route(app2, dm["conversation_id"], {
                 "pending_id": pid, "revision": 1, "choice": "approve"})
             assert h.code == 200, h.body
-            rows = [m for m in app2.get_payload(group["id"])["messages"]
+            rows = [m for m in app2.get_payload(group["conversation_id"])["messages"]
                     if (m.get("meta") or {}).get("kind") == "private_resume"]
             assert len(rows) == 1
             assert PrivateFollowupStore(tmp_path).get(
@@ -439,7 +439,7 @@ def test_concurrent_approve_single_row(tmp_path: Path) -> None:
         dm = app.bot_dm("coder")
         group, pid = _ask(app, tmp_path)
         _received(app, tmp_path, group, pid)
-        token = _ctx(app, tmp_path, "coder", dm["id"], "s2")
+        token = _ctx(app, tmp_path, "coder", dm["conversation_id"], "s2")
         try:
             asyncio.run(app._registry.get("private_followup").handler(
                 {"pending_id": pid, "action": "resume",
@@ -451,14 +451,14 @@ def test_concurrent_approve_single_row(tmp_path: Path) -> None:
 
         def approve():
             barrier.wait()
-            results.append(_decide_via_route(app, dm["id"], {
+            results.append(_decide_via_route(app, dm["conversation_id"], {
                 "pending_id": pid, "revision": 1, "choice": "approve"}).code)
 
         ts = [threading.Thread(target=approve) for _ in range(2)]
         for t in ts: t.start()
         barrier.wait()
         for t in ts: t.join(30)
-        rows = [m for m in app.get_payload(group["id"])["messages"]
+        rows = [m for m in app.get_payload(group["conversation_id"])["messages"]
                 if (m.get("meta") or {}).get("kind") == "private_resume"]
         assert len(rows) == 1
         assert all(c in (200, 409) for c in results)
@@ -475,7 +475,7 @@ def test_legacy_singleton_task_owner_via_remember(tmp_path: Path) -> None:
             "t", "b", task="task-aabb1122", bots=["coder"],
             now=_today())
         group = app.create(bots=["thyca", "coder"])
-        token = _ctx(app, tmp_path, "coder", group["id"])
+        token = _ctx(app, tmp_path, "coder", group["conversation_id"])
         try:
             out = asyncio.run(app._registry.get("ask_private").handler(
                 {"work_id": "task-aabb1122", "question": "q"}))
@@ -495,7 +495,7 @@ def test_team_ambiguous_owner_denied(tmp_path: Path) -> None:
             "t", "b", task="task-aabb1122", bots=["team", "coder"],
             now=_today())
         group = app.create(bots=["thyca", "coder"])
-        token = _ctx(app, tmp_path, "coder", group["id"])
+        token = _ctx(app, tmp_path, "coder", group["conversation_id"])
         try:
             out = asyncio.run(app._registry.get("ask_private").handler(
                 {"work_id": "task-aabb1122", "question": "q"}))
@@ -513,7 +513,7 @@ def test_single_pending_origin_group_cancel(tmp_path: Path) -> None:
     try:
         _coder(app)
         group, pid = _ask(app, tmp_path)
-        app.cancel(group["id"])
+        app.cancel(group["conversation_id"])
         assert PrivateFollowupStore(tmp_path).get(
             "coder", pid).status == "cancelled"
     finally:
@@ -529,7 +529,7 @@ def test_stale_keep_and_cancel_after_new_revision_409(
         group, pid = _ask(app, tmp_path)
         _received(app, tmp_path, group, pid)
         for span, v in (("s2", "v1"), ("s3", "v2")):
-            token = _ctx(app, tmp_path, "coder", dm["id"], span)
+            token = _ctx(app, tmp_path, "coder", dm["conversation_id"], span)
             try:
                 asyncio.run(app._registry.get("private_followup").handler(
                     {"pending_id": pid, "action": "resume",
@@ -537,7 +537,7 @@ def test_stale_keep_and_cancel_after_new_revision_409(
             finally:
                 _unctx(token)
         for choice in ("keep_private", "cancel"):
-            h = _decide_via_route(app, dm["id"], {
+            h = _decide_via_route(app, dm["conversation_id"], {
                 "pending_id": pid, "revision": 1, "choice": choice})
             assert h.code == 409, (choice, h.code, h.body)
         from thyca.bots.private_followups import PrivateFollowupStore
@@ -619,7 +619,7 @@ def test_scripted_tool_call_pipeline(tmp_path: Path, sender: str) -> None:
             _coder(app)
         app.bot_dm(sender)
         group = app.create(bots=["thyca", "coder"])
-        detail = app.turn(group["id"], f"@{sender} set up deploy")
+        detail = app.turn(group["conversation_id"], f"@{sender} set up deploy")
         assert detail["reply"]
         assert any(r for r in tool_results), "no tool results observed"
         assert not any(
@@ -631,9 +631,9 @@ def test_scripted_tool_call_pipeline(tmp_path: Path, sender: str) -> None:
         assert pending.status in ("open", "waiting_private")
         assert pending.work_id == work_id_box[0]
         dm = app.bot_dm(sender)
-        dm_msgs = app.get_payload(dm["id"])["messages"]
+        dm_msgs = app.get_payload(dm["conversation_id"])["messages"]
         assert any("deploy secret" in m["content"] for m in dm_msgs)
-        detail2 = app.turn(dm["id"], "RAW-SECRET")
+        detail2 = app.turn(dm["conversation_id"], "RAW-SECRET")
         assert detail2["reply"] == "done"
         p2 = PrivateFollowupStore(tmp_path).get(sender, pending.pending_id)
         assert p2.status == "received"
@@ -642,16 +642,16 @@ def test_scripted_tool_call_pipeline(tmp_path: Path, sender: str) -> None:
         assert any(
             f"pending_private={pending.pending_id}" in h for h in hot_dms)
         assert any(f"work_id={pending.work_id}" in h for h in hot_dms)
-        h = _decide_via_route(app, dm["id"], {
+        h = _decide_via_route(app, dm["conversation_id"], {
             "pending_id": pending.pending_id,
             "revision": p2.proposal_revision, "choice": "approve"})
         assert h.code == 200, h.body
-        group_msgs = app.get_payload(group["id"])["messages"]
+        group_msgs = app.get_payload(group["conversation_id"])["messages"]
         assert any("SAFE-deploy" in m["content"] for m in group_msgs)
         assert not any("RAW-SECRET" in m["content"] for m in group_msgs)
         assert not any("deploy secret" in m["content"] for m in group_msgs)
         from thyca.bots.tasks import derive_open_tasks
-        room = app._sessions.store.load(group["id"])
+        room = app._conversations.store.load(group["conversation_id"])
         opens = derive_open_tasks(list(room.messages), [], bot_id=sender)
         assert isinstance(opens, list)
     finally:
@@ -664,7 +664,7 @@ def test_new_task_wrapper_records_owner(tmp_path: Path) -> None:
         _coder(app)
         app.bot_dm("coder")
         group = app.create(bots=["thyca", "coder"])
-        token = _ctx(app, tmp_path, "coder", group["id"])
+        token = _ctx(app, tmp_path, "coder", group["conversation_id"])
         try:
             out = asyncio.run(app._registry.get("memory_remember").handler(
                 {"topic": "deploy", "summary": "x", "new_task": True}))
@@ -723,14 +723,14 @@ def test_active_turn_cancel_closes_pending(tmp_path: Path) -> None:
 
         def run_turn():
             try:
-                app.turn(dm["id"], "blocked turn")
+                app.turn(dm["conversation_id"], "blocked turn")
             except Exception as exc:
                 err.append(exc)
 
         t = threading.Thread(target=run_turn, daemon=True)
         t.start()
         assert started.wait(10)
-        app.cancel(dm["id"])
+        app.cancel(dm["conversation_id"])
         release.set()
         t.join(30)
         assert not t.is_alive()
@@ -752,7 +752,7 @@ def test_task_open_memory_task_id_links_work_item(tmp_path: Path) -> None:
         group = app.create(bots=["thyca", "coder"])
         # Tool rows live in the bot's canonical timeline, never the
         # public store: seed and read them there (production path).
-        room = app._sessions.store.load(group["id"])
+        room = app._conversations.store.load(group["conversation_id"])
         window = app._webui.window_for(room)
         app._runtime.workspaces.store.bind_window("coder", window)
         from thyca.bots.timeline import WorkspaceTimeline
@@ -806,9 +806,9 @@ def test_task_open_memory_task_id_pipeline(tmp_path: Path) -> None:
     try:
         _coder(app)
         group = app.create(bots=["thyca", "coder"])
-        detail = app.turn(group["id"], "@coder open deploy")
+        detail = app.turn(group["conversation_id"], "@coder open deploy")
         assert detail["reply"] == "linked"
-        internal = app._runtime.internal_session("coder", group["id"])
+        internal = app._runtime.internal_conversation("coder", group["conversation_id"])
         opens = derive_open_tasks(
             list(internal.messages), [], bot_id="coder")
         assert any(t.memory_task_id == "task-aabb1122" for t in opens)
@@ -828,7 +828,7 @@ def test_task_open_bad_memory_task_id_rejected(tmp_path: Path) -> None:
     try:
         _coder(app)
         group = app.create(bots=["thyca", "coder"])
-        token = _ctx(app, tmp_path, "coder", group["id"])
+        token = _ctx(app, tmp_path, "coder", group["conversation_id"])
         try:
             out = asyncio.run(app._registry.get("task_open").handler(
                 {"title": "x", "memory_task_id": "task-bad"}))
@@ -848,15 +848,15 @@ def test_ask_private_group_survives_first_dm(tmp_path: Path) -> None:
         app._runtime.workspaces.store.record_task_owner(
             "coder", "task-aabb1122", "coder")
         group = app.create(bots=["thyca", "coder"])
-        token = _ctx(app, tmp_path, "coder", group["id"])
+        token = _ctx(app, tmp_path, "coder", group["conversation_id"])
         try:
             out = asyncio.run(app._registry.get("ask_private").handler(
                 {"work_id": "task-aabb1122", "question": "secret?"}))
         finally:
             _unctx(token)
         assert json.loads(out)["ok"], out
-        session = app._sessions.store.load(group["id"])
-        assert session is not None
+        conversation = app._conversations.store.load(group["conversation_id"])
+        assert conversation is not None
     finally:
         app.shutdown()
 
@@ -873,8 +873,8 @@ def test_pending_group_survives_other_bot_dm(tmp_path: Path) -> None:
             description="h", persona=""))
         group, pid = _ask(app, tmp_path)
         app.bot_dm("helper")
-        session = app._sessions.store.load(group["id"])
-        assert session is not None
+        conversation = app._conversations.store.load(group["conversation_id"])
+        assert conversation is not None
         assert PrivateFollowupStore(tmp_path).get(
             "coder", pid).status == "waiting_private"
     finally:
@@ -912,19 +912,19 @@ def test_group_task_title_provenance_requires_explicit_link(tmp_path: Path) -> N
         _coder(app)
         dm = app.bot_dm('coder')
         group, pid = _ask(app, tmp_path)
-        app.turn(dm['id'], 'RAW-SECRET')
+        app.turn(dm["conversation_id"], 'RAW-SECRET')
         pending = PrivateFollowupStore(tmp_path).get('coder', pid)
         assert pending.question == 'private q?'
         assert pending.status == 'received'
         assert not any('RAW-SECRET' in m['content'] or 'private q?' in m['content']
-                       for m in app.get_payload(group['id'])['messages'])
+                       for m in app.get_payload(group["conversation_id"])['messages'])
         llm.emit_group_tasks = True
-        app.turn(group['id'], '@coder continue')
-        internal = app._runtime.internal_session('coder', group['id'])
+        app.turn(group["conversation_id"], '@coder continue')
+        internal = app._runtime.internal_conversation('coder', group["conversation_id"])
         tasks = derive_open_tasks(list(internal.messages), [], bot_id='coder')
         assert {t.task: t.memory_task_id for t in tasks} == {
             'private q?': 'task-aabb1122', 'RAW-SECRET': None}
-        titles = {t['title'] for t in app.bot_room_tasks(group['id'], 'coder')['tasks']}
+        titles = {t['title'] for t in app.bot_room_tasks(group["conversation_id"], 'coder')['tasks']}
         assert {'private q?', 'RAW-SECRET'} <= titles
     finally:
         app.shutdown()

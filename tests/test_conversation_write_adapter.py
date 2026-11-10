@@ -28,7 +28,7 @@ from thyca.conversations.store import (
 from thyca.conversations.store import write_adapter
 from thyca.core.conversation import ConversationRef
 from thyca.core.protocol import Message
-from thyca.conversations.runtime.store import SessionStore
+from thyca.conversations.runtime.store import ConversationStore
 
 
 def _root_id(root: Path) -> str:
@@ -325,61 +325,57 @@ def test_metadata_update_is_atomic_all_or_nothing(switched: Path) -> None:
 
     view = set_conversation_metadata(
         switched, group, intent=_intent(), actor='alice',
-        title='Kế hoạch tuần này', title_source='user',
-        naming_attempted=True, participants=['alice', 'bob'],
+        participants=['alice', 'bob'],
     )
-    assert view.title == 'Kế hoạch tuần này'
     assert view.participants == ('alice', 'bob')
     assert [m.content for m in view.messages] == ['hello']
     # Messages untouched by the metadata-only write.
     assert _snapshot(switched, group)[1] == before_msgs
 
-    # Failed validation changes nothing (title + participants together).
+    # Failed validation changes nothing.
     before = _snapshot(switched, group)
     with pytest.raises(ValueError):
         set_conversation_metadata(
             switched, group, intent=_intent(), actor='alice',
-            title='x', title_source='user', naming_attempted='yes',  # type: ignore[arg-type]
-            participants=['alice', 'bob'],
+            participants=[],
         )
     with pytest.raises(ValueError):
         set_conversation_metadata(
             switched, group, intent=_intent(), actor='alice',
-            title='x', title_source='user', naming_attempted=True,
             participants=['alice', 'mallory with spaces !!'],
         )
     assert _snapshot(switched, group) == before
     # Removed actor cannot authorize its own stale write.
     set_conversation_metadata(
         switched, group, intent=_intent(), actor='alice',
-        title=None, title_source=None, naming_attempted=False, participants=['alice'],
+        participants=['alice'],
     )
     with pytest.raises(ConversationStoreError):
         set_conversation_metadata(
             switched, group, intent=_intent(), actor='bob',
-            title='hijack', title_source='user', naming_attempted=True, participants=['alice'],
+            participants=['alice'],
         )
     assert AgentStore(switched).read(group, 'alice').messages[0].content == 'hello'
 
 
 # ---------- fail closed on never-initialized roots ----------
 
-def test_public_sessions_fail_closed_without_runtime_store(tmp_path: Path) -> None:
-    from thyca.conversations.runtime import SessionError
-    from thyca.conversations.runtime import SessionManager
+def test_public_conversations_fail_closed_without_runtime_store(tmp_path: Path) -> None:
+    from thyca.conversations.runtime import ConversationError
+    from thyca.conversations.runtime import ConversationManager
 
-    sessions_dir = tmp_path / 'sessions'
-    store = SessionStore(sessions_dir)
-    with pytest.raises(SessionError, match='runtime store not initialized'):
+    conversations_dir = tmp_path / 'sessions'
+    store = ConversationStore(conversations_dir)
+    with pytest.raises(ConversationError, match='runtime store not initialized'):
         store.create('group-' + 'a' * 32)
-    with pytest.raises(SessionError, match='runtime store not initialized'):
+    with pytest.raises(ConversationError, match='runtime store not initialized'):
         store.load('coder')
-    with pytest.raises(SessionError, match='runtime store not initialized'):
+    with pytest.raises(ConversationError, match='runtime store not initialized'):
         store.list_paths()
-    with pytest.raises(SessionError, match='runtime store not initialized'):
-        SessionManager(sessions_dir).create()
-    with pytest.raises(SessionError, match='runtime store not initialized'):
-        SessionManager(sessions_dir).ensure_dm('coder')
+    with pytest.raises(ConversationError, match='runtime store not initialized'):
+        ConversationManager(conversations_dir).create()
+    with pytest.raises(ConversationError, match='runtime store not initialized'):
+        ConversationManager(conversations_dir).ensure_dm('coder')
     # Nothing was created on the legacy file path.
     assert not list(tmp_path.rglob('*.jsonl'))
 

@@ -2,7 +2,7 @@
 
 The rebuilt Nhật ký page keeps one leaf list grouped by day and paged 60
 leaves at a time. Bot scope is no longer a toolbar <select>: sidebar bot
-cards and drawer sessions route through selectBot()/loadSession(), which
+cards and drawer sessions route through selectBot()/loadConversation(), which
 toggle the scope, rewrite ?bot= in the URL, hit stats?bot_id= and fill the
 scope card (with a "Bỏ lọc" button). Kind/use filtering and search stay
 client-side via the #memory-kind / #memory-use ghost selects. These
@@ -110,7 +110,7 @@ const fireAct = act => {
   return btn;
 };
 const LEAF = {
-  chunk_id: 'c1', session_id: 's1', heading: '## 09:30 — Trang một',
+  chunk_id: 'c1', memory_id: 's1', heading: '## 09:30 — Trang một',
   snippet: '- Nội dung một', timeline_day: '2026-09-20',
   get_count: 1, search_count: 2, bots: ['coder'], kind: 'habit',
   habit: 'viết', status: 'open',
@@ -142,7 +142,7 @@ const depNames = Object.keys(deps).filter(key => !['$', '$$', 'selectedBot'].inc
 const depValues = depNames.map(key => deps[key]);
 const page = new Function(...depNames, 'ctx', body.slice(0, tail.index) + `
   boot();
-  return { memState, loadStats, mutate, openEdit, selectBot, loadSession,
+  return { memState, loadStats, mutate, openEdit, selectBot, loadConversation,
            renderAll, renderLeaves, renderScopeCard, filteredLeaves,
            splitHeading };
 `)(...depValues, ctx);
@@ -231,7 +231,7 @@ hooks.getJson = async url => (url === '/api/memory/stats'
 await settle();
 const getsAfterBoot = calls.gets.length;
 
-// Gia hạn: posts session_id, then refreshes that leaf's meta in place —
+// Gia hạn: posts memory_id, then refreshes that leaf's meta in place —
 // no stats reload for a single-field change.
 hooks.postJson = async () => ({ ok: true, expires_at: '2026-10-20T00:00:00Z' });
 fireAct('reinforce');
@@ -299,8 +299,8 @@ const toggled = {
   scope: page.memState.scope, url: calls.urls[calls.urls.length - 1],
   cardHidden: document.querySelector('#memory-scope-card').hidden,
 };
-// A drawer session routes through loadSession to the owning bot's scope.
-page.loadSession('s9', 'Phiên mới', 'researcher');
+// A drawer session routes through loadConversation to the owning bot's scope.
+page.loadConversation('s9', 'researcher');
 await settle();
 const fromSession = {
   scope: page.memState.scope, selected: ctx.highlighted,
@@ -357,7 +357,7 @@ console.log(JSON.stringify({
     "filters": (r"""
 const many = [];
 for (let i = 0; i < 65; i++) many.push({
-  chunk_id: 'k' + i, session_id: 'sk' + i,
+  chunk_id: 'k' + i, memory_id: 'sk' + i,
   heading: '## 09:30 — Lá ' + i, snippet: '- nội dung ' + i,
   timeline_day: '2026-09-2' + (i % 3), get_count: i % 2, search_count: 0,
   bots: ['coder'], kind: i % 3 === 0 ? 'habit' : (i % 3 === 1 ? 'checkpoint' : ''),
@@ -513,11 +513,11 @@ def test_leaf_actions_post_the_right_endpoints(actions: dict) -> None:
     """Gia hạn renews the TTL (in-place meta refresh, no reload), Quên asks
     then drops the leaf, Sửa posts the collapsed summary — each exactly once."""
     posts = actions["posts"]
-    assert posts[0] == {"url": "/api/memory/reinforce", "body": {"session_id": "s1"}}
-    assert posts[1] == {"url": "/api/memory/forget", "body": {"session_id": "s1"}}
+    assert posts[0] == {"url": "/api/memory/reinforce", "body": {"memory_id": "s1"}}
+    assert posts[1] == {"url": "/api/memory/forget", "body": {"memory_id": "s1"}}
     assert posts[2] == {
         "url": "/api/memory/update",
-        "body": {"session_id": "s1", "topic": "Trang một", "summary": "dòng một hai"},
+        "body": {"memory_id": "s1", "topic": "Trang một", "summary": "dòng một hai"},
     }
     assert actions["confirms"] == 1            # only Quên asks
     # Reinforce refreshes the leaf's own meta; forget + update reload stats.
@@ -549,7 +549,7 @@ def test_update_failure_toasts_and_keeps_dialog_open(actions: dict) -> None:
 def test_scope_comes_from_sidebar_clicks_and_url(routing: dict) -> None:
     """Bot scope moved out of the deleted toolbar <select> into the sidebar:
     selectBot() toggles the filter + rewrites ?bot=, drawer sessions route
-    through loadSession(), and the scope card's "Bỏ lọc" clears it — each
+    through loadConversation(), and the scope card's "Bỏ lọc" clears it — each
     re-render keeps the roster highlight in sync."""
     assert routing["scoped"]["scope"] == "coder"
     assert routing["scoped"]["selected"] == "coder"

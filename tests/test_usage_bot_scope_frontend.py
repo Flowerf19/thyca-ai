@@ -21,7 +21,7 @@ def test_bot_selection_is_stable_and_preserves_content_view(node: str) -> None:
         node,
         "__controller.selectBot('coder'); const first = { ...ctx.route };"
         "ctx.route.hash = '#s/0'; activeView = 'trace'; __controller.selectBot('coder'); const sameId = { ...ctx.route };"
-        "__controller.loadSession('group', 'Group', 'coder');"
+        "__controller.loadConversation('group', 'coder');"
         "console.log(JSON.stringify({ first, sameId, route: ctx.route, botScope, activeView }))",
         "location.search = '?range=all&view=cost'; location.hash = '';"
     )
@@ -65,7 +65,7 @@ def test_explicit_bot_contribution_and_full_turn_context_are_distinguished(node:
         "botScope = 'coder'; const contribution = botContributionHtml({ bot_breakdown: [{ bot_id: 'coder',"
         " requests: 1, tool_calls: 1, prompt_tokens: 10, cached_tokens: 2, completion_tokens: 3,"
         " total_tokens: 13, cost_usd: 0.1, latency_ms: null }] });"
-        "detailData = { session_id: 's', turn_index: 0, bot_breakdown: [{ bot_id: 'coder' }], messages: [] };"
+        "detailData = { conversation_id: 's', turn_index: 0, bot_breakdown: [{ bot_id: 'coder' }], messages: [] };"
         "detailLoading = false; renderDetail();"
         "console.log(JSON.stringify({ contribution, detail: document.querySelector('#detail-body').innerHTML }))",
         "globalThis.__roster.coder = { id: 'coder', name: 'Coder', color: '#123', state: 'idle' };"

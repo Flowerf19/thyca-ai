@@ -25,8 +25,8 @@ from seeded_config import seeded_config
 from thyca.core.protocol import Message, ToolCall, parse_ts
 from thyca.llms.llm_base import ChatReply, LLMError
 from thyca.serve.turn_state import TurnHub
-from thyca.conversations.runtime import SessionManager
-from thyca.conversations.runtime.store import SessionStore
+from thyca.conversations.runtime import ConversationManager
+from thyca.conversations.runtime.store import ConversationStore
 
 
 def _chat(tmp_path: Path, connect=None) -> ChatApp:
@@ -65,7 +65,7 @@ def test_root_dm_keeps_identity_and_full_tool_scope(tmp_path: Path) -> None:
         dm = app.create()
         assert dm["dm"] == "thyca"
         assert dm["kind"] == "dm"
-        detail = app.turn(dm["id"], "hello root")
+        detail = app.turn(dm["conversation_id"], "hello root")
         assert detail["reply"] == "reply-1"
         rows = detail["messages"]
         reply_rows = [row for row in rows
@@ -86,23 +86,23 @@ def test_child_dm_reply_recorded_with_bot_id_and_internal(tmp_path: Path) -> Non
     try:
         _make_bot(app, "coder")
         dm = app.bot_dm("coder")
-        detail = app.turn(dm["id"], "hi coder")
+        detail = app.turn(dm["conversation_id"], "hi coder")
         reply_rows = [row for row in detail["messages"]
                       if isinstance(row.get("meta"), dict)
                       and row["meta"].get("bot_id") == "coder"]
         assert reply_rows, "child reply row must carry its bot_id in the room"
         assert reply_rows[-1]["content"] == "reply-1"
-        store, session_id = _internal_store(app, "coder", dm["id"])
-        internal_messages = store.load(session_id).messages
+        store, conversation_id = _internal_store(app, "coder", dm["conversation_id"])
+        internal_messages = store.load(conversation_id).messages
         assert any(row.role == "user" and "hi coder" in str(row.content)
                    for row in internal_messages)
         raw = json.loads(
             (tmp_path / "bots" / "coder" / "workspace" / "registry.json")
             .read_text(encoding="utf-8"))
-        entry = raw["windows"][dm["id"]]
-        assert entry.get("session") == session_id
+        entry = raw["windows"][dm["conversation_id"]]
+        assert entry.get("conversation") == conversation_id
         assert not (tmp_path / "bots" / "coder"
-                    / "room_sessions.json").exists()
+                    / "room_conversations.json").exists()
         assert llm.tool_names and "bot_create" not in llm.tool_names[-1]
     finally:
         app.shutdown()
@@ -114,7 +114,7 @@ def test_group_mention_runs_child_not_root(tmp_path: Path) -> None:
     try:
         _make_bot(app, "coder")
         group = app.create(bots=["thyca", "coder"])
-        detail = app.turn(group["id"], "hey @coder look at this")
+        detail = app.turn(group["conversation_id"], "hey @coder look at this")
         assert detail["reply"] == "reply-1"
         bot_rows = [row for row in detail["messages"]
                     if isinstance(row.get("meta"), dict)
@@ -131,9 +131,9 @@ def test_retry_keeps_single_user_row_and_new_reply(tmp_path: Path) -> None:
     app = _chat(tmp_path, connect=llm)
     try:
         dm = app.create()
-        first = app.turn(dm["id"], "do it")
+        first = app.turn(dm["conversation_id"], "do it")
         assert first["reply"] == "reply-1"
-        second = app.turn(dm["id"], retry=True)
+        second = app.turn(dm["conversation_id"], retry=True)
         assert second["reply"] == "reply-2"
         user_rows = [row for row in second["messages"]
                      if row.get("role") == "user"]
@@ -155,20 +155,20 @@ def test_webui_adapter_derives_window_and_event_metadata(
     try:
         _make_bot(app, "coder")
         adapter = WebUIChannelAdapter()
-        store = app._sessions.store
-        dm_session = store.load(app.bot_dm("coder")["id"])
-        dm_window = adapter.window_for(dm_session)
+        store = app._conversations.store
+        dm_conversation = store.load(app.bot_dm("coder")["conversation_id"])
+        dm_window = adapter.window_for(dm_conversation)
         assert dm_window.channel_id == "webui"
         assert dm_window.kind == "dm"
         assert dm_window.visibility == "private"
         assert dm_window.participants == ("coder",)
         group = app.create(bots=["thyca", "coder"])
-        group_window = adapter.window_for(store.load(group["id"]))
+        group_window = adapter.window_for(store.load(group["conversation_id"]))
         assert group_window.kind == "group"
         assert group_window.visibility == "public"
         assert group_window.participants == ("thyca", "coder")
-        event = adapter.event_for(store.load(group["id"]), "hello")
-        assert event.window_id == group["id"]
+        event = adapter.event_for(store.load(group["conversation_id"]), "hello")
+        assert event.window_id == group["conversation_id"]
         assert event.actor.kind == "user" and event.actor.id == "user"
         assert event.visibility == "public"
         assert event.event_id and event.idempotency_key
@@ -181,12 +181,12 @@ def test_webui_adapter_derives_window_and_event_metadata(
 
 
 def _internal_store(app, bot_id: str, room_id: str):
-    """Canonical journal store + session id for a bot's room binding."""
-    internal = app._runtime.internal_session(bot_id, room_id)
+    """Canonical journal store + conversation id for a bot's room binding."""
+    internal = app._runtime.internal_conversation(bot_id, room_id)
     window = app._runtime._window_for_room(room_id)
     assert window is not None, f"no window for room {room_id}"
     return app._runtime._canonical_store(
-        bot_id, window, internal.id), internal.id
+        bot_id, window, internal.conversation_id), internal.conversation_id
 
 
 def test_adapter_binding_survives_restart(
@@ -196,29 +196,29 @@ def test_adapter_binding_survives_restart(
     try:
         _make_bot(app, "coder")
         dm = app.bot_dm("coder")
-        app.turn(dm["id"], "hi dm")
-        internal = app._runtime.internal_session("coder", dm["id"])
+        app.turn(dm["conversation_id"], "hi dm")
+        internal = app._runtime.internal_conversation("coder", dm["conversation_id"])
         group = app.create(bots=["thyca", "coder"])
-        app.turn(group["id"], "@coder hi grp")
+        app.turn(group["conversation_id"], "@coder hi grp")
         app.shutdown()
         store = WorkspaceStore(tmp_path)
-        binding = store.get_binding("coder", dm["id"])
+        binding = store.get_binding("coder", dm["conversation_id"])
         assert binding is not None
-        assert binding.internal_session_id == internal.id
+        assert binding.internal_conversation_id == internal.conversation_id
         assert binding.window is not None
         assert binding.window.kind == "dm"
         assert binding.window.channel_id == "webui"
         assert binding.window.visibility == "private"
         assert binding.window.participants == ("coder",)
-        grp = store.get_binding("coder", group["id"])
+        grp = store.get_binding("coder", group["conversation_id"])
         assert grp is not None and grp.window is not None
         assert grp.window.kind == "group"
         assert grp.window.visibility == "public"
         assert grp.window.participants == ("thyca", "coder")
-        sessions = SessionStore(tmp_path / "sessions")
-        window = WebUIChannelAdapter().window_for(sessions.load(dm["id"]))
+        conversations = ConversationStore(tmp_path / "sessions")
+        window = WebUIChannelAdapter().window_for(conversations.load(dm["conversation_id"]))
         assert binding.window == window
-        reloaded = WorkspaceStore(tmp_path).get_binding("coder", dm["id"])
+        reloaded = WorkspaceStore(tmp_path).get_binding("coder", dm["conversation_id"])
         assert reloaded is not None and reloaded.window == window
     finally:
         app.shutdown()
@@ -240,11 +240,11 @@ class _GatedLLM:
         return ChatReply(content="quick-reply", model="m")
 
 
-def _turn_in_thread(app: ChatApp, session_id: str, text: str,
+def _turn_in_thread(app: ChatApp, conversation_id: str, text: str,
                     results: list, **kwargs) -> threading.Thread:
     def run() -> None:
         try:
-            results.append(("ok", app.turn(session_id, text, **kwargs)))
+            results.append(("ok", app.turn(conversation_id, text, **kwargs)))
         except BaseException as error:
             results.append(("err", error))
 
@@ -268,9 +268,9 @@ def test_same_bot_dm_and_group_turns_serialize(tmp_path: Path) -> None:
     try:
         _make_bot(app, "coder")
         _make_bot(app, "helper")
-        dm = app.bot_dm("coder")["id"]
-        group = app.create(bots=["coder", "helper"])["id"]
-        seed = SessionManager(store=app._sessions.store)
+        dm = app.bot_dm("coder")["conversation_id"]
+        group = app.create(bots=["coder", "helper"])["conversation_id"]
+        seed = ConversationManager(store=app._conversations.store)
         seed.load(group)
         seed.append(Message(role="user", content="seed"))
         first: list = []
@@ -283,7 +283,7 @@ def test_same_bot_dm_and_group_turns_serialize(tmp_path: Path) -> None:
         assert all("grp-second" not in str(m.get("content"))
                    for m in app.get_payload(group)["messages"])
         other: list = []
-        t3 = _turn_in_thread(app, app.bot_dm("helper")["id"],
+        t3 = _turn_in_thread(app, app.bot_dm("helper")["conversation_id"],
                              "helper-now", other)
         t3.join(timeout=10)
         assert other and other[0][0] == "ok"
@@ -304,8 +304,8 @@ def test_queued_turn_cancel_writes_nothing(tmp_path: Path) -> None:
     app = _chat(tmp_path, connect=llm)
     try:
         _make_bot(app, "coder")
-        dm = app.bot_dm("coder")["id"]
-        group = app.create(bots=["thyca", "coder"])["id"]
+        dm = app.bot_dm("coder")["conversation_id"]
+        group = app.create(bots=["thyca", "coder"])["conversation_id"]
         first: list = []
         t1 = _turn_in_thread(app, dm, "dm-first", first)
         _wait_for(lambda: llm.calls >= 1)
@@ -347,7 +347,7 @@ def test_failed_turn_releases_lease_and_retry_works(tmp_path: Path) -> None:
     app = _chat(tmp_path, connect=llm)
     try:
         _make_bot(app, "coder")
-        dm = app.bot_dm("coder")["id"]
+        dm = app.bot_dm("coder")["conversation_id"]
         with pytest.raises(LLMError):
             app.turn(dm, "hi coder")
         second = app.turn(dm, retry=True)
@@ -395,11 +395,11 @@ def test_turn_rejects_nonstr_text_before_any_write(tmp_path: Path) -> None:
         dm = app.create()
         for bad in (None, 123):
             with pytest.raises(InvalidTurnText):
-                app.turn(dm["id"], bad)
+                app.turn(dm["conversation_id"], bad)
         with pytest.raises(InvalidTurnText):
-            app.turn("ghost-session", None)
-        assert app._turns.hub(dm["id"]) is None
-        assert app.get_payload(dm["id"])["messages"] == []
+            app.turn("ghost-conversation", None)
+        assert app._turns.hub(dm["conversation_id"]) is None
+        assert app.get_payload(dm["conversation_id"])["messages"] == []
     finally:
         app.shutdown()
 
@@ -432,7 +432,7 @@ def test_a2a_send_back_to_running_bot_conflicts_and_stays_queued(
     try:
         _make_bot(app, "coder", tools=("bot_send",))
         _make_bot(app, "helper", tools=("bot_send",))
-        group = app.create(bots=["coder", "helper"])["id"]
+        group = app.create(bots=["coder", "helper"])["conversation_id"]
         detail = app.turn(group, "@coder go")
         assert detail["reply"] == "coder done"
         rows = detail["messages"]
@@ -441,8 +441,8 @@ def test_a2a_send_back_to_running_bot_conflicts_and_stays_queued(
             and m.get("content") == "helper done"
             for m in rows)
         assert app._runtime._bus.pending("coder") >= 1
-        store, session_id = _internal_store(app, "coder", group)
-        coder_internal = store.load(session_id).messages
+        store, conversation_id = _internal_store(app, "coder", group)
+        coder_internal = store.load(conversation_id).messages
         assert all("PING-BACK" not in str(m.content)
                    for m in coder_internal)
     finally:
@@ -456,11 +456,11 @@ def test_bidirectional_a2a_conflict_neither_hangs_nor_double_runs(
     try:
         _make_bot(app, "coder", tools=("bot_send",))
         _make_bot(app, "helper", tools=("bot_send",))
-        g1 = app.create(bots=["coder", "helper"])["id"]
-        seed = SessionManager(store=app._sessions.store)
+        g1 = app.create(bots=["coder", "helper"])["conversation_id"]
+        seed = ConversationManager(store=app._conversations.store)
         seed.load(g1)
         seed.append(Message(role="user", content="seed-g1"))
-        g2 = app.create(bots=["coder", "helper"])["id"]
+        g2 = app.create(bots=["coder", "helper"])["conversation_id"]
         seed.load(g2)
         seed.append(Message(role="user", content="seed-g2"))
         first: list = []

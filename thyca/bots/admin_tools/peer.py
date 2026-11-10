@@ -32,7 +32,7 @@ async def _send_and_deliver(
     Outside a live turn (no deliverer/context) the envelope stays queued
     for the recipient's next turn, reported honestly as ``queued``."""
     ctx = current_bot_turn_context()
-    session_id = room or (ctx.room_id if ctx is not None else "")
+    conversation_id = room or (ctx.room_id if ctx is not None else "")
     try:
         from thyca.memories.visibility import current_memory_view as _peer_view
         _peer_view0 = _peer_view()
@@ -87,7 +87,7 @@ async def _send_and_deliver(
         sender=sender,
         recipient=recipient,
         kind=kind,
-        session_id=session_id,
+        conversation_id=conversation_id,
         payload=payload,
         private_chain=_chain,
         trace_id=trace_id or (ctx.trace_id if ctx is not None else None),

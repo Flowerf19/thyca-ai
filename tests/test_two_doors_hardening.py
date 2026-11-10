@@ -675,13 +675,13 @@ def test_t5_skip_flag_avoids_global_scan(tmp_path: Path) -> None:
 
     mem._skills.index_text = _counted  # type: ignore[method-assign]
     try:
-        snap = mem.refresh(state, datetime.now(ZoneInfo("UTC")), session_id=None, reader="thyca", skip_skills=True)
+        snap = mem.refresh(state, datetime.now(ZoneInfo("UTC")), conversation_id=None, reader="thyca", skip_skills=True)
         assert snap.skills == ""
         assert calls == []
-        snap2 = mem.peek(state, datetime.now(ZoneInfo("UTC")), session_id=None, reader="thyca", skip_skills=True)
+        snap2 = mem.peek(state, datetime.now(ZoneInfo("UTC")), conversation_id=None, reader="thyca", skip_skills=True)
         assert snap2.skills == ""
         assert calls == []
-        snap3 = mem.refresh(state, datetime.now(ZoneInfo("UTC")), session_id=None, reader="thyca")
+        snap3 = mem.refresh(state, datetime.now(ZoneInfo("UTC")), conversation_id=None, reader="thyca")
         assert calls == [1]
         assert isinstance(snap3.skills, str)
     finally:
@@ -710,13 +710,13 @@ def test_t5_runtime_turn_skips_global_scan(tmp_path: Path, monkeypatch) -> None:
     app = _echo_app(tmp_path)
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="C", description="D", persona="P"))
-        dm = app.bot_dm("coder")["id"]
+        dm = app.bot_dm("coder")["conversation_id"]
         refresh_kwargs: list = []
         orig_refresh = app._memory.refresh
 
-        def _spy_refresh(state, now, session_id=None, reader=None, **kw):
+        def _spy_refresh(state, now, conversation_id=None, reader=None, **kw):
             refresh_kwargs.append(kw)
-            return orig_refresh(state, now, session_id=session_id, reader=reader, **kw)
+            return orig_refresh(state, now, conversation_id=conversation_id, reader=reader, **kw)
 
         monkeypatch.setattr(app._memory, "refresh", _spy_refresh)
         index_calls: list = []
@@ -745,13 +745,13 @@ def test_t5_meter_skips_global_scan(tmp_path: Path, monkeypatch) -> None:
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="C", description="D", persona="P"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="H", description="E", persona="Q"))
-        grp = app.create(bots=["coder", "helper"])["id"]
+        grp = app.create(bots=["coder", "helper"])["conversation_id"]
         peek_kwargs: list = []
         orig_peek = app._memory.peek
 
-        def _spy_peek(state, now, session_id=None, reader=None, **kw):
+        def _spy_peek(state, now, conversation_id=None, reader=None, **kw):
             peek_kwargs.append(kw)
-            return orig_peek(state, now, session_id=session_id, reader=reader, **kw)
+            return orig_peek(state, now, conversation_id=conversation_id, reader=reader, **kw)
 
         monkeypatch.setattr(app._memory, "peek", _spy_peek)
         index_calls: list = []
@@ -782,7 +782,7 @@ def test_t6_delegate_rejects_nonmember_sender(tmp_path: Path) -> None:
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="C", description="D", persona="P"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="H", description="E", persona="Q"))
-        room = app.create(bots=["coder", "helper"])["id"]
+        room = app.create(bots=["coder", "helper"])["conversation_id"]
         from thyca.bots.admin_tools import register_admin_tools
         from thyca.tools.registry import ToolRegistry
         from thyca.memories.identity import bind_bot_id, reset_bot_id
@@ -799,7 +799,7 @@ def test_t6_delegate_rejects_nonmember_sender(tmp_path: Path) -> None:
             reset_bot_id(tok)
         assert "member" in out.lower() and "sender" in out.lower(), (
             f"nonmember sender must be rejected as nonmember, got {out!r}")
-        room2 = app.create(bots=["coder", "thyca"])["id"]
+        room2 = app.create(bots=["coder", "thyca"])["conversation_id"]
         deps2 = _AD(app._bots, app._runtime, app.job_facade, room_bots=app.room_bots, room_dm_owner=app._room_dm_owner)
         tool_reg2 = ToolRegistry()
         register_admin_tools(tool_reg2, deps2)
@@ -831,7 +831,7 @@ def test_t6_delegate_rejects_nonmember_sender(tmp_path: Path) -> None:
 # provider: no direct _claimed call, no stubs bypassing model input.
 def test_t6_dm_turn_delegate_to_group_publishes_only_chosen(tmp_path: Path) -> None:
     from thyca.bots.card import BotCard
-    from thyca.conversations.runtime.manager import SessionManager
+    from thyca.conversations.runtime.manager import ConversationManager
     from thyca.core.protocol import Message, ToolCall
     from thyca.llms.llm_base import ChatReply
     from seeded_config import seeded_config
@@ -884,12 +884,12 @@ def test_t6_dm_turn_delegate_to_group_publishes_only_chosen(tmp_path: Path) -> N
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="C", description="D", persona="P"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="H", description="E", persona="Q"))
-        # Resolve the DM first: bot_dm prunes blank sessions, so the group
+        # Resolve the DM first: bot_dm prunes blank conversations, so the group
         # must be created afterwards (and seeded non-blank).
-        dm = app.bot_dm("thyca")["id"]
-        room = app.create(bots=["coder", "thyca"])["id"]
+        dm = app.bot_dm("thyca")["conversation_id"]
+        room = app.create(bots=["coder", "thyca"])["conversation_id"]
         llm.group_id = room
-        mgr = SessionManager(store=app._sessions.store)
+        mgr = ConversationManager(store=app._conversations.store)
         mgr.load(room)
         mgr.append(Message(role="user", content="group seed", ts="2026-10-26T09:00:00Z"))
         # Earlier real DM turn: persist the unique private marker in
@@ -959,7 +959,7 @@ def test_t7_request_needs_sender_and_recipient_same_txn(tmp_path: Path) -> None:
     group2 = AdminStore(tmp_path).create_group(["alice", "bob"]).ref
     from thyca.conversations.store.write_adapter import set_conversation_metadata
     set_conversation_metadata(tmp_path, group2, intent=RuntimeWriteIntent("t"), actor="alice",
-                              title=None, title_source=None, naming_attempted=False, participants=["alice"])
+                              participants=["alice"])
     with pytest.raises(ConversationStoreError):
         _wa.append_message(tmp_path, group2, "alice", Message(role="assistant", content="hi", meta={"bot_id": "alice"}),
                            intent=RuntimeWriteIntent("t"), require_participant="bob")
@@ -978,7 +978,7 @@ def _deliver_claimed(app, envelope, sender: str, room: str):
     # cannot run a real turn.
     import asyncio as _aio
     from thyca.bots.context import BotTurnContext, BotTurnScope
-    scope = BotTurnScope(store=app._sessions.store, act=app._act, tools=app._tools,
+    scope = BotTurnScope(store=app._conversations.store, act=app._act, tools=app._tools,
                          memory=app._memory, state=app._state, zone=app._zone)
     ctx = BotTurnContext(sender_id=sender, room_id=room, scope=scope, turn_cfg=app._current_cfg())
     return _aio.run(app._deliver_envelope(envelope, ctx))
@@ -987,19 +987,19 @@ def _deliver_claimed(app, envelope, sender: str, room: str):
 # T7 positive: real member publication records sender-stamped request + result.
 def test_t7_real_publication_records_request_and_result(tmp_path: Path) -> None:
     from thyca.bots.card import BotCard
-    from thyca.conversations.runtime.manager import SessionManager
+    from thyca.conversations.runtime.manager import ConversationManager
     app = _echo_app(tmp_path, reply_text="ECHO-7-DONE")
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="C", description="D", persona="P"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="H", description="E", persona="Q"))
-        room = app.create(bots=["coder", "helper"])["id"]
+        room = app.create(bots=["coder", "helper"])["conversation_id"]
         bus = app._runtime._bus
         bus.register("helper")
         envelope = bus.send(sender="coder", recipient="helper", kind="message",
-                            session_id=room, payload="live request 7")
+                            conversation_id=room, payload="live request 7")
         reply = _deliver_claimed(app, envelope, "coder", room)
         assert reply == "ECHO-7-DONE", f"member delivery must reply, got {reply!r}"
-        mgr = SessionManager(store=app._sessions.store)
+        mgr = ConversationManager(store=app._conversations.store)
         mgr.load(room)
         rows = list(mgr.current.messages)
         req = [m for m in rows if (m.meta or {}).get("bus_event") is True and m.content == "live request 7"]
@@ -1014,13 +1014,13 @@ def test_t7_real_publication_records_request_and_result(tmp_path: Path) -> None:
 # T7 race: sender removed after enqueue but before request insert fails the row, reply still returns.
 def test_t7_sender_removal_race_skips_request_but_returns_reply(tmp_path: Path) -> None:
     from thyca.bots.card import BotCard
-    from thyca.conversations.runtime.manager import SessionManager
+    from thyca.conversations.runtime.manager import ConversationManager
     import thyca.conversations.store.write_adapter as _wa
     app = _echo_app(tmp_path, reply_text="ECHO-RACE-DONE")
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="C", description="D", persona="P"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="H", description="E", persona="Q"))
-        room = app.create(bots=["coder", "helper"])["id"]
+        room = app.create(bots=["coder", "helper"])["conversation_id"]
         real_append = _wa.append_message
         removed: list = []
 
@@ -1034,13 +1034,13 @@ def test_t7_sender_removal_race_skips_request_but_returns_reply(tmp_path: Path) 
         bus = app._runtime._bus
         bus.register("helper")
         envelope = bus.send(sender="coder", recipient="helper", kind="message",
-                            session_id=room, payload="doomed request")
+                            conversation_id=room, payload="doomed request")
         import unittest.mock as _mock
         with _mock.patch.object(_wa, "append_message", _removing_append):
             reply = _deliver_claimed(app, envelope, "coder", room)
         assert reply == "ECHO-RACE-DONE", f"produced reply must still return, got {reply!r}"
         assert removed, "removal must win the race in this test"
-        mgr = SessionManager(store=app._sessions.store)
+        mgr = ConversationManager(store=app._conversations.store)
         mgr.load(room)
         rows = list(mgr.current.messages)
         assert all("doomed request" not in (m.content or "") for m in rows), "doomed row must be absent"
@@ -1053,13 +1053,13 @@ def test_t7_sender_removal_race_skips_request_but_returns_reply(tmp_path: Path) 
 # T7 race: recipient removed after enqueue but before request insert fails the row.
 def test_t7_recipient_removal_race_skips_request(tmp_path: Path) -> None:
     from thyca.bots.card import BotCard
-    from thyca.conversations.runtime.manager import SessionManager
+    from thyca.conversations.runtime.manager import ConversationManager
     import thyca.conversations.store.write_adapter as _wa
     app = _echo_app(tmp_path, reply_text="ECHO-RACE2-DONE")
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="C", description="D", persona="P"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="H", description="E", persona="Q"))
-        room = app.create(bots=["coder", "helper"])["id"]
+        room = app.create(bots=["coder", "helper"])["conversation_id"]
         real_append = _wa.append_message
         removed: list = []
 
@@ -1073,13 +1073,13 @@ def test_t7_recipient_removal_race_skips_request(tmp_path: Path) -> None:
         bus = app._runtime._bus
         bus.register("helper")
         envelope = bus.send(sender="coder", recipient="helper", kind="message",
-                            session_id=room, payload="doomed request 2")
+                            conversation_id=room, payload="doomed request 2")
         import unittest.mock as _mock
         with _mock.patch.object(_wa, "append_message", _removing_append):
             reply = _deliver_claimed(app, envelope, "coder", room)
         assert reply == "ECHO-RACE2-DONE", f"produced reply must still return, got {reply!r}"
         assert removed, "removal must win the race in this test"
-        mgr = SessionManager(store=app._sessions.store)
+        mgr = ConversationManager(store=app._conversations.store)
         mgr.load(room)
         rows = list(mgr.current.messages)
         assert all("doomed request 2" not in (m.content or "") for m in rows), "doomed row must be absent"

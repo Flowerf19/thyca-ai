@@ -184,7 +184,7 @@ def test_completed_bot_turn_reports_done_then_idle(tmp_path: Path) -> None:
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="P"))
-        room = app.create(bots=["coder"])["id"]
+        room = app.create(bots=["coder"])["conversation_id"]
         detail = app.turn(room, "làm giúp mình")
         assert detail["reply"] == "xong rồi"
         cards = {card["id"]: card for card in app.bots_list()}
@@ -233,7 +233,7 @@ def test_report_error_turn_reports_error(tmp_path: Path) -> None:
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="P"))
-        room = app.create(bots=["coder"])["id"]
+        room = app.create(bots=["coder"])["conversation_id"]
         app.turn(room, "làm giúp mình")
         cards = {card["id"]: card for card in app.bots_list()}
         status = cards["coder"]["agent_status"]
@@ -253,7 +253,7 @@ def test_failed_bot_turn_reports_error(tmp_path: Path) -> None:
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="P"))
-        room = app.create(bots=["coder"])["id"]
+        room = app.create(bots=["coder"])["conversation_id"]
         with pytest.raises(Exception):
             app.turn(room, "làm giúp mình")
         cards = {card["id"]: card for card in app.bots_list()}
@@ -267,7 +267,7 @@ def test_failed_bot_turn_reports_error(tmp_path: Path) -> None:
 def test_ask_user_turn_reports_waiting(tmp_path: Path) -> None:
     app = _chat(tmp_path, _AskLLM())
     try:
-        room = app.create(bots=["thyca"])["id"]
+        room = app.create(bots=["thyca"])["conversation_id"]
         app.turn(room, "hỏi giúp mình")
         cards = {card["id"]: card for card in app.bots_list()}
         status = cards["thyca"]["agent_status"]

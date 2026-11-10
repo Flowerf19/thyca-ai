@@ -23,8 +23,8 @@ from seeded_config import seeded_config
 from thyca.core.protocol import Message, ToolCall
 from thyca.llms.llm_base import ChatReply
 from thyca.memories.identity import bind_bot_id, reset_bot_id
-from thyca.serve.trace import aggregate, turns_from_session
-from thyca.conversations.runtime import SessionManager
+from thyca.serve.trace import aggregate, turns_from_conversation
+from thyca.conversations.runtime import ConversationManager
 from thyca.tools.registry import ToolRegistry
 
 
@@ -56,10 +56,10 @@ def _msg(role: str, content: str = "", **kw) -> Message:
 
 
 def _internal_store(app: ChatApp, bot_id: str, room_id: str):
-    internal = app._runtime.internal_session(bot_id, room_id)
+    internal = app._runtime.internal_conversation(bot_id, room_id)
     window = app._runtime._window_for_room(room_id)
     assert window is not None
-    return internal, app._runtime._canonical_store(bot_id, window, internal.id)
+    return internal, app._runtime._canonical_store(bot_id, window, internal.conversation_id)
 
 
 # --- 1. bot_fetch authorization -------------------------------------------
@@ -76,7 +76,7 @@ def test_bot_fetch_only_sender_or_recipient_get_content(tmp_path: Path) -> None:
     register_admin_tools(tools, AdminDeps(registry, runtime, lambda: None))
     body = "SECRET-BODY-" + "z" * 4000
     envelope = runtime.send(sender="thyca", recipient="coder", kind="delegate",
-                            session_id="room1", payload=body)
+                            conversation_id="room1", payload=body)
     # The artifact store recorded both parties at Bus.send time.
     assert bus.artifacts.parties(envelope.span_id) == ("thyca", "coder")
 
@@ -194,13 +194,13 @@ def test_task_open_end_to_end_in_bot_transcript(tmp_path: Path) -> None:
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="PERSONA-CODER"))
-        room = app.create(bots=["coder"])["id"]
+        room = app.create(bots=["coder"])["conversation_id"]
         detail = app.turn(room, "start the long research please")
         assert detail["reply"] == "opened reply"
 
         internal, store = _internal_store(app, "coder", room)
-        manager = SessionManager(store=store)
-        manager.load(internal.id)
+        manager = ConversationManager(store=store)
+        manager.load(internal.conversation_id)
         tasks = derive_open_tasks(list(manager.current.messages), bot_id="coder")
         assert len(tasks) == 1 and tasks[0].task == "long research"
         key = tasks[0].key
@@ -230,7 +230,7 @@ def test_bot_dm_concurrent_lookups_create_exactly_one_dm(tmp_path: Path) -> None
 
         def lookup() -> None:
             try:
-                results.append(app.bot_dm("coder")["id"])
+                results.append(app.bot_dm("coder")["conversation_id"])
             except Exception as exc:  # collected, asserted below
                 errors.append(exc)
 
@@ -241,8 +241,8 @@ def test_bot_dm_concurrent_lookups_create_exactly_one_dm(tmp_path: Path) -> None
             thread.join(timeout=10)
         assert errors == []
         assert len(results) == 8 and len(set(results)) == 1
-        dms = [s for s in app._sessions.list_sessions() if s.dm_bot == "coder"]
-        assert len(dms) == 1 and dms[0].id == results[0]
+        dms = [s for s in app._conversations.list_conversations() if s.dm_bot == "coder"]
+        assert len(dms) == 1 and dms[0].conversation_id == results[0]
     finally:
         app.shutdown()
 
@@ -254,12 +254,12 @@ def test_dm_participants_protected_and_blank_dm_survives_prune(tmp_path: Path) -
                                  description="Writes code.", persona="P"))
         app._bots.create(BotCard(bot_id="helper", name="helper", role="Helper",
                                  description="Helps.", persona="P"))
-        dm_id = app.bot_dm("coder")["id"]  # blank: no turn yet
-        # Creating another session prunes blank sessions — the DM stays.
+        dm_id = app.bot_dm("coder")["conversation_id"]  # blank: no turn yet
+        # Creating another conversation prunes blank conversations — the DM stays.
         other = app.create(bots=["thyca"])
-        assert other["id"] != dm_id
-        assert app._sessions.store.load(dm_id).dm_bot == "coder"
-        assert app.bot_dm("coder")["id"] == dm_id
+        assert other["conversation_id"] != dm_id
+        assert app._conversations.store.load(dm_id).dm_bot == "coder"
+        assert app.bot_dm("coder")["conversation_id"] == dm_id
 
         # The DM's own bot cannot be removed; nobody can be added.
         with pytest.raises(RegistryError):
@@ -267,12 +267,12 @@ def test_dm_participants_protected_and_blank_dm_survives_prune(tmp_path: Path) -
         with pytest.raises(RegistryError):
             app.set_room_bots(dm_id, "helper", "add")
         assert app.room_bots(dm_id) == ["coder"]
-        assert app._sessions.store.load(dm_id).dm_bot == "coder"
+        assert app._conversations.store.load(dm_id).dm_bot == "coder"
         # Ordinary rooms keep working exactly as before.
         group = app.create(bots=["thyca", "helper"])
         assert group["kind"] == "group"
-        assert app.set_room_bots(group["id"], "helper", "remove") == ["thyca"]
-        assert app.set_room_bots(group["id"], "helper", "add") == ["thyca", "helper"]
+        assert app.set_room_bots(group["conversation_id"], "helper", "remove") == ["thyca"]
+        assert app.set_room_bots(group["conversation_id"], "helper", "add") == ["thyca", "helper"]
     finally:
         app.shutdown()
 
@@ -281,8 +281,8 @@ def test_dm_participants_protected_and_blank_dm_survives_prune(tmp_path: Path) -
 
 def _seed_idle_bot_transcript(app: ChatApp, room: str):
     internal, store = _internal_store(app, "coder", room)
-    manager = SessionManager(store=store)
-    manager.load(internal.id)
+    manager = ConversationManager(store=store)
+    manager.load(internal.conversation_id)
     for index in range(8):
         manager.append(_msg("user", f"q{index} " + "u" * 400,
                             ts=f"2020-01-01T10:{index:02d}:00Z"))
@@ -291,27 +291,27 @@ def _seed_idle_bot_transcript(app: ChatApp, room: str):
     return internal, store
 
 
-def test_bot_idle_sweep_skips_internal_session_of_busy_room(tmp_path: Path) -> None:
+def test_bot_idle_sweep_skips_internal_conversation_of_busy_room(tmp_path: Path) -> None:
     app = _chat(tmp_path, _LLM(content="[]"), context_tokens=2000)
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="P"))
-        room = app.create(bots=["coder"])["id"]
+        room = app.create(bots=["coder"])["conversation_id"]
         internal, store = _seed_idle_bot_transcript(app, room)
 
         app._turns.claim(room)
         try:
-            report = app.sweep_idle_sessions(idle_s=900)
+            report = app.sweep_idle_conversations(idle_s=900)
         finally:
             app._turns.release(room)
-        key = f"coder:{internal.id}"
-        assert key not in report["bots"], "busy room's bot session must be skipped"
-        messages = _internal_store(app, "coder", room)[1].load(internal.id).messages
+        key = f"coder:{internal.conversation_id}"
+        assert key not in report["bots"], "busy room's bot conversation must be skipped"
+        messages = _internal_store(app, "coder", room)[1].load(internal.conversation_id).messages
         assert not any((m.content or "").startswith("[compaction: ") for m in messages)
 
-        report = app.sweep_idle_sessions(idle_s=900)
+        report = app.sweep_idle_conversations(idle_s=900)
         assert report["bots"][key]["compacted"] is True
-        messages = _internal_store(app, "coder", room)[1].load(internal.id).messages
+        messages = _internal_store(app, "coder", room)[1].load(internal.conversation_id).messages
         assert any((m.content or "").startswith("[compaction: ") for m in messages)
     finally:
         app.shutdown()
@@ -326,7 +326,7 @@ def test_bot_idle_sweep_skips_when_workspace_lease_is_already_held(
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="P"))
-        room = app.create(bots=["thyca"])["id"]
+        room = app.create(bots=["thyca"])["conversation_id"]
         internal, store = _seed_idle_bot_transcript(app, room)
 
         async def hold_lease():
@@ -336,11 +336,11 @@ def test_bot_idle_sweep_skips_when_workspace_lease_is_already_held(
 
         holder = asyncio.run_coroutine_threadsafe(hold_lease(), app._loop)
         assert acquired.wait(5)
-        report = app.sweep_idle_sessions(idle_s=900)
-        assert f"coder:{internal.id}" not in report["bots"]
+        report = app.sweep_idle_conversations(idle_s=900)
+        assert f"coder:{internal.conversation_id}" not in report["bots"]
         assert not any(
             (m.content or "").startswith("[compaction: ")
-            for m in store.load(internal.id).messages
+            for m in store.load(internal.conversation_id).messages
         )
         release.set()
         holder.result(timeout=5)
@@ -362,9 +362,9 @@ def test_bot_idle_sweep_holds_workspace_lease_through_compaction(
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="P"))
-        room = app.create(bots=["coder"])["id"]
+        room = app.create(bots=["coder"])["conversation_id"]
         internal, store = _seed_idle_bot_transcript(app, room)
-        before = len(store.load(internal.id).messages)
+        before = len(store.load(internal.conversation_id).messages)
 
         async def blocked_flush(bot_id, messages, cfg, room_id=None):
             flush_entered.set()
@@ -374,7 +374,7 @@ def test_bot_idle_sweep_holds_workspace_lease_through_compaction(
 
         def sweep():
             try:
-                sweep_result.append(app.sweep_idle_sessions(idle_s=900))
+                sweep_result.append(app.sweep_idle_conversations(idle_s=900))
             except BaseException as exc:
                 sweep_error.append(exc)
 
@@ -395,7 +395,7 @@ def test_bot_idle_sweep_holds_workspace_lease_through_compaction(
         while app._turns.hub(room) is None and time.monotonic() < deadline:
             time.sleep(0.01)
         assert app._turns.hub(room) is not None
-        assert len(store.load(internal.id).messages) == before
+        assert len(store.load(internal.conversation_id).messages) == before
 
         release_flush.set()
         sweep_thread.join(timeout=10)
@@ -407,7 +407,7 @@ def test_bot_idle_sweep_holds_workspace_lease_through_compaction(
         assert sweep_result
         assert turn_result
         assert any("LEASE-BLOCKED-TURN" in (m.content or "")
-                   for m in store.load(internal.id).messages)
+                   for m in store.load(internal.conversation_id).messages)
     finally:
         release_flush.set()
         app.shutdown()
@@ -427,10 +427,10 @@ def test_flush_prediction_counts_mailbox_wire_and_summary_reserve(
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="PERSONA-CODER"))
-        room = app.create(bots=["coder"])["id"]
+        room = app.create(bots=["coder"])["conversation_id"]
         internal, store = _internal_store(app, "coder", room)
-        manager = SessionManager(store=store)
-        manager.load(internal.id)
+        manager = ConversationManager(store=store)
+        manager.load(internal.conversation_id)
         for index in range(2):
             manager.append(_msg("user", f"q{index} " + "u" * 200,
                                 ts=f"2026-08-01T10:{index:02d}:00Z"))
@@ -438,7 +438,7 @@ def test_flush_prediction_counts_mailbox_wire_and_summary_reserve(
                                 ts=f"2026-08-01T10:{index:02d}:30Z"))
         for _ in range(5):
             app._runtime.send(sender="thyca", recipient="coder", kind="message",
-                              session_id=room, payload="m" * 900)
+                              conversation_id=room, payload="m" * 900)
         flush_calls: list[tuple[str, bool]] = []
         app._runtime.memory_flush = lambda bot_id, messages, cfg: flush_calls.append(
             (bot_id, any((m.content or "").startswith("[compaction: ")
@@ -446,7 +446,7 @@ def test_flush_prediction_counts_mailbox_wire_and_summary_reserve(
         app.turn(room, "hi")
         assert flush_calls == [("coder", False)], (
             "flush must run once, on the intact transcript, before compact")
-        messages = _internal_store(app, "coder", room)[1].load(internal.id).messages
+        messages = _internal_store(app, "coder", room)[1].load(internal.conversation_id).messages
         assert any((m.content or "").startswith("[compaction: ") for m in messages)
     finally:
         app.shutdown()
@@ -456,7 +456,7 @@ def test_mailbox_batch_is_frozen_across_flush_and_next_turn(
     tmp_path: Path, monkeypatch,
 ) -> None:
     from thyca.agents.shrink import estimate_wire_tokens
-    from thyca.conversations.runtime.compaction import SessionCompactor
+    from thyca.conversations.runtime.compaction import ConversationCompactor
 
     llm = _LLM()
     app = _chat(tmp_path, llm, context_tokens=30000)
@@ -468,10 +468,10 @@ def test_mailbox_batch_is_frozen_across_flush_and_next_turn(
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="PERSONA-CODER"))
-        room = app.create(bots=["coder"])["id"]
+        room = app.create(bots=["coder"])["conversation_id"]
         internal, store = _internal_store(app, "coder", room)
-        manager = SessionManager(store=store)
-        manager.load(internal.id)
+        manager = ConversationManager(store=store)
+        manager.load(internal.conversation_id)
         for index in range(50):
             manager.append(_msg("user", f"q{index} " + "u" * 1200,
                                 ts=f"2026-08-01T10:{index:02d}:00Z"))
@@ -479,7 +479,7 @@ def test_mailbox_batch_is_frozen_across_flush_and_next_turn(
                                 ts=f"2026-08-01T10:{index:02d}:30Z"))
         for _ in range(5):
             app._runtime.send(sender="thyca", recipient="coder", kind="message",
-                              session_id=room, payload="FROZEN-MAILBOX-" + "m" * 880)
+                              conversation_id=room, payload="FROZEN-MAILBOX-" + "m" * 880)
 
         original_prepend = app._runtime._prepend_mailbox
 
@@ -489,13 +489,13 @@ def test_mailbox_batch_is_frozen_across_flush_and_next_turn(
             return wire_text
 
         monkeypatch.setattr(app._runtime, "_prepend_mailbox", capture_frozen)
-        original_plan = SessionCompactor.plan
+        original_plan = ConversationCompactor.plan
 
         def capture_plan(self, messages, context_tokens, **kwargs):
             plan_tokens.append(kwargs.get("pending_user_tokens", 0))
             return original_plan(self, messages, context_tokens, **kwargs)
 
-        monkeypatch.setattr(SessionCompactor, "plan", capture_plan)
+        monkeypatch.setattr(ConversationCompactor, "plan", capture_plan)
 
         async def blocked_flush(bot_id, messages, cfg, room_id=None):
             flush_calls.append(any(
@@ -518,7 +518,7 @@ def test_mailbox_batch_is_frozen_across_flush_and_next_turn(
         assert flush_entered.wait(5)
         late = "LATE-THRESHOLD-MESSAGE-" + "z" * 1200
         app._runtime.send(sender="thyca", recipient="coder", kind="message",
-                          session_id=room, payload=late)
+                          conversation_id=room, payload=late)
         release_flush.set()
         turn_thread.join(timeout=10)
         assert not turn_thread.is_alive()
@@ -536,7 +536,7 @@ def test_mailbox_batch_is_frozen_across_flush_and_next_turn(
             Message(role="user", content=frozen["text"])
         ])
         assert plan_tokens[0] == plan_tokens[1]
-        projected = store.load(internal.id).messages
+        projected = store.load(internal.conversation_id).messages
         assert any((m.content or "").startswith("[compaction: ")
                    for m in projected)
         assert any(m.role == "user" and m.content == "FIRST-FROZEN-TURN"
@@ -552,7 +552,7 @@ def test_mailbox_batch_is_frozen_across_flush_and_next_turn(
         app.turn(room, "SECOND-FROZEN-TURN")
         assert any(late[:1000] in prompt for prompt in llm.prompts[before:])
         assert app._runtime._bus.pending("coder") == 0
-        projected = store.load(internal.id).messages
+        projected = store.load(internal.conversation_id).messages
         assert any(m.role == "user" and m.content == "SECOND-FROZEN-TURN"
                    for m in projected)
         assert all("LATE-THRESHOLD-MESSAGE-" not in (m.content or "")
@@ -580,7 +580,7 @@ def test_recall_stays_armed_after_failed_turn(tmp_path: Path) -> None:
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="PERSONA-CODER"))
-        room = app.create(bots=["coder"])["id"]
+        room = app.create(bots=["coder"])["conversation_id"]
         app._runtime.memory_searcher = (
             lambda text, bot_id: ["- recalled: phoenix fact"])
         app._runtime._reinject_pending.add(("coder", room))
@@ -610,7 +610,7 @@ def test_bus_send_caps_ref_count_and_length() -> None:
     bus.register("coder")
     refs = ["r" * 1000] + [f"/tmp/file-{i}.md" for i in range(11)]
     envelope = bus.send(sender="a", recipient="coder", kind="message",
-                        session_id="r", payload="hi", refs=refs)
+                        conversation_id="r", payload="hi", refs=refs)
     assert len(envelope.refs) == MAX_REFS
     assert all(len(ref) <= MAX_REF_CHARS for ref in envelope.refs)
     assert envelope.refs[0] == "r" * MAX_REF_CHARS
@@ -669,7 +669,7 @@ def _run_delivery(tmp_path: Path, body: str):
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="PERSONA-CODER"))
-        room = app.create(bots=["thyca", "coder"])["id"]
+        room = app.create(bots=["thyca", "coder"])["conversation_id"]
         detail = app.turn(room, "please coordinate")
         rows = app.get_payload(room)["messages"]
         return llm, detail, rows
@@ -720,15 +720,15 @@ def test_delivered_short_envelope_prompt_has_no_fetch_marker(tmp_path: Path) -> 
 def test_plain_thyca_turn_attributes_to_thyca_not_unknown(tmp_path: Path) -> None:
     app = _chat(tmp_path, _LLM(content="thyca reply"))
     try:
-        room = app.create()["id"]
+        room = app.create()["conversation_id"]
         detail = app.turn(room, "hello thyca")
         assert detail["reply"] == "thyca reply"
-        session = app.trace_store().load(room)
-        assistant = [m for m in session.messages if m.role == "assistant"]
+        conversation = app.trace_store().load(room)
+        assistant = [m for m in conversation.messages if m.role == "assistant"]
         assert assistant and all(
             (m.meta or {}).get("bot_id") == "thyca" for m in assistant
         )
-        turns = turns_from_session(session)
+        turns = turns_from_conversation(conversation)
         by_bot = {row["bot_id"]: row for row in aggregate(turns)["by_bot"]}
         assert by_bot["thyca"]["requests"] >= 1
         assert "unknown" not in by_bot
@@ -738,7 +738,7 @@ def test_plain_thyca_turn_attributes_to_thyca_not_unknown(tmp_path: Path) -> Non
 
 def test_mailbox_render_clips_refs() -> None:
     envelope = Envelope(
-        sender="a", recipient="coder", kind="message", session_id="room1",
+        sender="a", recipient="coder", kind="message", conversation_id="room1",
         trace_id="tr_1", parent_span_id=None, ts="2026-08-01T10:00:00Z",
         payload="see refs", span_id="sp_1",
         refs=tuple(f"ref{i}-" + "x" * 600 for i in range(12)),
@@ -793,8 +793,8 @@ class _DmFlowLLM:
         ])
 
 
-def _rows(app: ChatApp, session_id: str) -> list[dict]:
-    return app.get_payload(session_id)["messages"]
+def _rows(app: ChatApp, conversation_id: str) -> list[dict]:
+    return app.get_payload(conversation_id)["messages"]
 
 
 def _bot_rows(rows: list[dict], bot_id: str) -> list[dict]:
@@ -806,7 +806,7 @@ def _dm_flow(tmp_path: Path, *, greet: bool):
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="PERSONA-CODER"))
-        thyca_dm = app.bot_dm("thyca")["id"]
+        thyca_dm = app.bot_dm("thyca")["conversation_id"]
         detail = app.turn(thyca_dm, "nhờ coder nhắn riêng chào mình")
         return app, thyca_dm, detail
     except Exception:
@@ -847,9 +847,9 @@ def test_delegate_from_thyca_dm_records_grouped_exchange_only(tmp_path: Path) ->
             {"partner": "thyca", "count": 2, "last_ts": coder_rows[0]["ts"]},
         ]
         # The recipient really ran — privately, with none of the DM's
-        # private history in its internal session.
+        # private history in its internal conversation.
         internal, store = _internal_store(app, "coder", thyca_dm)
-        msgs = store.load(internal.id).messages
+        msgs = store.load(internal.conversation_id).messages
         assert any("say hi to the user" in (m.content or "") for m in msgs)
         assert all("nhờ coder nhắn riêng chào mình" not in (m.content or "")
                    for m in msgs)
@@ -861,7 +861,7 @@ def test_message_user_lands_in_coders_own_dm_only(tmp_path: Path) -> None:
     app, thyca_dm, detail = _dm_flow(tmp_path, greet=True)
     try:
         assert detail["reply"] == "thyca summary"
-        coder_dm = app.bot_dm("coder")["id"]
+        coder_dm = app.bot_dm("coder")["conversation_id"]
         dm_rows = _rows(app, coder_dm)
         greetings = [r for r in _bot_rows(dm_rows, "coder")
                      if _GREETING in (r.get("content") or "")]
@@ -900,7 +900,7 @@ def test_message_user_inside_own_dm_does_not_double_post(tmp_path: Path) -> None
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="PERSONA-CODER"))
-        coder_dm = app.bot_dm("coder")["id"]
+        coder_dm = app.bot_dm("coder")["conversation_id"]
         detail = app.turn(coder_dm, "chào coder")
         assert detail["reply"] == "coder direct reply"
         rows = _rows(app, coder_dm)
@@ -915,7 +915,7 @@ def test_delegate_in_plain_room_keeps_recipient_outside_participants(tmp_path: P
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="PERSONA-CODER"))
-        room = app._sessions.create().id  # legacy plain room, no bots meta
+        room = app._conversations.create().conversation_id  # legacy plain room, no bots meta
         assert app.room_bots(room) == ["thyca"]
         detail = app.turn(room, "ask coder for help")
         # No stored distinguisher tells a solo plain room from a reduced
@@ -960,7 +960,7 @@ class _AskUserLLM:
 def test_ask_user_posts_question_card_in_thyca_dm(tmp_path: Path) -> None:
     app = _chat(tmp_path, _AskUserLLM())
     try:
-        thyca_dm = app.bot_dm("thyca")["id"]
+        thyca_dm = app.bot_dm("thyca")["conversation_id"]
         detail = app.turn(thyca_dm, "tạo bot giúp mình")
         assert detail["reply"] == "Bạn chọn giúp mình nhé."
         cards = [r for r in _rows(app, thyca_dm)
@@ -1004,7 +1004,7 @@ def test_report_error_posts_error_card_in_room(tmp_path: Path) -> None:
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="PERSONA-CODER"))
-        room = app.create(bots=["coder"])["id"]
+        room = app.create(bots=["coder"])["conversation_id"]
         detail = app.turn(room, "fix giúp mình")
         assert detail["reply"] == "coder stopped"
         cards = [r for r in _rows(app, room)
@@ -1024,7 +1024,7 @@ def test_post_bot_card_rejected_in_another_bots_dm(tmp_path: Path) -> None:
     try:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
                                  description="Writes code.", persona="PERSONA-CODER"))
-        thyca_dm = app.bot_dm("thyca")["id"]
+        thyca_dm = app.bot_dm("thyca")["conversation_id"]
         result = app.post_bot_card(
             "coder",
             {"type": "question", "title": "?", "options": ["A", "B"]},
@@ -1037,12 +1037,12 @@ def test_post_bot_card_rejected_in_another_bots_dm(tmp_path: Path) -> None:
 
 
 def _old_dm(app, bot_id: str):
-    from thyca.conversations.runtime import SessionManager
+    from thyca.conversations.runtime import ConversationManager
 
     from thyca.core.protocol import Message
 
-    dm_id = app.bot_dm(bot_id)["id"]
-    manager = SessionManager(store=app._sessions.store)
+    dm_id = app.bot_dm(bot_id)["conversation_id"]
+    manager = ConversationManager(store=app._conversations.store)
     manager.load(dm_id)
     manager.append(Message(role="user", content="old private note",
                            ts="2020-01-01T10:00:00Z"))
@@ -1067,7 +1067,7 @@ def test_idle_sweep_ignores_public_room_transcripts(tmp_path: Path) -> None:
         app._bots.create(BotCard(bot_id="coder", name="coder", role="C",
                                  description="d", persona=""))
         _old_dm(app, "coder")
-        report = app.sweep_idle_sessions(idle_s=900)
+        report = app.sweep_idle_conversations(idle_s=900)
         assert report["rooms"] == {}
         assert report["bots"] == {}
         # Nothing was written from the room path: no daily file holds an
@@ -1090,7 +1090,7 @@ def test_idle_sweep_ignores_public_room_transcripts(tmp_path: Path) -> None:
 
 def test_idle_sweep_does_not_extract_from_root_or_group_room(tmp_path: Path) -> None:
     from thyca.bots.card import BotCard
-    from thyca.conversations.runtime import SessionManager
+    from thyca.conversations.runtime import ConversationManager
     from thyca.core.protocol import Message
 
     app = _chat(tmp_path, _LLM())
@@ -1098,15 +1098,15 @@ def test_idle_sweep_does_not_extract_from_root_or_group_room(tmp_path: Path) -> 
         app._bots.create(BotCard(bot_id="coder", name="coder", role="C",
                                  description="d", persona=""))
         _old_dm(app, "thyca")
-        group = app.create(bots=["thyca", "coder"])["id"]
-        manager = SessionManager(store=app._sessions.store)
+        group = app.create(bots=["thyca", "coder"])["conversation_id"]
+        manager = ConversationManager(store=app._conversations.store)
         manager.load(group)
         manager.append(Message(role="user", content="old group note",
                                ts="2020-01-01T10:00:00Z"))
         before = list(manager.current.messages)
-        report = app.sweep_idle_sessions(idle_s=900)
+        report = app.sweep_idle_conversations(idle_s=900)
         assert report["rooms"] == {}
         assert report["bots"] == {}
-        assert app._sessions.store.load(group).messages == before
+        assert app._conversations.store.load(group).messages == before
     finally:
         app.shutdown()

@@ -1,8 +1,8 @@
-"""Concurrent turns across sessions — webui/ui/chat/js/chat.js sendTurn.
+"""Concurrent turns across conversations — webui/ui/chat/js/chat.js sendTurn.
 
 Two turns can stream at once (send in A, switch to B, send there): ``runs``
-is keyed by sessionId and sendTurn only refuses a second send on the *same*
-session. Returning to a session while its original POST reader is alive
+is keyed by conversationId and sendTurn only refuses a second send on the *same*
+conversation. Returning to a conversation while its original POST reader is alive
 reattaches that same token and node, without opening another stream reader.
 The original reader continues through later deltas and the terminal event,
 which reconciles the live node with the stored transcript.
@@ -19,11 +19,11 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 _TUI_TAIL = """return {
-  sendTurn, loadSession, followRunningTurn, handleStreamEvent, renderTranscript,
-  updateCard, card, normalizeBot, getBot, refreshSessions, busy, runs, bots,
+  sendTurn, loadConversation, followRunningTurn, handleStreamEvent, renderTranscript,
+  updateCard, card, normalizeBot, getBot, refreshConversations, busy, runs, bots,
   groups, histories,
-  get currentSession() { return currentSession; },
-  set currentSession(v) { currentSession = v; },
+  get currentConversation() { return currentConversation; },
+  set currentConversation(v) { currentConversation = v; },
   get selectedBot() { return selectedBot; },
   set selectedBot(v) { selectedBot = v; },
   get run() { return run; },
@@ -40,10 +40,10 @@ ui.bots.push(ui.normalizeBot({ id: 'thyca', name: 'Thyca', role: 'bạn', agent_
 doc.querySelector('#team-bot-list').innerHTML = ui.bots.map(ui.card).join('');
 ui.updateCard(ui.bots[0]);
 ui.selectedBot = 'thyca';
-ui.currentSession = 'A';
+ui.currentConversation = 'A';
 
 // --- fetch routing: POST turn/stream (A held open, B completes),
-//     GET turn/stream (follow replay), GET session detail + list. ---
+//     GET turn/stream (follow replay), GET conversation detail + list. ---
 const posts = [], follows = [];
 const queueA = [];
 let waiterA = null;
@@ -70,7 +70,7 @@ const priorA = [
 ];
 const GID = 'group-cccccccccccccccccccccccccccccccc';
 const AKEY = 'dm:thyca', BKEY = 'group:' + GID;
-const sessions = {
+const conversations = {
   A: { kind: 'dm', bot_id: 'thyca', title: 'Phiên A', running: false, messages: priorA },
   B: { kind: 'group', group_id: GID, title: 'Phiên B', running: false, messages: [] },
 };
@@ -99,10 +99,10 @@ globalThis.fetch = async (url, opts = {}) => {
     return { ok: true, json: async () => ({ conversations: [] }) };
   }
   if (method === 'GET' && url === '/api/bots/thyca/dm') {
-    return { ok: true, json: async () => sessions.A };
+    return { ok: true, json: async () => conversations.A };
   }
   if (method === 'GET' && url === '/api/groups/' + GID) {
-    return { ok: true, json: async () => sessions.B };
+    return { ok: true, json: async () => conversations.B };
   }
   return { ok: false, status: 404, json: async () => ({ error: 'no route ' + url }) };
 };
@@ -110,7 +110,7 @@ globalThis.fetch = async (url, opts = {}) => {
 const listText = () => doc.querySelector('#message-list').textContent;
 
 // 1. Send in A; the POST stream stays open mid-turn.
-await ui.loadSession(AKEY);
+await ui.loadConversation(AKEY);
 await settle();
 const pendingA = ui.sendTurn('hi A');
 await settle();
@@ -127,24 +127,24 @@ result.sentA = {
 const tokenA = ui.runs.get(AKEY);
 
 // 2. Switch to B and send there: both turns stay tracked under their own key.
-await ui.loadSession(BKEY);
+await ui.loadConversation(BKEY);
 await settle();
 await ui.sendTurn('hi B');
 await settle();
 result.sentB = {
   posts: posts.length,
   tracked: [...ui.runs.keys()],
-  current: ui.currentSession,
+  current: ui.currentConversation,
   listHasDoneB: listText().includes('done B'),
 };
 
 // 3. Back to A while the original POST reader is still alive. The detail
 //    request says the turn is running, but followRunningTurn must reattach
 //    the original token/node rather than opening a replay GET.
-sessions.A = { ...sessions.A, running: true, messages: [...priorA,
+conversations.A = { ...conversations.A, running: true, messages: [...priorA,
   { role: 'user', content: 'hi A', ts: '2026-10-29T10:00:00Z' },
 ] };
-await ui.loadSession(AKEY);
+await ui.loadConversation(AKEY);
 await settle();
 const reattached = ui.runs.get(AKEY);
 const nodeA = tokenA.node;
@@ -204,7 +204,7 @@ def concurrent() -> dict:
     return json.loads(result.stdout)
 
 
-def test_two_sessions_stream_at_once(concurrent: dict) -> None:
+def test_two_conversations_stream_at_once(concurrent: dict) -> None:
     """runs keys by typed door key: the send in A stays tracked while B runs."""
     assert concurrent["sentA"]["tracked"] == ["dm:thyca"]
     assert concurrent["sentA"]["phase"] == "writing"

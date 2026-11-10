@@ -38,17 +38,17 @@ class MemoryWriter:
     def mutation_lock(self) -> threading.RLock:
         return MemoryWriter._mutation_lock
 
-    def locate(self, session_id: str) -> tuple[Path, str]:
-        if session_id.startswith("canonical#"):
+    def locate(self, memory_id: str) -> tuple[Path, str]:
+        if memory_id.startswith("canonical#"):
             raise ArchiveError("cannot forget or reinforce SOUL/USER as a whole")
-        if "#" not in session_id:
-            raise ArchiveError(f"invalid session_id {session_id!r}")
-        prefix, entry = session_id.split("#", 1)
+        if "#" not in memory_id:
+            raise ArchiveError(f"invalid memory_id {memory_id!r}")
+        prefix, entry = memory_id.split("#", 1)
         if prefix == "memory":
             raise ArchiveError("MEMORY.md is no longer supported")
         if len(prefix) == 10 and prefix[4] == "-" and prefix[7] == "-":
             return self.thyca_dir / "memory" / f"{prefix}.md", entry
-        raise ArchiveError(f"invalid session_id {session_id!r}")
+        raise ArchiveError(f"invalid memory_id {memory_id!r}")
 
     def append(self, path: Path, text: str) -> None:
         with self.lock_for(path):
@@ -81,18 +81,18 @@ class MemoryWriter:
                 break  # duplicate ids: first match wins, the rest stay verbatim
             out.extend(lines[pos:])
             if found is None:
-                raise ArchiveError(f"session not found: {entry_id}")
+                raise ArchiveError(f"memory not found: {entry_id}")
             _atomic_write(path, "".join(out))
             return found
 
-    def forget(self, session_id: str, now: datetime | None = None) -> None:
-        path, entry = self.locate(session_id)
+    def forget(self, memory_id: str, now: datetime | None = None) -> None:
+        path, entry = self.locate(memory_id)
         with self.lock_for(path):
             self._remove_session(path, entry)
 
-    def update_session(
+    def update_memory(
         self,
-        session_id: str,
+        memory_id: str,
         *,
         topic: str | None = None,
         body_lines: list[str] | None = None,
@@ -114,16 +114,16 @@ class MemoryWriter:
         the caller passes them (omit = keep). keep_details keeps
         the existing body lines after the summary line (summary-only update).
         """
-        path, entry = self.locate(session_id)
+        path, entry = self.locate(memory_id)
         with self.lock_for(path):
-            self._update_session(
+            self._update_memory(
                 path, entry, topic=topic, body_lines=body_lines,
                 proj=proj, chat=chat, keep_details=keep_details,
                 task=task, cont=cont, kind=kind, status=status, habit=habit,
                 habit_explicit=habit_explicit,
             )
 
-    def _update_session(
+    def _update_memory(
         self,
         path: Path,
         entry_id: str,
@@ -202,18 +202,18 @@ class MemoryWriter:
             break  # duplicate ids: first match wins, the rest stay verbatim
         out.extend(lines[pos:])
         if not found:
-            raise ArchiveError(f"session not found: {entry_id}")
+            raise ArchiveError(f"memory not found: {entry_id}")
         _atomic_write(path, "".join(out))
 
     def reinforce(
         self,
-        session_id: str,
+        memory_id: str,
         importance: int | None = None,
         now: datetime | None = None,
     ) -> str:
         if importance is not None and importance not in TTL_DAYS:
             raise ArchiveError(f"importance must be 1..5, got {importance}")
-        path, entry = self.locate(session_id)
+        path, entry = self.locate(memory_id)
 
         def touch(meta: HeadingMeta) -> HeadingMeta:
             imp = importance if importance is not None else meta.importance
@@ -224,18 +224,18 @@ class MemoryWriter:
         with self.lock_for(path):
             return self.map_heading(path, entry, touch).expires_at or ""
 
-    def read_session(self, session_id: str, now: datetime | None = None) -> str:
-        path, entry = self.locate(session_id)
+    def read_memory(self, memory_id: str, now: datetime | None = None) -> str:
+        path, entry = self.locate(memory_id)
         if not path.is_file():
-            raise ArchiveError(f"session not found: {session_id}")
+            raise ArchiveError(f"memory not found: {memory_id}")
         lines = _read_lines(path)
         for _meta, resolved, start, end in iter_session_blocks(lines, str(path)):
             if resolved != entry:
                 continue
             if not is_visible(_meta.expires_at, now):
-                raise ArchiveError(f"session not found: {session_id}")
+                raise ArchiveError(f"memory not found: {memory_id}")
             return "".join(lines[start:end])
-        raise ArchiveError(f"session not found: {session_id}")
+        raise ArchiveError(f"memory not found: {memory_id}")
 
     def purge_expired(self, now: datetime) -> None:
         memory_dir = self.thyca_dir / "memory"
@@ -288,7 +288,7 @@ class MemoryWriter:
             out.extend(lines[start:end])
         out.extend(lines[pos:])
         if not found:
-            raise ArchiveError(f"session not found: {entry_id}")
+            raise ArchiveError(f"memory not found: {entry_id}")
         _atomic_write(path, "".join(out))
 
     def _purge(self, path: Path, now: datetime) -> None:

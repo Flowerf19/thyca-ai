@@ -1,6 +1,6 @@
 """Thread/asyncio bridge: run a claimed turn's coroutine on the loop thread.
 
-The per-session registry lives in :class:`TurnState` (the one turn registry);
+The per-conversation registry lives in :class:`TurnState` (the one turn registry);
 this module is the asyncio view over it: job spawn/await plus cancel.
 """
 from __future__ import annotations
@@ -22,19 +22,19 @@ class TurnCancelled(Exception):
 
 
 class _LoopTurns:
-    """asyncio.Task per claimed session; each job is locked across spawn/cancel."""
+    """asyncio.Task per claimed conversation; each job is locked across spawn/cancel."""
 
     def __init__(self, loop: asyncio.AbstractEventLoop, turns: TurnState) -> None:
         self._loop = loop
         self._turns = turns
 
-    def begin(self, session_id: str) -> _TurnJob:
+    def begin(self, conversation_id: str) -> _TurnJob:
         job = _TurnJob()
-        self._turns.attach(session_id, job)
+        self._turns.attach(conversation_id, job)
         return job
 
-    def end(self, session_id: str, job: _TurnJob) -> None:
-        self._turns.detach(session_id, job)
+    def end(self, conversation_id: str, job: _TurnJob) -> None:
+        self._turns.detach(conversation_id, job)
 
     def submit(self, job: _TurnJob, coro):
         def spawn() -> None:
@@ -66,8 +66,8 @@ class _LoopTurns:
         except concurrent.futures.CancelledError:
             raise TurnCancelled() from None
 
-    def request_cancel(self, session_id: str) -> bool:
-        job = self._turns.job(session_id)
+    def request_cancel(self, conversation_id: str) -> bool:
+        job = self._turns.job(conversation_id)
         if job is None:
             return False
         with job.lock:

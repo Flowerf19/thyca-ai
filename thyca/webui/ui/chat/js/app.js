@@ -1,4 +1,4 @@
-// Chat boot: fetch roster + sessions, initial render, chat-only event wiring.
+// Chat boot: fetch roster + conversations, initial render, chat-only event wiring.
 // Shared shell wiring (menu, splitter, dialogs, motion, idle, roster sync)
 // lives in ../share/shell-app.js; shared fetch/state in ../share/data.js.
 'use strict';
@@ -8,7 +8,7 @@ const mentionPattern = () => new RegExp('@(' + bots.map(b => b.id.replace(/[.*+?
 
 // Boot chat from the route: ?g= opens a group, ?bot= opens that bot's DM.
 async function boot(ctx) {
-  try { await ctx.shellReady; }        // one shared roster/session load for the app
+  try { await ctx.shellReady; }        // one shared roster/conversation load for the app
   catch (err) {
     $('#message-list').innerHTML = `<article class="conversation-empty"><h2>Không kết nối được máy chủ</h2><p>${escapeHTML(err.message)}</p></article>`;
     return;
@@ -18,7 +18,6 @@ async function boot(ctx) {
   $('.bot-count').textContent = bots.length + ' người bạn';
   rebuildExpressionBots();
   renderGroups();
-  loadConfig();
   const params = new URLSearchParams(ctx.route.search);
   const linkGroup = params.get('g');
   const linkBot = params.get('bot');
@@ -33,7 +32,7 @@ $('#run-demo').hidden = true;            // prototype-only button; real turns go
 $('#stop-button').onclick = stopRun;
 
 $('#composer').onsubmit = e => {
-  e.preventDefault(); const input = $('#message'); let text = input.value.trim(); if (!text || runs.has(currentSession)) return;
+  e.preventDefault(); const input = $('#message'); let text = input.value.trim(); if (!text || runs.has(currentConversation)) return;
   const match = text.match(mentionPattern()); const recipient = match ? match[1].toLowerCase() : selectedBot;
   if (attachment) { toast('Tệp đính kèm chưa được hỗ trợ — chỉ gửi phần chữ.'); }
   sendTurn(text, recipient);
@@ -54,7 +53,7 @@ $('#mention-popup').onclick = e => { const item = e.target.closest('[data-mentio
 $('#attach-file').onclick = () => $('#file-input').click(); $('#file-input').onchange = e => { attachment = e.target.files[0]; if (!attachment) return; $('#file-chip span').textContent = attachment.name; $('#file-chip').hidden = false; toast('Tệp đính kèm chưa được backend hỗ trợ.'); }; $('#remove-file').onclick = () => { attachment = null; $('#file-chip').hidden = true; $('#file-input').value = ''; };
 $('#message-list').addEventListener('click', async e => {
   const retry = e.target.closest('[data-retry]'); const copy = e.target.closest('[data-copy]');
-  if (retry && !runs.has(currentSession)) sendTurn('', retry.dataset.retry, { retry: true });   // API: retry:true re-runs the last user message
+  if (retry && !runs.has(currentConversation)) sendTurn('', retry.dataset.retry, { retry: true });   // API: retry:true re-runs the last user message
   if (copy) { const text = $('.live-copy', copy.closest('article')).innerText; try { await navigator.clipboard.writeText(text); toast('Đã sao chép phản hồi.'); } catch { toast('Trình duyệt chưa cho phép sao chép.'); } }
   // Card answers: label chips ride the composer send path; consent chips
   // POST the option id to this DM's private-followup endpoint.
@@ -63,8 +62,8 @@ $('#message-list').addEventListener('click', async e => {
   const consentChip = e.target.closest('[data-pf-choice]');
   if (consentChip && !consentChip.disabled) void decidePrivateFollowup(consentChip.dataset.pendingId, consentChip.dataset.revision, consentChip.dataset.pfChoice, consentChip);
 });
-$('#session-info').onclick = () => {
-  const g = groups.find(g => groupKey(g.id) === currentSession);
+$('#conversation-info').onclick = () => {
+  const g = groups.find(g => groupKey(g.id) === currentConversation);
   $('#bot-drawer-name').textContent = $('#chat-title').textContent;
   $('#bot-drawer-subtitle').textContent = g ? 'Hội thoại với ' + g.bots.map(id => (getBot(id) || {}).name || id).join(', ') : 'Phiên cùng ' + ((getBot(selectedBot) || {}).name || '…');
   $('#bot-drawer-body').innerHTML = '';
@@ -81,10 +80,10 @@ ThycaRouter.register('chat', { title: 'Sổ trò chuyện', stylesheet: '/ui/cha
   return {
     ready,
     selectBot,
-    loadSession: loadConversation,
+    loadConversation: loadConversation,
     onLeave() { nextChatNav(); },
     onEnter(route) {
-      if (!currentSession && bots.length) {
+      if (!currentConversation && bots.length) {
         const bot = new URLSearchParams(route.search).get('bot');
         selectBot(getBot(bot) ? bot : bots[0].id);
       }

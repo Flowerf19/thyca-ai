@@ -61,12 +61,12 @@ class LeafUsage:
         return self._map("leaf_searches")
 
     @guarded
-    def record_gets(self, chunk_ids: list[str], session_id: str, now: str) -> None:
-        self._record("leaf_gets", chunk_ids, session_id, now)
+    def record_gets(self, chunk_ids: list[str], memory_id: str, now: str) -> None:
+        self._record("leaf_gets", chunk_ids, memory_id, now)
 
     @guarded
-    def record_searches(self, chunk_ids: list[str], session_id: str, now: str) -> None:
-        self._record("leaf_searches", chunk_ids, session_id, now)
+    def record_searches(self, chunk_ids: list[str], memory_id: str, now: str) -> None:
+        self._record("leaf_searches", chunk_ids, memory_id, now)
 
     @guarded
     def keep_gets(self, chunk_ids: set[str]) -> None:
@@ -91,7 +91,7 @@ class LeafUsage:
             )
         }
 
-    def _record(self, table: str, chunk_ids: list[str], session_id: str, now: str) -> None:
+    def _record(self, table: str, chunk_ids: list[str], memory_id: str, now: str) -> None:
         if not chunk_ids:
             return
         count_col, time_col = _TABLES[table]
@@ -99,13 +99,13 @@ class LeafUsage:
         try:
             for chunk_id in chunk_ids:
                 self._db.execute(
-                    f"""INSERT INTO {table}(chunk_id, session_id, {count_col}, {time_col})
+                    f"""INSERT INTO {table}(chunk_id, memory_id, {count_col}, {time_col})
                         VALUES (?, ?, 1, ?)
                         ON CONFLICT(chunk_id) DO UPDATE SET
                           {count_col} = {count_col} + 1,
                           {time_col} = excluded.{time_col},
-                          session_id = excluded.session_id""",
-                    (chunk_id, session_id, now),
+                          memory_id = excluded.memory_id""",
+                    (chunk_id, memory_id, now),
                 )
             self._db.commit()
         except Exception:

@@ -395,7 +395,7 @@ class BotRegistry:
         return self.require(bot_id)
 
     def delete(self, bot_id: str) -> None:
-        """Remove the bot directory (card + private skills + private sessions).
+        """Remove the bot directory (card + private skills + private conversations).
 
         Team-promoted memory stays with the team (facade owns entries);
         private memory removal is a separate facade call the admin tool makes.

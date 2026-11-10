@@ -13,8 +13,8 @@ from seeded_config import seeded_config
 from thyca.llms.llm_base import ChatReply
 from thyca.core.protocol import Message, ToolCall
 from thyca.serve import default_webui, make_server
-from thyca.conversations.runtime import SessionManager
-from thyca.conversations.runtime.store import SessionStore
+from thyca.conversations.runtime import ConversationManager
+from thyca.conversations.runtime.store import ConversationStore
 from thyca.core.conversation import ConversationRef
 from thyca.memories.facade import MemoryFacade
 
@@ -59,15 +59,14 @@ def _json(httpd, path: str) -> dict:
 
 
 def _append_turn(
-    manager: SessionManager,
+    manager: ConversationManager,
     *,
     model: str,
     content: str,
     cost: float | None,
     started: str = TS,
 ) -> str:
-    session = manager.create()
-    manager.set_title(content)
+    conversation = manager.create()
     manager.append(Message(role="user", content=content, ts=started))
     meta: dict = {
         "kind": "llm",
@@ -85,7 +84,7 @@ def _append_turn(
     if cost is not None:
         meta["cost_usd"] = cost
     manager.append(Message(role="assistant", content=content, ts=TS2, meta=meta), actor="thyca")
-    return session.id
+    return conversation.conversation_id
 
 
 def test_concurrent_trace_list_and_detail_do_not_race_cache(tmp_path: Path) -> None:
@@ -99,7 +98,7 @@ def test_concurrent_trace_list_and_detail_do_not_race_cache(tmp_path: Path) -> N
 
     chat = _chat(tmp_path)
     try:
-        manager = SessionManager(tmp_path / "sessions")
+        manager = ConversationManager(tmp_path / "sessions")
         ids = [
             _append_turn(manager, model="m", content=f"turn {index}", cost=None)
             for index in range(8)
@@ -141,19 +140,19 @@ def test_concurrent_trace_list_and_detail_do_not_race_cache(tmp_path: Path) -> N
 def test_trace_scan_rereads_store_doors(tmp_path: Path) -> None:
     chat = _chat(tmp_path)
     try:
-        manager = SessionManager(tmp_path / "sessions")
-        session_id = _append_turn(manager, model="gpt-4o-mini", content="cached turn", cost=0.00001)
+        manager = ConversationManager(tmp_path / "sessions")
+        conversation_id = _append_turn(manager, model="gpt-4o-mini", content="cached turn", cost=0.00001)
 
         scans = ["initial"]
-        original_scan = SessionStore.scan
+        original_scan = ConversationStore.scan
 
-        def counting_scan(self: SessionStore, path: Path):
+        def counting_scan(self: ConversationStore, path: Path):
             scans.append(path.name)
             return original_scan(self, path)
 
         httpd, thread = _start(tmp_path, chat)
         try:
-            SessionStore.scan = counting_scan  # type: ignore[method-assign]
+            ConversationStore.scan = counting_scan  # type: ignore[method-assign]
             try:
                 first = _json(httpd, "/api/traces/stats")
                 assert first["totals"]["requests"] == 1
@@ -162,7 +161,7 @@ def test_trace_scan_rereads_store_doors(tmp_path: Path) -> None:
                 second = _json(httpd, "/api/traces/stats")
                 assert second == first
                 assert scans == []
-                manager.load(session_id)
+                manager.load(conversation_id)
                 manager.append(
                     Message(
                         role="user",
@@ -175,7 +174,7 @@ def test_trace_scan_rereads_store_doors(tmp_path: Path) -> None:
                 assert refreshed["totals"]["requests"] == 1  # still one open turn
                 assert scans == []
             finally:
-                SessionStore.scan = original_scan  # type: ignore[method-assign]
+                ConversationStore.scan = original_scan  # type: ignore[method-assign]
         finally:
             _stop(httpd, thread)
     finally:
@@ -185,29 +184,29 @@ def test_trace_scan_rereads_store_doors(tmp_path: Path) -> None:
 def test_trace_detail_after_list_rereads_store_door(tmp_path: Path) -> None:
     chat = _chat(tmp_path)
     try:
-        manager = SessionManager(tmp_path / "sessions")
-        session_id = _append_turn(manager, model="gpt-4o-mini", content="detail turn", cost=0.00001)
+        manager = ConversationManager(tmp_path / "sessions")
+        conversation_id = _append_turn(manager, model="gpt-4o-mini", content="detail turn", cost=0.00001)
 
         scans: list[str] = []
-        original_scan = SessionStore.scan
+        original_scan = ConversationStore.scan
 
-        def counting_scan(self: SessionStore, path: Path):
+        def counting_scan(self: ConversationStore, path: Path):
             scans.append(path.name)
             return original_scan(self, path)
 
         httpd, thread = _start(tmp_path, chat)
         try:
-            SessionStore.scan = counting_scan  # type: ignore[method-assign]
+            ConversationStore.scan = counting_scan  # type: ignore[method-assign]
             try:
                 listed = _json(httpd, "/api/traces")
                 assert listed["total"] == 1
                 scans.clear()
-                detail = _json(httpd, f"/api/traces/groups/{session_id}/0")
-                assert detail["group_id"] == session_id
+                detail = _json(httpd, f"/api/traces/groups/{conversation_id}/0")
+                assert detail["group_id"] == conversation_id
                 assert detail["kind"] == "group"
                 assert scans == []
             finally:
-                SessionStore.scan = original_scan  # type: ignore[method-assign]
+                ConversationStore.scan = original_scan  # type: ignore[method-assign]
         finally:
             _stop(httpd, thread)
     finally:
@@ -225,8 +224,8 @@ def test_trace_store_corrupt_door_is_skipped(tmp_path: Path) -> None:
 
     chat = _chat(tmp_path)
     try:
-        manager = SessionManager(tmp_path / "sessions")
-        session_id = _append_turn(manager, model="gpt-4o-mini", content="recover turn", cost=0.00001)
+        manager = ConversationManager(tmp_path / "sessions")
+        conversation_id = _append_turn(manager, model="gpt-4o-mini", content="recover turn", cost=0.00001)
 
         httpd, thread = _start(tmp_path, chat)
         try:
@@ -235,7 +234,7 @@ def test_trace_store_corrupt_door_is_skipped(tmp_path: Path) -> None:
             try:
                 conn.execute(
                     "UPDATE conversations SET metadata=? WHERE kind='group' AND id=?",
-                    ("{not valid json", session_id),
+                    ("{not valid json", conversation_id),
                 )
                 conn.commit()
             finally:
@@ -263,7 +262,7 @@ def test_traces_without_chat_are_404(tmp_path: Path) -> None:
 def test_stats_filter_detail_and_corrupt_skip(tmp_path: Path) -> None:
     chat = _chat(tmp_path)
     try:
-        manager = SessionManager(tmp_path / "sessions")
+        manager = ConversationManager(tmp_path / "sessions")
         mini_id = _append_turn(manager, model="gpt-4o-mini", content="mini turn", cost=0.00001)
         other_id = _append_turn(
             manager,
@@ -314,7 +313,7 @@ def test_stats_filter_detail_and_corrupt_skip(tmp_path: Path) -> None:
             except HTTPError as exc:
                 assert exc.code == 404
             else:
-                raise AssertionError("expected 404 for missing session")
+                raise AssertionError("expected 404 for missing conversation")
         finally:
             _stop(httpd, thread)
     finally:
@@ -335,8 +334,8 @@ def test_trace_detail_expands_only_same_window_canonical_span(tmp_path: Path) ->
         )
         dm = chat.create(bots=["coder"])
         group = chat.create(bots=["thyca", "coder"])
-        dm_room = chat._sessions.store.load(dm["id"])
-        group_room = chat._sessions.store.load(group["id"])
+        dm_room = chat._conversations.store.load(dm["conversation_id"])
+        group_room = chat._conversations.store.load(group["conversation_id"])
         dm_window = chat._webui.window_for(dm_room)
         group_window = chat._webui.window_for(group_room)
         dm_span = "span_shared_fixture"
@@ -379,9 +378,9 @@ def test_trace_detail_expands_only_same_window_canonical_span(tmp_path: Path) ->
 
         chat._runtime.workspaces.store.bind_window("coder", dm_window)
         chat._runtime.workspaces.store.bind_window("coder", group_window)
-        room_manager = SessionManager(tmp_path / "sessions")
+        room_manager = ConversationManager(tmp_path / "sessions")
         for room, text in ((dm_room, "private"), (group_room, "public")):
-            room_manager.load(room.id)
+            room_manager.load(room.conversation_id)
             room_manager.append(Message(role="user", content=text))
             room_manager.append(
                 Message(
@@ -394,7 +393,7 @@ def test_trace_detail_expands_only_same_window_canonical_span(tmp_path: Path) ->
                 )
             )
 
-        payload = trace_api.trace_detail_payload_ref(chat, ConversationRef.group(group["id"]), 0)
+        payload = trace_api.trace_detail_payload_ref(chat, ConversationRef.group(group["conversation_id"]), 0)
         rendered = json.dumps(payload, ensure_ascii=False)
         assert "DM1 sentinel reasoning" not in rendered
         assert "DM1 sentinel tool result" not in rendered
@@ -421,11 +420,11 @@ def test_trace_detail_missing_canonical_artifact_is_explicit_and_read_only(
     chat = _chat(tmp_path)
     try:
         created = chat.create()
-        room = chat._sessions.store.load(created["id"])
+        room = chat._conversations.store.load(created["conversation_id"])
         window = chat._webui.window_for(room)
         chat._runtime.workspaces.store.bind_window("thyca", window)
-        manager = SessionManager(tmp_path / "sessions")
-        manager.load(created["id"])
+        manager = ConversationManager(tmp_path / "sessions")
+        manager.load(created["conversation_id"])
         manager.append(Message(role="user", content="question"))
         manager.append(
             Message(
@@ -439,7 +438,7 @@ def test_trace_detail_missing_canonical_artifact_is_explicit_and_read_only(
         timeline_path = tmp_path / "bots" / "thyca" / "workspace" / "timeline.jsonl"
         assert not timeline_path.exists()
         try:
-            trace_api.trace_detail_payload_ref(chat, ConversationRef.dm(created["id"]), 0)
+            trace_api.trace_detail_payload_ref(chat, ConversationRef.dm(created["conversation_id"]), 0)
         except TraceExecutionError as exc:
             assert "timeline is missing" in str(exc)
         else:
@@ -453,8 +452,8 @@ def test_trace_detail_marks_skill_loads_and_keeps_arguments(tmp_path: Path) -> N
     """Skill classification happens server-side; arguments stay on the payload."""
     chat = _chat(tmp_path)
     try:
-        manager = SessionManager(tmp_path / "sessions")
-        session = manager.create()
+        manager = ConversationManager(tmp_path / "sessions")
+        conversation = manager.create()
         skill_file = tmp_path / "skills" / "codereview" / "SKILL.md"
         skill_file.parent.mkdir(parents=True)
         skill_file.write_text("---\nname: codereview\n---\n")
@@ -470,7 +469,7 @@ def test_trace_detail_marks_skill_loads_and_keeps_arguments(tmp_path: Path) -> N
             Message(role="assistant", content="done", ts=TS2, meta={"kind": "llm", "round": 1}),
             actor="thyca",
         )
-        payload = trace_api.trace_detail_payload_ref(chat, ConversationRef.group(session.id), 0)
+        payload = trace_api.trace_detail_payload_ref(chat, ConversationRef.group(conversation.conversation_id), 0)
         # Trace detail always carries the tool shape (include_args);
         # store rooms hold no tool rows, so every entry is empty.
         assert all(m.get("tool_calls", []) == [] for m in payload["messages"])
@@ -493,11 +492,11 @@ def _trace_chat(tmp_path: Path) -> ChatApp:
 
 def test_f34_limit_all_capped_total_full_and_offset_pages_on(tmp_path: Path) -> None:
     chat = _trace_chat(tmp_path)
-    from thyca.conversations.runtime import SessionManager as _SM
+    from thyca.conversations.runtime import ConversationManager as _SM
 
     mgr = _SM(tmp_path / "sessions")
     for i in range(100):
-        sid = mgr.create().id
+        sid = mgr.create().conversation_id
         for t in range(25):
             mgr.load(sid)
             mgr.append(Message(role="user", content=f"q{t}"))
@@ -530,7 +529,7 @@ def test_x26_sum_group_rollup() -> None:
 
     def turn(requests, cost):
         return TurnSummary(
-            session_id="s",
+            conversation_id="s",
             turn_index=0,
             title="t",
             started_at="",
@@ -600,27 +599,27 @@ def test_m7_post_traces_is_404_like_get(tmp_path: Path) -> None:
 
 def test_m7_turn_status_meta_first_then_stripped() -> None:
     from thyca.core.protocol import Message
-    from thyca.serve.trace import turns_from_session
-    from thyca.conversations.runtime import Session
+    from thyca.serve.trace import turns_from_conversation
+    from thyca.conversations.runtime import ConversationRuntime
 
-    def session_with(last: Message) -> Session:
-        return Session(
+    def conversation_with(last: Message) -> ConversationRuntime:
+        return ConversationRuntime(
             "2026-08-26T09-12-03_abcf",
             Path("/tmp/x.jsonl"),
             [Message(role="user", content="go"), last],
         )
 
-    padded = turns_from_session(
-        session_with(Message(role="assistant", content="loop limit reached\n"))
+    padded = turns_from_conversation(
+        conversation_with(Message(role="assistant", content="loop limit reached\n"))
     )[0]
     assert padded.status == "loop_limit"
-    meta_only = turns_from_session(
-        session_with(
+    meta_only = turns_from_conversation(
+        conversation_with(
             Message(role="assistant", content="done", meta={"status": "loop_limit"})
         )
     )[0]
     assert meta_only.status == "loop_limit"
-    plain = turns_from_session(session_with(Message(role="assistant", content="done")))[
+    plain = turns_from_conversation(conversation_with(Message(role="assistant", content="done")))[
         0
     ]
     assert plain.status == "completed"

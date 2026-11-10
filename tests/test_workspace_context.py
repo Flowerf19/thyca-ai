@@ -6,7 +6,7 @@ import pytest
 
 from thyca.core.channel import WindowRef
 from thyca.memories.visibility import MemoryView, bound_memory_view, current_memory_view
-from thyca.conversations.runtime.store import SessionStore
+from thyca.conversations.runtime.store import ConversationStore
 from thyca.bots.workspace_context import WorkspaceContextBuilder, _channel_brief
 from thyca.bots.work_items import prioritize_window, project_work_items
 from thyca.bots.tasks import OpenTask
@@ -43,13 +43,13 @@ def _seed_session(
     tmp_path: Path, sid: str, *, bots=(), dm_bot=None
 ) -> None:
     from thyca.conversations.store.runtime import ensure_runtime_store
-    from thyca.conversations.runtime import SessionManager
+    from thyca.conversations.runtime import ConversationManager
 
     ensure_runtime_store(tmp_path)
-    store = SessionStore(tmp_path / "sessions")
+    store = ConversationStore(tmp_path / "sessions")
     store.ensure_dir()
     if dm_bot:
-        SessionManager(tmp_path / "sessions").ensure_dm(dm_bot)
+        ConversationManager(tmp_path / "sessions").ensure_dm(dm_bot)
         return
     path = store.create(sid)
     if bots:
@@ -137,7 +137,7 @@ def test_snapshot_filters_private_dm_entries(tmp_path: Path) -> None:
     memory = ActiveMemory(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     state = memory.open_session(_at(TODAY))
     with bound_memory_view(MemoryView(_group_window(GRP), "coder", tmp_path)):
-        snap = memory.refresh(state, _at(TODAY), session_id=GRP,
+        snap = memory.refresh(state, _at(TODAY), conversation_id=GRP,
                               reader="coder")
     assert "PRIVATE-TITLE" not in snap.today
     assert "PRIVATE-TITLE" not in snap.today_elsewhere
@@ -153,7 +153,7 @@ def test_private_view_still_reads_own_dm(tmp_path: Path) -> None:
     memory = ActiveMemory(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     state = memory.open_session(_at(TODAY))
     with bound_memory_view(MemoryView(_dm_window(DM_ID, "coder"), "coder", tmp_path)):
-        snap = memory.refresh(state, _at(TODAY), session_id=DM_ID,
+        snap = memory.refresh(state, _at(TODAY), conversation_id=DM_ID,
                               reader="coder")
     assert "PRIVATE-TITLE" in snap.today
 
@@ -164,7 +164,7 @@ def test_no_view_is_unchanged(tmp_path: Path) -> None:
     _seed_memory(tmp_path, DM_ID, "PRIVATE-TITLE", "PRIVATE-SUMMARY")
     memory = ActiveMemory(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     state = memory.open_session(_at(TODAY))
-    snap = memory.refresh(state, _at(TODAY), session_id=DM_ID)
+    snap = memory.refresh(state, _at(TODAY), conversation_id=DM_ID)
     assert "PRIVATE-TITLE" in snap.today
     assert current_memory_view() is None
 
@@ -191,12 +191,12 @@ def test_facade_get_denies_private_in_group(tmp_path: Path) -> None:
     facade._refresh_index()
     with bound_memory_view(MemoryView(_group_window(GRP), "coder", tmp_path)):
         with pytest.raises(ArchiveError):
-            facade.get(session_id=sid)
+            facade.get(memory_id=sid)
         hits = facade.search("PRIVATE", limit=10).hits
         assert all("PRIVATE-TITLE" not in h.heading for h in hits)
         assert all("PRIVATE" not in h.heading for h in facade.recent(10))
     with bound_memory_view(MemoryView(_dm_window(DM_ID, "coder"), "coder", tmp_path)):
-        assert "PRIVATE-SUMMARY" in facade.get(session_id=sid)
+        assert "PRIVATE-SUMMARY" in facade.get(memory_id=sid)
 
 
 def test_group_search_candidate_limit_still_returns_allowed(
@@ -231,7 +231,7 @@ def test_canonical_get_bypasses_daily_origin_check(tmp_path: Path) -> None:
     facade.remember("anything", "body", now=_at(TODAY), chat=GRP)
     facade._refresh_index()
     with bound_memory_view(MemoryView(_group_window(GRP), "coder", tmp_path)):
-        assert facade.get(session_id="canonical#soul") is not None
+        assert facade.get(memory_id="canonical#soul") is not None
 
 
 def test_memory_tasks_hide_private_title_in_group(tmp_path: Path) -> None:
@@ -295,7 +295,7 @@ def test_workitem_projection_links_only_explicit(tmp_path: Path) -> None:
     items = project_work_items(
         [linked, lookalike],
         [{"task_id": "task-aabb1122", "status": "open",
-          "title": "Memory task", "latest_session_id": "2026-10-19#aaaa1111"}],
+          "title": "Memory task", "latest_memory_id": "2026-10-19#aaaa1111"}],
         owner_bot="coder")
     assert len(items) == 2
     canon = next(i for i in items if i.work_id == "task-aabb1122")
@@ -303,7 +303,7 @@ def test_workitem_projection_links_only_explicit(tmp_path: Path) -> None:
     assert canon.runtime_refs == ("s1",)
     assert canon.current_window == GRP
     assert canon.title == "Memory task"
-    assert canon.latest_session_id == "2026-10-19#aaaa1111"
+    assert canon.latest_memory_id == "2026-10-19#aaaa1111"
     assert canon.coordinator is None
     rt = next(i for i in items if i.work_id is None)
     assert rt.runtime_refs == ("s2",)
@@ -338,9 +338,9 @@ def test_owner_dm_entry_readable_in_group(tmp_path: Path) -> None:
     try:
         with bound_memory_view(MemoryView(_group_window(GRP), "coder", tmp_path)):
             assert "OWN-DM-BODY-1" in facade.get(
-                session_id=sid, allow_own_cross_window=True)
+                memory_id=sid, allow_own_cross_window=True)
             with pytest.raises(ArchiveError):
-                facade.get(session_id=sid)
+                facade.get(memory_id=sid)
             hits = facade.search(
                 "OWN-DM-NOTE-1", limit=10,
                 allow_own_cross_window=True).hits
@@ -365,7 +365,7 @@ def test_delegated_note_readable_in_owner_dm(tmp_path: Path) -> None:
         with bound_memory_view(
                 MemoryView(_dm_window(DM_ID, "coder"), "coder", tmp_path)):
             assert "DELEGATED-BODY-2" in facade.get(
-                session_id=sid, allow_own_cross_window=True)
+                memory_id=sid, allow_own_cross_window=True)
     finally:
         reset_bot_id(token)
 
@@ -387,7 +387,7 @@ def test_owner_group_entry_readable_in_other_group(tmp_path: Path) -> None:
                 MemoryView(_group_window(GRP_OTHER, ("thyca", "helper")),
                            "coder", tmp_path)):
             assert "OWN-GRP-BODY-3" in facade.get(
-                session_id=sid, allow_own_cross_window=True)
+                memory_id=sid, allow_own_cross_window=True)
             hits = facade.search(
                 "OWN-GRP-NOTE-3", limit=10,
                 allow_own_cross_window=True).hits
@@ -414,7 +414,7 @@ def test_owner_group_entry_readable_in_larger_group(tmp_path: Path) -> None:
                     _group_window(GRP_BIG, ("thyca", "coder", "helper")),
                     "coder", tmp_path)):
             assert "OWN-GRP-BODY-4" in facade.get(
-                session_id=sid, allow_own_cross_window=True)
+                memory_id=sid, allow_own_cross_window=True)
             hits = facade.search(
                 "OWN-GRP-NOTE-4", limit=10,
                 allow_own_cross_window=True).hits
@@ -458,7 +458,7 @@ def test_other_bot_entry_still_denied_with_flag(tmp_path: Path) -> None:
     try:
         with bound_memory_view(MemoryView(_group_window(GRP), "coder", tmp_path)):
             with pytest.raises(ArchiveError):
-                facade.get(session_id=sid)
+                facade.get(memory_id=sid)
             hits = facade.search(
                 "HELPER-NOTE-6", limit=10,
                 allow_own_cross_window=True).hits
@@ -483,7 +483,7 @@ def test_team_co_owned_entry_still_denied_in_group(tmp_path: Path) -> None:
     try:
         with bound_memory_view(MemoryView(_group_window(GRP), "coder", tmp_path)):
             with pytest.raises(ArchiveError):
-                facade.get(session_id=sid)
+                facade.get(memory_id=sid)
             hits = facade.search(
                 "TEAM-NOTE-7", limit=10,
                 allow_own_cross_window=True).hits
@@ -509,7 +509,7 @@ def test_legacy_entry_from_other_dm_still_denied(tmp_path: Path) -> None:
         with bound_memory_view(
                 MemoryView(_dm_window(DM_ID, "coder"), "coder", tmp_path)):
             with pytest.raises(ArchiveError):
-                facade.get(session_id=sid)
+                facade.get(memory_id=sid)
     finally:
         reset_bot_id(token)
 
@@ -608,7 +608,7 @@ def test_denied_origin_matrix_hides_team_but_keeps_explicit_own(tmp_path: Path) 
             "TASKTEAM1" not in h.heading
             for h in facade.search("TASKTEAM1", limit=10).hits)
         with pytest.raises(ArchiveError):
-            facade.get(session_id=_sid_for(facade, tmp_path, "TEAMMATRIX1"))
+            facade.get(memory_id=_sid_for(facade, tmp_path, "TEAMMATRIX1"))
         recent_titles = [h.heading for h in facade.recent(
             10, allow_own_cross_window=True)]
         assert all("TEAMMATRIX1" not in h for h in recent_titles)

@@ -1,4 +1,4 @@
-"""SQLite schema, connection setup, transactions, and locked-session factory."""
+"""SQLite schema, connection setup, transactions, and locked-conversation factory."""
 from __future__ import annotations
 
 import fcntl
@@ -166,7 +166,7 @@ class _LockedConnection:
         if error is not None:
             raise ConversationStoreError() from error
 
-def open_existing_session(root: Path, *, lock_mode: Literal['shared', 'exclusive'] = 'shared') -> _LockedConnection:
+def open_existing_conversation(root: Path, *, lock_mode: Literal['shared', 'exclusive'] = 'shared') -> _LockedConnection:
     """Open an existing, validated v2 DB; never creates roots, DBs, or schema."""
     parent_fd, root_fd, root_name, absolute = _open_root(root, create=False)
     lock_fd = marker_fd = -1

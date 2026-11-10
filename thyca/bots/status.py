@@ -195,8 +195,6 @@ class AgentStatusTracker:
                 turn.phase = "turn"
             elif event_type == "llm.finished":
                 turn.phase = "turn"
-            elif event_type.startswith("session.naming."):
-                turn.phase = "naming"
             else:
                 # turn.accepted, context.shrunk, and anything else the
                 # loop emits still prove the turn is alive and working.

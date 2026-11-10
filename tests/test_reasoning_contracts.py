@@ -170,7 +170,7 @@ async def test_two_round_empty_summary_jsonl_roundtrip() -> None:
             "encrypted_content": "enc-blob",
         }
     ]
-    # JSONL persistence roundtrip, like the session store.
+    # JSONL persistence roundtrip, like the conversation store.
     stored = Message(
         role="assistant",
         content=first.content,
@@ -229,7 +229,7 @@ async def test_two_round_missing_and_invalid_id_never_sent() -> None:
         {"role": "assistant", "content": "prior"},
         {"role": "user", "content": "q1"},
     ]
-    # JSONL persistence roundtrip, like the session store.
+    # JSONL persistence roundtrip, like the conversation store.
     revived_history = Message.from_json_line(history.to_json_line())
     stored = Message(
         role="assistant",

@@ -19,7 +19,7 @@ def test_bus_send_drain_round_trip() -> None:
     bus = Bus()
     bus.register("coder")
     envelope = bus.send(sender="thyca", recipient="coder", kind="delegate",
-                        session_id="room1", payload="do it")
+                        conversation_id="room1", payload="do it")
     assert envelope.trace_id.startswith("tr_")
     assert bus.pending("coder") == 1
     got = bus.drain("coder")
@@ -33,10 +33,10 @@ def test_bus_rejects_unknown_kind_and_recipient() -> None:
     bus.register("coder")
     with pytest.raises(BusError):
         bus.send(sender="a", recipient="coder", kind="nope",
-                 session_id="r", payload="x")
+                 conversation_id="r", payload="x")
     with pytest.raises(BusError):
         bus.send(sender="a", recipient="ghost", kind="message",
-                 session_id="r", payload="x")
+                 conversation_id="r", payload="x")
 
 
 def test_bus_hop_limit_per_trace() -> None:
@@ -46,11 +46,11 @@ def test_bus_hop_limit_per_trace() -> None:
     trace = None
     for _ in range(3):
         envelope = bus.send(sender="a", recipient="b", kind="message",
-                            session_id="r", payload="x", trace_id=trace)
+                            conversation_id="r", payload="x", trace_id=trace)
         trace = envelope.trace_id
     with pytest.raises(BusError):
         bus.send(sender="b", recipient="a", kind="message",
-                 session_id="r", payload="x", trace_id=trace)
+                 conversation_id="r", payload="x", trace_id=trace)
     assert bus.hops_of(trace) == 3
 
 
@@ -143,7 +143,7 @@ def test_bus_rejects_self_send() -> None:
     bus.register("coder")
     with pytest.raises(BusError):
         bus.send(sender="coder", recipient="coder", kind="message",
-                 session_id="r", payload="note to self")
+                 conversation_id="r", payload="note to self")
     assert bus.pending("coder") == 0
 
 
@@ -186,8 +186,8 @@ def test_loop_limit_marker_does_not_double_count_aggregate_or_trace(
         _aggregate_turn_meta,
         _aggregate_turn_rounds,
     )
-    from thyca.conversations.runtime import SessionManager
-    from thyca.serve.trace import turns_from_session
+    from thyca.conversations.runtime import ConversationManager
+    from thyca.serve.trace import turns_from_conversation
 
     call = ToolCall(id="c1", name="read", arguments={})
     meta = {
@@ -232,16 +232,16 @@ def test_loop_limit_marker_does_not_double_count_aggregate_or_trace(
         rounds=rounds,
         status="loop_limit",
     )
-    from thyca.bots.timeline import CanonicalSessionStore, WorkspaceTimeline
+    from thyca.bots.timeline import CanonicalConversationStore, WorkspaceTimeline
     from thyca.core.channel import WindowRef
 
     _window = WindowRef(
         window_id="thyca", channel_id="webui", kind="dm", participants=("thyca",))
     _sid = "2026-01-01T00-00-00_ab12"
-    manager = SessionManager(store=CanonicalSessionStore(
+    manager = ConversationManager(store=CanonicalConversationStore(
         tmp_path / "bots" / "thyca" / "sessions",
         timeline=WorkspaceTimeline(tmp_path, "thyca"),
-        window=_window, session_id=_sid))
+        window=_window, conversation_id=_sid))
     manager.load(_sid)
     manager.append(Message(role="user", content="go"))
     manager.append(
@@ -253,7 +253,7 @@ def test_loop_limit_marker_does_not_double_count_aggregate_or_trace(
             ),
         )
     )
-    turn = turns_from_session(manager.current)[0]
+    turn = turns_from_conversation(manager.current)[0]
     assert turn.status == "loop_limit"
     assert (turn.rounds, turn.requests, turn.tool_calls) == (1, 1, 1)
     assert (turn.prompt_tokens, turn.completion_tokens) == (11, 2)

@@ -6,17 +6,15 @@ initialized root, see ``runtime.py``). Without an explicit intent the
 call fails before any I/O. All writes stay on their own paths.
 
 Byte-compat contract (R1):
-- ``summary`` mirrors ``sessions.wire.session_summary`` (same keys).
-- ``detail`` mirrors ``sessions.wire.session_detail`` via ``message_dict``
+- ``summary`` mirrors ``conversations.wire.conversation_summary`` (same keys).
+- ``detail`` mirrors ``conversations.wire.conversation_detail`` via ``message_dict``
   without ``include_args``: ``tool_calls``/``reasoning`` never appear.
 - ``trace`` mirrors ``serve.trace``/``serve.trace_api`` via ``message_dict``
   with ``include_args=True``: ``tool_calls``/``tool_call_id``/``meta``
   (and ``reasoning`` when present) appear only here.
 - ``updated_at`` is the last message ``ts``; empty conversations report the
   listing ``created_at`` stamp.
-- Titles reuse ``sessions.wire.session_title`` (user titles verbatim, agent
-  titles vetted, blank transcripts read ``"Phiên trống"``); the store
-  already rejects ``content=None`` rows at write time.
+- The store rejects ``content=None`` rows at write time.
 - Full history is assembled across ``AgentStore.read`` pages with
   :class:`PageCursor`; a generation change mid-assembly resyncs from the
   start (bounded restarts, then a sanitized failure).
@@ -28,9 +26,9 @@ from pathlib import Path
 
 from thyca.core.conversation import ConversationRef
 from thyca.core.protocol import Message, parse_ts
-from thyca.serve.trace import TurnSummary, turns_from_session
-from thyca.conversations.runtime import Session, calibration_factor, context_usage
-from thyca.conversations.runtime.wire import ask_remember, message_dict, session_title, turn_slices
+from thyca.serve.trace import TurnSummary, turns_from_conversation
+from thyca.conversations.runtime import ConversationRuntime, calibration_factor, context_usage
+from thyca.conversations.runtime.wire import ask_remember, message_dict, turn_slices
 
 from .agent import AgentStore
 from .contracts import (
@@ -101,8 +99,7 @@ def assemble_history(
         if metadata is None:
             metadata = page.conversation
         else:
-            # Titles may be renamed between pages (metadata writes do not
-            # bump generation); the final page carries the newest stamp.
+            # The final page carries the newest metadata stamp.
             metadata = page.conversation
         collected.extend(page.messages)
         if not page.has_more:
@@ -114,35 +111,29 @@ def assemble_history(
     return _view(
         metadata.ref,
         {
-            'title': metadata.title,
-            'title_source': metadata.title_source,
-            'naming_attempted': metadata.naming_attempted,
             'participants': list(metadata.participants),
         },
         tuple(collected),
     )
 
 
-# Project a store conversation onto the wire Session shape.
-def _wire_session(
+# Project a store conversation onto the wire ConversationRuntime shape.
+def _wire_conversation(
     conversation: Conversation,
     *,
-    session_id: str | None = None,
-) -> Session:
-    """Project a store conversation onto the :class:`Session` shape.
+    conversation_id: str | None = None,
+) -> ConversationRuntime:
+    """Project a store conversation onto the :class:`ConversationRuntime` shape.
 
-    ``path`` is a placeholder: ``turns_from_session`` and the
-    title/blank helpers never stat it. ``updated_at`` callers must not use
-    this session's path; the adapter resolves timestamps explicitly.
+    ``path`` is a placeholder: ``turns_from_conversation`` and the
+    blank helper never stat it. ``updated_at`` callers must not use
+    this conversation's path; the adapter resolves timestamps explicitly.
     """
     ref = conversation.ref
-    return Session(
-        session_id or ref.id,
+    return ConversationRuntime(
+        conversation_id or ref.id,
         Path(f'store://{ref.kind}/{ref.id}'),
         list(conversation.messages),
-        title=conversation.title,
-        title_source=conversation.title_source,
-        naming_attempted=conversation.naming_attempted,
         bots=list(conversation.participants),
         dm_bot=ref.id if ref.kind == 'dm' else None,
     )
@@ -162,18 +153,17 @@ def _updated_at(messages: tuple[Message, ...] | list[Message], created_at: str |
 # Build the wire summary with kind taken from the conversation ref.
 def summary_for(conversation: Conversation, created_at: str) -> dict:
     """Wire-shaped summary for one assembled conversation (pure, no I/O)."""
-    session = _wire_session(conversation)
+    view = _wire_conversation(conversation)
     return {
-        'id': session.id,
-        'title': session_title(session),
+        'conversation_id': view.conversation_id,
         'updated_at': _updated_at(conversation.messages, created_at),
         'message_count': len(conversation.messages),
         'turns': len(turn_slices(list(conversation.messages))),
-        'bots': list(session.bots) if session.bots else ['thyca'],
+        'bots': list(view.bots) if view.bots else ['thyca'],
         'dm': conversation.ref.id if conversation.ref.kind == 'dm' else None,
         'kind': conversation.ref.kind,
         'channel': 'webui',
-        'window_id': session.id,
+        'window_id': view.conversation_id,
     }
 
 
@@ -191,7 +181,7 @@ def detail_for(
     ``context`` is the transcript-only lower bound, matching the wire
     fallback for I/O-free callers.
     """
-    session = _wire_session(conversation)
+    view = _wire_conversation(conversation)
     context = context_usage(
         list(conversation.messages),
         cfg.effective_limits().contextTokens,
@@ -200,14 +190,13 @@ def detail_for(
         ),
     )
     detail = {
-        'id': session.id,
-        'title': session_title(session),
+        'conversation_id': view.conversation_id,
         'model': cfg.provider.model,
-        'bots': list(session.bots) if session.bots else ['thyca'],
+        'bots': list(view.bots) if view.bots else ['thyca'],
         'dm': conversation.ref.id if conversation.ref.kind == 'dm' else None,
         'kind': conversation.ref.kind,
         'channel': 'webui',
-        'window_id': session.id,
+        'window_id': view.conversation_id,
         'messages': [message_dict(item, skills_root) for item in conversation.messages],
         'ask_remember': ask_remember(list(conversation.messages), datetime.now(UTC)),
         'context': context,
@@ -219,7 +208,7 @@ def detail_for(
 # Build trace turns over one assembled conversation.
 def trace_turns_for(conversation: Conversation) -> list[TurnSummary]:
     """Trace turns over one assembled conversation (pure, no I/O)."""
-    return turns_from_session(_wire_session(conversation))
+    return turns_from_conversation(_wire_conversation(conversation))
 
 
 # Build one wire-shaped trace detail over an assembled conversation.

@@ -319,8 +319,8 @@ def test_turn_uses_saved_model_and_effort(tmp_path: Path, monkeypatch) -> None:
         app._bots.update_settings(
             "coder", BotModel(id="card-model", thinking="custom")
         )
-        app.turn(app.bot_dm("coder")["id"], "hello coder")
-        app.turn(app.bot_dm("thyca")["id"], "hello thyca")
+        app.turn(app.bot_dm("coder")["conversation_id"], "hello coder")
+        app.turn(app.bot_dm("thyca")["conversation_id"], "hello thyca")
         assert [p.model for p in captured] == ["card-model", "global-model"]
         assert [p.baseUrl for p in captured] == [
             "https://card.invalid/v1", "https://global.invalid/v1",
@@ -342,7 +342,7 @@ def test_explicit_override_wins_without_overwriting_settings(
             description="Writes code.", persona="",
             model=BotModel(id="card-model", thinking="custom"),
         ))
-        room = app.bot_dm("coder")["id"]
+        room = app.bot_dm("coder")["conversation_id"]
         app.turn(room, "override me", model="global-model", effort="max")
         assert captured[-1].model == "global-model"
         assert captured[-1].reasoningEffort == "max"
@@ -366,7 +366,7 @@ def test_operations_and_compact_honor_saved_settings(
     app, captured = _runtime_app(tmp_path, llm, monkeypatch)
     compact_models: list = []
 
-    async def compact_stub(summarizer, sessions, **kwargs):
+    async def compact_stub(summarizer, conversations, **kwargs):
         compact_models.append(kwargs["model"])
         return {"compacted": False, "summary": None}
 
@@ -379,7 +379,7 @@ def test_operations_and_compact_honor_saved_settings(
         app._bots.update_settings(
             "coder", BotModel(id="card-model", thinking="low")
         )
-        group = app.create(bots=["thyca", "coder"])["id"]
+        group = app.create(bots=["thyca", "coder"])["conversation_id"]
         app.turn(group, "@coder build it")
         ops = app.bot_operations(group, "coder")
         assert ops["model"]["id"] == "card-model"
@@ -388,18 +388,18 @@ def test_operations_and_compact_honor_saved_settings(
         assert captured[-1].model == "card-model"
         assert captured[-1].reasoningEffort == "low"
         # Force a real compaction with a long canonical history.
-        room = app._sessions.store.load(group)
+        room = app._conversations.store.load(group)
         window = app._webui.window_for(room)
-        internal = app._runtime.internal_session("coder", group)
-        store = app._runtime._canonical_store("coder", window, internal.id)
-        from thyca.conversations.runtime import SessionManager
+        internal = app._runtime.internal_conversation("coder", group)
+        store = app._runtime._canonical_store("coder", window, internal.conversation_id)
+        from thyca.conversations.runtime import ConversationManager
 
-        manager = SessionManager(store=store)
-        manager.load(internal.id)
+        manager = ConversationManager(store=store)
+        manager.load(internal.conversation_id)
         for index in range(4):
             manager.append(Message(role="user", content=f"old user {index} " + "u" * 1200))
             manager.append(Message(role="assistant", content=f"old assistant {index} " + "a" * 1200))
-        app.compact_session(group)
+        app.compact_conversation(group)
         assert "card-model" in compact_models
     finally:
         app.shutdown()
@@ -423,13 +423,13 @@ def test_a2a_recipient_uses_own_thinking(tmp_path: Path, monkeypatch) -> None:
             description="Writes code.", persona="",
             model=BotModel(id="card-model", thinking="low"),
         ))
-        group = app.create(bots=["sender", "coder"])["id"]
+        group = app.create(bots=["sender", "coder"])["conversation_id"]
         envelope = app._runtime.send(
             sender="sender", recipient="coder", kind="delegate",
-            session_id=group, payload="do the thing",
+            conversation_id=group, payload="do the thing",
         )
         scope = BotTurnScope(
-            store=app._sessions.store, act=app._act, tools=app._tools,
+            store=app._conversations.store, act=app._act, tools=app._tools,
             memory=app._memory, state=app._state, zone=app._zone,
             injected_connect=None,
         )
@@ -446,7 +446,7 @@ def test_a2a_recipient_uses_own_thinking(tmp_path: Path, monkeypatch) -> None:
         # An invalid explicit effort fails honestly instead of leaking.
         envelope2 = app._runtime.send(
             sender="sender", recipient="coder", kind="delegate",
-            session_id=group, payload="do it fast",
+            conversation_id=group, payload="do it fast",
         )
         ctx2 = BotTurnContext(
             sender_id="sender", room_id=group, trace_id=new_trace_id(),
@@ -541,8 +541,19 @@ def test_http_get_post_persist_restart_and_isolation(tmp_path: Path) -> None:
         )
         assert status == 404 and body == {"error": "bot not found"}
 
-        status, body = _request(server, "/api/bots/coder/settings", "PATCH", {"model": {"id": "default"}})
-        assert status == 404 and body == {"error": "bot not found"}
+        # No PATCH handler exists (settings are POST): the method is
+        # unsupported with a 501 HTML body, not a JSON 404.
+        patch = Request(
+            f"http://127.0.0.1:{server.server_address[1]}/api/bots/coder/settings",
+            data=json.dumps({"model": {"id": "default"}}).encode("utf-8"),
+            method="PATCH",
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            urlopen(patch, timeout=5)
+            raise AssertionError("expected 501 for PATCH")
+        except HTTPError as error:
+            assert error.code == 501
         status, body = _request(server, "/api/bots/coder/settings", "DELETE")
         assert status == 404 and body == {"error": "bot not found"}
     finally:
@@ -931,17 +942,21 @@ def test_invalid_settings_trigger_no_fallback_provider_call(
             description="Writes code.", persona="",
             model=BotModel(id="card-model", thinking="custom"),
         ))
-        group = app.create(bots=["coder"])["id"]
+        group = app.create(bots=["coder"])["conversation_id"]
         (tmp_path / "bots" / "coder" / "settings.json").write_text(
             "{broken", encoding="utf-8"
         )
         with pytest.raises(RegistryError):
             asyncio.run(app._flush_bot_memory("coder", [], app._current_cfg()))
         assert captured == []
-        # Compaction refuses the corrupt bot loudly instead of compacting
-        # it under a fallback global model.
-        with pytest.raises(RegistryError):
-            app.compact_session(group)
+        # Compaction refuses the corrupt bot instead of compacting it
+        # under a fallback global model: the bot settles as unavailable
+        # and no provider is ever created.
+        result = app.compact_conversation(group)
+        assert result["compaction"]["per_bot"]["coder"] == {
+            "compacted": False,
+            "skipped": "bot_unavailable",
+        }
         assert captured == []
     finally:
         app.shutdown()

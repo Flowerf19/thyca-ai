@@ -12,7 +12,7 @@ legacy guard passes, the live root).
   HTTP/CLI request handler) may call it to initialize a genuinely fresh
   root. An existing database is audited before any writer runs; a
   missing database with any leftover store artifact fails closed.
-- ``require_no_legacy_sessions`` refuses to start when legacy
+- ``require_no_legacy_conversations`` refuses to start when legacy
   ``sessions/*.jsonl`` files exist under any root (no migration).
 - Door ids equal ``ref.id``: ``group-<hex32>`` for groups and the bot
   id for DMs. The HTTP layer builds refs from path segments; internal
@@ -128,17 +128,17 @@ def ensure_runtime_store(root: Path) -> str:
     sidecar, lock, root marker or its temp, or ``dm-markers/``): fail
     closed. A missing database is not proof of freshness.
     (c) No database, no store artifacts, and (checked by the caller via
-    :func:`require_no_legacy_sessions`) no legacy sessions: initialize
+    :func:`require_no_legacy_conversations`) no legacy conversations: initialize
     a fresh root, preserving unrelated sentinel files untouched.
     """
     root = Path(root)
     if is_runtime_ready(root):
         AdminStore(root).audit()
         # Read the current instance id without re-initializing.
-        from .database import _root_instance_id_from_conn, open_existing_session
+        from .database import _root_instance_id_from_conn, open_existing_conversation
         from .database import _transaction_context, _ensure_root_ready
 
-        conn = open_existing_session(root, lock_mode="shared")
+        conn = open_existing_conversation(root, lock_mode="shared")
         try:
             with _transaction_context(conn, "BEGIN"):
                 _ensure_root_ready(conn, _root_instance_id_from_conn(conn))
@@ -154,8 +154,8 @@ def ensure_runtime_store(root: Path) -> str:
     return root_id
 
 
-# Refuse to start when any root still carries legacy session files.
-def require_no_legacy_sessions(root: Path) -> None:
+# Refuse to start when any root still carries legacy conversation files.
+def require_no_legacy_conversations(root: Path) -> None:
     """Storage guard: refuse to start on legacy ``sessions/`` files.
 
     Every root is refused (hard cut, no migration): an empty or missing
@@ -163,27 +163,27 @@ def require_no_legacy_sessions(root: Path) -> None:
     remediation when legacy files exist under the root.
     """
     root = Path(root)
-    sessions_dir = root / "sessions"
+    conversations_dir = root / "sessions"
     try:
-        if not sessions_dir.is_dir():
+        if not conversations_dir.is_dir():
             return
         legacy = [
             p
-            for p in sessions_dir.glob("*.jsonl")
+            for p in conversations_dir.glob("*.jsonl")
             if p.is_file() and not p.is_symlink()
         ]
     except OSError:
         return
     if legacy:
         raise RuntimeError(
-            f"refusing to start: legacy sessions exist under sessions/ "
+            f"refusing to start: legacy conversations exist under sessions/ "
             f"({len(legacy)} files); remove them to use the "
             f"conversation store (no automatic migration)"
         )
 
 
 # Resolve one stored door id to its ref by database lookup only.
-def resolve_ref(root: Path, session_id: str) -> ConversationRef:
+def resolve_ref(root: Path, conversation_id: str) -> ConversationRef:
     """Resolve a stored door id to its ``ConversationRef`` via the store.
 
     Internal callers only: the HTTP layer builds refs from path segments
@@ -192,26 +192,26 @@ def resolve_ref(root: Path, session_id: str) -> ConversationRef:
     Raises ``ConversationStoreError`` (local scope) when no door
     carries the id.
     """
-    if not isinstance(session_id, str) or not session_id:
-        raise ValueError("session id must be a non-empty string")
-    if not (_GROUP_RE.fullmatch(session_id) or _BOT_RE.fullmatch(session_id)):
-        raise ValueError(f"invalid session id: {session_id!r}")
+    if not isinstance(conversation_id, str) or not conversation_id:
+        raise ValueError("conversation id must be a non-empty string")
+    if not (_GROUP_RE.fullmatch(conversation_id) or _BOT_RE.fullmatch(conversation_id)):
+        raise ValueError(f"invalid conversation id: {conversation_id!r}")
     # Authority is the store: one indexed lookup by id across both kinds.
     from .database import (
         _ensure_root_ready,
         _root_instance_id_from_conn,
         _transaction_context,
-        open_existing_session,
+        open_existing_conversation,
     )
 
     try:
-        conn = open_existing_session(Path(root), lock_mode="shared")
+        conn = open_existing_conversation(Path(root), lock_mode="shared")
         try:
             with _transaction_context(conn, "BEGIN"):
                 _ensure_root_ready(conn, _root_instance_id_from_conn(conn))
                 rows = conn.execute(
                     "SELECT kind,id FROM conversations WHERE id=? AND lifecycle_state='ready'",
-                    (session_id,),
+                    (conversation_id,),
                 ).fetchall()
         finally:
             conn.close()

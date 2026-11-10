@@ -304,7 +304,7 @@ console.log(JSON.stringify({
   chartDay: document.querySelector('#chart-day').innerHTML,
   chartCost: document.querySelector('#chart-cost').innerHTML,
   chartHour: document.querySelector('#chart-hour').innerHTML,
-  traceRows: document.querySelector('#trace-sessions').innerHTML,
+  traceRows: document.querySelector('#trace-conversations').innerHTML,
   filterModel: document.querySelector('#filter-model').children.map(o => o.textContent),
   gets: calls.gets,
 }));
@@ -341,7 +341,7 @@ def test_dashboard_renders_stats_models_and_paged_rows() -> None:
     # Usage owns flat turn rows; detail is fetched only after selection.
     assert 'class="tl-turn"' in out["traceRows"]
     assert 'data-conv="dm:coder" data-turn="2"' in out["traceRows"]
-    assert 'class="tl-session"' not in out["traceRows"]
+    assert 'class="tl-conversation"' not in out["traceRows"]
 
     # Paged loading: stats + first trace page requested on boot.
     stats_url = next(u for u in out["gets"] if u.startswith("/api/traces/stats"))
@@ -498,13 +498,13 @@ const STATS = {
   bot_id: null, total: 3, used: 2, unused: 1, searched: 1, untouched: 1,
   expiring: [], suggest_removal: [],
   leaves: [
-    { chunk_id: 'a', session_id: 's1', heading: '## 09:30 — Trang một',
+    { chunk_id: 'a', conversation_id: 's1', heading: '## 09:30 — Trang một',
       snippet: '- Nội dung một', timeline_day: '2026-09-19',
       get_count: 1, search_count: 0, bots: ['coder'] },
-    { chunk_id: 'b', session_id: 's2', heading: '## 10:00 — Trang hai',
+    { chunk_id: 'b', conversation_id: 's2', heading: '## 10:00 — Trang hai',
       snippet: '- Nội dung hai', timeline_day: '2026-09-21',
       get_count: 4, search_count: 1, bots: ['coder'] },
-    { chunk_id: 'c', session_id: 's3', heading: '## 11:00 — Trang ba',
+    { chunk_id: 'c', conversation_id: 's3', heading: '## 11:00 — Trang ba',
       snippet: '- Nội dung ba', timeline_day: '2026-09-21',
       get_count: 0, search_count: 2, bots: ['researcher'] },
   ],
@@ -535,7 +535,7 @@ console.log(JSON.stringify({
 def test_memories_groups_leaves_by_day_and_filters() -> None:
     """The leaf list replaces the old view picker: payload order is kept
     inside day groups sorted newest-first, and the toolbar search filters
-    across title/snippet/session instead of re-sorting."""
+    across title/snippet/conversation instead of re-sorting."""
     out = _run_page(MEM_JS, _MEM_RET, _MEM_SCENARIO, _MEM_SETUP)
 
     assert "Tổng lá" in out["stats"]
@@ -557,14 +557,14 @@ def test_memories_groups_leaves_by_day_and_filters() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Shared sidebar + navigation (replaces the chat session pager)
+# Shared sidebar + navigation (replaces the chat conversation pager)
 # ---------------------------------------------------------------------------
 
 def test_shared_sidebar_renders_team_and_groups() -> None:
     """The shared sidebar lists the roster as bot cards on every page; the
     "Hội thoại chung" group section now only ships in chat's static markup,
     so sidebar.js guards its #group-list lookups. Card actions still
-    delegate to the page's selectBot/loadSession, whose shared defaults
+    delegate to the page's selectBot/loadConversation, whose shared defaults
     route back into the chat page."""
     sidebar = (UI / "share" / "sidebar.js").read_text(encoding="utf-8")
     shell = (UI / "share" / "shell.js").read_text(encoding="utf-8")
@@ -591,10 +591,10 @@ def test_shared_sidebar_renders_team_and_groups() -> None:
     assert "if(teamSharedCreate)" in sidebar
 
     # Click delegation: bot select / group open go through the page's
-    # selectBot/loadSession; defaults navigate into the chat page.
+    # selectBot/loadConversation; defaults navigate into the chat page.
     assert "$('#team-bot-list').addEventListener('click'" in sidebar
     assert "$('#group-list')?.addEventListener('click'" in sidebar
     assert "selectBot(b.id)" in sidebar
-    assert "loadSession(groupKey(g.id)" in sidebar
+    assert "loadConversation(groupKey(g.id)" in sidebar
     assert "ThycaRouter.dispatch('selectBot', id)" in shell_app
-    assert "ThycaRouter.dispatch('loadSession', id, title, botId)" in shell_app
+    assert "ThycaRouter.dispatch('loadConversation', id, botId)" in shell_app

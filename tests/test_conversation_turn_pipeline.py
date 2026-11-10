@@ -28,11 +28,9 @@ from thyca.conversations.store import (
     append_turn_error,
     assemble_history,
     detail_for,
-    mark_naming_attempted,
     prepare_retry,
     project_for_trace,
     record_turn_error,
-    store_title_if_missing,
     trace_detail_for,
     trace_turns_for,
     trace_turns_projected,
@@ -42,7 +40,7 @@ from thyca.core.protocol import Message, ToolCall
 from thyca.serve.bridge import SENTINEL, bridge_worker, pump_stream
 from thyca.serve.errors import public_turn_error
 from thyca.serve.turn_state import TurnHub, TurnState
-from thyca.conversations.runtime import SessionBusy, SessionCorrupt, SessionError, SessionNotFound
+from thyca.conversations.runtime import ConversationBusy, ConversationCorrupt, ConversationError, ConversationNotFound
 
 
 def _root_id(root: Path) -> str:
@@ -77,19 +75,6 @@ def switched(tmp_path: Path):
     yield tmp_path
 
 
-# Count completed turns over stored messages with error projection.
-def _completed_count(conversation) -> int:
-    from thyca.conversations.runtime.title import completed_turn_count
-
-    return completed_turn_count(list(project_for_trace(conversation).messages))
-
-
-# Read the stored title pair for one door through the runtime store.
-def _stored_title(root: Path, ref, actor: str):
-    conv = assemble_history(root, ref, actor, intent=_read_intent())
-    return conv.title, conv.title_source
-
-
 # Build projected trace turns for one door through the runtime store.
 def _trace_turns(root: Path, ref, actor: str):
     return trace_turns_projected(
@@ -113,13 +98,13 @@ def test_public_turn_error_preserves_contract_and_maps_store() -> None:
         400, 'invalid_text', 'invalid text: empty')
     assert public_turn_error(InvalidTurnOption('invalid model')) == (
         400, 'invalid_model', 'invalid model')
-    assert public_turn_error(SessionBusy('s')) == (409, 'session_busy', 'conversation busy')
-    assert public_turn_error(SessionNotFound(Path('/tmp/x'))) == (
-        404, 'session_not_found', 'conversation not found')
-    assert public_turn_error(SessionCorrupt(Path('/tmp/x'), 1, 'bad')) == (
+    assert public_turn_error(ConversationBusy('s')) == (409, 'session_busy', 'conversation busy')
+    assert public_turn_error(ConversationNotFound(Path('/tmp/x'))) == (
+        404, 'conversation_not_found', 'conversation not found')
+    assert public_turn_error(ConversationCorrupt(Path('/tmp/x'), 1, 'bad')) == (
         503, 'session_unreadable', 'conversation unreadable')
-    assert public_turn_error(SessionError('x')) == (
-        503, 'session_unavailable', 'conversation unavailable')
+    assert public_turn_error(ConversationError('x')) == (
+        503, 'conversation_unavailable', 'conversation unavailable')
     assert public_turn_error(LLMError('provider HTTP 503: down')) == (
         503, 'llm_error', 'provider HTTP 503: down')
     assert public_turn_error(TurnCancelled()) == (200, 'cancelled', 'cancelled')
@@ -131,11 +116,11 @@ def test_public_turn_error_preserves_contract_and_maps_store() -> None:
     local = ConversationStoreError('gone', scope='local',
                                    ref=ConversationRef.dm('coder'))
     assert public_turn_error(local) == (
-        404, 'session_not_found', 'conversation not found')
+        404, 'conversation_not_found', 'conversation not found')
     glob = ConversationStoreError('down')
     status, code, message = public_turn_error(glob)
     assert (status, code, message) == (
-        503, 'session_unavailable', 'conversation unavailable')
+        503, 'conversation_unavailable', 'conversation unavailable')
     # Sanitized: the bot id never leaks into the public message.
     assert 'coder' not in message
 
@@ -182,8 +167,7 @@ def test_error_marker_appends_without_rewrite_and_trace_fails(switched: Path) ->
     # include_args), chat detail never does.
     assert all('tool_calls' in item for item in payload['messages'])
     assert all('tool_calls' not in item for item in detail['messages'])
-    # A failed turn never satisfies the naming threshold.
-    assert _completed_count(conversation) == 0
+    # A failed turn never reads as completed.
 
 
 def test_project_for_trace_is_memory_only_and_drops_orphan_markers(switched: Path) -> None:
@@ -255,77 +239,10 @@ def test_retry_reports_last_user_without_mutation(switched: Path) -> None:
     assert [m.content for m in agents.read(ref, 'coder').messages] == before + ['boom']
 
 
-# ---------- naming/title one-shot semantics ----------
-
-def test_naming_attempted_once_and_title_if_missing(switched: Path) -> None:
-    ref = _dm(switched, 'coder')
-    agents = AgentStore(switched)
-    agents.append(ref, 'coder', _msg('user', 'first question here'))
-    agents.append(ref, 'coder', _msg('assistant', 'first answer here'))
-    agents.append(ref, 'coder', _msg('user', 'second question here'))
-    agents.append(ref, 'coder', _msg('assistant', 'second answer here'))
-    assert _completed_count(
-        assemble_history(switched, ref, 'coder', intent=_read_intent())) == 2
-
-    first = mark_naming_attempted(
-        switched, ref, intent=_write_intent(), actor='coder')
-    assert first.naming_attempted is True
-    second = mark_naming_attempted(
-        switched, ref, intent=_write_intent(), actor='coder')
-    assert second.naming_attempted is True
-
-    stored = store_title_if_missing(
-        switched, ref, intent=_write_intent(), actor='coder',
-        title='  Weekly plan  ')
-    assert stored == 'Weekly plan'
-    assert _stored_title(switched, ref, 'coder') == ('Weekly plan', None)
-    # Second automatic title never overwrites the first.
-    assert store_title_if_missing(
-        switched, ref, intent=_write_intent(), actor='coder',
-        title='Another title') is None
-    assert _stored_title(switched, ref, 'coder') == ('Weekly plan', None)
-    # Blank titles store nothing.
-    assert store_title_if_missing(
-        switched, ref, intent=_write_intent(), actor='coder', title='   ') is None
+# ---------- sidecar kinds ----------
 
 
-def test_title_if_missing_loses_to_concurrent_rename(switched: Path) -> None:
-    from thyca.conversations.store import set_conversation_metadata
 
-    ref = _dm(switched, 'coder')
-    AgentStore(switched).append(ref, 'coder', _msg('user', 'hello'))
-    set_conversation_metadata(
-        switched, ref, intent=_write_intent(), actor='coder',
-        title='User name', title_source='user',
-        naming_attempted=True, participants=['coder'])
-    assert store_title_if_missing(
-        switched, ref, intent=_write_intent(), actor='coder',
-        title='Auto title') is None
-    assert _stored_title(switched, ref, 'coder') == ('User name', 'user')
-
-
-def test_naming_helpers_require_intent_and_initialized_root(tmp_path: Path) -> None:
-    missing = tmp_path / 'missing'
-    ref = ConversationRef.dm('coder')
-    # Uninitialized root fails closed even with a valid runtime intent.
-    with pytest.raises(ValueError, match='not initialized'):
-        record_turn_error(
-            missing, ref, intent=_write_intent(), actor='coder',
-            code='e', message='m')
-    with pytest.raises(ValueError, match='not initialized'):
-        prepare_retry(missing, ref, intent=_write_intent(), actor='coder')
-    with pytest.raises(ValueError, match='not initialized'):
-        mark_naming_attempted(
-            missing, ref, intent=_write_intent(), actor='coder')
-    assert not missing.exists()
-    # A non-runtime intent fails on an initialized root too.
-    _init(tmp_path)
-    ref = _dm(tmp_path, 'coder')
-    AgentStore(tmp_path).append(ref, 'coder', _msg('user', 'hi'))
-    with pytest.raises(ValueError):
-        record_turn_error(
-            tmp_path, ref, intent='x', actor='coder',  # type: ignore[arg-type]
-            code='e', message='m')
 
 
 # ---------- trace slices + tool-row expansion ----------
@@ -391,8 +308,7 @@ def assemble_history_like(messages: list[Message]):
 
     return _view(
         ConversationRef.dm('coder'),
-        {'title': None, 'title_source': None, 'naming_attempted': False,
-         'participants': ['coder']},
+        {'participants': ['coder']},
         tuple(messages),
     )
 
@@ -406,9 +322,9 @@ def test_turnstate_busy_cancel_follow_on_store_ids(switched: Path) -> None:
 
     hub = turns.claim(group.id)
     assert isinstance(hub, TurnHub)
-    with pytest.raises(SessionBusy):
+    with pytest.raises(ConversationBusy):
         turns.claim(group.id)
-    status, code, _message = public_turn_error(SessionBusy(group.id))
+    status, code, _message = public_turn_error(ConversationBusy(group.id))
     assert (status, code) == (409, 'session_busy')
     # Another conversation stays free while the first is claimed.
     assert isinstance(turns.claim(ref.id), TurnHub)
@@ -475,7 +391,7 @@ def _drain(handler: _FakeHandler) -> list[dict]:
 def test_pump_stream_pre_accept_errors_are_http_json() -> None:
     handler = _FakeHandler()
     items: queue.Queue = queue.Queue()
-    items.put(('failed', SessionNotFound(Path('/tmp/x'))))
+    items.put(('failed', ConversationNotFound(Path('/tmp/x'))))
     pump_stream(handler, items, {'disconnected': False})
     assert handler.json_sent == [(404, {'error': 'conversation not found'})]
     assert _drain(handler) == []
@@ -539,7 +455,7 @@ def test_pump_stream_single_terminal_and_failed_cancel_shapes() -> None:
     items.put(TurnEvent(type='turn.accepted', bot_id='thyca'))
     items.put(SENTINEL)
     pump_stream(handler, items, {'disconnected': False},
-                app=None, session_id='s', model=None)
+                app=None, conversation_id='s', model=None)
     lines = _drain(handler)
     assert lines[-1] == {'type': 'turn.failed', 'code': 'chat_unavailable',
                          'message': 'chat unavailable'}
@@ -549,7 +465,6 @@ def test_public_store_exports_turn_pipeline_api() -> None:
     import thyca.conversations.store as store
 
     for name in ('record_turn_error', 'prepare_retry',
-                 'mark_naming_attempted', 'store_title_if_missing',
                  'project_for_trace', 'trace_turns_projected'):
         assert callable(getattr(store, name)), name
     # append_turn_error stays exported (Phase 2); record_turn_error routes it.

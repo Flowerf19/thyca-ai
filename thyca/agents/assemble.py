@@ -23,7 +23,7 @@ class Assemble:
             raise ValueError("user_msg must be a string")
         # Sidecar rows are transcript-only (assistant with null content and no
         # tool calls): strict providers 400 on them, so they never reach the
-        # model. Canonical predicate lives in sessions/wire (shared with trace).
+        # model. Canonical predicate lives in conversations/runtime/wire (shared with trace).
         # Compaction markers are the only history system rows the model may
         # see; stale hot prompts stay dropped. Markers are hoisted right
         # after the fresh hot prompt below.

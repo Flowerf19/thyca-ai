@@ -1,11 +1,11 @@
 """Authoritative workspace registry per bot (WS-1, canonical-only).
 
 State lives in ``bots/<bot_id>/workspace/registry.json``: window bindings
-(window metadata + canonical internal session id + room cursor) and task
+(window metadata + canonical internal conversation id + room cursor) and task
 owners. There is no legacy map, no migration source, no backup — one
 current shape, written and read here.
 
-``ensure_session`` creates a binding (never a transcript): the canonical
+``ensure_conversation`` creates a binding (never a transcript): the canonical
 transcript lives in the workspace timeline. Malformed registry state
 raises instead of being silently reset; unknown keys (top-level and
 per-window) are preserved across updates. Every read-modify-write runs
@@ -28,13 +28,13 @@ REGISTRY_FILENAME = "registry.json"
 REGISTRY_VERSION = 1
 
 
-# Canonical internal session-id grammar, owned here next to its minter.
-_INTERNAL_SESSION_ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_[0-9a-f]{4}$")
+# Canonical internal conversation-id grammar, owned here next to its minter.
+_INTERNAL_CONVERSATION_ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_[0-9a-f]{4}$")
 
 
-# Mint one fresh canonical internal session id.
-def _new_internal_session_id() -> str:
-    """Fresh canonical session id (same grammar as room sessions)."""
+# Mint one fresh canonical internal conversation id.
+def _new_internal_conversation_id() -> str:
+    """Fresh canonical conversation id (same grammar as room conversations)."""
     import secrets
     from datetime import datetime, timezone
 
@@ -57,15 +57,15 @@ class WindowBinding:
     """One window's binding inside a bot workspace."""
 
     window_id: str
-    internal_session_id: str | None = None
+    internal_conversation_id: str | None = None
     cursor: tuple[int, str] | None = None
     window: WindowRef | None = None
     extra: dict = field(default_factory=dict)
 
     def to_entry(self) -> dict:
         entry: dict = dict(self.extra)
-        if self.internal_session_id is not None:
-            entry["session"] = self.internal_session_id
+        if self.internal_conversation_id is not None:
+            entry["conversation"] = self.internal_conversation_id
         if self.cursor is not None:
             entry["room_cursor"], entry["room_fingerprint"] = self.cursor
         if self.window is not None:
@@ -78,12 +78,12 @@ def _entry_to_binding(window_id: str, entry: dict) -> WindowBinding:
         raise WorkspaceStoreError(
             f"registry entry for window {window_id!r} must be a dict"
         )
-    known = {"session", "room_cursor", "room_fingerprint", "window"}
+    known = {"conversation", "room_cursor", "room_fingerprint", "window"}
     extra = {k: v for k, v in entry.items() if k not in known}
-    session = entry.get("session")
-    if session is not None and not isinstance(session, str):
+    conversation = entry.get("conversation")
+    if conversation is not None and not isinstance(conversation, str):
         raise WorkspaceStoreError(
-            f"registry entry for window {window_id!r}: session must be a string"
+            f"registry entry for window {window_id!r}: conversation must be a string"
         )
     count, fingerprint = entry.get("room_cursor"), entry.get("room_fingerprint")
     cursor = None
@@ -104,7 +104,7 @@ def _entry_to_binding(window_id: str, entry: dict) -> WindowBinding:
             ) from error
     return WindowBinding(
         window_id=window_id,
-        internal_session_id=session,
+        internal_conversation_id=conversation,
         cursor=cursor,
         window=window,
         extra=extra,
@@ -163,7 +163,7 @@ class WorkspaceStore:
 
     def load(self, bot_id: str) -> dict[str, WindowBinding]:
         """All window bindings from the registry. Read-only: nothing is
-        written back and no session is created by reading."""
+        written back and no conversation is created by reading."""
         doc = self._read_registry_doc(bot_id)
         bindings: dict[str, WindowBinding] = {}
         for window_id, entry in doc["windows"].items():
@@ -269,12 +269,12 @@ class WorkspaceStore:
         bot_id: str,
         window: WindowRef,
         *,
-        internal_session_id: str | None = None,
+        internal_conversation_id: str | None = None,
         cursor: tuple[int, str] | None = None,
     ) -> WindowBinding:
         """Bind real window metadata (+ optional refs) in the registry.
 
-        A first-time window mints its canonical internal session id when
+        A first-time window mints its canonical internal conversation id when
         the caller does not pass one. Existing fields not passed here
         and unknown keys on this and every other window are preserved."""
         if not isinstance(window, WindowRef):
@@ -284,8 +284,8 @@ class WorkspaceStore:
             doc = self._read_registry_doc(bot_id)
             binding = self._update_locked(
                 bot_id, doc, window.window_id, window=window,
-                internal_session_id=internal_session_id, cursor=cursor,
-                generate_session=True,
+                internal_conversation_id=internal_conversation_id, cursor=cursor,
+                generate_conversation=True,
             )
             self._write_registry_doc(bot_id, path, doc)
         return binding
@@ -297,9 +297,9 @@ class WorkspaceStore:
         window_id: str,
         *,
         window: WindowRef | None = None,
-        internal_session_id: str | None = None,
+        internal_conversation_id: str | None = None,
         cursor: tuple[int, str] | None = None,
-        generate_session: bool = False,
+        generate_conversation: bool = False,
     ) -> WindowBinding:
         """Single read-modify-write helper (caller holds the txn lock)."""
         windows = doc["windows"]
@@ -311,20 +311,20 @@ class WorkspaceStore:
         )
         if window is not None:
             binding.window = window
-        if internal_session_id is not None:
-            binding.internal_session_id = internal_session_id
-        if binding.internal_session_id is None and generate_session:
-            binding.internal_session_id = _new_internal_session_id()
+        if internal_conversation_id is not None:
+            binding.internal_conversation_id = internal_conversation_id
+        if binding.internal_conversation_id is None and generate_conversation:
+            binding.internal_conversation_id = _new_internal_conversation_id()
         if cursor is not None:
             binding.cursor = cursor
         windows[window_id] = binding.to_entry()
         doc.setdefault("version", REGISTRY_VERSION)
         return binding
 
-    def ensure_session(self, bot_id: str, window_id: str) -> WindowBinding:
+    def ensure_conversation(self, bot_id: str, window_id: str) -> WindowBinding:
         """Get-or-create the canonical binding for a window id.
 
-        Mints a stable internal session id on first use (no transcript
+        Mints a stable internal conversation id on first use (no transcript
         is created — canonical content lives in the workspace timeline).
         Works for synthetic rooms with no ``WindowRef``; real window
         metadata lands later via :meth:`bind_window`."""
@@ -335,7 +335,7 @@ class WorkspaceStore:
         with self._txn_lock(bot_id):
             doc = self._read_registry_doc(bot_id)
             binding = self._update_locked(
-                bot_id, doc, window_id, generate_session=True)
+                bot_id, doc, window_id, generate_conversation=True)
             self._write_registry_doc(bot_id, path, doc)
         return binding
 

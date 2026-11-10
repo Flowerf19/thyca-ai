@@ -272,7 +272,7 @@ def test_split_today_groups_by_session(tmp_path: Path) -> None:
         "- body FOREIGN detail\n",
     )
     state = memory.open_session(at("2026-09-28"))
-    snap = memory.refresh(state, at("2026-09-28"), session_id="SID-HERE")
+    snap = memory.refresh(state, at("2026-09-28"), conversation_id="SID-HERE")
     assert "body OWN detail" in snap.today
     assert "body FOREIGN detail" not in snap.today
     assert "thyca {" not in snap.today  # metadata comments stripped, like legacy
@@ -289,12 +289,12 @@ def test_split_today_own_headings_carry_pullable_ids(tmp_path: Path) -> None:
         "- body OWN detail\n",
     )
     state = memory.open_session(at("2026-09-28"))
-    snap = memory.refresh(state, at("2026-09-28"), session_id="SID-HERE")
+    snap = memory.refresh(state, at("2026-09-28"), conversation_id="SID-HERE")
     assert "## 13:54 — own-note [2026-09-28#aaaa1111]" in snap.today
     assert "thyca {" not in snap.today
     # The visible id resolves through the write-back tools.
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
-    assert "OWN detail" in facade.get(session_id="2026-09-28#aaaa1111")
+    assert "OWN detail" in facade.get(memory_id="2026-09-28#aaaa1111")
 
 
 def test_split_today_index_ids_are_pullable(tmp_path: Path) -> None:
@@ -309,15 +309,15 @@ def test_split_today_index_ids_are_pullable(tmp_path: Path) -> None:
         "- hand-written, no metadata\n",
     )
     state = memory.open_session(at("2026-09-28"))
-    snap = memory.refresh(state, at("2026-09-28"), session_id="SID-HERE")
+    snap = memory.refresh(state, at("2026-09-28"), conversation_id="SID-HERE")
     assert snap.today == "# 2026-09-28\n"  # day title has no owner, stays in here
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     lines = snap.today_elsewhere.splitlines()
     assert len(lines) == 2
     foreign_sid = lines[0].split("[")[1].rstrip("]")
     legacy_sid = lines[1].split("[")[1].rstrip("]")
-    assert "FOREIGN detail" in facade.get(session_id=foreign_sid)
-    assert "no metadata" in facade.get(session_id=legacy_sid)
+    assert "FOREIGN detail" in facade.get(memory_id=foreign_sid)
+    assert "no metadata" in facade.get(memory_id=legacy_sid)
 
 
 def test_refresh_without_session_keeps_legacy_full_tail(tmp_path: Path) -> None:
@@ -346,7 +346,7 @@ def test_split_today_index_caps_at_25_lines(tmp_path: Path) -> None:
     )
     memory = _seed_today(tmp_path, "2026-09-28", blocks)
     state = memory.open_session(at("2026-09-28"))
-    snap = memory.refresh(state, at("2026-09-28"), session_id="SID-HERE")
+    snap = memory.refresh(state, at("2026-09-28"), conversation_id="SID-HERE")
     lines = snap.today_elsewhere.splitlines()
     assert len(lines) == 26  # 25 index lines + honesty marker
     assert "note-29" in lines[-2]  # newest kept
@@ -369,13 +369,13 @@ def test_split_duplicate_legacy_titles_resolve_to_own_bodies(tmp_path: Path) -> 
         "- third body FOREIGN\n",
     )
     state = memory.open_session(at("2026-09-28"))
-    snap = memory.refresh(state, at("2026-09-28"), session_id="SID-HERE")
+    snap = memory.refresh(state, at("2026-09-28"), conversation_id="SID-HERE")
     assert "first body HERE" in snap.today
     lines = snap.today_elsewhere.splitlines()
     assert len(lines) == 2
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     bodies = [
-        facade.get(session_id=line.split("[")[1].rstrip("]")) for line in lines
+        facade.get(memory_id=line.split("[")[1].rstrip("]")) for line in lines
     ]
     assert "second body FOREIGN" in bodies[0]
     assert "third body FOREIGN" in bodies[1]
@@ -406,7 +406,7 @@ def test_t7_elsewhere_marker_only_when_capped(tmp_path: Path) -> None:
         )
         memory = _seed_today(tmp_path, "2026-09-28", blocks)
         state = memory.open_session(at("2026-09-28"))
-        return memory.refresh(state, at("2026-09-28"), session_id="SID-HERE").today_elsewhere
+        return memory.refresh(state, at("2026-09-28"), conversation_id="SID-HERE").today_elsewhere
 
     exact = seed(25)
     assert len(exact.splitlines()) == 25
@@ -429,7 +429,7 @@ def test_t7_session_path_keeps_free_text_before_first_heading(tmp_path: Path) ->
         "- foreign body\n",
     )
     state = memory.open_session(at("2026-09-28"))
-    snap = memory.refresh(state, at("2026-09-28"), session_id="SID-HERE")
+    snap = memory.refresh(state, at("2026-09-28"), conversation_id="SID-HERE")
     assert snap.today.startswith("# 2026-09-28\nfree note before any heading\n")
     assert "own body" in snap.today
     assert "foreign body" not in snap.today
@@ -445,7 +445,7 @@ def test_t7_session_path_prefix_subject_to_tail_budget(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     state = memory.open_session(at("2026-09-28"))
-    snap = memory.refresh(state, at("2026-09-28"), session_id="SID-HERE")
+    snap = memory.refresh(state, at("2026-09-28"), conversation_id="SID-HERE")
     assert snap.today.startswith("[... truncated ")
     assert "own body" in snap.today
 
@@ -453,7 +453,7 @@ def test_t7_session_path_prefix_subject_to_tail_budget(tmp_path: Path) -> None:
 def test_t7_session_path_without_headings_keeps_whole_file(tmp_path: Path) -> None:
     memory = _seed_today(tmp_path, "2026-09-28", "just free notes\nno headings\n")
     state = memory.open_session(at("2026-09-28"))
-    snap = memory.refresh(state, at("2026-09-28"), session_id="SID-HERE")
+    snap = memory.refresh(state, at("2026-09-28"), conversation_id="SID-HERE")
     assert snap.today == "# 2026-09-28\njust free notes\nno headings\n"
     assert snap.today_elsewhere == ""
 

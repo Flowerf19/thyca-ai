@@ -62,15 +62,15 @@ def test_dm_checkpoint_invisible_to_same_bot_group_prompt(
     try:
         _coder(app)
         dm = app.bot_dm("coder")
-        app.turn(dm["id"], "hi dm")
-        _remember(tmp_path, dm["id"], "PRIVATE-TITLE", "PRIVATE-SUMMARY",
+        app.turn(dm["conversation_id"], "hi dm")
+        _remember(tmp_path, dm["conversation_id"], "PRIVATE-TITLE", "PRIVATE-SUMMARY",
                   bots=["coder"], task="task-aabb1122", kind="checkpoint")
         group = app.create(bots=["thyca", "coder"])
-        _remember(tmp_path, group["id"], "GROUP-TITLE", "GROUP-SUMMARY",
+        _remember(tmp_path, group["conversation_id"], "GROUP-TITLE", "GROUP-SUMMARY",
                   bots=["coder"], task="task-aabb1122", kind="checkpoint")
 
         llm.payloads.clear()
-        detail = app.turn(group["id"], "@coder continue task-aabb1122")
+        detail = app.turn(group["conversation_id"], "@coder continue task-aabb1122")
         assert detail["reply"] == "ok"
         all_prompts = "\n".join(llm.payloads)
         assert "PRIVATE-TITLE" not in all_prompts
@@ -86,11 +86,11 @@ def test_dm_prompt_still_sees_own_checkpoint(tmp_path: Path) -> None:
     try:
         _coder(app)
         dm = app.bot_dm("coder")
-        app.turn(dm["id"], "hi dm")
-        _remember(tmp_path, dm["id"], "PRIVATE-TITLE", "PRIVATE-SUMMARY",
+        app.turn(dm["conversation_id"], "hi dm")
+        _remember(tmp_path, dm["conversation_id"], "PRIVATE-TITLE", "PRIVATE-SUMMARY",
                   bots=["coder"], task="task-aabb1122", kind="checkpoint")
         llm.payloads.clear()
-        detail = app.turn(dm["id"], "what was that checkpoint?")
+        detail = app.turn(dm["conversation_id"], "what was that checkpoint?")
         assert detail["reply"] == "ok"
         all_prompts = "\n".join(llm.payloads)
         assert "PRIVATE-TITLE" in all_prompts
@@ -108,8 +108,8 @@ def test_armed_recall_runs_under_group_view(tmp_path: Path) -> None:
     try:
         _coder(app)
         dm = app.bot_dm("coder")
-        app.turn(dm["id"], "hi dm")
-        _remember(tmp_path, dm["id"], "PRIVATE-TITLE", "PRIVATE-SUMMARY",
+        app.turn(dm["conversation_id"], "hi dm")
+        _remember(tmp_path, dm["conversation_id"], "PRIVATE-TITLE", "PRIVATE-SUMMARY",
                   bots=["coder"], task="task-aabb1122", kind="checkpoint")
         group = app.create(bots=["thyca", "coder"])
         seen: list[str] = []
@@ -121,9 +121,9 @@ def test_armed_recall_runs_under_group_view(tmp_path: Path) -> None:
             return real(text, bot_id)
 
         app._runtime.memory_searcher = spy
-        app._runtime._reinject_pending.add(("coder", group["id"]))
+        app._runtime._reinject_pending.add(("coder", group["conversation_id"]))
         llm.payloads.clear()
-        detail = app.turn(group["id"], "@coder recap")
+        detail = app.turn(group["conversation_id"], "@coder recap")
         assert detail["reply"] == "ok"
         assert seen == ["coder"], "armed recall callback must have run"
         all_prompts = "\n".join(llm.payloads)
@@ -141,12 +141,12 @@ def test_root_and_group_prompt_privacy(tmp_path: Path) -> None:
     try:
         _coder(app)
         dm = app.bot_dm("coder")
-        app.turn(dm["id"], "hi dm")
-        _remember(tmp_path, dm["id"], "PRIVATE-TITLE", "PRIVATE-SUMMARY",
+        app.turn(dm["conversation_id"], "hi dm")
+        _remember(tmp_path, dm["conversation_id"], "PRIVATE-TITLE", "PRIVATE-SUMMARY",
                   bots=["coder"], task="task-aabb1122", kind="checkpoint")
         group = app.create(bots=["thyca", "coder"])
         llm.payloads.clear()
-        detail = app.turn(group["id"], "no mention -> root answers")
+        detail = app.turn(group["conversation_id"], "no mention -> root answers")
         assert detail["reply"] == "ok"
         all_prompts = "\n".join(llm.payloads)
         assert "PRIVATE-TITLE" not in all_prompts
@@ -168,12 +168,12 @@ def test_meter_tokens_match_builder_filtered_hot(tmp_path: Path) -> None:
     try:
         _coder(app)
         dm = app.bot_dm("coder")
-        app.turn(dm["id"], "hi dm")
-        _remember(tmp_path, dm["id"], "PRIVATE-TITLE", "PRIVATE-SUMMARY",
+        app.turn(dm["conversation_id"], "hi dm")
+        _remember(tmp_path, dm["conversation_id"], "PRIVATE-TITLE", "PRIVATE-SUMMARY",
                   bots=["coder"], task="task-aabb1122", kind="checkpoint")
         group = app.create(bots=["thyca", "coder"])
         hot_tokens, _tools = app._overhead_tokens(
-            group["id"], turn_cfg=app._current_cfg(), bot_id="thyca"
+            group["conversation_id"], turn_cfg=app._current_cfg(), bot_id="thyca"
         )
         assert hot_tokens > 0
         from datetime import datetime as _dt
@@ -185,14 +185,14 @@ def test_meter_tokens_match_builder_filtered_hot(tmp_path: Path) -> None:
         from thyca.app.webui_channel import WebUIChannelAdapter
 
         window = WebUIChannelAdapter().window_for(
-            app._sessions.store.load(group["id"]))
+            app._conversations.store.load(group["conversation_id"]))
         from thyca.bots.workspace_context import WorkspaceContextBuilder
 
         with bound_memory_view(
             MemoryView(window=window, bot_id="thyca", thyca_dir=tmp_path)
         ):
             peeked = app._memory.peek(
-                app._state, _dt.now(app._zone), session_id=group["id"])
+                app._state, _dt.now(app._zone), conversation_id=group["conversation_id"])
             filtered = PromptManager().build(
                 WorkspaceContextBuilder(tmp_path).build(
                     peeked, bot_id="thyca", window=window,
@@ -200,7 +200,7 @@ def test_meter_tokens_match_builder_filtered_hot(tmp_path: Path) -> None:
                         app._memory_task_rows("thyca")),
                     bot_user=app._bots.bot_user_text("thyca")))
         unfiltered = PromptManager().build(app._memory.peek(
-            app._state, _dt.now(app._zone), session_id=group["id"]))
+            app._state, _dt.now(app._zone), conversation_id=group["conversation_id"]))
         # The metered hot includes the channel brief and excludes the
         # private DM index line that an unfiltered peek still carries.
         assert "PRIVATE-TITLE" in unfiltered
@@ -234,9 +234,9 @@ def test_private_followup_full_consent_flow(tmp_path: Path) -> None:
         from thyca.bots.context import BotTurnContext, bind_bot_turn_context
 
         window = app._webui.window_for(
-            app._sessions.store.load(group["id"]))
+            app._conversations.store.load(group["conversation_id"]))
         ctx = BotTurnContext(
-            sender_id="coder", room_id=group["id"], span_id="s1",
+            sender_id="coder", room_id=group["conversation_id"], span_id="s1",
             trace_id="t1", thyca_dir=tmp_path, window=window)
         token = bind_bot_turn_context(ctx)
         try:
@@ -250,7 +250,7 @@ def test_private_followup_full_consent_flow(tmp_path: Path) -> None:
         pid = res["pending_id"]
 
         # Group only sees the generic wait line — no question/title.
-        gmsgs = app.get_payload(group["id"])["messages"]
+        gmsgs = app.get_payload(group["conversation_id"])["messages"]
         assert any(m["content"] == "Đang chờ thông tin riêng."
                    for m in gmsgs if m.get("meta", {}).get("bot_id"))
         assert all("your token?" not in m["content"] for m in gmsgs)
@@ -260,7 +260,7 @@ def test_private_followup_full_consent_flow(tmp_path: Path) -> None:
             "coder").status == "waiting_private"
 
         # User answers in the DM: the service consumes it as received.
-        app.turn(dm["id"], "RAW-SECRET-XYZ")
+        app.turn(dm["conversation_id"], "RAW-SECRET-XYZ")
         pending = PrivateFollowupStore(tmp_path).get("coder", pid)
         assert pending.status == "received"
         assert pending.answer_event_id is not None
@@ -268,9 +268,9 @@ def test_private_followup_full_consent_flow(tmp_path: Path) -> None:
         # Bot decides resume with a sanitized proposal.
         pf = app._registry.get("private_followup")
         window_dm = app._webui.window_for(
-            app._sessions.store.load(dm["id"]))
+            app._conversations.store.load(dm["conversation_id"]))
         ctx = BotTurnContext(
-            sender_id="coder", room_id=dm["id"], span_id="s2",
+            sender_id="coder", room_id=dm["conversation_id"], span_id="s2",
             trace_id="t1", thyca_dir=tmp_path, window=window_dm)
         token = bind_bot_turn_context(ctx)
         try:
@@ -296,12 +296,12 @@ def test_private_followup_full_consent_flow(tmp_path: Path) -> None:
                         "choice": "approve"}
 
         h = _H()
-        dm_private_followup(h, app, dm["id"])
+        dm_private_followup(h, app, dm["conversation_id"])
         assert h.code == 200, h.body
         assert h.body["status"] == "resumed"
 
         # Group has ONLY the sanitized text — never the raw DM answer.
-        gmsgs = app.get_payload(group["id"])["messages"]
+        gmsgs = app.get_payload(group["conversation_id"])["messages"]
         contents = [m["content"] for m in gmsgs]
         assert any("user shared a token" in c for c in contents)
         assert all("RAW-SECRET-XYZ" not in c for c in contents)

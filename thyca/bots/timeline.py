@@ -25,7 +25,7 @@ The projector reads the LAST ``view_reset`` as the basis for the
 requested window, then applies ``message`` events after it — one window
 only, never mixing windows, never leaking a DM view into a group
 projection. A window with no ``view_reset`` yet projects every
-``message`` event for it since the log start. ``CanonicalSessionStore``
+``message`` event for it since the log start. ``CanonicalConversationStore``
 reads the projection and journals timeline events only.
 """
 from __future__ import annotations
@@ -36,11 +36,11 @@ from pathlib import Path
 
 from filelock import FileLock
 
-from thyca.bots.workspace_store import _INTERNAL_SESSION_ID_RE, _check_bot_id
+from thyca.bots.workspace_store import _INTERNAL_CONVERSATION_ID_RE, _check_bot_id
 from thyca.core.channel import WindowRef
 from thyca.core.protocol import Message, utc_now_ts
-from thyca.conversations.runtime import Session, SessionStore
-from thyca.conversations.runtime.errors import SessionError, SessionNotFound
+from thyca.conversations.runtime import ConversationRuntime, ConversationStore
+from thyca.conversations.runtime.errors import ConversationError, ConversationNotFound
 
 EVENT_KINDS = frozenset({"message", "view_reset"})
 
@@ -76,14 +76,14 @@ def _validate_priv(priv) -> dict:
 
 
 # Resolve one canonical internal id to its binding path without touching disk.
-def _canonical_binding_path(sessions_dir: Path, session_id: str) -> Path:
-    if not isinstance(session_id, str) or not _INTERNAL_SESSION_ID_RE.fullmatch(session_id):
-        raise SessionNotFound(session_id, f"invalid canonical session id: {session_id!r}")
-    root = Path(sessions_dir).resolve()
-    candidate = (Path(sessions_dir) / f"{session_id}.jsonl").resolve()
+def _canonical_binding_path(conversations_dir: Path, conversation_id: str) -> Path:
+    if not isinstance(conversation_id, str) or not _INTERNAL_CONVERSATION_ID_RE.fullmatch(conversation_id):
+        raise ConversationNotFound(conversation_id, f"invalid canonical conversation id: {conversation_id!r}")
+    root = Path(conversations_dir).resolve()
+    candidate = (Path(conversations_dir) / f"{conversation_id}.jsonl").resolve()
     if candidate.parent != root:
-        raise SessionNotFound(candidate, "session id traversal blocked")
-    return Path(sessions_dir) / f"{session_id}.jsonl"
+        raise ConversationNotFound(candidate, "conversation id traversal blocked")
+    return Path(conversations_dir) / f"{conversation_id}.jsonl"
 
 
 # Resolve the on-disk workspace directory for one bot.
@@ -304,17 +304,12 @@ class WorkspaceTimeline:
     # Record a view_reset compaction or error basis for one window.
     def replace_view(self, window: WindowRef, messages, *,
                      event_id: str,
-                     title: str | None = None, title_source: str | None = None,
-                     naming_attempted: bool = False,
                      bots=None, dm=None, priv: dict | None = None) -> dict:
         payload = {
             "messages": [
                 m.to_canonical_dict() if hasattr(m, "to_canonical_dict")
                 else m for m in messages
             ],
-            "title": title,
-            "title_source": title_source,
-            "naming_attempted": bool(naming_attempted),
             "bots": list(bots) if bots else None,
             "dm": dm,
         }
@@ -372,8 +367,8 @@ class WorkspaceTimeline:
     # ---------- projector ----------
 
     def project(self, window: WindowRef, *,
-                session_id: str | None = None,
-                priv_span: str | None = None) -> Session:
+                conversation_id: str | None = None,
+                priv_span: str | None = None) -> ConversationRuntime:
         """Project the requested window's execution view.
 
         Default (member) basis = last v1 ``view_reset`` for that window;
@@ -382,7 +377,7 @@ class WorkspaceTimeline:
         (``priv_span`` set) uses the latest same-span ``view_reset``
         as its basis and replays only same-span v2 messages after it,
         so one invocation can never read another's transcript. The requested ``WindowRef`` is the only
-        non-private scope consulted. The session path is a binding only
+        non-private scope consulted. The conversation path is a binding only
         — canonical content lives in the journal.
         """
         if priv_span is not None and (
@@ -432,10 +427,10 @@ class WorkspaceTimeline:
                 selected.append(
                     Message.from_dict(raw) if hasattr(Message, "from_dict")
                     else raw)
-            sid = session_id or window.window_id
+            sid = conversation_id or window.window_id
             path = _canonical_binding_path(
                 self.root / "bots" / self.bot_id / "sessions", sid)
-            return Session(sid, path, selected)
+            return ConversationRuntime(sid, path, selected)
         basis = None
         basis_idx = -1
         for i, ev in enumerate(events):
@@ -447,8 +442,6 @@ class WorkspaceTimeline:
                 basis = ev
                 basis_idx = i
         messages: list[Message] = []
-        title = title_source = None
-        naming_attempted = False
         bots = dm = None
         if basis is not None:
             payload = basis["payload"]
@@ -456,9 +449,6 @@ class WorkspaceTimeline:
                 Message.from_dict(m) if hasattr(Message, "from_dict")
                 else m for m in payload.get("messages", [])
             ]
-            title = payload.get("title")
-            title_source = payload.get("title_source")
-            naming_attempted = bool(payload.get("naming_attempted"))
             bots = payload.get("bots")
             dm = payload.get("dm")
         for ev in events[basis_idx + 1:]:
@@ -471,41 +461,39 @@ class WorkspaceTimeline:
                 messages.append(
                     Message.from_dict(raw) if hasattr(Message, "from_dict")
                     else raw)
-        sid = session_id or window.window_id
+        sid = conversation_id or window.window_id
         path = _canonical_binding_path(
             self.root / "bots" / self.bot_id / "sessions", sid)
-        return Session(
+        return ConversationRuntime(
             sid, path, messages,
-            title=title, title_source=title_source,
-            naming_attempted=naming_attempted,
             bots=bots, dm_bot=dm,
         )
 
 
-class CanonicalSessionStore(SessionStore):
-    """Canonical store for one ``(bot, window, session_id)`` — the
+class CanonicalConversationStore(ConversationStore):
+    """Canonical store for one ``(bot, window, conversation_id)`` — the
     ONLY execution store for child-bot turns.
 
-    Subclasses ``SessionStore`` for its session-store interface but never
-touches session files: reads come from the timeline projection, writes
+    Subclasses ``ConversationStore`` for its conversation-store interface but never
+touches conversation files: reads come from the timeline projection, writes
 land as ``message``/``view_reset`` journal events only. An address to any
-other session fails instead of falling back to a file-backed store.
+other conversation fails instead of falling back to a file-backed store.
     """
 
-    # Bind one canonical session with an optional private span selector.
-    def __init__(self, sessions_dir: Path, *,
+    # Bind one canonical conversation with an optional private span selector.
+    def __init__(self, conversations_dir: Path, *,
                  timeline: WorkspaceTimeline, window: WindowRef,
-                 session_id: str, priv_span: str | None = None) -> None:
+                 conversation_id: str, priv_span: str | None = None) -> None:
         # A private execution binds the real group window for persistence
         # and selects only its own span; the visible DM-like window lives
         # only in the turn and is never journaled.
         if priv_span is not None and (
                 not isinstance(priv_span, str) or not priv_span):
             raise TimelineError("priv_span must be a non-empty string")
-        super().__init__(sessions_dir)
+        super().__init__(conversations_dir)
         self._timeline = timeline
         self._window = window
-        self._session_id = session_id
+        self._conversation_id = conversation_id
         self._priv_span = priv_span
 
     # Execution marker for this store: none shared, span only when private.
@@ -513,55 +501,44 @@ other session fails instead of falling back to a file-backed store.
         return None if self._priv_span is None else {"span": self._priv_span}
 
     # Resolve one canonical internal id to its binding path without touching disk.
-    def path_for(self, session_id: str) -> Path:
-        return _canonical_binding_path(self.sessions_dir, session_id)
+    def path_for(self, conversation_id: str) -> Path:
+        return _canonical_binding_path(self.conversations_dir, conversation_id)
 
     # ---------- projection helpers ----------
 
-    # Require the requested id to be this store's bound canonical session.
-    def _require_session(self, session_id: str) -> None:
-        if session_id != self._session_id:
+    # Require the requested id to be this store's bound canonical conversation.
+    def _require_conversation(self, conversation_id: str) -> None:
+        if conversation_id != self._conversation_id:
             raise TimelineError(
-                f"canonical store is bound to {self._session_id}, not {session_id}")
+                f"canonical store is bound to {self._conversation_id}, not {conversation_id}")
 
     def _require_path(self, path) -> None:
-        self._require_session(Path(path).stem)
+        self._require_conversation(Path(path).stem)
 
-    def _projected(self) -> Session:
+    def _projected(self) -> ConversationRuntime:
         return self._timeline.project(
-            self._window, session_id=self._session_id,
+            self._window, conversation_id=self._conversation_id,
             priv_span=self._priv_span)
 
-    def _reset(self, messages, *, title, title_source,
-               naming_attempted, bots, dm) -> None:
+    def _reset(self, messages, *,
+               bots, dm) -> None:
         import uuid
 
         self._timeline.replace_view(
             self._window, messages, event_id=f"reset-{uuid.uuid4().hex}",
-            title=title, title_source=title_source,
-            naming_attempted=naming_attempted, bots=bots, dm=dm,
+            bots=bots, dm=dm,
             priv=self._priv())
 
     # ---------- reads ----------
 
-    def load(self, session_id: str) -> Session:
-        self._require_session(session_id)
+    def load(self, conversation_id: str) -> ConversationRuntime:
+        self._require_conversation(conversation_id)
         return self._projected()
 
     def scan(self, path):
         self._require_path(path)
         projected = self._projected()
-        return (
-            list(projected.messages), projected.title,
-            projected.title_source, projected.naming_attempted,
-        )
-
-    def read_title(self, path):
-        self._require_path(path)
-        projected = self._projected()
-        if projected.title:
-            return projected.title, projected.title_source
-        return None
+        return list(projected.messages)
 
     def read_dm(self, path):
         self._require_path(path)
@@ -572,21 +549,21 @@ other session fails instead of falling back to a file-backed store.
         return self._projected().bots
 
     def list_paths(self) -> list:
-        # Honest empty: the bound session has no file on disk. Session
-        # discovery (discard_empty/list_sessions/continue_last) runs on
+        # Honest empty: the bound conversation has no file on disk. ConversationRuntime
+        # discovery (discard_empty/list_conversations/continue_last) runs on
         # the USER store, never through this wrapper — verified callers.
         return []
 
-    def latest(self) -> Session:
-        raise SessionNotFound(self.sessions_dir)
+    def latest(self) -> ConversationRuntime:
+        raise ConversationNotFound(self.conversations_dir)
 
     # ---------- writes ----------
 
-    def create(self, session_id: str):
-        self._require_session(session_id)
-        # No file: the canonical session's content lives in the
-        # timeline; the path is only a binding for Session.path.
-        return self.path_for(session_id)
+    def create(self, conversation_id: str):
+        self._require_conversation(conversation_id)
+        # No file: the canonical conversation's content lives in the
+        # timeline; the path is only a binding for ConversationRuntime.path.
+        return self.path_for(conversation_id)
 
     # Append one canonical row (actor accepted for interface parity).
     def append(self, path, row, *, actor=None) -> None:
@@ -595,13 +572,12 @@ other session fails instead of falling back to a file-backed store.
         self._require_path(path)
         self._timeline.append_message(
             self._window, row,
-            event_id=f"msg-{self._session_id}-{uuid.uuid4().hex}",
+            event_id=f"msg-{self._conversation_id}-{uuid.uuid4().hex}",
             priv=self._priv())
 
-    def rewrite(self, session_id, target, messages, title=None,
-                title_source=None, naming_attempted=False, bots=None,
+    def rewrite(self, conversation_id, target, messages, bots=None,
                 dm=None) -> None:
-        self._require_session(session_id)
+        self._require_conversation(conversation_id)
         self._require_path(target)
         # Preserve metadata and record the reset as one journal transaction.
         # The caller owns the workspace lease across any earlier async
@@ -609,72 +585,33 @@ other session fails instead of falling back to a file-backed store.
         with self._timeline._lock:
             projected = self._projected()
             self._reset(
-                messages, title=title, title_source=title_source,
-                naming_attempted=bool(naming_attempted),
+                messages,
                 bots=bots if bots is not None else projected.bots,
                 dm=dm if dm is not None else projected.dm_bot)
 
-    def delete(self, session_id: str) -> None:
-        self._require_session(session_id)
-        # Tombstone-by-reset: internal sessions aren't user-facing, so
+    def delete(self, conversation_id: str) -> None:
+        self._require_conversation(conversation_id)
+        # Tombstone-by-reset: internal conversations aren't user-facing, so
         # deleting one clears the canonical view instead of unlinking.
-        self._reset([], title=None, title_source=None,
-                    naming_attempted=False, bots=None, dm=None)
-
-    def append_meta(self, path, title, source=None) -> None:
-        self._require_path(path)
-        with self._timeline._lock:
-            projected = self._projected()
-            self._reset(
-                projected.messages, title=title, title_source=source,
-                naming_attempted=projected.naming_attempted,
-                bots=projected.bots, dm=projected.dm_bot)
-
-    # Store a canonical title when none exists (actor is interface parity).
-    def append_title_if_missing(self, path, title, source=None, *, actor=None) -> bool:
-        self._require_path(path)
-        with self._timeline._lock:
-            projected = self._projected()
-            if projected.title:
-                return False
-            self._reset(
-                projected.messages, title=title, title_source=source,
-                naming_attempted=projected.naming_attempted,
-                bots=projected.bots, dm=projected.dm_bot)
-            return True
-
-    # Mark the canonical naming attempt (actor is interface parity).
-    def append_naming_attempted(self, path, *, actor=None) -> None:
-        self._require_path(path)
-        with self._timeline._lock:
-            projected = self._projected()
-            self._reset(
-                projected.messages, title=projected.title,
-                title_source=projected.title_source,
-                naming_attempted=True,
-                bots=projected.bots, dm=projected.dm_bot)
+        self._reset([], bots=None, dm=None)
 
     def append_bots(self, path, bots) -> None:
         self._require_path(path)
         cleaned = [bot for bot in bots if isinstance(bot, str) and bot]
         if not cleaned:
-            raise SessionError("bots must be a non-empty list of bot ids")
+            raise ConversationError("bots must be a non-empty list of bot ids")
         with self._timeline._lock:
             projected = self._projected()
             self._reset(
-                projected.messages, title=projected.title,
-                title_source=projected.title_source,
-                naming_attempted=projected.naming_attempted,
+                projected.messages,
                 bots=cleaned, dm=projected.dm_bot)
 
     def append_dm(self, path, bot_id) -> None:
         self._require_path(path)
         if not isinstance(bot_id, str) or not bot_id:
-            raise SessionError("dm bot must be a non-empty bot id")
+            raise ConversationError("dm bot must be a non-empty bot id")
         with self._timeline._lock:
             projected = self._projected()
             self._reset(
-                projected.messages, title=projected.title,
-                title_source=projected.title_source,
-                naming_attempted=projected.naming_attempted,
+                projected.messages,
                 bots=projected.bots, dm=bot_id)

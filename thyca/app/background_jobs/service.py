@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from thyca.bots.registry import BotRegistry
     from thyca.bots.runtime import BotRuntime
     from thyca.configs import Config
-    from thyca.conversations.runtime import SessionManager
+    from thyca.conversations.runtime import ConversationManager
 
 
 @dataclass
@@ -33,7 +33,7 @@ class BackgroundJobsDeps:
     """Concrete collaborators for :class:`BackgroundJobsService`."""
 
     root: Path
-    sessions: SessionManager
+    conversations: ConversationManager
     bots: BotRegistry
     runtime: BotRuntime
     turns: Any
@@ -164,11 +164,11 @@ class BackgroundJobsService:
             self._job_facade = facade
         return facade
 
-    def sweep_idle_sessions(self, idle_s: int = 900) -> dict:
+    def sweep_idle_conversations(self, idle_s: int = 900) -> dict:
         """Sweep idle canonical bot timelines once, under their workspace lease."""
         from thyca.core.protocol import utc_now_ts
         from thyca.memories import jobs as mem_jobs
-        from thyca.conversations.runtime import SessionManager
+        from thyca.conversations.runtime import ConversationManager
         from thyca.conversations.runtime.wire import updated_at
 
         now_ts = utc_now_ts()
@@ -186,24 +186,24 @@ class BackgroundJobsService:
                 # for the lease. Never compact a pre-lease snapshot.
                 binding = self._deps.runtime.workspaces.store.get_binding(
                     bot_id, window_id)
-                if binding is None or binding.internal_session_id is None:
+                if binding is None or binding.internal_conversation_id is None:
                     return None
-                session_id = binding.internal_session_id
+                conversation_id = binding.internal_conversation_id
                 window = binding.window
                 if window is None:
                     try:
-                        room_session = self._deps.sessions.store.load(window_id)
-                        window = self._deps.window_for(room_session)
+                        room_conversation = self._deps.conversations.store.load(window_id)
+                        window = self._deps.window_for(room_conversation)
                     except Exception:
                         return None
-                sweep_manager = SessionManager(
+                sweep_manager = ConversationManager(
                     limits=bot_cfg.effective_limits(),
                     timezone_name=bot_cfg.timeline.timezone,
                     store=self._deps.runtime._canonical_store(
-                        bot_id, window, session_id),
+                        bot_id, window, conversation_id),
                 )
                 try:
-                    sweep_item = sweep_manager.load(session_id)
+                    sweep_item = sweep_manager.load(conversation_id)
                     last_ts = updated_at(sweep_item)
                 except Exception:
                     return None
@@ -215,7 +215,7 @@ class BackgroundJobsService:
                         bot_id, list(sweep_item.messages), bot_cfg,
                         room_id=window_id,
                     )
-                    sweep_manager.load(session_id)
+                    sweep_manager.load(conversation_id)
                     compacted = sweep_manager.compact_manual()
                     entry["compacted"] = bool(compacted["compacted"])
                     if entry["compacted"]:
@@ -223,7 +223,7 @@ class BackgroundJobsService:
                             (bot_id, window_id))
                 except Exception as exc:
                     entry["error"] = type(exc).__name__
-                return f"{bot_id}:{session_id}", entry
+                return f"{bot_id}:{conversation_id}", entry
 
         for doc in self._deps.bots.list():
             if not doc.ok or doc.card is None:

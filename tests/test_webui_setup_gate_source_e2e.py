@@ -201,7 +201,7 @@ E2E_SCRIPT = r"""
     }
     await wait(()=>window.ThycaRouter?.setupState()==='required' && window.ThycaRouter.currentPage()==='provider' && !document.querySelector('[data-page-workspace="provider"]').hidden);
     const beforeSessions=await fetch('/api/conversations').then(response=>response.json());
-    const before={route:window.ThycaRouter.currentRoute(),setup:window.ThycaRouter.setupState(),chatHidden:document.querySelector('#chat-workspace').hidden,chatInert:document.querySelector('#chat-workspace').inert,sessions:beforeSessions.conversations.length,dmLookups:window.__sourceApiRequests.filter(request=>request.path==='/api/bots/thyca/dm').length,historyPage:history.state?.thycaSpa?.page};
+    const before={route:window.ThycaRouter.currentRoute(),setup:window.ThycaRouter.setupState(),chatHidden:document.querySelector('#chat-workspace').hidden,chatInert:document.querySelector('#chat-workspace').inert,conversations:beforeSessions.conversations.length,dmLookups:window.__sourceApiRequests.filter(request=>request.path==='/api/bots/thyca/dm').length,historyPage:history.state?.thycaSpa?.page};
     await window.ThycaRouter.navigate('chat');
     await wait(()=>window.ThycaRouter.currentPage()==='provider');
     document.querySelector('#new-connection').click();
@@ -217,23 +217,23 @@ E2E_SCRIPT = r"""
     await wait(()=>{const btn=document.querySelector('[data-action="default"][data-model="fixture-model"]');return btn&&!btn.disabled;});
     document.querySelector('[data-action="default"][data-model="fixture-model"]').click();
     await wait(()=>window.ThycaRouter.setupState()==='ready' && window.ThycaRouter.currentRoute().page==='chat' && !document.querySelector('#chat-workspace').hidden);
-    await wait(()=>[...document.querySelector('#composer-model').options].some(option=>option.value==='fixture-model') && document.querySelector('#composer-model').options[0].textContent.includes('fixture-model · local'));
+    await wait(()=>window.ThycaRouter.setupState()==='ready' && window.ThycaRouter.currentRoute().page==='chat' && !document.querySelector('#chat-workspace').hidden && !document.querySelector('#composer-model') && !document.querySelector('#thinking-effort'));
     const status=await fetch('/api/config/status').then(response=>response.json());
     const config=await fetch('/api/config').then(response=>response.json());
     const settingsResponse=await fetch('/api/bots/thyca/settings');
     const settings=await settingsResponse.json();
-    const sessions=await fetch('/api/conversations').then(response=>response.json());
+    const conversations=await fetch('/api/conversations').then(response=>response.json());
     const chatDmLookups=window.__sourceApiRequests.filter(request=>request.path==='/api/bots/thyca/dm'&&request.method==='GET').length;
     const dmDetail=await fetch('/api/bots/thyca/dm').then(response=>response.json());
     const provider=config.values.providers.local,model=config.values.models['fixture-model'];
-    const modelOption=[...document.querySelector('#composer-model').options].find(option=>option.value==='fixture-model');
+    const composerSelectsAbsent=!document.querySelector('#composer-model')&&!document.querySelector('#thinking-effort');
     const postPaths=window.__sourceApiRequests.filter(request=>request.method==='POST').map(request=>request.path);
     finish({passed:true,before,route:window.ThycaRouter.currentRoute(),setup:window.ThycaRouter.setupState(),notice:!!document.querySelector('[data-setup-notice]'),chatVisible:!document.querySelector('#chat-workspace').hidden&&!document.querySelector('#chat-workspace').inert,
       serverReady:status.ready,defaultModel:config.values.defaultModel,defaultProvider:config.values.defaultProvider,modelProvider:model?.provider,
       providerBaseUrl:provider?.baseUrl,providerKeyMasked:provider?.apiKey==='',providerKeyPresent:config.meta?.providers?.local===true,
       settingsHttpOk:settingsResponse.ok,settingsBot:settings.bot_id,settingsEffectiveModel:settings.effective?.model,settingsEffectiveProvider:settings.effective?.provider,
-      composerInheritLabel:document.querySelector('#composer-model').options[0].textContent,composerModelOption:modelOption?.value,
-      sessionsAfter:sessions.conversations.length,sessionDm:dmDetail.bot_id,dmKind:dmDetail.kind,dmSessionId:dmDetail.bot_id,chatDmLookups,postPaths,turnPostCount:postPaths.filter(path=>path.includes('/turn')).length,localStorageKeys:Object.keys(localStorage)});
+      composerSelectsAbsent,
+      conversationsAfter:conversations.conversations.length,conversationDm:dmDetail.bot_id,dmKind:dmDetail.kind,dmConversationId:dmDetail.bot_id,chatDmLookups,postPaths,turnPostCount:postPaths.filter(path=>path.includes('/turn')).length,localStorageKeys:Object.keys(localStorage)});
   }catch(error){finish({error:String(error),stack:error.stack,route:window.ThycaRouter?.currentRoute(),setup:window.ThycaRouter?.setupState(),fields:{url:document.querySelector('#pv-base-url')?.value,connection:document.querySelector('#pv-id')?.value,keyPresent:!!document.querySelector('#pv-key')?.value,discovery:document.querySelector('#discovery-status')?.textContent,formStatus:document.querySelector('#editor-status')?.textContent,verifyDisabled:document.querySelector('#v-submit')?.disabled}});}})();
 })();
 """
@@ -271,20 +271,20 @@ def test_source_cli_first_run_gate_and_environment_key_readiness(tmp_path: Path)
             initial_status = json.loads(response.read())
         with urlopen(f"http://127.0.0.1:{source_port}/api/config", timeout=3) as response:
             initial_config = json.loads(response.read())
-        initial_session_files = list((source_root / "sessions").glob("*.jsonl"))
-        assert not initial_session_files
+        initial_conversation_files = list((source_root / "sessions").glob("*.jsonl"))
+        assert not initial_conversation_files
         chrome = shutil.which("google-chrome")
         page_url = f"http://127.0.0.1:{source_port}/?e2eMode=first-run"
         browser_script = E2E_SCRIPT.replace("__STUB_URL__", json.dumps(f"http://127.0.0.1:{stub_port}/v1"))
         browser = _browser_e2e(chrome, page_url, tmp_path / "chrome-first-run", browser_script, screenshot)
         assert browser.get("passed") is True, browser
         assert browser["before"]["setup"] == "required" and browser["before"]["route"]["page"] == "provider"
-        assert browser["before"]["chatHidden"] and browser["before"]["chatInert"] and browser["before"]["sessions"] == 0 and browser["before"]["dmLookups"] == 0
+        assert browser["before"]["chatHidden"] and browser["before"]["chatInert"] and browser["before"]["conversations"] == 0 and browser["before"]["dmLookups"] == 0
         assert browser["setup"] == "ready" and browser["route"] == {"page": "chat", "search": "?bot=thyca", "hash": ""} and browser["chatVisible"]
         assert browser["serverReady"] is True and browser["defaultModel"] == "fixture-model" and browser["defaultProvider"] == "legacy"
         assert browser["settingsEffectiveModel"] == "fixture-model" and browser["settingsEffectiveProvider"] == "local"
-        assert browser["composerInheritLabel"] == "Theo cấu hình bot (fixture-model · local)" and browser["composerModelOption"] == "fixture-model"
-        assert browser["sessionsAfter"] == 0 and browser["sessionDm"] == "thyca" and browser["dmKind"] == "dm" and browser["dmSessionId"]
+        assert browser["composerSelectsAbsent"] is True
+        assert browser["conversationsAfter"] == 0 and browser["conversationDm"] == "thyca" and browser["dmKind"] == "dm" and browser["dmConversationId"]
         assert browser["chatDmLookups"] == 1
         session_files = list((source_root / "sessions").glob("*.jsonl"))
         assert len(session_files) == 1
@@ -323,7 +323,7 @@ def test_source_cli_first_run_gate_and_environment_key_readiness(tmp_path: Path)
             assert env_browser["route"] == {"page": "profile", "search": "?bot=thyca", "hash": ""}
             assert env_browser["browserErrors"] == [] and "synthetic-env-only-key" not in json.dumps(env_browser)
             proof = {"firstRun": {"initialStatusReady": initial_status["ready"], "initialDefaultModelUnregistered": initial_config["values"]["defaultModel"], "browser": browser,
-                                  "chatRestoration": {"route": browser["route"], "chatVisible": browser["chatVisible"], "sessionsBefore": browser["before"]["sessions"], "sessionsAfter": browser["sessionsAfter"], "sessionFilesBefore": len(initial_session_files), "sessionFilesAfter": len(session_files), "sessionDm": browser["sessionDm"], "dmKind": browser["dmKind"], "dmSessionId": browser["dmSessionId"], "chatDmLookups": browser["chatDmLookups"], "defaultModel": browser["defaultModel"], "defaultProvider": browser["defaultProvider"], "effectiveModel": browser["settingsEffectiveModel"], "effectiveProvider": browser["settingsEffectiveProvider"], "modelProvider": browser["modelProvider"], "composerInheritLabel": browser["composerInheritLabel"], "composerModelOption": browser["composerModelOption"], "postPaths": browser["postPaths"], "turnPostCount": browser["turnPostCount"]},
+                                  "chatRestoration": {"route": browser["route"], "chatVisible": browser["chatVisible"], "conversationsBefore": browser["before"]["conversations"], "conversationsAfter": browser["conversationsAfter"], "conversationFilesBefore": len(initial_conversation_files), "conversationFilesAfter": len(session_files), "conversationDm": browser["conversationDm"], "dmKind": browser["dmKind"], "dmConversationId": browser["dmConversationId"], "chatDmLookups": browser["chatDmLookups"], "defaultModel": browser["defaultModel"], "defaultProvider": browser["defaultProvider"], "effectiveModel": browser["settingsEffectiveModel"], "effectiveProvider": browser["settingsEffectiveProvider"], "modelProvider": browser["modelProvider"], "composerSelectsAbsent": browser["composerSelectsAbsent"], "postPaths": browser["postPaths"], "turnPostCount": browser["turnPostCount"]},
                                   "stub": {"modelListRequests": LocalModelStub.requests, "postRequests": LocalModelStub.post_requests, "postPaths": LocalModelStub.post_paths, "authorizationPresent": LocalModelStub.auth_present, "authorizationMatched": LocalModelStub.auth_matched},
                                   "savedConfigHasApiKey": "apiKey" in saved_config["providers"]["local"]},
                      "environmentKeyLegacyConfig": {"statusReady": env_status["ready"], "registeredModels": list(env_config["values"].get("models", {})), "browser": env_browser},

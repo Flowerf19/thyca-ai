@@ -22,7 +22,7 @@ class ChannelAdapter(Protocol):
 
     def land(self, action: ChannelAction, *, ctx) -> dict:
         """Deliver ``action`` on this channel; returns the payload the
-        low-level writer produced ({"ok": True, "session_id": ...})."""
+        low-level writer produced ({"ok": True, "conversation_id": ...})."""
 
 
 class ChannelRegistry:

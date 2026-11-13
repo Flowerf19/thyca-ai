@@ -18,6 +18,7 @@ import pytest
 
 from test_webui_spa_frontend import _cdp_frame, _cdp_recv
 from thyca.configs import Config, ProviderEntry, save
+from thyca.conversations.store.admin import AdminStore
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -271,8 +272,10 @@ def test_source_cli_first_run_gate_and_environment_key_readiness(tmp_path: Path)
             initial_status = json.loads(response.read())
         with urlopen(f"http://127.0.0.1:{source_port}/api/config", timeout=3) as response:
             initial_config = json.loads(response.read())
-        initial_conversation_files = list((source_root / "sessions").glob("*.jsonl"))
-        assert not initial_conversation_files
+        assert (source_root / "conversations.db").is_file()
+        initial_conversations, _ = AdminStore(source_root).list()
+        assert not initial_conversations
+        assert not list((source_root / "sessions").glob("*.jsonl"))
         chrome = shutil.which("google-chrome")
         page_url = f"http://127.0.0.1:{source_port}/?e2eMode=first-run"
         browser_script = E2E_SCRIPT.replace("__STUB_URL__", json.dumps(f"http://127.0.0.1:{stub_port}/v1"))
@@ -286,8 +289,9 @@ def test_source_cli_first_run_gate_and_environment_key_readiness(tmp_path: Path)
         assert browser["composerSelectsAbsent"] is True
         assert browser["conversationsAfter"] == 0 and browser["conversationDm"] == "thyca" and browser["dmKind"] == "dm" and browser["dmConversationId"]
         assert browser["chatDmLookups"] == 1
-        session_files = list((source_root / "sessions").glob("*.jsonl"))
-        assert len(session_files) == 1
+        assert not list((source_root / "sessions").glob("*.jsonl"))
+        stored_conversations, _ = AdminStore(source_root).list()
+        assert [(row.ref.kind, row.ref.id) for row in stored_conversations] == [("dm", "thyca")]
         assert browser["postPaths"] == ["/api/onboarding/verify", "/api/config", "/api/config"] and browser["turnPostCount"] == 0
         assert browser["modelProvider"] == "local" and browser["providerKeyMasked"] and browser["providerKeyPresent"]
         assert browser["settingsHttpOk"] and browser["settingsBot"] == "thyca" and browser["settingsEffectiveProvider"] == "local"
@@ -323,7 +327,7 @@ def test_source_cli_first_run_gate_and_environment_key_readiness(tmp_path: Path)
             assert env_browser["route"] == {"page": "profile", "search": "?bot=thyca", "hash": ""}
             assert env_browser["browserErrors"] == [] and "synthetic-env-only-key" not in json.dumps(env_browser)
             proof = {"firstRun": {"initialStatusReady": initial_status["ready"], "initialDefaultModelUnregistered": initial_config["values"]["defaultModel"], "browser": browser,
-                                  "chatRestoration": {"route": browser["route"], "chatVisible": browser["chatVisible"], "conversationsBefore": browser["before"]["conversations"], "conversationsAfter": browser["conversationsAfter"], "conversationFilesBefore": len(initial_conversation_files), "conversationFilesAfter": len(session_files), "conversationDm": browser["conversationDm"], "dmKind": browser["dmKind"], "dmConversationId": browser["dmConversationId"], "chatDmLookups": browser["chatDmLookups"], "defaultModel": browser["defaultModel"], "defaultProvider": browser["defaultProvider"], "effectiveModel": browser["settingsEffectiveModel"], "effectiveProvider": browser["settingsEffectiveProvider"], "modelProvider": browser["modelProvider"], "composerSelectsAbsent": browser["composerSelectsAbsent"], "postPaths": browser["postPaths"], "turnPostCount": browser["turnPostCount"]},
+                                  "chatRestoration": {"route": browser["route"], "chatVisible": browser["chatVisible"], "conversationsBefore": browser["before"]["conversations"], "conversationsAfter": browser["conversationsAfter"], "storedConversationsBefore": len(initial_conversations), "storedConversationsAfter": len(stored_conversations), "conversationsDbPresent": (source_root / "conversations.db").is_file(), "conversationDm": browser["conversationDm"], "dmKind": browser["dmKind"], "dmConversationId": browser["dmConversationId"], "chatDmLookups": browser["chatDmLookups"], "defaultModel": browser["defaultModel"], "defaultProvider": browser["defaultProvider"], "effectiveModel": browser["settingsEffectiveModel"], "effectiveProvider": browser["settingsEffectiveProvider"], "modelProvider": browser["modelProvider"], "composerSelectsAbsent": browser["composerSelectsAbsent"], "postPaths": browser["postPaths"], "turnPostCount": browser["turnPostCount"]},
                                   "stub": {"modelListRequests": LocalModelStub.requests, "postRequests": LocalModelStub.post_requests, "postPaths": LocalModelStub.post_paths, "authorizationPresent": LocalModelStub.auth_present, "authorizationMatched": LocalModelStub.auth_matched},
                                   "savedConfigHasApiKey": "apiKey" in saved_config["providers"]["local"]},
                      "environmentKeyLegacyConfig": {"statusReady": env_status["ready"], "registeredModels": list(env_config["values"].get("models", {})), "browser": env_browser},

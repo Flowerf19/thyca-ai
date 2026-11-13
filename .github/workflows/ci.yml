@@ -51,7 +51,7 @@ jobs:
           - name: fedora-immutable-home
             image: fedora:latest
             prep_cmd: |
-              dnf install -y --allowerasing curl tar gzip shadow-utils
+              dnf install -y --allowerasing util-linux curl tar gzip shadow-utils
               rm -rf /home
               mkdir -p /var/home
               ln -s var/home /home

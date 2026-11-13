@@ -229,7 +229,7 @@ def test_root_spa_retains_all_workspaces_and_restores_history(tmp_path: Path, re
       await fetch(window.__spaControlBase + '/release-initial-dm');
       await wait(() => ThycaRouter.currentPage() === 'memories' && !document.querySelector('[data-page-workspace="memories"]').hidden);
       await ThycaRouter.navigate('chat');
-      await wait(() => ThycaRouter.currentPage() === 'chat' && !document.querySelector('[data-page-workspace="chat"]').hidden && currentConversation === 'dm-thyca');
+      await wait(() => ThycaRouter.currentPage() === 'chat' && !document.querySelector('[data-page-workspace="chat"]').hidden && currentConversation === 'dm:thyca');
       if (selectedBot !== 'thyca' || document.querySelector('#send-message').disabled) throw new Error('Chat did not recover its initial conversation after delayed navigation');
       finish({ delayedDmRecovered: true, conversation: currentConversation, bot: selectedBot, dmHits: (await waitForApiState(state => state.initialDmHits >= 2)).initialDmHits, route: ThycaRouter.currentRoute() });
       return;
@@ -249,12 +249,12 @@ def test_root_spa_retains_all_workspaces_and_restores_history(tmp_path: Path, re
       await wait(() => ThycaRouter.currentPage() === 'chat');
       await fetch(window.__spaControlBase + '/reset-api-counts');
       history.pushState({ external: 'previous entry' }, '', '/');
-      await ThycaRouter.navigate('trace', { search: '?s=synthetic-conversation&t=0' });
+      await ThycaRouter.navigate('trace', { hash: '#dm/thyca/0' });
       const view = document.querySelector('[data-page-workspace="dashboard"]');
-      await wait(() => ThycaRouter.currentPage() === 'dashboard' && ThycaRouter.currentRoute().hash === '#synthetic-conversation/0' && !view.querySelector('#turn-detail-view').hidden, 'legacy query opens Dashboard detail');
+      await wait(() => ThycaRouter.currentPage() === 'dashboard' && ThycaRouter.currentRoute().hash === '#dm/thyca/0' && !view.querySelector('#turn-detail-view').hidden, 'trace route opens Dashboard detail');
       if (history.state?.thycaReturn || history.state?.thycaSpa?.page !== 'dashboard') throw new Error('fresh detail acquired an unvalidated return origin');
       const state = await fetch(window.__spaControlBase + '/state').then(response => response.json());
-      if ((state.apiCounts['/api/traces/synthetic-conversation/0'] || 0) !== 1 || state.apiCounts['/api/traces'] || state.apiCounts['/api/traces/stats']) throw new Error('direct detail triggered overview API reads: ' + JSON.stringify(state.apiCounts));
+      if ((state.apiCounts['/api/traces/dm/thyca/0'] || 0) !== 1 || state.apiCounts['/api/traces'] || state.apiCounts['/api/traces/stats']) throw new Error('direct detail triggered overview API reads: ' + JSON.stringify(state.apiCounts));
       const detailCalls = state.apiCounts;
       view.querySelector('#detail-back').click();
       await wait(() => ThycaRouter.currentRoute().hash === '' && !view.querySelector('#usage-overview').hidden, 'fresh all-time detail returns to overview');
@@ -262,21 +262,21 @@ def test_root_spa_retains_all_workspaces_and_restores_history(tmp_path: Path, re
       const afterFreshBack = await fetch(window.__spaControlBase + '/state').then(response => response.json());
       const freshDefaultRoute = ThycaRouter.currentRoute();
       if ((detailCalls['/api/traces/stats'] || 0) || (detailCalls['/api/traces'] || 0) || afterFreshBack.apiCounts['/api/traces/stats'] !== 1 || afterFreshBack.apiCounts['/api/traces'] !== 1) throw new Error('fresh all-time detail did not make exactly one overview request pair: ' + JSON.stringify(afterFreshBack.apiCounts));
-      if (!view.querySelector('#trace-conversations button[data-conversation="synthetic-conversation"][data-turn="0"]') || !document.querySelector('#stat-grid .stat-value')?.textContent.trim()) throw new Error('fresh all-time back did not render loaded overview data');
+      if (!view.querySelector('#trace-conversations button[data-conv="dm:thyca"][data-turn="0"]') || !document.querySelector('#stat-grid .stat-value')?.textContent.trim()) throw new Error('fresh all-time back did not render loaded overview data');
       history.back();
       await wait(() => ThycaRouter.currentPage() === 'chat' && !document.querySelector('#chat-workspace').hidden, 'back after fresh detail reaches external previous entry');
       const externalReturnRoute = ThycaRouter.currentRoute();
       await ThycaRouter.navigate('dashboard', { search: '', hash: '' });
       const overview = document.querySelector('[data-page-workspace="dashboard"]');
-      await wait(() => !!overview.querySelector('#trace-conversations button[data-conversation="synthetic-conversation"][data-turn="0"]'));
+      await wait(() => !!overview.querySelector('#trace-conversations button[data-conv="dm:thyca"][data-turn="0"]'));
       overview.querySelector('[data-usage-view="trace"]').click();
       await wait(() => new URLSearchParams(ThycaRouter.currentRoute().search).get('view') === 'trace');
       const overviewRoute = ThycaRouter.currentRoute();
-      const row = overview.querySelector('#trace-conversations button[data-conversation="synthetic-conversation"][data-turn="0"]');
+      const row = overview.querySelector('#trace-conversations button[data-conv="dm:thyca"][data-turn="0"]');
       row.click();
-      await wait(() => ThycaRouter.currentRoute().hash === '#synthetic-conversation/0' && !view.querySelector('#turn-detail-view').hidden, 'local all-time detail opened');
-      await ThycaRouter.navigate('trace', { search: overviewRoute.search, hash: '#second-conversation/1' });
-      await wait(() => ThycaRouter.currentRoute().hash === '#second-conversation/1' && !view.querySelector('#turn-detail-view').hidden, 'detail-to-detail navigation');
+      await wait(() => ThycaRouter.currentRoute().hash === '#dm/thyca/0' && !view.querySelector('#turn-detail-view').hidden, 'local all-time detail opened');
+      await ThycaRouter.navigate('trace', { search: overviewRoute.search, hash: '#dm/coder/1' });
+      await wait(() => ThycaRouter.currentRoute().hash === '#dm/coder/1' && !view.querySelector('#turn-detail-view').hidden, 'detail-to-detail navigation');
       if (history.state?.thycaReturn) throw new Error('detail-to-detail push inherited an overview return marker');
       const beforeFallbackBack = history.length;
       view.querySelector('#detail-back').click();
@@ -309,9 +309,9 @@ def test_root_spa_retains_all_workspaces_and_restores_history(tmp_path: Path, re
     if (window.__spaMode === 'fresh-default-detail') {
       await wait(() => ThycaRouter.setupState() === 'ready' && ThycaRouter.currentPage() === 'chat');
       await fetch(window.__spaControlBase + '/reset-api-counts');
-      await ThycaRouter.navigate('dashboard', { hash: '#synthetic-conversation/0' });
+      await ThycaRouter.navigate('dashboard', { hash: '#dm/thyca/0' });
       const view = document.querySelector('[data-page-workspace="dashboard"]');
-      await wait(() => ThycaRouter.currentRoute().hash === '#synthetic-conversation/0' && !view.querySelector('#turn-detail-view').hidden, 'default-range detail opened');
+      await wait(() => ThycaRouter.currentRoute().hash === '#dm/thyca/0' && !view.querySelector('#turn-detail-view').hidden, 'default-range detail opened');
       const initial = await fetch(window.__spaControlBase + '/state').then(response => response.json());
       if (initial.apiCounts['/api/traces'] || initial.apiCounts['/api/traces/stats']) throw new Error('default-range direct detail fetched overview data first');
       view.querySelector('#detail-back').click();
@@ -319,7 +319,7 @@ def test_root_spa_retains_all_workspaces_and_restores_history(tmp_path: Path, re
       const state = await fetch(window.__spaControlBase + '/state').then(response => response.json());
       const listUrl = state.apiUrls.find(url => url.startsWith('/api/traces?')) || '';
       if (!listUrl.includes('from=') || !listUrl.includes('to=') || listUrl.includes('range=all')) throw new Error('default-range return did not use the seven-day range: ' + JSON.stringify(state.apiUrls));
-      await wait(() => !view.querySelector('#usage-overview').hidden && !!view.querySelector('#trace-conversations button[data-conversation="synthetic-conversation"]'));
+      await wait(() => !view.querySelector('#usage-overview').hidden && !!view.querySelector('#trace-conversations button[data-conv="dm:thyca"]'));
       finish({ freshDefaultDetail: true, route: ThycaRouter.currentRoute(), apiCounts: state.apiCounts,
         apiUrls: state.apiUrls, scriptErrors: window.__scriptErrors || [], unhandledRejections: window.__promiseErrors || [] });
       return;
@@ -328,13 +328,13 @@ def test_root_spa_retains_all_workspaces_and_restores_history(tmp_path: Path, re
       await wait(() => ThycaRouter.setupState() === 'ready' && ThycaRouter.currentPage() === 'chat');
       await ThycaRouter.navigate('dashboard');
       const view = document.querySelector('[data-page-workspace="dashboard"]');
-      await wait(() => !!view.querySelector('#trace-conversations button[data-conversation="synthetic-conversation"][data-turn="0"]') && !!view.querySelector('#stat-grid .stat-value')?.textContent.trim());
+      await wait(() => !!view.querySelector('#trace-conversations button[data-conv="dm:thyca"][data-turn="0"]') && !!view.querySelector('#stat-grid .stat-value')?.textContent.trim());
       const overview = window.__spaMode === 'usage-overview-screenshot';
       if (!overview) {
         view.querySelector('[data-usage-view="trace"]').click();
         await wait(() => new URLSearchParams(ThycaRouter.currentRoute().search).get('view') === 'trace');
-        view.querySelector('#trace-conversations button[data-conversation="synthetic-conversation"][data-turn="0"]').click();
-        await wait(() => ThycaRouter.currentRoute().hash === '#synthetic-conversation/0' && !view.querySelector('#turn-detail-view').hidden);
+        view.querySelector('#trace-conversations button[data-conv="dm:thyca"][data-turn="0"]').click();
+        await wait(() => ThycaRouter.currentRoute().hash === '#dm/thyca/0' && !view.querySelector('#turn-detail-view').hidden);
       }
       const nav = document.querySelector('.page-links');
       const activeLink = nav.querySelector('[aria-current="page"]');
@@ -553,7 +553,7 @@ def test_root_spa_retains_all_workspaces_and_restores_history(tmp_path: Path, re
         const view = document.querySelector('[data-page-workspace="dashboard"]');
         const overviewScope = document.querySelector('#chat-sidebar #usage-overview-scope');
         if (!overviewScope || overviewScope.hidden || document.querySelectorAll('#chat-sidebar #usage-overview-scope').length !== 1) throw new Error('Dashboard Overview scope button is missing, hidden, or duplicated');
-        await wait(() => !!view.querySelector('#trace-conversations button[data-conversation="synthetic-conversation"][data-turn="0"]'), 'Usage trace list loaded');
+        await wait(() => !!view.querySelector('#trace-conversations button[data-conv="dm:thyca"][data-turn="0"]'), 'Usage trace list loaded');
         const beforeTabs = await fetch(window.__spaControlBase + '/state').then(response => response.json());
         for (const tab of ['cost', 'usage', 'trace']) {
           view.querySelector(`[data-usage-view="${tab}"]`).click();
@@ -561,14 +561,14 @@ def test_root_spa_retains_all_workspaces_and_restores_history(tmp_path: Path, re
         }
         const afterTabs = await fetch(window.__spaControlBase + '/state').then(response => response.json());
         if (JSON.stringify(beforeTabs.apiCounts) !== JSON.stringify(afterTabs.apiCounts)) throw new Error('content tabs refetched overview or trace data');
-        view.querySelector('#trace-conversations button[data-conversation="synthetic-conversation"][data-turn="0"]').click();
-        await wait(() => ThycaRouter.currentRoute().hash === '#synthetic-conversation/0' && !view.querySelector('#turn-detail-view').hidden, 'Usage detail opened');
-        if (history.state?.thycaReturn?.page !== 'dashboard' || history.state.thycaReturn.hash !== '' || history.state.thycaSpa.hash !== '#synthetic-conversation/0') throw new Error('local detail return metadata is invalid: ' + JSON.stringify(history.state));
+        view.querySelector('#trace-conversations button[data-conv="dm:thyca"][data-turn="0"]').click();
+        await wait(() => ThycaRouter.currentRoute().hash === '#dm/thyca/0' && !view.querySelector('#turn-detail-view').hidden, 'Usage detail opened');
+        if (history.state?.thycaReturn?.page !== 'dashboard' || history.state.thycaReturn.hash !== '' || history.state.thycaSpa.hash !== '#dm/thyca/0') throw new Error('local detail return metadata is invalid: ' + JSON.stringify(history.state));
         if (JSON.stringify(history.state).includes('Synthetic detail body')) throw new Error('trace content leaked into history state');
         history.back();
         await wait(() => ThycaRouter.currentRoute().hash === '' && !view.querySelector('#usage-overview').hidden, 'native Back returns to Usage');
         history.forward();
-        await wait(() => ThycaRouter.currentRoute().hash === '#synthetic-conversation/0' && !view.querySelector('#turn-detail-view').hidden, 'native Forward restores detail');
+        await wait(() => ThycaRouter.currentRoute().hash === '#dm/thyca/0' && !view.querySelector('#turn-detail-view').hidden, 'native Forward restores detail');
         view.querySelector('#detail-back').click();
         await wait(() => ThycaRouter.currentRoute().hash === '' && !view.querySelector('#usage-overview').hidden, 'explicit back returns to same Usage entry');
         const dashboardRoute = ThycaRouter.currentRoute();
@@ -582,17 +582,17 @@ def test_root_spa_retains_all_workspaces_and_restores_history(tmp_path: Path, re
         const q = view.querySelector('#filter-q');
         q.value = 'Synthetic quick'; q.dispatchEvent(new Event('input', { bubbles: true }));
         await wait(() => new URLSearchParams(ThycaRouter.currentRoute().search).get('q') === 'Synthetic quick');
-        view.querySelector('#trace-conversations button[data-conversation="synthetic-conversation"][data-turn="0"]').click();
-        await wait(() => ThycaRouter.currentRoute().hash === '#synthetic-conversation/0' && !view.querySelector('#turn-detail-view').hidden);
+        view.querySelector('#trace-conversations button[data-conv="dm:thyca"][data-turn="0"]').click();
+        await wait(() => ThycaRouter.currentRoute().hash === '#dm/thyca/0' && !view.querySelector('#turn-detail-view').hidden);
         const detailSearch = ThycaRouter.currentRoute().search;
         await new Promise(resolve => setTimeout(resolve, 500));
-        if (ThycaRouter.currentRoute().hash !== '#synthetic-conversation/0' || ThycaRouter.currentRoute().search !== detailSearch || view.querySelector('#turn-detail-view').hidden) throw new Error('query debounce stomped an opened detail route');
+        if (ThycaRouter.currentRoute().hash !== '#dm/thyca/0' || ThycaRouter.currentRoute().search !== detailSearch || view.querySelector('#turn-detail-view').hidden) throw new Error('query debounce stomped an opened detail route');
         document.querySelector('[data-page-link="chat"]').click();
         await wait(() => ThycaRouter.currentPage() === 'chat' && !document.querySelector('#chat-workspace').hidden);
         await new Promise(resolve => setTimeout(resolve, 500));
         if (JSON.stringify(ThycaRouter.currentRoute()) !== JSON.stringify(chatRoute) || document.querySelector('#message').value !== draft || document.querySelector('.running-response') !== liveNode) throw new Error('delayed Usage search altered Chat route, draft, or stream');
         await ThycaRouter.navigate('dashboard');
-        await wait(() => ThycaRouter.currentPage() === 'dashboard' && ThycaRouter.currentRoute().hash === '#synthetic-conversation/0' && !view.querySelector('#turn-detail-view').hidden);
+        await wait(() => ThycaRouter.currentPage() === 'dashboard' && ThycaRouter.currentRoute().hash === '#dm/thyca/0' && !view.querySelector('#turn-detail-view').hidden);
         view.querySelector('#detail-back').click();
         await wait(() => !view.querySelector('#usage-overview').hidden && ThycaRouter.currentRoute().hash === '');
         q.value = 'cancelled quick'; q.dispatchEvent(new Event('input', { bubbles: true }));
@@ -826,15 +826,16 @@ def test_root_spa_retains_all_workspaces_and_restores_history(tmp_path: Path, re
                     type(self).initial_dm_hits += 1
                     if self.initial_dm_delay and self.initial_dm_hits == 1:
                         self.initial_dm_started.set(); self.initial_dm_release.wait()
-                    payload = {"id": "dm-thyca", "dm": "thyca", "messages": []}
+                    payload = {"kind": "dm", "bot_id": "thyca", "messages": []}
                 elif path in ("/api/bots/thyca/settings", "/api/bots/coder/settings"):
                     bot_id = path.split("/")[3]; payload = self.settings[bot_id]
                 elif path == "/api/config": payload = {"values": {"models": {"model-a": {"provider": "mock", "reasoningEfforts": ["low", "medium"]}, "model-b": {"provider": "mock", "reasoningEfforts": ["high", "max"]}}, "defaultModel": "model-a", "defaultProvider": "mock", "providers": {"mock": {}}}, "schema": {"sections": [{"fields": [{"key": "provider.reasoningEffort", "choices": ["low", "medium", "high", "max"]}]}]}, "defaults": {}}
                 elif path == "/api/config/status": payload = {"ready": True}
                 elif path == "/api/memory/stats": payload = {"files": [{"name": name, "content": content} for name, content in self.canonical.items()], "canonical": [], "total": len(self.canonical)}
                 elif path == "/api/traces/stats": payload = {"totals": {"requests": 2, "tool_calls": 1, "prompt_tokens": 10, "cached_tokens": 2, "completion_tokens": 3, "total_tokens": 13, "cost_usd": 0.125, "latency_ms_p50": 120, "latency_ms_p90": 120}, "by_day": [{"day": "2026-09-20", "requests": 2, "cost_usd": 0.125}], "by_bot": [{"bot_id": "thyca", "requests": 2, "tool_calls": 1, "total_tokens": 13, "cost_usd": 0.125}], "by_model": [{"model": "fixture-model", "requests": 2, "total_tokens": 13, "cost_usd": 0.125, "latency_ms_p50": 120}], "by_hour": [], "models": ["fixture-model"], "by_status": [{"status": "completed", "requests": 2}]}
-                elif path == "/api/traces": payload = {"traces": [{"conversation_id": "synthetic-conversation", "turn_index": 0, "title": "Synthetic Usage turn", "started_at": "2026-09-20T10:00:00Z", "status": "completed", "conversation_kind": "dm", "conversation_dm": "thyca", "bot_id": "thyca", "model": "fixture-model", "requests": 2, "tool_calls": 1, "total_tokens": 13, "cost_usd": 0.125, "latency_ms": 120}], "total": 1}
-                elif path == "/api/traces/synthetic-conversation/0": payload = {"conversation_id": "synthetic-conversation", "turn_index": 0, "title": "Synthetic Usage turn", "bot_id": "thyca", "started_at": "2026-09-20T10:00:00Z", "ended_at": "2026-09-20T10:00:01Z", "status": "completed", "model": "fixture-model", "requests": 2, "rounds": 2, "tool_calls": 1, "prompt_tokens": 10, "cached_tokens": 2, "completion_tokens": 3, "total_tokens": 13, "cost_usd": 0.125, "latency_ms": 120, "messages": [{"role": "user", "content": "Synthetic detail body"}, {"role": "assistant", "content": "Synthetic detail reply", "meta": {"bot_id": "thyca", "model": "fixture-model"}}]}
+                elif path == "/api/traces": payload = {"traces": [{"kind": "dm", "bot_id": "thyca", "turn_index": 0, "title": "Synthetic Usage turn", "started_at": "2026-09-20T10:00:00Z", "status": "completed", "model": "fixture-model", "requests": 2, "tool_calls": 1, "total_tokens": 13, "cost_usd": 0.125, "latency_ms": 120}], "total": 1}
+                elif path == "/api/traces/dm/thyca/0": payload = {"kind": "dm", "bot_id": "thyca", "turn_index": 0, "title": "Synthetic Usage turn", "started_at": "2026-09-20T10:00:00Z", "ended_at": "2026-09-20T10:00:01Z", "status": "completed", "model": "fixture-model", "requests": 2, "rounds": 2, "tool_calls": 1, "prompt_tokens": 10, "cached_tokens": 2, "completion_tokens": 3, "total_tokens": 13, "cost_usd": 0.125, "latency_ms": 120, "messages": [{"role": "user", "content": "Synthetic detail body"}, {"role": "assistant", "content": "Synthetic detail reply", "meta": {"bot_id": "thyca", "model": "fixture-model"}}]}
+                elif path == "/api/traces/dm/coder/1": payload = {"kind": "dm", "bot_id": "coder", "turn_index": 1, "title": "Coder Usage turn", "started_at": "2026-09-20T10:01:00Z", "ended_at": "2026-09-20T10:01:01Z", "status": "completed", "model": "fixture-model", "requests": 1, "rounds": 1, "tool_calls": 0, "prompt_tokens": 5, "cached_tokens": 0, "completion_tokens": 2, "total_tokens": 7, "cost_usd": 0.05, "latency_ms": 90, "messages": [{"role": "user", "content": "Coder detail body"}, {"role": "assistant", "content": "Coder detail reply", "meta": {"bot_id": "coder", "model": "fixture-model"}}]}
                 else: payload = {}
                 self._json(payload)
                 return
@@ -863,7 +864,7 @@ def test_root_spa_retains_all_workspaces_and_restores_history(tmp_path: Path, re
                 chunk({"type": "llm.content", "bot_id": "thyca", "delta": "FAKE STREAM TOKEN"})
                 self.stream_release.wait()
                 chunk({"type": "llm.finished", "bot_id": "thyca"})
-                chunk({"type": "turn.completed", "bot_id": "thyca", "detail": {"id": "dm-thyca", "dm": "thyca", "messages": [{"role": "user", "content": "keep this streamed turn"}, {"role": "assistant", "content": "FAKE STREAM TOKEN", "meta": {"bot_id": "thyca"}}]}})
+                chunk({"type": "turn.completed", "bot_id": "thyca", "detail": {"kind": "dm", "bot_id": "thyca", "messages": [{"role": "user", "content": "keep this streamed turn"}, {"role": "assistant", "content": "FAKE STREAM TOKEN", "meta": {"bot_id": "thyca"}}]}})
                 self.wfile.write(b"0\r\n\r\n"); self.wfile.flush(); return
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length) or b"{}")
@@ -953,14 +954,14 @@ def test_root_spa_retains_all_workspaces_and_restores_history(tmp_path: Path, re
         ("/ui/%70rofile/index.html?spaMode=legacy-check", {"page": "profile", "search": "", "hash": ""}),
         ("/ui/provider/index.html?bot=coder&spaMode=legacy-check", {"page": "profile", "search": "?bot=coder", "hash": ""}),
         ("/ui/chat/index.html?bot=thyca&spaMode=legacy-check", {"page": "chat", "search": "?bot=thyca", "hash": ""}),
-        ("/ui/dashboard/index.html?s=s9&t=2&spaMode=legacy-check#s9/2", {"page": "dashboard", "search": "?view=trace", "hash": "#s9/2"}),
-        ("/ui/trace/index.html?s=s9&t=2&spaMode=legacy-check#s9/2", {"page": "dashboard", "search": "?range=all&view=trace", "hash": "#s9/2"}),
+        ("/ui/dashboard/index.html?s=s9&t=2&spaMode=legacy-check#dm/thyca/2", {"page": "dashboard", "search": "?view=trace", "hash": "#dm/thyca/2"}),
+        ("/ui/trace/index.html?s=s9&t=2&spaMode=legacy-check#dm/thyca/2", {"page": "dashboard", "search": "?range=all&view=trace", "hash": "#dm/thyca/2"}),
         # Removed page: old Settings URLs land on chat (first bot highlighted by
         # chat's own onEnter) with the shared dialog open.
         ("/ui/settings/index.html?spaMode=legacy-check", {"page": "chat", "search": "?bot=thyca", "hash": ""}),
         ("/ui/settings/?spaMode=legacy-check", {"page": "chat", "search": "?bot=thyca", "hash": ""}),
         # A trace-shaped fragment on a Settings URL must not divert to Usage.
-        ("/ui/settings/index.html?spaMode=legacy-check#s9/2", {"page": "chat", "search": "?bot=thyca", "hash": ""}),
+        ("/ui/settings/index.html?spaMode=legacy-check#dm/thyca/2", {"page": "chat", "search": "?bot=thyca", "hash": ""}),
     )
     for index, (legacy, expected) in enumerate(legacy_cases):
         legacy_result = _cdp_browser_result(browser, f"http://127.0.0.1:{server.server_port}{legacy}", 1280, None, tmp_path / f'legacy-{index}')
@@ -981,7 +982,7 @@ def test_root_spa_retains_all_workspaces_and_restores_history(tmp_path: Path, re
     fresh_default = _cdp_browser_result(browser, f"http://127.0.0.1:{server.server_port}/?spaMode=fresh-default-detail", 1280, None, tmp_path / 'fresh-default')
     assert fresh_default.get("freshDefaultDetail") is True, fresh_default
     assert fresh_default["route"]["page"] == "dashboard" and fresh_default["route"]["hash"] == ""
-    assert fresh_default["apiCounts"].get("/api/traces/synthetic-conversation/0") == 1
+    assert fresh_default["apiCounts"].get("/api/traces/dm/thyca/0") == 1
     assert fresh_default["apiCounts"].get("/api/traces") == 1 and fresh_default["apiCounts"].get("/api/traces/stats") == 1
     assert "from=" in fresh_default["apiUrls"][-1] and "to=" in fresh_default["apiUrls"][-1]
     browser_results["freshDefaultDetail"] = fresh_default
@@ -992,7 +993,7 @@ def test_root_spa_retains_all_workspaces_and_restores_history(tmp_path: Path, re
     assert fresh_detail_result["route"]["hash"] == ""
     assert fresh_detail_result["externalReturnRoute"] == {"page": "chat", "search": "", "hash": ""}
     assert fresh_detail_result["externalEntryPreserved"] is True and fresh_detail_result["detailToDetailFallback"] is True
-    assert fresh_detail_result["overviewRequests"].get("/api/traces/synthetic-conversation/0") == 1
+    assert fresh_detail_result["overviewRequests"].get("/api/traces/dm/thyca/0") == 1
     assert fresh_detail_result["overviewRequests"].get("/api/traces", 0) == 1 and fresh_detail_result["overviewRequests"].get("/api/traces/stats", 0) == 1
     browser_results["freshDetail"] = fresh_detail_result
     for width in (320, 375):
@@ -1022,7 +1023,7 @@ def test_root_spa_retains_all_workspaces_and_restores_history(tmp_path: Path, re
             assert usage_result["headerControlsHidden"] is (mode == "detail")
             assert usage_result["frames"] == 0 and usage_result["scriptErrors"] == [] and usage_result["unhandledRejections"] == []
             assert usage_result["route"]["page"] == "dashboard"
-            assert usage_result["route"]["hash"] == ("#synthetic-conversation/0" if mode == "detail" else "")
+            assert usage_result["route"]["hash"] == ("#dm/thyca/0" if mode == "detail" else "")
             assert usage_result["viewport"] == width and usage_result["documentWidth"] <= width and usage_result["bodyWidth"] <= width
             assert usage_result["overflows"] == [], usage_result
             assert usage_result["nav"][0] <= usage_result["activeLink"][0] and usage_result["activeLink"][1] <= usage_result["nav"][1]
@@ -1035,7 +1036,7 @@ def test_root_spa_retains_all_workspaces_and_restores_history(tmp_path: Path, re
         pass
     delayed_result = _cdp_browser_result(browser, f"http://127.0.0.1:{server.server_port}/?spaMode=delayed-chat", 1280, None, tmp_path / 'delayed-chat')
     assert delayed_result.get("delayedDmRecovered") is True, delayed_result
-    assert delayed_result["conversation"] == "dm-thyca" and delayed_result["bot"] == "thyca" and delayed_result["dmHits"] >= 2
+    assert delayed_result["conversation"] == "dm:thyca" and delayed_result["bot"] == "thyca" and delayed_result["dmHits"] >= 2
     assert delayed_result["scriptErrors"] == [] and delayed_result["unhandledRejections"] == []
     browser_results["delayedChat"] = delayed_result
     for width in (1280, 375):

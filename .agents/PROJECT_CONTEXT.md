@@ -4,7 +4,7 @@ Mục tiêu của file này là mô tả trạng thái thật tại HEAD. Mã ng
 
 ## Runtime hiện tại
 
-- Phiên bản: `0.88.0.dev0`. Kiểm tra ở `pyproject.toml`, `thyca/__init__.py`, `uv.lock` và `README.md`.
+- Phiên bản: `0.88.0.dev1`. Kiểm tra ở `pyproject.toml`, `thyca/__init__.py`, `uv.lock` và `README.md`.
 - Điểm vào CLI nằm ở `thyca/app/cli.py`. Máy chủ WebUI vòng lặp nội bộ (loopback) nằm ở `thyca/serve/`.
 - WebUI là một SPA gốc duy nhất. File vào là `thyca/webui/ui/chat/index.html` tại `/`.
 - Sáu đường workspace cũ vẫn mở đúng màn. Đường Trace cũ được chuẩn hóa vào màn Sử dụng (Usage).
@@ -70,9 +70,9 @@ Mục tiêu của file này là mô tả trạng thái thật tại HEAD. Mã ng
 
 ## Bố cục gói
 
-- Layout backend là `thyca/{agents,llms,configs,memories,conversations,tools,skills,serve,app,core,bots,webui,seeds}/`.
+- Layout backend là `thyca/{agents,llms,configs,memories,conversations,tools,skills,serve,app,core,platform,bots,webui,seeds}/`.
 - Cấm file lẻ ở tầng cao nhất, trừ `__init__.py` và `__main__.py`. Cấm shim.
-- `core/` là lá (leaf): chỉ dùng thư viện chuẩn, không import `thyca.*` khác.
+- `core/` và `platform/` là lá (leaf): chỉ dùng thư viện chuẩn, không import `thyca.*` khác.
 - `serve/` không import runtime `app/` ở mức module. Chỉ dùng `TYPE_CHECKING` và import lười (lazy).
 
 ## Dữ liệu và an toàn

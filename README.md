@@ -2,7 +2,7 @@
 
 Trợ lý cá nhân đa công việc, giai đoạn **trước beta (pre-beta)**. Thyca học dần từ những gì bạn chia sẻ và cách bạn làm việc — trò chuyện, viết code, đọc tài liệu, tra web, chạy lệnh trên máy bạn — và **ghi nhớ** để lần sau không phải nhắc lại.
 
-**Phiên bản hiện tại: 0.88.0.dev0**
+**Phiên bản hiện tại: 0.88.0.dev1**
 
 Thyca là một **đội bot**: Thyca là bot quản lý, bạn tạo thêm bot cho từng vai trò. Mỗi bot có persona và bộ nhớ riêng, cùng đọc `SOUL.md` + `USER.md` chung về bạn.
 
@@ -98,7 +98,7 @@ Chưa chạy kiểm tra khói trên thư mục gốc thật (live scratch-root s
 
 ## Giới hạn đã biết
 
-- Đây vẫn là bản development (`0.88.0.dev0`). Đừng coi là bản beta hay bản ổn định.
+- Đây vẫn là bản development (`0.88.0.dev1`). Đừng coi là bản beta hay bản ổn định.
 - Bốn class runtime đã đổi sang `Conversation*` và `session_id` đã thành `conversation_id` ở code hội thoại (không còn alias); trường định danh ở lá bộ nhớ cũng đã đổi từ `session_id` sang `memory_id` (SQLite schema v9, migration v8→v9 giữ hàng chunk và bộ đếm get/search; Markdown không đổi).
 - Chưa có bên phát hành vòng đời/đặt lại (lifecycle/reset issuer) ngoài luồng khởi động cục bộ của `ChatApp`.
 - Chưa chốt chính sách giữ/xóa dữ liệu cũ (retention policy).

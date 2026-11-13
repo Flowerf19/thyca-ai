@@ -4,12 +4,12 @@ from __future__ import annotations
 import errno
 import json
 import os
-import re
 import stat
 import time
 from pathlib import Path
 
 from thyca.core.conversation import ConversationRef
+from thyca.platform import TrustedParentError, open_trusted_parent, same_inode as _same_inode
 from .contracts import ConversationStoreError, _ATTEMPT_RE, _local_error, _reject_duplicate_pairs, _validate_uuid
 
 class _TransientSidecarError(Exception):
@@ -38,66 +38,18 @@ def _stat_at(dir_fd: int, name: str):
     except OSError as exc:
         raise ConversationStoreError() from exc
 
-def _same_inode(left, right) -> bool:
-    return (left.st_dev, left.st_ino) == (right.st_dev, right.st_ino)
-
-def _check_ancestor_stat(info, path: str) -> None:
-    # 65534 is the kernel overflow UID for unmapped root-owned ancestors in
-    # the approved user-namespace test environment; such ancestors must remain
-    # non-writable except for root-owned sticky temporary directories.
-    if not stat.S_ISDIR(info.st_mode) or info.st_uid not in (0, os.geteuid(), 65534):
-        raise ConversationStoreError()
-    permissions = stat.S_IMODE(info.st_mode)
-    if permissions & 0o022:
-        sticky_tmp = (info.st_uid in (0, 65534) and bool(info.st_mode & stat.S_ISVTX)
-                      and permissions & 0o002 and path in ('/tmp', '/var/tmp', '/dev/shm'))
-        if not sticky_tmp:
-            raise ConversationStoreError()
-
-def _open_parent(root: Path) -> tuple[int, str, Path]:
-    raw = os.fspath(root)
-    if not isinstance(raw, str) or not raw:
-        raise ConversationStoreError()
-    initial = Path(raw)
-    if any(part == '..' for part in initial.parts):
-        raise ConversationStoreError()
-    absolute = Path(os.path.abspath(raw))
-    if absolute == Path('/') or absolute.name in ('', '.', '..'):
-        raise ConversationStoreError()
-    fd = os.open('/', os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
-    current = ''
-    try:
-        root_info = os.fstat(fd)
-        _check_ancestor_stat(root_info, '/')
-        for part in absolute.parts[1:-1]:
-            current += '/' + part
-            try:
-                next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
-                                  dir_fd=fd)
-            except OSError as exc:
-                raise ConversationStoreError() from exc
-            try:
-                path_info = os.stat(part, dir_fd=fd, follow_symlinks=False)
-                fd_info = os.fstat(next_fd)
-                if not stat.S_ISDIR(path_info.st_mode) or not _same_inode(path_info, fd_info):
-                    raise ConversationStoreError()
-                _check_ancestor_stat(fd_info, current)
-            except BaseException:
-                os.close(next_fd)
-                raise
-            os.close(fd)
-            fd = next_fd
-        return fd, absolute.name, absolute
-    except BaseException:
-        os.close(fd)
-        raise
-
 def _fsync_dir(fd: int) -> None:
     os.fsync(fd)
 
 # Open the store root directory without following links.
 def _open_root(root: Path, *, create: bool) -> tuple[int, int, str, Path]:
-    parent_fd, name, absolute = _open_parent(root)
+    try:
+        trusted = open_trusted_parent(root)
+    except TrustedParentError as exc:
+        raise ConversationStoreError() from exc
+    parent_fd = trusted.release_fd()
+    name = trusted.leaf_name
+    absolute = trusted.resolved_path
     created_here = False
     try:
         try:

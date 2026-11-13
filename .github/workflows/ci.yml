@@ -1,0 +1,120 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-suite:
+    name: Linux Full Suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv and Python 3.14
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: "3.14"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Run full test suite
+        run: uv run pytest -q
+
+      - name: Check trailing whitespace and conflict markers
+        run: git diff --check
+
+  linux-distro-matrix:
+    name: Linux Distro Matrix (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: debian-bookworm
+            image: debian:bookworm-slim
+            prep_cmd: apt-get update && apt-get install -y --no-install-recommends curl ca-certificates
+          - name: fedora-immutable-home
+            image: fedora:latest
+            prep_cmd: |
+              dnf install -y --allowerasing curl tar gzip shadow-utils
+              rm -rf /home
+              mkdir -p /var/home
+              ln -s var/home /home
+          - name: archlinux
+            image: archlinux:latest
+            prep_cmd: pacman -Syu --noconfirm uv
+          - name: alpine-musl
+            image: ghcr.io/astral-sh/uv:python3.14-alpine
+            prep_cmd: "true"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run platform, store, and CLI checks on ${{ matrix.name }}
+        env:
+          DISTRO_PREP_CMD: ${{ matrix.prep_cmd }}
+        run: |
+          docker run --rm \
+            -e DISTRO_PREP_CMD \
+            -v "${{ github.workspace }}:/src:ro" \
+            -w /src \
+            "${{ matrix.image }}" sh -ec '
+              eval "$DISTRO_PREP_CMD"
+              if ! id tester >/dev/null 2>&1; then
+                if command -v useradd >/dev/null 2>&1; then
+                  useradd -m -d /home/tester tester
+                else
+                  adduser -D -h /home/tester tester
+                fi
+              fi
+
+              su - tester -s /bin/sh -c "
+                set -e
+                export PATH=\"\$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:\$PATH\"
+                if ! command -v uv >/dev/null 2>&1; then
+                  curl -LsSf https://astral.sh/uv/install.sh | sh
+                fi
+                export UV_PROJECT_ENVIRONMENT=/tmp/venv
+                export PYTHONDONTWRITEBYTECODE=1
+                cd /src
+                uv sync --locked --python 3.14
+                uv run --no-sync pytest -q -o cache_dir=/tmp/pytest_cache tests/test_platform.py tests/test_conversation_store.py tests/test_skill_sharing.py
+                uv tool install --python 3.14 --force /src
+                thyca --version
+                thyca --seed
+                \"\$HOME/.local/share/uv/tools/thyca-ai/bin/python\" -c \"from pathlib import Path; from thyca.conversations.store.runtime import ensure_runtime_store; ensure_runtime_store(Path.home() / \\\".thyca\\\")\"
+              "
+            '
+
+  macos-platform:
+    name: macOS Platform & Store Checks
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv and Python 3.14
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Run platform and conversation store tests
+        run: uv run pytest -q tests/test_platform.py tests/test_conversation_store.py

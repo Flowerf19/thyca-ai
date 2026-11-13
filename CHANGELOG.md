@@ -2,6 +2,14 @@
 
 Thay đổi của Thyca, viết ngắn gọn cho người dùng.
 
+## 0.88.0.dev1 — Development
+
+- Sửa lỗi không mở được conversation store trên distro bất biến có `/home` là symlink (như Bazzite / Fedora Silverblue `/home -> var/home`): hỗ trợ duyệt symlink tổ tiên tin cậy (thuộc `root`, người dùng hiện tại, hoặc UID `65534` trong user namespace) qua descriptor `dir_fd`, vẫn chặn leaf symlink, symlink loop và thư mục tổ tiên cho phép ghi ngoài sticky temp.
+- Tách tầng lá `thyca/platform/` (`paths.py`, `fs.py` — chỉ dùng thư viện chuẩn) để gom quy ước đường dẫn và `open_trusted_parent()`, mở đường cho đa nền tảng; `thyca/conversations/store/rootfs.py` chuyển sang gọi `thyca.platform`.
+- Thêm workflow CI tại `.github/workflows/ci.yml`: chạy toàn suite trên Ubuntu, ma trận 4 distro Linux (`debian-bookworm`, `fedora-immutable-home` dựng `/home -> var/home`, `archlinux`, `alpine-musl`), và kiểm tra nền tảng/store trên `macos-latest`.
+- Kiểm chứng: bộ test tập trung (`test_cli.py`, `test_platform.py`, `test_conversation_store.py`) đạt **100 passed** và `git diff --check` sạch sau khi nâng version (đợt tách `thyca/platform/` trước đó đạt **218 passed** trên nhóm test `platform` + `conversation` + `CLI` + `ChatApp`). Chưa chạy lại toàn bộ suite hay pipeline CI trên GitHub.
+- Đây là bản dev, chưa phải beta hay stable; không tự bỏ hậu tố dev khi nâng phiên bản.
+
 ## 0.88.0.dev0 — Development
 
 - Bỏ hẳn đặt tên hội thoại tự động: không còn gọi LLM đặt tên sau 2 lượt nhắn, không còn sự kiện `session.naming` hay hàng `kind='naming'` mới. Tiêu đề chỉ từ người dùng tự đặt hoặc hiển thị dự phòng theo ngày/giờ. Đã gỡ `naming_meta`, seed `naming.md` và field metadata `naming_attempted`; door cũ còn key này vẫn đọc được bình thường (key bị bỏ qua lúc đọc).

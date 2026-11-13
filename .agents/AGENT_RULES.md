@@ -2,7 +2,7 @@
 
 ## Release status — explicit user decision
 
-- Thyca hiện là **development**, phiên bản `0.88.0.dev0` (số `0.88.0` do user xác nhận, không tự sửa thành số khác).
+- Thyca hiện là **development**, phiên bản `0.88.0.dev1` (số `0.88.0` do user xác nhận, không tự sửa thành số khác).
 - Giữ hậu tố `.devN` theo chuẩn Python; không tự bỏ `dev`, chuyển sang beta/RC/stable, hoặc coi bản dev là release chính thức. Chỉ thay giai đoạn phát hành khi user yêu cầu rõ ràng.
 - Khi đổi version, đồng bộ `pyproject.toml`, `thyca/__init__.py`, `uv.lock` và README.
 
@@ -16,7 +16,7 @@
 - Code và identifier tiếng Anh. Nói với user theo ngôn ngữ user.
 - Linux là target. Đừng viết API chỉ chạy trên Windows.
 - Secret chỉ qua env hoặc file ngoài Git (`~/.thyca/auth.json`, mode 0600).
-- Layout backend: `thyca/{agents,llms,configs,memories,conversations,tools,skills,serve,app,core}/` — cấm file lẻ top-level (trừ `__init__.py`/`__main__.py`) và cấm shim. `core/` là leaf (stdlib-only, không import `thyca.*` khác). `serve/` không import runtime `app/` (chỉ `TYPE_CHECKING` + lazy).
+- Layout backend: `thyca/{agents,llms,configs,memories,conversations,tools,skills,serve,app,core,platform}/` — cấm file lẻ top-level (trừ `__init__.py`/`__main__.py`) và cấm shim. `core/` và `platform/` là leaf (stdlib-only, không import `thyca.*` khác). `serve/` không import runtime `app/` (chỉ `TYPE_CHECKING` + lazy).
 - WebUI root-only native SPA: `thyca/webui/ui/chat/index.html` is the shared application entry at `/`; six known legacy workspace paths resolve to it, with the legacy Trace path normalized to Usage, and the router keeps page/filter/fragment state in browser history while the visible URL stays at `/`. Keep independent page factories/workspaces in `thyca/webui/ui/<page>/` and shared shell/router code in `thyca/webui/ui/share/`; do not introduce an iframe or a second application entry. Keep CSS page-scoped; shared global rules belong only in existing shared styles, and do not add unscoped global CSS.
 - Cổng kiểm tra hiện tại (commit `e46b18e`): **2097 passed, 5 skipped** (bỏ qua vì Chrome/môi trường). Test đỏ lại sau trạng thái này là regression, không tự sửa số.
 

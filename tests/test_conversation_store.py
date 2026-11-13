@@ -358,6 +358,80 @@ def test_root_and_db_permissions_and_symlink_refusal(tmp_path: Path) -> None:
         AgentStore(other).read(ref, 'coder')
 
 
+def test_trusted_ancestor_symlink_allows_store_init_and_access(tmp_path: Path) -> None:
+    real_user = tmp_path / 'var' / 'home' / 'user'
+    real_user.mkdir(parents=True)
+    # Relative ancestor symlink (mirrors /home -> var/home on Fedora Atomic / Bazzite).
+    (tmp_path / 'home').symlink_to(Path('var/home'))
+    # Absolute ancestor symlink and relative '..' symlink target.
+    (tmp_path / 'abs_home').symlink_to(tmp_path / 'var' / 'home')
+    nested = tmp_path / 'nested'
+    nested.mkdir()
+    (nested / 'rel_home').symlink_to(Path('../var/home'))
+
+    store_via_rel = tmp_path / 'home' / 'user' / '.thyca'
+    ref = _setup_dm(store_via_rel)
+    AgentStore(store_via_rel).append(ref, 'coder', Message(role='user', content='via rel'))
+
+    for alias_root in (
+        tmp_path / 'abs_home' / 'user' / '.thyca',
+        nested / 'rel_home' / 'user' / '.thyca',
+        real_user / '.thyca',
+    ):
+        msgs = AgentStore(alias_root).read(ref, 'coder').messages
+        assert [m.content for m in msgs] == ['via rel']
+
+    # The store root leaf itself must still be refused when it is a symlink.
+    leaf_link = tmp_path / 'home' / 'user' / 'leaf_link'
+    leaf_link.symlink_to(real_user / '.thyca')
+    with pytest.raises(ConversationStoreError):
+        AgentStore(leaf_link).read(ref, 'coder')
+
+
+def test_ancestor_symlink_rejects_untrusted_owner_loop_and_writable_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Symlink loop fails closed with ConversationStoreError.
+    loop_a = tmp_path / 'loop_a'
+    loop_b = tmp_path / 'loop_b'
+    loop_a.symlink_to(loop_b)
+    loop_b.symlink_to(loop_a)
+    with pytest.raises(ConversationStoreError):
+        _initialize(loop_a / 'vault')
+
+    # Ancestor symlink pointing to a group/world-writable non-sticky directory fails closed.
+    unsafe_dir = tmp_path / 'unsafe'
+    unsafe_dir.mkdir(mode=0o777)
+    unsafe_dir.chmod(0o777)
+    (tmp_path / 'to_unsafe').symlink_to(unsafe_dir)
+    try:
+        with pytest.raises(ConversationStoreError):
+            _initialize(tmp_path / 'to_unsafe' / 'vault')
+    finally:
+        unsafe_dir.chmod(0o700)
+
+    # Ancestor symlink owned by an untrusted UID fails closed.
+    real_parent = tmp_path / 'real_parent'
+    real_parent.mkdir()
+    foreign_link = tmp_path / 'foreign_link'
+    foreign_link.symlink_to(real_parent)
+    orig_stat = os.stat
+
+    def _fake_stat(path, *args, **kwargs):
+        st = orig_stat(path, *args, **kwargs)
+        if path == 'foreign_link' and kwargs.get('follow_symlinks', True) is False:
+            return os.stat_result((
+                st.st_mode, st.st_ino, st.st_dev, st.st_nlink,
+                os.geteuid() + 1, st.st_gid, st.st_size,
+                st.st_atime, st.st_mtime, st.st_ctime,
+            ))
+        return st
+
+    monkeypatch.setattr(os, 'stat', _fake_stat)
+    with pytest.raises(ConversationStoreError):
+        _initialize(foreign_link / 'vault')
+
+
 def test_hardlinked_database_alias_is_refused_without_exposing_messages(tmp_path: Path) -> None:
     original_root = tmp_path / 'original'
     alias_root = tmp_path / 'alias'

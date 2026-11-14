@@ -221,12 +221,11 @@ class ChatApp:
         try:
             if not self._ready.wait(timeout=5):
                 raise RuntimeError("mcp loop thread failed to start")
-            report_spawn_diags(
-                self._submit(self._mcp.spawn_all(cfg.mcpServers)), err=self._stderr
-            )
-            install_mcp_specs(self._registry, self._mcp, err=self._stderr)
+            # Kick off MCP connects in parallel without blocking serve/CLI boot.
+            # First turn's _sync_mcp settles, installs specs, and reports diags.
+            self._submit(self._mcp.schedule(cfg.mcpServers))
             self._tools = self._registry.to_openai_schema()
-            self._mcp_status = self._read_mcp_status()
+            self._mcp_status = ""
             self._act = Act(self._gateway, skills_root=root / "skills")
         except BaseException:
             self.shutdown()

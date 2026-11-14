@@ -128,13 +128,13 @@ def test_cli_registers_and_closes_configured_mcp_tools(tmp_path: Path, monkeypat
             self.servers = None
             self.closed = False
 
-        async def spawn_all(self, servers):
+        async def schedule(self, servers):
             self.servers = servers
             return []
 
         async def sync(self, servers):
             self.servers = servers
-            return [], set()
+            return [], []
 
         def tool_specs(self):
             async def ping(_args: dict) -> str:
@@ -148,6 +148,9 @@ def test_cli_registers_and_closes_configured_mcp_tools(tmp_path: Path, monkeypat
                     handler=ping,
                 )
             ]
+
+        def prompt_summary(self) -> str:
+            return ""
 
         async def shutdown(self) -> None:
             self.closed = True
@@ -192,14 +195,17 @@ def test_cli_registers_and_closes_configured_mcp_tools(tmp_path: Path, monkeypat
 
 def test_cli_mcp_diagnostic_includes_server_name(tmp_path: Path, monkeypatch) -> None:
     class FakeManager:
-        async def spawn_all(self, servers):
-            return [StartupDiagnostic("remote", False, "failed to start")]
+        async def schedule(self, servers):
+            return []
 
         async def sync(self, servers):
-            return [], set()
+            return [StartupDiagnostic("remote", False, "failed to start")], []
 
         def tool_specs(self):
             return []
+
+        def prompt_summary(self) -> str:
+            return ""
 
         async def shutdown(self) -> None:
             return

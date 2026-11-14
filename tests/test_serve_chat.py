@@ -67,11 +67,17 @@ def test_chat_app_mcp_diagnostic_includes_server_name(
     tmp_path: Path, monkeypatch
 ) -> None:
     class FakeManager:
-        async def spawn_all(self, servers):
-            return [StartupDiagnostic("remote", False, "failed to start")]
+        async def schedule(self, servers):
+            return []
+
+        async def sync(self, servers):
+            return [StartupDiagnostic("remote", False, "failed to start")], []
 
         def tool_specs(self):
             return []
+
+        def prompt_summary(self) -> str:
+            return ""
 
         async def shutdown(self) -> None:
             return
@@ -81,7 +87,9 @@ def test_chat_app_mcp_diagnostic_includes_server_name(
     monkeypatch.setattr("thyca.app.chat_app.sys.stderr", stderr)
     app = _chat(tmp_path, FakeLLM(ChatReply(content="unused")))
     try:
-        assert "remote: failed to start" in stderr.getvalue()
+        created = app.create()
+        app.turn(created["conversation_id"], "hi")
+        assert "warning: mcp remote: failed to start" in stderr.getvalue()
     finally:
         app.shutdown()
 

@@ -1,13 +1,14 @@
 # Có gì mới
 
-Thay đổi của Thyca, viết ngắn gọn cho người dùng.
+Thay đổi của Thyca cho người dùng: ngắn, dễ hiểu, nói về trải nghiệm dùng app.
+Không ghi nhật ký kỹ thuật (tên code, số test, trạng thái phát hành).
 
 ## 0.88.0.dev2 — Development
 
-- Cảnh báo trạng thái MCP lỗi cho agent: `MCPManager` theo dõi các server khởi động thất bại (`failed_servers()` / `prompt_summary()`) và bơm khối `<mcp_status>` vào system prompt qua `ActiveSnapshot` -> `PromptManager` để agent biết server nào không khả dụng.
-- Chống treo khi khởi động MCP và giữ biến chứng chỉ TLS: `MCPProcess.start()` đặt startup timeout mặc định **10 giây** (`START_TIMEOUT`), hủy task bị kẹt để `stdio_client` dọn tiến trình con mà vẫn cho Thyca khởi động bình thường; `report_spawn_diags()` in 1 dòng `warning: mcp <server>: <message>` ra stderr/log; `merge_env()` giữ lại `SSL_CERT_FILE`, `SSL_CERT_DIR`, `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`.
-- Kiểm chứng: bộ test tập trung (`test_mcp.py`, `test_llm_prompt_manager.py`, `test_workspace_context.py`, `test_chat_app.py`, `test_cli.py`, `test_serve_chat.py`, `test_bots_context.py`) đạt **254 passed** và `git diff --check` sạch tại commit `da31e91` (chưa chạy toàn bộ suite).
-- Đây là bản dev, chưa phải beta hay stable; không tự bỏ hậu tố dev khi nâng phiên bản.
+- Thyca khởi động nhanh hơn khi có MCP server chậm hoặc treo; server lỗi không còn làm kẹt cả app.
+- Nếu MCP đã từng chạy rồi lỗi lại, agent vẫn thấy tool đó và báo rõ là chưa dùng được thay vì giả vờ gọi thành công.
+- Khi MCP lỗi ngay từ đầu, agent được nhắc để nói thẳng với bạn thay vì bịa kết quả.
+- MCP dùng được với chứng chỉ TLS/doanh nghiệp thường gặp trên máy (proxy, CA nội bộ).
 
 ## 0.88.0.dev1 — Development
 

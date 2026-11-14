@@ -18,12 +18,12 @@ from thyca.tools.mcp import (
     MCPManager,
     MCPProcess,
     START_TIMEOUT,
-    _summarize_error,
     format_mcp_status,
     join_text_blocks,
     merge_env,
     model_name,
     resolve_command,
+    summarize_error,
 )
 from thyca.tools.gateway import ToolGateway
 from thyca.tools.registry import ToolRegistry
@@ -159,7 +159,7 @@ async def test_spawn_all_empty_does_not_touch_stdio(monkeypatch: pytest.MonkeyPa
     def boom(*_args, **_kwargs):
         raise AssertionError("stdio_client must not run")
 
-    monkeypatch.setattr("thyca.tools.mcp.stdio_client", boom)
+    monkeypatch.setattr("thyca.tools.mcp.process.stdio_client", boom)
     manager = MCPManager()
     assert await manager.spawn_all({}) == []
     assert manager.tool_specs() == []
@@ -246,6 +246,8 @@ async def test_startup_cleanup_failure_does_not_abort_other_servers() -> None:
 
 @pytest.mark.asyncio
 async def test_shutdown_closes_remaining_servers_after_failure() -> None:
+    from thyca.tools.mcp import ServerEntry
+
     class CloseFails:
         async def aclose(self) -> None:
             raise RuntimeError("close failed")
@@ -259,7 +261,10 @@ async def test_shutdown_closes_remaining_servers_after_failure() -> None:
 
     manager = MCPManager()
     remaining = Closes()
-    manager._live = [(CloseFails(), []), (remaining, [])]  # type: ignore[list-item]
+    manager._entries = {
+        "a": ServerEntry(cfg=_server_cfg(), status="live", proc=CloseFails()),  # type: ignore[arg-type]
+        "b": ServerEntry(cfg=_server_cfg(), status="live", proc=remaining),  # type: ignore[arg-type]
+    }
 
     await manager.shutdown()
 
@@ -538,7 +543,8 @@ async def test_sync_respawns_on_env_change() -> None:
     old = manager._live[0][0]
     diags, removed = await manager.sync({"t": _server_cfg(env={"K": "2"})})
     assert [diag.ok for diag in diags] == [True]
-    assert removed == ["t__ping"]
+    # Same catalog names stay registered as stubs→live; nothing to unregister.
+    assert removed == []
     assert manager._live[0][0] is not old
     assert started == ["1", "2"]
     await manager.shutdown()
@@ -647,8 +653,8 @@ async def test_process_start_timeout_cancels_hung_run(monkeypatch: pytest.Monkey
             await asyncio.Future()
             return {}
 
-    monkeypatch.setattr("thyca.tools.mcp.stdio_client", fake_stdio)
-    monkeypatch.setattr("thyca.tools.mcp.ClientSession", HungClientSession)
+    monkeypatch.setattr("thyca.tools.mcp.process.stdio_client", fake_stdio)
+    monkeypatch.setattr("thyca.tools.mcp.process.ClientSession", HungClientSession)
 
     proc = MCPProcess("hung", "unused", [], {}, start_timeout=timedelta(seconds=0.05))
     with pytest.raises(TimeoutError, match="startup timed out after 0.05s"):
@@ -779,7 +785,7 @@ async def test_list_tools_timeout_is_caught_and_sync_recovers() -> None:
 def test_format_mcp_status_and_summarize_error_bounds() -> None:
     assert format_mcp_status({}) == ""
     long_exc = RuntimeError("x " * 300)
-    summary = _summarize_error(long_exc)
+    summary = summarize_error(long_exc)
     assert len(summary) <= 200
     assert summary.endswith("...")
 
@@ -805,3 +811,183 @@ def test_report_spawn_diags_emits_single_warning_line_per_failure() -> None:
     assert buf.getvalue().splitlines() == [
         "warning: mcp tavily: TimeoutError: startup timed out after 10s"
     ]
+
+
+@pytest.mark.asyncio
+async def test_spawn_all_runs_connects_in_parallel() -> None:
+    class SlowOk(_FakeSession):
+        async def initialize(self) -> object:
+            await asyncio.sleep(0.15)
+            return {}
+
+    class HungSession(_FakeSession):
+        async def initialize(self) -> object:
+            await asyncio.Future()
+            return {}
+
+    def make(name: str, cfg: McpServerCfg) -> MCPProcess:
+        if name == "hung":
+            return MCPProcess(
+                name,
+                cfg.command,
+                [],
+                {},
+                session=HungSession(),
+                start_timeout=timedelta(seconds=0.2),
+            )
+        return MCPProcess(name, cfg.command, [], {}, session=SlowOk())
+
+    manager = MCPManager(process_factory=make)
+    started = asyncio.get_running_loop().time()
+    diags = await manager.spawn_all(
+        {
+            "hung": McpServerCfg(command="true"),
+            "echo": McpServerCfg(command="true"),
+        }
+    )
+    elapsed = asyncio.get_running_loop().time() - started
+    by_name = {diag.server: diag for diag in diags}
+    assert by_name["hung"].ok is False
+    assert by_name["echo"].ok is True
+    # Sequential would be ~0.35s+; parallel stays near the hung timeout.
+    assert elapsed < 0.35
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_schedule_does_not_block_until_settle() -> None:
+    class HungSession(_FakeSession):
+        async def initialize(self) -> object:
+            await asyncio.Future()
+            return {}
+
+    def make(name: str, cfg: McpServerCfg) -> MCPProcess:
+        return MCPProcess(
+            name,
+            cfg.command,
+            [],
+            {},
+            session=HungSession(),
+            start_timeout=timedelta(seconds=0.2),
+        )
+
+    manager = MCPManager(process_factory=make)
+    started = asyncio.get_running_loop().time()
+    assert await manager.schedule({"hung": McpServerCfg(command="true")}) == []
+    assert asyncio.get_running_loop().time() - started < 0.05
+    assert manager.tool_specs() == []
+    diags = await manager.settle()
+    assert len(diags) == 1 and diags[0].ok is False
+    assert "hung" in manager.failed_servers()
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_stub_handler_after_live_then_failed_reconnect() -> None:
+    state = {"broken": False}
+
+    class Toggle(_FakeSession):
+        async def initialize(self) -> object:
+            if state["broken"]:
+                raise RuntimeError("reconnect failed")
+            return {}
+
+    def make(name: str, cfg: McpServerCfg) -> MCPProcess:
+        return MCPProcess(name, cfg.command, [], {}, session=Toggle())
+
+    manager = MCPManager(process_factory=make)
+    await manager.spawn_all({"echo": _server_cfg(command="true")})
+    assert [spec.name for spec in manager.tool_specs()] == ["echo__ping"]
+
+    state["broken"] = True
+    diags, removed = await manager.sync({"echo": _server_cfg(command="true", env={"K": "2"})})
+    assert [diag.ok for diag in diags] == [False]
+    assert removed == []
+    # Catalog kept → stubs, not cold prompt failure.
+    assert manager.failed_servers() == {}
+    assert manager.prompt_summary() == ""
+    specs = manager.tool_specs()
+    assert [spec.name for spec in specs] == ["echo__ping"]
+    result = await specs[0].handler({})
+    assert result.is_error is True
+    assert "reconnect failed" in result.content
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_handler_waits_while_connecting_then_forwards() -> None:
+    release = asyncio.Event()
+    release.set()
+
+    class Gate(_FakeSession):
+        async def initialize(self) -> object:
+            await release.wait()
+            return {}
+
+    def make(name: str, cfg: McpServerCfg) -> MCPProcess:
+        return MCPProcess(name, cfg.command, [], {}, session=Gate())
+
+    manager = MCPManager(process_factory=make)
+    await manager.spawn_all({"echo": _server_cfg(command="true", env={"K": "1"})})
+    specs = manager.tool_specs()
+    assert specs[0].name == "echo__ping"
+
+    # Kick a reconnect and call the tool before settle completes.
+    release.clear()
+    await manager.schedule({"echo": _server_cfg(command="true", env={"K": "2"})})
+    assert manager._entries["echo"].status == "connecting"
+    call = asyncio.create_task(specs[0].handler({}))
+    await asyncio.sleep(0.05)
+    assert not call.done()
+    release.set()
+    result = await call
+    assert result.is_error is False
+    assert result.content == "pong"
+    await manager.settle()
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_cold_fail_keeps_prompt_status_without_stub_tools() -> None:
+    class Boom(_FakeSession):
+        async def initialize(self) -> object:
+            raise RuntimeError("cold boom")
+
+    manager = MCPManager(process_factory=_factory(Boom()))
+    await manager.spawn_all({"bad": _server_cfg()})
+    assert manager.tool_specs() == []
+    assert manager.failed_servers() == {"bad": "RuntimeError: cold boom"}
+    assert "- bad: RuntimeError: cold boom" in manager.prompt_summary()
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_stub_to_live_recovery_on_sync() -> None:
+    state = {"broken": False}
+
+    class Toggle(_FakeSession):
+        async def initialize(self) -> object:
+            if state["broken"]:
+                raise RuntimeError("down")
+            return {}
+
+    def make(name: str, cfg: McpServerCfg) -> MCPProcess:
+        return MCPProcess(name, cfg.command, [], {}, session=Toggle())
+
+    manager = MCPManager(process_factory=make)
+    await manager.spawn_all({"echo": _server_cfg(command="true")})
+    # Failed reconnect keeps last_tools stubs.
+    state["broken"] = True
+    await manager.sync({"echo": _server_cfg(command="true", env={"retry": "1"})})
+    stub = manager.tool_specs()[0]
+    assert (await stub.handler({})).is_error is True
+
+    state["broken"] = False
+    diags, _ = await manager.sync({"echo": _server_cfg(command="true", env={"retry": "2"})})
+    assert [diag.ok for diag in diags] == [True]
+    live = manager.tool_specs()[0]
+    result = await live.handler({})
+    assert result.is_error is False
+    assert result.content == "pong"
+    assert manager.failed_servers() == {}
+    await manager.shutdown()

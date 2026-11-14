@@ -92,6 +92,7 @@ class WorkspaceContextBuilder:
         skills: str | None = None,
         team: str | None = None,
         pending_followup: Any = None,
+        mcp_status: str = "",
     ) -> ActiveSnapshot:
         from thyca.bots.card import identity_text
         from thyca.bots.registry import SYSTEM_BOT_ID
@@ -185,6 +186,8 @@ class WorkspaceContextBuilder:
             hot = replace(hot, room_history=room_delta)
         if window is not None:
             hot = replace(hot, channel_brief=_channel_brief(window))
+        if mcp_status:
+            hot = replace(hot, mcp_status=mcp_status)
         if pending_followup is not None and window is not None:
             p = pending_followup
             if window.kind == "dm" and p.dm_window == window.window_id:
@@ -284,6 +287,7 @@ def build_workspace_hot(
     skills: str | None = None,
     team: str | None = None,
     pending_followup: Any = None,
+    mcp_status: str = "",
 ) -> ActiveSnapshot:
     """Compose a hot snapshot from already-prepared, turn-scoped inputs."""
     return WorkspaceContextBuilder(thyca_dir).build(
@@ -301,4 +305,5 @@ def build_workspace_hot(
         skills=skills,
         team=team,
         pending_followup=pending_followup,
+        mcp_status=mcp_status,
     )

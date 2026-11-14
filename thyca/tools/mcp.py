@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 import sys
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -18,6 +18,7 @@ from thyca.core.protocol import ToolResult
 from thyca.tools.registry import ToolSpec
 
 CALL_TIMEOUT = timedelta(seconds=30)
+_MAX_ERROR_CHARS = 200
 
 
 class _McpSession(Protocol):
@@ -273,11 +274,43 @@ def _canonical_tools(
             yield proc, tool, spec, None
 
 
+def _unwrap_exception(exc: BaseException) -> BaseException:
+    while isinstance(exc, BaseExceptionGroup) and exc.exceptions:
+        exc = exc.exceptions[0]
+    return exc
+
+
+def _summarize_error(exc: BaseException) -> str:
+    leaf = _unwrap_exception(exc)
+    detail = " ".join(str(leaf).split())
+    text = f"{type(leaf).__name__}: {detail}" if detail else type(leaf).__name__
+    if len(text) <= _MAX_ERROR_CHARS:
+        return text
+    return text[: _MAX_ERROR_CHARS - 3].rstrip() + "..."
+
+
+def format_mcp_status(failed: Mapping[str, str]) -> str:
+    """Render failed MCP server diagnostics for the agent system prompt."""
+    if not failed:
+        return ""
+    lines = [
+        "Configured MCP servers that failed to start (their tools are unavailable):",
+    ]
+    for server, reason in failed.items():
+        clean = " ".join(str(reason).split())[:_MAX_ERROR_CHARS]
+        lines.append(f"- {server}: {clean or 'startup failed'}")
+    lines.append(
+        "If a task relies on one of these servers, inform the user clearly instead of fabricating or retrying missing tools."
+    )
+    return "\n".join(lines)
+
+
 class MCPManager:
     def __init__(self, process_factory: ProcessFactory | None = None) -> None:
         self._factory = process_factory or _default_process
         self._live: list[tuple[MCPProcess, list[Tool]]] = []
         self._configs: dict[str, McpServerCfg] = {}
+        self._failed: dict[str, str] = {}
 
     async def _spawn_one(
         self, name: str, cfg: McpServerCfg, seen: set[str]
@@ -290,7 +323,10 @@ class MCPManager:
                 await proc.aclose()
             except Exception:
                 pass
-            return [StartupDiagnostic(name, False, str(exc))]
+            summary = _summarize_error(exc)
+            self._failed[name] = summary
+            return [StartupDiagnostic(name, False, summary)]
+        self._failed.pop(name, None)
         self._live.append((proc, tools))
         # Frozen copy: McpServerCfg.args/env are mutable containers, so the
         # stored fingerprint must not alias the caller's object.
@@ -346,6 +382,9 @@ class MCPManager:
                 for tool in tools
             )
         self._live = still
+        for name in list(self._failed):
+            if name not in servers:
+                self._failed.pop(name, None)
         diags: list[StartupDiagnostic] = []
         live_names = {proc.name for proc, _tools in self._live}
         seen = {spec.name for spec in self.tool_specs()}
@@ -354,6 +393,14 @@ class MCPManager:
                 continue
             diags.extend(await self._spawn_one(name, cfg, seen))
         return diags, removed
+
+    def failed_servers(self) -> dict[str, str]:
+        """Return a snapshot of MCP servers that failed startup and their summaries."""
+        return dict(self._failed)
+
+    def prompt_summary(self) -> str:
+        """Format current MCP server failures for prompt injection (empty when healthy)."""
+        return format_mcp_status(self._failed)
 
     def tool_specs(self) -> list[ToolSpec]:
         seen: set[str] = set()
@@ -366,6 +413,7 @@ class MCPManager:
     async def shutdown(self) -> None:
         live, self._live = self._live, []
         self._configs.clear()
+        self._failed.clear()
         for proc, _tools in live:
             try:
                 await proc.aclose()

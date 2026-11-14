@@ -177,3 +177,12 @@ def test_today_elsewhere_section_rendered_only_when_nonempty() -> None:
     # Order: today, today_elsewhere, then skills/rules.
     assert with_index.index("<today>") < with_index.index("<today_elsewhere>")
     assert with_index.index("</today_elsewhere>") < with_index.index("<rules>")
+
+
+def test_mcp_status_section_rendered_only_when_nonempty() -> None:
+    manager = PromptManager()
+    without = manager.build(_hot())
+    assert "<mcp_status>" not in without
+    with_status = manager.build(_hot(mcp_status="- tavily: RuntimeError: tls failed"))
+    assert "<mcp_status>\n- tavily: RuntimeError: tls failed\n</mcp_status>" in with_status
+    assert with_status.index("</mcp_status>") < with_status.index("<rules>")

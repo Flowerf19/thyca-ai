@@ -791,6 +791,7 @@ class BotRuntime:
                 skills=self._registry.skill_index_text(card.bot_id),
                 team=self._registry.team_index_text(),
                 pending_followup=_active_pf,
+                mcp_status=scope.mcp_status,
             )
             # Freeze the visible mailbox batch once before compact planning.
             # The exact same wire text is used by the plan and AgentLoop;

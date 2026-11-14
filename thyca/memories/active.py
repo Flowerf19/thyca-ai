@@ -93,6 +93,8 @@ class ActiveSnapshot:
     channel_brief: str = ""
     # WS-4: private-followup index line (DM full ref; group waiting only).
     private_followup: str = ""
+    # Failed MCP startup diagnostics formatted for prompt visibility (empty when healthy).
+    mcp_status: str = ""
 
 
 class ActiveMemory:

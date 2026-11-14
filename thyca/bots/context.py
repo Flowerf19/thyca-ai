@@ -32,6 +32,7 @@ class BotTurnScope:
     state: ActiveState
     zone: ZoneInfo
     injected_connect: LLMPort | None = None
+    mcp_status: str = ""
 
 
 @dataclass

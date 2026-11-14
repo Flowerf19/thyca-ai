@@ -38,6 +38,8 @@ class PromptManager:
             parts.append(_section("today_elsewhere", hot.today_elsewhere))
         if hot.skills:
             parts.append(_section("skills", hot.skills))
+        if getattr(hot, "mcp_status", ""):
+            parts.append(_section("mcp_status", hot.mcp_status))
         if hot.team:
             parts.append(_section("team", hot.team))
         if hot.tasks:

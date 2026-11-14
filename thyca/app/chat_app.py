@@ -226,6 +226,7 @@ class ChatApp:
             )
             install_mcp_specs(self._registry, self._mcp, err=self._stderr)
             self._tools = self._registry.to_openai_schema()
+            self._mcp_status = self._read_mcp_status()
             self._act = Act(self._gateway, skills_root=root / "skills")
         except BaseException:
             self.shutdown()
@@ -372,6 +373,10 @@ class ChatApp:
             offset += 200
         return {"model": self._current_cfg().provider.model, "conversations": summaries}
 
+    def _read_mcp_status(self) -> str:
+        fn = getattr(self._mcp, "prompt_summary", None)
+        return str(fn()) if callable(fn) else ""
+
     def _sync_mcp(self, turn_cfg: Config) -> None:
         """Converge MCP servers to the current config file (hot-reload).
 
@@ -385,6 +390,7 @@ class ChatApp:
                 self._registry.unregister(name)
             install_mcp_specs(self._registry, self._mcp, err=self._stderr)
             self._tools = self._registry.to_openai_schema()
+            self._mcp_status = self._read_mcp_status()
 
     def _current_cfg(self) -> Config:
         """Re-read the config file each turn so settings changes apply
@@ -787,6 +793,7 @@ class ChatApp:
                 state=self._state,
                 zone=self._zone,
                 injected_connect=connect,
+                mcp_status=self._mcp_status,
             )
             trace_id = new_trace_id()
             span_id = new_span_id()

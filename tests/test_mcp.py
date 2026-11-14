@@ -564,3 +564,41 @@ async def test_sync_stop_failure_is_swallowed() -> None:
     assert removed == ["t__ping"]
     assert manager._live == []
     await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_failed_servers_tracks_startup_errors_unwraps_groups_and_clears() -> None:
+    class GroupFail(_FakeSession):
+        async def initialize(self) -> object:
+            raise ExceptionGroup(
+                "unhandled errors in a TaskGroup",
+                [RuntimeError("unable to get local issuer certificate\nline2")],
+            )
+
+    state = {"broken": True}
+
+    def make(name: str, cfg: McpServerCfg) -> MCPProcess:
+        session = GroupFail() if state["broken"] else _FakeSession()
+        return MCPProcess(name, cfg.command, list(cfg.args), dict(cfg.env), session=session)
+
+    manager = MCPManager(process_factory=make)
+    await manager.spawn_all({"tavily": _server_cfg()})
+    failed = manager.failed_servers()
+    assert "tavily" in failed
+    assert "RuntimeError: unable to get local issuer certificate line2" == failed["tavily"]
+    summary = manager.prompt_summary()
+    assert "tavily" in summary and "unable to get local issuer certificate line2" in summary
+
+    # Removing from config clears its diagnostic even before another spawn.
+    await manager.sync({})
+    assert manager.failed_servers() == {}
+    assert manager.prompt_summary() == ""
+
+    # Recovering on sync clears the failed entry as well.
+    await manager.sync({"tavily": _server_cfg()})
+    assert "tavily" in manager.failed_servers()
+    state["broken"] = False
+    await manager.sync({"tavily": _server_cfg()})
+    assert manager.failed_servers() == {}
+    assert manager.prompt_summary() == ""
+    await manager.shutdown()

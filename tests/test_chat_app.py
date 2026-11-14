@@ -750,6 +750,48 @@ def test_turn_completes_when_mcp_spawn_fails(tmp_path: Path) -> None:
         turned = app.turn(created["conversation_id"], "hi")
         assert turned["reply"] == "pong"
         assert not _saw_tool(llm, "bad__search")
+        system = next(
+            m.content for msgs in llm.requests for m in msgs if m.role == "system"
+        )
+        assert "<mcp_status>" in system
+        assert "- bad: RuntimeError: child exited" in system
+    finally:
+        app.shutdown()
+
+
+def test_turn_mcp_status_clears_after_recovery(tmp_path: Path) -> None:
+    class ToggleSession(_TavilySession):
+        broken = True
+
+        async def initialize(self) -> object:
+            if ToggleSession.broken:
+                raise RuntimeError("connect failed")
+            return {}
+
+    def toggle_factory(name: str, cfg: McpServerCfg) -> MCPProcess:
+        return MCPProcess(
+            name, cfg.command, list(cfg.args), dict(cfg.env), session=ToggleSession()
+        )
+
+    llm = ScriptedLLM([ChatReply(content="first"), ChatReply(content="second")])
+    app = _chat_with_mcp(tmp_path, llm, toggle_factory)
+    try:
+        created = app.create()
+        _save_mcp(tmp_path, {"tavily": McpServerCfg(command="tavily")})
+        assert app.turn(created["conversation_id"], "one")["reply"] == "first"
+        first_system = next(
+            m.content for m in llm.requests[0] if m.role == "system"
+        )
+        assert "<mcp_status>" in first_system
+        assert "- tavily: RuntimeError: connect failed" in first_system
+
+        ToggleSession.broken = False
+        assert app.turn(created["conversation_id"], "two")["reply"] == "second"
+        second_system = next(
+            m.content for m in llm.requests[1] if m.role == "system"
+        )
+        assert "<mcp_status>" not in second_system
+        assert _saw_tool(llm, "tavily__search")
     finally:
         app.shutdown()
 

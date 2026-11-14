@@ -2,6 +2,13 @@
 
 Thay đổi của Thyca, viết ngắn gọn cho người dùng.
 
+## 0.88.0.dev2 — Development
+
+- Cảnh báo trạng thái MCP lỗi cho agent: `MCPManager` theo dõi các server khởi động thất bại (`failed_servers()` / `prompt_summary()`) và bơm khối `<mcp_status>` vào system prompt qua `ActiveSnapshot` -> `PromptManager` để agent biết server nào không khả dụng.
+- Chống treo khi khởi động MCP và giữ biến chứng chỉ TLS: `MCPProcess.start()` đặt startup timeout mặc định **10 giây** (`START_TIMEOUT`), hủy task bị kẹt để `stdio_client` dọn tiến trình con mà vẫn cho Thyca khởi động bình thường; `report_spawn_diags()` in 1 dòng `warning: mcp <server>: <message>` ra stderr/log; `merge_env()` giữ lại `SSL_CERT_FILE`, `SSL_CERT_DIR`, `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`.
+- Kiểm chứng: bộ test tập trung (`test_mcp.py`, `test_llm_prompt_manager.py`, `test_workspace_context.py`, `test_chat_app.py`, `test_cli.py`, `test_serve_chat.py`, `test_bots_context.py`) đạt **254 passed** và `git diff --check` sạch tại commit `da31e91` (chưa chạy toàn bộ suite).
+- Đây là bản dev, chưa phải beta hay stable; không tự bỏ hậu tố dev khi nâng phiên bản.
+
 ## 0.88.0.dev1 — Development
 
 - Sửa lỗi không mở được conversation store trên distro bất biến có `/home` là symlink (như Bazzite / Fedora Silverblue `/home -> var/home`): hỗ trợ duyệt symlink tổ tiên tin cậy (thuộc `root`, người dùng hiện tại, hoặc UID `65534` trong user namespace) qua descriptor `dir_fd`, vẫn chặn leaf symlink, symlink loop và thư mục tổ tiên cho phép ghi ngoài sticky temp.

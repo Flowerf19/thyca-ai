@@ -17,6 +17,9 @@ from thyca.tools.mcp import (
     CALL_TIMEOUT,
     MCPManager,
     MCPProcess,
+    START_TIMEOUT,
+    _summarize_error,
+    format_mcp_status,
     join_text_blocks,
     merge_env,
     model_name,
@@ -29,6 +32,10 @@ from thyca.tools.task_store import TaskStore
 
 def test_call_timeout_is_30s() -> None:
     assert timedelta(seconds=30) == CALL_TIMEOUT
+
+
+def test_start_timeout_is_10s() -> None:
+    assert timedelta(seconds=10) == START_TIMEOUT
 
 
 def test_model_name_prefix() -> None:
@@ -54,6 +61,15 @@ def test_merge_env_keeps_defaults_and_overrides(
     assert "HOME" in merged
     assert "pydantic_settings" in merged["PYTHONWARNINGS"]
     assert merge_env({"PYTHONWARNINGS": "default"})["PYTHONWARNINGS"] == "default"
+
+
+def test_merge_env_keeps_tls_ca_vars(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SSL_CERT_FILE", "/etc/ssl/certs/ca.pem")
+    monkeypatch.setenv("NODE_EXTRA_CA_CERTS", "/etc/pki/ca-trust/tls-ca-bundle.pem")
+    merged = merge_env({})
+    assert merged["SSL_CERT_FILE"] == "/etc/ssl/certs/ca.pem"
+    assert merged["NODE_EXTRA_CA_CERTS"] == "/etc/pki/ca-trust/tls-ca-bundle.pem"
+    assert merge_env({"SSL_CERT_FILE": "/override.pem"})["SSL_CERT_FILE"] == "/override.pem"
 
 
 def test_quiet_warnings_actually_silences_fastmcp() -> None:
@@ -602,3 +618,190 @@ async def test_failed_servers_tracks_startup_errors_unwraps_groups_and_clears() 
     assert manager.failed_servers() == {}
     assert manager.prompt_summary() == ""
     await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_process_start_timeout_cancels_hung_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    from contextlib import asynccontextmanager
+
+    cleaned = {"exited": False}
+
+    @asynccontextmanager
+    async def fake_stdio(_params):
+        try:
+            yield object(), object()
+        finally:
+            cleaned["exited"] = True
+
+    class HungClientSession:
+        def __init__(self, _read, _write) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def initialize(self) -> object:
+            await asyncio.Future()
+            return {}
+
+    monkeypatch.setattr("thyca.tools.mcp.stdio_client", fake_stdio)
+    monkeypatch.setattr("thyca.tools.mcp.ClientSession", HungClientSession)
+
+    proc = MCPProcess("hung", "unused", [], {}, start_timeout=timedelta(seconds=0.05))
+    with pytest.raises(TimeoutError, match="startup timed out after 0.05s"):
+        await proc.start()
+    assert cleaned["exited"] is True
+    assert proc._task is None
+
+
+@pytest.mark.asyncio
+async def test_spawn_all_isolates_hung_server_timeout() -> None:
+    class HungSession(_FakeSession):
+        async def initialize(self) -> object:
+            await asyncio.Future()
+            return {}
+
+    def make(name: str, cfg: McpServerCfg) -> MCPProcess:
+        if name == "hung":
+            return MCPProcess(
+                name,
+                cfg.command,
+                [],
+                {},
+                session=HungSession(),
+                start_timeout=timedelta(seconds=0.05),
+            )
+        return MCPProcess(name, cfg.command, [], {}, session=_FakeSession())
+
+    manager = MCPManager(process_factory=make)
+    diags = await manager.spawn_all(
+        {
+            "hung": McpServerCfg(command="true"),
+            "echo": McpServerCfg(command="true"),
+        }
+    )
+    by_name = {diag.server: diag for diag in diags}
+    assert by_name["hung"].ok is False
+    assert by_name["hung"].message == "TimeoutError: startup timed out after 0.05s"
+    assert by_name["echo"].ok is True
+    assert [spec.name for spec in manager.tool_specs()] == ["echo__ping"]
+    assert manager.failed_servers() == {"hung": "TimeoutError: startup timed out after 0.05s"}
+    assert "- hung: TimeoutError: startup timed out after 0.05s" in manager.prompt_summary()
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_real_hung_subprocess_times_out_and_keeps_echo_alive(tmp_path: Path) -> None:
+    hung_script = tmp_path / "hung_mcp.py"
+    hung_script.write_text("import time\ntime.sleep(60)\n", encoding="utf-8")
+    echo_script = _write_echo(tmp_path)
+
+    def make(name: str, cfg: McpServerCfg) -> MCPProcess:
+        timeout = timedelta(seconds=0.2) if name == "hung" else None
+        return MCPProcess(
+            name, cfg.command, list(cfg.args), dict(cfg.env), start_timeout=timeout
+        )
+
+    manager = MCPManager(process_factory=make)
+    diags = await manager.spawn_all(
+        {
+            "hung": McpServerCfg(command=sys.executable, args=[str(hung_script)]),
+            "echo": McpServerCfg(command=sys.executable, args=[str(echo_script)]),
+        }
+    )
+    by_name = {diag.server: diag for diag in diags}
+    assert by_name["hung"].ok is False
+    assert by_name["hung"].message == "TimeoutError: startup timed out after 0.2s"
+    assert by_name["echo"].ok is True
+    assert [spec.name for spec in manager.tool_specs()] == ["echo__ping"]
+    assert "hung" in manager.failed_servers()
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_real_crashing_subprocess_fails_soft_alongside_healthy(tmp_path: Path) -> None:
+    crash_script = tmp_path / "crash_mcp.py"
+    crash_script.write_text("import sys\nsys.exit(1)\n", encoding="utf-8")
+    echo_script = _write_echo(tmp_path)
+
+    manager = MCPManager()
+    diags = await manager.spawn_all(
+        {
+            "crash": McpServerCfg(command=sys.executable, args=[str(crash_script)]),
+            "echo": McpServerCfg(command=sys.executable, args=[str(echo_script)]),
+        }
+    )
+    by_name = {diag.server: diag for diag in diags}
+    assert by_name["crash"].ok is False
+    assert by_name["echo"].ok is True
+    assert [spec.name for spec in manager.tool_specs()] == ["echo__ping"]
+    assert "crash" in manager.failed_servers()
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_list_tools_timeout_is_caught_and_sync_recovers() -> None:
+    class HangListTools(_FakeSession):
+        async def list_tools(self):
+            await asyncio.Future()
+
+    broken = {"on": True}
+
+    def make(name: str, cfg: McpServerCfg) -> MCPProcess:
+        session = HangListTools() if broken["on"] else _FakeSession()
+        return MCPProcess(
+            name,
+            cfg.command,
+            [],
+            {},
+            session=session,
+            start_timeout=timedelta(seconds=0.05),
+        )
+
+    manager = MCPManager(process_factory=make)
+    diags, _ = await manager.sync({"slow": _server_cfg()})
+    assert len(diags) == 1 and diags[0].ok is False
+    assert "startup timed out after 0.05s" in diags[0].message
+    assert "slow" in manager.failed_servers()
+
+    broken["on"] = False
+    diags, _ = await manager.sync({"slow": _server_cfg()})
+    assert [diag.ok for diag in diags] == [True]
+    assert manager.failed_servers() == {}
+    assert manager.prompt_summary() == ""
+    assert [spec.name for spec in manager.tool_specs()] == ["slow__ping"]
+    await manager.shutdown()
+
+
+def test_format_mcp_status_and_summarize_error_bounds() -> None:
+    assert format_mcp_status({}) == ""
+    long_exc = RuntimeError("x " * 300)
+    summary = _summarize_error(long_exc)
+    assert len(summary) <= 200
+    assert summary.endswith("...")
+
+    rendered = format_mcp_status({"a": "first\nline", "b": ""})
+    assert "- a: first line" in rendered
+    assert "- b: startup failed" in rendered
+
+
+def test_report_spawn_diags_emits_single_warning_line_per_failure() -> None:
+    from io import StringIO
+
+    from thyca.app.toolchain import report_spawn_diags
+    from thyca.tools.mcp import StartupDiagnostic
+
+    buf = StringIO()
+    report_spawn_diags(
+        [
+            StartupDiagnostic("healthy", True, ""),
+            StartupDiagnostic("tavily", False, "TimeoutError: startup timed out after 10s"),
+        ],
+        err=buf,
+    )
+    assert buf.getvalue().splitlines() == [
+        "warning: mcp tavily: TimeoutError: startup timed out after 10s"
+    ]

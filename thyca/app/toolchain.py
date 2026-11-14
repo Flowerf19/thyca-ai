@@ -98,10 +98,10 @@ def build_agent_loop(
 
 
 def report_spawn_diags(diags: Iterable[StartupDiagnostic], *, err: TextIO) -> None:
-    """Print one stderr line per failed MCP server spawn."""
+    """Print one stderr warning line per failed MCP server spawn."""
     for diag in diags:
         if not diag.ok:
-            print(f"{diag.server}: {diag.message}", file=err)
+            print(f"warning: mcp {diag.server}: {diag.message}", file=err, flush=True)
 
 
 def install_mcp_specs(

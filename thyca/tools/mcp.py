@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import sys
 from collections.abc import Callable, Iterator, Mapping
@@ -17,8 +18,16 @@ from thyca.configs import McpServerCfg
 from thyca.core.protocol import ToolResult
 from thyca.tools.registry import ToolSpec
 
+START_TIMEOUT = timedelta(seconds=10)
 CALL_TIMEOUT = timedelta(seconds=30)
 _MAX_ERROR_CHARS = 200
+_TLS_ENV_VARS = (
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "NODE_EXTRA_CA_CERTS",
+    "REQUESTS_CA_BUNDLE",
+    "CURL_CA_BUNDLE",
+)
 
 
 class _McpSession(Protocol):
@@ -50,7 +59,12 @@ _QUIET_WARNINGS = "ignore:::pydantic_settings.sources.utils"
 
 
 def merge_env(server_env: dict[str, str]) -> dict[str, str]:
-    merged = get_default_environment() | dict(server_env)
+    merged = get_default_environment()
+    for key in _TLS_ENV_VARS:
+        value = os.environ.get(key)
+        if value:
+            merged[key] = value
+    merged.update(server_env)
     merged.setdefault("PYTHONWARNINGS", _QUIET_WARNINGS)
     return merged
 
@@ -105,6 +119,11 @@ def _is_object_schema(schema: object) -> bool:
     return isinstance(schema, dict) and schema.get("type") == "object" and is_schema(schema)
 
 
+def _format_timeout(seconds: float) -> str:
+    label = f"{int(seconds)}s" if float(seconds).is_integer() else f"{seconds:g}s"
+    return f"startup timed out after {label}"
+
+
 class MCPProcess:
     def __init__(
         self,
@@ -113,26 +132,43 @@ class MCPProcess:
         args: list[str],
         env: dict[str, str],
         session: _McpSession | None = None,
+        start_timeout: timedelta | None = None,
     ) -> None:
         self.name = name
         self._command = command
         self._args = args
         self._env = env
         self._session = session
+        self._start_timeout = start_timeout
         self._closed: asyncio.Event | None = None
         self._task: asyncio.Task[None] | None = None
+        self._running_wait = False
         self._failure: BaseException | None = None
 
+    def _timeout_seconds(self) -> float:
+        timeout = START_TIMEOUT if self._start_timeout is None else self._start_timeout
+        return timeout.total_seconds()
+
     async def start(self) -> list[Tool]:
+        timeout_s = self._timeout_seconds()
         if self._session is not None:
-            await self._session.initialize()
-            listed = await self._session.list_tools()
-            return list(listed.tools)
+            try:
+                async with asyncio.timeout(timeout_s):
+                    await self._session.initialize()
+                    listed = await self._session.list_tools()
+                    return list(listed.tools)
+            except TimeoutError as exc:
+                raise TimeoutError(_format_timeout(timeout_s)) from exc
         ready: asyncio.Future[list[Tool]] = asyncio.get_running_loop().create_future()
         self._closed = asyncio.Event()
+        self._running_wait = False
         self._task = asyncio.create_task(self._run(ready), name=f"mcp:{self.name}")
         try:
-            return await ready
+            async with asyncio.timeout(timeout_s):
+                return await ready
+        except TimeoutError as exc:
+            await self.aclose()
+            raise TimeoutError(_format_timeout(timeout_s)) from exc
         except BaseException:
             await self.aclose()
             raise
@@ -150,6 +186,7 @@ class MCPProcess:
                     self._session = session
                     await session.initialize()
                     listed = await session.list_tools()
+                    self._running_wait = True
                     if not ready.done():
                         ready.set_result(list(listed.tools))
                     # _closed is always set in start() before this task exists.
@@ -160,6 +197,7 @@ class MCPProcess:
             else:
                 self._failure = exc
         finally:
+            self._running_wait = False
             self._session = None
 
     async def call(
@@ -190,7 +228,17 @@ class MCPProcess:
             self._closed.set()
         task, self._task = self._task, None
         if task is not None:
-            await task
+            # Cancel if startup is still blocked before _closed.wait(); once waiting,
+            # _closed.set() exits cleanly and lets stdio_client terminate the child.
+            if not self._running_wait and not task.done():
+                task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                current = asyncio.current_task()
+                if current is not None and current.cancelling():
+                    raise
+        self._running_wait = False
         self._session = None
         self._failure = None
 

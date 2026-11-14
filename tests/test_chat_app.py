@@ -4,6 +4,8 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -792,6 +794,53 @@ def test_turn_mcp_status_clears_after_recovery(tmp_path: Path) -> None:
         )
         assert "<mcp_status>" not in second_system
         assert _saw_tool(llm, "tavily__search")
+    finally:
+        app.shutdown()
+
+
+def test_chat_app_starts_and_warns_when_mcp_times_out(tmp_path: Path) -> None:
+    from io import StringIO
+
+    class HungSession(_TavilySession):
+        async def initialize(self) -> object:
+            await asyncio.Future()
+            return {}
+
+    def hung_factory(name: str, cfg: McpServerCfg) -> MCPProcess:
+        return MCPProcess(
+            name,
+            cfg.command,
+            list(cfg.args),
+            dict(cfg.env),
+            session=HungSession(),
+            start_timeout=timedelta(seconds=0.05),
+        )
+
+    save(
+        replace(seeded_config(), mcpServers={"hung": McpServerCfg(command="hung")}),
+        tmp_path / "config.json",
+    )
+    stderr = StringIO()
+    llm = FakeLLM(ChatReply(content="still up"))
+    app = ChatApp(
+        tmp_path,
+        load(tmp_path / "config.json"),
+        connect=llm,
+        mcp_factory=hung_factory,
+        stderr=stderr,
+    )
+    try:
+        assert stderr.getvalue().splitlines() == [
+            "warning: mcp hung: TimeoutError: startup timed out after 0.05s"
+        ]
+        created = app.create()
+        turned = app.turn(created["conversation_id"], "hi")
+        assert turned["reply"] == "still up"
+        system = next(
+            m.content for msgs in llm.requests for m in msgs if m.role == "system"
+        )
+        assert "<mcp_status>" in system
+        assert "- hung: TimeoutError: startup timed out after 0.05s" in system
     finally:
         app.shutdown()
 

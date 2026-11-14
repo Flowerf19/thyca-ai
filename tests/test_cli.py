@@ -208,7 +208,7 @@ def test_cli_mcp_diagnostic_includes_server_name(tmp_path: Path, monkeypatch) ->
     cli, _out, err = _cli(tmp_path, FakeLLM(ChatReply(content="ok")))
 
     assert cli.main(["-p", "hi"]) == 0
-    assert "remote: failed to start" in err.getvalue()
+    assert err.getvalue().strip() == "warning: mcp remote: failed to start"
 
 
 def test_model_override_does_not_persist(tmp_path: Path) -> None:

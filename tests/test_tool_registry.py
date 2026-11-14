@@ -52,6 +52,15 @@ def test_duplicate_register_raises() -> None:
         registry.register(_echo_spec())
 
 
+def test_replace_swaps_spec_with_same_name() -> None:
+    registry = ToolRegistry()
+    first = _echo_spec()
+    second = _echo_spec()
+    registry.register(first)
+    registry.replace(second)
+    assert registry.get("echo") is second
+
+
 def test_get_returns_spec_or_none() -> None:
     registry = ToolRegistry()
     assert registry.get("echo") is None

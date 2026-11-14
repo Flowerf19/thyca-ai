@@ -107,15 +107,13 @@ def report_spawn_diags(diags: Iterable[StartupDiagnostic], *, err: TextIO) -> No
 def install_mcp_specs(
     registry: ToolRegistry, mcp: MCPManager, *, err: TextIO
 ) -> None:
-    """Register MCP tool specs; already-present names are skipped.
+    """Upsert MCP tool specs (stub↔live swaps reuse the same names).
 
-    Idempotent for turn-start re-installs: cross-server clashes were already
-    reported as spawn diagnostics, so only genuinely new names register here.
+    Cross-server name clashes were already reported as spawn diagnostics;
+    ``replace`` keeps the latest handler/schema for each accepted name.
     """
     for spec in mcp.tool_specs():
-        if registry.get(spec.name) is not None:
-            continue
         try:
-            registry.register(spec)
+            registry.replace(spec)
         except ValueError as exc:
             print(str(exc), file=err)

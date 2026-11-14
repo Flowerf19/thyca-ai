@@ -830,12 +830,14 @@ def test_chat_app_starts_and_warns_when_mcp_times_out(tmp_path: Path) -> None:
         stderr=stderr,
     )
     try:
-        assert stderr.getvalue().splitlines() == [
-            "warning: mcp hung: TimeoutError: startup timed out after 0.05s"
-        ]
+        # Boot only schedules; settle + warning happen on the first turn.
+        assert stderr.getvalue() == ""
         created = app.create()
         turned = app.turn(created["conversation_id"], "hi")
         assert turned["reply"] == "still up"
+        assert stderr.getvalue().splitlines() == [
+            "warning: mcp hung: TimeoutError: startup timed out after 0.05s"
+        ]
         system = next(
             m.content for msgs in llm.requests for m in msgs if m.role == "system"
         )

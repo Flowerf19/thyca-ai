@@ -74,6 +74,15 @@ Mục tiêu của file này là mô tả trạng thái thật tại HEAD. Mã ng
 - Cấm file lẻ ở tầng cao nhất, trừ `__init__.py` và `__main__.py`. Cấm shim.
 - `core/` và `platform/` là lá (leaf): chỉ dùng thư viện chuẩn, không import `thyca.*` khác.
 - `serve/` không import runtime `app/` ở mức module. Chỉ dùng `TYPE_CHECKING` và import lười (lazy).
+- MCP client nằm ở package `thyca/tools/mcp/` (`process`, `catalog`, `manager`). Không còn `thyca/tools/mcp.py`.
+
+## MCP runtime
+
+- Boot: `ChatApp` chỉ `schedule` connect song song; không chờ MCP xong mới mở app.
+- Mỗi turn: `_sync_mcp` gọi `sync` (= `schedule` + `settle`), rồi upsert tool specs vào registry.
+- Server từng `list_tools` thành công giữ `last_tools` in-memory: reconnect lỗi → stub/`is_error`; đang connect → handler chờ rồi forward.
+- Cold fail (chưa có catalog) mới vào `failed_servers()` / `<mcp_status>` trong system prompt. Stub đã cover thì không double-signal.
+- `START_TIMEOUT` mặc định 10s mỗi server; `merge_env` giữ biến chứng chỉ TLS thường gặp. Không tự respawn process chết giữa phiên.
 
 ## Dữ liệu và an toàn
 
@@ -81,7 +90,7 @@ Mục tiêu của file này là mô tả trạng thái thật tại HEAD. Mã ng
 - Không kiểm tra, không truy cập và không tạo lại `~/.thyca` hay nội dung trong đó.
 - Không thêm ví dụ API key vào tài liệu hướng dẫn dự án.
 - Giữ nguyên các thay đổi không liên quan trong working tree và artifact untracked của user.
-- Mọi kế hoạch đã xong và lưu dưới `.agents/plans/done/` (2026-11-09), gồm 3 file untracked của user. Không có plan in-progress. Không sửa và không xóa các file đã lưu.
+- Mọi kế hoạch đã xong và lưu dưới `.agents/plans/done/` (cập nhật 2026-11-14: thêm `mcp-health-visibility.md`). Không có plan in-progress. Không sửa và không xóa các file đã lưu trừ khi user yêu cầu cập nhật cho khớp HEAD.
 - Serve chỉ chạy loopback. Không để lộ secret, đường dẫn nội bộ hay stack trace qua API.
 - Markdown của bộ nhớ vẫn là nguồn sự thật của bộ nhớ. SQLite của bộ nhớ chỉ là mục lục suy ra (derived index).
 - Đọc `.agents/AGENT_RULES.md` và các quyết định/kế hoạch liên quan trước khi đổi contract bộ nhớ.

@@ -46,6 +46,10 @@ class ToolRegistry:
         """Drop a spec; unknown names are a silent no-op (idempotent)."""
         self._specs.pop(name, None)
 
+    def replace(self, spec: ToolSpec) -> None:
+        """Register ``spec``, replacing any prior spec with the same name."""
+        self._specs[spec.name] = spec
+
     def get(self, name: str) -> ToolSpec | None:
         """Spec lookup for the gateway; None when unregistered."""
         return self._specs.get(name)

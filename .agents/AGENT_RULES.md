@@ -6,6 +6,15 @@
 - Giữ hậu tố `.devN` theo chuẩn Python; không tự bỏ `dev`, chuyển sang beta/RC/stable, hoặc coi bản dev là release chính thức. Chỉ thay giai đoạn phát hành khi user yêu cầu rõ ràng.
 - Khi đổi version, đồng bộ `pyproject.toml`, `thyca/__init__.py`, `uv.lock` và README.
 
+## CHANGELOG — viết cho người dùng
+
+`CHANGELOG.md` (“Có gì mới”) là ghi chú sản phẩm, không phải nhật ký kỹ thuật.
+
+- Viết những gì người dùng thấy hoặc làm được khác đi: lỗi hết, hành vi mới, chỗ cần chú ý khi dùng.
+- Ngắn, tiếng Việt dễ đọc. Một ý một bullet.
+- Không viết kiểu dev: tên class/hàm/file/module, API nội bộ, biến môi trường, số test passed/skipped, `git diff --check`, commit hash, “kiểm chứng…”, hay câu “đây là bản dev / chưa phải beta” (trạng thái phát hành chỉ nằm ở rule này và README).
+- Không nhét refactor thuần nội bộ trừ khi người dùng phải biết (ví dụ đổi lệnh, đổi cấu hình, mất tương thích).
+
 - Chỉ làm task thuộc plan `in-progress` (hoặc bug/fix UI user vừa chỉ). Không thêm dependency, abstraction, hay feature ngoài task đó.
 - Không còn plan in-progress: mọi kế hoạch đã lưu xong dưới `.agents/plans/done/` (2026-11-09). Không đọc plan đã lưu như hướng dẫn hiện hành; nguồn chuẩn là `PROJECT_CONTEXT.md` và mã hiện tại.
 - L2 hybrid thuộc v1. Đọc `.agents/decisions/2026-08-15-l2-hybrid-v1.md` trước khi đổi memory contract.

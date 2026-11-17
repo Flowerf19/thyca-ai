@@ -479,6 +479,37 @@ def test_flush_extractor_prompt_hides_other_bot_task(tmp_path: Path) -> None:
         app.shutdown()
 
 
+def test_flush_extractor_prompt_includes_today_notes_scoped(tmp_path: Path) -> None:
+    import asyncio
+
+    llm = _CaptureLLM()
+    app = _chat(tmp_path, llm)
+    try:
+        app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
+                                 description="Writes code.", persona=""))
+        app._bots.create(BotCard(bot_id="designer", name="designer", role="Designer",
+                                 description="Draws.", persona=""))
+        facade = app.job_facade()
+        facade.remember("Env", "TODAY-CODER-FACT", bots=["coder"], chat="room-a")
+        facade.remember("OtherRoom", "OTHER-ROOM-FACT", bots=["coder"], chat="room-b")
+        facade.remember("Secret", "DESIGNER-PRIVATE-FACT", bots=["designer"], chat="room-a")
+        asyncio.run(app._flush_bot_memory(
+            "coder",
+            [Message(role="user", content="note this", ts="2026-10-16T10:00:00Z")],
+            app._current_cfg(),
+            room_id="room-a",
+        ))
+        extractor_prompts = [p for p in llm.prompts if "durable memories" in p]
+        assert extractor_prompts
+        prompt = extractor_prompts[-1]
+        assert "TODAY'S NOTES:" in prompt
+        assert "TODAY-CODER-FACT" in prompt
+        assert "OTHER-ROOM-FACT" not in prompt
+        assert "DESIGNER-PRIVATE-FACT" not in prompt
+    finally:
+        app.shutdown()
+
+
 def test_child_prompt_memory_tasks_filtered_per_bot(tmp_path: Path) -> None:
     llm = _CaptureLLM()
     app = _chat(tmp_path, llm)

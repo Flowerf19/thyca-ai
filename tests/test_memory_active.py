@@ -489,3 +489,21 @@ def test_snapshot_privileged_readers_keep_identity(tmp_path: Path) -> None:
         hot = memory.refresh(state, at("2026-09-01"), reader=reader)
         assert IDENTITY_MARKER in hot.identity
         assert IDENTITY_MARKER in PromptManager().build(hot)
+
+
+def test_split_today_tags_task_and_habit_headings_while_other_stays_plain(tmp_path: Path) -> None:
+    memory = _seed_today(
+        tmp_path,
+        "2026-09-28",
+        '## 13:54 — fix bug <!-- thyca {"id":"aaaa1111","imp":3,"chat":"SID-HERE","task":"task-1234abcd","kind":"checkpoint","status":"open"} -->\n'
+        "- task detail\n"
+        '## 13:55 — tea <!-- thyca {"id":"bbbb2222","imp":3,"chat":"SID-HERE","kind":"habit","habit":"uong tra"} -->\n'
+        "- habit detail\n"
+        '## 13:56 — plain <!-- thyca {"id":"cccc3333","imp":3,"chat":"SID-HERE"} -->\n'
+        "- other detail\n",
+    )
+    state = memory.open_session(at("2026-09-28"))
+    snap = memory.refresh(state, at("2026-09-28"), conversation_id="SID-HERE")
+    assert "## 13:54 — fix bug [2026-09-28#aaaa1111 · task-1234abcd · open]" in snap.today
+    assert "## 13:55 — tea [2026-09-28#bbbb2222 · habit: uong tra]" in snap.today
+    assert "## 13:56 — plain [2026-09-28#cccc3333]" in snap.today

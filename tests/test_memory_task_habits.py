@@ -701,3 +701,150 @@ async def test_tool_checkpoint_contract(tmp_path) -> None:
         "kind": "checkpoint", "habit": "label"})
     assert with_habit.is_error
     assert "does not take a habit" in with_habit.content
+
+
+# -- 3-ledger optimization: cancelled, upsert task, dedupe habit, other journal --
+
+def test_status_cancelled_validation_search_and_catalog(tmp_path) -> None:
+    from thyca.memories.facade import format_task_catalog
+
+    facade = MemoryFacade(tmp_path, timezone_name=TZ)
+    validate_task_meta("task-1234abcd", None, "checkpoint", "cancelled", None)
+    tid_open = facade.new_task_id()
+    tid_cancel = facade.new_task_id()
+    open_sid = facade.remember("active goal", "step one", now=at(1), task=tid_open, status="open")
+    cancel_sid = facade.remember("dropped goal", "abandoned tokenxyz", now=at(1), task=tid_cancel, status="open")
+    facade.update(cancel_sid, status="cancelled", now=at(2))
+    facade._refresh_index(at(5))
+
+    assert [t["task_id"] for t in facade.tasks(status="open", now=at(5))["tasks"]] == [tid_open]
+    assert [t["task_id"] for t in facade.tasks(status="cancelled", now=at(5))["tasks"]] == [tid_cancel]
+    assert len(facade.search("tokenxyz", now=at(5), status="cancelled").hits) == 1
+
+    all_rows = facade.tasks(now=at(5))["tasks"]
+    rendered = format_task_catalog(all_rows)
+    assert tid_open in rendered
+    assert open_sid in rendered
+    assert "step one" in rendered
+    assert tid_cancel not in rendered
+
+
+def test_upsert_task_card_updates_in_place_across_days(tmp_path) -> None:
+    facade = MemoryFacade(tmp_path, timezone_name=TZ)
+    tid = facade.new_task_id()
+    first = facade.upsert_task_card(
+        "Build L2 optimize",
+        "Initial setup",
+        content="- done: schema checked\n- processing: writer\n- next: tests",
+        task=tid,
+        status="open",
+        now=at(1),
+    )
+    second = facade.upsert_task_card(
+        "progress",  # generic title should preserve original card title
+        "Writer done",
+        content="- done: schema + writer\n- processing: jobs\n- next: tests",
+        task=tid,
+        status="done",
+        now=at(3),
+    )
+    assert second == first
+    assert not (tmp_path / "memory" / "2026-09-03.md").exists()
+    day1_text = (tmp_path / "memory" / "2026-09-01.md").read_text(encoding="utf-8")
+    assert day1_text.count("## ") == 1
+    assert "Build L2 optimize" in day1_text
+    assert "Writer done" in day1_text
+    assert "- done: schema + writer" in day1_text
+    catalog = facade.tasks(now=at(5))["tasks"]
+    assert len(catalog) == 1
+    assert catalog[0]["entry_count"] == 1
+    assert catalog[0]["status"] == "done"
+    assert catalog[0]["last_day"] == "2026-09-03"
+    assert catalog[0]["summary"] == "Writer done"
+    assert [
+        t["task_id"]
+        for t in facade.tasks(date_from="2026-09-03", now=at(5))["tasks"]
+    ] == [tid]
+
+
+def test_upsert_task_card_isolates_cross_window_dm(tmp_path) -> None:
+    facade = MemoryFacade(tmp_path, timezone_name=TZ)
+    tid = facade.new_task_id()
+    group_sid = facade.upsert_task_card(
+        "Group goal", "Public step", task=tid, chat="group-1", bots=["coder"], now=at(1)
+    )
+    dm_sid = facade.upsert_task_card(
+        "DM progress", "DM_SECRET_STEP", task=tid, chat="coder", bots=["coder"], now=at(2)
+    )
+    assert dm_sid != group_sid
+    day1_text = (tmp_path / "memory" / "2026-09-01.md").read_text(encoding="utf-8")
+    day2_text = (tmp_path / "memory" / "2026-09-02.md").read_text(encoding="utf-8")
+    assert "DM_SECRET_STEP" not in day1_text
+    assert "Public step" in day1_text
+    assert "DM_SECRET_STEP" in day2_text
+    dm_meta = parse_heading(next(l for l in day2_text.splitlines() if l.startswith("## ")))
+    assert dm_meta is not None
+    assert dm_meta.chat == "coder"
+    assert dm_meta.cont == group_sid
+
+
+def test_record_habit_entry_dedupes_same_day_and_upgrades_explicit(tmp_path) -> None:
+    facade = MemoryFacade(tmp_path, timezone_name=TZ)
+    token = bind_bot_id("coder")
+    try:
+        sid1 = facade.record_habit_entry(
+            "Uống trà", "Uống trà buổi sáng", habit="Uống  trà sáng", now=at(2)
+        )
+        sid2 = facade.record_habit_entry(
+            "Uống trà", "User tự nói thích uống trà sáng",
+            habit="uong tra sang", habit_explicit=True, now=at(2, 15),
+        )
+    finally:
+        reset_bot_id(token)
+    assert sid1 == sid2
+    day_text = (tmp_path / "memory" / "2026-09-02.md").read_text(encoding="utf-8")
+    assert day_text.count("## ") == 1
+    meta = next(m for line in day_text.splitlines() if (m := parse_heading(line)))
+    assert meta.habit_explicit is True
+
+
+def test_append_other_journal_groups_scope_and_skips_duplicates(tmp_path) -> None:
+    from thyca.memories.chunk import Chunker
+
+    facade = MemoryFacade(tmp_path, timezone_name=TZ)
+    sid1 = facade.append_other_journal(
+        "Môi trường", "Máy chạy Fedora Bazzite", chat="room-a", bots=["coder"], now=at(2, 10)
+    )
+    # Normalized duplicate (no accents, different case/punctuation) is skipped.
+    sid_dup = facade.append_other_journal(
+        "Môi trường", "may chay fedora bazzite!", chat="room-a", bots=["coder"], now=at(2, 11)
+    )
+    # Distinct fact in same scope appends as indented log line inside the same block.
+    sid2 = facade.append_other_journal(
+        "CI Fedora", "CI cần cài util-linux", content="Cho script test",
+        chat="room-a", bots=["coder"], now=at(2, 12)
+    )
+    # Synonymous paraphrase of an existing line in the same block is skipped via rapidfuzz.
+    sid_fuzzy = facade.append_other_journal(
+        "CI Fedora", "CI trên Fedora cần cài thêm util-linux",
+        chat="room-a", bots=["coder"], now=at(2, 12)
+    )
+    # Different chat scope creates a separate journal block.
+    sid_other_room = facade.append_other_journal(
+        "Phòng khác", "Fact riêng phòng B", chat="room-b", bots=["coder"], now=at(2, 13)
+    )
+    assert sid1 == sid_dup == sid2 == sid_fuzzy
+    assert sid_other_room != sid1
+
+    path = tmp_path / "memory" / "2026-09-02.md"
+    day_text = path.read_text(encoding="utf-8")
+    assert day_text.count("## ") == 2
+    assert "Môi trường · CI Fedora" in day_text
+    assert day_text.count("Máy chạy Fedora Bazzite") == 1
+    assert "CI trên Fedora cần cài thêm util-linux" not in day_text
+    assert "  - 19:00 — CI Fedora: CI cần cài util-linux" in day_text
+    assert "    Cho script test" in day_text
+
+    chunks = Chunker().chunk_markdown(path, day_text, source_kind="daily", timeline_day="2026-09-02")
+    room_a_chunks = [c for c in chunks if c.memory_id == sid1]
+    assert len(room_a_chunks) == 1

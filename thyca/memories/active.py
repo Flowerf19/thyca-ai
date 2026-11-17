@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from thyca.configs import DEFAULT_LIMITS_HOT_TAIL_KB, DEFAULT_TIMELINE_TIMEZONE
 from thyca.memories.heading import (
+    HeadingMeta,
     day,
     is_session_heading,
     iter_session_blocks,
@@ -352,7 +353,7 @@ def split_today_by_session(
             # hidden entirely, like the owner rule above.
             continue
         if meta.chat == chat_id:
-            here.append(_here_block(lines, start, end, day_str, entry_id))
+            here.append(_here_block(lines, start, end, day_str, entry_id, meta))
         else:
             elsewhere.append(
                 f"- {meta.time} — {meta.title} [{memory_id(day_str, entry_id)}]"
@@ -372,12 +373,24 @@ def split_today_by_session(
 
 
 def _here_block(
-    lines: list[str], start: int, end: int, day_str: str, entry_id: str
+    lines: list[str],
+    start: int,
+    end: int,
+    day_str: str,
+    entry_id: str,
+    meta: HeadingMeta | None = None,
 ) -> str:
-    """One same-session block with ``[day#id]`` on its heading."""
+    """One same-session block with ``[day#id]`` (plus task/habit tag) on its heading."""
     head = strip_comment(lines[start])
     ending = lines[start][len(lines[start].rstrip("\r\n")):]
-    first = f"{head} [{memory_id(day_str, entry_id)}]{ending}"
+    sid = memory_id(day_str, entry_id)
+    if meta is not None and meta.task:
+        tag = f"[{sid} · {meta.task} · {meta.status or 'open'}]"
+    elif meta is not None and meta.kind == "habit" and meta.habit:
+        tag = f"[{sid} · habit: {meta.habit}]"
+    else:
+        tag = f"[{sid}]"
+    first = f"{head} {tag}{ending}"
     return first + "".join(lines[start + 1 : end])
 
 

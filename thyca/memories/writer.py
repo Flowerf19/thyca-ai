@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import threading
 from collections.abc import Callable
 from dataclasses import replace
@@ -94,6 +95,7 @@ class MemoryWriter:
         self,
         memory_id: str,
         *,
+        time: str | None = None,
         topic: str | None = None,
         body_lines: list[str] | None = None,
         proj: str | None = None,
@@ -110,14 +112,14 @@ class MemoryWriter:
 
         entry_id / importance / expires_at stay untouched — the id the index
         and callers hold never changes; only the visible text moves.
-        proj/chat/task/cont/kind/status/habit/habit_explicit only change when
-        the caller passes them (omit = keep). keep_details keeps
+        time/proj/chat/task/cont/kind/status/habit/habit_explicit only change
+        when the caller passes them (omit = keep). keep_details keeps
         the existing body lines after the summary line (summary-only update).
         """
         path, entry = self.locate(memory_id)
         with self.lock_for(path):
             self._update_memory(
-                path, entry, topic=topic, body_lines=body_lines,
+                path, entry, time=time, topic=topic, body_lines=body_lines,
                 proj=proj, chat=chat, keep_details=keep_details,
                 task=task, cont=cont, kind=kind, status=status, habit=habit,
                 habit_explicit=habit_explicit,
@@ -128,6 +130,7 @@ class MemoryWriter:
         path: Path,
         entry_id: str,
         *,
+        time: str | None = None,
         topic: str | None,
         body_lines: list[str] | None,
         proj: str | None = None,
@@ -142,10 +145,13 @@ class MemoryWriter:
     ) -> None:
         if not path.is_file():
             raise ArchiveError(f"memory file missing: {path}")
+        if time is not None and re.fullmatch(r"\d{2}:\d{2}", time) is None:
+            raise ArchiveError(f"invalid time {time!r}")
         if topic is not None and not topic.strip():
             raise ArchiveError("topic must not be blank")
         if (
-            topic is None
+            time is None
+            and topic is None
             and body_lines is None
             and proj is None
             and chat is None
@@ -170,6 +176,7 @@ class MemoryWriter:
             found = True
             new_meta = replace(
                 meta,
+                time=time if time is not None else meta.time,
                 title=topic if topic is not None else meta.title,
                 entry_id=meta.entry_id or resolved,
                 proj=meta.proj if proj is None else proj,

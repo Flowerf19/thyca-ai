@@ -19,7 +19,7 @@ TTL_DAYS = {1: 3, 2: 7, 3: 30, 4: 90, 5: 180}
 DEFAULT_IMPORTANCE = 3
 ENTRY_ID_RE = re.compile(r"^[0-9a-f]{8}$")
 TASK_ID_RE = re.compile(r"^task-[0-9a-f]{8}$")
-TASK_STATUSES = ("open", "done")
+TASK_STATUSES = ("open", "done", "cancelled")
 #: Accepted memory kinds: habit observations and task checkpoints.
 TASK_KINDS = ("habit", "checkpoint")
 EXP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")

@@ -205,44 +205,51 @@ def test_extract_prompt_empty_catalog_block() -> None:
 
 def test_apply_continues_open_task_with_latest_cont(tmp_path: Path) -> None:
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
-    first = facade.remember("step one", "alpha", now=datetime(2026, 9, 1, 12, tzinfo=UTC))
+    first = facade.remember(
+        "step one", "alpha", importance=5,
+        now=datetime(2026, 11, 1, 12, tzinfo=UTC),
+    )
     catalog = [{"task_id": "task-aaaaaaaa", "title": "Goal",
-                "latest_memory_id": first, "last_day": "2026-09-01"}]
+                "latest_memory_id": first, "last_day": "2026-11-01"}]
     out = jobs.apply_extracted(
         facade,
         [jobs.ExtractedMemory(topic="step two", summary="beta",
+                              content="- done: step one\n- processing: step two",
                               task="task-aaaaaaaa")],
         open_tasks=catalog,
     )
     from thyca.memories.heading import parse_heading as _parse
 
-    day = out["written"][0].split("#")[0]
-    meta = _parse(open(tmp_path / "memory" / f"{day}.md",
-                       encoding="utf-8").read().splitlines()[-2])
+    assert out["written"] == [first]
+    day = first.split("#")[0]
+    text = (tmp_path / "memory" / f"{day}.md").read_text(encoding="utf-8")
+    assert text.count("## ") == 1
+    meta = _parse(text.splitlines()[1])
     assert meta is not None and meta.task == "task-aaaaaaaa"
-    assert meta.cont == first
-    assert meta.status is None
-    assert out["written"] == [f"{day}#{meta.entry_id}"]
+    assert meta.kind == "checkpoint"
+    assert meta.status == "open"
+    assert "beta" in text
 
 
 def test_apply_groups_new_task_titles_and_chains_cont(tmp_path: Path) -> None:
     facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
     out = jobs.apply_extracted(
         facade,
-        [jobs.ExtractedMemory(topic="a", summary="one", new_task="Fix  Sink "),
-         jobs.ExtractedMemory(topic="b", summary="two", new_task="fix sink")],
+        [jobs.ExtractedMemory(topic="Fix sink", summary="one", new_task="Fix  Sink "),
+         jobs.ExtractedMemory(topic="progress", summary="two", new_task="fix sink",
+                              status="done")],
     )
-    assert len(out["written"]) == 2
+    assert len(out["written"]) == 1
     from thyca.memories.heading import parse_heading as _parse
 
     day = out["written"][0].split("#")[0]
-    metas = [_parse(line) for line in
-             open(tmp_path / "memory" / f"{day}.md",
-                  encoding="utf-8").read().splitlines() if _parse(line)]
-    assert len(metas) == 2
-    assert metas[0].task and metas[0].task == metas[1].task
-    assert metas[0].status == "open"
-    assert metas[1].cont and metas[1].cont.endswith(f"#{metas[0].entry_id}")
+    text = (tmp_path / "memory" / f"{day}.md").read_text(encoding="utf-8")
+    metas = [_parse(line) for line in text.splitlines() if _parse(line)]
+    assert len(metas) == 1
+    assert metas[0].task and metas[0].task.startswith("task-")
+    assert metas[0].title == "Fix sink"
+    assert metas[0].status == "done"
+    assert "two" in text
 
 
 def test_apply_drops_task_outside_catalog_but_keeps_habit(tmp_path: Path) -> None:
@@ -301,3 +308,98 @@ def test_transcript_tail_treats_room_context_rows_as_ordinary_text() -> None:
     ])
     assert "hi" in tail
     assert "CÔNG KHAI" in tail
+
+
+def test_extract_prompt_carries_today_notes_and_delta_rules() -> None:
+    import asyncio
+
+    seen: list = []
+
+    class FakeConnect:
+        async def chat(self, messages, tools=None):
+            seen.append(messages)
+            return type("R", (), {"content": "[]"})()
+
+    open_tasks = [{
+        "task_id": "task-aaaaaaaa",
+        "title": "Fix sink",
+        "latest_memory_id": "2026-11-16#deadbeef",
+        "last_day": "2026-11-16",
+        "summary": "Bought washer",
+    }]
+    today_entries = [
+        {"memory_id": "2026-11-17#11111111", "title": "Tea", "kind": "habit",
+         "habit": "uong tra", "body": "- likes morning tea"},
+        {"memory_id": "2026-11-17#22222222", "title": "OS", "kind": None,
+         "task": None, "body": "- Fedora Bazzite"},
+    ]
+    asyncio.run(jobs.extract_from_transcript(
+        FakeConnect(), "m", "hello", open_tasks=open_tasks,
+        today_entries=today_entries, known_habits=["uong tra", "tra loi ngan"],
+    ))
+    prompt = seen[0][0].content
+    assert "Bought washer" in prompt
+    assert "TODAY'S NOTES:" in prompt
+    assert "2026-11-17#11111111" in prompt
+    assert "Fedora Bazzite" in prompt
+    assert "KNOWN HABIT LABELS: uong tra, tra loi ngan" in prompt
+    assert "NEVER attach stable facts" in prompt
+    assert "cancelled" in prompt
+
+
+def test_apply_extracted_dedupes_habits_and_groups_other_journal(tmp_path: Path) -> None:
+    from thyca.memories.heading import parse_heading as _parse
+
+    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    out1 = jobs.apply_extracted(
+        facade,
+        [
+            jobs.ExtractedMemory(topic="OS", summary="Máy chạy Fedora Bazzite"),
+            jobs.ExtractedMemory(topic="Tea", summary="Uống trà sáng",
+                                 kind="habit", habit="uong tra sang"),
+        ],
+        default_bot="coder",
+        chat="room-1",
+    )
+    out2 = jobs.apply_extracted(
+        facade,
+        [
+            jobs.ExtractedMemory(topic="OS", summary="May chay Fedora Bazzite"),
+            jobs.ExtractedMemory(topic="CI", summary="CI dùng Fedora container"),
+            jobs.ExtractedMemory(topic="Tea", summary="Khẳng định thích trà sáng",
+                                 kind="habit", habit="Uống trà sáng", habit_explicit=True),
+        ],
+        default_bot="coder",
+        chat="room-1",
+    )
+    assert len(out1["written"]) == 2
+    assert set(out2["written"]) == set(out1["written"])
+    day = out1["written"][0].split("#")[0]
+    text = (tmp_path / "memory" / f"{day}.md").read_text(encoding="utf-8")
+    metas = [_parse(line) for line in text.splitlines() if _parse(line)]
+    assert len(metas) == 2
+    assert text.count("Fedora Bazzite") == 1
+    assert "CI dùng Fedora container" in text
+    habit_meta = next(m for m in metas if m.kind == "habit")
+    assert habit_meta.habit_explicit is True
+
+
+def test_apply_extracted_can_cancel_open_task(tmp_path: Path) -> None:
+    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    tid = facade.new_task_id()
+    sid = facade.remember("Old migration", "Planned", task=tid, status="open", importance=5)
+    catalog = [{"task_id": tid, "title": "Old migration",
+                "latest_memory_id": sid, "last_day": sid.split("#")[0]}]
+    out = jobs.apply_extracted(
+        facade,
+        [jobs.ExtractedMemory(
+            topic="Old migration",
+            summary="User cancelled the old migration plan",
+            task=tid,
+            status="cancelled",
+        )],
+        open_tasks=catalog,
+    )
+    assert out["written"] == [sid]
+    assert facade.tasks(status="open")["tasks"] == []
+    assert [t["task_id"] for t in facade.tasks(status="cancelled")["tasks"]] == [tid]

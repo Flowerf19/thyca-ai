@@ -138,3 +138,16 @@ def test_x9_day_shared_by_active_and_archived(tmp_path: Path) -> None:
     archived = ArchivedMemory(tmp_path)
     moment = datetime(2026, 5, 5, 12, 0)
     assert active._day(moment) == archived.day(moment) == "2026-05-05"
+
+
+def test_status_cancelled_heading_roundtrip() -> None:
+    meta = HeadingMeta(
+        "09:15", "abandoned task", "a1b2c3d4",
+        task="task-1234abcd", kind="checkpoint", status="cancelled",
+    )
+    rendered = render_heading(meta)
+    parsed = parse_heading(rendered)
+    assert parsed is not None
+    assert parsed.status == "cancelled"
+    assert parsed.task == "task-1234abcd"
+    assert parsed.kind == "checkpoint"

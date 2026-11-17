@@ -84,8 +84,8 @@ def _remember_spec(facade: MemoryFacade) -> ToolSpec:
             "Before opening a new task, check the open-task catalog "
             "(memory_tasks) or search to reuse an existing task id: pass it "
             "as task to continue, or new_task=true to mint a fresh one. "
-            "Only set status='done' when the whole task is finished, not "
-            "when your own part is done — and only the bot coordinating "
+            "Only set status='done' when finished or 'cancelled' when abandoned, "
+            "not when only your part is done — and only the bot coordinating "
             "or opening the task (or the user) closes it; everyone else "
             "leaves it open. kind='habit' is only for repeated "
             "habit/preference observations, with habit as a short label. "
@@ -140,9 +140,9 @@ def _remember_spec(facade: MemoryFacade) -> ToolSpec:
                 "status": {
                     "type": "string",
                     "description": (
-                        "Task status 'open' or 'done'. Requires task. Only set "
-                        "'done' when the whole task is finished, and only if "
-                        "you coordinate or opened the task (or the user asks)."
+                        "Task status 'open', 'done', or 'cancelled'. Requires task. "
+                        "Set 'done' when finished or 'cancelled' when abandoned, "
+                        "only if you coordinate or opened the task (or the user asks)."
                     ),
                 },
                 "habit": {
@@ -217,7 +217,7 @@ def _search_spec(facade: MemoryFacade) -> ToolSpec:
                 },
                 "status": {
                     "type": "string",
-                    "description": "Filter to leaves with this task status ('open', 'done').",
+                    "description": "Filter to leaves with this task status ('open', 'done', 'cancelled').",
                 },
             },
             "required": ["query"],
@@ -350,7 +350,7 @@ def _tasks_spec(facade: MemoryFacade) -> ToolSpec:
             "properties": {
                 "status": {
                     "type": "string",
-                    "description": "Filter to tasks with this status ('open', 'done').",
+                    "description": "Filter to tasks with this status ('open', 'done', 'cancelled').",
                 },
                 "date_from": {
                     "type": "string",
@@ -429,9 +429,9 @@ def _update_spec(facade: MemoryFacade) -> ToolSpec:
                 "status": {
                     "type": "string",
                     "description": (
-                        "Task status 'open' or 'done'. Only 'done' when the "
-                        "whole task is finished, and only by its coordinator "
-                        "or opener (or the user). Omit to keep."
+                        "Task status 'open', 'done', or 'cancelled'. Set 'done' when "
+                        "finished or 'cancelled' when abandoned, only by coordinator, "
+                        "opener, or user. Omit to keep."
                     ),
                 },
                 "habit": {

@@ -34,6 +34,26 @@ from thyca.memories.heading import (
     validate_task_meta,
 )
 from thyca.memories.identity import current_bot_id
+from thyca.memories.ledgers import (
+    append_other_journal as _append_other_journal,
+)
+from thyca.memories.ledgers import (
+    extract_task_updated_day,
+    first_summary_line,
+    format_task_catalog,  # noqa: F401 — re-exported
+    locate_visible_block,
+    resolve_owners,
+    validate_entry_fields,
+)
+from thyca.memories.ledgers import (
+    record_habit_entry as _record_habit_entry,
+)
+from thyca.memories.ledgers import (
+    today_entries as _today_entries,
+)
+from thyca.memories.ledgers import (
+    upsert_task_card as _upsert_task_card,
+)
 from thyca.memories.search import _absolute_proj, lexical_search
 from thyca.memories.search import recent as _recent_search
 from thyca.memories.stats import CanonicalFile, MemoryStatsResult, build_stats
@@ -73,17 +93,12 @@ class MemoryFacade:
         habit: str | None = None,
         habit_explicit: bool = False,
     ) -> str:
-        if not isinstance(topic, str) or not topic.strip():
-            raise ValueError("topic must be a non-empty string")
-        if not isinstance(summary, str) or not summary.strip():
-            raise ValueError("summary must be a non-empty string")
-        if not isinstance(content, str):
-            raise ValueError("content must be a string")
+        validate_entry_fields(topic, summary, content, importance)
         validate_task_meta(task, cont, kind, status, habit, habit_explicit)
         if isinstance(habit, str):
             habit = " ".join(habit.split())
         normalized_proj = _absolute_proj(proj)
-        owners = _resolve_owners(bots, current_bot_id())
+        owners = resolve_owners(bots, current_bot_id())
         with self.writer.mutation_lock():
             self.active.ensure_files(now)
             moment = utc_now(now)
@@ -173,17 +188,28 @@ class MemoryFacade:
                     origin, row["bots"],
                     allow_own_cross_window=allow_own_cross_window):
                 continue
-            members_by_session[str(row["memory_id"])] = {
+            row_text = str(row["text_raw"] or "") if "text_raw" in keys else None
+            updated_day = extract_task_updated_day(row_text)
+            row_last_day = (
+                max(str(row["last_day"]), updated_day)
+                if updated_day
+                else str(row["last_day"])
+            )
+            member = {
                 "task": str(row["task"]),
                 "memory_id": str(row["memory_id"]),
                 "first_day": str(row["first_day"]),
-                "last_day": str(row["last_day"]),
+                "last_day": row_last_day,
                 "first_line": int(row["first_line"]),
                 "last_line": int(row["last_line"]),
                 "title": str(row["title"]),
                 "status": row["status"],
                 "bots": row["bots"],
+                "chat": origin,
             }
+            if row_text is not None:
+                member["summary"] = first_summary_line(row_text)
+            members_by_session[str(row["memory_id"])] = member
         # A task opened today is not indexed yet (today's daily file only
         # enters SQLite after day-close), but the catalog must show it so
         # "check memory_tasks before opening a task" works same-day.
@@ -220,11 +246,14 @@ class MemoryFacade:
                 if reader is not None and reader != "thyca":
                     if owners is not None and "team" not in owners and reader not in owners:
                         continue
+                today_body = "\n".join(leaf.text_raw for leaf in leaves)
+                updated_day = extract_task_updated_day(today_body)
+                member_last_day = max(today, updated_day) if updated_day else today
                 members_by_session[memory_id] = {
                     "task": str(first.task),
                     "memory_id": memory_id,
                     "first_day": today,
-                    "last_day": today,
+                    "last_day": member_last_day,
                     "first_line": min(leaf.line_start for leaf in leaves),
                     "last_line": max(leaf.line_start for leaf in leaves),
                     "title": first.memory_title,
@@ -232,6 +261,8 @@ class MemoryFacade:
                     # Same JSON-string shape as the store rows so the
                     # shared grouping below decodes both uniformly.
                     "bots": encode_bots(first.bots),
+                    "chat": getattr(first, "chat_session", None),
+                    "summary": first_summary_line(first.text_raw),
                 }
         grouped: dict[str, list] = {}
         for member in members_by_session.values():
@@ -272,6 +303,14 @@ class MemoryFacade:
                     owners.update(decoded)
                 else:
                     owners.add("team")
+            latest_summary = latest.get("summary")
+            if latest_summary is None:
+                mem_rows = self.archive.store.get_memory(latest_memory_id, now_ts)
+                latest_summary = (
+                    first_summary_line(str(mem_rows[0]["text_raw"]))
+                    if mem_rows
+                    else ""
+                )
             catalog.append(
                 {
                     "task_id": task_id,
@@ -282,10 +321,118 @@ class MemoryFacade:
                     "first_day": first_day,
                     "last_day": last_day,
                     "bots": sorted(owners),
+                    "chat": latest.get("chat"),
+                    "summary": latest_summary,
                 }
             )
         catalog.sort(key=lambda item: item["last_day"], reverse=True)
         return {"tasks": catalog[:limit], "warnings": warnings}
+
+    def today_entries(
+        self,
+        *,
+        now: datetime | None = None,
+        chat: str | None = None,
+        reader: str | None = None,
+    ) -> list[dict]:
+        """Visible entries written today for prompt/delta inspection."""
+        return _today_entries(self, now=now, chat=chat, reader=reader)
+
+    def upsert_task_card(
+        self,
+        topic: str,
+        summary: str,
+        content: str = "",
+        *,
+        task: str,
+        status: str | None = None,
+        importance: int = DEFAULT_IMPORTANCE,
+        bots: list[str] | tuple[str, ...] | None = None,
+        chat: str | None = None,
+        proj: str | None = None,
+        now: datetime | None = None,
+        target_memory_id: str | None = None,
+    ) -> str:
+        """Update an existing task card in-place or create a new checkpoint card."""
+        return _upsert_task_card(
+            self,
+            topic,
+            summary,
+            content,
+            task=task,
+            status=status,
+            importance=importance,
+            bots=bots,
+            chat=chat,
+            proj=proj,
+            now=now,
+            target_memory_id=target_memory_id,
+        )
+
+    def record_habit_entry(
+        self,
+        topic: str,
+        summary: str,
+        content: str = "",
+        *,
+        habit: str,
+        habit_explicit: bool = False,
+        importance: int = DEFAULT_IMPORTANCE,
+        bots: list[str] | tuple[str, ...] | None = None,
+        chat: str | None = None,
+        proj: str | None = None,
+        now: datetime | None = None,
+    ) -> str:
+        """Record a habit observation or reinforce an existing habit across days."""
+        return _record_habit_entry(
+            self,
+            topic,
+            summary,
+            content,
+            habit=habit,
+            habit_explicit=habit_explicit,
+            importance=importance,
+            bots=bots,
+            chat=chat,
+            proj=proj,
+            now=now,
+        )
+
+    def append_other_journal(
+        self,
+        topic: str,
+        summary: str,
+        content: str = "",
+        *,
+        importance: int = DEFAULT_IMPORTANCE,
+        bots: list[str] | tuple[str, ...] | None = None,
+        chat: str | None = None,
+        proj: str | None = None,
+        now: datetime | None = None,
+    ) -> str | None:
+        """Append a non-task/non-habit fact to today's scoped journal or skip dupes."""
+        return _append_other_journal(
+            self,
+            topic,
+            summary,
+            content,
+            importance=importance,
+            bots=bots,
+            chat=chat,
+            proj=proj,
+            now=now,
+        )
+
+    def _locate_visible_block(
+        self, memory_id_str: str | None, now: datetime | None
+    ) -> tuple[HeadingMeta, list[str]] | None:
+        return locate_visible_block(self, memory_id_str, now)
+
+    def _locate_visible_meta(
+        self, memory_id_str: str | None, now: datetime | None
+    ) -> HeadingMeta | None:
+        found = locate_visible_block(self, memory_id_str, now)
+        return found[0] if found is not None else None
 
     def forget(self, memory_id: str, now: datetime | None = None) -> None:
         self._check_mutate(memory_id, "forget", now)
@@ -707,50 +854,3 @@ class MemoryFacade:
             path, text, source_kind="daily", timeline_day=day
         )
         return [chunk.chunk_id for chunk in chunks if chunk.memory_id == memory_id]
-
-
-def _resolve_owners(
-    bots: list[str] | tuple[str, ...] | None, reader: str | None
-) -> tuple[str, ...] | None:
-    """Owner list for a new entry (BE-4).
-
-    Default is ``[self]`` for a bot turn, legacy ``None`` (team) for the
-    user. An explicit list is validated; a child bot may never claim
-    ``"team"`` — promotion goes through the candidate queue."""
-    if bots is None:
-        if reader is None:
-            return None
-        return (reader,)
-    if not isinstance(bots, (list, tuple)) or not bots:
-        raise ValueError("bots must be a non-empty list of bot ids")
-    cleaned = []
-    for item in bots:
-        if not isinstance(item, str) or not item or len(item) > 64:
-            raise ValueError("bots must be a non-empty list of bot ids")
-        if item not in cleaned:
-            cleaned.append(item)
-    if reader is not None and reader != "thyca" and "team" in cleaned:
-        raise ArchiveError(f"bot '{reader}' cannot write team memory directly")
-    return tuple(cleaned)
-
-
-def format_task_catalog(entries: list[dict], *, limit: int = 20) -> str:
-    """Render open memory tasks as prompt index lines (phase 1C).
-
-    One line per task: ``- <task_id>: <title ≤80 chars> · last active
-    <last_day> · bots <a, b>``. At most ``limit`` lines.
-    """
-    lines = []
-    for entry in entries[: max(0, limit)]:
-        if not isinstance(entry, dict):
-            continue
-        title = str(entry.get("title", ""))
-        if len(title) > 80:
-            title = title[:79].rstrip() + "…"
-        bots = entry.get("bots") or []
-        lines.append(
-            f"- {entry.get('task_id', '?')}: {title} · "
-            f"last active {entry.get('last_day', '?')} · "
-            f"bots {', '.join(str(b) for b in bots)}"
-        )
-    return "\n".join(lines)

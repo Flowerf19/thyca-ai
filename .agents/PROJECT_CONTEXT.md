@@ -90,7 +90,8 @@ Mục tiêu của file này là mô tả trạng thái thật tại HEAD. Mã ng
 - Không kiểm tra, không truy cập và không tạo lại `~/.thyca` hay nội dung trong đó.
 - Không thêm ví dụ API key vào tài liệu hướng dẫn dự án.
 - Giữ nguyên các thay đổi không liên quan trong working tree và artifact untracked của user.
-- Mọi kế hoạch đã xong và lưu dưới `.agents/plans/done/` (cập nhật 2026-11-14: thêm `mcp-health-visibility.md`). Không có plan in-progress. Không sửa và không xóa các file đã lưu trừ khi user yêu cầu cập nhật cho khớp HEAD.
+- Mọi kế hoạch đã xong và lưu dưới `.agents/plans/done/` (cập nhật 2026-11-17: thêm `memories-optimize.md`). Không có plan in-progress. Không sửa và không xóa các file đã lưu trừ khi user yêu cầu cập nhật cho khớp HEAD.
+- Bộ nhớ L2 dùng 1 file ngày `memory/YYYY-MM-DD.md` với 3 sổ hành vi tách tại `thyca/memories/ledgers.py` (`apply_extracted` + delta `extract_from_transcript` nhận `open_tasks`, `today_entries`, `known_habits`): `Task` (`upsert_task_card` cập nhật tại chỗ trên `latest_memory_id` khi cùng cửa sổ `chat`, giữ `updated: YYYY-MM-DD` cho `last_day`, `TASK_STATUSES = open | done | cancelled`, `<memory_tasks>` rút ngay task đóng và gắn `[latest_memory_id]` + tóm tắt), `Habit` (`record_habit_entry` reinforce + cộng `count` theo ngày mới xuyên ngày trên cùng 1 lá theo nhãn chuẩn hóa, ẩn tóm tắt DM khi chéo cửa sổ, và đẩy lên `bots/<id>/USER.md` khi đủ 3 ngày hoặc `habit_explicit`), và `Other` (`append_other_journal` nối log thụt lề theo phạm vi `(bots, chat, proj)`, gộp chủ đề vào tiêu đề `##` và bỏ qua trùng chuẩn hóa / `rapidfuzz`). `ActiveMemory._here_block` gắn nhãn sổ gọn cho heading Task/Habit trong `<today>`.
 - Serve chỉ chạy loopback. Không để lộ secret, đường dẫn nội bộ hay stack trace qua API.
 - Markdown của bộ nhớ vẫn là nguồn sự thật của bộ nhớ. SQLite của bộ nhớ chỉ là mục lục suy ra (derived index).
 - Đọc `.agents/AGENT_RULES.md` và các quyết định/kế hoạch liên quan trước khi đổi contract bộ nhớ.

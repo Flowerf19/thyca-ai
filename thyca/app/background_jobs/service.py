@@ -87,17 +87,25 @@ class BackgroundJobsService:
             transcript = mem_jobs.transcript_tail(list(messages))
             if not transcript.strip():
                 return
+            from thyca.memories import habits as mem_habits
             from thyca.memories.identity import bind_bot_id, reset_bot_id
 
             facade = self.job_facade()
+            bot_user_path = self._deps.bots.bot_dir(bot_id) / "USER.md"
             token = bind_bot_id(bot_id)
             try:
                 open_tasks = facade.tasks(status="open").get("tasks", [])
+                today_entries = facade.today_entries(chat=room_id, reader=bot_id)
+                known_habits = mem_habits.known_habit_labels(
+                    facade, bot_id, bot_user_path
+                )
             finally:
                 reset_bot_id(token)
             extracted = await mem_jobs.extract_from_transcript(
                 connect, turn_cfg.provider.model, transcript,
                 open_tasks=open_tasks,
+                today_entries=today_entries,
+                known_habits=known_habits,
             )
             if extracted:
                 mem_jobs.apply_extracted(
@@ -107,12 +115,10 @@ class BackgroundJobsService:
             # Phase 1E habit sweep (best-effort, never breaks the flush):
             # newly-qualified habit labels append to this bot's own USER.md.
             try:
-                from thyca.memories import habits as mem_habits
-
                 sweep_token = bind_bot_id(bot_id)
                 try:
                     mem_habits.sweep_bot_habits(
-                        facade, bot_id, self._deps.bots.bot_dir(bot_id) / "USER.md"
+                        facade, bot_id, bot_user_path
                     )
                 finally:
                     reset_bot_id(sweep_token)

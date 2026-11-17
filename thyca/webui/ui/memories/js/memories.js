@@ -138,7 +138,7 @@ function ownerLabel(bots) {
 }
 
 const KIND_LABEL = { habit: 'thói quen', checkpoint: 'task' };
-const STATUS_LABEL = { open: 'đang mở', done: 'đã xong' };
+const STATUS_LABEL = { open: 'đang mở', done: 'đã xong', cancelled: 'đã hủy' };
 
 /* Client mirror of stats.py expiring_soon / suggest rules — reused after a
    reinforce response updates expires_at in place. */

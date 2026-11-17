@@ -75,22 +75,67 @@ def _open_tasks_block(open_tasks) -> str:
         task_id = entry.get("task_id")
         if not task_id:
             continue
-        lines.append(
+        summary = " ".join(str(entry.get("summary", "") or "").split())
+        if len(summary) > 160:
+            summary = summary[:159].rstrip() + "…"
+        line = (
             f"- {task_id} — {entry.get('title', '')} "
             f"(latest entry {entry.get('latest_memory_id', '?')}, "
             f"last active {entry.get('last_day', '?')})"
         )
+        if summary:
+            line += f" — {summary}"
+        lines.append(line)
     if not lines:
         return "OPEN MEMORY TASKS: none."
     return "OPEN MEMORY TASKS:\n" + "\n".join(lines)
 
 
+def _today_notes_block(today_entries) -> str:
+    """Prompt block listing today's existing habit/other notes for delta extraction."""
+    lines = []
+    for entry in today_entries or ():
+        if not isinstance(entry, dict) or entry.get("task") is not None:
+            continue
+        mid = entry.get("memory_id", "?")
+        kind = entry.get("kind")
+        habit = entry.get("habit")
+        tag = f"habit: {habit}" if kind == "habit" and habit else "other"
+        title = str(entry.get("title", "")).strip()
+        body = " ".join(str(entry.get("body", "")).split())
+        if len(body) > 250:
+            body = body[:249].rstrip() + "…"
+        lines.append(
+            f"- [{mid}] ({tag}) {title}: {body}" if body else f"- [{mid}] ({tag}) {title}"
+        )
+    if not lines:
+        return "TODAY'S NOTES: none."
+    return "TODAY'S NOTES:\n" + "\n".join(lines)
+
+
+def _known_habits_block(known_habits) -> str:
+    """Prompt block listing known habit labels so extraction reuses canonical labels."""
+    labels = [
+        " ".join(str(label).split())
+        for label in (known_habits or ())
+        if isinstance(label, str) and label.strip()
+    ]
+    if not labels:
+        return "KNOWN HABIT LABELS: none."
+    return "KNOWN HABIT LABELS: " + ", ".join(labels)
+
+
 async def extract_from_transcript(connect, model: str, transcript: str,
-                                   open_tasks=()) -> list[ExtractedMemory]:
-    """Ask the model to list durable memories in a strict JSON schema.
+                                   open_tasks=(), today_entries=(),
+                                   known_habits=()) -> list[ExtractedMemory]:
+    """Ask the model to list durable delta memories in a strict JSON schema.
 
     ``open_tasks`` is an iterable of ``facade.tasks(status="open")``
     dicts so the model reuses task ids instead of opening duplicates.
+    ``today_entries`` lists today's existing habit/other notes so the
+    model extracts only deltas instead of duplicating today's journal.
+    ``known_habits`` lists existing habit labels across days so the model
+    reuses canonical labels instead of inventing synonyms.
     Any model failure (or unparseable reply) yields an empty list: the job
     is best-effort and must never break the turn or the compaction that
     follows it.
@@ -104,25 +149,36 @@ async def extract_from_transcript(connect, model: str, transcript: str,
         '"new_task": "<new goal title>" or null, '
         '"cont": "<latest_memory_id of the continued task>" or null, '
         '"kind": "habit" or null, '
-        '"status": "open"|"done"|null, '
+        '"status": "open"|"done"|"cancelled"|null, '
         '"habit": "<short label>" or null, '
         '"habit_explicit": true|false}. '
         "bots names the single bot this memory belongs to (its private notebook); "
         "null means general/user-level. "
-        "Link a memory to a task only when it is one step of an ongoing effort; "
-        "when it matches an open task below you MUST reuse that id, never open "
-        "a duplicate. new_task only when a genuinely new multi-step goal starts. "
-        'status="done" only when the transcript says the WHOLE goal is finished, '
-        "not when one step is done. "
-        'kind="habit" only for a repeated habit/preference/working style, with a '
-        'short habit label in the content\'s own language (e.g. "uong tra buoi sang"); '
-        "a one-off event is never a habit. "
-        '"habit_explicit": true only when the user themselves states a lasting '
-        'habit/preference in the transcript ("I usually/always/like..."); '
-        "false for behavior-inferred observations. "
-        "Skip small talk, transient plans, and anything "
-        "already phrased as a memory entry. Empty array when nothing is worth keeping.\n\n"
+        "DELTA RULE: Do NOT output any fact, habit, or task progress already "
+        "covered in OPEN MEMORY TASKS or TODAY'S NOTES. "
+        "3 LEDGERS: "
+        "(1) Task (task/new_task): one card per multi-step goal. Reuse an open "
+        "task id only when the item is genuine progress, decision, or closure for "
+        "that goal; write current progress in content using lines "
+        "'- done: ...', '- processing: ...', '- next: ...'. Use new_task only "
+        "when a genuinely new multi-step goal starts. Set status='done' only when "
+        "the whole goal is finished, or 'cancelled' when the goal is abandoned. "
+        "NEVER attach stable facts (OS, environment, policy, repo rules, "
+        "team/guild snapshots) to an open task! "
+        '(2) Habit (kind="habit"): only for a repeated habit/preference/working '
+        "style with a short label in the content's language; if it matches a "
+        "label in KNOWN HABIT LABELS, reuse that exact label instead of "
+        "inventing a synonym. Skip if that habit is already in TODAY'S NOTES. "
+        "Set habit_explicit=true only when the user states it directly "
+        '("I usually/always/like..."). '
+        "(3) Other (task=null, new_task=null, kind=null): only genuinely new "
+        "durable facts outside tasks and habits; group related facts into one "
+        "cohesive item instead of many 1-line fragments. "
+        "Skip small talk, transient plans, and anything already phrased as a "
+        "memory entry. Empty array when nothing is worth keeping.\n\n"
         f"{_open_tasks_block(open_tasks)}\n\n"
+        f"{_today_notes_block(today_entries)}\n\n"
+        f"{_known_habits_block(known_habits)}\n\n"
         f"TRANSCRIPT:\n{transcript}"
     )
     try:
@@ -214,16 +270,21 @@ def parse_extraction(text: str) -> list[ExtractedMemory]:
 
 def apply_extracted(facade, items: list[ExtractedMemory], *, default_bot: str = "thyca",
                     open_tasks=(), chat: str | None = None) -> dict:
-    """Write extracted memories as the sidecar (Thyca privileges).
+    """Write extracted memories into the 3 ledgers (Thyca privileges).
 
     Per-bot entries land in that bot's notebook; shared knowledge is the
     profile aggregation turn's job, so nothing is proposed or queued here.
-    Task linkage: an explicit ``task`` is honored only when present in
-    ``open_tasks`` (the catalog passed in); anything else is treated as
-    a hallucinated id and dropped with its status/cont. ``new_task``
-    titles group case-insensitively within one apply: one minted id per
-    group, later entries chaining ``cont`` onto the previously written
-    entry of the same task. Returns ``{"written": [...sids]}``.
+    Ledger routing:
+    - Task (``task`` in ``open_tasks`` or ``new_task``): updates the card's
+      ``latest_memory_id`` in-place via ``facade.upsert_task_card`` (unless
+      combined with ``kind="habit"`` which preserves the habit link row).
+      Hallucinated ``task`` ids outside ``open_tasks`` are dropped with their
+      ``status``/``cont`` and routed by ``kind``.
+    - Habit (``kind="habit"``, no task): reinforces/dedupes same-day label via
+      ``facade.record_habit_entry``.
+    - Other (no task, no kind): appends to today's scoped journal or skips
+      normalized duplicates via ``facade.append_other_journal``.
+    Returns ``{"written": [...sids]}``.
     """
     catalog = [entry for entry in (open_tasks or ()) if isinstance(entry, dict)]
     known = {str(entry["task_id"]): entry for entry in catalog if entry.get("task_id")}
@@ -239,30 +300,54 @@ def apply_extracted(facade, items: list[ExtractedMemory], *, default_bot: str = 
             status = item.status
             if task is not None and task not in known:
                 task = cont = status = None
+            is_new_task = False
             if task is None and item.new_task is not None:
                 # Group key: strip + collapse inner whitespace + casefold,
-                # so "Fix  Sink " and "fix sink" mint one id.
+                # so "Fix  Sink " and "fix sink" update one card.
                 key = " ".join(item.new_task.strip().split()).casefold()
                 if key not in minted:
                     minted[key] = facade.new_task_id()
+                    is_new_task = True
                 task = minted[key]
-                if status is None:
+                if is_new_task and status is None:
                     status = "open"
             if task is not None:
-                if cont is None:
-                    cont = last_written.get(task)
-                    if cont is None and task in known:
-                        cont = known[task].get("latest_memory_id")
-            sid = facade.remember(
-                item.topic, item.summary, content=item.content,
-                importance=item.importance, bots=owners, chat=chat,
-                task=task, cont=cont, kind=item.kind,
-                status=status, habit=item.habit,
-                habit_explicit=item.habit_explicit,
-            )
-            written.append(sid)
-            if task is not None:
-                last_written[task] = sid
+                if item.kind == "habit":
+                    if cont is None:
+                        cont = last_written.get(task)
+                        if cont is None and task in known:
+                            cont = known[task].get("latest_memory_id")
+                    sid = facade.remember(
+                        item.topic, item.summary, content=item.content,
+                        importance=item.importance, bots=owners, chat=chat,
+                        task=task, cont=cont, kind=item.kind,
+                        status=status, habit=item.habit,
+                        habit_explicit=item.habit_explicit,
+                    )
+                else:
+                    target_id = last_written.get(task)
+                    if target_id is None and task in known:
+                        target_id = known[task].get("latest_memory_id")
+                    sid = facade.upsert_task_card(
+                        item.topic, item.summary, content=item.content,
+                        task=task, status=status, importance=item.importance,
+                        bots=owners, chat=chat, target_memory_id=target_id,
+                    )
+                    last_written[task] = sid
+            elif item.kind == "habit":
+                sid = facade.record_habit_entry(
+                    item.topic, item.summary, content=item.content,
+                    habit=item.habit or item.topic,
+                    habit_explicit=item.habit_explicit,
+                    importance=item.importance, bots=owners, chat=chat,
+                )
+            else:
+                sid = facade.append_other_journal(
+                    item.topic, item.summary, content=item.content,
+                    importance=item.importance, bots=owners, chat=chat,
+                )
+            if sid is not None and sid not in written:
+                written.append(sid)
     finally:
         reset_bot_id(token)
     return {"written": written}

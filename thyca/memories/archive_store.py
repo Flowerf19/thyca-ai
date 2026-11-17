@@ -340,7 +340,8 @@ class ArchiveStore:
                            MAX(memory_title) AS title,
                            MAX(status) AS status,
                            MAX(bots) AS bots,
-                           MAX(chat_session) AS chat
+                           MAX(chat_session) AS chat,
+                           GROUP_CONCAT(text_raw, char(10)) AS text_raw
                     FROM chunks
                     WHERE task IS NOT NULL AND {VISIBLE_SQL}{clause}
                     GROUP BY task, memory_id""",
@@ -361,7 +362,8 @@ class ArchiveStore:
                            MIN(timeline_day) AS day,
                            MAX(habit) AS habit,
                            MAX(habit_explicit) AS explicit,
-                           MAX(bots) AS bots
+                           MAX(bots) AS bots,
+                           GROUP_CONCAT(text_raw, char(10)) AS text_raw
                     FROM chunks
                     WHERE kind = 'habit' AND {VISIBLE_SQL}{clause}
                     GROUP BY memory_id""",

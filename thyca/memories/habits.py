@@ -9,6 +9,7 @@ Only the bot's own file is touched; the shared ``USER.md`` aggregation
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from thyca.memories.chunk import Chunker
@@ -16,6 +17,7 @@ from thyca.memories.heading import format_ts, is_visible, utc_now
 
 AUTO_START = "<!-- habits:auto:start -->"
 AUTO_END = "<!-- habits:auto:end -->"
+OBS_DAY_RE = re.compile(r"^\s*-\s*(\d{4}-\d{2}-\d{2})\s*:", re.MULTILINE)
 
 FRAME = (
     "# User — bot tự ghi\n"
@@ -52,9 +54,15 @@ def habit_observations(facade, bot_id: str | None = None, now=None) -> list[dict
     for row in facade.archive.store.habit_rows(now_ts, reader=reader):
         if not row["day"]:
             continue  # sweep counts distinct daily days; dateless rows skip.
+        day_str = str(row["day"])
+        body_text = str(row["text_raw"] or "") if "text_raw" in row.keys() else ""
+        days = sorted({day_str, *OBS_DAY_RE.findall(body_text)})
         by_session[str(row["memory_id"])] = {
             "memory_id": str(row["memory_id"]),
-            "timeline_day": str(row["day"]),
+            "timeline_day": day_str,
+            "last_day": days[-1],
+            "days": days,
+            "count": len(days),
             "habit": str(row["habit"] or ""),
             "habit_explicit": bool(row["explicit"]),
             "bots": decode_bots(row["bots"]),
@@ -87,9 +95,14 @@ def habit_observations(facade, bot_id: str | None = None, now=None) -> list[dict
             if not first.habit:
                 continue
             # Explicit-owner filtering happens once below for both paths.
+            body_text = "\n".join(leaf.text_raw for leaf in leaves)
+            days = sorted({today, *OBS_DAY_RE.findall(body_text)})
             by_session[memory_id] = {
                 "memory_id": memory_id,
                 "timeline_day": today,
+                "last_day": days[-1],
+                "days": days,
+                "count": len(days),
                 "habit": first.habit,
                 "habit_explicit": bool(first.habit_explicit),
                 "bots": owners,
@@ -124,10 +137,14 @@ def sweep_bot_habits(facade, bot_id: str, bot_user_path, now=None) -> list[str]:
         groups.setdefault(Chunker.normalize(collapsed), []).append(obs)
     wanted: dict[str, str] = {}
     for key, members in groups.items():
-        days = {m["timeline_day"] for m in members}
+        days = {
+            d
+            for m in members
+            for d in m.get("days", (m["timeline_day"],))
+        }
         if not any(m["habit_explicit"] for m in members) and len(days) < 3:
             continue
-        newest = max(members, key=lambda m: m["timeline_day"])
+        newest = max(members, key=lambda m: m.get("last_day", m["timeline_day"]))
         wanted[key] = newest["habit"]
     if not wanted:
         return []
@@ -209,3 +226,29 @@ def strip_auto_habits(text: str) -> str:
         return head.rstrip("\n") + ("\n" if head.endswith("\n") else "")
     _, _, rest = tail.partition(AUTO_END)
     return head + rest
+
+
+def known_habit_labels(
+    facade,
+    bot_id: str | None = None,
+    bot_user_path=None,
+    now=None,
+) -> list[str]:
+    """Distinct habit labels already recorded for ``bot_id`` across days."""
+    seen: dict[str, str] = {}
+    for obs in habit_observations(facade, bot_id, now=now):
+        collapsed = " ".join(str(obs.get("habit") or "").split())
+        if not collapsed or "<!--" in collapsed:
+            continue
+        seen.setdefault(Chunker.normalize(collapsed), collapsed)
+    if bot_user_path is not None:
+        path = Path(bot_user_path)
+        try:
+            text = path.read_text(encoding="utf-8") if path.is_file() else ""
+        except OSError:
+            text = ""
+        for label in parse_bot_habits(text):
+            collapsed = " ".join(label.split())
+            if collapsed and "<!--" not in collapsed:
+                seen.setdefault(Chunker.normalize(collapsed), collapsed)
+    return list(seen.values())

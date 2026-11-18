@@ -1,14 +1,18 @@
 """Discord bridge prompt display (read-only investigation fix).
 
-thyca-discord-mcp build_conversation_prompt posts one user turn shaped
+An external bridge (thyca-discord-mcp in this fixture, but the display
+layer keys only on the frame protocol, never on the source tool) posts
+one user turn shaped
 ``{trusted}\\n{policy}\\n{task}\\nUNTRUSTED_CONVERSATION job_ref=R START\\n``
 ``{compact conversation JSON}\\nUNTRUSTED_CONVERSATION job_ref=R END`` —
 JSON snapshot: {assistant_uid, owner_uid, participants[{uid,
 display_name}], messages[{id, sender_uid, text, reply_to?, timestamp?}],
 new_message_id}; mentions arrive as ``<@uid>``. The chat display layer
-renders only the framed conversation (names resolved, mentions mapped),
-never the scaffolding or raw JSON; unparseable frames fall back to the
-escaped inner text. Stored payloads and the LLM path are untouched.
+renders the framed conversation as a proper block (one row per message,
+names resolved, mentions mapped, reply targets named, the triggering
+message highlighted), never the scaffolding or raw JSON; unparseable
+frames fall back to the escaped inner text. Stored payloads and the LLM
+path are untouched.
 """
 from __future__ import annotations
 
@@ -99,7 +103,14 @@ def test_framed_conversation_renders_names_not_json(framed: dict) -> None:
     assert "xuống dòng nè" in html
     # Unknown sender falls back to a shortened uid; unknown mention likewise.
     assert "333333" in html and "@000" in html
-    assert "Từ Discord" in html
+    assert "Hội thoại ngoài" in html
+    assert "Từ Discord" not in html
+    # Rendered properly: one conversation block, one row per message, the
+    # triggering message (new_message_id=m1, Bạn A) highlighted, reply named.
+    assert 'class="framed-convo"' in html
+    assert html.count('class="framed-msg') == 2
+    assert 'framed-msg is-new' in html
+    assert "trả lời Bạn A" in html
     assert "UNTRUSTED_CONVERSATION" not in html
     assert "TRUSTED_METADATA" not in html
     assert '"sender_uid"' not in html and "job_ref" not in html

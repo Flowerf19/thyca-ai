@@ -71,7 +71,7 @@ class ConversationAdminService:
     def __init__(self, deps: ConversationAdminDeps) -> None:
         self._deps = deps
 
-    def create(self, bots: list[str] | None = None) -> dict:
+    def create(self, bots: list[str] | None = None, title: str | None = None) -> dict:
         # Do not wait on any turn: create/list stay responsive while an LLM
         # call is in flight. Blank conversations belonging to a running turn must
         # survive the prune — its transcript is still empty on disk. Blank
@@ -85,14 +85,35 @@ class ConversationAdminService:
         participants = self._clean_participants(bots)
         if len(participants) == 1:
             return self.bot_dm(participants[0])
-        return self._create_group_conversation(participants)
+        return self._create_group_conversation(participants, title=title)
 
-    def _create_group_conversation(self, participants: list[str]) -> dict:
+    def _create_group_conversation(self, participants: list[str],
+                                   title: str | None = None) -> dict:
         """Fresh multi-bot group conversation (phase 2B; callers validated)."""
+        from thyca.conversations.store.contracts import normalize_group_title
+
+        cleaned = normalize_group_title(title)
         self._deps.conversations.discard_empty(keep=set(self._deps.turns.snapshot()))
         conversation = self._deps.conversations.create()
         self._deps.conversations.store.append_bots(conversation.path, participants)
         conversation.bots = list(participants)
+        if cleaned is not None:
+            self._deps.conversations.store.set_group_title(conversation.path, cleaned)
+            conversation.title = cleaned
+            self._deps.conversations.update_group_title(conversation.conversation_id, cleaned)
+        return self._deps.detail_fn(conversation, self._deps.current_cfg())
+
+    def rename_group(self, conversation_id: str, title: str | None) -> dict:
+        """Set (or clear, with a blank title) one group's display title."""
+        from thyca.conversations.store.contracts import normalize_group_title
+
+        cleaned = normalize_group_title(title)
+        conversation = self._deps.conversations.store.load(conversation_id)
+        if conversation.dm_bot is not None:
+            raise ValueError("not a group conversation")
+        self._deps.conversations.store.set_group_title(conversation.path, cleaned)
+        conversation.title = cleaned
+        self._deps.conversations.update_group_title(conversation_id, cleaned)
         return self._deps.detail_fn(conversation, self._deps.current_cfg())
 
     def get_payload(self, conversation_id: str) -> dict:

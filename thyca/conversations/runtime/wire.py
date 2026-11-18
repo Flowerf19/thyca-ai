@@ -89,7 +89,7 @@ def turn_slices(messages: list[Message]) -> list[list[Message]]:
 
 
 def conversation_summary(conversation: ConversationRuntime) -> dict:
-    return {
+    summary = {
         "conversation_id": conversation.conversation_id,
         "updated_at": updated_at(conversation),
         "message_count": len(conversation.messages),
@@ -106,6 +106,9 @@ def conversation_summary(conversation: ConversationRuntime) -> dict:
         "channel": "webui",
         "window_id": conversation.conversation_id,
     }
+    if conversation.title is not None:
+        summary["title"] = conversation.title
+    return summary
 
 
 def conversation_detail(
@@ -145,6 +148,8 @@ def conversation_detail(
         "ask_remember": ask_remember(conversation.messages, datetime.now(UTC)),
         "context": context,
     }
+    if conversation.title is not None:
+        detail["title"] = conversation.title
     # A turn in flight is invisible on disk until it finishes writing, so
     # the client is told here: it can wait instead of guessing.
     resolved = running if running is not None else started_at is not None

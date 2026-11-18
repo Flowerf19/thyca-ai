@@ -88,3 +88,27 @@ def test_dashboard_structure_and_scope_lifecycle_guards() -> None:
     assert "sidebarLabel(id, name, status) { return `Xem sử dụng của ${name}`; }" in source
     assert ".dashboard-shell .workspace{display:flex;flex-direction:column}" in css
     assert "repeat(7,minmax(0,1fr))" not in css
+
+
+def test_usage_scope_card_renders_and_clears_bot_scope(node: str) -> None:
+    out = _eval_dash(
+        node,
+        "globalThis.__roster.coder = { id: 'coder', name: 'Coder', role: 'Lập trình', color: '#123', state: 'idle' };"
+        "statsData = { totals: { conversations: 4, turns: 12 } };"
+        "botScope = 'coder'; updateScopeChip();"
+        "const scoped = { hidden: document.querySelector('#usage-scope-card').hidden, html: document.querySelector('#usage-scope-card').innerHTML };"
+        "document.querySelector('#usage-scope-card').listeners.click[0]({ target: { closest: s => s.includes('scope-clear') ? {} : null } });"
+        "const cleared = { botScope, hidden: document.querySelector('#usage-scope-card').hidden, html: document.querySelector('#usage-scope-card').innerHTML };"
+        "botScope = 'unknown-bot'; statsData = null; updateScopeChip();"
+        "const unknown = { hidden: document.querySelector('#usage-scope-card').hidden, html: document.querySelector('#usage-scope-card').innerHTML };"
+        "console.log(JSON.stringify({ scoped, cleared, unknown }));",
+    )
+    assert out["scoped"]["hidden"] is False
+    assert "Coder" in out["scoped"]["html"]
+    assert "Lập trình" in out["scoped"]["html"]
+    assert "4 phiên · 12 lượt" in out["scoped"]["html"]
+    assert "<ava:coder/>" in out["scoped"]["html"]
+    assert 'id="scope-clear"' in out["scoped"]["html"] and "Bỏ lọc" in out["scoped"]["html"]
+    assert out["cleared"] == {"botScope": "", "hidden": True, "html": ""}
+    assert out["unknown"]["hidden"] is False
+    assert 'class="id-chip"' in out["unknown"]["html"] and "Đang lọc theo bot" in out["unknown"]["html"]

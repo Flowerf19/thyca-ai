@@ -14,26 +14,28 @@
    chat page — which ships static markup instead of emitShell — renders the
    same nav. */
 function thycaHeader(current) {
-  return `<header class="site-header"><div class="header-left"><button class="icon-button menu-button" type="button" aria-label="Mở mục lục" aria-controls="chat-sidebar" aria-expanded="false"><svg class="icon"><use href="#i-menu"/></svg></button><span class="wordmark">thyca</span><span class="header-rule"></span></div><div class="header-right"><nav class="page-links" aria-label="Điều hướng">${pageLinksMarkup(current)}</nav></div></header>`;
+  const currentLabel = (Array.isArray(SHELL_PAGES) && SHELL_PAGES.find(([id]) => id === current)?.[1]) || 'Trò chuyện';
+  return `<header class="site-header"><div class="header-left"><button class="icon-button menu-button" type="button" aria-label="Mở mục lục" aria-controls="chat-sidebar" aria-expanded="false"><svg class="icon"><use href="#i-menu"/></svg></button><span class="wordmark" aria-hidden="true">thyca</span><span class="header-rule"></span></div><div class="header-right"><button type="button" class="page-menu-toggle" id="page-menu-toggle" aria-expanded="false" aria-controls="page-links-nav" aria-haspopup="true"><span class="page-menu-label">${escapeHTML(currentLabel)}</span></button><nav class="page-links" id="page-links-nav" aria-label="Điều hướng">${pageLinksMarkup(current)}</nav></div></header>`;
 }
 
-/* Sidebar for non-chat pages: team roster only. The "Hội thoại chung"
-   section + create button live in chat's own static markup — group
-   conversations only make sense on the chat page. */
+/* Shared sidebar includes the group section (chat-only) so SPA navigation
+   between chat and other pages can toggle visibility via CSS instead of
+   needing a second sidebar element. */
 function thycaSidebarMarkup() {
   return `<aside class="sidebar" id="chat-sidebar" aria-label="Đội bot">
  <div class="sessions-heading"><h2 id="team-nav-title">Đội</h2><span class="bot-count">0 người bạn</span></div>
  <div class="side-scroll"><nav class="session-list" id="team-bot-list" aria-label="Bot trong đội"></nav></div>
- <footer class="sidebar-footer"><button id="open-settings" aria-label="Cài đặt"><svg class="icon"><use href="#i-face"/></svg>Cài đặt</button></footer>
+ <div class="rail-scroll"><nav class="rail-avatar-list" id="rail-avatar-list" aria-label="Bot trong đội"></nav></div>
+ <footer class="sidebar-footer"><button id="open-settings" aria-label="Cài đặt"><svg class="icon"><use href="#i-face"/></svg><span class="settings-label">Cài đặt</span></button></footer>
 </aside>
-<div class="splitter" role="separator" tabindex="0" aria-label="Thay đổi chiều rộng thanh bot" aria-orientation="vertical" aria-valuemin="310" aria-valuemax="470" aria-valuenow="374" title="Kéo để thay đổi chiều rộng · dùng phím trái/phải"></div>`;
+<button type="button" class="splitter" aria-label="Thu gọn thanh bot" aria-controls="chat-sidebar" aria-expanded="true" title="Thu gọn/Mở rộng thanh bot">‹</button>`;
 }
 
 /* The same dialogs chat ships statically — needed before studio.js binds. */
 function thycaDialogs() {
   return `<div class="mobile-overlay" id="mobile-overlay" hidden></div>
-<dialog class="screen-dialog" id="expressions-dialog" aria-labelledby="expressions-title">
-<div class="dialog-heading"><div><h2 id="expressions-title">Một huy chương, nhiều tâm trạng.</h2><p>Đôi mắt kể chuyện, đôi tay giữ nhịp. Thử từng biểu cảm hoặc xem trọn một lượt làm việc.</p></div><button class="icon-button dialog-close" aria-label="Đóng"><svg class="icon"><use href="#i-close"/></svg></button></div>
+<dialog class="screen-dialog" id="expressions-dialog" aria-label="Xưởng biểu cảm">
+<button class="icon-button dialog-close expressions-close" aria-label="Đóng"><svg class="icon"><use href="#i-close"/></svg></button>
 <div class="dialog-body"><div class="dialog-controls"><label for="expression-bot">Người bạn</label><select id="expression-bot"></select><label for="bot-color">Màu bot</label><input type="color" id="bot-color" value="#315e4c" aria-label="Màu của bot" style="width:28px;height:28px;border:0;background:none;padding:0;cursor:pointer"><div class="palette-preview" id="palette-preview"></div></div>
 <div class="shape-row"><span class="shape-label" id="shape-label">Hình dạng</span><div class="shape-picker" id="shape-picker" role="group" aria-labelledby="shape-label"></div></div>
 <div class="studio-tabs" role="tablist" aria-label="Nhóm biểu cảm"><button type="button" class="studio-tab" id="work-tab" role="tab" aria-selected="true" aria-controls="lifecycle-panel">Khi làm việc <small>11</small></button><button type="button" class="studio-tab" id="idle-tab" role="tab" aria-selected="false" aria-controls="idle-panel" tabindex="-1">Lúc rảnh <small>8</small></button></div>
@@ -45,17 +47,23 @@ function thycaDialogs() {
 </div><section id="idle-panel" role="tabpanel" aria-labelledby="idle-tab" hidden><h3 class="idle-panel-heading">Rảnh một chút, vui một chút.</h3><p class="idle-panel-copy">Mắt thỉnh thoảng nhìn quanh. Một cử chỉ nhỏ, một câu nói vu vơ — rồi lại yên lặng. Mỗi người bạn có một nhịp riêng.</p><div class="idle-controls"><label><input type="checkbox" id="idle-auto-toggle" checked>Ngẫu nhiên khi rảnh</label><label><input type="checkbox" id="idle-comments-toggle" checked>Thỉnh thoảng nói nhỏ</label><button type="button" class="idle-random-button" id="idle-random"><svg class="icon"><use href="#i-retry"/></svg>Ngẫu nhiên ngay</button></div><div id="idle-expression-grid"></div><p class="idle-preview-hint">Lời nhắn xuất hiện trên thẻ bot. Khi bạn gọi hoặc giao việc, bot trở lại tập trung ngay.</p></section>
 <p class="dialog-note">Mỗi bot giữ màu, hình dạng và nhịp chớp mắt riêng. Biểu cảm theo trạng thái công việc; lúc rảnh có thêm cử chỉ và lời nhắn ngẫu nhiên, có thể tắt riêng.</p></div></dialog>
 <dialog class="screen-dialog" id="bot-drawer" aria-labelledby="bot-drawer-name"><div class="dialog-heading"><div><h2 id="bot-drawer-name">Thông tin bot</h2><p id="bot-drawer-subtitle">Một người bạn trong đội.</p></div><button class="icon-button dialog-close" aria-label="Đóng"><svg class="icon"><use href="#i-close"/></svg></button></div><div class="dialog-body" id="bot-drawer-body"></div></dialog>
-<dialog class="screen-dialog" id="group-dialog" aria-labelledby="group-dialog-title"><div class="dialog-heading"><div><h2 id="group-dialog-title">Một cuộc trò chuyện chung.</h2><p>Chọn những người bạn sẽ cùng tham gia.</p></div><button class="icon-button dialog-close" aria-label="Đóng"><svg class="icon"><use href="#i-close"/></svg></button></div><form class="dialog-body group-form" id="group-form"><div id="group-options"></div><div class="dialog-actions"><button class="primary-action" type="submit">Tạo hội thoại</button></div></form></dialog>
+<dialog class="screen-dialog" id="group-dialog" aria-labelledby="group-dialog-title"><div class="dialog-heading"><div><h2 id="group-dialog-title">Một cuộc trò chuyện chung.</h2><p>Chọn những người bạn sẽ cùng tham gia.</p></div><button class="icon-button dialog-close" aria-label="Đóng"><svg class="icon"><use href="#i-close"/></svg></button></div><form class="dialog-body group-form" id="group-form"><label class="group-name-label" for="group-name">Tên nhóm (không bắt buộc, nên 3–5 từ)</label><input type="text" id="group-name" name="group-name" maxlength="80" placeholder="Ví dụ: Đội hỗ trợ Discord" autocomplete="off"><small class="group-name-hint">Tên ngắn 3–5 từ; để trống nhóm sẽ hiện “Hội thoại chung”.</small><div id="group-options"></div><div class="dialog-actions"><button class="primary-action" type="submit">Tạo hội thoại</button></div></form></dialog>
 <dialog class="screen-dialog" id="settings-dialog" aria-labelledby="settings-title"><div class="dialog-heading"><div><h2 id="settings-title">Cài đặt</h2><p>Bot của bạn, giao diện máy này, giới hạn chạy và trạng thái máy chủ — chung cho mọi trang.</p></div><button class="icon-button dialog-close" aria-label="Đóng"><svg class="icon"><use href="#i-close"/></svg></button></div><div class="dialog-body" id="settings-body">
  <section class="paper-card" aria-labelledby="settings-bots-title">
   <div class="eyebrow">Bot của bạn</div>
   <h3 class="card-title" id="settings-bots-title">Người bạn đồng hành</h3>
-  <p class="card-copy">Đổi màu và hình dáng nhân vật ở xưởng biểu cảm — mọi lựa chọn giữ nguyên như trước.</p>
+  <p class="card-copy">Chọn bot ở trên để đổi model / mức suy luận riêng của bot đó (để trống là theo mặc định chung); màu và hình dáng nhân vật chỉnh ở Xưởng biểu cảm bên dưới.</p>
   <div class="bot-pick"><span id="settings-bot-seal" class="bot-pick-seal"></span>
    <label class="field" for="settings-bot"><span>Bot</span><select id="settings-bot"></select></label>
-   <input type="color" id="settings-bot-color" value="#315e4c" aria-label="Màu của bot" style="width:28px;height:28px;border:0;background:none;padding:0;cursor:pointer;align-self:end">
   </div>
   <div class="form-footer"><button type="button" class="quiet-button" id="open-studio">Xưởng biểu cảm</button></div>
+  <form id="bot-settings-form" class="settings-bot-model-form" novalidate aria-label="Model và mức suy luận của bot">
+   <div id="bot-settings-fields"><p class="empty-note">Đang tải cài đặt bot…</p></div>
+   <div class="form-footer">
+    <button class="primary-action" type="submit" id="save-bot-settings" disabled>Lưu cài đặt bot</button>
+    <span class="form-hint" id="bot-settings-hint"></span>
+   </div>
+  </form>
  </section>
  <section class="paper-card" aria-labelledby="settings-ui-title">
   <div class="eyebrow">Giao diện · máy này</div>
@@ -73,7 +81,7 @@ function thycaDialogs() {
  <section class="paper-card" aria-labelledby="settings-limits-title">
   <div class="eyebrow">Giới hạn &amp; thời gian chạy</div>
   <h3 class="card-title" id="settings-limits-title">Nhịp làm việc của đội</h3>
-  <p class="card-copy">Các mức trần áp cho mọi bot: vòng agent, nhớ nóng và ngữ cảnh gửi lên model. Provider, model mặc định và API key chỉnh ở trang riêng; model riêng của từng bot chỉnh ở trang Hồ sơ, mục của bot đó.</p>
+  <p class="card-copy">Giới hạn toàn cục của máy chủ áp cho mọi lượt chạy (vòng agent, nhớ nóng, ngữ cảnh, thời gian chờ). Provider và model mặc định chỉnh ở trang Provider; model riêng từng bot chỉnh ở mục “Bot của bạn” phía trên.</p>
   <form id="config-form" novalidate>
    <div id="config-fields"><p class="empty-note">Đang tải cấu hình…</p></div>
    <div class="form-footer">
@@ -152,5 +160,5 @@ async function bootShell() {
   bots.forEach(updateCard);
   $('.bot-count').textContent = bots.length + ' người bạn';
   rebuildExpressionBots();
-  try { await refreshConversations(); renderGroups(); } catch {}  // API: GET /api/conversations
+  try { await refreshConversations(); renderGroups(); renderHeaderBots(); } catch {}  // API: GET /api/conversations
 }

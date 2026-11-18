@@ -45,19 +45,32 @@ function convDoorUrl(key, suffix) {
    exception is the system bot: Thyca is always the main bot, so its
    star is permanently on and cannot be removed. */
 const FAVORITE_KEY = 'thyca.favorites';
-function favoriteIds() {
+/* Group pins use the same browser-only star preference, under their own
+   key so group ids and bot ids never collide. */
+const GROUP_FAVORITE_KEY = 'thyca.groupFavorites';
+function favoriteIdsFor(key) {
   try {
-    const raw = JSON.parse(localStorage.getItem(FAVORITE_KEY) || '[]');
+    const raw = JSON.parse(localStorage.getItem(key) || '[]');
     return new Set(Array.isArray(raw) ? raw.filter(x => typeof x === 'string') : []);
   } catch { return new Set(); }
 }
+function setFavoriteFor(key, id, favorite) {
+  const ids = favoriteIdsFor(key);
+  if (favorite) ids.add(id); else ids.delete(id);
+  try { localStorage.setItem(key, JSON.stringify([...ids])); } catch { /* marker still applies when storage is unavailable */ }
+}
+function favoriteIds() { return favoriteIdsFor(FAVORITE_KEY); }
 function botFavorite(cardId, system) {
   return system === true || favoriteIds().has(cardId);
 }
-function setBotFavorite(id, favorite) {
-  const ids = favoriteIds();
-  if (favorite) ids.add(id); else ids.delete(id);
-  try { localStorage.setItem(FAVORITE_KEY, JSON.stringify([...ids])); } catch { /* marker still applies when storage is unavailable */ }
+function setBotFavorite(id, favorite) { setFavoriteFor(FAVORITE_KEY, id, favorite); }
+function groupFavoriteIds() { return favoriteIdsFor(GROUP_FAVORITE_KEY); }
+function setGroupFavorite(id, favorite) { setFavoriteFor(GROUP_FAVORITE_KEY, id, favorite); }
+
+/* Display title for one group: its stored title when present, else the
+   shared-conversation fallback (one rule for sidebar, pockets, chat). */
+function groupTitleOf(title) {
+  return typeof title === 'string' && title.trim() ? title.trim() : 'Hội thoại chung';
 }
 
 async function getJson(url, options) {
@@ -318,20 +331,28 @@ function conversationRow(conversation) {
     : when ? when.toLocaleDateString('vi-VN', { day: 'numeric', month: 'numeric' }) : '';
   const turns = conversation.turns ? ` · ${conversation.turns} lượt` : '';
   const key = conversation.kind === 'dm' ? dmKey(conversation.bot_id) : groupKey(conversation.group_id);
-  const label = conversation.kind === 'dm' ? ((getBot(conversation.bot_id) || {}).name || conversation.bot_id || 'Thyca') : 'Hội thoại chung';
+  const label = conversation.kind === 'dm' ? ((getBot(conversation.bot_id) || {}).name || conversation.bot_id || 'Thyca') : groupTitleOf(conversation.title);
   return [key, label, day + turns];
 }
 // Refresh the conversation list into group rows and per-bot pocket rows.
+// Each group and bot keeps its newest conversation timestamp (activityAt /
+// updatedAtMs) so the unified sidebar can push recent chats to the top.
 async function refreshConversations() {
   const payload = await getJson('/api/conversations');         // API: GET /api/conversations
   const list = payload.conversations || [];
+  const tsOf = s => { const t = Date.parse(s.updated_at || ''); return Number.isFinite(t) ? t : 0; };
   groups.splice(0, groups.length, ...list.filter(s => s.kind === 'group').map(s => {
     const live = (s.bots || []).filter(id => getBot(id));
-    return { id: s.group_id, title: 'Hội thoại chung', bots: live, subtitle: `${live.length} người bạn${s.turns ? ' · ' + s.turns + ' lượt' : ''}` };
+    return { id: s.group_id, title: groupTitleOf(s.title), bots: live, subtitle: `${live.length} người bạn${s.turns ? ' · ' + s.turns + ' lượt' : ''}`, updatedAtMs: tsOf(s), favorite: groupFavoriteIds().has(s.group_id) };
   }));
   bots.forEach(b => {
-    b.conversations = list.filter(s => (s.kind === 'dm' && s.bot_id === b.id)
-      || (s.kind === 'group' && (s.bots || []).includes(b.id))).map(conversationRow);
+    const mine = list.filter(s => (s.kind === 'dm' && s.bot_id === b.id)
+      || (s.kind === 'group' && (s.bots || []).includes(b.id)));
+    b.conversations = mine.map(conversationRow);
+    /* Sidebar recency for a bot entry tracks its own DM only — group chats
+       promote the group entry, not every member bot on their own. */
+    b.activityAt = list.filter(s => s.kind === 'dm' && s.bot_id === b.id)
+      .reduce((max, s) => Math.max(max, tsOf(s)), 0);
   });
 }
 

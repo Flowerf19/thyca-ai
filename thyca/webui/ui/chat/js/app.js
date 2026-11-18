@@ -14,10 +14,12 @@ async function boot(ctx) {
     return;
   }
   renderTeam();
+  renderHeaderBots();
   bots.forEach(updateCard);
   $('.bot-count').textContent = bots.length + ' người bạn';
   rebuildExpressionBots();
   renderGroups();
+  renderHeaderBots();
   const params = new URLSearchParams(ctx.route.search);
   const linkGroup = params.get('g');
   const linkBot = params.get('bot');
@@ -62,13 +64,6 @@ $('#message-list').addEventListener('click', async e => {
   const consentChip = e.target.closest('[data-pf-choice]');
   if (consentChip && !consentChip.disabled) void decidePrivateFollowup(consentChip.dataset.pendingId, consentChip.dataset.revision, consentChip.dataset.pfChoice, consentChip);
 });
-$('#conversation-info').onclick = () => {
-  const g = groups.find(g => groupKey(g.id) === currentConversation);
-  $('#bot-drawer-name').textContent = $('#chat-title').textContent;
-  $('#bot-drawer-subtitle').textContent = g ? 'Hội thoại với ' + g.bots.map(id => (getBot(id) || {}).name || id).join(', ') : 'Phiên cùng ' + ((getBot(selectedBot) || {}).name || '…');
-  $('#bot-drawer-body').innerHTML = '';
-  $('#bot-drawer').showModal();
-};
 $('#conversation-scroll').addEventListener('scroll', () => $('#to-bottom').hidden = isNearBottom()); $('#to-bottom').onclick = () => toBottom(true);
 
 /* Public adapter for tests/demos: shared shell surface + chat turn control. */

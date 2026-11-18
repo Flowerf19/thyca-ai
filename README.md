@@ -1,112 +1,59 @@
 # Thyca
 
-Trợ lý cá nhân đa công việc, giai đoạn **trước beta (pre-beta)**. Thyca học dần từ những gì bạn chia sẻ và cách bạn làm việc — trò chuyện, viết code, đọc tài liệu, tra web, chạy lệnh trên máy bạn — và **ghi nhớ** để lần sau không phải nhắc lại.
+Thyca is a personal assistant that runs on your own Linux machine. It is a **team of bots**: Thyca manages the team, and you add bots for different roles. Each bot has its own persona and memory, learns from what you share, and can chat, write code, read documents, search the web, and run commands on your machine.
 
-**Phiên bản hiện tại: 0.88.0.dev2**
+**Version: 0.88.0.dev3** (development build, not yet a stable release)
 
-Thyca là một **đội bot**: Thyca là bot quản lý, bạn tạo thêm bot cho từng vai trò. Mỗi bot có persona và bộ nhớ riêng, cùng đọc `SOUL.md` + `USER.md` chung về bạn.
+![Chat with a team of bots](docs/images/webui-chat.png)
 
-## Màn hình
+*The Chat screen: your bot team on the left, a conversation in the middle.*
 
-6 màn trong một SPA tại `http://127.0.0.1:19502/`, chuyển bằng thanh nav góc phải; bấm bot trên sidebar để lọc màn theo bot đó. Mọi màn dùng chung URL gốc, không tải lại ứng dụng khi chuyển trang; các liên kết trang cũ vẫn mở đúng màn và giữ bộ lọc/định danh liên quan:
+## What you can do
 
-![Trò chuyện](docs/images/webui-chat.png)
+- **Chat with the team.** Pick a bot in the sidebar, or type `@bot-name` in the composer to hand a message to another bot. Bots show what they are doing while they work.
+- **Talk to several bots at once.** Group conversations bring multiple bots into one room; groups can be named, pinned, and opened from the same sidebar as bots.
+- **Give each bot its own model.** Choose a per-bot model and reasoning level in Settings; leave it empty to follow the shared default.
+- **Let Thyca remember.** Bots write memories to a daily journal you can browse, search, and filter on the Journal screen.
 
-*Màn Trò chuyện với avatar huy chương (medallion) hiện tại.*
+![Settings: per-bot model and app preferences](docs/images/webui-settings.png)
 
-| Màn | Làm gì |
-|---|---|
-| **Trò chuyện** | Chat chính. Xem suy nghĩ model đang chạy, đổi model/mức suy nghĩ trên ô soạn tin, dừng/thử lại lượt. Màn duy nhất có mục Hội thoại chung (nhiều bot). |
-| **Nhật ký** | Bộ nhớ các bot ghi. Thẻ tổng quan, lọc loại (Ghi nhớ/Thói quen/Task) + mức dùng, tìm kiếm, phân trang. |
-| **Hồ sơ** | Không bot nào mở: 3 file chung sửa trực tiếp (`USER.md`/`SOUL.md`/`IDENTITY.md`). Chọn bot ở thanh đội để mở hồ sơ riêng: persona (chỉ đọc) + model & mức suy luận của đúng bot đó. |
-| **Provider** | Một trình chỉnh sửa kết nối + model dùng chung: URL/API key, tải danh sách, chọn hoặc nhập model, rồi lưu rõ ràng. Tải danh sách chỉ đọc `/models`, không thử gọi model hay lưu cấu hình. Không chỉnh theo từng bot ở đây. |
-| **Sử dụng** | Ba góc nhìn Sử dụng, Chi phí, Trace trong cùng dashboard; lọc bot và kỳ rồi mở chi tiết reasoning/tool đầy đủ. Lượt chưa gắn bot chỉ có trong Tổng quan. |
-| **Cài đặt** | Mặc định chung (giới hạn/nhịp làm việc của đội). |
+*Settings: per-bot companion settings, appearance, and run limits in one dialog.*
 
-## Lưu trữ
+## Quick start
 
-Mục này nói rõ mỗi loại dữ liệu nằm ở đâu. Đọc mục này trước khi sao lưu hoặc dọn dữ liệu.
-
-### Hội thoại công khai (DM và nhóm)
-
-- Nơi lưu duy nhất là SQLite tại `<root>/conversations.db`.
-- Mã nằm ở `thyca/conversations/store/`. Hai cửa ghi là `AdminStore` và `AgentStore`.
-- Schema hiện tại là v2. Cơ sở dữ liệu chạy ở chế độ WAL.
-- DM mở qua `/api/bots/<bot_id>/dm/...`. Nhóm mở qua `/api/groups/<group_id>/...`.
-- Danh sách hội thoại nằm ở `/api/conversations`.
-- Đường cũ `/api/sessions*` đã bị cắt hẳn. Mọi yêu cầu tới đường này nhận `404`.
-- Không còn lưu hội thoại công khai bằng file JSONL. Hệ thống không tự chuyển dữ liệu cũ.
-- Nếu thư mục gốc còn file cũ dưới `sessions/*.jsonl`, hệ thống từ chối khởi động. Bạn phải tự xử lý các file đó trước.
-
-### Lịch sử thực thi của từng bot
-
-- Mỗi bot có một `WorkspaceTimeline` riêng tại `thyca/bots/timeline.py`.
-- Đây là nơi lưu lịch sử thực thi canonical duy nhất của bot đó.
-- File trên đĩa là `bots/<bot>/workspace/timeline.jsonl`.
-- Lớp điều phối hội thoại nằm ở `thyca/conversations/runtime/`.
-- Bốn class `ConversationRuntime`, `ConversationManager`, `ConversationStore`, `ConversationCompactor` ở đó (đổi tên full cutover, không còn alias cũ; runtime view đặt tên `ConversationRuntime` để không đụng store `Conversation`).
-
-### Bộ nhớ dài hạn
-
-Markdown dưới `~/.thyca` là nguồn sự thật cho bộ nhớ. SQLite ở đây chỉ là mục lục tìm kiếm:
-
-- Note đáng nhớ ghi vào `memory/YYYY-MM-DD.md` — file hôm nay inject thẳng vào ngữ cảnh mỗi lượt.
-- Qua ngày mới đưa vào index (`memory_search`, FTS5 + trigram) — tìm bằng từ khóa.
-- `SOUL.md` + `USER.md` dùng chung mọi bot; `IDENTITY.md` chỉ của Thyca; mỗi bot có `TWIN.md` + `USER.md` riêng (`bots/<id>/`) cho thói quen bot tự suy luận.
-- Model và mức suy luận riêng của từng bot nằm ở `bots/<id>/settings.json` (chọn bot ở thanh đội trên trang Hồ sơ, mục model của bot đó). `TWIN.md` chỉ giữ căn tính/persona/quy tắc — file canonical không còn key `model`.
-
-## Cài đặt
-
-Cần Linux, Python 3.14+, `uv`, API key OpenAI-compatible:
+You need Linux, Python 3.14+, and an API key for an OpenAI-compatible provider.
 
 ```bash
 curl -LsSf https://raw.githubusercontent.com/Flowerf19/thyca-ai/main/install.sh | sh
-thyca --serve        # SPA: http://127.0.0.1:19502/
+thyca --serve
 ```
 
-Lần đầu, nếu model hiệu lực chưa có API key, Thyca đưa bạn tới Provider và khóa các thao tác ở màn khác cho tới khi máy chủ xác nhận sẵn sàng. Điền tên kết nối + Base URL + API key → **Tải model** (chỉ lấy danh sách, không gọi model) → chọn model → **Lưu**, rồi **Đặt mặc định** ở danh sách model đã lưu để dùng model đó. Cấu hình được ghi trên máy; key đã lưu không gửi lại giao diện. Key trong biến môi trường cũng được máy chủ tính khi xác định trạng thái sẵn sàng, kể cả model chưa có trong danh mục.
+Then open http://127.0.0.1:19502/ in your browser. On first run, Thyca walks you through adding a provider (base URL + API key), loading its model list, and picking a default model.
 
-Nâng cấp: `uv tool upgrade thyca-ai` hoặc chạy lại `install.sh`.
+To upgrade later: `uv tool upgrade thyca-ai`, or run `install.sh` again.
 
-**Chat**: khung soạn mặc định để trống (theo cấu hình bot: model trong Hồ sơ khi chọn bot, provider suy từ model, mức suy luận đã lưu hoặc của model/provider); chỉ giá trị bạn chọn mới ghi đè lượt đó — không đổi gì đã lưu. Gõ `@tên-bot` để bot khác trả lời vẫn áp cấu hình của bot đó.
-
-**CLI**: chọn đúng một hội thoại cho mỗi lần chạy.
-
-- `thyca -p "câu hỏi"` hỏi nhanh một lượt trong DM của bot mặc định (`thyca`).
-- `thyca --bot <bot_id> -p "câu hỏi"` hỏi trong DM của bot đó.
-- `thyca --group <group_id> -p "câu hỏi"` hỏi trong một nhóm. Mã nhóm có dạng `group-<hex32>`.
-- Không ghi `-p` thì Thyca mở REPL chat liên tục trong cùng hội thoại đã chọn.
-- `--model <id>` chỉ đổi model cho lần chạy đó.
-- `--bot` và `--group` không dùng chung nhau. Cờ cũ `--session` và `--continue` đã bị gỡ.
-
-**Từ mã nguồn**: `uv sync` → `uv run thyca --serve --daemon` → `uv run pytest -q`.
-
-## Kiểm tra
-
-Chạy các lệnh này từ thư mục mã nguồn trước khi kết luận bản build khỏe:
+## Command line
 
 ```bash
-uv run pytest -q
-git diff --check
+thyca -p "your question"                    # one quick turn with the default bot
+thyca --bot <bot_id> -p "your question"     # one turn with a specific bot
+thyca --group <group_id> -p "your question" # one turn in a group conversation
+thyca                                       # interactive chat (REPL)
 ```
 
-Kết quả gần nhất đã xác minh (commit `e46b18e`): **2097 passed, 5 skipped**. Năm ca bị bỏ qua cần Chrome hoặc môi trường ngoài.
+Add `--model <id>` to override the model for a single run.
 
-Cổng `ruff` đã được cấu hình trong `pyproject.toml`. Máy kiểm tra lần này chưa cài `ruff` trong `.venv` nên cổng này chưa được xác minh.
+## Your data stays local
 
-Chưa chạy kiểm tra khói trên thư mục gốc thật (live scratch-root smoke). Chưa kiểm chứng chất lượng trả lời với nhà cung cấp thật.
+Everything runs on your machine: the web UI is served on loopback only (`127.0.0.1`), conversations live in a local SQLite database, and long-term memory is Markdown under `~/.thyca`. API keys are stored locally and never sent back to the browser after saving.
 
-## Giới hạn đã biết
+## From source
 
-- Đây vẫn là bản development (`0.88.0.dev2`). Đừng coi là bản beta hay bản ổn định.
-- Bốn class runtime đã đổi sang `Conversation*` và `session_id` đã thành `conversation_id` ở code hội thoại (không còn alias); trường định danh ở lá bộ nhớ cũng đã đổi từ `session_id` sang `memory_id` (SQLite schema v9, migration v8→v9 giữ hàng chunk và bộ đếm get/search; Markdown không đổi).
-- Chưa có bên phát hành vòng đời/đặt lại (lifecycle/reset issuer) ngoài luồng khởi động cục bộ của `ChatApp`.
-- Chưa chốt chính sách giữ/xóa dữ liệu cũ (retention policy).
-- Chưa có lệnh đặt lại trên dữ liệu thật. Việc đó cần bạn cho phép rõ ràng trước.
-
-## Tài liệu & góp ý
-
-`.agents/README.md` cho agent contributor, `.agents/plans/done/` kế hoạch, `.agents/decisions/` quyết định kiến trúc. Góp ý tại [GitHub Discussions](https://github.com/Flowerf19/thyca-ai/discussions).
+```bash
+uv sync
+uv run thyca --serve --daemon
+uv run pytest -q
+```
 
 ## License
 

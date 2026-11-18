@@ -118,8 +118,15 @@
     document.documentElement.dataset.setupState = setupState;
     const sidebar = document.querySelector('#chat-sidebar'), menu = document.querySelector('.menu-button');
     if (locked && sidebar?.classList.contains('mobile-open') && typeof closeMobile === 'function') closeMobile();
-    if (sidebar) sidebar.inert = locked || (matchMedia('(max-width:850px)').matches && !sidebar.classList.contains('mobile-open'));
+    const isNarrow = matchMedia('(max-width:850px)').matches;
+    if (sidebar) sidebar.inert = locked || (isNarrow && !sidebar.classList.contains('mobile-open'));
     if (menu) menu.disabled = locked;
+    const pageMenuBtn = document.querySelector('#page-menu-toggle');
+    if (pageMenuBtn) {
+      pageMenuBtn.disabled = locked;
+      if (locked && typeof closePageMenu === 'function') closePageMenu();
+    }
+    if (typeof syncSidebarChrome === 'function') syncSidebarChrome();
     for (const link of document.querySelectorAll('[data-page-link]')) {
       if (locked && link.dataset.pageLink !== 'provider') {
         if (!link.hasAttribute('data-setup-original-tabindex')) link.dataset.setupOriginalTabindex = link.getAttribute('tabindex') ?? '';
@@ -274,6 +281,18 @@
     if (shared) shared.media = 'all';
     pageStyle.media = 'all';
     document.body.dataset.activePage = page;
+    const navTitle = document.querySelector('#team-nav-title');
+    if (navTitle) {
+      if (['dashboard', 'memories', 'profile'].includes(page)) {
+        navTitle.setAttribute('role', 'button');
+        navTitle.tabIndex = 0;
+        navTitle.title = 'Xem tất cả / chung';
+      } else {
+        navTitle.removeAttribute('role');
+        navTitle.removeAttribute('tabindex');
+        navTitle.removeAttribute('title');
+      }
+    }
     for (const link of [shared, pageStyle].filter(Boolean)) {
       await awaitStylesheet(link, ticket);
       if (ticket !== generation) return;
@@ -431,6 +450,9 @@
         link.scrollIntoView({ block: 'nearest', inline: 'nearest' });
       } else link.removeAttribute('aria-current');
     }
+    const pageMenuLabel = document.querySelector('.page-menu-label');
+    if (pageMenuLabel) pageMenuLabel.textContent = entry.title;
+    if (typeof closePageMenu === 'function') closePageMenu();
     document.title = `Thyca — ${entry.title}`;
     // Legacy settings URL / historical settings entry: chat is showing, so
     // open the shared dialog once the setup gate allows it. The marker

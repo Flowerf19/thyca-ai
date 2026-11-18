@@ -23,8 +23,9 @@
 .shape-preview .seal-avatar{width:38px;height:38px}
 /* Expression studio: still thumbnails, one live character, a shared team clock. */
 #expressions-dialog{width:min(820px,calc(100vw - 32px))}
-#expressions-dialog .dialog-heading{position:sticky;top:0;z-index:5;background:#fbf5e8}
-#expressions-dialog .dialog-heading h2{font-size:30px}
+#expressions-dialog{position:relative}
+#expressions-dialog .expressions-close{position:absolute;top:12px;right:12px;z-index:6}
+#expressions-dialog .dialog-body{padding-top:18px}
 .expression-stage{position:relative;display:grid;grid-template-columns:170px minmax(0,1fr);align-items:center;gap:17px;padding:20px 24px;border:1px solid var(--bot-border);border-radius:14px;background:radial-gradient(ellipse at 17% 45%,var(--bot-paper),transparent 55%),linear-gradient(120deg,var(--bot-pale),#fffbf2);overflow:hidden;min-height:196px}
 .stage-portrait{display:grid;place-items:center;align-self:stretch;position:relative}
 .stage-portrait:before{content:'';position:absolute;bottom:10px;width:90px;height:9px;background:var(--bot-ink);opacity:.09;border-radius:50%;filter:blur(3px)}

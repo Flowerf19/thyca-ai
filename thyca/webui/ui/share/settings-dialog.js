@@ -10,12 +10,14 @@
 
 function fillSettingsBots(selected) {
   const sel = document.querySelector('#settings-bot');
-  if (!sel) return;
+  if (!sel) return '';
   const ids = bots.map(b => b.id);
-  const current = ids.includes(selected) ? selected : ids.includes(selectedBot) ? selectedBot : ids[0];
+  const current = ids.includes(selected) ? selected : ids.includes(selectedBot) ? selectedBot : ids[0] || '';
   sel.innerHTML = bots.map(b => `<option value="${escapeHTML(b.id)}"${b.id === current ? ' selected' : ''}>${escapeHTML(b.name)}</option>`).join('')
     || '<option value="">Chưa có bot nào</option>';
+  sel.value = current;
   paintSettingsBot(current);
+  return current;
 }
 
 function paintSettingsBot(id) {
@@ -23,8 +25,6 @@ function paintSettingsBot(id) {
   if (!holder) return;
   const b = id && getBot(id);
   holder.innerHTML = b ? `${avatar(b)}<span><strong>${escapeHTML(b.name)}</strong><span>${escapeHTML(b.role || 'Người bạn trong đội')}</span></span>` : '';
-  const color = document.querySelector('#settings-bot-color');
-  if (color && b) color.value = b.color || '#315e4c';
 }
 
 /* ---------- UI preferences (same key/shape as the old settings page) ---------- */
@@ -65,7 +65,310 @@ let settingsDraft = null;
 let settingsConflictSeen = null;
 let settingsSaving = false;
 let settingsLoadSeq = 0;
+let settingsConfigSavedSelf = false;
 const SETTINGS_CONFIG_SECTIONS = ['limits'];
+
+/* ---------- Per-bot model & thinking settings (scoped to #settings-bot) ---------- */
+
+let settingsBotCatalog = null; // { models, defaultModel, defaultProvider, providers }
+let settingsBotSchemaChoices = [];
+let settingsBotCatalogDirty = false;
+const botCfg = { bot: '', settings: null, seq: 0, loading: false, savingFor: null, error: '' };
+let botLoadedCfg = null;       // { bot, model, thinking } | null
+const botDrafts = new Map();   // botId -> { model, thinking }
+
+function currentSettingsBot() {
+  const sel = document.querySelector('#settings-bot');
+  return (sel && sel.value) || botCfg.bot || '';
+}
+
+function extractBotCatalog(payload) {
+  const values = payload?.values || {};
+  const sections = payload?.schema?.sections || [];
+  const field = sections.flatMap(s => s.fields || []).find(f => f.key === 'provider.reasoningEffort');
+  settingsBotCatalog = {
+    models: (values.models && typeof values.models === 'object') ? values.models : {},
+    defaultModel: typeof values.defaultModel === 'string' ? values.defaultModel : '',
+    defaultProvider: typeof values.defaultProvider === 'string' ? values.defaultProvider : '',
+    providers: (values.providers && typeof values.providers === 'object') ? values.providers : {},
+  };
+  settingsBotSchemaChoices = Array.isArray(field?.choices) ? field.choices : ['low', 'medium', 'high', 'xhigh', 'max'];
+}
+
+function botModelIds() {
+  const models = settingsBotCatalog?.models && typeof settingsBotCatalog.models === 'object' ? settingsBotCatalog.models : {};
+  const def = typeof settingsBotCatalog?.defaultModel === 'string' ? settingsBotCatalog.defaultModel : '';
+  return [...new Set(['default', def, ...Object.keys(models)].filter(Boolean))];
+}
+
+function botModelLabel(id) {
+  const def = settingsBotCatalog?.defaultModel || '';
+  return id === 'default' ? `Theo mặc định chung${def ? ' (' + def + ')' : ''}` : id;
+}
+
+function botEffortChoices(modelId) {
+  const registered = settingsBotCatalog?.models?.[modelId];
+  const own = Array.isArray(registered?.reasoningEfforts) ? registered.reasoningEfforts.filter(Boolean) : [];
+  return own.length ? own : settingsBotSchemaChoices;
+}
+
+function botDraftProviderId(modelId) {
+  const models = settingsBotCatalog?.models && typeof settingsBotCatalog.models === 'object' ? settingsBotCatalog.models : {};
+  const defProvider = typeof settingsBotCatalog?.defaultProvider === 'string' ? settingsBotCatalog.defaultProvider : '';
+  if (modelId === 'default') {
+    const dm = settingsBotCatalog?.defaultModel || '';
+    const entry = dm ? models[dm] : null;
+    return (entry?.provider && settingsBotCatalog?.providers?.[entry.provider]) ? entry.provider : defProvider;
+  }
+  if (!Object.hasOwn(models, modelId)) {
+    return modelId === settingsBotCatalog?.defaultModel ? defProvider : '';
+  }
+  const entry = models[modelId];
+  return (entry?.provider && settingsBotCatalog?.providers?.[entry.provider]) ? entry.provider : defProvider;
+}
+
+function botModelKnown(id) {
+  const models = settingsBotCatalog?.models && typeof settingsBotCatalog.models === 'object' ? settingsBotCatalog.models : {};
+  const def = settingsBotCatalog?.defaultModel || '';
+  return id === 'default' || Object.hasOwn(models, id) || (!!def && id === def);
+}
+
+function updateBotSave() {
+  const save = document.querySelector('#save-bot-settings');
+  const sel = document.querySelector('#bot-model');
+  if (!save) return;
+  const active = currentSettingsBot();
+  save.disabled = botCfg.loading || !!botCfg.savingFor || !active || !getBot(active)
+    || !settingsBotCatalog || !botCfg.settings || !sel || !botModelKnown(sel.value);
+}
+
+function paintBotProviderPreview() {
+  const sel = document.querySelector('#bot-model'), el = document.querySelector('#bot-provider-preview');
+  if (!sel || !el || !settingsBotCatalog) return;
+  const selVal = sel.value || 'default';
+  if (!botModelKnown(selVal)) {
+    el.textContent = 'Provider: — (model không còn trong danh mục)';
+    return;
+  }
+  const draftPid = botDraftProviderId(selVal);
+  const savedPid = botCfg.settings?.effective?.provider || '';
+  el.textContent = draftPid
+    ? (draftPid === savedPid ? `Provider: ${draftPid}` : `Provider: ${draftPid} (dự kiến — chưa lưu)`)
+    : 'Provider: —';
+}
+
+function botFieldsHtml(modelId, thinking, effective) {
+  const ids = botModelIds();
+  const def = settingsBotCatalog.defaultModel || '';
+  const known = botModelKnown(modelId);
+  const list = known ? ids : [...ids, modelId];
+  const choices = botEffortChoices(modelId === 'default' ? def : modelId);
+  const effModel = (effective && effective.model) || modelId;
+  const effThinking = effective && effective.thinking;
+  const effProvider = effective && effective.provider;
+  return `
+   <div class="card-grid">
+    <label class="field" for="bot-model"><span>Model</span>
+     <select id="bot-model">${list.map(id => `<option value="${escapeHTML(id)}"${id === modelId ? ' selected' : ''}>${escapeHTML(botModelLabel(id) + (!known && id === modelId ? ' (không còn trong danh mục)' : ''))}</option>`).join('')}</select></label>
+    <label class="field" for="bot-thinking"><span>Mức suy luận</span>
+     <select id="bot-thinking"><option value="">Theo model/provider</option>${choices.map(c => `<option value="${escapeHTML(c)}"${String(thinking) === String(c) ? ' selected' : ''}>${escapeHTML(c)}</option>`).join('')}</select></label>
+   </div>
+   <p class="field-hint" id="bot-model-notice"${known ? ' hidden' : ''}>${known ? '' : 'Model đã lưu không còn trong danh mục — chọn model khác rồi lưu.'}</p>
+   <div class="bot-model-meta">
+    <p class="bot-provider-line" id="bot-provider-preview"></p>
+    <p class="bot-effective">Đang dùng: <strong>${escapeHTML(effModel)}</strong>${effThinking ? ` · suy luận ${escapeHTML(effThinking)}` : ''}${effProvider ? ` · Provider: ${escapeHTML(effProvider)}` : ''}</p>
+   </div>`;
+}
+
+function bindBotFormControls() {
+  const def = settingsBotCatalog?.defaultModel || '';
+  const modelSel = document.querySelector('#bot-model');
+  if (!modelSel) return;
+  modelSel.onchange = () => {
+    const next = document.querySelector('#bot-thinking');
+    const keep = next.value;
+    const list = botEffortChoices(modelSel.value === 'default' ? def : modelSel.value);
+    next.replaceChildren(
+      Object.assign(document.createElement('option'), { value: '', textContent: 'Theo model/provider' }),
+      ...list.map(c => Object.assign(document.createElement('option'), { value: c, textContent: c })),
+    );
+    next.value = list.includes(keep) ? keep : '';
+    paintBotProviderPreview();
+    updateBotSave();
+  };
+  paintBotProviderPreview();
+  updateBotSave();
+}
+
+function botFormDraft() {
+  const m = document.querySelector('#bot-model'), t = document.querySelector('#bot-thinking');
+  const active = currentSettingsBot();
+  if (!m || !t || !botLoadedCfg || !active || botLoadedCfg.bot !== active) return null;
+  const cur = { model: m.value, thinking: t.value || null };
+  return (cur.model !== botLoadedCfg.model || cur.thinking !== botLoadedCfg.thinking) ? cur : null;
+}
+
+function retainBotSettingsDraft() {
+  if (!botLoadedCfg?.bot) return;
+  const draft = botFormDraft();
+  if (draft) botDrafts.set(botLoadedCfg.bot, draft);
+  else if (document.querySelector('#bot-model')) botDrafts.delete(botLoadedCfg.bot);
+}
+
+function renderBotForm() {
+  const host = document.querySelector('#bot-settings-fields');
+  const hint = document.querySelector('#bot-settings-hint');
+  if (!host || !hint) return;
+  const id = currentSettingsBot();
+  const b = id && getBot(id);
+  if (!b || !settingsBotCatalog) {
+    host.innerHTML = !b
+      ? `<p class="empty-note"><strong>Không tìm thấy bot${id ? ` “${escapeHTML(id)}”` : ''}.</strong>Chọn một bot trong danh sách phía trên.</p>`
+      : '<p class="empty-note"><strong>Chưa tải được danh mục model.</strong>Tải lại rồi thử lại.</p>';
+    hint.textContent = '';
+    updateBotSave();
+    return;
+  }
+  const s = botCfg.settings;
+  if (!s) {
+    host.innerHTML = botCfg.loading
+      ? '<p class="empty-note">Đang tải cài đặt bot…</p>'
+      : `<p class="empty-note"><strong>Không tải được cài đặt bot.</strong>${escapeHTML(botCfg.error || 'Máy chủ bận.')} — thử lại sau.</p>`;
+    hint.textContent = '';
+    updateBotSave();
+    return;
+  }
+  const configured = s.model || { id: 'default', thinking: null };
+  const modelId = configured.id || 'default';
+  const thinking = configured.thinking ?? '';
+  host.innerHTML = botFieldsHtml(modelId, thinking, s.effective || {});
+  const modelSel = document.querySelector('#bot-model'), thinkSel = document.querySelector('#bot-thinking');
+  if (modelSel) modelSel.value = modelId;
+  if (thinkSel) thinkSel.value = thinking;
+  botLoadedCfg = { bot: id, model: modelId, thinking: configured.thinking ?? null };
+  hint.textContent = '';
+  bindBotFormControls();
+}
+
+function fillBotFormFields(settings, draft) {
+  const host = document.querySelector('#bot-settings-fields');
+  const hint = document.querySelector('#bot-settings-hint');
+  if (!host || !hint || !settings || !settingsBotCatalog) { renderBotForm(); return; }
+  const id = currentSettingsBot();
+  const configured = settings.model || { id: 'default', thinking: null };
+  botLoadedCfg = { bot: id, model: configured.id || 'default', thinking: configured.thinking ?? null };
+  host.innerHTML = botFieldsHtml(draft.model, draft.thinking ?? '', settings.effective || {});
+  const modelSel = document.querySelector('#bot-model'), thinkSel = document.querySelector('#bot-thinking');
+  if (modelSel) modelSel.value = draft.model;
+  if (thinkSel) thinkSel.value = draft.thinking ?? '';
+  hint.textContent = '';
+  bindBotFormControls();
+}
+
+async function loadBotSettings(preserved = null) {
+  const id = currentSettingsBot();
+  if (!id || !getBot(id)) {
+    botCfg.settings = null;
+    botLoadedCfg = null;
+    botCfg.loading = false;
+    renderBotForm();
+    return;
+  }
+  const seq = ++botCfg.seq;
+  botCfg.loading = true;
+  botCfg.settings = null;
+  botCfg.error = '';
+  botLoadedCfg = null;
+  renderBotForm();
+  const save = document.querySelector('#save-bot-settings');
+  if (save) save.disabled = true;
+  const hint = document.querySelector('#bot-settings-hint');
+  if (hint) hint.textContent = 'Đang tải…';
+  try {
+    const data = await getJson(`/api/bots/${encodeURIComponent(id)}/settings`);
+    if (seq !== botCfg.seq || currentSettingsBot() !== id) return;
+    botCfg.settings = data;
+  } catch (err) {
+    if (seq !== botCfg.seq || currentSettingsBot() !== id) return;
+    botCfg.error = err.message;
+  } finally {
+    if (seq === botCfg.seq && currentSettingsBot() === id) {
+      botCfg.loading = false;
+      if (botCfg.settings) {
+        const m = botCfg.settings.model || {};
+        botLoadedCfg = { bot: id, model: m.id || 'default', thinking: m.thinking ?? null };
+      }
+      const draft = preserved || botDrafts.get(id) || null;
+      if (draft && botCfg.settings) fillBotFormFields(botCfg.settings, draft);
+      else renderBotForm();
+    }
+  }
+}
+
+function selectSettingsBot(id, { preserveCurrentDraft = true } = {}) {
+  if (preserveCurrentDraft && botCfg.bot && botCfg.bot !== id) retainBotSettingsDraft();
+  botCfg.bot = id || '';
+  const sel = document.querySelector('#settings-bot');
+  if (sel && sel.value !== botCfg.bot) sel.value = botCfg.bot;
+  paintSettingsBot(botCfg.bot);
+  void loadBotSettings(botDrafts.get(botCfg.bot) || null);
+}
+
+async function submitBotSettings() {
+  const id = currentSettingsBot();
+  const b = id && getBot(id);
+  const modelSel = document.querySelector('#bot-model'), thinkSel = document.querySelector('#bot-thinking');
+  if (!id || !b || !settingsBotCatalog || !modelSel || !thinkSel) return;
+  if (!botCfg.settings || botCfg.loading || botCfg.savingFor || !botModelKnown(modelSel.value)) return;
+  const seq = ++botCfg.seq;
+  botCfg.savingFor = { bot: id, seq };
+  const save = document.querySelector('#save-bot-settings');
+  if (save) save.disabled = true;
+  const hint = document.querySelector('#bot-settings-hint');
+  if (hint) hint.textContent = 'Đang lưu…';
+  const payload = { model: { id: modelSel.value, thinking: thinkSel.value || null } };
+  try {
+    const data = await postJson(`/api/bots/${encodeURIComponent(id)}/settings`, payload);
+    botDrafts.delete(id);
+    const live = getBot(id);
+    if (live) {
+      live.model = data.model;
+      if (typeof renderTeam === 'function') renderTeam();
+      if (typeof renderHeaderBots === 'function') renderHeaderBots();
+      paintSettingsBot(currentSettingsBot());
+    }
+    window.dispatchEvent(new CustomEvent('thyca:bot-settings-saved', { detail: { botId: id, model: data.model, effective: data.effective } }));
+    if (seq !== botCfg.seq || currentSettingsBot() !== id) return;
+    botCfg.settings = data;
+    renderBotForm();
+    const h = document.querySelector('#bot-settings-hint');
+    if (h) h.textContent = 'Đã lưu.';
+    toast(`Đã lưu cài đặt cho ${b.name}.`);
+  } catch (err) {
+    if (seq !== botCfg.seq || currentSettingsBot() !== id) return;
+    const h = document.querySelector('#bot-settings-hint');
+    if (h) h.textContent = 'Không lưu được: ' + err.message;
+  } finally {
+    if (botCfg.savingFor && botCfg.savingFor.seq === seq) {
+      botCfg.savingFor = null;
+      if (currentSettingsBot() === id) {
+        const h = document.querySelector('#bot-settings-hint');
+        if (h && h.textContent === 'Đang lưu…') {
+          h.textContent = '';
+          renderBotForm();
+        } else {
+          updateBotSave();
+        }
+      } else {
+        updateBotSave();
+      }
+    }
+    if (settingsBotCatalogDirty && !botCfg.savingFor && document.querySelector('#settings-dialog')?.open) {
+      settingsBotCatalogDirty = false;
+      void loadSettingsConfig();
+    }
+  }
+}
 
 function settingsRangeHint(f) {
   return f.min !== undefined && f.max !== undefined ? `<small class="field-range">${f.min} – ${f.max}</small>` : '';
@@ -196,6 +499,28 @@ function settingsFormStatus(message, kind) {
   if (message) toast(message);
 }
 
+function effectiveDefaultModelContext(values) {
+  const name = values?.defaultModel;
+  const models = values?.models;
+  if (!name || !models || typeof models !== 'object' || !Object.hasOwn(models, name)) return undefined;
+  const ctx = models[name]?.contextTokens;
+  return Number.isInteger(ctx) ? ctx : undefined;
+}
+
+/* Repaint the per-bot form after a config (re)load. The draft is re-read
+   for the bot selected NOW: a switch or an edit made while the config GET
+   was in flight wins over whatever was on screen when the load started, so
+   one bot's draft can never be painted onto another bot's form. */
+function repaintBotForm() {
+  if (!botCfg.bot || botCfg.savingFor) return;
+  const current = currentSettingsBot();
+  if (!current || current !== botCfg.bot) return;
+  const formLive = !!document.querySelector('#bot-model') && botLoadedCfg?.bot === current;
+  const draft = formLive ? botFormDraft() : (botDrafts.get(current) || null);
+  if (draft && draft.model && botCfg.settings) fillBotFormFields(botCfg.settings, draft);
+  else renderBotForm();
+}
+
 async function loadSettingsConfig() {
   const seq = ++settingsLoadSeq;
   let data;
@@ -207,6 +532,7 @@ async function loadSettingsConfig() {
     // the failed load and a later successful reopen restores it.
     retainSettingsDraft();
     document.querySelector('#config-fields').innerHTML = `<p class="empty-note"><strong>Không tải được cấu hình.</strong>${escapeHTML(err.message)} — kiểm tra máy chủ rồi mở lại Cài đặt.</p>`;
+    repaintBotForm();
     return;
   }
   if (seq !== settingsLoadSeq) return;       // stale response: never replace a newer render/draft
@@ -214,13 +540,24 @@ async function loadSettingsConfig() {
   // open) win over the fresh values; each keeps its original baseline so
   // a same-field concurrent change still compares against what the user saw.
   retainSettingsDraft();
-  settingsConfigValues = data.values || {};
+  settingsConfigValues = structuredClone(data.values || {});
   settingsBaseline = structuredClone(settingsConfigValues);
+  const effCtx = effectiveDefaultModelContext(data.values);
+  if (effCtx !== undefined && settingsConfigValues.limits && typeof settingsConfigValues.limits === 'object') {
+    settingsConfigValues.limits.contextTokens = effCtx;
+    settingsBaseline.limits.contextTokens = effCtx;
+  }
   renderSettingsConfigForm(data.schema?.sections || []);
   applySettingsDraft(settingsDraft);
+  extractBotCatalog(data);
+  repaintBotForm();
 }
 
 function settingsFreshOf(fresh, section, name) {
+  if (section === 'limits' && name === 'contextTokens') {
+    const effCtx = effectiveDefaultModelContext(fresh);
+    if (effCtx !== undefined) return effCtx;
+  }
   const group = fresh && typeof fresh === 'object' ? fresh[section] : undefined;
   return group && typeof group === 'object' ? group[name] : undefined;
 }
@@ -284,6 +621,16 @@ async function submitSettingsConfig(form) {
     // between still fails closed with 409. The draft stays for retry.
     const next = structuredClone(fresh);
     for (const [section, values] of Object.entries(dirty)) next[section] = { ...(next[section] || {}), ...values };
+    // The limits field shows the EFFECTIVE context (the default model's own
+    // value when it has one, else the global). Sync the per-model copy only
+    // when the model already carries one: creating a pin for a model that
+    // inherits the global would shadow every future global edit for it.
+    if (dirty.limits && dirty.limits.contextTokens !== undefined
+        && next.defaultModel && next.models && Object.hasOwn(next.models, next.defaultModel)
+        && next.models[next.defaultModel] && typeof next.models[next.defaultModel] === 'object'
+        && Number.isInteger(next.models[next.defaultModel].contextTokens)) {
+      next.models[next.defaultModel] = { ...next.models[next.defaultModel], contextTokens: dirty.limits.contextTokens };
+    }
     // Conditional write when the server reports a revision.
     const body = latest.revision != null ? { ...next, baseRevision: latest.revision } : next;
     try {
@@ -305,7 +652,8 @@ async function submitSettingsConfig(form) {
       Object.assign(settingsBaseline[section], structuredClone(values));
     }
     settingsFormStatus('Đã lưu cài đặt.', 'is-ok');
-    window.dispatchEvent(new Event('thyca:config-saved'));
+    settingsConfigSavedSelf = true;
+    try { window.dispatchEvent(new Event('thyca:config-saved')); } finally { settingsConfigSavedSelf = false; }
     loadSettingsStatus();
     // Refresh the display and its baseline from what was saved; edits typed
     // during the save are re-captured by the load snapshot and kept.
@@ -341,16 +689,15 @@ function bindSettingsDialog() {
   const dlg = document.querySelector('#settings-dialog');
   if (!dlg || dlg.dataset.settingsBound) return;
   dlg.dataset.settingsBound = 'true';
-  // Snapshot the draft on close (a fully reverted form clears the draft
-  // instead of resurrecting stale edits; with no controls rendered the
-  // retained draft is kept for the next successful load).
-  dlg.addEventListener('close', () => { retainSettingsDraft(); });
+  // Snapshot drafts on close so edits survive reopen without cross-bot bleed.
+  dlg.addEventListener('close', () => {
+    retainSettingsDraft();
+    retainBotSettingsDraft();
+  });
   document.querySelector('#config-form').onsubmit = e => { e.preventDefault(); submitSettingsConfig(e.target); };
-  document.querySelector('#settings-bot').onchange = e => paintSettingsBot(e.target.value);
-  document.querySelector('#settings-bot-color').oninput = e => {
-    const id = document.querySelector('#settings-bot').value;
-    if (id && (window.ThycaShell || window.ThycaPrototype)?.setBotColor(id, e.target.value)) paintSettingsBot(id);
-  };
+  const botForm = document.querySelector('#bot-settings-form');
+  if (botForm) botForm.onsubmit = e => { e.preventDefault(); void submitBotSettings(); };
+  document.querySelector('#settings-bot').onchange = e => selectSettingsBot(e.target.value);
   document.querySelector('#open-studio').onclick = () => {
     const id = document.querySelector('#settings-bot').value;
     if (id && getBot(id)) {
@@ -376,12 +723,28 @@ function bindSettingsDialog() {
   document.querySelector('#status-refresh').onclick = loadSettingsStatus;
 }
 
+window.addEventListener('thyca:config-saved', () => {
+  if (settingsConfigSavedSelf) return;
+  if (botCfg.savingFor) { settingsBotCatalogDirty = true; return; }
+  const dlg = document.querySelector('#settings-dialog');
+  if (dlg?.open) void loadSettingsConfig();
+  else settingsBotCatalogDirty = true;
+});
+
 function openSettingsDialog() {
   const dlg = document.querySelector('#settings-dialog');
   if (!dlg) return false;
   bindSettingsDialog();
   hydrateSettingsPrefs(readPrefs());
-  fillSettingsBots();
+  retainBotSettingsDraft();
+  const currentBot = fillSettingsBots();
+  if (!(botCfg.bot === currentBot && botCfg.savingFor?.bot === currentBot)) {
+    selectSettingsBot(currentBot, { preserveCurrentDraft: true });
+  } else {
+    paintSettingsBot(currentBot);
+    updateBotSave();
+  }
+  settingsBotCatalogDirty = false;
   settingsFormStatus('');                                           // clear the previous save/conflict note
   loadSettingsConfig();                                           // API: GET /api/config
   loadSettingsStatus();                                           // API: GET /api/config/status — on demand

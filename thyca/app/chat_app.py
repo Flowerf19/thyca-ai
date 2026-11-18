@@ -581,8 +581,11 @@ class ChatApp:
         self._conversations.store.load(conversation_id)
         return None
 
-    def create(self, bots: list[str] | None = None) -> dict:
-        return self._conversations_admin.create(bots)
+    def create(self, bots: list[str] | None = None, title: str | None = None) -> dict:
+        return self._conversations_admin.create(bots, title=title)
+
+    def rename_group(self, conversation_id: str, title: str | None = None) -> dict:
+        return self._conversations_admin.rename_group(conversation_id, title)
 
     def room_bots(self, conversation_id: str) -> list[str]:
         """Participant list of a room; legacy rooms read as Thyca alone."""

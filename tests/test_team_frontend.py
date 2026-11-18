@@ -1045,7 +1045,8 @@ def test_idle_layer_gestures_never_change_work_state(node: str) -> None:
 
 def test_card_markup_anatomy(node: str) -> None:
     """card(b) -> bot-card/team-cluster/team-envelope with select/favorite/
-    collapse actions, status label, compact preview and the inert pocket."""
+    info actions (info icon replaces the old expand chevron), status label,
+    compact preview and the inert pocket."""
     out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'coder', name: 'Coder', role: 'Dev',
@@ -1067,27 +1068,27 @@ def test_card_markup_anatomy(node: str) -> None:
     assert 'class="bot-name conversation-name"' in html and ">Coder<" in html
     assert 'class="bot-role"' in html and ">Dev<" in html
     assert 'class="header-status"' in html and "Đang suy nghĩ" in html
-    role_idx = html.index('class="bot-role"')
     status_idx = html.index('class="header-status"')
     actions_idx = html.index('class="card-actions"')
-    assert role_idx < status_idx < actions_idx   # status is the 3rd heading row, not in actions
+    assert status_idx < actions_idx   # status is the 2nd heading row, not in actions
     actions = html[actions_idx:html.index("</div>", actions_idx)]
-    assert sorted(re.findall(r'data-action="(\w+)"', actions)) == ["collapse", "favorite"]
+    assert sorted(re.findall(r'data-action="(\w+)"', actions)) == ["favorite", "info"]
     assert 'class="reply-action"' in html and 'data-action="reply" hidden' in html
     assert 'class="preview-text"></span>' in html   # live-only preview: empty with no tool/skill calls
     assert 'data-action="live-more"' not in html    # +N full-list button only when >2 groups
     assert 'data-action="favorite"' in html and 'aria-pressed="true"' in html
-    assert 'class="icon-button collapse-button"' in html
-    assert 'aria-controls="pocket-coder"' in html and 'aria-expanded="false"' in html
+    assert 'class="icon-button info-button"' in html
+    assert 'data-action="collapse"' not in html
     assert 'id="pocket-coder"' in html and " inert>" in html or " inert " in html
     assert 'class="thinking-paper"' in html and 'class="progress-list"' in html
     assert 'class="thought-extra"' not in html      # no invented thinking tail in the task pocket
-    assert 'data-action="info"' in html and 'data-action="capabilities"' in html
+    assert 'data-action="info"' in html and 'data-action="capabilities"' not in html
 
 
 def test_render_team_and_group_rows_markup(node: str) -> None:
     """renderTeam fills #team-bot-list in roster order; renderGroups emits a
-    .group-row with member seals, names and the computed subtitle."""
+    .group-row with a 64px cluster (3 mini avatars, or 2+plus when >3)
+    alongside title and subtitle."""
     out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'thyca', name: 'Thyca' }, { id: 'coder', name: 'Coder' }]));
@@ -1095,18 +1096,19 @@ def test_render_team_and_group_rows_markup(node: str) -> None:
         const team = $('#team-bot-list').innerHTML;
         groups.push({ id: 'g1', title: 'Nhóm A', bots: ['thyca', 'coder'], subtitle: '2 người bạn · 4 lượt' });
         renderGroups();
-        const group = $('#group-list').innerHTML;
+        const group = $('#team-bot-list').innerHTML;
         return { team, group, thycaIdx: team.indexOf('id="bot-thyca"'), coderIdx: team.indexOf('id="bot-coder"') };
     """)
     team, group = out["team"], out["group"]
     assert 0 <= out["thycaIdx"] < out["coderIdx"]         # roster order kept
     assert team.count('class="bot-card') == 2
-    assert 'class="group-row"' in group and 'data-group="g1"' in group
-    assert 'class="group-title"' in group and "Nhóm A" in group
-    assert '--members:2' in group
-    assert 'data-group-member="thyca"' in group and 'data-group-member="coder"' in group
-    assert 'class="group-member-name"' in group and ">Thyca<" in group and ">Coder<" in group
-    assert 'class="group-meta"' in group and "2 người bạn · 4 lượt" in group
+    assert 'class="bot-card group-card chat-only"' in group and 'data-group="g1"' in group
+    assert 'class="group-cluster"' in group
+    assert 'bot-name' in group and "Nhóm A" in group
+    assert 'data-count="2"' in group and 'data-shown="2"' in group
+    assert 'class="group-mini-member" data-group-member="thyca"' in group and 'class="group-mini-member" data-group-member="coder"' in group
+    assert 'bot-role' in group and "2 người bạn · 4 lượt" in group
+    assert 'group-meta' in group and "Sẵn sàng" in group
 
 
 def test_pinned_bots_render_first_stable(node: str) -> None:
@@ -1204,7 +1206,7 @@ def test_update_card_patches_state_preview_and_pocket(node: str) -> None:
             preview: $('.preview-text', el).textContent,
             more: $$('.live-more', el).filter(x => !x.hidden).map(x => x.textContent),
             elapsed: $('.elapsed', el).textContent,
-            expanded: $('.collapse-button', el).getAttribute('aria-expanded'),
+            expanded: !!$('.info-button', el),
             inert: $('.pocket', el).inert,
             title: $('.thinking-title', el).textContent,
             rows: $$('.progress-list li', el).length,
@@ -1242,7 +1244,7 @@ def test_update_card_patches_state_preview_and_pocket(node: str) -> None:
     assert w["summary"] == "1 vi\u1ec7c \u0111ang ch\u1ea1y"  # pocket: fetched task status
     assert w["rows"] == 1
     assert w["elapsed"] == "12 giây"
-    assert w["expanded"] == "true" and w["inert"] is False
+    assert w["expanded"] is True and w["inert"] is False
     i = out["idle"]
     assert "Khoảng lặng" not in i["summary"] and i["whisperCls"] is False
     assert i["preview"] == "" and i["idleFlag"] == "false"
@@ -1737,7 +1739,7 @@ def test_set_group_activity_syncs_member_seals_and_meta(node: str) -> None:
         groups.push({ id: 'g1', title: 'Nhóm', bots: ['thyca', 'coder'], subtitle: '2 người bạn' });
         const seal = (id) => { const s = document.createElement('span'); s.className = 'seal-avatar'; s.dataset.botAvatar = id; document.body.appendChild(s); return s; };
         const sa = seal('thyca'), sb = seal('coder');
-        const row = document.createElement('div'); row.className = 'group-row'; row.dataset.group = 'g1';
+        const row = document.createElement('div'); row.className = 'bot-card group-card'; row.dataset.group = 'g1';
         const meta = document.createElement('span'); meta.className = 'group-meta'; row.appendChild(meta);
         document.body.appendChild(row);
         const bad = [setGroupActivity('nope'), setGroupActivity('g1', 'ghost')];
@@ -1762,7 +1764,7 @@ def test_set_group_activity_syncs_member_seals_and_meta(node: str) -> None:
 
 
 def test_team_list_click_delegates_card_actions(node: str) -> None:
-    """The #team-bot-list delegation maps data-action to select / collapse /
+    """The #team-bot-list delegation maps data-action to select /
     favorite / info / capabilities."""
     out = _run(node, r"""
         localStorage.clear();
@@ -1777,18 +1779,18 @@ def test_team_list_click_delegates_card_actions(node: str) -> None:
         const cardEl = document.createElement('article');
         cardEl.className = 'bot-card'; cardEl.dataset.botId = 'a';
         const mk = (action) => { const btn = document.createElement('button'); btn.dataset.action = action; cardEl.appendChild(btn); return btn; };
-        const sel = mk('select'), col = mk('collapse'), fav = mk('favorite'), inf = mk('info'), cap = mk('capabilities');
+        const sel = mk('select'), fav = mk('favorite'), inf = mk('info'), cap = mk('capabilities');
         document.body.appendChild(cardEl);
         const fire = (btn) => list._handlers.click.forEach(h => h({ target: btn, preventDefault() {} }));
         b.open = false;
-        fire(sel); fire(col); fire(fav); fire(inf); fire(cap);
+        fire(sel); fire(fav); fire(inf); fire(cap);
         return { calls, dispatches: globalThis.__spaDispatches || [], open: b.open, fav: b.favorite, favAria: fav.getAttribute('aria-pressed'), toast: $('#toast').textContent,
                  stored: JSON.parse(localStorage.getItem('thyca.favorites')) };
     """)
     # Sidebar selection is routed to the active page controller; info stays shared.
     assert out["dispatches"] == [["selectBot", "a"]]
-    assert out["calls"] == [["info", "a", None], ["info", "a", True]]
-    assert out["open"] is True                            # collapse toggled open
+    assert out["calls"] == [["info", "a", None], ["info", "a", None]]
+    assert out["open"] is False                           # no expand action anymore
     assert out["fav"] is True and out["favAria"] == "true"
     assert "Alpha" in out["toast"]
     # The star is persisted so it survives reloads (prototype toggle lost it).
@@ -1981,7 +1983,7 @@ def test_group_list_click_loads_conversation(node: str) -> None:
         const calls = [];
         globalThis.loadConversation = (id, bot) => calls.push([id, bot]);
         const row = document.createElement('button'); row.className = 'group-row'; row.dataset.group = 'group-11111111111111111111111111111111';
-        $('#group-list')._handlers.click.forEach(h => h({ target: row, preventDefault() {} }));
+        $('#team-bot-list')._handlers.click.forEach(h => h({ target: row, preventDefault() {} }));
         return { calls, dispatches: globalThis.__spaDispatches || [] };
     """)
     assert out["dispatches"] == [["loadConversation", "group:group-11111111111111111111111111111111", "coder"]]
@@ -2045,8 +2047,8 @@ def test_group_form_submit_creates_and_opens_group(node: str) -> None:
 # ---------------------------------------------------------------------------
 
 def test_open_info_renders_identity_and_conversation_index(node: str) -> None:
-    """openInfo fills the drawer with the info lockup plus the bot's conversation
-    list; capabilities mode renders facts, tools and the context meter."""
+    """openInfo fills the merged drawer with the info lockup, facts/tools/context
+    (no descriptions) plus the bot's conversation list."""
     out = _run(node, r"""
         bots.length = 0;
         bots.push(...roster([{ id: 'a', name: 'Alpha', role: 'Lead' }]));
@@ -2062,14 +2064,15 @@ def test_open_info_renders_identity_and_conversation_index(node: str) -> None:
         return { info, caps: $('#bot-drawer-body').innerHTML, name2: $('#bot-drawer-name').textContent };
     """)
     info = out["info"]
-    assert info["name"] == "Một chút về Alpha"
+    assert info["name"] == "Thông tin bot"
     assert info["sub"] == "Lead"
     assert info["open"] is True
     assert 'class="info-lockup"' in info["body"] and "NHỮNG CUỘC TRÒ CHUYỆN" in info["body"]
     assert 'class="info-session"' in info["body"] and 'data-conversation="s1"' in info["body"]
+    assert 'class="capabilities"' in info["body"] and "CÔNG CỤ ĐANG DÙNG" in info["body"]
     assert 'data-bot="a"' in info["body"] and "Phiên 1" in info["body"]
     caps = out["caps"]
-    assert out["name2"] == "Các khả năng của Alpha"
+    assert out["name2"] == "Thông tin bot"
     assert 'class="capabilities"' in caps and "CÔNG CỤ ĐANG DÙNG" in caps
     assert 'class="ctx-meter"' in caps and 'data-drawer-context' in caps
 
@@ -2171,9 +2174,10 @@ def test_drawer_conversation_button_routes_to_conversation(node: str) -> None:
 
 def test_shell_markup_header_sidebar_and_dialogs(node: str) -> None:
     """shell.js emits the shared chrome: header nav (is-current + aria-current),
-    the team-only sidebar skeleton and the dialogs + toast/announcer. Group
-    chrome is chat-only — the "Hội thoại chung" section + create button ship
-    in chat's static markup, not the shared sidebar."""
+    the sidebar skeleton (with chat-only group section for SPA persistence)
+    and the dialogs + toast/announcer. The group section is present in the
+    shared sidebar as chat-only so SPA chat↔other-page navigation can toggle
+    it via CSS instead of swapping sidebar elements."""
     out = _run(node, """
         return { header: thycaHeader('memories'), side: thycaSidebarMarkup(), dlg: thycaDialogs(),
                  pages: SHELL_PAGES.map(p => p[0]) };
@@ -2194,17 +2198,15 @@ def test_shell_markup_header_sidebar_and_dialogs(node: str) -> None:
     assert 'id="open-settings"' in side and 'Cài đặt' in side
     assert 'id="open-customize"' not in side and 'id="motion-toggle"' not in side   # footer holds only the Settings entry now
     assert 'class="splitter"' in side
-    # Shared sidebars carry the roster only — group conversations only make
-    # sense on the chat page, so the section + its list live in chat's own
-    # static markup.
+    # Shared sidebar now carries the chat-only group section as well so SPA
+    # navigation can show/hide it via CSS at any width (small drawer included).
+    # Visibility is controlled by `body[data-active-page]` chat-only rule.
     assert 'id="team-shared-create"' not in side
-    assert 'class="section-label"' not in side
-    assert "Hội thoại chung" not in side
+    assert 'class="section-label chat-only"' not in side
     assert 'id="group-list"' not in side
     chat_html = INDEX_HTML.read_text(encoding="utf-8")
-    assert 'id="team-shared-create"' in chat_html
-    assert 'id="group-list"' in chat_html
-    assert "Hội thoại chung" in chat_html
+    assert 'id="team-shared-create"' not in chat_html
+    assert 'id="group-list"' not in chat_html
     for did in ("mobile-overlay", "expressions-dialog", "bot-drawer", "group-dialog",
                 "group-form", "group-options", "toast", "announcer", "bot-drawer-body"):
         assert f'id="{did}"' in dlg
@@ -2404,65 +2406,6 @@ def test_send_turn_guards_busy_offline_and_missing(node: str) -> None:
     }
 
 
-def test_group_delete_button_shows_for_group_only(node: str) -> None:
-    """The chat header delete button is visible only for a group.
-
-    loadConversation toggles it from the loaded detail kind; selectBot
-    (a DM) always hides it."""
-    out = _run(node, _CHAT_SEED + """
-        const btn = $('#delete-group');
-        const seen = [];
-        updateGroupDeleteButton(true);
-        seen.push(btn.hidden);
-        updateGroupDeleteButton(false);
-        seen.push(btn.hidden);
-        installFetch((url, opts) => {
-            const u = String(url);
-            if (u === '/api/groups/group-aaa') return { kind: 'group', title: 'G', messages: [], bots: ['thyca', 'coder'] };
-            if (u === '/api/bots/coder/dm') return { kind: 'dm', bot_id: 'coder', title: 'Coder', messages: [] };
-            if (u.startsWith('/api/bots/') && u.endsWith('/settings')) return { effective: { model: 'm', provider: 'p' } };
-            if (u === '/api/config') return { values: { models: {}, defaultModel: '' }, schema: { sections: [] } };
-            if (u === '/api/conversations') return { conversations: [] };
-            if (u === '/api/bots') return { bots: [] };
-            return {};
-        });
-        await loadConversation('group:group-aaa', 'G', 'thyca');
-        const groupHidden = btn.hidden;
-        await selectBot('coder');
-        const dmHidden = btn.hidden;
-        return { seen, groupHidden, dmHidden };
-    """, via="chat")
-    assert out["seen"] == [False, True]
-    assert out["groupHidden"] is False
-    assert out["dmHidden"] is True
-
-
-def test_group_delete_calls_delete_and_refreshes(node: str) -> None:
-    """Clicking delete confirms, DELETEs the group door, refreshes the
-    list, and lands on Thyca DM."""
-    out = _run(node, _CHAT_SEED + """
-        currentConversation = 'group:group-aaa';
-        window.confirm = () => true;
-        const calls = installFetch((url, opts) => {
-            const u = String(url);
-            const m = (opts && opts.method) || 'GET';
-            if (u === '/api/groups/group-aaa' && m === 'DELETE') return { ok: true };
-            if (u === '/api/conversations') return { conversations: [] };
-            if (u === '/api/bots/thyca/dm') return { kind: 'dm', bot_id: 'thyca', title: 'Thyca', messages: [] };
-            if (u.startsWith('/api/bots/') && u.endsWith('/settings')) return { effective: { model: 'm', provider: 'p' } };
-            if (u === '/api/config') return { values: { models: {}, defaultModel: '' }, schema: { sections: [] } };
-            return {};
-        });
-        await deleteCurrentGroup();
-        const deletes = calls.filter(c => c[0] === '/api/groups/group-aaa' && ((c[1] && c[1].method) || 'GET') === 'DELETE');
-        const lists = calls.filter(c => c[0] === '/api/conversations');
-        return { deletes: deletes.length, lists: lists.length, currentConversation };
-    """, via="chat")
-    assert out["deletes"] == 1
-    assert out["lists"] == 1
-    assert out["currentConversation"] == "dm:thyca"
-
-
 def test_stream_events_drive_live_calls_and_stream_text(node: str) -> None:
     """handleStreamEvent maps tool/skill started/finished onto the live-call
     identity (kind from event semantics, FIFO finish, skill distinct from
@@ -2616,6 +2559,32 @@ def test_follow_running_turn_rejoins_inflight(node: str) -> None:
     assert out["state"] == "done"
     assert "message-assistant" in out["html"] and "done" in out["html"]
     assert out["runsEmpty"] is True
+
+
+def test_open_conversation_divider_shows_bot_description(node: str) -> None:
+    """Opening a DM replaces the transcript's generic day divider with the
+    bot's own description; groups and description-less bots keep the
+    default new-day line."""
+    out = _run(node, _CHAT_SEED + """
+        getBot('coder').description = 'Coder chuyên viết và sửa code.';
+        installFetch((url) => {
+            if (url === '/api/bots/coder/dm') return { kind: 'dm', bot_id: 'coder', messages: [] };
+            if (url === '/api/bots/thyca/dm') return { kind: 'dm', bot_id: 'thyca', messages: [] };
+            if (url === '/api/groups/group-aaa') return { kind: 'group', group_id: 'group-aaa', messages: [] };
+            if (url === '/api/conversations') return { conversations: [] };
+            return {};
+        });
+        await loadConversation('dm:coder');
+        const dmDivider = document.querySelector('.day-divider').textContent;
+        await selectBot('thyca');
+        const plainDivider = document.querySelector('.day-divider').textContent;
+        await loadConversation('group:group-aaa');
+        const groupDivider = document.querySelector('.day-divider').textContent;
+        return { dmDivider, plainDivider, groupDivider };
+    """, via="chat")
+    assert out["dmDivider"] == "Coder chuyên viết và sửa code."
+    assert out["plainDivider"] == "Hôm nay, một khởi đầu mới"
+    assert out["groupDivider"] == "Hôm nay, một khởi đầu mới"
 
 
 def test_load_conversation_renders_and_drops_stale_answers(node: str) -> None:
@@ -3772,16 +3741,16 @@ def test_base_css_tokens_hidden_rule_and_shell_grid() -> None:
 
 def test_sidebar_css_card_pocket_and_group_contract() -> None:
     """sidebar.css styles the new card anatomy: palette-var border/paper,
-    0fr→1fr pocket reveal, keyed feed rows and the group roster grid."""
+    0fr→1fr pocket reveal, keyed feed rows and the group cluster (64px)."""
     css = SIDEBAR_CSS.read_text()
     for sel in (".bot-card{", ".bot-card[data-selected=true]", ".bot-header{",
                 ".bot-select{", ".bot-name{", ".bot-role{", ".compact-preview",
                 ".pocket{", ".pocket-inner{", ".thinking-paper{", ".thinking-heading{",
                 ".thinking-summary{", ".progress-list{", ".step-mark{", ".thought-extra{",
-                ".paper-footer{", ".section-label{", ".group-row{", ".group-roster{",
-                ".group-member{", ".group-meta{", ".info-lockup{", ".info-session{",
+                ".paper-footer{", ".section-label{", ".group-card{", ".group-cluster{",
+                ".group-mini-member{", ".group-mini-more{", ".group-meta{", ".info-lockup{", ".info-session{",
                 ".capabilities{", ".tool-chip{", ".ctx-meter{", ".ctx-bar{",
-                ".header-status{", ".favorite{", ".collapse-button{", ".check-row{",
+                ".header-status{", ".favorite{", ".check-row{",
                 ".check-avatar{", ".status-dot{", ".live-more{"):
         assert sel in css, sel
     assert "grid-template-rows:0fr" in css and ".bot-card[data-open=true] .pocket{grid-template-rows:1fr}" in css
@@ -3803,7 +3772,7 @@ def test_sidebar_css_card_pocket_and_group_contract() -> None:
     assert "text-overflow:ellipsis" in css                 # name/preview ellipsis
     assert ".li-enter" in css and ".li-exit" in css        # keyed row animation
     assert ".live-more:focus-visible" in css              # +N full-list button is keyboard visible
-    assert "repeat(var(--members,3)" in css                # roster grid columns
+    assert ".group-cluster{" in css and ".group-mini-member" in css  # 64px cluster
     assert "ctx-ok" in css and "ctx-warn" in css and "ctx-danger" in css
     assert "[data-coordinating=true]" in css
     assert "[data-speaking=true]" in css
@@ -3884,8 +3853,7 @@ def test_index_html_scripts_defs_and_static_markup() -> None:
     assert 'id="g-' not in html             # glyph spans gone, so their symbols ship no more
     assert 'id="composer-model"' not in html and 'id="thinking-effort"' not in html
     for sel in ('class="notebook-shell chat-shell"', 'class="site-header"',
-                'class="site-kicker"', 'id="team-nav-title"', 'id="team-bot-list"',
-                'id="group-list"', 'id="team-shared-create"', 'id="chat-sidebar"',
+                'id="team-nav-title"', 'id="team-bot-list"', 'id="rail-avatar-list"',
                 'id="mobile-overlay"', 'id="open-settings"',
                 'class="splitter"', 'id="chat-title"', 'id="conversation-eyebrow"',
                 'id="conversation-scroll"', 'id="message-list"', 'id="to-bottom"',
@@ -3893,7 +3861,7 @@ def test_index_html_scripts_defs_and_static_markup() -> None:
                 'id="send-message"',
                 'id="stop-button"', 'id="mention-popup"', 'id="attach-file"',
                 'id="file-input"', 'id="file-chip"', 'id="remove-file"',
-                'id="conversation-info"', 'id="run-demo"', 'id="delete-group"', 'id="toast"', 'id="announcer"',
+                'id="run-demo"', 'id="toast"', 'id="announcer"',
                 'id="settings-dialog"', 'id="settings-body"',
                 'id="bot-drawer"', 'id="bot-drawer-body"', 'id="group-dialog"',
                 'id="group-form"', 'id="group-options"', 'id="expressions-dialog"',
@@ -3920,12 +3888,14 @@ def test_index_html_scripts_defs_and_static_markup() -> None:
 
 def test_avatar_display_copy_uses_ink_drop() -> None:
     """User-visible studio/settings copy names the medallion and character:
-    the chat dialog, shared shell dialog and settings strings use approved wording."""
+    header removed from expressions dialog, so title/subtitle are gone but
+    aria-label and shared avatar wording remain."""
     html = INDEX_HTML.read_text()
     shell = SHELL_JS.read_text()
-    assert "Một huy chương, nhiều tâm trạng." in html
-    assert "Một huy chương, nhiều tâm trạng." in shell
-    assert "Đôi mắt kể chuyện, đôi tay giữ nhịp." in shell
+    assert "Một huy chương, nhiều tâm trạng." not in html
+    assert "Một huy chương, nhiều tâm trạng." not in shell
+    assert 'aria-label="Xưởng biểu cảm"' in html
+    assert 'aria-label="Xưởng biểu cảm"' in shell
     assert "nhân vật" in html and "nhân vật" in shell
     assert "giọt mực" not in html and "giọt mực" not in shell
     for text in (html, shell):
@@ -4027,8 +3997,8 @@ def test_thyca_always_pinned_first_and_lone_bot_full_row(node: str) -> None:
 
 
 def test_group_roster_caps_at_three_and_prioritizes_active_bots(node: str) -> None:
-    """Group rows display at most 3 bots and prioritize speaking/active bots
-    ahead of idle bots."""
+    """Group cluster shows at most 3 bots (2+plus when >3) and prioritizes speaking/active."""
+
     out = _run(node, """
         bots.length = 0;
         bots.push(...roster([
@@ -4046,5 +4016,827 @@ def test_group_roster_caps_at_three_and_prioritizes_active_bots(node: str) -> No
         const speakerFirst = groupDisplayBots(g).map(b => b.id);
         return { activeFirst, speakerFirst };
     """)
-    assert out["activeFirst"] == ["c", "thyca", "a"]
-    assert out["speakerFirst"] == ["b", "c", "thyca"]
+    assert out["activeFirst"] == ["c", "thyca"]
+    assert out["speakerFirst"] == ["b", "c"]
+
+
+def test_group_row_status_reflects_member_states(node: str) -> None:
+    """groupStatusLabel derives the group row status from member bots: an
+    error member surfaces the error label and an active member its working
+    label, instead of the hardcoded 'Sẵn sàng' for every inactive group.
+    Both group render paths (renderGroups markup, syncGroupAvatars) use it."""
+    out = _run(node, r"""
+        bots.length = 0;
+        bots.push(...roster([
+            { id: 'a', name: 'Alpha' },
+            { id: 'b', name: 'Beta' },
+        ]));
+        const g = { id: 'g1', title: 'Nhóm A', subtitle: '2 người bạn', bots: ['a', 'b'] };
+        getBot('a').state = 'error';
+        const withError = groupStatusLabel(g);
+        getBot('a').state = 'idle';
+        getBot('b').state = 'working';
+        const withWorking = groupStatusLabel(g);
+        getBot('b').state = 'offline';
+        getBot('a').state = 'offline';
+        const allOffline = groupStatusLabel(g);
+        getBot('a').state = 'idle';
+        getBot('b').state = 'idle';
+        const allIdle = groupStatusLabel(g);
+        return { withError, withWorking, allOffline, allIdle };
+    """)
+    assert out["withError"] != "Sẵn sàng" and "lỗi" in out["withError"].lower()
+    assert "Beta" in out["withWorking"]
+    assert out["allOffline"] != "Sẵn sàng"
+    assert out["allIdle"] == "Sẵn sàng"
+    sidebar_src = SIDEBAR_JS.read_text(encoding="utf-8")
+    assert "groupStatusLabel(g)" in sidebar_src
+    assert ":'Sẵn sàng'" not in sidebar_src.split("function syncGroupAvatars")[1].split("function setGroupActivity")[0]
+
+
+def test_sidebar_unified_order_activity_then_recent(node: str) -> None:
+    """Bots and groups form one sidebar stream: pinned bots always own
+    the top; below them live activity first, then error, then newest chat,
+    so a quiet system bot still leads every pushed-up entry."""
+    out = _run(node, r"""
+        bots.length = 0;
+        bots.push(...roster([
+            { id: 'thyca', name: 'Thyca', system: true },
+            { id: 'a', name: 'Alpha' },
+            { id: 'b', name: 'Beta' },
+            { id: 'c', name: 'Gamma' },
+        ]));
+        getBot('thyca').activityAt = 100;
+        getBot('a').activityAt = 5000;
+        getBot('b').activityAt = 10;
+        getBot('b').state = 'working';
+        getBot('c').activityAt = 9000;
+        getBot('c').state = 'error';
+        groups.length = 0;
+        groups.push(
+            { id: 'g1', title: 'Nhóm 1', subtitle: 'x', bots: ['a', 'b'], updatedAtMs: 8000 },
+            { id: 'g2', title: 'Nhóm 2', subtitle: 'x', bots: ['a'], updatedAtMs: 6000 },
+        );
+        // g1 leads because IT is the coordinating group, not because a
+        // member happens to be working (that alone must not promote it).
+        activeGroup = { id: 'g1', ids: ['a', 'b'], speaker: 'b', start: Date.now() };
+        const order = sidebarEntries().map(e => e.type + ':' + (e.type === 'bot' ? e.bot.id : e.group.id));
+        renderTeam();
+        const html = $('#team-bot-list').innerHTML;
+        return { order, g1Idx: html.indexOf('data-group="g1"'), thycaIdx: html.indexOf('id="bot-thyca"'),
+                 hasGroupRow: html.includes('class="bot-card group-card chat-only"') };
+    """)
+    assert out["order"] == ["bot:thyca", "group:g1", "bot:b", "bot:c", "group:g2", "bot:a"]
+    assert out["hasGroupRow"] is True
+    assert 0 <= out["thycaIdx"] < out["g1Idx"]
+
+
+def test_sidebar_group_not_pushed_by_member_dm_activity(node: str) -> None:
+    """A group rises only for its OWN activity: a member bot working in its
+    DM (state working, no live calls in the group window) must not promote
+    every group it belongs to. Only the coordinating group (activeGroup) or
+    live calls inside the group window count as group activity."""
+    out = _run(node, r"""
+        bots.length = 0;
+        bots.push(...roster([
+            { id: 'thyca', name: 'Thyca', system: true },
+            { id: 'a', name: 'Alpha' },
+            { id: 'b', name: 'Beta' },
+        ]));
+        getBot('thyca').activityAt = 100;
+        getBot('a').activityAt = 5000;
+        getBot('b').activityAt = 10;
+        getBot('b').state = 'working';
+        groups.length = 0;
+        groups.push({ id: 'g1', title: 'Nhóm 1', subtitle: 'x', bots: ['a', 'b'], updatedAtMs: 1000 });
+        const dmOnly = sidebarEntries().map(e => e.type + ':' + (e.type === 'bot' ? e.bot.id : e.group.id));
+        activeGroup = { id: 'g1', ids: ['a', 'b'], speaker: 'b', start: Date.now() };
+        const coordinating = sidebarEntries().map(e => e.type + ':' + (e.type === 'bot' ? e.bot.id : e.group.id));
+        activeGroup = null;
+        return { dmOnly, coordinating };
+    """)
+    assert out["dmOnly"] == ["bot:thyca", "bot:b", "bot:a", "group:g1"]
+    assert out["coordinating"][0] == "bot:thyca"
+    assert out["coordinating"][1] == "group:g1"
+
+
+def test_sidebar_pinned_bots_stay_above_pushed_up_activity(node: str) -> None:
+    """Pinned bots (system, then favorites) always stay above entries that
+    activity or a fresh chat pushes up — including a coordinating group."""
+    out = _run(node, r"""
+        bots.length = 0;
+        bots.push(...roster([
+            { id: 'act', name: 'Active' },
+            { id: 'fav', name: 'Fav' },
+            { id: 'sys', name: 'Sys', system: true },
+        ]));
+        getBot('fav').favorite = true;
+        getBot('act').state = 'working';
+        getBot('act').activityAt = 99999;
+        getBot('fav').activityAt = 0;
+        groups.length = 0;
+        groups.push({ id: 'g1', title: 'Nhóm 1', subtitle: 'x', bots: ['act'], updatedAtMs: 99999 });
+        activeGroup = { id: 'g1', ids: ['act'], speaker: 'act', start: Date.now() };
+        return sidebarEntries().map(e => e.type + ':' + (e.type === 'bot' ? e.bot.id : e.group.id));
+    """)
+    assert out == ["bot:sys", "bot:fav", "group:g1", "bot:act"]
+
+
+def test_group_card_has_pin_and_info_actions(node: str) -> None:
+    """Group cards carry the same top actions as bot cards: a star pin
+    (persisted via setGroupFavorite, joining the favorite tier below system
+    bots) and an info icon opening the group drawer with its members."""
+    out = _run(node, r"""
+        bots.length = 0;
+        bots.push(...roster([
+            { id: 'sys', name: 'Sys', system: true },
+            { id: 'a', name: 'Alpha', role: 'Dev' },
+            { id: 'b', name: 'Beta' },
+        ]));
+        groups.length = 0;
+        groups.push({ id: 'g1', title: 'Nhóm 1', subtitle: '2 người bạn', bots: ['a', 'b'], favorite: true });
+        getBot('a').state = 'working';
+        const order = sidebarEntries().map(e => e.type + ':' + (e.type === 'bot' ? e.bot.id : e.group.id));
+        const html = groupRowHtml(groups[0]);
+        openGroupInfo('g1');
+        const drawer = { name: $('#bot-drawer-name').textContent, body: $('#bot-drawer-body').innerHTML, open: $('#bot-drawer').open };
+        setGroupFavorite('g1', true);
+        const stored = groupFavoriteIds().has('g1');
+        setGroupFavorite('g1', false);
+        const unstored = groupFavoriteIds().has('g1');
+        return { order, html, drawer, stored, unstored };
+    """)
+    assert out["order"] == ["bot:sys", "group:g1", "bot:a", "bot:b"]
+    assert 'data-action="group-favorite"' in out["html"] and 'aria-pressed="true"' in out["html"]
+    assert 'data-action="group-info"' in out["html"]
+    assert out["drawer"]["name"] == "Thông tin nhóm" and out["drawer"]["open"] is True
+    assert "Alpha" in out["drawer"]["body"] and "Beta" in out["drawer"]["body"]
+    assert out["stored"] is True and out["unstored"] is False
+
+
+def test_rail_uses_unified_order_with_groups_interleaved(node: str) -> None:
+    """The collapsed rail shares the main list's unified order: pinned
+    first, then the coordinating group, then the remaining bots — groups
+    are interleaved by activity, not appended at the rail's bottom."""
+    out = _run(node, r"""
+        bots.length = 0;
+        bots.push(...roster([
+            { id: 'sys', name: 'Sys', system: true },
+            { id: 'a', name: 'Alpha' },
+            { id: 'b', name: 'Beta' },
+        ]));
+        groups.length = 0;
+        groups.push({ id: 'g1', title: 'Nhóm 1', subtitle: 'x', bots: ['a', 'b'], updatedAtMs: 1000 });
+        activeGroup = { id: 'g1', ids: ['a', 'b'], speaker: 'a', start: Date.now() };
+        renderHeaderBots();
+        const html = $('#rail-avatar-list').innerHTML;
+        return { order: [...html.matchAll(/(?:data-bot-id|data-group-id)="([^"]+)"/g)].map(m => m[1]),
+                 groupChatOnly: html.includes('class="rail-avatar rail-group chat-only"') };
+    """)
+    assert out["order"] == ["sys", "g1", "a", "b"]
+    assert out["groupChatOnly"] is True   # rail groups hide off-chat like the main list
+
+
+def test_active_bot_auto_expands_pocket_and_idle_collapses(node: str) -> None:
+    """No expand anymore: bot cards stay fixed-size in every state (pocket
+    never auto-opens), the chevron is replaced by an info icon, and the
+    bottom status bar streams the doing-status while active and rests at
+    the plain state label otherwise."""
+    out = _run(node, r"""
+        bots.length = 0;
+        bots.push(...roster([{ id: 'a', name: 'Alpha' }, { id: 'b', name: 'Beta' }]));
+        renderTeam();
+        const snap = (id) => { const el = $('#bot-' + id); return { open: el.dataset.open, state: el.dataset.state, info: $('.info-label', el).textContent }; };
+        const seq = [];
+        updateCard(getBot('a'));
+        seq.push(snap('a'));
+        getBot('a').state = 'working';
+        updateCard(getBot('a'));
+        await tick(10);
+        seq.push(snap('a'));
+        getBot('a').state = 'idle';
+        updateCard(getBot('a'));
+        seq.push(snap('a'));
+        getBot('a').state = 'thinking';
+        updateCard(getBot('a'));
+        await tick(10);
+        seq.push(snap('a'));
+        getBot('a').state = 'done';
+        updateCard(getBot('a'));
+        seq.push(snap('a'));
+        return { seq, html: $('#team-bot-list').innerHTML };
+    """)
+    assert out["seq"] == [
+        {"open": "false", "state": "idle", "info": "Sẵn sàng"},
+        {"open": "false", "state": "working", "info": "Đang làm việc"},
+        {"open": "false", "state": "idle", "info": "Sẵn sàng"},
+        {"open": "false", "state": "thinking", "info": "Đang suy nghĩ"},
+        {"open": "false", "state": "done", "info": "Đã hoàn tất"},
+    ]
+    assert 'data-action="collapse"' not in out["html"]
+    assert 'class="icon-button info-button" data-action="info"' in out["html"]
+
+
+def test_header_bot_strip_active_first_and_selection(node: str) -> None:
+    """Collapsed avatar rail (#rail-avatar-list, ex-header-bot-strip) sorts
+    active states (working/waiting/thinking/writing/confused) ahead of
+    idle/error/offline bots, marks the selected bot, and dispatches
+    selectBot when an avatar is clicked."""
+    out = _run(node, r"""
+        bots.length = 0;
+        bots.push(...roster([
+            { id: 'thyca', name: 'Thyca', system: true },
+            { id: 'a', name: 'Alpha' },
+            { id: 'b', name: 'Beta' },
+            { id: 'c', name: 'Gamma' },
+        ]));
+        ctx.highlightBot('thyca');
+        renderTeam();
+        const strip = $('#rail-avatar-list');
+        const chipIds = () => [...strip.innerHTML.matchAll(/data-bot-id="([^"]+)"/g)].map(m => m[1]);
+        const selectedAttr = (id) => {
+            const m = strip.innerHTML.match(new RegExp(`data-bot-id="${id}"[^>]*data-selected="([^"]+)"`));
+            return m ? m[1] : null;
+        };
+        const initialOrder = chipIds();
+        const initialSelectedThyca = selectedAttr('thyca');
+        const railStatic = strip.innerHTML.includes('expression-preview');
+        getBot('b').state = 'working';
+        getBot('c').state = 'waiting';
+        getBot('a').state = 'error';
+        updateCard(getBot('b'));
+        updateCard(getBot('c'));
+        updateCard(getBot('a'));
+        const activeOrder = chipIds();
+
+        // Changing b.state while b.mentioned === true still updates data-state in strip.
+        getBot('b').mentioned = true;
+        updateCard(getBot('b'));
+        const whileMentionedState = strip.innerHTML.match(/data-bot-id="b"[^>]*data-state="([^"]+)"/)?.[1] || null;
+        getBot('b').state = 'idle';
+        updateCard(getBot('b'));
+        const afterMentionIdleState = strip.innerHTML.match(/data-bot-id="b"[^>]*data-state="([^"]+)"/)?.[1] || null;
+        getBot('b').mentioned = false;
+
+        // Setup lock blocks avatar-rail click dispatch.
+        globalThis.__spaDispatches = [];
+        let locked = true;
+        globalThis.setupLocked = () => locked;
+        const chipBtn = document.createElement('button');
+        chipBtn.dataset.action = 'header-select';
+        chipBtn.dataset.botId = 'c';
+        strip.dispatch('click', { target: chipBtn });
+        const lockedDispatches = [...globalThis.__spaDispatches];
+        locked = false;
+        strip.dispatch('click', { target: chipBtn });
+        return {
+            initialOrder, initialSelectedThyca, railStatic, activeOrder,
+            whileMentionedState, afterMentionIdleState,
+            lockedDispatches, dispatches: globalThis.__spaDispatches,
+        };
+    """)
+    assert out["railStatic"] is False   # rail uses live avatars, not static expression previews
+    assert out["initialOrder"] == ["thyca", "a", "b", "c"]
+    assert out["initialSelectedThyca"] == "true"
+    assert out["activeOrder"] == ["thyca", "b", "c", "a"]   # pinned system bot leads; activity orders the rest
+    assert out["whileMentionedState"] == "working"
+    assert out["afterMentionIdleState"] == "idle"
+    assert out["lockedDispatches"] == []
+    assert [call[:2] for call in out["dispatches"]] == [["selectBot", "c"]]
+
+
+def test_wordmark_is_static_and_team_title_clears(node: str) -> None:
+    """Wordmark is static (no arrow, not clickable): desktop sidebar collapsed
+    only via resize band (medium 851..1150 default collapsed, wide default open)
+    or via splitter drag; narrow still uses mobile drawer via .menu-button.
+    Clicking #team-nav-title clears selection on dashboard/memories/profile.
+    Setup lock still respects rail inert."""
+    out = _run(node, r"""
+        let width = 1280;
+        globalThis.innerWidth = 1280;
+        globalThis.matchMedia = (q) => ({
+            matches: (q.includes('850px') && width <= 850) || (q.includes('1150px') && width <= 1150),
+            media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {},
+        });
+        const shell = $('.notebook-shell');
+        const sidebar = $('#chat-sidebar');
+        const title = $('#team-nav-title');
+        const snap = () => ({
+            collapsed: shell.dataset.sidebarCollapsed,
+            inert: sidebar.inert,
+            mobileOpen: sidebar.classList.contains('mobile-open'),
+        });
+        const hdr = thycaHeader('chat');
+        const wordmarkTag = hdr.includes('<span class="wordmark"') ? 'SPAN' : hdr.includes('<button class="wordmark"') ? 'BUTTON' : null;
+        const wordmarkHasAriaExpanded = hdr.includes('class="wordmark"') && hdr.includes('aria-expanded="true"');
+        const wordmark = $('.wordmark');
+        const wideInit = snap();
+        // Wordmark is static: clicking does nothing; sidebar collapse is via band/resize only.
+        if (wordmark && typeof wordmark.click === 'function') wordmark.click();
+        const afterWordmarkClick = snap();
+        width = 1000; globalThis.innerWidth = 1000;
+        dispatchEvent({ type: 'resize' });
+        const medInit = snap();
+        width = 700; globalThis.innerWidth = 700;
+        dispatchEvent({ type: 'resize' });
+        const narrowInit = snap();
+        const menuBtn = $('.menu-button');
+        if (menuBtn) menuBtn.click();
+        const narrowOpened = snap();
+        if (menuBtn) menuBtn.click();
+        const narrowClosed = snap();
+
+        let setup = 'required';
+        ThycaRouter.setupState = () => setup;
+        syncSidebarChrome();
+        const railList = $('#rail-avatar-list');
+        const lockState = {
+            railListInert: railList ? railList.inert : null,
+            railListExists: !!railList,
+        };
+        setup = 'ready';
+        syncSidebarChrome();
+        const unlockedState = {
+            railListInert: railList ? railList.inert : null,
+            railListExists: !!railList,
+        };
+
+        // Non-chat mobile drawer skips #team-shared-create focus and falls back to #chat-sidebar .bot-select / #open-settings.
+        const focusLog = [];
+        const createBtn = $('#team-shared-create');
+        if (createBtn) createBtn.focus = () => focusLog.push('create');
+        const settingsBtn = $('#open-settings');
+        settingsBtn.focus = () => focusLog.push('settings');
+        menuBtn.focus = () => focusLog.push('menu');
+        document.body.dataset.activePage = 'memories';
+        openMobile();
+        closeMobile();
+        const nonChatMenuFocus = [...focusLog];
+        document.body.dataset.activePage = 'chat';
+
+        let page = 'chat';
+        ThycaRouter.currentPage = () => page;
+        globalThis.__spaDispatches = [];
+        title.click();
+        const chatDispatches = [...globalThis.__spaDispatches];
+        page = 'dashboard';
+        title.click();
+        title.dispatch('keydown', { key: 'Enter' });
+        const dashDispatches = [...globalThis.__spaDispatches];
+        return { wideInit, afterWordmarkClick, wordmarkTag, wordmarkHasAriaExpanded, medInit, narrowInit, narrowOpened, narrowClosed, lockState, unlockedState, nonChatMenuFocus, chatDispatches, dashDispatches };
+    """, via="shell")
+    assert out["wordmarkTag"] == "SPAN"
+    assert out["wordmarkHasAriaExpanded"] is False
+    assert out["wideInit"] == {"collapsed": "false", "inert": False, "mobileOpen": False}
+    assert out["afterWordmarkClick"] == out["wideInit"]
+    assert out["medInit"] == {"collapsed": "true", "inert": False, "mobileOpen": False}
+    assert out["narrowInit"]["mobileOpen"] is False and out["narrowInit"]["inert"] is True
+    assert out["narrowOpened"]["mobileOpen"] is True and out["narrowOpened"]["inert"] is False
+    assert out["narrowClosed"]["mobileOpen"] is False and out["narrowClosed"]["inert"] is True
+    assert out["lockState"] == {"railListInert": True, "railListExists": True}
+    assert out["unlockedState"] == {"railListInert": False, "railListExists": True}
+    assert out["nonChatMenuFocus"] == ["settings", "menu"]
+    assert out["chatDispatches"] == []
+    assert [call[:2] for call in out["dashDispatches"]] == [["selectBot", ""], ["selectBot", ""]]
+    base_css = (SHARE / "base.css").read_text(encoding="utf-8")
+    assert ".wordmark::after" not in base_css
+    assert "thyca</button>" not in (SHARE / "shell.js").read_text(encoding="utf-8")
+
+
+def test_settings_dialog_syncs_default_model_context_tokens(node: str) -> None:
+    """#settings-dialog displays models[defaultModel].contextTokens when set,
+    compares concurrent server state against the same effective field, and updates
+    both limits.contextTokens and models[defaultModel].contextTokens when saved."""
+    out = _run(node, r"""
+        const server = {
+            revision: 'rev-1',
+            values: {
+                providers: { alpha: { baseUrl: 'https://a.invalid', apiKey: '' } },
+                models: { m1: { provider: 'alpha', contextTokens: 195000 } },
+                defaultProvider: 'alpha',
+                defaultModel: 'm1',
+                limits: { loopMax: 80, hotTailKB: 4, contextTokens: 272000 },
+            },
+            schema: { sections: [{ key: 'limits', label: 'Limits', fields: [
+                { key: 'limits.contextTokens', label: 'Ngữ cảnh tối đa', type: 'number', min: 1000, max: 2000000 },
+            ] }] },
+        };
+        const posted = [];
+        installFetch((url, opts) => {
+            if (url === '/api/bots') return { bots: [] };
+            if (url === '/api/conversations') return { conversations: [] };
+            if (url === '/api/config/status') return { ready: true };
+            if (url === '/api/config' && opts.method === 'POST') {
+                const body = JSON.parse(opts.body);
+                posted.push(body);
+                delete body.baseRevision;
+                server.values = body;
+                server.revision = 'rev-2';
+                return {};
+            }
+            if (url === '/api/config') return server;
+            return {};
+        });
+        await tick();
+        await loadSettingsConfig();
+        const fieldsHtml = $('#config-fields').innerHTML;
+        const input = document.createElement('input');
+        input.id = 'setcfg-limits-contextTokens';
+        input.type = 'number';
+        input.dataset.section = 'limits';
+        input.dataset.name = 'contextTokens';
+        input.dataset.label = 'Ngữ cảnh tối đa';
+        Object.defineProperty(input, 'valueAsNumber', { get: () => 205000 });
+        $('#config-form').appendChild(input);
+        await submitSettingsConfig($('#config-form'));
+        return { fieldsHtml, posted, formStatus: $('#settings-form-status').textContent };
+    """, via="dialog")
+    assert 'value="195000"' in out["fieldsHtml"]
+    assert 'value="272000"' not in out["fieldsHtml"]
+    assert out["formStatus"] == "Đã lưu cài đặt."
+    assert len(out["posted"]) == 1
+    assert out["posted"][0]["limits"]["contextTokens"] == 205000
+    assert out["posted"][0]["models"]["m1"]["contextTokens"] == 205000
+
+
+def test_provider_syncs_external_config_saved(node: str) -> None:
+    """provider.js skips background GET /api/config while inactive on
+    thyca:config-saved, syncs on onEnter() when clean, and syncs live when
+    active without clobbering dirty editor drafts."""
+    out = _run(node, r"""
+        const server = {
+            revision: 'rev-1',
+            values: {
+                providers: { alpha: { baseUrl: 'https://alpha.invalid/v1', api: 'openai_chat', apiKey: '' } },
+                models: { 'alpha-m': { provider: 'alpha', contextTokens: 195000 } },
+                defaultProvider: 'alpha',
+                defaultModel: 'alpha-m',
+                limits: { loopMax: 80, hotTailKB: 4, contextTokens: 195000 },
+            },
+            meta: { providers: { alpha: true } },
+            schema: { sections: [{ key: 'limits', fields: [
+                { key: 'limits.contextTokens', min: 1000, max: 2000000 },
+            ] }] },
+        };
+        let gets = 0;
+        installFetch((url) => {
+            if (url === '/api/config') { gets++; return server; }
+            return {};
+        });
+        await __controller.ready;
+        await reloadConfig();
+        const afterInitial = { gets, ctx: $('#m-context').value };
+
+        let active = false;
+        ctx.isActive = () => active;
+        server.revision = 'rev-2';
+        server.values.models['alpha-m'].contextTokens = 210000;
+        server.values.limits.contextTokens = 210000;
+        dispatchEvent({ type: 'thyca:config-saved' });
+        await tick(10);
+        const whileInactive = { gets, ctx: $('#m-context').value };
+
+        active = true;
+        __controller.onEnter();
+        await tick(10);
+        const afterEnter = { gets, ctx: $('#m-context').value };
+
+        server.revision = 'rev-3';
+        server.values.models['alpha-m'].contextTokens = 225000;
+        $('#m-context').value = '99999';
+        dispatchEvent({ type: 'thyca:config-saved' });
+        await tick(10);
+        const whileDirty = { gets, ctx: $('#m-context').value };
+
+        cancelEditor();
+        dispatchEvent({ type: 'thyca:config-saved' });
+        await tick(10);
+        const whenCleanActive = { gets, ctx: $('#m-context').value };
+        return { afterInitial, whileInactive, afterEnter, whileDirty, whenCleanActive };
+    """, via="provider")
+    assert out["afterInitial"]["ctx"] == 195000
+    assert out["whileInactive"] == out["afterInitial"]
+    assert out["afterEnter"]["gets"] == out["afterInitial"]["gets"] + 1
+    assert out["afterEnter"]["ctx"] == 210000
+    assert out["whileDirty"]["gets"] == out["afterEnter"]["gets"]
+    assert out["whileDirty"]["ctx"] == "99999"
+    assert out["whenCleanActive"]["gets"] == out["whileDirty"]["gets"] + 1
+    assert out["whenCleanActive"]["ctx"] == 225000
+
+
+def test_provider_external_sync_preserves_new_discovery_and_empty_model(node: str) -> None:
+    """syncExternalConfig() preserves an empty __new__ connection, keeps
+    non-stale state.discovery results, and avoids jumping back to defaultModel
+    when the user intentionally chose empty model selection."""
+    out = _run(node, r"""
+        const server = {
+            revision: 'rev-1',
+            values: {
+                providers: { alpha: { baseUrl: 'https://alpha.invalid/v1', api: 'openai_chat', apiKey: '' } },
+                models: { 'alpha-m': { provider: 'alpha', contextTokens: 195000 } },
+                defaultProvider: 'alpha',
+                defaultModel: 'alpha-m',
+                limits: { loopMax: 80, hotTailKB: 4, contextTokens: 195000 },
+            },
+            meta: { providers: { alpha: true } },
+            schema: { sections: [{ key: 'limits', fields: [
+                { key: 'limits.contextTokens', min: 1000, max: 2000000 },
+            ] }] },
+        };
+        installFetch((url) => {
+            if (url === '/api/config') return server;
+            if (url === '/api/onboarding/verify') return { models: ['vendor/a', 'vendor/b'] };
+            return {};
+        });
+        await __controller.ready;
+        await reloadConfig();
+
+        // Case A: __new__ connection is preserved across clean external sync.
+        openNewConnection();
+        server.revision = 'rev-2';
+        server.values.limits.contextTokens = 205000;
+        dispatchEvent({ type: 'thyca:config-saved' });
+        await tick(10);
+        const afterNewSync = {
+            editingProvider: state.editingProvider,
+            picker: $('#connection-picker').value,
+            dirty: editorIsDirty(),
+        };
+
+        // Case B: alpha + empty model + discovery results are preserved.
+        openExistingConnection('alpha');
+        await verifyQuick();
+        chooseModel('');
+        state.modelBaseline = modelFieldsSnapshot();
+        state.editorBaseline = editorSnapshot();
+        syncDirtyStatus();
+        const revBefore = state.connectionRevision;
+        server.revision = 'rev-3';
+        server.values.limits.contextTokens = 215000;
+        server.values.models['alpha-m'].contextTokens = 215000;
+        dispatchEvent({ type: 'thyca:config-saved' });
+        await tick(10);
+        const afterAlphaEmptySync = {
+            editingProvider: state.editingProvider,
+            selectedModel: state.selectedModel,
+            picker: $('#m-picker').value,
+            discoveryModels: state.discovery ? [...state.discovery.models] : null,
+            revSame: state.connectionRevision === revBefore,
+            dirty: editorIsDirty(),
+        };
+        return { afterNewSync, afterAlphaEmptySync };
+    """, via="provider")
+    assert out["afterNewSync"] == {"editingProvider": "", "picker": "__new__", "dirty": False}
+    assert out["afterAlphaEmptySync"] == {
+        "editingProvider": "alpha",
+        "selectedModel": "",
+        "picker": "__choose__",
+        "discoveryModels": ["vendor/a", "vendor/b"],
+        "revSame": True,
+        "dirty": False,
+    }
+
+
+def test_memories_on_route_updates_memory_title_immediately(node: str) -> None:
+    """onRoute() updates #memory-title immediately when scoping to a bot or back
+    to all memories, without waiting for /api/memory/stats to resolve."""
+    out = _run(node, r"""
+        let resolveStats = null;
+        installFetch((url) => {
+            if (url === '/api/bots') return { bots: [{ id: 'thyca', name: 'Thyca', system: true }, { id: 'coder', name: 'Coder' }] };
+            if (url === '/api/conversations') return { conversations: [] };
+            if (url.startsWith('/api/memory/stats')) return new Promise(r => { resolveStats = () => r({ total: 0, leaves: [] }); });
+            return {};
+        });
+        await __controller.ready;
+        await tick(20);
+        bots.length = 0;
+        bots.push(...roster([{ id: 'thyca', name: 'Thyca', system: true }, { id: 'coder', name: 'Coder' }]));
+        const titleEl = ctx.root.querySelector('#memory-title');
+        __controller.onRoute({ search: '?bot=coder', hash: '' });
+        const scopedImmediately = titleEl.textContent;
+        __controller.onRoute({ search: '', hash: '' });
+        const clearedImmediately = titleEl.textContent;
+        if (resolveStats) resolveStats();
+        return { scopedImmediately, clearedImmediately };
+    """, via="memories", emit="memories")
+    assert out["scopedImmediately"] == "Bộ nhớ · Coder"
+    assert out["clearedImmediately"] == "Bộ nhớ"
+
+
+def test_bottom_action_placements_and_sr_only_top_bars() -> None:
+    """Chat, Hồ sơ, and Provider place action buttons/status at the bottom of
+    the workspace while keeping sr-only page-nav / chat-title-head nodes for
+    heading focus and test hooks; Sử dụng keeps #range-note sr-only."""
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    chat_head = html.split('<header class="chat-title-head">', 1)[1].split("</header>", 1)[0]
+    composer_toolbar = html.split('<div class="composer-toolbar">', 1)[1].split('<div class="mention-popup"', 1)[0]
+    assert 'class="head-actions"' not in chat_head
+    assert 'class="head-actions"' in composer_toolbar
+    assert 'id="run-demo"' in composer_toolbar
+    assert 'id="delete-group"' not in composer_toolbar and 'id="conversation-info"' not in composer_toolbar
+
+    chat_css = CHAT_CSS.read_text(encoding="utf-8")
+    assert ".composer-toolbar .head-actions .icon-button{display:inline-flex" in chat_css
+    assert "clip-path:inset(50%)" in chat_css.split(".chat-title-head{", 1)[1].split("}", 1)[0]
+
+    profile_js = PROFILE_JS.read_text(encoding="utf-8")
+    profile_nav = profile_js.split('<header class="page-nav">', 1)[1].split("</header>", 1)[0]
+    assert 'id="profile-shared"' not in profile_nav and 'id="profile-reload"' not in profile_nav
+    assert '<div id="profile-root"></div>' in profile_js
+    after_root = profile_js.split('<div id="profile-root"></div>', 1)[1].split("</div>\n</div>", 1)[0]
+    assert 'class="page-actions profile-footer-actions"' in after_root
+    assert 'id="profile-shared"' in after_root and 'id="profile-reload"' in after_root
+    profile_css = (UI / "profile" / "profilecss" / "profile.css").read_text(encoding="utf-8")
+    assert "clip-path:inset(50%)" in profile_css.split(".profile-shell .page-nav{", 1)[1].split("}", 1)[0]
+
+    provider_js = PROVIDER_JS.read_text(encoding="utf-8")
+    provider_nav = provider_js.split('<header class="page-nav">', 1)[1].split("</header>", 1)[0]
+    assert 'id="save-status"' not in provider_nav
+    provider_footer = provider_js.split('<div class="editor-footer">', 1)[1].split("</div>", 1)[0]
+    assert 'id="save-status"' in provider_footer
+    provider_css = (UI / "provider" / "providercss" / "provider.css").read_text(encoding="utf-8")
+    assert "clip-path:inset(50%)" in provider_css.split(".provider-shell .page-nav{", 1)[1].split("}", 1)[0]
+    assert ".provider-shell .editor-footer .save-status{" in provider_css
+
+    dashboard_css = (UI / "dashboard" / "dashboardcss" / "dashboard.css").read_text(encoding="utf-8")
+    note_rule = dashboard_css.split(".dashboard-shell #range-note{", 1)[1].split("}", 1)[0]
+    assert "clip-path:inset(50%)" in note_rule and "pointer-events:none" in note_rule
+
+
+def test_sidebar_collapse_toggle_fixed_modes(node: str) -> None:
+    """Collapse button toggles two fixed modes only: desktop full 175px
+    and rail 74px. No drag resizing; setupLocked blocks the toggle."""
+    out = _run(node, r"""
+        let width = 1280;
+        globalThis.innerWidth = 1280;
+        globalThis.matchMedia = (q) => ({
+            matches: (q.includes('850px') && width <= 850) || (q.includes('1150px') && width <= 1150),
+            media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {},
+        });
+        const sep = $('.splitter');
+        const shell = $('.notebook-shell');
+        const snap = () => ({ w: document.documentElement.style.getPropertyValue('--sidebar-width'), collapsed: shell.dataset.sidebarCollapsed, expanded: sep.getAttribute('aria-expanded'), text: sep.textContent });
+        const init = snap();
+        sep.click();
+        const rail = snap();
+        sep.click();
+        const full = snap();
+        let locked = true;
+        ThycaRouter.setupState = () => (locked ? 'required' : 'ready');
+        sep.click();
+        const lockedSnap = snap();
+        return { init, rail, full, lockedSnap, hasDrag: typeof sep.onpointerdown, hasDragMove: typeof sep.onpointermove };
+    """, via="shell")
+    assert out["init"] == {"w": "175px", "collapsed": "false", "expanded": "true", "text": "‹"}
+    assert out["rail"] == {"w": "74px", "collapsed": "true", "expanded": "false", "text": "›"}
+    assert out["full"] == {"w": "175px", "collapsed": "false", "expanded": "true", "text": "‹"}
+    assert out["lockedSnap"] == out["full"]
+    assert out["hasDrag"] == "undefined" and out["hasDragMove"] == "undefined"
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    shell_js = SHELL_JS.read_text(encoding="utf-8")
+    for text in (html, shell_js):
+        assert 'class="splitter"' in text
+        assert 'aria-expanded="true"' in text
+
+
+def test_small_screen_collapse_toggle_opens_drawer(node: str) -> None:
+    """At <=850px clicking the collapse button opens the drawer and toggles
+    between narrow full 125px and rail 74px (no drag)."""
+    out = _run(node, r"""
+        let width = 700;
+        globalThis.innerWidth = 700;
+        globalThis.matchMedia = (q) => ({
+            matches: (q.includes('850px') && width <= 850) || (q.includes('950px') && width <= 950) || (q.includes('1150px') && width <= 1150),
+            media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {},
+        });
+        const sep = $('.splitter');
+        const sidebar = $('#chat-sidebar');
+        const shell = $('.notebook-shell');
+        sep.click();
+        const opened = { open: sidebar.classList.contains('mobile-open'), w: document.documentElement.style.getPropertyValue('--sidebar-width'), collapsed: shell.dataset.sidebarCollapsed };
+        sep.click();
+        const expanded = { w: document.documentElement.style.getPropertyValue('--sidebar-width'), collapsed: shell.dataset.sidebarCollapsed };
+        return { opened, expanded };
+    """, via="shell")
+    assert out["opened"] == {"open": True, "w": "74px", "collapsed": "true"}
+    assert out["expanded"] == {"w": "125px", "collapsed": "false"}
+
+
+def test_responsive_page_menu_dropdown(node: str) -> None:
+    """#page-menu-toggle opens/closes .header-right.page-menu-open, closes on
+    Escape / outside click / page-link click / resize >950px, respects
+    setupLocked(), and updates .page-menu-label in shell.js and router.js."""
+    out = _run(node, r"""
+        let width = 700;
+        globalThis.innerWidth = 700;
+        globalThis.matchMedia = (q) => ({
+            matches: (q.includes('850px') && width <= 850) || (q.includes('950px') && width <= 950) || (q.includes('1150px') && width <= 1150),
+            media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {},
+        });
+        const wrap = $('.header-right');
+        const toggle = $('#page-menu-toggle');
+        const nav = $('.page-links');
+        const link = document.createElement('a');
+        link.dataset.pageLink = 'memories';
+        nav.appendChild(link);
+        wrap.appendChild(toggle);
+        wrap.appendChild(nav);
+        const outside = document.createElement('div');
+        document.body.appendChild(outside);
+
+        const isOpen = () => ({ open: wrap.classList.contains('page-menu-open'), expanded: toggle.getAttribute('aria-expanded') });
+        toggle.click();
+        const opened = isOpen();
+        toggle.click();
+        const closedSecondClick = isOpen();
+
+        toggle.click();
+        (document._handlers.keydown || []).forEach(fn => fn({ key: 'Escape' }));
+        const closedEscape = isOpen();
+
+        toggle.click();
+        (document._handlers.click || []).forEach(fn => fn({ target: outside }));
+        const closedOutside = isOpen();
+
+        toggle.click();
+        (document._handlers.click || []).forEach(fn => fn({ target: link }));
+        const closedLink = isOpen();
+
+        toggle.click();
+        width = 1200; globalThis.innerWidth = 1200;
+        dispatchEvent({ type: 'resize' });
+        const closedWideResize = isOpen();
+
+        width = 700; globalThis.innerWidth = 700;
+        toggle.click();
+        let locked = true;
+        ThycaRouter.setupState = () => (locked ? 'required' : 'ready');
+        syncSidebarChrome();
+        const lockedState = { ...isOpen(), disabled: toggle.disabled };
+        toggle.click();
+        const lockedClickAttempt = isOpen();
+
+        return {
+            opened, closedSecondClick, closedEscape, closedOutside, closedLink,
+            closedWideResize, lockedState, lockedClickAttempt,
+            headerMem: thycaHeader('memories'),
+            headerDash: thycaHeader('dashboard'),
+        };
+    """, via="shell")
+    assert out["opened"] == {"open": True, "expanded": "true"}
+    assert out["closedSecondClick"] == {"open": False, "expanded": "false"}
+    assert out["closedEscape"] == {"open": False, "expanded": "false"}
+    assert out["closedOutside"] == {"open": False, "expanded": "false"}
+    assert out["closedLink"] == {"open": False, "expanded": "false"}
+    assert out["closedWideResize"] == {"open": False, "expanded": "false"}
+    assert out["lockedState"] == {"open": False, "expanded": "false", "disabled": True}
+    assert out["lockedClickAttempt"] == {"open": False, "expanded": "false"}
+    assert 'id="page-menu-toggle"' in out["headerMem"] and '<span class="page-menu-label">Nhật ký</span>' in out["headerMem"]
+    assert '<span class="page-menu-label">Sử dụng</span>' in out["headerDash"]
+
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    assert 'id="page-menu-toggle"' in html and 'id="page-links-nav"' in html
+    base_css = BASE_CSS.read_text(encoding="utf-8")
+    assert "@media(max-width:950px)" in base_css and ".header-right.page-menu-open .page-links{display:flex}" in base_css
+    assert ".page-menu-toggle:disabled" in (SHARE / "router.css").read_text(encoding="utf-8")
+    router_js = (SHARE / "router.js").read_text(encoding="utf-8")
+    assert "pageMenuLabel.textContent = entry.title" in router_js
+    assert "pageMenuBtn.disabled = locked" in router_js
+
+
+def test_sidebar_renders_provided_group_title(node: str) -> None:
+    """A group summary carrying a title renders that title in the sidebar
+    (and in pocket rows); a summary without one keeps the shared label."""
+    out = _run(node, r"""
+        bots.length = 0;
+        bots.push(...roster([{ id: 'thyca' }, { id: 'coder' }]));
+        installFetch((url) => url === '/api/conversations' ? { conversations: [
+            { group_id: 'group-11111111111111111111111111111111', kind: 'group', title: 'Ke hoach <b>tuan</b>', bots: ['thyca', 'coder'], turns: 2, updated_at: new Date().toISOString() },
+            { group_id: 'group-22222222222222222222222222222222', kind: 'group', bots: ['thyca', 'coder'], turns: 0, updated_at: new Date().toISOString() },
+        ] } : {});
+        await refreshConversations();
+        renderGroups();
+        const html = $('#team-bot-list').innerHTML;
+        return {
+            titles: groups.map(g => g.title),
+            coderLabels: bots[1].conversations.map(s => s[1]),
+            html,
+        };
+    """)
+    assert out["titles"] == ["Ke hoach <b>tuan</b>", "Hội thoại chung"]
+    assert "Ke hoach <b>tuan</b>" in out["coderLabels"]
+    assert "Ke hoach &lt;b&gt;tuan&lt;/b&gt;" in out["html"]  # escaped, never raw markup
+    assert "<b>tuan</b>" not in out["html"]
+
+
+def test_group_dialog_has_optional_name_input() -> None:
+    """Static wiring: the create-group dialog offers a name field and the
+    submit flow only sends a title when one was typed."""
+    shell = SHELL_JS.read_text(encoding="utf-8")
+    assert 'id="group-name"' in shell and 'maxlength="80"' in shell
+    assert "3–5 từ" in shell
+    sidebar = SIDEBAR_JS.read_text(encoding="utf-8")
+    assert "payload.title=groupName" in sidebar and "if(groupName)payload.title" in sidebar
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    assert 'id="group-name"' in html and "3–5 từ" in html

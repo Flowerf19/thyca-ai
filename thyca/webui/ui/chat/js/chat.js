@@ -2,43 +2,71 @@
 'use strict';
 const fmtTime = ts => { const d = ts ? new Date(ts) : new Date(); return Number.isFinite(d.getTime()) ? d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : ''; };
 function userMessage(text, time) {
-  const framed = discordConversationHtml(text);
+  const convo = framedConversationData(text);
+  if (convo && convo.messages.length) return framedConversationBlock(convo, time);
+  const framed = framedConversationFallback(text);
   const body = framed ? framed.html : `<p>${escapeHTML(text).replace(/\n/g, '<br>')}</p>`;
   const source = framed ? `<span class="message-source">${framed.label}</span>` : '';
   return `<article class="message-user">${body}<footer>${source}<time>${time}</time>${icon('check')}</footer></article>`;
 }
-/* Discord bridge posts (thyca-discord-mcp build_conversation_prompt) wrap
-   a compact conversation JSON between UNTRUSTED_CONVERSATION markers after
-   trusted/policy/task scaffolding meant for the LLM, not the reader.
-   Display layer only: parse the framed JSON into one readable line per
-   message (sender name from participants, <@uid> mentions resolved),
-   never the scaffolding, never raw JSON, never unescaped HTML. */
-function discordConversationHtml(text) {
+/* External bridge posts (any source tool) wrap a compact conversation
+   JSON between UNTRUSTED_CONVERSATION markers after trusted/policy/task
+   scaffolding meant for the LLM, not the reader. The display layer is
+   source-agnostic: it keys only on that frame protocol, never on which
+   tool produced it. Parsed frame as renderable data: one row per message
+   with the sender resolved, mentions mapped, reply target named, and the
+   message that triggered the turn (new_message_id) flagged. Null when
+   the text is not a framed bridge post or carries no messages. */
+function framedConversationData(text) {
   const m = String(text || '').match(/UNTRUSTED_CONVERSATION job_ref=(\S+) START\n([\s\S]*?)\nUNTRUSTED_CONVERSATION job_ref=\1 END/);
   if (!m) return null;
-  const inner = m[2].trim();
   let frame = null;
-  try { frame = JSON.parse(inner); } catch { frame = null; }
-  const messages = frame && typeof frame === 'object' && Array.isArray(frame.messages) ? frame.messages : null;
-  if (!messages) {
-    // Unparseable frame: show the inner text escaped, without markers.
-    return { label: 'Từ Discord', html: `<p>${escapeHTML(inner).replace(/\n/g, '<br>')}</p>` };
-  }
+  try { frame = JSON.parse(m[2].trim()); } catch { frame = null; }
+  if (!frame || typeof frame !== 'object' || !Array.isArray(frame.messages)) return null;
   const names = {};
   for (const p of Array.isArray(frame.participants) ? frame.participants : []) {
     if (p && p.uid) names[String(p.uid)] = String(p.display_name || p.uid);
   }
   const shortUid = uid => { const s = String(uid); return s.length > 12 ? s.slice(0, 6) + '…' + s.slice(-4) : s; };
   const nameOf = uid => names[String(uid)] || shortUid(uid);
-  const textOf = raw => escapeHTML(String(raw ?? '')).replace(/&lt;@([^&<>]+)&gt;/g,
-    (hit, uid) => '@' + escapeHTML(nameOf(String(uid).trim()))).replace(/\n/g, '<br>');
-  const lines = [];
-  for (const item of messages) {
+  const byId = new Map();
+  for (const item of frame.messages) if (item && typeof item === 'object' && item.id) byId.set(String(item.id), item);
+  const messages = [];
+  for (const item of frame.messages) {
     if (!item || typeof item !== 'object') continue;
-    lines.push(`<strong>${escapeHTML(nameOf(item.sender_uid))}</strong> ${textOf(item.text)}`);
+    const replyTarget = item.reply_to ? byId.get(String(item.reply_to)) : null;
+    const textHtml = escapeHTML(String(item.text ?? '')).replace(/&lt;@([^&<>]+)&gt;/g,
+      (hit, uid) => '@' + escapeHTML(nameOf(String(uid).trim()))).replace(/\n/g, '<br>');
+    messages.push({
+      sender: nameOf(item.sender_uid),
+      textHtml,
+      time: item.timestamp ? fmtTime(item.timestamp) : '',
+      isNew: frame.new_message_id != null && String(item.id) === String(frame.new_message_id),
+      replyTo: replyTarget ? nameOf(replyTarget.sender_uid) : '',
+    });
   }
-  if (!lines.length) return { label: 'Từ Discord', html: `<p>${escapeHTML(inner).replace(/\n/g, '<br>')}</p>` };
-  return { label: 'Từ Discord', html: `<p>${lines.join('<br>')}</p>` };
+  const sourceLabel = [frame.source_label, frame.source, frame.channel_name, frame.channel]
+    .find(v => typeof v === 'string' && v.trim())?.trim() || 'Hội thoại ngoài';
+  return messages.length ? { messages, label: sourceLabel } : null;
+}
+
+/* A framed conversation renders as its own conversation block — one
+   proper row per message (sender, time, reply context, the triggering
+   message highlighted) instead of every line crammed into a single user
+   bubble. */
+function framedConversationBlock(convo, time) {
+  const rows = convo.messages.map(msg => `<article class="framed-msg${msg.isNew ? ' is-new' : ''}"><header><strong>${escapeHTML(msg.sender)}</strong>${msg.time ? `<time>${escapeHTML(msg.time)}</time>` : ''}${msg.replyTo ? `<span class="framed-reply">trả lời ${escapeHTML(msg.replyTo)}</span>` : ''}</header><div class="framed-text">${msg.textHtml}</div></article>`).join('');
+  return `<section class="framed-convo" aria-label="${escapeHTML(convo.label)}"><header class="framed-head"><span class="message-source">${escapeHTML(convo.label)}</span><time>${time}</time></header>${rows}</section>`;
+}
+
+/* Fallback for a framed post the parser above cannot use (unparseable
+   JSON or no renderable messages): show the inner text escaped, without
+   the markers — never the scaffolding around the frame. */
+function framedConversationFallback(text) {
+  const m = String(text || '').match(/UNTRUSTED_CONVERSATION job_ref=(\S+) START\n([\s\S]*?)\nUNTRUSTED_CONVERSATION job_ref=\1 END/);
+  if (!m) return null;
+  const inner = m[2].trim();
+  return { label: 'Hội thoại ngoài', html: `<p>${escapeHTML(inner).replace(/\n/g, '<br>')}</p>` };
 }
 function assistantMessage(botId, content, time, toolNames = []) {
   const b = getBot(botId) || { id: botId, name: botId || 'Thyca', palette: derivePalette('#a65a42') };
@@ -295,34 +323,16 @@ function updateComposer() {
 }
 function saveHistory() { if (currentConversation && !runs.has(currentConversation)) histories.set(currentConversation, $('#message-list').innerHTML); }
 
-/* Show the group delete button only for a group conversation. */
-function updateGroupDeleteButton(isGroup) {
-  const btn = $('#delete-group');
-  if (btn) btn.hidden = !isGroup;
+/* The transcript's opening divider carries the opened bot's own
+   description instead of the generic new-day line. Groups and bots
+   without a description keep the default line. */
+function setDayDivider(detail) {
+  const el = document.querySelector('.day-divider');
+  if (!el) return;
+  const b = detail && detail.kind !== 'group' ? getBot(detail.bot_id || selectedBot) : null;
+  const desc = b && typeof b.description === 'string' ? b.description.trim() : '';
+  el.textContent = desc || 'Hôm nay, một khởi đầu mới';
 }
-
-/* Delete the open group: confirm, DELETE its door, then go to Thyca DM. */
-async function deleteCurrentGroup() {
-  const key = currentConversation;
-  const url = convDetailUrl(key);
-  if (!url || !convParts(key) || convParts(key).kind !== 'group') return;
-  if (!window.confirm('Xóa hội thoại chung này?')) return;
-  const nav = chatNavCurrent();
-  try {
-    await getJson(url, { method: 'DELETE' });
-    if (nav !== chatNavCurrent() || currentConversation !== key) return;
-    await refreshConversations();                                     // API: GET /api/conversations
-    if (typeof renderGroups === 'function') renderGroups();
-    toast('Đã xóa hội thoại chung.');
-    await loadConversation(dmKey('thyca'), 'thyca');
-  } catch (err) {
-    if (nav !== chatNavCurrent() || currentConversation !== key) return;
-    toast(err.message || 'Không xóa được hội thoại.');
-  }
-}
-
-/* Wire the delete button once the chat header exists. */
-if ($('#delete-group')) $('#delete-group').onclick = () => { void deleteCurrentGroup(); };
 
 /* Open one conversation by its typed key (dm:<bot> or group:<group_id>).
    The header names the door from its identity: a DM shows its bot name,
@@ -345,16 +355,16 @@ async function loadConversation(id, botId) {
     const detail = await getJson(convDetailUrl(id));
     if (nav !== chatNavCurrent() || currentConversation !== id) return;   // user switched meanwhile
     const group = detail.kind === 'group';
-    $('#chat-title').textContent = group ? 'Hội thoại chung' : ((getBot(detail.bot_id || selectedBot) || {}).name || 'Thyca');
-    updateGroupDeleteButton(group);
-    $('#conversation-eyebrow').textContent = group ? 'Hội thoại chung' : 'Sổ trò chuyện · ' + ((getBot(detail.bot_id || selectedBot) || {}).name || 'Thyca');
+    const groupTitle = groupTitleOf(detail.title);
+    $('#chat-title').textContent = group ? groupTitle : ((getBot(detail.bot_id || selectedBot) || {}).name || 'Thyca');
+    $('#conversation-eyebrow').textContent = group ? groupTitle : 'Sổ trò chuyện · ' + ((getBot(detail.bot_id || selectedBot) || {}).name || 'Thyca');
+    setDayDivider(detail);
     if (detail.bot_id && getBot(detail.bot_id)) selectedBot = detail.bot_id;
     $('#message-list').innerHTML = renderTranscript(detail);
     void renderExchangeGroups(detail);
     if (detail.running) followRunningTurn(id);        // API: GET turn/stream replay on the typed door
   } catch (err) {
     if (nav !== chatNavCurrent() || currentConversation !== id) return;
-    updateGroupDeleteButton(false);
     $('#message-list').innerHTML = `<article class="conversation-empty"><h2>Không tải được cuộc trò chuyện</h2><p>${escapeHTML(err.message)}</p></article>`;
   }
   updateComposer();
@@ -371,7 +381,6 @@ async function selectBot(id) {
   // Selecting a bot navigates to its DM; the pocket stays closed until
   // the user explicitly opens it (chevron/+N).
   if (selectedBot === id && currentConversation) return;
-  updateGroupDeleteButton(false);
   const nav = nextChatNav();
   try {                                          // API: GET /api/bots/<id>/dm — fixed DM, find-or-create
     const detail = await getJson(`/api/bots/${encodeURIComponent(id)}/dm`);
@@ -380,9 +389,9 @@ async function selectBot(id) {
     saveHistory(); currentConversation = key; selectedBot = id;
     updateComposer();
     if (nav !== chatNavCurrent()) return;
-    updateGroupDeleteButton(false);
     $('#chat-title').textContent = b.name;
     $('#conversation-eyebrow').textContent = 'Sổ trò chuyện · ' + b.name;
+    setDayDivider(detail);
     $('#message-list').innerHTML = renderTranscript(detail);
     void renderExchangeGroups(detail);
     if (detail.running) followRunningTurn(key);   // API: GET turn/stream replay — rejoin in-flight turn after reload
@@ -420,7 +429,7 @@ async function sendTurn(text, botId = selectedBot, { retry = false } = {}) {
   // chevron/+N open. Clear this window's stale live calls instead.
   clearLiveCalls(b, token.conversationId); updateCard(b);
   setState(b.id, 'waiting', 'Mình đang đọc yêu cầu\nvà ghi nhận những điều bạn cần.', 0);
-  token.interval = setInterval(() => { if (runs.get(token.conversationId) !== token) { clearInterval(token.interval); return; } b.elapsed = Math.floor((Date.now() - token.start) / 1000); const e = $('.elapsed', $('#bot-' + b.id)); if (e) e.textContent = b.elapsed + ' giây'; }, 1000);
+  token.interval = setInterval(() => { if (runs.get(token.conversationId) !== token) { clearInterval(token.interval); return; } b.elapsed = Math.floor((Date.now() - token.start) / 1000); const e = $('.elapsed', $('#bot-' + b.id)); if (e) e.textContent = formatElapsed(b.elapsed); }, 1000);
 
   const body = { text, retry };
   try {
@@ -610,7 +619,7 @@ function followRunningTurn(conversationId) {
   $('#message-list').append(node);
   const token = { botId: b?.id || '', conversationId, start: Date.now(), node, phase: 'following', timers: [], tools: [] };
   runs.set(conversationId, token); run = token; busy(true);
-  if (b) token.interval = setInterval(() => { if (runs.get(conversationId) !== token) { clearInterval(token.interval); return; } b.elapsed = Math.floor((Date.now() - token.start) / 1000); const e = $('.elapsed', $('#bot-' + b.id)); if (e) e.textContent = b.elapsed + ' giây'; }, 1000);
+  if (b) token.interval = setInterval(() => { if (runs.get(conversationId) !== token) { clearInterval(token.interval); return; } b.elapsed = Math.floor((Date.now() - token.start) / 1000); const e = $('.elapsed', $('#bot-' + b.id)); if (e) e.textContent = formatElapsed(b.elapsed); }, 1000);
   fetch(convDoorUrl(conversationId, 'turn/stream'))
     .then(res => res.ok ? readNdjson(res.body, ev => handleStreamEvent(token, ev)) : Promise.reject(new Error('HTTP ' + res.status)))
     .then(() => { if (runs.get(conversationId) === token && token.phase !== 'settled') finishTurn(token); })

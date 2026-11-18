@@ -81,11 +81,36 @@ class BootstrapResult:
     def ref(self) -> ConversationRef:
         return self.conversation.ref
 
+MAX_GROUP_TITLE_LEN = 80
+
+
+def normalize_group_title(value: object) -> str | None:
+    """Trim one optional group title; blank means untitled (None).
+
+    Titles should be short — 3-5 words is the recommended shape (the UI
+    hints the same); the hard limit enforced here stays MAX_GROUP_TITLE_LEN.
+    Raises ValueError for a non-string value, an over-long title, or
+    text the store cannot carry (NUL / surrogates)."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError('invalid title')
+    title = value.strip()
+    if not title:
+        return None
+    if len(title) > MAX_GROUP_TITLE_LEN:
+        raise ValueError('invalid title')
+    if '\x00' in title or any('\ud800' <= ch <= '\udfff' for ch in title):
+        raise ValueError('invalid title')
+    return title
+
+
 @dataclass(frozen=True)
 class Conversation:
     ref: ConversationRef
     participants: tuple[str, ...]
     messages: tuple[Message, ...]
+    title: str | None = None
 
 @dataclass(frozen=True)
 class ConversationListing:
@@ -98,6 +123,7 @@ class ConversationListing:
     ref: ConversationRef
     participants: tuple[str, ...]
     created_at: str
+    title: str | None = None
 
 @dataclass(frozen=True)
 class PageCursor:
@@ -128,8 +154,15 @@ class ConversationPage:
         return self.conversation.participants
 
 def validate_metadata(ref: ConversationRef, data: dict) -> None:
-    if not isinstance(data, dict) or set(data) != {'participants'}:
+    # Groups may carry one optional title; DMs and every other key stay
+    # refused, and pre-title rows ({participants} only) stay valid.
+    allowed = {'participants', 'title'} if ref.kind == 'group' else {'participants'}
+    if not isinstance(data, dict) or not set(data) <= allowed or 'participants' not in data:
         raise ValueError('invalid metadata')
+    if 'title' in data:
+        stored = data['title']
+        if not isinstance(stored, str) or normalize_group_title(stored) != stored:
+            raise ValueError('invalid metadata')
     participants = data['participants']
     if not isinstance(participants, list) or not participants:
         raise ValueError('invalid participants')
@@ -170,11 +203,15 @@ def _check_depth(value: object, limit: int = MAX_JSON_DEPTH) -> None:
         elif isinstance(node, list):
             stack.extend((child, depth + 1) for child in node)
 
-def _metadata(participants):
-    return {'participants': participants}
+def _metadata(participants, title: str | None = None):
+    data: dict = {'participants': participants}
+    if title is not None:
+        data['title'] = title
+    return data
 
 def _view(ref, metadata, messages):
-    return Conversation(ref, tuple(metadata['participants']), tuple(messages))
+    return Conversation(ref, tuple(metadata['participants']), tuple(messages),
+                        metadata.get('title'))
 
 def _encode_metadata(metadata: dict) -> str:
     return json.dumps(metadata, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(',', ':'))

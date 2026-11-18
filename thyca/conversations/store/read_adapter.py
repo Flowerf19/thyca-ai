@@ -106,15 +106,9 @@ def assemble_history(
             break
         cursor = page.cursor
     assert metadata is not None  # read always returns a conversation view
-    from .contracts import _view
+    from .contracts import _metadata, _view
 
-    return _view(
-        metadata.ref,
-        {
-            'participants': list(metadata.participants),
-        },
-        tuple(collected),
-    )
+    return _view(metadata.ref, _metadata(list(metadata.participants), metadata.title), tuple(collected))
 
 
 # Project a store conversation onto the wire ConversationRuntime shape.
@@ -136,6 +130,7 @@ def _wire_conversation(
         list(conversation.messages),
         bots=list(conversation.participants),
         dm_bot=ref.id if ref.kind == 'dm' else None,
+        title=conversation.title,
     )
 
 
@@ -154,7 +149,7 @@ def _updated_at(messages: tuple[Message, ...] | list[Message], created_at: str |
 def summary_for(conversation: Conversation, created_at: str) -> dict:
     """Wire-shaped summary for one assembled conversation (pure, no I/O)."""
     view = _wire_conversation(conversation)
-    return {
+    summary = {
         'conversation_id': view.conversation_id,
         'updated_at': _updated_at(conversation.messages, created_at),
         'message_count': len(conversation.messages),
@@ -165,6 +160,9 @@ def summary_for(conversation: Conversation, created_at: str) -> dict:
         'channel': 'webui',
         'window_id': view.conversation_id,
     }
+    if conversation.title is not None:
+        summary['title'] = conversation.title
+    return summary
 
 
 # Build the wire detail with kind taken from the conversation ref.
@@ -201,6 +199,8 @@ def detail_for(
         'ask_remember': ask_remember(list(conversation.messages), datetime.now(UTC)),
         'context': context,
     }
+    if conversation.title is not None:
+        detail['title'] = conversation.title
     detail['running'] = False
     return detail
 

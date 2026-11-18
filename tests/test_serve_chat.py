@@ -1398,7 +1398,7 @@ def test_chat_nav_opens_new_conversation() -> None:
     chat = (WEBUI / "ui" / "chat" / "js" / "chat.js").read_text(encoding="utf-8")
     html = (WEBUI / "ui" / "chat" / "index.html").read_text(encoding="utf-8")
 
-    assert 'id="team-shared-create"' in html
+    assert 'id="team-shared-create"' not in html
     assert 'id="group-dialog"' in html
     assert 'id="message-list"' in html
     assert 'id="composer"' in html
@@ -1631,7 +1631,7 @@ def test_chat_mobile_pick_pattern() -> None:
     assert "function openMobile" in shell_app
     assert "function closeMobile" in shell_app
     assert "mobile-open" in shell_app
-    assert "$('#mobile-overlay').onclick = closeMobile" in shell_app
+    assert "$('#mobile-overlay').onclick" in shell_app and "closeMobile()" in shell_app
     # The menu button toggles the overlay on mobile; the wiring uses optional
     # chaining so it stays safe if a page ever drops the element.
     assert "$('.menu-button')" in shell_app
@@ -2283,15 +2283,17 @@ def test_delete_racing_a_claim_does_not_lose_the_transcript(tmp_path: Path) -> N
         app.shutdown()
 
 
-def test_group_delete_http_api_remains_wired_without_rename() -> None:
-    """Removing chat UI controls does not remove the group delete API."""
+def test_group_delete_http_api_remains_wired_with_rename() -> None:
+    """Removing chat UI controls does not remove the group delete API;
+    renaming lives on POST /api/groups/<id>/title (still no PATCH)."""
     root = Path(__file__).resolve().parents[1]
     routes = (root / "thyca" / "serve" / "routes.py").read_text(encoding="utf-8")
     api = (root / "thyca" / "serve" / "conversations_api.py").read_text(encoding="utf-8")
     assert "group_delete(self, chat, match.group(1))" in routes
     assert "def group_delete(" in api
     assert "def do_PATCH" not in routes
-    assert "def group_rename(" not in api
+    assert "def group_rename(" in api
+    assert "group_rename(self, chat, match.group(1))" in routes
     assert "session_rename" not in routes
     assert "session_delete" not in routes
 
@@ -2982,7 +2984,92 @@ def test_chat_delete_group_button_wired() -> None:
     root = Path(__file__).resolve().parents[1]
     html = (root / "thyca" / "webui" / "ui" / "chat" / "index.html").read_text()
     js = (root / "thyca" / "webui" / "ui" / "chat" / "js" / "chat.js").read_text()
-    assert 'id="delete-group"' in html and 'class="quiet-button" id="delete-group"' in html
-    for token in ("updateGroupDeleteButton", "deleteCurrentGroup", "convDetailUrl",
-                  "refreshConversations", "renderGroups", 'method: \'DELETE\''):
-        assert token in js, token
+    # The chat composer no longer carries group-delete / session-info
+    # buttons; group deletion stays available through the API itself.
+    assert 'id="delete-group"' not in html
+    assert 'id="conversation-info"' not in html
+    for token in ("updateGroupDeleteButton", "deleteCurrentGroup"):
+        assert token not in js, token
+
+
+def test_group_title_create_detail_list_and_rename(tmp_path: Path) -> None:
+    """A titled group carries its title in detail + list, survives a
+    reload from disk, and renames through POST /api/groups/<id>/title."""
+    from thyca.bots.card import BotCard
+
+    llm = FakeLLM(ChatReply(content="pong"))
+    app = _chat(tmp_path, llm)
+    app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
+                             description="Codes.", persona="You code."))
+    httpd, thread = _start(tmp_path, app)
+    try:
+        created = _json(httpd, "/api/groups", method="POST",
+                        data=b'{"bots":["thyca","coder"],"title":"  Nhom Ke Hoach  "}')
+        assert created["title"] == "Nhom Ke Hoach"  # trimmed on create
+        sid = created["group_id"]
+        assert _json(httpd, f"/api/groups/{sid}")["title"] == "Nhom Ke Hoach"
+        listed = _json(httpd, "/api/conversations?kind=group")["conversations"]
+        assert [row["title"] for row in listed if row["group_id"] == sid] == ["Nhom Ke Hoach"]
+        # The title lives with the stored conversation, not the process.
+        assert ConversationManager(tmp_path / "sessions").load(sid).title == "Nhom Ke Hoach"
+        renamed = _json(httpd, f"/api/groups/{sid}/title", method="POST",
+                        data=b'{"title":"Ke hoach tuan"}')
+        assert renamed["title"] == "Ke hoach tuan"
+        assert _json(httpd, f"/api/groups/{sid}")["title"] == "Ke hoach tuan"
+        # Participant add/remove still works and keeps the title.
+        bots = _json(httpd, f"/api/groups/{sid}/bots", method="POST",
+                     data=b'{"bot_id":"coder","action":"remove"}')
+        assert bots["bots"] == ["thyca"]
+        assert _json(httpd, f"/api/groups/{sid}")["title"] == "Ke hoach tuan"
+    finally:
+        _stop(httpd, thread)
+        app.shutdown()
+
+
+def test_group_title_invalid_and_untitled_unchanged(tmp_path: Path) -> None:
+    """Invalid titles are 400; no title (or a blank one) is exactly the
+    pre-title behavior: no title key anywhere."""
+    from thyca.bots.card import BotCard
+
+    llm = FakeLLM(ChatReply(content="pong"))
+    app = _chat(tmp_path, llm)
+    app._bots.create(BotCard(bot_id="coder", name="coder", role="Coder",
+                             description="Codes.", persona="You code."))
+    httpd, thread = _start(tmp_path, app)
+    try:
+        for bad in (b'{"bots":["thyca","coder"],"title":"' + b"x" * 81 + b'"}',
+                    b'{"bots":["thyca","coder"],"title":42}'):
+            try:
+                _json(httpd, "/api/groups", method="POST", data=bad)
+            except HTTPError as exc:
+                assert exc.code == 400
+                assert json.loads(exc.read().decode("utf-8")) == {"error": "invalid title"}
+            else:
+                raise AssertionError("expected 400 for invalid title")
+        untitled = _json(httpd, "/api/groups", method="POST",
+                         data=b'{"bots":["thyca","coder"]}')
+        assert "title" not in untitled
+        assert "title" not in _json(httpd, f"/api/groups/{untitled['group_id']}")
+        blank = _json(httpd, "/api/groups", method="POST",
+                      data=b'{"bots":["thyca","coder"],"title":"   "}')
+        assert "title" not in blank
+        rows = _json(httpd, "/api/conversations?kind=group")["conversations"]
+        assert all("title" not in row for row in rows)
+        # Renaming validates the same way; a missing group still 404s.
+        try:
+            _json(httpd, f"/api/groups/{blank['group_id']}/title",
+                  method="POST", data=b'{"title":"' + b"y" * 81 + b'"}')
+        except HTTPError as exc:
+            assert exc.code == 400
+        else:
+            raise AssertionError("expected 400 for invalid rename")
+        try:
+            _json(httpd, f"/api/groups/group-{'0' * 32}/title",
+                  method="POST", data=b'{"title":"x"}')
+        except HTTPError as exc:
+            assert exc.code == 404
+        else:
+            raise AssertionError("expected 404 for missing group rename")
+    finally:
+        _stop(httpd, thread)
+        app.shutdown()

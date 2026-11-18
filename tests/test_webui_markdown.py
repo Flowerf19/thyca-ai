@@ -575,25 +575,24 @@ def test_shared_sidebar_renders_team_and_groups() -> None:
     # Roster cards render into the shell's sidebar markup, pinned-first
     # via teamDisplayOrder (TASK B: star = pin to top, bots array untouched).
     assert 'id="team-bot-list"' in shell
-    assert "teamDisplayOrder().map(card)" in sidebar
+    assert "sidebarEntries()" in sidebar
     assert "bot-card" in sidebar
 
-    # Group rows still render — but only where a #group-list exists. The
-    # shared shell no longer emits one; chat's static sidebar does, and
-    # sidebar.js guards every lookup so non-chat pages skip the section.
+    # Group rows still render — shared shell now emits a chat-only group list
+    # so SPA chat↔other-page navigation can toggle it via CSS at any width
+    # (including the small-window drawer). Sidebar.js guards lookups and
+    # visibility is controlled by body[data-active-page] chat-only rule.
     assert 'id="group-list"' not in shell
-    assert "groups.map(g=>" in sidebar or "groups.map(g =>" in sidebar
-    assert "group-row" in sidebar
-    assert "if(!gl)return" in sidebar
-    assert 'id="group-list"' in chat
-    assert 'id="team-shared-create"' in chat
-    assert "Hội thoại chung" in chat
+    assert "groups.map(group=>" in sidebar
+    assert "group-card" in sidebar
+    assert 'id="group-list"' not in chat
+    assert 'id="team-shared-create"' not in chat
     assert "if(teamSharedCreate)" in sidebar
 
     # Click delegation: bot select / group open go through the page's
     # selectBot/loadConversation; defaults navigate into the chat page.
     assert "$('#team-bot-list').addEventListener('click'" in sidebar
-    assert "$('#group-list')?.addEventListener('click'" in sidebar
+    assert "[data-group]" in sidebar
     assert "selectBot(b.id)" in sidebar
     assert "loadConversation(groupKey(g.id)" in sidebar
     assert "ThycaRouter.dispatch('selectBot', id)" in shell_app

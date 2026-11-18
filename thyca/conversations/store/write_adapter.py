@@ -105,6 +105,7 @@ def create_group(
     *,
     intent: RuntimeWriteIntent,
     actor: str,
+    title: str | None = None,
 ) -> Conversation:
     """Create a group on a runtime root; *actor* must participate."""
     _require_intent(intent)
@@ -112,7 +113,7 @@ def create_group(
     _require_actor(actor)
     if not isinstance(participants, list) or actor not in participants:
         raise ValueError('actor must be one of the participants')
-    return AdminStore(root).create_group(list(participants))
+    return AdminStore(root).create_group(list(participants), title=title)
 
 
 # Append one bot-authored row with an explicit acting bot.
@@ -272,17 +273,18 @@ def set_conversation_metadata(
     _require_enabled_root(root, intent)
     _require_ref(ref)
     _require_actor(actor)
-    metadata = {
-        'participants': list(participants),
-    }
-    validate_metadata(ref, metadata)
     conn = open_existing_conversation(root, lock_mode='exclusive')
     try:
         with _transaction_context(conn, 'BEGIN IMMEDIATE'):
             _ensure_root_ready(conn, _root_instance_id_from_conn(conn))
             # Membership is part of the atomic write: a removed actor fails
-            # here, inside the same transaction as the update.
-            _ensure_door_ready(conn, ref, actor)
+            # here, inside the same transaction as the update. Any stored
+            # group title survives a participants-only replacement.
+            current, _gen, _ev, _log = _ensure_door_ready(conn, ref, actor)
+            metadata = {'participants': list(participants)}
+            if current.get('title') is not None:
+                metadata['title'] = current['title']
+            validate_metadata(ref, metadata)
             try:
                 cur = conn.execute(
                     'UPDATE conversations SET metadata=? WHERE kind=? AND id=?',

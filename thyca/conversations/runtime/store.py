@@ -271,9 +271,9 @@ class ConversationStore:
         except Exception:
             return None
 
-    # Read the participant list stored for one door.
-    def read_bots(self, path: Path) -> list[str] | None:
-        """Stored participant list for one door, or None when unset."""
+    # Read the decoded metadata dict stored for one door (None when the
+    # door row is absent or unreadable; store errors keep their mapping).
+    def _read_metadata(self, path: Path) -> dict | None:
         runtime_root = _require_runtime_root(Path(path).parent)
         from thyca.conversations.store.contracts import ConversationStoreError
 
@@ -300,8 +300,7 @@ class ConversationStore:
                 conn.close()
             if row is None:
                 return None
-            participants = _decode_metadata(row[0]).get("participants")
-            return list(participants) if participants else None
+            return _decode_metadata(row[0])
         except ConversationError:
             raise
         except ConversationStoreError as exc:
@@ -311,6 +310,45 @@ class ConversationStore:
             raise ConversationCorrupt(path, None, exc) from exc
         except Exception:
             return None
+
+    # Read the group title stored for one door, or None when untitled.
+    def read_title(self, path: Path) -> str | None:
+        metadata = self._read_metadata(path)
+        if not metadata:
+            return None
+        title = metadata.get("title")
+        return title if isinstance(title, str) and title else None
+
+    # Store (or clear, with None) one group's title as door metadata.
+    def set_group_title(self, path: Path, title: str | None) -> None:
+        from thyca.conversations.store.contracts import normalize_group_title
+
+        cleaned = normalize_group_title(title)
+        runtime_root = _require_runtime_root(Path(path).parent)
+        from thyca.conversations.store.runtime import resolve_ref
+
+        ref = resolve_ref(runtime_root, Path(path).stem)
+        if ref.kind != "group":
+            raise ConversationError("cannot title a DM conversation")
+
+        def apply(meta: dict) -> dict:
+            updated = dict(meta)
+            if cleaned is None:
+                updated.pop("title", None)
+            else:
+                updated["title"] = cleaned
+            return updated
+
+        _runtime_mutate_metadata(runtime_root, ref, apply)
+
+    # Read the participant list stored for one door.
+    def read_bots(self, path: Path) -> list[str] | None:
+        """Stored participant list for one door, or None when unset."""
+        metadata = self._read_metadata(path)
+        if not metadata:
+            return None
+        participants = metadata.get("participants")
+        return list(participants) if participants else None
 
     # Assemble the full stored history for one door.
     def scan(self, path: Path) -> list[Message]:
@@ -380,6 +418,7 @@ class ConversationStore:
         return ConversationRuntime(
             conversation_id, path, messages,
             self.read_bots(path), self.read_dm(path),
+            title=self.read_title(path),
         )
 
     # List binding paths for every stored door, newest first.

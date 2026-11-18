@@ -63,8 +63,8 @@ Mục tiêu của file này là mô tả trạng thái thật tại HEAD. Mã ng
 - File `TWIN.md` giữ danh tính, persona và chính sách. Ghi canonical không còn khóa `model` trong `TWIN.md`.
 - Lúc đọc, hệ thống nạp thẻ từ settings nếu có. Nếu không có, hệ thống quay về model thẻ cũ mà không ghi chuyển đổi.
 - Settings hỏng làm bot bị đánh dấu không hợp lệ.
-- Thanh bên của trang Hồ sơ chọn hồ sơ của một bot (`?bot=<id>`). Form model theo bot đó là UI model theo bot duy nhất ngoài admin tools.
-- Không có `?bot` thì trang hiện các file canonical dùng chung. Mỗi bot (kể cả Thyca) có tab riêng.
+- Hộp thoại Cài đặt dùng chung (`#settings-dialog`, mục “Bot của bạn” theo `#settings-bot`) là UI model/mức suy luận theo bot duy nhất ngoài admin tools; trang Hồ sơ (`?bot=<id>`) chỉ hiển thị hồ sơ và `TWIN.md` chỉ đọc của bot.
+- Không có `?bot` thì trang Hồ sơ hiện các file canonical dùng chung. Mỗi bot (kể cả Thyca) có tab riêng.
 - Thứ tự lúc chạy lượt: ghi đè model/mức suy luận cho lượt đó, rồi cài đặt đã lưu của bot, rồi mặc định toàn cục. Mức suy luận được kiểm tra theo tập hợp của chính model hiệu lực.
 - Bên nhận A2A tự resolve thẻ của mình. Chỉ mức suy luận ghi đè tường minh mới được chuyển tiếp.
 

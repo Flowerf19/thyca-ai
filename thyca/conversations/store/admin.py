@@ -12,7 +12,7 @@ from .contracts import (BootstrapResult, Conversation, ConversationListing, Conv
                         PruneResult, RootInitializationIntent, _check_text,
                         _decode_message, _decode_metadata,
                         _encode_canonical_message, _encode_metadata, _local_error, _metadata,
-                        _require_ref, _view, validate_metadata)
+                        _require_ref, _view, normalize_group_title, validate_metadata)
 from .database import (_ensure_door_ready, _ensure_root_ready, _read_door_row,
                        _root_instance_id_from_conn, _transaction_context, open_existing_conversation)
 from .lifecycle import _audit_in_transaction, audit_root, bootstrap_dm, initialize_root
@@ -38,8 +38,8 @@ class AdminStore:
     def bootstrap_initial_dm(self, bot_id: str, *, intent: DMBootstrapIntent) -> BootstrapResult:
         return bootstrap_dm(self._root, bot_id, intent=intent)
 
-    def create_group(self, participants: list[str]) -> Conversation:
-        metadata = _metadata(participants)
+    def create_group(self, participants: list[str], title: str | None = None) -> Conversation:
+        metadata = _metadata(participants, normalize_group_title(title))
         # Validate all user-supplied data before filesystem access.
         ref = ConversationRef.new_group()
         validate_metadata(ref, metadata)
@@ -69,15 +69,18 @@ class AdminStore:
             conn.close()
 
     def set_metadata(self, ref: ConversationRef, *,
-                     participants: list[str]) -> Conversation:
+                     participants: list[str],
+                     title: str | None = None) -> Conversation:
         _require_ref(ref)
-        metadata = {'participants': participants}
-        validate_metadata(ref, metadata)
         conn = open_existing_conversation(self._root, lock_mode='exclusive')
         try:
             with _transaction_context(conn, 'BEGIN IMMEDIATE'):
                 _ensure_root_ready(conn, _root_instance_id_from_conn(conn))
-                _ensure_door_ready(conn, ref)
+                current, _gen, _ev, _log = _ensure_door_ready(conn, ref)
+                # A participants-only update keeps any stored group title.
+                kept = normalize_group_title(title) if title is not None else current.get('title')
+                metadata = _metadata(participants, kept)
+                validate_metadata(ref, metadata)
                 try:
                     cur = conn.execute(
                         'UPDATE conversations SET metadata=? WHERE kind=? AND id=?',
@@ -146,7 +149,7 @@ class AdminStore:
                 continue
             items.append(ConversationListing(
                 ref, tuple(metadata['participants']),
-                created_at,
+                created_at, metadata.get('title'),
             ))
         return items, has_more
 

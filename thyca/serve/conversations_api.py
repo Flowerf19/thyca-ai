@@ -21,6 +21,7 @@ from thyca.core.conversation import ConversationRef
 from thyca.serve.bridge import _log_turn_failure, pump_stream, stream_turn
 from thyca.serve.errors import _with_json, parse_turn_body, public_turn_error
 from thyca.conversations.runtime.wire import conversation_http_error
+from thyca.conversations.store.contracts import normalize_group_title
 
 if TYPE_CHECKING:
     from thyca.app.chat_app import ChatApp
@@ -42,6 +43,7 @@ __all__ = [
     "group_bots",
     "group_compact",
     "group_create",
+    "group_rename",
     "group_delete",
     "group_detail",
     "group_operations",
@@ -207,6 +209,16 @@ def _payload_kind(payload: dict) -> str:
     return kind
 
 
+# Clean one optional group title from a request body through the store's
+# single normalizer (absent/blank cleans to None without failing).
+def _clean_group_title(raw: object) -> tuple[str | None, bool]:
+    """(title, invalid) via normalize_group_title."""
+    try:
+        return normalize_group_title(raw), False
+    except ValueError:
+        return None, True
+
+
 # Convert one summary payload to the public conversation shape.
 def to_summary(payload: dict) -> dict:
     kind = _payload_kind(payload)
@@ -222,6 +234,9 @@ def to_summary(payload: dict) -> dict:
         out["bot_id"] = payload.get("dm") or payload.get("conversation_id")
     else:
         out["group_id"] = payload.get("conversation_id")
+        title = payload.get("title")
+        if isinstance(title, str) and title:
+            out["title"] = title
     return out
 
 
@@ -233,9 +248,13 @@ def to_detail(payload: dict) -> dict:
         out.pop(key, None)
     out["kind"] = kind
     if kind == "dm":
+        out.pop("title", None)
         out["bot_id"] = payload.get("dm") or payload.get("conversation_id")
     else:
         out["group_id"] = payload.get("conversation_id")
+        title = payload.get("title")
+        if not (isinstance(title, str) and title):
+            out.pop("title", None)
     return out
 
 
@@ -334,8 +353,12 @@ def group_create(handler, app: "ChatApp | None") -> None:
     ):
         handler._json(400, {"error": "invalid bots"})
         return
+    title, invalid_title = _clean_group_title(payload.get("title"))
+    if invalid_title:
+        handler._json(400, {"error": "invalid title"})
+        return
     try:
-        detail = app.create(bots=list(bots))
+        detail = app.create(bots=list(bots), title=title)
     except ValueError:
         handler._json(400, {"error": "invalid bots"})
     except RegistryError:
@@ -422,6 +445,43 @@ def group_bots(handler, app: "ChatApp | None", group_id: str) -> None:
             _conv_error(handler, exc)
         else:
             handler._json(200, {"ok": True, "kind": "group", "group_id": ref.id, "bots": bots})
+
+    _with_json(handler, run)
+
+
+# Rename one explicit group (blank title clears it back to untitled).
+def group_rename(handler, app: "ChatApp | None", group_id: str) -> None:
+    if _missing_chat(handler, app):
+        return
+    try:
+        ref = _group_ref(group_id)
+    except ValueError:
+        handler._json(404, {"error": "conversation not found"})
+        return
+    if _require_kind(handler, app, ref) is None:
+        return
+
+    # Apply the new title to this group only.
+    def run(payload: dict) -> None:
+        if _reject_legacy_id_fields(handler, payload):
+            return
+        if "title" not in payload:
+            handler._json(400, {"error": "invalid title"})
+            return
+        title, invalid_title = _clean_group_title(payload.get("title"))
+        if invalid_title:
+            handler._json(400, {"error": "invalid title"})
+            return
+        try:
+            detail = app.rename_group(ref.id, title)
+        except ValueError:
+            handler._json(400, {"error": "invalid title"})
+        except RegistryError:
+            handler._json(404, {"error": "bot not found"})
+        except Exception as exc:
+            _conv_error(handler, exc)
+        else:
+            handler._json(200, to_detail(detail))
 
     _with_json(handler, run)
 

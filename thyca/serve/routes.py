@@ -44,6 +44,7 @@ from thyca.serve.conversations_api import (
     group_bots,
     group_compact,
     group_create,
+    group_rename,
     group_delete,
     group_detail,
     group_operations,
@@ -81,6 +82,7 @@ _DM_COMPACT_RE = re.compile(rf"^/api/bots/{_BOT}/dm/compact$")
 _DM_PF_RE = re.compile(rf"^/api/bots/{_BOT}/dm/private-followup$")
 _GROUP_RE = re.compile(rf"^/api/groups/{_GROUP}$")
 _GROUP_BOTS_RE = re.compile(rf"^/api/groups/{_GROUP}/bots$")
+_GROUP_TITLE_RE = re.compile(rf"^/api/groups/{_GROUP}/title$")
 _GROUP_TURN_RE = re.compile(rf"^/api/groups/{_GROUP}/turn$")
 _GROUP_TURN_STREAM_RE = re.compile(rf"^/api/groups/{_GROUP}/turn/stream$")
 _GROUP_TURN_CANCEL_RE = re.compile(rf"^/api/groups/{_GROUP}/turn/cancel$")
@@ -242,6 +244,10 @@ def make_handler(
             match = _GROUP_BOTS_RE.fullmatch(path)
             if match:
                 group_bots(self, chat, match.group(1))
+                return
+            match = _GROUP_TITLE_RE.fullmatch(path)
+            if match:
+                group_rename(self, chat, match.group(1))
                 return
             match = _BOT_SETTINGS_RE.fullmatch(path)
             if match:

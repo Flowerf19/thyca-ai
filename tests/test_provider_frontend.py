@@ -197,13 +197,13 @@ def test_provider_page_has_one_editor_and_no_persist_before_explicit_save(node: 
         await __controller.ready; await tick(10);
         const markup = $('.workspace').innerHTML;
         const copy = {{titleMarkup: markup.includes('id="provider-title">Kết nối AI</h1>'), noEyebrow: !markup.includes('class="eyebrow"'), noSubtitle: !markup.includes('class="page-sub"'),
-          namePlaceholder: markup.includes('placeholder="Không dấu, không khoảng trắng"'), noVisibleNameHint: !markup.includes('<small>Không dấu, không khoảng trắng.</small>'), nameHintSpacer: markup.includes('<small class="name-hint-space" aria-hidden="true"></small>'),
+          namePlaceholder: markup.includes('placeholder="Không dấu, không khoảng trắng"'), noVisibleNameHint: !markup.includes('<small>Không dấu, không khoảng trắng.</small>'), nameHintSpacer: !markup.includes('name-hint-space'),
           loadButton: markup.includes(' Tải model</button>'), loadTitle: markup.includes('title="Chỉ tải danh sách, không gọi model hay lưu cấu hình."'),
           loadHintAbsent: !markup.includes('Tải chỉ kiểm tra danh sách'), discoveryHidden: $('#discovery-status').hidden, discoveryText: $('#discovery-status').textContent,
           keyTitle: markup.includes('title="Key được lưu trên máy này và gửi tới URL API khi kết nối."'), storedKeyNote: $('#pv-key-note').textContent, priceHint: markup.includes('Nhập đủ 3 giá hoặc để trống.'),
           priceTitle: markup.includes('title="Giá chỉ dùng để ước tính chi phí; API không trả giá này.'), noAdvancedToggle: !markup.includes('<summary'), currentDefault: $('#current-default').textContent,
           apiInConnectionFields: (() => {{ const seg = markup.slice(markup.indexOf('class="connection-fields"'), markup.indexOf('load-row')); return seg.includes('id="pv-key"') && seg.includes('id="pv-api"'); }})(),
-          noRemovedIds: ['id="reload-config"', 'id="save-catalog"', 'id="test-provider"', 'id="m-loop"', 'id="m-hot"', 'id="cfg-default-provider"', 'id="m-provider"', 'id="pv-effort"', 'id="m-id"'].every(id => !markup.includes(id))}};
+          noRemovedIds: ['id="reload-config"', 'id="save-catalog"', 'id="test-provider"', 'id="m-loop"', 'id="m-hot"', 'id="cfg-default-provider"', 'id="m-provider"', 'id="pv-effort"', 'id="m-id"', 'id="connection-extra"', 'class="advanced"'].every(id => !markup.includes(id))}};
         openNewConnection();
         copy.newKeyNote = $('#pv-key-note').textContent; copy.newDiscoveryHidden = $('#discovery-status').hidden;
         $('#pv-id').value = 'fresh'; $('#pv-base-url').value = 'https://fresh.invalid/v1'; $('#pv-key').value = 'mock-fresh-key';

@@ -25,3 +25,5 @@ class ConversationRuntime:
     # Bot main window (CBE-5): the bot id whose fixed DM this conversation is,
     # or None for ordinary rooms. Populated by ConversationStore.load.
     dm_bot: str | None = None
+    # Optional group display title; None for DMs and untitled groups.
+    title: str | None = None

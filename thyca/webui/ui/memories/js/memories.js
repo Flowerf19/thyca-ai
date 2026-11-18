@@ -39,30 +39,30 @@ const PAGE_HTML = `
 <header class="page-nav">
   <div class="page-title">
     <div class="eyebrow">Nhật ký</div>
-    <h1>Bộ nhớ</h1>
+    <h1 id="memory-title">Bộ nhớ</h1>
     <p class="page-sub">Bộ nhớ các bot ghi lại</p>
-  </div>
-  <div class="page-actions">
-    <select class="inline-field mem-kind-field" id="memory-kind" aria-label="Lọc loại kí ức">
-      <option value="">Lọc loại</option>
-      <option value="none">Ghi nhớ</option>
-      <option value="habit">Thói quen</option>
-      <option value="checkpoint">Task</option>
-    </select>
-    <select class="inline-field mem-use-field" id="memory-use" aria-label="Lọc mức dùng">
-      <option value="">Lọc mức dùng</option>
-      <option value="used">Dùng nhiều</option>
-      <option value="untouched">Không dùng bao giờ</option>
-    </select>
-    <input class="inline-field" id="memory-search" type="search" autocomplete="off"
-      placeholder="Tìm trong nhật ký…" aria-label="Tìm trong nhật ký">
-    <button class="quiet-button" id="memory-reload" type="button">${icon('retry')}<span>Tải lại</span></button>
   </div>
 </header>
 <div class="page-scroll">
   <div class="page-inner section-stack">
     <p class="page-status" id="memory-status" hidden></p>
     <article class="paper-card" id="memory-scope-card" hidden></article>
+    <div class="mem-filter-row page-actions" id="memory-filter-row">
+      <select class="inline-field mem-kind-field" id="memory-kind" aria-label="Lọc loại kí ức">
+        <option value="">Lọc loại</option>
+        <option value="none">Ghi nhớ</option>
+        <option value="habit">Thói quen</option>
+        <option value="checkpoint">Task</option>
+      </select>
+      <select class="inline-field mem-use-field" id="memory-use" aria-label="Lọc mức dùng">
+        <option value="">Lọc mức dùng</option>
+        <option value="used">Dùng nhiều</option>
+        <option value="untouched">Không dùng bao giờ</option>
+      </select>
+      <input class="inline-field" id="memory-search" type="search" autocomplete="off"
+        placeholder="Tìm trong nhật ký…" aria-label="Tìm trong nhật ký">
+      <button class="quiet-button" id="memory-reload" type="button">${icon('retry')}<span>Tải lại</span></button>
+    </div>
     <article class="paper-card" aria-label="Thống kê bộ nhớ">
       <div class="eyebrow">Tổng quan</div>
       <div class="mem-stats" id="memory-stats"></div>
@@ -202,14 +202,28 @@ function renderStats() {
     `<div class="mem-stat${cls ? ' ' + cls : ''}"><b>${value ?? 0}</b><span>${label}</span></div>`).join('');
 }
 
-function renderScopeCard() {
-  const card = $('#memory-scope-card');
+function updateMemoryTitle() {
+  const titleEl = $('#memory-title');
+  if (!titleEl) return;
   const b = memState.scope && getBot(memState.scope);
-  if (!b) { card.hidden = true; card.innerHTML = ''; return; }
+  titleEl.textContent = b ? `Bộ nhớ · ${b.name}` : 'Bộ nhớ';
+}
+function renderScopeCard() {
+  updateMemoryTitle();
+  const card = $('#memory-scope-card');
+  const filterRow = $('#memory-filter-row');
+  const b = memState.scope && getBot(memState.scope);
+  if (!b) {
+    card.hidden = true; card.innerHTML = '';
+    if (filterRow) { if (typeof filterRow.removeAttribute === 'function') filterRow.removeAttribute('style'); else if (filterRow.style) filterRow.style.cssText = ''; }
+    return;
+  }
   const count = memState.stats ? memState.stats.total ?? 0 : 0;
   const state = states[b.state] ? states[b.state][1] : '';
   card.hidden = false;
-  card.style.cssText = paletteStyle(b);
+  const css = paletteStyle(b);
+  card.style.cssText = css;
+  if (filterRow) filterRow.style.cssText = css;
   card.innerHTML = `<div class="mem-scope">${avatar(b)}<div class="mem-scope-main">
     <h3 class="mem-scope-name">${escapeHTML(b.name)} <span class="mem-scope-role">${escapeHTML(b.role || '')}</span></h3>
     <p class="mem-scope-meta">${count} lá nhớ${state ? ' · ' + escapeHTML(state) : ''}</p></div>
@@ -435,6 +449,7 @@ function selectBot(id) {
   memState.scope = !id || memState.scope === id ? '' : id;
   ctx.highlightBot(memState.scope);
   ctx.renderTeam();
+  updateMemoryTitle();
   const q = memState.scope ? '?bot=' + encodeURIComponent(memState.scope) : '';
   ctx.updateRoute({ search: q });
   routeKey = q;
@@ -472,7 +487,7 @@ async function boot() {
     const next = new URLSearchParams(route.search).get('bot') || '';
     if (next !== memState.scope) {
       memState.scope = next && getBot(next) ? next : '';
-      ctx.highlightBot(memState.scope); ctx.renderTeam(); loadStats();
+      ctx.highlightBot(memState.scope); ctx.renderTeam(); updateMemoryTitle(); loadStats();
     }
   } };
 } });

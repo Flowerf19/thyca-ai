@@ -5,27 +5,25 @@
 /* page-nav + page-scroll share the workspace height. */
 .memories-shell .workspace{display:grid;grid-template-rows:auto minmax(0,1fr)}
 .memories-shell .page-scroll{height:auto;min-height:0}
+.memories-shell .section-stack{gap:14px}
 
-/* Toolbar inside .page-actions. */
-.mem-kind-field,.mem-use-field{width:auto}
+/* Toolbar sits directly under the bot scope card in its own filter row. */
+.memories-shell .page-nav{flex-wrap:wrap;gap:8px 12px}
+.memories-shell .mem-filter-row{display:flex;align-items:center;justify-content:flex-start;gap:8px;flex-wrap:wrap}
+.mem-kind-field,.mem-use-field{width:auto;flex:0 1 auto;max-width:100%}
+.memories-shell .mem-kind-field,.memories-shell .mem-use-field,.memories-shell #memory-search{padding:5px 9px;font-size:12px;height:30px}
+.memories-shell #memory-reload{margin-left:auto;flex-shrink:0;padding:5px 10px;font-size:12px;height:30px}
 #memory-kind:has(option[value=""]:checked),
 #memory-use:has(option[value=""]:checked){color:var(--muted)}
-.mem-scope-clear{margin-left:auto;flex-shrink:0}
-#memory-search{width:min(230px,34vw)}
-
-/* Bot scope summary — only while one bot is selected. */
-.mem-scope{display:flex;align-items:center;gap:18px}
-.mem-scope .seal-avatar{width:64px;height:64px}
-.mem-scope-main{min-width:0}
-.mem-scope-name{margin:0;font:500 25px/1.15 var(--serif);color:#4e4028}
-.mem-scope-meta{margin:5px 0 0;font-size:12px;color:var(--muted)}
-.mem-scope-role{color:#8a7c62}
+#memory-search{width:auto;flex:1 1 180px;max-width:340px;min-width:130px}
 
 /* Stats tiles. */
-.mem-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:12px}
-.mem-stat{border:1px solid #e4d8c0;border-radius:12px;padding:13px 15px;background:#fffbf1a6}
-.mem-stat b{display:block;font:500 29px/1.15 var(--serif);color:#54452f;font-variant-numeric:tabular-nums}
-.mem-stat span{font-size:11px;color:var(--muted);letter-spacing:.3px}
+.memories-shell .paper-card[aria-label="Thống kê bộ nhớ"]{padding:10px 14px}
+.memories-shell .paper-card[aria-label="Thống kê bộ nhớ"]>.eyebrow{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+.mem-stats{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px}
+.mem-stat{border:1px solid #e4d8c0;border-radius:10px;padding:7px 10px;background:#fffbf1a6}
+.mem-stat b{display:block;font:500 18px/1.15 var(--serif);color:#54452f;font-variant-numeric:tabular-nums}
+.mem-stat span{font-size:10.5px;color:var(--muted);letter-spacing:.2px}
 .mem-stat.m-warn b{color:#8a6528}
 .mem-stat.m-danger b{color:#9c4f3f}
 
@@ -67,8 +65,12 @@
 .mem-pager{display:flex;align-items:center;justify-content:center;gap:14px;margin-top:14px}
 .mem-pager-info{font-size:11px;color:var(--muted);letter-spacing:.3px}
 
+@media(max-width:850px){
+.mem-stats{grid-template-columns:repeat(auto-fit,minmax(92px,1fr))}
+}
 @media(max-width:700px){
+.memories-shell .page-actions{justify-content:flex-start}
 .mem-leaf{flex-direction:column;gap:10px}
 .mem-actions{flex-direction:row;flex-wrap:wrap}
-#memory-search{width:100%;flex:1 1 160px}
+#memory-search{width:100%;flex:1 1 160px;max-width:none}
 }

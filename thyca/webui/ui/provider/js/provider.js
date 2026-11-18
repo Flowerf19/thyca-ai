@@ -19,6 +19,8 @@ const state = {
   activeVerify: null, discovery: null, discoveryStatus: '',
   selectedModel: '', selectedModelFromDiscovery: false,
 };
+let externalConfigDirty = false;
+let externalSyncInFlight = false;
 
 const workspace = $('.workspace');
 document.querySelector('.notebook-shell').setAttribute('aria-label', 'Thyca — kết nối AI');
@@ -26,7 +28,6 @@ workspace.setAttribute('aria-label', 'Nội dung kết nối AI');
 workspace.insertAdjacentHTML('beforeend', `
 <header class="page-nav">
   <div class="page-title"><h1 id="provider-title">Kết nối AI</h1></div>
-  <div class="page-actions"><span class="save-status" id="save-status" role="status" aria-live="polite">Đang tải cấu hình…</span></div>
 </header>
 <div class="page-scroll"><div class="page-inner">
   <p class="page-status" id="page-status" role="status" aria-live="polite" hidden></p>
@@ -38,11 +39,11 @@ workspace.insertAdjacentHTML('beforeend', `
       </div>
       <form class="editor-form" id="connection-form" aria-label="Cấu hình kết nối và model" novalidate>
         <div class="connection-fields">
-          <label class="field"><span>Tên kết nối</span><input id="pv-id" maxlength="64" autocomplete="off" spellcheck="false" placeholder="Không dấu, không khoảng trắng" required><small class="name-hint-space" aria-hidden="true"></small></label>
+          <label class="field"><span>Tên kết nối</span><input id="pv-id" maxlength="64" autocomplete="off" spellcheck="false" placeholder="Không dấu, không khoảng trắng" required></label>
           <label class="field"><span>URL API</span><input id="pv-base-url" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://api.example.com/v1" required></label>
           <label class="field"><span>API key <em id="pv-key-note"></em></span><input id="pv-key" type="password" autocomplete="new-password" maxlength="200" placeholder="Nhập API key" title="Key được lưu trên máy này và gửi tới URL API khi kết nối."></label>
           <label class="field"><span>Kiểu API</span><select id="pv-api"><option value="openai_chat">Chat completions</option><option value="openai_responses">Responses</option></select></label>
-          <div class="load-row field-wide"><button class="quiet-button" id="v-submit" type="button" title="Chỉ tải danh sách, không gọi model hay lưu cấu hình.">${icon('list')} Tải model</button></div>
+          <div class="load-row field-wide"><button class="quiet-button" id="v-submit" type="button" title="Chỉ tải danh sách, không gọi model hay lưu cấu hình.">${icon('list')} Tải model</button><button class="quiet-button is-danger" type="button" id="delete-provider" hidden>Xóa kết nối</button></div>
         </div>
         <p class="discovery-status" id="discovery-status" role="status" aria-live="polite" hidden></p>
         <div class="model-editor">
@@ -56,21 +57,16 @@ workspace.insertAdjacentHTML('beforeend', `
             <label class="field"><span>Output</span><input id="m-out" type="number" min="0" step="any" inputmode="decimal" placeholder="Không bắt buộc"></label>
           </div>
           <p class="field-hint field-wide">Nhập đủ 3 giá hoặc để trống.</p>
-        </div>
-        <div class="advanced" id="connection-extra">
-          <div class="advanced-grid">
-            <fieldset class="field field-wide" id="m-efforts-wrap"><legend>Mức suy luận model hỗ trợ</legend><div class="effort-checks" id="m-efforts"></div></fieldset>
+          <fieldset class="field field-wide" id="m-efforts-wrap"><legend>Mức suy luận model hỗ trợ</legend><div class="effort-checks" id="m-efforts"></div></fieldset>
+          <div class="model-limits-grid">
             <label class="field"><span>Ngữ cảnh (token)</span><input id="m-context" type="number" min="1000" max="2000000" step="16000" inputmode="numeric" placeholder="Kế thừa"></label>
             <label class="field"><span>Output tối đa (token)</span><input id="m-max" type="number" min="1" max="2000000" step="16000" inputmode="numeric" placeholder="Mặc định 16384"></label>
           </div>
-          <div class="advanced-actions">
-            <button class="quiet-button" type="button" id="delete-provider" hidden>Xóa kết nối</button>
-            <button class="quiet-button is-danger" type="button" id="delete-model" hidden>Xóa model đã lưu</button>
-          </div>
+          <div class="model-actions"><button class="quiet-button is-danger" type="button" id="delete-model" hidden>Xóa model đã lưu</button></div>
         </div>
         <p class="form-status" id="editor-status" role="status" aria-live="polite" hidden></p>
         <div class="current-default" id="current-default" aria-live="polite"></div>
-        <div class="editor-footer"><button class="primary-action" id="save-use" type="submit" form="connection-form">Lưu</button><button class="quiet-button" type="button" id="cancel-editor">Hủy thay đổi</button></div>
+        <div class="editor-footer"><button class="primary-action" id="save-use" type="submit" form="connection-form">Lưu</button><button class="quiet-button" type="button" id="cancel-editor">Hủy thay đổi</button><span class="save-status" id="save-status" role="status" aria-live="polite">Đang tải cấu hình…</span></div>
       </form>
     </fieldset>
     <section class="saved-models" id="saved-models" aria-label="Model đã lưu">
@@ -214,6 +210,56 @@ function applyConfig(payload) {
   state.loading = false; renderAll(); refreshBusyState();
 }
 async function refreshConfig() { const payload = await getJson('/api/config'); applyConfig(payload); return payload; }
+
+// Sync external config edits (e.g. settings dialog contextTokens) when form is clean.
+async function syncExternalConfig() {
+  if (externalSyncInFlight || state.loading || state.saving || state.reloading || !state.values || editorIsDirty()) return;
+  externalSyncInFlight = true;
+  externalConfigDirty = false;
+  try {
+    const activeProvider = state.editingProvider;
+    const activeModel = state.selectedModel;
+    const savedDiscovery = state.discovery;
+    await refreshConfig();
+    if (!state.values || editorIsDirty()) return;
+    if (!activeProvider) {
+      fillConnection('');
+      if (savedDiscovery && savedDiscovery.connectionRevision === state.connectionRevision) {
+        state.discovery = savedDiscovery;
+        renderModelPicker();
+      }
+      if (activeModel && state.discovery && state.discovery.models.includes(activeModel)) {
+        chooseModel(activeModel, { confirmDiscard: false });
+      }
+      state.providerBaseline = providerSnapshot();
+      state.modelBaseline = modelFieldsSnapshot();
+      state.editorBaseline = editorSnapshot();
+      syncDirtyStatus();
+    } else if (Object.hasOwn(state.values.providers || {}, activeProvider)) {
+      fillConnection(activeProvider);
+      if (savedDiscovery && savedDiscovery.connectionRevision === state.connectionRevision) {
+        state.discovery = savedDiscovery;
+        renderModelPicker();
+      }
+      if (!activeModel) {
+        setModelFields('');
+      } else if ((Object.hasOwn(state.values.models || {}, activeModel) && modelProviderId(state.values, activeModel) === activeProvider)
+          || (state.discovery && state.discovery.models.includes(activeModel))) {
+        chooseModel(activeModel, { confirmDiscard: false });
+      }
+      state.providerBaseline = providerSnapshot();
+      state.modelBaseline = modelFieldsSnapshot();
+      state.editorBaseline = editorSnapshot();
+      syncDirtyStatus();
+    } else {
+      fillConnection(state.values.defaultProvider || Object.keys(state.values.providers || {})[0] || '', { initial: true });
+    }
+  } catch {
+    externalConfigDirty = true;
+  } finally {
+    externalSyncInFlight = false;
+  }
+}
 
 function fillOptions(select, options, current) {
   if (!select) return;
@@ -723,6 +769,12 @@ async function boot() {
   window.addEventListener('thyca:setup-retry', () => {
     if (ctx.isActive() && !state.values && !state.loading && !state.reloading) void reloadConfig();
   });
+  window.addEventListener('thyca:config-saved', () => {
+    if (state.saving || state.loading || state.reloading || !state.values) return;
+    if (typeof ThycaRouter !== 'undefined' && typeof ThycaRouter.setupState === 'function' && ThycaRouter.setupState() !== 'ready') return;
+    externalConfigDirty = true;
+    if (ctx.isActive() && !editorIsDirty()) void syncExternalConfig();
+  });
   try { await ctx.shellReady; labelProfileLinks(); } catch (error) { setStatus(`Không kết nối được máy Thyca: ${error.message || ''}`, 'error'); }
   try {
     await refreshConfig();
@@ -733,5 +785,5 @@ async function boot() {
   }
 }
   const ready = boot();
-  return { ready, selectBot, loadConversation, sidebarLabel(_id, name) { return `Hồ sơ của ${name}`; } };
+  return { ready, selectBot, loadConversation, sidebarLabel(_id, name) { return `Hồ sơ của ${name}`; }, onEnter() { if (externalConfigDirty && !state.loading && !state.saving && !state.reloading && state.values && !editorIsDirty()) void syncExternalConfig(); } };
 } });

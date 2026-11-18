@@ -14,5 +14,5 @@ body[data-active-page]:not([data-active-page=chat]) .chat-only{display:none!impo
 .setup-notice-error{border-color:#d8ac98;background:#fff2e9;color:#8b4b3c}
 .setup-notice-error span{color:#80594f}
 .setup-disabled{opacity:.44;pointer-events:none}
-html[data-setup-state]:not([data-setup-state=ready]) .menu-button:disabled{opacity:.48;cursor:not-allowed}
+html[data-setup-state]:not([data-setup-state=ready]) .menu-button:disabled,html[data-setup-state]:not([data-setup-state=ready]) .wordmark:disabled,html[data-setup-state]:not([data-setup-state=ready]) .page-menu-toggle:disabled{opacity:.48;cursor:not-allowed}
 @media(max-width:850px){#thyca-page-host>[data-setup-notice]{grid-column:1}.setup-notice{margin:10px 14px 0;padding:9px 12px;align-items:flex-start;flex-direction:column;gap:4px}}

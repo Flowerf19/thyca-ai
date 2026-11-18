@@ -121,6 +121,7 @@ class ConversationManager:
                 conversation = ConversationRuntime(
                     conv.ref.id, path, [],
                     bots=list(conv.participants), dm_bot=None,
+                    title=conv.title,
                 )
                 if make_current:
                     self._conversation = conversation
@@ -619,6 +620,15 @@ class ConversationManager:
         with self._lock:
             if self._conversation is not None and self._conversation.conversation_id == conversation_id:
                 self._conversation.bots = list(bots)
+
+    def update_group_title(self, conversation_id: str, title: str | None) -> None:
+        """Refresh the in-memory group title when it is current.
+
+        Disk is owned by ``ConversationStore.set_group_title``; this only
+        keeps a loaded current conversation from serving a stale title."""
+        with self._lock:
+            if self._conversation is not None and self._conversation.conversation_id == conversation_id:
+                self._conversation.title = title
 
     def delete(self, conversation_id: str, *, keep: set[str] | None = None) -> None:
         """Remove a conversation file outright.

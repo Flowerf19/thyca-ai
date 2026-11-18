@@ -28,6 +28,7 @@ from thyca.core.protocol import Message
 
 from .contracts import (
     Conversation,
+    _metadata,
     _view,
 )
 from .read_adapter import trace_turns_for
@@ -130,13 +131,7 @@ def project_for_trace(conversation: Conversation) -> Conversation:
         stamped.append(item)
         if item.role == 'user':
             last_user_pos = len(stamped) - 1
-    return _view(
-        conversation.ref,
-        {
-            'participants': list(conversation.participants),
-        },
-        tuple(stamped),
-    )
+    return _view(conversation.ref, _metadata(list(conversation.participants), conversation.title), tuple(stamped))
 
 
 # Build projected trace turns over one assembled conversation.

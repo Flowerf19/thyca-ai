@@ -37,7 +37,7 @@ def test_base_tokens_define_the_paper_palette() -> None:
     for token in (
         "--paper:#fbf5e8", "--paper-deep:#f0e7d4", "--ink:#3c372c",
         "--muted:#877d69", "--line:#d9ccb4", "--forest:#315d4c",
-        "--rust:#aa5638", "--sidebar-width:250px",
+        "--rust:#aa5638", "--sidebar-width:175px",
     ):
         assert token in root, token
     assert "'Thyca Serif'" in root and "--serif" in root
@@ -140,10 +140,10 @@ def test_narrow_drawer_stays_paper_backed_and_opaque() -> None:
     assert "#fbf4e5a6" in drawer and "background-size:cover" in drawer
     assert "background-color:#f8efde" in drawer  # opaque base: no ghosted chat text
     base = BASE_CSS.read_text(encoding="utf-8")
-    # Drawer width matches the desktop column (250px token, 250px drawer).
-    assert "--sidebar-width:250px" in _block(base, ":root")
-    assert "grid-template-columns:var(--sidebar-width)" in base
-    assert "width:250px" in drawer
+    # Drawer width matches the desktop column (250px token, var-driven drawer).
+    assert "--sidebar-width:175px" in _block(base, ":root")
+    assert "grid-template-columns:var(--sidebar-width" in base
+    assert "width:min(var(--sidebar-width,125px),calc(50vw - 8px))" in drawer
     assert "min(360px" not in drawer
     # Hidden by default: slid off-screen; .mobile-open slides it in.
     assert "transform:translateX(calc(-100% - 18px))" in drawer

@@ -146,28 +146,30 @@ function turnRowHtml(turn) {
 const PAGE_HTML = `
 <header class="page-nav">
   <div class="page-title"><p class="eyebrow" id="usage-scope-eyebrow">Tổng quan</p><h1 id="usage-view-title">Sử dụng token</h1><p class="page-sub" id="usage-scope-note"></p></div>
-  <div class="usage-header-controls" id="usage-header-controls">
-    <p class="range-note" id="range-note"></p>
-    <div class="page-actions">
-    <button class="quiet-button" id="scope-clear" type="button" hidden></button>
-    <span class="range-presets" role="group" aria-label="Chọn nhanh kỳ">
-      <button class="chip" type="button" data-preset="1">1 ngày</button>
-      <button class="chip" type="button" data-preset="7" aria-pressed="true">7 ngày</button>
-      <button class="chip" type="button" data-preset="30">30 ngày</button>
-      <button class="chip" type="button" data-preset="all">Tất cả</button>
-    </span>
-    <label class="range-field"><span>Từ</span><input type="date" id="range-from"></label>
-    <label class="range-field"><span>Đến</span><input type="date" id="range-to"></label>
-    <button class="quiet-button" id="range-apply" type="button">Áp dụng</button>
-    </div>
-  </div>
 </header>
 <div class="page-scroll" id="usage-scroll"><div class="page-inner section-stack">
   <div id="usage-overview">
-    <div class="usage-view-tabs" id="usage-view-tabs" role="group" aria-label="Nội dung Usage">
-      <button class="chip" type="button" data-usage-view="usage" aria-pressed="true">Sử dụng</button>
-      <button class="chip" type="button" data-usage-view="cost" aria-pressed="false">Chi phí</button>
-      <button class="chip" type="button" data-usage-view="trace" aria-pressed="false">Trace</button>
+    <article class="paper-card bot-scope-card" id="usage-scope-card" hidden></article>
+    <div class="usage-filter-row" id="usage-filter-row">
+      <div class="usage-view-tabs" id="usage-view-tabs" role="group" aria-label="Nội dung Usage">
+        <button class="chip" type="button" data-usage-view="usage" aria-pressed="true">Sử dụng</button>
+        <button class="chip" type="button" data-usage-view="cost" aria-pressed="false">Chi phí</button>
+        <button class="chip" type="button" data-usage-view="trace" aria-pressed="false">Trace</button>
+      </div>
+      <div class="usage-header-controls" id="usage-header-controls">
+        <p class="range-note" id="range-note"></p>
+        <div class="page-actions">
+        <span class="range-presets" role="group" aria-label="Chọn nhanh kỳ">
+          <button class="chip" type="button" data-preset="1">1 ngày</button>
+          <button class="chip" type="button" data-preset="7" aria-pressed="true">7 ngày</button>
+          <button class="chip" type="button" data-preset="30">30 ngày</button>
+          <button class="chip" type="button" data-preset="all">Tất cả</button>
+        </span>
+        <label class="range-field"><span>Từ</span><input type="date" id="range-from"></label>
+        <label class="range-field"><span>Đến</span><input type="date" id="range-to"></label>
+        <button class="quiet-button" id="range-apply" type="button">Áp dụng</button>
+        </div>
+      </div>
     </div>
     <div class="page-status" id="page-status" role="status" hidden><span id="stats-status-text"></span><button class="quiet-button" id="stats-retry" type="button" hidden>Thử lại số liệu</button></div>
     <div class="stat-grid" id="stat-grid" aria-live="polite"></div>
@@ -350,10 +352,43 @@ function applyControlRoute() {
 }
 
 function updateScopeChip() {
-  const btn = $('#scope-clear');
-  const b = botScope && getBot(botScope);
-  btn.hidden = !botScope;
-  btn.textContent = botScope ? 'Bỏ lọc: ' + (b ? b.name : botScope) + ' ✕' : '';
+  const card = $('#usage-scope-card');
+  const filterRow = $('#usage-filter-row');
+  if (card) {
+    if (!botScope) {
+      card.hidden = true;
+      card.innerHTML = '';
+      if (typeof card.removeAttribute === 'function') card.removeAttribute('style');
+      else if (card.style) card.style.cssText = '';
+      if (filterRow && typeof filterRow.removeAttribute === 'function') filterRow.removeAttribute('style');
+      else if (filterRow && filterRow.style) filterRow.style.cssText = '';
+    } else {
+      const b = getBot(botScope);
+      card.hidden = false;
+      const css = b && b.palette && typeof paletteStyle === 'function' ? paletteStyle(b) : '';
+      if (css) {
+        if (card.style) card.style.cssText = css;
+        if (filterRow && filterRow.style) filterRow.style.cssText = css;
+      } else if (typeof card.removeAttribute === 'function') {
+        card.removeAttribute('style');
+        if (filterRow && typeof filterRow.removeAttribute === 'function') filterRow.removeAttribute('style');
+      } else if (card.style) {
+        card.style.cssText = '';
+        if (filterRow && filterRow.style) filterRow.style.cssText = '';
+      }
+      const name = b ? b.name : botScope;
+      const face = b
+        ? avatar(b, b.state, 'expression-preview')
+        : `<span class="id-chip" aria-hidden="true">${escapeHTML(String(botScope).slice(0, 2).toUpperCase() || '?')}</span>`;
+      const stateLabel = b && typeof states !== 'undefined' && states[b.state] ? states[b.state][1] : '';
+      const t = statsData?.totals;
+      const meta = t
+        ? `${fmtInt(t.conversations ?? 0)} phiên · ${fmtInt(t.turns ?? 0)} lượt${stateLabel ? ' · ' + escapeHTML(stateLabel) : ''}`
+        : `Đang lọc theo bot${stateLabel ? ' · ' + escapeHTML(stateLabel) : ''}`;
+      card.innerHTML = `<div class="bot-scope">${face}<div class="bot-scope-main"><h3 class="bot-scope-name">${escapeHTML(name)}${b?.role ? ` <span class="bot-scope-role">${escapeHTML(b.role)}</span>` : ''}</h3><p class="bot-scope-meta">${meta}</p></div><button class="quiet-button bot-scope-clear" id="scope-clear" type="button">Bỏ lọc</button></div>`;
+
+    }
+  }
   ctx.sidebar?.querySelector('#usage-overview-scope')?.setAttribute('aria-pressed', String(!botScope));
 }
 function updateViewShell() {
@@ -572,6 +607,7 @@ function renderStats(s, { loading = false } = {}) {
     $('#card-bot-cost').hidden = !!botScope;
     fillModelFilter(s.models || []);
     fillStatusFilter(s.by_status || []);
+    updateScopeChip();
     return;
   }
   const t = s.totals || {};
@@ -596,6 +632,7 @@ function renderStats(s, { loading = false } = {}) {
   renderDayChart(); renderCostChart(); renderBotRows(); renderModelRows(); renderCostRows(); renderHourChart();
   fillModelFilter(s.models || []);
   fillStatusFilter(s.by_status || []);
+  updateScopeChip();
 }
 
 /* ---------- render: daily tokens, calls, and recorded cost ---------- */
@@ -829,7 +866,14 @@ function ensureOverviewScopeButton() {
     button.setAttribute('aria-label', 'Tổng quan mọi bot');
     button.textContent = 'Tổng quan';
     button.hidden = true;
-    list.parentNode.insertBefore(button, list);
+    const heading = sidebar.querySelector('.sessions-heading');
+    if (heading) {
+      const createBtn = heading.querySelector('#team-shared-create');
+      if (createBtn) heading.insertBefore(button, createBtn);
+      else heading.appendChild(button);
+    } else {
+      list.parentNode.insertBefore(button, list);
+    }
     button.onclick = () => {
       if (sidebar.classList.contains('mobile-open') && typeof closeMobile === 'function') closeMobile();
       selectBot('');
@@ -841,7 +885,9 @@ function buildPage() {
   $('.workspace').insertAdjacentHTML('beforeend', PAGE_HTML);
   ensureOverviewScopeButton();
   $('#range-apply').onclick = applyRange;
-  $('#scope-clear').onclick = () => selectBot('');
+  $('#usage-scope-card').addEventListener('click', event => {
+    if (event.target?.closest?.('#scope-clear, .bot-scope-clear')) selectBot('');
+  });
   $$('.range-presets .chip').forEach(button => button.onclick = () => setPreset(button.dataset.preset));
   $('#usage-view-tabs').onclick = event => {
     const button = event.target.closest('[data-usage-view]');

@@ -211,8 +211,8 @@ def test_root_spa_retains_all_workspaces_and_restores_history(tmp_path: Path, re
     const cards = [...document.querySelectorAll('#profile-root > .paper-card')];
     const rects = cards.map(card => card.getBoundingClientRect());
     return { insets: rects.length ? [rects[0].left - edge, right - rects[0].right] : [],
+      cardCount: cards.length,
       gap: rects.length > 1 ? rects[1].top - rects[0].bottom : null,
-      saveSpacing: parseFloat(getComputedStyle(document.querySelector('#bot-model-card .form-footer')).marginTop),
       scroll: { rect: (() => { const r = scroll.getBoundingClientRect(); return [r.left, r.right, r.width]; })(), clientWidth: scroll.clientWidth, scrollWidth: scroll.scrollWidth, clientLeft: scroll.clientLeft },
       cardRects: rects.map(rect => [rect.left, rect.right, rect.width]),
       overflowElements: [document.documentElement, document.body, scroll, scroll.querySelector('.page-inner'), document.querySelector('#profile-root'), ...cards].filter(el => el.scrollWidth > el.clientWidth + 1).map(el => ({ tag: el.tagName, id: el.id, classes: el.className, scrollWidth: el.scrollWidth, clientWidth: el.clientWidth })),
@@ -649,18 +649,24 @@ def test_root_spa_retains_all_workspaces_and_restores_history(tmp_path: Path, re
     await wait(() => ThycaRouter.currentPage() === 'profile' && !document.querySelector('[data-page-workspace="profile"]').hidden);
     const profileRoot = document.querySelector('#profile-root');
     const geometry = profileGeometry();
-    if (JSON.stringify(geometry.insets.map(Math.round)) !== JSON.stringify([38, 38]) || geometry.gap !== 22 || geometry.saveSpacing !== 20 || geometry.overflow) throw new Error('desktop Profile geometry mismatch: ' + JSON.stringify(geometry));
-    await wait(() => document.querySelector('#bot-model')?.value === 'model-a' && document.querySelector('#bot-thinking')?.value === 'medium');
+    if (JSON.stringify(geometry.insets.map(Math.round)) !== JSON.stringify([38, 38]) || geometry.cardCount !== 1 || geometry.overflow || document.querySelector('#profile-root #bot-model-card') || document.querySelector('#profile-root #bot-settings-form')) throw new Error('desktop Profile geometry mismatch: ' + JSON.stringify(geometry));
+    const savedProfile = { page: 'profile', search: '?bot=coder', hash: '' };
+    document.querySelector('#open-settings').click();
+    await wait(() => !!document.querySelector('#settings-dialog')?.open && document.querySelector('#settings-bot')?.value === 'coder' && document.querySelector('#bot-model')?.value === 'model-a' && document.querySelector('#bot-thinking')?.value === 'medium');
     document.querySelector('#bot-model').value = 'model-b'; document.querySelector('#bot-model').dispatchEvent(new Event('change'));
     document.querySelector('#bot-thinking').value = 'high';
-    const savedProfile = { page: 'profile', search: '?bot=coder', hash: '' };
+    document.querySelector('#settings-dialog .dialog-close').click();
+    await wait(() => !document.querySelector('#settings-dialog').open);
     document.querySelector('[data-page-link="memories"]').click();
     await wait(() => ThycaRouter.currentPage() === 'memories' && !document.querySelector('[data-page-workspace="memories"]').hidden);
     if (document.activeElement !== document.querySelector('[data-page-workspace="memories"] h1')) throw new Error('navigation did not focus the new page heading');
     document.querySelector('[data-page-link="profile"]').click();
     await wait(() => ThycaRouter.currentPage() === 'profile' && !document.querySelector('[data-page-workspace="profile"]').hidden);
     if (document.querySelector('#profile-root') !== profileRoot || JSON.stringify(ThycaRouter.currentRoute()) !== JSON.stringify(savedProfile)) throw new Error('Profile destination route/workspace was not retained');
-    if (document.querySelector('#bot-model').value !== 'model-b' || document.querySelector('#bot-thinking').value !== 'high') throw new Error('Profile unsaved model draft did not survive navigation away');
+    document.querySelector('#open-settings').click();
+    await wait(() => !!document.querySelector('#settings-dialog')?.open && document.querySelector('#bot-model')?.value === 'model-b' && document.querySelector('#bot-thinking')?.value === 'high');
+    document.querySelector('#settings-dialog .dialog-close').click();
+    await wait(() => !document.querySelector('#settings-dialog').open);
     const historyLength = history.length;
     document.querySelector('[data-page-link="profile"]').click(); await new Promise(resolve => setTimeout(resolve, 100));
     if (history.length !== historyLength) throw new Error('same-page header navigation added history');
@@ -668,33 +674,46 @@ def test_root_spa_retains_all_workspaces_and_restores_history(tmp_path: Path, re
     await wait(() => ThycaRouter.currentPage() === 'memories' && !document.querySelector('[data-page-workspace="memories"]').hidden);
     history.forward();
     await wait(() => ThycaRouter.currentPage() === 'profile' && ThycaRouter.currentRoute().search === '?bot=coder' && !document.querySelector('[data-page-workspace="profile"]').hidden);
+    document.querySelector('#open-settings').click();
+    await wait(() => !!document.querySelector('#settings-dialog')?.open && document.querySelector('#bot-model')?.value === 'model-b' && document.querySelector('#bot-thinking')?.value === 'high');
     await fetch('/api/test/delay-settings');
     document.querySelector('#save-bot-settings').click();
-    await wait(() => document.querySelector('#save-bot-settings').disabled, 'Profile Save disabled while settings request is pending');
+    await wait(() => document.querySelector('#save-bot-settings').disabled, 'Settings Save disabled while bot settings request is pending');
     if (!document.querySelector('#save-bot-settings').disabled) {
       const pendingState = await fetch(window.__spaControlBase + '/state').then(response => response.json());
-      throw new Error('Profile Save remained enabled during pending POST: ' + JSON.stringify({ disabled: document.querySelector('#save-bot-settings').disabled, hint: document.querySelector('#bot-settings-hint').textContent, settingsStarted: pendingState.settingsStarted, settingsPosts: pendingState.settingsPosts, settingsDelay: pendingState.settingsDelay }));
+      throw new Error('Settings bot Save remained enabled during pending POST: ' + JSON.stringify({ disabled: document.querySelector('#save-bot-settings').disabled, hint: document.querySelector('#bot-settings-hint').textContent, settingsStarted: pendingState.settingsStarted, settingsPosts: pendingState.settingsPosts, settingsDelay: pendingState.settingsDelay }));
     }
     document.querySelector('#bot-settings-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
     await new Promise(resolve => setTimeout(resolve, 100));
-    if ((await waitForApiState(state => state.settingsPosts >= 1)).settingsPosts !== 1) throw new Error('duplicate Profile settings POST');
+    if ((await waitForApiState(state => state.settingsPosts >= 1)).settingsPosts !== 1) throw new Error('duplicate bot settings POST');
+    document.querySelector('#settings-dialog .dialog-close').click();
+    await wait(() => !document.querySelector('#settings-dialog').open);
     document.querySelector('[data-page-link="memories"]').click();
     await wait(() => ThycaRouter.currentPage() === 'memories' && !document.querySelector('[data-page-workspace="memories"]').hidden);
     document.querySelector('[data-page-link="profile"]').click();
     await wait(() => ThycaRouter.currentPage() === 'profile' && !document.querySelector('[data-page-workspace="profile"]').hidden);
-    if (document.querySelector('#bot-model').value !== 'model-b' || document.querySelector('#bot-thinking').value !== 'high') throw new Error('pending settings draft was lost across navigation');
+    document.querySelector('#open-settings').click();
+    await wait(() => !!document.querySelector('#settings-dialog')?.open && document.querySelector('#bot-model')?.value === 'model-b' && document.querySelector('#bot-thinking')?.value === 'high');
     await fetch(window.__spaControlBase + '/release-settings');
     await wait(() => document.querySelector('#bot-settings-hint').textContent.includes('Đã lưu.'));
-    if ((await waitForApiState(state => state.settingsPosts >= 1)).settingsPosts !== 1) throw new Error('duplicate Profile settings POST');
+    if ((await waitForApiState(state => state.settingsPosts >= 1)).settingsPosts !== 1) throw new Error('duplicate bot settings POST');
     if (!document.querySelector('#profile-root .chip')?.textContent.includes('model: model-b · suy nghĩ high')) throw new Error('saved Profile model chip did not update');
     const coderSaved = { model: document.querySelector('#bot-model').value, thinking: document.querySelector('#bot-thinking').value };
-    document.querySelector('#team-bot-list [data-action="select"][data-bot-id="thyca"]').click();
-    await wait(() => ThycaRouter.currentRoute().search === '?bot=thyca' && document.querySelector('#bot-model')?.value === 'model-a' && document.querySelector('#bot-thinking')?.value === 'low');
+    const settingsBotSel = document.querySelector('#settings-bot');
+    settingsBotSel.value = 'thyca'; settingsBotSel.dispatchEvent(new Event('change'));
+    await wait(() => document.querySelector('#settings-bot')?.value === 'thyca' && document.querySelector('#bot-model')?.value === 'model-a' && document.querySelector('#bot-thinking')?.value === 'low');
     if (coderSaved.model !== 'model-b' || coderSaved.thinking !== 'high') throw new Error('Coder settings were not kept distinct from Thyca');
     document.querySelector('#bot-model').value = 'model-b'; document.querySelector('#bot-model').dispatchEvent(new Event('change'));
     document.querySelector('#bot-thinking').value = 'max';
+    document.querySelector('#settings-dialog .dialog-close').click();
+    await wait(() => !document.querySelector('#settings-dialog').open);
     await ThycaRouter.navigate('memories'); await ThycaRouter.navigate('profile');
-    if (ThycaRouter.currentRoute().search !== '?bot=thyca' || document.querySelector('#bot-model').value !== 'model-b' || document.querySelector('#bot-thinking').value !== 'max') throw new Error('Thyca draft did not retain its own route/form state');
+    document.querySelector('#open-settings').click();
+    await wait(() => !!document.querySelector('#settings-dialog')?.open);
+    document.querySelector('#settings-bot').value = 'thyca'; document.querySelector('#settings-bot').dispatchEvent(new Event('change'));
+    await wait(() => document.querySelector('#bot-model')?.value === 'model-b' && document.querySelector('#bot-thinking')?.value === 'max');
+    document.querySelector('#settings-dialog .dialog-close').click();
+    await wait(() => !document.querySelector('#settings-dialog').open);
     document.querySelector('#profile-shared').click();
     await wait(() => ThycaRouter.currentRoute().search === '' && document.querySelector('[data-edit="USER.md"]'));
     if (document.querySelectorAll('#team-bot-list .bot-card[data-selected="true"]').length) throw new Error('shared Profile failed to clear bot selection');
@@ -734,7 +753,11 @@ def test_root_spa_retains_all_workspaces_and_restores_history(tmp_path: Path, re
     await wait(() => document.getElementById('file-USER.md')?.textContent.includes('Edited from SPA test'), 'canonical USER.md content refreshed');
     if (document.activeElement !== document.querySelector('[data-edit="USER.md"]')) throw new Error('canonical dialog did not restore focus');
     await ThycaRouter.navigate('profile', { search: '?bot=coder' });
-    await wait(() => ThycaRouter.currentRoute().search === '?bot=coder' && document.querySelector('#bot-model')?.value === 'model-b');
+    await wait(() => ThycaRouter.currentRoute().search === '?bot=coder' && !!document.querySelector('#profile-root .chip')?.textContent.includes('model: model-b'));
+    document.querySelector('#open-settings').click();
+    await wait(() => !!document.querySelector('#settings-dialog')?.open && document.querySelector('#bot-model')?.value === 'model-b');
+    document.querySelector('#settings-dialog .dialog-close').click();
+    await wait(() => !document.querySelector('#settings-dialog').open);
     const stableApiBefore = (await fetch(window.__spaControlBase + '/state').then(response => response.json())).apiCounts;
     for (let cycle = 0; cycle < 2; cycle++) {
       for (const page of ['memories', 'profile', 'provider', 'dashboard', 'chat']) await ThycaRouter.navigate(page);
@@ -935,8 +958,7 @@ def test_root_spa_retains_all_workspaces_and_restores_history(tmp_path: Path, re
     assert result["audit"]["initialChatStyles"] == result["audit"]["finalChatStyles"]
     assert result["audit"]["initialChatSnapshot"] == result["audit"]["finalChatSnapshot"]
     assert result["audit"]["desktopProfileGeometry"]["insets"] == [38, 38]
-    assert result["audit"]["desktopProfileGeometry"]["gap"] == 22
-    assert result["audit"]["desktopProfileGeometry"]["saveSpacing"] == 20
+    assert result["audit"]["desktopProfileGeometry"]["cardCount"] == 1
     assert result["audit"]["desktopProfileGeometry"]["overflow"] is False
     assert result["audit"]["workspaces"] == 5 and result["audit"]["intervalsStable"] is True
     assert result["audit"]["scriptErrors"] == [] and result["audit"]["unhandledRejections"] == []
@@ -1006,7 +1028,7 @@ def test_root_spa_retains_all_workspaces_and_restores_history(tmp_path: Path, re
         assert mobile_result["documentWidth"] <= mobile_result["viewport"], mobile_result
         assert mobile_result["bodyWidth"] <= mobile_result["viewport"], mobile_result
         assert mobile_result["insets"] == [14, 14], mobile_result
-        assert mobile_result["gap"] == 22 and mobile_result["saveSpacing"] == 20, mobile_result
+        assert mobile_result["cardCount"] == 1, mobile_result
         assert mobile_result["overflow"] is False and mobile_result["mobileMenuClosed"] is True, mobile_result
         assert [item["page"] for item in mobile_result["mobileViews"]] == list(PAGES), mobile_result
         assert all(abs(item["left"] - item["gridLeft"]) <= 1 and abs(item["right"] - item["gridRight"]) <= 1 and abs(item["width"] - item["gridWidth"]) <= 1 for item in mobile_result["mobileViews"]), mobile_result

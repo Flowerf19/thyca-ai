@@ -69,6 +69,15 @@ class LeafUsage:
         self._record("leaf_searches", chunk_ids, memory_id, now)
 
     @guarded
+    def record_searches_batch(self, by_session: dict[str, list[str]], now: str) -> None:
+        pairs = [
+            (chunk_id, memory_id)
+            for memory_id, chunk_ids in by_session.items()
+            for chunk_id in chunk_ids
+        ]
+        self._record_pairs("leaf_searches", pairs, now)
+
+    @guarded
     def keep_gets(self, chunk_ids: set[str]) -> None:
         self._keep("leaf_gets", chunk_ids)
 
@@ -94,19 +103,23 @@ class LeafUsage:
     def _record(self, table: str, chunk_ids: list[str], memory_id: str, now: str) -> None:
         if not chunk_ids:
             return
+        self._record_pairs(table, [(chunk_id, memory_id) for chunk_id in chunk_ids], now)
+
+    def _record_pairs(self, table: str, pairs: list[tuple[str, str]], now: str) -> None:
+        if not pairs:
+            return
         count_col, time_col = _TABLES[table]
+        sql = (
+            f"INSERT INTO {table}(chunk_id, memory_id, {count_col}, {time_col}) "
+            f"VALUES (?, ?, 1, ?) "
+            f"ON CONFLICT(chunk_id) DO UPDATE SET "
+            f"{count_col} = {count_col} + 1, "
+            f"{time_col} = excluded.{time_col}, "
+            f"memory_id = excluded.memory_id"
+        )
         self._db.execute("BEGIN IMMEDIATE")
         try:
-            for chunk_id in chunk_ids:
-                self._db.execute(
-                    f"""INSERT INTO {table}(chunk_id, memory_id, {count_col}, {time_col})
-                        VALUES (?, ?, 1, ?)
-                        ON CONFLICT(chunk_id) DO UPDATE SET
-                          {count_col} = {count_col} + 1,
-                          {time_col} = excluded.{time_col},
-                          memory_id = excluded.memory_id""",
-                    (chunk_id, memory_id, now),
-                )
+            self._db.executemany(sql, [(cid, mid, now) for cid, mid in pairs])
             self._db.commit()
         except Exception:
             self._db.rollback()

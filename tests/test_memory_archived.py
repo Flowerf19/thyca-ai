@@ -496,3 +496,68 @@ def test_facade_auto_reindexes_on_forward_day_rollover(tmp_path: Path) -> None:
     )
     obs = habit_observations(facade2, now=day2)
     assert [item["memory_id"] for item in obs] == [h_sid]
+
+
+def test_long_doc_does_not_starve_distinct_memories_from_candidate_cap(tmp_path: Path) -> None:
+    (tmp_path / "memory").mkdir()
+    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    past = at("2026-08-15")
+    now = at("2026-08-17")
+    long_body = "\n\n".join(
+        f"Section {i} discusses sharedtoken99 " + ("detail " * 35) for i in range(60)
+    )
+    sid_long = facade.remember("Long manual", "First sharedtoken99 overview", content=long_body, now=past)
+    sid_short = facade.remember("Short note", "Concise sharedtoken99 answer", now=past)
+    facade.archive.reindex(now)
+
+    # Confirm long doc actually spans >= 50 chunks so raw chunk capping would have starved sid_short.
+    assert facade.archive.store.memory_leaf_count(sid_long, "2026-08-17T10:00:00Z") >= 50
+    res = facade.search("sharedtoken99", limit=5, now=now)
+    assert {hit.memory_id for hit in res.hits} == {sid_long, sid_short}
+    assert any(w.startswith("dedup hid ") for w in res.warnings)
+
+
+def test_common_prefix_phrase_does_not_override_rare_entity_bm25(tmp_path: Path) -> None:
+    (tmp_path / "memory").mkdir()
+    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    past = at("2026-08-15")
+    now = at("2026-08-17")
+    for idx in range(5):
+        facade.remember(
+            f"Lịch sử Nga {idx}",
+            f"Hầu hết những người dân trong nước tham gia sự kiện {idx}",
+            now=past,
+        )
+    sid_gold = facade.remember(
+        "Lịch sử Singapore",
+        "Người Mã Lai sinh sống bằng nghề chài lưới trong suốt cuộc chiến Opium.",
+        now=past,
+    )
+    facade.archive.reindex(now)
+
+    res = facade.search("Hầu hết những người Mã Lai làm gì trong suốt cuộc chiến Opium?", now=now)
+    assert res.hits
+    assert res.hits[0].memory_id == sid_gold
+
+
+def test_trigram_runs_under_memory_view_when_fts_visible_below_limit(tmp_path: Path) -> None:
+    from thyca.core.channel import WindowRef
+    from thyca.memories.visibility import MemoryView, bound_memory_view
+
+    (tmp_path / "memory").mkdir()
+    facade = MemoryFacade(tmp_path, timezone_name="Asia/Ho_Chi_Minh")
+    past = at("2026-08-15")
+    now = at("2026-08-17")
+    for idx in range(6):
+        facade.remember(f"Other {idx}", f"mon thit bo #{idx}", chat="group-other", now=past)
+    sid_self = facade.remember("Self", "an bun voi thit quay rat ngon", chat="group-self", now=past)
+    facade.archive.reindex(now)
+
+    view = MemoryView(
+        window=WindowRef(channel_id="webui", kind="group", window_id="group-self"),
+        bot_id="thyca",
+        thyca_dir=tmp_path,
+    )
+    with bound_memory_view(view):
+        res = facade.search("thit quya", limit=5, now=now)
+    assert [hit.memory_id for hit in res.hits] == [sid_self]

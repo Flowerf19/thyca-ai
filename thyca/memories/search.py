@@ -98,37 +98,69 @@ def lexical_search(
             f"timeline_day {timeline_day} is not indexed "
             "(today and future files are excluded)"
         )
-    fts = archive.fts_hits(
+    from thyca.memories.visibility import current_memory_view
+
+    view = current_memory_view()
+    fts, fts_hidden, fts_capped = archive.fts_memory_hits(
         query, timeline_day, now, CANDIDATE_CAP,
         project=proj, chat_session=chat, reader=reader,
         task=task, kind=kind, status=status,
     )
+    if view is None:
+        fts_visible_count = len(fts)
+    else:
+        fts_visible_count = sum(
+            1
+            for hit in fts
+            if view.can_read_entry(
+                hit.chat_session, hit.bots,
+                allow_own_cross_window=allow_own_cross_window,
+            )
+        )
     hits: list[Hit] = list(fts)
-    trigram = archive.trigram_hits(
-        query, timeline_day, now, CANDIDATE_CAP,
-        project=proj, chat_session=chat, reader=reader,
-        task=task, kind=kind, status=status,
+    # Full-table trigram only when FTS under-fills the visible limit (typo/fill).
+    trigram = (
+        archive.trigram_hits(
+            query, timeline_day, now, CANDIDATE_CAP,
+            project=proj, chat_session=chat, reader=reader,
+            task=task, kind=kind, status=status,
+        )
+        if fts_visible_count < limit
+        else []
     )
-    if len(fts) >= CANDIDATE_CAP or len(trigram) >= CANDIDATE_CAP:
+    # Collapse trigram to one leaf per memory_id before merge/cap so a fat
+    # multi-leaf doc cannot alone trip the honesty candidate-cap warning.
+    best_trigram: dict[str, Hit] = {}
+    for hit in trigram:
+        prev = best_trigram.get(hit.memory_id)
+        if (
+            prev is None
+            or hit.score > prev.score
+            or (hit.score == prev.score and hit.chunk_id < prev.chunk_id)
+        ):
+            best_trigram[hit.memory_id] = hit
+    trigram = sorted(
+        best_trigram.values(), key=lambda item: (-item.score, item.chunk_id)
+    )
+    if fts_capped or len(trigram) >= CANDIDATE_CAP:
         warnings.append(
             f"candidate cap reached ({CANDIDATE_CAP}): "
             "some matches may be hidden"
         )
-    seen = {hit.chunk_id for hit in hits}
+    seen_chunks = {hit.chunk_id for hit in hits}
+    seen_memories = {hit.memory_id for hit in hits}
     for hit in trigram:
-        if hit.chunk_id not in seen:
+        if hit.chunk_id not in seen_chunks and hit.memory_id not in seen_memories:
             hits.append(hit)
-            seen.add(hit.chunk_id)
+            seen_chunks.add(hit.chunk_id)
+            seen_memories.add(hit.memory_id)
     hays = archive.store.rank_hays([hit.chunk_id for hit in hits])
     hits = _promote_in_order_span(query, hits, archive.chunker, hays)
     deduped = dedup_siblings(hits)
-    hidden = len(hits) - len(deduped)
+    hidden = fts_hidden + (len(hits) - len(deduped))
     if hidden:
         noun = "sibling hit" if hidden == 1 else "sibling hits"
         warnings.append(f"dedup hid {hidden} {noun}")
-    from thyca.memories.visibility import current_memory_view
-
-    view = current_memory_view()
     if view is not None:
         deduped = [
             hit for hit in deduped
@@ -142,8 +174,7 @@ def lexical_search(
         by_session: dict[str, list[str]] = {}
         for hit in hits:
             by_session.setdefault(hit.memory_id, []).append(hit.chunk_id)
-        for sid, chunk_ids in by_session.items():
-            archive.store.usage.record_searches(chunk_ids, sid, now_ts)
+        archive.store.usage.record_searches_batch(by_session, now_ts)
     return SearchResult(hits=hits, warnings=warnings)
 
 

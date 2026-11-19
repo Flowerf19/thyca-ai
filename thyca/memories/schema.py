@@ -1,8 +1,9 @@
 """SQLite schema versioning for the archived leaf index (stdlib-only deps).
 
-Table creation lives in ``schema.sql``; this module owns version checks and
-migrations. Query I/O stays in ``archive_store.py`` — the store delegates
-here from a thin guarded wrapper so lock/error semantics do not change.
+DDL lives in ``schema.sql`` (tables) and ``schema_fts.sql`` (FTS + triggers).
+This module owns version checks and migrations. Query I/O stays in
+``archive_store.py`` — the store delegates here from a thin guarded wrapper
+so lock/error semantics do not change.
 """
 from __future__ import annotations
 
@@ -12,12 +13,23 @@ from pathlib import Path
 SCHEMA_VERSION = "10"
 # Bump when Chunker.normalize changes so stale text_norm rows rebuild.
 NORM_VERSION = "2"
-SCHEMA_PATH = Path(__file__).with_name("schema.sql")
+_SCHEMA_DIR = Path(__file__).resolve().parent
+SCHEMA_PATH = _SCHEMA_DIR / "schema.sql"
+SCHEMA_FTS_PATH = _SCHEMA_DIR / "schema_fts.sql"
+
+
+def _read_sql(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+def _apply_base_schema(db: sqlite3.Connection) -> None:
+    db.executescript(_read_sql(SCHEMA_PATH))
+    db.executescript(_read_sql(SCHEMA_FTS_PATH))
 
 
 def init_schema(db: sqlite3.Connection) -> None:
     """Create or migrate schema tables in ``db`` (caller holds the lock)."""
-    db.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    _apply_base_schema(db)
     row = db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
     if row is None:
         db.execute(
@@ -37,6 +49,7 @@ def init_schema(db: sqlite3.Connection) -> None:
     # database the chunks table has no bots/task column until migrate() adds it.
     db.execute("CREATE INDEX IF NOT EXISTS chunks_bots ON chunks(bots)")
     db.execute("CREATE INDEX IF NOT EXISTS chunks_task ON chunks(task)")
+    db.execute("CREATE INDEX IF NOT EXISTS chunks_memory ON chunks(memory_id)")
     ensure_norm_version(db)
 
 
@@ -47,37 +60,9 @@ def _drop_fts(db: sqlite3.Connection) -> None:
 
 
 def rebuild_fts_v10(db: sqlite3.Connection) -> None:
-    """Recreate the 3-column chunks_fts virtual table and triggers, then rebuild."""
+    """Recreate chunks_fts + triggers from ``schema_fts.sql``, then rebuild."""
     _drop_fts(db)
-    db.execute(
-        """CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
-            text_raw,
-            memory_title,
-            text_norm,
-            content='chunks', content_rowid='row_id',
-            tokenize='unicode61 remove_diacritics 2'
-        )"""
-    )
-    db.execute(
-        """CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN
-            INSERT INTO chunks_fts(rowid, text_raw, memory_title, text_norm)
-            VALUES (new.row_id, new.text_raw, new.memory_title, new.text_norm);
-        END"""
-    )
-    db.execute(
-        """CREATE TRIGGER IF NOT EXISTS chunks_ad AFTER DELETE ON chunks BEGIN
-            INSERT INTO chunks_fts(chunks_fts, rowid, text_raw, memory_title, text_norm)
-            VALUES ('delete', old.row_id, old.text_raw, old.memory_title, old.text_norm);
-        END"""
-    )
-    db.execute(
-        """CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN
-            INSERT INTO chunks_fts(chunks_fts, rowid, text_raw, memory_title, text_norm)
-            VALUES ('delete', old.row_id, old.text_raw, old.memory_title, old.text_norm);
-            INSERT INTO chunks_fts(rowid, text_raw, memory_title, text_norm)
-            VALUES (new.row_id, new.text_raw, new.memory_title, new.text_norm);
-        END"""
-    )
+    db.executescript(_read_sql(SCHEMA_FTS_PATH))
     db.execute("INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild')")
 
 
@@ -166,7 +151,7 @@ def migrate(db: sqlite3.Connection, from_version: str) -> None:
     db.execute("DROP TABLE IF EXISTS chunks_fts")
     db.execute("DROP TABLE IF EXISTS chunks")
     db.execute("DELETE FROM source_files")
-    db.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    _apply_base_schema(db)
     db.execute(
         "UPDATE meta SET value = ? WHERE key = 'schema_version'",
         (SCHEMA_VERSION,),

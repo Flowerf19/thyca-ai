@@ -440,9 +440,19 @@ def _journal_entries(raw_lines: list[str]) -> list[tuple[str, str, str]]:
     return entries
 
 
+def _polarity_conflict(inc_raw: str, cand_raw: str) -> bool:
+    """True when raw forms disagree on a polarity token (accent folding can hide this)."""
+    inc_acc = set(_ACCENT_WORD_RE.findall(inc_raw.casefold()))
+    cand_acc = set(_ACCENT_WORD_RE.findall(cand_raw.casefold()))
+    return bool((inc_acc ^ cand_acc) & _POLARITY_TOKENS)
+
+
 def _entries_match(inc_raw: str, inc_norm: str, cand_raw: str, cand_norm: str) -> bool:
     """True when incoming entry duplicates candidate without clobbering updates/reversals."""
     if not inc_norm or not cand_norm:
+        return False
+    # Check raw polarity before norm equality: đừng/dùng both fold to "dung".
+    if _polarity_conflict(inc_raw, cand_raw):
         return False
     if inc_norm == cand_norm:
         return True
@@ -462,10 +472,6 @@ def _entries_match(inc_raw: str, inc_norm: str, cand_raw: str, cand_norm: str) -
     shared = set(inc_order) & set(cand_order)
     if [w for w in inc_order if w in shared] != [w for w in cand_order if w in shared]:
         return False
-    inc_acc = set(_ACCENT_WORD_RE.findall(inc_raw.casefold()))
-    cand_acc = set(_ACCENT_WORD_RE.findall(cand_raw.casefold()))
-    if (inc_acc ^ cand_acc) & _POLARITY_TOKENS:
-        return False
     return fuzz.token_set_ratio(inc_norm, cand_norm) >= _OTHER_FUZZY_RATIO
 
 
@@ -482,7 +488,7 @@ def _is_other_duplicate(
     inc_content_norm = norm_words(incoming_content_raw) if incoming_content_raw else ""
     for first_raw, cand_content_raw, full_raw in _journal_entries(raw_lines):
         full_norm = norm_words(full_raw)
-        if incoming_norm == full_norm:
+        if incoming_norm == full_norm and not _polarity_conflict(incoming_raw, full_raw):
             return True
         if inc_content_norm:
             if cand_content_raw:

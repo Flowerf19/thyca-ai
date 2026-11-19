@@ -298,15 +298,18 @@ CREATE INDEX related_edges_b ON related_edges(b_session);
 
 
 def _schema_without(*drop: str, with_graph: bool = True) -> str:
-    """Current schema.sql minus columns (and optionally the graph table)
-    an old release never had — keeps triggers/FTS in sync like a real
-    old DB. Leaf id columns read back as their pre-v9 names
+    """Current schema.sql + schema_fts.sql minus columns (and optionally the
+    graph table) an old release never had — keeps triggers/FTS in sync like
+    a real old DB. Leaf id columns read back as their pre-v9 names
     (``session_id`` / ``session_title``) so fixtures rebuild the
     genuine old schema the migration has to rename."""
     from pathlib import Path as _Path
 
-    script = (_Path(__file__).parent.parent / "thyca" / "memories" / "schema.sql").read_text(
-        encoding="utf-8"
+    root = _Path(__file__).parent.parent / "thyca" / "memories"
+    script = (
+        (root / "schema.sql").read_text(encoding="utf-8")
+        + "\n"
+        + (root / "schema_fts.sql").read_text(encoding="utf-8")
     )
     out: list[str] = []
     skip_block = False
@@ -892,26 +895,33 @@ def test_migration_v9_to_v10_keeps_usage_and_indexes_title_and_d_stroke(tmp_path
     st = day_file.stat()
     db_path = tmp_path / "memory.sqlite"
     db = sqlite3.connect(db_path)
-    base_sql = (_Path(__file__).parent.parent / "thyca" / "memories" / "schema.sql").read_text(
-        encoding="utf-8"
+    root = _Path(__file__).parent.parent / "thyca" / "memories"
+    tables_sql = (root / "schema.sql").read_text(encoding="utf-8")
+    # v9 FTS indexed text_raw only; strip the v10 title/norm columns from schema_fts.sql.
+    v9_fts = (
+        (root / "schema_fts.sql")
+        .read_text(encoding="utf-8")
+        .replace(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(\n"
+            "  text_raw,\n"
+            "  memory_title,\n"
+            "  text_norm,\n",
+            "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(\n"
+            "  text_raw,\n",
+        )
+        .replace(
+            "INSERT INTO chunks_fts(rowid, text_raw, memory_title, text_norm)\n"
+            "  VALUES (new.row_id, new.text_raw, new.memory_title, new.text_norm);",
+            "INSERT INTO chunks_fts(rowid, text_raw) VALUES (new.row_id, new.text_raw);",
+        )
+        .replace(
+            "INSERT INTO chunks_fts(chunks_fts, rowid, text_raw, memory_title, text_norm)\n"
+            "  VALUES ('delete', old.row_id, old.text_raw, old.memory_title, old.text_norm);",
+            "INSERT INTO chunks_fts(chunks_fts, rowid, text_raw) "
+            "VALUES ('delete', old.row_id, old.text_raw);",
+        )
     )
-    v9_sql = base_sql.replace(
-        "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(\n"
-        "  text_raw,\n"
-        "  memory_title,\n"
-        "  text_norm,\n",
-        "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(\n"
-        "  text_raw,\n",
-    ).replace(
-        "INSERT INTO chunks_fts(rowid, text_raw, memory_title, text_norm)\n"
-        "  VALUES (new.row_id, new.text_raw, new.memory_title, new.text_norm);",
-        "INSERT INTO chunks_fts(rowid, text_raw) VALUES (new.row_id, new.text_raw);",
-    ).replace(
-        "INSERT INTO chunks_fts(chunks_fts, rowid, text_raw, memory_title, text_norm)\n"
-        "  VALUES ('delete', old.row_id, old.text_raw, old.memory_title, old.text_norm);",
-        "INSERT INTO chunks_fts(chunks_fts, rowid, text_raw) VALUES ('delete', old.row_id, old.text_raw);",
-    )
-    db.executescript(v9_sql)
+    db.executescript(tables_sql + "\n" + v9_fts)
     db.execute("INSERT INTO meta VALUES ('schema_version', '9')")
     db.execute("INSERT INTO meta VALUES ('norm_version', '2')")
     db.execute(
@@ -992,6 +1002,11 @@ def test_append_other_journal_preserves_updates_and_dedupes_multiline_and_cross_
     # FP3: negation vs affirmative must not be dropped.
     facade.append_other_journal("Docker", "User is not using docker for local dev", chat="c3", now=day1)
     facade.append_other_journal("Docker", "using docker for local dev", chat="c3", now=day1)
+    # FP3b: Vietnamese đừng vs dùng (both fold to "dung") must not be dropped.
+    facade.append_other_journal("Tabs", "Trong nhóm dùng tab bốn khoảng để code", chat="c3b", now=day1)
+    facade.append_other_journal("Tabs", "Trong nhóm đừng dùng tab bốn khoảng để code", chat="c3b", now=day1)
+    facade.append_other_journal("Tabs2", "dung tab bon khoang", chat="c3c", now=day1)
+    facade.append_other_journal("Tabs2", "đừng tab bốn khoảng", chat="c3c", now=day1)
     # FP4: shared summary with short differing content lines must not be dropped.
     facade.append_other_journal("Style", "Team coding standards for Python", content="Use ruff", chat="c6", now=day1)
     facade.append_other_journal("Style", "Team coding standards for Python", content="Use uv", chat="c6", now=day1)
@@ -1024,6 +1039,8 @@ def test_append_other_journal_preserves_updates_and_dedupes_multiline_and_cross_
     assert "from PostgreSQL to SQLite" in d1_text and "from SQLite to PostgreSQL" in d1_text
     assert "User is not using docker for local dev" in d1_text
     assert sum("using docker for local dev" in ln for ln in d1_text.splitlines()) == 2
+    assert "nhóm dùng tab" in d1_text and "đừng dùng tab" in d1_text
+    assert "dung tab bon khoang" in d1_text and "đừng tab bốn khoảng" in d1_text
     assert "Use ruff" in d1_text and "Use uv" in d1_text
     assert "Use systemd" in d1_text
     assert "Line one uses FastAPI" in d1_text

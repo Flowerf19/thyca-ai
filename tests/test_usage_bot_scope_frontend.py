@@ -87,6 +87,8 @@ def test_dashboard_structure_and_scope_lifecycle_guards() -> None:
     assert "ctx.navigate('dashboard', { search: pageQuery(view), hash: '' })" in source
     assert "sidebarLabel(id, name, status) { return `Xem sử dụng của ${name}`; }" in source
     assert ".dashboard-shell .workspace{display:flex;flex-direction:column}" in css
+    assert ".dashboard-shell #usage-overview{display:grid;grid-template-columns:minmax(0,1fr);" in css
+    assert ".dashboard-shell .usage-view-panel{display:grid;grid-template-columns:minmax(0,1fr);" in css
     assert "repeat(7,minmax(0,1fr))" not in css
 
 
